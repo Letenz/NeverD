@@ -967,6 +967,18 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_pdb_reference_json",
+    "const char *",
+    ["const char *", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_dwarf_reference_json",
+    "const char *",
+    ["const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_session_set_load_options",
     "int",
     ["neverd_session_t", "const char *"],
@@ -1056,6 +1068,21 @@ _declare(
     "neverd_session_set_debug_info_enabled",
     "void",
     ["neverd_session_t", "int"],
+)
+_declare(
+    "neverd_session_set_pdb_search",
+    "void",
+    ["neverd_session_t", "int"],
+)
+_declare(
+    "neverd_session_set_dwarf_search",
+    "void",
+    ["neverd_session_t", "int"],
+)
+_declare(
+    "neverd_session_set_symbol_path",
+    "void",
+    ["neverd_session_t", "const char *"],
 )
 _declare(
     "neverd_session_set_load_progress",
@@ -1188,6 +1215,12 @@ _declare(
     "neverd_ir_view_json",
     "const char *",
     ["neverd_session_t", "neverd_va_t", "const char *", "size_t", "size_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_ir_view_ex_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "const char *", "size_t", "size_t", "const char *"],
     ownership=Ownership.OWNED_STRING,
 )
 _declare("neverd_func_find_by_name", "int", ["neverd_session_t", "const char *"])
@@ -1532,6 +1565,15 @@ _declare("neverd_renames_save", "int", ["neverd_session_t"])
 _declare("neverd_renames_load", "int", ["neverd_session_t"])
 _declare("neverd_func_create", "int", ["neverd_session_t", "neverd_va_t"])
 _declare("neverd_func_delete", "int", ["neverd_session_t", "neverd_va_t"])
+_declare(
+    "neverd_func_edit", "int", ["neverd_session_t", "neverd_va_t", "const char *"]
+)
+_declare(
+    "neverd_func_attributes_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t"],
+    ownership=Ownership.OWNED_STRING,
+)
 _declare(
     "neverd_functions_json",
     "const char *",

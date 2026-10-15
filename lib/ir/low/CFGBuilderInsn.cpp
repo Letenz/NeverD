@@ -370,6 +370,9 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
   }
   if (Target == InvalidVA)
     return false;
+  // What the user states of the callee decides over its name and a proof.
+  if (const auto Stated = CurrentImg->userNoReturnAt(Target))
+    return *Stated;
   if (libc::isNoReturnTarget(*CurrentImg, Target, NoReturnTargets))
     return true;
   // An internal callee needs a proof, which lifts it.  Padding after the call
@@ -489,9 +492,9 @@ void CFGBuilder::rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   if (!TRI.CallPushesReturnAddress)
     return;
-  // Compiler output reaches its own code with jumps; only hand-written code
-  // calls a label inside itself, and the return address that pushes is a
-  // value like any other.  Whether a return later pops it is for
+  // A call to an internal label can either return normally or abandon the
+  // invocation. Its pushed return address is a value like any other.
+  // Whether a return later pops it is for
   // classifyOwnInteriorCalls to prove.  The function's body is the extent
   // its own unwind record declares (a function-table entry or a DWARF FDE);
   // a range recovered from code or shared by several functions bounds
@@ -533,6 +536,44 @@ void CFGBuilder::rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
   Rec.BranchTarget = Target;
   CallTargets.erase(Target);
   OwnInteriorCallSites[Target].insert(Rec.Addr);
+}
+
+void CFGBuilder::rewriteOwnInteriorReturn(const BinaryImage &Img,
+                                          InsnRecord &Rec) {
+  const auto It = OwnInteriorReturns.find(Rec.Addr);
+  if (It == OwnInteriorReturns.end())
+    return;
+  const auto *Segment = Img.getSegmentFor(Rec.Addr);
+  // Only a decoded, bare near RET is admitted. Far returns and immediate
+  // cleanup need different contracts; a stale plan must never replace them.
+  if ((Img.Arch != Arch::X86 && Img.Arch != Arch::X64) || !Segment ||
+      Rec.Addr < Segment->VA ||
+      Rec.Addr - Segment->VA >= Segment->Data.size() ||
+      Segment->Data[Rec.Addr - Segment->VA] != 0xc3 || Rec.Size != 1 ||
+      !Rec.IsRet || Rec.IsCall || Rec.IsCond || Rec.Ops.size() != 1 ||
+      Rec.Ops.front().Opcode != NdOp::RETURN) {
+    UnsupportedInstructionAddresses.insert(Rec.Addr);
+    return;
+  }
+  const auto &TRI = getTargetRegInfo(Img.Arch);
+  const auto SP = NdVar::reg(TRI.StackPointer, TRI.PointerSize);
+  LowOp Pop;
+  Pop.Opcode = NdOp::INT_ADD;
+  Pop.Output = SP;
+  Pop.addInput(SP);
+  Pop.addInput(NdVar::scalar(TRI.PointerSize, TRI.PointerSize));
+  Pop.Addr = Rec.Addr;
+  Pop.Seq = 0;
+  LowOp Resume;
+  Resume.Opcode = NdOp::BRANCH;
+  Resume.addInput(NdVar::cst(It->second.Continuation, TRI.PointerSize));
+  Resume.Addr = Rec.Addr;
+  Resume.Seq = 1;
+  Rec.Ops = {Pop, Resume};
+  Rec.IsRet = Rec.IsIndirect = false;
+  Rec.IsBranch = true;
+  Rec.BranchTarget = It->second.Continuation;
+  Rec.Immediate = It->second.Continuation;
 }
 
 void CFGBuilder::rewriteAsIndirectTailCall(InsnRecord &Rec) {

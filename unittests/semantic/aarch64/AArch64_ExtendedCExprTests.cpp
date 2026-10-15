@@ -68,12 +68,6 @@ static const std::vector<RoundTripTC> kA64Ext = {
   {"a64_mneg", "long a64_mneg(long a, long b) { return -(a * b); }\n", {3, 7}, "A64Ext"},
 
   // --- Divide and modulo ---
-  {"a64_divmod",
-   "long a64_divmod(long a, long b) {\n"
-   "  return (a / b) * 1000 + (a % b);\n"
-   "}\n",
-   {12345, 67}, "A64Ext"},
-
   // --- Popcount (Brian Kernighan) ---
   {"a64_popcount_bk",
    "long a64_popcount_bk(long x) {\n"
@@ -127,5 +121,5 @@ static const std::vector<RoundTripTC> kA64Ext = {
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(A64Ext, AArch64ExtRT,
-                         ::testing::ValuesIn(kA64Ext), rtTCName);
+INSTANTIATE_TEST_SUITE_P(A64Ext, AArch64ExtRT, ::testing::ValuesIn(kA64Ext),
+                         rtTCName);

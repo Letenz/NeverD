@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/loader/RegistrationScopeGraph.h"
 
 #include <algorithm>
 #include <utility>
@@ -19,11 +20,16 @@ RegistrationStateSolver::RegistrationStateSolver(
     const std::vector<RegistrationCalleeFrameContract> *Callees,
     const std::vector<RegistrationCleanupFrameContract> *Cleanups,
     const std::vector<RegistrationCalleeStackContract> *Stacks,
-    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds)
+    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
+    const std::vector<RegistrationSEHControlContract> *SEHControls,
+    ConditionalFrame *Conditional, const BoundCalleeProver *BoundCallees,
+    const EH3JumpRuntime *JumpRuntime)
     : Function(Function), EH(*Function.ExceptionMetadata),
       Chain(*EH.Registration), SecurityCookieVA(SecurityCookieVA),
       CookieCheckVA(CookieCheckVA), Callees(Callees), Cleanups(Cleanups),
-      Stacks(Stacks), LocalUnwinds(LocalUnwinds),
+      Stacks(Stacks), LocalUnwinds(LocalUnwinds), SEHControls(SEHControls),
+      Conditional(Conditional), BoundCallees(BoundCallees),
+      JumpRuntime(JumpRuntime),
       KnownCxx(EH.Encoding == ExceptionEncoding::X86CxxFuncInfo &&
                (EH.Personality == ExceptionPersonality::CxxFrameHandlerX86 ||
                 EH.Personality == ExceptionPersonality::CxxFrameHandler3)),
@@ -46,6 +52,17 @@ RegistrationStateAnalysis RegistrationStateSolver::run() {
   }
   if (!initializeContracts())
     return std::move(Result);
+  if (SEHControls) {
+    for (const auto &Control : *SEHControls)
+      if (!charge(1) || Control.Address >= Control.EndAddress ||
+          !SEHControlIndex.emplace(Control.Address, Control).second) {
+        Result.SEHInvocationExitsComplete = false;
+        Result.Diagnostics.push_back(
+            "SEH physical control evidence is invalid");
+        return std::move(Result);
+      }
+    Result.SEHControls = *SEHControls;
+  }
   initializeCookies();
   collectOccurrences();
   seedEntries();
@@ -134,6 +151,19 @@ bool RegistrationStateSolver::initialize() {
       return false;
     }
   }
+  if (!KnownCxx) {
+    if (!charge(StateCount + 1) ||
+        !hasValidRegistrationScopeGraph(Chain, EH4)) {
+      Result.Diagnostics.push_back("invalid SEH registration scope graph");
+      return false;
+    }
+    // The frame sentinel remains a valid state even if installation starts
+    // directly in a checked active scope.
+    AllLevels.insert(registrationOutsideTryLevel(EH4));
+    for (const auto &Scope : Chain.Scopes)
+      if (Scope.IsFinally)
+        FinallyTargets.insert(Scope.HandlerVA);
+  }
   AllLevels.insert(*Chain.SeededTryLevel);
   for (size_t I = 0; I < StateCount; ++I)
     AllLevels.insert(static_cast<int32_t>(I));
@@ -185,6 +215,18 @@ bool RegistrationStateSolver::initialize() {
 bool RegistrationStateSolver::charge(size_t Amount) {
   if (Amount > limits::kMaxRegistrationEHStateWork - WorkUsed) {
     Exhausted = true;
+    Result.Complete = Result.CallbackStatesComplete =
+        Result.RegistrationLifetimeComplete = false;
+    Result.SEHInvocationExitsComplete = false;
+    Result.SEHInvocationExits.clear();
+    Result.SEHJumpResumptionsComplete = false;
+    Result.SEHJumpResumptions.clear();
+    Result.SEHJumpCapturesComplete = false;
+    Result.SEHJumpCaptures.clear();
+    Result.SEHBoundCallsComplete = false;
+    Result.SEHBoundCalls.clear();
+    Result.SEHExceptionAccessesComplete = false;
+    Result.SEHExceptionAccesses.clear();
     return false;
   }
   WorkUsed += Amount;
@@ -199,12 +241,13 @@ RegistrationStateAnalysis analyzeRegistrationStates(
     const std::vector<RegistrationCalleeFrameContract> *Callees,
     const std::vector<RegistrationCleanupFrameContract> *Cleanups,
     const std::vector<RegistrationCalleeStackContract> *Stacks,
-    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds) {
+    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
+    const std::vector<RegistrationSEHControlContract> *SEHControls) {
   if (!Function.ExceptionMetadata || !Function.ExceptionMetadata->Registration)
     return {};
   return registration_state::RegistrationStateSolver(
              Function, SecurityCookieVA, CookieCheckVA, Callees, Cleanups,
-             Stacks, LocalUnwinds)
+             Stacks, LocalUnwinds, SEHControls)
       .run();
 }
 } // namespace neverd

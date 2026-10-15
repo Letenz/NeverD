@@ -89,3 +89,65 @@ TEST(RegistrationThrowHighC, ReadsTheCurrentScalarObjectWithItsExactType) {
         EXPECT_NE(Text.find("CxxThrowException("), std::string::npos) << Text;
     }
 }
+
+TEST(RegistrationThrowHighC, KeepsUnknownObjectConstructionAndRuntimeCall) {
+  BinaryImage Image;
+  Image.Arch = Arch::X86;
+  Image.Bits = Bitness::Bits32;
+  Image.Format = BinaryFormat::COFF;
+  Image.Base = 0x400000;
+  Segment Table;
+  Table.VA = 0x403000;
+  Table.Flags = SegmentFlags::Readable;
+  Table.Data.resize(128);
+  Table.Size = Table.Data.size();
+  for (const auto &[Offset, Value] : {std::pair{12u, 0x403010u},
+                                      {16u, 1u},
+                                      {20u, 0x403018u},
+                                      {28u, 0x403040u},
+                                      {36u, UINT32_MAX},
+                                      {44u, 8u}})
+    writeLE<uint32_t>(Table.Data.data() + Offset, Value);
+  const std::string Name = ".?AUWithoutDefaultConstructor@@";
+  std::copy(Name.begin(), Name.end(), Table.Data.begin() + 72);
+  Image.Segments.push_back(std::move(Table));
+  CEmitterOptions Options;
+  Options.Image = &Image;
+  Options.TheArch = Arch::X86;
+  Options.Format = BinaryFormat::COFF;
+  Options.StructuredExceptionSyntax = true;
+  for (bool HasCall : {false, true}) {
+    SCOPED_TRACE(HasCall);
+    HighFunc Function;
+    Function.Name = "object_throw";
+    Function.Entry = 0x401000;
+    Function.ReturnType = NdType::makeVoid();
+    HighStmt Store;
+    Store.Kind = StmtKind::Store;
+    Store.StoreAddr = HighExpr::makeConst(0x404000, 4);
+    Store.StoreVal = HighExpr::makeConst(17, 4);
+    Function.Body.push_back(Store);
+    if (HasCall) {
+      HighStmt Call;
+      Call.Kind = StmtKind::Call;
+      Call.CallExpr = HighExpr::makeCall("touch_object", 0x402100,
+                                         {HighExpr::makeConst(0x404000, 4)});
+      Function.Body.push_back(Call);
+    }
+    HighStmt Throw;
+    Throw.Kind = StmtKind::Call;
+    Throw.CallExpr = HighExpr::makeCall(
+        "_CxxThrowException", 0x402000,
+        {HighExpr::makeConst(0x404000, 4), HighExpr::makeConst(0x403000, 4)});
+    Function.Body.push_back(Throw);
+    std::string Text;
+    llvm::raw_string_ostream OS(Text);
+    ASSERT_TRUE(HighCEmitter().emit({Function}, OS, Options));
+    EXPECT_EQ(Text.find("throw WithoutDefaultConstructor("), std::string::npos)
+        << Text;
+    EXPECT_NE(Text.find("CxxThrowException("), std::string::npos) << Text;
+    EXPECT_NE(Text.find(" = 17;"), std::string::npos) << Text;
+    if (HasCall)
+      EXPECT_NE(Text.find("    touch_object("), std::string::npos) << Text;
+  }
+}

@@ -22,11 +22,13 @@
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedConstantPropagation.h"
 #include "neverd/ir/med/MedSyscallConvention.h"
+#include "neverd/ir/med/X86RegistrationCall.h"
 #include "neverd/ir/med/X86RegistrationEntry.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
@@ -206,6 +208,21 @@ void splitEntryLoopHeader(MedFunc &Func) {
   Entry.EndAddr = InvalidVA;
   Entry.Succs.push_back(1);
   Func.Blocks.insert(Func.Blocks.begin(), std::move(Entry));
+  // A context begins at function entry, not on every visit to the machine
+  // entry address. Move only its owned initializer; original instruction
+  // effects stay in the loop header and run on every backedge.
+  auto &Header = Func.Blocks[1].Ops;
+  while (!Header.empty() && Header.front().Opcode == NdOp::INTRINSIC &&
+         Header.front().NumInputs && Header.front().Inputs[0].isConst() &&
+         Header.front().Inputs[0].ConstVal ==
+             unsigned(Intrinsic::X87ContextBegin)) {
+    Func.Blocks.front().Ops.push_back(std::move(Header.front()));
+    // This is synthetic initialization, not an occurrence of the machine
+    // loop header. Address-based HighIR loop recovery must not pull it back
+    // into the repeated instruction region.
+    Func.Blocks.front().Ops.back().Addr = InvalidVA;
+    Header.erase(Header.begin());
+  }
 }
 
 } // namespace
@@ -417,6 +434,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   TargetFormat = Fmt;
   for (const LowBlock &Block : Low.Blocks)
     for (const LowOp &Op : Block.Ops) {
+      if (isLowRawEnvironmentRequirement(Op))
+        throw LowToMedConversionError(
+            "raw environment requirement has no ordinary source contract");
       if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace))
         llvm::report_fatal_error(
             "LowIR contains an unknown memory address space");
@@ -870,10 +890,16 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
       // pop here -- before SSA, so the chain is well-formed -- and later stack
       // accesses (the cdecl `add esp, k` cleanup, the result-buffer reload) use
       // the corrected SP.
-      if (CalleePopMap && MOp.Opcode == NdOp::CALL && MOp.NumInputs >= 1 &&
+      if (MOp.Opcode == NdOp::CALL && MOp.NumInputs >= 1 &&
           MOp.Inputs[0].isConst()) {
-        auto It = CalleePopMap->find(MOp.Inputs[0].ConstVal);
-        if (It != CalleePopMap->end() && It->second > 0) {
+        auto Pop = TheArch == Arch::X86 ? registrationCallStackPop(Low, LB, LOp)
+                                        : std::nullopt;
+        if (!Pop && CalleePopMap) {
+          const auto It = CalleePopMap->find(MOp.Inputs[0].ConstVal);
+          if (It != CalleePopMap->end())
+            Pop = It->second;
+        }
+        if (Pop && *Pop) {
           const auto &TRI = getTargetRegInfo(TheArch);
           MedVar Sp;
           Sp.Kind = MedVar::Reg;
@@ -898,7 +924,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
           Adj.Output = Sp;
           Adj.addInput(Sp);
           Adj.addInput(
-              MedVar::makeConst(static_cast<uint64_t>(It->second),
+              MedVar::makeConst(static_cast<uint64_t>(*Pop),
                                 static_cast<uint16_t>(TRI.PointerSize)));
           MB.Ops.push_back(Adj);
         }

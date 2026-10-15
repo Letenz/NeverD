@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 // Driver-session wording belongs here; execution policy remains in C++.
 #ifdef NEVERD_DRIVER_SESSION_DIAGNOSTIC
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    LoaderViewContract, "driver loader_view requires checked-x64 execution")
 NEVERD_DRIVER_SESSION_DIAGNOSTIC(Limits,
                                  "driver limits must be positive (memory <= "
                                  "{0} bytes, events <= {1}, timeout <= {2} ms)")

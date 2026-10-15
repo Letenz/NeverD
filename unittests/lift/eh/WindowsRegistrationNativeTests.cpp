@@ -5,6 +5,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "RegistrationCxxContinuationTestUtils.h"
+#include "RegistrationSEHDynamicScopeTestUtils.h"
+#include "RegistrationSEHExceptionNativeTestUtils.h"
+#include "RegistrationSEHJumpNativeTestUtils.h"
+#include "RegistrationSEHNullAccessTestUtils.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -1821,8 +1825,11 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   auto &Image = *Loaded;
   for (const auto &Diagnostic : Image.ExceptionMetadata.Diagnostics)
     llvm::errs() << Diagnostic << '\n';
-  ASSERT_EQ(Image.ExceptionMetadata.Functions.size(), 1u);
-  const auto &EH = Image.ExceptionMetadata.Functions.front();
+  const auto *Export = Image.findExport("registration_entry");
+  ASSERT_TRUE(Export);
+  const auto *Entry = Image.ExceptionMetadata.findFunction(Export->Addr);
+  ASSERT_TRUE(Entry);
+  const auto &EH = *Entry;
   for (const auto &Diagnostic : EH.Diagnostics)
     llvm::errs() << Diagnostic << '\n';
   ASSERT_TRUE(EH.Registration);
@@ -1872,6 +1879,19 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   if (Error)
     Module->print(llvm::errs(), nullptr);
   ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+  if (!Low.RegistrationStates->SEHExceptionAccesses.empty())
+    registration_test::checkSEHExceptionEdits(*Parent, EH, Image,
+                                              *Low.RegistrationStates);
+  if (!Low.RegistrationStates->SEHBoundCalls.empty()) {
+    registration_test::checkSEHBoundEdits(*Parent, EH, Image);
+    registration_test::checkSEHBoundSourceEdits(*Parent, EH, Image);
+  } else if (!Low.RegistrationStates->SEHJumpCaptures.empty())
+    registration_test::checkSEHJumpEdits(*Parent, EH, Image);
+  registration_test::checkSEHNullReadEdits(*Parent, Med, EH, Image);
+  if (llvm::any_of(Low.RegistrationStates->Blocks, [](const auto &B) {
+        return !B.CallbackOnly && B.Levels.size() > 1;
+      }))
+    registration_test::checkDynamicSEHScopeEdits(*Parent, EH, Image);
   auto RejectMutation = [&](llvm::StringRef Label, auto Mutate,
                             llvm::StringRef Diagnostic) {
     SCOPED_TRACE(Label.str());
@@ -1885,6 +1905,29 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
     const auto Message = llvm::toString(std::move(Failure));
     EXPECT_NE(Message.find(Diagnostic.str()), std::string::npos) << Message;
   };
+  if (!Low.RegistrationStates->SEHInvocationExits.empty())
+    RejectMutation(
+        "an ordinary finally invocation must return to its caller",
+        [](llvm::Function &F) {
+          for (auto &Block : F)
+            for (auto &I : Block) {
+              auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
+              if (!Call ||
+                  !I.getMetadata(
+                      windows_eh_md::RegistrationFinallyCallAttachment))
+                continue;
+              for (auto &CallbackBlock : *Call->getCalledFunction())
+                if (auto *Return = llvm::dyn_cast<llvm::ReturnInst>(
+                        CallbackBlock.getTerminator())) {
+                  new llvm::UnreachableInst(F.getContext(),
+                                            Return->getIterator());
+                  Return->eraseFromParent();
+                  return true;
+                }
+            }
+          return false;
+        },
+        "callback return changed its source execution exit");
   RejectMutation(
       "edited LLVM cannot overwrite either registration scope format",
       [&](llvm::Function &F) {
@@ -2047,13 +2090,16 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
       },
       "stack cleanup ABI");
   bool HasNormalFinally = false;
+  bool HasReturningFinally = false;
   for (const auto &Block : *Parent)
     for (const auto &I : Block)
-      HasNormalFinally |=
-          I.getMetadata(windows_eh_md::RegistrationFinallyCallAttachment) !=
-          nullptr;
+      if (I.getMetadata(windows_eh_md::RegistrationFinallyCallAttachment)) {
+        HasNormalFinally = true;
+        HasReturningFinally |= !llvm::cast<llvm::CallBase>(I).doesNotReturn();
+      }
   if (HasNormalFinally)
-    for (unsigned Mutation = 0; Mutation != 3; ++Mutation)
+    for (unsigned Mutation = 0; Mutation != (HasReturningFinally ? 4 : 3);
+         ++Mutation)
       RejectMutation(
           "changed ordinary finally entry protocol",
           [Mutation](llvm::Function &F) {
@@ -2062,6 +2108,8 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
                 if (I.getMetadata(
                         windows_eh_md::RegistrationFinallyCallAttachment)) {
                   auto *Call = llvm::cast<llvm::CallBase>(&I);
+                  if (Mutation == 3 && Call->doesNotReturn())
+                    continue;
                   if (Mutation == 0)
                     I.setMetadata(
                         windows_eh_md::RegistrationFinallyCallAttachment,
@@ -2070,22 +2118,26 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
                     Call->setArgOperand(
                         0, llvm::ConstantInt::get(
                                llvm::Type::getInt8Ty(F.getContext()), 1));
-                  else
+                  else if (Mutation == 2)
                     Call->setArgOperand(
                         1, llvm::ConstantPointerNull::get(
                                llvm::PointerType::get(F.getContext(), 0)));
+                  else
+                    Call->addFnAttr(llvm::Attribute::NoReturn);
                   return true;
                 }
             return false;
           },
           Mutation == 0 ? "no recovered callback" : "normal parent-frame ABI");
   bool HasIncomingFrame = false;
+  unsigned IncomingLoadCount = 0;
   for (const auto &F : *Module)
     for (const auto &Block : F)
       for (const auto &I : Block)
-        HasIncomingFrame |=
-            I.getMetadata(windows_eh_md::RegistrationIncomingFrameAttachment) !=
-            nullptr;
+        if (I.getMetadata(windows_eh_md::RegistrationIncomingFrameAttachment)) {
+          HasIncomingFrame = true;
+          IncomingLoadCount += llvm::isa<llvm::LoadInst>(I);
+        }
   if (HasIncomingFrame)
     for (unsigned Mutation = 0; Mutation != 5; ++Mutation)
       RejectMutation(
@@ -2136,7 +2188,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           : Mutation == 3 ? "source memory"
           : Mutation == 4 ? "execution segment"
                           : "physical stack projection");
-  if (HasIncomingFrame)
+  if (IncomingLoadCount >= 2)
     RejectMutation(
         "swapped incoming recipes keep their original execution events",
         [](llvm::Function &F) {
@@ -2404,33 +2456,34 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           return false;
         },
         Redirect ? "unused storage" : "dominate");
-  RejectMutation(
-      "logical exception cell read before runtime bridge",
-      [](llvm::Function &F) {
-        for (auto &Helper : *F.getParent())
-          for (auto &Block : Helper)
-            for (auto &I : Block) {
-              auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
-              auto *Load =
-                  Store
-                      ? llvm::dyn_cast<llvm::LoadInst>(Store->getValueOperand())
-                      : nullptr;
-              auto *Cell = Load ? llvm::dyn_cast<llvm::GetElementPtrInst>(
-                                      Load->getPointerOperand())
-                                : nullptr;
-              auto *Runtime = Cell ? llvm::dyn_cast<llvm::IntrinsicInst>(
-                                         Cell->getPointerOperand())
+  if (llvm::any_of(EH.Registration->Scopes,
+                   [](const auto &Scope) { return !Scope.IsFinally; }))
+    RejectMutation(
+        "logical exception cell read before runtime bridge",
+        [](llvm::Function &F) {
+          for (auto &Helper : *F.getParent())
+            for (auto &Block : Helper)
+              for (auto &I : Block) {
+                auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
+                auto *Load = Store ? llvm::dyn_cast<llvm::LoadInst>(
+                                         Store->getValueOperand())
                                    : nullptr;
-              if (!Runtime ||
-                  Runtime->getIntrinsicID() != llvm::Intrinsic::frameaddress)
-                continue;
-              llvm::IRBuilder<> B(Store);
-              B.CreateLoad(B.getPtrTy(), Store->getPointerOperand());
-              return true;
-            }
-        return false;
-      },
-      "unproved LLVM escape or access");
+                auto *Cell = Load ? llvm::dyn_cast<llvm::GetElementPtrInst>(
+                                        Load->getPointerOperand())
+                                  : nullptr;
+                auto *Runtime = Cell ? llvm::dyn_cast<llvm::IntrinsicInst>(
+                                           Cell->getPointerOperand())
+                                     : nullptr;
+                if (!Runtime ||
+                    Runtime->getIntrinsicID() != llvm::Intrinsic::frameaddress)
+                  continue;
+                llvm::IRBuilder<> B(Store);
+                B.CreateLoad(B.getPtrTy(), Store->getPointerOperand());
+                return true;
+              }
+          return false;
+        },
+        "unproved LLVM escape or access");
   RejectMutation(
       "callback spill overwritten on a self-loop backedge",
       [](llvm::Function &F) {
@@ -2447,7 +2500,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
         if (!LogicalFrame || !Escape)
           return false;
         for (auto &Helper : *F.getParent()) {
-          if (&Helper == &F || Helper.isDeclaration() || Helper.arg_size())
+          if (&Helper == &F || Helper.isDeclaration())
             continue;
           llvm::IntrinsicInst *Recover = nullptr;
           for (auto &I : Helper.getEntryBlock())
@@ -2470,10 +2523,22 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           Setup.CreateStore(Frame32, Spill);
           auto *Loop =
               llvm::BasicBlock::Create(Context, "mutated.loop", &Helper);
-          for (auto &Block : Helper)
-            if (auto *Return =
-                    llvm::dyn_cast<llvm::ReturnInst>(Block.getTerminator())) {
-              auto *Done = Block.splitBasicBlock(Return, "mutated.done");
+          for (auto &Block : Helper) {
+            llvm::Instruction *Exit = nullptr;
+            for (auto &I : Block) {
+              const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
+              const auto *Callee = Call ? Call->getCalledFunction() : nullptr;
+              if (llvm::isa<llvm::ReturnInst>(I)) {
+                Exit = &I;
+                break;
+              }
+              if (Callee && Callee->getName() == "_longjmpex") {
+                Exit = llvm::cast<llvm::Instruction>(Call->getArgOperand(1));
+                break;
+              }
+            }
+            if (Exit) {
+              auto *Done = Block.splitBasicBlock(Exit, "mutated.done");
               llvm::cast<llvm::UncondBrInst>(Block.getTerminator())
                   ->setSuccessor(0, Loop);
               llvm::IRBuilder<> B(Loop);
@@ -2486,6 +2551,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
               B.CreateCondBr(B.CreateLoad(B.getInt1Ty(), Again), Loop, Done);
               return true;
             }
+          }
         }
         return false;
       },
@@ -2588,28 +2654,30 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
         return false;
       },
       "try-level synchronization");
-  RejectMutation(
-      "wrong exception pointer cell",
-      [](llvm::Function &F) {
-        for (auto &Helper : *F.getParent())
-          for (auto &B : Helper)
-            for (auto &I : B) {
-              auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(&I);
-              auto *Frame = GEP ? llvm::dyn_cast<llvm::IntrinsicInst>(
-                                      GEP->getPointerOperand())
-                                : nullptr;
-              if (Frame &&
-                  Frame->getIntrinsicID() == llvm::Intrinsic::frameaddress &&
-                  GEP->getNumIndices() == 1) {
-                GEP->setOperand(
-                    1, llvm::ConstantInt::get(
-                           llvm::Type::getInt32Ty(F.getContext()), -16));
-                return true;
+  if (llvm::any_of(EH.Registration->Scopes,
+                   [](const auto &Scope) { return !Scope.IsFinally; }))
+    RejectMutation(
+        "wrong exception pointer cell",
+        [](llvm::Function &F) {
+          for (auto &Helper : *F.getParent())
+            for (auto &B : Helper)
+              for (auto &I : B) {
+                auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(&I);
+                auto *Frame = GEP ? llvm::dyn_cast<llvm::IntrinsicInst>(
+                                        GEP->getPointerOperand())
+                                  : nullptr;
+                if (Frame &&
+                    Frame->getIntrinsicID() == llvm::Intrinsic::frameaddress &&
+                    GEP->getNumIndices() == 1) {
+                  GEP->setOperand(
+                      1, llvm::ConstantInt::get(
+                             llvm::Type::getInt32Ty(F.getContext()), -16));
+                  return true;
+                }
               }
-            }
-        return false;
-      },
-      "exception pointers");
+          return false;
+        },
+        "exception pointers");
   llvm::InitializeAllTargetInfos();
   llvm::InitializeAllTargets();
   llvm::InitializeAllTargetMCs();
@@ -2648,7 +2716,8 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   auto Compiled = compileImageForPatch(*Module, Arch::X86, BinaryFormat::COFF,
                                        CodeVA, Resolve, Image.Base);
   ASSERT_TRUE(Compiled.Success);
-  ASSERT_TRUE(Compiled.Unresolved.empty());
+  ASSERT_TRUE(Compiled.Unresolved.empty())
+      << ::testing::PrintToString(Compiled.Unresolved);
   auto Rows = validateCOFFRegistrationSemanticRows(*Parent, EH, Compiled);
   ASSERT_FALSE(bool(Rows)) << llvm::toString(std::move(Rows));
   va_t Generated = 0;
@@ -2869,10 +2938,14 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
         auto *Callee = Call ? Call->getCalledFunction() : nullptr;
         if (!Callee || !Callee->isDeclaration() || Callee->isIntrinsic())
           continue;
+        // Jump runtimes have canonical names consumed by LLVM's EH state
+        // pass. Exercise the spelling collision on the ordinary callee.
+        if (Callee->getName() == "_setjmp3" ||
+            Callee->getName() == "_longjmpex")
+          continue;
         auto Address = rewrite_source::getOriginalVA(*Callee);
         ASSERT_TRUE(bool(Address)) << llvm::toString(Address.takeError());
-        if (*Address) {
-          ASSERT_TRUE(!OriginalCallee || OriginalCallee == Callee);
+        if (*Address && !OriginalCallee) {
           OriginalCallee = Callee;
         }
       }
@@ -3136,6 +3209,48 @@ TEST(WindowsRegistrationNative, RejectsUnprovedStackCleanupAtomically) {
       F.Source.CalleePopBytes = 4;
     else
       F.Source.RegistrationCallerCleanupABIComplete = false;
+    const auto Before = F.print();
+    EXPECT_FALSE(F.lower());
+    EXPECT_EQ(F.print(), Before);
+  }
+}
+
+TEST(WindowsRegistrationNative,
+     RuntimeExceptionFieldsRequireAReplacementObjectReceipt) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    RegistrationNativeFixture F;
+    auto &States = *F.Source.RegistrationStates;
+    if (Mutation == 0)
+      States.SEHExceptionAccessesComplete = false;
+    else
+      States.SEHExceptionAccesses.push_back(
+          {static_cast<RegistrationSEHExceptionAccess::Kind>(Mutation - 1),
+           0x1020, 0, 0x1020});
+    const auto Before = F.print();
+    EXPECT_FALSE(F.lower());
+    EXPECT_EQ(F.print(), Before);
+  }
+}
+
+TEST(WindowsRegistrationNative, BoundSEHHelpersRequireAReplacementCallReceipt) {
+  RegistrationNativeFixture F;
+  F.Source.RegistrationStates->HasBoundSEHCallees = true;
+  const auto Before = F.print();
+  EXPECT_FALSE(F.lower());
+  EXPECT_EQ(F.print(), Before);
+}
+
+TEST(WindowsRegistrationNative, JumpCapturesRequireAReplacementBufferReceipt) {
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    RegistrationNativeFixture F;
+    auto &States = *F.Source.RegistrationStates;
+    if (Mutation == 0)
+      States.HasEH3JumpCaptures = true;
+    if (Mutation == 1)
+      States.SEHJumpResumptionsComplete = false;
+    if (Mutation == 2)
+      States.SEHJumpResumptions.push_back({});
     const auto Before = F.print();
     EXPECT_FALSE(F.lower());
     EXPECT_EQ(F.print(), Before);

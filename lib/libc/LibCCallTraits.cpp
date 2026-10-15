@@ -360,6 +360,9 @@ bool isIndirectCallDispatchThunk(std::string_view Name) {
 bool isNoReturnTarget(const BinaryImage &Img, va_t Target) {
   if (Target == InvalidVA)
     return false;
+  // The user's statement decides over every name.
+  if (const auto Stated = Img.userNoReturnAt(Target))
+    return *Stated;
   if (const Import *Imp = Img.findImportAt(Target))
     if (isNoReturnFunction(Imp->Name))
       return true;
@@ -422,6 +425,8 @@ void NoReturnTargetIndex::clearMemoizedNames() {
 bool NoReturnTargetIndex::contains(const BinaryImage &Img, va_t Target) const {
   if (Image != &Img)
     return isNoReturnTarget(Img, Target);
+  if (const auto Stated = Img.userNoReturnAt(Target))
+    return *Stated;
   if (Targets.count(Target))
     return true;
   if (SymbolsIndexed || Target == InvalidVA)

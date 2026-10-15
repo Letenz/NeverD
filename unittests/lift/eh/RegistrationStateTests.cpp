@@ -8,6 +8,7 @@
 #include "RegistrationStateTestUtils.h"
 #include "gtest/gtest.h"
 
+#include "neverd/Limits.h"
 #include "neverd/ir/RegistrationState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
@@ -533,6 +534,175 @@ RegistrationCalleeFrameContract objectLeafContract() {
   C.ImageWrites = {{0x3000, 0x3004}};
   return C;
 }
+
+LowFunc makeSEHObjectCall(bool EH4, bool GS, int32_t Offset, uint16_t Width,
+                          bool Initialize) {
+  auto F = EH4 ? makeCookieFrame(GS) : makeBranchingFrame();
+  const auto BP = NdVar::reg(x86reg::RBP, 4);
+  const auto SP = NdVar::reg(x86reg::RSP, 4);
+  const auto Object = NdVar::reg(x86reg::RCX, 4);
+  if (!EH4) {
+    auto &Exit = F.Blocks[3];
+    emitOp(Exit, Exit.StartAddr, NdOp::INT_ADD, NdVar::tmp(30, 4),
+           {BP, NdVar::cst(uint32_t(-16), 4)});
+    emitOp(Exit, Exit.StartAddr, NdOp::LOAD, NdVar::tmp(31, 4),
+           {NdVar::tmp(30, 4)});
+    emitOp(Exit, Exit.StartAddr, NdOp::STORE, {},
+           {NdVar::cst(0, 4), NdVar::tmp(31, 4)}, NdMemoryAddressSpace::X86FS);
+  }
+  LowBlock Call;
+  Call.Id = F.Blocks.size();
+  Call.StartAddr = 0x1100;
+  Call.Succs = {1, 2};
+  va_t Address = Call.StartAddr;
+  auto Emit = [&](NdOp Opcode, NdVar Output,
+                  std::initializer_list<NdVar> Inputs, uint8_t Size) {
+    const size_t First = Call.Ops.size();
+    emitOp(Call, Address, Opcode, Output, Inputs);
+    Call.InstructionBoundaries.push_back({Address, Size, First, 1});
+    Address += Size;
+  };
+  Emit(NdOp::INT_SUB, SP, {SP, NdVar::cst(48, 4)}, 3);
+  Emit(NdOp::INT_ADD, Object, {BP, NdVar::cst(uint32_t(Offset), 4)}, 3);
+  if (Initialize)
+    Emit(NdOp::STORE, {}, {Object, NdVar::cst(7, Width)}, 3);
+  Emit(NdOp::CALL, {}, {NdVar::cst(0x2100, 4)}, 5);
+  Call.InstructionBoundaries.back().Control = LowInstructionControl::Call;
+  Call.EndAddr = Address;
+  F.Blocks[0].Succs = {Call.Id};
+  F.Blocks.push_back(std::move(Call));
+  return F;
+}
+
+TEST(RegistrationState, SEHObjectBorrowsExcludeSavedStackAndExceptionPointers) {
+  for (bool EH4 : {false, true}) {
+    for (bool Write : {false, true}) {
+      for (const auto &[Offset, Width, Allowed] :
+           {std::tuple{-32, uint16_t(4), true},
+            std::tuple{-28, uint16_t(4), !EH4},
+            std::tuple{-25, uint16_t(1), !EH4},
+            std::tuple{-25, uint16_t(4), false},
+            std::tuple{-24, uint16_t(4), false},
+            std::tuple{-21, uint16_t(1), false},
+            std::tuple{-20, uint16_t(4), false},
+            std::tuple{-17, uint16_t(1), false}}) {
+        SCOPED_TRACE(EH4);
+        SCOPED_TRACE(Write);
+        SCOPED_TRACE(Offset);
+        SCOPED_TRACE(Width);
+        const auto F = makeSEHObjectCall(EH4, false, Offset, Width, !Write);
+        RegistrationCalleeFrameContract Leaf;
+        Leaf.Target = 0x2100;
+        (Write ? Leaf.ECXWrites : Leaf.ECXReads) = {{0, Width}};
+        const std::vector Callees{Leaf};
+        const auto A =
+            analyzeRegistrationStates(F, EH4 ? 0x4000 : 0, 0, &Callees);
+        EXPECT_EQ(A.CallFrameEffectsComplete, Allowed);
+        EXPECT_EQ(A.CallFrameEffects.empty(), !Allowed);
+        EXPECT_EQ(A.callFrameEffect(F.Blocks.back().Ops.back().Addr,
+                                    F.Blocks.back().Ops.back().Seq) != nullptr,
+                  Allowed);
+      }
+    }
+  }
+}
+
+TEST(RegistrationState, SEHObjectWritesCannotBorrowWholeOrPartialCookieCells) {
+  for (const auto &[Offset, Width, Allowed] :
+       {std::tuple{-40, uint16_t(4), true}, std::tuple{-37, uint16_t(4), false},
+        std::tuple{-36, uint16_t(4), false},
+        std::tuple{-33, uint16_t(1), false}, std::tuple{-32, uint16_t(4), true},
+        std::tuple{-29, uint16_t(4), false},
+        std::tuple{-28, uint16_t(4), false},
+        std::tuple{-25, uint16_t(1), false}}) {
+    SCOPED_TRACE(Offset);
+    SCOPED_TRACE(Width);
+    auto F = makeSEHObjectCall(true, true, Offset, Width, false);
+    RegistrationCalleeFrameContract Leaf;
+    Leaf.Target = 0x2100;
+    Leaf.ECXWrites = {{0, Width}};
+    const std::vector Callees{Leaf};
+    const auto A = analyzeRegistrationStates(F, 0x4000, 0, &Callees);
+    EXPECT_EQ(A.CallFrameEffectsComplete, Allowed);
+    EXPECT_EQ(A.CallFrameEffects.empty(), !Allowed);
+  }
+}
+
+TEST(RegistrationState, MalformedSEHScopeGraphsPublishNoStateFacts) {
+  for (bool EH4 : {false, true}) {
+    const auto Base = EH4 ? makeCookieFrame() : makeBranchingFrame();
+    ASSERT_TRUE(analyzeRegistrationStates(Base, EH4 ? 0x4000 : 0).Complete);
+    for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+      SCOPED_TRACE(EH4);
+      SCOPED_TRACE(Mutation);
+      auto F = Base;
+      auto &Chain = *F.ExceptionMetadata->Registration;
+      const int32_t InvalidLevels[] = {EH4 ? -1 : -2, -3, 0, 1, 99};
+      if (Mutation < 5)
+        Chain.Scopes[0].EnclosingLevel = InvalidLevels[Mutation];
+      else if (Mutation == 5)
+        Chain.Scopes[0].HandlerVA = 0;
+      else if (Mutation == 6)
+        Chain.Scopes[0].IsFinally = !Chain.Scopes[0].IsFinally;
+      else if (Mutation == 7)
+        Chain.SeededTryLevel = EH4 ? -1 : -2;
+      else if (Mutation == 8)
+        Chain.SeededTryLevel = 1;
+      else if (Mutation == 9)
+        Chain.Scopes[0].HandlerVA = InvalidVA;
+      else if (Mutation == 10)
+        Chain.Scopes[0].HandlerVA = uint64_t(UINT32_MAX) + 1;
+      else
+        Chain.Scopes[0].FilterVA = uint64_t(UINT32_MAX) + 1;
+      const auto A = analyzeRegistrationStates(F, EH4 ? 0x4000 : 0);
+      EXPECT_FALSE(A.Complete);
+      EXPECT_FALSE(A.RegistrationLifetimeComplete);
+      EXPECT_TRUE(A.Blocks.empty());
+      EXPECT_TRUE(A.FrameValues.empty());
+      EXPECT_TRUE(std::any_of(
+          A.Diagnostics.begin(), A.Diagnostics.end(), [](const std::string &D) {
+            return D.find("scope graph") != std::string::npos;
+          }));
+    }
+  }
+}
+
+TEST(RegistrationState, InitialActiveSEHScopeRetainsItsFrameSentinel) {
+  for (bool EH4 : {false, true}) {
+    auto F = EH4 ? makeCookieFrame() : makeBranchingFrame();
+    auto &Chain = *F.ExceptionMetadata->Registration;
+    const int32_t Outside = EH4 ? -2 : -1;
+    Chain.SeededTryLevel = 0;
+    for (auto &Op : F.Blocks[0].Ops)
+      if (Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          Op.Inputs[1].isConst() && Op.Inputs[1].Size == 4 &&
+          Op.Inputs[1].Offset == uint32_t(Outside))
+        Op.Inputs[1] = NdVar::cst(0, 4);
+    const auto A = analyzeRegistrationStates(F, EH4 ? 0x4000 : 0);
+    ASSERT_TRUE(A.Complete);
+    ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
+    EXPECT_EQ(A.Blocks.back().Levels, (std::vector<int32_t>{Outside, 0}));
+    if (EH4)
+      EXPECT_TRUE(A.SecurityCookiesComplete);
+  }
+}
+
+TEST(RegistrationState, EmptySEHScopeTableKeepsItsOutsideState) {
+  for (bool EH4 : {false, true}) {
+    auto F = EH4 ? makeCookieFrame() : makeBranchingFrame();
+    auto &Chain = *F.ExceptionMetadata->Registration;
+    const int32_t Outside = EH4 ? -2 : -1;
+    Chain.Scopes.clear();
+    Chain.TryLevelStores[0].Level = Outside;
+    F.Blocks[1].Ops.back().Inputs[1] = NdVar::cst(uint32_t(Outside), 4);
+    const auto A = analyzeRegistrationStates(F, EH4 ? 0x4000 : 0);
+    ASSERT_TRUE(A.Complete);
+    ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
+    EXPECT_EQ(A.Blocks.back().Levels, (std::vector<int32_t>{Outside}));
+  }
+}
+
 } // namespace
 
 TEST(RegistrationState, ProjectsTheInitializedObjectAtTheExactSourceCall) {
@@ -1063,15 +1233,36 @@ TEST(RegistrationState, CanonicalNoReturnKeepsExceptionalFlowWithoutBorrowing) {
 }
 
 TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
-  for (unsigned Mutation = 0; Mutation != 20; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 30; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto F = makeBranchingFrame();
     auto &Chain = *F.ExceptionMetadata->Registration;
     Chain.Scopes = {{-1, 0, 0x1800, true}};
     if (Mutation == 10)
       Chain.Scopes.front().EnclosingLevel = 0;
-    if (Mutation == 11)
+    if (Mutation == 11) {
       Chain.Scopes.push_back({-1, 0, 0x1900, true});
+      // Actually traverse the missing finally, rather than requesting an
+      // already higher stopping bound that executes no cleanup.
+      Chain.TryLevelStores.front().Level = 1;
+      F.Blocks[1].Ops.back().Inputs[1] = NdVar::cst(1, 4);
+    }
+    if (Mutation >= 20) {
+      // _local_unwind2 stops at the sentinel or any level at/below its
+      // unsigned threshold. It need not encounter that exact scope index.
+      Chain.Scopes.push_back({-1, 0, 0x1800, true});
+      const int32_t From = Mutation == 29                     ? 99
+                           : Mutation == 21                   ? 1
+                           : Mutation == 22 || Mutation == 27 ? -1
+                                                              : 0;
+      Chain.TryLevelStores.front().Level = From;
+      F.Blocks[1].Ops.back().Inputs[1] = NdVar::cst(uint32_t(From), 4);
+      if (Mutation == 23 || Mutation == 28) {
+        Chain.Scopes.push_back({0, 0, 0x1800, true});
+        Chain.TryLevelStores.front().Level = 2;
+        F.Blocks[1].Ops.back().Inputs[1] = NdVar::cst(2, 4);
+      }
+    }
     F.Blocks.resize(7);
     auto &Setup = F.Blocks[4];
     Setup.Id = 4;
@@ -1095,11 +1286,18 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
     Call.Succs = {2};
     emitOp(Call, 0x1100, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
            {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
-    const auto Level = Mutation == 3    ? NdVar::reg(x86reg::RAX, 4)
-                       : Mutation == 2  ? NdVar::cst(99, 4)
-                       : Mutation == 9  ? NdVar::cst(0, 4)
-                       : Mutation == 11 ? NdVar::cst(1, 4)
-                                        : NdVar::cst(UINT32_MAX, 4);
+    // The stopping bound is a numeric comparison operand, not a table index.
+    // Mutation 29 keeps the independent rejection of an invalid current level.
+    const auto Level =
+        Mutation == 3                      ? NdVar::reg(x86reg::RAX, 4)
+        : Mutation == 2                    ? NdVar::cst(99, 4)
+        : Mutation == 25                   ? NdVar::cst(0x80000000u, 4)
+        : Mutation == 26 || Mutation == 27 ? NdVar::cst(UINT32_MAX - 1, 4)
+        : Mutation == 28                   ? NdVar::cst(0x7fffffffu, 4)
+        : Mutation == 9 || Mutation == 21 || Mutation == 22 || Mutation == 24
+            ? NdVar::cst(0, 4)
+        : Mutation >= 20 ? NdVar::cst(1, 4)
+                         : NdVar::cst(UINT32_MAX, 4);
     emitOp(Call, 0x1100, NdOp::STORE, {}, {NdVar::reg(x86reg::RSP, 4), Level});
     emitOp(Call, 0x1102, NdOp::INT_ADD, NdVar::reg(x86reg::RDX, 4),
            {NdVar::reg(x86reg::RBP, 4),
@@ -1155,7 +1353,7 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
              {NdVar::reg(x86reg::RBP, 4)});
       ++Finally.InstructionBoundaries.back().OpCount;
     }
-    if (Mutation >= 17) {
+    if (Mutation >= 17 && Mutation < 20) {
       // Both successors return through this invocation. Join the actual
       // effects, and refuse when even one path changes the return slot.
       Finally.Ops.pop_back();
@@ -1190,6 +1388,22 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
         F.Blocks.push_back(std::move(Exit));
       }
     }
+    if (Mutation == 24) {
+      // One path is already at zero; the other unwinds level one to -1.
+      // The shared call must retain both exits and only a may-write effect.
+      LowBlock Other = F.Blocks[1];
+      Other.Id = 7;
+      Other.StartAddr = 0x1090;
+      Other.EndAddr = 0x1097;
+      Other.InstructionBoundaries.front().Address = Other.StartAddr;
+      for (auto &Op : Other.Ops)
+        Op.Addr = Other.StartAddr;
+      Other.Ops.back().Inputs[1] = NdVar::cst(1, 4);
+      Other.Succs = {5};
+      F.Blocks[4].Succs = {1, 7};
+      Chain.TryLevelStores.push_back({Other.StartAddr, Other.EndAddr, 1});
+      F.Blocks.push_back(std::move(Other));
+    }
     emitOp(F.Blocks[2], 0x1020, NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
            {NdVar::reg(x86reg::RSP, 4)});
     const auto ReadSeq = F.Blocks[2].Ops.back().Seq;
@@ -1201,13 +1415,26 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
     const std::vector<RegistrationLocalUnwindContract> Calls{{0x2100, false}};
     const auto A =
         analyzeRegistrationStates(F, 0, 0, nullptr, nullptr, nullptr, &Calls);
-    const bool Valid = Mutation == 0 || Mutation == 9 || Mutation >= 18;
+    const bool Valid = Mutation == 0 || Mutation == 2 || Mutation == 9 ||
+                       (Mutation >= 18 && Mutation != 29);
     EXPECT_EQ(A.Complete, Valid);
     EXPECT_FALSE(A.CallFrameEffectsComplete);
     EXPECT_TRUE(A.CallFrameEffects.empty());
     if (Valid) {
-      ASSERT_EQ(A.Blocks[2].Levels.size(), 1u);
-      EXPECT_EQ(A.Blocks[2].Levels.front(), Mutation == 9 ? 0 : -1);
+      if (Mutation == 24) {
+        EXPECT_EQ(A.Blocks[2].Levels, (std::vector<int32_t>{-1, 0}));
+      } else {
+        EXPECT_EQ(A.Blocks[2].Levels.size(), 1u);
+        if (A.Blocks[2].Levels.size() != 1)
+          continue;
+        const int32_t ExpectedLevel =
+            Mutation == 28 ? 2
+            : Mutation == 2 || Mutation == 9 || Mutation == 20 ||
+                    Mutation == 23 || Mutation == 25 || Mutation == 26
+                ? 0
+                : -1;
+        EXPECT_EQ(A.Blocks[2].Levels.front(), ExpectedLevel);
+      }
       bool FoundSP = false;
       bool FoundFinallyWrite = false;
       for (const auto &Value : A.FrameValues)
@@ -1218,7 +1445,7 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
       for (const auto &Value : A.FrameValues)
         if (Value.Address == 0x1020 && Value.OpSeq == WrittenValueSeq) {
           FoundFinallyWrite = true;
-          if (Mutation == 19)
+          if (Mutation == 19 || Mutation == 24)
             EXPECT_FALSE(Value.EstablishedFrameOffset);
           else
             EXPECT_EQ(Value.EstablishedFrameOffset, 0);
@@ -1226,7 +1453,9 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
       EXPECT_TRUE(FoundSP);
       // A zero-step unwind must not inherit the separately analyzed runtime
       // callback's writes; a traversed finally must publish its actual effect.
-      EXPECT_EQ(FoundFinallyWrite, Mutation != 9);
+      EXPECT_EQ(FoundFinallyWrite, Mutation != 2 && Mutation != 9 &&
+                                       Mutation != 20 && Mutation != 22 &&
+                                       Mutation < 25);
     }
   }
 }
@@ -1683,6 +1912,10 @@ TEST(RegistrationState, SEHActivationsShareTheCumulativeWorkBudget) {
       EXPECT_FALSE(A.Complete);
       EXPECT_TRUE(A.Blocks.empty());
       EXPECT_TRUE(A.FrameValues.empty());
+      EXPECT_FALSE(A.SEHInvocationExitsComplete);
+      EXPECT_TRUE(A.SEHInvocationExits.empty());
+      EXPECT_FALSE(A.SEHExceptionAccessesComplete);
+      EXPECT_TRUE(A.SEHExceptionAccesses.empty());
       EXPECT_TRUE(llvm::any_of(A.Diagnostics, [](const auto &D) {
         return D.find("budget exhausted") != std::string::npos;
       }));
@@ -1772,46 +2005,49 @@ TEST(RegistrationState, FreedOrOpaqueFrameBytesCannotAuthorizeObjectReads) {
   }
 }
 
-TEST(RegistrationState, APartialCalleeWriteCannotLaunderTheObjectPointer) {
-  auto F = makeCxxObjectCall();
-  auto &Body = F.Blocks[1];
-  auto Store =
-      std::find_if(Body.Ops.begin(), Body.Ops.end(), [](const auto &Op) {
-        return Op.Opcode == NdOp::STORE && Op.Inputs[0].isReg() &&
-               Op.Inputs[0].Offset == x86reg::RCX;
-      });
-  ASSERT_NE(Store, Body.Ops.end());
-  Store->Inputs[1] = NdVar::reg(x86reg::RBP, 4);
-  auto Writer = objectLeafContract();
-  Writer.ECXReads.clear();
-  Writer.ECXWrites = {{0, 1}};
-  auto Reader = objectLeafContract();
-  Reader.Target = 0x2200;
-  const std::vector Contracts{Writer, Reader};
-  F.Blocks[7].Succs = {8};
-  LowBlock Reload;
-  Reload.Id = 8;
-  Reload.StartAddr = 0x1110;
-  Reload.EndAddr = 0x1113;
-  Reload.InstructionBoundaries = {{0x1110, 3}};
-  Reload.Succs = {9};
-  emitOp(Reload, 0x1110, NdOp::INT_ADD, NdVar::reg(x86reg::RCX, 4),
-         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-24), 4)});
-  LowBlock Read = F.Blocks[7];
-  Read.Id = 9;
-  Read.StartAddr = 0x1120;
-  Read.EndAddr = 0x1125;
-  Read.Succs = {2};
-  Read.InstructionBoundaries[0].Address = 0x1120;
-  Read.Ops[0].Addr = 0x1120;
-  Read.Ops[0].Inputs[0] = NdVar::cst(0x2200, 4);
-  F.Blocks.push_back(std::move(Reload));
-  F.Blocks.push_back(std::move(Read));
-  const auto A = analyzeRegistrationStates(F, 0, 0, &Contracts);
-  EXPECT_FALSE(A.CallFrameEffectsComplete);
-  ASSERT_EQ(A.CallFrameEffects.size(), 1u);
-  EXPECT_EQ(A.CallFrameEffects[0].Target, 0x2100u);
-  EXPECT_EQ(A.callFrameEffect(0x1120, 0), nullptr);
+TEST(RegistrationState, APossibleCalleeWriteCannotLaunderTheObjectPointer) {
+  for (int32_t End : {1, 4}) {
+    SCOPED_TRACE(End);
+    auto F = makeCxxObjectCall();
+    auto &Body = F.Blocks[1];
+    auto Store =
+        std::find_if(Body.Ops.begin(), Body.Ops.end(), [](const auto &Op) {
+          return Op.Opcode == NdOp::STORE && Op.Inputs[0].isReg() &&
+                 Op.Inputs[0].Offset == x86reg::RCX;
+        });
+    ASSERT_NE(Store, Body.Ops.end());
+    Store->Inputs[1] = NdVar::reg(x86reg::RBP, 4);
+    auto Writer = objectLeafContract();
+    Writer.ECXReads.clear();
+    Writer.ECXWrites = {{0, End}};
+    auto Reader = objectLeafContract();
+    Reader.Target = 0x2200;
+    const std::vector Contracts{Writer, Reader};
+    F.Blocks[7].Succs = {8};
+    LowBlock Reload;
+    Reload.Id = 8;
+    Reload.StartAddr = 0x1110;
+    Reload.EndAddr = 0x1113;
+    Reload.InstructionBoundaries = {{0x1110, 3}};
+    Reload.Succs = {9};
+    emitOp(Reload, 0x1110, NdOp::INT_ADD, NdVar::reg(x86reg::RCX, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-24), 4)});
+    LowBlock Read = F.Blocks[7];
+    Read.Id = 9;
+    Read.StartAddr = 0x1120;
+    Read.EndAddr = 0x1125;
+    Read.Succs = {2};
+    Read.InstructionBoundaries[0].Address = 0x1120;
+    Read.Ops[0].Addr = 0x1120;
+    Read.Ops[0].Inputs[0] = NdVar::cst(0x2200, 4);
+    F.Blocks.push_back(std::move(Reload));
+    F.Blocks.push_back(std::move(Read));
+    const auto A = analyzeRegistrationStates(F, 0, 0, &Contracts);
+    EXPECT_FALSE(A.CallFrameEffectsComplete);
+    ASSERT_EQ(A.CallFrameEffects.size(), 1u);
+    EXPECT_EQ(A.CallFrameEffects[0].Target, 0x2100u);
+    EXPECT_EQ(A.callFrameEffect(0x1120, 0), nullptr);
+  }
 }
 
 TEST(RegistrationState, ADynamicWriteCannotKeepThePreviousState) {
@@ -1973,7 +2209,8 @@ LowFunc makePopulatedFrame(bool Exact) {
   const auto SP = NdVar::reg(x86reg::RSP, 4);
   const auto Slot = NdVar::reg(x86reg::RDI, 4);
   Emit(NdOp::INT_SUB, SP, {SP, NdVar::cst(4096, 4)});
-  for (int32_t I = 0; I != 512; ++I) {
+  constexpr int32_t PopulatedCells = 512;
+  for (int32_t I = 0; I != PopulatedCells; ++I) {
     Emit(NdOp::INT_ADD, Slot,
          {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-32 - I * 4), 4)});
     Emit(NdOp::STORE, {}, {Slot, NdVar::cst(uint32_t(I), 4)});
@@ -1981,7 +2218,10 @@ LowFunc makePopulatedFrame(bool Exact) {
   // Thousands of exact accesses to a populated frame must leave enough of
   // the same cumulative budget to prove the subsequent registration unlink.
   // Each load still reads the current cell, including the last overwrite.
-  for (unsigned I = 0; I != 4096; ++I)
+  const size_t Loads =
+      Exact ? 4096
+            : limits::kMaxRegistrationEHStateWork / size_t(PopulatedCells) + 1;
+  for (size_t I = 0; I != Loads; ++I)
     Emit(NdOp::LOAD, NdVar::reg(x86reg::RAX, 4),
          {Exact ? Slot : NdVar::reg(x86reg::RCX, 4)});
   Emit(NdOp::INT_ADD, SP, {SP, NdVar::cst(4096, 4)});

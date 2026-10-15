@@ -9,7 +9,8 @@
 
 namespace neverd::emulation {
 void KernelModel::recordUnpackEnvironmentRead() {
-  // Observed CPU identity and time cannot be rebound to a fresh kernel.
+  // Observed CPU identity, time and environment-specific instruction behavior
+  // cannot be rebound to an arbitrary fresh kernel.
   // API and instruction reads share this dependency independently of storage.
   UnpackOpaqueEffects = true;
 }
@@ -87,6 +88,8 @@ KernelModel::unpackDependencies() const {
   std::vector<std::string> Reasons;
   if (UnpackOpaqueEffects)
     Reasons.emplace_back("unreconstructed kernel or environment effects");
+  if (hasLiveBugCheckCallbacks())
+    Reasons.emplace_back("live kernel bug-check callbacks");
   if (UnpackMDLIdentityRead)
     Reasons.emplace_back("observed kernel MDL physical identity");
   if (!MDLs.empty())
@@ -105,7 +108,8 @@ KernelModel::unpackDependencies() const {
       // lifetime and extent. Only that identity can exclude an arena object
       // from the untyped inventory; unrelated objects remain dependencies.
       const auto Pool = Allocations.find(Address);
-      if (Pool != Allocations.end() && Pool->second.Size == Size)
+      if (Pool != Allocations.end() && Pool->second.API &&
+          Pool->second.Size == Size)
         continue;
       Reasons.emplace_back("retained kernel object allocations");
       break;
@@ -137,9 +141,14 @@ KernelModel::captureUnpackRuntime(bool IncludeBacking) const {
   WindowsDriverState State;
   State.Reasons = std::move(*Reasons);
   for (const auto &[Address, Allocation] : Allocations) {
+    // API-owned results retain borrowed/lifetime dependencies. Do not invent
+    // an ExAllocatePool call that could recreate their environment semantics.
+    if (!Allocation.API)
+      continue;
     WindowsDriverState::PoolAllocation Pool{
-        Address,        Allocation.Size, Allocation.API, Allocation.TypeOrFlags,
-        Allocation.Tag, std::nullopt};
+        Address,         Allocation.Size,
+        *Allocation.API, Allocation.TypeOrFlags,
+        Allocation.Tag,  std::nullopt};
     if (IncludeBacking) {
       // The allocation owner bounds the total retained payload by its arena.
       // Keep exact live contents, independently of image integer references.

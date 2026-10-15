@@ -29,6 +29,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/Regex.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -830,18 +831,27 @@ TEST(SysVCallContract, AFormatNamesTheArgumentsAFormattedCallPasses) {
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
   const std::string ShowBody = body(Source, "show");
   ASSERT_FALSE(ShowBody.empty()) << Source;
-  EXPECT_NE(ShowBody.find("printf(\"%d %s %f %d %f\\n\", arg0, (void*)arg1, "
-                          "arg3, arg2, "),
+  // CVTSS2SD retains MXCSR status and denormal behavior. Its double result,
+  // rather than a host-language cast, occupies the final variadic argument.
+  llvm::SmallVector<llvm::StringRef, 3> Widened;
+  ASSERT_TRUE(
+      llvm::Regex(
+          R"((t[0-9]+) = neverd_x86_cvtss2sd_source32\(__builtin_bit_cast\(uint32_t, \(float\)\(arg4\)\), (t[0-9]+)\);)")
+          .match(ShowBody, &Widened))
+      << ShowBody;
+  EXPECT_NE(ShowBody.find(Widened[2].str() + " = neverd_x86_read_mxcsr();"),
             std::string::npos)
       << ShowBody;
-  // The last value is f widened to double: a cast, or the CVTSS2SD that
-  // completes its MXCSR state when HighC keeps that state exact.
-  const size_t Widen = ShowBody.find("cvtss2sd");
-  EXPECT_TRUE(
-      ShowBody.find("arg2, (double)arg4)") != std::string::npos ||
-      (Widen != std::string::npos &&
-       ShowBody.substr(Widen, ShowBody.find(';', Widen) - Widen).find("arg4") !=
-           std::string::npos))
+  const size_t FormatCall =
+      ShowBody.find("printf(\"%d %s %f %d %f\\n\", arg0, (void*)arg1, "
+                    "arg3, arg2, ");
+  ASSERT_NE(FormatCall, std::string::npos) << ShowBody;
+  // Tie the actual variadic argument to the checked conversion result while
+  // allowing equivalent source casts and storage representations.
+  const size_t FormatEnd = ShowBody.find(';', FormatCall);
+  EXPECT_NE(ShowBody.substr(FormatCall, FormatEnd - FormatCall)
+                .find(Widened[1].str()),
+            std::string::npos)
       << ShowBody;
   const std::string PassBody = body(Source, "pass");
   ASSERT_FALSE(PassBody.empty()) << Source;
@@ -956,6 +966,9 @@ TEST(SysVCallContract, AJumpThroughALoadedSlotPassesTheArgumentsSetBefore) {
   ASSERT_FALSE(Body.empty()) << Source;
   EXPECT_NE(Body.find("_ITM_registerTMCloneTable("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
+  // The jump through the import's GOT slot reaches a void routine, so the
+  // wrapper returns nothing either, like GCC's register_tm_clones.
+  EXPECT_NE(Source.find("void wrap(void)"), std::string::npos) << Source;
 }
 
 TEST(SysVCallContract, ACallThroughALoaderBoundSlotPassesThePrototype) {
@@ -1249,7 +1262,9 @@ TEST(SysVCallContract, ACopyOfEaxAfterSeteIsNoVectorCount) {
 TEST(SysVCallContract, GccSplitVaStartMarksTheFunctionVariadic) {
   // fatal(fmt, ...) as GCC builds it: va_start stores gp_offset and fp_offset
   // as two 32-bit constants where Clang stores one 64-bit word.  Either marks
-  // the variadic prologue, so its vector register save area is no parameter.
+  // the variadic prologue, whose register save area holds what va_arg reads:
+  // the integer registers, and in the vector ones the doubles a floating
+  // vararg is promoted to, never a whole vector.
   constexpr va_t Fatal = Text, VprintfStub = Text + 0x100,
                  ExitStub = Text + 0x110;
   std::vector<uint8_t> Code(0x120, 0xCC);
@@ -1297,8 +1312,16 @@ TEST(SysVCallContract, GccSplitVaStartMarksTheFunctionVariadic) {
       [&](const MedFunc &Function) { return Function.Entry == Fatal; });
   ASSERT_NE(F, Result.MedFuncs.end());
   EXPECT_TRUE(F->IsVariadic);
-  for (const MedVar &Param : F->Params)
-    EXPECT_LE(Param.Size, 8u) << "vector save-area slot as a parameter";
+  for (const MedVar &Param : F->Params) {
+    if (Param.RegOff < x86reg::VectorBase) {
+      EXPECT_LE(Param.Size, 8u);
+      continue;
+    }
+    const auto Scalar = F->FPParamScalarBytes.find(Param.RegOff);
+    ASSERT_NE(Scalar, F->FPParamScalarBytes.end())
+        << "vector save-area slot as a vector parameter";
+    EXPECT_EQ(Scalar->second, sizeof(double));
+  }
 }
 
 TEST(SysVCallContract, AnAlignmentPushIsNoStackArgument) {

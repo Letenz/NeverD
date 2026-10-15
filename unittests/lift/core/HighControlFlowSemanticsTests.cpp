@@ -30,6 +30,8 @@ void detectAndConvertLoops(HighFunc &, const std::unordered_map<va_t, int> &,
                            const MedFunc &, bool);
 void inlineSingleDefSingleUse(std::vector<HighStmt> &);
 bool inlineSingleDefs(std::vector<HighStmt> &, const VarKeyMap<ExprPtr> &);
+void filterStableCopyCandidates(const std::vector<HighStmt> &,
+                                VarKeyMap<ExprPtr> &);
 void foldCopyChains(HighFunc &);
 void resolveRegAliases(std::vector<HighStmt> &);
 bool simplifyAllExprs(std::vector<HighStmt> &);
@@ -2835,7 +2837,52 @@ size_t countTests(const HighFunc &F) {
   });
   return Tests;
 }
+// The binary operations of \p Opcode the statements of \p F compute, each
+// parent of a shared expression counting it once more.
+size_t countOperations(HighFunc &F, NdOp Opcode) {
+  size_t Count = 0;
+  std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
+    if (!E)
+      return;
+    Count += E->Kind == ExprKind::BinOp && E->Op == Opcode;
+    E->forEachChildExpr(Visit);
+  };
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    for (const ExprPtr &E : {S.Dst, S.Val, S.Cond, S.RetVal, S.CallExpr})
+      Visit(E);
+  });
+  return Count;
+}
 } // namespace
+
+TEST(HighControlFlowSemantics, JoinCopyReadsASharedValueThroughItsVariable) {
+  // `t = x * 3; r = x ? t + 1 : t;` The join PHI takes `t` from one edge
+  // and `t + 1`, which only the PHI reads, from the other.  `t` is read
+  // twice: it keeps its assignment and both copies read its variable, where
+  // inlining it into each would compute the product once per read.
+  auto M = blockFunction("shared_join_value", 3);
+  const MedVar Input = M.Params[0];
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+  const auto Product = machineValue(3, Arch::X64);
+  const auto Sum = machineValue(4, Arch::X64);
+  auto IsZero = machineValue(1, Arch::X64);
+  IsZero.Size = 1;
+  M.Blocks[0].Succs = {2, 1};
+  M.Blocks[0].Ops = {operation(NdOp::INT_MULT, 0x1000, Product, {Input, C(3)}),
+                     operation(NdOp::INT_EQUAL, 0x1004, IsZero, {Input, C(0)}),
+                     operation(NdOp::COND_BR, 0x1008, {}, {C(0x1200), IsZero})};
+  M.Blocks[1].Preds = {0};
+  M.Blocks[1].Succs = {2};
+  M.Blocks[1].Ops = {operation(NdOp::INT_ADD, 0x1100, Sum, {Product, C(1)})};
+  M.Blocks[2].Preds = {0, 1};
+  M.Blocks[2].Phis = {{resultValue(1), {{0, Product}, {1, Sum}}}};
+  M.Blocks[2].Ops = {operation(NdOp::RETURN, 0x1200, {}, {resultValue(1)})};
+  auto F = MedToHighConverter().convert(M, Arch::X64);
+  EXPECT_NO_THROW(EXPECT_EQ(execute(F, 0, true), 0u));
+  EXPECT_NO_THROW(EXPECT_EQ(execute(F, 5, true), 16u));
+  EXPECT_EQ(countOperations(F, NdOp::INT_MULT), 1u);
+  EXPECT_EQ(countOperations(F, NdOp::INT_ADD), 1u);
+}
 
 TEST(HighControlFlowSemantics, ConstantBranchKeepsOnlyTheArmThatRuns) {
   // deregister_tm_clones compares two addresses of one object, so its branch
@@ -4211,6 +4258,114 @@ TEST(HighControlFlowSemantics, ImmutableSingleUseExpressionStillInlines) {
   inlineSingleDefSingleUse(F.Body);
   EXPECT_EQ(execute(F, 0), 17u);
   EXPECT_EQ(F.Body.back().RetVal->Kind, ExprKind::BinOp);
+}
+
+TEST(HighControlFlowSemantics, CopyStabilityFollowsEverySharedDefinition) {
+  auto Seed = assign(0x1000, 1, 7);
+  Seed.IsPhiCopy = true;
+  ExprPtr Shared = local(1);
+  for (unsigned I = 0; I < 128; ++I)
+    Shared = HighExpr::makeBinop(NdOp::INT_ADD, Shared, Shared);
+  std::vector<HighStmt> Body{Seed};
+  VarKeyMap<ExprPtr> Candidates;
+  for (unsigned I = 2; I < 1024; ++I) {
+    auto S = assign(0x1000 + 4 * I, I, 0);
+    S.Val = Shared;
+    Candidates[varKey(S.Dst->Var)] = S.Val;
+    Body.push_back(std::move(S));
+  }
+  // A parameter that prints with the same numeric id is a different input.
+  auto Parameter = local(1);
+  Parameter->Var.Kind = MedVar::Param;
+  auto Stable = assign(0x3000, 2048, 0);
+  Stable.Val = Parameter;
+  Candidates[varKey(Stable.Dst->Var)] = Parameter;
+  Body.push_back(Stable);
+
+  filterStableCopyCandidates(Body, Candidates);
+
+  ASSERT_EQ(Candidates.size(), 1u);
+  EXPECT_EQ(Candidates.at(varKey(Stable.Dst->Var)), Parameter);
+  EXPECT_EQ(Body[1].Val, Shared);
+}
+
+TEST(HighControlFlowSemantics, CopyStabilityPropagatesALateSelfRead) {
+  auto Dependent = assign(0x1000, 1, 0);
+  Dependent.Val = local(2);
+  auto Self = assign(0x1004, 2, 0);
+  Self.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(2), HighExpr::makeConst(1, 8));
+  auto Stable = assign(0x1008, 3, 4);
+  VarKeyMap<ExprPtr> Candidates = {{varKey(Dependent.Dst->Var), Dependent.Val},
+                                   {varKey(Self.Dst->Var), Self.Val},
+                                   {varKey(Stable.Dst->Var), Stable.Val},
+                                   {varKey(local(9)->Var), Stable.Val}};
+  filterStableCopyCandidates({Dependent, Self, Stable}, Candidates);
+  ASSERT_EQ(Candidates.size(), 1u);
+  EXPECT_EQ(Candidates.at(varKey(Stable.Dst->Var)), Stable.Val);
+
+  // The proposed replacement may already have resolved a copy chain and
+  // differ from the assignment's immediate RHS. It needs its own proof.
+  Candidates = {{varKey(Stable.Dst->Var), Dependent.Val}};
+  filterStableCopyCandidates({Dependent, Self, Stable}, Candidates);
+  EXPECT_TRUE(Candidates.empty());
+
+  Self.Val = local(2);
+  Candidates = {{varKey(Dependent.Dst->Var), Dependent.Val},
+                {varKey(Self.Dst->Var), Self.Val}};
+  filterStableCopyCandidates({Dependent, Self, Stable}, Candidates);
+  EXPECT_TRUE(Candidates.empty());
+}
+
+TEST(HighControlFlowSemantics, CopyStabilityDistinguishesLocalAndSharedCycles) {
+  auto First = assign(0x1000, 1, 0);
+  auto Second = assign(0x1004, 2, 0);
+  First.Val = local(2);
+  Second.Val = local(1);
+  VarKeyMap<ExprPtr> Candidates = {{varKey(First.Dst->Var), First.Val},
+                                   {varKey(Second.Dst->Var), Second.Val}};
+  filterStableCopyCandidates({First, Second}, Candidates);
+  // A cycle between distinct definitions does not assert either RHS reads
+  // its own destination. Copy-chain resolution separately keeps such cycles.
+  EXPECT_EQ(Candidates.size(), 2u);
+  Second.IsPhiCopy = true;
+  filterStableCopyCandidates({First, Second}, Candidates);
+  EXPECT_TRUE(Candidates.empty());
+
+  auto A = HighExpr::makeUnary(NdOp::INT_NEG2, HighExpr::makeConst(0, 8));
+  auto B = HighExpr::makeBinop(NdOp::INT_ADD, A, local(2));
+  A->Operands = {B};
+  First.Val = A;
+  Candidates = {{varKey(First.Dst->Var), B}};
+  filterStableCopyCandidates({First, Second}, Candidates);
+  A->Operands.clear(); // Release the deliberately cyclic fixture.
+  EXPECT_TRUE(Candidates.empty());
+}
+
+TEST(HighControlFlowSemantics, CopyStabilityRechecksAfterSharedMutation) {
+  auto Input = assign(0x1000, 1, 10);
+  auto Value = assign(0x1004, 2, 0);
+  Value.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(7, 8));
+  const auto Original = Value.Val;
+  VarKeyMap<ExprPtr> Candidates = {{varKey(Value.Dst->Var), Value.Val}};
+  filterStableCopyCandidates({Input, Value}, Candidates);
+  ASSERT_EQ(Candidates.size(), 1u);
+
+  Input.IsPhiCopy = true;
+  filterStableCopyCandidates({Input, Value}, Candidates);
+  EXPECT_TRUE(Candidates.empty());
+  Input.IsPhiCopy = false;
+  Value.Val->Operands[0] = local(2);
+  Candidates = {{varKey(Value.Dst->Var), Original}};
+  filterStableCopyCandidates({Input, Value}, Candidates);
+  EXPECT_TRUE(Candidates.empty());
+
+  Value.Val->Operands[0] = local(1);
+  Candidates = {{varKey(Value.Dst->Var), Original}};
+  filterStableCopyCandidates({Input, Value}, Candidates);
+  ASSERT_EQ(Candidates.size(), 1u);
+  EXPECT_EQ(Candidates.at(varKey(Value.Dst->Var)), Original);
 }
 
 TEST(HighControlFlowSemantics, SharedExpressionKeepsItsRepeatedInputUse) {

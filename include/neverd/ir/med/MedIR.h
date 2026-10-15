@@ -235,6 +235,13 @@ struct MedOp {
   /// Only source-call lowering may establish this transport before SSA.
   bool HasSourceErrorResult = false;
   bool Dead = false;
+  /// Source views only: this STORE saves a callee-saved register's entry
+  /// value into prologue storage (markCalleeSavePrologueSaves), so source
+  /// emitters leave it out.  Binary lifting and patching never set it.
+  bool PrologueSave = false;
+  /// Source views only: this LOAD reads the return address the call pushed,
+  /// in a function that never overwrites it (markReturnAddressReads).
+  bool ReturnAddressRead = false;
   bool PreservesCallerSaved = false;
   /// GPR families (see CallRegisterEffects.h) the direct callee provably
   /// never writes, so SSA keeps their pre-call values across this call.
@@ -396,6 +403,18 @@ struct MedCallInfo {
   /// only the scalar in the low lane of a floating-point argument register
   /// (MedFunc::FPParamScalarBytes); 0, or no entry, for a whole argument.
   std::vector<uint16_t> ArgReadBytes;
+  /// Counts of the independent integer and floating register runs in Args;
+  /// remaining arguments are stack-passed. -1 means no bank proof (explicit
+  /// source ABI or a convention with positional argument slots).
+  int IntegerRegisterArgCount = -1;
+  int FloatingRegisterArgCount = -1;
+  /// Where each stack-passed value after those register runs was stored: its
+  /// byte offset from the first stack argument, in Args order, with the ABI's
+  /// stack slot size. A value narrower than its slot leaves the rest of the
+  /// slot as padding (`mov [rsp], r11d` passes an int in an eight-byte slot).
+  /// Empty when a value's place is not known.
+  std::vector<int64_t> StackArgumentOffsets;
+  uint16_t StackArgumentSlotBytes = 0;
 };
 
 struct MedFunc {
@@ -576,6 +595,9 @@ struct MedFunc {
   /// into an indirect call merely because the CFG has no static successors.
   std::set<va_t> UnsafeIndirectBranchAddresses;
   std::optional<ExceptionFunction> ExceptionMetadata;
+  /// Source analysis retained unknown machine entries instead of asserting a
+  /// common SEH invocation frame. This function cannot be lowered to LLVM.
+  bool HasUnresolvedSEHFrame = false;
   std::optional<RegistrationStateAnalysis> RegistrationStates;
 
   bool hasTypeInfo() const { return ReturnType != nullptr; }

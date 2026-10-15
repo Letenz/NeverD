@@ -18,6 +18,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/NoFolder.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/FileSystem.h"
@@ -224,6 +225,66 @@ TEST(LLVMCIntrinsicSemantics,
       Driver + "return 0;\n}\n";
   for (llvm::StringRef Optimization : {"-O0", "-O2"})
     compileAndCheck(Source, false, {}, Optimization, true);
+}
+
+TEST(LLVMCIntrinsicSemantics, FxSnapshotsRetainLegacyAnd64BitStateEffects) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "native x64 snapshot oracle required";
+#endif
+  llvm::LLVMContext Context;
+  llvm::Module Module("fx-snapshots", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> B(Context);
+  const llvm::Intrinsic::ID IDs[] = {
+      llvm::Intrinsic::x86_fxsave, llvm::Intrinsic::x86_fxsave64,
+      llvm::Intrinsic::x86_fxrstor, llvm::Intrinsic::x86_fxrstor64};
+  const char *Names[] = {"save_legacy", "save_64", "restore_legacy",
+                         "restore_64"};
+  for (unsigned I = 0; I < 4; ++I) {
+    auto *Fn = llvm::Function::Create(
+        llvm::FunctionType::get(B.getVoidTy(), {B.getPtrTy()}, false),
+        llvm::GlobalValue::ExternalLinkage, Names[I], Module);
+    B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Fn));
+    B.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(&Module, IDs[I]),
+                 {Fn->getArg(0)});
+    B.CreateRetVoid();
+  }
+  ASSERT_FALSE(llvm::verifyModule(Module));
+  const std::string Text = emit(Module);
+  EXPECT_EQ(Text.find("llvm_x86_fx"), std::string::npos);
+  const std::string Source =
+      "#include <stdint.h>\n#include <string.h>\n" + Text + R"fx(
+int main(void) {
+  _Alignas(16) unsigned char expected[512]={0}, actual[512]={0};
+  for(unsigned form=0;form<2;++form) {
+    __asm__ volatile("fninit\n\tfldpi\n\tfchs\n\tfxsave64 (%0)"::"r"(expected):"memory","st");
+  if (form)
+    save_64(actual);
+  else
+    save_legacy(actual);
+  if (memcmp(expected, actual, 5))
+    return 1;
+  for (unsigned slot = 0; slot < 8; ++slot)
+    if (memcmp(expected + 32 + slot * 16, actual + 32 + slot * 16, 10))
+      return 2;
+  __asm__ volatile("fninit" ::: "memory", "st");
+  if (form)
+    restore_64(actual);
+  else
+    restore_legacy(actual);
+  __asm__ volatile("fxsave64 (%0)" ::"r"(actual) : "memory");
+  if (memcmp(expected, actual, 5))
+    return 3;
+  for (unsigned slot = 0; slot < 8; ++slot)
+    if (memcmp(expected + 32 + slot * 16, actual + 32 + slot * 16, 10))
+      return 4;
+}
+__asm__ volatile("fninit" ::: "memory", "st");
+return 0;
+}
+)fx";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndCheck(Source, false, {}, Level, true);
 }
 
 TEST(LLVMCIntrinsicSemantics, SaturatingConversionsClampBeforeCasting) {
@@ -623,6 +684,176 @@ TEST(LLVMCIntrinsicSemantics, IntegerMinMaxRejectsMismatchedCallsite) {
       llvm::GlobalValue::ExternalLinkage, "bad_minmax", Module);
   auto *Intrinsic = llvm::Intrinsic::getOrInsertDeclaration(
       &Module, llvm::Intrinsic::umin, {Builder.getInt8Ty()});
+  Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+  // Opaque pointers permit constructing this malformed call, for which
+  // getCalledFunction() returns null rather than the known declaration.
+  auto *Call = Builder.CreateCall(Function->getFunctionType(), Intrinsic,
+                                  {Function->getArg(0), Function->getArg(1)});
+  ASSERT_EQ(Call->getCalledFunction(), nullptr);
+  Builder.CreateRet(Call);
+  std::string Text;
+  llvm::raw_string_ostream Output(Text);
+  EXPECT_THROW(LLVMCEmitter().emit(Module, Output, {}), std::runtime_error);
+}
+
+TEST(LLVMCIntrinsicSemantics, UnsignedSaturationKeepsWidthsAndProducers) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("integer-saturation", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> Builder(Context);
+  auto *Wide = Builder.getInt128Ty();
+  auto Producer = Module.getOrInsertFunction("produce128", Wide, Wide);
+  auto *Collision = llvm::Function::Create(
+      llvm::FunctionType::get(Builder.getInt8Ty(),
+                              {Builder.getInt8Ty(), Builder.getInt8Ty()},
+                              false),
+      llvm::GlobalValue::ExternalLinkage, "neverd_llvm_uadd_sat_i8", Module);
+  Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Collision));
+  Builder.CreateRet(
+      Builder.CreateXor(Collision->getArg(0), Collision->getArg(1)));
+  const llvm::Intrinsic::ID Kinds[] = {llvm::Intrinsic::uadd_sat,
+                                       llvm::Intrinsic::usub_sat};
+  std::string Table;
+  for (unsigned Bits : {1u, 8u, 16u, 32u, 64u, 128u}) {
+    for (unsigned Kind = 0; Kind != 2; ++Kind) {
+      for (bool Assigned : {false, true}) {
+        const std::string Name = "saturation_" + std::to_string(Bits) + "_" +
+                                 std::to_string(Kind) + "_" +
+                                 std::to_string(Assigned);
+        Table += Name + ",";
+        auto *Function = llvm::Function::Create(
+            llvm::FunctionType::get(Wide, {Wide, Wide, Builder.getPtrTy()},
+                                    false),
+            llvm::GlobalValue::ExternalLinkage, Name, Module);
+        Builder.SetInsertPoint(
+            llvm::BasicBlock::Create(Context, "entry", Function));
+        auto *Left = Builder.CreateCall(Producer, {Function->getArg(0)});
+        auto *Right = Builder.CreateCall(Producer, {Function->getArg(1)});
+        auto *Integer = Builder.getIntNTy(Bits);
+        auto *Intrinsic = llvm::Intrinsic::getOrInsertDeclaration(
+            &Module, Kinds[Kind], {Integer});
+        auto *Chosen = Builder.CreateCall(
+            Intrinsic, {Builder.CreateTruncOrBitCast(Left, Integer),
+                        Builder.CreateTruncOrBitCast(Right, Integer)});
+        // Two direct uses exercise assigned calls; one exercises inline calls.
+        Builder.CreateStore(Assigned ? Builder.CreateZExtOrBitCast(Chosen, Wide)
+                                     : Left,
+                            Function->getArg(2));
+        Builder.CreateRet(Builder.CreateZExtOrBitCast(Chosen, Wide));
+      }
+    }
+  }
+  const std::string Text = emit(Module);
+  EXPECT_EQ(Text.find("llvm_x2E_"), std::string::npos) << Text;
+  // Runtime compilers may happen to evaluate C arguments left to right. Also
+  // reject an expression that leaves these LLVM-ordered calls unsequenced.
+  llvm::SmallVector<llvm::StringRef, 64> Lines;
+  llvm::StringRef(Text).split(Lines, '\n');
+  for (llvm::StringRef Line : Lines) {
+    const auto First = Line.find("produce128(");
+    if (First != llvm::StringRef::npos)
+      EXPECT_EQ(Line.find("produce128(", First + 1), llvm::StringRef::npos)
+          << Line.str();
+  }
+  const std::string Source = "#include <stdint.h>\n#include <stdbool.h>\n" +
+                             Text + R"(
+typedef unsigned __int128 U128;
+static unsigned calls;
+static U128 observed[2];
+U128 produce128(U128 value) {
+  if (calls < 2) observed[calls] = value;
+  ++calls;
+  return value;
+}
+int main(void) {
+  if (neverd_llvm_uadd_sat_i8(0xf0, 0x33) != 0xc3) return 4;
+  U128 (*functions[])(U128, U128, void *) = {)" +
+                             Table + R"(};
+  const unsigned widths[] = {1, 8, 16, 32, 64, 128};
+  for (unsigned width = 0; width < 6; ++width) {
+    const unsigned bits = widths[width];
+    const U128 mask = ~(U128)0 >> (128 - bits);
+    const U128 sign = (U128)1 << (bits - 1);
+    const U128 values[] = {0, 1, sign - 1, sign, sign + 1, mask,
+                          ~(U128)0, ((U128)1 << 100) | 0xabcdef};
+    for (unsigned a = 0; a < 8; ++a)
+      for (unsigned b = 0; b < 8; ++b)
+        for (unsigned kind = 0; kind < 2; ++kind)
+          for (unsigned assigned = 0; assigned < 2; ++assigned) {
+            const U128 left = values[a] & mask, right = values[b] & mask;
+            const U128 wrapped = (kind ? left - right : left + right) & mask;
+            const int overflow = kind ? wrapped > left : wrapped < left;
+            const U128 expected = overflow ? (kind ? 0 : mask) : wrapped;
+            U128 stored = 0;
+            calls = 0;
+            if (functions[width * 4 + kind * 2 + assigned](
+                    values[a], values[b], &stored) != expected) return 1;
+            if (stored != (assigned ? expected : values[a])) return 2;
+            if (calls != 2 || observed[0] != values[a] ||
+                observed[1] != values[b]) return 3;
+          }
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndCheck(Source, false, {}, Optimization, true);
+}
+
+TEST(LLVMCIntrinsicSemantics,
+     UnsignedSaturationRejectsUnsupportedScalarWidths) {
+  for (unsigned Bits : {2u, 7u, 24u, 65u, 129u}) {
+    SCOPED_TRACE(Bits);
+    llvm::LLVMContext Context;
+    llvm::Module Module("unsupported-saturation", Context);
+    llvm::IRBuilder<> Builder(Context);
+    auto *Integer = Builder.getIntNTy(Bits);
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(Integer, {Integer, Integer}, false),
+        llvm::GlobalValue::ExternalLinkage, "bad_saturation", Module);
+    Builder.SetInsertPoint(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Intrinsic = llvm::Intrinsic::getOrInsertDeclaration(
+        &Module, llvm::Intrinsic::uadd_sat, {Integer});
+    Builder.CreateRet(Builder.CreateCall(
+        Intrinsic, {Function->getArg(0), Function->getArg(1)}));
+    std::string Text;
+    llvm::raw_string_ostream Output(Text);
+    EXPECT_THROW(LLVMCEmitter().emit(Module, Output, {}), std::runtime_error);
+  }
+}
+
+TEST(LLVMCIntrinsicSemantics, UnsignedSaturationRejectsMismatchedOperands) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("malformed-saturation", Context);
+  llvm::IRBuilder<> Builder(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Builder.getInt8Ty(),
+                              {Builder.getInt8Ty(), Builder.getInt16Ty()},
+                              false),
+      llvm::GlobalValue::ExternalLinkage, "bad_saturation", Module);
+  auto *Malformed = llvm::Function::Create(Function->getFunctionType(),
+                                           llvm::GlobalValue::ExternalLinkage,
+                                           "llvm.uadd.sat.i8", Module);
+  Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+  Builder.CreateRet(Builder.CreateCall(
+      Malformed, {Function->getArg(0), Function->getArg(1)}));
+  std::string Text;
+  llvm::raw_string_ostream Output(Text);
+  EXPECT_THROW(LLVMCEmitter().emit(Module, Output, {}), std::runtime_error);
+}
+
+TEST(LLVMCIntrinsicSemantics, UnsignedSaturationRejectsMismatchedCallsite) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("mismatched-saturation-callsite", Context);
+  llvm::IRBuilder<> Builder(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Builder.getInt16Ty(),
+                              {Builder.getInt8Ty(), Builder.getInt8Ty()},
+                              false),
+      llvm::GlobalValue::ExternalLinkage, "bad_saturation", Module);
+  auto *Intrinsic = llvm::Intrinsic::getOrInsertDeclaration(
+      &Module, llvm::Intrinsic::uadd_sat, {Builder.getInt8Ty()});
   Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
   // Opaque pointers permit constructing this malformed call, for which
   // getCalledFunction() returns null rather than the known declaration.

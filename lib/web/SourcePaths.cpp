@@ -435,9 +435,9 @@ struct Resolver {
     step(validateSourceModel(S));
     if (B.SourceID != S.ID || M.SourceID != S.ID || O.SourceID != S.ID ||
         V.SourceID != S.ID || O.BindingID != B.ID || O.ModuleID != M.ID ||
-        M.BindingID != B.ID || B.Bindings.size() > 2 * MaxJavaScriptNodes ||
-        B.Declarations.size() > 2 * MaxJavaScriptNodes ||
-        B.References.size() > MaxJavaScriptNodes || Requested.size() > 10000)
+        M.BindingID != B.ID || B.Bindings.size() > 2 * sourceLimits(S).Nodes ||
+        B.Declarations.size() > 2 * sourceLimits(S).Nodes ||
+        B.References.size() > sourceLimits(S).Nodes || Requested.size() > 10000)
       throw Error("invalid_source_path_inputs");
     if (O.Status != "partial" || O.Nodes.size() != S.Nodes.size() ||
         V.Nodes.size() != S.Nodes.size())

@@ -15,10 +15,52 @@
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X86ShadowStack.h"
 #include "neverd/ir/X87Constant.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/MedIR.h"
 
 namespace neverd {
+
+/// Structural admission before inspecting an intrinsic ID, including during
+/// module preflight for bodies which will not be emitted.
+inline bool hasValidMedIntrinsicId(const MedOp &Op) {
+  return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+         Op.NumInputs <= Op.Inputs.size() && Op.Inputs.front().isConst();
+}
+
+inline bool x87ContextMedShapeIsValid(const MedOp &Op, Arch A) {
+  if (Op.NumInputs > Op.Inputs.size() || Op.NumInputs > 6 ||
+      !Op.IntrinsicOutputs.empty())
+    return false;
+  LowOp Low;
+  Low.NumInputs = Op.NumInputs;
+  Low.Output = NdVar::tmp(0, Op.Output.Size);
+  Low.MemoryOrdering = Op.MemoryOrdering;
+  Low.MemoryAddressSpace = Op.MemoryAddressSpace;
+  const auto ObserveArch = [&](const MedVar &V) {
+    if (V.TheArch == Arch::Unknown)
+      return true;
+    if (A == Arch::Unknown)
+      A = V.TheArch;
+    return A == V.TheArch;
+  };
+  if (!ObserveArch(Op.Output))
+    return false;
+  if (Op.Output.Size && Op.Output.Kind != MedVar::Reg &&
+      Op.Output.Kind != MedVar::Temp)
+    return false;
+  for (unsigned I = 0; I < Op.NumInputs; ++I) {
+    const auto &V = Op.Inputs[I];
+    if (!ObserveArch(V))
+      return false;
+    if (!V.isConst() && V.Kind != MedVar::Reg && V.Kind != MedVar::Temp &&
+        V.Kind != MedVar::Param)
+      return false;
+    Low.Inputs[I] =
+        V.isConst() ? NdVar::cst(V.ConstVal, V.Size) : NdVar::tmp(0, V.Size);
+  }
+  return x87ContextLowShapeIsValid(Low, A);
+}
 
 inline X87ConstantControlShape x87ConstantControlMedShape(const MedOp &Op,
                                                           Arch A) {

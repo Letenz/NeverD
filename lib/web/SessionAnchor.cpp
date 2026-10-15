@@ -25,7 +25,8 @@ std::string Session::sourceAnchor(std::string_view Revision,
   if (Found == State->Sources.end())
     throw Error("unknown_source");
   const auto &S = Found->second;
-  if (Offset > MaxJavaScriptBytes || Length > MaxJavaScriptBytes - Offset)
+  const auto Maximum = sourceLimits(S).Bytes;
+  if (Offset > Maximum || Length > Maximum - Offset)
     throw Error("invalid_source_position");
   const SourceView *View = nullptr;
   if (!ViewID.empty()) {
@@ -45,8 +46,8 @@ std::string Session::sourceAnchor(std::string_view Revision,
   std::string Bytes;
   llvm::json::Object Storage;
   if (Extraction) {
-    auto Projection = bunSourceRange(*Extraction, *Module, Offset, Length,
-                                     MaxJavaScriptBytes);
+    auto Projection =
+        bunSourceRange(*Extraction, *Module, Offset, Length, Maximum);
     Bytes = std::move(Projection.Text);
     const auto &R = Extraction->Regions[Module->Contents];
     Storage = llvm::json::Object{
@@ -71,7 +72,7 @@ std::string Session::sourceAnchor(std::string_view Revision,
     if (auto Container = State->artifactView(Extraction->ArtifactID))
       Storage["container_origin"] = std::move(Container->Origin);
   } else {
-    Bytes = State->sourceBytes(S.ArtifactID, MaxJavaScriptBytes,
+    Bytes = State->sourceBytes(S.ArtifactID, Maximum,
                                "source_byte_budget_exceeded");
     if (auto Direct = State->artifactView(S.ArtifactID)) {
       Storage = std::move(Direct->Origin);

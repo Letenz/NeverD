@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "NeverDCLI.h"
+#include "NeverDSymbolDownload.h"
 
 #include "neverd/Common.h"
 #include "neverd/loader/ARMModeCLIStrings.h"
@@ -143,11 +144,37 @@ static int realMain(int Argc, char *Argv[]) {
   // The debug-symbol search is part of loading, so its policy has to be in
   // place before the load rather than adjusted afterwards.
   neverd_session_set_debug_info_enabled(Sess, NoDebug ? 0 : 1);
+  neverd_session_set_dwarf_search(Sess, NoDwarf ? 0 : 1);
   if (!PdbFile.getValue().empty())
     neverd_session_set_pdb_path_ex(Sess, PdbFile.getValue().c_str(),
                                    PdbUnverified ? 1 : 0);
   if (!MapFile.getValue().empty())
     neverd_session_set_map_path(Sess, MapFile.getValue().c_str());
+  if (SymbolPathOption.getNumOccurrences())
+    neverd_session_set_symbol_path(Sess, SymbolPathOption.getValue().c_str());
+  // The download goes into a store the load then searches.
+  if (DownloadSymbols && !NoDebug && PdbFile.getValue().empty()) {
+    const auto Report = [](const std::string &Line) {
+      if (!JsonOutput)
+        errs() << "\r" << Line << "                    \n";
+    };
+    const auto Progress = [](uint64_t Received, uint64_t Total) {
+      if (JsonOutput)
+        return;
+      errs() << "\rDownloading debug symbols " << Received / 1024 << " KiB";
+      if (Total)
+        errs() << " of " << Total / 1024 << " KiB";
+      errs().flush();
+    };
+    if (!neverd::cli::downloadMissingPDB(
+            InputFile.getValue(),
+            SymbolPathOption.getNumOccurrences()
+                ? SymbolPathOption.getValue().c_str()
+                : nullptr,
+            Report, Progress))
+      WithColor::warning() << "no symbol server provided the PDB; loading "
+                              "without it\n";
+  }
   std::set<neverd_va_t> SeenARMEntries;
   for (const std::string &Hint : ARMFunctionModeHints) {
     const auto Parts = StringRef(Hint).split(':');

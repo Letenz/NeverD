@@ -12,6 +12,7 @@ enum {
   FaccessAt = 48,
   MkdirAt = 34,
   OpenAt = 56,
+  ReadlinkAt = 78,
   Read = 63,
   Close = 57,
   Seek = 62,
@@ -35,6 +36,7 @@ enum {
   FaccessAt = 269,
   MkdirAt = 258,
   OpenAt = 257,
+  ReadlinkAt = 267,
   Read = 0,
   Close = 3,
   Seek = 8,
@@ -689,6 +691,100 @@ U64 files_unsupported(U64 Mode) {
   return raw(Seek, F, 0, 3, 0);
 }
 
+// Targets are supplied as raw bytes: /x, a non-ASCII byte, then y.
+static const char LinkPath[] = "/links/raw";
+U64 files_links(void) {
+  U64 F = raw(OpenAt, 0, (U64)Path, 0, 0);
+  CHECK(F, 3);
+  CHECK(raw(Read, F, (U64)Pages + 16, 1, 0), 1);
+  for (unsigned I = 0; I < 16; ++I)
+    Pages[I] = 0xa5;
+  CHECK(raw(ReadlinkAt, (U64)-1, (U64)LinkPath, (U64)Pages, 16), 4);
+  CHECK(Pages[0], '/');
+  CHECK(Pages[1], 'x');
+  CHECK(Pages[2], 0xff);
+  CHECK(Pages[3], 'y');
+  CHECK(Pages[4], 0xa5);
+  CHECK(
+      raw(ReadlinkAt, 99, (U64)LinkPath, (U64)Pages + 8, 0x1234567800000002UL),
+      2);
+  CHECK(Pages[8], '/');
+  CHECK(Pages[9], 'x');
+  CHECK(Pages[10], 0xa5);
+  CHECK(raw(ReadlinkAt, 99, 1, 1, 0x1234567800000000UL), (U64)-22);
+  CHECK(raw(ReadlinkAt, 99, 1, 1, 0x80000000), (U64)-22);
+  CHECK(raw(ReadlinkAt, 99, 1, 1, (U64)-1), (U64)-22);
+  CHECK(raw(ReadlinkAt, 99, 1, 1, 1), (U64)-14);
+  CHECK(raw(ReadlinkAt, 99, (U64) "/absent", 1, 1), (U64)-2);
+  CHECK(raw(ReadlinkAt, 99, (U64)Path, 1, 1), (U64)-22);
+  CHECK(raw(ReadlinkAt, 99, (U64) "/links/", 1, 1), (U64)-22);
+  CHECK(raw(ReadlinkAt, 99, (U64) "/fixture/data/child", 1, 1), (U64)-20);
+  CHECK(raw(ReadlinkAt, 99, (U64) "", 1, 1), (U64)-9);
+  CHECK(raw(ReadlinkAt, 0x1234567800000000UL | F, (U64) "", 1, 1), (U64)-2);
+  CHECK(raw(ReadlinkAt, (U64)-100, (U64) "", 1, 1), (U64)-2);
+  CHECK(raw(ReadlinkAt, 99, (U64)LinkPath, 1, 1), (U64)-14);
+  CHECK(raw(FaccessAt, 99, (U64) "/links/", 0, 0), 0);
+  CHECK(raw(MkdirAt, 99, (U64)LinkPath, 0777, 0), (U64)-17);
+  CHECK(raw(Read, F, (U64)Pages + 16, 1, 0), 1);
+  CHECK(Pages[16], 0xff);
+  CHECK(raw(Close, F, 0, 0, 0), 0);
+#if !defined(__aarch64__)
+  CHECK(raw(89, (U64)LinkPath, (U64)Pages, 4, 0), 4);
+  CHECK(raw(89, (U64) "", 1, 1, 0), (U64)-2);
+#endif
+  // Import the whole pathname before writing an overlapping output buffer.
+  for (unsigned I = 0; I < sizeof(LinkPath); ++I)
+    Pages[I] = LinkPath[I];
+  CHECK(raw(ReadlinkAt, 99, (U64)Pages, (U64)Pages, 4), 4);
+  CHECK(Pages[0], '/');
+  CHECK(Pages[1], 'x');
+  CHECK(Pages[2], 0xff);
+  CHECK(Pages[3], 'y');
+  CHECK(Pages[4], 'k');
+  // Only the copied prefix must be writable, even for a much larger size.
+  for (unsigned I = 0; I < sizeof(LinkPath); ++I)
+    Pages[4096 - sizeof(LinkPath) + I] = LinkPath[I];
+  CHECK(raw(Protect, (U64)Pages + 4096, 4096, 0, 0), 0);
+  CHECK(raw(ReadlinkAt, 99, (U64)Pages + 4096 - sizeof(LinkPath),
+            (U64)Pages + 4092, 0x7fffffff),
+        4);
+  CHECK(Pages[4095], 'y');
+  Pages[4095] = '/';
+  CHECK(raw(ReadlinkAt, 99, (U64)Pages + 4095, 1, 1), (U64)-14);
+  CHECK(raw(Protect, (U64)Pages + 4096, 4096, 3, 0), 0);
+  for (unsigned I = 0; I < 4096; ++I)
+    Pages[I] = 'x';
+  CHECK(raw(ReadlinkAt, 99, (U64)Pages, 1, 1), (U64)-36);
+  return 0;
+}
+
+U64 files_links_pending(U64 Mode, U64 Output) {
+  if (Mode == 0)
+    return raw(ReadlinkAt, 99, (U64) "/links/raw/", Output, 4);
+  if (Mode == 1)
+    return raw(ReadlinkAt, 99, (U64) "/links/raw/child", Output, 4);
+  if (Mode == 2)
+    return raw(ReadlinkAt, 99, (U64) "relative", Output, 4);
+  if (Mode == 3)
+    return raw(FaccessAt, 99, (U64)LinkPath, 0, 0);
+  if (Mode == 4)
+    return raw(OpenAt, 99, (U64)LinkPath, 0, 0);
+  if (Mode == 5 || Mode == 6)
+    return raw(FstatAt, 99, (U64)LinkPath, Output, Mode == 5 ? 0 : 0x100);
+  if (Mode == 7)
+    return raw(StatFS, (U64)LinkPath, Output, 0, 0);
+  if (Mode == 8)
+    return raw(MkdirAt, 99, (U64) "/links/raw/child", 0777, 0);
+  if (Mode == 9)
+    return raw(ReadlinkAt, 0, (U64) "", Output, 4);
+  if (Mode == 10) {
+    CHECK(raw(Protect, Output + 4096, 4096, 0, 0), 0);
+    return raw(ReadlinkAt, 99, (U64)LinkPath, Output + 4094, 4);
+  }
+  return raw(Mode == 11 ? GetXAttr : LGetXAttr, (U64)LinkPath,
+             (U64) "user.fixture", Output, 4);
+}
+
 #if defined(__ANDROID__)
 extern int open(const char *, int, ...);
 extern int open64(const char *, int, ...);
@@ -708,6 +804,33 @@ extern int mkdir(const char *, U32);
 extern int mkdirat(int, const char *, U32);
 extern I64 syscall(I64, ...);
 extern int *__errno(void);
+extern I64 readlink(const char *, void *, U64);
+extern I64 readlinkat(int, const char *, void *, U64);
+U64 files_links_bionic(void) {
+  for (unsigned Route = 0; Route != 3; ++Route) {
+    *__errno() = 73;
+    Pages[4] = 0xa5;
+    I64 R = Route == 0   ? readlink(LinkPath, Pages, 16)
+            : Route == 1 ? readlinkat(-1, LinkPath, Pages, 16)
+                         : syscall(ReadlinkAt, -1UL, LinkPath, Pages, 16UL);
+    CHECK(R, 4);
+    CHECK(*__errno(), 73);
+    CHECK(Pages[4], 0xa5);
+    CHECK(Pages[0], '/');
+    CHECK(Pages[1], 'x');
+    CHECK(Pages[2], 0xff);
+    CHECK(Pages[3], 'y');
+    R = Route == 0   ? readlink((void *)1, (void *)1, 0)
+        : Route == 1 ? readlinkat(-1, (void *)1, (void *)1, 0)
+                     : syscall(ReadlinkAt, -1UL, 1UL, 1UL, 0UL);
+    CHECK(R, -1);
+    CHECK(*__errno(), 22);
+    CHECK(readlink("/missing", (void *)1, 1), -1);
+    CHECK(*__errno(), 2);
+  }
+  return 0;
+}
+
 U64 files_open_observed_errors_bionic(void) {
   for (unsigned Route = 0; Route != 4; ++Route) {
     *__errno() = 77;
@@ -1147,6 +1270,23 @@ U64 files_trailing_paths_bionic(void) {
   return 0;
 }
 
+U64 files_links_dynamic(U64 Closed, U64 At) {
+  void *Library = dlopen("libfiles.so", 2);
+  if (!Library)
+    return 99;
+  void *Call = dlsym(Library, At ? "readlinkat" : "readlink");
+  if (!Call)
+    return 98;
+  if (Closed)
+    CHECK(dlclose(Library), 0);
+  I64 N = At ? ((I64 (*)(int, const char *, void *, U64))Call)(-1, LinkPath,
+                                                               Pages, 4)
+             : ((I64 (*)(const char *, void *, U64))Call)(LinkPath, Pages, 4);
+  CHECK(N, 4);
+  CHECK(Pages[2], 0xff);
+  return 0;
+}
+
 U64 files_directory_dynamic(U64 Closed, U64 At) {
   void *Library = dlopen("libfiles.so", 2);
   if (!Library)
@@ -1168,7 +1308,8 @@ void process_main(U64 *Stack) {
   if (Stack[0] != 2)
     __builtin_trap();
   char Mode = ((const char **)(Stack + 1))[1][0];
-  U64 Status = Mode == 's'   ? files_sequence()
+  U64 Status = Mode == 'l'   ? files_links()
+               : Mode == 's' ? files_sequence()
                : Mode == 'f' ? files_faults()
                : Mode == 'c' ? files_capacity()
                : Mode == 't' ? files_status()

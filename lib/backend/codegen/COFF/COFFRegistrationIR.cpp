@@ -5,9 +5,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "COFFNativeEHProvenance.h"
+#include "COFFRegistrationCopyEdges.h"
 #include "COFFRegistrationCxxIRProof.h"
 #include "COFFRegistrationFrameProof.h"
 #include "COFFRegistrationIRProof.h"
+#include "COFFRegistrationSEHDynamicScope.h"
+#include "COFFRegistrationSEHException.h"
+#include "COFFRegistrationSEHJump.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -16,6 +20,7 @@
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
 #include "neverd/backend/llvm/WindowsRegistrationFrame.h"
+#include "neverd/backend/llvm/X86RegistrationSEHScope.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
@@ -249,6 +254,12 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
           Call->getCalledFunction() != CallbackMap->at({*Target, true}) ||
           Call->arg_size() != 2 || integer(Call->getArgOperand(0), 8) != 0 ||
           !ParentFrame ||
+          (Call->doesNotReturn() &&
+           llvm::any_of(*Call->getCalledFunction(),
+                        [](const llvm::BasicBlock &Block) {
+                          return llvm::isa<llvm::ReturnInst>(
+                              Block.getTerminator());
+                        })) ||
           ParentFrame->getIntrinsicID() != llvm::Intrinsic::localaddress ||
           ParentFrame->arg_size() || ParentFrame->getFunction() != &Function ||
           Call->getNumOperandBundles())
@@ -264,11 +275,19 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
   std::vector<const llvm::Function *> NativeFunctions{&Function};
   NativeFunctions.insert(NativeFunctions.end(), CallbackFunctions.begin(),
                          CallbackFunctions.end());
+  auto ExceptionFields = bindSEHExceptionReads(
+      ReplayMed, *Frame, *CallbackMap, ExceptionBridges, NativeFunctions);
+  if (!ExceptionFields)
+    return ExceptionFields.takeError();
   std::set<const llvm::Instruction *> IncomingAccesses, IncomingSetup;
   if (llvm::Error Error =
           validateIncomingCallerFrame(Function, ReplayMed, NativeFunctions,
                                       IncomingAccesses, IncomingSetup))
     return Error;
+  auto Jumps = coff_registration::bindSEHJumps(ReplayMed, Function, *Frame,
+                                               IncomingSetup, *CallbackMap);
+  if (!Jumps)
+    return Jumps.takeError();
   const auto &States = *Replay.RegistrationStates;
   const auto &Scopes = Source.Registration->Scopes;
   struct Dispatch {
@@ -288,6 +307,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
   std::map<uint32_t, BlockTarget> BlockEntries, BlockExits;
   std::set<const llvm::InvokeInst *> Invokes;
   std::set<const llvm::CallBase *> ScopeBoundaries;
+  auto ScopeWrites = Jumps->StateRestores;
   std::set<const llvm::CallBase *> AbnormalFinallyIR;
   std::map<va_t, uint32_t> Protected;
   std::set<std::pair<va_t, int>> Chain;
@@ -457,6 +477,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
           Sync->getAlign() != llvm::Align(1))
         return rejectIR(
             "handler dispatch lost its source try-level synchronization");
+      ScopeWrites.insert(Sync);
       Dispatch D;
       const auto *Callback =
           CallbackMap->at({Scope.IsFinally ? Scope.HandlerVA : Scope.FilterVA,
@@ -520,10 +541,15 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
     ImmutableImageRanges.push_back(
         {States.SecurityCookieVA, States.SecurityCookieVA + 4});
   }
+  auto ScopeState = coff_registration::bindDynamicSEHState(
+      ReplayMed, *Frame, NativeFunctions, ScopeWrites);
+  if (!ScopeState)
+    return ScopeState.takeError();
   if (llvm::Error Error = coff_registration::validateFramePrivacy(
           Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
           IncomingAccesses, SourceCallerPCWrites, ChainProtocolReads,
-          States.SecurityCookieVA, ImmutableImageRanges))
+          States.SecurityCookieVA, ImmutableImageRanges, nullptr,
+          &*ExceptionFields, &*Jumps, &*ScopeState))
     return Error;
   auto SourceSegments = validateSourceSegments(Function, ReplayMed,
                                                *CallbackMap, NativeFunctions);
@@ -539,14 +565,52 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
     if (Actual != Outer || (!Scopes[I].IsFinally && !HandlerTargets.count(I)))
       return rejectIR("scope enclosing state or handler target changed");
   }
-  size_t ActiveRanges = 0;
+  size_t ActiveRanges = 0, ActiveBlocks = 0;
   std::map<int, const llvm::BasicBlock *> SourceEntries, SourceExits;
   std::map<va_t, uint32_t> ExpectedProtected;
   for (const auto &State : States.Blocks) {
     if (State.CallbackOnly)
       continue;
-    if (State.Unknown || State.Levels.size() > 1)
-      return rejectIR("source scope is not uniquely determined at a CFG block");
+    if (State.Unknown)
+      return rejectIR("source scope is not determined at a CFG block");
+    if (State.Levels.size() > 1) {
+      const auto Begin = BlockEntries.find(State.BlockId);
+      const auto End = BlockExits.find(State.BlockId);
+      if (Begin == BlockEntries.end() || End == BlockExits.end() ||
+          Begin->second.Identity.SourceVA != State.Range.Begin ||
+          Begin->second.Identity.AuxVA != State.Range.End ||
+          End->second.Identity.SourceVA != State.Range.End ||
+          End->second.Identity.AuxVA != State.Range.Begin ||
+          Begin->second.Identity.Flags !=
+              uint32_t(x86_registration::DynamicScopeLevel) ||
+          End->second.Identity.Flags !=
+              uint32_t(x86_registration::DynamicScopeLevel))
+        return rejectIR("dynamic source block lost its exact state identity");
+      std::map<int32_t, coff_registration::DynamicSEHScopeCase> Cases;
+      for (int32_t Level : State.Levels) {
+        if (Level < 0) {
+          if (Level != *Source.Registration->SeededTryLevel)
+            return rejectIR("dynamic source scope has an unknown sentinel");
+          continue;
+        }
+        const RangeKey Key{uint32_t(Level), uint32_t(State.BlockId)};
+        if (!Dispatches.count(Level) || !Enters.count(Key) ||
+            !Exits.count(Key) || Enters.at(Key).first != State.Range.Begin ||
+            Exits.at(Key).first != State.Range.End)
+          return rejectIR("dynamic source scope has an incomplete interval");
+        Cases.emplace(Level, coff_registration::DynamicSEHScopeCase{
+                                 Enters.at(Key).second, Exits.at(Key).second,
+                                 Dispatches.at(Level).Unwind});
+      }
+      if (auto Error = coff_registration::validateDynamicSEHScope(
+              State, *Frame, SourceSegments->at(State.BlockId),
+              *Begin->second.Anchor, *End->second.Anchor, Cases))
+        return Error;
+      ActiveRanges += Cases.size();
+      SourceEntries.emplace(State.BlockId, Begin->second.Anchor->getParent());
+      SourceExits.emplace(State.BlockId, End->second.Anchor->getParent());
+      continue;
+    }
     const int32_t Level = State.Levels.empty()
                               ? *Source.Registration->SeededTryLevel
                               : State.Levels.front();
@@ -578,6 +642,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       continue;
     }
     ++ActiveRanges;
+    ++ActiveBlocks;
     const uint32_t Region = Level;
     const RangeKey Key{Region, uint32_t(State.BlockId)};
     if (!Enters.count(Key) || !Exits.count(Key) ||
@@ -640,7 +705,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
   if (ActiveRanges != Enters.size() || ActiveRanges != Exits.size() ||
       SourceEntries.size() != SourceExits.size() ||
       SourceExits.size() != BlockExits.size() ||
-      SourceEntries.size() - ActiveRanges != BlockEntries.size() ||
+      SourceEntries.size() - ActiveBlocks != BlockEntries.size() ||
       ExpectedProtected != Protected)
     return rejectIR("native scope ranges or protected call set is incomplete");
   for (size_t I = 0; I < Scopes.size(); ++I) {
@@ -664,6 +729,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
     if (Dispatches.at(I).Handler != Entry || HandlerTargets.at(I) != Body)
       return rejectIR("scope handler target bypasses its checked source entry");
   }
+  size_t CopyWork = 0;
   for (const auto &Block : Replay.Blocks) {
     auto Entry = SourceEntries.find(Block.Id);
     if (Entry == SourceEntries.end())
@@ -703,8 +769,16 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
     }
     const auto *Terminator = SourceExits.at(Block.Id)->getTerminator();
     std::set<const llvm::BasicBlock *> Actual;
-    for (unsigned I = 0; I < Terminator->getNumSuccessors(); ++I)
-      Actual.insert(Terminator->getSuccessor(I));
+    for (unsigned I = 0; I < Terminator->getNumSuccessors(); ++I) {
+      const auto *Next = Terminator->getSuccessor(I);
+      if (!Expected.count(Next)) {
+        Next = coff_registration::registrationCopyDestination(
+            *Terminator->getParent(), *Next, Expected, CopyWork, true);
+        if (!Next)
+          return rejectIR("SEH source edge gained unproved copy instructions");
+      }
+      Actual.insert(Next);
+    }
     if (Actual != Expected)
       return rejectIR(
           "native normal control flow bypasses a source registration boundary");
@@ -746,6 +820,8 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
         if (!Call)
           continue;
         const auto *Callee = Call->getCalledFunction();
+        if (Jumps->Calls.count(Call))
+          continue;
         if (Callee && Callee->isIntrinsic())
           continue;
         if (!Callee || Call->getCallingConv() != llvm::CallingConv::C ||
@@ -785,7 +861,8 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
     if (auto Error = coff_registration::validateFramePrivacy(
             Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
             IncomingAccesses, GeneratedCallerPCWrites, ChainProtocolReads,
-            States.SecurityCookieVA, ImmutableImageRanges))
+            States.SecurityCookieVA, ImmutableImageRanges, nullptr,
+            &*ExceptionFields, &*Jumps, &*ScopeState))
       return Error;
   return llvm::Error::success();
 #endif

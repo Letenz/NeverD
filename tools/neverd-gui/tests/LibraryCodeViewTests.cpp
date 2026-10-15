@@ -19,6 +19,156 @@ QJsonObject region(QString id, qint64 begin, qint64 end) {
 class LibraryCodeViewTests final : public QObject {
   Q_OBJECT
 private slots:
+  void nestedBlocksRetainChildrenCopyAndOriginalRows() {
+    const QString source = QString::fromUtf8("int f(int v7) {\n"
+                                             "  // 中文 😀\n"
+                                             "  if (v7) {\n"
+                                             "    while (v7) {\n"
+                                             "      --v7;\n"
+                                             "    }\n"
+                                             "  } else {\n"
+                                             "    v7 = 2;\n"
+                                             "  }\n"
+                                             "  return v7;\n"
+                                             "}\n");
+    const QVariantList rows{
+        QVariantMap{{"line", 4}, {"addresses", QVariantList{"0x1234"}}}};
+    LibraryCodeView view;
+    view.reset(source, rows, {}, 0, false, true);
+    QCOMPARE(view.blocks().size(), 4);
+    QCOMPARE(view.foldableCount(), 0);
+    view.setRegionFolded("source-block:3", true);
+    view.setRegionFolded("source-block:2", true);
+    QVERIFY(view.isFolded("source-block:3"));
+    QCOMPARE(view.blocks().size(), 3); // The while header is hidden by if.
+    QVERIFY(view.text().contains("if (v7) { /* … */\n  } else {"));
+    QVERIFY(!view.text().contains("while"));
+    QVERIFY(
+        view.mappings().isEmpty()); // Hidden addresses do not map the header.
+    QCOMPARE(view.originalSelection(0, view.text().size()), source);
+    QCOMPARE(view.sourceLineAt(view.text().indexOf("  } else")), 6);
+    view.setRegionFolded("source-block:2", false);
+    QVERIFY(view.text().contains("while (v7) { /* … */"));
+    QVERIFY(!view.text().contains("--v7"));
+    QVERIFY(view.unfoldSourceLine(4));
+    QCOMPARE(view.text(), source);
+    QCOMPARE(view.mappings(), rows);
+    view.setFolded(true); // Library fold-all does not fold source blocks.
+    QVERIFY(!view.anyFolded());
+  }
+
+  void bracesInCommentsCharactersAndRawStringsDoNotFold() {
+    const QString source = "int f() {\n"
+                           "  // {\n"
+                           "  /* } /* nested { */ still comment */\n"
+                           "  const char *a = \"\\\" } {\";\n"
+                           "  const char *b = R\"tag(\" {\n}\")tag\";\n"
+                           "  auto c = r##\"\" {\n}\"##;\n"
+                           "  auto d = `\" {\n}`;\n"
+                           "  auto e = '{';\n"
+                           "  if (e) {\n"
+                           "    return 1;\n"
+                           "  }\n"
+                           "}\n";
+    LibraryCodeView view;
+    view.reset(source, {}, {}, 0, false, true);
+    QCOMPARE(view.blocks().size(), 2);
+    view.setRegionFolded("source-block:2", true);
+    QVERIFY(view.text().contains("if (e) { /* … */"));
+    QVERIFY(view.text().contains("R\"tag(\" {\n}\")tag\""));
+    QCOMPARE(view.originalSelection(0, view.text().size()), source);
+    for (const QString &malformed :
+         {QString("if (x) {\n  x();\n"), QString("if (x) {\n  /*\n}\n"),
+          QString("if (x) {\n  \"unterminated\n}\n")}) {
+      view.reset(malformed, {}, {}, 0, false, true);
+      QVERIFY(view.blocks().isEmpty());
+      QVERIFY(!view.canFold());
+      QCOMPARE(view.text(), malformed);
+    }
+  }
+
+  void branchFoldStateSurvivesPresentationEdits() {
+    LibraryCodeView view;
+    const QString source = "int f() {\n  if (v7) {\n    --v7;\n  }\n}\n";
+    view.reset(source, {}, {}, 0, false, true);
+    view.setRegionFolded("source-block:2", true);
+    const auto structure = view.blockStructure();
+    const auto folded = view.foldedBlocks();
+    view.reset(QString(source).replace("v7", "counter"), {}, {}, 0, false,
+               true);
+    QCOMPARE(view.blockStructure(), structure);
+    view.setFoldedBlocks(folded);
+    QVERIFY(view.text().contains("if (counter) { /* … */"));
+    QVERIFY(!view.text().contains("--counter"));
+  }
+
+  void nestedLibrarySummariesStayIndependentAndCrossingBlocksStayOpen() {
+    LibraryCodeView view;
+    const QString source = "int f() {\n  if (x) {\n    call();\n  }\n}\n";
+    const int call = source.indexOf("call");
+    view.reset(source, {}, {region("call", call, call + 6)}, 0, false, true);
+    view.setFolded(true);
+    view.setRegionFolded("source-block:2", true);
+    view.setRegionFolded("source-block:2", false);
+    QVERIFY(view.libraryFolded());
+    QVERIFY(view.text().contains("std::vector<unsigned int>::size"));
+    view.setRegionFolded("source-block:2", true);
+    QVERIFY(view.unfoldSourceLine(2));
+    QVERIFY(!view.libraryFolded());
+    QCOMPARE(view.text(), source);
+    const int closing = source.indexOf("  }");
+    view.reset(source, {}, {region("cross", call, closing + 3)}, 0, false,
+               true);
+    QVERIFY(!view.hasRegion("source-block:2"));
+    QCOMPARE(view.foldableCount(), 1);
+  }
+
+  void manyBlocksDoNotConsumeTheWorkerRegionBudget() {
+    QString source = "int f() {\n";
+    for (int i = 0; i < 1000; ++i)
+      source += "  if (x) {\n    call();\n  }\n";
+    source += "}\n";
+    LibraryCodeView view;
+    view.reset(source, {}, {}, 0, false, true);
+    QCOMPARE(view.blocks().size(), 1001);
+    view.setRegionFolded("source-block:1", true);
+    QCOMPARE(view.blocks().size(), 1);
+    QCOMPARE(view.originalSelection(0, view.text().size()), source);
+    QVERIFY(view.unfoldSourceLine(2500));
+    QCOMPARE(view.blocks().size(), 1001);
+  }
+
+  void visibleHeaderRowsLeaveTheirBlocksFolded() {
+    const QString source = "int f() {\n"
+                           "  if (x) {\n"
+                           "    call();\n"
+                           "  }\n"
+                           "  done();\n"
+                           "}\n";
+    LibraryCodeView view;
+    view.reset(source, {}, {}, 0, false, true);
+    view.setRegionFolded("source-block:2", true);
+    // Revealing the header or closing row keeps the block folded; only a
+    // hidden row expands it.
+    QVERIFY(!view.unfoldSourceLine(1));
+    QVERIFY(!view.unfoldSourceLine(3));
+    QVERIFY(view.isFolded("source-block:2"));
+    // The summary is the fold, the newline ending the header's row is not.
+    const int summary = int(view.text().indexOf(QStringLiteral("/* … */")));
+    QCOMPARE(view.regionAt(summary), QStringLiteral("source-block:2"));
+    QVERIFY(view.regionAt(int(view.text().indexOf('\n', summary))).isEmpty());
+    QVERIFY(view.unfoldSourceLine(2));
+    QVERIFY(!view.isFolded("source-block:2"));
+
+    // A library operation over whole rows, newlines included, expands from
+    // its last row and not from the row after it.
+    const QString rows = "a();\nb();\nc();\nd();\n";
+    view.reset(rows, {}, {region("op", 5, 15)});
+    view.setRegionFolded("op", true);
+    QVERIFY(!view.unfoldSourceLine(3));
+    QVERIFY(view.unfoldSourceLine(2));
+  }
+
   void foldUnfoldAndCopyUseOriginalUtf8() {
     LibraryCodeView view;
     const QString source =

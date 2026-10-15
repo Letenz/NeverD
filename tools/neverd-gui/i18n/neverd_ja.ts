@@ -839,6 +839,14 @@
         <source>Load symbols from a selected PDB file</source>
         <translation>選択した PDB ファイルからシンボルを読み込む</translation>
     </message>
+    <message>
+        <source>&amp;Edit function...</source>
+        <translation>関数を編集(&amp;E)...</translation>
+    </message>
+    <message>
+        <source>Change the name of the current function and what it is</source>
+        <translation>現在の関数の名前と属性を変更します</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1461,6 +1469,22 @@ Double-click to go to the declaration.</source>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>保存された変数名は別のソース表示のものです</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>ブロックを展開 (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>ブロックを折りたたむ (Ctrl+Shift+[)</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification</source>
+        <translation>シンボリック簡約</translation>
+    </message>
+    <message>
+        <source>Transformation failed: %1</source>
+        <translation>変換に失敗しました: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1475,6 +1499,54 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Keep this function while the disassembly moves on</source>
         <translation>逆アセンブルが移動してもこの関数を表示し続ける</translation>
+    </message>
+    <message>
+        <source>Optimization</source>
+        <translation>最適化</translation>
+    </message>
+    <message>
+        <source>Transform the current function</source>
+        <translation>現在の関数を変換します</translation>
+    </message>
+    <message>
+        <source>Symbolically simplify this function</source>
+        <translation>この関数をシンボリックに簡約します</translation>
+    </message>
+    <message>
+        <source>Recover LLVM control flow</source>
+        <translation>LLVM の制御フローを復元</translation>
+    </message>
+    <message>
+        <source>LLVM optimization</source>
+        <translation>LLVM 最適化</translation>
+    </message>
+    <message>
+        <source>Basic cleanup</source>
+        <translation>基本的なクリーンアップ</translation>
+    </message>
+    <message>
+        <source>O2 (default)</source>
+        <translation>O2 (既定)</translation>
+    </message>
+    <message>
+        <source>Choose passes…</source>
+        <translation>パスを選択…</translation>
+    </message>
+    <message>
+        <source>LLVM passes for this function</source>
+        <translation>この関数の LLVM パス</translation>
+    </message>
+    <message>
+        <source>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</source>
+        <translation>スカラーのクリーンアップパスを選択します。シンボリック簡約は別に制御します。</translation>
+    </message>
+    <message>
+        <source>Restore default source</source>
+        <translation>既定のソースに戻す</translation>
+    </message>
+    <message>
+        <source>Cancel transformation</source>
+        <translation>変換をキャンセル</translation>
     </message>
 </context>
 <context>
@@ -2136,6 +2208,30 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>This engine cannot use an unverified PDB for analysis</source>
         <translation>このエンジンは未検証の PDB による解析に対応していません</translation>
     </message>
+    <message>
+        <source>Line</source>
+        <translation>行</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>列</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>コード</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>関数の読み込みが完了してから参照を検索してください</translation>
+    </message>
+    <message>
+        <source>Could not tell which PDB %1 names: %2</source>
+        <translation>%1 が指定する PDB を特定できませんでした：%2</translation>
+    </message>
+    <message>
+        <source>Could not tell whether %1 has DWARF: %2</source>
+        <translation>%1 に DWARF があるかどうか判別できませんでした：%2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2417,6 +2513,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
         <translation>解析用 PDB を読み込みました: %1（%2 個の名前、ユーザー確認済み、識別情報は未検証）</translation>
     </message>
+    <message>
+        <source>Opened without the PDB the input names, as chosen</source>
+        <translation>選択どおり、入力ファイルが指定する PDB を読み込まずに開きました</translation>
+    </message>
+    <message>
+        <source>Edited the function at %1</source>
+        <translation>%1 の関数を編集しました</translation>
+    </message>
+    <message>
+        <source>Opened without its DWARF debug information, as chosen</source>
+        <translation>選択どおり、DWARF デバッグ情報を読み込まずに開きました</translation>
+    </message>
+    <message>
+        <source>DWARF loaded: %1</source>
+        <translation>DWARF を読み込みました：%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2667,6 +2779,302 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The worker cannot restore analysis state.</source>
         <translation>解析プロセスは解析状態を復元できません。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PdbPromptDialog</name>
+    <message>
+        <source>Load PDB file</source>
+        <translation>PDB ファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>The input file was linked with debug information stored here:</source>
+        <translation>入力ファイルにリンクされたデバッグ情報の保存先：</translation>
+    </message>
+    <message>
+        <source>&amp;Browse…</source>
+        <translation>参照(&amp;B)…</translation>
+    </message>
+    <message>
+        <source>The download was cancelled.</source>
+        <translation>ダウンロードを取り消しました。</translation>
+    </message>
+    <message>
+        <source>A matching copy is at that path.</source>
+        <translation>そのパスに一致するコピーがあります。</translation>
+    </message>
+    <message>
+        <source>A matching copy is beside the input file:</source>
+        <translation>入力ファイルと同じ場所に一致するコピーがあります：</translation>
+    </message>
+    <message>
+        <source>A matching copy is in a symbol directory:</source>
+        <translation>シンボルディレクトリに一致するコピーがあります：</translation>
+    </message>
+    <message>
+        <source>A matching copy is in the symbol store:</source>
+        <translation>シンボルストアに一致するコピーがあります：</translation>
+    </message>
+    <message>
+        <source>Do you want to load it?</source>
+        <translation>読み込みますか？</translation>
+    </message>
+    <message>
+        <source>%1 belongs to another build.</source>
+        <translation>%1 は別のビルドのものです。</translation>
+    </message>
+    <message>
+        <source>%1 cannot be read.</source>
+        <translation>%1 を読み取れません。</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer, and no symbol server is configured.</source>
+        <translation>このコンピューターに一致するコピーがなく、シンボルサーバーも設定されていません。</translation>
+    </message>
+    <message>
+        <source>Do you want to browse for the PDB file on disk?</source>
+        <translation>ディスク上の PDB ファイルを参照しますか？</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer. Only the PDB&apos;s name and build identity are sent to look for it.</source>
+        <translation>このコンピューターに一致するコピーがありません。検索には PDB の名前とビルド ID だけが送信されます。</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the Microsoft Symbol Server?</source>
+        <translation>Microsoft シンボルサーバーでこのファイルを探しますか？</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the symbol server %1?</source>
+        <translation>シンボルサーバー %1 でこのファイルを探しますか？</translation>
+    </message>
+    <message>
+        <source>Downloading %1 from %2…</source>
+        <translation>%2 から %1 をダウンロード中…</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message>
+        <source>Verifying %1…</source>
+        <translation>%1 を検証中…</translation>
+    </message>
+    <message>
+        <source>The downloaded file is not the PDB of this build.</source>
+        <translation>ダウンロードしたファイルはこのビルドの PDB ではありません。</translation>
+    </message>
+    <message>
+        <source>Could not find PDB file &apos;%1&apos;.</source>
+        <translation>PDB ファイル「%1」が見つかりませんでした。</translation>
+    </message>
+    <message>
+        <source>Do you want to try again, or to browse for the PDB file on disk?</source>
+        <translation>もう一度試しますか、それともディスク上の PDB ファイルを参照しますか？</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB ファイル (*.pdb);;すべてのファイル (*)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SymbolDownload</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>シンボルのダウンロードがタイムアウトしました。</translation>
+    </message>
+    <message>
+        <source>No symbol server is configured.</source>
+        <translation>シンボルサーバーが設定されていません。</translation>
+    </message>
+    <message>
+        <source>%1 is not an HTTP symbol server.</source>
+        <translation>%1 は HTTP シンボルサーバーではありません。</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol store directory %1.</source>
+        <translation>シンボルストアのディレクトリ %1 を作成できません。</translation>
+    </message>
+    <message>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>%1 に一時シンボルファイルを開けません: %2</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>シンボルファイルが 2 GiB のダウンロード制限を超えています。</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>シンボルファイル %1 に書き込めません: %2</translation>
+    </message>
+    <message>
+        <source>%1 has no matching symbols for this build.</source>
+        <translation>%1 にはこのビルドに一致するシンボルがありません。</translation>
+    </message>
+    <message>
+        <source>The symbol download from %1 failed: %2</source>
+        <translation>%1 からのシンボルのダウンロードに失敗しました：%2</translation>
+    </message>
+    <message>
+        <source>%1 sent an empty symbol file.</source>
+        <translation>%1 から空のシンボルファイルが送られてきました。</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>圧縮シンボルファイルが無効です。</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>%1 に一時シンボルディレクトリを作成できません: %2</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>圧縮シンボルファイルを展開できませんでした。</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>圧縮シンボルには Windows が必要です。</translation>
+    </message>
+    <message>
+        <source>Cannot save the symbol file to %1: %2</source>
+        <translation>シンボルファイルを %1 に保存できません：%2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FunctionEditDialog</name>
+    <message>
+        <source>Edit function</source>
+        <translation>関数の編集</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this frame size</source>
+        <translation>NeverD はこのフレームサイズを保持しません</translation>
+    </message>
+    <message>
+        <source>&amp;Name of function</source>
+        <translation>関数名(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Analysis decodes where the function ends</source>
+        <translation>関数の終わりは解析が決定します</translation>
+    </message>
+    <message>
+        <source>&amp;Start address</source>
+        <translation>開始アドレス(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;End address</source>
+        <translation>終了アドレス(&amp;E)</translation>
+    </message>
+    <message>
+        <source>&amp;Choose…</source>
+        <translation>選択(&amp;C)…</translation>
+    </message>
+    <message>
+        <source>Function color</source>
+        <translation>関数の色</translation>
+    </message>
+    <message>
+        <source>&amp;Default</source>
+        <translation>既定(&amp;D)</translation>
+    </message>
+    <message>
+        <source>&amp;Color</source>
+        <translation>色(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Enter size of (in bytes)</source>
+        <translation>サイズ (バイト単位)</translation>
+    </message>
+    <message>
+        <source>Local &amp;variables area</source>
+        <translation>ローカル変数領域(&amp;V)</translation>
+    </message>
+    <message>
+        <source>Saved &amp;registers</source>
+        <translation>保存レジスタ(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Only x86 functions pop their arguments</source>
+        <translation>引数をスタックから取り除くのは x86 の関数だけです</translation>
+    </message>
+    <message>
+        <source>&amp;Purged bytes</source>
+        <translation>解放バイト数(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Frame pointer &amp;delta</source>
+        <translation>フレームポインタの差分(&amp;D)</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this flag</source>
+        <translation>NeverD はこのフラグを保持しません</translation>
+    </message>
+    <message>
+        <source>D&amp;oes not return</source>
+        <translation>戻らない(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Analysis ends every call to the function</source>
+        <translation>解析はこの関数への呼び出しをすべて終端として扱います</translation>
+    </message>
+    <message>
+        <source>&amp;Far function</source>
+        <translation>far 関数(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Only 16-bit x86 code has far functions</source>
+        <translation>far 関数があるのは 16 ビット x86 コードだけです</translation>
+    </message>
+    <message>
+        <source>&amp;Library func</source>
+        <translation>ライブラリ関数(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Static func</source>
+        <translation>静的関数</translation>
+    </message>
+    <message>
+        <source>&amp;BP based frame</source>
+        <translation>BP ベースのフレーム(&amp;B)</translation>
+    </message>
+    <message>
+        <source>BP e&amp;quals to SP</source>
+        <translation>BP は SP と等しい(&amp;Q)</translation>
+    </message>
+    <message>
+        <source>Fuzzy SP</source>
+        <translation>あいまいな SP</translation>
+    </message>
+    <message>
+        <source>Outlined code</source>
+        <translation>アウトライン化されたコード</translation>
+    </message>
+    <message>
+        <source>O&amp;K</source>
+        <translation>OK(&amp;K)</translation>
+    </message>
+    <message>
+        <source>DEFAULT</source>
+        <translation>既定</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DwarfPromptDialog</name>
+    <message>
+        <source>DWARF info found</source>
+        <translation>DWARF 情報が見つかりました</translation>
+    </message>
+    <message>
+        <source>Load DWARF debug information?</source>
+        <translation>DWARF デバッグ情報を読み込みますか？</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>（%1）</translation>
     </message>
 </context>
 </TS>

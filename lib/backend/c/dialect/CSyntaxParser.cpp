@@ -84,6 +84,7 @@ struct Declarator {
   size_t NameOffset = 0;
   /// The parameters of the function the name declares, when it declares one.
   std::vector<Decl *> Params;
+  std::optional<size_t> UnprototypedParams;
   bool DeclaresFunction = false;
   /// Applies the declarator to the specifiers' type.
   std::function<const CType *(const CType *)> Apply;
@@ -626,6 +627,7 @@ private:
 
     struct Suffix {
       bool Function = false;
+      size_t ParamsOffset = 0;
       std::optional<uint64_t> Count;
       std::vector<const CType *> Params;
       std::vector<Decl *> ParamDecls;
@@ -649,8 +651,9 @@ private:
         continue;
       }
       if (isPunct("(")) {
-        ++Pos;
         Suffix S;
+        S.ParamsOffset = offset();
+        ++Pos;
         S.Function = true;
         if (!parseParameters(S.Params, S.ParamDecls, S.Variadic, S.Prototyped))
           return false;
@@ -663,11 +666,14 @@ private:
       for (const Suffix &S : Suffixes)
         if (S.Function) {
           D.Params = S.ParamDecls;
+          if (!S.Prototyped)
+            D.UnprototypedParams = S.ParamsOffset;
           D.DeclaresFunction = true;
           break;
         }
     } else {
       D.Params = Inner->Params;
+      D.UnprototypedParams = Inner->UnprototypedParams;
       D.DeclaresFunction = Inner->DeclaresFunction;
     }
     TypeContext &Types = T.Types;
@@ -777,6 +783,8 @@ private:
     Decl *Result = T.newDecl(Kind, S.Begin);
     Result->Name = D.Name;
     Result->Ty = Ty;
+    if (Kind == DeclKind::Function)
+      Result->UnprototypedParams = D.UnprototypedParams;
     Result->Extern = S.Extern;
     Result->Static = S.Static;
     Result->Inline = S.Inline;
@@ -1133,15 +1141,6 @@ private:
         if (!expect(";"))
           return nullptr;
         return finish(S);
-      }
-      if ((W == "__unwind" || W == "__wind") && isPunct("{", 1)) {
-        Stmt *S = T.newStmt(StmtKind::PseudoBlock, Begin);
-        S->Text = W;
-        ++Pos;
-        if (!(S->Then = parseCompound()))
-          return nullptr;
-        S->End = lastEnd();
-        return S;
       }
       if ((W == "__asm__" || W == "__asm" || W == "asm") &&
           (isPunct("(", 1) || isIdent("volatile", 1) ||

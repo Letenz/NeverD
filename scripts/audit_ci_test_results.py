@@ -56,6 +56,28 @@ NON_APPLE_CORPUS_SKIPS = {
         frozenset({"NeverDCxxItaniumEHCorpusTests"}),
     ): "the committed Mach-O probes only run on their host ISA",
 }
+# These tests inspect a running ELF image or compile Linux-specific loader,
+# glibc and System V inputs. Linux CI must execute them; other native profiles
+# retain an explicit skip rather than claiming execution of a foreign runtime.
+NON_LINUX_SESSION_SKIPS = {
+    inventory.TestRecord("SessionCAPITest." + name,
+                         frozenset({"NeverDSessionCAPITests"})): reason
+    for name, reason in (
+        ("BinaryFilesReadTheirProcessorFromTheirBytes",
+         "the test reads code from a little-endian ELF64 host"),
+        ("EveryFunctionOfALazilyBoundProgramShowsAsLLVMC", "builds a glibc program"),
+        ("TLSDescriptorCallsShowAsCallsThroughTheDescriptor",
+         "builds an x86-64 ELF shared object"),
+        ("DebugParametersNameTheRegistersTheyArriveIn",
+         "builds an x86-64 System V program"),
+        ("StubsOfVariadicImportsPassTheirArgumentsOn", "builds a glibc program"),
+        ("BothCBackendsAgreeWhichFunctionsReturnAValue", "builds a glibc program"),
+        ("StartAloneCallsTheBoundStartupImportWithMain", "builds a glibc program"),
+        ("SourcePagesNameTheSymbolsOfRenamedFunctions", "builds a glibc program"),
+        ("FunctionsThatShareANameAreNumberedAsIDANumbersThem", "builds a glibc program"),
+        ("AnalyzedLLVMPagesEmitTheirFunctionAlone", "builds a glibc program"),
+    )
+}
 OUTCOME_NAMES = ("passed", "failed", "skipped", "disabled", "not_run")
 
 
@@ -235,6 +257,13 @@ def audit_results(
                 and reason is not None
                 and result.message == "SKIP_REGULAR_EXPRESSION_MATCHED"
                 and reason in result.output
+            )
+            linux_reason = NON_LINUX_SESSION_SKIPS.get(test)
+            permitted_platform_skip |= (
+                profile in {"macos-patch", "windows-focused"}
+                and linux_reason is not None
+                and result.message == "SKIP_REGULAR_EXPRESSION_MATCHED"
+                and linux_reason in result.output
             )
             if permitted_platform_skip:
                 platform_skips += 1

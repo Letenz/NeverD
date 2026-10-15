@@ -91,7 +91,13 @@ public:
   //--- Module-level (LLVMCEmitter.cpp) ---
   void writeModule(llvm::Module &Mod, const llvm::Function *Only = nullptr);
   void prepareFunctionIdentifiers(llvm::Module &Mod);
+  /// Records which symbol each function identifier stands for
+  /// (CSourceMap::Names), as HighC does, from the ordinary render.
+  void recordSourceNames(const llvm::Module &Mod);
   std::string functionIdentifier(const llvm::Function &Fn) const;
+  std::string sourceScalarType(llvm::Type *Type, bool Signed) const;
+  std::string sourceFunctionDeclaration(const llvm::Function &Fn,
+                                        llvm::StringRef Declarator) const;
   /// The C name of global \p Name: the module names a global by its symbol
   /// (cNameOfLLVMName), but a declaration of an import by the name its
   /// import entry lists, which is already the C name on some formats.
@@ -103,9 +109,10 @@ public:
   void writeGlobals(llvm::Module &Mod);
   void writeImageByteArray(const llvm::GlobalVariable &Global,
                            llvm::StringRef Name);
-  /// Declare the image objects \p Fn reads or writes, and those whose
-  /// addresses alone its printed \p Text names.
-  void writeReferencedImageObjects(const llvm::Function &Fn,
+  /// Declare the image objects \p Fns read or write, and those whose
+  /// addresses alone their printed \p Text names, with each pointer mirror
+  /// the text names that the environment holds rather than the module.
+  void writeReferencedImageObjects(llvm::ArrayRef<const llvm::Function *> Fns,
                                    llvm::StringRef Text);
   void writeForwardDecls(llvm::Module &Mod);
 
@@ -126,6 +133,9 @@ public:
   std::string fcmpInlineText(const llvm::FCmpInst &Compare);
   std::string gepExpr(const llvm::GEPOperator &GEP);
   bool writeRawMemoryCopy(llvm::Instruction &Inst, int Indent);
+  void planRawMemoryUpdates(llvm::Function &Fn);
+  bool writeRawMemoryUpdate(const llvm::StoreInst &Store, int Indent);
+  std::string rawMemoryLoadText(const llvm::LoadInst &Load);
   /// A call whose result is printed at exactly one later instruction is
   /// inlined there. Ctor returns, noreturn, and values with two printed
   /// uses stay assigned. A call that mentions a slot is not moved past a
@@ -225,8 +235,11 @@ public:
   /// `Overlay` uses `CallType` (`ArgList.types_`) on integer stores of a
   /// richer PDB record (`TPtr.p`). Loads and address-of stay the PDB field.
   std::optional<TypedAccess>
+  /// \p ValueType is the type a value access reads or writes; a frame
+  /// record member serves only integer accesses.
   frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize, bool AddressOf,
-                  bool Synthesize = false, bool Overlay = false) const;
+                  bool Synthesize = false, bool Overlay = false,
+                  const llvm::Type *ValueType = nullptr) const;
   std::optional<TypedAccess> typedIndexAccess(const llvm::Value *Ptr);
   std::string indexExprStr(const llvm::Value *V);
   bool isComposedRemValue(const llvm::Value *V);
@@ -489,6 +502,9 @@ public:
   void noteAllocaStore(const llvm::AllocaInst *Slot, const llvm::Value *Stored);
   void discoverSyntheticFrame(llvm::Function &Fn);
   void collectTypedHomes(llvm::Function &Fn);
+  /// The pointer type the callee's prototype gives argument \p Index of
+  /// \p Call: its debug information or the MSVC callee table.
+  TypeRef expectedCallArgType(const llvm::CallBase &Call, unsigned Index) const;
   std::optional<FunctionSym> debugCallee(const llvm::CallBase &Call) const;
   bool looksLikeHiddenSretOperand(const llvm::Value *Arg) const;
   std::string printedCalleeName(const llvm::CallBase &Call) const;
@@ -568,7 +584,8 @@ public:
                                   const llvm::Value *Other);
   std::string enumStoredText(const llvm::AllocaInst *Slot,
                              const llvm::Value *Stored);
-  std::string integerCallStoredText(const llvm::Value *Stored);
+  std::string integerCallStoredText(const llvm::Value *Stored,
+                                    bool AsInteger = false);
   std::string inplaceIntegerUpdate(const llvm::StoreInst &SI,
                                    llvm::StringRef Dest,
                                    const llvm::Value *Stored);
@@ -650,6 +667,7 @@ public:
   std::string getName(const llvm::Value *V);
   std::string freshVar(const std::string &Hint = "v");
   std::string valueStr(const llvm::Value *V, bool *PointerSpelling = nullptr);
+  std::string globalNameStr(const llvm::GlobalValue *Global);
   std::string constStr(const llvm::Constant *C);
   std::string blockLabel(const llvm::BasicBlock *BB);
   std::string binopStr(unsigned Opcode, const std::string &LHS,
@@ -705,6 +723,8 @@ public:
   std::map<const llvm::GlobalVariable *, std::string> ExternalDataIdentifiers;
   /// The C name each function's symbol spells, for its definition's comment.
   std::map<const llvm::Function *, std::string> FunctionSymbolNames;
+  /// Each function's symbol as the image spells it (CSourceName::Symbol).
+  std::map<const llvm::Function *, std::string> FunctionSources;
   /// Import entry names that are C names (SymbolDecorations.def).
   llvm::StringSet<> ImportEntryCNames;
   /// The calls a function's next render keeps as statements: its text
@@ -733,6 +753,12 @@ public:
   /// Fixed expression boundaries, chosen before declarations or assignments
   /// can be omitted and retained by later display-only inlining passes.
   std::set<const llvm::Value *> MaterializedExpressions;
+  /// A captured scalar update can move to its own store only after every
+  /// remaining SSA use and intervening effect has been checked.
+  std::map<const llvm::StoreInst *, const llvm::BinaryOperator *>
+      RawMemoryUpdates;
+  std::set<const llvm::Instruction *> RawMemoryUpdateInputs;
+  std::set<const llvm::LoadInst *> RawMemoryExpressionLoads;
   /// Calls currently being printed as expressions, so a cyclic reprint
   /// falls back to the instruction name.
   std::vector<const llvm::CallBase *> RenderingCalls;
@@ -772,8 +798,23 @@ public:
   mutable std::map<const llvm::AllocaInst *,
                    llvm::SmallVector<ImmediateUser, 2>>
       UniqueImmediateUsers;
+  /// The headers the output includes.
+  std::set<std::string> IncludedHeaders;
+  /// Whether an included header declares data object \p Name
+  /// (LibCDataObjects.def), which C then reaches as the header declares it.
+  bool headerDeclaresObject(llvm::StringRef Name) const {
+    const char *Header = libc::headerOfDataObject(Name);
+    return Header && IncludedHeaders.count(Header);
+  }
   mutable CProjectionIdentifierAllocator ImageIdentifierAllocator;
   mutable std::map<va_t, std::string> ImageObjectNames;
+  /// The comment naming the symbol of each image object whose identifier is
+  /// not that symbol (symbolComment()), by identifier.
+  mutable std::map<std::string, std::string> ImageObjectSymbols;
+  /// The line before the declaration of image object \p Name that names its
+  /// symbol, as a definition names its function's; empty for an object named
+  /// as its symbol is.
+  std::string imageObjectSymbolLine(llvm::StringRef Name) const;
   /// Image data no symbol or debug information names: its name is the
   /// writer's own.
   mutable std::set<va_t> SynthesizedImageObjects;
@@ -841,8 +882,32 @@ public:
     /// Address used as `&slot` or stored into `values_`. Leftover EAX
     /// siblings sit next to these homes and are not themselves taken.
     bool AddressTaken = false;
+    /// In a frame record, the type the member was laid out with. Later
+    /// display typing does not move or widen it.
+    TypeRef MemberType;
+    /// `Type` is a debug symbol's: the object's extent, which a prototype's
+    /// pointee (one element of an array, say) must not replace.
+    bool DebugType = false;
   };
   mutable std::map<uint64_t, NamedFrameSlot> FrameSlots;
+  /// The frame must stay one object (an escape no type bounds, a span that
+  /// crosses slots): its named slots print as members of one record laid out
+  /// exactly like the frame bytes, spelled `FrameRecordName.slot`.
+  bool FrameRecord = false;
+  std::string FrameRecordName;
+  /// \p Slot's spelling: its name, or its member of the frame record.
+  std::string slotText(const NamedFrameSlot &Slot) const;
+  /// Whether a member of type \p Ty (`uint64_t` when null) at frame offset
+  /// \p Off fits the frame record: inside the frame, aligned for its type,
+  /// and clear of every other member.
+  bool frameRecordAdmits(uint64_t Off, const TypeRef &Ty) const;
+  /// The frame record's declaration, from the members the body printed.
+  std::string frameRecordDeclaration(const llvm::AllocaInst &Frame) const;
+  /// Whether a named frame slot \p Load reads can print at each use: every
+  /// use prints later in its block, and nothing between may write memory.
+  /// Otherwise the load reads the slot into its temporary where it is.
+  bool slotReadAtUses(const llvm::LoadInst &Load) const;
+  mutable std::map<const llvm::LoadInst *, bool> SlotReadAtUses;
   /// Different overlapping memory extents cannot become independent scalar
   /// locals. Keep unnamed views of those bytes in the shared backing frame.
   std::set<uint64_t> OverlappingFrameAccessOffsets;

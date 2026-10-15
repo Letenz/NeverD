@@ -1,5 +1,6 @@
 add_neverd_component_library(NeverDBackendC
   CSourceRecorder.cpp
+  CSourceEvidence.cpp
   dialect/CDialect.cpp
   dialect/CSyntaxLexer.cpp
   dialect/CSyntaxParser.cpp
@@ -12,24 +13,31 @@ add_neverd_component_library(NeverDBackendC
   HighC/HighCEmitter.cpp
   HighC/HighCExprBinOp.cpp
   HighC/HighCExprWriter.cpp
+  HighC/HighCX87Context.cpp
   HighC/HighCSourceCalls.cpp
   HighC/HighCSourceNames.cpp
   HighC/HighCFuncWriter.cpp
   HighC/HighCStmtWriter.cpp
   HighC/HighCWindowsThrow.cpp
   HighC/COFF/HighCWindowsCallbacks.cpp
+  HighC/COFF/HighCSEH.cpp
+  HighC/COFF/HighCCxxEH.cpp
+  HighC/X86/HighCCallSetup.cpp
   HighC/X86/HighCRegistration.cpp
   LLVMC/LLVMCEmitter.cpp
   LLVMC/LLVMCExprWriter.cpp
   LLVMC/LLVMCFuncWriter.cpp
+  LLVMC/LLVMCMemoryUpdates.cpp
   LLVMC/LLVMCScalarRegions.cpp
   LLVMC/LLVMCScalarExpressions.cpp
   LLVMC/LLVMCStmtWriter.cpp
+  LLVMC/LLVMCStackAllocation.cpp
   pass/HighC/HighCDeadStoreAnalysis.cpp
   pass/HighC/HighCHiLoCollapse.cpp
   pass/HighC/HighCStoreForwarding.cpp
   pass/HighC/HighCUsedVars.cpp
   pass/HighC/HighCVoidAnalysis.cpp
+  pass/LLVMC/LLVMCBitTests.cpp
   pass/LLVMC/LLVMCCommonBranches.cpp
   pass/LLVMC/LLVMCLoopPhases.cpp
   pass/LLVMC/LLVMCScalarLoopRecovery.cpp

@@ -8,9 +8,12 @@ add_neverd_component_library(NeverDIRMed
   X86/RegistrationCatchContext.cpp
   X86/RegistrationCleanupContext.cpp
   X86/RegistrationCall.cpp
+  X86/RegistrationCallResult.cpp
   X86/RegistrationEntry.cpp
   X86/RegistrationRoots.cpp
   X86/RegistrationReachability.cpp
+  X86/SEHFrame.cpp
+  X86/SEHSourceRoots.cpp
   abi/MedABIPass.cpp
   abi/MedABIPassI386.cpp
   abi/MedABIPassSupport.cpp
@@ -23,6 +26,7 @@ add_neverd_component_library(NeverDIRMed
   abi/MedCallConventionSysV.cpp
   abi/MedCallConventionWin64.cpp
   abi/MedCallingConv.cpp
+  abi/MedCallingConvFP.cpp
   abi/MedCallingConvX86.cpp
   abi/MedSyscallConvention.cpp
   abi/MedSyscallConventionLinux.cpp
@@ -54,6 +58,7 @@ add_neverd_component_library(NeverDIRMed
   pass/MedMutableSource.cpp
   pass/MedNoReturn.cpp
   pass/MedPropagation.cpp
+  pass/MedPrologueSaves.cpp
   pass/MedPredicatedEffects.cpp
   pass/MedSSA.cpp
   pass/MedSourceParameterUses.cpp

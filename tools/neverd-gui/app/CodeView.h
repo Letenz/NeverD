@@ -15,6 +15,7 @@
 class QComboBox;
 class QLabel;
 class QToolButton;
+class QMenu;
 
 namespace neverd::gui {
 
@@ -29,13 +30,19 @@ public:
   struct Line {
     StyledLine styled;
     QVector<Address> addresses;
-    /// The line shows a folded library operation.
+    /// The line shows a folded summary.
     bool folded = false;
+    int sourceLine = 0;
+    QString block;
+    bool blockFolded = false;
   };
 
   CodeText(Session &session, QWidget *parent = nullptr);
 
-  void load(Address function, const QString &representation);
+  void load(Address function, const QString &representation,
+            std::optional<QJsonObject> options = std::nullopt);
+  const QJsonObject &sourceOptions() const { return sourceOptions_; }
+  void setSourceOptions(const QJsonObject &options);
   void clear();
   /// Stop obsolete requests/pages, including an in-flight analysis process
   /// when no other view still subscribes to its result.
@@ -50,6 +57,18 @@ public:
   QString currentToken() const;
   /// The selected source name's image address or declared-local identity.
   std::optional<QJsonObject> renameTarget() const;
+  /// Occurrences of one declared local in the complete, unfolded source.
+  struct LocalReference {
+    int line = 0, column = 0;
+    int begin = 0, end = 0;
+    QString text;
+  };
+  QVector<LocalReference> localReferences(const QJsonObject &target) const;
+  /// Reveal and select an occurrence, expanding any fold that contains it.
+  bool selectLocalReference(const QJsonObject &target,
+                            const LocalReference &reference);
+  /// Changes when a load, cancellation or clear retires this source document.
+  quint64 documentVersion() const { return serial_; }
   /// The original source row under the cursor, independent of folding.
   std::optional<QJsonObject> commentTarget() const;
   QString selectedText() const;
@@ -80,6 +99,8 @@ public:
   /// writer puts beside the declaration names it.
   std::optional<Address> objectAddress(const QString &name) const;
   void setFolded(bool folded);
+  /// Fold the header's block, or the innermost block containing the cursor.
+  bool setCurrentBlockFolded(bool folded);
   const QString &status() const { return status_; }
   /// Pages of the current function are still arriving.
   bool loading() const { return loading_; }
@@ -124,6 +145,7 @@ protected:
   void contextMenuEvent(QContextMenuEvent *event) override;
   void scrollContentsBy(int dx, int dy) override;
   bool event(QEvent *event) override;
+  bool viewportEvent(QEvent *event) override;
 
 private:
   void request(int offset, quint64 serial);
@@ -135,6 +157,9 @@ private:
   /// Position in the displayed text of a line and column.
   int displayPosition(int line, int column) const;
   QString regionAt(const QPoint &position) const;
+  QString blockAt(const QPoint &position) const;
+  void updateMouseCursor(const QPoint &position);
+  void setRegionFolded(const QString &id, bool folded);
   void highlightLine(Line &line, bool &inComment) const;
   void updateMetrics();
   void updateRange();
@@ -160,10 +185,13 @@ private:
   std::optional<Address> function_;
   std::optional<Address> pendingAddress_, selectedAddress_;
   QString representation_, status_, highlight_;
+  QJsonObject sourceOptions_, renderedOptions_;
   quint64 serial_ = 0;
   bool inComment_ = false, loading_ = false, foldAfterLoad_ = false;
   bool interrupted_ = false;
   bool foldPreludeAfterLoad_ = true;
+  QSet<QString> blocksAfterLoad_;
+  QString blockStructureAfterLoad_;
   /// The first page's prelude: lines and end_byte.
   QJsonObject prelude_;
   /// The language the first page names, and how many declarations it shows
@@ -211,6 +239,7 @@ public:
   CodeText *text() const { return text_; }
   void showFunction(Address function);
   void setRepresentation(const QString &representation);
+  void addSourceActions(QMenu &menu);
   /// The representation the selector shows, loaded or still to load.
   QString representation() const;
   /// The view stays on its function instead of following the disassembly.
@@ -241,7 +270,7 @@ private:
   void updateRepresentations();
   Session &session_;
   QComboBox *selector_;
-  QToolButton *fold_, *lock_;
+  QToolButton *fold_, *lock_, *optimize_;
   QLabel *status_;
   CodeText *text_;
 };

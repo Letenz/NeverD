@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include "neverd/web/Source.h"
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -21,8 +23,8 @@ namespace neverd::web {
 /// SDK sessions concurrently. No global runtime or signal handler is installed.
 class ParserBudget {
 public:
-  enum class Profile { Interactive, Recovery };
-  explicit ParserBudget(Profile Selected = Profile::Interactive);
+  explicit ParserBudget(
+      SourceAnalysisMode Mode = SourceAnalysisMode::Interactive);
   ~ParserBudget();
   ParserBudget(const ParserBudget &) = delete;
   void charge(size_t Bytes);
@@ -31,7 +33,7 @@ private:
   ParserBudget *Previous;
   uint64_t Bytes = 0;
   uint64_t Work = 0;
-  uint64_t MaxBytes = 32 * 1024 * 1024, MaxWork = 200000;
+  uint64_t MaxBytes, MaxWork;
   std::chrono::steady_clock::time_point Deadline;
 };
 

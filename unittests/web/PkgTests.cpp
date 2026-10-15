@@ -12,6 +12,7 @@
 #include "BlobStore.h"
 #include "Internal.h"
 #include "PkgFixture.h"
+#include "ProducerCorpus.h"
 #include "gtest/gtest.h"
 
 #include "neverd/web/Error.h"
@@ -39,6 +40,7 @@ std::string readQualification(const std::filesystem::path &Path) {
 class WebPkg : public ::testing::Test {
 protected:
   void SetUp() override {
+    ASSERT_TRUE(test::producerPrerequisite(pkgAvailable(), "pkg namespace"));
     if (!pkgAvailable())
       GTEST_SKIP() << "Pinned portable namespace policy unavailable";
   }
@@ -402,6 +404,7 @@ TEST_F(WebPkg, AggregateJSONAndLinkCountLimitsApplyAcrossPrivateDocuments) {
 
 TEST_F(WebPkg, OptionalSixPlatformProducerImagesMatchIndependentInputs) {
   const char *Root = std::getenv("NEVERD_PKG_581_CORPUS");
+  ASSERT_TRUE(test::producerCorpus("NEVERD_PKG_581_CORPUS", Root));
   if (!Root || !*Root)
     GTEST_SKIP() << "Pinned pkg producer corpus not supplied";
   const std::filesystem::path Directory(Root);
@@ -461,6 +464,7 @@ TEST_F(WebPkg, OptionalSixPlatformProducerImagesMatchIndependentInputs) {
 TEST_F(WebPkg,
        OptionalProducerPreprocessingPreservesStoredAndOriginalEvidence) {
   const char *Root = std::getenv("NEVERD_PKG_581_CORPUS");
+  ASSERT_TRUE(test::producerCorpus("NEVERD_PKG_581_CORPUS", Root));
   if (!Root || !*Root)
     GTEST_SKIP() << "Pinned pkg producer corpus not supplied";
   const std::filesystem::path Directory(Root);

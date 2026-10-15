@@ -12,6 +12,7 @@
 #include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/loader/SymbolSpelling.h"
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -193,6 +194,26 @@ TEST(SourceDialect, CxxProgramDefaultsIncludeCLinkageEntryPoints) {
   EXPECT_EQ(offeredSourceDialects(Plain),
             (std::vector<SourceDialect>{SourceDialect::C}));
   EXPECT_EQ(sourceDialectOfFunction("main", true, Plain), SourceDialect::C);
+}
+
+TEST(SourceDialect, AFunctionWhoseHandlersACxxRuntimeDispatchesReadsInCxx) {
+  // A `try` the C++ personality dispatches is C++ source, even under a C
+  // name in an image whose other evidence established only C.
+  LanguageRuntimeInfo Plain;
+  Plain.Runtime = SourceLanguageRuntime::C;
+  for (auto Handler :
+       {SourceLanguageRuntime::CxxItanium, SourceLanguageRuntime::CxxMSVC}) {
+    EXPECT_EQ(sourceDialectOfFunction("parse_config", true, Plain, Handler),
+              SourceDialect::Cpp);
+    EXPECT_EQ(sourceDialectOfFunction("", false, Plain, Handler),
+              SourceDialect::Cpp);
+  }
+  // SEH `__try` and C's cleanup-only `-fexceptions` tables stay C.
+  EXPECT_EQ(sourceDialectOfFunction("DriverEntry", true, Plain,
+                                    SourceLanguageRuntime::C),
+            SourceDialect::C);
+  EXPECT_EQ(sourceDialectOfFunction("DriverEntry", true, Plain),
+            SourceDialect::C);
 }
 
 TEST(SourceDialect, PlainCKeepsNativeExceptionCallsAndHandlerDefinitions) {
@@ -805,6 +826,108 @@ TEST(SourceDialect, PlainCCallbackRequiresItsNativeTableAndBodyIdentity) {
   }
 }
 
+TEST(SourceDialect, CxxUnknownExternalParametersKeepDefaultPromotions) {
+  const llvm::StringRef Source = R"C(
+extern int native_call(/* unknown parameters */) __asm__("native_call");
+int known(void);
+int defined();
+int known(void) { return 3; }
+int defined() { return 4; }
+int main(void) {
+  signed char value = -7;
+  float fraction = 1.25f;
+  return native_call(value, fraction, &value) + known() + defined() - 7;
+}
+)C";
+  const auto C = spell(Source, SourceDialect::C);
+  const auto Cpp = spell(Source, SourceDialect::Cpp);
+  ASSERT_TRUE(C.Unread.empty()) << C.Text;
+  ASSERT_TRUE(Cpp.Unread.empty()) << Cpp.Text;
+  EXPECT_EQ(tokens(C.Text), tokens(Source));
+  EXPECT_NE(Cpp.Text.find("native_call(.../* unknown parameters */)"),
+            std::string::npos)
+      << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("int known(void);"), std::string::npos);
+  EXPECT_NE(Cpp.Text.find("int defined();"), std::string::npos);
+  EXPECT_NE(Cpp.Text.find("int defined() {"), std::string::npos);
+  EXPECT_NE(Cpp.Text.find("native_call(value, fraction, &value)"),
+            std::string::npos);
+  // Separate prototypes and source labels still refer to their own tokens.
+  const auto Several =
+      spell("extern int first(), second() __asm__(\"first()\");\n",
+            SourceDialect::Cpp);
+  EXPECT_TRUE(Several.Unread.empty());
+  EXPECT_NE(Several.Text.find("first(...), second(...) __asm__(\"first()\")"),
+            std::string::npos)
+      << Several.Text;
+
+  const std::string Clang = NEVERD_TEST_CLANG;
+  if (Clang.empty())
+    GTEST_SKIP() << "no clang: C and C++ argument promotion is not executed";
+  llvm::SmallString<128> Dir;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-prototype", Dir));
+  llvm::SmallString<128> Provider(Dir), Object(Dir);
+  llvm::sys::path::append(Provider, "provider.c");
+  llvm::sys::path::append(Object, "provider.o");
+  std::error_code EC;
+  {
+    llvm::raw_fd_ostream OS(Provider, EC);
+    ASSERT_FALSE(EC);
+    // The source's explicit assembler label is exact on Mach-O as well.
+    // An ordinary definition would otherwise acquire the platform prefix.
+    OS << "int native_call(int, double, signed char *) "
+          "__asm__(\"native_call\");\n"
+          "int native_call(int value, double fraction, signed char *pointer) "
+          "{\n"
+          "  return value != -7 || fraction != 1.25 || *pointer != -7;\n}\n";
+  }
+  auto ProviderBuild =
+      run(Clang, {"-std=c11", "-c", Provider, "-o", Object}, Dir);
+  ASSERT_TRUE(bool(ProviderBuild)) << llvm::toString(ProviderBuild.takeError());
+  for (bool IsCpp : {false, true}) {
+    llvm::SmallString<128> File(Dir), Binary(Dir);
+    llvm::sys::path::append(File, IsCpp ? "source.cpp" : "source.c");
+    llvm::sys::path::append(Binary, IsCpp ? "cpp.out" : "c.out");
+    {
+      llvm::raw_fd_ostream OS(File, EC);
+      ASSERT_FALSE(EC);
+      OS << (IsCpp ? Cpp.Text : C.Text);
+    }
+    // Check the actual frontend argument types on every host. Darwin AArch64
+    // has different fixed and variadic physical ABIs; the C++ ellipsis is a
+    // source view and cannot authorize a call to the fixed C provider there.
+    llvm::SmallString<128> IR(Dir);
+    llvm::sys::path::append(IR, IsCpp ? "source-cpp.ll" : "source-c.ll");
+    auto CompiledIR = run(Clang,
+                          {IsCpp ? "-std=c++17" : "-std=c11", "-O0", "-S",
+                           "-emit-llvm", File, "-o", IR},
+                          Dir);
+    ASSERT_TRUE(bool(CompiledIR)) << llvm::toString(CompiledIR.takeError());
+    auto Buffer = llvm::MemoryBuffer::getFile(IR);
+    ASSERT_TRUE(bool(Buffer));
+    bool Promoted = false;
+    llvm::SmallVector<llvm::StringRef> Lines;
+    Buffer.get()->getBuffer().split(Lines, '\n');
+    for (const auto Line : Lines)
+      if (Line.contains("call ") && Line.contains("native_call"))
+        Promoted |= Line.contains("i32 ") && Line.contains("double ") &&
+                    Line.contains("ptr ");
+    EXPECT_TRUE(Promoted) << Buffer.get()->getBuffer().str();
+#if defined(__APPLE__) && defined(__aarch64__)
+    if (IsCpp)
+      continue;
+#endif
+    auto Built = run(
+        Clang,
+        {IsCpp ? "-std=c++17" : "-std=c11", "-O1", "-o", Binary, File, Object},
+        Dir);
+    ASSERT_TRUE(bool(Built)) << llvm::toString(Built.takeError());
+    auto Result = run(Binary, {}, Dir);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  }
+  llvm::sys::fs::remove_directories(Dir);
+}
+
 TEST(SourceDialect, CxxAlignmentUsesStandardSyntaxAndPreservesStorage) {
   const llvm::StringRef Source = R"C(
 #include <stdint.h>
@@ -860,6 +983,80 @@ int main(void) {
 /// both on the same inputs and compares what they print: the Rust view must
 /// compute what the C computes.  NEVERD_TEST_RUSTC or a `rustc` on PATH runs
 /// it; without one the check is skipped, as the SBF source suite is.
+TEST(SourceDialect, KeepsEveryDeclaratorOfADeclarationOnce) {
+  // Every declarator of `float a, b;` begins at the shared specifiers. The C
+  // and C++ views printed the first declarator again before the second.
+  constexpr const char *Source = R"C(#include <stdint.h>
+uint32_t bits(uint32_t x) {
+    float a, b;
+    uint32_t *p = &x, *q, y = 2;
+    __builtin_memcpy(&a, &x, 4);
+    b = a;
+    __builtin_memcpy(&x, &b, 4);
+    q = p;
+    return *q + y;
+}
+)C";
+  const auto C = spell(Source, SourceDialect::C);
+  ASSERT_TRUE(C.Unread.empty()) << C.Text;
+  EXPECT_EQ(tokens(C.Text), tokens(Source)) << C.Text;
+  const auto Cpp = spell(Source, SourceDialect::Cpp);
+  ASSERT_TRUE(Cpp.Unread.empty()) << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("float a, b;"), std::string::npos) << Cpp.Text;
+  EXPECT_EQ(Cpp.Text.find("float a;"), std::string::npos) << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("uint32_t *p = &x, *q, y = 2;"), std::string::npos)
+      << Cpp.Text;
+}
+
+TEST(SourceDialect, AFrameRecordPrintsItsTypeWhereItIsDeclared) {
+  // HighC declares a kept frame as one record laid out like its bytes. C
+  // and C++ define the record in the declaration; Go and Rust declare an
+  // object of a named type, so they print the type's definition first.
+  constexpr const char *Source = R"C(#include <stdint.h>
+int64_t frame_record(int64_t arg0) {
+    _Alignas(16) struct frame_401000 {
+        uint8_t gap0[24];
+        int64_t var_m10;
+        int64_t var_m8;
+    } stack_storage;
+    const uintptr_t frame_base = (uintptr_t)((uint8_t *)&stack_storage + 40);
+    stack_storage.var_m10 = arg0;
+    *(int64_t *)(frame_base - 8) = 5;
+    return stack_storage.var_m10 + stack_storage.var_m8;
+}
+)C";
+  const auto C = spell(Source, SourceDialect::C);
+  ASSERT_TRUE(C.Unread.empty()) << C.Text;
+  EXPECT_EQ(tokens(C.Text), tokens(Source));
+  const auto Cpp = spell(Source, SourceDialect::Cpp);
+  ASSERT_TRUE(Cpp.Unread.empty()) << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("alignas(16) struct frame_401000 {"),
+            std::string::npos)
+      << Cpp.Text;
+  for (SourceDialect Dialect : {SourceDialect::Go, SourceDialect::Rust}) {
+    const bool Go = Dialect == SourceDialect::Go;
+    const auto View = spell(Source, Dialect);
+    ASSERT_TRUE(View.Unread.empty()) << View.Text;
+    const auto Type = View.Text.find(Go ? "type frame_401000 struct {"
+                                        : "struct frame_401000 {");
+    const auto Object =
+        View.Text.find(Go ? "var stack_storage frame_401000"
+                          : "let mut stack_storage: frame_401000;");
+    ASSERT_NE(Type, std::string::npos) << View.Text;
+    ASSERT_NE(Object, std::string::npos) << View.Text;
+    EXPECT_LT(Type, Object) << View.Text;
+    EXPECT_NE(View.Text.find(Go ? "var_m10 int64" : "var_m10: i64,"),
+              std::string::npos)
+        << View.Text;
+    // One definition, though the record is named again at every member.
+    EXPECT_EQ(View.Text.find(Go ? "type frame_401000 struct {"
+                                : "struct frame_401000 {",
+                             Type + 1),
+              std::string::npos)
+        << View.Text;
+  }
+}
+
 TEST(SourceDialect, RustViewComputesWhatCComputes) {
   std::string Rustc;
   if (const char *FromEnv = std::getenv("NEVERD_TEST_RUSTC"))

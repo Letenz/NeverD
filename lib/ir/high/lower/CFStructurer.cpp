@@ -55,10 +55,11 @@ MedToHighConverter::phiCopiesForEdge(int From, int To, va_t At,
     Copy.Addr = At;
     Copy.IsPhiCopy = true;
     Copy.Dst = HighExpr::makeVar(Output);
-    // Keep a join PHI's incoming expression, not just the predecessor
-    // register. `arg = this+imm` that feeds a later call is otherwise a
-    // skippable Var PhiCopy and invert-skip drops it before HighC.
-    Copy.Val = forceInlineExpr(medvarToExpr(Argument));
+    // A join PHI's incoming value reads as in any other statement: a
+    // definition only the PHI uses is inlined, and a value read more than
+    // once stays the variable its assignment names.  Inlining that one too
+    // would repeat a shared expression once per read.
+    Copy.Val = medvarToExpr(Argument);
     bool ReadsDestination = false;
     std::set<const HighExpr *> Seen;
     std::function<void(const ExprPtr &)> Visit =
@@ -682,7 +683,9 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
       const size_t StatementBegin = Func.Body.size();
       switch (CurOp.Opcode) {
       case NdOp::STORE:
-        lowerStore(Func, CurOp);
+        // A prologue save keeps the caller's register, which no source reads.
+        if (!CurOp.PrologueSave)
+          lowerStore(Func, CurOp);
         break;
       case NdOp::CALL:
         lowerCall(Func, CurBlock, CurOp);

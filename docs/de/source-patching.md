@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: f682c59ea924e0d6188c4b2c418b7ad04e246df77c9925a04788a84818d838ab -->
+<!-- i18n-source: e9f75b83d2e57f9899d8319d6750fa790f310da19f83d7c653dfc2c987ea3621 -->
 
 [← Documentation Index](README.md)
 
@@ -11,11 +11,13 @@ NeverD kompiliert die Ersatzfunktion mit dem ausgewählten Compiler und installi
 <!-- i18n-section: compiler -->
 ## Compiler auswählen
 
-Wählen Sie `--compiler=clang`, `--compiler=gcc` oder `--compiler=neverc`. Clang und NeverC im normalen Modus erzeugen LLVM IR; `object` erhält native Maschinenbefehle. Die CLI wählt für GCC standardmäßig Objekte. Im Python-SDK ist für GCC `artifact="object"` ausdrücklich erforderlich. Ein anderer Compiler wird niemals stillschweigend eingesetzt.
+Wählen Sie `--compiler=clang`, `--compiler=gcc` oder `--compiler=neverc`. Clang und NeverC im normalen Modus erzeugen LLVM IR; `object` erhält native Maschinenbefehle. Die CLI wählt für GCC standardmäßig Objekte. Das Python-SDK wählt für GCC ebenfalls Objekte. Ein anderer Compiler wird niemals stillschweigend eingesetzt.
 
 Übergeben Sie Include-Pfade, Makrodefinitionen und unterstützte Quelloptionen mit `--compiler-arg` oder `compiler_args` im SDK. Änderungen an Ziel oder Ausgabemodus sowie Antwortdatei-Token (`@file`) werden an jeder Argumentposition abgelehnt, auch als separate Optionswerte. Gewöhnliche `-I`-Pfade und `-D`-Definitionen bleiben unterstützt.
 
 Ersetzen Sie Beispieladressen durch bestätigte ursprüngliche Funktionseinstiege. Die Deklaration muss zur ursprünglichen Maschinen-ABI passen, einschließlich Aufrufkonvention und Strukturaufbau; eine Adresse beweist dies nicht. C++ benötigt `--language=c++` und das passende Clang++/G++. Verwenden Sie einen `extern "C"`-Einstieg oder den exakten dekorierten Symbolnamen. Zusätzliche Hilfsfunktionen sind erlaubt. `--entry` und `--func` wählen den Ersatz ausdrücklich; auch das ältere `--from-c` beachtet die Adresse.
+
+`artifact="object"` lässt sich weiterhin explizit wählen.
 
 ```sh
 # Clang C -> LLVM IR
@@ -42,15 +44,38 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 <!-- i18n-section: profiles -->
 ## Geprüfte Profile und Grenzen
 
+[NeverC producer: 182fd2c5dc](https://github.com/NeverSight/NeverC/commit/182fd2c5dc)
+
+**NeverC C und hosted DynCode**
+
+NeverC akzeptiert ausschließlich reinen C-Quelltext auf ELF, PE und Mach-O für x64/ARM64. NeverD lehnt NeverC mit `--language=c++` vor dem Compilerstart ab; es übersetzt nicht implizit und wechselt den Compiler nicht. C++ und Ausnahmen verwenden Clang oder einen passenden GCC-Treiber für das geprüfte ELF-Objektprofil. Hosted-C-Rahmen können mit echten Unwind-Daten eine vom umgebenden C++-Programm ausgelöste und gefangene Ausnahme weitergeben. Das ist keine C++-Sprachunterstützung in NeverC.
+
+`dyncode`: `--compile-mode=dyncode` verwendet `-fdyncode-hosted`: Quelle, ein expliziter Einstieg, natives Objekt und keine Originalbindungen. CLI und Python wählen dafür und für GCC standardmäßig Objekte. Beide Hashes, sämtliche gelinkten Codebytes und der Einstieg werden vor Veröffentlichung geprüft; echte CFI/SEH oder vollständige native Compact-Daten liefern Unwind-Abdeckung. Veränderlicher/TLS-Zustand, implizite syscall/PEB/heap/string-Umwandlung, ungelöste Imports und umgeordneter Code werden abgelehnt. Daten und Callback-Zeiger können Parameter sein.
+
+```sh
+neverd patch app --from-source=replacement.cpp --language=c++ \
+  --compiler=clang --compiler-path=/path/to/clang++ \
+  --entry=replacement --func=0x401140 --patch-report -o app.cpp
+neverd patch app --from-source=replacement.c --compiler=neverc \
+  --compiler-path=/path/to/neverc --compile-mode=dyncode \
+  --entry=replacement --func=0x401140 --patch-report -o app.dyncode
+```
+
+Clang LLVM IR unterstützt Windows ARM64 C++ FH3 mit geprüfter xdata-Zuordnung, Elternframe-ABI und funclet/FuncInfo-Gruppen. Native Objekt-Sprachhandler bleiben ausgeschlossen. `check_source_patch_cpp_runtime.py` führt neun Szenarien auf nativem Windows x64/ARM64 aus; CPU- und OS-Unwinder-Belege bleiben getrennt.
+
 | Compiler | Artefakt | Geprüftes OS-Laufzeitprofil |
 |---|---|---|
-| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x64 C/C++ FH3 |
-| Clang 22.1.6 | Natives Objekt | ELF x64 C/C++ |
-| GCC/G++ 13.3.0 | Natives Objekt | ELF x64 C/C++ mit kompatibler Itanium-Laufzeit |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.6 | Natives Objekt | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| GCC/G++ 13.3.0 | Natives Objekt | ELF x64/ARM64 C/C++ mit kompatibler Itanium-Laufzeit; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
 | NeverC 3389.1.5 normaler Modus | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 normaler Modus | Natives Objekt | ELF x64 C |
+| NeverC 3389.1.5 C | LLVM IR / natives Objekt | ELF / PE / Mach-O x64/ARM64: reiner C-Quelltext |
+| NeverC 3389.1.5 `hosted-v1` | Natives Objekt + versiegelte Nutzlast | ELF / PE / Mach-O x64/ARM64: C-Quelltext und Ausnahmeweitergabe durch C-Rahmen |
 
-Die Tabelle nennt geprüfte OS-Laufzeitprofile, keine Zusage für jede Compiler-Version oder Option. Die nativen Installer für ELF, PE und Mach-O akzeptieren alle vier Architekturen. `dyncode` und NeverC C++ sind nicht zugelassen. GCC benötigt einen passenden ELF-Treiber und erzeugt kein LLVM IR. Unbekannte Relokationen, TLS, Konstruktoren, LTO, common/IFUNC-Symbole und unaufgelöste Imports führen zu klaren Fehlern. Der JSON-Beleg enthält Compiler, Argumente, Bindungen und Adressen; native Objekte erhalten zusätzlich SHA-256.
+Die Tabelle nennt geprüfte OS-Laufzeitprofile, keine Zusage für jede Compiler-Version oder Option. Die nativen Installer für ELF, PE und Mach-O akzeptieren alle vier Architekturen. GCC benötigt einen passenden ELF-Treiber und erzeugt kein LLVM IR. Unbekannte Relokationen, TLS, globale Konstruktoren beim Laden, LTO, common/IFUNC-Symbole und unaufgelöste Imports führen zu klaren Fehlern. Der JSON-Beleg enthält Compiler, Argumente, Bindungen und Adressen; native Objekte erhalten zusätzlich SHA-256.
+
+Das Feld `target` im Beleg eines nativen Objekts folgt der ABI des geladenen Images, einschließlich der ARM-ELF-Gleitkommaflags und der unterschiedlichen iOS/watchOS-Plattformen. Kompilierte und bereitgestellte Objekte verwenden dieselbe Identitätsregel.
 
 Die CPU-Matrix verlangt erfolgreiche Installation von Quellcode, bereitgestelltem IR und nativen Objekten in allen zwölf Kombinationen. Sie prüft ARMv7k watchOS und ARMv7 iOS getrennt sowie veränderliche／konstante Daten, Fließkomma- und Stackargumente originaler Funktionen und Einsprünge nach Änderung der Ladeadresse. CPU-Ausführung bestätigt weder OS-Loader noch C++-Unwinder oder beliebige ABIs; dafür gelten die OS-Profile oben.
 
@@ -62,7 +87,7 @@ Die CPU-Matrix verlangt erfolgreiche Installation von Quellcode, bereitgestellte
 
 `CPU` bedeutet Quellcode／IR／Objekt-Installation, erneutes Laden und exaktes Funktionsergebnis. ARM ELF wählt EABI5, ARM/Thumb-Modus und Fließkomma-ABI anhand des Images und registriert einen vollständigen sortierten `EHABI`-Index. PE bewahrt x64/ARM-Laufzeitzeilen und `HIGHLOW`/`DIR64`/`MOV32T`-Basisrelokationen; x86 verwendet Compiler-Registrierungscode. Mach-O unterscheidet watchOS DWARF und iOS `SjLj` anhand des CPU-Untertyps. ARM/Thumb-Einsprungzweige sind relativ und überstehen Rebasierung.
 
-Native Objekte verwenden eigene begrenzte Funktionssymbole, Hilfs／Abschnittsdefinitionen und Unwind-Daten; MC-Besitzer-IDs werden nicht erfunden und IR wird nicht neu kompiliert. COFF benötigt genaue Hilfsgrößen oder Abschnitte mit einer Funktion (`-ffunction-sections`). Der watchOS-Adapter behält Blattfunktionsrahmen für echte Unwind-Einträge. Native COFF/Mach-O-Sprachhandler gehören nicht zum geprüften Objektprofil; C++-Ausnahmen verwenden den geprüften IR-Pfad. Statische ARM-Unwinder mit festem exidx-Register, unregistrierte absolute Mach-O-Zeiger und nicht unterstützter RELRO-Speicher werden abgewiesen.
+Native Objekte verwenden eigene begrenzte Funktionssymbole, Hilfs／Abschnittsdefinitionen und Unwind-Daten; MC-Besitzer-IDs werden nicht erfunden und IR wird nicht neu kompiliert. COFF-Funktionsbereiche erfordern genaue Hilfsgrößen, Abschnitte mit einer Funktion (`-ffunction-sections`) oder dekodierte native Laufzeitfunktionseinträge; die Größe wird nie aus dem nächsten Symbol geschätzt. Der watchOS-Adapter behält Blattfunktionsrahmen für echte Unwind-Einträge. Native COFF/Mach-O-Sprachhandler gehören nicht zum geprüften Objektprofil; C++-Ausnahmen verwenden den geprüften IR-Pfad. Statische ARM-Unwinder mit festem exidx-Register, unregistrierte absolute Mach-O-Zeiger und nicht unterstützter RELRO-Speicher werden abgewiesen.
 
 GCC-C-Objekte wurden auch auf ELF x86, ARM32 und ARM64 installiert und mit Linux QEMU user mode ausgeführt. Der Adapter wählt ARM/Thumb anhand des Images; GNU-Property-Einträge folgen der ELF-Zeigerbreitenausrichtung.
 
@@ -86,7 +111,9 @@ Wachsende Mach-O-Unwind-Tabellen benötigen zusätzlich freien angrenzenden Date
 <!-- i18n-section: exceptions -->
 ## C++-Ausnahmen
 
-ELF verwendet Compiler-FDE/LSDA; Mach-O verwendet compact unwind/DWARF. PE x64 akzeptiert Compiler-FH3-Tabellen mit vorhandener kompatibler MSVC-Laufzeit und passenden Typidentitäten. Type-info-Daten können ausdrückliche Bindungen erfordern. FH4, eigene Personalities, SEH-Quellcode und aktive CFG/EHCont/XFG-Modi werden abgelehnt; ursprüngliche Schutzflags bleiben erhalten.
+ELF verwendet Compiler-FDE/LSDA; Mach-O verwendet compact unwind/DWARF. PE x64/ARM64 akzeptiert Compiler-FH3-Tabellen mit vorhandener kompatibler MSVC-Laufzeit und passenden Typidentitäten. Type-info-Daten können ausdrückliche Bindungen erfordern. FH4, eigene Personalities, SEH-Quellcode und aktive CFG/EHCont/XFG-Modi werden abgelehnt; ursprüngliche Schutzflags bleiben erhalten.
+
+ELF-x86/x64-Originale mit IBT-Anforderungen werden derzeit abgewiesen: Der Quellcode-Installer bietet noch keinen Trampolin, der ENDBR erhält.
 
 Laufzeitfälle prüfen normale Rückkehr, internes catch, neue Ausnahmen im ursprünglichen Aufrufer, Ausnahmen eines ursprünglichen Aufgerufenen durch den Ersatz, genau einmalige RAII-Bereinigung, erneutes Werfen, noexcept-Beendigung und unveränderte Funktionen. Die ursprüngliche Aufrufstelle muss Weitergabe bereits zulassen. Entfernte catches um eine bewiesen nicht werfende Funktion kann ein Patch nicht wiederherstellen.
 
@@ -130,3 +157,40 @@ ctest --test-dir build-source -L \
 Die LLVM-Kopie korrigiert auch Mach-O-x64-GOT-Datenreferenzen: Clangs typisierte catch-Tabelle ist relativ zum Ende des vier Byte langen Relokationsworts. r3/r4 verschiebt sie um vier Byte; die Prüfung vor Veröffentlichung lehnt das ab. Auf dem Entwicklungs-Mac läuft x64 unter Rosetta 2 und ARM64 direkt.
 
 Die native Windows-x64-Prüfung [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805) bestand alle 16 gezielten PE/Objekt/trampoline-Tests und alle 143 Tests der CPU-Zielmatrix ohne übersprungene Fälle. Der FH3-Test führte sieben C++-Laufzeitszenarien aus; die Zielmatrix verwendet Unicorn. Dieser Lauf verwendete Clang 22.1.6 mit nativem MSVC, Windows SDK und integriertem LLVM.
+
+Der Windows-Workflow erzeugt außerdem 27 PE-Ersetzungen für x86, x64 und ARM64. `scripts/check_source_patch_pe_runtime.py` prüft Nicht-Blattaufrufe, veränderlichen Zeigerzustand sowie Gleitkomma- und Stackargumente über Quell-IR, kompilierte und bereitgestellte Objekte. Jedes Original und jedes Patch-Ergebnis wird dreimal ausgeführt: 30 Prozessbeobachtungen je Architektur. x86/x64 laufen unter Windows x64, ARM64 auf `windows-11-arm`. Die Prüfung verlangt den erwarteten nativen Host, übereinstimmende Commits und Dateiprüfsummen sowie sämtliche Testfälle; externe Laufzeitumgebungen werden getrennt erfasst. Dieses Profil belegt keine Unterstützung für ARM64-C++-Exceptions.
+
+`NEVERD_TEST_MATRIX_NEVERC` wählt den optionalen Compiler der Matrix. NeverC 3389.1.5 bestand alle 66 Prüfungen für x64/ARM64 mit ELF, PE und Mach-O, einschließlich IR-/Objektinstallation und CPU-Ausführung. Diese Version unterstützt weder x86 noch ARM32; verwenden Sie dort Clang oder für ELF einen passenden GCC-Treiber. Bei PE-Kompilierung mit NeverC ergänzt der Adapter `-fno-autolink`: Referenzen werden im bestehenden Image aufgelöst, ohne eine weitere CRT zu linken. Bereitgestellte Objekte mit `.drectve`-Linkeranforderungen werden weiterhin abgelehnt.
+
+Die native Windows-Prozessprüfung [a4a5ae3cb](https://github.com/NeverSight/NeverD/actions/runs/38350079817) bestand alle 90 Beobachtungen: jeweils 30 für x86, x64 und ARM64 über Quell-IR, kompilierte und bereitgestellte Objekte. x86/x64 liefen unter Windows x64; ARM64 lief auf `windows-11-arm` mit denselben durch Prüfsummen bestätigten Images. Derselbe Lauf bestand außerdem alle 16 gezielten PE/Objekt/trampoline-Prüfungen und alle 143 Unicorn-Zielmatrixprüfungen ohne übersprungene Fälle. Der FH3-Test behielt seine sieben x64-C++-Laufzeitszenarien bei.
+
+Die native Qualifikation verwendet NeverC `182fd2c5dc`, unabhängige Originale und den aktuellen NeverD-Installierer. `check_source_patch_hosted_pe_runtime.py` verlangt je Windows-Architektur 36 Beobachtungen für C-IR/Objekte/Hosted-Ergebnisse und Ausnahmeweitergabe durch zwei C-Rahmen. `check_source_patch_elf_runtime.py` verlangt je Linux-Architektur 120 Beobachtungen für C, Hosted-Weitergabe und neun Clang-C++-Ausnahmeszenarien. Belege, Hashes und tatsächliche Hostarchitektur müssen übereinstimmen; NeverC selbst wird damit nicht auf dem CI-Host ausgeführt. Unter Linux x64 und ARM64 laufen die neun Ausnahmeszenarien jeweils mit Clang-IR, nativen Clang-Objekten und nativen GCC-Objekten. NeverC bleibt auf C beschränkt.
+
+Die 204 Beobachtungen des früheren Übersetzungsprofils sind historische Belege und weisen den aktuellen C-Vertrag nicht nach. Die drei aktuellen NeverC-Wege verwenden C; Clang C++ FH3 wird getrennt geprüft. Auf dem Entwicklungs-Mac mit Apple Silicon nutzt macOS x64 Rosetta 2. Unicorn/QEMU ersetzen keine nativen Betriebssystem- und Unwinder-Prüfungen.
+
+AArch64-Instruktionsrelokationen benötigen explizite RELA-Addenden. Implizite REL-Instruktionsaddenden werden vor der Veröffentlichung abgelehnt; ihre Befehlsbitfelder werden nicht als gewöhnliche Daten interpretiert. Unterstützte PREL64-Datenrelokationen behalten bei REL und RELA die vollständigen vorzeichenbehafteten Addenden.
+
+Die C-Produzentenqualifizierung [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213) bestand alle 312 nativen Prozessbeobachtungen: je 36 unter Windows x64 und ARM64 sowie je 120 unter Linux x64 und ARM64. Linux prüft neun Ausnahmeszenarien getrennt für Clang IR, native Clang-Objekte und native GCC-Objekte; alle NeverC-Eingaben für IR, Objekte und hosted DynCode sind C.
+
+Die Qualifizierung des neu gebauten Installers [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) bestand 19 PE-/Objektprüfungen, alle 143 CPU-Matrixfälle und 474 native Prozessbeobachtungen unter Windows/Linux. Windows-x86-Prozesse liefen auf Windows x64; x64 und ARM64 verwendeten passende Hosts. Die separate [Linux-Qualifizierung](https://github.com/NeverSight/NeverD/actions/runs/38585759996) bestand die ursprünglichen 108 Fälle sowie drei LLVM-C- und drei Clang/GCC-C++-Prüfungen ohne Fehler oder übersprungene Fälle.
+
+Die [Integrationsqualifikation 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097) bestätigte erneut alle 312 Prozessbeobachtungen auf nativem Windows/Linux mit x64 und ARM64. Alle 30 endgültigen Images entsprechen den zuvor qualifizierten Bytes; Quellcode-Prüfsummen und C-only-Veröffentlichungsbelege wurden erneuert und unabhängig geprüft.
+
+Die erweiterte [Linux-Qualifikation bei 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38626866257) bestand 429 ausgeführte Prüfungen ohne Fehler oder Überspringen: die ursprünglichen 108 Fälle, 55 vollständige Swift-Prüfungen, 143 CPU-Zielprüfungen, 117 native Sitzungsprüfungen sowie je drei LLVM-C- und Clang/GCC-C++-Prüfungen. Auch der vollständige lokale Binärpatch-Testbestand bestand bei dieser Integration alle 22.961 Fälle. Native Prozesszahlen und CPU-Emulationsabdeckung bleiben getrennt.
+
+Die [Qualifikation des neu gebauten Windows-Installers bei 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627581732) bestand alle 182 gezielten Prüfungen und 474 nativen Prozessausführungen, ohne Fehler oder übersprungene Tests. Eine unabhängige Artefaktprüfung kontrollierte jeden Image-Hash, jede Architektur, jedes Szenario und jede Wiederholung. Nach der ABI-/Unwind-Integration bei `e1cac949f` bestand die vollständige Binärpatch-Suite erneut alle 22,961 Fälle, ohne Fehler oder übersprungene Tests. NeverC bleibt auf reines C beschränkt; C++-Ersetzungen verwenden Clang/GCC.
+
+<!-- i18n-section: runtime-coverage -->
+## Prozessqualifikation für macOS und 32 Bit
+
+Der Workflow für Prozessabbilder verlangt native Ausführung auf macOS ARM64 (`macos-15`) und Intel x64 (`macos-15-intel`). Jede Architektur führt 96 Beobachtungen aus: Clang-C-Quelltext und Objekte, veränderlicher Zeigerzustand, Gleitkomma-/Stackargumente, neun Clang-C++-Ausnahmeszenarien sowie vorhandene reine C-Ausgaben von NeverC als IR/Objekt/hosted. Mach-O-Signaturen werden vor der Ausführung streng geprüft; installierter hosted-Code muss bytegenau der Compiler-Nutzlast entsprechen.
+
+Derselbe Workflow verlangt 30 Windows-x86-Beobachtungen auf Windows x64, 48 Linux-x86-Beobachtungen auf Linux x64 und 96 Linux-ARM32-Beobachtungen über QEMU im Benutzermodus, je zur Hälfte ARM und Thumb. Die Linux-Prüfungen umfassen passende GCC-Objekte. Jedes Szenario wird dreimal ausgeführt. Berichte unterscheiden `native`, `compatibility`, `rosetta` und `qemu-user` und halten Ziel- und tatsächliche Hostarchitektur fest. Rosetta erfüllt keine native Intel-Anforderung.
+
+Alle 14 CPU-Zielprofile bleiben durch die Matrix mit 154 Quelltext-/IR-/Objektprüfungen abgedeckt. PE ARM32, Mach-O i386, ARMv7 iOS und ARMv7k watchOS haben derzeit CPU-Qualifikation, ohne Nachweis für native OS-Lader oder C++-Unwinder. NeverC bleibt auf reines C für x64/ARM64 beschränkt; Clang und passende ELF-GCC-Treiber erzeugen die 32-Bit-Ausgaben. Der Prüfer baut oder verändert NeverC nicht.
+
+Windows x64 und ARM64 führen außerdem jeweils 36 Clang-C++-FH3-Beobachtungen aus.
+
+Veränderliche Mach-O-Zeiger werden während der Ausführung initialisiert; statische Adressinitialisierer benötigen weiterhin nicht unterstützte Laufzeit-Rebase-Registrierung und werden mit einem ausdrücklichen Ablehnungstest geprüft. ELF-COMDAT-Funktionen ohne Größenangabe werden nur akzeptiert, wenn die Signatur die einzige Funktion am Anfang ihres ausführbaren Abschnitts ist und CFI exakt den gesamten Abschnitt abdeckt. Innere Offsets, gemeinsame Abschnitte, Padding, fehlende Gruppen und fehlende CFI werden weiter abgelehnt.
+
+ELF ARM und Thumb haben getrennte Profile. Quellcodeproduzenten erhalten explizit `-marm` oder `-mthumb`; native Funktionsbindungen erhalten das ursprüngliche Befehlszustandsbit. Die 32-Bit-ELF-Prozesse verwenden PIE-Abbilder mit echten dynamischen Relokationen. ARM32-QEMU-Ausführung zeichnet einen expliziten glibc-`--loader` und Sysroot auf: QEMUs AUXV-Berechnung folgt verschobenen Programmheadern anders als der Linux-Kernel. Dieser Weg prüft glibc-Laden und Ausführung unter QEMU, nicht physische ARM32-Hardware oder den nativen Kernel-Lader.

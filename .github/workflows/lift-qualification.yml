@@ -1,0 +1,196 @@
+name: Lift native qualification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev, codex/native-source-patching]
+    paths:
+      - '.github/workflows/lift-qualification.yml'
+      - 'scripts/run_lift_qualification.py'
+      - 'scripts/tests/test_run_lift_qualification.py'
+      - 'unittests/Inputs/lift-qualification.json'
+      - 'unittests/backend/HighSwiftEmitterTests.cpp'
+      - 'unittests/lift/**'
+      - 'unittests/CMakeLists.txt'
+      - 'include/**'
+      - 'lib/**'
+      - 'tools/neverd/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'third_party/llvm-project'
+      - 'third_party/capstone'
+      - 'unittests/corpus'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lift-native-qualification-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux-x64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      SCCACHE_GHA_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.16.0
+        with:
+          version: v0.16.0
+      - name: Install LLVM 23 and native i386 development tools
+        run: |
+          curl --fail --silent --show-error --retry 3 https://apt.llvm.org/llvm-snapshot.gpg.key -o /tmp/llvm-signing-key.asc
+          gpg --show-keys --with-colons /tmp/llvm-signing-key.asc | grep '^fpr:.*6084F3CF814B57C1CF12EFD515CF4D18AF4F7421:'
+          sudo install -m 0644 /tmp/llvm-signing-key.asc /usr/share/keyrings/neverd-llvm.asc
+          echo 'deb [signed-by=/usr/share/keyrings/neverd-llvm.asc] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main' | sudo tee /etc/apt/sources.list.d/neverd-llvm.list
+          sudo apt-get update
+          sudo apt-get install --yes clang-23 lld-23 llvm-23 ninja-build gcc-multilib g++-multilib
+          echo /usr/lib/llvm-23/bin >> "$GITHUB_PATH"
+          test "$(uname -m)" = x86_64
+          swiftc --version
+          printf 'int main(void) { return sizeof(void*) != 4; }\n' > /tmp/neverd-i386.c
+          gcc -m32 /tmp/neverd-i386.c -o /tmp/neverd-i386
+          /tmp/neverd-i386
+      - name: Verify strict evidence audit
+        run: python -m unittest scripts.tests.test_run_lift_qualification -v
+      - name: Configure the corrected NeverD LLVM fork from source
+        run: |
+          cmake -S . -B build-lift-qualification -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DNEVERD_LLVM_PREBUILT=OFF -DNEVERD_ENABLE_BINARY_CORPUS_TESTS=ON \
+            -DNEVERD_BUILD_GUI=OFF -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
+            -DNEVERD_ENABLE_CPU_EMULATION=OFF -DNEVERD_ENABLE_SEMANTIC_TESTS=ON
+      - name: Build the production CLI and complete Lift test owner
+        run: cmake --build build-lift-qualification --target neverd NeverDLiftTests NeverDLLVMCValueTests NeverDSourcePatchTests NeverDSourcePatchMatrixTests NeverDHighSwiftEmitterTests NeverDSessionCAPITests --parallel 4
+      - name: Require all 108 previous failures and skips to pass
+        run: |
+          python scripts/run_lift_qualification.py \
+            --binary build-lift-qualification/bin/NeverDLiftTests \
+            --neverd build-lift-qualification/bin/neverd \
+            --output build-lift-qualification/evidence
+      - name: Execute complete native Swift scalar state coverage
+        run: |
+          python - <<'PYTHON'
+          import json, os, subprocess
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          from scripts.run_lift_qualification import audit
+          binary = 'build-lift-qualification/bin/NeverDHighSwiftEmitterTests'
+          listed = subprocess.check_output([binary, '--gtest_list_tests'], text=True)
+          names, suite = [], ''
+          for line in listed.splitlines():
+              if line and not line.startswith(' ') and line.endswith('.'):
+                  suite = line
+              elif line.startswith('  ') and suite == 'HighSwiftEmitter.':
+                  names.append(suite + line.strip().split()[0])
+          assert len(names) >= 40 and len(set(names)) == len(names)
+          output = Path('build-lift-qualification/evidence')
+          xml = output / 'swift-completion.xml'
+          with (output / 'swift-completion.log').open('w') as log:
+              result = subprocess.run([
+                  binary, '--gtest_filter=HighSwiftEmitter.*',
+                  '--gtest_output=xml:' + str(xml)],
+                  env=dict(os.environ, NEVERD_SIGNATURE_CACHE='off'),
+                  stdout=log, stderr=subprocess.STDOUT, timeout=1200)
+          report = audit(ET.parse(xml).getroot(), names, result.returncode)
+          (output / 'swift-completion.json').write_text(json.dumps(report, indent=2) + '\n')
+          print(f'Native Swift scalar state: {len(names)} passed, zero failed, zero skipped')
+          PYTHON
+      - name: Execute all target profiles and native session contracts
+        run: |
+          python - <<'PYTHON'
+          import json, os, subprocess
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          from scripts.run_lift_qualification import audit
+          output = Path('build-lift-qualification/evidence')
+          for owner, pattern, minimum, label in (
+              ('NeverDSourcePatchMatrixTests', 'AllTargets/*', 154, 'source-targets'),
+              ('NeverDSessionCAPITests', 'SessionCAPITest.*', 116, 'native-session'),
+          ):
+              binary = 'build-lift-qualification/bin/' + owner
+              listed = subprocess.check_output([
+                  binary, '--gtest_filter=' + pattern, '--gtest_list_tests'], text=True)
+              names, suite = [], ''
+              for line in listed.splitlines():
+                  if (line and not line.startswith(' ')
+                          and line.split(' #', 1)[0].strip().endswith('.')):
+                      suite = line.split(' #', 1)[0].strip()
+                  elif line.startswith('  '):
+                      names.append(suite + line.strip().split()[0])
+              assert len(names) >= minimum and len(set(names)) == len(names)
+              xml = output / (label + '.xml')
+              with (output / (label + '.log')).open('w') as log:
+                  result = subprocess.run([
+                      binary, '--gtest_filter=' + pattern,
+                      '--gtest_output=xml:' + str(xml)],
+                      env=dict(os.environ, NEVERD_SIGNATURE_CACHE='off'),
+                      stdout=log, stderr=subprocess.STDOUT, timeout=1200)
+              report = audit(ET.parse(xml).getroot(), names, result.returncode)
+              (output / (label + '.json')).write_text(json.dumps(report, indent=2) + '\n')
+              print(f'{label}: {len(names)} passed, zero failed, zero skipped')
+          PYTHON
+      - name: Execute LLVM-C wide values and native i386 table storage
+        run: |
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          from scripts.run_lift_qualification import audit
+          names = (
+              'LLVMCValues.WideIntegerConstantsPreserveEveryWordAndStoreExtent',
+              'LLVMCValues.WideConstantsPreserveEveryStoredByte',
+              'LLVMCValues.SelectedFunctionKeeps32BitSynthesizedTableStorage',
+          )
+          output = Path('build-lift-qualification/evidence')
+          xml = output / 'llvmc-native.xml'
+          with (output / 'llvmc-native.log').open('w') as log:
+              result = subprocess.run([
+                  'build-lift-qualification/bin/NeverDLLVMCValueTests',
+                  '--gtest_filter=' + ':'.join(names), '--gtest_output=xml:' + str(xml)],
+                  env=dict(os.environ, NEVERD_SIGNATURE_CACHE='off'),
+                  stdout=log, stderr=subprocess.STDOUT, timeout=600)
+          report = audit(ET.parse(xml).getroot(), names, result.returncode)
+          (output / 'llvmc-native.json').write_text(json.dumps(report, indent=2) + '\n')
+          print('LLVM-C native integration: 3 passed, zero failed, zero skipped')
+          PY
+      - name: Execute native Clang and GCC C++ exception replacements
+        run: |
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          from scripts.run_lift_qualification import audit
+          names = (
+              'SourcePatchException.LLVMIRRetainsCrossBoundaryExceptionSemantics',
+              'SourcePatchException.NativeObjectRetainsCrossBoundaryExceptionSemantics',
+              'SourcePatchException.GCCObjectRetainsCrossBoundaryExceptionSemantics',
+          )
+          output = Path('build-lift-qualification/evidence')
+          xml = output / 'source-patch-cpp-native.xml'
+          with (output / 'source-patch-cpp-native.log').open('w') as log:
+              result = subprocess.run([
+                  'build-lift-qualification/bin/NeverDSourcePatchTests',
+                  '--gtest_filter=' + ':'.join(names), '--gtest_output=xml:' + str(xml)],
+                  env=dict(os.environ, NEVERD_TEST_REQUIRE_FIXED_LLVM='1'),
+                  stdout=log, stderr=subprocess.STDOUT, timeout=600)
+          report = audit(ET.parse(xml).getroot(), names, result.returncode)
+          (output / 'source-patch-cpp-native.json').write_text(json.dumps(report, indent=2) + '\n')
+          print('Native Clang/GCC C++ exceptions: 3 passed, zero failed, zero skipped')
+          PY
+      - name: Retain individual results, compiler identities and native logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lift-native-qualification-${{ github.sha }}
+          path: build-lift-qualification/evidence
+          if-no-files-found: warn

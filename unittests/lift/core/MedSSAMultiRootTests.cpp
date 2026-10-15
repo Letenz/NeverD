@@ -8,15 +8,20 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
+
+#include "llvm/IR/Module.h"
 
 #include <regex>
 #include <set>
@@ -95,6 +100,69 @@ TEST(MedSSAMultiRoot, MergesDefinitionsFromIndependentSourcesAtAJoin) {
   EXPECT_EQ(MedReturn.Inputs[0].Id, Phi.Output.Id);
   EXPECT_EQ(MedReturn.Inputs[0].SSAVer, Phi.Output.SSAVer);
   EXPECT_TRUE(verifyMedFunc(Med, "multi-root-join"));
+}
+
+TEST(MedSSAMultiRoot, UnwrittenPhiEdgeCannotBorrowASiblingDefinition) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const uint16_t Width = TRI.PointerSize;
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    Low.Name = "partial_high_word";
+    Low.Blocks.resize(3);
+    for (int I = 0; I < 3; ++I) {
+      Low.Blocks[I].Id = I;
+      Low.Blocks[I].StartAddr = Low.Entry + 16 * I;
+      Low.Blocks[I].EndAddr = Low.Entry + 16 * I + 1;
+    }
+    Low.Blocks[0].Succs = {1, 2};
+    Low.Blocks[1].Preds = {0};
+    Low.Blocks[1].Succs = {2};
+    Low.Blocks[2].Preds = {0, 1};
+    LowOp Branch;
+    Branch.Opcode = NdOp::COND_BR;
+    Branch.Addr = Low.Entry;
+    Branch.addInput(NdVar::cst(0x1020, Width));
+    Branch.addInput(NdVar::reg(TRI.IntReturnReg, Width));
+    Low.Blocks[0].Ops.push_back(Branch);
+    LowOp High;
+    High.Opcode = NdOp::COPY;
+    High.Addr = 0x1010;
+    High.Output = NdVar::reg(TRI.IntReturnReg2, Width);
+    High.addInput(NdVar::cst(1, Width));
+    Low.Blocks[1].Ops.push_back(High);
+    LowOp Value = High;
+    Value.Addr = 0x1020;
+    Value.Output = NdVar::reg(TRI.IntReturnReg, Width);
+    Low.Blocks[2].Ops.push_back(Value);
+    LowOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = 0x1020;
+    Return.addInput(Value.Output);
+    Low.Blocks[2].Ops.push_back(Return);
+    const MedFunc Med = LowToMedConverter().convert(Low, Architecture);
+    ASSERT_TRUE(verifyMedFunc(Med, "unwritten-phi-edge"));
+    bool Found = false;
+    for (const PhiNode &Phi : Med.Blocks[2].Phis) {
+      if (Phi.Output.RegOff != TRI.IntReturnReg2)
+        continue;
+      ASSERT_EQ(Phi.Args.size(), 2u);
+      const MedVar &Incoming = Phi.Args[0].second;
+      // AArch64 may already bind the high register as an incoming argument.
+      // Either that entry value or an explicit unknown is valid; the sibling
+      // block's constant is not.
+      if (Incoming.Kind == MedVar::Reg) {
+        EXPECT_EQ(Incoming.RegOff, TRI.IntReturnReg2);
+        EXPECT_EQ(Incoming.SSAVer, 0);
+      } else {
+        EXPECT_EQ(Incoming.Kind, MedVar::Unspecified);
+      }
+      EXPECT_EQ(Phi.Args[1].second, MedVar::makeConst(1, Width));
+      Found = true;
+    }
+    EXPECT_TRUE(Found);
+  }
 }
 
 TEST(MedSSAMultiRoot, DoesNotInventADownstreamRootFromBlockOrder) {
@@ -363,6 +431,172 @@ TEST(MedSEHEstablisherFrame, NormalHandlerAndJoinUseTheSameLocalSlot) {
   EXPECT_EQ(Seen, Expected);
 }
 
+TEST(MedSEHEstablisherFrame, SourceIndependentEntriesKeepUnknownStackValues) {
+  for (bool SharedHandler : {false, true}) {
+    SCOPED_TRACE(SharedHandler);
+    auto Img = makeFixedSEHFrameImage();
+    if (SharedHandler)
+      // The ordinary branch also reaches the exception handler.
+      Img.Segments.front().Data[0x12] = 0x0d;
+    auto Low = decodeFixedSEHFrame(Img);
+    Low.ModuleAnalysisRoots.insert(Img.Entry + 0x10);
+    Low.OrdinaryModuleAnalysisRoots.insert(Img.Entry + 0x10);
+    EXPECT_THROW(
+        LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
+        LowToMedConversionError);
+    size_t Work = limits::kMaxSEHEstablisherFrameWork;
+    auto Strict = proveLowSEHEstablisherFrame(Low, Img.Entry + 0x20,
+                                              getTargetRegInfo(Arch::X64),
+                                              SharedHandler, Work);
+    EXPECT_FALSE(Strict);
+    llvm::consumeError(Strict.takeError());
+
+    LowToMedConverter Converter;
+    Converter.setSEHSourceProjectionEnabled(true);
+    auto Med = Converter.convert(Low, Arch::X64, BinaryFormat::COFF);
+    EXPECT_TRUE(Low.SEHLocalUnwindContinuations.empty());
+    EXPECT_TRUE(verifyMedFunc(Med, "seh-source-independent-entry"));
+    EXPECT_TRUE(Med.HasUnresolvedSEHFrame);
+    bool SawHandler = false;
+    for (const auto &Block : Med.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::LOAD && Op.Addr == Img.Entry + 0x20) {
+          SawHandler = true;
+          // The entry store uses SP-100; the runtime entry cannot reuse it.
+          EXPECT_FALSE(entrySPOffset(Med, Op.Inputs[0]));
+        }
+    EXPECT_TRUE(SawHandler);
+    auto High = MedToHighConverter().convert(Med, Arch::X64);
+    EXPECT_TRUE(High.HasUnresolvedSEHFrame);
+    std::string Source;
+    llvm::raw_string_ostream Stream(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    EXPECT_TRUE(HighCEmitter().emit({High}, Stream, Options));
+    EXPECT_NE(Source.find("unresolved runtime stack"), std::string::npos)
+        << Source;
+    EXPECT_NE(Source.find("unknown value"), std::string::npos) << Source;
+    if (SharedHandler) {
+      // The handler's entry copies stay on the runtime's entry into it.
+      const std::string Handler = llvm::utohexstr(Img.Entry + 0x20);
+      const size_t EntryAt =
+          Source.find("Native exception entry to the handler @ 0x" + Handler);
+      ASSERT_NE(EntryAt, std::string::npos) << Source;
+      EXPECT_NE(Source.find("goto L_" + Handler + ";", EntryAt),
+                std::string::npos)
+          << Source;
+      // Any other clause code would leave its native position: refuse it.
+      auto Moved = High;
+      for (auto &Stmt : Moved.Body)
+        if (Stmt.Kind == StmtKind::SEHTry)
+          for (auto &Body : Stmt.EHClauseBodies)
+            if (!Body.empty())
+              Body.pop_back();
+      std::string Refused;
+      llvm::raw_string_ostream RefusedStream(Refused);
+      EXPECT_THROW(HighCEmitter().emit({Moved}, RefusedStream, Options),
+                   std::invalid_argument);
+    }
+    llvm::LLVMContext Context;
+    EXPECT_THROW((void)MedLLVMEmitter().emit({Med}, Context),
+                 std::runtime_error);
+  }
+}
+
+TEST(MedSEHEstablisherFrame, SourceSwitchRequiresEveryResolvedTarget) {
+  auto Img = makeFixedSEHFrameImage();
+  auto Low = decodeFixedSEHFrame(Img);
+  int Dispatch = -1, Join = -1;
+  for (const auto &Block : Low.Blocks) {
+    if (!Block.Ops.empty() && Block.Ops.back().Addr == Img.Entry + 0x11)
+      Dispatch = Block.Id;
+    if (Block.StartAddr == Img.Entry + 0x30)
+      Join = Block.Id;
+  }
+  ASSERT_GE(Dispatch, 0);
+  ASSERT_GE(Join, 0);
+  // Model the resolver's published target set, independently of this frame
+  // consumer. An unresolved jmp rax is instead decoded as a tail call, so
+  // start with the complete branch CFG and replace the dispatch operation.
+  // Unknown or changed dispatches must not borrow that closure.
+  auto &Branch = Low.Blocks[Dispatch].Ops.back();
+  Branch.Opcode = NdOp::INDIR_BR;
+  Branch.Inputs[0] = NdVar::reg(x86reg::RAX, 8);
+  auto &Boundary = Low.Blocks[Dispatch].InstructionBoundaries.back();
+  Boundary.ControlFlags |= LowInstructionControlFlag::Indirect;
+  Boundary.Immediate.reset();
+  JumpTable Table;
+  Table.InsnAddr = Img.Entry + 0x11;
+  Table.Targets = {Img.Entry + 0x30};
+  Low.JumpTables = {Table};
+  Low.UnsafeIndirectBranchAddresses.erase(Table.InsnAddr);
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Low;
+    if (Mutation == 1)
+      Changed.JumpTables.clear();
+    if (Mutation == 2)
+      Changed.JumpTables.front().Targets.push_back(Img.Entry + 0x20);
+    if (Mutation == 3)
+      Changed.JumpTables.front().MutatedUnsafe = true;
+    if (Mutation == 4)
+      Changed.UnsafeIndirectBranchAddresses.insert(Table.InsnAddr);
+    if (Mutation == 5)
+      Changed.JumpTables.push_back(Table);
+    size_t Work = limits::kMaxSEHEstablisherFrameWork;
+    auto Proof = proveLowSEHEstablisherFrame(
+        Changed, Img.Entry + 0x20, getTargetRegInfo(Arch::X64), false, Work, {},
+        false, LowSEHFrameUse::SourceProjection);
+    std::string Failure = Proof ? "" : llvm::toString(Proof.takeError());
+    EXPECT_EQ(bool(Proof), Mutation == 0) << Failure;
+    if (Proof) {
+      EXPECT_FALSE(Proof->DynamicSP);
+      EXPECT_FALSE(Proof->HasIndependentEntries);
+      EXPECT_EQ(Proof->FrameBytes, 136u);
+    }
+  }
+}
+
+TEST(MedSEHEstablisherFrame, SourceRequiresExplicitIndependentEntry) {
+  auto Img = makeFixedSEHFrameImage();
+  auto Low = decodeFixedSEHFrame(Img);
+  auto *Protected = Low.blockFor(Img.Entry + 0x10);
+  auto *Join = Low.blockFor(Img.Entry + 0x30);
+  ASSERT_NE(Protected, nullptr);
+  ASSERT_NE(Join, nullptr);
+  // Redirect the post-prologue instruction to the epilogue. The protected
+  // scope is now disconnected, so it needs its own published entry state.
+  auto &Prefix = Low.Blocks.front();
+  auto &Boundary = Prefix.InstructionBoundaries.back();
+  Prefix.Ops.resize(Boundary.FirstOp);
+  LowOp Branch;
+  Branch.Opcode = NdOp::BRANCH;
+  Branch.Addr = Boundary.Address;
+  Branch.addInput(NdVar::cst(Join->StartAddr, 8));
+  Prefix.Ops.push_back(Branch);
+  Boundary.OpCount = 1;
+  Boundary.Control = LowInstructionControl::Branch;
+  Boundary.ControlFlags = LowInstructionControlFlag::Branch;
+  Boundary.Immediate = Join->StartAddr;
+  Prefix.Succs = {Join->Id};
+  Protected->Preds.clear();
+  Join->Preds.push_back(Prefix.Id);
+  Low.OrdinaryModuleAnalysisRoots.clear();
+  for (bool Published : {false, true}) {
+    SCOPED_TRACE(Published);
+    if (Published)
+      Low.OrdinaryModuleAnalysisRoots.insert(Protected->StartAddr);
+    size_t Work = limits::kMaxSEHEstablisherFrameWork;
+    auto Proof = proveLowSEHEstablisherFrame(
+        Low, Img.Entry + 0x20, getTargetRegInfo(Arch::X64), false, Work, {},
+        false, LowSEHFrameUse::SourceProjection);
+    std::string Failure = Proof ? "" : llvm::toString(Proof.takeError());
+    EXPECT_EQ(bool(Proof), Published) << Failure;
+    if (Proof)
+      EXPECT_TRUE(Proof->HasIndependentEntries);
+  }
+}
+
 LowFunc makeFixedCxxContinuationFrame(
     const BinaryImage &Image = makeFixedSEHFrameImage()) {
   auto Low = decodeFixedSEHFrame(Image);
@@ -408,6 +642,50 @@ TEST(MedCxxContinuationFrame, CatchResumeAndNormalPathAddressTheSameLocal) {
         ++Loads;
       }
   EXPECT_EQ(Loads, 2u);
+}
+
+TEST(MedCxxContinuationFrame, ProtectedSourcesFollowCompactedBlockIdentities) {
+  for (bool Synchronous : {false, true}) {
+    SCOPED_TRACE(Synchronous);
+    auto Image = makeFixedSEHFrameImage();
+    auto &Code = Image.Segments.front().Data;
+    Code.resize(0x101, 0xcc);
+    Code[0x100] = 0xc3;
+    // RDI changes before the throwing call, through two removable jump blocks.
+    const uint8_t SetRDI[] = {0x48, 0xc7, 0xc7, 0x55, 0, 0, 0};
+    std::copy(std::begin(SetRDI), std::end(SetRDI), Code.begin() + 8);
+    Code[0xf] = 0x90;
+    const uint8_t Path[] = {0xeb, 2,    0xcc, 0xcc, 0xeb, 2,    0xcc, 0xcc,
+                            0xe8, 0xe3, 0,    0,    0,    0xeb, 0x11};
+    std::copy(std::begin(Path), std::end(Path), Code.begin() + 0x10);
+    // The resumed catch observes the nonvolatile value at the throwing call.
+    const uint8_t Handler[] = {0x48, 0x89, 0x7c, 0x24, 0x24, 0xeb, 9};
+    std::copy(std::begin(Handler), std::end(Handler), Code.begin() + 0x20);
+    Image.ExceptionMetadata.Functions.front().SEH->Scopes.front().GuardedRange =
+        {Image.Entry + 0x18, Image.Entry + 0x1d};
+    auto Low = makeFixedCxxContinuationFrame(Image);
+    auto &Cxx = *Low.ExceptionMetadata->Cxx;
+    Cxx.IsSynchronous = Synchronous;
+    Cxx.IPMap = {
+        {Low.Entry, -1}, {Low.Entry + 0x18, 0}, {Low.Entry + 0x1d, -1}};
+    if (Synchronous)
+      for (auto &Block : Low.Blocks)
+        for (auto &Edge : Block.ExceptionalSuccs)
+          Edge.SourceVA = Low.Entry + 0x18;
+    auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+    ASSERT_TRUE(verifyMedFunc(Med, "compacted-cxx-frame"));
+    EXPECT_LT(Med.Blocks.size(), Low.Blocks.size());
+    bool Observed = false;
+    for (const auto &Block : Med.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::STORE && Op.Addr == Low.Entry + 0x20) {
+          Observed = true;
+          EXPECT_EQ(entrySPOffset(Med, Op.Inputs[0]), -100);
+          ASSERT_TRUE(Op.Inputs[1].isConst()) << Op.Inputs[1].display();
+          EXPECT_EQ(Op.Inputs[1].ConstVal, 0x55u);
+        }
+    EXPECT_TRUE(Observed);
+  }
 }
 
 TEST(MedCxxContinuationFrame, SynchronousFrameStillChecksTheThrowingPrefix) {
@@ -494,6 +772,10 @@ TEST(MedCxxContinuationFrame, RejectsUncertifiedParentFrame) {
     EXPECT_THROW(
         LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
         LowToMedConversionError);
+    LowToMedConverter Source;
+    Source.setSEHSourceProjectionEnabled(true);
+    EXPECT_THROW(Source.convert(Low, Arch::X64, BinaryFormat::COFF),
+                 LowToMedConversionError);
   }
 }
 
@@ -925,7 +1207,8 @@ BinaryImage makeSEHHandlerRegisterImage() {
   return Img;
 }
 
-// Follow copies and register-view extensions to the value a use reads.
+// Follow value copies and register-view extensions. A runtime frame definition
+// has its own occurrence and cannot be replaced by the incoming register.
 MedVar sourceValue(const MedFunc &F, MedVar V) {
   for (unsigned Step = 0; Step != 16; ++Step) {
     const MedOp *Def = nullptr;
@@ -935,6 +1218,7 @@ MedVar sourceValue(const MedFunc &F, MedVar V) {
             Op.Output.SSAVer == V.SSAVer)
           Def = &Op;
     if (!Def || Def->NumInputs == 0 ||
+        Def->RegistrationRoot != MedOp::RegistrationRootKind::None ||
         (Def->Opcode != NdOp::COPY && Def->Opcode != NdOp::INT_ZEXT))
       return V;
     V = Def->Inputs[0];
@@ -1267,6 +1551,108 @@ TEST(MedSEHHandlerEntry, X86RegistrationRestoresOnlyTheProvenFramePointer) {
   }
 }
 
+TEST(MedSEHHandlerEntry, IsolatedX86TableEntryKeepsFrameAfterStateExhaustion) {
+  const auto &TRI = getTargetRegInfo(Arch::X86);
+  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    Low.Name = "isolated_x86_table_entry";
+    Low.Blocks.resize(2);
+    for (int I = 0; I != 2; ++I) {
+      auto &Block = Low.Blocks[I];
+      Block.Id = I;
+      Block.StartAddr = Low.Entry + 0x20 * I;
+      Block.EndAddr = Block.StartAddr + 0x10;
+    }
+    LowOp PushFrame;
+    PushFrame.Opcode = NdOp::INT_SUB;
+    PushFrame.Addr = Low.Entry;
+    PushFrame.Output = NdVar::reg(TRI.StackPointer, 4);
+    PushFrame.addInput(PushFrame.Output);
+    PushFrame.addInput(NdVar::scalar(4, 4));
+    Low.Blocks[0].Ops.push_back(PushFrame);
+    LowOp EstablishFrame;
+    EstablishFrame.Opcode = NdOp::COPY;
+    EstablishFrame.Addr = Low.Entry + 1;
+    EstablishFrame.Output = NdVar::reg(TRI.FramePointer, 4);
+    EstablishFrame.addInput(PushFrame.Output);
+    Low.Blocks[0].Ops.push_back(EstablishFrame);
+    LowOp Store;
+    Store.Opcode = NdOp::STORE;
+    Store.Addr = 0x1020;
+    Store.addInput(NdVar::cst(0x3000, 4));
+    Store.addInput(NdVar::reg(TRI.FramePointer, 4));
+    Low.Blocks[1].Ops.push_back(Store);
+    for (auto &Block : Low.Blocks) {
+      LowOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = Block.EndAddr - 1;
+      Block.Ops.push_back(Return);
+    }
+    auto &EH = Low.ExceptionMetadata.emplace();
+    EH.Encoding = ExceptionEncoding::X86ScopeTableEH3;
+    EH.Personality = ExceptionPersonality::ExceptHandler3;
+    EH.CodeRange = {0x1000, 0x1040};
+    auto &Chain = EH.Registration.emplace();
+    Chain.RegistrationOffset = -16;
+    Chain.TryLevelOffset = -4;
+    Chain.ChainInstallVA = 0x1004;
+    Chain.Scopes = {{-1, 0x1020, 0x1030, false}};
+    auto &States = Low.RegistrationStates.emplace();
+    States.Complete = false;
+    States.Diagnostics = {"registration-state propagation budget exhausted"};
+    switch (Mutation) {
+    case 1:
+      Low.OrdinaryModuleAnalysisRoots.insert(0x1020);
+      break;
+    case 2:
+      Low.Blocks[0].Succs = {1};
+      Low.Blocks[1].Preds = {0};
+      break;
+    case 3:
+      EH.Personality = ExceptionPersonality::ExceptHandler4;
+      break;
+    case 4:
+      Chain.RegistrationOffset = -12;
+      break;
+    case 5:
+      EH.CodeRange.Begin = 0x0ff0;
+      break;
+    case 6:
+      Chain.Scopes.front().FilterVA = 0x1021;
+      break;
+    case 7:
+      Chain.ChainInstallVA = 0x1040;
+      break;
+    case 8:
+      Chain.Scopes.push_back({-1, 0, 0x1020, false});
+      break;
+    }
+    const auto Med =
+        LowToMedConverter().convert(Low, Arch::X86, BinaryFormat::COFF);
+    ASSERT_TRUE(verifyMedFunc(Med, "isolated-x86-table-entry"));
+    auto Frame = storedValueAt(Med, 0x1020);
+    ASSERT_TRUE(Frame);
+    unsigned RuntimeDefinitions = 0;
+    for (const auto &Block : Med.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.RegistrationRoot ==
+            MedOp::RegistrationRootKind::EstablishedFramePointer) {
+          ++RuntimeDefinitions;
+          EXPECT_EQ(registrationRootEntryStackOffset(Op), -4)
+              << Op.Output.display() << " <- " << Op.Inputs[0].display()
+              << " origin=" << Op.OriginSeq;
+        }
+    EXPECT_EQ(RuntimeDefinitions, Mutation == 0 ? 1u : 0u);
+    if (!Mutation)
+      EXPECT_EQ(entryStackOffset(Med, *Frame, Arch::X86, BinaryFormat::COFF),
+                -4)
+          << Frame->display() << " kind=" << unsigned(Frame->Kind)
+          << " id=" << Frame->Id << " ssa=" << Frame->SSAVer;
+  }
+}
+
 TEST(MedSEHHandlerEntry, NonvolatileRegisterWrittenInTheRangeIsUnspecified) {
   // mov rdi,rcx inside the protected range; the handler stores rdi. Where
   // the exception struck decides rdi, so the handler cannot know it.
@@ -1386,6 +1772,10 @@ TEST(MedSEHEstablisherFrame, RejectsUncertifiedFramesWithoutAborting) {
     EXPECT_THROW(
         LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
         LowToMedConversionError);
+    LowToMedConverter Source;
+    Source.setSEHSourceProjectionEnabled(true);
+    EXPECT_THROW(Source.convert(Low, Arch::X64, BinaryFormat::COFF),
+                 LowToMedConversionError);
   }
 }
 

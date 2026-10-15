@@ -15,8 +15,52 @@
 
 namespace neverd {
 
-bool HighCWriter::writeRegistrationCleanup(const HighStmt &Stmt, size_t I,
-                                           int Indent) {
+void HighCWriter::writeRegistrationAnnotation(const HighFunc &Func,
+                                              int Indent) {
+  if (!Func.ExceptionMetadata || !Func.ExceptionMetadata->Registration)
+    return;
+  const auto &Chain = *Func.ExceptionMetadata->Registration;
+  emitIndent(Indent);
+  OS << " * registration.handler=0x" << llvm::utohexstr(Chain.HandlerVA)
+     << ", scope_table=0x" << llvm::utohexstr(Chain.ScopeTableVA);
+  if (Chain.RegistrationOffset)
+    OS << ", frame_offset=" << *Chain.RegistrationOffset;
+  if (Chain.TryLevelOffset)
+    OS << ", try_level_offset=" << *Chain.TryLevelOffset;
+  if (Chain.SeededTryLevel)
+    OS << ", entry_level=" << *Chain.SeededTryLevel;
+  OS << ", install=0x" << llvm::utohexstr(Chain.ChainInstallVA) << ", remove=0x"
+     << llvm::utohexstr(Chain.ChainRemoveVA) << "\n";
+  for (size_t I = 0; I < Chain.Scopes.size(); ++I) {
+    const auto &Scope = Chain.Scopes[I];
+    emitIndent(Indent);
+    OS << " * registration.scope[" << I
+       << "]: " << (Scope.IsFinally ? "finally" : "except")
+       << ", enclosing=" << Scope.EnclosingLevel << ", filter=0x"
+       << llvm::utohexstr(Scope.FilterVA) << ", handler=0x"
+       << llvm::utohexstr(Scope.HandlerVA) << "\n";
+  }
+  for (size_t I = 0; I < Chain.TryLevelStores.size(); ++I) {
+    const auto &Store = Chain.TryLevelStores[I];
+    emitIndent(Indent);
+    OS << " * registration.state_store[" << I << "]: store=0x"
+       << llvm::utohexstr(Store.StoreVA) << ", end=0x"
+       << llvm::utohexstr(Store.EndVA) << ", level=" << Store.Level
+       << ", width=" << unsigned(Store.Width) << "\n";
+  }
+  if (Chain.HasSecurityCookies) {
+    emitIndent(Indent);
+    OS << " * registration.cookies: magic=0x"
+       << llvm::utohexstr(Chain.ScopeTableMagic)
+       << ", gs=" << Chain.GSCookieOffset
+       << ", gs_xor=" << Chain.GSCookieXOROffset
+       << ", eh=" << Chain.EHCookieOffset
+       << ", eh_xor=" << Chain.EHCookieXOROffset << "\n";
+  }
+}
+
+bool HighCWriter::isNativeRegistrationCleanup(const HighStmt &Stmt,
+                                              size_t I) const {
   if (Opts.TheArch != Arch::X86 || !CurrentFunc ||
       !CurrentFunc->ExceptionMetadata ||
       !CurrentFunc->ExceptionMetadata->Registration ||
@@ -25,12 +69,19 @@ bool HighCWriter::writeRegistrationCleanup(const HighStmt &Stmt, size_t I,
     return false;
   const auto &Clause = Stmt.EHClauses[I];
   const auto &Actions = CurrentFunc->ExceptionMetadata->Cxx->UnwindMap;
-  if (Clause.Kind != HighEHClauseKind::CxxCleanup || Clause.State < 0 ||
-      size_t(Clause.State) >= Actions.size() || !Clause.FilterOrActionVA ||
-      Actions[Clause.State].ActionVA != Clause.FilterOrActionVA)
+  return Clause.Kind == HighEHClauseKind::CxxCleanup && Clause.State >= 0 &&
+         size_t(Clause.State) < Actions.size() && Clause.FilterOrActionVA &&
+         Actions[Clause.State].ActionVA == Clause.FilterOrActionVA;
+}
+
+bool HighCWriter::writeRegistrationCleanup(const HighStmt &Stmt, size_t I,
+                                           int Indent) {
+  if (!isNativeRegistrationCleanup(Stmt, I))
     return false;
-  // This out-of-line relay retains its native frame ABI. An empty lexical
-  // __unwind body would hide the executable action and invent source syntax.
+  const auto &Clause = Stmt.EHClauses[I];
+  const auto &Actions = CurrentFunc->ExceptionMetadata->Cxx->UnwindMap;
+  // This out-of-line relay retains its native frame ABI. An empty cleanup
+  // handler would hide the executable action and invent source syntax.
   OS << '\n';
   emitIndent(Indent);
   OS << "/* Native x86 cleanup @ 0x" << llvm::utohexstr(Clause.FilterOrActionVA)

@@ -67,6 +67,14 @@ public:
   void setSyscallConvention(SyscallConvention C) { Syscalls = C; }
   SyscallConvention syscallConvention() const { return Syscalls; }
 
+  /// Whether x64 x87 and MMX-state instructions execute on the function's
+  /// owned x87 context rather than as typed binary80 values; the image's
+  /// calling convention decides it (x87ContextOwnsStack).
+  void setX87ContextOwnership(bool Owned) { X87ContextOwned = Owned; }
+  bool ownsX87Context() const {
+    return X87ContextOwned && TargetArch == Arch::X64;
+  }
+
   /// x87 stack-top (TOP) accessors.  The ST(i) macro names physical slot
   /// (TOP+i)&7, so TOP advances in lift order; the CFG builder reads it around
   /// each lift to later re-base ST references into control-flow order.
@@ -300,6 +308,7 @@ private:
   Arch TargetArch;
   bool Strict = true;
   SyscallConvention Syscalls = SyscallConvention::Linux;
+  bool X87ContextOwned = false;
   int FPUTop = 0;
 
   /// Set when the instruction just lifted reset TOP to an absolute value

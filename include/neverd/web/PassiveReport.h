@@ -16,18 +16,33 @@
 #include "neverd/web/Streams.h"
 
 #include <map>
+#include <optional>
 
 namespace neverd::web {
 inline constexpr std::string_view PassiveReportProfile =
-    "passive-evidence-shape-report-v1";
+    "passive-evidence-shape-report-v2";
 inline constexpr uint64_t MaxPassiveReportRecords = 16384;
 inline constexpr uint64_t MaxPassiveReportSteps = 8000000;
 inline constexpr uint64_t MaxPassiveShapeBytes = 65536;
 inline constexpr uint64_t MaxPassiveShapeNodes = 200000;
+inline constexpr uint64_t MaxPassiveShapePrivateBytes = 2 * 1024 * 1024;
 
-/// All textual classifications are closed vocabulary. Opaque IDs and original
-/// coordinates are the only input-derived publication. Body keys/values, URLs,
-/// names, recorded IDs and raw source never belong in this model.
+/// IDs encode public anchors and structural ordinals, never private names.
+/// Schema nodes share a capture-local field dictionary; value nodes keep each
+/// example's tree. Presence counts concern observed eligible parent objects.
+struct PassiveStructure {
+  std::string NodeID, ParentNodeID, GroupID, SchemaNodeID;
+  std::string Edge = "root", NameClass = "withheld",
+              Component = "not_applicable";
+  uint64_t Ordinal = 0;
+  std::optional<uint64_t> Instances, EligibleParents, MissingInstances;
+  std::optional<uint64_t> DecodedOffset, DecodedLength;
+  std::optional<uint64_t> ComponentIndex;
+};
+
+/// All textual classifications are closed vocabulary. Input-derived text is
+/// limited to opaque IDs. Body keys/values, URLs, names, recorded IDs and raw
+/// source never belong in this model.
 struct PassiveReportRecord {
   std::string ID, Kind, EvidenceClass, AnchorID, RelatedID, ParentID;
   std::string SourceID, ArtifactID, Method = "unknown", Domain;
@@ -36,6 +51,7 @@ struct PassiveReportRecord {
   uint64_t Offset = 0, Length = 0, Members = 0;
   bool CoordinatesPresent = false;
   std::map<std::string, uint64_t> Types;
+  std::optional<PassiveStructure> Structure;
 };
 
 struct PassiveSourceEvidence {
@@ -54,9 +70,9 @@ PassiveSourceEvidence projectPassiveSource(
     const InterfaceSourceRelations &Relations);
 
 /// Inspect only explicitly JSON, unencoded HAR body text after capture commit.
-/// Shape summaries count types; arbitrary keys, values and examples stay
-/// private. Invalid/absent/encoded/oversized bodies have located limitation
-/// records.
+/// Trees and capture-local aggregates retain types and observed field presence;
+/// arbitrary keys, values and raw examples stay private.
+/// Unavailable, invalid, encoded or oversized bodies have limitation records.
 std::vector<PassiveReportRecord>
 inspectPassiveHARShapes(const HARCapture &Capture, std::string_view Bytes);
 

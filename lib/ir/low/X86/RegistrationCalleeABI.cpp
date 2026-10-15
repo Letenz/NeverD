@@ -44,6 +44,19 @@ checkedRegistrationImportStackPop(const BinaryImage &Image, va_t Target) {
   const auto *Named = Image.findImportAt(Target);
   const auto *Import =
       Named ? checkedImportSlot(Image, Named->IATAddr) : nullptr;
+  // These authenticated C-runtime math entries use caller cleanup on PE32.
+  // This is a returning ESP fact only: callbacks, errno and floating-point
+  // effects still prevent a private-memory or native replacement contract.
+  if (Import && !Import->IsDelayImport &&
+      (Import->Name == "log" || Import->Name == "exp") &&
+      isFileBackedPEImportSlot(Image, Import->IATAddr)) {
+    const llvm::StringRef Module = Import->Module;
+    if (Module.equals_insensitive("api-ms-win-crt-math-l1-1-0.dll") ||
+        Module.equals_insensitive("ucrtbase.dll") ||
+        Module.equals_insensitive("ucrtbased.dll") ||
+        Module.equals_insensitive("msvcrt.dll"))
+      return 0;
+  }
   if (!Import || Import->Name != "RaiseException" ||
       (!llvm::StringRef(Import->Module).equals_insensitive("kernel32.dll") &&
        !llvm::StringRef(Import->Module).equals_insensitive("kernelbase.dll")))
@@ -168,7 +181,8 @@ using registration_abi::copyExtents;
 using registration_abi::hasPrivateCallerFrame;
 using registration_abi::ImageFrameEffects;
 
-bool retainLeafEntryBlocks(LowFunc &Function, size_t &Work) {
+bool retainLeafEntryBlocks(LowFunc &Function, size_t &Work,
+                           uint32_t ExpectedPop) {
   std::map<int, const LowBlock *> Blocks;
   std::deque<int> Pending;
   for (const auto &Block : Function.Blocks) {
@@ -193,7 +207,7 @@ bool retainLeafEntryBlocks(LowFunc &Function, size_t &Work) {
       return false;
     for (const auto &Boundary : Block.InstructionBoundaries)
       if (Boundary.Control == LowInstructionControl::Return &&
-          Boundary.Immediate.value_or(0) != 0)
+          Boundary.Immediate.value_or(0) != ExpectedPop)
         return false;
     Pending.insert(Pending.end(), Block.Succs.begin(), Block.Succs.end());
   }
@@ -207,22 +221,27 @@ bool retainLeafEntryBlocks(LowFunc &Function, size_t &Work) {
     llvm::erase_if(Block.Preds, [&](int Predecessor) {
       return !Reached.count(Predecessor);
     });
-  Function.CalleePopBytes = 0;
+  Function.CalleePopBytes = ExpectedPop;
   return true;
 }
 
 } // namespace
 
-std::optional<RegistrationLeafCalleeABI>
-getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target,
-                                       size_t *CumulativeWork) {
+std::optional<RegistrationLeafCalleeABI> registration_abi::checkedLeafCalleeABI(
+    const BinaryImage &Image, va_t Target, size_t &Work,
+    RegistrationLeafResult ResultKind, uint32_t CopyObjectSize,
+    std::vector<RegistrationObjectExtent> *CopySource,
+    InitializerFrame *Initializer, InitializerContext *Context,
+    ObjectCallbackContext *Callbacks, uint32_t CallbackStackPopBytes) {
+  if ((Initializer && CopyObjectSize) || (bool(Initializer) != bool(Context)) ||
+      (Callbacks && (Initializer || CopyObjectSize)) ||
+      (!Callbacks && CallbackStackPopBytes))
+    return std::nullopt;
   if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
       Image.Format != BinaryFormat::COFF || Target > UINT32_MAX ||
       !Image.isCodeAddress(Target) ||
       Image.ExceptionMetadata.findFunction(Target))
     return std::nullopt;
-  size_t LocalWork = 0;
-  size_t &Work = CumulativeWork ? *CumulativeWork : LocalWork;
   if (!chargeCalleeWork(Work, 1))
     return std::nullopt;
   Decoder Decoder;
@@ -230,36 +249,104 @@ getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target,
     return std::nullopt;
   CFGBuilder Builder;
   LowFunc Callee = Builder.build(Image, Decoder, Target, "abi-leaf");
+  const uint32_t Pop = Initializer      ? Initializer->StackPopBytes
+                       : CopyObjectSize ? 4
+                       : Callbacks      ? CallbackStackPopBytes
+                                        : 0;
   if (!chargeDecodedCallee(Work, Callee) || !Callee.hasCompleteLiftCoverage() ||
       Callee.Blocks.empty() || Callee.ExceptionMetadata ||
-      !retainLeafEntryBlocks(Callee, Work))
+      !retainLeafEntryBlocks(Callee, Work, Pop))
     return std::nullopt;
+  InitializerCalls Initializers;
+  ObjectCallbackCalls ObjectCallbacks;
   for (const auto &Block : Callee.Blocks) {
     if (Block.Succs.empty() &&
         (Block.Ops.empty() || Block.Ops.back().Opcode != NdOp::RETURN))
       return std::nullopt;
-    for (const auto &Op : Block.Ops)
-      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+    for (const auto &Op : Block.Ops) {
+      if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+        continue;
+      if ((!Context && !Callbacks) || Op.Opcode != NdOp::CALL ||
+          Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
+          Op.Inputs[0].Size != 4 || Op.Seq < 0 ||
+          Initializers.size() + ObjectCallbacks.size() >=
+              kMaxObjectCallbackNodes)
         return std::nullopt;
+      if (Context) {
+        auto Nested = checkedInitializerCalleeABI(Image, Op.Inputs[0].Offset,
+                                                  Work, *Context);
+        if (!Nested ||
+            !Initializers
+                 .emplace(std::make_pair(Op.Addr, Op.Seq), std::move(*Nested))
+                 .second)
+          return std::nullopt;
+      } else {
+        auto Nested = checkedObjectCallbackCalleeABI(Image, Op.Inputs[0].Offset,
+                                                     Work, *Callbacks);
+        if (!Nested ||
+            !ObjectCallbacks
+                 .emplace(std::make_pair(Op.Addr, Op.Seq), std::move(*Nested))
+                 .second)
+          return std::nullopt;
+      }
+    }
   }
   ImageFrameEffects Effects;
   bool IndependentScalarReturn = false;
-  if (!hasPrivateCallerFrame(Callee, Image, Work, Effects, true, nullptr,
-                             &IndependentScalarReturn))
+  const PrivateFrameOptions Frame{
+      .BorrowECX = true,
+      .IndependentScalarReturn = &IndependentScalarReturn,
+      .DiscardReturnValue = ResultKind == RegistrationLeafResult::Discarded,
+      .CopyObjectSize = CopyObjectSize,
+      .Initializer = Initializer,
+      .Initializers = Initializer ? &Initializers : nullptr,
+      .ObjectCallbacks = Callbacks ? &ObjectCallbacks : nullptr,
+      .CallbackStackPopBytes = CallbackStackPopBytes};
+  if (!hasPrivateCallerFrame(Callee, Image, Work, Effects, Frame))
     return std::nullopt;
   if (!callerPCIsNotReadBack(Effects))
     return std::nullopt;
   RegistrationLeafCalleeABI Result;
   Result.Target = Target;
+  Result.StackPopBytes = Pop;
   Result.HasIndependentScalarReturn = IndependentScalarReturn;
   if (!collectCalleeCodeRanges(Callee, Image, Work, Result.CodeRanges))
     return std::nullopt;
+  std::set<std::pair<va_t, va_t>> Code;
+  for (const auto &Range : Result.CodeRanges)
+    Code.emplace(Range.Begin, Range.End);
+  for (const auto &[Site, Nested] : Initializers) {
+    if (!chargeCalleeWork(Work, Nested.Object.CodeRanges.size()))
+      return std::nullopt;
+    for (const auto &Range : Nested.Object.CodeRanges)
+      Code.emplace(Range.Begin, Range.End);
+  }
+  for (const auto &[Site, Nested] : ObjectCallbacks) {
+    if (!chargeCalleeWork(Work, Nested.CodeRanges.size()))
+      return std::nullopt;
+    for (const auto &Range : Nested.CodeRanges)
+      Code.emplace(Range.Begin, Range.End);
+  }
+  Result.CodeRanges.clear();
+  copyExtents(Code, Result.CodeRanges);
   copyExtents(Effects.ECXReads, Result.ECXReads);
   copyExtents(Effects.ECXWrites, Result.ECXWrites);
   copyExtents(Effects.Reads, Result.ImageReads);
   copyExtents(Effects.Writes, Result.ImageWrites);
   copyExtents(Effects.CallerPCWrites, Result.CallerPCWrites);
+  if (CopySource)
+    copyExtents(Effects.CopySourceReads, *CopySource);
   return Result;
+}
+
+std::optional<RegistrationLeafCalleeABI>
+getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target,
+                                       size_t *CumulativeWork,
+                                       RegistrationLeafResult ResultKind) {
+  size_t LocalWork = 0;
+  size_t &Work = CumulativeWork ? *CumulativeWork : LocalWork;
+  return registration_abi::checkedLeafCalleeABI(Image, Target, Work,
+                                                ResultKind);
 }
 
 } // namespace neverd

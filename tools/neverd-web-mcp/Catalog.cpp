@@ -219,6 +219,16 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       "Native identity and source/cache equivalence remain unverified.",
       {decimal("revision"), text("artifact_id"), text("profile")});
   Page("web_pkg_records", "extraction_id", true);
+  Add("web_datapack_extract",
+      "Read a canonical Chromium DataPack v5 index and original resource "
+      "slices. Framework identity, filenames and runtime routing are unknown.",
+      {decimal("revision"), text("artifact_id"), text("profile")});
+  Page("web_datapack_records", "extraction_id");
+  Add("web_datapack_decode",
+      "Explicitly decode one stored resource as gzip-rfc1952-v1. "
+      "resource_id is the row's opaque selection_id. Return a separate "
+      "immutable byte selection without raw content.",
+      {decimal("revision"), text("resource_id"), text("codec")});
   Add("web_wails_extract",
       "Validate a listed Wails/Go embed.FS profile and every stored asset "
       "digest. Asset-server bindings and native bridges remain unverified.",
@@ -389,6 +399,11 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
   Page("web_html_records", "html_id", true);
   Add("web_source_analyze",
       "Parse admitted source with the embedded parser; do not execute it.",
+      {decimal("revision"), text("artifact_id"),
+       choice("source_type", {"script", "module", "commonjs"})});
+  Add("web_source_analyze_large",
+      "Explicit bounded large-source analysis; retain one large source per "
+      "revision and use existing evidence pages without execution.",
       {decimal("revision"), text("artifact_id"),
        choice("source_type", {"script", "module", "commonjs"})});
   Page("web_source_nodes", "source_id");

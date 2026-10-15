@@ -33,7 +33,7 @@ bool proveFixedCxxRegistrationLayout(const BinaryImage &Img,
     Allocation = readLE<uint32_t>(P + 8);
     Cursor = 12;
   }
-  if (Allocation < 16 || Allocation > limits::kMaxRegistrationEHStateWork)
+  if (Allocation < 16 || Allocation > limits::kMaxSourceCallBorrowedBytes)
     return false;
   // Parameter copies, loads and private ECX/EDX spills can precede SavedESP.
   // They do not change ESP/EBP or any runtime cell. Preserve their real

@@ -11,6 +11,7 @@
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionCommon.h"
 
+#include <array>
 #include <map>
 #include <optional>
 #include <vector>
@@ -18,6 +19,15 @@
 namespace neverd {
 struct BinaryImage;
 struct LowFunc;
+struct RegistrationStateAnalysis;
+class RegistrationCallCalleeIndex;
+
+RegistrationStateAnalysis analyzeCheckedX86SEHStates(
+    const BinaryImage &Image, const LowFunc &Function,
+    const std::vector<RegistrationCalleeStackContract> *Stacks,
+    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
+    const std::vector<RegistrationSEHControlContract> *Controls,
+    RegistrationCallCalleeIndex *Index = nullptr);
 
 /// Prove the entry ESP is restored at every ordinary near return and that
 /// all return-pop immediates agree. Unchecked calls invalidate ESP; an explicit
@@ -25,7 +35,9 @@ struct LowFunc;
 /// retain no memory values. SEH bodies also require complete current
 /// registration state/lifetime evidence to separate dispatcher returns and
 /// seed established EBP at except entries. Neither route infers saved-stack
-/// memory values or grants memory-effect authority.
+/// memory values or grants memory-effect authority. A termination-only SEH
+/// frame has no exceptional parent entry and uses the ordinary register-only
+/// proof, including a separate proof for every called finally.
 std::optional<uint32_t>
 getCheckedX86CalleeStackPop(const BinaryImage &Image, va_t Target,
                             size_t *CumulativeWork = nullptr);
@@ -54,13 +66,90 @@ struct RegistrationLeafCalleeABI {
   std::vector<ExceptionAddressRange> CodeRanges;
 };
 
+enum class RegistrationLeafResult { Observed, Discarded };
+
 /// Prove a complete returning PE32 leaf with a private stack, preserved
 /// nonvolatile registers and nonescaping ECX object access. This describes
 /// the callee only: each caller must still prove object bounds, initialization
 /// and separation from its registration fields before using the projection.
+/// Discarded requires an independently known void invocation, such as the
+/// CRT destructor or an authenticated unwind relay; it does not recover a
+/// source call's return type or relax memory/stack/nonvolatile preservation.
+std::optional<RegistrationLeafCalleeABI> getCheckedX86RegistrationLeafCalleeABI(
+    const BinaryImage &Image, va_t Target, size_t *CumulativeWork = nullptr,
+    RegistrationLeafResult Result = RegistrationLeafResult::Observed);
+
+/// Extend the returning leaf contract to a bounded acyclic object call graph.
+/// Direct children borrow the same ECX object or a nonnegative subobject and
+/// consume only initialized private scalar arguments. A child result remains
+/// unknown unless every return proves an independent 32-bit scalar. Observed
+/// graph results require this same independent result proof at the root.
+/// Transitive code, object and image effects belong to this invocation's proof.
+/// Each caller still owns object extent, contents, lifetime and return usage.
+/// The public root has no stack arguments or callee cleanup; scalar child
+/// arguments are proved only within their parent's private invocation.
 std::optional<RegistrationLeafCalleeABI>
-getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target,
+getCheckedX86RegistrationObjectCalleeABI(
+    const BinaryImage &Image, va_t Target, size_t *CumulativeWork = nullptr,
+    RegistrationLeafResult Result = RegistrationLeafResult::Observed);
+
+/// An ordinary ECX member may additionally consume bounded, callee-popped
+/// scalar stack words. Each source occurrence must prove those outgoing bytes
+/// initialized and pointer-free, separate from its live object borrow. CRT
+/// destructor and cleanup callers retain the zero-argument API above.
+std::optional<RegistrationLeafCalleeABI>
+getCheckedX86RegistrationMemberCalleeABI(
+    const BinaryImage &Image, va_t Target, size_t *CumulativeWork = nullptr,
+    RegistrationLeafResult Result = RegistrationLeafResult::Observed);
+
+/// A CRT copy constructor borrows two separate objects: destination ECX and
+/// the source pointer in its one callee-popped stack word. Every destination
+/// byte is initialized on every return, and source storage is read-only.
+struct RegistrationCopyCalleeABI {
+  RegistrationLeafCalleeABI Destination;
+  std::vector<RegistrationObjectExtent> SourceReads;
+};
+
+std::optional<RegistrationCopyCalleeABI>
+getCheckedX86RegistrationCopyCalleeABI(const BinaryImage &Image, va_t Target,
+                                       uint32_t ObjectSize,
                                        size_t *CumulativeWork = nullptr);
+
+/// A returning object initializer takes scalar stack words and entry ECX,
+/// returns that exact object pointer and pops its complete argument area.
+/// Initialized records bytes written on every returning path. Each caller
+/// must independently bind the arguments and object to its live private frame.
+/// Bounded acyclic direct initializer calls compose subobject must-writes and
+/// preserve the root destination. The proof retains all transitive code and
+/// image effects; it does not authorize other calls or pointer arguments.
+struct RegistrationInitializerCalleeABI {
+  RegistrationLeafCalleeABI Object;
+  std::vector<RegistrationObjectExtent> Initialized;
+};
+
+std::optional<RegistrationInitializerCalleeABI>
+getCheckedX86RegistrationInitializerCalleeABI(const BinaryImage &Image,
+                                              va_t Target,
+                                              size_t *CumulativeWork = nullptr);
+
+/// A single unadjusted object and its optional preserved runtime callbacks. The
+/// destructor must be a private, returning object graph with bounded ECX
+/// accesses and no observation of the CRT caller PC. Metadata decoding alone
+/// cannot prove these effects or authorize a runtime callback.
+struct RegistrationThrowObjectABI {
+  coff_loader::X86IdentityCxxThrowInfo Info;
+  std::optional<RegistrationLeafCalleeABI> Destructor;
+  std::optional<RegistrationCopyCalleeABI> CopyConstructor;
+
+  std::array<const RegistrationLeafCalleeABI *, 2> callbacks() const {
+    return {Destructor ? &*Destructor : nullptr,
+            CopyConstructor ? &CopyConstructor->Destination : nullptr};
+  }
+};
+
+std::optional<RegistrationThrowObjectABI>
+getCheckedX86RegistrationThrowObjectABI(const BinaryImage &Image, va_t Address,
+                                        size_t *CumulativeWork = nullptr);
 
 struct RegistrationCleanupCallABI {
   int32_t ObjectFrameOffset = 0;
@@ -75,8 +164,8 @@ struct RegistrationCleanupParentFrame {
 };
 
 /// A checked cleanup relay derives each ECX object from the establisher EBP.
-/// It tail-jumps to one leaf or saves/restores runtime EBP around an ordered
-/// sequence of leaf calls. The parent must prove every borrow at dispatch.
+/// It tail-jumps to one returning object callee or saves/restores runtime EBP
+/// around an ordered sequence of calls. The parent proves every borrow.
 struct RegistrationCleanupRelayABI {
   va_t Target = InvalidVA;
   va_t EndAddress = InvalidVA;
@@ -115,7 +204,7 @@ struct RegistrationThrowCalleeABI {
   /// Exactly two null arguments reuse the active CRT exception. No new object
   /// or ThrowInfo is supplied, and the caller must prove an active catch.
   bool IsRethrow = false;
-  coff_loader::X86SimpleCxxThrowInfo ThrowInfo;
+  coff_loader::X86IdentityCxxThrowInfo ThrowInfo;
   std::vector<ExceptionAddressRange> ImageReads;
   std::vector<ExceptionAddressRange> ImageWrites;
   std::vector<ExceptionAddressRange> CallerPCWrites;
@@ -142,6 +231,9 @@ public:
   RegistrationCallCalleeIndex &
   operator=(const RegistrationCallCalleeIndex &) = delete;
   bool ownsImage(const BinaryImage &Other) const { return &Image == &Other; }
+  /// Bill decoded state propagation, including unsuccessful helper analyses,
+  /// to this invocation closure's cumulative work budget.
+  bool chargeStateWork(size_t Amount);
   std::optional<uint32_t> stackPop(va_t Target);
   std::optional<std::vector<RegistrationCalleeFrameContract>>
   contracts(const LowFunc &Function);
@@ -151,6 +243,8 @@ public:
   stackContracts(const LowFunc &Function);
   std::optional<std::vector<RegistrationLocalUnwindContract>>
   localUnwindContracts(const LowFunc &Function);
+  std::optional<std::vector<RegistrationSEHControlContract>>
+  sehControlContracts(const LowFunc &Function);
 
 private:
   const BinaryImage &Image;

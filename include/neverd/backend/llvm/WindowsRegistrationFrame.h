@@ -19,6 +19,7 @@
 namespace llvm {
 class AllocaInst;
 class BasicBlock;
+class CallInst;
 class Function;
 class Module;
 class StoreInst;
@@ -77,6 +78,9 @@ struct X86RegistrationCallbackRequest {
   X86RegistrationCallbackKind Kind = X86RegistrationCallbackKind::Filter;
   std::string Name;
   X86RegistrationCallbackFrame Frame;
+  /// Exact source-bound nonlocal exits. Each call must be noreturn and end its
+  /// block with unreachable; only source boundary anchors may follow it.
+  std::vector<llvm::CallInst *> NonReturningCalls;
 };
 
 /// Prepare every callback, allocate one stable escape-index map, then commit

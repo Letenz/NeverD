@@ -11,6 +11,7 @@
 
 #include "Internal.h"
 #include "JsonReader.h"
+#include "ProducerCorpus.h"
 #include "SEAFixture.h"
 #include "gtest/gtest.h"
 
@@ -292,15 +293,25 @@ TEST_F(WebSEA, OfficialNodeCompilerBlobsMatchIndependentSourceAndAssetInputs) {
 }
 TEST_F(WebSEA, OptionalOfficialNodeSnapshotRemainsOpaque) {
   const auto *Root = std::getenv("NEVERD_NODE_SEA_22150_CORPUS");
-  if (!Root)
+  ASSERT_TRUE(test::producerCorpus("NEVERD_NODE_SEA_22150_CORPUS", Root));
+  if (!Root || !*Root)
     GTEST_SKIP() << "Set NEVERD_NODE_SEA_22150_CORPUS to compiler cases";
   const auto Dir = std::filesystem::path(NEVERD_WEB_FIXTURE_DIR) / "sea";
-  const auto Manifest = parseBoundedJSON(fixture(Dir / "manifest.json"));
-  const auto B = fixture(std::filesystem::path(Root) / "snapshot.blob");
+  const auto *Selected = std::getenv("NEVERD_NODE_SEA_SNAPSHOT_WITNESS");
+  const std::string_view Witness = Selected ? Selected : "original";
+  ASSERT_TRUE(Witness == "original" || Witness == "2026-10-13")
+      << "Unsupported fixed Node SEA snapshot witness";
+  const bool Reconstructed = Witness == "2026-10-13";
+  const auto Manifest = parseBoundedJSON(
+      fixture(Dir / (Reconstructed ? "snapshot-2026-10-13.manifest.json"
+                                   : "manifest.json")));
+  const auto B =
+      fixture(std::filesystem::path(Root) /
+              (Reconstructed ? "snapshot-2026-10-13.blob" : "snapshot.blob"));
   for (const auto &C : *Manifest.getAsObject()->getArray("cases"))
     if (C.getAsObject()->getString("name") == "snapshot") {
-      EXPECT_EQ(sha256(B), C.getAsObject()->getString("sha256"));
-      EXPECT_EQ(std::to_string(B.size()), C.getAsObject()->getString("size"));
+      ASSERT_EQ(sha256(B), C.getAsObject()->getString("sha256"));
+      ASSERT_EQ(std::to_string(B.size()), C.getAsObject()->getString("size"));
     }
   const auto E = extractSEA(input(B), SEABlobProfile);
   EXPECT_TRUE(E.SourceArtifactID.empty());
@@ -315,7 +326,8 @@ TEST_F(WebSEA, OptionalOfficialNodeSnapshotRemainsOpaque) {
 }
 TEST_F(WebSEA, OptionalSixInjectedOfficialNodeImagesPreserveTheCompilerBlob) {
   const auto *Root = std::getenv("NEVERD_NODE_SEA_22150_IMAGES");
-  if (!Root)
+  ASSERT_TRUE(test::producerCorpus("NEVERD_NODE_SEA_22150_IMAGES", Root));
+  if (!Root || !*Root)
     GTEST_SKIP() << "Set NEVERD_NODE_SEA_22150_IMAGES to pinned images";
   const auto Dir = std::filesystem::path(NEVERD_WEB_FIXTURE_DIR) / "sea";
   const auto Manifest = parseBoundedJSON(fixture(Dir / "images.json"));

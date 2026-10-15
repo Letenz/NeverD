@@ -29,9 +29,6 @@ class WebAsar : public ::testing::Test {
 protected:
   std::filesystem::path Root;
   void SetUp() override {
-#ifdef _WIN32
-    GTEST_SKIP() << "Windows snapshot capture is not implemented";
-#endif
     if (!asarAvailable())
       GTEST_SKIP() << "Pinned native ICU path policy is unavailable";
     llvm::SmallString<128> P;

@@ -156,6 +156,107 @@ struct RegistrationRuntimeObjectAccess {
   bool operator==(const RegistrationRuntimeObjectAccess &) const = default;
 };
 
+/// One source LOAD whose runtime storage belongs to an EH3/EH4 search filter.
+/// The slot names its current EXCEPTION_POINTERS; the remaining fields are
+/// the record link and read-only scalar exception code/flags. This evidence
+/// does not authorize a replacement runtime object in native code.
+struct RegistrationSEHExceptionAccess {
+  enum class Kind : uint8_t {
+    PointersSlot,
+    RecordPointer,
+    ExceptionCode,
+    ExceptionFlags
+  } Field = Kind::PointersSlot;
+  va_t Address = InvalidVA;
+  int OpSeq = -1;
+  va_t FilterVA = InvalidVA;
+  bool operator==(const RegistrationSEHExceptionAccess &) const = default;
+};
+
+/// A physical SEH finally invocation ends either by consuming its own near
+/// return PC or by restoring the checked parent SavedESP and branching to an
+/// exact parent instruction. CallVA is zero for a runtime invocation. These
+/// facts authorize state/CFG flow, not native replacement of the invocation.
+struct RegistrationSEHInvocationExit {
+  enum class Kind : uint8_t { NearReturn, ParentJump } Exit = Kind::NearReturn;
+  va_t EntryVA = InvalidVA;
+  va_t CallVA = 0;
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  int OpSeq = -1;
+  va_t TargetVA = InvalidVA;
+  va_t StackRestoreVA = InvalidVA;
+  int StackRestoreSeq = -1;
+  int32_t StackOffset = 0;
+  bool operator==(const RegistrationSEHInvocationExit &) const = default;
+};
+
+/// Exact source invocation of the EH3 capture protocol. Native reconstruction
+/// must replace its physical register/PC contents and CRT state arguments;
+/// copying the original jump buffer is not a continuation contract.
+struct RegistrationSEHJumpCapture {
+  static constexpr uint16_t BufferBytes = 64;
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  int OpSeq = -1;
+  va_t TargetVA = InvalidVA;
+  va_t UnwindVA = InvalidVA;
+  int32_t BufferOffset = 0;
+  int32_t StackOffset = 0;
+  int32_t Level = -1;
+  bool operator==(const RegistrationSEHJumpCapture &) const = default;
+};
+
+/// A live EH3 buffer supplies one physical capture PC and restored ESP. The
+/// source invocation is retired by the authenticated nonlocal runtime call;
+/// this is distinct from an ordinary CALL return or a target-wide noreturn.
+struct RegistrationSEHJumpResume {
+  va_t Address = InvalidVA;
+  int OpSeq = -1;
+  va_t CaptureCall = InvalidVA;
+  va_t TargetVA = InvalidVA;
+  va_t EntryVA = InvalidVA;
+  va_t OrdinaryCall = 0;
+  int32_t BufferOffset = 0;
+  int32_t StackOffset = 0;
+  /// Cross-function exits bind the caller CALL above and the callee's checked
+  /// runtime resume occurrence. These do not grant a callable native ABI.
+  va_t CalleeVA = 0;
+  va_t ResumeVA = 0;
+  /// Exact resume-value argument slot: established EBP-relative for parent
+  /// calls, or relative to EntryVA's private callback entry ESP. Cross-function
+  /// callees require a separate stack owner and do not publish this projection.
+  std::optional<int32_t> ValueOffset;
+  /// Actual source states after local unwind. A capture inside a retired
+  /// scope does not reactivate that scope when the continuation resumes.
+  std::vector<int32_t> ResumedLevels;
+  bool operator==(const RegistrationSEHJumpResume &) const = default;
+};
+
+/// One physical stack argument of an invocation-specialized SEH helper.
+/// Scalar slots and borrowed objects use the caller's established EBP;
+/// opaque buffers name a capture whose native allocation replaces the source.
+struct RegistrationSEHBoundArgument {
+  enum class Kind : uint8_t { Unused, Scalar, Object, JumpBuffer };
+  Kind ArgumentKind = Kind::Unused;
+  int32_t Offset = 0;
+  va_t Capture = 0;
+  bool operator==(const RegistrationSEHBoundArgument &) const = default;
+};
+
+/// A preserved helper may use only these arguments and its private frame.
+/// Source state propagation alone does not establish this native ABI: the
+/// conditional proof also rejects observations of regenerated frame addresses.
+struct RegistrationSEHBoundCall {
+  va_t Address = InvalidVA;
+  int OpSeq = -1;
+  va_t TargetVA = InvalidVA;
+  int32_t StackOffset = 0;
+  bool HasOrdinaryReturn = true;
+  std::vector<RegistrationSEHBoundArgument> Arguments;
+  bool operator==(const RegistrationSEHBoundCall &) const = default;
+};
+
 struct RegistrationStateAnalysis {
   std::vector<RegistrationBlockState> Blocks;
   bool Complete = false;
@@ -163,6 +264,22 @@ struct RegistrationStateAnalysis {
   bool RegistrationLifetimeComplete = false;
   bool CxxContinuationsComplete = true;
   std::vector<RegistrationCxxContinuation> CxxContinuations;
+  bool SEHInvocationExitsComplete = true;
+  std::vector<RegistrationSEHControlContract> SEHControls;
+  std::vector<RegistrationSEHInvocationExit> SEHInvocationExits;
+  bool SEHExceptionAccessesComplete = true;
+  std::vector<RegistrationSEHExceptionAccess> SEHExceptionAccesses;
+  /// Invocation-specialized original helpers require a separate native plan.
+  bool HasBoundSEHCallees = false;
+  bool SEHBoundCallsComplete = true;
+  std::vector<RegistrationSEHBoundCall> SEHBoundCalls;
+  /// Original EH3 captures retain their physical buffer and invocation. Native
+  /// reconstruction requires a separate replacement-buffer contract.
+  bool HasEH3JumpCaptures = false;
+  bool SEHJumpCapturesComplete = true;
+  std::vector<RegistrationSEHJumpCapture> SEHJumpCaptures;
+  bool SEHJumpResumptionsComplete = true;
+  std::vector<RegistrationSEHJumpResume> SEHJumpResumptions;
   /// Complete chain access ownership, including decoded boundaries and
   /// operation identities, available only with a complete registration
   /// lifetime and callback state proof. This is not a native output receipt.
@@ -261,7 +378,8 @@ RegistrationStateAnalysis analyzeRegistrationStates(
     const std::vector<RegistrationCalleeFrameContract> *Callees = nullptr,
     const std::vector<RegistrationCleanupFrameContract> *Cleanups = nullptr,
     const std::vector<RegistrationCalleeStackContract> *Stacks = nullptr,
-    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds = nullptr);
+    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds = nullptr,
+    const std::vector<RegistrationSEHControlContract> *SEHControls = nullptr);
 
 /// Return exact address intervals only if every reaching state agrees about
 /// membership. An ambiguous join cannot be flattened into a lexical try range.

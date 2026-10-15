@@ -1,6 +1,6 @@
 **Языки**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5e83757469a7e3ff81f7d18aba5f4d6641fc007f13b7f64d2a19549d26c1b3dc -->
+<!-- i18n-source: c6842dbcde7494478da5d1a0035e88fb073d2764b43e2a30400a470727685ec4 -->
 
 [← Оглавление документации](README.md)
 
@@ -18,7 +18,7 @@ NeverD использует [Hypervisor.framework](https://developer.apple.com/d
 
 Подключение фреймворка и подпись hypervisor применяются только к целевой системе сборки macOS (`CMAKE_SYSTEM_NAME=Darwin`). Мобильные цели Apple, включая iOS, не получают эту зависимость или разрешение. Гостевой профиль iOS по-прежнему может использовать HVF, если сам NeverD работает на Mac с совпадающей ISA.
 
-Право [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor) требуется **исполняемому файлу процесса**. Подписи одной `libneverd.dylib` недостаточно. CMake подписывает CLI, worker и тесты через `resources/macos/neverd-hypervisor.entitlements`. `NEVERD_HVF_SIGN_IDENTITY` по умолчанию равен `-` для ad hoc; можно выбрать имеющуюся идентичность подписи. Упаковка повторно применяет и проверяет право после исправления зависимостей Mach-O.
+Право [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor) требуется **исполняемому файлу процесса**. Подписи одной `libneverd.dylib` недостаточно. CMake после компоновки подписывает CLI, worker, средство проверки процесса и тесты эмуляции через `resources/macos/neverd-hypervisor.entitlements`. `NEVERD_HVF_SIGN_IDENTITY` по умолчанию равен `-` для ad hoc; можно выбрать имеющуюся идентичность подписи. Упаковка повторно применяет и проверяет право после исправления зависимостей Mach-O.
 
 Встраивающее приложение подписывает собственный процесс. NeverD не переподписывает установленный Python. `cpu-capabilities --configuration=JSON --probe-host` проверяет реальный процесс. Отдельный worker подписывается по умолчанию; `NEVERD_WORKER_SIGN_HVF=OFF` предназначен только для worker без необходимости HVF.
 

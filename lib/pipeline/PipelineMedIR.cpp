@@ -10,12 +10,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "PipelineMedAudit.h"
+#include "PipelineSEHRuntimeMemory.h"
 #include "PipelineTrimStorage.h"
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
+#include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/BinaryImage.h"
@@ -71,6 +73,8 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
   for (const auto &[Entry, Hint] : SourceHints)
     SourceEntryHints.emplace(Entry, *Hint);
   auto SourceCalleeHints = SourceEntryHints;
+  const auto SEHRuntimeMemory =
+      collectLowSEHRuntimeMemory(Img, Result.LowFuncs);
   std::map<va_t, const LowFunc *> SourceCalleeFunctions;
   for (const auto &F : Result.LowFuncs)
     SourceCalleeFunctions.emplace(F.Entry, &F);
@@ -118,6 +122,8 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setSourceCalleeTypeHints(&SourceCalleeHints);
     Local.setSourceCalleeFunctions(&SourceCalleeFunctions);
     Local.setSEHFrameCallees(&SourceCalleeFunctions);
+    Local.setSEHSourceProjectionEnabled(!Opts.PatchMode && !Opts.LiftMode);
+    Local.setSEHRuntimeMemory(&SEHRuntimeMemory);
     Local.setObjCBlockCaptureCallFields(&Opts.ObjCBlockCaptureFields);
     Local.setObjCBlockParameterReceivers(&Opts.ObjCBlockParameterReceivers);
     Local.setObjCBlockCaptureReceivers(&Opts.ObjCBlockCaptureReceivers);
@@ -137,9 +143,14 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
         auto &LF = Result.LowFuncs[I];
         trimFuncStorage(MF);
         MF.EntryKind = functionEntryKind(MF, Img.stackEntryKindAt(MF.Entry));
-        if (!Opts.PatchMode && (!Opts.LiftMode || Opts.SourceProjection))
+        if (!Opts.PatchMode && (!Opts.LiftMode || Opts.SourceProjection)) {
           simplifyProvenStackAlignment(MF, Img.Arch, Img.abiFormat(),
                                        MF.EntryKind);
+          // Source views keep no prologue storage of the caller's registers.
+          markCalleeSavePrologueSaves(MF, Img.Arch, Img.abiFormat(),
+                                      MF.EntryKind);
+          markReturnAddressReads(MF, Img.Arch, Img.abiFormat(), MF.EntryKind);
+        }
         MF.OriginalSize = LF.OriginalSize;
         MF.DebugName = LF.DebugName;
         MF.SourceFile = LF.SourceFile;

@@ -8,8 +8,10 @@
 //===----------------------------------------------------------------------===//
 #include "RegistrationDirectThrowTestUtils.h"
 
+#include "RegistrationInitializerTestUtils.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
@@ -51,8 +53,12 @@ void checkCallbackBoundaries(const MedFunc &Med, const BinaryImage &Image) {
           });
       ASSERT_NE(Segment, Changed.Segments.end());
       // A real return, trap or unresolved jump keeps even a weak boundary.
-      const uint8_t Terminators[] = {0xc3, 0xcc, 0xeb};
+      const uint8_t Terminators[] = {0xc3, 0xcc, 0xff};
       Segment->Data[Boundary - 1 - Segment->VA] = Terminators[Mutation - 3];
+      if (Mutation == 5) {
+        ASSERT_LT(Boundary - Segment->VA, Segment->Data.size());
+        Segment->Data[Boundary - Segment->VA] = 0xe0; // JMP EAX.
+      }
     }
     coff_loader::parseX86RegistrationExceptions(Changed);
     const auto Found = llvm::find_if(
@@ -68,6 +74,7 @@ void checkCallbackBoundaries(const MedFunc &Med, const BinaryImage &Image) {
 void checkDirectThrowEdits(const MedFunc &Med, const llvm::Function &Parent,
                            const BinaryImage &Image) {
   checkCallbackBoundaries(Med, Image);
+  checkInitializerEdits(Med, Parent, Image);
   for (bool Callback : {false, true})
     for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
       SCOPED_TRACE(Callback);
@@ -105,8 +112,13 @@ void checkDirectThrowEdits(const MedFunc &Med, const llvm::Function &Parent,
                                               Call->getArgOperand(Argument),
                                               Builder.getInt32(1)));
       }
-      if (Mutation == 3)
-        Call->setArgOperand(1, Calls[1]->getArgOperand(1));
+      if (Mutation == 3) {
+        const auto Other = llvm::find_if(Calls, [&](const auto *Candidate) {
+          return Candidate->getArgOperand(1) != Call->getArgOperand(1);
+        });
+        ASSERT_NE(Other, Calls.end());
+        Call->setArgOperand(1, (*Other)->getArgOperand(1));
+      }
       if (Mutation == 4)
         Call->addParamAttr(0, llvm::Attribute::InReg);
       if (Mutation == 5)
@@ -117,9 +129,9 @@ void checkDirectThrowEdits(const MedFunc &Med, const llvm::Function &Parent,
         Call->getCalledFunction()->setMemoryEffects(
             llvm::MemoryEffects::none());
       if (Mutation == 8 || Mutation == 9) {
-        // The three source objects hold int(7), unsigned(7), and float(7).
-        // Destroy their definite initialization without changing the call or
-        // its receipt. The float bits must not count as integer seven.
+        // Remove definite initialization of the selected throw object. Scalar
+        // fixtures store seven directly; a catch constructor instead consumes
+        // the caught object's current fields.
         unsigned Stores = 0;
         llvm::DominatorTree Dominators(*Function);
         for (auto &Block : *Function)
@@ -139,7 +151,46 @@ void checkDirectThrowEdits(const MedFunc &Med, const llvm::Function &Parent,
             else
               Store->setOperand(0, llvm::UndefValue::get(Value->getType()));
           }
-        ASSERT_GE(Stores, 1u);
+        if (!Stores) {
+          std::vector<llvm::CallBase *> Initializers;
+          for (auto &Block : *Function)
+            for (auto &I : Block) {
+              auto *Candidate = llvm::dyn_cast<llvm::CallBase>(&I);
+              const auto *Target =
+                  Candidate ? Candidate->getCalledFunction() : nullptr;
+              if (!Target || Target->isIntrinsic() ||
+                  !Dominators.dominates(Candidate, Call))
+                continue;
+              auto Address = rewrite_source::getOriginalVA(*Target);
+              if (!Address) {
+                llvm::consumeError(Address.takeError());
+                continue;
+              }
+              if (llvm::any_of(Med.RegistrationStates->CalleeContracts,
+                               [&](const auto &Contract) {
+                                 return Contract.isInitializer() &&
+                                        *Address == Contract.Target;
+                               }))
+                Initializers.push_back(Candidate);
+            }
+          ASSERT_FALSE(Initializers.empty());
+          for (auto *Initializer : Initializers) {
+            ASSERT_TRUE(Initializer->use_empty());
+            ASSERT_GT(Initializer->arg_size(), 1u);
+            if (Mutation == 8) {
+              if (auto *Invoke =
+                      llvm::dyn_cast<llvm::InvokeInst>(Initializer)) {
+                Invoke->getUnwindDest()->removePredecessor(Invoke->getParent());
+                llvm::IRBuilder<> Before(Invoke);
+                Before.CreateBr(Invoke->getNormalDest());
+              }
+              Initializer->eraseFromParent();
+            } else
+              Initializer->setArgOperand(
+                  1, llvm::UndefValue::get(
+                         Initializer->getArgOperand(1)->getType()));
+          }
+        }
       }
       ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
       auto Error = validateCOFFRegistrationCxxIR(*Function,

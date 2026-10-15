@@ -20,6 +20,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -413,6 +414,18 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
         return Address && Func.ExceptionMetadata &&
                Func.ExceptionMetadata->ownsCode(Address);
       };
+      if (!Stmt.EHIsReducible) {
+        // Native dispatch enters these bodies after ordinary code has left
+        // through a branch or return. Their labels must survive unreachable
+        // statement pruning even though no machine goto names the entry.
+        if (Reachable(Clause.FilterOrActionVA))
+          GotoTargets.insert(Clause.FilterOrActionVA);
+        if (Reachable(Clause.HandlerVA))
+          GotoTargets.insert(Clause.HandlerVA);
+        for (va_t Continuation : Clause.ContinuationVAs)
+          if (Reachable(Continuation))
+            GotoTargets.insert(Continuation);
+      }
       if (Clause.Kind == HighEHClauseKind::SEHExcept &&
           Reachable(Clause.HandlerVA)) {
         // An attached `__except` body is already printed in-place.  A label
@@ -430,6 +443,18 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
           GotoTargets.insert(Pad);
     }
   });
+  // Every landing pad the call-site table names is entered by the unwinder,
+  // including one that only runs cleanups and resumes: no clause names it,
+  // and without a label its code would read as dead after a return.
+  LandingPadLabels.clear();
+  if (Func.ExceptionMetadata && Func.ExceptionMetadata->Itanium &&
+      Func.ExceptionMetadata->Itanium->IsCallSiteAddressForm)
+    for (const ItaniumCallSite &Site :
+         Func.ExceptionMetadata->Itanium->CallSites)
+      if (Site.LandingPadVA &&
+          Func.ExceptionMetadata->ownsCode(Site.LandingPadVA) &&
+          GotoTargets.insert(Site.LandingPadVA).second)
+        LandingPadLabels.insert(Site.LandingPadVA);
   FallthroughTryExits.clear();
   {
     std::set<std::pair<va_t, va_t>> Kept;
@@ -757,6 +782,8 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
   }
 
   std::set<std::string> DeclaredNames(ParamNames);
+  // The parameters are declared already; a blank line ends the locals.
+  const size_t Parameters = DeclaredNames.size();
   for (auto &Local : Func.Locals) {
     MedVar StackVar;
     StackVar.Kind = MedVar::Stack;
@@ -853,7 +880,7 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
        << ";\n";
   }
   DeclaredCNames.insert(DeclaredNames.begin(), DeclaredNames.end());
-  if (!DeclaredNames.empty())
+  if (DeclaredNames.size() > Parameters)
     OS << "\n";
 }
 
@@ -873,72 +900,9 @@ void HighCWriter::writeExceptionAnnotation(const HighFunc &Func) {
   OS << " * highir.structured_regions=" << Func.StructuredExceptionRegions
      << ", fallback_regions=" << Func.UnstructuredExceptionRegions << "\n";
 
-  if (EH.SEH) {
-    for (size_t I = 0; I < EH.SEH->Scopes.size(); ++I) {
-      const SEHScopeRecord &Scope = EH.SEH->Scopes[I];
-      const char *Kind = Scope.Kind == SEHScopeKind::Finally    ? "finally"
-                         : Scope.Kind == SEHScopeKind::CatchAll ? "except-all"
-                                                                : "filter";
-      OS << " * seh.scope[" << I << "]: " << Kind << " [0x"
-         << llvm::utohexstr(Scope.GuardedRange.Begin) << ", 0x"
-         << llvm::utohexstr(Scope.GuardedRange.End) << ")";
-      if (Scope.FilterOrFinallyVA)
-        OS << " filter_or_finally=0x"
-           << llvm::utohexstr(Scope.FilterOrFinallyVA);
-      if (Scope.NormalizedFilterVA)
-        OS << " normalized_filter=0x"
-           << llvm::utohexstr(Scope.NormalizedFilterVA);
-      if (Scope.HandlerVA)
-        OS << " handler=0x" << llvm::utohexstr(Scope.HandlerVA);
-      OS << "\n";
-    }
-  }
-  if (EH.Cxx) {
-    OS << " * cxx.format="
-       << (EH.Cxx->NativeEncoding == CxxExceptionInfo::Encoding::FH4 ? "fh4"
-                                                                     : "fh3")
-       << ", states=" << EH.Cxx->MaxState
-       << ", try_blocks=" << EH.Cxx->TryBlocks.size()
-       << ", ip_states=" << EH.Cxx->IPMap.size() << "\n";
-    for (size_t I = 0; I < EH.Cxx->UnwindMap.size(); ++I) {
-      const CxxUnwindAction &Action = EH.Cxx->UnwindMap[I];
-      OS << " * cxx.unwind[" << I << "]: to_state=" << Action.ToState
-         << ", kind=" << getCxxUnwindActionKindName(Action.Kind);
-      if (Action.ActionVA)
-        OS << ", action=0x" << llvm::utohexstr(Action.ActionVA);
-      if (Action.ObjectOffset)
-        OS << ", object_offset=" << Action.ObjectOffset;
-      OS << "\n";
-    }
-    for (size_t I = 0; I < EH.Cxx->TryBlocks.size(); ++I) {
-      const CxxTryBlock &Try = EH.Cxx->TryBlocks[I];
-      OS << " * cxx.try[" << I << "]: states=" << Try.TryLow << ".."
-         << Try.TryHigh << ", catch_high=" << Try.CatchHigh
-         << ", handlers=" << Try.Handlers.size() << "\n";
-      for (size_t J = 0; J < Try.Handlers.size(); ++J) {
-        const CxxCatchHandler &Catch = Try.Handlers[J];
-        OS << " *   catch[" << J << "]: type=0x"
-           << llvm::utohexstr(Catch.TypeDescriptorVA) << ", handler=0x"
-           << llvm::utohexstr(Catch.HandlerVA) << ", adjectives=0x"
-           << llvm::utohexstr(Catch.Adjectives)
-           << ", object_offset=" << Catch.CatchObjectOffset
-           << ", parent_frame_offset=" << Catch.ParentFrameOffset;
-        if (!Catch.ContinuationVAs.empty()) {
-          OS << ", continuations=";
-          for (size_t K = 0; K < Catch.ContinuationVAs.size(); ++K) {
-            if (K)
-              OS << ",";
-            OS << "0x" << llvm::utohexstr(Catch.ContinuationVAs[K]);
-          }
-        }
-        OS << "\n";
-      }
-    }
-    for (size_t I = 0; I < EH.Cxx->IPMap.size(); ++I)
-      OS << " * cxx.ip_state[" << I << "]: ip=0x"
-         << llvm::utohexstr(EH.Cxx->IPMap[I].IP)
-         << ", state=" << EH.Cxx->IPMap[I].State << "\n";
-  }
+  writeSEHScopeAnnotation(Func);
+  writeRegistrationAnnotation(Func);
+  writeCxxScopeAnnotation(Func);
   if (EH.Itanium) {
     const ItaniumEHInfo &LSDA = *EH.Itanium;
     OS << " * itanium.lsda=0x" << llvm::utohexstr(LSDA.LSDAVA)
@@ -1015,8 +979,13 @@ void HighCWriter::writeExceptionAnnotation(const HighFunc &Func) {
 void HighCWriter::writeFunction(const HighFunc &Func) {
   if (Opts.Image && EmitFunctionWrapper)
     if (auto Reg = x86GetPcThunkRegister(*Opts.Image, Func.Entry)) {
-      c_stub::writeGetPcThunk(OS, functionIdentifier(Func),
-                              typeToC(Func.ReturnType), *Reg);
+      const std::string Identifier = functionIdentifier(Func);
+      std::string Symbol;
+      if (auto It = FunctionSymbolNames.find(&Func);
+          Opts.EmitComments && It != FunctionSymbolNames.end())
+        Symbol = symbolComment(It->second, Identifier);
+      c_stub::writeGetPcThunk(OS, Identifier, typeToC(Func.ReturnType), *Reg,
+                              Symbol);
       return;
     }
 
@@ -1048,11 +1017,15 @@ void HighCWriter::writeAnalysisOnlyFunction(const HighFunc &Func) {
     OS << "/* neverd.analysis-only: recovered Windows SEH/C++ as readable C. "
           "*/\n";
   }
+  if (Func.HasUnresolvedSEHFrame)
+    OS << "/* neverd.seh: unresolved runtime stack; unknown entry values "
+          "remain explicit. Native reconstruction is unavailable. */\n";
   writeFunctionProjection(Func);
 }
 
 void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
   FrameSlots.clear();
+  FrameAddressEscapes = false;
   FrameAliases.clear();
   AmbiguousFrameAliases.clear();
   const bool SavedHandler = InEHClauseBody;
@@ -1345,6 +1318,11 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
       else
         It->second.AddressTaken = true;
     }
+
+  // Slots that only share bytes keep their addresses to themselves; the
+  // slots marked below are address-taken for their storage, not escapes.
+  FrameAddressEscapes = llvm::any_of(
+      FrameSlots, [](const auto &Entry) { return Entry.second.AddressTaken; });
 
   // Slots that share bytes are one object, not separate variables: a byte
   // stored at -0x82 changes what a later read of the eight bytes at -0x84
@@ -3192,6 +3170,21 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     bool Cleanup = false;
     bool Handler = false;
   };
+  // An address the function computes from a frame address and a run-time
+  // value may be any frame byte.  What a load returns is no such
+  // computation: a frame address stored to memory has escaped.
+  std::function<bool(const HighExpr &, unsigned)> ComputedFromFrame =
+      [&](const HighExpr &E, unsigned Depth) -> bool {
+    if (Depth > limits::kMaxFrameDisplacementDepth || frameDisplacement(E))
+      return true;
+    if (E.Kind == ExprKind::Load || E.Kind == ExprKind::Call)
+      return false;
+    bool Hit = false;
+    E.forEachChildExpr([&](const ExprPtr &Child) {
+      Hit = Hit || (Child && ComputedFromFrame(*Child, Depth + 1));
+    });
+    return Hit;
+  };
   std::map<const HighStmt *, Site> Sites;
   std::map<uint64_t, std::vector<const HighStmt *>> Linear;
   std::map<uint64_t, uint64_t> JoinAfterTry;
@@ -3604,7 +3597,10 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     return false;
   };
 
+  // Candidates already settled; one refused stays a statement of its own.
+  std::set<std::string> Decided;
   for (const Candidate &C : Candidates) {
+    Decided.insert(C.Name);
     unsigned Uses = 0;
     bool Redefined = false;
     bool OtherRegion = false;
@@ -3768,10 +3764,36 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       // changes memory. This also checks loads reached through candidates.
       if (EffectfulLoadAddress)
         continue;
-      // A folded atomic read-modify-write runs at its use: no other memory
-      // access may run between, or sit unsequenced beside it in the use,
-      // including one another fold brings there.
-      const bool WritesMemory = ExprWrites(*C.Stmt->Val, ExprWrites);
+      // A folded atomic read-modify-write or call runs at its use, also one
+      // folded into this value first: no other memory access may run
+      // between, or sit unsequenced beside it in the use, including one
+      // another fold brings there.
+      std::set<std::string> WriteSeen{C.Name};
+      std::function<bool(const HighExpr &, unsigned)> FoldWrites =
+          [&](const HighExpr &E, unsigned Depth) -> bool {
+        if (Depth > 64 || E.Kind == ExprKind::Call ||
+            E.Kind == ExprKind::Store ||
+            E.MemoryOrdering != NdMemoryOrdering::None)
+          return true;
+        if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
+            WriteSeen.insert(varName(E.Var)).second) {
+          const std::string Read = varName(E.Var);
+          if (auto It = ValueForward.find(Read);
+              It != ValueForward.end() && It->second &&
+              FoldWrites(*It->second, Depth + 1))
+            return true;
+          if (auto It = CandidateDefs.find(Read);
+              !Decided.count(Read) && It != CandidateDefs.end() &&
+              It->second->Val && FoldWrites(*It->second->Val, Depth + 1))
+            return true;
+        }
+        bool Hit = false;
+        E.forEachChildExpr([&](const ExprPtr &Child) {
+          Hit = Hit || FoldWrites(*Child, Depth + 1);
+        });
+        return Hit;
+      };
+      const bool WritesMemory = FoldWrites(*C.Stmt->Val, 0);
       std::set<std::string> AccessSeen{C.Name};
       std::function<bool(const HighExpr &, unsigned)> AccessesMemory =
           [&](const HighExpr &E, unsigned Depth) -> bool {
@@ -3812,10 +3834,12 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
           Load ? frameDisplacement(*Load->Operands[0]) : std::nullopt;
       const std::optional<std::string> SlotName =
           Load ? namedFrameSlot(*Load->Operands[0]) : std::nullopt;
-      // Memory reached otherwise than through this one named slot.
-      const bool Escapes = ReadsMemory && (!Load || !Slot || !SlotName ||
-                                           isAddressTakenSlot(*SlotName) ||
-                                           Load != C.Stmt->Val.get());
+      // Memory reached otherwise than through this one named slot, which
+      // any slot is once a frame address escapes.
+      const bool Escapes =
+          ReadsMemory &&
+          (!Load || !Slot || !SlotName || FrameAddressEscapes ||
+           isAddressTakenSlot(*SlotName) || Load != C.Stmt->Val.get());
       const int64_t Width = Load && Load->Type ? Load->Type->Size : 8;
       auto Overlaps = [&](int64_t Disp, int64_t Size) {
         return Disp < *Slot + Width && *Slot < Disp + Size;
@@ -3848,7 +3872,8 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
             const auto Disp = frameDisplacement(*WriteAddr);
             const int64_t Size = WriteType ? WriteType->Size : 8;
             if (Escapes ? !Disp || !Slot || Overlaps(*Disp, Size)
-                        : Disp && Overlaps(*Disp, Size))
+                : Disp  ? Overlaps(*Disp, Size)
+                        : ComputedFromFrame(*WriteAddr, 0))
               return true;
           }
           if (S.Kind == StmtKind::Assign && S.Dst &&
@@ -4730,6 +4755,7 @@ size_t HighCWriter::emittedParamCount(const HighFunc &Func) const {
 
 std::vector<size_t>
 HighCWriter::emittedParamIndices(const HighFunc &Func) const {
+  const auto Key = std::make_pair(&Func, Func.Entry);
   std::vector<size_t> All;
   const auto DebugFn = debugFunction(Dbg, Func.Entry);
   const size_t N = Func.Params.size();
@@ -4738,19 +4764,24 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
     All.resize(N);
     for (size_t I = 0; I < N; ++I)
       All[I] = I;
+    EmittedParamIndices[Key] = All;
     return All;
   }
-  const auto Key = std::make_pair(&Func, Func.Entry);
   if (auto It = EmittedParamIndices.find(Key);
       It != EmittedParamIndices.end() && It->second.size() <= N)
     return It->second;
   std::set<int> Used;
+  // Expressions can share children, and several call edges can query the same
+  // definition. Visit each expression once and retain every completed answer.
+  HighExprSet Visited;
   ParamIndicesInProgress.insert(&Func);
   const auto Done =
       llvm::make_scope_exit([&] { ParamIndicesInProgress.erase(&Func); });
   // An indirect call's target is a use too.  A call's operand that its
   // callee's definition does not declare is none: the call does not pass it.
   std::function<void(const HighExpr &)> Walk = [&](const HighExpr &E) {
+    if (!Visited.insert(&E).second)
+      return;
     if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
         E.Var.Kind == MedVar::Param)
       Used.insert(E.Var.Id);
@@ -4799,6 +4830,7 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
     All.resize(N);
     for (size_t I = 0; I < N; ++I)
       All[I] = I;
+    EmittedParamIndices[Key] = All;
     return All;
   }
   size_t Unused = 0;
@@ -4809,6 +4841,7 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
     All.resize(N);
     for (size_t I = 0; I < N; ++I)
       All[I] = I;
+    EmittedParamIndices[Key] = All;
     return All;
   }
   std::vector<int> Order(Used.begin(), Used.end());
@@ -4821,6 +4854,7 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
     for (size_t I = 0; I < N; ++I)
       All[I] = I;
   }
+  EmittedParamIndices[Key] = All;
   return All;
 }
 
@@ -5003,135 +5037,15 @@ void HighCWriter::hideX86SehRegistration(const HighFunc &Func) {
   HideRestore(Func.Body);
 }
 
-void HighCWriter::hideX86CallPushSetup(const HighFunc &Func) {
-  if (Opts.TheArch != Arch::X86)
-    return;
-
-  auto Peel = [this](const HighExpr *E) { return unwrapIntegerView(E); };
-  auto IsImm = [&](const HighExpr *E, uint64_t Val) {
-    E = Peel(E);
-    return E && E->Kind == ExprKind::Const && E->ConstVal == Val;
-  };
-  auto IsSubImm = [&](const HighExpr *E, uint64_t Imm) {
-    E = Peel(E);
-    return E && E->Kind == ExprKind::BinOp && E->Op == NdOp::INT_SUB &&
-           E->Operands.size() == 2 && E->Operands[0] && E->Operands[1] &&
-           IsImm(E->Operands[1].get(), Imm);
-  };
-  auto SameScalar = [&](const HighExpr *A, const HighExpr *B) {
-    A = Peel(A);
-    B = Peel(B);
-    if (!A || !B)
-      return false;
-    if (A->Kind == ExprKind::Const && B->Kind == ExprKind::Const)
-      return A->ConstVal == B->ConstVal;
-    if ((A->Kind == ExprKind::Var || A->Kind == ExprKind::Phi) &&
-        A->Kind == B->Kind)
-      return A->Var.Kind == B->Var.Kind && A->Var.Id == B->Var.Id &&
-             A->Var.SSAVer == B->Var.SSAVer;
-    return false;
-  };
-  auto MatchesCallOperand = [&](const HighExpr *Val, const HighExpr &Call) {
-    if (!Val)
-      return false;
-    for (const auto &Op : Call.Operands)
-      if (SameScalar(Val, Op.get()))
-        return true;
-    return false;
-  };
-  auto IsPushStore = [&](const HighStmt &S, const HighExpr &Call) {
-    if (S.Kind != StmtKind::Store || !S.StoreAddr || !S.StoreVal)
-      return false;
-    if (S.MemoryAddressSpace != NdMemoryAddressSpace::Default)
-      return false;
-    if (namedFrameSlot(*S.StoreAddr) || typedMemberAccess(*S.StoreAddr))
-      return false;
-    if (!IsSubImm(S.StoreAddr.get(), 4))
-      return false;
-    const HighExpr *Val = Peel(S.StoreVal.get());
-    if (!Val)
-      return false;
-    if (Val->Kind == ExprKind::Const || Val->Kind == ExprKind::Undef)
-      return true;
-    return MatchesCallOperand(S.StoreVal.get(), Call);
-  };
-  auto IsEspSubAssign = [&](const HighStmt &S) {
-    if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val)
-      return false;
-    if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
-      return false;
-    if (S.Dst->Var.Kind == MedVar::Param)
-      return false;
-    if (namedFrameSlot(*S.Dst))
-      return false;
-    return IsSubImm(S.Val.get(), 4);
-  };
-  auto IsImageLoadAssign = [&](const HighStmt &S) {
-    if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val)
-      return false;
-    if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
-      return false;
-    const HighExpr *Val = Peel(S.Val.get());
-    if (!Val || Val->Kind != ExprKind::Load || Val->Operands.empty() ||
-        !Val->Operands[0])
-      return false;
-    const HighExpr *Addr = Peel(Val->Operands[0].get());
-    return Addr && Addr->Kind == ExprKind::Const;
-  };
-
-  std::function<void(const std::vector<HighStmt> &)> Walk =
-      [&](const std::vector<HighStmt> &Body) {
-        for (const HighStmt &S : Body) {
-          Walk(S.Body);
-          Walk(S.ElseBody);
-          Walk(S.DefaultBody);
-          for (const auto &C : S.Cases)
-            Walk(C.Body);
-          for (const auto &Clause : S.EHClauseBodies)
-            Walk(Clause);
-        }
-        for (size_t I = 0; I < Body.size(); ++I) {
-          const HighExpr *Call = stmtCallExpr(Body[I]);
-          if (!Call || Call->Operands.empty())
-            continue;
-          std::vector<const HighStmt *> Run;
-          bool Matched = false;
-          for (size_t J = I; J > 0 && Run.size() < 8;) {
-            --J;
-            const HighStmt &P = Body[J];
-            if (P.Kind == StmtKind::Nop ||
-                (P.Kind == StmtKind::Block && P.Body.empty()))
-              continue;
-            if (IsImageLoadAssign(P)) {
-              if (MatchesCallOperand(P.Dst.get(), *Call))
-                Run.push_back(&P);
-              continue;
-            }
-            if (IsPushStore(P, *Call)) {
-              if (MatchesCallOperand(P.StoreVal.get(), *Call))
-                Matched = true;
-              Run.push_back(&P);
-              continue;
-            }
-            if (IsEspSubAssign(P)) {
-              Run.push_back(&P);
-              continue;
-            }
-            break;
-          }
-          if (!Matched)
-            continue;
-          for (const HighStmt *P : Run)
-            Analysis.DeadStmts.insert(P);
-        }
-      };
-  Walk(Func.Body);
-}
-
 void HighCWriter::foldCxxThrowConstructors(const HighFunc &Func) {
   if (!Opts.StructuredExceptionSyntax)
     return;
   if (!Opts.Image)
+    return;
+  // PE32 ThrowInfo identifies an object, not its source constructor or member
+  // layout. Keep its initialization and exact runtime call until constructor
+  // recovery supplies that proof. Sharing an object argument is insufficient.
+  if (Opts.Image->Arch == Arch::X86)
     return;
   struct ThrownObject {
     std::optional<int64_t> Frame;
@@ -5364,9 +5278,31 @@ void HighCWriter::nameCxxCatchObjects(const HighFunc &Func) {
       return Rebased;
     return Direct;
   };
+  // An Itanium handler that reads what it caught takes a parameter.
+  auto BindsCaught = [](const std::vector<HighStmt> &Body) {
+    bool Binds = false;
+    std::function<void(const HighExpr *)> Visit = [&](const HighExpr *E) {
+      if (!E || Binds)
+        return;
+      Binds =
+          E->Operands.empty() && isItaniumRuntimeCall(*E, "__cxa_begin_catch");
+      E->forEachChildExpr([&](const ExprPtr &C) { Visit(C.get()); });
+    };
+    walkStmts(Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) { Visit(E.get()); });
+    });
+    return Binds;
+  };
   std::function<void(const std::vector<HighStmt> &)> Walk =
       [&](const std::vector<HighStmt> &Stmts) {
         for (const HighStmt &S : Stmts) {
+          if (hasItaniumHandlerBodies(S))
+            for (size_t I = 0; I < S.EHClauses.size(); ++I) {
+              const HighEHClause &Clause = S.EHClauses[I];
+              if (!Clause.TypeName.empty() && !CxxCatchNames.count(&Clause) &&
+                  BindsCaught(S.EHClauseBodies[I]))
+                CxxCatchNames[&Clause] = allocateName();
+            }
           if (S.Kind == StmtKind::CxxTry) {
             for (size_t I = 0; I < S.EHClauses.size(); ++I) {
               const HighEHClause &Clause = S.EHClauses[I];
@@ -5540,6 +5476,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   FrameStorageActive = false;
   ProjectFrameAliasesIntoStorage = false;
   FrameStorageSlots.clear();
+  FrameRecordMembers.clear();
+  FrameSlotNamesBeforeStorage.clear();
   CopyForward.clear();
   JoinPhiNames.clear();
   FieldForward.clear();
@@ -5880,6 +5818,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     }
     if (ProjectFrameAliasesIntoStorage)
       FrameStorageSlots = FrameSlots;
+    for (const auto &[Disp, Slot] : FrameSlots)
+      if (!Slot.Name.empty() && Slot.Outer.empty() && !Slot.RegionBytes)
+        FrameSlotNamesBeforeStorage[Disp] = Slot.Name;
     FrameSlots.clear();
     if (!ProjectFrameAliasesIntoStorage)
       FrameAliases.clear();
@@ -5916,15 +5857,15 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
 
   if (EmitFunctionWrapper && Func.Entry)
     OS << "/* neverd.entry: 0x" << llvm::utohexstr(Func.Entry) << " */\n";
-  // A definition whose identifier is spelled from its symbol names the symbol
-  // as its language does (`QDomNode::nodeType() const`, `main.main`), unless
-  // the debug name's comment below says the same.
+  // A definition whose identifier is not its symbol names the symbol as its
+  // language does (`QDomNode::nodeType() const`, `main.main`) or as the image
+  // spells it (`_fini`), unless the debug name's comment below says the same.
   const bool DebugNameComment =
       !Func.DebugName.empty() && Func.DebugName != Func.Name;
   if (Opts.EmitComments)
     if (auto Symbol = FunctionSymbolNames.find(&Func);
         Symbol != FunctionSymbolNames.end())
-      if (const std::string Demangled = demangledComment(Symbol->second);
+      if (const std::string Demangled = symbolComment(Symbol->second, FName);
           !Demangled.empty() &&
           !(DebugNameComment && Demangled == Func.DebugName)) {
         if (!EmitFunctionWrapper)
@@ -6092,12 +6033,43 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         syntheticEntryStackResidue(Opts.TheArch, Opts.Format, Func.EntryKind);
     uint64_t FrameBaseOffset = checkedStackAdd(LowerSize, EntryResidue);
     uint64_t StorageSize = checkedStackAdd(FrameBaseOffset, UpperSize);
+    collectFrameRecordMembers(Func, FrameBaseOffset, StorageSize);
     emitIndent(1);
-    OS << "_Alignas(" << kSyntheticStackAlignment << ") uint8_t stack_storage["
-       << StorageSize << "];\n";
-    emitIndent(1);
-    OS << "const uintptr_t frame_base = (uintptr_t)(stack_storage + "
-       << FrameBaseOffset << ");\n";
+    if (FrameRecordMembers.empty()) {
+      OS << "_Alignas(" << kSyntheticStackAlignment << ") uint8_t "
+         << kFrameStorageName << "[" << StorageSize << "];\n";
+      emitIndent(1);
+      OS << "const uintptr_t frame_base = (uintptr_t)(" << kFrameStorageName
+         << " + " << FrameBaseOffset << ");\n";
+    } else {
+      // The members at their byte offsets, the gaps named by offset as IDA
+      // names a structure's gaps. The tag is the function's own: the C++,
+      // Go and Rust views read every record into one namespace.
+      OS << "_Alignas(" << kSyntheticStackAlignment << ") struct frame_"
+         << llvm::utohexstr(Func.Entry) << " {\n";
+      uint64_t At = 0;
+      auto Gap = [&](uint64_t End) {
+        if (End <= At)
+          return;
+        emitIndent(2);
+        OS << "uint8_t gap" << llvm::utohexstr(At) << "[" << End - At << "];\n";
+        At = End;
+      };
+      for (const auto &[Disp, Member] : FrameRecordMembers) {
+        const uint64_t Offset =
+            static_cast<uint64_t>(static_cast<int64_t>(FrameBaseOffset) + Disp);
+        Gap(Offset);
+        emitIndent(2);
+        OS << declarationToC(Member.Type, Member.Name) << ";\n";
+        At = Offset + Member.Type->Size;
+      }
+      Gap(StorageSize);
+      emitIndent(1);
+      OS << "} " << kFrameStorageName << ";\n";
+      emitIndent(1);
+      OS << "const uintptr_t frame_base = (uintptr_t)((uint8_t *)&"
+         << kFrameStorageName << " + " << FrameBaseOffset << ");\n";
+    }
     // The rebuilt storage has the host's pointer width, which a 64-bit
     // target's source is compiled with: frame arithmetic is uint64_t already.
     const uint16_t PointerBytes = getTargetRegInfo(Opts.TheArch).PointerSize;

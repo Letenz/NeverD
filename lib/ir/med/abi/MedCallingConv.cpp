@@ -41,11 +41,13 @@
 
 namespace neverd {
 
-// ---- x86-specific helpers (MedCallingConvX86.cpp) ----
-void detectXMMParams(
+// ---- Shared FP/vector parameters (MedCallingConvFP.cpp) ----
+void detectFPParams(
     MedFunc &Func, const MedBlock &Entry, const TargetRegInfo &TRI,
     const std::map<std::pair<uint64_t, uint16_t>, int> &RegVarMap,
     Arch TargetArch, BinaryFormat TargetFormat);
+
+// ---- x86-specific helpers (MedCallingConvX86.cpp) ----
 void detectCdeclStackParams(MedFunc &Func, Arch TargetArch);
 
 // ---- variadic (...) prologue detection (MedVariadic.cpp) ----
@@ -257,6 +259,67 @@ uint16_t findFirstUseSize(const MedFunc &Func, uint64_t ParamRegOff,
     }
   }
   return MaxSz;
+}
+
+int nextValueId(const MedFunc &Func) {
+  int Next = 0;
+  const auto Observe = [&](const MedVar &V) {
+    if (!V.isConst())
+      Next = std::max(Next, V.Id + 1);
+  };
+  for (const auto &Parameter : Func.Params)
+    Observe(Parameter);
+  for (const auto &Block : Func.Blocks) {
+    for (const auto &Phi : Block.Phis) {
+      Observe(Phi.Output);
+      for (const auto &[Pred, Input] : Phi.Args)
+        Observe(Input);
+    }
+    for (const auto &Op : Block.Ops) {
+      Observe(Op.Output);
+      for (const auto &V : Op.Inputs)
+        Observe(V);
+      for (const auto &V : Op.IntrinsicOutputs)
+        Observe(V);
+    }
+  }
+  return Next;
+}
+
+void composeStackSlots(MedOp &Read, MedVar First, unsigned Slot, unsigned Bytes,
+                       int &NextValueId, std::vector<MedOp> &Prefix) {
+  const unsigned Slots = (Bytes + Slot - 1) / Slot;
+  First.Size = static_cast<uint16_t>(Slot);
+  const auto slotParam = [&](unsigned K) {
+    MedVar Parameter = First;
+    Parameter.Id += static_cast<int>(K);
+    return Parameter;
+  };
+  const auto compose = [&](NdOp Opcode, unsigned Size, const MedVar &Left,
+                           const MedVar &Right) {
+    MedOp Compose;
+    Compose.Opcode = Opcode;
+    Compose.Addr = Read.Addr;
+    Compose.OriginSeq = Read.OriginSeq;
+    Compose.Output = First;
+    Compose.Output.Kind = MedVar::Temp;
+    Compose.Output.Id = NextValueId++;
+    Compose.Output.Size = static_cast<uint16_t>(Size);
+    Compose.addInput(Left);
+    Compose.addInput(Right);
+    Prefix.push_back(Compose);
+    return Compose.Output;
+  };
+  MedVar Low = slotParam(0);
+  for (unsigned K = 1; K + 1 < Slots; ++K)
+    Low = compose(NdOp::CONCAT, Slot * (K + 1), slotParam(K), Low);
+  MedVar High = slotParam(Slots - 1);
+  if (const unsigned HighBytes = Bytes - Slot * (Slots - 1); HighBytes < Slot)
+    High = compose(NdOp::SUBBYTES, HighBytes, High, MedVar::makeConst(0, 4));
+  Read.Opcode = NdOp::CONCAT;
+  Read.Inputs[0] = High;
+  Read.Inputs[1] = Low;
+  Read.NumInputs = 2;
 }
 
 } // namespace med_calling_conv_detail
@@ -842,13 +905,12 @@ void detectStackParams(MedFunc &Func, Arch TargetArch, BinaryFormat Fmt,
           auto [SlotBase, ByteOff] = slotOf(*Off);
           Offsets.insert(SlotBase);
           // A slot-aligned load wider than one pointer slot (an 8-byte double
-          // stack argument on a 4-byte-slot target) spans several slots; record
-          // the highest so every covered slot is created as a parameter below.
+          // stack argument on a 4-byte-slot target, or a 10-byte x87 long
+          // double) spans several slots; record the one its last byte is in
+          // so every covered slot is created as a parameter below.
           const unsigned LoadSz = Read->Bytes;
-          if (Read->AddressInput == 1)
+          if (Read->AddressInput == 1 || (ByteOff == 0 && LoadSz > Slot))
             Offsets.insert(slotOf(*Off + LoadSz - 1).first);
-          else if (ByteOff == 0 && LoadSz > Slot)
-            Offsets.insert(slotOf(*Off + LoadSz - Slot).first);
         }
   // A tail call at the entry stack pointer hands its callee this function's
   // incoming stack arguments: the slots of the positions the callee is known
@@ -1004,8 +1066,12 @@ void detectStackParams(MedFunc &Func, Arch TargetArch, BinaryFormat Fmt,
       Func.MutableStackParamHomes.push_back({Idx, SlotBase});
   }
 
-  for (auto &Blk : Func.Blocks)
-    for (auto &Op : Blk.Ops) {
+  // The compositions to insert before an op, by its block and index.
+  std::map<std::pair<size_t, size_t>, std::vector<MedOp>> Compositions;
+  int NextValueId = med_calling_conv_detail::nextValueId(Func);
+  for (size_t BI = 0; BI < Func.Blocks.size(); ++BI)
+    for (size_t OI = 0; OI < Func.Blocks[BI].Ops.size(); ++OI) {
+      MedOp &Op = Func.Blocks[BI].Ops[OI];
       if (Op.Opcode != NdOp::LOAD || Op.NumInputs < 1)
         continue;
       if (Op.MemoryOrdering != NdMemoryOrdering::None)
@@ -1024,13 +1090,37 @@ void detectStackParams(MedFunc &Func, Arch TargetArch, BinaryFormat Fmt,
       // first) so it reads its arguments instead of an absolute address.  The
       // caller passes the same value as two consecutive 4-byte slot arguments.
       bool WidePair = ByteOff == 0 && Slot == 4 && ReadSz == 2u * Slot;
+      // A scalar that ends inside a later slot, the x86-64 `fld tbyte` of a
+      // 10-byte long double whose 16-byte home ends in padding, reads every
+      // slot it reaches.
+      const unsigned Spanned =
+          ByteOff == 0 && ReadSz > Slot && ReadSz % Slot != 0
+              ? (ReadSz + static_cast<unsigned>(Slot) - 1) /
+                    static_cast<unsigned>(Slot)
+              : 1;
       // Mutable stack-argument home (written or address-escaped): keep the load
       // as a memory read so a later write through it is observed.
-      if (MutableSlots.count(SlotBase) ||
-          (WidePair && MutableSlots.count(SlotBase + Slot)))
+      bool Mutable = MutableSlots.count(SlotBase) ||
+                     (WidePair && MutableSlots.count(SlotBase + Slot));
+      for (unsigned K = 1; K < Spanned; ++K)
+        Mutable |= MutableSlots.count(SlotBase + K * Slot) != 0;
+      if (Mutable)
         continue;
-      // A read straddling the slot end (and not a clean two-slot pair) is not a
-      // clean field of this slot; leave it for a later pass.
+      if (Spanned > 1) {
+        MedVar First;
+        First.Kind = MedVar::Param;
+        First.Id = offToIdx(SlotBase);
+        First.RegOff = kNoParamReg;
+        First.TheArch = TargetArch;
+        std::vector<MedOp> Prefix;
+        med_calling_conv_detail::composeStackSlots(Op, First,
+                                                   static_cast<unsigned>(Slot),
+                                                   ReadSz, NextValueId, Prefix);
+        Compositions[{BI, OI}] = std::move(Prefix);
+        continue;
+      }
+      // Any other read straddling the slot end (and not a clean two-slot pair)
+      // is not a clean field of this slot; leave it for a later pass.
       if (!WidePair && ByteOff + static_cast<int64_t>(ReadSz) > Slot)
         continue;
       if (WidePair) {
@@ -1070,6 +1160,13 @@ void detectStackParams(MedFunc &Func, Arch TargetArch, BinaryFormat Fmt,
         Op.NumInputs = 2;
       }
     }
+  // Insert each composition before its load, latest first so earlier indices
+  // stay valid.
+  for (auto It = Compositions.rbegin(); It != Compositions.rend(); ++It) {
+    auto &Ops = Func.Blocks[It->first.first].Ops;
+    Ops.insert(Ops.begin() + static_cast<std::ptrdiff_t>(It->first.second),
+               It->second.begin(), It->second.end());
+  }
   med_calling_conv_detail::recoverFPStackReads(
       Func, TargetArch, Base, Slot, MaxRegArgs, rawStackOff, MutableSlots);
 }
@@ -1235,7 +1332,7 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
       ParamRegs.push_back(R);
   } else {
     // Floating-point arguments use a *separate* register class with its own
-    // argument index (XMM0-7, V0-7, ARM D0-7), recovered by detectXMMParams.
+    // argument index (XMM0-7, V0-7, ARM D0-7), recovered by detectFPParams.
     // Folding them into the integer parameter list would make
     // detectRegisterParams synthesize bogus integer placeholders up to the FP
     // index (so a `double f(double,double)` would become N integer placeholders
@@ -1262,15 +1359,15 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
     // finalizeVariadicCallees).
     detectVariadic(Func, TRI, TargetArch, Fmt);
 
-    // x86-64/x86: also check for XMM floating-point parameters (no-op on ARM).
+    // Recover floating/vector parameters in their target's register bank.
     // A variadic function's FP register save area is not its parameter list,
     // except where it saves the vector registers (System V x86-64): past the
     // named ones, they carry the floating arguments a caller passes, each
     // promoted to double, and va_arg reads them from the area.
     if (!Func.IsVariadic) {
-      detectXMMParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
+      detectFPParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
     } else if (Func.takesVectorArgumentRegisters()) {
-      detectXMMParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
+      detectFPParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
       const auto VectorRegs = TRI.floatingParamRegs(TargetFormat);
       size_t Passed = 0;
       for (size_t K = 0; K < VectorRegs.size(); ++K)

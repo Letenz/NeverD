@@ -21,7 +21,7 @@ bool RegistrationStateSolver::validateRealignedLayout() {
       Layout.DefinitionVA != Function.Entry + 15 || Layout.Alignment < 4 ||
       Layout.Alignment > 128 || (Layout.Alignment & (Layout.Alignment - 1)) ||
       Layout.AllocationBytes < 20 ||
-      Layout.AllocationBytes > limits::kMaxRegistrationEHStateWork ||
+      Layout.AllocationBytes > limits::kMaxSourceCallBorrowedBytes ||
       Layout.BaseOffset > -20 ||
       int64_t(Layout.BaseOffset) + Layout.AllocationBytes < 0 ||
       Layout.SavedParentFrameOffset != -20 || Chain.RegistrationOffset != -12 ||

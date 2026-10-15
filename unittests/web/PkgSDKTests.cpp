@@ -11,6 +11,7 @@
 
 #include "NativeFixture.h"
 #include "PkgFixture.h"
+#include "ProducerCorpus.h"
 #include "ZipFixture.h"
 #include "gtest/gtest.h"
 
@@ -63,6 +64,8 @@ protected:
   std::vector<std::string> Artifacts;
   void SetUp() override {
 #ifdef _WIN32
+    ASSERT_TRUE(
+        neverd::web::test::producerPrerequisite(false, "POSIX capture"));
     GTEST_SKIP() << "POSIX capture profile required";
 #endif
     const auto C = take(neverd_web_capabilities_json());
@@ -70,6 +73,7 @@ protected:
     if (const auto *Ops = C.getAsObject()->getArray("operations"))
       for (const auto &Op : *Ops)
         Available |= Op.getAsString() == "pkg_extract";
+    ASSERT_TRUE(neverd::web::test::producerPrerequisite(Available, "pkg API"));
     if (!Available)
       GTEST_SKIP() << "pkg namespace policy unavailable";
     llvm::SmallString<128> D;
@@ -499,10 +503,14 @@ TEST_F(WebPkgSDK, EqualMemberBytesCannotCrossPackageNamespacesOrInheritEntry) {
 }
 TEST_F(WebPkgSDK, OptionalProducerSourcesPreludeAndManifestUseSharedConsumers) {
 #if !NEVERD_TEST_WEB_JAVASCRIPT
+  ASSERT_TRUE(
+      neverd::web::test::producerPrerequisite(false, "JavaScript parser"));
   GTEST_SKIP() << "Source qualification requires the parser";
 #endif
   const auto *RootPath = std::getenv("NEVERD_PKG_581_CORPUS");
-  if (!RootPath)
+  ASSERT_TRUE(
+      neverd::web::test::producerCorpus("NEVERD_PKG_581_CORPUS", RootPath));
+  if (!RootPath || !*RootPath)
     GTEST_SKIP() << "Set NEVERD_PKG_581_CORPUS to the pinned producer outputs";
   for (const auto *Name :
        {"neverd-pkg-fixture-linux-x64", "neverd-pkg-fixture-linux-arm64",

@@ -35,6 +35,9 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
     CompleteCxxContinuations &= Entries.count(Continuation.TargetVA) != 0;
   }
   Result.CxxContinuationsComplete = CompleteCxxContinuations;
+  if (Result.SEHInvocationExitsComplete)
+    for (const auto &[Identity, Exit] : SEHExits)
+      Result.SEHInvocationExits.push_back(Exit);
   for (size_t I = 0; I < Function.Blocks.size(); ++I) {
     const LowBlock &Block = Function.Blocks[I];
     std::set<int32_t> Levels;
@@ -79,9 +82,13 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
           std::min(Minimum, EH.Cxx ? cxxMinimumTryLevel(State, *EH.Cxx) : 0);
       if (State.Callback && !State.Parent && Unproven)
         Result.CallbackStatesComplete = false;
+      if (SEHControls && !KnownCxx && State.Callback && State.Reached &&
+          Block.Succs.empty() && !Facts.CallbackReturnAtExit &&
+          !Facts.InvocationAtExit && !Facts.NoReturnAtExit)
+        Result.SEHInvocationExitsComplete = false;
       if (State.Parent && State.Reached &&
           (Unproven || (Block.Succs.empty() && Facts.InstalledAtExit &&
-                        !Facts.NoReturnAtExit)))
+                        !Facts.NoReturnAtExit && !Facts.InvocationAtExit)))
         Result.RegistrationLifetimeComplete = false;
       if (!State.CxxCatchStacks.empty() && State.Reached &&
           Block.Succs.empty() && !Facts.CxxContinuationAtExit &&
@@ -120,11 +127,64 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
                              {CatchStacks.begin(), CatchStacks.end()}});
   }
   Result.RegistrationLifetimeComplete &= Result.CxxContinuationsComplete;
+  if (!Result.SEHInvocationExitsComplete) {
+    Result.SEHInvocationExits.clear();
+    Result.Complete = Result.CallbackStatesComplete =
+        Result.RegistrationLifetimeComplete = false;
+    Result.Diagnostics.push_back(
+        "SEH invocation exit or parent stack is not proven");
+  }
+  for (const auto &[Identity, Resume] : JumpResumptions)
+    if (!charge(1) || ModifiedCallbackCaptures.count(Resume.CaptureCall))
+      Result.SEHJumpResumptionsComplete = false;
+  if (!Result.SEHJumpCapturesComplete) {
+    Result.SEHJumpResumptionsComplete = false;
+    Result.Complete = Result.CallbackStatesComplete =
+        Result.RegistrationLifetimeComplete = false;
+    Result.Diagnostics.push_back(
+        "SEH jump capture has conflicting source facts");
+  }
+  const bool FailedJump = !Result.SEHJumpResumptionsComplete;
+  Result.SEHBoundCallsComplete &=
+      Result.Complete && Result.CallbackStatesComplete &&
+      Result.RegistrationLifetimeComplete && !Exhausted;
+  if (Result.SEHBoundCallsComplete && charge(BoundCalls.size()))
+    for (const auto &[Identity, Call] : BoundCalls)
+      Result.SEHBoundCalls.push_back(Call);
+  Result.SEHJumpResumptionsComplete &=
+      Result.Complete && Result.CallbackStatesComplete;
+  if (Result.SEHJumpResumptionsComplete)
+    for (const auto &[Identity, Resume] : JumpResumptions)
+      Result.SEHJumpResumptions.push_back(Resume);
+  else if (FailedJump || !JumpResumptions.empty()) {
+    Result.Complete = Result.CallbackStatesComplete =
+        Result.RegistrationLifetimeComplete = false;
+    Result.Diagnostics.push_back("SEH jump buffer or resumption is not proven");
+  }
+  Result.SEHJumpCapturesComplete &=
+      Result.Complete && Result.CallbackStatesComplete &&
+      Result.SEHJumpResumptionsComplete && !Exhausted;
+  if (Result.SEHJumpCapturesComplete) {
+    if (charge(JumpCaptureOccurrences.size()))
+      for (const auto &[Identity, Capture] : JumpCaptureOccurrences)
+        Result.SEHJumpCaptures.push_back(Capture);
+  }
   if (!Result.CxxContinuationsComplete) {
     Result.Complete = Result.CallbackStatesComplete = false;
     Result.Diagnostics.push_back(
         "C++ catch continuation or restored stack is not proven");
   }
+  Result.SEHExceptionAccessesComplete &=
+      Result.Complete && Result.CallbackStatesComplete && !Exhausted;
+  if (Result.SEHExceptionAccessesComplete)
+    for (const auto &[Identity, Access] : SEHExceptionAccesses) {
+      if (!charge(1))
+        break;
+      if (Access)
+        Result.SEHExceptionAccesses.push_back(*Access);
+    }
+  if (!Result.SEHExceptionAccessesComplete)
+    Result.SEHExceptionAccesses.clear();
   if (!Result.Complete)
     Result.Diagnostics.push_back(
         "registration state has an unproven transition");

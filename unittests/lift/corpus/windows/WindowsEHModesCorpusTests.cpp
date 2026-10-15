@@ -88,7 +88,8 @@ selectUnique(ArrayRef<WindowsEHArtifactExpectation> Expectations,
   return Match;
 }
 
-Expected<std::string> decompileToSource(const std::filesystem::path &Input) {
+Expected<std::string> decompileToSource(const std::filesystem::path &Input,
+                                        unsigned TimeoutSeconds = 120) {
   SmallString<128> OutputPath;
   if (std::error_code EC = sys::fs::createTemporaryFile(
           "neverd-windows-eh-mode", "c", OutputPath))
@@ -116,8 +117,9 @@ Expected<std::string> decompileToSource(const std::filesystem::path &Input) {
   std::optional<StringRef> Redirects[] = {std::nullopt, StdoutPath.str(),
                                           StderrPath.str()};
   std::string ProgramError;
-  const int Exit = sys::ExecuteAndWait(NEVERD_BINARY, Args, std::nullopt,
-                                       Redirects, 120, 0, &ProgramError);
+  const int Exit =
+      sys::ExecuteAndWait(NEVERD_BINARY, Args, std::nullopt, Redirects,
+                          TimeoutSeconds, 0, &ProgramError);
   if (Exit != 0) {
     std::string Diagnostic = ProgramError;
     if (auto StderrOrErr = MemoryBuffer::getFile(StderrPath.str()))
@@ -217,11 +219,15 @@ TEST(WindowsEHModesCorpus,
     ASSERT_FALSE(GuardedBlocks.empty());
     for (const std::vector<StringRef> &RequiredTokens :
          TestCase.RequiredGuardedTokenGroups) {
+      // A region without a provable lexical range keeps its native dispatch
+      // as an annotated block instead of a try the runtime would not run.
       const bool Found = llvm::any_of(GuardedBlocks, [&](StringRef Block) {
         return Block.contains("neverd.exception") &&
                Block.contains("highir.structured_regions=") &&
                Block.contains("fallback_regions=") &&
-               (Block.contains("__try") || Block.contains("try {")) &&
+               (Block.contains("__try") || Block.contains("try {") ||
+                Block.contains("unstructured SEH region [") ||
+                Block.contains("C++ unwind-table region [")) &&
                containsEveryToken(Block, RequiredTokens);
       });
       std::string TokenList;
@@ -233,6 +239,69 @@ TEST(WindowsEHModesCorpus,
       EXPECT_TRUE(Found) << "no guarded analysis-only function contains: "
                          << TokenList;
     }
+  }
+}
+
+TEST(WindowsEHModesCorpus, DecompilesOptimizedFH3ProtectedSourceProjection) {
+  auto ExpectationsOrErr = loadExpectations();
+  ASSERT_TRUE(static_cast<bool>(ExpectationsOrErr))
+      << toString(ExpectationsOrErr.takeError());
+  const std::filesystem::path CorpusRoot(NEVERD_BINARY_CORPUS_ROOT);
+  for (bool SecurityCookie : {false, true}) {
+    SCOPED_TRACE(SecurityCookie ? "gs" : "no-gs");
+    auto ExpectationOrErr =
+        selectUnique(*ExpectationsOrErr, {"cxx_eh_probe", "msvc", "x86_64",
+                                          "fh3", SecurityCookie, "o2"});
+    ASSERT_TRUE(static_cast<bool>(ExpectationOrErr))
+        << toString(ExpectationOrErr.takeError());
+    auto OutputOrErr =
+        decompileToSource(CorpusRoot / (*ExpectationOrErr)->Path);
+    ASSERT_TRUE(static_cast<bool>(OutputOrErr))
+        << toString(OutputOrErr.takeError());
+    EXPECT_TRUE(StringRef(*OutputOrErr).contains("cxx.format=fh3"));
+    EXPECT_FALSE(guardedAnalysisBlocks(*OutputOrErr).empty());
+  }
+}
+
+TEST(WindowsEHModesCorpus, DecompilesRegistrationCalleeProofCycles) {
+  const std::filesystem::path CorpusRoot =
+      std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) / "corpus/windows-eh";
+  const std::array<StringRef, 5> Inputs{{
+      "msvc/vs2019/x86/native/gs/o2/windows-seh-tests/"
+      "xcpt4-msvc-x86-native-gs-o2.exe",
+      "msvc/x86/native/gs/o0/windows-seh-tests/"
+      "xframe_eh_exe-msvc-x86-native-gs-o0.exe",
+      "msvc/x86/native/gs/o0/windows-seh-tests/"
+      "xframe_eh_dll-msvc-x86-native-gs-o0.dll",
+      "msvc/x86/native/no-gs/o0/windows-seh-tests/"
+      "xframe_eh_dll-msvc-x86-native-no-gs-o0.dll",
+      "msvc/x86/native/gs/o2/windows-seh-tests/"
+      "xframe_eh_dll-msvc-x86-native-gs-o2.dll",
+  }};
+  for (StringRef Input : Inputs) {
+    SCOPED_TRACE(Input.str());
+    // These are complete test applications, including the multi-megabyte
+    // optimized xcpt4 source projection. Allow slower workers more than the
+    // small probes' 120 seconds, within this corpus's 300-second CTest limit.
+    auto OutputOrErr =
+        decompileToSource(CorpusRoot / Input.str(), /*TimeoutSeconds=*/240);
+    ASSERT_TRUE(static_cast<bool>(OutputOrErr))
+        << toString(OutputOrErr.takeError());
+    EXPECT_TRUE(StringRef(*OutputOrErr).contains("encoding=x86-"));
+    EXPECT_FALSE(guardedAnalysisBlocks(*OutputOrErr).empty());
+    if (Input == Inputs.front())
+      for (const char *Address : {"402812", "40288B", "402953", "4065C3"}) {
+        SCOPED_TRACE(Address);
+        const std::string Marker =
+            std::string("/* neverd.entry: 0x") + Address + " */";
+        const size_t Start = OutputOrErr->find(Marker);
+        ASSERT_NE(Start, std::string::npos);
+        StringRef Body =
+            StringRef(*OutputOrErr).drop_front(Start + Marker.size());
+        Body = Body.take_front(Body.find("/* neverd.entry:"));
+        EXPECT_TRUE(Body.contains(std::string("int32_t sub_") + Address + "("));
+        EXPECT_FALSE(Body.contains("unknown return value"));
+      }
   }
 }
 

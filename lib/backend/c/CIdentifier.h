@@ -575,6 +575,25 @@ inline std::string demangledComment(llvm::StringRef Name) {
   return Readable;
 }
 
+/// How the comment beside \p Identifier, the C identifier the text spells
+/// for symbol \p Name, names the symbol: as demangledComment() reads it, or
+/// as the image spells it where the identifier is another name -- a start-up
+/// function the C runtime defines (`fini` for `_fini`), a name with
+/// underscores C cannot keep (`dso_handle` for `__dso_handle`), or one
+/// numbered after another symbol took it (`helper_2` for `helper`).  Empty
+/// when the identifier is the name itself.
+inline std::string symbolComment(llvm::StringRef Name,
+                                 llvm::StringRef Identifier) {
+  if (std::string Readable = demangledComment(Name); !Readable.empty())
+    return Readable;
+  // A name demangledComment() leaves alone is a C identifier, which can
+  // stand in a comment as it is, or one it never copies.
+  const llvm::StringRef Bare = stripImportSymbolPrefix(Name);
+  if (Bare == Identifier || canonicalizeCProjectionIdentifier(Bare) != Bare)
+    return {};
+  return Bare.str();
+}
+
 /// C++ TPI spellings (`ATL::CStringT<wchar_t, ...>`) become a C tag
 /// (`CStringT`). Nested members after a template (`ATL::CAtlMap<...>::CNode`)
 /// keep `CNode`; stripping at the first `<` used to leave `CAtlMap`.

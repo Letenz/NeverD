@@ -1,6 +1,6 @@
 **Langues**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5e83757469a7e3ff81f7d18aba5f4d6641fc007f13b7f64d2a19549d26c1b3dc -->
+<!-- i18n-source: c6842dbcde7494478da5d1a0035e88fb073d2764b43e2a30400a470727685ec4 -->
 
 [← Index de la documentation](README.md)
 
@@ -18,7 +18,7 @@ Activez `NEVERD_ENABLE_CPU_EMULATION=ON` ou l’émulation des pilotes. `NEVERD_
 
 La liaison du framework et la signature hypervisor sont réservées à la cible de compilation macOS (`CMAKE_SYSTEM_NAME=Darwin`). Les cibles mobiles Apple, dont iOS, ne reçoivent ni cette dépendance ni ce droit. Un profil invité iOS peut toujours utiliser HVF lorsque NeverD s’exécute sur un Mac avec la même ISA.
 
-L’**exécutable du processus** doit porter le droit [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor). Signer uniquement `libneverd.dylib` ne suffit pas. CMake signe le CLI, le worker et les tests avec `resources/macos/neverd-hypervisor.entitlements`. `NEVERD_HVF_SIGN_IDENTITY` vaut `-` par défaut, pour une signature ad hoc ; une identité existante peut être choisie. Le packaging réapplique puis vérifie ce droit après réparation des dépendances Mach-O.
+L’**exécutable du processus** doit porter le droit [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor). Signer uniquement `libneverd.dylib` ne suffit pas. CMake signe le CLI, le worker, la sonde de processus et les tests d’émulation après l’édition de liens avec `resources/macos/neverd-hypervisor.entitlements`. `NEVERD_HVF_SIGN_IDENTITY` vaut `-` par défaut, pour une signature ad hoc ; une identité existante peut être choisie. Le packaging réapplique puis vérifie ce droit après réparation des dépendances Mach-O.
 
 Une application intégratrice signe son propre exécutable ; NeverD ne modifie pas l’interpréteur Python installé. `cpu-capabilities --configuration=JSON --probe-host` teste le processus réel. Le worker autonome est signé par défaut ; utilisez `NEVERD_WORKER_SIGN_HVF=OFF` seulement s’il n’a pas besoin de HVF.
 

@@ -839,6 +839,14 @@
         <source>Load symbols from a selected PDB file</source>
         <translation>تحميل الرموز من ملف PDB محدد</translation>
     </message>
+    <message>
+        <source>&amp;Edit function...</source>
+        <translation>تعديل الدالة(&amp;E)...</translation>
+    </message>
+    <message>
+        <source>Change the name of the current function and what it is</source>
+        <translation>تغيير اسم الدالة الحالية وما هي عليه</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1476,6 +1484,22 @@ Double-click to go to the declaration.</source>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>أسماء المتغيرات المحفوظة تخص عرضًا مختلفًا للمصدر</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>توسيع الكتلة (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>طي الكتلة (Ctrl+Shift+[)</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification</source>
+        <translation>التبسيط الرمزي</translation>
+    </message>
+    <message>
+        <source>Transformation failed: %1</source>
+        <translation>فشل التحويل: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1490,6 +1514,54 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Keep this function while the disassembly moves on</source>
         <translation>الإبقاء على هذه الدالة أثناء تنقّل التفكيك</translation>
+    </message>
+    <message>
+        <source>Optimization</source>
+        <translation>التحسين</translation>
+    </message>
+    <message>
+        <source>Transform the current function</source>
+        <translation>تحويل الدالة الحالية</translation>
+    </message>
+    <message>
+        <source>Symbolically simplify this function</source>
+        <translation>تبسيط هذه الدالة رمزيًا</translation>
+    </message>
+    <message>
+        <source>Recover LLVM control flow</source>
+        <translation>استعادة تدفق التحكم في LLVM</translation>
+    </message>
+    <message>
+        <source>LLVM optimization</source>
+        <translation>تحسين LLVM</translation>
+    </message>
+    <message>
+        <source>Basic cleanup</source>
+        <translation>تنظيف أساسي</translation>
+    </message>
+    <message>
+        <source>O2 (default)</source>
+        <translation>O2 (افتراضي)</translation>
+    </message>
+    <message>
+        <source>Choose passes…</source>
+        <translation>اختيار التمريرات…</translation>
+    </message>
+    <message>
+        <source>LLVM passes for this function</source>
+        <translation>تمريرات LLVM لهذه الدالة</translation>
+    </message>
+    <message>
+        <source>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</source>
+        <translation>اختر تمريرات التنظيف العددية. يُتحكَّم في التبسيط الرمزي بشكل منفصل.</translation>
+    </message>
+    <message>
+        <source>Restore default source</source>
+        <translation>استعادة المصدر الافتراضي</translation>
+    </message>
+    <message>
+        <source>Cancel transformation</source>
+        <translation>إلغاء التحويل</translation>
     </message>
 </context>
 <context>
@@ -2156,6 +2228,30 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>This engine cannot use an unverified PDB for analysis</source>
         <translation>لا يستطيع هذا المحرك استخدام PDB غير موثق للتحليل</translation>
     </message>
+    <message>
+        <source>Line</source>
+        <translation>السطر</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>العمود</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>الشيفرة</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>انتظر اكتمال تحميل الدالة قبل البحث عن المراجع</translation>
+    </message>
+    <message>
+        <source>Could not tell which PDB %1 names: %2</source>
+        <translation>تعذّر تحديد ملف PDB الذي يشير إليه %1: %2</translation>
+    </message>
+    <message>
+        <source>Could not tell whether %1 has DWARF: %2</source>
+        <translation>تعذّر تحديد ما إذا كان %1 يحتوي على DWARF: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2437,6 +2533,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
         <translation>تم تحميل PDB للتحليل: %1 (%2 اسم، أكده المستخدم، الهوية غير موثقة)</translation>
     </message>
+    <message>
+        <source>Opened without the PDB the input names, as chosen</source>
+        <translation>فُتح دون ملف PDB الذي يشير إليه ملف الإدخال، كما اخترت</translation>
+    </message>
+    <message>
+        <source>Edited the function at %1</source>
+        <translation>عُدِّلت الدالة عند %1</translation>
+    </message>
+    <message>
+        <source>Opened without its DWARF debug information, as chosen</source>
+        <translation>تم الفتح دون معلومات تصحيح الأخطاء DWARF، كما تم الاختيار</translation>
+    </message>
+    <message>
+        <source>DWARF loaded: %1</source>
+        <translation>تم تحميل DWARF: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2687,6 +2799,302 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The worker cannot restore analysis state.</source>
         <translation>لا تستطيع عملية التحليل استعادة حالة التحليل.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PdbPromptDialog</name>
+    <message>
+        <source>Load PDB file</source>
+        <translation>تحميل ملف PDB</translation>
+    </message>
+    <message>
+        <source>The input file was linked with debug information stored here:</source>
+        <translation>رُبط ملف الإدخال بمعلومات تصحيح مخزّنة هنا:</translation>
+    </message>
+    <message>
+        <source>&amp;Browse…</source>
+        <translation>&amp;استعراض…</translation>
+    </message>
+    <message>
+        <source>The download was cancelled.</source>
+        <translation>أُلغي التنزيل.</translation>
+    </message>
+    <message>
+        <source>A matching copy is at that path.</source>
+        <translation>توجد نسخة مطابقة في هذا المسار.</translation>
+    </message>
+    <message>
+        <source>A matching copy is beside the input file:</source>
+        <translation>توجد نسخة مطابقة بجوار ملف الإدخال:</translation>
+    </message>
+    <message>
+        <source>A matching copy is in a symbol directory:</source>
+        <translation>توجد نسخة مطابقة في دليل رموز:</translation>
+    </message>
+    <message>
+        <source>A matching copy is in the symbol store:</source>
+        <translation>توجد نسخة مطابقة في مخزن الرموز:</translation>
+    </message>
+    <message>
+        <source>Do you want to load it?</source>
+        <translation>هل تريد تحميلها؟</translation>
+    </message>
+    <message>
+        <source>%1 belongs to another build.</source>
+        <translation>ينتمي %1 إلى إصدار آخر.</translation>
+    </message>
+    <message>
+        <source>%1 cannot be read.</source>
+        <translation>تتعذّر قراءة %1.</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer, and no symbol server is configured.</source>
+        <translation>لا توجد نسخة مطابقة على هذا الكمبيوتر، ولم يُكوَّن أي خادم رموز.</translation>
+    </message>
+    <message>
+        <source>Do you want to browse for the PDB file on disk?</source>
+        <translation>هل تريد استعراض ملف PDB على القرص؟</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer. Only the PDB&apos;s name and build identity are sent to look for it.</source>
+        <translation>لا توجد نسخة مطابقة على هذا الكمبيوتر. لا يُرسَل للبحث عنها سوى اسم ملف PDB ومعرّف إصداره.</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the Microsoft Symbol Server?</source>
+        <translation>هل تريد البحث عن هذا الملف في خادم رموز Microsoft؟</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the symbol server %1?</source>
+        <translation>هل تريد البحث عن هذا الملف في خادم الرموز %1؟</translation>
+    </message>
+    <message>
+        <source>Downloading %1 from %2…</source>
+        <translation>جارٍ تنزيل %1 من %2…</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 من %2</translation>
+    </message>
+    <message>
+        <source>Verifying %1…</source>
+        <translation>جارٍ التحقق من %1…</translation>
+    </message>
+    <message>
+        <source>The downloaded file is not the PDB of this build.</source>
+        <translation>الملف الذي تم تنزيله ليس ملف PDB لهذا الإصدار.</translation>
+    </message>
+    <message>
+        <source>Could not find PDB file &apos;%1&apos;.</source>
+        <translation>تعذّر العثور على ملف PDB «%1».</translation>
+    </message>
+    <message>
+        <source>Do you want to try again, or to browse for the PDB file on disk?</source>
+        <translation>هل تريد إعادة المحاولة، أم استعراض ملف PDB على القرص؟</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>ملفات PDB (*.pdb);;جميع الملفات (*)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SymbolDownload</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>انتهت مهلة تنزيل الرموز.</translation>
+    </message>
+    <message>
+        <source>No symbol server is configured.</source>
+        <translation>لم يُكوَّن أي خادم رموز.</translation>
+    </message>
+    <message>
+        <source>%1 is not an HTTP symbol server.</source>
+        <translation>%1 ليس خادم رموز HTTP.</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol store directory %1.</source>
+        <translation>يتعذّر إنشاء دليل مخزن الرموز %1.</translation>
+    </message>
+    <message>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>تعذر فتح ملف رموز مؤقت في %1: %2</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>يتجاوز ملف الرموز حد التنزيل البالغ 2 GiB.</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>تعذرت الكتابة إلى ملف الرموز %1: %2</translation>
+    </message>
+    <message>
+        <source>%1 has no matching symbols for this build.</source>
+        <translation>لا توجد لدى %1 رموز مطابقة لهذا الإصدار.</translation>
+    </message>
+    <message>
+        <source>The symbol download from %1 failed: %2</source>
+        <translation>فشل تنزيل الرموز من %1: %2</translation>
+    </message>
+    <message>
+        <source>%1 sent an empty symbol file.</source>
+        <translation>أرسل %1 ملف رموز فارغًا.</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>ملف الرموز المضغوط غير صالح.</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>تعذر إنشاء مجلد رموز مؤقت في %1: %2</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>تعذر فك ضغط ملف الرموز.</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>تتطلب الرموز المضغوطة Windows.</translation>
+    </message>
+    <message>
+        <source>Cannot save the symbol file to %1: %2</source>
+        <translation>يتعذّر حفظ ملف الرموز في %1: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FunctionEditDialog</name>
+    <message>
+        <source>Edit function</source>
+        <translation>تعديل الدالة</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this frame size</source>
+        <translation>لا يحتفظ NeverD بحجم الإطار هذا</translation>
+    </message>
+    <message>
+        <source>&amp;Name of function</source>
+        <translation>اسم الدالة(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Analysis decodes where the function ends</source>
+        <translation>يحدد التحليل أين تنتهي الدالة</translation>
+    </message>
+    <message>
+        <source>&amp;Start address</source>
+        <translation>عنوان البداية(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;End address</source>
+        <translation>عنوان النهاية(&amp;E)</translation>
+    </message>
+    <message>
+        <source>&amp;Choose…</source>
+        <translation>اختيار(&amp;C)…</translation>
+    </message>
+    <message>
+        <source>Function color</source>
+        <translation>لون الدالة</translation>
+    </message>
+    <message>
+        <source>&amp;Default</source>
+        <translation>الافتراضي(&amp;D)</translation>
+    </message>
+    <message>
+        <source>&amp;Color</source>
+        <translation>اللون(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Enter size of (in bytes)</source>
+        <translation>أدخل حجم (بالبايت)</translation>
+    </message>
+    <message>
+        <source>Local &amp;variables area</source>
+        <translation>منطقة المتغيرات المحلية(&amp;V)</translation>
+    </message>
+    <message>
+        <source>Saved &amp;registers</source>
+        <translation>السجلات المحفوظة(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Only x86 functions pop their arguments</source>
+        <translation>دوال x86 وحدها تُزيل وسائطها من المكدس</translation>
+    </message>
+    <message>
+        <source>&amp;Purged bytes</source>
+        <translation>البايتات المُزالة(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Frame pointer &amp;delta</source>
+        <translation>إزاحة مؤشر الإطار(&amp;D)</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this flag</source>
+        <translation>لا يحتفظ NeverD بهذه العلامة</translation>
+    </message>
+    <message>
+        <source>D&amp;oes not return</source>
+        <translation>لا تعود(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Analysis ends every call to the function</source>
+        <translation>ينهي التحليل كل استدعاء لهذه الدالة</translation>
+    </message>
+    <message>
+        <source>&amp;Far function</source>
+        <translation>دالة بعيدة(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Only 16-bit x86 code has far functions</source>
+        <translation>الدوال البعيدة موجودة في شيفرة x86 ذات 16 بت فقط</translation>
+    </message>
+    <message>
+        <source>&amp;Library func</source>
+        <translation>دالة مكتبة(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Static func</source>
+        <translation>دالة ساكنة</translation>
+    </message>
+    <message>
+        <source>&amp;BP based frame</source>
+        <translation>إطار قائم على BP(&amp;B)</translation>
+    </message>
+    <message>
+        <source>BP e&amp;quals to SP</source>
+        <translation>BP يساوي SP(&amp;Q)</translation>
+    </message>
+    <message>
+        <source>Fuzzy SP</source>
+        <translation>SP تقريبي</translation>
+    </message>
+    <message>
+        <source>Outlined code</source>
+        <translation>شيفرة مُخرَجة</translation>
+    </message>
+    <message>
+        <source>O&amp;K</source>
+        <translation>موافق(&amp;K)</translation>
+    </message>
+    <message>
+        <source>DEFAULT</source>
+        <translation>افتراضي</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>إلغاء</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DwarfPromptDialog</name>
+    <message>
+        <source>DWARF info found</source>
+        <translation>تم العثور على معلومات DWARF</translation>
+    </message>
+    <message>
+        <source>Load DWARF debug information?</source>
+        <translation>هل تريد تحميل معلومات تصحيح الأخطاء DWARF؟</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
     </message>
 </context>
 </TS>

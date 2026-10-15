@@ -1064,6 +1064,16 @@ public:
     PreservePotentialJumpTableBranches = Preserve;
   }
 
+  /// Fresh proof against the supplied final LowIR graph, including x87
+  /// normalization. Only a unique instruction-local absolute dispatch is
+  /// supported. The encoded source must reach its sole LOAD without exposing
+  /// the address elsewhere. Imports, replay and retirement share WorkRemaining;
+  /// no published LOAD tuple or stale resolver cache grants this permission.
+  static std::optional<JumpTableStorageRange> proveInstructionLocalTableSource(
+      const BinaryImage &Img, const LowFunc &Function,
+      const RelocatedInstructionAddressOccurrence &Source,
+      size_t &WorkRemaining);
+
 private:
   friend struct detail::ResolverGraphCacheTestAccess;
   friend struct detail::X87CallGraphCacheTestAccess;
@@ -1213,14 +1223,25 @@ private:
   /// the instruction does: push the return address and jump.
   void rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
                               va_t Next);
+  /// Replays a checked near RET as its physical pop and the unique internal
+  /// continuation. The final graph must prove the same invocation again.
+  void rewriteOwnInteriorReturn(const BinaryImage &Img, InsnRecord &Rec);
   /// A direct i386 call to a get-PC thunk, a function whose body is `mov r32,
   /// [esp]; ret`, is lifted as what it does: copy the return address into
   /// that register (CFGBuilderX86GetPc.cpp).
   void rewriteGetPcThunkCall(const BinaryImage &Img, InsnRecord &Rec,
                              va_t Next);
+  struct OwnInteriorReturn {
+    va_t Target;
+    va_t CallSite;
+    va_t Continuation;
+    bool operator==(const OwnInteriorReturn &) const = default;
+  };
   struct OwnInteriorCallVerdict {
     /// Targets a return pops the call's own return address for.
     std::set<va_t> Subroutines;
+    /// Normal exits of a single-site invocation with a separate nonlocal exit.
+    std::map<va_t, OwnInteriorReturn> Returns;
     /// The first return no proof covers, or the target whose returns
     /// disagree.
     std::optional<va_t> Unproven;
@@ -1261,7 +1282,8 @@ private:
   void prepareRelativeRelocationRootSourceCache();
   void extractJumpTables(LowFunc &Func);
   std::vector<va_t> resolveJumpTable(const BinaryImage &Img,
-                                     const InsnRecord &Rec);
+                                     const InsnRecord &Rec,
+                                     size_t *AggregateProofBudget = nullptr);
 
   /// Establish the half-open interval that this CFG builder may claim for
   /// address-taken interior blocks.  A merely containing unwind range is not
@@ -1839,6 +1861,20 @@ private:
   /// Scratch-only assumptions for bounded joint finite table proofs.
   /// They are never published as prior role/storage certificates. EmptyEdges
   /// removes every group edge for a hypothesis-free seed query.
+  struct FiniteJumpTableSourceSnapshot;
+  struct FiniteJumpTableJointProof {
+    // Coordinate membership is a numerical theorem, not input known bits or
+    // a negative dependency/origin certificate.
+    std::map<va_t, std::vector<uint32_t>> Domains;
+    std::map<va_t, std::vector<va_t>> PhysicalTargets;
+    std::map<va_t, std::vector<va_t>> HypothesisEdges;
+    std::map<va_t, std::vector<va_t>> RestrictedEdges;
+    std::set<va_t> Roots;
+    std::map<va_t, JumpTableValueOccurrence> Indices;
+    std::map<va_t, JumpTableLoadRole> LoadRoles;
+    std::map<va_t, JumpTableValueOccurrence> TargetUses;
+    std::shared_ptr<const FiniteJumpTableSourceSnapshot> Source;
+  };
   struct FiniteJumpTableRoundCertificate {
     // A complete all-consumer certificate belongs to exactly one immutable
     // group round. The next round uses a different edge/role hypothesis and
@@ -1849,6 +1885,10 @@ private:
     std::set<va_t> Roots;
     /// Exact use points for hypothesis-free absolute selector seeds.
     std::map<va_t, JumpTableValueOccurrence> Indices;
+    /// Complete i386 joint numerical result; committed only after all members
+    /// replay on the restricted owner graph. Never reused across source input
+    /// changes, even when roots and physical target vectors are identical.
+    std::shared_ptr<const FiniteJumpTableJointProof> JointProof;
   };
   struct GuardedJumpTableGroupProofContext {
     std::set<va_t> Roots;
@@ -1895,6 +1935,12 @@ private:
   bool prepayJumpTableInfoCopy(const JumpTableInfo &Info, size_t Copies);
   bool copyGuardedGroupProofSnapshot(
       CFGBuilder &Scratch, const GuardedJumpTableGroupProofContext &Context);
+  std::shared_ptr<const FiniteJumpTableSourceSnapshot>
+  freezeFiniteJumpTableSource(size_t &Remaining, bool &Incomplete) const;
+  bool finiteJumpTableJointProofMatches(
+      const FiniteJumpTableJointProof &Proof, const InsnRecord &Rec,
+      const JumpTableInfo &Info, const std::vector<va_t> &PhysicalTargets,
+      size_t &Remaining, bool &Incomplete) const;
   /// Decode authenticated physical case targets into a private, budgeted CFG
   /// snapshot for a finite-domain induction query.  The snapshot may describe
   /// hypothetical control flow only through the caller's query overrides;
@@ -1909,8 +1955,8 @@ private:
   bool proveCandidateFiniteAbsoluteSiblings(
       CFGBuilder &Scratch, const InsnRecord &Current, const JumpTableInfo &Info,
       const std::vector<va_t> &PhysicalTargets,
-      std::map<va_t, std::vector<uint32_t>> &FiniteDomains,
-      size_t *EvidenceBudget, bool *AnalysisIncomplete) const;
+      FiniteJumpTableJointProof &Proof, size_t *EvidenceBudget,
+      bool *AnalysisIncomplete) const;
   uint32_t proveGroupDenseMaskBound(const InsnRecord &Rec,
                                     const JumpTableInfo &Info,
                                     size_t *AggregateEvidenceBudget,
@@ -2314,8 +2360,8 @@ private:
       const InsnRecord &Rec, const JumpTableInfo &Info,
       size_t *AggregateEvidenceBudget, bool *AnalysisComplete,
       bool UseDefinedAlternativesAsRoots = false,
-      const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides =
-          nullptr) const;
+      const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,
+      bool UseGroupContext = true) const;
   /// Prove that every authenticated target LOAD reads the declared table role
   /// at that exact occurrence: base + certified-index * physical stride.
   /// Output-to-branch dependence alone is insufficient when a sibling or
@@ -2324,7 +2370,7 @@ private:
       JumpTableInfo &Info, size_t *AggregateEvidenceBudget,
       bool *AnalysisComplete, bool UseDefinedAlternativesAsRoots = false,
       const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,
-      bool *DomainInputsChanged = nullptr) const;
+      bool *DomainInputsChanged = nullptr, bool UseGroupContext = true) const;
   /// Build the root set used while proving one candidate table.  A
   /// relocation-discovered interior label is not an independent entry when
   /// every relocation that names it is a physical slot owned by this exact
@@ -2339,14 +2385,19 @@ private:
   /// Calls, opaque/resumable terminators, external successors, unresolved
   /// transfers, and a required fallthrough with no successor make it false.
   /// UseGroupContext=false replays all exact member edges on the frozen owner.
+  /// RequireCompleteFiniteMembers additionally requires every supplied root
+  /// to be a real modeled block entry and every reachable indirect branch to
+  /// belong to the explicit all-consumer edge map. Raw target vectors grant
+  /// no completeness authority in this mode. Nonempty conditional code-root
+  /// input needs separate admission and is refused by this narrow owner.
   std::set<va_t> candidateReachableInstructions(
       const InsnRecord &Candidate, const std::vector<va_t> &CandidateTargets,
       const std::set<va_t> &Roots,
       const std::vector<JumpTableStorageRange> &CandidateStorage,
       size_t *GraphWorkBudget = nullptr, bool *AnalysisComplete = nullptr,
       const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,
-      bool *ClosedWorldControlFlow = nullptr,
-      bool UseGroupContext = true) const;
+      bool *ClosedWorldControlFlow = nullptr, bool UseGroupContext = true,
+      bool RequireCompleteFiniteMembers = false) const;
   /// Prove that the conditional branch at BranchAddr actually gates the table
   /// LOAD: it dominates the LOAD and only one of its outgoing CFG edges can
   /// reach the access.  A comparison in a sibling/case-body block is not a
@@ -2614,6 +2665,7 @@ private:
   std::map<va_t, std::set<va_t>> OwnInteriorCallSites;
   /// Targets proven to be subroutines, whose calls stay calls.
   std::set<va_t> KeptOwnInteriorCallTargets;
+  std::map<va_t, OwnInteriorReturn> OwnInteriorReturns;
   /// Executable addresses taken via a relocation-free PC-relative `lea` while
   /// exploring this function (same-section function pointers); copied into the
   /// LowFunc so the pipeline merges them into the image's CodeRefTargets (a

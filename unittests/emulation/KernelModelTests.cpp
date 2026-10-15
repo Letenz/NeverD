@@ -258,6 +258,47 @@ TEST_F(DriverKernelModel,
   EXPECT_NE(denied(Object, 1).find("freed"), std::string::npos);
 }
 
+TEST_F(DriverKernelModel, SystemThreadClientIDNamesTheRunningThread) {
+  constexpr uint32_t ThreadAllAccess = 0x001fffff;
+  const uint64_t ClientID = Scratch + 0x20;
+  success(Memory->write(ClientID, std::vector<uint8_t>(16, 0xff)));
+  EXPECT_EQ(invoke("PsCreateSystemThread",
+                   {Scratch, ThreadAllAccess, 0, 0, ClientID, Entry, 0}),
+            0u);
+  EXPECT_EQ(integer(ClientID), windows::SystemProcessID);
+  const uint64_t ThreadID = integer(ClientID + 8);
+  EXPECT_EQ(ThreadID % 4, 0u);
+  const uint64_t Handle = integer(Scratch);
+  EXPECT_EQ(invoke("ObReferenceObjectByHandle",
+                   {Handle, 0x100000, 0, windows::KernelMode, Scratch + 8, 0}),
+            0u);
+  const uint64_t Object = integer(Scratch + 8);
+  EXPECT_EQ(invoke("PsGetThreadId", {Object}), ThreadID);
+  auto Invocation = Model->nextScheduled(false);
+  ASSERT_TRUE(bool(Invocation)) << llvm::toString(Invocation.takeError());
+  ASSERT_TRUE(*Invocation);
+  Model->enterExecution(Scratch + 0x8000, (**Invocation).ID);
+  EXPECT_EQ(invoke("PsGetCurrentThread", {}), Object);
+  EXPECT_EQ(invoke("PsGetCurrentThreadId", {}), ThreadID);
+  EXPECT_EQ(invoke("PsTerminateSystemThread", {0}), 0u);
+  ASSERT_EQ(Model->takeThreadTermination(), std::optional<uint32_t>(0));
+  success(Model->finishScheduled((**Invocation).ID));
+  EXPECT_EQ(invoke("ZwClose", {Handle}), 0u);
+  EXPECT_EQ(invoke("ObfDereferenceObject", {Object}), 0u);
+  // A retired thread loses its ID, and a later thread never reuses it.
+  EXPECT_NE(failure("PsGetThreadId", {Object}).find("known thread object"),
+            std::string::npos);
+  EXPECT_EQ(invoke("PsCreateSystemThread",
+                   {Scratch, ThreadAllAccess, 0, 0, ClientID, Entry, 0}),
+            0u);
+  EXPECT_NE(integer(ClientID + 8), ThreadID);
+  // Non-system process handles remain unsupported.
+  EXPECT_NE(failure("PsCreateSystemThread",
+                    {Scratch, ThreadAllAccess, 0, 1, 0, Entry, 0})
+                .find("process handles"),
+            std::string::npos);
+}
+
 TEST_F(DriverKernelModel, CriticalAndGuardedAPCRegionsPairOnOneThread) {
   Model->enterExecution(profile::StackBase);
   EXPECT_EQ(invoke("KeAreApcsDisabled", {}), 0u);
@@ -439,6 +480,26 @@ TEST_F(DriverKernelModel,
             thread_priority::Minimum);
 }
 
+TEST_F(DriverKernelModel, DetachedStackReuseStartsWithFreshThreadClientID) {
+  const uint64_t Base = Scratch + profile::PageSize;
+  Model->enterExecution(Base);
+  const uint64_t Object = llvm::cantFail(Model->currentThreadObject());
+  const uint64_t ID = invoke(kernel_api::PsGetCurrentThreadId, {});
+  EXPECT_EQ(invoke(kernel_api::PsGetThreadId, {Object}), ID);
+  success(Model->retireStack(Base, profile::PageSize));
+  EXPECT_NE(
+      failure(kernel_api::PsGetThreadId, {Object}).find("known thread object"),
+      std::string::npos);
+  success(Model->activateStack(Base, profile::PageSize));
+  Model->enterExecution(Base);
+  const uint64_t Fresh = llvm::cantFail(Model->currentThreadObject());
+  EXPECT_NE(Fresh, Object);
+  const uint64_t FreshID = invoke(kernel_api::PsGetThreadId, {Fresh});
+  EXPECT_NE(FreshID, ID);
+  EXPECT_EQ(FreshID % 4, 0u);
+  EXPECT_EQ(invoke(kernel_api::PsGetCurrentThreadId, {}), FreshID);
+}
+
 TEST_F(DriverKernelModel, DetachedStackReuseStartsWithFreshThreadPriority) {
   const uint64_t Base = Scratch + profile::PageSize;
   const uint64_t Child = Scratch + 2 * profile::PageSize;
@@ -527,6 +588,208 @@ TEST_F(DriverKernelModel, SpinLockFailuresPreserveOwnershipAndValidationOrder) {
             "DPC-level spin-lock acquisition requires DISPATCH_LEVEL");
   success(Model->validateExecutionReturn(profile::StackBase, 0));
   invoke("ExFreePoolWithTag", {Lock, Tag});
+}
+
+TEST_F(DriverKernelModel, InterlockedListsLinkLikeTheKernel) {
+  // ExInterlockedInsert{Head,Tail}List return the old neighbor or NULL, and
+  // ExInterlockedRemoveHeadList leaves the removed entry's own links. The
+  // lock is free again afterwards and IRQL never changes.
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Block =
+      invoke("ExAllocatePoolWithTag", {0, 0x100, 0x4c495354});
+  ASSERT_NE(Block, 0u);
+  const uint64_t Head = Block, E1 = Block + 0x10, E2 = Block + 0x20,
+                 E3 = Block + 0x30, Lock = Block + 0x80;
+  invoke("KeInitializeSpinLock", {Lock});
+  success(Memory->writeInteger(Head, Head, 8));
+  success(Memory->writeInteger(Head + 8, Head, 8));
+  auto Link = [&](uint64_t Entry, unsigned Offset) {
+    auto Value = Memory->readInteger(Entry + Offset, 8);
+    return Value ? *Value : ~uint64_t(0);
+  };
+
+  EXPECT_EQ(invoke("ExInterlockedInsertTailList", {Head, E1, Lock}), 0u);
+  EXPECT_EQ(invoke("ExInterlockedInsertTailList", {Head, E2, Lock}), E1);
+  EXPECT_EQ(invoke("ExInterlockedInsertHeadList", {Head, E3, Lock}), E1);
+  EXPECT_EQ(Link(Head, 0), E3);
+  EXPECT_EQ(Link(Head, 8), E2);
+  EXPECT_EQ(Link(E3, 0), E1);
+  EXPECT_EQ(Link(E1, 8), E3);
+  EXPECT_EQ(Model->currentIRQL(), 0u);
+  EXPECT_EQ(Link(Lock, 0), 0u);
+
+  EXPECT_EQ(invoke("ExInterlockedRemoveHeadList", {Head, Lock}), E3);
+  EXPECT_EQ(Link(E3, 0), E1);
+  EXPECT_EQ(Link(E3, 8), Head);
+  EXPECT_EQ(Link(E1, 8), Head);
+  const auto Previous = invoke("KfRaiseIrql", {2});
+  EXPECT_EQ(invoke("ExInterlockedRemoveHeadList", {Head, Lock}), E1);
+  EXPECT_EQ(invoke("ExInterlockedRemoveHeadList", {Head, Lock}), E2);
+  EXPECT_EQ(invoke("ExInterlockedRemoveHeadList", {Head, Lock}), 0u);
+  EXPECT_EQ(Model->currentIRQL(), 2u);
+  invoke("KeLowerIrql", {Previous});
+  EXPECT_EQ(Link(Head, 0), Head);
+  EXPECT_EQ(Link(Head, 8), Head);
+}
+
+TEST_F(DriverKernelModel, InterlockedSingleListsAndCountersMatchTheKernel) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Block =
+      invoke("ExAllocatePoolWithTag", {0, 0x100, 0x4c495354});
+  ASSERT_NE(Block, 0u);
+  const uint64_t Head = Block, E1 = Block + 0x10, E2 = Block + 0x20,
+                 Counter = Block + 0x40, Lock = Block + 0x80;
+  invoke("KeInitializeSpinLock", {Lock});
+  success(Memory->writeInteger(Head, 0, 8));
+  EXPECT_EQ(invoke("ExInterlockedPushEntryList", {Head, E1, Lock}), 0u);
+  EXPECT_EQ(invoke("ExInterlockedPushEntryList", {Head, E2, Lock}), E1);
+  EXPECT_EQ(invoke("ExInterlockedPopEntryList", {Head, Lock}), E2);
+  // The popped entry keeps its link to the old next entry.
+  auto Next = Memory->readInteger(E2, 8);
+  ASSERT_TRUE(static_cast<bool>(Next));
+  EXPECT_EQ(*Next, E1);
+  EXPECT_EQ(invoke("ExInterlockedPopEntryList", {Head, Lock}), E1);
+  EXPECT_EQ(invoke("ExInterlockedPopEntryList", {Head, Lock}), 0u);
+
+  // ExInterlockedAddUlong wraps at 32 bits and ignores the increment's upper
+  // half; ExInterlockedAddLargeInteger wraps at 64 bits.
+  success(Memory->writeInteger(Counter, 0x11111111ffffffffULL, 8));
+  EXPECT_EQ(
+      invoke("ExInterlockedAddUlong", {Counter, 0xabcdef0000000002ULL, Lock}),
+      0xffffffffu);
+  auto Value = Memory->readInteger(Counter, 8);
+  ASSERT_TRUE(static_cast<bool>(Value));
+  EXPECT_EQ(*Value, 0x1111111100000001ULL);
+  success(Memory->writeInteger(Counter, ~uint64_t(0), 8));
+  EXPECT_EQ(invoke("ExInterlockedAddLargeInteger", {Counter, 2, Lock}),
+            ~uint64_t(0));
+  Value = Memory->readInteger(Counter, 8);
+  ASSERT_TRUE(static_cast<bool>(Value));
+  EXPECT_EQ(*Value, 1u);
+}
+
+TEST_F(DriverKernelModel, InterlockedRoutinesRefuseWhatTheKernelCannotRun) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Block =
+      invoke("ExAllocatePoolWithTag", {0, 0x100, 0x4c495354});
+  const uint64_t Paged = invoke("ExAllocatePoolWithTag", {1, 0x20, 0x4c495354});
+  ASSERT_NE(Block, 0u);
+  ASSERT_NE(Paged, 0u);
+  const uint64_t Head = Block, Entry = Block + 0x10, Lock = Block + 0x80;
+  invoke("KeInitializeSpinLock", {Lock});
+  // A head whose first entry does not link back fails fast in the kernel.
+  success(Memory->writeInteger(Head, Entry, 8));
+  success(Memory->writeInteger(Head + 8, Entry, 8));
+  success(Memory->writeInteger(Entry, Head, 8));
+  success(Memory->writeInteger(Entry + 8, Entry, 8));
+  for (const char *Name :
+       {"ExInterlockedInsertHeadList", "ExInterlockedRemoveHeadList"}) {
+    const std::string Error =
+        std::string_view(Name) == "ExInterlockedRemoveHeadList"
+            ? failure(Name, {Head, Lock})
+            : failure(Name, {Head, Block + 0x20, Lock});
+    EXPECT_NE(Error.find("FAST_FAIL_CORRUPT_LIST_ENTRY"), std::string::npos)
+        << Name;
+  }
+  auto Untouched = Memory->readInteger(Head, 8);
+  ASSERT_TRUE(static_cast<bool>(Untouched));
+  EXPECT_EQ(*Untouched, Entry);
+
+  success(Memory->writeInteger(Entry + 8, Head, 8));
+  EXPECT_EQ(failure("ExInterlockedPushEntryList", {Paged, Entry, Lock}),
+            "interlocked storage requires nonpaged memory");
+  EXPECT_EQ(failure("ExInterlockedPopEntryList",
+                    {profile::UserProbeLimit - 0x10, Lock}),
+            "interlocked storage requires resident kernel memory");
+  EXPECT_EQ(failure("ExInterlockedAddUlong", {Lock + 4, 1, Lock}),
+            "interlocked storage overlaps its spin lock");
+  EXPECT_EQ(invoke("KeAcquireSpinLockRaiseToDpc", {Lock}), 0u);
+  EXPECT_EQ(failure("ExInterlockedRemoveHeadList", {Head, Lock}),
+            "executive spin lock would deadlock on this cooperative processor");
+  invoke("KeReleaseSpinLock", {Lock, 0});
+  success(Memory->writeInteger(Lock, 1, 8));
+  EXPECT_EQ(failure("ExInterlockedAddLargeInteger", {Block + 0x40, 1, Lock}),
+            "executive spin lock must be initialized and free");
+}
+
+TEST_F(DriverKernelModel, SequencedListsEncodeDepthAndSequenceLikeTheKernel) {
+  // A push adds 0x10001 to the first quadword, a pop decrements only the
+  // 16-bit Depth and a flush clears it; the entry word's low four bits are
+  // reserved and masked on every read.
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Block =
+      invoke("ExAllocatePoolWithTag", {0, 0x100, 0x534c5354});
+  ASSERT_NE(Block, 0u);
+  const uint64_t Header = Block, E1 = Block + 0x10, E2 = Block + 0x20;
+  auto Word = [&](uint64_t Address) {
+    auto Value = Memory->readInteger(Address, 8);
+    return Value ? *Value : ~uint64_t(0);
+  };
+  success(Memory->writeInteger(Header, ~uint64_t(0), 8));
+  invoke("InitializeSListHead", {Header});
+  EXPECT_EQ(Word(Header), 0u);
+  EXPECT_EQ(Word(Header + 8), 0u);
+  EXPECT_EQ(invoke("ExpInterlockedPushEntrySList", {Header, E1}), 0u);
+  EXPECT_EQ(invoke("ExpInterlockedPushEntrySList", {Header, E2}), E1);
+  EXPECT_EQ(Word(Header), 0x20002u);
+  EXPECT_EQ(Word(E2), E1);
+  EXPECT_EQ(invoke("ExQueryDepthSList", {Header}), 2u);
+  EXPECT_EQ(invoke("FirstEntrySList", {Header}), E2);
+  EXPECT_EQ(invoke("ExpInterlockedPopEntrySList", {Header}), E2);
+  EXPECT_EQ(Word(Header), 0x20001u);
+  EXPECT_EQ(Word(E2), E1);
+  EXPECT_EQ(invoke("ExpInterlockedFlushSList", {Header}), E1);
+  EXPECT_EQ(Word(Header), 0x20000u);
+  EXPECT_EQ(Word(Header + 8), 0u);
+  EXPECT_EQ(invoke("ExpInterlockedPopEntrySList", {Header}), 0u);
+  EXPECT_EQ(Word(Header), 0x20000u);
+
+  // Depth wraps alone on a pop, which stores the popped link unchanged, but a
+  // push carries it into Sequence.
+  success(Memory->writeInteger(Header, 0x30000, 8));
+  success(Memory->writeInteger(Header + 8, E1 | 5, 8));
+  success(Memory->writeInteger(E1, E2 | 3, 8));
+  EXPECT_EQ(invoke("ExpInterlockedPopEntrySList", {Header}), E1);
+  EXPECT_EQ(Word(Header), 0x3ffffu);
+  EXPECT_EQ(Word(Header + 8), E2 | 3);
+  EXPECT_EQ(invoke("FirstEntrySList", {Header}), E2);
+  EXPECT_EQ(invoke("ExpInterlockedPushEntrySList", {Header, E1}), E2);
+  EXPECT_EQ(Word(Header), 0x50000u);
+  EXPECT_EQ(Word(E1), E2);
+}
+
+TEST_F(DriverKernelModel, SequencedListsRaiseAndRefuseLikeTheKernel) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Block =
+      invoke("ExAllocatePoolWithTag", {0, 0x100, 0x534c5354});
+  const uint64_t Paged = invoke("ExAllocatePoolWithTag", {1, 0x20, 0x534c5354});
+  ASSERT_NE(Block, 0u);
+  ASSERT_NE(Paged, 0u);
+  const uint64_t Header = Block, Entry = Block + 0x10;
+  invoke("InitializeSListHead", {Header});
+  // InitializeSListHead raises like the kernel; cmpxchg16b would fault, and
+  // a misaligned entry would lose its reserved low bits.
+  EXPECT_EQ(failure("InitializeSListHead", {Header + 8}),
+            "raised guest exception 0x80000002");
+  EXPECT_EQ(failure("ExpInterlockedPushEntrySList", {Header + 8, Entry}),
+            "sequenced list header requires 16-byte alignment");
+  EXPECT_EQ(failure("ExpInterlockedPushEntrySList", {Header, Entry + 8}),
+            "sequenced list entries require 16-byte alignment");
+  EXPECT_EQ(failure("ExpInterlockedPushEntrySList", {Header, Header}),
+            "sequenced list entry overlaps its header");
+  auto Untouched = Memory->readInteger(Header, 8);
+  ASSERT_TRUE(static_cast<bool>(Untouched));
+  EXPECT_EQ(*Untouched, 0u);
+
+  // Paged lookaside entries make paged lists valid below DISPATCH_LEVEL.
+  invoke("InitializeSListHead", {Paged});
+  EXPECT_EQ(invoke("ExpInterlockedPushEntrySList", {Paged, Paged + 0x10}), 0u);
+  const auto Previous = invoke("KfRaiseIrql", {2});
+  EXPECT_NE(failure("ExpInterlockedPopEntrySList", {Paged}).find("paged pool"),
+            std::string::npos);
+  EXPECT_EQ(invoke("ExpInterlockedPushEntrySList", {Header, Entry}), 0u);
+  EXPECT_EQ(invoke("ExQueryDepthSList", {Header}), 1u);
+  invoke("KeLowerIrql", {Previous});
 }
 
 TEST_F(DriverKernelModel, MDLMappingIgnoresUnspecifiedNarrowArgumentHighBits) {

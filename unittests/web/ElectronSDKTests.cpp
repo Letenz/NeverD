@@ -66,9 +66,6 @@ protected:
   fs::path Root, Input;
   std::string Revision;
   void SetUp() override {
-#ifdef _WIN32
-    GTEST_SKIP() << "Windows web capture is not implemented";
-#endif
     Web = neverd_web_session_create();
     ASSERT_NE(Web, nullptr);
     llvm::SmallString<128> P;

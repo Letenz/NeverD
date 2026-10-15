@@ -51,8 +51,10 @@ struct CapturedFixupReference {
 
 struct SourceDisplacements {
   bool IsMachO = false;
+  bool IsI386ELF = false;
   std::map<std::pair<uint64_t, std::string>, uint64_t> Targets;
   std::map<std::pair<uint64_t, std::string>, uint64_t> MachOGOTData;
+  std::map<std::pair<uint64_t, std::string>, uint64_t> I386GOTAnchors;
 
   void record(const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request,
               uint64_t Address) {
@@ -63,6 +65,9 @@ struct SourceDisplacements {
     if (IsMachO && Request.SpecifierName == "GOTPCREL" &&
         Request.FixupKindName == "FK_Data_4" && !Request.IsPCRel)
       MachOGOTData[{Request.FixupVA, Request.Symbol.str()}] = Address;
+    if (IsI386ELF && Request.Symbol == "_GLOBAL_OFFSET_TABLE_" &&
+        !Request.Specifier)
+      I386GOTAnchors[{Request.FixupVA, Request.Symbol.str()}] = Address;
   }
 
   bool validate(const CompiledImage &Image) const {
@@ -104,6 +109,25 @@ struct SourceDisplacements {
         Bytes = Section.ExternalBytes;
       }
       for (const auto &Fixup : Section.FixupReferences) {
+        auto Anchor =
+            I386GOTAnchors.find({Section.VA + Fixup.Offset, Fixup.Symbol});
+        if (Anchor != I386GOTAnchors.end()) {
+          if (Fixup.BitWidth != 32 || !Fixup.IsResolved ||
+              !Fixup.SubtractSymbol.empty() ||
+              !rangeInBounds(Fixup.Offset, 4, Section.Size))
+            return false;
+          const uint32_t Encoded =
+              readLE<uint32_t>(Bytes.data() + Fixup.Offset);
+          const uint32_t Expected = static_cast<uint32_t>(
+              Anchor->second + static_cast<uint64_t>(Fixup.Addend) -
+              (Section.VA + Fixup.Offset));
+          if (Encoded != Expected) {
+            llvm::WithColor::error()
+                << "compileImageForPatch: LLVM encoded an invalid i386 GOT "
+                   "anchor displacement; rebuild the corrected LLVM fork\n";
+            return false;
+          }
+        }
         auto Target =
             MachOGOTData.find({Section.VA + Fixup.Offset, Fixup.Symbol});
         if (Target == MachOGOTData.end())
@@ -126,20 +150,49 @@ struct SourceDisplacements {
   }
 };
 
+// AArch64 ELF colon specifiers are absent from MCAsmInfo's @-name table.
+// LLVM 22 AArch64::Specifier combines S_GOT, S_PAGE/PAGEOFF and S_NC here.
+// Normalize once for both live resolution and captured relocation receipts.
+static llvm::StringRef sourceSpecifierName(Arch Architecture,
+                                           BinaryFormat Format,
+                                           unsigned Specifier,
+                                           llvm::StringRef Known) {
+  if (!Known.empty() || Architecture != Arch::AArch64 ||
+      Format != BinaryFormat::ELF)
+    return Known;
+  switch (Specifier) {
+  case 0x001: // S_ABS
+    return "ABS";
+  case 0x001 | 0x010: // S_ABS | S_PAGE
+    return "ABS_PAGE";
+  case 0x001 | 0x020 | 0x100: // S_ABS | S_PAGEOFF | S_NC
+    return "ABS_LO12";
+  case 0x004 | 0x010:
+    return "GOT_PAGE";
+  case 0x004 | 0x020 | 0x100:
+    return "GOT_LO12";
+  default:
+    return Known;
+  }
+}
+
 struct PatchSymbolResolvers {
   PatchSymbolResolver Legacy;
   ContextualPatchSymbolResolver Contextual;
 
-  void install(llvm::mc_rewrite::RewriteAddressModel &Model,
-               SourceDisplacements *PLT = nullptr) const {
+  void install(llvm::mc_rewrite::RewriteAddressModel &Model, Arch Architecture,
+               BinaryFormat Format, SourceDisplacements *PLT = nullptr) const {
     if (Contextual) {
       ContextualPatchSymbolResolver Resolver = Contextual;
       Model.resolveWithContext =
-          [Resolver,
+          [Resolver, Architecture, Format,
            PLT](const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request) {
-            auto Address = Resolver(Request);
+            auto Named = Request;
+            Named.SpecifierName = sourceSpecifierName(
+                Architecture, Format, Request.Specifier, Request.SpecifierName);
+            auto Address = Resolver(Named);
             if (PLT && Address)
-              PLT->record(Request, *Address);
+              PLT->record(Named, *Address);
             return Address;
           };
       return;
@@ -459,9 +512,11 @@ static CompiledImage compileImageForPatchImpl(
     RewriteInputKind InputKind) {
   SourceDisplacements PLT;
   PLT.IsMachO = Fmt == BinaryFormat::MachO;
+  PLT.IsI386ELF = TargetArch == Arch::X86 && Fmt == BinaryFormat::ELF;
   SourceDisplacements *PLTCheck =
-      TargetArch == Arch::X64 &&
-              (Fmt == BinaryFormat::ELF || Fmt == BinaryFormat::MachO) &&
+      ((TargetArch == Arch::X64 &&
+        (Fmt == BinaryFormat::ELF || Fmt == BinaryFormat::MachO)) ||
+       PLT.IsI386ELF) &&
               InputKind == RewriteInputKind::ReplacementIR
           ? &PLT
           : nullptr;
@@ -541,7 +596,7 @@ static CompiledImage compileImageForPatchImpl(
       return *FixedVA;
     return IsText(Name) ? BaseVA : *ProbeSectionVA;
   };
-  Resolvers.install(Pass1.Model, PLTCheck);
+  Resolvers.install(Pass1.Model, TargetArch, Fmt, PLTCheck);
   std::vector<CapturedFixupReference> Pass1Fixups;
   Pass1.onFixup = [&](const llvm::mc_rewrite::FixupCtx &Context,
                       uint64_t Value) {
@@ -596,9 +651,14 @@ static CompiledImage compileImageForPatchImpl(
   if (!AsmInfo)
     return Out;
   auto NameSpecifiers = [&](std::vector<CapturedFixupReference> &Fixups) {
-    for (auto &Fixup : Fixups)
+    for (auto &Fixup : Fixups) {
       Fixup.Reference.SpecifierName =
           AsmInfo->getSpecifierNameOrEmpty(Fixup.Reference.Specifier).str();
+      Fixup.Reference.SpecifierName =
+          sourceSpecifierName(TargetArch, Fmt, Fixup.Reference.Specifier,
+                              Fixup.Reference.SpecifierName)
+              .str();
+    }
   };
   NameSpecifiers(Pass1Fixups);
   const std::vector<WinEHSemanticEmissionShape> Pass1WinEHSemanticShape =
@@ -797,7 +857,7 @@ static CompiledImage compileImageForPatchImpl(
       auto It = SectionVA.find(N.str());
       return It != SectionVA.end() ? It->second : BaseVA;
     };
-    Resolvers.install(PassN.Model, PLTCheck);
+    Resolvers.install(PassN.Model, TargetArch, Fmt, PLTCheck);
     std::vector<CapturedFixupReference> IterationFixups;
     PassN.onFixup = [&](const llvm::mc_rewrite::FixupCtx &Context,
                         uint64_t Value) {

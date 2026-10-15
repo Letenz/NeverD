@@ -6,6 +6,21 @@ on:
     branches: [dev, codex/native-source-patching]
     paths:
       - '.github/workflows/source-patch-windows.yml'
+      - 'scripts/check_source_patch_pe_runtime.py'
+      - 'scripts/check_source_patch_cpp_runtime.py'
+      - 'scripts/check_source_patch_hosted_pe_runtime.py'
+      - 'scripts/check_source_patch_elf_runtime.py'
+      - 'scripts/tests/test_check_source_patch_hosted_pe_runtime.py'
+      - 'scripts/tests/test_check_source_patch_elf_runtime.py'
+      - 'unittests/Inputs/source-patch/neverc-hosted/**'
+      - 'unittests/Inputs/source-patch/neverc-linux/**'
+      - 'unittests/Inputs/source-patch/cpp-linux-objects/**'
+      - 'unittests/lift/eh/ELFSource*Tests.cpp'
+      - 'unittests/lift/eh/ReplacementIRTests.cpp'
+      - 'scripts/tests/test_check_source_patch_cpp_runtime.py'
+      - 'scripts/tests/test_check_source_patch_pe_runtime.py'
+      - 'pluginsdk/python/neverd_plugin/abi.py'
+      - 'pluginsdk/python/neverd_plugin/ffi.py'
       - 'lib/sdk/SourcePatchCompiler.*'
       - 'lib/sdk/capi/NeverDCAPISourcePatch.cpp'
       - 'lib/backend/codegen/SourcePatch*'
@@ -28,6 +43,21 @@ on:
   pull_request:
     paths:
       - '.github/workflows/source-patch-windows.yml'
+      - 'scripts/check_source_patch_pe_runtime.py'
+      - 'scripts/check_source_patch_cpp_runtime.py'
+      - 'scripts/check_source_patch_hosted_pe_runtime.py'
+      - 'scripts/check_source_patch_elf_runtime.py'
+      - 'scripts/tests/test_check_source_patch_hosted_pe_runtime.py'
+      - 'scripts/tests/test_check_source_patch_elf_runtime.py'
+      - 'unittests/Inputs/source-patch/neverc-hosted/**'
+      - 'unittests/Inputs/source-patch/neverc-linux/**'
+      - 'unittests/Inputs/source-patch/cpp-linux-objects/**'
+      - 'unittests/lift/eh/ELFSource*Tests.cpp'
+      - 'unittests/lift/eh/ReplacementIRTests.cpp'
+      - 'scripts/tests/test_check_source_patch_cpp_runtime.py'
+      - 'scripts/tests/test_check_source_patch_pe_runtime.py'
+      - 'pluginsdk/python/neverd_plugin/abi.py'
+      - 'pluginsdk/python/neverd_plugin/ffi.py'
       - 'lib/sdk/SourcePatchCompiler.*'
       - 'lib/sdk/capi/NeverDCAPISourcePatch.cpp'
       - 'lib/backend/codegen/SourcePatch*'
@@ -77,6 +107,9 @@ jobs:
         with:
           arch: x64
 
+      - name: Check runtime qualification evidence rules
+        run: python -m unittest scripts.tests.test_check_source_patch_pe_runtime scripts.tests.test_check_source_patch_cpp_runtime scripts.tests.test_check_source_patch_hosted_pe_runtime scripts.tests.test_check_source_patch_elf_runtime -v
+
       - name: Install the checked source producer
         shell: pwsh
         run: |
@@ -108,6 +141,7 @@ jobs:
           "NEVERD_TEST_WINDOWS_UCRT_LIB=$ucrt" >> $env:GITHUB_ENV
           "NEVERD_TEST_WINDOWS_SDK_LIB=$sdk" >> $env:GITHUB_ENV
           'NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1' >> $env:GITHUB_ENV
+          'NEVERD_TEST_REQUIRE_FIXED_LLVM=1' >> $env:GITHUB_ENV
 
       - name: Configure and build the focused patch tests
         shell: pwsh
@@ -120,19 +154,104 @@ jobs:
             -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF `
             "-DNEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE=$env:NEVERD_SOURCE_CLANG"
           if ($LASTEXITCODE -ne 0) { throw 'Configure failed' }
-          cmake --build build-source-windows --target NeverDSourcePatchTests NeverDSourcePatchMatrixTests --parallel 4
+          cmake --build build-source-windows --target NeverDSourcePatchTests NeverDSourcePatchMatrixTests NeverDSourcePatchDynCodeTests NeverDNativeExceptionRewriteContractTests --parallel 4
           if ($LASTEXITCODE -ne 0) { throw 'Focused build failed' }
 
       - name: Execute PE under Windows and the four-architecture matrix
         shell: pwsh
         run: |
           # This Clang qualification does not install the optional NeverC producer.
-          & build-source-windows/bin/NeverDSourcePatchTests.exe '--gtest_filter=SourcePatchPE.*:SourcePatchObject.*:SourcePatchTrampoline.*-SourcePatchObject.NeverCEntryTableCannotLoseItsLoadTimeRelocations' '--gtest_output=xml:build-source-windows/native-pe.xml'
+          & build-source-windows/bin/NeverDSourcePatchTests.exe '--gtest_filter=SourcePatchPE.*:SourcePatchObject.*:SourcePatchAArch64Object.*:SourcePatchTrampoline.*-SourcePatchObject.NeverCEntryTableCannotLoseItsLoadTimeRelocations' '--gtest_output=xml:build-source-windows/native-pe.xml'
           if ($LASTEXITCODE -ne 0) { throw 'PE source patch tests failed' }
-          & build-source-windows/bin/NeverDSourcePatchMatrixTests.exe '--gtest_output=xml:build-source-windows/target-matrix.xml'
+          & build-source-windows/bin/NeverDSourcePatchMatrixTests.exe '--gtest_filter=-NeverCProfiles/*' '--gtest_output=xml:build-source-windows/target-matrix.xml'
           if ($LASTEXITCODE -ne 0) { throw 'Source target matrix failed' }
-          python -c "import pathlib,xml.etree.ElementTree as E; paths=[pathlib.Path('build-source-windows')/n for n in ('native-pe.xml','target-matrix.xml')]; suites=[E.parse(p).getroot() for p in paths]; assert [int(s.attrib.get('tests','0')) for s in suites]==[16,143], 'Qualification inventory changed'; assert all(all(int(s.attrib.get(k,'0'))==0 for k in ('failures','errors','disabled')) for s in suites); assert all(c.find('skipped') is None for s in suites for c in s.iter('testcase')), 'Qualification cannot pass with skipped cases'"
+          & build-source-windows/bin/NeverDSourcePatchDynCodeTests.exe '--gtest_output=xml:build-source-windows/dyncode-evidence.xml'
+          if ($LASTEXITCODE -ne 0) { throw 'DynCode artifact evidence tests failed' }
+          & build-source-windows/bin/NeverDNativeExceptionRewriteContractTests.exe '--gtest_filter=ELFSourceSymbols.*:ELFSourceRelocations.*:ReplacementNativeCode.*' '--gtest_output=xml:build-source-windows/elf-reference-contracts.xml'
+          if ($LASTEXITCODE -ne 0) { throw 'ELF source reference contracts failed' }
+          python -c "import pathlib,xml.etree.ElementTree as E; paths=[pathlib.Path('build-source-windows')/n for n in ('native-pe.xml','target-matrix.xml')]; suites=[E.parse(p).getroot() for p in paths]; assert [int(s.attrib.get('tests','0')) for s in suites]==[20,154], 'Qualification inventory changed'; assert all(all(int(s.attrib.get(k,'0'))==0 for k in ('failures','errors','disabled')) for s in suites); assert all(c.find('skipped') is None for s in suites for c in s.iter('testcase')), 'Qualification cannot pass with skipped cases'"
           if ($LASTEXITCODE -ne 0) { throw 'Incomplete native qualification' }
+
+      - name: Prepare all PE process fixtures and execute x86 and x64
+        shell: pwsh
+        run: |
+          $linker = Join-Path (Split-Path $env:NEVERD_SOURCE_CLANG) 'lld-link.exe'
+          python scripts/check_source_patch_pe_runtime.py prepare `
+            --neverd build-source-windows/bin/neverd.exe `
+            --library build-source-windows/bin/neverd.dll `
+            --clang $env:NEVERD_SOURCE_CLANG --linker $linker `
+            --output build-source-windows/pe-runtime
+          if ($LASTEXITCODE -ne 0) { throw 'PE runtime fixture preparation failed' }
+          foreach ($arch in @('x86', 'x64')) {
+            python scripts/check_source_patch_pe_runtime.py run `
+              --root build-source-windows/pe-runtime --arch $arch --expected-native-host x64
+            if ($LASTEXITCODE -ne 0) { throw "$arch Windows process execution failed" }
+          }
+
+      - name: Prepare NeverC C and Clang/GCC C++ ELF images for native Linux execution
+        shell: pwsh
+        run: |
+          python scripts/check_source_patch_elf_runtime.py prepare `
+            --neverd build-source-windows/bin/neverd.exe --clang $env:NEVERD_SOURCE_CLANG `
+            --fixtures unittests/Inputs/source-patch/neverc-linux --output build-source-windows/elf-runtime
+          if ($LASTEXITCODE -ne 0) { throw 'ELF C/hosted/Clang C++ fixture preparation failed' }
+
+      - name: Prepare x64 and ARM64 source C++ exceptions and execute x64
+        shell: pwsh
+        run: |
+          $sdkRoot = Join-Path $env:WindowsSdkDir "Lib\$($env:WindowsSDKVersion.TrimEnd('\'))"
+          $linker = Join-Path (Split-Path $env:NEVERD_SOURCE_CLANG) 'lld-link.exe'
+          $crtArm = Join-Path $env:VCToolsInstallDir 'lib\arm64'
+          $ucrtArm = Join-Path $sdkRoot 'ucrt\arm64'
+          $sdkArm = Join-Path $sdkRoot 'um\arm64'
+          foreach ($directory in @($crtArm, $ucrtArm, $sdkArm)) {
+            if (-not (Test-Path -PathType Container $directory)) { throw "Missing ARM64 runtime directory: $directory" }
+          }
+          python scripts/check_source_patch_cpp_runtime.py prepare `
+            --neverd build-source-windows/bin/neverd.exe --library build-source-windows/bin/neverd.dll `
+            --clang $env:NEVERD_SOURCE_CLANG --linker $linker --output build-source-windows/cpp-runtime `
+            --crt-x64 $env:NEVERD_TEST_WINDOWS_CRT_LIB --ucrt-x64 $env:NEVERD_TEST_WINDOWS_UCRT_LIB `
+            --sdk-x64 $env:NEVERD_TEST_WINDOWS_SDK_LIB --crt-arm64 $crtArm --ucrt-arm64 $ucrtArm --sdk-arm64 $sdkArm
+          if ($LASTEXITCODE -ne 0) { throw 'C++ source patch fixture preparation failed' }
+          python scripts/check_source_patch_cpp_runtime.py run `
+            --root build-source-windows/cpp-runtime --arch x64 --expected-native-host x64
+          if ($LASTEXITCODE -ne 0) { throw 'x64 C++ Windows process execution failed' }
+          python scripts/check_source_patch_hosted_pe_runtime.py prepare `
+            --neverd build-source-windows/bin/neverd.exe --library build-source-windows/bin/neverd.dll `
+            --clang $env:NEVERD_SOURCE_CLANG --linker $linker --output build-source-windows/hosted-runtime `
+            --fixtures unittests/Inputs/source-patch/neverc-hosted `
+            --crt-x64 $env:NEVERD_TEST_WINDOWS_CRT_LIB --ucrt-x64 $env:NEVERD_TEST_WINDOWS_UCRT_LIB `
+            --sdk-x64 $env:NEVERD_TEST_WINDOWS_SDK_LIB --crt-arm64 $crtArm --ucrt-arm64 $ucrtArm --sdk-arm64 $sdkArm
+          if ($LASTEXITCODE -ne 0) { throw 'Hosted NeverC fixture preparation failed' }
+          python scripts/check_source_patch_hosted_pe_runtime.py run `
+            --root build-source-windows/hosted-runtime --arch x64 --expected-native-host x64
+          if ($LASTEXITCODE -ne 0) { throw 'x64 hosted NeverC unwind execution failed' }
+
+      - name: Preserve ELF images for native Linux execution
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-patch-elf-processes-${{ github.sha }}
+          path: build-source-windows/elf-runtime
+          if-no-files-found: warn
+
+      - name: Preserve C++ images for Windows ARM64 execution
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-patch-cpp-processes-${{ github.sha }}
+          path: |
+            build-source-windows/cpp-runtime
+            build-source-windows/hosted-runtime
+          if-no-files-found: warn
+
+      - name: Preserve PE images for Windows ARM64 execution
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-patch-pe-processes-${{ github.sha }}
+          path: build-source-windows/pe-runtime
+          if-no-files-found: warn
 
       - name: Preserve native runtime evidence
         if: always()
@@ -143,3 +262,98 @@ jobs:
             build-source-windows/*.xml
             build-source-windows/CMakeCache.txt
           if-no-files-found: warn
+
+  native-pe-arm64:
+    needs: native-pe
+    runs-on: windows-11-arm
+    timeout-minutes: 15
+    steps:
+      - name: Checkout the matching runtime verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Download the exact patch images
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: source-patch-pe-processes-${{ github.sha }}
+          path: build-source-windows/pe-runtime
+
+      - name: Execute ARM64 patches under native Windows ARM64
+        shell: pwsh
+        run: |
+          python scripts/check_source_patch_pe_runtime.py run `
+            --root build-source-windows/pe-runtime --arch arm64 --expected-native-host arm64
+          if ($LASTEXITCODE -ne 0) { throw 'ARM64 Windows process execution failed' }
+
+      - name: Download the exact C++ patch images
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: source-patch-cpp-processes-${{ github.sha }}
+          path: build-source-windows
+
+      - name: Execute ARM64 C++ exceptions under native Windows ARM64
+        shell: pwsh
+        run: |
+          python scripts/check_source_patch_cpp_runtime.py run `
+            --root build-source-windows/cpp-runtime --arch arm64 --expected-native-host arm64
+          if ($LASTEXITCODE -ne 0) { throw 'ARM64 C++ Windows process execution failed' }
+          python scripts/check_source_patch_hosted_pe_runtime.py run `
+            --root build-source-windows/hosted-runtime --arch arm64 --expected-native-host arm64
+          if ($LASTEXITCODE -ne 0) { throw 'ARM64 hosted NeverC unwind execution failed' }
+
+      - name: Preserve ARM64 native process evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-patch-pe-arm64-${{ github.sha }}
+          path: |
+            build-source-windows/pe-runtime/*-runtime.json
+            build-source-windows/pe-runtime/arm64/*.log
+            build-source-windows/pe-runtime/manifest.json
+            build-source-windows/cpp-runtime/*-runtime.json
+            build-source-windows/cpp-runtime/arm64/*.log
+            build-source-windows/cpp-runtime/manifest.json
+            build-source-windows/hosted-runtime/*-runtime.json
+            build-source-windows/hosted-runtime/arm64/*.log
+            build-source-windows/hosted-runtime/manifest.json
+          if-no-files-found: error
+
+  native-elf:
+    needs: native-pe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - name: Checkout the matching runtime verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the exact ELF patch images
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: source-patch-elf-processes-${{ github.sha }}
+          path: build-source-windows/elf-runtime
+
+      - name: Execute C and Clang C++ exception propagation
+        run: python3 scripts/check_source_patch_elf_runtime.py run --root build-source-windows/elf-runtime --arch '${{ matrix.arch }}'
+
+      - name: Preserve native Linux process evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-patch-elf-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            build-source-windows/elf-runtime/*-runtime.json
+            build-source-windows/elf-runtime/${{ matrix.arch }}/*.log
+            build-source-windows/elf-runtime/manifest.json
+          if-no-files-found: error

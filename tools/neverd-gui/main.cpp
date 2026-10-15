@@ -197,12 +197,18 @@ int main(int argc, char **argv) {
   if (automated || parser.isSet(QStringLiteral("fresh-layout")))
     window.setLayoutPath(testLayout.filePath(QStringLiteral("layout.json")));
   restoreGeometry(window);
+  // Nobody answers the questions of a run that captures or measures.
+  const bool unattended = automated || parser.isSet(QStringLiteral("capture"));
+  if (unattended)
+    window.setAsksForDebugInfo(false);
   // Without a file the quick start greets alone; the workbench lays out its
-  // desktop and shows once the user chooses how to start.
-  const bool greet = !openingFile && !automated &&
-                     !parser.isSet(QStringLiteral("capture")) &&
+  // desktop and shows once the user chooses how to start.  A file named here
+  // asks what it asks before its load alone too, and shows the workbench as
+  // it starts to load.
+  const bool greet = !openingFile && !unattended &&
                      QSettings().value(settings::QuickStart, true).toBool();
-  if (!greet)
+  const bool asksFirst = openingFile && !unattended;
+  if (!greet && !asksFirst)
     window.initializeLayout();
   if (startupMetrics)
     startupMetrics->observeWindow(&window);
@@ -221,7 +227,7 @@ int main(int argc, char **argv) {
         window, session, parser.value(QStringLiteral("interaction-benchmark")),
         timeout, &app);
   }
-  if (!greet)
+  if (!greet && !asksFirst)
     window.showWorkbench();
   QObject::connect(&app, &QApplication::aboutToQuit, &window, [&window] {
     QSettings().setValue(GeometryKey, window.saveGeometry());

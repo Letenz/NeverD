@@ -11,6 +11,7 @@
 
 #include "BunFixture.h"
 #include "NativeFixture.h"
+#include "ProducerCorpus.h"
 #include "gtest/gtest.h"
 
 #include "neverd/sdk/NeverDCAPI.h"
@@ -81,9 +82,6 @@ protected:
   fs::path Root;
   std::string Path, Revision, Artifact;
   void SetUp() override {
-#ifdef _WIN32
-    GTEST_SKIP() << "Windows web input capture is not implemented";
-#endif
     Web = neverd_web_session_create();
     ASSERT_NE(Web, nullptr);
     llvm::SmallString<128> Dir;
@@ -307,6 +305,8 @@ TEST_F(WebNative, DirectoryMembersRetainOccurrenceInsteadOfReopeningTheirPath) {
 TEST_F(WebNative,
        PinnedBunCompilerContainerEntersTheNativeLoaderWithoutExecution) {
   const char *Corpus = std::getenv("NEVERD_BUN_142_CORPUS");
+  ASSERT_TRUE(
+      neverd::web::test::producerCorpus("NEVERD_BUN_142_CORPUS", Corpus));
   if (!Corpus || !*Corpus)
     GTEST_SKIP() << "Pinned full Bun corpus is not configured";
   Path = (fs::path(Corpus) / "plain.elf").string();

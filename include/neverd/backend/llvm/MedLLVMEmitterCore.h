@@ -188,6 +188,7 @@ private:
       const std::map<int, llvm::BasicBlock *> &OriginalBlockMap,
       const std::map<llvm::BasicBlock *, std::pair<int, int>> &PHICopyEdges);
   llvm::Function *resolveX86RegistrationHandlerReference(va_t Address);
+  void declareX86RegistrationJumpRuntimes(const MedFunc &Func);
   bool
   emitNativeCxxEH(const MedFunc &Func, llvm::Function &LLVMFunc,
                   const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);
@@ -1866,6 +1867,12 @@ private:
   mutable std::map<
       std::tuple<AddressProvenanceVarKey, bool, AddressProvenanceVarKey>, bool>
       StableOffsetCache;
+  // Only completed default-budget, unbound top-level frame-slot queries.
+  // Nested path assumptions and externally shared budgets remain query-local.
+  mutable const MedFunc *ClosedFrameSlotCacheFor = nullptr;
+  mutable std::map<std::pair<AddressProvenanceVarKey, bool>,
+                   std::optional<med_llvm::SlotKey>>
+      ClosedFrameSlotCache;
   // A failed select/PHI table audit has no LLVM value to cache, but its
   // MedIR result is independent of the current IRBuilder.
   mutable const MedFunc *SelectMergeFailureCacheFor = nullptr;

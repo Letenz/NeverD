@@ -235,6 +235,17 @@ add_neverd_unittest(NeverDDarwinProcessTests
   DarwinImageTests.cpp
   DarwinMemoryTests.cpp
   DarwinFileTests.cpp
+  DarwinModeTests.cpp
+  DarwinOwnershipTests.cpp
+  DarwinAdvisoryLockTests.cpp
+  DarwinSynchronizationTests.cpp
+  DarwinDataSynchronizationTests.cpp
+  DarwinFullSynchronizationTests.cpp
+  DarwinTimestampMutationTests.cpp
+  DarwinFileSystemTests.cpp
+  DarwinCreatedSynchronizationTests.cpp
+    DarwinCreatedAdvisoryLockTests.cpp
+  DarwinCreatedAttributeTests.cpp
   DarwinPollTests.cpp
   DarwinSelectTests.cpp
   DarwinPselectTests.cpp
@@ -247,11 +258,16 @@ add_neverd_unittest(NeverDDarwinProcessTests
   NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDDarwinProcessTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)
+if(MSVC)
+  target_compile_options(NeverDDarwinProcessTests PRIVATE /bigobj)
+endif()
 include(DarwinFixtures.cmake)
 add_neverd_unittest(NeverDAndroidNativeTests
   AndroidNativeTests.cpp
   AndroidMemoryTests.cpp
   AndroidTokenTests.cpp
+  AndroidPropertyTests.cpp
+  AndroidStdioTests.cpp
   AndroidSearchTests.cpp
   AndroidMutexTests.cpp
   AndroidThreadAttributeTests.cpp
@@ -262,6 +278,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidSnapshotTests.cpp
   AndroidResidencyTests.cpp
   AndroidFileTests.cpp
+  AndroidDeviceTests.cpp
   AndroidFileStatusAtTests.cpp
   AndroidFileSystemStatusTests.cpp
   AndroidSyscallTests.cpp
@@ -661,7 +678,7 @@ foreach(_driver_name success failure unknown fault loop devices readonly privile
 endforeach()
 # The loader fixture deliberately retains relocations and a compiler-inserted
 # stack protector. The WDM fixture covers the complete synchronous lifecycle.
-foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority)
+foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority driver_loader_view driver_bugcheck driver_version_query driver_physical_ranges driver_va_shadow_query driver_strings driver_identity driver_time_fields driver_interlocked driver_slist)
   set(_driver_object "${_driver_fixture_dir}/${_driver_name}.obj")
   set(_driver_image "${_driver_fixture_dir}/${_driver_name}.sys")
   if(_driver_name STREQUAL "loader")
@@ -763,6 +780,29 @@ foreach(_driver_name driver_guard driver_guard_inactive
     VERBATIM)
   list(APPEND _driver_outputs "${_driver_image}")
 endforeach()
+set(_driver_context_image "${_driver_fixture_dir}/driver_context_capture.sys")
+set(_driver_context_object "${_driver_fixture_dir}/driver_context_capture.obj")
+set(_driver_context_assembly "${_driver_fixture_dir}/driver_context_capture_asm.obj")
+add_custom_command(OUTPUT "${_driver_context_image}" "${_driver_context_object}"
+    "${_driver_context_assembly}"
+  COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
+    --target=x86_64-pc-windows-msvc -std=c11 -ffreestanding
+    -fno-stack-protector -O1 -c
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/driver_context_capture.c"
+    -o "${_driver_context_object}"
+  COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
+    --target=x86_64-pc-windows-msvc -c
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/driver_context_capture.S"
+    -o "${_driver_context_assembly}"
+  COMMAND "${NEVERD_DRIVER_LLD_LINK}" /machine:x64 /entry:DriverEntry
+    /subsystem:native /driver /dll /nodefaultlib /dynamicbase /timestamp:0
+    /base:0x180000000 "/out:${_driver_context_image}"
+    "${_driver_context_object}" "${_driver_context_assembly}"
+    "${_driver_import_lib}"
+  DEPENDS fixtures/driver_context_capture.c fixtures/driver_context_capture.S
+    "${_driver_import_lib}"
+  VERBATIM)
+list(APPEND _driver_outputs "${_driver_context_image}")
 add_custom_target(NeverDDriverFixtures DEPENDS ${_driver_outputs})
 
 # Microsoft kit files are optional external validation inputs. Never assume a
@@ -1321,6 +1361,13 @@ add_neverd_unittest(NeverDNativeDriverTests
   DriverNativeExecutionTests.cpp
   DriverTimestampTests.cpp
   DriverCPUIDTests.cpp
+  DriverLoaderViewTests.cpp
+  DriverBugCheckTests.cpp
+  DriverVersionQueryTests.cpp
+  DriverPhysicalInventoryTests.cpp
+  DriverVaShadowQueryTests.cpp
+  DriverContextCaptureTests.cpp
+  DriverShadowStackTests.cpp
   DriverImageMemoryTests.cpp
   DriverSchedulingTests.cpp
   DriverThreadPriorityTests.cpp
@@ -1341,6 +1388,13 @@ add_neverd_unittest(NeverDKernelSnapshotTests
   NO_PRETTY_VALUES
   KernelSnapshotTests.cpp
   KernelUnpackStateTests.cpp
+  KernelLoaderViewTests.cpp
+  KernelResidentQueryTests.cpp
+  KernelBugCheckTests.cpp
+  KernelVersionQueryTests.cpp
+  KernelPhysicalInventoryTests.cpp
+  KernelVaShadowQueryTests.cpp
+  KernelContextCaptureTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS Emulation)
 target_include_directories(NeverDKernelSnapshotTests PRIVATE

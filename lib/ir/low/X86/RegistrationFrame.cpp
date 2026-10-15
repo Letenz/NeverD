@@ -8,28 +8,32 @@
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/lift/X86Regs.h"
 
 namespace neverd::registration_state {
 
-bool isCanonicalX87Wait(const LowOp &Op) {
-  return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 1 &&
-         Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
-         Op.Inputs[0].Offset == uint64_t(Intrinsic::X87Wait) &&
-         Op.Output == NdVar() && Op.MemoryOrdering == NdMemoryOrdering::None &&
-         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+bool hasX86ScalarCallOutput(const LowOp &Op) {
+  return Op.Opcode == NdOp::CALL && Op.Output.Size == 4 &&
+         (Op.Output.isTemp() ||
+          (Op.Output.isReg() && Op.Output.Offset == x86reg::RAX));
 }
 
 FrameValue join(FrameValue Left, const FrameValue &Right) {
   if (Left == Right)
     return Left;
   const bool MayBeFrame = Left.MayBeFrame || Right.MayBeFrame;
-  return {{},
-          {},
-          false,
-          MayBeFrame,
-          MayBeFrame && (!Left.MayBeFrame || Left.FrameOnlyFromCall) &&
-              (!Right.MayBeFrame || Right.FrameOnlyFromCall)};
+  FrameValue Result{{},
+                    {},
+                    false,
+                    MayBeFrame,
+                    MayBeFrame &&
+                        (!Left.MayBeFrame || Left.FrameOnlyFromCall) &&
+                        (!Right.MayBeFrame || Right.FrameOnlyFromCall)};
+  Result.FrameOnlyFromSEHScalar =
+      MayBeFrame && (!Left.MayBeFrame || Left.FrameOnlyFromSEHScalar) &&
+      (!Right.MayBeFrame || Right.FrameOnlyFromSEHScalar);
+  return Result;
 }
 
 namespace {
@@ -109,6 +113,10 @@ bool FrameState::merge(const FrameState &Other) {
     CallbackEntry.reset();
     Changed = true;
   }
+  if (SEHFilterEntry != Other.SEHFilterEntry && SEHFilterEntry) {
+    SEHFilterEntry.reset();
+    Changed = true;
+  }
   return Changed;
 }
 
@@ -140,22 +148,43 @@ FrameValue FrameTransfer::read(const NdVar &Value) const {
         State.Registers[Value.Offset / x86reg::GeneralRegStride];
     if (Value.Offset % x86reg::GeneralRegStride == 0 && Value.Size >= 4)
       return Register;
-    return {{}, {}, false, Register.MayBeFrame};
+    const auto Byte = Value.Offset % x86reg::GeneralRegStride;
+    if (Register.Constant && !Register.MayBeFrame && Value.Size &&
+        Byte + Value.Size <= 4)
+      return FrameValue::constant((*Register.Constant >> (Byte * 8)) &
+                                  (UINT32_MAX >> ((4 - Value.Size) * 8)));
+    return FrameValue::taint(Register.MayBeFrame,
+                             Register.FrameOnlyFromSEHScalar);
   }
   if (Value.isReg()) {
     FrameValue Result;
+    std::optional<uint32_t> Constant = Value.Size && Value.Size <= 4
+                                           ? std::optional<uint32_t>{0}
+                                           : std::nullopt;
     for (uint64_t Byte = 0; Byte < Value.Size; ++Byte)
       if (auto It = State.OtherRegisterBytes.find(Value.Offset + Byte);
-          It != State.OtherRegisterBytes.end())
+          It != State.OtherRegisterBytes.end()) {
         Result = join(Result, It->second);
-      else if (State.OtherRegistersMayBeFrame)
-        Result = join(Result, {{}, {}, false, true, true});
+        if (Constant && It->second.Constant && !It->second.MayBeFrame)
+          *Constant |= (*It->second.Constant & UINT8_MAX) << (Byte * 8);
+        else
+          Constant.reset();
+      } else {
+        Constant.reset();
+        if (State.OtherRegistersMayBeFrame)
+          Result = join(Result, {{}, {}, false, true, true});
+      }
+    if (Constant && !Result.MayBeFrame)
+      return FrameValue::constant(*Constant);
     return Result;
   }
   if (Value.isTemp()) {
     auto It = Temps.find(Value.Offset);
-    if (It != Temps.end())
+    if (It != Temps.end()) {
+      if (It->second.SEHException && Value.Size < 4)
+        return {{}, {}, false, true};
       return It->second;
+    }
   }
   return {};
 }
@@ -168,21 +197,42 @@ FrameValue FrameTransfer::evaluate(const LowOp &Op, bool Installed) const {
       Result.FrameOnlyFromCall =
           (!Result.MayBeFrame || Result.FrameOnlyFromCall) &&
           Input.FrameOnlyFromCall;
+      Result.FrameOnlyFromSEHScalar =
+          (!Result.MayBeFrame || Result.FrameOnlyFromSEHScalar) &&
+          Input.FrameOnlyFromSEHScalar;
       Result.MayBeFrame = true;
     }
   }
+  if (Op.Output.Size <= 4)
+    if (const auto Constant = lowScalarConstantResult(
+            Op, [&](const NdVar &V) -> std::optional<uint64_t> {
+              if (!V.Size || V.Size > 4)
+                return std::nullopt;
+              const auto Value = read(V);
+              if (Value.MayBeFrame || Value.SecurityCookie || Value.ReturnPC)
+                return std::nullopt;
+              return Value.Constant;
+            }))
+      return FrameValue::constant(uint32_t(*Constant));
   if ((Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT) &&
       Op.NumInputs == 1) {
     const auto Input = read(Op.Inputs[0]);
     if (Op.Output.Size >= 4 && Op.Inputs[0].Size >= 4)
       return Input;
-    return {{}, {}, false, Input.MayBeFrame};
+    return FrameValue::taint(Input.MayBeFrame, Input.FrameOnlyFromSEHScalar);
   }
   if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
       Op.Inputs[1].isConst() && Op.Inputs[1].Offset == 0 && Op.Output.Size == 4)
     return read(Op.Inputs[0]);
   if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1) {
     const FrameValue Address = read(Op.Inputs[0]);
+    if (Address.SEHException) {
+      if (Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+        if (const auto Value =
+                State.sehExceptionLoad(*Address.SEHException, Op.Output.Size))
+          return *Value;
+      return {{}, {}, false, true};
+    }
     if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS &&
         Address.Constant == uint32_t{0} && Op.Output.Size == 4)
       return Installed ? FrameValue::frame(RegistrationOffset)
@@ -240,6 +290,26 @@ FrameValue FrameTransfer::evaluate(const LowOp &Op, bool Installed) const {
       Op.NumInputs == 2) {
     const FrameValue Left = read(Op.Inputs[0]);
     const FrameValue Right = read(Op.Inputs[1]);
+    auto AddExceptionOffset = [&](const FrameValue &Base,
+                                  int64_t Delta) -> std::optional<FrameValue> {
+      if (!Base.SEHException || Op.Output.Size < 4)
+        return std::nullopt;
+      auto Address = *Base.SEHException;
+      const int64_t Offset = int64_t(Address.Offset) + Delta;
+      if (Offset < 0 || Offset > 4)
+        return FrameValue{{}, {}, false, true};
+      Address.Offset = int32_t(Offset);
+      return FrameValue::sehException(Address);
+    };
+    if (Left.SEHException && Right.Constant)
+      if (auto Value = AddExceptionOffset(
+              Left, Op.Opcode == NdOp::INT_ADD
+                        ? int64_t(int32_t(*Right.Constant))
+                        : -int64_t(int32_t(*Right.Constant))))
+        return *Value;
+    if (Op.Opcode == NdOp::INT_ADD && Left.Constant && Right.SEHException)
+      if (auto Value = AddExceptionOffset(Right, int32_t(*Left.Constant)))
+        return *Value;
     if (Left.CallbackAddress && Right.Constant)
       return FrameValue::callbackFrame(
           Left.CallbackAddress->Entry,
@@ -319,14 +389,22 @@ void FrameTransfer::write(const LowOp &Op, FrameValue Value,
         State.Registers[Op.Output.Offset / x86reg::GeneralRegStride];
     if (Op.Output.Offset % x86reg::GeneralRegStride == 0 && Op.Output.Size >= 4)
       Register = Value;
-    else
-      Register = {{}, {}, false, Register.MayBeFrame || Value.MayBeFrame};
+    else {
+      const auto Merged = join(Register, Value);
+      Register =
+          FrameValue::taint(Merged.MayBeFrame, Merged.FrameOnlyFromSEHScalar);
+    }
   } else if (Op.Output.isReg()) {
     for (uint64_t Byte = 0; Byte < Op.Output.Size; ++Byte)
-      if (Value.MayBeFrame || State.OtherRegistersMayBeFrame)
+      if (Value.Constant && !Value.MayBeFrame && Op.Output.Size <= 4)
+        State.OtherRegisterBytes[Op.Output.Offset + Byte] =
+            FrameValue::constant((*Value.Constant >> (Byte * 8)) & UINT8_MAX);
+      else if (Value.MayBeFrame || State.OtherRegistersMayBeFrame) {
         State.OtherRegisterBytes[Op.Output.Offset + Byte] = {
             {}, {}, false, Value.MayBeFrame, Value.FrameOnlyFromCall};
-      else
+        State.OtherRegisterBytes[Op.Output.Offset + Byte]
+            .FrameOnlyFromSEHScalar = Value.FrameOnlyFromSEHScalar;
+      } else
         State.OtherRegisterBytes.erase(Op.Output.Offset + Byte);
   }
 }

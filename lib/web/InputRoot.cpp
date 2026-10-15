@@ -11,6 +11,7 @@
 
 #include "BlobStore.h"
 #include "Internal.h"
+#include "platform/WindowsFile.h"
 
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Unicode.h"
@@ -25,6 +26,59 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#else
+namespace neverd::web {
+namespace {
+struct Reader {
+  const Limits &Budget;
+  Snapshot Result;
+  BlobStore Store;
+  explicit Reader(const Limits &Budget)
+      : Budget(Budget), Store(Budget.MaxInputBytes) {}
+
+  void visit(HANDLE File, std::string Path, uint64_t Depth) {
+    if (Depth > Budget.MaxDepth || Result.Artifacts.size() >= Budget.MaxEntries)
+      throw Error("budget_exceeded");
+    const auto Before = win::inspect(File);
+    Artifact Item;
+    Item.MemberPath = Path;
+    Item.Directory = Before.directory();
+    Item.Kind = Item.Directory ? "directory" : "opaque";
+    if (!Item.Directory) {
+      if (Before.size() > Budget.MaxMemberBytes ||
+          Before.size() > Budget.MaxInputBytes - Result.InputBytes)
+        throw Error("budget_exceeded");
+      auto Captured = Store.capture(File, Before.size());
+      Item.Content = std::move(Captured.Content);
+      Item.BlobHash = std::move(Captured.Hash);
+      Result.InputBytes += Item.Content.size();
+    }
+    Result.Artifacts.push_back(std::move(Item));
+    if (Before.directory()) {
+      auto Entries =
+          win::entries(File, Budget.MaxEntries - Result.Artifacts.size());
+      std::set<std::string> Keys;
+      for (const auto &Entry : Entries) {
+        validateMemberName(Entry.Name);
+        if (!Keys.insert(nameKey(Entry.Name)).second)
+          throw Error("member_name_collision");
+      }
+      std::sort(Entries.begin(), Entries.end(),
+                [](const auto &A, const auto &B) { return A.Name < B.Name; });
+      for (const auto &Entry : Entries) {
+        auto Child = win::openChild(File, Entry.Name);
+        if (!Entry.matches(win::inspect(Child.get())))
+          throw Error("input_changed");
+        visit(Child.get(), Path.empty() ? Entry.Name : Path + "/" + Entry.Name,
+              Depth + 1);
+      }
+    }
+    if (!Before.same(win::inspect(File)))
+      throw Error("input_changed");
+  }
+};
+} // namespace
+} // namespace neverd::web
 #endif
 
 namespace neverd::web {
@@ -193,9 +247,9 @@ Snapshot capture(std::string_view Path, const Limits &Budget) {
   if (Path.empty() || Path.size() > 32768 || Path.find('\0') != Path.npos)
     throw Error("invalid_path");
 #ifdef _WIN32
-  // A Windows handle-relative reader is required before admitting directory
-  // input. A portable path-based fallback would reintroduce reparse races.
-  throw Error("input_reader_unavailable");
+  auto Input = win::openRoot(Path);
+  Reader Read{Budget};
+  Read.visit(Input.get(), "", 0);
 #else
   // A trailing slash makes open(..., O_NOFOLLOW) dereference a directory
   // symlink on POSIX. Reject a terminal dot component and strip separators
@@ -208,6 +262,7 @@ Snapshot capture(std::string_view Path, const Limits &Budget) {
                 O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
   Reader Read{Budget};
   Read.visit(Input.Value, "", 0);
+#endif
   auto &Result = Read.Result;
   std::sort(Result.Artifacts.begin(), Result.Artifacts.end(),
             [](const Artifact &A, const Artifact &B) {
@@ -228,7 +283,6 @@ Snapshot capture(std::string_view Path, const Limits &Budget) {
   }
   Read.Store.seal();
   return std::move(Result);
-#endif
 }
 
 } // namespace neverd::web

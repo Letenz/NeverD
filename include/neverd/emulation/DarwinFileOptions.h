@@ -6,6 +6,7 @@
 #ifndef NEVERD_EMULATION_DARWINFILEOPTIONS_H
 #define NEVERD_EMULATION_DARWINFILEOPTIONS_H
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -187,6 +188,216 @@ enum class DarwinFileAuthorization {
   StaticOrdinaryQueries
 };
 
+/// Operation-specific ordinary local mode environment: no ACL, MAC, extra
+/// listener, privilege bypass, revocation, file/directory leases or pre-setattr
+/// lifecycle effects; a writable nonopaque mount with ownership enabled.
+/// Current complete ordinary metadata supplies supported security attributes.
+/// Other virtual mutations retain their independent contracts; this does not
+/// grant general DAC enforcement, data writes or namespace authority.
+struct DarwinModeMutationOptions {
+  /// Initial ordinary regular/directory grants and fixed resulting ctime. Empty
+  /// declares the environment without an initial provider grant. Objects retain
+  /// grants through dup, rename and runtime links; created/reused names do not
+  /// inherit initial grants. Success changes only ordinary permission bits and
+  /// ctime, including when permissions were already equal. Native lease
+  /// premises do not remove VM mapping leases. Invalidated complete metadata
+  /// cannot be restored.
+  std::map<std::string, DarwinFileTime> Objects;
+  /// Independent provider for newly admitted ordinary regular objects. True
+  /// requires the complete CreationPolicy and uses its fixed Mutation.Time
+  /// as resulting ctime. Existing objects and directory/link creation receive
+  /// no grant from this. False preserves the initial-only default.
+  bool CreatedRegularObjects = false;
+  /// Independent provider for successfully created ordinary directory objects.
+  /// True requires complete CreationPolicy with Namespace and uses its explicit
+  /// Mutation.Time as ctime. It grants no namespace or child-object authority.
+  bool CreatedDirectoryObjects = false;
+};
+
+/// Operation-specific ordinary ownership environment: writable nonopaque mount
+/// with ownership enabled and supported current ordinary security attributes;
+/// no ACL, MAC, extra listener, bypass, revocation, swap/named streams, native
+/// leases, AppleDouble/fallback, FSEvents/notifications/cache or other setattr
+/// lifecycle effects. Data, namespace and VM contracts remain independent.
+struct DarwinOwnershipMutationOptions {
+  /// Initial ordinary regular/directory/symbolic grants. Active UID/GID
+  /// requests supply fixed resulting ctime, including equal IDs. Both
+  /// UINT32_MAX IDs declare successful provider execution with no effects,
+  /// including unchanged ctime. Empty declares only the environment for initial
+  /// objects. Shared objects retain authority; creation/name reuse do not
+  /// inherit initial grants or restore invalidated metadata.
+  std::map<std::string, DarwinFileTime> Objects;
+  /// Independent provider for newly admitted ordinary regular objects. True
+  /// requires the complete CreationPolicy and uses its fixed Mutation.Time
+  /// as resulting ctime. Existing objects and directory/link creation receive
+  /// no grant from this. False preserves the initial-only default.
+  bool CreatedRegularObjects = false;
+  /// Independent new-directory grant. True requires complete CreationPolicy
+  /// with Namespace and uses Mutation.Time as fixed ctime. No child or
+  /// namespace authority is supplied; actual parent GID updates govern
+  /// creation.
+  bool CreatedDirectoryObjects = false;
+  /// Independent new-symbolic-object grant. True requires complete
+  /// CreationPolicy with Namespace and uses Mutation.Time as fixed ctime.
+  /// Neither the parent nor the followed target supplies ownership authority.
+  bool CreatedSymbolicLinkObjects = false;
+};
+
+/// Explicit ordinary regular/directory-vnode timestamp provider on a writable
+/// nonopaque mount. No ACL, MAC, privilege bypass, revocation, leases,
+/// notifications or other setattr lifecycle. This declares virtual storage of
+/// requested times: signed seconds/microseconds become signed nanoseconds
+/// saturated to int64, then floor-normalized; earlier nonnegative mtime reduces
+/// known birthtime. These rules identify no host filesystem and grant no
+/// data/namespace rights.
+struct DarwinFileTimestampMutationOptions {
+  /// Initial ordinary regular/directory objects and separately fixed ctime.
+  /// Empty declares only the environment. Grants follow actual Contents
+  /// through links/rename/held unlink, never replacement names. Execution
+  /// cannot restore invalidated complete metadata.
+  std::map<std::string, DarwinFileTime> Objects;
+  /// Independent new-regular grant; true requires complete CreationPolicy and
+  /// uses its Mutation.Time as ctime. Existing objects/directories/links
+  /// receive none. NULL requests use only the separately supplied TimeOfDay
+  /// sample.
+  bool CreatedRegularObjects = false;
+  /// Independent new-directory grant. True requires complete CreationPolicy
+  /// with Namespace and uses Mutation.Time as fixed ctime. Initial directories,
+  /// children and namespace authority receive no grant from this flag.
+  bool CreatedDirectoryObjects = false;
+};
+
+/// Exact immediate successful LP64 mount-stat observation. Every field is
+/// independently declared, including zero/empty values. No host mount, quota,
+/// live refresh, provider refusal/wait or process mountpoint rewrite is
+/// modeled.
+struct DarwinFileSystemSnapshot {
+  uint32_t BlockSize = 0;
+  int32_t IOSize = 0;
+  uint64_t Blocks = 0, FreeBlocks = 0, AvailableBlocks = 0;
+  uint64_t Files = 0, FreeFiles = 0;
+  std::array<int32_t, 2> FileSystemID{};
+  uint32_t Owner = 0, Type = 0, Flags = 0, Subtype = 0;
+  std::string TypeName, MountPoint, MountedFrom;
+  uint32_t ExtendedFlags = 0;
+};
+
+/// Independent statfs64/fstatfs64 provider, without MAC refusal or extra mount
+/// lifecycle. Path lookup declares ordinary effective ancestor search (no ACL,
+/// bypass or special attributes). Descriptor lookup needs no target DAC/stat.
+struct DarwinFileSystemOptions {
+  /// Initial regular/directory/symbolic objects, including implicit
+  /// directories. Actual objects retain snapshots through links, moves, dup and
+  /// held unlink. This neither restores file metadata nor identifies mounts by
+  /// equal IDs.
+  std::map<std::string, DarwinFileSystemSnapshot> Objects;
+  /// Explicit new-regular provider relation: successful creation uses the
+  /// actual parent's bound snapshot, if present. Requires CreationPolicy.
+  /// Initial children, unbound parents, mkdir/symlink and descendants through
+  /// new unbound directories receive none. Reused names inherit no old grant.
+  bool CreatedRegularObjects = false;
+  /// Independent new-directory relation. True requires complete CreationPolicy
+  /// with Namespace; successful mkdir uses its actual parent bound snapshot,
+  /// if present. No snapshot is manufactured for an unbound parent. Initial
+  /// objects, symlinks and other purposes receive no grant from this flag.
+  bool CreatedDirectoryObjects = false;
+  /// Independent new-symbolic-vnode relation. True requires complete
+  /// CreationPolicy.Namespace; successful symlink captures the actual parent's
+  /// bound snapshot, if present. Path queries still follow the target. Initial
+  /// links, unknown parents and other creation flags confer no binding.
+  bool CreatedSymbolicLinkObjects = false;
+};
+
+/// One live, accessible mount with an explicit cached observation. Refreshed
+/// supplies an immediate successful refresh; omission leaves it unsupported.
+/// Refresh updates only this entry's process-local cache, including before a
+/// complete EFAULT. New processes start from Cached again.
+struct DarwinMountObservation {
+  DarwinFileSystemSnapshot Cached;
+  std::optional<DarwinFileSystemSnapshot> Refreshed;
+};
+
+/// Independent ordered getfsstat64 table. Empty means known empty. Duplicate
+/// records retain their positions; paths and equal IDs infer no relationship
+/// to statfs64/fstatfs64 providers. No dead/unmount state, MAC refusal, failed
+/// refresh lifecycle, host query or asynchronous wait is modeled.
+struct DarwinFileSystemEnumerationOptions {
+  std::vector<DarwinMountObservation> Mounts;
+};
+
+/// Explicit whole-file flock provider for ordinary regular objects.
+/// Initial locks are empty; every owner is a modeled current open description.
+/// No external peers, POSIX/OFD/range locks, fork/descriptor transfer, MAC,
+/// listeners, revocation, provider errors, native leases or wait lifecycle.
+/// This does not supply general DAC, host durability or vnode observations.
+struct DarwinAdvisoryLockOptions {
+  /// Independent object grants, retained through runtime links/rename/unlink.
+  /// Created/reused names do not inherit them. Closing the last duplicate
+  /// releases its description's lock; VM leases do not retain descriptions.
+  std::set<std::string> Objects;
+  /// Independent provider for newly admitted ordinary regular objects. True
+  /// requires the complete CreationPolicy; false preserves the old default.
+  /// Existing objects and directory/link creation receive no grant from this.
+  bool CreatedRegularObjects = false;
+};
+
+/// Explicit immediate successful regular-vnode file integrity completion.
+/// Successful model mutations have already committed their modeled state;
+/// no deferred provider work or cancellation is requested. This acknowledges
+/// completion within that declared provider, without changing model state.
+/// It does not flush host storage or establish physical durability. Provider
+/// errors, cancellation, revocation, leases and asynchronous waits are unknown.
+struct DarwinFileSynchronizationOptions {
+  /// Initial ordinary regular objects. Grants follow their Contents through
+  /// runtime links/rename/held unlink; replacements never inherit this grant.
+  std::set<std::string> Objects;
+  /// Independent provider for newly admitted ordinary regular objects. True
+  /// requires the complete CreationPolicy; false preserves the old default.
+  /// Existing objects and directory/link creation receive no grant from this.
+  bool CreatedRegularObjects = false;
+};
+
+/// Independent immediate successful regular-vnode data integrity completion.
+/// Successful modeled data mutations already committed, with no deferred
+/// provider work or requested cancellation. This neither flushes host storage
+/// nor proves physical durability. File-integrity grants do not supply this
+/// distinct operation; provider failures, cancellation and waits stay unknown.
+struct DarwinFileDataSynchronizationOptions {
+  /// Initial ordinary regular objects, retained through runtime names and
+  /// open zero-name lifetime. Replacements never inherit initial grants.
+  std::set<std::string> Objects;
+  /// Independent provider for newly admitted ordinary regular objects. True
+  /// requires the complete CreationPolicy; false preserves the old default.
+  /// Existing objects and directory/link creation receive no grant from this.
+  bool CreatedRegularObjects = false;
+};
+
+/// Independent immediate successful ordinary regular-vnode F_FULLFSYNC
+/// completion. Model mutations have already committed, with no deferred work,
+/// requested cancellation, provider errors, revocation or native leases. This
+/// neither flushes host storage nor establishes physical durability.
+struct DarwinFileFullSynchronizationOptions {
+  /// Initial ordinary regular objects; actual Contents retain grants through
+  /// links, rename and open zero-name lifetime. Replacements never inherit
+  /// them.
+  std::set<std::string> Objects;
+  /// Independent newly admitted regular-object grant. True requires complete
+  /// CreationPolicy; existing objects and directory/link creation receive none.
+  bool CreatedRegularObjects = false;
+};
+
+/// Independent immediate successful ordinary regular-vnode F_BARRIERFSYNC
+/// completion with direct barrier support and no mount promotion or fallback.
+/// It borrows no file/data/full completion grant, changes no model observations
+/// and proves no physical durability. Provider failures and waits stay unknown.
+struct DarwinFileBarrierSynchronizationOptions {
+  /// Initial regular grants follow Contents, never reused pathnames.
+  std::set<std::string> Objects;
+  /// Independent new-regular grant; true requires complete CreationPolicy.
+  /// Existing objects, directories and links receive none from this flag.
+  bool CreatedRegularObjects = false;
+};
+
 /// Closed initial catalogue, with canonical absolute guest paths. No host
 /// filesystem is consulted. Separate opens have independent offsets; dup
 /// shares an open description. Ancestor directories are implicit.
@@ -201,6 +412,37 @@ struct DarwinFileOptions {
   /// Absence retains existence-only queries without permission enforcement.
   /// This declaration never infers missing credentials or metadata.
   std::optional<DarwinFileAuthorization> Authorization;
+  /// Independent chmod/fchmod/fchmodat authority. Absence is unknown;
+  /// incompatible with either immutable query environment, even when empty.
+  std::optional<DarwinModeMutationOptions> ModeMutations;
+  /// Independent chown/fchown/fchownat authority; absence is unknown. May
+  /// coexist with mode authority, but either immutable query environment
+  /// rejects it.
+  std::optional<DarwinOwnershipMutationOptions> OwnershipMutations;
+  /// Independent utimes/futimes authority; absence stays unknown. Both static
+  /// query environments reject this declaration, including an empty list.
+  std::optional<DarwinFileTimestampMutationOptions> TimestampMutations;
+  /// Independent filesystem observations. Both immutable query environments
+  /// reject even an empty declaration.
+  std::optional<DarwinFileSystemOptions> FileSystemObservations;
+  /// Independent complete live mount table. Both immutable query environments
+  /// reject even an empty declaration; absence remains unknown.
+  std::optional<DarwinFileSystemEnumerationOptions> FileSystemEnumeration;
+  /// Independent flock authority; absence is unknown. Either static query
+  /// environment rejects this declaration, including an empty object list.
+  std::optional<DarwinAdvisoryLockOptions> AdvisoryLocks;
+  /// Independent fsync/fsync_nocancel completion provider; absence is unknown.
+  /// Both static query environments reject even an empty declaration.
+  std::optional<DarwinFileSynchronizationOptions> Synchronization;
+  /// Independent fdatasync completion provider; omission remains unknown.
+  /// Both static query environments reject even an empty declaration.
+  std::optional<DarwinFileDataSynchronizationOptions> DataSynchronization;
+  /// Independent F_FULLFSYNC provider; omission remains unknown. Both static
+  /// query environments reject even an empty declaration.
+  std::optional<DarwinFileFullSynchronizationOptions> FullSynchronization;
+  /// Independent directly supported F_BARRIERFSYNC provider. This grants no
+  /// mount fallback and is incompatible with either immutable query domain.
+  std::optional<DarwinFileBarrierSynchronizationOptions> BarrierSynchronization;
   /// Absent means unknown input; an explicitly empty stream is EOF.
   std::optional<std::vector<uint8_t>> StandardInput;
   /// Exclusive FD ceiling, including the initially open descriptors 0/1/2.

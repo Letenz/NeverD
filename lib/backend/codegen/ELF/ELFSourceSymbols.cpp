@@ -139,12 +139,20 @@ llvm::Expected<std::optional<uint64_t>> resolveELFSourceSymbol(
                            Request.Specifier == 1 &&
                            (Request.FixupKindName.contains("call26") ||
                             Request.FixupKindName.contains("branch26"));
+  const bool AArch64Absolute =
+      Image.Arch == Arch::AArch64 &&
+      ((Request.Specifier == 0x001 && Specifier == "ABS") ||
+       (Request.Specifier == 0x011 && Specifier == "ABS_PAGE") ||
+       (Request.Specifier == 0x121 && Specifier == "ABS_LO12"));
   const bool Slot = Specifier == "GOTPCREL" ||
                     Specifier == "GOTPCREL_NORELAX" || Specifier == "GOT" ||
                     Specifier == "GOT_PAGE" || Specifier == "GOT_LO12";
   if (!Slot && Specifier != "PLT" &&
-      !(Request.Specifier == 0 && Specifier.empty()) && !AArch64Call)
-    return Fail("unsupported relocation specifier: " + Specifier);
+      !(Request.Specifier == 0 && Specifier.empty()) && !AArch64Call &&
+      !AArch64Absolute)
+    return Fail("unsupported relocation specifier: " + Specifier + " (" +
+                llvm::Twine(Request.Specifier) + ", " + Request.FixupKindName +
+                ", " + Request.SectionName + ")");
 
   if (auto VA = parseNdDataSymbol(Request.Symbol)) {
     const auto *Declaration = Module.getNamedValue(Request.Symbol);
@@ -170,8 +178,11 @@ llvm::Expected<std::optional<uint64_t>> resolveELFSourceSymbol(
   // known while patching. Its absolute storage field is deliberately deferred
   // to an authenticated existing dynamic symbol. prepareELFSourceRelocations
   // must register this exact final MC fixup before the candidate can publish.
-  if (Image.Arch == Arch::X64 && Request.Specifier == 0 && !Request.IsPCRel &&
-      Request.BitWidth == 64 && Request.SectionName.starts_with(".data")) {
+  if ((Image.Arch == Arch::X64 || Image.Arch == Arch::AArch64) &&
+      (Request.Specifier == 0 ||
+       (Request.Specifier == 1 && Specifier == "ABS")) &&
+      !Request.IsPCRel && Request.BitWidth == 64 &&
+      Request.SectionName.starts_with(".data")) {
     auto Symbol = findELFSourceDynamicSymbol(Image, Request.Symbol);
     if (!Symbol)
       return Symbol.takeError();

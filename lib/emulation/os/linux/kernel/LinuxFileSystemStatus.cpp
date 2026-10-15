@@ -17,11 +17,15 @@ LinuxFiles::fileSystemStatus(uint64_t Address, ProcessResult &Result) {
   if (!Path)
     return unsupported(Result, FilePathForm);
   switch (lookupPath(Path->Name, Path->RequiresDirectory)) {
+  case PathKind::SymbolicLink:
+  case PathKind::LinkTraversal:
+    return unsupported(Result, FileLinkTraversal);
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
   case PathKind::File:
+  case PathKind::Device:
   case PathKind::Directory:
     // File contents and stat metadata do not describe a mounted filesystem.
     // Path resolution precedes filesystem observation and user output access.

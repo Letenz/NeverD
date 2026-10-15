@@ -1640,9 +1640,10 @@ TEST_F(NativePointerRelocationBoundary,
 
   RunResult Med = liftToMedIR(Path);
   ASSERT_EQ(Med.exitCode, 0) << Med.err;
-  EXPECT_NE(Med.out.find("PHI X13.2"), std::string::npos) << Med.out;
-  EXPECT_NE(Med.out.find("PHI X28.2"), std::string::npos) << Med.out;
-  EXPECT_NE(Med.out.find("SELECT X28.3"), std::string::npos) << Med.out;
+  // X13 always holds table_a, so its redundant PHI may disappear. X28 is
+  // the live numeric index cycle; both table reads contribute to the result.
+  EXPECT_NE(Med.out.find("PHI X28."), std::string::npos) << Med.out;
+  EXPECT_NE(Med.out.find("SELECT X28."), std::string::npos) << Med.out;
   EXPECT_NE(Med.out.find("INT_LEFT"), std::string::npos) << Med.out;
 
   RunResult LLVM = liftToLLVMIRUnopt(Path);
@@ -1651,8 +1652,7 @@ TEST_F(NativePointerRelocationBoundary,
       << LLVM.err;
   const std::string_view Probe = functionBody(LLVM.out, "probe");
   ASSERT_FALSE(Probe.empty()) << LLVM.out;
-  EXPECT_NE(Probe.find("@__nd_data_"), std::string_view::npos) << Probe;
-  EXPECT_NE(Probe.find("getelementptr i8"), std::string_view::npos) << Probe;
+  EXPECT_NE(Probe.find("ptr @__nd_data_"), std::string_view::npos) << Probe;
 
   const fs::path LLVMPath = tmpFile("scalar_index_cycle_a64_macho.ll");
   const fs::path IntrinsicShim =
@@ -1679,17 +1679,21 @@ TEST_F(NativePointerRelocationBoundary,
   ASSERT_EQ(SDK.exitCode, 0) << SDK.err;
   const auto Sysroot = llvm::StringRef(SDK.out).trim().str();
   ASSERT_FALSE(Sysroot.empty());
-  RunResult Compile = exec(NEVERD_TEST_CLANG,
-                           {"-target", "arm64-apple-macos14", "-isysroot",
-                            Sysroot, LLVMPath.string(), IntrinsicShim.string(),
-                            "-o", RebuiltPath.string()});
-  ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    RunResult Compile =
+        exec(NEVERD_TEST_CLANG,
+             {Optimization, "-target", "arm64-apple-macos14", "-isysroot",
+              Sysroot, LLVMPath.string(), IntrinsicShim.string(), "-o",
+              RebuiltPath.string()});
+    ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
 #if defined(__aarch64__)
-  for (unsigned Attempt = 0; Attempt < 5; ++Attempt) {
-    RunResult Rebuilt = exec(RebuiltPath.string(), {});
-    EXPECT_EQ(Rebuilt.exitCode, 0) << Rebuilt.err;
-  }
+    for (unsigned Attempt = 0; Attempt < 5; ++Attempt) {
+      RunResult Rebuilt = exec(RebuiltPath.string(), {});
+      EXPECT_EQ(Rebuilt.exitCode, 0) << Rebuilt.err;
+    }
 #endif
+  }
 #endif
 }
 

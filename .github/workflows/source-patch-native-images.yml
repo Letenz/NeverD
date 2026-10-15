@@ -1,0 +1,136 @@
+name: Source patch process image qualification
+
+# Current-engine outputs have separate native, compatibility and QEMU owners.
+# The ordinary source-patch-windows workflow also rebuilds the engine.
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev, codex/native-source-patching]
+    paths:
+      - '.github/workflows/source-patch-native-images.yml'
+      - 'scripts/check_source_patch_snapshot_runtime.py'
+      - 'scripts/check_source_patch_additional_runtime.py'
+      - 'scripts/prepare_source_patch_additional_fixtures.py'
+      - 'scripts/tests/test_check_source_patch_snapshot_runtime.py'
+      - 'scripts/tests/test_check_source_patch_additional_runtime.py'
+      - 'unittests/Inputs/source-patch/native-processes/**'
+      - 'unittests/Inputs/source-patch/additional-processes/**'
+
+permissions:
+  contents: read
+
+jobs:
+  native-processes:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            system: windows
+            arch: x64
+          - os: windows-11-arm
+            system: windows
+            arch: arm64
+          - os: ubuntu-24.04
+            system: linux
+            arch: x64
+          - os: ubuntu-24.04-arm
+            system: linux
+            arch: arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Execute current-engine C and Clang/GCC C++ process images
+        run: python scripts/check_source_patch_snapshot_runtime.py --system '${{ matrix.system }}' --arch '${{ matrix.arch }}' --output build-native-images
+
+      - name: Preserve native receipts and process observations
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-patch-native-${{ matrix.system }}-${{ matrix.arch }}-${{ github.sha }}
+          path: build-native-images
+          if-no-files-found: error
+
+  additional-processes:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            system: macos
+            arch: arm64
+            execution: native
+          - os: macos-15-intel
+            system: macos
+            arch: x64
+            execution: native
+          - os: windows-latest
+            system: windows
+            arch: x86
+            execution: compatibility
+          - os: windows-latest
+            system: windows
+            arch: x64
+            execution: native
+          - os: windows-11-arm
+            system: windows
+            arch: arm64
+            execution: native
+          - os: ubuntu-24.04
+            system: linux
+            arch: x86
+            execution: compatibility
+          - os: ubuntu-24.04
+            system: linux
+            arch: arm32
+            execution: qemu-user
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Check execution evidence admission
+        run: python -m unittest scripts.tests.test_check_source_patch_snapshot_runtime scripts.tests.test_check_source_patch_additional_runtime -v
+
+      - name: Install the matching 32-bit runtime loader
+        if: matrix.system == 'linux'
+        run: |
+          sudo apt-get update
+          if [[ '${{ matrix.arch }}' == 'arm32' ]]; then
+            sudo apt-get install --no-install-recommends --yes qemu-user libc6-armhf-cross
+          else
+            sudo apt-get install --no-install-recommends --yes libc6-i386
+          fi
+
+      - name: Execute current-engine macOS and 32-bit process images
+        shell: bash
+        run: |
+          runner=()
+          if [[ '${{ matrix.execution }}' == 'qemu-user' ]]; then
+            # QEMU's AUXV uses load_addr + e_phoff, unlike Linux's PT_LOAD
+            # translation for a relocated program-header table. The explicit
+            # glibc loader reads the real headers; the report records this route.
+            runner=(--runner /usr/bin/qemu-arm --sysroot /usr/arm-linux-gnueabihf
+                    --loader /usr/arm-linux-gnueabihf/lib/ld-linux-armhf.so.3)
+          fi
+          python scripts/check_source_patch_additional_runtime.py \
+            --system '${{ matrix.system }}' --arch '${{ matrix.arch }}' \
+            --execution '${{ matrix.execution }}' "${runner[@]}" --output build-additional-images
+
+      - name: Preserve exact execution identity and process observations
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-patch-additional-${{ matrix.system }}-${{ matrix.arch }}-${{ github.sha }}
+          path: build-additional-images
+          if-no-files-found: error

@@ -5208,6 +5208,96 @@ TEST(LowInstructionBoundary,
 }
 
 TEST(LowInstructionBoundary,
+     AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths) {
+  enum class Case {
+    Valid,
+    ClobberedLength,
+    Oversized,
+    Writable,
+    LocalName,
+    WrongSource,
+    AlternateEntry,
+    Relocatable
+  };
+  for (BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+    for (Case C : {Case::Valid, Case::ClobberedLength, Case::Oversized,
+                   Case::Writable, Case::LocalName, Case::WrongSource,
+                   Case::AlternateEntry, Case::Relocatable}) {
+      SCOPED_TRACE(testing::Message() << int(Format) << ':' << int(C));
+      BinaryImage Image;
+      Image.Arch = Arch::AArch64;
+      Image.Bits = Bitness::Bits64;
+      Image.Format = Format;
+      Image.Base = Image.Entry = kEntry;
+      Image.IsRelocatable = C == Case::Relocatable;
+      Segment Text;
+      Text.VA = kEntry;
+      Text.Size = Text.FileSz = 0x100;
+      Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+      Text.Data.resize(Text.Size);
+      // Save LR; optionally bypass the length setup; movz x2,#64;
+      // adrp/add x1,0x9010; bl copy-import; restore LR; ret.
+      const uint32_t Words[] = {
+          0xa9bf7bfdu,
+          C == Case::AlternateEntry ? 0xb4000040u : 0xd503201fu,
+          C == Case::ClobberedLength ? 0xaa0003e2u
+          : C == Case::Oversized     ? 0xd2801002u
+                                     : 0xd2800802u,
+          C == Case::WrongSource ? 0x90000043u : 0x90000041u,
+          C == Case::WrongSource ? 0x91004063u : 0x91004021u,
+          0x9400001bu,
+          0xa8c17bfdu,
+          0xd65f03c0u};
+      for (size_t I = 0; I < std::size(Words); ++I)
+        writeLE<uint32_t>(Text.Data.data() + I * 4, Words[I]);
+      Image.Segments.push_back(std::move(Text));
+      Segment Data;
+      Data.VA = 0x9000;
+      Data.Size = Data.FileSz = 0x80;
+      Data.Flags = SegmentFlags::Readable;
+      if (C == Case::Writable)
+        Data.Flags = Data.Flags | SegmentFlags::Writable;
+      Data.Data.resize(Data.Size);
+      Image.Segments.push_back(std::move(Data));
+      Section Owner;
+      Owner.Name = C == Case::Writable ? ".data" : ".rodata";
+      Owner.VA = 0x9000;
+      Owner.Size = Owner.FileSz = 0x80;
+      Owner.Flags = Image.Segments.back().Flags;
+      Image.Sections.push_back(Owner);
+      Import Copy;
+      Copy.Name = "memcpy";
+      Copy.IATAddr = kEntry + 0x100;
+      if (C == Case::LocalName)
+        Image.Symbols.push_back({"memcpy", kEntry + 0x80, 4, true});
+      else {
+        Image.Imports.push_back(Copy);
+        Image.ImportStubIndices[kEntry + 0x80] = 0;
+      }
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Image));
+      CFGBuilder Builder;
+      const LowFunc Function = Builder.build(Image, Dec, kEntry, "copy_source");
+      std::vector<const RelocatedInstructionAddressOccurrence *> Found;
+      for (const auto &Occurrence :
+           Function.RelocatedInstructionAddressOccurrences)
+        if (Occurrence.TargetVA == 0x9010)
+          Found.push_back(&Occurrence);
+      if (C != Case::Valid) {
+        EXPECT_TRUE(Found.empty());
+        continue;
+      }
+      ASSERT_EQ(Found.size(), 1u);
+      EXPECT_EQ(Found[0]->DereferenceOpcode, NdOp::CALL);
+      EXPECT_EQ(Found[0]->DereferenceInstructionAddr, kEntry + 20);
+      EXPECT_EQ(Found[0]->DereferenceAccessSize, 64u);
+      EXPECT_EQ(Found[0]->TargetOwnerVA, 0x9000u);
+      EXPECT_TRUE(Found[0]->DefinesOutput);
+    }
+}
+
+TEST(LowInstructionBoundary,
      AArch64UnsignedOffsetLoadIntoWritableDataPublishesNoOccurrence) {
   const LowFunc Function = buildAArch64RelocationFreeOffsetLoad(
       /*WritableData=*/true);

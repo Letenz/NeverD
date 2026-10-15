@@ -47,6 +47,8 @@ bool isAbiRecoveryBarrier(const MedOp &Op) {
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
   if (static_cast<uint64_t>(Id) != Op.Inputs[0].ConstVal)
     return true;
+  if (preservesCallSetup(Id))
+    return false;
   return !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op));
 }
 

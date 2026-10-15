@@ -80,6 +80,9 @@ llvm::Expected<BytecodeStateFunction> neverd::analysis::lowerBytecodeState(
     std::map<std::pair<uint64_t, uint16_t>, NdVar> RegisterValues;
     std::map<std::pair<uint64_t, uint16_t>, size_t> PendingStateWrites;
     std::set<size_t> SupersededWrites;
+    std::map<size_t, BytecodeStateFunction::StoreOrigin> StoreOrigins;
+    va_t PreviousPC = InvalidVA;
+    unsigned InstructionOperation = 0;
     uint64_t Scratch = ScratchBase;
     auto Temp = [&](uint16_t Size = 8) {
       NdVar V = NdVar::tmp(Scratch, Size);
@@ -109,6 +112,11 @@ llvm::Expected<BytecodeStateFunction> neverd::analysis::lowerBytecodeState(
       HasEntry = true;
     }
     for (const LowOp &Original : Block.Ops) {
+      if (Original.Addr != PreviousPC) {
+        PreviousPC = Original.Addr;
+        InstructionOperation = 0;
+      } else
+        ++InstructionOperation;
       if (auto Error = detail::validateBytecodeOperation(Original))
         return std::move(Error);
       if (Original.Opcode == NdOp::INDIR_CALL ||
@@ -184,6 +192,10 @@ llvm::Expected<BytecodeStateFunction> neverd::analysis::lowerBytecodeState(
         O.addInput(NdVar::reg(Return, 8));
       }
       O.Seq = Ops.size();
+      if (O.Opcode == NdOp::STORE)
+        StoreOrigins.emplace(Ops.size(),
+                             BytecodeStateFunction::StoreOrigin{
+                                 O.Addr, InstructionOperation, O.Seq});
       Ops.push_back(O);
       if (O.Opcode == NdOp::LOAD || O.Opcode == NdOp::STORE)
         PendingStateWrites.clear();
@@ -234,11 +246,17 @@ llvm::Expected<BytecodeStateFunction> neverd::analysis::lowerBytecodeState(
       for (size_t I = 0; I != Ops.size(); ++I)
         if (!SupersededWrites.count(I)) {
           Ops[I].Seq = Retained.size();
+          if (auto At = StoreOrigins.find(I); At != StoreOrigins.end())
+            At->second.LoweredSequence = Ops[I].Seq;
           Retained.push_back(std::move(Ops[I]));
         }
       Ops = std::move(Retained);
     }
     Count += Ops.size();
+    for (const auto &[Index, Origin] : StoreOrigins) {
+      (void)Index;
+      Result.StoreOrigins.push_back(Origin);
+    }
     Block.Ops = std::move(Ops);
     Block.InstructionBoundaries.clear();
   }

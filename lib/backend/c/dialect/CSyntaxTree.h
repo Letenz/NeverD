@@ -274,9 +274,6 @@ enum class StmtKind : uint8_t {
   /// `__try` with `__except` or `__finally`; `try` with `catch`.
   Try,
   Throw,
-  /// `__unwind { }` and `__wind { }`: blocks the emitter names for the
-  /// cleanups C++ unwinding runs.
-  PseudoBlock,
   /// `__leave;`.
   Leave,
   /// An `__asm__` statement or an MSVC `__asm { }` block, kept as written.
@@ -287,7 +284,7 @@ struct Stmt {
   StmtKind Kind = StmtKind::Empty;
   size_t Begin = 0;
   size_t End = 0;
-  /// A label, a goto target, a pseudo block's keyword or the assembly text.
+  /// A label, a goto target or the assembly text.
   llvm::StringRef Text;
   /// `try` (C++) rather than `__try`.
   bool CxxTry = false;
@@ -320,6 +317,9 @@ struct Decl {
   size_t End = 0;
   llvm::StringRef Name;
   const CType *Ty = nullptr;
+  /// Opening parenthesis of a function's C declaration with no prototype.
+  /// A definition still has a known parameter count, including zero.
+  std::optional<size_t> UnprototypedParams;
   bool Extern = false;
   bool Static = false;
   bool Inline = false;

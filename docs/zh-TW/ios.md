@@ -360,3 +360,9 @@ Objective-C 選擇器樁呼叫也僅在重新驗證準確的接收者宣告與�
 在 ARM64 Mach-O 中，作為 Objective-C 方法公開的 Swift CGFloat、Double 或 Bool getter，只有在精確的 `d16@0:8` 或 `B16@0:8` 方法編碼、相符且唯一的 Swift getter thunk 符號、接收者 ivar 位移參照、來自 libswiftCore 的強式 _swift_isaMask 匯入、經遮罩 isa 的表項載入，以及 blr x21 目標全都吻合時，才會繫結其虛擬呼叫。Setter 也要求相同的證據、精確的 `v24@0:8d16` 或 `v20@0:8B16` 編碼，以及相符且唯一的 Swift setter thunk；Bool setter 使用 blr x22，浮點 setter 使用 blr x21。無參數 void 方法還要求精確的 `v16@0:8` 編碼、相符的 `yyFTo` 符號，以及 retain 到呼叫之間沒有一般參數暫存器寫入、或恰好將 X0/X1 兩個參數字清零的區段；Swift 呼叫會在 context 之前保留這兩個零值。產生的 C 將表項載入保留在 retain/release 之前，並以 swiftcall 和 swift_context 呼叫目標；Bool getter 的結果和 setter 的傳入值使用 `_Bool`，其他虛擬呼叫形式仍不復原。
 
 另一種無參數 void 橋接僅在唯一的 `yyFTo` 入口與 `v16@0:8` 編碼一致、LowIR 將 `self` 追溯到來自 libobjc 的強式 retain，且不可變的 `mov x20, x19; blr x8` 位元組與經遮罩 isa 的表項載入一致時，才繫結保留的 `self` 上的虛擬呼叫。產生的 Swift 呼叫僅透過 `swift_context` 接收該物件。
+
+## Swift scalar instruction completion
+
+恢復的 x86_64 Swift 支援純量暫存器 ADD/SUB/MUL/DIV，以及 Float32、signed32、signed64 暫存器到 Double 的轉換，保留數值位元及完整的輸入、輸出 MXCSR。其他轉換、記憶體、封裝算術、SQRT/MIN/MAX、FMA、捨入及近似運算仍不支援。這些修復解決已觀察到的 Swift 堆疊參數與混合函式恢復失敗；完整 macOS/iOS 執行階段及框架環境仍未完成。
+
+The unchanged scripts/test_mobile_swift_backend.py workflow must pass arm64/x86_64 × classic/default, preserving25 native method bodies, nine compiler projections and all34 callable identities. Each original and independently compiled recovered program must pass858 independent oracle checks. Scalar arithmetic and the three Double conversions address stackFloats/stackMixed and compiler-dependent mixed-function refusals without changing the corpus or weakening acceptance. A failed startup remains failed evidence even if the same retained original succeeds in a separate diagnostic; no deadline expansion is used. Results are limited to this macOS corpus. Translated x86_64 execution does not qualify physical Intel traps, physical iOS applications, full dyld/Mach IPC or Objective-C/Swift and Foundation/UIKit framework execution.

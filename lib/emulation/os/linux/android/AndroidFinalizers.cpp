@@ -32,7 +32,7 @@ BionicResult Bionic::finalize(uint64_t DSO) {
     // this registration again. Do not retain an iterator across that code.
     ExitCallbacks.erase(ExitCallbacks.begin() + I - 1);
     return std::optional<BionicValue>(GuestCallback{
-        Callback.Entry, Callback.Argument, FinalizeCallback{DSO}});
+        Callback.Entry, {Callback.Argument}, FinalizeCallback{DSO}});
   }
   if (!DSO)
     ExitCallbacks.clear();
@@ -40,14 +40,6 @@ BionicResult Bionic::finalize(uint64_t DSO) {
   return std::optional<BionicValue>(uint64_t(0));
 }
 
-BionicResult Bionic::finishCallback(const GuestCallback &Callback) {
-  if (const auto *Once = std::get_if<OnceCallback>(&Callback.Continuation)) {
-    if (auto E = finishOnce(*Once))
-      return std::move(E);
-    return std::optional<BionicValue>(uint64_t(0));
-  }
-  return finalize(std::get<FinalizeCallback>(Callback.Continuation).DSO);
-}
 BionicResult Bionic::finalizeCall(const NativeCallEvent &Call) {
   return finalize(Call.Arguments[0]);
 }

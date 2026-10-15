@@ -261,6 +261,10 @@ public:
   void setSemanticThreadLimit(unsigned MaxThreads) {
     SemanticThreadLimit = MaxThreads;
   }
+  /// Optional algebraic/MBA rewriting. Ordinary source retains basic cleanup.
+  void setSymbolicSimplification(bool Enabled) {
+    SymbolicSimplification = Enabled;
+  }
 
   /// Observe expression creation without adding metadata to either IR. The
   /// observer must keep weak references: later transformations can replace an
@@ -531,6 +535,7 @@ private:
   int ExprRecurseDepth = 0;
   static constexpr int kMaxExprDepth = limits::kMaxExprDepth;
   unsigned SemanticThreadLimit = 1;
+  bool SymbolicSimplification = false;
 };
 
 } // namespace neverd

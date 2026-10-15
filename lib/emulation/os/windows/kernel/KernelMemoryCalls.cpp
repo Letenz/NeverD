@@ -9,6 +9,8 @@
 #include "KernelModelRuntime.h"
 #include "WindowsKernelLayout.h"
 
+#include "neverd/emulation/AddressSpace.h"
+
 namespace neverd::emulation {
 namespace {
 using namespace windows;
@@ -34,6 +36,56 @@ llvm::Error writeBytes(GuestMemory &Memory, uint64_t Address, uint64_t Size,
   return Memory.write(Address, std::vector<uint8_t>(Size, Value));
 }
 } // namespace runtime
+
+llvm::Expected<uint64_t>
+KernelModel::isResidentKernelAddress(uint64_t Address) const {
+  // This is a partial concrete residency query, never an access or ownership
+  // grant. Unknown addresses must not acquire a guessed FALSE result.
+  if (!Address) {
+    const auto Space = Memory.addressSpace();
+    if (!Space)
+      return modelError("MmIsAddressValid requires address-space authority");
+    auto Mappings = Space->mappings();
+    if (!Mappings)
+      return Mappings.takeError();
+    if (!Mappings->empty() && Mappings->front().Address == 0)
+      return modelError("MmIsAddressValid does not model mapped zero pages");
+    return 0;
+  }
+  const auto Contains = [Address](uint64_t Base, uint64_t Size) {
+    return Address >= Base && Address - Base < Size;
+  };
+  // Freed bytes can share mapped pages with other live allocations. Physical
+  // residency of their enclosing page does not revive their lifetime.
+  for (const auto &[Base, Size] : FreedRanges)
+    if (Contains(Base, Size))
+      return modelError("MmIsAddressValid does not model retired allocations");
+  auto Arena = ArenaAllocations.upper_bound(Address);
+  if (Arena != ArenaAllocations.begin())
+    --Arena;
+  if (Arena == ArenaAllocations.end() || !Contains(Arena->first, Arena->second))
+    return modelError("MmIsAddressValid requires a live modeled kernel "
+                      "allocation without padding");
+  if (const auto Pool = Allocations.find(Arena->first);
+      Pool != Allocations.end()) {
+    if (!Pool->second.NonPaged)
+      return modelError("MmIsAddressValid does not model paged pool");
+    if (!Contains(Pool->first, Pool->second.Size))
+      return modelError("MmIsAddressValid requires exact live pool bytes");
+  } else if (Physical.find(Arena->first)) {
+    // DMA/MDL/request backing can include page padding outside the exact data
+    // owner, and carries its own lifetime. Do not inherit the arena extent.
+    return modelError("MmIsAddressValid does not model non-pool physical "
+                      "buffer ownership");
+  }
+  auto Accessible = Memory.canAccess(Address, 1, Read | Write);
+  if (!Accessible)
+    return Accessible.takeError();
+  if (!*Accessible)
+    return modelError("MmIsAddressValid requires resident readable and "
+                      "writable RAM");
+  return 1;
+}
 
 llvm::Expected<uint64_t> KernelModel::memoryCall(KernelAPIKind Kind,
                                                  llvm::ArrayRef<uint64_t> A) {

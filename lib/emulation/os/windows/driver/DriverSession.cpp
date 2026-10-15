@@ -21,6 +21,7 @@
 #include "../kernel/KernelModel.h"
 #include "../kernel/WindowsKernelLayout.h"
 #include "DriverCPUID.h"
+#include "DriverContextCapture.h"
 #include "DriverEntryABI.h"
 #include "DriverImage.h"
 #include "DriverObservation.h"
@@ -109,6 +110,20 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
                        .str());
   if (auto E = validateDriverScenario(Options))
     return std::move(E);
+  // Legacy software hooks may stop after a store has already committed.
+  // This view promises refusal before effects and needs checked admission.
+  if (Options.LoaderView && Options.Contract != ExecutionContract::CheckedX64)
+    return failure(session_diagnostic::LoaderViewContract);
+  if (Options.VersionQuery && Options.Contract != ExecutionContract::CheckedX64)
+    return failure("driver version_query requires checked-x64 execution");
+  if (Options.PhysicalMemoryInventory &&
+      Options.Contract != ExecutionContract::CheckedX64)
+    return failure(
+        "driver physical_memory_inventory requires checked-x64 execution");
+  if (Options.KernelVaShadowQuery &&
+      Options.Contract != ExecutionContract::CheckedX64)
+    return failure(
+        "driver kernel_va_shadow_query requires checked-x64 execution");
   KernelExportRegistry Exports;
   if (auto E = Exports.initialize(Options))
     return std::move(E);
@@ -1146,6 +1161,15 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       if (PendingEnvironmentRead) {
         const auto &Action = PendingEnvironmentRead->Request;
         if (Action.Source ==
+            WindowsX64ExecutionPolicy::Action::Kind::ReadDisabledShadowStack) {
+          // CR4.CET is disabled by this profile. RDSSPD also preserves the
+          // upper destination bits; no register write or transport helper is
+          // involved. The instruction has already consumed its normal budget.
+          Kernel.recordUnpackEnvironmentRead();
+          NextPC = PendingEnvironmentRead->NextPC;
+          continue;
+        }
+        if (Action.Source ==
             WindowsX64ExecutionPolicy::Action::Kind::ReadCPUID) {
           auto Leaf = CPU.reg(X64Register::AX);
           if (!Leaf)
@@ -1343,7 +1367,13 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
         Arguments.push_back(*Value);
         return *Value;
       };
-      auto Value = Kernel.call(*Pending, FixedArguments, ReadVariableArgument);
+      auto ReadContext = [&] { return collectDriverContext(CPU); };
+      auto SetContextFlags = [&](uint64_t Flags) {
+        return CPU.setReg(X64Register::FLAGS, Flags);
+      };
+      const KernelContextCapture Context{ReadContext, SetContextFlags};
+      auto Value =
+          Kernel.call(*Pending, FixedArguments, ReadVariableArgument, &Context);
       if (!Value) {
         std::optional<uint32_t> RaisedCode;
         auto OtherError = llvm::handleErrors(

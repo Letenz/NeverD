@@ -1,0 +1,442 @@
+{
+  "schema": 1,
+  "baseline_commit": "60241792142a51e44d93b28a7cad8bbda601b7a9",
+  "baseline_counts": {
+    "failed": 62,
+    "skipped": 46
+  },
+  "tests": [
+    {
+      "name": "A64FastClassifyParity.OptionalRealBinaryWalk",
+      "baseline": "skipped"
+    },
+    {
+      "name": "A64NativeParity.OptionalRealBinaryWalk",
+      "baseline": "skipped"
+    },
+    {
+      "name": "ARM32_CallAbi.AVariadicCalleeReadsItsStackArgumentsInPlace",
+      "baseline": "failed"
+    },
+    {
+      "name": "ARM32_CallAbi.AnIndirectCallPassesEveryStackArgument",
+      "baseline": "failed"
+    },
+    {
+      "name": "ARM32_Intrinsics.ALaneOfAZeroLiteralIsZero",
+      "baseline": "failed"
+    },
+    {
+      "name": "ARM32_LiteralPool.AConstantBesideARelocatedWordIsAConstant",
+      "baseline": "failed"
+    },
+    {
+      "name": "ARM32_ObjectImmediate.ACompareWithZeroIsADoubleCompare",
+      "baseline": "failed"
+    },
+    {
+      "name": "ARM32_ObjectImmediate.AConcatenatedMaskClearsAnUnknownLane",
+      "baseline": "failed"
+    },
+    {
+      "name": "ARM32_ObjectImmediate.ACursorFromAFrameAddressKeepsMoving",
+      "baseline": "failed"
+    },
+    {
+      "name": "ARM32_ObjectImmediate.AFirstWrittenMaskRegisterIsTheConstant",
+      "baseline": "failed"
+    },
+    {
+      "name": "ARM32_ObjectImmediate.ALoopCountIsNoAddress",
+      "baseline": "failed"
+    },
+    {
+      "name": "ARM32_ThumbPC.PICDataRunsLikeTheSource",
+      "baseline": "failed"
+    },
+    {
+      "name": "CImageObjects.DeclaredObjectsHoldTheImageBytes",
+      "baseline": "failed"
+    },
+    {
+      "name": "COFFExceptionParser.LoadsStrippedGSWrapperForFocusedX64Function",
+      "baseline": "skipped"
+    },
+    {
+      "name": "CSymbolNames.APointerResultKeepsTheMachineInteger",
+      "baseline": "failed"
+    },
+    {
+      "name": "CSymbolNames.ElfCxxLabelsLinkToTheMangledDefinitions",
+      "baseline": "skipped"
+    },
+    {
+      "name": "CSymbolNames.OtherLanguageLabelsLinkToTheirSymbols",
+      "baseline": "skipped"
+    },
+    {
+      "name": "CSymbolNames.StartupPassesMainThroughItsPrototype",
+      "baseline": "failed"
+    },
+    {
+      "name": "DataSymbolBindingTest.ExternalDataRunsAndDoesNotConflictWithHeaders",
+      "baseline": "skipped"
+    },
+    {
+      "name": "DataSymbolBindingTest.OpaqueAliasesKeepByteLoadAndStoreSemantics",
+      "baseline": "skipped"
+    },
+    {
+      "name": "DataSymbolBindingTest.PICObjectsKeepTheirIdentityAcrossArchitectures",
+      "baseline": "failed"
+    },
+    {
+      "name": "DataSymbolBindingTest.WritableSlotsRetainStorageAndSymbolInitializer",
+      "baseline": "failed"
+    },
+    {
+      "name": "HighCDemandedBytes.AConversionKeepsNoUnreadUpperHalf",
+      "baseline": "failed"
+    },
+    {
+      "name": "HighCDemandedBytes.AShiftDropsTheHalfAnUnsetRegisterGave",
+      "baseline": "failed"
+    },
+    {
+      "name": "HighCPointerAddresses.AScalarFloatArgumentIsADoubleParameter",
+      "baseline": "failed"
+    },
+    {
+      "name": "HighCPointerAddresses.AnIntegerConvertedIntoXMM0IsNoParameter",
+      "baseline": "failed"
+    },
+    {
+      "name": "HighCPointerAddresses.AnX87StoreWritesItsTenBytes",
+      "baseline": "failed"
+    },
+    {
+      "name": "HighCPointerAddresses.AnX87ValueRoundsToTheDoubleItIsStoredAs",
+      "baseline": "failed"
+    },
+    {
+      "name": "HighCPointerAddresses.CorpusArmPredicatedBranchesStayForwardJumps",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.CorpusBufferedCatchUsesParentFrameForIndex",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.CorpusCalleeSavesAreNotStoresOfLaterArguments",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.CorpusFuncLoadCxxEhProbeCatchReturnsValue",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.CorpusFuncLoadCxxEhProbeNestedCatchReturnsValues",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.CorpusFuncLoadCxxEhProbePrintsThrow",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.CorpusFuncLoadCxxEhProbePrintsUnwindDestructor",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.CorpusFuncLoadGsCookieReturnsOnTheValidPath",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.CorpusFuncLoadGsHandlerCheckReturnsOne",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.CorpusFuncLoadSehProbeRaisesImmediate",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.CorpusFuncLoadX86FilterThunksPrintTheirValue",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.CorpusFuncLoadX86SehProbeExceptAssignsResult",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.CorpusRustFormatKeepsTheEntryStackPointer",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.CorpusSehIndexedBufferUsesSameFrame",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.FuncLoadUsesDebugFunctionNameOnSynthesizedEntry",
+      "baseline": "skipped"
+    },
+    {
+      "name": "HighCPointerAddresses.X87ArithmeticComputesInLongDouble",
+      "baseline": "failed"
+    },
+    {
+      "name": "HighSwiftEmitter.GeneratedSSESourceTrapsBeforeNumericalAndStateStores",
+      "baseline": "skipped"
+    },
+    {
+      "name": "LLVMCPointerAddresses.CorpusCalleeSavesStayOutOfTheFrame",
+      "baseline": "skipped"
+    },
+    {
+      "name": "LLVMCPointerAddresses.CorpusFuncLoadCxxEhProbeCatchContinuationEmits",
+      "baseline": "skipped"
+    },
+    {
+      "name": "LLVMCPointerAddresses.CorpusFuncLoadCxxEhProbeLlvmOptIsVerifierClean",
+      "baseline": "skipped"
+    },
+    {
+      "name": "LLVMCPointerAddresses.CorpusFuncLoadGsCookieDoesNotLoadNull",
+      "baseline": "skipped"
+    },
+    {
+      "name": "LLVMCPointerAddresses.CorpusFuncLoadGsWrappedSehLlvmcNestsHandlerBodies",
+      "baseline": "skipped"
+    },
+    {
+      "name": "LLVMCPointerAddresses.CorpusFuncLoadSehProbeHasSingleWin64Arg",
+      "baseline": "skipped"
+    },
+    {
+      "name": "LLVMCPointerAddresses.CorpusFuncLoadSehProbeLlvmOptIsVerifierClean",
+      "baseline": "skipped"
+    },
+    {
+      "name": "LLVMCPointerAddresses.CorpusFuncLoadSehProbeLlvmcExceptContainsHandler",
+      "baseline": "skipped"
+    },
+    {
+      "name": "LLVMCPointerAddresses.CorpusOptimizedSehResultIsAssignedOnBothPaths",
+      "baseline": "skipped"
+    },
+    {
+      "name": "LLVMCPointerAddresses.CorpusSehProbeCliLlvmcKeepsProtectedEffects",
+      "baseline": "skipped"
+    },
+    {
+      "name": "MedCxxContinuationFrame.ClangInteriorStateMarkersKeepThePrologueFrame",
+      "baseline": "skipped"
+    },
+    {
+      "name": "MedCxxContinuationFrame.PublicNestedCatchKeepsOneParameterAndResumeEdges",
+      "baseline": "skipped"
+    },
+    {
+      "name": "MedSEHEstablisherFrame.PublicNestedSEHUsesOneSlotInMedAndHighC",
+      "baseline": "skipped"
+    },
+    {
+      "name": "NativePointerRelocationBoundary.BoundedRuntimeOffsetsAndNullableCallbacksExecute",
+      "baseline": "skipped"
+    },
+    {
+      "name": "NativePointerRelocationBoundary.NonlocalImportCallsPreserveLiveValuesAcrossBothReturns",
+      "baseline": "skipped"
+    },
+    {
+      "name": "NativePointerRelocationBoundary.OptimizedSwitchTablesPreservePhysicalAndTwoLevelSelectors",
+      "baseline": "skipped"
+    },
+    {
+      "name": "X86_32_CallAbi.ACallThroughAFieldsTableLoadsTwice",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_CallAbi.ADoubleArgumentPassesOnlyItsLowLane",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_CallAbi.AStackDoubleFeedsItsMultiplyWhole",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_CallAbi.AVariadicCalleeReadsItsStackArgumentsInPlace",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_CallAbi.AVectorOfOnesReadsNoRegister",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_CallAbi.AWideLoadOfStackArgumentsReadsEverySlot",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_CallAbi.AnSSEDoubleReturnsOnTheX87Stack",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_CallAbi.AnXmmRegisterPastTheArgumentOnesIsNoParameter",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_CallAbi.BytesAShiftDropsAreNotRead",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_CallAbi.GccRegparmFunctionsTakeEaxEdxEcx",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_CallAbi.GccRegparmStackArgumentFollowsTheRegisters",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_HighCData.AConstantMulsdReadsThroughTheGotIsWhole",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_HighCData.AViewOfACalleeSavedRegisterStoredInALocalStays",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_HighCData.AnIndexBiasBeforeAStringReadsTheString",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_HighCTruth.ATestOfTheLowByteIgnoresTheBytesAbove",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_32_NativeHostMode.EnterWPatchAgreesWithCpu",
+      "baseline": "skipped"
+    },
+    {
+      "name": "X86_32_NativeHostMode.IdentityPatchAgreesWithCpu",
+      "baseline": "skipped"
+    },
+    {
+      "name": "X86_32_X87FPU.ExamineClassificationMatchesNativeExtendedEncodings",
+      "baseline": "skipped"
+    },
+    {
+      "name": "X86_32_X87FPU.NativeAndLiftedCallLoopsReturnTheIndependentSum",
+      "baseline": "skipped"
+    },
+    {
+      "name": "X86_64_CallAbi.ABroadcastOfAConvertedIntTakesNoVectorArgument",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_CallAbi.AGuardedBsrReadsNoArgument",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_CallAbi.ALiftedVariadicCalleeTakesItsDoubleArguments",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_CallAbi.ALiftedVariadicCalleeTakesItsStackArguments",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_CallAbi.ARecordCopiedToTheStackPassesEverySlot",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_CallAbi.AStackDoubleCalleeIsDeclaredAsItIsDefined",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_CallAbi.AVariadicCalleeTakesItsDoubleArguments",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_CallAbi.VzeroupperReadsNoVectorArgument",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_DebugParams.ParametersAreNamedWhereTheConventionPassesThem",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_FrameAlias.AnAddressDerivedFromAnAdvancingOneIsNoFixedSlot",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_HighCIntrinsics.ABroadcastConstantWidensToItsVector",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_HighCIntrinsics.AGatherKeepsTheMaskOfTheElementsLeft",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_HighCIntrinsics.APermuteByIndexTakesTheDataFirst",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_HighCIntrinsics.ConstantPoolOperandsKeepTheirWidth",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_HighCIntrinsics.Crc32RunsLikeTheSource",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_HighCIntrinsics.SaturatingLanesRunLikeTheSource",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_HighCIntrinsics.ThirtyTwoBitPextAndPdepRunLikeTheSource",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_ImageTable.AWideConstantVectorKeepsItsValue",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_NativeHostMode.CvtSI2SDMulpdPatchAgreesWithCpu",
+      "baseline": "skipped"
+    },
+    {
+      "name": "X86_64_NativeHostMode.EnterWLiftDecompilePatchAgreeWithCpu",
+      "baseline": "skipped"
+    },
+    {
+      "name": "X86_64_StructReturn.ADoubleAndALongReturnBoth",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_StructReturn.AFloatAndADoubleReturnWithoutTheirPadding",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_StructReturn.AnIntAndADoubleReturnBoth",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_StructReturn.ThreeFloatsReturnWithoutTheirPadding",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_StructReturn.TwoDoublesReturnBoth",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_StructReturn.TwoFloatsReturnPackedInOneRegister",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_SystemRegister.AStoredSelectorIsTheValueReturned",
+      "baseline": "failed"
+    },
+    {
+      "name": "X86_64_X87FPU.EmittedCExecutesArithmeticAndDynamicRounding",
+      "baseline": "skipped"
+    }
+  ]
+}

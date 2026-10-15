@@ -124,9 +124,7 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
     if (!Scan.ResolveWindow && Stored.Kind == MedVar::Reg) {
       for (int K = J - 1; K >= 0; --K) {
         const MedOp &Def = Ops[static_cast<size_t>(K)];
-        if ((Def.Opcode == NdOp::CALL || Def.Opcode == NdOp::INDIR_CALL ||
-             Def.Opcode == NdOp::INTRINSIC) &&
-            !preserved(Stored))
+        if (endsCallSetup(Def) && !preserved(Stored))
           break;
         if (Def.Output.Kind != MedVar::Reg || Def.Output.Size == 0 ||
             Def.Output.RegOff != Stored.RegOff)
@@ -241,9 +239,7 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
       bool Progress = false;
       for (int K = J - 1; K >= 0; --K) {
         const MedOp &Def = Ops[static_cast<size_t>(K)];
-        if ((Def.Opcode == NdOp::CALL || Def.Opcode == NdOp::INDIR_CALL ||
-             Def.Opcode == NdOp::INTRINSIC) &&
-            !preserved(Stored))
+        if (endsCallSetup(Def) && !preserved(Stored))
           break;
         const bool SameSsa =
             Def.Output.Id == Stored.Id && Def.Output.SSAVer == Stored.SSAVer;
@@ -270,8 +266,7 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
                         int WindowFloor) {
     for (int J = Before; J >= WindowFloor; --J) {
       const MedOp &Prev = Ops[static_cast<size_t>(J)];
-      if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
-          Prev.Opcode == NdOp::INTRINSIC)
+      if (endsCallSetup(Prev))
         break;
       // HighIR has no MedCallInfo on the ordinary decompile path. Match the
       // MedABI scan's call boundary, but do not attach stores from an older
@@ -288,8 +283,7 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
         if (SpCopy && !SameSpBase)
           for (int K = J - 1; K >= WindowFloor; --K) {
             const MedOp &Def = Ops[static_cast<size_t>(K)];
-            if (Def.Opcode == NdOp::CALL || Def.Opcode == NdOp::INDIR_CALL ||
-                Def.Opcode == NdOp::INTRINSIC)
+            if (endsCallSetup(Def))
               break;
             if (Def.Output.Kind != MedVar::Reg || Def.Output.Size == 0 ||
                 Def.Output.RegOff != Scan.SpRegOff)
@@ -532,8 +526,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   bool ReachedBlockStart = true;
   for (int J = static_cast<int>(CallIdx) - 1; J >= 0; --J) {
     const MedOp &Prev = Ops[J];
-    if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
-        Prev.Opcode == NdOp::INTRINSIC) {
+    if (call_args_detail::endsCallSetup(Prev)) {
       ReachedBlockStart = false;
       break;
     }
@@ -611,9 +604,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
           if (D && D->Kind != ExprKind::Undef)
             return D;
         }
-        if ((Def.Opcode == NdOp::CALL || Def.Opcode == NdOp::INDIR_CALL ||
-             Def.Opcode == NdOp::INTRINSIC) &&
-            !preserved(V))
+        if (call_args_detail::endsCallSetup(Def) && !preserved(V))
           break;
       }
       if (!Progress)
@@ -1022,8 +1013,13 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   Scan.Convention = Convention;
   Scan.MaxArgs = MaxArgs;
   if (CallIdx < Ops.size() && !Ops[CallIdx].SourceCallHint) {
-    Scan.CalleeRegisterArgs = Ops[CallIdx].CalleeRegisterArgs;
-    Scan.CalleeStackArgs = Ops[CallIdx].CalleeStackArgs;
+    const MedOp &Call = Ops[CallIdx];
+    Scan.CalleeRegisterArgs = Call.CalleeRegisterArgs;
+    Scan.CalleeStackArgs = Call.CalleeStackArgs;
+    Scan.CalleeInImage =
+        Call.Opcode == NdOp::CALL && Call.NumInputs >= 1 &&
+        Call.Inputs[0].isConst() &&
+        (!Image || importCalleeName(*Image, Call.Inputs[0].ConstVal).empty());
   }
   Scan.FirstStackSlot = FirstStackSlot;
   Scan.TailJump = CallIdx + 1 < Ops.size() &&
@@ -1570,8 +1566,8 @@ void MedToHighConverter::resolveCalleeNames(
   // caching them on the image.  They choose what calleeDisplayName does: the
   // *first* import or export at an address, including an empty name, as
   // findImportAt and findExportAt do, and the symbol getFunctionNameAt
-  // chooses.  The first symbol at a MinGW function's start is often its
-  // object's `.text` section symbol.
+  // chooses, numbered as the function is listed.  The first symbol at a
+  // MinGW function's start is often its object's `.text` section symbol.
   std::map<va_t, const Import *> ImportsByIAT;
   for (const Import &Imp : Image->Imports)
     ImportsByIAT.try_emplace(Imp.IATAddr, &Imp);
@@ -1617,13 +1613,13 @@ void MedToHighConverter::resolveCalleeNames(
     }
     auto Exp = ExportsByAddr.find(Target);
     auto Sym = SymbolsByAddr.find(Target);
-    llvm::StringRef FromImage;
+    std::string FromImage;
     if (Exp != ExportsByAddr.end() && !Exp->second.empty())
       FromImage = Exp->second;
     else if (Sym != SymbolsByAddr.end())
-      FromImage = Sym->second->Name;
+      FromImage = Image->functionListName(Target, Sym->second->Name);
     Names[Target] = Usable(FromImage)
-                        ? FromImage.str()
+                        ? std::move(FromImage)
                         : (kAutoFuncPrefix + llvm::utohexstr(Target)).str();
   }
 }

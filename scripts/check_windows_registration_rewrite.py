@@ -23,9 +23,11 @@ import xml.etree.ElementTree as ET
 if __package__:
     from .check_windows_registration_eh import run_image
     from .check_windows_registration_frame import KERNEL32, MSVCRT, undecorate_kernel32_imports
+    from .windows_registration_runtime import load_runtime, validate_runtime
 else:
     from check_windows_registration_eh import run_image
     from check_windows_registration_frame import KERNEL32, MSVCRT, undecorate_kernel32_imports
+    from windows_registration_runtime import load_runtime, validate_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "unittests/lift/eh/fixtures"
@@ -35,11 +37,25 @@ OBSERVATION = re.compile(
 CASES = {"filter": (0, 0), "nested-finally": (1, 123),
          "continue-search": (2, 123), "continue-execution": (3, 1),
          "normal-finally": (4, 2), "cdecl-parameter": (5, 7),
-         "cdecl-parameter-write": (6, 177)}
+         "cdecl-parameter-write": (6, 177), "exception-code": (7, 7),
+         "exception-flags": (8, 7)}
 CASES.update({"eh4-" + name: value for name, value in tuple(CASES.items())})
 CASES.update({"eh4-gs-" + name: CASES[name] for name in
               ("filter", "nested-finally", "continue-search", "continue-execution",
-               "normal-finally", "cdecl-parameter", "cdecl-parameter-write")})
+               "normal-finally", "cdecl-parameter", "cdecl-parameter-write",
+               "exception-code", "exception-flags")})
+CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
+              "longjmp-filter": (11, 3), "longjmp-parameter": (12, 23),
+              "longjmp-callback": (13, 23),
+              "longjmp-unwind-callback": (14, 23),
+              "longjmp-callback-zero": (15, 23),
+              "longjmp-search-filter": (16, 23),
+              "longjmp-search-filter-zero": (17, 23),
+              "longjmp-retired-scope": (18, 23),
+              "longjmp-retired-inner-scope": (19, 23),
+              "longjmp-callee": (20, 23),
+              "longjmp-returning-callee": (21, 23),
+              "longjmp-scalar-callee": (22, 23)})
 
 
 class PE32:
@@ -177,12 +193,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test-binary", required=True, type=Path)
     parser.add_argument("--patch-binary", type=Path,
-                        help="also execute the CLI section and inplace patch paths")
+                        help="execute CLI section/inplace paths from IR and EXE, with and without optimization")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--compiler", default="clang")
     parser.add_argument("--linker", default="lld-link")
     parser.add_argument("--wine")
     parser.add_argument("--wine-prefix", type=Path)
+    parser.add_argument("--runtime-root", type=Path,
+                        help="captured Microsoft x86 CRT directory with runtime.json")
     parser.add_argument("--timeout", type=float, default=60)
     parser.add_argument("--case", choices=CASES, default="filter")
     args = parser.parse_args(argv)
@@ -193,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     case, expected_trace = CASES[args.case]
     eh4 = args.case.startswith("eh4-")
     gs = args.case.startswith("eh4-gs-")
+    jump = args.case.startswith("longjmp-")
     report = {"schema": 2, "evidence": f"reconstructed-source-registration-{'seh4' if eh4 else 'seh3'}",
               "case": args.case, "expected_trace": expected_trace,
               "passed": False, "steps": [], "observations": []}
@@ -211,15 +230,33 @@ def main(argv: list[str] | None = None) -> int:
             prefix.mkdir(parents=True, exist_ok=True)
             environment.update(WINEPREFIX=str(prefix), WINEDEBUG="-all")
         commands = []
-        definitions = (("kernel32", KERNEL32),
-                       ("msvcrt", MSVCRT + ("_except_handler4_common\n" if eh4 else "")))
+        runtime_exports = ("_except_handler3\n" +
+                           ("_except_handler4_common\n" if eh4 else "") +
+                           ("_setjmp3\n_longjmpex\n_seh_longjmp_unwind\n" if jump else ""))
+        definitions = [("kernel32", KERNEL32)]
+        if args.runtime_root:
+            runtime, report["seh_runtime"] = load_runtime(args.runtime_root.resolve())
+            shutil.copy2(runtime, output / runtime.name)
+            validate_runtime(output, report["seh_runtime"])
+            environment["WINEDLLOVERRIDES"] = "vcruntime140=n"
+            definitions.extend((("msvcrt", "LIBRARY msvcrt.dll\nEXPORTS\nprintf\n"),
+                                ("vcruntime", "LIBRARY vcruntime140.dll\nEXPORTS\n" +
+                                 runtime_exports)))
+        else:
+            if args.case == "longjmp-retired-inner-scope" and launcher:
+                raise ValueError("retired inner scopes require --runtime-root: Wine's builtin CRT uses a different unwind bound")
+            definitions.append(("msvcrt", MSVCRT.replace("_except_handler3\n", "") +
+                                runtime_exports))
         for name, definition in definitions:
             (output / f"{name}.def").write_text(definition, encoding="utf-8")
             commands.append([linker, "/lib", f"/def:{output / (name + '.def')}",
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
         sources = (["registration_seh4.s", "registration_eh4_runtime.c"] if eh4
-                   else ["registration_seh3.s"])
+                   else ["registration_jump.s" if jump else "registration_seh3.s"])
         sources.append("registration_observer.c")
+        if args.case in ("longjmp-callee", "longjmp-returning-callee",
+                         "longjmp-scalar-callee"):
+            sources.append("registration_jump_callee.s")
         for source in sources:
             commands.append([compiler, "--target=i686-pc-windows-msvc", "-O0",
                              f"-DREGISTRATION_CASE={case}",
@@ -238,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
                          *( ["/export:registration_eh4_personality=_except_handler4"] if eh4 else []),
                          f"/out:{original}",
                          *(str(output / (name + ".obj")) for name in sources),
-                         str(output / "kernel32.lib"), str(output / "msvcrt.lib")])
+                         *(str(output / (name + ".lib")) for name, _ in definitions)])
         environment.update(NEVERD_REGISTRATION_INPUT_PE32=str(original),
                            NEVERD_REGISTRATION_OUTPUT_PE32=str(patched),
                            NEVERD_REGISTRATION_OUTPUT_IR=str(output / "registration.ll"))
@@ -262,18 +299,21 @@ def main(argv: list[str] | None = None) -> int:
                   (output / "collision-patched.exe", True)]
         if args.patch_binary:
             for mode in ("section", "inplace"):
-                destination = output / f"cli-{mode}.exe"
-                destination.unlink(missing_ok=True)
-                command = [str(args.patch_binary.resolve()), "patch", str(original),
-                           f"--from-ir={output / 'registration.ll'}", f"--mode={mode}",
-                           "--no-opt", "-o", str(destination)]
-                result = subprocess.run(command, env=environment, capture_output=True,
-                                        text=True, errors="replace", timeout=args.timeout)
-                report["steps"].append({"command": command, "exit_code": result.returncode,
-                                        "stdout": result.stdout, "stderr": result.stderr})
-                if result.returncode or not destination.is_file():
-                    raise ValueError(f"CLI {mode} reconstruction failed")
-                images.append((destination, True))
+                inputs = (("ir", [f"--from-ir={output / 'registration.ll'}", "--no-opt"]),
+                          ("exe-no-opt", ["--max-func=1", "--no-debug", "--no-opt"]),
+                          ("exe-opt", ["--max-func=1", "--no-debug"]))
+                for source, options in inputs:
+                    destination = output / f"cli-{mode}-{source}.exe"
+                    destination.unlink(missing_ok=True)
+                    command = [str(args.patch_binary.resolve()), "patch", str(original),
+                               *options, f"--mode={mode}", "-o", str(destination)]
+                    result = subprocess.run(command, env=environment, capture_output=True,
+                                            text=True, errors="replace", timeout=args.timeout)
+                    report["steps"].append({"command": command, "exit_code": result.returncode,
+                                            "stdout": result.stdout, "stderr": result.stderr})
+                    if result.returncode or not destination.is_file():
+                        raise ValueError(f"CLI {mode} {source} reconstruction failed")
+                    images.append((destination, True))
         for image, generated in images:
             report["observations"].append(observe(image, generated, launcher,
                                                  environment, args.timeout, expected_trace))

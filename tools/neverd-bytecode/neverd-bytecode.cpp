@@ -27,6 +27,13 @@ llvm::cl::opt<std::string>
                  llvm::cl::desc("External state-call declarations JSON"));
 llvm::cl::opt<std::string> Output("o", llvm::cl::init("-"),
                                   llvm::cl::desc("C output path"));
+llvm::cl::opt<std::string> ObservationsPath(
+    "observations", llvm::cl::init(""),
+    llvm::cl::desc("Input-bound observations to associate with C call sites"));
+llvm::cl::opt<std::string> SourceContractsPath(
+    "source-contracts", llvm::cl::init(""),
+    llvm::cl::desc(
+        "Explicit isolated-state and imported-call source contracts"));
 llvm::cl::opt<uint64_t>
     Base("base", llvm::cl::init(0),
          llvm::cl::desc("Logical address of the first byte"));
@@ -90,10 +97,16 @@ llvm::Error run() {
       {"optimize", Optimize.getValue()},
       {"with_context", WithContext.getValue()},
       {"unaligned_pointers", UnalignedPointers.getValue()}};
-  for (const auto &Field : {std::pair{"profile", ProfilePath.getValue()},
-                            std::pair{"functions", FunctionsPath.getValue()},
-                            std::pair{"bindings", BindingsPath.getValue()}}) {
-    if (Field.first == llvm::StringRef("bindings") && Field.second.empty())
+  for (const auto &Field :
+       {std::pair{"profile", ProfilePath.getValue()},
+        std::pair{"functions", FunctionsPath.getValue()},
+        std::pair{"bindings", BindingsPath.getValue()},
+        std::pair{"observations", ObservationsPath.getValue()},
+        std::pair{"source_contracts", SourceContractsPath.getValue()}}) {
+    if ((Field.first == llvm::StringRef("bindings") ||
+         Field.first == llvm::StringRef("observations") ||
+         Field.first == llvm::StringRef("source_contracts")) &&
+        Field.second.empty())
       continue;
     auto Buffer = read(Field.second);
     if (!Buffer)

@@ -96,37 +96,6 @@ void addCandidate(std::vector<std::filesystem::path> &Out,
     Out.push_back(std::move(Candidate));
 }
 
-/// Base name of a path a linker recorded inside the image.  Such a path is
-/// spelled for the machine that produced the binary, so it may use Windows
-/// separators no matter which host NeverD runs on.
-llvm::StringRef recordedFileName(llvm::StringRef Recorded) {
-  size_t Pos = Recorded.find_last_of("/\\");
-  return Pos == llvm::StringRef::npos ? Recorded : Recorded.substr(Pos + 1);
-}
-
-/// PDB files a PE image points at or conventionally sits beside.
-std::vector<std::filesystem::path>
-pdbCandidates(const std::filesystem::path &BinaryPath, const BinaryImage &Img) {
-  std::vector<std::filesystem::path> Out;
-  const std::filesystem::path Dir = BinaryPath.parent_path();
-
-  // The CodeView debug directory records the path the linker wrote the PDB to.
-  // It resolves on the machine that produced the binary; anywhere else only
-  // the file name survives the trip, which is why that name is also retried
-  // next to the image.
-  llvm::StringRef Recorded(Img.DynInfo.PDBPath);
-  if (!Recorded.empty() && !Recorded.starts_with(kBuildIdPrefix)) {
-    addCandidate(Out, std::filesystem::u8path(Recorded.str()));
-    addCandidate(
-        Out, Dir / std::filesystem::u8path(recordedFileName(Recorded).str()));
-  }
-
-  auto Companion = BinaryPath;
-  Companion.replace_extension(".pdb");
-  addCandidate(Out, std::move(Companion));
-  return Out;
-}
-
 /// Companion files that hold the DWARF stripped out of an ELF image, in the
 /// layouts objcopy --only-keep-debug and the distro debug packages produce.
 std::vector<std::filesystem::path>
@@ -239,6 +208,35 @@ const char *debugInfoKindName(DebugInfoKind Kind) {
   return "none";
 }
 
+bool searchesDebugInfo(Arch A) { return A != Arch::EVM && A != Arch::SBF; }
+
+const char *dwarfLocationName(DWARFLocation Location) {
+  switch (Location) {
+#define NEVERD_DWARF_LOCATION(Name, Spelling)                                  \
+  case DWARFLocation::Name:                                                    \
+    return Spelling;
+#include "neverd/debug/DWARFLocation.def"
+  }
+  return "input";
+}
+
+std::optional<DWARFSource> findDWARF(const std::filesystem::path &BinaryPath,
+                                     BinaryFormat Format) {
+  if (Format != BinaryFormat::ELF && Format != BinaryFormat::MachO)
+    return std::nullopt;
+  if (hasDWARFUnits(BinaryPath))
+    return DWARFSource{BinaryPath, DWARFLocation::Input};
+  // DWARFDebugContext::load turns to the bundle when the image has none.
+  if (Format == BinaryFormat::MachO)
+    if (auto Bundle = findDSYMFile(BinaryPath);
+        !Bundle.empty() && hasDWARFUnits(Bundle))
+      return DWARFSource{std::move(Bundle), DWARFLocation::DSYM};
+  for (std::filesystem::path &C : splitDwarfCandidates(BinaryPath))
+    if (isReadableFile(C) && hasDWARFUnits(C))
+      return DWARFSource{std::move(C), DWARFLocation::Beside};
+  return std::nullopt;
+}
+
 DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
                               const BinaryImage &Img,
                               const DebugInfoRequest &Req,
@@ -269,30 +267,33 @@ DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
     return Result;
   }
 
-  // EVM and SBF describe themselves through their own metadata — an ABI JSON,
-  // an Anchor IDL — and no producer emits DWARF, PDB, or a linker MAP for
-  // either.  Probing for those files would only cost stat calls.
-  if (Img.Arch == Arch::EVM || Img.Arch == Arch::SBF)
+  if (!searchesDebugInfo(Img.Arch))
     return Result;
 
   switch (Img.Format) {
   case BinaryFormat::COFF:
-    for (const std::filesystem::path &C : pdbCandidates(BinaryPath, Img)) {
-      if (!isReadableFile(C))
+    if (!Req.SearchPDB)
+      break;
+    for (const PDBCandidate &C :
+         pdbCandidates(BinaryPath, Img, symbolPath(Req.SymbolPath))) {
+      if (!isReadableFile(C.Path))
         continue;
-      DebugInfoResult Attempt = loadPDB(C, Img, Progress);
+      DebugInfoResult Attempt = loadPDB(C.Path, Img, Progress);
       if (Attempt)
         return Attempt;
       LLVM_DEBUG(llvm::dbgs()
-                 << "debug-discovery: rejected PDB candidate " << pathToUTF8(C)
-                 << (Attempt.Error.empty() ? "" : ": ") << Attempt.Error
-                 << "\n");
+                 << "debug-discovery: rejected PDB candidate "
+                 << pathToUTF8(C.Path) << (Attempt.Error.empty() ? "" : ": ")
+                 << Attempt.Error << "\n");
     }
     break;
 
   case BinaryFormat::ELF:
   case BinaryFormat::MachO:
-    // Covers in-image .debug_info and, for Mach-O, an adjacent .dSYM bundle.
+    if (!Req.SearchDWARF)
+      break;
+    // Covers in-image .debug_info and, for Mach-O, an adjacent .dSYM bundle,
+    // in the order findDWARF reports.
     Result =
         loadDWARF(BinaryPath, Img.Format, DWARFLoadTrust::InImage, Img.Raw);
     if (Result)
@@ -432,6 +433,9 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
   dropDebugDataBoundaryGuesses(Img, Dbg, DataByAddr);
   recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
   recordDataInCode(Img, DataObjects);
+  // Static functions of several modules share names (ntoskrnl's PDB names
+  // thirteen twice).
+  Img.numberSharedFunctionNames();
   LLVM_DEBUG(llvm::dbgs() << "debug-discovery: published " << Applied << " of "
                           << DbgFuncs.size() << " debug function symbols\n");
   return Applied;

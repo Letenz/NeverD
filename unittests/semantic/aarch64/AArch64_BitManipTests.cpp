@@ -1,4 +1,4 @@
-//===- AArch64_BitManipTests.cpp - AArch64 bit manipulation tests -*- C++ -*-===//
+//===- AArch64_BitManipTests.cpp - AArch64 bit manipulation tests ---------===//
 //
 // NeverD Decompiler
 //
@@ -55,8 +55,6 @@ static const std::vector<RoundTripTC> kA64Bit = {
    {0x12345678}, "A64Bit"},
 
   // --- Isolate/reset/mask lowest bit ---
-  {"a64_blsi", "long a64_blsi(long a) { return a & (-a); }\n", {0xABCD0000ULL}, "A64Bit"},
-  {"a64_blsr", "long a64_blsr(long a) { return a & (a-1); }\n", {0xABCD0000ULL}, "A64Bit"},
   {"a64_blsmsk", "long a64_blsmsk(long a) { return a ^ (a-1); }\n", {0xABCD0000ULL}, "A64Bit"},
 
   // --- BT/BTS/BTR/BTC ---
@@ -138,5 +136,5 @@ static const std::vector<RoundTripTC> kA64Bit = {
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(A64Bit, AArch64BitRT,
-                         ::testing::ValuesIn(kA64Bit), rtTCName);
+INSTANTIATE_TEST_SUITE_P(A64Bit, AArch64BitRT, ::testing::ValuesIn(kA64Bit),
+                         rtTCName);

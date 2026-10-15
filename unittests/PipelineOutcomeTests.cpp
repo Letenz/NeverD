@@ -14,6 +14,7 @@
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -197,33 +198,59 @@ void expectSameSelection(const PipelineResult &Kept,
 TEST(PipelineOutcome, AnalysisCachePreservesFloatingAndIntegerCallChains) {
   for (unsigned Count : {1u, 4u}) {
     ScopedThreadCount Threads(Count);
-    for (bool Floating : {false, true}) {
-      SCOPED_TRACE(Count);
-      SCOPED_TRACE(Floating);
-      BinaryImage Image = selectionCacheImage(Floating);
-      PipelineAnalysisCache Cache;
-      PipelineResult First;
-      PipelineTestPeer::buildLowIR(Image, First, {0x1000}, &Cache);
-      const auto Facts = PipelineTestPeer::analysisFacts(Cache);
-      ASSERT_NE(Facts, nullptr);
-      for (va_t Entry : {0x1100, 0x1000}) {
-        PipelineResult Kept, Cold;
-        PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
-        PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
-        EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
-        expectSameSelection(Kept, Cold);
-        ASSERT_EQ(Kept.LowFuncs.size(), 1u);
-        EXPECT_EQ(Kept.LowFuncs[0].Entry, Entry);
-        bool FoundCall = false;
-        for (const auto &Block : Kept.LowFuncs[0].Blocks)
-          for (const auto &Op : Block.Ops)
-            if (Op.Opcode == NdOp::CALL) {
-              FoundCall = true;
-              EXPECT_EQ(Op.Output.Size, Floating ? 10u : 8u);
-            }
-        EXPECT_TRUE(FoundCall);
+    for (bool Floating : {false, true})
+      for (bool Owned : {false, true}) {
+        SCOPED_TRACE(Count);
+        SCOPED_TRACE(Floating);
+        SCOPED_TRACE(Owned);
+        BinaryImage Image = selectionCacheImage(Floating);
+        Image.X87ContextOverride = Owned;
+        PipelineAnalysisCache Cache;
+        PipelineResult First;
+        PipelineTestPeer::buildLowIR(Image, First, {0x1000}, &Cache);
+        const auto Facts = PipelineTestPeer::analysisFacts(Cache);
+        ASSERT_NE(Facts, nullptr);
+        for (va_t Entry : {0x1100, 0x1000}) {
+          PipelineResult Kept, Cold;
+          PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
+          PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
+          EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
+          expectSameSelection(Kept, Cold);
+          ASSERT_EQ(Kept.LowFuncs.size(), 1u);
+          EXPECT_EQ(Kept.LowFuncs[0].Entry, Entry);
+          bool FoundCall = false;
+          for (const auto &Block : Kept.LowFuncs[0].Blocks)
+            for (const auto &Op : Block.Ops)
+              if (Op.Opcode == NdOp::CALL) {
+                FoundCall = true;
+                // A typed long double returns in st0; an owned context
+                // transports it instead.
+                EXPECT_EQ(Op.Output.Size, Floating && !Owned ? 10u : 8u);
+                if (Floating && Owned)
+                  EXPECT_EQ(Op.Output, NdVar::reg(x86reg::RAX, 8));
+              }
+          EXPECT_TRUE(FoundCall);
+          if (Floating && Owned) {
+            unsigned Captures = 0, Exports = 0, Imports = 0;
+            for (const auto &B : Kept.LowFuncs[0].Blocks)
+              for (const auto &Op : B.Ops)
+                if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                    Op.Inputs[0].isConst()) {
+                  Captures += Op.Inputs[0].Offset ==
+                              unsigned(Intrinsic::X87ContextBegin);
+                  Exports += Op.Inputs[0].Offset ==
+                             unsigned(Intrinsic::X87ContextExport);
+                  Imports += Op.Inputs[0].Offset ==
+                             unsigned(Intrinsic::X87ContextRefresh);
+                }
+            // The wrapper returns its call's state directly: one export
+            // before the call, no refresh/export pair before its RET.
+            EXPECT_EQ(Captures, 1u);
+            EXPECT_EQ(Exports, 1u);
+            EXPECT_EQ(Imports, 0u);
+          }
+        }
       }
-    }
   }
 }
 
@@ -357,12 +384,18 @@ TEST(PipelineOutcome, ParallelCalleeFrontiersPreserveEveryRegisterSummary) {
 }
 
 TEST(PipelineOutcome, SelectedX87WrappersPreserveReturnsAcrossParallelBuilds) {
-  for (Arch Architecture : {Arch::X86, Arch::X64}) {
+  for (auto [Architecture, Format] :
+       {std::pair{Arch::X86, BinaryFormat::ELF},
+        std::pair{Arch::X64, BinaryFormat::ELF},
+        std::pair{Arch::X64, BinaryFormat::COFF}}) {
     SCOPED_TRACE(static_cast<int>(Architecture));
+    SCOPED_TRACE(static_cast<int>(Format));
     BinaryImage Image;
     Image.Arch = Architecture;
     Image.Bits = Architecture == Arch::X86 ? Bitness::Bits32 : Bitness::Bits64;
-    Image.Format = BinaryFormat::ELF;
+    Image.Format = Format;
+    const bool Owned =
+        x87ContextOwnsStack(Architecture, Format, Image.X87ContextOverride);
     Image.Entry = 0x1000;
     Segment Text;
     Text.Name = ".text";
@@ -413,9 +446,21 @@ TEST(PipelineOutcome, SelectedX87WrappersPreserveReturnsAcrossParallelBuilds) {
         EXPECT_EQ(Function.Entry, Entries[I]);
         ASSERT_TRUE(Function.hasCompleteInstructionLift());
         size_t Calls = 0, Returns = 0;
-        const auto ResultSlot = NdVar::reg(x86reg::ST7, x86reg::FPURegSize);
+        const auto ResultSlot =
+            Owned ? NdVar::reg(x86reg::RAX, 8)
+                  : NdVar::reg(x86reg::ST7, x86reg::FPURegSize);
+        unsigned Captures = 0, Exports = 0, Imports = 0;
         for (const auto &Block : Function.Blocks)
           for (const auto &Op : Block.Ops) {
+            if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                Op.Inputs[0].isConst()) {
+              Captures +=
+                  Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextBegin);
+              Exports +=
+                  Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextExport);
+              Imports +=
+                  Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextRefresh);
+            }
             if (Op.Opcode == NdOp::CALL) {
               ++Calls;
               ASSERT_GT(Op.NumInputs, 0u);
@@ -430,6 +475,10 @@ TEST(PipelineOutcome, SelectedX87WrappersPreserveReturnsAcrossParallelBuilds) {
           }
         EXPECT_EQ(Calls, 1u);
         EXPECT_EQ(Returns, 1u);
+        // Each wrapper returns its call's state directly (call; ret).
+        EXPECT_EQ(Captures, Owned ? 1u : 0u);
+        EXPECT_EQ(Exports, Owned ? 1u : 0u);
+        EXPECT_EQ(Imports, 0u);
       }
     }
     EXPECT_EQ(Parallel.CallMayWriteGPRs, Serial.CallMayWriteGPRs);
@@ -973,6 +1022,227 @@ TEST(PipelineOutcome,
   ASSERT_NE(Extend, nullptr);
   EXPECT_EQ(Extend->getOperand(0), Normalized);
   EXPECT_EQ(Extend->getType(), I64);
+}
+
+TEST(PipelineOutcome, ResolvedCallsKeepIndependentArgumentBanksAndStackSlots) {
+  for (bool Invoke : {false, true}) {
+    SCOPED_TRACE(Invoke);
+    llvm::LLVMContext C;
+    llvm::Module Module("argument_banks", C);
+    Module.setDataLayout("e-p:64:64");
+    auto *I64 = llvm::Type::getInt64Ty(C);
+    auto *Vector = llvm::FixedVectorType::get(I64, 2);
+    auto *Actual =
+        llvm::FunctionType::get(I64, {I64, Vector, Vector, I64, I64}, false);
+    auto *Target = llvm::Function::Create(
+        Actual, llvm::GlobalValue::ExternalLinkage, "target", Module);
+    setLLVMArgumentBanks(*Target, 1, 2);
+    auto *Caller = llvm::Function::Create(llvm::FunctionType::get(I64, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "caller", Module);
+    llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", Caller));
+    std::vector<llvm::Value *> Values = {B.getInt64(11), B.getInt64(99)};
+    for (unsigned I : {21u, 22u, 98u})
+      Values.push_back(llvm::ConstantVector::getSplat(
+          llvm::ElementCount::getFixed(2), B.getInt64(I)));
+    Values.push_back(B.getInt64(31));
+    Values.push_back(B.getInt64(32));
+    auto *Recovered = llvm::FunctionType::get(
+        I64, {I64, I64, Vector, Vector, Vector, I64, I64}, false);
+    llvm::CallBase *Call;
+    if (Invoke) {
+      auto *Normal = llvm::BasicBlock::Create(C, "normal", Caller);
+      auto *Unwind = llvm::BasicBlock::Create(C, "unwind", Caller);
+      auto *Personality = llvm::Function::Create(
+          llvm::FunctionType::get(B.getInt32Ty(), true),
+          llvm::GlobalValue::ExternalLinkage, "personality", Module);
+      Caller->setPersonalityFn(Personality);
+      Call = B.CreateInvoke(Recovered, Target, Normal, Unwind, Values);
+      B.SetInsertPoint(Unwind);
+      auto *Landing = B.CreateLandingPad(
+          llvm::StructType::get(B.getPtrTy(), B.getInt32Ty()), 0);
+      Landing->setCleanup(true);
+      B.CreateResume(Landing);
+      B.SetInsertPoint(Normal);
+    } else {
+      Call = B.CreateCall(Recovered, Target, Values);
+    }
+    setLLVMArgumentBanks(*Call, 2, 3);
+    Call->addParamAttr(2, llvm::Attribute::NoUndef);
+    B.CreateRet(Call);
+    LLVMSourceMap Sources;
+    Sources.Observations.push_back({0x1000, {0x1004, 0}, Call});
+    ASSERT_TRUE(normalizeResolvedLLVMCalls(Module, &Sources));
+    EXPECT_TRUE(validateResolvedLLVMCallSignatures(Module));
+    EXPECT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    auto *Bound = llvm::dyn_cast_or_null<llvm::CallBase>(
+        static_cast<llvm::Value *>(Sources.Observations[0].Value));
+    ASSERT_NE(Bound, nullptr);
+    ASSERT_EQ(Bound->arg_size(), 5u);
+    const unsigned Expected[] = {0, 2, 3, 5, 6};
+    for (unsigned I = 0; I < 5; ++I)
+      EXPECT_EQ(Bound->getArgOperand(I), Values[Expected[I]]);
+    EXPECT_TRUE(Bound->paramHasAttr(1, llvm::Attribute::NoUndef));
+    EXPECT_FALSE(Bound->paramHasAttr(0, llvm::Attribute::NoUndef));
+    EXPECT_EQ(llvm::isa<llvm::InvokeInst>(Bound), Invoke);
+    EXPECT_TRUE(normalizeResolvedLLVMCalls(Module, &Sources));
+  }
+}
+
+TEST(PipelineOutcome, ResolvedCallsRefuseMissingValuesInEitherArgumentBank) {
+  for (bool MissingFloating : {false, true}) {
+    SCOPED_TRACE(MissingFloating);
+    llvm::LLVMContext C;
+    llvm::Module Module("missing_argument_bank", C);
+    Module.setDataLayout("e-p:64:64");
+    auto *I64 = llvm::Type::getInt64Ty(C);
+    auto *Vector = llvm::FixedVectorType::get(I64, 2);
+    auto *Actual = llvm::FunctionType::get(I64, {I64, Vector}, false);
+    auto *Target = llvm::Function::Create(
+        Actual, llvm::GlobalValue::ExternalLinkage, "target", Module);
+    setLLVMArgumentBanks(*Target, 1, 1);
+    auto *Caller = llvm::Function::Create(llvm::FunctionType::get(I64, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "caller", Module);
+    llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", Caller));
+    auto *Carrier = MissingFloating ? I64 : static_cast<llvm::Type *>(Vector);
+    auto *Wrong = llvm::FunctionType::get(I64, {Carrier, Carrier}, false);
+    auto *Value = llvm::Constant::getNullValue(Carrier);
+    auto *Call = B.CreateCall(Wrong, Target, {Value, Value});
+    setLLVMArgumentBanks(*Call, MissingFloating ? 2 : 0,
+                         MissingFloating ? 0 : 2);
+    B.CreateRet(Call);
+    testing::internal::CaptureStderr();
+    EXPECT_FALSE(normalizeResolvedLLVMCalls(Module));
+    EXPECT_NE(testing::internal::GetCapturedStderr().find(
+                  "lacks recovered argument bank or stack values"),
+              std::string::npos);
+    EXPECT_EQ(Call->getFunctionType(), Wrong);
+    EXPECT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  }
+}
+
+TEST(PipelineOutcome, ResolvedCallsPreserveAllBytesAcrossStackStoreWidths) {
+  for (bool WideStore : {false, true})
+    for (bool MissingByte : {false, true}) {
+      SCOPED_TRACE(WideStore);
+      SCOPED_TRACE(MissingByte);
+      llvm::LLVMContext C;
+      llvm::Module Module("stack_argument_bytes", C);
+      Module.setDataLayout("e-p:64:64");
+      auto *I64 = llvm::Type::getInt64Ty(C);
+      auto *Target = llvm::Function::Create(
+          llvm::FunctionType::get(I64, {I64, I64}, false),
+          llvm::GlobalValue::ExternalLinkage, "target", Module);
+      setLLVMArgumentBanks(*Target, 0, 0);
+      auto *Caller = llvm::Function::Create(llvm::FunctionType::get(I64, false),
+                                            llvm::GlobalValue::ExternalLinkage,
+                                            "caller", Module);
+      llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", Caller));
+      std::vector<llvm::Value *> Values;
+      std::vector<llvm::Type *> Types;
+      if (WideStore) {
+        const unsigned Width = MissingByte ? 120 : 128;
+        llvm::APInt Bits(128, 0x123456789abcdef0ULL);
+        Bits |= llvm::APInt(128, 0xfedcba9876543210ULL).shl(64);
+        Values.push_back(llvm::ConstantInt::get(C, Bits.trunc(Width)));
+      } else {
+        for (uint32_t Value : {0x9abcdef0u, 0x12345678u, 0x76543210u})
+          Values.push_back(B.getInt32(Value));
+        Values.push_back(MissingByte ? B.getIntN(24, 0xdcba98)
+                                     : B.getInt32(0xfedcba98));
+      }
+      for (auto *Value : Values)
+        Types.push_back(Value->getType());
+      auto *Call = B.CreateCall(llvm::FunctionType::get(I64, Types, false),
+                                Target, Values);
+      setLLVMArgumentBanks(*Call, 0, 0);
+      Call->addParamAttr(0, llvm::Attribute::NoUndef);
+      B.CreateRet(Call);
+      testing::internal::CaptureStderr();
+      const bool Normalized = normalizeResolvedLLVMCalls(Module);
+      const auto Diagnostic = testing::internal::GetCapturedStderr();
+      EXPECT_EQ(Normalized, !MissingByte) << Diagnostic;
+      EXPECT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+      if (MissingByte) {
+        EXPECT_NE(
+            Diagnostic.find("lacks recovered argument bank or stack values"),
+            std::string::npos);
+        continue;
+      }
+      const auto *Bound =
+          llvm::cast<llvm::CallBase>(&*Caller->getEntryBlock().begin());
+      ASSERT_EQ(Bound->arg_size(), 2u);
+      const uint64_t Expected[] = {0x123456789abcdef0ULL,
+                                   0xfedcba9876543210ULL};
+      for (unsigned I = 0; I < 2; ++I) {
+        const auto *Value =
+            llvm::dyn_cast<llvm::ConstantInt>(Bound->getArgOperand(I));
+        ASSERT_NE(Value, nullptr);
+        EXPECT_EQ(Value->getZExtValue(), Expected[I]);
+        EXPECT_FALSE(Bound->paramHasAttr(I, llvm::Attribute::NoUndef));
+      }
+    }
+}
+
+TEST(PipelineOutcome, ResolvedCallsPlaceNarrowStackValuesInTheirSlots) {
+  // -O0 code passes each int stack argument in the low half of its
+  // eight-byte System V slot: `mov [rsp], r11d`, `mov [rsp+8], r10d`. The
+  // next slot also holds a spill. Each callee slot takes its own value, the
+  // rest of the slot being padding: neither the next value's bytes nor the
+  // spill. A slot no value was stored in still refuses.
+  for (bool MissingSlot : {false, true}) {
+    SCOPED_TRACE(MissingSlot);
+    llvm::LLVMContext C;
+    llvm::Module Module("stack_argument_slots", C);
+    Module.setDataLayout("e-p:64:64");
+    auto *I32 = llvm::Type::getInt32Ty(C);
+    auto *I64 = llvm::Type::getInt64Ty(C);
+    auto *Target = llvm::Function::Create(
+        llvm::FunctionType::get(I32, {I32, I64, I64}, false),
+        llvm::GlobalValue::ExternalLinkage, "target", Module);
+    setLLVMArgumentBanks(*Target, 1, 0);
+    auto *Caller = llvm::Function::Create(llvm::FunctionType::get(I32, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "caller", Module);
+    llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", Caller));
+    std::vector<llvm::Value *> Values = {B.getInt32(1), B.getInt32(7),
+                                         B.getInt32(9),
+                                         B.getInt64(0x2d9c127c45ac13abULL)};
+    std::vector<int64_t> Offsets = {0, 8, 16};
+    if (MissingSlot) {
+      Values.erase(Values.begin() + 2);
+      Offsets = {0, 16};
+    }
+    std::vector<llvm::Type *> Types;
+    for (auto *Value : Values)
+      Types.push_back(Value->getType());
+    auto *Call = B.CreateCall(llvm::FunctionType::get(I32, Types, false),
+                              Target, Values);
+    setLLVMArgumentBanks(*Call, 1, 0, Offsets, 8);
+    B.CreateRet(Call);
+    testing::internal::CaptureStderr();
+    const bool Normalized = normalizeResolvedLLVMCalls(Module);
+    const auto Diagnostic = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(Normalized, !MissingSlot) << Diagnostic;
+    EXPECT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    if (MissingSlot) {
+      EXPECT_NE(
+          Diagnostic.find("lacks recovered argument bank or stack values"),
+          std::string::npos);
+      continue;
+    }
+    const auto *Bound =
+        llvm::cast<llvm::CallBase>(&*Caller->getEntryBlock().begin());
+    ASSERT_EQ(Bound->arg_size(), 3u);
+    const uint64_t Expected[] = {1, 7, 9};
+    for (unsigned I = 0; I < 3; ++I) {
+      const auto *Value =
+          llvm::dyn_cast<llvm::ConstantInt>(Bound->getArgOperand(I));
+      ASSERT_NE(Value, nullptr);
+      EXPECT_EQ(Value->getZExtValue(), Expected[I]);
+    }
+  }
 }
 
 TEST(PipelineOutcome, ResolvedCallConventionMustAgreeEvenWhenTypesMatch) {

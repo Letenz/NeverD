@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <initializer_list>
+#include <iterator>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -220,6 +221,55 @@ TEST(KernelExports, HALStaticAndDynamicLookupRetainProviderIdentity) {
   EXPECT_NE(requireError(Registry.resolve("KeQueryPerformanceCounter"))
                 .find("ambiguous"),
             std::string::npos);
+}
+
+TEST(KernelExports, AdditionalImportModulesKeepUnknownRoutinesIsolated) {
+  KernelExportRegistry Registry;
+  ASSERT_EQ(llvm::toString(Registry.initialize({})), "");
+  std::vector<uint64_t> Addresses;
+  const char *Names[] = {"fltmgr.sys", "ndis.sys", "netio.sys"};
+  const char *Mixed[] = {"FlTmGr.SyS", "NDIS.SYS", "NetIO.Sys"};
+  for (unsigned I = 0; I < std::size(Names); ++I) {
+    SCOPED_TRACE(Names[I]);
+    EXPECT_EQ(KernelExportRegistry::canonicalImportModule(Mixed[I]), Names[I]);
+    EXPECT_EQ(KernelExportRegistry::moduleBase(Mixed[I]),
+              profile::KernelModuleBase +
+                  (I + 3) * profile::KernelModuleStride);
+    for (const char *Symbol : {"DbgPrint", "KeQueryPerformanceCounter",
+                               "WdfVersionBind", "UnknownRoutine"}) {
+      SCOPED_TRACE(Symbol);
+      const auto Address =
+          requireValue(Registry.bindImport({0x1000, Mixed[I], Symbol}));
+      ASSERT_NE(Address, 0u);
+      EXPECT_EQ(requireValue(Registry.bindImport({0x2000, Names[I], Symbol})),
+                Address);
+      EXPECT_EQ(std::count(Addresses.begin(), Addresses.end(), Address), 0);
+      Addresses.push_back(Address);
+      const auto *Entry = Registry.lookup(Address);
+      ASSERT_NE(Entry, nullptr);
+      EXPECT_EQ(Entry->Module, Names[I]);
+      EXPECT_EQ(Entry->Name, Symbol);
+      EXPECT_EQ(Entry->Kind, KernelExportRegistry::ExportKind::ModuleExport);
+      EXPECT_FALSE(KernelModel::argumentCount(*Entry));
+    }
+  }
+  const auto Kernel = requireValue(Registry.resolve("DbgPrint"));
+  EXPECT_EQ(Registry.lookup(Kernel)->Module, "ntoskrnl.exe");
+  EXPECT_EQ(std::count(Addresses.begin(), Addresses.end(), Kernel), 0);
+  const auto HAL = requireValue(Registry.resolve("KeQueryPerformanceCounter"));
+  EXPECT_EQ(Registry.lookup(HAL)->Module, "hal.dll");
+  EXPECT_EQ(std::count(Addresses.begin(), Addresses.end(), HAL), 0);
+  EXPECT_NE(
+      requireError(Registry.resolve("WdfVersionBind")).find("unspecified"),
+      std::string::npos);
+  EXPECT_NE(
+      requireError(Registry.resolve("UnknownRoutine")).find("unspecified"),
+      std::string::npos);
+  for (const char *Module :
+       {"unknown.sys", "ndis", "ndis.sys ", "path/fltmgr.sys", "netio.sys/"}) {
+    EXPECT_FALSE(KernelExportRegistry::canonicalImportModule(Module));
+    EXPECT_FALSE(KernelExportRegistry::moduleBase(Module));
+  }
 }
 
 TEST(KernelExports, HALAbsenceAndUnknownImportsDoNotInventSemantics) {
@@ -473,10 +523,12 @@ TEST(KernelExports, ReadablePEExportsMatchTheAuthoritativeNamespace) {
                            {"NeverDOptionalPresent", true}};
   ASSERT_EQ(llvm::toString(Registry.initialize(Options)), "");
   requireValue(Registry.bindImport({0x1000, "wdfldr.sys", "StaticUnknown"}));
+  for (const char *Module : {"fltmgr.sys", "ndis.sys", "netio.sys"})
+    requireValue(Registry.bindImport({0x2000, Module, "StaticUnknown"}));
   requireValue(Registry.insertFrameworkFunction(0x70005000, "WdfDriverCreate"));
   auto Images = makeKernelModuleImages(Registry);
   ASSERT_TRUE(bool(Images)) << llvm::toString(Images.takeError());
-  ASSERT_EQ(Images->size(), 3u);
+  ASSERT_EQ(Images->size(), 6u);
   size_t Seen = 0;
   for (const auto &Image : *Images) {
     const llvm::MemoryBufferRef Buffer(
@@ -517,7 +569,8 @@ TEST(KernelExports, ReadablePEExportsMatchTheAuthoritativeNamespace) {
 }
 
 TEST(KernelExports, OpaqueCodeRangesExcludeReadableHeadersAndExportTables) {
-  for (const char *Module : {"ntoskrnl.exe", "hal.dll", "wdfldr.sys"}) {
+  for (const char *Module : {"ntoskrnl.exe", "hal.dll", "wdfldr.sys",
+                             "fltmgr.sys", "ndis.sys", "netio.sys"}) {
     const uint64_t Base = *KernelExportRegistry::moduleBase(Module);
     const uint64_t Code = Base + profile::KernelModuleCodeRVA;
     const uint64_t End = Base + profile::KernelModuleExportRVA;

@@ -214,7 +214,7 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 {name for name in drivers if name.startswith(direct_prefix)},
                 direct_kvm if backend == "kvm" else set(),
             )
-            outcomes[backend] = {name.replace("/" + backend + "_", "/{backend}_")
+            outcomes[backend] = {re.sub("/" + backend + r"(?=_|$)", "/{backend}", name)
                                  .replace("/" + backend.title(), "/{backend_title}")
                                  for name in drivers - direct_kvm}
             self.assertTrue(any("/{backend}_Original_" in name for name in outcomes[backend]))
@@ -554,8 +554,48 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 with self.subTest(backend=backend, host=host):
                     owners, required = native.darwin_inventory(native.ROOT, backend, host)
                     self.assertEqual(owners, ["NeverDDarwinProcessTests"])
-                    self.assertEqual(len(required), 76 * len(platforms))
+                    self.assertEqual(len(required), 94 * len(platforms))
                     for platform in platforms:
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "SymbolicOwnershipKeepsVnodeAndTargetGrantsSeparate/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "SymbolicFileSystemsKeepOwnSnapshotAndFollowedTargetSeparate/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "CreatedDirectoryFileSystemsKeepActualParentAndHeldLifetime/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "DirectoryOwnershipMutationsPreserveIndependentObjectAndNamespaceState/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "DirectoryTimestampMutationsPreserveIndependentObjectAndNamespaceState/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "DirectoryModesPreserveIndependentObjectAndNamespaceState/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "TimestampMutationsKeepExplicitClockAndObjectAuthority/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "FullAndBarrierSynchronizationKeepIndependentObjectState/"
+                            f"{platform}_{backend}", required,
+                        )
                         self.assertIn(
                             "Transports/DarwinProcess."
                             "ImmediatePollPreservesFiltersCopiesAndExplicitResourceKnowledge/"
@@ -569,6 +609,46 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                         self.assertIn(
                             "Transports/DarwinProcess."
                             "ImmediatePselectPreservesTimespecMasksAndSharedBitmaps/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "OrdinaryAdvisoryLocksKeepDescriptionAndObjectLifetime/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "OrdinaryFileSynchronizationKeepsProviderAndCommittedState/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "OrdinaryDataSynchronizationKeepsProviderAndCommittedState/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "CreatedRegularSynchronizationKeepsIndependentProvidersAndState/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "CreatedRegularAdvisoryLocksKeepProviderAndDescriptionStatus/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "CreatedRegularAttributesKeepIndependentProvidersAndObjectState/"
                             f"{platform}_{backend}", required,
                         )
                     for platform in platforms:

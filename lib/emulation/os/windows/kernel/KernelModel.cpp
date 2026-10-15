@@ -14,7 +14,11 @@
 #include "../../../core/RAMInitializationWatch.h"
 #include "../driver/DriverImage.h"
 #include "KernelException.h"
+#include "KernelLoaderView.h"
 #include "KernelModelRuntime.h"
+#include "KernelPhysicalInventory.h"
+#include "KernelVaShadowQuery.h"
+#include "KernelVersionQuery.h"
 #include "KernelWaits.h"
 #include "WindowsKernelLayout.h"
 
@@ -144,6 +148,35 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
                                     const DriverOptions &Options) {
   if (DriverObject)
     return modelError("kernel model cannot be initialized twice");
+  if (Options.LoaderView) {
+    if (auto E = kernel_loader_view::validate(*Options.LoaderView))
+      return E;
+    if (!Image.Size || Image.Size > UINT32_MAX ||
+        Image.Size > UINT64_MAX - Image.Base || Image.Entry < Image.Base ||
+        Image.Entry - Image.Base >= Image.Size)
+      return modelError("driver loader_view: invalid image metadata");
+  }
+  if (Options.VersionQuery) {
+    if (auto E = kernel_version_query::validate(*Options.VersionQuery))
+      return E;
+    if (Options.Contract != ExecutionContract::CheckedX64)
+      return modelError("driver version_query requires checked-x64 execution");
+  }
+  if (Options.PhysicalMemoryInventory) {
+    if (auto E = kernel_physical_inventory::validate(
+            *Options.PhysicalMemoryInventory))
+      return E;
+    if (Options.Contract != ExecutionContract::CheckedX64)
+      return modelError(
+          "driver physical_memory_inventory requires checked-x64 execution");
+  }
+  if (Options.KernelVaShadowQuery) {
+    if (auto E = kernel_va_shadow_query::validate(*Options.KernelVaShadowQuery))
+      return E;
+    if (Options.Contract != ExecutionContract::CheckedX64)
+      return modelError(
+          "driver kernel_va_shadow_query requires checked-x64 execution");
+  }
   std::map<uint64_t, uint64_t> ImageRanges;
   for (const auto &Region : Image.Regions) {
     const uint64_t Size = Region.Bytes.size();
@@ -164,6 +197,12 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
     ImageRanges.emplace(Region.Address, Size);
   }
   ImageRAM = std::move(ImageRanges);
+  Contract = Options.Contract;
+  VersionQuery = Options.VersionQuery;
+  PhysicalMemoryInventory = Options.PhysicalMemoryInventory;
+  KernelVaShadowQuery = Options.KernelVaShadowQuery;
+  if (VersionQuery || PhysicalMemoryInventory || KernelVaShadowQuery)
+    UnpackOpaqueEffects = true;
   InstructionClock = Options.Scheduling.has_value();
   Scheduler = KernelScheduler(KernelScheduler::Limits{},
                               Options.Scheduling.has_value());
@@ -202,6 +241,27 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   if (!Extension)
     return Extension.takeError();
   DriverExtension = *Extension;
+  if (Options.LoaderView) {
+    auto Record = allocate(kernel_loader_view::RecordSize);
+    if (!Record)
+      return Record.takeError();
+    DriverLoaderRecord = *Record;
+    for (const auto &[Field, Value] :
+         std::array<std::pair<kernel_loader_view::Field, uint64_t>, 4>{
+             {{kernel_loader_view::DllBase, Image.Base},
+              {kernel_loader_view::EntryPoint, Image.Entry},
+              {kernel_loader_view::SizeOfImage, Image.Size},
+              {kernel_loader_view::Flags, *Options.LoaderView->Flags}}})
+      if (auto E = Memory.writeInteger(DriverLoaderRecord + Field.Offset, Value,
+                                       Field.Size))
+        return E;
+    if (auto E = Memory.writeInteger(DriverObject + DriverSectionOffset,
+                                     DriverLoaderRecord, profile::PointerSize))
+      return E;
+    // Even an unused declaration changes the concrete environment. It does
+    // not carry a rebinding contract for an independently loaded driver.
+    UnpackOpaqueEffects = true;
+  }
   auto Path =
       makeUnicodeString(RegistryServicesPrefix.str() + Options.ServiceName);
   if (!Path)
@@ -627,6 +687,8 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
     return llvm::Error::success();
   if (Size > UINT64_MAX - Address)
     return modelError("overflowing guest access in Windows model");
+  if (auto E = validateBugCheckAccess(Address, Size, IsWrite))
+    return E;
   const uint64_t End = Address + Size;
   if (Address < profile::ProcessorEnvironmentBase + profile::PageSize &&
       profile::ProcessorEnvironmentBase < End)
@@ -745,16 +807,21 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
               return (Offset >= DriverFastIOOffset &&
                       Offset < DriverInitOffset) ||
                      Offset >= DriverStartIOOffset;
-            if ((Offset >= DriverFlagsOffset &&
-                 Offset < DriverFlagsOffset + 4) ||
-                (Offset >= DriverSectionOffset &&
-                 Offset < DriverExtensionOffset))
+            if (Offset >= DriverFlagsOffset && Offset < DriverFlagsOffset + 4)
               return false;
+            if (Offset >= DriverSectionOffset && Offset < DriverExtensionOffset)
+              return DriverLoaderRecord != 0;
             if (Offset >= DriverDispatchOffset)
               return initialized(DispatchBytesWritten, DispatchInitialization,
                                  Offset - DriverDispatchOffset);
             return true;
           }))
+    return E;
+  if (auto E = CheckObject(DriverLoaderRecord, kernel_loader_view::RecordSize,
+                           [&](uint64_t Offset) {
+                             return !IsWrite &&
+                                    kernel_loader_view::readable(Offset);
+                           }))
     return E;
   if (auto E = CheckObject(
           DriverExtension, DriverExtensionSize, [&](uint64_t Offset) {

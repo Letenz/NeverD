@@ -46,6 +46,17 @@ NEVERD_KERNEL_IRQL_API(IoGetRequestorProcess, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoGetCurrentProcess, Any)
 NEVERD_KERNEL_IRQL_API(PsGetCurrentProcessId, Any)
 NEVERD_KERNEL_IRQL_API(PsGetProcessId, Any)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-psgetcurrentthread
+// The 19041.6456 kernel exports PsGetCurrentProcess as the IoGetCurrentProcess
+// routine (RVA 0x2bbc90) and PsGetCurrentThread as KeGetCurrentThread
+// (RVA 0x2c9210).
+NEVERD_KERNEL_IRQL_API(PsGetCurrentProcess, Any)
+NEVERD_KERNEL_IRQL_API(PsGetCurrentThread, Any)
+NEVERD_KERNEL_IRQL_API(KeGetCurrentThread, Any)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-psgetcurrentthreadid
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-psgetthreadid
+NEVERD_KERNEL_IRQL_API(PsGetCurrentThreadId, Any)
+NEVERD_KERNEL_IRQL_API(PsGetThreadId, Dispatch)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-pscreatesystemthread
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-psterminatesystemthread
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-obreferenceobjectbyhandle
@@ -66,10 +77,22 @@ NEVERD_KERNEL_IRQL_API(KeUnstackDetachProcess, APC)
   NEVERD_KERNEL_IRQL_API(Name, IRQL)
 #include "KernelThreadAPIs.def"
 #undef NEVERD_KERNEL_THREAD_API
+#define NEVERD_KERNEL_RUNTIME_STRING_API(Name, Arity, IRQL, Operation)         \
+  NEVERD_KERNEL_IRQL_API(Name, IRQL)
+#include "KernelRuntimeStringAPIs.def"
+#undef NEVERD_KERNEL_RUNTIME_STRING_API
+#define NEVERD_KERNEL_RUNTIME_TIME_API(Name, Arity, IRQL, Operation)           \
+  NEVERD_KERNEL_IRQL_API(Name, IRQL)
+#include "KernelRuntimeTimeAPIs.def"
+#undef NEVERD_KERNEL_RUNTIME_TIME_API
 #define NEVERD_KERNEL_SPINLOCK_API(Name, Arity, IRQL, Operation)               \
   NEVERD_KERNEL_IRQL_API(Name, IRQL)
 #include "KernelSpinLockAPIs.def"
 #undef NEVERD_KERNEL_SPINLOCK_API
+#define NEVERD_KERNEL_INTERLOCKED_API(Name, Arity, IRQL, Operation)            \
+  NEVERD_KERNEL_IRQL_API(Name, IRQL)
+#include "KernelInterlockedAPIs.def"
+#undef NEVERD_KERNEL_INTERLOCKED_API
 
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-ioconnectinterrupt
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-kesynchronizeexecution
@@ -89,6 +112,14 @@ NEVERD_KERNEL_IRQL_API(KeUnstackDetachProcess, APC)
 NEVERD_KERNEL_IRQL_API(RtlCompareUnicodeString, Passive)
 NEVERD_KERNEL_IRQL_API(RtlEqualUnicodeString, Passive)
 NEVERD_KERNEL_IRQL_API(MmGetSystemRoutineAddress, Passive)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-mmisaddressvalid
+NEVERD_KERNEL_IRQL_API(MmIsAddressValid, Dispatch)
+// The base WDK query requires PASSIVE_LEVEL and returns caller-owned pool.
+NEVERD_KERNEL_IRQL_API(MmGetPhysicalMemoryRanges, Passive)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-keregisterbugcheckreasoncallback
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-kederegisterbugcheckreasoncallback
+NEVERD_KERNEL_IRQL_API(KeRegisterBugCheckReasonCallback, Any)
+NEVERD_KERNEL_IRQL_API(KeDeregisterBugCheckReasonCallback, Any)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-mmmapiospace
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-mmmapiospaceex
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-mmunmapiospace
@@ -162,6 +193,9 @@ NEVERD_KERNEL_IRQL_API(MmUnmapLockedPages, Dispatch)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-mmprotectmdlsystemaddress
 NEVERD_KERNEL_IRQL_API(MmProtectMdlSystemAddress, Dispatch)
 NEVERD_KERNEL_IRQL_API(RtlInitUnicodeString, Dispatch)
+NEVERD_KERNEL_IRQL_API(RtlGetVersion, Passive)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-rtlcapturecontext
+NEVERD_KERNEL_IRQL_API(RtlCaptureContext, Dispatch)
 
 // IoCompleteRequest is the public macro for the IofCompleteRequest export.
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-iocompleterequest

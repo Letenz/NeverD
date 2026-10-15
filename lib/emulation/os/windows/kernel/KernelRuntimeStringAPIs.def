@@ -1,0 +1,103 @@
+//===- KernelRuntimeStringAPIs.def - Counted-string runtime contracts -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Argument counts, caller-IRQL ceilings and typed operations for the counted
+/// string helpers that drivers use to build and parse UNICODE_STRING and
+/// STRING records. Every operation only touches caller-provided guest memory;
+/// its full effect is captured by the written bytes. Behavior is modeled 1:1
+/// against the Windows 10.0.19041.6456 kernel exports cited per entry, so
+/// malformed records and unsupported case folding fail clearly rather than
+/// guessing.
+///
+//===----------------------------------------------------------------------===//
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlinitansistring
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlinitstring
+// Length counts bytes up to the terminator (capped at 0xFFFE); MaximumLength
+// includes the terminator. Both names share the routine at RVA 0x24fb00.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlInitAnsiString, 2, Dispatch,
+                                 runtime::initializeAnsiString(*this, Memory,
+                                                               A))
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlInitString, 2, Dispatch,
+                                 runtime::initializeAnsiString(*this, Memory,
+                                                               A))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdmsec/nf-wdmsec-wdmlibrtlinitunicodestringex
+// The library equivalent documents the DISPATCH_LEVEL ceiling. The export at
+// RVA 0x32eb60 clears the record and rejects sources over 0x7FFE units.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlInitUnicodeStringEx, 2, Dispatch,
+                                 runtime::initializeUnicodeStringEx(*this,
+                                                                    Memory, A))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-rtlcopystring
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-rtlequalstring
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-rtlcomparestring
+// Counted 8-bit copy without a terminator and unsigned byte comparison. As for
+// prefixes, only unequal bytes would consult the unmodeled case table.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlCopyString, 2, Any,
+                                 runtime::copyAnsiString(*this, Memory, A))
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlEqualString, 3, Passive,
+                                 runtime::compareAnsiStrings(*this, Memory, A,
+                                                             true))
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlCompareString, 3, Passive,
+                                 runtime::compareAnsiStrings(*this, Memory, A,
+                                                             false))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlappendunicodetostring
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlappendunicodestringtostring
+// Resident buffers permit any IRQL (DDI: resident required at >= DISPATCH).
+// RVA 0x32ead0 (to-string) and 0x3480c0 (string-to-string).
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlAppendUnicodeToString, 2, Any,
+                                 runtime::appendUnicodeString(*this, Memory, A,
+                                                              false))
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlAppendUnicodeStringToString, 2, Any,
+                                 runtime::appendUnicodeString(*this, Memory, A,
+                                                              true))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-rtlprefixunicodestring
+// Case-sensitive prefix test over counted UTF-16 units (RVA 0x5edbe0). The
+// case-insensitive path needs the unmodeled NLS upcase table and is refused.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlPrefixUnicodeString, 3, Passive,
+                                 runtime::prefixUnicodeString(*this, Memory, A))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlintegertounicodestring
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlunicodestringtointeger
+// RVA 0x6f6280 (integer->string, via RtlIntegerToChar 0x6f7000) and 0x6638e0
+// (string->integer). Both reject invalid radices; the formatter needs room for
+// the null terminator, and the parser skips leading whitespace and a sign.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlIntegerToUnicodeString, 3, Passive,
+                                 runtime::integerToUnicodeString(*this, Memory,
+                                                                 A))
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlUnicodeStringToInteger, 3, Passive,
+                                 runtime::unicodeStringToInteger(*this, Memory,
+                                                                 A))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlansistringtounicodestring
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlunicodestringtoansistring
+// RVA 0x6f6840 and 0x5edb00. Conversion through the system ANSI code page is
+// exact only for ASCII text; allocations use paged pool tagged 'Strg'.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlAnsiStringToUnicodeString, 3, Passive,
+                                 ansiToUnicodeString(A))
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlUnicodeStringToAnsiString, 3, Passive,
+                                 unicodeToAnsiString(A))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlfreeunicodestring
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlfreeansistring
+// Both names share the routine at RVA 0x602cb0.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlFreeUnicodeString, 1, APC,
+                                 freeCountedString(A))
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlFreeAnsiString, 1, APC,
+                                 freeCountedString(A))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlstringfromguid
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlguidfromstring
+// RVA 0x6f34d0 formats lowercase registry text into a 78-byte paged 'Strg'
+// allocation; RVA 0x6bd650 parses that form with exact field widths.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlStringFromGUID, 2, Passive,
+                                 stringFromGUID(A))
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlGUIDFromString, 2, Passive,
+                                 guidFromString(A))

@@ -93,8 +93,7 @@ void bindFloatCallResults(const BinaryImage &Img, PipelineResult &Result) {
 // buildHighIR — Phase 3
 //===----------------------------------------------------------------------===//
 
-void Pipeline::buildHighIR(const BinaryImage &Img,
-                           const PipelineOptions & /*Opts*/,
+void Pipeline::buildHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
                            PipelineResult &Result, DebugContext *Dbg) {
   // The HighIR route needs the same call-site evidence for register-pair
   // integer returns as direct MedIR -> LLVM emission.  In particular, a
@@ -138,6 +137,13 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     // is the stack its calls store.
     sizeVariadicOverflowFromStores(Result.MedFuncs, Img.Arch);
   }
+  rebuildHighIR(Img, Opts, Result, Dbg);
+}
+
+void Pipeline::rebuildHighIR(const BinaryImage &Img,
+                             const PipelineOptions &Opts,
+                             PipelineResult &Result, DebugContext *Dbg) {
+  auto AllFuncNames = buildFuncNameMap(Img, Result);
   if (Dbg && Dbg->hasInfo()) {
     for (const MedFunc &MF : Result.MedFuncs) {
       if (auto DF = Dbg->functionName(MF.Entry); DF && !DF->empty()) {
@@ -210,6 +216,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
 
   parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
     MedToHighConverter Local;
+    Local.setSymbolicSimplification(Opts.SymbolicHighC);
     // The outer helper runs small batches on the caller. Only those batches
     // can lend their unused worker allowance to a large function's independent
     // semantic segments; parallel function workers must not nest another pool.
@@ -326,6 +333,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
         HF.SourceFile = MF.SourceFile;
         HF.SourceLine = MF.SourceLine;
         HF.ExceptionMetadata = MF.ExceptionMetadata;
+        HF.HasUnresolvedSEHFrame = MF.HasUnresolvedSEHFrame;
         HF.ReturnType = MF.ReturnType ? MF.ReturnType : NdType::makeInt(4);
         HF.ReturnsNoValue = MF.ReturnsNoValue;
         HF.SourceTypeHint = MF.SourceTypeHint;
@@ -408,6 +416,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     }
   });
   Result.HighFuncs = std::move(Pending);
+  Result.HighSources.clear();
   for (auto &Source : Sources)
     for (auto &Observation : Source)
       if (Observation.Kind != HighSourceKind::Expression ||

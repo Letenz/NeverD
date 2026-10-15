@@ -294,6 +294,14 @@ TEST(CSymbolNames, MachOLabelsCarryTheDecoration) {
   EXPECT_NE(Source.find("extern int __nd_probe_hook();"), NotFound) << Source;
 }
 
+/// The line after the first line of \p Source that is \p Line.
+std::string lineAfter(llvm::StringRef Source, llvm::StringRef Line) {
+  const size_t At = Source.find((Line + "\n").str());
+  if (At == llvm::StringRef::npos)
+    return {};
+  return Source.substr(At + Line.size() + 1).split('\n').first.str();
+}
+
 TEST(CSymbolNames, DefinitionsStepAsideFromTheCRuntime) {
   const std::string Source = emitHighC(
       {function("_start", 0x1000, {callStatement("_helper", 0x1100)}),
@@ -303,9 +311,54 @@ TEST(CSymbolNames, DefinitionsStepAsideFromTheCRuntime) {
   EXPECT_NE(Source.find(" start("), NotFound) << Source;
   EXPECT_NE(Source.find(" init("), NotFound) << Source;
   EXPECT_EQ(Source.find(" _start("), NotFound) << Source;
-  // Other definitions keep their names.
+  // Each names its symbol above its definition, as the listing names it.
+  EXPECT_NE(lineAfter(Source, "/* _start */").find(" start("), NotFound)
+      << Source;
+  EXPECT_NE(lineAfter(Source, "/* _init */").find(" init("), NotFound)
+      << Source;
+  // Other definitions keep their names, which need no comment.
   EXPECT_NE(Source.find(" _helper("), NotFound) << Source;
   EXPECT_NE(Source.find("_helper();"), NotFound) << Source;
+  EXPECT_EQ(Source.find("/* _helper */"), NotFound) << Source;
+}
+
+TEST(CSymbolNames, LLVMCDefinitionsStepAsideFromTheCRuntime) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+define void @_fini() {
+  ret void
+}
+define i64 @_helper() {
+  ret i64 0
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(lineAfter(Source, "/* _fini */").find(" fini("), NotFound)
+      << Source;
+  EXPECT_NE(Source.find(" _helper("), NotFound) << Source;
+  EXPECT_EQ(Source.find("/* _helper */"), NotFound) << Source;
+}
+
+TEST(CSymbolNames, ANumberedDefinitionNamesItsSymbolAndItsCallsReachIt) {
+  // Two files of a program each define a static helper; main calls the
+  // second.
+  const std::string Source =
+      emitHighC({function("helper", 0x1100, {}), function("helper", 0x1200, {}),
+                 function("main", 0x1300, {callStatement("helper", 0x1200)})},
+                BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(lineAfter(Source, "/* helper */").find(" helper_2("), NotFound)
+      << Source;
+  EXPECT_NE(Source.find("helper_2();"), NotFound) << Source;
+  // No other function stands for the second.
+  EXPECT_EQ(Source.find("helper_1200"), NotFound) << Source;
 }
 
 TEST(CSymbolNames, LLVMCDeclaresCxxImportsByMangledName) {
@@ -358,7 +411,8 @@ define i64 @install(i64 %handler) {
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
   EXPECT_NE(Source.find("__cxa_atexit(handler, 0, 0)"), NotFound) << Source;
-  EXPECT_NE(Source.find("(void*)__cxa_atexit"), NotFound) << Source;
+  // The slot holds the symbol's address, whichever kind of object it names.
+  EXPECT_NE(Source.find("(void*)&__cxa_atexit"), NotFound) << Source;
   EXPECT_EQ(Source.find("_cxa_atexit"), Source.find("__cxa_atexit") + 1)
       << Source;
 }

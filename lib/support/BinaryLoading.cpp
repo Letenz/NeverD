@@ -102,6 +102,7 @@ Expected<BinaryImage> loadBinary(const std::filesystem::path &Path,
   if (!ImgOrErr)
     return ImgOrErr.takeError();
   normalizeBinaryMetadata(*ImgOrErr);
+  ImgOrErr->numberSharedFunctionNames();
   return std::move(*ImgOrErr);
 }
 
@@ -126,6 +127,7 @@ Expected<BinaryImage> loadBinaryBuffer(llvm::MemoryBufferRef Buffer,
   if (!Image)
     return Image.takeError();
   normalizeBinaryMetadata(*Image);
+  Image->numberSharedFunctionNames();
   return std::move(*Image);
 }
 

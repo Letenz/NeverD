@@ -49,23 +49,47 @@ bool RegistrationStateSolver::initializeContracts() {
       const bool Leaf =
           Callee.CalleeKind == RegistrationCalleeFrameContract::Kind::Leaf;
       const bool Throw = Callee.isThrow();
+      const bool Initializer = Callee.isInitializer();
+      const bool Member =
+          Leaf && (!Callee.ECXReads.empty() || !Callee.ECXWrites.empty()) &&
+          Callee.CallerPCWrites.empty();
       if (!charge(1) || !Callee.Target || Callee.Target > UINT32_MAX ||
-          Callee.StackPopBytes || (!Leaf && !Throw) ||
-          Callee.DoesNotReturn != Throw ||
-          ((Leaf || Callee.isRethrow() || Callee.isRuntimeThrow()) &&
+          (Initializer || Member
+               ? Callee.StackPopBytes > UINT16_MAX ||
+                     Callee.StackPopBytes % 4 ||
+                     (Leaf && Callee.StackPopBytes / 4 >= limits::kMaxCallArgs)
+               : Callee.StackPopBytes != 0) ||
+          (!Leaf && !Throw && !Initializer) || Callee.DoesNotReturn != Throw ||
+          (Callee.HasIndependentScalarReturn && !Leaf) ||
+          ((Leaf || Initializer || Callee.isRethrow() ||
+            Callee.isRuntimeThrow()) &&
            (Callee.ThrownTypeVA || Callee.ThrownObjectSize)) ||
           (Throw && (!Callee.ECXReads.empty() || !Callee.ECXWrites.empty())) ||
           (Throw && !Callee.isRethrow() && !Callee.isRuntimeThrow() &&
            (!Callee.ThrownTypeVA || Callee.ThrownTypeVA > UINT32_MAX ||
             !Callee.ThrownObjectSize ||
-            Callee.ThrownObjectSize > limits::kMaxRegistrationEHStateWork)) ||
+            Callee.ThrownObjectSize > limits::kMaxSourceCallBorrowedBytes)) ||
           !validObjects(Callee.ECXReads) || !validObjects(Callee.ECXWrites) ||
+          !validObjects(Callee.ECXInitialized) ||
+          (Initializer != !Callee.ECXInitialized.empty()) ||
+          (Initializer && !Callee.CallerPCWrites.empty()) ||
           !validImageRanges(Callee.ImageReads) ||
           !validImageRanges(Callee.ImageWrites) ||
           !validImageRanges(Callee.CallerPCWrites) ||
           !CalleeIndices.emplace(Callee.Target, CalleeIndices.size()).second) {
         Result.Diagnostics.push_back("registration callee contract is invalid");
         return false;
+      }
+      for (const auto &Initialized : Callee.ECXInitialized) {
+        bool Covered = false;
+        for (const auto &Write : Callee.ECXWrites) {
+          if (!charge(1))
+            return false;
+          Covered |=
+              Write.Begin <= Initialized.Begin && Initialized.End <= Write.End;
+        }
+        if (!Covered)
+          return false;
       }
       if (!Callee.isRuntimeThrow() && !Callee.RuntimeThrowInfos.empty())
         return false;
@@ -147,8 +171,8 @@ bool RegistrationStateSolver::initializeContracts() {
             Leaf.CalleeKind != RegistrationCalleeFrameContract::Kind::Leaf ||
             Leaf.StackPopBytes || Leaf.DoesNotReturn || Leaf.ThrownTypeVA ||
             Leaf.ThrownObjectSize || !Leaf.RuntimeThrowInfos.empty() ||
-            !Leaf.CallerPCWrites.empty() || !validObjects(Leaf.ECXReads) ||
-            !validObjects(Leaf.ECXWrites) ||
+            !Leaf.ECXInitialized.empty() || !Leaf.CallerPCWrites.empty() ||
+            !validObjects(Leaf.ECXReads) || !validObjects(Leaf.ECXWrites) ||
             !validImageRanges(Leaf.ImageReads) ||
             !validImageRanges(Leaf.ImageWrites)) {
           Result.Diagnostics.push_back("registration cleanup call is invalid");
@@ -166,7 +190,7 @@ bool RegistrationStateSolver::validObjects(
   int32_t PreviousEnd = 0;
   for (const auto &Range : Ranges) {
     if (!charge(1) || Range.Begin < PreviousEnd || Range.End <= Range.Begin ||
-        Range.End > int64_t(limits::kMaxRegistrationEHStateWork))
+        Range.End > int64_t(limits::kMaxSourceCallBorrowedBytes))
       return false;
     PreviousEnd = Range.End;
   }
@@ -185,6 +209,35 @@ bool RegistrationStateSolver::validImageRanges(
   return true;
 }
 
+bool RegistrationStateSolver::frameObjectIsDisjointFromAdministration(
+    int64_t Begin, int64_t End) const {
+  if (End <= Begin)
+    return false;
+  auto Overlaps = [&](int64_t Slot, int64_t Width) {
+    return Begin < Slot + Width && Slot < End;
+  };
+  // C++ owns SavedESP below its three-word node. SEH additionally owns the
+  // exception-pointer slot between SavedESP and its four-word node. These
+  // are runtime administration even when a source store left scalar contents.
+  int64_t Administration =
+      int64_t(*Chain.RegistrationOffset) - (KnownCxx ? 4 : 8);
+  if (Chain.RealignedFrame)
+    Administration = std::min(
+        Administration, int64_t(Chain.RealignedFrame->SavedParentFrameOffset));
+  if (Overlaps(Administration,
+               int64_t(*Chain.TryLevelOffset) + 4 - Administration))
+    return false;
+  if (EH4) {
+    // Cookie slots can lie below the contiguous registration area. Incomplete
+    // placement evidence cannot authorize an object at an invented offset.
+    if (!EHCookieSlot || (Chain.GSCookieOffset != -2 && !GSCookieSlot) ||
+        Overlaps(*EHCookieSlot, 4) ||
+        (GSCookieSlot && Overlaps(*GSCookieSlot, 4)))
+      return false;
+  }
+  return true;
+}
+
 bool RegistrationStateSolver::projectFrameObject(
     const Domain &State, int32_t Object, std::optional<int32_t> SP,
     llvm::ArrayRef<RegistrationObjectExtent> Extents,
@@ -196,15 +249,11 @@ bool RegistrationStateSolver::projectFrameObject(
       return false;
     const int64_t Begin = int64_t(Object) + Extent.Begin;
     const int64_t End = int64_t(Object) + Extent.End;
-    // Registration/SavedESP, saved EBP and the caller PC cannot be objects.
-    // The realigned frame additionally owns a distinct saved entry EBP.
-    const int64_t Administration =
-        Chain.RealignedFrame
-            ? Chain.RealignedFrame->SavedParentFrameOffset
-            : int64_t(*Chain.RegistrationOffset) - (KnownCxx ? 4 : 0);
-    if (Begin < *SP || Begin < -int64_t(limits::kMaxRegistrationEHStateWork) ||
+    // Saved EBP and the caller PC lie above the source allocation. The common
+    // administration proof also protects runtime slots within that allocation.
+    if (Begin < *SP || Begin < -int64_t(limits::kMaxSourceCallBorrowedBytes) ||
         End > (KnownCxx ? *Chain.cxxRuntimeFrameOffset() : 0) ||
-        (Begin < int64_t(*Chain.TryLevelOffset) + 4 && Administration < End) ||
+        !frameObjectIsDisjointFromAdministration(Begin, End) ||
         !charge(size_t(End - Begin) + State.Frame.cellCount()))
       return false;
     if (Reads) {

@@ -26,6 +26,7 @@
 
 #include "neverd/analysis/LowIRRefinement.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/symbolic/SymExec.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -2243,9 +2244,13 @@ class Checker {
         for (int S : B.Succs)
           if (!Unique.insert(S).second)
             fail(Status::Invalid, "duplicate CFG successor");
-        for (const auto &Op : B.Ops)
+        for (const auto &Op : B.Ops) {
+          if (isLowRawEnvironmentRequirement(Op))
+            fail(Status::Unsupported,
+                 "raw environment requirement has no static proof contract");
           if (Op.NumInputs > 6)
             fail(Status::Invalid, "operand capacity exceeded");
+        }
         for (const auto &Op : B.Ops) {
           checkScratch(Op.Output);
           for (unsigned I = 0; I != Op.NumInputs; ++I)

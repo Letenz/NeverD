@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b3bd2a5ad29930b12eb5d1925da192cb6a9a5df79f0048dfc3e3841b200bb189 -->
+<!-- i18n-source: 09eca35d8bd805528aff87341978b9aad368d02830f1ed3e8fb870f2e362b442 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -1181,9 +1181,9 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all43 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all57 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-61 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+64 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
 native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
 ```
 
@@ -1206,7 +1206,7 @@ partial outputs and overlaps unsupported before all output / zero prefix is not 
 ordered read write exception copyout / first EFAULT14 after later whole writable copies
 792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
 immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
-61 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
+64 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
@@ -1222,3 +1222,564 @@ complete nonnull mask unsupported / no guessed signal state
 shared select bitmap capacity provider output owner
 918 mixed controls and captures / 729 literal controls and 189 provider captures
 ```
+
+## 明示的な通常ファイルのモード変更
+
+chmod15、fchmod124、fchmodat467 は mode_mutations の初期通常ファイルと固定仮想 ctime を使用します。空の objects は環境のみを宣言し、provider 成功を付与しません。省略は未知で、静的クエリ環境と併用できません。ACL、MAC、追加リスナー、特権の回避、失効、ファイル/ディレクトリ lease と変更前の待機・通知を除外します。VM mapping lease と他の操作の権限は独立です。
+
+唯一の認可層は完全な現在 stat と要求を比較し、明示された非 root の実効資格情報を使います。非所有者の異なるモード要求は EPERM、同じモードは所有権だけでは拒否できません。ただし成功には常に物体固有の provider grant が必要です。パスは実際の現在ディレクトリごとに SEARCH を検査し、拒否の EACCES は欠落名より先です。未知のグループ・資格情報・記録は未対応です。読み取り専用 FD はパス SEARCH が不要です。成功は通常権限と ctime だけを変更し、バイト、その他の記録、カーソル、属性、保存量、VM 寿命を保ちます。grant は dup、ハードリンク、rename、保持された unlink 物体に追従し、新規物体や再利用名に継承されず、無効な記録を復元しません。
+
+不正な低32フラグの EINVAL はポインタ/FD より先で、独立した入力エラーと絶対パスの dirfd 無視は共通順序を保ちます。NOFOLLOW は終端リンクを保持し ANY は前段の展開を禁じます。ディレクトリ、リンク、特殊モード、選択 root は未対応です。54の原生呼び出しイベントと31の保護 statを検査します。mainの戻り値37は原始exitイベントを追加しません。所有者の450観測は非所有者の原生証拠ではありません。63/78一覧、ARM64一致234件は実行成功が必要です。Intel原生、実機iOS、一般権限、完全なOS/フレームワークは未完です。
+
+```text
+chmod15 / fchmod124 / fchmodat467 / low32 mode & ALLPERMS07777
+mode_mutations / objects / path / time / fixed virtual ctime
+effective explicit credential / actual current directory SEARCH
+ordinary security attributes / no ACL MAC file-directory leases or lifecycle effects
+same current permissions: no WRITE_SECURITY / nonowner not denied solely for ownership
+different current permissions: WRITE_SECURITY / nonroot nonowner EPERM1
+object provider grant still required for every success / no grant inference
+stat current-validity owner / invalidated records never restored
+type bytes offsets xattrs storage and VM mapping leases preserved
+AT_SYMLINK_NOFOLLOW0x20 / AT_SYMLINK_NOFOLLOW_ANY0x800
+flags EINVAL22 before path EFAULT14 / relative bad FD EBADF9 / absolute FD bypass
+empty declaration supplies environment without object provider grants
+missing names ENOENT2 only after all required SEARCH / denied SEARCH EACCES13
+SDK-free54 service records / 54 native calls / 31 guarded stat records / main return is not a raw exit event
+OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState
+64 current native-common cases / 79 mandatory workloads per platform
+ARM64 matching native mandatory237 / native Intel and physical iOS unverified
+450 original owner observations / 414 literal controls and 36 final-link provider captures
+nonowner authorization is source/model evidence, not owner-native evidence
+all57 other file routes closed before preflight / static query declarations incompatible
+native guest5s / compile120s / build-C++1200s / Python-config300s / docs-caps120s
+```
+
+[XNU chmod/fchmodat/fchmod](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU current-mode authorization and lease lifecycle](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c).
+
+## 明示的な通常ファイルの所有権変更
+
+ownership_mutations は初期通常ファイルごとの provider と固定仮想 ctime を宣言します。空の objects は環境だけを宣言し、省略は未知です。mode_mutations とは独立で、静的クエリ環境とは併用できません。現在の完全な属性と明示的な非 root 実効資格情報を使い、第三者 UID の拒否、対象グループの既知の所属、TAKE_OWNERSHIP、所有者の WRITE_SECURITY の順に判定します。未知の所属は未対応です。低32 UINT32_MAX は非アクティブです。両方が非アクティブでも provider が必要ですが ctime を含む記録は不変です。アクティブな ID は同じ値でも宣言 ctime を設定します。実際の現在ディレクトリの SEARCH を確認し、fchownat は NOFOLLOW0x20 のみを受け付け、ANY0x800 は EINVAL です。共有物体は grant を保持し、新規物体や再利用名は継承せず、無効な記録は復元しません。他のデータ、名前空間、属性、保存量と VM lease は独立です。以下は境界と検証要件です。所有者の原生観測は非所有者の証拠ではなく、Intel 原生、実機 iOS と完全な OS/フレームワークは未完です。
+
+```text
+chown16 / fchown123 / fchownat468 / low32 UID GID / UINT32_MAX inactive
+ownership_mutations / objects / path / time / independent provider authority
+explicit effective nonroot credentials / actual current directory SEARCH
+changed third-party UID EPERM1 before target-group lookup
+changed GID: known membership required / unknown membership unsupported
+TAKE_OWNERSHIP == CHANGE_OWNER / no ordinary POSIX fallback
+changed UID to caller EPERM1 / group-only WRITE_SECURITY requires current owner
+same IDs: no change-derived security rights / provider still required
+both IDs inactive: provider still required / entire record and ctime unchanged
+any active ID: fixed virtual ctime even for numerically same IDs
+AT_SYMLINK_NOFOLLOW0x20 only / ANY0x800 EINVAL22 before path or FD
+initial regular object grants / dup hardlink rename held unlink retain identity
+creation and name reuse do not inherit grants / invalidated records never restored
+mode data namespace xattr storage and VM mapping leases keep independent contracts
+SDK-free77 service records / 77 authored raw calls / 41 guarded stat records
+separate main return38 / OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState
+64 current native-common cases / 79 mandatory workloads per platform
+ARM64 matching native mandatory237 / actual successful execution required
+720 owner observations / 702 literal controls and 18 final-link provider captures
+nonowner authorization is source/model evidence, not owner-native evidence
+all57 other file routes closed before preflight / static query declarations incompatible
+no ACL MAC listener bypass revocation native file-directory leases or setattr lifecycle
+native Intel and physical iOS unverified / full macOS-iOS environment incomplete
+```
+
+[XNU ownership routes](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ownership actions](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [XNU vnode_setattr provider](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/kpi_vfs.c).
+
+
+## 明示的な通常ファイル全体の助言ロック
+
+flock131 は advisory_locks の一意な objects 文字列で初期通常ファイルの provider を宣言します。省略は未知、空配列は物体を許可しません。ロックは開いた記述に属し、dup、fcntl 複製と dup2 は所有者を共有します。最後の記述子を閉じると解除され、VM マッピングはロックを保持しません。UN > EX > SH、非ブロッキング競合 EAGAIN35 は元の SH を保持します。競合する待機はモデル変更前に未対応で停止します。リンクや名前変更は物体の許可を保持し、新規物体や再利用名は継承しません。以下は検証の境界です。Intel 原生、実機 iOS と完全な OS は未検証または未完です。
+
+```text
+flock131 / Int ABI / low32 FD and how / raw high carriers retained
+advisory_locks / objects / explicit initial ordinary regular-object provider
+missing environment unknown / empty objects no provider / initial locks empty
+complete initial metadata / flags0 / ordinary mode / link_count1 / no initial inode alias
+path+NUL shares input byte budget / strict unique string array / unknown keys rejected
+FD lookup first / known vnode without action EBADF9 / unrelated action bits ignored
+UN8 > EX2 > SH1 / NB4 selects nonblocking / readonly EX allowed
+whole-file description owner / dup fcntl duplication dup2 share one owner
+separate open descriptions arbitrate / shared-shared compatible / exclusive conflicts
+nonblocking conflict EAGAIN35 before old-lock removal / failed upgrade keeps SH
+success replaces upgrade or downgrade / uncontended blocking completes immediately
+contended blocking unsupported before model mutation / no wait or unlock fabrication
+current descriptor membership owns lock lifetime / last duplicate close releases lock
+VM mapping Contents leases do not retain description locks
+runtime hardlink rename held zero-name unlink keep object grant
+created or reused names do not inherit provider grants / path registry not lock authority
+flock preserves bytes cursors stat xattrs and allocation / successful lock sets persistent FWASLOCKED0x4000
+mode ownership data namespace policies independent / invalidated records never restored
+all57 other file routes closed before preflight / either static query rejects even empty declaration
+SDK-free77 service records / 13 guarded full stat observations / separate main return39
+OrdinaryAdvisoryLocksKeepDescriptionAndObjectLifetime
+64 current native-common cases / 79 mandatory workloads per platform
+ARM64 matching native mandatory237 / actual successful execution required
+720 literal native lock observations / 522 action controls and198 lifetime controls
+native O0 O1 O2 / raw SVC and syscall / three high-carrier variants
+no external or interprocess peers / no POSIX OFD range locks / no fork or descriptor transfer
+no MAC listener revocation provider error native-lease or blocking-wait lifecycle
+native Intel and physical iOS unverified / full macOS-iOS environment incomplete
+```
+
+
+## 通常ファイルの明示的な整合性同期完了
+
+fsync95 と fsync_nocancel408 は、取消要求のない既存の単一スレッド設定で Fsync/Int の所有者を共有します。DarwinFileOptions::Synchronization または厳格な darwin_files.synchronization={"objects":["/data"]} は、成功済みのモデル変更が確定し、保留作業や取消要求のない即時成功プロバイダーを宣言します。ゼロはその宣言された完了を確認するだけで、ホスト記憶装置のフラッシュや物理的な永続性を保証しません。XNU の通常入口は先に取消を確認し、nocancel 入口は確認しません。一般的な取消、プロバイダー障害、リース、非同期待機は未対応です。
+
+```text
+fsync95 / fsync_nocancel408 / Fsync Int owner / low32 FD / raw high carriers retained
+synchronization / objects / explicit immediate successful file integrity completion
+successful modeled mutations already committed / no deferred provider work or requested cancellation
+zero acknowledges declared provider / no host storage flush / no physical durability claim
+normal XNU entry tests cancellation / nocancel entry does not / full cancellation unsupported
+complete ordinary initial regular objects / flags0 / link_count1 / no initial inode alias
+unique strings / at most256 objects / canonical path+NUL shares catalogue byte budget
+missing environment unknown / empty objects no completion grant
+FD lookup first / absent or closed descriptor EBADF9 even without environment
+opaque streams unsupported kind / directory and symlink descriptions need independent providers
+readonly regular description accepted only with explicit object completion grant
+Contents owns grant / dup fcntl dup2 select current description and object
+runtime hardlink rename held zero-name unlink retain original grant
+created and reused names do not inherit initial completion grants
+VM mapping and retained Contents cannot make closed descriptors valid
+bytes cursors flags stat xattrs allocation namespace and advisory locks unchanged
+unknown metadata and xattrs remain unknown / no observation restoration
+all57 other logical file routes closed before preflight / both static queries reject empty declaration
+one alias shares owner / no extra query route for fsync_nocancel
+SDK-free68 service records / 20 guarded full stat observations / separate main return40 / stdout S
+OrdinaryFileSynchronizationKeepsProviderAndCommittedState
+68 current native-common cases / 83 mandatory workloads per platform
+ARM64 matching native mandatory249 / actual successful execution required
+504 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
+176-byte guarded native stat and cursors unchanged / actual native times
+file/data grants never supply F_FULLFSYNC51 F_BARRIERFSYNC85 / global sync remains unsupported
+no provider error resource-fork shadow-flush lease revocation wait or full cancellation lifecycle
+native Intel and physical iOS unverified / full macOS-iOS environment incomplete
+```
+
+[XNU fsync paths](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU descriptor lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c), [XNU syscall declarations](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master).
+
+
+## 通常ファイルの明示的なデータ整合性同期完了
+
+fdatasync187 は独立した Fdatasync/Int 操作です。XNU は取消を確認して MNT_DWAIT を要求し、fsync95/fsync_nocancel408 は MNT_WAIT を要求します。DarwinFileOptions::DataSynchronization または厳格な darwin_files.data_synchronization={"objects":["/data"]} は、成功したモデルのデータ変更が確定し、保留作業も取消要求もない即時成功を宣言します。ファイル Synchronization とデータ DataSynchronization の許可は相互に代用できません。ゼロは宣言された完了だけを確認し、ホストのフラッシュや物理的永続性を保証しません。一般の取消、プロバイダー障害、リースと非同期待機は未知のままです。
+
+```text
+fdatasync187 / distinct Fdatasync Int purpose / low32 FD / raw high carriers retained
+XNU tests cancellation and requests MNT_DWAIT / fsync95 and fsync_nocancel408 request MNT_WAIT
+data_synchronization / objects / explicit immediate successful data integrity completion
+DataSynchronization and Synchronization grants never supply each other's purpose
+successful modeled data mutations already committed / no deferred provider work or requested cancellation
+zero acknowledges declared provider / no host storage flush / no physical durability claim
+complete ordinary initial regular objects / flags0 / link_count1 / no initial inode alias
+unique strings / at most256 objects / canonical path+NUL shares catalogue byte budget
+missing environment unknown / empty objects no data completion grant
+FD lookup first / absent or closed descriptor EBADF9 even without environment
+opaque streams unsupported kind / directory and symlink descriptions need independent providers
+readonly regular description accepted only with explicit data object completion grant
+Contents owns separate grants / dup fcntl dup2 select current description and object
+runtime hardlink rename held zero-name unlink retain original grant
+created and reused names do not inherit initial completion grants
+VM mapping and retained Contents cannot make closed descriptors valid
+bytes cursors flags stat xattrs allocation namespace and advisory locks unchanged
+unknown metadata and xattrs remain unknown / no observation restoration
+all57 other logical file routes closed before preflight / both static queries reject empty declarations
+fsync_nocancel408 remains one Fsync alias / fdatasync187 is not that alias
+SDK-free41 service records / 11 guarded full stat observations / separate main return41 / stdout D
+OrdinaryDataSynchronizationKeepsProviderAndCommittedState
+68 current native-common cases / 83 mandatory workloads per platform
+ARM64 matching native mandatory249 / actual successful execution required
+252 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
+176-byte guarded native stat and cursors unchanged / actual native times
+directory and pipe captures do not expand ordinary initial regular-object provider
+file/data grants never supply F_FULLFSYNC51 F_BARRIERFSYNC85 / global sync remains unsupported
+no provider error resource-fork shadow-flush lease revocation wait or full cancellation lifecycle
+native Intel and physical iOS unverified / full macOS-iOS environment incomplete
+```
+
+[XNU synchronization purposes](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU descriptor lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c), [XNU syscall declarations](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master).
+
+
+## 新規通常ファイルの明示的な同期完了プロバイダー
+
+各独立宣言は created_regular_objects Boolean（C++ CreatedRegularObjects）を受け付けます。true は完全な CreationPolicy を要求し、通常ファイルの作成成功時だけ該当する即時完了を許可します。省略と false は従来の既定値を保ちます。必須 objects は初期オブジェクトだけを許可し、名前の再利用で旧許可を移しません。ファイルとデータの許可は独立です。
+
+```text
+CreatedRegularObjects / created_regular_objects / defaultfalse / mandatory objects array
+synchronization={"objects":[],"created_regular_objects":true}
+data_synchronization={"objects":[],"created_regular_objects":true}
+true requires complete CreationPolicy / current umask / parent metadata / valid inode and mutation policy
+ordinary regular creation commit only / independent File95+408 and Data187 grants
+initial grants and creation grants never supply each other / existing O_CREAT receives no new grant
+name reuse never transfers old authority / fresh explicit creation grant may authorize a replacement
+false or omission retains old default / missing and empty environments remain distinct
+single set-provider parser and input byte owner / no extra path entry FD inode or byte charge
+failed creation preserves admission resources and grants / directories links streams remain unsupported
+Contents lifetime through dup fcntl dup2 runtime links rename held zero-name and mapping leases
+closed FD returns EBADF9 / retained Contents or VM cannot revive a descriptor
+bytes stat cursor flags xattrs allocation namespace locks unchanged / no observation restoration
+completion grants supply no mode ownership xattr flock or general DAC authority
+both immutable query environments reject even false declarations / all57 other logical routes remain closed
+SDK-free147 service records / 33 guarded full stat observations / separate main return42 / stdout C
+CreatedRegularSynchronizationKeepsIndependentProvidersAndState
+68 current native-common cases / 83 mandatory workloads per platform / ARM64 matching native mandatory249
+702 original native literal observations / O0 O1 O2 / raw SVC and syscall / three upper carriers
+freshly created target without preparatory sync / own176-byte guarded native stat and content preserved
+native and model post-write F_GETFL65538 / existing FileWasWritten0x10000 / own initial flags captured and preserved
+immediate successful declared provider / committed model mutations / no deferred work or requested cancellation
+no host flush or physical durability / general cancellation provider errors leases waits remain unknown
+native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
+```
+
+
+## 新規通常ファイルの明示的ロック許可
+
+独立した advisory_locks は created_regular_objects（C++ CreatedRegularObjects、既定 false）を受け付けます。true は完全な CreationPolicy を要求し、作成に成功した通常ファイルだけを許可します。必須 objects は初期オブジェクトを別に許可し、既存ファイルの O_CREAT や名前の再利用で許可は移りません。成功した flock は F_GETFL に見える開いた記述の持続状態 FWASLOCKED0x4000 を設定します。解除しても履歴は残り、F_SETFL では生成も消去もできません。
+
+```text
+advisory_locks={"objects":[],"created_regular_objects":true}
+CreatedRegularObjects / created_regular_objects / defaultfalse / mandatory unique objects array
+true requires complete CreationPolicy / regular creation commit only / initial objects independent
+existing O_CREAT and reused names transfer no authority / explicit replacement grant is fresh
+single set-provider parser and admission / shared path+NUL budget / no extra entry byte FD or inode
+failed creation preserves budgets and next inode / directories links streams receive no regular grant
+Contents grants follow hardlink rename held zero-name and mapping / current FD lookup first
+description owns lock and history / dup fcntl dup2 share / independent opens own separate history
+successful flock sets FileWasLocked FWASLOCKED0x4000 / F_GETFL includes persistent description status
+unlock preserves history / failed and unsupported actions do not set it
+F_SETFL accepts observed history for roundtrip but cannot manufacture or clear it
+symbolic recognized history returns ENOTTY25 / opaque streams zero / actual history unchanged
+written created F_GETFL65538 becomes81922 after successful flock / readonly0 becomes16384
+nonblocking conflict35 before old-lock removal / failed upgrade retains shared lock
+last description close releases lock / VM Contents lease cannot retain lock or revive closed FD9
+flock preserves bytes stat cursor xattrs allocation namespace and observation validity
+mode ownership completion xattr permissions remain independent / no general DAC grant
+both static query declarations reject even false environment / all57 other file routes closed
+SDK-free131 service records / 12 guarded full stat observations / separate main return43 / stdout L
+CreatedRegularAdvisoryLocksKeepProviderAndDescriptionStatus
+68 current native-common cases / 83 mandatory workloads per platform / ARM64 matching native mandatory249
+486 original native flock observations / 72 fcntl history controls / O0 O1 O2 / raw SVC and libc
+162 additional native symbolic and pipe status controls / O0 O1 O2 / two APIs three carriers
+whole176-byte guarded native stat / dirty bytes and current cursors preserved / literal flag transitions
+failed first flag-preservation assumption retained / sole semantic owner repaired from native and pinned XNU
+native5s guest5000000us quantum1024 public10s unchanged / no timing stability claim
+no external peers range locks blocking waits cancellation revocation leases or host provider qualification
+native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
+```
+
+
+## Explicit mode and ownership providers for created files
+
+新しく作成する通常ファイルには、明示的な宣言によりモード変更と所有者変更の権限を個別に与えられます。両方のフラグは既定で無効であり、有効にするには完全な作成ポリシーが必要です。既存の権限は名前の再利用で移りません。成功した変更は mutation_time を仮想 ctime に使用します。所有者とグループを変更しない要求もプロバイダーを必要とし、全バイトを保持します。不明なメタデータやグループ所属は未対応のままです。
+
+
+```text
+mode_mutations={"objects":[],"created_regular_objects":true}
+ownership_mutations={"objects":[],"created_regular_objects":true}
+two independent timed creation providers / defaultfalse / mandatory objects array
+created ModeTime and OwnershipTime use CreationPolicy.Mutation.Time as explicit virtual ctime
+initial fixed times remain independent / existing O_CREAT grants nothing / fresh replacement only
+both UINT32_MAX IDs require provider execution and preserve every byte including ctime
+explicit effective groups20/31 / real GID31 alone does not prove effective membership
+attribute grants cannot restore invalidated metadata or supply write namespace lock completion xattr authority
+SDK-free235 service records / 137 guarded full stat observations / separate main return44 / stdout A
+virtual-only nine service records / separate main return45 / 320 independent literal guarded bytes
+CreatedRegularAttributesKeepIndependentProvidersAndObjectState
+69 current native-common cases / 84 mandatory workloads per platform / ARM64 matching native mandatory252
+450 original native mode observations / 720 original native ownership observations
+native trace not captured / virtual literal bytes not a native timestamp oracle
+native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
+```
+
+
+## Explicit full and barrier completion providers
+
+明示的な完全同期とバリア同期のプロバイダーは通常ファイルの操作を独立して完了します。既存オブジェクトと新規作成オブジェクトの権限は別です。作成フラグは既定で false で、有効にするには完全な作成ポリシーが必要です。完了はモデルの全観測を保持し、未使用の引数を無視します。バリアは直接対応し、マウントによる昇格や代替処理はありません。ホストのストレージ書き出しや物理的な永続性は保証しません。
+
+
+```text
+full_synchronization={"objects":[],"created_regular_objects":true}
+barrier_synchronization={"objects":[],"created_regular_objects":true}
+F_FULLFSYNC51 / F_BARRIERFSYNC85 / existing raw fcntl92 and406 / low32 FD and command
+two independent initial and new-regular providers / strict objects array / defaultfalse / complete CreationPolicy
+full and barrier grants never borrow file data or each other / reused names transfer no authority
+direct barrier support / no mount promotion or fallback / no host flush or physical durability
+bad FD before opaque kind query scope regular target environment and exact object grant
+unused argument ignored without reading memory / complete model observations unchanged
+directory link and failed creation publish no regular grant / VM mappings never revive closed FDs
+FullAndBarrierSynchronizationKeepIndependentObjectState
+51 private test identities / pages4096 and16384 / commands51 and85
+SDK-free148 authored service records / 38 guarded full stat observations / separate main46 / stdout F
+virtual-only ten services / separate main47 / 320 independent literal guarded bytes / not native metadata
+70 current native-common cases / 85 mandatory workloads per platform / ARM64 matching native mandatory255
+216 original native raw calls / 648 guarded176-byte stat comparisons / native pipe EBADF9
+native observed completion does not distinguish direct barrier from mount promotion
+native Intel and physical iOS unverified / full Apple frameworks remain incomplete
+```
+
+The native constants and descriptor behavior are checked against [Apple XNU xnu-11417.140.69 kern_descrip.c](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c) and [fcntl.h](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h). Native non-vnode EBADF observations do not identify opaque model-native kinds.
+
+
+## Explicit ordinary timestamp mutations
+
+明示的な時刻変更プロバイダーは通常ファイルを独立に認可します。既存オブジェクトと新規作成に成功した通常ファイルの権限は別です。作成フラグは既定で false で、true には完全な作成ポリシーが必要です。NULL 要求は別途宣言した現在時刻のサンプルだけを使います。要求時刻の保存規則と固定の仮想 ctime は別の観測です。ホストの時計やファイルシステムは参照せず、完全な macOS/iOS フレームワーク環境は未完成です。
+
+
+```text
+DarwinFileTimestampMutationOptions / timestamp_mutations / objects / created_regular_objects defaultfalse
+utimes138 and futimes139 / LP64 two timeval records32 bytes / signed64 seconds signed32 microseconds ignored padding
+virtual request-storage rule / signed wide nanoseconds saturated to int64 / floor-normalized seconds nanoseconds
+birth reduction only for earlier nonnegative resulting mtime including zero / negative mtime preserves birth
+fixed virtual ctime is separate from request conversion and current-time sample / no host filesystem identity inferred
+NULL uses only explicit TimeOfDay / zero sample valid / missing sample stays unknown / no timezone or Mach prerequisite
+utimes pathname before input / futimes input before low32 FD / fully unmapped EFAULT14 / partial input unsupported
+explicit effective ownership even equal times EPERM1 / current-time owner or proved ordinary POSIX write / group knowledge preserved
+all57 other file routes closed before preflight / both static queries reject even empty timestamp declaration
+ordinary regular Contents grants retain actual dup link rename held-zero-name lifetime / replacement names inherit none
+opaque kind unsupported / native pipe EINVAL22 does not identify model kind / directories and symbolic vnodes outside provider
+62 private identities / pages4096 and16384 / full160-byte stat guards / independent dirty bytes locks xattrs and real VM
+TimestampMutationsKeepExplicitClockAndObjectAuthority / 124 authored common services / main48 stdout T
+virtual-timestamp-creation / ten authored services / main49 / literal320 guarded bytes / explicit plus NULL request
+351 accepted original ARM64 O0 O1 O2 observations / signed micros saturation and birth limits belong to captured host
+native-common71 / mandatory86 per platform / matching ARM64 native required258 identities
+native Intel and physical iOS unverified / original five-second native and guest bounds unchanged / full Apple frameworks incomplete
+```
+
+The original model references [pinned XNU syscall/vnode ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c) and [ordinary WRITE_ATTRIBUTES authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). The discovered futimes number is139; the rejected206 probe is retained as failure evidence. No XNU implementation was copied.
+
+## Explicit filesystem observations
+
+明示的なファイルシステムのスナップショットは通常ファイルとディレクトリの容量、種類、マウント名を独立に提供します。ゼロ値と空の名前は有効で、ホストのファイルシステムを参照しません。複製した記述子、移動、削除後も開いている実際のオブジェクトに結び付きを保持し、置換された名前には継承しません。新規通常ファイルは明示的な作成フラグと完全な作成ポリシーがある場合だけ、実際の親に結び付いたスナップショットを受け取ります。ファイル環境の問い合わせは利用できますが、完全な macOS/iOS フレームワーク環境は未完成です。
+
+
+```text
+DarwinFileSystemSnapshot / DarwinFileSystemOptions / FileSystemObservations / filesystem_observations
+statfs64 BSD345 and fstatfs64 BSD346 / LP64 record2168 bytes / legacy157158 unsupported
+block_size uint32 io_size int32 / five uint64 counters / filesystem_id two int32 words
+owner type flags subtype uint32 / type_name16 mount_point1024 mounted_from1024 / extended_flags uint32
+reserved seven uint32 words zero / bounded UTF8 NUL-free names / all sixteen JSON members required / zero and empty valid
+explicit exact immediate mount-stat provider / no host query mount identity quota live refresh MAC refusal wait or process mountpoint rewrite
+initial regular directory and symbolic bindings / actual Contents DirectoryNode LinkNode / no target filestat prerequisite or recovery
+created_regular_objects defaultfalse / true requires complete CreationPolicy / successful new regular uses actual bound parent snapshot
+initial children unbound parents default-created directories and links receive none / no fsid device inode or pathname prefix inference
+effective ordinary ancestor search uses shared authorizer and group knowledge / FD query borrows no target DAC credentials or access flags
+pathname and low32 FD kind before output / ENOENT2 EBADF9 EFAULT14 / individually partial output unsupported before effects
+both immutable query domains reject even empty filesystem declaration / all57 other logical file routes closed before preflight
+67 private identities / both4096 and16384 pages bothroutes / full2200 guarded literal / shared16MiB budget
+dup independent opens hardlinks rename directory moves CWD held-unlink reuse / dirty bytes locks xattrs and real VM independent
+FileSystemSnapshotsPreserveLayoutAndIndependentObjectLifetime / 49 authored common services / main50 stdout W
+virtual-filesystem-creation / nine authored services / main51 / independent4400 guarded literal bytes
+114 original ARM64 O0 O1 O2 observations / readonly writeonly directory and held-zero-name FD controls / native pipe EINVAL22 opaque kind unsupported
+native-common72 / mandatory87 per platform / matching ARM64 required261 identities / no captured native service trace
+constant guest validation loops unrolled with every assertion retained / native5s guest5000000us quantum1024 public10s original owner bounds unchanged
+native Intel physical iOS full dyld Mach IPC ObjC Swift Foundation UIKit unqualified / full Apple environment incomplete
+```
+
+Raw BSD statfs64 345 and fstatfs64 346 use the independent FileSystemObservations provider. JSON places a unique array of {"path":canonical_initial_path,"snapshot":complete_record} entries under darwin_files.filesystem_observations.objects. Complete records require block_size, io_size, blocks, free_blocks, available_blocks, files, free_files, filesystem_id, owner, type, flags, subtype, type_name, mount_point, mounted_from and extended_flags. Integer fields accept the established exact integer/string-integer forms and enforce their widths. filesystem_id is exactly two signed32 words. The three strings contain no NUL, are valid UTF8 and fit15/1023/1023 bytes; empty values are explicit. Unknown members, incomplete records, duplicate paths, unknown objects and excess shared input budgets fail before image loading. Every snapshot plus its path reference is charged2168 bytes and NUL-inclusive path cost against the shared16MiB catalogue budget. Otherwise implicit observed directories consume one catalogue entry; directories already declared by metadata, enumeration, attributes or namespace authority are counted once within the shared256-entry limit.
+
+Path lookup follows symlinks and shares effective ordinary ancestor search, requiring only relevant current ordinary ancestor metadata and credentials. Root/special attributes and unresolved external group membership remain unsupported; no target filestat or access-mode authority is inferred. Known invalid/closed FD returns9 and missing/empty path returns2 before output preflight. Known regular, directory and symbolic FD observations need no unrelated credentials or read/write flags. Opaque standard streams remain unsupported; symbolic-vnode FDs require their own independent snapshot. A valid complete output record contains zeroed string padding and seven reserved words; fully unmapped output returns14, while individually partial output stops before effects.
+
+Snapshots bind to actual initial regular/directory/symbolic objects, including implicit directories, and survive dup, independent opens, runtime hardlinks, rename, moved directories/CWD and held zero-name lifetime. Different or reused names inherit no initial grant. Optional created_regular_objects defaultsfalse. True requires complete CreationPolicy and explicitly binds each successful new regular file to its actual parent's already-bound snapshot, if one exists. Unbound parents, initial children, mkdir/symlink and children through new unbound directories receive none. This relation comes from the declared provider, never equality of filesystem_id/device/inode or a pathname prefix. Counters remain exactly declared observations and are not derived from bytes, allocation units or virtual storage limits.
+
+The original model follows the [pinned XNU namei/file-vnode/mount-stat ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c) and the native SDK LP64 layout. No XNU implementation was copied. Native probes verify captured ABI and ordering on their owned test filesystem; dynamic capacity counts and IDs do not establish universal constants, real mount identity, quota or lifecycle. The SDK-free common workload compares stable fields and guards while deliberately excluding all five dynamic capacity counters. The independent virtual workload checks all4400 emitted bytes against authored literals. The first native virtualized round timed out in validation loops; fixed loops are unrolled without changing a single service, assertion, quantum or deadline. Broader default-fatal cleanup and framework execution are separate unfinished work.
+
+## Declared mount enumeration
+
+宣言されたマウント一覧は順序付きキャッシュと明示的な更新結果を提供します。プロセスごとにキャッシュを保持し、重複した記録と空の一覧を正確に扱います。未宣言の一覧は不明のままです。Apple アプリが使うファイルシステム照会を追加しましたが、dyld、Mach IPC、完全な Objective-C/Swift と Foundation/UIKit 環境は未完成です。
+
+```text
+DarwinFileSystemEnumerationOptions / DarwinMountObservation / FileSystemEnumeration / filesystem_enumeration
+getfsstat64 BSD347 Int / shared LP64 record2168 / independent ordered live accessible mounts
+mounts required array / cached complete16 fields required / refreshed complete16 fields optional
+empty table known empty / missing table unsupported / duplicate entries retain order / no inferred mount identity
+NULL output returns full count without refresh / short buffer capacity zero without memory access
+low32 signed byte size promoted to LP64 unsigned before division and narrowed int32 / negative size large capacity
+NOWAIT2 uses current cache unless WAIT1 or DWAIT4 / other bits follow same test / low32 flag carriers
+process cache starts Cached / refresh selects Refreshed before complete EFAULT14 / new process resets cache
+copy complete records sequentially / later fault retains prior output and refresh / partial current record unsupported before its effects
+missing refresh stops before current effects / earlier records stay committed / path and FD snapshots independent
+one catalogue entry per mount / each snapshot2168 bytes / shared256 entries16MiB / public JSON64KiB unchanged
+both static query domains reject empty enumeration / all57 other logical file routes closed before preflight
+MountEnumerationKeepsOrderedSnapshotsAndRefreshCache / common16 authored services main52 stdout M
+virtual-mount-enumeration / 19 authored services main53 / independent19609 full guarded output bytes
+270 ARM64 O0 O1 O2 native observations / count stability and literal guard checks / no universal host counters
+native-common73 / mandatory88 per platform / matching ARM64 required264 identities
+native5s guest5000000us quantum1024 public30s existing method and owner bounds unchanged
+no dead unmount MAC refusal failed refresh asynchronous wait host query or complete Apple framework claim
+```
+
+Raw BSD getfsstat64 347 reads only the explicitly declared mount table. JSON retains the required darwin_files.files array (which may be empty) and adds filesystem_enumeration: {"mounts":[{"cached":complete_snapshot,"refreshed":complete_snapshot}]}. Each snapshot uses all sixteen fields documented for filesystem_observations. Refreshed is optional; its presence declares immediate successful refresh for that mount. Empty mounts is a known empty table. Absence remains unsupported even for count-only requests. Entries model live, accessible mounts in exactly the declared order, including duplicates, without MAC denial, dead or unmounting state, refresh failure or asynchronous provider work.
+
+NULL output returns the full count without refresh. NonNULL output copies only complete 2168-byte records, returning the smaller of table size and capacity. The low signed32 buffer length is promoted to unsigned64 before division and the quotient is narrowed to signed32, as in the pinned XNU ABI; negative lengths therefore have a large positive capacity. Zero capacity does not access the pointer. Flags use the low32 bits: NOWAIT2 selects the current cache unless WAIT1 or DWAIT4 is also present. Otherwise the current mount needs an explicit Refreshed snapshot. Unknown bits follow this same bit test.
+
+Each process begins with Cached. A successful declared refresh selects Refreshed before copyout, so even a completely unmapped destination returning EFAULT14 updates that mount’s cache. Later NOWAIT observes the selected record. New process preparation resets all selections. Sequential records preserve earlier output and cache changes when a later copy faults or lacks a refresh provider. An individually partially accessible record is explicitly unsupported before its own refresh or output; this is not a modeled native partial-copy result.
+
+Each mount consumes one shared catalogue entry and each cached/refreshed snapshot consumes2168 bytes within the existing256-entry and16MiB budgets. The public JSON envelope stays64KiB. Both static query environments reject even an empty table. Enumeration supplies no statfs/fstatfs object binding and derives no identity from equal filesystem IDs, devices, inodes or path prefixes.
+
+Original implementation and tests use [pinned XNU getfsstat64 ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c) and [mount-stat cache updates](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c); no implementation was copied. ARM64 O0/O1/O2 probes retain270 observations with stable before/after counts, high carriers, size and flag boundaries, refresh/fault sequences and guarded output. Actual host counters are evidence for those runs, not virtual constants. Native and virtual workloads remain within native5 seconds, guest5,000,000 microseconds, quantum1024 and public30 seconds.
+
+## Explicit ordinary directory modes
+
+明示的な mode provider は通常のディレクトリとファイルを扱います。初期ディレクトリの権限と新規ディレクトリの独立した設定は、名前空間の変更権限を代替せず、子オブジェクトにも継承されません。完全な dyld、Mach IPC、Objective-C/Swift、Foundation/UIKit 環境と実機 iOS の検証は未完成です。
+
+```text
+directory mode: chmod15 fchmod124 fchmodat467 / ordinary initial regular or directory objects
+CreatedDirectoryObjects=false / created_directory_objects exact Boolean / separate CreatedRegularObjects
+created directory mode requires complete CreationPolicy.Namespace / resulting ctime uses Mutation.Time
+DirectoryNode ModeTime separate from MutationTime / CurrentMetadata never supplies namespace authority
+directory nlink greater than1 valid / equal known Device-Inode aliases rejected / ownership and timestamps require separate providers
+mode changes only permissions and ctime / independent namespace time preserves mode / missing namespace time permanently invalidates stat
+dup independent opens chdir fchdir direct rename exchange held rmdir and reused names / no child grant inference
+directory-mode-mutations59 services / created-directory-mode60 services / 33 full guarded stat144 records / main53 stdout Q
+five software profiles C CLI Python / three matching ARM64 HVF required / native common75 mandatory90 ARM64270
+60 native directory observations plus3 separate unexpanded-symlink controls / ARM64 O0 O1 O2 / native5s guest5000000us quantum1024 public30s
+```
+
+Raw BSD chmod15, fchmod124 and fchmodat467 accept initial ordinary directory objects through the same required mode_mutations.objects array of {path,time} declarations. Complete ordinary directory metadata, flags0, no special permission bits, a valid independent ctime and no known Device/Inode alias are required. Directory nlink may exceed1; regular-only nlink1 is not applied to directories. Equal Device/Inode declarations under different paths remain rejected. A directory grant needs no creator or mutable namespace. Neither a parent grant nor namespace mutability grants mode changes to initial children.
+
+The separate optional created_directory_objects Boolean defaultsfalse. True requires a complete creation_policy including namespace_policy; successful mkdir/mkdirat attaches mode authority to the actual new directory and uses creation_policy.mutation_policy.mutation_time for resulting ctime. created_regular_objects remains independent and never grants directories. Unknown fields, non-Booleans and incomplete policy fail during strict import. Failed creation, existing names, initial objects and name reuse transfer no grant.
+
+The existing effective-credential authorizer and current ancestor SEARCH owner are shared. Ordinary changed-mode nonowner requests return EPERM1, while an equal request can reach the independently required provider. FD lookup precedes authorization; readonly descriptions are eligible. Mode changes preserve all other complete stat fields and all namespace, enumeration, byte/entry/FD/inode accounting, xattrs and VM observations. Directory ownership and explicit timestamp mutation remain outside these mode providers. Special/security/root-caller and symbolic-vnode effects remain unknown.
+
+Namespace changes require their own metadata time and shape. With a directory mutation policy, mkdir/rmdir/direct rename/exchange preserve current mode while applying declared namespace effects. Without it, even a chmod-produced CurrentMetadata becomes permanently unknown and is cleared. A later mode provider cannot recover it or borrow its mode time as a namespace time. Dup, independent opens, chdir/fchdir, direct moves/exchanges and held removed directories follow the actual object; reused names get separate authority.
+
+Original ARM64 macOS O0/O1/O2 probes retain60 directory observations and3 separate final-unexpanded-symlink controls outside the directory provider. The common SDK-free workload performs59 authored services and33 guarded complete stat144 observations, including high carriers, path/fd/*at, CWD, held rename, closed descriptors and unchanged error effects. A native execution returning53/Q validates the authored common behavior without a captured service trace. Virtual initial and created variants independently check every stat byte, including declared mode and namespace times; created execution adds mkdir for60 services. Those virtual values are not native constants. Native nonowner/special security, physical Intel and physical iOS remain unqualified. Native5s, compile120s, per-component build1200s/parallel2, guest5000000us/quantum1024 and public30s remain fixed.
+
+The implementation and original probes use [pinned XNU chmod ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c) and [current-mode authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). No implementation was copied.
+
+## Explicit ordinary directory timestamps
+
+明示的なディレクトリ時刻プロバイダーは、個別に許可された初期ディレクトリと新規ディレクトリの utimes/futimes をサポートします。名前空間、モード、所有権の権限は独立しています。完全な Apple ランタイムとフレームワーク、実機 iOS 検証は未完了です。
+
+```text
+directory timestamps: utimes138 futimes139 / ordinary initial regular or directory objects
+TimestampMutations CreatedDirectoryObjects=false / created_directory_objects strict Boolean / separate CreatedRegularObjects
+created directory timestamp provider requires complete CreationPolicy.Namespace / fixed ctime Mutation.Time
+DirectoryNode TimestampTime independent of ModeTime MutationTime DirectoryEntrySize / unknown metadata never restored
+explicit timestamps require owner even when equal / NULL uses declared TimeOfDay and shared WRITE_ATTRIBUTES authorization
+LP64 timeval32 signed64 seconds signed32 microseconds ignored padding / int64 nanosecond saturation floor normalization / earlier nonnegative mtime reduces birthtime
+directory-timestamp-mutations46 services / created-directory-timestamps47 services / 24 complete guarded stat144 records / main54 stdout T
+five software profiles C CLI Python / three matching ARM64 HVF required / native common75 mandatory90 ARM64270
+141 owned native directory timestamp observations / ARM64 O0 O1 O2 / native5s compiler120s build1200s parallel2 guest5000000us quantum1024 public30s
+```
+
+Raw BSD utimes138 and futimes139 now accept independently granted ordinary directories through timestamp_mutations.objects: [{path,time}]. The time is a separately fixed virtual resulting ctime. Initial grants need complete ordinary metadata, flags0, no special mode bits and no known Device/Inode alias; ordinary directory nlink can exceed1. Initial directory grants do not require creation or mutable namespace authority.
+
+The optional strict created_directory_objects Boolean defaultsfalse and requires a complete creation_policy including namespace_policy when true. Only successful mkdir/mkdirat attaches this independent directory timestamp provider, using creation_policy.mutation_policy.mutation_time for ctime. created_regular_objects remains separate. Regular creation flags, mode providers, parents and children supply no timestamp grant to an initial or newly reused directory name.
+
+utimes resolves its path before importing the request. futimes imports the32-byte LP64 timeval array, or the separately declared NULL sample, before low32 FD lookup. Explicit requests require current ownership even when values are equal. NULL uses only darwin_time.time_of_day and shared WRITE_ATTRIBUTES authorization: an ordinary owner is allowed, while a nonowner needs the shared known group/world write decision. Missing time samples, credentials, metadata or providers remain unsupported; bad paths, pointers and descriptors preserve the established raw errno/carry order.
+
+The existing declared storage rule is unchanged: signed64 seconds and signed32 microseconds with ignored padding form signed wide nanoseconds, saturate to int64 and floor-normalize. The fixed provider ctime is independent of requested values and the NULL sample. An earlier nonnegative resulting mtime reduces the known birthtime; negative mtime does not. These virtual rules do not identify APFS or synthesize native filesystem time ranges. Success preserves every unrelated stat field, guards, input bytes, enumeration positions, FD flags and accounting.
+
+Direct moves/exchanges and held rmdir retain actual object grants, while reused names receive none. Namespace changes need their own MutationTime and DirectoryEntrySize. A timestamp-produced CurrentMetadata never supplies these premises; without them, namespace changes permanently invalidate complete metadata and later timestamp calls cannot restore it. Timestamp authority grants no mode, ownership, data or namespace mutation.
+
+Original owned ARM64 macOS O0/O1/O2 probes retain141 guarded directory observations, including low/high syscall/FD carriers, read-only/dup descriptors, errors, link following, direct moves, held removal and name reuse. Native secondary results were zero in these observations. The common SDK-free directory-timestamp-mutations workload checks46 authored calls and24 complete guarded stat144 records, returning54/T; it captures no native service trace. Initial and created virtual variants independently check every stat byte and separately declared times; creation adds mkdir for47 calls. Native nonowner/special-security effects, Intel hardware and physical iOS remain unqualified.
+
+The original implementation and probes use [pinned XNU utimes/futimes ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c) and [timestamp authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). No implementation was copied.
+
+## Explicit ordinary directory ownership
+
+明示的な所有権プロバイダーは、個別に許可された初期および新規の通常ディレクトリの chown/fchown/fchownat をサポートします。グループ変更は子オブジェクト作成に使う実際の親ディレクトリの識別情報も更新します。名前空間、モード、時刻の権限は独立しています。完全な Apple ランタイムとフレームワーク、実機 iOS 検証は未完了です。
+
+```text
+directory ownership: chown16 fchown123 fchownat468 / ordinary initial regular or directory objects
+OwnershipMutations CreatedDirectoryObjects=false / created_directory_objects strict Boolean / separate CreatedRegularObjects
+created directory ownership provider requires complete CreationPolicy.Namespace / fixed ctime Mutation.Time
+DirectoryNode OwnershipTime independent of ModeTime TimestampTime MutationTime DirectoryEntrySize / unknown metadata never restored
+active low32 UID GID including equal values set fixed ctime / both UINT32_MAX inactive require provider and preserve all observations
+actual DirectoryIdentity.GID and CurrentMetadata.GID commit together / newly created regular directory symbolic objects inherit current actual parent group
+directory-ownership-mutations61 services / created-directory-ownership62 services / 29 complete guarded stat144 records / main55 stdout O
+five software profiles C CLI Python / three matching ARM64 HVF required / native common76 mandatory91 ARM64273
+219 owned native directory ownership observations / ARM64 O0 O1 O2 / native5s compiler120s build1200s parallel2 guest5000000us quantum1024 public30s
+```
+
+Raw BSD chown16, fchown123 and fchownat468 now support explicitly granted ordinary directories through ownership_mutations.objects: [{path,time}]. Initial directory grants require complete ordinary metadata, flags0, no special mode bits and no known Device/Inode alias, without requiring mutable namespace authority. Ordinary directory nlink may exceed1; regular nlink1 remains required.
+
+The optional strict created_directory_objects Boolean defaultsfalse. True requires complete creation_policy with namespace_policy; only successful mkdir/mkdirat attaches the independent new-directory provider. Its fixed virtual ctime comes from creation_policy.mutation_policy.mutation_time. created_regular_objects remains separate. Child ownership authority comes only from a child's own initial grant or the independently selected creation flag.
+
+Existing effective ordinary authorization and error order are unchanged: FD lookup precedes object checks; pathname routes authorize actual ancestor SEARCH; fchownat admits only low32 NOFOLLOW0x20 before pathname/FD lookup. Low32 UINT32_MAX is inactive independently for each ID. Both inactive IDs require a provider and preserve the whole record. Equal active IDs require a provider and set declared ctime. Changed third-party UID is denied before group lookup; changed GID needs known membership and current-owner WRITE_SECURITY. Unknown credentials/security/group information remains unsupported. Readonly descriptions and duplicates retain actual-object authority.
+
+Directory GID changes also update the actual parent's retained group identity before any child can be published. New regular files, directories and symbolic links inherit this current GID, including after a direct parent move. A later namespace invalidation preserves only this independently known identity; stat and subsequent ownership mutations remain unsupported and cannot restore complete metadata. Ownership supplies no mode, timestamp, data, namespace or filesystem-observation grant.
+
+Original owned nonroot ARM64 macOS O0/O1/O2 probes retain219 observations, including high syscall/FD/ID/flags carriers, active equal and inactive IDs, errors, final-link following, NOFOLLOW directory requests, dup/readonly descriptions, moves, held removal/reuse and positively observed alternate-group changes. Created regular, directory and symbolic objects inherited that actual group. Complete144-byte stat records include8-byte guards on both sides. Native secondary results were zero in these observations. These owner-operated probes do not establish native nonowner, special-security, Intel or physical iOS behavior.
+
+The SDK-free directory-ownership-mutations workload checks61 authored calls and29 guarded whole stat records, returning55/O. Virtual initial and created variants independently check every stat byte and fixed times; creation adds mkdir for62 calls. The common native workload captures no native service trace and compares actual native ctime rather than inventing its value. All four ID patterns use the base carrier per route, while upper carriers repeat active-both requests. The independent native219 observations and private model checks retain full Cartesian typing. Namespace shape uses the separately declared virtual all-child policy, not inferred native filesystem link counts.
+
+Original implementation and probes use [pinned XNU ownership ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c) and [ordinary setattr authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). No implementation was copied.
+
+## Filesystem snapshots for created directories
+
+独立した作成フラグにより、新しいディレクトリは実際の親に宣言されたファイルシステムのスナップショットを保持できます。移動と削除後も開いた記述子は元の関連を保持します。完全な Apple ランタイムと実機 iOS 検証は未完了です。
+
+```text
+FileSystemObservations CreatedDirectoryObjects=false / filesystem_observations.created_directory_objects strict Boolean / independent CreatedRegularObjects
+created directory filesystem binding requires complete CreationPolicy.Namespace / successful mkdir binds actual parent DirectoryNode.FileSystem before publication
+unbound parent snapshot remains unknown / creation succeeds without manufacturing a snapshot / zero snapshot explicitly known
+actual snapshots survive moves exchanges dup held rmdir and metadata invalidation / replacement objects bind their own actual parent
+filesystem owner and directory stat UID GID independent / no attribute namespace mount identity or global fsid inference
+created-directory-filesystem33 authored services / virtual-created-directory-filesystem35 services / main56 stdout D / independent4400 guarded payload bytes
+102 owned ARM64 native filesystem observations O0 O1 O2 / native common77 mandatory92 per platform ARM64276
+125 initial private and strict JSON checks / five software C CLI Python profiles / three matching ARM64 HVF profiles required
+```
+
+Set darwin_files.filesystem_observations.created_directory_objects to the strict Boolean true to opt in. The provider still requires objects (an empty array is valid); entries retain all sixteen snapshot fields and the existing shared2168-byte/path charge. CreationPolicy must include namespace_policy, with the existing explicit mutable parent, complete parent identity and umask prerequisites. False or omission preserves the default closed new-directory domain.
+
+Each successful complete mkdir uses its actual parent’s bound snapshot if present. A zero snapshot is known; absence remains unknown and statfs64/fstatfs64 refuse a missing provider before output preflight. A regular child of a bound created directory needs the independent created_regular_objects flag; another new directory needs the directory flag. Initial children and symbolic vnodes receive no implicit grant. Filesystem owner remains independent of stat UID/GID, including after chown. Mode, timestamp, namespace, quota and mount identity authority are not inferred.
+
+Queries preserve every declared2168-byte payload and zero padding, descriptor state and unrelated full stat bytes. An existing descriptor retains its actual snapshot through parent/child moves, exchange, invalidated stat and held deletion. A replacement binds its own actual parent. Counters stay fixed declared observations; no advancing live mount is claimed. Original probes use the previously pinned XNU statfs64/fstatfs64 declarations and native SDK LP64 layout; no implementation was copied.
+
+## Filesystem snapshots for symbolic vnodes
+
+明示的なファイルシステムのスナップショットは、参照先が存在しない場合や循環する場合もシンボリックリンクの記述子をサポートします。パスの照会は参照先をたどります。新規リンクの親への関連付けは独立したフラグで指定します。完全な Apple 環境と実機 iOS 検証は未完了です。
+
+```text
+symbolic filesystem: fstatfs64 BSD346 O_SYMLINK own LinkNode.FileSystem / statfs64 BSD345 follows target snapshot
+CreatedSymbolicLinkObjects=false / FileSystemCreatedSymbolicLinkObjects created_symbolic_link_objects strict Boolean / filesystem purpose only
+created symbolic snapshot requires complete CreationPolicy.Namespace / actual parent binding before successful publication / independent regular directory flags
+initial symbolic snapshots need no target stat metadata or valid target / unbound unknown and explicit zero distinct / shared2168-byte plus path reference budget
+link object snapshots survive dup parent moves exchanges rename held unlink and name reuse / invalidated stat never restored
+symbolic-filesystem-observations32 created-symbolic-filesystem33 virtual-symbolic-filesystem35 authored services / main57 stdout Y / independent6600 guarded bytes
+114 owned ARM64 O0 O1 O2 native filesystem observations / common native79 mandatory93 per platform ARM64279
+166 initial private strict JSON checks / five software C CLI Python and three matching ARM64 HVF profiles / public30s guest5000000us quantum1024
+```
+
+Declare an initial link snapshot with the existing filesystem_observations.objects {path,snapshot} entry. All sixteen snapshot fields remain required; zero/empty values are explicit. The link may have a dangling, cyclic or opaque byte target and no stat observation. A descriptor opened with O_SYMLINK queries the link's own declaration. A normal path query follows its target and queries the resulting object; it does not borrow the link declaration. Missing/empty environments and absent per-object snapshots remain distinct unsupported completions before output preflight.
+
+For new links, set filesystem_observations.created_symbolic_link_objects to Boolean true and supply complete creation_policy.namespace_policy. Successful symlink creation uses the actual parent's already-bound snapshot if present, independently of regular/directory flags. Initial children and equal filesystem_id/device/inode values grant nothing. An unbound parent permits creation but leaves the new link query unknown. Incomplete/failed/existing-name creation publishes no new binding. Name reuse never recovers an old initial observation.
+
+Descriptor lookup narrows FD before kind/environment/provider/output checks. Valid symbolic snapshots need no target stat, credentials or access flags. Whole2168-byte records, padding and guards retain the existing copyout contract: unmapped output returns EFAULT14; partial output is unsupported before effects. Other pointer/FD/path errors preserve ordering. Raw native references use the cached pinned XNU fstatfs64 file_vnode/mount-stat implementation and native SDK O_SYMLINK/LP64 declarations. No implementation was copied; dynamic native counters and real mount identity are not literal virtual facts. Full framework execution remains incomplete.
+
+## 通常のシンボリックリンクの明示的な所有権
+
+明示的な所有権設定は、シンボリックリンクの記述子と NOFOLLOW パスに対応します。リンク先には独立した権限が必要です。完全な Apple 実行環境と実機 iOS の検証は未完了です。
+
+```text
+symbolic ownership: chown16 fchown123 fchownat468 / ordinary initial regular directory symbolic objects
+fchown O_SYMLINK and fchownat NOFOLLOW0x20 select actual LinkNode / chown and default fchownat follow target
+OwnershipMutations CreatedSymbolicLinkObjects=false / FileOwnershipCreatedSymbolicLinkObjects created_symbolic_link_objects strict Boolean
+initial exact Objects grant / created symbolic ownership requires complete CreationPolicy.Namespace and uses Mutation.Time / independent regular directory flags
+LinkNode OwnershipTime independent of MutationTime and FileSystem / unknown complete metadata never restored
+symbolic-ownership-mutations59 created-symbolic-ownership60 virtual-symbolic-ownership67 virtual-created-symbolic-ownership68 authored services / main58 stdout W
+literal variants each1281 output bytes / eight complete stat144 records with two8-byte guards / separate link target and replacement inodes
+318 owned native ownership observations O0 O1 O2 / six common native runs / native common81 mandatory94 per platform ARM64282
+74 direct ownership plus6 strict JSON checks / five software C CLI Python profiles / three matching ARM64 HVF required
+native5s compiler120s build1200s parallel2 guest5000000us quantum1024 public30s / native Intel and physical iOS unqualified
+```
+
+An initial symbolic ownership grant names the exact symbolic vnode in `ownership_mutations.objects`. Admission requires complete ordinary metadata, flags0, no special mode bits, link_count1 and no known Device/Inode alias. Grant presence, namespace mutability, target metadata and filesystem snapshots are independent. Mode and timestamp declarations still reject symbolic grants. The optional `created_symbolic_link_objects` Boolean defaults false; true requires complete `creation_policy.namespace_policy`. Successful new symlink creation alone attaches its own fixed ctime provider from `creation_policy.mutation_policy.mutation_time`. A parent's grant or another creation flag cannot supply it.
+
+`fchown` on an `O_SYMLINK` descriptor and `fchownat` with low32 `NOFOLLOW0x20` select the actual link. Ordinary `chown` and default `fchownat` follow its target, whose separate grant and complete metadata are required. Dangling and cyclic targets do not affect retained-link or NOFOLLOW operations; followed routes retain ENOENT2 and ELOOP62. No lchown service is added. FD lookup and complete metadata checks retain their existing precedence; pathname routes authorize actual ancestor SEARCH before final-object checks, and invalid fchownat flags precede pathname import.
+
+The shared effective ordinary authorizer remains authoritative. Both inactive low32 UINT32_MAX IDs require a provider and preserve every stat byte. Any active request, including equal IDs, commits requested UID/GID and the separately declared ctime together after authorization. Unknown credentials, security or group membership remain unsupported. A link GID change affects neither its target nor its parent's retained identity. Namespace and xattr changes without their own complete metadata policy permanently invalidate stat; ownership never repairs it.
+
+Object grants survive duplicate and independent descriptions, runtime symbolic hardlinks, direct and parent moves, exchange and held unlink. A replacement name binds a new inode and receives only an independently selected creation grant. Darwin link9 follows the source link; symbolic hardlink construction uses linkat471 flags0. The original native probe corrected this distinction before production edits; its failed first epoch remains preserved.
+
+Original owned nonroot ARM64 macOS O0/O1/O2 probes retain318 observations, including raw carry/secondary/high carriers, whole guarded stat records, libc controls, flags/cursors/target bytes, observed alternate groups, dangling/cyclic targets and object lifetime. The compact SDK-free common workload passes on both initial and created links at each optimization level. It captures no native service trace and assumes no fixed native ctime. Its literal virtual variants emit eight independent complete guarded stat records and verify every byte, while all variants verify authored raw service outcomes and fixed scalar arguments. Positive runs repeat from fresh state; omitted initial grants stop at the first ownership call, and a missing new-object grant stops at the replacement while preserving the preceding six literal records.
+
+C, CLI and Python routes use all five image profiles without loading an analysis session, compare exact output and services, and reject malformed Booleans. Three matching ARM64 HVF identities execute under required-native policy. Current inventory requires94 methods per matching platform,282 on ARM64; the common native catalogue contains81 cases. Intel hardware, physical iOS, special-security/nonowner native effects, full dyld, Mach IPC and Apple frameworks remain unqualified or unfinished.
+
+The implementation uses the existing shared ownership authorizer and [pinned XNU ownership and link ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), plus [ordinary setattr authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). No kernel implementation was copied.

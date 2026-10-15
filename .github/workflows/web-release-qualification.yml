@@ -1,0 +1,91 @@
+name: Web release qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      corpus_url:
+        description: 'HTTPS URL of the immutable full producer corpus archive'
+        required: true
+        type: string
+        default: 'https://github.com/NeverSight/NeverD/releases/download/web-producer-corpus-2026-10-13/neverd-web-producer-corpus-2026-10-13.tar.gz'
+      corpus_sha256:
+        description: 'Exact lowercase SHA-256 of the corpus archive'
+        required: true
+        type: string
+        default: '7372a4fb66605e2d62405ee1e5ef55da1fbde99bed8cd61c1f5c6790c1d53ce3'
+      snapshot_witness:
+        description: 'Fixed opaque Node snapshot witness in the supplied corpus'
+        required: true
+        type: choice
+        default: '2026-10-13'
+        options: [original, '2026-10-13']
+  workflow_call:
+    inputs:
+      corpus_url:
+        required: false
+        type: string
+        default: 'https://github.com/NeverSight/NeverD/releases/download/web-producer-corpus-2026-10-13/neverd-web-producer-corpus-2026-10-13.tar.gz'
+      corpus_sha256:
+        required: false
+        type: string
+        default: '7372a4fb66605e2d62405ee1e5ef55da1fbde99bed8cd61c1f5c6790c1d53ce3'
+      snapshot_witness:
+        required: false
+        type: string
+        default: '2026-10-13'
+    secrets:
+      NEVERD_WEB_PRODUCER_CORPUS_AUTHORIZATION:
+        description: 'Optional bearer token for the immutable corpus archive'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  inputs:
+    name: Require immutable qualification inputs
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate the archive selection before scheduling readers
+        shell: bash
+        env:
+          CORPUS_URL: ${{ inputs.corpus_url }}
+          CORPUS_SHA256: ${{ inputs.corpus_sha256 }}
+          SNAPSHOT_WITNESS: ${{ inputs.snapshot_witness }}
+        run: |
+          set -euo pipefail
+          if [[ "$CORPUS_URL" != https://* || ! "$CORPUS_SHA256" =~ ^[0-9a-f]{64}$ || \
+                ( "$SNAPSHOT_WITNESS" != original && "$SNAPSHOT_WITNESS" != 2026-10-13 ) ]]; then
+            printf 'A pinned HTTPS archive, lowercase SHA-256 and known snapshot witness are required.\n' >&2
+            exit 1
+          fi
+  producers:
+    needs: inputs
+    uses: ./.github/workflows/web-producer-qualification.yml
+    with:
+      corpus_url: ${{ inputs.corpus_url }}
+      corpus_sha256: ${{ inputs.corpus_sha256 }}
+      snapshot_witness: ${{ inputs.snapshot_witness }}
+    secrets:
+      NEVERD_WEB_PRODUCER_CORPUS_AUTHORIZATION: ${{ secrets.NEVERD_WEB_PRODUCER_CORPUS_AUTHORIZATION }}
+  resources:
+    needs: inputs
+    uses: ./.github/workflows/web-resource-qualification.yml
+  release-gate:
+    name: Web release qualification gate
+    needs: [inputs, producers, resources]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require both complete qualifications
+        shell: bash
+        env:
+          INPUT_RESULT: ${{ needs.inputs.result }}
+          PRODUCER_RESULT: ${{ needs.producers.result }}
+          RESOURCE_RESULT: ${{ needs.resources.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$INPUT_RESULT" != success || "$PRODUCER_RESULT" != success || "$RESOURCE_RESULT" != success ]]; then
+            printf 'Web release qualification requires successful producer and resource jobs.\n' >&2
+            exit 1
+          fi

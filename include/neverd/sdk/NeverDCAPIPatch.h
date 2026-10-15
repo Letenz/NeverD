@@ -198,6 +198,8 @@ enum neverd_source_patch_artifact {
 };
 enum neverd_source_patch_mode {
   NEVERD_SOURCE_PATCH_NORMAL = 0,
+  /// Source-only NeverC hosted DynCode, native object artifact, one explicit
+  /// entry and no original bindings. Payload/object/audit must agree exactly.
   NEVERD_SOURCE_PATCH_DYNCODE = 1
 };
 
@@ -251,6 +253,8 @@ typedef struct neverd_source_patch_options_v1 {
 /// the exact byte length, excluding any optional terminating NUL. Input and
 /// existing output files are never overwritten. Unsupported compiler/target/
 /// artifact combinations fail explicitly without selecting another compiler.
+/// NeverC accepts C source only, including hosted DynCode. C++ source requires
+/// Clang or a matching ELF GCC driver; no translation or fallback is implicit.
 /// Returns one only after every requested target is installed and verified.
 NEVERD_API int
 neverd_patch_source(neverd_session_t Sess, const void *Input, size_t InputSize,

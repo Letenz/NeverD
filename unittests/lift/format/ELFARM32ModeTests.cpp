@@ -417,42 +417,47 @@ TEST_F(ELFARM32ModeTest, UnmarkedObjectRequiresAnExactFunctionMode) {
         << llvm::toString(Asserted.takeError());
     EXPECT_EQ(Asserted->instructionModeAt(0), Options.ARMFunctionModes[0]);
 
-    for (bool LLVM : {false, true}) {
-      SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
-      const auto CFile = tmpFile("unmarked-mode.c");
-      std::vector<std::string> Args{"decompile", "--func=0"};
-      if (LLVM)
-        Args.push_back("--llvm");
-      Args.insert(Args.end(), {"-o", CFile.string(), Object.string()});
-      const auto Unknown = exec(ndBin(), Args);
-      EXPECT_FALSE(Unknown.ok());
-      EXPECT_NE(Unknown.err.find("--arm-function-mode"), std::string::npos)
-          << Unknown.err;
+    for (bool Symbolic : {false, true})
+      for (bool LLVM : {false, true}) {
+        SCOPED_TRACE(Symbolic ? "enhanced" : "ordinary");
+        SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+        const auto CFile = tmpFile("unmarked-mode.c");
+        std::vector<std::string> Args{"decompile", "--func=0"};
+        if (LLVM)
+          Args.push_back("--llvm");
+        if (Symbolic)
+          Args.push_back("--symbolic-simplify");
+        Args.insert(Args.end(), {"-o", CFile.string(), Object.string()});
+        const auto Unknown = exec(ndBin(), Args);
+        EXPECT_FALSE(Unknown.ok());
+        EXPECT_NE(Unknown.err.find("--arm-function-mode"), std::string::npos)
+            << Unknown.err;
 
-      Args.insert(Args.begin() + 2, Case.Hint);
-      const auto Decompiled = exec(ndBin(), Args);
-      ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
-      std::ifstream SourceInput(CFile);
-      const std::string Source(std::istreambuf_iterator<char>(SourceInput), {});
-      ASSERT_NE(Source.find("sub_0("), std::string::npos) << Source;
-      EXPECT_EQ(Source.find(" ^ "), std::string::npos) << Source;
-      EXPECT_EQ(Source.find(" & "), std::string::npos) << Source;
-      const auto Harness = tmpFile("unmarked-mode-execute.c");
-      std::ofstream(Harness) << Source << UnmarkedModeExecutionHarness;
-      for (const char *Optimization : {"-O0", "-O2"}) {
-        SCOPED_TRACE(Optimization);
-        const auto Executable = tmpFile("unmarked-mode-execute");
-        const auto Recompiled =
-            exec(NEVERD_TEST_CLANG,
-                 {"-std=c11", Optimization, "-Werror=return-type",
-                  "-Werror=implicit-function-declaration",
-                  "-fsanitize=undefined", "-fsanitize-trap=undefined",
-                  Harness.string(), "-o", Executable.string()});
-        ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
-        const auto Ran = exec(Executable.string(), {});
-        EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+        Args.insert(Args.begin() + 2, Case.Hint);
+        const auto Decompiled = exec(ndBin(), Args);
+        ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+        std::ifstream SourceInput(CFile);
+        const std::string Source(std::istreambuf_iterator<char>(SourceInput),
+                                 {});
+        ASSERT_NE(Source.find("sub_0("), std::string::npos) << Source;
+        EXPECT_EQ(Source.find(" ^ ") == std::string::npos, Symbolic) << Source;
+        EXPECT_EQ(Source.find(" & ") == std::string::npos, Symbolic) << Source;
+        const auto Harness = tmpFile("unmarked-mode-execute.c");
+        std::ofstream(Harness) << Source << UnmarkedModeExecutionHarness;
+        for (const char *Optimization : {"-O0", "-O2"}) {
+          SCOPED_TRACE(Optimization);
+          const auto Executable = tmpFile("unmarked-mode-execute");
+          const auto Recompiled =
+              exec(NEVERD_TEST_CLANG,
+                   {"-std=c11", Optimization, "-Werror=return-type",
+                    "-Werror=implicit-function-declaration",
+                    "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                    Harness.string(), "-o", Executable.string()});
+          ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+          const auto Ran = exec(Executable.string(), {});
+          EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+        }
       }
-    }
   }
 }
 
@@ -646,8 +651,8 @@ arm_leaf:
     ASSERT_NE(LeafClose, std::string::npos) << Source;
     const auto LeafBody = Source.substr(LeafOpen, LeafClose - LeafOpen);
     EXPECT_NE(LeafBody.find('+'), std::string::npos) << LeafBody;
-    EXPECT_EQ(LeafBody.find('^'), std::string::npos) << LeafBody;
-    EXPECT_EQ(LeafBody.find('&'), std::string::npos) << LeafBody;
+    EXPECT_NE(LeafBody.find('^'), std::string::npos) << LeafBody;
+    EXPECT_NE(LeafBody.find('&'), std::string::npos) << LeafBody;
     {
       std::ofstream Append(CFile, std::ios::app);
       Append << "\nint main(void) { return sub_"
@@ -660,6 +665,29 @@ arm_leaf:
         NEVERD_TEST_CLANG, {"-std=c11", "-Werror=implicit-function-declaration",
                             "-O0", CFile.string(), "-o", Executable.string()});
     ASSERT_TRUE(Compiled.ok()) << Compiled.err << "\n" << Source;
+    EXPECT_TRUE(exec(Executable.string(), {}).ok());
+
+    // Explicit enhancement must retain the same ARM/Thumb mode recovery.
+    Arguments.insert(
+        Arguments.begin() + 1,
+        {"--func=0x" + llvm::utohexstr(ARMLeafVA), "--symbolic-simplify"});
+    const auto Enhanced = exec(ndBin(), Arguments);
+    ASSERT_TRUE(Enhanced.ok()) << Enhanced.err;
+    std::ifstream EnhancedInput(CFile);
+    const std::string EnhancedSource(
+        std::istreambuf_iterator<char>(EnhancedInput), {});
+    EXPECT_EQ(EnhancedSource.find('^'), std::string::npos) << EnhancedSource;
+    EXPECT_EQ(EnhancedSource.find('&'), std::string::npos) << EnhancedSource;
+    {
+      std::ofstream Append(CFile, std::ios::app);
+      Append << "\nint main(void) { return sub_" << llvm::utohexstr(ARMLeafVA)
+             << "(7, 5) == 12 && sub_" << llvm::utohexstr(ARMLeafVA)
+             << "(0xffffffffu, 2) == 1 ? 0 : 1; }\n";
+    }
+    const auto EnhancedCompiled = exec(
+        NEVERD_TEST_CLANG, {"-std=c11", "-Werror=implicit-function-declaration",
+                            "-O0", CFile.string(), "-o", Executable.string()});
+    ASSERT_TRUE(EnhancedCompiled.ok()) << EnhancedCompiled.err;
     EXPECT_TRUE(exec(Executable.string(), {}).ok());
   }
 

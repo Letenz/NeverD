@@ -13,11 +13,8 @@ sleepService(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
              const MemoryLayout &Layout, LinuxClock &Clock,
              ThreadContext *Thread, ProcessResult &Result) {
   using Reply = std::optional<uint64_t>;
-  if (!Clock.advancesOnIdle()) {
-    Result.Stop = ProcessStopReason::UnsupportedService;
-    Result.Diagnostic = SleepPolicy;
-    return Reply();
-  }
+  if (!Clock.advancesOnIdle())
+    return sleepRelative({0, 0}, Clock, Thread, Result);
   // Linux copies both LP64 fields before validating either value. Failed
   // input copies have no observable partial output to the guest.
   uint8_t Bytes[16];
@@ -34,6 +31,18 @@ sleepService(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
   const LinuxTimespec Duration{
       int64_t(llvm::support::endian::read64le(Bytes)),
       int64_t(llvm::support::endian::read64le(Bytes + 8))};
+  return sleepRelative(Duration, Clock, Thread, Result);
+}
+
+std::optional<uint64_t> sleepRelative(const LinuxTimespec &Duration,
+                                      LinuxClock &Clock, ThreadContext *Thread,
+                                      ProcessResult &Result) {
+  using Reply = std::optional<uint64_t>;
+  if (!Clock.advancesOnIdle()) {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic = SleepPolicy;
+    return Reply();
+  }
   if (Duration.Seconds < 0 || !isNormalizedTimespec(Duration))
     return Reply(0 - InvalidArgument);
   auto Deadline = Clock.deadline(Duration, Result);

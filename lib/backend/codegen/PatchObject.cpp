@@ -20,11 +20,14 @@
 #include "neverd/support/ISAEncoding.h"
 #include "neverd/support/TargetCodegenInfo.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Object/ELF.h"
 #include "llvm/Support/ARMAttributeParser.h"
 #include "llvm/Support/ARMBuildAttributes.h"
 #include "llvm/Support/Errc.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/SHA256.h"
 
 #include <algorithm>
 #include <map>
@@ -246,6 +249,7 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
     return Names.takeError();
   if (Symbols->size() > 1024 * 1024)
     return fail("excessive symbol count");
+  std::map<uint32_t, unsigned> FunctionCounts;
   for (const auto &Symbol : *Symbols) {
     auto Name = Symbol.getName(*Names);
     if (!Name)
@@ -271,6 +275,8 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
           !rangeInBounds(Item.Offset, Item.Size,
                          (*Sections)[Item.Section].sh_size))
         return fail("symbol exceeds its section: " + Item.Name);
+      if (Item.Type == llvm::ELF::STT_FUNC)
+        ++FunctionCounts[Item.Section];
     }
     if (!Item.Name.empty() && Item.Type != llvm::ELF::STT_FILE &&
         Item.Type != llvm::ELF::STT_SECTION &&
@@ -286,6 +292,7 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
   // together, without archive selection or cross-object ODR coalescing.
   std::set<uint32_t> GroupMembers;
   std::set<std::string> GroupSignatures;
+  std::set<uint32_t> COMDATFunctions;
   for (uint32_t I = 0; I < Sections->size(); ++I) {
     const auto &Section = (*Sections)[I];
     if (Section.sh_type == llvm::ELF::SHT_GROUP) {
@@ -297,16 +304,21 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
           Contents->size() % 4 ||
           readLE<uint32_t>(Contents->data()) != llvm::ELF::GRP_COMDAT)
         return fail("malformed or unsupported section group");
-      const auto &Signature = Result.Symbols[Section.sh_info].Name;
+      const auto &SignatureSymbol = Result.Symbols[Section.sh_info];
+      const auto &Signature = SignatureSymbol.Name;
       if (Signature.empty() || !GroupSignatures.insert(Signature).second)
         return fail("ambiguous COMDAT signature");
+      bool OwnsSignatureSection = false;
       for (size_t O = 4; O < Contents->size(); O += 4) {
         const auto Member = readLE<uint32_t>(Contents->data() + O);
         if (!Member || Member >= Sections->size() || Member == I ||
             !((*Sections)[Member].sh_flags & llvm::ELF::SHF_GROUP) ||
             !GroupMembers.insert(Member).second)
           return fail("invalid or multiply owned COMDAT member");
+        OwnsSignatureSection |= Member == SignatureSymbol.Section;
       }
+      if (OwnsSignatureSection && SignatureSymbol.Type == llvm::ELF::STT_FUNC)
+        COMDATFunctions.insert(Section.sh_info);
     }
     if (Section.sh_type != llvm::ELF::SHT_RELA &&
         Section.sh_type != llvm::ELF::SHT_REL)
@@ -357,11 +369,36 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
       const auto &Data = Result.Storage.Sections[Target->second].ExternalBytes;
       for (const auto &Relocation : *Relocations) {
         const uint32_t Type = Relocation.getType(false);
-        if (!rangeInBounds(Relocation.r_offset, 4, Data.size()))
+        const auto Width =
+            elf_loader::objectRelocationFieldWidth(Original.Arch, Type);
+        if (!Width)
+          return fail("unsupported implicit native relocation field");
+        if (Original.Arch == Arch::AArch64) {
+          // Instruction addends occupy encoded bitfields, not the whole word.
+          // Keep those records on the explicit RELA path until decoded here.
+          switch (Type) {
+          case llvm::ELF::R_AARCH64_NONE:
+          case llvm::ELF::R_AARCH64_ABS64:
+          case llvm::ELF::R_AARCH64_ABS32:
+          case llvm::ELF::R_AARCH64_ABS16:
+          case llvm::ELF::R_AARCH64_PREL64:
+          case llvm::ELF::R_AARCH64_PREL32:
+          case llvm::ELF::R_AARCH64_PREL16:
+            break;
+          default:
+            return fail("unsupported implicit AArch64 instruction relocation");
+          }
+        }
+        if (!rangeInBounds(Relocation.r_offset, *Width, Data.size()))
           return fail("implicit relocation addend exceeds its section");
-        const uint32_t Word =
-            readLE<uint32_t>(Data.data() + Relocation.r_offset);
-        int64_t Addend = int32_t(Word);
+        const auto *Field = Data.data() + Relocation.r_offset;
+        const uint64_t Raw = *Width == 8   ? readLE<uint64_t>(Field)
+                             : *Width == 4 ? readLE<uint32_t>(Field)
+                             : *Width == 2 ? readLE<uint16_t>(Field)
+                             : *Width == 1 ? *Field
+                                           : 0;
+        const uint32_t Word = uint32_t(Raw);
+        int64_t Addend = *Width ? llvm::SignExtend64(Raw, *Width * 8) : 0;
         if (Original.Arch == Arch::ARM) {
           if (Type == llvm::ELF::R_ARM_PREL31)
             Addend = llvm::SignExtend64<31>(Word & 0x7fffffff);
@@ -389,6 +426,22 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
     if (((*Sections)[I].sh_flags & llvm::ELF::SHF_GROUP) &&
         !GroupMembers.count(I))
       return fail("section group membership is missing");
+  // GCC's i386 PIC thunks omit st_size. A COMDAT signature that is the sole
+  // function at offset zero owns its complete executable section. The later
+  // DWARF check must still match that extent exactly; no next-symbol or
+  // instruction-decoding guess supplies a function boundary. ARM EHABI has
+  // no explicit end range, so its existing nonzero-symbol contract remains.
+  if (Original.Arch != Arch::ARM)
+    for (uint32_t Index : COMDATFunctions) {
+      auto &Symbol = Result.Symbols[Index];
+      auto Section = Result.SectionIndices.find(Symbol.Section);
+      if (Symbol.Size || Symbol.Offset || FunctionCounts[Symbol.Section] != 1 ||
+          Section == Result.SectionIndices.end())
+        continue;
+      const auto &Storage = Result.Storage.Sections[Section->second];
+      if (Storage.Kind == SectionKind::Code && Storage.Size)
+        Symbol.Size = Storage.Size;
+    }
   return Result;
 }
 
@@ -508,7 +561,17 @@ llvm::Expected<ResolvedSymbol> resolveObjectSymbol(
   if (auto Binding = Bindings.find(Symbol.Name); Binding != Bindings.end()) {
     if (Callable && Binding->second.Kind != SourcePatchBindingKind::Function)
       return fail("data binding used as a callable target: " + Symbol.Name);
-    return ResolvedSymbol{Binding->second.OriginalVA, 0};
+    uint64_t VA = Binding->second.OriginalVA;
+    if (Original.Arch == Arch::ARM &&
+        Binding->second.Kind == SourcePatchBindingKind::Function) {
+      const auto Mode = Original.instructionModeAt(VA);
+      if (!Mode || (*Mode != InstructionMode::ARM &&
+                    *Mode != InstructionMode::Thumb))
+        return fail("bound ARM function has no authenticated instruction state");
+      if (*Mode == InstructionMode::Thumb)
+        VA |= 1;
+    }
+    return ResolvedSymbol{VA, 0};
   }
   if (Symbol.Binding == llvm::ELF::STB_WEAK)
     return fail("unresolved weak symbol: " + Symbol.Name);
@@ -599,7 +662,10 @@ llvm::Error relocateOtherELFObject(
           R.Type == llvm::ELF::R_ARM_THM_JUMP24)) ||
         (A == Arch::AArch64 && (R.Type == llvm::ELF::R_AARCH64_CALL26 ||
                                 R.Type == llvm::ELF::R_AARCH64_JUMP26));
-    const unsigned Width = Absolute ? Image.PointerWidth : 4;
+    const auto FieldWidth = elf_loader::objectRelocationFieldWidth(A, R.Type);
+    if (!FieldWidth)
+      return fail("unsupported native relocation field width");
+    const unsigned Width = *FieldWidth;
     if (!rangeInBounds(R.Offset, Width, Section.Size))
       return fail("relocation exceeds its native section");
     const uint64_t P = Section.VA + R.Offset;
@@ -709,12 +775,18 @@ llvm::Error relocateOtherELFObject(
       } else
         return fail("unsupported ARM native relocation " + llvm::Twine(R.Type));
     } else if (A == Arch::AArch64) {
+      if (Width < 4)
+        return fail("unsupported AArch64 native relocation field width");
       uint32_t Word = readLE<uint32_t>(Out);
-      if (R.Type == llvm::ELF::R_AARCH64_PREL32) {
-        auto D = SignedDelta(P, 32);
+      if (R.Type == llvm::ELF::R_AARCH64_PREL32 ||
+          R.Type == llvm::ELF::R_AARCH64_PREL64) {
+        auto D = SignedDelta(P, Width * 8);
         if (!D)
           return D.takeError();
-        writeLE<uint32_t>(Out, uint32_t(*D));
+        if (Width == 8)
+          writeLE<uint64_t>(Out, uint64_t(*D));
+        else
+          writeLE<uint32_t>(Out, uint32_t(*D));
       } else if (R.Type == llvm::ELF::R_AARCH64_CALL26 ||
                  R.Type == llvm::ELF::R_AARCH64_JUMP26) {
         auto D = SignedDelta(P, 28);
@@ -906,18 +978,109 @@ validateObjectUnwind(const ObjectImage &Object) {
 
 } // namespace
 
+llvm::Error
+validateDynCodePatchImage(const DynCodePatchEvidence &Evidence,
+                          llvm::StringRef Object, const BinaryImage &Original,
+                          const CompiledImage &Compiled,
+                          llvm::ArrayRef<SourcePatchMapping> Mappings,
+                          llvm::ArrayRef<SourcePatchBinding> Bindings) {
+  if ((Original.Arch != Arch::X64 && Original.Arch != Arch::AArch64) ||
+      Compiled.TargetArch != Original.Arch ||
+      Compiled.Format != Original.Format ||
+      Compiled.InputKind != RewriteInputKind::ReplacementObject ||
+      Mappings.size() != 1 || Mappings.front().Symbol.empty() ||
+      !Bindings.empty() || Evidence.Payload.empty() ||
+      Evidence.Payload.size() > MaxImageSize)
+    return fail("hosted DynCode requires one explicit x64/ARM64 entry, "
+                "a bounded payload and no original bindings");
+  auto Parsed = llvm::json::parse(Evidence.Audit);
+  if (!Parsed)
+    return fail("malformed DynCode audit: " +
+                llvm::toString(Parsed.takeError()));
+  const auto *Audit = Parsed->getAsObject();
+  if (!Audit || Audit->getString("execution_profile") != "hosted-v1" ||
+      Audit->getBoolean("keep_unwind") != true ||
+      Audit->getInteger("selected_section_count") != 1 ||
+      Audit->getInteger("remaining_external_count") != 0 ||
+      Audit->getInteger("runtime_contract_count") != 0 ||
+      Audit->getInteger("padding_size") != 0 ||
+      Audit->getInteger("bad_byte_hit_count") != 0 ||
+      Audit->getInteger("alignment") != 1 ||
+      Audit->getInteger("entry_offset") != 0 ||
+      Audit->getInteger("image_size") !=
+          static_cast<int64_t>(Evidence.Payload.size()))
+    return fail(
+        "DynCode audit does not prove the hosted single-section profile");
+  auto Target = sourcePatchTargetTriple(Original);
+  if (!Target)
+    return Target.takeError();
+  const auto Entry = Original.Format == BinaryFormat::MachO
+                         ? "_" + Mappings.front().Symbol
+                         : Mappings.front().Symbol;
+  auto Hash = [](llvm::StringRef Bytes) {
+    return llvm::toHex(
+        llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
+            reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size())),
+        true);
+  };
+  if (Audit->getString("target_triple") != *Target ||
+      Audit->getString("entry_symbol") != Entry ||
+      Audit->getString("output_digest") != Hash(Evidence.Payload) ||
+      Audit->getString("input_digest") != Hash(Object))
+    return fail(
+        "DynCode target, entry or artifact digest disagrees with its audit");
+  const auto *Journal = Audit->getArray("journal");
+  for (llvm::StringRef Key : {"binary", "plan", "relocations"}) {
+    if (!Journal || llvm::count_if(*Journal, [&](const auto &Value) {
+                      const auto *Record = Value.getAsObject();
+                      return Record && Record->getString("key") == Key &&
+                             Record->getString("provider") ==
+                                 "builtin.final_verifier" &&
+                             Record->getString("value") == "ok";
+                    }) != 1)
+      return fail("DynCode sealed final verification is incomplete");
+  }
+  const CompiledSection *Code = nullptr;
+  for (const auto &Section : Compiled.Sections) {
+    if (!Section.IsAllocated || !Section.IsInImage || !Section.Size)
+      continue;
+    if (Section.Kind == SectionKind::Code) {
+      if (Code)
+        return fail("DynCode code requires one unchanged native section");
+      Code = &Section;
+      continue;
+    }
+    const llvm::StringRef Name(Section.Name);
+    const bool Metadata = Name == ".eh_frame" || Name == ".xdata" ||
+                          Name == ".pdata" || Name == ".note.gnu.property" ||
+                          Name == "__eh_frame" || Name == "__compact_unwind";
+    if (Section.Kind != SectionKind::ReadOnlyData || !Metadata)
+      return fail("hosted DynCode has unexpected native data storage: " + Name);
+  }
+  const auto Symbol = Compiled.SymbolAddrs.find(Mappings.front().Symbol);
+  if (!Code || Code->Size != Evidence.Payload.size() ||
+      !rangeInBounds(Code->Offset, Code->Size, Compiled.Bytes.size()) ||
+      Symbol == Compiled.SymbolAddrs.end() || Symbol->second != Code->VA ||
+      std::memcmp(Compiled.Bytes.data() + Code->Offset, Evidence.Payload.data(),
+                  Evidence.Payload.size()))
+    return fail("linked native code/entry layout differs from the audited "
+                "DynCode payload");
+  return llvm::Error::success();
+}
+
 llvm::Expected<PatchResult> installObjectPatch(
     llvm::StringRef Bytes, const BinaryImage &Original,
     llvm::ArrayRef<SourcePatchMapping> Mappings,
     llvm::ArrayRef<SourcePatchBinding> RequestedBindings,
     const std::filesystem::path &Output,
-    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt) {
+    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt,
+    const DynCodePatchEvidence *DynCode) {
   if (Original.Format == BinaryFormat::COFF)
     return installCOFFObjectPatch(Bytes, Original, Mappings, RequestedBindings,
-                                  Output, PrepareReceipt);
+                                  Output, PrepareReceipt, DynCode);
   if (Original.Format == BinaryFormat::MachO)
     return installMachOObjectPatch(Bytes, Original, Mappings, RequestedBindings,
-                                   Output, PrepareReceipt);
+                                   Output, PrepareReceipt, DynCode);
   if (Original.Format != BinaryFormat::ELF)
     return fail("native object format is unsupported");
   if (Mappings.empty())
@@ -983,6 +1146,11 @@ llvm::Expected<PatchResult> installObjectPatch(
     return std::move(Error);
   if (auto Error = relocateObject(*Object, References, Bindings))
     return std::move(Error);
+  if (DynCode)
+    if (auto Error = validateDynCodePatchImage(*DynCode, Bytes, Original,
+                                               Object->Storage, Mappings,
+                                               RequestedBindings))
+      return std::move(Error);
   auto Functions = validateObjectUnwind(*Object);
   if (!Functions)
     return Functions.takeError();

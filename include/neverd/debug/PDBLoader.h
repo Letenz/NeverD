@@ -14,6 +14,7 @@
 #define NEVERD_DEBUG_PDBLOADER_H
 
 #include "neverd/debug/DebugContext.h"
+#include "neverd/loader/BinaryImageDynamic.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
@@ -150,6 +151,13 @@ void publishNamedOffset(std::map<int64_t, VariableSym> &Slots,
 llvm::Expected<std::unique_ptr<class PDBDebugContext>>
 loadPdb20DebugContext(const std::filesystem::path &PdbPath,
                       const BinaryImage &Image);
+
+/// The build identity \p PdbPath records, read from its Info and DBI streams
+/// alone: the RSDS GUID with the age a PE's CodeView record names, or a PDB
+/// 2.00 file's NB10 signature and age.  Says which PDB a file is without
+/// loading it; loading still checks machine and sections too.
+llvm::Expected<PDBBuildIdentity>
+readPDBBuildIdentity(const std::filesystem::path &PdbPath);
 
 class PDBDebugContext : public DebugContext {
 public:

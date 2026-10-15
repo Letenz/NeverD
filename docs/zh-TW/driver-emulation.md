@@ -101,6 +101,8 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 映像預設使用慣用基底位址，除非情境選擇了有效的重新定位位址。映像必須為使用 native 子系統的 PE32+ x64 可執行檔。匯入可來自 `ntoskrnl.exe`、`ntkrnlmp.exe`、`HAL.dll` 或 `WDFLDR.SYS`。
 
+新增的 `FLTMGR.SYS`、`NDIS.SYS` 和 `NETIO.SYS` 提供依模組區分的延遲匯入識別，其函式尚未建模：未呼叫的匯入可完成載入，實際呼叫時會回報標準化的 `module!symbol` 並停止。它們不參與 `MmGetSystemRoutineAddress` 查詢，該查詢仍僅限核心和 HAL。
+
 執行載入器支援經驗證的 x64 `DIR64` 基底重新定位，以及有限的安全性 cookie 載入組態；它會在進入點包裝函式執行前設定具確定性的客體 cookie。其他未建模的載入組態欄位、TLS、延遲／繫結匯入、依序號匯入及受控映像皆會遭拒絕。映像還必須通過嚴格的範圍與對齊檢查。
 
 啟用的控制流程防護（CFG）會驗證 PE 旗標、指標槽與已排序的可執行目標表。檢查與分派輔助函式僅允許已宣告的映像進入點或已登記的 API 跳板，保留 Win64 呼叫狀態，並拒絕未宣告的目標。只有插樁而未啟用 CFG 時，保留原始客體後援指標。啟用的 XFG、匯出抑制和其他未建模的防護策略仍遭拒絕；位址位於可執行記憶體不代表它是合法目標。
@@ -327,11 +329,26 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | API | 建模行為與限制 |
 |-----|----------------|
 | `RtlInitUnicodeString` | 根據有界且以 NUL 結尾的來源字串建立客體 `UNICODE_STRING` |
+| `RtlGetVersion` | 明確的 checked-x64 基礎版本查詢，不採用主機版本預設值。需要 `version_query`；長度 276 的記錄必須預先清零整個 CSD 陣列。零長度相容行為需單獨啟用並提供實際 20 位元組緩衝區。擴充長度與未宣告查詢明確停止，保留環境相依。 |
+| `RtlCaptureContext` | 有界核心呼叫者內容擷取; checked-x64, IRQL <= DISPATCH_LEVEL. |
 | `RtlCopyUnicodeString`、`RtlCompareUnicodeString`、`RtlEqualUnicodeString` | 計數式 UTF-16 複製及區分大小寫的比較；不區分大小寫的比較需要 Windows 大小寫對照表，因此會停止 |
+| `RtlInitAnsiString`、`RtlInitString` | 根據以 NUL 結尾的位元組來源建立客體 `STRING`；計數長度上限為 `0xFFFE`，`MaximumLength` 包含結尾字元，並清除記錄的填補位元組 |
+| `RtlAppendUnicodeToString`、`RtlAppendUnicodeStringToString` | 附加到計數式 UTF-16 目標；回傳 `STATUS_BUFFER_TOO_SMALL` 時目標保持不變，至少剩餘兩個空閒位元組時才寫入結尾字元，超過 `0x7FFE` 個單元的 NUL 結尾來源同樣回傳 `STATUS_BUFFER_TOO_SMALL` |
+| `RtlPrefixUnicodeString` | 計數式 UTF-16 前綴判斷；不區分大小寫的請求只有在不相等的單元需要 Windows 大小寫對照表時才會停止 |
+| `RtlIntegerToUnicodeString`、`RtlUnicodeStringToInteger` | 以 2、8、10、16 為基數的無號轉換，前導空白、正負號、`0x`/`0o`/`0b` 前綴與 32 位元回繞皆遵循核心規則；格式化需要為結尾字元預留空間，並在寫入長度後回傳 `STATUS_BUFFER_OVERFLOW` |
+| `RtlAnsiStringToUnicodeString`、`RtlUnicodeStringToAnsiString`、`RtlFreeUnicodeString`、`RtlFreeAnsiString` | 在計數式 8 位元記錄與 UTF-16 記錄之間轉換 ASCII 文字；其他文字取決於未建模的系統 ANSI 字碼頁，因此會停止。先寫入長度；配置來自帶 `Strg` 標記的分頁集區，兩個釋放常式都會釋放它並清除記錄（忽略集區標記）。不配置時，ANSI 轉 Unicode 不做轉換直接回傳 `STATUS_BUFFER_OVERFLOW`，而 Unicode 轉 ANSI 會轉換放得下的前置部分、寫入結尾字元並回傳 `STATUS_BUFFER_OVERFLOW` |
+| `RtlInitUnicodeStringEx` | 先清除記錄，再像 `RtlInitUnicodeString` 一樣建立客體 `UNICODE_STRING`；超過 `0x7FFE` 個單元的來源回傳 `STATUS_NAME_TOO_LONG`，兩個長度維持為零 |
+| `RtlCopyString`、`RtlEqualString`、`RtlCompareString` | 計數式 8 位元字串依容量複製且不寫入結尾字元；以無號位元組比較，前置部分相同時由長度決定；不區分大小寫的請求只有在不相等的位元組需要 Windows 大小寫對照表時才會停止 |
+| `RtlStringFromGUID`、`RtlGUIDFromString` | 登錄形式的 GUID 文字 `{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}`：格式化把小寫數字寫入帶 `Strg` 標記的 78 位元組分頁集區配置，由 `RtlFreeUnicodeString` 釋放；剖析要求欄位寬度精確、大小寫皆可，僅在零單元之後允許後續文字，後段不符時回傳 `STATUS_INVALID_PARAMETER`，此時 `Data1`–`Data3` 已寫入 |
+| `RtlTimeToTimeFields`、`RtlTimeFieldsToTime` | 在自 1601 年起以 100 ns 為單位的系統時間與 `TIME_FIELDS` 之間依公曆轉換（無已記錄的閏秒）；輸出時計算星期、輸入時忽略星期；超出 1601–30827 年或不是真實日期的欄位回傳 `FALSE`，負時間會停止 |
+| `PsGetCurrentProcess`、`PsGetCurrentThread`、`KeGetCurrentThread` | `IoGetCurrentProcess` 與內嵌 `GS:[0x188]` 讀取的匯出別名，任意 IRQL 皆可呼叫：目前 APC 狀態中的行程隨行程附加而改變，目前邏輯執行緒的借用不透明身分則維持不變 |
+| `PsGetCurrentThreadId`、`PsGetThreadId` | 存活執行緒物件的用戶端 ID：首次觀察時自 `0x2000` 起以 4 為步長配置，略過已建模的行程 ID 且永不重複使用；請求者 ID 與已配置執行緒 ID 相同的請求會被拒絕。`PsCreateSystemThread` 也透過 `ClientId` 回傳系統行程 ID 與執行緒 ID。前景分派在同一個邏輯執行緒上執行，因此來自不同請求者行程的請求看到相同的執行緒 ID，而 `PsGetCurrentProcessId` 會跟隨請求者。`PsGetThreadId` 需要 IRQL ≤ `DISPATCH_LEVEL` |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 引發客體例外，無正常 API 返回；真正 C 篩選函式／處理常式及展開 finally，使用者 CPU 訪存例外的有限恢復見下文 |
 | `ExAllocatePool2` | 分頁／非分頁 NX 配置，預設清零；建模未初始化與快取對齊旗標；無效的必要旗標傳回 NULL，配額／可執行集區及引發的配置例外會停止 |
 | `MmGetSystemRoutineAddress` | 透過共用匯出清單解析客體計數式名稱 |
-| `NtQuerySystemInformation`, `ZwQuerySystemInformation` | 在 PASSIVE_LEVEL 支援類別 `11`（`SystemModuleInformation`）：零長度大小查詢，以及模擬提供者和輸入驅動程式的完整 Win64 模組記錄。部分緩衝區和未知資訊類別會明確停止。 |
+| `MmIsAddressValid` | IRQL ≤ 2 的有限具體查詢：僅在零頁未映射時將 NULL 判為假；只有有效模型物件或非分頁集區的精確位元組具有可讀寫 RAM 後備時才傳回真。分頁集區、已釋放或無主記憶體、配置填補、非集區實體緩衝區及受保護後備均明確停止。查詢不授予欄位存取、擁有權或未來生命週期保證，並保留環境還原相依性。 |
+| `KeRegisterBugCheckReasonCallback`, `KeDeregisterBugCheckReasonCallback` | 僅限 checked-x64 註冊/取消註冊：記錄須為驅動映像內對齊、可讀寫的 48 位元組區域，回呼須為映像內可執行位址，原因限 2–7，最多保留 64 個記錄身分；元件名稱初始須可讀、以 NUL 結尾且不超過 256 位元組。重複註冊、取消註冊與重新註冊保留已知欄位及 State 變化；僅保留元件指標，不保證後續生命週期。僅回呼、元件、原因及 State 欄位可讀；取消註冊後仍禁止所有寫入、不透明欄位存取及相交頁面的 MDL 借用。DriverUnload 必須取消活躍註冊。環境相依性保留；不支援當機回呼派送或傾印產生。 |
+| `NtQuerySystemInformation`, `ZwQuerySystemInformation` | 在 PASSIVE_LEVEL 支援類別 `11`（`SystemModuleInformation`）：零長度大小查詢，以及模擬提供者和輸入驅動程式的完整 Win64 模組記錄。部分緩衝區和未知資訊類別會明確停止。 類別 `196` 使用明確的 `kernel_va_shadow_query`，詳見查詢章節。 |
 | `MmMapIoSpace`, `MmMapIoSpaceEx`, `MmUnmapIoSpace` | 宣告之轉譯子範圍的非快取映射、共用 RO／RW 別名，以及原始基址／長度完全相符的解除映射 |
 | `IoGetDmaAdapter` | 明確 Internal 匯流排主控版本 0／1 描述與 PASSIVE_LEVEL 的版本一繫結表；更新版本探查傳回 NULL |
 | `AllocateCommonBuffer`, `FreeCommonBuffer`, `GetDmaAlignment`, `PutDmaAdapter` | 共用一致性 RAM 上的 adapter 表方法、確切配置身分與獨立 adapter 壽命 |
@@ -358,6 +375,8 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `KeGetCurrentIrql` | 讀取目前 IRQL/CR8，包括明確升降級；派送與工作項目從 `PASSIVE_LEVEL` 開始，DPC 從 `DISPATCH_LEVEL` 開始 |
 | `KfRaiseIrql`, `KeLowerIrql` | 真正的 x64 WDK IRQL 升降匯入，包含內聯輔助函式；每個執行必須在返回前按 LIFO 順序恢復儲存值。IRQL <= APC_LEVEL 的合法等待保留升降配對，並按等待時的 IRQL 恢復；DISPATCH_LEVEL 持鎖不能暫停。CR8 反映每次變化；設定的 CPU0 事件搶占使用 `scheduling`；任意巢狀中斷仍不受支援。 |
 | `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | CPU0 上常駐且對齊的執行自旋鎖；檢查擁有者、取得與釋放配對及 IRQL 恢復。競爭的阻塞取得會明確停止。 |
+| `ExInterlockedInsertHeadList`、`ExInterlockedInsertTailList`、`ExInterlockedRemoveHeadList`、`ExInterlockedPushEntryList`、`ExInterlockedPopEntryList`、`ExInterlockedAddUlong`、`ExInterlockedAddLargeInteger` | 在任意 IRQL 下，於閒置的常駐執行自旋鎖內遮罩中斷、維持 IRQL 不變完成一次更新。插入回傳原本的相鄰項或 NULL，移除保留被移除項本身的連結，加法回繞並回傳原值。損毀的連結如核心的 `FAST_FAIL_CORRUPT_LIST_ENTRY` 一樣停止；已被持有的鎖，以及可分頁、使用者模式或與鎖重疊的儲存會明確停止。 |
+| `InitializeSListHead`、`ExpInterlockedPushEntrySList`、`ExpInterlockedPopEntrySList`、`ExpInterlockedFlushSList`、`ExQueryDepthSList`、`FirstEntrySList` | x64 無鎖 `SLIST_HEADER` 串列，`InterlockedPushEntrySList`、`InterlockedPopEntrySList`、`InterlockedFlushSList` 巨集及其 `ExInterlocked` 形式經由 `Exp` 匯出到達這裡。推入把 Depth 和 Sequence 同時加一，彈出只減少 Depth，清空會清除 Depth 和首項，彈出或清空的項保留各自的連結。`InitializeSListHead` 像核心一樣對未對齊的標頭引發 `STATUS_DATATYPE_MISALIGNMENT`；其他未對齊的標頭和項會明確停止。`ExQueryDepthSList` 要求 `DISPATCH_LEVEL` 或更低，其餘可在任意 IRQL 呼叫。 |
 | `IoAllocateWorkItem`, `IoQueueWorkItem`, `IoFreeWorkItem` | 裝置擁有的不透明工作項目；僅支援 `DelayedWorkQueue`，在 `PASSIVE_LEVEL` 將裝置與內容傳給回呼；禁止釋放仍在佇列中的項目 |
 | `KeInitializeDpc`, `KeInsertQueueDpc`, `KeRemoveQueueDpc`, `KeSetImportanceDpc`, `KeSetTargetProcessorDpc` | 不透明 DPC 儲存、四個客體回呼參數、`DISPATCH_LEVEL`、重複排入／移除及優先順序；僅目標 CPU0 |
 | `KeInitializeTimer`, `KeInitializeTimerEx`, `KeSetTimer`, `KeSetTimerEx`, `KeCancelTimer`, `KeReadStateTimer` | 通知／同步計時器；相對／絕對 100 ns 期限、毫秒週期、重新設定／取消及虛擬時間中的訊號查詢 |
@@ -416,7 +435,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 選用根欄位 `"load_address": "0x190000000"` 請求變更載入基底位址；省略此欄位或指定 `"0x0"` 時使用慣用位址。映像必須滿足重新定位需求。原有的初始化命令或 C API 不會隱含執行任何請求情境。
 
-根物件僅接受 `load_address`、`requests`、`unload`、`kernel_exports`、`registry` 和 `pnp_devices`。一般檔案要求接受 `kind`、選用且互斥的 `device` 或 `device_id`，以及選用的 `file`。IOCTL 必須提供 `code`，並接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。位移預設為零，可使用整數或十六進位字串，且必須落在非負有號 64 位元值的範圍內。生命週期請求會拒絕傳輸欄位。未知或重複欄位會遭拒絕。`code` 接受無號 32 位元 JSON 整數或 `0x` 十六進位字串。`input` 是長度為偶數且不帶前綴或空格的十六進位位元組字串；省略表示空輸入。`output_size` 為無號 JSON 整數，省略表示零。不接受小數及浮點數寫法。
+根物件僅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`kernel_va_shadow_query`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry` 和 `pnp_devices`。一般檔案要求接受 `kind`、選用且互斥的 `device` 或 `device_id`，以及選用的 `file`。IOCTL 必須提供 `code`，並接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。位移預設為零，可使用整數或十六進位字串，且必須落在非負有號 64 位元值的範圍內。生命週期請求會拒絕傳輸欄位。未知或重複欄位會遭拒絕。`code` 接受無號 32 位元 JSON 整數或 `0x` 十六進位字串。`input` 是長度為偶數且不帶前綴或空格的十六進位位元組字串；省略表示空輸入。`output_size` 為無號 JSON 整數，省略表示零。不接受小數及浮點數寫法。
 
 僅 READ／WRITE／IOCTL 請求接受選用欄位 `cancel_after_100ns`，它必須是 0 到 `INT64_MAX`（9223372036854775807）之間的 JSON 整數。此值相對於請求提交時刻，以虛擬 100 ns 為單位，並非實際時間。對 KMDF，零表示框架路由後、客體 I/O 回呼前觸發取消；若路由已直接完成請求，則完成優先。對 WDM，零在派送傳回後生效。正數延遲僅在沒有就緒回呼或執行框架時，隨時間推進至計時器、等待或取消期限而觸發。掛起的 WDM IRP 會在持有取消自旋鎖的 `DISPATCH_LEVEL` 呼叫已註冊的取消常式；常式必須使用 `Irp->CancelIrql` 釋放鎖後再完成請求。一般佇列與 PnP 取消仍不支援。每個請求報告都包含 `cancel_requested_at_100ns`，值為取消實際發生時的絕對虛擬時間；若未發生取消，包括完成先發生的情況，則為 null。請求取消本身不會完成 IRP，也不規定最終狀態。
 `IoSetCancelRoutine`、`IoAcquireCancelSpinLock`、`IoReleaseCancelSpinLock` 與 `IoCancelIrp` 共用相同的 IRP 狀態及取消自旋鎖；`IoCancelIrp` 同步呼叫已註冊常式，並傳回是否實際呼叫。
@@ -480,7 +499,7 @@ python3 scripts/validate_windows_driver_sample.py \
 
 JSON 報告區分 `stop_reason`、可為空值的 `nt_status` 和 `nt_success`、停止位置 PC，以及指令計數。它保留停止前收集的 API 呼叫及可觀察狀態，包括裝置物件與驅動程式回呼位址。客體位址以十六進位字串表示，避免 JSON 使用端遺失 64 位元精確度。
 
-`configuration` 物件記錄本次執行的限制、服務名稱與 `kernel_exports` 覆寫值。設定識別為 `wdm-x64-scheduled-v101`。`nt_status` 始終是 DriverEntry 的結果，而 `scenario_success` 綜合描述初始化及已完成請求的結果。`phase`、`requests` 和 `unload_completed` 表明請求生命週期的哪些部分已執行。每次 API 呼叫及 CPU 寫入也會記錄階段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每個請求報告派送狀態與 I/O 狀態、是否完成、information 長度及傳回的 `output_hex` 位元組。`preferred_image_base` 描述原始 PE 基底位址。`security_cookie` 是已初始化 cookie 的客體位址；若不需要 cookie，則為 `"0x0"`。請求報告欄位為 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始登錄配置。 `information_hex` 以十六進位字串精確保留原始 64 位元 `IoStatus.Information`；原有數值欄位 `information` 仍然保留。
+`configuration` 物件記錄本次執行的限制、服務名稱與 `kernel_exports` 覆寫值。設定識別為 `wdm-x64-scheduled-v103`。`nt_status` 始終是 DriverEntry 的結果，而 `scenario_success` 綜合描述初始化及已完成請求的結果。`phase`、`requests` 和 `unload_completed` 表明請求生命週期的哪些部分已執行。每次 API 呼叫及 CPU 寫入也會記錄階段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每個請求報告派送狀態與 I/O 狀態、是否完成、information 長度及傳回的 `output_hex` 位元組。`preferred_image_base` 描述原始 PE 基底位址。`security_cookie` 是已初始化 cookie 的客體位址；若不需要 cookie，則為 `"0x0"`。請求報告欄位為 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始登錄配置。 `information_hex` 以十六進位字串精確保留原始 64 位元 `IoStatus.Information`；原有數值欄位 `information` 仍然保留。
 
 工作項目觀察記錄使用 `callback:N` 階段。待處理請求的 `dispatch_status` 保留 `STATUS_PENDING`，最終完成狀態分別記錄於 `io_status`，並據此計算該請求對 `scenario_success` 的影響。
 
@@ -606,3 +625,36 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 透過 `KeQueryPerformanceCounter`、`RDTSC` 或 `RDTSCP` 讀取時鐘會保留明確的驅動程式恢復相依性。擷取的計數器與頻率值尚無面向新核心環境的重新繫結契約。預設恢復傳回 `unsupported_state`；`snapshot_only` 保留此診斷。
 
 `KernelModuleImages` 根據 `KernelExportRegistry` 產生可讀的 PE 標頭和匯出表；靜態匯入、動態查找和模組列舉共用相同位址。提供者程式碼保持不透明，清單描述的是模擬環境，而非主機核心。兩個輸出皆在寫入前檢查，包括集區記憶體生命週期與重疊。Nt 查詢要求已知的核心 previous-mode；Zw 查詢採用核心呼叫契約。完整模組查詢會保留明確的復原相依性，即使其緩衝區已釋放；提供者映像指標也以借用狀態追蹤。`KernelExportTests.cpp` 檢查 PE 解析、權限、ABI 欄位、寫入拒絕和復原相依性；原創編譯執行階段測試程式在 CPU 後端走訪這些匯出表。
+
+驅動設定固定關閉 CET 影子堆疊。標準編碼的 `RDSSPD` 和 `RDSSPQ` 保留全部暫存器位元、旗標和記憶體，包括 32 位元目的暫存器的高半部分。兩種讀取都計為一條指令，並為 UNPACK 保留環境相依性。CPUID 宣告不會啟用 CET；其他影子堆疊指令及啟用 CET 的操作仍不受支援。
+
+## 宣告的載入記錄檢視
+
+可選的 `loader_view` 宣告具體診斷環境，例如 `{"version":1,"flags":0,"evidence":"fixture declaration"}`。三個欄位皆必填；`flags` 為無號 32 位元整數，零也必須明確提供；`evidence` 是呼叫方提供的 1–256 位元組可列印 ASCII 標籤，並非經過認證的證據。版本 1 指模擬配置，不代表 Windows 版本。未知欄位或無效宣告會在模型配置記憶體前拒絕。省略時 `DriverSection` 保持不透明，報告不增加該欄位；提供時完整保留於 `configuration.loader_view`。
+
+可選 `version_query` 選擇具體診斷演算法：`{"version":1,"build_number":12345,"evidence":"fixture declaration","allow_zero_size":false}`。`version`、`build_number`（0–65535，包含明確的零）及 `evidence`（1–256 個可列印 ASCII 位元組）必填；`allow_zero_size` 預設為 false。版本 1 僅在 [4,20) 寫入主版本 10、次版本 0、宣告的組建號及平台 2，其餘位元組不變。此版本識別演算法，不認證 Windows 實作，也不從主機推斷數值。
+
+`RtlGetVersion` 需要 `checked-x64` 與 PASSIVE_LEVEL。基礎記錄長度必須為 276，整個 CSD 陣列已清零；另行啟用的零長度形式只存取 20 位元組，屬非通用相容行為。長度 284/292、其他長度、非零 CSD、無效 RAM 或權限均在寫入前拒絕，共用物件守衛同樣適用。未使用的宣告也保留尚未重建的環境相依，不提供符號假設、指標配置或原生恢復證明。報告保留 `configuration.version_query`。參見 [API 契約](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlgetversion) 與[基礎記錄初始化](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_osversioninfow)。
+
+查詢緩衝區必須位於此執行設定的核心位址範圍；在本次停止 CPU 執行的 API 操作期間，每個存取的 RAM 位元組在目前位址空間只能有一個虛擬對映。使用者緩衝區及任何第二對映（包括唯讀或不可存取別名）均在輸出前拒絕。這是保守的准入限制，不依高位址推斷所有權，共用物件存取檢查仍然適用。
+
+借用的 160 位元組記錄僅開放 `DllBase`（位移 48，8 位元組）、`EntryPoint`（56，8）、`SizeOfImage`（64，4）及 `Flags`（104，4）。前三項來自實際載入映像，包含重定位後的值；不推斷旗標位元意義。允許這些範圍內的部分讀取；未知位元組、跨越未知範圍的存取與所有寫入皆遭拒絕，複製服務或 MDL 別名也無法繞過。`DriverObject.Flags` 仍不透明。檢視貫穿模擬生命週期，即使未讀取也保留未重建的環境相依性，不授予符號常數或原生執行階段還原權限。
+
+執行要求透過 `DriverOptions.Contract` 或支援選擇合約的入口啟用 `checked-x64`。原 C v1 場景入口使用 Legacy，不能啟用此檢視；UNPACK 預設採用受檢查執行。Legacy 會在映像載入或觀察器啟動前遭拒絕，因為軟體寫入掛鉤可能在提交儲存後才停止。
+
+
+## 明確宣告物理記憶體清單
+
+選用的 `physical_memory_inventory` 明確選擇模擬 RAM：`{"version":1,"source":"model-identity-window","evidence":"fixture declaration"}`。三個欄位皆必填，evidence 為 1–256 位元組可列印 ASCII。未知欄位、不支援的版本或來源、非 `checked-x64` 宣告會在載入前拒絕。此來源選擇統一物理識別視窗，即從 64 GiB 開始的一段 64 MiB 範圍；不推斷主機安裝記憶體，也不為尚無後備儲存的頁面賦予內容或存取權限。
+
+在 PASSIVE_LEVEL，`MmGetPhysicalMemoryRanges` 回傳新配置的 32 位元組非分頁集區緩衝區：兩個 64 位元欄位（基址和位元組長度），接著是零/零終止項。並存結果彼此獨立，呼叫者透過 `ExFreePool` 或 `ExFreePoolWithTag(...,0)` 分別釋放；資源不足回傳 NULL。缺少宣告、IRQL 過高或生命週期無效均明確停止，固定頁面阻止提前釋放。Ex/Ex2、任意清單和記憶體熱增刪尚不支援。報告保留 `configuration.physical_memory_inventory`。即使宣告未使用，也保留環境依賴。API 擁有的結果緩衝區仍屬借用狀態和存活集區依賴，不會虛構可重建的集區配置 API；釋放也不構成符號證明或原生還原證明。
+
+## 明確宣告的核心虛擬位址隔離狀態查詢
+
+選用的 `kernel_va_shadow_query` 提供類別 `196`（`SystemKernelVaShadowInformation`）的結果：`{"version":1,"flags":0,"evidence":"fixture declaration"}`。三個欄位皆必填，明確的零值有效。版本 1 僅接受低十四個已定義位元（`0x3fff`）；保留位元、格式錯誤、未知欄位及非 `checked-x64` 執行皆拒絕。evidence 為 1–256 個可列印 ASCII 位元組，不推斷主機狀態或實作硬體緩解措施。
+
+在 PASSIVE_LEVEL，長度小於 4 時回傳 `STATUS_INFO_LENGTH_MISMATCH` 且不存取結果；長度至少為 4 時僅更新前四位元組。非 NULL 的 `ReturnLength` 在兩種情況皆寫入 4。ULONG 引數取低 32 位元。結果須為可讀寫核心 RAM，長度輸出須可寫；兩者均須具唯一實體映射及有效物件生命週期。成功輸出不得重疊，所有檢查先於寫入。Nt 要求已知的 KernelMode previous-mode，Zw 保留呼叫者內容。報告保留宣告，即使未使用也保留尚未重建的環境相依性。
+
+## 有界核心呼叫者內容擷取
+
+`RtlCaptureContext` 在 checked-x64 Unicorn/KVM/WHP 共用匯入與動態實作，要求 IRQL <= DISPATCH_LEVEL。記錄須為 16 位元組對齊、完整可讀寫的 1232 位元組核心 RAM。只寫入 `[48,72)`、`[120,262)`、`[280,284)`、`[416,672)`，保留其餘位元組及 x87 資料/指標、MXCSR mask。ContextFlags=`0x10000f`，呼叫者 RSP=入口 RSP+8，RIP 來自實際返回槽；入口 RSP-8 寫入 8 位元組旗標，RAX 為零擴展 EFLAGS，算術旗標依 ADD(入口 RSP-8,8) 更新。DS/ES/FS/GS 使用 checked 邏輯 SS，不代表主機或原始後端值。完整記錄、返回槽與暫存槽須通過普通核心 RAM、有效物件、權限與唯一實體映射檢查，記錄不可重疊返回/暫存範圍；入口 RSP 模 16 為 8。擷取或驗證失敗不改 CPU/RAM，legacy 明確拒絕。此有界模型不代表所有 Windows 實作；即使覆寫擷取內容仍保留環境相依性，不授予 UNPACK 還原或符號前提。

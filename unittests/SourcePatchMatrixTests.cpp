@@ -24,6 +24,7 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Program.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -37,22 +38,29 @@ struct Profile {
   Arch Architecture;
   BinaryFormat Format;
   const char *Name;
+  const char *ReceiptTriple;
   const char *FrontendTriple = nullptr;
 };
 const Profile Profiles[] = {
-    {Arch::X86, BinaryFormat::ELF, "ELF_X86"},
-    {Arch::X64, BinaryFormat::ELF, "ELF_X64"},
-    {Arch::ARM, BinaryFormat::ELF, "ELF_ARM32"},
-    {Arch::AArch64, BinaryFormat::ELF, "ELF_ARM64"},
-    {Arch::X86, BinaryFormat::COFF, "PE_X86"},
-    {Arch::X64, BinaryFormat::COFF, "PE_X64"},
-    {Arch::ARM, BinaryFormat::COFF, "PE_ARM32"},
-    {Arch::AArch64, BinaryFormat::COFF, "PE_ARM64"},
-    {Arch::X86, BinaryFormat::MachO, "MachO_X86"},
-    {Arch::X64, BinaryFormat::MachO, "MachO_X64"},
-    {Arch::ARM, BinaryFormat::MachO, "MachO_ARM32"},
-    {Arch::AArch64, BinaryFormat::MachO, "MachO_ARM64"},
-    {Arch::ARM, BinaryFormat::MachO, "MachO_ARMv7", "armv7-apple-ios5.0"},
+    {Arch::X86, BinaryFormat::ELF, "ELF_X86", "i386-unknown-linux-gnu"},
+    {Arch::X64, BinaryFormat::ELF, "ELF_X64", "x86_64-unknown-linux-gnu"},
+    {Arch::ARM, BinaryFormat::ELF, "ELF_ARM32",
+     "armv7-unknown-linux-gnueabihf"},
+    {Arch::AArch64, BinaryFormat::ELF, "ELF_ARM64",
+     "aarch64-unknown-linux-gnu"},
+    {Arch::X86, BinaryFormat::COFF, "PE_X86", "i686-pc-windows-msvc"},
+    {Arch::X64, BinaryFormat::COFF, "PE_X64", "x86_64-pc-windows-msvc"},
+    {Arch::ARM, BinaryFormat::COFF, "PE_ARM32", "thumbv7-pc-windows-msvc"},
+    {Arch::AArch64, BinaryFormat::COFF, "PE_ARM64", "aarch64-pc-windows-msvc"},
+    {Arch::X86, BinaryFormat::MachO, "MachO_X86", "i386-apple-darwin"},
+    {Arch::X64, BinaryFormat::MachO, "MachO_X64", "x86_64-apple-macos14.0"},
+    {Arch::ARM, BinaryFormat::MachO, "MachO_ARM32", "thumbv7k-apple-watchos"},
+    {Arch::AArch64, BinaryFormat::MachO, "MachO_ARM64",
+     "arm64-apple-macos14.0"},
+    {Arch::ARM, BinaryFormat::MachO, "MachO_ARMv7", "thumbv7-apple-ios5.0",
+     "armv7-apple-ios5.0"},
+    {Arch::ARM, BinaryFormat::ELF, "ELF_ARM32_Thumb",
+     "thumbv7-unknown-linux-gnueabihf"},
 };
 std::string take(const char *Text) {
   std::string Result = Text ? Text : "";
@@ -236,12 +244,21 @@ protected:
       const auto Source = Directory / "original.c",
                  Object = Directory / "original.o";
       std::ofstream(Source) << originalSource();
-      ASSERT_EQ(run({NEVERD_TEST_CLANG,
-                     std::string("--target=") +
-                         llvmCodegenTriple(P.Architecture, P.Format),
-                     "-O0", "-funwind-tables", "-fno-pie", "-c",
-                     Source.string(), "-o", Object.string()}),
-                0);
+      std::vector<std::string> Command{
+          NEVERD_TEST_CLANG,
+          std::string("--target=") + P.ReceiptTriple,
+          "-O0",
+          "-funwind-tables",
+          "-fno-pie",
+          "-c",
+          Source.string(),
+          "-o",
+          Object.string()};
+      if (P.Architecture == Arch::ARM)
+        Command.push_back(llvm::StringRef(P.ReceiptTriple).starts_with("thumb")
+                              ? "-mthumb"
+                              : "-marm");
+      ASSERT_EQ(run(Command), 0);
       const auto Linker = linker(P.Format == BinaryFormat::ELF    ? "ld.lld"
                                  : P.Format == BinaryFormat::COFF ? "lld-link"
                                                                   : "ld64.lld");
@@ -282,6 +299,13 @@ protected:
     Mapping = {"replacement", Image.Entry};
     Options.struct_size = sizeof(Options);
     Options.compiler_path = NEVERD_TEST_CLANG;
+    // Keep the original Clang image as an independent ABI oracle when
+    // qualifying the optional ordinary NeverC source producer.
+    if (const char *NeverC = std::getenv("NEVERD_TEST_MATRIX_NEVERC");
+        NeverC && *NeverC) {
+      Options.compiler = NEVERD_SOURCE_PATCH_NEVERC;
+      Options.compiler_path = NeverC;
+    }
     Options.mappings = &Mapping;
     Options.mapping_count = 1;
   }
@@ -296,6 +320,20 @@ protected:
       std::filesystem::remove_all(Directory, Ignored);
   }
   std::string error() { return take(neverd_last_error(Session)); }
+  void expectObjectReceipt() {
+    auto Report = llvm::json::parse(take(neverd_patch_source_report(Session)));
+    ASSERT_TRUE(bool(Report));
+    const auto *Object = Report->getAsObject();
+    ASSERT_NE(Object, nullptr);
+    EXPECT_EQ(Object->getBoolean("success"), true);
+    EXPECT_EQ(Object->getString("target"), GetParam().ReceiptTriple);
+    EXPECT_EQ(Object->getInteger("artifact"),
+              NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT);
+    if (Options.input_kind == NEVERD_SOURCE_PATCH_OBJECT) {
+      EXPECT_EQ(Object->getString("producer"), "external");
+      EXPECT_EQ(Object->getInteger("input_kind"), NEVERD_SOURCE_PATCH_OBJECT);
+    }
+  }
   int patch() {
     constexpr const char *Source =
         "__attribute__((noinline)) static int helper(int x) { volatile int "
@@ -312,6 +350,18 @@ TEST_P(SourcePatchMatrix, CompilesInstallsAndExecutes) {
   ASSERT_EQ(Result, 1) << error();
   auto Report = llvm::json::parse(take(neverd_patch_source_report(Session)));
   ASSERT_TRUE(bool(Report));
+  EXPECT_EQ(Report->getAsObject()->getInteger("compiler"), Options.compiler);
+  EXPECT_EQ(Report->getAsObject()->getString("compiler_path"),
+            Options.compiler_path);
+  if (Options.compiler == NEVERD_SOURCE_PATCH_NEVERC &&
+      P.Format == BinaryFormat::COFF) {
+    const auto *Arguments =
+        Report->getAsObject()->getArray("compiler_arguments");
+    ASSERT_NE(Arguments, nullptr);
+    EXPECT_TRUE(llvm::any_of(*Arguments, [](const llvm::json::Value &Argument) {
+      return Argument.getAsString() == "-fno-autolink";
+    }));
+  }
   const auto *Installed = Report->getAsObject()->getArray("installed");
   ASSERT_NE(Installed, nullptr);
   ASSERT_EQ(Installed->size(), 1u);
@@ -334,7 +384,7 @@ TEST_P(SourcePatchMatrix, SuppliedIRUsesTheSameInstallationContract) {
       (P.Format == BinaryFormat::MachO && P.Architecture == Arch::ARM
            ? (P.FrontendTriple ? "thumbv7-apple-ios5.0"
                                : "thumbv7k-apple-watchos")
-           : llvmCodegenTriple(P.Architecture, P.Format)) +
+           : P.ReceiptTriple) +
       "\"\n" + "target datalayout = \"e-p:" +
       std::to_string(Image.getPointerSize() * 8) + ":" +
       std::to_string(Image.getPointerSize() * 8) + "\"\n" +
@@ -459,6 +509,7 @@ TEST_P(SourcePatchMatrix, NativeObjectFloatingPointAndStackArgumentABI) {
 TEST_P(SourcePatchMatrix, NativeObjectProfileCannotFallBackToIR) {
   Options.artifact = NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT;
   ASSERT_EQ(patch(), 1) << error();
+  expectObjectReceipt();
   auto Reader = Loader::create(Output);
   ASSERT_NE(Reader, nullptr);
   auto Reloaded = Reader->load(Output);
@@ -484,10 +535,14 @@ TEST_P(SourcePatchMatrix, NativeObjectRejectsMismatchedAndTruncatedHeaders) {
                                    O.string()};
   if (Image.Format == BinaryFormat::MachO && Image.Arch == Arch::ARM) {
     Args[1] = "--target=arm" + Target->substr(5);
-    Args.push_back("-mthumb");
     Args.push_back("-fno-omit-frame-pointer");
     Args.push_back("-mno-omit-leaf-frame-pointer");
   }
+  if (Image.Arch == Arch::ARM)
+    Args.push_back(
+        llvm::StringRef(GetParam().ReceiptTriple).starts_with("thumb")
+            ? "-mthumb"
+            : "-marm");
   if (Image.Format == BinaryFormat::COFF)
     Args.push_back("-ffunction-sections");
   else
@@ -513,6 +568,34 @@ TEST_P(SourcePatchMatrix, NativeObjectRejectsMismatchedAndTruncatedHeaders) {
             0);
   EXPECT_FALSE(error().empty());
   EXPECT_FALSE(std::filesystem::exists(Output));
+  EXPECT_EQ(read(Original), OriginalBytes);
+  if (Image.Format == BinaryFormat::COFF) {
+    // Suppressing the source producer's automatic libraries must not weaken
+    // the independent contract of an externally supplied linker directive.
+    std::ofstream(C) << "#pragma comment(lib, \"unavailable_patch_runtime\")\n"
+                        "int replacement(int x) {return x+40;}\n";
+    ASSERT_EQ(run(Args), 0);
+    const auto Directed = read(O);
+    EXPECT_EQ(neverd_patch_source(Session, Directed.data(), Directed.size(),
+                                  &Options, Output.string().c_str()),
+              0);
+    EXPECT_NE(error().find(".drectve"), std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(Output));
+    EXPECT_EQ(read(Original), OriginalBytes);
+  }
+  // The same independent object must also succeed. This prevents rejection of
+  // every object from satisfying the malformed-input assertions above, and
+  // checks receipt identity without going through the source compiler adapter.
+  ASSERT_EQ(neverd_patch_source(Session, Bytes.data(), Bytes.size(), &Options,
+                                Output.string().c_str()),
+            1)
+      << error();
+  expectObjectReceipt();
+  auto Reader = Loader::create(Output);
+  ASSERT_NE(Reader, nullptr);
+  auto Reloaded = Reader->load(Output);
+  ASSERT_TRUE(bool(Reloaded)) << llvm::toString(Reloaded.takeError());
+  execute(*Reloaded, GetParam(), 7, 61);
   EXPECT_EQ(read(Original), OriginalBytes);
 }
 TEST_P(SourcePatchMatrix, SourceEntrySurvivesImageRebasing) {
@@ -540,6 +623,102 @@ TEST_P(SourcePatchMatrix, DyncodeCannotPublishAnOrdinaryCompilation) {
 }
 INSTANTIATE_TEST_SUITE_P(AllTargets, SourcePatchMatrix,
                          testing::ValuesIn(Profiles),
+                         [](const testing::TestParamInfo<Profile> &Info) {
+                           return Info.param.Name;
+                         });
+
+class NeverCSourcePatchMatrix : public SourcePatchMatrix {
+protected:
+  void SetUp() override {
+    const char *Compiler = std::getenv("NEVERD_TEST_MATRIX_NEVERC");
+    if (!Compiler || !*Compiler)
+      GTEST_SKIP()
+          << "explicit NeverC producer required for its optional matrix";
+    SourcePatchMatrix::SetUp();
+  }
+  void check(llvm::StringRef Source, bool Object, bool DynCode, int Scale,
+             int Offset) {
+    Options.language = NEVERD_SOURCE_PATCH_C;
+    Options.artifact = Object ? NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT
+                              : NEVERD_SOURCE_PATCH_ARTIFACT_IR;
+    Options.mode =
+        DynCode ? NEVERD_SOURCE_PATCH_DYNCODE : NEVERD_SOURCE_PATCH_NORMAL;
+    ASSERT_EQ(neverd_patch_source(Session, Source.data(), Source.size(),
+                                  &Options, Output.string().c_str()),
+              1)
+        << error();
+    auto Parsed = llvm::json::parse(take(neverd_patch_source_report(Session)));
+    ASSERT_TRUE(bool(Parsed));
+    auto *Receipt = Parsed->getAsObject();
+    ASSERT_NE(Receipt, nullptr);
+    EXPECT_EQ(Receipt->getInteger("compiler"), NEVERD_SOURCE_PATCH_NEVERC);
+    EXPECT_EQ(Receipt->getInteger("language"), Options.language);
+    EXPECT_EQ(Receipt->getObject("translation"), nullptr);
+    if (DynCode) {
+      ASSERT_NE(Receipt->getObject("dyncode"), nullptr);
+      EXPECT_EQ(Receipt->getObject("dyncode")->getString("execution_profile"),
+                "hosted-v1");
+      EXPECT_EQ(Receipt->getObject("dyncode")->getBoolean("keep_unwind"), true);
+    }
+    auto Reader = Loader::create(Output);
+    auto Reloaded = Reader->load(Output);
+    ASSERT_TRUE(bool(Reloaded)) << llvm::toString(Reloaded.takeError());
+    for (int X : {-3, 0, 7, 25})
+      execute(*Reloaded, GetParam(), X, X * Scale + Offset);
+    EXPECT_EQ(read(Original), OriginalBytes);
+  }
+  static constexpr llvm::StringLiteral CSource = R"(
+struct State { int value; };
+static int twice(int value) { return value * 2; }
+int replacement(int x) {
+  struct State state = {x + 3};
+  state.value = twice(state.value);
+  return state.value + 5 + sizeof(long);
+})";
+};
+TEST_P(NeverCSourcePatchMatrix, CIRPreservesTargetLayout) {
+  check(CSource, false, false, 2,
+        GetParam().Format == BinaryFormat::COFF ? 15 : 19);
+}
+TEST_P(NeverCSourcePatchMatrix, CObjectPreservesTargetLayout) {
+  check(CSource, true, false, 2,
+        GetParam().Format == BinaryFormat::COFF ? 15 : 19);
+}
+TEST_P(NeverCSourcePatchMatrix, HostedCUsesExactPayloadLayout) {
+  check(CSource, true, true, 2,
+        GetParam().Format == BinaryFormat::COFF ? 15 : 19);
+}
+TEST_P(NeverCSourcePatchMatrix,
+       HostedCHelpersAndRecursionKeepExactPayloadLayout) {
+  check(R"(
+__attribute__((noinline)) static int recurse(int x) {
+  if (x <= 0) return 0;
+  volatile int value = recurse(x - 1); return value + 1;
+}
+__attribute__((noinline)) static int helper(int x) {
+  volatile int value = x * 3; return value;
+}
+int replacement(int x) {
+  volatile int value = recurse(3); return helper(x) + value + 37;
+})",
+        true, true, 3, 40);
+}
+TEST_P(NeverCSourcePatchMatrix, CppSourceCannotPublishWithNeverC) {
+  Options.language = NEVERD_SOURCE_PATCH_CXX;
+  for (llvm::StringRef Source : {"extern \"C\" int replacement(int x) { try "
+                                 "{throw x;} catch (...) {return 1;} }",
+                                 "int replacement(int x) { return x+1; }"}) {
+    EXPECT_EQ(neverd_patch_source(Session, Source.data(), Source.size(),
+                                  &Options, Output.string().c_str()),
+              0);
+    EXPECT_NE(error().find("NeverC accepts C source only"), std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(Output));
+  }
+}
+INSTANTIATE_TEST_SUITE_P(NeverCProfiles, NeverCSourcePatchMatrix,
+                         testing::Values(Profiles[1], Profiles[3], Profiles[5],
+                                         Profiles[7], Profiles[9],
+                                         Profiles[11]),
                          [](const testing::TestParamInfo<Profile> &Info) {
                            return Info.param.Name;
                          });

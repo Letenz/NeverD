@@ -13,6 +13,7 @@
 #include "os/windows/driver/DriverImage.h"
 #include "os/windows/kernel/WindowsKernelLayout.h"
 
+#include "neverd/emulation/CPU.h"
 #include "neverd/emulation/DriverSession.h"
 
 #include "llvm/BinaryFormat/COFF.h"
@@ -606,6 +607,126 @@ TEST_F(DriverImageValidation, RejectsNonKernelImportProvider) {
               Bytes.data() + offset(reinterpret_cast<const void *>(Address)));
   rejects();
 }
+
+TEST_F(DriverImageValidation, ReservesEveryKernelImportModuleSpan) {
+  const auto *Header = Object->getPE32PlusHeader();
+  for (unsigned I = 0; I < profile::KernelModuleCount; ++I) {
+    const uint64_t Base =
+        profile::KernelModuleBase + I * profile::KernelModuleStride;
+    for (const uint64_t Address :
+         {Base, Base + profile::KernelModuleStride - 0x10000}) {
+      SCOPED_TRACE(Address);
+      put64(&Header->ImageBase, Address);
+      auto Image = loadDriverImage(writeModified(), 64 * 1024 * 1024);
+      ASSERT_FALSE(bool(Image));
+      EXPECT_NE(llvm::toString(Image.takeError()).find("reserved"),
+                std::string::npos);
+    }
+  }
+  put64(&Header->ImageBase,
+        profile::KernelModuleBase +
+            profile::KernelModuleCount * profile::KernelModuleStride);
+  auto Image = loadDriverImage(writeModified(), 64 * 1024 * 1024);
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+}
+
+class DriverImportProvider
+    : public DriverImageValidation,
+      public testing::WithParamInterface<ExecutionBackendKind> {
+protected:
+  void replaceProvider(llvm::StringRef Module) {
+    const auto *Table = Object->getDataDirectory(llvm::COFF::IMPORT_TABLE);
+    ASSERT_NE(Table, nullptr);
+    uintptr_t Address = 0;
+    auto Error = Object->getRvaPtr(Table->RelativeVirtualAddress, Address);
+    ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+    const auto *Descriptor = reinterpret_cast<
+        const llvm::object::coff_import_directory_table_entry *>(Address);
+    Error = Object->getRvaPtr(Descriptor->NameRVA, Address);
+    ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+    ASSERT_EQ(std::string(reinterpret_cast<const char *>(Address)),
+              "ntoskrnl.exe");
+    const auto At = offset(reinterpret_cast<const void *>(Address));
+    ASSERT_LT(Module.size(), sizeof("ntoskrnl.exe"));
+    std::fill_n(Bytes.begin() + At, sizeof("ntoskrnl.exe"), 0);
+    std::copy(Module.begin(), Module.end(), Bytes.begin() + At);
+  }
+
+  void requireBackend() {
+    auto Backend = createExecutionBackend(
+        GetParam(), ExecutionContract::CheckedX64, 64 * 1024 * 1024);
+    if (!Backend) {
+      auto Error = Backend.takeError();
+      const bool Unavailable = Error.isA<BackendUnavailableError>();
+      const auto Reason = llvm::toString(std::move(Error));
+      if (Unavailable)
+        GTEST_SKIP() << Reason;
+      FAIL() << Reason;
+    }
+  }
+};
+
+TEST_P(DriverImportProvider, UnusedImportsDoNotRequireInventedImplementations) {
+  requireBackend();
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  const auto Original = Bytes;
+  for (const char *Module : {"FLTMGR.SYS", "NDIS.SYS", "NETIO.SYS"}) {
+    SCOPED_TRACE(Module);
+    std::copy(Original.begin(), Original.end(), Bytes.begin());
+    replaceProvider(Module);
+    ASSERT_FALSE(HasFatalFailure());
+    // Independently authored DriverEntry: return STATUS_SUCCESS without calls.
+    replaceEntry({0x31, 0xc0, 0xc3});
+    DriverOptions Options;
+    Options.Backend = GetParam();
+    Options.Contract = ExecutionContract::CheckedX64;
+    auto Result = emulateDriver(writeModified(), Options);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    EXPECT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+    EXPECT_EQ(Result->NTStatus, 0u);
+    EXPECT_EQ(Result->Instructions, 2u);
+    EXPECT_TRUE(Result->Calls.empty());
+  }
+}
+
+TEST_P(DriverImportProvider, ExecutedImportsRetainProviderQualifiedRefusal) {
+  requireBackend();
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  const auto Original = Bytes;
+  for (const char *Module : {"FLTMGR.SYS", "NDIS.SYS", "NETIO.SYS"}) {
+    SCOPED_TRACE(Module);
+    std::copy(Original.begin(), Original.end(), Bytes.begin());
+    replaceProvider(Module);
+    ASSERT_FALSE(HasFatalFailure());
+    DriverOptions Options;
+    Options.Backend = GetParam();
+    Options.Contract = ExecutionContract::CheckedX64;
+    Options.Requests.push_back({DriverRequestKind::Create});
+    Options.Unload = true;
+    auto Result = emulateDriver(writeModified(), Options);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    EXPECT_EQ(Result->Stop, DriverStopReason::UnsupportedAPI)
+        << Result->Diagnostic;
+    EXPECT_EQ(Result->Diagnostic,
+              "unsupported import: " + llvm::StringRef(Module).lower() +
+                  "!RtlInitUnicodeString");
+    EXPECT_GT(Result->Instructions, 0u);
+    EXPECT_FALSE(Result->NTStatus);
+    EXPECT_TRUE(Result->Calls.empty());
+    EXPECT_TRUE(Result->Requests.empty());
+    EXPECT_FALSE(Result->UnloadCompleted);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Backends, DriverImportProvider,
+    testing::Values(ExecutionBackendKind::Unicorn, ExecutionBackendKind::KVM,
+                    ExecutionBackendKind::WHP, ExecutionBackendKind::HVF),
+    [](const testing::TestParamInfo<ExecutionBackendKind> &Info) {
+      return std::string(executionBackendName(Info.param));
+    });
 
 TEST_F(DriverImageValidation, RejectsInvalidLoadConfigurationSize) {
   const auto *Directory =

@@ -18,6 +18,7 @@ namespace llvm {
 class Argument;
 class DataLayout;
 class Instruction;
+class LoadInst;
 class ReturnInst;
 class Value;
 class User;
@@ -43,6 +44,17 @@ bool isStaticEntryAlloca(const llvm::AllocaInst &Slot,
                          const llvm::Function &Parent);
 bool isPrivateSlotInitializer(const llvm::User *User,
                               const llvm::AllocaInst &Slot);
+/// Emitter-private SSA transport for one exact callback stack displacement.
+struct RegistrationStackCopy {
+  int64_t Offset = 0;
+  std::set<llvm::StoreInst *> Definitions;
+  std::set<llvm::LoadInst *> Loads;
+};
+llvm::Error validateRegistrationStackCopies(
+    llvm::BasicBlock &Entry, const std::set<llvm::BasicBlock *> &Body,
+    const std::map<llvm::AllocaInst *, RegistrationStackCopy> &Copies,
+    const std::map<llvm::Value *, int64_t> &Offsets, size_t &Work,
+    llvm::ArrayRef<X86RegistrationCatchStackResume> Resumes);
 llvm::Error checkPrivateStack(
     const llvm::DataLayout &Layout, llvm::BasicBlock &Entry,
     const std::set<llvm::BasicBlock *> &Body,
@@ -50,7 +62,8 @@ llvm::Error checkPrivateStack(
     X86RegistrationCallbackFrame &Frame,
     std::set<llvm::AllocaInst *> &PrivateSlots, size_t &WorkUsed,
     const std::set<llvm::StoreInst *> *SourceStores = nullptr,
-    llvm::ArrayRef<X86RegistrationCatchStackResume> Resumes = {});
+    llvm::ArrayRef<X86RegistrationCatchStackResume> Resumes = {},
+    std::set<const llvm::StoreInst *> *PrivateStores = nullptr);
 llvm::Expected<CallbackPlan>
 prepareCallback(llvm::Function &Parent,
                 const X86RegistrationCallbackRequest &Request,

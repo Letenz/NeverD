@@ -8,6 +8,8 @@ NeverD 的測試回答三個不同問題：表示形狀是否符合預期、完�
 處理二進位 fixture，以及產生的程式碼是否維持行為。先選擇能回答本次變更問題的
 最小套件；對高風險提取請求，再執行較廣的彙總測試。
 
+`PipelineOutcome.ResolvedCalls*` 檢查暫存器分組、call／invoke 身分、堆疊位元組封裝與拆分、窄值留在各自的堆疊槽，以及缺少位元組時的拒絕。`MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` 檢查記錄的偏移。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` 涵蓋 x64、ARM32、AArch64 的 ELF、PE、Mach-O。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` 涵蓋三種格式，拒絕長度被改寫、可寫或越界範圍、同名本地函式、錯誤來源暫存器、替代入口及可重定位映像。主機 C 差分測試將原始 C 獨立以 O0 編譯，產生的 C 仍以 O2 編譯，避免主機最佳化器錯算迴圈遞推而污染對照。AArch64 FMA 檢查僅在 x86 主機要求 `-mfma`。
+
 ## 設定測試建置
 
 除非啟用 `BUILD_TESTING`，否則不會建置測試。完整套件通常使用 Release；Debug
@@ -280,11 +282,21 @@ build-release/bin/NeverDLowUndefinedDigestTests
 `NarrowArithmeticShiftCarrySurvivesBothSourceBackends` 在 O0/O2 下啟用未定義行為陷阱，執行兩條恢復 C 路徑，涵蓋全部位元組值和原始計數。
 `NeverDLLVMCIntrinsicSemanticTests` 也在 O0/O2 下執行 i1/8/16/32/64/128 的有號與無號整數 min/max，檢查賦值與內嵌結果、運算元產生順序及單次求值。不支援的純量位寬和格式錯誤的運算元必須明確失敗。
 
+## x64 x87 上下文所有權
+
+`NeverDX86X87ConvertStateTests` 在預設/NoOpt 與 C O0/O2 路線比較原始指令及原生 LLVM、HighC、LLVMC 輸出，檢查轉換、八種算術形式、旗標、MMX/EMMS、滿/空堆疊、呼叫、包裝函式、入口迴圈與獨立入口。其測試夾具透過 `BinaryImage::X87ContextOverride` 在所有主機上固定使用自有上下文；整數載入、符號與 x87 FPU 測試集亦涵蓋 System V 的具型別投影。四種 FLDENV/FRSTOR 格式涵蓋待處理例外、標籤與保留載荷；適用情況涵蓋四種 RC、三種有效 PC 及 64 種例外遮罩。Low/Med/High 契約拒絕非法形狀、偽造控制代碼與截斷選擇器。窄回傳保留呼叫副作用，並拒絕實際需要的未知位元。原生對照需要 x64 與 Clang；不宣稱涵蓋全部指令、平台、CPU、故障優先順序或具型別的浮點匯入 ABI。
+
 ## 結構化 C 控制流程與呼叫檢查
 
 `HighControlFlowSemantics.*` 檢查移動迴圈出口或尾部時是否保留其他跳躍仍引用的標籤。測試涵蓋直接進入迴圈頭部、尾部出口及替換後的 break，並以獨立回傳值預期執行 O0/O2 編譯的產生 C。
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` 檢查推斷出的必要暫存器引數是否保留末尾未知欄位。讀取未知的必要引數或條件必須明確觸發陷阱；省略、空指標和巢狀運算元不能被悄悄替換為零。已知值和已證明不被讀取的多餘運算元仍可執行。陷阱是診斷邊界，不是還原行為等價的證明。
+
+## LLVM C 物件儲存
+
+`NeverDLLVMCAllocaTests` 將原 LLVM 與輸出 C 在 O0/O2 下編譯執行並啟用未定義行為陷阱，觀察完整動態範圍、含填補的元素步長、16/32/64 位元組對齊、同時與迴圈配置的獨立性，以及數量產生呼叫只求值一次。一般及保留型別的 C 路徑都保留儲存；未支援或溢位的配置形狀與明確堆疊儲存/還原在死碼刪除前拒絕。這些測試驗證 C 配置行為，不證明原堆疊位址或例外框架身分。
+
+同一測試目標也比較靜態純量、指標、陣列和緊密記錄最高 128 位元組的對齊、全域對齊、零填補字串的完整儲存，以及初始化器、傳回、呼叫、選擇和指標轉整數中的純量全域位址身分；依適用範圍涵蓋一般/保留型別及整個模組/單一函式輸出。
 
 ## CPU 執行測試
 
@@ -1208,7 +1220,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 48 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 24 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks = 5508`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks = 5615`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1445,6 +1457,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 將目標判定為一般子程序前，返回位址槽檢查會拒絕重疊寫入、未知寫入、原子寫入及效果未證明的被呼叫函式寫入。PE、ELF 和 Mach-O 案例涵蓋返回位址的部分寬度破壞及 i386 擴寬記憶體位址。私有堆疊寫入、捨棄的返回位址和終止分支仍可通過驗證。
 
+同一內部呼叫點的混合出口保留兩種行為：已證明的裸近 RET 彈出自身未被破壞的返回位址，並續接至精確位置；丟棄該位址的出口保留原有控制流程。`MixedExitsResumeOnlyTheMatchingInvocation` 涵蓋 PE/ELF/Mach-O x64 與 ELF i386，驗證最佳化及未最佳化 LLVM，並在啟用消毒器時執行 x64 C。配套案例涵蓋重複呼叫，並拒絕多個呼叫點共用 RET、獨立或例外入口、續接區塊揭露的新前驅、未封閉的間接出口、返回位址損壞、帶立即數清理堆疊的返回及語言執行階段中繼資料。每次重建 CFG 都須重新證明呼叫歸屬；這不授權共用 SEH 回呼返回。 非區域出口還須單獨證明父函式返回槽：外層 RET 必須在精確的入口 SP 處讀取原始入口返回位址。釋放過多堆疊空間，以及破壞或可能別名該位址的寫入均被拒絕；不重疊的私有寫入仍可通過。
+
 `NeverDSysVCallContractTests` 以 QtXml 中 `QDomNode::save` 與 `QDomNode::isDocument` 的形態檢查 x86-64 System V 呼叫約定。摘要顯示會讀取某個引數暫存器的直接被呼叫者會收到呼叫者的值，包括原樣傳遞的傳入 `this`；虛擬呼叫會取得支配區塊載入 `RDI` 的物件；在某條路徑上不寫 `RAX` 就返回、在其他路徑上只傳遞被呼叫者結果的方法為 void；在比較鏈之前寫入 `AL` 的位元組在每條路徑上都是返回值。產生的程式在 `-O0` 與 `-O2` 下搭配 AddressSanitizer 與未定義行為陷阱執行。
 
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` 檢查 CoreImage 提供方、CIImage 工廠、完整 48 位元組邏輯記錄與 x2 指標，拒絕缺失或錯誤的提供方、x86_64 及衝突宣告。`ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` 區分原始呼叫與沿用相同機器位址的結果賦值。`RejectsChangedCopyCallBodyAndCurrentImage` 拒絕 24 類憑據、參數、儲存、框架、中繼資料、匯入、重複呼叫與儲存 IR 的修改，包括同時一致地修改 MedIR 和 HighIR。`GeneratedCExecutesAgainstIndependentPhysicalCopyABI` 在 ARM64 上以 O0/O2 執行未修改的產生 C，對照獨立從編譯器觀察到的 x2 指標接收函式，檢查六個浮點位元模式、選擇器與接收者身分、單次求值、傳回物件、合法副本寫入、輸入不變性與邊界保護。其他主機略過此實體 ABI 執行測試。
@@ -1632,7 +1646,11 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 
 `X86PreservedState.*` 檢查重新解碼的純量形式、精確暫存器別名、嚴格重設及位元組/操作段/版本過期拒絕。`OriginalBinaryUndefinedIndependence.*Opaque*` 涵蓋分支、內部呼叫、完整間接目標、精確設定及獨立解碼的中繼資料預算恰好足夠/少一單位邊界。`BinaryLowIR*.*Opaque*` 涵蓋選擇見證與任意未定義選擇、多歸納來源、後期秩/預算拒絕、真實入口純量保持，以及 LowIR 不變但後續來源段位元組改變時執行摘要必須改變。`NativeUndefinedIndependence.*Opaque*` 和 `NativeStackControl.*FreshMemoryCall*` 檢查群組內部、切點前邊界、過期記錄及堆疊修改前的目標求值。重建受影響的中繼資料使用端，包括 `NeverDInterpreterLLVMRefinementTests`；分別報告 sanitizer、編譯故障注入與一般測試結果。
 
-`scripts/check_windows_nonlocal_finally.py` 使用 MSVC 編譯並原生執行 x86/x64 程式，涵蓋 O0/O2 與 GS 開關。六種情況區分普通呼叫和異常展開中的 finally、條件跳回父函式，以及中止展開的 return。重複執行檢查區域保護區和 x86 註冊鏈；刻意改變清理軌跡的負對照必須被原始預期拒絕。Windows EH fixture 作業保留原始碼及映像雜湊、編譯器輸出、連結映射和執行觀察。請在對應 MSVC 環境中指定 `--arch x86` 或 `--arch x64` 與 `--output`。這些結果僅提供原生執行基準，不代表 NeverD 已支援這些非區域轉移。
+`scripts/check_windows_nonlocal_finally.py` 使用 MSVC 編譯並原生執行 x86/x64 程式，涵蓋 O0/O2 與 GS 開關。六種情況區分普通呼叫和異常展開中的 finally、條件跳回父函式，以及中止展開的 return。重複執行檢查區域保護區和 x86 註冊鏈；刻意改變清理軌跡的負對照必須被原始預期拒絕。Windows EH fixture 作業保留原始碼及映像雜湊、編譯器輸出、連結映射和執行觀察。請在對應 MSVC 環境中指定 `--arch x86` 或 `--arch x64` 與 `--output`。這些結果僅提供原生執行基準，不代表 NeverD 已支援這些非區域轉移。 新增四種情況在父函式恢復後立即再次拋出例外，另有兩種檢查純量輸入與呼叫端擁有、帶相鄰 guard 的計數器。x86 註冊鏈在每次呼叫之後與恢復標籤處檢查。必須使用 schema 2 觀測；只比較最終註冊鏈的舊報告不能證明這些涵蓋範圍。
+
+`scripts/check_windows_native_seh_resume.py` 單獨測試 Windows x64 LLVM/CRT 的實驗性續接協定，涵蓋 O0/O2。`_local_unwind` 接收捕獲的實體 SP 與取址的父函式續接點，與逸出的來源框架單元分開。MASM 呼叫端檢查八個保留 GPR、XMM6–XMM15、返回 SP 和 guard。普通路徑執行呼叫後的操作，非局部路徑跳過這些操作，所有路徑隨後再次拋出例外。報告保留工具鏈與雜湊。原生成功不授予 NeverD 重建憑據，也未解決 PE32 出口、逸出記憶體的存取權限、任意巢狀或兩條 C 路線。請在原生 x64 MSVC 環境中指定 `--output`。 工作流程參數 `windows_eh_protocol_only` 直接執行這些原生實驗，不重新建置 NeverD；它與引擎迴歸涵蓋範圍分開。
+
+`scripts/check_windows_native_seh_bridge.py` 獨立 x64 固定框架橋由組合語言擁有续接標籤和展開中繼資料，以一般 ABI 入口呼叫最佳化 LLVM。O0/O2 各測八路徑、256 次呼叫；逐次保留原始異常旗標、代碼、事件數及永久錯誤，並執行六個損壞反例。保存實際來源雜湊、unwind/load-config 與 CRT 提供者。來源記憶體權限、任意巢狀、並行、EHCONT/CET 和正式重建仍未證明。
 
 `RegistrationTryLevel.EH4Publication*` 與 `EH4CookieStoresMustOwnDistinctPrivateBytes` 檢查 PE32 EH4 直接堆疊框架，涵蓋 ADD/SUB 配置、保存暫存器、壓入 cookie 及 disp8/disp32 cookie 儲存。變更來源或位移、cookie 重疊，以及覆寫保存暫存器或執行階段管理欄位的寫入必須被拒絕；共用 LowIR 獨立驗證值與生命週期。
 
@@ -1641,6 +1659,20 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 `RegistrationCallNoReturn` 拒絕變更的指令範圍、目標、操作範圍、條件呼叫，以及錯誤架構或格式下的使用。對齊堆疊 PE32 案例同時檢查已獨立證明終止的呼叫和依賴目前證明刪除的普通後繼邊；記憶體證據失效不能重新產生已不存在的普通邊。
 
 `SafeSEHReference.*` 檢查不可變 SafeSEH 表成員、畸形或歧義儲存、重定位、其他架構與格式，以及分片間的宣告順序。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` 透過 `NEVERD_NONLOCAL_FINALLY_INPUTS`，測試原生 MSVC x86/x64、O0/O2、GS 開關及來源最佳化開關的 32 種 LLVM 組合。測試驗證 LLVM 與已解析呼叫簽章，並要求不支援的 x86 原生 EH 重建仍遭拒絕。Windows EH 專項作業下載原生 fixture artifact 並執行此矩陣；缺少輸入目錄時測試會明確跳過。
+
+`LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` 檢查經過證明的 Windows x64 SEH 處理器及共用一般/例外入口中的區域展開呼叫。反例涵蓋展開配置不一致、SP 不穩定或寬度不完整、獨立根、不完整輸入、缺少或偽造例外邊、工作量耗盡、未知堆疊記憶體載入、外部目標重定位及不可信執行階段。LowIR 呼叫證明與模組憑據均進入 SSA 驗證；一般傳回接續測試保留各自的入口規則。
+
+`OrdinaryInternalReturnsRetainTheParentsReturnPC` 和 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` 在 PE、ELF、Mach-O x64 及 ELF i386 上檢查父返回位址損壞和不相交的父區域變數寫入。只保住被呼叫者的返回位址不能授權一般呼叫。
+
+`LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` 在 x86、x64、ARM 與 AArch64 上限制重複肯定及否定查詢的工作量。上下文測試保留繫結值、入口 SP、位寬與零預算的拒絕，並在暫時或重建的可行圖及函式切換後捨棄舊答案。
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` 也檢查低於邊界的提前停止、哨兵退出、父層級跳過請求索引，以及不同停止層級的合併。實際經過的 finally 函式本體缺失時仍須拒絕；跳過的清理不能提供堆疊框架寫入效果。
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` 亦涵蓋表外常數上界、無符號高半區及 -2。零步退出保留原層級與框架記憶體事實；動態上界及無效目前層級仍遭拒絕。
+
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` 檢查解析已完成但含錯誤哨兵、循環、前向或越界連結、無效初始層級及處理器/過濾器角色的記錄。初始活動範圍與空表對照案例驗證 EH3/EH4 的合法框架哨兵仍被保留。 超出指標寬度的處理器及過濾器位址也會遭拒，且不發布事實。
+
+原始碼登記狀態求解器對物件借用、catch 物件建構與 local-finally 寫入共用管理區邊界檢查。`RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` 與 `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` 涵蓋 EH3/EH4 對 SavedESP、例外指標與 cookie 槽的讀取、寫入及部分重疊。`RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` 獨立檢查入口框架保存槽，無須依賴後續重新載入才發現覆寫。相鄰一般物件仍可合法借用。
 
 `RAMReservationTests.cpp` 驗證公開寫入記錄的同值及 ABA 寫入、保留切片、位址重用、兄弟映射、回復、取消、故障前已提交寫入和不透明執行。`UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` 在偏好、向下重定位和核心載入位址檢查具有獨立生命週期的載入事實：還原位元組不會恢復已失效的來源證明。`DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` 區分活動 CFG 指標替換與未啟用 CFG 的後援指標保留。
 
@@ -1656,11 +1688,11 @@ MSVC 單元測試目標使用 `/bigobj`，允許 GoogleTest 和 LLVM 範本實�
 
 ## 原始碼與原生物件 patch
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-目前矩陣要求 143 項檢查成功，涵蓋原始碼／IR／原生物件、四架構三格式、ARMv7k watchOS 與 ARMv7 iOS、可寫／唯讀狀態、浮點／堆疊參數及兩次非零基底位址變更。舊 32 位 Mach-O 容器保留真實編譯器程式碼及中繼資料，執行結果不代表作業系統驗證；物件不虛構 MC 範圍身分。
+目前矩陣要求 154 項檢查成功，涵蓋原始碼／IR／原生物件、四架構三格式、ARMv7k watchOS 與 ARMv7 iOS、可寫／唯讀狀態、浮點／堆疊參數及兩次非零基底位址變更。舊 32 位 Mach-O 容器保留真實編譯器程式碼及中繼資料，執行結果不代表作業系統驗證；物件不虛構 MC 範圍身分。
 
 [原始碼與原生物件 patch](source-patching.md)
 
@@ -1682,3 +1714,185 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```
 
 受檢查的 KVM x64 執行透過 `withExecutionOwner` 將完整指令迴圈交給私有 vCPU 執行緒。准入、RAM 交易、回呼與預算仍由此迴圈處理；各次原生執行保留獨立控制和例外優先順序。呼叫端監控執行中的原生入口，確認取消完成後才返回。CPU 回呼在私有執行緒執行，不能依賴呼叫端的執行緒區域狀態；獨立原生入口的完成回呼仍在其呼叫執行緒執行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 與 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 驗證所有權及實際取消；此後端變更不代表恢復驅動已通過認證。
+
+原始碼 patch 的 Windows 工作流程還會執行 `scripts/check_source_patch_pe_runtime.py`：先產生 x86/x64/ARM64 的三份原始程式與 27 份替換產物，再為每種架構執行 30 次程序觀測。x86/x64 在 Windows x64 上執行，ARM64 在 `windows-11-arm` 上執行；提交、PE 架構、檔案雜湊及案例清單必須相符。此 C 程序配置不驗證 ARM64 C++ 例外。可用 `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` 選擇普通 NeverC 產生器。3389.1.5 的 66 項配置涵蓋 x64/ARM64 × ELF、PE、Mach-O；它不支援 x86/ARM32，不能靜默切換編譯器。PE 適配器使用 `-fno-autolink`，外部 `.drectve` 物件仍會被拒絕。
+
+矩陣也會依獨立的 ABI 清單核對編譯物件與外部原生物件的 `target` 憑據。錯誤物件測試隨後必須安裝並執行未修改的物件，作為有效輸入對照。
+
+選用的 `NeverCProfiles/*` 在六種 x64/ARM64 設定驗證 30 項：C IR、C 物件、C hosted DynCode、非內聯輔助函式與遞迴，以及拒絕 C++。`SourcePatch.NeverCRejectsCppBeforeStartingTheCompiler` 不需安裝 NeverC，也能證明在啟動前拒絕。`SourcePatchException.NeverC*` 執行純 C 結果與穿過兩層 hosted C 框架的例外回呼；Clang C++ 例外另行驗證。Swift 暫存器及記憶體純量轉換在兩種最佳化層級檢查結果位元與 MXCSR；行動端只接受 C 後端精確的捨入 pragma 前綴，仍拒絕條件宣告與修改過的指令。
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+原生生產語料固定 NeverC `182fd2c5dc`，搭配獨立原程式與目前 NeverD 安裝器。`check_source_patch_hosted_pe_runtime.py` 每種 Windows 架構要求 36 次 C IR/物件/hosted 與兩層 hosted C 展開觀測；`check_source_patch_elf_runtime.py` 每種 Linux 架構要求 120 次 C、hosted 傳播及九種 Clang C++ 例外情境觀測。憑據、摘要及真實主機架構必須相符；不表示 CI 主機執行了 NeverC 編譯器本身。 Linux 清單在 x64、ARM64 分別涵蓋 Clang IR、Clang 原生物件與 GCC 原生物件各九種例外情境；NeverC 仍僅處理 C。
+
+舊翻譯設定的 204 次觀測僅為歷史記錄，不能證明目前純 C 契約。目前三條 NeverC 路徑均使用 C，Clang C++ FH3 獨立驗證。macOS x64 使用 Rosetta 2；Unicorn/QEMU 的 CPU 結果不能替代原生作業系統與例外展開驗證。
+
+`InterpreterSpecialization.HighAddress*` 與 `BinaryLowIRRefinement.HighAddress*` 涵蓋高位址入口與轉移、重疊指令範圍、原始返回位元組、堆疊還原、與標籤數值相同的資料、無效或缺失程式碼及精確／不足預算。獨立位元組執行器與修改返回值的反例區分執行時數值和 CFG 標籤。
+
+
+`NeverDRawEnvironmentRequirementTests` 檢查 LowIR 複製、完整及格式錯誤的標記、嚴格與非嚴格模擬、符號單步及序列執行、Low-to-Med 轉換、直接 C/LLVM 產生、機器狀態包裝及再次特化。一般成功對照和不可達標記負例涵蓋靜態獨立性、精化關係兩側及原始二進位至候選的精化；拒絕時不得發布憑證。
+
+`PEFixedImageTest.RawCode*` 涵蓋高低位址的外部返回函式、原始返回位址、完整暫存器與位元組記憶體、未知可寫全域資料、完整槽讀取、缺失程式碼、完整映像排除、異常及未使用宣告、精度細化、明確別名契約與回執變更。恰好及少一單位的準備、結果與操作預算測試包含多映射、多繫結和混合終止退出。`PipelineRefusesUnusedRawEnvironmentDomains` 驗證在恢復前拒絕原始碼輸出。
+
+`RawCodeNativeReturn*` 檢查兩個實際儲存的返回位址、可別名的間隙、被捨棄的未證明單元、窄位址拒絕、完整暫存器與記憶體效果，以及精確證明預算。`SymStorePreservation.Additional*` 與 `SymStorePreservation.AbsentAdditional*` 檢查兩種位元組順序下的範圍聯集、寫入後的記憶體版本、缺失位元組、無效範圍，以及預算不足時不修改狀態。
+
+`FrameOffsets.*Normalization*` 涵蓋精確恆等式、額外輸入、根身分、無快取見證的不可達述詞、預設行為、結構准入與測量計費，以及呼叫後的節點超限拒絕。`FrameNormalizationPreservesStoresAndNativeReturns` 與 `RawCodeFrameNormalization*` 使用獨立位元組檢查器驗證原始記憶體效果與實際返回位址，並涵蓋適用的兩種位元組順序、精確及不足的操作預算與回執竄改。`FrameNormalizationStrategyBindsIndependentProof` 檢查兩種二進位證明身分。
+
+## 原生 Lift 驗收
+
+`Lift native qualification` 工作流程負責先前未完成驗證的 108 項（62 項失敗與 46 項略過）。它在原生 Linux x86-64 執行器上安裝 Clang 23 或更新版本、GNU GCC 與 i386 開發函式庫，並初始化固定版本的二進位語料。`unittests/Inputs/lift-qualification.json` 保留所有原始測試識別碼。`scripts/run_lift_qualification.py` 拒絕遺漏、重複、停用、略過、失敗與非零程序結束狀態；`qualification.json` 記錄逐項通過結果、原始碼與語料版本、編譯器版本和二進位雜湊。
+
+此設定實際執行 i386/x86-64 對照、x87 擴充精度，以及兩種最佳化層級下產生的 Swift SSE 結果、狀態與未遮罩例外測試。AArch64 一致性測試解碼固定版本 Rust 執行階段的真實 `.text`。跨目標解碼不代表在該目標上原生執行；Windows/Linux x64/ARM64 使用獨立的原始碼修補原生程序工作，macOS 使用本機驗證。
+
+```bash
+python3 scripts/run_lift_qualification.py \
+  --binary build-release/bin/NeverDLiftTests \
+  --neverd build-release/bin/neverd \
+  --output build-release/lift-qualification
+```
+
+原生設定也要求通過 LLVM-C 寬整數常數與儲存檢查，以及 i386 合成表的原生執行。Swift 訊號觀察器使用獨立的原始儲存，在兩種最佳化層級下分別驗證未寫入的正例、提前寫入狀態與結果的反例。訊號處理器讀取仍處於 Swift `inout` 存取期間的變數會觸發獨佔存取錯誤，使例外觀察失效。
+
+`NeverDFPParameterMaskTests` 執行共用 ABI 套件與 `FPParameterMask.*`，保留有效位元組、先前儲存、歧義定義及未遮罩回傳路徑，只排除完全清零或取代的位元組；涵蓋 D0 中間傳遞、D16-D31 暫用暫存器及浮點回傳匯合的兩條路徑。`NeverDARM32ObjectImmediateTests` 獨立執行五項 ARM32 主機 C 差分，Windows EH CI 用 Clang 18 檢查包括與 Clang 23 不同的 NEON zip/mask 形式。直接與間接呼叫在 ABI 運算元尚未恢復時，保留明確準備的浮點暫存器。
+
+原生 Linux x64 工作還強制驗證三條 C++ 例外替換路徑：Clang IR、Clang 原生物件與 GCC 原生物件。XML 與程序結束狀態分別稽核，任何失敗或略過都會使驗收失敗；這些 C++ 輸入不使用 NeverC。
+
+原生驗證工作從原始碼建置固定版本的 LLVM 分支，包含 x64 PLT/AArch64 說明符作用域修正。僅使用 r4 預編譯套件不能完成 Clang IR 例外路徑的能力驗證。
+
+## Ordinary Darwin whole-file lock coverage
+
+`DarwinAdvisoryLockOptions` and `DarwinAdvisoryLockTest` check complete unique initial objects, shared byte budgets, both page sizes, low carriers, action priority, readonly EX, reentry, failed upgrades, downgrade, missing versus empty providers, FD/kind ordering, duplicate/fcntl/dup2 lifetime, descriptor reuse, hardlinks, rename, held zero-name unlink and creation refusal. Real VM mappings and retained Contents cannot keep a closed description’s lock; mode/ownership/data/xattr changes keep independent authority and metadata validity. A contended blocking request stops before model mutation. Strict C/CLI/Python and the original SDK-free77-record workload cover five software and three matching HVF profiles, including empty-provider boundaries. Native-common64 and mandatory79 per platform require all237 matching ARM64 native identities to execute successfully. The720 original ARM64 O0/O1/O2 literal observations comprise522 action and198 namespace/descriptor/VM-lifetime controls. Intel native, physical iOS, external peers and wait lifecycle remain separate unverified coverage. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.
+
+
+## 普通 Darwin 檔案同步覆蓋
+
+`DarwinSynchronizationOptions` and `DarwinSynchronizationTest` check complete initial grants, shared byte budgets, 4KiB/16KiB pages, three upper carriers, readonly/writeonly/readwrite descriptions, missing versus empty providers, FD/kind ordering, dup/fcntl/dup2 and FD reuse, runtime links/rename/held zero-name unlink, recreated-object refusal, real private mappings and retained Contents. Write/truncate, mode/ownership, invalid stat/xattr observations and advisory locks retain their independent state. Both immutable query domains close all57 other logical routes. The original SDK-free68-record workload and C/CLI/Python preserve20 guarded full stat observations and separate main40/stdout S across five software and three matching ARM64 HVF profiles. Native-common68 and mandatory83 per platform require all249 matching ARM64 identities to execute successfully. Original O0/O1/O2 native captures contain504 literal observations with guarded176-byte stat records, cursors, raw/libc paths and three high carriers. Directory/pipe captures do not expand the ordinary provider contract. Native5s, guest/Python5,000,000us/quantum1024 and public10s are unchanged. Native Intel, physical iOS, durability, full cancellation, provider failures and asynchronous waits remain unverified or unsupported.
+
+
+## Ordinary Darwin data synchronization coverage
+
+`DarwinDataSynchronizationOptions` and `DarwinDataSynchronizationTest` execute complete initial admission/shared budgets at4KiB/16KiB, low FD carriers, readonly/writeonly/readwrite, FD/kind/provider ordering, missing/empty environments, dup/fcntl/dup2/reuse, runtime names/held zero-name/recreation, real VM and retained Contents, committed write/truncate records/cursors, invalid stat/xattrs, mode/ownership and locks. The existing `DarwinSynchronizationTest.DataGrantCannotSupplyFileCompletionProvider` and new `FileGrantCannotSupplyDataCompletionProvider` cases execute file-only/data-only/both/empty providers. Neither purpose restores observations or supplies the other's grant. Both query domains close all57 other logical routes. SDK-free41 records/11 guarded full stat observations/main41/stdout D use five software and three matching HVF profiles plus C/CLI/Python. Native-common68/mandatory83 require all249 matching ARM64 identities to actually pass. Original O0/O1/O2 controls retain252 literal observations with176-byte guarded native stat/cursors. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged. Native Intel, physical iOS, physical durability, general cancellation, provider failures and asynchronous waits remain unverified or unsupported.
+
+
+## Created ordinary Darwin completion coverage
+
+DarwinCreatedSynchronizationOptions and both4096/16384-page DarwinCreatedSynchronizationTest cases execute complete policy prerequisites, independent purposes/defaults, initial/creation separation, readonly/dirty data, carriers, literal created metadata, write/truncate state, runtime links/rename/held removal/recreation, dup/fcntl/dup2/reuse, real VM retention, failed descriptor/entry/byte/inode admission and unchanged unrelated authorities. CreatedRegularSynchronizationKeepsIndependentProvidersAndState is mandatory on every available matching ARM64 transport. ProcessReport strict flag/policy cases run in NeverDLinuxProcessTests; C/CLI and the complete Python method preserve147 records/33 guarded full stat observations/main42/C through five software profiles. Common68/mandatory83 per platform require all249 matching ARM64 identities to actually pass. The702 original O0/O1/O2 controls observe each fresh unflushed target itself. The SDK-free first native failure is retained: raw created F_GETFL65538 exposed an invalid hard-coded2; corrected checks capture the initial flags and verify access bits and preservation. The first model process failure is also retained: its existing FileWasWritten0x10000 owner produced post-write65538. C++/C/CLI/Python expectations include that existing write history and preserve whole flags; no new status-bit representation is introduced. Native5s, guest/Python5000000us/quantum1024 and public10s remain unchanged. Intel native, physical iOS, physical durability, full cancellation and provider/wait lifecycle stay unverified or unsupported.
+
+
+## Created ordinary Darwin advisory lock coverage
+
+DarwinCreatedAdvisoryLockOptions and both4096/16384-page DarwinCreatedAdvisoryLockTest cases cover complete policy prerequisites, shared byte budgets, independent defaults/initial objects, existing O_CREAT and replacements, persistent status on initial/created descriptions, failed/unsupported actions, F_SETFL history roundtrip, carriers, complete dirty state, dup/fcntl/dup2/FD reuse, runtime names, actual mapping and final-description release, failed FD/entry/byte/inode admission, directory/link exclusion and independent authorities/unknown observations. CreatedRegularAdvisoryLocksKeepProviderAndDescriptionStatus is mandatory on available matching ARM64 transports. ProcessReport strict tests run in NeverDLinuxProcessTests; C/CLI and the complete Python method verify131 literal records/twelve guarded stat observations/main43/L through five software profiles. Native-common68/mandatory83 require all249 matching ARM64 identities to actually pass. Existing SymbolicDescriptorTruncateAndControlShareOnlyDescriptions runs both pages with ENOTTY25 for recognized history, unchanged actual history/stat/cursors, and genuine unsupported flags. Opaque stream requests return zero without acquiring history. Separate162 native symbolic/pipe controls prove these exact results. Original486 flock observations plus72 fcntl checks at O0/O1/O2 prove persistent FWASLOCKED0x4000, original bounds, whole176-byte stat/content/cursors and real mapping lifetime. Retain the first native assumption failure and repair the existing status owner; success sets history, unlock keeps it, and errors/refused waits do not manufacture it. Skips remain unexecuted; full timing stability, Intel native, physical iOS, external peers and wait/provider lifecycle remain unverified.
+
+
+## Created ordinary Darwin attribute coverage
+
+新建一般檔案可透過明確宣告分別取得權限修改與擁有者修改能力。兩個開關預設關閉，啟用時需要完整建立策略。既有物件保留各自宣告的授權；名稱重用不會轉移權限。成功修改使用指定的 mutation_time 作為虛擬 ctime。擁有者與群組均不修改時仍需提供器並保持所有位元組不變。中繼資料或群組成員資訊未知時仍明確拒絕。
+
+DarwinCreatedAttributeOptions and DarwinCreatedAttributeTest register three admission/default cases and thirteen cases on each of 4096/16384-byte pages: 29 identities. They check independent flags/initial times, existing O_CREAT, fresh replacements, dirty bytes/cursors/status, three high carriers and all mode/owner routes, readonly/duplicate/independent descriptions, inactive ownership and active equal IDs, errors/unknown security or groups, names/held unlink, private mappings, failed FD/entry/byte/inode admission, directory/link exclusions, independent authorities and invalidated metadata. CreatedRegularAttributesKeepIndependentProvidersAndObjectState is mandatory on available matching ARM64 transports. Strict JSON runs in NeverDLinuxProcessTests. C/CLI and one whole Python SDK method check five software profiles: 235 authored common services/main44/stdout A/137 guarded stat observations and nine virtual services/main45/320 independent literal guarded bytes. Process and SDK success cases each use two fresh common and virtual runs. Virtual GID31 explicitly declares effective groups20/31; real GID31 alone proves nothing. Common native69 and mandatory84 per platform require all252 matching ARM64 identities to pass. The complete Darwin owner must discover3098 identities (2090 runnable/1008 unavailable), with broad C++ owners requiring1808 passes; actual receipts determine qualification. Fresh O0/O1/O2 native controls record450 mode and720 ownership observations at native5s with whole176-byte guarded stat records. Native timestamps are not literal virtual ctime; SDK-free native execution proves main44/A without a captured service trace. Preparation/compile failures and older HVF time-limit failures remain evidence. Whole-method revalidation, if required, is an explicit aggregate without a timing-stability claim. Guest/Python5000000us/quantum1024 and original bounds stay unchanged. Intel native, physical iOS, full frameworks, root privilege, general DAC and host provider lifecycle remain unqualified.
+
+The first process expectation failure is retained:136 assertions omitted upper raw syscall or FD carrier bits. Fresh expectations derive the complete raw carriers from the unchanged workload; optional FD expectations also check literal UINT64_MAX instead of conflating it with an absent check. Runtime decisions, scalar/errno results, guarded records and timing bounds are unchanged.
+
+The complete-owner first round retained two x64 stack-budget failures. Compiler inlining reserved13688 bytes on every main branch, so the unchanged four-page stack test selected an unmapped page below SP and could not release budget. Only the two new workload helpers now use noinline; main reserves56 bytes, and all eight runnable original budget cases pass without a larger budget. Later guest time-limit failures remain retained. Five fixed-length loops in the shared stat helpers use compile-time full unrolling: every original guard, mask, scalar/error check, all137 complete observations and all235 raw calls remain. The runtime implementation, guest5s, method/owner bounds and scheduling policy remain unchanged. Failure diagnostics retain mode/repeat, instructions, PC and completed service count. Isolated entitled CLI completion does not establish timing stability or prove the cause of another host timeout.
+
+
+## Ordinary Darwin full and barrier completion coverage
+
+完整同步與屏障同步透過明確宣告的提供器分別完成一般檔案操作。既有物件與新建物件的授權獨立；建立開關預設關閉，啟用時需要完整建立策略。完成操作保持模型所有觀察不變，並忽略未使用的參數。屏障能力直接提供，不執行掛載提升或退回。兩種宣告都不刷新主機儲存，也不證明實體持久化。
+
+DarwinFullSynchronizationOptions and DarwinFullSynchronizationTest register three admission cases and twelve parameterized cases over4096/16384-byte pages and commands51/85:51 identities. They cover initial/created defaults and policy prerequisites, shared reference budgets, access modes, raw upper carriers, ignored invalid pointers, bad/closed FDs and kind/scope ordering, missing/empty/other-purpose grants, duplicate/fcntl/dup2/reuse, links/rename/held removal/recreation, real VM retention, dirty bytes/truncate/mode/ownership/locks/xattrs, invalid metadata, directory/link exclusion and failed admission. FullAndBarrierSynchronizationKeepIndependentObjectState is mandatory on each available matching ARM64 transport. The SDK-free common workload has148 authored services,38 guarded full stat observations and separate main46/stdout F. Its native execution establishes46/F without a captured service trace. Virtual-only creation uses ten services, separate main47 and320 independent literal guarded bytes; this is not a native timestamp oracle. Process and Python success paths use two fresh common and virtual runs across five software profiles; C/CLI checks strict independent success and missing/empty providers. New strict JSON cases run in NeverDLinuxProcessTests. Common native70 and mandatory85 per platform require all255 matching ARM64 native identities to execute successfully. The complete Darwin inventory is3169 identities; expected2149 runnable and1020 unavailable identities must be reconciled against actual execution receipts. Broad public/Linux/service/budget/safety/integration owners and nineteen complete Python methods are separate acceptance checks. Fresh O0/O1/O2 native controls record216 raw calls and648 guarded176-byte whole-stat comparisons, including known native pipe EBADF9, low carriers and ignored arguments. Those controls establish observed completions, not whether a native mount used direct barriers or promotion, and not physical durability. Retain initial test-only failures: write access had no explicit write grant, and exhausted virtual inode admission is unsupported rather than a guessed ENOSPC28. Original guest/Python5000000us/quantum1024, native5s, public10s, registered method and owner bounds remain unchanged. Older stack and HVF timing failures remain evidence. Native Intel, physical iOS, default-fatal child cleanup, provider/wait lifecycle and complete Apple frameworks remain unqualified.
+
+
+## Explicit ordinary timestamp mutations
+
+明確宣告的時間修改提供器獨立授權一般檔案。既有物件與成功新建一般檔案的權限分開；建立開關預設關閉，啟用時需要完整建立策略。NULL 請求只使用另行宣告的目前時間樣本。請求時間的儲存規則與固定虛擬 ctime 是不同觀測。模型不讀取主機時鐘或檔案系統，完整 macOS/iOS 框架環境仍未完成。
+
+DarwinTimestampMutationOptions and DarwinTimestampMutationTest cover initial/created grants, shared catalogue limits, explicit and NULL requests, signed microseconds and seconds saturation, nonnegative birth boundaries, request/error ordering, effective ownership and known/unknown group permissions, whole guarded stat records, dirty bytes, offsets, descriptor flags, lock/xattr independence, unknown metadata, hardlinks/rename/held unlink, failed creation and real VM retention. C++ process, strict JSON, C/CLI and one whole Python method cover five software profiles and three required matching ARM64 HVF profiles. Earlier batch counts are historical observations; the timestamp batch required71 common workloads and86 mandatory methods per platform. Every discovered matching ARM64 native identity must actually pass for complete owner acceptance. Native captures are evidence on their test filesystem, not a universal storage rule. Intel native, physical iOS, general setattr lifecycle, dyld/Mach IPC/ObjC/Swift/Foundation/UIKit and full OS execution remain unqualified.
+
+## Explicit filesystem observations
+
+明確宣告的檔案系統快照獨立提供一般檔案和目錄的容量、類型與掛載名稱。零值和空名稱都是有效輸入，模型不讀取主機檔案系統。繫結隨實際物件保留，支援複製描述符、移動及刪除後仍開啟的物件，替代名稱不繼承舊繫結。成功建立一般檔案時，只有明確啟用建立權限並提供完整建立策略，才使用實際父目錄已有的快照。這補上可用的檔案環境查詢入口；完整 macOS/iOS 框架環境仍未完成。
+
+DarwinFileSystemOptions and DarwinFileSystemTest cover exact wide/signed fields, UTF8/empty/maximum names, full guarded records, low carriers, missing/empty/other-purpose declarations, path/FD/output order, partial output without effects, independent target metadata and access flags, effective known/unknown group search, root/special/unknown ancestors, implicit directories and followed links, CWD, separate opens/dup/fcntl, same-ID noninheritance, hardlinks/rename/held unlink/reuse, explicit/default/unbound creation, directory moves/default-created-directory exclusion, dirty bytes/locks/xattrs and real VM retention. C++ process, strict JSON, C/CLI and one whole Python method execute both authored common and independent virtual modes across five thin profiles; all three matching ARM64 HVF identities are mandatory. Full owner acceptance reconciles discovered identities and actually passed native requirements. All prior timing and test-input failures are retained in immutable receipts. Source/products are pinned and heavy work is serial under the existing acceptance lock. Old batch totals remain historical; current native registration is72 common workloads and87 mandatory methods per platform. Native Intel, physical iOS, default-fatal child cleanup, provider wait lifecycle and complete Apple frameworks remain unqualified.
+
+`DarwinCreatedAttributesPublic.PreserveProvidersAcrossCAndCLI` 分別註冊五個平台案例，在原有每例 30 秒限制內保留全部 180 次 C API/CLI 執行。`DarwinCreatedRegularAttributesRejectMalformedProvidersBeforeLoading` 保留十個無效輸入。行動端回歸檢查原文不變並拒絕修改後的指令；純量、呼叫/Blocks 與 Swift 復原必須重新編譯並執行全部十二種組合，再執行 `test_mobile_ios_single_session.py`。
+
+## Declared mount enumeration
+
+掛載表列舉現在支援依宣告順序查詢快取，以及使用明確提供的成功更新結果。每個行程維護自己的快取，重複記錄保持獨立，空表與未知表有明確區別。這補上了 Apple 應用程式常用的一類檔案系統查詢；dyld、Mach IPC 與完整的 Objective-C/Swift、Foundation/UIKit 環境仍未完成。
+
+DarwinMountEnumerationOptions and DarwinMountEnumerationTest exercise both 4KiB and 16KiB pages, the shared entry/byte budgets, exact independent record bytes, duplicate order, signed and high size carriers, unknown versus empty tables, NULL and short outputs, flag precedence, partial records, late missing refresh and complete faults, earlier committed effects, cache reset and independent statfs/fstatfs observations. Strict JSON tests reach both nested snapshot parsers and preserve the separate 64KiB envelope. The SDK-free common workload checks count, truncation, flags, guarded records and native error ABI; the virtual workload emits 19609 independently authored bytes across three snapshots plus M. C++ process, C/CLI and Python exercise five thin profiles and process reuse, with three matching ARM64 HVF identities mandatory. The new common native registration is73 and required method registration88 per matching platform. Native Intel hardware, physical iOS, default-fatal child cleanup and full Apple frameworks remain unqualified.
+
+## Swift scalar instruction completion
+
+還原的 x86_64 Swift 支援暫存器與記憶體形式的純量 ADD/SUB/MUL/DIV、有號 32/64 位元整數至 Float32/Float64 的轉換，以及 Float32/Float64 雙向轉換，包括 VEX 形式。結果位元與完整輸入/輸出 MXCSR 成對保留。封裝運算、SQRT/MIN/MAX、FMA、捨入及近似運算仍明確拒絕；完整 macOS/iOS 框架環境尚未完成。
+
+混合舊式/通用及舊式/VEX 案例驗證每個數值/狀態契約只有一個輔助函式。獨立原始 SSE 觀測與常數結果於 Onone/O 比較捨入、黏滯旗標、DAZ/FTZ、非正規數、有號零與 NaN；暫存器/記憶體控制涵蓋所有純量轉換方向。未遮罩算術及轉換陷阱要求原生 Linux x64 或 Intel macOS，且結果/狀態哨兵維持原值。ARM64 主機因 Rosetta 遮罩例外而明確略過這些陷阱檢查。
+
+## Explicit ordinary directory modes
+
+明確宣告的 mode provider 現在支援一般目錄與一般檔案。初始目錄授權與新建目錄的獨立開關，都不取代命名空間變更權限，也不將權限傳給子物件。完整 dyld、Mach IPC、Objective-C/Swift、Foundation/UIKit 環境與 iOS 真機驗證仍未完成。
+
+DarwinModeTest covers both4KiB and16KiB pages with complete independent stat records, changed/equal permissions, strict authority, alias admission, independent initial/created grants, high carriers, errors, cursors, direct moves/exchanges and both namespace/mode orders. The focused61 checks passed. Earlier complete-owner rounds retained two obsolete directory-target expectations and intermittent legacy mount-enumeration/created-attribute HVF guest timeouts. Final required method revalidation uses the original complete method, unchanged source and binary hashes, and original method/guest deadlines; earlier failures remain evidence. DirectoryModesPreserveIndependentObjectAndNamespaceState is mandatory on all three available matching ARM64 HVF profiles. Five thin software profiles also pass process, C/CLI and Python, including fresh runs in a reused public session. Native common inventory74 and mandatory inventory89 require267 matching ARM64 executions; the complete Darwin owner reconciled3419 identities with2351 passed and1068 unavailable hardware identities across four disjoint serial shards plus full-method revalidation of retained guest timeouts. This is a composite qualification, not a single unsharded timing-stability claim. A retained HVF run reached the unchanged guest5-second limit during complete stat verification under high observed host load; load is contextual evidence, not a proven sole cause. Equivalent word comparisons and fully unrolled fixed-length fixture loops retain all33 records, complete fields and guards, raw calls, errors and independent virtual times. The qualified fixture reduces checked guest instruction work without changing runtime semantics, scheduling or deadlines. Earlier invalid-fixture, registration-controller and build-target errors remain retained. The first captured-dev Lift rebuild reached its original1200-second deadline; the incomplete attempt is retained and the final incremental build is separately qualified under the same bound. Intel hardware, physical iOS and the complete Apple framework environment remain unqualified.
+
+## Explicit ordinary directory timestamps
+
+顯式目錄時間戳提供器現已支援初始目錄和新建目錄的 utimes/futimes，各自需要獨立授權。命名空間、模式和所有權權限保持獨立。完整 Apple 執行階段與框架及實體 iOS 驗證仍未完成。
+
+The97 initial private/strict JSON checks passed before route addition. Directory timestamp cases cover4KiB/16KiB, full literal stat144 with guards, initial/created grants, all time/namespace orders, aliases, effective owner/nonowner decisions, dup/cursors, direct move/exchange, held removal/reuse and permanent invalidation. Five thin software process/C/CLI/Python profiles and all three matching ARM64 HVF profiles passed with fresh executions; foreign hardware is unavailable coverage. The complete Darwin owner reconciles3469 identities with2389 passed and1080 unavailable, including all270 mandatory matching ARM64 executions, across four disjoint serial bounded shards. This is not a single unsharded timing-stability claim. Shared public/Linux/service/budget/safety owners passed1845 cases, with existing timestamp and filesystem Python regressions. The native common inventory is75 and mandatory inventory is90 per matching platform. The preparation controller's ignored-plan assertion, one isolated test's retained movable capability without mutable parent, and a stale regular-object diagnostic expectation are preserved failures corrected in fresh epochs. Native5s, compiler120s, component1200s/parallel2, original method bounds, guest5000000us/quantum1024, public30s and other established limits remain unchanged. Physical Intel/iOS, nonowner/special native security and complete Apple runtime/framework execution remain unqualified.
+
+## Explicit ordinary directory ownership
+
+顯式所有權提供器現已支援獨立授權的初始一般目錄和新建目錄的 chown/fchown/fchownat。群組變更同時更新子物件建立使用的實際父目錄身分。命名空間、模式和時間戳記權限保持獨立。完整 Apple 執行階段與框架及實體 iOS 驗證仍未完成。
+
+Initial focused private and strict JSON checks passed103 identities before route addition. New directory cases cover4KiB/16KiB, complete literal stat144 with guards, independent initial/created grants, actual current parent group inheritance for all3routes and all3child kinds, aliases, active/inactive IDs, authorization and group knowledge, high carriers, errors, dup/cursors, moves/exchanges, held removal/reuse and permanent invalidation. Five software process/C/CLI/Python profiles and all three matching ARM64 HVF profiles passed fresh executions. The complete Darwin owner reconciles3511 identities with2419 passed and1092 hardware-unavailable, including all273 mandatory matching ARM64 executions, across four disjoint serial bounded shards plus37 fresh isolated replays of the initial guest-time-limit failures. Every replay passed on the same source/products and original bounds. This is not a clean full-round or unsharded timing-stability claim. Shared public/Linux/service/budget/safety owners passed1852 cases, together with affected Python attribute/filesystem regressions. Native common inventory is76 and mandatory inventory91 per matching platform. The earlier complete Darwin round retains guest-time-limit failures during high observed host load; the final complete-inventory qualification uses unchanged source, products and bounds, combining the original disjoint shards with focused replays. Native5s, compiler120s, component1200s/parallel2, original method bounds, guest5000000us/quantum1024 and public30s remain unchanged. The new negative-membership fixture correction and a guest-deadline failure from redundant end-to-end Cartesian snapshots are retained in immutable epochs; the final workload keeps independent full typing proof and unchanged bounds. Physical Intel/iOS, native nonowner/special security and complete Apple runtimes/frameworks remain unqualified.
+
+## Symbolic ownership regression
+
+`DarwinSymbolicOwnershipTestData.h` supplies independently authored complete stat144 records with two8-byte guards. `DarwinOwnershipTests.cpp` covers exact initial/created authority, effective credentials and known/unknown groups, complete-record preservation/commit, descriptor versus SEARCH error order, flags/carriers, dangling/cyclic targets, alias/dup/move/exchange/held-unlink/reuse and permanent metadata invalidation. Strict JSON checks preserve purpose-specific Booleans, defaults, creation prerequisites and lossless timestamp import.
+
+The SDK-free `darwin_process.c` ownership modes use59/60 authored common calls and67/68 literal calls, return58/W and emit1281 bytes in each literal mode. The eight full guarded records distinguish original link, unchanged/changed target, two-name/renamed/held link and fresh replacement. Process tests repeat positives from fresh state and retain early/late unsupported outcomes with exact raw service/scalar argument checks. Native catalogue seeding explicitly creates a symbolic input and a separate binary target. Original owned nonroot O0/O1/O2 probes retain318 observations, and common initial/created native workloads execute at all three levels. Common native checks capture no service trace and assert no fixed native ctime.
+
+`SymbolicOwnershipKeepsVnodeAndTargetGrantsSeparate` is required on every matching native platform through `scripts/NativeDarwinTests.def`; inventory now contains94 methods per platform and282 matching ARM64 identities. `DarwinNativeCases.def` contains81 common cases. Execute all five software profiles, all three matching ARM64 HVF identities and C/CLI/Python routes; skips do not count as native acceptance. Preserve guest5000000us, quantum1024, native5s, compiler120s, component1200s/parallel2 and public30s limits. Full Darwin qualification uses the existing disjoint serial method shards, with any bounded unchanged-source recovery reported as a composite. Intel hardware, physical iOS and complete Apple runtimes remain unqualified.
+
+## Filesystem snapshots for created directories
+
+新增獨立建立開關，可將新目錄繫結至實際父目錄已宣告的檔案系統快照。移動和刪除後，已開啟的描述元仍保留原繫結。完整 Apple 執行階段、框架和實體 iOS 驗證仍未完成。
+
+Initial focused private and strict JSON checks passed125 identities before route addition. Final cases cover both page sizes/routes, full2200 guarded literal records, independent flags, zero versus unbound parents, initial/symbolic exclusion, actual parent binding after moves/exchanges, child moves, held rmdir/name reuse, failed/exhausted-inode creation, descriptor flags, full stat preservation, group changes and permanent metadata invalidation without path SEARCH repair. Five software process/C/CLI/Python profiles and three matching ARM64 HVF profiles pass. C API successes repeat in reused sessions; CLI reports are compared completely.
+
+Owned nonroot ARM64 O0/O1/O2 probes passed102 observations with complete2168-byte records and guards, primary/secondary/carry, high carriers, error order, CWD, child kinds, moves and held deletion/name reuse. Common native main56/D passes with33 authored calls; virtual-only35 calls emit4400 independent literal guarded bytes plus D. Native comparisons exclude only five dynamic uint64 counters; no native service trace or universal capacity is claimed.
+
+The complete Darwin owner reconciles3565 identities: 2461 passed, 1104 hardware-unavailable, zero failures; all276 mandatory matching ARM64 identities actually pass in four disjoint serial bounded shards. This is not an unsharded timing-stability claim. Shared public/Linux/services/budget/safety owners pass1858 C++ cases. All20 products rebuilt; inventories77 common native and92 mandatory per matching platform verified. Original fixture/discovery failures stay immutable: explicit creation/swap/empty-provider prerequisites and a regular-only stat helper were corrected, without changing production semantics or the33/35-call sequence. Native5s, compiler120s, component1200s/parallel2, guest5000000us/quantum1024, public30s and original method bounds remain unchanged. Apple runtimes/frameworks, Intel native and physical iOS remain unfinished.
+
+## Filesystem snapshots for symbolic vnodes
+
+明確宣告的檔案系統快照現已支援符號連結描述元，包括懸空和循環目標。路徑查詢仍跟隨目標。新符號連結透過獨立開關繫結實際父目錄快照。完整 Apple 執行階段、框架及實體 iOS 驗證仍未完成。
+
+Initial private/strict JSON checks passed166 identities before route addition. Final coverage uses both4KiB/16KiB pages and both path/FD routes: full2200-byte literal guarded snapshots, link-versus-target declarations with identical IDs, unknown/empty/zero snapshots, dangling/cyclic/nonUTF8 targets, complete namespace prerequisites and all8 independent creation-flag combinations, no target metadata/stat/credential dependence, permanent invalidation, dup/flags/target bytes, moves/exchanged parents, held unlink/replacement, failed creation/inode exhaustion and exact reference budgets/partial copyout.
+
+Owned nonroot ARM64 O0/O1/O2 native probes passed114 observations, full2168 payloads/guards, raw primary/secondary/carry, high carriers, readonly/dup, target errors, parent moves, held deletion/name reuse and unchanged stat/flags/cursor. The common initial32 and created33 authored services pass main57/Y natively; virtual35 emits6600 independent literal bytes plus Y, separating link owner17 from target/replacement owner4294967294. Native comparisons mask only five dynamic uint64 counters and capture no native service trace. Five software process/C API/CLI/Python profiles and three matching ARM64 HVF profiles pass fresh executions; C API successes reuse sessions and CLI reports compare completely.
+
+Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailable, zero remaining failures; all279 required matching ARM64 identities actually pass in four disjoint serial bounded shards plus1 fresh isolated replay of the original resource-usage HVF guest-time-limit failure. The initial full round and all failures remain retained. Identical source/products and unchanged limits qualify the composite only; no clean full-round or unsharded timing-stability claim. Shared public/Linux/services/budget/safety owners pass1866 C++ cases. All20 products rebuilt; common native79/mandatory93 per matching platform independently asserted. Earlier compile enum typo, mutable-parent fixture omissions and failed repair matching/controller syntax attempts remain immutable; no production semantics were weakened to pass them. Native5s/compiler120s/component1200s parallel2/guest5000000us quantum1024/public30s and original method bounds are unchanged. Intel native, physical iOS and complete Apple runtimes/frameworks remain unqualified.
+
+`LLVMCValues.NativeBlockAddressesCannotBecomeZeroConstants` 檢查完整模組及單函式輸出中的基本區塊位址回傳、整數轉換、位址運算與巢狀表初始化。矩陣涵蓋 32/64 位元、兩種位元組序及 ELF/COFF/Mach-O 設定。不支援的符號常數也明確拒絕，不能變成空指標。這驗證輸出拒絕規則，尚未實作可攜的原生續接。
+
+`X86_64_PipelineE2E.DecompileC_InteriorCodeAddressRefusesWithoutReplacingOutput` 完整模組和單函式 CLI 檢查涵蓋兩種最佳化，拒絕內部程式碼位址並保留既有輸出；其他原子指令函式仍须輸出 C。位址低位觀察未支援，LLVM 驗證不能證明其語義。
+
+
+### 明確宣告物理記憶體清單
+
+`KernelPhysicalInventoryTests` 檢查位元組單位、終止項、獨立配置、拒絕時無副作用、宣告複製、擷取依賴、固定頁面、物理識別和資源不足。`DriverPhysicalInventoryTests` 檢查嚴格傳輸，以及 Unicorn/KVM/WHP 上偏好和重定位位址的完整生命週期、動態查詢和釋放後讀取。未使用宣告的 UNPACK 對照仍拒絕還原。每個原生後端的 13 項皆為必跑；本機無法使用的平台執行仍記為略過。
+
+### 明確宣告的核心虛擬位址隔離狀態查詢
+
+`KernelVaShadowQueryTests` 檢查獨立旗標、精確/短/跨頁輸出、ULONG 截斷、兩個目標、重疊、權限、別名、物件、內容、IRQL 及相依性。`DriverVaShadowQueryTests` 檢查嚴格傳輸及 Unicorn/KVM/WHP 重定位生命週期中的匯入與動態查詢。未使用宣告仍拒絕 UNPACK 還原。每個原生後端的 19 項皆必跑；不可用的執行明確略過。原版本查詢測試覆蓋共用緩衝區檢查。
+
+## 合併後的原始碼修補驗收
+
+Linux 原生驗收也執行完整的 `HighSwiftEmitter` 測試集，涵蓋暫存器與記憶體轉換、legacy/VEX 輔助函式共用、原始 SSE 對照及未遮罩例外。請從修正後的 LLVM 原始碼建置：r4 可能錯誤編碼 i386 PIC 的 GOT 錨點，發布前現在會拒絕錯誤位移。10 項僅適用於 Linux/ELF 的 `SessionCAPITest` 在 macOS 和 Windows 上保留明確的平台略過；稽核嚴格比對名稱、所屬標籤及原始原因，在 Linux 上仍要求原生執行，略過不計為通過。使用宿主編譯器的無回傳函式測試會處理 Mach-O 符號名稱與還原出的原生參數寬度。
+
+### 有界核心呼叫者內容擷取
+
+`KernelContextCaptureTests` 驗證完整記錄、保護位元組、堆疊、旗標、別名、重疊、物件、權限、IRQL 和注入失敗。`DriverContextCaptureTests` 驗證即時 GPR/FPCW/MXCSR/XMM、重新定位生命週期、匯入/動態呼叫與相依性。12 筆逐位元組比較使用明確的 400000 指令測試預算；夾具使用 checked 初始 FPCW，獨立 collector 改變該值。每個原生後端 17 項皆必跑，Linux 的 WHP 不可用時明確略過；既有 x64/ARM64 使用者測試保護原行為。

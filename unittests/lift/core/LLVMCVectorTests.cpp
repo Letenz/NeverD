@@ -126,6 +126,117 @@ std::string floatingVectorConstantSource(bool Double) {
   return Source + "  return 0;\n}\n";
 }
 
+// A block address is a native control destination, not a null data pointer.
+// Portable C needs a separately proved continuation model before publishing it.
+TEST(LLVMCValues, NativeBlockAddressesCannotBecomeZeroConstants) {
+  struct Profile {
+    const char *Triple;
+    const char *Layout;
+  };
+  const Profile Profiles[] = {{"i686-pc-windows-msvc", "e-p:32:32"},
+                              {"x86_64-pc-windows-msvc", "e-p:64:64"},
+                              {"armv7-unknown-linux-gnueabihf", "e-p:32:32"},
+                              {"aarch64-unknown-linux-gnu", "e-p:64:64"},
+                              {"aarch64-apple-darwin", "e-p:64:64"},
+                              {"powerpc64-unknown-linux-gnu", "E-p:64:64"}};
+  for (const auto &Profile : Profiles)
+    for (unsigned Form = 0; Form < 6; ++Form)
+      for (bool Selected : {false, true}) {
+        SCOPED_TRACE(Profile.Triple);
+        SCOPED_TRACE(Form);
+        SCOPED_TRACE(Selected);
+        llvm::LLVMContext Context;
+        llvm::Module Module("native-label-projection", Context);
+        Module.setTargetTriple(llvm::Triple(Profile.Triple));
+        Module.setDataLayout(Profile.Layout);
+        llvm::IRBuilder<> B(Context);
+        auto *Word = B.getIntNTy(Module.getDataLayout().getPointerSizeInBits());
+        auto *Provider = llvm::Function::Create(
+            llvm::FunctionType::get(B.getInt32Ty(), {}, false),
+            llvm::GlobalValue::ExternalLinkage, "label_provider", Module);
+        auto *Entry = llvm::BasicBlock::Create(Context, "entry", Provider);
+        auto *Target =
+            llvm::BasicBlock::Create(Context, "continuation", Provider);
+        B.SetInsertPoint(Entry);
+        B.CreateBr(Target);
+        B.SetInsertPoint(Target);
+        B.CreateRet(B.getInt32(7));
+        auto *Address = llvm::BlockAddress::get(Provider, Target);
+        auto *Bits = llvm::ConstantExpr::getPtrToInt(Address, Word);
+        auto *Result = Form == 2 || Form == 3 ? static_cast<llvm::Type *>(Word)
+                                              : B.getPtrTy();
+        auto *Function = llvm::Function::Create(
+            llvm::FunctionType::get(Result, {}, false),
+            llvm::GlobalValue::ExternalLinkage, "publish_label", Module);
+        B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+        if (Form == 0) {
+          // A function can expose its own non-entry destination too.
+          auto *Own = llvm::BasicBlock::Create(Context, "own_target", Function);
+          B.CreateBr(Own);
+          B.SetInsertPoint(Own);
+          B.CreateRet(llvm::BlockAddress::get(Function, Own));
+        } else if (Form == 1) {
+          B.CreateRet(Address);
+        } else if (Form == 2) {
+          B.CreateRet(Bits);
+        } else if (Form == 3) {
+          B.CreateRet(llvm::ConstantExpr::getAdd(
+              Bits, llvm::ConstantInt::get(Word, 16)));
+        } else if (Form == 4) {
+          auto *Record = llvm::StructType::get(B.getPtrTy(), Word);
+          auto *Array = llvm::ArrayType::get(Record, 1);
+          auto *Initializer = llvm::ConstantArray::get(
+              Array, {llvm::ConstantStruct::get(Record, {Address, Bits})});
+          auto *Table = new llvm::GlobalVariable(
+              Module, Array, false, llvm::GlobalValue::InternalLinkage,
+              Initializer, "continuation_table");
+          auto *Element = B.CreateInBoundsGEP(
+              Array, Table, {B.getInt32(0), B.getInt32(0), B.getInt32(0)});
+          auto *Load = B.CreateLoad(B.getPtrTy(), Element);
+          Load->setVolatile(true);
+          B.CreateRet(Load);
+        } else {
+          auto *Observer = llvm::Function::Create(
+              llvm::FunctionType::get(B.getVoidTy(), {B.getPtrTy()}, false),
+              llvm::GlobalValue::ExternalLinkage, "consume_label", Module);
+          B.CreateCall(Observer, {Address});
+          B.CreateRet(llvm::ConstantPointerNull::get(B.getPtrTy()));
+        }
+        ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+        std::string Before, After, Source;
+        llvm::raw_string_ostream BeforeOut(Before), AfterOut(After),
+            Out(Source);
+        Module.print(BeforeOut, nullptr);
+        try {
+          (void)neverd::LLVMCEmitter().emit(Module, Out, {}, nullptr, nullptr,
+                                            Selected ? Function : nullptr);
+          FAIL() << "native control address was published as C: " << Source;
+        } catch (const std::runtime_error &Error) {
+          EXPECT_NE(std::string(Error.what()).find("blockaddress"),
+                    std::string::npos)
+              << Error.what();
+        }
+        Module.print(AfterOut, nullptr);
+        EXPECT_EQ(Before, After);
+      }
+}
+
+TEST(LLVMCValues, UnsupportedSymbolConstantsCannotBecomeNullAddresses) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("unsupported-symbol-constant", Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {}, false),
+      llvm::GlobalValue::ExternalLinkage, "external_provider", Module);
+  neverd::CEmitterOptions Options;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  neverd::LLVMCWriter Writer(Out, Options, nullptr);
+  EXPECT_THROW(Writer.constStr(llvm::DSOLocalEquivalent::get(Function)),
+               std::runtime_error);
+  EXPECT_THROW(Writer.constStr(llvm::NoCFIValue::get(Function)),
+               std::runtime_error);
+}
+
 TEST(LLVMCValues, FloatingVectorConstantsPreserveExactBitsInC) {
   for (bool Double : {false, true})
     compileAndRun(floatingVectorConstantSource(Double));

@@ -457,6 +457,9 @@ constexpr int64_t kMaxFrameSize = 16 * 1024 * 1024; // 16 MiB
 /// indirect-tail frame guard. Exhaustion retains the original indirect branch.
 constexpr size_t kMaxIndirectTailFrameWork = 262144;
 
+/// Cumulative decoded-prologue and protected-prefix work for one SEH query.
+constexpr size_t kMaxSEHEstablisherFrameWork = 1048576;
+
 /// Joins at one block after which a stack-offset bound that is still moving
 /// (a stack pointer that drifts around a loop) becomes unbounded.
 constexpr unsigned kStackOffsetWideningJoins = 8;
@@ -695,6 +698,15 @@ constexpr unsigned kMaxFrameDisplacementDepth = 32;
 /// Fixed-point iterations when growing HighC frame aliases.
 constexpr unsigned kMaxFrameAliasFixedPoint = 64;
 
+/// Expression nodes visited while finding the frame address of a C++ object
+/// an unwind action destroys.  Exhaustion keeps the action as a note.
+constexpr size_t kMaxCxxObjectAddressWork = 1048576;
+
+/// Instructions LLVM-C scans between a frame slot load and its last use when
+/// deciding to print the slot at the use. Exhaustion reads it where the load
+/// is, into a temporary.
+constexpr size_t kMaxLLVMCSlotReadScan = 512;
+
 /// (block, covered-byte mask) states explored while proving that every path to
 /// a frame reload initializes each of its bytes.  Exhaustion is unproved.
 constexpr size_t kMaxFrameInitializerStates = 4096;
@@ -763,7 +775,9 @@ constexpr uint32_t kMaxRegistrationEHRecords = 4096;
 
 /// Total registration-state propagation work, including state/edge pairs.
 /// Exhaustion invalidates the whole result rather than truncating a domain.
-constexpr size_t kMaxRegistrationEHStateWork = 1048576;
+/// Includes the shared decoded-callee closure; large nested EH3 functions
+/// need more than one million operations even after all transfers are exact.
+constexpr size_t kMaxRegistrationEHStateWork = 4194304;
 
 /// Default MXCSR value (x86 SSE control/status register).
 constexpr uint64_t kDefaultMXCSR = 0x1F80;

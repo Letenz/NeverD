@@ -69,6 +69,40 @@ def run(executable):
         assert explicit_c["fixture_pages"] > first["fixture_pages"]
         reused(source(client), first)
 
+        # Each complete variant and its later pages have their own cache key.
+        enhanced = ok(client, "decompile", {"address": A, "representation": "source",
+                       "source_options": {"symbolic": True}, "limit": 4})
+        assert enhanced["fixture_source_options"] == {"symbolic": True}
+        assert enhanced["fixture_pages"] > explicit_c["fixture_pages"]
+        reused(source(client), first)
+        same_variant = ok(client, "decompile", {"address": A, "representation": "source",
+                          "source_options": {"symbolic": True}, "limit": 4})
+        reused(same_variant, enhanced)
+        late_variant = ok(client, "decompile", {"address": A, "representation": "source",
+                          "source_options": {"symbolic": True}, "offset": 2, "limit": 2})
+        assert late_variant["fixture_pages"] == enhanced["fixture_pages"]
+        assert late_variant["source_options"] == {"symbolic": True}
+        for level in ("basic", "O0", "O1", "O2", "O3"):
+            page = ok(client, "decompile", {"address": A, "representation": "llvmc",
+                      "source_options": {"llvm_optimization": level}, "limit": 4})
+            assert page["fixture_source_options"] == {"llvm_optimization": level}
+        recovered = ok(client, "decompile", {"address": A,
+                       "representation": "llvmc", "limit": 4,
+                       "source_options": {"llvm_control_flow": True}})
+        raw_cfg = ok(client, "decompile", {"address": A,
+                     "representation": "llvmc", "limit": 4,
+                     "source_options": {"llvm_control_flow": False}})
+        assert raw_cfg["fixture_pages"] > recovered["fixture_pages"]
+        reused(ok(client, "decompile", {"address": A,
+                  "representation": "llvmc", "limit": 4,
+                  "source_options": {"llvm_control_flow": True}}), recovered)
+        for options in ([], "O3", {"symbolic": "yes"}):
+            reply = client.call("decompile", {"address": A, "representation": "source",
+                                "source_options": options})
+            assert reply["status"] != "ok", reply
+        # Cache eviction above can retire first; acquire the current baseline.
+        first = source(client)
+
         # Image comments and renames invalidate every previously kept source,
         # including A after another function became the active pipeline.
         source(client, B)

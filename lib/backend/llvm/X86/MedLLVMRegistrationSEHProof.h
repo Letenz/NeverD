@@ -9,6 +9,7 @@
 
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 
 #include <map>
@@ -22,7 +23,12 @@ class BasicBlock;
 class CallInst;
 class Function;
 class Instruction;
+class StoreInst;
 } // namespace llvm
+
+namespace neverd {
+struct X86RegistrationCallbackRequest;
+}
 
 namespace neverd::x86_registration {
 
@@ -36,7 +42,10 @@ struct SEHFrameValues {
 };
 std::optional<SEHFrameValues> getPrivateSEHFrameValues(
     const MedFunc &Func, const RegistrationStateAnalysis &States,
-    llvm::function_ref<bool(const MedVar &, uint16_t)> IsPrivateStore);
+    llvm::function_ref<bool(const MedOp &)> IsPrivateStore);
+
+std::optional<std::set<const llvm::StoreInst *>> getCheckedSEHCallbackStores(
+    llvm::ArrayRef<X86RegistrationCallbackRequest> Requests);
 
 std::optional<std::set<llvm::Instruction *>> getCheckedSEHChainInstructions(
     llvm::Function &Parent, const RegistrationStateAnalysis &States,
@@ -60,8 +69,8 @@ std::optional<SEHSourceOperations> getCheckedSEHSourceOperations(
         &RegistrationMemoryIR,
     const std::map<const llvm::CallInst *, va_t> &CallSiteAddrs);
 
-bool collectDeadFinallyResult(llvm::CallInst &Call,
-                              std::vector<llvm::Instruction *> &Dead);
+bool collectDiscardedRegistrationResult(llvm::CallInst &Call,
+                                        std::vector<llvm::Instruction *> &Dead);
 
 } // namespace neverd::x86_registration
 

@@ -40,6 +40,52 @@
 
 using namespace neverd;
 
+TEST(DebugInfoDiscovery, SymbolStoreKeyUsesUniqueCodeViewIdentity) {
+  BinaryImage Img;
+  Img.Format = BinaryFormat::COFF;
+  Img.DynInfo.PDBPath = "C:\\build\\Private\\NTKERNEL.PDB";
+  Img.DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Unique;
+  PDBBuildIdentity Identity;
+  Identity.Guid = {0x78, 0x56, 0x34, 0x12, 0xbc, 0x9a, 0xf0, 0xde,
+                   0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0};
+  Identity.Age = 0x2a;
+  Img.DynInfo.CodeViewPDBIdentity = Identity;
+  auto Request = pdbSymbolRequest(Img);
+  ASSERT_TRUE(Request);
+  EXPECT_EQ(Request->FileName, "ntkernel.pdb");
+  EXPECT_EQ(Request->Key, "123456789ABCDEF0123456789ABCDEF02a");
+  Identity.Kind = PDBIdentityKind::NB10;
+  Identity.Signature = 0x1234abcd;
+  Img.DynInfo.CodeViewPDBIdentity = Identity;
+  Request = pdbSymbolRequest(Img);
+  ASSERT_TRUE(Request);
+  EXPECT_EQ(Request->Key, "1234ABCD2a");
+  Img.Format = BinaryFormat::ELF;
+  EXPECT_FALSE(pdbSymbolRequest(Img));
+}
+
+TEST(DebugInfoDiscovery, MissingAmbiguousOrUnsafePdbCannotRequestSymbols) {
+  BinaryImage Img;
+  Img.Format = BinaryFormat::COFF;
+  Img.DynInfo.PDBPath = "kernel.pdb";
+  EXPECT_FALSE(pdbSymbolRequest(Img));
+  PDBBuildIdentity Identity;
+  Identity.Guid[0] = 1;
+  Identity.Age = 1;
+  Img.DynInfo.CodeViewPDBIdentity = Identity;
+  Img.DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Ambiguous;
+  EXPECT_FALSE(pdbSymbolRequest(Img));
+  Img.DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Unique;
+  for (const auto *Path : {"", ".pdb", "kernel.dll", "bad:stream.pdb",
+                           "bad?query.pdb", "bad\nname.pdb"}) {
+    Img.DynInfo.PDBPath = Path;
+    EXPECT_FALSE(pdbSymbolRequest(Img)) << Path;
+  }
+  Img.DynInfo.PDBPath = "kernel.pdb";
+  Img.DynInfo.CodeViewPDBIdentity->Age = 0;
+  EXPECT_FALSE(pdbSymbolRequest(Img));
+}
+
 namespace {
 
 /// A DebugContext holding exactly the functions a test hands it, so the
@@ -1617,6 +1663,83 @@ TEST(DWARFLocationExpressionPolicy,
                                           true, true, 7, 6)
                 .Base,
             LocationExpressionBase::Malformed);
+}
+
+/// An x86-64 ELF image as the loader leaves it for debug discovery.
+BinaryImage makeELFImage(std::vector<uint8_t> Bytes) {
+  BinaryImage Img;
+  Img.Format = BinaryFormat::ELF;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Raw = std::move(Bytes);
+  return Img;
+}
+
+TEST(DebugInfoDiscovery, FindsDWARFInTheInputBeforeASplitFile) {
+  ScratchDir Dir;
+  const auto Bytes =
+      makeELFDWARFReturnFixture(DWARFReturnFixtureKind::PointerSizeAbsent);
+  const auto Image = Dir.writeBytes("image", Bytes);
+  Dir.writeBytes("image.debug", Bytes);
+  const auto Found = findDWARF(Image, BinaryFormat::ELF);
+  ASSERT_TRUE(Found);
+  EXPECT_EQ(Found->Location, DWARFLocation::Input);
+  EXPECT_EQ(Found->Path, Image);
+  EXPECT_STREQ(dwarfLocationName(Found->Location), "input");
+}
+
+TEST(DebugInfoDiscovery, FindsDWARFInASplitFileBesideAStrippedImage) {
+  ScratchDir Dir;
+  const auto Image = Dir.writeBytes("image", makeELFObjectExtentFixture());
+  const auto Companion = Dir.writeBytes(
+      "image.debug",
+      makeELFDWARFReturnFixture(DWARFReturnFixtureKind::PointerSizeAbsent));
+  const auto Found = findDWARF(Image, BinaryFormat::ELF);
+  ASSERT_TRUE(Found);
+  EXPECT_EQ(Found->Location, DWARFLocation::Beside);
+  EXPECT_EQ(Found->Path, Companion);
+  EXPECT_STREQ(dwarfLocationName(Found->Location), "beside");
+}
+
+TEST(DebugInfoDiscovery, FindsNoDWARFWithoutSectionsCompanionOrFormat) {
+  ScratchDir Dir;
+  const auto Image = Dir.writeBytes("image", makeELFObjectExtentFixture());
+  // A companion without compile units holds no DWARF either.
+  Dir.writeBytes("image.debug", makeELFObjectExtentFixture());
+  EXPECT_FALSE(findDWARF(Image, BinaryFormat::ELF));
+  // A PE carries its debug information in a PDB, which findDWARF never
+  // reports, whatever the file holds.
+  const auto PE = Dir.writeBytes(
+      "probe.exe",
+      makeELFDWARFReturnFixture(DWARFReturnFixtureKind::PointerSizeAbsent));
+  EXPECT_FALSE(findDWARF(PE, BinaryFormat::COFF));
+  EXPECT_FALSE(findDWARF(Dir.path("missing"), BinaryFormat::ELF));
+}
+
+TEST(DebugInfoDiscovery, DeclinedDWARFLeavesTheImageWithoutIt) {
+  ScratchDir Dir;
+  const auto Bytes =
+      makeELFDWARFReturnFixture(DWARFReturnFixtureKind::PointerSizeAbsent);
+  const auto Image = Dir.writeBytes("image", Bytes);
+  const BinaryImage Img = makeELFImage(Bytes);
+
+  const DebugInfoResult Read = loadDebugInfo(Image, Img);
+  EXPECT_EQ(Read.Kind, DebugInfoKind::DWARF);
+  EXPECT_TRUE(Read);
+
+  DebugInfoRequest Declined;
+  Declined.SearchDWARF = false;
+  const DebugInfoResult Skipped = loadDebugInfo(Image, Img, Declined);
+  EXPECT_EQ(Skipped.Kind, DebugInfoKind::None);
+  EXPECT_FALSE(Skipped);
+  EXPECT_TRUE(Skipped.Error.empty());
+}
+
+TEST(DebugInfoDiscovery, ImagesThatDescribeThemselvesReadNoDebugInfo) {
+  EXPECT_TRUE(searchesDebugInfo(Arch::X64));
+  EXPECT_TRUE(searchesDebugInfo(Arch::AArch64));
+  EXPECT_FALSE(searchesDebugInfo(Arch::EVM));
+  EXPECT_FALSE(searchesDebugInfo(Arch::SBF));
 }
 
 } // anonymous namespace

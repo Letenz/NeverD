@@ -1158,11 +1158,6 @@ private:
       line("throw " + T.Source.slice(S->Value->Begin, S->Value->End).str() +
            ";");
       return;
-    case StmtKind::PseudoBlock:
-      openBlock(S->Text);
-      body(S->Then);
-      closeBlock();
-      return;
     case StmtKind::Leave:
       line("__leave;");
       return;
@@ -1241,6 +1236,8 @@ private:
   }
 
   void local(const Decl *D) {
+    // A record the declaration defines (a frame's layout) prints first.
+    record(D->Ty);
     std::string Text = D->Static      ? "static mut "
                        : D->Ty->Const ? "let "
                                       : "let mut ";
@@ -1564,7 +1561,8 @@ private:
   }
 
   void record(const CType *Ty) {
-    if (!Ty->isRecord() || !Ty->Record->Complete)
+    if (!Ty->isRecord() || !Ty->Record->Complete ||
+        !PrintedRecords.insert(Ty).second)
       return;
     line("#[repr(C)]");
     openBlock("struct " + type(Ty));
@@ -1579,6 +1577,7 @@ private:
   }
 
   llvm::DenseSet<const Decl *> FileScope;
+  llvm::DenseSet<const CType *> PrintedRecords;
   llvm::StringSet<> Defined, DefinedObjects;
   std::vector<Target> Targets;
   const CType *ReturnType = nullptr;

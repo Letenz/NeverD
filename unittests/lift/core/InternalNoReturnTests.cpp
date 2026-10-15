@@ -1,6 +1,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/InternalNoReturn.h"
@@ -134,6 +135,13 @@ BinaryImage floatingForwarder(Arch Architecture, BinaryFormat Format,
   return Image;
 }
 
+// Whether \p Image's calling convention owns the x87 stack as one context,
+// whose calls return through the context rather than an st0 value.
+bool ownsX87(const BinaryImage &Image) {
+  return x87ContextOwnsStack(Image.Arch, Image.abiFormat(),
+                             Image.X87ContextOverride);
+}
+
 TEST(InternalNoReturn, TerminationDoesNotDemandUnusedFloatingReturns) {
   for (Arch Architecture : {Arch::X86, Arch::X64})
     for (BinaryFormat Format :
@@ -166,15 +174,24 @@ TEST(InternalNoReturn, TerminationDoesNotDemandUnusedFloatingReturns) {
           for (const LowOp &Op : Block.Ops) {
             if (Op.Opcode == NdOp::CALL && Op.Addr == Base) {
               SawCall = true;
-              EXPECT_EQ(Op.Output.Size, x86reg::FPURegSize);
-              EXPECT_TRUE(Op.Output.isReg());
-              EXPECT_GE(Op.Output.Offset, x86reg::ST0);
-              EXPECT_LE(Op.Output.Offset, x86reg::ST7);
+              if (ownsX87(Image)) {
+                EXPECT_EQ(Op.Output, NdVar::reg(x86reg::RAX, 8));
+              } else {
+                EXPECT_EQ(Op.Output.Size, x86reg::FPURegSize);
+                EXPECT_TRUE(Op.Output.isReg());
+                EXPECT_GE(Op.Output.Offset, x86reg::ST0);
+                EXPECT_LE(Op.Output.Offset, x86reg::ST7);
+              }
             }
             if (Op.Opcode == NdOp::RETURN) {
               SawReturn = true;
-              EXPECT_EQ(Op.NumInputs, 1u);
-              EXPECT_EQ(Op.Inputs[0].Size, x86reg::FPURegSize);
+              if (ownsX87(Image)) {
+                ASSERT_EQ(Op.NumInputs, 1u);
+                EXPECT_EQ(Op.Inputs[0], NdVar::reg(x86reg::RAX, 8));
+              } else {
+                EXPECT_EQ(Op.NumInputs, 1u);
+                EXPECT_EQ(Op.Inputs[0].Size, x86reg::FPURegSize);
+              }
             }
           }
         EXPECT_TRUE(SawCall);
@@ -188,14 +205,16 @@ TEST(InternalNoReturn, LocalFloatingStateKeepsTheFullProof) {
       {0xd9, 0xe5},             // fxam: exposes stack tags to status bits
       {0xd9, 0xf7},             // fincstp: rotates without reading ST(i)
       {0xdb, 0xe3}};            // fninit: resets TOP and tags
-  for (Arch Architecture : {Arch::X86, Arch::X64})
+  for (auto [Architecture, Format] : {std::pair{Arch::X86, BinaryFormat::ELF},
+                                      std::pair{Arch::X64, BinaryFormat::ELF},
+                                      std::pair{Arch::X64, BinaryFormat::COFF}})
     for (const auto &Local : Locals)
       for (bool Trap : {false, true}) {
         SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(static_cast<int>(Format));
         SCOPED_TRACE(Local[1]);
         SCOPED_TRACE(Trap);
-        const auto Image =
-            floatingForwarder(Architecture, BinaryFormat::ELF, Local, Trap);
+        const auto Image = floatingForwarder(Architecture, Format, Local, Trap);
         const std::set<va_t> Entries{Base, Base + 0x20, Base + 0x40};
         ReturningCallCounter Counter;
         Decoder Dec;
@@ -206,7 +225,10 @@ TEST(InternalNoReturn, LocalFloatingStateKeepsTheFullProof) {
         EXPECT_EQ(
             detail::NoReturnProofTestAccess::prove(Builder, Image, Dec, Base),
             Trap);
-        EXPECT_GT(Counter.LeafQueries, 0u);
+        if (ownsX87(Image))
+          EXPECT_EQ(Counter.LeafQueries, 0u);
+        else
+          EXPECT_GT(Counter.LeafQueries, 0u);
         const LowFunc Full = Builder.build(Image, Dec, Base, "full");
         EXPECT_EQ(lowFunctionNeverReturns(Full, Architecture), Trap);
       }
@@ -245,7 +267,7 @@ TEST(InternalNoReturn, TerminationProjectionPreservesExceptionHandlers) {
     }
 }
 
-TEST(InternalNoReturn, UnprovenFloatingTagsStayUnsupportedInOrdinaryIR) {
+TEST(InternalNoReturn, UnknownTagsRequireScalarProofOrOwnedRuntimeContext) {
   for (Arch Architecture : {Arch::X86, Arch::X64})
     for (BinaryFormat Format :
          {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
@@ -264,9 +286,20 @@ TEST(InternalNoReturn, UnprovenFloatingTagsStayUnsupportedInOrdinaryIR) {
       const bool Proof =
           detail::NoReturnProofTestAccess::prove(Builder, Image, Dec, Base);
       const LowFunc Full = Builder.build(Image, Dec, Base, "full");
-      EXPECT_FALSE(Full.hasCompleteInstructionLift());
+      const bool Owned = ownsX87(Image);
+      EXPECT_EQ(Full.hasCompleteInstructionLift(), Owned);
       EXPECT_EQ(Full.UnsupportedInstructionAddresses,
-                std::vector<va_t>{Base + 7});
+                Owned ? std::vector<va_t>{} : std::vector<va_t>{Base + 7});
+      if (Owned) {
+        unsigned RootCapture = 0;
+        for (const auto &B : Full.Blocks)
+          for (const auto &Op : B.Ops)
+            RootCapture +=
+                B.StartAddr == Base + 7 && Op.Opcode == NdOp::INTRINSIC &&
+                Op.NumInputs == 1 &&
+                Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextBegin);
+        EXPECT_EQ(RootCapture, 1u);
+      }
       EXPECT_EQ(Proof, lowFunctionNeverReturns(Full, Architecture));
       const InternalNoReturnIndex Index(Image, &Entries, nullptr, nullptr,
                                         nullptr);
@@ -364,6 +397,39 @@ TEST(InternalNoReturn, CalleeEndingInAKnownNoReturnCallEndsItsBlock) {
   const auto Image =
       imageWith(Code, {{Base, "caller"}, {0x1010, "b"}, {0x1030, "abort"}});
   EXPECT_TRUE(callAtBaseEndsItsBlock(Image));
+}
+
+TEST(InternalNoReturn, WhatTheUserStatesOfACalleeDecides) {
+  // As IDA's Edit function does, a statement decides over the callee's name
+  // and its body, in either direction.
+  {
+    SCOPED_TRACE("a returning callee stated never to return");
+    auto Image =
+        imageWith(callerThen({0xc3}), {{Base, "caller"}, {0x1010, "b"}});
+    EXPECT_FALSE(callAtBaseEndsItsBlock(Image));
+    Image.UserNoReturn[0x1010] = true;
+    EXPECT_TRUE(callAtBaseEndsItsBlock(Image));
+    EXPECT_TRUE(libc::isNoReturnTarget(Image, 0x1010));
+    EXPECT_TRUE(libc::NoReturnTargetIndex(Image).contains(Image, 0x1010));
+  }
+  {
+    SCOPED_TRACE("abort stated to return");
+    auto Image =
+        imageWith(callerThen({0xc3}), {{Base, "caller"}, {0x1010, "abort"}});
+    EXPECT_TRUE(callAtBaseEndsItsBlock(Image));
+    Image.UserNoReturn[0x1010] = false;
+    EXPECT_FALSE(callAtBaseEndsItsBlock(Image));
+    EXPECT_FALSE(libc::isNoReturnTarget(Image, 0x1010));
+    EXPECT_FALSE(libc::NoReturnTargetIndex(Image).contains(Image, 0x1010));
+  }
+  {
+    SCOPED_TRACE("a fast-failing callee stated to return");
+    auto Image =
+        imageWith(callerThen({0xcd, 0x29}), {{Base, "caller"}, {0x1010, "b"}});
+    EXPECT_TRUE(callAtBaseEndsItsBlock(Image));
+    Image.UserNoReturn[0x1010] = false;
+    EXPECT_FALSE(callAtBaseEndsItsBlock(Image));
+  }
 }
 
 TEST(InternalNoReturn, MutualRecursionWithoutATrapProvesNothing) {

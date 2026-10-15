@@ -1,0 +1,161 @@
+name: Windows Web product qualification
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches: [dev]
+    paths:
+      - 'lib/web/**'
+      - 'include/neverd/web/**'
+      - 'unittests/web/**'
+      - 'tools/neverd-web-mcp/**'
+      - 'tools/neverd-worker/**'
+      - 'cmake/NeverDWeb*.cmake'
+      - 'cmake/web-product-dependencies.json'
+      - 'CMakeLists.txt'
+      - 'include/neverd/sdk/NeverDCAPIWeb.h'
+      - '.github/workflows/web-windows-qualification.yml'
+      - 'scripts/web_product_receipt.py'
+      - 'scripts/web_product_release.py'
+      - 'scripts/tests/test_web_product_receipt.py'
+  pull_request:
+    paths:
+      - 'lib/web/**'
+      - 'include/neverd/web/**'
+      - 'unittests/web/**'
+      - 'tools/neverd-web-mcp/**'
+      - 'tools/neverd-worker/**'
+      - 'cmake/NeverDWeb*.cmake'
+      - 'cmake/web-product-dependencies.json'
+      - 'CMakeLists.txt'
+      - 'include/neverd/sdk/NeverDCAPIWeb.h'
+      - '.github/workflows/web-windows-qualification.yml'
+      - 'scripts/web_product_receipt.py'
+      - 'scripts/web_product_release.py'
+      - 'scripts/tests/test_web_product_receipt.py'
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Native Windows x64 and relocated product
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 90
+    env:
+      SCCACHE_GHA_ENABLED: 'true'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Select source dependencies for this prebuilt LLVM profile
+        run: git submodule update --init --depth 1 third_party/capstone
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+      - name: Record the native frontend and runtime toolset
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $Pins = Get-Content cmake/web-product-dependencies.json -Raw | ConvertFrom-Json
+          if ([version]$env:VCToolsVersion -lt [version]$Pins.toolchain.msvc_toolset_minimum) {
+            throw 'The selected MSVC runtime is older than the pinned LLVM producer'
+          }
+          $Frontend = & clang-cl --version
+          $Frontend
+          "NEVERD_WEB_PRODUCT_COMPILER=$($Frontend[0])" >> $env:GITHUB_ENV
+      - name: Enable the existing compiler cache profile
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: 'v0.16.0'
+      - name: Prove incomplete or changed qualification cannot publish
+        run: python -m unittest scripts.tests.test_web_product_receipt -v
+      - name: Obtain and verify the fixed native dependencies
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          New-Item -ItemType Directory -Force web-deps, dist | Out-Null
+          function Fetch([string]$URL, [string]$Name, [string]$SHA) {
+            $Path = Join-Path 'web-deps' $Name
+            Invoke-WebRequest -Uri $URL -OutFile $Path -MaximumRetryCount 3 -RetryIntervalSec 2
+            if ((Get-FileHash $Path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $SHA) {
+              throw "Dependency checksum mismatch: $Name"
+            }
+          }
+          $Dependencies = Get-Content cmake/web-product-dependencies.json -Raw | ConvertFrom-Json
+          foreach ($Name in @('icu', 'zstd', 'brotli', 'zlib')) {
+            $D = $Dependencies.$Name
+            Fetch $D.url $D.archive $D.sha256
+          }
+          Expand-Archive web-deps/icu77.zip web-deps/icu
+          tar -xf web-deps/zstd.tar.gz -C web-deps
+          tar -xf web-deps/brotli.tar.gz -C web-deps
+          tar -xf web-deps/zlib.tar.gz -C web-deps
+      - name: Build native static compression SDKs
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $Prefix = Join-Path $PWD 'web-deps/native'
+          cmake -S web-deps/zstd-1.5.7/build/cmake -B web-deps/zstd-build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$Prefix" -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_TESTS=OFF -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON
+          cmake --build web-deps/zstd-build --parallel 4
+          cmake --install web-deps/zstd-build
+          cmake -S web-deps/brotli-1.2.0 -B web-deps/brotli-build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$Prefix" -DBUILD_SHARED_LIBS=OFF -DBROTLI_BUILD_TOOLS=OFF -DBROTLI_DISABLE_TESTS=ON
+          cmake --build web-deps/brotli-build --parallel 4
+          cmake --install web-deps/brotli-build
+          cmake -S web-deps/zlib-1.3.2 -B web-deps/zlib-build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$Prefix" -DZLIB_BUILD_TESTING=OFF -DZLIB_BUILD_SHARED=OFF -DZLIB_BUILD_STATIC=ON
+          cmake --build web-deps/zlib-build --parallel 4
+          cmake --install web-deps/zlib-build
+      - name: Build product and native C++ contracts
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $ICU = Join-Path $PWD 'web-deps/icu'
+          $Prefix = Join-Path $PWD 'web-deps/native'
+          $Candidates = @(Get-ChildItem (Join-Path $env:VCToolsRedistDir 'x64') -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'msvcp140.dll') })
+          if ($Candidates.Count -ne 1) { throw 'Require one matching x64 CRT in the selected toolset' }
+          $CRT = $Candidates[0].FullName
+          cmake -S . -B build-web-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DNEVERD_LLVM_PREBUILT=ON -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF -DNEVERD_ENABLE_Z3=OFF -DNEVERD_ENABLE_CPU_EMULATION=OFF -DNEVERD_ENABLE_DRIVER_EMULATION=OFF -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF -DNEVERD_ENABLE_BINARY_CORPUS_TESTS=OFF -DNEVERD_BUILD_GUI=OFF -DNEVERD_BUILD_WORKER=ON -DNEVERD_BUILD_WEB_MCP=ON -DNEVERD_ENABLE_WEB_ANALYSIS=ON -DNEVERD_ENABLE_WEB_ASAR=ON -DNEVERD_ENABLE_WEB_JAVASCRIPT=ON -DNEVERD_BUILD_WEB_PRODUCT=ON -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache "-DICU_ROOT=$ICU" "-DCMAKE_PREFIX_PATH=$Prefix" "-DNEVERD_WEB_BROTLI_ROOT=$Prefix" "-DNEVERD_MSVC_REDIST_DIRECTORY=$CRT" -DZLIB_USE_STATIC_LIBS=ON
+          $Cache = Get-Content build-web-windows/CMakeCache.txt
+          $LLVM = ($Cache | Select-String '^LLVM_DIR:PATH=').Line.Substring(14)
+          cmake -S scripts/fixtures/windows_llvm_runtime -B build-llvm-runtime -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl "-DLLVM_DIR=$LLVM"
+          cmake --build build-llvm-runtime --parallel 2
+          & "$PWD/build-llvm-runtime/neverd-llvm-runtime-probe.exe"
+          cmake --build build-web-windows --target NeverDWebArtifactTests --parallel 4
+          Copy-Item "$ICU/bin64/icuuc77.dll", "$ICU/bin64/icudt77.dll" build-web-windows/bin
+          ctest --test-dir build-web-windows/unittests/web --output-on-failure --no-tests=error --parallel 4 -R '^Web(WindowsHost|Asar)\.'
+          cmake --build build-web-windows --target neverd neverd-worker neverd-web-mcp NeverDWebArtifactTests NeverDWebSDKTests NeverDWebNativeTests neverd-worker-web-tests neverd-web-mcp-web-tests neverd-web-package-tests --parallel 4
+          Copy-Item "$ICU/bin64/icuuc77.dll", "$ICU/bin64/icudt77.dll" build-web-windows/bin
+      - name: Qualify Windows owners and public API without skips
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $Selection = '^Web(Native|WindowsHost|Artifacts|Asar|AsarSDK|SDK|RewriteSDK|ReadableExportSDK|DataPackSDK)\.'
+          $Optional = '^WebReadableExportSDK\.(Zentro030WholeBundleWhenSupplied|OmittedParserRefusesBeforeLocalWrites)$|^WebNative\.PinnedBunCompilerContainerEntersTheNativeLoaderWithoutExecution$'
+          ctest --test-dir build-web-windows/unittests/web --show-only=json-v1 -R $Selection -E $Optional | Set-Content -Encoding utf8 dist/windows-native-inventory.json
+          ctest --test-dir build-web-windows/unittests/web --output-on-failure --no-tests=error --parallel 4 --output-junit "$PWD/dist/windows-native-results.xml" -R $Selection -E $Optional
+          ctest --test-dir build-web-windows --output-on-failure --no-tests=error --output-junit "$PWD/dist/windows-adapter-results.xml" -R '^(NeverDWorkerWeb|NeverDWebMCPWeb)$'
+      - name: Package once and qualify the extracted product
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          cmake --install build-web-windows --component WebProduct --prefix "$PWD/web-product"
+          $Short = $env:GITHUB_SHA.Substring(0, 12)
+          $Name = "neverd-web-windows-x64-$Short.zip"
+          Compress-Archive web-product/* "dist/$Name"
+          Expand-Archive "dist/$Name" relocated-product
+          Copy-Item build-web-windows/bin/neverd-web-package-tests.exe relocated-product/bin
+          & "$PWD/relocated-product/bin/neverd-web-package-tests.exe" "$PWD/relocated-product/bin" "$PWD/relocated-product" | Tee-Object dist/windows-installed-results.json
+          python scripts/web_product_receipt.py --archive "dist/$Name" --native-inventory dist/windows-native-inventory.json --native-junit dist/windows-native-results.xml --adapter-junit dist/windows-adapter-results.xml --installed-result dist/windows-installed-results.json --output dist/windows-product-receipt.json
+      - name: Retain product bytes and qualification receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-windows-product
+          path: |
+            dist/
+            build-web-windows/unittests/web/Testing/Temporary/LastTest.log
+            build-web-windows/CMakeCache.txt
+            build-web-windows/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: error

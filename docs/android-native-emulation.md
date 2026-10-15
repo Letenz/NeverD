@@ -162,18 +162,32 @@ The supported Bionic subset is:
 - `malloc`, `calloc`, `realloc`, `free`, with live allocation tracking and
   bounded anonymous guest memory. Zero-size allocations may return a unique
   pointer; allocation failure returns NULL and sets ENOMEM.
-- `__errno`, `getpid`, `gettid`, `getuid`, `geteuid`, `getgid`, `getegid`,
-  `android_get_device_api_level` (28). Identity queries share the Linux
+- `__errno`, `getpid`, `gettid`, `getuid`, `geteuid`, `getgid`, `getegid`.
+  Identity queries share the Linux
   process model: PID/TID and real/effective UID/GID are 1000, including raw
   `svc #0` and calls resolved through the explicit dynamic catalogue. They
   preserve errno and never query host credentials. Credential changes such
   as `setuid` remain unsupported.
+- `android_get_device_api_level`, reading the explicitly supplied
+  `android.properties["ro.build.version.sdk"]`. Missing, empty, nonnumeric or
+  nonpositive values return signed `int` -1; positive decimal prefixes use the
+  same bounded parser as `atoi`, including whitespace and a leading sign.
+  Out-of-range conversion stops explicitly. The query preserves errno and
+  observes immutable guest input, never host properties. Direct imports and
+  declared dynamic providers share this behavior. The reported device version
+  does not change the profile's pinned API 28 Bionic structures, supported
+  services or selected kernel contract. See the
+  [Bionic query](https://android.googlesource.com/platform/bionic/+/android-13.0.0_r1/libc/include/bits/get_device_api_level_inlines.h).
 - `getpagesize`, returning the Android profile's 4096-byte guest page size
   without changing errno. It uses the same layout as guest mappings,
   independently of the host page size. Direct imports and explicit dynamic
   catalogue entries share this behavior; provider lifetime rules still apply.
   See the pinned Android 9
   [Bionic implementation](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/getpagesize.cpp).
+- `ioctl`, for [explicit Linux device transactions](linux-device-contracts.md).
+  Imported, dynamic and raw calls use the shared descriptor owner. Inputs must
+  declare the ordered request, scalar/byte expectations, result and outputs;
+  missing transactions stop. This does not provide a driver or device mapping.
 - `sysconf`, for Android's `_SC_PAGESIZE` (`0x27`) and `_SC_PAGE_SIZE` (`0x28`)
   selectors. Both return the same guest page size as `getpagesize`, mappings
   and allocation rounding, without changing errno. The selector uses its
@@ -182,9 +196,32 @@ The supported Bionic subset is:
   responses. Direct and dynamic calls share provider lifetime checks. Android
   9 defines [distinct selector numbers](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/include/bits/sysconf.h)
   and [one page-size result](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/sysconf.cpp).
-- `__system_property_get`, backed only by the explicit property dictionary.
-  Missing properties return length zero and write NUL; values must fit 91 bytes
-  plus NUL. Host properties are never inherited.
+- `__system_property_get`, `__system_property_find`,
+  `__system_property_find_nth`, `__system_property_read`,
+  `__system_property_serial`, `__system_property_read_callback` and
+  `__system_property_foreach` share the explicit immutable property dictionary.
+  Missing get values return zero and write NUL; missing find/nth entries return
+  NULL. Empty values retain a valid handle. Values fit 91 bytes plus NUL.
+  Legacy read accepts a NULL name and truncates names to 31 bytes plus NUL;
+  the read callback receives the complete name. Value output precedes name
+  output, including overlapping buffers.
+  [The API 28 implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/system_properties/system_properties.cpp)
+  defines these read and callback contracts.
+  Stable, read-only guest records use the
+  [short `prop_info` layout](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/system_properties/include/system_properties/prop_info.h).
+  The snapshot starts at generation zero: serial is value length shifted by 24.
+  This is a newly constructed model state, not a captured device serial.
+  Enumeration is deterministic name order; Android's property-area traversal
+  order is not inferred. The reserved property arena starts at `0x7010000000`,
+  is bounded by 256 MiB and the workload memory limit, and charges mapped bytes
+  to that same memory budget. Invalid handles, missing mappings and changed
+  record bytes fail clearly instead of reading cached original values.
+  Both callbacks execute guest code with full-width cookies on the suspended
+  stack. Nested enumeration, once callbacks and cooperative threads retain
+  independent continuations and share execution budgets. Callback strings are
+  const snapshot storage. No host property or callback is used. Property
+  mutation/waits, long values, SELinux property contexts and property-service
+  IPC remain unsupported.
 - `time`, `gettimeofday`, and `clock_gettime`, using the shared explicit
   [`linux_time` inputs](process-emulation.md#explicit-guest-clocks). Imports,
   named dynamic calls and raw ARM64 services read the same fixed observations.
@@ -256,6 +293,12 @@ The supported Bionic subset is:
   while other guest threads run, and preserves remaining-time storage and errno
   on success. The policy is disabled by default; signal interruption and
   absolute sleeps remain unmodeled.
+- `usleep` uses the same policy and thread wait ownership. The argument is
+  unsigned 32-bit microseconds, including values of one second or more;
+  successful calls preserve errno. Direct imports and dynamic lookups share
+  provider lifetime checks. The scalar conversion follows Android 9's
+  [Bionic contract](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/upstream-freebsd/lib/libc/gen/usleep.c)
+  and [32-bit type](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/include/sys/types.h).
 
 TLS uses the API 28 Bionic layout: TPIDR_EL0 points to a guest TLS block,
 `__errno` addresses slot 2, and the stack guard occupies slot 5. The guard is a
@@ -309,6 +352,59 @@ The independently authored implementation and compiled O0/O2 callers follow
 [AAPCS64's variadic layout](https://github.com/ARM-software/abi-aa/blob/2025Q1/aapcs64/aapcs64.rst#the-va_list-type),
 Android 9's [formatting entrypoints](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/stdio.cpp)
 and [conversion behavior](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/vfprintf.cpp).
+
+### Read-only byte streams
+
+`fopen`/`fopen64` and `fdopen` admit read-only modes. `fread`, `fgets`,
+`fgetc`/`getc`, their unlocked forms, `fileno`, `feof`, `ferror`, `clearerr`,
+`fclose`, `fseek`/`fseeko`/`fseeko64`, `ftell`/`ftello`/`ftello64`,
+`fgetpos`/`fgetpos64`, `fsetpos`/`fsetpos64`, `rewind`, `setvbuf`, `setbuf`,
+`setbuffer` and `setlinebuf` share one workload's stream state. Direct imports
+and explicit dynamic providers use the same owner. FILE tokens are opaque:
+field access, forged tokens, retired tokens and detected changes to their
+mapping fail; a returned token is not a materialized Bionic FILE structure.
+
+Supply regular bytes and metadata in `linux_files`. Default buffer capacity
+comes from that live descriptor's explicit `metadata.block_size`; zero selects
+API 28's 1024-byte BUFSIZ. Missing metadata remains unknown, not a fabricated
+failed fstat or default block size. `setvbuf(..., _IONBF, ...)` needs no metadata
+and uses a one-byte buffer. Model-owned allocations count against the guest
+memory limit; buffer allocation failure falls back to one-byte reads and
+retains ENOMEM. Caller-supplied buffers are actual guest memory. Rebuffering
+discards unread bytes at the underlying FD position without rewinding it.
+
+Refills advance the kernel's shared open-description cursor; `ftell` subtracts
+unread bytes. A read larger than the stream buffer bypasses that buffer.
+`fread` returns complete element counts while retaining any final partial
+object's bytes. Exact-length reads do not infer EOF. In this API 28 contract,
+EOF remains set until cleared, but later reads still retry the descriptor.
+`fseek` clears EOF on success and preserves the error indicator; `rewind`
+clears both. `fflush`/`fflush_unlocked` on a read-only FILE return EOF/EBADF
+without discarding buffered input, while a null argument succeeds because
+there are no modeled output buffers.
+
+`fdopen` adopts the existing FD without duplicating or resetting it. `dup`
+aliases and raw syscalls see the same kernel cursor. Closing the FD does not
+erase already buffered bytes; a later refill reports EBADF. `fclose` retires the
+stream even when closing its FD fails. Thread calls share FILE state, complete
+as indivisible model events, and retain separate TLS errno. Explicit
+`flockfile` locking and concurrent unlocked operations are not modeled.
+
+Transfers above the API 28 callback's signed-int extent, write/update modes,
+fdopen's close-on-exec mutation, `ungetc`, wide streams, `freopen`, custom
+callbacks, standard FILE objects, directory iteration, and dynamic procfs
+contents remain unsupported. Buffered copies validate consumed guest memory;
+invalid pointers stop the workload. Direct reads preserve the kernel model's
+partial-transfer/EFAULT behavior. This is a bounded input-stream model, not
+an implementation of the entire Bionic stdio ABI.
+
+These independently authored models and synthetic callers follow the pinned
+Android 9 [stdio entrypoints](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/stdio/stdio.cpp),
+[refill contract](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/stdio/refill.c),
+[buffer selection](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/upstream-openbsd/lib/libc/stdio/makebuf.c),
+[mode parsing](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/upstream-openbsd/lib/libc/stdio/flags.c)
+and [setvbuf behavior](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/upstream-openbsd/lib/libc/stdio/setvbuf.c).
+Host stdio and host filesystem calls do not satisfy guest reads.
 
 ### Integer scanning
 

@@ -44,7 +44,8 @@ std::optional<unsigned> KernelModel::argumentCount(const std::string &Name) {
 
 llvm::Expected<uint64_t> KernelModel::call(
     const std::string &Name, llvm::ArrayRef<uint64_t> A,
-    llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument) {
+    llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
+    const KernelContextCapture *Context) {
   const auto *API = lookupKernelAPI(Name);
   if (!API || A.size() != API->Arity)
     return modelError("unknown API or incorrect argument count: " + Name);
@@ -67,6 +68,18 @@ llvm::Expected<uint64_t> KernelModel::call(
   case KernelAPIKind::ZwQuerySystemInformation:
   case KernelAPIKind::ExFreePool:
   case KernelAPIKind::ExFreePoolWithTag:
+#define NEVERD_KERNEL_RUNTIME_STRING_API(Name, Arity, IRQL, Operation)         \
+  case KernelAPIKind::Name:
+#include "KernelRuntimeStringAPIs.def"
+#undef NEVERD_KERNEL_RUNTIME_STRING_API
+#define NEVERD_KERNEL_RUNTIME_TIME_API(Name, Arity, IRQL, Operation)           \
+  case KernelAPIKind::Name:
+#include "KernelRuntimeTimeAPIs.def"
+#undef NEVERD_KERNEL_RUNTIME_TIME_API
+#define NEVERD_KERNEL_INTERLOCKED_API(Name, Arity, IRQL, Operation)            \
+  case KernelAPIKind::Name:
+#include "KernelInterlockedAPIs.def"
+#undef NEVERD_KERNEL_INTERLOCKED_API
     break;
   case KernelAPIKind::IoAllocateMdl:
   case KernelAPIKind::IoFreeMdl:
@@ -102,6 +115,11 @@ llvm::Expected<uint64_t> KernelModel::call(
       Kind != KernelAPIKind::KeStackAttachProcess &&
       Kind != KernelAPIKind::KeUnstackDetachProcess &&
       Kind != KernelAPIKind::IoGetCurrentProcess &&
+      Kind != KernelAPIKind::PsGetCurrentProcess &&
+      Kind != KernelAPIKind::PsGetCurrentThread &&
+      Kind != KernelAPIKind::KeGetCurrentThread &&
+      Kind != KernelAPIKind::PsGetCurrentThreadId &&
+      Kind != KernelAPIKind::PsGetThreadId &&
       Kind != KernelAPIKind::IoGetRequestorProcess &&
       Kind != KernelAPIKind::PsGetCurrentProcessId &&
       Kind != KernelAPIKind::PsGetProcessId &&
@@ -147,6 +165,10 @@ llvm::Expected<uint64_t> KernelModel::call(
   case KernelAPIKind::ZwQuerySystemInformation:
     return querySystemInformation(
         A, Kind == KernelAPIKind::ZwQuerySystemInformation);
+  case KernelAPIKind::RtlGetVersion:
+    return queryVersion(A[0]);
+  case KernelAPIKind::RtlCaptureContext:
+    return captureCallerContext(A[0], Context);
   case KernelAPIKind::PsGetCurrentProcessId:
     if (auto Context = executionProcessContext())
       return uint64_t(Context->CreatingProcessID);
@@ -169,7 +191,20 @@ llvm::Expected<uint64_t> KernelModel::call(
   case KernelAPIKind::IoGetRequestorProcess:
     return requestorProcess(A[0]);
   case KernelAPIKind::IoGetCurrentProcess:
+  case KernelAPIKind::PsGetCurrentProcess:
     return currentProcess();
+  case KernelAPIKind::PsGetCurrentThread:
+  case KernelAPIKind::KeGetCurrentThread:
+    // The same borrowed identity the inline GS:[0x188] read observes.
+    return currentThreadObject();
+  case KernelAPIKind::PsGetCurrentThreadId: {
+    auto Thread = currentThreadObject();
+    if (!Thread)
+      return Thread.takeError();
+    return threadClientID(*Thread);
+  }
+  case KernelAPIKind::PsGetThreadId:
+    return threadClientID(A[0]);
   case KernelAPIKind::PsGetProcessId: {
     auto Process = ProcessObjectIDs.find(A[0]);
     if (Process == ProcessObjectIDs.end())
@@ -194,11 +229,26 @@ llvm::Expected<uint64_t> KernelModel::call(
     return Operation;
 #include "KernelThreadAPIs.def"
 #undef NEVERD_KERNEL_THREAD_API
+#define NEVERD_KERNEL_RUNTIME_STRING_API(Name, Arity, IRQL, Operation)         \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelRuntimeStringAPIs.def"
+#undef NEVERD_KERNEL_RUNTIME_STRING_API
+#define NEVERD_KERNEL_RUNTIME_TIME_API(Name, Arity, IRQL, Operation)           \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelRuntimeTimeAPIs.def"
+#undef NEVERD_KERNEL_RUNTIME_TIME_API
 #define NEVERD_KERNEL_SPINLOCK_API(Name, Arity, IRQL, Operation)               \
   case KernelAPIKind::Name:                                                    \
     return Operation;
 #include "KernelSpinLockAPIs.def"
 #undef NEVERD_KERNEL_SPINLOCK_API
+#define NEVERD_KERNEL_INTERLOCKED_API(Name, Arity, IRQL, Operation)            \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelInterlockedAPIs.def"
+#undef NEVERD_KERNEL_INTERLOCKED_API
 #define NEVERD_KERNEL_INTERRUPT_API(Name, Arity, IRQL, Operation)              \
   case KernelAPIKind::Name:                                                    \
     return Operation;
@@ -237,6 +287,14 @@ llvm::Expected<uint64_t> KernelModel::call(
     return Registry.call(*this, Name, A);
   case KernelAPIKind::MmGetSystemRoutineAddress:
     return resolveRoutine(A[0]);
+  case KernelAPIKind::MmGetPhysicalMemoryRanges:
+    return queryPhysicalMemoryRanges();
+  case KernelAPIKind::MmIsAddressValid:
+    return isResidentKernelAddress(A[0]);
+  case KernelAPIKind::KeRegisterBugCheckReasonCallback:
+    return registerBugCheckCallback(A[0], A[1], uint32_t(A[2]), A[3]);
+  case KernelAPIKind::KeDeregisterBugCheckReasonCallback:
+    return deregisterBugCheckCallback(A[0]);
   case KernelAPIKind::KeWaitForSingleObject:
   case KernelAPIKind::KeDelayExecutionThread:
     return beginWait(A, Kind == KernelAPIKind::KeDelayExecutionThread);

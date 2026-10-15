@@ -28,6 +28,7 @@
 #include "neverd/symbolic/SymExec.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/ir/low/X87PartialRemainder.h"
 #include "neverd/lift/X86Regs.h"
 
@@ -36,6 +37,7 @@
 
 #include <array>
 #include <cassert>
+#include <stdexcept>
 
 namespace neverd::symbolic {
 
@@ -75,6 +77,40 @@ SymRef SymExec::read(const NdVar &V) {
 
 SymRef SymExec::operandValue(const NdVar &V) { return read(V); }
 
+SymRef SymExec::memoryAddressValue(const LowOp &Op) {
+  const auto Memory = lowMemoryOperands(Op);
+  if (!Memory.Complete)
+    return {};
+  if (Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+    return read(*Memory.Address);
+  const auto Base = State.x64MemoryAddressSpaceBase(Op.MemoryAddressSpace);
+  if (!Base)
+    return {};
+  // The legacy address-space token, when present, is metadata, not an address.
+  const bool Load = Op.Opcode == NdOp::LOAD;
+  const bool Store = Op.Opcode == NdOp::STORE;
+  const unsigned Arity = Load ? 1 : Op.Opcode == NdOp::ATOMIC_CMPXCHG ? 3 : 2;
+  const bool HasToken = (Load || Store) && Op.NumInputs == Arity + 1;
+  if ((!HasToken && Op.NumInputs != Arity) ||
+      (HasToken && !Op.Inputs[0].isConst()))
+    return {};
+  const auto Scalar = [](const NdVar &V) {
+    return V.Size && (V.isConst() || V.isReg() || V.isTemp()) &&
+           (V.isConst() || V.Offset <= UINT64_MAX - (V.Size - 1));
+  };
+  if (!Scalar(*Memory.Address) || Memory.Address->Size > 8 ||
+      (Store ? Op.Output.Size != 0
+             : !(Op.Output.isReg() || Op.Output.isTemp()) ||
+                   !Scalar(Op.Output)) ||
+      (Memory.StoredValue && !Scalar(*Memory.StoredValue)) ||
+      (Memory.ExpectedValue && !Scalar(*Memory.ExpectedValue)))
+    return {};
+  const auto Offset = read(*Memory.Address);
+  if (!Offset)
+    return {};
+  return Ctx.mkAdd(Base, Ctx.mkZExtOrTrunc(Offset, 64));
+}
+
 SymRef SymExec::fit(SymRef Value, uint32_t Bits) {
   return Bits == 0 ? Value : Ctx.mkZExtOrTrunc(Value, Bits);
 }
@@ -96,6 +132,8 @@ void SymExec::writeResult(const NdVar &Output, SymRef Value) {
 StepResult SymExec::unmodelled(const LowOp &Op) {
   ++Unmodelled;
   ++OpaqueOperations;
+  // Opaque system instructions can change FS/GS without a LowIR output.
+  State.clearX64MemoryAddressSpaceBases();
   if (widthOf(Op.Output) != 0)
     writeResult(Op.Output, State.freshInput("undef", widthOf(Op.Output)));
   return StepResult::Unmodelled;
@@ -606,33 +644,34 @@ StepResult SymExec::stepBits(const LowOp &Op) {
 
 StepResult SymExec::stepMemory(const LowOp &Op,
                                SymStorePreservation *Preservation) {
-  // A segment offset is not a process address.  Symbolic state has no
-  // architecture register for an FS/GS base, so fail closed instead of
-  // manufacturing a load/store at the unbased numeric offset.  Concrete
-  // LowIR emulation can execute these operations when its caller explicitly
-  // supplies the corresponding address-space base.
-  if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
+  const auto Refuse = [&]() {
     if (Op.Opcode == NdOp::STORE || Op.Opcode == NdOp::ATOMIC_XCHG ||
         Op.Opcode == NdOp::ATOMIC_ADD || Op.Opcode == NdOp::ATOMIC_CMPXCHG) {
       State.clobberMemory();
       ++MemoryHavocs;
     }
     return unmodelled(Op);
-  }
+  };
   const LowMemoryOperandView Memory = lowMemoryOperands(Op);
+  const SymRef Addr = memoryAddressValue(Op);
+  if (!Addr)
+    return Refuse();
+  if (const auto Absolute = Ctx.asConst(Addr);
+      Absolute && Absolute->getBitWidth() <= 64 &&
+      Absolute->getZExtValue() > UINT64_MAX - (Memory.AccessSize - 1))
+    return Refuse();
   if (Op.Opcode == NdOp::LOAD) {
-    if (!Memory.Complete || widthOf(Op.Output) == 0)
-      return unmodelled(Op);
-    writeResult(Op.Output,
-                State.load(read(*Memory.Address), Memory.AccessSize));
+    const auto Value = State.load(Addr, Memory.AccessSize);
+    if (!Value)
+      return Refuse();
+    writeResult(Op.Output, Value);
     return StepResult::Continue;
   }
 
   if (Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD) {
-    if (!Memory.Complete || widthOf(Op.Output) == 0)
-      return unmodelled(Op);
-    SymRef Addr = read(*Memory.Address);
     SymRef Old = State.load(Addr, Memory.AccessSize);
+    if (!Old)
+      return Refuse();
     SymRef Value = fit(read(*Memory.StoredValue), widthOf(Op.Output));
     writeResult(Op.Output, Old);
     SymRef NewValue =
@@ -645,10 +684,9 @@ StepResult SymExec::stepMemory(const LowOp &Op,
   }
 
   if (Op.Opcode == NdOp::ATOMIC_CMPXCHG) {
-    if (!Memory.Complete || widthOf(Op.Output) == 0)
-      return unmodelled(Op);
-    SymRef Addr = read(*Memory.Address);
     SymRef Old = State.load(Addr, Memory.AccessSize);
+    if (!Old)
+      return Refuse();
     SymRef Expected = fit(read(*Memory.ExpectedValue), widthOf(Op.Output));
     SymRef Desired = fit(read(*Memory.StoredValue), widthOf(Op.Output));
     writeResult(Op.Output, Old);
@@ -659,9 +697,6 @@ StepResult SymExec::stepMemory(const LowOp &Op,
     return StepResult::Continue;
   }
 
-  if (!Memory.Complete)
-    return unmodelled(Op);
-  SymRef Addr = read(*Memory.Address);
   SymRef Value = read(*Memory.StoredValue);
   const bool Absolute = Preservation ? State.store(Addr, Value, *Preservation)
                                      : State.store(Addr, Value);
@@ -719,6 +754,7 @@ StepResult SymExec::stepControl(const LowOp &Op,
     // SymExplore consumes it when instruction-boundary metadata proves that the
     // call does not return.
     Target = Op.NumInputs >= 1 ? read(Op.Inputs[0]) : SymRef();
+    State.clearX64MemoryAddressSpaceBases();
     if (CallEffect) {
       State.clobberRegistersExcept(CallPreserved);
       if (CallEffect->Memory == SymCallMemoryEffect::Havoc)
@@ -773,6 +809,11 @@ StepResult SymExec::step(const LowOp &Op, const SymCallEffect *CallEffect) {
 
 StepResult SymExec::step(const LowOp &Op, const SymCallEffect *CallEffect,
                          SymStorePreservation *Preservation) {
+  // Unmodelled is a continuing value abstraction. A required environment
+  // cannot be replaced by an unknown result, especially without an output.
+  if (isLowRawEnvironmentRequirement(Op))
+    throw std::invalid_argument(
+        "raw environment requirement needs a receipt-aware symbolic consumer");
   if (Preservation) {
     Preservation->Status = SymStorePreservationStatus::Invalid;
     Preservation->WorkUsed = 0;

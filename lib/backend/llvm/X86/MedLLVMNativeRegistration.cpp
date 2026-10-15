@@ -6,6 +6,8 @@
 
 #include "../eh/MedLLVMEHHelpers.h"
 #include "MedLLVMRegistrationIncoming.h"
+#include "MedLLVMRegistrationSEHDynamicScope.h"
+#include "MedLLVMRegistrationSEHJump.h"
 #include "MedLLVMRegistrationSEHProof.h"
 
 #include "neverd/Limits.h"
@@ -15,6 +17,7 @@
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
 #include "neverd/backend/llvm/WindowsRegistrationFrame.h"
+#include "neverd/backend/llvm/X86RegistrationSEHScope.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -117,24 +120,13 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       FrameEntrySPOffset > FrameBytes->getFixedValue())
     return false;
 
-  auto FrameValues = x86_registration::getPrivateSEHFrameValues(
-      Func, States, [&](const MedVar &Address, uint16_t Width) {
-        const auto Slot = canonicalFrameSlotKey(Address, true);
-        return Slot && Slot->second >= -int64_t(FrameEntrySPOffset) &&
-               Width <= FrameBytes->getFixedValue() &&
-               Slot->second <= int64_t(FrameBytes->getFixedValue() - Width) -
-                                   int64_t(FrameEntrySPOffset);
-      });
-  if (!FrameValues)
-    return false;
-  auto IsFrame = [&](const MedVar &V) { return FrameValues->contains(V); };
-
   std::map<va_t, const MedBlock *> BlocksAt;
   std::map<int, const RegistrationBlockState *> BlockStates;
   for (const RegistrationBlockState &State : States.Blocks)
     if (!BlockStates.emplace(State.BlockId, &State).second)
       return false;
   std::map<llvm::BasicBlock *, int32_t> Active;
+  std::map<llvm::BasicBlock *, std::vector<int32_t>> Dynamic;
   std::set<llvm::BasicBlock *> CallbackBlocks;
   const int32_t Sentinel = *Chain.SeededTryLevel;
   for (const MedBlock &Block : Func.Blocks) {
@@ -151,8 +143,19 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       CallbackBlocks.insert(IR->second);
       continue;
     }
-    if (State->second->Levels.size() > 1)
-      return false;
+    if (State->second->Levels.size() > 1) {
+      for (int32_t Level : State->second->Levels)
+        if (Level != Sentinel &&
+            (Level < 0 || uint32_t(Level) >= Chain.Scopes.size()))
+          return false;
+      for (const auto &I : *IR->second)
+        if (llvm::isa<llvm::PHINode>(I) || (llvm::isa<llvm::CallBase>(I) &&
+                                            !llvm::isa<llvm::IntrinsicInst>(I)))
+          return false;
+      Dynamic.emplace(IR->second, State->second->Levels);
+      Active.emplace(IR->second, x86_registration::DynamicScopeLevel);
+      continue;
+    }
     const int32_t Level = State->second->Levels.empty()
                               ? Sentinel
                               : State->second->Levels.front();
@@ -286,6 +289,28 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     Regions.push_back(R);
   }
 
+  const auto CallbackStores =
+      x86_registration::getCheckedSEHCallbackStores(Requests);
+  if (!CallbackStores)
+    return false;
+  auto FrameValues = x86_registration::getPrivateSEHFrameValues(
+      Func, States, [&](const MedOp &Op) {
+        const auto Emitted = RegistrationMemoryIR.find({Op.Addr, Op.OriginSeq});
+        if (Emitted != RegistrationMemoryIR.end())
+          if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(Emitted->second);
+              Store && CallbackStores->count(Store))
+            return true;
+        const auto Slot = canonicalFrameSlotKey(Op.Inputs[0], true);
+        const auto Width = Op.Inputs[1].Size;
+        return Slot && Slot->second >= -int64_t(FrameEntrySPOffset) &&
+               Width <= FrameBytes->getFixedValue() &&
+               Slot->second <= int64_t(FrameBytes->getFixedValue() - Width) -
+                                   int64_t(FrameEntrySPOffset);
+      });
+  if (!FrameValues)
+    return false;
+  auto IsFrame = [&](const MedVar &V) { return FrameValues->contains(V); };
+
   const auto Incoming = x86_registration::prepareIncomingFrame(
       Func, Parent, RegistrationIncomingIR);
   if (!Incoming)
@@ -298,6 +323,21 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       Func, OriginalBlockMap, RegistrationMemoryIR, CallSiteAddrs);
   if (!SourceProof)
     return false;
+  auto JumpPlan = x86_registration::prepareSEHJumps(
+      Func, Parent, *FrameAlloca, FrameEntrySPOffset, CallSiteAddrs);
+  if (!JumpPlan)
+    return false;
+  for (const auto &[Call, Source] : JumpPlan->Calls)
+    if (Source.Resume && Source.Resume->EntryVA) {
+      const auto Callback =
+          CallbackIndices.lower_bound({Source.Resume->EntryVA, false});
+      if (Callback == CallbackIndices.end() ||
+          Callback->first.first != Source.Resume->EntryVA ||
+          !llvm::is_contained(Requests[Callback->second].Blocks,
+                              Call->getParent()))
+        return false;
+      Requests[Callback->second].NonReturningCalls.push_back(Call);
+    }
   auto &SourceOperations = SourceProof->Operations;
   auto &CookieCheckCalls = SourceProof->CookieCheckCalls;
 
@@ -315,6 +355,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     va_t Address;
     int32_t State;
     std::optional<size_t> Finally;
+    bool NoReturn;
   };
   std::map<va_t, va_t> DirectCalls;
   for (const MedBlock &Block : Func.Blocks)
@@ -336,7 +377,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     if (AllCallbackBlocks.count(Instruction->getParent()))
       return false;
   std::vector<CallPlan> Calls;
-  std::vector<llvm::Instruction *> DeadFinallyResults;
+  std::vector<llvm::Instruction *> DeadCallResults = JumpPlan->DiscardedResults;
   for (const auto &[Call, Address] : CallSiteAddrs) {
     if (CookieCheckCalls.count(const_cast<llvm::CallInst *>(Call)))
       continue;
@@ -351,12 +392,19 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       if (auto Callback = CallbackIndices.find({Direct->second, true});
           Callback != CallbackIndices.end())
         Finally = Callback->second;
-    if (Finally && !x86_registration::collectDeadFinallyResult(
-                       *const_cast<llvm::CallInst *>(Call), DeadFinallyResults))
+    const bool NoReturn =
+        Finally &&
+        llvm::none_of(
+            Requests[*Finally].Blocks, [](const llvm::BasicBlock *Block) {
+              return llvm::isa<llvm::ReturnInst>(Block->getTerminator());
+            });
+    if (Finally && !NoReturn &&
+        !x86_registration::collectDiscardedRegistrationResult(
+            *const_cast<llvm::CallInst *>(Call), DeadCallResults))
       return false;
     if ((State->second >= 0 && mayUnwind(*Call)) || Finally)
       Calls.push_back({const_cast<llvm::CallInst *>(Call), Address,
-                       State->second, Finally});
+                       State->second, Finally, NoReturn});
   }
   for (llvm::BasicBlock &Block : Parent)
     for (llvm::Instruction &Instruction : Block)
@@ -579,12 +627,34 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     Call->eraseFromParent();
   }
 
-  for (auto *Instruction : llvm::reverse(DeadFinallyResults))
+  std::set<llvm::Instruction *> DeadResults(DeadCallResults.begin(),
+                                            DeadCallResults.end());
+  for (auto *Instruction : DeadResults)
+    Instruction->dropAllReferences();
+  for (auto *Instruction : DeadResults)
     Instruction->eraseFromParent();
+
+  std::map<va_t, llvm::Function *> JumpCallbacks;
+  for (const auto &[Identity, Index] : CallbackIndices)
+    JumpCallbacks.emplace(Identity.first, (*Outlined)[Index]);
+  auto JumpCalls = x86_registration::emitSEHJumps(
+      *JumpPlan, Parent, *FrameAlloca, FrameEntrySPOffset, EH.CodeRange.Begin,
+      JumpCallbacks);
+  for (const auto &[Original, Replacement] : JumpCalls) {
+    if (const auto Site = CallSiteAddrs.find(Original);
+        Site != CallSiteAddrs.end()) {
+      CallSiteAddrs.emplace(Replacement, Site->second);
+      CallSiteAddrs.erase(Site);
+    }
+    Original->replaceAllUsesWith(Replacement);
+    Original->eraseFromParent();
+  }
 
   uint64_t ProtectedCalls = 0;
   for (const CallPlan &Plan : Calls) {
     llvm::CallInst *Call = Plan.Call;
+    if (const auto Jump = JumpCalls.find(Call); Jump != JumpCalls.end())
+      Call = Jump->second;
     if (Plan.Finally) {
       llvm::IRBuilder<> B(Call);
       auto *Frame = B.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
@@ -592,6 +662,16 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       auto *Replacement =
           B.CreateCall((*Outlined)[*Plan.Finally], {B.getInt8(0), Frame});
       Replacement->copyMetadata(*Call);
+      // The batch outliner has now proved every callback exit. A nonlocal
+      // finally has no ordinary result, including the lifted register copies
+      // on its unreachable fallthrough. Keep source boundaries for replay.
+      // Keep this attribute on the ordinary invocation: the cleanup dispatch
+      // still needs its cleanupret edge to preserve the source scope nesting.
+      if (Plan.NoReturn) {
+        Replacement->addFnAttr(llvm::Attribute::NoReturn);
+        if (!Call->getType()->isVoidTy())
+          Call->replaceAllUsesWith(llvm::PoisonValue::get(Call->getType()));
+      }
       va_t FinallyVA = 0;
       for (const auto &[Identity, Index] : CallbackIndices)
         if (Identity.second && Index == *Plan.Finally)
@@ -655,6 +735,16 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       }
     };
     Volatilize(*Block);
+    if (const auto Choice = Dynamic.find(Block); Choice != Dynamic.end()) {
+      std::map<int32_t, llvm::BasicBlock *> Unwinds;
+      for (int32_t Level : Choice->second)
+        if (Level >= 0)
+          Unwinds.emplace(Level, Regions[Level].Unwind);
+      x86_registration::emitDynamicSEHScope(
+          *Block, *FrameAlloca, FrameEntrySPOffset, EH.CodeRange.Begin,
+          SourceBlock, Choice->second, Unwinds, *TryBegin, *TryEnd);
+      continue;
+    }
     if (State->second < 0) {
       llvm::IRBuilder<> B(&*Block->getFirstInsertionPt());
       med_llvm_eh::emitWindowsEHProvenanceAnchor(

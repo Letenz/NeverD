@@ -3,11 +3,26 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "DarwinAdvisoryLockTestData.h"
+#include "DarwinCreatedAdvisoryLockTestData.h"
+#include "DarwinCreatedAttributeTestData.h"
+#include "DarwinCreatedSynchronizationTestData.h"
+#include "DarwinDataSynchronizationTestData.h"
+#include "DarwinDirectoryModeTestData.h"
+#include "DarwinDirectoryOwnershipTestData.h"
+#include "DarwinDirectoryTimestampTestData.h"
 #include "DarwinEntropyTestData.h"
 #include "DarwinFileTestData.h"
+#include "DarwinFullSynchronizationTestData.h"
+#include "DarwinModeTestData.h"
+#include "DarwinOwnershipTestData.h"
+#include "DarwinSymbolicLinkFileSystemTestData.h"
+#include "DarwinSymbolicOwnershipTestData.h"
+#include "DarwinSynchronizationTestData.h"
 #include "DarwinSystemTestData.h"
 #include "DarwinTestImage.h"
 #include "DarwinTimeTestData.h"
+#include "DarwinTimestampMutationTestData.h"
 #include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 #include "os/darwin/process/DarwinProcess.h"
@@ -2730,6 +2745,1341 @@ TEST_P(DarwinProcess,
     EXPECT_FALSE(E.Result);
     EXPECT_FALSE(E.Error);
   }
+}
+
+TEST_P(DarwinProcess, OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinFiles = darwin_test::modeOptions();
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  constexpr uint64_t High[] = {0, 0x1234567800000000ULL, 0xffffffff00000000ULL};
+  constexpr uint64_t Numbers[] = {15, 124, 467};
+  constexpr uint64_t Modes[] = {0000, 0640, 0604};
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("ordinary-mode-mutations");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 37);
+    EXPECT_EQ(R->StandardOutput, "M");
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R->Services.size(), 54u);
+    constexpr uint64_t PrefixNumbers[] = {5, 41, 199, 339};
+    constexpr uint64_t PrefixResults[] = {3, 4, 2, 0};
+    for (unsigned I = 0; I != 4; ++I) {
+      EXPECT_EQ(R->Services[I].Number, Class | PrefixNumbers[I]);
+      EXPECT_EQ(R->Services[I].Result, PrefixResults[I]);
+      EXPECT_EQ(R->Services[I].Error, false);
+    }
+    for (unsigned API = 0; API != 3; ++API)
+      for (unsigned H = 0; H != 3; ++H) {
+        const unsigned Start = 4 + (API * 3 + H) * 4;
+        const auto &E = R->Services[Start];
+        EXPECT_EQ(E.Number, Class | High[H] | Numbers[API]);
+        EXPECT_EQ(E.Result, 0u);
+        EXPECT_EQ(E.Error, false);
+        EXPECT_EQ(E.Arguments[API == 2 ? 2 : 1],
+                  High[H] | 0x7fff0000 | Modes[H]);
+        for (unsigned I = 1; I != 4; ++I) {
+          EXPECT_EQ(R->Services[Start + I].Number,
+                    Class | (I == 2 ? 338 : 339));
+          EXPECT_EQ(R->Services[Start + I].Result, 0u);
+          EXPECT_EQ(R->Services[Start + I].Error, false);
+        }
+      }
+    constexpr uint64_t TailNumbers[] = {15,  124, 467, 467, 339, 467, 339,
+                                        199, 6,   124, 124, 339, 6,   4};
+    constexpr uint64_t TailResults[] = {14, 9, 22, 9, 0, 0, 0,
+                                        2,  0, 9,  0, 0, 0, 1};
+    for (unsigned I = 0; I != 14; ++I) {
+      EXPECT_EQ(R->Services[40 + I].Number, Class | TailNumbers[I]);
+      EXPECT_EQ(R->Services[40 + I].Result, TailResults[I]);
+      EXPECT_EQ(R->Services[40 + I].Error, I < 4 || I == 9);
+    }
+    EXPECT_EQ(R->ReturnValue, 37u);
+    EXPECT_EQ(R->Services.back().Number, Class | 4);
+    EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").Mode, 0100600);
+    EXPECT_EQ(Options.DarwinFiles->Files.at("/data"),
+              (std::vector<uint8_t>{'a', 'b', 0, 255, 'e', 'f'}));
+  }
+  Options.DarwinFiles->ModeMutations->Objects.clear();
+  auto Unknown = run("ordinary-mode-mutations");
+  ASSERT_TRUE(bool(Unknown)) << llvm::toString(Unknown.takeError());
+  EXPECT_EQ(Unknown->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Unknown->Diagnostic,
+            "Darwin object mode provider is not configured");
+  ASSERT_EQ(Unknown->Services.size(), 5u);
+  EXPECT_EQ(Unknown->Services.back().Number, Class | 15);
+  EXPECT_FALSE(Unknown->Services.back().Result);
+  EXPECT_FALSE(Unknown->Services.back().Error);
+}
+
+TEST_P(DarwinProcess, SymbolicOwnershipKeepsVnodeAndTargetGrantsSeparate) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.DarwinSystem.emplace().Credentials =
+      darwin_test::symbolicOwnershipCredentials();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  constexpr const char *Modes[] = {
+      "symbolic-ownership-mutations", "virtual-symbolic-ownership",
+      "created-symbolic-ownership", "virtual-created-symbolic-ownership"};
+  for (unsigned Kind = 0; Kind != 4; ++Kind) {
+    SCOPED_TRACE(Modes[Kind]);
+    Options.Arguments[2] = Kind >= 2 ? "/dir/new" : "/dir/link";
+    Options.DarwinFiles = darwin_test::symbolicOwnershipOptions(true);
+    const auto Wanted = darwin_test::symbolicOwnershipServices(Kind);
+    const auto Output = darwin_test::symbolicOwnershipOutput(Kind);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      SCOPED_TRACE(Repeat);
+      auto R = run(Modes[Kind]);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " pc=" << R->PC << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, 58);
+      EXPECT_EQ(R->ReturnValue, 58u);
+      EXPECT_EQ(R->StandardOutput, Output);
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        EXPECT_EQ(R->Services[I].Number, Class | Wanted[I].Number);
+        EXPECT_EQ(R->Services[I].Result, Wanted[I].Value);
+        EXPECT_EQ(R->Services[I].Error, Wanted[I].Error);
+        for (unsigned J = 0; J != 6; ++J)
+          if (Wanted[I].Arguments[J])
+            EXPECT_EQ(R->Services[I].Arguments[J], *Wanted[I].Arguments[J]);
+      }
+      EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").GID, 31u);
+      EXPECT_EQ(Options.DarwinFiles->SymbolicLinks.at("/dir/link"),
+                (std::vector<uint8_t>{'.', '.', '/', 'd', 'a', 't', 'a'}));
+    }
+    for (bool Late : {false, true}) {
+      if (Kind >= 2 && Late)
+        continue;
+      Options.DarwinFiles = darwin_test::symbolicOwnershipOptions(true);
+      if (Kind >= 2 || Late)
+        Options.DarwinFiles->OwnershipMutations->CreatedSymbolicLinkObjects =
+            false;
+      else
+        Options.DarwinFiles->OwnershipMutations->Objects.erase("/dir/link");
+      const uint64_t FD = Late ? 8 : 3;
+      unsigned Last = 0;
+      while (Last != Wanted.size() &&
+             !(Wanted[Last].Number == 123 && Wanted[Last].Arguments[0] == FD))
+        ++Last;
+      ASSERT_NE(Last, Wanted.size());
+      auto R = run(Modes[Kind]);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(R->Diagnostic,
+                "Darwin object ownership provider is not configured");
+      EXPECT_EQ(R->StandardOutput,
+                Late && (Kind & 1) ? Output.substr(0, 6 * 160) : "");
+      EXPECT_TRUE(R->StandardError.empty());
+      ASSERT_EQ(R->Services.size(), Last + 1);
+      EXPECT_EQ(R->Services.back().Number, Class | 123);
+      EXPECT_EQ(R->Services.back().Arguments[0], FD);
+      EXPECT_FALSE(R->Services.back().Result);
+      EXPECT_FALSE(R->Services.back().Error);
+    }
+  }
+}
+
+TEST_P(DarwinProcess,
+       DirectoryOwnershipMutationsPreserveIndependentObjectAndNamespaceState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (const char *Mode :
+       {"directory-ownership-mutations", "virtual-directory-ownership",
+        "created-directory-ownership"}) {
+    const bool Created = llvm::StringRef(Mode) == "created-directory-ownership";
+    Options.Arguments[2] = Created ? "/child" : "/dir";
+    Options.DarwinFiles = darwin_test::directoryOwnershipOptions(Created);
+    const auto Wanted = darwin_test::directoryOwnershipServices(Created);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      SCOPED_TRACE(Mode);
+      SCOPED_TRACE(Repeat);
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " pc=" << R->PC << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, 55);
+      EXPECT_EQ(R->StandardOutput, "O");
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        EXPECT_EQ(R->Services[I].Number, Class | Wanted[I].Number);
+        EXPECT_EQ(R->Services[I].Result, Wanted[I].Value);
+        EXPECT_EQ(R->Services[I].Error, Wanted[I].Error);
+      }
+      EXPECT_EQ(R->ReturnValue, 55u);
+      EXPECT_EQ(Options.DarwinFiles->Metadata.at("/").Mode, 0040700);
+      EXPECT_EQ(Options.DarwinFiles->OwnershipMutations->CreatedRegularObjects,
+                false);
+    }
+    Options.DarwinFiles->OwnershipMutations->Objects.clear();
+    Options.DarwinFiles->OwnershipMutations->CreatedDirectoryObjects = false;
+    auto R = run(Mode);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(R->Diagnostic,
+              "Darwin object ownership provider is not configured");
+    ASSERT_EQ(R->Services.size(), Created ? 6u : 5u);
+    EXPECT_EQ(R->Services.back().Number, Class | 16);
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+  }
+}
+
+TEST_P(DarwinProcess,
+       DirectoryTimestampMutationsPreserveIndependentObjectAndNamespaceState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  Options.DarwinTime.emplace().TimeOfDay = DarwinTimeOfDay{21, 22};
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (const char *Mode :
+       {"directory-timestamp-mutations", "virtual-directory-timestamps",
+        "created-directory-timestamps"}) {
+    const bool Created =
+        llvm::StringRef(Mode) == "created-directory-timestamps";
+    Options.Arguments[2] = Created ? "/child" : "/dir";
+    Options.DarwinFiles = darwin_test::directoryTimestampOptions(Created);
+    const auto Wanted = darwin_test::directoryTimestampServices(Created);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      SCOPED_TRACE(Mode);
+      SCOPED_TRACE(Repeat);
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " pc=" << R->PC << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, 54);
+      EXPECT_EQ(R->StandardOutput, "T");
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        EXPECT_EQ(R->Services[I].Number, Class | Wanted[I].Number);
+        EXPECT_EQ(R->Services[I].Result, Wanted[I].Value);
+        EXPECT_EQ(R->Services[I].Error, Wanted[I].Error);
+      }
+      EXPECT_EQ(R->ReturnValue, 54u);
+      EXPECT_EQ(Options.DarwinFiles->Metadata.at("/").Mode, 0040700);
+      EXPECT_EQ(Options.DarwinFiles->TimestampMutations->CreatedRegularObjects,
+                false);
+    }
+    Options.DarwinFiles->TimestampMutations->Objects.clear();
+    Options.DarwinFiles->TimestampMutations->CreatedDirectoryObjects = false;
+    auto R = run(Mode);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(R->Diagnostic,
+              "Darwin object timestamp provider is not configured");
+    ASSERT_EQ(R->Services.size(), Created ? 6u : 5u);
+    EXPECT_EQ(R->Services.back().Number, Class | 138);
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+  }
+}
+
+TEST_P(DarwinProcess,
+       DirectoryModesPreserveIndependentObjectAndNamespaceState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (const char *Mode : {"directory-mode-mutations", "virtual-directory-mode",
+                           "created-directory-mode"}) {
+    const bool Created = llvm::StringRef(Mode) == "created-directory-mode";
+    Options.Arguments[2] = Created ? "/child" : "/dir";
+    Options.DarwinFiles = darwin_test::directoryModeOptions(Created);
+    const auto Wanted = darwin_test::directoryModeServices(Created);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      SCOPED_TRACE(Mode);
+      SCOPED_TRACE(Repeat);
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " pc=" << R->PC << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, 53);
+      EXPECT_EQ(R->StandardOutput, "Q");
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        EXPECT_EQ(R->Services[I].Number, Class | Wanted[I].Number);
+        EXPECT_EQ(R->Services[I].Result, Wanted[I].Value);
+        EXPECT_EQ(R->Services[I].Error, Wanted[I].Error);
+      }
+      EXPECT_EQ(R->ReturnValue, 53u);
+      EXPECT_EQ(Options.DarwinFiles->Metadata.at("/").Mode, 0040700);
+      EXPECT_EQ(Options.DarwinFiles->ModeMutations->CreatedRegularObjects,
+                false);
+    }
+    Options.DarwinFiles->ModeMutations->Objects.clear();
+    Options.DarwinFiles->ModeMutations->CreatedDirectoryObjects = false;
+    auto R = run(Mode);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(R->Diagnostic, "Darwin object mode provider is not configured");
+    ASSERT_EQ(R->Services.size(), Created ? 6u : 5u);
+    EXPECT_EQ(R->Services.back().Number, Class | 15);
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+  }
+}
+
+TEST_P(DarwinProcess,
+       FileSystemSnapshotsPreserveLayoutAndIndependentObjectLifetime) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  Options.DarwinTime.reset();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  const auto Common = darwin_test::fileSystemServices(),
+             Virtual = darwin_test::createdFileSystemServices();
+  const auto Bytes = darwin_test::createdFileSystemRecords();
+  const std::string Literal(reinterpret_cast<const char *>(Bytes.data()),
+                            Bytes.size());
+  ASSERT_EQ(Common.size(), 49u);
+  ASSERT_EQ(Virtual.size(), 9u);
+  for (bool Created : {false, true}) {
+    const char *Mode =
+        Created ? "virtual-filesystem-creation" : "filesystem-observations";
+    const auto &Wanted = Created ? Virtual : Common;
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      Options.DarwinFiles = Created ? darwin_test::createdFileSystemOptions()
+                                    : darwin_test::fileSystemOptions();
+      Options.DarwinFiles->WritableFiles.insert("/data");
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, Created ? 51 : 50);
+      EXPECT_EQ(R->StandardOutput, Created ? Literal : "W");
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        const auto &E = R->Services[I];
+        const auto &W = Wanted[I];
+        EXPECT_EQ(E.Number, Class | W.Number);
+        EXPECT_EQ(E.Result, W.Value);
+        EXPECT_EQ(E.Error, W.Error);
+        if (W.Object)
+          EXPECT_EQ(E.Arguments[0], *W.Object);
+        if (W.Output)
+          EXPECT_EQ(E.Arguments[1], *W.Output);
+        const auto N = W.Number & 0xffffff;
+        if (N == 345 || N == 346)
+          for (unsigned J = 2; J != 6; ++J)
+            EXPECT_EQ(E.Arguments[J], UINT64_MAX);
+      }
+    }
+    for (bool Missing : {false, true}) {
+      Options.DarwinFiles = Created ? darwin_test::createdFileSystemOptions()
+                                    : darwin_test::fileSystemOptions();
+      Options.DarwinFiles->WritableFiles.insert("/data");
+      if (Missing)
+        Options.DarwinFiles->FileSystemObservations.reset();
+      else {
+        Options.DarwinFiles->FileSystemObservations->Objects.clear();
+        Options.DarwinFiles->FileSystemObservations->CreatedRegularObjects =
+            false;
+      }
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R));
+      EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(
+          R->Diagnostic,
+          Missing
+              ? "Darwin filesystem observation environment is not configured"
+              : "Darwin object filesystem snapshot is not configured");
+      ASSERT_EQ(R->Services.size(), Created ? 2u : 8u);
+      EXPECT_FALSE(R->Services.back().Result);
+      EXPECT_FALSE(R->Services.back().Error);
+    }
+  }
+}
+
+TEST_P(DarwinProcess,
+       CreatedDirectoryFileSystemsKeepActualParentAndHeldLifetime) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/child";
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  Options.DarwinTime.reset();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (bool Literal : {false, true}) {
+    const char *Mode = Literal ? "virtual-created-directory-filesystem"
+                               : "created-directory-filesystem";
+    const auto Wanted =
+        darwin_test::createdDirectoryFileSystemServices(Literal);
+    ASSERT_EQ(Wanted.size(), Literal ? 35u : 33u);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      Options.DarwinFiles = darwin_test::createdDirectoryFileSystemOptions();
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, 56);
+      EXPECT_EQ(R->StandardOutput,
+                darwin_test::createdDirectoryFileSystemOutput(Literal));
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        const auto &E = R->Services[I];
+        const auto &W = Wanted[I];
+        EXPECT_EQ(E.Number, Class | W.Number);
+        EXPECT_EQ(E.Result, W.Value);
+        EXPECT_EQ(E.Error, W.Error);
+        if (W.Object)
+          EXPECT_EQ(E.Arguments[0], *W.Object);
+        if (W.Output)
+          EXPECT_EQ(E.Arguments[1], *W.Output);
+        const auto N = W.Number & 0xffffff;
+        if (N == 345 || N == 346)
+          for (unsigned J = 2; J != 6; ++J)
+            EXPECT_EQ(E.Arguments[J], UINT64_MAX);
+      }
+    }
+  }
+  for (unsigned Variant = 0; Variant != 4; ++Variant) {
+    Options.DarwinFiles = darwin_test::createdDirectoryFileSystemOptions();
+    auto &F = Options.DarwinFiles->FileSystemObservations;
+    if (Variant == 0)
+      F.reset();
+    else if (Variant == 1)
+      F->Objects.clear();
+    else {
+      F->CreatedDirectoryObjects = false;
+      F->CreatedRegularObjects = Variant == 2;
+    }
+    auto R = run("created-directory-filesystem");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(
+        R->Diagnostic,
+        Variant == 0
+            ? "Darwin filesystem observation environment is not configured"
+            : "Darwin object filesystem snapshot is not configured");
+    EXPECT_TRUE(R->StandardOutput.empty());
+    ASSERT_EQ(R->Services.size(), 4u);
+    EXPECT_EQ(R->Services.back().Number, Class | 346);
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+  }
+}
+
+TEST_P(DarwinProcess,
+       SymbolicFileSystemsKeepOwnSnapshotAndFollowedTargetSeparate) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/link";
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  Options.DarwinTime.reset();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  const char *Modes[] = {"symbolic-filesystem-observations",
+                         "created-symbolic-filesystem",
+                         "virtual-symbolic-filesystem"};
+  for (unsigned Kind = 0; Kind != 3; ++Kind) {
+    const auto Wanted = darwin_test::symbolicFileSystemServices(Kind);
+    ASSERT_EQ(Wanted.size(), Kind == 1 ? 33u : Kind == 2 ? 35u : 32u);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      Options.DarwinFiles =
+          darwin_test::symbolicLinkFileSystemOptions(Kind == 1);
+      if (Kind == 2)
+        Options.DarwinFiles->FileSystemObservations->Objects["/link"].Owner =
+            17;
+      auto R = run(Modes[Kind]);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, 57);
+      EXPECT_EQ(R->StandardOutput, darwin_test::symbolicFileSystemOutput(Kind));
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        const auto &E = R->Services[I];
+        const auto &W = Wanted[I];
+        EXPECT_EQ(E.Number, Class | W.Number);
+        EXPECT_EQ(E.Result, W.Value);
+        EXPECT_EQ(E.Error, W.Error);
+        if (W.Object)
+          EXPECT_EQ(E.Arguments[0], *W.Object);
+        if (W.Output)
+          EXPECT_EQ(E.Arguments[1], *W.Output);
+        const auto N = W.Number & 0xffffff;
+        if (N == 345 || N == 346)
+          for (unsigned J = 2; J != 6; ++J)
+            EXPECT_EQ(E.Arguments[J], UINT64_MAX);
+      }
+    }
+  }
+  for (unsigned Variant = 0; Variant != 3; ++Variant) {
+    Options.DarwinFiles = darwin_test::symbolicLinkFileSystemOptions(true);
+    auto &F = Options.DarwinFiles->FileSystemObservations;
+    if (Variant == 0)
+      F.reset();
+    else if (Variant == 1)
+      F->Objects.clear();
+    else {
+      F->CreatedSymbolicLinkObjects = false;
+      F->CreatedRegularObjects = F->CreatedDirectoryObjects = true;
+    }
+    auto R = run(Modes[1]);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(
+        R->Diagnostic,
+        Variant == 0
+            ? "Darwin filesystem observation environment is not configured"
+            : "Darwin object filesystem snapshot is not configured");
+    EXPECT_TRUE(R->StandardOutput.empty());
+    ASSERT_EQ(R->Services.size(), 4u);
+    EXPECT_EQ(R->Services.back().Number, Class | 346);
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+  }
+}
+
+TEST_P(DarwinProcess, MountEnumerationKeepsOrderedSnapshotsAndRefreshCache) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.DarwinTime.reset();
+  Options.DarwinSystem.reset();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (bool Virtual : {false, true}) {
+    const auto Wanted = darwin_test::mountEnumerationServices(Virtual);
+    ASSERT_EQ(Wanted.size(), Virtual ? 19u : 16u);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      Options.DarwinFiles = darwin_test::mountEnumerationOptions();
+      auto R = run(Virtual ? "virtual-mount-enumeration" : "mount-enumeration");
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, Virtual ? 53 : 52);
+      EXPECT_EQ(R->StandardOutput,
+                Virtual ? darwin_test::mountEnumerationOutput() : "M");
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        const auto &E = R->Services[I];
+        const auto &W = Wanted[I];
+        EXPECT_EQ(E.Number, Class | W.Number);
+        EXPECT_EQ(E.Result, W.Value);
+        EXPECT_EQ(E.Error, W.Error);
+        for (unsigned J = 0; J != 6; ++J)
+          if (W.Arguments[J])
+            EXPECT_EQ(E.Arguments[J], *W.Arguments[J]);
+      }
+    }
+  }
+  Options.DarwinFiles.emplace();
+  auto R = run("mount-enumeration");
+  ASSERT_TRUE(bool(R));
+  EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R->Diagnostic,
+            "Darwin mount enumeration environment is not configured");
+  EXPECT_TRUE(R->StandardOutput.empty());
+  ASSERT_EQ(R->Services.size(), 1u);
+  EXPECT_FALSE(R->Services[0].Result);
+  EXPECT_FALSE(R->Services[0].Error);
+}
+
+TEST_P(DarwinProcess, TimestampMutationsKeepExplicitClockAndObjectAuthority) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  Options.DarwinTime.emplace().TimeOfDay = DarwinTimeOfDay{0, 0};
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  const auto Common = darwin_test::timestampServices(),
+             Virtual = darwin_test::createdTimestampServices();
+  const auto Bytes = darwin_test::createdTimestampRecords();
+  const std::string Literal(reinterpret_cast<const char *>(Bytes.data()),
+                            Bytes.size());
+  ASSERT_EQ(Common.size(), 124u);
+  ASSERT_EQ(Virtual.size(), 10u);
+  for (bool Created : {false, true}) {
+    const char *Mode =
+        Created ? "virtual-timestamp-creation" : "ordinary-timestamp-mutations";
+    const auto &Wanted = Created ? Virtual : Common;
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      Options.DarwinFiles = Created ? darwin_test::createdTimestampOptions()
+                                    : darwin_test::timestampOptions();
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, Created ? 49 : 48);
+      EXPECT_EQ(R->StandardOutput, Created ? Literal : "T");
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        const auto &E = R->Services[I];
+        const auto &W = Wanted[I];
+        EXPECT_EQ(E.Number, Class | W.Number);
+        EXPECT_EQ(E.Result, W.Value);
+        EXPECT_EQ(E.Error, W.Error);
+        if (W.Object)
+          EXPECT_EQ(E.Arguments[0], *W.Object);
+        if (W.Input)
+          EXPECT_EQ(E.Arguments[1], *W.Input);
+        const auto N = W.Number & 0xffffff;
+        if (N == 138 || N == 139)
+          for (unsigned J = 2; J != 6; ++J)
+            EXPECT_EQ(E.Arguments[J], UINT64_MAX);
+      }
+    }
+    for (bool Missing : {false, true}) {
+      Options.DarwinFiles = Created ? darwin_test::createdTimestampOptions()
+                                    : darwin_test::timestampOptions();
+      if (Missing)
+        Options.DarwinFiles->TimestampMutations.reset();
+      else {
+        Options.DarwinFiles->TimestampMutations->Objects.clear();
+        Options.DarwinFiles->TimestampMutations->CreatedRegularObjects = false;
+      }
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R));
+      EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(R->Diagnostic,
+                Missing
+                    ? "Darwin ordinary timestamp environment is not configured"
+                    : "Darwin object timestamp provider is not configured");
+      ASSERT_EQ(R->Services.size(), Created ? 3u : 8u);
+      EXPECT_FALSE(R->Services.back().Result);
+      EXPECT_FALSE(R->Services.back().Error);
+    }
+  }
+  Options.DarwinFiles = darwin_test::createdTimestampOptions();
+  Options.DarwinTime.reset();
+  auto R = run("virtual-timestamp-creation");
+  ASSERT_TRUE(bool(R));
+  EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R->Diagnostic, "Darwin time_of_day is not configured");
+  ASSERT_EQ(R->Services.size(), 5u);
+  EXPECT_EQ(R->Services.back().Arguments[1], 0u);
+}
+
+TEST_P(DarwinProcess, FullAndBarrierSynchronizationKeepIndependentObjectState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  const auto Common = darwin_test::fullSynchronizationServices();
+  const auto Virtual = darwin_test::createdFullSynchronizationServices();
+  const auto Bytes = darwin_test::createdFullSynchronizationRecord();
+  std::string Literal(reinterpret_cast<const char *>(Bytes.data()),
+                      Bytes.size());
+  Literal += Literal;
+  auto check =
+      [&](const ProcessResult &R,
+          llvm::ArrayRef<darwin_test::FullSynchronizationService> Wanted,
+          int Code, llvm::StringRef Output) {
+        ASSERT_EQ(R.Stop, ProcessStopReason::Exited)
+            << R.Diagnostic << " instructions=" << R.Instructions
+            << " services=" << R.Services.size();
+        EXPECT_EQ(R.ExitStatus, Code);
+        EXPECT_EQ(R.ReturnValue, uint64_t(Code));
+        EXPECT_EQ(R.StandardOutput, Output);
+        EXPECT_TRUE(R.StandardError.empty());
+        EXPECT_EQ(R.SelectedBackend, GetParam().Backend);
+        ASSERT_EQ(R.Services.size(), Wanted.size());
+        for (unsigned I = 0; I != Wanted.size(); ++I) {
+          SCOPED_TRACE(I);
+          const auto &E = R.Services[I];
+          const auto &W = Wanted[I];
+          EXPECT_EQ(E.Number, Class | W.Number);
+          EXPECT_EQ(E.Result, W.Value);
+          EXPECT_EQ(E.Error, W.Error);
+          if (W.FD)
+            EXPECT_EQ(E.Arguments[0], *W.FD);
+          if (W.Command)
+            EXPECT_EQ(E.Arguments[1], *W.Command);
+          if (W.Argument)
+            EXPECT_EQ(E.Arguments[2], *W.Argument);
+          const bool Sync =
+              (W.Number & 0xffffff) == 92 || (W.Number & 0xffffff) == 406;
+          const bool Full =
+              Sync && W.Command &&
+              (uint32_t(*W.Command) == 51 || uint32_t(*W.Command) == 85);
+          for (unsigned J = 3; J != 6; ++J)
+            EXPECT_EQ(E.Arguments[J], Full ? UINT64_MAX : 0u);
+        }
+      };
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    Options.DarwinFiles = darwin_test::fullSynchronizationOptions();
+    auto R = run("ordinary-full-barrier-synchronization");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    check(*R, Common, 46, "F");
+    Options.DarwinFiles = darwin_test::createdFullSynchronizationOptions();
+    R = run("virtual-full-barrier-creation");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    check(*R, Virtual, 47, Literal);
+  }
+  for (bool Created : {false, true})
+    for (bool Full : {true, false})
+      for (bool Missing : {false, true}) {
+        Options.DarwinFiles =
+            Created ? darwin_test::createdFullSynchronizationOptions()
+                    : darwin_test::fullSynchronizationOptions();
+        if (Full) {
+          if (Missing)
+            Options.DarwinFiles->FullSynchronization.reset();
+          else {
+            Options.DarwinFiles->FullSynchronization->Objects.clear();
+            Options.DarwinFiles->FullSynchronization->CreatedRegularObjects =
+                false;
+          }
+        } else {
+          if (Missing)
+            Options.DarwinFiles->BarrierSynchronization.reset();
+          else {
+            Options.DarwinFiles->BarrierSynchronization->Objects.clear();
+            Options.DarwinFiles->BarrierSynchronization->CreatedRegularObjects =
+                false;
+          }
+        }
+        auto R = run(Created ? "virtual-full-barrier-creation"
+                             : "ordinary-full-barrier-synchronization");
+        ASSERT_TRUE(bool(R));
+        EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+        EXPECT_EQ(R->Diagnostic,
+                  std::string("Darwin ") +
+                      (Missing
+                           ? (Full ? "full synchronization environment is not "
+                                     "configured"
+                                   : "barrier synchronization environment is "
+                                     "not configured")
+                           : (Full ? "regular-object full synchronization "
+                                     "provider is not configured"
+                                   : "regular-object barrier synchronization "
+                                     "provider is not configured")));
+        const unsigned Prefix = Created ? (Full ? 2 : 3) : (Full ? 6 : 17);
+        ASSERT_EQ(R->Services.size(), Prefix + 1);
+        const auto &Last = R->Services.back();
+        EXPECT_EQ(Last.Number, Class | (Created && !Full ? 406u : 92u));
+        EXPECT_EQ(Last.Arguments[0], 3u);
+        EXPECT_EQ(Last.Arguments[1], Full ? 51u : 85u);
+        EXPECT_FALSE(Last.Result);
+        EXPECT_FALSE(Last.Error);
+      }
+  Options.DarwinFiles = darwin_test::fullSynchronizationOptions();
+  Options.DarwinFiles->FullSynchronization.reset();
+  Options.DarwinFiles->BarrierSynchronization.reset();
+  Options.DarwinFiles->Synchronization.emplace().Objects.insert("/data");
+  Options.DarwinFiles->DataSynchronization.emplace().Objects.insert("/data");
+  auto R = run("ordinary-full-barrier-synchronization");
+  ASSERT_TRUE(bool(R));
+  EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+  ASSERT_EQ(R->Services.size(), 7u);
+  EXPECT_FALSE(R->Services.back().Result);
+}
+
+TEST_P(DarwinProcess,
+       OrdinaryFileSynchronizationKeepsProviderAndCommittedState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinFiles = darwin_test::synchronizationOptions();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  constexpr uint64_t High[] = {0, 0x1234567800000000ULL, 0xffffffff00000000ULL};
+  constexpr uint64_t FDs[] = {3, 5, 4, 0xffffffffULL}, Values[] = {0, 0, 0, 9};
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("ordinary-file-synchronization");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 40);
+    EXPECT_EQ(R->ReturnValue, 40u);
+    EXPECT_EQ(R->StandardOutput, "S");
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R->Services.size(), 68u);
+    constexpr uint64_t PrefixNumbers[] = {5, 5, 41, 199, 339},
+                       PrefixValues[] = {3, 4, 5, 2, 0};
+    for (unsigned I = 0; I != 5; ++I) {
+      EXPECT_EQ(R->Services[I].Number, Class | PrefixNumbers[I]);
+      EXPECT_EQ(R->Services[I].Result, PrefixValues[I]);
+      EXPECT_EQ(R->Services[I].Error, false);
+    }
+    for (unsigned H = 0; H != 3; ++H)
+      for (unsigned N = 0; N != 2; ++N) {
+        const unsigned Start = 5 + H * 18 + N * 9;
+        for (unsigned I = 0; I != 4; ++I) {
+          const auto &E = R->Services[Start + I];
+          EXPECT_EQ(E.Number, Class | High[H] | (N ? 408 : 95));
+          EXPECT_EQ(E.Result, Values[I]);
+          EXPECT_EQ(E.Error, I == 3);
+          EXPECT_EQ(E.Arguments[0], High[H] | FDs[I]);
+          for (unsigned J = 1; J != 6; ++J)
+            EXPECT_EQ(E.Arguments[J], 0u);
+        }
+        for (unsigned I = 0; I != 3; ++I) {
+          const auto &E = R->Services[Start + 4 + I];
+          EXPECT_EQ(E.Number, Class | 339);
+          EXPECT_EQ(E.Result, 0u);
+          EXPECT_EQ(E.Error, false);
+        }
+        for (unsigned I = 0; I != 2; ++I) {
+          const auto &E = R->Services[Start + 7 + I];
+          EXPECT_EQ(E.Number, Class | 199);
+          EXPECT_EQ(E.Result, I ? 0u : 2u);
+          EXPECT_EQ(E.Error, false);
+        }
+      }
+    constexpr uint64_t TailNumbers[] = {6, 95, 95, 6, 408, 408, 339, 6, 4},
+                       TailValues[] = {0, 9, 0, 0, 9, 0, 0, 0, 1};
+    for (unsigned I = 0; I != 9; ++I) {
+      const auto &E = R->Services[59 + I];
+      EXPECT_EQ(E.Number, Class | TailNumbers[I]);
+      EXPECT_EQ(E.Result, TailValues[I]);
+      EXPECT_EQ(E.Error, I == 1 || I == 4);
+    }
+    EXPECT_EQ(Options.DarwinFiles->Files.at("/data"),
+              (std::vector<uint8_t>{'a', 'b', 0, 255, 'e', 'f'}));
+    EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").ChangeTime.Seconds, 5);
+    EXPECT_EQ(Options.DarwinFiles->Synchronization->Objects,
+              (std::set<std::string>{"/data"}));
+  }
+  Options.DarwinFiles->Synchronization->Objects.clear();
+  auto Unknown = run("ordinary-file-synchronization");
+  ASSERT_TRUE(bool(Unknown)) << llvm::toString(Unknown.takeError());
+  EXPECT_EQ(Unknown->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Unknown->Diagnostic, "Darwin regular-object file integrity "
+                                 "completion provider is not configured");
+  ASSERT_EQ(Unknown->Services.size(), 6u);
+  EXPECT_EQ(Unknown->Services.back().Number, Class | 95);
+  EXPECT_FALSE(Unknown->Services.back().Result);
+  EXPECT_FALSE(Unknown->Services.back().Error);
+}
+
+TEST_P(DarwinProcess,
+       CreatedRegularAttributesKeepIndependentProvidersAndObjectState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinSystem.emplace().Credentials =
+      darwin_test::createdAttributeCredentials();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  auto check = [&](const ProcessResult &R,
+                   llvm::ArrayRef<darwin_test::CreatedAttributeService> Wanted,
+                   int Status, llvm::StringRef Output) {
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited)
+        << R.Diagnostic << " instructions=" << R.Instructions << " pc=" << R.PC
+        << " services=" << R.Services.size() << " last_number="
+        << (R.Services.empty() ? 0 : R.Services.back().Number);
+    EXPECT_EQ(R.ExitStatus, Status);
+    EXPECT_EQ(R.ReturnValue, uint64_t(Status));
+    EXPECT_EQ(R.StandardOutput, Output);
+    EXPECT_TRUE(R.StandardError.empty());
+    EXPECT_EQ(R.SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R.Services.size(), Wanted.size());
+    for (unsigned I = 0; I != Wanted.size(); ++I) {
+      SCOPED_TRACE(I);
+      const auto &E = R.Services[I];
+      EXPECT_EQ(E.Number, Class | Wanted[I].Number);
+      EXPECT_EQ(E.Result, Wanted[I].Value);
+      EXPECT_EQ(E.Error, Wanted[I].Error);
+      if (Wanted[I].FD)
+        EXPECT_EQ(E.Arguments[0], *Wanted[I].FD);
+    }
+  };
+  for (bool Virtual : {false, true}) {
+    const char *Mode = Virtual ? "virtual-created-regular-attributes"
+                               : "created-regular-attributes";
+    const auto Wanted =
+        Virtual ? llvm::ArrayRef(darwin_test::VirtualCreatedAttributeServices)
+                : llvm::ArrayRef(darwin_test::CreatedAttributeServices);
+    const auto Output =
+        Virtual ? llvm::fromHex(darwin_test::VirtualCreatedAttributeStdoutHex)
+                : "A";
+    Options.DarwinFiles = darwin_test::createdAttributeOptions();
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      SCOPED_TRACE(Mode);
+      SCOPED_TRACE(Repeat);
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_NO_FATAL_FAILURE(check(*R, Wanted, Virtual ? 45 : 44, Output));
+      EXPECT_EQ(Options.DarwinFiles->CreationPolicy->FirstInode, 100u);
+      EXPECT_EQ(Options.DarwinFiles->Files.at("/data"),
+                (std::vector<uint8_t>{'a', 'b', 0, 255, 'e', 'f'}));
+      EXPECT_EQ(Options.DarwinSystem->Credentials->GroupAccessList,
+                (std::vector<uint32_t>{20, 31}));
+    }
+    for (bool Owner : {false, true})
+      for (unsigned Variant = 0; Variant != 4; ++Variant) {
+        Options.DarwinFiles =
+            darwin_test::createdAttributeOptions(Owner, !Owner);
+        if (Variant == 1) {
+          if (Owner)
+            Options.DarwinFiles->OwnershipMutations.reset();
+          else
+            Options.DarwinFiles->ModeMutations.reset();
+        } else if (Variant == 2) {
+          auto &Map = Owner ? Options.DarwinFiles->OwnershipMutations->Objects
+                            : Options.DarwinFiles->ModeMutations->Objects;
+          Map["/data"] =
+              Owner ? DarwinFileTime{81, 82} : DarwinFileTime{71, 72};
+        } else if (Variant == 3) {
+          if (Owner)
+            Options.DarwinFiles->OwnershipMutations.emplace();
+          else
+            Options.DarwinFiles->ModeMutations.emplace();
+        }
+        auto R = run(Mode);
+        ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+        EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+        const unsigned Count = Virtual ? (Owner ? 4 : 3) : (Owner ? 52 : 12);
+        ASSERT_EQ(R->Services.size(), Count);
+        for (unsigned I = 0; I + 1 < Count; ++I) {
+          EXPECT_EQ(R->Services[I].Number, Class | Wanted[I].Number);
+          EXPECT_EQ(R->Services[I].Result, Wanted[I].Value);
+          EXPECT_EQ(R->Services[I].Error, Wanted[I].Error);
+        }
+        EXPECT_EQ(R->Services.back().Number,
+                  Class | (Owner ? (Virtual ? 123u : 16u) : 124u));
+        EXPECT_FALSE(R->Services.back().Result);
+        EXPECT_FALSE(R->Services.back().Error);
+        EXPECT_EQ(R->Diagnostic,
+                  Owner ? (Variant == 1 ? "Darwin ordinary ownership "
+                                          "environment is not configured"
+                                        : "Darwin object ownership "
+                                          "provider is not configured")
+                        : (Variant == 1 ? "Darwin ordinary mode mutation "
+                                          "environment is not configured"
+                                        : "Darwin object mode provider "
+                                          "is not configured"));
+        EXPECT_TRUE(R->StandardOutput.empty());
+        EXPECT_TRUE(R->StandardError.empty());
+      }
+  }
+}
+
+TEST_P(DarwinProcess,
+       CreatedRegularAdvisoryLocksKeepProviderAndDescriptionStatus) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinFiles = darwin_test::createdAdvisoryLockOptions();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("created-regular-advisory-locks");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 43);
+    EXPECT_EQ(R->ReturnValue, 43u);
+    EXPECT_EQ(R->StandardOutput, "L");
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R->Services.size(),
+              std::size(darwin_test::CreatedAdvisoryServices));
+    for (unsigned I = 0; I != std::size(darwin_test::CreatedAdvisoryServices);
+         ++I) {
+      SCOPED_TRACE(I);
+      const auto &Expected = darwin_test::CreatedAdvisoryServices[I];
+      const auto &E = R->Services[I];
+      EXPECT_EQ(E.Number, Class | Expected.Number);
+      EXPECT_EQ(E.Result, Expected.Value);
+      EXPECT_EQ(E.Error, Expected.Error);
+      if (Expected.FD != UINT64_MAX)
+        EXPECT_EQ(E.Arguments[0], Expected.FD);
+      if (Expected.How != UINT64_MAX)
+        EXPECT_EQ(E.Arguments[1], Expected.How);
+    }
+    EXPECT_EQ(Options.DarwinFiles->Files.at("/data"),
+              (std::vector<uint8_t>{'a', 'b', 0, 255, 'e', 'f'}));
+    EXPECT_EQ(Options.DarwinFiles->CreationPolicy->FirstInode, 100u);
+  }
+  for (unsigned Variant = 0; Variant != 3; ++Variant) {
+    Options.DarwinFiles = darwin_test::createdAdvisoryLockOptions(false);
+    if (Variant == 1)
+      Options.DarwinFiles->AdvisoryLocks.reset();
+    if (Variant == 2)
+      Options.DarwinFiles->AdvisoryLocks->Objects.insert("/data");
+    auto R = run("created-regular-advisory-locks");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    ASSERT_EQ(R->Services.size(), 11u);
+    EXPECT_EQ(R->Services.back().Number, Class | 131u);
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+    EXPECT_EQ(
+        R->Diagnostic,
+        Variant == 1
+            ? "Darwin whole-file advisory lock environment is not configured"
+            : "Darwin regular-object advisory lock provider is not configured");
+  }
+}
+
+TEST_P(DarwinProcess,
+       CreatedRegularSynchronizationKeepsIndependentProvidersAndState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinFiles = darwin_test::createdSynchronizationOptions();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("created-regular-synchronization");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 42);
+    EXPECT_EQ(R->ReturnValue, 42u);
+    EXPECT_EQ(R->StandardOutput, "C");
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R->Services.size(), 147u);
+    for (unsigned I = 0; I != 9; ++I) {
+      EXPECT_EQ(R->Services[I].Number,
+                Class | darwin_test::CreatedSynchronizationPrefixNumbers[I]);
+      EXPECT_EQ(R->Services[I].Result,
+                darwin_test::CreatedSynchronizationPrefixValues[I]);
+      EXPECT_EQ(R->Services[I].Error, false);
+    }
+    constexpr uint64_t Highs[] = {0, 0x1234567800000000ULL,
+                                  0xffffffff00000000ULL},
+                       Numbers[] = {95, 408, 187},
+                       FDs[] = {3, 5, 10, 20, 4, 0xffffffffULL};
+    for (unsigned H = 0; H != 3; ++H)
+      for (unsigned N = 0; N != 3; ++N) {
+        const auto Start = 9 + H * 36 + N * 12;
+        for (unsigned I = 0; I != 6; ++I) {
+          const auto &E = R->Services[Start + I];
+          EXPECT_EQ(E.Number, Class | Highs[H] | Numbers[N]);
+          EXPECT_EQ(E.Arguments[0], Highs[H] | FDs[I]);
+          EXPECT_EQ(E.Result, I == 5 ? 9u : 0u);
+          EXPECT_EQ(E.Error, I == 5);
+        }
+        for (unsigned I = 0; I != 6; ++I) {
+          const auto &E = R->Services[Start + 6 + I];
+          EXPECT_EQ(E.Number, Class | (I < 3 ? 339u : I < 5 ? 199u : 92u));
+          EXPECT_EQ(E.Result, I < 3    ? 0u
+                              : I == 3 ? 10u
+                              : I == 4 ? 3u
+                                       : 0x10002u);
+          EXPECT_EQ(E.Error, false);
+        }
+      }
+    for (unsigned I = 0; I != 30; ++I) {
+      const auto &E = R->Services[117 + I];
+      const auto Value = darwin_test::CreatedSynchronizationTailValues[I];
+      EXPECT_EQ(E.Number,
+                Class | darwin_test::CreatedSynchronizationTailNumbers[I]);
+      EXPECT_EQ(E.Result, Value);
+      EXPECT_EQ(E.Error, Value == 9);
+    }
+    EXPECT_EQ(Options.DarwinFiles->Files.at("/data"),
+              (std::vector<uint8_t>{'a', 'b', 0, 255, 'e', 'f'}));
+    EXPECT_EQ(Options.DarwinFiles->CreationPolicy->FirstInode, 100u);
+  }
+  for (unsigned Variant = 0; Variant != 5; ++Variant) {
+    Options.DarwinFiles =
+        darwin_test::createdSynchronizationOptions(Variant == 0, Variant == 1);
+    if (Variant == 3) {
+      Options.DarwinFiles->Synchronization.reset();
+      Options.DarwinFiles->DataSynchronization.reset();
+    }
+    if (Variant == 4) {
+      Options.DarwinFiles->Synchronization->Objects.insert("/data");
+      Options.DarwinFiles->DataSynchronization->Objects.insert("/data");
+    }
+    auto R = run("created-regular-synchronization");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    ASSERT_EQ(R->Services.size(), Variant == 0 ? 34u : 10u);
+    EXPECT_EQ(R->Services.back().Number, Class | (Variant == 0 ? 187u : 95u));
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+    EXPECT_EQ(R->Diagnostic,
+              Variant == 0 ? "Darwin regular-object data integrity completion "
+                             "provider is not configured"
+              : Variant == 3
+                  ? "Darwin file synchronization environment is not configured"
+                  : "Darwin regular-object file integrity completion provider "
+                    "is not configured");
+  }
+}
+
+TEST_P(DarwinProcess,
+       OrdinaryDataSynchronizationKeepsProviderAndCommittedState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinFiles = darwin_test::dataSynchronizationOptions();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  constexpr uint64_t High[] = {0, 0x1234567800000000ULL, 0xffffffff00000000ULL};
+  constexpr uint64_t FDs[] = {3, 5, 4, 0xffffffffULL}, Values[] = {0, 0, 0, 9};
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("ordinary-data-synchronization");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 41);
+    EXPECT_EQ(R->ReturnValue, 41u);
+    EXPECT_EQ(R->StandardOutput, "D");
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R->Services.size(), 41u);
+    constexpr uint64_t PrefixNumbers[] = {5, 5, 41, 199, 339},
+                       PrefixValues[] = {3, 4, 5, 2, 0};
+    for (unsigned I = 0; I != 5; ++I) {
+      EXPECT_EQ(R->Services[I].Number, Class | PrefixNumbers[I]);
+      EXPECT_EQ(R->Services[I].Result, PrefixValues[I]);
+      EXPECT_EQ(R->Services[I].Error, false);
+    }
+    for (unsigned H = 0; H != 3; ++H) {
+      const unsigned Start = 5 + H * 9;
+      for (unsigned I = 0; I != 4; ++I) {
+        const auto &E = R->Services[Start + I];
+        EXPECT_EQ(E.Number, Class | High[H] | 187);
+        EXPECT_EQ(E.Result, Values[I]);
+        EXPECT_EQ(E.Error, I == 3);
+        EXPECT_EQ(E.Arguments[0], High[H] | FDs[I]);
+        for (unsigned J = 1; J != 6; ++J)
+          EXPECT_EQ(E.Arguments[J], 0u);
+      }
+      for (unsigned I = 0; I != 3; ++I) {
+        const auto &E = R->Services[Start + 4 + I];
+        EXPECT_EQ(E.Number, Class | 339);
+        EXPECT_EQ(E.Result, 0u);
+        EXPECT_EQ(E.Error, false);
+      }
+      for (unsigned I = 0; I != 2; ++I) {
+        const auto &E = R->Services[Start + 7 + I];
+        EXPECT_EQ(E.Number, Class | 199);
+        EXPECT_EQ(E.Result, I ? 0u : 2u);
+        EXPECT_EQ(E.Error, false);
+      }
+    }
+    constexpr uint64_t TailNumbers[] = {6, 187, 187, 6, 187, 187, 339, 6, 4},
+                       TailValues[] = {0, 9, 0, 0, 9, 0, 0, 0, 1};
+    for (unsigned I = 0; I != 9; ++I) {
+      const auto &E = R->Services[32 + I];
+      EXPECT_EQ(E.Number, Class | TailNumbers[I]);
+      EXPECT_EQ(E.Result, TailValues[I]);
+      EXPECT_EQ(E.Error, I == 1 || I == 4);
+    }
+    EXPECT_EQ(Options.DarwinFiles->Files.at("/data"),
+              (std::vector<uint8_t>{'a', 'b', 0, 255, 'e', 'f'}));
+    EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").ChangeTime.Seconds, 5);
+    EXPECT_EQ(Options.DarwinFiles->DataSynchronization->Objects,
+              (std::set<std::string>{"/data"}));
+  }
+  Options.DarwinFiles->DataSynchronization->Objects.clear();
+  auto Unknown = run("ordinary-data-synchronization");
+  ASSERT_TRUE(bool(Unknown)) << llvm::toString(Unknown.takeError());
+  EXPECT_EQ(Unknown->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Unknown->Diagnostic, "Darwin regular-object data integrity "
+                                 "completion provider is not configured");
+  ASSERT_EQ(Unknown->Services.size(), 6u);
+  EXPECT_EQ(Unknown->Services.back().Number, Class | 187);
+  EXPECT_FALSE(Unknown->Services.back().Result);
+  EXPECT_FALSE(Unknown->Services.back().Error);
+}
+
+TEST_P(DarwinProcess, OrdinaryAdvisoryLocksKeepDescriptionAndObjectLifetime) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinFiles = darwin_test::advisoryLockOptions();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  constexpr uint64_t High[] = {0, 0x1234567800000000ULL, 0xffffffff00000000ULL};
+  constexpr uint64_t FDs[] = {3, 5, 4, 5, 4, 3, 3, 4, 4, 3, 4, 4};
+  constexpr uint64_t Actions[] = {2, 6, 5, 8, 5, 5, 6, 8, 6, 8, 6, 8};
+  constexpr uint64_t Values[] = {0, 0, 35, 0, 0, 0, 35, 0, 35, 0, 0, 0};
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("ordinary-advisory-locks");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 39);
+    EXPECT_EQ(R->ReturnValue, 39u);
+    EXPECT_EQ(R->StandardOutput, "K");
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R->Services.size(), 77u);
+    constexpr uint64_t PrefixNumbers[] = {5, 5, 41, 199, 339},
+                       PrefixValues[] = {3, 4, 5, 2, 0};
+    for (unsigned I = 0; I != 5; ++I) {
+      EXPECT_EQ(R->Services[I].Number, Class | PrefixNumbers[I]);
+      EXPECT_EQ(R->Services[I].Result, PrefixValues[I]);
+      EXPECT_EQ(R->Services[I].Error, false);
+    }
+    for (unsigned H = 0; H != 3; ++H) {
+      const unsigned Start = 5 + H * 17;
+      for (unsigned I = 0; I != 12; ++I) {
+        const auto &E = R->Services[Start + I];
+        EXPECT_EQ(E.Number, Class | High[H] | 131);
+        EXPECT_EQ(E.Result, Values[I]);
+        EXPECT_EQ(E.Error, bool(Values[I]));
+        EXPECT_EQ(E.Arguments[0], High[H] | FDs[I]);
+        EXPECT_EQ(E.Arguments[1], High[H] | Actions[I]);
+      }
+      for (unsigned I = 0; I != 3; ++I) {
+        const auto &E = R->Services[Start + 12 + I];
+        EXPECT_EQ(E.Number, Class | 339);
+        EXPECT_EQ(E.Result, 0u);
+        EXPECT_EQ(E.Error, false);
+      }
+      for (unsigned I = 0; I != 2; ++I) {
+        const auto &E = R->Services[Start + 15 + I];
+        EXPECT_EQ(E.Number, Class | 199);
+        EXPECT_EQ(E.Result, I ? 0u : 2u);
+        EXPECT_EQ(E.Error, false);
+      }
+    }
+    constexpr uint64_t FlagValues[] = {9, 9, 9, 0, 0, 0, 35, 0, 9};
+    for (unsigned I = 0; I != 9; ++I) {
+      const auto &E = R->Services[56 + I];
+      EXPECT_EQ(E.Number, Class | 131);
+      EXPECT_EQ(E.Result, FlagValues[I]);
+      EXPECT_EQ(E.Error, bool(FlagValues[I]));
+    }
+    constexpr uint64_t TailNumbers[] = {339, 339, 131, 6,   131, 131,
+                                        6,   131, 131, 339, 6,   4};
+    constexpr uint64_t TailValues[] = {0, 0, 0, 0, 9, 35, 0, 0, 0, 0, 0, 1};
+    for (unsigned I = 0; I != 12; ++I) {
+      const auto &E = R->Services[65 + I];
+      EXPECT_EQ(E.Number, Class | TailNumbers[I]);
+      EXPECT_EQ(E.Result, TailValues[I]);
+      EXPECT_EQ(E.Error, I == 4 || I == 5);
+    }
+    EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").ChangeTime.Seconds, 5);
+    EXPECT_EQ(Options.DarwinFiles->Files.at("/data"),
+              (std::vector<uint8_t>{'a', 'b', 0, 255, 'e', 'f'}));
+    EXPECT_EQ(Options.DarwinFiles->AdvisoryLocks->Objects,
+              (std::set<std::string>{"/data"}));
+  }
+  Options.DarwinFiles->AdvisoryLocks->Objects.clear();
+  auto Unknown = run("ordinary-advisory-locks");
+  ASSERT_TRUE(bool(Unknown)) << llvm::toString(Unknown.takeError());
+  EXPECT_EQ(Unknown->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Unknown->Diagnostic,
+            "Darwin regular-object advisory lock provider is not configured");
+  ASSERT_EQ(Unknown->Services.size(), 6u);
+  EXPECT_EQ(Unknown->Services.back().Number, Class | 131);
+  EXPECT_FALSE(Unknown->Services.back().Result);
+  EXPECT_FALSE(Unknown->Services.back().Error);
+}
+
+TEST_P(DarwinProcess, OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinFiles = darwin_test::ownershipOptions();
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  constexpr uint64_t High[] = {0, 0x1234567800000000ULL, 0xffffffff00000000ULL};
+  constexpr uint64_t Numbers[] = {16, 123, 468};
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("ordinary-ownership-mutations");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 38);
+    EXPECT_EQ(R->ReturnValue, 38u);
+    EXPECT_EQ(R->StandardOutput, "O");
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R->Services.size(), 77u);
+    constexpr uint64_t PrefixNumbers[] = {25, 43, 5, 41, 199, 339};
+    constexpr uint64_t PrefixResults[] = {501, 20, 3, 4, 2, 0};
+    for (unsigned I = 0; I != 6; ++I) {
+      EXPECT_EQ(R->Services[I].Number, Class | PrefixNumbers[I]);
+      EXPECT_EQ(R->Services[I].Result, PrefixResults[I]);
+      EXPECT_EQ(R->Services[I].Error, false);
+    }
+    for (unsigned API = 0; API != 3; ++API)
+      for (unsigned H = 0; H != 3; ++H) {
+        const unsigned Start = 6 + (API * 3 + H) * 6;
+        for (unsigned Mutation : {0u, 4u}) {
+          const auto &E = R->Services[Start + Mutation];
+          EXPECT_EQ(E.Number, Class | High[H] | Numbers[API]);
+          EXPECT_EQ(E.Result, 0u);
+          EXPECT_EQ(E.Error, false);
+          EXPECT_EQ(E.Arguments[API == 2 ? 2 : 1],
+                    High[H] | (Mutation == 4 || H == 1 ? UINT32_MAX : 501));
+          EXPECT_EQ(E.Arguments[API == 2 ? 3 : 2],
+                    High[H] | (Mutation == 4 || H == 2 ? UINT32_MAX : 20));
+        }
+        for (unsigned I : {1u, 2u, 3u, 5u}) {
+          EXPECT_EQ(R->Services[Start + I].Number,
+                    Class | (I == 2 ? 338 : 339));
+          EXPECT_EQ(R->Services[Start + I].Result, 0u);
+          EXPECT_EQ(R->Services[Start + I].Error, false);
+        }
+      }
+    constexpr uint64_t TailNumbers[] = {16,  123, 468, 468, 468, 339,
+                                        123, 339, 468, 339, 199, 6,
+                                        123, 123, 339, 6,   4};
+    constexpr uint64_t TailResults[] = {14, 9, 22, 22, 9, 0, 1, 0, 0,
+                                        0,  2, 0,  9,  0, 0, 0, 1};
+    for (unsigned I = 0; I != 17; ++I) {
+      EXPECT_EQ(R->Services[60 + I].Number, Class | TailNumbers[I]);
+      EXPECT_EQ(R->Services[60 + I].Result, TailResults[I]);
+      EXPECT_EQ(R->Services[60 + I].Error, I < 5 || I == 6 || I == 12);
+    }
+    EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").UID, 501u);
+    EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").GID, 31u);
+    EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").ChangeTime.Seconds, 5);
+    EXPECT_EQ(Options.DarwinFiles->Files.at("/data"),
+              (std::vector<uint8_t>{'a', 'b', 0, 255, 'e', 'f'}));
+  }
+  Options.DarwinFiles->OwnershipMutations->Objects.clear();
+  auto Unknown = run("ordinary-ownership-mutations");
+  ASSERT_TRUE(bool(Unknown)) << llvm::toString(Unknown.takeError());
+  EXPECT_EQ(Unknown->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Unknown->Diagnostic,
+            "Darwin object ownership provider is not configured");
+  ASSERT_EQ(Unknown->Services.size(), 7u);
+  EXPECT_EQ(Unknown->Services.back().Number, Class | 16);
+  EXPECT_FALSE(Unknown->Services.back().Result);
+  EXPECT_FALSE(Unknown->Services.back().Error);
 }
 
 TEST_P(DarwinProcess, ImmediatePselectPreservesTimespecMasksAndSharedBitmaps) {

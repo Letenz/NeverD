@@ -35,6 +35,8 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <utility>
+
 using namespace neverd;
 
 namespace {
@@ -134,6 +136,58 @@ TEST(ControlFlowRecovery, RecoversTheGraphItsOwnFlatteningHid) {
     if (auto *Switch = llvm::dyn_cast<llvm::SwitchInst>(&I))
       EXPECT_TRUE(llvm::pred_empty(Switch->getParent())) << printFunction(*F);
   EXPECT_GT(countOf<llvm::CondBrInst>(*F), 0u) << printFunction(*F);
+}
+
+TEST(ControlFlowRecovery,
+     SourceRecoveryIsIndependentOfExpressionSimplification) {
+  for (const auto [Recovery, Symbolic] :
+       {std::pair{false, false}, {false, true}, {true, false}, {true, true}}) {
+    SCOPED_TRACE(Recovery);
+    SCOPED_TRACE(Symbolic);
+    llvm::LLVMContext C;
+    llvm::Module M("source", C);
+    buildBranchingFunction(M);
+    ASSERT_GT(ControlFlowFlatteningPass::inject(M), 0u);
+    SourceViewOptions Options;
+    Options.Symbolic = Symbolic;
+    Options.RecoverControlFlow = Recovery;
+    Options.LLVM = SourceViewOptions::LLVMOptimization::Custom;
+    Options.Passes = 0;
+    const auto Result = Pipeline::optimizeOrPromoteModule(M, nullptr, Options);
+    EXPECT_NE(Result.Stop, OptimizationStopReason::InputInvalid);
+    EXPECT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
+    ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    auto *F = M.getFunction("f");
+    ASSERT_NE(F, nullptr);
+    unsigned ReachableDispatchers = 0;
+    for (const auto &I : llvm::instructions(F))
+      if (const auto *Switch = llvm::dyn_cast<llvm::SwitchInst>(&I))
+        ReachableDispatchers += !llvm::pred_empty(Switch->getParent());
+    EXPECT_EQ(ReachableDispatchers, Recovery ? 0u : 1u) << printFunction(*F);
+  }
+}
+
+TEST(ControlFlowRecovery, DefaultSourceRecoversWhileConservativePatchKeepsCFG) {
+  for (bool Patch : {false, true}) {
+    SCOPED_TRACE(Patch);
+    llvm::LLVMContext C;
+    llvm::Module M("default_recovery", C);
+    buildBranchingFunction(M);
+    ASSERT_GT(ControlFlowFlatteningPass::inject(M), 0u);
+    Pipeline::OptimizationOptions Options;
+    Options.Conservative = true;
+    const auto Result = Patch ? Pipeline::optimizeModule(M, Options)
+                              : Pipeline::optimizeOrPromoteModule(M);
+    ASSERT_NE(Result.Stop, OptimizationStopReason::InputInvalid);
+    ASSERT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
+    ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    auto *F = M.getFunction("f");
+    ASSERT_NE(F, nullptr);
+    EXPECT_EQ(countOf<llvm::SwitchInst>(*F), Patch ? 1u : 0u)
+        << printFunction(*F);
+    EXPECT_EQ(Result.Rounds, 0u);
+    EXPECT_EQ(Result.SemanticRewrites, 0u);
+  }
 }
 
 TEST(ControlFlowRecovery, DeepRunsRecoveryBeforePromotionAndSROA) {
@@ -275,6 +329,80 @@ TEST(ControlFlowRecovery, ThreadsANumberTheObfuscatorComputedRatherThanWrote) {
       llvm::dyn_cast<llvm::UncondBrInst>(F->getEntryBlock().getTerminator());
   ASSERT_NE(Br, nullptr) << printFunction(*F);
   EXPECT_EQ(Br->getSuccessor(0)->getName(), "one") << printFunction(*F);
+}
+
+TEST(ControlFlowRecovery, PreservesDispatcherEffectsBeforeAndAfterTheLoad) {
+  for (bool BeforeLoad : {false, true}) {
+    SCOPED_TRACE(BeforeLoad);
+    llvm::LLVMContext C;
+    llvm::Module M("effects", C);
+    auto *F = buildComputedDispatch(M, "effects", 1, false);
+    auto &Dispatch = *std::next(F->begin());
+    auto *Switch = llvm::cast<llvm::SwitchInst>(Dispatch.getTerminator());
+    auto *Load = llvm::cast<llvm::LoadInst>(Switch->getCondition());
+    auto *I32 = llvm::Type::getInt32Ty(C);
+    auto *Observable = new llvm::GlobalVariable(
+        M, I32, false, llvm::GlobalValue::ExternalLinkage,
+        llvm::ConstantInt::get(I32, 0), "observable");
+    llvm::IRBuilder<> B(BeforeLoad ? static_cast<llvm::Instruction *>(Load)
+                                   : Switch);
+    B.CreateStore(llvm::ConstantInt::get(I32, 99), Observable);
+    ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    const auto Original = printFunction(*F);
+    EXPECT_EQ(ControlFlowRecoveryPass::recover(*F), 0u);
+    EXPECT_EQ(printFunction(*F), Original);
+  }
+}
+
+TEST(ControlFlowRecovery, PreservesDispatcherValuesUsedByTheDestination) {
+  llvm::LLVMContext C;
+  llvm::Module M("live_load", C);
+  auto *F = buildComputedDispatch(M, "live_load", 1, false);
+  auto &Dispatch = *std::next(F->begin());
+  auto *Switch = llvm::cast<llvm::SwitchInst>(Dispatch.getTerminator());
+  auto &One = *std::next(F->begin(), 2);
+  llvm::cast<llvm::ReturnInst>(One.getTerminator())
+      ->setOperand(0, Switch->getCondition());
+  ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+  const auto Original = printFunction(*F);
+  EXPECT_EQ(ControlFlowRecoveryPass::recover(*F), 0u);
+  EXPECT_EQ(printFunction(*F), Original);
+}
+
+TEST(ControlFlowRecovery, KeepsStateStoresReadBeyondTheDispatcher) {
+  llvm::LLVMContext C;
+  llvm::Module M("live_state", C);
+  auto *F = buildComputedDispatch(M, "live_state", 1, false);
+  auto &Dispatch = *std::next(F->begin());
+  auto *Switch = llvm::cast<llvm::SwitchInst>(Dispatch.getTerminator());
+  auto *Load = llvm::cast<llvm::LoadInst>(Switch->getCondition());
+  auto &One = *std::next(F->begin(), 2);
+  auto *Return = llvm::cast<llvm::ReturnInst>(One.getTerminator());
+  llvm::IRBuilder<> B(Return);
+  Return->setOperand(0,
+                     B.CreateLoad(Load->getType(), Load->getPointerOperand()));
+  ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+  EXPECT_EQ(ControlFlowRecoveryPass::recover(*F), 1u);
+  ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+  EXPECT_EQ(countOf<llvm::StoreInst>(*F), 1u);
+  auto *Branch =
+      llvm::cast<llvm::UncondBrInst>(F->getEntryBlock().getTerminator());
+  EXPECT_EQ(Branch->getSuccessor(0), &One);
+}
+
+TEST(ControlFlowRecovery, DoesNotBypassAtomicStateAccesses) {
+  llvm::LLVMContext C;
+  llvm::Module M("atomic_state", C);
+  auto *F = buildComputedDispatch(M, "atomic_state", 1, false);
+  auto &Dispatch = *std::next(F->begin());
+  auto *Switch = llvm::cast<llvm::SwitchInst>(Dispatch.getTerminator());
+  auto *Load = llvm::cast<llvm::LoadInst>(Switch->getCondition());
+  Load->setAtomic(llvm::AtomicOrdering::Acquire);
+  Load->setAlignment(llvm::Align(4));
+  ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+  const auto Original = printFunction(*F);
+  EXPECT_EQ(ControlFlowRecoveryPass::recover(*F), 0u);
+  EXPECT_EQ(printFunction(*F), Original);
 }
 
 TEST(ControlFlowRecovery, LeavesADispatchWhoseNumberReallyDependsOnTheInput) {

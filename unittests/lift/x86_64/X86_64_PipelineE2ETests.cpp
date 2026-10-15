@@ -35,7 +35,6 @@ FULL_PIPELINE_TEST(X86_64_PipelineE2E, Bmi, "test_bmi.o")
 FULL_PIPELINE_TEST(X86_64_PipelineE2E, AdxMisc, "test_adx_misc.o")
 FULL_PIPELINE_TEST(X86_64_PipelineE2E, SseAvx, "test_sse_avx.o")
 FULL_PIPELINE_TEST(X86_64_PipelineE2E, FlagOps, "test_flag_ops.o")
-FULL_PIPELINE_TEST(X86_64_PipelineE2E, MemAtomic, "test_mem_atomic.o")
 FULL_PIPELINE_TEST(X86_64_PipelineE2E, DoubleShift, "test_double_shift.o")
 FULL_PIPELINE_TEST(X86_64_PipelineE2E, FlagsMisc, "test_flags_misc.o")
 FULL_PIPELINE_TEST(X86_64_PipelineE2E, FpConvert, "test_fp_convert.o")
@@ -50,6 +49,18 @@ FULL_PIPELINE_TEST(X86_64_PipelineE2E, SseMisc, "test_sse_misc.o")
 FULL_PIPELINE_TEST(X86_64_PipelineE2E, GlobalVolatile, "test_global_volatile.o")
 
 #undef FULL_PIPELINE_TEST
+
+// This mixed fixture also observes an interior code address. Successful LLVM
+// verification is distinct from a portable C representation of that value.
+TEST_F(X86_64_PipelineE2E, LiftStages_MemAtomic) {
+  verifyAllStages(obj("test_mem_atomic.o"));
+  verifyLLVMIRNoVerifierErrors(obj("test_mem_atomic.o"));
+  verifyNoConstantTrueBranch(obj("test_mem_atomic.o"));
+}
+
+TEST_F(X86_64_PipelineE2E, NoUnreachable_MemAtomic) {
+  verifyLLVMIRNoUnreachable(obj("test_mem_atomic.o"));
+}
 
 // ============================================================================
 // Decompile mode: all objects produce valid C output
@@ -77,7 +88,6 @@ DECOMPILE_TEST(RotateShift, "test_rotate_shift.o")
 DECOMPILE_TEST(DoubleShift, "test_double_shift.o")
 DECOMPILE_TEST(Bmi, "test_bmi.o")
 DECOMPILE_TEST(CmpxchgXadd, "test_cmpxchg_xadd.o")
-DECOMPILE_TEST(MemAtomic, "test_mem_atomic.o")
 DECOMPILE_TEST(FpConvert, "test_fp_convert.o")
 DECOMPILE_TEST(RclRcr, "test_rcl_rcr.o")
 DECOMPILE_TEST(AdxMisc, "test_adx_misc.o")
@@ -93,6 +103,57 @@ DECOMPILE_TEST(SseMisc, "test_sse_misc.o")
 DECOMPILE_TEST(GlobalVolatile, "test_global_volatile.o")
 
 #undef DECOMPILE_TEST
+
+TEST_F(X86_64_PipelineE2E,
+       DecompileC_InteriorCodeAddressRefusesWithoutReplacingOutput) {
+  for (bool NoOpt : {false, true})
+    for (bool Selected : {false, true}) {
+      SCOPED_TRACE(NoOpt);
+      SCOPED_TRACE(Selected);
+      const auto Out = tmpFile("interior-address.c");
+      const std::string Sentinel = "existing output must survive refusal\n";
+      std::ofstream(Out) << Sentinel;
+      std::vector<std::string> Args = {"decompile", "--llvm", "-o",
+                                       Out.string(),
+                                       obj("test_mem_atomic.o").string()};
+      if (NoOpt)
+        Args.push_back("--no-opt");
+      if (Selected)
+        Args.push_back("--func=test_lea_rip_relative");
+      auto Result = exec(ndBin(), Args);
+      ASSERT_NE(Result.exitCode, 0);
+      EXPECT_TRUE(Result.errContains("LLVM C constant is not supported"))
+          << Result.err;
+      EXPECT_TRUE(Result.errContains("blockaddress(@test_lea_rip_relative"))
+          << Result.err;
+      std::ifstream File(Out);
+      std::ostringstream Content;
+      Content << File.rdbuf();
+      EXPECT_EQ(Content.str(), Sentinel);
+    }
+}
+
+TEST_F(X86_64_PipelineE2E, DecompileC_MemAtomicSupportedFunctions) {
+  for (const char *Function :
+       {"test_xadd", "test_cmpxchg_success", "test_lock_add", "test_lock_inc",
+        "test_lock_dec", "test_lock_or", "test_lea_complex", "test_prefetch",
+        "test_clflush", "test_nop_variants", "test_movabs", "_start"})
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(Function);
+      SCOPED_TRACE(NoOpt);
+      auto Out =
+          tmpFile(std::string(Function) + (NoOpt ? "-noopt.c" : "-opt.c"));
+      std::vector<std::string> Args = {
+          "decompile", "--llvm",     std::string("--func=") + Function,
+          "-o",        Out.string(), obj("test_mem_atomic.o").string()};
+      if (NoOpt)
+        Args.push_back("--no-opt");
+      auto Result = exec(ndBin(), Args);
+      ASSERT_EQ(Result.exitCode, 0) << Result.err;
+      ASSERT_TRUE(fs::exists(Out));
+      EXPECT_GT(fs::file_size(Out), 0U);
+    }
+}
 
 TEST_F(X86_64_PipelineE2E, GlobalVolatile_LLVMIRValid) {
   verifyLLVMIRNoVerifierErrors(obj("test_global_volatile.o"));
@@ -317,9 +378,11 @@ TEST_F(X86_64_PipelineE2E, PatchMachO_Switch) {
   if (cr.exitCode != 0)
     GTEST_SKIP() << "Cannot compile x64 Mach-O";
   verifyPatchProducesOutput(exe);
-  auto LLVM = liftToLLVMIR(exe);
+  // Check recovery before LLVM can fold affine switch cases into arithmetic.
+  auto LLVM = liftToLLVMIRUnopt(exe);
   ASSERT_EQ(LLVM.exitCode, 0) << "LLVM IR lift failed: " << LLVM.err;
-  EXPECT_NE(LLVM.out.find("switch i32"), std::string::npos)
+  // Recovery may retain a 64-bit table key before optimization narrows it.
+  EXPECT_NE(LLVM.out.find("  switch "), std::string::npos)
       << "Expected the recovered classify switch:\n"
       << LLVM.out;
   // A proof-complete set of cases may still use an explicit trap for an

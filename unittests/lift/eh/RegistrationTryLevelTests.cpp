@@ -129,17 +129,31 @@ struct ImageBuilder {
     TextSeg.Name = ".text";
     TextSeg.VA = kText;
     TextSeg.Size = Text.size();
+    TextSeg.FileSz = TextSeg.Size;
     TextSeg.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
     TextSeg.Data = Text;
+    Section TextSection;
+    TextSection.Name = TextSeg.Name;
+    TextSection.VA = TextSeg.VA;
+    TextSection.Size = TextSection.FileSz = TextSeg.Size;
+    TextSection.Flags = TextSeg.Flags;
+    Img.Sections.push_back(std::move(TextSection));
     Img.Segments.push_back(std::move(TextSeg));
 
     Segment RDataSeg;
     RDataSeg.Name = ".rdata";
     RDataSeg.VA = kRData;
     RDataSeg.Size = std::max<size_t>(RData.size(), 16);
+    RDataSeg.FileSz = RDataSeg.Size;
     RDataSeg.Flags = SegmentFlags::Readable;
     RDataSeg.Data = RData;
     RDataSeg.Data.resize(RDataSeg.Size, 0);
+    Section RDataSection;
+    RDataSection.Name = RDataSeg.Name;
+    RDataSection.VA = RDataSeg.VA;
+    RDataSection.Size = RDataSection.FileSz = RDataSeg.Size;
+    RDataSection.Flags = RDataSeg.Flags;
+    Img.Sections.push_back(std::move(RDataSection));
     Img.Segments.push_back(std::move(RDataSeg));
 
     for (const auto &[Name, Addr] : Funcs) {
@@ -1645,3 +1659,43 @@ TEST(RegistrationTryLevel, ScopeBudgetCannotPublishACompletePrefix) {
 }
 
 } // namespace
+
+TEST(RegistrationTryLevel, DistinctDirectProloguesDoNotShareAGuessedOwner) {
+  for (bool Damaged : {false, true}) {
+    SCOPED_TRACE(Damaged);
+    ImageBuilder B;
+    B.addScope(-1, kText + 0xa0, kText + 0xb0);
+    B.endScopes();
+    const auto SecondTable = B.rdataVA();
+    B.addScope(-1, kText + 0xa8, kText + 0xb8);
+    B.endScopes();
+    emitInstall(B.Text, -1, kRData);
+    B.Text.push_back(0xc3);
+    const auto SecondEntry = B.textVA();
+    emitInstall(B.Text, -1, SecondTable);
+    B.Text.push_back(0xc3);
+    if (Damaged)
+      B.Text[SecondEntry - kText + 1] = 0x90;
+    B.Text.resize(0xa0, 0xcc);
+    B.addStub();
+    B.Text.resize(0xa8, 0xcc);
+    B.addStub();
+    B.Text.resize(0xb0, 0xcc);
+    B.addStub();
+    B.Text.resize(0xb8, 0xcc);
+    B.addStub();
+    const auto Image = B.build({{"first", kText}});
+    const auto *First = chainAt(Image, kText);
+    ASSERT_TRUE(First);
+    EXPECT_EQ(First->ChainInstallVA, kText + 22);
+    const auto *Second = chainAt(Image, SecondEntry);
+    if (Damaged)
+      EXPECT_FALSE(Second);
+    else {
+      ASSERT_TRUE(Second);
+      EXPECT_EQ(Second->ScopeTableVA, SecondTable);
+      EXPECT_EQ(Second->ChainInstallVA, SecondEntry + 22);
+      EXPECT_EQ(Second->RegistrationOffset, -16);
+    }
+  }
+}

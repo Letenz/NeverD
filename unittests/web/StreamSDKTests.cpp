@@ -58,9 +58,6 @@ protected:
   std::string Revision;
   std::vector<std::string> Artifacts;
   void SetUp() override {
-#ifdef _WIN32
-    GTEST_SKIP() << "POSIX capture required";
-#endif
     llvm::SmallString<128> Dir;
     ASSERT_FALSE(
         llvm::sys::fs::createUniqueDirectory("neverd-stream-sdk", Dir));
@@ -238,7 +235,7 @@ TEST_F(WebStreamSDK, CLIReceiptBindsBytesProfileAndPolicyWithoutExternalTools) {
   ASSERT_EQ(Run({"stream-import", Path, Profile, "1", Policy, Receipt}), 0);
   EXPECT_NE(Output.find("peer_record_id"), std::string::npos);
   ASSERT_EQ(Run({"report-stream", Path, Profile, "1", Policy, Receipt}), 0);
-  EXPECT_NE(Output.find("passive-evidence-shape-report-v1"), std::string::npos);
+  EXPECT_NE(Output.find("passive-evidence-shape-report-v2"), std::string::npos);
   EXPECT_NE(Output.find("related_id"), std::string::npos);
   std::ofstream(Root / "a0.jsonl", std::ios::app) << " ";
   EXPECT_EQ(Run({"stream-import", Path, Profile, "1", Policy, Receipt}), 1);

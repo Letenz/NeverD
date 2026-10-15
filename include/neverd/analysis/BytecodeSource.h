@@ -15,6 +15,13 @@ namespace neverd::analysis {
 struct BytecodeStateFunction {
   LowFunc Function;
   SourceFunctionTypeHint SourceABI;
+  struct StoreOrigin {
+    va_t Address;
+    unsigned InstructionOperation;
+    int LoweredSequence;
+  };
+  /// Exact guest stores, distinguished from synthetic state-buffer stores.
+  std::vector<StoreOrigin> StoreOrigins;
 };
 
 /// Bind byte-addressed virtual registers to a caller-owned state buffer.

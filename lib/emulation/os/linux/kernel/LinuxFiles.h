@@ -6,19 +6,26 @@
 #ifndef NEVERD_EMULATION_OS_LINUX_LINUXFILES_H
 #define NEVERD_EMULATION_OS_LINUX_LINUXFILES_H
 
+#include "LinuxDeviceState.h"
 #include "LinuxKernel.h"
 
+#include <memory>
+#include <set>
 #include <variant>
 
 namespace neverd::emulation::linux_model {
+class LinuxMemory;
 bool isCanonicalFilePath(llvm::StringRef Path);
 llvm::Error validateFileOptions(const LinuxFileOptions &Options);
+llvm::Error validateDeviceOptions(const LinuxDeviceOptions &Options,
+                                  uint64_t &Bytes, uint64_t &Transactions);
 
 class LinuxFiles {
 public:
   LinuxFiles(ExecutionBackend &CPU, const MemoryLayout &Layout,
-             const std::optional<LinuxFileOptions> &Options)
-      : CPU(CPU), Layout(Layout), Options(Options) {}
+             const std::optional<LinuxFileOptions> &Options,
+             LinuxMemory *Memory = nullptr)
+      : CPU(CPU), Layout(Layout), Options(Options), Memory(Memory) {}
 
   llvm::Expected<std::optional<uint64_t>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
@@ -27,7 +34,21 @@ public:
   extendedAttribute(ServiceKind Kind, const ProcessServiceEvent &Event,
                     const std::optional<LinuxKernelOptions> &Kernel,
                     ProcessResult &Result);
+  struct DescriptorStatus {
+    uint32_t AccessMode;
+    const LinuxFileMetadata *Metadata;
+  };
+  /// Live open-description facts, or guest errno. Missing metadata stays
+  /// unknown; libc consumers must not infer it from a pathname or file bytes.
+  std::optional<std::variant<DescriptorStatus, uint32_t>>
+  descriptorStatus(uint32_t FD, ProcessResult &Result) const;
   std::optional<uint64_t> outputError(uint32_t FD) const;
+  uint32_t outputTarget(uint32_t FD) const;
+  bool isDevice(uint32_t FD) const;
+  /// Missing descriptor returns EBADF; another descriptor kind returns null.
+  /// The borrowed catalogue identity outlives every mapping in this process.
+  std::variant<std::shared_ptr<LinuxDeviceState>, uint64_t>
+  mappingDevice(uint32_t FD) const;
   std::optional<uint64_t>
   openProcessDescriptor(uint32_t PID, uint32_t Flags,
                         const LinuxKernelOptions &Kernel,
@@ -38,7 +59,15 @@ public:
 
 private:
   enum class Stream { Input, Output, Error };
-  enum class PathKind { File, Directory, Missing, NotDirectory };
+  enum class PathKind {
+    File,
+    Device,
+    Directory,
+    Missing,
+    NotDirectory,
+    SymbolicLink,
+    LinkTraversal
+  };
   // A pathname import can fail with guest errno independently of backend I/O.
   using Pathname = std::variant<std::string, uint32_t>;
   struct ParsedPath {
@@ -53,13 +82,22 @@ private:
   struct ProcessDescriptor {
     uint32_t PID, Flags;
   };
-  using Descriptor = std::variant<Stream, OpenFile, ProcessDescriptor>;
+  using OpenDevice = std::shared_ptr<LinuxDeviceState>;
+  using Descriptor =
+      std::variant<Stream, OpenFile, ProcessDescriptor, OpenDevice>;
 
   ExecutionBackend &CPU;
   const MemoryLayout &Layout;
   const std::optional<LinuxFileOptions> &Options;
-  std::map<uint32_t, Descriptor> Descriptors{
-      {0, Stream::Input}, {1, Stream::Output}, {2, Stream::Error}};
+  LinuxMemory *Memory;
+  // Descriptor numbers refer to shared open descriptions. dup preserves the
+  // cursor, device transaction position and context ownership; another open
+  // creates a distinct description. VMAs also retain a device's lifetime.
+  std::map<uint32_t, std::shared_ptr<Descriptor>> Descriptors{
+      {0, std::make_shared<Descriptor>(Stream::Input)},
+      {1, std::make_shared<Descriptor>(Stream::Output)},
+      {2, std::make_shared<Descriptor>(Stream::Error)}};
+  std::vector<std::weak_ptr<LinuxDeviceState>> DeviceDescriptions;
 
   static std::optional<uint64_t> unsupported(ProcessResult &Result,
                                              const char *Reason);
@@ -72,6 +110,9 @@ private:
   PathKind lookupPath(const std::string &Path,
                       bool RequiresDirectory = false) const;
   llvm::Expected<std::optional<uint64_t>>
+  readLink(uint32_t Directory, uint64_t Path, uint64_t Address, uint32_t Size,
+           ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>>
   access(uint64_t Address, uint32_t Mode, ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>> makeDirectory(uint64_t Address,
                                                         ProcessResult &Result);
@@ -80,7 +121,20 @@ private:
   llvm::Expected<uint64_t> read(OpenFile &File, uint64_t Address,
                                 uint64_t Size);
   uint64_t seek(OpenFile &File, uint64_t Offset, uint32_t Whence);
-  llvm::Expected<std::optional<uint64_t>> close(uint32_t FD);
+  llvm::Expected<std::optional<uint64_t>> close(uint32_t FD,
+                                                ProcessResult &Result);
+  std::optional<uint64_t> duplicate(ServiceKind Kind, uint32_t Old,
+                                    uint32_t New, uint32_t Flags,
+                                    ProcessResult &Result);
+  bool canRelease(const std::shared_ptr<Descriptor> &Description) const;
+  llvm::Expected<std::optional<uint64_t>> contextIoctl(LinuxDeviceState &Device,
+                                                       uint32_t Request,
+                                                       uint64_t Argument,
+                                                       ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>> deviceIoctl(uint32_t FD,
+                                                      uint32_t Request,
+                                                      uint64_t Argument,
+                                                      ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>> readDescriptor(uint32_t FD,
                                                          uint64_t Address,
                                                          uint64_t Size,

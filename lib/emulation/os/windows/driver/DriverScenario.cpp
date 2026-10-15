@@ -11,9 +11,17 @@
 
 #include "DriverScenario.h"
 
+#include "../kernel/KernelLoaderView.h"
+#include "../kernel/KernelPhysicalInventory.h"
+#include "../kernel/KernelVaShadowQuery.h"
+#include "../kernel/KernelVersionQuery.h"
 #include "../kernel/WindowsKernelLayout.h"
 #include "DriverCPUID.h"
+#include "DriverLoaderViewJSON.h"
+#include "DriverPhysicalInventoryJSON.h"
 #include "DriverSchedulingJSON.h"
+#include "DriverVaShadowQueryJSON.h"
+#include "DriverVersionQueryJSON.h"
 
 #include "neverd/emulation/DriverReportFields.h"
 #include "neverd/emulation/DriverSession.h"
@@ -2068,6 +2076,19 @@ llvm::Error validateDriverUserMemory(const DriverRequest &Request) {
 }
 
 llvm::Error validateDriverScenario(const DriverOptions &Options) {
+  if (Options.LoaderView)
+    if (auto E = kernel_loader_view::validate(*Options.LoaderView))
+      return E;
+  if (Options.KernelVaShadowQuery)
+    if (auto E = kernel_va_shadow_query::validate(*Options.KernelVaShadowQuery))
+      return E;
+  if (Options.VersionQuery)
+    if (auto E = kernel_version_query::validate(*Options.VersionQuery))
+      return E;
+  if (Options.PhysicalMemoryInventory)
+    if (auto E = kernel_physical_inventory::validate(
+            *Options.PhysicalMemoryInventory))
+      return E;
   if (auto E = driver_cpuid::validate(Options.CPUID))
     return E;
   if (Options.Scheduling)
@@ -2478,6 +2499,30 @@ driverOptionsFromScenarioJSON(llvm::StringRef JSON, DriverOptions Base) {
     if (!Parsed)
       return Parsed.takeError();
     Base.CPUID = std::move(*Parsed);
+  }
+  if (const auto *View = Object->get(LoaderViewField)) {
+    auto Parsed = driver_loader_view::parse(*View);
+    if (!Parsed)
+      return Parsed.takeError();
+    Base.LoaderView = std::move(*Parsed);
+  }
+  if (const auto *Query = Object->get(KernelVaShadowQueryField)) {
+    auto Parsed = driver_va_shadow_query::parse(*Query);
+    if (!Parsed)
+      return Parsed.takeError();
+    Base.KernelVaShadowQuery = std::move(*Parsed);
+  }
+  if (const auto *Query = Object->get(VersionQueryField)) {
+    auto Parsed = driver_version_query::parse(*Query);
+    if (!Parsed)
+      return Parsed.takeError();
+    Base.VersionQuery = std::move(*Parsed);
+  }
+  if (const auto *Inventory = Object->get(PhysicalMemoryInventoryField)) {
+    auto Parsed = driver_physical_inventory::parse(*Inventory);
+    if (!Parsed)
+      return Parsed.takeError();
+    Base.PhysicalMemoryInventory = std::move(*Parsed);
   }
   if (const auto *Unload = Object->get(UnloadField)) {
     auto Boolean = Unload->getAsBoolean();

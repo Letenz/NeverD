@@ -5,12 +5,135 @@
 //===----------------------------------------------------------------------===//
 #include "X64Recovery.h"
 
+#include "../../../lift/X86/X86CetEncoding.h"
+#include "NativeStackControl.h"
+
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Errc.h"
 #include "llvm/Support/SHA256.h"
 
+#include <algorithm>
+#include <set>
+
 namespace neverd::analysis::x64 {
+llvm::Expected<RawEnvironmentPreparation>
+validateRawEnvironmentDeclarations(const SpecializationOptions &Options) {
+  RawEnvironmentPreparation Cost;
+  if (!Options.hasRawEnvironment())
+    return Cost;
+  const auto Invalid = [](const char *Message) {
+    return llvm::createStringError(llvm::errc::invalid_argument, "%s", Message);
+  };
+  const auto Exhausted = [] {
+    return llvm::createStringError(
+        std::make_error_code(std::errc::value_too_large),
+        "raw environment preparation budget exhausted");
+  };
+  // V1 reserves thirty-two bounded preparation passes (validation, owned copies
+  // and serialization/hash) before examining any declaration payload. Scalar
+  // option fields fit in the 1024-byte header; each record adds 128 bytes.
+  // Payload lengths are inspected only after aggregate collection counts fit.
+  constexpr uint64_t Passes = 32;
+  uint64_t Records = 1;
+  const uint64_t RecordLimit = Options.MaxImagePreparationRecords / Passes;
+  for (size_t Count :
+       {Options.X64CodeRegions.size(), Options.X64ImportBindings.size(),
+        Options.X64TerminalImports.size(), Options.ControlRegisters.size(),
+        Options.ControlFrameSlots.size(), Options.EntryConstants.size()}) {
+    if (Records > RecordLimit || Count > RecordLimit - Records)
+      return Exhausted();
+    Records += Count;
+  }
+  // Pairwise interval and target checks have an explicit worst-case record
+  // reservation too. Avoid an uncharged sort or implementation-dependent
+  // comparator count; the small raw-domain interface uses bounded lists.
+  if (Records > RecordLimit || Records > RecordLimit / Records)
+    return Exhausted();
+  const uint64_t ByteLimit = Options.MaxImagePreparationBytes / Passes;
+  if (ByteLimit < 1024 || Records > (ByteLimit - 1024) / 128)
+    return Exhausted();
+  uint64_t Bytes = 1024 + Records * 128;
+  const auto Add = [&](uint64_t Size) {
+    if (Size > ByteLimit - Bytes)
+      return false;
+    Bytes += Size;
+    return true;
+  };
+  for (const auto &R : Options.X64CodeRegions)
+    if (!Add(R.Bytes.size()) || !Add(R.Evidence.size()))
+      return Exhausted();
+  for (const auto &B : Options.X64ImportBindings)
+    if (!Add(B.Module.size()) || !Add(B.Symbol.size()) ||
+        !Add(B.Evidence.size()))
+      return Exhausted();
+  for (const auto &B : Options.X64TerminalImports)
+    if (!Add(B.Module.size()) || !Add(B.Symbol.size()))
+      return Exhausted();
+  Cost.Bytes = Bytes * Passes;
+  Cost.Records = Records * Records * Passes;
+  // Each primary identity lookup performs two binary searches in size_t-wide
+  // indexes (named slots and section mappings): at most 64 comparisons each.
+  // This pays the declaration/primary-index boundary independently of either
+  // collection's size. Unique slots prevent repeated copying of one identity.
+  const uint64_t ImportCount =
+      Options.X64ImportBindings.size() + Options.X64TerminalImports.size();
+  if (ImportCount > (Options.MaxImagePreparationRecords - Cost.Records) / 128)
+    return Exhausted();
+  Cost.Records += ImportCount * 128;
+
+  if (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution ||
+      !Options.X64CetDisabled ||
+      Options.ByteOrder != llvm::endianness::little ||
+      !Options.FrameBaseRegister ||
+      Options.FrameBaseRegister->Offset != StackPointer ||
+      Options.FrameBaseRegister->Bytes != 8 ||
+      !Options.RequireRestoredFrameAtReturn)
+    return Invalid("raw environment requires explicit nonfaulting CET-disabled "
+                   "x64 state and a restored entry RSP root");
+  if (auto Error = validateX64TerminalImportDomain(Options))
+    return std::move(Error);
+  const auto Text = [](llvm::StringRef S, bool AllowSpace = false) {
+    return !S.empty() && S.size() <= 4096 &&
+           llvm::all_of(S, [&](unsigned char C) {
+             return C >= (AllowSpace ? 32 : 33) && C <= 126;
+           });
+  };
+  std::vector<std::pair<va_t, va_t>> Ranges;
+  for (const auto &R : Options.X64CodeRegions) {
+    if (R.Version != 1 || R.Bytes.empty() ||
+        R.Bytes.size() > InvalidVA - R.Address || !Text(R.Evidence, true))
+      return Invalid("invalid supplemental code region");
+    Ranges.emplace_back(R.Address, R.Address + R.Bytes.size());
+  }
+  for (size_t I = 0; I < Ranges.size(); ++I)
+    for (size_t J = 0; J < I; ++J)
+      if (Ranges[I].first < Ranges[J].second &&
+          Ranges[J].first < Ranges[I].second)
+        return Invalid("overlapping supplemental code regions");
+  const auto Contains = [&](va_t Target) {
+    return llvm::any_of(Ranges, [&](const auto &R) {
+      return Target >= R.first && Target < R.second;
+    });
+  };
+  std::vector<std::pair<va_t, va_t>> Slots;
+  for (const auto &B : Options.X64TerminalImports)
+    Slots.emplace_back(B.Slot, B.Slot + 8);
+  for (const auto &B : Options.X64ImportBindings) {
+    if (B.Version != 1 || !B.Slot || B.Slot > InvalidVA - 8 ||
+        !Text(B.Module) || !Text(B.Symbol) || !Text(B.Evidence, true) ||
+        !Contains(B.Target))
+      return Invalid("invalid stable named import binding");
+    Slots.emplace_back(B.Slot, B.Slot + 8);
+  }
+  for (size_t I = 0; I < Slots.size(); ++I)
+    for (size_t J = 0; J < I; ++J)
+      if (Slots[I].first < Slots[J].second && Slots[J].first < Slots[I].second)
+        return Invalid("overlapping stable or terminal import bindings");
+  return Cost;
+}
+
 /// The x64 lifter uses these exact shapes to read and restore the system
 /// portion of RFLAGS. The residual keeps both intrinsics. During analysis a
 /// PUSHFQ snapshot is an unconstrained runtime value: this overapproximates
@@ -89,19 +212,9 @@ bool isCetDisabledProjection(const SpecializationInstruction &Insn) {
               Op.Inputs[0].Offset !=
                   static_cast<uint64_t>(Intrinsic::CetIncSsp)))
     return false;
-  const auto &Bytes = Insn.NativeBytes;
-  if ((Bytes.size() != 4 && Bytes.size() != 5) || Bytes[0] != 0xf3)
-    return false;
-  size_t I = 1;
-  if (Bytes.size() == 5) {
-    // REX.W and REX.B select width/bank. Extra prefix forms are not certified.
-    if (Bytes[I] != 0x40 && Bytes[I] != 0x41 && Bytes[I] != 0x48 &&
-        Bytes[I] != 0x49)
-      return false;
-    ++I;
-  }
-  return Bytes[I] == 0x0f && Bytes[I + 1] == (Read ? 0x1e : 0xae) &&
-         (Bytes[I + 2] & 0xf8) == (Read ? 0xc8 : 0xe8);
+  return x86cet::canonicalEncoding(
+      Insn.NativeBytes,
+      Read ? x86cet::Operation::Read : x86cet::Operation::Increment);
 }
 
 bool bindCetDisabledPreservedState(SpecializationInstruction &Insn) {

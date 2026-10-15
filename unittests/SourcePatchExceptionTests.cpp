@@ -39,10 +39,10 @@ protected:
 
   void SetUp() override {
 #if !((defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__))) || \
-      (defined(__linux__) && defined(__x86_64__)))
+      (defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))))
     GTEST_SKIP()
         << "native exception runtime profile requires Darwin ARM64/x64 or "
-           "Linux x64";
+           "Linux ARM64/x64";
 #endif
     if (std::string(NEVERD_TEST_CLANG).empty())
       GTEST_SKIP() << "a compatible Clang is required";
@@ -192,16 +192,17 @@ TEST_F(SourcePatchException, LLVMIRRetainsCrossBoundaryExceptionSemantics) {
 }
 TEST_F(SourcePatchException,
        NativeObjectRetainsCrossBoundaryExceptionSemantics) {
-#if !(defined(__linux__) && defined(__x86_64__))
-  GTEST_SKIP() << "native object exception runtime profile requires Linux x64";
+#if !(defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__)))
+  GTEST_SKIP()
+      << "native object exception runtime profile requires Linux x64/ARM64";
 #endif
   Options.artifact = NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT;
   check();
 }
 
 TEST_F(SourcePatchException, GCCObjectRetainsCrossBoundaryExceptionSemantics) {
-#if !(defined(__linux__) && defined(__x86_64__))
-  GTEST_SKIP() << "GCC exception runtime profile requires Linux x64";
+#if !(defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__)))
+  GTEST_SKIP() << "GCC exception runtime profile requires Linux x64/ARM64";
 #endif
   auto GCC = llvm::sys::findProgramByName("g++");
   if (!GCC)
@@ -210,6 +211,102 @@ TEST_F(SourcePatchException, GCCObjectRetainsCrossBoundaryExceptionSemantics) {
   Options.compiler_path = GCC->c_str();
   Options.artifact = NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT;
   check();
+}
+
+TEST_F(SourcePatchException, NeverCCSourcesExecuteInNativeProcesses) {
+  const char *Compiler = std::getenv("NEVERD_TEST_NEVERC");
+  if (!Compiler || !*Compiler)
+    GTEST_SKIP() << "explicit NeverC producer required";
+  Options.compiler = NEVERD_SOURCE_PATCH_NEVERC;
+  Options.compiler_path = Compiler;
+  Options.language = NEVERD_SOURCE_PATCH_C;
+  Options.bindings = nullptr;
+  Options.binding_count = 0;
+  constexpr llvm::StringLiteral Source = R"(
+static int twice(int x) { return x * 2; }
+int replacement(int x) {
+  return twice(x + 3) + 5;
+})";
+  for (const auto [Artifact, CompileMode] :
+       {std::pair{NEVERD_SOURCE_PATCH_ARTIFACT_IR, NEVERD_SOURCE_PATCH_NORMAL},
+        {NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT, NEVERD_SOURCE_PATCH_NORMAL},
+        {NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT, NEVERD_SOURCE_PATCH_DYNCODE}}) {
+    Options.artifact = Artifact;
+    Options.mode = CompileMode;
+    Output = Directory / ("neverc-c-" + std::to_string(Artifact) + "-" +
+                          std::to_string(CompileMode));
+    ASSERT_EQ(neverd_patch_source(Session, Source.data(), Source.size(),
+                                  &Options, Output.string().c_str()),
+              1)
+        << error();
+    for (const auto [Mode, Expected] :
+         {std::pair{0, 11}, {1, 13}, {2, 15}, {9, 19}})
+      EXPECT_EQ(executeEH({Output.string(), std::to_string(Mode)}), Expected);
+  }
+}
+
+TEST_F(SourcePatchException, NeverCHostedDynCodeUnwindsThroughTwoNativeFrames) {
+  const char *Compiler = std::getenv("NEVERD_TEST_NEVERC");
+  if (!Compiler || !*Compiler)
+    GTEST_SKIP() << "explicit NeverC producer required";
+  const auto SourceFile = Directory / "callback-original.cpp";
+  Original = Directory / "callback-original";
+  std::ofstream(SourceFile) << R"(
+using Callback = int (*)(int);
+extern "C" __attribute__((noinline)) int throwing(int x) {
+  if (x) throw x;
+  return 0;
+}
+extern "C" __attribute__((noinline)) int target(Callback cb, int x) {
+  volatile int value = cb(x);
+  return value + 1;
+}
+int main(int argc, char **argv) {
+  int x = argc > 1 ? argv[1][0] - '0' : 0;
+  try { return target(throwing, x); }
+  catch (int value) { return value + 40; }
+})";
+  std::vector<std::string> Command{
+      NEVERD_TEST_CLANG, "--driver-mode=g++", "-O0", SourceFile.string(), "-o",
+      Original.string()};
+#ifdef __APPLE__
+  if (const char *Arch = std::getenv("NEVERD_TEST_DARWIN_ARCH"))
+    Command.insert(Command.end(), {"-arch", Arch, "-Wl,-segalign,0x4000"});
+  Command.push_back("-Wl,-headerpad,0x1000");
+#endif
+  ASSERT_EQ(executeEH(Command), 0);
+  ASSERT_EQ(executeEH({Original.string(), "0"}), 1);
+  ASSERT_EQ(executeEH({Original.string(), "2"}), 42);
+  ASSERT_EQ(neverd_session_load(Session, Original.string().c_str()), 1)
+      << error();
+  Mapping.original_va = 0;
+  for (int I = 0; I < neverd_func_count(Session); ++I) {
+    const auto Name = takeEH(neverd_func_name(Session, I));
+    if (Name == "target" || Name == "_target")
+      Mapping.original_va = neverd_func_entry(Session, I);
+  }
+  ASSERT_NE(Mapping.original_va, 0u);
+  Options.compiler = NEVERD_SOURCE_PATCH_NEVERC;
+  Options.compiler_path = Compiler;
+  Options.language = NEVERD_SOURCE_PATCH_C;
+  Options.mode = NEVERD_SOURCE_PATCH_DYNCODE;
+  Options.artifact = NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT;
+  Options.bindings = nullptr;
+  Options.binding_count = 0;
+  constexpr llvm::StringLiteral Replacement = R"(
+typedef int (*Callback)(int);
+__attribute__((noinline)) static int inner(Callback cb, int x) {
+  volatile int value = cb(x); return value + 1;
+}
+int replacement(Callback cb, int x) {
+  volatile int value = inner(cb, x); return value + 39;
+})";
+  ASSERT_EQ(neverd_patch_source(Session, Replacement.data(), Replacement.size(),
+                                &Options, Output.string().c_str()),
+            1)
+      << error();
+  EXPECT_EQ(executeEH({Output.string(), "0"}), 40);
+  EXPECT_EQ(executeEH({Output.string(), "2"}), 42);
 }
 
 } // namespace

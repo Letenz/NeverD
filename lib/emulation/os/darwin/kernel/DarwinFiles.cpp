@@ -15,6 +15,7 @@
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
+#include <type_traits>
 
 namespace neverd::emulation::darwin_model {
 using namespace value;
@@ -129,7 +130,12 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
        !Options.RemovableDirectories.empty() ||
        !Options.MovableDirectories.empty() ||
        !Options.ExchangeableDirectories.empty() ||
-       !Options.SwapRenameDirectories.empty()))
+       !Options.SwapRenameDirectories.empty() || Options.ModeMutations ||
+       Options.OwnershipMutations || Options.TimestampMutations ||
+       Options.FileSystemObservations || Options.FileSystemEnumeration ||
+       Options.AdvisoryLocks || Options.Synchronization ||
+       Options.DataSynchronization || Options.FullSynchronization ||
+       Options.BarrierSynchronization))
     return failure(OptionDiagnostic);
   if (Options.InitialUmask && *Options.InitialUmask > 07777)
     return failure(diagnostic::FileUmaskOption);
@@ -352,6 +358,136 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     }
     return false;
   };
+  const auto AdmitOrdinaryObject =
+      [&](const std::string &Path, const char *Reason,
+          bool AllowDirectories = false,
+          bool AllowSymbolicLinks = false) -> llvm::Error {
+    const bool Directory =
+        AllowDirectories && pathKind(Options, Path) == PathKind::Directory;
+    const bool SymbolicLink =
+        AllowSymbolicLinks && pathKind(Options, Path) == PathKind::SymbolicLink;
+    const auto M = Options.Metadata.find(Path);
+    if ((!Directory && !SymbolicLink && !Options.Files.contains(Path)) ||
+        M == Options.Metadata.end() || M->second.Flags ||
+        (M->second.Mode & 07000) || (!Directory && M->second.LinkCount != 1) ||
+        HasAlias(Path))
+      return failure(Reason);
+    return PathInput(Path, Directory);
+  };
+  const auto AdmitCreatedObjectProviders =
+      [&](const auto &Environment) -> llvm::Error {
+    if (Environment && Environment->CreatedRegularObjects &&
+        !Options.CreationPolicy)
+      return failure(diagnostic::FileCreationPolicy);
+    bool NamespaceProvider = false;
+    using Provider =
+        typename std::remove_cvref_t<decltype(Environment)>::value_type;
+    // A requires-local parameter avoids Clang 18 trying to capture the outer
+    // generic-lambda parameter while instantiating a nested admission call.
+    if constexpr (requires(Provider P) { P.CreatedDirectoryObjects; })
+      NamespaceProvider |= Environment && Environment->CreatedDirectoryObjects;
+    if constexpr (requires(Provider P) { P.CreatedSymbolicLinkObjects; })
+      NamespaceProvider |=
+          Environment && Environment->CreatedSymbolicLinkObjects;
+    if (NamespaceProvider &&
+        (!Options.CreationPolicy || !Options.CreationPolicy->Namespace))
+      return failure(diagnostic::FileCreationPolicy);
+    return llvm::Error::success();
+  };
+  const auto AdmitOrdinaryGrants =
+      [&](const auto &Environment, const char *Reason,
+          bool AllowDirectories = false,
+          bool AllowSymbolicLinks = false) -> llvm::Error {
+    if (auto E = AdmitCreatedObjectProviders(Environment))
+      return E;
+    if (!Environment)
+      return llvm::Error::success();
+    for (const auto &[Path, Time] : Environment->Objects) {
+      if (!validTime(Time))
+        return failure(Reason);
+      if (auto E = AdmitOrdinaryObject(Path, Reason, AllowDirectories,
+                                       AllowSymbolicLinks))
+        return E;
+    }
+    return llvm::Error::success();
+  };
+  if (auto E = AdmitOrdinaryGrants(Options.ModeMutations,
+                                   diagnostic::FileModeOption, true))
+    return E;
+  if (auto E = AdmitOrdinaryGrants(Options.OwnershipMutations,
+                                   diagnostic::FileOwnershipOption, true, true))
+    return E;
+  if (auto E = AdmitOrdinaryGrants(Options.TimestampMutations,
+                                   diagnostic::FileTimestampOption, true))
+    return E;
+  if (auto E = AdmitCreatedObjectProviders(Options.FileSystemObservations))
+    return E;
+  if (Options.FileSystemObservations) {
+    if (Options.FileSystemObservations->Objects.size() > limits::Files)
+      return failure(diagnostic::FileOptionsLimit);
+    for (const auto &[Path, Snapshot] :
+         Options.FileSystemObservations->Objects) {
+      const auto Kind = pathKind(Options, Path);
+      // Every declared vnode kind may carry its own observation; no target
+      // metadata or followed path supplies a symbolic-vnode binding.
+      if (Kind == PathKind::Missing || !validFileSystemSnapshot(Snapshot))
+        return failure(diagnostic::FileSystemOption);
+      // Observing an otherwise implicit directory declares one bounded
+      // catalogue object. Other observations or the later mutable-directory
+      // pass already account for their own existing entry.
+      if (Kind == PathKind::Directory && !Options.Directories.contains(Path) &&
+          !Options.Metadata.contains(Path) &&
+          !Options.DirectoryContents.contains(Path) &&
+          !Options.ExtendedAttributes.contains(Path) &&
+          !Options.MutableDirectories.contains(Path) &&
+          ++Entries > limits::Files)
+        return failure(diagnostic::FileOptionsLimit);
+      if (auto E = PathInput(Path, Kind == PathKind::Directory, 2168))
+        return E;
+    }
+  }
+  if (Options.FileSystemEnumeration) {
+    const auto &Mounts = Options.FileSystemEnumeration->Mounts;
+    if (Mounts.size() > limits::Files - Entries)
+      return failure(diagnostic::FileOptionsLimit);
+    Entries += Mounts.size();
+    for (const auto &Mount : Mounts) {
+      if (!validFileSystemSnapshot(Mount.Cached) ||
+          (Mount.Refreshed && !validFileSystemSnapshot(*Mount.Refreshed)))
+        return failure(diagnostic::FileSystemEnumerationOption);
+      const uint64_t Bytes = 2168 * (1 + unsigned(bool(Mount.Refreshed)));
+      if (Bytes > limits::Bytes - Total)
+        return failure(diagnostic::FileOptionsLimit);
+      Total += Bytes;
+    }
+  }
+  const auto AdmitObjectProvider = [&](const auto &Environment,
+                                       const char *Reason) -> llvm::Error {
+    if (auto E = AdmitCreatedObjectProviders(Environment))
+      return E;
+    if (!Environment)
+      return llvm::Error::success();
+    for (const auto &Path : Environment->Objects)
+      if (auto E = AdmitOrdinaryObject(Path, Reason))
+        return E;
+    return llvm::Error::success();
+  };
+  if (auto E = AdmitObjectProvider(Options.AdvisoryLocks,
+                                   diagnostic::FileAdvisoryLockOption))
+    return E;
+  if (auto E = AdmitObjectProvider(Options.Synchronization,
+                                   diagnostic::FileSynchronizationOption))
+    return E;
+  if (auto E = AdmitObjectProvider(Options.DataSynchronization,
+                                   diagnostic::FileDataSynchronizationOption))
+    return E;
+  if (auto E = AdmitObjectProvider(Options.FullSynchronization,
+                                   diagnostic::FileFullSynchronizationOption))
+    return E;
+  if (auto E =
+          AdmitObjectProvider(Options.BarrierSynchronization,
+                              diagnostic::FileBarrierSynchronizationOption))
+    return E;
   for (const auto &Path : Options.MutableExtendedAttributes) {
     const auto Kind = pathKind(Options, Path);
     const auto M = Options.Metadata.find(Path);
@@ -581,6 +717,9 @@ DarwinFiles::DarwinFiles(GuestMemory &Memory,
   Descriptors.emplace(2, Descriptor{std::make_shared<Description>(
                              Description{Kind::Error, {}})});
   Descriptors.at(1).Open->Flags = Descriptors.at(2).Open->Flags = OpenWriteOnly;
+  if (Options && Options->FileSystemEnumeration)
+    for (const auto &Mount : Options->FileSystemEnumeration->Mounts)
+      MountCache.push_back(&Mount.Cached);
 }
 uint32_t DarwinFiles::limit() const {
   return Options ? Options->DescriptorLimit : limits::DefaultDescriptors;
@@ -620,6 +759,39 @@ void DarwinFiles::initializeNamespace() {
     const auto Policy = Options->MutationPolicies.find(Path);
     if (Policy != Options->MutationPolicies.end())
       Node->Policy = &Policy->second;
+    if (Options->ModeMutations) {
+      const auto Time = Options->ModeMutations->Objects.find(Path);
+      if (Time != Options->ModeMutations->Objects.end())
+        Node->ModeTime = &Time->second;
+    }
+    Node->AdvisoryLocks = Options->AdvisoryLocks &&
+                          Options->AdvisoryLocks->Objects.contains(Path);
+    Node->Synchronization = Options->Synchronization &&
+                            Options->Synchronization->Objects.contains(Path);
+    Node->DataSynchronization =
+        Options->DataSynchronization &&
+        Options->DataSynchronization->Objects.contains(Path);
+    Node->FullSynchronization =
+        Options->FullSynchronization &&
+        Options->FullSynchronization->Objects.contains(Path);
+    Node->BarrierSynchronization =
+        Options->BarrierSynchronization &&
+        Options->BarrierSynchronization->Objects.contains(Path);
+    if (Options->OwnershipMutations) {
+      const auto Time = Options->OwnershipMutations->Objects.find(Path);
+      if (Time != Options->OwnershipMutations->Objects.end())
+        Node->OwnershipTime = &Time->second;
+    }
+    if (Options->TimestampMutations) {
+      const auto Time = Options->TimestampMutations->Objects.find(Path);
+      if (Time != Options->TimestampMutations->Objects.end())
+        Node->TimestampTime = &Time->second;
+    }
+    if (Options->FileSystemObservations) {
+      const auto I = Options->FileSystemObservations->Objects.find(Path);
+      if (I != Options->FileSystemObservations->Objects.end())
+        Node->FileSystem = &I->second;
+    }
     Nodes.emplace(Path, std::make_shared<FileEntry>(std::move(Node)));
   }
   for (const auto &[Path, Target] : Options->SymbolicLinks) {
@@ -640,6 +812,16 @@ void DarwinFiles::initializeNamespace() {
     const auto Policy = Options->SymbolicLinkMutationPolicies.find(Path);
     if (Policy != Options->SymbolicLinkMutationPolicies.end())
       Node->MutationTime = &Policy->second.Time;
+    if (Options->OwnershipMutations) {
+      const auto Time = Options->OwnershipMutations->Objects.find(Path);
+      if (Time != Options->OwnershipMutations->Objects.end())
+        Node->OwnershipTime = &Time->second;
+    }
+    if (Options->FileSystemObservations) {
+      const auto I = Options->FileSystemObservations->Objects.find(Path);
+      if (I != Options->FileSystemObservations->Objects.end())
+        Node->FileSystem = &I->second;
+    }
     Links.emplace(Path, std::make_shared<LinkEntry>(std::move(Node)));
   }
   NamespaceReady = true;
@@ -714,6 +896,26 @@ DarwinFiles::initialDirectoryNode(const std::string &Path) {
     return nullptr;
   auto Node = std::make_shared<DirectoryNode>();
   Node->Path = Path;
+  if (Options->ModeMutations) {
+    const auto I = Options->ModeMutations->Objects.find(Path);
+    if (I != Options->ModeMutations->Objects.end())
+      Node->ModeTime = &I->second;
+  }
+  if (Options->OwnershipMutations) {
+    const auto I = Options->OwnershipMutations->Objects.find(Path);
+    if (I != Options->OwnershipMutations->Objects.end())
+      Node->OwnershipTime = &I->second;
+  }
+  if (Options->TimestampMutations) {
+    const auto I = Options->TimestampMutations->Objects.find(Path);
+    if (I != Options->TimestampMutations->Objects.end())
+      Node->TimestampTime = &I->second;
+  }
+  if (Options->FileSystemObservations) {
+    const auto I = Options->FileSystemObservations->Objects.find(Path);
+    if (I != Options->FileSystemObservations->Objects.end())
+      Node->FileSystem = &I->second;
+  }
   if (Path != "/")
     Node->Parent = initialDirectoryNode(parentPath(Path));
   const auto Attributes = Options->ExtendedAttributes.find(Path);
@@ -968,9 +1170,40 @@ std::optional<bool> DarwinFiles::groupMembership(uint32_t GID,
   return std::nullopt;
 }
 DarwinFiles::Authorization
-DarwinFiles::authorize(const DarwinFileMetadata *Metadata, uint32_t Actions,
-                       Subject User) const {
+DarwinFiles::authorize(const DarwinFileMetadata *Metadata, uint32_t Request,
+                       Subject User, AuthorizationPurpose Purpose,
+                       std::optional<OwnershipRequest> Ownership) const {
+  const bool Mode = Purpose == AuthorizationPurpose::ModeSearch ||
+                    Purpose == AuthorizationPurpose::ModeChange;
+  const bool Owner = Purpose == AuthorizationPurpose::OwnershipSearch ||
+                     Purpose == AuthorizationPurpose::OwnershipChange;
+  const bool Timestamp =
+      Purpose == AuthorizationPurpose::TimestampSearch ||
+      Purpose == AuthorizationPurpose::TimestampChangeExplicit ||
+      Purpose == AuthorizationPurpose::TimestampChangeCurrent;
+  const bool FileSystem = Purpose == AuthorizationPurpose::FileSystemSearch;
+  if ((Purpose == AuthorizationPurpose::OwnershipChange) != bool(Ownership))
+    return diagnostic::FileOwnershipRequest;
+  if (Mode || Owner || Timestamp || FileSystem) {
+    if (!Options || (Mode && !Options->ModeMutations) ||
+        (Owner && !Options->OwnershipMutations) ||
+        (Timestamp && !Options->TimestampMutations) ||
+        (FileSystem && !Options->FileSystemObservations))
+      return FileSystem  ? diagnostic::FileSystemEnvironment
+             : Timestamp ? diagnostic::FileTimestampEnvironment
+             : Owner     ? diagnostic::FileOwnershipEnvironment
+                         : diagnostic::FileModeEnvironment;
+    User = Subject::Effective;
+    if (!Metadata || Metadata->Flags || (Metadata->Mode & 07000))
+      return FileSystem  ? diagnostic::FileSystemSecurityAttributes
+             : Timestamp ? diagnostic::FileTimestampSecurityAttributes
+             : Owner     ? diagnostic::FileOwnershipSecurityAttributes
+                         : diagnostic::FileModeSecurityAttributes;
+    if (Purpose == AuthorizationPurpose::ModeChange && (Request & 07000))
+      return diagnostic::FileModePermissions;
+  }
   const bool Ordinary =
+      Mode || Owner || Timestamp || FileSystem ||
       Options->Authorization == DarwinFileAuthorization::StaticOrdinaryQueries;
   if (!Credentials)
     return Ordinary ? diagnostic::FileOrdinaryAuthorizationCredentials
@@ -983,6 +1216,48 @@ DarwinFiles::authorize(const DarwinFileMetadata *Metadata, uint32_t Actions,
   if (!Metadata)
     return Ordinary ? diagnostic::FileOrdinaryAuthorizationMetadata
                     : diagnostic::FileAuthorizationMetadata;
+  // In the declared no-ACL environment, vnode_authattr requests
+  // WRITE_SECURITY only when current va_mode differs. Zero requested rights
+  // still reach the filesystem provider; nonownership alone cannot deny them.
+  if (Purpose == AuthorizationPurpose::ModeChange) {
+    if ((Metadata->Mode & FilePermissionMask) != Request &&
+        UID != Metadata->UID)
+      return uint32_t(OperationNotPermitted);
+    return std::monostate{};
+  }
+  if (Purpose == AuthorizationPurpose::OwnershipChange) {
+    const bool UserChange =
+        Ownership->UID != UINT32_MAX && Ownership->UID != Metadata->UID;
+    const bool GroupChange =
+        Ownership->GID != UINT32_MAX && Ownership->GID != Metadata->GID;
+    // vnode_authattr checks third-party UID first, then target membership.
+    if (UserChange && Ownership->UID != UID)
+      return uint32_t(OperationNotPermitted);
+    if (GroupChange) {
+      const auto Member = groupMembership(Ownership->GID, Subject::Effective);
+      if (!Member)
+        return diagnostic::FileOrdinaryAuthorizationGroups;
+      if (!*Member)
+        return uint32_t(OperationNotPermitted);
+    }
+    // TAKE_OWNERSHIP == CHANGE_OWNER has no ordinary POSIX fallback. Group-only
+    // changes need WRITE_SECURITY, implicitly supplied only to the current
+    // owner.
+    if (UserChange || (GroupChange && UID != Metadata->UID))
+      return uint32_t(OperationNotPermitted);
+    return std::monostate{};
+  }
+  // Explicit utimes requires ownership even when both observations are equal.
+  // NULL requests WRITE_ATTRIBUTES: the owner is implicitly authorized and
+  // an ordinary nonowner uses the shared POSIX VWRITE/group decision below.
+  if (Purpose == AuthorizationPurpose::TimestampChangeExplicit)
+    return UID == Metadata->UID
+               ? Authorization(std::monostate{})
+               : Authorization(uint32_t(OperationNotPermitted));
+  if (Purpose == AuthorizationPurpose::TimestampChangeCurrent &&
+      UID == Metadata->UID)
+    return std::monostate{};
+  const auto Actions = Request;
   const auto Decision = [](bool Allowed) -> Authorization {
     if (!Allowed)
       return uint32_t(PermissionDenied);
@@ -1002,13 +1277,21 @@ DarwinFiles::authorize(const DarwinFileMetadata *Metadata, uint32_t Actions,
   return Decision(*Member ? Group : World);
 }
 
-llvm::Expected<DarwinFiles::Lookup>
-DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
-                         LookupMode Mode, LinkPolicy Links,
-                         bool CheckDirectoryPrefix, Subject User) {
-  if (!Options)
+llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(
+    uint64_t Address, uint32_t DirectoryFD, LookupMode Mode, LinkPolicy Links,
+    bool CheckDirectoryPrefix, Subject User, LookupAuthorization Scope) {
+  const bool ModeAuthorization = Scope == LookupAuthorization::Mode;
+  const bool OwnershipAuthorization = Scope == LookupAuthorization::Ownership;
+  const bool TimestampAuthorization = Scope == LookupAuthorization::Timestamp;
+  const bool FileSystemAuthorization = Scope == LookupAuthorization::FileSystem;
+  const bool ExplicitAuthorization =
+      ModeAuthorization || OwnershipAuthorization || TimestampAuthorization ||
+      FileSystemAuthorization;
+  const bool AuthorizedLookup = queryEnvironment() || ExplicitAuthorization;
+  if (!Options && !ExplicitAuthorization)
     return diagnostic::FileInputs;
-  initializeNamespace();
+  if (Options)
+    initializeNamespace();
   if (CheckDirectoryPrefix) {
     auto Prefix = directoryPrefix(Address, DirectoryFD);
     if (!Prefix)
@@ -1022,6 +1305,15 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
   if (auto *Error = std::get_if<uint32_t>(&*Imported))
     return *Error;
   std::string Path = std::move(std::get<std::string>(*Imported));
+  if (!Options)
+    return Path.empty() ? Lookup(uint32_t(NoEntry))
+                        : Lookup(FileSystemAuthorization
+                                     ? diagnostic::FileSystemEnvironment
+                                 : TimestampAuthorization
+                                     ? diagnostic::FileTimestampEnvironment
+                                 : OwnershipAuthorization
+                                     ? diagnostic::FileOwnershipEnvironment
+                                     : diagnostic::FileModeEnvironment);
   const bool Absolute = llvm::StringRef(Path).starts_with('/');
   auto Directory = directoryNode("/");
   if (!Absolute) {
@@ -1062,7 +1354,7 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
       const auto Part = Parts[Index];
       if (Type != PathKind::Directory)
         return uint32_t(NotDirectory);
-      if (!queryEnvironment() && Part.size() > limits::Name)
+      if (!AuthorizedLookup && Part.size() > limits::Name)
         return uint32_t(NameTooLong);
       if (Part.empty())
         continue;
@@ -1070,14 +1362,29 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
       // before the cold SEARCH point in the pinned namei owner. All other
       // components authorize the actual parent before reducing dots or
       // asking the filesystem for a child, including a missing one.
-      if (queryEnvironment() && (Part != ".." || Directory->Parent)) {
-        auto Authorization = authorize(Directory->Metadata, 1, User);
+      if (AuthorizedLookup && (Part != ".." || Directory->Parent)) {
+        const DarwinFileMetadata *Metadata = Directory->Metadata;
+        if (ExplicitAuthorization) {
+          Description Parent{Kind::Directory, {}, 0, Metadata, Directory->Path};
+          Parent.Directory = Directory;
+          auto Current = statusMetadata(Parent);
+          if (auto *Reason = std::get_if<const char *>(&Current))
+            return *Reason;
+          Metadata = std::get<const DarwinFileMetadata *>(Current);
+        }
+        auto Authorization = authorize(
+            Metadata, 1, User,
+            FileSystemAuthorization  ? AuthorizationPurpose::FileSystemSearch
+            : TimestampAuthorization ? AuthorizationPurpose::TimestampSearch
+            : OwnershipAuthorization ? AuthorizationPurpose::OwnershipSearch
+            : ModeAuthorization      ? AuthorizationPurpose::ModeSearch
+                                     : AuthorizationPurpose::Query);
         if (auto *Error = std::get_if<uint32_t>(&Authorization))
           return *Error;
         if (auto *Reason = std::get_if<const char *>(&Authorization))
           return *Reason;
       }
-      if (queryEnvironment() && Part.size() > limits::Name)
+      if (AuthorizedLookup && Part.size() > limits::Name)
         return diagnostic::FileAuthorizationName;
       // RENAME rejects its terminal dot before looking up that component.
       // Earlier missing/file/removed ancestors still take precedence.
@@ -1521,6 +1828,12 @@ DarwinFiles::makeSymbolicLink(uint64_t Target, uint64_t Path,
         *Parent->Identity, FileSymbolicLinkMode | (0777 & ~CurrentUmask), 1,
         Bytes.size(), ((Bytes.size() + Unit - 1) / Unit) * (Unit / 512));
     Node->MutationTime = &Policy->Mutation.Time;
+    if (Options->OwnershipMutations &&
+        Options->OwnershipMutations->CreatedSymbolicLinkObjects)
+      Node->OwnershipTime = &Policy->Mutation.Time;
+    if (Options->FileSystemObservations &&
+        Options->FileSystemObservations->CreatedSymbolicLinkObjects)
+      Node->FileSystem = Parent->FileSystem;
   }
   // Reused names never inherit an old Options.Metadata observation. The
   // namespace extension is the only authority for link/directory metadata.
@@ -1580,6 +1893,18 @@ DarwinFiles::makeDirectory(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
         *ParentIdentity, FileDirectoryMode | (Mode & 0777 & ~CurrentUmask), 2,
         uint64_t(2) * Node->DirectoryEntrySize,
         Policy->Namespace->DirectoryBlocks);
+    if (Options->ModeMutations &&
+        Options->ModeMutations->CreatedDirectoryObjects)
+      Node->ModeTime = &Policy->Mutation.Time;
+    if (Options->OwnershipMutations &&
+        Options->OwnershipMutations->CreatedDirectoryObjects)
+      Node->OwnershipTime = &Policy->Mutation.Time;
+    if (Options->TimestampMutations &&
+        Options->TimestampMutations->CreatedDirectoryObjects)
+      Node->TimestampTime = &Policy->Mutation.Time;
+    if (Options->FileSystemObservations &&
+        Options->FileSystemObservations->CreatedDirectoryObjects)
+      Node->FileSystem = Node->Parent->FileSystem;
   }
   Directories.emplace(File.Path, std::move(Node));
   *StorageUsed += Charge;
@@ -1840,10 +2165,18 @@ void DarwinFiles::updateDirectoryMetadata(DirectoryNode &Node,
   // observed record. Copying its scalar fields allocates nothing after commit.
   if (Node.MetadataInvalidated)
     return;
-  if (!Node.CurrentMetadata && Node.DirectoryEntrySize)
-    Node.CurrentMetadata = *Node.Metadata;
-  if (!Node.CurrentMetadata)
+  // Attribute-created current metadata supplies no namespace update authority.
+  // A complete namespace policy must keep this record independently; otherwise
+  // invalidate it permanently, including a record published by an attribute
+  // call.
+  if (!Node.MutationTime || !Node.DirectoryEntrySize ||
+      (!Node.CurrentMetadata && !Node.Metadata)) {
+    Node.MetadataInvalidated = true;
+    Node.CurrentMetadata.reset();
     return;
+  }
+  if (!Node.CurrentMetadata)
+    Node.CurrentMetadata = *Node.Metadata;
   auto &M = *Node.CurrentMetadata;
   M.ChangeTime = *Node.MutationTime;
   if (!ContentsChanged)
@@ -2412,6 +2745,32 @@ DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
     Node->CurrentMetadata = createdMetadata(
         *ParentIdentity, FileRegularMode | (Mode & 0777 & ~CurrentUmask), 1);
     Node->Policy = &Policy.Mutation;
+    if (Options->FileSystemObservations &&
+        Options->FileSystemObservations->CreatedRegularObjects)
+      Node->FileSystem = Node->Name->Parent->FileSystem;
+    if (Options->ModeMutations && Options->ModeMutations->CreatedRegularObjects)
+      Node->ModeTime = &Policy.Mutation.Time;
+    if (Options->OwnershipMutations &&
+        Options->OwnershipMutations->CreatedRegularObjects)
+      Node->OwnershipTime = &Policy.Mutation.Time;
+    if (Options->TimestampMutations &&
+        Options->TimestampMutations->CreatedRegularObjects)
+      Node->TimestampTime = &Policy.Mutation.Time;
+    // These independent creation providers belong only to this newly admitted
+    // ordinary regular object, never to an old name or initial grant.
+    Node->AdvisoryLocks =
+        Options->AdvisoryLocks && Options->AdvisoryLocks->CreatedRegularObjects;
+    Node->Synchronization = Options->Synchronization &&
+                            Options->Synchronization->CreatedRegularObjects;
+    Node->DataSynchronization =
+        Options->DataSynchronization &&
+        Options->DataSynchronization->CreatedRegularObjects;
+    Node->FullSynchronization =
+        Options->FullSynchronization &&
+        Options->FullSynchronization->CreatedRegularObjects;
+    Node->BarrierSynchronization =
+        Options->BarrierSynchronization &&
+        Options->BarrierSynchronization->CreatedRegularObjects;
   }
   // A new object never inherits an old observation/policy at the same name.
   auto Entry = std::make_shared<FileEntry>(Node);
@@ -2622,7 +2981,8 @@ std::optional<ServiceResult> DarwinFiles::pathconf(const Description &File,
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
                     ProcessResult &Result,
-                    const std::optional<DarwinSystemOptions> &System) {
+                    const std::optional<DarwinSystemOptions> &System,
+                    const std::optional<DarwinTimeOptions> &Time) {
   const auto &A = Event.Arguments;
   if (queryEnvironment()) {
     // Closed by default, including new file routes. Only queries and the
@@ -2648,12 +3008,40 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
       return unsupported(Result, authorizationScope());
     }
   }
+  if (Service == ServiceKind::Fcntl) {
+    switch (uint32_t(A[1])) {
+    case FullSynchronizationCommand:
+      return synchronize(SynchronizationKind::Full, Event, Result);
+    case BarrierSynchronizationCommand:
+      return synchronize(SynchronizationKind::Barrier, Event, Result);
+    default:
+      break;
+    }
+  }
+  if (Service == ServiceKind::Fsync)
+    return synchronize(SynchronizationKind::File, Event, Result);
+  if (Service == ServiceKind::Fdatasync)
+    return synchronize(SynchronizationKind::Data, Event, Result);
+  if (Service == ServiceKind::Utimes || Service == ServiceKind::Futimes)
+    return changeTimes(Service, Event, Result, Time);
+  if (Service == ServiceKind::Getfsstat64)
+    return enumerateFileSystems(Event, Result);
+  if (Service == ServiceKind::Statfs64 || Service == ServiceKind::Fstatfs64)
+    return fileSystemStatus(Service, Event, Result);
+  if (Service == ServiceKind::Flock)
+    return advisoryLock(Event, Result);
   if (Service == ServiceKind::Poll)
     return poll(Event, System, Result);
   if (Service == ServiceKind::Select)
     return select(Event, Result);
   if (Service == ServiceKind::Pselect)
     return pselect(Event, Result);
+  if (Service == ServiceKind::Chown || Service == ServiceKind::Fchown ||
+      Service == ServiceKind::FchownAt)
+    return changeOwnership(Service, Event, Result);
+  if (Service == ServiceKind::Chmod || Service == ServiceKind::Fchmod ||
+      Service == ServiceKind::FchmodAt)
+    return changeMode(Service, Event, Result);
   if (Service == ServiceKind::SetXattr || Service == ServiceKind::FsetXattr ||
       Service == ServiceKind::RemoveXattr ||
       Service == ServiceKind::FremoveXattr)
@@ -3000,12 +3388,14 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     case GetFileFlags:
       return returned(File.Flags);
     case SetFileFlags:
-      if (uint32_t(A[2]) & ~uint32_t(OpenAccessMask | OpenNonBlocking |
-                                     OpenAppend | FileWasWritten))
+      if (uint32_t(A[2]) &
+          ~uint32_t(OpenAccessMask | OpenNonBlocking | OpenAppend |
+                    FileWasWritten | FileWasLocked))
         return unsupported(Result, diagnostic::FileControl);
       // XNU converts the low32 open-flag request to file flags first. Access
       // bits3 carry into NONBLOCK (and through APPEND); the actual access and
-      // write history belong to the existing description, not this request.
+      // write/lock history belong to the existing description, not this
+      // request.
       File.Flags = (File.Flags & ~(OpenAppend | OpenNonBlocking)) |
                    ((uint32_t(A[2]) + 1) & (OpenAppend | OpenNonBlocking));
       return returned(File.Type == Kind::SymbolicLink ? NotTerminal : 0,

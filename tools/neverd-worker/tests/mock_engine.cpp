@@ -69,11 +69,19 @@ struct MockSession {
   std::string path, error;
   /// Whether loading reads the debug information beside the input.
   bool debugInfo = true;
+  /// Whether a load searches for the fixture PDB, and whether it found one.
+  bool pdbSearch = true;
+  bool pdbFound = false;
+  bool pdbLoaded = false;
+  /// Whether a load reads the DWARF of the DWARF fixtures.
+  bool dwarfSearch = true;
   int imageFunctions = ImageFunctions;
   /// Image functions the fixture does not list.
   std::set<std::uint64_t> absentFunctions;
   std::map<std::uint64_t, std::string> annotations, names;
   std::map<std::uint64_t, bool> functionEdits;
+  /// What the user states of a function (neverd_func_edit), by entry.
+  std::map<std::uint64_t, Json> functionAttributes;
   /// The user's data items, as neverd_items_json lists them.
   std::map<std::uint64_t, Json> items;
   /// The user's operand formats by address and operand index.
@@ -145,6 +153,107 @@ void neverd_session_set_load_progress(neverd_session_t s,
     session(s)->progressUser = userData;
   }
 }
+namespace {
+constexpr char FixturePdb[] = "fixture.pdb";
+constexpr char FixturePdbKey[] = "123456789ABCDEF0123456789ABCDEF01";
+constexpr char FixturePdbBytes[] = "matching fixture PDB";
+
+bool symbolsFixture(const std::filesystem::path &input) {
+  const auto name = input.filename().string();
+  return name == "symbols-missing.bin" || name == "symbols-local.bin";
+}
+
+/// Where the fixture's symbol store keeps its PDB: beside the input, as
+/// <dir>/symbols/<pdb>/<key>/<pdb>.
+std::filesystem::path fixtureStorePdb(const std::filesystem::path &input) {
+  return input.parent_path() / "symbols" / FixturePdb / FixturePdbKey /
+         FixturePdb;
+}
+
+/// dwarf-embedded.bin carries DWARF in its own sections; dwarf-split.bin
+/// has it in the .debug file beside it, when the test writes one.
+bool dwarfFixture(const std::filesystem::path &input) {
+  const auto name = input.filename().string();
+  return name == "dwarf-embedded.bin" || name == "dwarf-split.bin";
+}
+
+bool matchingFixturePdb(const std::filesystem::path &path) {
+  std::ifstream input(path, std::ios::binary);
+  const std::string bytes((std::istreambuf_iterator<char>(input)), {});
+  return bytes == FixturePdbBytes;
+}
+} // namespace
+
+const char *neverd_pdb_reference_json(const char *path, const char *) {
+  const auto input = std::filesystem::u8path(path);
+  if (!symbolsFixture(input))
+    return copy(Json{{"pdb", nullptr}}.dump());
+  const auto utf8 = [](const std::filesystem::path &p) {
+    const auto text = p.u8string();
+    return std::string(text.begin(), text.end());
+  };
+  Json found = nullptr;
+  Json rejected = Json::array();
+  const std::pair<std::filesystem::path, const char *> candidates[] = {
+      {input.parent_path() / FixturePdb, "beside"},
+      {fixtureStorePdb(input), "store"}};
+  for (const auto &[candidate, location] : candidates) {
+    if (!std::filesystem::is_regular_file(candidate))
+      continue;
+    Json entry{{"path", utf8(candidate)}, {"location", location}};
+    if (matchingFixturePdb(candidate)) {
+      found = std::move(entry);
+      break;
+    }
+    entry["reason"] = "mismatch";
+    rejected.push_back(std::move(entry));
+  }
+  const std::string url = std::string("https://msdl.microsoft.com/download/"
+                                      "symbols/") +
+                          FixturePdb + "/" + FixturePdbKey + "/" + FixturePdb;
+  return copy(Json{
+      {"pdb",
+       {{"file", FixturePdb},
+        {"key", FixturePdbKey},
+        {"recorded", FixturePdb},
+        {"found", found},
+        {"rejected", rejected},
+        {"servers", Json::array({{{"url", url},
+                                  {"path", utf8(fixtureStorePdb(input))}}})}}}}
+                  .dump());
+}
+
+void neverd_session_set_pdb_search(neverd_session_t s, int enabled) {
+  session(s)->pdbSearch = enabled != 0;
+}
+
+const char *neverd_dwarf_reference_json(const char *path) {
+  const auto input = std::filesystem::u8path(path);
+  if (!std::filesystem::is_regular_file(input))
+    return copy(
+        Json{{"dwarf", nullptr}, {"error", std::string("cannot read ") + path}}
+            .dump());
+  const auto utf8 = [](const std::filesystem::path &p) {
+    const auto text = std::filesystem::absolute(p).u8string();
+    return std::string(text.begin(), text.end());
+  };
+  if (input.filename() == "dwarf-embedded.bin")
+    return copy(
+        Json{{"dwarf", {{"path", utf8(input)}, {"location", "input"}}}}.dump());
+  auto companion = input;
+  companion += ".debug";
+  if (input.filename() == "dwarf-split.bin" &&
+      std::filesystem::is_regular_file(companion))
+    return copy(
+        Json{{"dwarf", {{"path", utf8(companion)}, {"location", "beside"}}}}
+            .dump());
+  return copy(Json{{"dwarf", nullptr}}.dump());
+}
+
+void neverd_session_set_dwarf_search(neverd_session_t s, int enabled) {
+  session(s)->dwarfSearch = enabled != 0;
+}
+
 int neverd_session_load(neverd_session_t s, const char *path) {
   const auto notify = [&](const char *phase, unsigned long long done) {
     if (session(s)->progress)
@@ -170,6 +279,13 @@ int neverd_session_load(neverd_session_t s, const char *path) {
                           : std::set<std::uint64_t>{};
   session(s)->functions = listedFunctions({}, session(s)->imageFunctions,
                                           session(s)->absentFunctions);
+  // The local fixture's PDB is beside it; the missing one's is found once a
+  // download put it in the store.
+  const auto input = std::filesystem::u8path(path);
+  session(s)->pdbFound =
+      session(s)->debugInfo && session(s)->pdbSearch &&
+      (input.filename() == "symbols-local.bin" ||
+       (symbolsFixture(input) && matchingFixturePdb(fixtureStorePdb(input))));
   notify("ready", 1);
   return 1;
 }
@@ -296,18 +412,57 @@ const char *neverd_headers_json(neverd_session_t s) {
       session(s)->path.ends_with("pseudocode-rust.bin") ? "rust"
       : session(s)->path.ends_with("pseudocode-go.bin") ? "go"
       : (session(s)->path.ends_with("pseudocode-cpp.bin") ||
-         session(s)->path.ends_with("code-edits-cpp.bin"))
+         session(s)->path.ends_with("code-edits-cpp.bin") ||
+         session(s)->path.ends_with("code-folding-cpp.bin") ||
+         session(s)->path.ends_with("local-references-cpp.bin"))
           ? "cpp"
           : "c";
   Json pseudocode = Json::array({"c"});
   if (runtime != "c")
     pseudocode.push_back(runtime);
-  return copy(Json{{"language",
-                    {{"runtime", runtime},
-                     {"secondary", Json::array()},
-                     {"evidence", Json::array()},
-                     {"pseudocode", pseudocode}}}}
-                  .dump());
+  Json result{{"language",
+               {{"runtime", runtime},
+                {"secondary", Json::array()},
+                {"evidence", Json::array()},
+                {"pseudocode", pseudocode}}}};
+  if (session(s)->path.ends_with("symbols-missing.bin") ||
+      session(s)->path.ends_with("symbols-local.bin")) {
+    result["debug_info"] = {
+        {"enabled", session(s)->debugInfo},
+        {"kind",
+         session(s)->pdbLoaded || session(s)->pdbFound ? "pdb" : "none"}};
+    result["dynamic"]["pdb_symbol"] = {
+        {"file", "fixture.pdb"}, {"key", "123456789ABCDEF0123456789ABCDEF01"}};
+  }
+  if (dwarfFixture(std::filesystem::u8path(session(s)->path))) {
+    const bool read = session(s)->debugInfo && session(s)->dwarfSearch;
+    result["debug_info"] = {{"enabled", session(s)->debugInfo},
+                            {"kind", read ? "dwarf" : "none"},
+                            {"path", read ? session(s)->path : ""}};
+  }
+  return copy(result.dump());
+}
+
+const char *neverd_session_inspect_pdb_json(neverd_session_t s,
+                                            const char *path) {
+  std::ifstream input(std::filesystem::u8path(path), std::ios::binary);
+  std::string bytes((std::istreambuf_iterator<char>(input)), {});
+  if (bytes != "matching fixture PDB") {
+    session(s)->error = "fixture PDB identity mismatch";
+    return nullptr;
+  }
+  return copy(
+      Json{{"verified", true}, {"names", Json::array()}, {"name_count", 1}}
+          .dump());
+}
+
+int neverd_session_load_pdb(neverd_session_t s, const char *path) {
+  const auto inspected = neverd_session_inspect_pdb_json(s, path);
+  if (!inspected)
+    return 0;
+  neverd_free_string(inspected);
+  session(s)->pdbLoaded = true;
+  return 1;
 }
 
 // Deterministic fixture-only identity. The real engine uses SHA-256; the
@@ -848,6 +1003,41 @@ std::string spelledPage(neverd_session_t s, neverd_va_t address,
 }
 } // namespace
 
+const char *neverd_ir_view_ex_json(neverd_session_t s, neverd_va_t address,
+                                   const char *representation,
+                                   std::size_t offset, std::size_t limit,
+                                   const char *options) {
+  const auto policy = Json::parse(options ? options : "{}", nullptr, false);
+  if (!policy.is_object() ||
+      (policy.contains("symbolic") && !policy["symbolic"].is_boolean())) {
+    session(s)->error = "invalid source options";
+    return nullptr;
+  }
+  if (!policy.empty()) {
+    std::fprintf(stderr, "fixture source options %s\n", policy.dump().c_str());
+    std::fflush(stderr);
+  }
+  if (session(s)->path.ends_with("source-options-fail.bin") &&
+      policy.value("symbolic", false)) {
+    session(s)->error = "fixture transformation refused";
+    return nullptr;
+  }
+  if (session(s)->path.ends_with("source-options-slow.bin") &&
+      policy.value("symbolic", false)) {
+    std::fprintf(stderr, "fixture symbolic transformation started\n");
+    std::fflush(stderr);
+    std::this_thread::sleep_for(std::chrono::seconds(30));
+  }
+  const char *raw =
+      neverd_ir_view_json(s, address, representation, offset, limit);
+  if (!raw)
+    return nullptr;
+  auto page = Json::parse(raw);
+  neverd_free_string(raw);
+  page["fixture_source_options"] = policy;
+  return copy(page.dump());
+}
+
 const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                                 const char *representation, std::size_t offset,
                                 std::size_t limit) {
@@ -969,17 +1159,62 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
   if (session(s)->path.ends_with("code-edits.bin") ||
       session(s)->path.ends_with("code-edits-cpp.bin") ||
       session(s)->path.ends_with("code-edits-mapped.bin") ||
+      session(s)->path.ends_with("code-folding.bin") ||
+      session(s)->path.ends_with("code-folding-cpp.bin") ||
+      session(s)->path.ends_with("local-references.bin") ||
+      session(s)->path.ends_with("local-references-cpp.bin") ||
       session(s)->path.ends_with("tab-sync-paged.bin")) {
-    const bool paged = session(s)->path.ends_with("tab-sync-paged.bin");
+    const bool localReferences =
+        session(s)->path.ends_with("local-references.bin") ||
+        session(s)->path.ends_with("local-references-cpp.bin");
+    const bool codeFolding = session(s)->path.ends_with("code-folding.bin") ||
+                             session(s)->path.ends_with("code-folding-cpp.bin");
+    const bool paged =
+        localReferences || session(s)->path.ends_with("tab-sync-paged.bin");
     std::string full = "#include <stdint.h>\n"
                        "int32_t function_20(int32_t v0) {\n"
                        "  int32_t v1 = v0 + function_22();\n"
                        "  const char *message = \"v0 v1 function_22\";\n"
                        "  return v1;\n"
                        "}\n";
+    if (codeFolding)
+      full = "#include <stdint.h>\n"
+             "int32_t function_20(int32_t v0) {\n"
+             "  int32_t v7 = v0;\n"
+             "  if (v7) {\n"
+             "    while (v7) {\n"
+             "      --v7;\n"
+             "    }\n"
+             "  } else {\n"
+             "    for (int32_t v1 = 0; v1 < 2; ++v1) {\n"
+             "      v7 += v1;\n"
+             "    }\n"
+             "  }\n"
+             "  switch (v7) {\n"
+             "  case 2:\n"
+             "    v7 = 3;\n"
+             "    break;\n"
+             "  }\n"
+             "  return v7;\n"
+             "}\n";
+    if (localReferences)
+      full = "#include <stdint.h>\n"
+             "struct Box { int64_t v7; };\n"
+             "int64_t function_20(int64_t v0) {\n"
+             "  int64_t v7 = 0;\n"
+             "  int64_t v70 = 4;\n"
+             "  struct Box box;\n"
+             "  const char *message = \"v7\"; // v7\n"
+             "  box.v7 = v70;\n"
+             "  // \xe4\xb8\xad\xe6\x96\x87 v7\n"
+             "  const char *label = \"\xe4\xb8\xad\xe6\x96\x87\"; v7 += v0;\n";
     if (paged)
-      for (int i = 6; i < 700; ++i)
-        full += "// code line " + std::to_string(i) + "\n";
+      for (int i = localReferences ? 10 : 6; i < 700; ++i)
+        full += localReferences && i == 550
+                    ? "  v7 += v0;\n"
+                    : "// code line " + std::to_string(i) + "\n";
+    if (localReferences)
+      full += "  return v7 + v7;\n}\n";
     std::vector<std::size_t> starts{0};
     for (std::size_t i = 0; i + 1 < full.size(); ++i)
       if (full[i] == '\n')
@@ -990,7 +1225,7 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
     for (auto i = first; i < end; ++i) {
       const bool mapped =
           (session(s)->path.ends_with("code-edits-mapped.bin") && i == 2) ||
-          (paged && i == 550);
+          (codeFolding && i == 5) || (paged && i == 550);
       rows.push_back({{"line", i},
                       {"object_id", "source:" + std::to_string(i)},
                       {"kind", "source"},
@@ -1015,7 +1250,9 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
         {"total_lines", starts.size()},
         {"complete", end == starts.size()},
         {"next_offset", end == starts.size() ? Json(nullptr) : Json(end)},
-        {"prelude", {{"lines", 1}, {"end_byte", starts[1]}}},
+        {"prelude",
+         {{"lines", localReferences ? 2 : 1},
+          {"end_byte", starts[localReferences ? 2 : 1]}}},
         {"library_regions",
          paged ? Json::array(
                      {{{"id", "late-operation"},
@@ -1553,24 +1790,105 @@ int neverd_func_delete(neverd_session_t s, neverd_va_t address) {
     return -1;
   }
   state.functionEdits[address] = false;
+  state.functionAttributes.erase(address);
   state.functions = listedFunctions(state.functionEdits, state.imageFunctions,
                                     state.absentFunctions);
   return 0;
 }
+constexpr const char *FunctionAttributeKeys[] = {"noreturn", "library",
+                                                 "static", "color"};
+int neverd_func_edit(neverd_session_t s, neverd_va_t address,
+                     const char *text) {
+  auto &state = *session(s);
+  if (neverd_func_find_by_addr(s, address) < 0) {
+    state.error = "no function starts at " + hexAddress(address);
+    return -1;
+  }
+  Json row;
+  try {
+    row = Json::parse(text ? text : "");
+  } catch (...) {
+    row = nullptr;
+  }
+  if (!row.is_object()) {
+    state.error = "a function edit is a JSON object";
+    return -1;
+  }
+  Json stated = state.functionAttributes.contains(address)
+                    ? state.functionAttributes[address]
+                    : Json::object();
+  for (const auto &[key, value] : row.items()) {
+    if (std::find(std::begin(FunctionAttributeKeys),
+                  std::end(FunctionAttributeKeys),
+                  key) == std::end(FunctionAttributeKeys)) {
+      state.error = "unknown function attribute \"" + key + "\"";
+      return -1;
+    }
+    if (value.is_null())
+      stated.erase(key);
+    else
+      stated[key] = value;
+  }
+  if (stated.empty())
+    state.functionAttributes.erase(address);
+  else
+    state.functionAttributes[address] = stated;
+  return 0;
+}
+const char *neverd_func_attributes_json(neverd_session_t s,
+                                        neverd_va_t address) {
+  auto &state = *session(s);
+  const int index = neverd_func_find_by_addr(s, address);
+  if (index < 0) {
+    state.error = "no function starts at " + hexAddress(address);
+    return nullptr;
+  }
+  const Json stated = state.functionAttributes.contains(address)
+                          ? state.functionAttributes[address]
+                          : Json::object();
+  const auto size = static_cast<std::uint64_t>(neverd_func_size(s, index));
+  const char *name = neverd_func_name(s, index);
+  const std::string spelled = name ? name : "";
+  neverd_free_string(name);
+  Json result{{"addr", hexAddress(address)},
+              {"name", spelled},
+              {"start", hexAddress(address)},
+              {"end", hexAddress(address + size)},
+              {"noreturn", stated.value("noreturn", false)},
+              {"library", stated.value("library", false)},
+              {"static", stated.contains("static") ? stated["static"] : Json()},
+              {"color", stated.contains("color") ? stated["color"] : Json()},
+              {"purged_bytes", 0},
+              {"stated", stated}};
+  return copy(result.dump());
+}
 const char *neverd_functions_json(neverd_session_t s) {
-  Json result = Json::array();
+  std::map<std::uint64_t, Json> rows;
   for (const auto &[address, created] : session(s)->functionEdits)
-    result.push_back({{"addr", hexAddress(address)},
-                      {"state", created ? "created" : "deleted"}});
+    rows[address]["state"] = created ? "created" : "deleted";
+  for (const auto &[address, stated] : session(s)->functionAttributes)
+    rows[address].update(stated);
+  Json result = Json::array();
+  for (auto &[address, row] : rows) {
+    row["addr"] = hexAddress(address);
+    result.push_back(std::move(row));
+  }
   return copy(result.dump());
 }
 int neverd_functions_load(neverd_session_t s) {
   try {
     std::map<std::uint64_t, bool> edits;
-    for (const auto &item : read(session(s)->path + ".neverd-functions.json"))
-      edits[parseAddress(item.at("addr").get<std::string>())] =
-          item.at("state").get<std::string>() == "created";
+    std::map<std::uint64_t, Json> attributes;
+    for (const auto &item : read(session(s)->path + ".neverd-functions.json")) {
+      const auto address = parseAddress(item.at("addr").get<std::string>());
+      if (item.contains("state"))
+        edits[address] = item.at("state").get<std::string>() == "created";
+      for (const char *key : FunctionAttributeKeys)
+        if (item.contains(key))
+          attributes[address][key] = item.at(key);
+    }
     session(s)->functionEdits = std::move(edits);
+    session(s)->functionAttributes = std::move(attributes);
     session(s)->functions =
         listedFunctions(session(s)->functionEdits, session(s)->imageFunctions,
                         session(s)->absentFunctions);

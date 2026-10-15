@@ -1,0 +1,149 @@
+{
+  "schema": "neverd.neverc-linux-fixtures.v2",
+  "producer_commit": "182fd2c5dc",
+  "original_compiler": "Ubuntu 24.04 GCC/G++ 13.3.0",
+  "sources": {
+    "exceptions.cpp": "50101a0d8c0ba8b01a59426c1f9ae8efee44c693e99f3b84899a9876c97638c8",
+    "hosted.c": "0194f76dae67a229b8110f8f63fc400a7790ad5c6e958765a7e5bca2930c4263",
+    "original-callback.cpp": "882aa95e23507fa12eeee6074469fddf4f51a6a64c8cdee84089166ff1fc26c0",
+    "original-eh.cpp": "85ff39e4aeb2adddc6e416e69877f32fd7d071ad3c7eca2b84e5ad3e5a7c305e",
+    "replacement.c": "b19c76edc0d39484f32a15704db8652e788f2d1d71471971ab63ee53eda03152"
+  },
+  "entries": [
+    {
+      "architecture": "x64",
+      "target": "x86_64-unknown-linux-gnu",
+      "machine": 62,
+      "target_va": 4613,
+      "cleanup_va": 16420,
+      "thrower_va": 4553,
+      "callback_target_va": 4198831,
+      "files": {
+        "original-eh.elf": {
+          "path": "x64/original-eh.elf",
+          "sha256": "7230a48e874eef55ec5730f815cc60efecbe56ee3db5f2d24b18db4873b43a3e"
+        },
+        "original-callback.elf": {
+          "path": "x64/original-callback.elf",
+          "sha256": "adf20e6a14c1ba3d08c4c08b9051abd9022e510b0345c491057692461aa76724"
+        },
+        "c.ll": {
+          "path": "x64/c.ll",
+          "sha256": "d55e81550cbedf93a991e413bcec816187addfcd951e903d7768abf4d4f26cf7"
+        },
+        "c.o": {
+          "path": "x64/c.o",
+          "sha256": "2f24de10b200310f20a5aa48798cc3e4443c71705a214e7f4ba91b1712f31ab3"
+        },
+        "hosted.o": {
+          "path": "x64/hosted.o",
+          "sha256": "4d8b92ffd91bb1bed7bad3a20e72c40fa302a43b6fa5d4a7678089a9aa2a8992"
+        },
+        "hosted.bin": {
+          "path": "x64/hosted.bin",
+          "sha256": "7f2a8dd79b7bf0c124dc6d2402dbc6c4c014f8873824cf59037ed59976025b5c"
+        },
+        "hosted.audit.json": {
+          "path": "x64/hosted.audit.json",
+          "sha256": "42ee611e905e8ede37bca148f9573bc46e2287228d09fd18d16a96118ac38930"
+        },
+        "c-hosted.o": {
+          "path": "x64/c-hosted.o",
+          "sha256": "5ae0c25d7256391ff15cc74b322e1541f27188d402872f7f39fb7c2e7da33192"
+        },
+        "c-hosted.bin": {
+          "path": "x64/c-hosted.bin",
+          "sha256": "77dd4b81e28f854547fb9afc5077a0000b0508e39e5e13f41ba376f7a649c03e"
+        },
+        "c-hosted.audit.json": {
+          "path": "x64/c-hosted.audit.json",
+          "sha256": "59438688ab2c31b17a7e3e09de54fb240c92987fe1555653a3533de671a1169c"
+        },
+        "producer-commands.json": {
+          "path": "x64/producer-commands.json",
+          "sha256": "3a7f0a6c97e4c61117017e796e7addac24506d192646bf516f4a0abc0a07c64c"
+        }
+      }
+    },
+    {
+      "architecture": "arm64",
+      "target": "aarch64-unknown-linux-gnu",
+      "machine": 183,
+      "target_va": 3228,
+      "cleanup_va": 131108,
+      "thrower_va": 3160,
+      "callback_target_va": 4196652,
+      "files": {
+        "original-eh.elf": {
+          "path": "arm64/original-eh.elf",
+          "sha256": "aa9ec1b581bf8e3aef42390c32f7cb7a1e028687798d2b1005e4f6fe37073898"
+        },
+        "original-callback.elf": {
+          "path": "arm64/original-callback.elf",
+          "sha256": "d3cf81b06709e739b6c7f865161cd2887caf9814f32f61ec149957d52d8a7ca4"
+        },
+        "c.ll": {
+          "path": "arm64/c.ll",
+          "sha256": "d5fd1e35f3de8aab12fdeabf69f29012851ed7fb9983f7d75231e066e69136ac"
+        },
+        "c.o": {
+          "path": "arm64/c.o",
+          "sha256": "9b212adf93fd1e647c1b744cc52d4796899c9d7365e801b38ea88099820c366d"
+        },
+        "hosted.o": {
+          "path": "arm64/hosted.o",
+          "sha256": "cebd085cd29c095f5455c411385be50e268f2a27c46879c0b49ad5088c46e0a1"
+        },
+        "hosted.bin": {
+          "path": "arm64/hosted.bin",
+          "sha256": "4612c1dc437729b0b18f7c00bc290144d67d09a6c22716f54abe442efdb3ee11"
+        },
+        "hosted.audit.json": {
+          "path": "arm64/hosted.audit.json",
+          "sha256": "b659879cf6d92d7d311a7a6acbf9db5bac04d29c316142850bc345cb0f09ab0e"
+        },
+        "c-hosted.o": {
+          "path": "arm64/c-hosted.o",
+          "sha256": "043570b1bcc8dc80620cf1eb08fa95dfba93a8fc9fcdad8e68cf750d5133644a"
+        },
+        "c-hosted.bin": {
+          "path": "arm64/c-hosted.bin",
+          "sha256": "550cbee07f61789d11107dceb0551ff978843d5556e5f321df6477406a79496f"
+        },
+        "c-hosted.audit.json": {
+          "path": "arm64/c-hosted.audit.json",
+          "sha256": "c08359651e36db6c4631e8145cf3d01f81c86afdc760d63045778ccf520b4b83"
+        },
+        "producer-commands.json": {
+          "path": "arm64/producer-commands.json",
+          "sha256": "bd54fe5e40c750872be864606fa9108d9c439819d87eec610a095db52ecb9ad9"
+        }
+      }
+    }
+  ],
+  "original_flags": {
+    "x64-eh": [
+      "-O0",
+      "-fcf-protection=none",
+      "-fPIC",
+      "-pie"
+    ],
+    "x64-callback": [
+      "-O0",
+      "-fcf-protection=none",
+      "-fno-pie",
+      "-no-pie"
+    ],
+    "arm64-eh": [
+      "-O0",
+      "-fPIC",
+      "-pie"
+    ],
+    "arm64-callback": [
+      "-O0",
+      "-fno-pie",
+      "-no-pie"
+    ]
+  },
+  "language": "c"
+}

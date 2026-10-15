@@ -14,6 +14,8 @@
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/backend/llvm/WindowsEHMetadataEncoder.h"
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/CxxObjectActions.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -21,6 +23,7 @@
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/GlobalAlias.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
@@ -339,6 +342,7 @@ TEST(COFFExceptionIR, HighCCxxTryRendersCatchSyntaxInReadableListing) {
 
   HighStmt Try;
   Try.Kind = StmtKind::CxxTry;
+  Try.EHIsReducible = true;
   Try.EHRange = {0x140001000, 0x140001040};
   HighStmt BodyRet;
   BodyRet.Kind = StmtKind::Return;
@@ -377,6 +381,7 @@ TEST(COFFExceptionIR, HighCCxxCatchRendersQualifiedTypeName) {
 
   HighStmt Try;
   Try.Kind = StmtKind::CxxTry;
+  Try.EHIsReducible = true;
   Try.EHRange = {0x140001000, 0x140001040};
   HighStmt BodyRet;
   BodyRet.Kind = StmtKind::Return;
@@ -408,6 +413,7 @@ TEST(COFFExceptionIR, HighCCxxCatchRendersRecoveredTypeName) {
 
   HighStmt Try;
   Try.Kind = StmtKind::CxxTry;
+  Try.EHIsReducible = true;
   Try.EHRange = {0x140001000, 0x140001040};
   HighStmt BodyRet;
   BodyRet.Kind = StmtKind::Return;
@@ -439,6 +445,7 @@ TEST(COFFExceptionIR, HighCCxxCatchRendersConstReferenceTypeAndHandlerNote) {
 
   HighStmt Try;
   Try.Kind = StmtKind::CxxTry;
+  Try.EHIsReducible = true;
   Try.EHRange = {0x140001000, 0x140001040};
   HighStmt BodyRet;
   BodyRet.Kind = StmtKind::Return;
@@ -2954,18 +2961,25 @@ TEST(COFFExceptionIR, StructuresReducibleSEHAndCxxRegionsInHighIR) {
   CxxFunc.ExceptionMetadata = std::move(CxxMetadata);
 
   HighFunc HighCxx = MedToHighConverter().convert(CxxFunc, Arch::X64);
-  ASSERT_EQ(HighCxx.StructuredExceptionRegions, 1u);
+  // The object at the try's own state outlives what the try catches: the
+  // runtime unwinds only down to that state before the handler runs.  Its
+  // cleanup is a scope around the try, for exceptions that leave the try.
+  ASSERT_EQ(HighCxx.StructuredExceptionRegions, 2u);
   ASSERT_EQ(HighCxx.UnstructuredExceptionRegions, 0u);
   ASSERT_FALSE(HighCxx.Body.empty());
-  EXPECT_EQ(HighCxx.Body.front().Kind, StmtKind::CxxTry);
-  ASSERT_EQ(HighCxx.Body.front().EHClauses.size(), 2u);
-  EXPECT_EQ(HighCxx.Body.front().EHClauses.front().Kind,
-            HighEHClauseKind::CxxCatch);
-  const HighEHClause &Cleanup = HighCxx.Body.front().EHClauses.back();
+  const HighStmt &Lifetime = HighCxx.Body.front();
+  EXPECT_EQ(Lifetime.Kind, StmtKind::CxxTry);
+  ASSERT_EQ(Lifetime.EHClauses.size(), 1u);
+  const HighEHClause &Cleanup = Lifetime.EHClauses.front();
   EXPECT_EQ(Cleanup.Kind, HighEHClauseKind::CxxCleanup);
   EXPECT_EQ(Cleanup.UnwindActionKind,
             CxxUnwindAction::ActionKind::DestructorWithObjectPointer);
   EXPECT_EQ(Cleanup.UnwindObjectOffset, -0x20);
+  ASSERT_FALSE(Lifetime.Body.empty());
+  const HighStmt &Inner = Lifetime.Body.front();
+  EXPECT_EQ(Inner.Kind, StmtKind::CxxTry);
+  ASSERT_EQ(Inner.EHClauses.size(), 1u);
+  EXPECT_EQ(Inner.EHClauses.front().Kind, HighEHClauseKind::CxxCatch);
 }
 
 TEST(COFFExceptionIR, CleanupOnlyCxxStatesBecomeCxxTryNotSEH) {
@@ -3002,8 +3016,10 @@ TEST(COFFExceptionIR, CleanupOnlyCxxStatesBecomeCxxTryNotSEH) {
   EXPECT_EQ(High.Body.front().EHClauseBodies.front().front().Addr, ActionVA);
 
   std::string Source = emitHighC({High});
-  EXPECT_NE(Source.find("__wind {"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("try {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("try {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("} catch (...) {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("throw;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("__wind"), std::string::npos) << Source;
   EXPECT_NE(Source.find("unwind cleanup"), std::string::npos) << Source;
   EXPECT_NE(Source.find("sub_14000F000();"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("unstructured SEH"), std::string::npos) << Source;
@@ -3038,8 +3054,10 @@ TEST(COFFExceptionIR, CleanupOnlyCxxWithoutIpMapIsNotUnstructuredSEH) {
             HighEHClauseKind::CxxCleanup);
 
   std::string Source = emitHighC({High});
-  EXPECT_NE(Source.find("__wind {"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("try {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("try {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("} catch (...) {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("throw;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("__wind"), std::string::npos) << Source;
   EXPECT_NE(Source.find("unwind cleanup"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("unstructured SEH"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("__try"), std::string::npos) << Source;
@@ -3144,9 +3162,10 @@ TEST(COFFExceptionIR, CleanupOnlyCxxStateInsideIfBecomesCxxTry) {
   EXPECT_TRUE(Nested);
 
   const std::string Source = emitHighC({High});
-  EXPECT_NE(Source.find("__wind {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("try {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("} catch (...) {"), std::string::npos) << Source;
   EXPECT_NE(Source.find("use_temp("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("try {"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("__wind"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("__try"), std::string::npos) << Source;
 }
 
@@ -3255,7 +3274,266 @@ TEST(COFFExceptionIR, CleanupOnlyParentLiveRangeWrapsChildFragments) {
   EXPECT_NE(Source.find("outer_b("), std::string::npos) << Source;
   EXPECT_NE(Source.find("dtor_outer("), std::string::npos) << Source;
   EXPECT_NE(Source.find("dtor_inner("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("try {"), std::string::npos) << Source;
+  // Each object's lifetime is a try whose catch-all runs its cleanup and
+  // rethrows; the inner object's sits inside the outer one's.
+  const size_t OuterTry = Source.find("try {");
+  const size_t InnerTry = Source.find("try {", OuterTry + 1);
+  const size_t InnerCatch = Source.find("} catch (...) {", InnerTry);
+  const size_t OuterCatch = Source.find("} catch (...) {", InnerCatch + 1);
+  ASSERT_NE(InnerCatch, std::string::npos) << Source;
+  ASSERT_NE(OuterCatch, std::string::npos) << Source;
+  EXPECT_LT(Source.find("dtor_inner(", InnerCatch), OuterCatch) << Source;
+  EXPECT_GT(Source.find("dtor_outer(", OuterCatch), OuterCatch) << Source;
+  EXPECT_EQ(Source.find("__wind"), std::string::npos) << Source;
+}
+
+constexpr va_t kObjectInTryVA = 0x140001000;
+
+/// try { Probe Obj; work(); } catch (...) { }: the object's destructor runs
+/// while the exception leaves its lifetime, before the handler, and only once
+/// it is constructed.  FH4 names the destructor itself as the action and the
+/// object by its establisher-frame offset.  Without \p PassesObject the calls
+/// take no argument, so no code computes the object's address.
+HighFunc objectInTry(bool PassesObject) {
+  constexpr va_t FunctionVA = kObjectInTryVA;
+  constexpr va_t CtorVA = 0x140002000;
+  constexpr va_t WorkVA = 0x140002010;
+  constexpr va_t DtorVA = 0x14000F000;
+  constexpr int32_t FrameSize = 0x48;
+  constexpr int32_t ObjectOffset = 0x20;
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  MedFunc Med;
+  Med.Entry = FunctionVA;
+  Med.Name = "object_in_try";
+  Med.ReturnType = NdType::makeVoid();
+  Med.FrameSize = FrameSize;
+
+  MedVar SP;
+  SP.Kind = MedVar::Reg;
+  SP.Id = 1;
+  SP.RegOff = TRI.StackPointer;
+  SP.Size = 8;
+  SP.TheArch = Arch::X64;
+  MedVar Object;
+  Object.Kind = MedVar::Temp;
+  Object.Id = 2;
+  Object.Size = 8;
+  Object.TheArch = Arch::X64;
+  auto Call = [](va_t Addr, va_t Target, std::vector<MedVar> Args) {
+    MedOp Op;
+    Op.Opcode = NdOp::CALL;
+    Op.Addr = Addr;
+    Op.addInput(MedVar::makeConst(Target, 8));
+    for (const MedVar &Arg : Args)
+      Op.addInput(Arg);
+    Op.ExactArguments = true;
+    return Op;
+  };
+  std::vector<MedVar> This;
+  if (PassesObject)
+    This.push_back(Object);
+  MedBlock Body;
+  Body.Id = 0;
+  Body.StartAddr = FunctionVA;
+  Body.EndAddr = FunctionVA + 0x40;
+  MedOp Address;
+  Address.Opcode = NdOp::INT_SUB;
+  Address.Addr = FunctionVA;
+  Address.Output = Object;
+  Address.addInput(SP);
+  Address.addInput(MedVar::makeConst(FrameSize - ObjectOffset, 8,
+                                     ConstantAddressProvenance::Scalar));
+  Body.Ops.push_back(Address);
+  Body.Ops.push_back(Call(FunctionVA + 0x8, CtorVA, This));
+  Body.Ops.push_back(Call(FunctionVA + 0x10, WorkVA, {}));
+  Body.Ops.push_back(Call(FunctionVA + 0x20, DtorVA, This));
+  MedOp Ret;
+  Ret.Opcode = NdOp::RETURN;
+  Ret.Addr = FunctionVA + 0x30;
+  Body.Ops.push_back(std::move(Ret));
+  Med.Blocks.push_back(std::move(Body));
+
+  ExceptionFunction EH;
+  EH.CodeRange = {FunctionVA, FunctionVA + 0x40};
+  EH.ParseStatus = ExceptionParseStatus::Complete;
+  EH.Personality = ExceptionPersonality::CxxFrameHandler4;
+  CxxExceptionInfo Cxx;
+  Cxx.MaxState = 3;
+  Cxx.UnwindMap = {{-1, 0}, {0, 0}, {-1, 0}};
+  Cxx.UnwindMap[0].Kind = CxxUnwindAction::ActionKind::None;
+  Cxx.UnwindMap[1].ActionVA = DtorVA;
+  Cxx.UnwindMap[1].Kind = CxxUnwindAction::ActionKind::DestructorWithObject;
+  Cxx.UnwindMap[1].ObjectOffset = ObjectOffset;
+  Cxx.UnwindMap[2].Kind = CxxUnwindAction::ActionKind::None;
+  Cxx.IPMap = {{FunctionVA, -1},
+               {FunctionVA + 0x4, 0},
+               {FunctionVA + 0xC, 1},
+               {FunctionVA + 0x1C, 0},
+               {FunctionVA + 0x24, -1}};
+  CxxTryBlock Try;
+  Try.TryLow = 0;
+  Try.TryHigh = 1;
+  Try.CatchHigh = 2;
+  CxxCatchHandler Catch;
+  Catch.HandlerVA = FunctionVA + 0x100;
+  Try.Handlers.push_back(Catch);
+  Cxx.TryBlocks.push_back(std::move(Try));
+  EXPECT_TRUE(Cxx.hasValidStateGraph());
+  EH.Cxx = std::move(Cxx);
+  Med.ExceptionMetadata = std::move(EH);
+
+  std::map<va_t, std::string> Names{
+      {CtorVA, "probe_ctor"}, {WorkVA, "work"}, {DtorVA, "probe_dtor"}};
+  MedToHighConverter Converter;
+  Converter.setFuncNames(&Names);
+  return Converter.convert(Med, Arch::X64);
+}
+
+TEST(COFFExceptionIR, ObjectOfATryBodyIsACleanupScopeInsideTheTry) {
+  constexpr va_t FunctionVA = kObjectInTryVA;
+  const HighFunc High = objectInTry(/*PassesObject=*/true);
+  const HighStmt *Handler = nullptr;
+  const HighStmt *Scope = nullptr;
+  walkStmts(High.Body, [&](const HighStmt &S) {
+    if (S.Kind != StmtKind::CxxTry || S.EHClauses.size() != 1)
+      return;
+    if (S.EHClauses.front().Kind == HighEHClauseKind::CxxCatch)
+      Handler = &S;
+    if (S.EHClauses.front().Kind == HighEHClauseKind::CxxCleanup)
+      Scope = &S;
+  });
+  ASSERT_NE(Handler, nullptr);
+  ASSERT_NE(Scope, nullptr);
+  bool ScopeInsideTry = false;
+  walkStmts(Handler->Body,
+            [&](const HighStmt &S) { ScopeInsideTry |= &S == Scope; });
+  EXPECT_TRUE(ScopeInsideTry);
+  EXPECT_EQ(Scope->EHRange.Begin, FunctionVA + 0xC);
+  EXPECT_EQ(Scope->EHRange.End, FunctionVA + 0x1C);
+  // The C++ view writes the action as the destructor called on the object;
+  // the IR keeps the clause, as the C view shows the native action.
+  ASSERT_EQ(Scope->EHClauseBodies.size(), 1u);
+  EXPECT_TRUE(Scope->EHClauseBodies.front().empty());
+
+  const std::string Source = emitHighC({High});
+  const size_t OuterTry = Source.find("try {");
+  const size_t InnerTry = Source.find("try {", OuterTry + 1);
+  const size_t Cleanup = Source.find("} catch (...) {", InnerTry);
+  const size_t Rethrow = Source.find("throw;", Cleanup);
+  const size_t HandlerAt = Source.find("} catch (...) {", Rethrow);
+  ASSERT_NE(InnerTry, std::string::npos) << Source;
+  ASSERT_NE(Cleanup, std::string::npos) << Source;
+  ASSERT_NE(Rethrow, std::string::npos) << Source;
+  ASSERT_NE(HandlerAt, std::string::npos) << Source;
+  EXPECT_LT(Source.find("work("), Cleanup) << Source;
+  const size_t Dtor = Source.find("probe_dtor(", Cleanup);
+  ASSERT_LT(Dtor, Rethrow) << Source;
+  // The destructor's `this` is the object the constructor built.
+  EXPECT_NE(Source.substr(Dtor, Rethrow - Dtor).find("frame_base - 40"),
+            std::string::npos)
+      << Source;
+  EXPECT_LT(Source.find("probe_ctor("), InnerTry) << Source;
+  EXPECT_EQ(Source.find("__unwind"), std::string::npos) << Source;
+}
+
+TEST(COFFExceptionIR, AnObjectBuiltThroughAFrameAliasGetsItsDestructor) {
+  // v0 = SP - 0x48; probe_ctor(v0 + 0x20): the object FH4 names at
+  // establisher-frame offset 0x20, even though no code spells SP - 40 itself.
+  // A local the function sets twice to one address still spells it.
+  constexpr va_t DtorVA = 0x14000F000;
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  HighFunc Func;
+  Func.Entry = 0x140001000;
+  Func.FrameSize = 0x48;
+  ExceptionFunction &EH = Func.ExceptionMetadata.emplace();
+  EH.Personality = ExceptionPersonality::CxxFrameHandler4;
+  EH.Cxx.emplace();
+  MedVar SP;
+  SP.Kind = MedVar::Reg;
+  SP.Id = 1;
+  SP.RegOff = TRI.StackPointer;
+  SP.Size = 8;
+  SP.TheArch = Arch::X64;
+  MedVar Base;
+  Base.Kind = MedVar::Temp;
+  Base.Id = 2;
+  Base.Size = 8;
+  Base.TheArch = Arch::X64;
+  Base.RenameTag = 0;
+  const TypeRef Word = NdType::makeInt(8, /*S=*/false);
+  auto At = [&](const MedVar &From, NdOp Op, uint64_t Bytes) {
+    ExprPtr E = HighExpr::makeBinop(Op, HighExpr::makeVar(From, Word),
+                                    HighExpr::makeConst(Bytes, 8));
+    E->Type = Word;
+    return E;
+  };
+  for (int Copy = 0; Copy < 2; ++Copy) {
+    HighStmt Set;
+    Set.Kind = StmtKind::Assign;
+    Set.Dst = HighExpr::makeVar(Base, Word);
+    Set.Val = At(SP, NdOp::INT_SUB, 0x48);
+    Func.Body.push_back(std::move(Set));
+  }
+  HighStmt Ctor;
+  Ctor.Kind = StmtKind::Call;
+  Ctor.CallExpr = HighExpr::makeCall("probe_ctor", 0x140002000,
+                                     {At(Base, NdOp::INT_ADD, 0x20)});
+  Func.Body.push_back(std::move(Ctor));
+  HighStmt Scope;
+  Scope.Kind = StmtKind::CxxTry;
+  Scope.EHIsReducible = true;
+  HighStmt Work;
+  Work.Kind = StmtKind::Call;
+  Work.CallExpr = HighExpr::makeCall("work", 0x140002010, {});
+  Scope.Body.push_back(std::move(Work));
+  HighEHClause Cleanup;
+  Cleanup.Kind = HighEHClauseKind::CxxCleanup;
+  Cleanup.FilterOrActionVA = DtorVA;
+  Cleanup.UnwindActionKind = CxxUnwindAction::ActionKind::DestructorWithObject;
+  Cleanup.UnwindObjectOffset = 0x20;
+  Scope.EHClauses.push_back(Cleanup);
+  Scope.EHClauseBodies.emplace_back();
+  Func.Body.push_back(std::move(Scope));
+  HighStmt Dtor;
+  Dtor.Kind = StmtKind::Call;
+  Dtor.CallExpr =
+      HighExpr::makeCall("probe_dtor", DtorVA, {At(Base, NdOp::INT_ADD, 0x20)});
+  Func.Body.push_back(std::move(Dtor));
+
+  attachCxxObjectActionCalls(Func, Arch::X64);
+  const auto &Body = Func.Body[3].EHClauseBodies.front();
+  ASSERT_EQ(Body.size(), 1u);
+  ASSERT_EQ(Body.front().Kind, StmtKind::Call);
+  const HighExpr &Call = *Body.front().CallExpr;
+  EXPECT_EQ(Call.CallAddr, DtorVA);
+  EXPECT_EQ(Call.CallTarget, "probe_dtor");
+  ASSERT_EQ(Call.Operands.size(), 1u);
+  const HighExpr &This = *Call.Operands.front();
+  ASSERT_EQ(This.Kind, ExprKind::BinOp);
+  EXPECT_EQ(This.Op, NdOp::INT_SUB);
+  ASSERT_EQ(This.Operands.size(), 2u);
+  EXPECT_EQ(This.Operands[0]->Var.RegOff, TRI.StackPointer);
+  EXPECT_EQ(This.Operands[1]->ConstVal, 40u);
+
+  // A local with two different values spells neither.
+  Func.Body[1].Val = At(SP, NdOp::INT_SUB, 0x50);
+  Func.Body[3].EHClauseBodies.front().clear();
+  attachCxxObjectActionCalls(Func, Arch::X64);
+  EXPECT_TRUE(Func.Body[3].EHClauseBodies.front().empty());
+}
+
+TEST(COFFExceptionIR, AnObjectNoCodeAddressesKeepsItsActionAsANote) {
+  // The cleanup would name an object the source never shows.
+  const std::string Source = emitHighC({objectInTry(/*PassesObject=*/false)});
+  const size_t InnerTry = Source.find("try {", Source.find("try {") + 1);
+  const size_t Cleanup = Source.find("} catch (...) {", InnerTry);
+  const size_t Rethrow = Source.find("throw;", Cleanup);
+  ASSERT_NE(Cleanup, std::string::npos) << Source;
+  ASSERT_NE(Rethrow, std::string::npos) << Source;
+  const std::string Action = Source.substr(Cleanup, Rethrow - Cleanup);
+  EXPECT_NE(Action.find("/* cleanup @ 0x14000F000 */"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Action.find("probe_dtor("), std::string::npos) << Source;
 }
 
 TEST(COFFExceptionIR, CleanupOnlyLiveRangeWrapsIfWhoseCondIsPreviousIp) {
@@ -3381,7 +3659,8 @@ TEST(COFFExceptionIR, CleanupOnlyLiveRangeWrapsIfWhoseCondIsPreviousIp) {
   EXPECT_EQ(Try->EHRange.End, FunctionVA + 0x50);
 
   const std::string Source = emitHighC({High});
-  EXPECT_NE(Source.find("__wind {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("try {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("} catch (...) {"), std::string::npos) << Source;
   EXPECT_NE(Source.find("then_work("), std::string::npos) << Source;
   EXPECT_NE(Source.find("else_work("), std::string::npos) << Source;
   EXPECT_NE(Source.find("dtor_name("), std::string::npos) << Source;
@@ -3505,8 +3784,8 @@ TEST(COFFExceptionIR, CleanupOnlySplitFragmentsWrapsIfElseDiamond) {
   EXPECT_GE(High.StructuredExceptionRegions, 1u);
 
   const std::string Source = emitHighC({High});
-  const size_t Wind = Source.find("__wind {");
-  const size_t Unwind = Source.find("__unwind", Wind);
+  const size_t Wind = Source.find("try {");
+  const size_t Unwind = Source.find("} catch (...) {", Wind);
   ASSERT_NE(Wind, std::string::npos) << Source;
   ASSERT_NE(Unwind, std::string::npos) << Source;
   const size_t ThenPos = Source.find("then_work(", Wind);
@@ -4431,14 +4710,23 @@ TEST(COFFExceptionIR, StructuresSingleBlockFH3CleanupBody) {
 
   HighFunc High = MedToHighConverter().convert(Func, Arch::X64);
   ASSERT_FALSE(High.Body.empty());
-  const HighStmt &Try = High.Body.front();
+  // State 0 is the try's own state: unwinding to its catch stops there, so
+  // the state's object encloses the try and only an exception the try lets
+  // through runs the cleanup.
+  const HighStmt &Scope = High.Body.front();
+  ASSERT_EQ(Scope.Kind, StmtKind::CxxTry);
+  ASSERT_EQ(Scope.EHClauses.size(), 1u);
+  EXPECT_EQ(Scope.EHClauses[0].Kind, HighEHClauseKind::CxxCleanup);
+  ASSERT_EQ(Scope.EHClauseBodies.size(), 1u);
+  ASSERT_EQ(Scope.EHClauseBodies[0].size(), 1u);
+  EXPECT_EQ(Scope.EHClauseBodies[0].front().Addr, ActionVA);
+  ASSERT_FALSE(Scope.Body.empty());
+  const HighStmt &Try = Scope.Body.front();
   ASSERT_EQ(Try.Kind, StmtKind::CxxTry);
-  ASSERT_EQ(Try.EHClauses.size(), 2u);
-  ASSERT_EQ(Try.EHClauseBodies.size(), 2u);
+  ASSERT_EQ(Try.EHClauses.size(), 1u);
+  EXPECT_EQ(Try.EHClauses[0].Kind, HighEHClauseKind::CxxCatch);
+  ASSERT_EQ(Try.EHClauseBodies.size(), 1u);
   EXPECT_TRUE(Try.EHClauseBodies[0].empty());
-  ASSERT_EQ(Try.EHClauseBodies[1].size(), 1u);
-  EXPECT_EQ(Try.EHClauses[1].Kind, HighEHClauseKind::CxxCleanup);
-  EXPECT_EQ(Try.EHClauseBodies[1].front().Addr, ActionVA);
   ASSERT_EQ(High.Body.size(), 2u);
   EXPECT_EQ(High.Body.back().Addr, FunctionVA + 0x30);
 
@@ -5133,11 +5421,11 @@ TEST(COFFExceptionIR, ExceptHandlerSeesTheEstablishedFrame) {
 
 TEST(COFFExceptionIR, ExceptBodyKeepsTheBlockItRanInto) {
   // PoGetRequesterOld: the __except handler (`and qword [rsp+48h], 0;
-  // mov r8, [rsp+40h]`) runs on into a tail its try body also jumps to.  The
-  // structured tree puts part of the guarded range, statements that may
-  // fault, outside the only slice a __try could wrap, so that __try would
-  // leave them unprotected.  The region is reported unstructured instead,
-  // and the handler and the tail it runs on into stay printed.
+  // mov r8, [rsp+40h]`) runs on into a tail its try body also jumps to.
+  // Each path into the tail copies only the values it set, so the guarded
+  // range is one slice: the __try wraps every statement of it, the
+  // handler's statements are the __except arm, and the tail it runs on into
+  // follows the region.
   constexpr va_t F = 0x1403F75E4;
   BinaryImage Img;
   Img.Arch = Arch::X64;
@@ -5219,12 +5507,53 @@ TEST(COFFExceptionIR, ExceptBodyKeepsTheBlockItRanInto) {
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS));
   OS.flush();
-  EXPECT_EQ(Result.HighFuncs.front().StructuredExceptionRegions, 0u);
-  EXPECT_EQ(Result.HighFuncs.front().UnstructuredExceptionRegions, 1u);
-  EXPECT_NE(Source.find("unstructured SEH region"), std::string::npos)
+  EXPECT_EQ(Result.HighFuncs.front().StructuredExceptionRegions, 1u);
+  EXPECT_EQ(Result.HighFuncs.front().UnstructuredExceptionRegions, 0u);
+  EXPECT_EQ(Source.find("unstructured SEH region"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("L_1403F76AC:"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("L_1403F76B7:"), std::string::npos) << Source;
+  // Where each instruction's statements are: the guarded range in the
+  // __try body, the handler in its __except arm, the rest outside both.
+  enum class Place { Outside, TryBody, Handler };
+  std::vector<std::pair<va_t, Place>> Placed;
+  unsigned Tries = 0;
+  std::function<void(const std::vector<HighStmt> &, Place)> Walk =
+      [&](const std::vector<HighStmt> &Stmts, Place Where) {
+        for (const HighStmt &S : Stmts) {
+          if (S.Kind == StmtKind::SEHTry) {
+            ++Tries;
+            Walk(S.Body, Place::TryBody);
+            for (const std::vector<HighStmt> &Clause : S.EHClauseBodies)
+              Walk(Clause, Place::Handler);
+            continue;
+          }
+          if (S.Addr)
+            Placed.push_back({S.Addr, Where});
+          Walk(S.Body, Where);
+          Walk(S.ElseBody, Where);
+          Walk(S.DefaultBody, Where);
+          for (const SwitchCase &Case : S.Cases)
+            Walk(Case.Body, Where);
+        }
+      };
+  Walk(Result.HighFuncs.front().Body, Place::Outside);
+  EXPECT_EQ(Tries, 1u) << Source;
+  for (const auto &[Addr, Where] : Placed) {
+    const Place Expected =
+        Addr >= 0x1403F7648 && Addr < 0x1403F76AC   ? Place::TryBody
+        : Addr >= 0x1403F76AC && Addr < 0x1403F76B7 ? Place::Handler
+                                                    : Place::Outside;
+    EXPECT_EQ(static_cast<int>(Where), static_cast<int>(Expected))
+        << llvm::utohexstr(Addr) << '\n'
+        << Source;
+  }
+  // The reads of [rdx+1720h] are copies of a block the guarded paths share,
+  // with no address of their own.
+  const size_t Try = Source.find("__try {");
+  const size_t GuardedRead = Source.find("+ 0x1720)");
+  const size_t Except = Source.find("} __except (EXCEPTION_EXECUTE_HANDLER) {");
+  ASSERT_NE(GuardedRead, std::string::npos) << Source;
+  EXPECT_LT(Try, GuardedRead) << Source;
+  EXPECT_LT(GuardedRead, Except) << Source;
 }
 
 TEST(COFFExceptionIR, HandlerWhoseFirstCopyIsDeadKeepsItsLabel) {

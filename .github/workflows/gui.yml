@@ -3,11 +3,11 @@ name: Desktop GUI
 on:
   push:
     branches: [dev]
-    paths: ['tools/neverd-gui/**', 'tools/neverd-worker/**', 'tools/neverd-mcp/**', 'tools/common/**', 'scripts/check_gui_i18n.py', '.github/workflows/gui.yml']
+    paths: ['tools/neverd-gui/**', 'tools/neverd-worker/**', 'tools/neverd-mcp/**', 'tools/common/**', 'scripts/check_gui_i18n.py', 'scripts/check_gui_icons.py', '.github/workflows/gui.yml']
   pull_request:
     # closed cancels this PR's run through its concurrency group; no job runs.
     types: [opened, synchronize, reopened, closed]
-    paths: ['tools/neverd-gui/**', 'tools/neverd-worker/**', 'tools/neverd-mcp/**', 'tools/common/**', 'scripts/check_gui_i18n.py', '.github/workflows/gui.yml']
+    paths: ['tools/neverd-gui/**', 'tools/neverd-worker/**', 'tools/neverd-mcp/**', 'tools/common/**', 'scripts/check_gui_i18n.py', 'scripts/check_gui_icons.py', '.github/workflows/gui.yml']
   workflow_dispatch:
 
 permissions:
@@ -73,6 +73,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           python scripts/check_gui_i18n.py --check-sources
+          python scripts/check_gui_icons.py
           if [ '${{ runner.os }}' = Windows ]; then
             mkdir -p build-gui/ci-diagnostics
             set +e
@@ -86,6 +87,21 @@ jobs:
             exit "$ctest_status"
           fi
           ctest --test-dir build-gui --output-on-failure
+      - name: Verify the native window frame
+        # Offscreen keeps the system frame; Windows and macOS frame the
+        # workbench natively, so maximize and full screen run there for real,
+        # whatever the earlier contract checks found.
+        if: ${{ !cancelled() && runner.os != 'Linux' }}
+        shell: bash
+        run: |
+          # Windows does not pass a console test's standard output on; read
+          # the log file back on every platform.
+          set +e
+          build-gui/bin/neverd-gui-unit-tests nativeFrameKeepsTheTitleBarOnScreen \
+            -o native-frame.txt,txt
+          status=$?
+          cat native-frame.txt
+          exit "$status"
       - name: Retain Windows GUI contract diagnostics
         id: gui_diagnostics
         if: ${{ always() && runner.os == 'Windows' }}

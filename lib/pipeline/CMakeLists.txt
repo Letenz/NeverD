@@ -1,5 +1,9 @@
 add_neverd_component_library(NeverDPipeline
   BytecodeRecovery.cpp
+  BytecodeSourceEvidence.cpp
+  BytecodeStateSourceContract.cpp
+  StateSourceRecovery.cpp
+  StateSourceBank.cpp
   evidence/ConstantStores.cpp
   Pipeline.cpp
   NativeSourceHints.cpp
@@ -12,6 +16,8 @@ add_neverd_component_library(NeverDPipeline
   PipelineLLVM.cpp
   PipelineLibraryRecognition.cpp
   PipelineLowIR.cpp
+  PipelineSEHRuntimeMemory.cpp
+  Windows/SEHRuntimeFormat.cpp
   PipelineMedIR.cpp
   PipelineOptimize.cpp
   PipelinePatchLift.cpp
@@ -20,6 +26,7 @@ add_neverd_component_library(NeverDPipeline
   PipelineStructReturnCallSites.cpp
   PipelineReturnContracts.cpp
   PipelineWideIntReturn.cpp
+  PipelineWideIntReturnEvidence.cpp
 
   LINK_COMPONENTS
   BinaryInterpreterSpecialization

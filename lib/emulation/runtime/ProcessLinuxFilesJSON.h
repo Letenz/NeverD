@@ -11,6 +11,9 @@
 #include "llvm/Support/JSON.h"
 
 namespace neverd::emulation {
+llvm::Expected<LinuxDeviceOptions>
+linuxDeviceOptionsFromJSON(const llvm::json::Object &Value,
+                           uint64_t &PayloadBytes, uint64_t &Transactions);
 llvm::Expected<LinuxFileOptions>
 linuxFileOptionsFromJSON(const llvm::json::Value &Value);
 } // namespace neverd::emulation

@@ -94,6 +94,8 @@ private:
   std::vector<CSourceAnchor> PositionAnchors;
   bool PositionsValid = true;
   std::map<std::pair<va_t, const HighExpr *>, Event> HighRegions;
+  std::map<std::pair<va_t, const HighExpr *>, std::set<sigs::LibraryOccurrence>>
+      HighCallAnchors;
   std::map<std::pair<va_t, va_t>, Event> HighStores;
   std::map<std::tuple<va_t, va_t, StmtKind>, std::set<sigs::LibraryOccurrence>>
       HighAnchors;

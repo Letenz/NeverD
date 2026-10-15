@@ -32,6 +32,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -286,6 +287,10 @@ struct BinaryImage {
   /// follows: ELF for System V and AAPCS, COFF for Windows, Mach-O for
   /// Apple.  Only a binary file sets it; see abiFormat().
   BinaryFormat ConventionFormat = BinaryFormat::Unknown;
+  /// Replaces the calling convention's choice of how lifted x86-64 code holds
+  /// the x87 register stack (x87ContextOwnsStack): true owns it as one
+  /// mutable context, false keeps typed binary80 values.
+  std::optional<bool> X87ContextOverride;
   Bitness Bits = Bitness::Unknown;
   bool IsRelocatable = false;
   /// The image runs at its link-time addresses: no loader rebases it, so an
@@ -309,6 +314,20 @@ struct BinaryImage {
   std::vector<Section> Sections;
   std::vector<Import> Imports;
   std::vector<Export> Exports;
+  /// The functions listed under a number because functions at lower
+  /// addresses share their names (numberSharedFunctionNames()), by entry:
+  /// the name their symbol gives them, and the name they are listed under.
+  std::map<va_t, std::pair<std::string, std::string>> SharedFunctionNames;
+  /// What the user states of the function at an entry, as IDA's Edit
+  /// function does: true, it never returns; false, it returns.  An entry
+  /// absent here is analysis's to decide.  Every layer that asks whether a
+  /// call returns reads this first (userNoReturnAt).
+  std::map<va_t, bool> UserNoReturn;
+  std::optional<bool> userNoReturnAt(va_t Entry) const {
+    const auto It = UserNoReturn.find(Entry);
+    return It == UserNoReturn.end() ? std::nullopt
+                                    : std::optional<bool>(It->second);
+  }
   std::vector<Symbol> Symbols;
   std::vector<ObjCClass> ObjCClasses;
   std::vector<ObjCMethod> ObjCMethods;
@@ -1577,19 +1596,81 @@ struct BinaryImage {
     return Sym.IsFunc ? 2 : 1;
   }
 
-  /// Resolve the best available display name for a function address: an
-  /// export, else the symbol there of the highest functionNameRank.
-  std::string getFunctionNameAt(va_t Addr) const {
-    if (const Export *Exp = findExportAt(Addr); Exp && !Exp->Name.empty())
-      return Exp->Name;
+  /// The symbol at \p Addr of the highest functionNameRank, which names the
+  /// function there where no export does; null for none.
+  const Symbol *functionNameSymbolAt(va_t Addr) const {
     const Symbol *Best = nullptr;
     for (const auto &Sym : Symbols)
       if (Sym.Addr == Addr && !Sym.Name.empty() &&
           (!Best || functionNameRank(Sym) > functionNameRank(*Best)))
         Best = &Sym;
-    if (Best)
-      return Best->Name;
+    return Best;
+  }
+
+  /// Resolve the best available display name for a function address: an
+  /// export, else the symbol there of the highest functionNameRank, as the
+  /// function is listed under it (functionListName).
+  std::string getFunctionNameAt(va_t Addr) const {
+    if (const Export *Exp = findExportAt(Addr); Exp && !Exp->Name.empty())
+      return Exp->Name;
+    if (const Symbol *Best = functionNameSymbolAt(Addr))
+      return functionListName(Addr, Best->Name);
     return (kAutoFuncPrefix + llvm::utohexstr(Addr)).str();
+  }
+
+  /// The name the function at \p Addr is listed and called under when its
+  /// symbol names it \p Name: the name itself, or the number
+  /// numberSharedFunctionNames() gave it where functions at lower addresses
+  /// take that name already.
+  std::string functionListName(va_t Addr, llvm::StringRef Name) const {
+    if (auto It = SharedFunctionNames.find(Addr);
+        It != SharedFunctionNames.end() && It->second.first == Name)
+      return It->second.second;
+    return Name.str();
+  }
+
+  /// Number the names functions share as IDA numbers them: the function at
+  /// the lowest address keeps the name, a program's second static `helper`
+  /// is `helper_0` and its third `helper_1`, each number another symbol
+  /// holds as its name skipped.  Distinct functions so keep distinct names
+  /// in the listing and in C.  A function an export names is listed by it.
+  /// Loading calls this, and so does a change to the symbols that can name
+  /// functions (applyDebugSymbols).
+  void numberSharedFunctionNames() {
+    SharedFunctionNames.clear();
+    std::set<va_t> Exported;
+    for (const Export &Exp : Exports)
+      if (!Exp.Name.empty())
+        Exported.insert(Exp.Addr);
+    // The first stated function symbol at an address names it, as
+    // functionNameRank chooses.
+    std::map<va_t, const Symbol *> Named;
+    for (const Symbol &Sym : Symbols)
+      if (Sym.IsFunc && !Sym.Name.empty() &&
+          Sym.Origin != NameOrigin::Synthesized && !Exported.count(Sym.Addr))
+        Named.try_emplace(Sym.Addr, &Sym);
+    std::map<llvm::StringRef, std::vector<va_t>> Entries;
+    for (const auto &[Addr, Sym] : Named)
+      Entries[Sym->Name].push_back(Addr);
+    std::set<std::string> Held;
+    for (const auto &[Name, Addrs] : Entries) {
+      if (Addrs.size() < 2)
+        continue;
+      if (Held.empty()) {
+        for (const Symbol &Sym : Symbols)
+          Held.insert(Sym.Name);
+        for (const Export &Exp : Exports)
+          Held.insert(Exp.Name);
+      }
+      unsigned Number = 0;
+      for (size_t I = 1; I < Addrs.size(); ++I) {
+        std::string Listed;
+        do
+          Listed = (Name + "_" + llvm::Twine(Number++)).str();
+        while (!Held.insert(Listed).second);
+        SharedFunctionNames[Addrs[I]] = {Name.str(), std::move(Listed)};
+      }
+    }
   }
 
   /// Register an executable import veneer without changing Import::IATAddr.

@@ -17,7 +17,9 @@
 
 #include "neverd/web/Asar.h"
 #include "neverd/web/Bun.h"
+#include "neverd/web/ConfigurationFiles.h"
 #include "neverd/web/ConfigurationOrder.h"
+#include "neverd/web/DataPack.h"
 #include "neverd/web/DesktopBridge.h"
 #include "neverd/web/DesktopManifest.h"
 #include "neverd/web/Electron.h"
@@ -45,6 +47,7 @@
 #include "neverd/web/SourceBundles.h"
 #include "neverd/web/SourceEffects.h"
 #include "neverd/web/SourceFeatures.h"
+#include "neverd/web/SourceLimits.h"
 #include "neverd/web/SourceMap.h"
 #include "neverd/web/SourceModules.h"
 #include "neverd/web/SourceNavigation.h"
@@ -67,12 +70,14 @@ struct Session::Impl {
   uint64_t Revision = 0;
   uint64_t PreviewSequence = 0;
   std::map<std::string, SourceAnalysis> Sources;
+  std::string LargeSourceID;
   std::map<std::string, SourceBindingAnalysis> Bindings;
   struct NavigationResults {
     SourceNavigation Evidence;
     SourceFeatures Features;
     DesktopBridgeSource Bridges;
     ConfigurationSourceOrder Configuration;
+    ConfigurationFileNavigation ConfigurationFiles;
   };
   std::map<std::string, NavigationResults> Navigation;
   struct SemanticResults {
@@ -91,6 +96,8 @@ struct Session::Impl {
   std::map<std::string, SEAExtraction> SEAExtractions;
   std::map<std::string, NexeExtraction> NexeExtractions;
   std::map<std::string, PkgExtraction> PkgExtractions;
+  std::map<std::string, DataPackExtraction> DataPacks;
+  std::map<std::string, DataPackDecodedResource> DecodedDataPackResources;
   std::map<std::string, WailsExtraction> WailsExtractions;
   std::map<std::string, TauriExtraction> TauriExtractions;
   std::map<std::string, AsarExtraction> AsarExtractions;
@@ -160,14 +167,14 @@ struct Session::Impl {
   const char *analysisStatus() const {
     return Sources.empty() && Maps.empty() && BunExtractions.empty() &&
                    SEAExtractions.empty() && NexeExtractions.empty() &&
-                   PkgExtractions.empty() && WailsExtractions.empty() &&
-                   TauriExtractions.empty() && AsarExtractions.empty() &&
-                   ElectronManifests.empty() && DesktopManifests.empty() &&
-                   HTMLDocuments.empty() && PackageAnalyses.empty() &&
-                   PackageArchives.empty() && PackageIntegrity.empty() &&
-                   PackageAdvisories.empty() && PackageAttestations.empty() &&
-                   HARCaptures.empty() && InterfaceSources.empty() &&
-                   StreamCaptures.empty()
+                   PkgExtractions.empty() && DataPacks.empty() &&
+                   WailsExtractions.empty() && TauriExtractions.empty() &&
+                   AsarExtractions.empty() && ElectronManifests.empty() &&
+                   DesktopManifests.empty() && HTMLDocuments.empty() &&
+                   PackageAnalyses.empty() && PackageArchives.empty() &&
+                   PackageIntegrity.empty() && PackageAdvisories.empty() &&
+                   PackageAttestations.empty() && HARCaptures.empty() &&
+                   InterfaceSources.empty() && StreamCaptures.empty()
                ? "not_analyzed"
                : "partial";
   }

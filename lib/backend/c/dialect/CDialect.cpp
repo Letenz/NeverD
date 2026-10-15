@@ -18,6 +18,9 @@
 #include "neverd/backend/c/CSourceMap.h"
 #include "neverd/loader/SymbolSpelling.h"
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringSwitch.h"
 
 using namespace neverd;
@@ -63,7 +66,22 @@ public:
   using DialectPrinter::DialectPrinter;
 
 private:
-  void header() override {}
+  llvm::DenseSet<size_t> UnknownParameterLists;
+
+  void header() override {
+    if (Opts.Dialect != SourceDialect::Cpp)
+      return;
+    llvm::StringSet<> KnownFunctions;
+    for (const auto &Item : T.Items)
+      for (const Decl *D : Item.Decls)
+        if (D->Kind == DeclKind::Function && (D->Body || D->Ty->Prototyped))
+          KnownFunctions.insert(D->Name);
+    for (const auto &Item : T.Items)
+      for (const Decl *D : Item.Decls)
+        if (D->Kind == DeclKind::Function && D->UnprototypedParams &&
+            !D->Body && !KnownFunctions.contains(D->Name))
+          UnknownParameterLists.insert(*D->UnprototypedParams);
+  }
   void directive(const TopLevel &Item) override { line(Item.Text); }
   std::string escapeIdentifier(llvm::StringRef Name) const override {
     return Name.str();
@@ -85,6 +103,7 @@ private:
 
   std::string text(size_t Begin, size_t End, bool SpellNames = true) const {
     llvm::StringRef Text = T.Source.slice(Begin, End).trim();
+    const size_t SourceOffset = Text.data() - T.Source.data();
     if (Opts.Dialect != SourceDialect::Cpp)
       return Text.str();
     // Only identifiers are respelled. Strings, comments and assembler labels
@@ -112,6 +131,12 @@ private:
       else
         Out += SpellNames && Tok.Kind == TokenKind::Identifier ? name(Tok.Text)
                                                                : Tok.Text.str();
+      // C's f() leaves the parameters unknown. C++'s f() would assert zero
+      // parameters and reject recovered arguments. Keep default promotions
+      // with an ellipsis in this view; it does not prove a native variadic ABI.
+      if (Tok.Text == "(" &&
+          UnknownParameterLists.contains(SourceOffset + Tok.Offset))
+        Out += "...";
       Previous = Tok.Offset + Tok.Text.size();
     }
     Out += Text.substr(Previous);
@@ -264,6 +289,11 @@ private:
       line("}");
       break;
     case csyntax::StmtKind::Declaration:
+      if (S->Decls.size() > 1 &&
+          llvm::none_of(S->Decls, [](const Decl *D) { return D->Body; })) {
+        declarators(S->Decls);
+        break;
+      }
       for (const Decl *D : S->Decls)
         declarationLine(D);
       break;
@@ -364,10 +394,6 @@ private:
     case csyntax::StmtKind::Throw:
       line(S->Value ? "throw " + expr(S->Value).Text + ";" : "throw;");
       break;
-    case csyntax::StmtKind::PseudoBlock:
-      block(S->Text, S->Then);
-      line("}");
-      break;
     case csyntax::StmtKind::Leave:
       line("__leave;");
       break;
@@ -392,6 +418,22 @@ private:
       return;
     }
     line(text(D->Begin, D->End) + ";");
+  }
+
+  /// One declaration of several declarators, `float a, b;`. Every declarator
+  /// begins at the shared specifiers, so each prints from where the one
+  /// before it ends.
+  void declarators(llvm::ArrayRef<Decl *> Decls) {
+    std::string Text;
+    size_t From = Decls.front()->Begin;
+    for (const Decl *D : Decls) {
+      if (D->Init)
+        Text += text(From, D->Init->Begin) + " " + expr(D->Init).Text;
+      else
+        Text += text(From, D->End);
+      From = D->End;
+    }
+    line(Text + ";");
   }
 
   void declaration(const TopLevel &Item) override {

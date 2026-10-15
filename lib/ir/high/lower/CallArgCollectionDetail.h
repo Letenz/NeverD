@@ -18,6 +18,7 @@
 #include "neverd/Common.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedIR.h"
 
@@ -78,6 +79,10 @@ struct CallArgScan {
   /// Positional arguments its incoming stack reads imply
   /// (MedOp::CalleeStackArgs), or -1 when they are unbounded.
   int CalleeStackArgs = -1;
+  /// The call is a direct one to code of this image, whose recovered stack
+  /// parameters are one per slot.  An import's prototype may instead take an
+  /// argument wider than a slot whole.
+  bool CalleeInImage = false;
   /// Trailing windows of immediate predecessors of a call-only block.
   /// Each `Before` is the last op index to scan (typically `size()-1`);
   /// the scan stops at the previous CALL, matching same-block setup.
@@ -204,6 +209,22 @@ inline bool isNoopRegisterCopy(const MedOp &Op) {
          Op.Output.Size == Op.Inputs[0].Size &&
          Op.Output.Id == Op.Inputs[0].Id &&
          Op.Output.SSAVer == Op.Inputs[0].SSAVer;
+}
+
+/// True when \p Op ends the setup of a later call's arguments: another call,
+/// or an intrinsic that may write registers or memory.  The x87 wait that
+/// FILD, FABS and FCHS check writes neither (preservesCallSetup), as
+/// MedABIPass's barrier has it.
+inline bool endsCallSetup(const MedOp &Op) {
+  if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+    return true;
+  if (Op.Opcode != NdOp::INTRINSIC)
+    return false;
+  if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
+    return true;
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+  return static_cast<uint64_t>(Id) != Op.Inputs[0].ConstVal ||
+         !preservesCallSetup(Id);
 }
 
 void collectSpilledStackArgs(const CallArgScan &Scan,

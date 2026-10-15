@@ -11,6 +11,14 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFRegistrationPatch.cpp
   COFF/COFFRegistrationCallbackProof.cpp
   COFF/COFFRegistrationFrameProof.cpp
+  COFF/COFFRegistrationSEHScopeState.cpp
+  COFF/COFFRegistrationSEHDynamicScope.cpp
+  COFF/COFFRegistrationSEHException.cpp
+  COFF/COFFRegistrationSEHNullAccess.cpp
+  COFF/COFFRegistrationSEHJump.cpp
+  COFF/COFFRegistrationSEHBoundCall.cpp
+  COFF/COFFRegistrationSEHJumpArguments.cpp
+  COFF/COFFRegistrationSEHJumpRuntime.cpp
   COFF/COFFRegistrationFrameStores.cpp
   COFF/COFFRegistrationFrameTaint.cpp
   COFF/COFFRegistrationFrameBits.cpp
@@ -22,6 +30,7 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFRegistrationCxxStateProof.cpp
   COFF/COFFRegistrationCxxIR.cpp
   COFF/COFFRegistrationCxxEdges.cpp
+  COFF/COFFRegistrationCopyEdges.cpp
   COFF/COFFRegistrationCxxCall.cpp
   COFF/COFFRegistrationCxxCatch.cpp
   COFF/COFFRegistrationCxxContinuation.cpp
@@ -29,6 +38,7 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFRegistrationCxxResume.cpp
   COFF/COFFRegistrationCxxLifetime.cpp
   COFF/COFFRegistrationCxxFrame.cpp
+  COFF/COFFRegistrationCxxObjectCall.cpp
   COFF/COFFRegistrationCxxThrow.cpp
   COFF/COFFRegistrationIRProof.cpp
   CodeGen.cpp

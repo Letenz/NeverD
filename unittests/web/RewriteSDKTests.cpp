@@ -57,9 +57,6 @@ protected:
   std::string Revision;
   std::vector<std::string> Artifacts;
   void SetUp() override {
-#ifdef _WIN32
-    GTEST_SKIP() << "POSIX capture profile required";
-#endif
     llvm::SmallString<128> Path;
     ASSERT_FALSE(
         llvm::sys::fs::createUniqueDirectory("neverd-rewrite-sdk", Path));

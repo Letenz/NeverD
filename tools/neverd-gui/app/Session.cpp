@@ -24,6 +24,22 @@ constexpr char StringEncodingsKey[] = "strings/encodings";
 constexpr char StringPreferredKey[] = "strings/preferred";
 constexpr char StringMinLengthKey[] = "strings/minLength";
 constexpr int MaxRecentFiles = 10;
+/// The project's record of the user's answers about its debug information:
+/// the PDB to load or {"mode":"none"}, and {"mode":"none"} for declined
+/// DWARF.
+constexpr char PdbInputState[] = "pdb-input.json";
+constexpr char DwarfInputState[] = "dwarf-input.json";
+
+/// Keep \p options' answers about debug information with the project.
+void insertChoices(QHash<QString, QByteArray> &state,
+                   const LoadOptions &options) {
+  if (!options.pdb.isEmpty())
+    state.insert(QLatin1String(PdbInputState),
+                 QJsonDocument(options.pdb).toJson(QJsonDocument::Compact));
+  if (!options.dwarf.isEmpty())
+    state.insert(QLatin1String(DwarfInputState),
+                 QJsonDocument(options.dwarf).toJson(QJsonDocument::Compact));
+}
 
 bool isEdit(const QString &operation) {
   static const QSet<QString> edits{QStringLiteral("annotation_set"),
@@ -31,6 +47,7 @@ bool isEdit(const QString &operation) {
                                    QStringLiteral("code_edit"),
                                    QStringLiteral("function_create"),
                                    QStringLiteral("function_delete"),
+                                   QStringLiteral("function_edit"),
                                    QStringLiteral("item_define"),
                                    QStringLiteral("operand_format"),
                                    QStringLiteral("undo"),
@@ -427,13 +444,19 @@ void Session::sendOpen(const QString &requested, const QString &path,
                        LoadOptions options) {
   if (options.pdb.isEmpty())
     options.pdb =
-        QJsonDocument::fromJson(state.value(QStringLiteral("pdb-input.json")))
+        QJsonDocument::fromJson(state.value(QLatin1String(PdbInputState)))
+            .object();
+  if (options.dwarf.isEmpty())
+    options.dwarf =
+        QJsonDocument::fromJson(state.value(QLatin1String(DwarfInputState)))
             .object();
   QJsonObject payload{{"path", path},
                       {"debug_info", options.debugInfo},
                       {"analysis", options.analysis}};
   if (!options.pdb.isEmpty())
     payload.insert(QStringLiteral("pdb"), options.pdb);
+  if (!options.dwarf.isEmpty())
+    payload.insert(QStringLiteral("dwarf"), options.dwarf);
   if (!options.loader.isEmpty())
     payload.insert(QStringLiteral("loader"), options.loader);
   if (options.loader == QLatin1String("binary")) {
@@ -496,8 +519,24 @@ void Session::sendOpen(const QString &requested, const QString &path,
                   : tr("Platform: %1, as chosen").arg(platform),
               0);
         }
-        if (const auto pdb = payload.value("pdb").toObject(); !pdb.isEmpty())
+        if (const auto pdb = payload.value("pdb").toObject();
+            pdb.value("mode").toString() == QLatin1String("none"))
+          emit message(tr("Opened without the PDB the input names, as "
+                          "chosen"),
+                       0);
+        else if (!pdb.isEmpty())
           reportPdb(pdb);
+        if (payload.value("dwarf").toObject().value("mode").toString() ==
+            QLatin1String("none"))
+          emit message(tr("Opened without its DWARF debug information, as "
+                          "chosen"),
+                       0);
+        else if (const auto debug = payload.value("debug_info").toObject();
+                 debug.value("kind").toString() == QLatin1String("dwarf"))
+          emit message(tr("DWARF loaded: %1")
+                           .arg(QDir::toNativeSeparators(
+                               debug.value("path").toString())),
+                       0);
         if (std::exchange(reloading_, false))
           emit message(tr("Reloaded the input file"), 0);
         emit opened();
@@ -661,10 +700,7 @@ void Session::packDatabase() {
   if (databasePath_.isEmpty() || readOnly())
     return;
   auto state = stateProvider_ ? stateProvider_() : QHash<QString, QByteArray>{};
-  if (!loadOptions_.pdb.isEmpty())
-    state.insert(
-        QStringLiteral("pdb-input.json"),
-        QJsonDocument(loadOptions_.pdb).toJson(QJsonDocument::Compact));
+  insertChoices(state, loadOptions_);
   // Quitting waits for the database like it waits for an edit.
   ++pendingWrites_;
   emit stateChanged();
@@ -693,10 +729,7 @@ void Session::saveDatabaseState() {
       !QFileInfo::exists(databasePath_) || !stateProvider_)
     return;
   auto state = stateProvider_();
-  if (!loadOptions_.pdb.isEmpty())
-    state.insert(
-        QStringLiteral("pdb-input.json"),
-        QJsonDocument(loadOptions_.pdb).toJson(QJsonDocument::Compact));
+  insertChoices(state, loadOptions_);
   if (const auto error = ProjectDatabase::saveState(databasePath_, state);
       !error.isEmpty())
     emit message(tr("Could not update the database: %1").arg(error), 1);
@@ -792,6 +825,21 @@ void Session::deleteFunction(Address entry, std::optional<quint64> epoch) {
           });
 }
 
+void Session::editFunction(Address entry, const QJsonObject &attributes,
+                           std::optional<quint64> epoch) {
+  if (attributes.isEmpty() || !acceptsEdit(epoch))
+    return;
+  if (dirty_)
+    save();
+  command(QStringLiteral("function_edit"),
+          {{"address", hexAddress(entry)}, {"attributes", attributes}},
+          [this, entry](const QJsonObject &) {
+            refreshHistory();
+            emit message(
+                tr("Edited the function at %1").arg(displayAddress(entry)), 0);
+          });
+}
+
 void Session::rename(Address function, const QString &name,
                      std::optional<quint64> epoch) {
   if (name.trimmed().isEmpty() || !acceptsEdit(epoch))
@@ -867,12 +915,15 @@ void Session::loadPdb(const QJsonObject &selection) {
   if (!loaded_ || !loadsPdbFiles())
     return;
   command(QStringLiteral("pdb_load"), selection,
-          [this, selection](const QJsonObject &result) {
-            loadOptions_.pdb = selection;
+          [this](const QJsonObject &result) {
+            loadOptions_.pdb = {{"path", result.value("path")},
+                                {"mode", result.value("mode")},
+                                {"stamp", result.value("stamp")}};
             functionCount_ =
                 result.value("function_count").toInteger(functionCount_);
             metadata_.insert(QStringLiteral("debug_info"), result);
-            metadata_.insert(QStringLiteral("pdb"), selection);
+            metadata_.insert(QStringLiteral("pdb"), loadOptions_.pdb);
+            metadata_.remove(QStringLiteral("pdb_download"));
             emit functionsChanged();
             emit stateChanged();
             reportPdb(result);

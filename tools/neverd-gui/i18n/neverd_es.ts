@@ -839,6 +839,14 @@
         <source>Load symbols from a selected PDB file</source>
         <translation>Cargar símbolos desde un archivo PDB seleccionado</translation>
     </message>
+    <message>
+        <source>&amp;Edit function...</source>
+        <translation>Edi&amp;tar función...</translation>
+    </message>
+    <message>
+        <source>Change the name of the current function and what it is</source>
+        <translation>Cambiar el nombre de la función actual y lo que es</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1464,6 +1472,22 @@ Haz doble clic para ir a la declaración.</translation>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>Los nombres de variables guardados pertenecen a otra representación del código fuente</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>Expandir bloque (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>Contraer bloque (Ctrl+Shift+[)</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification</source>
+        <translation>Simplificación simbólica</translation>
+    </message>
+    <message>
+        <source>Transformation failed: %1</source>
+        <translation>La transformación falló: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1478,6 +1502,54 @@ Haz doble clic para ir a la declaración.</translation>
     <message>
         <source>Keep this function while the disassembly moves on</source>
         <translation>Mantener esta función mientras el desensamblado avanza</translation>
+    </message>
+    <message>
+        <source>Optimization</source>
+        <translation>Optimización</translation>
+    </message>
+    <message>
+        <source>Transform the current function</source>
+        <translation>Transformar la función actual</translation>
+    </message>
+    <message>
+        <source>Symbolically simplify this function</source>
+        <translation>Simplificar simbólicamente esta función</translation>
+    </message>
+    <message>
+        <source>Recover LLVM control flow</source>
+        <translation>Recuperar el flujo de control de LLVM</translation>
+    </message>
+    <message>
+        <source>LLVM optimization</source>
+        <translation>Optimización de LLVM</translation>
+    </message>
+    <message>
+        <source>Basic cleanup</source>
+        <translation>Limpieza básica</translation>
+    </message>
+    <message>
+        <source>O2 (default)</source>
+        <translation>O2 (predeterminado)</translation>
+    </message>
+    <message>
+        <source>Choose passes…</source>
+        <translation>Elegir pasadas…</translation>
+    </message>
+    <message>
+        <source>LLVM passes for this function</source>
+        <translation>Pasadas de LLVM para esta función</translation>
+    </message>
+    <message>
+        <source>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</source>
+        <translation>Elija las pasadas de limpieza escalar. La simplificación simbólica se controla por separado.</translation>
+    </message>
+    <message>
+        <source>Restore default source</source>
+        <translation>Restaurar el código fuente predeterminado</translation>
+    </message>
+    <message>
+        <source>Cancel transformation</source>
+        <translation>Cancelar la transformación</translation>
     </message>
 </context>
 <context>
@@ -2140,6 +2212,30 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>This engine cannot use an unverified PDB for analysis</source>
         <translation>Este motor no puede usar una PDB sin verificar para el análisis</translation>
     </message>
+    <message>
+        <source>Line</source>
+        <translation>Línea</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>Columna</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>Código</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>Espere a que la función termine de cargarse antes de buscar referencias</translation>
+    </message>
+    <message>
+        <source>Could not tell which PDB %1 names: %2</source>
+        <translation>No se pudo determinar qué PDB indica %1: %2</translation>
+    </message>
+    <message>
+        <source>Could not tell whether %1 has DWARF: %2</source>
+        <translation>No se pudo determinar si %1 tiene DWARF: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2421,6 +2517,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
         <translation>PDB cargada para el análisis: %1 (%2 nombres, confirmada por el usuario, identidad sin verificar)</translation>
     </message>
+    <message>
+        <source>Opened without the PDB the input names, as chosen</source>
+        <translation>Abierto sin el PDB que indica el archivo de entrada, según lo elegido</translation>
+    </message>
+    <message>
+        <source>Edited the function at %1</source>
+        <translation>Se editó la función en %1</translation>
+    </message>
+    <message>
+        <source>Opened without its DWARF debug information, as chosen</source>
+        <translation>Abierto sin su información de depuración DWARF, según lo elegido</translation>
+    </message>
+    <message>
+        <source>DWARF loaded: %1</source>
+        <translation>DWARF cargado: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2671,6 +2783,302 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The worker cannot restore analysis state.</source>
         <translation>El proceso de análisis no puede restaurar el estado del análisis.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PdbPromptDialog</name>
+    <message>
+        <source>Load PDB file</source>
+        <translation>Cargar archivo PDB</translation>
+    </message>
+    <message>
+        <source>The input file was linked with debug information stored here:</source>
+        <translation>El archivo de entrada se vinculó con información de depuración guardada aquí:</translation>
+    </message>
+    <message>
+        <source>&amp;Browse…</source>
+        <translation>&amp;Examinar…</translation>
+    </message>
+    <message>
+        <source>The download was cancelled.</source>
+        <translation>Se canceló la descarga.</translation>
+    </message>
+    <message>
+        <source>A matching copy is at that path.</source>
+        <translation>Hay una copia coincidente en esa ruta.</translation>
+    </message>
+    <message>
+        <source>A matching copy is beside the input file:</source>
+        <translation>Hay una copia coincidente junto al archivo de entrada:</translation>
+    </message>
+    <message>
+        <source>A matching copy is in a symbol directory:</source>
+        <translation>Hay una copia coincidente en un directorio de símbolos:</translation>
+    </message>
+    <message>
+        <source>A matching copy is in the symbol store:</source>
+        <translation>Hay una copia coincidente en el almacén de símbolos:</translation>
+    </message>
+    <message>
+        <source>Do you want to load it?</source>
+        <translation>¿Desea cargarla?</translation>
+    </message>
+    <message>
+        <source>%1 belongs to another build.</source>
+        <translation>%1 pertenece a otra compilación.</translation>
+    </message>
+    <message>
+        <source>%1 cannot be read.</source>
+        <translation>No se puede leer %1.</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer, and no symbol server is configured.</source>
+        <translation>No hay ninguna copia coincidente en este equipo y no hay ningún servidor de símbolos configurado.</translation>
+    </message>
+    <message>
+        <source>Do you want to browse for the PDB file on disk?</source>
+        <translation>¿Desea buscar el archivo PDB en el disco?</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer. Only the PDB&apos;s name and build identity are sent to look for it.</source>
+        <translation>No hay ninguna copia coincidente en este equipo. Para buscarla solo se envían el nombre y la identidad de compilación del PDB.</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the Microsoft Symbol Server?</source>
+        <translation>¿Desea buscar este archivo en el servidor de símbolos de Microsoft?</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the symbol server %1?</source>
+        <translation>¿Desea buscar este archivo en el servidor de símbolos %1?</translation>
+    </message>
+    <message>
+        <source>Downloading %1 from %2…</source>
+        <translation>Descargando %1 desde %2…</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 de %2</translation>
+    </message>
+    <message>
+        <source>Verifying %1…</source>
+        <translation>Verificando %1…</translation>
+    </message>
+    <message>
+        <source>The downloaded file is not the PDB of this build.</source>
+        <translation>El archivo descargado no es el PDB de esta compilación.</translation>
+    </message>
+    <message>
+        <source>Could not find PDB file &apos;%1&apos;.</source>
+        <translation>No se encontró el archivo PDB «%1».</translation>
+    </message>
+    <message>
+        <source>Do you want to try again, or to browse for the PDB file on disk?</source>
+        <translation>¿Desea volver a intentarlo o buscar el archivo PDB en el disco?</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>Archivos PDB (*.pdb);;Todos los archivos (*)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SymbolDownload</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>Se agotó el tiempo de descarga de los símbolos.</translation>
+    </message>
+    <message>
+        <source>No symbol server is configured.</source>
+        <translation>No hay ningún servidor de símbolos configurado.</translation>
+    </message>
+    <message>
+        <source>%1 is not an HTTP symbol server.</source>
+        <translation>%1 no es un servidor de símbolos HTTP.</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol store directory %1.</source>
+        <translation>No se puede crear el directorio del almacén de símbolos %1.</translation>
+    </message>
+    <message>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>No se puede abrir un archivo temporal de símbolos en %1: %2</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>El archivo de símbolos supera el límite de descarga de 2 GiB.</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>No se puede escribir el archivo de símbolos %1: %2</translation>
+    </message>
+    <message>
+        <source>%1 has no matching symbols for this build.</source>
+        <translation>%1 no tiene símbolos compatibles para esta compilación.</translation>
+    </message>
+    <message>
+        <source>The symbol download from %1 failed: %2</source>
+        <translation>Error al descargar símbolos desde %1: %2</translation>
+    </message>
+    <message>
+        <source>%1 sent an empty symbol file.</source>
+        <translation>%1 envió un archivo de símbolos vacío.</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>El archivo de símbolos comprimido no es válido.</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>No se puede crear un directorio temporal de símbolos en %1: %2</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>No se pudo descomprimir el archivo de símbolos.</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>Los símbolos comprimidos requieren Windows.</translation>
+    </message>
+    <message>
+        <source>Cannot save the symbol file to %1: %2</source>
+        <translation>No se puede guardar el archivo de símbolos en %1: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FunctionEditDialog</name>
+    <message>
+        <source>Edit function</source>
+        <translation>Editar función</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this frame size</source>
+        <translation>NeverD no guarda este tamaño del marco</translation>
+    </message>
+    <message>
+        <source>&amp;Name of function</source>
+        <translation>&amp;Nombre de la función</translation>
+    </message>
+    <message>
+        <source>Analysis decodes where the function ends</source>
+        <translation>El análisis determina dónde termina la función</translation>
+    </message>
+    <message>
+        <source>&amp;Start address</source>
+        <translation>Dirección de &amp;inicio</translation>
+    </message>
+    <message>
+        <source>&amp;End address</source>
+        <translation>Dirección de &amp;fin</translation>
+    </message>
+    <message>
+        <source>&amp;Choose…</source>
+        <translation>&amp;Elegir…</translation>
+    </message>
+    <message>
+        <source>Function color</source>
+        <translation>Color de la función</translation>
+    </message>
+    <message>
+        <source>&amp;Default</source>
+        <translation>&amp;Predeterminado</translation>
+    </message>
+    <message>
+        <source>&amp;Color</source>
+        <translation>&amp;Color</translation>
+    </message>
+    <message>
+        <source>Enter size of (in bytes)</source>
+        <translation>Introduzca el tamaño (en bytes)</translation>
+    </message>
+    <message>
+        <source>Local &amp;variables area</source>
+        <translation>Área de &amp;variables locales</translation>
+    </message>
+    <message>
+        <source>Saved &amp;registers</source>
+        <translation>&amp;Registros guardados</translation>
+    </message>
+    <message>
+        <source>Only x86 functions pop their arguments</source>
+        <translation>Solo las funciones x86 retiran sus argumentos de la pila</translation>
+    </message>
+    <message>
+        <source>&amp;Purged bytes</source>
+        <translation>Bytes &amp;purgados</translation>
+    </message>
+    <message>
+        <source>Frame pointer &amp;delta</source>
+        <translation>&amp;Delta del puntero de marco</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this flag</source>
+        <translation>NeverD no guarda este indicador</translation>
+    </message>
+    <message>
+        <source>D&amp;oes not return</source>
+        <translation>N&amp;o retorna</translation>
+    </message>
+    <message>
+        <source>Analysis ends every call to the function</source>
+        <translation>El análisis termina cada llamada a la función</translation>
+    </message>
+    <message>
+        <source>&amp;Far function</source>
+        <translation>Función &amp;lejana</translation>
+    </message>
+    <message>
+        <source>Only 16-bit x86 code has far functions</source>
+        <translation>Solo el código x86 de 16 bits tiene funciones lejanas</translation>
+    </message>
+    <message>
+        <source>&amp;Library func</source>
+        <translation>Función de &amp;biblioteca</translation>
+    </message>
+    <message>
+        <source>Static func</source>
+        <translation>Función estática</translation>
+    </message>
+    <message>
+        <source>&amp;BP based frame</source>
+        <translation>&amp;Marco basado en BP</translation>
+    </message>
+    <message>
+        <source>BP e&amp;quals to SP</source>
+        <translation>BP i&amp;gual a SP</translation>
+    </message>
+    <message>
+        <source>Fuzzy SP</source>
+        <translation>SP impreciso</translation>
+    </message>
+    <message>
+        <source>Outlined code</source>
+        <translation>Código extraído</translation>
+    </message>
+    <message>
+        <source>O&amp;K</source>
+        <translation>&amp;Aceptar</translation>
+    </message>
+    <message>
+        <source>DEFAULT</source>
+        <translation>PREDETERMINADO</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancelar</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DwarfPromptDialog</name>
+    <message>
+        <source>DWARF info found</source>
+        <translation>Se encontró información DWARF</translation>
+    </message>
+    <message>
+        <source>Load DWARF debug information?</source>
+        <translation>¿Cargar la información de depuración DWARF?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
     </message>
 </context>
 </TS>

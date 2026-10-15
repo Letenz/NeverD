@@ -11,11 +11,14 @@ EXPORTS
   ZwDeleteValueKey
   ZwDeleteKey
   ZwClose
+  RtlGetVersion
+  RtlCaptureContext
   RtlInitUnicodeString
   ExAllocatePool
   NtQuerySystemInformation
   ZwQuerySystemInformation
   ExAllocatePoolWithTag
+  ExFreePool
   ExFreePoolWithTag
   IoCreateDevice
   IoCreateSymbolicLink
@@ -60,6 +63,9 @@ EXPORTS
   DbgPrint
   DbgPrintEx
   MmGetSystemRoutineAddress
+  MmIsAddressValid
+  KeRegisterBugCheckReasonCallback
+  KeDeregisterBugCheckReasonCallback
   RtlCopyUnicodeString
   RtlCompareUnicodeString
   RtlEqualUnicodeString
@@ -79,3 +85,44 @@ EXPORTS
   IoGetCurrentProcess
   KeStackAttachProcess
   KeUnstackDetachProcess
+  RtlInitAnsiString
+  RtlInitString
+  RtlAppendUnicodeToString
+  RtlAppendUnicodeStringToString
+  RtlPrefixUnicodeString
+  RtlIntegerToUnicodeString
+  RtlUnicodeStringToInteger
+  PsGetCurrentProcessId
+  PsGetProcessId
+  PsGetCurrentProcess
+  PsGetCurrentThread
+  KeGetCurrentThread
+  PsGetCurrentThreadId
+  PsGetThreadId
+  RtlAnsiStringToUnicodeString
+  RtlUnicodeStringToAnsiString
+  RtlFreeUnicodeString
+  RtlFreeAnsiString
+  MmGetPhysicalMemoryRanges
+  RtlInitUnicodeStringEx
+  RtlCopyString
+  RtlEqualString
+  RtlCompareString
+  RtlTimeToTimeFields
+  RtlTimeFieldsToTime
+  RtlStringFromGUID
+  RtlGUIDFromString
+  ExInterlockedInsertHeadList
+  ExInterlockedInsertTailList
+  ExInterlockedRemoveHeadList
+  ExInterlockedPushEntryList
+  ExInterlockedPopEntryList
+  ExInterlockedAddUlong
+  ExInterlockedAddLargeInteger
+  KeInitializeSpinLock
+  InitializeSListHead
+  ExpInterlockedPushEntrySList
+  ExpInterlockedPopEntrySList
+  ExpInterlockedFlushSList
+  ExQueryDepthSList
+  FirstEntrySList

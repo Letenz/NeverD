@@ -10,7 +10,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "DriverCPUID.h"
+#include "DriverLoaderViewJSON.h"
+#include "DriverPhysicalInventoryJSON.h"
 #include "DriverSchedulingJSON.h"
+#include "DriverVaShadowQueryJSON.h"
+#include "DriverVersionQueryJSON.h"
 
 #include "neverd/emulation/DriverReportFields.h"
 #include "neverd/emulation/DriverSession.h"
@@ -773,6 +777,21 @@ std::string driverResultJSON(const DriverResult &Result) {
   if (Result.Configuration.Scheduling)
     (*Root[field::Configuration].getAsObject())[driver_scheduling::Scheduling] =
         driverSchedulingJSON(*Result.Configuration.Scheduling);
+  if (Result.Configuration.LoaderView)
+    (*Root[field::Configuration].getAsObject())[field::LoaderView] =
+        driver_loader_view::toJSON(*Result.Configuration.LoaderView);
+  if (Result.Configuration.KernelVaShadowQuery)
+    (*Root[field::Configuration].getAsObject())[field::KernelVaShadowQuery] =
+        driver_va_shadow_query::toJSON(
+            *Result.Configuration.KernelVaShadowQuery);
+  if (Result.Configuration.VersionQuery)
+    (*Root[field::Configuration].getAsObject())[field::VersionQuery] =
+        driver_version_query::toJSON(*Result.Configuration.VersionQuery);
+  if (Result.Configuration.PhysicalMemoryInventory)
+    (*Root[field::Configuration]
+          .getAsObject())[field::PhysicalMemoryInventory] =
+        driver_physical_inventory::toJSON(
+            *Result.Configuration.PhysicalMemoryInventory);
   if (Result.Fault) {
     const auto &Fault = *Result.Fault;
     llvm::json::Object Item{

@@ -17,6 +17,7 @@
 
 namespace neverd::emulation::darwin_model {
 llvm::Error validateFileOptions(const DarwinFileOptions &Options);
+bool validFileSystemSnapshot(const DarwinFileSystemSnapshot &Snapshot);
 bool validExtendedAttributeName(llvm::StringRef Name);
 bool ordinaryExtendedAttributeName(llvm::StringRef Name);
 
@@ -30,7 +31,8 @@ public:
   llvm::Expected<std::optional<ServiceResult>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ProcessResult &Result,
-         const std::optional<DarwinSystemOptions> &System = std::nullopt);
+         const std::optional<DarwinSystemOptions> &System = std::nullopt,
+         const std::optional<DarwinTimeOptions> &Time = std::nullopt);
   struct Mapping {
     llvm::ArrayRef<uint8_t> Bytes;
     /// The VM owner retains this lease until every mapped range is unmapped.
@@ -65,6 +67,29 @@ private:
     RenameDirectoryTarget
   };
   enum class Subject { Real, Effective };
+  enum class SynchronizationKind { File, Data, Full, Barrier };
+  enum class AuthorizationPurpose {
+    Query,
+    ModeSearch,
+    ModeChange,
+    OwnershipSearch,
+    OwnershipChange,
+    TimestampSearch,
+    TimestampChangeExplicit,
+    TimestampChangeCurrent,
+    FileSystemSearch
+  };
+  struct OwnershipRequest {
+    uint32_t UID;
+    uint32_t GID;
+  };
+  enum class LookupAuthorization {
+    Query,
+    Mode,
+    Ownership,
+    Timestamp,
+    FileSystem
+  };
   using Authorization = std::variant<std::monostate, uint32_t, const char *>;
   // Retaining a terminal link and refusing required expansion are separate
   // namei policies. AT_SYMLINK_NOFOLLOW_ANY uses both; ordinary open uses only
@@ -105,9 +130,13 @@ private:
     const DarwinFileMetadata *Metadata = nullptr;
     AttributeState ExtendedAttributes;
     std::optional<DarwinFileMetadata> CurrentMetadata;
+    const DarwinFileTime *ModeTime = nullptr;
+    const DarwinFileTime *OwnershipTime = nullptr;
+    const DarwinFileTime *TimestampTime = nullptr;
     uint32_t DirectoryEntrySize = 0;
     const DarwinFileTime *MutationTime = nullptr;
     const DarwinDirectoryContents *Snapshot = nullptr;
+    const DarwinFileSystemSnapshot *FileSystem = nullptr;
     const DarwinDirectoryEnumerationPolicy *EnumerationPolicy = nullptr;
     /// Bulk authorization belongs to an initial object, never its children.
     bool BulkAttributes = false;
@@ -160,6 +189,15 @@ private:
     AttributeState ExtendedAttributes;
     std::optional<DarwinFileMetadata> CurrentMetadata;
     const DarwinFileMutationPolicy *Policy = nullptr;
+    const DarwinFileTime *ModeTime = nullptr;
+    const DarwinFileTime *OwnershipTime = nullptr;
+    const DarwinFileTime *TimestampTime = nullptr;
+    const DarwinFileSystemSnapshot *FileSystem = nullptr;
+    bool AdvisoryLocks = false;
+    bool Synchronization = false;
+    bool DataSynchronization = false;
+    bool FullSynchronization = false;
+    bool BarrierSynchronization = false;
     std::optional<llvm::BitVector> Allocated;
     bool Writable = false;
     bool MetadataInvalidated = false;
@@ -174,9 +212,11 @@ private:
   struct LinkNode : NamedObject {
     llvm::ArrayRef<uint8_t> Initial;
     std::optional<std::vector<uint8_t>> CreatedTarget;
+    const DarwinFileSystemSnapshot *FileSystem = nullptr;
     const DarwinFileMetadata *Metadata = nullptr;
     AttributeState ExtendedAttributes;
     std::optional<DarwinFileMetadata> CurrentMetadata;
+    const DarwinFileTime *OwnershipTime = nullptr;
     const DarwinFileTime *MutationTime = nullptr;
     bool Created = false;
     bool MetadataInvalidated = false;
@@ -200,6 +240,7 @@ private:
   using FileEntry = NamedEntry<Contents>;
   using LinkEntry = NamedEntry<LinkNode>;
   enum class DirectoryIteration { None, Entries, Bulk };
+  enum class AdvisoryLock { None, Shared, Exclusive };
   struct Description {
     Kind Type;
     llvm::ArrayRef<uint8_t> Input;
@@ -217,6 +258,7 @@ private:
     DirectoryIteration Iteration = DirectoryIteration::None;
     uint64_t BulkCursor = 0;
     bool BulkEOF = false;
+    AdvisoryLock Lock = AdvisoryLock::None;
     llvm::ArrayRef<uint8_t> bytes() const {
       return File ? File->bytes() : Link ? Link->bytes() : Input;
     }
@@ -261,6 +303,8 @@ private:
   uint64_t NextCreatedInode = 0;
   uint16_t CurrentUmask = 0;
   std::optional<uint64_t> StorageUsed;
+  /// Selected immutable snapshots; the selection itself belongs to one process.
+  std::vector<const DarwinFileSystemSnapshot *> MountCache;
   uint32_t FixedEntries = 0;
   uint32_t AttributeSlots = 0;
   std::shared_ptr<DirectoryNode> CurrentDirectory;
@@ -282,13 +326,36 @@ private:
   bool queryEnvironment() const;
   const char *authorizationScope() const;
   std::optional<bool> groupMembership(uint32_t GID, Subject User) const;
-  Authorization authorize(const DarwinFileMetadata *Metadata, uint32_t Actions,
-                          Subject User) const;
-  llvm::Expected<Lookup> resolvePath(uint64_t Address, uint32_t DirectoryFD,
-                                     LookupMode Mode = LookupMode::Existing,
-                                     LinkPolicy Links = {true, false},
-                                     bool CheckDirectoryPrefix = true,
-                                     Subject User = Subject::Real);
+  Authorization
+  authorize(const DarwinFileMetadata *Metadata, uint32_t Request, Subject User,
+            AuthorizationPurpose Purpose = AuthorizationPurpose::Query,
+            std::optional<OwnershipRequest> Ownership = std::nullopt) const;
+  llvm::Expected<Lookup>
+  resolvePath(uint64_t Address, uint32_t DirectoryFD,
+              LookupMode Mode = LookupMode::Existing,
+              LinkPolicy Links = {true, false},
+              bool CheckDirectoryPrefix = true, Subject User = Subject::Real,
+              LookupAuthorization Scope = LookupAuthorization::Query);
+  llvm::Expected<std::optional<ServiceResult>>
+  changeMode(ServiceKind Service, const ProcessServiceEvent &Event,
+             ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  changeOwnership(ServiceKind Service, const ProcessServiceEvent &Event,
+                  ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  changeTimes(ServiceKind Service, const ProcessServiceEvent &Event,
+              ProcessResult &Result,
+              const std::optional<DarwinTimeOptions> &Time);
+  llvm::Expected<std::optional<ServiceResult>>
+  fileSystemStatus(ServiceKind Service, const ProcessServiceEvent &Event,
+                   ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  enumerateFileSystems(const ProcessServiceEvent &Event, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  advisoryLock(const ProcessServiceEvent &Event, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  synchronize(SynchronizationKind Purpose, const ProcessServiceEvent &Event,
+              ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD, uint32_t Mode,
        ProcessResult &Result);

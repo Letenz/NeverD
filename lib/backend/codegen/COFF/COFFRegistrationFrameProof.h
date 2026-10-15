@@ -26,6 +26,7 @@ class CatchPadInst;
 class Function;
 class Instruction;
 class StoreInst;
+class Value;
 } // namespace llvm
 
 namespace neverd {
@@ -34,15 +35,24 @@ struct BinaryImage;
 
 namespace neverd::coff_registration {
 
+struct RegistrationSEHExceptionContract;
+struct RegistrationSEHJumpContract;
+struct RegistrationSEHScopeState;
+
 struct RegistrationFrameBorrow {
   int64_t Offset = 0;
   std::vector<RegistrationObjectExtent> Reads;
   std::vector<RegistrationObjectExtent> Writes;
-  /// Null selects the parent's logical frame. A callback borrow names its
-  /// independently authenticated private stack allocation.
-  const llvm::AllocaInst *Root = nullptr;
+  /// Null selects the parent's logical frame. An alloca selects a checked
+  /// callback stack; a catchpad selects its live reference exception object.
+  const llvm::Value *Root = nullptr;
   /// Nonzero selects the two-pointer stdcall CRT ABI and exact table identity.
   va_t ThrowInfoVA = 0;
+  /// Ordinary construction reads only values it initialized during the call.
+  /// These must-writes seed the normal edge, never an unwind edge.
+  bool Initializer = false;
+  uint32_t ScalarStackWords = 0;
+  std::vector<RegistrationObjectExtent> Initialized;
 };
 struct RegistrationRuntimeAccess {
   int32_t Offset = 0;
@@ -94,7 +104,10 @@ llvm::Error validateFramePrivacy(
     const std::set<const llvm::Instruction *> &ChainProtocolReads = {},
     va_t SecurityCookieVA = 0,
     llvm::ArrayRef<ExceptionAddressRange> ImmutableImageRanges = {},
-    const RegistrationCxxFrameContract *Cxx = nullptr);
+    const RegistrationCxxFrameContract *Cxx = nullptr,
+    const RegistrationSEHExceptionContract *SEH = nullptr,
+    const RegistrationSEHJumpContract *Jumps = nullptr,
+    const RegistrationSEHScopeState *Scopes = nullptr);
 
 } // namespace neverd::coff_registration
 

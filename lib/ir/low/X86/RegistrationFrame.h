@@ -25,16 +25,21 @@ struct RegistrationRealignedFrame;
 
 namespace neverd::registration_state {
 
-/// This intrinsic preserves normal-path frame facts. The source operation
-/// and its pending x87 exception dispatch remain part of the original code.
-bool isCanonicalX87Wait(const LowOp &Op);
-
 /// A runtime callback owns a separate invocation stack. Its offsets cannot
 /// alias either source-frame coordinate, even at the same displacement.
 struct CallbackFrameAddress {
   va_t Entry = InvalidVA;
   int32_t Offset = 0;
   auto operator<=>(const CallbackFrameAddress &) const = default;
+};
+
+/// Read-only runtime storage belonging to one SEH search-filter invocation.
+/// These coordinates are independent of the establisher and callback stacks.
+struct SEHExceptionAddress {
+  enum class Kind : uint8_t { Pointers, Record } Storage = Kind::Pointers;
+  va_t Filter = InvalidVA;
+  int32_t Offset = 0;
+  auto operator<=>(const SEHExceptionAddress &) const = default;
 };
 
 /// Values in the PE32 address domain. Offset names the runtime establisher;
@@ -65,6 +70,22 @@ struct FrameValue {
   /// Runtime exception pointers keep the catch invocation that owns them.
   /// Two live reference catches can have the same object-relative offset.
   std::optional<std::pair<uint32_t, uint32_t>> ExceptionObject;
+  std::optional<SEHExceptionAddress> SEHException;
+  /// A borrowed live jump buffer is opaque to an inspected callee. Only an
+  /// authenticated resume consumes it; source memory/arithmetic gets no
+  /// establisher coordinate from this identity.
+  std::optional<va_t> JumpCapture;
+  /// ExceptionCode/ExceptionFlags may contain arbitrary address bits, so they
+  /// retain alias taint. Their scalar value is independent of regenerated
+  /// frame placement. Mixing with any other frame provenance drops this fact.
+  bool FrameOnlyFromSEHScalar = false;
+
+  static FrameValue taint(bool MayBeFrame, bool SEHScalar = false) {
+    FrameValue Result;
+    Result.MayBeFrame = MayBeFrame;
+    Result.FrameOnlyFromSEHScalar = MayBeFrame && SEHScalar;
+    return Result;
+  }
 
   static FrameValue frame(int32_t Offset) { return {Offset, {}, false, true}; }
   static FrameValue entryFrame(int32_t Offset) {
@@ -88,10 +109,20 @@ struct FrameValue {
     Result.ExceptionObject = {Try, Catch};
     return Result;
   }
+  static FrameValue sehException(SEHExceptionAddress Address) {
+    FrameValue Result;
+    Result.MayBeFrame = true;
+    Result.SEHException = Address;
+    return Result;
+  }
   auto operator<=>(const FrameValue &) const = default;
 };
 
 FrameValue join(FrameValue Left, const FrameValue &Right);
+
+/// A checked PE32 scalar call defines either its instruction-local result or
+/// the complete physical EAX. Other register outputs carry no return authority.
+bool hasX86ScalarCallOutput(const LowOp &Op);
 
 struct FrameState {
   std::array<FrameValue, 8> Registers;
@@ -106,6 +137,7 @@ struct FrameState {
   std::map<int32_t, FrameValue> CallbackCells;
   std::set<int32_t> InitializedCallbackBytes;
   std::optional<va_t> CallbackEntry;
+  std::optional<va_t> SEHFilterEntry;
   size_t cellCount() const {
     return Cells.size() + EntryCells.size() + CallbackCells.size() +
            InitializedCallbackBytes.size();
@@ -117,6 +149,9 @@ struct FrameState {
 
   bool merge(const FrameState &Other);
   void forgetCellValues();
+  /// A possible write drops exact values but retains pointer provenance from
+  /// paths on which the store does not execute. Definite stores use store().
+  void forgetCellValues(int32_t Offset, uint32_t Width);
 
   void store(int32_t Offset, uint16_t Width, const FrameValue &Value);
 
@@ -129,6 +164,11 @@ struct FrameState {
   /// pointer retained from an earlier callback. Old pointers keep only taint.
   void enterCallback(va_t Entry);
   void leaveCallback();
+  void enterSEHFilter(va_t Entry, int32_t ExceptionPointersOffset);
+  /// Only the record link and the scalar code/flags are modeled. An absent
+  /// value means this invocation, field, or access width has no authority.
+  std::optional<FrameValue> sehExceptionLoad(const SEHExceptionAddress &Address,
+                                             uint16_t Width) const;
   bool callbackMemoryIsPrivate(const CallbackFrameAddress &Address,
                                uint16_t Width, bool Read = false) const;
   /// Returning to the runtime requires this invocation's untouched return

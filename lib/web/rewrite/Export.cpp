@@ -11,6 +11,8 @@
 
 #include "Export.h"
 
+#include "../platform/WindowsFile.h"
+
 #include "neverd/web/Artifact.h"
 #include "neverd/web/Error.h"
 #include "neverd/web/SourceRewrite.h"
@@ -36,7 +38,29 @@ struct Export::Impl {
                                     "receipt.json"};
   unsigned Next = 0;
   bool Committed = false;
-#ifndef _WIN32
+#ifdef _WIN32
+  win::Destination Destination;
+  std::array<win::Handle, 3> Handles;
+  ~Impl() {
+    if (Committed || !Destination.Directory)
+      return;
+    for (auto &File : Handles) {
+      if (File) {
+        try {
+          win::remove(File.get());
+        } catch (const Error &) {
+        }
+        File = {};
+      }
+    }
+    // Removal acts on the created directory object. Foreign entries make it
+    // nonempty and survive; no caller pathname is traversed during rollback.
+    try {
+      win::remove(Destination.Directory.get());
+    } catch (const Error &) {
+    }
+  }
+#else
   struct FD {
     int Value = -1;
     FD() = default;
@@ -84,7 +108,7 @@ struct Export::Impl {
 
 Export::Export(std::string_view Path) : State(std::make_unique<Impl>()) {
 #ifdef _WIN32
-  throw Error("export_writer_unavailable");
+  State->Destination = win::newDirectory(Path, win::DirectoryAccess::Remove);
 #else
   if (Path.empty() || Path.size() > 32768 || Path.find('\0') != Path.npos)
     throw Error("invalid_path");
@@ -113,9 +137,6 @@ Export::Export(std::string_view Path) : State(std::make_unique<Impl>()) {
 Export::~Export() = default;
 
 void Export::write(ExportFile File, std::string_view Bytes) {
-#ifdef _WIN32
-  throw Error("export_writer_unavailable");
-#else
   const auto Index = static_cast<unsigned>(File);
   if (State->Committed || Index != State->Next || Index >= Impl::Names.size())
     throw Error("source_rewrite_export_invalid_order");
@@ -123,6 +144,26 @@ void Export::write(ExportFile File, std::string_view Bytes) {
                                                   : MaxSourceRewriteBytes;
   if (Bytes.size() > Budget)
     throw Error("source_rewrite_export_byte_budget_exceeded");
+#ifdef _WIN32
+  auto &F = State->Handles[Index];
+  F = win::createFile(State->Destination.Directory.get(), Impl::Names[Index]);
+  win::writeAt(F.get(), Bytes, 0);
+  win::flush(F.get());
+  llvm::SHA256 Digest;
+  std::array<char, 65536> Buffer;
+  for (uint64_t At = 0; At < Bytes.size();) {
+    const auto N =
+        win::readAt(F.get(), Buffer.data(),
+                    std::min<uint64_t>(Buffer.size(), Bytes.size() - At), At);
+    if (!N)
+      throw Error("export_io_error");
+    Digest.update(llvm::StringRef(Buffer.data(), size_t(N)));
+    At += N;
+  }
+  if (win::inspect(F.get()).size() != Bytes.size() ||
+      llvm::toHex(Digest.final(), true) != sha256(Bytes))
+    throw Error("export_verification_failed");
+#else
   State->requireLocation();
   auto &F = State->Handles[Index];
   F.Value = openat(State->Directory.Value, Impl::Names[Index],
@@ -161,22 +202,20 @@ void Export::write(ExportFile File, std::string_view Bytes) {
       !State->at(State->Directory.Value, Impl::Names[Index],
                  State->Files[Index]))
     throw Error("export_verification_failed");
-  ++State->Next;
 #endif
+  ++State->Next;
 }
 
 void Export::commit() {
-#ifdef _WIN32
-  throw Error("export_writer_unavailable");
-#else
   if (State->Committed || State->Next != Impl::Names.size())
     throw Error("source_rewrite_export_incomplete");
+#ifndef _WIN32
   State->requireLocation();
   for (unsigned I = 0; I < Impl::Names.size(); ++I)
     if (!State->at(State->Directory.Value, Impl::Names[I], State->Files[I]))
       throw Error("source_rewrite_export_file_changed");
-  State->Committed = true;
 #endif
+  State->Committed = true;
 }
 
 } // namespace neverd::web::rewrite

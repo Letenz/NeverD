@@ -39,8 +39,8 @@ LinuxFiles::openProcessDescriptor(uint32_t PID, uint32_t Flags,
   const uint32_t FD = nextDescriptor();
   if (FD == Options->DescriptorLimit)
     return uint64_t(0) - TooManyFiles;
-  Descriptors.emplace(
-      FD, ProcessDescriptor{PID, Flags | uint32_t(OpenCloseOnExec)});
+  Descriptors.emplace(FD, std::make_shared<Descriptor>(ProcessDescriptor{
+                              PID, Flags | uint32_t(OpenCloseOnExec)}));
   return FD;
 }
 } // namespace neverd::emulation::linux_model

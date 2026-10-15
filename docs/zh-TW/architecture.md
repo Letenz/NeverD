@@ -13,6 +13,12 @@ NeverD 自有程式碼；LLVM、Capstone 與 Unicorn 子模組各自維護內部
 
 `sourcePatchTargetTriple` 從映像確定 ARM 指令模式、ELF 浮點 ABI 與 Mach-O CPU 子類型。`COFFPatchObject` 和 `MachOPatchObject` 依物件自身符號、輔助／區段定義及展開記錄驗證範圍，不虛構 MC 識別碼；格式安裝器負責註冊實際展開表。
 
+`SourcePatchCompiler` 在啟動前限制 NeverC 為純 C；C++ 由 Clang 或相符的 ELF GCC 驅動負責。`validateDynCodePatchImage` 將 hosted C 稽核綁定至真實物件、載荷摘要及精確程式碼與入口配置。格式安裝器註冊真實展開記錄；ARM64 Clang FH3 保留載入器的 xdata 範圍及 MC 的 funclet/FuncInfo 群組，Mach-O 可使用完整原生 compact 記錄。
+
+`CompiledImage` 在同一入口正規化 AArch64 ELF 冒號重定位標記，供即時解析與記錄後的 fixup 共用。ELF 解析器與載入器重定位發布共用精確 ABS/GOT 身分，TLS 與未知形式仍明確拒絕。COFF 原生函式範圍可採用解碼後的執行階段記錄；hosted 程式碼須具備完整的編譯器展開覆蓋。
+
+恢復後的間接呼叫參數保留獨立的整數暫存器組、浮點暫存器組及其餘堆疊位元組。每個堆疊值也保留寫入時的偏移，因此比堆疊槽窄的值只佔槽的低位，其餘位元組是填充：-O0 的 x86-64 程式碼以 `mov [rsp+8], r10d` 在 8 位元組堆疊槽中傳遞一個 `int`。`LLVMCallContract` 在程式碼產生及 LLVM 解析目標後使用同一個繫結器：多收集的暫存器不會擠占另一組，封裝的 32 位元寫入依位元組組合成被呼叫函式的完整堆疊槽，較窄的值只填入自己的堆疊槽，沒有寫入任何值的堆疊槽則拒絕繫結。回呼表不能以推測的物件指標覆蓋已恢復的第一個實際參數。AArch64 以複製初始化的跳轉表須驗證原生 BL／匯入身分、MOVZ 長度、ADRP／ADD 來源及完整唯讀範圍；發布和跳轉表證明重播檢查同一份證據。
+
 ## 系統邊界
 
 ```mermaid
@@ -61,6 +67,10 @@ Objective-C 接收物件事實區分方法入口的 self 與確定的類別參�
 帶明確物件型別的成員變數可透過最多八次完整寬度讀取延伸接收物件證明。每一步記錄執行期偏移槽、偏移值寬度，以及機器存取使用的固定位元組偏移。固定偏移必須仍符合目前配置；執行期偏移參照則可隨欄位移動。載入器核對已記錄的類別繼承鏈與欄位宣告。部分讀取、裸 id、Block、僅協定型別、歧義儲存和未知指標基址都不能產生類別事實；原始碼驗證會依據目前映像重新檢查整條路徑。這些事實描述宣告型別，不代表物件身分，也不允許刪除記憶體操作。
 
 載入器驗證 Darwin 常數字串、整數物件、陣列和有序字典組成的有界無環圖。容器欄位與每條邊都需要不可變映射儲存，以及無歧義的匯入或重定位證據；不支援的編碼、循環和不完整物件圖會明確失敗。原始碼繫結重新驗證物件圖及傳入指標槽。產生的輔助函式保留整數位元模式、子物件順序和共用位址，並重用既有字串身分。容器槽透過 acquire/release 發布機制只初始化一次，初始化僅呼叫已驗證的子物件輔助函式。每個輔助函式自帶子函式宣告，使獨立還原的方法可以共用同一定義。可攜式測試涵蓋損壞輸入與證明預算；原生編譯器樣例對照原始方法檢查內容、別名、複製身分和並行初始化。
+
+## x64 x87 上下文所有權
+
+在 Win64 的 x64 映像（其 C ABI 從不傳遞 x87 值）提升中，`ir/X87Context.h` 統一定義編碼准入，`CFGBuilderX86Fpu` 管理函式內的可變上下文，保存 CW、SW、執行時 TOP、簡化標籤與八個原始 binary80 載荷。函式入口及獨立入口擷取狀態；普通邊在目標入口重新擷取前發布狀態。呼叫與擴充狀態保存/恢復會匯出並更新上下文，沒有本地 x87 指令的包裝函式亦適用。入口回邊保留既有上下文。LLVM、HighC、LLVMC 使用相同契約，HighC 採用具名助手和固定對齊儲存。MMX 連接實體別名，EMMS 清空標籤。具體執行要求經過驗證的狀態與記憶體，拒絕未知效果，僅明確的原生參考模式允許依實作而異的結果。上述靜態 TOP/標籤證明仍適用於 x86-32 與 System V x64，其 long double 參數與 st0 回傳值仍是具型別的值；`x87ContextOwnsStack` 依映像選擇模型，`BinaryImage::X87ContextOverride` 可明確指定其中之一。這些 x64 回歸不代表所有 CPU、指令、故障優先順序或來源語言浮點回傳 ABI 都已驗證。
 
 ## IR 表示與路徑
 
@@ -287,6 +297,12 @@ LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，
 
 `lib/pipeline/Pipeline.cpp` 是路徑選擇的事實來源。特定表示的邏輯應留在其
 所屬 IR 或 backend 程式庫；pipeline 應編排元件，而不是吸收其演算法。
+
+## LLVM C 物件儲存
+
+`LLVMCStackAllocation` 在私有 C 複本統一管理帶數量和非入口堆疊配置，保留 DataLayout 配置步長、無號數量、對齊與執行位置。具副作用的私有呼叫在原指令處輸出一般 `__builtin_alloca`，檢查長度溢位並在額外位元組內對齊，因此 Clang/GCC 的配置存續到函式返回。入口單物件配置保留一般區域宣告。過寬數量、可伸縮儲存、非預設位址空間、inalloca/swifterror 和明確堆疊儲存/還原在正規化前拒絕；輸入 IR 的私有標記也拒絕，呼叫者 IR 不變。
+
+`LLVMCStorage` 統一保留區域物件、全域物件及其宣告的明確額外對齊。字串定義保留完整的 LLVM 陣列長度，包括尾端零位元組。LLVM 全域值在運算式和初始化器中代表位址；只有物件宣告和直接載入/儲存使用單純的 C 名稱。匯入資料綁定保留既有位址表示。
 
 ## 跨架構翻譯契約
 
@@ -1429,6 +1445,8 @@ Swift SDK Published 的 enclosing-instance 存取器保留四個指標載體：�
 
 Objective-C 原始碼匯出器對完整原生單元與各方法單元同時關閉 `CEmitterOptions::EmitRecordGuards` 與 `CEmitterOptions::UseUnalignedPointers`。精確寬度的位元組複製保留非對齊記憶體存取語意，並使產生的巨集不進入行動端剖析器；條件指令與修改巨集的指令仍被拒絕。
 
+解析器也會識別 C 產生器共享的完整固定 `ContractionPolicy` 指令區塊，保留原文供編譯使用，不求值任意條件指令。遭修改、截斷或包在額外條件中的版本仍不受支援。
+
 ## 有界目錄批次屬性
 
 DarwinFiles 負責共通屬性匯入、名稱/stat 有效性與紀錄編碼；DarwinDirectory 負責批次分組、明確物件授權與描述物件擁有的迭代/游標/EOF 狀態，與 getdirentries64 共用目前子項投影。dup 共用同一描述物件，零 seek 重設迭代契約。JSON 提供明確策略輸入，服務派送不推斷檔案系統觀察。
@@ -1447,12 +1465,170 @@ DarwinFiles 在 DarwinSelect.cpp 中匯入 Pselect 的 timespec 與訊號遮罩�
 
 `isCheckedX86SafeSEHHandlerReference` 使用既有 SafeSEH 解碼器、不可變的表與標頭位元組，以及具有重定位的 load-config 指標，驗證保留的 PE32 處理器入口。LLVM 在輸出任何函式本體前宣告此來源身分，包括分片省略的本體。表成員資格不證明語言 personality、可呼叫 ABI 或原生 EH 重建權限；各使用端仍執行獨立檢查。
 
+`proveLowSEHEstablisherFrame` 統一擁有 LowIR 與 SSA 使用的 Windows x64 父框架證明。它在有界查詢中檢查正規化展開動作、完整指令與 CFG 來源，以及所有可到達的受保護前綴；SSA 另外檢查轉換後的 ABI 效果。通過證明的處理器入口只提供固定 SP 座標，不還原已儲存的記憶體事實。一般 catch 傳回分析保留原有入口域；獨立的區域展開位址清單掃描已宣告的啟用根，不沿例外邊傳遞暫存器值。執行階段身分、確切接續用途與全模組排他性仍分別約束發布。
+
+每次整函式堆疊框架查詢只驗證一次不可變 CFG，並按處理常式索引受保護區塊；預算依實際存取的工作量扣減。SEH finally 回呼擁有獨立的呼叫堆疊，因此與 finally 共用入口的程式碼不能據此證明 except 主體的父框架 SP。
+
+一般內部返回必須同時保住被呼叫者的返回位址和父函式的入口返回位址。同一套可達寫入證明檢查兩種座標；仍允許寫入已證明配置的父函式區域空間。
+
+LLVM 發射器只在目前不可變的 MedFunc 內重用已完成、採用預設預算的堆疊槽查詢。入口 SP 要求與完整值身分分別限定答案。具有繫結值或共用預算的查詢不重用；重建可行邊或發射模組時清空快取，跨越重建的查詢不能發布結果。
+
+`_local_unwind2` 使用無符號停止邊界：遇到 -1 哨兵或不高於請求邊界的層級就停止，即使父層級連結跳過了該索引。共用的 PE32 EH3 求解器合併實際停止層級，並且只合併經過的 finally 回呼的效果；零步展開保留傳入的登錄層級和堆疊框架記憶體事實。堆疊框架參數、執行階段欄位和回呼堆疊的既有證明仍然必須成立。
+
+`_local_unwind2` 的停止上界是數值運算元，而非作用域表索引。任何已知的 32 位元無符號上界都可用於證明零步退出；只有實際目前層級才索引作用域表。動態上界和無效目前層級仍無法獲得證明。
+
+`RegistrationScopeGraph` 統一 COFF 解析與 LowIR 的 EH3/EH4 索引及框架哨兵規則。狀態分析在發布事實前，重新檢查初始層級、指向先前記錄的父層級連結、處理器位址及過濾器/finally 角色。初始活動範圍保留框架哨兵；空表只允許該哨兵。指令位元組、可執行位址歸屬及框架安裝仍分別證明。 處理器及過濾器位址亦須符合 PE32 指標寬度。
+
 核心欄位初始化由獨立的實體 RAM 記錄管理，權限驗證維持純檢查。成功的主機寫入、已提交的受檢交易及精確的軟體寫後事件，只確認實際提交的位元組，包括同值寫入及故障前已完成的寫入。暫時寫入、回復、提交前取消的嘗試及不透明失效不建立初始化證據。自有位圖隨保留的實體切片跨別名生效，查詢無須讀取客體 RAM。軟體事件只證明所報告的寫入，不代表完整寫入涵蓋；具型別的模型服務保留各自明確的初始化契約。
 
 `MemoryWriteWitness` 保留精確的實體配置切片，與 RAM reservation 共用已提交寫入的失效機制。同值、部分及別名寫入會使記錄失效；無法完整追蹤寫入的執行會保守地撤銷證明。建立和查詢要求實體擁有者已停止。驅動觀察在映像複製後、工作階段修正前綁定已驗證的 DIR64 欄位，只有映射配置和寫入歷史仍相符時才保留載入事實。這些事實不涵蓋產生的指標，也不提供原生核心狀態重建器。
 
 驅動程式載入器以已驗證檔案的 SHA-256 繫結重定位事實。PE 重建使用這些自有事實，在輸出診斷 DIR64 記錄前排除匯入修復或中繼資料格式化替換的欄位。此層不能推斷生成指標的重定位，也不能解除核心執行階段拒絕。
 
-`isCanonicalX87Wait` 為一般 registration 轉移和經驗證的 local-finally 返回提供相同的正常路徑框架保留規則。FWAIT 操作與例外分派保持完整；其他 intrinsic 和畸形形式仍是不透明操作。此規則不授予非區域 finally 退出或原生還原證明。
+`isX86FramePreservingIntrinsic` 為一般 registration 轉移和經驗證的 local-finally 返回統一檢查 FWAIT、MXCSR 與浮點算術形式。原始操作與例外分派保持完整；不支援的 intrinsic 和畸形形式仍是不透明操作。此規則不授予非區域 finally 退出或原生還原證明。
 
 受檢查的 KVM x64 執行透過 `withExecutionOwner` 將完整指令迴圈交給私有 vCPU 執行緒。准入、RAM 交易、回呼與預算仍由此迴圈處理；各次原生執行保留獨立控制和例外優先順序。呼叫端監控執行中的原生入口，確認取消完成後才返回。CPU 回呼在私有執行緒執行，不能依賴呼叫端的執行緒區域狀態；獨立原生入口的完成回呼仍在其呼叫執行緒執行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 與 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 驗證所有權及實際取消；此後端變更不代表恢復驅動已通過認證。
+
+直譯器特化保留客體位址的全部位元。發布時，標籤配置器合併已探索的原生指令範圍與入口錨點，再選取不重疊的連續範圍作為殘餘 CFG 標籤，並檢查所有範圍運算。InvalidVA 仍是哨兵值。只有控制身分會改變；CALL 壓入堆疊的返回值、一般資料和記憶體位址保留原始 64 位元。
+
+
+`RawEnvironmentRequirementV1` 以具有副作用的 LowIR 操作保留明確的原始分析環境相依性。共用結構規定完整 ID 和四個 64 位元純量摘要字。一般執行、原始碼轉換及靜態證明入口明確拒絕它，包括格式錯誤的編碼和不可達或被遮蔽的位置。通用符號執行在修改狀態前拋出例外，不把環境要求近似為未知值。此載體本身不提供環境收據或原始碼／原生憑證。
+
+`X64CodeRegions` 與 `X64ImportBindings` 為二進位特化加入明確的原始環境。完整固定 PE 負責整個映像範圍；額外不可變程式碼須與它分離，並沿用嚴格解碼、符號執行、求解器及真實 CALL/RET 堆疊語義。外部可寫資料保持未知。呼叫方提供機器、堆疊與穩定繫結前提。持有宣告的回執將原始選項、映像識別、完整圖與證據繫結至入口要求，包括未使用的宣告。準備工作與主映像共用預算，結果驗證使用獨立預期限額。完整性驗證不證明即時環境，也不提供原始碼或原生認證。
+
+`ProveStoreReturnSlotSeparation` 也能針對使用 64 位元位址的一般非堆疊框架寫入，逐一證明作用中的原生返回位址單元不受覆寫。每個完整的八位元組單元都必須在目前路徑下證明不重疊。僅保留通過證明之範圍聯集內既有的位元組；間隙、未獲證明的單元及其他記憶體區域仍依一般規則失效。證明與保留共用現有預算，不增加堆疊歸屬假設。
+
+`MaxFrameOffsetNormalizationWorkPerProof` 預設為零。啟用後，未完成的首次堆疊偏移查詢可使用既有 MBA 精確推導，相對於同一個根證明 64 位元偏移，並保留原始操作。這不提供可達性或記憶體歸屬事實，也不填入有限值域快取。每次嘗試依目前內容節點、運算元邊及常數的每個 64 位元區塊各計一單位，再加上 MBA 回報的測量工作，同時計入此限制與 `MaxOperations`；失敗嘗試仍計費。內部走訪、重建及取樣缺陷檢查不另行計量；最後的 `MaxSymbolicNodes` 檢查限制結果發布，而非配置峰值。 若精確化簡改變了運算式，但未直接顯露結構性偏移，一般堆疊偏移證明器會用新的編碼重試一次，保留相同路徑述詞、根及求解器設定，並沿用累計查詢額度及節點上限。重試停用再次化簡，也不快取結果。
+
+`MedCallingConvFP` 統一負責浮點／向量輸入的位元組需求。AND/OR 常數遮罩僅在唯一、有界的 SSA 常數證明下排除完全清零或取代的位元組，包括首寫版本為零的串接遮罩；缺失、歧義、載入或呼叫產生的遮罩保留輸入。浮點回傳暫存器的中間寫入仍是值傳遞；回傳讀取依據目前 CFG 中到達各 RETURN 的定義，未知路徑保守保留需求。恢復明確 ABI 運算元前，透過浮點回傳暫存器轉送的值也是 CALL 的可能讀取。向量暫存器以自身低位元組擴展（`vzeroupper`）時，只有它自己的輸入位元組算原地保留；從其他暫存器移入的位元組與其他寫入一樣會到達回傳。ARM32 暫存器定義涵蓋完整 D0-D31，與 D0-D7 參數組獨立。
+
+ELF 物件解析、原生重定位寫入與載入器來源證明共用欄位寬度表。AArch64 `PREL64` 使用八位元組，保留有號 `S + A - P` 與完整寬度的 REL 隱含加數。越界、寫入重疊及有號溢位會在發布前失敗。
+
+DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
+
+DarwinFiles extends its sole authorizer with typed OwnershipSearch and OwnershipChange and an explicit UID/GID request. DarwinOwnership.cpp owns chown16/fchown123/fchownat468 import and the atomic active UID/GID/ctime commit; DarwinServices only forwards. The shared path walker and statusMetadata owner supply actual current records. Target membership and change-derived TAKE_OWNERSHIP/WRITE_SECURITY decisions stay in the sole authorizer. Contents retains a separate initial ownership provider/time grant; both inactive IDs still require it and preserve every field. Mode/data/namespace/xattr/storage/VM grants remain independent, creation/name reuse never inherits authority and invalidated records remain unknown. Strict JSON uses the existing vocabulary/admission/time owners. Static query closures deny all57 other file routes before preflight. This ordinary environment excludes ACL/MAC/listeners/bypass/revocation/native leases and unmodeled setattr lifecycle; it does not establish general DAC or a complete macOS/iOS environment.
+
+
+## Darwin 普通檔案同步完成的歸屬
+
+DarwinFiles owns initial ordinary synchronization admission and stores an independent completion grant in Contents. DarwinSynchronization.cpp owns low32 FD lookup and immediate successful completion; DarwinServices only forwards and both raw entry numbers retain their report identity. The existing uncancelled single-thread profile supplies no deferred provider work or cancellation request, while normal versus nocancel XNU cancellation paths remain distinct outside it. Current descriptors select the object, so runtime names and open zero-name objects keep grants and created/reused objects do not. Data, metadata validity, cursors, flags, mode/ownership, locks, xattrs, namespace and VM owners remain independent and unchanged. Both static query domains close57 other logical routes before preflight and reject even empty declarations. This acknowledges a declared file integrity provider without a host storage flush, physical durability or guessed provider/wait/cancellation lifecycle.
+
+
+## Darwin independent data completion ownership
+
+DarwinFiles retains one ordinary-object admission and separate default-false file/data completion grants in Contents. DarwinSynchronization.cpp owns a typed File/Data purpose with one low32 FD lookup, kind/target ordering and independent environment/object diagnostics; DarwinServices only forwards. Fdatasync187 is a distinct Int kind, while fsync95/alias408 retain one file kind. DataSynchronization never supplies Synchronization and vice versa. Current descriptions select the grant through runtime names, duplicates and held zero-name objects; creation/reuse never inherits an initial grant and VM retention never revives a closed FD. The supplied immediate data provider acknowledges already committed successful data mutations with no deferred work or requested cancellation, without modifying any independent state owner or restoring invalid observations. Both static environments reject empty declarations and close57 other logical routes before preflight. XNU MNT_DWAIT and MNT_WAIT remain distinct operations; normal cancellation, provider failures, leases, waits, host flushing and physical durability are outside this bounded declaration.
+
+
+## Darwin created ordinary completion ownership
+
+DarwinFiles retains the single initial ordinary-object admission and complete creation transaction. Its shared completion admission requires CreationPolicy only when the selected CreatedRegularObjects flag is true. The shared generic set-provider parser owns both completion environments and advisory locks, optional strict Boolean and one input budget. Only successful regular create assigns each independent Contents grant; initial construction still uses only Objects membership, and directory/link constructors grant neither purpose. No path registry is authority. Current descriptions and object lifetime retain grants, while name reuse never inherits them and mapping cannot revive closed FDs. The existing DarwinSynchronization.cpp File/Data owner performs unchanged low32 FD, kind/target and provider decisions. File/data, metadata validity, bytes/allocation, namespace/FD/inode budgets, mode/ownership, xattrs, locks and VM remain independent. No new service or alias changes the52-route query closure. The existing FileWasWritten0x10000 write-history owner yields post-write F_GETFL65538 on this native/model workload. Completion preserves that whole status and introduces no new flag representation. This remains an immediate explicitly declared provider, not host flushing, physical durability or general Apple filesystem/framework semantics.
+
+
+## Darwin created advisory provider and persistent description status
+
+DarwinFiles keeps the single initial ordinary-object admission and complete creation transaction. One generic set-provider JSON parser and admission helper serves AdvisoryLocks, Synchronization and DataSynchronization, preserving optional strict created_regular_objects and one input budget. True requires complete CreationPolicy; only successful ordinary regular create assigns the fresh independent Contents grant. Initial Objects, existing O_CREAT, name reuse, directory/link constructors and other authorities never supply it. The current Description owns flock lock and persistent FileWasLocked0x4000 history. DarwinAdvisoryLocks.cpp sets history only after successful non-unlock acquisition; unlock and failures preserve existing history. F_GETFL observes it and the existing F_SETFL owner accepts it without changing its read-only history, access, or existing NONBLOCK/APPEND conversion. The shared mask preserves the existing symbolic ENOTTY25 path and opaque-stream zero result; it manufactures no history for either. Dup/fcntl/dup2 share descriptions; independent opens do not. Final descriptor close/replacement releases the lock even when mapping or temporary references retain Contents, and closed FD lookup remains9. Metadata/bytes/allocation/namespace budgets, mode/ownership/completion/xattr authority and unknown observations stay independent. No service/alias changes the52-route static query closure. Native/pinned-XNU proof qualifies this bounded immediate whole-file provider, not native host peers, blocking waits, revocation, leases or complete Apple frameworks.
+
+
+## Darwin created ordinary attribute ownership
+
+新建一般檔案可透過明確宣告分別取得權限修改與擁有者修改能力。兩個開關預設關閉，啟用時需要完整建立策略。既有物件保留各自宣告的授權；名稱重用不會轉移權限。成功修改使用指定的 mutation_time 作為虛擬 ctime。擁有者與群組均不修改時仍需提供器並保持所有位元組不變。中繼資料或群組成員資訊未知時仍明確拒絕。
+
+DarwinFiles keeps initial ordinary-object admission and the complete creation transaction authoritative. One common JSON provider header validates required objects and optional strict created_regular_objects across five independent providers; the timed-map helper retains both initial path/time formats. One shared creation-provider admission rule requires complete CreationPolicy for true. Only successful ordinary regular create assigns ModeTime and OwnershipTime independently to CreationPolicy.Mutation.Time before publication, with no new budget charge or rollback path. DarwinModes.cpp and DarwinOwnership.cpp retain current metadata, sole credential/membership authorization, carriers, observation preservation and provider execution. Initial fixed times remain independent. Object grants survive dup/independent opens, runtime links/rename and held zero-name lifetime. Mapping leases retain Contents without reviving closed FDs. Missing independent mutation policy still invalidates initial namespace metadata; attribute or creation grants cannot restore it. Writes, namespace mutation, completion, locks and xattrs remain independent. No service, alias, C ABI or static-query logical route is added.
+
+
+## Darwin full and barrier completion ownership
+
+完整同步與屏障同步透過明確宣告的提供器分別完成一般檔案操作。既有物件與新建物件的授權獨立；建立開關預設關閉，啟用時需要完整建立策略。完成操作保持模型所有觀察不變，並忽略未使用的參數。屏障能力直接提供，不執行掛載提升或退回。兩種宣告都不刷新主機儲存，也不證明實體持久化。
+
+DarwinFiles owns admission and one successful regular creation transaction. Its shared provider admission applies complete CreationPolicy and the existing reference-byte budget to FullSynchronization and BarrierSynchronization independently. One strict JSON object-provider header now serves seven independent declarations: mode, ownership, advisory lock, file, data, full and barrier completion. DarwinSynchronization.cpp selects four distinct completion purposes in one authoritative helper. Fcntl dispatch recognizes low32 commands51/85 through existing raw services92/406; low32 FD lookup precedes opaque-kind refusal, immutable-query scope, ordinary regular-target checks and independent environment/grant checks. The unused argument is never read as memory. Existing fsync/fdatasync ordering and all52 immutable-query logical routes retain their own contracts. Initial grants follow actual Contents through dup, independent opens, links, rename and held zero-name lifetime; reused names and retained VM mappings do not revive closed FDs or inherit grants. Successful new regular creation alone applies each explicit created flag before publication. Directory/link creation and failed FD/entry/byte/inode admission publish no grant. Completion changes no bytes, whole stat, cursor, status/history, lock, xattr or metadata-validity observation and borrows no authority from any other purpose. The barrier declaration describes direct support only; no mount model promotes it to full synchronization or supplies an ioctl fallback. Provider errors, deferred work, cancellation, revocation and native leases remain unsupported. No new service alias or C ABI is added.
+
+
+## Explicit ordinary timestamp mutations
+
+明確宣告的時間修改提供器獨立授權一般檔案。既有物件與成功新建一般檔案的權限分開；建立開關預設關閉，啟用時需要完整建立策略。NULL 請求只使用另行宣告的目前時間樣本。請求時間的儲存規則與固定虛擬 ctime 是不同觀測。模型不讀取主機時鐘或檔案系統，完整 macOS/iOS 框架環境仍未完成。
+
+DarwinTimestamps.cpp owns one utimes138/futimes139 import and request-storage decision. DarwinFiles retains shared admission, object grants, effective ordinary credentials, group knowledge and pathname search; TimestampSearch, TimestampChangeExplicit and TimestampChangeCurrent extend that owner. DarwinServices forwards the existing optional DarwinTimeOptions through a trailing defaulted Files.handle argument. ProcessDarwinFilesJSON reuses strict TimedObjectProvider; there is no constructor or C ABI change. Timestamp execution updates only atime, mtime, separately fixed ctime and declared birth reduction. It preserves byte/namespace/mode/ownership/lock/completion/xattr/VM authority and never restores invalid metadata.
+
+## Explicit filesystem observations
+
+明確宣告的檔案系統快照獨立提供一般檔案和目錄的容量、類型與掛載名稱。零值和空名稱都是有效輸入，模型不讀取主機檔案系統。繫結隨實際物件保留，支援複製描述符、移動及刪除後仍開啟的物件，替代名稱不繼承舊繫結。成功建立一般檔案時，只有明確啟用建立權限並提供完整建立策略，才使用實際父目錄已有的快照。這補上可用的檔案環境查詢入口；完整 macOS/iOS 框架環境仍未完成。
+
+DarwinFileSystems.cpp owns LP64 filesystem record serialization and read-only completion. DarwinFiles owns admission, object bindings, successful created-parent assignment, descriptor/namespace lifetime and the existing shared effective ancestor authorizer. The strict JSON reader uses the same bounded snapshot admission contract. Query snapshots grant no data, namespace, mode, ownership, timestamp, lock, completion, VM, mount-domain or quota authority. Filesystem snapshots stay independent when complete vnode metadata is invalidated and never repair it. No constructor, scheduling, C ABI or dependency revision changes.
+
+## Declared mount enumeration
+
+掛載表列舉現在支援依宣告順序查詢快取，以及使用明確提供的成功更新結果。每個行程維護自己的快取，重複記錄保持獨立，空表與未知表有明確區別。這補上了 Apple 應用程式常用的一類檔案系統查詢；dyld、Mach IPC 與完整的 Objective-C/Swift、Foundation/UIKit 環境仍未完成。
+
+DarwinFileSystems.cpp is the sole LP64 statfs record serializer for statfs64, fstatfs64 and getfsstat64. DarwinFiles owns bounded declaration admission and a per-process vector selecting immutable cached/refreshed records. The strict ProcessDarwinFilesJSON reader uses one complete snapshot parser for both object observations and mount enumeration. Enumeration never derives a global mount relation from object paths or equal IDs. It does not change object-bound snapshots, credentials, metadata, contents, namespace, descriptors or VM authority. Refresh selection commits before complete copyout faults. A partially accessible current record is an explicit fail-stop boundary before that record refreshes; earlier complete records remain committed.
+
+## Swift scalar instruction completion
+
+還原的 x86_64 Swift 支援暫存器與記憶體形式的純量 ADD/SUB/MUL/DIV、有號 32/64 位元整數至 Float32/Float64 的轉換，以及 Float32/Float64 雙向轉換，包括 VEX 形式。結果位元與完整輸入/輸出 MXCSR 成對保留。封裝運算、SQRT/MIN/MAX、FMA、捨入及近似運算仍明確拒絕；完整 macOS/iOS 框架環境尚未完成。
+
+共用 X86FPState 形狀驗證器維持權威。舊式與通用算術共用指令/寬度輔助鍵；轉換鍵保留來源類別、來源/目標寬度及暫存器/記憶體傳輸，僅移除 VEX 上半向量位元，高位仍由提升器負責。來源與狀態順序不變，數值計算停用最佳化，完整結果/MXCSR 保留在 64/96 位元容器中。不推斷 ARM64 的 MXCSR 替代。
+
+## Explicit ordinary directory modes
+
+明確宣告的 mode provider 現在支援一般目錄與一般檔案。初始目錄授權與新建目錄的獨立開關，都不取代命名空間變更權限，也不將權限傳給子物件。完整 dyld、Mach IPC、Objective-C/Swift、Foundation/UIKit 環境與 iOS 真機驗證仍未完成。
+
+DarwinFiles retains the authoritative object admission, current-stat validity and namespace-update boundary. Mode and timestamp admission accept independently granted initial ordinary directories; ownership admission now independently accepts ordinary directories. DirectoryNode owns a separate ModeTime pointer. Successful mkdir with complete Namespace policy attaches it only when CreatedDirectoryObjects is explicitly true. DarwinModes selects actual File or Directory metadata, invokes the existing shared authorizer, and commits only permissions and ctime. No duplicated DAC or pathname grant registry is introduced. updateDirectoryMetadata now requires its own MutationTime and complete namespace shape, even when chmod has already published CurrentMetadata. Missing authority clears and permanently invalidates that record; later chmod cannot restore it. Complete independent namespace updates preserve current mode. Mode changes preserve enumeration versions/cursors and accounting; moves, exchanges, held objects and reused names retain their existing identity owners.
+
+## Explicit ordinary directory timestamps
+
+顯式目錄時間戳提供器現已支援初始目錄和新建目錄的 utimes/futimes，各自需要獨立授權。命名空間、模式和所有權權限保持獨立。完整 Apple 執行階段與框架及實體 iOS 驗證仍未完成。
+
+DarwinFiles retains one authoritative ordinary-object admission, actual-object provider binding, current-stat validity, effective credential/search authorization and namespace metadata owner. Mode and timestamp grants independently admit initial ordinary directories with complete ordinary metadata, flags0, no special mode bits and no known Device/Inode alias. Ordinary directory nlink may exceed1; regular nlink1 remains unchanged. Ownership admission now independently accepts ordinary directories.
+
+DirectoryNode owns separate ModeTime, TimestampTime and namespace MutationTime/DirectoryEntrySize. Initial timestamp grants attach only Objects membership. Successful complete mkdir attaches its own timestamp provider only when TimestampMutations.CreatedDirectoryObjects is true, using CreationPolicy.Mutation.Time. CreatedRegularObjects, mode grants, mutable parents and child names transfer no directory timestamp authority. Incomplete or failed creation publishes no provider. Grants follow the actual object through dup, moves, exchanges and held removal; a replacement name receives its own grants.
+
+DarwinTimestamps.cpp keeps the existing utimes/futimes request import, error order, explicit versus NULL authorization and declared requested-time storage decision. After shared status/authorization it selects the actual File or Directory provider and CurrentMetadata. Directory timestamp writes preserve all unrelated stat bytes, enumeration/cursors/flags, budgets, namespace, mode/ownership, xattr and VM authority. Namespace changes still require independent time and shape; timestamp-created CurrentMetadata cannot replace either, and invalidation cannot be reversed.
+
+The shared strict object-provider header admits created_directory_objects only for Mode, Ownership, Timestamp and FileSystem provider types. Required objects, strict Boolean, each purpose's entry parser and shared budgets remain authoritative; other provider types reject this field. The existing public FileModeCreatedDirectoryObjects constant identifier and its wire string remain compatible. No syscall or pure C function was added. Full dyld/Mach IPC/ObjC/Swift/Foundation/UIKit execution and physical-device evidence remain incomplete.
+
+## Explicit ordinary directory ownership
+
+顯式所有權提供器現已支援獨立授權的初始一般目錄和新建目錄的 chown/fchown/fchownat。群組變更同時更新子物件建立使用的實際父目錄身分。命名空間、模式和時間戳記權限保持獨立。完整 Apple 執行階段與框架及實體 iOS 驗證仍未完成。
+
+DarwinFiles retains one ordinary-object admission and the shared effective-credential, group-membership and current pathname SEARCH authorizer. Mode, Ownership and Timestamp grants independently admit ordinary initial regular or directory objects. Directory nlink may exceed1 without declaring an alias; known equal Device/Inode aliases are rejected, and regular nlink1 remains required. Unknown or invalid complete metadata is never reconstructed from identity, providers or other observations.
+
+DirectoryNode owns independent OwnershipTime, ModeTime, TimestampTime and namespace MutationTime/DirectoryEntrySize. Initial Objects membership attaches ownership authority to the actual directory. Only successful complete mkdir with OwnershipMutations.CreatedDirectoryObjects=true attaches the separate creation provider, using CreationPolicy.Mutation.Time. CreatedRegularObjects, mutable parents, permissions and child names supply no such grant. Failed creation and name reuse publish no inherited initial grant.
+
+DarwinOwnership.cpp selects actual File or Directory metadata and provider after existing status and authorization. Both inactive low32 IDs still require provider execution and preserve every observation. Any active ID, including an equal value, updates its requested field and separately fixed ctime. Active directory GID commits CurrentMetadata.GID and the existing actual DirectoryIdentity.GID together after verifying identity. Regular create, mkdir and symlink creation consume this identity; it follows direct moves and exchanges and retains its last known group after later namespace invalidation. This retained identity does not repair complete stat or supply child ownership authority.
+
+Directory ownership preserves unrelated stat bytes, cursors, flags, enumeration versions, accounting, xattrs, VM and filesystem snapshots. Namespace mutation still needs independent time and shape, even after an attribute call publishes CurrentMetadata. Missing premises permanently invalidate the complete record. Actual providers follow dup, moves, exchanges and held removal; a reused name receives a different object.
+
+The strict shared timed-object parser admits created_directory_objects for exactly Mode, Ownership and Timestamp, with a single type decision. Required objects, exact Boolean, time validation and common budgets remain authoritative. The existing FileModeCreatedDirectoryObjects identifier and wire string remain compatible. No syscall, C function, constructor, dependency or scheduling policy changed.
+
+## Explicit ordinary symbolic ownership
+
+DarwinFiles retains one ordinary admission boundary; only ownership extends it to complete independently granted symbolic vnodes. LinkNode owns its separate OwnershipTime pointer. Initial exact Objects membership attaches it; only successful complete symlink construction with OwnershipMutations.CreatedSymbolicLinkObjects=true attaches CreationPolicy.Mutation.Time. MutableSymbolicLinks, parent/target ownership, filesystem snapshots and regular/directory creation flags supply no such grant. Initial nlink1/no-alias admission does not prevent later explicit runtime symbolic hardlinks from sharing the actual object and its grant.
+
+DarwinOwnership.cpp remains the sole ownership execution and commit owner. It selects actual File, Directory or Link provider/current metadata after existing lookup, complete-stat and shared effective authorization. O_SYMLINK/NOFOLLOW select the link, while followed paths select the target. Active IDs and supplied ctime commit atomically; both inactive IDs still require execution authority and preserve the whole record. Link GID updates never change DirectoryIdentity or target state. Provider pointers follow existing namespace/descriptor lifetime through moves, exchange, runtime links and held deletion; reused names bind new objects. Ownership cannot reverse namespace/xattr metadata invalidation.
+
+The strict generic JSON provider header accepts created_symbolic_link_objects only for FileSystem and Ownership, with separate wire identifiers and authority. Other purposes still reject the key, including false. Complete Namespace creation prerequisites and shared budgets remain authoritative. No service, constructor, C ABI, dependency or scheduling boundary changes. The compact original native/model/C/CLI/Python workloads distinguish complete link and target records, high carriers, lifetime, fresh state and early/late missing grants under original limits.
+
+## Filesystem snapshots for created directories
+
+新增獨立建立開關，可將新目錄繫結至實際父目錄已宣告的檔案系統快照。移動和刪除後，已開啟的描述元仍保留原繫結。完整 Apple 執行階段、框架和實體 iOS 驗證仍未完成。
+
+DarwinFiles owns admission and the successful mkdir publication boundary. The appended FileSystemObservations.CreatedDirectoryObjects defaultsfalse and requires complete CreationPolicy.Namespace when enabled. Before publishing a complete new DirectoryNode, it binds Node->Parent->FileSystem only through this independent flag. An unbound parent leaves a null pointer and does not prevent otherwise valid creation. No path prefix, filesystem_id/device/inode match, mount enumeration or stat observation supplies a missing snapshot.
+
+DarwinFileSystems.cpp remains the single LP642168-byte serializer and query owner. The shared strict object-provider header admits created_directory_objects for Mode, Ownership, Timestamp and FileSystem; each purpose keeps its entry parser. Initial Objects and created regular/directory flags remain independent. The actual binding survives moves/exchanges, dup and held rmdir; reused names create separate objects. Namespace/stat invalidation never clears or repairs the binding. Path queries retain effective ancestor SEARCH, while descriptor queries borrow no target stat, credentials or access flags. No C function, dispatch, authorization, dependency pin or scheduling change.
+
+## Filesystem snapshots for symbolic vnodes
+
+明確宣告的檔案系統快照現已支援符號連結描述元，包括懸空和循環目標。路徑查詢仍跟隨目標。新符號連結透過獨立開關繫結實際父目錄快照。完整 Apple 執行階段、框架及實體 iOS 驗證仍未完成。
+
+DarwinFiles retains one declaration admission, namespace publication owner and actual-object lifetime. Initial filesystem Objects may independently name any declared regular, directory or symbolic vnode; only the existing path+2168 snapshot reference charge applies, without following a symbolic target or demanding target/stat metadata. LinkNode stores its own immutable snapshot pointer. Initial bindings use exact object membership. Successful complete symlink creation captures its actual parent snapshot only when FileSystemObservations.CreatedSymbolicLinkObjects is true. Unknown parents stay null and do not prevent valid creation.
+
+The default-false public C++ option and FileSystemCreatedSymbolicLinkObjects wire field created_symbolic_link_objects are independent of regular/directory creation flags and require complete CreationPolicy.Namespace. The generic creation admission has one Namespace prerequisite shared by directory and symbolic flags. The shared strict provider header accepts the exact Boolean for FileSystem and Ownership with independent wire identifiers; other purposes reject it even when false. Existing required objects, per-purpose parsers and budgets remain authoritative.
+
+DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains the sole2168-byte serializer. fstatfs64 on O_SYMLINK selects LinkNode.FileSystem; path statfs64 retains FollowFinal and effective ancestor SEARCH. A link and its followed target can carry different snapshots, even with equal declared IDs. Opaque streams remain kind-unsupported. Snapshot pointers survive dup, rename, moved/exchanged parents and held unlink; replacement names bind new objects. Querying does not repair invalid stat or confer I/O, mode/ownership/time/namespace/quota or mount identity authority. C functions, constructor, dispatch, dependency pins and scheduling are unchanged.
+
+### 明確宣告的核心虛擬位址隔離狀態查詢
+
+`KernelSystemInformation.cpp` 統一負責類別與 previous-mode 分派，`KernelModelVaShadow.cpp` 負責四位元組結果。`KernelQueryBuffer.cpp` 與版本查詢共用物件、權限及實體別名檢查；類別 11 維持原行為。宣告解析不授予記憶體或緩解措施權限。
+
+### 有界核心呼叫者內容擷取
+
+`WindowsX64Context.def` 統一 x64 版面與欄位；`WindowsX64Context.cpp` 共用整數擷取與邏輯選擇子，保留使用者完整 FP 與核心有限 FP 的不同策略。`DriverContextCapture.cpp` 同步且不可重入地借用 CPU；`KernelModelContextCapture.cpp` 管理記憶體檢查、實際返回槽及副作用。完整檢查後先原子設定 FLAGS，再寫入已驗證 RAM；不保證任意寫入失敗或並行映射變更的回復。三個後端共用此層。

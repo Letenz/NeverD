@@ -16,13 +16,15 @@
 
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../../../loader/Swift/SwiftErrorRuntime.h"
-#include "../FloatingPointContract.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
 #include "../render/X86FPStateHelpers.h"
 #include "HighCWriter.h"
 
+#include "neverd/backend/c/FloatingPointContract.h"
+#include "neverd/ir/high/CxxObjectActions.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
+#include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/X86FPStateShape.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
@@ -1403,9 +1405,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
         }
         if (Ex.IntrinsicId == Intrinsic::None)
           Name = callIdentifier(Ex);
-        if ((!Opts.StructuredExceptionSyntax ||
-             (!isMsvcCxxThrowCallName(Name) &&
-              !isMsvcCxxThrowCallName(Ex.CallTarget))) &&
+        if (((!isMsvcCxxThrowCallName(Name) &&
+              !isMsvcCxxThrowCallName(Ex.CallTarget)) ||
+             cxxThrowUsesRuntimeCall(Ex)) &&
             !HiddenCxxCtorIdentifiers.count(Name)) {
           const bool UnresolvedIndirect =
               Ex.IsIndirectCall || Name == "indirect";
@@ -2962,7 +2964,7 @@ void HighCWriter::writeImageObjects() {
       continue;
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Backing.Base) << " .. 0x"
-         << llvm::utohexstr(Backing.End) << " */\n";
+         << llvm::utohexstr(Backing.End) << backingReadable(Backing) << " */\n";
     if (Backing.Align > 1)
       OS << "_Alignas(" << Backing.Align << ") ";
     OS << "unsigned char " << Backing.Name << "["
@@ -3056,6 +3058,15 @@ void HighCWriter::writeImageObjects() {
   OS << "\n";
 }
 
+std::string HighCWriter::backingReadable(const ImageBacking &Backing) const {
+  const auto First = ImageObjects.find(Backing.Base);
+  if (First == ImageObjects.end() || First->second.Readable.empty() ||
+      First->second.Name !=
+          (Backing.Words.empty() ? Backing.Name : Backing.Words))
+    return {};
+  return " " + First->second.Readable;
+}
+
 void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   // Slots that hold addresses come last: they name the objects above, and
   // each other by the declarations that come first.
@@ -3081,7 +3092,8 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   for (const va_t Addr : Deferred) {
     const ImageObject &Obj = ImageObjects.at(Addr);
     if (Opts.EmitComments)
-      OS << "/* neverd.image: 0x" << llvm::utohexstr(Addr) << " */\n";
+      OS << "/* neverd.image: 0x" << llvm::utohexstr(Addr)
+         << (Obj.Readable.empty() ? "" : " ") << Obj.Readable << " */\n";
     OS << declarationToC(Obj.Type, Obj.Name) << " = "
        << *relocatedSlotInitializer(Addr, Obj) << ";\n";
   }
@@ -3090,7 +3102,7 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
       continue;
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Backing.Base) << " .. 0x"
-         << llvm::utohexstr(Backing.End) << " */\n";
+         << llvm::utohexstr(Backing.End) << backingReadable(Backing) << " */\n";
     OS << "union " << Backing.Words << "_words " << Backing.Words
        << " = { .w = {";
     // A long initializer takes a few words a line, so no line runs to the
@@ -3190,6 +3202,11 @@ std::string HighCWriter::relocatedTargetNote(va_t Slot) const {
   const va_t Target =
       PointerBytes == 8 ? readLE<uint64_t>(Bytes) : readLE<uint32_t>(Bytes);
   const ImageSymbolName Named = imageSymbolName(Target);
+  // The listing names it by its symbol as the image spells it: the
+  // underscore of `_IO_stdin_used` stays, though its C identifier drops it.
+  if (!Named.Symbol.empty() && isPlainSymbolText(Named.Symbol) &&
+      !llvm::StringRef(Named.Symbol).contains("*/"))
+    return "&" + Named.Symbol;
   return Named.Raw.empty() ? std::string() : "&" + Named.Raw;
 }
 
@@ -3437,6 +3454,7 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
               [&](const HighStmt &Stmt) { forEachExpr(Stmt, Visit); });
   }
   writeX87CHelpers(OS, UsesX87Extended, X87Helpers);
+  writeX87ContextHelpers(Funcs);
   writeX86FPStateCHelpers(OS, X86FPStateHelpers);
   writeMemoryHelpers();
   writeX64SyscallHelper();
@@ -3479,6 +3497,24 @@ void HighCEmitter::prepareImageFunctionNames(const BinaryImage &Image) {
 bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                         llvm::raw_ostream &Out, const CEmitterOptions &Opts,
                         DebugContext *Dbg) {
+  // Check the complete supplied IR before source-only hiding or preparation
+  // can discard an unreachable or malformed environment requirement.
+  std::set<const HighExpr *> Seen;
+  std::function<void(const ExprPtr &)> CheckRequirement =
+      [&](const ExprPtr &Expr) {
+        if (!Expr || !Seen.insert(Expr.get()).second)
+          return;
+        if (Expr->IntrinsicId == Intrinsic::RawEnvironmentRequirementV1)
+          throw std::invalid_argument(
+              "raw environment requirement has no C runtime contract");
+        Expr->forEachChildExpr(CheckRequirement);
+      };
+  for (const auto &Func : Funcs)
+    walkStmts(Func.Body, [&](const HighStmt &Stmt) {
+      forEachExpr(Stmt, CheckRequirement);
+      for (const auto &Clause : Stmt.EHClauses)
+        CheckRequirement(Clause.FilterValue);
+    });
   for (const auto &Func : Funcs)
     if (Func.SourceTypeHint &&
         (hasIndirectSourceParameters(*Func.SourceTypeHint) ||
@@ -3488,8 +3524,13 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                                   "entries need a projection proof");
   auto Render = [&](llvm::raw_ostream &OS, CSourceRecorder *Recorder) {
     std::vector<HighFunc> Working = Funcs;
-    if (Opts.StructuredExceptionSyntax)
+    if (Opts.StructuredExceptionSyntax) {
       attachCxxFuncletBodies(Working);
+      for (HighFunc &Func : Working) {
+        attachCxxObjectActionCalls(Func, Opts.TheArch);
+        attachItaniumHandlerBodies(Func);
+      }
+    }
     HighCWriter W(OS, Opts, Dbg, true,
                   Opts.Image && Opts.Image == PreparedImage
                       ? &PreparedImageFunctionNames

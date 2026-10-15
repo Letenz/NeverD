@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace neverd {
 
@@ -28,6 +29,12 @@ struct PEFixedImageLimits {
   uint64_t MaxBytes = 64 * 1024 * 1024;
   /// Section, relocation, import and derived-provenance traversal work.
   uint64_t MaxRecords = 65536;
+};
+
+struct PEFixedImportIdentity {
+  va_t Slot = 0;
+  std::string Module;
+  std::string Symbol;
 };
 
 /// A loader-validated snapshot at the PE's preferred image base. Preparing a
@@ -49,6 +56,13 @@ public:
 
   std::optional<llvm::ArrayRef<uint8_t>> read(va_t Address, uint32_t Bytes,
                                               bool Executable) const;
+  /// Exact ordinary named import in a complete read-only slot. Identity comes
+  /// from authenticated raw descriptors/thunks, never mutable display names.
+  /// This neither reads nor certifies the runtime pointer stored in the IAT.
+  std::optional<PEFixedImportIdentity> importIdentity(va_t Slot) const;
+  /// Complete nonwrapping preferred-base extent from authenticated
+  /// SizeOfImage, including headers and holes between section mappings.
+  std::pair<va_t, va_t> imageExtent() const;
   const std::string &digest() const;
 };
 

@@ -133,6 +133,17 @@ bool RegistrationStateSolver::recordRuntimeMemory(
         return false;
       After.RuntimeObject.store(*PrivateAddress.Offset, Memory.AccessSize,
                                 Stored);
+    } else if (PrivateAddress.CallbackAddress && !RuntimeAddress.MayBeFrame) {
+      if (!charge(After.RuntimeObject.memoryAccessWork(
+                      PrivateAddress, Memory.AccessSize, true) +
+                  (Memory.AccessSize + 3) / 4 + 1))
+        return false;
+      // Private scalar arguments must retain runtime-pointer taint too. A
+      // store cannot turn a live exception pointer into an ordinary word.
+      After.RuntimeObject.storeCallback(PrivateAddress.CallbackAddress->Offset,
+                                        Memory.AccessSize, Stored);
+      if (Stored.MayBeFrame)
+        CompleteRuntimeObjects = false;
     } else if (Stored.MayBeFrame) {
       CompleteRuntimeObjects = false;
     }

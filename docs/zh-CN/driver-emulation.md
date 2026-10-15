@@ -101,6 +101,8 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 映像默认使用首选基址，除非场景选择了有效的重定位地址。映像必须为使用 native 子系统的 PE32+ x64 可执行文件。导入可来自 `ntoskrnl.exe`、`ntkrnlmp.exe`、`HAL.dll` 或 `WDFLDR.SYS`。
 
+新增的 `FLTMGR.SYS`、`NDIS.SYS` 和 `NETIO.SYS` 提供按模块区分的延迟导入标识，其函数尚未建模：未调用的导入可完成加载，实际调用时会报告规范的 `module!symbol` 并停止。它们不参与 `MmGetSystemRoutineAddress` 查询，该查询仍仅限内核和 HAL。
+
 执行加载器支持经验证的 x64 `DIR64` 基址重定位，以及有限的安全 cookie 加载配置；它会在入口包装函数执行前设置确定性的来宾 cookie。其他未建模的加载配置字段、TLS、延迟／绑定导入、按序号导入以及托管映像都会被拒绝。映像还必须通过严格的范围与对齐检查。
 
 启用的控制流保护（CFG）会验证 PE 标志、指针槽和已排序的可执行目标表。检查与分派辅助函数仅允许已声明的映像入口或已登记的 API 跳板，保留 Win64 调用状态，并拒绝未声明的目标。只有插桩而未启用 CFG 时，保留原始来宾回退指针。启用的 XFG、导出抑制和其他未建模的保护策略仍被拒绝；地址位于可执行内存并不使它成为合法目标。
@@ -327,11 +329,26 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | API | 建模行为与限制 |
 |-----|----------------|
 | `RtlInitUnicodeString` | 根据有界、以 NUL 结尾的源字符串构造来宾 `UNICODE_STRING` |
+| `RtlGetVersion` | 显式 checked-x64 基础版本查询，不采用宿主版本默认值。要求 `version_query`；长度 276 的记录必须预先清零整个 CSD 数组。零长度兼容行为需单独启用且具有实际 20 字节缓冲区。扩展长度及未声明查询明确停止，保留环境依赖。 |
+| `RtlCaptureContext` | 有界内核调用者上下文捕获; checked-x64, IRQL <= DISPATCH_LEVEL. |
 | `RtlCopyUnicodeString`、`RtlCompareUnicodeString`、`RtlEqualUnicodeString` | 带长度的 UTF-16 复制及区分大小写比较；不区分大小写的比较需要 Windows 大小写表，因此会停止 |
+| `RtlInitAnsiString`、`RtlInitString` | 根据以 NUL 结尾的字节源构造来宾 `STRING`；计数长度上限为 `0xFFFE`，`MaximumLength` 包含结尾符，记录中的填充字节会被清零 |
+| `RtlAppendUnicodeToString`、`RtlAppendUnicodeStringToString` | 追加到带长度的 UTF-16 目标；返回 `STATUS_BUFFER_TOO_SMALL` 时目标保持不变，至少剩余两个空闲字节时才写入结尾符，超过 `0x7FFE` 个单元的 NUL 结尾源同样返回 `STATUS_BUFFER_TOO_SMALL` |
+| `RtlPrefixUnicodeString` | 带长度的 UTF-16 前缀判断；不区分大小写的请求只有在不相等的单元需要 Windows 大小写表时才会停止 |
+| `RtlIntegerToUnicodeString`、`RtlUnicodeStringToInteger` | 以 2、8、10、16 为基数的无符号转换，前导空白、符号、`0x`/`0o`/`0b` 前缀和 32 位回绕均遵循内核规则；格式化需要为结尾符留出空间，并在写入长度后返回 `STATUS_BUFFER_OVERFLOW` |
+| `RtlAnsiStringToUnicodeString`、`RtlUnicodeStringToAnsiString`、`RtlFreeUnicodeString`、`RtlFreeAnsiString` | 在带长度的 8 位记录与 UTF-16 记录之间转换 ASCII 文本；其他文本依赖未建模的系统 ANSI 代码页，因此会停止。先写入长度；分配来自带 `Strg` 标记的分页池，两个释放例程都会释放它并清零记录（忽略池标记）。不分配时，ANSI 转 Unicode 不做转换直接返回 `STATUS_BUFFER_OVERFLOW`，而 Unicode 转 ANSI 会转换能放下的前缀、写入结尾符并返回 `STATUS_BUFFER_OVERFLOW` |
+| `RtlInitUnicodeStringEx` | 先清零记录，再像 `RtlInitUnicodeString` 一样构造来宾 `UNICODE_STRING`；超过 `0x7FFE` 个单元的源返回 `STATUS_NAME_TOO_LONG`，两个长度保持为零 |
+| `RtlCopyString`、`RtlEqualString`、`RtlCompareString` | 带长度的 8 位字符串按容量复制且不写结尾符；按无符号字节比较，前缀相同时由长度决定；不区分大小写的请求只有在不相等的字节需要 Windows 大小写表时才会停止 |
+| `RtlStringFromGUID`、`RtlGUIDFromString` | 注册表形式的 GUID 文本 `{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}`：格式化把小写数字写入带 `Strg` 标记的 78 字节分页池分配，由 `RtlFreeUnicodeString` 释放；解析要求字段宽度精确、大小写均可，仅在零单元之后允许后续文本，后段不匹配时返回 `STATUS_INVALID_PARAMETER`，此时 `Data1`–`Data3` 已经写入 |
+| `RtlTimeToTimeFields`、`RtlTimeFieldsToTime` | 在自 1601 年起以 100 ns 为单位的系统时间与 `TIME_FIELDS` 之间按公历转换（无已记录的闰秒）；输出时计算星期，输入时忽略星期；超出 1601–30827 年或不是真实日期的字段返回 `FALSE`，负时间会停止 |
+| `PsGetCurrentProcess`、`PsGetCurrentThread`、`KeGetCurrentThread` | `IoGetCurrentProcess` 和内联 `GS:[0x188]` 读取的导出别名，任意 IRQL 均可调用：当前 APC 状态中的进程随进程附加而变化，当前逻辑线程的借用不透明身份则保持不变 |
+| `PsGetCurrentThreadId`、`PsGetThreadId` | 存活线程对象的客户端 ID：首次观察时从 `0x2000` 起以 4 为步长分配，跳过已建模的进程 ID 且永不复用；请求者 ID 与已分配线程 ID 相同的请求会被拒绝。`PsCreateSystemThread` 也通过 `ClientId` 返回系统进程 ID 和线程 ID。前台派发运行在同一个逻辑线程上，因此来自不同请求者进程的请求看到相同的线程 ID，而 `PsGetCurrentProcessId` 跟随请求者。`PsGetThreadId` 要求 IRQL ≤ `DISPATCH_LEVEL` |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 抛出来宾异常，无正常 API 返回；真实 C 过滤器／处理器及展开 finally，用户 CPU 访存异常的受限恢复见下文 |
 | `ExAllocatePool2` | 分页／非分页 NX 分配，默认清零；支持未初始化与缓存行对齐标志；无效的必需标志返回 NULL，配额／可执行池以及分配失败引发异常的路径会停止 |
 | `MmGetSystemRoutineAddress` | 通过共享导出清单解析带长度的来宾名称 |
-| `NtQuerySystemInformation`, `ZwQuerySystemInformation` | 在 PASSIVE_LEVEL 支持类 `11`（`SystemModuleInformation`）：零长度大小查询，以及模拟提供者和输入驱动的完整 Win64 模块记录。部分缓冲区和未知信息类会明确停止。 |
+| `MmIsAddressValid` | IRQL ≤ 2 的有限具体查询：仅在零页未映射时将 NULL 判为假；只有活跃模型对象或非分页池的精确字节具有可读写 RAM 后备时才返回真。分页池、已释放或无主内存、分配填充、非池物理缓冲区及受保护后备均明确停止。查询不授予字段访问、所有权或未来生命周期保证，并保留环境恢复依赖。 |
+| `KeRegisterBugCheckReasonCallback`, `KeDeregisterBugCheckReasonCallback` | 仅限 checked-x64 注册/注销：记录须为驱动映像内对齐、可读写的 48 字节区域，回调须为映像内可执行地址，原因限 2–7，最多保留 64 个记录身份；组件名初始须可读、以 NUL 结尾且不超过 256 字节。重复注册、注销和重新注册保留已知字段与 State 状态变化；只保留组件指针，不保证后续生命周期。仅回调、组件、原因和 State 字段可读；注销后仍禁止所有写入、不透明字段访问及相交页面的 MDL 借用。DriverUnload 必须注销活跃记录。环境依赖保留；不支持崩溃回调派发或转储生成。 |
+| `NtQuerySystemInformation`, `ZwQuerySystemInformation` | 在 PASSIVE_LEVEL 支持类 `11`（`SystemModuleInformation`）：零长度大小查询，以及模拟提供者和输入驱动的完整 Win64 模块记录。部分缓冲区和未知信息类会明确停止。 类 `196` 通过显式 `kernel_va_shadow_query` 支持，见对应查询章节。 |
 | `MmMapIoSpace`, `MmMapIoSpaceEx`, `MmUnmapIoSpace` | 声明的转换后子区间；非缓存 RO／RW、共享别名、精确取消映射；不提供任意物理内存 |
 | `IoConnectInterrupt`, `IoDisconnectInterrupt`, `IoConnectInterruptEx`, `IoDisconnectInterruptEx` | 精确配置的独占／共享 latched 或 level_sensitive 线路；PASSIVE_LEVEL 下传统 ABI 与 Ex 1／2／4，严格连接代次和锁所有权 |
 | `KeSynchronizeExecution`, `KeAcquireInterruptSpinLock`, `KeReleaseInterruptSpinLock` | 真实 BOOLEAN 同步回调，在不低于配置 DIRQL 的同步 IRQL 下持有同一非递归锁；恢复原调用者 IRQL 和所有权 |
@@ -358,6 +375,8 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `KeGetCurrentIrql` | 读取当前 IRQL/CR8，包括显式升降级；派发和工作项从 `PASSIVE_LEVEL` 开始，DPC 从 `DISPATCH_LEVEL` 开始 |
 | `KfRaiseIrql`, `KeLowerIrql` | 真实的 x64 WDK IRQL 升降导入，包含内联辅助函数；每个执行必须在返回前按 LIFO 顺序恢复保存值。IRQL <= APC_LEVEL 的合法等待保留升降配对，并按等待时的 IRQL 恢复；DISPATCH_LEVEL 持锁不能挂起。CR8 反映每次变化；配置的 CPU0 事件抢占使用 `scheduling`；任意嵌套中断仍不受支持。 |
 | `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | CPU0 上驻留且对齐的执行自旋锁；检查所有者、获取与释放配对和 IRQL 恢复。竞争的阻塞获取会显式停止。 |
+| `ExInterlockedInsertHeadList`、`ExInterlockedInsertTailList`、`ExInterlockedRemoveHeadList`、`ExInterlockedPushEntryList`、`ExInterlockedPopEntryList`、`ExInterlockedAddUlong`、`ExInterlockedAddLargeInteger` | 在任意 IRQL 下，于空闲的驻留执行自旋锁内屏蔽中断、保持 IRQL 不变完成一次更新。插入返回原来的相邻项或 NULL，移除保留被移除项自身的链接，加法回绕并返回原值。损坏的链接如内核的 `FAST_FAIL_CORRUPT_LIST_ENTRY` 一样停止；已被持有的锁，以及可分页、用户模式或与锁重叠的存储会显式停止。 |
+| `InitializeSListHead`、`ExpInterlockedPushEntrySList`、`ExpInterlockedPopEntrySList`、`ExpInterlockedFlushSList`、`ExQueryDepthSList`、`FirstEntrySList` | x64 无锁 `SLIST_HEADER` 列表，`InterlockedPushEntrySList`、`InterlockedPopEntrySList`、`InterlockedFlushSList` 宏及其 `ExInterlocked` 形式经由 `Exp` 导出到达这里。压入把 Depth 和 Sequence 同时加一，弹出只减少 Depth，清空会清除 Depth 和首项，弹出或清空的项保留各自的链接。`InitializeSListHead` 像内核一样对未对齐的表头引发 `STATUS_DATATYPE_MISALIGNMENT`；其他未对齐的表头和项会显式停止。`ExQueryDepthSList` 要求 `DISPATCH_LEVEL` 或更低，其余可在任意 IRQL 调用。 |
 | `IoAllocateWorkItem`, `IoQueueWorkItem`, `IoFreeWorkItem` | 设备拥有的不透明工作项；仅支持 `DelayedWorkQueue`，在 `PASSIVE_LEVEL` 将设备和上下文传给回调；禁止释放仍在队列中的项 |
 | `KeInitializeDpc`, `KeInsertQueueDpc`, `KeRemoveQueueDpc`, `KeSetImportanceDpc`, `KeSetTargetProcessorDpc` | 不透明 DPC 存储、四个来宾回调参数、`DISPATCH_LEVEL`、重复入队／移除及优先级；仅目标 CPU0 |
 | `KeInitializeTimer`, `KeInitializeTimerEx`, `KeSetTimer`, `KeSetTimerEx`, `KeCancelTimer`, `KeReadStateTimer` | 通知／同步定时器；相对／绝对 100 ns 期限、毫秒周期、重新设置／取消及虚拟时间中的信号查询 |
@@ -416,7 +435,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 可选根字段 `"load_address": "0x190000000"` 请求更改加载基址；省略该字段或指定 `"0x0"` 时使用首选地址。映像必须满足重定位要求。原有的初始化命令或 C API 不会隐式执行任何请求场景。
 
-根对象仅接受 `load_address`、`requests`、`unload`、`kernel_exports`、`registry` 和 `pnp_devices`。普通文件请求接受 `kind`、可选且互斥的 `device` 或 `device_id`，以及可选的 `file`。IOCTL 必须提供 `code`，并接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。偏移默认为零，接受整数或十六进制字符串，且必须位于有符号 64 位整数的非负范围内。生命周期请求拒绝传输字段。未知或重复字段会被拒绝。`code` 接受无符号 32 位 JSON 整数或 `0x` 十六进制字符串。`input` 是长度为偶数且不带前缀或空格的十六进制字节字符串；省略表示空输入。`output_size` 为无符号 JSON 整数，省略表示零。不接受小数以及浮点数写法。
+根对象仅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`kernel_va_shadow_query`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry` 和 `pnp_devices`。普通文件请求接受 `kind`、可选且互斥的 `device` 或 `device_id`，以及可选的 `file`。IOCTL 必须提供 `code`，并接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。偏移默认为零，接受整数或十六进制字符串，且必须位于有符号 64 位整数的非负范围内。生命周期请求拒绝传输字段。未知或重复字段会被拒绝。`code` 接受无符号 32 位 JSON 整数或 `0x` 十六进制字符串。`input` 是长度为偶数且不带前缀或空格的十六进制字节字符串；省略表示空输入。`output_size` 为无符号 JSON 整数，省略表示零。不接受小数以及浮点数写法。
 
 仅 READ／WRITE／IOCTL 请求接受可选字段 `cancel_after_100ns`，它必须是 0 到 `INT64_MAX`（9223372036854775807）之间的 JSON 整数。该值相对于请求提交时刻，以虚拟 100 ns 为单位，并非墙钟时间。对 KMDF，零表示框架路由后、来宾 I/O 回调前触发取消；若路由已直接完成请求，则完成优先。对 WDM，零在派发返回后生效。正数延迟仅在没有就绪回调或执行帧时，随时间推进至定时器、等待或取消期限而触发。挂起的 WDM IRP 会在持有取消自旋锁的 `DISPATCH_LEVEL` 调用已注册的取消例程；例程必须使用 `Irp->CancelIrql` 释放锁后再完成请求。通用队列与 PnP 取消仍不支持。每个请求报告都包含 `cancel_requested_at_100ns`，值为取消实际发生时的绝对虚拟时间；若未发生取消，包括完成先发生的情况，则为 null。请求取消本身不会完成 IRP，也不规定最终状态。
 `IoSetCancelRoutine`、`IoAcquireCancelSpinLock`、`IoReleaseCancelSpinLock` 和 `IoCancelIrp` 共用同一 IRP 状态与取消自旋锁；`IoCancelIrp` 同步调用已注册例程，并返回是否实际调用。
@@ -474,7 +493,7 @@ python3 scripts/validate_windows_driver_sample.py \
 
 JSON 报告区分 `stop_reason`、可为空的 `nt_status` 和 `nt_success`、停止位置 PC，以及指令计数。它保留停止前收集的 API 调用和可观察状态，包括设备对象与驱动回调地址。来宾地址以十六进制字符串表示，避免 JSON 使用方丢失 64 位精度。
 
-`configuration` 对象记录本次执行的限制、服务名及 `kernel_exports` 覆盖配置。配置标识为 `wdm-x64-scheduled-v101`。`nt_status` 始终是 DriverEntry 的结果，而 `scenario_success` 综合描述初始化及已完成请求的结果。`phase`、`requests` 和 `unload_completed` 表明请求生命周期的哪些部分已运行。每次 API 调用及 CPU 写入也会记录阶段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每个请求报告派发状态与 I/O 状态、是否完成、information 长度以及返回的 `output_hex` 字节。`preferred_image_base` 描述原始 PE 基址。`security_cookie` 为已初始化 cookie 的来宾地址；若无需 cookie，则为 `"0x0"`。请求报告字段为 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始注册表配置。 `information_hex` 以十六进制字符串精确保留原始 64 位 `IoStatus.Information`；原有数值字段 `information` 仍保留。
+`configuration` 对象记录本次执行的限制、服务名及 `kernel_exports` 覆盖配置。配置标识为 `wdm-x64-scheduled-v103`。`nt_status` 始终是 DriverEntry 的结果，而 `scenario_success` 综合描述初始化及已完成请求的结果。`phase`、`requests` 和 `unload_completed` 表明请求生命周期的哪些部分已运行。每次 API 调用及 CPU 写入也会记录阶段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每个请求报告派发状态与 I/O 状态、是否完成、information 长度以及返回的 `output_hex` 字节。`preferred_image_base` 描述原始 PE 基址。`security_cookie` 为已初始化 cookie 的来宾地址；若无需 cookie，则为 `"0x0"`。请求报告字段为 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始注册表配置。 `information_hex` 以十六进制字符串精确保留原始 64 位 `IoStatus.Information`；原有数值字段 `information` 仍保留。
 
 工作项观察记录使用 `callback:N` 阶段。待处理请求的 `dispatch_status` 保留 `STATUS_PENDING`，最终完成状态单独记录在 `io_status`，并据此计算该请求对 `scenario_success` 的影响。
 
@@ -606,3 +625,36 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 通过 `KeQueryPerformanceCounter`、`RDTSC` 或 `RDTSCP` 读取时钟会保留明确的驱动恢复依赖。捕获的计数器和频率值尚无面向新内核环境的重绑定契约。默认恢复返回 `unsupported_state`；`snapshot_only` 保留此诊断。
 
 `KernelModuleImages` 根据 `KernelExportRegistry` 生成可读的 PE 头和导出表；静态导入、动态查找和模块枚举共享同一组地址。提供者代码保持不透明，清单描述的是模拟环境，而非宿主内核。两个输出都在写入前检查，包括池内存生命周期与重叠。Nt 查询要求已知的内核 previous-mode；Zw 查询采用内核调用契约。完整模块查询会保留明确的恢复依赖，即使其缓冲区已释放；提供者映像指针也按借用状态跟踪。`KernelExportTests.cpp` 检查 PE 解析、权限、ABI 字段、写入拒绝和恢复依赖；原创编译运行时夹具在 CPU 后端遍历这些导出表。
+
+驱动配置固定关闭 CET 影子栈。规范编码的 `RDSSPD` 和 `RDSSPQ` 保留全部寄存器位、标志和内存，包括 32 位目的寄存器的高半部分。两种读取都计为一条指令，并为 UNPACK 保留环境依赖。CPUID 声明不会启用 CET；其他影子栈指令及启用 CET 的操作仍不受支持。
+
+## 声明的加载记录视图
+
+可选的 `loader_view` 声明具体诊断环境，例如 `{"version":1,"flags":0,"evidence":"fixture declaration"}`。三个字段都必填；`flags` 是无符号 32 位整数，零也必须显式提供；`evidence` 是调用方提供的 1–256 字节可打印 ASCII 标签，不是经过认证的证据。版本 1 指模拟布局，不代表 Windows 版本。未知字段或无效声明在模型分配前拒绝。省略时 `DriverSection` 保持不透明，报告不增加该字段；提供时完整记录于 `configuration.loader_view`。
+
+可选 `version_query` 选择具体诊断算法：`{"version":1,"build_number":12345,"evidence":"fixture declaration","allow_zero_size":false}`。`version`、`build_number`（0–65535，包含显式零）和 `evidence`（1–256 个可打印 ASCII 字节）必填；`allow_zero_size` 默认为 false。版本 1 仅向 [4,20) 写入主版本 10、次版本 0、声明的构建号和平台 2，其余字节保持不变。此版本标识算法，不认证某个 Windows 实现，也不从宿主推断数值。
+
+`RtlGetVersion` 要求 `checked-x64` 和 PASSIVE_LEVEL。基础记录长度必须为 276，整个 CSD 数组已清零；单独启用的零长度形式仅访问 20 字节，属于非通用兼容行为。长度 284/292、其他长度、非零 CSD、无效 RAM 或权限均在输出写入前拒绝，共享对象访问守卫同样适用。未使用的声明也保留未重建的环境依赖，不提供符号假设、指针布局或原生恢复证明。报告保留 `configuration.version_query`。参见 [API 契约](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlgetversion) 与[基础记录初始化](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_osversioninfow)。
+
+查询缓冲区必须位于该执行配置的内核地址范围；在本次停止 CPU 执行的 API 操作期间，每个访问的 RAM 字节在当前地址空间只能有一个虚拟映射。用户缓冲区以及任何第二映射（包括只读或不可访问别名）均在输出前拒绝。这是保守的准入限制，不根据高地址推断所有权，共享对象访问检查仍然适用。
+
+借用的 160 字节记录仅开放 `DllBase`（偏移 48，8 字节）、`EntryPoint`（56，8）、`SizeOfImage`（64，4）及 `Flags`（104，4）。前三项来自实际加载映像，包含重定位后的值；不推断标志位含义。允许这些范围内的部分读取；未知字节、跨越未知范围的访问和所有写入均拒绝，复制服务和尝试建立 MDL 别名也不能绕过。`DriverObject.Flags` 仍不透明。视图贯穿模拟生命周期，即使未读取也保留未重建的环境依赖，不授予符号常量或原生运行时恢复权限。
+
+执行要求通过 `DriverOptions.Contract` 或支持选择合约的入口启用 `checked-x64`。原 C v1 场景入口使用 Legacy，不能启用该视图；UNPACK 默认采用受检查执行。Legacy 在映像加载或观察器启动前即被拒绝，因为软件写入钩子可能在提交存储后才停止。
+
+
+## 显式物理内存清单
+
+可选 `physical_memory_inventory` 显式选择模拟 RAM：`{"version":1,"source":"model-identity-window","evidence":"fixture declaration"}`。三个字段均必填，evidence 为 1–256 字节可打印 ASCII。未知字段、不支持的版本或来源、非 `checked-x64` 声明在加载前拒绝。此来源选择统一物理身份窗口，即从 64 GiB 开始的一个 64 MiB 范围；不推断宿主机安装内存，也不为尚无后备存储的页面赋予字节或访问权限。
+
+在 PASSIVE_LEVEL，`MmGetPhysicalMemoryRanges` 返回新分配的 32 字节非分页池缓冲区：两个 64 位字段（基址和字节长度），随后是零/零终止项。并存结果相互独立，调用者通过 `ExFreePool` 或 `ExFreePoolWithTag(...,0)` 分别释放；资源不足返回 NULL。缺少声明、IRQL 过高或生命周期非法均明确停止，固定的页面阻止提前释放。Ex/Ex2、任意清单和内存热增删尚不支持。报告保留 `configuration.physical_memory_inventory`。即使未使用声明，也保留环境依赖。API 所有的结果缓冲区仍属于借用状态和活跃池依赖，不会捏造可重建的池分配 API；释放它们也不构成符号证明或原生还原证明。
+
+## 显式内核虚拟地址隔离状态查询
+
+可选 `kernel_va_shadow_query` 显式提供类 `196`（`SystemKernelVaShadowInformation`）的结果：`{"version":1,"flags":0,"evidence":"fixture declaration"}`。三项均必填，显式零值有效。版本 1 只接受低十四个已定义位（`0x3fff`）；保留位、畸形或未知字段及非 `checked-x64` 执行均拒绝。evidence 为 1–256 个可打印 ASCII 字节。此声明不会推断宿主状态或实现硬件缓解措施。
+
+在 PASSIVE_LEVEL，长度小于 4 时返回 `STATUS_INFO_LENGTH_MISMATCH`，不访问结果；长度至少为 4 时只更新前四字节。非空 `ReturnLength` 在两种情况下均写入 4。ULONG 参数取低 32 位。结果须为可读写内核 RAM，长度输出须可写；两个范围均须具有唯一物理映射和有效对象生命周期。成功输出不得重叠，所有检查先于写入。Nt 要求已知 KernelMode previous-mode，Zw 保留调用者上下文。报告保留声明，即使未使用也保留尚未重建的环境依赖。
+
+## 有界内核调用者上下文捕获
+
+`RtlCaptureContext` 在 checked-x64 Unicorn/KVM/WHP 上共用导入和动态调用实现，要求 IRQL <= DISPATCH_LEVEL。目标为 16 字节对齐、完整可读写的 1232 字节内核记录；仅写 `[48,72)`、`[120,262)`、`[280,284)`、`[416,672)`，其余字节（包括 x87 数据、指针和 MXCSR mask）保持不变。ContextFlags 为 `0x10000f`，调用者 RSP=入口 RSP+8，RIP 取实际返回槽；入口 RSP-8 写入 8 字节标志暂存值，RAX 返回零扩展 EFLAGS，算术标志按 ADD(入口 RSP-8,8) 更新。DS/ES/FS/GS 使用 checked 逻辑 SS 选择子，不代表宿主或原始后端选择子。完整记录、返回槽和暂存槽必须通过普通内核 RAM、有效对象、权限和唯一物理映射检查；记录不得与返回/暂存范围重叠，入口 RSP 模 16 必须为 8。采集或准入失败不改变 CPU/RAM，legacy 明确拒绝。这是有界模型，不代表所有 Windows 实现；即使捕获字节被覆盖，仍保留未重建环境依赖，不授予 UNPACK 还原或符号前提。

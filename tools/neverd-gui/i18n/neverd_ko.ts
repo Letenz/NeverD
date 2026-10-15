@@ -839,6 +839,14 @@
         <source>Load symbols from a selected PDB file</source>
         <translation>선택한 PDB 파일에서 심볼 불러오기</translation>
     </message>
+    <message>
+        <source>&amp;Edit function...</source>
+        <translation>함수 편집(&amp;E)...</translation>
+    </message>
+    <message>
+        <source>Change the name of the current function and what it is</source>
+        <translation>현재 함수의 이름과 속성을 변경합니다</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1461,6 +1469,22 @@ Double-click to go to the declaration.</source>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>저장된 변수 이름은 다른 소스 렌더링에 속합니다</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>블록 펼치기 (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>블록 접기 (Ctrl+Shift+[)</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification</source>
+        <translation>기호 단순화</translation>
+    </message>
+    <message>
+        <source>Transformation failed: %1</source>
+        <translation>변환 실패: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1475,6 +1499,54 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Keep this function while the disassembly moves on</source>
         <translation>디스어셈블리가 이동해도 이 함수를 계속 표시</translation>
+    </message>
+    <message>
+        <source>Optimization</source>
+        <translation>최적화</translation>
+    </message>
+    <message>
+        <source>Transform the current function</source>
+        <translation>현재 함수 변환</translation>
+    </message>
+    <message>
+        <source>Symbolically simplify this function</source>
+        <translation>이 함수를 기호적으로 단순화</translation>
+    </message>
+    <message>
+        <source>Recover LLVM control flow</source>
+        <translation>LLVM 제어 흐름 복원</translation>
+    </message>
+    <message>
+        <source>LLVM optimization</source>
+        <translation>LLVM 최적화</translation>
+    </message>
+    <message>
+        <source>Basic cleanup</source>
+        <translation>기본 정리</translation>
+    </message>
+    <message>
+        <source>O2 (default)</source>
+        <translation>O2 (기본값)</translation>
+    </message>
+    <message>
+        <source>Choose passes…</source>
+        <translation>패스 선택…</translation>
+    </message>
+    <message>
+        <source>LLVM passes for this function</source>
+        <translation>이 함수의 LLVM 패스</translation>
+    </message>
+    <message>
+        <source>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</source>
+        <translation>스칼라 정리 패스를 선택합니다. 기호 단순화는 따로 제어합니다.</translation>
+    </message>
+    <message>
+        <source>Restore default source</source>
+        <translation>기본 소스 복원</translation>
+    </message>
+    <message>
+        <source>Cancel transformation</source>
+        <translation>변환 취소</translation>
     </message>
 </context>
 <context>
@@ -2136,6 +2208,30 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>This engine cannot use an unverified PDB for analysis</source>
         <translation>이 엔진은 검증되지 않은 PDB를 분석에 사용할 수 없습니다</translation>
     </message>
+    <message>
+        <source>Line</source>
+        <translation>행</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>열</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>코드</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>함수 불러오기가 완료된 후 참조를 찾으세요</translation>
+    </message>
+    <message>
+        <source>Could not tell which PDB %1 names: %2</source>
+        <translation>%1이(가) 지정한 PDB를 확인할 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>Could not tell whether %1 has DWARF: %2</source>
+        <translation>%1에 DWARF가 있는지 확인할 수 없습니다: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2417,6 +2513,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
         <translation>분석용 PDB를 불러왔습니다: %1 (%2개 이름, 사용자 확인됨, 식별 정보 미검증)</translation>
     </message>
+    <message>
+        <source>Opened without the PDB the input names, as chosen</source>
+        <translation>선택에 따라 입력 파일이 지정한 PDB 없이 열었습니다</translation>
+    </message>
+    <message>
+        <source>Edited the function at %1</source>
+        <translation>%1의 함수를 편집했습니다</translation>
+    </message>
+    <message>
+        <source>Opened without its DWARF debug information, as chosen</source>
+        <translation>선택한 대로 DWARF 디버그 정보 없이 열었습니다</translation>
+    </message>
+    <message>
+        <source>DWARF loaded: %1</source>
+        <translation>DWARF를 불러왔습니다: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2667,6 +2779,302 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The worker cannot restore analysis state.</source>
         <translation>분석 프로세스가 분석 상태를 복원할 수 없습니다.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PdbPromptDialog</name>
+    <message>
+        <source>Load PDB file</source>
+        <translation>PDB 파일 불러오기</translation>
+    </message>
+    <message>
+        <source>The input file was linked with debug information stored here:</source>
+        <translation>입력 파일에 링크된 디버그 정보의 저장 위치:</translation>
+    </message>
+    <message>
+        <source>&amp;Browse…</source>
+        <translation>찾아보기(&amp;B)…</translation>
+    </message>
+    <message>
+        <source>The download was cancelled.</source>
+        <translation>다운로드가 취소되었습니다.</translation>
+    </message>
+    <message>
+        <source>A matching copy is at that path.</source>
+        <translation>해당 경로에 일치하는 사본이 있습니다.</translation>
+    </message>
+    <message>
+        <source>A matching copy is beside the input file:</source>
+        <translation>입력 파일과 같은 위치에 일치하는 사본이 있습니다:</translation>
+    </message>
+    <message>
+        <source>A matching copy is in a symbol directory:</source>
+        <translation>심볼 디렉터리에 일치하는 사본이 있습니다:</translation>
+    </message>
+    <message>
+        <source>A matching copy is in the symbol store:</source>
+        <translation>심볼 저장소에 일치하는 사본이 있습니다:</translation>
+    </message>
+    <message>
+        <source>Do you want to load it?</source>
+        <translation>불러오시겠습니까?</translation>
+    </message>
+    <message>
+        <source>%1 belongs to another build.</source>
+        <translation>%1은(는) 다른 빌드의 파일입니다.</translation>
+    </message>
+    <message>
+        <source>%1 cannot be read.</source>
+        <translation>%1을(를) 읽을 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer, and no symbol server is configured.</source>
+        <translation>이 컴퓨터에 일치하는 사본이 없고 심볼 서버도 설정되어 있지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Do you want to browse for the PDB file on disk?</source>
+        <translation>디스크에서 PDB 파일을 찾아보시겠습니까?</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer. Only the PDB&apos;s name and build identity are sent to look for it.</source>
+        <translation>이 컴퓨터에 일치하는 사본이 없습니다. 검색할 때는 PDB 이름과 빌드 식별자만 전송됩니다.</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the Microsoft Symbol Server?</source>
+        <translation>Microsoft 심볼 서버에서 이 파일을 찾으시겠습니까?</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the symbol server %1?</source>
+        <translation>심볼 서버 %1에서 이 파일을 찾으시겠습니까?</translation>
+    </message>
+    <message>
+        <source>Downloading %1 from %2…</source>
+        <translation>%2에서 %1 다운로드 중…</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message>
+        <source>Verifying %1…</source>
+        <translation>%1 검증 중…</translation>
+    </message>
+    <message>
+        <source>The downloaded file is not the PDB of this build.</source>
+        <translation>다운로드한 파일은 이 빌드의 PDB가 아닙니다.</translation>
+    </message>
+    <message>
+        <source>Could not find PDB file &apos;%1&apos;.</source>
+        <translation>PDB 파일 &apos;%1&apos;을(를) 찾을 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Do you want to try again, or to browse for the PDB file on disk?</source>
+        <translation>다시 시도하시겠습니까, 아니면 디스크에서 PDB 파일을 찾아보시겠습니까?</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB 파일 (*.pdb);;모든 파일 (*)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SymbolDownload</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>심볼 다운로드 시간이 초과되었습니다.</translation>
+    </message>
+    <message>
+        <source>No symbol server is configured.</source>
+        <translation>심볼 서버가 설정되어 있지 않습니다.</translation>
+    </message>
+    <message>
+        <source>%1 is not an HTTP symbol server.</source>
+        <translation>%1은(는) HTTP 심볼 서버가 아닙니다.</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol store directory %1.</source>
+        <translation>심볼 저장소 디렉터리 %1을(를) 만들 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>%1에서 임시 심볼 파일을 열 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>심볼 파일이 2 GiB 다운로드 제한을 초과합니다.</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>심볼 파일 %1에 쓸 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>%1 has no matching symbols for this build.</source>
+        <translation>%1에 이 빌드와 일치하는 심볼이 없습니다.</translation>
+    </message>
+    <message>
+        <source>The symbol download from %1 failed: %2</source>
+        <translation>%1에서 심볼 다운로드 실패: %2</translation>
+    </message>
+    <message>
+        <source>%1 sent an empty symbol file.</source>
+        <translation>%1에서 빈 심볼 파일을 보냈습니다.</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>압축된 심볼 파일이 유효하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>%1에 임시 심볼 디렉터리를 만들 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>심볼 파일의 압축을 해제할 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>압축된 심볼은 Windows가 필요합니다.</translation>
+    </message>
+    <message>
+        <source>Cannot save the symbol file to %1: %2</source>
+        <translation>심볼 파일을 %1에 저장할 수 없습니다: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FunctionEditDialog</name>
+    <message>
+        <source>Edit function</source>
+        <translation>함수 편집</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this frame size</source>
+        <translation>NeverD는 이 프레임 크기를 보관하지 않습니다</translation>
+    </message>
+    <message>
+        <source>&amp;Name of function</source>
+        <translation>함수 이름(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Analysis decodes where the function ends</source>
+        <translation>함수의 끝은 분석이 결정합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Start address</source>
+        <translation>시작 주소(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;End address</source>
+        <translation>끝 주소(&amp;E)</translation>
+    </message>
+    <message>
+        <source>&amp;Choose…</source>
+        <translation>선택(&amp;C)…</translation>
+    </message>
+    <message>
+        <source>Function color</source>
+        <translation>함수 색</translation>
+    </message>
+    <message>
+        <source>&amp;Default</source>
+        <translation>기본값(&amp;D)</translation>
+    </message>
+    <message>
+        <source>&amp;Color</source>
+        <translation>색(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Enter size of (in bytes)</source>
+        <translation>크기 입력 (바이트 단위)</translation>
+    </message>
+    <message>
+        <source>Local &amp;variables area</source>
+        <translation>지역 변수 영역(&amp;V)</translation>
+    </message>
+    <message>
+        <source>Saved &amp;registers</source>
+        <translation>저장된 레지스터(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Only x86 functions pop their arguments</source>
+        <translation>x86 함수만 인수를 스택에서 제거합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Purged bytes</source>
+        <translation>제거되는 바이트(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Frame pointer &amp;delta</source>
+        <translation>프레임 포인터 차이(&amp;D)</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this flag</source>
+        <translation>NeverD는 이 플래그를 보관하지 않습니다</translation>
+    </message>
+    <message>
+        <source>D&amp;oes not return</source>
+        <translation>반환하지 않음(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Analysis ends every call to the function</source>
+        <translation>분석은 이 함수에 대한 모든 호출을 끝으로 처리합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Far function</source>
+        <translation>far 함수(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Only 16-bit x86 code has far functions</source>
+        <translation>far 함수는 16비트 x86 코드에만 있습니다</translation>
+    </message>
+    <message>
+        <source>&amp;Library func</source>
+        <translation>라이브러리 함수(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Static func</source>
+        <translation>정적 함수</translation>
+    </message>
+    <message>
+        <source>&amp;BP based frame</source>
+        <translation>BP 기반 프레임(&amp;B)</translation>
+    </message>
+    <message>
+        <source>BP e&amp;quals to SP</source>
+        <translation>BP가 SP와 같음(&amp;Q)</translation>
+    </message>
+    <message>
+        <source>Fuzzy SP</source>
+        <translation>모호한 SP</translation>
+    </message>
+    <message>
+        <source>Outlined code</source>
+        <translation>아웃라인된 코드</translation>
+    </message>
+    <message>
+        <source>O&amp;K</source>
+        <translation>확인(&amp;K)</translation>
+    </message>
+    <message>
+        <source>DEFAULT</source>
+        <translation>기본값</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DwarfPromptDialog</name>
+    <message>
+        <source>DWARF info found</source>
+        <translation>DWARF 정보를 찾았습니다</translation>
+    </message>
+    <message>
+        <source>Load DWARF debug information?</source>
+        <translation>DWARF 디버그 정보를 불러오시겠습니까?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
     </message>
 </context>
 </TS>

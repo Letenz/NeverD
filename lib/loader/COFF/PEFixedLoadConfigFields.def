@@ -1,0 +1,64 @@
+//===- PEFixedLoadConfigFields.def - Fixed-image load configuration -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Audited PE32+ load-configuration fields. Unsupported nonzero fields refuse
+/// the fixed snapshot; callable slots and the security cookie are loader writes.
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_PE_FIXED_LOAD_CONFIG_FIELD
+#error "Define NEVERD_PE_FIXED_LOAD_CONFIG_FIELD before including this file"
+#endif
+
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(Size, Scalar)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(TimeDateStamp, Scalar)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(MajorVersion, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(MinorVersion, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GlobalFlagsClear, Scalar)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GlobalFlagsSet, Scalar)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(CriticalSectionDefaultTimeout, Scalar)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(DeCommitFreeBlockThreshold, Scalar)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(DeCommitTotalFreeThreshold, Scalar)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(LockPrefixTable, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(MaximumAllocationSize, Scalar)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(VirtualMemoryThreshold, Scalar)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(ProcessAffinityMask, Scalar)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(ProcessHeapFlags, Scalar)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(CSDVersion, Scalar)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(DependentLoadFlags, Scalar)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(EditList, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(SecurityCookie, Cookie)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(SEHandlerTable, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(SEHandlerCount, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardCFCheckFunction, GuardCFCheck)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardCFCheckDispatch, GuardCFDispatch)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardCFFunctionTable, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardCFFunctionCount, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardFlags, GuardFlags)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(CodeIntegrity, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardAddressTakenIatEntryTable, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardAddressTakenIatEntryCount, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardLongJumpTargetTable, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardLongJumpTargetCount, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(DynamicValueRelocTable, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(CHPEMetadataPointer, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardRFFailureRoutine, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardRFFailureRoutineFunctionPointer, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(DynamicValueRelocTableOffset, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(DynamicValueRelocTableSection, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(Reserved2, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardRFVerifyStackPointerFunctionPointer, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(HotPatchTableOffset, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(Reserved3, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(EnclaveConfigurationPointer, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(VolatileMetadataPointer, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardEHContinuationTable, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardEHContinuationCount, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardXFGCheckFunctionPointer, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardXFGDispatchFunctionPointer, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(GuardXFGTableDispatchFunctionPointer, Zero)
+NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(CastGuardOsDeterminedFailureMode, Zero)
+
+#undef NEVERD_PE_FIXED_LOAD_CONFIG_FIELD

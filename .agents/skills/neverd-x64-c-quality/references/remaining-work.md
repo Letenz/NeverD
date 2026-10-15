@@ -12,12 +12,66 @@ analysis and comparison output belong outside the repository.
 | Source types and member calls remain partially recovered | Use authenticated PDB/TPI type and method metadata; do not infer a virtual method name from a vtable offset alone. |
 | Release performance varies by function and debug input | Time paired fresh `--func` calls and separate load from decompile cost. Profile before changing shared analysis. Preserve byte-identical C and EH semantics. |
 | Toolset coverage varies by hosted runner | Verify each compiler's actual version and path before publishing corpus artifacts. Treat unavailable versions as explicit skips. |
+| Interior code-address bits have no portable C or general LLVM blockaddress contract | Preserve precise CLI refusal and existing-file protection at full/selected optimized/unoptimized emission. Other atomic functions must still emit. LLVM verification does not prove bit observation; close opaque transport versus inspected bits at the shared LLVM owner. |
 | MinGW x86 call arguments can remain unknown after function boundaries are repaired | Inspect the recovered callee ABI and each caller's actual register/stack evidence. Do not treat residual unknown arguments as evidence that an internal label is still a function. |
-| The public x64 `xcpt4` SEH analysis matrix still rejects an independent ordinary entry in a protected scope | Complete decoded callee chains and certified runtime-only continuations retain their frame evidence. This case still needs authenticated effects across opaque imports and cross-funclet runtime activation identities. ABI declarations alone do not preserve saved memory. |
-| The public PE32 `xcpt4` mixes ordinary calls into finally bodies with runtime activations and nonlocal stack restoration | Runtime callback entries now retain separate invocation stacks across shared tails. Ordinary finally calls and nonlocal exits still need exact return-PC and resumption evidence consumed by CFG, SSA and emitters. Neither a zero-pop summary nor an unconditional no-return annotation is valid. |
+| The public x64 `xcpt4` source projection retains unresolved runtime stack values | The analysis matrix now retains the body and explicit unknown entry values. Native reconstruction still needs authenticated effects across opaque imports and cross-funclet runtime activation identities. ABI declarations alone do not preserve saved memory. |
+| Native reconstruction of PE32 `xcpt4` nonlocal invocations remains incomplete | Source registration-state closure and local filter recovery are fixed by #920 / #859. CFG, SSA and native emitters still need to consume the source capture/resumption and invocation-exit evidence. A source receipt does not certify a replacement runtime activation. |
+
+The original MSVC nonlocal-finally fixture now includes a second exception
+immediately after parent resumption and a guarded caller-owned counter helper.
+Its schema 2 oracle checks the x86 chain at each return and at the resume label.
+The new reentry oracle permits a nonlocal jump only during ordinary execution;
+exception unwinding completes its finally before raising the second exception.
+Jumping out of an abnormal finally is MSVC C4532 undefined behavior. The legacy
+compiler observations do not certify guard retirement inside the resumed parent.
+`check_windows_native_seh_resume.py` is a separate x64 LLVM/CRT protocol
+experiment with a physical-stack capture and a parent continuation address.
+Its explicit escaped resume token selects the ordinary suffix at the call
+continuation. An address-taken join alone allowed O2 to sink suffix effects and
+require a predecessor-only PHI at hidden entry. Local Wine O0/O2 observations
+are supporting evidence only; native Windows and compiler-visible resumption
+still require their own validation. A second ordinary finally call in the same
+parent activation checks token reinitialization. Arbitrary live SSA values,
+nested activations and EHCONT/CET compatibility are not authenticated. The independent
+`check_windows_native_seh_bridge.py` tests a fixed assembly-owned frame and two
+native continuation labels, entering optimized LLVM bodies through ordinary ABI
+calls. Local Wine O0/O2 covers eight paths and 512 positive calls, plus six
+corrupt compiled controls. Raw abnormal bytes, event counts, actual codes and a
+persistent unexpected-event flag remain independently observable. Native Windows
+is pending; no source-memory, arbitrary nesting, concurrency, EHCONT/CET or
+production reconstruction authority follows. LLVMC refuses block addresses and other
+unrepresented constants instead of silently substituting zero.
+Compiler or native-runtime success alone grants no reconstruction receipt;
+conditional memory, invocation lifetime and both C routes remain open.
 
 ## CRT and catch-continuation repairs
 
+- Source-written Win64 frame formats now retain exact reaching scalar bytes.
+  Every predecessor and inspected callee return must agree, and the complete
+  format through NUL must remain live outside runtime home/scratch areas and
+  return PCs. Image and frame formats share one Windows grammar. Initial
+  mutable-image bytes and language handler entries still supply no memory
+  authority. #858 source analysis is covered by #969; native reconstruction
+  still needs those memory contracts.
+- Windows SEH runtime-memory proofs use their own bounded scalar printf
+  grammar instead of Darwin/Objective-C argument typing. Positional and
+  foreign dialects, dynamic widths, decimal overflow and multibyte formats
+  retain refusal. Native reconstruction still needs writable-format and
+  exception-activation memory contracts beyond the #858 source projection.
+- Object borrows, local-finally writes and catch-object construction share the
+  source solver’s administration-boundary check. SEH SavedESP and exception
+  pointers, discontiguous EH4 cookies and realigned saved-entry anchors cannot
+  become scalar objects, even when no later reload exposes the overwrite.
+  Whole and partial overlaps reject; adjacent initialized objects stay valid.
+  These boundaries do not close the remaining conditional incoming-object or
+  nonlocal-invocation proof.
+- COFF parsing and LowIR share EH3/EH4 scope-index and frame-sentinel rules.
+  Registration analysis rechecks normalized initial levels, backward enclosing
+  links, handler/filter roles and PE32 code-address width before publishing
+  facts, even when parser status is complete. Twenty-four malformed-record
+  mutations reject without frame facts; initial-active and empty-table controls
+  retain valid sentinels. Byte, executable-ownership and frame-installation
+  proofs remain separate.
 - Single-function source LLVM emission uses the same verified promotion fallback
   as the SDK and sharded source route. Incomplete native EH contracts remain
   explicit and still prevent binary rewriting. Cross-format and architecture
@@ -52,6 +106,12 @@ analysis and comparison output belong outside the repository.
   Certified runtime-only continuation roots receive their established SP even
   without an ordinary incoming edge. This does not preserve saved pointers
   through opaque callees or prove cross-funclet frame borrowing.
+- Win64 `_controlfp_s` now bounds its real four-byte output for authenticated
+  UCRT queries and exception-mask changes. Partial saved-pointer overlaps,
+  active return PCs, home storage, escaped frames and unsupported masks still
+  refuse. PE32 and x64 share checked WAIT, MXCSR and FP arithmetic effects with
+  separate x64 GPR/APX negative controls. This closes two frame-transfer gaps;
+  the x64 xcpt4 case still lacks writable-format and runtime-activation proofs.
 - SEH filters and finally handlers retain separate entry/search-mode states
   when decoded callback tails are shared. Each must restore its own private
   stack and parent EBP. Source-value projections intersect all activations,

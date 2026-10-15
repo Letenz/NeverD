@@ -25,7 +25,7 @@ RegistrationStateSolver::parentStackOffset(const Domain &State) const {
        SP.CallbackAddress->Entry != State.Frame.CallbackEntry ||
        SP.CallbackAddress->Offset > 0 ||
        SP.CallbackAddress->Offset <
-           -int64_t(limits::kMaxRegistrationEHStateWork)))
+           -int64_t(limits::kMaxSourceCallBorrowedBytes)))
     return std::nullopt;
   // Callback allocation cannot release parent locals. SavedESP may already
   // name this private stack; only the CRT's pre-dispatch snapshot bounds the
@@ -62,6 +62,14 @@ bool RegistrationStateSolver::callbackReturnInstruction(size_t I,
       Boundary == Boundaries.end() || Boundary->second.first != Block.Id)
     return false;
   const auto &Insn = Boundary->second.second;
+  if (SEHControls && !KnownCxx) {
+    const auto Control = SEHControlIndex.find(Op.Addr);
+    if (Control == SEHControlIndex.end() ||
+        Control->second.Control !=
+            RegistrationSEHControlContract::Kind::NearReturn ||
+        Control->second.EndAddress != Block.EndAddr)
+      return false;
+  }
   return Insn.Control == LowInstructionControl::Return &&
          !hasLowInstructionControlFlag(
              Insn.ControlFlags, LowInstructionControlFlag::Conditional) &&

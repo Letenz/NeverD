@@ -42,7 +42,7 @@ concurrency:
 jobs:
   test:
     name: Test (Python ${{ matrix.python-version }})
-    if: ${{ github.event.action != 'closed' }}
+    if: ${{ github.event.action != 'closed' && (github.event_name != 'release' || (!startsWith(github.event.release.tag_name, 'web-producer-corpus-') && !startsWith(github.event.release.tag_name, 'web-product-'))) }}
     runs-on: ubuntu-24.04
     strategy:
       # Leave runner slots for the main builds in the shared organization pool.

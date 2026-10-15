@@ -823,7 +823,8 @@ va_t CFGBuilder::resolveStackMaterializedTableSource(
                Occurrence.DereferenceInstructionAddr != InvalidVA &&
                Occurrence.DereferenceOpSeq >= 0 &&
                (Occurrence.DereferenceOpcode == NdOp::LOAD ||
-                Occurrence.DereferenceOpcode == NdOp::STORE) &&
+                Occurrence.DereferenceOpcode == NdOp::STORE ||
+                Occurrence.DereferenceOpcode == NdOp::CALL) &&
                Occurrence.DereferenceAccessSize != 0;
       };
   auto exactStaticAddressMetadata =

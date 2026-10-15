@@ -48,6 +48,13 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelFrameworkRequests.cpp
   KernelModelExports.cpp
   KernelModel.cpp
+  KernelLoaderView.cpp
+  KernelVersionQuery.cpp
+  KernelVaShadowQuery.cpp
+  KernelModelVaShadow.cpp
+  KernelQueryBuffer.cpp
+  KernelModelContextCapture.cpp
+  KernelModelVersion.cpp
   KernelUnpackState.cpp
   KernelCalls.cpp
   KernelIRPCalls.cpp
@@ -56,6 +63,7 @@ target_sources(NeverDEmulation PRIVATE
   KernelPoolCalls.cpp
   KernelObjectCalls.cpp
   KernelMemoryCalls.cpp
+  KernelModelBugCheck.cpp
   KernelModelIO.cpp
   KernelModelUserMemory.cpp
   KernelModelPhysicalMemory.cpp
@@ -76,6 +84,7 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelInterruptEvents.cpp
   KernelResources.cpp
   KernelPhysicalMemory.cpp
+  KernelPhysicalInventory.cpp
   KernelDMA.cpp
   KernelDMAChannels.cpp
   KernelDMAEvents.cpp
@@ -87,6 +96,7 @@ target_sources(NeverDEmulation PRIVATE
   KernelRemoveLocks.cpp
   KernelModelRuntime.cpp
   KernelModelScheduling.cpp
+  KernelModelSLists.cpp
   KernelModelWaits.cpp
   KernelModelThreadPriorities.cpp
   KernelModelProcessors.cpp

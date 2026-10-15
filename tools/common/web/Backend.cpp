@@ -68,6 +68,9 @@ struct API {
   WEB_API(neverd_web_nexe_records_json)
   WEB_API(neverd_web_pkg_extract_json)
   WEB_API(neverd_web_pkg_records_json)
+  WEB_API(neverd_web_datapack_extract_json)
+  WEB_API(neverd_web_datapack_records_json)
+  WEB_API(neverd_web_datapack_decode_json)
   WEB_API(neverd_web_wails_extract_json)
   WEB_API(neverd_web_wails_records_json)
   WEB_API(neverd_web_tauri_extract_json)
@@ -128,6 +131,7 @@ struct API {
   WEB_API(neverd_web_html_records_json)
   WEB_API(neverd_web_asar_records_json)
   WEB_API(neverd_web_source_analyze_json)
+  WEB_API(neverd_web_source_analyze_large_json)
   WEB_API(neverd_web_source_nodes_json)
   WEB_API(neverd_web_source_bindings_analyze_json)
   WEB_API(neverd_web_source_binding_records_json)
@@ -1033,6 +1037,43 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
         sizeField(p, "limit", 128, 512)));
   }
+  if (operation == "web_datapack_extract") {
+    fields(p, {"revision", "artifact_id", "profile"});
+    if (!api().neverd_web_datapack_extract_json)
+      throw Error("capability_unavailable",
+                  "DataPack extraction is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "artifact_id", 64);
+    const auto profile = required(p, "profile", 64);
+    auto value = result(api().neverd_web_datapack_extract_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        profile.data(), profile.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_datapack_records") {
+    fields(p, {"revision", "extraction_id", "offset", "limit"});
+    if (!api().neverd_web_datapack_records_json)
+      throw Error("capability_unavailable",
+                  "DataPack extraction is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "extraction_id", 64);
+    return result(api().neverd_web_datapack_records_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 512)));
+  }
+  if (operation == "web_datapack_decode") {
+    fields(p, {"revision", "resource_id", "codec"});
+    if (!api().neverd_web_datapack_decode_json)
+      throw Error("capability_unavailable", "DataPack decoding is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "resource_id", 64);
+    const auto codec = required(p, "codec", 64);
+    return result(api().neverd_web_datapack_decode_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        codec.data(), codec.size()));
+  }
   if (operation == "web_tauri_extract") {
     fields(p, {"revision", "artifact_id", "profile", "initializer_address"});
     if (!api().neverd_web_tauri_extract_json)
@@ -1108,8 +1149,14 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         sizeField(p, "limit", 128, 512)));
   }
   if (operation == "web_source_analyze" ||
+      operation == "web_source_analyze_large" ||
       operation == "web_source_map_analyze") {
-    const bool source = operation == "web_source_analyze";
+    const bool source = operation != "web_source_map_analyze";
+    const auto SourceAPI = operation == "web_source_analyze_large"
+                               ? api().neverd_web_source_analyze_large_json
+                               : api().neverd_web_source_analyze_json;
+    if (source && !SourceAPI)
+      throw Error("capability_unavailable", "Source analysis is unavailable");
     if (source)
       fields(p, {"revision", "artifact_id", "source_type"});
     else
@@ -1117,12 +1164,13 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     const auto revision = required(p, "revision", 20);
     const auto id = required(p, "artifact_id", 64);
     const auto type = source ? required(p, "source_type", 16) : std::string();
-    auto value = source ? result(api().neverd_web_source_analyze_json(
-                              session_, revision.data(), revision.size(),
-                              id.data(), id.size(), type.data(), type.size()))
-                        : result(api().neverd_web_source_map_analyze_json(
-                              session_, revision.data(), revision.size(),
-                              id.data(), id.size()));
+    auto value =
+        source
+            ? result(SourceAPI(session_, revision.data(), revision.size(),
+                               id.data(), id.size(), type.data(), type.size()))
+            : result(api().neverd_web_source_map_analyze_json(
+                  session_, revision.data(), revision.size(), id.data(),
+                  id.size()));
     analysisState_ = "partial";
     return value;
   }

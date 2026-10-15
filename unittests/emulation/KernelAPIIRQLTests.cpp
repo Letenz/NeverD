@@ -75,6 +75,7 @@ TEST(DriverKernelAPIIRQL, DeviceCreationDeletionAndSymbolicLinksDiffer) {
   expectLimit("IoCreateSymbolicLink", 0);
   expectLimit("IoDeleteSymbolicLink", 0);
   expectLimit("MmGetSystemRoutineAddress", 0);
+  expectLimit("RtlGetVersion", 0);
 }
 
 TEST(DriverKernelAPIIRQL,
@@ -92,6 +93,7 @@ TEST(DriverKernelAPIIRQL, NonpagedPoolMdlAndWorkOperationsPermitDispatch) {
                                        "IoFreeIrp",
                                        "IoAllocateMdl",
                                        "IoFreeMdl",
+                                       "MmIsAddressValid",
                                        "MmBuildMdlForNonPagedPool",
                                        "MmMapLockedPagesSpecifyCache",
                                        "MmGetSystemAddressForMdlSafe",
@@ -135,6 +137,11 @@ TEST(DriverKernelAPIIRQL,
       "IoMarkIrpPending", "KeGetCurrentIrql"};
   for (auto Name : Names)
     expectLimit(Name, 15);
+}
+
+TEST(DriverKernelAPIIRQL, BugCheckRegistrationPreservesAnyValidLevel) {
+  expectLimit("KeRegisterBugCheckReasonCallback", 15);
+  expectLimit("KeDeregisterBugCheckReasonCallback", 15);
 }
 
 TEST(DriverKernelAPIIRQL, DispatcherKeepsItsOwnNarrowerChecks) {

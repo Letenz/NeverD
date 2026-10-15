@@ -55,6 +55,37 @@ NEVERD_API int neverd_session_load(neverd_session_t Sess, const char *Path);
 /// {"rows":[],"error"} when \p Path names no regular file.  Path is UTF-8.
 /// Free with neverd_free_string.
 NEVERD_API const char *neverd_identify_json(const char *Path);
+/// The PDB the PE at \p Path names, and where it is, without loading the PE:
+/// {"pdb":null} for an input that names no PDB a symbol store can key -- not
+/// a PE, or one without a unique valid CodeView record -- and otherwise
+/// {"pdb":{"file","key","recorded","found":{"path","location"}|null,
+/// "rejected":[{"path","location","reason"}],"servers":[{"url","path"}]}}.
+/// "file" and "key" name it in a symbol store, as
+/// <store>/<file>/<key>/<file>, and "recorded" is the path the linker wrote.
+/// "found" is the first local copy whose build identity matches the PE's, in
+/// the order neverd_session_load() searches: "recorded" (that path),
+/// "beside" (the input's directory), "directory" or "store" (of the search
+/// path); "rejected" lists the copies before it that belong to another build
+/// or cannot be read.  "servers" are the symbol servers to download a
+/// missing PDB from, in order: "url" serves it, and "path" is where its store
+/// keeps it, which a later load searches.  \p SymbolPath is a search path in
+/// _NT_SYMBOL_PATH syntax; NULL reads _NT_ALT_SYMBOL_PATH and
+/// _NT_SYMBOL_PATH, and without either searches a store in the user's cache
+/// directory filled from Microsoft's public symbol server.  Nothing is
+/// downloaded.  {"pdb":null,"error"} when \p Path names no readable file.
+/// Paths are UTF-8.  Free with neverd_free_string.
+NEVERD_API const char *neverd_pdb_reference_json(const char *Path,
+                                                 const char *SymbolPath);
+/// The DWARF of the ELF or Mach-O image at \p Path, found without loading the
+/// image: {"dwarf":null} for another format, for an image without DWARF, or
+/// for one whose debug information is never read (SBF), and otherwise
+/// {"dwarf":{"path","location"}}.  "path" is the file that holds it, and
+/// "location" is where neverd_session_load() reads it from, in its order:
+/// "input" (the image's own sections), "dsym" (a .dSYM bundle beside a
+/// Mach-O image) or "beside" (a split .debug file beside the image, matched
+/// by name alone).  {"dwarf":null,"error"} when \p Path names no readable
+/// file.  Paths are UTF-8.  Free with neverd_free_string.
+NEVERD_API const char *neverd_dwarf_reference_json(const char *Path);
 /// Read the input of the next neverd_session_load() as \p OptionsJson says
 /// instead of by its header: {"loader":"binary","processor":"x86"|"x86_64"|
 /// "arm"|"thumb"|"aarch64","base","offset","size","entry"?,"platform"?}
@@ -176,6 +207,28 @@ NEVERD_API void neverd_session_set_map_path(neverd_session_t Sess,
 /// the image itself does.  Enabled by default.
 NEVERD_API void neverd_session_set_debug_info_enabled(neverd_session_t Sess,
                                                       int Enabled);
+
+/// Pass 0 to load a PE without the PDB it names: the next
+/// neverd_session_load() searches for none, though a PDB named with
+/// neverd_session_set_pdb_path() still loads and other debug information is
+/// still found.  For a user who declined the PDB, or chose one to load after
+/// the image.  Enabled by default.
+NEVERD_API void neverd_session_set_pdb_search(neverd_session_t Sess,
+                                              int Enabled);
+
+/// Pass 0 to load an ELF or Mach-O image without its DWARF, from its own
+/// sections or a companion file: the next neverd_session_load() reads none,
+/// though other debug information is still found.  For a user who declined
+/// it.  Enabled by default.
+NEVERD_API void neverd_session_set_dwarf_search(neverd_session_t Sess,
+                                                int Enabled);
+
+/// Search the directories and symbol stores of \p SymbolPath, in
+/// _NT_SYMBOL_PATH syntax, for the PDB the next neverd_session_load() finds,
+/// instead of the environment's; NULL returns to the environment's.  Servers
+/// in it are not contacted.  UTF-8.
+NEVERD_API void neverd_session_set_symbol_path(neverd_session_t Sess,
+                                               const char *SymbolPath);
 
 /// Limit the next `neverd_session_load()` PE exception-table decode to this
 /// function entry.  Catch funclets named by that frame are still decoded.

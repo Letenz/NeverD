@@ -19,7 +19,9 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
+#include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/X86ShadowStackShape.h"
 #include "neverd/ir/high/X87ConstantShape.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
@@ -320,6 +322,121 @@ bool isPlainInteger(const TypeRef &T) {
 }
 
 } // anonymous namespace
+
+void HighCWriter::collectFrameRecordMembers(const HighFunc &Func,
+                                            uint64_t FrameBaseOffset,
+                                            uint64_t StorageSize) {
+  FrameRecordMembers.clear();
+  // Every access at a displacement: its type, and whether it is a plain
+  // integer read or write a member could print.
+  struct Access {
+    TypeRef Type;
+    bool Plain = false;
+  };
+  std::map<int64_t, std::vector<Access>> Accesses;
+  auto Note = [&](const HighExpr &Address, const TypeRef &Type,
+                  NdMemoryOrdering Ordering, NdMemoryAddressSpace Space) {
+    if (const auto Disp = certifiedFrameStorageDisplacement(Address))
+      Accesses[*Disp].push_back(
+          {Type, isPlainInteger(Type) && Ordering == NdMemoryOrdering::None &&
+                     Space == NdMemoryAddressSpace::Default});
+  };
+  std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
+    if (E.Kind == ExprKind::Load && !E.Operands.empty() && E.Operands[0])
+      Note(*E.Operands[0], E.Type, E.MemoryOrdering, E.MemoryAddressSpace);
+    E.forEachChildExpr([&](const ExprPtr &Child) {
+      if (Child)
+        Visit(*Child);
+    });
+  };
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Store && S.StoreAddr && S.StoreVal)
+      Note(*S.StoreAddr, S.StoreVal->Type, S.MemoryOrdering,
+           S.MemoryAddressSpace);
+    if (S.Dst)
+      Visit(*S.Dst);
+    forEachRhsExpr(S, [&](const ExprPtr &E) {
+      if (E)
+        Visit(*E);
+    });
+  });
+  // A debug object of another type keeps its bytes raw, as in LLVM C: its
+  // layout comes from the reader's headers, not from one integer member.
+  std::set<int64_t> Starts;
+  for (const auto &Entry : Accesses)
+    Starts.insert(Entry.first);
+  for (const auto &Entry : FrameSlotNamesBeforeStorage)
+    Starts.insert(Entry.first);
+  std::map<int64_t, TypeRef> DebugTypes;
+  std::vector<std::pair<int64_t, int64_t>> RawObjects;
+  for (int64_t Start : Starts)
+    if (TypeRef DebugTy = debugTypeForDisplacement(Func.Entry, Start)) {
+      if (!isPlainInteger(DebugTy))
+        RawObjects.push_back(
+            {Start, Start + std::max<int64_t>(DebugTy->Size, 1)});
+      DebugTypes[Start] = std::move(DebugTy);
+    }
+  std::set<std::string> Names;
+  for (const auto &[Disp, List] : Accesses) {
+    const TypeRef &Type = List.front().Type;
+    if (!llvm::all_of(List, [&](const Access &A) {
+          return A.Plain && A.Type->Size == Type->Size &&
+                 A.Type->IsSigned == Type->IsSigned;
+        }))
+      continue;
+    const int64_t At = static_cast<int64_t>(FrameBaseOffset) + Disp;
+    if (At < 0 || static_cast<uint64_t>(At) + Type->Size > StorageSize ||
+        At % Type->Size)
+      continue;
+    if (const auto Debug = DebugTypes.find(Disp);
+        Debug != DebugTypes.end() && Debug->second->Size != Type->Size)
+      continue;
+    const int64_t End = Disp + static_cast<int64_t>(Type->Size);
+    if (llvm::any_of(RawObjects, [&](const auto &Object) {
+          return Object.first < End && Disp < Object.second;
+        }))
+      continue;
+    const bool Clear = llvm::none_of(Accesses, [&](const auto &Other) {
+      return Other.first != Disp &&
+             llvm::any_of(Other.second, [&](const Access &A) {
+               const int64_t Size = A.Type && A.Type->Size ? A.Type->Size : 1;
+               return Other.first < End && Disp < Other.first + Size;
+             });
+    });
+    if (!Clear)
+      continue;
+    std::string Name;
+    if (const auto Slot = FrameSlotNamesBeforeStorage.find(Disp);
+        Slot != FrameSlotNamesBeforeStorage.end())
+      Name = Slot->second;
+    // `gapXX` names the record's gaps.
+    if (Name.empty() || Names.count(Name) ||
+        llvm::StringRef(Name).starts_with("gap")) {
+      const uint64_t Magnitude = Disp < 0
+                                     ? uint64_t{0} - static_cast<uint64_t>(Disp)
+                                     : static_cast<uint64_t>(Disp);
+      Name = (Disp < 0 ? "var_m" : "var_") + llvm::utohexstr(Magnitude);
+    }
+    if (!Names.insert(Name).second)
+      continue;
+    FrameRecordMembers[Disp] = {Name, Type};
+  }
+}
+
+std::optional<std::string>
+HighCWriter::frameRecordMember(const HighExpr &Addr, const TypeRef &Ty) const {
+  if (FrameRecordMembers.empty() || !isPlainInteger(Ty))
+    return std::nullopt;
+  const auto Disp = certifiedFrameStorageDisplacement(Addr);
+  if (!Disp)
+    return std::nullopt;
+  const auto Member = FrameRecordMembers.find(*Disp);
+  if (Member == FrameRecordMembers.end() ||
+      Member->second.Type->Size != Ty->Size ||
+      Member->second.Type->IsSigned != Ty->IsSigned)
+    return std::nullopt;
+  return kFrameStorageName.str() + "." + Member->second.Name;
+}
 
 bool printsIntegerArithmetic(const HighExpr &E) {
   if (E.Kind == ExprKind::UnaryOp)
@@ -927,6 +1044,12 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
     return Declared == ExternalFunctionIdentifiers.end() ? Slot
                                                          : Declared->second;
   }
+  // The function this unit defines at the address, under the identifier its
+  // definition took: a second static `helper` is `helper_2`.
+  if (auto At = DefinedFunctionsByAddress.find(E.CallAddr);
+      At != DefinedFunctionsByAddress.end() && At->second &&
+      !isVariadicImportStub(*At->second))
+    return functionIdentifier(*At->second);
   return Name + "_" + llvm::utohexstr(E.CallAddr);
 }
 
@@ -1098,6 +1221,15 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (isX87ContextIntrinsic(E.IntrinsicId))
+    return renderX87ContextCall(E);
+  // In an Itanium handler the exception the runtime took is the catch's
+  // parameter: its address, or for a caught pointer its value.  Both are the
+  // `void *` the call returns.
+  if (ItaniumCatchParameter && E.Operands.empty() &&
+      isItaniumRuntimeCall(E, "__cxa_begin_catch"))
+    return (ItaniumCatchParameter->second ? "" : "&") +
+           ItaniumCatchParameter->first;
   if (isX87ConstantControlIntrinsic(E.IntrinsicId)) {
     if (!x87ConstantControlShapeIsValid(
             E.IntrinsicId, x87ConstantControlHighShape(E, Opts.TheArch)))
@@ -1802,7 +1934,8 @@ void HighCWriter::collectUnknownOnlyNames(const HighFunc &Func) {
       const std::string Name = varName(S.Dst->Var);
       if (Name.empty())
         return;
-      if (isUnknownCallOperand(S.Val.get()))
+      if ((S.Val->Kind == ExprKind::Call && knownVoidCall(*S.Val)) ||
+          isUnknownCallOperand(S.Val.get()))
         HasUnknown.insert(Name);
       else
         HasKnown.insert(Name);
@@ -1862,7 +1995,8 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   }
   // A function this unit defines returns the type its definition prints.
   if (Defined != DefinedFunctionsByIdentifier.end() && Defined->second)
-    return Defined->second->ReturnType;
+    return analyzeVoidReturn(*Defined->second) ? NdType::makeVoid()
+                                               : Defined->second->ReturnType;
   // A C library routine returns the floating type its declaration names,
   // or a math routine the one its arguments have.
   if (const libc::LibCPrototype *Prototype = calleePrototype(E)) {
@@ -1883,9 +2017,11 @@ bool HighCWriter::knownVoidCall(const HighExpr &E) const {
     return false;
   // A function this unit defines returns what its definition declares: a
   // bound source signature decides over debug information.
-  if (const HighFunc *Definition = calledDefinition(E))
+  if (const HighFunc *Definition = calledDefinition(E)) {
     if (const TypeRef Declared = declaredFunctionReturnType(*Definition))
       return Declared->Kind == NdTypeKind::Void;
+    return analyzeVoidReturn(*Definition);
+  }
   // Other special-member rows are declared `void` too, but an MSVC
   // constructor or assignment returns `this`, and so does an ARM32 Itanium
   // destructor: a read of their result is real.
@@ -2256,6 +2392,11 @@ bool HighCWriter::isUnknownCallOperand(const HighExpr *Op) const {
   if (Inner->Kind == ExprKind::Undef)
     return true;
   if (Inner->Kind != ExprKind::Var && Inner->Kind != ExprKind::Phi)
+    return false;
+  // The unwinder hands a landing pad its exception object and selector; no
+  // statement assigns them, but they are the pad's own values, not unknown.
+  if (Inner->Var.Kind == MedVar::EHException ||
+      Inner->Var.Kind == MedVar::EHSelector)
     return false;
   // The stack pointer the function was entered with is frame_base, which no
   // statement assigns: `_start` passes it to __libc_start_main as stack_end.
@@ -4625,6 +4766,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return "(" + typeToC(E.Type) + ")(" + *Fwd + ")";
       if (auto Slot = namedSlotLoadDisplay(E))
         return *Slot;
+      if (auto Member = frameRecordMember(*E.Operands[0], E.Type))
+        return Access(*Member);
       // A data import's slot holds the import's address, which the read
       // takes: `(int64_t)__imp__commode`.
       if (const auto Slot =
@@ -4690,6 +4833,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return *Member + " = " + Val;
       if (auto Slot = namedFrameSlot(*E.Operands[0]))
         return *Slot + " = " + Val;
+      if (auto Member = frameRecordMember(*E.Operands[0], E.Operands[1]->Type))
+        return *Member + " = " + Val;
     }
     return memoryStoreExpr(E.Operands[1]->Type, Addr, Val, E.MemoryOrdering,
                            E.MemoryAddressSpace);
@@ -4937,6 +5082,40 @@ std::string HighCWriter::collapseHiLo(const HighExpr &Expr) {
 }
 
 std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
+  if (FuncReturnType && FuncReturnType->Kind == NdTypeKind::Int) {
+    const HighExpr *Value = &Expr;
+    if (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi) {
+      const std::string Name = copyForwardName(varName(Value->Var));
+      if (auto Forward = ValueForward.find(Name);
+          Forward != ValueForward.end() && Forward->second &&
+          Forward->second != Value)
+        Value = Forward->second;
+    }
+    if (Value->Kind == ExprKind::BinOp && Value->Op == NdOp::CONCAT &&
+        Value->Operands.size() == 2 && Value->Operands[0] &&
+        Value->Operands[1] && Value->Operands[1]->Type &&
+        Value->Operands[1]->Type->Kind == NdTypeKind::Int &&
+        Value->Operands[1]->Type->Size >= FuncReturnType->Size) {
+      const HighExpr *High = Value->Operands[0].get();
+      for (unsigned Depth = 0;
+           High && Depth < limits::kMaxIntegerViewUnwrapDepth; ++Depth) {
+        if (High->Kind == ExprKind::BinOp && High->Op == NdOp::SUBBYTES &&
+            High->Operands.size() == 2 && High->Operands[0] &&
+            High->Operands[1] && High->Operands[1]->Kind == ExprKind::Const) {
+          High = High->Operands[0].get();
+          continue;
+        }
+        break;
+      }
+      // A narrow declared return does not read the unbound upper register
+      // slice. Keep demanded unknown bits, loads and calls fail-closed.
+      if (High &&
+          (High->Kind == ExprKind::Undef ||
+           ((High->Kind == ExprKind::Var || High->Kind == ExprKind::Phi) &&
+            isUnknownCallOperand(High))))
+        return formatReturnExpr(*Value->Operands[1]);
+    }
+  }
   if (FuncReturnType && FuncReturnType->Kind == NdTypeKind::Ptr) {
     const HighExpr *Inner = unwrapIntegerView(&Expr);
     if (Inner &&
@@ -5420,13 +5599,13 @@ HighCWriter::ImageSymbolName HighCWriter::imageSymbolName(va_t Addr) const {
       // A mangled name keeps the underscores its scheme starts with
       // (`_ZTV8QDomNode` is `QDomNode_vtable`).  A comment reads a name the
       // identifier is spelled from: `vtable for QDomNode`, Go's
-      // `main.Flags`.
+      // `main.Flags`, or `__dso_handle`, whose underscores C drops.
       const llvm::StringRef CName =
           cNameOfSymbol(Sym->Name, Opts.Format, Opts.TheArch);
       Named.Raw = symbolScheme(CName) != SymbolScheme::None
                       ? CName.str()
                       : stripLeadingUnderscores(Sym->Name).str();
-      Named.Readable = demangledComment(CName);
+      Named.Readable = symbolComment(CName, Named.Raw);
       Named.Symbol = Sym->Name;
     }
   }
@@ -5444,8 +5623,11 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
     const ImageSymbolName Named = imageSymbolName(Addr);
     if (!Named.Raw.empty())
       Obj.Name = GlobalIdentifierAllocator.allocate(Named.Raw, "g");
-    if (!Named.Readable.empty())
-      Obj.Readable = Named.Readable;
+    // An identifier spelled from the name, or numbered after another object
+    // took it, has the name in its comment.
+    Obj.Readable = !Named.Readable.empty() || Named.Raw.empty()
+                       ? Named.Readable
+                       : symbolComment(Named.Raw, Obj.Name);
     if (!Named.Symbol.empty())
       Obj.Symbol = Named.Symbol;
     if (Obj.Symbol.empty())
@@ -6151,7 +6333,8 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
       const std::string Name = varName(Stmt.Dst->Var);
       if (!JoinPhiNames.count(Name) &&
           (FieldForward.count(Name) || ValueForward.count(Name) ||
-           UnknownOnlyNames.count(Name)))
+           (UnknownOnlyNames.count(Name) &&
+            (!Stmt.Val || !highCExpressionHasEffect(*Stmt.Val)))))
         return true;
     }
     if ((Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) &&

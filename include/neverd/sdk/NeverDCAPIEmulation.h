@@ -62,8 +62,15 @@ neverd_emulate_driver_json(neverd_session_t Sess, const char *Path,
 /// NUL-terminated UTF-8 JSON, limited to NEVERD_DRIVER_SCENARIO_JSON_LIMIT
 /// bytes. Supported root keys: load_address (0x string), unload (boolean),
 /// requests, registry, pnp_devices, and kernel_exports (routine names mapped
-/// to availability booleans). Each ordinary request supplies kind
-/// (create/ioctl/read/write/cleanup/close), optional device or configured
+/// to availability booleans).
+/// Additional root options include service_name, scheduling,
+/// trace_memory_writes, cpuid, and loader_view (version, flags, evidence).
+/// The loader view is a concrete declaration with retained recovery
+/// dependencies; it supplies no native state restoration contract.
+/// It requires checked-x64 execution. This v1 entry uses Legacy, so callers
+/// must use an entry point that can select the checked contract to enable it.
+/// Each ordinary request supplies kind (create/ioctl/read/write/cleanup/close),
+/// optional device or configured
 /// device_id, and optional file (u32 identity, default zero). CREATE without
 /// a device selector selects the sole live
 /// device; later requests use their file's device. IOCTL requires code (u32 or

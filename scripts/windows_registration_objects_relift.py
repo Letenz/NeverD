@@ -31,6 +31,10 @@ def validate_first(root, capture):
 
 def validate_installation(original, product, receipt, first, case):
     _, _, export = entry_context(case)
+    validate_object_installation(original, product, receipt, first, case, export)
+
+
+def validate_object_installation(original, product, receipt, first, case, export):
     validate_search_context(first, case)
     validate_generation(original, product, receipt, first, export)
     fields = ("entry_registers", "entry_pop", "cleanup_actions", "cleanup_calls",

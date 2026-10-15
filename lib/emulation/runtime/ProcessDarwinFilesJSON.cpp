@@ -12,6 +12,8 @@
 
 #include "llvm/ADT/StringExtras.h"
 
+#include <type_traits>
+
 namespace neverd::emulation {
 namespace {
 namespace field = process_report;
@@ -316,6 +318,236 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
     }
     return llvm::Error::success();
   };
+  auto ProviderObjects =
+      [&](const llvm::json::Value &Value, llvm::StringRef Name,
+          auto &Options) -> llvm::Expected<const llvm::json::Array *> {
+    const auto *Environment = Value.getAsObject();
+    const auto *Objects =
+        Environment ? Environment->getArray(field::FileSynchronizationObjects)
+                    : nullptr;
+    const auto *Created =
+        Environment
+            ? Environment->get(field::FileSynchronizationCreatedRegularObjects)
+            : nullptr;
+    using ProviderType = std::remove_cvref_t<decltype(*Options)>;
+    constexpr bool SymbolicLinkProvider =
+        std::is_same_v<ProviderType, DarwinFileSystemOptions> ||
+        std::is_same_v<ProviderType, DarwinOwnershipMutationOptions>;
+    constexpr bool DirectoryProvider =
+        std::is_same_v<ProviderType, DarwinModeMutationOptions> ||
+        std::is_same_v<ProviderType, DarwinOwnershipMutationOptions> ||
+        std::is_same_v<ProviderType, DarwinFileTimestampMutationOptions> ||
+        SymbolicLinkProvider;
+    const llvm::json::Value *CreatedDirectories = nullptr;
+    if constexpr (DirectoryProvider) {
+      if (Environment)
+        CreatedDirectories =
+            Environment->get(field::FileModeCreatedDirectoryObjects);
+    }
+    const llvm::json::Value *CreatedSymbolicLinks = nullptr;
+    if constexpr (SymbolicLinkProvider) {
+      if (Environment)
+        CreatedSymbolicLinks = Environment->get(
+            std::is_same_v<ProviderType, DarwinOwnershipMutationOptions>
+                ? field::FileOwnershipCreatedSymbolicLinkObjects
+                : field::FileSystemCreatedSymbolicLinkObjects);
+    }
+    if (!Environment ||
+        Environment->size() != 1 + unsigned(bool(Created)) +
+                                   unsigned(bool(CreatedDirectories)) +
+                                   unsigned(bool(CreatedSymbolicLinks)) ||
+        !Objects || Objects->size() > darwin_file_limits::Files)
+      return invalid(Name);
+    auto &Provider = Options.emplace();
+    if (Created) {
+      const auto Enabled = Created->getAsBoolean();
+      if (!Enabled)
+        return invalid(Name);
+      Provider.CreatedRegularObjects = *Enabled;
+    }
+    if constexpr (DirectoryProvider) {
+      if (CreatedDirectories) {
+        const auto Enabled = CreatedDirectories->getAsBoolean();
+        if (!Enabled)
+          return invalid(Name);
+        Provider.CreatedDirectoryObjects = *Enabled;
+      }
+    }
+    if constexpr (SymbolicLinkProvider) {
+      if (CreatedSymbolicLinks) {
+        const auto Enabled = CreatedSymbolicLinks->getAsBoolean();
+        if (!Enabled)
+          return invalid(Name);
+        Provider.CreatedSymbolicLinkObjects = *Enabled;
+      }
+    }
+    return Objects;
+  };
+  auto ObjectProvider = [&](const llvm::json::Value &Value,
+                            llvm::StringRef Name,
+                            auto &Options) -> llvm::Error {
+    auto Parsed = ProviderObjects(Value, Name, Options);
+    if (!Parsed)
+      return Parsed.takeError();
+    const auto *Objects = *Parsed;
+    auto &Provider = *Options;
+    for (const auto &Value : *Objects) {
+      const auto Path = Value.getAsString();
+      if (!Path || Path->size() >= Remaining ||
+          !Provider.Objects.insert(Path->str()).second)
+        return invalid(Name);
+      Remaining -= Path->size() + 1;
+    }
+    return llvm::Error::success();
+  };
+  auto ReadFileSystemSnapshot =
+      [&](const llvm::json::Value &Value,
+          llvm::StringRef Name) -> llvm::Expected<DarwinFileSystemSnapshot> {
+    const auto *Record = Value.getAsObject();
+    if (!Record || Record->size() != 16 || Remaining < 2168)
+      return invalid(Name);
+    DarwinFileSystemSnapshot Snapshot;
+    const auto Number = [&](llvm::StringRef Key,
+                            auto &Destination) -> llvm::Error {
+      const auto *V = Record->get(Key);
+      using T = std::remove_reference_t<decltype(Destination)>;
+      const auto N = V ? process_json::integer<T>(*V) : std::nullopt;
+      if (!N)
+        return invalid(Key);
+      Destination = *N;
+      return llvm::Error::success();
+    };
+    if (auto E = Number(field::FileBlockSize, Snapshot.BlockSize))
+      return E;
+    if (auto E = Number(field::FileSystemIOSize, Snapshot.IOSize))
+      return E;
+    if (auto E = Number(field::FileBlocks, Snapshot.Blocks))
+      return E;
+    if (auto E = Number(field::FileSystemFreeBlocks, Snapshot.FreeBlocks))
+      return E;
+    if (auto E =
+            Number(field::FileSystemAvailableBlocks, Snapshot.AvailableBlocks))
+      return E;
+    if (auto E = Number(field::Files, Snapshot.Files))
+      return E;
+    if (auto E = Number(field::FileSystemFreeFiles, Snapshot.FreeFiles))
+      return E;
+    const auto *ID = Record->getArray(field::FileSystemID);
+    if (!ID || ID->size() != 2)
+      return invalid(field::FileSystemID);
+    for (unsigned I = 0; I != 2; ++I) {
+      const auto N = process_json::integer<int32_t>((*ID)[I]);
+      if (!N)
+        return invalid(field::FileSystemID);
+      Snapshot.FileSystemID[I] = *N;
+    }
+    if (auto E = Number(field::FileSystemOwner, Snapshot.Owner))
+      return E;
+    if (auto E = Number(field::FileSystemType, Snapshot.Type))
+      return E;
+    if (auto E = Number(field::FileFlags, Snapshot.Flags))
+      return E;
+    if (auto E = Number(field::FileSystemSubtype, Snapshot.Subtype))
+      return E;
+    if (auto E = Number(field::FileSystemExtendedFlags, Snapshot.ExtendedFlags))
+      return E;
+    const auto Text = [&](llvm::StringRef Key,
+                          std::string &Destination) -> llvm::Error {
+      const auto V = Record->getString(Key);
+      if (!V)
+        return invalid(Key);
+      Destination = V->str();
+      return llvm::Error::success();
+    };
+    if (auto E = Text(field::FileSystemTypeName, Snapshot.TypeName))
+      return E;
+    if (auto E = Text(field::FileSystemMountPoint, Snapshot.MountPoint))
+      return E;
+    if (auto E = Text(field::FileSystemMountedFrom, Snapshot.MountedFrom))
+      return E;
+    if (!darwin_model::validFileSystemSnapshot(Snapshot))
+      return invalid(Name);
+    Remaining -= 2168;
+    return Snapshot;
+  };
+  auto FileSystemProvider = [&](const llvm::json::Value &Value,
+                                llvm::StringRef Name) -> llvm::Error {
+    auto Parsed = ProviderObjects(Value, Name, Out.FileSystemObservations);
+    if (!Parsed)
+      return Parsed.takeError();
+    for (const auto &Value : **Parsed) {
+      const auto *Object = Value.getAsObject();
+      const auto Path = Object ? Object->getString(field::Path) : std::nullopt;
+      const auto *Record =
+          Object ? Object->get(field::FileSystemSnapshot) : nullptr;
+      if (!Object || Object->size() != 2 || !Path || !Record ||
+          Path->size() >= Remaining)
+        return invalid(Name);
+      Remaining -= Path->size() + 1;
+      auto Snapshot = ReadFileSystemSnapshot(*Record, Name);
+      if (!Snapshot)
+        return Snapshot.takeError();
+      if (!Out.FileSystemObservations->Objects
+               .emplace(Path->str(), std::move(*Snapshot))
+               .second)
+        return invalid(Name);
+    }
+    return llvm::Error::success();
+  };
+  auto FileSystemEnumeration = [&](const llvm::json::Value &Value,
+                                   llvm::StringRef Name) -> llvm::Error {
+    const auto *Object = Value.getAsObject();
+    const auto *Mounts =
+        Object ? Object->getArray(field::FileSystemMounts) : nullptr;
+    if (!Object || Object->size() != 1 || !Mounts ||
+        Mounts->size() > darwin_file_limits::Files)
+      return invalid(Name);
+    auto &Provider = Out.FileSystemEnumeration.emplace();
+    for (const auto &Item : *Mounts) {
+      const auto *Entry = Item.getAsObject();
+      const auto *Cached =
+          Entry ? Entry->get(field::FileSystemCached) : nullptr;
+      const auto *Refreshed =
+          Entry ? Entry->get(field::FileSystemRefreshed) : nullptr;
+      if (!Entry || !Cached || Entry->size() != 1 + unsigned(bool(Refreshed)))
+        return invalid(Name);
+      auto Snapshot = ReadFileSystemSnapshot(*Cached, Name);
+      if (!Snapshot)
+        return Snapshot.takeError();
+      DarwinMountObservation Mount{std::move(*Snapshot), std::nullopt};
+      if (Refreshed) {
+        auto Update = ReadFileSystemSnapshot(*Refreshed, Name);
+        if (!Update)
+          return Update.takeError();
+        Mount.Refreshed = std::move(*Update);
+      }
+      Provider.Mounts.push_back(std::move(Mount));
+    }
+    return llvm::Error::success();
+  };
+  auto TimedObjectProvider = [&](const llvm::json::Value &Value,
+                                 llvm::StringRef Name,
+                                 auto &Options) -> llvm::Error {
+    auto Parsed = ProviderObjects(Value, Name, Options);
+    if (!Parsed)
+      return Parsed.takeError();
+    const auto *Objects = *Parsed;
+    auto &Provider = *Options;
+    for (const auto &Value : *Objects) {
+      const auto *Object = Value.getAsObject();
+      const auto Path = Object ? Object->getString(field::Path) : std::nullopt;
+      if (!Object || Object->size() != 2 || !Path || Path->size() >= Remaining)
+        return invalid(Name);
+      auto Time =
+          fileTime(Object->get(field::FileModeTime), field::FileModeTime);
+      if (!Time)
+        return Time.takeError();
+      if (!Provider.Objects.emplace(Path->str(), *Time).second)
+        return invalid(Name);
+      Remaining -= Path->size() + 1;
+    }
+    return llvm::Error::success();
+  };
   for (const auto &[Key, V] : *Object) {
     const llvm::StringRef Name = Key;
     if (Name == field::FileAuthorization) {
@@ -326,6 +558,36 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
       Out.Authorization = *Authorization == field::StaticOwnerQueries
                               ? DarwinFileAuthorization::StaticOwnerQueries
                               : DarwinFileAuthorization::StaticOrdinaryQueries;
+    } else if (Name == field::FileModeMutations) {
+      if (auto E = TimedObjectProvider(V, Name, Out.ModeMutations))
+        return E;
+    } else if (Name == field::FileFullSynchronization) {
+      if (auto E = ObjectProvider(V, Name, Out.FullSynchronization))
+        return E;
+    } else if (Name == field::FileBarrierSynchronization) {
+      if (auto E = ObjectProvider(V, Name, Out.BarrierSynchronization))
+        return E;
+    } else if (Name == field::FileDataSynchronization) {
+      if (auto E = ObjectProvider(V, Name, Out.DataSynchronization))
+        return E;
+    } else if (Name == field::FileSynchronization) {
+      if (auto E = ObjectProvider(V, Name, Out.Synchronization))
+        return E;
+    } else if (Name == field::FileAdvisoryLocks) {
+      if (auto E = ObjectProvider(V, Name, Out.AdvisoryLocks))
+        return E;
+    } else if (Name == field::FileOwnershipMutations) {
+      if (auto E = TimedObjectProvider(V, Name, Out.OwnershipMutations))
+        return E;
+    } else if (Name == field::FileSystemEnumeration) {
+      if (auto E = FileSystemEnumeration(V, Name))
+        return E;
+    } else if (Name == field::FileSystemObservations) {
+      if (auto E = FileSystemProvider(V, Name))
+        return E;
+    } else if (Name == field::FileTimestampMutations) {
+      if (auto E = TimedObjectProvider(V, Name, Out.TimestampMutations))
+        return E;
     } else if (Name == field::DescriptorLimit) {
       auto N = V.getAsUINT64();
       if (!N || *N > UINT32_MAX)

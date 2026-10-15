@@ -18,6 +18,78 @@
 namespace neverd::emulation {
 namespace {
 
+TEST(DriverScenario, LoaderViewIsExplicitAndRoundTripsWithoutDefaultFields) {
+  DriverResult Default;
+  auto Report = llvm::cantFail(llvm::json::parse(driverResultJSON(Default)));
+  EXPECT_FALSE(
+      Report.getAsObject()->getObject("configuration")->get("loader_view"));
+  auto Parsed = driverOptionsFromScenarioJSON(
+      R"({"loader_view":{"version":1,"flags":4294967295,"evidence":"caller declaration"}})");
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  ASSERT_TRUE(Parsed->LoaderView);
+  EXPECT_EQ(Parsed->LoaderView->Flags, UINT32_MAX);
+  auto Inherited = driverOptionsFromScenarioJSON("{}", *Parsed);
+  ASSERT_TRUE(bool(Inherited));
+  Default.Configuration = *Inherited;
+  Report = llvm::cantFail(llvm::json::parse(driverResultJSON(Default)));
+  const auto *View = Report.getAsObject()
+                         ->getObject("configuration")
+                         ->getObject("loader_view");
+  ASSERT_NE(View, nullptr);
+  EXPECT_EQ(View->getInteger("version"), 1);
+  EXPECT_EQ(View->getInteger("flags"), UINT32_MAX);
+  EXPECT_EQ(View->getString("evidence"), "caller declaration");
+  auto Zero = driverOptionsFromScenarioJSON(
+      R"({"loader_view":{"version":1,"flags":0,"evidence":"zero"}})", *Parsed);
+  ASSERT_TRUE(bool(Zero));
+  EXPECT_EQ(Zero->LoaderView->Flags, 0u);
+}
+
+TEST(DriverScenario, LoaderViewRejectsMalformedInputsBeforeLoading) {
+  for (const char *Input :
+       {"null",
+        "[]",
+        "true",
+        "{}",
+        R"({"version":1,"evidence":"missing"})",
+        R"({"flags":0,"evidence":"missing"})",
+        R"({"version":1,"flags":0})",
+        R"({"version":2,"flags":0,"evidence":"unsupported"})",
+        R"({"version":1.0,"flags":0,"evidence":"floating"})",
+        R"({"version":1e0,"flags":0,"evidence":"floating"})",
+        R"({"version":1.5,"flags":0,"evidence":"floating"})",
+        R"({"version":1.0000000000000001,"flags":0,"evidence":"rounded"})",
+        R"({"version":1,"flags":0.0,"evidence":"floating"})",
+        R"({"version":1,"flags":1e0,"evidence":"floating"})",
+        R"({"version":1,"flags":1.5,"evidence":"floating"})",
+        R"({"version":1,"flags":4294967295.0000001,"evidence":"rounded"})",
+        R"({"version":1,"flags":null,"evidence":"bad"})",
+        R"({"version":1,"flags":true,"evidence":"bad"})",
+        R"({"version":1,"flags":-1,"evidence":"bad"})",
+        R"({"version":1,"flags":4294967296,"evidence":"bad"})",
+        R"({"version":1,"flags":0,"evidence":""})",
+        R"({"version":1,"flags":0,"evidence":7})",
+        R"({"version":1,"flags":0,"evidence":"a\nlabel"})",
+        R"({"version":1,"flags":0,"evidence":"label","extra":0})",
+        R"({"version":1,"flags":0,"flags":1,"evidence":"duplicate"})"}) {
+    SCOPED_TRACE(Input);
+    auto Rejected = driverOptionsFromScenarioJSON(
+        std::string("{\"loader_view\":") + Input + "}");
+    ASSERT_FALSE(bool(Rejected));
+    llvm::consumeError(Rejected.takeError());
+  }
+  for (const auto &View : {DriverLoaderView{9, 0, "version"},
+                           DriverLoaderView{1, std::nullopt, "flags"},
+                           DriverLoaderView{1, 0, std::string(257, 'a')}}) {
+    DriverOptions Options;
+    Options.LoaderView = View;
+    auto Rejected = emulateDriver("absent.sys", Options);
+    ASSERT_FALSE(bool(Rejected));
+    EXPECT_NE(llvm::toString(Rejected.takeError()).find("driver loader_view:"),
+              std::string::npos);
+  }
+}
+
 TEST(DriverScenario, CPUIDDeclarationsRoundTripAndCanBeCleared) {
   auto Parsed = driverOptionsFromScenarioJSON(R"({"cpuid":[
     {"leaf":0,"eax":1,"ebx":2,"ecx":3,"edx":4294967295},

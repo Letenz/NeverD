@@ -1,0 +1,33 @@
+//===- FunctionAttributes.def - What the user states of a function -*- C++ -*-//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// The attributes of a function the user can state, as IDA's Edit function
+// dialog does, and the keys that spell them in neverd_func_edit's rows, the
+// function edits sidecar and neverd_func_attributes_json.  An attribute the
+// user has not stated is analysis's to decide.
+//
+// NEVERD_FUNCTION_FLAG(Member, Key): a true or false statement.
+//   NoReturn - the function never returns, which ends every call to it.
+//   Library  - a library function (a note analysis does not read).
+//   Static   - a function with internal linkage (a note).
+// NEVERD_FUNCTION_COLOR(Key): the "#RRGGBB" color the function shows in.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_FUNCTION_FLAG
+#define NEVERD_FUNCTION_FLAG(Member, Key)
+#endif
+#ifndef NEVERD_FUNCTION_COLOR
+#define NEVERD_FUNCTION_COLOR(Key)
+#endif
+
+NEVERD_FUNCTION_FLAG(NoReturn, "noreturn")
+NEVERD_FUNCTION_FLAG(Library, "library")
+NEVERD_FUNCTION_FLAG(Static, "static")
+NEVERD_FUNCTION_COLOR("color")
+
+#undef NEVERD_FUNCTION_FLAG
+#undef NEVERD_FUNCTION_COLOR

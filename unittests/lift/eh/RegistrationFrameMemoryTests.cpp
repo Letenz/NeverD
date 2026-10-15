@@ -64,4 +64,45 @@ TEST(RegistrationFrameMemory, OverlapLookupDoesNotWrapSignedCoordinates) {
   EXPECT_TRUE(Frame.load(INT32_MIN, 4).MayBeFrame);
   EXPECT_FALSE(Frame.load(INT32_MIN, 4).Offset);
 }
+
+TEST(RegistrationFrameMemory, SEHScalarsRetainAliasTaintAcrossPartialSpills) {
+  FrameState Frame;
+  Frame.enterSEHFilter(0x1800, -20);
+  const auto Pointers = Frame.load(-20, 4);
+  const auto Record = Frame.sehExceptionLoad(*Pointers.SEHException, 4);
+  ASSERT_TRUE(Record && Record->SEHException);
+  const auto Scalar = Frame.sehExceptionLoad(*Record->SEHException, 4);
+  ASSERT_TRUE(Scalar);
+  ASSERT_TRUE(Scalar->MayBeFrame && Scalar->FrameOnlyFromSEHScalar);
+  EXPECT_FALSE(Scalar->Offset);
+  Frame.store(-32, 4, *Scalar);
+  Frame.store(-31, 1, FrameValue::constant(7));
+  EXPECT_TRUE(Frame.load(-32, 4).MayBeFrame);
+  EXPECT_TRUE(Frame.load(-31, 1).FrameOnlyFromSEHScalar);
+  FrameState Other = Frame;
+  Other.store(-32, 4, FrameValue::constant(42));
+  Frame.merge(Other);
+  EXPECT_TRUE(Frame.load(-32, 4).MayBeFrame);
+  EXPECT_TRUE(Frame.load(-32, 4).FrameOnlyFromSEHScalar);
+}
+
+TEST(RegistrationFrameMemory, SEHScalarBytesCannotHidePhysicalFrameBits) {
+  for (int32_t Offset = -32; Offset != -28; ++Offset)
+    for (bool ScalarFirst : {false, true}) {
+      SCOPED_TRACE(Offset);
+      SCOPED_TRACE(ScalarFirst);
+      FrameState Frame;
+      const auto Scalar = FrameValue::taint(true, true);
+      const auto Pointer = FrameValue::frame(-64);
+      Frame.store(-32, 4, ScalarFirst ? Scalar : Pointer);
+      Frame.store(Offset, 1, ScalarFirst ? Pointer : Scalar);
+      const auto Mixed = Frame.load(-32, 4);
+      EXPECT_TRUE(Mixed.MayBeFrame);
+      EXPECT_FALSE(Mixed.FrameOnlyFromSEHScalar);
+      EXPECT_FALSE(Mixed.Offset);
+      const auto Shifted = Frame.load(Offset, 4);
+      EXPECT_TRUE(Shifted.MayBeFrame);
+      EXPECT_FALSE(Shifted.FrameOnlyFromSEHScalar);
+    }
+}
 } // namespace

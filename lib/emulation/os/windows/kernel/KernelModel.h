@@ -41,6 +41,7 @@ namespace neverd::emulation {
 class RAMInitializationWatch;
 struct DriverImage;
 class KernelExportRegistry;
+struct KernelContextCapture;
 enum class KernelAPIKind;
 class KernelModel {
 public:
@@ -86,7 +87,8 @@ public:
   llvm::Expected<uint64_t>
   call(const KernelExportRegistry::Export &Export,
        llvm::ArrayRef<uint64_t> Arguments,
-       llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument);
+       llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
+       const KernelContextCapture *Context = nullptr);
   std::optional<KernelGuestCall> takeGuestCall();
   std::optional<KernelGuestCall> takeIndependentGuestCall();
   std::optional<KernelGuestCall> takePoFxThreadCall(uint64_t Thread);
@@ -102,7 +104,8 @@ public:
   llvm::Expected<uint64_t>
   call(const std::string &Name, llvm::ArrayRef<uint64_t> Arguments,
        llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument =
-           nullptr);
+           nullptr,
+       const KernelContextCapture *Context = nullptr);
   llvm::Error snapshot();
   struct Invocation {
     uint64_t PC = 0;
@@ -299,8 +302,15 @@ private:
   llvm::Expected<uint64_t>
   currentDriverRequestStack(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> initializeUnicodeString(llvm::ArrayRef<uint64_t> A);
-  llvm::Expected<uint64_t> allocatePool(llvm::ArrayRef<uint64_t> A,
-                                        bool Modern);
+  llvm::Expected<uint64_t> ansiToUnicodeString(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> unicodeToAnsiString(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> freeCountedString(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> stringFromGUID(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> guidFromString(llvm::ArrayRef<uint64_t> A);
+  enum class PoolSource { GuestAllocation, KernelResult };
+  llvm::Expected<uint64_t>
+  allocatePool(llvm::ArrayRef<uint64_t> A, bool Modern,
+               PoolSource Source = PoolSource::GuestAllocation);
   llvm::Expected<uint64_t> freePool(llvm::ArrayRef<uint64_t> A, bool Tagged);
   llvm::Expected<uint64_t>
   deleteSymbolicLinkFromGuest(llvm::ArrayRef<uint64_t> A);
@@ -651,6 +661,28 @@ private:
   llvm::Expected<uint64_t> acquireSpinLock(uint64_t Address, SpinLockMode Mode);
   llvm::Expected<uint64_t> releaseSpinLock(uint64_t Address,
                                            std::optional<uint8_t> RestoreIRQL);
+  llvm::Error validateInterlockedLock(uint64_t Lock) const;
+  llvm::Error validateInterlockedStorage(uint64_t Lock, uint64_t Address,
+                                         uint32_t Size, bool IsWrite) const;
+  llvm::Expected<uint64_t> readInterlockedLink(uint64_t Lock, uint64_t Address,
+                                               bool IsWrite) const;
+  llvm::Expected<uint64_t> interlockedInsertList(llvm::ArrayRef<uint64_t> A,
+                                                 bool Tail);
+  llvm::Expected<uint64_t>
+  interlockedRemoveHeadList(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> interlockedPushEntryList(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> interlockedPopEntryList(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> interlockedAdd(llvm::ArrayRef<uint64_t> A,
+                                          unsigned Size);
+  llvm::Error validateSListStorage(uint64_t Address, uint32_t Size,
+                                   bool IsWrite) const;
+  llvm::Expected<std::pair<uint64_t, uint64_t>>
+  readSListHeader(uint64_t Header, bool IsWrite) const;
+  llvm::Expected<uint64_t> initializeSList(uint64_t Header);
+  llvm::Expected<uint64_t> pushEntrySList(uint64_t Header, uint64_t Entry);
+  llvm::Expected<uint64_t> popEntrySList(uint64_t Header);
+  llvm::Expected<uint64_t> flushSList(uint64_t Header);
+  llvm::Expected<uint64_t> querySList(uint64_t Header, bool FirstEntry);
   struct RaisedIRQL {
     uint64_t Execution;
     uint8_t OldIRQL;
@@ -742,6 +774,13 @@ private:
   std::map<uint64_t, uint64_t> ThreadHandles;
   uint64_t NextThreadHandle = profile::SystemThreadHandleBase;
   std::optional<uint32_t> PendingThreadTermination;
+  /// Client IDs of live thread objects, assigned on first observation. Issued
+  /// IDs are never reused, and requestor process IDs may not collide with them.
+  std::map<uint64_t, uint32_t> ThreadClientIDs;
+  std::set<uint32_t> IssuedThreadClientIDs;
+  std::set<uint32_t> RequestorProcessIDs;
+  uint64_t NextThreadClientID = profile::ThreadIDBase;
+  llvm::Expected<uint64_t> threadClientID(uint64_t Object);
   llvm::Expected<uint64_t>
   createSystemThread(llvm::ArrayRef<uint64_t> Arguments);
   llvm::Expected<uint64_t> terminateSystemThread(uint32_t Status);
@@ -821,6 +860,25 @@ private:
   // Only loader-owned mapped spans, excluding image holes. Physical backing is
   // registered lazily when a permitted image range is first locked.
   std::map<uint64_t, uint64_t> ImageRAM;
+  ExecutionContract Contract = ExecutionContract::Legacy;
+  struct BugCheckRecord {
+    uint64_t Callback, Component;
+    uint32_t Reason;
+    bool Live;
+  };
+  // Retain opaque record identities after removal: native list/checksum bytes
+  // have no concrete model value, even when the State byte becomes empty.
+  std::map<uint64_t, BugCheckRecord> BugCheckRecords;
+  llvm::Error validateBugCheckRecord(uint64_t Record) const;
+  llvm::Error validateBugCheckAccess(uint64_t Address, uint32_t Size,
+                                     bool IsWrite) const;
+  llvm::Error validateBugCheckPageBorrow(uint64_t Address, uint64_t Size) const;
+  bool hasLiveBugCheckCallbacks() const;
+  llvm::Expected<uint64_t> registerBugCheckCallback(uint64_t Record,
+                                                    uint64_t Callback,
+                                                    uint32_t Reason,
+                                                    uint64_t Component);
+  llvm::Expected<uint64_t> deregisterBugCheckCallback(uint64_t Record);
   std::optional<uint64_t> imageOwnerForRange(uint64_t Address,
                                              uint64_t Size) const;
   bool unpackImageMDLCall(KernelAPIKind Kind,
@@ -828,9 +886,20 @@ private:
   uint64_t DriverObject = 0;
   uint64_t RegistryPath = 0;
   uint64_t DriverExtension = 0;
+  uint64_t DriverLoaderRecord = 0;
   bool EntryFinished = false;
   std::optional<std::map<uint64_t, std::vector<uint8_t>>> UnpackBaseline;
   bool UnpackOpaqueEffects = false;
+  llvm::Error validateQueryBuffer(uint64_t Address, uint32_t Size,
+                                  bool Writable, llvm::StringRef API);
+  std::optional<DriverKernelVaShadowQuery> KernelVaShadowQuery;
+  llvm::Expected<uint64_t> queryKernelVaShadow(llvm::ArrayRef<uint64_t> Args);
+  std::optional<DriverVersionQuery> VersionQuery;
+  llvm::Expected<uint64_t> queryVersion(uint64_t Address);
+  llvm::Expected<uint64_t>
+  captureCallerContext(uint64_t Address, const KernelContextCapture *Context);
+  std::optional<DriverPhysicalMemoryInventory> PhysicalMemoryInventory;
+  llvm::Expected<uint64_t> queryPhysicalMemoryRanges();
   // Admission conservatively records reads that can expose model PFNs,
   // including reads performed by modeled copy/compare services.
   mutable bool UnpackMDLIdentityRead = false;
@@ -840,7 +909,9 @@ private:
     uint64_t Size;
     uint32_t Tag;
     bool NonPaged;
-    WindowsDriverState::PoolAPI API;
+    // Kernel-returned buffers need pool lifetime checks but may have no
+    // supported external allocation recipe for native reconstruction.
+    std::optional<WindowsDriverState::PoolAPI> API;
     uint64_t TypeOrFlags;
   };
   std::map<uint64_t, PoolAllocation> Allocations;
@@ -1276,6 +1347,7 @@ private:
   llvm::Error validateIOAccess(uint64_t Address, uint32_t Size,
                                bool IsWrite) const;
   llvm::Expected<uint64_t> allocate(uint64_t Size, uint64_t Alignment = 16);
+  llvm::Expected<uint64_t> isResidentKernelAddress(uint64_t Address) const;
   llvm::Expected<uint64_t> allocatePhysicalBuffer(uint64_t AllocationSize,
                                                   uint64_t Alignment,
                                                   uint64_t DataOffset,

@@ -38,6 +38,42 @@ llvm::Expected<uint64_t> unicodeOperation(const KernelModel &Model,
                                           GuestMemory &Memory,
                                           UnicodeOperation Operation,
                                           llvm::ArrayRef<uint64_t> Arguments);
+/// RtlInitAnsiString and RtlInitString.
+llvm::Expected<uint64_t> initializeAnsiString(const KernelModel &Model,
+                                              GuestMemory &Memory,
+                                              llvm::ArrayRef<uint64_t> A);
+llvm::Expected<uint64_t> initializeUnicodeStringEx(const KernelModel &Model,
+                                                   GuestMemory &Memory,
+                                                   llvm::ArrayRef<uint64_t> A);
+llvm::Expected<uint64_t> copyAnsiString(const KernelModel &Model,
+                                        GuestMemory &Memory,
+                                        llvm::ArrayRef<uint64_t> A);
+llvm::Expected<uint64_t> timeToTimeFields(const KernelModel &Model,
+                                          GuestMemory &Memory,
+                                          llvm::ArrayRef<uint64_t> A);
+llvm::Expected<uint64_t> timeFieldsToTime(const KernelModel &Model,
+                                          GuestMemory &Memory,
+                                          llvm::ArrayRef<uint64_t> A);
+/// RtlEqualString when \p EqualityOnly is true, otherwise RtlCompareString.
+llvm::Expected<uint64_t> compareAnsiStrings(const KernelModel &Model,
+                                            GuestMemory &Memory,
+                                            llvm::ArrayRef<uint64_t> A,
+                                            bool EqualityOnly);
+/// RtlAppendUnicodeStringToString when \p CountedSource is true, otherwise
+/// RtlAppendUnicodeToString with a null-terminated source.
+llvm::Expected<uint64_t> appendUnicodeString(const KernelModel &Model,
+                                             GuestMemory &Memory,
+                                             llvm::ArrayRef<uint64_t> A,
+                                             bool CountedSource);
+llvm::Expected<uint64_t> prefixUnicodeString(const KernelModel &Model,
+                                             GuestMemory &Memory,
+                                             llvm::ArrayRef<uint64_t> A);
+llvm::Expected<uint64_t> integerToUnicodeString(const KernelModel &Model,
+                                                GuestMemory &Memory,
+                                                llvm::ArrayRef<uint64_t> A);
+llvm::Expected<uint64_t> unicodeStringToInteger(const KernelModel &Model,
+                                                GuestMemory &Memory,
+                                                llvm::ArrayRef<uint64_t> A);
 llvm::Expected<std::string> formatDebugMessage(const KernelModel &Model,
                                                GuestMemory &Memory,
                                                uint64_t Format,

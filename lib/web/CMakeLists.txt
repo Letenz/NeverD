@@ -1,5 +1,6 @@
 add_neverd_component_library(NeverDWeb
   ArtifactStore.cpp
+  SourceLimits.cpp
   packages/PackageReader.cpp
   packages/PackageDiff.cpp
   packages/PackageArchive.cpp
@@ -40,6 +41,7 @@ add_neverd_component_library(NeverDWeb
   SessionPassiveReport.cpp
   interfaces/report/Compose.cpp
   interfaces/report/Shapes.cpp
+  interfaces/report/ObservedStructure.cpp
   interfaces/report/Publication.cpp
   streams/Framing.cpp
   streams/Records.cpp
@@ -70,6 +72,10 @@ add_neverd_component_library(NeverDWeb
   desktop/NWManifest.cpp
   desktop/VSIXManifest.cpp
   desktop/ResourceManifest.cpp
+  desktop/DataPack.cpp
+  SessionDataPack.cpp
+  SessionDataPackExport.cpp
+  compression/Gzip.cpp
   desktop/wails/ELF.cpp
   desktop/wails/PE.cpp
   desktop/wails/Mappings.cpp
@@ -84,6 +90,7 @@ add_neverd_component_library(NeverDWeb
   desktop/tauri/Reader.cpp
   desktop/bridge/Publication.cpp
   features/configuration/Publication.cpp
+  features/configuration/FilesPublication.cpp
   SessionTauri.cpp
   SessionTauriExport.cpp
   compression/Brotli.cpp
@@ -133,6 +140,10 @@ add_neverd_component_library(NeverDWeb
   LLVM_COMPONENTS Support
 )
 include("${CMAKE_SOURCE_DIR}/cmake/NeverDWebURL.cmake")
+if(WIN32)
+  target_sources(NeverDWeb PRIVATE platform/WindowsFile.cpp)
+  target_link_libraries(NeverDWeb PRIVATE advapi32 bcrypt)
+endif()
 include("${CMAKE_SOURCE_DIR}/cmake/NeverDWebBrotli.cmake")
 neverd_add_web_brotli()
 find_package(ZLIB QUIET)
@@ -159,11 +170,13 @@ target_link_libraries(NeverDWeb PRIVATE neverd_web_url)
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/LICENSES/ada/"
         DESTINATION share/neverd/licenses/ada)
 option(NEVERD_ENABLE_WEB_ASAR "Build ASAR extraction with pinned native Unicode policy" ON)
+set_property(TARGET NeverDWeb PROPERTY NEVERD_WEB_ICU_AVAILABLE FALSE)
 if(NEVERD_ENABLE_WEB_ASAR)
   find_package(ICU 77.1 EXACT COMPONENTS uc QUIET)
   if(ICU_FOUND)
     target_link_libraries(NeverDWeb PRIVATE ICU::uc)
     target_compile_definitions(NeverDWeb PRIVATE NEVERD_WEB_ICU=1)
+    set_property(TARGET NeverDWeb PROPERTY NEVERD_WEB_ICU_AVAILABLE TRUE)
   else()
     message(STATUS "ASAR unavailable: ICU 77.1 uc library is required (set ICU_ROOT)")
   endif()
@@ -189,6 +202,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   target_sources(NeverDWeb PRIVATE SourceParser.cpp ParserBudget.cpp
     desktop/bridge/Source.cpp
     features/configuration/Analysis.cpp
+    features/configuration/Files.cpp
     packages/behavior/Rules.cpp
     packages/behavior/Source.cpp
     packages/behavior/Package.cpp
@@ -206,6 +220,8 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     interfaces/TransformationLinks.cpp
     interfaces/SourceRelations.cpp
     interfaces/report/Source.cpp
+    interfaces/report/SourceStructure.cpp
+    interfaces/report/URLStructure.cpp
     SourceRecovery.cpp
     rewrite/Plan.cpp
     rewrite/Rename.cpp

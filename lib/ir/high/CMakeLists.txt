@@ -39,7 +39,10 @@ add_neverd_component_library(NeverDIRHigh
   pass/HighVarRename.cpp
   structure/HighCFSimplify.cpp
   structure/HighCFSimplifyIfElse.cpp
+  structure/CxxObjectActions.cpp
   structure/HighEHStructurer.cpp
+  structure/ItaniumHandlers.cpp
+  structure/X86RegistrationFilter.cpp
   structure/X86RegistrationTry.cpp
   structure/X86RegistrationContinuation.cpp
   structure/X86RegistrationNestedTry.cpp

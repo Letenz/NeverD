@@ -30,6 +30,10 @@
 #include <unordered_map>
 #include <vector>
 
+namespace neverd {
+bool simplifyAllExprs(std::vector<HighStmt> &);
+}
+
 namespace {
 
 using namespace neverd;
@@ -80,7 +84,7 @@ public:
   /// Return-value recovery looks for the final definition of that register
   /// rather than at what the RETURN names, so a temporary would leave the
   /// function returning nothing.
-  HighFunc finish(NdOp Op, std::vector<MedVar> Inputs) {
+  HighFunc finish(NdOp Op, std::vector<MedVar> Inputs, bool Symbolic = true) {
     MedVar Out;
     Out.Kind = MedVar::Reg;
     Out.TheArch = Arch::X64;
@@ -96,10 +100,12 @@ public:
     Block.Ops.push_back(std::move(Return));
     Block.EndAddr = NextAddr + 4;
     Func.Blocks.push_back(std::move(Block));
-    // convert() runs the production HighIR cleanup, including semantic
-    // simplification.  Do not invoke the pass a second time here: these tests
-    // must fail if the default decompilation path ever loses that integration.
-    return MedToHighConverter().convert(Func, Arch::X64);
+    // Exercise the opt-in through the production converter, not a second
+    // invocation of the pass after ordinary cleanup.
+    MedToHighConverter Converter;
+    if (Symbolic)
+      Converter.setSymbolicSimplification(true);
+    return Converter.convert(Func, Arch::X64);
   }
 
 private:
@@ -127,6 +133,19 @@ std::string returnedExpr(const HighFunc &Func) {
     if (S.Kind == StmtKind::Return && S.RetVal)
       return S.RetVal->str();
   return "<no return>";
+}
+
+TEST(HighSymSimplify, OrdinaryConversionKeepsOptionalSymbolicWorkDisabled) {
+  FunctionBuilder B;
+  MedVar X = B.param(0, 0x38);
+  MedVar Y = B.param(1, 0x30);
+  MedVar Xor = B.emit(NdOp::INT_XOR, {X, Y});
+  MedVar And = B.emit(NdOp::INT_AND, {X, Y});
+  MedVar Scaled = B.emit(NdOp::INT_MULT, {And, FunctionBuilder::constant(2)});
+  const auto Expr =
+      returnedExpr(B.finish(NdOp::INT_ADD, {Xor, Scaled}, /*Symbolic=*/false));
+  EXPECT_NE(Expr.find('^'), std::string::npos) << Expr;
+  EXPECT_NE(Expr.find('&'), std::string::npos) << Expr;
 }
 
 TEST(HighSymSimplify, RecoversAdditionFromItsBitwiseRewriting) {
@@ -691,6 +710,139 @@ integerValue(const ExprPtr &E, uint64_t X, uint64_t Y = 0,
   default:
     ADD_FAILURE() << "unsupported binary test expression";
     return llvm::APInt(Width, 0);
+  }
+}
+
+// These checks use only ordinary cleanup, with no symbolic bridge or solver.
+ExprPtr basicSimplified(const ExprPtr &E) {
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = E;
+  std::vector<HighStmt> Body{Return};
+  for (unsigned I = 0; I < 8 && simplifyAllExprs(Body); ++I) {
+  }
+  return Body.front().RetVal;
+}
+
+bool containsNode(const ExprPtr &E, const ExprPtr &Needle) {
+  if (E == Needle)
+    return true;
+  for (const auto &Operand : E->Operands)
+    if (Operand && containsNode(Operand, Needle))
+      return true;
+  return false;
+}
+
+TEST(HighExprSimplify, MaskedStatusBitsDoNotEvaluateUnknownIncomingBits) {
+  auto Unknown = std::make_shared<HighExpr>();
+  Unknown->Kind = ExprKind::Undef;
+  Unknown->Type = NdType::makeInt(2, false);
+  const auto Flags = HighExpr::makeBinop(
+      NdOp::INT_OR,
+      HighExpr::makeBinop(NdOp::INT_AND, Unknown,
+                          HighExpr::makeConst(0xb8ff, 2)),
+      HighExpr::makeBinop(NdOp::INT_OR, HighExpr::makeConst(0x4100, 2),
+                          HighExpr::makeVar(tempOfSize(1, 2))));
+  const auto SharedText = Flags->str();
+  const auto After = basicSimplified(HighExpr::makeBinop(
+      NdOp::INT_AND, extendInteger(Flags, 4), HighExpr::makeConst(0x4700, 4)));
+  EXPECT_FALSE(containsNode(After, Unknown)) << After->str();
+  EXPECT_EQ(Flags->str(), SharedText);
+  EXPECT_TRUE(containsNode(Flags, Unknown));
+  for (uint64_t Bits = 0; Bits < 65536; ++Bits)
+    ASSERT_EQ(integerValue(After, Bits).getZExtValue(),
+              (0x4100 | Bits) & 0x4700);
+
+  const auto Observed = basicSimplified(HighExpr::makeBinop(
+      NdOp::INT_AND, Flags, HighExpr::makeConst(0x4701, 2)));
+  EXPECT_TRUE(containsNode(Observed, Unknown));
+}
+
+TEST(HighExprSimplify,
+     MaskProjectionPreservesBitwiseValuesAndSignedExtensions) {
+  for (uint16_t Bytes : {1, 2, 4, 8})
+    for (bool Signed : {false, true})
+      for (NdOp Op : {NdOp::INT_AND, NdOp::INT_OR, NdOp::INT_XOR})
+        for (uint64_t Mask : {0x55ULL, 0x80ULL, 0xff00ULL,
+                              0x8000000000000000ULL, 0xffffffffffffffffULL}) {
+          const auto X =
+              HighExpr::makeVar(tempOfSize(1, 1), NdType::makeInt(1, Signed));
+          const auto Narrow =
+              HighExpr::makeBinop(Op, X, HighExpr::makeConst(0xa5, 1));
+          Narrow->Type = NdType::makeInt(1, Signed);
+          const auto Extended = integerCast(Narrow, Bytes);
+          const auto Before = HighExpr::makeBinop(
+              NdOp::INT_AND, Extended, HighExpr::makeConst(Mask, Bytes));
+          // Record the independent expected values before any in-place cleanup.
+          std::vector<llvm::APInt> Expected;
+          for (uint64_t A = 0; A < 256; ++A)
+            Expected.push_back(integerValue(Before, A));
+          const auto After = basicSimplified(Before);
+          for (uint64_t A = 0; A < 256; ++A)
+            ASSERT_EQ(integerValue(After, A), Expected[A])
+                << Bytes << " " << Signed << " " << Mask << " " << A;
+        }
+}
+
+TEST(HighExprSimplify, MaskProjectionKeepsEffectsAndTrappingOperations) {
+  const auto X = HighExpr::makeVar(tempOfSize(1, 2));
+  auto Call = std::make_shared<HighExpr>();
+  Call->Kind = ExprKind::Call;
+  Call->Type = NdType::makeInt(2, false);
+  Call->CallTarget = "observe";
+  auto Load = std::make_shared<HighExpr>();
+  Load->Kind = ExprKind::Load;
+  Load->Type = NdType::makeInt(2, false);
+  Load->Operands = {X};
+  const auto Div = HighExpr::makeBinop(NdOp::INT_DIV, X, X);
+  auto Ordered = HighExpr::makeUnary(NdOp::INT_NOT, X);
+  Ordered->MemoryOrdering = NdMemoryOrdering::Acquire;
+  for (const auto &Effect : {Call, Load, Div, Ordered}) {
+    const auto Flags =
+        HighExpr::makeBinop(NdOp::INT_OR,
+                            HighExpr::makeBinop(NdOp::INT_AND, Effect,
+                                                HighExpr::makeConst(0xb8ff, 2)),
+                            HighExpr::makeConst(0x4100, 2));
+    const auto After = basicSimplified(HighExpr::makeBinop(
+        NdOp::INT_AND, Flags, HighExpr::makeConst(0x4700, 2)));
+    EXPECT_TRUE(containsNode(After, Effect)) << After->str();
+  }
+}
+
+TEST(HighSymSimplify, OrdinaryAndEnhancedConversionPreserveIntegerResults) {
+  for (const bool Symbolic : {false, true}) {
+    SCOPED_TRACE(Symbolic);
+    FunctionBuilder B;
+    const auto X = B.param(0, 0x38);
+    const auto Y = B.param(1, 0x30);
+    const auto Xor = B.emit(NdOp::INT_XOR, {X, Y});
+    const auto And = B.emit(NdOp::INT_AND, {X, Y});
+    const auto Scaled =
+        B.emit(NdOp::INT_MULT, {And, FunctionBuilder::constant(2)});
+    const auto F = B.finish(NdOp::INT_ADD, {Xor, Scaled}, Symbolic);
+    ASSERT_EQ(F.Params.size(), 2u);
+    ASSERT_EQ(F.Params[0].RegOff, X.RegOff);
+    ASSERT_EQ(F.Params[1].RegOff, Y.RegOff);
+    for (uint32_t A : {0u, 1u, 7u, 0x7fffffffu, 0x80000000u, 0xffffffffu})
+      for (uint32_t C : {0u, 1u, 17u, 0x7fffffffu, 0x80000000u, 0xffffffffu}) {
+        // HighIR parameter references use their source parameter position,
+        // after the converter has bound the original MedIR register inputs.
+        std::unordered_map<int, uint64_t> Values{{0, A}, {1, C}};
+        unsigned Returns = 0;
+        for (const auto &S : F.Body) {
+          if (S.Kind == StmtKind::Assign && S.Dst &&
+              S.Dst->Kind == ExprKind::Var)
+            Values[S.Dst->Var.Id] =
+                integerValue(S.Val, 0, 0, &Values).getZExtValue();
+          if (S.Kind == StmtKind::Return) {
+            ASSERT_NE(S.RetVal, nullptr);
+            EXPECT_EQ(integerValue(S.RetVal, 0, 0, &Values).getZExtValue(),
+                      static_cast<uint32_t>(A + C));
+            ++Returns;
+          }
+        }
+        EXPECT_EQ(Returns, 1u);
+      }
   }
 }
 

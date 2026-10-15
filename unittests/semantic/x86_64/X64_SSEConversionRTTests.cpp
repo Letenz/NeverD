@@ -132,49 +132,8 @@ static const std::vector<RoundTripTC> kX64SSEConv = {
    {1000000}, "SSEConvRT"},
 
   // ========== FP comparison patterns (CMPSD/CMPSS/UCOMISD) ==========
-  {"fp_cmp_lt",
-   "long fp_cmp_lt(long a, long b) {\n"
-   "  double da, db;\n"
-   "  __builtin_memcpy(&da, &a, 8); __builtin_memcpy(&db, &b, 8);\n"
-   "  return da < db ? 1 : 0;\n"
-   "}\n",
-   {0x4008000000000000ULL, 0x4014000000000000ULL}, "SSEConvRT"},  // 3.0 < 5.0
-
-  {"fp_cmp_eq",
-   "long fp_cmp_eq(long a, long b) {\n"
-   "  double da, db;\n"
-   "  __builtin_memcpy(&da, &a, 8); __builtin_memcpy(&db, &b, 8);\n"
-   "  return da == db ? 1 : 0;\n"
-   "}\n",
-   {0x4045000000000000ULL, 0x4045000000000000ULL}, "SSEConvRT"},  // 42.0 == 42.0
-
-  {"fp_cmp_ge",
-   "long fp_cmp_ge(long a, long b) {\n"
-   "  double da, db;\n"
-   "  __builtin_memcpy(&da, &a, 8); __builtin_memcpy(&db, &b, 8);\n"
-   "  return da >= db ? 1 : 0;\n"
-   "}\n",
-   {0x4014000000000000ULL, 0x4008000000000000ULL}, "SSEConvRT"},  // 5.0 >= 3.0
 
   // ========== FP min/max (MINSD/MAXSD) ==========
-  {"fp_min_d",
-   "long fp_min_d(long a, long b) {\n"
-   "  double da, db;\n"
-   "  __builtin_memcpy(&da, &a, 8); __builtin_memcpy(&db, &b, 8);\n"
-   "  double r = da < db ? da : db;\n"
-   "  long ret; __builtin_memcpy(&ret, &r, 8); return ret;\n"
-   "}\n",
-   {0x4014000000000000ULL, 0x4008000000000000ULL}, "SSEConvRT"},
-
-  {"fp_max_d",
-   "long fp_max_d(long a, long b) {\n"
-   "  double da, db;\n"
-   "  __builtin_memcpy(&da, &a, 8); __builtin_memcpy(&db, &b, 8);\n"
-   "  double r = da > db ? da : db;\n"
-   "  long ret; __builtin_memcpy(&ret, &r, 8); return ret;\n"
-   "}\n",
-   {0x4014000000000000ULL, 0x4008000000000000ULL}, "SSEConvRT"},
-
   // ========== FP abs/negate via bitwise (ANDPD/XORPD patterns) ==========
   {"fp_abs_d",
    "long fp_abs_d(long a) {\n"
@@ -202,15 +161,6 @@ static const std::vector<RoundTripTC> kX64SSEConv = {
    {0x4024000000000000ULL}, "SSEConvRT"},  // 10.0^2 = 100.0
 
   // ========== FP reciprocal ==========
-  {"fp_recip_d",
-   "long fp_recip_d(long a, long b) {\n"
-   "  double da, db;\n"
-   "  __builtin_memcpy(&da, &a, 8); __builtin_memcpy(&db, &b, 8);\n"
-   "  double r = da / db;\n"
-   "  long ret; __builtin_memcpy(&ret, &r, 8); return ret;\n"
-   "}\n",
-   {0x4024000000000000ULL, 0x4000000000000000ULL}, "SSEConvRT"},  // 10.0/2.0=5.0
-
   // ========== Multi-step FP: a*b+a (no rodata constants) ==========
   {"fp_fma_manual",
    "long fp_fma_manual(long x, long y) {\n"

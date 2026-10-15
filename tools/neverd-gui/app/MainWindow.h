@@ -4,6 +4,7 @@
 #include "Address.h"
 #include "AddressSpace.h"
 #include "ChooserView.h"
+#include "Session.h"
 
 #include <QHash>
 #include <QJsonArray>
@@ -12,6 +13,7 @@
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
 #include <optional>
+#include <utility>
 
 class QDialog;
 class QLabel;
@@ -31,6 +33,7 @@ class ExtensionsView;
 class GraphOverview;
 class HexView;
 class NavigationBand;
+class MicrosoftSymbols;
 class OutputWindow;
 class Session;
 class TitleBar;
@@ -47,6 +50,11 @@ public:
   ~MainWindow() override;
 
   void openFile(const QString &path);
+  /// Whether opening a file asks to load its debug information: the PDB a
+  /// PE names, before the load or once it lacks one, or the DWARF of an ELF
+  /// or Mach-O image.  Automated runs, which nobody answers, load what
+  /// discovery finds.
+  void setAsksForDebugInfo(bool asks);
   /// Use a disposable layout file (tests and benchmarks).
   void setLayoutPath(const QString &path) { layoutPath_ = path; }
   /// Restore the saved desktop, or lay out the default one; later calls do
@@ -143,6 +151,15 @@ private:
   QString askForFile(QWidget *parent) const;
   /// Open \p path, first asking how to load it when NeverD keeps no project
   /// for it, as IDA's "Load a new file" dialog does.
+  /// Open \p path once the user answered whether to load its debug
+  /// information, as IDA asks when it loads a PE that names a PDB or an
+  /// image with DWARF.
+  void openAskingForDebugInfo(const QString &path, LoadOptions options);
+  /// Open \p path once the user answered whether to load the DWARF of the
+  /// ELF or Mach-O image, if it has any.
+  void openAskingForDwarf(const QString &path, LoadOptions options);
+  /// Show the workbench and start loading \p path.
+  void openNow(const QString &path, const LoadOptions &options);
   void chooseLoader(const QString &path);
   /// File, Load file, Reload the input file: read the file again, asking
   /// again how to read a binary file.
@@ -151,9 +168,14 @@ private:
   /// last chose.
   void applyIndicator();
   void rename();
+  /// IDA's Edit function dialog for the function at \p entry.
+  void editFunction(Address entry);
+  /// The Functions window's context menu for the row at \p position.
+  void functionsMenu(const QPoint &position);
   void comment();
   void jumpAnywhere();
   void showCrossReferences(std::optional<Address> address, bool to);
+  void showLocalReferences(CodeView *origin, const QJsonObject &target);
   void showReferencesDialog(std::optional<Address> address, bool to,
                             CodeView *origin);
   void showPseudocode(const QString &representation,
@@ -207,6 +229,11 @@ private:
   DisassemblyView *disassembly_ = nullptr;
   HexView *hex_ = nullptr;
   OutputWindow *output_ = nullptr;
+  MicrosoftSymbols *microsoftSymbols_ = nullptr;
+  /// A file to open once the worker has started, asking for its debug
+  /// information then.
+  std::optional<std::pair<QString, LoadOptions>> debugPromptPending_;
+  bool asksForDebugInfo_ = true;
   GraphOverview *overview_ = nullptr;
   ExtensionsView *extensions_ = nullptr;
   ChooserView *functions_ = nullptr;

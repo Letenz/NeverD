@@ -7,6 +7,7 @@
 
 #include "../../../arch/aarch64/AArch64Machine.h"
 #include "../../../arch/x86_64/X64Machine.h"
+#include "../exception/WindowsX64Context.h"
 #include "WindowsProcess.h"
 
 #include "llvm/Support/Endian.h"
@@ -98,18 +99,18 @@ llvm::Expected<std::vector<uint8_t>> captureUserContext(ExecutionBackend &CPU,
   llvm::support::endian::write32le(
       Bytes.data() + (X64 ? X64ContextFlagsOffset : AArch64ContextFlagsOffset),
       X64 ? X64ContextFlags : AArch64ContextFlags);
-  for (const auto &F : fields(X64)) {
-    auto V = CPU.readRegister(F.Register);
-    if (!V)
-      return V.takeError();
-    // Windows exposes fault RF in CONTEXT, independently of the checked CPU's
-    // logical FLAGS. Its transport has already removed private debug state.
-    if (Origin == ContextOrigin::HardwareFault &&
-        F.Register == CPURegister::X64FLAGS)
-      (*V)[0] |= x64::ResumeFlag;
-    for (unsigned I = 0; I < F.Size; ++I)
-      Bytes[F.Offset + I] = (*V)[0] >> (I * CHAR_BIT);
-  }
+  if (X64) {
+    if (auto E = windows_context::collectX64IntegerContext(
+            CPU, Bytes, Origin == ContextOrigin::HardwareFault))
+      return E;
+  } else
+    for (const auto &F : fields(false)) {
+      auto V = CPU.readRegister(F.Register);
+      if (!V)
+        return V.takeError();
+      for (unsigned I = 0; I < F.Size; ++I)
+        Bytes[F.Offset + I] = (*V)[0] >> (I * CHAR_BIT);
+    }
   if (X64) {
     X64MachineState State;
     auto MXCSR = CPU.reg(X64Register::MXCSR);
@@ -209,10 +210,7 @@ llvm::Error captureCallerContext(ExecutionBackend &CPU, uint64_t Destination) {
     auto SS = CPU.readRegister(CPURegister::X64SS);
     if (!SS)
       return SS.takeError();
-#define NEVERD_WINDOWS_CAPTURE_DATA_SEGMENT(Offset)                            \
-  llvm::support::endian::write16le(Bytes->data() + Offset, (*SS)[0]);
-#include "WindowsContextCapture.def"
-#undef NEVERD_WINDOWS_CAPTURE_DATA_SEGMENT
+    windows_context::writeFlatDataSelectors(*Bytes, (*SS)[0]);
 #define NEVERD_WINDOWS_CAPTURE_FP_POINTER(Offset)                              \
   llvm::support::endian::write64le(                                            \
       Bytes->data() + Offset,                                                  \

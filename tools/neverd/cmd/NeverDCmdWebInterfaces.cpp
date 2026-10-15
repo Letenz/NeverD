@@ -48,15 +48,20 @@ bool index(size_t At, uint64_t &Value) {
 
 int runWebInterfaces() {
   const auto &Command = WebArguments[0];
-  const bool Report = Command == "report-source" || Command == "report-har" ||
-                      Command == "report-correlate";
+  const bool Large = Command == "report-source-large" ||
+                     Command == "interfaces-large" ||
+                     Command == "interface-relations-large";
+  const bool Report = Command == "report-source" ||
+                      Command == "report-source-large" ||
+                      Command == "report-har" || Command == "report-correlate";
   const bool Preview = Command == "har-preview";
   const bool HAR = Command == "har-import" || Command == "report-har";
   const bool Correlate =
       Command == "interface-correlate" || Command == "report-correlate";
-  const bool Relations = Command == "interface-relations";
+  const bool Relations = Command == "interface-relations" ||
+                         Command == "interface-relations-large";
   const bool Source = Command == "interfaces" || Command == "report-source" ||
-                      Correlate || Relations;
+                      Correlate || Relations || Large;
   const auto Count = WebArguments.size();
   const bool ValidCount = Preview     ? Count == 2 || Count == 3
                           : HAR       ? Count == 5
@@ -76,7 +81,9 @@ int runWebInterfaces() {
            "<source-index> <har-index> <redaction-policy> "
            "<previewed-sha256>\n";
     llvm::errs() << "report-source, report-har and report-correlate use the "
-                    "corresponding source/import/correlate arguments.\n";
+                    "corresponding source/import/correlate arguments.\n"
+                    "The explicit interfaces-large, interface-relations-large "
+                    "and report-source-large commands use source arguments.\n";
     return 2;
   }
   uint64_t SourceIndex = 0, HARIndex = 0;
@@ -142,9 +149,10 @@ int runWebInterfaces() {
     const auto &Type = WebArguments[2];
     if (ID.empty())
       return 1;
-    const auto S = reply(neverd_web_source_analyze_json(
-        G.S, Revision.data(), Revision.size(), ID.data(), ID.size(),
-        Type.data(), Type.size()));
+    const auto Parse = Large ? neverd_web_source_analyze_large_json
+                             : neverd_web_source_analyze_json;
+    const auto S = reply(Parse(G.S, Revision.data(), Revision.size(), ID.data(),
+                               ID.size(), Type.data(), Type.size()));
     if (!S)
       return 1;
     const auto SID = field(*S, "source_id");

@@ -41,6 +41,9 @@ public:
   static std::string version();
   /// Whether the engine keeps function edits (function_create/_delete).
   static bool keepsFunctionEdits();
+  /// Whether the engine keeps what the user states of a function
+  /// (function_edit, function_attributes).
+  static bool statesFunctionAttributes();
   /// Whether the engine keeps the user's data items.
   static bool keepsDataItems();
   /// Whether the engine keeps how the user shows operands' numbers.
@@ -48,6 +51,12 @@ public:
   /// Whether the engine lists the ways it can load a file (identify).
   static bool identifiesFiles();
   static bool loadsPdbFiles();
+  /// Whether the engine finds the PDB a PE names before opening it, and
+  /// opens a PE without it.
+  static bool findsPdbFiles();
+  /// Whether the engine finds the DWARF of an ELF or Mach-O image before
+  /// opening it, and opens the image without it.
+  static bool findsDwarf();
 
 private:
   neverd_session_t session_ = nullptr;
@@ -70,6 +79,8 @@ private:
   std::string projectId_;
   Json openOptions_, signatureInputs_ = Json::array();
   Json pdbInput_ = nullptr, pdbDisplayNames_ = Json::array();
+  /// {"mode":"none"} when the user declined the image's DWARF, else null.
+  Json dwarfInput_ = nullptr;
   /// A read-only replica is checked against the owner's loaded input and
   /// committed sidecars before any expensive operation is admitted.
   Json analysisSnapshot();
@@ -107,11 +118,13 @@ private:
   std::size_t namedViewBytes_ = 0;
   std::uint64_t namedViewsRevision_ = 0, namedViewsListingGeneration_ = 0;
   void forgetNamedViews();
-  std::shared_ptr<const NamedView> namedView(std::uint64_t address,
-                                             const std::string &representation);
+  std::shared_ptr<const NamedView>
+  namedView(std::uint64_t address, const std::string &representation,
+            const Json &options = Json::object());
   std::optional<Json> namedViewPage(std::uint64_t address,
                                     const std::string &representation,
-                                    std::size_t offset, std::size_t limit);
+                                    std::size_t offset, std::size_t limit,
+                                    const Json &options = Json::object());
   /// Function-list order (indices into Listing::functionRows) for the last
   /// filter, sort and listing generation.
   std::string functionOrderKey_;

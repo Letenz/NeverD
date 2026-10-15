@@ -24,7 +24,8 @@ void storeCell(std::map<int32_t, FrameValue> &Cells, int32_t Offset,
         Offset <= It->first &&
         int64_t(It->first) + 4 <= int64_t(Offset) + Width;
     if (!FullyOverwritten && It->second.MayBeFrame) {
-      It->second = {{}, {}, false, true};
+      const auto Merged = join(It->second, Value);
+      It->second = FrameValue::taint(true, Merged.FrameOnlyFromSEHScalar);
       ++It;
     } else
       It = Cells.erase(It);
@@ -36,24 +37,34 @@ void storeCell(std::map<int32_t, FrameValue> &Cells, int32_t Offset,
     // later load. Retain conservative four-byte coverage for every written
     // chunk, including a final partial chunk, rather than dropping its
     // provenance merely because this store is not a full pointer width.
-    for (uint32_t I = 0; I < Width; I += 4)
-      Cells[static_cast<int32_t>(uint32_t(Offset) + I)] = {{}, {}, false, true};
+    for (uint32_t I = 0; I < Width; I += 4) {
+      const auto Taint = FrameValue::taint(true, Value.FrameOnlyFromSEHScalar);
+      const auto [Cell, Added] =
+          Cells.emplace(static_cast<int32_t>(uint32_t(Offset) + I), Taint);
+      if (!Added)
+        Cell->second = join(Cell->second, Taint);
+    }
 }
 
 FrameValue loadCell(const std::map<int32_t, FrameValue> &Cells,
                     std::optional<int32_t> Offset, uint16_t Width) {
   if (Offset && Width == 4)
     if (auto It = Cells.find(*Offset); It != Cells.end())
-      return It->second;
+      // Narrow stores retain a conservative four-byte taint cell. Its scalar
+      // provenance cannot hide physical pointer bits in overlapping cells.
+      if (!It->second.FrameOnlyFromSEHScalar)
+        return It->second;
   auto It = Offset ? Cells.lower_bound(int32_t(
                          std::max<int64_t>(INT32_MIN, int64_t(*Offset) - 3)))
                    : Cells.begin();
+  FrameValue Result;
   for (; It != Cells.end() &&
          (!Offset || int64_t(It->first) < int64_t(*Offset) + Width);
        ++It)
     if (It->second.MayBeFrame)
-      return {{}, {}, false, true};
-  return {};
+      Result = join(Result,
+                    FrameValue::taint(true, It->second.FrameOnlyFromSEHScalar));
+  return Result;
 }
 
 } // namespace
@@ -85,6 +96,20 @@ size_t FrameState::memoryAccessWork(const FrameValue &Address, uint16_t Width,
 void FrameState::store(int32_t Offset, uint16_t Width,
                        const FrameValue &Value) {
   storeCell(Cells, Offset, Width, Value);
+}
+
+void FrameState::forgetCellValues(int32_t Offset, uint32_t Width) {
+  if (!Width)
+    return;
+  auto It = Cells.lower_bound(
+      int32_t(std::max<int64_t>(INT32_MIN, int64_t(Offset) - 3)));
+  while (It != Cells.end() && int64_t(It->first) < int64_t(Offset) + Width) {
+    if (It->second.MayBeFrame) {
+      It->second = {{}, {}, false, true};
+      ++It;
+    } else
+      It = Cells.erase(It);
+  }
 }
 void FrameState::storeEntry(int32_t Offset, uint16_t Width,
                             const FrameValue &Value) {

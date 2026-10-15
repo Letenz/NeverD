@@ -31,6 +31,8 @@
 #include "neverd/backend/llvm/PEImportShadow.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
+#include "neverd/ir/med/MedRawEnvironment.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-emitter"
@@ -677,6 +679,32 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
   auto *FuncTy = llvm::FunctionType::get(RetType, ParamTypes, Func.IsVariadic);
   auto *LLVMFunc = llvm::Function::Create(
       FuncTy, llvm::GlobalValue::ExternalLinkage, EmittedName, Mod);
+  // Recovered parameters are ordered by independent ABI register banks, then
+  // incoming stack slots. A resolved indirect call can have surplus registers
+  // in either bank; retaining these boundaries prevents positional coercion
+  // from feeding an integer scratch value to an FP-only function.
+  if (!(TargetArch == Arch::X64 && TargetFormat == BinaryFormat::COFF)) {
+    const auto IntegerRegisters = TRI.integerParamRegs(TargetFormat);
+    unsigned Integers = 0, Floating = 0;
+    unsigned LastBank = 0;
+    bool Canonical = ParamTypes.size() == Func.Params.size();
+    for (const auto &P : Func.Params) {
+      unsigned Bank = 2;
+      if (P.RegOff != kNoParamReg)
+        Bank = TRI.isFPArgReg(P.RegOff, TargetFormat) ? 1 : 0;
+      Canonical &= Bank >= LastBank;
+      // Dedicated result/context registers use a separate reconstructed ABI;
+      // they are not another ordinary integer argument-bank slot.
+      if (Bank == 0)
+        Canonical &= std::find(IntegerRegisters.begin(), IntegerRegisters.end(),
+                               P.RegOff) != IntegerRegisters.end();
+      LastBank = Bank;
+      Integers += Bank == 0;
+      Floating += Bank == 1;
+    }
+    if (Canonical)
+      setLLVMArgumentBanks(*LLVMFunc, Integers, Floating);
+  }
   // A lifted function is defined in this same module, so its address is fixed
   // at link time — mark it dso_local so a `ptrtoint @func` reference (a
   // function pointer) under the PIC relocation model is materialized by direct
@@ -723,14 +751,25 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   // bodies. Validate mutable storage and metadata before any such traversal,
   // then reuse the same plan during emission.
   for (const auto &Func : Funcs) {
+    if (Func.HasUnresolvedSEHFrame)
+      throw std::runtime_error(
+          "Windows SEH source projection has an unresolved runtime stack in " +
+          Func.Name);
     for (const auto &Block : Func.Blocks)
-      for (const auto &Op : Block.Ops)
+      for (const auto &Op : Block.Ops) {
+        if (isMedRawEnvironmentRequirement(Op))
+          llvm::report_fatal_error(
+              "raw environment requirement has no LLVM runtime contract");
+        if (Op.Opcode == NdOp::INTRINSIC && !hasValidMedIntrinsicId(Op))
+          llvm::report_fatal_error(
+              "intrinsic has an invalid intrinsic ID shape");
         if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
             Op.Inputs[0].isConst() &&
             Op.Inputs[0].ConstVal == static_cast<uint64_t>(Intrinsic::X87Fxam))
           throw std::runtime_error(
               "FXAM requires a proven x87 slot tag and payload in " +
               Func.Name);
+      }
     if (!Func.SkippedSSA)
       continue;
     if (Img_)
@@ -905,6 +944,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   SelfRecurrenceCache.clear();
   StableOffsetCacheFor = nullptr;
   StableOffsetCache.clear();
+  ClosedFrameSlotCacheFor = nullptr;
+  ClosedFrameSlotCache.clear();
   AddressFragmentTaintFor = nullptr;
   AddressFragmentTaint.clear();
   SymbolizedWritableSegsFor = nullptr;
@@ -1211,6 +1252,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
         continue;
       resolveX86RegistrationHandlerReference(
           Func.ExceptionMetadata->PersonalityVA);
+      declareX86RegistrationJumpRuntimes(Func);
     }
 
   // Build every ordinary block skeleton before emitting the first operation.

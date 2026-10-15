@@ -762,6 +762,18 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         CalleeRegArgs = 0;
         CalleeArgs = 2;
       }
+      // Checked ordinary members and constructors own exactly one ECX
+      // receiver plus their proved scalar stack words. Other live registers
+      // cannot extend that physical contract.
+      const bool RegistrationObjectCall =
+          Registration && Registration->BorrowsECX;
+      if (RegistrationObjectCall) {
+        IntegerLayout.Registers = Registration->integerArgumentRegisters();
+        IntParamRegs = IntegerLayout.Registers;
+        CI.ArgumentsInCalleeRegisterOrder = true;
+        CalleeRegArgs = 1;
+        CalleeArgs = 1 + Registration->ScalarStackWords;
+      }
 
       // Apple/Darwin AArch64 passes EVERY variadic argument on the stack
       // (unlike AAPCS64/Linux, which fills x0-x7 first).  For a known-variadic
@@ -1253,11 +1265,15 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // object as arg0; the convention may also pass a result buffer after
       // it.  Do not invent further arguments.
       if (CI.IsIndirect && RegArgsApply && Op.NumInputs >= 1) {
-        if (auto Obj =
-                vtableCallObject(Blk, static_cast<int>(OI), Op.Inputs[0])) {
-          Found[0] = *Obj;
-          FoundMask[0] = true;
-        }
+        // A C callback table can have exactly the same two-load shape as a
+        // C++ vtable. Its address does not override an actual first argument
+        // already reaching the call (including a literal such as f(8)).
+        if (!FoundMask[0])
+          if (auto Obj =
+                  vtableCallObject(Blk, static_cast<int>(OI), Op.Inputs[0])) {
+            Found[0] = *Obj;
+            FoundMask[0] = true;
+          }
         if (Policy && Policy->TakeVirtualCallResultBuffer)
           Policy->TakeVirtualCallResultBuffer(Ctx);
       }
@@ -1446,14 +1462,15 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
 
         if (SlotIdx >= 0 && SlotIdx < MaxArgs && !FoundMask[SlotIdx]) {
           const MedVar &SV = Prev.Inputs[1];
-          int Lanes =
-              (SlotSize > 0 && SV.Size > SlotSize && (SV.Size % SlotSize) == 0)
-                  ? SV.Size / SlotSize
-                  : 1;
+          int Lanes = SlotSize > 0 && SV.Size > SlotSize
+                          ? (SV.Size + SlotSize - 1) / SlotSize
+                          : 1;
           // A single wide store covering several outgoing 4-byte slots is split
           // into one argument per slot — but only for a direct callee that
           // actually takes a scalar argument at every covered slot, so a
-          // genuine wide (vector) argument is still passed whole.
+          // genuine wide (vector) argument is still passed whole.  The slot
+          // an x87 `fstp tbyte` ends in takes its last two bytes, and padding
+          // passed as zero.
           bool SplitWide = Lanes > 1 && !CI.IsIndirect && CalleeArgs >= 0 &&
                            SlotIdx + Lanes <= CalleeArgs;
           if (SplitWide)
@@ -1464,11 +1481,12 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
               }
           if (SplitWide) {
             for (int L = 0; L < Lanes; ++L) {
+              const int Bytes = std::min<int>(SlotSize, SV.Size - L * SlotSize);
               MedVar Lane;
               Lane.Kind = MedVar::Temp;
               Lane.Id = FreshId++;
               Lane.SSAVer = 0;
-              Lane.Size = static_cast<uint16_t>(SlotSize);
+              Lane.Size = static_cast<uint16_t>(Bytes);
               Lane.TheArch = TheArch;
               MedOp Sub;
               Sub.Opcode = NdOp::SUBBYTES;
@@ -1478,6 +1496,17 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
               Sub.addInput(
                   MedVar::makeConst(static_cast<uint64_t>(L * SlotSize), 4));
               CallLaneOps.push_back(std::move(Sub));
+              if (Bytes < SlotSize) {
+                MedOp Widen;
+                Widen.Opcode = NdOp::INT_ZEXT;
+                Widen.Addr = Op.Addr;
+                Widen.Output = Lane;
+                Widen.Output.Id = FreshId++;
+                Widen.Output.Size = static_cast<uint16_t>(SlotSize);
+                Widen.addInput(Lane);
+                Lane = Widen.Output;
+                CallLaneOps.push_back(std::move(Widen));
+              }
               Found[SlotIdx + L] = Lane;
               FoundMask[SlotIdx + L] = true;
               FromStackScan[SlotIdx + L] = true;
@@ -1943,6 +1972,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // int+FP overflow) leaves the run empty, falling back to the 8-byte-slot
       // model below.  The covered slots are cleared so that model does not also
       // emit them.
+      // The stack offset of each value the overflow run appends to FoundFP.
+      std::vector<int64_t> FPOverflowOffsets;
       if (CI.IsIndirect && !FPStackByOff.empty() && !FPParamRegs.empty() &&
           static_cast<int>(FoundFP.size()) ==
               static_cast<int>(FPParamRegs.size())) {
@@ -1953,6 +1984,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           if (Entry.first != Next)
             break; // gap ends the contiguous overflow run
           FoundFP.push_back(Entry.second);
+          FPOverflowOffsets.push_back(Entry.first - CallLayout.CallStackBase);
           if (SlotSize > 0) {
             int Slot =
                 NumRegArgSlots + static_cast<int>(Entry.first / SlotSize);
@@ -2027,8 +2059,9 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // only exactly that shape fills gaps there, so ordinary calls keep the
       // strict first-gap cutoff and their register/stack lane classification.
       bool LeadingGap = false;
-      if (!RuntimeThrow && Policy && Policy->LeadingStackGapIsUnusedArgument &&
-          !CI.IsIndirect && CalleeArgs >= 0 && MaxArgs > 0 && !FoundMask[0])
+      if (!RuntimeThrow && !RegistrationObjectCall && Policy &&
+          Policy->LeadingStackGapIsUnusedArgument && !CI.IsIndirect &&
+          CalleeArgs >= 0 && MaxArgs > 0 && !FoundMask[0])
         for (int K = 1; K < MaxArgs; ++K)
           if (FoundMask[K]) {
             LeadingGap = true;
@@ -2042,7 +2075,9 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // but no trailing argument is invented.  A reliable callee arity (>0; a
       // not-yet-promoted forwarder still reports 0 at this point) additionally
       // drops a stray lane recovered above the real argument list.
-      int AssembleEnd = RuntimeThrow ? 2 : MaxArgs;
+      int AssembleEnd = RuntimeThrow             ? 2
+                        : RegistrationObjectCall ? CalleeArgs
+                                                 : MaxArgs;
       if (FillGaps) {
         int LastFound = -1;
         for (int K = 0; K < MaxArgs; ++K)
@@ -2067,6 +2102,13 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         }
       }
       std::vector<MedVar> IntPart, StackPart;
+      // Each stack argument's offset from the first stack argument: the
+      // slot the stack scan found it in.
+      const int StackArgBase = StackAfterUsedRegisters ? FirstStackSlot
+                               : DarwinVarArgBase >= 0
+                                   ? DarwinVarArgBase
+                                   : static_cast<int>(IntParamRegs.size());
+      std::vector<int64_t> StackPartOffsets;
       for (int K = 0; K < AssembleEnd; ++K) {
         const bool Gap = !FoundMask[K];
         if (Gap && !FillGaps) {
@@ -2106,6 +2148,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
             IntPart.push_back(A);
         } else {
           StackPart.push_back(A);
+          StackPartOffsets.push_back(static_cast<int64_t>(K - StackArgBase) *
+                                     IntegerLayout.SlotBytes);
         }
         // A wide stack argument (an 8-byte double passed whole) covers several
         // pointer slots.  For an INDIRECT call the callee arity is unknown, so
@@ -2138,6 +2182,30 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                               : static_cast<uint16_t>(TRI.VecRegStride);
         while (static_cast<int>(FoundFP.size()) < Vectors)
           FoundFP.push_back(MedVar::makeConst(0, VectorBytes));
+      }
+      if (!PositionalSlots) {
+        CI.IntegerRegisterArgCount = static_cast<int>(IntPart.size());
+        CI.FloatingRegisterArgCount =
+            static_cast<int>(std::min(FoundFP.size(), FPParamRegs.size()));
+        // The stack values follow in Args: the FP overflow run, then the slot
+        // model's arguments. A truncated FoundFP loses its last overflow
+        // values.
+        const size_t Overflow =
+            FoundFP.size() - static_cast<size_t>(CI.FloatingRegisterArgCount);
+        CI.StackArgumentOffsets.clear();
+        CI.StackArgumentSlotBytes = 0;
+        if (Overflow <= FPOverflowOffsets.size() &&
+            IntegerLayout.SlotBytes > 0) {
+          CI.StackArgumentOffsets.assign(FPOverflowOffsets.begin(),
+                                         FPOverflowOffsets.begin() + Overflow);
+          llvm::append_range(CI.StackArgumentOffsets, StackPartOffsets);
+          if (llvm::all_of(CI.StackArgumentOffsets,
+                           [](int64_t Offset) { return Offset >= 0; }))
+            CI.StackArgumentSlotBytes =
+                static_cast<uint16_t>(IntegerLayout.SlotBytes);
+          else
+            CI.StackArgumentOffsets.clear();
+        }
       }
       for (auto &A : IntPart)
         CI.Args.push_back(A);

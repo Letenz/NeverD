@@ -122,16 +122,22 @@ compileSourcePatch(llvm::StringRef Source,
                    const BinaryImage &Image) {
   const Arch Architecture = Image.Arch;
   const BinaryFormat Format = Image.Format;
-  if (Options.mode != NEVERD_SOURCE_PATCH_NORMAL)
-    return compilerError("dyncode requires a separate code-block adapter");
+  const bool DynCode = Options.mode == NEVERD_SOURCE_PATCH_DYNCODE;
+  const bool NeverC = Options.compiler == NEVERD_SOURCE_PATCH_NEVERC;
   const bool Object = Options.artifact == NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT;
   const bool GCC = Options.compiler == NEVERD_SOURCE_PATCH_GCC;
+  if (NeverC && Options.language != NEVERD_SOURCE_PATCH_C)
+    return compilerError("NeverC accepts C source only; select Clang or GCC "
+                         "for C++ source");
   if (GCC && !Object)
     return compilerError("GCC requires the native object artifact profile");
-  if (Options.compiler == NEVERD_SOURCE_PATCH_NEVERC &&
-      Options.language != NEVERD_SOURCE_PATCH_C)
-    return compilerError(
-        "NeverC C++ source is not an admitted language profile");
+  if (NeverC && Architecture != Arch::X64 && Architecture != Arch::AArch64)
+    return compilerError("NeverC code generation requires x64 or ARM64");
+  if (DynCode && (!NeverC || !Object || Options.mapping_count != 1 ||
+                  !Options.mappings || !Options.mappings[0].symbol ||
+                  !*Options.mappings[0].symbol || Options.binding_count))
+    return compilerError("hosted dyncode requires NeverC, a native object, "
+                         "one explicit entry and no original bindings");
   if (!Object)
     if (auto Error = validateSourcePatchTarget(Architecture, Format))
       return std::move(Error);
@@ -191,6 +197,8 @@ compileSourcePatch(llvm::StringRef Source,
 
   auto &Args = Result.Arguments;
   Args = {*Program, "-O2"};
+  if (NeverC)
+    Args.push_back("--no-default-config");
   Args.push_back("-funwind-tables");
   if (!GCC)
     Args.push_back("-fno-discard-value-names");
@@ -209,8 +217,6 @@ compileSourcePatch(llvm::StringRef Source,
              llvm::Triple(*Target).getEnvironment()))
       return compilerError("selected GCC must match the loaded ELF "
                            "architecture and ABI; use a matching cross driver");
-    if (Architecture == Arch::ARM)
-      Args.push_back(llvm::Triple(*Target).isThumb() ? "-mthumb" : "-marm");
   }
 #ifdef __APPLE__
   if (Format == BinaryFormat::MachO) {
@@ -236,21 +242,38 @@ compileSourcePatch(llvm::StringRef Source,
     Args.push_back("-iquote");
     Args.push_back(Parent.string());
   }
-  if (auto Error = appendUserArguments(Args, Options))
+  if (auto Error = appendUserArguments(Args, Options)) {
     return std::move(Error);
+  }
   if (!GCC) {
     // Darwin's driver accepts an ARM CPU spelling and selects Thumb with
     // -mthumb. The resulting IR/backend triple still carries the Thumb state.
     if (Format == BinaryFormat::MachO && Architecture == Arch::ARM &&
         llvm::StringRef(*Target).starts_with("thumb")) {
       Args.push_back("--target=arm" + Target->substr(5));
-      Args.push_back("-mthumb");
     } else {
       Args.push_back("--target=" + *Target);
     }
   }
+  // Clang's Linux driver may canonicalize a thumbv7 triple back to ARM mode.
+  // Every producer must receive the instruction state selected from the image.
+  if (Architecture == Arch::ARM)
+    Args.push_back(llvm::Triple(*Target).isThumb() ? "-mthumb" : "-marm");
   Args.push_back("-fno-lto");
-  if (Object) {
+  if (Options.compiler == NEVERD_SOURCE_PATCH_NEVERC &&
+      Format == BinaryFormat::COFF) {
+    // A patch resolves references against the original image; it never links
+    // another CRT. Ask the producer to omit automatic DEFAULTLIB directives
+    // instead of stripping linker contracts from a supplied COFF object.
+    Args.push_back("-fno-autolink");
+  }
+  if (DynCode) {
+    Args.insert(Args.end(),
+                {"-fdyncode", "-fdyncode-hosted",
+                 "-fdyncode-entry=" + std::string(Options.mappings[0].symbol),
+                 "-fdyncode-keep-obj=" + Output.string(),
+                 "-fdyncode-report=" + (TempDir / "dyncode.json").string()});
+  } else if (Object) {
     if (Format != BinaryFormat::COFF)
       Args.push_back("-fPIC");
     if (Format == BinaryFormat::COFF)
@@ -269,14 +292,24 @@ compileSourcePatch(llvm::StringRef Source,
   }
   Args.insert(Args.end(),
               {"-x", Options.language == NEVERD_SOURCE_PATCH_CXX ? "c++" : "c",
-               "-o", Output.string(), Input.string()});
+               "-o", (DynCode ? TempDir / "payload.bin" : Output).string(),
+               Input.string()});
   if (auto Error = execute(Args, Stdout, Stderr, Timeout))
     return std::move(Error);
-  Result.Diagnostics = readText(Stderr);
+  Result.Diagnostics += readText(Stderr);
   auto Product = llvm::MemoryBuffer::getFile(Output.string());
   if (!Product)
     return compilerError("compiler did not produce the requested artifact");
   Result.Bytes = (*Product)->getBuffer().str();
+  if (DynCode) {
+    DynCodePatchEvidence Evidence;
+    Evidence.Payload = readText(TempDir / "payload.bin");
+    Evidence.Audit = readText(TempDir / "dyncode.json");
+    if (Evidence.Payload.empty() || Evidence.Audit.empty())
+      return compilerError(
+          "NeverC did not produce hosted DynCode payload/audit");
+    Result.DynCode = std::move(Evidence);
+  }
   return Result;
 }
 

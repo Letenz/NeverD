@@ -12,7 +12,10 @@
 /// set.  The workbench unit tests fail when an icon is missing from this
 /// record or listed without its file, leaves the 16 px grid, draws in a color
 /// not listed here, or embeds a raster image, text, an external reference, a
-/// script or an editor's metadata.
+/// script or an editor's metadata.  scripts/check_gui_icons.py fails when a
+/// straight stroke or an unstroked fill edge falls between two pixels at the
+/// size the icon is drawn on, its viewBox, unless NEVERD_ICON_SOFT_LINE
+/// allows the icon such a line.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -24,6 +27,11 @@
 #endif
 #ifndef NEVERD_ICON
 #define NEVERD_ICON("Name", Group, Shows)
+#endif
+// NEVERD_ICON_SOFT_LINE("Name", Why): an icon allowed a straight line between
+// two pixels, and why it cannot have it on whole pixels.
+#ifndef NEVERD_ICON_SOFT_LINE
+#define NEVERD_ICON_SOFT_LINE(Name, Why)
 #endif
 
 NEVERD_ICON_COLOR("#3B4250", "outline of every icon")
@@ -54,6 +62,9 @@ NEVERD_ICON_COLOR("#3B3B3B", "menu check, light theme")
 
 // File.
 NEVERD_ICON("open", File, "an open folder")
+NEVERD_ICON("folder", File, "a closed folder")
+NEVERD_ICON("folder_new", File, "a folder with a plus")
+NEVERD_ICON("file", File, "a page with a folded corner")
 NEVERD_ICON("save", File, "a floppy disk")
 NEVERD_ICON("close", File, "a page with a cross")
 NEVERD_ICON("exit", File, "a door with an arrow leaving it")
@@ -61,6 +72,7 @@ NEVERD_ICON("exit", File, "a door with an arrow leaving it")
 // Navigation.
 NEVERD_ICON("back", Navigation, "an arrow to the left")
 NEVERD_ICON("forward", Navigation, "an arrow to the right")
+NEVERD_ICON("up", Navigation, "an arrow up")
 NEVERD_ICON("entry", Navigation, "a play mark in a circle")
 NEVERD_ICON("jump", Navigation, "an arrow into a target")
 NEVERD_ICON("jump_entry", Navigation, "an arch with a play mark")
@@ -88,6 +100,7 @@ NEVERD_ICON("text_view", View, "lines of text on a page")
 NEVERD_ICON("functions", List, "an f on a tile")
 NEVERD_ICON("function_create", List, "an f with a plus")
 NEVERD_ICON("function_delete", List, "an f with a minus")
+NEVERD_ICON("function_edit", List, "an f with a pencil")
 NEVERD_ICON("names", List, "a name tag")
 NEVERD_ICON("strings", List, "quotation marks")
 NEVERD_ICON("string_item", List, "a quotation mark on a tile")
@@ -96,6 +109,8 @@ NEVERD_ICON("exports", List, "an arrow leaving a box")
 NEVERD_ICON("imports", List, "an arrow entering a box")
 NEVERD_ICON("segment", List, "a bar over a ruler")
 NEVERD_ICON("segments", List, "stacked bars")
+NEVERD_ICON("view_list", List, "rows behind square bullets")
+NEVERD_ICON("view_details", List, "a table under a header row")
 NEVERD_ICON("xrefs", List, "two crossing arrows")
 NEVERD_ICON("output", List, "a console with a prompt")
 NEVERD_ICON("operand_number", List, "# on a key")
@@ -128,6 +143,9 @@ NEVERD_ICON("analyze", Analysis, "a gear with a play mark")
 NEVERD_ICON("cancel", Analysis, "a stop square in a circle")
 NEVERD_ICON("refresh", Analysis, "two arrows chasing each other")
 NEVERD_ICON("signatures", Analysis, "a fingerprint")
+NEVERD_ICON_SOFT_LINE("signatures",
+                      "its center ridge lies on the fingerprint's axis, where "
+                      "a 1 px line cannot be both centered and whole")
 NEVERD_ICON("undefine", Analysis, "a form with a cross")
 NEVERD_ICON("function_library", Library, "an f on a library tile")
 
@@ -146,6 +164,14 @@ NEVERD_ICON("zoom_reset", Settings, "a magnifier at actual size")
 NEVERD_ICON("zoom_fit", Settings, "a square between corner marks")
 NEVERD_ICON("help", Settings, "a question mark in a circle")
 NEVERD_ICON("about", Settings, "an i in a circle")
+NEVERD_ICON("computer", Settings, "a monitor on a stand")
+NEVERD_ICON("drive", Settings, "a disk drive with a light")
+
+// What a message box's text is, as the style's standard icons show it: the
+// question takes the help icon.
+NEVERD_ICON("message_information", Message, "an i in a blue circle")
+NEVERD_ICON("message_warning", Message, "an exclamation mark in a triangle")
+NEVERD_ICON("message_critical", Message, "a cross in a red circle")
 
 // Control chrome the theme style sheet draws: white on a checked control's
 // accent fill, or one variant per theme.
@@ -156,6 +182,10 @@ NEVERD_ICON("chevron_down-dark", Chrome, "a chevron down")
 NEVERD_ICON("chevron_down-light", Chrome, "a chevron down")
 NEVERD_ICON("chevron_up-dark", Chrome, "a chevron up")
 NEVERD_ICON("chevron_up-light", Chrome, "a chevron up")
+NEVERD_ICON("chevron_left-dark", Chrome, "a chevron left")
+NEVERD_ICON("chevron_left-light", Chrome, "a chevron left")
+NEVERD_ICON("chevron_right-dark", Chrome, "a chevron right")
+NEVERD_ICON("chevron_right-light", Chrome, "a chevron right")
 NEVERD_ICON("grip_horizontal-dark", Chrome, "three dots in a row")
 NEVERD_ICON("grip_horizontal-light", Chrome, "three dots in a row")
 NEVERD_ICON("grip_vertical-dark", Chrome, "three dots in a column")
@@ -164,7 +194,8 @@ NEVERD_ICON("menu_check-dark", Chrome, "a check mark")
 NEVERD_ICON("menu_check-light", Chrome, "a check mark")
 
 // Line glyphs of the quick start, drawn on a 24 px grid and tinted where they
-// are painted.
+// are painted.  Straight strokes run along pixel centers, so the 24 px glyphs
+// keep their full color instead of blurring across two pixels.
 NEVERD_ICON("start_new", Glyph, "a page with a plus")
 NEVERD_ICON("start_go", Glyph, "a window with a side pane")
 NEVERD_ICON("start_previous", Glyph, "a clock with an arrow turning back")
@@ -175,3 +206,4 @@ NEVERD_ICON("app", Brand, "the NeverD logo")
 
 #undef NEVERD_ICON_COLOR
 #undef NEVERD_ICON
+#undef NEVERD_ICON_SOFT_LINE

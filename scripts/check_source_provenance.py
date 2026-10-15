@@ -418,6 +418,8 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
         commits=frozenset({
             "500c51062c3aba4e2251b8f3c76569f058fd3ef7",
             "ec58750a8ed49319af857f5cb1aa77670810e39e",
+            "d729f6d64b3ee497f020a271176fe833b779b847",
+            "9b4a32c6249a4f690394c6797c5f4dce9bc81ef9",
         }),
         line="",
         reason=(
@@ -788,14 +790,16 @@ def scan_worktree_patch(rules: Sequence[Rule] | None = None) -> list[str]:
     names = [
         entry
         for entry in _git_output(
-            ["diff", "--name-only", "--no-renames", "-z", "HEAD", "--"]
+            ["diff", "--name-only", "--no-renames", "--ignore-submodules=all",
+             "-z", "HEAD", "--"]
         ).split("\0")
         if entry
     ]
     return _scan_patch_set(
         names,
         _git_output(
-            ["diff", "--no-ext-diff", "--no-renames", "--unified=0", "HEAD", "--"]
+            ["diff", "--no-ext-diff", "--no-renames", "--ignore-submodules=all",
+             "--unified=0", "HEAD", "--"]
         ),
         "worktree-deletion",
         selected_rules,
@@ -837,6 +841,7 @@ def scan_recent_history(
                     "--no-commit-id",
                     "--name-only",
                     "--no-renames",
+                    "--ignore-submodules=all",
                     "-r",
                     "-z",
                     commit,
@@ -854,6 +859,7 @@ def scan_recent_history(
                         "--first-parent",
                         "--no-ext-diff",
                         "--no-renames",
+                        "--ignore-submodules=all",
                         "--unified=0",
                         commit,
                         "--",

@@ -1,0 +1,54 @@
+//===- KernelInterlockedAPIs.def - Interlocked list routines -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Argument counts, caller-IRQL ceilings and typed operations for the
+/// executive routines that update caller lists and counters atomically, either
+/// under a caller spin lock with interrupts masked or lock-free on an x64
+/// SLIST_HEADER, following the Windows 10.0.19041.6456 kernel exports.
+///
+//===----------------------------------------------------------------------===//
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedinsertheadlist
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedinserttaillist
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedremoveheadlist
+NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedInsertHeadList, 3, Any,
+                              interlockedInsertList(A, false))
+NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedInsertTailList, 3, Any,
+                              interlockedInsertList(A, true))
+NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedRemoveHeadList, 2, Any,
+                              interlockedRemoveHeadList(A))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedpushentrylist
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedpopentrylist
+NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedPushEntryList, 3, Any,
+                              interlockedPushEntryList(A))
+NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedPopEntryList, 2, Any,
+                              interlockedPopEntryList(A))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedaddulong
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedaddlargeinteger
+NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedAddUlong, 3, Any,
+                              interlockedAdd(A, 4))
+NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedAddLargeInteger, 3, Any,
+                              interlockedAdd(A, 8))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-initializeslisthead
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedpushentryslist
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedpopentryslist
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedflushslist
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exquerydepthslist
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-firstentryslist
+// x64 wdm.h maps InterlockedPushEntrySList, InterlockedPopEntrySList,
+// InterlockedFlushSList and their ExInterlocked forms to the Exp exports.
+NEVERD_KERNEL_INTERLOCKED_API(InitializeSListHead, 1, Any,
+                              initializeSList(A[0]))
+NEVERD_KERNEL_INTERLOCKED_API(ExpInterlockedPushEntrySList, 2, Any,
+                              pushEntrySList(A[0], A[1]))
+NEVERD_KERNEL_INTERLOCKED_API(ExpInterlockedPopEntrySList, 1, Any,
+                              popEntrySList(A[0]))
+NEVERD_KERNEL_INTERLOCKED_API(ExpInterlockedFlushSList, 1, Any,
+                              flushSList(A[0]))
+NEVERD_KERNEL_INTERLOCKED_API(ExQueryDepthSList, 1, Dispatch,
+                              querySList(A[0], false))
+NEVERD_KERNEL_INTERLOCKED_API(FirstEntrySList, 1, Any, querySList(A[0], true))

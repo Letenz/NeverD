@@ -104,10 +104,61 @@ struct DriverCPUID {
   std::array<uint32_t, 4> Registers{}; // EAX, EBX, ECX, EDX.
 };
 
+/// Caller-declared, read-only loader record for concrete diagnostics. Version
+/// identifies a simulated layout, not a Windows version. Evidence is a bounded
+/// printable ASCII label supplied by the caller, not authenticated provenance.
+struct DriverLoaderView {
+  uint32_t Version = 1;
+  /// Required even when zero; no loader flag value is inferred.
+  std::optional<uint32_t> Flags;
+  std::string Evidence;
+};
+
+/// Explicit concrete base-field algorithm for RtlGetVersion. Version 1 writes
+/// major 10, minor 0, declared 16-bit build, platform 2 and preserves all other
+/// bytes. It does not identify or authenticate a Windows implementation.
+/// Buffers must be in the profile's kernel address range with no second VA
+/// mapping of the accessed RAM bytes in the current address space.
+struct DriverVersionQuery {
+  uint32_t Version = 1;
+  std::optional<uint32_t> BuildNumber;
+  /// Caller-supplied printable label, never authenticated provenance.
+  std::string Evidence;
+  /// Nonportable compatibility shape with a real 20-byte buffer. The default
+  /// requires a 276-byte base record with its entire CSD array already zero.
+  bool AllowZeroSize = false;
+};
+
+/// Explicit simulated RAM inventory for concrete checked-x64 diagnostics.
+/// Selecting the model identity window does not infer installed host RAM or
+/// grant access to unbacked physical pages. No native reconstruction is
+/// implied.
+struct DriverPhysicalMemoryInventory {
+  enum class SourceKind { ModelIdentityWindow };
+  uint32_t Version = 1;
+  /// Required selection; omission leaves system RAM inventory unspecified.
+  std::optional<SourceKind> Source;
+  /// Caller-supplied printable label, never authenticated provenance.
+  std::string Evidence;
+};
+
+/// Explicit class-196 system-information result for checked-x64 execution.
+/// Reports the declared low fourteen flags without implementing a hardware
+/// mitigation or inferring native host state. Reserved bits must be zero.
+struct DriverKernelVaShadowQuery {
+  uint32_t Version = 1;
+  /// Required value; an explicitly declared zero is distinct from omission.
+  std::optional<uint32_t> Flags;
+  /// Caller-supplied printable label, never authenticated provenance.
+  std::string Evidence;
+};
+
 /// This profile models a single-processor x64 WDM lifecycle with cooperative
 /// or explicit instruction-driven preemptive scheduling, dispatcher waits,
 /// and DPC execution at modeled IRQLs.
 /// RDTSC/RDTSCP share the scheduler's 10 MHz clock; RDTSCP reports CPU0.
+/// CET shadow stacks are disabled. Canonical RDSSPD/RDSSPQ preserve all state;
+/// other shadow-stack operations and attempts to enable CET remain unsupported.
 /// All pointers describe guest addresses, never native pointers. No host OS
 /// services are forwarded. Unsupported APIs and CPU environment effects stop.
 struct DriverOptions {
@@ -140,6 +191,19 @@ struct DriverOptions {
   /// An explicit policy permits instruction-boundary thread preemption below
   /// DISPATCH_LEVEL and advances virtual time while guest instructions run.
   std::optional<DriverScheduling> Scheduling;
+  /// Omission leaves DriverSection opaque. An enabled view retains an
+  /// unreconstructed environment dependency, including when it is not read.
+  /// Driver execution requires Contract == CheckedX64 to refuse before effects.
+  std::optional<DriverLoaderView> LoaderView;
+  /// Optional checked-x64 diagnostic environment. No host version is inferred;
+  /// even an unused declaration retains an unreconstructed dependency.
+  std::optional<DriverVersionQuery> VersionQuery;
+  /// Optional simulated inventory; even an unused declaration retains an
+  /// unreconstructed environment dependency. Requires checked-x64 execution.
+  std::optional<DriverPhysicalMemoryInventory> PhysicalMemoryInventory;
+  /// Optional diagnostic query; even unused declarations retain an
+  /// unreconstructed environment dependency. Requires checked-x64 execution.
+  std::optional<DriverKernelVaShadowQuery> KernelVaShadowQuery;
 };
 
 enum class DriverStopReason {
