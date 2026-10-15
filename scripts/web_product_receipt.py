@@ -23,6 +23,7 @@ HOST_CASES = {
     "InputHandlesBlockWritersAndReplacement",
     "EnumeratedIdentityDetectsReplacementBeforeOpen",
     "UTF8NamesAndRelocationPreserveSnapshotIdentity",
+    "DirectoryEnumerationAndHandleRevisionRemainDistinct",
     "SpoolIsUnlinkedPrivateNonInheritedAndReadOnlyAfterSeal",
     "CapturedBlobsSurviveDeletedInputsAndConcurrentRangeReads",
     "StoreRequiresExactLengthSealAndCumulativeBudget",

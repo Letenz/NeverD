@@ -163,10 +163,16 @@ bool Info::same(const Info &Other) const {
          Times.ChangeTime.QuadPart == Other.Times.ChangeTime.QuadPart;
 }
 bool Entry::matches(const Info &Opened) const {
-  return ID == Opened.id() && Attributes == Opened.Identity.dwFileAttributes &&
-         (Opened.directory() || Size == Opened.size()) &&
-         WriteTime.QuadPart == Opened.Times.LastWriteTime.QuadPart &&
-         ChangeTime.QuadPart == Opened.Times.ChangeTime.QuadPart;
+  if (ID != Opened.id() || Attributes != Opened.Identity.dwFileAttributes)
+    return false;
+  // NTFS directory entries carry cached metadata. Creating a descendant can
+  // leave the enumerated directory times stale even after every writer closes.
+  // Bind its identity here; Reader compares authoritative handle revisions
+  // before and after visiting the directory. File revisions remain checked.
+  return Opened.directory() ||
+         (Size == Opened.size() &&
+          WriteTime.QuadPart == Opened.Times.LastWriteTime.QuadPart &&
+          ChangeTime.QuadPart == Opened.Times.ChangeTime.QuadPart);
 }
 
 Info inspect(HANDLE File, bool AdmitStreams) {
@@ -306,12 +312,19 @@ std::vector<Entry> entries(HANDLE Directory, uint64_t MaxEntries) {
   return Result;
 }
 
-Handle createDirectory(HANDLE Parent, std::string_view Name) {
+Handle createDirectory(HANDLE Parent, std::string_view Name,
+                       DirectoryAccess Access) {
   validateMemberName(Name);
   Security ACL;
+  // The kernel's relative rename opens the target directory for FILE_WRITE_DATA.
+  // Use traversal access compatible with that open. Only the rollback owner
+  // needs directory removal authority.
+  const ACCESS_MASK Extra = Access == DirectoryAccess::Remove
+                               ? FILE_LIST_DIRECTORY | DELETE
+                               : 0;
   auto Result = openAt(Parent, wide(Name),
-                       FILE_LIST_DIRECTORY | FILE_TRAVERSE |
-                           FILE_READ_ATTRIBUTES | DELETE | READ_CONTROL,
+                       FILE_TRAVERSE | FILE_READ_ATTRIBUTES | READ_CONTROL |
+                           Extra,
                        FILE_CREATE, FILE_DIRECTORY_FILE,
                        FILE_SHARE_READ | FILE_SHARE_WRITE, ACL.get());
   inspect(Result.get());
@@ -331,7 +344,7 @@ Handle createFile(HANDLE Parent, std::string_view Name, bool Temporary) {
   inspect(Result.get());
   return Result;
 }
-Destination newDirectory(std::string_view Path) {
+Destination newDirectory(std::string_view Path, DirectoryAccess Access) {
   const std::filesystem::path P{wide(Path)};
   const auto Name = utf8(P.filename().native());
   validateMemberName(Name);
@@ -339,7 +352,7 @@ Destination newDirectory(std::string_view Path) {
       P.has_parent_path() ? utf8(P.parent_path().native()) : ".";
   Destination Result;
   Result.Parent = openRoot(Parent, true);
-  Result.Directory = createDirectory(Result.Parent.get(), Name);
+  Result.Directory = createDirectory(Result.Parent.get(), Name, Access);
   return Result;
 }
 Handle privateSpool() {
@@ -426,7 +439,7 @@ void remove(HANDLE File) {
 void rename(HANDLE File, HANDLE Parent, std::string_view Name) {
   validateMemberName(Name);
   const auto Wide = wide(Name);
-  std::vector<unsigned char> Buffer(offsetof(FILE_RENAME_INFO, FileName) +
+  std::vector<unsigned char> Buffer(sizeof(FILE_RENAME_INFO) +
                                         (Wide.size() + 1) * sizeof(wchar_t),
                                     0);
   auto *Info = reinterpret_cast<FILE_RENAME_INFO *>(Buffer.data());
@@ -434,8 +447,19 @@ void rename(HANDLE File, HANDLE Parent, std::string_view Name) {
   Info->RootDirectory = Parent;
   Info->FileNameLength = DWORD(Wide.size() * sizeof(wchar_t));
   std::memcpy(Info->FileName, Wide.data(), Info->FileNameLength);
-  if (!SetFileInformationByHandle(File, FileRenameInfo, Info,
-                                  DWORD(Buffer.size())))
+  // The Win32 adapter rejects a non-null RootDirectory on the qualified host.
+  // The native operation admits that retained directory without resolving a
+  // process-relative pathname. FileRenameInformation is WDK information class
+  // 10. The SDK's placeholder enum cannot represent it; use the native ABI's
+  // 32-bit information-class argument without an out-of-range C++ enum cast.
+  using SetInformation = NTSTATUS(NTAPI *)(HANDLE, PIO_STATUS_BLOCK, PVOID,
+                                            ULONG, ULONG);
+  static const auto Function = reinterpret_cast<SetInformation>(
+      GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtSetInformationFile"));
+  constexpr ULONG RenameInformation = 10;
+  IO_STATUS_BLOCK Status{};
+  if (!Function || Function(File, &Status, Info, ULONG(Buffer.size()),
+                             RenameInformation) < 0)
     throw Error("export_io_error");
 }
 } // namespace neverd::web::win

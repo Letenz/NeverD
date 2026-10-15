@@ -3565,6 +3565,50 @@ TEST_F(SessionCAPITest, PDBReferenceNamesTheCopyALoadFinds) {
             "{\"pdb\":null}");
 }
 
+TEST_F(SessionCAPITest, DWARFReferenceNamesWhatALoadReads) {
+  const auto Fixtures = std::filesystem::path(__FILE__).parent_path() /
+                        "safety" / "fixtures" / "binaries";
+  const auto read = [&](const char *Name) {
+    std::ifstream Input(Fixtures / Name, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(Input), {});
+  };
+  const std::string Image = write("app", read("safety_cases_elf_x64"));
+  const auto Reference = [](const std::string &Path) {
+    auto Parsed = llvm::json::parse(
+        takeString(neverd_dwarf_reference_json(Path.c_str())));
+    EXPECT_TRUE(static_cast<bool>(Parsed));
+    return Parsed ? llvm::json::Object(*Parsed->getAsObject())
+                  : llvm::json::Object();
+  };
+
+  // The image's own sections, by the absolute path a frontend keeps.
+  const auto Answer = Reference(Image);
+  const auto *DWARF = Answer.getObject("dwarf");
+  ASSERT_TRUE(DWARF);
+  EXPECT_EQ(DWARF->getString("location"), "input");
+  EXPECT_EQ(DWARF->getString("path"),
+            std::filesystem::absolute(Image).string());
+  ASSERT_EQ(neverd_session_load(Session, Image.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_debug_info_kind(Session)), "dwarf");
+
+  // Declined, the DWARF stays unread while the map beside the image loads.
+  write("app.map", read("safety_cases_elf_x64.map"));
+  neverd_session_set_dwarf_search(Session, 0);
+  ASSERT_EQ(neverd_session_load(Session, Image.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_debug_info_kind(Session)), "map");
+
+  // Neither a file that is no ELF or Mach-O nor a missing one has DWARF.
+  const std::string Text = write("notes.txt", "plain text");
+  EXPECT_EQ(takeString(neverd_dwarf_reference_json(Text.c_str())),
+            "{\"dwarf\":null}");
+  const auto Missing = Reference(Image + ".missing");
+  EXPECT_EQ(Answer.get("error"), nullptr);
+  EXPECT_EQ(Missing.get("dwarf")->kind(), llvm::json::Value::Null);
+  EXPECT_TRUE(Missing.getString("error"));
+}
+
 TEST_F(SessionCAPITest, CachedAnalysisFailuresRetainTheirDiagnostic) {
   const std::string Path = write("requires-shanghai.evm", "5f00");
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);

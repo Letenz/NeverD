@@ -302,6 +302,8 @@ private:
   llvm::Expected<uint64_t> ansiToUnicodeString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> unicodeToAnsiString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> freeCountedString(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> stringFromGUID(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> guidFromString(llvm::ArrayRef<uint64_t> A);
   enum class PoolSource { GuestAllocation, KernelResult };
   llvm::Expected<uint64_t>
   allocatePool(llvm::ArrayRef<uint64_t> A, bool Modern,

@@ -97,6 +97,15 @@ private:
 
 } // namespace dwarf_loader_detail
 
+/// The DWARF file inside the .dSYM bundle beside the Mach-O image at
+/// \p BinaryPath: <image>.dSYM, or a bundle named after the image's stem.
+/// Empty when there is none or the directory cannot be read.
+std::filesystem::path findDSYMFile(const std::filesystem::path &BinaryPath);
+
+/// Whether the object file at \p Path holds DWARF compile units, the test
+/// DWARFDebugContext::load applies to an image and to its .dSYM file.
+bool hasDWARFUnits(const std::filesystem::path &Path);
+
 class DWARFDebugContext : public DebugContext {
 public:
   ~DWARFDebugContext() override;
