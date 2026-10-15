@@ -1962,3 +1962,9 @@ Linux ネイティブ検証では `HighSwiftEmitter` 全体も実行し、レジ
 `InterpreterSpecialization.WideIntegerConcat*` は両バイト順、上下位ワード、定数入力、重複出力、上位ワードによる分岐、不正形状、正確／不足予算、未知メモリ由来の保持を検査します。厳密に復号した `PSHUFD` は全256選択値と同一／別宛先を独立したダブルワード索引で照合します。`BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` はネイティブ証明と両ソース配置の拒否を維持します。
 
 `InterpreterSpecialization.Timestamp*` は独立した値・状態オラクルで全ビット、上位半分のクリア、独立／反復読み取り、レジスタ・フラグ・メモリ・セグメント基底の保持、正確／不足予算、不正な操作列、未知アドレス由来を検査します。`BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` は raw 完了とネイティブ証明／ソース配置の拒否を確認します。既存の `X86_64_Intrinsics` 時計ケースはソース出力と 1 回の読み取りによる全ビット結果を検査し、`DriverTimestamp` は Unicorn/KVM/WHP 共通の時計方針、状態保持、予算、オーバーフローを別途検査します。プラットフォームによるスキップはバックエンド実行の証拠ではありません。
+
+`KernelObjectTests.cpp` は既知 ID、型/権限/モード失敗、ハンドル情報、出力失敗時の参照漏れ防止、アンロード、スタック再利用を検証します。`DriverObjectTests.cpp` は独自の `driver_objects.c` を利用可能な Unicorn/KVM/WHP/HVF、Legacy/CheckedX64、標準/再配置アドレス、協調/17 命令スケジューリングで実行します。`NativeDriverTests.def` は KVM/WHP 結果を必須とし、欠落やスキップは未検証です。ACL、一般的なプロセス終了、未実装の型の証明にはなりません。
+
+`KernelDataExportTests.cpp` は識別子、可用性、thunk 容量、読み取り専用/NX、未宣言デバッガー、復元を検証します。`DriverDataExportTests.cpp` は独自の `driver_data.c` の実際の DATA インポートを利用し、利用可能なバックエンド・両契約・両基点で実行、アンロード、書き込み/実行拒否を確認します。シナリオ、C ABI、CLI、Python はブール値とレポート転送を検証します。`NativeDriverTests.def` はネイティブ結果を要求し、利用不可のバックエンドは未検証のままです。
+
+`KernelNamespaceTests.cpp` は型、相対名、大文字小文字、サイズ/コピー順序、末尾バイト、権限、プロセス範囲、IRQL、出力失敗、保持中の削除を検証します。`DriverNamespaceTests.cpp` は独自 `driver_namespace.c` を利用可能な Unicorn/KVM/WHP/HVF、両契約、両ロード位置、協調/17 命令スケジューリングで実行します。`NativeDriverTests.def` はネイティブ結果を要求します。利用不可バックエンドと未対応情報/セキュリティクラスは未検証範囲です。

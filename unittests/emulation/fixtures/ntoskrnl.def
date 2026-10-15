@@ -78,6 +78,14 @@ EXPORTS
   KeSetPriorityThread
   ObReferenceObjectByHandle
   ObfDereferenceObject
+  ObfReferenceObject
+  ObReferenceObjectByPointer
+  ObOpenObjectByPointer
+  ObGetObjectType
+  PsLookupProcessByProcessId
+  PsLookupThreadByThreadId
+  PsGetThreadProcess
+  PsIsThreadTerminating
   PsCreateSystemThread
   PsTerminateSystemThread
   KeAreApcsDisabled
@@ -211,3 +219,22 @@ ExEnterCriticalRegionAndAcquireSharedWaitForExclusive
 ExReleaseResourceAndLeaveCriticalRegion
 ExSetResourceOwnerPointer
 ExSetResourceOwnerPointerEx
+  PsProcessType DATA
+  PsThreadType DATA
+  IoDriverObjectType DATA
+  IoFileObjectType DATA
+  ExEventObjectType DATA
+  ExSemaphoreObjectType DATA
+  PsJobType DATA
+  SeTokenObjectType DATA
+  PsInitialSystemProcess DATA
+  KeNumberProcessors DATA
+  KdDebuggerEnabled DATA
+  KdDebuggerNotPresent DATA
+
+  ObQueryNameString
+  ObReferenceObjectByName
+  ZwOpenDirectoryObject
+  ZwOpenSymbolicLinkObject
+  ZwQuerySymbolicLinkObject
+  ZwQueryObject

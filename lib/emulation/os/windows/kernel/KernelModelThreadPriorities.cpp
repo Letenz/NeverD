@@ -11,22 +11,22 @@ namespace neverd::emulation {
 
 llvm::Expected<uint64_t> KernelModel::threadPriorityKey(uint64_t Object,
                                                         bool Changing) const {
-  if (const auto Thread = SystemThreads.find(Object);
-      Thread != SystemThreads.end()) {
+  if (const auto Thread = ThreadObjects.find(Object);
+      Thread != ThreadObjects.end()) {
     if (Changing && (Thread->second.Terminating || Thread->second.Exited))
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                      thread_priority::ExitedThread);
     return Thread->second.CallbackID;
   }
-  for (const auto &[Key, KnownObject] : CurrentThreadObjects)
-    if (KnownObject == Object)
-      return Key;
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  thread_priority::UnknownThread);
 }
 
 llvm::Expected<uint64_t>
 KernelModel::queryThreadPriority(uint64_t Object) const {
+  if (const auto Thread = ThreadObjects.find(Object);
+      Thread != ThreadObjects.end() && Thread->second.Exited)
+    return uint64_t(Thread->second.ExitPriority);
   auto Key = threadPriorityKey(Object, false);
   if (!Key)
     return Key.takeError();

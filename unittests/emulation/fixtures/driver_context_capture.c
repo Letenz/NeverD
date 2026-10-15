@@ -45,12 +45,18 @@ static void put(U8 *P, U64 V, unsigned Size) {
 }
 
 static int verify(Capture Function, U8 Fill, U32 MXCSR) {
-  __declspec(align(16)) U8 Area[1296];
-  U8 Expected[1296];
+  // The aligned unsigned words retain all 1296 bytes, including both guards.
+  // Byte stores below update their object representations before comparison.
+  enum { WordCount = 1296 / sizeof(U64) };
+  __declspec(align(16)) U64 AreaWords[WordCount];
+  U64 ExpectedWords[WordCount];
+  U8 *Area = (U8 *)AreaWords;
+  U8 *Expected = (U8 *)ExpectedWords;
   U64 Observed[11] = {0};
   U8 *P = Expected + 32;
-  for (unsigned I = 0; I < 1296; ++I)
-    Area[I] = Expected[I] = Fill;
+  const U64 Pattern = (U64)Fill * 0x0101010101010101ULL;
+  for (unsigned I = 0; I < WordCount; ++I)
+    AreaWords[I] = ExpectedWords[I] = Pattern;
   Observed[9] = (U64)CaptureDriverResume;
   CaptureDriverContext(Function, Area + 32, Observed, MXCSR);
   if (Observed[1] != Observed[9] || Observed[8] != Observed[0] + 128 ||
@@ -91,8 +97,8 @@ static int verify(Capture Function, U8 Fill, U32 MXCSR) {
     put(P + 416 + I * 16, 0x1122334455667700ULL + I, 8);
     put(P + 424 + I * 16, 0x8877665544332200ULL + I, 8);
   }
-  for (unsigned I = 0; I < 1296; ++I)
-    if (Area[I] != Expected[I])
+  for (unsigned I = 0; I < WordCount; ++I)
+    if (AreaWords[I] != ExpectedWords[I])
       return 0;
   return 1;
 }

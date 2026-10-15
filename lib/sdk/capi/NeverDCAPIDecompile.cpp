@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "InstructionFlow.h"
+#include "LLVMFunctionView.h"
 #include "LibraryPresentation.h"
 #include "SessionImpl.h"
 
@@ -1011,6 +1012,78 @@ struct ScopedSourceView {
   }
 };
 
+/// A page of \p Entry's LLVM IR view: its lines from \p Offset, where the
+/// declarations before the function's own lines end and where the attribute
+/// groups and metadata after them begin, and the image address each global
+/// name on the page stands for.  No row maps to an instruction.
+llvm::json::Object llvmViewPage(const LLVMFunctionView &View, va_t Entry,
+                                size_t Offset, size_t Limit) {
+  const llvm::StringRef Full(View.Text);
+  std::string Text;
+  size_t Total = 0, Shown = 0, ByteOffset = Full.size();
+  bool PageFull = false;
+  for (size_t Start = 0; Start < Full.size();) {
+    const size_t Newline = Full.find('\n', Start);
+    const size_t End =
+        Newline == llvm::StringRef::npos ? Full.size() : Newline + 1;
+    // A page ends before the line that would pass its byte budget; the next
+    // page starts there.
+    if (!PageFull && Total >= Offset && Total - Offset < Limit &&
+        End - Start > limits::kMaxViewPageBytes - Text.size()) {
+      if (Text.empty())
+        throw std::length_error("an IR line exceeds the 2 MiB page budget");
+      PageFull = true;
+    }
+    if (!PageFull && Total >= Offset && Total - Offset < Limit) {
+      if (Text.empty())
+        ByteOffset = Start;
+      Text.append(Full.data() + Start, End - Start);
+      ++Shown;
+    }
+    ++Total;
+    Start = End;
+  }
+  const size_t First = std::min(Offset, Total);
+  const size_t Last = First + Shown;
+  llvm::json::Array References;
+  for (const LLVMViewReference &Reference : View.References)
+    if (Reference.Line >= First && Reference.Line < Last)
+      References.push_back(
+          llvm::json::Object{{"line", static_cast<int64_t>(Reference.Line)},
+                             {"name", jsonSafeText(Reference.Name)},
+                             {"address", vaHex(Reference.Address)}});
+  llvm::json::Object Page{{"schema_version", 1},
+                          {"address", vaHex(Entry)},
+                          {"representation", "llvm"},
+                          {"mapping_status", "unsupported_representation"},
+                          {"provenance_complete", false},
+                          {"text", std::move(Text)},
+                          {"rows", llvm::json::Array()},
+                          {"library_regions", llvm::json::Array()},
+                          {"references", std::move(References)},
+                          {"offset", static_cast<int64_t>(Offset)},
+                          {"byte_offset", static_cast<int64_t>(ByteOffset)},
+                          {"total_lines", static_cast<int64_t>(Total)},
+                          {"complete", Last == Total}};
+  Page["next_offset"] = Last == Total
+                            ? llvm::json::Value(nullptr)
+                            : llvm::json::Value(static_cast<int64_t>(Last));
+  // The declarations of what the function refers to, before its own lines.
+  if (View.DefinitionBegin > 0 && View.DefinitionBegin <= Full.size() &&
+      Full[View.DefinitionBegin - 1] == '\n')
+    Page["prelude"] = llvm::json::Object{
+        {"lines", static_cast<int64_t>(
+                      Full.take_front(View.DefinitionBegin).count('\n'))},
+        {"end_byte", static_cast<int64_t>(View.DefinitionBegin)}};
+  // The attribute groups and metadata it uses, after them.
+  if (View.DefinitionEnd < Full.size())
+    Page["epilogue"] = llvm::json::Object{
+        {"lines",
+         static_cast<int64_t>(Full.drop_front(View.DefinitionEnd).count('\n'))},
+        {"begin_byte", static_cast<int64_t>(View.DefinitionEnd)}};
+  return Page;
+}
+
 } // namespace
 
 const char *neverd_ir_view_ex_json(neverd_session_t Sess, neverd_va_t FuncEntry,
@@ -1081,6 +1154,20 @@ const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
         return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
       }
       auto Page = sourcePage(Sess, FuncEntry, Stage, Offset, Limit);
+      return dupStr(jsonToString(llvm::json::Value(std::move(Page))));
+    }
+    if (Stage == "llvm") {
+      if (!S->ensurePipeline(/*NeedHighIR=*/false))
+        return nullptr;
+      // Bytecode keeps its whole module as its text (neverd_ir_llvm).
+      if (S->PipeResult.EVM || S->PipeResult.SBF) {
+        Result["mapping_status"] = "unsupported_architecture";
+        return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
+      }
+      const LLVMFunctionView *View = functionLlvmView(*S, FuncEntry);
+      if (!View)
+        return nullptr;
+      auto Page = llvmViewPage(*View, FuncEntry, Offset, Limit);
       return dupStr(jsonToString(llvm::json::Value(std::move(Page))));
     }
     if (Stage != "low" && Stage != "med") {
@@ -1219,23 +1306,9 @@ const char *neverd_ir_llvm(neverd_session_t Sess, neverd_va_t FuncEntry) {
                       : sbf::emitLLVMText(*S->PipeResult.LlvmModule));
   }
 
-  // Inspection shows the lifted control flow, independently of LLVMC's
-  // source optimization profile. Promote temporary slots to SSA only.
-  const auto *Native = S->ensureFunctionLlvmModule(FuncEntry, /*NoOpt=*/true);
-  if (!Native) {
-    if (S->LastError.empty())
-      S->setError("failed to generate LLVM module");
-    return dupStr(std::string());
-  }
-  llvm::Function *LF = S->findNativeLlvmFunction(*Native->Module, FuncEntry);
-  if (!LF)
-    return dupStr(std::string());
-
-  std::string Out;
-  llvm::raw_string_ostream OS(Out);
-  LF->print(OS);
-
-  return dupStr(Out);
+  // The function in a module of its own, with what it refers to.
+  const LLVMFunctionView *View = functionLlvmView(*S, FuncEntry);
+  return dupStr(View ? View->Text : std::string());
 }
 
 // ===--------------------------------------------------------------------===//

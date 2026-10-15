@@ -64,6 +64,8 @@ LinuxFiles::PathKind LinuxFiles::lookupPath(const std::string &Path,
                                             bool RequiresDirectory) const {
   if (Path == "/" || llvm::is_contained(Options->Directories, Path))
     return PathKind::Directory;
+  if (auto Kind = procKind(Path, RequiresDirectory))
+    return *Kind;
   if (Options->DynamicProcFDs) {
     if (Path == "/proc" || Path == "/proc/self/fd")
       return PathKind::Directory;
@@ -129,10 +131,13 @@ LinuxFiles::access(uint64_t Address, uint32_t Mode, ProcessResult &Result) {
   case PathKind::SymbolicLink:
   case PathKind::LinkTraversal:
     return unsupported(Result, FileLinkTraversal);
+  case PathKind::UnmodeledProc:
+    return unsupported(Result, "proc entry has no modeled semantics");
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
+  case PathKind::ProcFile:
   case PathKind::File:
   case PathKind::Device:
   case PathKind::Directory:
@@ -163,8 +168,11 @@ LinuxFiles::makeDirectory(uint64_t Address, ProcessResult &Result) {
   case PathKind::SymbolicLink:
   case PathKind::LinkTraversal:
     return unsupported(Result, FileLinkTraversal);
+  case PathKind::UnmodeledProc:
+    return unsupported(Result, "proc entry has no modeled semantics");
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
+  case PathKind::ProcFile:
   case PathKind::File:
   case PathKind::Device:
   case PathKind::NotDirectory:
@@ -216,6 +224,7 @@ llvm::Expected<std::optional<uint64_t>> LinuxFiles::open(uint64_t Address,
   if (!Path)
     return unsupported(Result, FilePathForm);
 
+  Path->Name = procPath(Path->Name);
   uint32_t FD = nextDescriptor();
   if (FD == Options->DescriptorLimit)
     return std::optional<uint64_t>(uint64_t(0) - TooManyFiles);
@@ -223,12 +232,14 @@ llvm::Expected<std::optional<uint64_t>> LinuxFiles::open(uint64_t Address,
       lookupPath(Path->Name, Path->RequiresDirectory || (Flags & Directory));
   if ((Flags & (OpenCreate | OpenExclusive)) == (OpenCreate | OpenExclusive) &&
       Kind != PathKind::Missing && Kind != PathKind::NotDirectory &&
-      Kind != PathKind::LinkTraversal)
+      Kind != PathKind::LinkTraversal && Kind != PathKind::UnmodeledProc)
     return std::optional<uint64_t>(uint64_t(0) - AlreadyExists);
   switch (Kind) {
   case PathKind::SymbolicLink:
   case PathKind::LinkTraversal:
     return unsupported(Result, FileLinkTraversal);
+  case PathKind::UnmodeledProc:
+    return unsupported(Result, "proc entry has no modeled semantics");
   case PathKind::Missing:
     if (Flags & OpenCreate)
       return unsupported(Result,
@@ -242,7 +253,8 @@ llvm::Expected<std::optional<uint64_t>> LinuxFiles::open(uint64_t Address,
     if (Flags & Direct)
       return unsupported(Result, FileDirectIO);
     Descriptors.emplace(
-        FD, std::make_shared<Descriptor>(OpenDirectory{Path->Name}));
+        FD, std::make_shared<Descriptor>(OpenDirectory{Path->Name, 0, Flags}));
+    opened(FD, Flags);
     return std::optional<uint64_t>(FD);
   case PathKind::Device: {
     if (Flags & (OpenCreate | OpenExclusive | OpenTruncate | OpenAppend))
@@ -258,11 +270,20 @@ llvm::Expected<std::optional<uint64_t>> LinuxFiles::open(uint64_t Address,
                   [](const auto &D) { return D.expired(); });
     auto Description =
         std::make_shared<LinuxDeviceState>(LinuxDeviceState{&Device});
+    Description->OpenFlags = Flags;
     DeviceDescriptions.push_back(Description);
     Descriptors.emplace(FD,
                         std::make_shared<Descriptor>(std::move(Description)));
+    opened(FD, Flags);
     return std::optional<uint64_t>(FD);
   }
+  case PathKind::ProcFile:
+    if ((Flags & 3) || (Flags & (OpenTruncate | OpenAppend | Direct)))
+      return unsupported(Result, "proc write and direct IO are unmodeled");
+    Descriptors.emplace(FD, std::make_shared<Descriptor>(
+                                OpenProcFile{Path->Name, 0, 0, Flags}));
+    opened(FD, Flags);
+    return std::optional<uint64_t>(FD);
   case PathKind::File:
     break;
   }
@@ -275,12 +296,17 @@ llvm::Expected<std::optional<uint64_t>> LinuxFiles::open(uint64_t Address,
     if (!Options->WriteLimits.contains(Path->Name))
       return unsupported(Result,
                          "memory-file write requires an explicit reservation");
-    auto [I, Inserted] = MutableFiles.try_emplace(Path->Name);
-    if (Inserted)
-      I->second.Bytes = Options->Files.at(Path->Name);
+    auto &Object = mutableFile(Path->Name);
     if (Flags & OpenTruncate) {
-      I->second.Bytes.clear();
-      I->second.Changed = true;
+      if (!touchWrite(Object, Result))
+        return std::optional<uint64_t>();
+      Object.Bytes.clear();
+      Object.Changed = true;
+      Object.AllocatedPages.clear();
+      if (Object.Metadata) {
+        Object.Metadata->Size = 0;
+        Object.Metadata->Blocks = 0;
+      }
     }
   }
   auto File = Options->Files.find(Path->Name);
@@ -290,6 +316,7 @@ llvm::Expected<std::optional<uint64_t>> LinuxFiles::open(uint64_t Address,
               File->second,
               Metadata == Options->Metadata.end() ? nullptr : &Metadata->second,
               0, Path->Name, Flags}));
+  opened(FD, Flags);
   return std::optional<uint64_t>(FD);
 }
 

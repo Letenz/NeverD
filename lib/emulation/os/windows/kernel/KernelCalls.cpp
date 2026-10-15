@@ -131,6 +131,7 @@ llvm::Expected<uint64_t> KernelModel::call(
       Kind != KernelAPIKind::IoGetRequestorProcess &&
       Kind != KernelAPIKind::PsGetCurrentProcessId &&
       Kind != KernelAPIKind::PsGetProcessId &&
+      Kind != KernelAPIKind::PsGetThreadProcess &&
       Kind != KernelAPIKind::IoGetRequestorProcessId &&
       Kind != KernelAPIKind::ExGetPreviousMode &&
       Kind != KernelAPIKind::KeGetCurrentIrql &&
@@ -186,10 +187,12 @@ llvm::Expected<uint64_t> KernelModel::call(
     return createSystemThread(A);
   case KernelAPIKind::PsTerminateSystemThread:
     return terminateSystemThread(uint32_t(A[0]));
-  case KernelAPIKind::ObReferenceObjectByHandle:
-    return referenceThreadByHandle(A);
-  case KernelAPIKind::ObfDereferenceObject:
-    return dereferenceThread(A[0]);
+#define NEVERD_KERNEL_OBJECT_API(Name, Arity, IRQL, Operation)                 \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelNamespaceAPIs.def"
+#include "KernelObjectAPIs.def"
+#undef NEVERD_KERNEL_OBJECT_API
   case KernelAPIKind::IoGetRequestorProcessId: {
     const auto *Request = requestForIRP(A[0]);
     if (!Request || Request->Completed)

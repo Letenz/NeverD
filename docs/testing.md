@@ -55,7 +55,15 @@ module cache identities. `NativeLLVMInspection*` preserves inspection branches
 across source profiles and both view orders. `LLVMViewsDeferOnlyHighIR*`
 checks integer and floating call results, unchanged LLVM/source output and
 resumption without relifting; `FunctionViewRejectsUnknown*` preserves the
-prepared function on invalid view names. Worker source-cache tests also check
+prepared function on invalid view names. `LLVMViewShowsTheFunctionInAModuleOfItsOwn`
+builds a glibc PIE: `_start`'s LLVM IR must assemble and verify alone, declare
+the GOT's mirror before the definition and name the `__libc_start_main` slot as
+the listing does; pages keep the prelude, epilogue and by-line references
+through small pages, a rename of the slot reaches the comment, and `main`'s
+strings read beside their references.
+`LLVMViewMapsEachSpellingOfAMirrorToItsOwnOffset` renders a hand-written
+module: a mirror spelled at two offsets on one line, and on a call whose
+callee prints before its arguments, maps each spelling to its own address. Worker source-cache tests also check
 that preparation receives the requested LLVM representation.
 `HighSymSimplify.OrdinaryConversion*` keeps optional
 rewriting out of ordinary HighC; the other HighSymSimplify cases explicitly
@@ -114,6 +122,12 @@ the production views against the deterministic worker. Its chooser regressions
 replace queued filters and scroll a 20,000-function fixture across more pages
 than the dispatcher admits. Functions activation covers Pseudocode, explicit C,
 LLVM C and IR windows, multiple windows, pinned views and back/forward history.
+`llvmIrNamesGoWhereTheyStandFor` opens LLVM IR between its folded prelude and
+epilogue, jumps to the lines defining values, blocks, parameters, attribute
+groups and metadata, shows the declaration of a name the binary lacks, resolves
+a comment's address, and sends an image mirror to its first byte where declared,
+to the byte its constant offset reaches on a load, and each of two spellings on
+one line to its own offset.
 Cross-reference cases query the name under the code cursor while assembly is
 at a different function, then select an instruction in the caller. They check
 the originating window, representation and pin, proven source-line mapping,
@@ -5676,8 +5690,10 @@ LP64 architectures, complete defined dirent bytes and untouched padding,
 partial source-page writes, closed FD slots, EOF cookies and budget refusal.
 C/CLI and Python exercise fresh mutable-file and proc workloads through the
 public JSON contract. None of these fixtures needs a phone or a host filesystem
-oracle. These bounded contracts do not establish dynamic maps/task procfs,
-creation, timestamp maintenance or complete Android filesystem equivalence.
+oracle. Live maps/task/status/fdinfo and opt-in timestamp/allocation maintenance
+have separate `LinuxProcTests` and `AndroidProcTests` coverage; see
+[live proc](linux-live-proc.md). These bounded contracts do not establish
+creation or complete Android filesystem equivalence.
 
 Independent tokenization fixtures at O0/O2 and all three relocation packings
 check changed delimiters, interleaved contexts, unsigned bytes, final/empty
@@ -6796,3 +6812,21 @@ The native Linux qualification also runs the complete `HighSwiftEmitter` owner, 
 ### Sequential raw compare-and-exchange
 
 `SymAtomicCmpxchg.*` and `InterpreterSpecialization.AtomicCmpxchg*` cover complete byte effects, both byte orders, old-value provenance, input/output aliases, native return cells, affine-spill invalidation across joins, retained ordered occurrences, strict admission and exact/short budgets. The independent byte oracle models sequential values only. Source-wrapping controls require ordered-memory refusal for initialized, structurally valid graphs. Independent LowIR controls also bind complete sidecars and require no certificate. Native binary proofs may refuse earlier because LOCK CMPXCHG lacks a complete architecture-undefined-output audit. Raw-receipt checks bind ordering, address space and desired operands. Run the owning suites before claiming support; test definitions alone are not execution evidence.
+
+`KernelObjectTests.cpp` checks known-ID lookup, type/access/mode failures, optional handle information, failed outputs without leaked references, unload, and retained identities across stack reuse. `DriverObjectTests.cpp` executes original `driver_objects.c` on available Unicorn/KVM/WHP/HVF backends, Legacy/CheckedX64, preferred/rebased images and cooperative/17-instruction scheduling. KVM/WHP outcomes are mandatory in `NativeDriverTests.def`; missing or skipped execution is a gap. These fixtures do not certify ACLs, general process exit or unimplemented object classes.
+
+`KernelDataExportTests.cpp` checks object identity, availability, thunk capacity, read-only/NX permissions, undeclared debugger bytes and recovery dependencies. `DriverDataExportTests.cpp` runs original `driver_data.c` with real DATA imports across available backends, both contracts and image bases, including unload and rejected writes/execution. Scenario, C ABI, CLI and Python tests cover strict debugger booleans and report transport. Native outcomes are required by `NativeDriverTests.def`; unavailable backends remain coverage gaps.
+
+### Live proc and maintained file metadata
+
+`LinuxProc` checks x64 and AArch64 stat bytes, sparse page allocation, truncation,
+clock failure, live FD offsets/CLOEXEC, proc buffering, task disappearance and
+mapping-label retirement. `AndroidProc` runs independent O0/O2 callers with
+ordinary/APS2/RELR relocation packing on every available transport, including
+real cooperative thread creation/join and libc DIR/FILE reads. Run
+`ctest -R 'LinuxProc|AndroidProc|AndroidLiveProc'` after building the Linux,
+Android and process-public test targets, then the four OS/session suites for
+shared-owner changes. `test_android_live_proc_and_maintained_stat` checks Python
+against the built SDK; unavailable backends are skips, not successful coverage.
+
+`KernelNamespaceTests.cpp` checks typed names, root-relative and case-sensitive lookup, buffer sizing/copy order, captured link tails, permissions, process scope, IRQL, failed-output reference safety and held deletion. `DriverNamespaceTests.cpp` runs original `driver_namespace.c` on available Unicorn/KVM/WHP/HVF, both contracts, both load addresses and cooperative/17-instruction scheduling. `NativeDriverTests.def` requires native outcomes. Unavailable backends and unsupported information/security classes remain coverage gaps.

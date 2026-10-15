@@ -19,11 +19,11 @@ LinuxFiles::statusDescriptor(uint32_t FD, uint64_t Address,
   const auto *File = std::get_if<OpenFile>(I->second.get());
   if (!File || !File->Metadata)
     return unsupported(Result, FileStatusMissing);
-  auto M = MutableFiles.find(File->Path);
-  if (M != MutableFiles.end() && M->second.Changed)
+  const auto *Metadata = fileMetadata(File->Path);
+  if (!Metadata)
     return unsupported(Result,
                        "file mutation invalidated captured stat metadata");
-  return status(*File->Metadata, Address, Result);
+  return status(*Metadata, Address, Result);
 }
 
 llvm::Expected<std::optional<uint64_t>>
@@ -60,6 +60,8 @@ LinuxFiles::statusAt(uint32_t Directory, uint64_t PathAddress, uint64_t Address,
   case PathKind::SymbolicLink:
   case PathKind::LinkTraversal:
     return unsupported(Result, FileLinkTraversal);
+  case PathKind::UnmodeledProc:
+    return unsupported(Result, "proc entry has no modeled semantics");
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:
@@ -68,17 +70,18 @@ LinuxFiles::statusAt(uint32_t Directory, uint64_t PathAddress, uint64_t Address,
     return unsupported(Result, FileStatusDirectory);
   case PathKind::Device:
     return unsupported(Result, FileStatusMissing);
+  case PathKind::ProcFile:
   case PathKind::File:
     break;
   }
   auto Metadata = Options->Metadata.find(Path->Name);
   if (Metadata == Options->Metadata.end())
     return unsupported(Result, FileStatusMissing);
-  auto M = MutableFiles.find(Path->Name);
-  if (M != MutableFiles.end() && M->second.Changed)
+  const auto *Current = fileMetadata(Path->Name);
+  if (!Current)
     return unsupported(Result,
                        "file mutation invalidated captured stat metadata");
-  return status(Metadata->second, Address, Result);
+  return status(*Current, Address, Result);
 }
 
 llvm::Expected<std::optional<uint64_t>>

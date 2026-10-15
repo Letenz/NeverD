@@ -57,6 +57,7 @@ LinuxServices::handle(const ProcessServiceEvent &Event, ThreadContext *Thread) {
 llvm::Expected<std::optional<uint64_t>>
 LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
                       ThreadContext *Thread) {
+  Files.setCurrentTask(Thread ? Thread->ID : ThreadID);
   if (auto E = synchronizeDevices())
     return std::move(E);
   if (unavailableKernelService(Kind, Options.LinuxKernel))

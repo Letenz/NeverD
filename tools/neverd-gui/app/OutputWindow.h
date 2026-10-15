@@ -7,6 +7,7 @@
 #include <functional>
 
 class QLineEdit;
+class QMenu;
 class QPlainTextEdit;
 class QToolButton;
 
@@ -22,6 +23,9 @@ public:
   explicit OutputWindow(Session &session, QWidget *parent = nullptr);
 
   void append(const QString &text, int level = 0);
+  /// The log's context menu, which the caller owns: Copy, Select all and
+  /// Clear.
+  QMenu *createLogMenu();
   void focusCommandLine();
   /// Run one command line as if typed (echoed to the log).
   void run(const QString &line);

@@ -5,6 +5,7 @@
 #include <QPointer>
 
 class QApplication;
+class QDialog;
 class QWidget;
 class QWindow;
 
@@ -35,6 +36,13 @@ public:
   /// Give every dialog its own frame and a TitleBar as it first shows,
   /// except popups and dialogs that are frameless already.
   static void frameDialogs(QApplication &app);
+
+  /// Make \p dialog at least \p width wide, the width its title bar needs to
+  /// show the whole title centered.  A message box sizes itself to its text
+  /// once it shows, so its text takes the missing width; the box measures
+  /// that text unwrapped and wraps it only past a width limit, so only a text
+  /// narrower unwrapped than the title is widened.
+  static void fitTitle(QDialog &dialog, int width);
 
   /// The edges a press at \p at resizes in a window of \p size whose visible
   /// part lies \p shadow inside it.  Within a corner's reach a press resizes

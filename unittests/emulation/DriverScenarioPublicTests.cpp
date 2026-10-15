@@ -116,6 +116,43 @@ TEST_F(DriverScenarioPublic, EmptyScenarioPreservesInitializationOnlyBehavior) {
   EXPECT_EQ(neverd_session_is_loaded(Session), 0);
 }
 
+TEST_F(DriverScenarioPublic, DebuggerDataDeclarationReachesCABIAndCLI) {
+  for (bool Enabled : {false, true}) {
+    const auto Scenario =
+        std::string(
+            R"({"service_name":"NeverDData1","unload":true,"debugger_state":{"enabled":)") +
+        (Enabled ? "true" : "false") + R"(,"not_present":true}})";
+    const auto FromC = takeString(neverd_emulate_driver_scenario_json(
+        Session, fixture("driver_data").c_str(), Scenario.c_str(), nullptr));
+    ASSERT_FALSE(FromC.empty()) << error();
+    const auto FromCLI = runCLI(Scenario, 0, "driver_data");
+    for (const auto &Text : {FromC, FromCLI}) {
+      auto Parsed = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      const auto *Report = Parsed->getAsObject();
+      ASSERT_NE(Report, nullptr);
+      EXPECT_EQ(Report->getString("stop_reason"), "returned");
+      EXPECT_EQ(Report->getInteger("nt_status"), 0);
+      const auto *Messages = Report->getArray("messages");
+      ASSERT_NE(Messages, nullptr);
+      ASSERT_EQ(Messages->size(), 1u);
+      EXPECT_EQ((*Messages)[0].getAsString(),
+                Enabled ? "debugger bytes: 1,1" : "debugger bytes: 0,1");
+      EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+      const auto *State =
+          Report->getObject("configuration")->getObject("debugger_state");
+      ASSERT_NE(State, nullptr);
+      EXPECT_EQ(State->getBoolean("enabled"), Enabled);
+      EXPECT_EQ(State->getBoolean("not_present"), true);
+    }
+  }
+  EXPECT_EQ(neverd_emulate_driver_scenario_json(
+                Session, "missing.sys",
+                R"({"debugger_state":{"enabled":true}})", nullptr),
+            nullptr);
+  EXPECT_NE(error().find("debugger_state"), std::string::npos);
+}
+
 TEST_F(DriverScenarioPublic,
        RejectsNullMalformedAndOversizedScenarioBeforeLoad) {
   EXPECT_EQ(neverd_emulate_driver_scenario_json(Session, "missing.sys", nullptr,
