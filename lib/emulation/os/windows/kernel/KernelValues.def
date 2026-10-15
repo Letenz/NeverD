@@ -118,6 +118,7 @@ NEVERD_WDM_VALUE(MaxUnicodeBytes, 65532)
 NEVERD_WDM_VALUE(MaxDebugBytes, 512)
 NEVERD_WDM_VALUE(MaxDebugFormatBytes, 1024)
 NEVERD_WDM_VALUE(MaxCreateInformation, 5)
+NEVERD_WDM_VALUE(StatusReparse, 0x104)
 
 NEVERD_WDM_VALUE(StatusNotSupported, 0xc00000bb)
 

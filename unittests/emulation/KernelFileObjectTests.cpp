@@ -236,5 +236,15 @@ TEST_F(KernelFileObjects, UnknownReleaseContextDoesNotInventSystemProcess) {
   complete(Call.Arguments[1]);
   take(Model->finishGuestCall(Call.Token, 0));
 }
+
+TEST_F(KernelFileObjects, ReparseDoesNotBecomeASuccessfulOpen) {
+  const auto Create = begin(DriverRequestKind::Create);
+  write(Create.IRP + IRPStatusOffset, 0x104, 4);
+  write(Create.IRP + IRPInformationOffset, 0);
+  auto Completed = Model->call("IofCompleteRequest", {Create.IRP, 0});
+  ASSERT_FALSE(bool(Completed));
+  rejects(Completed.takeError(), "reparse");
+  EXPECT_FALSE(Result.Requests.back().Completed);
+}
 } // namespace
 } // namespace neverd::emulation
