@@ -4309,6 +4309,8 @@ thread/APC/spinlock scheduling, arbitrary concurrent request arrival, PnP
 cancellation, full PnP/power or general hardware. API IRQL ceilings come from `KernelAPIIRQL.def`, with
 argument-dependent checks in the owning model.
 
+`KernelModelLookaside` owns paged/nonpaged lookaside registration and the kernel-owned fields of the x64 header. WDK inline cache contents and counters remain in guest bytes; the existing SLIST operations and pool allocator retain their ownership. Default callback addresses come from the session export registry. Deletion preflights the entire cache and both registration neighbors before retiring anything; storage retirement and unload share the live-list and cached-entry guards. MDL admission prevents aliases and DMA borrows from bypassing header ownership. These bounded lifetimes retain an explicit unpack dependency.
+
 `KernelScheduler` owns live runtime priority and the shared priority/ready-order comparison. `KernelModelThreadPriorities` validates thread objects for `KeSetPriorityThread` and `KeQueryPriorityThread`; paused CPU contexts never copy priority state. `DriverSession` checks higher-priority readiness before callback synchronization and at API/event boundaries. See [driver scheduling](driver-scheduling.md) for the bounded policy and remaining limits.
 
 `KernelDispatcher` owns mutex recursion by logical thread. `KernelModel` captures the waiting thread for deferred `KeWaitForSingleObject` acquisition and uses the same identity for APC queries and `KeReleaseMutex`; nested stack retirement preserves ownership, while outermost return checks retain the lifetime guard.

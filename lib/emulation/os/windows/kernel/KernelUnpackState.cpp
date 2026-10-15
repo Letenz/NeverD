@@ -90,6 +90,8 @@ KernelModel::unpackDependencies() const {
     Reasons.emplace_back("unreconstructed kernel or environment effects");
   if (hasLiveBugCheckCallbacks())
     Reasons.emplace_back("live kernel bug-check callbacks");
+  if (!Lookasides.empty())
+    Reasons.emplace_back("live kernel lookaside lists");
   if (UnpackMDLIdentityRead)
     Reasons.emplace_back("observed kernel MDL physical identity");
   if (!MDLs.empty())

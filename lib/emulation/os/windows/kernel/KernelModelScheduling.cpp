@@ -701,7 +701,8 @@ llvm::Error KernelModel::prepareReleaseRange(uint64_t Base, uint64_t Size,
 }
 
 llvm::Error KernelModel::canReleaseRange(uint64_t Base, uint64_t Size,
-                                         uint64_t IgnoredDMAPin) const {
+                                         uint64_t IgnoredDMAPin,
+                                         uint64_t RetiringLookaside) const {
   if (Size > UINT64_MAX - Base)
     return schedulingError("overflowing object storage range");
   if (auto E = canReleaseUserViewsForBacking(Base, Size))
@@ -709,12 +710,13 @@ llvm::Error KernelModel::canReleaseRange(uint64_t Base, uint64_t Size,
   if (Size)
     if (auto E = Physical.canReleaseRange(Base, Size, IgnoredDMAPin))
       return E;
-  return canRevokeVirtualRange(Base, Size);
+  return canRevokeVirtualRange(Base, Size, {}, RetiringLookaside);
 }
 
-llvm::Error KernelModel::canRevokeVirtualRange(
-    uint64_t Base, uint64_t Size,
-    std::optional<UsbIdleKey> RetiringUsbIdle) const {
+llvm::Error
+KernelModel::canRevokeVirtualRange(uint64_t Base, uint64_t Size,
+                                   std::optional<UsbIdleKey> RetiringUsbIdle,
+                                   uint64_t RetiringLookaside) const {
   if (Size > UINT64_MAX - Base)
     return schedulingError("overflowing virtual storage range");
   if (auto E = DMA.canReleaseRange(Base, Size))
@@ -722,6 +724,8 @@ llvm::Error KernelModel::canRevokeVirtualRange(
   if (auto E = Interrupts.canReleaseRange(Base, Size))
     return E;
   if (auto E = UsbIdle.canReleaseRange(Base, Size, RetiringUsbIdle))
+    return E;
+  if (auto E = canReleaseLookasideRange(Base, Size, RetiringLookaside))
     return E;
   for (const auto &[Address, Lock] : ExecutiveSpinLocks)
     if (Address < Base + Size && Base < Address + sizeof(uint64_t))

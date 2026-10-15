@@ -252,6 +252,11 @@ llvm::Expected<uint64_t> KernelModel::call(
     return Operation;
 #include "KernelSpinLockAPIs.def"
 #undef NEVERD_KERNEL_SPINLOCK_API
+#define NEVERD_KERNEL_LOOKASIDE_API(Name, Arity, IRQL, Operation)              \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelLookasideAPIs.def"
+#undef NEVERD_KERNEL_LOOKASIDE_API
 #define NEVERD_KERNEL_INTERLOCKED_API(Name, Arity, IRQL, Operation)            \
   case KernelAPIKind::Name:                                                    \
     return Operation;

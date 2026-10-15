@@ -140,6 +140,10 @@ NEVERD_KERNEL_API(KeGetCurrentIrql, 0, Export)
   NEVERD_KERNEL_API(Name, Arity, Export)
 #include "KernelRundownAPIs.def"
 #undef NEVERD_KERNEL_RUNDOWN_API
+#define NEVERD_KERNEL_LOOKASIDE_API(Name, Arity, IRQL, Operation)              \
+  NEVERD_KERNEL_API(Name, Arity, Export)
+#include "KernelLookasideAPIs.def"
+#undef NEVERD_KERNEL_LOOKASIDE_API
 NEVERD_KERNEL_API(IoAllocateWorkItem, 1, Export)
 NEVERD_KERNEL_API(IoQueueWorkItem, 4, Export)
 NEVERD_KERNEL_API(IoFreeWorkItem, 1, Export)
