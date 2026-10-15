@@ -1874,8 +1874,10 @@ TEST(RegistrationState, SharedSEHCallbackTailsKeepEachInvocationStack) {
 }
 
 TEST(RegistrationState, SEHActivationsShareTheCumulativeWorkBudget) {
-  for (unsigned Count : {2u, 512u}) {
+  for (auto [Count, TailOps] :
+       {std::pair{2u, 2048u}, std::pair{512u, 0u}, std::pair{512u, 2048u}}) {
     SCOPED_TRACE(Count);
+    SCOPED_TRACE(TailOps);
     auto F = makeBranchingFrame();
     F.ExceptionMetadata->CodeRange.End = 0x40000;
     auto &Chain = *F.ExceptionMetadata->Registration;
@@ -1901,15 +1903,22 @@ TEST(RegistrationState, SEHActivationsShareTheCumulativeWorkBudget) {
     LowBlock Tail;
     Tail.Id = TailId;
     Tail.StartAddr = 0x30000;
-    Tail.EndAddr = 0x30001;
-    emitOp(Tail, 0x30000, NdOp::RETURN, {}, {});
-    Tail.InstructionBoundaries = {{0x30000, 1, 0, 1}};
+    Tail.EndAddr = 0x30001 + TailOps;
+    // The shared tail executes in every callback activation. Its operations
+    // alone exceed the cumulative budget in the large nonempty case.
+    for (unsigned I = 0; I != TailOps; ++I) {
+      emitOp(Tail, Tail.StartAddr + I, NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
+             {NdVar::reg(x86reg::RAX, 4)});
+      Tail.InstructionBoundaries.push_back({Tail.StartAddr + I, 1, I, 1});
+    }
+    emitOp(Tail, Tail.EndAddr - 1, NdOp::RETURN, {}, {});
+    Tail.InstructionBoundaries.push_back({Tail.EndAddr - 1, 1, TailOps, 1});
     Tail.InstructionBoundaries.back().Control = LowInstructionControl::Return;
     for (unsigned Entry = 0; Entry != Count; ++Entry)
       Tail.Preds.push_back(4 + Entry);
     F.Blocks.push_back(std::move(Tail));
     const auto A = analyzeRegistrationStates(F);
-    if (Count == 2) {
+    if (Count == 2 || !TailOps) {
       EXPECT_TRUE(A.Complete);
       EXPECT_TRUE(A.CallbackStatesComplete);
     } else {

@@ -66,7 +66,11 @@ RegistrationStateAnalysis RegistrationStateSolver::run() {
   initializeCookies();
   collectOccurrences();
   seedEntries();
-  while (!Work.empty() && !Exhausted) {
+  while ((!Work.empty() || !PendingSEHFrames.empty()) && !Exhausted) {
+    if (Work.empty()) {
+      flushSEHScopes();
+      continue;
+    }
     const auto [Priority, I, Activation] = *Work.begin();
     Work.erase(Work.begin());
     auto &State = States[I].at(Activation);

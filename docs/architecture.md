@@ -338,6 +338,25 @@ The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
 lifetime, including the untouched bytes of narrow state stores; HighIR and
 native LLVM lowering consume that same result.
+SEH dispatch joins use an explicit pending queue. After ordinary propagation
+quiesces, equal source snapshots contribute their complete level domains to
+runtime roots together. `dispatchSource` owns the inherited facts used by both
+root construction and snapshot identity. Parent cells, initialized bytes,
+captures and unknown provenance remain distinct; registers and the invocation
+stack are replaced by runtime entry. The exact state cell is replaced by each
+selected root level, which remains in the pending level domain.
+Completed contributions are remembered only within the current solver run.
+An ordered index locates hash buckets before comparing complete snapshots.
+Hashing, lookup and collision comparisons consume the same work budget; only
+complete equality can suppress a contribution. Distinct snapshots do not
+require scanning every earlier frame.
+`RegistrationStateSEHDispatch` collects scope ancestry with finite bit sets;
+`RegistrationStateSEHDispatchWork` owns scheduling and duplicate suppression.
+`RegistrationStateSnapshot` hashes the projected facts; hash equality alone
+never establishes identity or suppresses a source contribution.
+Local unwind uses an iterative depth-first path with ancestors indexed by
+their proved level. A sibling's completed path cannot prove or reject a cycle
+on another path. These changes retain the existing cumulative work limit.
 `RegistrationStateTryLevel` binds each SEH store to its decoded extent,
 operation identity, width, literal and reaching-state transitions. Finally
 execution partitions frame outcomes by the resulting try level; local unwind
@@ -1467,15 +1486,24 @@ queries solve only new dependencies.
 
 Register and memory value reconstruction share a stack of active walks. A
 concrete merge that skipped a transparent backedge is still provisional: later
-loop definitions may add values. Every memo result records a conservative range
-of the active walks it depends on, including dependencies inherited through memo
-hits. Retiring a dependency invalidates that snapshot; closing the state's own
+loop definitions may add values. `ResolverPendingWalks` records the exact active
+dependencies through depth 255 in fixed storage, including dependencies
+inherited through memo hits. Greater caller-specified depths use a conservative
+interval there. Unrelated intermediate returns do not expire an exact snapshot.
+Retiring a dependency invalidates that snapshot; closing the state's own
 backedges removes only its own activation. Unique activation identities prevent
 a later walk at the same depth from reviving stale entries. Concrete results
 with no pending dependency retain their ordinary batch lifetime. Context-free
 transparent cycles retain the existing shared generation guard; memory-context
 resets also invalidate those entries in the value memo. Neither cache bypasses
 incomplete-proof rejection.
+
+Edge refinement shares one predicate policy with its local shape inspection.
+An exact, unguarded byte producer can establish that the current query cannot
+use a condition, avoiding reconstruction of its operands. Exact COPY and NOT
+transports preserve that classification. Needed predicates, guarded or partial
+definitions, and producers outside the local block retain the complete walk.
+All inspected definitions consume the ordinary evidence allowance.
 
 HighIR's call-argument projection uses the same checked affine equation core
 for entry-stack offsets in an immutable MedIR function. Each SSA definition is
@@ -4143,6 +4171,12 @@ preparation reject memory-to-memory reads rather than consuming them early.
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
+Baseline integer CMEQ, UZP1, XTN/XTN2 and UMAXV use that same admission owner.
+The original instructions execute on the selected checked CPU transport; OS
+models do not replace them with scalar stubs. Optional/scalable forms still fail
+admission. Independent lane and full-state oracles cover both execution levels.
+
+
 ARM64 native adapters use 4 KiB, 48-bit virtual-address page tables and separate
 TTBR0/TTBR1 roots. Guest mappings cannot overlap the private vector and
 maintenance pages at `[0x1000, 0x3000)`. The backing arena stays below the
@@ -6341,7 +6375,9 @@ Interpreter specialization retains full-width guest addresses. At publication, i
 
 `ProveStoreReturnSlotSeparation` also proves preservation of individual live native return cells across ordinary non-frame stores with 64-bit addresses. Each complete eight-byte cell must be disjoint under the current path. Only existing bytes in the accepted range union survive; gaps, unproved cells and other banks keep normal alias invalidation. Proof and preservation share the existing budgets and add no stack-ownership assumption.
 
-`MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. This supplies no reachability or memory-ownership fact and never populates the finite-domain cache. Each attempt charges one unit per uncached readability-prefix node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization. Completed enumeration or proved excess cardinality can populate the original query cache through the exact expression equality, retaining its constant-bias translation. Algebraic offsets alone and incomplete retries cannot populate finite domains.
+`MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. Alone, this supplies no reachability or memory-ownership fact and cannot populate the finite-domain cache. Each attempt charges one unit per uncached readability-prefix node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization. Completed enumeration or proved excess cardinality can populate the original query cache through the exact expression equality, retaining its constant-bias translation. Algebraic offsets alone and incomplete retries cannot populate finite domains.
+
+If the same cache already holds a completed empty-projection proof for the identical predicate at limit one, `FrameOffsets` can combine it with the exact algebraic offset and cache the original query, preserving modular bias translation. Feasible predicates yield a singleton; proved infeasibility stays empty. Missing, incomplete or unrelated proofs cannot enable this reuse. No additional solver query or memory premise is introduced.
 
 For constant-only projections, `InterpreterSpecialization` reuses a completed empty-projection proof under the identical predicate and tuple limit, then reconstructs the literal tuple. Constants do not establish reachability. Observers still validate every original address and extent, including cache hits; rejected observations and incomplete enumeration never supply a completed proof.
 
@@ -6509,6 +6545,14 @@ semantics. Guest storage uses the existing allocator and address-space authority
 shared by descriptor aliases and raw/Bionic calls. JSON adapters supply no
 alternate semantics or service responses. JNI object limits and Binder stream
 admission fail explicitly rather than borrowing a host VM or driver.
+`AndroidJNIMethods` owns the finite intrinsic method catalogue, descriptor binding
+and execution; all JNI call forms reuse it and Bionic's GP argument reader.
+`LinuxBinderTransactions` routes object-free messages between guest-owned opens;
+LinuxMemory owns their read-only arenas and every service body remains guest code.
+`LinuxGPUCommands` owns explicitly selected PM4 admission and execution, using
+MemoryView physical pins and the existing KGSL context/memstore owner. JSON
+adapters declare these contracts and never infer methods, services or commands.
+
 
 `KernelModelNamespace.cpp` resolves names through the shared reference and handle owner. Device names remain owned by device records; immutable driver/directory/link names belong to object records. Links retain captured target bytes and separate permanent/named state. Handle close removes temporary names before pointer-reference retirement. Device I/O holds control driver-list removal independently of object storage references. No transport owns a second namespace or reference count.
 

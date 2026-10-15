@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -57,6 +58,9 @@ struct JNIState {
   std::map<uint64_t, Reference> References;
   std::map<uint64_t, Borrow> Borrows;
   std::map<std::string, std::shared_ptr<JNIObject>> Classes;
+  // IDs are separate from references and survive local-frame/thread teardown.
+  std::set<unsigned> ResolvedMethods;
+  std::map<std::string, std::shared_ptr<JNIObject>> MethodConstants;
   // Retain bounded objects until workload teardown. Weak element edges avoid
   // host ownership cycles; this profile deliberately makes no GC claim.
   std::vector<std::shared_ptr<JNIObject>> Objects;

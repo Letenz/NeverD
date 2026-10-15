@@ -178,6 +178,8 @@ class WorkbenchUnitTests : public QObject {
   Q_OBJECT
 private slots:
   void initTestCase() {
+    // As the workbench starts.
+    WindowFrame::prepareNativeWindows();
     // Docking chrome is fixed before the first dock exists.
     configureDocking();
   }
@@ -1245,6 +1247,33 @@ private slots:
       QVERIFY(QTest::qWaitForWindowExposed(&box));
       QVERIFY2(box.width() >= 420, qPrintable(text));
     }
+  }
+
+  void earlyDialogWindowsLeaveTheWorkbenchWhole() {
+    // A file dialog is polished while it is built, and its frame then takes
+    // its native window before it first shows (WindowFrame::attach).  Qt
+    // gave every child of the dialog's parent a native window as well: the
+    // workbench's title bar, toolbars, docks and status bar became Wayland
+    // subsurfaces that GNOME stopped updating once Load file > FLIRT
+    // signature file was cancelled.
+    QMainWindow workbench;
+    workbench.setMenuBar(new QMenuBar);
+    workbench.menuBar()->addMenu(QStringLiteral("&File"));
+    workbench.addToolBar(QStringLiteral("File"))
+        ->addAction(QStringLiteral("Open"));
+    workbench.setCentralWidget(new QPlainTextEdit);
+    workbench.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&workbench));
+    QDialog dialog(&workbench);
+    QVERIFY(!dialog.windowHandle());
+    dialog.winId();
+    QVERIFY(dialog.windowHandle());
+    const auto children =
+        workbench.findChildren<QWidget *>(Qt::FindDirectChildrenOnly);
+    QVERIFY(children.size() >= 3);
+    for (const QWidget *child : children)
+      if (!child->isWindow())
+        QVERIFY2(!child->internalWinId(), child->metaObject()->className());
   }
 
   void nativeFrameKeepsTheTitleBarOnScreen() {

@@ -470,6 +470,103 @@ U64 devices_context_unsupported(U64 Mode, U64 Buffer) {
   Packet[2] = 0xdeadbeefU;
   return invoke(0, 3, ReadTimestamp, Buffer);
 }
+
+struct GPUMap {
+  int fd;
+  U64 gpu, length, offset, host;
+  U32 type, flags;
+};
+struct GPUSubmit {
+  U32 context;
+  U64 commands;
+  U32 words, timestamp, flags;
+};
+_Static_assert(sizeof(struct GPUMap) == 48, "LP64 GPU mapping");
+_Static_assert(sizeof(struct GPUSubmit) == 32, "LP64 GPU submission");
+U64 devices_gpu_commands(U64 Route) {
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  U32 context[2] = {0x12, 0};
+  CHECK(invoke(Route, 3, CreateContext, (U64)context), 0);
+  U64 store = mapping(0, 3, 4096, 4096, 1);
+  U64 code = raw6(Map, 0, 4096, 3, 0x22, (U64)-1, 0);
+  U64 data = raw6(Map, 0, 4096, 3, 0x22, (U64)-1, 0);
+  if (code > (U64)-4096 || data > (U64)-4096)
+    return __LINE__;
+  struct GPUMap cmd = {-1, 0, 4096, 0, code, 2, 0x01000000};
+  struct GPUMap dst = {-1, 0, 4096, 0, data, 2, 0};
+  CHECK(invoke(Route, 3, 0xc0300915, (U64)&cmd), 0);
+  CHECK(invoke(Route, 3, 0xc0300915, (U64)&dst), 0);
+  CHECK(cmd.flags, 0x01000060);
+  CHECK(dst.flags, 0x60);
+  U32 *p = (U32 *)code, *d = (U32 *)data;
+  for (U32 i = 0; i != 1024; ++i)
+    d[i] = 0x8899aabb;
+  p[0] = 0xc0021000;
+  p[1] = 0xffffffff;
+  p[2] = 0xc0013d00;
+  p[3] = 1; /* NOP payload */
+  p[4] = 0xc0013d00;
+  p[5] = (U32)dst.gpu + 4;
+  p[6] = 0x11223344;
+  p[7] = 0xc0013d00;
+  p[8] = (U32)dst.gpu + 4092;
+  p[9] = 0xff00ff00;
+  struct GPUSubmit submit = {context[1], cmd.gpu, 10, 0xdeadbeef, 0};
+  CHECK(invoke(Route, 3, 0xc0200910, (U64)&submit), 0);
+  CHECK(submit.timestamp, 1);
+  CHECK(d[0], 0x8899aabb);
+  CHECK(d[1], 0x11223344);
+  CHECK(d[2], 0x8899aabb);
+  CHECK(d[1022], 0x8899aabb);
+  CHECK(d[1023], 0xff00ff00);
+  CHECK(*(volatile U32 *)(store + context[1] * 40), 1);
+  CHECK(*(volatile U32 *)(store + context[1] * 40 + 8), 1);
+  /* GPU pins cannot follow a recycled CPU virtual address. */
+  CHECK(raw(Unmap, code, 4096, 0), 0);
+  CHECK(raw6(Map, code, 4096, 3, 0x22, (U64)-1, 0), code);
+  p[0] = 0xffffffff;
+  d[1] = 0;
+  CHECK(invoke(Route, 3, 0xc0200910, (U64)&submit), 0);
+  CHECK(submit.timestamp, 2);
+  CHECK(d[1], 0x11223344);
+  CHECK(p[0], 0xffffffff);
+  U32 query[3] = {context[1], 3, 0xdeadbeef};
+  CHECK(invoke(Route, 3, ReadTimestamp, (U64)query), 0);
+  CHECK(query[2], 2);
+  U32 wait[3] = {context[1], 2, 0};
+  CHECK(invoke(Route, 3, 0x400c0907, (U64)wait), 0);
+  /* Independently opened descriptions share the process GPU address space. */
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 4);
+  CHECK(raw(Close, 3, 0, 0), 0);
+  CHECK(invoke(Route, 4, 0x40080921, (U64)&cmd.gpu), 0);
+  CHECK(invoke(Route, 4, 0x40080921, (U64)&dst.gpu), 0);
+  CHECK(raw(Unmap, store, 4096, 0), 0);
+  CHECK(raw(Unmap, code, 4096, 0), 0);
+  CHECK(raw(Unmap, data, 4096, 0), 0);
+  CHECK(raw(Close, 4, 0, 0), 0);
+  return 0;
+}
+U64 devices_gpu_rejected(U64 Mode, U64 Buffer) {
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  U32 context[2] = {0x12, 0};
+  CHECK(invoke(0, 3, CreateContext, (U64)context), 0);
+  CHECK(raw6(Map, 0x22000000, 4096, 1, 1, 3, 4096), 0x22000000);
+  U64 code = raw6(Map, 0, 4096, 3, 0x22, (U64)-1, 0);
+  struct GPUMap cmd = {-1, 0, 4096, 0, code, 2, 0};
+  struct GPUMap dst = {-1, 0, 4096, 0, Buffer, 2, Mode == 1 ? 0x01000000 : 0};
+  CHECK(invoke(0, 3, 0xc0300915, (U64)&cmd), 0);
+  CHECK(invoke(0, 3, 0xc0300915, (U64)&dst), 0);
+  U32 *p = (U32 *)code;
+  p[0] = 0xc0013d00;
+  p[1] = (U32)(Mode == 2 ? cmd.gpu : dst.gpu);
+  p[2] = 0x12345678;
+  p[3] = Mode == 0 ? 0xc0009900 : 0xc0001000;
+  p[4] = 0;
+  struct GPUSubmit *submit = (struct GPUSubmit *)(Buffer + 4096);
+  *submit =
+      (struct GPUSubmit){context[1], cmd.gpu, Mode == 3 ? 2 : 5, 0xdeadbeef, 0};
+  return invoke(0, 3, 0xc0200910, (U64)submit);
+}
 #ifdef __ANDROID__
 extern int pthread_create(U64 *, const void *, void *(*)(void *), void *);
 extern int pthread_join(U64, void **);
@@ -501,10 +598,12 @@ U64 devices_open_error(void) {
 void process_main(U64 *Stack) {
   if (Stack[0] > 1) {
     char Mode = ((const char *)Stack[2])[0];
-    if (Mode == 'd' || Mode == 'u' || Mode == 'k' || Mode == 'b') {
+    if (Mode == 'd' || Mode == 'u' || Mode == 'k' || Mode == 'b' ||
+        Mode == 'g') {
       U64 Status = Mode == 'd'   ? devices_duplicates(0)
                    : Mode == 'u' ? devices_updates()
                    : Mode == 'k' ? devices_contexts(0)
+                   : Mode == 'g' ? devices_gpu_commands(0)
                                  : devices_busy_poll();
       raw(Exit, Status, 0, 0);
       __builtin_trap();

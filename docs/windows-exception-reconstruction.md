@@ -197,6 +197,15 @@ complete body, entry kinds and physical near returns are checked. Ordinary
 callers, shared filter/handler entries and other uses of that result still
 require an observation proof; a `void` import declaration alone is insufficient.
 
+Deep scope chains retain the same proof budget. The solver batches equal
+source-frame contributions to exceptional roots and tracks unwind ancestry
+without copying each whole path. Runtime coverage includes a 259-row nested
+chain; state tests cover 1,024 levels, 1,024 distinct frame snapshots and
+recurrent paths. Indexed snapshot lookup charges hashing and collision checks;
+complete equality remains mandatory.
+Ordinary/nonlocal calls at a parent join with several active levels still need
+a separate native state-selection contract.
+
 Native callback TryLevel writes additionally require
 `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, supplied by the pinned r5
 compiler and absent from r4. The current path accepts checked constant 8-, 16-
