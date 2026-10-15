@@ -17,7 +17,7 @@
     </message>
     <message>
         <source>Read the input file again, with its saved annotations</source>
-        <translation>Die Eingabedatei erneut lesen, mit ihren gespeicherten Anmerkungen</translation>
+        <translation>Eingabedatei mit den gespeicherten Anmerkungen erneut einlesen</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -121,7 +121,7 @@
     </message>
     <message>
         <source>Rename the current address</source>
-        <translation>Die aktuelle Adresse umbenennen</translation>
+        <translation>Aktuelle Adresse umbenennen</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -517,7 +517,7 @@
     </message>
     <message>
         <source>Evaluate an expression</source>
-        <translation>Einen Ausdruck auswerten</translation>
+        <translation>Ausdruck auswerten</translation>
     </message>
     <message>
         <source>F&amp;ull screen</source>
@@ -701,7 +701,7 @@
     </message>
     <message>
         <source>Choose the encodings and minimum length of the strings the listing shows</source>
-        <translation>Kodierungen und Mindestlänge der Zeichenketten wählen, die die Auflistung zeigt</translation>
+        <translation>Kodierungen und Mindestlänge der im Listing angezeigten Zeichenketten auswählen</translation>
     </message>
     <message>
         <source>String &amp;references</source>
@@ -709,7 +709,7 @@
     </message>
     <message>
         <source>List the instructions that refer to strings</source>
-        <translation>Die Anweisungen auflisten, die auf Zeichenketten verweisen</translation>
+        <translation>Befehle auflisten, die auf Zeichenketten verweisen</translation>
     </message>
     <message>
         <source>Create &amp;function</source>
@@ -717,7 +717,7 @@
     </message>
     <message>
         <source>Start a function at the current address</source>
-        <translation>Eine Funktion an der aktuellen Adresse beginnen</translation>
+        <translation>Funktion ab der aktuellen Adresse erstellen</translation>
     </message>
     <message>
         <source>&amp;Delete function</source>
@@ -725,7 +725,7 @@
     </message>
     <message>
         <source>Stop treating the current function as one</source>
-        <translation>Die aktuelle Funktion nicht mehr als Funktion behandeln</translation>
+        <translation>Aktuelle Funktion nicht mehr als Funktion behandeln</translation>
     </message>
     <message>
         <source>&amp;Data</source>
@@ -733,7 +733,7 @@
     </message>
     <message>
         <source>Define a value at the current address; again for the next size</source>
-        <translation>Einen Wert an der aktuellen Adresse definieren; erneut für die nächste Größe</translation>
+        <translation>Wert an der aktuellen Adresse definieren; für die nächste Größe erneut aufrufen</translation>
     </message>
     <message>
         <source>&amp;String</source>
@@ -741,15 +741,15 @@
     </message>
     <message>
         <source>Define the string that starts at the current address</source>
-        <translation>Die Zeichenkette definieren, die an der aktuellen Adresse beginnt</translation>
+        <translation>Zeichenkette definieren, die an der aktuellen Adresse beginnt</translation>
     </message>
     <message>
         <source>Undef&amp;ine</source>
         <translation>Definition auf&amp;heben</translation>
     </message>
     <message>
-        <source>Show the current item&apos;s bytes as bytes</source>
-        <translation>Die Bytes des aktuellen Elements als Bytes anzeigen</translation>
+        <source>Turn the current item back into undefined bytes</source>
+        <translation>Aktuelles Element wieder in undefinierte Bytes umwandeln</translation>
     </message>
     <message>
         <source>&amp;Number</source>
@@ -757,7 +757,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number as the listing chooses</source>
-        <translation>Die Zahl des Operanden so zeigen, wie die Liste sie wählt</translation>
+        <translation>Zahl des Operanden in der vom Listing gewählten Form anzeigen</translation>
     </message>
     <message>
         <source>&amp;Hexadecimal</source>
@@ -765,7 +765,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number in hexadecimal</source>
-        <translation>Die Zahl des Operanden hexadezimal zeigen</translation>
+        <translation>Zahl des Operanden hexadezimal anzeigen</translation>
     </message>
     <message>
         <source>&amp;Decimal</source>
@@ -773,7 +773,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number in decimal</source>
-        <translation>Die Zahl des Operanden dezimal zeigen</translation>
+        <translation>Zahl des Operanden dezimal anzeigen</translation>
     </message>
     <message>
         <source>&amp;Binary</source>
@@ -781,7 +781,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number in binary</source>
-        <translation>Die Zahl des Operanden binär zeigen</translation>
+        <translation>Zahl des Operanden binär anzeigen</translation>
     </message>
     <message>
         <source>&amp;Character</source>
@@ -789,7 +789,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number as characters</source>
-        <translation>Die Zahl des Operanden als Zeichen zeigen</translation>
+        <translation>Zahl des Operanden als Zeichen anzeigen</translation>
     </message>
     <message>
         <source>&amp;Offset</source>
@@ -797,15 +797,15 @@
     </message>
     <message>
         <source>Show the operand&apos;s number as the address it names</source>
-        <translation>Die Zahl des Operanden als die Adresse zeigen, die sie benennt</translation>
+        <translation>Zahl des Operanden als die Adresse anzeigen, die sie bezeichnet</translation>
     </message>
     <message>
         <source>Change &amp;sign</source>
-        <translation>&amp;Vorzeichen wechseln</translation>
+        <translation>&amp;Vorzeichen umkehren</translation>
     </message>
     <message>
         <source>Show the operand&apos;s number with its sign changed</source>
-        <translation>Die Zahl des Operanden mit gewechseltem Vorzeichen zeigen</translation>
+        <translation>Zahl des Operanden mit umgekehrtem Vorzeichen anzeigen</translation>
     </message>
     <message>
         <source>Bitwise ne&amp;gate</source>
@@ -813,7 +813,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number with its bits inverted</source>
-        <translation>Die Zahl des Operanden mit invertierten Bits zeigen</translation>
+        <translation>Zahl des Operanden mit invertierten Bits anzeigen</translation>
     </message>
     <message>
         <source>C&amp;ode</source>
@@ -845,7 +845,7 @@
     </message>
     <message>
         <source>Change the name of the current function and what it is</source>
-        <translation>Den Namen der aktuellen Funktion und ihre Eigenschaften ändern</translation>
+        <translation>Namen und Eigenschaften der aktuellen Funktion ändern</translation>
     </message>
 </context>
 <context>
@@ -1046,7 +1046,7 @@
     </message>
     <message>
         <source>MCP HTTP requires HTTPS, or HTTP on localhost</source>
-        <translation>MCP HTTP erfordert HTTPS oder HTTP auf localhost</translation>
+        <translation>MCP über HTTP erfordert HTTPS oder HTTP auf localhost</translation>
     </message>
     <message>
         <source>Invalid authentication token</source>
@@ -1062,7 +1062,7 @@
     </message>
     <message>
         <source>MCP outgoing message budget exceeded</source>
-        <translation>Ausgehende MCP-Nachricht überschreitet das Größenbudget</translation>
+        <translation>Budget für ausgehende MCP-Nachrichten überschritten</translation>
     </message>
     <message>
         <source>MCP server is disconnected</source>
@@ -1130,7 +1130,7 @@
     </message>
     <message>
         <source>Connect an MCP server first</source>
-        <translation>Verbinden Sie zuerst einen MCP-Server</translation>
+        <translation>Verbinden Sie sich zuerst mit einem MCP-Server</translation>
     </message>
     <message>
         <source>Tool arguments exceed the size limit</source>
@@ -1283,7 +1283,7 @@
     </message>
     <message>
         <source>%1 names an invalid input file.</source>
-        <translation>%1 nennt eine ungültige Eingabedatei.</translation>
+        <translation>%1 verweist auf eine ungültige Eingabedatei.</translation>
     </message>
     <message>
         <source>Cannot write %1: %2</source>
@@ -1368,7 +1368,7 @@
     </message>
     <message>
         <source>Analysis request queue is full.</source>
-        <translation>Analyse-Anfragewarteschlange ist voll.</translation>
+        <translation>Warteschlange für Analyseanfragen ist voll.</translation>
     </message>
     <message>
         <source>Invalid analysis protocol frame.</source>
@@ -1387,11 +1387,11 @@
     </message>
     <message>
         <source>Up</source>
-        <translation>Oben</translation>
+        <translation>Aufwärts</translation>
     </message>
     <message>
         <source>Down</source>
-        <translation>Unten</translation>
+        <translation>Abwärts</translation>
     </message>
 </context>
 <context>
@@ -1406,13 +1406,13 @@
     </message>
     <message>
         <source>1 item</source>
-        <translation>1 Element</translation>
+        <translation>1 Eintrag</translation>
     </message>
     <message numerus="yes">
         <source>%n items</source>
         <translation>
-            <numerusform>%n Element</numerusform>
-            <numerusform>%n Elemente</numerusform>
+            <numerusform>%n Eintrag</numerusform>
+            <numerusform>%n Einträge</numerusform>
         </translation>
     </message>
 </context>
@@ -1445,7 +1445,7 @@ Erkannte Bibliotheksoperation; klicken, um ihren Code anzuzeigen.</translation>
     </message>
     <message>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
-        <translation>Die Includes, Hilfstypen und Deklarationen, mit denen dieser Code kompiliert wird; klicken zeigt sie an, - auf dem Ziffernblock faltet sie wieder ein.</translation>
+        <translation>Die Includes, Hilfstypen und Deklarationen, mit denen dieser Code kompiliert wird; zum Anzeigen klicken, mit Ziffernblock - wieder einklappen.</translation>
     </message>
     <message numerus="yes">
         <source>%n lines of declarations</source>
@@ -1463,21 +1463,21 @@ Erkannte Bibliotheksoperation; klicken, um ihren Code anzuzeigen.</translation>
     </message>
     <message>
         <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
-        <translation>Das Ziel, die Typen, globalen Variablen und Funktionen, auf die diese Funktion verweist; klicken zeigt sie an, - auf dem Ziffernblock faltet sie wieder ein.</translation>
+        <translation>Die Zielplattform, die Typen, globalen Variablen und Funktionen, auf die diese Funktion verweist; zum Anzeigen klicken, mit Ziffernblock - wieder einklappen.</translation>
     </message>
     <message>
         <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
-        <translation>Die Attributgruppen und Metadaten, die diese Funktion verwendet; klicken zeigt sie an, - auf dem Ziffernblock faltet sie wieder ein.</translation>
+        <translation>Die Attributgruppen und Metadaten, die diese Funktion verwendet; zum Anzeigen klicken, mit Ziffernblock - wieder einklappen.</translation>
     </message>
     <message>
         <source>Double-click to go to %1.</source>
-        <translation>Doppelklicken springt zu %1.</translation>
+        <translation>Doppelklicken, um zu %1 zu springen.</translation>
     </message>
     <message>
         <source>%1
 Double-click to go to the declaration.</source>
         <translation>%1
-Doppelklicken springt zur Deklaration.</translation>
+Doppelklicken, um zur Deklaration zu springen.</translation>
     </message>
     <message>
         <source>C: %1</source>
@@ -1486,8 +1486,8 @@ Doppelklicken springt zur Deklaration.</translation>
     <message numerus="yes">
         <source>%n declarations shown as C</source>
         <translation>
-            <numerusform>%n Deklaration als C gezeigt</numerusform>
-            <numerusform>%n Deklarationen als C gezeigt</numerusform>
+            <numerusform>%n Deklaration als C angezeigt</numerusform>
+            <numerusform>%n Deklarationen als C angezeigt</numerusform>
         </translation>
     </message>
     <message>
@@ -1500,11 +1500,11 @@ Doppelklicken springt zur Deklaration.</translation>
     </message>
     <message>
         <source>Expand block (Ctrl+Shift+])</source>
-        <translation>Block aufklappen (Ctrl+Shift+])</translation>
+        <translation>Block ausklappen (Ctrl+Shift+])</translation>
     </message>
     <message>
         <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>Block zuklappen (Ctrl+Shift+[)</translation>
+        <translation>Block einklappen (Ctrl+Shift+[)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -1512,7 +1512,7 @@ Doppelklicken springt zur Deklaration.</translation>
     </message>
     <message>
         <source>Transformation failed: %1</source>
-        <translation>Umwandlung fehlgeschlagen: %1</translation>
+        <translation>Transformation fehlgeschlagen: %1</translation>
     </message>
 </context>
 <context>
@@ -1527,7 +1527,7 @@ Doppelklicken springt zur Deklaration.</translation>
     </message>
     <message>
         <source>Keep this function while the disassembly moves on</source>
-        <translation>Diese Funktion beibehalten, während die Disassembly weiterwandert</translation>
+        <translation>Diese Funktion beibehalten, wenn die Disassemblierung zu anderen Stellen wechselt</translation>
     </message>
     <message>
         <source>Optimization</source>
@@ -1535,7 +1535,7 @@ Doppelklicken springt zur Deklaration.</translation>
     </message>
     <message>
         <source>Transform the current function</source>
-        <translation>Die aktuelle Funktion umwandeln</translation>
+        <translation>Aktuelle Funktion transformieren</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -1575,7 +1575,7 @@ Doppelklicken springt zur Deklaration.</translation>
     </message>
     <message>
         <source>Cancel transformation</source>
-        <translation>Umwandlung abbrechen</translation>
+        <translation>Transformation abbrechen</translation>
     </message>
 </context>
 <context>
@@ -1605,15 +1605,15 @@ Doppelklicken springt zur Deklaration.</translation>
         <translation>Getrennt</translation>
     </message>
     <message>
-        <source>MCP Connections</source>
+        <source>MCP connections</source>
         <translation>MCP-Verbindungen</translation>
     </message>
     <message>
-        <source>Current GUI session</source>
-        <translation>Aktuelle GUI-Sitzung</translation>
+        <source>This NeverD session</source>
+        <translation>Diese NeverD-Sitzung</translation>
     </message>
     <message>
-        <source>Copy Credential Path</source>
+        <source>Copy credential path</source>
         <translation>Pfad der Zugangsdaten kopieren</translation>
     </message>
     <message>
@@ -1661,23 +1661,23 @@ Doppelklicken springt zur Deklaration.</translation>
         <translation>Schema</translation>
     </message>
     <message>
-        <source>Call Tool</source>
+        <source>Call tool</source>
         <translation>Werkzeug aufrufen</translation>
     </message>
     <message>
-        <source>Cancel Call</source>
+        <source>Cancel call</source>
         <translation>Aufruf abbrechen</translation>
     </message>
     <message>
         <source>Select a resource or call a tool to inspect its response.</source>
-        <translation>Wählen Sie eine Ressource oder rufen Sie ein Werkzeug auf, um die Antwort zu prüfen.</translation>
+        <translation>Wählen Sie eine Ressource oder rufen Sie ein Werkzeug auf, um die Antwort einzusehen.</translation>
     </message>
     <message>
-        <source>Disable Sharing</source>
+        <source>Disable sharing</source>
         <translation>Freigabe deaktivieren</translation>
     </message>
     <message>
-        <source>Enable Sharing</source>
+        <source>Enable sharing</source>
         <translation>Freigabe aktivieren</translation>
     </message>
     <message>
@@ -1717,7 +1717,7 @@ Doppelklicken springt zur Deklaration.</translation>
         <translation>Argumente müssen ein JSON-Array aus Zeichenketten sein.</translation>
     </message>
     <message>
-        <source>Tool Input Schema</source>
+        <source>Tool input schema</source>
         <translation>Eingabeschema des Werkzeugs</translation>
     </message>
 </context>
@@ -1766,7 +1766,7 @@ Doppelklicken springt zur Deklaration.</translation>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import Manifest…</source>
+        <source>Import manifest…</source>
         <translation>Manifest importieren…</translation>
     </message>
     <message>
@@ -1783,7 +1783,7 @@ Doppelklicken springt zur Deklaration.</translation>
     </message>
     <message>
         <source>Select an extension command to inspect its result.</source>
-        <translation>Wählen Sie einen Erweiterungsbefehl, um sein Ergebnis zu prüfen.</translation>
+        <translation>Wählen Sie einen Erweiterungsbefehl, um sein Ergebnis einzusehen.</translation>
     </message>
     <message>
         <source>Import extension manifest</source>
@@ -1809,11 +1809,11 @@ Doppelklicken springt zur Deklaration.</translation>
     </message>
     <message>
         <source>Copy takes at most %1 bytes; select fewer.</source>
-        <translation>Kopieren übernimmt höchstens %1 Bytes; wählen Sie weniger aus.</translation>
+        <translation>Es können höchstens %1 Bytes kopiert werden; wählen Sie weniger aus.</translation>
     </message>
     <message>
         <source>The selection holds bytes no segment maps; nothing was copied.</source>
-        <translation>Die Auswahl enthält Bytes, die kein Segment abbildet; es wurde nichts kopiert.</translation>
+        <translation>Die Auswahl enthält Bytes, die zu keinem Segment gehören; es wurde nichts kopiert.</translation>
     </message>
 </context>
 <context>
@@ -1945,7 +1945,7 @@ Doppelklicken springt zur Deklaration.</translation>
         <translation>Aufwärts</translation>
     </message>
     <message>
-        <source>Disk: %1GB</source>
+        <source>Disk: %1 GB</source>
         <translation>Datenträger: %1 GB</translation>
     </message>
     <message>
@@ -2139,12 +2139,12 @@ Mit Vorzeichen: %4</translation>
         <translation>Gängige Codepages erkennen</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
-        <translation>C-Zeichenketten, die kein UTF-8 sind, auch in %1 lesen, wenn eine davon sie als Text liest und keine Codepage für eine andere Schrift</translation>
+        <source>Also read C strings that are not UTF-8 in %1, when the code pages of only one script read them as text</source>
+        <translation>C-Zeichenketten, die kein UTF-8 sind, auch in %1 lesen, sofern eine dieser Codepages sie als Text liest und keine Codepage einer anderen Schrift dies tut</translation>
     </message>
     <message>
-        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
-        <translation>C-Zeichenketten, die kein UTF-8 sind, zuerst in dieser Codepage lesen, damit sie gewinnt, wo andere Codepages sie ebenfalls lesen</translation>
+        <source>Try this code page first for C strings that are not UTF-8; it wins when other code pages read them too</source>
+        <translation>C-Zeichenketten, die kein UTF-8 sind, zuerst in dieser Codepage lesen, damit sie Vorrang hat, wenn auch andere Codepages sie lesen können</translation>
     </message>
     <message>
         <source>Code pages:</source>
@@ -2179,8 +2179,8 @@ Mit Vorzeichen: %4</translation>
         <translation>Bibliotheksoperationen einklappen</translation>
     </message>
     <message>
-        <source>The ways to load %1 are unknown: %2</source>
-        <translation>Wie %1 geladen wird, ist unbekannt: %2</translation>
+        <source>Cannot determine how to load %1: %2</source>
+        <translation>Es lässt sich nicht bestimmen, wie %1 geladen wird: %2</translation>
     </message>
     <message>
         <source>Comment this source line:</source>
@@ -2200,7 +2200,7 @@ Mit Vorzeichen: %4</translation>
     </message>
     <message>
         <source>Select a source line; expand folded code before commenting it</source>
-        <translation>Wählen Sie eine Quelltextzeile aus; klappen Sie eingeklappten Code vor dem Kommentieren auf</translation>
+        <translation>Wählen Sie eine Quelltextzeile aus; klappen Sie eingeklappten Code vor dem Kommentieren aus</translation>
     </message>
     <message>
         <source>The selected name has no image address</source>
@@ -2227,10 +2227,10 @@ Mit Vorzeichen: %4</translation>
         <translation>Ungeprüfte PDB zur Analyse verwenden</translation>
     </message>
     <message>
-        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+        <source>This PE has no PDB identity (GUID/age) to match against. The selected PDB&apos;s machine and section layout match, but its build cannot be verified.
 
 Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
-        <translation>Dieser PE fehlt die PDB-Identität (GUID/age). Architektur und Abschnittslayout der ausgewählten PDB stimmen überein, aber ihr Build lässt sich nicht bestätigen.
+        <translation>Diese PE-Datei enthält keine Identität (GUID/age) für den Abgleich mit einer PDB. Maschinentyp und Abschnittslayout der ausgewählten PDB stimmen überein, ihr Build lässt sich jedoch nicht verifizieren.
 
 Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Adressbereiche werden als Analyseeingaben verwendet. Eine falsche PDB kann zu falschen Ergebnissen führen.</translation>
     </message>
@@ -2256,7 +2256,7 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>Could not tell which PDB %1 names: %2</source>
-        <translation>Die PDB, die %1 nennt, ließ sich nicht ermitteln: %2</translation>
+        <translation>Welche PDB %1 angibt, ließ sich nicht ermitteln: %2</translation>
     </message>
     <message>
         <source>Could not tell whether %1 has DWARF: %2</source>
@@ -2331,7 +2331,7 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
-        <translation>  strref [Text]     Anweisungen auflisten, die auf Zeichenketten verweisen</translation>
+        <translation>  strref [Text]     Befehle auflisten, die auf Zeichenketten verweisen</translation>
     </message>
 </context>
 <context>
@@ -2425,7 +2425,7 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <name>neverd::gui::Session</name>
     <message>
         <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
-        <translation>%1 liegt in einem Ordner, in den Sie nicht schreiben können; seine Datenbank wird in %2 aufbewahrt</translation>
+        <translation>%1 liegt in einem Ordner, in den Sie nicht schreiben können; die zugehörige Datenbank wird in %2 gespeichert</translation>
     </message>
     <message>
         <source>Starting analysis worker…</source>
@@ -2433,7 +2433,7 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>Incompatible analysis worker protocol.</source>
-        <translation>Inkompatibles Analyseprozess-Protokoll.</translation>
+        <translation>Inkompatibles Protokoll des Analyseprozesses.</translation>
     </message>
     <message>
         <source>Analysis engine %1 ready</source>
@@ -2465,7 +2465,7 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>Edits are paused while the pending save, open or close completes.</source>
-        <translation>Bearbeitungen sind angehalten, bis das ausstehende Speichern, Öffnen oder Schließen abgeschlossen ist.</translation>
+        <translation>Änderungen sind ausgesetzt, bis das ausstehende Speichern, Öffnen oder Schließen abgeschlossen ist.</translation>
     </message>
     <message>
         <source>Renamed %1 to %2</source>
@@ -2485,11 +2485,11 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>Queued requests cancelled; a running engine call finishes unless the worker is restarted.</source>
-        <translation>Wartende Anfragen abgebrochen; ein bereits laufender Engine-Aufruf wird zu Ende ausgeführt, außer der Analyseprozess wird neu gestartet.</translation>
+        <translation>Wartende Anfragen abgebrochen; ein bereits laufender Engine-Aufruf wird zu Ende ausgeführt, sofern der Analyseprozess nicht neu gestartet wird.</translation>
     </message>
     <message>
         <source>%1 describes a different version of this file and was not used; saving replaces it.</source>
-        <translation>%1 beschreibt eine andere Version dieser Datei und wurde nicht verwendet; Speichern ersetzt sie.</translation>
+        <translation>%1 beschreibt eine andere Version dieser Datei und wurde nicht verwendet; beim Speichern wird die Datenbank ersetzt.</translation>
     </message>
     <message>
         <source>Could not restore %1 from the database.</source>
@@ -2545,7 +2545,7 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>An instruction is already defined at %1</source>
-        <translation>An %1 ist bereits ein Befehl definiert</translation>
+        <translation>Bei %1 ist bereits ein Befehl definiert</translation>
     </message>
     <message>
         <source>PDB loaded: %1 (%2 names, identity verified)</source>
@@ -2561,7 +2561,7 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>Opened without the PDB the input names, as chosen</source>
-        <translation>Wie gewählt ohne die PDB geöffnet, die die Eingabedatei nennt</translation>
+        <translation>Wie gewählt ohne die von der Eingabedatei angegebene PDB geöffnet</translation>
     </message>
     <message>
         <source>Edited the function at %1</source>
@@ -2569,11 +2569,11 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>Opened without its DWARF debug information, as chosen</source>
-        <translation>Ohne seine DWARF-Debuginformationen geöffnet, wie gewählt</translation>
+        <translation>Wie gewählt ohne DWARF-Debuginformationen geöffnet</translation>
     </message>
     <message>
         <source>Opened without its symbol table, as chosen</source>
-        <translation>Ohne seine Symboltabelle geöffnet, wie gewählt</translation>
+        <translation>Wie gewählt ohne Symboltabelle geöffnet</translation>
     </message>
     <message>
         <source>DWARF loaded: %1</source>
@@ -2612,7 +2612,7 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>If turned off, NeverD will not analyze the program in idle time</source>
-        <translation>Wenn ausgeschaltet, analysiert NeverD das Programm nicht im Leerlauf</translation>
+        <translation>Wenn deaktiviert, analysiert NeverD das Programm nicht im Leerlauf</translation>
     </message>
     <message>
         <source>In&amp;dicator enabled</source>
@@ -2628,7 +2628,7 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>Load debu&amp;g information</source>
-        <translation>Debu&amp;g-Informationen laden</translation>
+        <translation>Debu&amp;ginformationen laden</translation>
     </message>
     <message>
         <source>Read the PDB, DWARF or linker map that belongs to the input</source>
@@ -2640,7 +2640,7 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
-        <translation>Nur wegen des Dateinamens aufgeführt; der Inhalt zeigt dieses Format nicht</translation>
+        <translation>Nur wegen des Dateinamens aufgeführt; der Inhalt weist nicht auf dieses Format hin</translation>
     </message>
     <message>
         <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
@@ -2672,7 +2672,7 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>How many bytes to load</source>
-        <translation>Wie viele Bytes geladen werden</translation>
+        <translation>Anzahl der zu ladenden Bytes</translation>
     </message>
     <message>
         <source>Image &amp;base</source>
@@ -2708,7 +2708,7 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
-        <translation>Die Plattform, für die der Code gebaut wurde und deren Konventionen er folgt: wie Aufrufe Argumente übergeben, welche Register sie erhalten und wie groß C-Typen sind</translation>
+        <translation>Die Plattform, für die der Code erstellt wurde und deren Konventionen er folgt: wie Aufrufe Argumente übergeben, welche Register dabei erhalten bleiben und wie groß C-Typen sind</translation>
     </message>
     <message>
         <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
@@ -2716,7 +2716,7 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
-        <translation>Der Code sieht aus wie %1 oder %2, und seine Befehle verraten nicht, welches; wählen Sie den Prozessor, auf dem ihr Code läuft</translation>
+        <translation>Der Code sieht nach %1 oder %2 aus, und seine Befehle lassen nicht erkennen, welches von beiden; wählen Sie den Prozessor, auf dem der Code läuft</translation>
     </message>
     <message>
         <source>Read from the bytes: %1</source>
@@ -2724,15 +2724,15 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
     <message>
         <source>Read from the bytes: %1, entry %2, base %3</source>
-        <translation>Aus den Bytes erkannt: %1, Einsprung %2, Basis %3</translation>
+        <translation>Aus den Bytes erkannt: %1, Einsprungpunkt %2, Basis %3</translation>
     </message>
     <message>
         <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
-        <translation>Der Code sieht aus wie %1, den NeverD nicht dekodieren kann; wählen Sie einen Prozessor, um ihn trotzdem so zu lesen</translation>
+        <translation>Der Code sieht nach %1 aus, NeverD kann ihn aber nicht dekodieren; wählen Sie einen Prozessor, um ihn trotzdem als dessen Code zu lesen</translation>
     </message>
     <message>
         <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
-        <translation>Der Code ähnelt am meisten %1, aber nicht eindeutig; wählen Sie den Prozessor, auf dem er läuft</translation>
+        <translation>Der Code ähnelt am ehesten %1, aber nicht eindeutig; wählen Sie den Prozessor, auf dem er läuft</translation>
     </message>
 </context>
 <context>
@@ -3004,7 +3004,7 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <translation>&amp;Name der Funktion</translation>
     </message>
     <message>
-        <source>Analysis decodes where the function ends</source>
+        <source>Analysis decides where the function ends</source>
         <translation>Die Analyse ermittelt, wo die Funktion endet</translation>
     </message>
     <message>
@@ -3064,16 +3064,16 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <translation>Kehrt nicht &amp;zurück</translation>
     </message>
     <message>
-        <source>Analysis ends every call to the function</source>
-        <translation>Die Analyse beendet jeden Aufruf der Funktion</translation>
+        <source>Analysis stops control flow at every call to the function</source>
+        <translation>Für die Analyse endet der Kontrollfluss bei jedem Aufruf der Funktion</translation>
     </message>
     <message>
         <source>&amp;Far function</source>
-        <translation>Fernfunk&amp;tion</translation>
+        <translation>Far-Funk&amp;tion</translation>
     </message>
     <message>
         <source>Only 16-bit x86 code has far functions</source>
-        <translation>Nur 16-Bit-x86-Code hat Fernfunktionen</translation>
+        <translation>Nur 16-Bit-x86-Code hat Far-Funktionen</translation>
     </message>
     <message>
         <source>&amp;Library func</source>
@@ -3144,6 +3144,228 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <message>
         <source>(%1)</source>
         <translation>(%1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::FindingModel</name>
+    <message>
+        <source>Kind</source>
+        <translation>Art</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>Nachweis</translation>
+    </message>
+    <message>
+        <source>Binding</source>
+        <translation>Bindung</translation>
+    </message>
+    <message>
+        <source>Confidence</source>
+        <translation>Konfidenz</translation>
+    </message>
+    <message>
+        <source>Analyst disposition</source>
+        <translation>Analysteneinstufung</translation>
+    </message>
+    <message>
+        <source>Disposition source</source>
+        <translation>Einstufungsquelle</translation>
+    </message>
+    <message>
+        <source>Finding ID</source>
+        <translation>Befund-ID</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::PackageReviewDialog</name>
+    <message>
+        <source>Not selected</source>
+        <translation>Nicht ausgewählt</translation>
+    </message>
+    <message>
+        <source>Offline package review</source>
+        <translation>Offline-Paketprüfung</translation>
+    </message>
+    <message>
+        <source>Evidence coverage is partial. Analyst dispositions are caller assertions; package safety, publisher authentication and runtime behavior are not verified.</source>
+        <translation>Die Nachweisabdeckung ist unvollständig. Analysteneinstufungen sind Angaben des Aufrufers; Paketsicherheit, Authentifizierung des Herausgebers und Laufzeitverhalten werden nicht überprüft.</translation>
+    </message>
+    <message>
+        <source>Preview file…</source>
+        <translation>Dateivorschau…</translation>
+    </message>
+    <message>
+        <source>Preview directory…</source>
+        <translation>Verzeichnisvorschau…</translation>
+    </message>
+    <message>
+        <source>Capture preview</source>
+        <translation>Vorschau erfassen</translation>
+    </message>
+    <message>
+        <source>Select local evidence</source>
+        <translation>Lokale Nachweise auswählen</translation>
+    </message>
+    <message>
+        <source>Select local evidence directory</source>
+        <translation>Lokales Nachweisverzeichnis auswählen</translation>
+    </message>
+    <message>
+        <source>Loose manifest / lock file</source>
+        <translation>Lose Manifest-/Lock-Datei</translation>
+    </message>
+    <message>
+        <source>Inspect archive</source>
+        <translation>Archiv untersuchen</translation>
+    </message>
+    <message>
+        <source>Captured artifact</source>
+        <translation>Erfasstes Artefakt</translation>
+    </message>
+    <message>
+        <source>Container</source>
+        <translation>Container</translation>
+    </message>
+    <message>
+        <source>Manifest member</source>
+        <translation>Manifest im Archiv</translation>
+    </message>
+    <message>
+        <source>Manifest format</source>
+        <translation>Manifestformat</translation>
+    </message>
+    <message>
+        <source>Include captured registry declarations</source>
+        <translation>Erfasste Registry-Deklarationen einbeziehen</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>Originalbytes</translation>
+    </message>
+    <message>
+        <source>Registry metadata</source>
+        <translation>Registry-Metadaten</translation>
+    </message>
+    <message>
+        <source>Capture descriptor</source>
+        <translation>Erfassungsdeskriptor</translation>
+    </message>
+    <message>
+        <source>Assess selected evidence</source>
+        <translation>Ausgewählte Nachweise auswerten</translation>
+    </message>
+    <message>
+        <source>Filter evidence, confidence, disposition or ID</source>
+        <translation>Nach Nachweis, Konfidenz, Einstufung oder ID filtern</translation>
+    </message>
+    <message>
+        <source>Filter findings</source>
+        <translation>Befunde filtern</translation>
+    </message>
+    <message>
+        <source>Selected finding evidence anchors</source>
+        <translation>Nachweisanker des ausgewählten Befunds</translation>
+    </message>
+    <message>
+        <source>Unreviewed</source>
+        <translation>Ungeprüft</translation>
+    </message>
+    <message>
+        <source>Needs review</source>
+        <translation>Prüfung erforderlich</translation>
+    </message>
+    <message>
+        <source>Accepted risk (analyst assertion)</source>
+        <translation>Akzeptiertes Risiko (Analystenangabe)</translation>
+    </message>
+    <message>
+        <source>False positive (analyst assertion)</source>
+        <translation>Falsch positiv (Analystenangabe)</translation>
+    </message>
+    <message>
+        <source>Record disposition</source>
+        <translation>Einstufung eintragen</translation>
+    </message>
+    <message>
+        <source>Save review…</source>
+        <translation>Prüfung speichern…</translation>
+    </message>
+    <message>
+        <source>Load review…</source>
+        <translation>Prüfung laden…</translation>
+    </message>
+    <message>
+        <source>Restore loaded review</source>
+        <translation>Geladene Prüfung wiederherstellen</translation>
+    </message>
+    <message>
+        <source>Stop worker</source>
+        <translation>Analyseprozess beenden</translation>
+    </message>
+    <message>
+        <source>Starting NeverD analysis worker…</source>
+        <translation>NeverD-Analyseprozess wird gestartet…</translation>
+    </message>
+    <message>
+        <source>Offline evidence analysis in progress</source>
+        <translation>Offline-Nachweisanalyse läuft</translation>
+    </message>
+    <message>
+        <source>Operation refused: %1</source>
+        <translation>Vorgang abgelehnt: %1</translation>
+    </message>
+    <message>
+        <source>Reading bounded offline evidence…</source>
+        <translation>Begrenzte Offline-Nachweise werden gelesen…</translation>
+    </message>
+    <message>
+        <source>Preview: %1 artifacts, %2 bytes. Capture reads local bytes; source and names remain private.</source>
+        <translation>Vorschau: %1 Artefakte, %2 Bytes. Die Erfassung liest lokale Bytes; Quelle und Namen bleiben privat.</translation>
+    </message>
+    <message>
+        <source>%1 findings · %2 analyst decisions · partial coverage · head %3</source>
+        <translation>%1 Befunde · %2 Analystenentscheidungen · unvollständige Abdeckung · Head %3</translation>
+    </message>
+    <message>
+        <source>Select local evidence to preview or assess.</source>
+        <translation>Wählen Sie lokale Nachweise für eine Vorschau oder Auswertung aus.</translation>
+    </message>
+    <message>
+        <source>Save local review</source>
+        <translation>Lokale Prüfung speichern</translation>
+    </message>
+    <message>
+        <source>NeverD review (*.ndreview)</source>
+        <translation>NeverD-Prüfung (*.ndreview)</translation>
+    </message>
+    <message>
+        <source>Review save refused: %1</source>
+        <translation>Speichern der Prüfung abgelehnt: %1</translation>
+    </message>
+    <message>
+        <source>Saved opaque evidence IDs and analyst assertions locally.</source>
+        <translation>Opake Nachweis-IDs und Analystenangaben lokal gespeichert.</translation>
+    </message>
+    <message>
+        <source>Load local review</source>
+        <translation>Lokale Prüfung laden</translation>
+    </message>
+    <message>
+        <source>Review load refused: %1</source>
+        <translation>Laden der Prüfung abgelehnt: %1</translation>
+    </message>
+    <message>
+        <source>Loaded %1 assertions. Restore validates the entire chain against the current assessment; nothing has been applied.</source>
+        <translation>%1 Angaben geladen. Die Wiederherstellung prüft die gesamte Kette anhand der aktuellen Auswertung; es wurde noch nichts angewendet.</translation>
+    </message>
+    <message>
+        <source>Unsaved review</source>
+        <translation>Ungespeicherte Prüfung</translation>
+    </message>
+    <message>
+        <source>Discard unsaved analyst assertions and continue?</source>
+        <translation>Ungespeicherte Analystenangaben verwerfen und fortfahren?</translation>
     </message>
 </context>
 </TS>

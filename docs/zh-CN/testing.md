@@ -1718,6 +1718,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `FrameOffsets.*Normalization*` 覆盖精确恒等式、额外输入、根身份、无缓存见证的不可达谓词、默认行为、结构准入与测量计费，以及调用后的节点超限拒绝。`FrameNormalizationPreservesStoresAndNativeReturns` 和 `RawCodeFrameNormalization*` 使用独立字节检查器验证原始内存效果与实际返回地址，并覆盖适用的两种字节序、精确及不足的操作预算和回执篡改。`FrameNormalizationStrategyBindsIndependentProof` 检查两种二进制证明身份。
 
+`NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` 检查缓存历史不再重复计费、新增宽常量仍需计费、工作或节点额度不足仍拒绝，以及可读性缓存副本保持独立。
 
 ## 原生 Lift 验收

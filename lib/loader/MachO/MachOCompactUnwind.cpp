@@ -643,7 +643,12 @@ ParseResult parseCompactUnwind(const BinaryImage &Img) {
       continue;
 
     CompactUnwindEntry Entry;
-    Entry.CodeRange = {ImageBase + Begin, ImageBase + End};
+    Entry.CodeRange = {canonicalCodeAddress(Img.Arch, ImageBase + Begin),
+                       canonicalCodeAddress(Img.Arch, ImageBase + End)};
+    if (!Entry.CodeRange.isValid()) {
+      partial("__unwind_info code range is empty after mode normalization");
+      continue;
+    }
     Entry.NativeEncoding = Raw[I].Encoding;
     if (!decodeEncoding(Img.Arch, Raw[I].Encoding, Entry)) {
       if (Entry.Kind != CompactUnwindKind::Unknown)

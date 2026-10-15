@@ -71,12 +71,24 @@ LoadQuestionDialog::LoadQuestionDialog(const QString &name, const Text &text,
   connect(no, &QPushButton::clicked, this, &QDialog::reject);
   layout->addWidget(buttons);
 
-  // The lines reach the layout's size once its requests are handled.
-  QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
-  layout->activate();
-  setFixedHeight(heightForWidth(width()));
+  fitHeight();
   // The detail line shows from the first paint, before any resize.
   elideDetail();
+}
+
+void LoadQuestionDialog::fitHeight() {
+  // The lines reach the layout's size once its requests are handled.
+  QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+  layout()->activate();
+  setFixedHeight(heightForWidth(width()));
+}
+
+void LoadQuestionDialog::showEvent(QShowEvent *event) {
+  // The style sheet gives the detail line its font as the dialog polishes,
+  // after the constructor measured it: a Chinese or Japanese detail then
+  // needed a pixel more than the dialog had.
+  fitHeight();
+  QDialog::showEvent(event);
 }
 
 void LoadQuestionDialog::resizeEvent(QResizeEvent *event) {

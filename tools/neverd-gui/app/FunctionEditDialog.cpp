@@ -87,7 +87,7 @@ FunctionEditDialog::FunctionEditDialog(const QJsonObject &attributes,
   fields->addRow(tr("&Name of function"), name_);
   // A function's bounds are what analysis decodes; NeverD takes no end from
   // the user yet.
-  const QString boundsWhy = tr("Analysis decodes where the function ends");
+  const QString boundsWhy = tr("Analysis decides where the function ends");
   auto *startField = shownField(this, start, boundsWhy);
   startField->setObjectName(QStringLiteral("start"));
   fields->addRow(tr("&Start address"), startField);
@@ -151,7 +151,8 @@ FunctionEditDialog::FunctionEditDialog(const QJsonObject &attributes,
   noReturn_ =
       flag(flags, tr("D&oes not return"), attributes.value(NoReturnKey));
   noReturn_->setObjectName(QLatin1String(NoReturnKey));
-  noReturn_->setToolTip(tr("Analysis ends every call to the function"));
+  noReturn_->setToolTip(
+      tr("Analysis stops control flow at every call to the function"));
   flagRows->addWidget(noReturn_);
   flagRows->addWidget(unmodeled(flags, tr("&Far function"),
                                 tr("Only 16-bit x86 code has far functions")));

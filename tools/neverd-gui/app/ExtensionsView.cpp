@@ -37,7 +37,7 @@ ExtensionsView::ExtensionsView(Session &session, QWidget *parent)
   auto *buttonRow = new QWidget(left);
   auto *buttons = new QHBoxLayout(buttonRow);
   buttons->setContentsMargins(0, 0, 0, 0);
-  import_ = new QPushButton(tr("Import Manifest…"), buttonRow);
+  import_ = new QPushButton(tr("Import manifest…"), buttonRow);
   run_ = new QPushButton(tr("Run"), buttonRow);
   unload_ = new QPushButton(tr("Unload"), buttonRow);
   buttons->addWidget(import_);

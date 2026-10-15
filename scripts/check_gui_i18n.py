@@ -26,7 +26,8 @@ ACCESS_KEY = re.compile(r"&(.)")
 
 def gui_sources():
     """Every file with translatable strings: C++ sources and the .def tables."""
-    return [str(path) for pattern in ("*.cpp", "app/*.cpp", "app/*.def", "mcp/*.cpp")
+    return [str(path) for pattern in ("*.cpp", "app/*.cpp", "app/*.def", "mcp/*.cpp",
+                                    "web/*.cpp")
             for path in sorted(GUI.glob(pattern))]
 
 

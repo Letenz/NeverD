@@ -1784,6 +1784,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `FrameOffsets.*Normalization*`은 정확한 항등식, 추가 입력, 루트 식별, 증인을 캐시하지 않는 도달 불가능 조건, 기본 동작, 구조 및 측정 비용, 호출 후 노드 한도 거부를 검사합니다. `FrameNormalizationPreservesStoresAndNativeReturns`와 `RawCodeFrameNormalization*`은 독립 바이트 판정기로 원래 메모리 효과와 실제 반환 주소, 해당되는 양쪽 바이트 순서, 정확하거나 부족한 연산 예산 및 영수증 변조를 확인합니다. `FrameNormalizationStrategyBindsIndependentProof`는 두 바이너리 증명 식별을 검사합니다.
 
+`NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` 는 캐시된 이력을 다시 청구하지 않고, 추가된 넓은 상수는 계속 청구하며, 작업 및 노드 예산 부족은 거부하고, 복사된 가독성 캐시가 독립적으로 유지되는지 확인합니다.
 
 ## 네이티브 Lift 검증

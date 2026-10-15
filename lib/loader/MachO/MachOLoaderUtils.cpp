@@ -484,6 +484,18 @@ void parseExportTrie(const uint8_t *BasePtr, size_t FileSize,
         if (!ReadULEB(TermP, TermEnd, Addr) || Addr > InvalidVA - TextVMAddr)
           continue;
         va_t ExportAddr = TextVMAddr + Addr;
+        // dyld stores Thumb function pointers with bit zero set, whereas
+        // nlist entries use canonical code addresses. Only exact Thumb mode
+        // evidence permits normalization; odd data exports retain their byte
+        // address even when the containing image also has Thumb functions.
+        if (Img.Arch == Arch::ARM && (ExportAddr & 1u) != 0) {
+          const va_t CodeAddr = clearThumbBit(ExportAddr);
+          const auto Mode = Img.ARMCodeModeEntries.find(CodeAddr);
+          if (Mode != Img.ARMCodeModeEntries.end() &&
+              Mode->second == InstructionMode::Thumb &&
+              Img.hasExecutableCodeOwnerAt(CodeAddr))
+            ExportAddr = CodeAddr;
+        }
         if (ExistingExports.insert(ExportAddr).second) {
           Export Exp;
           Exp.Name = Prefix;

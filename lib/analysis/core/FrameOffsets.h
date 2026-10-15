@@ -30,8 +30,9 @@ struct FrameOffset {
 /// readability-prefix admission (nodes, operand edges and constant limbs) plus
 /// MBA measurement units; not every internal traversal, sample or CPU
 /// operation. A changed exact expression may retry the ordinary proof once,
-/// retaining cumulative solver limits. Neither fallback enters the
-/// finite-domain cache.
+/// retaining cumulative solver limits. Only completed finite-domain evidence
+/// from that retry can populate the original query's cache; algebraic offset
+/// theorems alone cannot.
 struct FrameOffsetNormalization {
   uint64_t MaxWork = 0;
   uint64_t WorkUsed = 0;

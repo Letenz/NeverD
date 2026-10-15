@@ -1862,6 +1862,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `FrameOffsets.*Normalization*` проверяет точные тождества, дополнительные входы, идентичность корня, невыполнимые предикаты без кешированных свидетелей, поведение по умолчанию, структурные и измерительные расходы и отказ при превышении числа узлов. `FrameNormalizationPreservesStoresAndNativeReturns` и `RawCodeFrameNormalization*` проверяют исходные эффекты памяти и физические адреса возврата независимыми побайтовыми оракулами, оба применимых порядка байтов, точные и недостаточные бюджеты операций и изменённые квитанции. `FrameNormalizationStrategyBindsIndependentProof` проверяет обе идентичности двоичных доказательств.
 
+`NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` проверяет отсутствие повторного учёта кешированной истории, учёт добавленных широких констант, отказ при недостаточных бюджетах работы и узлов и независимость копий кеша читаемости.
 
 ## Нативная проверка Lift

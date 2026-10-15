@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: ee36c902e90a2f26bd648acf020212b2720bc29bd414bdada2c8c96bf4479130 -->
+<!-- i18n-source: be6fcc291675e50f0ce8d8517475c9efa35e98e854f9dd96e0a044bdf3b28e88 -->
 
 [← Documentation Index](README.md)
 
@@ -202,3 +202,11 @@ ELF ARM 與 Thumb 使用獨立設定。原始碼編譯器明確接收 `-marm` �
 補充的 [ARM/Thumb 驗證](https://github.com/gmh5225/test_mac_intel/actions/runs/38750504263)在 `ubuntu-24.04-arm` 上執行了 `fcee81c9a5e2f20a71090ade23ae833175f64c59` 的 32 個 C 測試映像，全部 96 次觀測通過（ARM 與 Thumb 各 48 次）。Linux 核心透過 `/lib/ld-linux-armhf.so.3` 直接載入映像，未使用 QEMU 或明確指定的載入器命令。這屬於 ARM64 主機上的 `compatibility`，不是原生 32 位元主機驗證。測試入口提交 `3ad17ac9608d6bd9f5a4d44953ec375524e5730b` 與映像提交分別記錄。獨立產物稽核核對了映像雜湊、全部 30 份發布回執、完整情境及重複次數，並確認沒有符合這些映像的 `binfmt_misc` 直譯器規則。
 
 另外執行的[託管 runner 探測](https://github.com/gmh5225/test_mac_intel/actions/runs/38749138719)確認，所提供的 Windows 11 ARM64 runner 以 `WinError 216` 拒絕啟動 ARM32 程式。在 macOS 15.7.9 與 Xcode 16.4 環境中，現有 SDK 無法連結 macOS i386 或 iOS ARMv7 程式。watchOS ARMv7k 程式連結成功，但未取得實體裝置執行證據。探測工作成功不等於這些平台通過驗證；其原生硬體覆蓋仍未補齊。NeverC 未被建置或修改。
+
+補充的[個人 Actions Linux 驗證](https://github.com/gmh5225/test_mac_intel/actions/runs/38773830274)在完整 QEMU TCG ARM32 客體中通過了 96 次 ARM/Thumb 執行，客體使用 32 位元 Linux 核心和 glibc；同一客體內的 Wine 另通過 30 次 PE ARM32 執行。ELF 映像由客體核心直接載入，這是整機模擬，與需要明確載入器的 `qemu-user` 路徑分別記錄。ARM64 主機相容層上的 Wine 登錄安裝僅作為安裝證據，計入零次修補執行。客體內的 Wine 初始化及每次量測執行都必須在原定時限內成功。
+
+[Apple 相容性驗證](https://github.com/gmh5225/test_mac_intel/actions/runs/38771214358)通過了 Linux 上 Darling 的 30 次 Mach-O i386 執行，以及 Intel macOS 上 touchHLE 的 60 次 ARMv7/ARMv7k 執行。每個原始映像以及原始碼 IR、編譯物件、外部物件替換結果均執行三次。獨立稽核驗證了這些補充執行中的全部 72 個映像、66 份修補發布紀錄和 216 次執行，包括 GitHub 產物大小、SHA256、精確提交及完整案例清單。Linux 輸入仍固定於 `fcee81c9a5`；PE 輸入產生於 `a542f97ba`，Mach-O 輸入產生於 `8f5f06762`。驗證指令碼的提交編號在對應執行中單獨記錄。
+
+Mach-O 修正依所選函式認證 Thumb 模式，避免被映像整體的 ARM/Thumb 混合模式覆蓋；僅正規化有證據的 Thumb 匯出指標，並統一 ARM32 展開程式碼位址，不改變資料指標或範圍長度。整合 LLVM 原始碼建置在本機通過全部 154 項 CPU 矩陣檢查及 258 項例外契約檢查，零失敗、零略過。舊 Mach-O 測試程式使用已記錄的開源連結器並預留展開中繼資料容量；i386 使用正確對齊的啟動入口和 64 KiB 頁零區段。
+
+這些結果證明指定模擬器及相容層下的 C 程式碼執行。Wine 不等於 Microsoft Windows，Darling 不等於 macOS；iOS HLE 中的 ARMv7k 執行不能證明 watchOS、WatchKit 或 Apple 實機支援。不能據此推斷舊 Apple SDK 或原生 32 位元硬體涵蓋率，這些測試也不認證 C++ 例外展開。既有原生與相容模式證據繼續分開記錄。NeverC 未建置、未修改。
