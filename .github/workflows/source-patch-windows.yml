@@ -169,7 +169,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'DynCode artifact evidence tests failed' }
           & build-source-windows/bin/NeverDNativeExceptionRewriteContractTests.exe '--gtest_filter=ELFSourceSymbols.*:ELFSourceRelocations.*:ReplacementNativeCode.*' '--gtest_output=xml:build-source-windows/elf-reference-contracts.xml'
           if ($LASTEXITCODE -ne 0) { throw 'ELF source reference contracts failed' }
-          python -c "import pathlib,xml.etree.ElementTree as E; paths=[pathlib.Path('build-source-windows')/n for n in ('native-pe.xml','target-matrix.xml')]; suites=[E.parse(p).getroot() for p in paths]; assert [int(s.attrib.get('tests','0')) for s in suites]==[20,143], 'Qualification inventory changed'; assert all(all(int(s.attrib.get(k,'0'))==0 for k in ('failures','errors','disabled')) for s in suites); assert all(c.find('skipped') is None for s in suites for c in s.iter('testcase')), 'Qualification cannot pass with skipped cases'"
+          python -c "import pathlib,xml.etree.ElementTree as E; paths=[pathlib.Path('build-source-windows')/n for n in ('native-pe.xml','target-matrix.xml')]; suites=[E.parse(p).getroot() for p in paths]; assert [int(s.attrib.get('tests','0')) for s in suites]==[20,154], 'Qualification inventory changed'; assert all(all(int(s.attrib.get(k,'0'))==0 for k in ('failures','errors','disabled')) for s in suites); assert all(c.find('skipped') is None for s in suites for c in s.iter('testcase')), 'Qualification cannot pass with skipped cases'"
           if ($LASTEXITCODE -ne 0) { throw 'Incomplete native qualification' }
 
       - name: Prepare all PE process fixtures and execute x86 and x64

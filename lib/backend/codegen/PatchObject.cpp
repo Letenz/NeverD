@@ -561,7 +561,17 @@ llvm::Expected<ResolvedSymbol> resolveObjectSymbol(
   if (auto Binding = Bindings.find(Symbol.Name); Binding != Bindings.end()) {
     if (Callable && Binding->second.Kind != SourcePatchBindingKind::Function)
       return fail("data binding used as a callable target: " + Symbol.Name);
-    return ResolvedSymbol{Binding->second.OriginalVA, 0};
+    uint64_t VA = Binding->second.OriginalVA;
+    if (Original.Arch == Arch::ARM &&
+        Binding->second.Kind == SourcePatchBindingKind::Function) {
+      const auto Mode = Original.instructionModeAt(VA);
+      if (!Mode || (*Mode != InstructionMode::ARM &&
+                    *Mode != InstructionMode::Thumb))
+        return fail("bound ARM function has no authenticated instruction state");
+      if (*Mode == InstructionMode::Thumb)
+        VA |= 1;
+    }
+    return ResolvedSymbol{VA, 0};
   }
   if (Symbol.Binding == llvm::ELF::STB_WEAK)
     return fail("unresolved weak symbol: " + Symbol.Name);

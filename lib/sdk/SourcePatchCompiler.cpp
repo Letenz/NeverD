@@ -217,8 +217,6 @@ compileSourcePatch(llvm::StringRef Source,
              llvm::Triple(*Target).getEnvironment()))
       return compilerError("selected GCC must match the loaded ELF "
                            "architecture and ABI; use a matching cross driver");
-    if (Architecture == Arch::ARM)
-      Args.push_back(llvm::Triple(*Target).isThumb() ? "-mthumb" : "-marm");
   }
 #ifdef __APPLE__
   if (Format == BinaryFormat::MachO) {
@@ -253,11 +251,14 @@ compileSourcePatch(llvm::StringRef Source,
     if (Format == BinaryFormat::MachO && Architecture == Arch::ARM &&
         llvm::StringRef(*Target).starts_with("thumb")) {
       Args.push_back("--target=arm" + Target->substr(5));
-      Args.push_back("-mthumb");
     } else {
       Args.push_back("--target=" + *Target);
     }
   }
+  // Clang's Linux driver may canonicalize a thumbv7 triple back to ARM mode.
+  // Every producer must receive the instruction state selected from the image.
+  if (Architecture == Arch::ARM)
+    Args.push_back(llvm::Triple(*Target).isThumb() ? "-mthumb" : "-marm");
   Args.push_back("-fno-lto");
   if (Options.compiler == NEVERD_SOURCE_PATCH_NEVERC &&
       Format == BinaryFormat::COFF) {
