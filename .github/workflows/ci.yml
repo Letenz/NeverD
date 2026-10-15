@@ -2719,11 +2719,13 @@ jobs:
             --output build-windows-eh/evidence/eh4-gs-cookie-runtime \
             --wine-prefix "$RUNNER_TEMP/neverd-wine32"
       - name: Execute reconstructed SEH3 and EH4 source through both CLI modes and rebasing
+        env:
+          REGISTRATION_SOURCE_PROFILE: ${{ inputs.windows_eh_llvm_artifact_run != '' && 'all' || 'r4' }}
         run: |
           build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
             --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract:WindowsRegistrationCxxSource.*:RegistrationEntryABI.InputPE32*:RegistrationRelift.InputPE32* \
             --gtest_output=xml:build-windows-eh/evidence/native.xml
-          for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write eh4-filter eh4-nested-finally eh4-continue-search eh4-continue-execution eh4-normal-finally eh4-cdecl-parameter eh4-cdecl-parameter-write eh4-gs-filter eh4-gs-nested-finally eh4-gs-continue-search eh4-gs-continue-execution eh4-gs-normal-finally eh4-gs-cdecl-parameter eh4-gs-cdecl-parameter-write exception-code exception-flags eh4-exception-code eh4-exception-flags eh4-gs-exception-code eh4-gs-exception-flags longjmp-finally longjmp-zero longjmp-filter longjmp-parameter longjmp-callback longjmp-unwind-callback longjmp-callback-zero longjmp-search-filter longjmp-search-filter-zero longjmp-retired-scope longjmp-retired-inner-scope longjmp-callee longjmp-returning-callee longjmp-scalar-callee longjmp-runtime-raise longjmp-control-fp longjmp-runtime-continue longjmp-runtime-finally longjmp-runtime-ordinary-finally longjmp-nested-finally-call longjmp-nested-finally-unwind; do
+          for registration_case in $(python -c 'import os; from scripts.replay_windows_registration import source_cases; print(" ".join(source_cases(os.environ["REGISTRATION_SOURCE_PROFILE"])))'); do
             python scripts/check_windows_registration_rewrite.py \
               --test-binary build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
               --patch-binary build-windows-eh/bin/neverd --case "$registration_case" \
@@ -2806,7 +2808,7 @@ jobs:
           name: windows-eh-x86-runtime-arm32-contracts
           path: build-windows-eh
       - name: Replay identical original and rewritten PE32 images on Windows
-        run: python scripts/replay_windows_registration.py --source-only --evidence-root build-windows-eh/evidence --output build-windows-eh/native-seh-source.json
+        run: python scripts/replay_windows_registration.py --source-only --source-profile ${{ inputs.windows_eh_llvm_artifact_run != '' && 'all' || 'r4' }} --evidence-root build-windows-eh/evidence --output build-windows-eh/native-seh-source.json
       - name: Preserve native SEH execution evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

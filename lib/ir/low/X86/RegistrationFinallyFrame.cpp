@@ -18,16 +18,16 @@ namespace neverd::registration_state {
 bool RegistrationStateSolver::runLocalFinally(
     va_t Target, FrameState &Parent, bool OrdinaryInvocation,
     std::vector<RegistrationObjectExtent> *Writes, const EH3JumpCapture *Jump,
-    const FrameValue *JumpValue) {
+    const FrameValue *JumpValue, SEHFrameOutcomes *Outcomes) {
   return runSEHCallbackFrame(Target, Parent, OrdinaryInvocation, Writes, Jump,
-                             JumpValue, nullptr);
+                             JumpValue, nullptr, 0, std::nullopt, Outcomes);
 }
 
 bool RegistrationStateSolver::runSEHCallbackFrame(
     va_t Target, FrameState &Parent, bool OrdinaryInvocation,
     std::vector<RegistrationObjectExtent> *Writes, const EH3JumpCapture *Jump,
     const FrameValue *JumpValue, FrameValue *FilterResult, unsigned Depth,
-    std::optional<int32_t> ParentStackOffset) {
+    std::optional<int32_t> ParentStackOffset, SEHFrameOutcomes *Outcomes) {
   const auto Entry = Entries.find(Target);
   // An ordinary CALL has a proved current ESP and its own return PC. SavedESP
   // belongs to a separate runtime restoration protocol; finally-only helpers
@@ -56,21 +56,31 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
     Initial.enterSEHFilter(Target, *Chain.RegistrationOffset - 4);
   else
     Initial.enterCallback(Target);
-  std::map<size_t, FrameState> Incoming{{Entry->second, Initial}};
-  std::deque<size_t> Pending{Entry->second};
-  std::set<size_t> Queued{Entry->second};
-  std::optional<FrameState> Returned;
+  const auto InitialLevel = Initial.load(Chain.TryLevelOffset, 4).Constant;
+  if (!InitialLevel || !validLevel(int32_t(*InitialLevel)))
+    return false;
+  using Key = std::pair<size_t, int32_t>;
+  const Key InitialKey{Entry->second, int32_t(*InitialLevel)};
+  std::map<Key, FrameState> Incoming{{InitialKey, Initial}};
+  std::deque<Key> Pending{InitialKey};
+  std::set<Key> Queued{InitialKey};
+  std::map<Key, std::set<Key>> Edges;
+  SEHFrameOutcomes Returned;
   while (!Pending.empty()) {
-    const size_t I = Pending.front();
+    const Key Current = Pending.front();
+    const size_t I = Current.first;
     Pending.pop_front();
-    Queued.erase(I);
-    FrameState State = Incoming.at(I);
+    Queued.erase(Current);
+    FrameState State = Incoming.at(Current);
     FrameTransfer Transfer(State, *Chain.RegistrationOffset);
     const auto &Block = Function.Blocks[I];
-    if (OrdinaryInvocation && !validateSEHInvocationBlock(I))
+    if (InvalidBlocks[I] ||
+        (OrdinaryInvocation && !validateSEHInvocationBlock(I)))
       return false;
     bool HasReturn = false;
     bool HasResume = false;
+    std::set<va_t> ProvenStores;
+    SEHFrameOutcomes NestedOutcomes;
     for (const auto &Op : Block.Ops) {
       if (!charge(1 + State.cellCount() + Op.Output.Size) ||
           (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)) ||
@@ -113,9 +123,12 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
             Op.Inputs[0].Size == 4 &&
             FinallyTargets.count(Op.Inputs[0].Offset)) {
           if (FilterResult ||
-              !runSEHNestedFinallyFrame(I, Op, State, *ParentSP, Writes, Depth))
+              !runSEHNestedFinallyFrame(I, Op, State, *ParentSP, Writes, Depth,
+                                        NestedOutcomes))
             return false;
-          continue;
+          // The shared CALL proof permits only the checked tail JMP after
+          // this call. Its successors can be resumed once per returned state.
+          break;
         }
         const auto SP = State.Registers[x86reg::RSP / x86reg::GeneralRegStride]
                             .CallbackAddress;
@@ -135,12 +148,8 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
         // value. A different target/value needs a separate transition.
         if (Value.MayBeFrame || Normalize(Value) != Normalize(*JumpValue))
           return false;
-        if (!Returned)
-          Returned = State;
-        else if (!charge(Returned->cellCount() + State.cellCount() + 10))
+        if (!mergeSEHFrameOutcome(Returned, State))
           return false;
-        else
-          Returned->merge(State);
         HasReturn = HasResume = true;
         break;
       }
@@ -148,12 +157,8 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
         if (!callbackReturnInstruction(I, Op) ||
             State.CallbackEntry != Target || !State.callbackStackIsRestored(0))
           return false;
-        if (!Returned)
-          Returned = State;
-        else if (!charge(Returned->cellCount() + State.cellCount() + 10))
+        if (!mergeSEHFrameOutcome(Returned, State))
           return false;
-        else
-          Returned->merge(State);
         HasReturn = true;
         break;
       }
@@ -206,17 +211,29 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
                    int64_t(*Address.Offset) + Memory.AccessSize > 0) {
           return false;
         } else if (Op.Opcode == NdOp::STORE) {
-          // The runtime owns SavedESP, exception pointers and the complete
-          // registration record. A finally that can change them needs a
-          // separate nonlocal-transition proof, not an ordinary return fact.
-          if (!frameObjectIsDisjointFromAdministration(
-                  *Address.Offset,
-                  int64_t(*Address.Offset) + Memory.AccessSize))
-            return false;
           const auto Value = Transfer.read(*Memory.StoredValue);
-          if (Value.CallbackAddress || (Value.MayBeFrame && !Value.Offset))
-            return false;
-          State.store(*Address.Offset, Memory.AccessSize, Value);
+          if (Address.Offset == Chain.TryLevelOffset) {
+            const auto Level = State.load(Chain.TryLevelOffset, 4).Constant;
+            std::set<int32_t> Written;
+            if (!Level || !ProvenStores.insert(Op.Addr).second ||
+                !transferTryLevelStore(I, Op, Address, Value, {int32_t(*Level)},
+                                       false, Written) ||
+                Written.size() != 1)
+              return false;
+            State.store(*Address.Offset, Memory.AccessSize, Value);
+            State.store(*Chain.TryLevelOffset, 4,
+                        FrameValue::constant(uint32_t(*Written.begin())));
+          } else {
+            // SavedESP, exception pointers and the rest of the registration
+            // remain runtime-owned. Only the checked state recipe can write
+            // through that administrative boundary.
+            if (!frameObjectIsDisjointFromAdministration(
+                    *Address.Offset,
+                    int64_t(*Address.Offset) + Memory.AccessSize) ||
+                Value.CallbackAddress || (Value.MayBeFrame && !Value.Offset))
+              return false;
+            State.store(*Address.Offset, Memory.AccessSize, Value);
+          }
           if (Writes)
             Writes->push_back(
                 {*Address.Offset,
@@ -235,6 +252,10 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
         State.trimCallbackCells();
       }
     }
+    for (auto Store = Stores.lower_bound(Block.StartAddr);
+         Store != Stores.end() && Store->first < Block.EndAddr; ++Store)
+      if (!ProvenStores.count(Store->first))
+        return false;
     if (HasReturn) {
       if (!HasResume && !Block.Succs.empty())
         return false;
@@ -242,32 +263,85 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
     }
     if (Block.Succs.empty())
       return false;
-    for (int Next : Block.Succs) {
-      const auto Successor = Index.find(Next);
-      if (Successor == Index.end() || !charge(State.cellCount() + 10))
+    if (NestedOutcomes.empty() && !mergeSEHFrameOutcome(NestedOutcomes, State))
+      return false;
+    for (const auto &[Level, Outcome] : NestedOutcomes)
+      for (int Next : Block.Succs) {
+        const auto Successor = Index.find(Next);
+        if (Successor == Index.end() || !charge(Outcome.cellCount() + 10))
+          return false;
+        const Key NextKey{Successor->second, Level};
+        Edges[Current].insert(NextKey);
+        auto [It, New] = Incoming.emplace(NextKey, Outcome);
+        if ((New || It->second.merge(Outcome)) && Queued.insert(NextKey).second)
+          Pending.push_back(NextKey);
+      }
+  }
+  if (Returned.empty())
+    return false;
+  // Every reachable abstract path must return. A fixed point with one return
+  // arm and one recurrent arm is not a proof that this invocation returns.
+  std::map<Key, size_t> Predecessors;
+  for (const auto &[Node, Frame] : Incoming) {
+    if (!charge(1 + Edges[Node].size()))
+      return false;
+    Predecessors.try_emplace(Node, 0);
+    for (const auto &Next : Edges[Node])
+      ++Predecessors[Next];
+  }
+  for (const auto &[Node, Count] : Predecessors)
+    if (!Count)
+      Pending.push_back(Node);
+  size_t Retired = 0;
+  while (!Pending.empty()) {
+    const Key Node = Pending.front();
+    Pending.pop_front();
+    ++Retired;
+    for (const auto &Next : Edges[Node]) {
+      if (!charge(1))
         return false;
-      auto [It, New] = Incoming.emplace(Successor->second, State);
-      if ((New || It->second.merge(State)) &&
-          Queued.insert(Successor->second).second)
-        Pending.push_back(Successor->second);
+      if (!--Predecessors[Next])
+        Pending.push_back(Next);
     }
   }
-  if (!Returned)
+  if (Retired != Incoming.size())
     return false;
-  if (FilterResult) {
-    *FilterResult = Returned->Registers[x86reg::RAX / x86reg::GeneralRegStride];
-    // Runtime exception pointers expire with this search invocation.
-    Returned->leaveCallback();
+  std::optional<FrameState> Joined;
+  bool FirstFilterResult = true;
+  for (auto &[Level, ReturnedFrame] : Returned) {
+    if (FilterResult) {
+      const auto Value =
+          ReturnedFrame.Registers[x86reg::RAX / x86reg::GeneralRegStride];
+      *FilterResult = FirstFilterResult ? Value : join(*FilterResult, Value);
+      FirstFilterResult = false;
+      // Runtime exception pointers expire with this search invocation.
+      ReturnedFrame.leaveCallback();
+    }
+    FrameState Projected = Parent;
+    Projected.Cells = std::move(ReturnedFrame.Cells);
+    if (OrdinaryInvocation) {
+      // Source finally callbacks retain their actual register effects. The
+      // caller separately restores the SP after the checked near RET.
+      Projected.Registers = ReturnedFrame.Registers;
+      Projected.OtherRegisterBytes =
+          std::move(ReturnedFrame.OtherRegisterBytes);
+      Projected.OtherRegistersMayBeFrame =
+          ReturnedFrame.OtherRegistersMayBeFrame;
+    }
+    if (Outcomes && !mergeSEHFrameOutcome(*Outcomes, Projected))
+      return false;
+    if (!Joined)
+      Joined = std::move(Projected);
+    else if (!charge(Joined->cellCount() + Projected.cellCount() + 10))
+      return false;
+    else
+      Joined->merge(Projected);
   }
-  Parent.Cells = std::move(Returned->Cells);
-  if (OrdinaryInvocation) {
-    // A source finally is not an ABI-preserving ordinary function. Retain
-    // its actual register effects; the caller separately restores the SP
-    // after the checked near RET has consumed its own untouched return PC.
-    Parent.Registers = Returned->Registers;
-    Parent.OtherRegisterBytes = std::move(Returned->OtherRegisterBytes);
-    Parent.OtherRegistersMayBeFrame = Returned->OtherRegistersMayBeFrame;
-  }
+  // A consumer without a partitioned result cannot use a merged unknown state
+  // to select the next runtime action.
+  if (!Outcomes && Returned.size() != 1)
+    return false;
+  Parent = std::move(*Joined);
   return true;
 }
 

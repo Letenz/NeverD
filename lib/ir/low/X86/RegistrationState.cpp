@@ -223,6 +223,8 @@ bool RegistrationStateSolver::charge(size_t Amount) {
     Result.SEHJumpResumptions.clear();
     Result.SEHJumpCapturesComplete = false;
     Result.SEHJumpCaptures.clear();
+    Result.SEHStateStoresComplete = false;
+    Result.SEHStateStores.clear();
     Result.SEHBoundCallsComplete = false;
     Result.SEHBoundCalls.clear();
     Result.SEHExceptionAccessesComplete = false;

@@ -169,33 +169,21 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
     Result.SEHJumpResumptionsComplete = false;
     return true;
   };
+  SEHFrameOutcomes Outcomes;
+  std::vector<RegistrationObjectExtent> Writes;
+  for (int32_t Level : After.Levels)
+    if (!runSEHUnwind(After.Frame, Level, uint32_t(Saved.Level), Outcomes,
+                      Writes, &Saved, &Value))
+      return Refuse();
+  for (const auto &Write : Writes)
+    if (Write.Begin <
+            int64_t(Saved.BufferOffset) + EH3JumpCapture::BufferBytes &&
+        Saved.BufferOffset < Write.End)
+      return Refuse();
   std::optional<FrameState> Joined;
   std::set<int32_t> Stopped;
-  for (int32_t Level : After.Levels) {
-    FrameState Frame = After.Frame;
-    size_t Steps = 0;
-    int32_t Walk = Level;
-    while (Walk != -1 &&
-           (Saved.Level == -1 || uint32_t(Walk) > uint32_t(Saved.Level))) {
-      if (!charge(Frame.cellCount() + 1) || Walk < 0 ||
-          size_t(Walk) >= Chain.Scopes.size() || ++Steps > Chain.Scopes.size())
-        return Refuse();
-      const auto &Scope = Chain.Scopes[Walk];
-      Walk = Scope.EnclosingLevel;
-      Frame.store(-4, 4, FrameValue::constant(uint32_t(Walk)));
-      if (Scope.IsFinally) {
-        std::vector<RegistrationObjectExtent> Writes;
-        if (!runLocalFinally(Scope.HandlerVA, Frame, false, &Writes, &Saved,
-                             &Value))
-          return Refuse();
-        for (const auto &Write : Writes)
-          if (Write.Begin <
-                  int64_t(Saved.BufferOffset) + EH3JumpCapture::BufferBytes &&
-              Saved.BufferOffset < Write.End)
-            return Refuse();
-      }
-    }
-    Stopped.insert(Walk);
+  for (auto &[Level, Frame] : Outcomes) {
+    Stopped.insert(Level);
     if (!Joined)
       Joined = std::move(Frame);
     else if (!charge(Joined->cellCount() + Frame.cellCount() + 10))
@@ -203,6 +191,8 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
     else
       Joined->merge(Frame);
   }
+  if (!Joined)
+    return Refuse();
   Domain Resume = After;
   Resume.Frame = std::move(*Joined);
   Resume.Frame.leaveCallback();

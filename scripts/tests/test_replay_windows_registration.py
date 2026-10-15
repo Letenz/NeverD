@@ -1,10 +1,21 @@
 import copy
 import unittest
 
-from scripts.replay_windows_registration import source_records
+from scripts.replay_windows_registration import source_cases, source_records
 
 
 class RegistrationSourceReplayTests(unittest.TestCase):
+    def test_older_compiler_profiles_do_not_claim_callback_state_execution(self):
+        current, r4, legacy = (source_cases(p) for p in ("all", "r4", "seh3-eh4"))
+        self.assertEqual(len(r4), 48)
+        self.assertEqual(len(legacy), 39)
+        self.assertEqual(set(current) - set(r4), {
+            "longjmp-state-activate-call", "longjmp-state-activate-unwind",
+            "longjmp-state-retire", "longjmp-state-sentinel"})
+        self.assertTrue(all(name.startswith("eh4-gs-") for name in set(r4) - set(legacy)))
+        with self.assertRaises(ValueError):
+            source_cases("unknown")
+
     def evidence(self, schema=2):
         labels = ["original", "patched", "product-patched", "collision-patched"]
         if schema == 2:

@@ -76,6 +76,12 @@ scope table 或 C++ FuncInfo。SafeSEH 表必须已映射、严格排序，且�
 callback 不属于父函数的词法保护区；catch/except 入口使用对应的运行时状态迁移。
 MedIR 单独携带这些推导结果，不修改 patch 事务认证的 loader 描述符。只有所有到达状态
 对区域归属一致时，HighIR 才生成结构化区域；未知迁移保留注释，不虚构 IP-to-state map。
+
+SEH 状态写入凭据保留准确的源操作、宽度、字面值和输入/输出 level。finally callback
+的栈帧效果按最终 level 分别保留；局部展开在选择下一次 cleanup 前重新读取该 level。
+因此 callback 内激活或退出 scope 的效果不会丢失，窄写入未覆盖的高位也保持原值。
+这些源分析事实本身不能授权生成物理 registration 写入。
+
 C++ catch 使用独立的运行时上下文：嵌套异常从活动 try 之上的状态开始搜索，catch
 返回的是交给运行时的 continuation 代码地址。LowIR 要求精确解码的返回指令与已证明
 的保存栈值，在同一函数内解码目标并重放恢复后的上下文。无法证明或相互冲突的
@@ -127,6 +133,17 @@ callback 通过 escaped frame 恢复源 EBP/ESP 和 exception pointer。只有�
 链操作才会被替换。每个活动区间都有显式异步 scope 边界，包括内层 handler 进入外层
 保护区的入口。原函数和保留的直接被调函数必须证明 caller-cleanup 栈行为；间接调用
 或无法证明的栈清理约定仍被拒绝。
+
+callback 内 TryLevel 写入的原生重建还要求
+`LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`，r4 编译器不提供这一能力。
+当前路径只接受经过检查的常量 32 位写入；字节、字宽度的 callback 写入仍仅支持分析。
+每次生成写入将精确源操作、所属 callback、恢复的父帧和 scope 语义 token 绑定到 LLVM
+生成的状态索引，或经过检查的 EH3/EH4 域外 sentinel。安装器重放逻辑源写入，并将物理
+MOV32 的字节、栈帧偏移、基址寄存器、立即数和唯一代码范围与编译器凭据逐项核对；
+缺失、额外或重排的写入都会拒绝安装。仅通过这些 callback 写入到达的 scope 会保留
+语言表行，但不会在父函数入口被激活。所有保留行必须来自已证明的父函数状态、callback
+迁移结果或其外层 scope。该契约适用于经过检查的 SEH3/SEH4 栈帧；EH4 非局部跳转
+缓冲区和独立的 C++ 对象生命周期契约仍不在其范围内。
 
 搜索 filter 可以读取当前 `EXCEPTION_POINTERS`、其中的 record 指针，以及 32 位
 `ExceptionCode` 和 `ExceptionFlags`。每个源 LOAD 都绑定到所属 filter；安装器独立

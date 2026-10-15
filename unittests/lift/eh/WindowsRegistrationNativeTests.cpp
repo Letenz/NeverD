@@ -6,6 +6,7 @@
 
 #include "../../../lib/backend/codegen/COFF/COFFSourceCallSymbols.h"
 #include "RegistrationCxxContinuationTestUtils.h"
+#include "RegistrationNativeEmitterTestPeer.h"
 #include "RegistrationSEHDynamicScopeTestUtils.h"
 #include "RegistrationSEHExceptionNativeTestUtils.h"
 #include "RegistrationSEHFinallyIRMutations.h"
@@ -58,42 +59,6 @@
 #include <algorithm>
 #include <cstdlib>
 #include <set>
-
-namespace neverd {
-class MedLLVMEmitterTestPeer {
-public:
-  static void prepare(MedLLVMEmitter &E, llvm::Module &M, llvm::Function &F,
-                      const MedFunc &Source, llvm::AllocaInst &Frame) {
-    E.Ctx = &M.getContext();
-    E.Mod = &M;
-    E.TargetArch = Arch::X86;
-    E.TargetFormat = BinaryFormat::COFF;
-    E.CurFunc = &F;
-    E.CurMedFunc = &Source;
-    E.FrameAlloca = &Frame;
-    E.FrameEntrySPOffset = 64;
-  }
-  static void chain(MedLLVMEmitter &E, llvm::Instruction &I, va_t Address,
-                    int Seq) {
-    E.RegistrationChainIR.emplace(std::make_pair(Address, Seq), &I);
-  }
-  static void call(MedLLVMEmitter &E, llvm::CallInst &I, va_t Address) {
-    E.CallSiteAddrs.emplace(&I, Address);
-    I.setMetadata(language_eh_md::InternalSourceCallAttachment,
-                  llvm::MDNode::get(
-                      I.getContext(),
-                      {llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
-                          llvm::Type::getInt64Ty(I.getContext()), Address))}));
-  }
-  static void forgetCall(MedLLVMEmitter &E, llvm::CallInst &I) {
-    E.CallSiteAddrs.erase(&I);
-  }
-  static bool lower(MedLLVMEmitter &E, const MedFunc &Source, llvm::Function &F,
-                    const std::map<int, llvm::BasicBlock *> &Blocks) {
-    return E.emitNativeX86RegistrationSEH(Source, F, Blocks);
-  }
-};
-} // namespace neverd
 
 namespace {
 using namespace neverd;
@@ -2499,6 +2464,8 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           return false;
         },
         "unproved LLVM escape or access");
+  // This added backedge also changes the authenticated callback exit. Source
+  // execution closure now runs before the physical frame/escape proof.
   RejectMutation(
       "callback spill overwritten on a self-loop backedge",
       [](llvm::Function &F) {
@@ -2570,7 +2537,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
         }
         return false;
       },
-      "unproved LLVM escape or access");
+      "source execution");
   for (bool WideGEP : {false, true})
     RejectMutation(
         WideGEP ? "inbounds wide-index overflow" : "nonnegative frame cast",

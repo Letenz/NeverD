@@ -7,6 +7,7 @@
 #include "COFFRegistrationSEHDynamicScope.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/med/X86RegistrationSEHStateStore.h"
 
 #include <functional>
 #include <tuple>
@@ -18,13 +19,16 @@ bindDynamicSEHState(const MedFunc &Source, const RegistrationFrame &Frame,
                     llvm::ArrayRef<const llvm::Function *> Functions,
                     const std::set<const llvm::StoreInst *> &RuntimeWrites) {
   RegistrationSEHScopeState Result;
-  if (!Source.RegistrationStates ||
+  Result.Offset = int64_t(Frame.EntrySP) - 8;
+  const auto CallbackStores = getX86RegistrationSEHStateStores(Source);
+  if (!CallbackStores)
+    return rejectIR("logical state has incomplete callback store receipts");
+  if (CallbackStores->empty() &&
       !llvm::any_of(Source.RegistrationStates->Blocks, [](const auto &Block) {
         return !Block.CallbackOnly && Block.Levels.size() > 1;
       }))
     return Result;
   Result.Enabled = true;
-  Result.Offset = int64_t(Frame.EntrySP) - 8;
   Result.Writes = RuntimeWrites;
   using Key = std::tuple<MedVar::VarKind, int, int>;
   auto KeyOf = [](const MedVar &V) { return Key{V.Kind, V.Id, V.SSAVer}; };

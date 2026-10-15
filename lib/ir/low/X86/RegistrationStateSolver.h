@@ -109,6 +109,9 @@ struct Domain {
   }
 };
 
+/// Frames with different native TryLevels must not lose their correlation.
+using SEHFrameOutcomes = std::map<int32_t, FrameState>;
+
 struct BlockFacts {
   bool Invalid = false;
   bool InstalledAtExit = false;
@@ -200,21 +203,34 @@ private:
   void recordSEHStackRestore(const LowOp &Op, Domain &After,
                              const FrameTransfer &Transfer,
                              const FrameValue &Value);
+  bool transferTryLevelStore(size_t I, const LowOp &Op,
+                             const FrameValue &Address,
+                             const FrameValue &Stored,
+                             const std::set<int32_t> &Levels, bool Unknown,
+                             std::set<int32_t> &WrittenLevels);
+  bool mergeSEHFrameOutcome(SEHFrameOutcomes &Outcomes, FrameState State);
+  bool runSEHUnwind(FrameState Frame, int32_t Level, uint32_t Bound,
+                    SEHFrameOutcomes &Outcomes,
+                    std::vector<RegistrationObjectExtent> &Writes,
+                    const EH3JumpCapture *Jump = nullptr,
+                    const FrameValue *JumpValue = nullptr);
   bool runLocalFinally(va_t Target, FrameState &Parent,
                        bool OrdinaryInvocation = false,
                        std::vector<RegistrationObjectExtent> *Writes = nullptr,
                        const EH3JumpCapture *Jump = nullptr,
-                       const FrameValue *JumpValue = nullptr);
+                       const FrameValue *JumpValue = nullptr,
+                       SEHFrameOutcomes *Outcomes = nullptr);
   bool
   runSEHCallbackFrame(va_t Target, FrameState &Parent, bool OrdinaryInvocation,
                       std::vector<RegistrationObjectExtent> *Writes,
                       const EH3JumpCapture *Jump, const FrameValue *JumpValue,
                       FrameValue *FilterResult, unsigned Depth = 0,
-                      std::optional<int32_t> ParentStackOffset = std::nullopt);
+                      std::optional<int32_t> ParentStackOffset = std::nullopt,
+                      SEHFrameOutcomes *Outcomes = nullptr);
   bool runSEHNestedFinallyFrame(size_t I, const LowOp &Op, FrameState &State,
                                 int32_t ParentStackOffset,
                                 std::vector<RegistrationObjectExtent> *Writes,
-                                unsigned Depth);
+                                unsigned Depth, SEHFrameOutcomes &Outcomes);
   bool runSEHContinueFilters(FrameState &Parent,
                              std::vector<RegistrationObjectExtent> *Writes);
   void
@@ -318,6 +334,7 @@ private:
   std::map<va_t, size_t> Entries;
   std::vector<bool> InvalidBlocks;
   std::map<va_t, RegistrationTryLevelStore> Stores;
+  std::map<std::pair<va_t, int>, RegistrationSEHStateStore> SEHStateStores;
   std::set<int32_t> AllLevels;
   std::set<va_t> FinallyTargets;
   std::set<va_t> SEHParentEntries;

@@ -62,7 +62,11 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-runtime-finally": (26, 23),
               "longjmp-runtime-ordinary-finally": (27, 23),
               "longjmp-nested-finally-call": (28, 243),
-              "longjmp-nested-finally-unwind": (29, 243)})
+              "longjmp-nested-finally-unwind": (29, 243),
+              "longjmp-state-activate-call": (30, 243),
+              "longjmp-state-activate-unwind": (31, 243),
+              "longjmp-state-retire": (32, 23),
+              "longjmp-state-sentinel": (33, 23)})
 
 
 class PE32:
@@ -261,7 +265,8 @@ def main(argv: list[str] | None = None) -> int:
             commands.append([linker, "/lib", f"/def:{output / (name + '.def')}",
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
         sources = (["registration_seh4.s", "registration_eh4_runtime.c"] if eh4
-                   else ["registration_jump.s" if jump else "registration_seh3.s"])
+                   else ["registration_state.s" if case >= 30 else
+                         "registration_jump.s" if jump else "registration_seh3.s"])
         sources.append("registration_observer.c")
         if args.case in ("longjmp-callee", "longjmp-returning-callee",
                          "longjmp-scalar-callee"):

@@ -13,6 +13,7 @@
 #include "COFFRegistrationSEHException.h"
 #include "COFFRegistrationSEHFinally.h"
 #include "COFFRegistrationSEHJump.h"
+#include "COFFRegistrationSEHState.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -493,16 +494,27 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       ReplayMed, *Frame, NativeFunctions, ScopeWrites);
   if (!ScopeState)
     return ScopeState.takeError();
+  auto SourceSegments = validateSourceSegments(Function, ReplayMed,
+                                               *CallbackMap, NativeFunctions);
+  if (!SourceSegments)
+    return SourceSegments.takeError();
+  auto PhysicalWrites = coff_registration::bindSEHCallbackStateWrites(
+      ReplayMed, Function, *SourceSegments, NativeFunctions);
+  if (!PhysicalWrites)
+    return PhysicalWrites.takeError();
+  ScopeState->PhysicalWrites = *PhysicalWrites;
+  for (const auto *Write : *PhysicalWrites) {
+    const auto *Previous = Write->getPrevNode();
+    while (Previous && Previous->isDebugOrPseudoInst())
+      Previous = Previous->getPrevNode();
+    ScopeState->CallbackWrites.insert(llvm::cast<llvm::StoreInst>(Previous));
+  }
   if (llvm::Error Error = coff_registration::validateFramePrivacy(
           Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
           IncomingAccesses, SourceCallerPCWrites, ChainProtocolReads,
           States.SecurityCookieVA, ImmutableImageRanges, nullptr,
           &*ExceptionFields, &*Jumps, &*ScopeState))
     return Error;
-  auto SourceSegments = validateSourceSegments(Function, ReplayMed,
-                                               *CallbackMap, NativeFunctions);
-  if (!SourceSegments)
-    return SourceSegments.takeError();
   auto NormalFinallyIR = coff_registration::bindSEHFinallyCalls(
       ReplayMed, Function, *CallbackMap, *SourceSegments, NativeFunctions);
   if (!NormalFinallyIR)
@@ -682,18 +694,25 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       return rejectIR("scope handler target bypasses its checked source entry");
   }
   size_t CopyWork = 0;
+  std::set<const llvm::InvokeInst *> RetainedScopes;
+  std::map<uint32_t, const llvm::BasicBlock *> ScopeUnwinds;
+  for (const auto &[Region, Dispatch] : Dispatches)
+    ScopeUnwinds.emplace(Region, Dispatch.Unwind);
   for (const auto &Block : Replay.Blocks) {
     auto Entry = SourceEntries.find(Block.Id);
     if (Entry == SourceEntries.end())
       continue;
+    if (Block.StartAddr == Source.CodeRange.Begin) {
+      auto Retention = coff_registration::validateSEHRetainedScopes(
+          ReplayMed, Function, *Entry->second, ScopeUnwinds);
+      if (!Retention)
+        return Retention.takeError();
+      RetainedScopes = *Retention;
+      Invokes.insert(Retention->begin(), Retention->end());
+    }
     if (Block.StartAddr == Source.CodeRange.Begin &&
         Entry->second != &Function.getEntryBlock()) {
       const auto &Setup = Function.getEntryBlock();
-      const auto *Branch =
-          llvm::dyn_cast<llvm::UncondBrInst>(Setup.getTerminator());
-      if (!Branch || Branch->getSuccessor(0) != Entry->second)
-        return rejectIR(
-            "machine entry bypasses its checked registration block");
       for (const auto &I : Setup) {
         if (IncomingSetup.count(&I))
           continue;
@@ -737,7 +756,11 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
   }
   for (const auto *NativeFunction : NativeFunctions)
     for (const auto &Block : *NativeFunction)
-      for (const auto &I : Block)
+      for (const auto &I : Block) {
+        if (I.getMetadata(
+                windows_eh_md::RegistrationScopeRetentionAttachment) &&
+            !RetainedScopes.count(llvm::dyn_cast<llvm::InvokeInst>(&I)))
+          return rejectIR("scope retention marker has no checked entry edge");
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
             Call && Call->getCalledFunction() &&
             (Call->getCalledFunction()->getIntrinsicID() ==
@@ -747,6 +770,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
             !ScopeBoundaries.count(Call))
           return rejectIR(
               "native parent contains an unanchored SEH scope state change");
+      }
   for (const auto &Block : Function)
     if (const auto *Invoke =
             llvm::dyn_cast<llvm::InvokeInst>(Block.getTerminator());

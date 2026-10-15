@@ -261,6 +261,20 @@ struct RegistrationSEHBoundCall {
   bool operator==(const RegistrationSEHBoundCall &) const = default;
 };
 
+/// One installed SEH TryLevel store, bound to its decoded source operation.
+/// Transitions preserve the whole state before and after a byte, word or dword
+/// write; consumers do not infer untouched bytes from the encoded payload.
+struct RegistrationSEHStateStore {
+  int BlockId = -1;
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  int OpSeq = -1;
+  uint8_t Width = 0;
+  uint32_t Value = 0;
+  std::vector<std::pair<int32_t, int32_t>> Transitions;
+  bool operator==(const RegistrationSEHStateStore &) const = default;
+};
+
 struct RegistrationStateAnalysis {
   std::vector<RegistrationBlockState> Blocks;
   bool Complete = false;
@@ -271,6 +285,8 @@ struct RegistrationStateAnalysis {
   bool SEHInvocationExitsComplete = true;
   std::vector<RegistrationSEHControlContract> SEHControls;
   std::vector<RegistrationSEHInvocationExit> SEHInvocationExits;
+  bool SEHStateStoresComplete = true;
+  std::vector<RegistrationSEHStateStore> SEHStateStores;
   bool SEHExceptionAccessesComplete = true;
   std::vector<RegistrationSEHExceptionAccess> SEHExceptionAccesses;
   /// Invocation-specialized original helpers require a separate native plan.

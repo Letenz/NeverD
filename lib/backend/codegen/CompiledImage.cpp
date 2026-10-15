@@ -9,6 +9,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86/CompiledSEHStateWrites.h"
+
 #include "neverd/ArchSupport.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
@@ -637,6 +639,16 @@ static CompiledImage compileImageForPatchImpl(
   NameSpecifiers(Pass1Fixups);
   const std::vector<WinEHSemanticEmissionShape> Pass1WinEHSemanticShape =
       collectWinEHSemanticEmissionShape(Res1.WinEHSemanticRecords);
+#ifdef LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES
+  const auto Pass1SEHStateShape = collectX86SEHStateEmissionShape(Res1);
+  if (!Pass1SEHStateShape) {
+    llvm::WithColor::error()
+        << "compileImageForPatch: sizing compile produced invalid x86 SEH "
+           "state-write provenance\n";
+    Out.WinX86SEHStateWritesValid = false;
+    return Out;
+  }
+#endif
 
   bool HasFixedSection = false;
   for (const auto &S : Res1.Sections)
@@ -688,6 +700,17 @@ static CompiledImage compileImageForPatchImpl(
     Out.FunctionRanges = std::move(Res1.FunctionRanges);
     Out.SourceFunctionOwners = std::move(Res1.SourceFunctionOwners);
     Out.WinEHSemanticRecords = std::move(Res1.WinEHSemanticRecords);
+#ifdef LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES
+    Out.WinX86SEHFrames = std::move(Res1.WinX86SEHFrames);
+    Out.WinX86SEHStateWrites = std::move(Res1.WinX86SEHStateWrites);
+    if (!validateCompiledX86SEHStateWrites(Out)) {
+      llvm::WithColor::error()
+          << "compileImageForPatch: final x86 SEH state writes lost code "
+             "or source ownership\n";
+      Out.WinX86SEHStateWritesValid = false;
+      return Out;
+    }
+#endif
     if (!attachSourceFunctionOriginalVAs(Out, *OriginalVAs, Mod)) {
       llvm::WithColor::error()
           << "compileImageForPatch: sizing compile lost exact source "
@@ -870,6 +893,16 @@ static CompiledImage compileImageForPatchImpl(
       Out.WinEHSemanticsValid = false;
       return Out;
     }
+#ifdef LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES
+    const auto SEHStateShape = collectX86SEHStateEmissionShape(ResN);
+    if (!SEHStateShape || *SEHStateShape != *Pass1SEHStateShape) {
+      llvm::WithColor::error()
+          << "compileImageForPatch: x86 SEH state-write provenance changed "
+             "during layout\n";
+      Out.WinX86SEHStateWritesValid = false;
+      return Out;
+    }
+#endif
     if (ResN.Sections.empty()) {
       llvm::WithColor::error()
           << "compileImageForPatch: layout compile emitted no sections\n";
@@ -963,6 +996,17 @@ static CompiledImage compileImageForPatchImpl(
   Out.FunctionRanges = std::move(Final.FunctionRanges);
   Out.SourceFunctionOwners = std::move(Final.SourceFunctionOwners);
   Out.WinEHSemanticRecords = std::move(Final.WinEHSemanticRecords);
+#ifdef LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES
+  Out.WinX86SEHFrames = std::move(Final.WinX86SEHFrames);
+  Out.WinX86SEHStateWrites = std::move(Final.WinX86SEHStateWrites);
+  if (!validateCompiledX86SEHStateWrites(Out)) {
+    llvm::WithColor::error()
+        << "compileImageForPatch: final x86 SEH state writes lost code "
+           "or source ownership\n";
+    Out.WinX86SEHStateWritesValid = false;
+    return Out;
+  }
+#endif
   if (!attachSourceFunctionOriginalVAs(Out, *OriginalVAs, Mod)) {
     llvm::WithColor::error()
         << "compileImageForPatch: layout compile lost exact source "

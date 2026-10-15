@@ -14,6 +14,8 @@ struct RegistrationSEHScopeState {
   bool Enabled = false;
   int64_t Offset = 0;
   std::set<const llvm::StoreInst *> Writes;
+  std::set<const llvm::StoreInst *> CallbackWrites;
+  std::set<const llvm::CallBase *> PhysicalWrites;
 };
 
 llvm::Expected<RegistrationSEHScopeState>

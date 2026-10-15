@@ -94,6 +94,14 @@ derived facts separately from the authenticated loader descriptor. HighIR
 requires every reaching state to agree about region membership before emitting
 a structured region. Unknown transitions retain annotations rather than
 inventing an IP-to-state map.
+
+SEH state-store receipts retain the exact source occurrence, width, literal and
+input/output levels. A finally callback's frame effects remain partitioned by
+its resulting level; local unwind reloads that level before choosing the next
+cleanup. This preserves activation and retirement performed inside a callback,
+including the untouched high bytes of a narrow write. These source facts alone
+do not authorize a generated physical registration write.
+
 C++ catches have a separate runtime context. The active catch guard first
 searches tries inside that catch; an unmatched exception continues through
 enclosing guards and the parent registration. LowIR records each possible
@@ -182,6 +190,21 @@ Every active interval has explicit asynchronous scope boundaries, including
 nested handler entry into its outer scope. Original functions and preserved
 direct callees must have checked caller-cleanup stack behavior. Indirect or
 unproved cleanup conventions remain rejected.
+
+Native callback TryLevel writes additionally require
+`LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, which the r4 compiler does not
+provide. The current path accepts only checked constant 32-bit stores; byte and
+word callback stores remain analysis-only. Each generated write binds the exact
+source occurrence, owning callback, recovered parent frame and scope semantic
+token to LLVM's generated state index, or the checked EH3/EH4 outside sentinel.
+The installer replays the logical source store and checks the physical MOV32
+bytes, frame displacement, base register, immediate and unique code range
+against the compiler receipt. Missing, extra or reordered writes refuse
+installation. Scopes reached only through these callback writes retain their
+language-table rows without becoming active on parent entry; all retained rows
+must follow checked parent states or callback transition results and their
+enclosing scopes. This contract covers checked SEH3/SEH4 frames; EH4 nonlocal
+jump buffers and the separate C++ lifetime contracts remain outside it.
 
 Search filters may read their current `EXCEPTION_POINTERS`, its record link,
 and the 32-bit `ExceptionCode` and `ExceptionFlags` fields. Each source load is

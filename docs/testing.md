@@ -3832,6 +3832,49 @@ ABI and attributes. The clone regression uses two calls sharing unobserved
 result storage and checks atomic refusal when a volatile load observes it.
 The ordinary-entry and runtime-unwind source tests share direct-call and
 folded tail-jump controls, including effects hidden after a CALL.
+
+Callback TryLevel coverage is split across `RegistrationSEHTryLevel.*`
+(state/frame correlation, retirement, narrow writes and source receipts),
+`RegistrationSEHStateStore.*` (exact MedIR fullword binding and retained scopes),
+and `RegistrationSEHStateNative.*` (EH3/EH4 lowering, source replay, callback ABI
+retention and physical write mutations). `CompiledSEHStateWrites.*` checks
+receipt transport through layout changes and final ownership/range closure;
+`CompiledSEHStateStoreBytes.*` checks every architectural address register,
+displacements and rejection of extra instructions or indexed addresses.
+The native receipt tests require
+`LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`; r4 builds retain analysis and
+refusal coverage but cannot run the new compiler-protocol tests.
+
+`registration_state.s` adds four EH3 runtime cases:
+
+| Case | Checked callback state effect |
+|------|-------------------------------|
+| `longjmp-state-activate-call` (30) | An ordinary finally activates a callback-only scope before resumption |
+| `longjmp-state-activate-unwind` (31) | A CRT-dispatched finally activates that scope before nested resumption |
+| `longjmp-state-retire` (32) | A returning unwind callback retires a pending inner cleanup |
+| `longjmp-state-sentinel` (33) | A callback leaves no active scope; the resumed parent later activates one |
+
+The four cases have passed local Wine execution against the captured Microsoft
+x86 CRT: 80 original and rewritten image executions cover both patch modes,
+IR and EXE input, optimization on/off and forced rebasing. Each execution checks
+four invocations, the cleanup trace, resumed registers/state and FS:[0]
+restoration. To run the complete script, use NeverD built against a compiler
+with the capability above and the captured Microsoft x86 CRT. `--compiler` and
+`--linker` select fixture tools, not the LLVM library linked into NeverD:
+
+```bash
+for registration_case in longjmp-state-activate-call longjmp-state-activate-unwind longjmp-state-retire longjmp-state-sentinel; do
+  python scripts/check_windows_registration_rewrite.py \
+    --test-binary build/bin/NeverDWindowsRegistrationNativeTests \
+    --patch-binary build/bin/neverd \
+    --compiler /path/to/neverd-llvm/bin/clang \
+    --linker /path/to/neverd-llvm/bin/lld-link \
+    --wine wine --runtime-root /path/to/runtime-libs \
+    --case "$registration_case" \
+    --output "build/evidence/registration-${registration_case}"
+done
+```
+
 `RegistrationSEHJumpABI` checks exact stack argument order and arity despite
 incidental register values, extra private spills and conflicting inferred
 prototypes; missing arguments and changed source receipts remain rejected.
