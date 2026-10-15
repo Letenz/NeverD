@@ -4218,10 +4218,11 @@ bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
 stack-only facts cannot preserve a capture, deallocated buffers refuse and a
 frame-preserving call supplies no scalar result authority.
 
-The EH4 jump matrix repeats twenty-three capture/resumption scenarios with and without
+The EH4 jump matrix repeats thirty capture/resumption scenarios with and without
 GS cookies: parent and callback jumps, zero values, filter search, incoming
 parameters, retired scopes, private leaf/graph calls with a live buffer, and
-registered EH3/EH4 helpers borrowing the parent buffer and a scalar object.
+registered EH3/EH4 helpers borrowing the parent buffer and a scalar object, and
+correlated filter searches while a finally invocation is suspended.
 The helper cases require exactly one observed helper effect after resumption.
 `RegistrationSEHPrivateCall.EH4CalleeGraphsPreserveTheImageCookie` rejects
 transitive cookie/header writes, partial cookie overlap and invalid cookie
@@ -4242,7 +4243,7 @@ four calls, unwind the same finally, check the restored state and nonvolatile
 register, then raise another exception. The native mutation tests alter the saved
 state slot, read address, volatile accesses, placement, use closure and captured
 projection key while retaining verifier-clean IR. The full source profile now
-contains 115 scenarios; older compiler profiles keep their original membership.
+contains 129 scenarios; older compiler profiles keep their original membership.
 
 The EH4/GS `longjmp-callee`, `longjmp-returning-callee` and
 `longjmp-scalar-callee` variants retain the source helper's registration while
@@ -4267,7 +4268,9 @@ ordinary-return check retains its independent obligation.
 
 `RegistrationFilterState.*` checks paired dispositions and states at shared
 returns, captured search cursors, arbitrary negative dispositions, continuation
-inside a finally block and reordered edges. Selected handlers, unknown results,
+inside a finally block and reordered edges for EH3, EH4 and EH4+GS. Missing or
+wrong image cookie inputs, full/partial EH and GS slot writes refuse EH4
+resumption; a disjoint scalar write remains valid. Selected handlers, unknown results,
 escaping searches, bad stacks, cycles and incomplete instruction boundaries
 refuse. Skipping one or several filter scopes records the last callback state
 and its final runtime state separately. `RegistrationSEHJumpABI` checks complete
@@ -4300,7 +4303,10 @@ path must not be treated as a failed nonlocal resumption.
 Each execution alternates both filter paths across four invocations, checks the
 resumed TryLevel and nonvolatile register, and requires the exact cleanup trace
 and restored registration chain. The source reconstruction and independent
-replay scripts include these cases in the current compiler profile.
+replay scripts include these cases and their EH4/GS variants in the current
+compiler profile. EH4 variants use the native CRT's cookie-aware unwind routine,
+eleven initialized buffer words and the -2 frame sentinel. All seven variants
+retain the exact trace, correlated filter state and restored nonvolatile value.
 
 `registration_state.s` adds six EH3 runtime cases:
 

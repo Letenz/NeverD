@@ -8,6 +8,8 @@
 
 #include "RegistrationStateSolver.h"
 
+#include "neverd/loader/RegistrationScopeGraph.h"
+
 #include <deque>
 
 namespace neverd::registration_state {
@@ -15,10 +17,11 @@ namespace neverd::registration_state {
 bool RegistrationStateSolver::runSEHFilterSearch(
     const FrameState &Parent, std::vector<RegistrationObjectExtent> *Writes,
     SEHFrameOutcomes &Outcomes, bool RequireResume) {
-  if (KnownCxx || EH4 || !Chain.TryLevelOffset)
+  if (KnownCxx || !Chain.TryLevelOffset ||
+      (EH4 && (!CompleteCookies || !cookiesReady(Parent))))
     return false;
   const auto Level = Parent.load(*Chain.TryLevelOffset, 4).Constant;
-  if (!Level)
+  if (!Level || !validLevel(int32_t(*Level)))
     return false;
   struct Search {
     FrameState Frame;
@@ -32,7 +35,7 @@ bool RegistrationStateSolver::runSEHFilterSearch(
     if (!charge(Current.Frame.cellCount() +
                 Current.Frame.OtherRegisterBytes.size() + 10))
       return false;
-    if (Current.Cursor < 0) {
+    if (Current.Cursor == registrationOutsideTryLevel(EH4)) {
       // A search outside this registration can return through an external
       // handler. It contributes ordinary effects but cannot close a bounded
       // nonlocal-unwind proof.
@@ -57,7 +60,9 @@ bool RegistrationStateSolver::runSEHFilterSearch(
       return false;
     for (auto &[Disposition, Frames] : Returned)
       for (auto &[State, Frame] : Frames) {
-        // EH3 tests EAX's sign bit; any negative LONG continues execution.
+        if (EH4 && (!CompleteCookies || !cookiesReady(Frame)))
+          return false;
+        // The checked CRT tests EAX's sign bit; a negative LONG continues.
         if (int32_t(Disposition) < 0) {
           if (!mergeSEHFrameOutcome(Outcomes, std::move(Frame)))
             return false;

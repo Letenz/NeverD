@@ -660,6 +660,10 @@ cumulative work budget.
 The suspended-finally interpreter partitions filter returns by disposition and
 written TryLevel, including joins at a shared return block. Search keeps the
 cursor captured before each filter call. Continued exceptions resume every
+resulting frame with the same EH3/EH4 protocol. EH4 search requires the checked
+image cookie and intact EH/GS slots both before the filter and at its returned
+frame; the shared scope graph supplies its -2 outside sentinel. Cookie and
+scope storage retain their separate write exclusions. Execution resumes each
 resulting frame at the next instruction; instruction-local temporaries cannot
 cross an internal split. Ordinary callback propagation uses these same checked
 filter effects after a returning `RaiseException`, including changed parent
