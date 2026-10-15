@@ -163,10 +163,16 @@ bool Info::same(const Info &Other) const {
          Times.ChangeTime.QuadPart == Other.Times.ChangeTime.QuadPart;
 }
 bool Entry::matches(const Info &Opened) const {
-  return ID == Opened.id() && Attributes == Opened.Identity.dwFileAttributes &&
-         (Opened.directory() || Size == Opened.size()) &&
-         WriteTime.QuadPart == Opened.Times.LastWriteTime.QuadPart &&
-         ChangeTime.QuadPart == Opened.Times.ChangeTime.QuadPart;
+  if (ID != Opened.id() || Attributes != Opened.Identity.dwFileAttributes)
+    return false;
+  // NTFS directory entries carry cached metadata. Creating a descendant can
+  // leave the enumerated directory times stale even after every writer closes.
+  // Bind its identity here; Reader compares authoritative handle revisions
+  // before and after visiting the directory. File revisions remain checked.
+  return Opened.directory() ||
+         (Size == Opened.size() &&
+          WriteTime.QuadPart == Opened.Times.LastWriteTime.QuadPart &&
+          ChangeTime.QuadPart == Opened.Times.ChangeTime.QuadPart);
 }
 
 Info inspect(HANDLE File, bool AdmitStreams) {

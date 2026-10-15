@@ -162,6 +162,44 @@ TEST_F(WebWindowsHost, UTF8NamesAndRelocationPreserveSnapshotIdentity) {
   EXPECT_EQ(A.Artifacts[1].MemberPath, win::utf8(Name));
   EXPECT_EQ(A.Artifacts[1].Content.read(0, 10), "const x=1;");
 }
+TEST_F(WebWindowsHost, DirectoryEnumerationAndHandleRevisionRemainDistinct) {
+  write(Root / "selected" / "one", "a");
+  write(Root / "selected" / "two", "bad");
+  write(Root / "selected" / "four" / "child", "abc");
+  const auto S = capture(path(Root), Limits{});
+  ASSERT_EQ(S.Artifacts.size(), 6u);
+  auto Parent = win::openRoot(path(Root), true);
+  const auto Entries = win::entries(Parent.get(), 1);
+  ASSERT_EQ(Entries.size(), 1u);
+  auto Directory = win::openChild(Parent.get(), "selected");
+  const auto Before = win::inspect(Directory.get());
+  auto Cached = Entries[0];
+  Cached.WriteTime.QuadPart = Before.Times.LastWriteTime.QuadPart - 100000000;
+  Cached.ChangeTime.QuadPart = Before.Times.ChangeTime.QuadPart - 100000000;
+  EXPECT_TRUE(Cached.matches(Before));
+  Cached.ID ^= 1;
+  EXPECT_FALSE(Cached.matches(Before));
+  Directory = {};
+  Parent = {};
+  {
+    win::Handle Writer(CreateFileW(
+        (Root / "selected").c_str(), FILE_WRITE_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr));
+    ASSERT_TRUE(Writer);
+    ULARGE_INTEGER Stamp;
+    Stamp.QuadPart = Before.Times.LastWriteTime.QuadPart + 100000000;
+    const FILETIME Time{Stamp.LowPart, Stamp.HighPart};
+    ASSERT_TRUE(SetFileTime(Writer.get(), nullptr, nullptr, &Time));
+  }
+  Directory = win::openRoot(path(Root / "selected"), true);
+  const auto After = win::inspect(Directory.get());
+  EXPECT_EQ(Before.id(), After.id());
+  EXPECT_EQ(Before.Identity.dwFileAttributes, After.Identity.dwFileAttributes);
+  EXPECT_NE(Before.Times.LastWriteTime.QuadPart,
+            After.Times.LastWriteTime.QuadPart);
+  EXPECT_FALSE(Before.same(After));
+}
 TEST_F(WebWindowsHost, SpoolIsUnlinkedPrivateNonInheritedAndReadOnlyAfterSeal) {
   auto F = win::privateSpool();
   BY_HANDLE_FILE_INFORMATION Info{};
