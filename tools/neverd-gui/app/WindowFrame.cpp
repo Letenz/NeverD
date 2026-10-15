@@ -75,6 +75,10 @@ protected:
 };
 } // namespace
 
+void WindowFrame::prepareNativeWindows() {
+  QCoreApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
+}
+
 bool WindowFrame::enabled() {
   if (platform::frameKind() == platform::FrameKind::System)
     return false;
@@ -108,7 +112,8 @@ WindowFrame *WindowFrame::attach(QWidget &window, QWidget *titleBar) {
     }
   }
   // The native window exists from here, so its margins can be set before
-  // the compositor first sizes it.
+  // the compositor first sizes it.  A dialog's parent keeps its children
+  // without native windows of their own (prepareNativeWindows).
   window.winId();
   QWindow *handle = window.windowHandle();
   if (!handle)

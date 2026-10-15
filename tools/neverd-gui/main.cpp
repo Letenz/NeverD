@@ -66,6 +66,7 @@ int main(int argc, char **argv) {
   QApplication::setApplicationName(QStringLiteral("NeverD"));
   QApplication::setApplicationVersion(QStringLiteral("3389.0.1"));
   gnome::prepareModalDialogs();
+  WindowFrame::prepareNativeWindows();
   QApplication app(argc, argv);
   const auto applicationCreatedMs = startupClock.nsecsElapsed() / 1.0e6;
   gnome::detachModalDialogs(app);
