@@ -685,11 +685,18 @@ logical bound in a private volatile slot before the one physical capture; COFF
 replays its exact source-cell address, two uses, ordering and contiguous save and
 restore placement. The saved bound supplies no buffer initialization or callee
 privacy authority. All partitions and projections share the existing work budget.
-For preserved EH3 helpers, the conditional callee proof returns object effects in
+For preserved EH3/EH4 helpers, the conditional callee proof returns object effects in
 the caller's coordinates. The parent state owner checks allocation and excludes
 its registration and cookie cells from all effects and object-address arguments.
 EH4 callers additionally prove live cookie initialization before invoking this
 path; the MedIR call binder requires the complete cookie receipt before lowering.
+EH4 helpers use the same authenticated image cookie inputs and state owner as
+their callers. Conditional memory admits only the exact four-byte cookie read;
+the transfer owner checks each live GS call's ECX value. A borrowed resumption
+requires the helper's own outside-state sentinel and intact cookies. For an
+unchanged preserved helper, cookie-call coverage follows the proved invocation's
+reachable blocks. Unreachable calls grant no effects; a reconstructed parent
+still requires coverage of every source cookie-call occurrence.
 Registration no-return annotations and ordinary-edge removal bind the same
 current call occurrence, target, instruction extent and operation range. A
 conditional or malformed instruction cannot reuse that receipt. A separate

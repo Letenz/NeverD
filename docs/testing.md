@@ -4218,10 +4218,10 @@ bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
 stack-only facts cannot preserve a capture, deallocated buffers refuse and a
 frame-preserving call supplies no scalar result authority.
 
-The EH4 jump matrix repeats seventeen capture/resumption scenarios with and without
+The EH4 jump matrix repeats twenty capture/resumption scenarios with and without
 GS cookies: parent and callback jumps, zero values, filter search, incoming
 parameters, retired scopes, private leaf/graph calls with a live buffer, and
-registered EH3 helpers borrowing the parent buffer and a scalar object.
+registered EH3/EH4 helpers borrowing the parent buffer and a scalar object.
 The helper cases require exactly one observed helper effect after resumption.
 `RegistrationSEHPrivateCall.EH4CalleeGraphsPreserveTheImageCookie` rejects
 transitive cookie/header writes, partial cookie overlap and invalid cookie
@@ -4242,7 +4242,7 @@ four calls, unwind the same finally, check the restored state and nonvolatile
 register, then raise another exception. The native mutation tests alter the saved
 state slot, read address, volatile accesses, placement, use closure and captured
 projection key while retaining verifier-clean IR. The full source profile now
-contains 103 scenarios; older compiler profiles keep their original membership.
+contains 109 scenarios; older compiler profiles keep their original membership.
 
 The EH4/GS `longjmp-callee`, `longjmp-returning-callee` and
 `longjmp-scalar-callee` variants retain the source helper's registration while
@@ -4252,6 +4252,15 @@ arguments and allocation bounds. Runtime source mutations retarget the actual
 object-address instruction into both cookie slots; source replay and installation
 must reject them. The MedIR binder also rejects missing cookie proof or invalid
 cookie addresses before lowering the preserved call.
+
+The corresponding `longjmp-eh4-callee`, `longjmp-eh4-returning-callee` and
+`longjmp-eh4-scalar-callee` variants use a separately registered EH4 helper.
+`RegistrationSEHBoundCookieTests` mutates its actual cookie load width, global
+address, access direction, frame XOR, encoded scope pointer, and full/partial
+cookie stores. It also changes the live GS check parameter and requires source
+replay and native installation to reject it. A changed check in the fixture's
+unreachable except body remains harmless for that proved invocation; the live
+ordinary-return check retains its independent obligation.
 
 
 `RegistrationFilterState.*` checks paired dispositions and states at shared

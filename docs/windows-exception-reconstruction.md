@@ -274,6 +274,11 @@ buffer helper protocols still require their own proofs.
 
 Preserved EH3 helpers can borrow a generated EH3 or EH4 parent buffer and resume
 it across their own registration frame, including EH4 parents with GS cookies.
+EH4 helpers support the same borrowed-buffer and ordinary-return paths for EH4
+parents, with or without GS cookies. Their own encoded scope pointer, cookie
+initialization and live GS check arguments must be proved independently. The
+helper retains its source registration and uses its own -2 outside state while
+the opaque parent capture retains the parent's unwind protocol.
 The caller proves its live cookie state before the call and excludes registration
 and cookie storage from every borrowed read, write and object-address argument,
 including partial overlaps. Each exact caller occurrence binds the helper's

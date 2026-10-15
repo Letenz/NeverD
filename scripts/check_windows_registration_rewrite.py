@@ -98,6 +98,11 @@ CASES.update({prefix + name: (number, 23)
                                    (51, "longjmp-private-parent-graph"))})
 CASES.update({prefix + "longjmp-multistate-capture": (52, 23)
               for prefix in ("", "eh4-", "eh4-gs-")})
+CASES.update({prefix + name: (number, 23)
+              for prefix in ("eh4-", "eh4-gs-")
+              for number, name in ((20, "longjmp-eh4-callee"),
+                                   (21, "longjmp-eh4-returning-callee"),
+                                   (22, "longjmp-eh4-scalar-callee"))})
 
 
 
@@ -313,7 +318,8 @@ def main(argv: list[str] | None = None) -> int:
         if case in (49, 51):
             sources.append("registration_private_graph.s")
         if case in (20, 21, 22):
-            sources.append("registration_jump_callee.s")
+            sources.append("registration_jump_callee_eh4.s" if "-eh4-" in args.case
+                           else "registration_jump_callee.s")
         for source in sources:
             commands.append([compiler, "--target=i686-pc-windows-msvc", "-O0",
                              f"-DREGISTRATION_CASE={case}",
