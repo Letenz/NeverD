@@ -1839,3 +1839,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Requête explicite de protection des adresses du noyau
 
 `KernelSystemInformation.cpp` gère classe et previous-mode ; `KernelModelVaShadow.cpp` gère le résultat de quatre octets. `KernelQueryBuffer.cpp` partage les contrôles d’objet, de droits et d’alias physiques avec les requêtes de version. La classe 11 est inchangée ; la déclaration n’accorde aucun droit mémoire ou matériel.
+
+### Capture bornée du contexte appelant noyau
+
+`WindowsX64Context.def` centralise le format et `WindowsX64Context.cpp` la collecte entière/les sélecteurs logiques. FP utilisateur complet et publication noyau limitée restent distincts. `DriverContextCapture.cpp` emprunte le CPU par callbacks synchrones sans réentrance ; `KernelModelContextCapture.cpp` possède admission, vrai retour et effets. Après toute admission, FLAGS est modifié atomiquement puis la RAM prévalidée est écrite. Aucun rollback arbitraire des écritures ou modifications concurrentes des mappings n’est promis.

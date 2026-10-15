@@ -287,10 +287,11 @@ KernelModel::argumentCount(const KernelExportRegistry::Export &Export) {
 llvm::Expected<uint64_t> KernelModel::call(
     const KernelExportRegistry::Export &Export,
     llvm::ArrayRef<uint64_t> Arguments,
-    llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument) {
+    llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
+    const KernelContextCapture *Context) {
   if (Export.Kind == KernelExportRegistry::ExportKind::ModuleExport &&
       Export.Module == KernelProvider)
-    return call(Export.Name, Arguments, ReadArgument);
+    return call(Export.Name, Arguments, ReadArgument, Context);
   if (Export.Kind == KernelExportRegistry::ExportKind::ModuleExport &&
       Export.Module == HALProvider)
     return callHAL(Export.Name, Arguments);

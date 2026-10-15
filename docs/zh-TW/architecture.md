@@ -1628,3 +1628,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### 明確宣告的核心虛擬位址隔離狀態查詢
 
 `KernelSystemInformation.cpp` 統一負責類別與 previous-mode 分派，`KernelModelVaShadow.cpp` 負責四位元組結果。`KernelQueryBuffer.cpp` 與版本查詢共用物件、權限及實體別名檢查；類別 11 維持原行為。宣告解析不授予記憶體或緩解措施權限。
+
+### 有界核心呼叫者內容擷取
+
+`WindowsX64Context.def` 統一 x64 版面與欄位；`WindowsX64Context.cpp` 共用整數擷取與邏輯選擇子，保留使用者完整 FP 與核心有限 FP 的不同策略。`DriverContextCapture.cpp` 同步且不可重入地借用 CPU；`KernelModelContextCapture.cpp` 管理記憶體檢查、實際返回槽及副作用。完整檢查後先原子設定 FLAGS，再寫入已驗證 RAM；不保證任意寫入失敗或並行映射變更的回復。三個後端共用此層。

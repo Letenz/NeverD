@@ -324,6 +324,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 |-----|------------------------|
 | `RtlInitUnicodeString` | 範囲を限定した NUL 終端ソースからゲスト `UNICODE_STRING` を作る |
 | `RtlGetVersion` | 明示的な checked-x64 基本バージョン照会。ホストの既定値は使用しない。`version_query` が必要で、サイズ 276 は CSD 全体のゼロ初期化が必要。ゼロサイズ互換動作は別途有効化し、実際の 20 バイト領域を使う。拡張サイズと未宣言の照会は停止し、環境依存を保持する。 |
+| `RtlCaptureContext` | 制限付きカーネル呼び出し元コンテキスト取得; checked-x64, IRQL <= DISPATCH_LEVEL. |
 | `RtlCopyUnicodeString`、`RtlCompareUnicodeString`、`RtlEqualUnicodeString` | 長さを持つ UTF-16 文字列のコピーと、大文字小文字を区別する比較。区別しない比較には Windows の大小文字テーブルが必要なため停止する |
 | `RtlInitAnsiString`、`RtlInitString` | NUL 終端のバイト列ソースからゲスト `STRING` を作る。長さは `0xFFFE` で打ち切られ、`MaximumLength` は終端文字を含み、レコードのパディングはクリアされる |
 | `RtlAppendUnicodeToString`、`RtlAppendUnicodeStringToString` | 長さを持つ UTF-16 の宛先に追記する。`STATUS_BUFFER_TOO_SMALL` のときは宛先を変更せず、終端文字は空きが 2 バイト以上あるときだけ書き込む。`0x7FFE` 単位を超える NUL 終端ソースも `STATUS_BUFFER_TOO_SMALL` を返す |
@@ -647,3 +648,7 @@ PASSIVE_LEVEL の `MmGetPhysicalMemoryRanges` は新しい 32 バイトの非ペ
 任意の `kernel_va_shadow_query` はクラス `196`（`SystemKernelVaShadowInformation`）の結果を宣言します：`{"version":1,"flags":0,"evidence":"fixture declaration"}`。全フィールドが必須で、明示的なゼロは有効です。バージョン 1 は定義済みの下位 14 ビット（`0x3fff`）のみを許可し、予約ビット、不正/未知のフィールド、`checked-x64` 以外を拒否します。evidence は印字可能 ASCII の 1–256 バイトです。ホスト状態の推測やハードウェア緩和策の実装は行いません。
 
 PASSIVE_LEVEL で長さが 4 未満なら結果に触れず `STATUS_INFO_LENGTH_MISMATCH`、4 以上なら先頭 4 バイトのみを書き換えます。非 NULL の `ReturnLength` は常に 4 です。ULONG 引数は下位 32 ビットを使用します。結果には読み書き可能なカーネル RAM、長さには書き込み可能な RAM が必要です。両範囲の物理マッピングは一意で、オブジェクト寿命が有効である必要があります。成功時の出力は重複不可で、全検証は書き込み前です。Nt は既知の KernelMode previous-mode を要求し、Zw は呼び出し元の状態を保持します。宣言は報告に残り、未使用でも未再構築の環境依存が残ります。
+
+## 制限付きカーネル呼び出し元コンテキスト取得
+
+`RtlCaptureContext` は checked-x64 Unicorn/KVM/WHP で共通の静的/動的実装を使い、IRQL <= DISPATCH_LEVEL を要求します。16 バイト境界の読み書き可能な 1232 バイトのカーネル記録に、`[48,72)`、`[120,262)`、`[280,284)`、`[416,672)` だけを書きます。他のバイト、x87 データ/ポインタ、MXCSR mask は保持します。ContextFlags=`0x10000f`、呼び出し元 RSP=入口 RSP+8、RIP は実際の戻りスロットです。入口 RSP-8 に 8 バイトのフラグを書き、RAX はゼロ拡張 EFLAGS、算術フラグは ADD(入口 RSP-8,8) に従います。DS/ES/FS/GS は checked 論理 SS であり、ホストや生の転送値ではありません。記録全体、戻り/一時領域は通常のカーネル RAM、寿命、権限、一意の物理マッピングを検証し、記録との重複を拒否します。入口 RSP は 16 を法として 8。取得/検証失敗は CPU/RAM を変更せず、legacy を拒否します。全 Windows 実装を意味せず、上書き後も環境依存を保持し、UNPACK 復元や記号的前提を許可しません。

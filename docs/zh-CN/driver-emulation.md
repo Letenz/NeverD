@@ -324,6 +324,7 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 |-----|----------------|
 | `RtlInitUnicodeString` | 根据有界、以 NUL 结尾的源字符串构造来宾 `UNICODE_STRING` |
 | `RtlGetVersion` | 显式 checked-x64 基础版本查询，不采用宿主版本默认值。要求 `version_query`；长度 276 的记录必须预先清零整个 CSD 数组。零长度兼容行为需单独启用且具有实际 20 字节缓冲区。扩展长度及未声明查询明确停止，保留环境依赖。 |
+| `RtlCaptureContext` | 有界内核调用者上下文捕获; checked-x64, IRQL <= DISPATCH_LEVEL. |
 | `RtlCopyUnicodeString`、`RtlCompareUnicodeString`、`RtlEqualUnicodeString` | 带长度的 UTF-16 复制及区分大小写比较；不区分大小写的比较需要 Windows 大小写表，因此会停止 |
 | `RtlInitAnsiString`、`RtlInitString` | 根据以 NUL 结尾的字节源构造来宾 `STRING`；计数长度上限为 `0xFFFE`，`MaximumLength` 包含结尾符，记录中的填充字节会被清零 |
 | `RtlAppendUnicodeToString`、`RtlAppendUnicodeStringToString` | 追加到带长度的 UTF-16 目标；返回 `STATUS_BUFFER_TOO_SMALL` 时目标保持不变，至少剩余两个空闲字节时才写入结尾符，超过 `0x7FFE` 个单元的 NUL 结尾源同样返回 `STATUS_BUFFER_TOO_SMALL` |
@@ -647,3 +648,7 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 可选 `kernel_va_shadow_query` 显式提供类 `196`（`SystemKernelVaShadowInformation`）的结果：`{"version":1,"flags":0,"evidence":"fixture declaration"}`。三项均必填，显式零值有效。版本 1 只接受低十四个已定义位（`0x3fff`）；保留位、畸形或未知字段及非 `checked-x64` 执行均拒绝。evidence 为 1–256 个可打印 ASCII 字节。此声明不会推断宿主状态或实现硬件缓解措施。
 
 在 PASSIVE_LEVEL，长度小于 4 时返回 `STATUS_INFO_LENGTH_MISMATCH`，不访问结果；长度至少为 4 时只更新前四字节。非空 `ReturnLength` 在两种情况下均写入 4。ULONG 参数取低 32 位。结果须为可读写内核 RAM，长度输出须可写；两个范围均须具有唯一物理映射和有效对象生命周期。成功输出不得重叠，所有检查先于写入。Nt 要求已知 KernelMode previous-mode，Zw 保留调用者上下文。报告保留声明，即使未使用也保留尚未重建的环境依赖。
+
+## 有界内核调用者上下文捕获
+
+`RtlCaptureContext` 在 checked-x64 Unicorn/KVM/WHP 上共用导入和动态调用实现，要求 IRQL <= DISPATCH_LEVEL。目标为 16 字节对齐、完整可读写的 1232 字节内核记录；仅写 `[48,72)`、`[120,262)`、`[280,284)`、`[416,672)`，其余字节（包括 x87 数据、指针和 MXCSR mask）保持不变。ContextFlags 为 `0x10000f`，调用者 RSP=入口 RSP+8，RIP 取实际返回槽；入口 RSP-8 写入 8 字节标志暂存值，RAX 返回零扩展 EFLAGS，算术标志按 ADD(入口 RSP-8,8) 更新。DS/ES/FS/GS 使用 checked 逻辑 SS 选择子，不代表宿主或原始后端选择子。完整记录、返回槽和暂存槽必须通过普通内核 RAM、有效对象、权限和唯一物理映射检查；记录不得与返回/暂存范围重叠，入口 RSP 模 16 必须为 8。采集或准入失败不改变 CPU/RAM，legacy 明确拒绝。这是有界模型，不代表所有 Windows 实现；即使捕获字节被覆盖，仍保留未重建环境依赖，不授予 UNPACK 还原或符号前提。

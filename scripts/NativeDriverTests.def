@@ -10,6 +10,45 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelContextCapture.ExactRecordScratchAndFlagsPreserveEveryOtherByte")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelContextCapture.HighStackAndCrossPageRecordUseActualReturnWord")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelContextCapture.MissingBridgeLegacyAndArityFailWithoutCollection")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelContextCapture.CollectionSetterAndReturnReadFailuresHaveNoEffects")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelContextCapture.RejectsMalformedAndMismatchedCallerState")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelContextCapture.RejectsUnalignedOverflowAndUserDestinations")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelContextCapture.CompleteRecordReadWriteRightsPrecedeAllEffects")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelContextCapture.ScratchNeedsReadAsWellAsWritePermission")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelContextCapture.RejectsReturnAndScratchOverlapBeforeMutation")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelContextCapture.RejectsPhysicalAliasesEvenWithNoAccess")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelContextCapture.DeviceFreedAndOpaqueStorageRemainIneligible")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelContextCapture.DispatchIRQLAllowedHigherIRQLRejected")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelContextCapture.OverwritingCaptureDoesNotRemoveRecoveryDependency")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverContextCapture.CollectorUsesLiveRegistersAndLogicalSelectors/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/"
+    "DriverContextCapture.CompleteImportedAndDynamicRecordsAcrossLifecycle/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverContextCapture.InvalidDestinationsAndLegacyFailClearly/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverContextCapture.ConcreteCaptureRetainsRecoveryDependency/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelVaShadowQuery.DeclaredFlagsAndExactFootprintsOnBothEntrypoints")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelVaShadowQuery.ShortResultsOnlyWriteOptionalLength")

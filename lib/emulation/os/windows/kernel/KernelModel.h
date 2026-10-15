@@ -41,6 +41,7 @@ namespace neverd::emulation {
 class RAMInitializationWatch;
 struct DriverImage;
 class KernelExportRegistry;
+struct KernelContextCapture;
 enum class KernelAPIKind;
 class KernelModel {
 public:
@@ -86,7 +87,8 @@ public:
   llvm::Expected<uint64_t>
   call(const KernelExportRegistry::Export &Export,
        llvm::ArrayRef<uint64_t> Arguments,
-       llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument);
+       llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
+       const KernelContextCapture *Context = nullptr);
   std::optional<KernelGuestCall> takeGuestCall();
   std::optional<KernelGuestCall> takeIndependentGuestCall();
   std::optional<KernelGuestCall> takePoFxThreadCall(uint64_t Thread);
@@ -102,7 +104,8 @@ public:
   llvm::Expected<uint64_t>
   call(const std::string &Name, llvm::ArrayRef<uint64_t> Arguments,
        llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument =
-           nullptr);
+           nullptr,
+       const KernelContextCapture *Context = nullptr);
   llvm::Error snapshot();
   struct Invocation {
     uint64_t PC = 0;
@@ -893,6 +896,8 @@ private:
   llvm::Expected<uint64_t> queryKernelVaShadow(llvm::ArrayRef<uint64_t> Args);
   std::optional<DriverVersionQuery> VersionQuery;
   llvm::Expected<uint64_t> queryVersion(uint64_t Address);
+  llvm::Expected<uint64_t>
+  captureCallerContext(uint64_t Address, const KernelContextCapture *Context);
   std::optional<DriverPhysicalMemoryInventory> PhysicalMemoryInventory;
   llvm::Expected<uint64_t> queryPhysicalMemoryRanges();
   // Admission conservatively records reads that can expose model PFNs,

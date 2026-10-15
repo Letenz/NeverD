@@ -1833,3 +1833,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Explizite Abfrage des Kernel-VA-Schattenstatus
 
 `KernelSystemInformation.cpp` verwaltet Klasse und previous-mode, `KernelModelVaShadow.cpp` das Vier-Byte-Ergebnis. `KernelQueryBuffer.cpp` teilt Objekt-, Rechte- und physische Aliasprüfungen mit Versionsabfragen. Klasse 11 bleibt unverändert; Deklarationen gewähren keine Speicher- oder Hardwareberechtigung.
+
+### Begrenzte Erfassung des Kernel-Aufruferkontexts
+
+`WindowsX64Context.def` besitzt das gemeinsame Layout, `WindowsX64Context.cpp` die Ganzzahl-Erfassung und logischen Selektoren. Vollständiges Benutzer-FP und begrenztes Kernel-FP bleiben getrennt. `DriverContextCapture.cpp` leiht die CPU synchron ohne Wiedereintritt; `KernelModelContextCapture.cpp` besitzt Speicherprüfung, echten Rückkehrslot und Effekte. Nach allen Prüfungen wird FLAGS atomar gesetzt und vorgeprüftes RAM geschrieben. Beliebige Schreibfehler oder nebenläufige Mapping-Änderungen werden nicht zurückgerollt.

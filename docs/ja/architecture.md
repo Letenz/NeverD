@@ -1700,3 +1700,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### 明示的なカーネル VA シャドウ情報
 
 `KernelSystemInformation.cpp` がクラスと previous-mode、`KernelModelVaShadow.cpp` が 4 バイト結果を管理します。`KernelQueryBuffer.cpp` はバージョン照会とオブジェクト、権限、物理エイリアス検証を共有します。クラス 11 の動作は保持され、宣言からメモリや緩和策の権限は得られません。
+
+### 制限付きカーネル呼び出し元コンテキスト取得
+
+`WindowsX64Context.def` が共通レイアウト、`WindowsX64Context.cpp` が整数取得と論理セレクタを所有します。ユーザーの完全 FP とカーネルの限定 FP は分離します。`DriverContextCapture.cpp` は同期・非再入コールバックで CPU を借用し、`KernelModelContextCapture.cpp` がメモリ、実際の戻り値、効果を管理します。全検証後に FLAGS を原子的に設定して検証済み RAM を書きます。任意の書き込み失敗や並行マッピング変更のロールバックではありません。

@@ -6288,3 +6288,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Declared kernel VA shadow query
 
 `KernelSystemInformation.cpp` owns class and previous-mode dispatch. `KernelModelVaShadow.cpp` owns the four-byte result. `KernelQueryBuffer.cpp` shares object, permission and physical-alias admission with version queries; class 11 retains its existing behavior. Declaration parsing never supplies memory or mitigation authority.
+
+### Bounded kernel caller-context capture
+
+`WindowsX64Context.def` owns the common x64 layout/field table. `WindowsX64Context.cpp` shares integer collection and logical selectors while user full-FP and kernel limited-FP publication remain separate. `DriverContextCapture.cpp` borrows the current CPU through synchronous, non-reentrant callbacks. `KernelModelContextCapture.cpp` owns buffer admission, real return-word reading and effects. All admission precedes the atomic FLAGS setter; prevalidated ordinary RAM is then written on the stopped CPU. This is not rollback for arbitrary write failures or concurrent mapping changes. All three transports use this owner.
