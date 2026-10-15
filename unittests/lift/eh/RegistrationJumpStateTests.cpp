@@ -157,6 +157,16 @@ TEST(RegistrationJumpState, CaptureSurvivesOnlyCheckedStorageAndCalls) {
       EXPECT_TRUE(Result.Complete);
       EXPECT_TRUE(Result.RegistrationLifetimeComplete);
       EXPECT_TRUE(Result.HasEH3JumpCaptures);
+      EXPECT_TRUE(Result.SEHJumpCapturesComplete);
+      ASSERT_EQ(Result.SEHJumpCaptures.size(), 1u);
+      const auto &Capture = Result.SEHJumpCaptures.front();
+      EXPECT_EQ(Capture.Address, 0x1100u);
+      EXPECT_EQ(Capture.EndAddress, 0x1105u);
+      EXPECT_EQ(Capture.TargetVA, 0x3000u);
+      EXPECT_EQ(Capture.UnwindVA, 0x3300u);
+      EXPECT_EQ(Capture.BufferOffset, -144);
+      EXPECT_EQ(Capture.StackOffset, -192);
+      EXPECT_EQ(Capture.Level, -1);
       EXPECT_TRUE(Result.SEHJumpResumptionsComplete);
       ASSERT_EQ(Result.SEHJumpResumptions.size(), 1u);
       const auto &Resume = Result.SEHJumpResumptions.front();
@@ -164,7 +174,12 @@ TEST(RegistrationJumpState, CaptureSurvivesOnlyCheckedStorageAndCalls) {
       EXPECT_EQ(Resume.CaptureCall, 0x1100u);
       EXPECT_EQ(Resume.TargetVA, 0x1105u);
       EXPECT_EQ(Resume.StackOffset, -192);
+      // Capture reserves 16 bytes; its successor releases those arguments,
+      // then longjmp reserves eight bytes and writes its value at ESP + 4.
+      EXPECT_EQ(Resume.ValueOffset, -192 + 16 - 8 + 4);
     } else {
+      EXPECT_FALSE(Result.SEHJumpCapturesComplete);
+      EXPECT_TRUE(Result.SEHJumpCaptures.empty());
       EXPECT_FALSE(Result.SEHJumpResumptionsComplete);
       EXPECT_TRUE(Result.SEHJumpResumptions.empty());
     }
@@ -196,83 +211,93 @@ TEST(RegistrationJumpState, CaptureWritesOnlyTheSpecifiedRuntimeFields) {
   }
 }
 
-TEST(RegistrationJumpState, RuntimeFinallyResumesOnlyFromPrivateArguments) {
-  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
-    SCOPED_TRACE(Mutation);
-    auto F = jumpFrame(0);
-    F.Blocks.resize(8);
-    auto &Chain = *F.ExceptionMetadata->Registration;
-    Chain.Scopes = {{-1, 0, 0x110f, true}};
-    Chain.TryLevelStores = {{0x1120, 0x1127, -1}, {0x1140, 0x1147, 0}};
-    auto &Resume = F.Blocks[3];
-    Resume.Ops.clear();
-    Resume.Succs = {7};
-    Resume.EndAddr = 0x1108;
-    emitOp(Resume, 0x1105, NdOp::INT_ADD, NdVar::reg(x86reg::RSP, 4),
-           {NdVar::reg(x86reg::RSP, 4), NdVar::cst(16, 4)});
-    Resume.InstructionBoundaries = {{0x1105, 3, 0, 1}};
-    auto &Active = F.Blocks[7];
-    Active.Id = 7;
-    Active.StartAddr = 0x1140;
-    Active.EndAddr = 0x1147;
-    Active.Succs = {5};
-    addSlotStore(Active, 0);
-    for (unsigned I = 0; I != Active.Ops.size(); ++I)
-      Active.Ops[I].Seq = I;
-    Active.InstructionBoundaries = {{0x1140, 7, 0, 2}};
-    if (Mutation) {
-      auto &Jump = F.Blocks[4];
-      LowOp Access;
-      Access.Addr = 0x110f;
-      Access.Opcode = Mutation == 1 ? NdOp::STORE : NdOp::LOAD;
-      Access.addInput(NdVar::reg(x86reg::RSP, 4));
-      if (Mutation == 1)
-        Access.addInput(NdVar::cst(0, 1));
-      else
-        Access.Output = NdVar::reg(x86reg::RCX, 1);
-      Jump.Ops.insert(Jump.Ops.begin(), Access);
-      ++Jump.InstructionBoundaries.front().OpCount;
-      for (unsigned I = 1; I != Jump.InstructionBoundaries.size(); ++I)
-        ++Jump.InstructionBoundaries[I].FirstOp;
-      for (unsigned I = 0; I != Jump.Ops.size(); ++I)
-        Jump.Ops[I].Seq = I;
-    }
-    EH3JumpRuntime Runtime;
-    Runtime.Capture = [](const LowOp &Op, const FrameState &Frame, bool,
-                         size_t &) -> std::optional<EH3JumpCapture> {
-      if (Op.Addr != 0x1100)
-        return std::nullopt;
-      EH3JumpCapture Capture;
-      Capture.Call = Op.Addr;
-      Capture.ReturnPC = 0x1105;
-      Capture.BufferOffset = -144;
-      Capture.StackOffset = -192;
-      Capture.UnwindTarget = 0x3300;
-      constexpr uint64_t Registers[] = {x86reg::RBP, x86reg::RBX, x86reg::RDI,
-                                        x86reg::RSI};
-      for (unsigned I = 0; I != 4; ++I)
-        Capture.Nonvolatile[I] =
-            Frame.Registers[Registers[I] / x86reg::GeneralRegStride];
-      return Capture;
-    };
-    Runtime.Resume = [](const LowOp &Op, size_t &) {
-      return Op.Addr == 0x111a;
-    };
-    std::vector<RegistrationSEHControlContract> Controls;
-    RegistrationStateSolver Solver(F, 0, 0, nullptr, nullptr, nullptr, nullptr,
-                                   &Controls, nullptr, nullptr, &Runtime);
-    const auto Result = Solver.run();
-    if (!Mutation) {
-      for (const auto &Diagnostic : Result.Diagnostics)
-        ADD_FAILURE() << Diagnostic;
-      EXPECT_TRUE(Result.Complete);
-      ASSERT_EQ(Result.SEHJumpResumptions.size(), 1u);
-      EXPECT_EQ(Result.SEHJumpResumptions.front().EntryVA, 0x110fu);
-      EXPECT_EQ(Result.SEHJumpResumptions.front().TargetVA, 0x1105u);
-    } else {
-      EXPECT_FALSE(Result.Complete);
-      EXPECT_FALSE(Result.SEHJumpResumptionsComplete);
-      EXPECT_TRUE(Result.SEHJumpResumptions.empty());
+TEST(RegistrationJumpState, RuntimeCallbacksResumeOnlyFromPrivateArguments) {
+  for (bool Filter : {false, true}) {
+    SCOPED_TRACE(Filter);
+    for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto F = jumpFrame(0);
+      F.Blocks.resize(8);
+      auto &Chain = *F.ExceptionMetadata->Registration;
+      Chain.Scopes =
+          Filter ? std::vector<RegistrationScopeRecord>{{-1, 0x110f, 0x1120,
+                                                         false}}
+                 : std::vector<RegistrationScopeRecord>{{-1, 0, 0x110f, true}};
+      if (Mutation == 3)
+        Chain.SeededTryLevel = 0;
+      Chain.TryLevelStores = {{0x1120, 0x1127, -1}, {0x1140, 0x1147, 0}};
+      auto &Resume = F.Blocks[3];
+      Resume.Ops.clear();
+      Resume.Succs = {7};
+      Resume.EndAddr = 0x1108;
+      emitOp(Resume, 0x1105, NdOp::INT_ADD, NdVar::reg(x86reg::RSP, 4),
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(16, 4)});
+      Resume.InstructionBoundaries = {{0x1105, 3, 0, 1}};
+      auto &Active = F.Blocks[7];
+      Active.Id = 7;
+      Active.StartAddr = 0x1140;
+      Active.EndAddr = 0x1147;
+      Active.Succs = {5};
+      addSlotStore(Active, 0);
+      for (unsigned I = 0; I != Active.Ops.size(); ++I)
+        Active.Ops[I].Seq = I;
+      Active.InstructionBoundaries = {{0x1140, 7, 0, 2}};
+      if (Mutation == 1 || Mutation == 2) {
+        auto &Jump = F.Blocks[4];
+        LowOp Access;
+        Access.Addr = 0x110f;
+        Access.Opcode = Mutation == 1 ? NdOp::STORE : NdOp::LOAD;
+        Access.addInput(NdVar::reg(x86reg::RSP, 4));
+        if (Mutation == 1)
+          Access.addInput(NdVar::cst(0, 1));
+        else
+          Access.Output = NdVar::reg(x86reg::RCX, 1);
+        Jump.Ops.insert(Jump.Ops.begin(), Access);
+        ++Jump.InstructionBoundaries.front().OpCount;
+        for (unsigned I = 1; I != Jump.InstructionBoundaries.size(); ++I)
+          ++Jump.InstructionBoundaries[I].FirstOp;
+        for (unsigned I = 0; I != Jump.Ops.size(); ++I)
+          Jump.Ops[I].Seq = I;
+      }
+      EH3JumpRuntime Runtime;
+      Runtime.Capture = [](const LowOp &Op, const FrameState &Frame, bool,
+                           size_t &) -> std::optional<EH3JumpCapture> {
+        if (Op.Addr != 0x1100)
+          return std::nullopt;
+        EH3JumpCapture Capture;
+        Capture.Call = Op.Addr;
+        Capture.ReturnPC = 0x1105;
+        Capture.BufferOffset = -144;
+        Capture.StackOffset = -192;
+        Capture.UnwindTarget = 0x3300;
+        constexpr uint64_t Registers[] = {x86reg::RBP, x86reg::RBX, x86reg::RDI,
+                                          x86reg::RSI};
+        for (unsigned I = 0; I != 4; ++I)
+          Capture.Nonvolatile[I] =
+              Frame.Registers[Registers[I] / x86reg::GeneralRegStride];
+        return Capture;
+      };
+      Runtime.Resume = [](const LowOp &Op, size_t &) {
+        return Op.Addr == 0x111a;
+      };
+      std::vector<RegistrationSEHControlContract> Controls;
+      RegistrationStateSolver Solver(F, 0, 0, nullptr, nullptr, nullptr,
+                                     nullptr, &Controls, nullptr, nullptr,
+                                     &Runtime);
+      const auto Result = Solver.run();
+      if (!Mutation) {
+        for (const auto &Diagnostic : Result.Diagnostics)
+          ADD_FAILURE() << Diagnostic;
+        EXPECT_TRUE(Result.Complete);
+        ASSERT_EQ(Result.SEHJumpResumptions.size(), 1u);
+        EXPECT_EQ(Result.SEHJumpResumptions.front().EntryVA, 0x110fu);
+        EXPECT_EQ(Result.SEHJumpResumptions.front().TargetVA, 0x1105u);
+        EXPECT_EQ(Result.SEHJumpResumptions.front().ValueOffset, -4);
+      } else {
+        EXPECT_FALSE(Result.Complete);
+        EXPECT_FALSE(Result.SEHJumpResumptionsComplete);
+        EXPECT_TRUE(Result.SEHJumpResumptions.empty());
+      }
     }
   }
 }

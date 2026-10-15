@@ -262,6 +262,8 @@ add_neverd_unittest(NeverDLiftTests
   core/ObjCBlocksTests.cpp
   core/ObjCBlockCallHintTests.cpp
   core/HighFrameTemporaryTests.cpp
+  core/HighX86CallSetupTests.cpp
+  core/HalfFMAHostTests.cpp
   core/HighControlFlowSemanticsTests.cpp
   core/LowZeroIdiomTests.cpp
   ../backend/HighSwiftEmitterTests.cpp
@@ -329,6 +331,7 @@ add_neverd_unittest(NeverDLiftTests
   eh/COFFFH4EncodingTests.cpp
   eh/COFFExceptionGSTests.cpp
   eh/COFFExceptionIRTests.cpp
+  eh/WindowsSEHFallbackTests.cpp
   eh/COFFExceptionNativeIRTests.cpp
   eh/COFFExceptionSEHTests.cpp
   eh/ELFARMEHABIPatchTests.cpp
@@ -366,6 +369,8 @@ add_neverd_unittest(NeverDLiftTests
   core/JumpTableJoinedGuardTests.cpp
   core/JumpTableFixedAddressTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
+  core/ModuleJumpTableBudgetTests.cpp
+  core/ModuleAdjacentTableTests.cpp
   core/JumpTableProposalLFPTests.cpp
   format/PatchFormatTests.cpp
   format/PatchFormatCOFFARMTests.cpp
@@ -1136,6 +1141,8 @@ add_neverd_unittest(NeverDJumpTableTests
   core/JumpTableJoinedGuardTests.cpp
   core/JumpTableFixedAddressTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
+  core/ModuleJumpTableBudgetTests.cpp
+  core/ModuleAdjacentTableTests.cpp
   core/JumpTableProposalLFPTests.cpp
   LINK_COMPONENTS Pipeline Support
 )
@@ -1285,6 +1292,8 @@ add_neverd_unittest(NeverDHighControlFlowTests
   core/HighEntryStackOffsetsTests.cpp
   core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp
+  core/HighX86CallSetupTests.cpp
+  eh/WindowsSEHFallbackTests.cpp
   LINK_COMPONENTS
   BackendC
 )
@@ -1389,6 +1398,10 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationSEHInvocationTests.cpp
   eh/RegistrationSEHExceptionTests.cpp
   eh/RegistrationJumpStateTests.cpp
+  eh/RegistrationScalarCallStateTests.cpp
+  eh/RegistrationRuntimeMemberStateTests.cpp
+  eh/RegistrationMemberArgumentStateTests.cpp
+  eh/RegistrationInitializerStateTests.cpp
   eh/RegistrationStateTestUtils.cpp
   eh/RegistrationCxxContinuationTests.cpp
   eh/RegistrationCxxSearchTests.cpp
@@ -1420,6 +1433,7 @@ add_neverd_unittest(NeverDWindowsRegistrationFrameTests
   eh/WindowsRegistrationFrameTests.cpp
   eh/WindowsRegistrationFrameLayoutTests.cpp
   eh/WindowsRegistrationCxxFrameTests.cpp
+  eh/RegistrationCallbackStackFlowTests.cpp
 
   LINK_COMPONENTS
   WindowsRegistrationFrame
@@ -1431,12 +1445,21 @@ add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
   eh/WindowsRegistrationMultipleCatchTests.cpp
   eh/WindowsRegistrationNestedTryTests.cpp
   eh/RegistrationObjectTests.cpp
+  eh/RegistrationThrowObjectTests.cpp
+  eh/RegistrationCopyTests.cpp
+  eh/RegistrationInitializerTests.cpp
+  eh/RegistrationInitializerGraphTests.cpp
+  eh/RegistrationObjectGraphTests.cpp
+  eh/RegistrationRuntimeMemberTests.cpp
+  eh/RegistrationMemberCalleeTests.cpp
+  eh/RegistrationMemberArgumentTests.cpp
   eh/WindowsRegistrationCatchContextTests.cpp
   eh/RegistrationSourceReceiptTestUtils.cpp
   eh/RegistrationCleanupTestUtils.cpp
   eh/RegistrationNestedTryTestUtils.cpp
   eh/RegistrationRethrowTestUtils.cpp
   eh/RegistrationDirectThrowTestUtils.cpp
+  eh/RegistrationInitializerTestUtils.cpp
   eh/RegistrationThrowHighCTests.cpp
   eh/RegistrationMultipleCatchTestUtils.cpp
   eh/WindowsRegistrationFixedTests.cpp
@@ -1456,6 +1479,11 @@ add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
 
 add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
+  eh/RegistrationSEHReturnTests.cpp
+  eh/RegistrationSEHExceptionNativeTests.cpp
+  eh/RegistrationSEHJumpNativeTests.cpp
+  eh/RegistrationSEHFrameProofTests.cpp
+  eh/RegistrationSEHNullAccessTests.cpp
   eh/RegistrationCxxContinuationTestUtils.cpp
   eh/RegistrationCallTests.cpp
   eh/RegistrationCalleeRecursionTests.cpp
@@ -1464,12 +1492,16 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationEntryABITests.cpp
   eh/RegistrationEntryLayoutTests.cpp
   eh/RegistrationRealignedLayoutTests.cpp
+  eh/RegistrationInstructionRangeTests.cpp
   eh/RegistrationRuntimePointerTests.cpp
   eh/RegistrationHandlerReferenceTests.cpp
   eh/RegistrationFrameTaintTests.cpp
+  eh/RegistrationInitializerFrameTests.cpp
+  eh/RegistrationRuntimeMemberFrameTests.cpp
   eh/RegistrationFrameStoresTests.cpp
   eh/RegistrationFrameBitsTests.cpp
   eh/RegistrationPHICopyTests.cpp
+  eh/RegistrationStackCopyTests.cpp
   eh/COFFTrampolineRegionTests.cpp
   eh/RegistrationReliftTests.cpp
   eh/RegistrationSourceReceiptTestUtils.cpp
@@ -1527,6 +1559,15 @@ add_neverd_unittest(NeverDMedLLVMDeadSlotsTests
 )
 target_include_directories(NeverDMedLLVMDeadSlotsTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/backend/llvm/emit
+)
+
+add_neverd_unittest(NeverDRegistrationCallResultTests
+  eh/RegistrationCallResultTests.cpp
+  eh/RegistrationLLVMCallResultTests.cpp
+  LINK_COMPONENTS IRMed BackendLLVM
+)
+target_include_directories(NeverDRegistrationCallResultTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/backend/llvm/X86
 )
 
 target_include_directories(NeverDLLVMMemoryAlignmentTests PRIVATE
@@ -1898,6 +1939,7 @@ endif()
 # PassIR component), so the stamp/skip contract can be pinned without rebuilding
 # or relinking the ~100-TU NeverDLiftTests binary.
 add_neverd_unittest(NeverDSymSimplifyGuardTests
+  pipeline/PipelineOptNoneTests.cpp
   pipeline/SymSimplifyGuardTests.cpp
   pipeline/SymSimplifyFiniteTests.cpp
   pipeline/SymSimplifyPredicateTests.cpp

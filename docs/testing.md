@@ -725,6 +725,10 @@ checks with `UseUnalignedPointers`. `HighCIntegerWidths.*`,
 `HighCPointerAddresses.*`, `HighCStoreForwarding.*`, `LLVMCValues.*`, and the
 frame-memory, atomic and segmented-memory suites cover the surrounding paths.
 
+`HighX86CallSetup` compiles and executes recovered outgoing-stack arithmetic
+through straight-line and nested continuation uses, including 32-bit wraparound.
+It also requires unused argument stores and address chains to disappear.
+
 `LLVMCValues.SelectedFunctionKeeps*SynthesizedTableStorage` compiles and executes
 selected lookup-table output at O0/O2 for x86, x64, ARM and AArch64 source
 profiles across ELF, COFF and Mach-O. Execution uses host scalar C for 64-bit
@@ -734,6 +738,15 @@ retains forward-referenced storage and function providers while excluding
 unrelated globals. `HighCPointerAddresses.ExceptTailUsesOnlyItsPrintedContinuation`
 checks except fallthrough, live intervening effects and finally transfers;
 the x86 SEH probe also checks shared result-slot identity after frame projection.
+`LLVMCValues.NativeBlockAddressesCannotBecomeZeroConstants` rejects native
+control addresses in returns, integer casts, address arithmetic and nested table
+initializers through full and selected-function emission. The matrix covers
+32/64-bit, both byte orders and ELF/COFF/Mach-O profiles. Unsupported symbol
+constants also fail explicitly; they cannot become null pointers. This is an
+emission refusal contract, not a portable implementation of native resumption.
+
+`X86_64_PipelineE2E.DecompileC_InteriorCodeAddressRefusesWithoutReplacingOutput` checks full and selected-function CLI refusal at both optimization settings, retaining an existing output file. The mixed atomic fixture still requires C emission for every other function. Returning the low bits of an interior code address remains unsupported; LLVM verification alone does not establish defined address-bit observation.
+
 `LLVMCValues.WideConstantsPreserveEveryStoredByte` executes unaligned loads and
 stores at eleven widths from i129 through i512, including i224/i384 and partial
 final bytes, for both LLVM byte orders at O0/O2 with undefined-behavior traps.
@@ -1741,6 +1754,43 @@ roundtrips execute HighC and both LLVMC modes at O0/O2 against an independent
 selection oracle. Small joined domains reuse the finite-coordinate proof;
 unchecked paths and sparse or incomplete domains cannot grant a dense table.
 
+`ResolverValueQueryCache.MalformedScalarRecordsCannotPublishProofs` verifies
+missing ADD/SELECT inputs, input-array overflow, zero widths and a memory-space
+scalar input across x86/x64/ARM/AArch64 and ELF/COFF/Mach-O metadata. Each case
+first populates a valid cache, mutates an equally sized record, and requires
+incomplete results on warm and cold queries. Valid input must still prove its
+value; malformed input cannot become a completed negative proof.
+
+`ResolverValueQueryCache.EntryMemoryCannotBorrowAStoreFromALaterIteration`
+checks first-iteration frame-memory identity and authenticated writers across
+the same architecture/format matrix. A back-edge STORE cannot initialize the
+entry LOAD. A preceding definite STORE is a positive control, and masking the
+unknown LOAD still proves its independent numeric bound. Both query orders and
+cold/warm caches must agree.
+
+`ResolverValueQueryCache.FiniteJointReuseRequiresCurrentSourceAndRoles` supplies
+a cached numerical result directly to the production reuse gate. Equal-size
+source changes, altered index/LOAD/target use points and changed address roles
+must refuse; exact/one-short work boundaries remain deterministic. This fixture
+tests result binding, not construction of a numerical theorem. The existing
+i386 GOTOFF joint-loop and four/six-consumer adjacent-table fixtures separately
+exercise construction, restricted selector/address/target replay and atomic
+group publication.
+`ResolverLoadRoles.RestrictedReplayDoesNotBorrowTheGroupHypothesis` includes an
+extra H edge that can corrupt both an address and a target producer. Both role
+queries refuse H and accept its independently supplied restricted map; ordinary
+group mode still uses H. Cold/warm graph reuse must preserve this distinction.
+`ResolverFiniteControl.*` supplies a provisional nonmember target subset that
+hides a STORE of an out-of-range index. The subset admits an apparent finite
+domain, but cannot supply the joint owner's control completeness; exposing the
+STORE independently rejects both selector domains. Direct control, ordinary
+indirect RET and modeled additional roots are positives. Unknown/interior/guard
+roots, missing block boundaries and malformed nonterminal branches refuse.
+Conditional code-root input also refuses this narrow owner, including a target
+silently omitted by the ordinary graph because its model is missing.
+Exact/one-short work checks require no stale completeness output on exhaustion.
+These controls exercise the shared graph gate, not a new table admission route.
+
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
 fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer
@@ -1783,6 +1833,45 @@ when their full-width pointer, displacement, load width and memory history
 agree. Borrowed RBP fields, negative displacements and both signed and unsigned
 index extensions are covered; changed bases/offsets, partial reloads, stores,
 calls and memory barriers must not recover a table from the earlier guard.
+
+`ModuleJumpTableBudget.*` uses a real ELF table inventory to separate the
+400000-operation input boundary from scan, retained-source, queue and cumulative
+transfer limits. It checks both function orders, unrelated code occurrences,
+same-field independent contexts with no memory consumer, missing PC-relative
+sources, repeated long blocks, final recording and cross-function exhaustion.
+Every exhaustion must protect the nonempty request set. Existing cross-target
+jump-table and returned-code tests exercise the shared collector's semantics.
+
+`ModuleAdjacentTable.*` uses real ELF32/ELF64 adjacent absolute tables in both
+function orders. It checks final x87 returns, independent roots, an unsplit
+interior branch that bypasses the mask, physical fallthrough gaps, cloned TOP
+contexts, malformed address operands, changed LOAD widths/addresses and FS/GS
+spaces. Escaped temporaries and provenance aliases, duplicate sources and a
+source-only context retain the preceding object. The source-only control removes
+only its occurrence, leaving its LowOps unchanged. A three-table positive and
+cumulative exhaustion control verify withdrawal of earlier grants. The expanded
+physical-envelope test checks end-to-end preservation, including the later
+LOAD/alias veto; it does not isolate the envelope comparison. Actual CLI HighC
+and optimized/unoptimized LLVMC output execute all masked indices at host O0/O2.
+These fixtures do not establish support for exceptional graphs or other
+architectures in the new instruction-local query. The real PE32 CFI cases require
+`i686-w64-mingw32-ld`; they assert an actual FDE, nonempty recovered tables and
+exact field occurrences before testing ordinary-unwind admission and incomplete
+augmentation/indirect-LSDA refusals. Metadata negatives cover outer records,
+fragments, explicit entries, malformed identifiable starts, reversed order and
+cleared final annotations. Per-slot inventories must completely partition the
+fresh runtime extent; gaps, duplicates, extra slots and changed strides refuse.
+
+`ItaniumEHDriver` and `DarwinUnwindSymbols` check section-wide structural failure
+propagation across x86/x64/AArch64, mixed good/bad record orders, unknown CIE
+augmentation, unresolved indirect LSDA, malformed tails and language refresh.
+Darwin covers standalone and both compact/FDE attachment paths, unrelated
+compact-only records, missing personality arrays, unknown providers, direct and
+bound-slot conflicts (including equal nonzero file values, equal names and
+unnamed relative relocation targets),
+LSDA conflicts, invalid ranges and retained foreign/oversized FDEs. Complete
+frame sections add no language-refresh provenance. These are decoding/source
+proof checks; they do not certify native exception execution.
 
 The same target's `NarrowGuard*` tests use long arithmetic prefixes before x86
 and x64 byte/word guards and AArch64 W-register guards. Low/high byte identity,
@@ -3689,6 +3778,30 @@ for registration_case in filter nested-finally continue-search continue-executio
 done
 ```
 
+The SEH rewrite script also runs `longjmp-finally`, `longjmp-zero`,
+`longjmp-filter`, `longjmp-parameter`, `longjmp-callback`,
+`longjmp-unwind-callback`, `longjmp-callback-zero`, `longjmp-search-filter`
+and `longjmp-search-filter-zero`. These fixtures check a resumed
+nonvolatile register and try level, the requested jump value (including zero
+becoming one), finally's
+private-frame write, a subsequent exception, and FS:[0] restoration on four
+successive invocations. Original and generated caller PCs are distinguished,
+and each generated image is executed at preferred and forced-rebased addresses.
+The parameter case reads the real caller argument in both the resumed parent
+and its filter, including the caller-frame slot introduced during outlining.
+The callback cases resume from ordinary finally calls and runtime unwind
+dispatch, recover their parent's native buffer, and exercise private argument
+slots and zero-to-one conversion. Mutation controls reject a different parent
+frame, escape index, unused recovery, escaped buffer and redirected value load.
+CLI coverage includes both patch modes from emitted IR and directly from the
+original EXE, with default optimization and `--no-opt`. Both pipeline paths
+must preserve `optnone` runtime callback roots and register snapshots.
+The source-input unit rejects edits to capture/resume identities, the private
+buffer, register snapshots, restored state and argument slot. Its unwind-adapter
+controls change the copy extent, physical registration field, virtual EBP,
+original-buffer isolation, runtime identity and call attributes. All mutations
+must remain LLVM-verifier-clean and fail the independent installer proof.
+
 With genuine MSVC value/reference fixtures, run the source IR and machine-code
 checks once per image. Missing input is a skip and cannot count as verification:
 
@@ -4079,6 +4192,155 @@ files with `replay_windows_registration_relift.py`; source proofs, both image
 generations, Microsoft CRT identity, field effects and throw caller ranges are
 mandatory evidence. Second-generation direct throws run the normal call ABI
 recovery pass before native LLVM emission.
+
+The `destructors` profile uses the same sixteen O0/O1 source/control cases with
+observable exception-object and catch-copy destructors. Each execution checks
+twelve destructions and a rolling trace of their order and object contents,
+alongside catch results, reference effects, caller ownership and FS:[0]. Negative
+controls change only the expected destruction count. The shared source driver,
+record declarations and independent destructor proof are hashed into admission.
+Both `check_windows_registration_nested_try.py --profile destructors` and
+`check_windows_registration_relift.py --profile destructors` produce 128 images;
+their replay tools validate the identical files with Wine or native Windows.
+`RegistrationThrowObject.*` rejects out-of-bounds effects, escapes, CRT caller
+observations, mutable code, metadata writes, unchecked calls and exhausted
+budgets. It also retains helper and destructor code in either address order.
+
+The separate `destructor-graphs` profile keeps both observable destructor
+operations behind two real out-of-line member calls. Its sixteen O0/O1 cases
+and controls each exercise both installation routes and forced bases (128
+images per generation); capture, replay, re-lift and replay retain the exact
+source, declarations and transitive lifetime proof hashes. The existing leaf
+destructor profile remains a control. `RegistrationObjectGraph.*` checks
+same-object and subobject effects, conditional may-writes, private scalar
+arguments, exact cleanup, child-result privacy, pointer escapes, metadata and
+code writes, recursion, depth, distinct-node and work exhaustion, and changed
+transitive code. The input-PE32 test requires complete runtime object and cleanup
+state, both destructor identities, two actual child calls and closure of their
+code ranges in the parent's current contracts.
+The separate `destructor-results` profile consumes a returned object-field
+calculation when updating the same independent lifetime trace. Its sixteen
+O0/O1 cases and controls produce 128 images per generation, with identical-file
+replay on Wine and native Windows.
+`RegistrationScalarCallState.*` additionally checks parent and catch calls,
+physical and instruction-local return values, unproved or wide results,
+changed output identities, other volatile register escapes and separate object
+initialization. Authentic source tests also flip the result proof and require
+native emission to refuse the stale contract. O1 corpus inputs expose ordinary scalar calls
+after destructor inlining and require complete source state before rewriting.
+`RegistrationRuntimeMemberState.*` checks distinct runtime allocation identity,
+subobject offsets, reordered CFGs, bounds, partial pointers, constructor
+authority and expired catches. `RegistrationRuntimeMemberFrame.*` independently
+checks the actual LLVM pointer and lifetime, rejecting parent-frame or constant
+receivers, changed offsets, wide effects and invented initialization or stack
+arguments. The `reference-members` profile consumes a real out-of-line member
+call on a catch reference before normal completion or rethrow. Its sixteen
+O0/O1 cases and controls produce 128 images per generation and retain source,
+declaration, callback and receiver-proof hashes for Wine and native Windows
+replay. Its input-PE32 test also rejects six changed source receiver contracts,
+three missing, extra or constant receiver argument projections and three
+post-emission LLVM pointer edits. O1 keeps a live EDX value beside ECX; the
+checked member contract must exclude that scratch value from the call ABI.
+Pure graph tests require an independent
+scalar on every return, reject borrowed pointers and entry-EAX alternatives,
+and retain the private scalar-argument proof when a child returns an argument.
+`NeverDRegistrationCallResultTests` independently checks source result-use
+proofs and LLVM deletion plans. SSA copies, extensions and PHIs may transport
+an unused result; returns, branches, source stores, implicit call arguments,
+preserved call inputs, ambiguous definitions and exhausted budgets reject.
+LLVM plans remove only integer transports into exact emitter-owned store-only
+slots, retaining the call and rejecting loads, escapes, metadata, volatile and
+atomic stores. O1 destructor graph cases exercise the ordinary void member
+calls exposed when the compiler inlines the outer destructor.
+`SourceDialect.CxxUnknownExternalParametersKeepDefaultPromotions` checks the
+frontend IR argument types for the C/C++ views on every host: a C declaration
+with unknown parameters cannot become a zero-argument C++ prototype. Both views
+execute against an independent C callee where the physical ABIs agree. Darwin
+AArch64 executes the C view and checks the C++ view's promoted IR types, because
+its fully variadic and fixed C ABIs differ. The provider uses the exact assembler
+label on Mach-O. The source ellipsis does not grant a native variadic ABI contract.
+The `member-arguments` profile adds a nonzero 32-bit stack argument to those
+member calls and separately authenticates its source, type and scalar-word proof.
+`RegistrationMemberCallee.*` keeps CRT callback and ordinary member policies
+separate; `RegistrationMemberArgumentState.*` checks one through three words in
+parent, value-catch and reference-catch contexts, including missing, partial,
+pointer-bearing, unbalanced and retired storage.
+`RegistrationRuntimeMemberFrame.RechecksDefinedScalarStackWords` and authentic
+source mutants reject pointer, undef and poison arguments after LLVM emission.
+Capture, replay and a second reconstruction cover both optimizations, negative
+controls, both patch modes, rebasing and lifetime count/order/content.
+
+`WindowsSEHFallback.*` checks complete native clause annotations, narrow state
+stores, pure and side-effecting filters, refusal to discard an unbound handler
+body, native continuations after an ordinary return, and irreducible C++ views.
+`MedSEHHandlerEntry` checks table-owned x86
+frame recovery after state-budget exhaustion, including independent ordinary
+roles, predecessors, mismatched personalities, frame offsets and entry ranges.
+The large original `xcpt4` corpus regression must keep its frame-reading filter
+expression in the native annotation without claiming lexical protection.
+
+`NeverDLiftTest.HostHalfFMAProviderMatchesIndependentIEEEOracle` checks the
+test-only binary16 FMA provider against APFloat for 10,936 edge and randomized
+triples at O0/O2. `AArch64_FP.HalfPrecisionArithmeticExecutesThroughHighC` uses
+that provider when an older host library lacks `fmaf16`; its expected values
+also come from APFloat. This fixture proves default nearest-even execution,
+without granting a product floating-environment or other rounding-mode contract.
+
+The `copies` source and relift profiles extend that matrix with nontrivial CRT
+copy callbacks for both records. Each run checks four copies and twelve
+destructions with separate count and object-content traces. Negative controls
+change the expected copy count. The sixteen source/control cases produce 128
+executions per capture or replay, including both patch modes and forced bases.
+`RegistrationCopy.*` separately rejects source writes, bounds violations,
+partial destination initialization on any return, pointer escapes, caller
+storage observations and incorrect `RET 4` cleanup. Replay admission binds the
+copy proof and source declarations and rejects a trivial-object or destructor
+capture in their place. C/C++ syntax checks also cover records with no default
+constructor; RTTI alone must not invent a constructor or remove initialization.
+
+The `initializers` source and relift profiles keep ordinary scalar-argument
+constructors out of line in the parent, its catch callback and private throw
+helpers before entering the CRT. Twenty O0/O1 direct/private nested/rethrow and
+direct-secondary source/control cases produce 160 images per capture or replay;
+the complete two-generation sequence executes 640 images. The source
+profile binds the initializer proof, the constructor-selection wrapper, both
+shared drivers and the actual type declarations. It retains the independent
+four-copy/twelve-destruction oracle for nested catches and rethrows. A new
+object constructed from a catch's modified fields requires four copies and
+sixteen destructions with a distinct content/order trace. Copy-only evidence
+cannot replace ordinary-constructor evidence. `RegistrationInitializer.*` checks
+callee stack cleanup, exact returned destination, private spills, all-path initialization,
+source closure and the nearest pointer/argument/caller-storage refusals.
+`RegistrationInitializerState.*` checks exact stack cleanup and return identity
+without borrowing uninitialized arguments. `RegistrationInitializerFrame.*`
+checks disjoint must-writes, exceptional-edge isolation and scalar argument
+privacy. Direct-source mutations also challenge the installed constructor ABI,
+object pointer and optimizer promises at every call occurrence, including a
+constructor shared by parent and callback. `RegistrationCallbackInitializer.*`
+checks callback argument privacy, stack cleanup and parent-object initialization
+independently of block order. `RegistrationCallbackStackFlow.*` checks cross-block
+SSA copies, loops, bypassed definitions and runtime resumes without treating the
+parent's ordinary entry as the callback's dominator root.
+Second-generation receipts retain disjoint callback ranges. Replay checks each
+range and rejects gaps, overlap and chunks from the previous generation.
+`RegistrationInstructionRange.*` distinguishes instruction operands containing padding
+bytes from real entries after branches and calls, including loops, unreachable
+bytes, conflicting branch targets and overlapping instruction decodes.
+`RegistrationState.APossibleCalleeWriteCannotLaunderTheObjectPointer` checks
+that both partial and full-width may-writes preserve possible frame-pointer
+provenance until a definite replacement has been proved.
+
+The separate `delegating` source and relift profiles retain both ordinary
+constructor bodies and require a current-machine transitive construction proof.
+Their twenty O0/O1 source/control cases cover private helpers, direct parent
+calls, catch construction, rethrows and secondary exceptions, producing 160
+executions per capture or replay and 640 across both generations. Native Windows
+replays the identical files. Ordinary initializer evidence cannot replace the
+constructor-graph proof or its source dependencies. `RegistrationInitializerGraph.*`
+checks transitive image/code effects, independent subobjects sharing one callee,
+subobject return identity, partial must-writes, scalar privacy, exact cleanup,
+recursion and exhausted depth/work budgets. The source proof verifies actual
+child calls on ordinary entry paths, independently of other address-taken roots.
 
 ### Language exception models
 
@@ -4780,7 +5042,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 26 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 56 driver environment checks = 5566`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 27 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 68 driver environment checks = 5579`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 
@@ -5521,7 +5783,9 @@ The committed-write observer regressions verify visibility before the next instr
 
 `scripts/check_windows_nonlocal_finally.py` compiles and executes original MSVC x86/x64 programs at O0/O2 with GS enabled and disabled. Its six cases distinguish ordinary and unwinding finally invocations, conditional jumps to the parent, and returns that stop unwinding. Repeated observations check local guards and the x86 registration chain; a deliberately changed cleanup trace must fail the original oracle. The Windows EH fixture job retains the source/image hashes, compiler output, linker maps and runtime observations. Run it in the matching MSVC environment with `--arch x86` or `--arch x64` and `--output`. This supplies an original-runtime baseline, not evidence that NeverD supports these nonlocal transitions. Four additional cases raise another exception immediately after parent resumption, and two exercise a scalar input plus a guarded caller-owned counter. The x86 chain is checked after every call and at the resumed label. Schema 2 observations are required; an older final-chain-only record cannot establish this coverage.
 
-`scripts/check_windows_native_seh_resume.py` separately tests an experimental Windows x64 LLVM/CRT continuation at O0/O2. `_local_unwind` receives the captured physical SP and an address-taken parent continuation, separate from escaped source cells. A MASM caller checks eight preserved GPRs, XMM6–XMM15, returned SP and guards. Normal paths execute the call suffix; abandoning paths skip it, and every path raises a second exception. Reports retain toolchains and hashes. Native success grants no NeverD reconstruction receipt and does not solve PE32 exits, escaped-memory authority, arbitrary nesting or the two C routes. Use `--output` in the native x64 MSVC environment. The `windows_eh_protocol_only` workflow input runs these native experiments without rebuilding NeverD; it is separate from engine regression coverage.
+`scripts/check_windows_native_seh_resume.py` separately tests an experimental Windows x64 LLVM/CRT continuation at O0/O2. `_local_unwind` receives the captured physical SP and an address-taken parent continuation, separate from escaped source cells. The target is the ordinary call continuation, which reads an explicit escaped resume token before selecting the suffix. A bare address-taken join can acquire predecessor-only PHIs or a sunk suffix under O2; address retention alone does not authenticate hidden entry into LLVM control flow. A MASM caller checks eight preserved GPRs, XMM6–XMM15, returned SP and guards. Normal paths execute the call suffix; abandoning paths skip it, and every path raises a second exception. A later ordinary finally call in the same parent activation must execute its own suffix after reinitializing the token. These fixed-frame observations do not authenticate arbitrary LLVM live values at hidden entry or EHCONT/CET compatibility. Reports retain toolchains and hashes. Native success grants no NeverD reconstruction receipt and does not solve PE32 exits, escaped-memory authority, arbitrary nesting or the two C routes. Use `--output` in the native x64 MSVC environment. The `windows_eh_protocol_only` workflow input runs these native experiments without rebuilding NeverD; it is separate from engine regression coverage.
+
+`scripts/check_windows_native_seh_bridge.py` adds a separate fixed-frame x64 experiment: assembly owns both continuation labels and unwind metadata, then calls optimized LLVM through ordinary ABI entries. O0/O2 each exercise eight paths over 256 iterations, including a second nonlocal call. Independent observations retain each raw AbnormalTermination byte, exception-event counts, actual codes and a persistent unexpected-event flag. Six compiled negative controls cover exclusive scope ends, unwind flags, repeated suffixes, colliding abnormal bytes, overwritten exception observations and shifted physical frames. Reports hash every compiled source, retain object/final-image unwind and load-config output, and capture the actually resolved CRT providers. This is feasibility evidence only; source-memory authority, arbitrary nesting, concurrency, EHCONT/CET and production reconstruction remain unproved.
 
 `RegistrationTryLevel.EH4Publication*` and `EH4CookieStoresMustOwnDistinctPrivateBytes` check direct PE32 EH4 frames with ADD/SUB allocation, saved registers, pushed cookies and disp8/disp32 cookie stores. Changed sources, offsets, overlapping cookies and writes into saved registers or runtime administration must be rejected; shared LowIR independently verifies values and lifetime.
 
@@ -5550,6 +5814,13 @@ Partial temporary aliases must not preserve a full runtime pointer, including
 when the truncated value feeds address arithmetic in the same instruction.
 `WindowsRegistrationNative.RuntimeExceptionFieldsRequireAReplacementObjectReceipt`
 checks atomic refusal of incomplete or unconsumed runtime access evidence.
+The `exception-code` and `exception-flags` reconstruction cases, including their
+`eh4-` and `eh4-gs-` variants, execute original and reconstructed PE32 files in
+both CLI modes and at a changed image base. Each source replay also rejects
+wrong field offsets, pointers and widths, unindexed and duplicated reads,
+runtime writes, overwritten pointer cells and pointer escapes (including an
+extra unindexed pointer-slot read). These are native reconstruction checks;
+they do not grant arbitrary context access or a nonlocal continuation contract.
 
 PE32 LowIR branch
 targets use 64-bit code-address constants; they must still fit the 32-bit address
@@ -5746,9 +6017,21 @@ calls, malformed boundaries, missing near-return evidence and stack-pop returns
 reject. The check supplies no native callable contract and does not model the
 nonlocal xcpt4 finally exits.
 
+`RegistrationSEHReturn` checks the native near-return consumer against changed
+CALL, callback, return occurrence and continuation identities, duplicate exits,
+and multiple callers sharing one return. `RegistrationSEHControl` checks that
+EH3 and EH4 both partition the physical CALL continuation before later source
+instructions. The `normal-finally`, `eh4-normal-finally` and
+`eh4-gs-normal-finally` reconstruction cases execute the generated callback,
+public section/inplace installation and rebased images. Their independent
+source replay also rejects replacing the generated finally return with
+`unreachable`.
+
 `RAMReservationTests.cpp` checks public write witnesses across identical-value and ABA stores, retained slices, address reuse, sibling mappings, rollback, cancellation, fault-prefix commits and opaque execution. `UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` checks owned loader facts at preferred, downward and kernel load addresses: restored bytes do not restore invalidated provenance. `DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` distinguishes active CFG pointer replacement from dormant fallback retention.
 
 `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` checks PE output, an independent DIR64 reader, model rebasing and exclusion of rewritten debug records. `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` rejects source/base/order mismatches and excludes formatting replacements even when bytes match. These checks certify diagnostic metadata, not native recovery.
+
+`RegistrationStackCopy.*` authenticates equal-displacement copies from both callback predecessors and rejects changed displacements, unknown or undefined sources, missing paths, external definitions, reads before definition, volatile stores and uninitialized self-copies.
 
 ## Source and native object replacement tests
 
@@ -6007,3 +6290,8 @@ Initial private/strict JSON checks passed166 identities before route addition. F
 Owned nonroot ARM64 O0/O1/O2 native probes passed114 observations, full2168 payloads/guards, raw primary/secondary/carry, high carriers, readonly/dup, target errors, parent moves, held deletion/name reuse and unchanged stat/flags/cursor. The common initial32 and created33 authored services pass main57/Y natively; virtual35 emits6600 independent literal bytes plus Y, separating link owner17 from target/replacement owner4294967294. Native comparisons mask only five dynamic uint64 counters and capture no native service trace. Five software process/C API/CLI/Python profiles and three matching ARM64 HVF profiles pass fresh executions; C API successes reuse sessions and CLI reports compare completely.
 
 Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailable, zero remaining failures; all279 required matching ARM64 identities actually pass in four disjoint serial bounded shards plus1 fresh isolated replay of the original resource-usage HVF guest-time-limit failure. The initial full round and all failures remain retained. Identical source/products and unchanged limits qualify the composite only; no clean full-round or unsharded timing-stability claim. Shared public/Linux/services/budget/safety owners pass1866 C++ cases. All20 products rebuilt; common native79/mandatory93 per matching platform independently asserted. Earlier compile enum typo, mutable-parent fixture omissions and failed repair matching/controller syntax attempts remain immutable; no production semantics were weakened to pass them. Native5s/compiler120s/component1200s parallel2/guest5000000us quantum1024/public30s and original method bounds are unchanged. Intel native, physical iOS and complete Apple runtimes/frameworks remain unqualified.
+
+
+### Declared physical memory inventory
+
+`KernelPhysicalInventoryTests` verifies byte units, terminator, independent allocations, admission without effects, declaration copying, capture dependencies, pins, physical identity and shortage. `DriverPhysicalInventoryTests` covers strict transport and full preferred/rebased lifecycle, dynamic lookup and freed reads on Unicorn/KVM/WHP. The unused-declaration UNPACK control preserves refusal. All 13 cases per native backend are mandatory; unavailable platform execution remains skipped locally.

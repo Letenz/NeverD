@@ -20,6 +20,7 @@ if __package__:
     from .check_windows_registration_cxx_rewrite import code_owner
     from .check_windows_registration_rewrite import PE32
     from .windows_registration_libraries import load_libraries
+    from .windows_registration_image import code_chunks
 else:
     from check_windows_registration_eh import run_image
     from check_windows_registration_realigned import require_test_result
@@ -29,6 +30,7 @@ else:
     from check_windows_registration_cxx_rewrite import code_owner
     from check_windows_registration_rewrite import PE32
     from windows_registration_libraries import load_libraries
+    from windows_registration_image import code_chunks
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "unittests/lift/eh/fixtures/registration_multiple_catch_driver.cpp"
@@ -53,12 +55,26 @@ def validate_decompilation(text: str, language: str) -> None:
 def observe(path: Path, case: str, route: str, receipt: dict,
             launcher: list[str], env: dict[str, str], timeout: float,
             *, expected_values: tuple = (17, 28, 39, 7, 18, 39, 1, 12),
-            expected_cleanup: tuple | None = None, source_section: str = ".text") -> dict:
+            expected_cleanup: tuple | None = None,
+            expected_lifetime: tuple | None = None,
+            expected_copy: tuple | None = None, source_section: str = ".text") -> dict:
     image = PE32(path.read_bytes())
     if image.base not in BASES or image.u16(image.optional + 70) & 0x40:
         raise ValueError("multiple-catch probe has no forced base")
     result = run_image(path, launcher, env, timeout)
     output = result.get("stdout", "")
+    if expected_lifetime is not None:
+        output, separator, lifetime = output.rpartition("LIFETIME ")
+        matched = re.fullmatch(r"([0-9A-F]{8}) ([0-9A-F]{8})\r?\n", lifetime)
+        if not separator or not matched or \
+                tuple(int(v, 16) for v in matched.groups()) != expected_lifetime:
+            raise ValueError(f"exception destruction count, order or contents differ: {result}")
+    if expected_copy is not None:
+        output, separator, construction = output.rpartition("COPY ")
+        matched = re.fullmatch(r"([0-9A-F]{8}) ([0-9A-F]{8})\r?\n", construction)
+        if not separator or not matched or \
+                tuple(int(v, 16) for v in matched.groups()) != expected_copy:
+            raise ValueError(f"exception copy count, order or contents differ: {result}")
     if expected_cleanup is not None:
         output, separator, cleanup = output.rpartition("CLEANUP ")
         matched = re.fullmatch(r"([0-9A-F]{8}) ([0-9A-F]{8}) ([0-9A-F]{8})\r?\n", cleanup)
@@ -72,11 +88,11 @@ def observe(path: Path, case: str, route: str, receipt: dict,
     if tuple(values[:8]) != expected_values:
         raise ValueError("catch dispatch, reference effect or registration chain differs")
     owner = "source" if route == "original" else "generated"
-    begin, end = receipt[owner + "_begin"], receipt[owner + "_end"]
+    chunks = code_chunks(image, receipt, owner,
+                         source_section if route == "original" else ".ndtext")
     callers = [value - image.base for value in values[8:]]
-    if any(not begin <= caller < end for caller in callers):
+    if any(not any(begin <= caller < end for begin, end in chunks) for caller in callers):
         raise ValueError("throw caller is outside the exact parent owner")
-    code_owner(image, begin, end, source_section if route == "original" else ".ndtext")
     return {"image": path.name, "sha256": file_digest(path), "route": route,
             "base": image.base, "expected_exit": int(case.endswith("-control")),
             "caller_rvas": callers, "runtime": result}

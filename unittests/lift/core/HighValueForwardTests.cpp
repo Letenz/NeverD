@@ -604,6 +604,76 @@ int main(void) { return other_slot(7) == 7 && other_slot(9) == 9 ? 0 : 1; }
 )");
 }
 
+TEST(HighValueForward, SlotLoadStaysBeforeAStoreComputedFromTheFrame) {
+  // Two words at -40 and -32 are one array.  A store to the first plus a
+  // run-time offset writes the second when the offset is 8, whether the
+  // address goes through a pointer to the first word or is computed in
+  // place, so the read of the second word stays before the store.
+  const auto Word = NdType::makeInt(8, false);
+  for (bool ThroughPointer : {true, false}) {
+    std::vector<HighStmt> Body = {store(frameSlot(40), constant(11)),
+                                  store(frameSlot(32), constant(22))};
+    ExprPtr Base = frameSlot(40);
+    if (ThroughPointer) {
+      Body.push_back(assign(local(2, Word), frameSlot(40)));
+      Base = local(2, Word);
+    }
+    Body.push_back(
+        assign(local(1, Word), HighExpr::makeLoad(frameSlot(32), Word)));
+    Body.push_back(store(op(NdOp::INT_ADD, Base, input()), constant(99)));
+    Body.push_back(result(local(1, Word)));
+    HighFunc F = function("array_slot", std::move(Body));
+    F.FrameSize = 64;
+    const std::string Source = emit({F});
+    compileAndRun(Source + R"(
+int main(void) { return array_slot(8) == 22 && array_slot(0) == 22 ? 0 : 1; }
+)");
+  }
+}
+
+TEST(HighValueForward, AnAtomicAddACopyCarriesStaysBeforeALoadAfterIt) {
+  // The atomic add returns the old *arg0, the copy widens it, and the load
+  // after the add reads the sum.  Folded through the copy,
+  // `*arg0 ^ (uint64_t)__atomic_fetch_add(arg0, 1, ...)` would read *arg0
+  // unsequenced beside the add (x64o209_aacqrel).
+  const auto Half = NdType::makeInt(4, false);
+  const auto Word = NdType::makeInt(8, false);
+  const auto Pointer = NdType::makePtr(Half);
+  auto Narrow = [&](int Id) {
+    MedVar V;
+    V.Kind = MedVar::Temp;
+    V.Id = Id;
+    V.Size = 4;
+    V.TheArch = Arch::X64;
+    return HighExpr::makeVar(V, Half);
+  };
+  auto Widen = [&](ExprPtr Value) {
+    auto E = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Value));
+    E->Type = Word;
+    return E;
+  };
+  auto Add = HighExpr::makeBinop(NdOp::ATOMIC_ADD, typedParameter(0, Pointer),
+                                 HighExpr::makeConst(1, 4));
+  Add->Type = Half;
+  Add->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  auto Sum = op(NdOp::INT_XOR, local(3, Word), local(2, Word));
+  Sum->Type = Word;
+  HighFunc F = function(
+      "add_then_read",
+      {assign(Narrow(1), Add), assign(local(2, Word), Widen(Narrow(1))),
+       assign(local(3, Word),
+              Widen(HighExpr::makeLoad(typedParameter(0, Pointer), Half))),
+       result(Sum)});
+  F.Params = {{"arg0", Pointer}};
+  const std::string Source = emit({F});
+  compileAndRun(Source + R"(
+int main(void) {
+  uint32_t value = 5;
+  return add_then_read(&value) == (6 ^ 5) && value == 6 ? 0 : 1;
+}
+)");
+}
+
 TEST(HighValueForward, AnIndirectCallReadsItsTargetFromASlot) {
   // The function pointer is kept in a frame slot and called through it: the
   // slot is read like any other, and the frame that holds it is declared.
@@ -612,8 +682,8 @@ TEST(HighValueForward, AnIndirectCallReadsItsTargetFromASlot) {
   Call->IndirectTarget =
       HighExpr::makeLoad(frameSlot(40), NdType::makeInt(8, false));
   Call->Type = NdType::makeInt(8, false);
-  HighFunc F = function("through_slot",
-                        {store(frameSlot(40), input()), result(Call)});
+  HighFunc F =
+      function("through_slot", {store(frameSlot(40), input()), result(Call)});
   F.FrameSize = 64;
   const std::string Source = emit({F});
   compileAndRun(Source + R"(
@@ -653,8 +723,8 @@ TEST(HighValueForward, AForwardedConversionComparesInItsOwnType) {
   Less->Type = NdType::makeInt(1, false);
   auto Result = HighExpr::makeUnary(NdOp::INT_ZEXT, Less);
   Result->Type = NdType::makeInt(8, false);
-  HighFunc F = function("byte_below",
-                        {assign(HighExpr::makeVar(T, U8), Lane), result(Result)});
+  HighFunc F = function(
+      "byte_below", {assign(HighExpr::makeVar(T, U8), Lane), result(Result)});
   F.Params = {{"arg0", NdType::makeInt(16, false)}, {"arg1", U8}};
   const std::string Source = emit({F});
   compileAndRun(Source + R"(

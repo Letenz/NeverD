@@ -638,6 +638,39 @@ class ProvenanceOfThisRepositoryTests(unittest.TestCase):
         self.assertIn("老", text)
         self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")
 
+    def test_gitlink_changes_keep_source_patch_inventory_consistent(self) -> None:
+        for ignore in ("all", "none"):
+            with self.subTest(ignore=ignore), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                subprocess.run(("git", "init", "-q"), cwd=root, check=True)
+                subprocess.run(
+                    ("git", "config", "diff.ignoreSubmodules", ignore),
+                    cwd=root, check=True,
+                )
+                path = root / "source.cpp"
+                path.write_text("// private-token\n", encoding="utf-8")
+                subprocess.run(("git", "add", "source.cpp"), cwd=root, check=True)
+                self.commit(root, "initial source")
+                target = subprocess.check_output(
+                    ("git", "rev-parse", "HEAD"), cwd=root, text=True,
+                ).strip()
+                path.write_text("int value;\n", encoding="utf-8")
+                subprocess.run(("git", "add", "source.cpp"), cwd=root, check=True)
+                # A gitlink needs only a commit identity; no external checkout
+                # or network is required to exercise Git's two diff surfaces.
+                subprocess.run(
+                    ("git", "update-index", "--add", "--cacheinfo",
+                     f"160000,{target},dependency"), cwd=root, check=True,
+                )
+                rule = ProvenanceScanTests.term_rule("private-path", "private-token")
+                with mock.patch.object(provenance, "REPO_ROOT", root):
+                    pending = provenance.scan_worktree_patch((rule,))
+                    self.commit(root, "source cleanup and dependency")
+                    historical = provenance.scan_recent_history(1, (rule,))
+                for findings in (pending, historical):
+                    self.assertEqual(len(findings), 1)
+                    self.assertIn("source.cpp@", findings[0])
+
     def test_recent_history_reads_a_cjk_patch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

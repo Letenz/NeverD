@@ -12,6 +12,7 @@ analysis and comparison output belong outside the repository.
 | Source types and member calls remain partially recovered | Use authenticated PDB/TPI type and method metadata; do not infer a virtual method name from a vtable offset alone. |
 | Release performance varies by function and debug input | Time paired fresh `--func` calls and separate load from decompile cost. Profile before changing shared analysis. Preserve byte-identical C and EH semantics. |
 | Toolset coverage varies by hosted runner | Verify each compiler's actual version and path before publishing corpus artifacts. Treat unavailable versions as explicit skips. |
+| Interior code-address bits have no portable C or general LLVM blockaddress contract | Preserve precise CLI refusal and existing-file protection at full/selected optimized/unoptimized emission. Other atomic functions must still emit. LLVM verification does not prove bit observation; close opaque transport versus inspected bits at the shared LLVM owner. |
 | MinGW x86 call arguments can remain unknown after function boundaries are repaired | Inspect the recovered callee ABI and each caller's actual register/stack evidence. Do not treat residual unknown arguments as evidence that an internal label is still a function. |
 | The public x64 `xcpt4` source projection retains unresolved runtime stack values | The analysis matrix now retains the body and explicit unknown entry values. Native reconstruction still needs authenticated effects across opaque imports and cross-funclet runtime activation identities. ABI declarations alone do not preserve saved memory. |
 | Native reconstruction of PE32 `xcpt4` nonlocal invocations remains incomplete | Source registration-state closure and local filter recovery are fixed by #920 / #859. CFG, SSA and native emitters still need to consume the source capture/resumption and invocation-exit evidence. A source receipt does not certify a replacement runtime activation. |
@@ -25,6 +26,21 @@ Jumping out of an abnormal finally is MSVC C4532 undefined behavior. The legacy
 compiler observations do not certify guard retirement inside the resumed parent.
 `check_windows_native_seh_resume.py` is a separate x64 LLVM/CRT protocol
 experiment with a physical-stack capture and a parent continuation address.
+Its explicit escaped resume token selects the ordinary suffix at the call
+continuation. An address-taken join alone allowed O2 to sink suffix effects and
+require a predecessor-only PHI at hidden entry. Local Wine O0/O2 observations
+are supporting evidence only; native Windows and compiler-visible resumption
+still require their own validation. A second ordinary finally call in the same
+parent activation checks token reinitialization. Arbitrary live SSA values,
+nested activations and EHCONT/CET compatibility are not authenticated. The independent
+`check_windows_native_seh_bridge.py` tests a fixed assembly-owned frame and two
+native continuation labels, entering optimized LLVM bodies through ordinary ABI
+calls. Local Wine O0/O2 covers eight paths and 512 positive calls, plus six
+corrupt compiled controls. Raw abnormal bytes, event counts, actual codes and a
+persistent unexpected-event flag remain independently observable. Native Windows
+is pending; no source-memory, arbitrary nesting, concurrency, EHCONT/CET or
+production reconstruction authority follows. LLVMC refuses block addresses and other
+unrepresented constants instead of silently substituting zero.
 Compiler or native-runtime success alone grants no reconstruction receipt;
 conditional memory, invocation lifetime and both C routes remain open.
 

@@ -54,3 +54,20 @@ NEVERD_KERNEL_RUNTIME_STRING_API(RtlIntegerToUnicodeString, 3, Passive,
 NEVERD_KERNEL_RUNTIME_STRING_API(RtlUnicodeStringToInteger, 3, Passive,
                                  runtime::unicodeStringToInteger(*this, Memory,
                                                                  A))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlansistringtounicodestring
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlunicodestringtoansistring
+// RVA 0x6f6840 and 0x5edb00. Conversion through the system ANSI code page is
+// exact only for ASCII text; allocations use paged pool tagged 'Strg'.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlAnsiStringToUnicodeString, 3, Passive,
+                                 ansiToUnicodeString(A))
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlUnicodeStringToAnsiString, 3, Passive,
+                                 unicodeToAnsiString(A))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlfreeunicodestring
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlfreeansistring
+// Both names share the routine at RVA 0x602cb0.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlFreeUnicodeString, 1, APC,
+                                 freeCountedString(A))
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlFreeAnsiString, 1, APC,
+                                 freeCountedString(A))

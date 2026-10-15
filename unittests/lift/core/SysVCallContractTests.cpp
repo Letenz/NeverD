@@ -29,6 +29,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/Regex.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -830,18 +831,27 @@ TEST(SysVCallContract, AFormatNamesTheArgumentsAFormattedCallPasses) {
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
   const std::string ShowBody = body(Source, "show");
   ASSERT_FALSE(ShowBody.empty()) << Source;
-  EXPECT_NE(ShowBody.find("printf(\"%d %s %f %d %f\\n\", arg0, (void*)arg1, "
-                          "arg3, arg2, "),
+  // CVTSS2SD retains MXCSR status and denormal behavior. Its double result,
+  // rather than a host-language cast, occupies the final variadic argument.
+  llvm::SmallVector<llvm::StringRef, 3> Widened;
+  ASSERT_TRUE(
+      llvm::Regex(
+          R"((t[0-9]+) = neverd_x86_cvtss2sd_source32\(__builtin_bit_cast\(uint32_t, \(float\)\(arg4\)\), (t[0-9]+)\);)")
+          .match(ShowBody, &Widened))
+      << ShowBody;
+  EXPECT_NE(ShowBody.find(Widened[2].str() + " = neverd_x86_read_mxcsr();"),
             std::string::npos)
       << ShowBody;
-  // The last value is f widened to double: a cast, or the CVTSS2SD that
-  // completes its MXCSR state when HighC keeps that state exact.
-  const size_t Widen = ShowBody.find("cvtss2sd");
-  EXPECT_TRUE(
-      ShowBody.find("arg2, (double)arg4)") != std::string::npos ||
-      (Widen != std::string::npos &&
-       ShowBody.substr(Widen, ShowBody.find(';', Widen) - Widen).find("arg4") !=
-           std::string::npos))
+  const size_t FormatCall =
+      ShowBody.find("printf(\"%d %s %f %d %f\\n\", arg0, (void*)arg1, "
+                    "arg3, arg2, ");
+  ASSERT_NE(FormatCall, std::string::npos) << ShowBody;
+  // Tie the actual variadic argument to the checked conversion result while
+  // allowing equivalent source casts and storage representations.
+  const size_t FormatEnd = ShowBody.find(';', FormatCall);
+  EXPECT_NE(ShowBody.substr(FormatCall, FormatEnd - FormatCall)
+                .find(Widened[1].str()),
+            std::string::npos)
       << ShowBody;
   const std::string PassBody = body(Source, "pass");
   ASSERT_FALSE(PassBody.empty()) << Source;

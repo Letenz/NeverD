@@ -40,6 +40,14 @@ __declspec(dllimport) NTSTATUS RtlIntegerToUnicodeString(U32, U32,
                                                          UNICODE_STRING *);
 __declspec(dllimport) NTSTATUS RtlUnicodeStringToInteger(const UNICODE_STRING *,
                                                          U32, U32 *);
+__declspec(dllimport) U8 RtlEqualUnicodeString(const UNICODE_STRING *,
+                                               const UNICODE_STRING *, U8);
+__declspec(dllimport) NTSTATUS RtlAnsiStringToUnicodeString(UNICODE_STRING *,
+                                                            const STRING *, U8);
+__declspec(dllimport) NTSTATUS
+RtlUnicodeStringToAnsiString(STRING *, const UNICODE_STRING *, U8);
+__declspec(dllimport) void RtlFreeUnicodeString(UNICODE_STRING *);
+__declspec(dllimport) void RtlFreeAnsiString(STRING *);
 
 NTSTATUS DriverEntry(void *Driver, const UNICODE_STRING *RegistryPath) {
   (void)Driver;
@@ -82,5 +90,23 @@ NTSTATUS DriverEntry(void *Driver, const UNICODE_STRING *RegistryPath) {
   DbgPrint("strings %wZ %u %d %.*s %u", &Path, Instance, (int)Signed,
            (int)Name.Length, Name.Buffer, Path.Length);
   DbgPrint("status %08x %08x %u", (U32)TooSmall, (U32)Overflow, Tight.Length);
+
+  // Round-trip the path through allocated copies, then release both.
+  STRING Narrow;
+  UNICODE_STRING Wide;
+  if (RtlUnicodeStringToAnsiString(&Narrow, &Path, 1) ||
+      Narrow.Length != Path.Length / 2 || Narrow.Buffer[Narrow.Length] ||
+      RtlAnsiStringToUnicodeString(&Wide, &Narrow, 1) ||
+      !RtlEqualUnicodeString(&Wide, &Path, 0))
+    return (NTSTATUS)0xc000000dU;
+  RtlFreeAnsiString(&Narrow);
+  RtlFreeUnicodeString(&Wide);
+  if (Narrow.Buffer || Narrow.Length || Wide.Buffer || Wide.Length)
+    return (NTSTATUS)0xc000000dU;
+  // A short ANSI buffer keeps the terminated prefix that fits.
+  char Head[4];
+  STRING Short = {0, sizeof(Head), 0, Head};
+  NTSTATUS Truncated = RtlUnicodeStringToAnsiString(&Short, &Path, 0);
+  DbgPrint("convert %08x %u %s", (U32)Truncated, Short.Length, Head);
   return 0;
 }

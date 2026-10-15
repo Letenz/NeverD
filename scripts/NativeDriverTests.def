@@ -9,6 +9,32 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDUnpackDriverTests)
 NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.ExactByteRangesAndTerminatorInOwnedPool")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.LiveResultsAreIndependentAndFreeExactlyOnce")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.AdmissionFailureDoesNotAllocateOrChangeBytes")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.InvalidDeclarationFailsBeforeKernelAllocation")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.CopiedDeclarationRetainsOpaqueLifetimeDependencies")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.PinnedResultCannotBeFreedAndIdentityIsInRange")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.ShortageReturnsNullWithoutPublishingAnotherObject")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.InventoryDoesNotGrantPhysicalReadOrMappingAuthority")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverPhysicalInventoryDeclaration.RoundTripsAndInheritsExplicitSource")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverPhysicalInventoryDeclaration.RejectsMalformedAndLegacyBeforeLoading")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverPhysicalInventoryExecution.IndependentResultsSurviveRebasedLifecycle/{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverPhysicalInventoryExecution.MissingDeclarationAndFreedReadsStop/{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver.UnusedPhysicalInventoryCannotAuthorizeRuntimeRecovery/{backend_title}")
 // Shared driver environment and recovery guards are mandatory on both transports.
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelLoaderView.DefaultSectionAndFlagsStayOpaque")

@@ -84,7 +84,7 @@ bool hasConditionalCallFrame(const BinaryImage &Image, const LowOp &Op,
   if (Callee.ExceptionMetadata || !Callee.hasCompleteLiftCoverage() ||
       !registration_abi::chargeDecodedCallee(Work, Callee) ||
       !registration_abi::hasPrivateCallerFrame(
-          Callee, Image, Work, Effects, false, nullptr, nullptr, &Arguments) ||
+          Callee, Image, Work, Effects, {.ScalarArguments = &Arguments}) ||
       !Effects.Writes.empty() || !Effects.CallerPCWrites.empty())
     return false;
   return true;

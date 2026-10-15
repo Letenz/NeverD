@@ -77,6 +77,11 @@ NEVERD_DRIVER_PROFILE(CanonicalKernelMin, 0xffff800000000000ULL)
 NEVERD_DRIVER_PROFILE(SystemThreadHandleBase, 0x60000000)
 NEVERD_DRIVER_PROFILE(SystemThreadHandleLimit, 0x6ffffffc)
 NEVERD_DRIVER_PROFILE(SystemThreadHandleStride, 4)
+// Thread client IDs share the process-ID namespace: synthetic IDs start here in
+// steps of 4, skip modeled process IDs and are never reused.
+NEVERD_DRIVER_PROFILE(ThreadIDBase, 0x2000)
+NEVERD_DRIVER_PROFILE(ThreadIDStride, 4)
+NEVERD_DRIVER_PROFILE(ThreadIDLimit, 0xfffffffc)
 NEVERD_DRIVER_PROFILE(ThunkTrapByte, 0xcc)
 NEVERD_DRIVER_PROFILE(MajorFunctionCount, 28)
 NEVERD_DRIVER_PROFILE(MaxImports, 4096)

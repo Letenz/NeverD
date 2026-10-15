@@ -12,6 +12,7 @@
 #include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/loader/SymbolSpelling.h"
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -823,6 +824,108 @@ TEST(SourceDialect, PlainCCallbackRequiresItsNativeTableAndBodyIdentity) {
     EXPECT_THROW(HighCEmitter().emit({Function}, OS, Options),
                  std::invalid_argument);
   }
+}
+
+TEST(SourceDialect, CxxUnknownExternalParametersKeepDefaultPromotions) {
+  const llvm::StringRef Source = R"C(
+extern int native_call(/* unknown parameters */) __asm__("native_call");
+int known(void);
+int defined();
+int known(void) { return 3; }
+int defined() { return 4; }
+int main(void) {
+  signed char value = -7;
+  float fraction = 1.25f;
+  return native_call(value, fraction, &value) + known() + defined() - 7;
+}
+)C";
+  const auto C = spell(Source, SourceDialect::C);
+  const auto Cpp = spell(Source, SourceDialect::Cpp);
+  ASSERT_TRUE(C.Unread.empty()) << C.Text;
+  ASSERT_TRUE(Cpp.Unread.empty()) << Cpp.Text;
+  EXPECT_EQ(tokens(C.Text), tokens(Source));
+  EXPECT_NE(Cpp.Text.find("native_call(.../* unknown parameters */)"),
+            std::string::npos)
+      << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("int known(void);"), std::string::npos);
+  EXPECT_NE(Cpp.Text.find("int defined();"), std::string::npos);
+  EXPECT_NE(Cpp.Text.find("int defined() {"), std::string::npos);
+  EXPECT_NE(Cpp.Text.find("native_call(value, fraction, &value)"),
+            std::string::npos);
+  // Separate prototypes and source labels still refer to their own tokens.
+  const auto Several =
+      spell("extern int first(), second() __asm__(\"first()\");\n",
+            SourceDialect::Cpp);
+  EXPECT_TRUE(Several.Unread.empty());
+  EXPECT_NE(Several.Text.find("first(...), second(...) __asm__(\"first()\")"),
+            std::string::npos)
+      << Several.Text;
+
+  const std::string Clang = NEVERD_TEST_CLANG;
+  if (Clang.empty())
+    GTEST_SKIP() << "no clang: C and C++ argument promotion is not executed";
+  llvm::SmallString<128> Dir;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-prototype", Dir));
+  llvm::SmallString<128> Provider(Dir), Object(Dir);
+  llvm::sys::path::append(Provider, "provider.c");
+  llvm::sys::path::append(Object, "provider.o");
+  std::error_code EC;
+  {
+    llvm::raw_fd_ostream OS(Provider, EC);
+    ASSERT_FALSE(EC);
+    // The source's explicit assembler label is exact on Mach-O as well.
+    // An ordinary definition would otherwise acquire the platform prefix.
+    OS << "int native_call(int, double, signed char *) "
+          "__asm__(\"native_call\");\n"
+          "int native_call(int value, double fraction, signed char *pointer) "
+          "{\n"
+          "  return value != -7 || fraction != 1.25 || *pointer != -7;\n}\n";
+  }
+  auto ProviderBuild =
+      run(Clang, {"-std=c11", "-c", Provider, "-o", Object}, Dir);
+  ASSERT_TRUE(bool(ProviderBuild)) << llvm::toString(ProviderBuild.takeError());
+  for (bool IsCpp : {false, true}) {
+    llvm::SmallString<128> File(Dir), Binary(Dir);
+    llvm::sys::path::append(File, IsCpp ? "source.cpp" : "source.c");
+    llvm::sys::path::append(Binary, IsCpp ? "cpp.out" : "c.out");
+    {
+      llvm::raw_fd_ostream OS(File, EC);
+      ASSERT_FALSE(EC);
+      OS << (IsCpp ? Cpp.Text : C.Text);
+    }
+    // Check the actual frontend argument types on every host. Darwin AArch64
+    // has different fixed and variadic physical ABIs; the C++ ellipsis is a
+    // source view and cannot authorize a call to the fixed C provider there.
+    llvm::SmallString<128> IR(Dir);
+    llvm::sys::path::append(IR, IsCpp ? "source-cpp.ll" : "source-c.ll");
+    auto CompiledIR = run(Clang,
+                          {IsCpp ? "-std=c++17" : "-std=c11", "-O0", "-S",
+                           "-emit-llvm", File, "-o", IR},
+                          Dir);
+    ASSERT_TRUE(bool(CompiledIR)) << llvm::toString(CompiledIR.takeError());
+    auto Buffer = llvm::MemoryBuffer::getFile(IR);
+    ASSERT_TRUE(bool(Buffer));
+    bool Promoted = false;
+    llvm::SmallVector<llvm::StringRef> Lines;
+    Buffer.get()->getBuffer().split(Lines, '\n');
+    for (const auto Line : Lines)
+      if (Line.contains("call ") && Line.contains("native_call"))
+        Promoted |= Line.contains("i32 ") && Line.contains("double ") &&
+                    Line.contains("ptr ");
+    EXPECT_TRUE(Promoted) << Buffer.get()->getBuffer().str();
+#if defined(__APPLE__) && defined(__aarch64__)
+    if (IsCpp)
+      continue;
+#endif
+    auto Built = run(
+        Clang,
+        {IsCpp ? "-std=c++17" : "-std=c11", "-O1", "-o", Binary, File, Object},
+        Dir);
+    ASSERT_TRUE(bool(Built)) << llvm::toString(Built.takeError());
+    auto Result = run(Binary, {}, Dir);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  }
+  llvm::sys::fs::remove_directories(Dir);
 }
 
 TEST(SourceDialect, CxxAlignmentUsesStandardSyntaxAndPreservesStorage) {

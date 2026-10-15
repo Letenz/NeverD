@@ -59,6 +59,15 @@ void writeSourceReceipt(const char *Input, const char *Output,
   Context["source_end"] = Source.CodeRange.End - Image.Base;
   Context["generated_begin"] = Generated.CodeRange.Begin - Image.Base;
   Context["generated_end"] = Generated.CodeRange.End - Image.Base;
+  auto Fragments = [&](const ExceptionFunction &Function) {
+    llvm::json::Array Ranges;
+    for (const auto &Range : Function.FragmentRanges)
+      Ranges.push_back(
+          llvm::json::Array{Range.Begin - Image.Base, Range.End - Image.Base});
+    return Ranges;
+  };
+  Context["source_fragments"] = Fragments(Source);
+  Context["generated_fragments"] = Fragments(Generated);
   std::error_code Error;
   llvm::raw_fd_ostream Out(Receipt, Error);
   ASSERT_FALSE(Error) << Error.message();

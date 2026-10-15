@@ -259,4 +259,68 @@ TEST(RegistrationCallback, RealignedCatchObjectsCannotReplaceRuntimeAnchors) {
   }
 }
 
+TEST(RegistrationCallbackInitializer,
+     KeepsArgumentsAndParentInitializationSeparate) {
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation)
+    for (bool Reversed : {false, true}) {
+      SCOPED_TRACE(Mutation);
+      SCOPED_TRACE(Reversed);
+      auto F = realignedCatchWithCall();
+      auto &Handler = F.Blocks[4];
+      std::erase_if(Handler.Ops, [](const auto &Op) {
+        return Op.Addr == 0x110d && Op.Opcode == NdOp::STORE;
+      });
+      const auto SP = NdVar::reg(x86reg::RSP, 4);
+      const auto FP = NdVar::reg(x86reg::RBP, 4);
+      const auto Tmp = NdVar::tmp(55, 4);
+      LowBlock Arguments;
+      emit(Arguments, 0x1110, NdOp::INT_SUB, SP, {SP, NdVar::cst(8, 4)});
+      emit(Arguments, 0x1110, NdOp::STORE, {},
+           {SP, Mutation == 2 ? FP : NdVar::cst(7, 4)});
+      emit(Arguments, 0x1110, NdOp::INT_ADD, Tmp, {SP, NdVar::cst(4, 4)});
+      if (Mutation != 1)
+        emit(Arguments, 0x1110, NdOp::STORE, {}, {Tmp, NdVar::cst(13, 4)});
+      if (Mutation == 4)
+        emit(Arguments, 0x1110, NdOp::INT_ADD, SP, {SP, NdVar::cst(4, 4)});
+      const auto At = llvm::find_if(
+          Handler.Ops, [](const auto &Op) { return Op.Addr == 0x1110; });
+      Handler.Ops.insert(At, Arguments.Ops.begin(), Arguments.Ops.end());
+      for (unsigned I = 0; I != Handler.Ops.size(); ++I)
+        Handler.Ops[I].Seq = I;
+      auto &Resume = F.Blocks[5];
+      emit(Resume, 0x1189, NdOp::INT_ADD, NdVar::reg(x86reg::RCX, 4),
+           {NdVar::reg(x86reg::RSI, 4), NdVar::cst(36, 4)});
+      emit(Resume, 0x118c, NdOp::CALL, NdVar::reg(x86reg::RAX, 4),
+           {NdVar::cst(0x2200, 4)});
+      Resume.InstructionBoundaries.insert(Resume.InstructionBoundaries.end(),
+                                          {{0x1189, 3}, {0x118c, 5}});
+      Resume.InstructionBoundaries.back().Control = LowInstructionControl::Call;
+      Resume.EndAddr = 0x1191;
+      RegistrationCalleeFrameContract Constructor;
+      Constructor.Target = 0x2100;
+      Constructor.CalleeKind =
+          RegistrationCalleeFrameContract::Kind::Initializer;
+      Constructor.StackPopBytes = Mutation == 3 ? 12 : 8;
+      Constructor.ECXWrites = {{0, 4}};
+      Constructor.ECXInitialized = {{0, Mutation == 5 ? 2 : 4}};
+      RegistrationCalleeFrameContract Read;
+      Read.Target = 0x2200;
+      Read.ECXReads = {{0, 4}};
+      const std::vector Contracts{Constructor, Read};
+      if (Reversed)
+        std::reverse(F.Blocks.begin(), F.Blocks.end());
+      const auto State = analyzeRegistrationStates(F, 0, 0, &Contracts);
+      EXPECT_EQ(State.Complete, Mutation == 0);
+      EXPECT_EQ(State.CallFrameEffectsComplete, Mutation == 0);
+      if (Mutation != 0)
+        continue;
+      for (const auto &D : State.Diagnostics)
+        ADD_FAILURE() << D;
+      ASSERT_EQ(State.CallFrameEffects.size(), 2u);
+      EXPECT_EQ(State.CallFrameEffects[0].StackPopBytes, 8u);
+      EXPECT_EQ(State.CallFrameEffects[1].ECXFrameOffset, -24);
+      EXPECT_EQ(State.CxxContinuations[0].SavedStackOffset, -60);
+    }
+}
+
 } // namespace

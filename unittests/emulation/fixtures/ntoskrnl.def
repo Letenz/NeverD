@@ -17,6 +17,7 @@ EXPORTS
   NtQuerySystemInformation
   ZwQuerySystemInformation
   ExAllocatePoolWithTag
+  ExFreePool
   ExFreePoolWithTag
   IoCreateDevice
   IoCreateSymbolicLink
@@ -95,3 +96,10 @@ EXPORTS
   PsGetCurrentProcess
   PsGetCurrentThread
   KeGetCurrentThread
+  PsGetCurrentThreadId
+  PsGetThreadId
+  RtlAnsiStringToUnicodeString
+  RtlUnicodeStringToAnsiString
+  RtlFreeUnicodeString
+  RtlFreeAnsiString
+  MmGetPhysicalMemoryRanges

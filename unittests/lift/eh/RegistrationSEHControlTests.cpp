@@ -8,6 +8,7 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/loader/BinaryImage.h"
@@ -16,6 +17,60 @@
 #include "llvm/ADT/STLExtras.h"
 
 using namespace neverd;
+
+TEST(RegistrationSEHControl, PartitionsEH3AndEH4FinallyCallContinuations) {
+  for (bool EH4 : {false, true}) {
+    SCOPED_TRACE(EH4);
+    BinaryImage Image;
+    Image.Arch = Arch::X86;
+    Image.Bits = Bitness::Bits32;
+    Image.Format = BinaryFormat::COFF;
+    Image.Base = 0x400000;
+    Segment Text;
+    Text.VA = 0x401000;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    // Keep an observable instruction between the CALL and the parent RET.
+    // It must run only after the finally invocation returns.
+    Text.Data = {0xe8, 6, 0, 0, 0, 0xb8, 7, 0, 0, 0, 0xc3, 0xc3};
+    Text.Size = Text.FileSz = Text.Data.size();
+    Image.Segments.push_back(Text);
+    Section Code;
+    Code.VA = Text.VA;
+    Code.Size = Code.FileSz = Text.Size;
+    Code.Flags = Text.Flags;
+    Image.Sections.push_back(Code);
+    ExceptionFunction EH;
+    EH.CodeRange = {Text.VA, Text.VA + Text.Size};
+    EH.Encoding = EH4 ? ExceptionEncoding::X86ScopeTableEH4
+                      : ExceptionEncoding::X86ScopeTableEH3;
+    EH.Personality = EH4 ? ExceptionPersonality::ExceptHandler4
+                         : ExceptionPersonality::ExceptHandler3;
+    EH.ParseStatus = ExceptionParseStatus::Complete;
+    EH.Registration.emplace();
+    EH.Registration->SeededTryLevel = EH4 ? -2 : -1;
+    EH.Registration->TryLevelOffset = -4;
+    EH.Registration->RegistrationOffset = -16;
+    EH.Registration->Scopes = {{EH4 ? -2 : -1, 0, Text.VA + 11, true}};
+    Image.ExceptionMetadata.Functions.push_back(EH);
+    Image.ExceptionMetadata.rebuildIndex();
+    Decoder Decode;
+    ASSERT_TRUE(Decode.init(Image));
+    const auto Function = CFGBuilder().build(Image, Decode, Text.VA);
+    const auto Continuation =
+        llvm::find_if(Function.Blocks, [&](const auto &B) {
+          return B.StartAddr == Text.VA + 5;
+        });
+    ASSERT_NE(Continuation, Function.Blocks.end());
+    const auto Caller = llvm::find_if(
+        Function.Blocks, [&](const auto &B) { return B.StartAddr == Text.VA; });
+    ASSERT_NE(Caller, Function.Blocks.end());
+    EXPECT_EQ(Caller->EndAddr, Text.VA + 5);
+    EXPECT_EQ(Caller->Succs, (std::vector<int>{Continuation->Id}));
+    // Partitioning establishes no registration lifetime by itself.
+    ASSERT_TRUE(Function.RegistrationStates);
+    EXPECT_FALSE(Function.RegistrationStates->Complete);
+  }
+}
 
 TEST(RegistrationSEHControl, UsesActualImmutableNearCallAndReturnBytes) {
   for (unsigned Mutation = 0; Mutation != 13; ++Mutation) {

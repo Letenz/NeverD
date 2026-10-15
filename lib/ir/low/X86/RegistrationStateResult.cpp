@@ -137,6 +137,13 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
   for (const auto &[Identity, Resume] : JumpResumptions)
     if (!charge(1) || ModifiedCallbackCaptures.count(Resume.CaptureCall))
       Result.SEHJumpResumptionsComplete = false;
+  if (!Result.SEHJumpCapturesComplete) {
+    Result.SEHJumpResumptionsComplete = false;
+    Result.Complete = Result.CallbackStatesComplete =
+        Result.RegistrationLifetimeComplete = false;
+    Result.Diagnostics.push_back(
+        "SEH jump capture has conflicting source facts");
+  }
   const bool FailedJump = !Result.SEHJumpResumptionsComplete;
   Result.SEHJumpResumptionsComplete &=
       Result.Complete && Result.CallbackStatesComplete;
@@ -147,6 +154,14 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
     Result.Complete = Result.CallbackStatesComplete =
         Result.RegistrationLifetimeComplete = false;
     Result.Diagnostics.push_back("SEH jump buffer or resumption is not proven");
+  }
+  Result.SEHJumpCapturesComplete &=
+      Result.Complete && Result.CallbackStatesComplete &&
+      Result.SEHJumpResumptionsComplete && !Exhausted;
+  if (Result.SEHJumpCapturesComplete) {
+    if (charge(JumpCaptureOccurrences.size()))
+      for (const auto &[Identity, Capture] : JumpCaptureOccurrences)
+        Result.SEHJumpCaptures.push_back(Capture);
   }
   if (!Result.CxxContinuationsComplete) {
     Result.Complete = Result.CallbackStatesComplete = false;

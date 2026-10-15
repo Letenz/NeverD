@@ -19,7 +19,6 @@ namespace neverd {
 struct BinaryImage;
 struct LowFunc;
 struct LowOp;
-struct RegistrationChainInfo;
 
 namespace registration_state {
 
@@ -46,10 +45,6 @@ checkedJumpRuntimeCall(const BinaryImage &Image, const LowFunc &Function,
 /// call. This grants no buffer, frame, resumption or no-return authority.
 bool isEH3JumpRuntimeInstruction(const BinaryImage &Image, va_t Address,
                                  uint16_t Size, llvm::ArrayRef<LowOp> Ops);
-bool isEH3FinallyCallInstruction(const BinaryImage &Image,
-                                 const RegistrationChainInfo &Chain,
-                                 va_t Address, uint16_t Size,
-                                 llvm::ArrayRef<LowOp> Ops);
 
 } // namespace registration_state
 } // namespace neverd

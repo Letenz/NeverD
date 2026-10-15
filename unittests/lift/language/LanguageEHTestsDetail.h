@@ -15,6 +15,7 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/DWARF/EHFrame.h"
 #include "neverd/loader/DWARF/ItaniumEH.h"
 #include "neverd/loader/DWARF/LSDA.h"
@@ -22,11 +23,8 @@
 #include "neverd/loader/LanguageRuntime.h"
 #include "neverd/loader/Rust/RustEH.h"
 
-#include <cstring>
-
-#include "neverd/loader/BinaryImage.h"
-
 #include <cstddef>
+#include <cstring>
 #include <vector>
 
 namespace neverd::language_eh_test {
@@ -100,8 +98,9 @@ inline constexpr va_t kTextVA = 0x400000;
 
 inline constexpr va_t kDataVA = 0x500000;
 
-inline /// A minimal 64-bit image with one executable segment and one data segment.
-BinaryImage makeImage(size_t TextSize = 0x1000, size_t DataSize = 0x1000) {
+inline /// A minimal 64-bit image with one executable segment and one data
+       /// segment.
+    BinaryImage makeImage(size_t TextSize = 0x1000, size_t DataSize = 0x1000) {
   BinaryImage Img;
   Img.Arch = Arch::X64;
   Img.Format = BinaryFormat::ELF;
@@ -127,7 +126,8 @@ BinaryImage makeImage(size_t TextSize = 0x1000, size_t DataSize = 0x1000) {
   return Img;
 }
 
-inline void writeData(BinaryImage &Img, va_t VA, const std::vector<uint8_t> &Bytes) {
+inline void writeData(BinaryImage &Img, va_t VA,
+                      const std::vector<uint8_t> &Bytes) {
   ASSERT_TRUE(Img.writeVA(VA, Bytes.data(), Bytes.size()));
 }
 
@@ -142,9 +142,10 @@ struct FrameBytes {
   size_t FDEOffset = 0;
 };
 
-inline FrameBytes buildSimpleFrame(va_t SectionVA, va_t FuncVA, uint64_t FuncSize,
-                            const char *Augmentation, va_t PersonalityVA,
-                            va_t LSDAVA) {
+inline FrameBytes buildSimpleFrame(va_t SectionVA, va_t FuncVA,
+                                   uint64_t FuncSize, const char *Augmentation,
+                                   va_t PersonalityVA, va_t LSDAVA,
+                                   uint8_t LSDAEncoding = 0x1b) {
   FrameBytes Result;
   ByteBuilder B;
 
@@ -168,7 +169,7 @@ inline FrameBytes buildSimpleFrame(va_t SectionVA, va_t FuncVA, uint64_t FuncSiz
     for (const char *P = Augmentation + 1; *P; ++P) {
       switch (*P) {
       case 'L':
-        Aug.u8(0x1b); // DW_EH_PE_pcrel | DW_EH_PE_sdata4
+        Aug.u8(LSDAEncoding);
         break;
       case 'P': {
         Aug.u8(0x00); // DW_EH_PE_absptr

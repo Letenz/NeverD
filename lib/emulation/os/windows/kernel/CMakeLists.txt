@@ -80,6 +80,7 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelInterruptEvents.cpp
   KernelResources.cpp
   KernelPhysicalMemory.cpp
+  KernelPhysicalInventory.cpp
   KernelDMA.cpp
   KernelDMAChannels.cpp
   KernelDMAEvents.cpp

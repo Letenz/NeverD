@@ -63,7 +63,8 @@ bool RegistrationStateSolver::transferJumpCapture(
   if (!JumpRuntime || !JumpRuntime->Capture || KnownCxx || EH4 ||
       After.Unknown || Facts.Invalid || !After.Parent || After.Callback ||
       !After.JumpBindingsIntact || !After.Installed || After.Uninstalled ||
-      !Function.hasCompleteLiftCoverage())
+      !Function.hasCompleteLiftCoverage() || Op.Opcode != NdOp::CALL ||
+      Op.NumInputs != 1 || !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4)
     return false;
   const auto Capture = JumpRuntime->Capture(Op, After.Frame, true, WorkUsed);
   if (!Capture)
@@ -75,6 +76,20 @@ bool RegistrationStateSolver::transferJumpCapture(
       Block.Succs.front() != Function.Blocks[Entry->second].Id ||
       !charge(After.Frame.cellCount() + After.JumpCaptures.size() * 14 + 40))
     return false;
+  const RegistrationSEHJumpCapture Receipt{Op.Addr,
+                                           Capture->ReturnPC,
+                                           Op.Seq,
+                                           Op.Inputs[0].Offset,
+                                           Capture->UnwindTarget,
+                                           Capture->BufferOffset,
+                                           Capture->StackOffset,
+                                           Capture->Level};
+  const auto [Found, New] =
+      JumpCaptureOccurrences.emplace(std::make_pair(Op.Addr, Op.Seq), Receipt);
+  if (!New && Found->second != Receipt) {
+    Result.SEHJumpCapturesComplete = false;
+    return false;
+  }
   invalidateJumpCaptures(After, FrameValue::frame(Capture->BufferOffset),
                          EH3JumpCapture::BufferBytes);
   storeEH3JumpCapture(After.Frame, *Capture);
@@ -100,9 +115,9 @@ bool RegistrationStateSolver::transferJumpResume(size_t I, Domain &After,
       !After.JumpBindingsIntact || Function.Entry != EH.CodeRange.Begin ||
       !EH.CodeRange.contains(Op.Addr) || Op.Addr > UINT32_MAX - 5 ||
       Op.Addr + 5 > EH.CodeRange.End || !After.Installed || After.Uninstalled ||
-      After.Levels.empty() || After.Activation.SearchFilter ||
-      Chain.RealignedFrame || Chain.RegistrationOffset != -16 ||
-      Chain.TryLevelOffset != -4 || !Function.hasCompleteLiftCoverage() ||
+      After.Levels.empty() || Chain.RealignedFrame ||
+      Chain.RegistrationOffset != -16 || Chain.TryLevelOffset != -4 ||
+      !Function.hasCompleteLiftCoverage() ||
       After.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride].Offset != 0)
     return Refuse();
   const auto SP = After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
@@ -221,6 +236,14 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
                                     Saved.StackOffset,
                                     CalleeVA,
                                     ResumeVA};
+  const auto SP = After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
+  if (!Receipt.EntryVA && !Receipt.OrdinaryCall && !CalleeVA && !ResumeVA &&
+      SP.Offset && *SP.Offset <= INT32_MAX - 4)
+    Receipt.ValueOffset = *SP.Offset + 4;
+  if (Receipt.EntryVA && !CalleeVA && !ResumeVA && After.Callback &&
+      SP.CallbackAddress && SP.CallbackAddress->Entry == Receipt.EntryVA &&
+      SP.CallbackAddress->Offset <= -8)
+    Receipt.ValueOffset = SP.CallbackAddress->Offset + 4;
   const SEHExitKey Identity{Receipt.EntryVA, Receipt.OrdinaryCall, Op.Addr,
                             Op.Seq};
   const auto [It, New] = JumpResumptions.emplace(Identity, Receipt);

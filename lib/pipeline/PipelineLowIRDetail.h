@@ -37,6 +37,7 @@ bool tableObjectSummaryMayAlias(
 struct ModuleJumpTableArbitrationTestResult {
   std::set<va_t> UnsafeBranches;
   bool AnalysisComplete = false;
+  std::set<va_t> ProtectedRelocationSlots;
 };
 
 /// Focused test seam for the otherwise private module ownership fixed point.

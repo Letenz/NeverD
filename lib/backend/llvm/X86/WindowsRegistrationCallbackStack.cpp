@@ -43,7 +43,8 @@ llvm::Error checkPrivateStack(
     X86RegistrationCallbackFrame &Frame,
     std::set<llvm::AllocaInst *> &PrivateSlots, size_t &WorkUsed,
     const std::set<llvm::StoreInst *> *SourceStores,
-    llvm::ArrayRef<X86RegistrationCatchStackResume> Resumes) {
+    llvm::ArrayRef<X86RegistrationCatchStackResume> Resumes,
+    std::set<const llvm::StoreInst *> *PrivateStores) {
   std::map<llvm::Value *, int64_t> Offsets;
   std::vector<llvm::Value *> Work;
   struct ScratchAccess {
@@ -95,6 +96,7 @@ llvm::Error checkPrivateStack(
            Size.getFixedValue() <= uint64_t(-Offset) && Align.value() <= 16 &&
            (int64_t(*Frame.StackPointerOffset) + Offset) % Align.value() == 0;
   };
+  std::map<llvm::AllocaInst *, RegistrationStackCopy> Copies;
   while (!Work.empty() && !Invalid && !Exhausted) {
     if (!Charge(1))
       break;
@@ -196,21 +198,36 @@ llvm::Error checkPrivateStack(
             Store->getValueOperand()->getType() != Slot->getAllocatedType() ||
             Store->isVolatile() || Store->isAtomic())
           return reject("private callback stack address is stored externally");
+        const auto [Copy, Added] = Copies.try_emplace(Slot);
+        if (!Added) {
+          if (Copy->second.Offset != Offset)
+            return reject("private callback stack copy changed its offset");
+          continue;
+        }
+        Copy->second.Offset = Offset;
         for (llvm::User *SlotUser : Slot->users()) {
           if (!Charge(1))
             return reject(
                 "private callback stack SSA uses exceed the work budget");
-          auto *Load = llvm::dyn_cast<llvm::LoadInst>(SlotUser);
-          if (SlotUser == Store || isPrivateSlotInitializer(SlotUser, *Slot))
+          if (isPrivateSlotInitializer(SlotUser, *Slot))
             continue;
+          if (auto *Definition = llvm::dyn_cast<llvm::StoreInst>(SlotUser)) {
+            if (Definition->getPointerOperand() != Slot ||
+                Definition->getValueOperand()->getType() !=
+                    Slot->getAllocatedType() ||
+                !Body.count(Definition->getParent()) ||
+                Definition->isVolatile() || Definition->isAtomic())
+              return reject(
+                  "private callback stack copy has an unproved definition");
+            Copy->second.Definitions.insert(Definition);
+            continue;
+          }
+          auto *Load = llvm::dyn_cast<llvm::LoadInst>(SlotUser);
           if (!Load || Load->getType() != Slot->getAllocatedType() ||
               !Body.count(Load->getParent()) || Load->isVolatile() ||
-              Load->isAtomic() ||
-              (Store->getParent() != &Entry &&
-               Store->getParent() != Load->getParent()) ||
-              (Store->getParent() == Load->getParent() &&
-               !Store->comesBefore(Load)))
+              Load->isAtomic())
             return reject("private callback stack SSA copy has unproved uses");
+          Copy->second.Loads.insert(Load);
           Add(Load, Offset);
         }
         PrivateSlots.insert(Slot);
@@ -219,6 +236,9 @@ llvm::Error checkPrivateStack(
       return reject("private callback stack address has an observable use");
     }
   }
+  if (auto Error = validateRegistrationStackCopies(Entry, Body, Copies, Offsets,
+                                                   WorkUsed, Resumes))
+    return Error;
   if (Exhausted)
     return reject("private callback stack values exceed the work budget");
   if (Invalid)
@@ -360,6 +380,10 @@ llvm::Error checkPrivateStack(
               "private callback scratch read is not definitely initialized");
     }
   }
+  if (PrivateStores)
+    for (const auto &[Instruction, Access] : Accesses)
+      if (Access.Write)
+        PrivateStores->insert(llvm::cast<llvm::StoreInst>(Instruction));
   return llvm::Error::success();
 }
 

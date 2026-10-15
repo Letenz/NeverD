@@ -258,6 +258,47 @@ TEST_F(DriverKernelModel,
   EXPECT_NE(denied(Object, 1).find("freed"), std::string::npos);
 }
 
+TEST_F(DriverKernelModel, SystemThreadClientIDNamesTheRunningThread) {
+  constexpr uint32_t ThreadAllAccess = 0x001fffff;
+  const uint64_t ClientID = Scratch + 0x20;
+  success(Memory->write(ClientID, std::vector<uint8_t>(16, 0xff)));
+  EXPECT_EQ(invoke("PsCreateSystemThread",
+                   {Scratch, ThreadAllAccess, 0, 0, ClientID, Entry, 0}),
+            0u);
+  EXPECT_EQ(integer(ClientID), windows::SystemProcessID);
+  const uint64_t ThreadID = integer(ClientID + 8);
+  EXPECT_EQ(ThreadID % 4, 0u);
+  const uint64_t Handle = integer(Scratch);
+  EXPECT_EQ(invoke("ObReferenceObjectByHandle",
+                   {Handle, 0x100000, 0, windows::KernelMode, Scratch + 8, 0}),
+            0u);
+  const uint64_t Object = integer(Scratch + 8);
+  EXPECT_EQ(invoke("PsGetThreadId", {Object}), ThreadID);
+  auto Invocation = Model->nextScheduled(false);
+  ASSERT_TRUE(bool(Invocation)) << llvm::toString(Invocation.takeError());
+  ASSERT_TRUE(*Invocation);
+  Model->enterExecution(Scratch + 0x8000, (**Invocation).ID);
+  EXPECT_EQ(invoke("PsGetCurrentThread", {}), Object);
+  EXPECT_EQ(invoke("PsGetCurrentThreadId", {}), ThreadID);
+  EXPECT_EQ(invoke("PsTerminateSystemThread", {0}), 0u);
+  ASSERT_EQ(Model->takeThreadTermination(), std::optional<uint32_t>(0));
+  success(Model->finishScheduled((**Invocation).ID));
+  EXPECT_EQ(invoke("ZwClose", {Handle}), 0u);
+  EXPECT_EQ(invoke("ObfDereferenceObject", {Object}), 0u);
+  // A retired thread loses its ID, and a later thread never reuses it.
+  EXPECT_NE(failure("PsGetThreadId", {Object}).find("known thread object"),
+            std::string::npos);
+  EXPECT_EQ(invoke("PsCreateSystemThread",
+                   {Scratch, ThreadAllAccess, 0, 0, ClientID, Entry, 0}),
+            0u);
+  EXPECT_NE(integer(ClientID + 8), ThreadID);
+  // Non-system process handles remain unsupported.
+  EXPECT_NE(failure("PsCreateSystemThread",
+                    {Scratch, ThreadAllAccess, 0, 1, 0, Entry, 0})
+                .find("process handles"),
+            std::string::npos);
+}
+
 TEST_F(DriverKernelModel, CriticalAndGuardedAPCRegionsPairOnOneThread) {
   Model->enterExecution(profile::StackBase);
   EXPECT_EQ(invoke("KeAreApcsDisabled", {}), 0u);
@@ -437,6 +478,26 @@ TEST_F(DriverKernelModel,
   invoke(kernel_api::KeLowerIrql, {scheduler::PassiveLevel});
   EXPECT_EQ(invoke(kernel_api::KeQueryPriorityThread, {Object}),
             thread_priority::Minimum);
+}
+
+TEST_F(DriverKernelModel, DetachedStackReuseStartsWithFreshThreadClientID) {
+  const uint64_t Base = Scratch + profile::PageSize;
+  Model->enterExecution(Base);
+  const uint64_t Object = llvm::cantFail(Model->currentThreadObject());
+  const uint64_t ID = invoke(kernel_api::PsGetCurrentThreadId, {});
+  EXPECT_EQ(invoke(kernel_api::PsGetThreadId, {Object}), ID);
+  success(Model->retireStack(Base, profile::PageSize));
+  EXPECT_NE(
+      failure(kernel_api::PsGetThreadId, {Object}).find("known thread object"),
+      std::string::npos);
+  success(Model->activateStack(Base, profile::PageSize));
+  Model->enterExecution(Base);
+  const uint64_t Fresh = llvm::cantFail(Model->currentThreadObject());
+  EXPECT_NE(Fresh, Object);
+  const uint64_t FreshID = invoke(kernel_api::PsGetThreadId, {Fresh});
+  EXPECT_NE(FreshID, ID);
+  EXPECT_EQ(FreshID % 4, 0u);
+  EXPECT_EQ(invoke(kernel_api::PsGetCurrentThreadId, {}), FreshID);
 }
 
 TEST_F(DriverKernelModel, DetachedStackReuseStartsWithFreshThreadPriority) {
