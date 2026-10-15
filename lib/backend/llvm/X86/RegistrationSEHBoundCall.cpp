@@ -10,6 +10,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/X86RegistrationSEHBoundCall.h"
 #include "neverd/ir/med/MedIR.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/X86RegistrationCallResult.h"
 
 #include "llvm/IR/DerivedTypes.h"
@@ -35,6 +36,8 @@ getX86RegistrationSEHBoundCalls(const MedFunc &Function) {
     using ArgumentKind = RegistrationSEHBoundArgument::Kind;
     switch (Call.CalleeKind) {
     case CalleeKind::PreservedHelper:
+      if (Call.EntryVA)
+        return std::nullopt;
       break;
     case CalleeKind::RaiseException:
       if (!Call.HasOrdinaryReturn || Call.Arguments.size() != 4 ||
@@ -45,7 +48,8 @@ getX86RegistrationSEHBoundCalls(const MedFunc &Function) {
         return std::nullopt;
       break;
     case CalleeKind::ControlFP:
-      if (!Call.HasOrdinaryReturn || Call.Arguments.size() != 3 ||
+      if (Call.EntryVA || !Call.HasOrdinaryReturn ||
+          Call.Arguments.size() != 3 ||
           Call.Arguments[0].ArgumentKind != ArgumentKind::Object ||
           Call.Arguments[1].ArgumentKind != ArgumentKind::Scalar ||
           Call.Arguments[2].ArgumentKind != ArgumentKind::Scalar)
@@ -59,6 +63,10 @@ getX86RegistrationSEHBoundCalls(const MedFunc &Function) {
         Call.Arguments.size() > 31 ||
         !Result.emplace(Call.Address, X86RegistrationSEHBoundCall{&Call})
              .second)
+      return std::nullopt;
+    if (Call.EntryVA &&
+        (Call.EntryVA > UINT32_MAX || Call.StackOffset > -16 ||
+         Call.StackOffset < -int64_t(limits::kMaxSourceCallBorrowedBytes)))
       return std::nullopt;
     for (size_t I = 0; I != Call.Arguments.size(); ++I) {
       const auto &Arg = Call.Arguments[I];
@@ -128,6 +136,29 @@ getX86RegistrationSEHBoundCalls(const MedFunc &Function) {
   if (llvm::any_of(Result,
                    [](const auto &Item) { return !Item.second.Operation; }))
     return std::nullopt;
+  for (auto &[Address, Call] : Result) {
+    if (!Call.Source->EntryVA)
+      continue;
+    for (const auto &Block : Function.Blocks) {
+      if (++Work > limits::kMaxRegistrationEHStateWork)
+        return std::nullopt;
+      if (Block.StartAddr != Call.Source->EntryVA)
+        continue;
+      for (const auto &Op : Block.Ops) {
+        if (++Work > limits::kMaxRegistrationEHStateWork)
+          return std::nullopt;
+        if (Op.RegistrationRoot !=
+            MedOp::RegistrationRootKind::CallbackStackPointer)
+          continue;
+        if (Call.StackRoot || !hasValidRegistrationRootShape(Op) ||
+            Op.Output.SSAVer <= 0 || Op.Addr != Block.StartAddr)
+          return std::nullopt;
+        Call.StackRoot = &Op;
+      }
+    }
+    if (!Call.StackRoot)
+      return std::nullopt;
+  }
   for (const auto &[Address, Call] : Result) {
     if (Call.Source->CalleeKind == RegistrationSEHBoundCall::Kind::ControlFP) {
       if (Call.Operation->Output.Size != 4)

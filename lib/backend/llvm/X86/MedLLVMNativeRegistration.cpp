@@ -338,6 +338,14 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
         return false;
       Requests[Callback->second].NonReturningCalls.push_back(Call);
     }
+  for (const auto &[Call, Bound] : JumpPlan->BoundCalls)
+    if (Bound.Source->EntryVA) {
+      const auto Callback = CallbackIndices.find({Bound.Source->EntryVA, true});
+      if (Callback == CallbackIndices.end() ||
+          !llvm::is_contained(Requests[Callback->second].Blocks,
+                              Call->getParent()))
+        return false;
+    }
   auto &SourceOperations = SourceProof->Operations;
   auto &CookieCheckCalls = SourceProof->CookieCheckCalls;
 
@@ -637,6 +645,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   std::map<va_t, llvm::Function *> JumpCallbacks;
   for (const auto &[Identity, Index] : CallbackIndices)
     JumpCallbacks.emplace(Identity.first, (*Outlined)[Index]);
+  x86_registration::bindSEHRuntimeCallbackArguments(*JumpPlan, JumpCallbacks);
   auto JumpCalls = x86_registration::emitSEHJumps(
       *JumpPlan, Parent, *FrameAlloca, FrameEntrySPOffset, EH.CodeRange.Begin,
       JumpCallbacks);

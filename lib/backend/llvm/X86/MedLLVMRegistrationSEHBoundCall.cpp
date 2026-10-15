@@ -40,6 +40,18 @@ bool prepareSEHBoundCall(const llvm::CallInst &Call,
 bool hasSEHBoundFrameArguments(const RegistrationSEHBoundCall &Source,
                                const llvm::AllocaInst &Frame,
                                uint64_t EntrySP) {
+  if (Source.EntryVA) {
+    // The callback plan separately authenticates this invocation's ESP seed
+    // and redirects every private access to its own bounded allocation.
+    if (Source.CalleeKind != RegistrationSEHBoundCall::Kind::RaiseException ||
+        Source.StackOffset > -16)
+      return false;
+    for (const auto &Arg : Source.Arguments)
+      if (Arg.ArgumentKind == RegistrationSEHBoundArgument::Kind::Scalar &&
+          (Arg.Offset < Source.StackOffset || Arg.Offset > -4))
+        return false;
+    return true;
+  }
   const auto Bytes =
       Frame.getAllocationSize(Frame.getModule()->getDataLayout());
   if (!Bytes || Bytes->isScalable())
