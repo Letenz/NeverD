@@ -17,6 +17,7 @@
 #include "Language.h"
 #include "ListingView.h"
 #include "LoadFileDialog.h"
+#include "LocalTypesView.h"
 #include "MicrosoftSymbols.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
@@ -126,6 +127,7 @@ constexpr char OverviewDock[] = "graph-overview";
 constexpr char PseudocodeDock[] = "pseudocode-a";
 constexpr char RepresentationDock[] = "ir-a";
 constexpr char ExtensionsDock[] = "extensions";
+constexpr char LocalTypesDock[] = "local-types";
 
 // Workbench state keys inside a NeverD database.
 constexpr char LocationState[] = "location";
@@ -547,6 +549,11 @@ MainWindow::Dock *MainWindow::dockNamed(const QString &name) {
     extensions_->setLocationProvider([this] { return currentAddress(); });
     return makeDock(name, QT_TR_NOOP("Extensions"),
                     QStringLiteral("extensions"), extensions_);
+  }
+  if (name == QLatin1String(LocalTypesDock)) {
+    localTypes_ = new LocalTypesView(session_);
+    return makeDock(name, QT_TR_NOOP("Local Types"),
+                    QStringLiteral("local_types"), localTypes_);
   }
   for (int kind = 0; kind < int(ChooserKind::Count); ++kind)
     if (name == chooserDockId(ChooserKind(kind)))
@@ -1345,6 +1352,11 @@ void MainWindow::connectActions() {
   on(ActionId::ViewConnections, [this] { showConnections(); });
   on(ActionId::ViewExtensions, [this] {
     openDock(dockNamed(QString::fromLatin1(ExtensionsDock)), false);
+  });
+  // A tab beside the disassembly, as IDA opens its subviews.
+  on(ActionId::ViewLocalTypes, [this] {
+    openDock(dockNamed(QString::fromLatin1(LocalTypesDock)), true);
+    localTypes_->focusFilter();
   });
   on(ActionId::ViewUndoHistory, [this] {
     const auto &history = session_.history();
