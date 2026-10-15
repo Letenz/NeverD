@@ -747,7 +747,8 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
   if (Input.Kind == DriverRequestKind::Close) {
     auto &File = FileIt->second;
     const auto &References = ReferencedObjects.at(File.Address);
-    if (References.Pointers || References.Handles || File.HandleCloseHolds) {
+    if (References.Pointers || References.Handles || File.HandleCloseHolds ||
+        File.InternalIOHolds) {
       if (RetainedFile)
         return ioError("retained CLOSE still has external references");
       File.DeferredClose = DeferredFileClose{Input, Index, SourceIndex};
@@ -932,7 +933,7 @@ KernelModel::requestReleaseRanges(uint64_t IRP) const {
     Retiring.emplace_back(Request->TranslatedResources,
                           Request->ResourceListSize);
   }
-  if (Request->SystemBuffer)
+  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer)
     Retiring.emplace_back(Request->SystemBuffer, Request->BufferSize);
   if (Request->UserBuffer && !Request->Neither)
     Retiring.emplace_back(Request->UserBuffer, Request->Direct
@@ -1020,6 +1021,9 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
   Observation.IOStatus = static_cast<uint32_t>(*Status);
   Observation.Information = *Information;
   Request->PendingMarked = *Pending;
+  if (Request->FileQueryOperation)
+    if (auto E = publishFileQueryCompletion(IRP))
+      return E;
   if (Request->ChildPower && Request->ChildPower->StatusBlock) {
     const auto Block = Request->ChildPower->StatusBlock;
     if (auto E = Memory.writeInteger(Block, uint32_t(*Status), 4))
@@ -1046,15 +1050,16 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
       Observation.Output.resize(*Information);
       if (auto E = Memory.read(Request->SystemBuffer, Observation.Output))
         return E;
-      if (auto E = Memory.write(Request->UserBuffer, Observation.Output))
-        return E;
+      if (!Request->BorrowedSystemBuffer)
+        if (auto E = Memory.write(Request->UserBuffer, Observation.Output))
+          return E;
     }
   }
   if (auto E = expireRequestMDL(IRP))
     return E;
   if (auto E = finishRequestLifecycle(*Request, uint32_t(*Status)))
     return E;
-  if (Request->SystemBuffer)
+  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer)
     if (auto E = Physical.retire(Request->SystemBuffer))
       return E;
   if (Request->UserBuffer && !Request->Neither)
@@ -1077,7 +1082,7 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
     FreedRanges.emplace(Request->TranslatedResources,
                         Request->ResourceListSize);
   }
-  if (Request->SystemBuffer)
+  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer)
     FreedRanges.emplace(Request->SystemBuffer, Request->BufferSize);
   if (Request->UserBuffer && !Request->Neither)
     FreedRanges.emplace(Request->UserBuffer, Request->Direct
@@ -1114,7 +1119,10 @@ llvm::Error KernelModel::recordDispatchReturn(uint64_t IRP,
   if (DispatchStatus != StatusPending) {
     if (!Request->Completed)
       return ioError("dispatch returned without completing its IRP");
-    if (!Request->Forwarded && Observation.IOStatus != DispatchStatus)
+    // The file-query helper returns a nonpending dispatch status independently
+    // from its IOSB. Ordinary scenario producers retain their stricter check.
+    if (!Request->Forwarded && !Request->FileQueryOperation &&
+        Observation.IOStatus != DispatchStatus)
       return ioError("synchronous dispatch status does not match completed "
                      "IoStatus.Status");
   }
@@ -1217,9 +1225,10 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
   auto &File = FileIt->second;
   const uint64_t Device = File.Device;
   const uint32_t CompletionStatus = *Observation.IOStatus;
-  if (auto E = Memory.writeInteger(File.Address + FileFinalStatusOffset,
-                                   CompletionStatus, 4))
-    return E;
+  if (!Request->FileQueryOperation)
+    if (auto E = Memory.writeInteger(File.Address + FileFinalStatusOffset,
+                                     CompletionStatus, 4))
+      return E;
   if (Request->Kind == DriverRequestKind::Create) {
     if (ntSuccess(CompletionStatus)) {
       File.State = FileState::Open;
@@ -1251,6 +1260,8 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
                                      *Flags | FileCleanupComplete, 4))
       return E;
   } else if (Request->Kind == DriverRequestKind::Close) {
+    if (auto E = prepareReleaseRange(File.Address, FileSize))
+      return E;
     const auto Identity = Files.find(Request->FileId);
     if (Identity != Files.end() && Identity->second == File.Address)
       Files.erase(Identity);
@@ -1287,7 +1298,8 @@ llvm::Expected<KernelModel::Invocation> KernelModel::beginUnload() {
   if (Scheduler.queuedCallbackCount() || Scheduler.active() ||
       Scheduler.suspendedCallbackCount())
     return ioError("unload requires scheduled callbacks to drain");
-  if (!Requests.empty() || !FileObjects.empty() || !DriverIRPs.empty())
+  if (!Requests.empty() || !FileObjects.empty() || !DriverIRPs.empty() ||
+      !FileInformationQueries.empty() || PendingFileQueryContinuation)
     return ioError(
         "unload requires all requests completed and the file closed");
   if (Unloading || Unloaded)
@@ -1325,6 +1337,7 @@ llvm::Error KernelModel::finishUnload() {
     return ioError("unload returned with a live framework binding");
   if (!Devices.empty() || !SymbolicLinks.empty() || !Allocations.empty() ||
       !FileObjects.empty() || !Requests.empty() || !DriverIRPs.empty() ||
+      !FileInformationQueries.empty() || PendingFileQueryContinuation ||
       !MDLs.empty() || !WorkItems.empty() || !IRPCalls.empty() ||
       PendingWdmCall || Scheduler.hasPending() || !PoFxDeviceObjects.empty() ||
       !BlockingPoFx.empty())
@@ -1337,7 +1350,8 @@ llvm::Error KernelModel::finishUnload() {
 }
 
 llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
-                                          bool IsWrite) const {
+                                          bool IsWrite,
+                                          bool DispatcherStorage) const {
   const uint64_t End = Address + Size;
   auto Check = [&](uint64_t Object, uint64_t Length,
                    auto &&Allowed) -> llvm::Error {
@@ -1353,6 +1367,10 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
   for (const auto &[Id, File] : FileObjects) {
     (void)Id;
     if (auto E = Check(File.Address, FileSize, [&](uint64_t Offset) {
+          if (DispatcherStorage && File.QueryEventInitialized &&
+              Offset >= FileEventOffset &&
+              Offset < FileEventOffset + dispatcher::EventSize)
+            return true;
           if (IsWrite)
             return Offset >= FileContextOffset && Offset < FileSectionOffset;
           return Offset < FileSectionOffset ||
@@ -1382,7 +1400,12 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
             return initialized(Request->IOStatusWritten,
                                Request->IOStatusInitialization,
                                Offset - IRPStatusOffset);
-          return (DriverIRPs.contains(IRP) && Offset < sizeof(uint32_t)) ||
+          return (Request->FileQueryOperation &&
+                  ((Offset >= IRPAllocationFlagsOffset &&
+                    Offset < IRPUserEventOffset + profile::PointerSize) ||
+                   (Offset >= IRPThreadOffset &&
+                    Offset < IRPThreadOffset + profile::PointerSize))) ||
+                 (DriverIRPs.contains(IRP) && Offset < sizeof(uint32_t)) ||
                  (Offset >= profile::PointerSize &&
                   Offset < IRPSystemBufferOffset + profile::PointerSize) ||
                  (Offset >= IRPStatusOffset && Offset <= IRPCancelIROffset) ||

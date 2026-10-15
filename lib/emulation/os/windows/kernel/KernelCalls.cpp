@@ -46,6 +46,18 @@ llvm::Expected<uint64_t> KernelModel::call(
     const std::string &Name, llvm::ArrayRef<uint64_t> A,
     llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
     const KernelContextCapture *Context) {
+  auto Value = dispatchKernelCall(Name, A, ReadArgument, Context);
+  if (!Value)
+    return Value;
+  if (auto E = deliverFileQueryCompletions(Context))
+    return E;
+  return Value;
+}
+
+llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
+    const std::string &Name, llvm::ArrayRef<uint64_t> A,
+    llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
+    const KernelContextCapture *Context) {
   const auto *API = lookupKernelAPI(Name);
   if (!API || A.size() != API->Arity)
     return modelError("unknown API or incorrect argument count: " + Name);
@@ -437,6 +449,10 @@ llvm::Expected<uint64_t> KernelModel::call(
     return attachDevice(A[0], A[1]);
   case KernelAPIKind::IoGetAttachedDevice:
     return queryDeviceStack(A[0], DeviceStackQuery::Top);
+  case KernelAPIKind::IoGetRelatedDeviceObject:
+    return relatedFileDevice(A[0]);
+  case KernelAPIKind::IoQueryFileInformation:
+    return queryFileInformation(A, Context);
   case KernelAPIKind::IoGetAttachedDeviceReference:
     return queryDeviceStack(A[0], DeviceStackQuery::TopReference);
   case KernelAPIKind::IoGetLowerDeviceObject:
@@ -463,9 +479,13 @@ llvm::Expected<uint64_t> KernelModel::call(
     return 0;
   }
   case KernelAPIKind::IofCompleteRequest:
+  case KernelAPIKind::IoCompleteRequest: {
+    const auto *Request = requestForIRP(A[0]);
+    if (Request && Request->FileQueryOperation)
+      if (auto E = validateFileQueryInterrupts(Context))
+        return E;
     return completeDriverRequest(A);
-  case KernelAPIKind::IoCompleteRequest:
-    return completeDriverRequest(A);
+  }
   case KernelAPIKind::IoGetCurrentIrpStackLocation:
     return currentDriverRequestStack(A);
   case KernelAPIKind::RtlInitUnicodeString:

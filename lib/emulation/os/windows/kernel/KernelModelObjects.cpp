@@ -87,9 +87,15 @@ llvm::Expected<uint64_t> KernelModel::dereferenceObject(uint64_t Object) {
   if (Found == ReferencedObjects.end() || !Found->second.Pointers)
     return objectError("ObfDereferenceObject requires a referenced object");
   if (const auto File = FileObjects.find(Object);
+      File != FileObjects.end() && File->second.Asynchronous &&
+      File->second.InternalIOHolds && !Found->second.Handles &&
+      Found->second.Pointers == 1)
+    return objectError("asynchronous final query release requires deferred "
+                       "file deletion");
+  if (const auto File = FileObjects.find(Object);
       File != FileObjects.end() && File->second.DeferredClose &&
-      !File->second.HandleCloseHolds && !Found->second.Handles &&
-      Found->second.Pointers == 1) {
+      !File->second.HandleCloseHolds && !File->second.InternalIOHolds &&
+      !Found->second.Handles && Found->second.Pointers == 1) {
     if (CurrentIRQL != scheduler::PassiveLevel)
       return objectError("final file reference release requires PASSIVE_LEVEL");
     if (!executionProcessContext())

@@ -111,6 +111,10 @@ public:
        llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument =
            nullptr,
        const KernelContextCapture *Context = nullptr);
+  /// Deliver completed query notifications at an eligible caller boundary.
+  /// File retirement and API results remain owned by the query continuation.
+  llvm::Error
+  deliverFileQueryCompletions(const KernelContextCapture *Context = nullptr);
   llvm::Error snapshot();
   struct Invocation {
     uint64_t PC = 0;
@@ -210,7 +214,8 @@ public:
       FrameworkCallback,
       FrameworkCallbackLock,
       FileClose,
-      FileHandleClose
+      FileHandleClose,
+      FileInformationQuery
     };
     Kind Type = Kind::Dispatcher;
     uint64_t Object = 0;
@@ -228,6 +233,9 @@ public:
   std::optional<Wait> takeWait();
   llvm::Expected<std::optional<uint32_t>> pollWait(const Wait &Pending);
   llvm::Expected<std::optional<uint64_t>> resumeFileHandleClose(uint64_t ID);
+  std::optional<uint64_t> takeFileQueryContinuation();
+  llvm::Expected<std::optional<uint64_t>>
+  resumeFileInformationQuery(uint64_t ID);
   std::optional<uint64_t> nextEventTime() const;
   bool hasQueuedDPC() const { return Scheduler.hasQueuedDPC(); }
   bool hasQueuedPriorityCallback() const {
@@ -301,6 +309,10 @@ public:
                                   bool IsWrite) const;
 
 private:
+  llvm::Expected<uint64_t> dispatchKernelCall(
+      const std::string &Name, llvm::ArrayRef<uint64_t> Arguments,
+      llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
+      const KernelContextCapture *Context);
   static std::optional<unsigned> halArgumentCount(llvm::StringRef Name);
   llvm::Expected<uint64_t> callHAL(llvm::StringRef Name,
                                    llvm::ArrayRef<uint64_t> Arguments);
@@ -1224,6 +1236,8 @@ private:
     uint32_t ScenarioID = 0;
     bool ScenarioCleanupRequested = false;
     uint32_t HandleCloseHolds = 0;
+    uint32_t InternalIOHolds = 0;
+    bool QueryEventInitialized = false;
     std::optional<DeferredFileClose> DeferredCleanup;
     std::optional<DeferredFileClose> DeferredClose;
   };
@@ -1262,6 +1276,28 @@ private:
   llvm::Error waitForFileHandleClose(uint64_t ID);
   llvm::Expected<std::optional<uint64_t>>
   finishFileHandleDispatch(uint64_t Token, uint64_t ReturnValue);
+  struct FileInformationQuery {
+    uint64_t File = 0, IRP = 0, ReturnedLength = 0, Storage = 0;
+    uint64_t CallerExecution = 0, CallerThread = 0;
+    uint32_t CallerProcess = 0;
+    uint32_t Status = 0, Information = 0;
+    bool Released = false;
+    bool CompletionPublished = false;
+    bool CriticalRegion = false;
+  };
+  std::map<uint64_t, FileInformationQuery> FileInformationQueries;
+  uint64_t NextFileInformationQuery = 1;
+  std::optional<uint64_t> PendingFileQueryContinuation;
+  llvm::Expected<uint64_t> relatedFileDevice(uint64_t File) const;
+  llvm::Expected<uint64_t>
+  queryFileInformation(llvm::ArrayRef<uint64_t> A,
+                       const KernelContextCapture *Context);
+  llvm::Error validateFileQueryInterrupts(const KernelContextCapture *Context);
+  llvm::Error publishFileQueryCompletion(uint64_t IRP);
+  llvm::Expected<bool> fileInformationQueryReady(uint64_t ID) const;
+  llvm::Error waitForFileInformationQuery(uint64_t ID);
+  llvm::Expected<std::optional<uint64_t>>
+  finishFileInformationDispatch(uint64_t Token, uint64_t ReturnValue);
   bool Unloading = false;
   bool Unloaded = false;
   struct RequestedPower {
@@ -1346,6 +1382,9 @@ private:
     std::vector<std::optional<bool>> UnwoundPending;
     bool Forwarded = false;
     uint64_t SystemBuffer = 0;
+    /// Internal query producers borrow caller storage through completion.
+    bool BorrowedSystemBuffer = false;
+    uint64_t FileQueryOperation = 0;
     uint64_t UserBuffer = 0;
     uint64_t UserInput = 0;
     std::vector<UserRegion> UserRegions;
@@ -1392,7 +1431,8 @@ private:
     PowerCompletion,
     Cancel,
     FileClose,
-    FileHandleClose
+    FileHandleClose,
+    FileInformationQuery
   };
   struct IRPCall {
     IRPCallKind Kind;
@@ -1403,6 +1443,7 @@ private:
     std::optional<uint64_t> ProviderReceiptIRP;
     std::optional<uint32_t> FrameworkDispatchStatus;
     uint64_t FileHandleOperation = 0;
+    uint64_t FileQueryOperation = 0;
   };
   struct ProviderReceipt {
     uint64_t Device = 0;
@@ -1626,8 +1667,8 @@ private:
   llvm::Error completeRequest(uint64_t IRP, uint8_t PriorityBoost);
   llvm::Error validateRequestCompletion(uint64_t IRP, uint32_t Status,
                                         uint64_t Information) const;
-  llvm::Error validateIOAccess(uint64_t Address, uint32_t Size,
-                               bool IsWrite) const;
+  llvm::Error validateIOAccess(uint64_t Address, uint32_t Size, bool IsWrite,
+                               bool DispatcherStorage = false) const;
   llvm::Expected<uint64_t> allocate(uint64_t Size, uint64_t Alignment = 16);
   llvm::Expected<uint64_t> isResidentKernelAddress(uint64_t Address) const;
   llvm::Expected<uint64_t> allocatePhysicalBuffer(uint64_t AllocationSize,

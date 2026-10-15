@@ -87,6 +87,12 @@ llvm::Error KernelModel::validateRequestCompletion(uint64_t IRP,
   if (HasTransferCount && Information > Request->TransferSize)
     return frameworkRequestError(
         "IoStatus.Information exceeds the requested transfer buffer");
+  if (Request->Kind == DriverRequestKind::QueryInformation &&
+      (Status >> profile::NTStatusSeverityShift) !=
+          profile::NTStatusErrorSeverity &&
+      Information > Request->TransferSize)
+    return frameworkRequestError(
+        "query Information exceeds the borrowed output buffer");
   if ((Request->Kind == DriverRequestKind::Cleanup ||
        Request->Kind == DriverRequestKind::UnlockAll ||
        Request->Kind == DriverRequestKind::Close) &&

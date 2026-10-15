@@ -101,6 +101,8 @@ EXPORTS
   KeEnterGuardedRegion
   KeLeaveGuardedRegion
   IoGetCurrentProcess
+  IoQueryFileInformation
+  IoGetRelatedDeviceObject
   KeStackAttachProcess
   KeUnstackDetachProcess
   RtlInitAnsiString

@@ -29,7 +29,7 @@ KernelModel::retireFileIfUnreferenced(uint64_t Object,
   if (References->second.Pointers || References->second.Handles)
     return llvm::Error::success();
   auto &File = Found->second;
-  if (File.HandleCloseHolds)
+  if (File.HandleCloseHolds || File.InternalIOHolds)
     return llvm::Error::success();
   if (File.State == FileState::Failed) {
     FreedRanges.emplace(Object, windows::FileSize);
