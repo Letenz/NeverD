@@ -64,6 +64,9 @@ struct RenderOptions {
   bool Asserts = false;
   /// The column offset comments start at.
   unsigned CommentColumn = 64;
+  /// When every type renders, the library's function prototypes after them,
+  /// in C and C++.
+  bool Prototypes = false;
 };
 
 /// \p Type's declaration, alone.

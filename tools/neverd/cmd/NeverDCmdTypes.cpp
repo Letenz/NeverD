@@ -8,7 +8,8 @@
 /// `neverd types`: the program's local types as the workbench's Local Types
 /// window shows them.  Without --type it lists them; --type lays a type out
 /// (--layout) or renders it, with what it needs, as C, C++, Rust or Go;
-/// --all renders every type as one unit that compiles.
+/// --all renders every type as one unit that compiles.  Without a binary,
+/// --data-model converts the --declare files from one language to another.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -217,7 +218,8 @@ int render(neverd_session_t Sess, raw_ostream &Out) {
                        {"spelling", TypesSpelling},
                        {"offsets", !TypesNoOffsets},
                        {"hexOffsets", !TypesDecimalOffsets},
-                       {"asserts", static_cast<bool>(TypesAsserts)}};
+                       {"asserts", static_cast<bool>(TypesAsserts)},
+                       {"prototypes", static_cast<bool>(TypesPrototypes)}};
   if (!TypesAll) {
     json::Array Names;
     for (const std::string &Name : TypeNames)
@@ -296,24 +298,150 @@ bool declare(neverd_session_t Sess) {
   return true;
 }
 
-} // namespace
-
-int runTypes(neverd_session_t Sess) {
+/// The checks of options both ways of running share; false with an error
+/// printed.
+bool optionsValid() {
   if (!knownLanguage(TypesLanguage)) {
     WithColor::error() << "--lang must be c, cpp, rust or go\n";
-    return 1;
+    return false;
   }
   if (!knownSpelling(TypesSpelling)) {
     WithColor::error()
         << "--spelling must be windows, ida, keywords or portable\n";
-    return 1;
+    return false;
   }
   if (TypesAll && !TypeNames.empty()) {
     WithColor::error() << "--all renders every type; leave out --type\n";
+    return false;
+  }
+  if (TypesAlone && TypeNames.empty()) {
+    WithColor::error() << "--alone needs a --type\n";
+    return false;
+  }
+  if (TypesPrototypes && !TypesAll) {
+    WithColor::error() << "--prototypes follows --all\n";
+    return false;
+  }
+  return true;
+}
+
+} // namespace
+
+int runTypesConvert() {
+  if (TypesDataModel.empty()) {
+    WithColor::error() << "types: name a binary, or --data-model LLP64, LP64 "
+                          "or ILP32 to convert --declare files without one\n";
     return 1;
   }
-  if ((TypesLayout || TypesAlone) && TypeNames.empty()) {
-    WithColor::error() << "--layout and --alone need a --type\n";
+  if (TypesDeclare.empty()) {
+    WithColor::error() << "types: --data-model converts --declare files; "
+                          "name at least one\n";
+    return 1;
+  }
+  if (!optionsValid())
+    return 1;
+  if (TypesLayout || !TypesFilter.empty()) {
+    WithColor::error() << "--layout and --filter read a binary's types\n";
+    return 1;
+  }
+  json::Array Declarations;
+  for (const std::string &Path : TypesDeclare) {
+    const std::optional<StringRef> Language = languageOfFile(Path);
+    if (!Language) {
+      WithColor::error() << Path
+                         << ": name C (.h), C++ (.hpp), Rust (.rs) or Go "
+                            "(.go) declarations\n";
+      return 1;
+    }
+    auto Buffer = MemoryBuffer::getFile(Path);
+    if (!Buffer) {
+      WithColor::error() << "cannot read " << Path << ": "
+                         << Buffer.getError().message() << "\n";
+      return 1;
+    }
+    // A JSON string from a StringRef refers to the buffer, which goes.
+    Declarations.push_back(
+        json::Object{{"language", Language->str()},
+                     {"source", (*Buffer)->getBuffer().str()}});
+  }
+  json::Object Request{{"dataModel", TypesDataModel.getValue()},
+                       {"declarations", std::move(Declarations)},
+                       {"keepGoing", TypesKeepGoing.getValue()}};
+  const bool Renders = TypesAll || !TypeNames.empty();
+  if (Renders) {
+    json::Array Names;
+    for (const std::string &Name : TypeNames)
+      Names.push_back(Name);
+    json::Object Render{{"language", TypesLanguage.getValue()},
+                        {"spelling", TypesSpelling.getValue()},
+                        {"offsets", !TypesNoOffsets},
+                        {"hexOffsets", !TypesDecimalOffsets},
+                        {"asserts", TypesAsserts.getValue()},
+                        {"prototypes", TypesPrototypes.getValue()},
+                        {"dependencies", !TypesAlone}};
+    if (!Names.empty())
+      Render["types"] = std::move(Names);
+    Request["render"] = std::move(Render);
+  }
+  const char *Raw = neverd_types_convert(text(std::move(Request)).c_str());
+  auto Parsed = json::parse(Raw ? Raw : "");
+  neverd_free_string(Raw);
+  if (!Parsed || !Parsed->getAsObject()) {
+    if (!Parsed)
+      consumeError(Parsed.takeError());
+    WithColor::error() << "types: the engine returned invalid JSON\n";
+    return 1;
+  }
+  const json::Object &Reply = *Parsed->getAsObject();
+  if (std::optional<StringRef> Error = Reply.getString("error")) {
+    WithColor::error() << "types: " << *Error << "\n";
+    return 1;
+  }
+  // Problems by file and place; kept-going ones are warnings.
+  bool Problems = false;
+  if (const json::Array *List = Reply.getArray("problems"))
+    for (const json::Value &Value : *List)
+      if (const json::Object *Problem = Value.getAsObject()) {
+        Problems = true;
+        const size_t Index =
+            size_t(Problem->getInteger("declaration").value_or(0));
+        (TypesKeepGoing ? WithColor::warning() : WithColor::error())
+            << (Index < TypesDeclare.size() ? TypesDeclare[Index] : "?") << ":"
+            << Problem->getInteger("line").value_or(0) << ":"
+            << Problem->getInteger("column").value_or(0) << ": "
+            << Problem->getString("message").value_or("") << "\n";
+      }
+  if (Problems && !TypesKeepGoing)
+    return 1;
+  std::unique_ptr<raw_fd_ostream> File;
+  if (!OutputFile.empty()) {
+    std::error_code EC;
+    File = std::make_unique<raw_fd_ostream>(OutputFile, EC);
+    if (EC) {
+      WithColor::error() << "cannot write " << OutputFile << ": "
+                         << EC.message() << "\n";
+      return 1;
+    }
+  }
+  raw_ostream &Out = File ? *File : outs();
+  if (Renders) {
+    Out << Reply.getString("source").value_or("");
+    return 0;
+  }
+  // Without --type or --all, the names of the types and prototypes read.
+  for (const char *Key : {"types", "prototypes"})
+    if (const json::Array *Names = Reply.getArray(Key))
+      for (const json::Value &Name : *Names)
+        Out << (StringRef(Key) == "types" ? "type " : "prototype ")
+            << Name.getAsString().value_or("") << "\n";
+  return 0;
+}
+
+int runTypes(neverd_session_t Sess) {
+  if (!optionsValid())
+    return 1;
+  if (TypesLayout && TypeNames.empty()) {
+    WithColor::error() << "--layout needs a --type\n";
     return 1;
   }
   std::unique_ptr<raw_fd_ostream> File;

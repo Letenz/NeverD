@@ -6,7 +6,10 @@ checks of each size and offset.  This script renders them in C and C++ with
 every builtin spelling, in Rust and in Go, and compiles each with clang,
 rustc and go, so that a layout NeverD gets wrong, or source that does not
 compile, fails.  Without --binary it checks the fixture PDB the unit tests
-use.  A toolchain that is missing is reported and skipped.
+use; with --declare it checks the types C, C++, Rust or Go files declare,
+laid out for --data-model, such as a type library NeverD ships, and the
+prototypes they declare too.  A toolchain that is missing is reported and
+skipped.
 """
 from __future__ import annotations
 
@@ -22,6 +25,27 @@ import tempfile
 REPOSITORY = Path(__file__).resolve().parents[1]
 FIXTURES = REPOSITORY / "unittests" / "types" / "fixtures"
 SPELLINGS = ("windows", "ida", "keywords", "portable")
+
+# Windows' own typedefs of the builtins it names, as <ntdef.h> declares them:
+# prototypes of the compiler's intrinsics only match its declarations with
+# these, where the rendered prelude gives exact widths instead.
+WINDOWS_TYPEDEFS = """#define _NTDEF_
+#define VOID void
+typedef char CHAR;
+typedef signed char SCHAR;
+typedef unsigned char UCHAR;
+typedef unsigned short WCHAR;
+typedef short SHORT;
+typedef unsigned short USHORT;
+typedef int INT;
+typedef unsigned int UINT;
+typedef long LONG;
+typedef unsigned long ULONG;
+typedef long long LONGLONG;
+typedef unsigned long long ULONGLONG;
+typedef float FLOAT;
+typedef double DOUBLE;
+"""
 
 # Per data model: the MSVC target C and C++ compile for, the GNU target the
 # portable spelling also compiles for, and Go's GOARCH.
@@ -52,9 +76,15 @@ class Checker:
         self.skipped = []
 
     def neverd(self, *options):
-        command = [self.arguments.neverd, "types", self.arguments.binary]
-        if self.arguments.pdb:
-            command += ["--pdb", self.arguments.pdb]
+        command = [self.arguments.neverd, "types"]
+        if self.arguments.declare:
+            command += ["--data-model", self.arguments.data_model]
+            for path in self.arguments.declare:
+                command += ["--declare", path]
+        else:
+            command.append(self.arguments.binary)
+            if self.arguments.pdb:
+                command += ["--pdb", self.arguments.pdb]
         result = run(command + list(options))
         if result.returncode:
             sys.exit(f"neverd types failed: {result.stderr.strip()}")
@@ -106,6 +136,21 @@ class Checker:
                     self.report(f"{language} {spelling} {target}",
                                 diagnostics(result))
 
+    def prototypes(self, model):
+        """The prototypes, with Windows' typedefs, for the MSVC target."""
+        clang = shutil.which(self.arguments.clang)
+        if not clang:
+            self.skip("prototypes", f"{self.arguments.clang} not found")
+            return
+        header = self.render("prototypes.h", "--lang", "c", "--spelling",
+                             "windows", "--prototypes")
+        unit = self.work / "prototypes.c"
+        unit.write_text(WINDOWS_TYPEDEFS + f'#include "{header.name}"\n',
+                        encoding="utf-8")
+        result = run([clang, f"--target={TARGETS[model][0]}", "-fsyntax-only",
+                      "-std=c11", "-x", "c", str(unit)], cwd=self.work)
+        self.report(f"c prototypes {TARGETS[model][0]}", diagnostics(result))
+
     def rust(self, model):
         rustc = shutil.which("rustc")
         if not rustc:
@@ -145,6 +190,12 @@ def main():
                         help="the program whose types to check")
     parser.add_argument("--pdb", default=None,
                         help="its PDB, when the program does not find it")
+    parser.add_argument("--declare", action="append", default=[],
+                        help="check the types this file declares instead of a "
+                             "program's; repeat for more")
+    parser.add_argument("--data-model", default="LLP64",
+                        choices=sorted(TARGETS),
+                        help="the data model --declare files lay out for")
     parser.add_argument("--clang", default="clang",
                         help="the clang driver C and C++ compile with")
     parser.add_argument("--keep", default=None,
@@ -158,15 +209,28 @@ def main():
         work = Path(arguments.keep or scratch)
         work.mkdir(parents=True, exist_ok=True)
         checker = Checker(arguments, work)
-        listing = json.loads(checker.neverd("--json"))
-        model = listing.get("dataModel", "LLP64")
-        if listing.get("source") != "pdb" or not listing.get("types"):
-            sys.exit(f"{arguments.binary} has no local types to check")
-        mismatches = listing.get("stats", {}).get("nestingMismatches", [])
-        checker.report(f"{len(listing['types'])} types read, nesting holds",
-                       "\n".join(f"{name} does not lay out as listed"
-                                 for name in mismatches))
+        if arguments.declare:
+            model = arguments.data_model
+            names = checker.neverd().splitlines()
+            types = sum(line.startswith("type ") for line in names)
+            prototypes = sum(line.startswith("prototype ") for line in names)
+            if not types:
+                sys.exit("the declarations declare no types to check")
+            checker.report(f"{types} types and {prototypes} prototypes read",
+                           "")
+        else:
+            listing = json.loads(checker.neverd("--json"))
+            model = listing.get("dataModel", "LLP64")
+            if listing.get("source") != "pdb" or not listing.get("types"):
+                sys.exit(f"{arguments.binary} has no local types to check")
+            mismatches = listing.get("stats", {}).get("nestingMismatches", [])
+            prototypes = 0
+            checker.report(f"{len(listing['types'])} types read, nesting holds",
+                           "\n".join(f"{name} does not lay out as listed"
+                                     for name in mismatches))
         checker.c_family(model)
+        if prototypes:
+            checker.prototypes(model)
         checker.rust(model)
         checker.go(model)
     if checker.failures:

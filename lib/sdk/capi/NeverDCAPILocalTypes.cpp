@@ -211,8 +211,8 @@ std::optional<types::BuiltinSpelling> spellingNamed(llvm::StringRef Name) {
 
 /// Reads "spelling" into \p Spelling; false with the session's error when it
 /// names no spelling.
-bool readSpelling(Session &S, const llvm::json::Object &Options,
-                  types::BuiltinSpelling &Spelling) {
+bool readSpelling(const llvm::json::Object &Options,
+                  types::BuiltinSpelling &Spelling, std::string &Error) {
   const llvm::json::Value *Value = Options.get("spelling");
   if (!Value)
     return true;
@@ -220,7 +220,7 @@ bool readSpelling(Session &S, const llvm::json::Object &Options,
   std::optional<types::BuiltinSpelling> Found =
       Name ? spellingNamed(*Name) : std::nullopt;
   if (!Found) {
-    S.setError("\"spelling\" must be windows, ida, keywords or portable");
+    Error = "\"spelling\" must be windows, ida, keywords or portable";
     return false;
   }
   Spelling = *Found;
@@ -229,8 +229,8 @@ bool readSpelling(Session &S, const llvm::json::Object &Options,
 
 /// Reads boolean \p Key into \p Out; false with the session's error when it
 /// is no boolean.
-bool readFlag(Session &S, const llvm::json::Object &Options,
-              llvm::StringRef Key, bool &Out) {
+bool readFlag(const llvm::json::Object &Options, llvm::StringRef Key, bool &Out,
+              std::string &Error) {
   const llvm::json::Value *Value = Options.get(Key);
   if (!Value)
     return true;
@@ -238,8 +238,74 @@ bool readFlag(Session &S, const llvm::json::Object &Options,
     Out = *Flag;
     return true;
   }
-  S.setError(("\"" + Key + "\" must be true or false").str());
+  Error = ("\"" + Key + "\" must be true or false").str();
   return false;
+}
+
+/// The language, spelling and flags of a source rendering; false with
+/// \p Error when one is malformed.
+bool readRender(const llvm::json::Object &Options, types::RenderOptions &Render,
+                bool &Dependencies, std::string &Error) {
+  if (const llvm::json::Value *Value = Options.get("language")) {
+    std::optional<llvm::StringRef> Id = Value->getAsString();
+    std::optional<types::Language> Lang =
+        Id ? types::languageNamed(*Id) : std::nullopt;
+    if (!Lang) {
+      Error = "\"language\" must be c, cpp, rust or go";
+      return false;
+    }
+    Render.Lang = *Lang;
+  }
+  return readSpelling(Options, Render.Spelling, Error) &&
+         readFlag(Options, "offsets", Render.Offsets, Error) &&
+         readFlag(Options, "hexOffsets", Render.HexOffsets, Error) &&
+         readFlag(Options, "asserts", Render.Asserts, Error) &&
+         readFlag(Options, "prototypes", Render.Prototypes, Error) &&
+         readFlag(Options, "dependencies", Dependencies, Error);
+}
+
+/// The types \p Options' "types" names in \p Library, in order; false with
+/// \p Error when one is missing.
+bool readRoots(const llvm::json::Object &Options,
+               const types::TypeLibrary &Library,
+               std::vector<const types::LocalType *> &Roots,
+               std::string &Error) {
+  const llvm::json::Value *Value = Options.get("types");
+  if (!Value)
+    return true;
+  const llvm::json::Array *Names = Value->getAsArray();
+  if (!Names) {
+    Error = "\"types\" must be an array of names";
+    return false;
+  }
+  for (const llvm::json::Value &Entry : *Names) {
+    std::optional<llvm::StringRef> Name = Entry.getAsString();
+    const types::LocalType *Type = Name ? Library.find(*Name) : nullptr;
+    if (!Type) {
+      Error = Name ? "no local type named " + jsonSafeText(*Name)
+                   : std::string("\"types\" must be an array of names");
+      return false;
+    }
+    Roots.push_back(Type);
+  }
+  return true;
+}
+
+/// \p Roots, or every type, rendered as \p Render says.
+std::string renderSource(const types::TypeLibrary &Library,
+                         llvm::ArrayRef<const types::LocalType *> Roots,
+                         const types::RenderOptions &Render,
+                         bool Dependencies) {
+  if (!Roots.empty() && !Dependencies) {
+    std::string Text;
+    for (const types::LocalType *Type : Roots) {
+      if (!Text.empty())
+        Text += '\n';
+      Text += types::renderType(Library, *Type, Render);
+    }
+    return Text;
+  }
+  return types::renderTypes(Library, Roots, Render);
 }
 
 } // namespace
@@ -341,8 +407,11 @@ const char *neverd_local_type_json(neverd_session_t Sess, const char *Name,
   if (!Options)
     return nullptr;
   types::BuiltinSpelling Spelling = types::BuiltinSpelling::Windows;
-  if (!readSpelling(*S, *Options, Spelling))
+  std::string Error;
+  if (!readSpelling(*Options, Spelling, Error)) {
+    S->setError(Error);
     return nullptr;
+  }
   const types::TypeLibrary *Library = localTypes(*S);
   if (!Library)
     return nullptr;
@@ -369,54 +438,21 @@ const char *neverd_local_types_source(neverd_session_t Sess,
   if (!Options)
     return nullptr;
   types::RenderOptions Render;
-  if (const llvm::json::Value *Value = Options->get("language")) {
-    std::optional<llvm::StringRef> Id = Value->getAsString();
-    std::optional<types::Language> Lang =
-        Id ? types::languageNamed(*Id) : std::nullopt;
-    if (!Lang) {
-      S->setError("\"language\" must be c, cpp, rust or go");
-      return nullptr;
-    }
-    Render.Lang = *Lang;
-  }
   bool Dependencies = true;
-  if (!readSpelling(*S, *Options, Render.Spelling) ||
-      !readFlag(*S, *Options, "offsets", Render.Offsets) ||
-      !readFlag(*S, *Options, "hexOffsets", Render.HexOffsets) ||
-      !readFlag(*S, *Options, "asserts", Render.Asserts) ||
-      !readFlag(*S, *Options, "dependencies", Dependencies))
+  std::string Error;
+  if (!readRender(*Options, Render, Dependencies, Error)) {
+    S->setError(Error);
     return nullptr;
+  }
   const types::TypeLibrary *Library = localTypes(*S);
   if (!Library)
     return nullptr;
   std::vector<const types::LocalType *> Roots;
-  if (const llvm::json::Value *Value = Options->get("types")) {
-    const llvm::json::Array *Names = Value->getAsArray();
-    if (!Names) {
-      S->setError("\"types\" must be an array of names");
-      return nullptr;
-    }
-    for (const llvm::json::Value &Entry : *Names) {
-      std::optional<llvm::StringRef> Name = Entry.getAsString();
-      const types::LocalType *Type = Name ? Library->find(*Name) : nullptr;
-      if (!Type) {
-        S->setError(Name ? "no local type named " + jsonSafeText(*Name)
-                         : std::string("\"types\" must be an array of names"));
-        return nullptr;
-      }
-      Roots.push_back(Type);
-    }
+  if (!readRoots(*Options, *Library, Roots, Error)) {
+    S->setError(Error);
+    return nullptr;
   }
-  if (!Roots.empty() && !Dependencies) {
-    std::string Text;
-    for (const types::LocalType *Type : Roots) {
-      if (!Text.empty())
-        Text += '\n';
-      Text += types::renderType(*Library, *Type, Render);
-    }
-    return dupStr(Text);
-  }
-  return dupStr(types::renderTypes(*Library, Roots, Render));
+  return dupStr(renderSource(*Library, Roots, Render, Dependencies));
 }
 
 const char *neverd_local_types_declare(neverd_session_t Sess,
@@ -521,6 +557,81 @@ const char *neverd_local_types_forget(neverd_session_t Sess,
   S->TypeDeclarations.push_back(std::move(Declaration));
   return dupStr(jsonToString(llvm::json::Value(llvm::json::Object{
       {"removed", std::move(Names)}, {"usedBy", std::move(UsedBy)}})));
+}
+
+const char *neverd_types_convert(const char *RequestJson) {
+  const auto answer = [](llvm::json::Object Reply) {
+    return dupStr(jsonToString(llvm::json::Value(std::move(Reply))));
+  };
+  const auto refuse = [&](const std::string &Error) {
+    return answer(llvm::json::Object{{"error", jsonSafeText(Error)}});
+  };
+  llvm::Expected<llvm::json::Value> Parsed =
+      llvm::json::parse(RequestJson ? RequestJson : "");
+  if (!Parsed)
+    return refuse("malformed request: " + llvm::toString(Parsed.takeError()));
+  const llvm::json::Object *Request = Parsed->getAsObject();
+  if (!Request)
+    return refuse("the request must be a JSON object");
+  std::optional<llvm::StringRef> ModelName = Request->getString("dataModel");
+  std::optional<types::DataModel> Model =
+      ModelName ? types::dataModelNamed(*ModelName) : std::nullopt;
+  if (!Model)
+    return refuse("\"dataModel\" must be LLP64, LP64 or ILP32");
+  bool KeepGoing = false;
+  std::string Error;
+  if (!readFlag(*Request, "keepGoing", KeepGoing, Error))
+    return refuse(Error);
+
+  types::TypeLibrary Library(*Model);
+  llvm::json::Array Types, Prototypes, Problems;
+  const llvm::json::Array *Declarations = Request->getArray("declarations");
+  if (!Declarations)
+    return refuse("\"declarations\" must be an array");
+  for (size_t I = 0; I < Declarations->size(); ++I) {
+    const llvm::json::Object *Declaration = (*Declarations)[I].getAsObject();
+    std::optional<llvm::StringRef> Language =
+        Declaration ? Declaration->getString("language") : std::nullopt;
+    std::optional<types::Language> Lang =
+        Language ? types::languageNamed(*Language) : std::nullopt;
+    std::optional<llvm::StringRef> Source =
+        Declaration ? Declaration->getString("source") : std::nullopt;
+    if (!Lang || !Source)
+      return refuse("a declaration needs a language (c, cpp, rust or go) and "
+                    "its source");
+    types::ParseOptions Parse;
+    Parse.Lang = *Lang;
+    Parse.Rules = types::defaultRules(*Model);
+    Parse.KeepGoing = KeepGoing;
+    const types::ParseResult Result =
+        types::parseTypes(*Source, Library, Parse);
+    for (const std::string &Name : Result.Types)
+      Types.push_back(jsonSafeText(Name));
+    for (const std::string &Name : Result.Prototypes)
+      Prototypes.push_back(jsonSafeText(Name));
+    for (const types::SourceProblem &Problem : Result.Problems)
+      Problems.push_back(
+          llvm::json::Object{{"declaration", static_cast<int64_t>(I)},
+                             {"line", Problem.Line},
+                             {"column", Problem.Column},
+                             {"message", jsonSafeText(Problem.Message)}});
+  }
+  llvm::json::Object Reply{{"types", std::move(Types)},
+                           {"prototypes", std::move(Prototypes)}};
+  // Nothing renders from declarations that do not read, unless asked to
+  // keep going past them.
+  if (const llvm::json::Object *Render = Request->getObject("render");
+      Render && (Problems.empty() || KeepGoing)) {
+    types::RenderOptions Options;
+    bool Dependencies = true;
+    std::vector<const types::LocalType *> Roots;
+    if (!readRender(*Render, Options, Dependencies, Error) ||
+        !readRoots(*Render, Library, Roots, Error))
+      return refuse(Error);
+    Reply["source"] = renderSource(Library, Roots, Options, Dependencies);
+  }
+  Reply["problems"] = std::move(Problems);
+  return answer(std::move(Reply));
 }
 
 const char *neverd_type_declarations_json(neverd_session_t Sess) {

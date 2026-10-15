@@ -347,6 +347,10 @@ extern llvm::cl::opt<bool> TypesAsserts;
 extern llvm::cl::opt<bool> TypesDecimalOffsets;
 extern llvm::cl::opt<bool> TypesNoOffsets;
 extern llvm::cl::list<std::string> TypesDeclare;
+extern llvm::cl::opt<std::string> TypesInput;
+extern llvm::cl::opt<std::string> TypesDataModel;
+extern llvm::cl::opt<bool> TypesKeepGoing;
+extern llvm::cl::opt<bool> TypesPrototypes;
 
 // Xrefs.
 extern llvm::cl::opt<std::string> XrefAddr;
@@ -600,6 +604,8 @@ int runRelocs(neverd_session_t Sess);
 int runEntryPoints(neverd_session_t Sess);
 int runSwitches(neverd_session_t Sess);
 int runTypes(neverd_session_t Sess);
+/// `neverd types --data-model`: --declare files converted without a binary.
+int runTypesConvert();
 int runStrings(neverd_session_t Sess);
 
 // NeverDCmdDisasm.cpp — code views.

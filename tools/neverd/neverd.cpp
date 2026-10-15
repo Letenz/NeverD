@@ -112,6 +112,12 @@ static int realMain(int Argc, char *Argv[]) {
     return runMobile(Argv[0]);
   if (WebCmd)
     return runWeb();
+  // types reads a program's types, or converts declarations without one.
+  if (TypesCmd) {
+    if (TypesInput.empty())
+      return runTypesConvert();
+    InputFile.setValue(TypesInput);
+  }
 
   // The active subcommand's registered name feeds the banner below.  Plugins
   // and diff returned already, so exactly one of the remaining named

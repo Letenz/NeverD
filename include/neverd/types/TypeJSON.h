@@ -22,12 +22,16 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/JSON.h"
 
+#include <optional>
+
 namespace neverd::types {
 
 /// The kind, origin and data model as JSON names them.
 llvm::StringRef kindName(TypeKind Kind);
 llvm::StringRef originName(TypeOrigin Origin);
 llvm::StringRef dataModelName(DataModel Model);
+/// The data model \p Name names (LLP64, LP64, ILP32), or none.
+std::optional<DataModel> dataModelNamed(llvm::StringRef Name);
 
 /// Every type in brief, in ordinal order:
 /// `{"ordinal", "name", "kind", "size", "members", "origin"}`, where size is

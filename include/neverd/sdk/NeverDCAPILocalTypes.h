@@ -101,6 +101,18 @@ NEVERD_API const char *neverd_local_types_declare(neverd_session_t Sess,
 /// when no binary is loaded, the names are malformed, or one names no type.
 NEVERD_API const char *neverd_local_types_forget(neverd_session_t Sess,
                                                  const char *NamesJson);
+/// Converts declarations between C, C++, Rust and Go without a program.
+/// \p RequestJson is {"dataModel":"LLP64"|"LP64"|"ILP32","declarations":
+/// [{"language":"c"|"cpp"|"rust"|"go","source"},...],"keepGoing"?:bool,
+/// "render"?:{...as neverd_local_types_source's options, and
+/// "prototypes":bool}}: the declarations read in order into one library
+/// laid out for the data model, then render as asked.  Returns {"types",
+/// "prototypes","problems":[{"declaration","line","column","message"},...],
+/// "source"?}: with a problem nothing renders unless "keepGoing" keeps the
+/// C and C++ declarations that read.  {"error"} when the request is
+/// malformed.  Free with neverd_free_string.
+NEVERD_API const char *neverd_types_convert(const char *RequestJson);
+
 /// The user's declarations in the order made:
 /// [{"language","source"} | {"forget":[name,...]}, ...].
 NEVERD_API const char *neverd_type_declarations_json(neverd_session_t Sess);

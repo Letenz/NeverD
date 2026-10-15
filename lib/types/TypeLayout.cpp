@@ -61,7 +61,16 @@ llvm::Expected<RecordDef> layOutRecord(const TypeLibrary &Library,
     if (!Size)
       return problem("the size of " + Name + " is unknown");
     const uint32_t Natural = Library.alignOf(*Field.Type);
-    const uint32_t Aligned = packed(Natural);
+    // A member's declared alignment raises its packed one.  GNU's packed
+    // member would lower the record's alignment below what its members'
+    // types give, which a record keeps only as a pack of its own.
+    if (Field.Packed && Draft.Pack != 1)
+      return problem(Name + " is packed alone, which local types do not lay "
+                            "out; pack the record");
+    if (Field.Bitfield && Field.Alignment)
+      return problem("bitfield " + Name +
+                     " is aligned, which local types do not lay out");
+    const uint32_t Aligned = std::max(packed(Natural), Field.Alignment);
 
     if (Field.Bitfield) {
       const uint64_t Unit = *Size * 8;
@@ -135,11 +144,19 @@ llvm::Expected<RecordDef> layOutRecord(const TypeLibrary &Library,
   }
 
   // A declared alignment may only raise the record's.
-  if (Draft.Alignment > Alignment) {
-    Alignment = Draft.Alignment;
-    Record.Alignment = Draft.Alignment;
-  }
+  Alignment = std::max(Alignment, Draft.Alignment);
   Record.Size = alignBits(Draft.Union ? Widest : End, Alignment) / 8;
+  // A record with no bytes, such as a union of empty arrays, still takes
+  // some: a byte in C++, and in Microsoft's C four or its declared
+  // alignment.
+  if (!Record.Size && (Draft.Cpp || Rules == LayoutRules::MSVC)) {
+    const uint32_t Least = Draft.Cpp ? 1 : 4;
+    Record.Size = Draft.Alignment >= Least ? Alignment : Least;
+  }
+  // The record keeps an alignment its members' types do not give it, from
+  // its declaration or a member's, as the library's alignOf would not find.
+  if (Alignment > Library.alignOf(Record))
+    Record.Alignment = Alignment;
   return Record;
 }
 

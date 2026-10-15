@@ -153,17 +153,142 @@ TEST(TypeParse, ReadsTypedefsPrototypesAndFunctionPointers) {
   const TypeExpr &Dispatch = *Device.Members[0].Type;
   ASSERT_EQ(Dispatch.Kind, TypeExprKind::Pointer);
   ASSERT_EQ(Dispatch.Element->Kind, TypeExprKind::Function);
-  EXPECT_EQ(Dispatch.Element->Function->Convention, CallingConvention::Stdcall);
+  // x64 compilers accept __stdcall and ignore it: no convention is kept.
+  EXPECT_EQ(Dispatch.Element->Function->Convention,
+            CallingConvention::Unspecified);
   EXPECT_EQ(Dispatch.Element->Function->Params[0].Name, "Self");
 
   const FunctionDef *Call = Library.findPrototype("IoCallDevice");
   ASSERT_NE(Call, nullptr);
-  EXPECT_EQ(Call->Convention, CallingConvention::Stdcall);
+  EXPECT_EQ(Call->Convention, CallingConvention::Unspecified);
   ASSERT_EQ(Call->Params.size(), 2u);
   EXPECT_EQ(Call->Params[1].Name, "Length");
   EXPECT_TRUE(Call->Variadic);
   EXPECT_EQ(Library.find("PROUTINE")->Target->Element->Kind,
             TypeExprKind::Function);
+
+  // 32-bit x86 keeps it.
+  TypeLibrary X86(DataModel::ILP32);
+  ASSERT_TRUE(parseCTypes("LONG NTAPI IoCallDevice(ULONG Length);", X86).ok());
+  EXPECT_EQ(X86.findPrototype("IoCallDevice")->Convention,
+            CallingConvention::Stdcall);
+}
+
+TEST(TypeParse, ReadsWhatGnuPreprocessedHeadersHold) {
+  // As clang -E writes <ntifs.h> for mingw-w64: attributes wherever GNU
+  // puts them, __extension__, inline definitions, assembler names, and a
+  // #pragma pack that names a macro.
+  const TypeLibrary Library = parsed(R"(
+    #define PACKING 4
+    typedef struct __attribute__ ((__aligned__ (16))) _SLIST {
+      unsigned long long A, B;
+    } SLIST, *PSLIST;
+    #pragma pack(push, PACKING)
+    typedef struct _P { char c; long long q; } P;
+    #pragma pack(pop)
+    typedef struct _M {
+      unsigned long a;
+      unsigned long b __attribute__((aligned(8)));
+      unsigned char __attribute__ ((__aligned__ (8))) c;
+    } M;
+    typedef struct { int a; } X, *PX;
+    typedef enum { A1, A2 = 5 } E, *PE;
+    typedef struct _Q { char c; int i; } __attribute__((__packed__, __may_alias__)) Q;
+    __extension__ typedef unsigned long long U64;
+    typedef union _R {
+      unsigned long n;
+      __extension__ union { unsigned long w[0]; unsigned long v[0]; };
+    } R;
+    typedef struct _S { unsigned long n; union { unsigned long w[0]; }; } S;
+    extern __inline__ __attribute__((__always_inline__,__gnu_inline__))
+    int helper(int x) { return x + 1.5f > 0 ? 1 : 0; }
+    void __attribute__((__cdecl__)) quit(int code) __attribute__ ((__noreturn__));
+    int renamed(void) __asm__("_renamed");
+    void *__attribute__((__cdecl__)) info(void);
+    void logv(const char *format, va_list arguments);
+    _Static_assert(sizeof(P) == 12, "packed to the macro");
+    _Static_assert(__alignof__(SLIST) == 16, "aligned record");
+    _Static_assert(__builtin_offsetof(M, b) == 8, "aligned member");
+    _Static_assert(sizeof(int) == 4 ? 1 : 0, "a conditional");
+  )");
+  EXPECT_EQ(recordOf(Library, "_SLIST").Size, 16u);
+  EXPECT_EQ(Library.alignOf(*makeNamed("_SLIST", TypeKind::Struct)), 16u);
+  EXPECT_EQ(shapeOf(recordOf(Library, "_M")), "struct{a@0 b@8 c@16}");
+  EXPECT_EQ(recordOf(Library, "_M").Size, 24u);
+  // An anonymous record's typedef names it; the others point to it.
+  EXPECT_EQ(Library.find("X")->Kind, TypeKind::Struct);
+  EXPECT_EQ(Library.find("PX")->Target->Element->Name, "X");
+  EXPECT_EQ(Library.find("E")->Kind, TypeKind::Enum);
+  EXPECT_EQ(Library.find("PE")->Target->Element->Name, "E");
+  EXPECT_EQ(recordOf(Library, "_Q").Size, 5u);
+  // Microsoft's C gives a union of empty arrays four bytes.
+  EXPECT_EQ(recordOf(Library, "_R").Size, 4u);
+  EXPECT_EQ(recordOf(Library, "_S").Size, 8u);
+  ASSERT_NE(Library.findPrototype("helper"), nullptr);
+  ASSERT_NE(Library.findPrototype("quit"), nullptr);
+  EXPECT_TRUE(Library.findPrototype("quit")->NoReturn);
+  EXPECT_FALSE(Library.findPrototype("helper")->NoReturn);
+  ASSERT_NE(Library.findPrototype("renamed"), nullptr);
+  ASSERT_NE(Library.findPrototype("info"), nullptr);
+  // va_list is Windows' pointer to the arguments.
+  const FunctionDef &Log = *Library.findPrototype("logv");
+  ASSERT_EQ(Log.Params.size(), 2u);
+  EXPECT_EQ(Log.Params[1].Type->Kind, TypeExprKind::Pointer);
+}
+
+TEST(TypeParse, RefusesWhatItCannotLayOutAndKeepsGoingWhenAsked) {
+  TypeLibrary Library;
+  // A #pragma pack of an unknown name leaves every layout after it unknown.
+  ParseResult Pack =
+      parseCTypes("#pragma pack(push, UNKNOWN)\nstruct A { int a; };", Library);
+  ASSERT_EQ(Pack.Problems.size(), 1u);
+  EXPECT_NE(Pack.Problems[0].Message.find("UNKNOWN"), std::string::npos);
+
+  const char *Source = "typedef int v4 __attribute__((__vector_size__(16)));\n"
+                       "struct B { char c; int i __attribute__((packed)); };\n"
+                       "struct C { int c; };\n";
+  ParseResult Strict = parseCTypes(Source, Library);
+  EXPECT_EQ(Strict.Problems.size(), 2u);
+  EXPECT_EQ(Library.find("C"), nullptr);
+  ParseOptions Going;
+  Going.KeepGoing = true;
+  ParseResult Kept = parseCTypes(Source, Library, Going);
+  EXPECT_EQ(Kept.Problems.size(), 2u);
+  EXPECT_EQ(Library.find("v4"), nullptr);
+  EXPECT_EQ(Library.find("B"), nullptr);
+  EXPECT_NE(Library.find("C"), nullptr);
+}
+
+TEST(TypeParse, ConvertsWithoutAProgram) {
+  // A C header read and rendered as Rust and Go, and back.
+  TypeLibrary Library;
+  ASSERT_TRUE(parseCTypes("typedef LONG NTSTATUS;\n"
+                          "typedef struct _PAIR { ULONG Low; LONG High; } "
+                          "PAIR, *PPAIR;\n"
+                          "NTSTATUS NTAPI Pair(PPAIR Out, ULONG Flags);",
+                          Library)
+                  .ok());
+  for (Language Lang : {Language::Rust, Language::Go, Language::Cpp}) {
+    RenderOptions Render;
+    Render.Lang = Lang;
+    Render.Asserts = true;
+    TypeLibrary Back;
+    ParseOptions Read;
+    Read.Lang = Lang;
+    const ParseResult Result =
+        parseTypes(renderTypes(Library, {}, Render), Back, Read);
+    EXPECT_TRUE(Result.ok()) << languageId(Lang).str();
+    EXPECT_EQ(shapeOf(recordOf(Back, "_PAIR")), "struct{Low@0 High@4}");
+  }
+  RenderOptions Prototypes;
+  Prototypes.Prototypes = true;
+  const std::string Header = renderTypes(Library, {}, Prototypes);
+  EXPECT_NE(Header.find("NTSTATUS Pair(PPAIR Out, ULONG Flags);"),
+            std::string::npos);
+  TypeLibrary Back;
+  ASSERT_TRUE(parseCTypes(Header, Back).ok());
+  ASSERT_NE(Back.findPrototype("Pair"), nullptr);
+  EXPECT_EQ(Back.findPrototype("Pair")->Params[1].Name, "Flags");
 }
 
 TEST(TypeParse, ChecksStaticAssertions) {
