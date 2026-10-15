@@ -1,0 +1,35 @@
+//===- KernelInterlockedAPIs.def - Spin-lock interlocked routines --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Argument counts, caller-IRQL ceilings and typed operations for the
+/// executive routines that update caller storage under a caller spin lock.
+/// They mask interrupts instead of raising IRQL and free the lock before they
+/// return, following the Windows 10.0.19041.6456 kernel exports.
+///
+//===----------------------------------------------------------------------===//
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedinsertheadlist
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedinserttaillist
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedremoveheadlist
+NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedInsertHeadList, 3, Any,
+                              interlockedInsertList(A, false))
+NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedInsertTailList, 3, Any,
+                              interlockedInsertList(A, true))
+NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedRemoveHeadList, 2, Any,
+                              interlockedRemoveHeadList(A))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedpushentrylist
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedpopentrylist
+NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedPushEntryList, 3, Any,
+                              interlockedPushEntryList(A))
+NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedPopEntryList, 2, Any,
+                              interlockedPopEntryList(A))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedaddulong
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedaddlargeinteger
+NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedAddUlong, 3, Any,
+                              interlockedAdd(A, 4))
+NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedAddLargeInteger, 3, Any,
+                              interlockedAdd(A, 8))

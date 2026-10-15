@@ -89,6 +89,10 @@ NEVERD_KERNEL_IRQL_API(KeUnstackDetachProcess, APC)
   NEVERD_KERNEL_IRQL_API(Name, IRQL)
 #include "KernelSpinLockAPIs.def"
 #undef NEVERD_KERNEL_SPINLOCK_API
+#define NEVERD_KERNEL_INTERLOCKED_API(Name, Arity, IRQL, Operation)            \
+  NEVERD_KERNEL_IRQL_API(Name, IRQL)
+#include "KernelInterlockedAPIs.def"
+#undef NEVERD_KERNEL_INTERLOCKED_API
 
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-ioconnectinterrupt
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-kesynchronizeexecution

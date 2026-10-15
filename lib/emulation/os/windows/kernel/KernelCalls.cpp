@@ -75,6 +75,10 @@ llvm::Expected<uint64_t> KernelModel::call(
   case KernelAPIKind::Name:
 #include "KernelRuntimeTimeAPIs.def"
 #undef NEVERD_KERNEL_RUNTIME_TIME_API
+#define NEVERD_KERNEL_INTERLOCKED_API(Name, Arity, IRQL, Operation)            \
+  case KernelAPIKind::Name:
+#include "KernelInterlockedAPIs.def"
+#undef NEVERD_KERNEL_INTERLOCKED_API
     break;
   case KernelAPIKind::IoAllocateMdl:
   case KernelAPIKind::IoFreeMdl:
@@ -237,6 +241,11 @@ llvm::Expected<uint64_t> KernelModel::call(
     return Operation;
 #include "KernelSpinLockAPIs.def"
 #undef NEVERD_KERNEL_SPINLOCK_API
+#define NEVERD_KERNEL_INTERLOCKED_API(Name, Arity, IRQL, Operation)            \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelInterlockedAPIs.def"
+#undef NEVERD_KERNEL_INTERLOCKED_API
 #define NEVERD_KERNEL_INTERRUPT_API(Name, Arity, IRQL, Operation)              \
   case KernelAPIKind::Name:                                                    \
     return Operation;

@@ -111,3 +111,11 @@ EXPORTS
   RtlTimeFieldsToTime
   RtlStringFromGUID
   RtlGUIDFromString
+  ExInterlockedInsertHeadList
+  ExInterlockedInsertTailList
+  ExInterlockedRemoveHeadList
+  ExInterlockedPushEntryList
+  ExInterlockedPopEntryList
+  ExInterlockedAddUlong
+  ExInterlockedAddLargeInteger
+  KeInitializeSpinLock

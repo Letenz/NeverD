@@ -590,6 +590,128 @@ TEST_F(DriverKernelModel, SpinLockFailuresPreserveOwnershipAndValidationOrder) {
   invoke("ExFreePoolWithTag", {Lock, Tag});
 }
 
+TEST_F(DriverKernelModel, InterlockedListsLinkLikeTheKernel) {
+  // ExInterlockedInsert{Head,Tail}List return the old neighbor or NULL, and
+  // ExInterlockedRemoveHeadList leaves the removed entry's own links. The
+  // lock is free again afterwards and IRQL never changes.
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Block =
+      invoke("ExAllocatePoolWithTag", {0, 0x100, 0x4c495354});
+  ASSERT_NE(Block, 0u);
+  const uint64_t Head = Block, E1 = Block + 0x10, E2 = Block + 0x20,
+                 E3 = Block + 0x30, Lock = Block + 0x80;
+  invoke("KeInitializeSpinLock", {Lock});
+  success(Memory->writeInteger(Head, Head, 8));
+  success(Memory->writeInteger(Head + 8, Head, 8));
+  auto Link = [&](uint64_t Entry, unsigned Offset) {
+    auto Value = Memory->readInteger(Entry + Offset, 8);
+    return Value ? *Value : ~uint64_t(0);
+  };
+
+  EXPECT_EQ(invoke("ExInterlockedInsertTailList", {Head, E1, Lock}), 0u);
+  EXPECT_EQ(invoke("ExInterlockedInsertTailList", {Head, E2, Lock}), E1);
+  EXPECT_EQ(invoke("ExInterlockedInsertHeadList", {Head, E3, Lock}), E1);
+  EXPECT_EQ(Link(Head, 0), E3);
+  EXPECT_EQ(Link(Head, 8), E2);
+  EXPECT_EQ(Link(E3, 0), E1);
+  EXPECT_EQ(Link(E1, 8), E3);
+  EXPECT_EQ(Model->currentIRQL(), 0u);
+  EXPECT_EQ(Link(Lock, 0), 0u);
+
+  EXPECT_EQ(invoke("ExInterlockedRemoveHeadList", {Head, Lock}), E3);
+  EXPECT_EQ(Link(E3, 0), E1);
+  EXPECT_EQ(Link(E3, 8), Head);
+  EXPECT_EQ(Link(E1, 8), Head);
+  const auto Previous = invoke("KfRaiseIrql", {2});
+  EXPECT_EQ(invoke("ExInterlockedRemoveHeadList", {Head, Lock}), E1);
+  EXPECT_EQ(invoke("ExInterlockedRemoveHeadList", {Head, Lock}), E2);
+  EXPECT_EQ(invoke("ExInterlockedRemoveHeadList", {Head, Lock}), 0u);
+  EXPECT_EQ(Model->currentIRQL(), 2u);
+  invoke("KeLowerIrql", {Previous});
+  EXPECT_EQ(Link(Head, 0), Head);
+  EXPECT_EQ(Link(Head, 8), Head);
+}
+
+TEST_F(DriverKernelModel, InterlockedSingleListsAndCountersMatchTheKernel) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Block =
+      invoke("ExAllocatePoolWithTag", {0, 0x100, 0x4c495354});
+  ASSERT_NE(Block, 0u);
+  const uint64_t Head = Block, E1 = Block + 0x10, E2 = Block + 0x20,
+                 Counter = Block + 0x40, Lock = Block + 0x80;
+  invoke("KeInitializeSpinLock", {Lock});
+  success(Memory->writeInteger(Head, 0, 8));
+  EXPECT_EQ(invoke("ExInterlockedPushEntryList", {Head, E1, Lock}), 0u);
+  EXPECT_EQ(invoke("ExInterlockedPushEntryList", {Head, E2, Lock}), E1);
+  EXPECT_EQ(invoke("ExInterlockedPopEntryList", {Head, Lock}), E2);
+  // The popped entry keeps its link to the old next entry.
+  auto Next = Memory->readInteger(E2, 8);
+  ASSERT_TRUE(static_cast<bool>(Next));
+  EXPECT_EQ(*Next, E1);
+  EXPECT_EQ(invoke("ExInterlockedPopEntryList", {Head, Lock}), E1);
+  EXPECT_EQ(invoke("ExInterlockedPopEntryList", {Head, Lock}), 0u);
+
+  // ExInterlockedAddUlong wraps at 32 bits and ignores the increment's upper
+  // half; ExInterlockedAddLargeInteger wraps at 64 bits.
+  success(Memory->writeInteger(Counter, 0x11111111ffffffffULL, 8));
+  EXPECT_EQ(
+      invoke("ExInterlockedAddUlong", {Counter, 0xabcdef0000000002ULL, Lock}),
+      0xffffffffu);
+  auto Value = Memory->readInteger(Counter, 8);
+  ASSERT_TRUE(static_cast<bool>(Value));
+  EXPECT_EQ(*Value, 0x1111111100000001ULL);
+  success(Memory->writeInteger(Counter, ~uint64_t(0), 8));
+  EXPECT_EQ(invoke("ExInterlockedAddLargeInteger", {Counter, 2, Lock}),
+            ~uint64_t(0));
+  Value = Memory->readInteger(Counter, 8);
+  ASSERT_TRUE(static_cast<bool>(Value));
+  EXPECT_EQ(*Value, 1u);
+}
+
+TEST_F(DriverKernelModel, InterlockedRoutinesRefuseWhatTheKernelCannotRun) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Block =
+      invoke("ExAllocatePoolWithTag", {0, 0x100, 0x4c495354});
+  const uint64_t Paged = invoke("ExAllocatePoolWithTag", {1, 0x20, 0x4c495354});
+  ASSERT_NE(Block, 0u);
+  ASSERT_NE(Paged, 0u);
+  const uint64_t Head = Block, Entry = Block + 0x10, Lock = Block + 0x80;
+  invoke("KeInitializeSpinLock", {Lock});
+  // A head whose first entry does not link back fails fast in the kernel.
+  success(Memory->writeInteger(Head, Entry, 8));
+  success(Memory->writeInteger(Head + 8, Entry, 8));
+  success(Memory->writeInteger(Entry, Head, 8));
+  success(Memory->writeInteger(Entry + 8, Entry, 8));
+  for (const char *Name :
+       {"ExInterlockedInsertHeadList", "ExInterlockedRemoveHeadList"}) {
+    const std::string Error =
+        std::string_view(Name) == "ExInterlockedRemoveHeadList"
+            ? failure(Name, {Head, Lock})
+            : failure(Name, {Head, Block + 0x20, Lock});
+    EXPECT_NE(Error.find("FAST_FAIL_CORRUPT_LIST_ENTRY"), std::string::npos)
+        << Name;
+  }
+  auto Untouched = Memory->readInteger(Head, 8);
+  ASSERT_TRUE(static_cast<bool>(Untouched));
+  EXPECT_EQ(*Untouched, Entry);
+
+  success(Memory->writeInteger(Entry + 8, Head, 8));
+  EXPECT_EQ(failure("ExInterlockedPushEntryList", {Paged, Entry, Lock}),
+            "interlocked storage requires nonpaged memory");
+  EXPECT_EQ(failure("ExInterlockedPopEntryList",
+                    {profile::UserProbeLimit - 0x10, Lock}),
+            "interlocked storage requires resident kernel memory");
+  EXPECT_EQ(failure("ExInterlockedAddUlong", {Lock + 4, 1, Lock}),
+            "interlocked storage overlaps its spin lock");
+  EXPECT_EQ(invoke("KeAcquireSpinLockRaiseToDpc", {Lock}), 0u);
+  EXPECT_EQ(failure("ExInterlockedRemoveHeadList", {Head, Lock}),
+            "executive spin lock would deadlock on this cooperative processor");
+  invoke("KeReleaseSpinLock", {Lock, 0});
+  success(Memory->writeInteger(Lock, 1, 8));
+  EXPECT_EQ(failure("ExInterlockedAddLargeInteger", {Block + 0x40, 1, Lock}),
+            "executive spin lock must be initialized and free");
+}
+
 TEST_F(DriverKernelModel, MDLMappingIgnoresUnspecifiedNarrowArgumentHighBits) {
   using namespace windows;
   invoke("IoCreateDevice",
