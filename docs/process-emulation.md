@@ -639,8 +639,9 @@ and [x64 layout](https://github.com/torvalds/linux/blob/v6.6/arch/x86/include/ua
 `newfstatat` (x64 262, AArch64 79), Bionic `fstatat`/`fstatat64` and variadic
 `syscall` query those same observations. Absolute paths in the supported form ignore dirfd;
 missing entries return `ENOENT`, and traversal through a regular file returns
-`ENOTDIR`. `AT_SYMLINK_NOFOLLOW` and `AT_NO_AUTOMOUNT` are accepted for this
-catalogue, which has neither symlinks nor automounts. A non-NULL empty pathname
+`ENOTDIR`. `AT_SYMLINK_NOFOLLOW` and `AT_NO_AUTOMOUNT` are accepted for supported
+regular-file queries; link metadata, link traversal and automount behavior
+remain unmodeled. A non-NULL empty pathname
 with `AT_EMPTY_PATH` queries an existing descriptor without changing its cursor;
 without that flag it returns `ENOENT`. Closed descriptors return `EBADF`.
 The directory and flags arguments use their low 32 bits. Invalid flag bits
