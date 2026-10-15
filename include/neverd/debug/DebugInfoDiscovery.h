@@ -34,6 +34,26 @@ enum class DebugInfoKind { None, DWARF, PDB, Map };
 /// Human-readable name of \p Kind, for diagnostics and the C API.
 const char *debugInfoKindName(DebugInfoKind Kind);
 
+/// Whether images of \p A can have DWARF, a PDB or a linker MAP at all.  EVM
+/// and SBF describe themselves through their own metadata -- an ABI JSON, an
+/// Anchor IDL -- so discovery reads nothing for them.
+bool searchesDebugInfo(Arch A);
+
+/// Where discovery reads an ELF or Mach-O image's DWARF from.
+enum class DWARFLocation {
+#define NEVERD_DWARF_LOCATION(Name, Spelling) Name,
+#include "neverd/debug/DWARFLocation.def"
+};
+
+/// The C API spelling of \p Location.
+const char *dwarfLocationName(DWARFLocation Location);
+
+/// A file that holds an image's DWARF.
+struct DWARFSource {
+  std::filesystem::path Path;
+  DWARFLocation Location = DWARFLocation::Input;
+};
+
 /// Where to look for debug information beyond the binary itself.
 struct DebugInfoRequest {
   /// Caller-supplied companion files.  A non-empty path is authoritative:
@@ -51,6 +71,10 @@ struct DebugInfoRequest {
   /// one: the user declined it, or chose one that loads after the image.
   /// Other debug information is still found.
   bool SearchPDB = true;
+  /// Set false to leave an ELF or Mach-O image without its DWARF, from its
+  /// own sections or a companion file: the user declined it.  Other debug
+  /// information is still found.
+  bool SearchDWARF = true;
 
   /// The symbol search path, in _NT_SYMBOL_PATH syntax, that replaces the
   /// environment's.  Its directories and stores are searched for the PDB;
@@ -78,6 +102,14 @@ struct DebugInfoResult {
   /// True once a context carrying at least one symbol was loaded.
   explicit operator bool() const { return Context && Context->hasInfo(); }
 };
+
+/// The DWARF loadDebugInfo reads for the \p Format image at \p BinaryPath,
+/// found without loading it and in the order loadDebugInfo tries: the image's
+/// own sections, a .dSYM bundle beside a Mach-O image, then a split .debug
+/// file beside it, which is matched by name alone.  Empty for another format
+/// or an image without DWARF.
+std::optional<DWARFSource> findDWARF(const std::filesystem::path &BinaryPath,
+                                     BinaryFormat Format);
 
 /// Locate and load the debug information for \p BinaryPath.
 ///

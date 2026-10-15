@@ -48,6 +48,20 @@ __declspec(dllimport) NTSTATUS
 RtlUnicodeStringToAnsiString(STRING *, const UNICODE_STRING *, U8);
 __declspec(dllimport) void RtlFreeUnicodeString(UNICODE_STRING *);
 __declspec(dllimport) void RtlFreeAnsiString(STRING *);
+__declspec(dllimport) NTSTATUS RtlInitUnicodeStringEx(UNICODE_STRING *,
+                                                      const U16 *);
+__declspec(dllimport) void RtlCopyString(STRING *, const STRING *);
+__declspec(dllimport) U8 RtlEqualString(const STRING *, const STRING *, U8);
+__declspec(dllimport) int RtlCompareString(const STRING *, const STRING *, U8);
+typedef struct {
+  U32 Data1;
+  U16 Data2, Data3;
+  U8 Data4[8];
+} GUID;
+__declspec(dllimport) NTSTATUS RtlStringFromGUID(const GUID *,
+                                                 UNICODE_STRING *);
+__declspec(dllimport) NTSTATUS RtlGUIDFromString(const UNICODE_STRING *,
+                                                 GUID *);
 
 NTSTATUS DriverEntry(void *Driver, const UNICODE_STRING *RegistryPath) {
   (void)Driver;
@@ -108,5 +122,35 @@ NTSTATUS DriverEntry(void *Driver, const UNICODE_STRING *RegistryPath) {
   STRING Short = {0, sizeof(Head), 0, Head};
   NTSTATUS Truncated = RtlUnicodeStringToAnsiString(&Short, &Path, 0);
   DbgPrint("convert %08x %u %s", (U32)Truncated, Short.Length, Head);
+
+  // Bounded initialization, terminator-free byte copy and byte comparison.
+  UNICODE_STRING Bounded;
+  char Bytes[8] = {'!', '!', '!', '!', '!', '!', '!', '!'};
+  STRING Copied = {0, sizeof(Bytes), 0, Bytes};
+  RtlCopyString(&Copied, &Name);
+  if (RtlInitUnicodeStringEx(&Bounded, (const U16 *)L"Sample") ||
+      Bounded.Length != 12 || Bounded.MaximumLength != 14 ||
+      Copied.Length != 6 || Bytes[6] != '!' ||
+      !RtlEqualString(&Copied, &Name, 0))
+    return (NTSTATUS)0xc000000dU;
+  DbgPrint("bytes %d %d", RtlCompareString(&Name, &Empty, 0),
+           RtlCompareString(&Empty, &Name, 0));
+
+  // Format a device-class GUID, parse it back and release the text.
+  const GUID Class = {0x4d36e967,
+                      0xe325,
+                      0x11ce,
+                      {0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18}};
+  UNICODE_STRING ClassText;
+  GUID Parsed = {0, 0, 0, {0}};
+  if (RtlStringFromGUID(&Class, &ClassText) ||
+      RtlGUIDFromString(&ClassText, &Parsed))
+    return (NTSTATUS)0xc000000dU;
+  const U8 *Left = (const U8 *)&Class, *Right = (const U8 *)&Parsed;
+  U32 Same = 1;
+  for (U32 I = 0; I < sizeof(GUID); ++I)
+    Same &= Left[I] == Right[I];
+  DbgPrint("guid %wZ %u %u", &ClassText, ClassText.Length, Same);
+  RtlFreeUnicodeString(&ClassText);
   return 0;
 }

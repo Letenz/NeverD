@@ -744,7 +744,12 @@ TEST_F(WebSDK, LargeOriginalImportDoesNotExpandSourceOrMapParsingBudgets) {
   constexpr uint64_t Size = 65ULL * 1024 * 1024 + 1;
   fs::resize_file(Path, Size);
   const auto Capabilities = take(neverd_web_capabilities_json());
+#ifdef _WIN32
+  EXPECT_EQ(field(Capabilities, "artifact_storage"),
+            "windows-private-unlinked-spool-v1");
+#else
   EXPECT_EQ(field(Capabilities, "artifact_storage"), "posix-unlinked-spool-v1");
+#endif
   const auto Opened = commit(preview());
   ASSERT_EQ(field(Opened, "status"), "ok");
   EXPECT_EQ(field(Opened, "input_bytes"), std::to_string(Size));

@@ -1,0 +1,27 @@
+//===- DWARFLocation.def - Where an image's DWARF is found -----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The places debug discovery reads an ELF or Mach-O image's DWARF from, in
+/// the order it tries them, with the spelling the C API reports.  Define the
+/// macro before including this file.
+///
+///   NEVERD_DWARF_LOCATION(Name, Spelling)
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_DWARF_LOCATION
+#define NEVERD_DWARF_LOCATION(Name, Spelling)
+#endif
+
+// The image's own .debug_info or __debug_info sections.
+NEVERD_DWARF_LOCATION(Input, "input")
+// The DWARF file of a .dSYM bundle beside a Mach-O image.
+NEVERD_DWARF_LOCATION(DSYM, "dsym")
+// A split .debug file beside the image, matched by its name alone.
+NEVERD_DWARF_LOCATION(Beside, "beside")
+
+#undef NEVERD_DWARF_LOCATION

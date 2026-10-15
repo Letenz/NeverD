@@ -250,6 +250,8 @@ Json hello() {
   }
   if (Engine::findsPdbFiles())
     result["capabilities"].push_back("pdb_reference");
+  if (Engine::findsDwarf())
+    result["capabilities"].push_back("dwarf_reference");
   result["web"] = WebEngine::capabilities();
   return result;
 }

@@ -30,6 +30,7 @@ NEVERD_WDM_VALUE(StatusInvalidParameter2, 0xc00000f0)
 NEVERD_WDM_VALUE(StatusBufferOverflow, 0x80000005)
 NEVERD_WDM_VALUE(StatusBufferTooSmall, 0xc0000023)
 NEVERD_WDM_VALUE(StatusNoMemory, 0xc0000017)
+NEVERD_WDM_VALUE(StatusNameTooLong, 0xc0000106)
 // ExpAllocateStringRoutine allocates converted strings from paged pool 'Strg'.
 NEVERD_WDM_VALUE(RuntimeStringPoolTag, 0x67727453)
 NEVERD_WDM_VALUE(StatusTimeout, 0x102)

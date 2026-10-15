@@ -144,6 +144,7 @@ static int realMain(int Argc, char *Argv[]) {
   // The debug-symbol search is part of loading, so its policy has to be in
   // place before the load rather than adjusted afterwards.
   neverd_session_set_debug_info_enabled(Sess, NoDebug ? 0 : 1);
+  neverd_session_set_dwarf_search(Sess, NoDwarf ? 0 : 1);
   if (!PdbFile.getValue().empty())
     neverd_session_set_pdb_path_ex(Sess, PdbFile.getValue().c_str(),
                                    PdbUnverified ? 1 : 0);

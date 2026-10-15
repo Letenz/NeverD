@@ -2236,6 +2236,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Could not tell which PDB %1 names: %2</source>
         <translation>Не удалось определить, какой PDB указан в %1: %2</translation>
     </message>
+    <message>
+        <source>Could not tell whether %1 has DWARF: %2</source>
+        <translation>Не удалось определить, есть ли в %1 DWARF: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2524,6 +2528,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Edited the function at %1</source>
         <translation>Изменена функция по адресу %1</translation>
+    </message>
+    <message>
+        <source>Opened without its DWARF debug information, as chosen</source>
+        <translation>Открыто без отладочной информации DWARF, как выбрано</translation>
+    </message>
+    <message>
+        <source>DWARF loaded: %1</source>
+        <translation>DWARF загружен: %1</translation>
     </message>
 </context>
 <context>
@@ -3056,6 +3068,21 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Cancel</source>
         <translation>Отмена</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DwarfPromptDialog</name>
+    <message>
+        <source>DWARF info found</source>
+        <translation>Найдена информация DWARF</translation>
+    </message>
+    <message>
+        <source>Load DWARF debug information?</source>
+        <translation>Загрузить отладочную информацию DWARF?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
     </message>
 </context>
 </TS>

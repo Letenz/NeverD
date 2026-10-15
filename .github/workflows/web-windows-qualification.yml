@@ -124,7 +124,7 @@ jobs:
           & "$PWD/build-llvm-runtime/neverd-llvm-runtime-probe.exe"
           cmake --build build-web-windows --target NeverDWebArtifactTests --parallel 4
           Copy-Item "$ICU/bin64/icuuc77.dll", "$ICU/bin64/icudt77.dll" build-web-windows/bin
-          ctest --test-dir build-web-windows/unittests/web --output-on-failure --no-tests=error --parallel 4 -R '^WebWindowsHost\.'
+          ctest --test-dir build-web-windows/unittests/web --output-on-failure --no-tests=error --parallel 4 -R '^Web(WindowsHost|Asar)\.'
           cmake --build build-web-windows --target neverd neverd-worker neverd-web-mcp NeverDWebArtifactTests NeverDWebSDKTests NeverDWebNativeTests neverd-worker-web-tests neverd-web-mcp-web-tests neverd-web-package-tests --parallel 4
           Copy-Item "$ICU/bin64/icuuc77.dll", "$ICU/bin64/icudt77.dll" build-web-windows/bin
       - name: Qualify Windows owners and public API without skips

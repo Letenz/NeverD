@@ -208,6 +208,35 @@ const char *debugInfoKindName(DebugInfoKind Kind) {
   return "none";
 }
 
+bool searchesDebugInfo(Arch A) { return A != Arch::EVM && A != Arch::SBF; }
+
+const char *dwarfLocationName(DWARFLocation Location) {
+  switch (Location) {
+#define NEVERD_DWARF_LOCATION(Name, Spelling)                                  \
+  case DWARFLocation::Name:                                                    \
+    return Spelling;
+#include "neverd/debug/DWARFLocation.def"
+  }
+  return "input";
+}
+
+std::optional<DWARFSource> findDWARF(const std::filesystem::path &BinaryPath,
+                                     BinaryFormat Format) {
+  if (Format != BinaryFormat::ELF && Format != BinaryFormat::MachO)
+    return std::nullopt;
+  if (hasDWARFUnits(BinaryPath))
+    return DWARFSource{BinaryPath, DWARFLocation::Input};
+  // DWARFDebugContext::load turns to the bundle when the image has none.
+  if (Format == BinaryFormat::MachO)
+    if (auto Bundle = findDSYMFile(BinaryPath);
+        !Bundle.empty() && hasDWARFUnits(Bundle))
+      return DWARFSource{std::move(Bundle), DWARFLocation::DSYM};
+  for (std::filesystem::path &C : splitDwarfCandidates(BinaryPath))
+    if (isReadableFile(C) && hasDWARFUnits(C))
+      return DWARFSource{std::move(C), DWARFLocation::Beside};
+  return std::nullopt;
+}
+
 DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
                               const BinaryImage &Img,
                               const DebugInfoRequest &Req,
@@ -238,10 +267,7 @@ DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
     return Result;
   }
 
-  // EVM and SBF describe themselves through their own metadata — an ABI JSON,
-  // an Anchor IDL — and no producer emits DWARF, PDB, or a linker MAP for
-  // either.  Probing for those files would only cost stat calls.
-  if (Img.Arch == Arch::EVM || Img.Arch == Arch::SBF)
+  if (!searchesDebugInfo(Img.Arch))
     return Result;
 
   switch (Img.Format) {
@@ -264,7 +290,10 @@ DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
 
   case BinaryFormat::ELF:
   case BinaryFormat::MachO:
-    // Covers in-image .debug_info and, for Mach-O, an adjacent .dSYM bundle.
+    if (!Req.SearchDWARF)
+      break;
+    // Covers in-image .debug_info and, for Mach-O, an adjacent .dSYM bundle,
+    // in the order findDWARF reports.
     Result =
         loadDWARF(BinaryPath, Img.Format, DWARFLoadTrust::InImage, Img.Raw);
     if (Result)
