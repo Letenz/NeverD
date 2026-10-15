@@ -3639,6 +3639,17 @@ checks all four architectures, including explicit function ownership and
 partial-range counterexamples. Session C API regressions cover TLS calls,
 variadic veneers and lazy-binding source pages.
 
+`ExternalFunctionPointersNeedAnExactAbsoluteSymbol` checks the four absolute
+relocation types with REL and RELA addends, and that GOT bindings, data,
+untyped, weak and defined symbols, conflicting names and relocatable objects
+yield no external function pointer. `PointerVariablesStartAtExternalFunctions`
+builds, for each architecture, a library whose two pointer variables start at a
+function another library defines. One is volatile, so x64 calls the other
+straight from memory (`call [rip+disp]`) and loads this one into a register
+first. Its LLVM C must not trap and must compile for all four targets. On an
+x64 host the program runs and must call the initial function, then the one
+stored over it.
+
 `LocalUnwindTargetRequiresExclusiveSameFrameUses` includes decoded x64 calls
 whose SP save and load occupy different blocks, stale producer changes, opaque
 calls, partial writes, foreign address uses and invalid module/runtime facts.

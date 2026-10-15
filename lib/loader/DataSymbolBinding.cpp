@@ -10,12 +10,22 @@
 
 #include "llvm/BinaryFormat/ELF.h"
 
+#include <algorithm>
+#include <set>
 #include <stdexcept>
 
 namespace neverd {
 namespace {
 bool isDataSlot(Arch Target, uint32_t Type) {
 #define NEVERD_ELF_DATA_SLOT(ISA, Reloc)                                       \
+  if (Target == Arch::ISA && Type == llvm::ELF::Reloc)                         \
+    return true;
+#include "ELF/ELFDynamicRelocations.def"
+  return false;
+}
+
+bool isAbsoluteSymbol(Arch Target, uint32_t Type) {
+#define NEVERD_ELF_ABSOLUTE_SYMBOL(ISA, Reloc)                                 \
   if (Target == Arch::ISA && Type == llvm::ELF::Reloc)                         \
     return true;
 #include "ELF/ELFDynamicRelocations.def"
@@ -82,5 +92,41 @@ collectDataSymbolBindings(const BinaryImage &Image) {
           "conflicting data symbol relocation bindings");
   }
   return Bindings;
+}
+
+std::map<va_t, std::string>
+collectExternalFunctionPointers(const BinaryImage &Image) {
+  std::map<va_t, std::string> Pointers;
+  const unsigned Width = Image.getPointerSize();
+  if (!Image.isELF() || Image.IsRelocatable || Width == 0)
+    return Pointers;
+  std::set<va_t> Conflicts;
+  for (const auto &Relocation : Image.Relocations) {
+    if (!isAbsoluteSymbol(Image.Arch, Relocation.Type) || !Relocation.ELF ||
+        !Relocation.ELF->Symbol)
+      continue;
+    // The loader may leave a weak symbol's word null.
+    const auto &Symbol = *Relocation.ELF->Symbol;
+    if (!Symbol.Name || Symbol.Name->empty() || Symbol.isDefined() ||
+        !Symbol.isFunction() || Symbol.Binding == llvm::ELF::STB_WEAK)
+      continue;
+    const uint8_t *Bytes = Image.readVA(Relocation.Address, Width);
+    if (!Bytes)
+      continue;
+    // RELA states the addend; REL keeps it in the word.
+    const bool Exact =
+        Relocation.HasExplicitAddend
+            ? Relocation.Addend == 0
+            : std::all_of(Bytes, Bytes + Width,
+                          [](uint8_t Byte) { return Byte == 0; });
+    if (!Exact)
+      continue;
+    auto [It, Inserted] = Pointers.emplace(Relocation.Address, *Symbol.Name);
+    if (!Inserted && It->second != *Symbol.Name)
+      Conflicts.insert(Relocation.Address);
+  }
+  for (va_t Slot : Conflicts)
+    Pointers.erase(Slot);
+  return Pointers;
 }
 } // namespace neverd

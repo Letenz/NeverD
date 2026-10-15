@@ -31,5 +31,15 @@ struct DataSymbolBinding {
 /// section names and symbol-name searches. Conflicting bindings fail clearly.
 std::map<va_t, DataSymbolBinding>
 collectDataSymbolBindings(const BinaryImage &Image);
+
+/// The pointer-width data words the dynamic loader starts at a function
+/// another module defines, by that function's name: an absolute symbol
+/// relocation with no addend against a non-weak function symbol, as a pointer
+/// variable's initializer (`void (*sink)(int) = exit;`).  The program may
+/// store another function there, so the word holds a callable value without
+/// being the function's import slot.  A word two such relocations name
+/// differently is left out.
+std::map<va_t, std::string>
+collectExternalFunctionPointers(const BinaryImage &Image);
 } // namespace neverd
 #endif

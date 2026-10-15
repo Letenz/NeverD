@@ -94,12 +94,17 @@ void MedLLVMEmitter::ensureImportStorageSnapshot() const {
   EffectiveImportStorageSlots.clear();
   ConflictingImportStorageSlots.clear();
   DataSymbolBindings.clear();
+  ExternalFunctionPointerSlots.clear();
   if (!Img)
     return;
   DataSymbolBindings = collectDataSymbolBindings(*Img);
   ImportStorageSlotCollection ImportStorage = Img->collectImportStorageSlots();
   EffectiveImportStorageSlots = std::move(ImportStorage.Slots);
   ConflictingImportStorageSlots = std::move(ImportStorage.Conflicts);
+  for (auto &[Slot, Name] : collectExternalFunctionPointers(*Img))
+    if (!EffectiveImportStorageSlots.count(Slot) &&
+        !ConflictingImportStorageSlots.count(Slot))
+      ExternalFunctionPointerSlots.emplace(Slot, std::move(Name));
 }
 
 bool MedLLVMEmitter::sameCxxContinuationReturnValue(const MedVar &Left,
@@ -796,6 +801,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   ImportStorageSnapshotImage = nullptr;
   EffectiveImportStorageSlots.clear();
   ConflictingImportStorageSlots.clear();
+  ExternalFunctionPointerSlots.clear();
   ensureImportStorageSnapshot();
   TargetArch = TheArch;
   TargetFormat = Fmt;

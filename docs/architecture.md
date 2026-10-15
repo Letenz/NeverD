@@ -1688,6 +1688,19 @@ This contract also works without section headers. In sectionless ARM ELF,
 immutable executable bytes can supply scalar literal reads without classifying
 unreached bytes as instructions; overlapping relocations prevent folding.
 
+An absolute symbol relocation (`NEVERD_ELF_ABSOLUTE_SYMBOL`: `R_386_32`,
+`R_X86_64_64`, `R_ARM_ABS32`, `R_AARCH64_ABS64`) with no addend against a strong
+undefined function starts an ordinary data word at that function, as
+`void (*sink)(int) = exit;` does. `collectExternalFunctionPointers` lists these
+words. They are not import storage: the program may store another function
+there, so the listing keeps the variable's name, and no call through the word
+takes the function's name or its no-return contract. LLVM emission treats the
+word as callable storage, loads it for each call, and starts its mirror field at
+the function's address rather than at the file's zero. Until a call proves the
+function's type, C names it through the same opaque assembly-name alias as
+undefined data. Weak symbols, addends and words two relocations name
+differently stay unknown, and a call through them still fails closed.
+
 The shared i386 get-PC recognizer requires the complete `mov r32,[esp]; ret`
 encoding, with bounded NOP padding. Its own HighC, LLVM and LLVM C bodies retain
 that instruction sequence in a naked helper, preserving the selected register,
