@@ -238,6 +238,7 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   if (!Object)
     return Object.takeError();
   DriverObject = *Object;
+  ReferencedObjects.emplace(DriverObject, ObjectReferences{ObjectKind::Driver});
   auto Extension = allocate(DriverExtensionSize);
   if (!Extension)
     return Extension.takeError();
@@ -328,7 +329,7 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   if (!Watch)
     return Watch.takeError();
   DispatchInitialization = std::move(*Watch);
-  return llvm::Error::success();
+  return initializeDataExports(Options);
 }
 
 llvm::Expected<std::shared_ptr<RAMInitializationWatch>>
@@ -688,6 +689,8 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
     return llvm::Error::success();
   if (Size > UINT64_MAX - Address)
     return modelError("overflowing guest access in Windows model");
+  if (auto E = validateDataExportAccess(Address, Size, IsWrite))
+    return E;
   if (auto E = validateBugCheckAccess(Address, Size, IsWrite))
     return E;
   if (auto E = validateLookasideAccess(Address, Size, IsWrite))

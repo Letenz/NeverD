@@ -65,6 +65,10 @@ neverd_emulate_driver_json(neverd_session_t Sess, const char *Path,
 /// to availability booleans).
 /// Additional root options include service_name, scheduling,
 /// trace_memory_writes, cpuid, and loader_view (version, flags, evidence).
+/// debugger_state requires enabled and not_present booleans for read-only
+/// KdDebuggerEnabled/KdDebuggerNotPresent data. Omission leaves these bytes
+/// inaccessible; declarations and consumed kernel data retain recovery
+/// dependencies. Both Legacy and checked-x64 support these explicit facts.
 /// The loader view is a concrete declaration with retained recovery
 /// dependencies; it supplies no native state restoration contract.
 /// It requires checked-x64 execution. This v1 entry uses Legacy, so callers

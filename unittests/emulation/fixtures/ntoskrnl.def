@@ -219,3 +219,15 @@ ExEnterCriticalRegionAndAcquireSharedWaitForExclusive
 ExReleaseResourceAndLeaveCriticalRegion
 ExSetResourceOwnerPointer
 ExSetResourceOwnerPointerEx
+  PsProcessType DATA
+  PsThreadType DATA
+  IoDriverObjectType DATA
+  IoFileObjectType DATA
+  ExEventObjectType DATA
+  ExSemaphoreObjectType DATA
+  PsJobType DATA
+  SeTokenObjectType DATA
+  PsInitialSystemProcess DATA
+  KeNumberProcessors DATA
+  KdDebuggerEnabled DATA
+  KdDebuggerNotPresent DATA
