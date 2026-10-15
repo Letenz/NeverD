@@ -428,7 +428,7 @@ std::optional<KernelGuestCall> KernelModel::takeIndependentGuestCall() {
       return KernelGuestCall{Call->ExecutionToken.value_or(GuestCallToken{
                                  GuestCallOwner::Framework, Call->Token}),
                              Call->PC, std::move(Call->Arguments),
-                             Call->SynchronizationObject};
+                             Call->SynchronizationObject, Call->ProcessID};
   return std::nullopt;
 }
 

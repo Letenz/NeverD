@@ -165,6 +165,44 @@ protected:
   }
 };
 
+TEST_F(KernelPnpRequest, DelayedFileCleanupPreservesDeclaredProviderResponse) {
+  attach();
+  start();
+  Model->enterExecution(profile::StackBase);
+  const auto Create = file(DriverRequestKind::Create);
+  const uint64_t File = get(Create.IRP + IRPOriginalFileOffset);
+  status(Create.IRP, 0);
+  call("IofCompleteRequest", {Create.IRP, 0});
+  finish(Create.IRP);
+  EXPECT_EQ(
+      call("ObOpenObjectByPointer", {File, 0x200, 0, 0, 0, 0, Scratch + 8}),
+      0u);
+  const uint64_t Handle = get(Scratch + 8);
+  DriverRequest Input;
+  Input.Kind = DriverRequestKind::Cleanup;
+  Input.FileBusCompletion = DriverBusCompletion{StatusNotSupported, 0};
+  auto Unlock = take(Model->beginRequest(Input));
+  EXPECT_EQ(Unlock.PC, 0u);
+  Input.Kind = DriverRequestKind::Close;
+  Input.FileBusCompletion = DriverBusCompletion{StatusSuccess, 0};
+  EXPECT_EQ(take(Model->beginRequest(Input)).IRP, 0u);
+  EXPECT_EQ(call("ZwClose", {Handle}), 0u);
+  auto Cleanup = Model->takeGuestCall();
+  ASSERT_TRUE(Cleanup);
+  ok(Model->beginGuestCall(Cleanup->Token));
+  EXPECT_EQ(forward(Cleanup->Arguments[1]), StatusNotSupported);
+  EXPECT_FALSE(
+      take(Model->finishGuestCall(Cleanup->Token, StatusNotSupported)));
+  auto Close = Model->takeGuestCall();
+  ASSERT_TRUE(Close);
+  ok(Model->beginGuestCall(Close->Token));
+  EXPECT_EQ(forward(Close->Arguments[1]), StatusSuccess);
+  take(Model->finishGuestCall(Close->Token, StatusSuccess));
+  EXPECT_EQ(Result.Requests[2].IOStatus, StatusNotSupported);
+  EXPECT_EQ(Result.Requests[4].IOStatus, StatusSuccess);
+  EXPECT_EQ(get(PDO + DeviceReferenceCount, 4), 0u);
+}
+
 TEST_F(KernelPnpRequest, StartPacketIsKernelModeWithoutFileOrResources) {
   attach();
   const auto Request = begin(DevicePnpRequest::Start);

@@ -502,7 +502,7 @@ Windows 模型亦管理獨立的非分頁池 MDL；釋放描述符不會釋放�
 
 `KernelModelWaits` 統一負責單物件／多物件等待登記、執行緒參考、期限及呼叫端不透明 `KWAIT_BLOCK` 的生命週期。`KernelDispatcher` 驗證完整集合後才提交訊號、計數及 mutex 變更；`KernelScheduler` 對選中的同步計時器訊號整批預檢和消耗。 `WaitRegistrations` 保存這份權威記錄。 每次延後等待都有不重複使用的識別碼與不可變的擷取狀態；輪詢已完成或被竄改的等待時，會在取得訊號或釋放參照之前報錯。
 
-`KernelModelDeviceStack` 以單一記錄管理各裝置的驅動程式擁有者、配置、上下層鄰居、待刪除狀態與內部參考。客體 `NextDevice` 列舉串列與宿主擁有的附加圖意義不同。名稱解析保留具名下層裝置作為 `FILE_OBJECT` 和報告身分，選擇目前堆疊頂端進行初始派送及 READ/WRITE 緩衝設定，並保留整條請求路徑。解除附加或刪除不會讓請求／回呼仍持有的裝置失效；公開 `ReferenceCount` 仍只計算開啟的控制代碼。
+`KernelModelDeviceStack` 以單一記錄管理各裝置的驅動程式擁有者、配置、上下層鄰居、待刪除狀態與內部參考。客體 `NextDevice` 列舉串列與宿主擁有的附加圖意義不同。名稱解析保留具名下層裝置作為 `FILE_OBJECT` 和報告身分，選擇目前堆疊頂端進行初始派送及 READ/WRITE 緩衝設定，並保留整條請求路徑。解除附加或刪除不會讓請求／回呼仍持有的裝置失效；公開 `ReferenceCount` 計算關聯檔案物件。
 
 附加查詢使用相同拓撲和物件參考擁有者；傳回的指標參考獨立於驅動程式裝置鏈成員關係及開啟控制代碼計數保留配置。
 
@@ -1655,4 +1655,4 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `KernelModelNamespace.cpp` 透過統一參照及控制代碼擁有者解析名稱。裝置紀錄擁有裝置名稱；物件紀錄擁有不可變的驅動/目錄/連結名稱。連結保存捕獲目標位元組，區分永久狀態與名稱綁定。最後控制代碼關閉移除臨時名稱，指標參照決定回收。裝置 I/O 保留控制清單移除，物件參照控制儲存生命週期；後端不另設計數。
 
-KernelModel 分離情境編號與依位址索引的檔案物件。KernelModelObjects 管理呼叫端指標計數；KernelModelFileObjects 管理延後的 CLOSE 派送與等待。KernelModelIO 僅在請求完成且派送及續調返回後釋放物件。裝置與 PnP 保留檢查物件本身，包括已無情境編號的物件。DriverSession 讓同步巢狀回呼繼承實際父上下文；獨立排程回呼保留自己的上下文。
+KernelModelObjects 在共用物件表管理檔案控制代碼與指標計數。KernelModelFileObjects 選擇行程解鎖或全域清理，在消耗控制代碼前準備請求，並管理延後 CLOSE 與等待。KernelModelIO 保留情境參數，僅在請求完成且派送與續調返回後銷毀物件。KernelFramework 只為內部檔案生命週期回呼攜帶選用有效行程覆寫。DriverSession 保持呼叫執行緒與建立行程身分、啟用繼承位址空間，並於最終釋放前恢復來源內容。獨立排程回呼保留自己的內容。裝置與 PnP 保留檢查物件本身。
