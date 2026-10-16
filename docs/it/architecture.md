@@ -1929,3 +1929,5 @@ Gli alias riusano i proprietari di thread/processi e contesti anche durante il c
 `KernelModelIO` gestisce il wrapper di controllo e la durata del collegamento privato, riusando cambio di vista condiviso e controllo MDL ordinario. Non inventa memoria APC guest e non consente il distacco tramite token pubblico zero. Ammissione e annidamento rimangono al proprietario esistente. L’eccezione raggiunge il guest soltanto dopo il ripristino riuscito; gli errori di ripristino restano errori del modello.
 
 `KernelObjectAPIs.def` gestisce identità, arità, valore e limite IRQL della query fissa. Non introduce un registro di callback né interrogazioni al sistema operativo host.
+
+`KernelPhysicalMemory::resolveAddress` associa il `MemoryView` corrente agli intervalli esatti delle allocazioni conservate e alle identità di pagina esistenti, inclusi gli alias. `KernelModel` verifica separatamente leggibilità, processo e residenza. La query non crea identità né blocca pagine; il riempimento ancora mappato non riattiva byte liberati.

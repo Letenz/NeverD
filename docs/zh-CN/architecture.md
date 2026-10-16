@@ -1809,3 +1809,5 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 `KernelModelIO` 负责进程锁页包装及私有附加生命周期，复用共享进程视图切换和普通 MDL 探测。私有附加不伪造来宾 APC 存储，也不能用公开接口的零令牌解除；准入和嵌套仍由原附加所有者管理。只有恢复成功后才向来宾传递探测异常；恢复错误仍作为模型失败。
 
 `KernelObjectAPIs.def` 统一负责固定回调版本查询的标识、参数数量、值与 IRQL 上限，不引入回调注册表或宿主操作系统查询。
+
+`KernelPhysicalMemory::resolveAddress` 将当前 `MemoryView` 与保留的精确分配切片和既有页身份匹配，包括别名。`KernelModel` 单独检查映射可读性、进程上下文及驻留状态。查询不分配新身份或锁页；仍映射的页填充不能恢复已释放字节的生命周期。

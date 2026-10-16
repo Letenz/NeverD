@@ -83,6 +83,7 @@ EXPORTS
   vDbgPrintExWithPrefix
   MmGetSystemRoutineAddress
   MmIsAddressValid
+  MmGetPhysicalAddress
   KeRegisterBugCheckReasonCallback
   KeDeregisterBugCheckReasonCallback
   RtlCopyUnicodeString
