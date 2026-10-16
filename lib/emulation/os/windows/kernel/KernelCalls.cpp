@@ -453,7 +453,9 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   case KernelAPIKind::IoGetRelatedDeviceObject:
     return relatedFileDevice(A[0]);
   case KernelAPIKind::IoQueryFileInformation:
-    return queryFileInformation(A, Context);
+    return queryFileInformation(A, false, Context);
+  case KernelAPIKind::ZwQueryInformationFile:
+    return queryFileInformation(A, true, Context);
   case KernelAPIKind::ZwCreateFile:
   case KernelAPIKind::IoCreateFile:
     return createFile(A, false, Context);

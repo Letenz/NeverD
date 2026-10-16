@@ -962,7 +962,8 @@ KernelModel::requestReleaseRanges(uint64_t IRP) const {
   std::vector<std::pair<uint64_t, uint64_t>> Retiring;
   // CREATE and IoCancelFileOpen borrow a producer-owned packet. Their wrappers
   // dispose it after lower dispatch and every completion continuation return.
-  if (!Request->FileOperation)
+  const bool NativeQuery = nativeFileQuery(Request->FileQueryOperation);
+  if (!Request->FileOperation && !NativeQuery)
     Retiring.emplace_back(IRP, IRPSize + Request->StackCount * StackSize);
   const auto NativeUsb = FrameworkUsbIdleRequests.find(IRP);
   if (NativeUsb != FrameworkUsbIdleRequests.end()) {
@@ -982,9 +983,9 @@ KernelModel::requestReleaseRanges(uint64_t IRP) const {
     Retiring.emplace_back(Request->TranslatedResources,
                           Request->ResourceListSize);
   }
-  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer)
+  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer && !NativeQuery)
     Retiring.emplace_back(Request->SystemBuffer, Request->BufferSize);
-  if (Request->UserBuffer && !Request->Neither)
+  if (Request->UserBuffer && !Request->Neither && !NativeQuery)
     Retiring.emplace_back(Request->UserBuffer, Request->Direct
                                                    ? Request->TransferSize
                                                    : Request->OutputSize);
@@ -1044,6 +1045,7 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
   auto &Observation = Result.Requests[Request->ResultIndex];
   const bool HasIOCTLOutput =
       Request->Kind == DriverRequestKind::DeviceControl && Request->OutputSize;
+  const bool NativeQuery = nativeFileQuery(Request->FileQueryOperation);
   auto Pending = dispatchPending(*Request, Request->StackCount - 1);
   if (!Pending)
     return Pending.takeError();
@@ -1111,10 +1113,10 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
     return E;
   if (auto E = finishRequestLifecycle(*Request, uint32_t(*Status)))
     return E;
-  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer)
+  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer && !NativeQuery)
     if (auto E = Physical.retire(Request->SystemBuffer))
       return E;
-  if (Request->UserBuffer && !Request->Neither)
+  if (Request->UserBuffer && !Request->Neither && !NativeQuery)
     if (auto E = Physical.retire(Request->UserBuffer))
       return E;
   // Ordinary request completion consumes the IRP. File operation producers
@@ -1124,7 +1126,7 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
     Observation.UsbIdle->CompletedAt100ns = Scheduler.now100ns();
   Request->Completed = true;
   Request->CancelDeadline.reset();
-  if (!Request->FileOperation)
+  if (!Request->FileOperation && !NativeQuery)
     FreedRanges.emplace(IRP, IRPSize + Request->StackCount * StackSize);
   if (const auto Native = FrameworkUsbIdleRequests.find(IRP);
       Native != FrameworkUsbIdleRequests.end())
@@ -1134,14 +1136,16 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
     FreedRanges.emplace(Request->TranslatedResources,
                         Request->ResourceListSize);
   }
-  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer)
+  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer && !NativeQuery)
     FreedRanges.emplace(Request->SystemBuffer, Request->BufferSize);
-  if (Request->UserBuffer && !Request->Neither)
+  if (Request->UserBuffer && !Request->Neither && !NativeQuery)
     FreedRanges.emplace(Request->UserBuffer, Request->Direct
                                                  ? Request->TransferSize
                                                  : Request->OutputSize);
   if (Request->SecurityContext && !Request->FileOperation)
     FreedRanges.emplace(Request->SecurityContext, SecurityContextSize);
+  if (NativeQuery)
+    return releaseNativeFileQueryPacket(IRP);
   return llvm::Error::success();
 }
 
@@ -1496,11 +1500,14 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
       return E;
   }
   for (const auto &[IRP, Record] : Requests) {
-    if (Record.Completed)
+    if (Record.Completed && !Record.FileOperation &&
+        !nativeFileQuery(Record.FileQueryOperation))
       continue;
     const auto *Request = &Record;
     if (auto E = Check(Request->IRP, IRPSize, [&](uint64_t Offset) {
-          if (IsWrite && Request->Completed && Request->FileOperation)
+          if (IsWrite && Request->Completed &&
+              (Request->FileOperation ||
+               nativeFileQuery(Request->FileQueryOperation)))
             return false;
           if (IsWrite)
             return (Offset >= IRPMdlOffset &&
@@ -1557,7 +1564,7 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
         return E;
     // Raw user pointers are outside this kernel-only profile. Buffered requests
     // use SystemBuffer; direct requests access the locked system mapping.
-    if (!Request->Neither)
+    if (!Request->Neither && !nativeFileQuery(Request->FileQueryOperation))
       if (auto E = Check(Request->UserBuffer,
                          Request->Direct ? Request->TransferSize
                                          : Request->OutputSize,
