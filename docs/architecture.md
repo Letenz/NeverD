@@ -94,11 +94,12 @@ before nesting. It reports a record whose nesting does not flatten back to the
 stream's member list, or whose members cannot sit where they say
 (`layoutProblem`).
 
-`renderType` and `renderTypes` spell types as C, C++, Rust, Go or Python
-(`TypeLanguages.def`), each member marked with its offset. Builtins take
-the spellings each language has (`BuiltinSpellings.def`): C and C++ name
-them as Windows, IDA or the compiler does, or by exact widths; Rust, Go and
-Python by exact widths or by Windows' names, which a module or file
+`renderType` and `renderTypes` spell types as C, C++, Rust, Go, Python or
+JavaScript (`TypeLanguages.def`), each member marked with its offset.
+Builtins take the spellings each language has (`TypeLanguages.def` lists
+them, `BuiltinSpellings.def` names them): C and C++ name them as Windows,
+IDA or the compiler does, or by exact widths; Rust, Go, Python and
+JavaScript by exact widths or by Windows' names, which a module or file
 declares as aliases as wdk-sys does. Every language
 reproduces the library's layout exactly. An explicit filler moves a member
 that the language's own rules would place earlier. Rust and Go read what they
@@ -120,6 +121,22 @@ A module declares its classes first, binds each typedef after those it
 names (an array's after the layout of what it holds, since ctypes sizes an
 array type once), and lays each record out after what it holds by value.
 Python renders only; its declarations do not read back.
+
+JavaScript reads records through a `DataView`: a class per record, made on
+the bytes, the offset the record begins at and their byte order
+(little-endian unless the caller says), with an accessor per member at the
+offset the library records. An anonymous record's members are the parent's,
+as C reaches them; a named member of a record defined in place reads through
+a class of its own. Integers of up to four bytes are numbers and wider ones
+bigints, as `DataView` reads them; a pointer is its address. Array elements
+read through methods that take their index, bitfields through accessors
+whose arithmetic follows C (32-bit for units of up to four bytes, bigint
+for eight). JSDoc types every accessor, so the one module is the workbench's
+JS/TS: TypeScript checks it with `checkJs`. With asserts, the module reads
+and writes back every accessor in a buffer of its record's size, which
+throws past its end. JavaScript renders only, and no language but C and
+C++ renders prototypes (`rendersPrototypes`, `readsDeclarations`; the C
+API's language list says both).
 
 `parseTypes` reads C, C++, Rust and Go declarations back into the library
 (`TypeParse.h`), and `layOutRecord` lays each record out under MSVC or
@@ -5430,7 +5447,7 @@ libraries supplied by the CMake helper.
 | `lib/sdk` | Public C ABI, session lifecycle, queries, persistence, plugins, lift/decompile/patch/audit/hunt entry points | Aggregates the engine components into `libneverd` |
 | `lib/pass` | LLVM IR obfuscation passes and MIR pass runner | IR |
 | `lib/debug` | DWARF, PDB, and linker-map debug contexts | IR |
-| `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust, Go and Python | LLVM DebugInfo PDB |
+| `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust, Go, Python and JavaScript | LLVM DebugInfo PDB |
 | `lib/sigs` | Signature parsing, databases, and matching | Loader |
 | `lib/libc` | Known libc names and call-model support | Standalone component |
 | `lib/symbolic` | Width-exact symbolic execution, bounded path exploration, stable control-decision histories, and the exact concrete shadow | LowIR |

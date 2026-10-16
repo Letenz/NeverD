@@ -14,6 +14,7 @@
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
 #include "TitleBar.h"
+#include "TypeSourceHighlighter.h"
 #include "WindowFrame.h"
 #include "WindowFramePlatform.h"
 
@@ -55,6 +56,9 @@
 #include <QTabBar>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTextBlock>
+#include <QTextDocument>
+#include <QTextLayout>
 #include <QToolBar>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -183,6 +187,46 @@ private slots:
     WindowFrame::prepareNativeWindows();
     // Docking chrome is fixed before the first dock exists.
     configureDocking();
+  }
+
+  void typeSourceColorsJavaScriptsComments() {
+    // JSDoc spans lines and sits before code; a private field is no
+    // directive; the offsets a comment gives stand out from its words.
+    QTextDocument document;
+    document.setPlainText(QStringLiteral(
+        "/**\n"
+        " * 0x18 int32_t Tail\n"
+        " */\n"
+        "export class _X {\n"
+        "  #view;\n"
+        "  /** @returns {number} */ get Tail() { return 0x18; } // 0x18\n"));
+    TypeSourceHighlighter highlighter(&document);
+    highlighter.setLanguage(QStringLiteral("javascript"));
+    const Theme &theme = Theme::instance();
+    // The color the highlighter gives the character at \p column of line
+    // \p line, or none.
+    const auto colorAt = [&](int line, int column) {
+      const QTextBlock block = document.findBlockByNumber(line);
+      for (const QTextLayout::FormatRange &range : block.layout()->formats())
+        if (column >= range.start && column < range.start + range.length)
+          return range.format.foreground().color();
+      return QColor();
+    };
+    const QColor comment = theme.color(ColorRole::ListingComment);
+    const QColor number = theme.color(ColorRole::ListingNumber);
+    const QColor keyword = theme.color(ColorRole::ListingKeyword);
+    QCOMPARE(colorAt(0, 0), comment);
+    QCOMPARE(colorAt(1, 1), comment);
+    QCOMPARE(colorAt(1, 3), number);
+    QCOMPARE(colorAt(2, 1), comment);
+    QCOMPARE(colorAt(3, 0), keyword);
+    QVERIFY(colorAt(4, 2) != theme.color(ColorRole::ListingDirective));
+    const QString last = document.findBlockByNumber(5).text();
+    QCOMPARE(colorAt(5, int(last.indexOf(QLatin1String("@returns")))), comment);
+    QCOMPARE(colorAt(5, int(last.indexOf(QLatin1String("get")))), keyword);
+    QCOMPARE(colorAt(5, int(last.indexOf(QLatin1String("return 0x18")) + 7)),
+             number);
+    QCOMPARE(colorAt(5, int(last.lastIndexOf(QLatin1String("//")))), comment);
   }
 
   void flowLayoutWrapsRatherThanOverlaps() {
