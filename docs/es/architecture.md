@@ -1904,3 +1904,5 @@ KernelFileSystem mantiene un provider token por FILE_OBJECT. La operación priva
 `KernelModelRuntime` centraliza el hash Unicode, la conversión común a mayúsculas independiente de NLS y los segundos desde 1980. `KernelRuntimeCalls` usa el propietario existente del pool paginado de cadenas. Las tablas API unifican exportaciones, argumentos y APC_LEVEL; los propietarios conservan el orden de acceso a los campos.
 
 `uppercaseCharacter` reduce los argumentos antes de admitirlos y delega en `uppercaseUnicodeUnit`. Las tablas CRT y Unicode comparten la decisión con identidades ABI distintas; ningún adaptador ni configuración regional del host aporta otra conversión.
+
+`KernelModelRuntime` posee los anchos escalares y la publicación común de prefijo y búfer. Las llamadas variádicas normales usan el lector ABI existente; el adaptador explícito x64 `va_list` valida cada escalar invitado solicitado con pasos de ocho bytes. El despachador y el adaptador no duplican el análisis del formato.

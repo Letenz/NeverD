@@ -1912,3 +1912,5 @@ KernelFileSystem conserve un provider token par FILE_OBJECT. L’opération priv
 `KernelModelRuntime` possède le hachage Unicode, la décision commune de mise en majuscules indépendante de NLS et la conversion en secondes depuis 1980. `KernelRuntimeCalls` utilise le propriétaire existant du pool de chaînes paginé. Les tables d’API définissent les exports, le nombre d’arguments et APC_LEVEL ; les propriétaires conservent l’ordre d’accès aux champs.
 
 `uppercaseCharacter` réduit les arguments avant leur admission et délègue à `uppercaseUnicodeUnit`. Les tables CRT et Unicode partagent cette décision avec des identités ABI distinctes ; aucun adaptateur ni paramètre régional hôte ne fournit une seconde correspondance.
+
+`KernelModelRuntime` possède les largeurs scalaires et la règle commune de publication du préfixe et du tampon. Les appels variadiques ordinaires utilisent le lecteur ABI existant ; l’adaptateur x64 `va_list` vérifie chaque scalaire invité demandé avec un pas de huit octets. Ni le répartiteur ni l’adaptateur ne dupliquent l’analyse du format.

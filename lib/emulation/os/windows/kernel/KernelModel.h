@@ -351,6 +351,7 @@ private:
   llvm::Expected<uint64_t> debugMessage(
       llvm::ArrayRef<uint64_t> A, unsigned FormatIndex,
       llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument);
+  llvm::Expected<uint64_t> prefixedDebugMessage(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> checkedMemoryCopy(llvm::ArrayRef<uint64_t> A,
                                              bool ClearOnError);
   llvm::Expected<uint64_t> memoryCall(KernelAPIKind Kind,

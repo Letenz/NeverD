@@ -375,7 +375,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `PoCallDriver`, `PoStartNextPowerIrp` | 管理対象電源 IRP の転送と追加ハンドシェイクなしの Vista+ 検証 |
 | `PoSetPowerState`, `PoRequestPowerIrp` | デバイス別通知状態と明示 PDO FIFO に基づく実際の子要求。範囲は上記 |
 | `IoCreateSymbolicLink`、`IoDeleteSymbolicLink` | 1 セッションの名前空間内の ASCII `\DosDevices\Name` または `\??\Name`。リンク先は `\Device\Name` |
-| `DbgPrint`、`DbgPrintEx` | 検査付き Win64 可変引数の書式処理。出力は最大 512 バイトで、デバッガーフィルターはすべて有効 |
+| `DbgPrint`、`DbgPrintEx`、`vDbgPrintExWithPrefix` | 検査付き Win64 可変引数の書式処理。出力は最大 511 バイトで、デバッガーフィルターはすべて有効 |
 | `IoGetCurrentIrpStackLocation` | 現在モデル化している IRP のスタック位置を返す。通常コンパイルされた WDM マクロも同じゲストフィールドを読む |
 | `KeGetCurrentIrql` | 明示的な引き上げと復元を含む現在の IRQL/CR8 を読みます。ディスパッチとワーク項目は `PASSIVE_LEVEL`、DPC は `DISPATCH_LEVEL` で開始します |
 | `KfRaiseIrql`, `KeLowerIrql` | 実際の x64 WDK IRQL 昇降インポートとインライン補助関数。各実行は復帰前に保存値を LIFO 順に復元します。IRQL <= APC_LEVEL の合法な待機は保存した昇降状態を維持し、待機時の IRQL で再開します。DISPATCH_LEVEL のロック保持中は中断できません。CR8 は各変更を反映し、設定した CPU0 イベントの先取りには `scheduling` を使用します。任意の割り込みネストは未対応です。 |
@@ -763,3 +763,5 @@ ASCII 名、名前空間リンク、RootDirectory として保持したディレ
 `RtlHashUnicodeString`、`RtlUpcaseUnicodeString`、`RtlTimeToSecondsSince1980` は APC_LEVEL 以下で使用できます。ハッシュ方式 0/1 は x65599 を使い、Length の読み取り前に出力をゼロ化し、MaximumLength を参照しません。大文字小文字を区別する場合は全 UTF-16 単位を受け入れます。大文字化を伴う処理は U+00C0 未満を扱い、それ以上は未モデル化の NLS 表を明示的に要求します。大文字化は重複領域への順次書き込み、各単位での Buffer 再読取、最後の Length 再読取を保持し、終端文字を追加しません。割り当ては共有ページプール `Strg` と `RtlFreeUnicodeString` を使い、ゼロ長の割り当ては未対応です。奇数 Length は完全な単位のみ処理します。時刻変換は 100 ns 単位を秒に切り捨て、1980 年の起点を差し引き、ULONG 範囲内でのみ 4 バイトを書き込みます。範囲外では出力を変更しません。
 
 `toupper`、`towupper`、`RtlUpcaseUnicodeChar` は APC_LEVEL 制約と計数 Unicode 処理の大文字化を共有します。カーネルの toupper は入力の下位バイトを使い、ASCII のみ受け入れます。EOF のバイト値を含む拡張値には未モデル化のコードページが必要です。ワイド入力は 16 ビットに切り詰め、U+00C0 未満を扱い、その他は NLS を明示的に要求します。これらはインプレース CRT 変換とは別のカーネル補助関数を呼ぶため、両者の規則を混同しません。
+
+`vDbgPrintExWithPrefix` は `DbgPrint` / `DbgPrintEx` と有限フォーマッター、全フィルター有効の観測モデル、DIRQL 上限を共有します。ゲスト x64 `va_list` は 8 バイト単位で進み、実際のスカラー幅だけを読みます。`hh` は固定カーネルの 16 ビット short 規則です。プレフィックスのバッファーは 128/256/384/512 バイトで、成功時は最初の NUL まで、最終オーバーフロー時は改行で終わる 511 バイトを公開します。公開前に本文全体（上限 512 バイト）を検査するため、切り詰めても無効・未対応の末尾は許可されません。ASCII プレフィックスは 1 MiB 以内で終端まで走査します。Unicode 変換には PASSIVE_LEVEL が必要です。ホストのフィルター、デバッグコールバック、通信は未モデル化です。
