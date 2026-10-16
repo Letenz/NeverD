@@ -111,33 +111,55 @@ struct NdType {
   /// and no display members, and authorize no spelling or extents.
   std::vector<NdScalarLeaf> ScalarLeaves;
 
-  /// Unique display field at exactly \p Offset.  Ambiguous or unnamed
-  /// slots return nullopt; do not guess a member.  A nonzero
-  /// \p AccessSize keeps the unique overlay whose type width matches
-  /// (CPtred `_m_nRef` vs `_m_pNext` at +8). Same-width overlays stay raw.
-  std::optional<std::string> displayFieldNameAt(uint64_t Offset,
-                                                uint16_t AccessSize = 0) const {
+  /// The index of the unique display field at exactly \p Offset.
+  /// Ambiguous or unnamed slots return nullopt; do not guess a member.  A
+  /// nonzero \p AccessSize keeps the unique overlay whose type width
+  /// matches (CPtred `_m_nRef` vs `_m_pNext` at +8), a scalar's over a
+  /// record's of that width, which no scalar access reads whole
+  /// (`QuadPart` over the `u` of a LARGE_INTEGER).  Same-width scalar
+  /// overlays stay raw.
+  std::optional<size_t> displayFieldIndexAt(uint64_t Offset,
+                                            uint16_t AccessSize = 0) const {
     if (Kind != NdTypeKind::Struct ||
         FieldDisplayNames.size() != FieldDisplayOffsets.size())
       return std::nullopt;
     const bool FilterSize = AccessSize != 0 && FieldDisplayTypes.size() ==
                                                    FieldDisplayOffsets.size();
-    const std::string *Found = nullptr;
+    std::optional<size_t> Found;
+    bool FoundRecord = false;
     for (size_t I = 0; I < FieldDisplayOffsets.size(); ++I) {
       if (FieldDisplayOffsets[I] != Offset || FieldDisplayNames[I].empty())
         continue;
+      bool Record = false;
       if (FilterSize) {
         const auto &Ty = FieldDisplayTypes[I];
         if (Ty && Ty->Size != 0 && Ty->Size != AccessSize)
           continue;
+        Record = Ty && Ty->Kind == NdTypeKind::Struct && !Ty->IsEnum;
       }
-      if (Found && *Found != FieldDisplayNames[I])
-        return std::nullopt;
-      Found = &FieldDisplayNames[I];
+      if (Found && FieldDisplayNames[*Found] != FieldDisplayNames[I]) {
+        if (FoundRecord == Record)
+          return std::nullopt;
+        if (FoundRecord) {
+          Found = I;
+          FoundRecord = false;
+        }
+        continue;
+      }
+      Found = I;
+      FoundRecord = Record;
     }
-    if (!Found)
-      return std::nullopt;
-    return *Found;
+    return Found;
+  }
+
+  /// The name of the unique display field at exactly \p Offset
+  /// (displayFieldIndexAt).
+  std::optional<std::string> displayFieldNameAt(uint64_t Offset,
+                                                uint16_t AccessSize = 0) const {
+    if (const std::optional<size_t> Index =
+            displayFieldIndexAt(Offset, AccessSize))
+      return FieldDisplayNames[*Index];
+    return std::nullopt;
   }
 
   std::shared_ptr<NdType> displayFieldTypeAt(uint64_t Offset,
@@ -146,22 +168,9 @@ struct NdType {
         FieldDisplayNames.size() != FieldDisplayOffsets.size() ||
         FieldDisplayTypes.size() != FieldDisplayOffsets.size())
       return nullptr;
-    std::shared_ptr<NdType> ExactTy;
-    const std::string *ExactName = nullptr;
-    for (size_t I = 0; I < FieldDisplayOffsets.size(); ++I) {
-      if (FieldDisplayOffsets[I] != Offset || FieldDisplayNames[I].empty())
-        continue;
-      if (AccessSize != 0) {
-        const auto &Ty = FieldDisplayTypes[I];
-        if (Ty && Ty->Size != 0 && Ty->Size != AccessSize)
-          continue;
-      }
-      if (ExactName && *ExactName != FieldDisplayNames[I])
-        return nullptr;
-      ExactName = &FieldDisplayNames[I];
-      ExactTy = FieldDisplayTypes[I];
-    }
-    if (ExactName) {
+    if (const std::optional<size_t> Exact =
+            displayFieldIndexAt(Offset, AccessSize)) {
+      const std::shared_ptr<NdType> &ExactTy = FieldDisplayTypes[*Exact];
       if (ExactTy && ExactTy->Kind == NdTypeKind::Struct && !ExactTy->IsEnum)
         if (auto Inner = ExactTy->displayFieldTypeAt(0, AccessSize))
           return Inner;
@@ -195,6 +204,10 @@ struct NdType {
       if (auto Inner =
               FieldDisplayTypes[Best]->displayFieldTypeAt(0, AccessSize))
         return Inner;
+      // The record itself only where the access reads it whole.
+      if (AccessSize != 0 && FieldDisplayTypes[Best]->Size != 0 &&
+          FieldDisplayTypes[Best]->Size != AccessSize)
+        return nullptr;
       return FieldDisplayTypes[Best];
     }
     return FieldDisplayTypes[Best]->displayFieldTypeAt(Rel, AccessSize);
@@ -257,6 +270,11 @@ struct NdType {
                 0, AccessSize, EnterNestedAtZero))
           return FieldDisplayNames[Best] + "." + *Inner;
       }
+      // The record itself only where the access reads it whole: a byte of a
+      // header is no header.
+      if (AccessSize != 0 && FieldDisplayTypes[Best]->Size != 0 &&
+          FieldDisplayTypes[Best]->Size != AccessSize)
+        return std::nullopt;
       return FieldDisplayNames[Best];
     }
     auto Inner = FieldDisplayTypes[Best]->displayFieldPathAt(Rel, AccessSize,

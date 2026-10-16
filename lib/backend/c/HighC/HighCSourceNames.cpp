@@ -20,6 +20,88 @@
 
 using namespace neverd;
 
+void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
+  if (!Opts.RecordDefinitions || !Opts.EmitIncludes)
+    return;
+  // Every named record and enumeration the unit's types reach.
+  std::vector<TypeRef> Records;
+  std::set<const NdType *> Seen;
+  std::set<std::string> Named;
+  std::function<void(const TypeRef &)> Visit = [&](const TypeRef &Type) {
+    if (!Type || !Seen.insert(Type.get()).second)
+      return;
+    switch (Type->Kind) {
+    case NdTypeKind::Ptr:
+      Visit(Type->Pointee);
+      return;
+    case NdTypeKind::Array:
+      Visit(Type->ElemType);
+      return;
+    case NdTypeKind::Func:
+      Visit(Type->RetType);
+      for (const TypeRef &Param : Type->ParamTypes)
+        Visit(Param);
+      return;
+    case NdTypeKind::Struct:
+      if (!Type->RegisterReturnRecord && !Type->SourceName.empty() &&
+          Named.insert(Type->SourceName).second)
+        Records.push_back(Type);
+      return;
+    default:
+      return;
+    }
+  };
+  std::function<void(const HighExpr &)> VisitExpr = [&](const HighExpr &E) {
+    Visit(E.Type);
+    if (E.SourceCallHint) {
+      Visit(E.SourceCallHint->Signature.ReturnType);
+      for (const auto &Parameter : E.SourceCallHint->Signature.Parameters)
+        Visit(Parameter.Type);
+    }
+    E.forEachChildExpr([&](const ExprPtr &Child) { VisitExpr(*Child); });
+  };
+  for (const HighFunc &Function : Funcs) {
+    Visit(Function.ReturnType);
+    for (const HighParam &Param : Function.Params)
+      Visit(Param.Type);
+    for (const HighLocal &Local : Function.Locals)
+      Visit(Local.Type);
+    walkStmts(Function.Body, [&](const HighStmt &Statement) {
+      forEachExpr(Statement, [&](const ExprPtr &E) { VisitExpr(*E); });
+    });
+    if (Dbg)
+      if (auto Found = Dbg->resolveFunction(Function.Entry)) {
+        Visit(Found->ReturnType);
+        for (const auto &[Name, Type] : Found->Params)
+          Visit(Type);
+      }
+  }
+  if (Records.empty())
+    return;
+  // Their members as the code names them, which the definitions must agree
+  // with.
+  if (Dbg)
+    for (const TypeRef &Record : Records)
+      Dbg->completeType(Record);
+  RecordDefinitions = Opts.RecordDefinitions(Records);
+  // The typedefs and enumerators they declare are the program's names: the
+  // unit's own step around them.
+  for (const std::string &Name : RecordDefinitions.Identifiers)
+    GlobalIdentifierAllocator.allocateVerbatim(Name);
+}
+
+bool HighCWriter::memberOfDefinedRecord(const HighExpr &Addr) const {
+  if (RecordDefinitions.Records.empty())
+    return false;
+  const auto Typed = typedPointerOffset(Addr);
+  if (!Typed || !Typed->first)
+    return false;
+  const TypeRef Record = declaredRecordPointee(*Typed->first);
+  return Record && !Record->SourceName.empty() &&
+         RecordDefinitions.Records.count(
+             cNamedTypeSpelling(Record->SourceName));
+}
+
 void HighCWriter::writeSourceRecordDeclarations(
     const std::vector<HighFunc> &Funcs) {
   std::set<std::string> Declared;
@@ -32,8 +114,13 @@ void HighCWriter::writeSourceRecordDeclarations(
       if (Record && Record->Kind == NdTypeKind::Struct && !Record->IsEnum &&
           !Record->SourceName.empty()) {
         const std::string Name = cNamedTypeSpelling(Record->SourceName);
+        // A record the program's types know takes the keyword they give it.
+        const auto Tag = RecordDefinitions.Tags.find(Name);
+        const char *Keyword = Tag != RecordDefinitions.Tags.end() && Tag->second
+                                  ? "union"
+                                  : "struct";
         if (Declared.insert(Name).second)
-          OS << "typedef struct " << Name << " " << Name << ";\n";
+          OS << "typedef " << Keyword << " " << Name << " " << Name << ";\n";
       }
       Visit(Record);
     }

@@ -1,10 +1,10 @@
-//===- PrototypeDebugContext.cpp - Signatures from a type library ---------===//
+//===- LocalTypesDebugContext.cpp - Debug info from local types -----------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 
-#include "PrototypeDebugContext.h"
+#include "LocalTypesDebugContext.h"
 
 #include "neverd/Limits.h"
 #include "neverd/types/TypeRender.h"
@@ -12,6 +12,7 @@
 #include "llvm/ADT/StringExtras.h"
 
 #include <limits>
+#include <set>
 
 namespace neverd::sdk {
 namespace {
@@ -205,6 +206,24 @@ private:
   llvm::StringMap<TypeRef> Records;
 };
 
+/// Whether every member \p Record names for display is one \p Def has
+/// where the name says, and is no bitfield, which C reads otherwise than
+/// its storage's bytes.
+bool membersAgree(const NdType &Record, const types::RecordDef &Def) {
+  if (Record.FieldDisplayNames.size() != Record.FieldDisplayOffsets.size())
+    return Record.FieldDisplayNames.empty();
+  std::set<std::pair<uint64_t, std::string>> Members;
+  for (const types::FlatMember &Flat : types::flattenMembers(Def))
+    if (!Flat.BitWidth && !Flat.Name.empty())
+      Members.emplace(Flat.BitOffset / 8, Flat.Name);
+  for (size_t I = 0; I < Record.FieldDisplayNames.size(); ++I)
+    if (!Record.FieldDisplayNames[I].empty() &&
+        !Members.count(
+            {Record.FieldDisplayOffsets[I], Record.FieldDisplayNames[I]}))
+      return false;
+  return true;
+}
+
 } // namespace
 
 TypeRef decompilerTypeOf(const types::TypeLibrary &Library,
@@ -236,12 +255,136 @@ llvm::StringSet<> prototypeTypeNames(const types::TypeLibrary &Library) {
   return Names;
 }
 
-PrototypeDebugContext::PrototypeDebugContext(
+LocalTypesDebugContext::LocalTypesDebugContext(
     const DebugContext &Inner, std::shared_ptr<const types::TypeLibrary> Types)
     : Inner(Inner), Types(std::move(Types)) {}
 
+LocalTypesDebugContext::~LocalTypesDebugContext() {
+  std::lock_guard<std::mutex> Guard(Mutex);
+  for (const TypeRef &Record : Completed) {
+    Record->FieldDisplayNames.clear();
+    Record->FieldDisplayOffsets.clear();
+    Record->FieldDisplayTypes.clear();
+  }
+}
+
+const types::LocalType *
+LocalTypesDebugContext::definedRecord(llvm::StringRef Name,
+                                      uint16_t Size) const {
+  const types::LocalType *Type = Types->find(Name);
+  if (!Type || !Type->Record || !Type->Record->Defined ||
+      (Type->Kind != types::TypeKind::Struct &&
+       Type->Kind != types::TypeKind::Union))
+    return nullptr;
+  return !Size || Size == Type->Record->Size ? Type : nullptr;
+}
+
+void LocalTypesDebugContext::completeType(const TypeRef &Type) const {
+  TypeRef Record = Type;
+  while (Record && Record->Kind == NdTypeKind::Ptr)
+    Record = Record->Pointee;
+  if (Record && Record->Kind == NdTypeKind::Struct && !Record->IsEnum &&
+      !Record->SourceName.empty()) {
+    std::lock_guard<std::mutex> Guard(Mutex);
+    if (CompletedRecords.contains(Record.get()))
+      return;
+    // The library's members, which a record none has been given members
+    // takes whole: the debug information's own stay where it gave them.
+    if (const types::LocalType *Local =
+            definedRecord(Record->SourceName, Record->Size);
+        Local && Record->FieldDisplayNames.empty()) {
+      const TypeRef From = Converter(*Types).convert(
+          *types::makeNamed(Local->Name, Local->Kind), 0);
+      if (From && From->Kind == NdTypeKind::Struct) {
+        Record->FieldDisplayNames = From->FieldDisplayNames;
+        Record->FieldDisplayOffsets = From->FieldDisplayOffsets;
+        Record->FieldDisplayTypes = From->FieldDisplayTypes;
+        Completed.push_back(Record);
+        CompletedRecords.insert(Record.get());
+        Read.insert(Local->Name);
+        return;
+      }
+    }
+  }
+  Inner.completeType(Type);
+}
+
+CRecordDefinitions
+LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
+  std::lock_guard<std::mutex> Guard(Mutex);
+  if (!RenamedInC) {
+    RenamedInC.emplace();
+    for (const auto &[Name, Spelled] :
+         types::renamedNames(*Types, types::Language::C)) {
+      RenamedInC->insert(Name);
+      // An enumerator's key is its enumeration's: Owner::Value.
+      if (const size_t Scope = Name.find("::"); Scope != std::string::npos)
+        RenamedInC->insert(Name.substr(0, Scope) + "::");
+    }
+  }
+  CRecordDefinitions Result;
+  std::vector<const types::LocalType *> Roots;
+  for (const TypeRef &Record : Records) {
+    if (!Record || Record->Kind != NdTypeKind::Struct ||
+        Record->SourceName.empty() || RenamedInC->contains(Record->SourceName))
+      continue;
+    const types::LocalType *Local = Types->find(Record->SourceName);
+    if (Local && (Local->Kind == types::TypeKind::Struct ||
+                  Local->Kind == types::TypeKind::Union))
+      Result.Tags[Record->SourceName] = Local->Kind == types::TypeKind::Union;
+    if (Record->IsEnum) {
+      // An enumeration whose enumerators the unit names as the library
+      // does, none of them spelled otherwise in C.
+      if (Local && Local->Kind == types::TypeKind::Enum && Local->Enum &&
+          !RenamedInC->contains(Record->SourceName + "::") &&
+          llvm::all_of(Record->FieldDisplayNames, [&](const std::string &N) {
+            return N.empty() ||
+                   llvm::any_of(Local->Enum->Values,
+                                [&](const types::Enumerator &Value) {
+                                  return Value.Name == N;
+                                });
+          }))
+        Roots.push_back(Local);
+      continue;
+    }
+    // A record the unit names members of otherwise than the library does
+    // stays declared only: its definition would disagree with them.
+    if (const types::LocalType *Local =
+            definedRecord(Record->SourceName, Record->Size);
+        Local && membersAgree(*Record, *Local->Record))
+      Roots.push_back(Local);
+  }
+  if (Roots.empty())
+    return Result;
+  types::RenderOptions Options;
+  Options.Lang = types::Language::C;
+  // Exact widths, which mean the same on every compiler the unit builds
+  // with; the checks make a layout no compiler agrees with an error.
+  Options.Spelling = types::BuiltinSpelling::Portable;
+  Options.Asserts = true;
+  const types::EmbeddedC Embedded =
+      types::renderEmbeddedC(*Types, Roots, Options);
+  Result.Text = Embedded.Text;
+  for (const auto &[Name, Union] : Embedded.Records)
+    Result.Records[Name] = Result.Tags[Name] = Union;
+  for (const auto &[Name, Union] : Embedded.Declared)
+    Result.Tags[Name] = Union;
+  Result.Identifiers = Embedded.Identifiers;
+  for (const std::string &Name : Embedded.Types)
+    Read.insert(Name);
+  return Result;
+}
+
+llvm::StringSet<> LocalTypesDebugContext::readTypes() const {
+  std::lock_guard<std::mutex> Guard(Mutex);
+  llvm::StringSet<> Names;
+  for (const auto &Name : Read)
+    Names.insert(Name.getKey());
+  return Names;
+}
+
 std::optional<FunctionSym>
-PrototypeDebugContext::prototype(llvm::StringRef Name) const {
+LocalTypesDebugContext::prototype(llvm::StringRef Name) const {
   std::lock_guard<std::mutex> Guard(Mutex);
   if (auto Known = Signatures.find(Name); Known != Signatures.end())
     return Known->second;
@@ -268,7 +411,7 @@ PrototypeDebugContext::prototype(llvm::StringRef Name) const {
 }
 
 std::optional<FunctionSym>
-PrototypeDebugContext::resolveFunction(va_t Addr) const {
+LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   std::optional<FunctionSym> Function = Inner.resolveFunction(Addr);
   // Only a function the debug information names at its entry and leaves
   // untyped: a declaration of the program's own describes its build.

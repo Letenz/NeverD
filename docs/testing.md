@@ -307,7 +307,7 @@ and checks that the headers join its PDB without conflicts.
 `SessionCAPITest.KernelFunctionsDecompileWithTheirPrototypes` decompiles
 `NtCreateFile`, `IoAllocateIrp`, `PsCreateSystemThread` and
 `IofCompleteRequest` and checks the signatures the headers give them.
-`PrototypeDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
+`LocalTypesDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
 the conversion and which functions take a prototype without a program.
 `scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
 decompiles with the prototypes an IDA dump shows; it decompiles each
@@ -355,6 +355,30 @@ python3 scripts/check_type_renders.py --neverd build/bin/neverd
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --binary /path/to/ntoskrnl.exe --pdb /path/to/ntkrnlmp.pdb
 ```
+
+Decompiled units must compile with the records they name.
+`scripts/check_decompiled_types.py` decompiles kernel functions in HighC and
+compiles each unit for the Windows target with clang and mingw-w64's
+headers, as errors for int-to-pointer and incompatible pointer conversions:
+a unit that reads members of a record it leaves incomplete, or stores a
+value C does not convert to the member's type, fails:
+
+```sh
+python3 scripts/check_decompiled_types.py --neverd build/bin/neverd \
+  --binary ntoskrnl.exe --pdb ntkrnlmp.pdb
+```
+
+Without the kernel, the fixture checks a function its PDB types:
+`--binary unittests/types/fixtures/local_types.exe --pdb
+unittests/types/fixtures/local_types.pdb --func use`.
+
+`LocalTypesDebugContext.GivesTheDebugInformationsRecordsTheirMembers` covers
+the members the context gives, the definitions a unit holds and what a
+dropped context takes back. `SessionCAPITest.FunctionsHoldTheRecordsTheirPDBTypes`
+covers the same through a session on the fixture, a renamed member reaching
+the pseudocode among them, in every build;
+`SessionCAPITest.KernelFunctionsHoldTheRecordsTheyName` (with the kernel's
+environment variables) covers `KeInitializeDpc` and the kernel's unions.
 
 ## Scalar x86 floating-point state
 
