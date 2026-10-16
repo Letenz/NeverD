@@ -15,6 +15,7 @@
 #include "neverd/web/SourceLimits.h"
 
 #include <bit>
+#include <charconv>
 #include <iostream>
 #include <span>
 
@@ -22,7 +23,7 @@ namespace {
 using namespace neverd::web;
 
 struct Budget {
-  static constexpr uint64_t Limit = 256ULL * 1024 * 1024;
+  uint64_t Limit = 256ULL * 1024 * 1024;
   uint64_t Reserved = 4096;
   void add(uint64_t Bytes) {
     if (Bytes > Limit - Reserved)
@@ -151,12 +152,21 @@ llvm::json::Object model(const SourceAnalysis &S,
 
 int main(int Argc, char **Argv) {
   using namespace neverd::web;
-  if (Argc != 4) {
+  if (Argc != 4 && Argc != 5) {
     std::cerr << "usage: neverd-web-source-model <script|module|commonjs> "
-                 "<input> <new-output-directory>\n";
+                 "<input> <new-output-directory> [export-budget-mib]\n";
     return 2;
   }
   try {
+    uint64_t ExportBudgetMiB = 256;
+    if (Argc == 5) {
+      const std::string_view Value = Argv[4];
+      const auto [End, Error] = std::from_chars(
+          Value.data(), Value.data() + Value.size(), ExportBudgetMiB);
+      if (Error != std::errc{} || End != Value.data() + Value.size() ||
+          ExportBudgetMiB == 0 || ExportBudgetMiB > 1024)
+        throw neverd::web::Error("source_model_export_budget_invalid");
+    }
     const std::string_view SourceType = Argv[1];
     if (SourceType != "script" && SourceType != "module" &&
         SourceType != "commonjs")
@@ -178,7 +188,7 @@ int main(int Argc, char **Argv) {
     const auto Bindings = analyzeSourceBindings(Source);
     if (Bindings.Status != "ok" && Bindings.Status != "partial")
       throw Error("source_model_binding_refused");
-    Budget B;
+    Budget B{ExportBudgetMiB * 1024 * 1024};
     const auto Serialized = json(model(Source, Bindings, B));
     if (Serialized.size() > B.Reserved)
       throw Error("source_model_export_accounting_exceeded");
@@ -200,6 +210,7 @@ int main(int Argc, char **Argv) {
         {"node_count", Source.Nodes.size()},
         {"binding_count", Bindings.Bindings.size()},
         {"export_reserved_bytes", B.Reserved},
+        {"export_limit_bytes", B.Limit},
         {"executes_input", false},
         {"semantic_equivalence", "not_established"}});
     Output.complete(Manifest);

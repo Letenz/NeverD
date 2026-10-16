@@ -932,3 +932,69 @@ combine unchanged checked clients with these acceptance records and their
 existing editable rebuild projects. The overall recovery goal remains open:
 original engine dispatch/revision, wider platforms/features, native internals
 and stronger source/type correspondence still require work.
+
+
+## Native dispatcher, other platforms and stronger source evidence
+
+The original Linux classifier has four roles: ripgrep (rg), ugrep (ug/ugrep),
+bfs and apply-seccomp. An authored typed Rust contract matches four original
+call-free classifier slices for 15,855 byte vectors each (63,420 total),
+including exhaustive one-byte mutations of the known spellings. Every emulated
+invocation must return to its owned stop address within its instruction budget.
+No original entry point or syscall is executed by this classifier experiment.
+
+Separate real-process controls pass twenty original cases on each of glibc
+x64/ARM64 and musl x64/ARM64. Recognized actual argv[0] basenames override
+the raw ARGV0 environment role. The raw environment value is not basename
+normalized; ARGV0 is consumed even when empty or unrecognized. Original bfs
+executes an authored receiver to prove environment removal. These observations
+establish the bounded selection contract, not complete helper equivalence.
+
+The original full native revision is eecfd55debb281c3fe3518098b1a49f76429637c.
+The public Bun repository has not supplied that commit. A separate source-build
+experiment uses public c6da4a4d3010e5553438c60f6bd76d981976867c, inserts the
+recovered selector before VM initialization and embeds source-built rg/seccomp
+payloads. It is still undergoing native x64/ARM64 CI qualification. Sealed memfd
+execution differs from the original static-library integration; ugrep/bfs
+dispatch fails explicitly until its implementation is connected. The compiler
+container's initial ownership, build-directory and archive-owner failures are
+retained. This experiment is not an accepted replacement engine yet.
+
+At f081a6dc74031535dee426d4860beb6848f4b6ea, native search-component run
+38946054021 passes macOS x64/ARM64 and Windows x64/ARM64. Every platform builds
+ripgrep 14.1.1 and PCRE2 10.45/JIT from pinned public archives and crates, tests
+PCRE2, checks five component cases and ten managed-launcher controls. Windows
+uses a consistent static CRT; archive directory aliases and parent Git revision
+discovery are checked explicitly. The launchers preserve Unicode arguments,
+quoting, environment selection and exit status, and reject missing/directory/
+symlink dependencies. Prior archive/link/CRT/fixture failures remain available.
+
+Fresh original and two-layout macOS Grep/Glob observations pass thirteen cases
+per layout, 52 differential pairs across the two architectures. The existing
+strict comparator is unchanged; complete ordered protocol/API records, stderr,
+exits and workspace bytes are compared. Narrow exact-helper executable grants
+first pass authored child-spawn and outside read/write/network denial controls.
+The x64 candidates run under Rosetta on the local ARM64 host. Concurrent first
+attempts timed out; the retained sequential pilot and complete runs pass within
+the existing deadline. Native x64 component execution is independently covered
+by CI. The new Windows full-client search matrix remains pending its own native
+AppContainer workflow; component success alone does not qualify those clients.
+
+The public sandbox-runtime 0.0.79 package adds 53 complete structural function
+candidates across all eight captured platform modules, with eleven ambiguous
+shapes per platform retained as unknown. Forty-four candidates have exact
+upstream source-map boundaries and formal parameter anchors in public
+TypeScript, adding nineteen written parameter and 22 return annotation
+candidates. Two destructuring links and seven absent/ambiguous exact anchors
+are refused. All 45 selected source files match public Git blobs at
+d9aac2098351ca17f3743fbaf6ecbd0051b7e00e. The npm provenance signature remains
+unverified and supplies a candidate revision only. Erased original types and
+whole-program equivalence are not established.
+
+The private source-model evidence fixture now accepts an explicit 1–1024 MiB
+serialized-model budget, retaining its 256 MiB default and existing analysis
+limits. Eleven controls cover unchanged default output, explicit budget parity,
+malformed/oversized budgets and actual exhaustion before output creation. The
+larger budget permits complete large-module analysis without weakening parser
+or binding refusal. The eight evidence directories and their index rehash in
+756 files. The full recovery objective remains open.

@@ -1184,6 +1184,10 @@ all admitted units must complete the inventory. See the
 [file navigation profile](web-configuration-file-profile.md).
 `WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
 recovery without raising interactive budgets and invalid-source refusal.
+The private `neverd-web-source-model` evidence fixture accepts a final
+`export-budget-mib` argument from 1 through 1024 (default 256). This bounds
+serialized-model accounting only; parser and binding limits stay unchanged.
+Invalid budgets and exhausted exports refuse before creating an output directory.
 `WebReadableExportSDK.*` checks immutable input deletion, exact original and
 readable hashes, explicit source goals, invalid syntax/encoding without fake
 source, stale/unknown/oversize refusal before writes, 9 MiB chunked selection,
