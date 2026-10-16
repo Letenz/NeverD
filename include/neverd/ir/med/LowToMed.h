@@ -192,6 +192,9 @@ private:
   void bindSourceCalls(MedFunc &Func, const LowFunc &Low, BinaryFormat Fmt);
   MedVar ndVarToMedVar(const NdVar &VN);
   void fixupSubRegisters(MedFunc &Func);
+  /// Keep the architectural data registers of checked ordinary SEH callbacks
+  /// on explicit state edges before SSA applies the ordinary calling ABI.
+  void modelSEHFinallyRegisters(MedFunc &Func);
 
   // --- Architecture-specific sub-register fixups (LLVM target-dispatch) ---
   // Each helper guards on TargetArch internally and is a no-op on other

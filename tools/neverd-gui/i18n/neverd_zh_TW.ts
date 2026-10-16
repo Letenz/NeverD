@@ -856,6 +856,22 @@
         <translation>顯示程式的型別及其記憶體配置與原始碼</translation>
     </message>
     <message>
+        <source>D&amp;WARF file...</source>
+        <translation>DWARF 檔案(&amp;W)...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>從獨立的 DWARF 檔案、未移除符號的副本或 .dSYM 載入偵錯資訊</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>MAP 檔案(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>從連結器 MAP 檔案載入名稱</translation>
+    </message>
+    <message>
         <source>S&amp;tructure offset...</source>
         <translation>結構位移(&amp;T)...</translation>
     </message>
@@ -2280,6 +2296,38 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Local Types</source>
         <translation>本機型別</translation>
     </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>無法判斷 %1 是否有 MAP 檔案：%2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>載入 DWARF 檔案</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>載入 MAP 檔案</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>MAP 檔案 (*.map);;所有檔案 (*)</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>載入其他版本的 MAP 檔案</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+是否仍然載入其中的名稱？位於錯誤位址的名稱會誤導分析。</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>DWARF 檔案 (*.debug *.dSYM);;所有檔案 (*)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2596,6 +2644,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>DWARF loaded: %1</source>
         <translation>已載入 DWARF：%1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>已依選擇開啟，未載入輸入檔案旁的 MAP 檔案</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>已不經核對載入 MAP：%1（新增 %2 個名稱，屬於其他版本）</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>已載入 MAP：%1（新增 %2 個名稱）</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>未載入 MAP：%1 與載入後的映像不符</translation>
     </message>
     <message numerus="yes">
         <source>Showed %n operands as members of %1</source>
@@ -3804,6 +3868,49 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>第 %1 列，第 %2 欄：%3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>%1 MAP，%2 個名稱。其建置時間戳記與輸入檔案相符。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>%1 MAP，%2 個名稱。其各區段的位置與輸入檔案相符。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>%1 MAP，%2 個名稱。其中沒有可與輸入檔案核對的資訊。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>%1 MAP，%2 個名稱。其記錄的建置時間戳記為 %3，而輸入檔案的為 %4：它屬於其他版本。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>%1 MAP，%2 個名稱。它將 %3 置於 %4，%5 位元組，而輸入檔案中它位於 %6，%7 位元組：它屬於其他版本。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>%1 MAP，%2 個名稱。其 %4 個函式中有 %3 個位於輸入檔案的程式碼之外：它屬於其他版本。</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>找到 MAP 檔案</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>是否仍然載入 MAP 檔案？</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>是否載入 MAP 檔案？</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>（%1）</translation>
     </message>
 </context>
 <context>

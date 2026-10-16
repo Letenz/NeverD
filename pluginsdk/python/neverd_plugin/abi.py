@@ -830,6 +830,7 @@ _C_TYPES: dict[str, object] = {
     "size_t": ctypes.c_size_t,
     "unsigned": ctypes.c_uint,
     "unsigned short": ctypes.c_ushort,
+    "long long": ctypes.c_longlong,
     "unsigned long long": ctypes.c_ulonglong,
     "neverd_session_t": SessionHandle,
     "neverd_va_t": VirtualAddress,
@@ -985,6 +986,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_map_reference_json",
+    "const char *",
+    ["const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_session_set_load_options",
     "int",
     ["neverd_session_t", "const char *"],
@@ -1086,6 +1093,27 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_local_types_fit_json",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_local_type_member_json",
+    "const char *",
+    [
+        "neverd_session_t", "const char *", "long long",
+        "unsigned long long", "const char *",
+    ],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_func_type_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_types_convert",
     "const char *",
     ["const char *"],
@@ -1121,6 +1149,32 @@ _declare(
     ["neverd_session_t", "const char *"],
 )
 _declare(
+    "neverd_session_set_map_path_ex",
+    "int",
+    ["neverd_session_t", "const char *", "int"],
+)
+_declare(
+    "neverd_session_inspect_map_json",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_session_load_map",
+    "int",
+    ["neverd_session_t", "const char *", "int"],
+)
+_declare(
+    "neverd_session_set_dwarf_path",
+    "void",
+    ["neverd_session_t", "const char *"],
+)
+_declare(
+    "neverd_session_load_dwarf",
+    "int",
+    ["neverd_session_t", "const char *"],
+)
+_declare(
     "neverd_session_set_debug_info_enabled",
     "void",
     ["neverd_session_t", "int"],
@@ -1132,6 +1186,11 @@ _declare(
 )
 _declare(
     "neverd_session_set_dwarf_search",
+    "void",
+    ["neverd_session_t", "int"],
+)
+_declare(
+    "neverd_session_set_map_search",
     "void",
     ["neverd_session_t", "int"],
 )
@@ -1158,6 +1217,12 @@ _declare(
 )
 _declare(
     "neverd_session_debug_info_path",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_session_debug_info_json",
     "const char *",
     ["neverd_session_t"],
     ownership=Ownership.OWNED_STRING,

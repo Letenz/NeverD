@@ -759,3 +759,7 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 内核 CRT 新增 `isdigit`、`_strupr`、`_wcslwr`、`_wcsupr`、`strcpy_s`、`strncpy_s`、`wcscat_s` 和 `wcsncpy_s`。数字分类按 int／字节截断后返回掩码 4，单独处理 EOF。原地大小写转换只修改 ASCII，其余字节和 UTF-16 单元保持不变，不使用 NLS 字符表。受检写入保留逐单元存储、内核错误码 22／34／80、错误时首单元清零和完整 size_t 的 `_TRUNCATE`；后续访问故障不撤销先前写入。零计数、空指针、部分输出及别名按固定内核版本的实际行为处理，不代表可移植 C 的重叠保证。1 MiB 上限只约束实际扫描／写入，不访问未用容量；分页存储仍受 IRQL 限制。
 
 内核 `memcpy_s` 和 `memmove_s` 支持有界、可访问缓冲区及完整 size_t 计数。零计数不访问指针；成功时均按移动语义处理重叠。无效参数返回 22 或 34，仅 `memcpy_s` 在错误时清零给定目标容量。两者复用既有 1 MiB 操作上限、生命周期和 IRQL 检查；此有效区间配置不复现优化复制发生故障时的部分 SIMD 写入。`RtlImageNtHeader` 检查 MZ、无符号 DOS 偏移及 PE 签名，并保留固定 x64 内核的用户地址边界；不验证可选头、节或镜像可加载性。无效签名返回 NULL，无效内存明确停止执行。
+
+`RtlHashUnicodeString`、`RtlUpcaseUnicodeString` 和 `RtlTimeToSecondsSince1980` 支持不高于 APC_LEVEL 的调用。哈希算法 0/1 使用 x65599，先清零输出再读取 Length，不使用 MaximumLength；区分大小写时接受所有 UTF-16 单元。转大写和忽略大小写的哈希支持小于 U+00C0 的单元，其他单元明确要求尚未建模的 NLS 表。转大写保留顺序重叠写入，每个单元重读 Buffer，转换后重读 Length，不追加终止符。分配使用共享分页 `Strg` 池并由 `RtlFreeUnicodeString` 释放，零长度分配仍不支持。奇数 Length 只处理完整单元。时间转换将 100 ns 刻度截断为秒并减去 1980 纪元，仅结果可用 ULONG 表示时写入四字节；越界时输出及别名保持不变。
+
+`toupper`、`towupper` 与 `RtlUpcaseUnicodeChar` 共用 APC_LEVEL 限制及计数字符串的大写映射。内核 `toupper` 使用输入低字节，仅接受 ASCII；扩展字节（包括 EOF 的字节值）需要尚未建模的代码页。宽字符输入截为 16 位，接受小于 U+00C0 的单元，其余明确要求 NLS。这些标量接口和原位 CRT 转换使用不同的内核辅助函数，不能混同其映射规则。

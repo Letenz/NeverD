@@ -322,6 +322,10 @@ struct RegistrationStateAnalysis {
   bool CxxContinuationsComplete = true;
   std::vector<RegistrationCxxContinuation> CxxContinuations;
   bool SEHInvocationExitsComplete = true;
+  /// Direct parent exits do not expose a stale CRT unwind guard to another
+  /// call or faulting access. Logical source-state analysis can remain complete
+  /// without this proof, but native parent-context reconstruction cannot.
+  bool SEHParentChainComplete = true;
   std::vector<RegistrationSEHControlContract> SEHControls;
   std::vector<RegistrationSEHInvocationExit> SEHInvocationExits;
   bool SEHStateStoresComplete = true;

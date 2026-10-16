@@ -156,7 +156,10 @@ void emitSEHRetainedScopes(llvm::Function &Parent, va_t SourceVA,
   if (Scopes.empty())
     return;
   auto &Setup = Parent.getEntryBlock();
-  auto *Branch = llvm::cast<llvm::UncondBrInst>(Setup.getTerminator());
+  auto *Branch = Setup.getTerminator();
+  assert((llvm::isa<llvm::UncondBrInst>(Branch) ||
+          llvm::isa<llvm::CondBrInst>(Branch)) &&
+         "checked entry must branch to its normal source path");
   auto *Next = Branch->getSuccessor(0);
   auto *NoOp = llvm::Intrinsic::getOrInsertDeclaration(
       Parent.getParent(), llvm::Intrinsic::donothing);

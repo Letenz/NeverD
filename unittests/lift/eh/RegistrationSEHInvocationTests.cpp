@@ -216,6 +216,111 @@ TEST(RegistrationState, FinallyInvocationsResumeOnlyTheirCheckedParent) {
     }
 }
 
+TEST(RegistrationState, FinallyOnlyParentTailsRequireEveryPathToAnAnchor) {
+  for (unsigned Shape = 0; Shape != 3; ++Shape)
+    for (unsigned Mutation = 0; Mutation != 10; ++Mutation)
+      for (bool Reverse : {false, true}) {
+        SCOPED_TRACE(Shape);
+        SCOPED_TRACE(Mutation);
+        SCOPED_TRACE(Reverse);
+        auto F = invocationFrame(12, false);
+        F.Blocks.resize(Shape == 2 ? 13 : Shape == 1 ? 12 : 11);
+        const auto SetBranch = [&](unsigned Id, va_t Address, unsigned Target,
+                                   va_t TargetAddress) {
+          auto &Block = F.Blocks[Id];
+          Block = {};
+          Block.Id = Id;
+          Block.StartAddr = Address;
+          Block.EndAddr = Address + 2;
+          Block.Succs = {int(Target)};
+          emitOp(Block, Address, NdOp::BRANCH, {},
+                 {NdVar::cst(TargetAddress, 4)});
+          Block.InstructionBoundaries = {{Address, 2, 0, 1}};
+          auto &Instruction = Block.InstructionBoundaries.back();
+          Instruction.Control = LowInstructionControl::Branch;
+          Instruction.ControlFlags = LowInstructionControlFlag::Branch;
+          Instruction.Immediate = TargetAddress;
+        };
+        SetBranch(10, 0x1900, Shape ? 11 : 8, Shape ? 0x1910 : 0x1105);
+        if (Shape)
+          SetBranch(11, 0x1910, 8, 0x1105);
+        if (Shape == 2) {
+          SetBranch(12, 0x1902, 8, 0x1105);
+          auto &Split = F.Blocks[10];
+          Split.Succs.push_back(12);
+          Split.Ops.back().Opcode = NdOp::COND_BR;
+          Split.Ops.back().addInput(NdVar::cst(1, 1));
+          Split.InstructionBoundaries.back().ControlFlags |=
+              LowInstructionControlFlag::Conditional;
+        }
+        auto &Tail = F.Blocks[10];
+        switch (Mutation) {
+        case 1:
+          SetBranch(10, 0x1900, 10, 0x1900);
+          break;
+        case 2:
+          SetBranch(10, 0x1900, 9, 0x1850);
+          break;
+        case 3:
+          Tail.Succs.front() = 99;
+          break;
+        case 4:
+          Tail.Succs.push_back(Tail.Succs.front());
+          break;
+        case 5:
+          ++*Tail.InstructionBoundaries.back().Immediate;
+          break;
+        case 6:
+          F.ExceptionMetadata->CodeRange.End = 0x1900;
+          break;
+        case 7:
+          Tail.InstructionBoundaries.back().TargetMode =
+              LowInstructionTargetMode::Thumb;
+          break;
+        case 8:
+          Tail.Succs.clear();
+          Tail.Ops.back().Opcode = NdOp::RETURN;
+          Tail.Ops.back().NumInputs = 0;
+          Tail.InstructionBoundaries.back().Control =
+              LowInstructionControl::Return;
+          Tail.InstructionBoundaries.back().ControlFlags =
+              LowInstructionControlFlag::Return;
+          Tail.InstructionBoundaries.back().Immediate = 0;
+          break;
+        case 9:
+          if (Shape == 2)
+            SetBranch(12, 0x1902, 9, 0x1850);
+          else
+            Tail.InstructionBoundaries.back().ControlFlags |=
+                LowInstructionControlFlag::InstructionGuard;
+          break;
+        }
+        if (Reverse)
+          std::reverse(F.Blocks.begin(), F.Blocks.end());
+        const std::vector<RegistrationSEHControlContract> Controls{
+            {RegistrationSEHControlContract::Kind::NearCall, 0x1100, 0x1105,
+             0x1800},
+            {RegistrationSEHControlContract::Kind::NearReturn, 0x1850, 0x1851,
+             InvalidVA}};
+        const std::vector<RegistrationLocalUnwindContract> Unwinds{
+            {0x2200, false}};
+        const auto State = analyzeRegistrationStates(
+            F, 0, 0, nullptr, nullptr, nullptr, &Unwinds, &Controls);
+        EXPECT_EQ(State.Complete, Mutation == 0);
+        EXPECT_EQ(State.SEHInvocationExitsComplete, Mutation == 0);
+        if (Mutation)
+          continue;
+        ASSERT_EQ(State.SEHInvocationExits.size(), 1u);
+        EXPECT_EQ(State.SEHInvocationExits.front().TargetVA, 0x1900u);
+        const auto Reached = llvm::find_if(State.Blocks, [](const auto &Block) {
+          return Block.BlockId == 10;
+        });
+        ASSERT_NE(Reached, State.Blocks.end());
+        EXPECT_TRUE(Reached->Reached);
+        EXPECT_FALSE(Reached->CallbackOnly);
+      }
+}
+
 TEST(RegistrationState, NestedFinallyKeepsEachInvocationReturnSlot) {
   for (unsigned Mutation = 0; Mutation != 19; ++Mutation) {
     SCOPED_TRACE(Mutation);

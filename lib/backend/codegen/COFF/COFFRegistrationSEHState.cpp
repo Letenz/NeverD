@@ -94,7 +94,8 @@ bindSEHCallbackStateWrites(const MedFunc &Source, const llvm::Function &Parent,
 llvm::Expected<std::set<const llvm::InvokeInst *>> validateSEHRetainedScopes(
     const MedFunc &Source, const llvm::Function &Parent,
     const llvm::BasicBlock &SourceEntry,
-    const std::map<uint32_t, const llvm::BasicBlock *> &Unwinds) {
+    const std::map<uint32_t, const llvm::BasicBlock *> &Unwinds,
+    const llvm::BasicBlock *CapturedEntry) {
   const auto Expected = getX86RegistrationSEHRetainedScopes(Source);
   if (!Expected)
     return rejectIR(
@@ -123,9 +124,9 @@ llvm::Expected<std::set<const llvm::InvokeInst *>> validateSEHRetainedScopes(
   const auto *Previous = &Parent.getEntryBlock();
   const auto *Branch =
       llvm::dyn_cast<llvm::UncondBrInst>(Previous->getTerminator());
-  if (!Branch)
+  if (!Branch && !CapturedEntry)
     return rejectIR("machine entry bypasses its checked registration block");
-  const auto *Block = Branch->getSuccessor(0);
+  const auto *Block = CapturedEntry ? CapturedEntry : Branch->getSuccessor(0);
   for (uint32_t Scope : *Expected) {
     const auto *Invoke =
         llvm::dyn_cast<llvm::InvokeInst>(Block->getTerminator());

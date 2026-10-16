@@ -678,6 +678,11 @@ void recoverCallAbi(
           continue;
         }
       }
+      if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF &&
+          recoverI386RegistrationCookieCall(Func, Blk, OI, TRI, CI)) {
+        Func.CallInfos.push_back(std::move(CI));
+        continue;
+      }
       const auto SEHJumpABI =
           SEHJumpABIs.find({Blk.Id, Op.Addr, Op.OriginSeq, CI.TargetAddr});
       const bool SEHJump = SEHJumpABI != SEHJumpABIs.end();

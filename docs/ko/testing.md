@@ -1710,6 +1710,10 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 
 `SafeSEHReference.*`는 불변 SafeSEH 테이블 소속, 잘못되거나 모호한 저장 영역, 재배치, 다른 아키텍처와 형식, 분할 간 선언 순서를 검사합니다. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM`는 `NEVERD_NONLOCAL_FINALLY_INPUTS`로 네이티브 MSVC x86/x64, O0/O2, GS 및 소스 최적화 설정의 LLVM 조합 32개를 검사합니다. LLVM과 해석된 호출 시그니처를 검증하며 지원하지 않는 x86 네이티브 EH 재구성이 계속 거부되어야 합니다. Windows EH 전용 작업은 네이티브 fixture artifact를 내려받아 실행하며 입력 디렉터리가 없으면 테스트를 명시적으로 건너뜁니다.
 
+`RegistrationPrologueSaves.*`와 `PipelineOptNone.*`는 소스 메모리 기록, 콜백 인수와 선택기 보호, 일반 코드 최적화를 검증합니다. 네이티브 MSVC 행렬은 x86 `/Od` (`/GS-`, `/GS`)의 `nonlocal_finally_return`을 독립 COFF 검증으로 확인합니다. `check_windows_finally_rewrite.py`는 두 강제 기준 주소와 두 패치 모드에서 원본/최적화 IR을 비교합니다. 관찰기 실행 24회, 호출 1536회, 체인과 스택 보호 및 음성 대조를 검사합니다. EXE를 DLL로 바꾸는 어댑터는 TLS 없는 입력의 헤더만 수정하고 원래 코드를 유지하며 외부 SEH 관찰기가 예외 검색을 제공합니다. 다른 MSVC 형태는 분석과 거부만 검사합니다.
+
+`RegistrationEH4Wrapper.*`는 두 기준 주소, 가변 및 불변 런타임 데이터, MXCSR 분기, 모든 경로의 정의, 호출자 프레임 격리, 명령 및 저장소 중첩과 정확한 PE 재배치를 검사합니다. 두 MSVC 프로필에는 각각 독립 음성 대조가 있습니다.
+
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame`은 인증된 Windows x64 SEH 처리기와 일반/예외 공유 진입의 로컬 해제 호출을 검사합니다. 반례에는 해제 할당 불일치, 불안정하거나 일부 폭의 SP, 독립 루트, 불완전한 입력, 누락되거나 위조된 예외 간선, 작업 한도 소진, 알 수 없는 스택 메모리, 외부 재배치 및 신뢰할 수 없는 런타임이 포함됩니다. LowIR 호출 증명과 모듈 증명서를 SSA 검증에 전달하며 일반 반환 연속 테스트는 별도 진입 규칙을 유지합니다.
 
 `OrdinaryInternalReturnsRetainTheParentsReturnPC`와 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation`은 PE, ELF, Mach-O x64 및 ELF i386에서 부모 반환 주소 손상과 겹치지 않는 부모 지역 쓰기를 검사합니다. 피호출자 반환 주소 보존만으로 일반 호출을 허용할 수 없습니다.
@@ -2003,3 +2007,7 @@ CRT 회귀는 모든 바이트/UTF-16 단위, 인수 폭, 변경이 없는 읽�
 `KernelFileTransfers`는 플러시 권한, 모든 장치 전송 방식의 버퍼 없는 패킷, 64비트 Information, 디스패치 반환 전 게시·해제, 작업자/보호 영역 알림 및 비동기/동시 요청 거부를 검증합니다. 기존 자체 및 실제 WDK 전송 픽스처도 사용자 IOSB와 아홉 완료 조건에서 가져오기 및 동적 조회 플러시 호출을 실행합니다.
 
 `KernelFileTransfers`는 제어 패킷, ULONG 잘림, 길이 0 포인터, 읽기 전용 입력 복사, IOSB 별칭, 독립 입출력 한계, 지연 완료와 원래 스레드 알림을 검증합니다. 기존 원본 및 실제 WDK 전송 픽스처는 두 API의 가져오기와 동적 조회를 네 가지 버퍼 형태와 아홉 완료 모드로 실행합니다.
+
+회귀 테스트는 출력 별칭, 좁은 인수, 홀수 길이, 설명자 재읽기, 순차 겹침, 할당 실패, NLS 거부, 부분 오류, 수명과 APC_LEVEL을 확인합니다. 시간 테스트는 기준점의 소수 초, ULONG 상한, 입력/출력 별칭을 확인합니다. 자체 및 실제 WDK CRT 드라이버가 진입점, 작업자, 언로드에서 정적/동적 호출을 실행하며 진입점에서는 APC_LEVEL도 검증합니다.
+
+회귀 테스트는 ASCII와 NLS 독립 와이드 범위를 상위 비트와 조합해 전수 검사하고 확장 값 거부, 정확한 인수 수와 APC_LEVEL을 확인합니다. 자체 및 실제 WDK CRT는 진입점, 작업자, 언로드에서 세 정적/동적 호출을 검증합니다. WDK ctype.h의 wint_t는 16비트이며 기대값은 호스트 CRT에 의존하지 않습니다.

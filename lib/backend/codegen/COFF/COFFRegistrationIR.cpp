@@ -6,6 +6,7 @@
 
 #include "COFFNativeEHProvenance.h"
 #include "COFFRegistrationCopyEdges.h"
+#include "COFFRegistrationCopySlots.h"
 #include "COFFRegistrationCxxIRProof.h"
 #include "COFFRegistrationFrameProof.h"
 #include "COFFRegistrationIRProof.h"
@@ -14,6 +15,8 @@
 #include "COFFRegistrationSEHException.h"
 #include "COFFRegistrationSEHFinally.h"
 #include "COFFRegistrationSEHJump.h"
+#include "COFFRegistrationSEHParentExit.h"
+#include "COFFRegistrationSEHRegisters.h"
 #include "COFFRegistrationSEHState.h"
 
 #include "neverd/Limits.h"
@@ -213,6 +216,13 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       callbacks(Function, Source, &ExpectedRoots, &ExceptionBridges);
   if (!CallbackMap)
     return CallbackMap.takeError();
+  auto ParentExits = coff_registration::bindSEHParentExitContext(
+      Function, Source.CodeRange.Begin, *CallbackMap);
+  if (!ParentExits)
+    return ParentExits.takeError();
+  if (auto Error =
+          coff_registration::bindSEHParentExitSources(*ParentExits, ReplayMed))
+    return Error;
   std::vector<const llvm::Function *> CallbackFunctions;
   for (const auto &[Key, Callback] : *CallbackMap)
     CallbackFunctions.push_back(Callback);
@@ -263,9 +273,9 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
   std::set<const llvm::CallBase *> AbnormalFinallyIR;
   std::map<va_t, uint32_t> Protected;
   std::set<std::pair<va_t, int>> Chain;
-  std::set<const llvm::Instruction *> ChainProtocolReads;
+  auto ChainProtocolReads = ParentExits->ChainReads;
   size_t FSReads = 0;
-  size_t ExpectedFSReads = 0;
+  size_t ExpectedFSReads = ParentExits->ChainReads.size();
   for (const auto &Block : Function)
     for (const auto &Instruction : Block) {
       for (const auto &Operand : Instruction.operands())
@@ -503,10 +513,13 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       ReplayMed, *Frame, NativeFunctions, ScopeWrites);
   if (!ScopeState)
     return ScopeState.takeError();
-  auto SourceSegments = validateSourceSegments(Function, ReplayMed,
-                                               *CallbackMap, NativeFunctions);
+  auto SourceSegments = validateSourceSegments(
+      Function, ReplayMed, *CallbackMap, NativeFunctions, false, &*ParentExits);
   if (!SourceSegments)
     return SourceSegments.takeError();
+  if (auto Error = coff_registration::validateSEHRegisterStorage(
+          Function, ReplayMed, *CallbackMap))
+    return Error;
   auto PhysicalWrites = coff_registration::bindSEHCallbackStateWrites(
       ReplayMed, Function, *SourceSegments, NativeFunctions);
   if (!PhysicalWrites)
@@ -517,7 +530,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
           Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
           IncomingAccesses, SourceCallerPCWrites, ChainProtocolReads,
           States.SecurityCookieVA, ImmutableImageRanges, nullptr,
-          &*ExceptionFields, &*Jumps, &*ScopeState))
+          &*ExceptionFields, &*Jumps, &*ScopeState, &*ParentExits))
     return Error;
   auto NormalFinallyIR = coff_registration::bindSEHFinallyCalls(
       ReplayMed, Function, *CallbackMap, *SourceSegments, NativeFunctions);
@@ -702,6 +715,12 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       return rejectIR("scope handler target bypasses its checked source entry");
   }
   size_t CopyWork = 0;
+  coff_registration::RegistrationCopySlots CopySlots;
+  if (!CopySlots.build(Function, CallbackFunctions, CopyWork))
+    return rejectIR("parent copy storage has no closed recovery graph");
+  if (auto Error = coff_registration::validateSEHParentExitTargets(
+          *ParentExits, SourceEntries))
+    return Error;
   std::set<const llvm::InvokeInst *> RetainedScopes;
   std::map<uint32_t, const llvm::BasicBlock *> ScopeUnwinds;
   for (const auto &[Region, Dispatch] : Dispatches)
@@ -712,7 +731,8 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       continue;
     if (Block.StartAddr == Source.CodeRange.Begin) {
       auto Retention = coff_registration::validateSEHRetainedScopes(
-          ReplayMed, Function, *Entry->second, ScopeUnwinds);
+          ReplayMed, Function, *Entry->second, ScopeUnwinds,
+          ParentExits->NormalEntry);
       if (!Retention)
         return Retention.takeError();
       RetainedScopes = *Retention;
@@ -722,7 +742,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
         Entry->second != &Function.getEntryBlock()) {
       const auto &Setup = Function.getEntryBlock();
       for (const auto &I : Setup) {
-        if (IncomingSetup.count(&I))
+        if (IncomingSetup.count(&I) || ParentExits->Setup.count(&I))
           continue;
         if (I.isTerminator() || llvm::isa<llvm::AllocaInst>(I) ||
             llvm::isa<llvm::GetElementPtrInst>(I) ||
@@ -752,7 +772,8 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       const auto *Next = Terminator->getSuccessor(I);
       if (!Expected.count(Next)) {
         Next = coff_registration::registrationCopyDestination(
-            *Terminator->getParent(), *Next, Expected, CopyWork, true);
+            *Terminator->getParent(), *Next, Expected, CopyWork, true,
+            &CopySlots);
         if (!Next)
           return rejectIR("SEH source edge gained unproved copy instructions");
       }
@@ -852,7 +873,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
             Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
             IncomingAccesses, GeneratedCallerPCWrites, ChainProtocolReads,
             States.SecurityCookieVA, ImmutableImageRanges, nullptr,
-            &*ExceptionFields, &*Jumps, &*ScopeState))
+            &*ExceptionFields, &*Jumps, &*ScopeState, &*ParentExits))
       return Error;
   return llvm::Error::success();
 #endif

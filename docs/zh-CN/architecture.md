@@ -1773,3 +1773,11 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 `KernelModelRuntime` 统一负责内核 CRT 分类、原地转换和受检字符串写入。`KernelCStringAPIs.def` 向各调用入口提供导出身份、参数数量和 IRQL 准入。逐单元访问复用来宾内存权限及生命周期检查，报告和适配层不重复实现复制或错误语义。
 
 `KernelMemoryCalls` 负责检查型内存复制的准入并复用移动／填充操作，包括池生命周期和用户内存检查。`KernelModelRuntime` 负责 `RtlImageNtHeader` 原始签名探测。探测结果不能替代执行镜像所需的加载器验证；适配器不重复实现这两种语义。
+
+`OptimizationGuards` 补充 LLVM 的 `optnone` 检查：模块中有受保护函数时，跳过可能改写其 CFG 或把回调实参替换成 poison 的可选模块及调用图优化。必需的适配器和普通函数优化继续运行。注册链源码投影保留序言保存操作的内存记录，供原生重建绑定。
+
+`COFFRegistrationEH4Wrapper` 负责保留的 EH4 转发证明。`COFFRegistrationScalarLeaf` 检查有界且仅向前的标量 CFG、寄存器与标志初始化、私有 MXCSR 存储及映像运行时数据；拒绝调用者栈帧读取、地址逃逸、未知调用、指令重叠及不完整返回。LLVM 发射和独立 COFF 校验共用加载器证明，原包装器、辅助函数及动态数据读取继续在原位执行。
+
+`KernelModelRuntime` 统一负责 Unicode 哈希、不依赖 NLS 的大写映射及 1980 纪元秒数转换。`KernelRuntimeCalls` 通过已有分页字符串池分配大写输出。字符串和时间 API 表统一导出身份、参数个数与 APC_LEVEL 限制；字段访问顺序由实现层负责。
+
+`uppercaseCharacter` 先收窄标量参数，再进行准入检查并委托已有 `uppercaseUnicodeUnit`。CRT 与计数字符串 API 表以各自 ABI 身份共享映射；适配层和宿主区域设置不提供另一套语义。

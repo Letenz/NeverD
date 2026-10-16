@@ -699,19 +699,46 @@ since then loads without asking.
 
 Opening an ELF or Mach-O image with DWARF asks **DWARF info found** — *Load
 DWARF debug information?* — as IDA does, before the file loads. When the DWARF
-is not in the input itself, the dialog names the file that holds it: the
-`.dSYM` bundle beside a Mach-O image, or a split `.debug` file beside the
-image, which is found by its name alone (`<image>.debug`, `<stem>.debug` or
-`.debug/<image>`) and not by its build ID or debug link. **Yes** loads it, and
-the Output window names what loaded; for a `.dSYM` bundle it names the image
-the bundle belongs to. **No**, Escape or closing the dialog opens the file
-without its DWARF, which the project keeps, so reopening it does not load the
-DWARF either; a linker map beside the input still loads. IDA's import options
+is not in the input itself, the dialog names the file that holds it, found in
+GDB's order: the `.dSYM` bundle beside a Mach-O image, the file a debug
+directory keeps under the image's build ID
+(`/usr/lib/debug/.build-id/xx/yyyy.debug`, where distribution debug packages
+install it; `NEVERD_DEBUG_FILE_DIRECTORY` lists other directories), the file the
+image's `.gnu_debuglink` names, beside it, in `.debug/` beside it or under a
+debug directory, and a split `.debug` file named after it (`<image>.debug`,
+`<stem>.debug` or `.debug/<image>`). A companion that records another build ID
+than the image, or a linked file of another CRC, is passed over, and compressed
+debug sections are read expanded. **Yes** loads it, and the Output window names
+what loaded; for a `.dSYM` bundle it names the image the bundle belongs to.
+**No**, Escape or closing the dialog opens the file without its DWARF, which
+the project keeps, so reopening it does not load the DWARF either. IDA's import options
 (global names, types, calling conventions, line numbers) are not offered,
 because the engine reads DWARF whole or not at all. Projects, files opened with
 **Load debug information** cleared, and SBF programs, whose debug information
 is never read, are not asked. The command line reads the image without its
 DWARF with `--no-dwarf`.
+
+A linker MAP names functions and data by address and nothing more, so a PDB's
+or DWARF's names outrank its own. The MAP beside the input (`<stem>.map` or
+`<name>.map`) loads only for an image no PDB or DWARF describes: one that has
+none, or whose PDB or DWARF the user declined. Only then does opening it ask
+**MAP file found** — *Load the MAP file?* — after the PDB and DWARF questions;
+IDA reads no MAP. The dialog names the file, the linker that wrote it (link.exe
+and lld-link `/MAP`, whose layout Borland's and IDA's MAPs share, lld-link
+`/lldmap`, ld.lld, GNU ld or ld64) and how many names it gives, with its first
+names in the tooltip, and says whether it belongs to the input's build: a
+link.exe MAP records the build stamp, and the others place the output sections
+the input has. A MAP of another build — another stamp, a section placed
+elsewhere, or most of its functions outside the input's code — asks *Load the
+MAP file anyway?* with **No** the default, since the open would pass over it;
+**Yes** loads it unchecked, which the project keeps. **No**, Escape or closing
+the dialog opens the file without the MAP, which the project keeps too. The
+Output window names the MAP that loaded and the names it added, and says so
+when a binary file's MAP, which can be held against the image only as it
+loads, does not fit it. The command line reads an image without the MAP beside
+it with `--no-map`, names one with `--map`, which a PDB or DWARF still
+outranks unless `--no-pdb` or `--no-dwarf` declines it, and takes one of
+another build with `--map-unchecked`.
 
 Anyone can write names into a symbol table, to mislead whoever reads the
 program. Opening an image with a static symbol table, the table `strip`
@@ -730,6 +757,17 @@ DWARF and PDB names have their own questions, and `main` is still named when
 the analysis finds it from the start-up code. Object files, whose relocations
 need their symbols, are not asked. The command line reads the image without
 its symbol table with `--no-symtab`.
+
+**File → Load file** loads a debug file into the open image: **PDB file...**
+for a PE, **DWARF file...** for an ELF or Mach-O image — a split `.debug` file,
+an unstripped copy or a `.dSYM` (the DWARF file inside it), whose machine and
+any build ID or UUID must be the image's — and **MAP file...** for any image
+but an EVM or SBF program. A MAP of another build asks before it loads. The
+image is read again with every debug file it has, in rank order, so a PDB or
+DWARF loaded after a MAP replaces the MAP's names, and a MAP loaded after them
+fills only what they leave unnamed. The project keeps the files chosen, and
+reopening it loads them again; one that no longer loads leaves the project open
+without it, with a warning. The command line names a DWARF file with `--dwarf`.
 
 **File → Load file → PDB file...** selects a PDB anywhere on disk for the
 currently loaded PE. A matching CodeView identity applies its debug symbols and

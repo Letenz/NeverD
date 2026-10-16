@@ -638,6 +638,84 @@ llvm::Expected<uint64_t> initializeUnicodeStringEx(const KernelModel &Model,
   return StatusSuccess;
 }
 
+llvm::Expected<uint16_t> uppercaseUnicodeUnit(uint16_t Unit) {
+  if (Unit >= 0xc0)
+    return runtimeError("Unicode upcasing requires an unmodeled NLS table");
+  return Unit >= 'a' && Unit <= 'z' ? uint16_t(Unit - 32) : Unit;
+}
+
+llvm::Expected<uint64_t> uppercaseCharacter(uint64_t Value, bool Narrow) {
+  // Kernel toupper converts the low byte through the active code page, even
+  // for int carriers outside the portable CRT input domain. ASCII is shared
+  // by ANSI and UTF-8 modes; extended bytes require a declared code page.
+  const uint16_t Unit = Narrow ? uint8_t(Value) : uint16_t(Value);
+  if (Narrow && Unit > MaxASCII)
+    return runtimeError("toupper requires an unmodeled ANSI code page");
+  auto Upper = uppercaseUnicodeUnit(Unit);
+  if (!Upper)
+    return Upper.takeError();
+  return uint64_t(*Upper);
+}
+
+llvm::Expected<uint64_t> hashUnicodeString(const KernelModel &Model,
+                                           GuestMemory &Memory,
+                                           llvm::ArrayRef<uint64_t> A) {
+  if (!A[0] || !A[3])
+    return StatusInvalidParameter;
+  if (auto E = checkBufferRange(A[0], UnicodeBufferOffset + 8))
+    return E;
+  auto Buffer = readInteger(Model, Memory, A[0] + UnicodeBufferOffset, 8);
+  if (!Buffer)
+    return Buffer.takeError();
+  if (auto E = Model.validateGuestAccess(A[3], 4, true))
+    return E;
+  if (auto E = Memory.writeInteger(A[3], 0, 4))
+    return E;
+  auto Length = readInteger(Model, Memory, A[0], 2);
+  if (!Length)
+    return Length.takeError();
+  if (uint32_t(A[2]) > 1)
+    return StatusInvalidParameter;
+  uint32_t Hash = 0;
+  for (unsigned I = 0; I < *Length / 2; ++I) {
+    if (auto E = checkBufferRange(*Buffer, I * 2 + 2))
+      return E;
+    auto Unit = readInteger(Model, Memory, *Buffer + I * 2, 2);
+    if (!Unit)
+      return Unit.takeError();
+    if (uint8_t(A[1])) {
+      auto Upper = uppercaseUnicodeUnit(*Unit);
+      if (!Upper)
+        return Upper.takeError();
+      *Unit = *Upper;
+    }
+    Hash = Hash * 65599u + uint32_t(*Unit);
+  }
+  if (auto E = Model.validateGuestAccess(A[3], 4, true))
+    return E;
+  if (auto E = Memory.writeInteger(A[3], Hash, 4))
+    return E;
+  return StatusSuccess;
+}
+
+llvm::Expected<uint64_t> timeToSecondsSince1980(const KernelModel &Model,
+                                                GuestMemory &Memory,
+                                                llvm::ArrayRef<uint64_t> A) {
+  auto Time = readInteger(Model, Memory, A[0], 8);
+  if (!Time)
+    return Time.takeError();
+  // Every negative signed input is before 1980. Unsigned subtraction makes
+  // the other out-of-range values explicit without signed overflow.
+  const uint64_t Seconds = *Time / 10000000 - 11960006400ULL;
+  if ((*Time >> 63) || Seconds > UINT32_MAX)
+    return 0;
+  if (auto E = Model.validateGuestAccess(A[1], 4, true))
+    return E;
+  if (auto E = Memory.writeInteger(A[1], Seconds, 4))
+    return E;
+  return 1;
+}
+
 llvm::Expected<uint64_t> timeToTimeFields(const KernelModel &Model,
                                           GuestMemory &Memory,
                                           llvm::ArrayRef<uint64_t> A) {

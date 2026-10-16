@@ -72,6 +72,52 @@ TEST(TypeParse, LaysAStructureOutAsMSVC) {
   EXPECT_EQ(B.Size, 12u);
 }
 
+TEST(TypeParse, ReadsOneFunctionsDeclarationAgainstTheLibrary) {
+  // IDA's Y: one declaration, its semicolon optional, of the library's types.
+  const TypeLibrary Library = parsed(R"(
+    typedef struct _DEV { unsigned short Type, Size; } DEV, *PDEV;
+    enum MODE { Kernel, User };
+  )");
+  const size_t Types = Library.types().size();
+  FunctionDeclaration Read = parseFunctionDeclaration(
+      "long __stdcall Dispatch(PDEV Device, enum MODE Mode, void *Irp)",
+      Library);
+  ASSERT_TRUE(Read.ok()) << Read.Problems.front().Message;
+  EXPECT_EQ(Read.Name, "Dispatch");
+  ASSERT_EQ(Read.Function->Params.size(), 3u);
+  EXPECT_EQ(Read.Function->Params[0].Name, "Device");
+  // As 64-bit x86 ignores __stdcall, so does a 64-bit library.
+  EXPECT_EQ(Read.Function->Convention, CallingConvention::Unspecified);
+  EXPECT_TRUE(
+      parseFunctionDeclaration("void f(struct _DEV *d);", Library).ok());
+  // A definition's line, as the decompiler prints it, reads too.
+  EXPECT_TRUE(parseFunctionDeclaration("int f(DEV *d) {}", Library).ok());
+  // Reading changes nothing.
+  EXPECT_EQ(Library.types().size(), Types);
+  EXPECT_EQ(Library.findPrototype("Dispatch"), nullptr);
+
+  const auto problem = [&](llvm::StringRef Source) {
+    const FunctionDeclaration Bad = parseFunctionDeclaration(Source, Library);
+    EXPECT_FALSE(Bad.ok()) << Source.str();
+    EXPECT_FALSE(Bad.Function) << Source.str();
+    return Bad.Problems.empty() ? std::string()
+                                : std::to_string(Bad.Problems.front().Column) +
+                                      ": " + Bad.Problems.front().Message;
+  };
+  EXPECT_EQ(problem("int f(NOPE x)"), "7: 'NOPE' names no type");
+  // C lets a declaration name a structure before it is defined; the library
+  // must define it.
+  EXPECT_NE(problem("int f(struct NOPE *x)").find("NOPE is not a local type"),
+            std::string::npos);
+  EXPECT_NE(problem("int f(struct NEW { int a; } *x)").find("NEW"),
+            std::string::npos);
+  EXPECT_NE(problem("int f(void); int g(void)").find("declare one"),
+            std::string::npos);
+  EXPECT_NE(problem("typedef int T").find("declares no function"),
+            std::string::npos);
+  EXPECT_NE(problem("int f(int a").find("expected ')'"), std::string::npos);
+}
+
 TEST(TypeParse, BitfieldsShareUnitsUnderItanium) {
   ParseOptions Options;
   Options.Rules = LayoutRules::Itanium;
