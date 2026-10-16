@@ -554,7 +554,9 @@ def qualify(args: argparse.Namespace) -> None:
     if system == "Linux":
         command += ["-Wl,--export-dynamic", "-Wl,--eh-frame-hdr", "-fPIE", "-pie"]
     if system == "Darwin":
-        command += ["-Wl,-keep_dwarf_unwind"]
+        # Intel's linker does not sign by default. The original input must meet
+        # the same strict signature check as every published Mach-O image.
+        command += ["-Wl,-keep_dwarf_unwind", "-Wl,-adhoc_codesign"]
     run(command, root / "original-build.json")
     original_hash = digest(original)
     host = HostAPI(ctypes.CDLL(str(args.library.resolve())))
