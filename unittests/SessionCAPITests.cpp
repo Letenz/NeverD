@@ -3546,7 +3546,7 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
       Session, R"({"types":["_DEVICE"],"asserts":true})"));
   EXPECT_NE(Header.find("struct _LIST_ENTRY\n{"), std::string::npos);
   EXPECT_NE(Header.find("struct _DEVICE\n{"), std::string::npos);
-  EXPECT_NE(Header.find("_Static_assert(sizeof(struct _DEVICE) == 0x58"),
+  EXPECT_NE(Header.find("static_assert(sizeof(struct _DEVICE) == 0x58"),
             std::string::npos);
   const std::string Rust = takeString(neverd_local_types_source(
       Session,

@@ -365,6 +365,11 @@ struct SpecializationOptions {
   /// proof once under the original predicate and cumulative solver-query limit.
   uint64_t MaxFrameOffsetNormalizationWorkPerProof = 0;
 
+  /// Native recovery contract, independent of the build host. X64 retains
+  /// the existing API default. Targets without an adapter fail explicitly;
+  /// changing this field alone does not enable native recovery for that ISA.
+  Arch Architecture = Arch::X64;
+
   bool hasRawEnvironment() const {
     return !X64CodeRegions.empty() || !X64ImportBindings.empty() ||
            !X64MachineExits.empty();

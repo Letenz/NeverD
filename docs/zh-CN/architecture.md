@@ -1745,3 +1745,7 @@ KernelModelObjects 在共用对象表中管理文件句柄和指针计数。Kern
 `KernelFileSystem` / `KernelModel` / `DriverFileSystemJSON` / `DeviceOwnerKind` / `isPnpProviderDevice`: `configuration.filesystem` 保存输入；顶层 `filesystem` 来自独立状态所有者，增加 `device_object` 和节点 `end_of_file`，执行或投影校验停止后仍保留。通用 `devices` 只包含来宾设备。会话卷可在卸载后保留，但来宾对象、引用、句柄、挂接和 IRP 必须释放。任何声明，包括 `[]`，都保留未重建依赖并阻止可执行 UNPACK 恢复。旧 Unicorn 模式可能在停止前提交已拒绝的设备写入；诊断保留投影失败，文件状态仍可观察。
 
 KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共享操作接收已获准的节点及已映射权限，双向检查共享冲突；仅访问元数据的打开不参与冲突。CLEANUP 释放共享限制但保留 token，CLOSE 删除已清理的 token。仍被引用的已清理对象也计入 1024 个打开的上限。严格绑定校验将 token 与文件对象 owner 对照。 `KernelModelFileCreate` 拥有 CREATE 和取消生产者，在回调前保留句柄容量。`DriverSession` 在异步操作与嵌套 CLOSE 中保留原调用者。统一对象所有者发布句柄；名称查找保留真实目录对象，终端提供方读取已准入数据包。场景关闭意图独立保留，快照与卸载执行双向 token 校验。
+
+### 原始环境的架构归属
+
+`RecoveryArchitecture` 根据 `SpecializationOptions::Architecture` 选择原生契约，与编译主机无关。现有默认值为 x64；没有适配器的架构明确拒绝。`arch/x86_64` 负责原生选项编码、主映像范围规则、外部退出匹配成本和物理退出回执。core 负责通用预算、策略编码及图与证据的完整性。x64 选项和回执摘要保留原有字节编码；验证声明前检查预期与存储的架构标识。`RawArchitectureReceiptCompatibility` 固定重构前的摘要值，架构不匹配测试禁止把 x64 证据改标为 ARM64。这一边界尚未实现 ARM64 原生恢复。

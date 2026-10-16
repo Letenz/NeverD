@@ -165,7 +165,8 @@ public:
         FixedPEDiagnostic = "terminal imports require a complete fixed PE view";
         return;
       }
-      if (Options.X64TerminalImports.size() > Options.MaxImagePreparationRecords) {
+      if (Options.X64TerminalImports.size() >
+          Options.MaxImagePreparationRecords) {
         FixedPEDiagnostic = "terminal import declaration budget exhausted";
         FixedPEBudgetExceeded = true;
         return;
@@ -174,7 +175,8 @@ public:
         const auto Identity = FixedPE->importIdentity(Binding.Slot);
         if (!Identity || Identity->Module != Binding.Module ||
             Identity->Symbol != Binding.Symbol) {
-          FixedPEDiagnostic = "terminal import differs from the authenticated named slot";
+          FixedPEDiagnostic =
+              "terminal import differs from the authenticated named slot";
           return;
         }
         TerminalImports.emplace(Binding.Slot, Binding);
@@ -275,10 +277,9 @@ public:
     if (Options.X64CetDisabled &&
         (Insn.Id == X86_INS_RDSSPD || Insn.Id == X86_INS_RDSSPQ ||
          Insn.Id == X86_INS_INCSSPD || Insn.Id == X86_INS_INCSSPQ)) {
-      const auto Kind =
-          Insn.Id == X86_INS_RDSSPD || Insn.Id == X86_INS_RDSSPQ
-              ? x86cet::Operation::Read
-              : x86cet::Operation::Increment;
+      const auto Kind = Insn.Id == X86_INS_RDSSPD || Insn.Id == X86_INS_RDSSPQ
+                            ? x86cet::Operation::Read
+                            : x86cet::Operation::Increment;
       if (!x86cet::canonicalEncoding(Result.NativeBytes, Kind))
         return llvm::createStringError(
             llvm::errc::not_supported,
@@ -423,11 +424,13 @@ public:
         Result.NativeBytes[0] == 0xff && Result.NativeBytes[1] == 0x15) {
       const auto Displacement = static_cast<int32_t>(
           llvm::support::endian::read32le(Result.NativeBytes.data() + 2));
-      const va_t Slot = Result.Fallthrough.Address +
-                       static_cast<uint64_t>(static_cast<int64_t>(Displacement));
-      if (const auto At = TerminalImports.find(Slot); At != TerminalImports.end()) {
-        Result.TerminalImport = SpecializationTerminalImportEvidence{
-            At->second, FixedPE->digest()};
+      const va_t Slot =
+          Result.Fallthrough.Address +
+          static_cast<uint64_t>(static_cast<int64_t>(Displacement));
+      if (const auto At = TerminalImports.find(Slot);
+          At != TerminalImports.end()) {
+        Result.TerminalImport =
+            SpecializationTerminalImportEvidence{At->second, FixedPE->digest()};
         if (auto Error = validateX64TerminalImportCall(Result))
           return std::move(Error);
       }
@@ -480,6 +483,11 @@ public:
 std::optional<SpecializationResult>
 validateBinaryImage(const BinaryImage &Image,
                     const SpecializationOptions &Options) {
+  if (Options.Architecture != Image.Arch) {
+    SpecializationResult Result;
+    Result.Diagnostic = "recovery architecture differs from the binary image";
+    return Result;
+  }
   if (Image.Arch != Arch::X64 || Image.IsRelocatable ||
       Options.ByteOrder != llvm::endianness::little ||
       (Image.Format != BinaryFormat::ELF &&

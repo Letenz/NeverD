@@ -19,13 +19,16 @@
 namespace neverd::gui {
 namespace {
 
-/// The languages declarations are read in, by the engine's names.
+/// The languages declarations are read in, by the engine's names.  C/C++
+/// reads as C, the language the Local Types window shows it in, so that a
+/// type declared lays out as the source it is shown as; C++'s references
+/// and bases are refused clearly.
 struct DeclarationLanguage {
   const char *id;
   const char *title;
 };
 constexpr DeclarationLanguage Languages[] = {
-    {"c", "C"}, {"cpp", "C++"}, {"rust", "Rust"}, {"go", "Go"}};
+    {"c", "C/C++"}, {"rust", "Rust"}, {"go", "Go"}};
 
 constexpr int LineRole = Qt::UserRole;
 constexpr int ColumnRole = Qt::UserRole + 1;
@@ -51,7 +54,11 @@ DeclareTypesDialog::DeclareTypesDialog(const QString &language,
   for (const auto &entry : Languages)
     language_->addItem(QString::fromLatin1(entry.title),
                        QString::fromLatin1(entry.id));
-  language_->setCurrentIndex(std::max(language_->findData(language), 0));
+  // C++ opens as C/C++ too.
+  language_->setCurrentIndex(std::max(
+      language_->findData(language == QLatin1String("cpp") ? QStringLiteral("c")
+                                                           : language),
+      0));
   top->addWidget(hint, 1);
   top->addWidget(language_);
   layout->addLayout(top);
