@@ -53,6 +53,21 @@ constexpr bool intrinsicHasOnlyValueEffects(Intrinsic Id, uint8_t NumInputs,
   }
 }
 
+/// Intrinsics that read architectural state no register or memory analysis
+/// models, such as a system register, and write no memory and no register
+/// but their explicit output.  Reading that state is not a pure value effect,
+/// so these stay out of intrinsicHasOnlyValueEffects.
+constexpr bool intrinsicWritesOnlyItsOutput(Intrinsic Id) {
+  switch (Id) {
+  case Intrinsic::Mrs:
+  case Intrinsic::A64_GetFPSR:
+  case Intrinsic::A64_GetFPCR:
+    return true;
+  default:
+    return false;
+  }
+}
+
 /// Operand roles of an intrinsic whose complete effects are its explicit
 /// output and one access to the memory at an explicit address operand.  Input
 /// indices count the constant intrinsic ID as input 0; AccessSize names the

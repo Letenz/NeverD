@@ -35,6 +35,29 @@ inline bool lowIntrinsicHasOnlyValueEffects(const LowOp &Op) {
       Op.NumInputs > 2 ? Op.Inputs[2].Size : 0);
 }
 
+/// Whether \p Op is an intrinsic, in its lifted shape, that writes no memory
+/// and no register but its explicit output (intrinsicWritesOnlyItsOutput).
+inline bool lowIntrinsicWritesOnlyItsOutput(const LowOp &Op) {
+  return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 1 &&
+         Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+         Op.Inputs[0].Offset < static_cast<uint64_t>(Intrinsic::_Count) &&
+         (Op.Output.isReg() || Op.Output.isTemp()) && Op.Output.Size != 0 &&
+         Op.MemoryOrdering == NdMemoryOrdering::None &&
+         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+         intrinsicWritesOnlyItsOutput(
+             static_cast<Intrinsic>(Op.Inputs[0].Offset));
+}
+
+/// Whether \p Op is an intrinsic that unconditionally traps: no state after
+/// it, including the output an opaque lift gives it, is reached on its path.
+inline bool lowIntrinsicIsUnconditionalTrap(const LowOp &Op) {
+  return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs >= 1 &&
+         Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+         Op.Inputs[0].Offset < static_cast<uint64_t>(Intrinsic::_Count) &&
+         isUnconditionalTrapIntrinsic(
+             static_cast<Intrinsic>(Op.Inputs[0].Offset));
+}
+
 /// The memory operands of an intrinsic whose complete effects
 /// intrinsicMemoryAccessRoles describes, checked against its LowIR shape.
 /// Complete stays false for every other operation, so an unknown or malformed

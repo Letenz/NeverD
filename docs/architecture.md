@@ -2087,19 +2087,33 @@ incoming SP and link-word restoration under the existing native call ABI.
 Whole-word copies, bounded pointer-width stack arithmetic and exact spills
 carry these identities; all reaching predecessors and backedges must converge.
 Independent roots start unknown. Partial or overlapping writes invalidate whole
-restoration words; unknown memory writes and exposed frame storage invalidate
-spill evidence. Atomic read-modify-writes and exclusive loads and stores, whose
+restoration words. A store the spills do not track exactly keeps the spills of
+the frame the function has allocated only when its address is not derived from
+the stack pointer and no frame address has escaped: under the native ABI
+nothing outside the function can name that frame. Through a frame-derived
+address, or after an escape, it invalidates all spill evidence. A frame address
+escapes when it is stored through an untracked address, stored outside the
+allocated frame or where no spill records it, or passed to a call; a load
+through a frame address that no exact spill answers carries the taint of every
+spilled word. Atomic read-modify-writes and exclusive loads and stores, whose
 operands `lowMemoryOperands` and `lowIntrinsicMemoryOperands` decode, write only
-their output and the memory at their address: a store among them is an unknown
-memory write, since its ordering and an exclusive store's possible failure keep
-that memory out of the spill facts, and the value one returns is untracked.
-Value-only intrinsics are ordinary values. Other intrinsics, unsupported
-effects, incomplete graphs and exhausted work retain the original indirect
-branch. A frame description that only unwinds
-the frame (`ExceptionFunction::describesUnwindOnly`: no personality routine,
-handler data, LSDA or language table, as for the FDE every function of an
-ordinary shared library has) runs no handler, so it does not prevent the
-classification; one that names a handler does. A branch whose target derives
+their output and the memory at their address: a store among them is an
+untracked store, since its ordering and an exclusive store's possible failure
+keep that memory out of the spill facts, and the value one returns is
+untracked. Value-only intrinsics are ordinary values, a read of state no
+analysis tracks (`intrinsicWritesOnlyItsOutput`: `mrs`, FPSR and FPCR reads)
+writes only its output, and an unconditional trap ends its path. Other
+intrinsics, unsupported effects, incomplete graphs and exhausted work retain
+the original indirect branch. A frame description that only unwinds the frame
+(`ExceptionFunction::describesUnwindOnly`: no personality routine, handler
+data, LSDA or language table, as for the FDE every function of an ordinary
+shared library has) runs no handler, so it does not prevent the
+classification. A complete address-form Itanium table read by the C or C++
+personality allows a branch whose covering call site names no landing pad
+(`exceptionForwardsUnwindAt`): an exception there goes on to the caller either
+way. An address the table leaves out terminates under the C++ personality, as
+a `noexcept` destructor's empty table makes it, and keeps its branch, as does
+any other handler. A branch whose target derives
 from an address of the function's own code (an `adr` of a switch's case
 labels, which the jump-table resolver left unresolved) is a computed jump
 within the function and keeps its indirect branch; the function's own entry is
