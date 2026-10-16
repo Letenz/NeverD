@@ -26,7 +26,8 @@ bool KernelModel::unpackImageMDLCall(KernelAPIKind Kind,
        It->second.Owner != LockedMdl::Ownership::KernelLocked) ||
       !imageOwnerForRange(It->second.OriginalAddress, It->second.ByteCount))
     return false;
-  if (Kind == KernelAPIKind::MmProbeAndLockPages)
+  if (Kind == KernelAPIKind::MmProbeAndLockPages ||
+      Kind == KernelAPIKind::MmMapLockedPages)
     return uint8_t(A[1]) == windows::KernelMode;
   if (Kind == KernelAPIKind::MmMapLockedPagesSpecifyCache)
     return uint8_t(A[1]) == windows::KernelMode &&

@@ -7207,3 +7207,5 @@ of mappings, current/maximum rights, reserved pages and retained file leases.
 `KernelModelRuntime` owns scalar debug argument widths and the common prefix/buffer publication rule. Native variadic calls use the existing call-ABI reader; the explicit x64 `va_list` adapter checks each requested guest scalar with an eight-byte stride. Neither dispatcher nor adapter duplicates format parsing.
 
 Thread query aliases reuse the existing thread/process and execution-context owners, including during process attachment. `RtlPcToFileHeader` uses `LoadedModules`, alongside system module queries; `ImageRAM` describes mapped regions and is not a substitute for module identity. No host process, thread or module state is consulted.
+
+`KernelMDLCalls` normalizes the legacy mapping entry into the existing six-argument mapper. `KernelPhysicalMemory` and MDL records continue to own cache attributes, page identity, permissions and lifetime. Only fully released kernel image aliases remain recoverable without an environment dependency; user views retain that dependency.
