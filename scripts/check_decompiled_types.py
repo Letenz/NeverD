@@ -2,9 +2,10 @@
 """Check that decompiled units hold the types they name.
 
 Decompiles functions of a program with local types, the Windows kernel by
-default, and compiles each unit for the program's target, so that a record
-a unit reads members of without defining it, or a member stored with a type
-C does not convert to the member's, fails:
+default, through HighC and LLVM-C, and compiles each unit for the program's
+target, so that a record a unit reads members of without defining it, or a
+value C does not convert to the type of the member or parameter it reaches,
+fails:
 
     python3 scripts/check_decompiled_types.py --neverd build/bin/neverd \\
         --binary ntoskrnl.exe --pdb ntkrnlmp.pdb
@@ -47,6 +48,10 @@ def main():
     parser.add_argument("--func", action="append", default=None,
                         help="a function to decompile; repeat for more "
                              "(default: the kernel's list)")
+    parser.add_argument("--route", action="append", default=None,
+                        choices=("highc", "llvmc"),
+                        help="the route to decompile through; repeat for "
+                             "both (default both)")
     parser.add_argument("--clang", default="clang",
                         help="the clang driver the units compile with")
     parser.add_argument("--target", default="x86_64-w64-windows-gnu",
@@ -77,32 +82,36 @@ def check(arguments, clang, include, work):
     """Decompiles each function into a unit in work and compiles it."""
     failures = 0
     for function in arguments.func or FUNCTIONS:
-        command = [arguments.neverd, "decompile", arguments.binary,
-                   "--func", function]
-        if arguments.pdb:
-            command += ["--pdb", arguments.pdb]
-        result = subprocess.run(command, capture_output=True, text=True)
-        unit = work / f"{function}.c"
-        unit.write_text(BANNER.sub("", result.stdout), encoding="utf-8")
-        if result.returncode:
-            failures += 1
-            print(f"FAIL {function}: neverd: {result.stderr.strip()[:200]}")
-            continue
-        compile_command = [clang, f"--target={arguments.target}",
-                           "-fsyntax-only", "-std=c11", *ERRORS]
-        if include:
-            compile_command += ["-isystem", include]
-        compiled = subprocess.run(compile_command + ["-x", "c", str(unit)],
-                                  capture_output=True, text=True)
-        errors = [line for line in compiled.stderr.splitlines()
-                  if "error:" in line]
-        if compiled.returncode:
-            failures += 1
-            print(f"FAIL {function}")
-            for line in errors[:10]:
-                print(f"     {line}")
-        else:
-            print(f"ok   {function}")
+        for route in arguments.route or ("highc", "llvmc"):
+            what = f"{function} {route}"
+            command = [arguments.neverd, "decompile", arguments.binary,
+                       "--func", function]
+            if arguments.pdb:
+                command += ["--pdb", arguments.pdb]
+            if route == "llvmc":
+                command.append("--llvm")
+            result = subprocess.run(command, capture_output=True, text=True)
+            unit = work / f"{function}-{route}.c"
+            unit.write_text(BANNER.sub("", result.stdout), encoding="utf-8")
+            if result.returncode:
+                failures += 1
+                print(f"FAIL {what}: neverd: {result.stderr.strip()[:200]}")
+                continue
+            compile_command = [clang, f"--target={arguments.target}",
+                               "-fsyntax-only", "-std=c11", *ERRORS]
+            if include:
+                compile_command += ["-isystem", include]
+            compiled = subprocess.run(compile_command + ["-x", "c", str(unit)],
+                                      capture_output=True, text=True)
+            errors = [line for line in compiled.stderr.splitlines()
+                      if "error:" in line]
+            if compiled.returncode:
+                failures += 1
+                print(f"FAIL {what}")
+                for line in errors[:10]:
+                    print(f"     {line}")
+            else:
+                print(f"ok   {what}")
     if failures:
         sys.exit(f"{failures} unit(s) failed")
     print("every unit compiled")

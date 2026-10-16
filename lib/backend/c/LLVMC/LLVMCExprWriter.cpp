@@ -2095,6 +2095,21 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       Rec = TyIt->second->Pointee;
       BaseName = Text->second;
     }
+  } else if (const auto *Arg = llvm::dyn_cast<llvm::Argument>(Peeled->first)) {
+    // A parameter the signature types as a record's address, in a unit
+    // that defines the program's records.
+    const auto Type = ParamDebugTypes.find(Arg);
+    const auto Name = ValNames.find(Arg);
+    if (!Opts.RecordDefinitions || Opts.PreserveLLVMFunctionTypes ||
+        Type == ParamDebugTypes.end() || !Type->second ||
+        Type->second->Kind != NdTypeKind::Ptr || !Type->second->Pointee ||
+        Type->second->Pointee->Kind != NdTypeKind::Struct ||
+        Type->second->Pointee->IsEnum ||
+        cNamedTypeSpelling(Type->second->Pointee->SourceName).empty() ||
+        Name == ValNames.end() || Name->second.empty())
+      return std::nullopt;
+    Rec = Type->second->Pointee;
+    BaseName = Name->second;
   } else
     return std::nullopt;
   completeDisplayRecord(Dbg, Rec);
@@ -2826,9 +2841,30 @@ void LLVMCWriter::markIndirectCalleeChains(llvm::Function &Fn) {
         (void)indirectCalleeStr(CB->getCalledOperand(), /*MarkChain=*/true);
 }
 
+std::string LLVMCWriter::memberAsAccessed(const llvm::LoadInst &Load,
+                                          std::string Text,
+                                          const TypeRef &Member) const {
+  // Only a unit that defines the program's records gives its members their
+  // declared types.
+  if (!Opts.RecordDefinitions || !Member)
+    return Text;
+  llvm::Type *Type = Load.getType();
+  if ((Member->Kind == NdTypeKind::Ptr && Type->isIntegerTy()) ||
+      (Member->Kind == NdTypeKind::Int && Type->isPointerTy()))
+    return "((" + typeToCLLVM(Type) + ")(uintptr_t)(" + Text + "))";
+  return Text;
+}
+
 std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
   if (PointerSpelling)
     *PointerSpelling = false;
+  // A parameter the signature types as a pointer is the integer the code
+  // computes with.
+  if (const auto *Arg = llvm::dyn_cast<llvm::Argument>(V);
+      Arg && PointerParams.count(Arg))
+    if (auto Name = ValNames.find(Arg); Name != ValNames.end())
+      return "((" + typeToCLLVM(Arg->getType()) + ")(uintptr_t)" +
+             Name->second + ")";
   if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(V))
     if (auto Text = codeSectionAddressText(*CI))
       return *Text;
@@ -2963,25 +2999,33 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
   }
   if (auto Text = ValueTexts.find(V);
       Text != ValueTexts.end() && !Text->second.empty()) {
+    const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V);
+    const TypeRef Member = [&]() -> TypeRef {
+      if (!LI)
+        return nullptr;
+      const auto Type = ValueTypes.find(LI);
+      return Type != ValueTypes.end() ? Type->second : nullptr;
+    }();
     // Cached field/index spellings still evaluate the original memory load.
     // A cached variable name does not: never attribute that reference as an
     // emitted memory operation.
-    if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V);
-        SourceRecorder && LI) {
+    if (SourceRecorder && LI) {
       auto Access = typedRecordAccess(LI->getPointerOperand(),
                                       llvmAccessSize(LI->getType()));
       if (!Access)
         Access = typedIndexAccess(LI->getPointerOperand());
       if (Access && Access->Text == Text->second)
-        return SourceRecorder->expression(*LI, Text->second);
+        return SourceRecorder->expression(
+            *LI, memberAsAccessed(*LI, Text->second, Member));
     }
-    return Text->second;
+    return LI ? memberAsAccessed(*LI, Text->second, Member) : Text->second;
   }
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
     if (auto Acc = typedRecordAccess(LI->getPointerOperand(),
-                                     llvmAccessSize(LI->getType())))
-      return SourceRecorder ? SourceRecorder->expression(*LI, Acc->Text)
-                            : Acc->Text;
+                                     llvmAccessSize(LI->getType()))) {
+      std::string Read = memberAsAccessed(*LI, Acc->Text, Acc->Type);
+      return SourceRecorder ? SourceRecorder->expression(*LI, Read) : Read;
+    }
   }
   if (std::string Text = composedReprintText(V); !Text.empty())
     return Text;

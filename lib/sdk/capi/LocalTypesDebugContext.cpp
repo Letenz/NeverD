@@ -307,6 +307,21 @@ void LocalTypesDebugContext::completeType(const TypeRef &Type) const {
     }
   }
   Inner.completeType(Type);
+  // What the debug information gave a record or an enumeration of one of
+  // the library's names: a unit holds the library's definition only where
+  // that agrees with it.
+  if (Record && Record->Kind == NdTypeKind::Struct &&
+      !Record->SourceName.empty() &&
+      (Record->IsEnum || !Record->FieldDisplayNames.empty())) {
+    std::lock_guard<std::mutex> Guard(Mutex);
+    const types::LocalType *Local = Types->find(Record->SourceName);
+    if (Local && !CompletedRecords.contains(Record.get()) &&
+        (Record->IsEnum
+             ? Local->Kind == types::TypeKind::Enum
+             : definedRecord(Record->SourceName, Record->Size) != nullptr) &&
+        GivenTypes.insert(Record.get()).second)
+      Given[Record->SourceName].push_back(Record);
+  }
 }
 
 CRecordDefinitions
@@ -322,6 +337,42 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
         RenamedInC->insert(Name.substr(0, Scope) + "::");
     }
   }
+  // Whether \p Type, of the library's type \p Local, names its members or
+  // enumerators as the library does.
+  const auto Agrees = [&](const NdType &Type, const types::LocalType &Local) {
+    if (Local.Kind != types::TypeKind::Enum)
+      return Local.Record && membersAgree(Type, *Local.Record);
+    // An enumeration none of whose enumerators C spells otherwise.
+    return Local.Enum && !RenamedInC->contains(Local.Name + "::") &&
+           llvm::all_of(Type.FieldDisplayNames, [&](const std::string &Name) {
+             return Name.empty() ||
+                    llvm::any_of(Local.Enum->Values,
+                                 [&](const types::Enumerator &Value) {
+                                   return Value.Name == Name;
+                                 });
+           });
+  };
+  // ... as each type the debug information gave of its name does.
+  const auto AllAgree = [&](const NdType &Type, const types::LocalType &Local) {
+    const auto Types = Given.find(Local.Name);
+    return Agrees(Type, Local) &&
+           (Types == Given.end() ||
+            llvm::all_of(Types->second, [&](const TypeRef &Other) {
+              return Other->IsEnum == (Local.Kind == types::TypeKind::Enum) &&
+                     Agrees(*Other, Local);
+            }));
+  };
+  // The enumerators of the enumerations the decompiler displays, which a
+  // unit can spell without their enumeration's name.
+  llvm::StringMap<const types::LocalType *> Enumerators;
+  for (const auto &Entry : Given)
+    for (const TypeRef &Enum : Entry.getValue())
+      if (const types::LocalType *Local = Types->find(Entry.getKey());
+          Enum->IsEnum && Local && Local->Kind == types::TypeKind::Enum &&
+          AllAgree(*Enum, *Local))
+        for (const std::string &Name : Enum->FieldDisplayNames)
+          if (!Name.empty())
+            Enumerators.try_emplace(Name, Local);
   CRecordDefinitions Result;
   std::vector<const types::LocalType *> Roots;
   for (const TypeRef &Record : Records) {
@@ -329,30 +380,29 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
         Record->SourceName.empty() || RenamedInC->contains(Record->SourceName))
       continue;
     const types::LocalType *Local = Types->find(Record->SourceName);
-    if (Local && (Local->Kind == types::TypeKind::Struct ||
-                  Local->Kind == types::TypeKind::Union))
+    // A name the unit only spells.
+    const bool Spelled =
+        !Record->IsEnum && !Record->Size && Record->FieldDisplayNames.empty();
+    if (!Local) {
+      if (const auto Owner = Enumerators.find(Record->SourceName);
+          Spelled && Owner != Enumerators.end())
+        Roots.push_back(Owner->second);
+      continue;
+    }
+    if (Local->Kind == types::TypeKind::Struct ||
+        Local->Kind == types::TypeKind::Union)
       Result.Tags[Record->SourceName] = Local->Kind == types::TypeKind::Union;
-    if (Record->IsEnum) {
-      // An enumeration whose enumerators the unit names as the library
-      // does, none of them spelled otherwise in C.
-      if (Local && Local->Kind == types::TypeKind::Enum && Local->Enum &&
-          !RenamedInC->contains(Record->SourceName + "::") &&
-          llvm::all_of(Record->FieldDisplayNames, [&](const std::string &N) {
-            return N.empty() ||
-                   llvm::any_of(Local->Enum->Values,
-                                [&](const types::Enumerator &Value) {
-                                  return Value.Name == N;
-                                });
-          }))
+    if (Record->IsEnum || (Spelled && Local->Kind == types::TypeKind::Enum)) {
+      if (Local->Kind == types::TypeKind::Enum && AllAgree(*Record, *Local))
         Roots.push_back(Local);
       continue;
     }
     // A record the unit names members of otherwise than the library does
     // stays declared only: its definition would disagree with them.
-    if (const types::LocalType *Local =
+    if (const types::LocalType *Defined =
             definedRecord(Record->SourceName, Record->Size);
-        Local && membersAgree(*Record, *Local->Record))
-      Roots.push_back(Local);
+        Defined && AllAgree(*Record, *Defined))
+      Roots.push_back(Defined);
   }
   if (Roots.empty())
     return Result;
@@ -370,8 +420,12 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
   for (const auto &[Name, Union] : Embedded.Declared)
     Result.Tags[Name] = Union;
   Result.Identifiers = Embedded.Identifiers;
-  for (const std::string &Name : Embedded.Types)
+  for (const std::string &Name : Embedded.Types) {
     Read.insert(Name);
+    if (const types::LocalType *Type = Types->find(Name);
+        Type && Type->Kind == types::TypeKind::Enum)
+      Result.Enumerations.push_back(Name);
+  }
   return Result;
 }
 

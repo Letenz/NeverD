@@ -143,7 +143,11 @@ public:
   /// The C that defines \p Records for a decompiled unit
   /// (CEmitterOptions::RecordDefinitions): each one the library defines, of
   /// the name and size the unit reads, whose members the unit names as the
-  /// library does, and what these hold by value.
+  /// library does, and what these hold by value.  A record of no size or
+  /// members is a name the unit spells: a record's or an enumeration's of
+  /// the library's, or an enumerator of one the decompiler displays, which
+  /// stands for that enumeration.  What the debug information gave types of
+  /// the name, members or enumerators, must agree with the library too.
   CRecordDefinitions definitions(const std::vector<TypeRef> &Records) const;
 
   /// The library's types the decompiler has read through this context: the
@@ -165,6 +169,10 @@ private:
   mutable std::vector<TypeRef> Completed;
   mutable llvm::DenseSet<const NdType *> CompletedRecords;
   mutable llvm::StringSet<> Read;
+  /// The records and enumerations of the library's names that the debug
+  /// information gave members or enumerators, by name.
+  mutable llvm::StringMap<std::vector<TypeRef>> Given;
+  mutable llvm::DenseSet<const NdType *> GivenTypes;
   /// The library's names C spells otherwise, which a unit cannot name.
   mutable std::optional<llvm::StringSet<>> RenamedInC;
 };
