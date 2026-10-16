@@ -19,6 +19,7 @@
 namespace neverd {
 struct BinaryImage;
 struct LowFunc;
+struct LowOp;
 struct RegistrationStateAnalysis;
 class RegistrationCallCalleeIndex;
 
