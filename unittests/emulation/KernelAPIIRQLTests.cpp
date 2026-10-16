@@ -106,6 +106,7 @@ TEST(DriverKernelAPIIRQL, NonpagedPoolMdlAndWorkOperationsPermitDispatch) {
                                        "MmIsAddressValid",
                                        "MmBuildMdlForNonPagedPool",
                                        "MmMapLockedPagesSpecifyCache",
+                                       "MmMapLockedPages",
                                        "MmGetSystemAddressForMdlSafe",
                                        "MmUnmapLockedPages",
                                        "IofCompleteRequest",

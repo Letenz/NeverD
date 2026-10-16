@@ -96,6 +96,12 @@ TEST(DriverMDL, DescriptorAndBackingAllocationHaveIndependentLifetimes) {
     ASSERT_TRUE(static_cast<bool>(Result))
         << llvm::toString(Result.takeError());
     expectCompleted(*Result);
+    if (Action == 2)
+      EXPECT_EQ(std::count_if(Result->Calls.begin(), Result->Calls.end(),
+                              [](const DriverAPIEvent &Call) {
+                                return Call.Name == "MmMapLockedPages";
+                              }),
+                2);
   }
 }
 

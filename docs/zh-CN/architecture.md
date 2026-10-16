@@ -1785,3 +1785,5 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 `KernelModelRuntime` 统一拥有调试参数的标量宽度及前缀和缓冲发布规则。普通变参调用使用已有调用 ABI 读取器；显式 x64 `va_list` 适配器按八字节步长检查每个实际请求的客户机标量。分派器和适配器不重复解析格式。
 
 线程查询别名复用既有线程／进程和执行上下文所有者，进程附加期间也保持一致。`RtlPcToFileHeader` 与系统模块查询共用 `LoadedModules`；`ImageRAM` 表示映射区间，不能代替模块身份。实现不读取宿主进程、线程或模块状态。
+
+`KernelMDLCalls` 将旧映射入口归一到现有六参数映射器。缓存属性、物理页身份、权限与生命周期仍由 `KernelPhysicalMemory` 和 MDL 记录负责。完整释放的内核映像别名不增加环境依赖；用户视图保留该依赖。
