@@ -27,6 +27,7 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/X86RegistrationCallback.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include "llvm/IR/CFG.h"
@@ -533,11 +534,14 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       return rejectIR("scope enclosing state or handler target changed");
   }
   size_t ActiveRanges = 0, ActiveBlocks = 0;
+  const auto CallbackOwners = registrationSEHCallbackOwners(ReplayMed);
+  if (!CallbackOwners)
+    return rejectIR("source SEH callback ownership is incomplete");
   std::set<const llvm::CallBase *> DynamicCalls;
   std::map<int, const llvm::BasicBlock *> SourceEntries, SourceExits;
   std::map<va_t, uint32_t> ExpectedProtected;
   for (const auto &State : States.Blocks) {
-    if (State.CallbackOnly)
+    if (CallbackOwners->count(State.BlockId))
       continue;
     if (State.Unknown)
       return rejectIR("source scope is not determined at a CFG block");

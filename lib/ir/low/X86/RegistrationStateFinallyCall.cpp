@@ -86,7 +86,7 @@ bool RegistrationStateSolver::transferOrdinaryFinally(
     Frame.store(*Chain.TryLevelOffset, 4,
                 FrameValue::constant(uint32_t(Level)));
     if (!runLocalFinally(Op.Inputs[0].Offset, Frame, true, &Writes, nullptr,
-                         nullptr, &Outcomes))
+                         &Outcomes))
       return Refuse();
   }
   std::optional<FrameState> Joined;

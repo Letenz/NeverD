@@ -25,6 +25,8 @@ bool RegistrationStateSolver::runSEHUnwind(
     std::set<RegistrationSEHJumpState> *StateRestores,
     SEHHandlerOutcomes *Selected) {
   if (KnownCxx || !Chain.TryLevelOffset || !validLevel(Level) ||
+      bool(Jump) != bool(JumpValue) ||
+      (Jump && Bound != uint32_t(Jump->Level)) ||
       (EH4 && (!CompleteCookies || !cookiesReady(Frame))))
     return false;
   struct Step {
@@ -121,18 +123,19 @@ bool RegistrationStateSolver::runSEHUnwind(
                         FrameValue::constant(uint32_t(Scope.EnclosingLevel)));
     SEHFrameOutcomes Returned;
     SEHHandlerOutcomes Selections;
+    std::optional<SEHUnwindJump> Repeated;
+    if (Jump)
+      Repeated.emplace(SEHUnwindJump{*Jump, *JumpValue, {}});
     if (Scope.IsFinally) {
-      // A new jump from the selected handler's cleanup would replace that
-      // selection. It cannot borrow the suspended capture's return recipe.
       if (!runLocalFinally(Scope.HandlerVA, Current.Frame, false, &Writes,
-                           Current.Handler ? nullptr : Jump,
-                           Current.Handler ? nullptr : JumpValue, &Returned,
+                           Repeated ? &*Repeated : nullptr, &Returned,
                            Selected ? &Selections : nullptr))
         return false;
     } else if (!mergeSEHFrameOutcome(Returned, std::move(Current.Frame))) {
       return false;
     }
-    if (!charge(Returned.size() + Selections.size() + 1))
+    if (!charge(Returned.size() + Selections.size() +
+                (Repeated ? Repeated->Resumed.size() : 0) + 1))
       return false;
     for (auto It = Returned.rbegin(); It != Returned.rend(); ++It) {
       auto &[NextLevel, NextFrame] = *It;
@@ -151,6 +154,14 @@ bool RegistrationStateSolver::runSEHUnwind(
         Pending.push_back(
             {std::move(NextFrame), NextLevel, ScopeIndex, ScopeIndex});
     }
+    if (Repeated)
+      for (auto &[NextLevel, NextFrame] : Repeated->Resumed) {
+        // A new jump reloads the current state but restores the capture's
+        // bound. The pending handler and its bound no longer own this path.
+        NextFrame.leaveCallback();
+        Pending.push_back(
+            {std::move(NextFrame), NextLevel, Bound, std::nullopt});
+      }
   }
   return !Outcomes.empty() || (Selected && !Selected->empty());
 }

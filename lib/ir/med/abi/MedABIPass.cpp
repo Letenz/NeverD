@@ -447,6 +447,9 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
   const auto SEHReturns = TheArch == Arch::X86 && Fmt == BinaryFormat::COFF
                               ? getRegistrationSEHReturns(Func)
                               : std::nullopt;
+  const auto SEHNonlocal = TheArch == Arch::X86 && Fmt == BinaryFormat::COFF
+                               ? getRegistrationSEHNonlocalCalls(Func)
+                               : std::nullopt;
   // Result normalization can erase unrelated operations during recovery.
   // Retain stable source identities, not pointers into an operation vector.
   std::map<std::tuple<int, va_t, int, va_t>, unsigned> SEHJumpABIs;
@@ -646,6 +649,16 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         const auto Finally = SEHReturns->ReturningCalls.find(Key);
         if (Finally != SEHReturns->ReturningCalls.end() &&
             Finally->second == CI.TargetAddr) {
+          Func.CallInfos.push_back(std::move(CI));
+          continue;
+        }
+      }
+      if (SEHNonlocal) {
+        const auto Key = std::make_tuple(Blk.Id, Op.Addr, Op.OriginSeq);
+        const auto Finally = SEHNonlocal->find(Key);
+        if (Finally != SEHNonlocal->end() && Finally->second == CI.TargetAddr) {
+          CI.IntegerRegisterArgCount = 0;
+          CI.FloatingRegisterArgCount = 0;
           Func.CallInfos.push_back(std::move(CI));
           continue;
         }

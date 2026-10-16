@@ -27,7 +27,11 @@ bool RegistrationStateSolver::returnNestedFinally(
   };
   const auto Return = SEHControlIndex.find(Op.Addr);
   const auto Call = SEHControlIndex.find(After.Activation.OrdinaryCall);
-  const auto Target = sehCallContinuation(After.Activation.OrdinaryCall);
+  const auto Target = sehCallContinuation(
+      After.Activation.OrdinaryCall,
+      After.SEHCallers.empty()
+          ? 0
+          : After.SEHCallers.back().Activation.Entry.value_or(0));
   if (!callbackCanReturn(After) || Return == SEHControlIndex.end() ||
       Return->second.Control !=
           RegistrationSEHControlContract::Kind::NearReturn ||

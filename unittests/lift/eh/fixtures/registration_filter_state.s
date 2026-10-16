@@ -78,6 +78,9 @@ _registration_entry:
   test eax,eax
   jnz .Lresumed
   mov ebx,9
+#if REGISTRATION_CASE == 59
+  mov dword ptr [ebp-4],4
+#endif
 #if REGISTRATION_CASE == 41 || REGISTRATION_CASE == 42
   mov dword ptr [ebp-4],4
 #else
@@ -96,7 +99,7 @@ _registration_entry:
   jne .Lbad
   cmp eax,42
   jne .Lbad
-#if REGISTRATION_CASE == 37 || REGISTRATION_CASE == 57
+#if REGISTRATION_CASE == 37 || REGISTRATION_CASE == 57 || REGISTRATION_CASE == 58 || REGISTRATION_CASE == 59
   cmp dword ptr [ebp-4],0
 #elif REGISTRATION_CASE == 38
   cmp dword ptr [ebp-4],FILTER_SENTINEL
@@ -142,8 +145,8 @@ _registration_entry:
 .Lmixed_continue:
   mov eax,-1
 .Lmixed_return:
-#elif REGISTRATION_CASE == 53 || REGISTRATION_CASE == 54 || REGISTRATION_CASE == 56
-#if REGISTRATION_CASE == 54
+#elif REGISTRATION_CASE == 53 || REGISTRATION_CASE == 54 || REGISTRATION_CASE == 56 || REGISTRATION_CASE == 58 || REGISTRATION_CASE == 59
+#if REGISTRATION_CASE == 54 || REGISTRATION_CASE == 58 || REGISTRATION_CASE == 59
   // The search cursor stays at scope 1 while its state write adds cleanup 3.
   mov dword ptr [ebp-4],3
 #endif
@@ -283,12 +286,31 @@ _registration_entry:
 #if REGISTRATION_EH4_FILTER
 #include "registration_eh4_personality.inc"
 #endif
-#if REGISTRATION_CASE == 54
+#if REGISTRATION_CASE == 54 || REGISTRATION_CASE == 58 || REGISTRATION_CASE == 59
 .Lselected_cleanup:
   mov eax,[ebp-100]
   imul eax,eax,10
   add eax,6
   mov [ebp-100],eax
+#if REGISTRATION_CASE == 59
+  call .Lcleanup_jump
+  jmp .Lcleanup_return
+.Lcleanup_jump:
+  mov eax,[ebp-100]
+  imul eax,eax,10
+  add eax,7
+  mov [ebp-100],eax
+#endif
+#if REGISTRATION_CASE == 58 || REGISTRATION_CASE == 59
+  push 42
+  lea eax,[ebp-96]
+  push eax
+  call __longjmpex
+  ud2
+#endif
+#if REGISTRATION_CASE == 59
+.Lcleanup_return:
+#endif
   ret
 #endif
 .safeseh FILTER_PERSONALITY
@@ -312,10 +334,13 @@ _registration_entry:
   .long 0,.Lfilter,.Lhandler
   .long 1,0,.Lfinally
 #endif
-#if REGISTRATION_CASE == 54
+#if REGISTRATION_CASE == 54 || REGISTRATION_CASE == 58 || REGISTRATION_CASE == 59
   .long 1,0,.Lselected_cleanup
 #elif REGISTRATION_CASE == 56
   .long 1,0,.Lselected_nested
+#endif
+#if REGISTRATION_CASE == 59
+  .long 1,0,.Lcleanup_jump
 #endif
   .long 0,0,0
 .globl __load_config_used

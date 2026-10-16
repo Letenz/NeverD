@@ -149,6 +149,14 @@ using SEHFilterOutcomes = std::map<uint32_t, SEHFrameOutcomes>;
 /// filter-written state which controls the following local unwind.
 using SEHHandlerOutcomes = std::map<uint32_t, SEHFrameOutcomes>;
 
+// A repeated jump retires the pending handler and every suspended callback.
+// Its frames must not be projected through an ordinary callback return.
+struct SEHUnwindJump {
+  const SEHJumpCapture &Capture;
+  const FrameValue &Value;
+  SEHFrameOutcomes Resumed;
+};
+
 struct BlockFacts {
   bool Invalid = false;
   bool InstalledAtExit = false;
@@ -234,8 +242,9 @@ private:
                                std::optional<FrameValue> &ReturnedSP);
   bool enterOrdinaryFinally(size_t I, const Domain &Before, const LowOp &Op,
                             BlockFacts &Facts);
-  std::optional<va_t> sehCallContinuation(va_t Call);
-  bool validateSEHCallContinuation(size_t I, const LowOp &Op);
+  std::optional<va_t> sehCallContinuation(va_t Call, va_t CallerEntry = 0);
+  bool validateSEHCallContinuation(size_t I, const LowOp &Op,
+                                   va_t CallerEntry = 0);
   bool validateSEHInvocationBlock(size_t I);
   bool transferSEHExit(size_t I, Domain &After, const LowOp &Op,
                        BlockFacts &Facts);
@@ -260,23 +269,25 @@ private:
   bool runLocalFinally(va_t Target, FrameState &Parent,
                        bool OrdinaryInvocation = false,
                        std::vector<RegistrationObjectExtent> *Writes = nullptr,
-                       const SEHJumpCapture *Jump = nullptr,
-                       const FrameValue *JumpValue = nullptr,
+                       SEHUnwindJump *Jump = nullptr,
                        SEHFrameOutcomes *Outcomes = nullptr,
                        SEHHandlerOutcomes *Selected = nullptr);
   bool
   runSEHCallbackFrame(va_t Target, FrameState &Parent, bool OrdinaryInvocation,
                       std::vector<RegistrationObjectExtent> *Writes,
-                      const SEHJumpCapture *Jump, const FrameValue *JumpValue,
-                      SEHFilterOutcomes *FilterOutcomes, unsigned Depth = 0,
+                      SEHUnwindJump *Jump, SEHFilterOutcomes *FilterOutcomes,
+                      unsigned Depth = 0,
                       std::optional<int32_t> ParentStackOffset = std::nullopt,
                       SEHFrameOutcomes *Outcomes = nullptr,
                       SEHHandlerOutcomes *Selected = nullptr);
   bool runSEHNestedFinallyFrame(size_t I, const LowOp &Op, FrameState &State,
                                 int32_t ParentStackOffset,
                                 std::vector<RegistrationObjectExtent> *Writes,
-                                unsigned Depth, SEHFrameOutcomes &Outcomes,
+                                unsigned Depth, SEHUnwindJump *Jump,
+                                SEHFrameOutcomes &Outcomes,
                                 SEHHandlerOutcomes *Selected);
+  bool recordSEHUnwindJump(size_t I, const LowOp &Op, const FrameState &State,
+                           va_t Callback, SEHUnwindJump &Jump);
   bool runSEHFilterSearch(const FrameState &Parent,
                           std::vector<RegistrationObjectExtent> *Writes,
                           SEHFrameOutcomes &Outcomes, bool RequireResume,
