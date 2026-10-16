@@ -10,6 +10,8 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/low/RegistrationABI.h"
+#include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/X86RegistrationSEHParentExit.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -115,6 +117,14 @@ TEST(RegistrationSEHEpilogue,
       }));
       EXPECT_EQ(State.SEHInvocationExits[0].CallVA, 0u);
       EXPECT_NE(State.SEHInvocationExits[1].CallVA, 0u);
+      LowToMedConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto Med =
+          Converter.convert(Function, Arch::X86, BinaryFormat::COFF);
+      const auto Exits = getRegistrationSEHParentExits(Med);
+      ASSERT_TRUE(Exits);
+      ASSERT_EQ(Exits->size(), 1u);
+      EXPECT_EQ(Exits->begin()->second.Invocations.size(), 2u);
     }
 }
 

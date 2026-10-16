@@ -3,6 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Binds the source chain removal and the adjoining parent epilogue before and
+/// after SSA construction.
 
 #include "RegistrationSEHParentFallthrough.h"
 
@@ -12,6 +15,32 @@
 #include "llvm/ADT/STLExtras.h"
 
 namespace neverd {
+namespace {
+
+bool isChainHeadAddress(const MedBlock &Block, const MedOp &Store) {
+  const auto &Address = Store.Inputs[0];
+  if (Address.Size != 4 && Address.Size != 8)
+    return false;
+  if (Address.isConst())
+    return Address.ConstVal == 0;
+  // Before propagation, the x86 lifter materializes the segment offset in an
+  // instruction-local temporary. Bind that exact producer, never a register
+  // with an equal value or a definition borrowed from another instruction.
+  if (Address.Kind != MedVar::Temp || &Store == Block.Ops.data())
+    return false;
+  const auto &Copy = *(&Store - 1);
+  return !Copy.Dead && Copy.Opcode == NdOp::COPY && Copy.NumInputs == 1 &&
+         Copy.Addr == Store.Addr && Copy.OriginSeq >= 0 &&
+         Copy.OriginSeq + 1 == Store.OriginSeq && Copy.Output == Address &&
+         Copy.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+         Copy.MemoryOrdering == NdMemoryOrdering::None &&
+         Copy.RegistrationRoot == MedOp::RegistrationRootKind::None &&
+         !Copy.ExactArguments && !Copy.SourceCallHint &&
+         Copy.Inputs[0].isConst() && Copy.Inputs[0].ConstVal == 0 &&
+         Copy.Inputs[0].Size == Address.Size;
+}
+
+} // namespace
 
 bool isRegistrationSEHParentFallthrough(
     const MedBlock &Block, const MedOp &Op, const MedBlock &Target,
@@ -29,9 +58,7 @@ bool isRegistrationSEHParentFallthrough(
       Op.ExactArguments || Op.SourceCallHint || Op.Opcode != NdOp::STORE ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::X86FS ||
       Op.MemoryOrdering != NdMemoryOrdering::None || Op.Output.Size ||
-      Op.NumInputs != 2 || !Op.Inputs[0].isConst() ||
-      Op.Inputs[0].ConstVal != 0 ||
-      (Op.Inputs[0].Size != 4 && Op.Inputs[0].Size != 8) ||
+      Op.NumInputs != 2 || !isChainHeadAddress(Block, Op) ||
       Op.Inputs[1].Size != 4 || Op.Inputs[1].isConst() ||
       Exit.EndAddress != Exit.TargetVA || Block.EndAddr != Target.StartAddr ||
       !Target.Succs.empty() || Target.Ops.empty())
