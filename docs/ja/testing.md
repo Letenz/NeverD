@@ -2057,3 +2057,5 @@ CRT 回帰は全バイト／UTF-16 単位、引数幅、変更不要な読み取
 `DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*` は有効化、解放、入れ子環境の復元、全幅境界、IRQL、プロセス接続、出力重複、High→Low の障害時書き込み順序を検証します。独自版と実際の WDK CRT フィクスチャは入口・ワーカー・アンロードで両 API を静的・動的に呼び、ローカル変数の範囲と DISPATCH_LEVEL での境界を確認します。
 
 `KernelMDLChain.CreateMdl*` と `KernelMDLUserMapping.CreateMdl*` は全幅検査、保持バイト、空・折返し値、プール／スタック寿命、ロック、別名、解放失敗、部分再利用、IRP 拒否、IRQL を検証します。実際の WDK フィクスチャは静的・動的生成、所有プール、呼出側プール内部とスタック、物理同一性、アンロードを実行します。原コードの観測はフィールド書込、プールフラグ変換、注入した確保／解放境界を区別します。
+
+`KernelMDLChain.AdvanceMdl*` と `KernelMDLUserMapping.AdvanceMdl*` は反復ページ境界、末尾、終端拒否、引数幅、全マッピング、解放失敗、権限、格納域とプロセス寿命を検証します。実 WDK は静的／動的呼出と明示解除・自動アンロックを実行します。原コード観測は完全な進行、復元ヘルパー、マッピング種類／PTE 解放を注入した解除ラッパーを区別し、OS ページデータベースの実行を主張しません。

@@ -834,6 +834,91 @@ static NTSTATUS CheckCreatedDescriptors(volatile UCHAR *Report,
   return STATUS_SUCCESS;
 }
 
+static NTSTATUS CheckAdvancedDescriptor(volatile UCHAR *Report) {
+  UNICODE_STRING Name;
+  RtlInitUnicodeString(&Name, L"MmAdvanceMdl");
+  NTSTATUS(NTAPI * Advance)(PMDL, ULONG) =
+      (NTSTATUS(NTAPI *)(PMDL, ULONG))MmGetSystemRoutineAddress(&Name);
+  if (!Advance)
+    return STATUS_PROCEDURE_NOT_FOUND;
+  PUCHAR Pool =
+      ExAllocatePool2(POOL_FLAG_NON_PAGED, 4 * PAGE_SIZE, UserMappingPoolTag);
+  if (!Pool)
+    return STATUS_INSUFFICIENT_RESOURCES;
+  PMDL Mdl = MmCreateMdl(NULL, Pool + 17, 3 * PAGE_SIZE);
+  NTSTATUS Status = STATUS_INSUFFICIENT_RESOURCES;
+  BOOLEAN Locked = FALSE;
+  if (!Mdl)
+    goto Cleanup;
+  MmProbeAndLockPages(Mdl, KernelMode, IoWriteAccess);
+  Locked = TRUE;
+  PUCHAR Initial = MmGetSystemAddressForMdlSafe(Mdl, NormalPagePriority);
+  if (!Initial)
+    goto Cleanup;
+  PFN_NUMBER Original[4];
+  for (ULONG I = 0; I < 4; ++I)
+    Original[I] = MmGetMdlPfnArray(Mdl)[I];
+  if (NT_SUCCESS(MmAdvanceMdl(Mdl, 17)))
+    Report[0] |= 1;
+  if (NT_SUCCESS(Advance(Mdl, PAGE_SIZE)))
+    Report[0] |= 2;
+  if (NT_SUCCESS(MmAdvanceMdl(Mdl, PAGE_SIZE - 1)))
+    Report[0] |= 4;
+  PUCHAR Current = MmGetSystemAddressForMdlSafe(Mdl, NormalPagePriority);
+  const ULONG Total = 2 * PAGE_SIZE + 16;
+  if (Current == Initial + Total &&
+      MmGetMdlVirtualAddress(Mdl) == Pool + 17 + Total &&
+      MmGetMdlByteCount(Mdl) == 3 * PAGE_SIZE - Total)
+    Report[1] |= 1;
+  Current[0] = UserMappingSecondByte;
+  if (Pool[17 + Total] == UserMappingSecondByte)
+    Report[1] |= 2;
+  if (MmGetMdlPfnArray(Mdl)[0] == Original[2] &&
+      MmGetMdlPfnArray(Mdl)[1] == Original[3] &&
+      MmGetMdlPfnArray(Mdl)[2] == Original[0] &&
+      MmGetMdlPfnArray(Mdl)[3] == (Original[1] | ((PFN_NUMBER)1 << 63)))
+    Report[1] |= 4;
+  if (MmAdvanceMdl(Mdl, MmGetMdlByteCount(Mdl)) == STATUS_INVALID_PARAMETER_2)
+    Report[2] |= 1;
+  if (NT_SUCCESS(MmAdvanceMdl(Mdl, 0)))
+    Report[2] |= 2;
+  MmUnmapLockedPages(Current, Mdl);
+  BOOLEAN Restored = Mdl->StartVa == Pool && Mdl->ByteOffset == 33 &&
+                     Mdl->ByteCount == 3 * PAGE_SIZE - 16 &&
+                     Mdl->MappedSystemVa == Initial + 16 &&
+                     Mdl->MdlFlags == MDL_PAGES_LOCKED;
+  for (ULONG I = 0; I < 4; ++I)
+    Restored = Restored && MmGetMdlPfnArray(Mdl)[I] == Original[I];
+  if (Restored)
+    Report[2] |= 4;
+  MmUnlockPages(Mdl);
+  Locked = FALSE;
+  IoFreeMdl(Mdl);
+  Mdl = IoAllocateMdl(Pool + 17, 3 * PAGE_SIZE, FALSE, FALSE, NULL);
+  if (!Mdl)
+    goto Cleanup;
+  MmProbeAndLockPages(Mdl, KernelMode, IoWriteAccess);
+  Locked = TRUE;
+  if (!MmGetSystemAddressForMdlSafe(Mdl, NormalPagePriority))
+    goto Cleanup;
+  if (!NT_SUCCESS(MmAdvanceMdl(Mdl, PAGE_SIZE)))
+    goto Cleanup;
+  MmUnlockPages(Mdl);
+  Locked = FALSE;
+  if (!Mdl->MdlFlags && MmGetMdlVirtualAddress(Mdl) == Pool + 17 &&
+      Mdl->ByteCount == 3 * PAGE_SIZE &&
+      Pool[17 + Total] == UserMappingSecondByte)
+    Report[3] |= 1;
+  Status = STATUS_SUCCESS;
+Cleanup:
+  if (Locked)
+    MmUnlockPages(Mdl);
+  if (Mdl)
+    IoFreeMdl(Mdl);
+  ExFreePoolWithTag(Pool, UserMappingPoolTag);
+  return Status;
+}
+
 static NTSTATUS Dispatch(PDEVICE_OBJECT Object, PIRP Irp) {
   PIO_STACK_LOCATION Stack = IoGetCurrentIrpStackLocation(Irp);
   UNREFERENCED_PARAMETER(Object);
@@ -853,6 +938,8 @@ static NTSTATUS Dispatch(PDEVICE_OBJECT Object, PIRP Irp) {
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return Complete(Irp, GetExceptionCode());
   }
+  if (Action == UserMappingAdvanceMdl)
+    return Complete(Irp, CheckAdvancedDescriptor(Report));
   if (Action == UserMappingCreateMdl) {
     struct {
       MDL Descriptor;
