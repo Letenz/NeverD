@@ -7025,6 +7025,8 @@ KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing
 
 `KernelModelFileRequests` owns native device/filesystem control buffer capture and publication. Both use the same file hold, caller continuation and packet release; producer-specific deferral distinguishes device control from FSCTL. Control output limits are checked by the shared completion validator.
 
+`KernelModelRuntime` owns kernel CRT classification, in-place conversion and checked string writes. `KernelCStringAPIs.def` supplies export identity, argument count and IRQL admission to every caller surface. Unit accesses reuse guest-memory permissions and lifetime guards; reports and adapters do not repeat copy or error semantics.
+
 ### Darwin imported file calls
 
 DarwinLibSystemCalls.def adds exact open/lseek/pread/pwrite/dup/dup2 identities.

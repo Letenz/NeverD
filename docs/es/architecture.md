@@ -1888,3 +1888,5 @@ KernelFileSystem mantiene un provider token por FILE_OBJECT. La operación priva
 `KernelModelFileRequests` también posee la producción sin búfer de `ZwFlushBuffersFile`. La máscara de acceso y la publicación/liberación inmediata difieren de los paquetes nativos diferidos de lectura, escritura y consulta; comparten la notificación del llamador original y una única liberación.
 
 `KernelModelFileRequests` controla la captura y publicación de búferes de control nativo. Comparten retención del archivo, continuación del llamador y liberación del paquete; el aplazamiento del productor distingue control de dispositivo y FSCTL. El validador común de finalización comprueba los límites de salida.
+
+`KernelModelRuntime` es responsable de clasificación CRT, conversión en el búfer y escritura comprobada de cadenas. `KernelCStringAPIs.def` aporta identidad exportada, número de argumentos y admisión IRQL a todas las rutas. Los accesos por unidad reutilizan permisos y vida útil del invitado; informes y adaptadores no duplican la semántica de copia o errores.

@@ -1890,3 +1890,5 @@ KernelFileSystem hält je FILE_OBJECT ein provider token. Die private Freigabeop
 `KernelModelFileRequests` besitzt auch die pufferlose Erzeugung für `ZwFlushBuffersFile`. Zugriffsmaske und unmittelbare Veröffentlichung/Freigabe unterscheiden sich von verzögerten nativen Lese-, Schreib- und Abfragepaketen; Benachrichtigung des ursprünglichen Aufrufers und einmalige Freigabe bleiben gemeinsam verwaltet.
 
 `KernelModelFileRequests` besitzt Puffererfassung und Veröffentlichung nativer Steueraufrufe. Dateihaltung, Aufruferfortsetzung und Paketfreigabe sind gemeinsam; die erzeugerspezifische Verzögerung unterscheidet Gerätesteuerung und FSCTL. Die gemeinsame Abschlussprüfung begrenzt die Ausgabe.
+
+`KernelModelRuntime` besitzt CRT-Klassifizierung, Umwandlung im Puffer und geprüfte String-Schreibvorgänge. `KernelCStringAPIs.def` liefert Exportidentität, Argumentzahl und IRQL-Zulassung für alle Aufrufwege. Einheitenzugriffe verwenden die vorhandenen Gastrechte und Lebensdauerprüfungen; Berichte und Adapter duplizieren keine Kopier- oder Fehlersemantik.
