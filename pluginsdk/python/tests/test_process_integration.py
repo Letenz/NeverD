@@ -1117,7 +1117,8 @@ class ProcessIntegrationTests(unittest.TestCase):
             profile = f"{platform}-macho64-v1"
             path = str((Path(fixtures) / f"{platform}-{architecture}-libsystem-lazy").resolve(strict=True))
             options = {"backend": "unicorn", "instruction_quantum": 1024,
-                       "timeout_microseconds": 5000000, "arguments": ["lazy"]}
+                       "timeout_microseconds": 5000000, "arguments": ["lazy"],
+                       "darwin_files": {"stdin_hex": ""}}
             for repeat in range(2):
                 with self.subTest(profile=profile, architecture=architecture, repeat=repeat):
                     result = session.emulate_process(path, profile, json.dumps(options))

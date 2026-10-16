@@ -2719,7 +2719,7 @@ call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonre
 basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
 classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
-native common catalogue: 82; required methods/platform: 96; matching ARM64 identities: 288
+native common catalogue: 82; required methods/platform: 97; matching ARM64 identities: 291
 ```
 
 ```json

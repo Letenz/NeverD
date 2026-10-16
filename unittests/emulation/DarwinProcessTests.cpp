@@ -4344,6 +4344,7 @@ TEST_P(DarwinProcess, ClassicLazyImportsResolveBeforeCallsAndKeepSlotsStable) {
   Options.InstructionQuantum = 1024;
   Options.Arguments = {"lazy"};
   Options.DarwinFiles.emplace();
+  Options.DarwinFiles->StandardInput.emplace();
   const auto Linked = std::filesystem::path(Path.string() + "-libsystem-lazy");
   const char *Names[] = {"___error", "___error", "_getpid", "_getpid", "_write",
                          "_write",   "_read",    "_close",  "_read",   "_close",

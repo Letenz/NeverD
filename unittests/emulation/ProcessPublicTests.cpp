@@ -4653,11 +4653,12 @@ TEST_P(DarwinLibSystemPublic,
     llvm::json::Array Args{"lazy"};
     if (Terminal)
       Args.push_back("exit");
-    const auto Options =
-        jsonText(llvm::json::Object{{"backend", "unicorn"},
-                                    {"instruction_quantum", 1024},
-                                    {"timeout_microseconds", 5000000},
-                                    {"arguments", std::move(Args)}});
+    const auto Options = jsonText(llvm::json::Object{
+        {"backend", "unicorn"},
+        {"instruction_quantum", 1024},
+        {"timeout_microseconds", 5000000},
+        {"arguments", std::move(Args)},
+        {"darwin_files", llvm::json::Object{{"stdin_hex", ""}}}});
     for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
       auto Text = takeString(neverd_emulate_process_json(
           Session, Path.c_str(), Profile, Options.c_str()));

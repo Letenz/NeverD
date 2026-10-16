@@ -1316,6 +1316,8 @@ TEST(DarwinNative, ClassicLazyImportsMatchEagerNativeSlotObservations) {
     Options.Backend = ExecutionBackendKind::Unicorn;
     Options.InstructionQuantum = 1024;
     Options.Arguments = {"lazy"};
+    Options.DarwinFiles.emplace();
+    Options.DarwinFiles->StandardInput.emplace();
     if (Terminal)
       Options.Arguments.push_back("exit");
     auto Guest = emulateProcess(Program, ProcessProfile::MacOSMachO64, Options);

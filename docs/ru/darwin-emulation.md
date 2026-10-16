@@ -1,6 +1,6 @@
 **Языки**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 109c1b21917c9ee77d9379f545ca8484d3beea860e25c9fc0e964f56d8558e86 -->
+<!-- i18n-source: 39a521d14dfb31f7e045451a8039cdc180e2e6fabd816f96a0c746ddfa3d19f1 -->
 
 [← Оглавление документации](README.md)
 
@@ -1824,7 +1824,7 @@ call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonre
 basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
 classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
-native common catalogue: 82; required methods/platform: 96; matching ARM64 identities: 288
+native common catalogue: 82; required methods/platform: 97; matching ARM64 identities: 291
 ```
 
 ```json
