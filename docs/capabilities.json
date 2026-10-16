@@ -21825,7 +21825,40 @@
           "runner": "gtest",
           "target": "NeverDDarwinProcessTests",
           "source": "unittests/emulation/DarwinDylibTests.cpp",
-          "filter": "DarwinDylibAddends.*",
+          "filter": "DarwinDylibAddends.OriginalDataAndTLSTemplatePointersShareProviderStorage",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylibAddends.ExtremeSignedAddendsFailBeforeExecution",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylibAddends.MainImageRuntimeGatesAndProviderPaddingAreNotProviderTargets",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylibAddends.PointerValuesRequireOneByteMembershipWithoutAnAccessWidth",
           "platforms": [
             "darwin",
             "linux",
