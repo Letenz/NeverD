@@ -1033,19 +1033,42 @@ combination passes both native source builds in 38956750121. Before admitting
 a runtime, every artifact file, core version requirement and exact embedded
 rg/seccomp byte range is rechecked; no captured client executes in admission.
 
-The new source-native-client workflow rebuilds original-provider clients in
-both layouts twice, checks all module rows, then targets seven actual Bash and
-thirteen built-in Grep/Glob cases per layout. Its direct native path has no
-external rg on PATH and makes no managed descriptor patch. ARM64 is admitted;
-x64 artifacts are being retained and independently qualified. This client suite
-is not accepted until the actual native results are available.
+Source-native client run 38960197959 rebuilds both original-provider layouts
+twice and reads back every module row, but the first candidate Bash policy case
+fails. The original passes. Materializing the memfd seccomp payload exceeds the
+unchanged 262,144-byte hard file limit; six causal public-engine controls isolate
+that boundary. The memfd strategy is rejected for client admission. No file
+limit, strict comparator or private oracle is weakened to accept it.
 
-Additional Ugrep 7.8.4/Bfs 4.1.1 source candidates retain pinned archives for all
-selected regex/compression libraries. Exact original transitive versions are
-not proven. Native ARM64 bfs passes its upstream suites; the archive's missing
-Git metadata requires the documented VERSION=4.1.1 build input. Native x64
-static bfs crashes in account-lookup tests; its unqualified public binary,
-runner NSS configuration and debugger controls are retained for diagnosis.
-No failing candidate is integrated or counted as restored. Original static
-library linkage, the private Bun revision, other-platform engine integration,
-wider runtime behavior and complete source/type restoration remain unfinished.
+The replacement links source-built Rust rg and unchanged C seccomp directly
+into Bun before VM setup. Its exact nightly compiler matches the public engine.
+Cargo's fresh artifact records define all 36 Rust archive inputs, with no second
+Rust standard library or global allocator. All seven public probe cases use
+RLIMIT_FSIZE=0. Earlier native x64 probes pass; ARM64's outlined atomic helper
+and standard-library archive-order failures are retained. The fixed ARM64 probe
+now passes; the new two-architecture producer is 38966864371. The engine build
+must then pass GLIBC_2.17, ten zero-file-budget controls and actual-client
+acceptance, including all observer and external-signal helper comparisons,
+seven Bash chains and thirteen built-in Grep/Glob cases per layout. Its direct
+route has no external rg on PATH or managed descriptor patch.
+
+Ugrep 7.8.4/Bfs 4.1.1 candidates now pass both native component builds in
+38961650575. Every public artifact file, source archive, raw control and ELF
+loader/version requirement is independently checked. A debugger isolates the
+x64 crash to mixing static glibc with the runner's libnss_systemd; the new Bfs
+uses its host's dynamic libc. Each architecture passes ten authored component
+cases and the upstream Bfs suites, with 26-27 of 543 cases explicitly skipped
+per strategy. Bfs requires GLIBC_2.38, so the original portability floor and
+original static integration remain open. Exact transitive versions are unproven.
+
+The immutable sandbox-source-evidence-v3 addendum verifies 780 files. Five
+additional exported functions use exact owning export AST boundaries, both
+name anchors and the existing strict formal parameter checks. There is no
+nearest-anchor fallback; duplicate or explicitly unmapped function starts
+remain refused. Exact upstream TypeScript links increase from 46 to 51, with
+24 written parameter and 26 return annotation candidates. Nineteen refusal
+controls and Unicode/CRLF coordinate controls pass. Two constructor start
+anchors and eleven ambiguous shapes per platform remain unknown. The v3
+manifest is 8124e76ac514246359ef963fded00c21d92905e1d44e58a8c9c7bb83c31936a7.
+Original erased types, the private Bun revision, other-platform engine
+integration and full reconstruction acceptance remain unfinished.
