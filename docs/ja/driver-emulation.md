@@ -773,3 +773,5 @@ ASCII 名、名前空間リンク、RootDirectory として保持したディレ
 [`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject) は有効なファイルの基底デバイスを借用し、接続スタックの走査、参照の追加、ファイル拡張の参照を行いません。本プロファイルは所有済みの未マウント経路と IRQL <= DISPATCH_LEVEL に限定され、マウント済み VPB や所有者・トポロジーの不整合は明示的に停止します。Microsoft は本ルーチンをシステム用に予約しており、この IRQL 上限は公開 Windows 契約ではなくモデル方針です。
 
 [`IoGetDeviceObjectPointer`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-iogetdeviceobjectpointer) は特殊カーネル APC が有効な PASSIVE_LEVEL で、宣言済みの既存ファイルを開きます。名前は大文字小文字を区別せず、内部カーネルハンドル、読み書き共有、非同期の非ディレクトリ指定を使います。返されたファイル参照はデバイスを保持し、呼び出し側が `ObfDereferenceObject` で解放します。出力が重なる場合もファイル、デバイスの順に書き込みます。CREATE と内部ハンドルの CLEANUP は保留可能で、元のスレッドは両方の完了までクリティカル領域を保持します。デバイス名のみのオープン、ボリュームオープン、マウント済み VPB、ファイル拡張の経路、未知のプロバイダーは未対応です。
+
+`MmProbeAndLockProcessPages` は IRQL <= APC_LEVEL で既存の MDL プローブを利用します。モードは下位 8 ビット、操作は下位 32 ビットを使用し、ゼロは読み取り、それ以外は書き込みです。同一プロセスではアタッチしません。別プロセスでは既存のワーク項目/システムスレッド制限を維持し、要求が存続する既知の生存ユーザープロセスが必要です。私有アタッチは成功時とプローブ例外時に元のプロセスを復元し、スレッド識別と以前のモードを維持します。復元失敗は明示的に停止します。前景での別プロセスへのアタッチや任意のプロセスオブジェクトは未対応です。WDK はこのルーチンをシステム用に予約しています。

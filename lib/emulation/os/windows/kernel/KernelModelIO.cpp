@@ -93,8 +93,8 @@ bool KernelModel::hasProcessAttachment(uint64_t Execution) const {
                      });
 }
 
-llvm::Error KernelModel::stackAttachProcess(uint64_t Process,
-                                            uint64_t ApcState) {
+llvm::Error KernelModel::stackAttachProcess(uint64_t Process, uint64_t ApcState,
+                                            bool Private) {
   if (!Scheduler.active() ||
       (Scheduler.active()->Kind != KernelScheduler::CallbackKind::WorkItem &&
        Scheduler.active()->Kind !=
@@ -115,32 +115,36 @@ llvm::Error KernelModel::stackAttachProcess(uint64_t Process,
         return Entry.second.ProcessID == ProcessID && !Entry.second.Completed;
       }))
     return ioError("process attachment requires a live requesting IRP");
-  if (!ApcState || (ApcState & 7) || ApcState < profile::UserProbeLimit)
-    return ioError("process attachment requires aligned kernel APC storage");
-  const bool CurrentStack =
-      ApcState >= CurrentExecution &&
-      ApcState - CurrentExecution <= profile::CallbackStackSize &&
-      KAPCStateSize <=
-          profile::CallbackStackSize - (ApcState - CurrentExecution);
-  const bool NonPagedPool = std::any_of(
-      Allocations.begin(), Allocations.end(), [&](const auto &Entry) {
-        return Entry.second.NonPaged && ApcState >= Entry.first &&
-               ApcState - Entry.first <= Entry.second.Size &&
-               KAPCStateSize <= Entry.second.Size - (ApcState - Entry.first);
-      });
-  if (!CurrentStack && !NonPagedPool)
-    return ioError("APC storage must be on the current thread stack or in "
-                   "nonpaged pool");
-  for (const auto &Attachment : ProcessAttachments)
-    if (Attachment.ApcState == ApcState)
-      return ioError("APC storage is already owned by an attachment");
-  if (auto E = validateGuestAccess(ApcState, KAPCStateSize, true))
-    return E;
-  auto Writable = Memory.canAccess(ApcState, KAPCStateSize, Read | Write);
-  if (!Writable)
-    return Writable.takeError();
-  if (!*Writable)
-    return ioError("process attachment requires writable APC storage");
+  if (!Private) {
+    if (!ApcState || (ApcState & 7) || ApcState < profile::UserProbeLimit)
+      return ioError("process attachment requires aligned kernel APC storage");
+    const bool CurrentStack =
+        ApcState >= CurrentExecution &&
+        ApcState - CurrentExecution <= profile::CallbackStackSize &&
+        KAPCStateSize <=
+            profile::CallbackStackSize - (ApcState - CurrentExecution);
+    const bool NonPagedPool = std::any_of(
+        Allocations.begin(), Allocations.end(), [&](const auto &Entry) {
+          return Entry.second.NonPaged && ApcState >= Entry.first &&
+                 ApcState - Entry.first <= Entry.second.Size &&
+                 KAPCStateSize <= Entry.second.Size - (ApcState - Entry.first);
+        });
+    if (!CurrentStack && !NonPagedPool)
+      return ioError("APC storage must be on the current thread stack or in "
+                     "nonpaged pool");
+    for (const auto &Attachment : ProcessAttachments)
+      if (Attachment.ApcState == ApcState)
+        return ioError("APC storage is already owned by an attachment");
+    if (auto E = validateGuestAccess(ApcState, KAPCStateSize, true))
+      return E;
+    auto Writable = Memory.canAccess(ApcState, KAPCStateSize, Read | Write);
+    if (!Writable)
+      return Writable.takeError();
+    if (!*Writable)
+      return ioError("process attachment requires writable APC storage");
+  } else if (ApcState) {
+    return ioError("private process attachment has no guest APC storage");
+  }
   const bool PreviousUserContext = UserRequestContext;
   const uint32_t PreviousProcessID =
       PreviousUserContext ? CurrentUserProcessID : 4;
@@ -151,23 +155,26 @@ llvm::Error KernelModel::stackAttachProcess(uint64_t Process,
     return PreviousProcess.takeError();
   if (auto E = setUserRequestContext(true, ProcessID))
     return E;
-  std::array<uint8_t, KAPCStateSize> Saved{};
-  if (auto E = Memory.write(ApcState, Saved))
-    return E;
-  if (auto E = Memory.writeInteger(ApcState + KAPCStateProcessOffset,
-                                   *PreviousProcess, 8))
-    return E;
-  ProcessAttachments.push_back(
-      {CurrentExecution, ApcState, PreviousProcessID, PreviousUserContext});
+  if (!Private) {
+    std::array<uint8_t, KAPCStateSize> Saved{};
+    if (auto E = Memory.write(ApcState, Saved))
+      return E;
+    if (auto E = Memory.writeInteger(ApcState + KAPCStateProcessOffset,
+                                     *PreviousProcess, 8))
+      return E;
+  }
+  ProcessAttachments.push_back({CurrentExecution, ApcState, PreviousProcessID,
+                                PreviousUserContext, Private});
   return llvm::Error::success();
 }
 
-llvm::Error KernelModel::unstackDetachProcess(uint64_t ApcState) {
+llvm::Error KernelModel::unstackDetachProcess(uint64_t ApcState, bool Private) {
   auto It = std::find_if(ProcessAttachments.rbegin(), ProcessAttachments.rend(),
                          [&](const auto &Attachment) {
                            return Attachment.Execution == CurrentExecution;
                          });
-  if (It == ProcessAttachments.rend() || It->ApcState != ApcState)
+  if (It == ProcessAttachments.rend() || It->ApcState != ApcState ||
+      It->Private != Private)
     return ioError("process detach requires the current thread's most recent "
                    "APC state");
   const auto Attachment = *It;
@@ -176,6 +183,31 @@ llvm::Error KernelModel::unstackDetachProcess(uint64_t ApcState) {
     return E;
   ProcessAttachments.erase(std::next(It).base());
   return llvm::Error::success();
+}
+
+llvm::Error KernelModel::probeAndLockProcessPages(uint64_t MDL,
+                                                  uint64_t Process,
+                                                  uint8_t Mode,
+                                                  uint32_t Operation) {
+  auto Current = currentProcess();
+  if (!Current)
+    return Current.takeError();
+  // This wrapper narrows LOCK_OPERATION and treats every non-read value as
+  // write access before calling the ordinary probe; it is not a direct alias.
+  const uint32_t Access = Operation != windows::IoReadAccess
+                              ? windows::IoWriteAccess
+                              : windows::IoReadAccess;
+  if (Process == *Current)
+    return probeAndLockPages(MDL, Mode, Access);
+  // Keep the shared attachment owner's worker/live-process admission. This
+  // private APC state has no fabricated guest stack or pool projection.
+  if (auto E = stackAttachProcess(Process, 0, true))
+    return E;
+  auto Probed = probeAndLockPages(MDL, Mode, Access);
+  // The target's termination handler detaches on exceptions as well. Preserve
+  // the guest exception when restoration succeeds; never swallow a detach
+  // error.
+  return llvm::joinErrors(std::move(Probed), unstackDetachProcess(0, true));
 }
 
 KernelModel::ActiveRequest *KernelModel::requestForIRP(uint64_t IRP) {

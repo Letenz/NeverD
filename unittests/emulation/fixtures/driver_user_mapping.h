@@ -24,6 +24,7 @@ enum DriverUserMappingAction {
   UserMappingIndependentPartial = 0x222137,
   UserMappingContiguousChunks = 0x22213b,
   UserMappingKernelPoolLock = 0x22213f,
+  UserMappingProcessLock = 0x222143,
   UserMappingReportSize = 4,
   UserMappingByteOffset = 17,
   UserMappingFirstByte = 0x43,

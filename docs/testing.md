@@ -284,6 +284,9 @@ the reload after an edit puts the cursor and the view back on a third-page row;
 `codeTextSelectsLikeAnEditor` presses Ctrl+A while pages still arrive and
 after the load, drags beyond the bottom edge until the view scrolls past the
 first page, and right-clicks inside the selection to keep it for Copy;
+`gotoLabelsGoToTheirBlock` double-clicks a goto's label and checks the code
+cursor, the disassembly, Back, and that the label's row maps to its block
+rather than to the statement the engine's rows give it;
 `NeverDWorkerCodeEdits` checks the literal scan
 and type-keeping spellings of `neverd/support/IntegerLiterals.h` for C, Rust
 and Go. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks
@@ -459,7 +462,13 @@ kernel's headers and `WindowsKernelRoutines.inc` agree on the bytes each
 parameter of a routine both know takes, and
 `ReturnContracts.ACallToAFunctionDeclaredVoidElsewhereHandsBackNoValue` and
 `AStubOfAnImportDeclaredVoidReturnsNoValue` cover the return contracts that
-read declarations.
+read declarations. `known_routines.sys` also checks that `KeSetEvent` prints
+the parameters its prototype declares and its code never reads, and that
+`neverd_decompile_all` takes the prototypes; the kernel inputs check
+`ZwCreateKey`'s seven parameters and that `FsRtlAllocatePool` stops at the
+`ExRaiseStatus` the kernel exports without its PDB.
+`IsNoReturnTarget.ExportsAndDeclaredPrototypesNameNoReturnRoutines` covers
+exports and `_Noreturn` prototypes in the no-return index.
 Build and run `NeverDSessionLLVMTests` as well: its private Session queries
 link the actual local-type/debug implementations and shared atomic sidecar
 helper into the test executable. It must not acquire a libneverd dependency.
@@ -7790,3 +7799,5 @@ side-effecting statement without acquiring a Linux syscall contract.
 `RegistrationSEHScalarSpill.*` checks exact block-local runtime DWORD spills and rejects changed widths, overlapping stores, unknown effects, duplicate definitions and exhausted proof budgets. `RegistrationLocalUnwindNative.SavedStackReadsBindTheExactLoadAndCallback` separates ordinary source preflight from committed volatile reads. `check_windows_finally_rewrite.py --form goto` checks all four MSVC profiles through raw/optimized LLVM and both patch modes at two bases; the external observer verifies four execution paths, chain restoration, stack guards and a changed-finally negative control.
 
 `KernelDevicePointer.*` checks retained references, overlapping outputs, failed and informational opens, caller/APC restoration across pending CREATE and CLEANUP, argument widths, sharing, output-fault store order, admission and unload. The original and genuine WDK filesystem fixture adds immediate, worker-completed CREATE, worker-completed CLEANUP and unload-held pointer modes, including dynamic lookup. `KernelFileSystemExecution.*OpensExistingFiles` runs both scheduling modes, contracts and image bases; unavailable transports remain explicit skips.
+
+`KernelMDLUserMapping.ProcessProbe*` checks carrier widths, operation normalization, IRQL, live-process admission, thread identity during probing, nested restoration, retry after faults and attachment/restoration shortages. The genuine WDK user-mapping fixture executes static and dynamic calls, a real exception handler after detachment, same-process calls while attached, shared physical pages and complete lock release. Original wrapper/termination-funclet probes establish control flow across explicitly injected helper boundaries, not whole-kernel behavior.
