@@ -5106,6 +5106,68 @@ llvm::json::Object takeView(const char *Text) {
   return Object ? std::move(*Object) : llvm::json::Object{};
 }
 
+TEST_F(SessionCAPITest, RustAndGoPseudocodeDefineTheProgramsTypesAsTheyDo) {
+  // A program that reads as Rust and as Go, whose PDB types a function's
+  // parameter as a record of anonymous members: each view defines the
+  // record as Local Types renders it in its language, and reaches the
+  // member through what holds its anonymous union.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "rust_types.exe", std::ios::binary);
+  const std::string Exe = write(
+      "rust_types.exe", std::string(std::istreambuf_iterator<char>(Input), {}));
+  neverd_session_set_pdb_path(Session,
+                              (Fixtures / "rust_types.pdb").string().c_str());
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Index = neverd_func_find_by_name(
+      Session, "_RNvCs8vGhbR5OvgK_13rust_eh_probe4main");
+  ASSERT_GE(Index, 0);
+  const auto Entry = neverd_func_entry(Session, Index);
+  const auto view = [&](const char *Stage, llvm::json::Object &First) {
+    std::string Text;
+    size_t Offset = 0;
+    for (int Pages = 0; Pages < 64; ++Pages) {
+      auto Page =
+          takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 2048));
+      if (!Offset)
+        First = Page;
+      if (!Page.getString("text"))
+        break;
+      Text += Page.getString("text")->str();
+      const auto Next = Page.getInteger("next_offset");
+      if (Page.getBoolean("complete").value_or(false) || !Next)
+        break;
+      Offset = static_cast<size_t>(*Next);
+    }
+    return Text;
+  };
+  const auto unread = [](const llvm::json::Object &Page) {
+    const llvm::json::Array *Reasons = Page.getArray("unread");
+    return Reasons ? Reasons->size() : size_t(0);
+  };
+  llvm::json::Object Page;
+  const std::string Rust = view("rust", Page);
+  EXPECT_NE(Rust.find("pub struct _DPC {\n    pub Anonymous: _DPC_0,"),
+            std::string::npos)
+      << Rust;
+  EXPECT_NE(Rust.find("pub union _DPC_0 {"), std::string::npos);
+  EXPECT_NE(Rust.find("(*Dpc).Anonymous.TargetInfoAsUlong"), std::string::npos);
+  EXPECT_EQ(Rust.find("NEVERD_TYPE__DPC"), std::string::npos);
+  EXPECT_EQ(unread(Page), 0u);
+  // Go reads the union's members through its methods.
+  const std::string Go = view("go", Page);
+  EXPECT_NE(Go.find("func (s *_DPC_0) TargetInfoAsUlong() *uint32 {"),
+            std::string::npos)
+      << Go;
+  EXPECT_NE(Go.find("*Dpc.Anonymous.TargetInfoAsUlong()"), std::string::npos);
+  EXPECT_EQ(Go.find("NEVERD_TYPE__DPC"), std::string::npos);
+  EXPECT_EQ(unread(Page), 0u);
+  // C keeps the definitions as C defines them.
+  const std::string C = view("c", Page);
+  EXPECT_NE(C.find("#ifndef NEVERD_TYPE__DPC"), std::string::npos) << C;
+  EXPECT_NE(C.find("Dpc->TargetInfoAsUlong"), std::string::npos);
+}
 TEST_F(SessionCAPITest,
        NativeIRViewPagesPreserveTextAndExactInstructionAnchors) {
   for (bool AArch64 : {false, true}) {

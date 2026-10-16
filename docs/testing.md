@@ -309,7 +309,14 @@ NEVERD_SOURCE_DIALECT=go \
 custom template arguments, ATL names, and the C exception projection's native
 calls and handlers. `ReadsTheDefinitionsOfTheProgramsTypes` reads a unit's
 local types definitions back in C as written, whole in C++, and in Rust and
-Go as far as their structures lay them out, saying why for the rest. Decompiled
+Go as far as their structures lay them out, saying why for the rest.
+`TheProgramsTypesSpellTheirRecordsAndTheirMembers` gives Rust and Go the
+program's types and checks the paths their code reaches members by;
+`TypeRender.EmbeddedSourceSaysHowCodeReachesEachMember` checks those paths
+as the renderers write them. `SessionCAPITest.RustAndGoPseudocodeDefineTheProgramsTypesAsTheyDo`
+reads `unittests/types/fixtures/rust_types.exe`, which reads as Rust and as
+Go, through both views; its Rust and Go views compile with rustc and
+`go vet`. Decompiled
 kernel units read back the same way: `NEVERD_SOURCE_DIALECT_CORPUS` on the
 units `scripts/check_decompiled_types.py --keep` writes. `NeverDSessionCAPITests` checks detected defaults, explicit
 language pages and emission caches; `NeverDGuiController` checks the C++ title,

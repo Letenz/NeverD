@@ -936,6 +936,22 @@ private:
     }
     case ExprKind::Member: {
       const Expr *Base = E->Ops.front();
+      // A member of one of the program's types, by the fields that hold it.
+      if (auto Path = localMember(E)) {
+        if (Path->empty())
+          return Printed{"_", PrecAtom};
+        std::string Text =
+            E->Postfix ? "(*" + paren(value(Base, nullptr), PrecUnary) + ")"
+                       : paren(place(Base), PrecAtom);
+        for (const SourceDialectLocalTypes::Hop &Hop : *Path) {
+          if (Hop.Accessor) {
+            unsupported("a member the program's types read through a method");
+            return Printed{"_", PrecAtom};
+          }
+          Text += "." + Hop.Name;
+        }
+        return Printed{Text, PrecAtom};
+      }
       if (E->Field && E->Field->BitWidth) {
         unsupported("a bit-field");
         return Printed{"_", PrecAtom};
@@ -1586,7 +1602,8 @@ private:
   }
 
   void record(const CType *Ty) {
-    if (!Ty->isRecord() || PrintedRecords.contains(Ty))
+    // The program's types define their records themselves.
+    if (!Ty->isRecord() || PrintedRecords.contains(Ty) || localRecord(Ty))
       return;
     const RecordDef &Record = *Ty->Record;
     // What a Rust structure of these fields would not lay out as C does.

@@ -32,6 +32,7 @@
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/sbf/emit/SBFCEmitter.h"
 #include "neverd/sbf/emit/SBFRustEmitter.h"
+#include "neverd/types/TypeRender.h"
 
 #include "llvm/ADT/DenseSet.h"
 
@@ -430,11 +431,19 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     Opts.SourceMap = SourceMap;
   }
   DebugContext *Debug = S->decompileDebug();
-  // The program's records, as its local types define them.
+  // The program's records, as its local types define them, which the
+  // source map keeps for another language's spelling of the unit.
+  if (SourceMap)
+    SourceMap->LocalTypes.reset();
   if (const LocalTypesDebugContext *Local = S->LocalTypesDbg.get();
       Local && Debug == Local)
-    Opts.RecordDefinitions = [Local](const std::vector<TypeRef> &Records) {
-      return Local->definitions(Records);
+    Opts.RecordDefinitions = [Local,
+                              SourceMap](const std::vector<TypeRef> &Records) {
+      CRecordDefinitions Definitions = Local->definitions(Records);
+      if (SourceMap && !Definitions.Text.empty())
+        SourceMap->LocalTypes = CSourceLocalTypes{
+            Definitions.Text, Definitions.Types, Definitions.DeclaredTypes};
+      return Definitions;
     };
   try {
     HighCEmitter Emitter;
@@ -570,6 +579,54 @@ std::string unofferedDialectReason(SourceDialect Dialect,
       .str();
 }
 
+/// The local types \p Original, a HighC unit, defines (CSourceMap::LocalTypes)
+/// as \p Dialect, Rust or Go, defines them, from the library they were
+/// rendered from, and how its code reaches their members; none when the
+/// text holds no definitions, or not once.
+std::optional<SourceDialectLocalTypes>
+dialectLocalTypes(const Session &S, llvm::StringRef Original,
+                  const CSourceMap &Map, SourceDialect Dialect) {
+  const LocalTypesDebugContext *Local = S.LocalTypesDbg.get();
+  if (!Map.LocalTypes || !Local)
+    return std::nullopt;
+  const size_t At = Original.find(Map.LocalTypes->Text);
+  if (At == llvm::StringRef::npos ||
+      Original.find(Map.LocalTypes->Text, At + 1) != llvm::StringRef::npos)
+    return std::nullopt;
+  const types::TypeLibrary &Library = Local->library();
+  const auto found = [&](const std::vector<std::string> &Names) {
+    std::vector<const types::LocalType *> Types;
+    for (const std::string &Name : Names)
+      if (const types::LocalType *Type = Library.find(Name))
+        Types.push_back(Type);
+    return Types;
+  };
+  types::RenderOptions Render;
+  Render.Lang = Dialect == SourceDialect::Rust ? types::Language::Rust
+                                               : types::Language::Go;
+  // As the C does: exact widths, with the checks of every layout.
+  Render.Spelling = types::BuiltinSpelling::Portable;
+  Render.Asserts = true;
+  const types::EmbeddedSource Embedded =
+      types::renderEmbeddedSource(Library, found(Map.LocalTypes->Types),
+                                  found(Map.LocalTypes->DeclaredTypes), Render);
+  SourceDialectLocalTypes Result;
+  Result.CBegin = At;
+  Result.CEnd = At + Map.LocalTypes->Text.size();
+  Result.Text = Embedded.Text;
+  for (const auto &[Record, Members] : Embedded.Members) {
+    auto &Paths = Result.Members[Record];
+    for (const auto &[Name, Path] : Members) {
+      auto &Hops = Paths[Name];
+      for (const types::MemberPath::Hop &Hop : Path.Hops)
+        Hops.push_back({Hop.Name, Hop.Accessor});
+    }
+  }
+  for (const std::string &Name : Map.LocalTypes->DeclaredTypes)
+    Result.Opaque.insert(Name);
+  return Result;
+}
+
 /// \p Entry's HighC source spelled in \p Dialect, with its library regions
 /// and definition moved to the spelled text, kept with the C it spells.
 const Session::FunctionSource &dialectSource(neverd_session_t Sess, va_t Entry,
@@ -595,6 +652,8 @@ const Session::FunctionSource &dialectSource(neverd_session_t Sess, va_t Entry,
   Options.Format = S.Img.abiFormat();
   Options.Names = Map.Names;
   const llvm::StringRef Original(Raw);
+  if (Dialect == SourceDialect::Rust || Dialect == SourceDialect::Go)
+    Options.LocalTypes = dialectLocalTypes(S, Original, Map, Dialect);
   SourceDialectText Spelled = spellInDialect(Original, Options);
   for (CSourceRegion &Region : Map.Regions) {
     std::vector<CSourceSpan> Spans;
