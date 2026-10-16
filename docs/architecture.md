@@ -146,6 +146,29 @@ after the program's PDB and before the user's declarations:
 declarations without a program, which is how the generator builds the
 library.
 
+The decompiler reads the local types' prototypes through
+`PrototypeDebugContext` (`lib/sdk/capi`). It wraps the program's debug
+context, and completes the functions the debug information names but leaves
+untyped from the prototype of their name, as the kernel's public symbols
+are completed from `<ntifs.h>`. A function the debug information types
+keeps its own type, and a variadic prototype is not used, because its calls
+pass more than it declares. The prototype's types convert to the
+decompiler's types:
+- records become named records that C passes and returns by value, with
+  their members' names for display;
+- typedefs become what they name, and enumerations their underlying
+  integers;
+- pointers to functions become pointers to C signatures of scalars and
+  opaque pointers.
+
+Win64 placement then binds each parameter by its location, and the
+signature prints with the prototype's names. A declaration changes what the
+decompiler read only when it adds a prototype or changes a type a prototype
+names, through typedefs, pointers, arrays and members
+(`prototypeTypeNames`). Only such a declaration clears the pipeline, which
+the C API reports as `"decompilation": true`, and the worker then refreshes
+its views as after loading signatures.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and
