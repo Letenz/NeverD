@@ -114,6 +114,8 @@ EXPORTS
   ZwWriteFile
   ZwSetInformationFile
   ZwFlushBuffersFile
+  ZwDeviceIoControlFile
+  ZwFsControlFile
   IoGetRelatedDeviceObject
   KeStackAttachProcess
   KeUnstackDetachProcess
@@ -260,3 +262,12 @@ ExSetResourceOwnerPointerEx
   ZwOpenSymbolicLinkObject
   ZwQuerySymbolicLinkObject
   ZwQueryObject
+
+  isdigit
+  _strupr
+  _wcslwr
+  _wcsupr
+  strcpy_s
+  strncpy_s
+  wcscat_s
+  wcsncpy_s

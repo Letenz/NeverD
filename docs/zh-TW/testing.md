@@ -10,6 +10,10 @@ NeverD 的測試回答三個不同問題：表示形狀是否符合預期、完�
 
 `PipelineOutcome.ResolvedCalls*` 檢查暫存器分組、call／invoke 身分、堆疊位元組封裝與拆分、窄值留在各自的堆疊槽，以及缺少位元組時的拒絕。`MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` 檢查記錄的偏移。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` 涵蓋 x64、ARM32、AArch64 的 ELF、PE、Mach-O。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` 涵蓋三種格式，拒絕長度被改寫、可寫或越界範圍、同名本地函式、錯誤來源暫存器、替代入口及可重定位映像。主機 C 差分測試將原始 C 獨立以 O0 編譯，產生的 C 仍以 O2 編譯，避免主機最佳化器錯算迴圈遞推而污染對照。AArch64 FMA 檢查僅在 x86 主機要求 `-mfma`。
 
+## 具體入口記憶體種子
+
+執行 `NeverDSymbolicTests`、`NeverDConcolicTests` 與 `NeverDConcolicIntegrationTests`。`LowIRConcolicMemory.*` 和符號層測試涵蓋兩種位元組序、別名寫入、獨立儲存空間、缺漏及非法範圍、重設與晚種子、精確/不足/零預算、epoch、模型寬度、候選重新執行及去重；既有原生架構/格式矩陣維持回歸。
+
 ## 設定測試建置
 
 除非啟用 `BUILD_TESTING`，否則不會建置測試。完整套件通常使用 Release；Debug
@@ -1218,9 +1222,9 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 `windows-alignment-oracle.yml` 透過 `check_windows_alignment.py` 和 `WindowsAlignmentCases.def` 收集 72 項原創 x64 Windows 例外觀測：九種對齊 SSE 形式分別涵蓋七種未對齊位址/權限情境，以及一個已對齊但頁面無法存取的對照。它保留例外代碼、參數、故障 PC、儲存的上下文、原始輸出及原始碼/二進位雜湊，並驗證輸入與 RAM 未改變。這些觀測僅建立 OS 行為依據，不代表 KVM/WHP 執行驗收，也不新增 SEH 支援。
 
-在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 58 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
+在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 68 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 133 個負載產生 266 項 WHP 結果：27 個內建映像、66 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5085 CPU + 266 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 108 driver API checks = 5760`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM66 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 135 個負載產生 270 項 WHP 結果：27 個內建映像、68 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 116 driver API checks = 5772`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 真實 WDK 清單也建置 `driver_device_queries.c`、`driver_file_objects.c` 和 `driver_file_handles.c` 的一般及 CFG 版本。`DriverDeviceQueryTests.cpp` 與 `DriverFileObjectTests.cpp` 共用可攜呼叫端的斷言，在兩種契約、基址與排程策略下檢查保留參考後的刪除、失敗 CREATE、行程身分、最後控制代碼 CLEANUP 與延後 CLOSE。三組均為原生必測項；清單驗證獨立探索含 `NEVERD_WDK_FIXTURE` 的原始碼，避免漏建 WDK 版本。
 
@@ -1948,4 +1952,8 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 
 `KernelFileTransfers` 涵蓋封包欄位、偏移哨兵、僅附加控制代碼、零長度、輸出別名、立即與擱置狀態、工作執行緒通知及發布前拒絕。`OriginalBufferedNativeFileTransfers` 與 `GenuineWdkBufferedNativeFileTransfers` 跨後端、執行契約、載入位址及排程執行匯入與動態查找呼叫。設定 `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` / `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` 使用真正的一般/CFG 映像；不可用後端明確跳過。
 
+受檢 CRT 回歸涵蓋全部位元組／UTF-16 單元、參數截斷、唯讀且無需修改的緩衝區、計數／容量邊界、截斷、空指標順序、逐步別名、部分錯誤、已釋放儲存與掃描上限。原始 `driver_crt_strings.c` 和真實 `NEVERD_WDM_CRT_STRINGS_FIXTURE`／`NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE` 在入口、工作執行緒及卸載階段檢查匯入與動態解析，並涵蓋被動／派送 IRQL 和兩種排程模式。原生閘門要求兩種契約與載入基址；宿主不可用項目明確跳過。
+
 `KernelFileTransfers` 驗證刷新權限、各裝置傳輸模式的無緩衝區封包、完整位寬 Information、分派返回前的發布與釋放、工作執行緒／受限 APC 通知及非同步／並行拒絕。既有原創與真正 WDK 檔案傳輸夾具亦執行匯入及動態查找的刷新呼叫，包含使用者 IOSB 與九種完成情形。
+
+`KernelFileTransfers` 檢查控制封包欄位、ULONG 截斷、零長度指標、唯讀輸入複製、IOSB 別名、獨立輸入／輸出界限、延遲完成與原呼叫執行緒通知。既有原創及真正 WDK 傳輸夾具透過匯入與動態查找呼叫兩個控制 API，涵蓋四種緩衝區形態和九種完成模式。

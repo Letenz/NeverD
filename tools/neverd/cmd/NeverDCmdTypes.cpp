@@ -60,10 +60,33 @@ std::string listed(ArrayRef<std::string> Ids) {
   return Text;
 }
 
-/// A spelling --spelling may name; empty takes the language's own.
-bool knownSpelling(StringRef Id) {
-  return Id.empty() || Id == "windows" || Id == "ida" || Id == "keywords" ||
-         Id == "portable";
+/// What the engine says of the language --lang names.
+std::optional<json::Object> languageTaken() {
+  const char *Raw = neverd_types_languages_json();
+  auto Parsed = json::parse(Raw ? Raw : "");
+  neverd_free_string(Raw);
+  if (!Parsed) {
+    consumeError(Parsed.takeError());
+    return std::nullopt;
+  }
+  if (const json::Object *Root = Parsed->getAsObject())
+    if (const json::Array *Languages = Root->getArray("languages"))
+      for (const json::Value &Value : *Languages)
+        if (const json::Object *Language = Value.getAsObject();
+            Language && Language->getString("id") == TypesLanguage.getValue())
+          return *Language;
+  return std::nullopt;
+}
+
+/// The spellings --lang takes, its own first.
+std::vector<std::string> spellingIds() {
+  std::vector<std::string> Ids;
+  if (const std::optional<json::Object> Language = languageTaken())
+    if (const json::Array *Spellings = Language->getArray("spellings"))
+      for (const json::Value &Value : *Spellings)
+        if (std::optional<StringRef> Id = Value.getAsString())
+          Ids.push_back(Id->str());
+  return Ids;
 }
 
 /// \p Options with the spelling --spelling asks, if it asks one.
@@ -78,19 +101,8 @@ json::Object withSpelling(json::Object Options) {
 std::string spellingTaken() {
   if (!TypesSpelling.empty())
     return TypesSpelling;
-  const char *Raw = neverd_types_languages_json();
-  auto Parsed = json::parse(Raw ? Raw : "");
-  neverd_free_string(Raw);
-  if (!Parsed) {
-    consumeError(Parsed.takeError());
-    return {};
-  }
-  if (const json::Object *Root = Parsed->getAsObject())
-    if (const json::Array *Languages = Root->getArray("languages"))
-      for (const json::Value &Value : *Languages)
-        if (const json::Object *Language = Value.getAsObject();
-            Language && Language->getString("id") == TypesLanguage.getValue())
-          return Language->getString("spelling").value_or("").str();
+  if (const std::optional<json::Object> Language = languageTaken())
+    return Language->getString("spelling").value_or("").str();
   return {};
 }
 
@@ -380,9 +392,11 @@ bool optionsValid() {
     WithColor::error() << "--lang must be " << listed(Languages) << "\n";
     return false;
   }
-  if (!knownSpelling(TypesSpelling)) {
-    WithColor::error()
-        << "--spelling must be windows, ida, keywords or portable\n";
+  if (const std::vector<std::string> Spellings = spellingIds();
+      !TypesSpelling.empty() &&
+      !is_contained(Spellings, TypesSpelling.getValue())) {
+    WithColor::error() << "--spelling must be " << listed(Spellings) << " in "
+                       << TypesLanguage << "\n";
     return false;
   }
   if (TypesAll && !TypeNames.empty()) {

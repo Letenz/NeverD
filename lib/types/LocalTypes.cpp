@@ -17,8 +17,8 @@ namespace {
 
 constexpr BuiltinInfo Builtins[] = {
 #define NEVERD_BUILTIN_TYPE(Name, Class, Signed, LLP64, LP64, ILP32, Keywords, \
-                            Windows, IDA)                                      \
-  {BuiltinClass::Class, Signed, {LLP64, LP64, ILP32}, Keywords, Windows, IDA},
+                            Windows)                                           \
+  {BuiltinClass::Class, Signed, {LLP64, LP64, ILP32}, Keywords, Windows},
 #include "neverd/types/BuiltinTypes.def"
 };
 

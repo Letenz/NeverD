@@ -3418,10 +3418,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Nombres de Windows (ULONG)</translation>
     </message>
     <message>
-        <source>IDA names (unsigned int)</source>
-        <translation>Nombres de IDA (unsigned int)</translation>
-    </message>
-    <message>
         <source>C keywords (unsigned long)</source>
         <translation>Palabras clave de C (unsigned long)</translation>
     </message>

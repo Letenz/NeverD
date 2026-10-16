@@ -1099,6 +1099,107 @@ uint64_t foldAsciiUpper(uint64_t Unit) {
 }
 } // namespace
 
+uint64_t cIsDigit(uint32_t Value) {
+  const uint8_t Byte = uint8_t(Value);
+  return Value != UINT32_MAX && Byte >= '0' && Byte <= '9' ? 4 : 0;
+}
+
+llvm::Expected<uint64_t> cStringChangeCase(const KernelModel &Model,
+                                           GuestMemory &Memory,
+                                           uint64_t Address, unsigned UnitWidth,
+                                           bool Lower) {
+  // The narrow upper and wide lower exports handle NULL; wide upper reads it.
+  if (!Address && (UnitWidth == 1 || Lower))
+    return 0;
+  const uint64_t First = Lower ? 'A' : 'a';
+  for (uint64_t I = 0;; ++I) {
+    auto Unit = readScanUnit(Model, Memory, Address, I, UnitWidth);
+    if (!Unit)
+      return Unit.takeError();
+    if (!*Unit)
+      return Address;
+    if (*Unit >= First && *Unit < First + 26) {
+      const uint64_t Target = Address + I * UnitWidth;
+      if (auto E = Model.validateGuestAccess(Target, UnitWidth, true))
+        return E;
+      if (auto E = Memory.writeInteger(Target, Lower ? *Unit + 32 : *Unit - 32,
+                                       UnitWidth))
+        return E;
+    }
+  }
+}
+
+llvm::Expected<uint64_t> cStringCheckedWrite(const KernelModel &Model,
+                                             GuestMemory &Memory,
+                                             llvm::ArrayRef<uint64_t> A,
+                                             unsigned UnitWidth, bool Append) {
+  constexpr uint64_t Invalid = 22, Range = 34, Truncated = 80;
+  const bool Counted = A.size() == 4;
+  const uint64_t Destination = A[0], Capacity = A[1], Source = A[2];
+  const uint64_t Count = Counted ? A[3] : UINT64_MAX;
+  if (Counted && !Count && !Destination && !Capacity)
+    return 0;
+  if (!Destination || !Capacity)
+    return Invalid;
+  auto Store = [&](uint64_t Index, uint64_t Value) -> llvm::Error {
+    if (Index >= profile::KernelArenaSize / UnitWidth)
+      return runtimeError("checked C string exceeds the model buffer limit");
+    if (auto E = checkBufferRange(Destination, (Index + 1) * UnitWidth))
+      return E;
+    const uint64_t Address = Destination + Index * UnitWidth;
+    if (auto E = Model.validateGuestAccess(Address, UnitWidth, true))
+      return E;
+    return Memory.writeInteger(Address, Value, UnitWidth);
+  };
+  auto Clear = [&](uint64_t Status) -> llvm::Expected<uint64_t> {
+    if (auto E = Store(0, 0))
+      return E;
+    return Status;
+  };
+  if (Counted && !Count)
+    return Clear(0);
+  if (!Source)
+    return Clear(Invalid);
+  uint64_t Prefix = 0;
+  if (Append) {
+    while (Prefix < Capacity) {
+      auto Unit = readScanUnit(Model, Memory, Destination, Prefix, UnitWidth);
+      if (!Unit)
+        return Unit.takeError();
+      if (!*Unit)
+        break;
+      ++Prefix;
+    }
+    if (Prefix == Capacity)
+      return Clear(Invalid);
+  }
+  const uint64_t Available = Capacity - Prefix;
+  for (uint64_t I = 0;; ++I) {
+    auto Unit = readScanUnit(Model, Memory, Source, I, UnitWidth);
+    if (!Unit)
+      return Unit.takeError();
+    // These exports copy one unit at a time, including on error. A later
+    // fault does not roll back earlier stores or a completed append prefix.
+    if (auto E = Store(Prefix + I, *Unit))
+      return E;
+    if (!*Unit)
+      return 0;
+    if (I + 1 == Available) {
+      if (Counted && Count == UINT64_MAX) {
+        if (auto E = Store(Capacity - 1, 0))
+          return E;
+        return Truncated;
+      }
+      return Clear(Range);
+    }
+    if (Counted && I + 1 == Count) {
+      if (auto E = Store(Prefix + I + 1, 0))
+        return E;
+      return 0;
+    }
+  }
+}
+
 llvm::Expected<uint64_t> cStringLength(const KernelModel &Model,
                                        GuestMemory &Memory,
                                        llvm::ArrayRef<uint64_t> A,

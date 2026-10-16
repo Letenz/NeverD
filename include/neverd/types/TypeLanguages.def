@@ -13,7 +13,8 @@
 ///   Display  How the workbench shows it.
 ///   Spelling How it names builtins unless asked (BuiltinSpellings.def).
 /// NEVERD_TYPE_SPELLING(Language, Spelling)
-///   A spelling Language names builtins in when asked.
+///   A spelling Language names builtins in when asked, its default
+///   first.
 /// NEVERD_TYPE_KEYWORD(Language, Word)
 ///   A word Language reserves.  C++ reserves C's words too.
 ///
@@ -29,32 +30,30 @@
 #define NEVERD_TYPE_KEYWORD(Language, Word)
 #endif
 
-NEVERD_TYPE_LANGUAGE(C, "c", "C", Windows)
-NEVERD_TYPE_LANGUAGE(Cpp, "cpp", "C++", Windows)
+NEVERD_TYPE_LANGUAGE(C, "c", "C", Portable)
+NEVERD_TYPE_LANGUAGE(Cpp, "cpp", "C++", Portable)
 NEVERD_TYPE_LANGUAGE(Rust, "rust", "Rust", Portable)
 NEVERD_TYPE_LANGUAGE(Go, "go", "Go", Portable)
 NEVERD_TYPE_LANGUAGE(Python, "python", "Python", Portable)
 NEVERD_TYPE_LANGUAGE(JavaScript, "javascript", "JavaScript", Portable)
 NEVERD_TYPE_LANGUAGE(Lua, "lua", "Lua", Portable)
 
-NEVERD_TYPE_SPELLING(C, Windows)
-NEVERD_TYPE_SPELLING(C, IDA)
-NEVERD_TYPE_SPELLING(C, Keywords)
 NEVERD_TYPE_SPELLING(C, Portable)
-NEVERD_TYPE_SPELLING(Cpp, Windows)
-NEVERD_TYPE_SPELLING(Cpp, IDA)
-NEVERD_TYPE_SPELLING(Cpp, Keywords)
+NEVERD_TYPE_SPELLING(C, Windows)
+NEVERD_TYPE_SPELLING(C, Keywords)
 NEVERD_TYPE_SPELLING(Cpp, Portable)
-NEVERD_TYPE_SPELLING(Rust, Windows)
+NEVERD_TYPE_SPELLING(Cpp, Windows)
+NEVERD_TYPE_SPELLING(Cpp, Keywords)
 NEVERD_TYPE_SPELLING(Rust, Portable)
-NEVERD_TYPE_SPELLING(Go, Windows)
+NEVERD_TYPE_SPELLING(Rust, Windows)
 NEVERD_TYPE_SPELLING(Go, Portable)
-NEVERD_TYPE_SPELLING(Python, Windows)
+NEVERD_TYPE_SPELLING(Go, Windows)
 NEVERD_TYPE_SPELLING(Python, Portable)
-NEVERD_TYPE_SPELLING(JavaScript, Windows)
+NEVERD_TYPE_SPELLING(Python, Windows)
 NEVERD_TYPE_SPELLING(JavaScript, Portable)
-NEVERD_TYPE_SPELLING(Lua, Windows)
+NEVERD_TYPE_SPELLING(JavaScript, Windows)
 NEVERD_TYPE_SPELLING(Lua, Portable)
+NEVERD_TYPE_SPELLING(Lua, Windows)
 
 NEVERD_TYPE_KEYWORD(C, "auto")
 NEVERD_TYPE_KEYWORD(C, "break")

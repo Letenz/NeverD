@@ -538,19 +538,52 @@ U64 devices_gpu_commands(U64 Route) {
   CHECK(d[1023], 0xff00ff00);
   CHECK(*(volatile U32 *)(store + context[1] * 40), 1);
   CHECK(*(volatile U32 *)(store + context[1] * 40 + 8), 1);
+  /* Both IB forms return to their caller. Repeated sibling calls execute
+     again, with stores ordered before, within, and after each child. */
+  p[0] = 0xc0013d00;
+  p[1] = (U32)dst.gpu;
+  p[2] = 0x10101010;
+  p[3] = 0xc0013f00;
+  p[4] = (U32)cmd.gpu + 128;
+  p[5] = 6;
+  p[6] = 0xc0013d00;
+  p[7] = (U32)dst.gpu;
+  p[8] = 0x30303030;
+  p[9] = 0xc0013700;
+  p[10] = p[4];
+  p[11] = 6;
+  p[32] = 0xc0013d00;
+  p[33] = (U32)dst.gpu;
+  p[34] = 0x20202020;
+  p[35] = 0xc0013d00;
+  p[36] = (U32)dst.gpu + 8;
+  p[37] = 0x76543210;
+  submit.words = 12;
+  CHECK(invoke(Route, 3, 0xc0200910, (U64)&submit), 0);
+  CHECK(submit.timestamp, 2);
+  CHECK(d[0], 0x20202020);
+  CHECK(d[2], 0x76543210);
+  /* Replacing the second call with NOP must leave the parent store last. */
+  p[9] = 0xc0011000;
+  CHECK(invoke(Route, 3, 0xc0200910, (U64)&submit), 0);
+  CHECK(submit.timestamp, 3);
+  CHECK(d[0], 0x30303030);
   /* GPU pins cannot follow a recycled CPU virtual address. */
   CHECK(raw(Unmap, code, 4096, 0), 0);
   CHECK(raw6(Map, code, 4096, 3, 0x22, (U64)-1, 0), code);
   p[0] = 0xffffffff;
-  d[1] = 0;
+  d[0] = 0;
+  d[2] = 0;
   CHECK(invoke(Route, 3, 0xc0200910, (U64)&submit), 0);
-  CHECK(submit.timestamp, 2);
+  CHECK(submit.timestamp, 4);
+  CHECK(d[0], 0x30303030);
   CHECK(d[1], 0x11223344);
+  CHECK(d[2], 0x76543210);
   CHECK(p[0], 0xffffffff);
   U32 query[3] = {context[1], 3, 0xdeadbeef};
   CHECK(invoke(Route, 3, ReadTimestamp, (U64)query), 0);
-  CHECK(query[2], 2);
-  U32 wait[3] = {context[1], 2, 0};
+  CHECK(query[2], 4);
+  U32 wait[3] = {context[1], 4, 0};
   CHECK(invoke(Route, 3, 0x400c0907, (U64)wait), 0);
   /* Independently opened descriptions share the process GPU address space. */
   CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 4);
@@ -582,6 +615,86 @@ U64 devices_gpu_rejected(U64 Mode, U64 Buffer) {
   struct GPUSubmit *submit = (struct GPUSubmit *)(Buffer + 4096);
   *submit =
       (struct GPUSubmit){context[1], cmd.gpu, Mode == 3 ? 2 : 5, 0xdeadbeef, 0};
+  return invoke(0, 3, 0xc0200910, (U64)submit);
+}
+
+U64 devices_gpu_indirect_rejected(U64 Mode, U64 Buffer) {
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  U32 context[2] = {0x12, 0};
+  CHECK(invoke(0, 3, CreateContext, (U64)context), 0);
+  CHECK(raw6(Map, 0x22000000, 4096, 1, 1, 3, 4096), 0x22000000);
+  CHECK(raw6(Map, 0x23000000, 4096, 3, 0x22, (U64)-1, 0), 0x23000000);
+  CHECK(raw6(Map, 0x24000000, 4096, 3, 0x22, (U64)-1, 0), 0x24000000);
+  U32 *p = (U32 *)0x23000000, *q = (U32 *)0x24000000;
+  struct GPUMap cmd = {-1, 0, 4096, 0, (U64)p, 2, 0};
+  struct GPUMap child = {-1, 0, 4096, 0, (U64)q, 2, 0};
+  struct GPUMap dst = {-1, 0, 4096, 0, Buffer, 2, Mode == 10 ? 0x01000000 : 0};
+  CHECK(invoke(0, 3, 0xc0300915, (U64)&cmd), 0);
+  CHECK(invoke(0, 3, 0xc0300915, (U64)&child), 0);
+  CHECK(invoke(0, 3, 0xc0300915, (U64)&dst), 0);
+  p[0] = 0xc0013d00;
+  p[1] = (U32)dst.gpu;
+  p[2] = 0x12345678;
+  p[3] = 0xc0013f00;
+  p[4] = (U32)child.gpu;
+  p[5] = 5;
+  p[6] = 0xc0001000;
+  p[7] = 0;
+  q[0] = 0xc0013d00;
+  q[1] = (U32)dst.gpu + 4;
+  q[2] = 0x89abcdef;
+  q[3] = 0xc0001000;
+  q[4] = 0;
+  U32 words = 8;
+  if (Mode == 0)
+    q[3] = 0xc0003000; /* unmodeled state/program load */
+  if (Mode == 1)
+    q[3] = 0xc0013d00; /* incomplete child packet */
+  if (Mode == 2)
+    ++p[4];
+  if (Mode == 3)
+    p[4] += 4092;
+  if (Mode == 4)
+    p[5] = 0;
+  if (Mode == 5 || Mode == 6) {
+    p[5] = 6;
+    q[3] = 0xc0013700;
+    q[4] = (U32)cmd.gpu + (Mode == 6 ? 256 : 0);
+    q[5] = Mode == 6 ? 2 : 8;
+    p[64] = 0xc0001000;
+  }
+  if (Mode == 7)
+    p[1] = (U32)child.gpu; /* a later-discovered fetch */
+  if (Mode == 8) {
+    struct GPUMap alias = {-1, 0, 4096, 0, (U64)q, 2, 0};
+    CHECK(invoke(0, 3, 0xc0300915, (U64)&alias), 0);
+    p[1] = (U32)alias.gpu; /* distinct GPU addresses, identical physical RAM */
+  }
+  if (Mode == 9) {
+    words = 18;
+    q[0] = 0xc3fe1000; /* 1024 words, entirely one NOP including its header */
+    for (U32 i = 3; i < words; i += 3) {
+      p[i] = 0xc0013f00;
+      p[i + 1] = (U32)child.gpu;
+      p[i + 2] = 1024;
+    }
+  }
+  if (Mode == 10)
+    p[1] = (U32)cmd.gpu + 512;
+  if (Mode == 11)
+    q[1] = (U32)cmd.gpu; /* child writes its caller */
+  if (Mode == 12)
+    p[6] = 0xc0003000; /* valid child, refused caller suffix */
+  if (Mode == 13)
+    p[3] = 0xc0003f00; /* wrong IB operand count */
+  if (Mode == 14)
+    q[0] |= 1; /* conditional execution is not unconditional */
+  for (U32 i = 0; i < 1024; ++i) {
+    ((U32 *)(Buffer + 8192))[i] = p[i];
+    ((U32 *)(Buffer + 12288))[i] = q[i];
+  }
+  struct GPUSubmit *submit = (struct GPUSubmit *)(Buffer + 4096);
+  *submit = (struct GPUSubmit){context[1], cmd.gpu, words, 0xdeadbeef, 0};
   return invoke(0, 3, 0xc0200910, (U64)submit);
 }
 enum {

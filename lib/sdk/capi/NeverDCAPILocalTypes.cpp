@@ -258,7 +258,7 @@ bool readSpelling(const llvm::json::Object &Options,
   std::optional<types::BuiltinSpelling> Found =
       Name ? types::spellingNamed(*Name) : std::nullopt;
   if (!Found) {
-    Error = "\"spelling\" must be windows, ida, keywords or portable";
+    Error = "\"spelling\" must be " + types::spellingsText();
     return false;
   }
   Spelling = *Found;
@@ -722,10 +722,8 @@ const char *neverd_types_languages_json(void) {
   llvm::json::Array Languages;
   const auto add = [&](types::Language Lang, llvm::StringRef Display) {
     llvm::json::Array Spellings;
-#define NEVERD_BUILTIN_SPELLING(Name, Id)                                      \
-  if (types::spellsBuiltins(Lang, types::BuiltinSpelling::Name))               \
-    Spellings.push_back(Id);
-#include "neverd/types/BuiltinSpellings.def"
+    for (types::BuiltinSpelling Spelling : types::spellingsOf(Lang))
+      Spellings.push_back(types::spellingId(Spelling));
     Languages.push_back(llvm::json::Object{
         {"id", types::languageId(Lang)},
         {"display", Display},
