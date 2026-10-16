@@ -54,6 +54,15 @@ llvm::Expected<uint64_t> timeToTimeFields(const KernelModel &Model,
 llvm::Expected<uint64_t> timeFieldsToTime(const KernelModel &Model,
                                           GuestMemory &Memory,
                                           llvm::ArrayRef<uint64_t> A);
+llvm::Expected<uint64_t> timeToSecondsSince1980(const KernelModel &Model,
+                                                GuestMemory &Memory,
+                                                llvm::ArrayRef<uint64_t> A);
+/// Pinned Unicode upcasing that is independent of the system NLS table.
+/// Units at or above U+00C0 require an explicit NLS owner and fail clearly.
+llvm::Expected<uint16_t> uppercaseUnicodeUnit(uint16_t Unit);
+llvm::Expected<uint64_t> hashUnicodeString(const KernelModel &Model,
+                                           GuestMemory &Memory,
+                                           llvm::ArrayRef<uint64_t> A);
 /// RtlEqualString when \p EqualityOnly is true, otherwise RtlCompareString.
 llvm::Expected<uint64_t> compareAnsiStrings(const KernelModel &Model,
                                             GuestMemory &Memory,

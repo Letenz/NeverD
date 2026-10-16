@@ -7475,3 +7475,5 @@ ARM64 HVF identities are mandatory. Public C/CLI and real Python tests repeat
 the same workload. `DarwinNative.LibSystemMemoryCallsMatchNativeMappingsAndCErrorOrder`
 compares the system-linked object with original native file bytes, anonymous
 zeroing, protection transitions, private mapping lifetime and EOF tails.
+
+Counted runtime regressions cover hash-output aliases, low-width carriers, odd lengths, reloaded descriptors, sequential overlap, allocation failure, NLS refusal, partial faults, lifetime and APC_LEVEL admission. Time tests cover subsecond epoch edges, the ULONG limit and input/output aliases. The original and genuine WDK CRT fixtures call all three exports statically and dynamically in entry, worker and unload; entry also exercises APC_LEVEL.
