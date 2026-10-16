@@ -186,7 +186,7 @@ TEST_F(AArch64_RoundTrip, LiveInIdentityAndCallClobbersStayExact) {
   std::string D9FromWide =
       functionText(C, "test_post_call_q9_low_from_wide_write");
   ASSERT_FALSE(D9FromWide.empty()) << C;
-  EXPECT_NE(D9FromWide.find("return 123;"), std::string::npos) << D9FromWide;
+  EXPECT_NE(D9FromWide.find("return 0x7B;"), std::string::npos) << D9FromWide;
   EXPECT_EQ(D9FromWide.find("unknown"), std::string::npos) << D9FromWide;
 
   std::string FMinNum = functionText(C, "test_fminnm_f64");

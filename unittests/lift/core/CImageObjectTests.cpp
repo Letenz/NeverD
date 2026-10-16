@@ -440,7 +440,7 @@ TEST(CImageObjects, AnIndexedTableIsDeclaredWhole) {
   ASSERT_TRUE(HighCEmitter().emit({Lookup}, OS, Options));
   OS.flush();
   EXPECT_NE(Source.find("table[16] = {"), NotFound) << Source;
-  EXPECT_NE(Source.find("&table[0] + (arg0 & 15)"), NotFound) << Source;
+  EXPECT_NE(Source.find("&table[0] + (arg0 & 0xF)"), NotFound) << Source;
   source_call_execution_test::compileAndRun(Source + R"(
 int main(void) {
   for (uint64_t i = 0; i < 40; ++i)

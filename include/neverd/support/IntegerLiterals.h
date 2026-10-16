@@ -565,6 +565,36 @@ integerLiterals(std::string_view Line, LiteralSyntax Syntax, bool &InComment) {
   return Literals;
 }
 
+/// The base a decompiler writes \p Value in when the user picked none:
+/// hexadecimal, as the disassembly shows numbers, unless the value is at most
+/// ten or its decimal digits read rounder than its hexadecimal ones (100,
+/// 999, 5000, 1000000 against 0x64, 0x3E7, 0x1388, 0xF4240). The line is
+/// Ghidra's PrintLanguage::mostNaturalBase: a run of trailing 0s or 9s in
+/// decimal, longer than the run of trailing 0s or Fs in hexadecimal, with
+/// little left before it.
+inline LiteralRadix naturalLiteralRadix(uint64_t Value) {
+  if (Value <= 10)
+    return LiteralRadix::Decimal;
+  unsigned DecimalRun = 0;
+  uint64_t Rest = Value;
+  if (const uint64_t Repeated = Rest % 10; Repeated == 0 || Repeated == 9)
+    for (; Rest && Rest % 10 == Repeated; Rest /= 10)
+      ++DecimalRun;
+  const uint64_t Limit = DecimalRun == 0   ? 0
+                         : DecimalRun == 1 ? (Value % 10 == 9 ? 0 : 1)
+                         : DecimalRun == 2 ? 10
+                         : DecimalRun <= 4 ? 100
+                                           : 1000;
+  if (DecimalRun == 0 || Rest > Limit)
+    return LiteralRadix::Hex;
+  unsigned HexRun = 0;
+  Rest = Value;
+  if (const uint64_t Repeated = Rest & 0xF; Repeated == 0 || Repeated == 0xF)
+    for (; Rest && (Rest & 0xF) == Repeated; Rest >>= 4)
+      ++HexRun;
+  return DecimalRun > HexRun ? LiteralRadix::Decimal : LiteralRadix::Hex;
+}
+
 /// \p Literal spelled in \p Radix with its type, or none when no spelling in
 /// that base has it, the base is Number, or the language fixes no value.
 inline std::optional<std::string>
