@@ -6891,6 +6891,8 @@ The finite intrinsic catalogue and value semantics live in `dalvik::Library`;
 JNI retains opaque identities and argument/reference transport only.
 `LinuxBinderTransactions` routes object-free messages between guest-owned opens;
 LinuxMemory owns their read-only arenas and every service body remains guest code.
+It preserves admitted libbinder request/status flags at this shared transport
+boundary. No frontend interprets a status payload or invents a service result.
 `LinuxGPUCommands` owns explicitly selected PM4 admission and execution, using
 MemoryView physical pins and the existing KGSL context/memstore owner.
 `LinuxGPUObjects` allocates retained RAM through `AddressSpace::allocateBacking`

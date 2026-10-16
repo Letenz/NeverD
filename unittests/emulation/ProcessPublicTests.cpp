@@ -2773,7 +2773,7 @@ TEST_F(ProcessPublic, AndroidBinderProtocolMatchesSDKAndCLI) {
   const auto Output = (Root / OutputFile).string();
   auto Request = llvm::cantFail(llvm::json::parse(R"({
     "backend":"unicorn", "android":{"entry_symbol":"binder_control",
-    "initialize":false,"thread_limit":3},
+    "initialize":false,"thread_limit":5},
     "linux_files":{"files":[],"devices":[{"path":"/dev/binder",
       "access_mode":2,"open_errno":0,"ioctls":[],"binder":true}]}})"));
   for (const char *Entry :
