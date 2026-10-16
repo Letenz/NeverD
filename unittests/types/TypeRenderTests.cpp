@@ -158,9 +158,13 @@ TEST_F(TypeRenderFixture, AHeaderDefinesWhatATypeHoldsFirst) {
   }
   EXPECT_FALSE(contains(Text, "_THREAD_LIKE"));
   EXPECT_TRUE(contains(Text, "typedef uint32_t ULONG;"));
-  EXPECT_TRUE(contains(Text,
-                       "_Static_assert(offsetof(struct _DEVICE, Pool) == 0x50, "
-                       "\"_DEVICE.Pool\");"));
+  // The header compiles as C++ too: C names its check as C++ does.
+  EXPECT_TRUE(contains(Text, "#if !defined(__cplusplus) && "
+                             "!defined(static_assert)\n#define static_assert "
+                             "_Static_assert\n#endif\n"));
+  EXPECT_TRUE(
+      contains(Text, "\nstatic_assert(offsetof(struct _DEVICE, Pool) == 0x50, "
+                     "\"_DEVICE.Pool\");"));
 }
 
 TEST_F(TypeRenderFixture, CppNamesTypesBare) {
@@ -274,6 +278,30 @@ TEST(TypeRender, GoReadsAFlexibleArrayThroughAnAccessor) {
       renderType(Library, *Library.find("_LIST"), in(Language::Go));
   EXPECT_FALSE(contains(Text, "\tItems [0]uint16"));
   EXPECT_TRUE(contains(Text, "func (s *_LIST) Items(n int) []uint16 {"));
+}
+
+TEST(TypeRender, CCharacterTypesLeaveCppItsKeywords) {
+  // C declares the character types C++ has keywords for, so that its header
+  // compiles as either; char8_t is a keyword from C++20.
+  TypeLibrary Library;
+  Library.define(structure("_TEXT", 4,
+                           {member("Narrow", makeBuiltin(Builtin::Char8), 0),
+                            member("Wide", makeBuiltin(Builtin::Char16), 2)}));
+  for (BuiltinSpelling Spelling :
+       {BuiltinSpelling::Windows, BuiltinSpelling::Keywords}) {
+    RenderOptions Options = in(Language::C);
+    Options.Spelling = Spelling;
+    const std::string Text = renderTypes(Library, {}, Options);
+    EXPECT_TRUE(contains(Text, "#if !defined(__cplusplus) || "
+                               "!defined(__cpp_char8_t)\ntypedef uint8_t "
+                               "char8_t;\n#endif\n"))
+        << Text;
+    EXPECT_TRUE(contains(Text, "#ifndef __cplusplus\ntypedef uint16_t "
+                               "char16_t;\n#endif\n"))
+        << Text;
+  }
+  EXPECT_FALSE(contains(renderTypes(Library, {}, in(Language::Cpp)),
+                        "typedef uint16_t char16_t;"));
 }
 
 TEST(TypeRender, NamesStepAroundKeywords) {

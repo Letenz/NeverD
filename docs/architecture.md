@@ -103,7 +103,10 @@ included: unions in Go, bitfields, members Go cannot align, and flexible
 arrays. Names a language cannot spell, such as `std::pair<int,int>` or an
 enumerator two enumerations share, take one identifier per language
 (`renamedNames`). With asserts, the output checks every size and offset when
-it compiles.
+it compiles. C's header compiles as C++ too, which the workbench shows it as:
+its checks are `static_assert`, and the character types C declares are left
+to C++'s keywords. Member names stay C's, so one C++ reserves, such as
+`class`, still needs the C++ rendering.
 
 `parseTypes` reads C, C++, Rust and Go declarations back into the library
 (`TypeParse.h`), and `layOutRecord` lays each record out under MSVC or
