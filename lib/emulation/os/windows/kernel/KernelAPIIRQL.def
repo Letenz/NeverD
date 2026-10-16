@@ -215,6 +215,7 @@ NEVERD_KERNEL_IRQL_API(IoGetDmaAdapter, Passive)
 NEVERD_KERNEL_IRQL_API(IoAllocateMdl, Dispatch)
 // The obsolete wrapper uses resident caller storage or nonpaged pool.
 NEVERD_KERNEL_IRQL_API(MmCreateMdl, Dispatch)
+NEVERD_KERNEL_IRQL_API(MmAdvanceMdl, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoBuildPartialMdl, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoFreeMdl, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmBuildMdlForNonPagedPool, Dispatch)

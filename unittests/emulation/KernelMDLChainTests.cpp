@@ -149,11 +149,329 @@ protected:
     put(IRP + IRPStatusOffset, StatusSuccess, sizeof(uint32_t));
     put(IRP + IRPInformationOffset, Information);
   }
+  struct AdvanceBuffer {
+    uint64_t Pool, MDL, Alias;
+  };
+  AdvanceBuffer advanceBuffer(uint32_t Offset, uint32_t Count,
+                              uint32_t Access = IoWriteAccess,
+                              uint64_t Storage = 0) {
+    const auto Buffer =
+        call("ExAllocatePoolWithTag", {0, 8 * profile::PageSize, PoolTag});
+    const auto MDL =
+        Storage ? call("MmCreateMdl", {Storage, Buffer + Offset, Count})
+                : call("IoAllocateMdl", {Buffer + Offset, Count, 0, 0, 0});
+    call("MmProbeAndLockPages", {MDL, KernelMode, Access});
+    const auto Alias = call("MmGetSystemAddressForMdlSafe",
+                            {MDL, NormalPagePriority | MdlMappingNoExecute});
+    return {Buffer, MDL, Alias};
+  }
+  void releaseAdvanceBuffer(const AdvanceBuffer &B) {
+    call("MmUnlockPages", {B.MDL});
+    call("IoFreeMdl", {B.MDL});
+    call("ExFreePool", {B.Pool});
+  }
+  std::vector<uint8_t> descriptorBytes(uint64_t MDL) {
+    std::vector<uint8_t> Bytes(get(MDL + MDLSizeOffset, 2));
+    success(Memory->read(MDL, Bytes));
+    return Bytes;
+  }
   void complete(uint64_t IRP, uint32_t Information = 0) {
     status(IRP, Information);
     call("IofCompleteRequest", {IRP, 0});
   }
 };
+
+TEST_F(KernelMDLChain, AdvanceMdlEndStatusAndCarrierBits) {
+  const auto B = advanceBuffer(17, 8193);
+  const auto Before = descriptorBytes(B.MDL);
+  for (uint64_t Bytes :
+       std::array<uint64_t, 4>{8193, 8194, 0x100002001ULL, UINT64_MAX}) {
+    EXPECT_EQ(call("MmAdvanceMdl", {B.MDL, Bytes}), StatusInvalidParameter2);
+    EXPECT_EQ(descriptorBytes(B.MDL), Before);
+  }
+  EXPECT_EQ(call("MmAdvanceMdl", {B.MDL, 0x100000001ULL}), StatusSuccess);
+  EXPECT_EQ(get(B.MDL + MDLByteCountOffset, 4), 8192u);
+  EXPECT_EQ(get(B.MDL + MDLByteOffsetOffset, 4), 18u);
+  EXPECT_EQ(call("MmGetSystemAddressForMdlSafe", {B.MDL, NormalPagePriority}),
+            B.Alias + 1);
+  releaseAdvanceBuffer(B);
+  const auto Empty = call("MmCreateMdl", {0, 0, 0});
+  EXPECT_EQ(call("MmAdvanceMdl", {Empty, 0}), StatusInvalidParameter2);
+  call("IoFreeMdl", {Empty});
+}
+
+TEST_F(KernelMDLChain, AdvanceMdlRotatesRetainedPfnsAcrossRepeatedAdvances) {
+  constexpr uint64_t Page = profile::PageSize, Tail = uint64_t(1) << 63;
+  for (uint32_t Offset : {0u, 17u, 4095u}) {
+    const auto B = advanceBuffer(Offset, 5 * Page);
+    const uint64_t Pages = (Offset + 5 * Page + Page - 1) / Page;
+    std::vector<uint64_t> Original;
+    for (uint64_t I = 0; I < Pages; ++I)
+      Original.push_back(get(B.MDL + MDLSize + I * 8));
+    const auto Extent = get(B.MDL + MDLSizeOffset, 2);
+    uint64_t Total = 0;
+    for (uint32_t Bytes : {17u, 4096u, 4095u, 1u, 4097u}) {
+      ASSERT_EQ(call("MmAdvanceMdl", {B.MDL, Bytes}), StatusSuccess);
+      Total += Bytes;
+      const uint64_t Dropped = (Offset + Total) / Page;
+      EXPECT_EQ(get(B.MDL + MDLStartVAOffset), B.Pool + Dropped * Page);
+      EXPECT_EQ(get(B.MDL + MDLByteOffsetOffset, 4), (Offset + Total) % Page);
+      EXPECT_EQ(get(B.MDL + MDLByteCountOffset, 4), 5 * Page - Total);
+      EXPECT_EQ(get(B.MDL + MDLSizeOffset, 2), Extent);
+      EXPECT_EQ(get(B.MDL + MDLNextOffset), 0u);
+      for (uint64_t I = 0; I < Pages; ++I) {
+        success(Model->validateGuestAccess(B.MDL + MDLSize + I * 8, 8, false));
+        EXPECT_EQ(get(B.MDL + MDLSize + I * 8),
+                  Original[(I + Dropped) % Pages] |
+                      (Dropped && I + 1 == Pages ? Tail : 0));
+      }
+      const auto View = B.Alias + Total;
+      EXPECT_EQ(
+          call("MmGetSystemAddressForMdlSafe", {B.MDL, NormalPagePriority}),
+          View);
+      put(View, 0x53, 1);
+      EXPECT_EQ(get(B.Pool + Offset + Total, 1), 0x53u);
+      EXPECT_EQ(call("MmGetPhysicalAddress", {View}),
+                call("MmGetPhysicalAddress", {B.Pool + Offset + Total}));
+      rejected(Model->validateGuestAccess(B.Alias, 1, false), "MDL byte range");
+    }
+    const uint64_t Restored = ((Offset + Total) / Page) * Page;
+    call("MmUnmapLockedPages", {B.Alias + Total, B.MDL});
+    EXPECT_EQ(get(B.MDL + MDLStartVAOffset), B.Pool);
+    EXPECT_EQ(get(B.MDL + MDLByteOffsetOffset, 4), (Offset + Total) % Page);
+    EXPECT_EQ(get(B.MDL + MDLByteCountOffset, 4), 5 * Page - Total + Restored);
+    EXPECT_EQ(get(B.MDL + MDLMappedSystemVAOffset), B.Alias + Total - Restored);
+    EXPECT_EQ(get(B.MDL + MDLFlagsOffset, 2), MDLPagesLocked);
+    for (uint64_t I = 0; I < Pages; ++I)
+      EXPECT_EQ(get(B.MDL + MDLSize + I * 8), Original[I]);
+    EXPECT_FALSE(take(Memory->canAccess(B.Alias, 1, Read)));
+    EXPECT_FALSE(take(Memory->canAccess(B.Alias + 5 * Page - 1, 1, Read)));
+    rejected(Model->call("MmGetSystemAddressForMdlSafe",
+                         {B.MDL, NormalPagePriority}),
+             "new probe and lock");
+    releaseAdvanceBuffer(B);
+  }
+}
+
+TEST_F(KernelMDLChain, AdvanceMdlReservesAndRetiresEntireSystemMapping) {
+  constexpr uint64_t Page = profile::PageSize;
+  const auto First = advanceBuffer(0, 4 * Page);
+  call("MmAdvanceMdl", {First.MDL, 2 * Page});
+  const auto Second = advanceBuffer(0, Page);
+  EXPECT_GE(Second.Alias, First.Alias + 4 * Page);
+  put(Second.Alias, 0x72, 1);
+  call("MmUnlockPages", {First.MDL});
+  EXPECT_FALSE(take(Memory->canAccess(First.Alias, 1, Read)));
+  EXPECT_FALSE(take(Memory->canAccess(First.Alias + 3 * Page, 1, Read)));
+  EXPECT_EQ(get(Second.Alias, 1), 0x72u);
+  const auto Third = advanceBuffer(0, Page);
+  EXPECT_EQ(Third.Alias, First.Alias);
+  call("IoFreeMdl", {First.MDL});
+  call("ExFreePool", {First.Pool});
+  releaseAdvanceBuffer(Second);
+  releaseAdvanceBuffer(Third);
+}
+
+TEST_F(KernelMDLChain, AdvanceMdlRejectsReadonlyMetadataBeforeMutation) {
+  const auto Storage =
+      call("ExAllocatePoolWithTag", {0, profile::PageSize, PoolTag});
+  const auto B = advanceBuffer(17, 8193, IoWriteAccess, Storage);
+  auto Before = descriptorBytes(B.MDL);
+  success(Memory->protect(Storage, profile::PageSize, Read));
+  EXPECT_EQ(call("MmAdvanceMdl", {B.MDL, 8193}), StatusInvalidParameter2);
+  rejected(Model->call("MmAdvanceMdl", {B.MDL, 4096}), "writable");
+  EXPECT_EQ(descriptorBytes(B.MDL), Before);
+  success(Memory->protect(Storage, profile::PageSize, Read | Write));
+  call("MmAdvanceMdl", {B.MDL, 4096});
+  Before = descriptorBytes(B.MDL);
+  success(Memory->protect(Storage, profile::PageSize, Read));
+  rejected(Model->call("MmUnmapLockedPages", {B.Alias + 4096, B.MDL}),
+           "writable");
+  rejected(Model->call("MmUnlockPages", {B.MDL}), "writable");
+  EXPECT_EQ(descriptorBytes(B.MDL), Before);
+  EXPECT_TRUE(take(Memory->canAccess(B.Alias + 4096, 1, Read)));
+  success(Memory->protect(Storage, profile::PageSize, Read | Write));
+  releaseAdvanceBuffer(B);
+}
+
+TEST_F(KernelMDLChain, AdvanceMdlReadsTheCountBeforeReturningEndStatus) {
+  const auto Storage =
+      call("ExAllocatePoolWithTag", {0, profile::PageSize, PoolTag});
+  const auto B = advanceBuffer(17, 8193, IoWriteAccess, Storage);
+  const auto Before = descriptorBytes(B.MDL);
+  success(Memory->protect(Storage, profile::PageSize, Write));
+  rejected(Model->call("MmAdvanceMdl", {B.MDL, 8193}), "");
+  rejected(Model->call("MmAdvanceMdl", {B.MDL, 1}), "");
+  success(Memory->protect(Storage, profile::PageSize, Read | Write));
+  EXPECT_EQ(descriptorBytes(B.MDL), Before);
+  call("MmAdvanceMdl", {B.MDL, 4096});
+  const auto Advanced = descriptorBytes(B.MDL);
+  success(Memory->protect(Storage, profile::PageSize, Write));
+  rejected(Model->call("MmUnmapLockedPages", {B.Alias + 4096, B.MDL}),
+           "readable");
+  rejected(Model->call("MmUnlockPages", {B.MDL}), "readable");
+  success(Memory->protect(Storage, profile::PageSize, Read | Write));
+  EXPECT_EQ(descriptorBytes(B.MDL), Advanced);
+  releaseAdvanceBuffer(B);
+}
+
+TEST_F(KernelMDLChain, AdvanceMdlRetainsPinsAndMetadataAcrossUnmapFailure) {
+  Model->enterExecution(Scratch);
+  const auto B = advanceBuffer(0, 8193);
+  call("KeInitializeSpinLock", {B.Alias});
+  const auto Old = call("KfRaiseIrql", {scheduler::DispatchLevel});
+  call("KeAcquireSpinLockAtDpcLevel", {B.Alias});
+  const auto Initial = descriptorBytes(B.MDL);
+  rejected(Model->call("MmAdvanceMdl", {B.MDL, 4096}), "spin lock");
+  EXPECT_EQ(descriptorBytes(B.MDL), Initial);
+  call("KeReleaseSpinLockFromDpcLevel", {B.Alias});
+  call("MmAdvanceMdl", {B.MDL, 4096});
+  call("KeInitializeSpinLock", {B.Alias + 4096});
+  call("KeAcquireSpinLockAtDpcLevel", {B.Alias + 4096});
+  const auto Before = descriptorBytes(B.MDL);
+  rejected(Model->call("MmUnmapLockedPages", {B.Alias + 4096, B.MDL}),
+           "spin lock");
+  rejected(Model->call("MmUnlockPages", {B.MDL}), "spin lock");
+  rejected(Model->call("ExFreePool", {B.Pool}), "");
+  EXPECT_EQ(descriptorBytes(B.MDL), Before);
+  call("KeReleaseSpinLockFromDpcLevel", {B.Alias + 4096});
+  call("KeLowerIrql", {Old});
+  releaseAdvanceBuffer(B);
+}
+
+TEST_F(KernelMDLChain, AdvanceMdlRefusesPartialDependenciesAndNewPartials) {
+  const auto B = advanceBuffer(17, 8193);
+  const auto Child = call("IoAllocateMdl", {B.Pool, 64, 0, 0, 0});
+  call("IoBuildPartialMdl", {B.MDL, Child, B.Pool + 17, 32});
+  const auto Before = descriptorBytes(B.MDL);
+  rejected(Model->call("MmAdvanceMdl", {B.MDL, 4096}), "dependent partial");
+  EXPECT_EQ(descriptorBytes(B.MDL), Before);
+  call("IoFreeMdl", {Child});
+  call("MmAdvanceMdl", {B.MDL, 4096});
+  const auto Other = call("IoAllocateMdl", {B.Pool + 4113, 32, 0, 0, 0});
+  rejected(Model->call("IoBuildPartialMdl", {B.MDL, Other, B.Pool + 4113, 32}),
+           "advanced descriptor");
+  call("IoFreeMdl", {Other});
+  releaseAdvanceBuffer(B);
+}
+
+TEST_F(KernelMDLChain, AdvanceMdlRefusesChainsBeforeAndAfterAdvance) {
+  const auto IRP = begin();
+  const auto B = advanceBuffer(17, 8193);
+  put(IRP + IRPMdlOffset, B.MDL);
+  rejected(Model->call("MmAdvanceMdl", {B.MDL, 4096}), "IRP-owned");
+  put(IRP + IRPMdlOffset, 0);
+  put(B.MDL + MDLNextOffset, B.MDL);
+  rejected(Model->call("MmAdvanceMdl", {B.MDL, 4096}), "unchained");
+  put(B.MDL + MDLNextOffset, 0);
+  call("MmAdvanceMdl", {B.MDL, 4096});
+  put(IRP + IRPMdlOffset, B.MDL);
+  status(IRP);
+  rejected(Model->call("IofCompleteRequest", {IRP, 0}), "advanced MDLs");
+  EXPECT_FALSE(Result.Requests.back().Completed);
+  put(IRP + IRPMdlOffset, 0);
+  releaseAdvanceBuffer(B);
+  complete(IRP);
+}
+
+TEST_F(KernelMDLChain, AdvanceMdlPreservesPoolAndStackDescriptorOwners) {
+  constexpr uint64_t Page = profile::PageSize;
+  Model->enterExecution(Scratch);
+  success(Model->activateStack(Scratch, Page));
+  for (bool OnStack : {false, true}) {
+    const auto Buffer = call("ExAllocatePoolWithTag", {0, 4 * Page, PoolTag});
+    const auto MDL =
+        call("MmCreateMdl", {OnStack ? Scratch + 512 : 0, Buffer + 17, 8193});
+    call("MmProbeAndLockPages", {MDL, KernelMode, IoWriteAccess});
+    call("MmGetSystemAddressForMdlSafe", {MDL, NormalPagePriority});
+    call("MmAdvanceMdl", {MDL, 4097});
+    if (OnStack)
+      rejected(Model->retireStack(Scratch, Page), "unlock");
+    else
+      rejected(Model->call("ExFreePool", {MDL}), "unlock");
+    call("MmUnlockPages", {MDL});
+    if (!OnStack)
+      call("IoFreeMdl", {MDL});
+    call("ExFreePool", {Buffer});
+  }
+  success(Model->retireStack(Scratch, Page));
+}
+
+TEST_F(KernelMDLChain, AdvanceMdlChecksArityIRQLAndZero) {
+  Model->enterExecution(Scratch);
+  const auto B = advanceBuffer(0, 8193);
+  rejected(Model->call("MmAdvanceMdl", {B.MDL}), "argument");
+  rejected(Model->call("MmAdvanceMdl", {B.MDL, 0, 0}), "argument");
+  const auto Before = descriptorBytes(B.MDL);
+  const auto Old = call("KfRaiseIrql", {scheduler::DispatchLevel});
+  EXPECT_EQ(call("MmAdvanceMdl", {B.MDL, 0}), StatusSuccess);
+  EXPECT_EQ(descriptorBytes(B.MDL), Before);
+  call("KfRaiseIrql", {scheduler::DispatchLevel + 1});
+  rejected(Model->call("MmAdvanceMdl", {B.MDL, 4096}), "IRQL");
+  EXPECT_EQ(descriptorBytes(B.MDL), Before);
+  call("KeLowerIrql", {scheduler::DispatchLevel});
+  call("MmAdvanceMdl", {B.MDL, 4096});
+  releaseAdvanceBuffer(B);
+  call("KeLowerIrql", {Old});
+}
+
+TEST_F(KernelMDLChain, AdvanceMdlPreservesLockedPermissionsAfterProtection) {
+  const auto B = advanceBuffer(17, 8193, IoReadAccess);
+  call("MmAdvanceMdl", {B.MDL, 4096});
+  EXPECT_FALSE(take(Memory->canAccess(B.Alias + 4096, 1, Write)));
+  rejected(Model->call("MmProtectMdlSystemAddress", {B.MDL, PageReadWrite}),
+           "write-access contract");
+  EXPECT_EQ(call("MmProtectMdlSystemAddress", {B.MDL, PageNoAccess}),
+            StatusSuccess);
+  EXPECT_FALSE(take(Memory->canAccess(B.Alias + 4096, 1, Read)));
+  EXPECT_EQ(call("MmProtectMdlSystemAddress", {B.MDL, PageReadOnly}),
+            StatusSuccess);
+  EXPECT_TRUE(take(Memory->canAccess(B.Alias + 4096, 1, Read)));
+  rejected(Model->call("MmUnmapLockedPages", {B.Alias, B.MDL}),
+           "live system mapping");
+  releaseAdvanceBuffer(B);
+}
+
+TEST_F(KernelMDLChain, AdvanceMdlRejectsUnsupportedOwnersAndUnmappedBuffers) {
+  const auto MDL = allocate(0, false);
+  rejected(Model->call("MmAdvanceMdl", {MDL, 1}), "standalone probe-locked");
+  call("MmBuildMdlForNonPagedPool", {MDL});
+  rejected(Model->call("MmAdvanceMdl", {MDL, 1}), "standalone probe-locked");
+  call("IoFreeMdl", {MDL});
+  const auto B = advanceBuffer(17, 8193);
+  call("MmUnmapLockedPages", {B.Alias, B.MDL});
+  rejected(Model->call("MmAdvanceMdl", {B.MDL, 1}), "live system mapping");
+  releaseAdvanceBuffer(B);
+  rejected(Model->call("MmAdvanceMdl", {B.MDL, 1}), "live modeled MDL");
+}
+
+TEST_F(KernelMDLChain, AdvanceMdlRejectsCorruptPfnTailBeforeRestoration) {
+  const auto B = advanceBuffer(17, 8193);
+  call("MmAdvanceMdl", {B.MDL, 4096});
+  const auto TailAddress = B.MDL + MDLSize + 2 * profile::PointerSize;
+  const auto Tail = get(TailAddress);
+  success(Memory->writeInteger(TailAddress, Tail & ~(uint64_t(1) << 63), 8));
+  const auto Before = descriptorBytes(B.MDL);
+  rejected(Model->call("MmAdvanceMdl", {B.MDL, 4096}), "PFN-tail");
+  rejected(Model->call("MmUnmapLockedPages", {B.Alias + 4096, B.MDL}),
+           "PFN-tail");
+  EXPECT_EQ(descriptorBytes(B.MDL), Before);
+  EXPECT_TRUE(take(Memory->canAccess(B.Alias + 4096, 1, Read)));
+  success(Memory->writeInteger(TailAddress, Tail, 8));
+  releaseAdvanceBuffer(B);
+}
+
+TEST_F(KernelMDLChain, AdvanceMdlKeepsInitialBorrowProtectedUntilUnlock) {
+  const auto B = advanceBuffer(0, 8193);
+  call("MmAdvanceMdl", {B.MDL, 4096});
+  rejected(Model->call("MmCreateMdl", {B.Pool, Pool, 4}), "borrow");
+  call("MmUnmapLockedPages", {B.Alias + 4096, B.MDL});
+  rejected(Model->call("MmCreateMdl", {B.Pool, Pool, 4}), "borrow");
+  call("MmUnlockPages", {B.MDL});
+  EXPECT_EQ(call("MmCreateMdl", {B.Pool, Pool, 4}), B.Pool);
+  call("IoFreeMdl", {B.MDL});
+  call("ExFreePool", {B.Pool});
+}
 
 TEST_F(KernelMDLChain, CreateMdlPreservesCallerBytesAndRawMetadata) {
   const auto Storage = call("ExAllocatePoolWithTag", {0, 256, PoolTag});

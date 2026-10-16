@@ -97,6 +97,9 @@ KernelModel::mapUserMDL(uint64_t MDL, uint64_t RequestedAddress,
       It->second.Owner == LockedMdl::Ownership::ReleasedPages)
     return userMappingError("user mapping requires a built, live MDL");
   const auto &State = It->second;
+  if (State.Advance)
+    return userMappingError("user mappings of an advanced MDL require "
+                            "unmodeled PFN-tail lifetime support");
   const uint32_t BasePriority =
       Priority & ~(MdlMappingNoWrite | MdlMappingNoExecute);
   if (BasePriority != LowPagePriority && BasePriority != NormalPagePriority &&

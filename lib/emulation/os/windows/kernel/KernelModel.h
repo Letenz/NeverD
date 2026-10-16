@@ -1692,6 +1692,13 @@ private:
     uint64_t AllocationSize = 0;
     uint64_t UserAddress = 0;
     uint32_t ByteCount = 0;
+    struct AdvanceRange {
+      uint64_t OriginalAddress, BackingAddress, MappingBase;
+      uint32_t ByteCount, DroppedPages;
+    };
+    // Advancing the data window does not retire the original pin or alias.
+    std::optional<AdvanceRange> Advance;
+    uint64_t systemMappingBase() const;
     uint64_t Pool = 0;
     uint64_t Pin = 0;
     bool Writable = false;
@@ -1726,6 +1733,8 @@ private:
   llvm::Error probeAndLockPages(uint64_t MDL, uint32_t Mode,
                                 uint32_t Operation);
   llvm::Error unlockPages(uint64_t MDL);
+  llvm::Expected<uint64_t> advanceMDL(uint64_t MDL, uint32_t Bytes);
+  llvm::Error restoreAdvancedMDL(LockedMdl &State);
   llvm::Expected<uint64_t> protectMDLSystemAddress(uint64_t MDL,
                                                    uint32_t Protection);
   llvm::Error freeMDL(uint64_t MDL);

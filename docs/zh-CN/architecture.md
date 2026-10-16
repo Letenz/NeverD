@@ -1817,3 +1817,5 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 `activateStack` 和 `retireStack` 管理 `ExecutionStacks`；查询将该范围绑定到当前 `ExecutionThreadKeys` 身份。再次激活必须保留精确范围，存活栈重叠或回收范围不符在修改前拒绝。共享线程的嵌套执行仍有独立边界。这些环境查询在原生脱壳重建中仍属于不透明依赖。
 
 `LockedMdl::StorageKind` 将描述符存储与页来源分开。池分配和存活执行栈提供精确范围，共用释放预检先核对全部范围，再移除描述符记录。池释放在修改状态前检查写权限。部分 MDL 构建和解锁保留描述符所有者；内核内存借用拒绝与存活 MDL 元数据相交。MmCreateMdl 保留默认不透明脱壳边界。
+
+`LockedMdl::AdvanceRange` 独立保留原始锁定字节范围和系统映射基址，数据窗口可继续推进。别名分配、访问验证、借用与释放都使用该所有者；同一 MDL 层负责 PFN 旋转及恢复，页和描述符存储所有权不变。根据固定版本的生产端及清理端，原页锁保留到清理，不从通用文档推断立即解锁。MmAdvanceMdl 对脱壳重建保持不透明。

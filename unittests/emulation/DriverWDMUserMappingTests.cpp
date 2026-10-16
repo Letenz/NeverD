@@ -127,6 +127,26 @@ TEST(DriverWDMUserMapping,
     }
 }
 
+TEST(DriverWDMUserMapping, AdvancedDescriptorsRestoreTheirOriginalPageOwners) {
+  for (const auto *Image : images())
+    for (uint64_t LoadAddress : {0x180000000ULL, 0x190000000ULL}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(LoadAddress);
+      auto Result =
+          emulateDriver(Image, options(UserMappingAdvanceMdl, LoadAddress));
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      expectLifecycle(*Result, {7, 7, 7, 1});
+      const auto Calls = [&](llvm::StringRef Name) {
+        return std::count_if(
+            Result->Calls.begin(), Result->Calls.end(),
+            [&](const auto &Call) { return Call.Name == Name; });
+      };
+      EXPECT_EQ(Calls("MmAdvanceMdl"), 6);
+      EXPECT_EQ(Calls("MmGetSystemRoutineAddress"), 1);
+      EXPECT_EQ(Calls("MmUnlockPages"), 2);
+    }
+}
+
 TEST(DriverWDMUserMapping, CreatedDescriptorsKeepTheirPoolAndStackOwners) {
   for (const auto *Image : images())
     for (uint64_t LoadAddress : {0x180000000ULL, 0x190000000ULL}) {
