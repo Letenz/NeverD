@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 00509a4718fb83deef9b9430e71183313790e9707bed10468cdbd18f5c715de3 -->
+<!-- i18n-source: 39a521d14dfb31f7e045451a8039cdc180e2e6fabd816f96a0c746ddfa3d19f1 -->
 
 [← 문서 목록](README.md)
 
@@ -1799,7 +1799,7 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 ## 유한 libSystem 가져오기
 
-기본 ISA의 thin 실행 파일은 강한 `/usr/lib/libSystem.B.dylib` 의존성 하나를 바인딩할 수 있습니다. `LC_MAIN`, `MH_TWOLEVEL`, 일반 라이브러리 ordinal 및 1.0 이하 호환 버전 요구가 필요합니다. 원본 classic 포인터 스트림 또는 generic64 체인, 미정의 심볼, 정확한 슬롯과 로컬 rebase를 완전히 검증합니다. 다른 의존성, weak/lazy/threaded 바인딩, 미지원 relocation, 초기화, TLS 및 인증 포인터는 실행 전에 거부합니다.
+기본 ISA의 thin 실행 파일은 강한 `/usr/lib/libSystem.B.dylib` 의존성 하나를 바인딩할 수 있습니다. `LC_MAIN`, `MH_TWOLEVEL`, 일반 라이브러리 ordinal 및 1.0 이하 호환 버전 요구가 필요합니다. 원본 classic 포인터 스트림 또는 generic64 체인, 미정의 심볼, 정확한 슬롯과 로컬 rebase를 완전히 검증합니다. 다른 의존성, weak/threaded 바인딩, 미지원 relocation, 초기화, TLS 및 인증 포인터는 실행 전에 거부합니다.
 
 가져오기가 있을 때만 인증된 진입점과 매 실행의 새 주 스레드 errno를 만듭니다. 래퍼는 Darwin 커널 효과를 공유하며 실패를 `-1`과 errno로 변환하고 성공 시 errno를 보존합니다. C `_exit`는 Mach-O `__exit`이고 C `exit`의 `_exit`는 미지원입니다. 일반 함수는 반환 프레임을 검사하며 종료 함수는 반환 주소가 필요 없습니다. 보고서는 공급자, 링크 이름, 인수 개수와 전체 비트를 유지하고 미완료/비복귀 결과는 null입니다. 기존 raw 보고서는 호환됩니다.
 
@@ -1807,13 +1807,15 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 동일한 독립 작성 객체를 system/classic/chained로 링크하여 실제 libSystem에서 실행합니다. 다섯 플랫폼/ISA의 process/C/CLI/Python과 세 ARM64 HVF profile을 확인합니다. 임의 dylib, dlopen/dlsym, shared cache, 생성자, 스레드, Apple 프레임워크, Intel HVF 및 실제 iOS 검증은 미완료입니다。
 
+classic lazy 포인터는 게스트 진입 전에 해석한다. 각 프로그램은 목적지, 일반 ordinal, 심볼을 독립적으로 지정하며 포인터 형식, 0 addend, DO_BIND 하나와 바로 뒤의 DONE만 허용한다. 이전 상태를 상속하지 않으며 로컬 실행 가능 바이트의 rebase 하나와 같은 슬롯의 lazy bind 하나만 병합한다. 두 원본 레코드 모두 예산에 계산한다. dyld_stub_binder는 실제 lazy 호출에 동반되는 강한 일반 classic bind와 0 addend로만 허용하며, 실행 시 C 프레임·인수 읽기, errno 변경, 호출 기록 전에 실패한다. 런타임 resolver나 dyld 내부 상태는 구현하지 않는다. 여섯 함수의 네이티브 대조군과 게스트가 포인터 안정성, 출력 및 종료 상태를 확인한다.
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
-fixups: classic non-lazy pointer bind/rebase; DYLD_CHAINED_PTR_64 / PTR_64_OFFSET
-unsupported: weak/lazy/threaded streams; authenticated/multi-start chains; other relocations
+fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
+unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
 errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
 SG_READ_ONLY: current R after fixup; original declared maximum is retained
 gates: RX/max RX; errno: RW/max RW; both resident model reservations
@@ -1822,8 +1824,9 @@ preparation timeout: typed Timeout, zero guest work; original format/backend err
 report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
 call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
 basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
-native common catalogue: 82; required methods/platform: 96; matching ARM64 identities: 288
+native common catalogue: 82; required methods/platform: 97; matching ARM64 identities: 291
 ```
 
 ```json

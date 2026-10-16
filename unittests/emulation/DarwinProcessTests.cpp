@@ -4340,6 +4340,66 @@ TEST_P(DarwinProcess, LibSystemImportsPreserveErrnoAndRawKernelAuthority) {
   }
 }
 
+TEST_P(DarwinProcess, ClassicLazyImportsResolveBeforeCallsAndKeepSlotsStable) {
+  Options.InstructionQuantum = 1024;
+  Options.Arguments = {"lazy"};
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->StandardInput.emplace();
+  const auto Linked = std::filesystem::path(Path.string() + "-libsystem-lazy");
+  const char *Names[] = {"___error", "___error", "_getpid", "_getpid", "_write",
+                         "_write",   "_read",    "_close",  "_read",   "_close",
+                         "_getpid",  "_write",   "__exit"};
+  const unsigned Counts[] = {0, 0, 0, 0, 3, 3, 3, 1, 3, 1, 0, 3, 1};
+  const uint64_t Errno =
+      0x00007fffffbf0000ULL +
+      (GetParam().ISA == GuestArchitecture::X64 ? 4096 : 16384);
+  const std::optional<uint64_t> Values[] = {
+      Errno, Errno,      1000,       1000, 3, UINT64_MAX,  0,
+      0,     UINT64_MAX, UINT64_MAX, 1000, 1, std::nullopt};
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = emulateProcess(Linked, GetParam().OS, Options);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 83);
+    EXPECT_FALSE(R->ReturnValue);
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    EXPECT_EQ(R->StandardOutput, std::string("A\0ZS", 4));
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_TRUE(R->Services.empty());
+    EXPECT_EQ(R->Events, 13u);
+    ASSERT_EQ(R->NativeCalls.size(), 13u);
+    for (unsigned I = 0; I != 13; ++I) {
+      const auto &Call = R->NativeCalls[I];
+      EXPECT_EQ(Call.Name, Names[I]);
+      EXPECT_EQ(Call.Module, "/usr/lib/libSystem.B.dylib");
+      EXPECT_EQ(Call.ArgumentCount, Counts[I]);
+      EXPECT_EQ(Call.Result, Values[I]);
+      EXPECT_EQ(Call.ReturnAddress.has_value(), I != 12);
+    }
+  }
+  Options.Arguments.push_back("exit");
+  auto Exit = emulateProcess(Linked, GetParam().OS, Options);
+  ASSERT_TRUE(bool(Exit)) << llvm::toString(Exit.takeError());
+  EXPECT_EQ(Exit->Stop, ProcessStopReason::Exited) << Exit->Diagnostic;
+  EXPECT_EQ(Exit->ExitStatus, 35);
+  EXPECT_EQ(Exit->StandardOutput, "X");
+  ASSERT_EQ(Exit->NativeCalls.size(), 2u);
+  EXPECT_EQ(Exit->NativeCalls.back().Name, "__exit");
+  EXPECT_EQ(Exit->NativeCalls.back().Arguments[0], 0x123u);
+  EXPECT_FALSE(Exit->NativeCalls.back().Result);
+  Options.Arguments.pop_back();
+  Options.Limits.Events = 1;
+  auto Limited = emulateProcess(Linked, GetParam().OS, Options);
+  ASSERT_TRUE(bool(Limited)) << llvm::toString(Limited.takeError());
+  EXPECT_EQ(Limited->Stop, ProcessStopReason::EventLimit);
+  EXPECT_EQ(Limited->Events, 1u);
+  EXPECT_TRUE(Limited->Services.empty());
+  EXPECT_TRUE(Limited->StandardOutput.empty());
+  ASSERT_EQ(Limited->NativeCalls.size(), 1u);
+  EXPECT_EQ(Limited->NativeCalls.front().Name, "___error");
+  EXPECT_EQ(Limited->NativeCalls.front().Result, Errno);
+}
+
 INSTANTIATE_TEST_SUITE_P(Transports, DarwinProcess,
                          testing::ValuesIn(profiles()),
                          [](const testing::TestParamInfo<Profile> &P) {

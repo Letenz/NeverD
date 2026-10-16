@@ -59,6 +59,23 @@ foreach(_darwin_profile macos ios ios-simulator)
         VERBATIM)
       list(APPEND _darwin_outputs "${_darwin_libsystem_output}")
     endforeach()
+    set(_darwin_lazy_output "${_darwin_output}-libsystem-lazy")
+    add_custom_command(OUTPUT "${_darwin_lazy_output}" "${_darwin_lazy_output}.o"
+      COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" "--target=${_darwin_target}"
+        -std=c11 -ffreestanding -fno-builtin -fno-stack-protector
+        -nostdinc -isysroot "${_darwin_fixture_dir}"
+        -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
+        -fno-asynchronous-unwind-tables -O1 -c
+        "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/darwin_libsystem_lazy.c"
+        -o "${_darwin_lazy_output}.o"
+      COMMAND "${NEVERD_PROCESS_LD64}" -arch "${_darwin_arch}"
+        -platform_version "${_darwin_profile}" 14.0 14.0 -e _main
+        -no_fixup_chains "${_darwin_lazy_output}.o"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/darwin_libsystem_lazy.tbd"
+        -o "${_darwin_lazy_output}"
+      DEPENDS fixtures/darwin_libsystem_lazy.c fixtures/darwin_libsystem_lazy.tbd
+      VERBATIM)
+    list(APPEND _darwin_outputs "${_darwin_lazy_output}")
   endforeach()
 endforeach()
 add_custom_target(NeverDDarwinFixtures DEPENDS ${_darwin_outputs})
@@ -97,6 +114,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND NOT CMAKE_CROSSCOMPILING)
   add_dependencies(NeverDDarwinProcessTests NeverDDarwinLibSystemNativeOracle)
   target_compile_definitions(NeverDDarwinProcessTests PRIVATE
     NEVERD_DARWIN_LIBSYSTEM_NATIVE_ORACLE="${_darwin_libsystem_native}")
+  set(_darwin_lazy_native "${_darwin_fixture_dir}/macos-libsystem-lazy-native")
+  add_custom_command(OUTPUT "${_darwin_lazy_native}"
+    COMMAND xcrun clang -arch "${_darwin_native_arch}" -Wl,-no_fixup_chains
+      "${_darwin_fixture_dir}/macos-${_darwin_native_arch}-libsystem-lazy.o"
+      -o "${_darwin_lazy_native}"
+    DEPENDS "${_darwin_fixture_dir}/macos-${_darwin_native_arch}-libsystem-lazy.o"
+    VERBATIM)
+  add_custom_target(NeverDDarwinLazyNativeOracle DEPENDS "${_darwin_lazy_native}")
+  add_dependencies(NeverDDarwinProcessTests NeverDDarwinLazyNativeOracle)
+  target_compile_definitions(NeverDDarwinProcessTests PRIVATE
+    NEVERD_DARWIN_LAZY_NATIVE_ORACLE="${_darwin_lazy_native}")
 endif()
 if(TARGET NeverDProcessPublicTests)
   add_dependencies(NeverDProcessPublicTests NeverDDarwinFixtures)

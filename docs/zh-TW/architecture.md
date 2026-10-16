@@ -1649,6 +1649,8 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `MachOProgramLinking` 擁有嚴格原始 classic/generic64 事實、完整未定義符號閉合與準備預算。Darwin 進程管理庫/符號准入、指標發布、fixup 後唯讀、libSystem 入口與 errno。`DarwinLibSystemCalls.def` 將精確名稱和參數數量繫結到 `DarwinServices` 核心效果，不捏造原始 trap。`DarwinMemory` 管理保留頁與原始最大權限；`ExecutionBudget` 共用期限，`ProcessReport` 輸出可選 `darwin.native_calls`，不載入宿主庫。
 
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
 ### 循序執行範圍內的原始比較交換
 
 `SymExec` 負責獲准的原始 `ATOMIC_CMPXCHG` 的值語義：發佈輸出前擷取位址、預期值、目標值及舊值，再一次提交 `ite(Old == Expected, Desired, Old)`。`SymState` 負責該次寫入的位元組效果、別名失效及保存預算。`InterpreterSpecialization` 負責接納與來源：Old 使用寫入前的記憶體來源；條件寫入保守合併 Old、預期值與目標值的來源，並撤銷可能重疊的仿射溢出儲存事實。即使比較失敗，也須證明完整寫入範圍與受保護返回單元分離。殘餘程式保留原子操作、記憶體順序及發生次數；拒絕時不發佈部分殘餘 CFG。

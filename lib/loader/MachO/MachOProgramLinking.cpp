@@ -31,10 +31,11 @@ class Reader {
   uint64_t Limit, RecordLimit;
   llvm::function_ref<llvm::Error()> CheckPreparation;
   std::vector<segment_command_64> Segments;
-  std::set<uint64_t> Slots;
+  std::map<uint64_t, size_t> Slots;
   using Identity = std::tuple<std::string, int32_t, bool>;
   std::set<Identity> Undefined, Bound;
   uint64_t HeaderAddress = 0;
+  uint64_t RawFixups = 0;
 
 public:
   MachOProgramLinking Out;
@@ -83,12 +84,11 @@ public:
     return S.vmaddr + Offset;
   }
   llvm::Error add(MachOProgramFixup Fixup) {
-    if (Out.Fixups.size() >= RecordLimit)
+    if (RawFixups >= RecordLimit)
       return failure("too many fixup records");
     if (auto E = charge(2 * sizeof(Fixup) + 160))
       return E;
-    if (!Slots.insert(Fixup.Address).second)
-      return failure("duplicate or overlapping fixup destination");
+    ++RawFixups;
     if (Fixup.Bind) {
       if (Fixup.LibraryOrdinal <= 0 ||
           uint64_t(Fixup.LibraryOrdinal) > Out.Dependencies.size())
@@ -107,6 +107,22 @@ public:
       if (!Mapped)
         return failure("rebase target is not a local mapped address");
     }
+    if (auto Previous = Slots.find(Fixup.Address); Previous != Slots.end()) {
+      auto &Original = Out.Fixups[Previous->second];
+      if (Original.Origin != MachOProgramFixupOrigin::ClassicRebase ||
+          Original.Bind || !Fixup.Bind ||
+          Fixup.Origin != MachOProgramFixupOrigin::ClassicLazyBind)
+        return failure("duplicate or overlapping fixup destination");
+      const bool Executable = llvm::any_of(Segments, [&](const auto &S) {
+        return (S.initprot & VM_PROT_EXECUTE) && Original.Target >= S.vmaddr &&
+               Original.Target - S.vmaddr < S.filesize;
+      });
+      if (!Executable)
+        return failure("lazy rebase target is not local executable bytes");
+      Original = std::move(Fixup);
+      return llvm::Error::success();
+    }
+    Slots.emplace(Fixup.Address, Out.Fixups.size());
     Out.Fixups.push_back(std::move(Fixup));
     return llvm::Error::success();
   }
@@ -121,8 +137,8 @@ public:
   }
   llvm::Error stream(llvm::ArrayRef<uint8_t> Data, bool Bind) {
     const auto *P = Data.begin(), *End = Data.end();
-    // Ordinary streams start with an unset type. Only lazy bindings have an
-    // implicit pointer type; that separate format is not admitted here.
+    // Ordinary streams start with an unset type. Lazy programs have their own
+    // implicit pointer type and independent per-program state below.
     unsigned Segment = UINT32_MAX, Type = 0;
     uint64_t Offset = 0;
     int32_t Ordinal = 0;
@@ -137,7 +153,7 @@ public:
       return llvm::Error::success();
     };
     auto Emit = [&](uint64_t Count, uint64_t Skip) -> llvm::Error {
-      if (Type != 1 || Count > RecordLimit - Out.Fixups.size() ||
+      if (Type != 1 || Count > RecordLimit - RawFixups ||
           Skip > UINT64_MAX - 8 ||
           (Count && (Count - 1) > (UINT64_MAX - Offset) / (8 + Skip)))
         return failure(
@@ -149,6 +165,8 @@ public:
         MachOProgramFixup F;
         F.Address = *Address;
         F.Bind = Bind;
+        F.Origin = Bind ? MachOProgramFixupOrigin::ClassicBind
+                        : MachOProgramFixupOrigin::ClassicRebase;
         if (Bind) {
           if (Name.empty())
             return failure("binding has no symbol");
@@ -318,6 +336,116 @@ public:
     }
     return failure("unterminated fixup stream");
   }
+  llvm::Error lazy(llvm::ArrayRef<uint8_t> Data) {
+    const auto *P = Data.begin(), *End = Data.end();
+    unsigned Segment = UINT32_MAX;
+    uint64_t Offset = 0;
+    int32_t Ordinal = 0;
+    std::string Name;
+    bool HasOrdinal = false, HasFields = false, Emitted = false;
+    while (P < End) {
+      if (auto E = check())
+        return E;
+      const uint8_t Byte = *P++, Op = Byte & 0xf0, Imm = Byte & 0xf;
+      if (!Op) {
+        if (Byte)
+          return failure("invalid lazy bind terminator");
+        if (!Emitted) {
+          if (HasFields || llvm::any_of(llvm::ArrayRef(P, End),
+                                        [](uint8_t B) { return B != 0; }))
+            return failure("incomplete lazy bind program");
+          return llvm::Error::success();
+        }
+        Segment = UINT32_MAX;
+        Offset = 0;
+        Ordinal = 0;
+        Name.clear();
+        HasOrdinal = HasFields = Emitted = false;
+        continue;
+      }
+      if (Emitted)
+        return failure("lazy bind must be followed immediately by DONE");
+      HasFields = true;
+      switch (Op) {
+      case BIND_OPCODE_SET_DYLIB_ORDINAL_IMM:
+        Ordinal = Imm;
+        HasOrdinal = true;
+        break;
+      case BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB: {
+        if (Imm)
+          return failure("invalid lazy ordinal opcode");
+        auto N = uleb(P, End);
+        if (!N)
+          return N.takeError();
+        if (*N > INT32_MAX)
+          return failure("dependency ordinal overflows");
+        Ordinal = *N;
+        HasOrdinal = true;
+        break;
+      }
+      case BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM: {
+        if (Imm)
+          return failure("unsupported lazy binding symbol flags");
+        auto S = string(llvm::ArrayRef(P, End), 0);
+        if (!S)
+          return S.takeError();
+        P += S->size() + 1;
+        Name = std::move(*S);
+        break;
+      }
+      case BIND_OPCODE_SET_TYPE_IMM:
+        if (Imm != BIND_TYPE_POINTER)
+          return failure("unsupported lazy pointer type");
+        break;
+      case BIND_OPCODE_SET_ADDEND_SLEB: {
+        if (Imm)
+          return failure("invalid lazy addend opcode");
+        unsigned Size = 0;
+        const char *Error = nullptr;
+        const auto Addend = llvm::decodeSLEB128(P, &Size, End, &Error);
+        if (Error || !Size)
+          return failure("invalid SLEB128");
+        P += Size;
+        if (Addend)
+          return failure("nonzero lazy addends are unsupported");
+        break;
+      }
+      case BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB: {
+        Segment = Imm;
+        auto N = uleb(P, End);
+        if (!N)
+          return N.takeError();
+        Offset = *N;
+        break;
+      }
+      case BIND_OPCODE_DO_BIND: {
+        if (Imm || Segment == UINT32_MAX || !HasOrdinal || Name.empty())
+          return failure(
+              "lazy bind requires its own destination, ordinal and symbol");
+        auto Address = slot(Segment, Offset);
+        if (!Address)
+          return Address.takeError();
+        if (auto E = charge(2 * Name.size() + 64))
+          return E;
+        MachOProgramFixup F;
+        F.Address = *Address;
+        F.Symbol = Name;
+        F.LibraryOrdinal = Ordinal;
+        F.Bind = true;
+        F.Origin = MachOProgramFixupOrigin::ClassicLazyBind;
+        if (auto E = add(std::move(F)))
+          return E;
+        Emitted = true;
+        break;
+      }
+      default:
+        return failure("unsupported lazy binding opcode");
+      }
+    }
+    if (HasFields || Emitted)
+      return failure("unterminated lazy bind program");
+    return llvm::Error::success();
+  }
   llvm::Error chains(llvm::ArrayRef<uint8_t> Data);
   llvm::Error read();
 };
@@ -423,6 +551,7 @@ llvm::Error Reader::chains(llvm::ArrayRef<uint8_t> Data) {
         MachOProgramFixup F;
         F.Address = *Address;
         F.Bind = Raw >> 63;
+        F.Origin = MachOProgramFixupOrigin::Chained;
         if (F.Bind) {
           const uint64_t Index = Raw & 0xffffff;
           if (Index >= Table.size() || ((Raw >> 32) & 0x7ffff))
@@ -604,8 +733,8 @@ llvm::Error Reader::read() {
     }
   }
   if (Classic) {
-    if (Classic->weak_bind_size || Classic->lazy_bind_size)
-      return failure("weak/lazy binding streams are unsupported");
+    if (Classic->weak_bind_size)
+      return failure("weak binding streams are unsupported");
     for (const auto &[Offset, Size, Bind] :
          {std::tuple{Classic->rebase_off, Classic->rebase_size, false},
           std::tuple{Classic->bind_off, Classic->bind_size, true}}) {
@@ -615,6 +744,13 @@ llvm::Error Reader::read() {
       if (!Data)
         return Data.takeError();
       if (auto E = stream(*Data, Bind))
+        return E;
+    }
+    if (Classic->lazy_bind_size) {
+      auto Data = bytes(Classic->lazy_bind_off, Classic->lazy_bind_size);
+      if (!Data)
+        return Data.takeError();
+      if (auto E = lazy(*Data))
         return E;
     }
   }

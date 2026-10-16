@@ -4637,6 +4637,82 @@ TEST_P(DarwinLibSystemPublic, ImportedCallsKeepErrnoAndReportsAcrossCAndCLI) {
   }
 #endif
 }
+TEST_P(DarwinLibSystemPublic,
+       ClassicLazyCallsKeepSlotsErrnoAndReportsAcrossCAndCLI) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const auto &[File, Profile] = GetParam();
+  Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) /
+          (std::string(File) + "-libsystem-lazy"))
+             .string();
+  const char *Names[] = {"___error", "___error", "_getpid", "_getpid", "_write",
+                         "_write",   "_read",    "_close",  "_read",   "_close",
+                         "_getpid",  "_write",   "__exit"};
+  for (bool Terminal : {false, true}) {
+    llvm::json::Array Args{"lazy"};
+    if (Terminal)
+      Args.push_back("exit");
+    const auto Options = jsonText(llvm::json::Object{
+        {"backend", "unicorn"},
+        {"instruction_quantum", 1024},
+        {"timeout_microseconds", 5000000},
+        {"arguments", std::move(Args)},
+        {"darwin_files", llvm::json::Object{{"files", llvm::json::Array{}},
+                                            {"stdin_hex", ""}}}});
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Report));
+      const auto *O = Report->getAsObject();
+      ASSERT_NE(O, nullptr);
+      EXPECT_EQ(O->getInteger(field::Version), 1);
+      EXPECT_EQ(O->getString(field::Stop), "exited")
+          << O->getString(field::Diagnostic).value_or("").str();
+      EXPECT_EQ(O->getInteger(field::ExitStatus), Terminal ? 35 : 83);
+      EXPECT_EQ(O->getString(field::Stdout), Terminal ? "58" : "41005a53");
+      EXPECT_EQ(O->getString(field::Stderr), "");
+      EXPECT_EQ(O->getString(field::Backend), "unicorn");
+      ASSERT_NE(O->getArray(field::Services), nullptr);
+      EXPECT_TRUE(O->getArray(field::Services)->empty());
+      const auto *Darwin = O->getObject(field::Darwin);
+      ASSERT_NE(Darwin, nullptr);
+      const auto *Calls = Darwin->getArray(field::NativeCalls);
+      ASSERT_NE(Calls, nullptr);
+      ASSERT_EQ(Calls->size(), Terminal ? 2u : 13u);
+      for (unsigned I = 0; I != Calls->size(); ++I) {
+        const auto *Call = (*Calls)[I].getAsObject();
+        ASSERT_NE(Call, nullptr);
+        EXPECT_EQ(Call->getString(field::Module), "/usr/lib/libSystem.B.dylib");
+        EXPECT_EQ(Call->getString(field::Name),
+                  Terminal ? (I ? "__exit" : "_write") : Names[I]);
+      }
+      EXPECT_EQ(Calls->back().getAsObject()->get(field::Result)->kind(),
+                llvm::json::Value::Null);
+      if (!Terminal) {
+        EXPECT_EQ((*Calls)[0].getAsObject()->getString(field::Result),
+                  (*Calls)[1].getAsObject()->getString(field::Result));
+        EXPECT_EQ((*Calls)[5].getAsObject()->getString(field::Result),
+                  "ffffffffffffffff");
+        EXPECT_EQ((*Calls)[6].getAsObject()->getString(field::Result), "0");
+      }
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+      if (!Repeat) {
+        EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),
+                  process_cli::GuestFailure);
+        ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
+      }
+    }
+  }
+#endif
+}
 INSTANTIATE_TEST_SUITE_P(
     Platforms, DarwinLibSystemPublic,
     testing::Values(std::pair{"macos-arm64", MacOSMachO64},
