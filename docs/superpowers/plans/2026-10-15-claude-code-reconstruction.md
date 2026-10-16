@@ -298,6 +298,35 @@ AppContainer TEMP beneath the supplied disposable HOME. Neither observation is
 silently normalized away. The standalone CI extractor was compared with every
 NeverD module row before use. Original executables are fetched from a published,
 hash-pinned package inside the runner; source and executables are not uploaded
-as workflow artifacts. The remaining 22 offline behavior cases are in progress.
-Wine startup failures remain recorded; native results do not depend on Wine.
-The overall goal remains open.
+as workflow artifacts. Both Windows architectures now also pass all 22 offline
+behavior cases, completing the same 29-case configuration/behavior matrix as
+the six macOS/Linux distributions. The final native run at
+[`36fd64388c5e7fcc44276979d4e254d423b1501b`](https://github.com/gmh5225/test_mac_intel/actions/runs/38795636890)
+passes both jobs. The reusable Windows environment is available in
+[test_mac_intel PR #1](https://github.com/gmh5225/test_mac_intel/pull/1).
+
+Authored child-process probes isolated Bun's ignored-stdio failure to the
+AppContainer SID lacking access to the NUL device. A per-profile handle ACL
+grant, removed after descendant collection, fixes that boundary without
+granting internet capabilities. The loopback exception also belongs only to
+the fresh profile and is removed after each invocation. Permission checks
+account for the original client's Windows path canonicalization. Differential
+comparison retains generated pipe identities with an audited bijection and
+distinguishes missing JSON fields from null; all substantive protocol fields,
+request bodies, exit codes and filesystem oracles remain checked.
+
+The Windows v2 deliveries include the exact accepted CI sources, receipts,
+source navigation and fixed build dependencies. A new clean build from each
+delivery reproduces the accepted native hash. Every delivered file is covered
+by a checked inventory; the six earlier platform inventories were rechecked
+without changes. Wine startup failures and earlier fixture failures remain
+recorded separately from passing native observations.
+
+The defined reconstruction acceptance is complete for all eight retained
+distributions: readable anchored source evidence, independent repeatable
+builds, 232 original/rebuilt configuration and behavior case pairs, 26 startup
+case pairs, and loading/materialization checks for 16 retained native addons.
+These bounded results do not recover erased TypeScript information, native
+addon source or the original Bun revision, and do not establish live-service,
+hardware or universal behavioral equivalence. No recovered private source or
+executable is part of this repository change.
