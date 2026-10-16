@@ -26,7 +26,7 @@ bool RegistrationStateSolver::recordSEHUnwindJump(size_t I, const LowOp &Op,
       !hasSEHJumpCapture(State, Jump.Capture))
     return false;
   const auto Value = State.loadCallback(SP->Offset + 4, 4);
-  if (Value.MayBeFrame)
+  if (!Value.isFrameIndependentScalar())
     return false;
   return mergeSEHFrameOutcome(Jump.Resumed[Value], State);
 }

@@ -9,8 +9,9 @@
 #define FILTER_PERSONALITY __except_handler3
 #define FILTER_UNWIND __seh_longjmp_unwind
 #endif
-#define FILTER_REPEATED_JUMP (REGISTRATION_CASE >= 58 && REGISTRATION_CASE <= 63)
-#define FILTER_NESTED_JUMP (REGISTRATION_CASE == 59 || REGISTRATION_CASE == 61 || REGISTRATION_CASE == 63)
+#define FILTER_REPEATED_JUMP (REGISTRATION_CASE >= 58 && REGISTRATION_CASE <= 65)
+#define FILTER_NESTED_JUMP (FILTER_REPEATED_JUMP && (REGISTRATION_CASE & 1))
+#define FILTER_DYNAMIC_VALUE (REGISTRATION_CASE == 64 || REGISTRATION_CASE == 65)
 #if REGISTRATION_CASE == 60 || REGISTRATION_CASE == 61
 #define FILTER_JUMP_VALUE 43
 #define FILTER_RESUME_VALUE 43
@@ -109,7 +110,16 @@ _registration_entry:
 #else
   cmp ebx,6
   jne .Lbad
+#if FILTER_DYNAMIC_VALUE
+  mov ecx,[_registration_iteration]
+  sub ecx,1
+  jnz .Lexpected_value
+  mov ecx,1
+.Lexpected_value:
+  cmp eax,ecx
+#else
   cmp eax,FILTER_RESUME_VALUE
+#endif
   jne .Lbad
 #if REGISTRATION_CASE == 37 || REGISTRATION_CASE == 57 || FILTER_REPEATED_JUMP
   cmp dword ptr [ebp-4],0
@@ -314,7 +324,13 @@ _registration_entry:
   mov [ebp-100],eax
 #endif
 #if FILTER_REPEATED_JUMP
+#if FILTER_DYNAMIC_VALUE
+  mov eax,[_registration_iteration]
+  sub eax,1
+  push eax
+#else
   push FILTER_JUMP_VALUE
+#endif
   lea eax,[ebp-96]
   push eax
   call __longjmpex

@@ -179,7 +179,8 @@ bool RegistrationStateSolver::transferJumpResume(size_t I, Domain &After,
   const auto ParentSP = After.Frame.load(-24, 4).Offset;
   if (Capture == After.JumpCaptures.end() || Buffer.ReturnPC ||
       Buffer.CallbackAddress || Buffer.EntryOffset || Buffer.SEHException ||
-      Value.MayBeFrame || !ParentSP || *ParentSP > Capture->first ||
+      !Value.isFrameIndependentScalar() || !ParentSP ||
+      *ParentSP > Capture->first ||
       !hasSEHJumpCapture(After.Frame, Capture->second) ||
       !Entries.count(Capture->second.ReturnPC) ||
       (After.Callback && (!SEHControls || !validateSEHInvocationBlock(I))) ||

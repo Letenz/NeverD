@@ -266,9 +266,10 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
               (Write && Transfer.read(*Memory.StoredValue).MayBeFrame))
             return false;
           if (!Write) {
-            // Mutable image contents may contain pointer bits. Storage
-            // ownership never turns those bits into an exact frame value.
-            Transfer.write(Op, FrameValue::taint(true));
+            // These runtime bits survive frame relocation. They remain
+            // potentially aliasing pointers, but scalar observations do not
+            // depend on either regenerated private stack's placement.
+            Transfer.write(Op, FrameValue::taint(true, true));
             continue;
           }
         } else if (!Address.Offset || *Address.Offset < *ParentSP ||

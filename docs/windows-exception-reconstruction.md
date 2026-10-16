@@ -350,8 +350,10 @@ queries; a nonreturning nested call requires both a checked jump exit and no
 ordinary return. Different captures, escaping frame values, recurrent selection,
 and escaping searches still require separate complete transfer proofs.
 Scopes without any proved activation remain unsupported.
-Mapped PE data,
-including zero-fill storage, retains its runtime values and access permissions;
+Checked reads from mapped PE data retain their runtime bits as scalar jump
+values, including negative values. They keep possible alias provenance: a
+subsequent dereference or a value mixed with a frame address needs its own proof.
+Mapped PE data, including zero-fill storage, retains its runtime values and access permissions;
 overlapping mappings, import writes and escaping frame pointers refuse.
 
 Ordinary calls from one finally callback to another retain the same physical
