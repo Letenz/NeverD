@@ -1735,6 +1735,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
 
+### Darwin dylib インポートのオフセット
+
+通常の強い dylib インポートは、グローバルポインターと TLS テンプレートで符号付きバイト加算値を扱います。`DarwinImage` がエクスポート先アドレス、ライブラリの配置差分、加算値を一度だけ合成し、オーバーフローと選択した提供元の元セグメント内であることを検査します。ポインター値からアクセス幅は推測しません。libSystem 入口、インポートした TLV 記述子、遅延バインドの加算値はゼロに限ります。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### 逐次 raw 実行での比較交換
 
 `SymExec` は受け入れられた raw `ATOMIC_CMPXCHG` の値の意味論を所有します。出力を書き戻す前にアドレス、期待値、更新値、旧値を取得し、`ite(Old == Expected, Desired, Old)` を一度だけコミットします。`SymState` はその書き込みのバイト効果、エイリアスの無効化、保存予算を担当します。`InterpreterSpecialization` は受け入れと由来を管理します。Old には書き込み前のメモリ由来を使い、条件付き書き込みには Old、期待値、更新値の由来を保守的に統合し、重なり得るアフィンスピルの事実を破棄します。比較が失敗しても、書き込み範囲全体と保護された戻りセルの分離証明が必要です。残余には元の原子操作、メモリ順序、発生回数を保持し、拒否時には部分的な残余 CFG を公開しません。
@@ -1793,3 +1799,7 @@ KernelFileSystem は FILE_OBJECT ごとに provider token を保持します。�
 `KernelModelFileCreate` は既存の `FileOperation` 内でデバイスポインター取得を管理します。名前解決、CREATE パケット、最終解放は通常のファイルオープンと共有します。オブジェクト管理が内部ハンドルからファイル参照を取得し、`queryFileDevice` が関連デバイスを返し、既存のハンドルクローズ継続が CLEANUP を実行します。継続完了後に元のスレッドのクリティカル領域を解放します。公開出力の重なりは内部の参照先を変更しません。
 
 `KernelModelIO` がプロセスプローブのラッパーと私有アタッチの寿命を管理し、共通のプロセスビュー切り替えと通常の MDL プローブを再利用します。私有アタッチはゲスト APC 領域を捏造せず、公開 API のゼロトークンでは解除できません。許可条件と入れ子は既存の所有者が管理します。復元成功後にのみプローブ例外をゲストへ渡し、復元エラーはモデル失敗として残します。
+
+`KernelObjectAPIs.def` が固定コールバックバージョンクエリの識別、引数数、値、IRQL 上限を一元管理します。コールバックレジストリやホスト OS への照会は追加しません。
+
+`KernelPhysicalMemory::resolveAddress` は現在の `MemoryView` を保持中の正確な割り当て範囲と既存のページ識別子に照合し、別名も扱います。`KernelModel` は読み取り権限、プロセス環境、常駐状態を別途検証します。照会は識別子の割り当てやページ固定を行わず、マッピングが残るページの余白で解放済みバイトを復活させません。

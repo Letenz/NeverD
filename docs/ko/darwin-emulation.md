@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 6d44f96afae7f68162fb5f61324f22a7893d7ea9bb0e2df38768afc67bf2c060 -->
+<!-- i18n-source: 2dececbb333d44745a37cffde5543a187cfe8daacdeb237691dae825824997c8 -->
 
 [← 문서 목록](README.md)
 
@@ -1835,7 +1835,7 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
+native common catalogue: 82; required methods/platform: 101; matching ARM64 identities: 303
 ```
 
 ```json
@@ -1860,7 +1860,14 @@ exports: regular / thread-local; ordinary dependency ordinal; rebased actual pro
 TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live contiguous first copy
 resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
 lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
-unsupported: cycles; weak/reexports/resolvers; imported addends; callbacks; dlopen/dlsym; threads
+addends: checked signed ordinary provider offsets; data/TLS initializers; original provider spans only
+unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; callbacks; dlopen/dlsym; threads
 workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
-native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
+native common catalogue: 82; required methods/platform: 101; matching ARM64 identities: 303
 ```
+
+## Darwin dylib 가져오기 오프셋
+
+일반적인 강한 dylib 가져오기는 전역 포인터와 TLS 템플릿에 부호 있는 바이트 가산값을 지원합니다. `DarwinImage`가 내보낸 주소, 라이브러리 배치 차이, 가산값을 한 번만 합성하고 오버플로와 선택한 제공자의 원래 세그먼트 범위를 검사합니다. 포인터 값에서 접근 폭을 추정하지 않습니다. libSystem 진입점, 가져온 TLV 설명자, 지연 바인딩의 가산값은 0이어야 합니다.
+
+원본 O0/O1/O2 classic/chained 네이티브 대조는 출력 없이 종료값 78을 반환합니다. C, CLI, Python은 다섯 프로필을 검증합니다. Intel 네이티브 실행과 실제 iOS 기기는 아직 검증하지 않았습니다.

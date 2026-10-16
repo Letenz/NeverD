@@ -27,6 +27,7 @@ __declspec(dllimport) U8 PsIsThreadTerminating(void *);
 __declspec(dllimport) NTSTATUS PsLookupProcessByProcessId(U64, void **);
 __declspec(dllimport) NTSTATUS PsLookupThreadByThreadId(U64, void **);
 __declspec(dllimport) void *ObGetObjectType(void *);
+__declspec(dllimport) unsigned short ObGetFilterVersion(void);
 __declspec(dllimport) void ObfReferenceObject(void *);
 __declspec(dllimport) void ObfDereferenceObject(void *);
 __declspec(dllimport) NTSTATUS ObReferenceObjectByPointer(void *, U32, void *,
@@ -81,6 +82,7 @@ NTSTATUS DriverEntry(void *Driver, void *Registry) {
   void *ProcessType = ObGetObjectType(Process);
   void *ThreadType = ObGetObjectType(Current);
   CHECK(ProcessType != ThreadType);
+  CHECK(ObGetFilterVersion() == 0x100);
   CHECK(!PsLookupProcessByProcessId(PsGetProcessId(Process), &Lookup));
   CHECK(Lookup == Process);
   ObfDereferenceObject(Lookup);

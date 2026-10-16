@@ -1868,6 +1868,12 @@ python3 scripts/run_lift_qualification.py \
 
 تبني مهمة التحقق الأصلي مراجعة LLVM المثبتة من المصدر، بما في ذلك تصحيح نطاق محددات x64 PLT/AArch64. لا تكفي الحزمة المبنية مسبقًا r4 وحدها للتحقق من مسار استثناءات Clang IR.
 
+## إزاحات استيراد Darwin dylib
+
+يتحقق اختبار `StartupDylibAddendsPreserveDataAndTLSAliasing` من الإزاحتين +8 و-4 وتعديل مؤشر TLS وإعادة تهيئته في عملية جديدة. تغطي الاختبارات C وCLI وPython، ويصبح الجرد المطلوب 101 طريقة لكل ملف تعريف و 303 حالات ARM64 متطابقة؛ يبقى الجرد الأصلي العام 82. الحالات المتعذرة لا تُحسب نجاحاً أصلياً.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ## Ordinary Darwin whole-file lock coverage
 
 `DarwinAdvisoryLockOptions` and `DarwinAdvisoryLockTest` check complete unique initial objects, shared byte budgets, both page sizes, low carriers, action priority, readonly EX, reentry, failed upgrades, downgrade, missing versus empty providers, FD/kind ordering, duplicate/fcntl/dup2 lifetime, descriptor reuse, hardlinks, rename, held zero-name unlink and creation refusal. Real VM mappings and retained Contents cannot keep a closed description’s lock; mode/ownership/data/xattr changes keep independent authority and metadata validity. A contended blocking request stops before model mutation. Strict C/CLI/Python and the original SDK-free77-record workload cover five software and three matching HVF profiles, including empty-provider boundaries. Native-common64 and mandatory79 per platform require all237 matching ARM64 native identities to execute successfully. The720 original ARM64 O0/O1/O2 literal observations comprise522 action and198 namespace/descriptor/VM-lifetime controls. Intel native, physical iOS, external peers and wait lifecycle remain separate unverified coverage. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.
@@ -2067,3 +2073,7 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 تتحقق `KernelDevicePointer.*` من المراجع وتداخل المخرجات وفشل الفتح وحالاته المعلوماتية واستعادة الخيط وAPC بعد CREATE/CLEANUP المعلقة وعرض الوسائط والمشاركة وترتيب الكتابة عند الخطأ والقبول وإلغاء التحميل. تضيف عينتا نظام الملفات الأصلية وWDK الحقيقية أنماط الإكمال الفوري وإكمال CREATE/CLEANUP بواسطة عامل والاحتفاظ بالمرجع حتى إلغاء التحميل، مع البحث الديناميكي. تغطي `KernelFileSystemExecution.*OpensExistingFiles` نمطي الجدولة والعقود وعناوين التحميل؛ وتبقى وسائل التنفيذ غير المتاحة تجاوزات صريحة.
 
 تختبر `KernelMDLUserMapping.ProcessProbe*` عرض الوسائط وتوحيد العملية وIRQL وقبول العمليات الحية وهوية الخيط أثناء الفحص والاستعادة المتداخلة وإعادة المحاولة بعد الأخطاء ونقص الذاكرة أثناء الإرفاق/الاستعادة. تنفذ عينة WDK الحقيقية استدعاءات ثابتة وديناميكية ومعالج استثناء فعلياً بعد الفصل واستدعاءات للعملية المرفقة نفسها ومشاركة الصفحات المادية وتحرير الأقفال بالكامل. تثبت فحوص الغلاف الأصلي ودالة الإنهاء تدفق التحكم بين حدود المساعدات المحقونة صراحةً، ولا تثبت سلوك النواة كاملة.
+
+تختبر `KernelObjects.FilterVersion*` عدد الوسائط الدقيق والنتيجة المستقلة عن المستدعي وحد IRQL للكود القابل للترحيل. تستخدم عينات CRT الأصلية وWDK الحقيقية استيراداً ثابتاً وبحثاً ديناميكياً في الدخول والعامل وإلغاء التحميل، مع الدخول عند APC_LEVEL. تتحقق فحوص التعليمتين الأصليتين من سجل الإرجاع كاملاً وغياب التأثيرات على ذاكرة البيانات بلا مساعدات محقونة.
+
+تختبر `KernelPhysicalRAM.AddressQueries*` و`KernelMDLUserMapping.PhysicalQuery*` الأسماء البديلة وهوية فضاء العناوين وإعادة استخدام VA والحدود وPFN كامل العرض وIRQL وتثبيت الصفحات وإلغاء التعيين. يقارن برنامج اختبار WDK الحقيقي استدعاءات `MmGetPhysicalAddress` الثابتة والديناميكية مع PFN في MDL عبر عروض مستخدم للقراءة فقط وعروض نظام بمستوى DPC وإعادة التعيين مع بقاء اسم بديل مثبت سابقًا.

@@ -284,6 +284,9 @@ the reload after an edit puts the cursor and the view back on a third-page row;
 `codeTextSelectsLikeAnEditor` presses Ctrl+A while pages still arrive and
 after the load, drags beyond the bottom edge until the view scrolls past the
 first page, and right-clicks inside the selection to keep it for Copy;
+`gotoLabelsGoToTheirBlock` double-clicks a goto's label and checks the code
+cursor, the disassembly, Back, and that the label's row maps to its block
+rather than to the statement the engine's rows give it;
 `NeverDWorkerCodeEdits` checks the literal scan
 and type-keeping spellings of `neverd/support/IntegerLiterals.h` for C, Rust
 and Go. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks
@@ -4457,6 +4460,20 @@ becoming one), finally's
 private-frame write, a subsequent exception, and FS:[0] restoration on four
 successive invocations. Original and generated caller PCs are distinguished,
 and each generated image is executed at preferred and forced-rebased addresses.
+
+`RegistrationFrameScalar` checks that exact PE32 frame differences and equality
+preserve their results under relocation, including integer wraparound. Distinct
+frame roots, partial stores, ambiguous joins and ordered comparisons retain
+their conservative provenance. `LowScalarConstant` compares constant multiply
+and shift facts with concrete LowIR execution at 1/2/4/8-byte widths, including
+overflow, zero shifts and saturating counts. Unknown operands and malformed
+widths supply no fact. The native MSVC input owner also checks chain
+observations in `nonlocal_finally_reenter` across `/Od`/`/O2`, `/GS-`/`/GS` and
+raw/optimized projection. The focused Windows EH job runs the complete native
+input owner with its verified MSVC images. Its exact source state does not discharge the separate
+CRT guard retirement obligation; native reconstruction remains rejected while
+that proof is incomplete.
+
 The parameter case reads the real caller argument in both the resumed parent
 and its filter, including the caller-frame slot introduced during outlining.
 The callback cases resume from ordinary finally calls and runtime unwind
@@ -7727,8 +7744,8 @@ checks actual reservation charging and mapping/protection refusal.
 original three-module C workload for all five profiles with classic and chained
 fixups. It checks shared dependencies, duplicate export spellings, relocated data,
 zero-only and initialized TLS, live template mutation and fresh repeated runs.
-The mandatory native inventory now has 100 methods per matching profile, or
-300 matching ARM64 identities; the separate common native catalogue remains 82.
+The mandatory native inventory now has 101 methods per matching profile, or
+303 matching ARM64 identities; the separate common native catalogue remains 82.
 Unavailable transports remain explicit skips. `DarwinNative.StartupDylibsAndTLSMatchOriginalNativeImages`
 compares a system-linked executable and its original libraries with real macOS
 execution. Independent O0/O1/O2 classic/chained controls complement that test.
@@ -7740,6 +7757,27 @@ same explicit catalogue and reports through C and CLI. With
 Run these alongside DarwinImage, linking, memory, existing libSystem calls,
 raw startup and shared process/API regressions before publishing. Guest deadlines
 and event limits are unchanged; native Intel and physical iOS need other hosts.
+
+### Imported Darwin data and TLS pointer offsets
+
+`DarwinAddendFixtures.cmake` builds the original SDK-free C/assembler alias
+workload for all five platform/ISA cells with classic/chained fixups. The +8
+array reference, -4 tail reference and initialized volatile TLS pointer share
+provider storage; the TLS pointer remains changed at exit to check fresh state.
+`DarwinDylibAddends.*` checks original format facts, signed extremes, main-image
+and runtime targets, declared-span versus page padding, and one-byte pointer
+membership. `DarwinDylib.OrdinaryAddendsKeepProviderChoiceWithRepeatedExportSpellings`
+checks ordinal ownership; `NonzeroTLVDescriptorAndLibSystemAddendsRemainExplicitlyRefused`
+retains the exact-entry boundaries.
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` is required on each matching
+native profile. `DarwinNative.StartupDylibAddendsAndTLSTemplatesMatchOriginalImages`
+compares both system-linked formats with original macOS execution; independent
+O0/O1/O2 controls complement it. `DylibAddendsAndTLSPointersKeepIdentityAcrossCAndCLI`
+and the genuine Python `test_darwin_dylib_addends_initialize_data_and_tls_pointers`
+repeat all five profiles. Unavailable hardware remains a skip, with no native
+Intel or physical iOS claim. Common native cases remain 82; required methods
+are 101 per profile, or 303 matching ARM64 identities.
 
 ### Imported Darwin memory calls
 
@@ -7785,3 +7823,7 @@ side-effecting statement without acquiring a Linux syscall contract.
 `KernelDevicePointer.*` checks retained references, overlapping outputs, failed and informational opens, caller/APC restoration across pending CREATE and CLEANUP, argument widths, sharing, output-fault store order, admission and unload. The original and genuine WDK filesystem fixture adds immediate, worker-completed CREATE, worker-completed CLEANUP and unload-held pointer modes, including dynamic lookup. `KernelFileSystemExecution.*OpensExistingFiles` runs both scheduling modes, contracts and image bases; unavailable transports remain explicit skips.
 
 `KernelMDLUserMapping.ProcessProbe*` checks carrier widths, operation normalization, IRQL, live-process admission, thread identity during probing, nested restoration, retry after faults and attachment/restoration shortages. The genuine WDK user-mapping fixture executes static and dynamic calls, a real exception handler after detachment, same-process calls while attached, shared physical pages and complete lock release. Original wrapper/termination-funclet probes establish control flow across explicitly injected helper boundaries, not whole-kernel behavior.
+
+`KernelObjects.FilterVersion*` checks exact arity, caller-independent results and the pageable IRQL boundary. Original and genuine WDK CRT fixtures call the query through static imports and dynamic lookup in entry, worker and unload, with entry at APC_LEVEL. Original two-instruction probes verify the full return carrier and lack of data-memory effects without injected helpers.
+
+`KernelPhysicalRAM.AddressQueries*` and `KernelMDLUserMapping.PhysicalQuery*` cover aliases, address-space identity, VA reuse, exact bounds, full-width PFNs, IRQL, page locks and revoked mappings. The genuine WDK user-mapping fixture compares static/dynamic `MmGetPhysicalAddress` calls with MDL PFNs across read-only user views, DPC-level system views and rebinding while an earlier locked alias survives.

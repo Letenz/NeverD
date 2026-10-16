@@ -1712,6 +1712,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
 
+### Darwin dylib 가져오기 오프셋
+
+일반적인 강한 dylib 가져오기는 전역 포인터와 TLS 템플릿에 부호 있는 바이트 가산값을 지원합니다. `DarwinImage`가 내보낸 주소, 라이브러리 배치 차이, 가산값을 한 번만 합성하고 오버플로와 선택한 제공자의 원래 세그먼트 범위를 검사합니다. 포인터 값에서 접근 폭을 추정하지 않습니다. libSystem 진입점, 가져온 TLV 설명자, 지연 바인딩의 가산값은 0이어야 합니다.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### 순차 raw 실행의 비교 교환
 
 `SymExec`는 허용된 raw `ATOMIC_CMPXCHG`의 값 의미론을 담당합니다. 출력을 게시하기 전에 주소, 기대값, 새 값, 이전 값을 확보하고 `ite(Old == Expected, Desired, Old)`를 한 번 커밋합니다. `SymState`는 해당 쓰기의 바이트 효과, 별칭 무효화와 보존 예산을 담당합니다. `InterpreterSpecialization`은 허용과 출처를 관리합니다. Old에는 쓰기 전 메모리 출처를 사용하고, 조건부 쓰기는 Old·기대값·새 값의 출처를 보수적으로 합치며 겹칠 수 있는 아핀 스필 사실을 무효화합니다. 비교가 실패해도 전체 쓰기 범위와 보호된 반환 셀의 분리를 증명해야 합니다. 잔여 코드에는 원래 원자 연산, 메모리 순서와 발생 횟수를 유지하며, 거부 시 부분 잔여 CFG를 게시하지 않습니다.
@@ -1770,3 +1776,7 @@ KernelFileSystem은 FILE_OBJECT마다 provider token 하나를 유지합니다. 
 `KernelModelFileCreate`는 기존 `FileOperation`에서 장치 포인터 열기를 관리합니다. 이름 확인, CREATE 패킷과 최종 해제는 일반 파일 열기와 공유합니다. 개체 관리자가 내부 핸들로 파일 참조를 얻고 `queryFileDevice`가 관련 장치를 반환하며 기존 핸들 닫기 연속 실행이 CLEANUP을 처리합니다. 완료 후에만 원래 호출 스레드의 임계 영역을 해제합니다. 공개 출력의 겹침은 내부 참조 개체를 바꾸지 않습니다.
 
 `KernelModelIO`가 프로세스 검사 래퍼와 내부 연결 수명을 관리하며 공유 프로세스 뷰 전환과 일반 MDL 검사를 재사용합니다. 내부 연결은 게스트 APC 저장소를 만들어 내지 않으며 공개 API의 0 토큰으로 해제할 수 없습니다. 허용 조건과 중첩은 기존 연결 소유자가 관리합니다. 복원이 성공해야 검사 예외를 게스트에 전달하며 복원 오류는 모델 실패로 유지됩니다.
+
+`KernelObjectAPIs.def`가 고정 콜백 버전 조회의 식별, 인수 개수, 값 및 IRQL 상한을 관리합니다. 콜백 레지스트리나 호스트 운영체제 조회는 추가하지 않습니다.
+
+`KernelPhysicalMemory::resolveAddress`는 현재 `MemoryView`를 보존된 정확한 할당 범위와 기존 페이지 식별자에 대조하며 별칭도 처리합니다. `KernelModel`은 읽기 권한, 프로세스 컨텍스트 및 상주 상태를 별도로 검사합니다. 조회는 식별자나 페이지 잠금을 생성하지 않으며, 매핑이 남은 페이지의 패딩으로 해제된 바이트를 되살리지 않습니다.

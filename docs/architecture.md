@@ -7229,6 +7229,13 @@ fixups and complete undefined-symbol closure. `DarwinImage` resolves the explici
 catalogue into one bounded acyclic graph, checks every dependency edge and
 assigns disjoint placements. Its graph-wide input, metadata, record and resident
 ledgers charge shared nodes once and retain one preparation deadline.
+`MachOProgramLinking` retains the signed addend fact. `DarwinImage` alone
+combines the selected provider export, slide and ordinary import addend,
+rejecting arithmetic overflow/underflow and nonzero targets outside that
+provider's original mapped segments. It checks pointer-value membership without
+inferring a pointee width. These prepared values also relocate TLS template
+pointers before `DarwinTLS` copies their live bytes. Imported TLV descriptors,
+libSystem gates and classic lazy programs require zero addends.
 `DarwinTLSPreparation` admits exact descriptors and contiguous template storage,
 publishes keys and physically maps charged TLS reservations before execution.
 `DarwinTLS` alone owns main-thread instantiation and the authenticated TLV return:
@@ -7420,3 +7427,7 @@ capture failures cannot replace the original service outcome.
 `KernelModelFileCreate` owns device-pointer opens within the existing `FileOperation`. Namespace resolution, CREATE packets and final release share the ordinary file-open owner. The object manager acquires the file reference through the private handle; `queryFileDevice` supplies the related device, and the existing handle-close continuation performs CLEANUP. The original caller releases its critical region only after that continuation completes. Public output overlap cannot replace the private referenced object.
 
 `KernelModelIO` owns the process-probe wrapper and private attachment lifetime. It reuses the shared process-view switch and ordinary MDL probe; private attachments have no fabricated guest APC storage and cannot be detached with a public zero token. The ordinary attachment owner retains admission and nesting. A probe exception reaches the guest only after successful restoration; restoration errors remain model failures.
+
+`KernelObjectAPIs.def` owns the fixed callback-version query’s identity, arity, value and IRQL ceiling. No callback registry or host operating-system query is introduced.
+
+`KernelPhysicalMemory::resolveAddress` matches the current `MemoryView` to exact retained allocation slices and existing page identities, including aliases. `KernelModel` separately admits readable mappings, process context and residency. A query neither allocates an identity nor pins a page; surviving mapped page padding cannot revive retired bytes.

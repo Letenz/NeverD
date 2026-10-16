@@ -71,6 +71,21 @@ protected:
   }
 };
 
+TEST_F(KernelObjects, FilterVersionHasExactArityAndPagedCodeAdmission) {
+  EXPECT_EQ(call("ObGetFilterVersion", {}), 0x100u);
+  EXPECT_FALSE(fail("ObGetFilterVersion", {0}).empty());
+  ok(Model->setUserRequestContext(true, 0x2000));
+  EXPECT_EQ(call("ObGetFilterVersion", {}), 0x100u);
+  EXPECT_EQ(call("KfRaiseIrql", {1}), 0u);
+  EXPECT_EQ(call("ObGetFilterVersion", {}), 0x100u);
+  EXPECT_EQ(call("KfRaiseIrql", {2}), 1u);
+  EXPECT_NE(fail("ObGetFilterVersion", {}).find("IRQL"), std::string::npos);
+  call("KeLowerIrql", {1});
+  EXPECT_EQ(call("ObGetFilterVersion", {}), 0x100u);
+  call("KeLowerIrql", {0});
+  EXPECT_FALSE(fail("ObRegisterCallbacks", {0, 0}).empty());
+}
+
 TEST_F(KernelObjects, LookupDoesNotInventProcessesOrOverwriteUnknownIDs) {
   write(Scratch, 0x11223344);
   for (const uint64_t ID : {0ULL, 8ULL, 0x1000ULL, 0x100000004ULL}) {

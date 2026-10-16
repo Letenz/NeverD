@@ -775,3 +775,7 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 [`IoGetDeviceObjectPointer`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-iogetdeviceobjectpointer) 在 PASSIVE_LEVEL 且特殊核心 APC 啟用時開啟已宣告的現有檔案。採用不區分大小寫的名稱、內部核心控制代碼、讀寫共用及非同步非目錄開啟。傳回的檔案參考保留裝置，呼叫端以 `ObfDereferenceObject` 釋放。先寫檔案輸出，再寫裝置輸出，重疊指標亦遵循此順序。CREATE 和內部控制代碼 CLEANUP 可暫止，原呼叫執行緒保持臨界區直到兩者完成。裸裝置或磁碟區開啟、已掛載 VPB、檔案延伸路由及未知提供者仍不支援。
 
 `MmProbeAndLockProcessPages` 在 IRQL <= APC_LEVEL 時重用現有 MDL 探測。模式取低位元組；操作取低 32 位元，零表示讀取，其餘值均表示寫入。同處理程序呼叫無需附加；跨處理程序呼叫沿用工作項目/系統執行緒限制，目標必須是已知、存活且仍有請求的使用者處理程序。私有附加在成功或探測例外後還原原處理程序，保留執行緒身分與先前模式。還原失敗會明確停止。前景跨處理程序附加及任意處理程序物件仍不支援。WDK 將此常式保留給系統使用。
+
+`ObGetFilterVersion` 傳回固定設定的物件回呼註冊 ABI 版本 `0x100`，不接收參數，也不持有物件參考。此可分頁查詢在本設定中僅允許 IRQL <= APC_LEVEL。它只查詢版本；回呼註冊與傳遞仍不支援。
+
+`MmGetPhysicalAddress` 透過目前映射查詢可讀且存活的非分頁集區、獨立實體頁面和已鎖定 RAM。使用者檢視保留既有行程及 IRQL 限制。結果採用既有完整位寬實體身分與位元組偏移；未知駐留狀態、填補、撤銷檢視及已釋放位元組均明確拒絕。此介面不提供 DMA 位址，也不實作 `MmGetVirtualForPhysical`。

@@ -1514,6 +1514,61 @@ TEST(DarwinNative, StartupDylibsAndTLSMatchOriginalNativeImages) {
 #endif
 }
 
+TEST(DarwinNative, StartupDylibAddendsAndTLSTemplatesMatchOriginalImages) {
+#if !defined(NEVERD_DARWIN_ADDENDS_NATIVE_CLASSIC) ||                          \
+    !defined(NEVERD_DARWIN_ADDENDS_NATIVE_CHAINED)
+  GTEST_SKIP() << "native Darwin reference requires a macOS build host";
+#else
+  llvm::SmallString<128> Temporary;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-dylib-addends", Temporary));
+  const std::filesystem::path Root(Temporary.str().str());
+  bool Passed = false;
+  auto Cleanup = llvm::scope_exit([&] {
+    if (Passed)
+      std::filesystem::remove_all(Root);
+  });
+  unsigned Index = 0;
+  for (const std::string Program : {NEVERD_DARWIN_ADDENDS_NATIVE_CLASSIC,
+                                    NEVERD_DARWIN_ADDENDS_NATIVE_CHAINED}) {
+    SCOPED_TRACE(Program);
+    const auto Output = (Root / ("stdout-" + std::to_string(Index))).string();
+    const auto Error = (Root / ("stderr-" + std::to_string(Index++))).string();
+    const std::optional<llvm::StringRef> Redirects[] = {llvm::StringRef(),
+                                                        Output, Error};
+    std::string LaunchError;
+    bool ExecutionFailed = false;
+    const auto Status =
+        llvm::sys::ExecuteAndWait(Program, {Program}, std::nullopt, Redirects,
+                                  5, 0, &LaunchError, &ExecutionFailed);
+    ASSERT_FALSE(ExecutionFailed) << LaunchError;
+    auto Out = llvm::MemoryBuffer::getFile(Output),
+         Err = llvm::MemoryBuffer::getFile(Error);
+    ASSERT_TRUE(bool(Out));
+    ASSERT_TRUE(bool(Err));
+    ASSERT_EQ(Status, 78) << (*Err)->getBuffer().str();
+    EXPECT_TRUE((*Out)->getBuffer().empty());
+    EXPECT_TRUE((*Err)->getBuffer().empty());
+    ProcessOptions Options;
+    Options.Backend = ExecutionBackendKind::Unicorn;
+    Options.InstructionQuantum = 1024;
+    const auto Directory = std::filesystem::path(Program).parent_path();
+    Options.Darwin =
+        DarwinProcessOptions{{{"@loader_path/libneverd-addends.dylib",
+                               Directory / "libneverd-addends.dylib"}}};
+    auto Guest = emulateProcess(Program, ProcessProfile::MacOSMachO64, Options);
+    ASSERT_TRUE(bool(Guest)) << llvm::toString(Guest.takeError());
+    EXPECT_EQ(Guest->Stop, ProcessStopReason::Exited) << Guest->Diagnostic;
+    EXPECT_EQ(Guest->ExitStatus, Status);
+    EXPECT_EQ(Guest->StandardOutput, (*Out)->getBuffer());
+    EXPECT_TRUE(Guest->StandardError.empty());
+    EXPECT_TRUE(Guest->Services.empty());
+    EXPECT_GT(Guest->NativeCalls.size(), 1u);
+  }
+  Passed = !HasFailure();
+#endif
+}
+
 TEST(DarwinNative, DirectoryOwnershipWorkloadMatchesOwnedNativeObjectLifetime) {
 #ifndef NEVERD_DARWIN_NATIVE_ORACLE
   GTEST_SKIP() << "native Darwin reference requires a macOS build host";

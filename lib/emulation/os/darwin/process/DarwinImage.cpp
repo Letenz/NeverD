@@ -270,9 +270,8 @@ class ImageGraph {
             Out.Imports.emplace(Target, *Binding);
           }
         } else {
-          if (F.WeakImport || F.Addend)
-            return failure(
-                "Darwin weak imports and imported addends are unsupported");
+          if (F.WeakImport)
+            return failure("Darwin weak imports are unsupported");
           const auto &Library = Nodes[Provider];
           auto Export = Library.Exports.find(F.Symbol);
           if (Export == Library.Exports.end())
@@ -281,6 +280,38 @@ class ImageGraph {
                 "Darwin dylib has no exported symbol: " +
                     llvm::Twine(F.Symbol));
           Target = Export->second.Address + Library.Bias;
+          if (F.Addend) {
+            if (Export->second.ThreadLocal)
+              return failure("Darwin TLS import addends are unsupported");
+            // Compute the magnitude without negating INT64_MIN.
+            const uint64_t Amount = F.Addend > 0
+                                        ? uint64_t(F.Addend)
+                                        : uint64_t(-(F.Addend + 1)) + 1;
+            if (F.Addend > 0) {
+              if (Amount > UINT64_MAX - Target)
+                return failure(
+                    "Darwin imported addend overflows its provider address");
+              Target += Amount;
+            } else {
+              if (Amount > Target)
+                return failure(
+                    "Darwin imported addend underflows its provider address");
+              Target -= Amount;
+            }
+            bool Mapped = false;
+            for (const auto &Segment : Library.Loaded.Image.Segments) {
+              if (auto E = check())
+                return E;
+              const uint64_t Begin = Segment.VA + Library.Bias;
+              if (Target >= Begin && Target - Begin < Segment.Size) {
+                Mapped = true;
+                break;
+              }
+            }
+            if (!Mapped)
+              return failure(
+                  "Darwin imported addend target is outside its provider");
+          }
         }
       }
       Out.Fixups.push_back({F.Address + N.Bias, Target});
