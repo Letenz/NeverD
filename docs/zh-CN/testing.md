@@ -2012,3 +2012,5 @@ KernelFileObjectTests 与 KernelObjectTests 覆盖带类型的指针打开、类
 `KernelDevicePointer.*` 检查引用保留、输出重叠、失败及信息状态打开、挂起 CREATE/CLEANUP 后的调用方与 APC 恢复、参数宽度、共享、输出故障写入顺序、准入和卸载。原始及真实 WDK 文件系统样例增加立即完成、工作项完成 CREATE、工作项完成 CLEANUP 和保留指针到卸载四种模式，包含动态查找。`KernelFileSystemExecution.*OpensExistingFiles` 覆盖两种调度模式、执行契约和装载基址；不可用传输仍明确跳过。
 
 `KernelMDLUserMapping.ProcessProbe*` 检查参数位宽、操作归一化、IRQL、存活进程准入、探测期间线程身份、嵌套恢复、异常后重试及附加/恢复内存不足。真实 WDK 用户映射样例执行静态和动态调用，验证解除附加后的真实异常处理器、附加状态下的同进程调用、共享物理页和完整锁页释放。原始包装及终止处理函数探针只证明显式注入辅助调用边界间的控制流，不代表整个内核行为。
+
+`KernelObjects.FilterVersion*` 检查严格参数数量、与调用者无关的结果及分页 IRQL 边界。原创和真实 WDK CRT 样例在入口、工作线程及卸载阶段使用静态导入和动态查找调用，入口还覆盖 APC_LEVEL。原始两条指令的探针不注入辅助函数，验证完整返回寄存器及无数据内存副作用。

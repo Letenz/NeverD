@@ -775,3 +775,5 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 [`IoGetDeviceObjectPointer`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-iogetdeviceobjectpointer) 在 PASSIVE_LEVEL 且特殊内核 APC 启用时打开已声明的现有文件。采用不区分大小写的名称、内部内核句柄、读写共享及异步非目录打开。返回的文件引用保留设备，调用方通过 `ObfDereferenceObject` 释放。先写文件输出，再写设备输出，重叠指针也遵守此顺序。CREATE 和内部句柄 CLEANUP 可挂起，原调用线程的临界区保持到两者完成。裸设备或卷打开、已挂载 VPB、文件扩展路由及未知提供方仍不支持。
 
 `MmProbeAndLockProcessPages` 在 IRQL <= APC_LEVEL 时复用现有 MDL 探测。模式取低字节；操作取低 32 位，零表示读，其余值均表示写。同进程调用无需附加；跨进程调用沿用工作项/系统线程限制，目标必须是已知、存活且仍有请求的用户进程。私有附加在成功或探测异常后恢复原进程，保留线程身份和先前模式。恢复失败会明确停止。前台跨进程附加及任意进程对象仍不支持。WDK 将此例程保留给系统使用。
+
+`ObGetFilterVersion` 返回固定配置的对象回调注册 ABI 版本 `0x100`，不接收参数，也不持有对象引用。该可分页查询在此配置中仅允许 IRQL <= APC_LEVEL。它只查询版本；回调注册与投递仍不支持。
