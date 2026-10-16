@@ -17,6 +17,7 @@
 #define NEVERD_TYPES_TYPEJSON_H
 
 #include "neverd/types/LocalTypes.h"
+#include "neverd/types/TypeFit.h"
 #include "neverd/types/TypeRender.h"
 
 #include "llvm/ADT/StringRef.h"
@@ -53,6 +54,28 @@ llvm::json::Array typeListJSON(const TypeLibrary &Library);
 llvm::json::Object
 typeJSON(const TypeLibrary &Library, const LocalType &Type,
          BuiltinSpelling Spelling = BuiltinSpelling::Windows);
+
+/// How an access lands as JSON names it: exact, start, inside, padding or
+/// outside.
+llvm::StringRef accessFitName(AccessFit Fit);
+
+/// Where an access lands (memberAt): `fit`, `path` as C spells it after
+/// `->` (empty for the record itself and its own padding), `memberOffset`,
+/// and for a member `memberSize`, its `type` as C spells it in \p Spelling
+/// and `bitfield` when it is the storage of bitfields.
+llvm::json::Object memberAtJSON(const TypeLibrary &Library, const MemberAt &At,
+                                BuiltinSpelling Spelling);
+
+/// A type a search found (fitTypes): `name`, `kind`, `origin`, `size`, the
+/// `record` the accesses were judged against when it is another type, the
+/// record's `aliases` and `pointerAliases`, `shift` and `shiftPath` where
+/// the pointer points into the record, the counts `exact`,
+/// `exactElements`, `partial`, `padding` and `outside`, `fits` (each
+/// access's landing, memberAtJSON), and where the search text matched:
+/// `matchedName` with `matched` runs as [begin, length] in bytes, and
+/// `matchedMember` with `memberMatched` runs.
+llvm::json::Object typeFitJSON(const TypeLibrary &Library, const TypeFit &Fit,
+                               BuiltinSpelling Spelling);
 
 } // namespace neverd::types
 

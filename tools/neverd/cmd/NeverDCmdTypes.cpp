@@ -556,6 +556,10 @@ int runTypes(neverd_session_t Sess) {
   raw_ostream &Out = File ? *File : outs();
   if (!declare(Sess))
     return 1;
+  if (TypesFit)
+    return runTypesFit(Sess, Out);
+  if (!TypesMember.empty())
+    return runTypesMember(Sess, Out);
   if (TypeNames.empty() && !TypesAll)
     return list(Sess, Out);
   if (TypesLayout)

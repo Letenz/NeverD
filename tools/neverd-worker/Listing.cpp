@@ -20,6 +20,7 @@
 #include <list>
 #include <map>
 #include <set>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -49,6 +50,9 @@ using StringRefsFunction = const char *(*)(neverd_session_t, const char *,
 using StringEncodingsFunction = const char *(*)();
 using SwitchesFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 using DemangleFunction = const char *(*)(const char *);
+using TypeMemberFunction = const char *(*)(neverd_session_t, const char *,
+                                           long long, unsigned long long,
+                                           const char *);
 
 // Listing layout, in characters after the prefix: name, mnemonic and comment
 // columns of a conventional interactive disassembler listing.
@@ -527,6 +531,14 @@ struct Listing::Impl {
   ItemsFunction operandFormatsQuery = nullptr;
   /// The user's operand formats by instruction address, by operand index.
   std::unordered_map<std::uint64_t, std::vector<NumberFormat>> numberFormats;
+  /// neverd_local_type_member_json, which names structure offsets, and what
+  /// it answered for each type, offset and access width, read again with the
+  /// formats.
+  TypeMemberFunction typeMember = nullptr;
+  std::map<std::tuple<std::string, std::int64_t, unsigned>,
+           std::optional<StructLanding>>
+      landings;
+  StructNamer structNamer;
   StringAtFunction stringAtQuery = nullptr;
   DecodeTextFunction decodeText = nullptr;
   /// The user's data items (neverd_items_json) by address: a value, a string
@@ -643,6 +655,13 @@ struct Listing::Impl {
     itemsQuery = engineSymbol<ItemsFunction>("neverd_items_json");
     operandFormatsQuery =
         engineSymbol<ItemsFunction>("neverd_operand_formats_json");
+    typeMember =
+        engineSymbol<TypeMemberFunction>("neverd_local_type_member_json");
+    if (typeMember)
+      structNamer = [this](std::string_view type, std::int64_t offset,
+                           unsigned bytes) {
+        return structLanding(type, offset, bytes);
+      };
     stringAtQuery = engineSymbol<StringAtFunction>("neverd_string_at");
     decodeText = engineSymbol<DecodeTextFunction>("neverd_decode_text_json");
     stringRefs = engineSymbol<StringRefsFunction>("neverd_string_refs_json");
@@ -1408,9 +1427,33 @@ struct Listing::Impl {
     return address < it->first + it->second.size ? &*it : nullptr;
   }
 
+  /// Where a structure offset lands in a local type, as the engine says: a
+  /// member that holds the byte, or the record that holds padding there.
+  std::optional<StructLanding>
+  structLanding(std::string_view type, std::int64_t offset, unsigned bytes) {
+    const auto key = std::make_tuple(std::string(type), offset, bytes);
+    if (const auto known = landings.find(key); known != landings.end())
+      return known->second;
+    std::optional<StructLanding> landing;
+    const auto answer = takeJson(
+        typeMember(session, std::get<0>(key).c_str(), offset, bytes, nullptr));
+    const auto fit =
+        answer.is_object() ? answer.value("fit", std::string()) : std::string();
+    const auto path = answer.is_object() ? answer.value("path", std::string())
+                                         : std::string();
+    // Bytes no member holds are named by the record that holds them, and
+    // the type's own padding by nothing.
+    if (!fit.empty() && fit != "outside" && (fit != "padding" || !path.empty()))
+      landing = StructLanding{path, static_cast<std::int64_t>(jsonCount(
+                                        answer.value("memberOffset", Json())))};
+    landings.emplace(key, landing);
+    return landing;
+  }
+
   /// Read how the user shows instruction operands' numbers.
   void loadNumberFormats() {
     numberFormats.clear();
+    landings.clear();
     if (!operandFormatsQuery)
       return;
     const auto rows = takeJson(operandFormatsQuery(session));
@@ -1426,7 +1469,9 @@ struct Listing::Impl {
         if (formats.size() <= index)
           formats.resize(index + 1);
         formats[index] = {*base, entry.value("negate", false),
-                          entry.value("invert", false)};
+                          entry.value("invert", false),
+                          entry.value("type", std::string()),
+                          entry.value("delta", std::int64_t(0))};
       }
     }
   }
@@ -2662,6 +2707,8 @@ struct Listing::Impl {
     if (const auto formats = numberFormats.find(instruction.address);
         formats != numberFormats.end())
       facts.numberFormats = &formats->second;
+    if (structNamer)
+      facts.structs = &structNamer;
     FrameNamer frame;
     if (body && !body->frame.empty()) {
       frame = [this, body](std::int64_t offset) {
@@ -3577,6 +3624,19 @@ Listing::numberOperands(std::uint64_t address) {
   const auto &instruction = d.instructionOf(*item);
   return formattableOperands(instruction.operands, d.dialect);
 }
+
+std::optional<std::vector<bool>>
+Listing::structOperands(std::uint64_t address) {
+  auto &d = *impl_;
+  d.build();
+  const auto item = d.itemAt(address);
+  if (!item || item->kind != ItemKind::Instruction || item->start != address)
+    return std::nullopt;
+  const auto &instruction = d.instructionOf(*item);
+  return neverd::worker::structOperands(instruction.operands, d.dialect);
+}
+
+bool Listing::namesStructOffsets() { return impl_->typeMember != nullptr; }
 
 void Listing::setStringOptions(std::string options) {
   if (impl_->stringOptions == options)

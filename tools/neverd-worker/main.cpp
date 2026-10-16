@@ -257,6 +257,12 @@ Json hello() {
   if (Engine::declaresLocalTypes())
     for (const char *operation : {"local_types_declare", "local_types_forget"})
       result["capabilities"].push_back(operation);
+  // Structure offsets are operand formats that name local types.
+  if (Engine::fitsLocalTypes()) {
+    result["capabilities"].push_back("local_types_fit");
+    if (Engine::keepsOperandFormats())
+      result["capabilities"].push_back("operand_struct");
+  }
   if (Engine::findsDwarf())
     result["capabilities"].push_back("dwarf_reference");
   if (Engine::findsSymbolTables())

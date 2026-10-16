@@ -637,6 +637,13 @@ bool Engine::listsLocalTypes() {
          engineSymbol<LocalTypeFunction>("neverd_local_type_json") &&
          engineSymbol<LocalTypesFunction>("neverd_local_types_source");
 }
+bool Engine::fitsLocalTypes() {
+  using Member = const char *(*)(neverd_session_t, const char *, long long,
+                                 unsigned long long, const char *);
+  return listsLocalTypes() &&
+         engineSymbol<LocalTypesFunction>("neverd_local_types_fit_json") &&
+         engineSymbol<Member>("neverd_local_type_member_json");
+}
 bool Engine::declaresLocalTypes() {
   return listsLocalTypes() &&
          engineSymbol<LocalTypeFunction>("neverd_local_types_declare") &&
@@ -2260,6 +2267,9 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         throw;
       }
     }
+    // Structure offsets name the members of the types as they are now.
+    if (result.value("problems", Json::array()).empty())
+      operandFormatsChanged();
     // A prototype the decompiler reads, or a type it names, changed: the
     // engine let its analysis go, as loading signatures does, and every view
     // reads anew.
@@ -2270,6 +2280,49 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       ++revision_;
     }
     return result;
+  }
+  if (operation == "local_types_fit") {
+    if (!fitsLocalTypes())
+      throw Error("unsupported", "This engine cannot fit local types to code");
+    // The request the C API reads: the search, and what the code does
+    // through the pointer, the instruction's at "address" in "function"
+    // among them.
+    Json request = Json::object();
+    for (const char *key : {"text", "spelling"})
+      if (p.contains(key))
+        request[key] = stringField(p, key, {}, 256);
+    for (const char *key : {"records", "shifts"})
+      if (p.contains(key)) {
+        if (!p.at(key).is_boolean())
+          throw Error("invalid_request",
+                      std::string(key) + " must be true or false");
+        request[key] = p.at(key);
+      }
+    if (p.contains("limit"))
+      request["limit"] = sizeField(p, "limit", 50, 500);
+    if (p.contains("accesses")) {
+      const auto &accesses = p.at("accesses");
+      if (!accesses.is_array() || accesses.size() > 4096)
+        throw Error("invalid_request",
+                    "accesses must be a list of at most 4096 accesses");
+      request["accesses"] = accesses;
+    }
+    if (p.contains("address")) {
+      request["function"] =
+          hexAddress(parseAddress(stringField(p, "function", {}, 32)));
+      request["target"] = {
+          {"address", hexAddress(parseAddress(stringField(p, "address")))}};
+    }
+    const auto fit =
+        engineSymbol<LocalTypesFunction>("neverd_local_types_fit_json");
+    const auto reply = ownedString(fit(session_, request.dump().c_str()));
+    if (reply.empty())
+      throw Error("local_types_failed", error());
+    try {
+      return Json::parse(reply);
+    } catch (const Json::exception &) {
+      throw Error("engine_error", "Engine returned malformed JSON");
+    }
   }
   if (operation == "local_types" || operation == "local_type" ||
       operation == "local_types_source") {
@@ -2929,25 +2982,39 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                   "Operand types are shown for x86 instructions only");
     // Formats belong to the instruction that starts at the address, and
     // change its operands that are numbers: the one asked for if it is one,
-    // else the last.
+    // else the last.  A structure offset also changes a displacement from a
+    // register, which it takes first.
+    const auto action = stringField(p, "action", {}, 16);
+    const bool structure = action == numberBaseName(NumberBase::Struct);
+    if (structure && !fitsLocalTypes())
+      throw Error("unsupported",
+                  "This engine shows no structure offsets of local types");
     const auto numbers = listing().numberOperands(address);
-    if (!numbers)
+    const auto structs = listing().structOperands(address);
+    if (!numbers || !structs)
       throw Error("invalid_request",
                   "No instruction starts at " + hexAddress(address));
+    // The listing's own number again also clears a structure offset.
+    const bool reset = action == numberBaseName(NumberBase::Number);
+    const auto &candidates = structure || reset ? *structs : *numbers;
     std::optional<std::size_t> chosen;
     if (p.contains("operand"))
       if (const auto asked = sizeField(p, "operand", 0, 7);
-          asked < numbers->size() && (*numbers)[asked])
+          asked < candidates.size() && candidates[asked])
         chosen = asked;
-    for (std::size_t i = numbers->size(); !chosen && i-- > 0;)
-      if ((*numbers)[i])
+    for (std::size_t i = 0; structure && !chosen && i < structs->size(); ++i)
+      if ((*structs)[i] && !(i < numbers->size() && (*numbers)[i]))
+        chosen = i;
+    for (std::size_t i = candidates.size(); !chosen && i-- > 0;)
+      if (candidates[i])
         chosen = i;
     if (!chosen)
-      throw Error("invalid_request", "The instruction at " +
-                                         hexAddress(address) +
-                                         " has no number to format");
+      throw Error("invalid_request",
+                  "The instruction at " + hexAddress(address) +
+                      (structure ? " has no number or displacement from a "
+                                   "register to show as a structure offset"
+                                 : " has no number to format"));
     const auto operand = *chosen;
-    const auto action = stringField(p, "action", {}, 16);
     auto &store = history();
     auto state = store.committedState();
     const auto rowAt = [&](const Json &rows) -> Json {
@@ -2967,7 +3034,21 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
           next = {{"base", entry.at("base")},
                   {"negate", entry.value("negate", false)},
                   {"invert", entry.value("invert", false)}};
-    if (action == "negate")
+    if (structure) {
+      // The member a structure offset names has no sign of its own.
+      next = {{"base", action},
+              {"negate", false},
+              {"invert", false},
+              {"type", stringField(p, "type", {}, 512)},
+              {"delta", p.value("delta", Json(0))}};
+      if (!next.at("delta").is_number_integer())
+        throw Error("invalid_request", "delta must be an integer");
+    } else if ((action == "negate" || action == "invert") &&
+               next.at("base") == numberBaseName(NumberBase::Struct)) {
+      throw Error(
+          "invalid_request",
+          "A structure offset has no sign or bits of its own to change");
+    } else if (action == "negate")
       next["negate"] = !next.at("negate").get<bool>();
     else if (action == "invert")
       next["invert"] = !next.at("invert").get<bool>();

@@ -108,6 +108,58 @@ def run(executable):
         refused = replica.call("local_types_declare", {"source": "struct C { int c; };"})
         assert refused["error"]["code"] == "read_only", refused
 
+        # The records a pointer may point at, ranked by what the code does
+        # through it: use() reads Device->Size through rcx, which only a
+        # _DEVICE holds as a member of its width.
+        assert "local_types_fit" in owner.hello["capabilities"]
+        assert "operand_struct" in owner.hello["capabilities"]
+        use = ok(owner, "resolve", {"query": "use"})["function_address"]
+        lines = ok(owner, "listing", {"address": use, "before": 0, "after": 40})["lines"]
+        read = next(line for line in lines if "[rcx+2]" in line["text"])
+        fit = ok(owner, "local_types_fit", {"function": use, "address": read["address"], "limit": 3})
+        assert fit["target"]["base"] == "rcx" and fit["target"]["offset"] == 2, fit
+        best = fit["candidates"][0]
+        assert best["name"] == "_DEVICE" and best["exact"] == 1, best
+        assert best["fits"][0]["path"] == "Size" and best["fits"][0]["fit"] == "exact", best
+        assert fit["total"] >= 3 and all(c["exact"] == 0 for c in fit["candidates"][1:]), fit
+        searched = ok(owner, "local_types_fit", {"text": "dev.lock.wait"})
+        assert [c["name"] for c in searched["candidates"]] == ["_DEVICE"], searched
+        assert searched["candidates"][0]["matchedMember"] == "Lock.Waiting", searched
+        no_pointer = owner.call("local_types_fit", {"function": use, "address": use})
+        assert no_pointer["status"] == "error", no_pointer
+        assert no_pointer["error"]["code"] == "local_types_failed", no_pointer
+
+        # T: the displacement as a structure offset into _DEVICE, kept with
+        # the project and undone as one step.
+        formatted = ok(owner, "operand_format", {"address": read["address"], "action": "struct",
+                                                 "type": "_DEVICE"})
+        assert formatted["operand"] == 1 and formatted["format"]["type"] == "_DEVICE", formatted
+        line = ok(owner, "listing", {"address": read["address"], "before": 0, "after": 1})["lines"][0]
+        assert "[rcx+_DEVICE.Size]" in line["text"], line
+        member = next(span for span in line["spans"]
+                      if line["text"].encode()[span[0]:span[0] + span[1]] == b"_DEVICE.Size")
+        assert member[2] == 23, member
+        # A register that points at the device's Links, as a list walk's
+        # does: the bytes are the start of Links.Flink, six before the
+        # register.
+        shifted = ok(owner, "operand_format", {"address": read["address"], "action": "struct",
+                                               "type": "_DEVICE", "delta": 6})
+        assert shifted["format"]["delta"] == 6, shifted
+        line = ok(owner, "listing", {"address": read["address"], "before": 0, "after": 1})["lines"][0]
+        assert "[rcx+(_DEVICE.Links.Flink-6)]" in line["text"], line
+        unknown = owner.call("operand_format", {"address": read["address"], "action": "struct",
+                                                "type": "_NO_SUCH_TYPE"})
+        assert unknown["status"] == "error" and unknown["error"]["code"] == "invalid_request", unknown
+        signed = owner.call("operand_format", {"address": read["address"], "operand": 1,
+                                               "action": "negate"})
+        assert signed["status"] == "error", signed
+        ok(owner, "undo")
+        line = ok(owner, "listing", {"address": read["address"], "before": 0, "after": 1})["lines"][0]
+        assert "[rcx+_DEVICE.Size]" in line["text"], line
+        ok(owner, "operand_format", {"address": read["address"], "operand": 1, "action": "number"})
+        line = ok(owner, "listing", {"address": read["address"], "before": 0, "after": 1})["lines"][0]
+        assert "[rcx+2]" in line["text"], line
+
         missing = owner.call("local_type", {"name": "_NO_SUCH_TYPE"})
         assert missing["status"] == "error" and missing["error"]["code"] == "local_types_failed", missing
         malformed = owner.call("local_types_source", {"asserts": "yes"})

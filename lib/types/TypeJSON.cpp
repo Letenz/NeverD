@@ -245,4 +245,101 @@ llvm::json::Object typeJSON(const TypeLibrary &Library, const LocalType &Type,
   return Out;
 }
 
+llvm::StringRef accessFitName(AccessFit Fit) {
+  switch (Fit) {
+  case AccessFit::Exact:
+    return "exact";
+  case AccessFit::Start:
+    return "start";
+  case AccessFit::Inside:
+    return "inside";
+  case AccessFit::Padding:
+    return "padding";
+  case AccessFit::Outside:
+    return "outside";
+  }
+  return "outside";
+}
+
+namespace {
+
+llvm::json::Object landing(const Builder &Build, const MemberAt &At) {
+  llvm::json::Object Out{{"fit", accessFitName(At.Fit)},
+                         {"path", text(memberPathText(At.Path))},
+                         {"memberOffset", At.MemberOffset}};
+  if (At.Fit == AccessFit::Padding || At.Fit == AccessFit::Outside)
+    return Out;
+  Out["memberSize"] = At.MemberBytes;
+  if (At.Type)
+    Out["type"] = Build.spell(*At.Type);
+  if (At.Bitfield)
+    Out["bitfield"] = true;
+  return Out;
+}
+
+} // namespace
+
+llvm::json::Object memberAtJSON(const TypeLibrary &Library, const MemberAt &At,
+                                BuiltinSpelling Spelling) {
+  return landing(Builder(Library, Spelling), At);
+}
+
+llvm::json::Object typeFitJSON(const TypeLibrary &Library, const TypeFit &Fit,
+                               BuiltinSpelling Spelling) {
+  const LocalType &Type = *Fit.Type;
+  llvm::json::Object Out{{"name", text(Type.Name)},
+                         {"kind", kindName(Type.Kind)},
+                         {"origin", originName(Type.Origin)}};
+  TypeExpr Self;
+  Self.Kind = TypeExprKind::Named;
+  Self.Name = Type.Name;
+  if (std::optional<uint64_t> Size = Library.sizeOf(Self))
+    Out["size"] = *Size;
+  if (Fit.Record && Fit.Record != Fit.Type) {
+    Out["record"] = text(Fit.Record->Name);
+    Out["recordSize"] = Fit.Record->Record->Size;
+  }
+  auto Names = [](llvm::ArrayRef<std::string> List) {
+    llvm::json::Array Array;
+    for (const std::string &Name : List)
+      Array.push_back(text(Name));
+    return Array;
+  };
+  auto Runs = [](llvm::ArrayRef<MatchRun> List) {
+    llvm::json::Array Array;
+    for (const MatchRun &Run : List)
+      Array.push_back(llvm::json::Array{Run.Begin, Run.Length});
+    return Array;
+  };
+  if (!Fit.Aliases.empty())
+    Out["aliases"] = Names(Fit.Aliases);
+  if (!Fit.PointerAliases.empty())
+    Out["pointerAliases"] = Names(Fit.PointerAliases);
+  if (Fit.Shift) {
+    Out["shift"] = Fit.Shift;
+    Out["shiftPath"] = text(memberPathText(Fit.ShiftPath));
+  }
+  Out["exact"] = Fit.Exact;
+  Out["exactElements"] = Fit.ExactElements;
+  Out["partial"] = Fit.Partial;
+  Out["padding"] = Fit.Padding;
+  Out["outside"] = Fit.Outside;
+  if (!Fit.Fits.empty()) {
+    const Builder Build(Library, Spelling);
+    llvm::json::Array Fits;
+    for (const MemberAt &At : Fit.Fits)
+      Fits.push_back(landing(Build, At));
+    Out["fits"] = std::move(Fits);
+  }
+  if (!Fit.MatchedName.empty()) {
+    Out["matchedName"] = text(Fit.MatchedName);
+    Out["matched"] = Runs(Fit.MatchedRuns);
+  }
+  if (!Fit.MatchedMember.empty()) {
+    Out["matchedMember"] = text(memberPathText(Fit.MatchedMember));
+    Out["memberMatched"] = Runs(Fit.MatchedMemberRuns);
+  }
+  return Out;
+}
+
 } // namespace neverd::types

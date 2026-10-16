@@ -41,6 +41,7 @@ NEVERD_THEME_COLOR(ListingOpcodeBytes, "#808080", "#858585")
 NEVERD_THEME_COLOR(ListingLabel, "#795E26", "#DCDCAA")
 NEVERD_THEME_COLOR(ListingError, "#CD3131", "#F44747")
 NEVERD_THEME_COLOR(ListingFlowMnemonic, "#AF00DB", "#C586C0")
+NEVERD_THEME_COLOR(ListingStructOffset, "#267F99", "#4EC9B0")
 
 // Listing surfaces.
 NEVERD_THEME_COLOR(ListingBackground, "#FFFFFF", "#1E1E1E")

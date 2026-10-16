@@ -82,6 +82,11 @@ public:
   /// Which operands of the instruction that starts at \p address a number
   /// format changes, by index; none when no instruction starts there.
   std::optional<std::vector<bool>> numberOperands(std::uint64_t address);
+  /// Which of them a structure offset changes: numbers and displacements
+  /// from a base register.
+  std::optional<std::vector<bool>> structOperands(std::uint64_t address);
+  /// Whether the engine names structure offsets by local types.
+  bool namesStructOffsets();
   /// The item at \p address as the listing shows it: {"start","size","kind"}
   /// and "user", the kind of the user's data item there; null outside the
   /// image.
