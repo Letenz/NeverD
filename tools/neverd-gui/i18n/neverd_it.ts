@@ -2331,6 +2331,22 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
         <translation>Posiziona il cursore su un parametro della funzione per convertirlo</translation>
     </message>
     <message>
+        <source>Synchronize with disassembly</source>
+        <translation>Sincronizza con il disassemblato</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>Otta&amp;le</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>Posiziona il cursore su un numero dello pseudocodice per cambiarne la base</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 non si può scrivere in quella base con lo stesso tipo</translation>
+    </message>
+    <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
         <translation>Impossibile stabilire se %1 ha un file MAP: %2</translation>
     </message>

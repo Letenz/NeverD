@@ -520,7 +520,11 @@ escaped call-site comments without changing targets, arguments, types or
 effects. `SymValueIdentities` follows only complete fresh resolver values via
 the shared symbolic state, including nullable results; this provenance is not
 a loader import, immutable address, or rewriting certificate.
-Source and assembly cursors browse independently. Graph refreshes retain the
+A source cursor the user moves takes the assembly cursor to its row's
+primary address without recording a jump; an assembly move the user makes
+selects the mapped rows of a source pane already showing that function and
+never starts a decompile. Selections made to follow the other pane do not echo
+back. Graph refreshes retain the
 latest requested or selected instruction even while no layout is available.
 A new navigation cancels the preceding function-lookup callback so a late reply
 cannot replace the newer destination.

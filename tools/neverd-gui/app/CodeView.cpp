@@ -22,6 +22,7 @@
 #include <QMenu>
 #include <QPainter>
 #include <QRegularExpression>
+#include <QScopedValueRollback>
 #include <QScrollBar>
 #include <QSet>
 #include <QTextLine>
@@ -1331,8 +1332,13 @@ void CodeText::moveCursor(int line, int column, bool extend) {
     bar->setValue(cursorLine_);
   else if (cursorLine_ >= bar->value() + visibleLines())
     bar->setValue(cursorLine_ - visibleLines() + 1);
-  if (const auto address = currentAddress())
-    emit locationChanged(*address);
+  // A move of the code's own leaves the rows the disassembly marked, and
+  // takes the disassembly along.
+  if (!following_) {
+    marked_.clear();
+    if (const auto address = currentAddress())
+      emit locationChanged(*address);
+  }
   viewport()->update();
 }
 
@@ -1368,18 +1374,40 @@ void CodeText::selectAddress(Address address) {
     }
     break;
   }
-  marked_.clear();
+  QVector<int> rows;
   for (int i = 0; i < lines_.size(); ++i)
     if (lines_[i].addresses.contains(address))
-      marked_.append(i);
-  if (!marked_.isEmpty()) {
-    moveCursor(marked_.front(), 0, false);
+      rows.append(i);
+  if (!rows.isEmpty()) {
+    // The disassembly stays on the instruction the user selected there,
+    // though the row's first mapping may be another one.
+    const QScopedValueRollback<bool> following(following_, true);
+    moveCursor(rows.front(), 0, false);
     // Preserve an assembly address that is one of several on this row, so
     // a Tab round trip returns to the instruction the user selected.
     selectedAddress_ = address;
   }
+  marked_ = rows;
   viewport()->update();
   emit addressSelected(address, !marked_.isEmpty());
+}
+
+void CodeText::revealAddress(Address address) {
+  if (loading_ || lines_.isEmpty())
+    return;
+  QVector<int> rows;
+  for (int i = 0; i < lines_.size(); ++i)
+    if (lines_[i].addresses.contains(address))
+      rows.append(i);
+  // A row already under the cursor keeps it where the user put it.
+  if (!rows.isEmpty() && !rows.contains(cursorLine_)) {
+    const QScopedValueRollback<bool> following(following_, true);
+    moveCursor(rows.front(), 0, false);
+  }
+  if (!rows.isEmpty())
+    selectedAddress_ = address;
+  marked_ = rows;
+  viewport()->update();
 }
 
 QString CodeText::currentToken() const {
@@ -1518,6 +1546,81 @@ std::optional<QJsonObject> CodeText::commentTarget() const {
     if (!row.value("code_comment_is_source").toBool())
       if (const auto at = currentAddress())
         target["mapped_address"] = hexAddress(*at);
+    return target;
+  }
+  return std::nullopt;
+}
+
+std::optional<CodeText::NumberTarget> CodeText::numberTarget() const {
+  // The worker edits the source views it decorates.
+  if (!function_ || loading_ || lines_.isEmpty() || !editMetadata_ ||
+      !CodeView::isSource(representation_) || cursorLine_ >= lines_.size())
+    return std::nullopt;
+  const auto display = displayPosition(cursorLine_, cursorColumn_);
+  if (!library_.regionAt(display).isEmpty())
+    return std::nullopt;
+  const int position =
+      library_.canFold() ? library_.originalPosition(display) : display;
+  const int start =
+      position > 0
+          ? int(source_.lastIndexOf(QLatin1Char('\n'), position - 1)) + 1
+          : 0;
+  const int line = int(QStringView(source_).left(start).count(u'\n'));
+  QVariantMap row;
+  for (const auto &value : sourceRows_)
+    if (auto candidate = value.toMap();
+        candidate.value("line").toInt() == line &&
+        candidate.contains("code_anchor")) {
+      row = std::move(candidate);
+      break;
+    }
+  if (row.isEmpty())
+    return std::nullopt;
+  NumberTarget target;
+  target.line = line;
+  target.anchor = row.value("code_anchor").toString();
+  const QString language = this->language();
+  target.syntax = language == QLatin1String("rust") ? LiteralSyntax::Rust
+                  : language == QLatin1String("go") ? LiteralSyntax::Go
+                                                    : LiteralSyntax::C;
+  // A block comment carries over lines; the lines before say whether this
+  // one starts in one.
+  bool inComment = false;
+  for (int at = 0; at < start;) {
+    const int end = int(source_.indexOf(QLatin1Char('\n'), at));
+    if (end < 0 || end >= start)
+      break;
+    (void)integerLiterals(source_.mid(at, end - at).toStdString(),
+                          target.syntax, inComment);
+    at = end + 1;
+  }
+  bool anchorInComment = inComment;
+  int end = int(source_.indexOf(QLatin1Char('\n'), start));
+  if (end < 0)
+    end = int(source_.size());
+  const auto shown = integerLiterals(
+      source_.mid(start, end - start).toStdString(), target.syntax, inComment);
+  // The engine's own spelling, which the worker spells the other bases from;
+  // the shown line counts the same literals.
+  const auto written = integerLiterals(target.anchor.toStdString(),
+                                       target.syntax, anchorInComment);
+  // The literal under the cursor, or the one it just passed.
+  const auto column =
+      std::size_t(source_.mid(start, position - start).toUtf8().size());
+  for (std::size_t i = 0; i < shown.size() && i < written.size(); ++i) {
+    if (column < shown[i].Begin || column > shown[i].End ||
+        (column == shown[i].End && i + 1 < shown.size() &&
+         shown[i + 1].Begin == column))
+      continue;
+    target.index = int(i);
+    target.literal = written[i];
+    target.shown = shown[i].Radix;
+    const auto radix = row.value("code_number_radixes")
+                           .toMap()
+                           .value(QString::number(i))
+                           .toString();
+    target.chosen =
+        literalRadixNamed(radix.toStdString()).value_or(LiteralRadix::Number);
     return target;
   }
   return std::nullopt;

@@ -1,5 +1,7 @@
 #include "CodeEdits.h"
 
+#include "neverd/support/IntegerLiterals.h"
+
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
@@ -145,11 +147,205 @@ void manySourceNames() {
           "A renamed explicit source span lost its displayed edit target");
   }
 }
+
+std::vector<std::string> spellings(std::string_view line,
+                                   neverd::LiteralSyntax syntax) {
+  bool inComment = false;
+  std::vector<std::string> texts;
+  for (const auto &literal : neverd::integerLiterals(line, syntax, inComment))
+    texts.push_back(literal.Text);
+  return texts;
+}
+
+std::string spelled(std::string_view line, neverd::LiteralRadix radix,
+                    neverd::LiteralSyntax syntax = neverd::LiteralSyntax::C) {
+  bool inComment = false;
+  const auto literals = neverd::integerLiterals(line, syntax, inComment);
+  check(literals.size() == 1, "A test line does not hold one literal");
+  return neverd::spellIntegerLiteral(literals.front(), radix, syntax)
+      .value_or("-");
+}
+
+void integerLiterals() {
+  using neverd::LiteralRadix;
+  using neverd::LiteralSyntax;
+  // Comments, strings and floating literals hold no integer literal, and a
+  // block comment carries over to the next line.
+  check(spellings("  v = *(uint32_t *)(a1 + 24) & 0xFFFFFFFF; // 99",
+                  LiteralSyntax::C) ==
+            std::vector<std::string>({"24", "0xFFFFFFFF"}),
+        "Literals were missed, or found in a comment");
+  check(spellings("s = \"12\"; f = 1e5 + 0x1p3 + 1.5 + 2.0f; t = 'eliF';",
+                  LiteralSyntax::C) == std::vector<std::string>({"'eliF'"}),
+        "A string or floating literal read as an integer literal");
+  bool inComment = false;
+  check(neverd::integerLiterals("x = 1; /* 2", LiteralSyntax::C, inComment)
+                    .size() == 1 &&
+            inComment &&
+            neverd::integerLiterals("3 */ y = 4;", LiteralSyntax::C, inComment)
+                    .size() == 1 &&
+            !inComment,
+        "A block comment did not carry over lines");
+  // Rust's chars and labels and Go's runes are no integer literals; their
+  // suffixes and separators are.
+  check(spellings("let x = 24usize + 0x18_u64 + 030 + 'a' as u32 + 1e-5;",
+                  LiteralSyntax::Rust) ==
+            std::vector<std::string>({"24usize", "0x18_u64", "030"}),
+        "Rust literals were misread");
+  check(spellings("x := 0x18 + 030 + 0o17 + 'A' + 1_000", LiteralSyntax::Go) ==
+            std::vector<std::string>({"0x18", "030", "0o17", "1_000"}),
+        "Go literals were misread");
+
+  // Each base keeps the C type the written literal has under LP64 and LLP64.
+  check(spelled("24", LiteralRadix::Hex) == "0x18" &&
+            spelled("24", LiteralRadix::Octal) == "030" &&
+            spelled("24", LiteralRadix::Binary) == "0b11000" &&
+            spelled("65", LiteralRadix::Char) == "'A'" &&
+            spelled("24", LiteralRadix::Char) == "'\\030'" &&
+            spelled("0", LiteralRadix::Char) == "'\\0'",
+        "A small literal was spelled wrongly");
+  check(spelled("0xFFFFFFFF", LiteralRadix::Decimal) == "4294967295U" &&
+            spelled("4294967295u", LiteralRadix::Hex) == "0xFFFFFFFFu" &&
+            spelled("3000000000", LiteralRadix::Hex) == "0xB2D05E00LL" &&
+            spelled("0x80000000", LiteralRadix::Char) == "-",
+        "A literal's type changed with its base");
+  check(spelled("'eliF'", LiteralRadix::Hex) == "0x656C6946" &&
+            spelled("0x656C6946", LiteralRadix::Char) == "'eliF'" &&
+            spelled("'\\xff'", LiteralRadix::Hex) == "-" &&
+            spelled("0xFF", LiteralRadix::Char) == "-",
+        "Character constants were not read or refused as compilers read them");
+  check(spelled("24usize", LiteralRadix::Hex, LiteralSyntax::Rust) ==
+                "0x18usize" &&
+            spelled("24", LiteralRadix::Octal, LiteralSyntax::Rust) == "0o30" &&
+            spelled("24", LiteralRadix::Char, LiteralSyntax::Rust) == "-" &&
+            spelled("0x18", LiteralRadix::Octal, LiteralSyntax::Go) == "0o30" &&
+            spelled("24", LiteralRadix::Char, LiteralSyntax::Go) == "-",
+        "Rust or Go literals were spelled wrongly");
+}
+
+void numberFormats() {
+  const std::string source = "int32_t target(int32_t value) {\n"
+                             "  /* 1\n"
+                             "     2 */ value = value + 24; /* 7 */\n"
+                             "  return value * 3 + 0x10; // 5\n"
+                             "}\n";
+  auto original = page(source);
+  decorate(original);
+  const Json number = {{"address", "0x1000"},
+                       {"representation", "c"},
+                       {"kind", "number"},
+                       {"line", 3},
+                       {"anchor", "  return value * 3 + 0x10; // 5"},
+                       {"index", 1},
+                       {"radix", "decimal"}};
+  CodeEdits::validateChange(original, number);
+  auto row = CodeEdits::change(nullptr, number);
+  // The literal after a comment that ends on the line is its first.
+  auto spanned = number;
+  spanned["line"] = 2;
+  spanned["anchor"] = "     2 */ value = value + 24; /* 7 */";
+  spanned["index"] = 0;
+  spanned["radix"] = "hex";
+  CodeEdits::validateChange(original, spanned);
+  row = CodeEdits::change(row, spanned);
+  // A local's alias on the same line keeps its span.
+  const Json rename = {{"address", "0x1000"},
+                       {"representation", "c"},
+                       {"kind", "name"},
+                       {"original", "value"},
+                       {"name", "total_value"},
+                       {"identity", target(original, "value").at("identity")}};
+  row = CodeEdits::change(row, rename);
+  auto edited = page(source);
+  decorate(edited, row);
+  const auto &text = edited.at("text").get_ref<const std::string &>();
+  check(text.find("total_value = total_value + 0x18; /* 7 */") !=
+                std::string::npos &&
+            text.find("return total_value * 3 + 16; // 5") !=
+                std::string::npos &&
+            text.find("/* 1\n     2 */") != std::string::npos,
+        "The picked bases were not shown, or a comment changed");
+  check(edited.at("rows")[3].at("code_number_radixes") ==
+                Json({{"1", "decimal"}}) &&
+            !edited.at("rows")[1].contains("code_number_radixes"),
+        "A row does not say which base its numbers were given");
+  for (const auto &name : edited.at("code_names")) {
+    const auto begin = name.at("begin_byte").get<std::size_t>();
+    const auto end = name.at("end_byte").get<std::size_t>();
+    const auto spelling = text.substr(begin, end - begin);
+    check(spelling == "total_value" || spelling == "target",
+          "A respelled number moved an edit span");
+  }
+
+  // The decompiler's own base again, and the bases of a changed line.
+  auto reset = number;
+  reset["radix"] = "number";
+  auto cleared = CodeEdits::change(row, reset);
+  cleared = CodeEdits::change(cleared, [&] {
+    auto other = spanned;
+    other["radix"] = "number";
+    return other;
+  }());
+  check(!cleared.at("views").at("c").contains("numbers"),
+        "Giving the numbers back left a base behind");
+  auto changed = page("int32_t target(int32_t value) {\n"
+                      "  /* 1\n"
+                      "     2 */ value = value + 24; /* 7 */\n"
+                      "  return value * 3 + 0x20; // 5\n"
+                      "}\n");
+  decorate(changed, row);
+  check(changed.at("text").get<std::string>().find("+ 0x20; // 5") !=
+                std::string::npos &&
+            !changed.at("rows")[3].contains("code_number_radixes"),
+        "A base was applied to a line that reads differently");
+
+  auto missing = number;
+  missing["index"] = 2;
+  refused(original, missing, "stale_target");
+  auto moved = number;
+  moved["anchor"] = "  return value;";
+  refused(original, moved, "stale_target");
+  auto inComment = number;
+  inComment["line"] = 1;
+  inComment["anchor"] = "  /* 1";
+  inComment["index"] = 0;
+  refused(original, inComment, "stale_target");
+  auto unknown = number;
+  unknown["radix"] = "roman";
+  refused(original, unknown, "invalid_request");
+  auto wide = page("int32_t target(void) {\n  return 0xFFFFFFFF;\n}\n");
+  decorate(wide);
+  refused(wide,
+          {{"address", "0x1000"},
+           {"representation", "c"},
+           {"kind", "number"},
+           {"line", 1},
+           {"anchor", "  return 0xFFFFFFFF;"},
+           {"index", 0},
+           {"radix", "char"}},
+          "invalid_request");
+  for (const Json &invalid :
+       {Json{{"anchor", "x"}, {"radixes", {{"0", "number"}}}},
+        Json{{"anchor", "x"}, {"radixes", {{"a", "hex"}}}},
+        Json{{"anchor", "x"}, {"radixes", Json::object()}}}) {
+    auto bad = row;
+    bad["views"]["c"]["numbers"]["3"] = invalid;
+    try {
+      CodeEdits::validateRow(bad);
+      check(false, "An invalid number format was accepted");
+    } catch (const Error &error) {
+      check(error.code == "invalid_request",
+            "An invalid number format produced the wrong error");
+    }
+  }
+}
 } // namespace
 
 int main() {
   sourceSpanBoundaries();
   manySourceNames();
+  integerLiterals();
+  numberFormats();
   const std::string source =
       "extern int32_t global_data; /* 0x2000 */\n"
       "int32_t callee(int32_t);\n"
