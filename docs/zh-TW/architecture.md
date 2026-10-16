@@ -1727,3 +1727,7 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 `KernelModelFileCreate` 在現有 `FileOperation` 中管理裝置指標開啟。名稱解析、CREATE 封包和最終釋放共用一般檔案開啟的狀態管理。物件管理員透過內部控制代碼取得檔案參考，`queryFileDevice` 提供關聯裝置，現有關閉續接執行 CLEANUP。續接完成後才離開原呼叫執行緒的臨界區。公開輸出重疊不會替換內部保留的檔案物件。
 
 `KernelModelIO` 負責處理程序鎖頁包裝及私有附加生命週期，重用共用處理程序檢視切換和一般 MDL 探測。私有附加不偽造客體 APC 儲存，也不能以公開介面的零權杖解除；准入和巢狀關係仍由原附加擁有者管理。只有還原成功後才向客體傳遞探測例外；還原錯誤仍為模型失敗。
+
+`KernelObjectAPIs.def` 統一負責固定回呼版本查詢的識別、參數數量、值與 IRQL 上限，不引入回呼登錄表或主機作業系統查詢。
+
+`KernelPhysicalMemory::resolveAddress` 將目前 `MemoryView` 與保留的精確配置切片和既有頁面身分匹配，包括別名。`KernelModel` 分別檢查映射可讀性、行程環境及駐留狀態。查詢不配置新身分或鎖定頁面；仍映射的頁面填補不能恢復已釋放位元組的生命週期。

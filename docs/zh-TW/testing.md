@@ -1993,3 +1993,7 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 `KernelDevicePointer.*` 檢查參考保留、輸出重疊、失敗與資訊狀態開啟、暫止 CREATE/CLEANUP 後的呼叫端與 APC 還原、參數寬度、共用、輸出錯誤寫入順序、准入及卸載。原始及真正 WDK 檔案系統範例新增立即完成、工作項目完成 CREATE、工作項目完成 CLEANUP 和保留指標至卸載模式，包含動態查找。`KernelFileSystemExecution.*OpensExistingFiles` 涵蓋兩種排程模式、執行契約與載入基址；不可用傳輸仍明確略過。
 
 `KernelMDLUserMapping.ProcessProbe*` 檢查參數位寬、操作正規化、IRQL、存活處理程序准入、探測期間執行緒身分、巢狀還原、例外後重試及附加/還原記憶體不足。真實 WDK 使用者映射範例執行靜態與動態呼叫，驗證解除附加後的真實例外處理器、附加狀態下的同處理程序呼叫、共用實體頁與完整鎖頁釋放。原始包裝及終止處理函式探針只證明明確注入輔助呼叫邊界間的控制流程，不代表整個核心行為。
+
+`KernelObjects.FilterVersion*` 檢查嚴格參數數量、與呼叫者無關的結果及分頁 IRQL 邊界。原創及真實 WDK CRT 範例在進入點、工作執行緒與卸載階段使用靜態匯入和動態查找呼叫，進入點亦涵蓋 APC_LEVEL。原始兩條指令的探針不注入輔助函式，驗證完整回傳暫存器及無資料記憶體副作用。
+
+`KernelPhysicalRAM.AddressQueries*` 與 `KernelMDLUserMapping.PhysicalQuery*` 涵蓋別名、位址空間身分、虛擬位址重用、精確邊界、完整位寬 PFN、IRQL、頁面鎖定及撤銷映射。真正 WDK 使用者映射夾具以 MDL PFN 核對靜態和動態 `MmGetPhysicalAddress`，涵蓋唯讀使用者檢視、DPC 層級系統檢視及舊鎖定別名存活時的重新映射。

@@ -1431,7 +1431,7 @@ TEST(COFFExceptionIR, LLVMCExceptWrapContainsHandlerBody) {
 
   std::string Source = emitLLVMC(Module);
   const auto ExceptAt = Source.find("} __except (EXCEPTION_EXECUTE_HANDLER) {");
-  const auto StoreAt = Source.find("ProbeSink = 41");
+  const auto StoreAt = Source.find("ProbeSink = 0x29");
   EXPECT_NE(ExceptAt, std::string::npos) << Source;
   EXPECT_NE(StoreAt, std::string::npos) << Source;
   EXPECT_LT(ExceptAt, StoreAt) << Source;
@@ -1681,12 +1681,12 @@ TEST(COFFExceptionIR, LLVMCProjectsInternalInvokePhiBridgeCopy) {
   const std::string Source = emitLLVMC(Module);
   const auto InsideAt = Source.find("inside_step();");
   ASSERT_NE(InsideAt, std::string::npos) << Source;
-  const auto CopyAt = Source.find(" = 13;", InsideAt);
+  const auto CopyAt = Source.find(" = 0xD;", InsideAt);
   const auto GotoAt = Source.find("goto L_exit;", InsideAt);
   ASSERT_NE(CopyAt, std::string::npos) << Source;
   ASSERT_NE(GotoAt, std::string::npos) << Source;
   EXPECT_LT(CopyAt, GotoAt) << Source;
-  EXPECT_EQ(Source.find(" = 13;", GotoAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" = 0xD;", GotoAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
     const std::string Prelude =
         "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
@@ -1780,12 +1780,12 @@ TEST(COFFExceptionIR, LLVMCProjectsFallbackAdjacentInvokePhiBridgeCopy) {
   const std::string Source = emitLLVMC(Module);
   const auto InsideAt = Source.find("inside_step();");
   ASSERT_NE(InsideAt, std::string::npos) << Source;
-  const auto CopyAt = Source.find(" = 13;", InsideAt);
+  const auto CopyAt = Source.find(" = 0xD;", InsideAt);
   const auto GotoAt = Source.find("goto L_exit;", InsideAt);
   ASSERT_NE(CopyAt, std::string::npos) << Source;
   ASSERT_NE(GotoAt, std::string::npos) << Source;
   EXPECT_LT(CopyAt, GotoAt) << Source;
-  EXPECT_EQ(Source.find(" = 13;", GotoAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" = 0xD;", GotoAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
     const std::string Prelude =
         "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
@@ -2637,7 +2637,7 @@ TEST(COFFExceptionIR, LLVMCNestedFinallyInsideExceptContainsBothBodies) {
   const auto OuterAt = Source.find("outer_step();", BodyAt);
   const auto ExceptKw =
       Source.find("} __except (EXCEPTION_EXECUTE_HANDLER) {", BodyAt);
-  const auto StoreAt = Source.find("ProbeSink = 41", BodyAt);
+  const auto StoreAt = Source.find("ProbeSink = 0x29", BodyAt);
   EXPECT_NE(ArmAt, std::string::npos) << Source;
   EXPECT_NE(TryAt, std::string::npos) << Source;
   EXPECT_NE(RaiseAt, std::string::npos) << Source;
@@ -5921,8 +5921,8 @@ TEST(COFFExceptionIR, LargeImageStillResolvesAnImageRelativeJumpTable) {
   OS.flush();
   EXPECT_EQ(Source.find("L_FFFFFFFFFFFFFFFF"), std::string::npos) << Source;
   // Every case keeps its return value.
-  EXPECT_NE(Source.find("return 16;"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return 55;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x10;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x37;"), std::string::npos) << Source;
 }
 
 TEST(COFFExceptionIR, SymbolHeavyImageStillResolvesAnImageRelativeJumpTable) {
@@ -6038,6 +6038,6 @@ TEST(COFFExceptionIR, SymbolHeavyImageStillResolvesAnImageRelativeJumpTable) {
   OS.flush();
   EXPECT_EQ(Source.find("L_FFFFFFFFFFFFFFFF"), std::string::npos) << Source;
   // Every case keeps its return value.
-  EXPECT_NE(Source.find("return 16;"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return 55;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x10;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x37;"), std::string::npos) << Source;
 }

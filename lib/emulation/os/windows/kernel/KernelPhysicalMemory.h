@@ -119,6 +119,14 @@ public:
                     llvm::ArrayRef<uint8_t> Bytes);
   /// Physical identity alone never authorizes access to a retired byte slice.
   llvm::Expected<uint64_t> physicalAddress(uint64_t Backing) const;
+  struct AddressTranslation {
+    uint64_t Physical;
+    std::vector<uint64_t> Owners;
+  };
+  /// Resolve the current RAM mapping against exact live owner slices. Aliases
+  /// may share several owners; callers decide residency and access admission.
+  /// This pure query neither pins pages nor grants access to their contents.
+  llvm::Expected<AddressTranslation> resolveAddress(uint64_t Address) const;
   llvm::Expected<uint64_t> ownerForRange(uint64_t Backing, uint64_t Size) const;
 
 private:

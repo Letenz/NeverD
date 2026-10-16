@@ -30,6 +30,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/IntegerLiterals.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
@@ -272,7 +273,11 @@ std::string HighCWriter::constStr(uint64_t Val, TypeRef Type) {
   }
   if (Val == 0)
     return "0";
-  if (Val <= limits::kDecimalConstThreshold)
+  // A number reads as the disassembly shows it, in hexadecimal, unless its
+  // decimal digits are its natural reading (naturalLiteralRadix). Either
+  // spelling of a value an int holds is an int.
+  if (Val <= uint64_t(std::numeric_limits<int32_t>::max()) &&
+      naturalLiteralRadix(Val) == LiteralRadix::Decimal)
     return std::to_string(Val);
   // A constant of a type wider than eight bytes is its value zero-extended:
   // a negative literal would convert to that type sign-extended.

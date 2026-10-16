@@ -74,7 +74,8 @@ protected:
           EXPECT_EQ(Calls[Name], Count) << Name;
         for (const char *Name : {"toupper", "towupper", "RtlUpcaseUnicodeChar"})
           EXPECT_EQ(Calls[Name], 12u) << Name;
-        EXPECT_EQ(Calls["MmGetSystemRoutineAddress"], 21u);
+        EXPECT_EQ(Calls["MmGetSystemRoutineAddress"], 22u);
+        EXPECT_EQ(Calls["ObGetFilterVersion"], 6u);
         EXPECT_EQ(Calls["IoThreadToProcess"], 6u);
         EXPECT_EQ(Calls["PsGetCurrentThreadPreviousMode"], 6u);
         EXPECT_EQ(Calls["RtlPcToFileHeader"], 12u);

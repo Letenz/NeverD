@@ -183,6 +183,91 @@ static VOID MappingWorker(PDEVICE_OBJECT Object, PVOID Context) {
   Complete(Irp, Status);
 }
 
+static NTSTATUS CheckPhysicalAddresses(PMDL Mdl, PUCHAR Pool,
+                                       volatile UCHAR *Report) {
+  UNICODE_STRING Routine;
+  RtlInitUnicodeString(&Routine, L"MmGetPhysicalAddress");
+  PHYSICAL_ADDRESS(NTAPI * Query)(PVOID) =
+      (PHYSICAL_ADDRESS(NTAPI *)(PVOID))MmGetSystemRoutineAddress(&Routine);
+  if (!Query)
+    return STATUS_PROCEDURE_NOT_FOUND;
+  PUCHAR Other =
+      ExAllocatePool2(POOL_FLAG_NON_PAGED, PAGE_SIZE, UserMappingPoolTag);
+  if (!Other)
+    return STATUS_INSUFFICIENT_RESOURCES;
+  PMDL OtherMdl = IoAllocateMdl(Other, PAGE_SIZE, FALSE, FALSE, NULL);
+  if (!OtherMdl) {
+    ExFreePoolWithTag(Other, UserMappingPoolTag);
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+  MmBuildMdlForNonPagedPool(OtherMdl);
+  PMDL LockedMdl = NULL, ViewMdl = Mdl;
+  PUCHAR View = NULL;
+  BOOLEAN Locked = FALSE;
+  NTSTATUS Status = STATUS_SUCCESS;
+  __try {
+    const ULONGLONG Expected =
+        ((ULONGLONG)MmGetMdlPfnArray(Mdl)[0] << PAGE_SHIFT) +
+        UserMappingByteOffset;
+    if ((ULONGLONG)MmGetPhysicalAddress(Pool + UserMappingByteOffset)
+            .QuadPart == Expected)
+      Report[0] |= 1;
+    View = MmMapLockedPagesSpecifyCache(Mdl, UserMode, MmCached, NULL, FALSE,
+                                        NormalPagePriority | MdlMappingNoWrite);
+    if ((ULONGLONG)Query(View + UserMappingByteOffset).QuadPart == Expected)
+      Report[0] |= 2;
+    LockedMdl =
+        IoAllocateMdl(View + UserMappingByteOffset, 1, FALSE, FALSE, NULL);
+    if (!LockedMdl)
+      ExRaiseStatus(STATUS_INSUFFICIENT_RESOURCES);
+    MmProbeAndLockPages(LockedMdl, UserMode, IoReadAccess);
+    Locked = TRUE;
+    PUCHAR System = MmGetSystemAddressForMdlSafe(LockedMdl, NormalPagePriority);
+    if (!System)
+      ExRaiseStatus(STATUS_INSUFFICIENT_RESOURCES);
+    PUCHAR Requested = View;
+    MmUnmapLockedPages(View, Mdl);
+    View = NULL;
+    KIRQL Old;
+    KeRaiseIrql(DISPATCH_LEVEL, &Old);
+    const PHYSICAL_ADDRESS SystemAddress = MmGetPhysicalAddress(System);
+    const PHYSICAL_ADDRESS PoolAddress = Query(Pool + UserMappingByteOffset);
+    KeLowerIrql(Old);
+    // Report is user memory and is only written after restoring APC admission.
+    if ((ULONGLONG)SystemAddress.QuadPart == Expected)
+      Report[1] |= 1;
+    if ((ULONGLONG)PoolAddress.QuadPart == Expected)
+      Report[1] |= 2;
+    ViewMdl = OtherMdl;
+    View = MmMapLockedPagesSpecifyCache(OtherMdl, UserMode, MmCached, Requested,
+                                        FALSE,
+                                        NormalPagePriority | MdlMappingNoWrite);
+    if (View == Requested)
+      Report[2] |= 1;
+    const ULONGLONG Replacement =
+        ((ULONGLONG)MmGetMdlPfnArray(OtherMdl)[0] << PAGE_SHIFT) +
+        UserMappingByteOffset;
+    if (Replacement != Expected &&
+        (ULONGLONG)Query(View + UserMappingByteOffset).QuadPart == Replacement)
+      Report[2] |= 2;
+    if ((ULONGLONG)MmGetPhysicalAddress(System).QuadPart == Expected)
+      Report[3] |= 1;
+    if (MmGetMdlPfnArray(LockedMdl)[0] == MmGetMdlPfnArray(Mdl)[0] &&
+        MmGetMdlPfnArray(LockedMdl)[0] != MmGetMdlPfnArray(OtherMdl)[0])
+      Report[3] |= 2;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    Status = GetExceptionCode();
+  }
+  if (View)
+    MmUnmapLockedPages(View, ViewMdl);
+  if (Locked)
+    MmUnlockPages(LockedMdl);
+  if (LockedMdl)
+    IoFreeMdl(LockedMdl);
+  ReleasePool(OtherMdl, Other);
+  return Status;
+}
+
 static NTSTATUS CheckAliases(PMDL Mdl, PUCHAR Pool, volatile UCHAR *Report) {
   UNICODE_STRING Routine;
   RtlInitUnicodeString(&Routine, L"MmMapLockedPages");
@@ -704,6 +789,8 @@ static NTSTATUS Dispatch(PDEVICE_OBJECT Object, PIRP Irp) {
   NTSTATUS Status;
   if (Action == UserMappingPoolAliases)
     Status = CheckAliases(Mdl, Pool, Report);
+  else if (Action == UserMappingPhysicalAddress)
+    Status = CheckPhysicalAddresses(Mdl, Pool, Report);
   else if (Action == UserMappingShortage)
     Status = CheckShortage(Mdl, Report);
   else if (Action == UserMappingPartialReuse)

@@ -62,7 +62,7 @@ TEST(ObjCSourceTypeHints, PreservesConstantReturnAndUnusedHiddenParameters) {
   Options.TheArch = Arch::AArch64;
   ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
   OS.flush();
-  EXPECT_NE(Source.find("return 42;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x2A;"), std::string::npos) << Source;
   EXPECT_NE(Source.find("objc_self"), std::string::npos) << Source;
   EXPECT_NE(Source.find("objc_cmd"), std::string::npos) << Source;
 }
@@ -557,7 +557,7 @@ TEST(ObjCSourceTypeHints,
   ASSERT_TRUE(HighCEmitter().emit({High}, OS, CEmitterOptions{}));
   OS.flush();
   EXPECT_NE(Source.find("void nothing(void)"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("return 42"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("return 0x2A"), std::string::npos) << Source;
 
   MedFunc Func;
   Hint.ReturnType = NdType::makeInt(8);

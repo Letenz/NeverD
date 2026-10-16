@@ -169,6 +169,16 @@ std::string spelled(std::string_view line, neverd::LiteralRadix radix,
 void integerLiterals() {
   using neverd::LiteralRadix;
   using neverd::LiteralSyntax;
+  // A number reads in hexadecimal unless it is small or round in decimal.
+  for (const std::uint64_t value :
+       {0ull, 7ull, 10ull, 99ull, 100ull, 999ull, 5000ull, 1000000ull})
+    check(neverd::naturalLiteralRadix(value) == LiteralRadix::Decimal,
+          "A small or round number did not read in decimal");
+  for (const std::uint64_t value :
+       {11ull, 16ull, 19ull, 20ull, 42ull, 240ull, 255ull, 1024ull, 4096ull,
+        0x7FFFFFFFull, 0xFFFFFFFFull})
+    check(neverd::naturalLiteralRadix(value) == LiteralRadix::Hex,
+          "A number with no round decimal reading did not read in hex");
   // Comments, strings and floating literals hold no integer literal, and a
   // block comment carries over to the next line.
   check(spellings("  v = *(uint32_t *)(a1 + 24) & 0xFFFFFFFF; // 99",
