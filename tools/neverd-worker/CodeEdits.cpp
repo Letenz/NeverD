@@ -4,6 +4,7 @@
 #include <cctype>
 #include <regex>
 #include <set>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 
@@ -53,11 +54,12 @@ std::vector<Token> tokens(const std::string &text) {
     }
     // C++ raw strings can contain quotes and identifier-looking text.
     auto raw = i;
-    for (const std::string prefix : {"u8", "u", "U", "L"})
-      if (text.compare(i, prefix.size() + 2, prefix + "R\"") == 0) {
-        raw += prefix.size();
-        break;
-      }
+    if (text[i] == 'u' || text[i] == 'U' || text[i] == 'L')
+      for (const std::string_view prefix : {"u8R\"", "uR\"", "UR\"", "LR\""})
+        if (text.compare(i, prefix.size(), prefix) == 0) {
+          raw += prefix.size() - 2;
+          break;
+        }
     if (text.compare(raw, 2, "R\"") == 0) {
       const auto open = text.find('(', raw + 2);
       if (open != std::string::npos && open - raw <= 18) {

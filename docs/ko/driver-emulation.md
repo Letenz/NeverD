@@ -742,3 +742,7 @@ PASSIVE_LEVEL에서 길이가 4 미만이면 결과에 접근하지 않고 `STAT
 
 
 ASCII 이름, 네임스페이스 링크, RootDirectory로 유지되는 디렉터리 핸들을 지원합니다. 루트 접미사 `\`와 지원하지 않는 접미사 없는 볼륨 열기는 구분됩니다. 디렉터리／비디렉터리 및 비경고 동기 옵션을 지원합니다. `IoCancelFileOpen`은 아직 게시되지 않은 하위 성공 열기에 CLEANUP을 보내며 마지막 참조 해제가 CLOSE를 보냅니다. 취소 없는 상위 실패는 거부합니다. DriverEntry 핸들은 DriverUnload에서 닫을 수 있습니다. 비동기 작업과 중첩 해제에서도 완료, 디스패치, API 반환값을 유지합니다. 보고서는 `file_object`, `file_open_operation`, `filesystem_device`, `filesystem_file_id`를 사용하며 드라이버 생성 요청의 `file`은 null입니다. EA, 장치 힌트, 바이너리 ID, 재분석, oplock, 트랜잭션, ACL, 파일명 저장소 교체 및 프레임워크 경로는 미지원입니다.
+
+`ZwReadFile` / `ZwWriteFile`은 버퍼 방식 장치 스택의 열린 동기 WDM 파일을 지원합니다. PASSIVE_LEVEL, 활성 인터럽트와 특수 커널 APC, NULL Event·APC 루틴·컨텍스트가 필요합니다. KernelMode는 핸들 범위를 유지하며 권한 마스크를 검사하지 않지만 추가 전용 쓰기는 오프셋 −1을 사용합니다. NULL 또는 −2는 저장된 위치이며 다른 음수는 쓰기의 −1을 제외하고 무효입니다. 길이와 키는 ULONG입니다. 쓰기 입력은 디스패치 전에 복사하며 읽기 완료는 바이트, Information, 4바이트 Status 순서로 공개합니다. 즉시 오류는 호출자의 IOSB를 보존하고 보류 오류는 공개합니다. 보류 호출은 원래 호출자를 유지하며 완료를 기다리고 길이 0도 디스패치합니다. 공통 완료는 파일 위치를 변경하지 않습니다. 한도는 1 MiB입니다. 비동기 파일, direct/neither I/O, 캐시 Fast I/O, 완료 포트, 프레임워크 경로, 선언 제공자의 데이터 I/O는 미지원입니다. 보고서 출처는 `ZwReadFile` / `ZwWriteFile`입니다.
+
+`ZwSetInformationFile`은 같은 파일 소유자에서 동기 FilePositionInformation (14)을 구현합니다. 입력 8바이트를 캡처하며 Length >= 8과 음이 아닌 부호 있는 64비트 위치를 요구합니다. 장치 섹터 크기가 0이 아니면 비캐시 정렬도 검사합니다. 저장 위치를 먼저 바꾼 뒤 4바이트 Status와 8바이트 Information=0을 쓰며 IOSB 패딩과 출력 오류 전의 쓰기를 보존합니다. IRP를 만들거나 파일 이벤트를 재설정하지 않습니다. 핸들 범위, 호출자 자격, 같은 파일의 직렬화는 파일 API 계약을 따릅니다. 다른 클래스와 비동기 위치 설정은 미지원입니다. 위치 조회 및 이후 NULL/−2 읽기·쓰기 오프셋은 이 상태를 사용합니다.

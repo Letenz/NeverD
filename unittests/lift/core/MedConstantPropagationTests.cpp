@@ -6,6 +6,7 @@
 #include "neverd/ir/med/MedIR.h"
 
 #include <algorithm>
+#include <limits>
 
 using namespace neverd;
 namespace {
@@ -182,6 +183,63 @@ TEST(MedConstantPropagation, BudgetExhaustionLeavesAllOperandsUnchanged) {
   EXPECT_EQ(result(Func), variable(2));
   EXPECT_EQ(block(Func, 0).Ops.back().Inputs[0], variable(1));
 }
+
+TEST(MedConstantPropagation,
+     FullSsaIdentityKeepsMaximumIdsAndVersionsDistinct) {
+  MedFunc Func;
+  Func.Blocks.resize(1);
+  auto &Block = Func.Blocks.front();
+  Block.Id = 0;
+  auto A = variable(std::numeric_limits<int>::max());
+  A.Kind = MedVar::Temp;
+  A.SSAVer = std::numeric_limits<int>::max();
+  auto B = A;
+  B.Kind = MedVar::Reg;
+  auto C = B;
+  --C.SSAVer;
+  auto Unknown = variable(-1);
+  Unknown.Kind = MedVar::Temp;
+  Unknown.SSAVer = -1;
+  Block.Ops = {operation(NdOp::COPY, A, {MedVar::makeConst(7, 8)}),
+               operation(NdOp::COPY, B, {MedVar::makeConst(11, 8)}),
+               operation(NdOp::COPY, C, {MedVar::makeConst(13, 8)}),
+               operation(NdOp::INT_ADD, variable(10), {A, B}),
+               operation(NdOp::INT_ADD, variable(11), {Unknown, C}),
+               operation(NdOp::RETURN, {}, {C})};
+  ASSERT_TRUE(propagateInvariantConstants(Func));
+  EXPECT_EQ(Block.Ops[3].Inputs[0],
+            MedVar::makeConst(7, 8, ConstantAddressProvenance::Scalar));
+  EXPECT_EQ(Block.Ops[3].Inputs[1],
+            MedVar::makeConst(11, 8, ConstantAddressProvenance::Scalar));
+  EXPECT_EQ(Block.Ops[4].Inputs[0], Unknown);
+  EXPECT_EQ(Block.Ops[4].Inputs[1],
+            MedVar::makeConst(13, 8, ConstantAddressProvenance::Scalar));
+  EXPECT_EQ(Block.Ops.back().Inputs[0], MedVar::makeConst(13, 8));
+}
+
+TEST(MedConstantPropagation, ReverseWidthChainKeepsAtomicBudgetRefusal) {
+  for (const int Count : {600, 2000}) {
+    SCOPED_TRACE(Count);
+    MedFunc Func;
+    Func.Blocks.resize(1);
+    auto &Block = Func.Blocks.front();
+    Block.Id = 0;
+    for (int Id = Count; Id >= 0; --Id)
+      Block.Ops.push_back(operation(
+          Id == Count ? NdOp::INT_ZEXT : NdOp::COPY, variable(Id, 4),
+          {Id == Count ? MedVar::makeConst(7, 1) : variable(Id + 1, 4)}));
+    Block.Ops.push_back(operation(NdOp::RETURN, {}, {variable(0, 4)}));
+    const auto Original = Block.Ops;
+    const bool Complete = Count == 600;
+    EXPECT_EQ(propagateInvariantConstants(Func), Complete);
+    EXPECT_EQ(Block.Ops.back().Inputs[0],
+              Complete ? MedVar::makeConst(7, 4) : variable(0, 4));
+    if (!Complete)
+      for (size_t I = 0; I < Block.Ops.size(); ++I)
+        EXPECT_EQ(Block.Ops[I].Inputs[0], Original[I].Inputs[0]);
+  }
+}
+
 TEST(MedConstantPropagation,
      LowConversionPreservesOneValueAcrossLoopDefinitions) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
