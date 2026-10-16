@@ -142,6 +142,9 @@ TEST_P(AndroidDevices, GPUCommandsWritePinnedRAMAndRetireOwnedTimestamps) {
   }
 }
 TEST_P(AndroidDevices, GPUObjectsShareMemoryAndRetireOnlyTheirFinalOwner) {
+  // O0 checks every word of the retained pages. Match the raw Linux case's
+  // wall budget without changing guest instruction or event limits.
+  Options.Limits.TimeoutMicroseconds = 30000000;
   auto D = contextDeviceTestInput();
   D.ReadOnlyMappings[0].Updates.clear();
   D.KGSL->MemoryObjects = true;
@@ -158,6 +161,7 @@ TEST_P(AndroidDevices, GPUObjectsShareMemoryAndRetireOnlyTheirFinalOwner) {
 }
 
 TEST_P(AndroidDevices, GPUObjectAddressesExcludeLegacyDeviceRanges) {
+  Options.Limits.TimeoutMicroseconds = 30000000;
   auto D = contextDeviceTestInput();
   D.ReadOnlyMappings[0].Updates.clear();
   D.ReadOnlyMappings.push_back(
