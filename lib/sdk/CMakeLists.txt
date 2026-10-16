@@ -23,6 +23,7 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPIHexDump.cpp
     capi/NeverDCAPIInfo.cpp
     capi/NeverDCAPILocalTypes.cpp
+    capi/NeverDCAPITypeFit.cpp
     capi/LocalTypesDebugContext.cpp
     capi/NeverDCAPIOptimize.cpp
     capi/NeverDCAPIPatch.cpp

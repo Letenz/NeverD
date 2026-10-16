@@ -102,6 +102,11 @@ void validateRow(std::string_view table, const Json &row) {
       for (const char *flag : {"negate", "invert"})
         if (operand.contains(flag) && !operand.at(flag).is_boolean())
           throw Error("history_invalid", "Operand format flag is invalid");
+      // A structure offset's type and delta.
+      if (operand.contains("type"))
+        (void)stringField(operand, "type", {}, 512);
+      if (operand.contains("delta") && !operand.at("delta").is_number_integer())
+        throw Error("history_invalid", "Operand structure delta is invalid");
     }
   }
 }

@@ -57,6 +57,7 @@ add_neverd_tool(neverd
   cmd/NeverDCmdInfo.cpp
   cmd/NeverDCmdTables.cpp
   cmd/NeverDCmdTypes.cpp
+  cmd/NeverDCmdTypeFit.cpp
   cmd/NeverDCmdStrings.cpp
   cmd/NeverDCmdXrefs.cpp
   cmd/NeverDCmdDisasm.cpp
