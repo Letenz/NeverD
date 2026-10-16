@@ -7285,4 +7285,7 @@ free. The shared RAM test verifies capacity and identity without a virtual
 mapping. C API/CLI and Python integration use the same authored guest.
 Broaden to the memory-lifecycle, Linux-process, Android-native, execution-session
 and process-public labels before publishing changes to these shared owners.
+The raw `GPUObjectStorage` case has a 30-second per-execution wall budget for
+word-by-word O0 page checks on contended software CPUs; its guest instruction
+and event budgets are unchanged. Existing device cases retain their deadlines.
 These fixtures do not supply an Android system-service implementation or shader.
