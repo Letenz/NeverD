@@ -167,6 +167,13 @@ llvm::StringRef dataModelName(DataModel Model) {
   return "LLP64";
 }
 
+std::optional<DataModel> dataModelNamed(llvm::StringRef Name) {
+  for (DataModel Model : {DataModel::LLP64, DataModel::LP64, DataModel::ILP32})
+    if (Name == dataModelName(Model))
+      return Model;
+  return std::nullopt;
+}
+
 llvm::json::Array typeListJSON(const TypeLibrary &Library) {
   llvm::json::Array Out;
   for (const LocalType *Type : Library.types()) {

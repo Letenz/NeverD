@@ -248,6 +248,27 @@ uint32_t TypeLibrary::alignOf(const RecordDef &Record) const {
   return Alignment;
 }
 
+uint32_t TypeLibrary::requiredAlignOf(const TypeExpr &Type) const {
+  switch (Type.Kind) {
+  case TypeExprKind::Array:
+    return Type.Element ? requiredAlignOf(*Type.Element) : 0;
+  case TypeExprKind::Record:
+    return Type.Record ? Type.Record->Alignment : 0;
+  case TypeExprKind::Named: {
+    const LocalType *Named = resolve(Type.Name);
+    if (!Named)
+      return 0;
+    if (Named->Record)
+      return Named->Record->Alignment;
+    return Named->Kind == TypeKind::Typedef && Named->Target
+               ? requiredAlignOf(*Named->Target)
+               : 0;
+  }
+  default:
+    return 0;
+  }
+}
+
 uint32_t TypeLibrary::alignOf(const TypeExpr &Type) const {
   switch (Type.Kind) {
   case TypeExprKind::Builtin:

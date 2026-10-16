@@ -15,6 +15,7 @@
 
 #include "neverd/types/TypeParse.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -30,12 +31,15 @@ struct Token {
   TokenKind Kind = TokenKind::End;
   std::string Text;
   uint64_t Value = 0;
+  /// A number with a point or an exponent, which no constant expression
+  /// this reads takes.
+  bool Floating = false;
   unsigned Line = 1;
   unsigned Column = 1;
 };
 
 /// What a #pragma pack asks, kept in a pragma token's value.
-enum class PackAction : uint8_t { Set, Reset, Push, PushSet, Pop };
+enum class PackAction : uint8_t { Set, Reset, Push, PushSet, Pop, PopSet };
 
 uint64_t packToken(PackAction Action, uint64_t Value) {
   return (uint64_t(Action) << 32) | Value;
@@ -132,12 +136,29 @@ private:
       Result.Text = Source.slice(Start, At).str();
       return Result;
     }
-    if (llvm::isDigit(C)) {
+    if (llvm::isDigit(C) ||
+        (C == '.' && At + 1 < Source.size() && llvm::isDigit(Source[At + 1]))) {
       const size_t Start = At;
-      while (At < Source.size() &&
-             (llvm::isAlnum(Source[At]) || Source[At] == '.'))
+      const bool Hex = Source.substr(At).starts_with_insensitive("0x");
+      while (At < Source.size()) {
+        const char D = Source[At];
+        const char Before = llvm::toLower(Source[At - (At > Start)]);
+        // An exponent's sign belongs to the number: 1e-5, 0x1p+3.
+        const bool Sign =
+            (D == '+' || D == '-') && At > Start && Before == (Hex ? 'p' : 'e');
+        if (!llvm::isAlnum(D) && D != '.' && !Sign)
+          break;
         advance();
+      }
       llvm::StringRef Text = Source.slice(Start, At);
+      if (Text.contains('.') ||
+          (Hex ? Text.contains_insensitive("p")
+               : Text.find_first_of("eE") != llvm::StringRef::npos)) {
+        Result.Kind = TokenKind::Number;
+        Result.Text = Text.str();
+        Result.Floating = true;
+        return Result;
+      }
       // Drop the suffixes: u, l, ll, i64 and their mixes.
       llvm::StringRef Digits = Text;
       while (!Digits.empty()) {
@@ -256,15 +277,51 @@ private:
       Arguments.split(Parts, ',', -1, /*KeepEmpty=*/false);
       PackAction Action = PackAction::Reset;
       uint64_t Value = 0;
+      // The packing a part gives: a number, or a macro defined as one.
+      const auto number = [&](llvm::StringRef Part) -> std::optional<uint64_t> {
+        uint64_t Number = 0;
+        if (!Part.getAsInteger(0, Number))
+          return Number;
+        auto Macro = Macros.find(Part);
+        if (Macro != Macros.end() && Macro->second.size() == 1 &&
+            Macro->second.front().Kind == TokenKind::Number &&
+            !Macro->second.front().Floating)
+          return Macro->second.front().Value;
+        return std::nullopt;
+      };
+      bool HasNumber = false;
+      for (llvm::StringRef Part : Parts)
+        HasNumber |= number(Part.trim()).has_value();
       for (llvm::StringRef Part : Parts) {
         Part = Part.trim();
-        if (Part == "push")
+        if (Part == "push") {
           Action = PackAction::Push;
-        else if (Part == "pop")
+        } else if (Part == "pop") {
           Action = PackAction::Pop;
-        else if (!Part.getAsInteger(0, Value))
-          Action = Action == PackAction::Push ? PackAction::PushSet
-                                              : PackAction::Set;
+        } else if (Part == "show") {
+          continue;
+        } else if (std::optional<uint64_t> Number = number(Part)) {
+          Value = *Number;
+          Action = Action == PackAction::Push  ? PackAction::PushSet
+                   : Action == PackAction::Pop ? PackAction::PopSet
+                                               : PackAction::Set;
+        } else if (Action == PackAction::Push && HasNumber) {
+          // push, label, n: the label names the push, which this reads
+          // without.
+          continue;
+        } else {
+          // An identifier alone may be a label or a macro this source does
+          // not define; the packing is not known either way.
+          problem(L, Col,
+                  "'" + Part.str() +
+                      "' in #pragma pack is no packing this knows; define it "
+                      "as a number");
+          return;
+        }
+        if (Value && (Value > 16 || (Value & (Value - 1)))) {
+          problem(L, Col, "#pragma pack takes 1, 2, 4, 8 or 16");
+          return;
+        }
       }
       if (Parts.empty())
         Action = PackAction::Reset;
@@ -367,39 +424,43 @@ std::optional<CallingConvention> conventionWord(llvm::StringRef Word) {
 /// Words a declaration may hold that do not change its type.
 bool ignoredWord(llvm::StringRef Word) {
   return llvm::is_contained(
-      std::initializer_list<llvm::StringRef>{"extern",
-                                             "static",
-                                             "inline",
-                                             "__inline",
-                                             "__forceinline",
-                                             "register",
-                                             "auto",
-                                             "_Noreturn",
-                                             "constexpr",
-                                             "virtual",
-                                             "explicit",
-                                             "mutable",
-                                             "__unaligned",
-                                             "NTKERNELAPI",
-                                             "NTSYSAPI",
-                                             "NTSYSCALLAPI",
-                                             "NTHALAPI",
-                                             "DECLSPEC_IMPORT",
-                                             "DECLSPEC_NORETURN",
-                                             "FORCEINLINE",
-                                             "__restrict",
-                                             "restrict",
-                                             "__restrict__",
-                                             "_Atomic",
-                                             "thread_local",
-                                             "__ptr32",
-                                             "__ptr64",
-                                             "__sptr",
-                                             "__uptr",
-                                             "_Nonnull",
-                                             "_Nullable",
-                                             "__based"},
+      std::initializer_list<llvm::StringRef>{
+          "extern",      "static",        "inline",        "__inline",
+          "__inline__",  "__forceinline", "__extension__", "__w64",
+          "register",    "auto",          "constexpr",     "virtual",
+          "explicit",    "mutable",       "__unaligned",   "NTKERNELAPI",
+          "NTSYSAPI",    "NTSYSCALLAPI",  "NTHALAPI",      "DECLSPEC_IMPORT",
+          "FORCEINLINE", "__restrict",    "restrict",      "__restrict__",
+          "_Atomic",     "thread_local",  "__ptr32",       "__ptr64",
+          "__sptr",      "__uptr",        "_Nonnull",      "_Nullable",
+          "__based"},
       Word);
+}
+
+/// Whether a target with 64-bit pointers keeps \p Convention.
+bool keptWide(CallingConvention Convention) {
+  switch (Convention) {
+#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide)                    \
+  case CallingConvention::Name:                                                \
+    return Wide;
+#include "neverd/types/CallingConventions.def"
+  }
+  return true;
+}
+
+/// const and volatile in GNU's spellings too.
+bool constWord(llvm::StringRef Word) {
+  return Word == "const" || Word == "__const" || Word == "__const__";
+}
+bool volatileWord(llvm::StringRef Word) {
+  return Word == "volatile" || Word == "__volatile" || Word == "__volatile__";
+}
+
+/// An attribute's name without GNU's underscores: __aligned__ is aligned.
+llvm::StringRef attributeName(llvm::StringRef Name) {
+  if (Name.size() > 4 && Name.starts_with("__") && Name.ends_with("__"))
+    return Name.drop_front(2).drop_back(2);
+  return Name;
 }
 
 class Parser {
@@ -484,18 +545,23 @@ private:
   bool isTypeName(llvm::StringRef Word) const {
     return builtinKeyword(Word) || builtinWords().count(Word) ||
            Library.find(Word) || Word == "size_t" || Word == "ptrdiff_t" ||
-           Word == "intptr_t" || Word == "uintptr_t" || Word == "ssize_t";
+           Word == "intptr_t" || Word == "uintptr_t" || Word == "ssize_t" ||
+           ((Word == "__builtin_va_list" || Word == "va_list") &&
+            !Library.find(Word));
   }
   /// Whether the token at \p Ahead may begin a declaration's type.
   bool startsType(size_t Ahead = 0) const {
     const Token &T = peek(Ahead);
     if (T.Kind != TokenKind::Word)
       return false;
+    if (startsAttribute(Ahead))
+      return true;
     return isTypeName(T.Text) || T.Text == "struct" || T.Text == "union" ||
-           T.Text == "enum" || T.Text == "class" || T.Text == "const" ||
-           T.Text == "volatile" || T.Text == "typename" ||
+           T.Text == "enum" || T.Text == "class" || constWord(T.Text) ||
+           T.Text == "_Noreturn" || T.Text == "DECLSPEC_NORETURN" ||
+           volatileWord(T.Text) || T.Text == "typename" ||
            conventionWord(T.Text) || ignoredWord(T.Text) ||
-           T.Text == "__declspec" || T.Text == "__attribute__";
+           startsAttribute(Ahead);
   }
 
   uint32_t pointerSize() const { return pointerBytes(Library.dataModel()); }
@@ -537,15 +603,37 @@ private:
       Pack = PackStack.back();
       PackStack.pop_back();
       break;
+    case PackAction::PopSet:
+      if (PackStack.empty()) {
+        fail(Pragma, "#pragma pack(pop) has no push to return to");
+        return;
+      }
+      PackStack.pop_back();
+      Pack = Value;
+      break;
     }
   }
 
   // Declarations.
+  /// What __attribute__, __declspec and the alignment specifiers say that
+  /// a local type keeps.
+  struct Attributes {
+    uint32_t Alignment = 0;
+    bool Packed = false;
+    bool NoReturn = false;
+  };
+
   struct Specifiers {
     TypeExprRef Type;
     bool Typedef = false;
     bool Const = false, Volatile = false;
-    uint32_t Alignment = 0;
+    /// The alignment and packing asked before the type is complete: a
+    /// record defined here takes them, a declaration of another type keeps
+    /// them for what it declares.
+    Attributes Asked;
+    /// Whether the specifiers define the record or enumeration they name.
+    bool Defines = false;
+    bool NoReturn = false;
   };
 
   void note(std::vector<std::string> &Names, const std::string &Name) {
@@ -596,15 +684,42 @@ private:
       return;
     if (accept(";"))
       return;
+    // typedef struct { ... } X, *PX: an anonymous record's typedefs, defined
+    // together once all are read.
+    const bool Anonymous =
+        Spec.Typedef && (Spec.Type->Kind == TypeExprKind::Record ||
+                         Spec.Type->Kind == TypeExprKind::Enum);
+    std::vector<std::tuple<std::string, TypeExprRef, Token>> Typedefs;
     while (true) {
       std::string Name;
       Token NameToken = peek();
       TypeExprRef Type = declarator(Spec.Type, Name, NameToken, false);
       if (Failed)
         return;
-      if (Spec.Typedef)
-        defineTypedef(Name, Type, NameToken);
-      else if (Type->Kind == TypeExprKind::Function && Type->Function) {
+      // Alignment asked of what the declaration declares, rather than of a
+      // record its specifiers define.
+      const uint32_t Alignment = std::max(
+          Declared.Alignment, Spec.Defines ? 0u : Spec.Asked.Alignment);
+      const bool Packed =
+          Declared.Packed || (!Spec.Defines && Spec.Asked.Packed);
+      if (Spec.Typedef) {
+        // A typedef cannot change its type's layout here: the library's
+        // typedefs name a type as it is.
+        if (Packed || (Alignment && Alignment != Library.alignOf(*Type))) {
+          fail(NameToken, "a typedef that aligns or packs its type is not a "
+                          "local type");
+          return;
+        }
+        if (Anonymous)
+          Typedefs.emplace_back(Name, Type, NameToken);
+        else
+          defineTypedef(Name, Type, NameToken);
+      } else if (Type->Kind == TypeExprKind::Function && Type->Function) {
+        if (Spec.NoReturn || Declared.NoReturn) {
+          auto Function = std::make_shared<FunctionDef>(*Type->Function);
+          Function->NoReturn = true;
+          Type = makeFunction(std::move(Function));
+        }
         Library.definePrototype(Name, Type->Function);
         note(Result.Prototypes, Name);
         // A definition's body holds no declarations this reads.
@@ -627,8 +742,89 @@ private:
       }
       if (accept(","))
         continue;
-      expect(";", "after a declaration");
+      if (expect(";", "after a declaration") && Anonymous)
+        defineAnonymousTypedefs(Spec.Type, Typedefs);
       return;
+    }
+  }
+
+  /// Defines the typedefs of an anonymous record or enumeration: the first
+  /// that names it as it is, then the others through that one, as C names
+  /// the anonymous type only through it.
+  void defineAnonymousTypedefs(
+      const TypeExprRef &Type,
+      const std::vector<std::tuple<std::string, TypeExprRef, Token>>
+          &Typedefs) {
+    const auto Naming = llvm::find_if(Typedefs, [&](const auto &Typedef) {
+      return std::get<1>(Typedef).get() == Type.get();
+    });
+    if (Naming == Typedefs.end()) {
+      for (const auto &[Name, Target, At] : Typedefs)
+        defineTypedef(Name, Target, At);
+      return;
+    }
+    // The record or enumeration takes the typedef's name, as a tag would
+    // give it, unless the name is another type's.
+    const std::string &Name = std::get<0>(*Naming);
+    const TypeKind Kind = Type->Kind == TypeExprKind::Enum ? TypeKind::Enum
+                          : Type->Record && Type->Record->Union
+                              ? TypeKind::Union
+                              : TypeKind::Struct;
+    const LocalType *Existing = Library.find(Name);
+    const bool Declared = Existing && Existing->Kind == Kind &&
+                          ((Existing->Record && !Existing->Record->Defined) ||
+                           (Existing->Enum && Existing->Enum->Values.empty()));
+    TypeExprRef Named;
+    if ((!Existing || Declared) && !builtinWords().count(Name) &&
+        !builtinKeyword(Name)) {
+      LocalType Local;
+      Local.Name = Name;
+      Local.Kind = Kind;
+      Local.Origin = Options.Origin;
+      if (Kind == TypeKind::Enum)
+        Local.Enum = Type->Enum;
+      else
+        Local.Record = Type->Record;
+      Library.define(std::move(Local));
+      note(Result.Types, Name);
+      Named = makeNamed(Name, Kind);
+    } else {
+      defineTypedef(Name, Type, std::get<2>(*Naming));
+      Named = makeNamed(Name, TypeKind::Typedef);
+    }
+    for (const auto &[Name, Target, At] : Typedefs)
+      if (&std::get<0>(*Naming) != &Name)
+        defineTypedef(Name, substituted(Target, Type.get(), Named), At);
+  }
+
+  /// \p Type with \p Old, wherever it stands, replaced by \p New.
+  static TypeExprRef substituted(const TypeExprRef &Type, const TypeExpr *Old,
+                                 const TypeExprRef &New) {
+    if (!Type)
+      return Type;
+    if (Type.get() == Old)
+      return New;
+    switch (Type->Kind) {
+    case TypeExprKind::Pointer:
+    case TypeExprKind::Array: {
+      TypeExprRef Element = substituted(Type->Element, Old, New);
+      if (Element == Type->Element)
+        return Type;
+      auto Copy = std::make_shared<TypeExpr>(*Type);
+      Copy->Element = std::move(Element);
+      return Copy;
+    }
+    case TypeExprKind::Function: {
+      if (!Type->Function)
+        return Type;
+      auto Function = std::make_shared<FunctionDef>(*Type->Function);
+      Function->Return = substituted(Function->Return, Old, New);
+      for (Parameter &Param : Function->Params)
+        Param.Type = substituted(Param.Type, Old, New);
+      return makeFunction(std::move(Function));
+    }
+    default:
+      return Type;
     }
   }
 
@@ -694,30 +890,37 @@ private:
       if (W == "typedef") {
         take();
         Spec.Typedef = true;
-      } else if (W == "const") {
+      } else if (constWord(W)) {
         take();
         Spec.Const = true;
-      } else if (W == "volatile") {
+      } else if (volatileWord(W)) {
         take();
         Spec.Volatile = true;
       } else if (ignoredWord(W) || W == "typename") {
         take();
+      } else if (W == "_Noreturn" || W == "DECLSPEC_NORETURN" ||
+                 W == "noreturn") {
+        take();
+        Spec.NoReturn = true;
       } else if (conventionWord(W)) {
         PendingConvention = conventionWord(take().Text);
-      } else if (W == "__declspec" || W == "__attribute__" ||
-                 W == "DECLSPEC_ALIGN" || W == "alignas" || W == "_Alignas") {
-        if (std::optional<uint32_t> Align = attribute())
-          Spec.Alignment = std::max(Spec.Alignment, *Align);
+      } else if (startsAttribute()) {
+        Attributes Read;
+        if (!attributes(Read))
+          return false;
+        Spec.Asked.Alignment = std::max(Spec.Asked.Alignment, Read.Alignment);
+        Spec.Asked.Packed |= Read.Packed;
+        Spec.NoReturn |= Read.NoReturn;
       } else if (W == "struct" || W == "union" || W == "class") {
         if (Spec.Type)
           break;
         take();
-        Spec.Type = record(W == "union", Spec.Alignment);
+        Spec.Type = record(W == "union", Spec.Asked, Spec.Defines);
       } else if (W == "enum") {
         if (Spec.Type)
           break;
         take();
-        Spec.Type = enumeration();
+        Spec.Type = enumeration(Spec.Defines);
       } else if (builtinKeyword(W)) {
         if (Spec.Type)
           break;
@@ -759,7 +962,17 @@ private:
         take();
         if (auto Found = builtinWords().find(W); Found != builtinWords().end())
           Spec.Type = makeBuiltin(Found->second);
-        else if (W == "size_t" || W == "uintptr_t")
+        else if ((W == "__builtin_va_list" || W == "va_list") &&
+                 !Library.find(W)) {
+          // Windows and i386 pass the variable arguments' address; other
+          // targets a record of their own.
+          if (Library.dataModel() == DataModel::LP64) {
+            fail(T, "__builtin_va_list of an LP64 target is a record local "
+                    "types do not know");
+            return false;
+          }
+          Spec.Type = makePointer(makeBuiltin(Builtin::Char), pointerSize());
+        } else if (W == "size_t" || W == "uintptr_t")
           Spec.Type = makeBuiltin(pointerSize() == 8 ? Builtin::ULongLong
                                                      : Builtin::UInt);
         else if (W == "ptrdiff_t" || W == "intptr_t" || W == "ssize_t")
@@ -807,9 +1020,10 @@ private:
       Spec.Type = makeBuiltin(Type);
     }
     if (!Spec.Type) {
-      fail(Start, Start.Kind == TokenKind::Word
-                      ? "'" + Start.Text + "' names no type"
-                      : "expected a type");
+      // The word that ended the specifiers is the one no type has.
+      const Token &At = peek().Kind == TokenKind::Word ? peek() : Start;
+      fail(At, At.Kind == TokenKind::Word ? "'" + At.Text + "' names no type"
+                                          : "expected a type");
       return false;
     }
     Spec.Type = qualified(Spec.Type, Spec.Const, Spec.Volatile);
@@ -822,48 +1036,155 @@ private:
     return makeNamed(Name.str(), Type ? Type->Kind : TypeKind::Typedef);
   }
 
-  /// __declspec(align(n)), DECLSPEC_ALIGN(n), alignas(n) and
-  /// __attribute__((aligned(n))): the alignment they ask, none for the
-  /// attributes that ask none.
-  std::optional<uint32_t> attribute() {
-    const std::string Word = take().Text;
-    if (!expect("(", "after " + Word))
-      return std::nullopt;
-    std::optional<uint32_t> Alignment;
-    if (Word == "DECLSPEC_ALIGN" || Word == "alignas" || Word == "_Alignas") {
-      if (std::optional<int64_t> Value = constant())
-        Alignment = uint32_t(*Value);
-      expect(")", "after the alignment");
-      return Alignment;
-    }
-    // Look for align(n) or aligned(n) among the attributes.
-    int Depth = 1;
-    while (Depth > 0 && peek().Kind != TokenKind::End && !Failed) {
-      if ((isWord("align") || isWord("aligned") || isWord("__aligned__")) &&
-          isPunct("(", 1)) {
+  /// Whether an attribute, an alignment specifier or an assembler name
+  /// begins at \p Ahead.
+  bool startsAttribute(size_t Ahead = 0) const {
+    const Token &T = peek(Ahead);
+    if (isPunct("[", Ahead) && isPunct("[", Ahead + 1))
+      return true;
+    return T.Kind == TokenKind::Word &&
+           (T.Text == "__attribute__" || T.Text == "__attribute" ||
+            T.Text == "__declspec" || T.Text == "DECLSPEC_ALIGN" ||
+            T.Text == "alignas" || T.Text == "_Alignas" ||
+            T.Text == "__asm__" || T.Text == "__asm");
+  }
+
+  /// Reads the attributes, alignment specifiers and assembler names that
+  /// follow into \p Read: __attribute__((...)), __declspec(...),
+  /// DECLSPEC_ALIGN(n), alignas(n) and __asm__("name").  Alignment,
+  /// packing, calling conventions and noreturn are kept; attributes that
+  /// change a type into one local types do not hold (vector_size, mode)
+  /// fail, as does aligned without its value.  False on a problem.
+  bool attributes(Attributes &Read) {
+    while (startsAttribute() && !Failed) {
+      // [[noreturn]], [[nodiscard]]: C++ and C23 attributes.
+      if (isPunct("[")) {
+        const Token Open = take();
+        take();
+        int Depth = 0;
+        while (!Failed && !(Depth == 0 && isPunct("]") && isPunct("]", 1))) {
+          if (peek().Kind == TokenKind::End) {
+            fail(Open, "an attribute list does not end");
+            return false;
+          }
+          if (isPunct("(") || isPunct("["))
+            ++Depth;
+          else if (isPunct(")") || isPunct("]"))
+            --Depth;
+          if (peek().Kind == TokenKind::Word &&
+              attributeName(peek().Text) == "noreturn")
+            Read.NoReturn = true;
+          take();
+        }
         take();
         take();
-        if (std::optional<int64_t> Value = constant())
-          Alignment = uint32_t(*Value);
-        expect(")", "after the alignment");
         continue;
       }
-      if (isPunct("("))
-        ++Depth;
-      else if (isPunct(")"))
-        --Depth;
-      take();
+      const Token At = take();
+      const llvm::StringRef Word = At.Text;
+      if (!expect("(", "after " + Word.str()))
+        return false;
+      if (Word == "__asm__" || Word == "__asm") {
+        // The symbol's name in the object file says nothing of its type.
+        while (!Failed && !accept(")")) {
+          if (peek().Kind == TokenKind::End) {
+            fail(At, "an assembler name does not end");
+            return false;
+          }
+          take();
+        }
+        continue;
+      }
+      if (Word == "DECLSPEC_ALIGN" || Word == "alignas" || Word == "_Alignas") {
+        std::optional<int64_t> Value = alignment(At);
+        if (!Value || !expect(")", "after the alignment"))
+          return false;
+        Read.Alignment = std::max(Read.Alignment, uint32_t(*Value));
+        continue;
+      }
+      // __attribute__((a, b(x))) lists its attributes in a second pair of
+      // parentheses; __declspec(a b(x)) in its one.
+      const bool Gnu = Word != "__declspec";
+      if (Gnu && !expect("(", "after " + Word.str() + "("))
+        return false;
+      while (!Failed && !isPunct(")")) {
+        if (accept(","))
+          continue;
+        if (peek().Kind != TokenKind::Word) {
+          fail(peek(), "expected an attribute's name");
+          return false;
+        }
+        const Token Name = take();
+        const llvm::StringRef Attribute = attributeName(Name.Text);
+        const bool Arguments = isPunct("(");
+        if (Attribute == "aligned" || Attribute == "align") {
+          if (!Arguments) {
+            fail(Name, "'" + Name.Text +
+                           "' without an alignment asks the target's largest, "
+                           "which local types do not assume");
+            return false;
+          }
+          take();
+          std::optional<int64_t> Value = alignment(Name);
+          if (!Value || !expect(")", "after the alignment"))
+            return false;
+          Read.Alignment = std::max(Read.Alignment, uint32_t(*Value));
+          continue;
+        }
+        if (Attribute == "vector_size" || Attribute == "mode" ||
+            Attribute == "ext_vector_type") {
+          fail(Name,
+               "'" + Name.Text + "' makes a type local types do not hold");
+          return false;
+        }
+        if (Attribute == "packed")
+          Read.Packed = true;
+        else if (Attribute == "noreturn")
+          Read.NoReturn = true;
+        else if (std::optional<CallingConvention> Convention =
+                     conventionWord("__" + Attribute.str()))
+          PendingConvention = Convention;
+        // Any other attribute says nothing of a type: skip its arguments.
+        if (Arguments) {
+          take();
+          int Depth = 1;
+          while (Depth > 0 && !Failed) {
+            if (peek().Kind == TokenKind::End) {
+              fail(Name, "an attribute's arguments do not end");
+              return false;
+            }
+            if (isPunct("("))
+              ++Depth;
+            else if (isPunct(")"))
+              --Depth;
+            take();
+          }
+        }
+      }
+      if (!expect(")", "after the attributes") ||
+          (Gnu && !expect(")", "after the attributes")))
+        return false;
     }
-    return Alignment;
+    return !Failed;
+  }
+
+  /// An alignment's value: a power of two.
+  std::optional<int64_t> alignment(const Token &At) {
+    std::optional<int64_t> Value = constant();
+    if (!Value)
+      return Value;
+    if (*Value <= 0 || (*Value & (*Value - 1))) {
+      fail(At, "an alignment must be a power of two");
+      return std::nullopt;
+    }
+    return Value;
   }
 
   /// struct or union: a reference, a definition, or an anonymous record.
-  TypeExprRef record(bool Union, uint32_t Alignment) {
+  TypeExprRef record(bool Union, Attributes Asked, bool &Defines) {
     const TypeKind Kind = Union ? TypeKind::Union : TypeKind::Struct;
-    while (isWord("__declspec") || isWord("__attribute__") ||
-           isWord("DECLSPEC_ALIGN") || isWord("alignas") || isWord("_Alignas"))
-      if (std::optional<uint32_t> Align = attribute())
-        Alignment = std::max(Alignment, *Align);
+    if (!attributes(Asked))
+      return nullptr;
     std::string Name;
     Token NameToken = peek();
     if (peek().Kind == TokenKind::Word && !isPunct("{", 0)) {
@@ -895,13 +1216,20 @@ private:
       return makeNamed(Name, Kind);
     }
     const Token Open = take();
+    Defines = true;
     DraftRecord Draft;
     Draft.Union = Union;
     Draft.Pack = Pack;
-    Draft.Alignment = Alignment;
+    Draft.Cpp = Cpp;
     body(Draft);
     if (Failed)
       return nullptr;
+    // GNU attributes after the body belong to the record too.
+    if (!attributes(Asked))
+      return nullptr;
+    Draft.Alignment = Asked.Alignment;
+    if (Asked.Packed)
+      Draft.Pack = 1;
     llvm::Expected<RecordDef> Laid =
         layOutRecord(Library, Draft, Options.Rules);
     if (!Laid) {
@@ -957,6 +1285,7 @@ private:
       }
       while (!Failed) {
         DraftMember Field;
+        Declared = Attributes();
         if (accept(":")) {
           Field.Type = Spec.Type;
           Field.Bitfield = true;
@@ -983,6 +1312,12 @@ private:
           }
           Field.Width = uint32_t(*Width);
         }
+        // GNU puts a member's attributes after its width too.
+        if (!attributes(Declared))
+          return;
+        Field.Alignment = std::max(Declared.Alignment,
+                                   Spec.Defines ? 0u : Spec.Asked.Alignment);
+        Field.Packed = Declared.Packed || (!Spec.Defines && Spec.Asked.Packed);
         Draft.Members.push_back(std::move(Field));
         if (accept(","))
           continue;
@@ -994,9 +1329,12 @@ private:
 
   /// An enumeration: a reference or a definition, with its values known to
   /// the expressions after it.
-  TypeExprRef enumeration() {
+  TypeExprRef enumeration(bool &Defines) {
     if (isWord("class") || isWord("struct"))
       take();
+    Attributes Asked;
+    if (!attributes(Asked))
+      return nullptr;
     std::string Name;
     if (peek().Kind == TokenKind::Word)
       Name = take().Text;
@@ -1038,6 +1376,7 @@ private:
       return makeNamed(Name, TypeKind::Enum);
     }
     (void)Fixed;
+    Defines = true;
     auto Def = std::make_shared<EnumDef>();
     Def->Underlying = Underlying;
     const unsigned Bits = builtinBytes(Underlying, Library.dataModel()) * 8;
@@ -1072,8 +1411,13 @@ private:
         break;
       }
     }
-    if (Failed)
+    if (Failed || !attributes(Asked))
       return nullptr;
+    // A packed or aligned enumeration takes a size its values do not say.
+    if (Asked.Packed || Asked.Alignment) {
+      fail(peek(), "a packed or aligned enumeration is not a local type");
+      return nullptr;
+    }
     if (Name.empty())
       return makeEnum(std::move(Def));
     LocalType Local;
@@ -1090,6 +1434,7 @@ private:
   /// with parentheses binding as C binds them.
   TypeExprRef declarator(TypeExprRef Base, std::string &Name, Token &NameToken,
                          bool Abstract) {
+    Declared = Attributes();
     std::function<TypeExprRef(TypeExprRef)> Wrap =
         parseDeclarator(Name, NameToken, Abstract);
     if (Failed)
@@ -1112,11 +1457,16 @@ private:
       P.Reference = !isPunct("*");
       P.Bytes = pointerSize();
       take();
-      while (peek().Kind == TokenKind::Word) {
+      while (peek().Kind == TokenKind::Word || startsAttribute()) {
+        if (startsAttribute()) {
+          if (!attributes(Declared))
+            return Identity;
+          continue;
+        }
         const llvm::StringRef W = peek().Text;
-        if (W == "const")
+        if (constWord(W))
           P.Const = true;
-        else if (W == "volatile")
+        else if (volatileWord(W))
           P.Volatile = true;
         else if (W == "__ptr32")
           P.Bytes = 4;
@@ -1130,15 +1480,26 @@ private:
       }
       Pointers.push_back(P);
     }
-    std::function<TypeExprRef(TypeExprRef)> Inner = [](TypeExprRef T) {
-      return T;
-    };
-    while (peek().Kind == TokenKind::Word && conventionWord(peek().Text))
-      PendingConvention = conventionWord(take().Text);
+    std::function<TypeExprRef(TypeExprRef)> Inner = Identity;
+    while ((peek().Kind == TokenKind::Word && conventionWord(peek().Text)) ||
+           startsAttribute()) {
+      if (!startsAttribute()) {
+        PendingConvention = conventionWord(take().Text);
+        continue;
+      }
+      if (!attributes(Declared))
+        return Identity;
+    }
     if (isPunct("(") && nestedDeclaratorFollows()) {
       take();
-      while (peek().Kind == TokenKind::Word &&
-             (conventionWord(peek().Text) || ignoredWord(peek().Text))) {
+      while ((peek().Kind == TokenKind::Word &&
+              (conventionWord(peek().Text) || ignoredWord(peek().Text))) ||
+             startsAttribute()) {
+        if (startsAttribute()) {
+          if (!attributes(Declared))
+            return Identity;
+          continue;
+        }
         if (std::optional<CallingConvention> Convention =
                 conventionWord(peek().Text))
           PendingConvention = Convention;
@@ -1165,6 +1526,12 @@ private:
     };
     std::vector<Suffix> Suffixes;
     while (!Failed) {
+      // GNU puts attributes and assembler names after a declarator too.
+      if (startsAttribute()) {
+        if (!attributes(Declared))
+          break;
+        continue;
+      }
       if (accept("[")) {
         Suffix S;
         S.Array = true;
@@ -1213,6 +1580,8 @@ private:
 
   /// Whether '(' begins a parenthesized declarator rather than parameters.
   bool nestedDeclaratorFollows() const {
+    if (startsAttribute(1))
+      return true;
     const Token &Next = peek(1);
     if (Next.Kind == TokenKind::Punct)
       return Next.Text == "*" || Next.Text == "&" || Next.Text == "(" ||
@@ -1226,9 +1595,15 @@ private:
 
   /// A parameter list, the convention pending applied.
   std::shared_ptr<FunctionDef> parameters() {
+    // Each parameter's declarator has attributes of its own.
+    const Attributes Outer = Declared;
+    auto Restore = llvm::make_scope_exit([&] { Declared = Outer; });
     auto Function = std::make_shared<FunctionDef>();
     if (PendingConvention) {
-      Function->Convention = *PendingConvention;
+      // A convention the target ignores, as 64-bit x86 does __stdcall, is
+      // no convention of the function's.
+      if (pointerSize() < 8 || keptWide(*PendingConvention))
+        Function->Convention = *PendingConvention;
       PendingConvention.reset();
     }
     take(); // (
@@ -1271,7 +1646,18 @@ private:
   }
 
   // Constant expressions.
-  std::optional<int64_t> constant() { return binary(0); }
+  std::optional<int64_t> constant() {
+    std::optional<int64_t> Condition = binary(0);
+    if (!Condition || !accept("?"))
+      return Condition;
+    std::optional<int64_t> Then = constant();
+    if (!Then || !expect(":", "in a conditional constant"))
+      return std::nullopt;
+    std::optional<int64_t> Else = constant();
+    if (!Else)
+      return std::nullopt;
+    return *Condition ? *Then : *Else;
+  }
 
   static int precedence(llvm::StringRef Op) {
     static const std::pair<const char *, int> Levels[] = {
@@ -1349,8 +1735,13 @@ private:
       std::optional<int64_t> V = unary();
       return V ? std::optional<int64_t>(!*V) : V;
     }
-    if (At.Kind == TokenKind::Number)
+    if (At.Kind == TokenKind::Number) {
+      if (At.Floating) {
+        fail(At, "'" + At.Text + "' is a floating constant, not an integer");
+        return std::nullopt;
+      }
       return int64_t(take().Value);
+    }
     if (isPunct("(")) {
       // A cast to an integer type keeps the value's bits in its width.
       if (startsType(1) && !isWord("sizeof", 1)) {
@@ -1386,7 +1777,8 @@ private:
     }
     if (At.Kind == TokenKind::Word) {
       if (At.Text == "sizeof" || At.Text == "alignof" ||
-          At.Text == "_Alignof" || At.Text == "__alignof") {
+          At.Text == "_Alignof" || At.Text == "__alignof" ||
+          At.Text == "__alignof__") {
         take();
         TypeExprRef Type = typeInParentheses();
         if (!Type)
@@ -1400,7 +1792,8 @@ private:
         }
         return int64_t(*Size);
       }
-      if (At.Text == "offsetof" || At.Text == "FIELD_OFFSET") {
+      if (At.Text == "offsetof" || At.Text == "FIELD_OFFSET" ||
+          At.Text == "__builtin_offsetof") {
         take();
         return offsetOf(At);
       }
@@ -1528,6 +1921,11 @@ private:
   /// Open extern "C" and namespace blocks.
   unsigned Blocks = 0;
   std::optional<CallingConvention> PendingConvention;
+  /// What the attributes of the declarator being read say.
+  Attributes Declared;
+  const std::function<TypeExprRef(TypeExprRef)> Identity = [](TypeExprRef T) {
+    return T;
+  };
   llvm::StringMap<int64_t> Enumerators;
 };
 
@@ -1555,7 +1953,7 @@ ParseResult parseCTypes(llvm::StringRef Source, TypeLibrary &Library,
     return Result;
   TypeLibrary Scratch(Library);
   Parser(std::move(Tokens), Scratch, Options, Result).run();
-  if (Result.Problems.empty())
+  if (Result.Problems.empty() || Options.KeepGoing)
     Library = std::move(Scratch);
   return Result;
 }

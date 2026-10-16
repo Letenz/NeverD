@@ -14,6 +14,7 @@
 
 #include "TypeRenderShared.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/Format.h"
@@ -35,7 +36,7 @@ std::string hex(uint64_t Value) {
 
 const char *conventionSpelling(CallingConvention Convention) {
   switch (Convention) {
-#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA)                          \
+#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide)                    \
   case CallingConvention::Name:                                                \
     return C;
 #include "neverd/types/CallingConventions.def"
@@ -152,11 +153,16 @@ std::string CWriter::declare(const TypeExpr &Type,
   case TypeExprKind::Named: {
     std::string Base = Qualifiers;
     if (!Cpp) {
-      if (Type.NamedKind == TypeKind::Struct)
+      // The tag the library's type takes now: a type of another kind may
+      // have replaced the one the reference was read with, as a program's
+      // own union does a header's structure of the name.
+      const LocalType *Named = Library.find(Type.Name);
+      const TypeKind Kind = Named ? Named->Kind : Type.NamedKind;
+      if (Kind == TypeKind::Struct)
         Base += "struct ";
-      else if (Type.NamedKind == TypeKind::Union)
+      else if (Kind == TypeKind::Union)
         Base += "union ";
-      else if (Type.NamedKind == TypeKind::Enum)
+      else if (Kind == TypeKind::Enum)
         Base += "enum ";
     }
     return spaced(Base + Names.type(Type.Name));
@@ -428,17 +434,20 @@ void CWriter::body(const RecordDef &Record, uint32_t Pack, unsigned Indent,
     }
     line(Indent, Code + ";", Comment, Out);
   }
-  if (!Outer)
-    return;
   if (Record.Union) {
-    // A union larger than its alternatives keeps its size with one more.
+    // A union larger than its alternatives keeps its size with one more, as
+    // a union of empty arrays, which only Microsoft's C sizes.  A union in
+    // place names it apart: its members join the record's.
     if (Record.Size > alignTo(UnionSize, UnionAlign))
       line(Indent,
-           builtin(Builtin::UChar) + " __size[" + std::to_string(Record.Size) +
-               "];",
+           builtin(Builtin::UChar) + " __size" +
+               (Outer ? std::string() : std::to_string(Fillers++)) + "[" +
+               std::to_string(Record.Size) + "];",
            offset(Base / 8), Out);
     return;
   }
+  if (!Outer)
+    return;
   const uint64_t At = Layout.end();
   step(Layout.finish(Record.Size, Library.alignOf(Record)), Base / 8 + At,
        Indent, Out);
@@ -590,9 +599,11 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
     for (Builtin Type : Writer.builtins()) {
       const BuiltinInfo &Info = builtinInfo(Type);
       const std::string Portable = portableBuiltin(Type, Library.dataModel());
-      // A keyword, such as char16_t in C++, needs no declaring.
+      // A keyword, such as char16_t in C++ or long double, needs no
+      // declaring.
       if (Portable == Info.Windows ||
-          escapedName(Options.Lang, Info.Windows) != Info.Windows)
+          escapedName(Options.Lang, Info.Windows) != Info.Windows ||
+          llvm::StringRef(Info.Windows).contains(' '))
         continue;
       if (Type == Builtin::Void)
         Out += "#define VOID void\n";
@@ -652,6 +663,13 @@ std::string renderC(const TypeLibrary &Library, const LocalType &Type,
   return Out;
 }
 
+/// Whether \p Name is a C identifier, as a prototype's name must be.
+bool isIdentifier(llvm::StringRef Name) {
+  return !Name.empty() && !llvm::isDigit(Name.front()) &&
+         llvm::all_of(Name,
+                      [](char C) { return llvm::isAlnum(C) || C == '_'; });
+}
+
 std::string renderCHeader(const TypeLibrary &Library,
                           llvm::ArrayRef<const LocalType *> Roots,
                           const RenderOptions &Options) {
@@ -694,8 +712,17 @@ std::string renderCHeader(const TypeLibrary &Library,
   std::function<void(const LocalType &)> Emit = [&](const LocalType &Type) {
     if (!Defined.contains(Type.Name) || !Done.insert(Type.Name).second)
       return;
+    // What it holds by value, and the typedefs and enumerations it names
+    // anywhere: C declares neither ahead of its definition.
     std::vector<std::string> Needs;
     valueDependencies(Type, Needs);
+    std::vector<std::string> Named;
+    mentionedTypes(Type, Named);
+    for (const std::string &Name : Named)
+      if (const LocalType *Found = Library.find(Name);
+          Found && Found->Kind != TypeKind::Struct &&
+          Found->Kind != TypeKind::Union)
+        Needs.push_back(Name);
     for (const std::string &Name : Needs)
       if (const LocalType *Found = Library.find(Name))
         Emit(*Found);
@@ -709,12 +736,38 @@ std::string renderCHeader(const TypeLibrary &Library,
   for (const LocalType *Type : All)
     Emit(*Type);
 
-  std::string Out = "// " + std::to_string(Done.size()) +
-                    " types, rendered by NeverD.\n#pragma once\n\n";
+  // The functions the library knows the prototypes of, by name.
+  std::string Prototypes;
+  size_t PrototypeCount = 0;
+  if (Options.Prototypes && Roots.empty()) {
+    std::vector<std::pair<llvm::StringRef, const FunctionDef *>> Sorted;
+    for (const auto &Entry : Library.prototypes())
+      if (Entry.second && isIdentifier(Entry.first()))
+        Sorted.emplace_back(Entry.first(), Entry.second.get());
+    llvm::sort(Sorted);
+    const bool Cpp = Options.Lang == Language::Cpp;
+    for (const auto &[Name, Function] : Sorted) {
+      if (Function->NoReturn)
+        Prototypes += Cpp ? "[[noreturn]] " : "_Noreturn ";
+      Prototypes += Writer.declare(
+                        *makeFunction(std::make_shared<FunctionDef>(*Function)),
+                        Name.str()) +
+                    ";\n";
+    }
+    PrototypeCount = Sorted.size();
+  }
+
+  std::string Out =
+      "// " + std::to_string(Done.size()) + " types" +
+      (PrototypeCount ? ", " + std::to_string(PrototypeCount) + " prototypes"
+                      : std::string()) +
+      ", rendered by NeverD.\n#pragma once\n\n";
   Out += prelude(Writer, Library, Options);
   if (!Declarations.empty())
     Out += "\n" + Declarations;
   Out += "\n" + Enums + Body;
+  if (!Prototypes.empty())
+    Out += "\n" + Prototypes;
   return Out;
 }
 

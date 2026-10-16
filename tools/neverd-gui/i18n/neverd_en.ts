@@ -3527,10 +3527,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>No local types: this program has no PDB with types.</translation>
     </message>
     <message>
-        <source>Types: %1 · PDB · %2</source>
-        <translation>Types: %1 · PDB · %2</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>Types that do not lay out as the PDB lists them: %1</translation>
     </message>
@@ -3712,6 +3708,51 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The window closed</source>
         <translation>The window closed</translation>
+    </message>
+    <message>
+        <source>All types</source>
+        <translation>All types</translation>
+    </message>
+    <message>
+        <source>From the PDB</source>
+        <translation>From the PDB</translation>
+    </message>
+    <message>
+        <source>From system headers</source>
+        <translation>From system headers</translation>
+    </message>
+    <message>
+        <source>Declared</source>
+        <translation>Declared</translation>
+    </message>
+    <message>
+        <source>Show the types of one origin</source>
+        <translation>Show the types of one origin</translation>
+    </message>
+    <message>
+        <source>Types: %1</source>
+        <translation>Types: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from the PDB</source>
+        <translation>
+            <numerusform>%n from the PDB</numerusform>
+            <numerusform>%n from the PDB</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from system headers</source>
+        <translation>
+            <numerusform>%n from system headers</numerusform>
+            <numerusform>%n from system headers</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declared</source>
+        <translation>
+            <numerusform>%n declared</numerusform>
+            <numerusform>%n declared</numerusform>
+        </translation>
     </message>
 </context>
 <context>

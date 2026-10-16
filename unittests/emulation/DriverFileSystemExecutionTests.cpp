@@ -50,6 +50,59 @@ class KernelFileSystemExecution
     : public testing::TestWithParam<
           std::tuple<ExecutionBackendKind, ExecutionContract, bool>> {
 protected:
+  void runOpens(const std::filesystem::path &Image) {
+    const auto [Backend, Contract, Rebase] = GetParam();
+    auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+    if (!Probe) {
+      auto E = Probe.takeError();
+      const bool Unavailable = E.isA<BackendUnavailableError>();
+      const auto Reason = llvm::toString(std::move(E));
+      if (Unavailable)
+        GTEST_SKIP() << Reason;
+      FAIL() << Reason;
+    }
+    Probe->CPU.reset();
+    for (bool Scheduled : {false, true})
+      for (char Mode : {'C', 'P', 'X', 'U', 'R'}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Image << ' ' << Scheduled << ' ' << Mode);
+        DriverOptions Options;
+        Options.Backend = Backend;
+        Options.Contract = Contract;
+        Options.Unload = true;
+        Options.ServiceName = std::string("FileOpen") + Mode;
+        Options.FileSystem = std::vector{declaredVolume()};
+        if (Rebase)
+          Options.LoadAddress = 0x1c0000000;
+        if (Scheduled)
+          Options.Scheduling = DriverScheduling{17, 10};
+        auto Result = emulateDriver(Image, Options);
+        ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+        ASSERT_EQ(Result->Stop, DriverStopReason::Returned)
+            << Result->Diagnostic;
+        ASSERT_EQ(Result->NTStatus, 0u) << Result->Diagnostic;
+        ASSERT_TRUE(Result->UnloadCompleted) << Result->Diagnostic;
+        EXPECT_TRUE(Result->Devices.empty());
+        ASSERT_FALSE(Result->Requests.empty());
+        for (const auto &Request : Result->Requests) {
+          EXPECT_TRUE(Request.Completed);
+          EXPECT_TRUE(Request.FileObject);
+          EXPECT_TRUE(Request.FileOpenOperation);
+          EXPECT_TRUE(Request.FileSystemDevice);
+          EXPECT_TRUE(Request.FileSystemFileID);
+        }
+        auto JSON = llvm::json::parse(driverResultJSON(*Result));
+        ASSERT_TRUE(bool(JSON)) << llvm::toString(JSON.takeError());
+        const auto *Requests = JSON->getAsObject()->getArray("requests");
+        ASSERT_NE(Requests, nullptr);
+        const auto *First = Requests->front().getAsObject();
+        EXPECT_EQ(First->get("file")->kind(), llvm::json::Value::Null);
+        EXPECT_TRUE(First->getString("file_object"));
+        EXPECT_TRUE(First->getInteger("file_open_operation"));
+        EXPECT_TRUE(First->getString("filesystem_device"));
+        EXPECT_TRUE(First->get("filesystem_file_id"));
+      }
+  }
   void run(const std::filesystem::path &Image) {
     const auto [Backend, Contract, Rebase] = GetParam();
     auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
@@ -156,6 +209,21 @@ TEST_P(KernelFileSystemExecution, GenuineWdkObservesDeclaredVolumes) {
   if (HasFatalFailure() || IsSkipped())
     return;
   run(NEVERD_WDM_FILESYSTEM_CFG_FIXTURE);
+#endif
+}
+TEST_P(KernelFileSystemExecution, OriginalDriverOpensExistingFiles) {
+  runOpens(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+           "driver_filesystem_provider.sys");
+}
+TEST_P(KernelFileSystemExecution, GenuineWdkOpensExistingFiles) {
+#if !defined(NEVERD_WDM_FILESYSTEM_FIXTURE) ||                                 \
+    !defined(NEVERD_WDM_FILESYSTEM_CFG_FIXTURE)
+  GTEST_SKIP() << "genuine WDK filesystem fixture was not supplied";
+#else
+  runOpens(NEVERD_WDM_FILESYSTEM_FIXTURE);
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  runOpens(NEVERD_WDM_FILESYSTEM_CFG_FIXTURE);
 #endif
 }
 std::string fileSystemParameterName(

@@ -284,6 +284,12 @@ struct DriverRequestResult {
   std::optional<DriverUsbIdleRequestResult> UsbIdle;
   /// Original FILE_INFORMATION_CLASS supplied to an internal query producer.
   std::optional<uint32_t> FileInformationClass;
+  /// Actual file body, independent of an optional scenario identifier.
+  std::optional<uint64_t> FileObject;
+  /// Driver-originated open and terminal provider identity, when established.
+  std::optional<uint64_t> FileOpenOperation;
+  std::optional<uint64_t> FileSystemDevice;
+  std::optional<uint64_t> FileSystemFileID;
 };
 
 struct DriverFault {

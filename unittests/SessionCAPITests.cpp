@@ -3534,6 +3534,8 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
   EXPECT_EQ((*List.getArray("types"))[0].getAsObject()->getString("name"),
             "_THREAD_LIKE");
   EXPECT_EQ(List.getObject("stats")->getArray("nestingMismatches")->size(), 0u);
+  // A console program takes no kernel headers.
+  EXPECT_EQ(List.get("headers"), nullptr);
 
   llvm::json::Object Thread =
       parse(neverd_local_type_json(Session, "_THREAD_LIKE", nullptr));
@@ -3641,6 +3643,14 @@ TEST_F(SessionCAPITest, DeclaredTypesJoinThePDBsAndStayWithTheProject) {
   llvm::json::Value Rows =
       *llvm::json::parse(takeString(neverd_type_declarations_json(Session)));
   ASSERT_EQ(Rows.getAsArray()->size(), 4u);
+  // The list keeps one origin when asked, and counts every origin's.
+  llvm::json::Object Mine =
+      parse(neverd_local_types_json(Session, R"({"origin":"user"})"));
+  EXPECT_EQ(Mine.getArray("types")->size(), 3u);
+  EXPECT_EQ(Mine.getObject("stats")->getObject("origins")->getInteger("user"),
+            3);
+  EXPECT_EQ(neverd_local_types_json(Session, R"({"origin":"elsewhere"})"),
+            nullptr);
   ASSERT_EQ(neverd_type_declarations_save(Session), 0)
       << takeString(neverd_last_error(Session));
   ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1);
@@ -3666,6 +3676,50 @@ TEST_F(SessionCAPITest, DeclaredTypesJoinThePDBsAndStayWithTheProject) {
   // The others need no PDB: a pointer to a structure C has not seen is C.
   EXPECT_EQ(size("OWNER"), 16);
   EXPECT_EQ(size("_PACKED"), 16);
+}
+
+TEST_F(SessionCAPITest, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
+  // ntoskrnl.exe and its PDB, as a developer points to them.
+  const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
+  const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");
+  if (!Kernel || !PDB)
+    GTEST_SKIP() << "set NEVERD_TYPES_NTOSKRNL and NEVERD_TYPES_NTKRNLMP to "
+                    "ntoskrnl.exe and ntkrnlmp.pdb";
+  neverd_session_set_pdb_path(Session, PDB);
+  ASSERT_EQ(neverd_session_load(Session, Kernel), 1)
+      << takeString(neverd_last_error(Session));
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_local_types_json(Session, nullptr)));
+  ASSERT_TRUE(static_cast<bool>(Parsed));
+  const llvm::json::Object &List = *Parsed->getAsObject();
+  EXPECT_EQ(List.getString("source"), "pdb");
+  // The PDB names records only; the WDK's typedefs and prototypes join
+  // them, where the PDB has no type of the name.
+  const llvm::json::Array *Headers = List.getArray("headers");
+  ASSERT_NE(Headers, nullptr);
+  ASSERT_EQ(Headers->size(), 1u);
+  const llvm::json::Object &Joined = *(*Headers)[0].getAsObject();
+  EXPECT_EQ(Joined.getString("name"), "windows-kernel-x64");
+  EXPECT_GT(Joined.getInteger("types").value_or(0), 3000);
+  EXPECT_GT(Joined.getInteger("prototypes").value_or(0), 1500);
+  EXPECT_EQ(Joined.getArray("conflicts")->size(), 0u);
+  // A record the PDB has stays the PDB's.
+  auto Thread = llvm::json::parse(
+      takeString(neverd_local_type_json(Session, "_KTHREAD", nullptr)));
+  ASSERT_TRUE(static_cast<bool>(Thread));
+  EXPECT_EQ(Thread->getAsObject()->getString("origin"), "pdb");
+  // Declarations may name the WDK's typedefs.
+  auto Declared = llvm::json::parse(takeString(neverd_local_types_declare(
+      Session,
+      "typedef struct _MINE { PKTHREAD Owner; LIST_ENTRY Links; "
+      "NTSTATUS Status; } MINE;",
+      nullptr)));
+  ASSERT_TRUE(static_cast<bool>(Declared));
+  EXPECT_EQ(Declared->getAsObject()->getArray("problems")->size(), 0u);
+  auto Mine = llvm::json::parse(
+      takeString(neverd_local_type_json(Session, "_MINE", nullptr)));
+  ASSERT_TRUE(static_cast<bool>(Mine));
+  EXPECT_EQ(Mine->getAsObject()->getInteger("size"), 32);
 }
 
 TEST_F(SessionCAPITest, PDBReferenceNamesTheCopyALoadFinds) {

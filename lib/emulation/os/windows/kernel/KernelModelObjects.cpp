@@ -93,7 +93,7 @@ llvm::Expected<uint64_t> KernelModel::dereferenceObject(uint64_t Object) {
     return objectError("asynchronous final query release requires deferred "
                        "file deletion");
   if (const auto File = FileObjects.find(Object);
-      File != FileObjects.end() && File->second.DeferredClose &&
+      File != FileObjects.end() && owesFileClose(File->second) &&
       !File->second.HandleCloseHolds && !File->second.InternalIOHolds &&
       !Found->second.Handles && Found->second.Pointers == 1) {
     if (CurrentIRQL != scheduler::PassiveLevel)
@@ -238,11 +238,19 @@ KernelModel::openObjectByPointer(llvm::ArrayRef<uint64_t> A) {
 
 void KernelModel::retainObjectHandle(uint64_t Object, uint32_t Access,
                                      uint32_t Attributes, uint32_t ProcessID) {
+  const uint64_t Handle = NextObjectHandle;
+  NextObjectHandle += profile::SystemThreadHandleStride;
+  retainReservedObjectHandle(Handle, Object, Access, Attributes, ProcessID);
+}
+
+void KernelModel::retainReservedObjectHandle(uint64_t Handle, uint64_t Object,
+                                             uint32_t Access,
+                                             uint32_t Attributes,
+                                             uint32_t ProcessID) {
   if (Attributes & windows::ObjectKernelHandle)
     ProcessID = windows::SystemProcessID;
-  ObjectHandles.emplace(NextObjectHandle,
+  ObjectHandles.emplace(Handle,
                         ObjectHandle{Object, Access, Attributes, ProcessID});
-  NextObjectHandle += profile::SystemThreadHandleStride;
   ++ReferencedObjects.at(Object).Handles;
 }
 

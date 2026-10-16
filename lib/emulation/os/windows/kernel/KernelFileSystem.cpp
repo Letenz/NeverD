@@ -205,6 +205,20 @@ bool KernelFileSystem::ownsDevice(uint64_t DeviceObject) const {
   return volumeForDevice(DeviceObject) != nullptr;
 }
 
+llvm::Expected<const DriverFileSystemNode *>
+KernelFileSystem::lookupNode(uint64_t DeviceObject, llvm::StringRef Path,
+                             bool FoldCase) const {
+  const auto *Volume = volumeForDevice(DeviceObject);
+  if (!Volume)
+    return invalid("node lookup requires a bound volume");
+  if (!path(Path))
+    return invalid("file name requires a bounded rooted ASCII path");
+  for (const auto &Node : Volume->Nodes)
+    if (FoldCase ? Path.equals_insensitive(Node.Path) : Path == Node.Path)
+      return &Node;
+  return nullptr;
+}
+
 llvm::Expected<KernelFileSystem::OpenResult>
 KernelFileSystem::reserveOpen(uint64_t DeviceObject, uint64_t FileID,
                               uint64_t FileObject, uint32_t GrantedAccess,
@@ -236,13 +250,24 @@ KernelFileSystem::reserveOpen(uint64_t DeviceObject, uint64_t FileID,
     return invalid("provider open inventory or token space exhausted");
   const auto Token = NextOpen++;
   Opens.emplace(Token, Open{Token, FileObject, DeviceObject, FileID,
-                            GrantedAccess, ShareAccess, false});
+                            GrantedAccess, ShareAccess, Demand, false});
   return OpenResult{windows::StatusSuccess, Token};
 }
 
 const KernelFileSystem::Open *KernelFileSystem::findOpen(uint64_t Token) const {
   const auto Found = Opens.find(Token);
   return Found == Opens.end() ? nullptr : &Found->second;
+}
+
+const DriverFileSystemNode *
+KernelFileSystem::nodeForOpen(uint64_t Token) const {
+  const auto *Open = findOpen(Token);
+  if (Open)
+    if (const auto *Volume = volumeForDevice(Open->DeviceObject))
+      for (const auto &Node : Volume->Nodes)
+        if (Node.FileID == Open->FileID)
+          return &Node;
+  return nullptr;
 }
 
 llvm::Error KernelFileSystem::cleanupOpen(uint64_t Token) {

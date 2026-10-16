@@ -3527,10 +3527,6 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <translation>Keine lokalen Typen: Dieses Programm hat keine PDB mit Typen.</translation>
     </message>
     <message>
-        <source>Types: %1 · PDB · %2</source>
-        <translation>Typen: %1 · PDB · %2</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>Typen, deren Layout nicht der PDB entspricht: %1</translation>
     </message>
@@ -3712,6 +3708,51 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <message>
         <source>The window closed</source>
         <translation>Das Fenster wurde geschlossen</translation>
+    </message>
+    <message>
+        <source>All types</source>
+        <translation>Alle Typen</translation>
+    </message>
+    <message>
+        <source>From the PDB</source>
+        <translation>Aus der PDB</translation>
+    </message>
+    <message>
+        <source>From system headers</source>
+        <translation>Aus System-Headern</translation>
+    </message>
+    <message>
+        <source>Declared</source>
+        <translation>Selbst deklariert</translation>
+    </message>
+    <message>
+        <source>Show the types of one origin</source>
+        <translation>Nur Typen einer Herkunft anzeigen</translation>
+    </message>
+    <message>
+        <source>Types: %1</source>
+        <translation>Typen: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from the PDB</source>
+        <translation>
+            <numerusform>%n aus der PDB</numerusform>
+            <numerusform>%n aus der PDB</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from system headers</source>
+        <translation>
+            <numerusform>%n aus System-Headern</numerusform>
+            <numerusform>%n aus System-Headern</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declared</source>
+        <translation>
+            <numerusform>%n deklariert</numerusform>
+            <numerusform>%n deklariert</numerusform>
+        </translation>
     </message>
 </context>
 <context>

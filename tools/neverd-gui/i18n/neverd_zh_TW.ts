@@ -3521,10 +3521,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>沒有本機型別：此程式沒有含型別的 PDB。</translation>
     </message>
     <message>
-        <source>Types: %1 · PDB · %2</source>
-        <translation>型別：%1 · PDB · %2</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>配置與 PDB 所列不一致的型別：%1</translation>
     </message>
@@ -3701,6 +3697,48 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The window closed</source>
         <translation>視窗已關閉</translation>
+    </message>
+    <message>
+        <source>All types</source>
+        <translation>全部型別</translation>
+    </message>
+    <message>
+        <source>From the PDB</source>
+        <translation>來自 PDB</translation>
+    </message>
+    <message>
+        <source>From system headers</source>
+        <translation>來自系統標頭檔</translation>
+    </message>
+    <message>
+        <source>Declared</source>
+        <translation>自行宣告的</translation>
+    </message>
+    <message>
+        <source>Show the types of one origin</source>
+        <translation>只顯示某一來源的型別</translation>
+    </message>
+    <message>
+        <source>Types: %1</source>
+        <translation>型別：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from the PDB</source>
+        <translation>
+            <numerusform>%n 個來自 PDB</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from system headers</source>
+        <translation>
+            <numerusform>%n 個來自系統標頭檔</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declared</source>
+        <translation>
+            <numerusform>%n 個自行宣告</numerusform>
+        </translation>
     </message>
 </context>
 <context>

@@ -90,6 +90,31 @@ class DriverFileSystemIntegrationTests(unittest.TestCase):
             self.assertIsNone(raw)
             self.assertIn("filesystem", self.host.owned_string("neverd_last_error", self.session))
 
+    def test_driver_opens_have_independent_report_identity(self) -> None:
+        for mode in ("C", "P", "X", "U", "R"):
+            for rebase in (False, True):
+                with self.subTest(mode=mode, rebase=rebase):
+                    scenario = dict(service_name="FileOpen" + mode, unload=True,
+                                    filesystem=[volume()])
+                    if rebase:
+                        scenario["load_address"] = "0x1c0000000"
+                    result = self.run_scenario(scenario)
+                    self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+                    self.assertEqual(result["nt_status"], 0)
+                    self.assertTrue(result["unload_completed"])
+                    self.assertTrue(result["requests"])
+                    identities = {}
+                    for request in result["requests"]:
+                        self.assertIsNone(request["file"])
+                        self.assertTrue(request["completed"])
+                        self.assertGreater(int(request["file_object"], 0), 0)
+                        self.assertIn(request["filesystem_file_id"], (0, 2**64 - 1))
+                        identity = (request["file_object"], request["filesystem_device"],
+                                    request["filesystem_file_id"])
+                        key = request["file_open_operation"]
+                        self.assertEqual(identities.setdefault(key, identity), identity)
+                    self.assertEqual(result["filesystem"][0]["nodes"][1]["data"], "007f80ff")
+
 
 if __name__ == "__main__":
     unittest.main()

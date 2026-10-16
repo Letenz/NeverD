@@ -122,6 +122,23 @@ is left out and reported (`declarationProblems`), never silently dropped.
 The worker writes the declarations to `<input>.neverd-types.json` at once;
 they do not join undo history.
 
+Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
+the system's types and prototypes that its debug information lacks: the
+Windows kernel's PDB names records, but no typedefs and no prototypes.
+`scripts/generate_windows_kernel_types.py` renders what `<ntifs.h>` declares,
+from mingw-w64's DDK headers, into `lib/types/headers/WindowsKernelX64.h`.
+The build embeds the file, and `headerLibrary` reads it once. The C API joins
+a library to an image the table names (an x64 PE of the native subsystem)
+after the program's PDB and before the user's declarations:
+- a header type joins only where the program has no type of its name;
+- a typedef names the program's type, as C binds it;
+- a header record laid out with a type the program sizes otherwise is left
+  out and reported (`conflicts`).
+
+`neverd_types_convert` and `neverd types --data-model` read and render
+declarations without a program, which is how the generator builds the
+library.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and
@@ -6713,4 +6730,4 @@ stateful initialization, fields, hierarchy dispatch, objects and handlers.
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
 
-KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing operation accepts an already admitted node and mapped access, checks both directions, and excludes metadata-only opens from sharing conflicts. CLEANUP releases sharing without retiring the token; CLOSE removes the cleaned token. Cleaned retained bodies still count toward the 1024-open bound. Exact binding validation compares tokens with the file-object owner. This preparatory owner does not enable CREATE/OPEN exports or relax route rejection.
+KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing operation accepts an already admitted node and mapped access, checks both directions, and excludes metadata-only opens from sharing conflicts. CLEANUP releases sharing without retiring the token; CLOSE removes the cleaned token. Cleaned retained bodies still count toward the 1024-open bound. Exact binding validation compares tokens with the file-object owner. `KernelModelFileCreate` owns CREATE and cancellation producers and reserves handle capacity before callbacks. `DriverSession` retains the original caller through pending work and nested CLOSE. The common object owner publishes the handle; namespace lookup retains a real directory body, and the terminal provider reads the admitted packet. Scenario close intent remains separate. Bidirectional token checks run on snapshot and unload.

@@ -28,6 +28,7 @@ public:
     uint64_t FileID = 0;
     uint32_t GrantedAccess = 0;
     uint32_t ShareAccess = 0;
+    uint32_t SharingDemand = 0;
     bool Cleaned = false;
   };
   struct OpenResult {
@@ -44,6 +45,8 @@ public:
   llvm::Error bindDevice(size_t Volume, uint64_t DeviceObject);
   bool ownsDevice(uint64_t DeviceObject) const;
   const DriverFileSystemVolume *volumeForDevice(uint64_t DeviceObject) const;
+  llvm::Expected<const DriverFileSystemNode *>
+  lookupNode(uint64_t DeviceObject, llvm::StringRef Path, bool FoldCase) const;
   size_t volumeCount() const { return Volumes ? Volumes->size() : 0; }
   /// Commit sharing after the terminal provider has admitted the name, node
   /// kind, create disposition and access policy. GrantedAccess must already be
@@ -54,6 +57,7 @@ public:
                                          uint32_t GrantedAccess,
                                          uint32_t ShareAccess);
   const Open *findOpen(uint64_t Token) const;
+  const DriverFileSystemNode *nodeForOpen(uint64_t Token) const;
   llvm::Error cleanupOpen(uint64_t Token);
   llvm::Error closeOpen(uint64_t Token);
   size_t openCount() const { return Opens.size(); }

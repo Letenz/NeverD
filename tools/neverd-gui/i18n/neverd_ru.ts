@@ -3533,10 +3533,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Нет локальных типов: у программы нет PDB с типами.</translation>
     </message>
     <message>
-        <source>Types: %1 · PDB · %2</source>
-        <translation>Типов: %1 · PDB · %2</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>Типов, размещение которых не совпадает с PDB: %1</translation>
     </message>
@@ -3723,6 +3719,54 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The window closed</source>
         <translation>Окно закрыто</translation>
+    </message>
+    <message>
+        <source>All types</source>
+        <translation>Все типы</translation>
+    </message>
+    <message>
+        <source>From the PDB</source>
+        <translation>Из PDB</translation>
+    </message>
+    <message>
+        <source>From system headers</source>
+        <translation>Из системных заголовков</translation>
+    </message>
+    <message>
+        <source>Declared</source>
+        <translation>Объявленные</translation>
+    </message>
+    <message>
+        <source>Show the types of one origin</source>
+        <translation>Показывать типы одного источника</translation>
+    </message>
+    <message>
+        <source>Types: %1</source>
+        <translation>Типов: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from the PDB</source>
+        <translation>
+            <numerusform>%n из PDB</numerusform>
+            <numerusform>%n из PDB</numerusform>
+            <numerusform>%n из PDB</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from system headers</source>
+        <translation>
+            <numerusform>%n из системных заголовков</numerusform>
+            <numerusform>%n из системных заголовков</numerusform>
+            <numerusform>%n из системных заголовков</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declared</source>
+        <translation>
+            <numerusform>%n объявлен</numerusform>
+            <numerusform>%n объявлено</numerusform>
+            <numerusform>%n объявлено</numerusform>
+        </translation>
     </message>
 </context>
 <context>

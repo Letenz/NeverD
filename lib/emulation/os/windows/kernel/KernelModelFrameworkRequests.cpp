@@ -61,6 +61,24 @@ llvm::Error KernelModel::validateRequestCompletion(uint64_t IRP,
         "completion requires the active IRP and cannot occur twice");
   if (DriverIRPs.contains(IRP))
     return validateDriverIRPCompletion(IRP, Status, Information);
+  if (const auto File = FileObjects.find(Request->FileAddress);
+      File != FileObjects.end() &&
+      File->second.Source == OpenFile::Origin::DriverCreate) {
+    if (Request->Kind == DriverRequestKind::Create) {
+      const bool Success = !(Status & profile::NTStatusFailureMask);
+      if (Success &&
+          (!File->second.ProviderOpen || File->second.OpenCancelled ||
+           !Request->FileSystemReceived))
+        return frameworkRequestError(
+            "successful CREATE requires its terminal provider open");
+      if (!Success && File->second.ProviderOpen && !File->second.OpenCancelled)
+        return frameworkRequestError(
+            "failed provider CREATE requires IoCancelFileOpen");
+    } else if (!Request->FileSystemReceived) {
+      return frameworkRequestError(
+          "file lifecycle completion requires terminal provider receipt");
+    }
+  }
   // An accepted AdapterControl may still need this exact captured packet as
   // input. Check before a terminal unwind consumes stack slots; beginning the
   // callback releases that input hold and permits completion from its body.

@@ -1664,4 +1664,4 @@ KernelModelObjects 在共用物件表管理檔案控制代碼與指標計數。K
 
 `KernelFileSystem` / `KernelModel` / `DriverFileSystemJSON` / `DeviceOwnerKind` / `isPnpProviderDevice`: `configuration.filesystem` 保存輸入；頂層 `filesystem` 來自獨立狀態擁有者，增加 `device_object` 與節點 `end_of_file`，執行或投影驗證停止後仍保留。通用 `devices` 僅包含來賓裝置。工作階段磁碟區可在卸載後保留，但來賓物件、參考、控制代碼、附加與 IRP 必須釋放。任何宣告，包括 `[]`，均保留未重建相依性並阻止可執行 UNPACK 復原。舊版 Unicorn 可能在停止前提交遭拒寫入；診斷仍保留投影錯誤。
 
-KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共享操作接收已獲准的節點及已映射權限，雙向檢查共享衝突；僅存取中繼資料的開啟不參與衝突。CLEANUP 釋放共享限制但保留 token，CLOSE 刪除已清理的 token。仍被參照的已清理物件也計入 1024 個開啟的上限。嚴格綁定驗證將 token 與檔案物件 owner 對照。此前置層尚未啟用 CREATE/OPEN 匯出，也未放寬路由拒絕邊界。
+KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共享操作接收已獲准的節點及已映射權限，雙向檢查共享衝突；僅存取中繼資料的開啟不參與衝突。CLEANUP 釋放共享限制但保留 token，CLOSE 刪除已清理的 token。仍被參照的已清理物件也計入 1024 個開啟的上限。嚴格綁定驗證將 token 與檔案物件 owner 對照。 `KernelModelFileCreate` 擁有 CREATE 與取消生產者，在回呼前保留控制代碼容量。`DriverSession` 在非同步操作與巢狀 CLOSE 中保留原呼叫者。共同物件擁有者發布控制代碼；名稱查找保留真實目錄物件，終端提供者讀取已准入封包。場景關閉意圖獨立保留，快照與卸載執行雙向 token 驗證。

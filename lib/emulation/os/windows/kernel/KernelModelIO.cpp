@@ -427,14 +427,21 @@ KernelModel::beginRequest(const DriverRequest &Input,
   return beginFileRequest(Input, SourceIndex, Index);
 }
 
-llvm::Expected<KernelModel::Invocation>
-KernelModel::beginFileRequest(const DriverRequest &Input,
-                              std::optional<size_t> SourceIndex, size_t Index,
-                              uint64_t RetainedFile) {
+llvm::Expected<KernelModel::Invocation> KernelModel::beginFileRequest(
+    const DriverRequest &Input, std::optional<size_t> SourceIndex, size_t Index,
+    uint64_t RetainedFile, uint64_t DispatchDevice, uint64_t FileOperationID) {
+  const bool CancelOpen =
+      Result.Requests[Index].Origin == DriverRequestOrigin::FileCancelOpen;
   auto FileIt = FileObjects.find(
       RetainedFile ? RetainedFile
                    : (Files.contains(Input.File) ? Files.at(Input.File) : 0));
-  if (Unloading || Unloaded ||
+  const bool UnloadTeardown =
+      Unloading && RetainedFile && FileIt != FileObjects.end() &&
+      FileIt->second.Source == OpenFile::Origin::DriverCreate &&
+      (Input.Kind == DriverRequestKind::Cleanup ||
+       Input.Kind == DriverRequestKind::UnlockAll ||
+       Input.Kind == DriverRequestKind::Close);
+  if ((Unloading && !UnloadTeardown) || Unloaded ||
       (!RetainedFile &&
        std::any_of(Requests.begin(), Requests.end(), [](const auto &Entry) {
          return !Entry.second.DispatchReturned;
@@ -582,13 +589,14 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
     if (auto E = Lifecycle.validateIoSubmission(PnpOwner))
       return E;
   }
-  auto Top = topAttachedDevice(Device);
+  auto Top = DispatchDevice ? llvm::Expected<uint64_t>(DispatchDevice)
+                            : topAttachedDevice(Device);
   if (!Top)
     return Top.takeError();
   auto Route = deviceStack(*Top);
   if (!Route)
     return Route.takeError();
-  if (auto E = validateFileSystemRoute(*Route))
+  if (auto E = validateFileSystemRoute(*Route, RetainedFile, Input.Kind))
     return E;
   auto StackCount = Memory.readInteger(*Top + DeviceStackCountOffset, 1);
   if (!StackCount)
@@ -700,10 +708,13 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
     const bool RetainedCleanup = RetainedFile && State == FileState::Cleaned &&
                                  (Input.Kind == DriverRequestKind::Cleanup ||
                                   Input.Kind == DriverRequestKind::UnlockAll);
+    const bool CancelCleanup = CancelOpen && RetainedFile &&
+                               Input.Kind == DriverRequestKind::Cleanup &&
+                               State == FileState::Opening;
     if ((Input.Kind == DriverRequestKind::Close &&
          State != FileState::Cleaned && !DeferredScenarioClose) ||
         (Input.Kind != DriverRequestKind::Close && State != FileState::Open &&
-         !RetainedCleanup))
+         !RetainedCleanup && !CancelCleanup))
       return ioError(
           "file request order must be CREATE, READ/WRITE/DEVICE_CONTROL*, "
           "CLEANUP, CLOSE");
@@ -713,7 +724,13 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
       std::any_of(Requests.begin(), Requests.end(), [&](const auto &Entry) {
         return Entry.second.FileAddress == FileIt->second.Address;
       });
-  if (FileHasActiveRequest) {
+  const bool OnlyOpeningRequest =
+      CancelOpen &&
+      std::none_of(Requests.begin(), Requests.end(), [&](const auto &Entry) {
+        return Entry.second.FileAddress == FileIt->second.Address &&
+               Entry.second.Kind != DriverRequestKind::Create;
+      });
+  if (FileHasActiveRequest && !OnlyOpeningRequest) {
     if (!FileIt->second.Asynchronous)
       return ioError(
           "a synchronous file requires its prior request to finalize");
@@ -790,6 +807,8 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
     if (auto E = Lifecycle.trackIo(PnpOwner, *Packet))
       return E;
   Record.FileAddress = FileIt->second.Address;
+  Record.FileOperation = FileOperationID;
+  associateFileRequest(Result.Requests[Index], FileIt->second);
   Record.FileId = Input.File;
   Record.AsynchronousFile = FileIt->second.Asynchronous;
   Record.ProcessID = Input.RequestorProcessID;
@@ -812,6 +831,9 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
     return E;
   if (auto E = initializeRequestPacket(*Request, Input))
     return E;
+  if (FileOperationID)
+    if (auto E = prepareCancelFileOpenPacket(*Packet, FileOperationID))
+      return E;
   Result.Requests[Index].IRP = *Packet;
   if (auto E =
           Interrupts.arm(Input.InterruptEvents, SourceIndex.value_or(Index),
@@ -824,6 +846,18 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
                                     SourceIndex.value_or(Index)))
     return E;
   const uint64_t Callback = Result.MajorFunctions[Major];
+  if (FileSystem.ownsDevice(*Top)) {
+    auto Status = dispatchFileSystem(*Top, *Packet);
+    if (!Status)
+      return Status.takeError();
+    if (auto E = recordDispatchReturn(*Packet, uint32_t(*Status)))
+      return E;
+    if (auto E = finalizeRequest(*Packet))
+      return E;
+    Invocation Call;
+    Call.IRP = *Packet;
+    return Call;
+  }
   if (Framework) {
     auto Route = Framework->routeRequest(*Top, Request->IRP);
     if (!Route)
@@ -925,8 +959,11 @@ KernelModel::requestReleaseRanges(uint64_t IRP) const {
     return ioError("completion release requires a live IRP");
   if (DriverIRPs.contains(IRP))
     return ioError("caller-owned IRPs require explicit IoFreeIrp disposal");
-  std::vector<std::pair<uint64_t, uint64_t>> Retiring{
-      {IRP, IRPSize + Request->StackCount * StackSize}};
+  std::vector<std::pair<uint64_t, uint64_t>> Retiring;
+  // CREATE and IoCancelFileOpen borrow a producer-owned packet. Their wrappers
+  // dispose it after lower dispatch and every completion continuation return.
+  if (!Request->FileOperation)
+    Retiring.emplace_back(IRP, IRPSize + Request->StackCount * StackSize);
   const auto NativeUsb = FrameworkUsbIdleRequests.find(IRP);
   if (NativeUsb != FrameworkUsbIdleRequests.end()) {
     const auto &Native = NativeUsb->second;
@@ -951,7 +988,7 @@ KernelModel::requestReleaseRanges(uint64_t IRP) const {
     Retiring.emplace_back(Request->UserBuffer, Request->Direct
                                                    ? Request->TransferSize
                                                    : Request->OutputSize);
-  if (Request->SecurityContext)
+  if (Request->SecurityContext && !Request->FileOperation)
     Retiring.emplace_back(Request->SecurityContext, SecurityContextSize);
   std::vector<uint64_t> RetiringPins;
   std::vector<std::pair<uint64_t, uint64_t>> RevokingAliases;
@@ -1036,6 +1073,9 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
   if (Request->FileQueryOperation)
     if (auto E = publishFileQueryCompletion(IRP))
       return E;
+  if (Request->FileOperation)
+    if (auto E = publishFileOperationCompletion(IRP))
+      return E;
   if (Request->ChildPower && Request->ChildPower->StatusBlock) {
     const auto Block = Request->ChildPower->StatusBlock;
     if (auto E = Memory.writeInteger(Block, uint32_t(*Status), 4))
@@ -1077,15 +1117,15 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
   if (Request->UserBuffer && !Request->Neither)
     if (auto E = Physical.retire(Request->UserBuffer))
       return E;
-  // Completion consumes the IRP. Preserve observations now; subsequent guest
-  // accesses to the packet and its system buffer are invalid even before the
-  // dispatch routine returns to the session.
+  // Ordinary request completion consumes the IRP. File operation producers
+  // retain their borrowed packet until the calling wrapper resumes.
   Observation.Completed = true;
   if (Observation.UsbIdle)
     Observation.UsbIdle->CompletedAt100ns = Scheduler.now100ns();
   Request->Completed = true;
   Request->CancelDeadline.reset();
-  FreedRanges.emplace(IRP, IRPSize + Request->StackCount * StackSize);
+  if (!Request->FileOperation)
+    FreedRanges.emplace(IRP, IRPSize + Request->StackCount * StackSize);
   if (const auto Native = FrameworkUsbIdleRequests.find(IRP);
       Native != FrameworkUsbIdleRequests.end())
     FreedRanges.emplace(Native->second.Info, usb_idle::CallbackInfoSize);
@@ -1100,7 +1140,7 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
     FreedRanges.emplace(Request->UserBuffer, Request->Direct
                                                  ? Request->TransferSize
                                                  : Request->OutputSize);
-  if (Request->SecurityContext)
+  if (Request->SecurityContext && !Request->FileOperation)
     FreedRanges.emplace(Request->SecurityContext, SecurityContextSize);
   return llvm::Error::success();
 }
@@ -1159,6 +1199,18 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
                   [&](const auto &Entry) { return Entry.second.IRP == IRP; }))
     return ioError(
         "request finalization requires its guest continuations to return");
+  if (Request->FileOperation) {
+    const uint64_t Size = IRPSize + Request->StackCount * StackSize;
+    if (auto E = prepareReleaseRange(IRP, Size))
+      return E;
+    if (Request->SecurityContext)
+      if (auto E = prepareReleaseRange(Request->SecurityContext,
+                                       SecurityContextSize))
+        return E;
+    FreedRanges.emplace(IRP, Size);
+    if (Request->SecurityContext)
+      FreedRanges.emplace(Request->SecurityContext, SecurityContextSize);
+  }
   if (auto Allocation = DriverIRPs.find(IRP); Allocation != DriverIRPs.end()) {
     if (!Allocation->second.StorageReleased)
       return ioError("caller request finalization requires IoFreeIrp");
@@ -1237,7 +1289,7 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
   auto &File = FileIt->second;
   const uint64_t Device = File.Device;
   const uint32_t CompletionStatus = *Observation.IOStatus;
-  if (!Request->FileQueryOperation)
+  if (!Request->FileQueryOperation && !Request->FileOperation)
     if (auto E = Memory.writeInteger(File.Address + FileFinalStatusOffset,
                                      CompletionStatus, 4))
       return E;
@@ -1247,19 +1299,33 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
       auto Flags = Memory.readInteger(File.Address + FileFlagsOffset, 4);
       if (!Flags)
         return Flags.takeError();
-      if (auto E = Memory.writeInteger(File.Address + FileFlagsOffset,
-                                       *Flags | FileHandleCreated, 4))
+      if (auto E = Memory.writeInteger(
+              File.Address + FileFlagsOffset,
+              *Flags |
+                  (File.Source == OpenFile::Origin::Scenario ? FileHandleCreated
+                                                             : 0),
+              4))
         return E;
     } else {
-      Files.erase(Request->FileId);
-      ObjectHandles.erase(File.ScenarioHandle);
-      --ReferencedObjects.at(File.Address).Handles;
-      File.ScenarioHandle = 0;
-      File.State = FileState::Failed;
-      File.Device = 0;
-      File.PnpDevice = 0;
-      if (auto E = Memory.writeInteger(File.Address + FileDeviceOffset, 0, 8))
-        return E;
+      if (File.Source == OpenFile::Origin::Scenario) {
+        const auto Identity = Files.find(Request->FileId);
+        if (Identity != Files.end() && Identity->second == File.Address)
+          Files.erase(Identity);
+        ObjectHandles.erase(File.ScenarioHandle);
+        --ReferencedObjects.at(File.Address).Handles;
+        File.ScenarioHandle = 0;
+      }
+      if (File.OpenCancelled) {
+        File.State = FileState::Cleaned;
+      } else {
+        if (File.ProviderOpen)
+          return ioError("failed provider CREATE requires IoCancelFileOpen");
+        File.State = FileState::Failed;
+        File.Device = 0;
+        File.PnpDevice = 0;
+        if (auto E = Memory.writeInteger(File.Address + FileDeviceOffset, 0, 8))
+          return E;
+      }
       if (auto E = retireFileIfUnreferenced(File.Address))
         return E;
     }
@@ -1274,10 +1340,20 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
   } else if (Request->Kind == DriverRequestKind::Close) {
     if (auto E = prepareReleaseRange(File.Address, FileSize))
       return E;
+    if (File.NameStorage)
+      if (auto E = prepareReleaseRange(File.NameStorage, File.NameStorageSize))
+        return E;
+    if (File.ProviderOpen) {
+      if (auto E = FileSystem.closeOpen(*File.ProviderOpen))
+        return E;
+      File.ProviderOpen.reset();
+    }
     const auto Identity = Files.find(Request->FileId);
     if (Identity != Files.end() && Identity->second == File.Address)
       Files.erase(Identity);
     FreedRanges.emplace(File.Address, FileSize);
+    if (File.NameStorage)
+      FreedRanges.emplace(File.NameStorage, File.NameStorageSize);
     ReferencedObjects.erase(File.Address);
     FileObjects.erase(FileIt);
   } else if ((Request->Kind == DriverRequestKind::Read ||
@@ -1310,8 +1386,16 @@ llvm::Expected<KernelModel::Invocation> KernelModel::beginUnload() {
   if (Scheduler.queuedCallbackCount() || Scheduler.active() ||
       Scheduler.suspendedCallbackCount())
     return ioError("unload requires scheduled callbacks to drain");
-  if (!Requests.empty() || !FileObjects.empty() || !DriverIRPs.empty() ||
-      !FileInformationQueries.empty() || PendingFileQueryContinuation)
+  const bool ScenarioOrOpeningFile = std::any_of(
+      FileObjects.begin(), FileObjects.end(), [](const auto &Entry) {
+        const auto &File = Entry.second;
+        return File.Source != OpenFile::Origin::DriverCreate ||
+               (File.State != FileState::Open &&
+                File.State != FileState::Cleaned);
+      });
+  if (!Requests.empty() || ScenarioOrOpeningFile || !DriverIRPs.empty() ||
+      !FileInformationQueries.empty() || PendingFileQueryContinuation ||
+      !FileOperations.empty() || PendingFileOperation)
     return ioError(
         "unload requires all requests completed and the file closed");
   if (Unloading || Unloaded)
@@ -1357,11 +1441,12 @@ llvm::Error KernelModel::finishUnload() {
                !Device.UnlinkedFromDriver && !Device.InternalReferences;
       });
   if (!OnlyDeclaredVolumes || !SymbolicLinks.empty() || !Allocations.empty() ||
-      !FileObjects.empty() || !Requests.empty() || !DriverIRPs.empty() ||
-      !FileInformationQueries.empty() || PendingFileQueryContinuation ||
-      !MDLs.empty() || !WorkItems.empty() || !IRPCalls.empty() ||
-      PendingWdmCall || Scheduler.hasPending() || !PoFxDeviceObjects.empty() ||
-      !BlockingPoFx.empty())
+      !FileObjects.empty() || FileSystem.openCount() || !Requests.empty() ||
+      !DriverIRPs.empty() || !FileInformationQueries.empty() ||
+      PendingFileQueryContinuation || !FileOperations.empty() ||
+      PendingFileOperation || !MDLs.empty() || !WorkItems.empty() ||
+      !IRPCalls.empty() || PendingWdmCall || Scheduler.hasPending() ||
+      !PoFxDeviceObjects.empty() || !BlockingPoFx.empty())
     return ioError("unload returned with live devices, symbolic links, pool "
                    "allocations or file/request state");
   Unloading = false;
@@ -1388,16 +1473,26 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
   for (const auto &[Id, File] : FileObjects) {
     (void)Id;
     if (auto E = Check(File.Address, FileSize, [&](uint64_t Offset) {
-          if (DispatcherStorage && File.QueryEventInitialized &&
+          if (DispatcherStorage && File.FileEventInitialized &&
               Offset >= FileEventOffset &&
               Offset < FileEventOffset + dispatcher::EventSize)
             return true;
           if (IsWrite)
-            return Offset >= FileContextOffset && Offset < FileSectionOffset;
+            return (Offset >= FileContextOffset &&
+                    Offset < FileSectionOffset) ||
+                   (File.Source == OpenFile::Origin::DriverCreate &&
+                    File.State == FileState::Opening &&
+                    Offset >= FileNameOffset && Offset < FileNameOffset + 16);
           return Offset < FileSectionOffset ||
                  (Offset >= FileFinalStatusOffset &&
                   Offset < FileWaitersOffset);
         }))
+      return E;
+  }
+  for (const auto &[ID, Operation] : FileOperations) {
+    (void)ID;
+    if (auto E =
+            Check(Operation.AccessState, 16, [](uint64_t) { return false; }))
       return E;
   }
   for (const auto &[IRP, Record] : Requests) {
@@ -1405,6 +1500,8 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
       continue;
     const auto *Request = &Record;
     if (auto E = Check(Request->IRP, IRPSize, [&](uint64_t Offset) {
+          if (IsWrite && Request->Completed && Request->FileOperation)
+            return false;
           if (IsWrite)
             return (Offset >= IRPMdlOffset &&
                     Offset < IRPMdlOffset + profile::PointerSize) ||
@@ -1421,7 +1518,7 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
             return initialized(Request->IOStatusWritten,
                                Request->IOStatusInitialization,
                                Offset - IRPStatusOffset);
-          return (Request->FileQueryOperation &&
+          return ((Request->FileQueryOperation || Request->FileOperation) &&
                   ((Offset >= IRPAllocationFlagsOffset &&
                     Offset < IRPUserEventOffset + profile::PointerSize) ||
                    (Offset >= IRPThreadOffset &&
@@ -1446,6 +1543,8 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
       return E;
     if (auto E = Check(Request->SecurityContext, SecurityContextSize,
                        [&](uint64_t Offset) {
+                         if (Request->FileOperation)
+                           return !IsWrite;
                          return !IsWrite &&
                                 Offset >= SecurityDesiredAccessOffset &&
                                 Offset < SecurityDesiredAccessOffset + 4;

@@ -1477,6 +1477,7 @@ add_neverd_unittest(NeverDKernelSnapshotTests
   KernelSnapshotTests.cpp
   DriverFileSystemTests.cpp
   KernelFileSystemTests.cpp
+  KernelFileCreateTests.cpp
   KernelUnpackStateTests.cpp
   KernelLoaderViewTests.cpp
   KernelResidentQueryTests.cpp

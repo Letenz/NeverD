@@ -679,7 +679,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI,
                            "+ 7 kernel snapshots + 10 pool captures "
                            "+ 4 DriverEntry caller checks "
                            "+ 103 driver environment checks "
-                           "+ 72 driver API checks = 5708")
+                           "+ 80 driver API checks = 5716")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -2594,4 +2594,19 @@ NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemTests,
 NEVERD_EMULATION_DOC_TOKEN(
     DriverFileSystemTests,
     "UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery")
+#endif
+
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "ZwOpenFile")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "ZwCreateFile")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "IoCreateFile")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "IoCancelFileOpen")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "file_object")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "file_open_operation")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "filesystem_device")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "filesystem_file_id")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemArchitecture,
+                           "KernelModelFileCreate")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemArchitecture, "DriverSession")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemTests, "KernelFileCreateTests.cpp")
 #endif

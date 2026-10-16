@@ -32,7 +32,7 @@
 NEVERD_BUILTIN_TYPE(Void, Void, false, 0, 0, 0, "void", "VOID", "void")
 NEVERD_BUILTIN_TYPE(Bool, Bool, false, 1, 1, 1, "bool", "bool", "bool")
 NEVERD_BUILTIN_TYPE(Char, Character, true, 1, 1, 1, "char", "CHAR", "char")
-NEVERD_BUILTIN_TYPE(SChar, Integer, true, 1, 1, 1, "signed char", "CHAR",
+NEVERD_BUILTIN_TYPE(SChar, Integer, true, 1, 1, 1, "signed char", "SCHAR",
                     "__int8")
 NEVERD_BUILTIN_TYPE(UChar, Integer, false, 1, 1, 1, "unsigned char", "UCHAR",
                     "unsigned __int8")

@@ -49,6 +49,12 @@ struct DraftMember {
   /// A bitfield's width; zero ends the run of bitfields before it.
   uint32_t Width = 0;
   std::string Comment;
+  /// The alignment the member is declared with (__declspec(align),
+  /// __attribute__((aligned))), which the pack does not lower; zero for
+  /// none.
+  uint32_t Alignment = 0;
+  /// GNU's packed attribute on the member: it aligns to a byte.
+  bool Packed = false;
 };
 
 /// A record as source declares it.
@@ -59,6 +65,9 @@ struct DraftRecord {
   /// The alignment it is declared with (__declspec(align), alignas);
   /// zero for none.
   uint32_t Alignment = 0;
+  /// A C++ record: one with no bytes takes one, where Microsoft's C gives it
+  /// four, or its declared alignment, and GNU's C none.
+  bool Cpp = false;
   std::vector<DraftMember> Members;
 };
 

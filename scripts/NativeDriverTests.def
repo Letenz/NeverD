@@ -11,6 +11,30 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/KernelFileSystemExecution."
+    "OriginalDriverOpensExistingFiles/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "OriginalDriverOpensExistingFiles/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "OriginalDriverOpensExistingFiles/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "OriginalDriverOpensExistingFiles/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "GenuineWdkOpensExistingFiles/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "GenuineWdkOpensExistingFiles/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "GenuineWdkOpensExistingFiles/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "GenuineWdkOpensExistingFiles/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
     "OriginalDriverObservesDeclaredVolumes/{backend}LegacyPreferred")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/KernelFileSystemExecution."

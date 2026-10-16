@@ -48,6 +48,11 @@ struct ParseOptions {
   LayoutRules Rules = LayoutRules::MSVC;
   /// What the types defined record as their origin.
   TypeOrigin Origin = TypeOrigin::User;
+  /// C and C++: keep the declarations that read when others do not, each
+  /// problem still reported, as a generator reading a system's headers
+  /// does.  A problem the lexer finds, such as a #pragma pack it cannot
+  /// read, still changes nothing: the layouts after it are not known.
+  bool KeepGoing = false;
 };
 
 struct ParseResult {

@@ -38,6 +38,7 @@
 #include "neverd/sbf/emit/SBFLLVMEmitter.h"
 #include "neverd/sdk/NeverDCAPI.h"
 #include "neverd/sigs/SignatureDB.h"
+#include "neverd/types/HeaderLibrary.h"
 #include "neverd/types/PDBTypeImport.h"
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
@@ -124,6 +125,14 @@ struct Session {
   /// What the declarations replayed over the program's types last met:
   /// {declaration index, problem}.
   std::vector<std::pair<size_t, types::SourceProblem>> DeclarationProblems;
+  /// The header libraries joined to the program's types, and what each
+  /// added; a library that did not read has its problem instead.
+  struct JoinedHeaders {
+    types::HeaderLibrary Library;
+    types::HeaderMerge Merge;
+    std::string Error;
+  };
+  std::vector<JoinedHeaders> LocalTypeHeaders;
   /// Drops the program's types, read anew when next asked for; the user's
   /// declarations stay, to be read again over them.
   void dropLocalTypes() {
@@ -131,6 +140,7 @@ struct Session {
     LocalTypeStats = {};
     LocalTypesSource.clear();
     DeclarationProblems.clear();
+    LocalTypeHeaders.clear();
   }
 
   std::unique_ptr<llvm::LLVMContext> LLVMCtx;
