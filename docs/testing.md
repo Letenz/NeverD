@@ -298,6 +298,19 @@ With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
 ntoskrnl.exe and its PDB,
 `SessionCAPITest.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
 and checks that the headers join its PDB without conflicts.
+`SessionCAPITest.KernelFunctionsDecompileWithTheirPrototypes` decompiles
+`NtCreateFile`, `IoAllocateIrp`, `PsCreateSystemThread` and
+`IofCompleteRequest` and checks the signatures the headers give them.
+`PrototypeDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
+the conversion and which functions take a prototype without a program.
+`scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
+decompiles with the prototypes an IDA dump shows; it decompiles each
+function by address and resolves IDA's typedefs through the shipped headers:
+
+```sh
+python3 scripts/compare_prototypes_with_ida.py --neverd build/bin/neverd \
+  --binary ntoskrnl.exe --pdb ntkrnlmp.pdb --ida prototypes.json
+```
 
 Declared types are covered at each layer:
 - `SessionCAPITest.DeclaredTypesJoinThePDBsAndStayWithTheProject`: declaring,

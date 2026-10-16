@@ -358,6 +358,26 @@ std::string renderSource(const types::TypeLibrary &Library,
 
 } // namespace
 
+DebugContext *Session::decompileDebug() {
+  if (!Dbg)
+    return nullptr;
+  if (PrototypeDbg)
+    return PrototypeDbg.get();
+  if (PrototypesChecked)
+    return Dbg.get();
+  PrototypesChecked = true;
+  // Reading the types may fail, as a PDB's may; the decompilation goes on
+  // with the program's debug information alone, its error untouched.
+  const std::string Error = LastError;
+  const types::TypeLibrary *Library = localTypes(*this);
+  LastError = Error;
+  if (!Library || Library->prototypes().empty())
+    return Dbg.get();
+  PrototypeDbg = std::make_unique<PrototypeDebugContext>(
+      *Dbg, std::make_shared<types::TypeLibrary>(*Library));
+  return PrototypeDbg.get();
+}
+
 extern "C" {
 
 const char *neverd_local_types_json(neverd_session_t Sess,
@@ -574,8 +594,21 @@ const char *neverd_local_types_declare(neverd_session_t Sess,
     return nullptr;
   Declaration.Source = Source ? Source : "";
   const types::ParseResult Result = apply(Declaration, *Library);
-  if (Result.ok())
+  // Prototypes reach the decompiler with the types they name: a change to
+  // either takes the analysis that read them, and no other change does.
+  bool Decompilation = false;
+  if (Result.ok()) {
     S->TypeDeclarations.push_back(std::move(Declaration));
+    Decompilation = !Result.Prototypes.empty();
+    if (!Decompilation && !Result.Types.empty()) {
+      const llvm::StringSet<> Read = prototypeTypeNames(*Library);
+      Decompilation = llvm::any_of(Result.Types, [&](const std::string &Name) {
+        return Read.contains(Name);
+      });
+    }
+    if (Decompilation)
+      S->clearPipeline();
+  }
   llvm::json::Array Types, Prototypes, Problems;
   for (const std::string &Name : Result.Types)
     Types.push_back(jsonSafeText(Name));
@@ -589,7 +622,8 @@ const char *neverd_local_types_declare(neverd_session_t Sess,
   return dupStr(jsonToString(llvm::json::Value(
       llvm::json::Object{{"types", std::move(Types)},
                          {"prototypes", std::move(Prototypes)},
-                         {"problems", std::move(Problems)}})));
+                         {"problems", std::move(Problems)},
+                         {"decompilation", Decompilation}})));
 }
 
 const char *neverd_local_types_forget(neverd_session_t Sess,
@@ -643,9 +677,20 @@ const char *neverd_local_types_forget(neverd_session_t Sess,
   llvm::json::Array Names;
   for (const std::string &Name : Declaration.Forget)
     Names.push_back(jsonSafeText(Name));
+  // A type the prototypes name, which they still do, read as the decompiler
+  // read it.
+  const llvm::StringSet<> Read = prototypeTypeNames(*Library);
+  const bool Decompilation =
+      llvm::any_of(Declaration.Forget, [&](const std::string &Name) {
+        return Read.contains(Name);
+      });
   S->TypeDeclarations.push_back(std::move(Declaration));
-  return dupStr(jsonToString(llvm::json::Value(llvm::json::Object{
-      {"removed", std::move(Names)}, {"usedBy", std::move(UsedBy)}})));
+  if (Decompilation)
+    S->clearPipeline();
+  return dupStr(jsonToString(
+      llvm::json::Value(llvm::json::Object{{"removed", std::move(Names)},
+                                           {"usedBy", std::move(UsedBy)},
+                                           {"decompilation", Decompilation}})));
 }
 
 const char *neverd_types_convert(const char *RequestJson) {
@@ -788,7 +833,12 @@ int neverd_type_declarations_load(neverd_session_t Sess) {
     Declarations = std::move(*Read);
   }
   S->TypeDeclarations = std::move(Declarations);
+  // A decompilation that read the prototypes read the declarations these
+  // replace.
+  const bool ReadPrototypes = S->PrototypesChecked;
   S->dropLocalTypes();
+  if (ReadPrototypes)
+    S->clearPipeline();
   return 0;
 }
 

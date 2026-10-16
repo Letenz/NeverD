@@ -16,6 +16,7 @@
 #include "../plugin/PluginManager.h"
 #include "ImageStrings.h"
 #include "LoadOptions.h"
+#include "PrototypeDebugContext.h"
 
 #include "neverd/DataAccessWidths.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -141,6 +142,19 @@ struct Session {
     LocalTypesSource.clear();
     DeclarationProblems.clear();
     LocalTypeHeaders.clear();
+    dropPrototypes();
+  }
+
+  /// The debug context the decompiler reads: the program's own, its
+  /// functions that it names but leaves untyped completed from the local
+  /// types' prototypes (PrototypeDebugContext), when those have any.  Built
+  /// at the first decompilation; the pipeline it fed goes with it.
+  std::unique_ptr<PrototypeDebugContext> PrototypeDbg;
+  bool PrototypesChecked = false;
+  DebugContext *decompileDebug();
+  void dropPrototypes() {
+    PrototypeDbg.reset();
+    PrototypesChecked = false;
   }
 
   std::unique_ptr<llvm::LLVMContext> LLVMCtx;
@@ -663,6 +677,9 @@ struct Session {
 
   void clearPipeline() {
     clearPipelineResult();
+    // The prototypes' context refers to the debug context a load replaces
+    // after this.
+    dropPrototypes();
     AnalysisCache.reset();
     AccessWidths.reset();
     AccessWidthsFunctions.clear();
@@ -706,14 +723,14 @@ struct Session {
       // Debug names already reached Img.Symbols at load time; handing the
       // context to the pipeline also carries source locations, declared sizes,
       // and parameter names into the IR.
-      PipeResult = ThePipeline.run(Img, *LLVMCtx, Opts, Dbg.get());
+      PipeResult = ThePipeline.run(Img, *LLVMCtx, Opts, decompileDebug());
       PipelineFeatureGeneration = SigDB.featureGeneration();
       PipeRan = true;
     }
     if (NeedHighIR && PipeResult.Success && PipeResult.HighIRDeferred) {
       PipelineOptions Opts;
       applyAnalysisOptions(Opts);
-      Pipeline().resumeHighIR(Img, Opts, PipeResult, Dbg.get());
+      Pipeline().resumeHighIR(Img, Opts, PipeResult, decompileDebug());
     }
     if (!PipeResult.Success)
       setError(PipeResult.Error.empty() ? "pipeline failed" : PipeResult.Error);
@@ -807,7 +824,7 @@ struct Session {
     for (const auto &[Addr, Name] : Img.getImportAddressNames())
       ImportMap.emplace_back(Addr, Name);
     MedLLVMEmitter Emitter;
-    Emitter.setDebugContext(Dbg.get());
+    Emitter.setDebugContext(decompileDebug());
     // Native source views need surviving instruction observations even when
     // this function contains no recognized library operation.
     Sources = std::make_shared<LLVMSourceMap>();
