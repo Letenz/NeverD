@@ -4437,6 +4437,16 @@ becoming one), finally's
 private-frame write, a subsequent exception, and FS:[0] restoration on four
 successive invocations. Original and generated caller PCs are distinguished,
 and each generated image is executed at preferred and forced-rebased addresses.
+
+`RegistrationFrameScalar` checks that exact PE32 frame differences and equality
+preserve their results under relocation, including integer wraparound. Distinct
+frame roots, partial stores, ambiguous joins and ordered comparisons retain
+their conservative provenance. The native MSVC input owner also checks chain
+observations in `nonlocal_finally_reenter` across `/Od`/`/O2`, `/GS-`/`/GS` and
+raw/optimized projection. Its exact source state does not discharge the separate
+CRT guard retirement obligation; native reconstruction remains rejected while
+that proof is incomplete.
+
 The parameter case reads the real caller argument in both the resumed parent
 and its filter, including the caller-frame slot introduced during outlining.
 The callback cases resume from ordinary finally calls and runtime unwind

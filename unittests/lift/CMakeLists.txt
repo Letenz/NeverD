@@ -1439,6 +1439,7 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationRealignedTestUtils.cpp
   eh/RegistrationCallbackStateTests.cpp
   eh/RegistrationFrameMemoryTests.cpp
+  eh/RegistrationFrameScalarTests.cpp
   eh/RegistrationIncomingAliasTests.cpp
 
   LINK_COMPONENTS

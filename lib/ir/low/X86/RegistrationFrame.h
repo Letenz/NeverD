@@ -207,6 +207,7 @@ public:
   void write(const LowOp &Op, FrameValue Value, va_t CookieCheckVA = 0);
 
 private:
+  std::optional<FrameValue> evaluateRelativeScalar(const LowOp &Op) const;
   std::optional<FrameValue> evaluateRealignment(const LowOp &Op) const;
 
   FrameState &State;
