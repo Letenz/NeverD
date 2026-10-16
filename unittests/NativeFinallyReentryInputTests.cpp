@@ -58,6 +58,7 @@ TEST(PipelineOutcome, NativeFinallyReentryRetainsExactChainState) {
         EXPECT_TRUE(States.RegistrationLifetimeComplete);
         EXPECT_TRUE(States.SEHInvocationExitsComplete);
         EXPECT_TRUE(States.ChainOperationsComplete);
+        EXPECT_TRUE(States.IncomingFrameAccessesComplete);
         // Exact chain equality does not prove that an abnormal parent jump
         // retires the CRT guard. Keep that independent native obligation.
         EXPECT_FALSE(States.SEHParentChainComplete);

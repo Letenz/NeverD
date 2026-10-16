@@ -4441,7 +4441,10 @@ and each generated image is executed at preferred and forced-rebased addresses.
 `RegistrationFrameScalar` checks that exact PE32 frame differences and equality
 preserve their results under relocation, including integer wraparound. Distinct
 frame roots, partial stores, ambiguous joins and ordered comparisons retain
-their conservative provenance. The native MSVC input owner also checks chain
+their conservative provenance. `LowScalarConstant` compares constant multiply
+and shift facts with concrete LowIR execution at 1/2/4/8-byte widths, including
+overflow, zero shifts and saturating counts. Unknown operands and malformed
+widths supply no fact. The native MSVC input owner also checks chain
 observations in `nonlocal_finally_reenter` across `/Od`/`/O2`, `/GS-`/`/GS` and
 raw/optimized projection. Its exact source state does not discharge the separate
 CRT guard retirement obligation; native reconstruction remains rejected while

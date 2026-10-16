@@ -1,4 +1,5 @@
 add_neverd_unittest(NeverDSEHRuntimeMemoryTests
+  core/LowScalarConstantTests.cpp
   eh/SEHRuntimeMemoryTests.cpp
   eh/SEHImageFormatTests.cpp
   eh/X64CRTFrameTests.cpp
