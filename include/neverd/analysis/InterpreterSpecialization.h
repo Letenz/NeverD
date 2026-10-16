@@ -208,6 +208,13 @@ struct SpecializationOptions {
   /// This raw-residual contract supplies no scheduling, native proof or source
   /// ABI. Possible reserved-bit writes are refused rather than truncated.
   bool X64CR8State = false;
+  /// Raw-only MXCSR loads and scalar state reads/writes under explicit
+  /// nonfaulting machine state. The caller declares the CPU's writable mask:
+  /// 0xffbf without DAZ, or 0xffff with DAZ. Entry state is arbitrary within
+  /// that mask, never a default control word. Every load/write must prove its
+  /// reserved bits clear. Memory stores and other floating-point operations
+  /// remain unsupported; source and native proofs lack this state contract.
+  std::optional<uint32_t> X64MXCSRMask;
   /// Raw-only environment domain: these exact ordinary named PE imports have
   /// stable loader bindings, and their callees neither return nor reenter this
   /// residual graph via unwind, callbacks, context restoration or other means.

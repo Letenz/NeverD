@@ -8,6 +8,7 @@ add_neverd_component_library(NeverDInterpreterSpecialization
   ../arch/x86_64/ExternalExits.cpp
   ../arch/x86_64/NativeStackControl.cpp
   ../arch/x86_64/X64Recovery.cpp
+  ../arch/x86_64/X64MXCSR.cpp
   ../arch/x86_64/InterpreterMachineState.cpp
   FiniteValues.cpp
   CompleteModel.cpp

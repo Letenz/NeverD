@@ -556,6 +556,7 @@ bool supported(const LowOp &Op, const SpecializationOptions &Options) {
   case NdOp::INTRINSIC:
     return x64::runtimeFlagsIntrinsic(Op, Options.X64FlagsProfile) ||
            detail::stringTransferShape(Op) ||
+           supportsRuntimeControlOperation(Op, Options) ||
            (Options.X64CR8State && detail::taskPriorityOperation(Op));
   default:
     return false;
@@ -2193,6 +2194,7 @@ bool Specializer::evaluate(int Id) {
       Options.FrameBaseRegister ? Ctx.mkFreshVar(64, "entry_frame") : SymRef();
   seed(Ctx, State, FrameRoot, Draft.Incoming);
   seedRuntimeMemoryState(Ctx, State, Options);
+  auto RuntimeControls = seedRuntimeControlState(Ctx, Options);
   // Rebuilt nodes forget correlations, including prior writes, but retain the
   // full architectural domain. Runtime intrinsics are never removed.
   SymRef TaskPriority =
@@ -2616,9 +2618,12 @@ bool Specializer::evaluate(int Id) {
       const bool RuntimeMemory =
           Original.MemoryAddressSpace != NdMemoryAddressSpace::Default;
       const auto PriorityOperation = detail::taskPriorityOperation(Original);
+      const bool RuntimeControl =
+          supportsRuntimeControlOperation(Original, Options);
       const bool EnvironmentRead =
           (RuntimeMemory && Original.Opcode == NdOp::LOAD) ||
-          PriorityOperation == detail::X64TaskPriorityOperation::Read;
+          PriorityOperation == detail::X64TaskPriorityOperation::Read ||
+          RuntimeControl;
       const bool CompareExchange = Original.Opcode == NdOp::ATOMIC_CMPXCHG;
       // An offset's provenance says nothing about the value read through an
       // arbitrary base. Keep that value unsafe through copies and frame spills.
@@ -3002,6 +3007,52 @@ bool Specializer::evaluate(int Id) {
             DefinedTemporaries.insert(Output.Offset + B);
         }
         OutputUnsafe = true;
+      } else if (RuntimeControl) {
+        uint64_t Scratch = DispatchTargetTemp + 8;
+        const auto Transition = lowerRuntimeControlOperation(
+            Original, State, RuntimeControls, Options, [&](uint16_t Bytes) {
+              const auto Slot = NdVar::tmp(Scratch, Bytes);
+              Scratch += Bytes;
+              return Slot;
+            });
+        if (!Transition)
+          return fail(SpecializationStatus::InvalidInput,
+                      "invalid runtime control transition");
+        for (const auto &Scalar : Transition->Ops) {
+          if (++Result.EvaluatedOperations > Options.MaxOperations)
+            return fail(
+                SpecializationStatus::BudgetExceeded,
+                "runtime control transition operation budget exhausted");
+          if (Scalar.Opcode == NdOp::STORE ||
+              lowMemoryOperands(Scalar).StoredValue ||
+              Exec.step(Scalar) != StepResult::Continue)
+            return fail(SpecializationStatus::Unsupported,
+                        "runtime control transition was not exact");
+          if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "runtime control symbolic-node budget exhausted");
+        }
+        if (Transition->Rejected) {
+          const auto Bad =
+              enumerate(Ctx, Exec.pathPredicate(),
+                        {Exec.operandValue(*Transition->Rejected)}, 1);
+          if (Failed)
+            return false;
+          if (Bad.Status == FiniteValueStatus::Unknown)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "runtime control validity proof exceeded its budget");
+          if (Bad.Status != FiniteValueStatus::Complete ||
+              Bad.Tuples != std::vector<std::vector<uint64_t>>{{0}})
+            return fail(SpecializationStatus::Unsupported,
+                        Transition->InvalidValueDiagnostic);
+        }
+        if (Transition->OutputState) {
+          const auto &[Index, Value] = *Transition->OutputState;
+          if (Index >= RuntimeControls.Values.size())
+            return fail(SpecializationStatus::InvalidInput,
+                        "runtime control state index is invalid");
+          RuntimeControls.Values[Index] = Exec.operandValue(Value);
+        }
       } else if (PriorityOperation) {
         // Scratch is live only for this transition. Keeping the resulting
         // SymRef locally avoids collision with later string/frame scratch.
@@ -3841,6 +3892,10 @@ SpecializationResult Specializer::run() {
     return std::move(Result);
   }
   if (auto Error = validateRuntimeMemoryOptions(Options)) {
+    fail(SpecializationStatus::InvalidInput, llvm::toString(std::move(Error)));
+    return std::move(Result);
+  }
+  if (auto Error = validateRuntimeControlOptions(Options)) {
     fail(SpecializationStatus::InvalidInput, llvm::toString(std::move(Error)));
     return std::move(Result);
   }

@@ -625,6 +625,10 @@ binaryExecutionDigest(const BinaryImage &Image,
     Number(Options.X64SegmentedWrites);
   }
   Number(Options.X64CR8State);
+  if (Options.X64MXCSRMask) {
+    Hash.update("x64-mxcsr-mask-v1");
+    Number(*Options.X64MXCSRMask);
+  }
   Number(Options.X64TerminalImports.size());
   for (const auto &Binding : Options.X64TerminalImports) {
     Number(Binding.Version);
@@ -747,6 +751,9 @@ prepareBinaryRelation(const BinaryImage &Image,
   if (Options.X64CR8State)
     return Fail(Status::Unsupported,
                 "native proof requires authenticated task-priority state");
+  if (Options.X64MXCSRMask)
+    return Fail(Status::Unsupported,
+                "native proof requires authenticated MXCSR state");
   if (Image.Segments.size() > Limits.MaxInstructions ||
       Image.Relocations.size() > Limits.MaxInstructions ||
       Image.BaseRelocations.size() > Limits.MaxInstructions ||

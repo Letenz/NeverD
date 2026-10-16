@@ -315,7 +315,14 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       return Result;
     }
     if (!Opts.InterpreterSpecialization->X64TerminalImports.empty()) {
-      Result.Error = "machine-state source does not support terminal import domains";
+      Result.Error =
+          "machine-state source does not support terminal import domains";
+      Trace.finish(false);
+      return Result;
+    }
+    if (Opts.InterpreterSpecialization->X64MXCSRMask) {
+      Result.Error =
+          "machine-state recovery requires a versioned MXCSR source interface";
       Trace.finish(false);
       return Result;
     }
