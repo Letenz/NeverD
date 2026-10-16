@@ -2,6 +2,9 @@
 
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/DenseMap.h"
+
+#include <algorithm>
 #include <deque>
 #include <optional>
 #include <tuple>
@@ -9,13 +12,20 @@
 namespace neverd {
 namespace {
 using Key = std::tuple<MedVar::VarKind, int, int>;
+// Constant operands never enter the definition map. Reserve that kind for
+// sentinels so every nonconstant id/SSA version, including INT_MAX, stays
+// legal.
+struct ConstantKeyInfo : llvm::DenseMapInfo<Key> {
+  static constexpr Key getEmptyKey() { return {MedVar::Const, -1, -1}; }
+  static constexpr Key getTombstoneKey() { return {MedVar::Const, -2, -2}; }
+};
 Key key(const MedVar &Value) { return {Value.Kind, Value.Id, Value.SSAVer}; }
 
 enum class Knowledge { Pending, Constant, Varying };
 struct ConstantNode {
   MedVar Output;
   std::vector<MedVar> Inputs;
-  std::vector<Key> Users;
+  std::vector<ConstantNode *> Users;
   Knowledge State = Knowledge::Pending;
   MedVar Value;
   bool Queued = false;
@@ -93,7 +103,7 @@ bool propagateInvariantConstants(MedFunc &Func) {
     if (!Blocks.count(Id))
       return false;
 
-  std::map<Key, ConstantNode> Nodes;
+  llvm::DenseMap<Key, ConstantNode, ConstantKeyInfo> Nodes;
   auto Add = [&](const MedVar &Output, std::vector<MedVar> Inputs, bool Valid) {
     if (Output.isConst() || Output.Id < 0 || !Output.Size)
       return;
@@ -153,29 +163,39 @@ bool propagateInvariantConstants(MedFunc &Func) {
     }
   }
 
-  std::deque<Key> Work;
-  auto Enqueue = [&](const Key &Id) {
-    auto &Node = Nodes.at(Id);
-    if (!Node.Queued) {
-      Node.Queued = true;
-      Work.push_back(Id);
+  // No nodes are inserted after this point, so their addresses stay stable.
+  // Preserve the ordered-map visitation order, including users and pending
+  // cycles: it also determines when the existing shared budget is exhausted.
+  std::vector<ConstantNode *> Ordered;
+  Ordered.reserve(Nodes.size());
+  for (auto &[Id, Node] : Nodes)
+    Ordered.push_back(&Node);
+  std::sort(Ordered.begin(), Ordered.end(), [](const auto *A, const auto *B) {
+    return key(A->Output) < key(B->Output);
+  });
+  std::deque<ConstantNode *> Work;
+  auto Enqueue = [&](ConstantNode *Node) {
+    if (!Node->Queued) {
+      Node->Queued = true;
+      Work.push_back(Node);
     }
   };
-  for (auto &[Id, Node] : Nodes) {
+  for (auto *Item : Ordered) {
+    auto &Node = *Item;
     for (const auto &Input : Node.Inputs) {
       if (!Budget--)
         return false;
       if (!Input.isConst())
         if (auto It = Nodes.find(key(Input)); It != Nodes.end())
-          It->second.Users.push_back(Id);
+          It->second.Users.push_back(&Node);
     }
-    Enqueue(Id);
+    Enqueue(&Node);
   }
   auto Drain = [&] {
     while (!Work.empty()) {
       if (!Budget--)
         return false;
-      auto &Node = Nodes.at(Work.front());
+      auto &Node = *Work.front();
       Work.pop_front();
       Node.Queued = false;
       if (Node.State == Knowledge::Varying)
@@ -230,12 +250,14 @@ bool propagateInvariantConstants(MedFunc &Func) {
   // An unseeded cycle cannot contribute a defined value. Make every remaining
   // pending component opaque, then invalidate any provisional constants that
   // depended on it. No operand is changed before both fixed points converge.
-  for (auto &[Id, Node] : Nodes)
+  for (auto *Item : Ordered) {
+    auto &Node = *Item;
     if (Node.State == Knowledge::Pending) {
       Node.State = Knowledge::Varying;
       for (const auto &User : Node.Users)
         Enqueue(User);
     }
+  }
   if (!Drain())
     return false;
 
@@ -250,7 +272,8 @@ bool propagateInvariantConstants(MedFunc &Func) {
   //   jump table it addresses.
   for (bool Grew = true; Grew;) {
     Grew = false;
-    for (auto &[Id, Node] : Nodes) {
+    for (auto *Item : Ordered) {
+      auto &Node = *Item;
       if (Node.FromView)
         continue;
       bool FromView = Node.View != NdOp::COPY;

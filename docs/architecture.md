@@ -3552,6 +3552,13 @@ identical in both paths.
 
 MedIR owns bounded invariant-constant propagation across same-width SSA copies and complete PHIs, including loops. Every incoming value must converge to the same bits, width, provenance and address owner. Unknown definitions, unseeded cycles, incomplete edges and conflicting constants prevent substitution; budget exhaustion leaves the function unchanged. The analysis substitutes operands without removing calls, loads, stores or their effects. Both HighIR and LLVM consume the same result.
 
+The constant worklist indexes complete nonconstant SSA identities. Node
+addresses become stable only after all definitions have been collected;
+ordered visitation and the existing work charges remain unchanged. HighIR's
+call-clobber index is local to each converter invocation and retains the first
+record for each full SSA identity, including its variable kind. Reusing a
+converter rebuilds that index before following any preserved-prefix chain.
+
 | User route | Representation path | Exit |
 |------------|---------------------|------|
 | Low/Med dump | Binary -> LowIR, optionally -> MedIR | Diagnostic text |
