@@ -1413,6 +1413,79 @@ private slots:
     QCOMPARE(code->selectedText(), selected);
   }
 
+  void gotoLabelsGoToTheirBlock() {
+    // A double-click on a goto's label takes the code to the label and the
+    // disassembly to the block the label names, Back returning to the goto.
+    // The label's row maps to that block, not to the statement around it
+    // the engine's rows give it, so the cursor on it takes the disassembly
+    // there too.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-labels.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address function = Base + 0x140;
+    const Address block = function + 0xA;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 6);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    const QString label =
+        QStringLiteral("L_") + QString::number(block, 16).toUpper();
+    code->setCursorLine(0);
+    QVERIFY(code->findText(QStringLiteral("goto ") + label, true));
+    const int gotoRow = code->cursorLine();
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function + 2));
+
+    // The double-click acts on the token the cursor is on.
+    code->setCursorLine(gotoRow - 1);
+    QVERIFY(code->findText(label, true));
+    QCOMPARE(code->cursorLine(), gotoRow);
+    QCOMPARE(code->currentToken(), label);
+    QSignalSpy names(code, &CodeText::nameActivated);
+    const QPointF point(code->viewport()->width() / 2.0, 1);
+    QMouseEvent click(QEvent::MouseButtonDblClick, point,
+                      code->viewport()->mapToGlobal(point), Qt::LeftButton,
+                      Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(code->viewport(), &click);
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(block));
+    QCOMPARE(names.size(), 0);
+    QVERIFY(code->cursorLine() > gotoRow);
+    const int labelRow = code->cursorLine();
+    QCOMPARE(code->currentToken(), label);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(block));
+    QVERIFY(code->hasFocus());
+    QCOMPARE(code->function(), std::optional<Address>(function));
+
+    bench.action(ActionId::JumpBack)->trigger();
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function + 2));
+    QTRY_COMPARE(code->cursorLine(), gotoRow);
+    bench.action(ActionId::JumpForward)->trigger();
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(block));
+    QTRY_COMPARE(code->cursorLine(), labelRow);
+
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    code->setCursorLine(gotoRow);
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function + 2));
+    code->setCursorLine(labelRow);
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(block));
+  }
+
   void codeEditKeepsThePlaceInALongFunction() {
     // An edit loads the function's pages again. The first page used to
     // clamp the cursor and the view, which then stayed near its end: the

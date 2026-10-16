@@ -38,6 +38,31 @@ namespace {
 constexpr int PageLines = 256;
 constexpr int Margin = 6;
 constexpr int WheelLines = 3;
+
+/// The goto label \p line defines and the block address it names: HighC
+/// labels a goto's block `L_` and the address in hexadecimal
+/// (HighCStmtWriter), defined as `L_140001010:` or, in Rust, as a loop's
+/// `'L_140001010: loop`.
+std::optional<std::pair<QStringView, Address>>
+labelDefinition(QStringView line) {
+  line = line.trimmed();
+  if (line.startsWith(u'\''))
+    line = line.mid(1);
+  if (!line.startsWith(u"L_"))
+    return std::nullopt;
+  qsizetype end = 2;
+  while (end < line.size() && ((line[end] >= u'0' && line[end] <= u'9') ||
+                               (line[end] >= u'A' && line[end] <= u'F')))
+    ++end;
+  if (end == 2 || end >= line.size() || line[end] != u':' ||
+      line.mid(end).startsWith(u"::"))
+    return std::nullopt;
+  bool valid = false;
+  const Address address = line.mid(2, end - 2).toULongLong(&valid, 16);
+  if (!valid)
+    return std::nullopt;
+  return std::pair{line.left(end), address};
+}
 /// How often a drag beyond an edge scrolls the text.
 constexpr int DragScrollMs = 40;
 /// The fold over the lines before a definition: C's includes and
@@ -866,12 +891,20 @@ void CodeText::rebuildLines(bool append) {
     renderedChars_ = renderedRows_ = widestLine_ = 0;
   }
   int start = renderedChars_;
+  const bool addressLabels = labelsNameAddresses();
   while (start < display.size()) {
     int end = int(display.indexOf(QLatin1Char('\n'), start));
     if (end < 0)
       end = int(display.size());
     Line line;
     line.styled.text = display.mid(start, end - start);
+    // A label's row is the block it labels, though the rows the engine maps
+    // may give it the instruction of a statement around it.
+    if (addressLabels)
+      if (const auto label = labelDefinition(line.styled.text)) {
+        line.label = true;
+        line.addresses = {label->second};
+      }
     widestLine_ = std::max(widestLine_, int(line.styled.text.size()));
     highlightLine(line, inComment_);
     lines_.append(std::move(line));
@@ -881,7 +914,7 @@ void CodeText::rebuildLines(bool append) {
   for (int i = renderedRows_; i < rows.size(); ++i) {
     const auto row = rows[i].toMap();
     const int index = row.value(QStringLiteral("line"), -1).toInt();
-    if (index < 0 || index >= lines_.size())
+    if (index < 0 || index >= lines_.size() || lines_[index].label)
       continue;
     for (const auto &address : row.value(QStringLiteral("addresses")).toList())
       if (const auto parsed = parseAddress(address.toString()))
@@ -1963,6 +1996,13 @@ void CodeText::mouseDoubleClickEvent(QMouseEvent *event) {
     return;
   }
   const QString token = currentToken();
+  // A goto label is a place in this function: the code goes to the label,
+  // the disassembly to the block it labels.
+  if (const auto label = addressLabel(token)) {
+    emit labelActivated(label->first);
+    goToLabel(token, label->second, label->first);
+    return;
+  }
   // A type or macro this code declares opens at its declaration; the
   // language's own words name nothing in the binary.
   const auto &words = vocabularyOf(dialectOf(representation_, pageLanguage_));
@@ -2203,6 +2243,47 @@ std::optional<QString> CodeText::linkedSymbol(const QString &name) const {
   if (const auto found = linked.constFind(name); found != linked.cend())
     return found->second;
   return std::nullopt;
+}
+
+bool CodeText::labelsNameAddresses() const {
+  // LLVM C numbers its labels instead.
+  return representation_ == QLatin1String("source") ||
+         representation_ == QLatin1String("c");
+}
+
+std::optional<std::pair<Address, int>>
+CodeText::addressLabel(const QString &name) const {
+  if (!labelsNameAddresses() || !name.startsWith(QLatin1String("L_")))
+    return std::nullopt;
+  int line = 0;
+  for (qsizetype start = 0; start < source_.size(); ++line) {
+    qsizetype end = source_.indexOf(QLatin1Char('\n'), start);
+    if (end < 0)
+      end = source_.size();
+    if (const auto label =
+            labelDefinition(QStringView(source_).mid(start, end - start));
+        label && label->first == name)
+      return std::pair{label->second, line};
+    start = end + 1;
+  }
+  return std::nullopt;
+}
+
+void CodeText::goToLabel(const QString &name, int sourceLine, Address address) {
+  if (library_.unfoldSourceLine(sourceLine)) {
+    rebuildLines();
+    emit foldingChanged();
+  }
+  const int line =
+      library_.canFold() ? library_.displayLine(sourceLine) : sourceLine;
+  if (line < 0 || line >= lines_.size())
+    return;
+  highlight_ = name;
+  // The disassembly already shows the block.
+  const QScopedValueRollback<bool> following(following_, true);
+  moveCursor(line, std::max(0, int(lines_[line].styled.text.indexOf(name))),
+             false);
+  selectedAddress_ = address;
 }
 
 bool CodeText::goToDeclaration(const QString &name) {
