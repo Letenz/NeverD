@@ -696,6 +696,8 @@ PASSIVE_LEVEL で長さが 4 未満なら結果に触れず `STATUS_INFO_LENGTH_
 
 `ZwQueryInformationFile` は共通のクエリ所有者でプロセス範囲のファイルハンドルを解決し、別のゼロ初期化 SystemBuffer を確保して呼び出し元の出力を借用します。ローカルクラスは Access (8)、同期 Position (14)、Mode (16)、Alignment (17)、IsRemoteDevice (51) で、Mode と Alignment は専用 IRP を作成します。転送クラスは 4/5/6/7/9/14/21/22/28/34/35/59/71/75 です。非同期 Position は転送し、75 は 71 とスタックフラグ 1 に変換します。KernelMode 参照はハンドルの範囲を守り、許可アクセスマスクを検査しません。レポートの origin は `ZwQueryInformationFile` です。
 
+ゲストデバイスの READ/WRITE 完了は、同期転送やゼロバイト転送でも、保存された `FILE_OBJECT.CurrentByteOffset` を維持します。要求の明示的な `byte_offset` 自体はファイル位置を変更しません。位置の変更には、実装済みのファイルシステム処理または位置設定操作が必要です。
+
 即時完了はディスパッチ復帰までパケットを保持します。エラーでない完了は出力をコピーしてから Information と四バイトの Status を書き、即時エラーは呼び出し元 IOSB を変更しません。保留完了は元の配信可能スレッドに通知します。非同期保留呼び出しは復帰時に私有 IOSB の全 16 バイトをコピーし、他の書き込みはパディングを保持します。共通の物理メモリー所有者が解放を管理します。ネイティブ Fast I/O、未記載クラス、ゼロ長バッファー、短い Mode/Alignment バッファーは拒否し、汎用 NtQueryInformationFile や APC を提供しません。
 
 宣言済み提供元は保持されたオープントークンから Basic (4)、Standard (5)、Internal (6)、Name (9)、NetworkOpen (34)、AttributeTag (35) を返します。時刻、割り当て、EOF、属性、64 ビット ID は宣言値を保持します。名前は許可された ASCII パスのボリューム相対 UTF-16 です。固定構造の短いバッファーは STATUS_INFO_LENGTH_MISMATCH。名前には八バイト以上が必要で、切り詰め時は完全な UTF-16 単位、STATUS_BUFFER_OVERFLOW、完全な名前長を返します。両 API はエンコーダーと実際のゲストフィルター経路を共有し、他の提供元クラスは未対応です。

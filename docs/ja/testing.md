@@ -1989,6 +1989,8 @@ KernelFileObjectTests と KernelObjectTests は型付きオープン、型不一
 
 `KernelFileQueryTests.cpp` は借用／専用パケット、即時／保留公開、IOSB 別名とパディング、ワーカー完了、寿命、ローカルクラス、ハンドル範囲、IRQL/APC 拒否を検証します。`KernelFileCreateTests.cpp` と `DriverFileSystemTests.cpp` は六クラスと名前境界を検証します。driver_file_queries.c と driver_filesystem_provider.c は利用可能なバックエンド、契約、基址、協調／17 命令スケジューリングで実行します。本物の通常／CFG イメージは NEVERD_WDM_FILE_QUERIES_FIXTURE、NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE、NEVERD_WDM_FILESYSTEM_FIXTURE、NEVERD_WDM_FILESYSTEM_CFG_FIXTURE を使用します。C API/CLI/Python は origin、全出力、処理済み失敗を確認します。元カーネルの限定プローブは生成 156 件と完了 18 件で、割り当て・ディスパッチ・通知の境界を明示します。完全なファイルシステムや汎用 APC の証明ではなく、ハードウェアと外部イメージの不足は明示的スキップです。
 
+`KernelIRPStack.ReadWriteCompletionPreservesStoredFilePosition` は独立した64ビット位置を使い、同期／非同期ファイル、即時／保留完了、成功／警告／エラー、ゼロ／非ゼロ長を検証します。正規の通常／CFG `driver_wdm_stack.c` フィクスチャは READ、WRITE、クリーンアップの間で位置を再確認します。
+
 プロセッサの回帰は出力境界、NULL、入れ子の復元、不正 IRQL、インポート識別を検証します。独自の `driver_processors.c` は各バックエンド、契約、基址、スケジューリングで入口、ワーカー、DPC を実行します。任意の `NEVERD_WDM_PROCESSORS_FIXTURE` と `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` は実際の WDK 通常/CFG イメージのインライン呼び出しと動的エクスポートを検証し、利用不能なバックエンドは明示的にスキップします。
 
 整数変換の回帰テストは全ビット幅、対応基数、容量境界、不正基数の処理順序、出力の別名、終端書き込み障害を検証します。独自の `driver_int64_strings.c` は入口、ワーク項目、アンロードでインポートと動的検索を確認し、IRQL 上昇時の拒否も検証します。任意の `NEVERD_WDM_INT64_STRINGS_FIXTURE` と `NEVERD_WDM_INT64_STRINGS_CFG_FIXTURE` は実際の WDK 通常/CFG ドライバーを利用可能なバックエンド、契約、ロード基底、スケジュールで検証します。

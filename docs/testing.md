@@ -7209,6 +7209,8 @@ Android service or shader coverage.
 
 `KernelFileQueryTests.cpp` covers borrowed and native buffered packets, immediate/pending publication, IOSB aliases and padding, worker completion, retained storage, local classes, handle scope, IRQL/APC admission and unsupported routes. `KernelFileCreateTests.cpp` and `DriverFileSystemTests.cpp` cover six declared metadata classes, exact sizes, bounded names and retained open identity. Original `driver_file_queries.c` and `driver_filesystem_provider.c` run across available backends, contracts, bases and cooperative/17-instruction scheduling; genuine normal/CFG images use `NEVERD_WDM_FILE_QUERIES_FIXTURE`, `NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE`, `NEVERD_WDM_FILESYSTEM_FIXTURE` and `NEVERD_WDM_FILESYSTEM_CFG_FIXTURE`. C API/CLI/Python check origins, full output bytes and handled failure statuses. Bounded original-kernel probes cover 156 producer cases and 18 completion cases with explicit allocator, dispatcher and notification boundaries; they do not certify a complete filesystem or general APC runtime. Missing hardware and external fixtures remain explicit skips.
 
+`KernelIRPStack.ReadWriteCompletionPreservesStoredFilePosition` checks synchronous/asynchronous files, immediate/pending completion, success/warning/error statuses and zero/nonzero lengths against an independent 64-bit position. The genuine normal/CFG `driver_wdm_stack.c` fixture reads the position again across READ, WRITE and cleanup.
+
 ## Supplied DEX method execution
 
 `NeverDDalvikTests` checks the decoded executor's uninitialized/torn registers,

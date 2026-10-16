@@ -1360,15 +1360,9 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
       FreedRanges.emplace(File.NameStorage, File.NameStorageSize);
     ReferencedObjects.erase(File.Address);
     FileObjects.erase(FileIt);
-  } else if ((Request->Kind == DriverRequestKind::Read ||
-              Request->Kind == DriverRequestKind::Write) &&
-             !ntError(CompletionStatus) && !File.Asynchronous) {
-    if (auto E =
-            Memory.writeInteger(File.Address + FileCurrentByteOffset,
-                                Request->ByteOffset + Observation.Information,
-                                profile::PointerSize))
-      return E;
   }
+  // A transfer offset is an input to dispatch. Completion does not seek the
+  // file; a storage operation must own any change to CurrentByteOffset.
   if (auto E = updateDeviceReferences(Device))
     return E;
   auto Route = std::move(Request->DeviceRoute);

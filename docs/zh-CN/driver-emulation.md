@@ -696,6 +696,8 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 
 `ZwQueryInformationFile` 通过同一查询所有者解析具有进程作用域的文件句柄，单独分配清零的 SystemBuffer，借用调用方输出区。本地类为 Access (8)、同步 Position (14)、Mode (16)、Alignment (17)、IsRemoteDevice (51)；Mode 和 Alignment 仍建立自有 IRP。转发类为 4/5/6/7/9/14/21/22/28/34/35/59/71/75，其中异步 Position 转发，75 转为 71 并设置栈标志 1。KernelMode 引用保留句柄作用域，但不检查已授予的访问掩码。报告来源为 `ZwQueryInformationFile`。
 
+来宾设备的 READ/WRITE 完成会保留已存储的 `FILE_OBJECT.CurrentByteOffset`，包括同步传输和零字节传输。请求中的显式 `byte_offset` 本身不会改变文件位置；位置变化需要已实现的文件系统或文件定位操作。
+
 立即完成会保留原生数据包，直到分发返回。非错误完成先复制输出，再写 Information 和四字节 Status；立即错误保留调用方 IOSB。挂起完成通知原来的可交付线程；异步挂起调用在返回时复制整个私有 16 字节 IOSB，其他写入保留填充字节。共享物理内存所有者控制缓冲区回收。原生 Fast I/O、未列出的类、零长度缓冲调用和过短的 Mode/Alignment 缓冲区均明确拒绝；这不表示支持通用 NtQueryInformationFile 或 APC 运行时。
 
 声明式提供方通过保留的打开 token 回答 Basic (4)、Standard (5)、Internal (6)、Name (9)、NetworkOpen (34)、AttributeTag (35)，保留声明的时间戳、分配大小、EOF、属性和完整 64 位文件 ID。名称是准入 ASCII 路径的卷内相对 UTF-16 编码。固定结构缓冲区过短返回 STATUS_INFO_LENGTH_MISMATCH；名称至少需要八字节，截断时只返回完整 UTF-16 单元，并报告 STATUS_BUFFER_OVERFLOW 和完整名称长度。两个查询 API 共用编码器与真实来宾筛选器路径，其他提供方信息类仍未支持。
