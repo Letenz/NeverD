@@ -2423,13 +2423,16 @@ jobs:
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         run: |
           python -m unittest scripts.tests.test_windows_finally_image -v
-          python scripts/check_windows_finally_rewrite.py \
-            --inputs build-windows-eh/nonlocal-finally \
-            --runtime-libs build-windows-eh/cxx-source-inputs/runtime-libs \
-            --test-binary build-windows-eh/bin/NeverDNativeFinallyInputTests \
-            --patch-binary build-windows-eh/bin/neverd \
-            --output build-windows-eh/evidence/native-finally-return \
-            --wine-prefix "$RUNNER_TEMP/neverd-wine32"
+          for profile in Od-no-gs Od-gs; do
+            python scripts/check_windows_finally_rewrite.py \
+              --inputs build-windows-eh/nonlocal-finally \
+              --runtime-libs build-windows-eh/cxx-source-inputs/runtime-libs \
+              --test-binary build-windows-eh/bin/NeverDNativeFinallyInputTests \
+              --patch-binary build-windows-eh/bin/neverd \
+              --profile "$profile" \
+              --output "build-windows-eh/evidence/native-finally-return-$profile" \
+              --wine-prefix "$RUNNER_TEMP/neverd-wine32"
+          done
       - name: Execute generated x86 callback frames with real exceptions
         run: |
           python scripts/check_windows_registration_frame.py \

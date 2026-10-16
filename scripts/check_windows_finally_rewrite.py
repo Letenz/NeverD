@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reconstruct a genuine MSVC PE32 finally return and compare its execution.
 
-The checked Od/no-GS export is loaded under an outer SEH observer. Header-only
+The checked Od export is loaded under an outer SEH observer. Header-only
 EXE-to-DLL adaptation leaves source code intact and avoids unrelated CRT startup.
 Other source profiles are checked for analysis/refusal by the native test owner.
 """
@@ -38,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--test-binary", type=Path, required=True)
     parser.add_argument("--patch-binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--profile", choices=("Od-no-gs", "Od-gs"), default="Od-no-gs")
     parser.add_argument("--compiler", default="clang")
     parser.add_argument("--linker", default="lld-link")
     parser.add_argument("--wine")
@@ -49,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     report = {"schema": 1, "evidence": "reconstructed-msvc-finally-return",
-              "profile": "x86/Od-no-gs", "passed": False, "steps": [], "observations": []}
+              "profile": "x86/" + args.profile, "passed": False, "steps": [], "observations": []}
     environment = os.environ.copy()
 
     def run(command):
@@ -66,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("cross-target clang and lld-link are required")
         inputs, libraries = args.inputs.resolve(), args.runtime_libs.resolve()
         source = FIXTURES / "nonlocal_finally_runtime.c"
-        original = captured_input(inputs, source, "Od-no-gs")
+        original = captured_input(inputs, source, args.profile)
         control = captured_input(inputs, source, "O2-no-gs-control")
         runtime, report["runtime"] = load_runtime(libraries)
         environment["WINEDLLOVERRIDES"] = "vcruntime140=n"
@@ -82,7 +83,9 @@ def main(argv: list[str] | None = None) -> int:
 
         environment.update(NEVERD_NONLOCAL_FINALLY_INPUTS=str(inputs),
                            NEVERD_NONLOCAL_FINALLY_OUTPUT=str(output))
-        for name in ("native-inputs.xml", "return-raw.ll", "return-opt.ll"):
+        ir_prefix = "return-gs-" if args.profile == "Od-gs" else "return-"
+        ir_names = [ir_prefix + form + ".ll" for form in ("raw", "opt")]
+        for name in ["native-inputs.xml", *ir_names]:
             (output / name).unlink(missing_ok=True)
         run([str(args.test_binary.resolve()),
              "--gtest_filter=PipelineOutcome.NativeFinallyInputsRetainSourceLLVM",
@@ -91,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         if int(tests.get("tests", "0")) != 1 or tests.findall(".//skipped") or \
                 tests.findall(".//failure"):
             raise ValueError("native finally source and COFF proofs were not executed")
-        for name in ("return-raw.ll", "return-opt.ll"):
+        for name in ir_names:
             if not (output / name).is_file():
                 raise ValueError("native finally proof did not emit both IR variants")
 
@@ -111,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             for form in ("raw", "opt"):
                 name = mode + "-" + form
                 image = output / (name + ".exe")
-                options = [f"--from-ir={output / ('return-' + form + '.ll')}"]
+                options = [f"--from-ir={output / (ir_prefix + form + '.ll')}"]
                 if form == "raw":
                     options.append("--no-opt")
                 image.unlink(missing_ok=True)

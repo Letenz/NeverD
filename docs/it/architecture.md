@@ -1896,6 +1896,8 @@ KernelFileSystem conserva un provider token per FILE_OBJECT. L’operazione priv
 
 `OptimizationGuards` integra il controllo `optnone` di LLVM: i passaggi facoltativi di modulo e grafo delle chiamate vengono saltati se esiste una funzione protetta, perché possono modificarne il CFG o sostituire gli argomenti del callback con poison. Gli adattatori obbligatori e le ottimizzazioni delle funzioni ordinarie restano attivi. La proiezione conserva le scritture di salvataggio del prologo fino al loro collegamento nella ricostruzione nativa.
 
+`COFFRegistrationEH4Wrapper` possiede la prova dell’inoltro EH4 conservato. `COFFRegistrationScalarLeaf` verifica un CFG scalare limitato solo in avanti, registri e flag inizializzati, memoria MXCSR privata e dati runtime dell’immagine. Rifiuta letture del frame chiamante, indirizzi sfuggiti, chiamate ignote, istruzioni sovrapposte e ritorni incompleti. LLVM e la verifica COFF indipendente condividono la prova del loader; codice originale e letture dinamiche restano in posizione.
+
 `KernelModelRuntime` gestisce hash Unicode, conversione comune in maiuscolo indipendente da NLS e secondi dall’epoca 1980. `KernelRuntimeCalls` riusa il proprietario del pool paginato delle stringhe. Le tabelle API definiscono esportazioni, numero di argomenti e APC_LEVEL; l’ordine degli accessi resta nelle implementazioni.
 
 `uppercaseCharacter` riduce gli argomenti prima dell’ammissione e delega a `uppercaseUnicodeUnit`. Le tabelle CRT e Unicode condividono la decisione con identità ABI distinte; adattatori e impostazioni locali dell’host non forniscono una seconda mappatura.

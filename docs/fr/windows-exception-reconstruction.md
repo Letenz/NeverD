@@ -265,4 +265,4 @@ et ne reprend pas les entrées d’un appel ordinaire antérieur. Un scope réf�
 uniquement par un appel ordinaire à finally authentifié est conservé, même si
 aucun try level du code source ne l’active.
 
-La reconstruction de `nonlocal_finally_return` produit par MSVC x86 `/Od /GS-` est exécutée avec LLVM source optimisé ou non et les deux modes de patch. Un observateur SEH extérieur vérifie les retours normaux et exceptionnels, la pile et la chaîne à deux bases imposées. Cette couverture ne comprend pas le retour direct au parent de `/O2` ni les wrappers GS.
+La reconstruction MSVC x86 `/Od` de `nonlocal_finally_return` est vérifiée avec `/GS-` et `/GS`, les IR source optimisés ou non, les deux modes de patch et deux bases imposées. Un observateur SEH extérieur contrôle les retours, la pile et la chaîne. Le chemin GS conserve le wrapper original de normalisation après preuve que son auxiliaire scalaire ne lit pas le cadre appelant. Le retour direct au parent de `/O2` reste non pris en charge.

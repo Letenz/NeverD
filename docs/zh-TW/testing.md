@@ -1666,7 +1666,9 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 
 `SafeSEHReference.*` 檢查不可變 SafeSEH 表成員、畸形或歧義儲存、重定位、其他架構與格式，以及分片間的宣告順序。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` 透過 `NEVERD_NONLOCAL_FINALLY_INPUTS`，測試原生 MSVC x86/x64、O0/O2、GS 開關及來源最佳化開關的 32 種 LLVM 組合。測試驗證 LLVM 與已解析呼叫簽章，並要求不支援的 x86 原生 EH 重建仍遭拒絕。Windows EH 專項作業下載原生 fixture artifact 並執行此矩陣；缺少輸入目錄時測試會明確跳過。
 
-`RegistrationPrologueSaves.*` 與 `PipelineOptNone.*` 驗證來源記憶體記錄、回呼引數與選擇器保護，以及一般程式仍可最佳化。原生 MSVC 矩陣正向檢查 x86 `/Od /GS-` 的 `nonlocal_finally_return` 匯出，並獨立驗證 COFF。`check_windows_finally_rewrite.py` 在兩個強制基址，以兩種修補模式比較原始與最佳化 IR：12 次觀察器執行、768 次呼叫、異常鏈與堆疊哨兵及負向對照。僅改標頭的 EXE 至 DLL 適配要求無 TLS 並保留原始程式碼；外層 SEH 觀察器提供異常搜尋。其他 MSVC 形式仍僅涵蓋分析與拒絕。
+`RegistrationPrologueSaves.*` 與 `PipelineOptNone.*` 驗證來源記憶體記錄、回呼引數與選擇器保護，以及一般程式仍可最佳化。原生 MSVC 矩陣正向檢查 x86 `/Od` (`/GS-`, `/GS`) 的 `nonlocal_finally_return` 匯出，並獨立驗證 COFF。`check_windows_finally_rewrite.py` 在兩個強制基址，以兩種修補模式比較原始與最佳化 IR：24 次觀察器執行、1536 次呼叫、異常鏈與堆疊哨兵及負向對照。僅改標頭的 EXE 至 DLL 適配要求無 TLS 並保留原始程式碼；外層 SEH 觀察器提供異常搜尋。其他 MSVC 形式仍僅涵蓋分析與拒絕。
+
+`RegistrationEH4Wrapper.*` 涵蓋兩個基址、可寫與唯讀執行階段資料、MXCSR 分支、逐路徑定義、呼叫者框架隔離、指令與儲存重疊及精確 PE 重定位。兩種 MSVC 形式各有獨立負向對照。
 
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` 檢查經過證明的 Windows x64 SEH 處理器及共用一般/例外入口中的區域展開呼叫。反例涵蓋展開配置不一致、SP 不穩定或寬度不完整、獨立根、不完整輸入、缺少或偽造例外邊、工作量耗盡、未知堆疊記憶體載入、外部目標重定位及不可信執行階段。LowIR 呼叫證明與模組憑據均進入 SSA 驗證；一般傳回接續測試保留各自的入口規則。
 

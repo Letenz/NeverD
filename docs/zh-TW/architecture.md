@@ -1696,6 +1696,8 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 
 `OptimizationGuards` 補充 LLVM 的 `optnone` 檢查：模組內有受保護函式時，略過可能改寫其 CFG 或將回呼引數替換為 poison 的選用模組與呼叫圖最佳化。必要適配器與一般函式最佳化仍執行。註冊鏈來源投影保留序言儲存的記憶體記錄，供原生重建綁定。
 
+`COFFRegistrationEH4Wrapper` 負責保留的 EH4 轉送證明。`COFFRegistrationScalarLeaf` 檢查有界且只向前的純量 CFG、暫存器與旗標初始化、私有 MXCSR 儲存及映像執行階段資料；拒絕呼叫者框架讀取、位址逸出、未知呼叫、指令重疊及不完整返回。LLVM 發射與獨立 COFF 驗證共用載入器證明，原包裝器、輔助函式及動態資料讀取繼續原位執行。
+
 `KernelModelRuntime` 統一負責 Unicode 雜湊、不依賴 NLS 的大寫映射及 1980 紀元秒數轉換。`KernelRuntimeCalls` 透過既有分頁字串集區配置輸出。字串與時間 API 表統一匯出身分、參數數量及 APC_LEVEL 限制；欄位存取順序由實作層負責。
 
 `uppercaseCharacter` 先縮窄純量參數，再檢查准入並委託既有 `uppercaseUnicodeUnit`。CRT 與計數字串 API 表以各自 ABI 身分共用映射，介接層與宿主地區設定不提供另一套語意。
