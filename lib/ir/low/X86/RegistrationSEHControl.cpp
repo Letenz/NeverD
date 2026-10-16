@@ -15,6 +15,8 @@
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <map>
 #include <set>
 
@@ -125,7 +127,23 @@ RegistrationCallCalleeIndex::sehControlContracts(const LowFunc &Function) {
     }
   for (const auto &[Address, Jump] : FoldedJumps)
     Result.push_back(Jump);
+  // An ordinary parent epilogue is not evidence of a nonreturning finally.
+  // Only the adjacent physical invocation needs its original caller values
+  // threaded through the state solver. Seeding those values for every SEH
+  // function needlessly multiplies the cost of unrelated runtime closures.
+  if (llvm::none_of(Result, [](const auto &Control) {
+        return Control.Control ==
+                   RegistrationSEHControlContract::Kind::NearCall &&
+               Control.EndAddress == Control.Target;
+      }))
+    return Result;
   for (const auto &Block : Function.Blocks) {
+    if (!registration_abi::chargeCalleeWork(Work, 1))
+      return std::nullopt;
+    if (!Block.Succs.empty() || Block.StartAddr >= Block.EndAddr ||
+        Block.EndAddr - Block.StartAddr < 4 ||
+        Block.EndAddr - Block.StartAddr > 8)
+      continue;
     if (!registration_abi::chargeCalleeWork(Work, 16))
       return std::nullopt;
     if (Function.ExceptionMetadata->ownsCode({Block.StartAddr, Block.EndAddr}))

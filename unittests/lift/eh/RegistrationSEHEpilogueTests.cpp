@@ -199,6 +199,39 @@ TEST(RegistrationSEHEpilogue, RequiresImmutableCompleteInstructionBoundaries) {
     }
 }
 
+TEST(RegistrationSEHEpilogue, EpilogueAloneDoesNotRequestCallerState) {
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = epilogueImage(false, 0);
+    Decoder Decode;
+    ASSERT_TRUE(Decode.init(Image));
+    auto Function = CFGBuilder().build(Image, Decode, 0x401000);
+    auto &Scope = Function.ExceptionMetadata->Registration->Scopes.front();
+    const va_t Call = Scope.HandlerVA - 5;
+    if (Mutation == 1)
+      Scope.IsFinally = false;
+    if (Mutation == 2)
+      ++Scope.HandlerVA;
+    if (Mutation == 3)
+      ++Image.Segments.front().Data[Call + 1 - Image.Segments.front().VA];
+    const auto Epilogue =
+        llvm::find_if(Function.Blocks, [&](const auto &Block) {
+          return getRegistrationSEHParentEpilogue(Image, Block).has_value();
+        });
+    ASSERT_NE(Epilogue, Function.Blocks.end());
+    RegistrationCallCalleeIndex Index(Image);
+    const auto Controls = Index.sehControlContracts(Function);
+    ASSERT_TRUE(Controls);
+    EXPECT_EQ(llvm::any_of(
+                  *Controls,
+                  [](const auto &Control) {
+                    return Control.Control ==
+                           RegistrationSEHControlContract::Kind::ParentEpilogue;
+                  }),
+              Mutation == 0);
+  }
+}
+
 TEST(RegistrationSEHEpilogue, AdjacentCallRequiresCheckedFinallyOwnership) {
   for (bool EH4 : {false, true})
     for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
