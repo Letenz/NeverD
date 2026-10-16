@@ -1898,3 +1898,5 @@ KernelFileSystem mantiene un provider token por FILE_OBJECT. La operación priva
 `KernelMemoryCalls` controla la admisión de copias comprobadas y reutiliza move/fill y las verificaciones de vida del pool y memoria de usuario. `KernelModelRuntime` controla la prueba de firma bruta `RtlImageNtHeader`. Esta prueba no sustituye la validación del cargador necesaria para ejecutar imágenes; los adaptadores no duplican su semántica.
 
 `KernelModelRuntime` centraliza el hash Unicode, la conversión común a mayúsculas independiente de NLS y los segundos desde 1980. `KernelRuntimeCalls` usa el propietario existente del pool paginado de cadenas. Las tablas API unifican exportaciones, argumentos y APC_LEVEL; los propietarios conservan el orden de acceso a los campos.
+
+`uppercaseCharacter` reduce los argumentos antes de admitirlos y delega en `uppercaseUnicodeUnit`. Las tablas CRT y Unicode comparten la decisión con identidades ABI distintas; ningún adaptador ni configuración regional del host aporta otra conversión.

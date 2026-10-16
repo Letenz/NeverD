@@ -1900,3 +1900,5 @@ KernelFileSystem hält je FILE_OBJECT ein provider token. Die private Freigabeop
 `KernelMemoryCalls` besitzt die Zulassung geprüfter Speicherkopien und verwendet vorhandene move/fill-Operationen sowie Pool-Lebensdauer- und Benutzerspeicherprüfungen. `KernelModelRuntime` besitzt die rohe Signaturprüfung `RtlImageNtHeader`. Sie ersetzt keine zum Ausführen nötige Loaderprüfung; Adapter duplizieren diese Semantik nicht.
 
 `KernelModelRuntime` verantwortet Unicode-Hashing, die gemeinsame NLS-unabhängige Großschreibung und Sekunden seit 1980. `KernelRuntimeCalls` verwendet den bestehenden Pool für paged Zeichenketten. Die API-Tabellen vereinheitlichen Exporte, Argumentanzahl und APC_LEVEL; die Zugriffsreihenfolge bleibt bei den Implementierungen.
+
+`uppercaseCharacter` kürzt skalare Argumente vor der Zulassung und delegiert an `uppercaseUnicodeUnit`. CRT- und Unicode-API-Tabellen teilen die Entscheidung unter eigenen ABI-Identitäten; weder Adapter noch Host-Locale liefern eine zweite Zuordnung.

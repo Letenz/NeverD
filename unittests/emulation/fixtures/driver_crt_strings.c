@@ -22,7 +22,9 @@ typedef PDEVICE_OBJECT DEVICE;
 typedef PDRIVER_OBJECT DRIVER;
 typedef PUNICODE_STRING REGISTRY;
 typedef UNICODE_STRING TEXT;
-_Static_assert(sizeof(wchar_t) == 2 && sizeof(size_t) == 8, "x64 CRT widths");
+_Static_assert(sizeof(wchar_t) == 2 && sizeof(wint_t) == 2 &&
+                   sizeof(size_t) == 8,
+               "x64 CRT widths");
 #else
 typedef int NTSTATUS;
 typedef void *DEVICE;
@@ -39,6 +41,9 @@ __declspec(dllimport) NTSTATUS RtlHashUnicodeString(const TEXT *, U8, U32,
 __declspec(dllimport) NTSTATUS RtlUpcaseUnicodeString(TEXT *, const TEXT *, U8);
 __declspec(dllimport) U8 RtlTimeToSecondsSince1980(LARGE_INTEGER *, U32 *);
 __declspec(dllimport) void RtlFreeUnicodeString(TEXT *);
+__declspec(dllimport) int toupper(int);
+__declspec(dllimport) U16 towupper(U16);
+__declspec(dllimport) U16 RtlUpcaseUnicodeChar(U16);
 __declspec(dllimport) int memcpy_s(void *, U64, const void *, U64);
 __declspec(dllimport) int memmove_s(void *, U64, const void *, U64);
 __declspec(dllimport) void *RtlImageNtHeader(void *);
@@ -103,6 +108,13 @@ static __typeof__(&RtlTimeToSecondsSince1980) volatile Seconds =
 static __typeof__(&RtlHashUnicodeString) DynamicHash;
 static __typeof__(&RtlUpcaseUnicodeString) DynamicUpcase;
 static __typeof__(&RtlTimeToSecondsSince1980) DynamicSeconds;
+static __typeof__(&(toupper)) volatile ByteUpper = (toupper);
+static __typeof__(&(towupper)) volatile UnitUpper = (towupper);
+static __typeof__(&RtlUpcaseUnicodeChar) volatile UnicodeUpper =
+    RtlUpcaseUnicodeChar;
+static __typeof__(&(toupper)) DynamicByteUpper;
+static __typeof__(&(towupper)) DynamicUnitUpper;
+static __typeof__(&RtlUpcaseUnicodeChar) DynamicUnicodeUpper;
 static DEVICE Device;
 static void *Work;
 static volatile U32 WorkerDone, WorkerFailed;
@@ -111,6 +123,12 @@ static volatile U32 WorkerDone, WorkerFailed;
 // and unload probe at PASSIVE_LEVEL, separately from the CRT's DISPATCH run.
 static NTSTATUS countedProbe(void) {
   for (U32 Dynamic = 0; Dynamic < 2; ++Dynamic) {
+    CHECK((Dynamic ? DynamicByteUpper : ByteUpper)('a') == 'A');
+    CHECK((Dynamic ? DynamicByteUpper : ByteUpper)(0x15a) == 'Z');
+    CHECK((Dynamic ? DynamicUnitUpper : UnitUpper)('z') == 'Z');
+    CHECK((Dynamic ? DynamicUnitUpper : UnitUpper)(0x00bf) == 0x00bf);
+    CHECK((Dynamic ? DynamicUnicodeUpper : UnicodeUpper)('b') == 'B');
+    CHECK((Dynamic ? DynamicUnicodeUpper : UnicodeUpper)(0x00bf) == 0x00bf);
     U16 Input[] = {'a', 'b', 0x00bf};
     U16 Output[] = {'!', '!', '!', '!'};
     TEXT Source = {5, 0, Input};
@@ -251,6 +269,9 @@ NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
   RESOLVE(DynamicHash, "RtlHashUnicodeString");
   RESOLVE(DynamicUpcase, "RtlUpcaseUnicodeString");
   RESOLVE(DynamicSeconds, "RtlTimeToSecondsSince1980");
+  RESOLVE(DynamicByteUpper, "toupper");
+  RESOLVE(DynamicUnitUpper, "towupper");
+  RESOLVE(DynamicUnicodeUpper, "RtlUpcaseUnicodeChar");
   RESOLVE(DynamicDigit, "isdigit");
   RESOLVE(DynamicNarrowUpper, "_strupr");
   RESOLVE(DynamicWideLower, "_wcslwr");

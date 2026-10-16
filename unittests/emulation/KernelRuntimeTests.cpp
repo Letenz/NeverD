@@ -2631,5 +2631,39 @@ TEST_F(KernelRuntime, CountedRuntimeHelpersRejectReadOnlyOutputs) {
   }
 }
 
+TEST_F(KernelRuntime, ScalarUpcaseNarrowsCarriersBeforeTableAdmission) {
+  for (uint64_t High : {0ULL, 0x100ULL, 0xffffff00ULL, 0x12345678abcd0000ULL})
+    for (unsigned Unit = 0; Unit < 128; ++Unit)
+      EXPECT_EQ(invoke("toupper", {High | Unit}),
+                Unit >= 'a' && Unit <= 'z' ? Unit - 32 : Unit);
+  for (const char *Name : {"towupper", "RtlUpcaseUnicodeChar"})
+    for (uint64_t High :
+         {0ULL, 0x10000ULL, 0xffff0000ULL, 0x12345678abcd0000ULL})
+      for (unsigned Unit = 0; Unit < 192; ++Unit)
+        EXPECT_EQ(invoke(Name, {High | Unit}),
+                  Unit >= 'a' && Unit <= 'z' ? Unit - 32 : Unit);
+  for (uint64_t Value : {0x80ULL, 0xbfULL, 0xffULL, 0xffffffffULL})
+    EXPECT_NE(failure("toupper", {Value}).find("code page"), std::string::npos);
+  for (const char *Name : {"towupper", "RtlUpcaseUnicodeChar"})
+    for (uint64_t Value : {0xc0u, 0xe9u, 0x3b1u, 0xd800u, 0xffffu})
+      EXPECT_NE(failure(Name, {Value}).find("NLS"), std::string::npos);
+}
+
+TEST_F(KernelRuntime, ScalarUpcaseSharesApcAdmissionAndExactArity) {
+  Model->enterExecution(0x100);
+  invoke("KfRaiseIrql", {1});
+  for (const char *Name : {"toupper", "towupper", "RtlUpcaseUnicodeChar"}) {
+    EXPECT_EQ(invoke(Name, {'a'}), 'A');
+    EXPECT_NE(failure(Name, {}).find("argument count"), std::string::npos);
+    EXPECT_NE(failure(Name, {'a', 'b'}).find("argument count"),
+              std::string::npos);
+  }
+  invoke("KfRaiseIrql", {2});
+  for (const char *Name : {"toupper", "towupper", "RtlUpcaseUnicodeChar"})
+    EXPECT_NE(failure(Name, {'a'}).find("IRQL"), std::string::npos);
+  invoke("KeLowerIrql", {1});
+  invoke("KeLowerIrql", {0});
+}
+
 } // namespace
 } // namespace neverd::emulation
