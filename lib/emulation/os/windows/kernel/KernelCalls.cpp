@@ -155,6 +155,7 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
       Kind != KernelAPIKind::ProbeForRead &&
       Kind != KernelAPIKind::ProbeForWrite &&
       Kind != KernelAPIKind::MmProbeAndLockPages &&
+      Kind != KernelAPIKind::MmProbeAndLockProcessPages &&
       Kind != KernelAPIKind::MmMapLockedPagesSpecifyCache &&
       Kind != KernelAPIKind::MmMapLockedPages &&
       Kind != KernelAPIKind::MmGetSystemAddressForMdlSafe &&
@@ -423,6 +424,12 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   }
   case KernelAPIKind::MmProbeAndLockPages: {
     if (auto E = probeAndLockPages(A[0], uint8_t(A[1]), uint32_t(A[2])))
+      return E;
+    return 0;
+  }
+  case KernelAPIKind::MmProbeAndLockProcessPages: {
+    if (auto E =
+            probeAndLockProcessPages(A[0], A[1], uint8_t(A[2]), uint32_t(A[3])))
       return E;
     return 0;
   }

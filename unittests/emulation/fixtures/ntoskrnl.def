@@ -71,6 +71,7 @@ EXPORTS
   MmMapLockedPages
   MmUnmapLockedPages
   MmProbeAndLockPages
+  MmProbeAndLockProcessPages
   MmUnlockPages
   IoAllocateMdl
   IoFreeMdl

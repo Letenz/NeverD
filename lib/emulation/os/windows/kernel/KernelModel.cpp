@@ -850,7 +850,7 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
     if (Address < Handle + profile::PointerSize && Handle < End)
       return modelError("guest access to an opaque PoFx handle");
   for (const auto &Attachment : ProcessAttachments)
-    if (Address < Attachment.ApcState + KAPCStateSize &&
+    if (!Attachment.Private && Address < Attachment.ApcState + KAPCStateSize &&
         Attachment.ApcState < End)
       return modelError("guest access to an active opaque APC state");
   if (IsWrite)
