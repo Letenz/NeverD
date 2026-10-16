@@ -418,3 +418,71 @@ is a contract candidate only; erased original TypeScript annotations have not
 been proven or inserted into executable source. Whole-package structure,
 full feature coverage, native implementations and runtime revision differences
 remain open under the active overall goal.
+
+## Complete-function and upstream type correspondence
+
+Two explicit development exporters now disclose full syntax/lexical models
+and decoded source-map anchors to fresh local directories. They reuse the
+existing parser, binding and offline map owners; there is no second parser,
+production metadata change or target-code execution. Numeric attributes keep
+binary64 bits and strings retain UTF-16 units. Each exporter reserves bounded
+output before allocation and publishes hashes only after readback. The 19
+binding/navigation and seven source-map owner tests pass, alongside eight
+source-model and nine map-model driver controls.
+
+A private comparator preserves complete function syntax, values, property
+names, declaration/reference identities and external-name distinctions while
+normalizing identified local bindings. Twenty-seven independently authored
+controls cover alpha renaming, shadowing, captures, changed operators/values,
+property keys, external bindings, strictness and dynamic-scope refusal. It
+finds the same 208 one-to-one structural candidates in all eight platform
+copies of the captured gRPC-containing module, against 67 top-level JavaScript
+files from the integrity-verified Apache-2.0 `@grpc/grpc-js@1.14.4` package.
+The 1,664 platform instances represent 208 candidate functions, not 1,664
+distinct recovered functions. Forty-seven repeated structural groups remain
+ambiguous. Uniqueness is local to the compared corpus, not proof of origin or
+whole-program equivalence; dynamic and conflicting binding cases are retained
+as refusals.
+
+All 67 upstream source maps are decoded through the shared owner. A pinned
+official TypeScript 5.3.3 package parses the corresponding upstream source
+without executing it, resolving imports, emitting code or inferring types.
+This analysis version is not asserted to be the original build compiler.
+Exact function boundaries and parameter anchors connect 194 candidates to
+upstream TypeScript, including 76 explicitly written parameter types and 83
+return types. Fourteen candidates lack exact anchors and remain unlinked.
+Absent annotations stay absent; original erased TypeScript types have not
+been proven or added to execution source. Position, hash and altered-anchor
+controls retain the mapping boundary rather than interpolating missing points.
+
+Each platform also has 38 consistently anchored factory-location candidates
+within 110 recognized top-level imported-helper calls. All matched functions
+within each selected factory point to one upstream file; 32 factories have
+multiple anchors and six have one. The resulting 304 private reading views
+preserve original names and license headers, insert whitespace only, and
+reparse to the same complete tree. Their outside bindings still belong to the
+original containing module, so these views are not standalone build inputs or
+a claim that whole modules have been recovered.
+
+Factory admission follows captured module imports/exports and shared lexical
+bindings, then matches the complete helper function against an authored
+cache/exports factory. Its minified names differ (`T`, `C`, `R`) across
+platforms; all match the same qualified structure. Eleven selection/helper
+controls pass. An initial null-node handling failure for implicit bindings
+and an earlier macOS-name assumption are preserved as failed runs. The final
+locator uses structure and binding identities, without a platform-name table.
+
+The active objective still includes original module/type evidence beyond this
+dependency, full feature coverage, opaque native implementations, Bun revision
+differences and all-readable execution on the remaining platforms. The eight
+sealed development deliveries and their accepted build inputs are unchanged.
+
+Linux x64 now also qualifies the all-readable layout. All 2,345 source modules
+use readable text and all 2,589 module rows pass independent readback. The
+result is 147,195,872 bytes, SHA-256
+`d791d2b2fd6047966c05f4a92d80b371b7d0a9a8db6ce678f4d769559d82c00b`.
+Three startup comparisons match the qualified baseline. Fresh original and
+candidate runs pass the same seven configuration and 22 behavior comparisons,
+without suppressing date text, missing fields, timeouts or protocol errors.
+This extends layout qualification beyond macOS ARM64 while retaining the
+same bounded feature scope; it does not add a universal equivalence claim.
