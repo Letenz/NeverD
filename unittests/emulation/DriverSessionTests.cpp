@@ -106,7 +106,8 @@ TEST(DriverEmulation, UnsupportedImportStopsWithoutInventingSuccess) {
   EXPECT_EQ(Result->Stop, DriverStopReason::UnsupportedAPI)
       << Result->Diagnostic;
   EXPECT_FALSE(Result->NTStatus);
-  EXPECT_NE(Result->Diagnostic.find("ZwOpenFile"), std::string::npos);
+  EXPECT_NE(Result->Diagnostic.find("NeverDUnsupportedFixtureAPI"),
+            std::string::npos);
 }
 
 TEST(DriverEmulation, InvalidGuestMemoryStopsWithObservations) {

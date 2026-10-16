@@ -454,7 +454,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 選用根欄位 `"load_address": "0x190000000"` 請求變更載入基底位址；省略此欄位或指定 `"0x0"` 時使用慣用位址。映像必須滿足重新定位需求。原有的初始化命令或 C API 不會隱含執行任何請求情境。
 
-根物件僅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`kernel_va_shadow_query`, `debugger_state`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry_system_time_100ns`, `registry` 和 `pnp_devices`。一般檔案要求接受 `kind`、選用且互斥的 `device` 或 `device_id`，以及選用的 `file`。IOCTL 必須提供 `code`，並接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。位移預設為零，可使用整數或十六進位字串，且必須落在非負有號 64 位元值的範圍內。生命週期請求會拒絕傳輸欄位。未知或重複欄位會遭拒絕。`code` 接受無號 32 位元 JSON 整數或 `0x` 十六進位字串。`input` 是長度為偶數且不帶前綴或空格的十六進位位元組字串；省略表示空輸入。`output_size` 為無號 JSON 整數，省略表示零。不接受小數及浮點數寫法。
+根物件僅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`kernel_va_shadow_query`, `debugger_state`、`load_address`、`requests`、`unload`、`filesystem`, `kernel_exports`、`registry_system_time_100ns`, `registry` 和 `pnp_devices`。一般檔案要求接受 `kind`、選用且互斥的 `device` 或 `device_id`，以及選用的 `file`。IOCTL 必須提供 `code`，並接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。位移預設為零，可使用整數或十六進位字串，且必須落在非負有號 64 位元值的範圍內。生命週期請求會拒絕傳輸欄位。未知或重複欄位會遭拒絕。`code` 接受無號 32 位元 JSON 整數或 `0x` 十六進位字串。`input` 是長度為偶數且不帶前綴或空格的十六進位位元組字串；省略表示空輸入。`output_size` 為無號 JSON 整數，省略表示零。不接受小數及浮點數寫法。
 
 僅 READ／WRITE／IOCTL 請求接受選用欄位 `cancel_after_100ns`，它必須是 0 到 `INT64_MAX`（9223372036854775807）之間的 JSON 整數。此值相對於請求提交時刻，以虛擬 100 ns 為單位，並非實際時間。對 KMDF，零表示框架路由後、客體 I/O 回呼前觸發取消；若路由已直接完成請求，則完成優先。對 WDM，零在派送傳回後生效。正數延遲僅在沒有就緒回呼或執行框架時，隨時間推進至計時器、等待或取消期限而觸發。掛起的 WDM IRP 會在持有取消自旋鎖的 `DISPATCH_LEVEL` 呼叫已註冊的取消常式；常式必須使用 `Irp->CancelIrql` 釋放鎖後再完成請求。一般佇列與 PnP 取消仍不支援。每個請求報告都包含 `cancel_requested_at_100ns`，值為取消實際發生時的絕對虛擬時間；若未發生取消，包括完成先發生的情況，則為 null。請求取消本身不會完成 IRP，也不規定最終狀態。
 `IoSetCancelRoutine`、`IoAcquireCancelSpinLock`、`IoReleaseCancelSpinLock` 與 `IoCancelIrp` 共用相同的 IRP 狀態及取消自旋鎖；`IoCancelIrp` 同步呼叫已註冊常式，並傳回是否實際呼叫。
@@ -684,7 +684,7 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 
 `RtlCaptureContext` 在 checked-x64 Unicorn/KVM/WHP 共用匯入與動態實作，要求 IRQL <= DISPATCH_LEVEL。記錄須為 16 位元組對齊、完整可讀寫的 1232 位元組核心 RAM。只寫入 `[48,72)`、`[120,262)`、`[280,284)`、`[416,672)`，保留其餘位元組及 x87 資料/指標、MXCSR mask。ContextFlags=`0x10000f`，呼叫者 RSP=入口 RSP+8，RIP 來自實際返回槽；入口 RSP-8 寫入 8 位元組旗標，RAX 為零擴展 EFLAGS，算術旗標依 ADD(入口 RSP-8,8) 更新。DS/ES/FS/GS 使用 checked 邏輯 SS，不代表主機或原始後端值。完整記錄、返回槽與暫存槽須通過普通核心 RAM、有效物件、權限與唯一實體映射檢查，記錄不可重疊返回/暫存範圍；入口 RSP 模 16 為 8。擷取或驗證失敗不改 CPU/RAM，legacy 明確拒絕。此有界模型不代表所有 Windows 實作；即使覆寫擷取內容仍保留環境相依性，不授予 UNPACK 還原或符號前提。
 
-檔案物件以位址維持唯一身分，由情境控制代碼、額外控制代碼與呼叫端指標共同參考。ObOpenObjectByPointer 支援已建立的 FILE_OBJECT、核心存取和選用 OBJ_KERNEL_HANDLE，並將通用檔案權限映射為具體權限。關閉某行程最後一個控制代碼時，若其他行程仍持有控制代碼，便傳送 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL；全域最後一個才傳送 CLEANUP。延後的情境 CLEANUP 保留宣告的下層回應。即使編號已重用，CLOSE 仍等待最後的控制代碼、指標及關閉續調。核心控制代碼屬於系統行程：CLEANUP 暫時使用該有效行程，保留呼叫執行緒、建立行程及 PreviousMode；CLOSE 恢復實際釋放者的行程。暫止回呼暫停釋放者。CREATE 失敗僅保留帶參考的儲存空間並清除裝置關聯。每個關聯物件只計入一次 DEVICE_OBJECT.ReferenceCount。WDM 與 KMDF 共用生命週期；一般 KMDF 裝置以 STATUS_INVALID_DEVICE_REQUEST 完成 LOCK_CONTROL。關閉回呼內重開、存在未完成檔案 I/O 時關閉、KMDF 篩選驅動程式的 LOCK_CONTROL 轉送、名稱查詢及提供者檔案 I/O仍未支援。
+檔案物件以位址維持唯一身分，由情境控制代碼、額外控制代碼與呼叫端指標共同參考。ObOpenObjectByPointer 支援已建立的 FILE_OBJECT、核心存取和選用 OBJ_KERNEL_HANDLE，並將通用檔案權限映射為具體權限。關閉某行程最後一個控制代碼時，若其他行程仍持有控制代碼，便傳送 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL；全域最後一個才傳送 CLEANUP。延後的情境 CLEANUP 保留宣告的下層回應。即使編號已重用，CLOSE 仍等待最後的控制代碼、指標及關閉續調。核心控制代碼屬於系統行程：CLEANUP 暫時使用該有效行程，保留呼叫執行緒、建立行程及 PreviousMode；CLOSE 恢復實際釋放者的行程。暫止回呼暫停釋放者。在提供者成功開啟之前失敗的 CREATE，僅保留帶參考的儲存空間並清除裝置關聯；明確取消的提供者開啟仍保留裝置，直到 CLOSE。每個關聯物件只計入一次 DEVICE_OBJECT.ReferenceCount。WDM 與 KMDF 共用生命週期；一般 KMDF 裝置以 STATUS_INVALID_DEVICE_REQUEST 完成 LOCK_CONTROL。關閉回呼內重開、存在未完成檔案 I/O 時關閉、KMDF 篩選驅動程式的 LOCK_CONTROL 轉送、名稱查詢及提供者資料／控制 I/O 仍未支援。
 
 ## 檔案資訊查詢 IRP
 
@@ -703,7 +703,7 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 
 ## 宣告式檔案系統清單
 
-選用欄位 `filesystem` 在 DriverEntry 前宣告工作階段內的磁碟區。省略表示可用性未知；`[]` 表示沒有檔案系統提供者。空磁碟區必須明確包含根目錄。宣告不讀取主機檔案，也不使檔案 I/O 自動成功。裝置查找、指標參考及來賓篩選器附加共用裝置身分；建立／開啟、中繼資料查詢、讀寫、目錄列舉及控制操作仍未實作。包含宣告磁碟區的路徑會在建立檔案物件或提交 IRP 前拒絕。
+選用的 `filesystem` 在 DriverEntry 前宣告工作階段磁碟區。省略表示可用性未知，`[]` 表示無提供者；每個磁碟區明確包含根目錄。現有節點可經真實 CREATE 請求開啟，入口為 `ZwOpenFile` 及 `ZwCreateFile`、`IoCreateFile` 的 FILE_OPEN 形式。名稱查找、來賓篩選器、共用、控制代碼與指標生命週期使用共同擁有者，不讀取主機檔案。新增、覆寫、刪除、中繼資料查詢、資料 I/O、列舉與檔案系統控制仍未實作。
 
 名稱與路徑限可列印 ASCII，忽略大小寫辨識；父目錄須明確宣告，64 位元檔案 ID 在各磁碟區內唯一。不接受別名、串流、連結、重新解析點及 Unicode 路徑。每個節點必須提供類型、屬性、配置大小及四個非負有號 64 位元時間戳記，包含零。檔案須提供精確十六進位 `data`，空檔案使用空字串；EOF 為位元組數。目錄不含 data 且配置為零。磁區為 512–4096 的二次方，配置須對齊磁區並涵蓋 EOF；對齊遮罩為小於磁區大小的 2^n−1。`full_access` 僅排除 ACL 拒絕。
 
@@ -736,3 +736,6 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 ```
 
 `configuration.filesystem` 保存輸入；頂層 `filesystem` 來自獨立狀態擁有者，增加 `device_object` 與節點 `end_of_file`，執行或投影驗證停止後仍保留。通用 `devices` 僅包含來賓裝置。工作階段磁碟區可在卸載後保留，但來賓物件、參考、控制代碼、附加與 IRP 必須釋放。任何宣告，包括 `[]`，均保留未重建相依性並阻止可執行 UNPACK 復原。舊版 Unicorn 可能在停止前提交遭拒寫入；診斷仍保留投影錯誤。
+
+
+支援範圍包含 ASCII 名稱、命名空間連結及作為 RootDirectory 保留的目錄控制代碼。根目錄後綴 `\` 與無後綴的磁碟區開啟不同，後者未實作。支援目錄／非目錄與同步非警示選項。`IoCancelFileOpen` 對尚未發布的底層成功開啟明確傳送 CLEANUP，最後參考釋放傳送 CLOSE；上層改為失敗而未取消會遭拒。DriverEntry 可保留控制代碼至 DriverUnload。非同步完成與巢狀清理保留各自的完成、分派及 API 結果。報告使用 `file_object`、`file_open_operation`、`filesystem_device`、`filesystem_file_id`，驅動程式建立請求的 `file` 為 null。EA、裝置提示、二進位 ID、重新解析、oplock、交易、ACL、替換檔名儲存及框架檔案系統分派仍不支援。

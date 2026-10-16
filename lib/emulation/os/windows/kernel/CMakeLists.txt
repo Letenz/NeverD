@@ -49,6 +49,7 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelExports.cpp
   KernelModel.cpp
   KernelFileSystem.cpp
+  KernelModelFileCreate.cpp
   KernelModelFileSystem.cpp
   KernelLoaderView.cpp
   KernelVersionQuery.cpp

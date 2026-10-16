@@ -103,7 +103,8 @@ protected:
 };
 
 TEST_F(DriverScenarioPublic, DeclaredFileSystemStateReachesCABIAndCLIOnStop) {
-  for (char Mode : {'S', 'W'}) {
+  for (char Mode : {'S', 'W', 'C', 'P', 'X', 'U', 'R'}) {
+    SCOPED_TRACE(Mode);
     const std::string Scenario =
         std::string(R"({"service_name":"DeclaredFileSystem)") + Mode +
         R"(","unload":true,"filesystem":[{"device_name":"\\Device\\DeclaredVolume",)"
@@ -117,16 +118,35 @@ TEST_F(DriverScenarioPublic, DeclaredFileSystemStateReachesCABIAndCLIOnStop) {
         Session, fixture("driver_filesystem_provider").c_str(),
         Scenario.c_str(), nullptr));
     ASSERT_FALSE(FromC.empty()) << error();
-    const auto FromCLI =
-        runCLI(Scenario, Mode == 'S' ? 0 : 3, "driver_filesystem_provider");
+    // X deliberately completes a CREATE with failure after cancellation.
+    // The driver handles that failure, but the CLI still reports its request.
+    const auto FromCLI = runCLI(Scenario,
+                                Mode == 'W'   ? 3
+                                : Mode == 'X' ? 2
+                                              : 0,
+                                "driver_filesystem_provider");
     for (const auto &Text : {FromC, FromCLI}) {
       auto Parsed = llvm::json::parse(Text);
       ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
       const auto *Report = Parsed->getAsObject();
       ASSERT_NE(Report, nullptr);
       EXPECT_EQ(Report->getString("stop_reason"),
-                Mode == 'S' ? "returned" : "model_error");
-      EXPECT_EQ(Report->getBoolean("unload_completed"), Mode == 'S');
+                Mode == 'W' ? "model_error" : "returned");
+      EXPECT_EQ(Report->getBoolean("unload_completed"), Mode != 'W');
+      if (Mode != 'S' && Mode != 'W') {
+        const auto *Requests = Report->getArray("requests");
+        ASSERT_NE(Requests, nullptr);
+        ASSERT_FALSE(Requests->empty());
+        for (const auto &Value : *Requests) {
+          const auto &Request = *Value.getAsObject();
+          EXPECT_EQ(Request.get("file")->kind(), llvm::json::Value::Null);
+          EXPECT_TRUE(Request.getString("file_object"));
+          EXPECT_TRUE(Request.getInteger("file_open_operation"));
+          EXPECT_TRUE(Request.getString("filesystem_device"));
+          EXPECT_TRUE(Request.get("filesystem_file_id"));
+          EXPECT_EQ(Request.getBoolean("completed"), true);
+        }
+      }
       const auto *State = Report->getArray("filesystem");
       ASSERT_NE(State, nullptr);
       ASSERT_EQ(State->size(), 1u);

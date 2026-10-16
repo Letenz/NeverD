@@ -1066,6 +1066,16 @@ std::string driverResultJSON(const DriverResult &Result) {
       Item[field::ResponseIndex] = *Request.ResponseIndex;
     if (Request.FileInformationClass)
       Item[field::FileInformationClass] = *Request.FileInformationClass;
+    if (Request.FileObject)
+      Item[field::FileObject] = Address(*Request.FileObject);
+    if (Request.FileOpenOperation) {
+      Item[field::FileOpenOperation] = *Request.FileOpenOperation;
+      Item[field::File] = nullptr;
+    }
+    if (Request.FileSystemDevice)
+      Item[field::FileSystemDevice] = Address(*Request.FileSystemDevice);
+    if (Request.FileSystemFileID)
+      Item[field::FileSystemFileID] = *Request.FileSystemFileID;
     if (Request.Kind == DriverRequestKind::Pnp ||
         Request.Kind == DriverRequestKind::Power ||
         Request.Origin == DriverRequestOrigin::DriverAllocatedIRP ||
