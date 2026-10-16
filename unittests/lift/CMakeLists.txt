@@ -1507,6 +1507,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationLocalUnwindBridgeTests.cpp
   eh/RegistrationSEHReturnTests.cpp
   eh/RegistrationSEHParentExitTests.cpp
+  eh/RegistrationSEHRegisterInputTests.cpp
   eh/RegistrationSEHParentExitIRMutations.cpp
   eh/RegistrationSEHRegisterIRMutations.cpp
   eh/RegistrationSEHCallbackTests.cpp
