@@ -191,6 +191,13 @@ back to its function entry with a message; an unmapped instruction reports that
 no source row is available and keeps the existing source cursor. Closing or
 hiding a pane stops its requests; showing it again resumes its own function.
 
+Pseudocode writes a number in hexadecimal, as the disassembly shows it, unless
+its decimal digits are its natural reading: a value up to 10 or a round decimal
+number such as 100, 999 or 5000 (Ghidra's choice). Negative numbers read in
+decimal, and a C literal keeps the type the decompiler gave it. The CLI's C
+output follows the same rule; C through LLVM also keeps decimal where a
+hexadecimal literal would need a suffix to keep its type.
+
 Right-click a number in pseudocode for its bases, each showing what the number
 would read in it: the decompiler's own choice (**Number**, `#`),
 **Hexadecimal** (`Q`), **Decimal**, **Octal**, **Binary** (`B`) and

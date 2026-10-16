@@ -52,11 +52,12 @@ protected:
 TEST_F(LinuxSyscall, AArch64CallsPassTheirRegisters) {
   const std::string C = highC(a64Obj());
   EXPECT_NE(cFunction(C, "a64_linux_exit_group")
-                .find("neverd_a64_linux_syscall(94, 5, 0, 0, 0, 0, 0)"),
+                .find("neverd_a64_linux_syscall(0x5E, 5, 0, 0, 0, 0, 0)"),
             std::string::npos)
       << C;
   EXPECT_NE(cFunction(C, "a64_linux_six")
-                .find("neverd_a64_linux_syscall(63, 20, 21, 22, 23, 24, 25)"),
+                .find("neverd_a64_linux_syscall(0x3F, 0x14, 0x15, 0x16, 0x17, "
+                      "0x18, 0x19)"),
             std::string::npos)
       << C;
   EXPECT_EQ(cFunction(C, "a64_other_immediate").find("linux_syscall"),
@@ -76,7 +77,8 @@ TEST_F(LinuxSyscall, ARMCallsPassTheirRegisters) {
       << C;
   EXPECT_NE(
       cFunction(C, "arm_linux_seven")
-          .find("neverd_arm_linux_syscall(4, 10, 11, 12, 13, 14, 15, 16)"),
+          .find(
+              "neverd_arm_linux_syscall(4, 10, 0xB, 0xC, 0xD, 0xE, 0xF, 0x10)"),
       std::string::npos)
       << C;
   EXPECT_EQ(cFunction(C, "arm_oabi_call").find("linux_syscall"),
@@ -98,7 +100,7 @@ TEST_F(LinuxSyscall, AnExitReadsOnlyItsStatus) {
 // not an SVC result it must refuse.
 TEST_F(LinuxSyscall, AnExitAfterACallDecompiles) {
   const std::string C = highC(exitAfterCallObj());
-  EXPECT_NE(C.find("neverd_a64_linux_syscall(93, "), std::string::npos) << C;
+  EXPECT_NE(C.find("neverd_a64_linux_syscall(0x5D, "), std::string::npos) << C;
 }
 
 TEST_F(LinuxSyscall, LLVMIRBindsEachRegister) {
@@ -123,7 +125,7 @@ TEST_F(LinuxSyscall, LLVMCCallsTheHelper) {
   EXPECT_NE(C.find("static inline uint64_t neverd_a64_linux_syscall("),
             std::string::npos)
       << C;
-  EXPECT_NE(C.find("neverd_a64_linux_syscall(63, "), std::string::npos) << C;
+  EXPECT_NE(C.find("neverd_a64_linux_syscall(0x3F, "), std::string::npos) << C;
 }
 
 // The helpers build for the system the code was lifted from.

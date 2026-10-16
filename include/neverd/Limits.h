@@ -680,8 +680,9 @@ constexpr size_t kMinParallelIRWorkItems = 32;
 // C output formatting
 //===----------------------------------------------------------------------===//
 
-/// Threshold below which integer constants are printed in decimal
-/// rather than hexadecimal in decompiled C output.
+/// The magnitude up to which a negative integer constant prints in decimal
+/// in decompiled C, and any constant in HighIR dumps; C writes non-negative
+/// constants in their natural base (neverd/support/IntegerLiterals.h).
 constexpr uint64_t kDecimalConstThreshold = 4096;
 
 /// Display-only TPI member / enumerator names.  Structs stay small;

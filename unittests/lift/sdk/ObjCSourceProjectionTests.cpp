@@ -148,7 +148,7 @@ TEST(ObjCSourceProjection,
   // C projection does not require an LLVM definition or invent one as proof.
   EXPECT_FALSE(P.Audit.HasLLVMDefinition);
   const std::string Source = emit(P.Func);
-  EXPECT_NE(Source.find("return 42;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x2A;"), std::string::npos) << Source;
   EXPECT_TRUE(objcSourceTextLimitation(Source).empty());
 }
 
