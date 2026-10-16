@@ -251,8 +251,9 @@ int runSourcePatch(neverd_session_t Sess, StringRef Output, int Strategy) {
     Libraries.push_back(Library.str());
     Dependencies.push_back(
         {Libraries.back().c_str(), ImportNames.back().c_str(),
-         Kind == "function" ? NEVERD_SOURCE_DEPENDENCY_FUNCTION
-                            : NEVERD_SOURCE_DEPENDENCY_DATA});
+         static_cast<uint32_t>(Kind == "function"
+                                   ? NEVERD_SOURCE_DEPENDENCY_FUNCTION
+                                   : NEVERD_SOURCE_DEPENDENCY_DATA)});
   }
   Options.dependencies = Dependencies.data();
   Options.dependency_count = Dependencies.size();
