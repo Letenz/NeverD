@@ -18,6 +18,7 @@
 #include "neverd/ir/med/X86RegistrationSEHCall.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/COFF/COFFLoader.h"
+#include "neverd/pipeline/Pipeline.h"
 
 using namespace neverd;
 
@@ -86,6 +87,33 @@ TEST(RegistrationConditionalFrame,
   EXPECT_FALSE(Med.SkippedSSA);
   EXPECT_TRUE(getRegistrationSEHReturns(Med))
       << "native parent chain: " << States.SEHParentChainComplete;
+}
+
+TEST(RegistrationConditionalFrame,
+     XCPT4SourcePipelineRetainsItsScalarFilterRange) {
+  auto Image = loadXCPT4(true);
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  llvm::LLVMContext Context;
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries.insert(0x401580);
+  const auto Result = Pipeline().run(*Image, Context, Options);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_EQ(Result.LowFuncs.size(), 1u);
+  ASSERT_EQ(Result.MedFuncs.size(), 1u);
+  // Pipeline function discovery exposes additional call targets to the
+  // shared proof budget. A standalone CFGBuilder run missed this regression.
+  for (const auto *States : {&Result.LowFuncs.front().RegistrationStates,
+                             &Result.MedFuncs.front().RegistrationStates}) {
+    ASSERT_TRUE(*States);
+    for (const auto &Diagnostic : (*States)->Diagnostics)
+      ADD_FAILURE() << Diagnostic;
+    EXPECT_TRUE((*States)->Complete);
+    const auto Ranges = registrationRangesWhere(
+        **States, [](int32_t Level) { return Level == 1; });
+    ASSERT_TRUE(Ranges);
+    EXPECT_EQ(Ranges->size(), 1u);
+  }
 }
 
 TEST(RegistrationConditionalFrame, XCPT4HelperChecksItsBoundIncomingCounter) {
