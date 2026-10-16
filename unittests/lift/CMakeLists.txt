@@ -3308,6 +3308,28 @@ if(LLD_LINK_EXEC)
     COMMENT "Linking guarded x64 SEH fixture")
   list(APPEND TEST_OBJECTS ${coff_seh_guard_obj} ${coff_seh_guard_exe})
 
+  set(mingw_startup_seh_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_mingw_startup_seh.s")
+  set(mingw_startup_seh_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_mingw_startup_seh.obj")
+  set(mingw_startup_seh_exe
+      "${CMAKE_CURRENT_BINARY_DIR}/test_mingw_startup_seh.exe")
+  add_custom_command(
+    OUTPUT ${mingw_startup_seh_obj}
+    COMMAND ${CLANG_EXEC} -target x86_64-pc-windows-msvc -c
+            ${mingw_startup_seh_src} -o ${mingw_startup_seh_obj}
+    DEPENDS ${mingw_startup_seh_src}
+    COMMENT "Compiling MinGW-style x64 SEH startup fixture")
+  add_custom_command(
+    OUTPUT ${mingw_startup_seh_exe}
+    COMMAND ${LLD_LINK_EXEC} /entry:mingw_entry /subsystem:console
+            /nodefaultlib /export:mingw_entry /export:startup_filter
+            /export:__C_specific_handler ${mingw_startup_seh_obj}
+            /out:${mingw_startup_seh_exe}
+    DEPENDS ${mingw_startup_seh_obj}
+    COMMENT "Linking MinGW-style x64 SEH startup fixture")
+  list(APPEND TEST_OBJECTS ${mingw_startup_seh_obj} ${mingw_startup_seh_exe})
+
   set(coff_cxx_fh3_src
       "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_patch_coff_cxx_fh3.s")
   set(coff_cxx_fh3_obj
