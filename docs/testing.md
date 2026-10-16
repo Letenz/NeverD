@@ -7169,9 +7169,20 @@ initialization, both orders of cyclic initialization, ordinary division failure
 without rollback, failed initializer effects without retry, nested initializer
 errors and subsequent NoClassDefFoundError. Each sequence runs with retained JNI
 attachment, repeated detach/reattach, and alternating joined guest threads.
-Instance/volatile fields and unsupported or looping initializers retain explicit
+Volatile fields and unsupported or looping initializers retain explicit
 failure boundaries. These are supplied synthetic programs, not evidence for
 unavailable application DEX, Binder services or shaders.
+
+Run `scripts/test_android_dex_objects.py` with the same arguments for supplied
+objects and arrays. Its independent JVM oracle covers every integral JNI field
+width, object/static aliases, native-to-DEX and DEX-to-native mutation, constructor
+and method call forms, nested arrays, primitive payloads, global references and
+field IDs across reattachment, and five recoverable Java exception classes.
+Separate negative calls check accessor mismatch, final writes, bad receivers,
+forged field IDs and model heap limits. Decoded-model unit cases independently
+check forged register references, constructor ordering/aliasing, array payload
+bounds, component types, cyclic field storage and terminal resource stops.
+
 
 Processor regressions cover output boundaries, NULL, nested restores, invalid IRQL and import identity. Original `driver_processors.c` exercises entry, worker and DPC contexts across backends, contracts, bases and scheduling. Optional `NEVERD_WDM_PROCESSORS_FIXTURE` and `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` verify genuine WDK inline calls and dynamic exports with normal/active CFG images; missing transports remain explicit skips.
 

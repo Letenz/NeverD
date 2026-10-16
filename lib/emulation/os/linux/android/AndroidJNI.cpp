@@ -194,6 +194,8 @@ BionicResult Bionic::jniCall(const NativeCallEvent &Call) {
     return jniStrings(Slot, Call);
   if (Slot >= 171 && Slot <= 214)
     return jniArrays(Slot, Call);
+  if ((Slot >= 94 && Slot <= 112) || (Slot >= 144 && Slot <= 162))
+    return jniFields(Slot, Call);
   if ((Slot >= 28 && Slot <= 30) || (Slot >= 33 && Slot <= 93) ||
       (Slot >= 113 && Slot <= 143))
     return jniMethods(Slot, Call);

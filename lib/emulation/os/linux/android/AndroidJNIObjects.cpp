@@ -11,53 +11,20 @@
 #include "neverd/dalvik/Runtime.h"
 
 namespace neverd::emulation::android_model {
-namespace {
-llvm::StringRef parent(llvm::StringRef Name) {
-  if (Name == "java/lang/Object")
-    return {};
-  if (Name == "java/lang/RuntimeException")
-    return "java/lang/Exception";
-  if (Name == "java/lang/Exception" || Name == "java/lang/Error")
-    return "java/lang/Throwable";
-  if (Name == "java/lang/OutOfMemoryError")
-    return "java/lang/Error";
-  if (Name == "java/lang/ExceptionInInitializerError" ||
-      Name == "java/lang/NoClassDefFoundError")
-    return "java/lang/LinkageError";
-  if (Name == "java/lang/LinkageError")
-    return "java/lang/Error";
-  if (Name == "java/lang/ArrayIndexOutOfBoundsException" ||
-      Name == "java/lang/StringIndexOutOfBoundsException")
-    return "java/lang/IndexOutOfBoundsException";
-  if (Name.starts_with("java/lang/") && Name.ends_with("Exception"))
-    return "java/lang/RuntimeException";
-  return "java/lang/Object";
-}
-} // namespace
 bool jniAssignable(llvm::StringRef Source, llvm::StringRef Destination) {
-  if (Source == "[Ljava/lang/String;" && Destination == "[Ljava/lang/Object;")
-    return true;
-  for (; !Source.empty(); Source = parent(Source))
-    if (Source == Destination)
-      return true;
-  return false;
+  auto Descriptor = [](llvm::StringRef Name) {
+    return Name.starts_with("[") ? Name.str() : "L" + Name.str() + ";";
+  };
+  return mobile::dalvik::referenceAssignable(Descriptor(Source),
+                                             Descriptor(Destination));
 }
 
 llvm::Expected<std::shared_ptr<JNIObject>>
 Bionic::jniNewObject(JNIObject::Kind Kind, llvm::StringRef Class,
                      uint64_t Bytes) {
-  const uint64_t Limit = Options.MemoryLimit / 2;
-  const uint64_t Overhead = sizeof(JNIObject) + Class.size() + 64;
-  if (JNI.CreatedObjects == jni_abi::ObjectLimit || Bytes > Limit ||
-      Overhead > Limit - Bytes || JNI.ObjectBytes > Limit - Bytes - Overhead)
+  auto Object = JNI.Heap->allocate(Kind, Class.str(), Bytes);
+  if (!Object)
     return failure("JNI object storage budget exhausted");
-  auto Object = std::make_shared<JNIObject>();
-  Object->Type = Kind;
-  Object->ClassName = Class.str();
-  Object->Bytes.resize(Bytes);
-  ++JNI.CreatedObjects;
-  JNI.ObjectBytes += Bytes + Overhead;
-  JNI.Objects.push_back(Object);
   return Object;
 }
 
@@ -79,6 +46,7 @@ Bionic::jniClass(llvm::StringRef Name) {
                Name == "java/lang/StringIndexOutOfBoundsException" ||
                Name == "java/lang/NegativeArraySizeException" ||
                Name == "java/lang/ArrayStoreException" ||
+               Name == "java/lang/ClassCastException" ||
                Name == "java/lang/OutOfMemoryError" ||
                Name == "java/lang/LinkageError" ||
                Name == "java/lang/ExceptionInInitializerError" ||
@@ -90,6 +58,25 @@ Bionic::jniClass(llvm::StringRef Name) {
     if (auto Reason = JNI.Dex->unsupportedClass("L" + Name.str() + ";"))
       return failure(*Reason);
     Known = true;
+  }
+  if (!Known && Name.starts_with("[")) {
+    try {
+      mobile::dalvik::descriptor(Name.str());
+      auto Component = Name;
+      while (Component.consume_front("[")) {
+      }
+      if (Component.size() == 1 &&
+          llvm::StringRef("ZBCSIJFD").contains(Component[0]))
+        Known = true;
+      else if (Component.starts_with("L") && Component.ends_with(";")) {
+        auto Class = jniClass(Component.drop_front().drop_back());
+        if (!Class)
+          return Class.takeError();
+        Known = true;
+      }
+    } catch (const mobile::Error &E) {
+      return failure(E.what());
+    }
   }
   if (!Known)
     return failure("JNI class resolution requires an unmodeled class: " + Name);
@@ -144,6 +131,19 @@ BionicResult Bionic::jniObjects(unsigned Slot, const NativeCallEvent &Call) {
       return Handle.takeError();
     return value(*Handle);
   };
+  if (Slot == 27) {
+    auto Class = jniObject(A[1]);
+    if (!Class)
+      return Class.takeError();
+    if (!*Class || (*Class)->Type != JNIObject::Class)
+      return failure("JNI AllocObject requires a class reference");
+    if (!JNI.DexRuntime)
+      return unsupportedImport(Call);
+    auto Allocated = allocateDex("L" + (*Class)->ClassName + ";", true);
+    if (!Allocated || !*Allocated || Thread.Exception)
+      return Allocated;
+    return Ref(JNI.Heap->get(std::get<uint64_t>(**Allocated)));
+  }
   if (Slot == 6) {
     auto Name = string(A[1]);
     if (!Name)
@@ -241,7 +241,7 @@ BionicResult Bionic::jniObjects(unsigned Slot, const NativeCallEvent &Call) {
       if ((*Object)->Type != JNIObject::Class)
         return failure("JNI operation requires a class reference");
     if (Slot == 10) {
-      auto Name = parent((*Object)->ClassName);
+      auto Name = mobile::dalvik::javaParent((*Object)->ClassName);
       if (Name.empty())
         return value(0);
       auto Class = jniClass(Name);

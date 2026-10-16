@@ -6716,7 +6716,7 @@ CLI/session state or CPU transports. The existing pinned zlib fallback has one
 CMake owner. This does not add a second instruction decoder.
 
 `dalvik::Program` owns immutable explicit class declarations; `dalvik::Runtime`
-owns a workload's static integral fields, initialization states and execution
+owns a workload's static fields, initialization states and execution
 over those decoded instructions. Frames own typed 32-bit register
 words and overlapping-wide invalidation; arithmetic has one unsigned-bit
 implementation of Java integer semantics. Calls share one owner-provided
@@ -6734,8 +6734,19 @@ static field instructions have one semantic owner in Runtime, including recursiv
 initialization, persistent erroneous classes and terminal non-Java stops.
 Program's convenience execute creates a fresh Runtime; repeated calls must use
 the workload instance. Execution is synchronous, without Java preemption or a
-concurrent Java memory-model claim. The supported class contract excludes
-instance/object/floating/volatile fields, hierarchy dispatch, objects and handlers.
+concurrent Java memory-model claim. The supported class contract excludes floating/volatile fields, hierarchy
+and interface dispatch, synchronization and exception handlers.
+
+`dalvik::Heap` is the single retained Java object/array owner for JNI and DEX.
+Its bounded identities are separate from native reference handles and guest
+addresses. JNI borrows, object arrays and DEX array instructions all refer to the
+same storage; no import/export copy of the heap occurs at a method boundary.
+Runtime owns instance/static field semantics and construction. JNI field/method
+adapters only bind typed IDs, convert references and apply the common execution
+budget/stop mapping. Weak object-array edges and integer field identities avoid
+host ownership cycles while the heap retains objects until workload teardown.
+Java reference assignability, including array covariance, has one shared owner.
+Uninitialized construction and unsupported constructor escape fail explicitly.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.

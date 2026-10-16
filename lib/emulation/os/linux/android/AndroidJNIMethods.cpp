@@ -120,18 +120,7 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
     auto Signature = string(A[3]);
     if (!Signature)
       return Signature.takeError();
-    // Prefer the most specific body (String.equals overrides Object.equals).
-    for (unsigned I = std::size(Methods); I-- > 0;) {
-      const auto &M = Methods[I];
-      if (*Name != M.Name || *Signature != M.Signature ||
-          M.Static != (Slot == 113) ||
-          !jniAssignable((*Receiver)->ClassName, M.Class) ||
-          (M.Op == Construct && (*Receiver)->ClassName != M.Class))
-        continue;
-      JNI.ResolvedMethods.insert(I);
-      return value(MethodBase + I * 8);
-    }
-    if (Slot == 113 && JNI.Dex) {
+    if (JNI.Dex) {
       try {
         auto [Params, Return] = mobile::dalvik::prototype(*Signature);
         mobile::dalvik::MethodRef Ref{"L" + (*Receiver)->ClassName + ";", *Name,
@@ -141,10 +130,11 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
           if (!Initialized || !*Initialized ||
               JNI.Threads.at(threadID()).Exception)
             return Initialized;
-          if (Ref.name.starts_with('<'))
+          if (Ref.name.starts_with('<') &&
+              !(Slot == 33 && Ref.name == "<init>"))
             return failure("JNI cannot explicitly invoke a DEX initializer");
         }
-        if (const auto *Body = JNI.Dex->findStatic(Ref)) {
+        if (const auto *Body = JNI.Dex->findMethod(Ref, Slot == 113)) {
           if (auto Reason = JNI.Dex->unsupported(*Body)) {
             auto Stopped = unsupportedImport(Call);
             Result.Diagnostic += " (" + *Reason + ")";
@@ -162,6 +152,17 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       } catch (const mobile::Error &E) {
         return failure(E.what());
       }
+    }
+    // Prefer the most specific body (String.equals overrides Object.equals).
+    for (unsigned I = std::size(Methods); I-- > 0;) {
+      const auto &M = Methods[I];
+      if (*Name != M.Name || *Signature != M.Signature ||
+          M.Static != (Slot == 113) ||
+          !jniAssignable((*Receiver)->ClassName, M.Class) ||
+          (M.Op == Construct && (*Receiver)->ClassName != M.Class))
+        continue;
+      JNI.ResolvedMethods.insert(I);
+      return value(MethodBase + I * 8);
     }
     auto Unsupported = unsupportedImport(Call);
     Result.Diagnostic += " (unmodeled Java method " + (*Receiver)->ClassName +
@@ -182,7 +183,9 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
         1, DexMethod->reference.owner.size() - 2);
     DexSignature = DexMethod->reference.signature();
     M = {DexClass.c_str(), DexMethod->reference.name.c_str(),
-         DexSignature.c_str(), GetClass, true};
+         DexSignature.c_str(),
+         DexMethod->reference.name == "<init>" ? Construct : GetClass,
+         mobile::dalvik::has(DexMethod->access, "static")};
   } else {
     if (ID < MethodBase || (ID - MethodBase) % 8 ||
         (ID - MethodBase) / 8 >= std::size(Methods) ||
@@ -248,8 +251,36 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       V = uint16_t(V);
     Values.push_back(V);
   }
-  if (DexMethod)
-    return executeDex(DexMethod, Values);
+  if (DexMethod) {
+    for (unsigned I = 0; I < Values.size(); ++I)
+      if (Types[I] == 'L') {
+        auto Object = jniObject(Values[I]);
+        if (!Object)
+          return Object.takeError();
+        Values[I] = *Object ? (*Object)->Identity : 0;
+      }
+    uint64_t Instance = 0;
+    if (New) {
+      auto Allocated = allocateDex(DexMethod->reference.owner, false);
+      if (!Allocated || !*Allocated || JNI.Threads.at(threadID()).Exception)
+        return Allocated;
+      Instance = std::get<uint64_t>(**Allocated);
+    } else if (!Static)
+      Instance = (*Receiver)->Identity;
+    if (!Static)
+      Values.insert(Values.begin(), Instance);
+    auto Executed = executeDex(DexMethod, Values);
+    if (!Executed || !*Executed || JNI.Threads.at(threadID()).Exception)
+      return Executed;
+    if (New || Return == 'L' || Return == '[') {
+      auto ID = New ? Instance : std::get<uint64_t>(**Executed);
+      auto Ref = jniReference(JNI.Heap->get(ID));
+      if (!Ref)
+        return Ref.takeError();
+      return value(*Ref);
+    }
+    return Executed;
+  }
   auto Ref = [&](std::shared_ptr<JNIObject> Object) -> BionicResult {
     auto R = jniReference(std::move(Object));
     if (!R)
