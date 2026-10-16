@@ -59,6 +59,7 @@ __declspec(dllimport) char ExGetPreviousMode(void);
 __declspec(dllimport) void *IoThreadToProcess(void *);
 __declspec(dllimport) void *PsGetCurrentThread(void);
 __declspec(dllimport) void *PsGetCurrentProcess(void);
+__declspec(dllimport) U16 ObGetFilterVersion(void);
 __declspec(dllimport) int isdigit(int);
 __declspec(dllimport) char *_strupr(char *);
 __declspec(dllimport) U16 *_wcslwr(U16 *);
@@ -138,6 +139,9 @@ static __typeof__(&RtlPcToFileHeader) volatile PcImage = RtlPcToFileHeader;
 static __typeof__(&IoThreadToProcess) DynamicThreadProcess;
 static __typeof__(&PsGetCurrentThreadPreviousMode) DynamicPreviousMode;
 static __typeof__(&RtlPcToFileHeader) DynamicPcImage;
+static __typeof__(&ObGetFilterVersion) volatile FilterVersion =
+    ObGetFilterVersion;
+static __typeof__(&ObGetFilterVersion) DynamicFilterVersion;
 static void *ImageBase;
 static DEVICE Device;
 static void *Work;
@@ -156,6 +160,7 @@ static U32 print(U32 Dynamic, const char *Prefix, const char *Format, ...) {
 // and unload probe at PASSIVE_LEVEL, separately from the CRT's DISPATCH run.
 static NTSTATUS countedProbe(void) {
   for (U32 Dynamic = 0; Dynamic < 2; ++Dynamic) {
+    CHECK((Dynamic ? DynamicFilterVersion : FilterVersion)() == 0x100);
     CHECK((Dynamic ? DynamicByteUpper : ByteUpper)('a') == 'A');
     CHECK((Dynamic ? DynamicByteUpper : ByteUpper)(0x15a) == 'Z');
     CHECK((Dynamic ? DynamicUnitUpper : UnitUpper)('z') == 'Z');
@@ -336,6 +341,7 @@ NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
   RESOLVE(DynamicThreadProcess, "IoThreadToProcess");
   RESOLVE(DynamicPreviousMode, "PsGetCurrentThreadPreviousMode");
   RESOLVE(DynamicPcImage, "RtlPcToFileHeader");
+  RESOLVE(DynamicFilterVersion, "ObGetFilterVersion");
   RESOLVE(DynamicDigit, "isdigit");
   RESOLVE(DynamicNarrowUpper, "_strupr");
   RESOLVE(DynamicWideLower, "_wcslwr");
