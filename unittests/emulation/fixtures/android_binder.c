@@ -142,7 +142,7 @@ static int free_buffer(int fd, U64 pointer) {
 }
 struct ServiceArgs {
   int fd;
-  unsigned prefix;
+  unsigned prefix, flags, status;
 };
 static int serve(struct ServiceArgs *args) {
   int fd = args->fd;
@@ -159,7 +159,7 @@ static int serve(struct ServiceArgs *args) {
   CHECK(output[18] == 0xaabbccdd && output[31] == 0xaabbccdd);
   struct Transaction tx;
   bytes(&tx, output + 2, 64);
-  CHECK(!tx.target && !tx.cookie && tx.code == 17 && !tx.flags &&
+  CHECK(!tx.target && !tx.cookie && tx.code == 17 && tx.flags == args->flags &&
         tx.data_size == 12 && !tx.offsets_size);
   CHECK(tx.sender_pid != 0 && tx.offsets == tx.buffer + 16);
   unsigned request[3];
@@ -168,6 +168,11 @@ static int serve(struct ServiceArgs *args) {
                        request[0] * 7};
   U64 old = tx.buffer;
   tx = (struct Transaction){0, 0, 29, 0, 0, 0, sizeof(reply), 0, (U64)reply, 0};
+  if (args->status) {
+    reply[0] = 0u - (request[0] + 1); /* service-produced signed status_t */
+    tx.flags = 8;
+    tx.data_size = 4;
+  }
   CHECK(!send_message(fd, 0x40406301, &tx));
   CHECK(!free_buffer(fd, old));
   wr = (struct WriteRead){0, 0, 0, sizeof(output), 0, (U64)output};
@@ -190,15 +195,16 @@ int binder_service_transactions(void) {
   int alias = dup(client);
   CHECK(alias >= 0);
   CHECK(!close(client));
-  for (unsigned i = 1; i <= 2; ++i) {
+  for (unsigned i = 1; i <= 4; ++i) {
     unsigned data[3] = {i * 13, 0x10203040 + i, 0x81234567};
-    struct Transaction tx = {0, 0, 17, 0, 999, 999, 12, 0, (U64)data, 1};
+    unsigned flags = i % 2 ? 0 : 16, status = i > 2;
+    struct Transaction tx = {0, 0, 17, flags, 999, 999, 12, 0, (U64)data, 1};
     CHECK(!send_message(alias, 0x40406300, &tx));
     /* The request is copied; later writes to the sender cannot change it. */
     data[0] = 99;
     U64 tid;
     void *result = (void *)99;
-    struct ServiceArgs args = {server, i == 1 ? 0x720d : 0x720c};
+    struct ServiceArgs args = {server, i == 1 ? 0x720d : 0x720c, flags, status};
     CHECK(!pthread_create(&tid, 0, service_thread, &args));
     CHECK(!pthread_join(tid, &result) && !result);
     unsigned output[32];
@@ -210,13 +216,19 @@ int binder_service_transactions(void) {
           output[1] == 0x7206 && output[2] == 0x80407203);
     CHECK(output[19] == 0xabcddcba && output[31] == 0xabcddcba);
     bytes(&tx, output + 3, 64);
-    CHECK(tx.code == 29 && !tx.flags && !tx.sender_pid && tx.data_size == 12 &&
-          !tx.offsets_size);
+    CHECK(tx.code == 29 && tx.flags == (status ? 8u : 0u) && !tx.sender_pid &&
+          tx.data_size == (status ? 4u : 12u) && !tx.offsets_size);
     CHECK(tx.buffer >= (U64)cm && tx.buffer + 16 <= (U64)cm + 4096);
+    CHECK(tx.offsets == tx.buffer + (status ? 8 : 16));
     unsigned answer[3];
-    bytes(answer, (void *)tx.buffer, 12);
-    CHECK(answer[0] == i * 13 + 0x10203040 + i &&
-          answer[1] == ((0x10203040 + i) ^ 0x81234567) && answer[2] == i * 91);
+    bytes(answer, (void *)tx.buffer, tx.data_size);
+    if (status) {
+      CHECK(answer[0] == 0u - (i * 13 + 1));
+    } else {
+      CHECK(answer[0] == i * 13 + 0x10203040 + i &&
+            answer[1] == ((0x10203040 + i) ^ 0x81234567) &&
+            answer[2] == i * 91);
+    }
     CHECK(!free_buffer(alias, tx.buffer));
   }
   CHECK(!munmap(sm, 4096) && !munmap(cm, 4096));

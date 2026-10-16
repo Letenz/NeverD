@@ -336,6 +336,47 @@ TEST_P(AndroidDevices, RejectedGPUProgramsCannotPublishEarlierWrites) {
   }
 }
 
+TEST_P(AndroidDevices, RejectedIndirectGPUProgramsPreserveAllFetchedRAM) {
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.KGSL->SynchronousA3xx = true;
+  Options.LinuxFiles->Devices.at("/fixture/control") = D;
+  const char *Reasons[] = {"opcode",         "extent",         "aligned",
+                           "registered RAM", "nonempty",       "recursive",
+                           "depth budget",   "self-modifying", "self-modifying",
+                           "aggregate",      "writable RAM",   "self-modifying",
+                           "opcode",         "opcode",         "predicate"};
+  for (unsigned Mode = 0; Mode != std::size(Reasons); ++Mode) {
+    SCOPED_TRACE(Mode);
+    Options.Android->Memory = {
+        {Buffer, 16384, std::vector<uint8_t>(16384, 0xa5), false}};
+    Options.Android->ReadMemory = {{Buffer, 4096},
+                                   {Buffer + 4096 + 20, 4},
+                                   {0x22000000 + 40, 4, false},
+                                   {0x22000000 + 48, 4, false},
+                                   {0x23000000, 4096, false},
+                                   {0x24000000, 4096, false},
+                                   {Buffer + 8192, 4096},
+                                   {Buffer + 12288, 4096}};
+    auto R = run("devices_gpu_indirect_rejected", {Mode, Buffer});
+    ASSERT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_NE(R.Diagnostic.find("GPU PM4 buffer 0x"), std::string::npos);
+    EXPECT_NE(R.Diagnostic.find(" word "), std::string::npos);
+    EXPECT_NE(R.Diagnostic.find(" header 0x"), std::string::npos);
+    EXPECT_NE(R.Diagnostic.find(Reasons[Mode]), std::string::npos)
+        << R.Diagnostic;
+    ASSERT_EQ(R.MemorySnapshots.size(), 8u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, std::vector<uint8_t>(4096, 0xa5));
+    EXPECT_EQ(R.MemorySnapshots[1].Bytes,
+              (std::vector<uint8_t>{0xef, 0xbe, 0xad, 0xde}));
+    EXPECT_EQ(R.MemorySnapshots[2].Bytes, std::vector<uint8_t>(4, 0));
+    EXPECT_EQ(R.MemorySnapshots[3].Bytes, std::vector<uint8_t>(4, 0));
+    EXPECT_EQ(R.MemorySnapshots[4].Bytes, R.MemorySnapshots[6].Bytes);
+    EXPECT_EQ(R.MemorySnapshots[5].Bytes, R.MemorySnapshots[7].Bytes);
+    EXPECT_FALSE(R.Services.back().Result);
+  }
+}
+
 TEST_P(AndroidDevices, ContextRefusalsDoNotInventOutputs) {
   Options.LinuxFiles->Devices.at("/fixture/control") = contextDeviceTestInput();
   Options.LinuxTime.emplace().AdvanceOnIdle = true;

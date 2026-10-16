@@ -7404,6 +7404,24 @@ unmap-after-refused-free state, so unchanged output bytes alone cannot hide a
 partially committed allocation or pending free.
 These fixtures do not supply an Android system-service implementation or shader.
 
+`GPUCommandsWritePinnedRAMAndRetireOwnedTimestamps` also executes both A3xx
+indirect-buffer forms, repeated child calls, parent continuation and pinned
+child fetches after CPU address reuse. The raw x64/AArch64, C API/CLI and Python
+paths use that same independent caller. `RejectedIndirectGPUProgramsPreserveAllFetchedRAM`
+checks child and parent failures, recursive/deeper calls, aggregate budget,
+physical aliases, empty/truncated/unmapped/misaligned buffers and permissions.
+It compares complete fetched pages with pre-submission copies, destination RAM,
+the result timestamp and both memstore timestamps, plus the refusal location.
+
+`AndroidBinder.GuestServicesExecuteSynchronousTransactionsAndReplies` runs
+ordinary and TF_ACCEPT_FDS requests with both data and guest-computed
+TF_STATUS_CODE replies, including exact guards and buffer release. The LP64
+`LinuxBinder` test checks rejected flags/status sizes/objects, unchanged arenas
+and consumed counts, and a successful retry of the same pending call. These
+checks validate message transport, not any Android service's response policy.
+Run `ctest -R 'Binder|GPUCommands|RejectedIndirectGPU|RejectedGPU|StatefulDescriptorsPages'`,
+then the five OS/memory/session owner labels described above.
+
 `KernelFileTransfers` covers packet fields, offset sentinels, append-only handles, zero lengths, aliased outputs, immediate and pending statuses, worker notification and refusal before publication. `OriginalBufferedNativeFileTransfers` and `GenuineWdkBufferedNativeFileTransfers` execute imported and dynamically resolved calls across backends, contracts, load bases and scheduling. Configure `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` and `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` for genuine normal/CFG images; unavailable backends remain explicit skips.
 
 `KernelFileTransfers` checks native flush access masks, bufferless packets on every device transfer mode, full-width Information, publication and disposal before dispatch returns, worker/guarded notification and rejected async/concurrent calls. The existing original and genuine WDK file-transfer fixtures also execute imported and dynamically resolved flushes, including a user IOSB and the nine completion modes.
