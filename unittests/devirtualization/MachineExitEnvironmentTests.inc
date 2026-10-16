@@ -422,3 +422,5 @@ TEST_F(PEFixedImageTest, MachineExitIntegrityBudgetsAndOrdinaryConsumers) {
       llvm::consumeError(Wrapped.takeError());
   }
 }
+
+#include "RecoveryArchitectureTests.inc"

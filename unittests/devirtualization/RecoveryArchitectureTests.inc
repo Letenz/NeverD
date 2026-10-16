@@ -1,0 +1,131 @@
+//===- RecoveryArchitectureTests.inc - Native contract ownership --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file Compatibility and architecture identity controls for raw receipts.
+// Included after RawCodeEnvironmentTests.inc in the fixed-PE test namespace.
+
+TEST_F(PEFixedImageTest, RawArchitectureReceiptCompatibility) {
+  // Recorded with the original v2 option/exit encoding and v1 receipts.
+  // A policy relocation must not silently introduce a new evidence schema.
+  const char *Expected[2][4] = {
+      {"8A628DDB2C445F9B90E3D418427FEF909E803C5FBCF8510332FAB5B78F987AB4",
+       "7861421693CF948D345001BCD3AA1D124808C9BBBDC81E486C1E09ED5C4FE42E",
+       "6C5C194454FC2CB4E228D17B8C78215E004221325FE1F0F8343EEC0F7A3D2F90",
+       "6B46EE514A8722629C878D5D997267576CBEDC3F756808BB49B066D3769E9273"},
+      {"49F6411DFB8D107606A87C7D5BA1D9CBC2A9899048150A9F076D2D3A45FC9CAB",
+       "48AEFB5CEE6E967105756FBD787E27907B0E1D86841CE8E8772C42C9ECD68185",
+       "1D1C92C1638AF650C8D35E694FA72B059D22D83AC4E7E12C616BBE0210C20924",
+       "C95AB4D1A1663A1279ECB4E77EE8A3513F6BF3D5D06B6CA85D862DD9B1EDA770"},
+  };
+  for (unsigned Case = 0; Case != 2; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Loaded = load(Case ? machineExitFixture({0xff, 0xd0})
+                            : returningImportFixture());
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    auto O = Case ? machineExitOptions(Base + 0x1000, MachineExitKind::Call)
+                  : returningRawOptions(0x400000);
+    O.X64SegmentedReads = true;
+    O.X64CR8State = true;
+    O.X64FlagsProfile = InterpreterMachineStateProfile::KernelX64NoFaultV1;
+    const auto R = specializeBinaryInterpreter(
+        *Loaded, Base + (Case ? 0x1000 : 0x1100), O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    ASSERT_TRUE(R.RawEnvironment);
+    auto Error = validateSpecializationRawEnvironment(R, O);
+    ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+    const auto &Receipt = *R.RawEnvironment;
+    EXPECT_EQ(Receipt.Domain->DomainDigest, Expected[Case][0]);
+    EXPECT_EQ(Receipt.GraphDigest, Expected[Case][1]);
+    EXPECT_EQ(Receipt.EvidenceDigest, Expected[Case][2]);
+    EXPECT_EQ(Receipt.IdentityDigest, Expected[Case][3]);
+    if (Case) {
+      ASSERT_EQ(R.ExternalExits.size(), 1U);
+      EXPECT_EQ(
+          R.ExternalExits.front().IdentityDigest,
+          "EE472CFCD612E99A2757A1A64E49ECF7BA1FB08D3592FACC51B8A3341091B5E5");
+    }
+  }
+}
+
+TEST_F(PEFixedImageTest, RawArchitectureCannotRelabelEvidence) {
+  auto Loaded = load(machineExitFixture({0xff, 0xd0}));
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  const auto O = machineExitOptions(Base + 0x1000, MachineExitKind::Call);
+  const auto Good = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+  ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+  ASSERT_TRUE(Good.RawEnvironment);
+  for (Arch Target : {Arch::AArch64, Arch::X86, Arch::ARM, Arch::EVM, Arch::SBF,
+                      Arch::Unknown, static_cast<Arch>(255)}) {
+    SCOPED_TRACE(static_cast<unsigned>(Target));
+    auto Changed = O;
+    Changed.Architecture = Target;
+    for (bool Raw : {false, true}) {
+      auto Error = Raw ? validateSpecializationRawEnvironment(Good, Changed)
+                       : validateSpecializationExternalExits(Good, Changed);
+      ASSERT_TRUE(bool(Error));
+      EXPECT_NE(llvm::toString(std::move(Error)).find("architecture"),
+                std::string::npos);
+    }
+    auto R = Good;
+    auto Domain = std::make_shared<SpecializationRawEnvironment>(
+        *Good.RawEnvironment->Domain);
+    Domain->Declaration.Architecture = Target;
+    // Stored authority cannot select the policy or enlarge its walk budget.
+    Domain->Declaration.MaxImagePreparationBytes = UINT64_MAX;
+    R.RawEnvironment->Domain = Domain;
+    auto Error = validateSpecializationRawEnvironment(R, O);
+    ASSERT_TRUE(bool(Error));
+    EXPECT_NE(llvm::toString(std::move(Error)).find("expected architecture"),
+              std::string::npos);
+    Error = validateSpecializationRawEnvironment(R, Changed);
+    ASSERT_TRUE(bool(Error));
+    EXPECT_NE(llvm::toString(std::move(Error)).find("architecture"),
+              std::string::npos);
+    const auto Mismatch =
+        specializeBinaryInterpreter(*Loaded, Base + 0x1000, Changed);
+    EXPECT_EQ(Mismatch.Status, SpecializationStatus::InvalidInput);
+    EXPECT_EQ(Mismatch.EvaluatedOperations, 0U);
+    EXPECT_TRUE(Mismatch.Residual.Blocks.empty());
+    EXPECT_FALSE(Mismatch.RawEnvironment);
+    EXPECT_NE(Mismatch.Diagnostic.find("architecture"), std::string::npos);
+  }
+  auto Explicit = O;
+  Explicit.Architecture = Arch::X64;
+  auto Error = validateSpecializationRawEnvironment(Good, Explicit);
+  EXPECT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+}
+
+TEST_F(PEFixedImageTest, RecoveryArchitectureSelectionPrecedesProvider) {
+  struct UnreachableProvider final : SpecializationProvider {
+    mutable unsigned DomainReads = 0;
+    unsigned Fetches = 0;
+    std::shared_ptr<const SpecializationRawEnvironment>
+    rawEnvironment() const override {
+      ++DomainReads;
+      return {};
+    }
+    llvm::Expected<SpecializationInstruction>
+    instruction(SpecializationCursor) override {
+      ++Fetches;
+      return llvm::createStringError(llvm::errc::not_supported,
+                                     "unexpected instruction fetch");
+    }
+  } P;
+  for (Arch Target : {Arch::AArch64, Arch::X86, Arch::ARM, Arch::EVM, Arch::SBF,
+                      Arch::Unknown, static_cast<Arch>(255)})
+    for (bool Raw : {false, true}) {
+      auto O = Raw ? rawOptions() : SpecializationOptions{};
+      O.Architecture = Target;
+      const auto R = specializeInterpreter(P, {Base + 0x1000}, O);
+      EXPECT_EQ(R.Status, SpecializationStatus::Unsupported);
+      EXPECT_NE(R.Diagnostic.find("architecture"), std::string::npos);
+      EXPECT_EQ(R.EvaluatedOperations, 0U);
+      EXPECT_TRUE(R.Residual.Blocks.empty());
+      EXPECT_TRUE(R.ExternalExits.empty());
+      EXPECT_FALSE(R.RawEnvironment);
+      EXPECT_EQ(P.DomainReads, 0U);
+      EXPECT_EQ(P.Fetches, 0U);
+    }
+}

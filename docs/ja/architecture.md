@@ -1737,3 +1737,7 @@ KernelModelObjects が共通オブジェクト表でハンドルとポインタ�
 `KernelFileSystem` / `KernelModel` / `DriverFileSystemJSON` / `DeviceOwnerKind` / `isPnpProviderDevice`: `configuration.filesystem` は入力、上位 `filesystem` は独立した状態で、`device_object` と各ノードの `end_of_file` を追加します。実行や投影検証の停止後も状態を保持します。`devices` はゲストのみです。アンロード時にセッションボリュームは残せますが、ゲストの参照、ハンドル、接続、IRP は解放が必要です。`[]` を含む宣言は未再構築依存性を保持し、実行可能 UNPACK 復元を禁止します。旧 Unicorn は拒否書き込みを停止前に反映する場合があり、投影エラーを診断に残します。
 
 KernelFileSystem は FILE_OBJECT ごとに provider token を保持します。非公開の共有処理は許可済みノードとマッピング済みアクセスを受け取り、共有競合を双方向に検査します。メタデータのみのアクセスは競合に含みません。CLEANUP は共有制限を解除して token を保持し、CLOSE はクリーンアップ済み token を削除します。参照が残るオブジェクトも 1024 個の上限に含みます。厳密な対応検証で token とファイルオブジェクトの所有者を照合します。 `KernelModelFileCreate` が CREATE と取消を生成し、コールバック前にハンドル容量を予約します。`DriverSession` は非同期処理と入れ子の CLOSE で呼出元を保持します。共通オブジェクト所有者がハンドルを公開し、名前検索は実際のディレクトリを保持します。シナリオの終了意図は独立し、スナップショットとアンロードが token を双方向検証します。
+
+### 生環境のアーキテクチャ所有権
+
+`RecoveryArchitecture` はビルドホストとは独立に `SpecializationOptions::Architecture` からネイティブ契約を選択します。既存の既定値は x64 で、アダプターのない対象は明示的に拒否します。`arch/x86_64` がネイティブオプションの符号化、主イメージの範囲規則、外部出口の照合コストと物理出口の証跡を所有し、core が共通予算、ポリシー符号化、グラフと証拠の完全性を所有します。x64 のダイジェストのバイト列は維持し、宣言の検証前に期待するアーキテクチャと保存された識別を確認します。`RawArchitectureReceiptCompatibility` は変更前のダイジェストを固定し、不一致テストは x64 の証拠を ARM64 として扱うことを拒否します。ARM64 のネイティブ復元は未実装です。
