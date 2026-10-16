@@ -3715,7 +3715,21 @@ void Pipeline::buildLowIR(
     StableCxxContinuationExitAnalysisCompleteByFunction.clear();
     HasStableCxxContinuationExitSnapshot = false;
   };
+  // Continuation discovery need not change any body. The same immutable
+  // AllLow then has the same module arbitration, including budget refusals.
+  // Keep one result within this run; every body replacement below retires it
+  // before parallel builders can change its inputs. Image publication occurs
+  // only after both fixed points finish.
+  std::optional<ModuleJumpTableArbitration> CachedArbitration;
+  auto arbitrationForCurrentBodies =
+      [&]() -> const ModuleJumpTableArbitration & {
+    if (!CachedArbitration)
+      CachedArbitration = collectModuleJumpTableArbitration(
+          Img, AllLow, Opts.JumpTableEvidenceBudgetForTesting);
+    return *CachedArbitration;
+  };
   auto rebuildFunctions = [&](const std::vector<bool> &Rebuild) {
+    CachedArbitration.reset();
     parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
       Decoder LocalDec;
       if (!LocalDec.init(Img))
@@ -3757,8 +3771,7 @@ void Pipeline::buildLowIR(
   bool PreserveAllRelocationSlots = false;
   const size_t MaxArbitrationPasses = limits::kMaxJumpTableEvidenceWork + 1;
   for (size_t Pass = 0; Pass < MaxArbitrationPasses; ++Pass) {
-    ModuleJumpTableArbitration Discovered = collectModuleJumpTableArbitration(
-        Img, AllLow, Opts.JumpTableEvidenceBudgetForTesting);
+    ModuleJumpTableArbitration Discovered = arbitrationForCurrentBodies();
     if (!Discovered.AnalysisComplete) {
       ProtectedRelocationSlots.insert(
           Discovered.ProtectedRelocationSlots.begin(),
@@ -3935,8 +3948,7 @@ void Pipeline::buildLowIR(
       ContinuationAndArbitrationStable = true;
       break;
     }
-    ModuleJumpTableArbitration Discovered = collectModuleJumpTableArbitration(
-        Img, AllLow, Opts.JumpTableEvidenceBudgetForTesting);
+    ModuleJumpTableArbitration Discovered = arbitrationForCurrentBodies();
     if (!Discovered.AnalysisComplete) {
       clearStableCxxContinuationExitSnapshot();
       clearContinuationRoots();

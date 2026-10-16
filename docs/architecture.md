@@ -225,6 +225,11 @@ the cache while its image/debug owners are alive. Feature generations are
 checked even after navigation cleared the preceding pipeline result. COFF
 handler discovery conservatively retires facts before expanding metadata.
 Other architectures and whole-image analyses retain run-local ownership.
+Within one LowIR build, module jump-table arbitration is reused while its
+function bodies remain unchanged. Any body rebuild retires that result before
+parallel builders run. Continuation discovery still runs normally, and image
+publication follows both fixed points; budget refusals and proof requirements
+remain the same.
 Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
 before input or policy mutation; image pointers alone do not establish validity.
 
