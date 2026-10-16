@@ -238,3 +238,22 @@ Le cleanup du handler sélectionné peut sauter vers la même capture ou une aut
 Un filtre appelé par RaiseException dans un finally suspendu peut sauter vers la même capture ou une autre capture valide, ou revenir par une autre branche. Les effets de retour et de saut restent séparés ; le saut termine le filtre et tous les finally suspendus et imbriqués, avec sa propre destination et sa valeur.
 
 Les boucles finies des callbacks finally et des filtres conservent un cadre complet par étape, avec compteurs en registres, cellules parentes et pile privée. Les états complets récurrents, la terminaison non prouvée et les budgets épuisés sont refusés. Les blocs de copie PHI doivent appartenir à la même arête source et au même callback ; l’installation vérifie l’indice escape exact de chaque emplacement scalaire récupéré et les accès privés non atomiques de tous ses alias.
+
+Un finally SEH3/EH4 à cadre fixe vérifié peut restaurer SavedESP et sauter vers
+une continuation déjà attribuée au parent. Un contexte SjLj privé restaure la pile
+générée et FS:[0], conserve les registres logiques courants et les écritures du
+callback, puis rejoint la limite exacte du scope source. L’installateur vérifie
+indépendamment les alias, la capture, le transfert et la sélection ; un tampon
+source ne peut pas remplacer ce contexte. Une sortie du runtime peut abandonner
+le nœud temporaire de déroulement du CRT : avant un nouvel appel ou une opération
+susceptible de lever une exception, la source doit reconnecter son registration
+vivant, ou le retirer au retour. Une réparation non prouvée ou une destination
+extérieure au CFG parent vérifié entraîne un refus.
+
+
+Les appels ordinaires à finally échangent explicitement EAX/ECX/EDX/EBX/ESI/EDI
+par des emplacements privés du cadre parent, y compris les valeurs du retour
+proche physique. L’entrée du runtime conserve son propre contrat de registres
+et ne reprend pas les entrées d’un appel ordinaire antérieur. Un scope référencé
+uniquement par un appel ordinaire à finally authentifié est conservé, même si
+aucun try level du code source ne l’active.

@@ -227,3 +227,22 @@ Il cleanup del handler selezionato può saltare alla stessa cattura o a un’alt
 Un filtro chiamato da RaiseException dentro un finally sospeso può saltare alla stessa cattura o a un’altra valida, oppure ritornare da un altro ramo. Gli effetti di ritorno e salto rimangono distinti; il salto termina il filtro e tutti i finally sospesi e annidati, mantenendo la propria destinazione e il proprio valore.
 
 I cicli finiti nei callback finally e nei filtri conservano un frame completo per ogni passo, inclusi contatori nei registri, celle del padre e stack privato. Stati completi ricorrenti, terminazione non dimostrata e budget esauriti sono rifiutati. Ogni blocco di copia PHI conserva l’esatto arco sorgente e il callback; l’installazione verifica l’indice escape dello slot scalare recuperato e gli accessi privati non atomici di tutti gli alias.
+
+Un finally SEH3/EH4 con frame fisso verificato può ripristinare SavedESP e saltare
+a una continuazione già attribuita al padre. Un contesto SjLj privato ripristina
+lo stack generato e FS:[0], conserva i registri logici correnti e le scritture del
+callback ed entra nell’esatto confine dello scope sorgente. L’installatore verifica
+separatamente alias, acquisizione, trasferimento e selezione; un buffer sorgente
+non può sostituire questo contesto. Un’uscita dal runtime può abbandonare il nodo
+temporaneo di unwind del CRT: prima di un’altra chiamata o operazione che possa
+causare un’eccezione, il sorgente deve ricollegare la registration attiva oppure
+rimuoverla al ritorno. Riparazioni non dimostrate e destinazioni esterne al CFG
+padre verificato vengono rifiutate.
+
+
+Le chiamate ordinarie a finally scambiano esplicitamente EAX/ECX/EDX/EBX/ESI/EDI
+tramite slot privati del frame padre, inclusi i valori del ritorno vicino fisico.
+L’ingresso del runtime mantiene il proprio contratto dei registri e non riutilizza
+gli ingressi di una precedente chiamata ordinaria. Uno scope referenziato solo da
+una chiamata ordinaria a finally autenticata viene conservato anche se nessun
+try level del codice sorgente lo attiva.

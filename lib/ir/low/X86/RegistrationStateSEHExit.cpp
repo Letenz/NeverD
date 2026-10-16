@@ -304,6 +304,14 @@ bool RegistrationStateSolver::transferSEHExit(size_t I, Domain &After,
   auto [It, New] = SEHExits.emplace(Identity, Exit);
   if (!New && It->second != Exit)
     return Refuse();
+  if (!OrdinaryReturn) {
+    After.AbandonedSEHGuard |=
+        !After.Activation.OrdinaryCall ||
+        llvm::any_of(After.SEHCallers, [](const auto &Caller) {
+          return !Caller.Activation.OrdinaryCall;
+        });
+    After.SEHCallers.clear();
+  }
   After.Frame.leaveCallback();
   After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
       FrameValue::frame(Exit.StackOffset);

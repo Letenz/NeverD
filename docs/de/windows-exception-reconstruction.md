@@ -230,3 +230,23 @@ Das Cleanup eines ausgewählten Handlers darf zum selben oder zu einem anderen g
 Ein durch RaiseException in einem unterbrochenen Finally aufgerufener Suchfilter kann zum selben oder zu einem anderen gültigen Capture springen oder auf einem anderen Zweig zurückkehren. Rückkehr und Sprung behalten getrennte Frame-Ergebnisse; der Sprung beendet den Filter und alle unterbrochenen verschachtelten Finally-Aufrufe und bewahrt sein eigenes Ziel und seinen Wert.
 
 Endliche Schleifen in Finally-Callbacks und Suchfiltern behalten pro Ausführung den vollständigen Frame, einschließlich Registerzählern, Elternframe und privatem Callback-Stack. Wiederkehrende vollständige Zustände, unbelegte Terminierung und erschöpfte Budgets werden abgewiesen. PHI-Kopierblöcke müssen zur exakten Quellkante und zum selben Callback gehören; der Installer prüft den Escape-Index jedes wiederhergestellten Skalarslots und sämtliche Aliase auf private, nichtatomare Zugriffe.
+
+Ein geprüftes SEH3/EH4-finally mit festem Frame darf SavedESP wiederherstellen
+und direkt zu einer bereits dem Elterncode zugeordneten Fortsetzung springen.
+Ein privater SjLj-Kontext stellt den erzeugten Stack und FS:[0] wieder her,
+bewahrt aktuelle logische Register und Frame-Schreibzugriffe des Callbacks und
+führt zur exakten Quell-Scope-Grenze. Der Installer prüft Aliase, Erfassung,
+Transfer und Auswahl unabhängig; Quellpuffer dürfen diesen Kontext nicht ersetzen.
+Ein Runtime-Ausstieg kann den temporären CRT-Unwind-Knoten zurücklassen. Vor einem
+weiteren Aufruf oder einer möglicherweise fehlerauslösenden Operation muss der
+Quellcode seine aktive Registrierung erneut verknüpfen oder sie bei der Rückkehr
+entfernen. Unbewiesene Kettenreparaturen und Ziele außerhalb des geprüften
+Eltern-CFG werden abgelehnt.
+
+
+Gewöhnliche finally-Aufrufe übertragen EAX/ECX/EDX/EBX/ESI/EDI explizit über
+private Speicherplätze im Elternframe, einschließlich der Werte beim physischen
+Nah-Rücksprung. Der Laufzeiteinstieg behält seinen eigenen Registervertrag und
+übernimmt keine Eingaben eines früheren gewöhnlichen Aufrufs. Ein ausschließlich
+durch einen nachgewiesenen gewöhnlichen finally-Aufruf referenzierter Scope
+bleibt erhalten, auch wenn ihn kein try level des Quellcodes aktiviert.

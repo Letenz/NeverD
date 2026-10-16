@@ -70,6 +70,13 @@ inline constexpr llvm::StringLiteral RegistrationScopeRetentionAttachment(
     "neverd.windows.registration.scope-retention");
 inline constexpr llvm::StringLiteral
     RegistrationJumpAttachment("neverd.windows.registration.jump");
+inline constexpr llvm::StringLiteral
+    RegistrationParentExitAttachment("neverd.windows.registration.parent-exit");
+/// Private data-register exchange: owner VA, role, callback VA, source site,
+/// register offset. Roles 0/1/2/3 are call input/callback input/callback
+/// output/ call output; role 4 identifies the unique parent-owned i32 slot.
+inline constexpr llvm::StringLiteral
+    RegistrationRegisterAttachment("neverd.windows.registration.register");
 
 enum ProvenanceOperand : unsigned {
   ProvenanceVersion = 0,

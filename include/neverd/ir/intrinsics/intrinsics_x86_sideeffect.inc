@@ -179,6 +179,8 @@ SIDEEFFECT(Intrinsic::Enqcmd);
 SIDEEFFECT(Intrinsic::Enqcmds);
 SIDEEFFECT(Intrinsic::X86Invalidate);
 SIDEEFFECT(Intrinsic::X86RequireDivPrecondition);
+SIDEEFFECT(Intrinsic::X86SEHRegisterRead);
+SIDEEFFECT(Intrinsic::X86SEHRegisterWrite);
 SIDEEFFECT(Intrinsic::X86MsrAccess);
 SIDEEFFECT(Intrinsic::X86FPArith);
 SIDEEFFECT(Intrinsic::X86FPFmaState);

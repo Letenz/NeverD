@@ -10,6 +10,7 @@
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/X86RegistrationSEHCall.h"
 #include "neverd/ir/med/X86RegistrationSEHJump.h"
+#include "neverd/ir/med/X86RegistrationSEHParentExit.h"
 
 #include <set>
 
@@ -21,10 +22,11 @@ getRegistrationSEHNonlocalCalls(const MedFunc &Function) {
       !Function.RegistrationStates->SEHInvocationExitsComplete)
     return std::nullopt;
   const auto Jumps = getX86RegistrationSEHJumpCalls(Function);
-  if (!Jumps)
+  const auto ParentExits = getRegistrationSEHParentExits(Function);
+  if (!Jumps || !ParentExits)
     return std::nullopt;
   std::map<std::tuple<int, va_t, int>, va_t> Result;
-  if (Jumps->empty())
+  if (Jumps->empty() && ParentExits->empty())
     return Result;
   std::set<va_t> FinallyEntries;
   for (const auto &Scope : Function.ExceptionMetadata->Registration->Scopes)
@@ -32,6 +34,17 @@ getRegistrationSEHNonlocalCalls(const MedFunc &Function) {
       FinallyEntries.insert(Scope.HandlerVA);
   std::map<va_t, va_t> Invocations;
   size_t Work = 0;
+  for (const auto &[Id, Exit] : *ParentExits)
+    for (const auto *Invocation : Exit.Invocations) {
+      if (++Work > limits::kMaxRegistrationEHStateWork)
+        return std::nullopt;
+      if (!Invocation->CallVA)
+        continue;
+      const auto [It, New] =
+          Invocations.emplace(Invocation->CallVA, Exit.EntryVA);
+      if (!New && It->second != Exit.EntryVA)
+        return std::nullopt;
+    }
   for (const auto &Resume : Function.RegistrationStates->SEHJumpResumptions) {
     if (++Work > limits::kMaxRegistrationEHStateWork)
       return std::nullopt;

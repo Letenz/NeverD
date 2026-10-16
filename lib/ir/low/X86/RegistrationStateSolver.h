@@ -85,6 +85,9 @@ struct Domain {
   std::set<CatchStack> CxxCatchStacks;
   bool Uninstalled = false;
   bool Installed = false;
+  /// A runtime finally left its CRT guard without returning through the CRT.
+  /// The parent must reconnect its own node or remove the chain before calls.
+  bool AbandonedSEHGuard = false;
   bool CanDispatch = false;
   std::optional<int32_t> OrdinaryCallStack;
   struct ParentStackRestore {
@@ -220,6 +223,9 @@ private:
   bool realignedMemoryIsDisjoint(const FrameValue &Address,
                                  uint16_t Width) const;
   bool registrationInstallationReady(const FrameState &Frame) const;
+  bool validateSEHParentChainUse(const Domain &State, const LowOp &Op,
+                                 const FrameTransfer &Transfer) const;
+  bool canReconnectSEHParentChain(const Domain &State) const;
   bool callbackCanReturn(const Domain &State) const;
   bool callbackReturnInstruction(size_t I, const LowOp &Op) const;
   std::optional<int32_t> parentStackOffset(const Domain &State) const;

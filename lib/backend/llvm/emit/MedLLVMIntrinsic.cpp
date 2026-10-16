@@ -25,6 +25,7 @@
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedRawEnvironment.h"
 #include "neverd/ir/med/MedSyscallConvention.h"
+#include "neverd/ir/med/X86RegistrationSEHRegisters.h"
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -103,6 +104,9 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
 
   using I = Intrinsic;
   auto IC = static_cast<I>(IntrCode);
+
+  if (x86_registration::isSEHRegisterIntrinsic(Op))
+    return emitSEHRegisterIntrinsic(Op, Builder);
 
   if (isX87ContextIntrinsic(IC)) {
     if (TargetArch != Arch::X64)

@@ -12,6 +12,7 @@
 #include "COFFRegistrationSEHDynamicScope.h"
 #include "COFFRegistrationSEHException.h"
 #include "COFFRegistrationSEHJump.h"
+#include "COFFRegistrationSEHParentExit.h"
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
@@ -55,7 +56,8 @@ llvm::Error validateFramePrivacy(
     const RegistrationCxxFrameContract *Cxx,
     const RegistrationSEHExceptionContract *SEH,
     const RegistrationSEHJumpContract *Jumps,
-    const RegistrationSEHScopeState *Scopes) {
+    const RegistrationSEHScopeState *Scopes,
+    const RegistrationSEHParentExitContract *ParentExits) {
   const llvm::Instruction *CurrentInstruction = nullptr;
   auto Reject = [&](llvm::StringRef Detail = {}) {
     std::string Message = "coff registration patch: synthetic frame has an "
@@ -350,8 +352,21 @@ llvm::Error validateFramePrivacy(
           continue;
         if (llvm::pred_empty(Block))
           return std::nullopt;
-        for (const auto *Pred : llvm::predecessors(Block))
-          Pending.emplace_back(Pred, Pred->getTerminator());
+        for (const auto *Pred : llvm::predecessors(Block)) {
+          // A SjLj resume preserves the logical values last written by the
+          // exiting callback. Its apparent LLVM predecessor is the capture
+          // at machine entry; replay the authenticated transfer edge instead.
+          if (ParentExits && ParentExits->Dispatch &&
+              Pred == ParentExits->Dispatch->getParent()) {
+            const auto Resumes =
+                ParentExits->ResumptionPredecessors.find(Block);
+            if (Resumes == ParentExits->ResumptionPredecessors.end())
+              return std::nullopt;
+            for (const auto *Transfer : Resumes->second)
+              Pending.emplace_back(Transfer, Transfer->getTerminator());
+          } else
+            Pending.emplace_back(Pred, Pred->getTerminator());
+        }
       }
       return Common;
     }
@@ -547,6 +562,8 @@ llvm::Error validateFramePrivacy(
             continue;
           }
           if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I)) {
+            if (ParentExits && ParentExits->ChainWrites.count(Store))
+              continue;
             auto Where = Locate(Store->getPointerOperand(), 0);
             const uint64_t Bytes = Size(Store->getValueOperand()->getType());
             if (Scopes && Scopes->CallbackWrites.count(Store) &&
@@ -678,6 +695,8 @@ llvm::Error validateFramePrivacy(
           }
           if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I)) {
             if (Jumps && Jumps->Calls.count(Call))
+              continue;
+            if (ParentExits && ParentExits->Calls.count(Call))
               continue;
             if (Call->isInlineAsm() || llvm::isa<llvm::CallBrInst>(Call) ||
                 Call->isMustTailCall() ||

@@ -664,6 +664,35 @@ checked near returns and continuations. Call-ABI recovery and LLVM callback
 lowering consume this one binding, so callback-private pushes cannot become
 cdecl arguments. Outlining exposes exact instruction clone identities for
 removing preflighted unused return transports without reopening the proof.
+`RegistrationStateSEHParentExit` owns the lifetime of an abandoned CRT unwind
+guard. Reconnecting the same live registration preserves its current try level
+and jump-buffer bindings. `SEHParentChainComplete` separately gates native parent
+resumption without invalidating otherwise complete logical source-state analysis.
+LLVM preparation and the independent COFF source check enforce that native gate;
+shared MedIR bindings retain the source exits for ABI recovery and decompilation.
+Once the native guard proof fails, guard-only lattice changes no longer reschedule
+logical state propagation; the native failure remains permanent. Native return
+projection still binds both near returns and parent branches independently.
+MedIR's `RegistrationSEHParentExit` binds the exact
+SavedESP restore and parent branch; callback ownership stops at this boundary.
+`MedLLVMRegistrationSEHParentExit` projects a private SjLj context transactionally,
+after checked PHI copies. `COFFRegistrationSEHParentExit` independently checks
+every context alias, capture and transfer; its source companion binds the
+resumption switch to exact source scope entries. Frame reaching-definition
+replay follows the authenticated callback transfers across this resumption,
+preserving current logical state instead of treating entry capture as a reset.
+`RegistrationSEHRegisters` inserts explicit data-register exchanges before SSA
+for checked ordinary finally calls. These intrinsics keep inputs and outputs in
+the ordinary def-use and partial-register passes. `MedLLVMRegistrationSEHRegisters`
+owns their private parent-frame slots and the separate runtime entry values;
+`COFFRegistrationSEHRegisters` authenticates storage and source execution order.
+These invocation slots are separate from the logical register snapshots of
+source setjmp calls and must not be restored by source longjmp resumptions.
+The shared scope-retention owner also includes rows used solely by authenticated
+ordinary calls, without making their source try levels active.
+`abi/MedABIPassI386.cpp` binds an authenticated EH4 cookie check to its current
+ECX value. Finally register exchanges and inferred callee signatures cannot add
+EDX, floating-point or stack arguments to that checked protocol.
 `X86/RegistrationSEHStateStore.cpp` binds complete source receipts to exact
 MedIR callback stores. Native writes require a checked byte, word or full-word
 constant store with a proved finite set of complete resulting states. Narrow
