@@ -1968,4 +1968,62 @@ ParseResult parseCTypes(llvm::StringRef Source, TypeLibrary &Library,
   return Result;
 }
 
+FunctionDeclaration parseFunctionDeclaration(llvm::StringRef Source,
+                                             const TypeLibrary &Library,
+                                             const ParseOptions &Options) {
+  FunctionDeclaration Declared;
+  ParseResult Result;
+  // A prototype is typed without its semicolon as often as with it.
+  std::string Text = Source.rtrim().str();
+  if (!llvm::StringRef(Text).ends_with(";") &&
+      !llvm::StringRef(Text).ends_with("}"))
+    Text += ";";
+  std::vector<Token> Tokens = Lexer(Text, Result.Problems).run();
+  if (Result.Problems.empty()) {
+    TypeLibrary Scratch(Library);
+    ParseOptions One = Options;
+    One.KeepGoing = false;
+    Parser(std::move(Tokens), Scratch, One, Result).run();
+    if (Result.Problems.empty()) {
+      if (Result.Prototypes.size() != 1)
+        Result.Problems.push_back(
+            {1, 1,
+             Result.Prototypes.empty()
+                 ? "this declares no function"
+                 : "this declares " + std::to_string(Result.Prototypes.size()) +
+                       " functions; declare one"});
+      else if (!Result.Types.empty())
+        Result.Problems.push_back(
+            {1, 1,
+             Library.find(Result.Types.front())
+                 ? "the declaration defines " + Result.Types.front() +
+                       " again; a function's declaration only uses types"
+                 : Result.Types.front() +
+                       " is not a local type; declare it among the local "
+                       "types first"});
+      else {
+        Declared.Name = Result.Prototypes.front();
+        Declared.Function = Scratch.prototypes().lookup(Declared.Name);
+        // A name C lets a declaration use before it is defined, such as
+        // `struct S *`, must still be one of the library's.
+        LocalType Signature;
+        Signature.Kind = TypeKind::Function;
+        Signature.Function = Declared.Function;
+        for (const std::string &Name : mentionedTypeNames(Signature))
+          if (!Library.find(Name)) {
+            Result.Problems.push_back(
+                {1, 1,
+                 Name + " is not a local type; declare it among the local "
+                        "types first"});
+            break;
+          }
+      }
+    }
+  }
+  Declared.Problems = std::move(Result.Problems);
+  if (!Declared.Problems.empty())
+    Declared.Function.reset();
+  return Declared;
+}
+
 } // namespace neverd::types

@@ -233,6 +233,122 @@ protected:
   }
 };
 
+TEST_F(KernelMDLUserMapping,
+       LegacyMappingsShareOwnedBytesAndModeSpecificPermissions) {
+  begin();
+  const auto Pool = pool();
+  const auto MDL = descriptor(Pool + 17, 31);
+  call("MmProbeAndLockPages", {MDL, KernelMode, IoWriteAccess});
+  const auto System = call("MmMapLockedPages", {MDL, 0x100});
+  ASSERT_NE(System, 0u);
+  EXPECT_NE(System, Pool + 17);
+  EXPECT_TRUE(allowed(System, Read | Write | Execute));
+  EXPECT_EQ(get(MDL + MDLMappedSystemVAOffset), System);
+  rejected(Model->call("MmMapLockedPages", {MDL, KernelMode}));
+  const auto User = call("MmMapLockedPages", {MDL, 0x101});
+  ASSERT_NE(User, 0u);
+  EXPECT_TRUE(allowed(User, Read | Write));
+  EXPECT_FALSE(allowed(User, Execute));
+  put(User, 0x71, 1);
+  EXPECT_EQ(get(System, 1), 0x71u);
+  EXPECT_EQ(get(Pool + 17, 1), 0x71u);
+  process(ProcessB);
+  EXPECT_FALSE(allowed(User, Read));
+  EXPECT_EQ(get(System, 1), 0x71u);
+  rejected(Model->call("MmUnmapLockedPages", {User, MDL}));
+  process(ProcessA);
+  call("MmUnmapLockedPages", {User, MDL});
+  EXPECT_TRUE(allowed(System, Read | Write));
+  call("MmUnmapLockedPages", {System, MDL});
+  call("MmUnlockPages", {MDL});
+  call("IoFreeMdl", {MDL});
+  call("ExFreePoolWithTag", {Pool, PoolTag});
+}
+
+TEST_F(KernelMDLUserMapping,
+       LegacyMappingAdmissionPreservesModesIrqlAndLifetimes) {
+  begin();
+  const auto Pool = pool();
+  const auto MDL = descriptor(Pool, profile::PageSize);
+  rejected(Model->call("MmMapLockedPages", {MDL}));
+  rejected(Model->call("MmMapLockedPages", {MDL, KernelMode, 0}));
+  rejected(Model->call("MmMapLockedPages", {MDL, KernelMode}));
+  call("MmProbeAndLockPages", {MDL, KernelMode, IoReadAccess});
+  rejected(Model->call("MmMapLockedPages", {MDL, 2}));
+  call("KfRaiseIrql", {2});
+  rejected(Model->call("MmMapLockedPages", {MDL, UserMode}));
+  const auto Alias = call("MmMapLockedPages", {MDL, KernelMode});
+  ASSERT_NE(Alias, 0u);
+  EXPECT_FALSE(allowed(Alias, Write));
+  call("MmUnmapLockedPages", {Alias, MDL});
+  call("KfRaiseIrql", {3});
+  rejected(Model->call("MmMapLockedPages", {MDL, KernelMode}));
+  call("KeLowerIrql", {2});
+  call("KeLowerIrql", {0});
+  call("MmUnlockPages", {MDL});
+  call("IoFreeMdl", {MDL});
+  rejected(Model->call("MmMapLockedPages", {MDL, KernelMode}));
+  call("ExFreePoolWithTag", {Pool, PoolTag});
+}
+
+TEST_F(KernelMDLUserMapping,
+       KernelMappingShortageHonorsBugcheckWithoutPublishingAlias) {
+  begin();
+  const auto Pool = pool();
+  const auto MDL = descriptor(Pool, profile::PageSize);
+  call("MmProbeAndLockPages", {MDL, KernelMode, IoWriteAccess});
+  const auto Flags = get(MDL + MDLFlagsOffset, 2);
+  const auto Previous = get(MDL + MDLMappedSystemVAOffset);
+  Budget->Exhausted = true;
+  for (uint64_t Flag : {uint64_t(0), uint64_t(0x100)})
+    EXPECT_EQ(call("MmMapLockedPagesSpecifyCache",
+                   {MDL, KernelMode, MmCached, 0, Flag, HighPagePriority}),
+              0u);
+  for (uint64_t Flag : {uint64_t(1), uint64_t(2), uint64_t(0x101)}) {
+    auto Value =
+        Model->call("MmMapLockedPagesSpecifyCache",
+                    {MDL, KernelMode, MmCached, 0, Flag, HighPagePriority});
+    ASSERT_FALSE(bool(Value));
+    EXPECT_NE(llvm::toString(Value.takeError()).find("unmodeled bugcheck"),
+              std::string::npos);
+  }
+  auto Legacy = Model->call("MmMapLockedPages", {MDL, KernelMode});
+  ASSERT_FALSE(bool(Legacy));
+  EXPECT_NE(llvm::toString(Legacy.takeError()).find("unmodeled bugcheck"),
+            std::string::npos);
+  EXPECT_EQ(get(MDL + MDLFlagsOffset, 2), Flags);
+  EXPECT_EQ(get(MDL + MDLMappedSystemVAOffset), Previous);
+  EXPECT_FALSE(Memory->fault());
+  Budget->Exhausted = false;
+  const auto Alias = call("MmMapLockedPages", {MDL, KernelMode});
+  ASSERT_NE(Alias, 0u);
+  call("MmUnmapLockedPages", {Alias, MDL});
+  const auto Again = call("MmMapLockedPagesSpecifyCache",
+                          {MDL, KernelMode, MmCached, 0, 1, HighPagePriority});
+  EXPECT_EQ(Again, Alias);
+  call("MmUnlockPages", {MDL});
+  call("IoFreeMdl", {MDL});
+  call("ExFreePoolWithTag", {Pool, PoolTag});
+}
+
+TEST_F(KernelMDLUserMapping, LegacyUserMappingShortageRaisesAndAllowsRecovery) {
+  begin();
+  const auto Pool = pool();
+  const auto MDL = poolMDL(Pool);
+  const auto Flags = get(MDL + MDLFlagsOffset, 2);
+  Budget->Exhausted = true;
+  EXPECT_EQ(raised(Model->call("MmMapLockedPages", {MDL, UserMode})),
+            StatusInsufficientResources);
+  EXPECT_EQ(get(MDL + MDLFlagsOffset, 2), Flags);
+  EXPECT_EQ(get(MDL + MDLMappedSystemVAOffset), Pool);
+  Budget->Exhausted = false;
+  const auto User = call("MmMapLockedPages", {MDL, UserMode});
+  ASSERT_NE(User, 0u);
+  call("MmUnmapLockedPages", {User, MDL});
+  call("IoFreeMdl", {MDL});
+  call("ExFreePoolWithTag", {Pool, PoolTag});
+}
+
 TEST_F(KernelMDLUserMapping, PoolViewsShareBytesAndPreserveSystemMapping) {
   begin();
   const auto Pool = pool();
@@ -890,6 +1006,9 @@ TEST_F(KernelMDLUserMapping,
   ASSERT_TRUE(Scheduled);
   Model->enterExecution(profile::CallbackStackBase);
   const auto SystemProcess = call("IoGetCurrentProcess", {});
+  const auto WorkerThread = call("PsGetCurrentThread", {});
+  EXPECT_EQ(call("IoThreadToProcess", {WorkerThread}), SystemProcess);
+  EXPECT_EQ(call("PsGetCurrentThreadPreviousMode", {}), 0u);
   Budget->Exhausted = true;
   auto Attached = Model->call("KeStackAttachProcess", {Process, ApcState});
   ASSERT_FALSE(bool(Attached));
@@ -906,10 +1025,15 @@ TEST_F(KernelMDLUserMapping,
   Budget->Exhausted = false;
   call("KeStackAttachProcess", {Process, ApcState});
   EXPECT_EQ(call("IoGetCurrentProcess", {}), Process);
+  EXPECT_EQ(call("IoThreadToProcess", {WorkerThread}), SystemProcess);
+  EXPECT_EQ(call("PsGetCurrentThreadPreviousMode", {}), 0u);
+  EXPECT_EQ(call("ExGetPreviousMode", {}), 0u);
   EXPECT_TRUE(allowed(Address, Read | Write));
   call("MmUnmapLockedPages", {Address, MDL});
   call("KeUnstackDetachProcess", {ApcState});
   EXPECT_EQ(call("IoGetCurrentProcess", {}), SystemProcess);
+  EXPECT_EQ(call("IoThreadToProcess", {WorkerThread}), SystemProcess);
+  EXPECT_EQ(call("PsGetCurrentThreadPreviousMode", {}), 0u);
   success(Model->finishScheduled(Scheduled->ID));
   call("IoFreeWorkItem", {Work});
   call("IoFreeMdl", {MDL});

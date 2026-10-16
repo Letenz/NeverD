@@ -40,8 +40,18 @@ struct LoadOptions {
   /// {"mode":"none"} for a PE the user opened without the PDB it names.
   QJsonObject pdb;
   /// {"mode":"none"} when the user declined the DWARF of an ELF or Mach-O
-  /// image; empty reads it.
+  /// image, or a DWARF file chosen for it with its file stamp; empty reads
+  /// the one the image has.
   QJsonObject dwarf;
+  /// {"mode":"none"} when the user declined the linker MAP beside the input,
+  /// or a MAP file chosen for it with its mode ("checked", or "unchecked"
+  /// for one of another build) and file stamp; empty reads the one beside
+  /// it when no PDB or DWARF describes the image.
+  QJsonObject map;
+  /// The MAP beside the input the user agreed to load, which the open reads
+  /// only when it holds against the image as loaded; empty otherwise.  The
+  /// project does not keep it.
+  QString acceptedMap;
   /// {"mode":"none"} when the user declined the image's static symbol table,
   /// which loads it as if stripped; empty reads it.
   QJsonObject symbols;
@@ -145,7 +155,26 @@ public:
   bool findsSymbolTables() const {
     return capabilities_.contains(QStringLiteral("symbol_table_reference"));
   }
+  /// Whether the worker finds the linker MAP beside an input before opening
+  /// it (map_reference), and opens the image without it.
+  bool findsMapFiles() const {
+    return capabilities_.contains(QStringLiteral("map_reference"));
+  }
+  /// Whether the worker loads a MAP file into the open image (map_inspect,
+  /// map_load).
+  bool loadsMapFiles() const {
+    return capabilities_.contains(QStringLiteral("map_load"));
+  }
+  /// Whether the worker loads a DWARF file into the open image (dwarf_load).
+  bool loadsDwarfFiles() const {
+    return capabilities_.contains(QStringLiteral("dwarf_load"));
+  }
   void loadPdb(const QJsonObject &selection);
+  /// Load the MAP file \p selection names ({path,mode,stamp}) into the open
+  /// image, after its PDB or DWARF, whose names outrank the MAP's.
+  void loadMap(const QJsonObject &selection);
+  /// Load the DWARF file \p selection names ({path}) into the open image.
+  void loadDwarf(const QJsonObject &selection);
   void closeFile();
   /// Read the input file again through a fresh worker, as IDA's "Reload the
   /// input file": its bytes as they are now, with the saved names, comments
@@ -187,6 +216,30 @@ public:
   /// else the instruction's last number.  Commits at once, like a rename.
   void formatOperand(Address address, std::optional<int> operand,
                      const QString &action, std::optional<quint64> epoch = {});
+  /// Whether the worker's engine shows structure offsets of local types
+  /// and ranks the types by the code's accesses (local_types_fit).
+  bool showsStructOffsets() const {
+    return capabilities_.contains(QStringLiteral("operand_struct"));
+  }
+  /// Whether the worker's engine gives a function the user's C
+  /// declaration, as IDA's Y does (function_type, function_edit's "type").
+  bool typesFunctions() const {
+    return capabilities_.contains(QStringLiteral("function_type"));
+  }
+  /// Whether it also ranks the local types a parameter points at by the
+  /// code's accesses, as Convert to struct * offers them.
+  bool convertsParameters() const {
+    return typesFunctions() &&
+           capabilities_.contains(QStringLiteral("local_types_fit"));
+  }
+  /// Show the operand of the instruction at \p address as a member of the
+  /// local type \p type, the register \p delta bytes into it, and the
+  /// same in each instruction of \p others: one step of the history for up
+  /// to 64 instructions.  Commits at once, like a rename.
+  void formatOperandStruct(Address address, std::optional<int> operand,
+                           const QString &type, qint64 delta,
+                           const QStringList &others,
+                           std::optional<quint64> epoch = {});
   /// Whether the worker's engine keeps the user's data items.
   bool keepsDataItems() const {
     return capabilities_.contains(QStringLiteral("item_define"));
@@ -316,6 +369,8 @@ private:
   void resetState();
   void setError(const QString &text);
   void reportPdb(const QJsonObject &result);
+  /// Say which MAP files \p debug, an open's or load's debug_info, read.
+  void reportMaps(const QJsonObject &debug);
   /// Whether an edit aimed at \p epoch may be applied now.
   bool acceptsEdit(std::optional<quint64> epoch);
 

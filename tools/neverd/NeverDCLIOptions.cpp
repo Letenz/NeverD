@@ -385,6 +385,23 @@ cl::opt<bool> NoDwarf(
     cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
     cl::sub(HuntCmd));
 
+cl::opt<bool> NoPdb(
+    "no-pdb",
+    cl::desc("Read a PE without the PDB it names, as declining it in the "
+             "workbench does: no copy is searched for or downloaded.  A --pdb "
+             "file still loads, and other debug information is still read"),
+    cl::sub(LiftCmd), cl::sub(DecompileCmd), cl::sub(PatchCmd),
+    cl::sub(InfoCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
+    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
+    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
+
 cl::opt<bool> NoSymtab(
     "no-symtab",
     cl::desc("Read the image without its static symbol table, as if it had "
@@ -607,7 +624,62 @@ cl::opt<bool> DownloadSymbols(
 cl::opt<std::string> MapFile(
     "map",
     cl::desc("Load symbols from this linker .map (MSVC, lld, GNU ld, or "
-             "ld64) instead of searching beside the binary"),
+             "ld64) instead of the one beside the binary.  A PDB or DWARF "
+             "outranks its names, which fill only what they leave unnamed, "
+             "unless --no-pdb or --no-dwarf declines it; a MAP of another "
+             "build is refused"),
+    cl::init(""), cl::value_desc("file"), cl::sub(LiftCmd),
+    cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
+    cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
+    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
+    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
+
+cl::opt<bool> MapUnchecked(
+    "map-unchecked",
+    cl::desc("Load the --map file even when what it records contradicts the "
+             "image: another build stamp, a section placed elsewhere, or "
+             "functions outside the image's code"),
+    cl::sub(LiftCmd), cl::sub(DecompileCmd), cl::sub(PatchCmd),
+    cl::sub(InfoCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
+    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
+    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
+
+cl::opt<bool> NoMap(
+    "no-map",
+    cl::desc("Read the image without the linker MAP beside it, as declining "
+             "it in the workbench does.  A --map file still loads"),
+    cl::sub(LiftCmd), cl::sub(DecompileCmd), cl::sub(PatchCmd),
+    cl::sub(InfoCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
+    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
+    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
+
+cl::opt<std::string> DwarfFile(
+    "dwarf",
+    cl::desc("Read the DWARF of an ELF or Mach-O image from this file instead "
+             "of finding it: a split .debug file, an unstripped copy of the "
+             "image, or a .dSYM bundle.  Its machine and any build ID or UUID "
+             "must be the image's"),
     cl::init(""), cl::value_desc("file"), cl::sub(LiftCmd),
     cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
     cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
@@ -940,7 +1012,7 @@ cl::opt<std::string> TypesSpelling(
     cl::desc("Spell builtins as portable, exact widths (uint32_t, u32, "
              "uint32, ctypes.c_uint32, number), every language's default; as "
              "windows (ULONG; in Rust, Go, Python, JavaScript and Lua aliases "
-             "of exact widths, as wdk-sys declares them); or in C and C++ as "
+             "of exact widths, as wdk-sys declares them), or in C and C++ as "
              "keywords (unsigned long)"),
     cl::init(""), cl::value_desc("style"), cl::sub(TypesCmd));
 cl::opt<bool> TypesAsserts(
@@ -962,6 +1034,50 @@ cl::list<std::string> TypesDeclare(
 cl::opt<bool> TypesNoOffsets("no-offsets",
                              cl::desc("Leave out the offset comments"),
                              cl::sub(TypesCmd));
+cl::opt<bool> TypesFit(
+    "fit",
+    cl::desc("Rank the structures and unions a pointer may point at by how "
+             "the accesses through it land on their members: those the "
+             "instruction --at makes through its pointer in --func, or "
+             "--func makes through its parameter --param, and each --access"),
+    cl::sub(TypesCmd));
+cl::opt<std::string>
+    TypesFunc("func",
+              cl::desc("With --fit --at or --param, the function the "
+                       "instruction is in or the parameter is of: its name or "
+                       "entry address (hex)"),
+              cl::init(""), cl::value_desc("function"), cl::sub(TypesCmd));
+cl::opt<int> TypesParam(
+    "param",
+    cl::desc("With --fit, the parameter of --func, from 0 as its declaration "
+             "lists it, whose accesses the types are ranked by"),
+    cl::init(-1), cl::value_desc("index"), cl::sub(TypesCmd));
+cl::opt<std::string>
+    TypesAt("at",
+            cl::desc("With --fit, the instruction (hex) whose memory "
+                     "operand's pointer the accesses go through"),
+            cl::init(""), cl::value_desc("address"), cl::sub(TypesCmd));
+cl::list<std::string> TypesAccess(
+    "access",
+    cl::desc("With --fit, an access through the pointer: offset:size or "
+             "offset:size:read|write|address (size 0), numbers in hex with "
+             "0x or decimal; repeat for more"),
+    cl::value_desc("access"), cl::sub(TypesCmd));
+cl::opt<std::string> TypesMatch(
+    "match",
+    cl::desc("With --fit, keep the types whose name, or a typedef's, "
+             "matches this as an editor's quick open matches; Type.member "
+             "and .member match member paths too"),
+    cl::init(""), cl::value_desc("text"), cl::sub(TypesCmd));
+cl::opt<unsigned> TypesLimit("limit",
+                             cl::desc("With --fit, show at most this many "
+                                      "types (default 10)"),
+                             cl::init(10), cl::sub(TypesCmd));
+cl::opt<std::string> TypesMember(
+    "member",
+    cl::desc("With one --type, where an access of offset[:size] bytes lands "
+             "among its members, as a structure offset names it"),
+    cl::init(""), cl::value_desc("offset[:size]"), cl::sub(TypesCmd));
 
 //===----------------------------------------------------------------------===//
 // Xrefs-specific options
@@ -1312,8 +1428,35 @@ cl::opt<std::string>
 cl::list<std::string> FunctionSet(
     "set",
     cl::desc("An attribute --edit states: noreturn, library or static "
-             "=true|false, color=#RRGGBB; =default hands it back to analysis"),
+             "=true|false, color=#RRGGBB, type=<C declaration> as IDA's Y "
+             "sets it; =default hands it back to analysis"),
     cl::value_desc("key=value"), cl::sub(FunctionEditsCmd));
+
+cl::opt<std::string> FunctionDeclaration(
+    "declaration",
+    cl::desc("Show the C declaration of the function at this address (hex) "
+             "as IDA's Y edits it, the user's or the one the decompiler "
+             "prints, and where each parameter arrives"),
+    cl::init(""), cl::value_desc("address"), cl::sub(FunctionEditsCmd));
+
+cl::opt<std::string> FunctionCheck(
+    "check",
+    cl::desc("With --declaration, read this declaration instead, as the "
+             "function's type would read, changing nothing"),
+    cl::init(""), cl::value_desc("declaration"), cl::sub(FunctionEditsCmd));
+
+cl::opt<std::string> FunctionRetype(
+    "retype",
+    cl::desc("With --declaration, the declaration with one parameter's type "
+             "changed, as Convert to struct * makes it: index=type, the type "
+             "naming the parameter too if it likes (0='struct _KAPC *Apc')"),
+    cl::init(""), cl::value_desc("index=type"), cl::sub(FunctionEditsCmd));
+
+cl::opt<bool> FunctionApply(
+    "apply",
+    cl::desc("With --declaration and --check or --retype, state the "
+             "declaration as the function's type"),
+    cl::sub(FunctionEditsCmd));
 
 cl::opt<std::string>
     FunctionShow("show",
@@ -1367,6 +1510,16 @@ cl::opt<bool> OperandInvert("invert", cl::desc("Invert the number's bits"),
                             cl::sub(OperandsCmd));
 cl::opt<bool> OperandClear("clear", cl::desc("Forget the operand's format"),
                            cl::sub(OperandsCmd));
+cl::opt<std::string> OperandStruct(
+    "struct",
+    cl::desc("Show the number as a structure offset into this local type, "
+             "the member it lands on (IDA's T)"),
+    cl::init(""), cl::value_desc("type"), cl::sub(OperandsCmd));
+cl::opt<long long> OperandDelta(
+    "delta",
+    cl::desc("With --struct, how many bytes into the type the register "
+             "points: the number lands that much further in"),
+    cl::init(0), cl::sub(OperandsCmd));
 cl::opt<std::string>
     ItemEncoding("encoding",
                  cl::desc("The encoding --string reads, as `neverd strings` "

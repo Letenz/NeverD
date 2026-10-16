@@ -855,6 +855,46 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>عرض أنواع البرنامج مع تخطيطها ومصدرها</translation>
     </message>
+    <message>
+        <source>D&amp;WARF file...</source>
+        <translation>ملف DWARF(&amp;W)...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>تحميل معلومات التصحيح من ملف DWARF منفصل أو من نسخة لم تُجرَّد من رموزها أو من ‎.dSYM</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>ملف MAP(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>تحميل الأسماء من ملف MAP الخاص بالرابط</translation>
+    </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>إزاحة البنية(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>عرض المعامل كعضو في نوع محلي، مع ترتيب الأنواع حسب مدى توافق وصول الشيفرة معها</translation>
+    </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>تحويل إلى struct *(&amp;V)...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>إعطاء الدالة الحالية، أو المعامل تحت المؤشر، نوعًا بلغة C يُتحقق منه أثناء الكتابة</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>جعل المعامل تحت المؤشر مؤشرًا إلى نوع محلي، مع ترتيب الأنواع حسب توافق الوصول عبره معها</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>تعيين النوع(&amp;Y)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2302,6 +2342,50 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Local Types</source>
         <translation>الأنواع المحلية</translation>
     </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>تعذر تحويل المعامل: %1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>ضع المؤشر داخل دالة لتعيين نوعها</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>ضع المؤشر على معامل للدالة لتحويله</translation>
+    </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>تعذّر تحديد ما إذا كان لـ %1 ملف MAP: %2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>تحميل ملف DWARF</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>تحميل ملف MAP</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>ملفات MAP (*.map);;جميع الملفات (*)</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>تحميل ملف MAP من بناء آخر</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+هل تريد تحميل أسمائه رغم ذلك؟ الأسماء الموضوعة عند عناوين خاطئة تضلل التحليل.</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>ملفات DWARF (*.debug *.dSYM);;جميع الملفات (*)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2618,6 +2702,33 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>DWARF loaded: %1</source>
         <translation>تم تحميل DWARF: %1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>تم الفتح دون ملف MAP المجاور لملف الإدخال، كما اخترت</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>تم تحميل MAP دون تحقق: %1 (عدد الأسماء المضافة: %2، من بناء آخر)</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>تم تحميل MAP: %1 (عدد الأسماء المضافة: %2)</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>لم يُحمَّل MAP: لا يطابق %1 الصورة كما حُمِّلت</translation>
+    </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>عُرض %n معامل كأعضاء في %1</numerusform>
+            <numerusform>عُرض معامل واحد (%n) كعضو في %1</numerusform>
+            <numerusform>عُرض معاملان (%n) كعضوين في %1</numerusform>
+            <numerusform>عُرضت %n معاملات كأعضاء في %1</numerusform>
+            <numerusform>عُرض %n معاملًا كأعضاء في %1</numerusform>
+            <numerusform>عُرض %n معامل كأعضاء في %1</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -3860,6 +3971,337 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>السطر %1، العمود %2: %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>ملف MAP من ‎%1، عدد الأسماء: %2. ختم البناء فيه يطابق ملف الإدخال.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>ملف MAP من ‎%1، عدد الأسماء: %2. أقسامه في المواضع نفسها التي في ملف الإدخال.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>ملف MAP من ‎%1، عدد الأسماء: %2. لا يسجّل شيئًا يمكن مطابقته مع ملف الإدخال.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>ملف MAP من ‎%1، عدد الأسماء: %2. يسجّل ختم البناء ‎%3، لكن ختم ملف الإدخال ‎%4: إنه ينتمي إلى بناء آخر.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>ملف MAP من ‎%1، عدد الأسماء: %2. يضع ‎%3 عند ‎%4 (عدد البايتات: ‎%5)، لكن ملف الإدخال يضعه عند ‎%6 (عدد البايتات: ‎%7): إنه ينتمي إلى بناء آخر.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>ملف MAP من ‎%1، عدد الأسماء: %2. عدد دواله الواقعة خارج شيفرة ملف الإدخال: ‎%3 من ‎%4، إنه ينتمي إلى بناء آخر.</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>تم العثور على ملف MAP</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>هل تريد تحميل ملف MAP رغم ذلك؟</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>هل تريد تحميل ملف MAP؟</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>الإزاحات التي تقع تمامًا على أعضاء: %1 من %n</numerusform>
+            <numerusform>الإزاحات التي تقع تمامًا على أعضاء: %1 من %n</numerusform>
+            <numerusform>الإزاحات التي تقع تمامًا على أعضاء: %1 من %n</numerusform>
+            <numerusform>الإزاحات التي تقع تمامًا على أعضاء: %1 من %n</numerusform>
+            <numerusform>الإزاحات التي تقع تمامًا على أعضاء: %1 من %n</numerusform>
+            <numerusform>الإزاحات التي تقع تمامًا على أعضاء: %1 من %n</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>الأنواع: %1 من %n</numerusform>
+            <numerusform>الأنواع: %1 من %n</numerusform>
+            <numerusform>الأنواع: %1 من %n</numerusform>
+            <numerusform>الأنواع: %1 من %n</numerusform>
+            <numerusform>الأنواع: %1 من %n</numerusform>
+            <numerusform>الأنواع: %1 من %n</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n بايت</numerusform>
+            <numerusform>%n بايت</numerusform>
+            <numerusform>%n بايتان</numerusform>
+            <numerusform>%n بايتات</numerusform>
+            <numerusform>%n بايتًا</numerusform>
+            <numerusform>%n بايت</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>الأنواع: %n</numerusform>
+            <numerusform>الأنواع: %n</numerusform>
+            <numerusform>الأنواع: %n</numerusform>
+            <numerusform>الأنواع: %n</numerusform>
+            <numerusform>الأنواع: %n</numerusform>
+            <numerusform>الأنواع: %n</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>الوصول</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>اعرض أيضًا التعليمات الأخرى التي تمر عبر %1 كأعضاء (%n)</numerusform>
+            <numerusform>اعرض أيضًا التعليمات الأخرى التي تمر عبر %1 كأعضاء (%n)</numerusform>
+            <numerusform>اعرض أيضًا التعليمات الأخرى التي تمر عبر %1 كأعضاء (%n)</numerusform>
+            <numerusform>اعرض أيضًا التعليمات الأخرى التي تمر عبر %1 كأعضاء (%n)</numerusform>
+            <numerusform>اعرض أيضًا التعليمات الأخرى التي تمر عبر %1 كأعضاء (%n)</numerusform>
+            <numerusform>اعرض أيضًا التعليمات الأخرى التي تمر عبر %1 كأعضاء (%n)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>تطبيق</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>عند %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>البايتات</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>العضو</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>لا يحتوي أي عضو على هذا البايت</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>لا يوجد نوع مطابق.</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>الإزاحة</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>جارٍ قراءة ما تفعله الشيفرة عبر مؤشر المعامل…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>البحث عن الأنواع: اسم، أو typedef، أو Type.member، أو ‎.member</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>إزاحة البنية</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>الرقم %1 كإزاحة داخل بنية أو اتحاد.</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>يحتفظ المعامل برقمه.</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>لا يحتوي البرنامج على بنى أو اتحادات. صرّح عنها في الأنواع المحلية (Shift+F1‎).</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>يشير المسجل إلى %1 بايت داخل %2، عند %3: تقرأ عمليات الوصول التي تسبقه الأعضاءَ الأسبق في السجل، كما يتراجع عنه CONTAINING_RECORD.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>النوع</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>رُتبت الأنواع حسب كيفية وقوع وصول الدالة عبر %1 على أعضائها (%n).</numerusform>
+            <numerusform>رُتبت الأنواع حسب كيفية وقوع وصول الدالة عبر %1 على أعضائها (%n).</numerusform>
+            <numerusform>رُتبت الأنواع حسب كيفية وقوع وصول الدالة عبر %1 على أعضائها (%n).</numerusform>
+            <numerusform>رُتبت الأنواع حسب كيفية وقوع وصول الدالة عبر %1 على أعضائها (%n).</numerusform>
+            <numerusform>رُتبت الأنواع حسب كيفية وقوع وصول الدالة عبر %1 على أعضائها (%n).</numerusform>
+            <numerusform>رُتبت الأنواع حسب كيفية وقوع وصول الدالة عبر %1 على أعضائها (%n).</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>عنوان</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>ترويسة</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>خارج النوع</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>حشو</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>قراءة</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>المؤشر</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>المستخدم</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>كتابة</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>الاسم(&amp;N):</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>مؤشر إلى %1، سجل من %n بايت</numerusform>
+            <numerusform>مؤشر إلى %1، سجل من %n بايت</numerusform>
+            <numerusform>مؤشر إلى %1، سجل من %n بايت</numerusform>
+            <numerusform>مؤشر إلى %1، سجل من %n بايتات</numerusform>
+            <numerusform>مؤشر إلى %1، سجل من %n بايتًا</numerusform>
+            <numerusform>مؤشر إلى %1، سجل من %n بايت</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>تحويل إلى struct *</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>جارٍ قراءة ما تفعله الشيفرة عبر المعامل…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>اسم المعامل، الذي يحتفظ به التصريح</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>الأنواع مرتبة حسب وقوع %n وصول للدالة عبر %1، حيث يصل %2، على أعضائها.</numerusform>
+            <numerusform>الأنواع مرتبة حسب وقوع %n وصول للدالة عبر %1، حيث يصل %2، على أعضائها.</numerusform>
+            <numerusform>الأنواع مرتبة حسب وقوع %n وصول للدالة عبر %1، حيث يصل %2، على أعضائها.</numerusform>
+            <numerusform>الأنواع مرتبة حسب وقوع %n وصول للدالة عبر %1، حيث يصل %2، على أعضائها.</numerusform>
+            <numerusform>الأنواع مرتبة حسب وقوع %n وصول للدالة عبر %1، حيث يصل %2، على أعضائها.</numerusform>
+            <numerusform>الأنواع مرتبة حسب وقوع %n وصول للدالة عبر %1، حيث يصل %2، على أعضائها.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>السجل</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1، %n بايت</numerusform>
+            <numerusform>%1، %n بايت</numerusform>
+            <numerusform>%1، %n بايت</numerusform>
+            <numerusform>%1، %n بايتات</numerusform>
+            <numerusform>%1، %n بايتًا</numerusform>
+            <numerusform>%1، %n بايت</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1، المعامل %2 من %3، يصل في %4.</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1، المعامل %2 من %3.</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>تطبيق</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>يصل في</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>عند العمود %1: %2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>إعادة تصريح الدالة إلى معلومات التصحيح والتحليل</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>الاسم</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>جارٍ قراءة التصريح…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>يُقرأ: %n معامل</numerusform>
+            <numerusform>يُقرأ: %n معامل</numerusform>
+            <numerusform>يُقرأ: %n معامل</numerusform>
+            <numerusform>يُقرأ: %n معاملات</numerusform>
+            <numerusform>يُقرأ: %n معاملًا</numerusform>
+            <numerusform>يُقرأ: %n معامل</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>تعيين نوع %1</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>تصريح %1 كما يطبعه مفكك الترجمة، يُقرأ مقابل الأنواع المحلية أثناء الكتابة.</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>التصريح الذي أعطيته لـ %1، يُقرأ مقابل الأنواع المحلية أثناء الكتابة.</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>تصريح الدالة لا يُقرأ، لذا لا يمكن تعيين أنواع معاملاتها واحدًا تلو الآخر. عيّن نوع الدالة بدلًا من ذلك.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>النوع</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>استخدام نوع التحليل(&amp;A)</translation>
     </message>
 </context>
 </TS>

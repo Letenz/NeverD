@@ -359,7 +359,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `KeFlushIoBuffers` | 有效且已鎖定／非分頁的 MDL 與一致性快取；不釋放映射或 registers |
 | `IoConnectInterrupt`, `IoDisconnectInterrupt`, `IoConnectInterruptEx`, `IoDisconnectInterruptEx` | 精確配置的獨佔／共用 latched 或 level_sensitive 線路；PASSIVE_LEVEL 下傳統 ABI 與 Ex 1／2／4、嚴格連線世代及鎖所有權 |
 | `KeSynchronizeExecution`, `KeAcquireInterruptSpinLock`, `KeReleaseInterruptSpinLock` | 真正 BOOLEAN 同步回呼，在不低於配置 DIRQL 的同步 IRQL 下持有同一把不可遞迴鎖；恢復原始呼叫者 IRQL 與所有權 |
-| `MmMapLockedPagesSpecifyCache`、`MmGetSystemAddressForMdlSafe`、`MmUnmapLockedPages` | 使用者／系統對映繼承實體頁面快取屬性及各自權限；非分頁集區 MDL 透過安全輔助函式重用原系統對映 |
+| `MmMapLockedPages`、`MmMapLockedPagesSpecifyCache`、`MmGetSystemAddressForMdlSafe`、`MmUnmapLockedPages` | 使用者／系統對映繼承實體頁面快取屬性及各自權限；非分頁集區 MDL 透過安全輔助函式重用原系統對映 |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | 獨立或 IRP 關聯的非分頁集區／使用者描述元；可修改鏈指標，鎖頁與系統別名獨立；不支援配額 |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | 明確配置的工作階段登錄、每個控制代碼的權限與生命週期、查詢緩衝區大小及修改；不存取主機登錄 |
 | `ZwEnumerateValueKey` | 依建立順序列舉 Basic、Full、Partial 值資訊；取代保留索引，刪除壓縮索引，重建附加至尾端。需要 `KEY_QUERY_VALUE`，超出範圍傳回 `STATUS_NO_MORE_ENTRIES`。與值查詢共用序列化：x64 Full 資料按 8 位元組對齊，空資料位移為 `0xffffffff`，填補和不完整 UTF-16 單元維持原值 |
@@ -375,7 +375,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `PoCallDriver`, `PoStartNextPowerIrp` | 轉送同一受管理的電源 IRP；Vista+ start-next 驗證不增加序列化交握 |
 | `PoSetPowerState`, `PoRequestPowerIrp` | 獨立裝置通知狀態及明確 PDO FIFO 驅動的真正子要求；範圍見上 |
 | `IoCreateSymbolicLink`、`IoDeleteSymbolicLink` | 一個工作階段命名空間內的 ASCII `\DosDevices\Name` 或 `\??\Name`，目標為 `\Device\Name` |
-| `DbgPrint`、`DbgPrintEx` | 經檢查的 Win64 可變參數格式化，最多輸出 512 位元組；啟用所有偵錯器篩選器 |
+| `DbgPrint`、`DbgPrintEx`、`vDbgPrintExWithPrefix` | 經檢查的 Win64 可變參數格式化，最多輸出 511 位元組；啟用所有偵錯器篩選器 |
 | `IoGetCurrentIrpStackLocation` | 傳回目前建模 IRP 的堆疊位置；正常編譯的 WDM 巨集讀取相同客體欄位 |
 | `KeGetCurrentIrql` | 讀取目前 IRQL/CR8，包括明確升降級；派送與工作項目從 `PASSIVE_LEVEL` 開始，DPC 從 `DISPATCH_LEVEL` 開始 |
 | `KfRaiseIrql`, `KeLowerIrql` | 真正的 x64 WDK IRQL 升降匯入，包含內聯輔助函式；每個執行必須在返回前按 LIFO 順序恢復儲存值。IRQL <= APC_LEVEL 的合法等待保留升降配對，並按等待時的 IRQL 恢復；DISPATCH_LEVEL 持鎖不能暫停。CR8 反映每次變化；設定的 CPU0 事件搶占使用 `scheduling`；任意巢狀中斷仍不受支援。 |
@@ -397,7 +397,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `KeInitializeSemaphore`, `KeReleaseSemaphore`, `KeReadStateSemaphore` | 常駐的計數號誌，上限必須為正；每次成功等待消耗一個計數。釋放僅接受 Increment=0、Wait=FALSE；超過上限時擲出 `STATUS_SEMAPHORE_LIMIT_EXCEEDED`。 |
 | `KeInitializeMutex`, `KeReleaseMutex`, `KeReadStateMutex` | 常駐的 KMUTEX 依邏輯執行緒持有，支援跨巢狀回呼和 SEH 的遞迴取得；KeReleaseMutex 回傳先前的有號訊號狀態，要求持有者與相符的 DISPATCH_LEVEL 取得情境，且僅接受 Wait=FALSE。持有期間禁止最外層返回、重新初始化或釋放儲存。非持有者釋放會觸發 `STATUS_MUTANT_NOT_OWNED`。 |
 | `PsCreateSystemThread`, `PsTerminateSystemThread` | 系統行程執行緒在獨立客體堆疊上以 `PASSIVE_LEVEL` 執行。終止會使物件有信號且不返回；啟動常式一般返回會明確停止。支援 NULL 行程控制代碼、可選 `ClientId`、NULL 或僅含核心控制代碼旗標的物件屬性。尚不支援 APC 傳遞及在其他行程建立執行緒。 |
-| `PsLookupProcessByProcessId`, `PsLookupThreadByThreadId`, `PsGetThreadProcess`, `PsIsThreadTerminating` | 僅查找已知系統/要求者行程 ID 與已發放執行緒 ID；未知 ID 傳回 `STATUS_INVALID_CID`。保留的執行緒物件仍可查詢建立行程及終止狀態。行程身分由工作階段持有；查找不會還原已撤銷的使用者記憶體。 |
+| `PsLookupProcessByProcessId`, `PsLookupThreadByThreadId`, `PsGetThreadProcess`, `IoThreadToProcess`, `PsIsThreadTerminating` | 僅查找已知系統/要求者行程 ID 與已發放執行緒 ID；未知 ID 傳回 `STATUS_INVALID_CID`。保留的執行緒物件仍可查詢建立行程及終止狀態。行程身分由工作階段持有；查找不會還原已撤銷的使用者記憶體。 |
 | `ObGetObjectType`, `ObfReferenceObject`, `ObfDereferenceObject`, `ObReferenceObjectByPointer`, `ObReferenceObjectByHandle`, `ObOpenObjectByPointer`, `ZwClose` | 不透明型別身分、具型別參照及多個控制代碼共用生命週期管理。指標參照在兩種存取模式均驗證指定型別。控制代碼參照在 `UserMode` 檢查授予權限並拒絕核心控制代碼；可選 `OBJECT_HANDLE_INFORMATION` 傳回授予權限。`ObOpenObjectByPointer` 支援 `KernelMode`、NULL 存取狀態及零或 `OBJ_KERNEL_HANDLE` 旗標。尚不支援行程/執行緒控制代碼的通用權限、ACL、虛擬控制代碼、檔案物件參照。DriverUnload 前必須釋放所有呼叫者參照及控制代碼。 |
 | `ObQueryNameString`, `ObReferenceObjectByName`, `ZwOpenDirectoryObject`, `ZwOpenSymbolicLinkObject`, `ZwQuerySymbolicLinkObject`, `ZwQueryObject` | ASCII 名稱使用共用工作階段命名空間：根目錄、`\Driver`、`\Device`、`\FileSystem` 與全域 DOS 裝置映射（`\GLOBAL??`，含 `\??`/`\DosDevices` 別名）。名稱參照要求 KernelMode、已知型別、零 DesiredAccess、無存取狀態/解析內容，且僅允許選用 OBJ_CASE_INSENSITIVE。只解析既有模型物件；外部驅動、登錄名稱解析、檔案物件、Unicode 折疊、安全檢查及解析回呼未支援。ZwQueryObject 僅支援 ObjectNameInformation。目錄/連結開啟支援相對目錄控制代碼與通用權限映射；Zw 查詢採核心存取語意。名稱查詢回報精確大小；連結查詢保留捕獲的 MaximumLength 位元組。刪除連結後名稱保留至最後控制代碼關閉，指標參照保留脫離目錄的物件。裝置刪除移除名稱，I/O 保留釋放後移出驅動清單，指標參照保留儲存空間。 |
 | `PsProcessType`, `PsThreadType`, `IoDriverObjectType`, `IoFileObjectType`, `ExEventObjectType`, `ExSemaphoreObjectType`, `PsJobType`, `SeTokenObjectType`, `PsInitialSystemProcess`, `KeNumberProcessors`, `KdDebuggerEnabled`, `KdDebuggerNotPresent` | 唯讀、不可執行的 PE 資料，靜態匯入與動態查詢位址一致。型別指標共用物件管理身分；工作階段 DRIVER_OBJECT 支援型別查詢和指標參照。發布型別標記不代表已實作其他物件類別。`PsInitialSystemProcess` 指向系統行程；`KeNumberProcessors` 來自單處理器遮罩。讀取任一偵錯器位元組前，必須在 `debugger_state` 明確提供布林欄位 `enabled` 和 `not_present`；省略時沒有預設狀態。兩種執行契約均支援這些宣告。 |
@@ -755,3 +755,17 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 `ZwFlushBuffersFile` 支援已開啟的同步 WDM 檔案控制代碼。即使在 KernelMode，也要求 FILE_WRITE_DATA 或 FILE_APPEND_DATA；檔案的具名管道旗標會將要求縮為 FILE_WRITE_DATA。無緩衝區請求使用主功能 9、次功能 0，不設定延遲完成旗標。符合條件的立即完成會在分派返回前發布 IOSB 並釋放封包；工作執行緒、受限 APC 或提高 IRQL 時的完成等待原呼叫者恢復可通知狀態。Information 保留完整 64 位元，不複製輸出，檔案位置保持不變。非同步檔案、宣告式提供者刷新與框架路徑仍不支援。報告種類為 `flush_buffers`，來源為 `ZwFlushBuffersFile`；情境不能建立這種由核心產生的請求。
 
 `ZwDeviceIoControlFile` 與 `ZwFsControlFile` 接受已開啟的同步 WDM 控制代碼、METHOD_BUFFERED 及空 Event/APC 參數。共用擁有者截取 ULONG 長度與控制碼、複製輸入、清零其餘輸出配置，並以要求的輸出長度限制非零輸出；零輸出請求保留完整位寬 Information，不複製資料。裝置控制在可通知時立即完成，FSCTL 的立即完成封包保留至服務尾端。兩者保留原呼叫者通知、IOSB 填補位元組與檔案位置。KernelMode 略過權限遮罩檢查，但傳遞讀寫堆疊旗標。上限為 1 MiB。非同步、direct/neither、裝置 Fast I/O、IOCP、內部緩衝繞過、提供者／框架路徑及控制碼 0x94264/0x98268/0x9042c/0x90020 尚未支援；非零長度的空輸入會被拒絕。報告來源使用 API 名稱；`fsctl` 僅能由核心產生。
+
+核心 CRT 新增 `isdigit`、`_strupr`、`_wcslwr`、`_wcsupr`、`strcpy_s`、`strncpy_s`、`wcscat_s` 和 `wcsncpy_s`。數字分類按 int／位元組截斷後回傳遮罩 4，另行處理 EOF。原地大小寫轉換僅修改 ASCII，其餘位元組與 UTF-16 單元保持不變，不使用 NLS 字元表。受檢寫入保留逐單元儲存、核心錯誤碼 22／34／80、錯誤時首單元清零，以及完整 size_t 的 `_TRUNCATE`；後續存取錯誤不撤銷先前寫入。零計數、空指標、部分輸出與別名依固定核心版本的實際行為處理，不代表可攜 C 的重疊保證。1 MiB 上限只限制實際掃描／寫入，不存取未用容量；分頁儲存仍受 IRQL 限制。
+
+核心 `memcpy_s` 與 `memmove_s` 支援有界、可存取緩衝區及完整 size_t 計數。零計數不存取指標；成功時均依移動語義處理重疊。無效參數傳回 22 或 34，僅 `memcpy_s` 在錯誤時清零指定目標容量。兩者沿用既有 1 MiB 操作上限、生命週期及 IRQL 檢查；此有效區間設定不重現最佳化複製故障時的部分 SIMD 寫入。`RtlImageNtHeader` 檢查 MZ、無符號 DOS 位移與 PE 簽章，並保留固定 x64 核心的使用者位址邊界；不驗證選用標頭、區段或映像可載入性。無效簽章傳回 NULL，無效記憶體明確停止執行。
+
+`RtlHashUnicodeString`、`RtlUpcaseUnicodeString` 與 `RtlTimeToSecondsSince1980` 支援不高於 APC_LEVEL 的呼叫。雜湊演算法 0/1 使用 x65599，先清零輸出再讀取 Length，忽略 MaximumLength；區分大小寫時接受所有 UTF-16 單元。大寫轉換與忽略大小寫的雜湊支援小於 U+00C0 的單元，其餘明確要求尚未建模的 NLS 表。轉換保留循序重疊寫入，逐單元重讀 Buffer，結束後重讀 Length，不附加終止符。配置使用共用分頁 `Strg` 集區並由 `RtlFreeUnicodeString` 釋放；零長度配置仍不支援。奇數 Length 僅處理完整單元。時間轉換將 100 ns 刻度截斷為秒，扣除 1980 紀元，僅在 ULONG 範圍內寫入四位元組；越界時保留輸出及別名。
+
+`toupper`、`towupper` 與 `RtlUpcaseUnicodeChar` 共用 APC_LEVEL 限制及計數字串的大寫映射。核心 `toupper` 使用輸入低位元組，只接受 ASCII；擴充位元組（包括 EOF 的位元組值）需要尚未建模的字碼頁。寬字元輸入截為 16 位元，接受小於 U+00C0 的單元，其餘明確要求 NLS。這些純量介面與原位 CRT 轉換使用不同的核心輔助函式，不可混同映射規則。
+
+`vDbgPrintExWithPrefix` 與 `DbgPrint` / `DbgPrintEx` 共用有限格式化器、全部篩選器啟用的觀察模型及 DIRQL 上限。客體 x64 `va_list` 以八位元組槽前進，但只讀取實際純量寬度；重複的 `hh` 依固定核心的 16 位元 short 規則處理。前綴依序使用 128/256/384/512 位元組緩衝；成功時截於首個 NUL，最終溢位時發布以換行結尾的 511 位元組。模型先檢查完整的有界本文（512 位元組），截斷不會放行無效或不支援的尾端。ASCII 前綴在 1 MiB 上限內掃描至終止符。Unicode 轉換仍要求 PASSIVE_LEVEL；主機篩選器、偵錯回呼及傳輸尚未建模。
+
+`IoThreadToProcess` 共用保留執行緒的建立行程身分。`PsGetCurrentThreadPreviousMode` 與 `ExGetPreviousMode` 共用狀態及 DISPATCH_LEVEL 上限，原先過寬的准入已修正。`RtlPcToFileHeader` 以完整位寬查詢固定模組清單，寫入八位元組結果，未命中寫零，不讀取 PC 所指記憶體。有界非分頁查詢允許所有有效 IRQL，但輸出必須駐留；缺少清單明確失敗，動態展開表及 retpoline 範圍仍不在模型內。
+
+`MmMapLockedPages` 共用現有映射器，固定使用快取頁面、HIGH 優先級及耗盡時 bugcheck 旗標。核心映射允許 DISPATCH_LEVEL；程序所屬的使用者檢視要求不高於 APC_LEVEL，耗盡時保留既有資源例外。帶 bugcheck 旗標的核心映射耗盡會明確停止為模型錯誤，不能作為成功呼叫傳回 NULL；實際 bugcheck 處理仍未建模。

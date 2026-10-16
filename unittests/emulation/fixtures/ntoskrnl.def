@@ -68,6 +68,7 @@ EXPORTS
   IoCancelFileOpen
   IofCallDriver
   MmMapLockedPagesSpecifyCache
+  MmMapLockedPages
   MmUnmapLockedPages
   MmProbeAndLockPages
   MmUnlockPages
@@ -78,6 +79,7 @@ EXPORTS
   ExAllocatePool2
   DbgPrint
   DbgPrintEx
+  vDbgPrintExWithPrefix
   MmGetSystemRoutineAddress
   MmIsAddressValid
   KeRegisterBugCheckReasonCallback
@@ -98,6 +100,7 @@ EXPORTS
   PsLookupProcessByProcessId
   PsLookupThreadByThreadId
   PsGetThreadProcess
+  IoThreadToProcess
   PsIsThreadTerminating
   PsCreateSystemThread
   PsTerminateSystemThread
@@ -129,6 +132,7 @@ EXPORTS
   RtlUnicodeStringToInteger
   PsGetCurrentProcessId
   ExGetPreviousMode
+  PsGetCurrentThreadPreviousMode
   PsGetProcessId
   PsGetCurrentProcess
   PsGetCurrentThread
@@ -138,6 +142,12 @@ EXPORTS
   RtlAnsiStringToUnicodeString
   RtlUnicodeStringToAnsiString
   RtlFreeUnicodeString
+  RtlHashUnicodeString
+  RtlUpcaseUnicodeString
+  RtlUpcaseUnicodeChar
+  toupper
+  towupper
+  RtlTimeToSecondsSince1980
   RtlFreeAnsiString
   MmGetPhysicalMemoryRanges
   RtlInitUnicodeStringEx
@@ -262,3 +272,16 @@ ExSetResourceOwnerPointerEx
   ZwOpenSymbolicLinkObject
   ZwQuerySymbolicLinkObject
   ZwQueryObject
+
+  isdigit
+  _strupr
+  _wcslwr
+  _wcsupr
+  strcpy_s
+  strncpy_s
+  wcscat_s
+  wcsncpy_s
+  memcpy_s
+  memmove_s
+  RtlImageNtHeader
+  RtlPcToFileHeader

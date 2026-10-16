@@ -395,8 +395,67 @@ bool Session::typesChanged(const types::TypeLibrary &Library,
   return Shows;
 }
 
+types::TypeLibrary *Session::readLocalTypes() { return localTypes(*this); }
+
+bool Session::checkFunctionDeclaration(const std::string &Text,
+                                       std::string &Error) {
+  const types::TypeLibrary *Library = localTypes(*this);
+  if (!Library) {
+    Error = LastError;
+    return false;
+  }
+  const types::FunctionDeclaration Read =
+      types::parseFunctionDeclaration(Text, *Library);
+  if (!Read.ok()) {
+    const types::SourceProblem &Problem = Read.Problems.front();
+    Error = "the declaration does not read: " + std::to_string(Problem.Line) +
+            ":" + std::to_string(Problem.Column) + ": " + Problem.Message;
+    return false;
+  }
+  if (Read.Function->Variadic) {
+    Error = "a variadic declaration is not supported: its calls pass more "
+            "than it declares";
+    return false;
+  }
+  // The decompiler names a parameter as declared only while no other shares
+  // its name.
+  llvm::StringSet<> Names;
+  for (const types::Parameter &Param : Read.Function->Params)
+    if (!Param.Name.empty() && !Names.insert(Param.Name).second) {
+      Error = "two parameters are named " + Param.Name;
+      return false;
+    }
+  // The conventions whose parameter placement NeverD knows for the image:
+  // its own, and on x64 the keywords its compilers ignore.
+  const types::CallingConvention Convention = Read.Function->Convention;
+  const bool X64 = Img.Arch == Arch::X64;
+  const bool Windows = Img.abiFormat() == BinaryFormat::COFF;
+  bool Placed = Convention == types::CallingConvention::Unspecified ||
+                Convention == types::CallingConvention::Cdecl;
+  if (Img.Arch == Arch::X86)
+    Placed |= Convention == types::CallingConvention::Stdcall;
+  if (X64)
+    Placed |= Convention == types::CallingConvention::Stdcall ||
+              Convention == types::CallingConvention::Fastcall ||
+              Convention == types::CallingConvention::Thiscall ||
+              (Convention == types::CallingConvention::Win64 && Windows) ||
+              (Convention == types::CallingConvention::SysV && !Windows);
+  if (!Placed) {
+    Error = "NeverD does not place this image's parameters by the "
+            "declaration's calling convention";
+    return false;
+  }
+  if (!signatureOf(*Library, *Read.Function, Read.Name)) {
+    Error = "the declaration has a type the decompiler cannot describe, such "
+            "as a function or an array passed by value";
+    return false;
+  }
+  return true;
+}
+
 DebugContext *Session::decompileDebug() {
-  if (!Dbg)
+  std::map<va_t, std::string> Declarations = functionDeclarations();
+  if (!Dbg && Declarations.empty())
     return nullptr;
   if (LocalTypesDbg)
     return LocalTypesDbg.get();
@@ -404,14 +463,18 @@ DebugContext *Session::decompileDebug() {
     return Dbg.get();
   LocalTypesChecked = true;
   // Reading the types may fail, as a PDB's may; the decompilation goes on
-  // with the program's debug information alone, its error untouched.
+  // with the program's debug information alone, its error untouched, and
+  // the user's declarations read against the types every image has.
   const std::string Error = LastError;
   const types::TypeLibrary *Library = localTypes(*this);
   LastError = Error;
-  if (!Library)
+  if (!Library && Declarations.empty())
     return Dbg.get();
   LocalTypesDbg = std::make_unique<LocalTypesDebugContext>(
-      *Dbg, std::make_shared<types::TypeLibrary>(*Library));
+      Dbg ? *Dbg : static_cast<const DebugContext &>(NoDebugInfo),
+      Library ? std::make_shared<types::TypeLibrary>(*Library)
+              : std::make_shared<types::TypeLibrary>(dataModelOf(Img)),
+      std::move(Declarations));
   return LocalTypesDbg.get();
 }
 

@@ -228,6 +228,8 @@ private:
   llvm::Value *widenToI128(llvm::Value *V, llvm::IRBuilder<> &Builder);
 
   llvm::Value *emitIntrinsic(const MedOp &Op, llvm::IRBuilder<> &Builder);
+  llvm::Value *emitSEHRegisterIntrinsic(const MedOp &Op,
+                                        llvm::IRBuilder<> &Builder);
   llvm::Value *emitFloatOp(const MedOp &Op, llvm::IRBuilder<> &Builder);
   llvm::Value *emitAesIntrinsic(const MedOp &Op, Intrinsic IC,
                                 llvm::IRBuilder<> &Builder);
@@ -2058,6 +2060,7 @@ private:
   std::map<std::pair<va_t, int>, llvm::Instruction *> RegistrationChainIR;
   std::map<std::pair<va_t, int>, llvm::Instruction *> RegistrationIncomingIR;
   std::map<std::pair<va_t, int>, llvm::Instruction *> RegistrationMemoryIR;
+  std::map<std::pair<va_t, uint64_t>, llvm::AllocaInst *> SEHRegisterSlots;
   /// LLVM symbol chosen for each lifted function body. Usually identical to
   /// MedFunc::Name; an address-backed native personality body uses its stable
   /// auto name so the canonical ABI name remains an external declaration.
@@ -2066,6 +2069,10 @@ private:
   /// whose symbol spells one is another function, which a call reaches by its
   /// own name.
   std::set<std::string> PEImportCNames;
+  /// The fewest and the most arguments the module's calls pass each direct
+  /// call target.  A declaration made from one call's arguments would cut
+  /// another call's.
+  std::map<va_t, std::pair<size_t, size_t>> DirectCallArgumentCounts;
   std::map<va_t, std::string> FuncNames;
   // Ordinary LLVM blocks are created for every body-emitted MedFunc before
   // any body operation runs.  This makes blockaddress resolution independent

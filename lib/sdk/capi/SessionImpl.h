@@ -45,6 +45,7 @@
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
@@ -108,6 +109,12 @@ struct Session {
   std::unique_ptr<DebugContext> Dbg;
   DebugInfoKind DbgKind = DebugInfoKind::None;
   std::filesystem::path DbgPath;
+  /// Every file the debug information was read from, Dbg's first.
+  std::vector<DebugInfoFile> DbgFiles;
+  /// Whether neverd_session_load() read the image from FilePath, so a debug
+  /// file loaded later can read it again the same way
+  /// (reloadDebugInformation).
+  bool ReadFromFile = false;
   /// The program's local types, read from its debug information when first
   /// asked for (NeverDCAPILocalTypes.cpp).  A new image or PDB drops them.
   std::unique_ptr<types::TypeLibrary> LocalTypes;
@@ -147,11 +154,40 @@ struct Session {
   }
 
   /// The debug context the decompiler reads: the program's own completed
-  /// from its local types (LocalTypesDebugContext), when it has any.  Built
-  /// at the first decompilation; the pipeline it fed goes with it.
+  /// from its local types (LocalTypesDebugContext), when it has any, and
+  /// the declarations the user gave its functions, with or without debug
+  /// information.  Built at the first decompilation; the pipeline it fed
+  /// goes with it.
   std::unique_ptr<LocalTypesDebugContext> LocalTypesDbg;
   bool LocalTypesChecked = false;
   DebugContext *decompileDebug();
+  /// The debug context of an image without debug information, which the
+  /// user's declarations complete.
+  NullDebugContext NoDebugInfo;
+  /// The C declarations the user gave functions, by entry
+  /// (FunctionAttributes::Type).
+  std::map<va_t, std::string> functionDeclarations() const {
+    std::map<va_t, std::string> Declarations;
+    for (const auto &[Entry, Attributes] : FunctionAttributeEdits)
+      if (Attributes.Type)
+        Declarations.emplace(Entry, *Attributes.Type);
+    return Declarations;
+  }
+  /// Whether \p Text declares a function the decompiler can bind, as
+  /// FunctionAttributes::Type: it reads against the local types as one
+  /// function's declaration, is not variadic, every type it names has a
+  /// decompiler type, and its calling convention is one NeverD places the
+  /// image's parameters by.  False, with \p Error, otherwise.
+  bool checkFunctionDeclaration(const std::string &Text, std::string &Error);
+  /// After the user's declarations change: the decompiler reads them anew,
+  /// and only what it made of them goes.  Analysis never reads them.
+  void declarationsChanged() {
+    dropLocalTypesDebug();
+    clearPipelineResult();
+  }
+  /// The program's local types, read when first asked for; null with the
+  /// session's error when its PDB's types cannot be read.
+  types::TypeLibrary *readLocalTypes();
   /// After a declaration changes \p Changed in \p Library, or adds
   /// prototypes, drops what read them: the analysis, where prototypes read
   /// them, or the text that printed them.  Whether the decompilation
@@ -467,7 +503,12 @@ struct Session {
     std::optional<bool> Library;
     std::optional<bool> Static;
     std::optional<uint32_t> Color;
-    bool empty() const { return !NoReturn && !Library && !Static && !Color; }
+    /// The C declaration the user gave the function, which the decompiler
+    /// prints and binds its parameters by (FunctionAttributes.def).
+    std::optional<std::string> Type;
+    bool empty() const {
+      return !NoReturn && !Library && !Static && !Color && !Type;
+    }
     bool operator==(const FunctionAttributes &) const = default;
   };
   std::map<va_t, FunctionAttributes> FunctionAttributeEdits;
@@ -502,10 +543,13 @@ struct Session {
   std::map<va_t, DataItem> DataItems;
   /// How the user shows an instruction operand's number
   /// (neverd_operand_format_set): a base of OperandFormats.def, with its sign
-  /// changed or its bits inverted.
+  /// changed or its bits inverted, or for a structure offset the local type
+  /// and how many bytes into it the register points.
   struct OperandFormat {
     std::string Base;
     bool Negate = false, Invert = false;
+    std::string Type;
+    int64_t Delta = 0;
     bool operator==(const OperandFormat &) const = default;
   };
   /// The user's operand formats by instruction address and operand index.
@@ -1010,6 +1054,22 @@ struct PipelineRunner {
 /// naming \p Kind.
 bool saveSidecar(Session *S, const std::filesystem::path &Path,
                  llvm::json::Value Values, llvm::StringRef Kind);
+
+/// Read the session's input again as it was loaded and publish \p Request's
+/// debug information into it, in the order the names rank, so a file loaded
+/// after the image ranks as it would had the load named it: a PDB's or
+/// DWARF's names replace a MAP's, and a MAP's fill only what they leave.
+/// The session then takes the image, keeping the user's names, comments and
+/// edits, and \p Request becomes its next load's.  \p Unchanged, when given,
+/// is asked once the files are read and before the session takes them; it
+/// sets the error when it answers false.  Returns 1, or 0 with the session's
+/// error and the session as it was.
+int reloadDebugInformation(Session &S, DebugInfoRequest Request,
+                           llvm::function_ref<bool()> Unchanged = {});
+
+/// The files \p S read its debug information from, as
+/// neverd_session_debug_info_json() lists them.
+llvm::json::Array debugInfoFilesJson(const Session &S);
 
 } // namespace sdk
 } // namespace neverd

@@ -1892,3 +1892,21 @@ KernelFileSystem mantiene un provider token por FILE_OBJECT. La operación priva
 `KernelModelFileRequests` también posee la producción sin búfer de `ZwFlushBuffersFile`. La máscara de acceso y la publicación/liberación inmediata difieren de los paquetes nativos diferidos de lectura, escritura y consulta; comparten la notificación del llamador original y una única liberación.
 
 `KernelModelFileRequests` controla la captura y publicación de búferes de control nativo. Comparten retención del archivo, continuación del llamador y liberación del paquete; el aplazamiento del productor distingue control de dispositivo y FSCTL. El validador común de finalización comprueba los límites de salida.
+
+`KernelModelRuntime` es responsable de clasificación CRT, conversión en el búfer y escritura comprobada de cadenas. `KernelCStringAPIs.def` aporta identidad exportada, número de argumentos y admisión IRQL a todas las rutas. Los accesos por unidad reutilizan permisos y vida útil del invitado; informes y adaptadores no duplican la semántica de copia o errores.
+
+`KernelMemoryCalls` controla la admisión de copias comprobadas y reutiliza move/fill y las verificaciones de vida del pool y memoria de usuario. `KernelModelRuntime` controla la prueba de firma bruta `RtlImageNtHeader`. Esta prueba no sustituye la validación del cargador necesaria para ejecutar imágenes; los adaptadores no duplican su semántica.
+
+`OptimizationGuards` complementa `optnone` de LLVM: omite los pases opcionales de módulo y grafo de llamadas si hay una función protegida, pues pueden cambiar su CFG o sustituir argumentos del callback por poison. Los adaptadores obligatorios y la optimización de funciones ordinarias siguen activos. La proyección conserva las escrituras de salvado del prólogo hasta que la reconstrucción nativa las vincula.
+
+`COFFRegistrationEH4Wrapper` posee la prueba del reenvío EH4 conservado. `COFFRegistrationScalarLeaf` verifica un CFG escalar acotado solo hacia delante, registros y banderas inicializados, almacenamiento MXCSR privado y datos de ejecución de la imagen. Rechaza lecturas del marco llamador, escapes de direcciones, llamadas desconocidas, instrucciones solapadas y retornos incompletos. LLVM y la validación COFF independiente comparten esta prueba del cargador; se conservan el código original y sus lecturas dinámicas.
+
+`KernelModelRuntime` centraliza el hash Unicode, la conversión común a mayúsculas independiente de NLS y los segundos desde 1980. `KernelRuntimeCalls` usa el propietario existente del pool paginado de cadenas. Las tablas API unifican exportaciones, argumentos y APC_LEVEL; los propietarios conservan el orden de acceso a los campos.
+
+`uppercaseCharacter` reduce los argumentos antes de admitirlos y delega en `uppercaseUnicodeUnit`. Las tablas CRT y Unicode comparten la decisión con identidades ABI distintas; ningún adaptador ni configuración regional del host aporta otra conversión.
+
+`KernelModelRuntime` posee los anchos escalares y la publicación común de prefijo y búfer. Las llamadas variádicas normales usan el lector ABI existente; el adaptador explícito x64 `va_list` valida cada escalar invitado solicitado con pasos de ocho bytes. El despachador y el adaptador no duplican el análisis del formato.
+
+Los alias reutilizan los propietarios de hilos/procesos y contextos, incluso durante la vinculación de procesos. `RtlPcToFileHeader` usa `LoadedModules`, igual que las consultas de módulos del sistema; las regiones de `ImageRAM` no sustituyen la identidad del módulo. No se consulta estado del host.
+
+`KernelMDLCalls` normaliza la entrada antigua al mapeador existente de seis argumentos. `KernelPhysicalMemory` y los registros MDL siguen gestionando caché, identidad física, permisos y duración. Solo los alias de imagen del núcleo liberados por completo no dejan dependencia del entorno; las vistas de usuario la conservan.

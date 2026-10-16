@@ -520,6 +520,10 @@ static std::optional<uint32_t> parseColor(llvm::StringRef Text) {
   return Color;
 }
 
+/// The longest declaration a function's "type" holds: a prototype with
+/// dozens of parameters fits.
+constexpr size_t MaxFunctionDeclarationBytes = 4096;
+
 /// The members of \p Attributes the user has stated, as Row's keys
 /// (FunctionAttributes.def).
 static void
@@ -531,6 +535,9 @@ writeFunctionAttributes(const Session::FunctionAttributes &Attributes,
 #define NEVERD_FUNCTION_COLOR(Key)                                             \
   if (Attributes.Color)                                                        \
     Row[Key] = colorText(*Attributes.Color);
+#define NEVERD_FUNCTION_TYPE(Member, Key)                                      \
+  if (Attributes.Member)                                                       \
+    Row[Key] = *Attributes.Member;
 #include "neverd/sdk/FunctionAttributes.def"
 }
 
@@ -565,6 +572,22 @@ static bool readFunctionAttributes(const llvm::json::Object &Row,
       Attributes.Color = *parseColor(*Text);                                   \
     else {                                                                     \
       Error = std::string("\"") + KeyName + "\" is \"#RRGGBB\" or null";       \
+      return false;                                                            \
+    }                                                                          \
+  }
+#define NEVERD_FUNCTION_TYPE(Member, KeyName)                                  \
+  if (Name == KeyName) {                                                       \
+    Known = true;                                                              \
+    if (Value.kind() == llvm::json::Value::Null)                               \
+      Attributes.Member.reset();                                               \
+    else if (const auto Text = Value.getAsString();                            \
+             Text && !Text->trim().empty() &&                                  \
+             Text->size() <= MaxFunctionDeclarationBytes)                      \
+      Attributes.Member = Text->trim().str();                                  \
+    else {                                                                     \
+      Error = std::string("\"") + KeyName +                                    \
+              "\" is a C declaration of at most " +                            \
+              std::to_string(MaxFunctionDeclarationBytes) + " bytes, or null"; \
       return false;                                                            \
     }                                                                          \
   }
@@ -756,8 +779,19 @@ int neverd_functions_load(neverd_session_t Sess) {
         AttributeEdits[*Entry] = Attributes;
     }
   }
-  const bool Changed =
-      Edits != S->FunctionEdits || AttributeEdits != S->FunctionAttributeEdits;
+  // What analysis reads: whether functions start there and return.  A
+  // declaration, or a note, changes no more than the decompiler's text.
+  const auto WithoutDeclarations =
+      [](std::map<va_t, Session::FunctionAttributes> Rows) {
+        for (auto &[Entry, Attributes] : Rows)
+          Attributes.Type.reset();
+        return Rows;
+      };
+  const bool Changed = Edits != S->FunctionEdits ||
+                       WithoutDeclarations(AttributeEdits) !=
+                           WithoutDeclarations(S->FunctionAttributeEdits);
+  const std::map<va_t, std::string> DeclarationsBefore =
+      S->functionDeclarations();
   S->FunctionEdits = std::move(Edits);
   S->FunctionAttributeEdits = std::move(AttributeEdits);
   // A load replaces the image, which holds what analysis reads of them.
@@ -767,6 +801,8 @@ int neverd_functions_load(neverd_session_t Sess) {
     restartWithUserNoReturn(Sess, S);
   else if (Changed)
     S->invalidatePipeline();
+  else if (S->functionDeclarations() != DeclarationsBefore)
+    S->declarationsChanged();
   return 0;
 }
 
@@ -810,14 +846,26 @@ int neverd_func_edit(neverd_session_t Sess, neverd_va_t Entry,
   const std::optional<bool> OldNoReturn =
       Before == S->FunctionAttributeEdits.end() ? std::nullopt
                                                 : Before->second.NoReturn;
+  const std::optional<std::string> OldType =
+      Before == S->FunctionAttributeEdits.end() ? std::nullopt
+                                                : Before->second.Type;
+  // A declaration must read against the local types as they are now.
+  if (Attributes.Type && Attributes.Type != OldType &&
+      !S->checkFunctionDeclaration(*Attributes.Type, Error)) {
+    S->setError(Error);
+    return -1;
+  }
   if (Attributes.empty())
     S->FunctionAttributeEdits.erase(Entry);
   else
     S->FunctionAttributeEdits[Entry] = Attributes;
   // Whether a function returns decides how every call to it ends; the notes
-  // change nothing analysis reads.
+  // change nothing analysis reads, and a declaration only what the
+  // decompiler prints.
   if (Attributes.NoReturn != OldNoReturn)
     restartWithUserNoReturn(Sess, S);
+  else if (Attributes.Type != OldType)
+    S->declarationsChanged();
   return 0;
 }
 
@@ -904,6 +952,8 @@ const char *neverd_func_attributes_json(neverd_session_t Sess,
                                 : llvm::json::Value(nullptr);
   Row["color"] = Stated.Color ? llvm::json::Value(colorText(*Stated.Color))
                               : llvm::json::Value(nullptr);
+  Row["type"] = Stated.Type ? llvm::json::Value(jsonSafeText(*Stated.Type))
+                            : llvm::json::Value(nullptr);
   // x86 `ret imm` pops the caller's arguments; no other target does.
   Row["purged_bytes"] = (A == Arch::X86 || A == Arch::X64) && Low
                             ? llvm::json::Value(Low->CalleePopBytes)
@@ -959,14 +1009,17 @@ bool isOperandBase(llvm::StringRef Base) {
   return false;
 }
 
+/// The longest name a structure offset's type may have.
+constexpr size_t MaxOperandTypeName = 512;
+
 /// The format \p Object describes, or none with \p Error.
 std::optional<Session::OperandFormat>
 parseOperandFormat(const llvm::json::Object &Object, std::string &Error) {
   Session::OperandFormat Format;
   const auto Base = Object.getString("base");
   if (!Base || !isOperandBase(*Base)) {
-    Error = "an operand's base is number, hex, decimal, binary, char or "
-            "offset";
+    Error = "an operand's base is number, hex, decimal, binary, char, offset "
+            "or struct";
     return std::nullopt;
   }
   Format.Base = Base->str();
@@ -980,6 +1033,28 @@ parseOperandFormat(const llvm::json::Object &Object, std::string &Error) {
       }
       *Field = *Flag;
     }
+  const llvm::json::Value *Type = Object.get("type");
+  const llvm::json::Value *Delta = Object.get("delta");
+  if (Format.Base != kStructBase) {
+    if (Type || Delta) {
+      Error = "only a structure offset names a type and a delta";
+      return std::nullopt;
+    }
+    return Format;
+  }
+  // The member a structure offset names has no sign of its own to change.
+  const std::optional<llvm::StringRef> Name =
+      Type ? Type->getAsString() : std::nullopt;
+  const std::optional<int64_t> Bytes =
+      Delta ? Delta->getAsInteger() : std::optional<int64_t>(0);
+  if (!Name || Name->empty() || Name->size() > MaxOperandTypeName || !Bytes ||
+      Format.Negate || Format.Invert) {
+    Error = "a structure offset names its local type, an integer delta, and "
+            "neither negates nor inverts";
+    return std::nullopt;
+  }
+  Format.Type = Name->str();
+  Format.Delta = *Bytes;
   return Format;
 }
 
@@ -987,12 +1062,17 @@ llvm::json::Array operandFormatRows(const Session *S) {
   llvm::json::Array Rows;
   for (const auto &[Addr, Operands] : S->OperandFormats) {
     llvm::json::Array List;
-    for (const auto &[Index, Format] : Operands)
-      List.push_back(
-          llvm::json::Object{{"operand", static_cast<int64_t>(Index)},
-                             {"base", Format.Base},
-                             {"negate", Format.Negate},
-                             {"invert", Format.Invert}});
+    for (const auto &[Index, Format] : Operands) {
+      llvm::json::Object Entry{{"operand", static_cast<int64_t>(Index)},
+                               {"base", Format.Base},
+                               {"negate", Format.Negate},
+                               {"invert", Format.Invert}};
+      if (Format.Base == kStructBase) {
+        Entry["type"] = jsonSafeText(Format.Type);
+        Entry["delta"] = Format.Delta;
+      }
+      List.push_back(std::move(Entry));
+    }
     Rows.push_back(llvm::json::Object{{"addr", vaHex(Addr)},
                                       {"operands", std::move(List)}});
   }
@@ -1237,6 +1317,22 @@ int neverd_operand_format_set(neverd_session_t Sess, neverd_va_t Addr,
     if (!Format) {
       S->setError(Error);
       return -1;
+    }
+    // A structure offset names a structure or union of the program's local
+    // types, which a sidecar read later may no longer have; the listing then
+    // shows the number.
+    if (Format->Base == kStructBase) {
+      const types::TypeLibrary *Library = S->readLocalTypes();
+      if (!Library)
+        return -1;
+      const types::LocalType *Record = Library->resolve(Format->Type);
+      if (!Record || !Record->Record || !Record->Record->Defined ||
+          (Record->Kind != types::TypeKind::Struct &&
+           Record->Kind != types::TypeKind::Union)) {
+        S->setError("no structure or union named " +
+                    jsonSafeText(Format->Type));
+        return -1;
+      }
     }
   }
   // The listing's own spelling is no format of the user's.

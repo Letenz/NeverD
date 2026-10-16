@@ -681,6 +681,15 @@ renamedNames(const TypeLibrary &Library, Language Lang) {
   return render::NameSpelling(Library, Lang).renamed();
 }
 
+std::string spellType(const TypeLibrary &Library, const TypeExpr &Type,
+                      const std::string &Declarator,
+                      const RenderOptions &Options) {
+  RenderOptions C = Options;
+  if (C.Lang != Language::Cpp)
+    C.Lang = Language::C;
+  return render::CSpeller(Library, C).declare(Type, Declarator);
+}
+
 std::string renderTypes(const TypeLibrary &Library,
                         llvm::ArrayRef<const LocalType *> Types,
                         const RenderOptions &Options) {

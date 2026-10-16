@@ -142,6 +142,62 @@ NEVERD_API const char *neverd_type_declarations_json(neverd_session_t Sess);
 NEVERD_API int neverd_type_declarations_save(neverd_session_t Sess);
 NEVERD_API int neverd_type_declarations_load(neverd_session_t Sess);
 
+/// The local types a pointer may point at, best first, judged by what the
+/// code does through it, as an analyst checks a guess against the code.
+/// RequestJson is {"accesses":[{"offset","size","use":"read"|"write"|
+/// "address"},...], "function":"0x..", "target":{"address":"0x.."} or
+/// {"parameter":N}, "text", "records":bool, "shifts":bool, "limit":N,
+/// "spelling"}, every field optional:
+/// - "accesses": what the code does at each offset from where the pointer
+///   points; "size" is zero for an address taken.
+/// - "target" adds the accesses the code of "function" makes through the
+///   pointer the memory operand of the instruction at "address" goes
+///   through (or, for an address it computes, as `lea` does, the pointer
+///   it adds to), read from the function's MedIR; or through its parameter
+///   N (from 0, as its declaration lists it, neverd_func_type_json), from
+///   the integer register its calling convention passes it in.
+/// - "text" matches type names and the typedefs of a record and of a
+///   pointer to it, as an editor's quick open matches; "Type.member" also
+///   matches member paths, ".member" those of every record.
+/// - "records" (default true) keeps structures and unions, each with its
+///   typedefs as aliases; false lists every type under its own name, a
+///   typedef judged by the record it names or points at.
+/// - "shifts" (default true) lets the pointer point into a record when
+///   accesses reach before it, as CONTAINING_RECORD undoes.
+/// - "limit": at most this many candidates (default 50, at most 500).
+/// Returns {"accesses":[{"offset","size","use"},...], "target":{"base",
+/// "offset","size","use" or "parameter","accesses":[{"address","offset",
+/// "size","use"},...]}?,
+/// "candidates":[{"name","kind","origin","size","record"?,
+/// "aliases"?,"pointerAliases"?,"shift"?,"shiftPath"?,"exact",
+/// "exactElements","partial","padding","outside","fits":[{"fit","path",
+/// "memberOffset","memberSize"?,"type"?,"bitfield"?},...]?,"matchedName"?,
+/// "matched"?,"matchedMember"?,"memberMatched"?},...], "total"}:
+/// "accesses" are every access judged, the request's and then the
+/// target's, which each candidate's "fits" follow; the target's "base" is
+/// the register the pointer is in, when it is one, and "offset", "size"
+/// and "use" the instruction's own access.  "fit" is exact, start, inside,
+/// padding or outside, and a match is [[begin, length],...] in bytes of
+/// the matched text.  NULL with neverd_last_error() when no binary is
+/// loaded, the request is malformed, the instruction reaches no memory
+/// through a pointer, or the parameter does not arrive in an integer
+/// register.
+NEVERD_API const char *neverd_local_types_fit_json(neverd_session_t Sess,
+                                                   const char *RequestJson);
+
+/// Where \p Size bytes at \p Offset land in the record \p Name names,
+/// through typedefs, as the listing names a structure offset:
+/// {"record","size","fit","path","memberOffset","memberSize"?,"type"?,
+/// "bitfield"?}, "record" and "size" the record's and the rest as
+/// neverd_local_types_fit_json's fits say.  OptionsJson may be NULL or
+/// {"spelling"}.  NULL with neverd_last_error() when no defined structure
+/// or union has that name.
+NEVERD_API const char *neverd_local_type_member_json(neverd_session_t Sess,
+                                                     const char *Name,
+                                                     long long Offset,
+                                                     unsigned long long Size,
+                                                     const char *OptionsJson);
+
 #ifdef __cplusplus
 }
 #endif

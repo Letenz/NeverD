@@ -57,6 +57,13 @@ LoadQuestionDialog::LoadQuestionDialog(const QString &name, const Text &text,
                                                      : text.detailToolTip);
     layout->addWidget(detail_);
   }
+  if (!text.note.isEmpty()) {
+    auto *note = line(this, text.noteName);
+    note->setWordWrap(true);
+    note->setText(text.note);
+    note->setToolTip(text.noteToolTip);
+    layout->addWidget(note);
+  }
   layout->addSpacing(GroupSpacing);
 
   auto *buttons = new QDialogButtonBox(this);
@@ -65,8 +72,10 @@ LoadQuestionDialog::LoadQuestionDialog(const QString &name, const Text &text,
   auto *no = buttons->addButton(QDialogButtonBox::No);
   yes->setObjectName(QStringLiteral("yes"));
   no->setObjectName(QStringLiteral("no"));
-  yes->setDefault(true);
-  yes->setFocus();
+  // A question about a file that is likely the wrong one defaults to No.
+  QPushButton *answer = text.cautious ? no : yes;
+  answer->setDefault(true);
+  answer->setFocus();
   connect(yes, &QPushButton::clicked, this, &QDialog::accept);
   connect(no, &QPushButton::clicked, this, &QDialog::reject);
   layout->addWidget(buttons);

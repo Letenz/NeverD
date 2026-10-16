@@ -249,6 +249,9 @@ using LocalTypesFunction = const char *(*)(neverd_session_t, const char *);
 using LocalTypeNamesFunction = const char *(*)(neverd_session_t, const char *);
 // The most source one declaration reads.
 constexpr std::size_t MaxDeclarationBytes = 4u << 20;
+// The most other instructions one structure offset goes to, which with the
+// instruction's own row fill a history command.
+constexpr std::size_t MaxOperandFormatRows = 63;
 // The user's type declarations beside the input, as the engine reads them.
 constexpr std::string_view TypeDeclarationsSuffix = ".neverd-types.json";
 using LocalTypeFunction = const char *(*)(neverd_session_t, const char *,
@@ -265,6 +268,17 @@ using DwarfSearchFunction = void (*)(neverd_session_t, int);
 using SymbolTableReferenceFunction = const char *(*)(const char *);
 /// Whether the next load reads the image's static symbol table.
 using SymbolTableFunction = void (*)(neverd_session_t, int);
+/// The linker MAP beside an input and how it holds against the image, before
+/// the image is open.
+using MapReferenceFunction = const char *(*)(const char *);
+/// Whether the next load reads the MAP beside the image.
+using MapSearchFunction = void (*)(neverd_session_t, int);
+/// The MAP a user chose, read against the open image.
+using MapInspectFunction = const char *(*)(neverd_session_t, const char *);
+/// Load a MAP into the open image, unchecked or not.
+using MapLoadFunction = int (*)(neverd_session_t, const char *, int);
+/// Load a DWARF file into the open image.
+using DwarfLoadFunction = int (*)(neverd_session_t, const char *);
 
 using IdentifyFunction = const char *(*)(const char *);
 IdentifyFunction identifyFunction() {
@@ -637,6 +651,19 @@ bool Engine::listsLocalTypes() {
          engineSymbol<LocalTypeFunction>("neverd_local_type_json") &&
          engineSymbol<LocalTypesFunction>("neverd_local_types_source");
 }
+bool Engine::typesFunctions() {
+  using Declaration =
+      const char *(*)(neverd_session_t, neverd_va_t, const char *);
+  return statesFunctionAttributes() &&
+         engineSymbol<Declaration>("neverd_func_type_json");
+}
+bool Engine::fitsLocalTypes() {
+  using Member = const char *(*)(neverd_session_t, const char *, long long,
+                                 unsigned long long, const char *);
+  return listsLocalTypes() &&
+         engineSymbol<LocalTypesFunction>("neverd_local_types_fit_json") &&
+         engineSymbol<Member>("neverd_local_type_member_json");
+}
 bool Engine::declaresLocalTypes() {
   return listsLocalTypes() &&
          engineSymbol<LocalTypeFunction>("neverd_local_types_declare") &&
@@ -656,6 +683,18 @@ bool Engine::findsSymbolTables() {
   return engineSymbol<SymbolTableReferenceFunction>(
              "neverd_symbol_table_reference_json") &&
          engineSymbol<SymbolTableFunction>("neverd_session_set_symbol_table");
+}
+bool Engine::findsMapFiles() {
+  return engineSymbol<MapReferenceFunction>("neverd_map_reference_json") &&
+         engineSymbol<MapSearchFunction>("neverd_session_set_map_search");
+}
+bool Engine::loadsMapFiles() {
+  return engineSymbol<MapInspectFunction>("neverd_session_inspect_map_json") &&
+         engineSymbol<MapLoadFunction>("neverd_session_load_map");
+}
+bool Engine::loadsDwarfFiles() {
+  return static_cast<bool>(
+      engineSymbol<DwarfLoadFunction>("neverd_session_load_dwarf"));
 }
 bool Engine::keepsOperandFormats() {
   return static_cast<bool>(operandFormats());
@@ -1307,9 +1346,11 @@ Json Engine::metadata() const {
           {"pdb", pdbInput_},
           {"pdb_download", mayDownload ? symbol : Json()},
           {"dwarf", dwarfInput_},
+          {"map", mapInput_},
           {"symbols", symbolsInput_},
-          // What the load read: {"enabled","kind","path"}, kind "dwarf",
-          // "pdb", "map" or "none".
+          // What the load read: {"enabled","kind","path","files"}, kind
+          // "dwarf", "pdb", "map" or "none", and every file read, the PDB or
+          // DWARF before a MAP.
           {"debug_info", debug},
           {"function_count",
            deferred ? Json(nullptr) : Json(neverd_func_count(session_))},
@@ -1393,6 +1434,12 @@ Json Engine::analysisSnapshot() {
     if (signatureStamp(utf8Path(input.at("path").get<std::string>())) !=
         input.at("stamp"))
       throw Error("input_changed", "Loaded signatures changed; reload them");
+  for (const Json *input : {&dwarfInput_, &mapInput_})
+    if (input->contains("path") && !input->value("stamp", Json()).is_null() &&
+        signatureStamp(utf8Path(input->at("path").get<std::string>())) !=
+            input->at("stamp"))
+      throw Error("input_changed",
+                  "A loaded debug file changed; load it again");
   auto options = openOptions_;
   if (loadOptions()) {
     const auto actual = backendJson(loadOptions().json(session_));
@@ -1413,6 +1460,7 @@ Json Engine::analysisSnapshot() {
           {"signatures", signatureInputs_},
           {"pdb", pdbInput_},
           {"dwarf", dwarfInput_},
+          {"map", mapInput_},
           {"symbols", symbolsInput_},
           {"string_options", stringOptions_.empty()
                                  ? Json::object()
@@ -1435,12 +1483,12 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
       pdb.is_object() && pdb.value("mode", Json("")) == "none";
   if (pdbDeclined)
     options["pdb"] = pdb;
-  // And the DWARF and the symbol table it declined.
-  if (const auto dwarf = snapshot.value("dwarf", Json()); dwarf.is_object())
-    options["dwarf"] = dwarf;
-  if (const auto symbols = snapshot.value("symbols", Json());
-      symbols.is_object())
-    options["symbols"] = symbols;
+  // And the DWARF, the MAP and the symbol table it declined; the files it
+  // chose load below, once the project's edits are checked.
+  for (const char *input : {"dwarf", "map", "symbols"})
+    if (const auto answer = snapshot.value(input, Json());
+        answer.is_object() && answer.value("mode", Json("")) == "none")
+      options[input] = answer;
   execute("open", options);
   if (inputHash() != snapshot.at("input_sha256").get<std::string>())
     throw Error("input_changed",
@@ -1475,6 +1523,12 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
         row.at("text").get_ref<const std::string &>().c_str());
   if (!pdb.is_null() && !pdbDeclined)
     execute("pdb_load", pdb);
+  // The DWARF and MAP files the owner loaded by choice load here the same
+  // way, after its PDB, which outranks a MAP.
+  for (const char *input : {"dwarf", "map"})
+    if (const auto chosen = snapshot.value(input, Json());
+        chosen.is_object() && chosen.contains("path"))
+      execute(std::string(input) + "_load", chosen);
   for (const auto &input : snapshot.at("signatures")) {
     const auto path = utf8Path(input.at("path").get<std::string>());
     if (signatureStamp(path) != input.at("stamp"))
@@ -1538,6 +1592,19 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         engineSymbol<DwarfReferenceFunction>("neverd_dwarf_reference_json");
     if (!reference)
       throw Error("unsupported", "This engine cannot find DWARF");
+    const auto path = stringField(p, "path", {}, 32768);
+    auto result = backendJson(reference(path.c_str()));
+    if (result.contains("error"))
+      throw Error("invalid_request", result.value("error", std::string()));
+    return result;
+  }
+  if (operation == "map_reference") {
+    // The linker MAP beside an input and how it holds against the image,
+    // before the image is opened.
+    const auto reference =
+        engineSymbol<MapReferenceFunction>("neverd_map_reference_json");
+    if (!reference)
+      throw Error("unsupported", "This engine cannot find MAP files");
     const auto path = stringField(p, "path", {}, 32768);
     auto result = backendJson(reference(path.c_str()));
     if (result.contains("error"))
@@ -1668,12 +1735,33 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     const bool pdbDeclined =
         p.contains("pdb") && p.at("pdb").value("mode", Json("")) == "none";
     // The user's answer for the DWARF of an ELF or Mach-O image: none, which
-    // leaves the image without it, is the only one there is.
+    // leaves the image without it, or the file to read it from once the
+    // image is open.
+    const auto declines = [&](const char *input) {
+      return p.contains(input) && p.at(input).value("mode", Json("")) == "none";
+    };
+    const auto chooses = [&](const char *input) {
+      return p.contains(input) && !declines(input);
+    };
     if (p.contains("dwarf") &&
         (!p.at("dwarf").is_object() ||
-         p.at("dwarf").value("mode", Json("")) != "none"))
-      throw Error("invalid_request", "DWARF selection is {\"mode\":\"none\"}");
-    const bool dwarfDeclined = p.contains("dwarf");
+         (!declines("dwarf") && !p.at("dwarf").contains("path"))))
+      throw Error("invalid_request",
+                  "DWARF selection is {\"mode\":\"none\"} or a file");
+    const bool dwarfDeclined = declines("dwarf");
+    const bool dwarfChosen = chooses("dwarf");
+    // And for the linker MAP beside the input: none, or the file to load once
+    // the image is, checked against it or not.
+    if (p.contains("map") &&
+        (!p.at("map").is_object() ||
+         (!declines("map") &&
+          (!p.at("map").contains("path") ||
+           (p.at("map").value("mode", Json("checked")) != "checked" &&
+            p.at("map").value("mode", Json("checked")) != "unchecked")))))
+      throw Error("invalid_request",
+                  "MAP selection is {\"mode\":\"none\"} or a file");
+    const bool mapDeclined = declines("map");
+    const bool mapChosen = chooses("map");
     // And for the image's static symbol table: none, which loads the image
     // as if stripped.
     if (p.contains("symbols") &&
@@ -1753,14 +1841,27 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         throw Error("unsupported",
                     "This engine cannot open a PE without its PDB");
     }
-    // Reading would load the DWARF the user declined.
-    if (dwarfDeclined) {
+    // Reading would load the DWARF the user declined, or one the file they
+    // chose replaces.
+    if (dwarfDeclined || dwarfChosen) {
       const auto search =
           engineSymbol<DwarfSearchFunction>("neverd_session_set_dwarf_search");
       if (!search)
         throw Error("unsupported",
                     "This engine cannot open an image without its DWARF");
       search(next.get(), 0);
+    }
+    // The MAP beside the input the user declined or replaced with a file
+    // stays unread, and so does one a chosen PDB or DWARF file outranks: the
+    // file loads once the image is, and the MAP's names would come first.
+    if (const auto search =
+            engineSymbol<MapSearchFunction>("neverd_session_set_map_search")) {
+      if (mapDeclined || mapChosen || dwarfChosen ||
+          (p.contains("pdb") && !pdbDeclined))
+        search(next.get(), 0);
+    } else if (mapDeclined) {
+      throw Error("unsupported",
+                  "This engine cannot open an image without its MAP file");
     }
     // Reading would load the symbol table the user declined.
     if (symbolsDeclined) {
@@ -1792,12 +1893,12 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       lock_ = std::move(nextLock);
     readOnly_ = readOnly;
     openOptions_ = p;
-    openOptions_.erase("pdb");
-    openOptions_.erase("dwarf");
-    openOptions_.erase("symbols");
+    for (const char *input : {"pdb", "dwarf", "map", "symbols"})
+      openOptions_.erase(input);
     signatureInputs_ = Json::array();
     pdbInput_ = nullptr;
     dwarfInput_ = dwarfDeclined ? Json{{"mode", "none"}} : Json(nullptr);
+    mapInput_ = mapDeclined ? Json{{"mode", "none"}} : Json(nullptr);
     symbolsInput_ = symbolsDeclined ? Json{{"mode", "none"}} : Json(nullptr);
     pdbDisplayNames_ = Json::array();
     backgroundAnalysis_ = p.value("analysis", true);
@@ -1857,6 +1958,24 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       } catch (const std::exception &failure) {
         warnings.push_back(std::string("The project's PDB was not loaded: ") +
                            failure.what());
+      }
+    }
+    // So do the DWARF and MAP files chosen for it, after its PDB.  A file the
+    // engine checks against the image proves itself again; only a MAP the
+    // user took unchecked stays bound to its file stamp.
+    const std::pair<const char *, const char *> chosen[] = {
+        {"dwarf", "The project's DWARF file was not loaded: "},
+        {"map", "The project's MAP file was not loaded: "}};
+    for (const auto &[input, failed] : chosen) {
+      if (!(std::string_view(input) == "dwarf" ? dwarfChosen : mapChosen))
+        continue;
+      auto selection = p.at(input);
+      if (selection.value("mode", Json("checked")) != "unchecked")
+        selection.erase("stamp");
+      try {
+        execute(std::string(input) + "_load", selection);
+      } catch (const std::exception &failure) {
+        warnings.push_back(std::string(failed) + failure.what());
       }
     }
     auto result = metadata();
@@ -1951,6 +2070,87 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     result["analysis"] = forAnalysis;
     result["loaded"] = true;
     return result;
+  }
+  if (operation == "map_inspect" || operation == "map_load") {
+    const auto inspect =
+        engineSymbol<MapInspectFunction>("neverd_session_inspect_map_json");
+    const auto load = engineSymbol<MapLoadFunction>("neverd_session_load_map");
+    if (!inspect || !load)
+      throw Error("unsupported", "This engine cannot load a selected MAP file");
+    const auto path = stringField(p, "path", {}, 32768);
+    if (path.empty())
+      throw Error("invalid_request", "Select a MAP file first");
+    if (!fs::is_regular_file(utf8Path(path)))
+      throw Error("map_load_failed",
+                  "The selected MAP file is not a regular file");
+    const auto stamp = signatureStamp(utf8Path(path));
+    if (p.contains("stamp") && p.at("stamp") != stamp)
+      throw Error("input_changed",
+                  "The selected MAP file changed; select it again");
+    const auto text = ownedString(inspect(session_, path.c_str()));
+    if (text.empty())
+      throw Error("map_load_failed", error());
+    auto result = Json::parse(text, nullptr, false);
+    if (!result.is_object() || !result.contains("match"))
+      throw Error("map_load_failed", "Invalid MAP inspection result");
+    result["stamp"] = stamp;
+    if (operation == "map_inspect")
+      return result;
+    const auto mode = stringField(p, "mode", "checked", 16);
+    if (mode != "checked" && mode != "unchecked")
+      throw Error("invalid_request", "MAP mode is checked or unchecked");
+    if (mode == "checked" && result.value("match", "") == "mismatch")
+      throw Error("map_mismatch", "The MAP file describes another build; "
+                                  "confirm loading it unchecked");
+    if (!load(session_, path.c_str(), mode == "unchecked" ? 1 : 0))
+      throw Error("map_load_failed", error());
+    if (signatureStamp(utf8Path(path)) != stamp)
+      throw Error("input_changed",
+                  "The selected MAP file changed while reading it");
+    mapInput_ = {{"path", path}, {"mode", mode}, {"stamp", stamp}};
+    analyzed_ = false;
+    preparedFunction_.reset();
+    listing_.reset();
+    invalidate();
+    ++revision_;
+    result["mode"] = mode;
+    result["loaded"] = true;
+    result["function_count"] = neverd_func_count(session_);
+    result["debug_info"] = metadata().at("debug_info");
+    return result;
+  }
+  if (operation == "dwarf_load") {
+    const auto load =
+        engineSymbol<DwarfLoadFunction>("neverd_session_load_dwarf");
+    if (!load)
+      throw Error("unsupported",
+                  "This engine cannot load a selected DWARF file");
+    const auto path = stringField(p, "path", {}, 32768);
+    if (path.empty())
+      throw Error("invalid_request", "Select a DWARF file first");
+    // A .dSYM bundle is a directory; its DWARF file proves itself by UUID.
+    std::error_code ec;
+    const bool bundle = fs::is_directory(utf8Path(path), ec);
+    if (!bundle && !fs::is_regular_file(utf8Path(path), ec))
+      throw Error("dwarf_load_failed",
+                  "The selected DWARF file is not a regular file");
+    const auto stamp = bundle ? Json() : signatureStamp(utf8Path(path));
+    if (p.contains("stamp") && p.at("stamp") != stamp)
+      throw Error("input_changed",
+                  "The selected DWARF file changed; select it again");
+    if (!load(session_, path.c_str()))
+      throw Error("dwarf_load_failed", error());
+    dwarfInput_ = {{"path", path}, {"stamp", stamp}};
+    analyzed_ = false;
+    preparedFunction_.reset();
+    listing_.reset();
+    invalidate();
+    ++revision_;
+    return {{"path", path},
+            {"stamp", stamp},
+            {"loaded", true},
+            {"function_count", neverd_func_count(session_)},
+            {"debug_info", metadata().at("debug_info")}};
   }
   if (operation == "signatures_load") {
     const auto path = stringField(p, "path", {}, 32768);
@@ -2260,6 +2460,9 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         throw;
       }
     }
+    // Structure offsets name the members of the types as they are now.
+    if (result.value("problems", Json::array()).empty())
+      operandFormatsChanged();
     // A prototype the decompiler reads, or a type it names, changed: the
     // engine let its analysis go, as loading signatures does, and every view
     // reads anew.
@@ -2269,6 +2472,85 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       invalidate();
       ++revision_;
     }
+    return result;
+  }
+  if (operation == "local_types_fit") {
+    if (!fitsLocalTypes())
+      throw Error("unsupported", "This engine cannot fit local types to code");
+    // The request the C API reads: the search, and what the code does
+    // through the pointer, the instruction's at "address" in "function"
+    // among them.
+    Json request = Json::object();
+    for (const char *key : {"text", "spelling"})
+      if (p.contains(key))
+        request[key] = stringField(p, key, {}, 256);
+    for (const char *key : {"records", "shifts"})
+      if (p.contains(key)) {
+        if (!p.at(key).is_boolean())
+          throw Error("invalid_request",
+                      std::string(key) + " must be true or false");
+        request[key] = p.at(key);
+      }
+    if (p.contains("limit"))
+      request["limit"] = sizeField(p, "limit", 50, 500);
+    if (p.contains("accesses")) {
+      const auto &accesses = p.at("accesses");
+      if (!accesses.is_array() || accesses.size() > 4096)
+        throw Error("invalid_request",
+                    "accesses must be a list of at most 4096 accesses");
+      request["accesses"] = accesses;
+    }
+    // The operand a structure offset would change: a displacement is a
+    // pointer's, whose accesses the engine reads in the function; a number
+    // is an offset by itself.
+    std::optional<std::size_t> operand;
+    if (p.contains("address") && p.contains("parameter"))
+      throw Error("invalid_request",
+                  "A fit follows an instruction's pointer or a parameter, "
+                  "not both");
+    if (p.contains("parameter")) {
+      request["function"] =
+          hexAddress(parseAddress(stringField(p, "function", {}, 32)));
+      request["target"] = {{"parameter", sizeField(p, "parameter", 0, 255)}};
+    }
+    if (p.contains("address")) {
+      const auto address = parseAddress(stringField(p, "address"));
+      std::optional<std::int64_t> number;
+      operand = listing().structOperand(
+          address,
+          p.contains("operand")
+              ? std::optional<std::size_t>(sizeField(p, "operand", 0, 7))
+              : std::nullopt,
+          &number);
+      if (!operand)
+        throw Error("invalid_request",
+                    "The instruction at " + hexAddress(address) +
+                        " has no number or displacement from a register to "
+                        "show as a structure offset");
+      if (number) {
+        if (!request.contains("accesses"))
+          request["accesses"] = Json::array();
+        request["accesses"].push_back(
+            {{"offset", *number}, {"size", 0}, {"use", "address"}});
+      } else {
+        request["function"] =
+            hexAddress(parseAddress(stringField(p, "function", {}, 32)));
+        request["target"] = {{"address", hexAddress(address)}};
+      }
+    }
+    const auto fit =
+        engineSymbol<LocalTypesFunction>("neverd_local_types_fit_json");
+    const auto reply = ownedString(fit(session_, request.dump().c_str()));
+    if (reply.empty())
+      throw Error("local_types_failed", error());
+    Json result;
+    try {
+      result = Json::parse(reply);
+    } catch (const Json::exception &) {
+      throw Error("engine_error", "Engine returned malformed JSON");
+    }
+    if (operand)
+      result["operand"] = *operand;
     return result;
   }
   if (operation == "local_types" || operation == "local_type" ||
@@ -2435,13 +2717,18 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     const auto address = parseAddress(stringField(p, "address"));
     auto &store = history();
     const auto before = codeEditRow(address);
-    const auto after = CodeEdits::change(before, p);
     const auto document = namedView(address, stringField(p, "representation"),
                                     p.value("source_options", Json::object()));
     if (!document)
       throw Error("unsupported",
                   "The engine does not expose editable source targets");
     CodeEdits::validateChange(document->value, p);
+    // The names keep while the code keeps its locals (code_shape).
+    Json request = p;
+    if (const auto shape = document->value.find("code_shape");
+        shape != document->value.end() && shape->is_string())
+      request["shape"] = *shape;
+    const auto after = CodeEdits::change(before, request);
     if (before == after)
       return {{"saved", false}, {"address", hexAddress(address)}};
     const auto checkpoint = store;
@@ -2509,10 +2796,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       operation != "annotation_set" && operation != "rename" &&
       operation != "function_create" && operation != "function_delete" &&
       operation != "function_edit" && operation != "function_attributes" &&
-      operation != "item_define" && operation != "operand_format" &&
-      operation != "decompile" && operation != "cfg" &&
-      operation != "cfg_summary" && operation != "cfg_viewport" &&
-      operation != "xrefs")
+      operation != "function_type" && operation != "item_define" &&
+      operation != "operand_format" && operation != "decompile" &&
+      operation != "cfg" && operation != "cfg_summary" &&
+      operation != "cfg_viewport" && operation != "xrefs")
     throw Error("unsupported", "Unknown worker operation: " + operation);
   const auto address = parseAddress(stringField(p, "address"));
   if (operation == "disasm") {
@@ -2687,6 +2974,31 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (!row)
       throw Error("invalid_request", error());
     return backendJson(row);
+  }
+  if (operation == "function_type") {
+    if (!typesFunctions())
+      throw Error("unsupported", "This engine keeps no function declarations");
+    // The declaration the user edits, one checked before it is stated, or
+    // the one a parameter's new type makes.
+    Json options = Json::object();
+    if (p.contains("declaration"))
+      options["declaration"] = stringField(p, "declaration", {}, 4096);
+    if (p.contains("parameter")) {
+      options["parameter"] = sizeField(p, "parameter", 0, 255);
+      options["type"] = stringField(p, "type", {}, 4096);
+    }
+    using Declaration =
+        const char *(*)(neverd_session_t, neverd_va_t, const char *);
+    const auto declaration = engineSymbol<Declaration>("neverd_func_type_json");
+    const auto reply = ownedString(declaration(
+        session_, address, options.empty() ? nullptr : options.dump().c_str()));
+    if (reply.empty())
+      throw Error("invalid_request", error());
+    try {
+      return Json::parse(reply);
+    } catch (const Json::exception &) {
+      throw Error("engine_error", "Engine returned malformed JSON");
+    }
   }
   if (operation == "function_create" || operation == "function_delete" ||
       operation == "function_edit") {
@@ -2929,25 +3241,40 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                   "Operand types are shown for x86 instructions only");
     // Formats belong to the instruction that starts at the address, and
     // change its operands that are numbers: the one asked for if it is one,
-    // else the last.
+    // else the last.  A structure offset also changes a displacement from a
+    // register, which it takes first.
+    const auto action = stringField(p, "action", {}, 16);
+    const bool structure = action == numberBaseName(NumberBase::Struct);
+    if (structure && !fitsLocalTypes())
+      throw Error("unsupported",
+                  "This engine shows no structure offsets of local types");
     const auto numbers = listing().numberOperands(address);
-    if (!numbers)
+    const auto structs = listing().structOperands(address);
+    if (!numbers || !structs)
       throw Error("invalid_request",
                   "No instruction starts at " + hexAddress(address));
+    // The listing's own number again also clears a structure offset.
+    const bool reset = action == numberBaseName(NumberBase::Number);
+    const auto &candidates = structure || reset ? *structs : *numbers;
+    const std::optional<std::size_t> asked =
+        p.contains("operand")
+            ? std::optional<std::size_t>(sizeField(p, "operand", 0, 7))
+            : std::nullopt;
     std::optional<std::size_t> chosen;
-    if (p.contains("operand"))
-      if (const auto asked = sizeField(p, "operand", 0, 7);
-          asked < numbers->size() && (*numbers)[asked])
-        chosen = asked;
-    for (std::size_t i = numbers->size(); !chosen && i-- > 0;)
-      if ((*numbers)[i])
+    if (structure)
+      chosen = listing().structOperand(address, asked);
+    if (!structure && asked && *asked < candidates.size() && candidates[*asked])
+      chosen = asked;
+    for (std::size_t i = candidates.size(); !structure && !chosen && i-- > 0;)
+      if (candidates[i])
         chosen = i;
     if (!chosen)
-      throw Error("invalid_request", "The instruction at " +
-                                         hexAddress(address) +
-                                         " has no number to format");
+      throw Error("invalid_request",
+                  "The instruction at " + hexAddress(address) +
+                      (structure ? " has no number or displacement from a "
+                                   "register to show as a structure offset"
+                                 : " has no number to format"));
     const auto operand = *chosen;
-    const auto action = stringField(p, "action", {}, 16);
     auto &store = history();
     auto state = store.committedState();
     const auto rowAt = [&](const Json &rows) -> Json {
@@ -2967,7 +3294,21 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
           next = {{"base", entry.at("base")},
                   {"negate", entry.value("negate", false)},
                   {"invert", entry.value("invert", false)}};
-    if (action == "negate")
+    if (structure) {
+      // The member a structure offset names has no sign of its own.
+      next = {{"base", action},
+              {"negate", false},
+              {"invert", false},
+              {"type", stringField(p, "type", {}, 512)},
+              {"delta", p.value("delta", Json(0))}};
+      if (!next.at("delta").is_number_integer())
+        throw Error("invalid_request", "delta must be an integer");
+    } else if ((action == "negate" || action == "invert") &&
+               next.at("base") == numberBaseName(NumberBase::Struct)) {
+      throw Error(
+          "invalid_request",
+          "A structure offset has no sign or bits of its own to change");
+    } else if (action == "negate")
       next["negate"] = !next.at("negate").get<bool>();
     else if (action == "invert")
       next["invert"] = !next.at("invert").get<bool>();
@@ -2978,22 +3319,71 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     else
       throw Error("invalid_request", "action is a base of OperandFormats.def, "
                                      "\"negate\" or \"invert\"");
-    if (formats.set(session_, address, static_cast<int>(operand),
-                    next.dump().c_str()) != 0)
-      throw Error("invalid_request", error());
+    // A structure offset may go to other instructions too, as every access
+    // through the same pointer does: the displacement each one adds to a
+    // register, all of them one step of the history.
+    std::vector<std::pair<std::uint64_t, std::size_t>> others;
+    if (p.contains("also")) {
+      const auto &also = p.at("also");
+      if (!structure)
+        throw Error("invalid_request",
+                    "Only a structure offset goes to other instructions");
+      if (!also.is_array() || also.size() > MaxOperandFormatRows)
+        throw Error("invalid_request",
+                    "also lists at most " +
+                        std::to_string(MaxOperandFormatRows) + " instructions");
+      for (const auto &value : also) {
+        if (!value.is_string())
+          throw Error("invalid_request", "also lists instruction addresses");
+        const auto at = parseAddress(value.get<std::string>());
+        if (at == address ||
+            std::any_of(others.begin(), others.end(),
+                        [&](const auto &other) { return other.first == at; }))
+          continue;
+        if (const auto chosen = listing().structOperand(at, std::nullopt))
+          others.emplace_back(at, *chosen);
+      }
+    }
+    try {
+      if (formats.set(session_, address, static_cast<int>(operand),
+                      next.dump().c_str()) != 0)
+        throw Error("invalid_request", error());
+      for (const auto &[at, index] : others)
+        if (formats.set(session_, at, static_cast<int>(index),
+                        next.dump().c_str()) != 0)
+          throw Error("invalid_request", error());
+    } catch (...) {
+      // The sidecar still holds the formats before these.
+      (void)formats.load(session_);
+      throw;
+    }
+    // One history step holds every row the change made, the instruction's
+    // first.
+    std::map<std::uint64_t, std::pair<Json, Json>> changed;
+    for (const auto &row : state.at("operands"))
+      changed[parseAddress(row.at("addr").get<std::string>())].first = row;
     state["operands"] = operandFormatRows();
-    const Json after = rowAt(state.at("operands"));
-    if (before == after)
+    for (const auto &row : state.at("operands"))
+      changed[parseAddress(row.at("addr").get<std::string>())].second = row;
+    const Json after = changed[address].second;
+    Json command{{"kind", "operand"},
+                 {"address", hexAddress(address)},
+                 {"before", before},
+                 {"after", after}};
+    for (const auto &[at, sides] : changed)
+      if (at != address && sides.first != sides.second)
+        command["rows"].push_back({{"address", hexAddress(at)},
+                                   {"before", sides.first},
+                                   {"after", sides.second}});
+    if (before == after && !command.contains("rows"))
       return {{"address", hexAddress(address)},
               {"operand", operand},
               {"format", next},
+              {"also", 0},
               {"saved", false}};
     const auto checkpoint = store;
     try {
-      store.stage({{"kind", "operand"},
-                   {"address", hexAddress(address)},
-                   {"before", before},
-                   {"after", after}});
+      store.stage(std::move(command));
       store.persist(state);
     } catch (...) {
       store = checkpoint;
@@ -3007,6 +3397,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     return {{"address", hexAddress(address)},
             {"operand", operand},
             {"format", next},
+            {"also", others.size()},
             {"saved", true}};
   }
   if (operation == "decompile") {

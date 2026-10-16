@@ -107,6 +107,7 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   case KernelAPIKind::MmUnlockPages:
   case KernelAPIKind::MmGetSystemAddressForMdlSafe:
   case KernelAPIKind::MmMapLockedPagesSpecifyCache:
+  case KernelAPIKind::MmMapLockedPages:
   case KernelAPIKind::MmUnmapLockedPages:
   case KernelAPIKind::MmProtectMdlSystemAddress:
     // Complete image pages already belong to the recovered file. Their
@@ -144,14 +145,18 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
       Kind != KernelAPIKind::PsGetCurrentProcessId &&
       Kind != KernelAPIKind::PsGetProcessId &&
       Kind != KernelAPIKind::PsGetThreadProcess &&
+      Kind != KernelAPIKind::IoThreadToProcess &&
       Kind != KernelAPIKind::IoGetRequestorProcessId &&
       Kind != KernelAPIKind::ExGetPreviousMode &&
+      Kind != KernelAPIKind::PsGetCurrentThreadPreviousMode &&
+      Kind != KernelAPIKind::RtlPcToFileHeader &&
       Kind != KernelAPIKind::KeGetCurrentIrql &&
       Kind != KernelAPIKind::KeGetCurrentProcessorNumberEx &&
       Kind != KernelAPIKind::ProbeForRead &&
       Kind != KernelAPIKind::ProbeForWrite &&
       Kind != KernelAPIKind::MmProbeAndLockPages &&
       Kind != KernelAPIKind::MmMapLockedPagesSpecifyCache &&
+      Kind != KernelAPIKind::MmMapLockedPages &&
       Kind != KernelAPIKind::MmGetSystemAddressForMdlSafe &&
       Kind != KernelAPIKind::MmUnmapLockedPages &&
       Kind != KernelAPIKind::RtlCopyMemory &&
@@ -179,7 +184,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   case KernelAPIKind::ProbeForWrite:
     return probeUserBuffer(A[0], A[1], uint32_t(A[2]),
                            Kind == KernelAPIKind::ProbeForWrite);
-  case KernelAPIKind::ExGetPreviousMode: {
+  case KernelAPIKind::ExGetPreviousMode:
+  case KernelAPIKind::PsGetCurrentThreadPreviousMode: {
     auto Context = executionProcessContext();
     return uint64_t(Context ? Context->PreviousMode : KernelMode);
   }
@@ -189,6 +195,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
         A, Kind == KernelAPIKind::ZwQuerySystemInformation);
   case KernelAPIKind::RtlGetVersion:
     return queryVersion(A[0]);
+  case KernelAPIKind::RtlPcToFileHeader:
+    return pcToFileHeader(A[0], A[1]);
   case KernelAPIKind::RtlCaptureContext:
     return captureCallerContext(A[0], Context);
   case KernelAPIKind::PsGetCurrentProcessId:
@@ -439,6 +447,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   }
   case KernelAPIKind::MmMapLockedPagesSpecifyCache:
     return mapMDL(A);
+  case KernelAPIKind::MmMapLockedPages:
+    return mapMDL({A[0], A[1], MmCached, 0, 1, HighPagePriority});
   case KernelAPIKind::MmGetSystemAddressForMdlSafe: {
     return mapLockedPages(A[0], static_cast<uint32_t>(A[1]), true);
   }
@@ -550,8 +560,16 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
     return debugMessage(A, 0, ReadArgument);
   case KernelAPIKind::DbgPrintEx:
     return debugMessage(A, 2, ReadArgument);
+  case KernelAPIKind::vDbgPrintExWithPrefix:
+    return prefixedDebugMessage(A);
   case KernelAPIKind::KeGetCurrentIrql:
     return CurrentIRQL;
+  case KernelAPIKind::memcpy_s:
+    return checkedMemoryCopy(A, true);
+  case KernelAPIKind::memmove_s:
+    return checkedMemoryCopy(A, false);
+  case KernelAPIKind::RtlImageNtHeader:
+    return runtime::imageNtHeader(*this, Memory, A[0]);
   case KernelAPIKind::memcpy:
   case KernelAPIKind::memmove:
   case KernelAPIKind::memset:

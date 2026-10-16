@@ -1222,9 +1222,9 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 `windows-alignment-oracle.yml` 透過 `check_windows_alignment.py` 和 `WindowsAlignmentCases.def` 收集 72 項原創 x64 Windows 例外觀測：九種對齊 SSE 形式分別涵蓋七種未對齊位址/權限情境，以及一個已對齊但頁面無法存取的對照。它保留例外代碼、參數、故障 PC、儲存的上下文、原始輸出及原始碼/二進位雜湊，並驗證輸入與 RAM 未改變。這些觀測僅建立 OS 行為依據，不代表 KVM/WHP 執行驗收，也不新增 SEH 支援。
 
-在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 58 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
+在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 68 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 133 個負載產生 266 項 WHP 結果：27 個內建映像、66 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5085 CPU + 266 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 108 driver API checks = 5760`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM66 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 135 個負載產生 270 項 WHP 結果：27 個內建映像、68 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 116 driver API checks = 5772`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 真實 WDK 清單也建置 `driver_device_queries.c`、`driver_file_objects.c` 和 `driver_file_handles.c` 的一般及 CFG 版本。`DriverDeviceQueryTests.cpp` 與 `DriverFileObjectTests.cpp` 共用可攜呼叫端的斷言，在兩種契約、基址與排程策略下檢查保留參考後的刪除、失敗 CREATE、行程身分、最後控制代碼 CLEANUP 與延後 CLOSE。三組均為原生必測項；清單驗證獨立探索含 `NEVERD_WDK_FIXTURE` 的原始碼，避免漏建 WDK 版本。
 
@@ -1666,6 +1666,10 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 
 `SafeSEHReference.*` 檢查不可變 SafeSEH 表成員、畸形或歧義儲存、重定位、其他架構與格式，以及分片間的宣告順序。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` 透過 `NEVERD_NONLOCAL_FINALLY_INPUTS`，測試原生 MSVC x86/x64、O0/O2、GS 開關及來源最佳化開關的 32 種 LLVM 組合。測試驗證 LLVM 與已解析呼叫簽章，並要求不支援的 x86 原生 EH 重建仍遭拒絕。Windows EH 專項作業下載原生 fixture artifact 並執行此矩陣；缺少輸入目錄時測試會明確跳過。
 
+`RegistrationPrologueSaves.*` 與 `PipelineOptNone.*` 驗證來源記憶體記錄、回呼引數與選擇器保護，以及一般程式仍可最佳化。原生 MSVC 矩陣正向檢查 x86 `/Od` (`/GS-`, `/GS`) 的 `nonlocal_finally_return` 匯出，並獨立驗證 COFF。`check_windows_finally_rewrite.py` 在兩個強制基址，以兩種修補模式比較原始與最佳化 IR：24 次觀察器執行、1536 次呼叫、異常鏈與堆疊哨兵及負向對照。僅改標頭的 EXE 至 DLL 適配要求無 TLS 並保留原始程式碼；外層 SEH 觀察器提供異常搜尋。其他 MSVC 形式仍僅涵蓋分析與拒絕。
+
+`RegistrationEH4Wrapper.*` 涵蓋兩個基址、可寫與唯讀執行階段資料、MXCSR 分支、逐路徑定義、呼叫者框架隔離、指令與儲存重疊及精確 PE 重定位。兩種 MSVC 形式各有獨立負向對照。
+
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` 檢查經過證明的 Windows x64 SEH 處理器及共用一般/例外入口中的區域展開呼叫。反例涵蓋展開配置不一致、SP 不穩定或寬度不完整、獨立根、不完整輸入、缺少或偽造例外邊、工作量耗盡、未知堆疊記憶體載入、外部目標重定位及不可信執行階段。LowIR 呼叫證明與模組憑據均進入 SSA 驗證；一般傳回接續測試保留各自的入口規則。
 
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` 和 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` 在 PE、ELF、Mach-O x64 及 ELF i386 上檢查父返回位址損壞和不相交的父區域變數寫入。只保住被呼叫者的返回位址不能授權一般呼叫。
@@ -1952,6 +1956,20 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 
 `KernelFileTransfers` 涵蓋封包欄位、偏移哨兵、僅附加控制代碼、零長度、輸出別名、立即與擱置狀態、工作執行緒通知及發布前拒絕。`OriginalBufferedNativeFileTransfers` 與 `GenuineWdkBufferedNativeFileTransfers` 跨後端、執行契約、載入位址及排程執行匯入與動態查找呼叫。設定 `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` / `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` 使用真正的一般/CFG 映像；不可用後端明確跳過。
 
+受檢 CRT 回歸涵蓋全部位元組／UTF-16 單元、參數截斷、唯讀且無需修改的緩衝區、計數／容量邊界、截斷、空指標順序、逐步別名、部分錯誤、已釋放儲存與掃描上限。原始 `driver_crt_strings.c` 和真實 `NEVERD_WDM_CRT_STRINGS_FIXTURE`／`NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE` 在入口、工作執行緒及卸載階段檢查匯入與動態解析，並涵蓋被動／派送 IRQL 和兩種排程模式。原生閘門要求兩種契約與載入基址；宿主不可用項目明確跳過。
+
+檢查型記憶體回歸區分全容量清零與錯誤時不改寫，涵蓋零計數指標、完整位寬、重疊、分頁／已釋放／唯讀儲存與操作上限。標頭探針涵蓋無符號 DOS 位移、64 位元結果、位址邊界、僅簽章接受及故障順序。原創與真實 WDK CRT 夾具在進入點、工作執行緒及卸載中執行匯入與動態呼叫。固定 WDK 標頭未宣告 `RtlImageNtHeader`，夾具提供本機 ABI 宣告；PE 型別及匯入程式庫仍來自真實套件。 固定 WDK 的 ntoskrnl.lib 將 memcpy_s 連結為客體程式碼；原創夾具驗證直接匯入，兩種夾具都驗證動態匯出呼叫。
+
 `KernelFileTransfers` 驗證刷新權限、各裝置傳輸模式的無緩衝區封包、完整位寬 Information、分派返回前的發布與釋放、工作執行緒／受限 APC 通知及非同步／並行拒絕。既有原創與真正 WDK 檔案傳輸夾具亦執行匯入及動態查找的刷新呼叫，包含使用者 IOSB 與九種完成情形。
 
 `KernelFileTransfers` 檢查控制封包欄位、ULONG 截斷、零長度指標、唯讀輸入複製、IOSB 別名、獨立輸入／輸出界限、延遲完成與原呼叫執行緒通知。既有原創及真正 WDK 傳輸夾具透過匯入與動態查找呼叫兩個控制 API，涵蓋四種緩衝區形態和九種完成模式。
+
+回歸測試涵蓋雜湊輸出別名、窄參數、奇數長度、描述符重讀、循序重疊、配置失敗、NLS 拒絕、部分故障、生命週期及 APC_LEVEL。時間測試涵蓋紀元邊界、ULONG 上限及輸入輸出別名。原創與真實 WDK CRT 驅動在入口、工作執行緒及卸載時靜態和動態呼叫三項介面；入口亦驗證 APC_LEVEL。
+
+純量大寫回歸窮舉 ASCII 及不依賴 NLS 的寬字元範圍，組合參數高位元，並檢查擴充值拒絕、精確參數數量與 APC_LEVEL。原創與真實 WDK CRT 夾具在入口、工作執行緒及卸載時驗證三項靜態匯入與動態查找。WDK ctype.h 保留 16 位元 wint_t，預期值不依賴宿主 C 執行階段。
+
+偵錯回歸涵蓋三個入口的重複 short 規則、客體邊界讀取、逐級前綴緩衝、內嵌 NUL、已釋放或分頁輸入及 IRQL。原始與真實 WDK CRT 測試映像在入口、工作執行緒及卸載中執行靜態及動態前綴呼叫，涵蓋兩種排程、執行契約及載入基址。不可用後端明確跳過。
+
+上下文查詢回歸涵蓋保留／失效執行緒、要求者／工作執行緒／附加上下文、模組邊界與空洞、精確輸出寬度、生命週期、權限及 IRQL。原始與真實 WDK CRT 測試映像執行靜態／動態 KernelMode 查詢，檔案查詢映像另測 UserMode 呼叫者。兩個 WDK 家族均有一般／CFG 映像；缺少的兩個宣告以真實 kit 型別補充本地 ABI。不可用後端明確跳過。
+
+舊式 MDL 映射驗證涵蓋真實 WDK 靜態及動態呼叫、附加程序的工作執行緒、原創映像別名、模式窄化、IRQL、程序切換、過期描述符、重複核心映射及注入的別名預算耗盡。核心耗盡保留 MDL 並回報未建模的 bugcheck；使用者耗盡仍可捕捉。原始包裝器探針僅驗證參數轉送與傳回寬度，不驗證注入的映射器。

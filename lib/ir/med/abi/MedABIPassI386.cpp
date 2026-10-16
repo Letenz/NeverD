@@ -17,7 +17,86 @@
 
 #include "MedABIPassDetail.h"
 
+#include "neverd/Limits.h"
+#include "neverd/lift/X86Regs.h"
+
 namespace neverd {
+
+bool recoverI386RegistrationCookieCall(const MedFunc &Func,
+                                       const MedBlock &Block, size_t CallIndex,
+                                       const TargetRegInfo &TRI,
+                                       MedCallInfo &Info) {
+  if (!Func.ExceptionMetadata || !Func.RegistrationStates || Func.SkippedSSA ||
+      CallIndex >= Block.Ops.size())
+    return false;
+  const auto &EH = *Func.ExceptionMetadata;
+  const auto &States = *Func.RegistrationStates;
+  const auto &Call = Block.Ops[CallIndex];
+  if (!EH.Registration || EH.ParseStatus != ExceptionParseStatus::Complete ||
+      EH.Encoding != ExceptionEncoding::X86ScopeTableEH4 ||
+      Func.Entry != EH.CodeRange.Begin || !States.SecurityCookiesComplete ||
+      States.CookieChecks.size() > limits::kMaxRegistrationEHRecords ||
+      !States.CookieCheckVA || States.CookieCheckVA > UINT32_MAX || Call.Dead ||
+      Call.Opcode != NdOp::CALL || Call.NumInputs != 1 ||
+      !Call.Inputs[0].isConst() || Call.Inputs[0].Size != 4 ||
+      Call.Inputs[0].ConstVal != States.CookieCheckVA || Call.OriginSeq < 0 ||
+      Call.ExactArguments || Call.SourceCallHint || Call.DoesNotReturn)
+    return false;
+  const RegistrationCookieCheck *Check = nullptr;
+  for (const auto &Candidate : States.CookieChecks)
+    if (Candidate.Address == Call.Addr && Candidate.OpSeq == Call.OriginSeq) {
+      if (Check)
+        return false;
+      Check = &Candidate;
+    }
+  if (!Check || Call.Addr < Block.StartAddr || Check->EndAddress <= Call.Addr ||
+      Check->EndAddress > Block.EndAddr ||
+      !EH.ownsCode({Call.Addr, Check->EndAddress}))
+    return false;
+  size_t Work = 0;
+  bool Found = false;
+  for (const auto &CurrentBlock : Func.Blocks)
+    for (const auto &Current : CurrentBlock.Ops) {
+      if (++Work > limits::kMaxRegistrationEHStateWork)
+        return false;
+      if (Current.Addr != Call.Addr || Current.OriginSeq != Call.OriginSeq)
+        continue;
+      if (Found || &Current != &Call || &CurrentBlock != &Block)
+        return false;
+      Found = true;
+    }
+  if (!Found)
+    return false;
+
+  // The LowIR receipt proves the checker and its decoded cookie input. Use
+  // current SSA definitions for that input; EDX, XMM values and private stack
+  // spills are not additional arguments of the compiler's cookie protocol.
+  static constexpr uint64_t CookieRegisters[] = {x86reg::RCX};
+  auto Layout = TRI.integerArgumentLayout(BinaryFormat::COFF);
+  Layout.Registers = CookieRegisters;
+  std::optional<MedVar> Argument;
+  for (size_t I = CallIndex; I != 0; --I) {
+    const auto &Op = Block.Ops[I - 1];
+    if (isAbiRecoveryBarrier(Op))
+      break;
+    if (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == x86reg::RCX &&
+        Op.Output.Size == 4) {
+      Argument = argRegSourceValueInBlock(Block, I - 1, TRI, Layout);
+      break;
+    }
+  }
+  if (!Argument)
+    Argument = findReachingArgReg(Func, TRI, Arch::X86, Block.Id, 0, Layout,
+                                  /*AllowUnknownLiveIn=*/false, nullptr);
+  if (!Argument || Argument->Size != 4)
+    return false;
+  Info.Args = {*Argument};
+  Info.IntegerRegisterArgCount = 1;
+  Info.FloatingRegisterArgCount = 0;
+  Info.ArgumentsInCalleeRegisterOrder = true;
+  Info.StackArgumentSlotBytes = 4;
+  return true;
+}
 
 extern const AbiCallPolicy I386AbiCallPolicy;
 const AbiCallPolicy I386AbiCallPolicy = {

@@ -181,6 +181,11 @@ prepareSEHJumps(const MedFunc &Source, llvm::Function &Parent,
       auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(&I);
       if (!Slot || Slot == &Frame)
         continue;
+      // Ordinary finally inputs/results belong to an invocation, not the
+      // logical register state captured by setjmp. Each call initializes its
+      // own inputs; runtime entries have a separate unknown-register path.
+      if (Slot->getMetadata(windows_eh_md::RegistrationRegisterAttachment))
+        continue;
       if (!Slot->isStaticAlloca() || Slot->getAddressSpace() ||
           !Slot->getAllocatedType()->isSingleValueType() ||
           Slot->isArrayAllocation())

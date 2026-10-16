@@ -29,7 +29,8 @@ bindSEHCallbackStateWrites(const MedFunc &Source, const llvm::Function &Parent,
 llvm::Expected<std::set<const llvm::InvokeInst *>> validateSEHRetainedScopes(
     const MedFunc &Source, const llvm::Function &Parent,
     const llvm::BasicBlock &SourceEntry,
-    const std::map<uint32_t, const llvm::BasicBlock *> &Unwinds);
+    const std::map<uint32_t, const llvm::BasicBlock *> &Unwinds,
+    const llvm::BasicBlock *CapturedEntry = nullptr);
 
 } // namespace neverd::coff_registration
 

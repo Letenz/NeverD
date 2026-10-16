@@ -72,6 +72,43 @@ the file through the strict PDB loader.
 or before the PDB they chose loads. Epoch and request guards retire downloads on
 document changes, and network errors do not change the image.
 
+## Debug information files
+
+`debug/DebugInfoDiscovery` owns which debug files an image is read with and how
+their names rank: a PDB or DWARF, which also carries types and lines, before a
+linker MAP, which names addresses and nothing more. The PDB or DWARF is the
+session's debug context; a MAP the caller names is a names-only supplement
+published after it (`applyDebugInfo`), so it fills only the addresses the PDB or
+DWARF leaves unnamed. The MAP beside an image is read only when no PDB or DWARF
+describes it. `debug/MapFile` reads a MAP in its linker's dialect against the
+image's layout, read from its headers: link.exe's segment:offset publics are
+placed through the image's section numbering, which also reads IDA's and
+Borland's MAPs without an Rva+Base column, and names made up from an address
+(`MapAutomaticNames.def`) are left out. It also holds the MAP against the image
+(`MapMatches.def`): link.exe and lld-link record the build stamp, the other
+dialects the output sections' addresses and sizes, and most functions outside
+the image's code mean another layout. Discovery passes over a MAP that
+mismatches; a named one fails the load unless the request takes it unchecked.
+
+DWARF companions are found in GDB's order (`DWARFLocation.def`): the image's own
+sections, a `.dSYM` beside a Mach-O image, the file a debug directory keeps under
+an ELF image's build ID, the file its `.gnu_debuglink` names with the CRC it
+records, then a `.debug` file named after it. `debug/DebugFileIdentity` reads
+the identities they share; a companion of another build ID is passed over, and
+a DWARF file the user names must be of the image's machine and build. A
+companion stays `UnauthenticatedCompanion` trust: its names and lines load, its
+object extents do not. `debug/CompressedSections` expands SHF_COMPRESSED
+sections before the DWARF reader sees them, since the LLVM NeverD links may
+lack the decompressors.
+
+A debug file loaded into an open session (`neverd_session_load_pdb_ex`,
+`neverd_session_load_dwarf`, `neverd_session_load_map`) reads the image again
+with the options it was loaded with and publishes the session's whole request
+in rank order (`reloadDebugInformation`), so the result is the one a load that
+named the file gives: a PDB loaded after a MAP replaces the MAP's names. User
+names, comments and edits are kept, and the session is left as it was when the
+input changed or a file fails to load.
+
 ## Local types boundary
 
 `lib/types` (NeverDTypes) owns a program's named types as a reader sees and
@@ -180,6 +217,49 @@ after the program's PDB and before the user's declarations:
 - a typedef names the program's type, as C binds it;
 - a header record laid out with a type the program sizes otherwise is left
   out and reported (`conflicts`).
+
+`TypeFit.h` judges which records a pointer points at by what the code
+does through it, as an analyst checks a guess against the code.
+`memberAt` lands an access of some bytes at an offset on the member that
+holds it: exactly, at its start or inside it, on padding, or outside the
+record.  It prefers, among a union's alternatives, the one the access fits
+best, a named member over an array's element and a scalar over the record
+it begins.  `fitTypes` ranks the records:
+- those that hold every access come first;
+- then the better score, where an access landing exactly on a named member
+  counts most, on an array's element a little less, and one landing in part
+  or on padding counts against;
+- a pointer into a record, as a list entry's is, takes the member start that
+  explains accesses before it best (CONTAINING_RECORD's shift).
+It matches names as an editor's quick open does, a record's typedefs and
+`Type.member` paths included.  The evidence comes from MedIR
+(`MedPointerAccesses`): every load and store whose address is an SSA value
+plus a constant, through copies, and every such address the code passes on.
+
+A function's type, as IDA's Y sets it, is the user's C declaration of it,
+kept by its address among the function's attributes ("type",
+`FunctionAttributes.def`). `parseFunctionDeclaration` reads it against the
+library without changing it: one function, of the library's types only. The
+C API refuses a declaration that does not read, a variadic one, and one
+whose calling convention NeverD does not place the image's parameters by.
+`LocalTypesDebugContext` is the one layer that applies it: its
+`resolveFunction` gives the declared return and parameters ahead of the debug
+information's and the prototypes the library knows by name, and wraps a
+`NullDebugContext` for an image without debug information. The C backends
+then bind each declared parameter to the register or stack slot its
+convention passes it in (`placeSourceParameters`), as they bind a PDB's, and
+a function's callers see it. Analysis never reads a declaration, so a change
+drops only what the decompiler made (`Session::declarationsChanged`).
+`neverd_func_type_json` reports the declaration the user edits: theirs, else
+the signature the decompiler prints, which reads as C. It also gives the one
+Convert to struct * makes, with one parameter's type replaced, and the
+register or slot each parameter arrives in; `neverd_local_types_fit_json`
+ranks the records by what the code does through that register.
+`neverd_local_types_fit_json` joins the two for an instruction's memory
+operand, and `neverd_local_type_member_json` names one landing.  A
+structure offset is an operand format (`OperandFormats.def`) that names a
+local type and a delta; the worker spells it from the type's current
+layout, so an edited type renames its operands.
 
 `neverd_types_convert` and `neverd types --data-model` read and render
 declarations without a program, which is how the generator builds the
@@ -532,6 +612,11 @@ LLVM declaration materialization shares the direct-call ABI rules with exact
 immutable import targets, including FP, variadic and va_list signatures.
 Known integer parameters use the target's pointer-width carrier so narrow
 register aliases and shard order do not choose different declarations.
+A callee nothing describes is declared from its first call's arguments.
+Where the module's calls pass it different numbers of arguments, those past
+the ones every call passes are variadic (`DirectCallArgumentCounts`), so a
+longer later call keeps all of its arguments instead of being cut to the
+first call's.
 `LLVMCallContract` reconciles exact targets revealed by optimization or shard
 linking, drops surplus fixed arguments and adapts integer/pointer carriers.
 Missing arguments, incompatible observed results and musttail changes fail
@@ -584,6 +669,45 @@ checked near returns and continuations. Call-ABI recovery and LLVM callback
 lowering consume this one binding, so callback-private pushes cannot become
 cdecl arguments. Outlining exposes exact instruction clone identities for
 removing preflighted unused return transports without reopening the proof.
+`RegistrationStateSEHParentExit` owns the lifetime of an abandoned CRT unwind
+guard. Reconnecting the same live registration preserves its current try level
+and jump-buffer bindings. `SEHParentChainComplete` separately gates native parent
+resumption without invalidating otherwise complete logical source-state analysis.
+LLVM preparation and the independent COFF source check enforce that native gate;
+shared MedIR bindings retain the source exits for ABI recovery and decompilation.
+Once the native guard proof fails, guard-only lattice changes no longer reschedule
+logical state propagation; the native failure remains permanent. Native return
+projection still binds both near returns and parent branches independently.
+`RegistrationStateSEHParentOwnership` anchors acyclic continuation tails only
+when every physical successor leads to existing parent code. Its possible
+continuations remain separate from ordinary/except entries: they grant neither
+reaching state nor runtime-handler memory privileges before the exact SavedESP
+transfer succeeds. Callback roots, unanchored terminals and cycles are excluded.
+MedIR's `RegistrationSEHParentExit` binds the exact
+SavedESP restore and parent branch; callback ownership stops at this boundary.
+`RegistrationSEHParentRoots` gives an exclusively resumed parent block its own
+established EBP definition before SSA renaming. Every actual incoming edge must
+be a bound parent transfer; ordinary or independent entries keep their existing
+definitions. This prevents the callback's private runtime seed from escaping
+into parent code while preserving the current data registers and restored ESP.
+`MedLLVMRegistrationSEHParentExit` projects a private SjLj context transactionally,
+after checked PHI copies. `COFFRegistrationSEHParentExit` independently checks
+every context alias, capture and transfer; its source companion binds the
+resumption switch to exact source scope entries. Frame reaching-definition
+replay follows the authenticated callback transfers across this resumption,
+preserving current logical state instead of treating entry capture as a reset.
+`RegistrationSEHRegisters` inserts explicit data-register exchanges before SSA
+for checked ordinary finally calls. These intrinsics keep inputs and outputs in
+the ordinary def-use and partial-register passes. `MedLLVMRegistrationSEHRegisters`
+owns their private parent-frame slots and the separate runtime entry values;
+`COFFRegistrationSEHRegisters` authenticates storage and source execution order.
+These invocation slots are separate from the logical register snapshots of
+source setjmp calls and must not be restored by source longjmp resumptions.
+The shared scope-retention owner also includes rows used solely by authenticated
+ordinary calls, without making their source try levels active.
+`abi/MedABIPassI386.cpp` binds an authenticated EH4 cookie check to its current
+ECX value. Finally register exchanges and inferred callee signatures cannot add
+EDX, floating-point or stack arguments to that checked protocol.
 `X86/RegistrationSEHStateStore.cpp` binds complete source receipts to exact
 MedIR callback stores. Native writes require a checked byte, word or full-word
 constant store with a proved finite set of complete resulting states. Narrow
@@ -659,6 +783,10 @@ This prevents unused PHI copies from reading unavailable register values in
 `optnone` code. Escaping slots, live values, source observations and volatile or
 atomic operations remain intact; no source-frame initialization is invented.
 Ordinary analysis IR retains its original value graph.
+
+`OptimizationGuards` supplements LLVM’s `optnone` instrumentation: optional module and call-graph passes are skipped when the module defines a protected function, because those passes can rewrite its CFG or replace callback arguments with poison. Required adaptors and ordinary function optimizations still run. Registration source projection retains prologue-save memory occurrences until native reconstruction can bind them.
+
+`COFFRegistrationEH4Wrapper` owns the retained EH4 forwarding proof. `COFFRegistrationScalarLeaf` checks a bounded forward-only scalar CFG, initialized registers and flags, private MXCSR storage and mapped runtime data. It rejects caller-frame reads, escaping addresses, unknown calls, overlapping instructions and incomplete returns. LLVM emission and independent COFF validation consume the same loader proof; the original wrapper, helper and dynamic data reads remain in place.
 `lib/ir/low/X86/RegistrationEntryABI.cpp` binds those returns to source bytes and
 keeps callback returns separate. The LLVM adapter selects cdecl, stdcall,
 thiscall or fastcall and independently validates its exact parameter attributes;
@@ -2029,6 +2157,22 @@ control-flow edges through the shared reachable-mode analysis. A cross-state
 `BLX` can establish an ARM target without treating an unflagged symbol as ARM
 proof. Decoding is limited to reached instruction spans; an unproved gap in a
 mixed image retains unknown mode.
+The ELF loader pairs each ARM PLT entry with its import by decoding the GOT
+cell the entry's instructions compute (`findARMPLTVeneers`), in mixed ARM/Thumb
+images as in single-mode ones: the PLT is ARM code either way, and a Thumb
+caller's `blx` reaches the same stub. Without the pairing every import call of
+a Thumb library read as an unnamed local function, without its prototype or
+no-return contract.
+A long-branch or interworking thunk a linker wrote between a branch and an
+import's stub stands for that import too: a Thumb tail call enters the ARM PLT
+through lld's `__ThumbV7PILongThunk_*`, a distant A64 call through
+`__AArch64ADRPThunk_*`. `linkerThunkAt` (loader/LinkerThunk) decodes the forms
+`BranchEncoding.def` lists, and signature matching follows a reference
+through the same decoder. Function discovery pairs a thunk with an import
+only when its exact target is a paired stub and only for the
+multi-instruction forms a linker alone writes (`linkerLongBranchThunkAt`); a
+direct jump to a stub ends many a routine. Thunks to the image's own routines
+are not followed into calls yet.
 Validated ARM and Thumb instruction relocations can also seed their exact
 instruction addresses. This can recover an otherwise uncalled function when
 its entry instruction has such a relocation, without assuming that an
@@ -2462,6 +2606,45 @@ register (`add r0, pc; ldr r0, [r0]; blx r0`), and the C++ virtual-call rule
 that passes a two-load target's object finds none in a register that holds the
 target. HighIR's stack scan takes no prologue save for an indirect call either
 (`isIncomingRegisterSave`, shared with recovery).
+
+A caller-saved register holds, after a call, only what that call left in it,
+so no compiler passes that value on as an argument. `ValuesLeftByCalls`
+(`MedCallLeftovers.h`) names such values: each call's clobber of a register it
+may change whole, and each join of nothing else, loops of joins included.
+Clobbers that keep a preserved low half do not count, nor do clobbers the
+struct-return recovery still holds as possible result fields, nor joins the
+exception dispatcher enters with another value. Past the register arguments
+the callee is known to take, the first such register ends a call's register
+arguments, or passes zero where stack arguments follow and need their places.
+An indirect call has no callee to vouch for its stack slots. Where integer
+arguments fill every register before the stack, an unset register below
+those slots shows they are no arguments (an -O0 spill near the call), so they
+end with it.
+That count is the named parameters of a variadic callee and zero for a callee
+nothing describes. Below it the callee reads the register, and the unknown
+value stays. The named count of an AAPCS64 or AAPCS32 variadic routine comes
+from its register save area, which spills the argument registers from the
+first unnamed one to the last (`MedFunc::VariadicFirstRegister`). Recovery
+applies the rule to `MedCallInfo::Args`, and HighIR's hole filling and
+positional fill use the same predicate, since x86-64 HighC builds its call
+arguments with its own scan. Because a variadic routine of the image keeps its
+arity open for its callers' overflow, that arity gives a tail jump to it no
+incoming stack slots to pass on. A call to such a routine records its named
+count (`MedCallInfo::VarArgFixedCount`), so an LLVM declaration of a routine
+the module does not emit stays variadic. A declaration made from one call's
+arguments would cut another call's.
+
+Where every variadic argument travels on the stack (Darwin AArch64, i386
+cdecl), no register save area shows that a routine is variadic. The routine
+is variadic when the `va_list` it passes to a known consumer (`vprintf` and
+the rest of `isVaListConsumer`) points into its own incoming arguments, and
+module recovery then keeps the routine's arity open for its callers. A stub
+the function names leave unnamed takes its import's name, so a wrapper still
+shows through a `sub_` name. A call that takes every argument from the stack
+passes nothing in a slot that holds a scratch register's incoming value where
+the caller takes no parameter in it (the alignment `push eax` above the
+arguments). Such a slot is dropped above the arguments, and below one it
+passes zero.
 
 `PipelineWideIntReturnEvidence` checks the high-word carrier on every return
 before the shared pipeline widens an x86/ARM32 function to a register-pair
@@ -7049,6 +7232,10 @@ KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing
 
 `KernelModelFileRequests` owns native device/filesystem control buffer capture and publication. Both use the same file hold, caller continuation and packet release; producer-specific deferral distinguishes device control from FSCTL. Control output limits are checked by the shared completion validator.
 
+`KernelModelRuntime` owns kernel CRT classification, in-place conversion and checked string writes. `KernelCStringAPIs.def` supplies export identity, argument count and IRQL admission to every caller surface. Unit accesses reuse guest-memory permissions and lifetime guards; reports and adapters do not repeat copy or error semantics.
+
+`KernelMemoryCalls` owns checked memory-copy admission and reuses its existing move/fill operations, including pool lifetime and user-memory checks. `KernelModelRuntime` owns the raw `RtlImageNtHeader` signature probe. This probe is distinct from the loader validation needed to execute an image; adapters do not duplicate either operation.
+
 ### Darwin imported file calls
 
 DarwinLibSystemCalls.def adds exact open/lseek/pread/pwrite/dup/dup2 identities.
@@ -7072,6 +7259,16 @@ records mmap's early zero-length or missing-sharing-type EINVAL, and adds
 MAP_UNIX03 only to the separate kernel arguments. The common completion path
 owns errno and return-frame publication. DarwinMemory remains the sole owner
 of mappings, current/maximum rights, reserved pages and retained file leases.
+
+`KernelModelRuntime` owns Unicode hashing, the shared NLS-independent uppercase decision and conversion to 1980 epoch seconds. `KernelRuntimeCalls` owns uppercase allocation through the existing paged-string pool. The string/time API tables supply export identity, argument counts and APC_LEVEL admission; field access order remains inside these owners.
+
+`uppercaseCharacter` narrows scalar carriers before admission and delegates to the existing `uppercaseUnicodeUnit` owner. The CRT and counted-string API tables expose the same decision with independent ABI identities; no adapter or host locale supplies a second mapping.
+
+`KernelModelRuntime` owns scalar debug argument widths and the common prefix/buffer publication rule. Native variadic calls use the existing call-ABI reader; the explicit x64 `va_list` adapter checks each requested guest scalar with an eight-byte stride. Neither dispatcher nor adapter duplicates format parsing.
+
+Thread query aliases reuse the existing thread/process and execution-context owners, including during process attachment. `RtlPcToFileHeader` uses `LoadedModules`, alongside system module queries; `ImageRAM` describes mapped regions and is not a substitute for module identity. No host process, thread or module state is consulted.
+
+`KernelMDLCalls` normalizes the legacy mapping entry into the existing six-argument mapper. `KernelPhysicalMemory` and MDL records continue to own cache attributes, page identity, permissions and lifetime. Only fully released kernel image aliases remain recoverable without an environment dependency; user views retain that dependency.
 
 
 ### Linux ioctl observation ownership

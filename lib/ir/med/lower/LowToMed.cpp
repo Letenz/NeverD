@@ -986,6 +986,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     modelKnownWideCallReturns(Func);
     debugVerifyMedFunc(Func, "modelKnownWideCallReturns");
 
+    modelSEHFinallyRegisters(Func);
+    debugVerifyMedFunc(Func, "modelSEHFinallyRegisters");
+
     fixupSubRegisters(Func);
     debugVerifyMedFunc(Func, "fixupSubRegisters");
 

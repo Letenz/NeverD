@@ -335,6 +335,7 @@ private:
   llvm::Expected<uint64_t> initializeUnicodeString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> ansiToUnicodeString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> unicodeToAnsiString(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> upcaseUnicodeString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> freeCountedString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> stringFromGUID(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> guidFromString(llvm::ArrayRef<uint64_t> A);
@@ -350,6 +351,9 @@ private:
   llvm::Expected<uint64_t> debugMessage(
       llvm::ArrayRef<uint64_t> A, unsigned FormatIndex,
       llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument);
+  llvm::Expected<uint64_t> prefixedDebugMessage(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> checkedMemoryCopy(llvm::ArrayRef<uint64_t> A,
+                                             bool ClearOnError);
   llvm::Expected<uint64_t> memoryCall(KernelAPIKind Kind,
                                       llvm::ArrayRef<uint64_t> A);
 
@@ -1102,6 +1106,7 @@ private:
   llvm::Expected<uint64_t> resolveRoutine(uint64_t Address);
   llvm::Expected<uint64_t> querySystemInformation(llvm::ArrayRef<uint64_t> Args,
                                                   bool Trusted);
+  llvm::Expected<uint64_t> pcToFileHeader(uint64_t PC, uint64_t Output);
   std::vector<KernelLoadedModule> LoadedModules;
   // Only loader-owned mapped spans, excluding image holes. Physical backing is
   // registered lazily when a permitted image range is first locked.

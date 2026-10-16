@@ -1900,3 +1900,21 @@ KernelFileSystem conserve un provider token par FILE_OBJECT. L’opération priv
 `KernelModelFileRequests` possède aussi la production sans tampon de `ZwFlushBuffersFile`. Le contrôle du masque d’accès et la publication/libération immédiate diffèrent des paquets natifs de lecture, écriture et interrogation différés ; la notification de l’appelant initial et la libération unique restent partagées.
 
 `KernelModelFileRequests` possède la capture et la publication des tampons de contrôle natifs. Conservation du fichier, continuation de l’appelant et libération du paquet sont partagées ; le report propre au producteur distingue le contrôle de périphérique de FSCTL. Le validateur commun de complétion borne la sortie.
+
+`KernelModelRuntime` possède la classification CRT, les conversions en place et les écritures de chaînes vérifiées. `KernelCStringAPIs.def` fournit identité exportée, nombre d’arguments et admission IRQL à toutes les voies d’appel. Les accès unitaires réutilisent permissions et durée de vie invitées ; rapports et adaptateurs ne réimplémentent pas les copies ou erreurs.
+
+`KernelMemoryCalls` possède l’admission des copies vérifiées et réutilise move/fill, la durée de vie du pool et les contrôles de mémoire utilisateur. `KernelModelRuntime` possède la sonde de signature brute `RtlImageNtHeader`. Cette sonde ne remplace pas la validation du chargeur ; les adaptateurs ne dupliquent aucune de ces sémantiques.
+
+`OptimizationGuards` complète le contrôle `optnone` de LLVM : les passes facultatives de module et de graphe d’appels sont ignorées si le module définit une fonction protégée, car elles peuvent modifier son CFG ou remplacer les arguments du rappel par poison. Les adaptateurs obligatoires et les optimisations des fonctions ordinaires restent actifs. La projection conserve les écritures de sauvegarde du prologue jusqu’à leur liaison par la reconstruction native.
+
+`COFFRegistrationEH4Wrapper` possède la preuve de transfert EH4 conservé. `COFFRegistrationScalarLeaf` vérifie un CFG scalaire borné sans retour arrière, les registres et drapeaux initialisés, le stockage MXCSR privé et les données dynamiques de l’image. Il refuse les lectures du cadre appelant, les adresses échappées, appels inconnus, instructions chevauchantes et retours incomplets. LLVM et la validation COFF indépendante partagent cette preuve du chargeur ; le code original et ses lectures dynamiques restent en place.
+
+`KernelModelRuntime` possède le hachage Unicode, la décision commune de mise en majuscules indépendante de NLS et la conversion en secondes depuis 1980. `KernelRuntimeCalls` utilise le propriétaire existant du pool de chaînes paginé. Les tables d’API définissent les exports, le nombre d’arguments et APC_LEVEL ; les propriétaires conservent l’ordre d’accès aux champs.
+
+`uppercaseCharacter` réduit les arguments avant leur admission et délègue à `uppercaseUnicodeUnit`. Les tables CRT et Unicode partagent cette décision avec des identités ABI distinctes ; aucun adaptateur ni paramètre régional hôte ne fournit une seconde correspondance.
+
+`KernelModelRuntime` possède les largeurs scalaires et la règle commune de publication du préfixe et du tampon. Les appels variadiques ordinaires utilisent le lecteur ABI existant ; l’adaptateur x64 `va_list` vérifie chaque scalaire invité demandé avec un pas de huit octets. Ni le répartiteur ni l’adaptateur ne dupliquent l’analyse du format.
+
+Les alias réutilisent les propriétaires existants des threads/processus et des contextes, même pendant un attachement. `RtlPcToFileHeader` utilise `LoadedModules`, comme les requêtes de modules système ; les régions mappées de `ImageRAM` ne remplacent pas l’identité des modules. Aucun état de l’hôte n’est consulté.
+
+`KernelMDLCalls` normalise l’entrée historique vers le mappeur existant à six arguments. `KernelPhysicalMemory` et les enregistrements MDL conservent les attributs de cache, l’identité des pages, les droits et la durée de vie. Seuls les alias d’image noyau entièrement libérés ne laissent aucune dépendance environnementale ; les vues utilisateur la conservent.
