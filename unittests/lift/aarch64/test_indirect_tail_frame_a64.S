@@ -255,6 +255,110 @@ BEGIN tail_unmodelled_intrinsic
   br x0
 END tail_unmodelled_intrinsic
 
+// libc++'s __shared_weak_count::__release_shared: a call, then the exclusive
+// decrement of the object's count while the link word is saved.  A store
+// through a pointer the function did not derive from its frame cannot reach
+// that frame.
+BEGIN tail_saved_link_foreign_store
+  stp x20,x19,[sp,#-32]!
+  stp x29,x30,[sp,#16]
+  add x29,sp,#16
+  mov x19,x0
+  bl tail_helper
+  add x8,x19,#8
+.Lforeign_retry:
+  ldaxr x9,[x8]
+  sub x10,x9,#1
+  stlxr w11,x10,[x8]
+  cbnz w11,.Lforeign_retry
+  ldr x8,[x19]
+  ldp x29,x30,[sp,#16]
+  mov x0,x19
+  ldr x1,[x8,#32]
+  ldp x20,x19,[sp],#32
+  br x1
+END tail_saved_link_foreign_store
+
+// A store through an address derived from the frame may hit the saved link
+// word.
+BEGIN tail_frame_alias
+  stp x29,x30,[sp,#-16]!
+  add x2,sp,x3
+  str x1,[x2]
+  ldp x29,x30,[sp],#16
+  br x0
+END tail_frame_alias
+
+// Once a frame address has left for memory the function does not track, any
+// store may be the one through it.
+BEGIN tail_exposed_frame_alias
+  stp x29,x30,[sp,#-16]!
+  mov x9,sp
+  str x9,[x3]
+  str x1,[x2]
+  ldp x29,x30,[sp],#16
+  br x0
+END tail_exposed_frame_alias
+
+// A frame address spilled to the frame and read back through an address the
+// spills cannot follow is still a frame address.
+BEGIN tail_reloaded_frame_alias
+  stp x29,x30,[sp,#-32]!
+  add x9,sp,#8
+  str x9,[sp,#16]
+  ldr x10,[sp,x4]
+  str x1,[x10]
+  ldp x29,x30,[sp],#32
+  br x0
+END tail_reloaded_frame_alias
+
+// Half of a frame address stored where no spill records it, or a frame
+// address stored above the frame, escapes as surely as one stored elsewhere.
+BEGIN tail_narrow_frame_alias
+  stp x29,x30,[sp,#-32]!
+  add x9,sp,#8
+  str w9,[sp,#16]
+  str x1,[x2]
+  ldp x29,x30,[sp],#32
+  br x0
+END tail_narrow_frame_alias
+
+BEGIN tail_outside_frame_alias
+  stp x29,x30,[sp,#-16]!
+  mov x9,sp
+  str x9,[sp,#24]
+  str x1,[x2]
+  ldp x29,x30,[sp],#16
+  br x0
+END tail_outside_frame_alias
+
+// A trap ends its own path; the other path still restores the frame.
+BEGIN tail_after_trap_path
+  stp x29,x30,[sp,#-16]!
+  cbz x1,.Ltrap_path
+  ldp x29,x30,[sp],#16
+  br x0
+.Ltrap_path:
+  brk #0x3e8
+END tail_after_trap_path
+
+BEGIN tail_udf_padding
+  br x0
+  udf #0
+END tail_udf_padding
+
+// The thread pointer read writes only its destination.
+BEGIN tail_thread_pointer
+  mrs x1,tpidr_el0
+  str x2,[x1,#8]
+  br x0
+END tail_thread_pointer
+
+BEGIN tail_link_from_sysreg
+  mrs x30,tpidr_el0
+  br x0
+END tail_link_from_sysreg
+
 BEGIN tail_helper
   ret
 END tail_helper

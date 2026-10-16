@@ -64,17 +64,19 @@ TEST_F(IndirectTailFrame, ActiveOrUnknownTailFrameRetainsItsIndirectBranch) {
   auto Image = neverd::loadBinary(compileTailFrameFixture().string());
   ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
   for (const char *Name :
-       {"tail_frame_live",          "tail_frame_unknown",
-        "tail_frame_join",          "tail_link_changed",
-        "tail_link_unrestored",     "tail_link_slot_changed",
-        "tail_link_slot_partial",   "tail_unknown_alias",
-        "tail_frame_borrowed",      "tail_stack_target",
-        "tail_link_target",         "tail_frame_loop",
-        "tail_link_loop",           "tail_independent_root",
-        "tail_exclusive_live",      "tail_exclusive_link_slot",
-        "tail_atomic_link_slot",    "tail_exclusive_escape",
-        "tail_atomic_escape",       "tail_exclusive_link_load",
-        "tail_unmodelled_intrinsic"}) {
+       {"tail_frame_live",           "tail_frame_unknown",
+        "tail_frame_join",           "tail_link_changed",
+        "tail_link_unrestored",      "tail_link_slot_changed",
+        "tail_link_slot_partial",    "tail_frame_borrowed",
+        "tail_stack_target",         "tail_link_target",
+        "tail_frame_loop",           "tail_link_loop",
+        "tail_independent_root",     "tail_exclusive_live",
+        "tail_exclusive_link_slot",  "tail_atomic_link_slot",
+        "tail_exclusive_escape",     "tail_atomic_escape",
+        "tail_exclusive_link_load",  "tail_unmodelled_intrinsic",
+        "tail_frame_alias",          "tail_exposed_frame_alias",
+        "tail_reloaded_frame_alias", "tail_narrow_frame_alias",
+        "tail_outside_frame_alias",  "tail_link_from_sysreg"}) {
     SCOPED_TRACE(Name);
     const auto Low = build(*Image, Name);
     EXPECT_TRUE(hasOpcode(Low, neverd::NdOp::INDIR_BR));
@@ -89,7 +91,9 @@ TEST_F(IndirectTailFrame,
   for (const char *Name :
        {"tail_leaf", "tail_frame_balanced", "tail_frame_diamond",
         "tail_link_restored", "tail_loop_balanced", "tail_exclusive_release",
-        "tail_exclusive_pair", "tail_lse_atomics", "tail_value_intrinsic"}) {
+        "tail_exclusive_pair", "tail_lse_atomics", "tail_value_intrinsic",
+        "tail_unknown_alias", "tail_saved_link_foreign_store",
+        "tail_after_trap_path", "tail_udf_padding", "tail_thread_pointer"}) {
     SCOPED_TRACE(Name);
     const auto Low = build(*Image, Name);
     EXPECT_FALSE(hasOpcode(Low, neverd::NdOp::INDIR_BR));
@@ -189,6 +193,105 @@ tail_cfi_self:
   const auto Self = build(*Image, "tail_cfi_self");
   EXPECT_FALSE(hasOpcode(Self, neverd::NdOp::INDIR_BR));
   EXPECT_TRUE(hasOpcode(Self, neverd::NdOp::INDIR_CALL));
+}
+
+// A C++ table lets a branch out of the frame be a tail call where the call
+// site covering it names no landing pad: an exception there goes on to the
+// caller either way.  An address the table leaves out terminates under the
+// C++ personality, as a noexcept destructor's empty table makes it.
+TEST_F(IndirectTailFrame, ItaniumTableForwardsOnlyFromCoveredBranches) {
+  const auto Source = tmpFile("tail-lsda.s");
+  std::ofstream(Source) << R"(.text
+.p2align 2
+.globl tail_lsda_forward
+.type tail_lsda_forward,@function
+tail_lsda_forward:
+.Lforward_begin:
+  .cfi_startproc
+  .cfi_personality 0x9b, DW.ref.__gxx_personality_v0
+  .cfi_lsda 0x1b, .Lforward_table
+  stp x29, x30, [sp, #-16]!
+  .cfi_def_cfa_offset 16
+  .cfi_offset w30, -8
+  .cfi_offset w29, -16
+  bl helper
+  ldp x29, x30, [sp], #16
+  .cfi_def_cfa_offset 0
+  br x0
+.Lforward_end:
+  .cfi_endproc
+.size tail_lsda_forward,.-tail_lsda_forward
+.p2align 2
+.globl tail_lsda_noexcept
+.type tail_lsda_noexcept,@function
+tail_lsda_noexcept:
+  .cfi_startproc
+  .cfi_personality 0x9b, DW.ref.__gxx_personality_v0
+  .cfi_lsda 0x1b, .Lnoexcept_table
+  br x0
+  .cfi_endproc
+.size tail_lsda_noexcept,.-tail_lsda_noexcept
+.p2align 2
+.globl helper
+.type helper,@function
+helper:
+  ret
+.size helper,.-helper
+.section .gcc_except_table,"a",@progbits
+.p2align 2
+.Lforward_table:
+  .byte 255
+  .byte 255
+  .byte 1
+  .uleb128 .Lforward_sites_end-.Lforward_sites
+.Lforward_sites:
+  .uleb128 .Lforward_begin-.Lforward_begin
+  .uleb128 .Lforward_end-.Lforward_begin
+  .byte 0
+  .byte 0
+.Lforward_sites_end:
+.p2align 2
+.Lnoexcept_table:
+  .byte 255
+  .byte 255
+  .byte 1
+  .uleb128 0
+.data
+.hidden DW.ref.__gxx_personality_v0
+.weak DW.ref.__gxx_personality_v0
+.p2align 3
+.type DW.ref.__gxx_personality_v0,@object
+.size DW.ref.__gxx_personality_v0,8
+DW.ref.__gxx_personality_v0:
+  .xword __gxx_personality_v0
+)";
+  const auto Object = tmpFile("tail-lsda.o");
+  const auto Library = tmpFile("tail-lsda.so");
+  const auto Built =
+      exec(NEVERD_TEST_CLANG, {"-target", "aarch64-linux-gnu", "-c",
+                               Source.string(), "-o", Object.string()});
+  ASSERT_TRUE(Built.ok()) << Built.err;
+  const auto Linked =
+      exec("ld.lld", {"-shared", Object.string(), "-o", Library.string()});
+  ASSERT_TRUE(Linked.ok()) << Linked.err;
+  auto Image = neverd::loadBinary(Library.string());
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+
+  const auto Forward = build(*Image, "tail_lsda_forward");
+  ASSERT_TRUE(Forward.ExceptionMetadata.has_value());
+  EXPECT_EQ(Forward.ExceptionMetadata->Personality,
+            neverd::ExceptionPersonality::GxxPersonalityV0);
+  ASSERT_TRUE(Forward.ExceptionMetadata->Itanium.has_value());
+  EXPECT_FALSE(Forward.ExceptionMetadata->describesUnwindOnly());
+  EXPECT_FALSE(hasOpcode(Forward, neverd::NdOp::INDIR_BR));
+  EXPECT_TRUE(hasOpcode(Forward, neverd::NdOp::INDIR_CALL));
+
+  const auto Noexcept = build(*Image, "tail_lsda_noexcept");
+  ASSERT_TRUE(Noexcept.ExceptionMetadata.has_value());
+  ASSERT_TRUE(Noexcept.ExceptionMetadata->Itanium.has_value());
+  EXPECT_TRUE(Noexcept.ExceptionMetadata->Itanium->CallSites.empty());
+  EXPECT_TRUE(hasOpcode(Noexcept, neverd::NdOp::INDIR_BR));
+  EXPECT_FALSE(hasOpcode(Noexcept, neverd::NdOp::INDIR_CALL));
 }
 
 // Only a record that names no handler of the frame lets a branch out of it be
@@ -379,6 +482,37 @@ TEST(LowIntrinsicMemoryOperands, DecodeOnlyTheLiftedShapes) {
   LowOp Plain = Load;
   Plain.Opcode = NdOp::LOAD;
   EXPECT_FALSE(lowIntrinsicMemoryOperands(Plain).Complete);
+}
+
+// A system register read writes only its destination, and a trap ends its
+// path whatever output its lift names; neither holds for another shape or
+// another intrinsic.
+TEST(LowIntrinsicEffects, OutputOnlyReadsAndTraps) {
+  using namespace neverd;
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  const auto make = [](Intrinsic Id, NdVar Output,
+                       std::initializer_list<NdVar> Inputs) {
+    LowOp Op;
+    Op.Opcode = NdOp::INTRINSIC;
+    Op.Output = Output;
+    Op.addInput(NdVar::cst(static_cast<uint64_t>(Id), 2));
+    for (const NdVar &Input : Inputs)
+      Op.addInput(Input);
+    return Op;
+  };
+  const NdVar Register = NdVar::reg(TRI.IntParamRegs[1], 8);
+  EXPECT_TRUE(
+      lowIntrinsicWritesOnlyItsOutput(make(Intrinsic::Mrs, Register, {})));
+  EXPECT_FALSE(lowIntrinsicWritesOnlyItsOutput(
+      make(Intrinsic::Mrs, Register, {Register})));
+  EXPECT_FALSE(lowIntrinsicWritesOnlyItsOutput(make(Intrinsic::Mrs, {}, {})));
+  EXPECT_FALSE(lowIntrinsicWritesOnlyItsOutput(
+      make(Intrinsic::Msr, Register, {Register})));
+  EXPECT_TRUE(lowIntrinsicIsUnconditionalTrap(make(Intrinsic::Brk, {}, {})));
+  EXPECT_TRUE(
+      lowIntrinsicIsUnconditionalTrap(make(Intrinsic::Brk, Register, {})));
+  EXPECT_FALSE(lowIntrinsicIsUnconditionalTrap(
+      make(Intrinsic::Svc, Register, {NdVar::cst(0, 2)})));
 }
 
 } // namespace
