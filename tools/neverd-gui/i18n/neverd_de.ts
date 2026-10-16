@@ -3411,6 +3411,10 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <translation>Exakte Breiten (uint32_t)</translation>
     </message>
     <message>
+        <source>Exact widths (u32)</source>
+        <translation>Exakte Breiten (u32)</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>Typen nach Namen filtern</translation>
     </message>
@@ -3463,8 +3467,8 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <translation>Alle Typen exportieren…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>Wie C und C++ eingebaute Typen benennen</translation>
+        <source>How the source names builtin types</source>
+        <translation>Wie der Quelltext eingebaute Typen benennt</translation>
     </message>
     <message>
         <source>Hex offsets</source>

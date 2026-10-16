@@ -537,6 +537,89 @@ TEST(TypeParse, ReadsBackTheFixtureAsRendered) {
   expectRoundTrip(**Library, Language::Go);
 }
 
+namespace {
+
+/// Each named member of a builtin the Windows headers name, as Name:ULONG,
+/// through records in place and arrays; not the renderers' fillers, which
+/// hold no data.
+void windowsTyped(const RecordDef &Record, std::string &Out) {
+  for (const Member &Field : Record.Members) {
+    const llvm::StringRef Name = Field.Name;
+    if (!Field.Type || Name.starts_with("_filler") ||
+        Name.starts_with("__filler") || Name.starts_with("_size") ||
+        Name.starts_with("__size"))
+      continue;
+    if (Field.isAnonymous()) {
+      windowsTyped(*Field.Type->Record, Out);
+      continue;
+    }
+    const TypeExpr *Type = Field.Type.get();
+    while (Type->Kind == TypeExprKind::Array && Type->Element)
+      Type = Type->Element.get();
+    if (Type->Kind == TypeExprKind::Builtin && windowsTypedef(Type->TheBuiltin))
+      Out += Field.Name + ":" + builtinInfo(Type->TheBuiltin).Windows + " ";
+  }
+}
+
+/// \p Library rendered as Rust in Windows' names reads back with every
+/// member of a Windows-named builtin of that builtin.
+void expectWindowsNamesKept(const TypeLibrary &Library) {
+  expectRoundTrip(Library, Language::Rust, BuiltinSpelling::Windows);
+  RenderOptions Render;
+  Render.Lang = Language::Rust;
+  Render.Spelling = BuiltinSpelling::Windows;
+  TypeLibrary Back(Library.dataModel());
+  ParseOptions Read;
+  Read.Lang = Language::Rust;
+  ASSERT_TRUE(parseTypes(renderTypes(Library, {}, Render), Back, Read).ok());
+  unsigned Compared = 0;
+  for (const LocalType *Type : Library.types()) {
+    if (!Type->Record || !Type->Record->Defined)
+      continue;
+    std::string Expected, Actual;
+    windowsTyped(*Type->Record, Expected);
+    windowsTyped(recordOf(Back, Type->Name), Actual);
+    EXPECT_EQ(Actual, Expected) << Type->Name;
+    Compared += !Expected.empty();
+  }
+  EXPECT_GT(Compared, 0u);
+}
+
+} // namespace
+
+TEST(TypeParse, RustInWindowsNamesKeepsEachBuiltin) {
+  // LONG and ULONG come back as themselves, where i32 and u32 would read
+  // as int and unsigned int.
+  auto Library = importPDBTypes(NEVERD_TYPES_FIXTURES "/local_types.pdb");
+  ASSERT_TRUE(bool(Library)) << llvm::toString(Library.takeError());
+  expectWindowsNamesKept(**Library);
+
+  // Without their aliases too, as a type is edited alone; and an alias that
+  // would make one another width fails where it stands.
+  ParseOptions Read;
+  Read.Lang = Language::Rust;
+  const TypeLibrary Alone = parsed(
+      "#[repr(C)]\npub struct S { pub a: ULONG, pub b: UINT, pub c: CHAR }\n",
+      Read);
+  const RecordDef &S = recordOf(Alone, "S");
+  ASSERT_EQ(S.Members.size(), 3u);
+  EXPECT_EQ(S.Members[0].Type->TheBuiltin, Builtin::ULong);
+  EXPECT_EQ(S.Members[1].Type->TheBuiltin, Builtin::UInt);
+  EXPECT_EQ(S.Members[2].Type->TheBuiltin, Builtin::Char);
+  EXPECT_EQ(Alone.find("ULONG"), nullptr);
+  TypeLibrary Wrong;
+  const ParseResult Result =
+      parseTypes("#[repr(C)]\npub struct T { pub a: ULONG }\n"
+                 "pub type ULONG = u64;\n",
+                 Wrong, Read);
+  ASSERT_EQ(Result.Problems.size(), 1u);
+  EXPECT_EQ(Result.Problems[0].Line, 3u);
+  EXPECT_EQ(Result.Problems[0].Column, 10u);
+  EXPECT_EQ(Result.Problems[0].Message,
+            "'ULONG' is the builtin of 4 bytes that Windows names so; an alias "
+            "cannot make it another");
+}
+
 TEST(TypeParseKernel, ReadsBackEveryKernelTypeAsRendered) {
   const char *Path = std::getenv("NEVERD_TYPES_NTKRNLMP");
   if (!Path)
@@ -545,5 +628,6 @@ TEST(TypeParseKernel, ReadsBackEveryKernelTypeAsRendered) {
   ASSERT_TRUE(bool(Library)) << llvm::toString(Library.takeError());
   expectRoundTrip(**Library, Language::C);
   expectRoundTrip(**Library, Language::Rust);
+  expectWindowsNamesKept(**Library);
   expectRoundTrip(**Library, Language::Go);
 }

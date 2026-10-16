@@ -3405,6 +3405,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>精确宽度（uint32_t）</translation>
     </message>
     <message>
+        <source>Exact widths (u32)</source>
+        <translation>精确宽度（u32）</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>按名称筛选类型</translation>
     </message>
@@ -3457,8 +3461,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>导出全部类型…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>C 和 C++ 对内置类型的命名方式</translation>
+        <source>How the source names builtin types</source>
+        <translation>源码对内置类型的命名方式</translation>
     </message>
     <message>
         <source>Hex offsets</source>

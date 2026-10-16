@@ -75,7 +75,11 @@ private:
   void back();
   void open(const QString &name, bool remember);
   QString language() const;
-  QString spelling() const;
+  /// How \p language names builtins as chosen: C's spelling for the layout
+  /// and C/C++, Rust's for Rust, none for Go, which has one way.
+  QString spelling(const QString &language) const;
+  /// The spellings the tab shown chooses from, the chosen one current.
+  void showSpellings();
   QString offsetText(qint64 offset, qint64 bit = -1) const;
   QStringList selectedNames() const;
   void updateActions();
@@ -101,6 +105,7 @@ private:
   QPlainTextEdit *source_ = nullptr;
   TypeSourceHighlighter *highlighter_ = nullptr;
   QComboBox *spelling_ = nullptr;
+  QString cSpelling_, rustSpelling_;
   QCheckBox *hex_ = nullptr, *dependencies_ = nullptr, *asserts_ = nullptr;
   QToolButton *copy_ = nullptr, *export_ = nullptr;
   QToolButton *add_ = nullptr, *edit_ = nullptr, *delete_ = nullptr;

@@ -1026,15 +1026,16 @@ int neverd_type_declarations_load(neverd_session_t s) {
   return 0;
 }
 
-/// The source names its language, spelling and options, and declares each
-/// type it renders, so tests can see what was asked.
+/// The source names its language, spelling ("default" when none was asked)
+/// and options, and declares each type it renders, so tests can see what was
+/// asked.
 const char *neverd_local_types_source(neverd_session_t s, const char *options) {
   session(s)->error.clear();
   const Json parsed =
       options ? Json::parse(options, nullptr, false) : Json::object();
   std::string text =
       "// language " + parsed.value("language", "c") + " spelling " +
-      parsed.value("spelling", "windows") +
+      parsed.value("spelling", "default") +
       (parsed.value("asserts", false) ? " asserts" : "") +
       (parsed.value("dependencies", true) ? " dependencies" : "") + "\n";
   Json names = parsed.value("types", Json::array());

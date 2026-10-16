@@ -3405,6 +3405,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>正確な幅（uint32_t）</translation>
     </message>
     <message>
+        <source>Exact widths (u32)</source>
+        <translation>正確な幅（u32）</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>名前で型を絞り込み</translation>
     </message>
@@ -3457,8 +3461,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>すべての型をエクスポート…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>C と C++ での組み込み型の名前</translation>
+        <source>How the source names builtin types</source>
+        <translation>ソースでの組み込み型の名前</translation>
     </message>
     <message>
         <source>Hex offsets</source>

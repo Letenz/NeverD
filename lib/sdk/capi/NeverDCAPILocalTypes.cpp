@@ -246,28 +246,17 @@ std::optional<llvm::json::Object> options(Session &S, const char *Json) {
   return std::nullopt;
 }
 
-std::optional<types::BuiltinSpelling> spellingNamed(llvm::StringRef Name) {
-  if (Name == "windows")
-    return types::BuiltinSpelling::Windows;
-  if (Name == "ida")
-    return types::BuiltinSpelling::IDA;
-  if (Name == "keywords")
-    return types::BuiltinSpelling::Keywords;
-  if (Name == "portable")
-    return types::BuiltinSpelling::Portable;
-  return std::nullopt;
-}
-
-/// Reads "spelling" into \p Spelling; false with the session's error when it
-/// names no spelling.
+/// Reads "spelling" into \p Spelling, which stays unset without it; false
+/// with \p Error when it names no spelling.
 bool readSpelling(const llvm::json::Object &Options,
-                  types::BuiltinSpelling &Spelling, std::string &Error) {
+                  std::optional<types::BuiltinSpelling> &Spelling,
+                  std::string &Error) {
   const llvm::json::Value *Value = Options.get("spelling");
   if (!Value)
     return true;
   std::optional<llvm::StringRef> Name = Value->getAsString();
   std::optional<types::BuiltinSpelling> Found =
-      Name ? spellingNamed(*Name) : std::nullopt;
+      Name ? types::spellingNamed(*Name) : std::nullopt;
   if (!Found) {
     Error = "\"spelling\" must be windows, ida, keywords or portable";
     return false;
@@ -305,8 +294,18 @@ bool readRender(const llvm::json::Object &Options, types::RenderOptions &Render,
     }
     Render.Lang = *Lang;
   }
-  return readSpelling(Options, Render.Spelling, Error) &&
-         readFlag(Options, "offsets", Render.Offsets, Error) &&
+  if (!readSpelling(Options, Render.Spelling, Error))
+    return false;
+  // Each language names builtins its own ways; none asked takes its default.
+  if (Render.Spelling &&
+      !types::spellsBuiltins(Render.Lang, *Render.Spelling)) {
+    Error = (types::languageId(Render.Lang) + " names builtins as " +
+             types::spellingsText(Render.Lang) + ", not " +
+             types::spellingId(*Render.Spelling))
+                .str();
+    return false;
+  }
+  return readFlag(Options, "offsets", Render.Offsets, Error) &&
          readFlag(Options, "hexOffsets", Render.HexOffsets, Error) &&
          readFlag(Options, "asserts", Render.Asserts, Error) &&
          readFlag(Options, "prototypes", Render.Prototypes, Error) &&
@@ -494,7 +493,8 @@ const char *neverd_local_type_json(neverd_session_t Sess, const char *Name,
   std::optional<llvm::json::Object> Options = options(*S, OptionsJson);
   if (!Options)
     return nullptr;
-  types::BuiltinSpelling Spelling = types::BuiltinSpelling::Windows;
+  // A member's type as C spells it.
+  std::optional<types::BuiltinSpelling> Spelling;
   std::string Error;
   if (!readSpelling(*Options, Spelling, Error)) {
     S->setError(Error);
@@ -508,8 +508,9 @@ const char *neverd_local_type_json(neverd_session_t Sess, const char *Name,
     S->setError(std::string("no local type named ") + jsonSafeText(Name));
     return nullptr;
   }
-  return dupStr(jsonToString(
-      llvm::json::Value(types::typeJSON(*Library, *Type, Spelling))));
+  return dupStr(jsonToString(llvm::json::Value(types::typeJSON(
+      *Library, *Type,
+      Spelling.value_or(types::defaultSpelling(types::Language::C))))));
 }
 
 const char *neverd_local_types_source(neverd_session_t Sess,

@@ -3435,6 +3435,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>عروض دقيقة ‎(uint32_t)</translation>
     </message>
     <message>
+        <source>Exact widths (u32)</source>
+        <translation>عروض دقيقة ‎(u32)</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>تصفية الأنواع بالاسم</translation>
     </message>
@@ -3487,8 +3491,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>تصدير كل الأنواع…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>كيف تسمّي C وC++ الأنواع المضمّنة</translation>
+        <source>How the source names builtin types</source>
+        <translation>كيف يسمّي المصدر الأنواع المضمّنة</translation>
     </message>
     <message>
         <source>Hex offsets</source>

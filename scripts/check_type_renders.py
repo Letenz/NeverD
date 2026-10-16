@@ -3,14 +3,14 @@
 
 `neverd types --all --asserts` renders every local type with compile-time
 checks of each size and offset.  This script renders them in C and C++ with
-every builtin spelling, in Rust and in Go, and compiles each with clang,
-rustc and go, so that a layout NeverD gets wrong, or source that does not
-compile, fails.  The C header, which the workbench shows as C/C++, compiles
-as C++ as well.  Without --binary it checks the fixture PDB the unit tests
-use; with --declare it checks the types C, C++, Rust or Go files declare,
-laid out for --data-model, such as a type library NeverD ships, and the
-prototypes they declare too.  A toolchain that is missing is reported and
-skipped.
+every builtin spelling, in Rust with both of its own and in Go, and compiles
+each with clang, rustc and go, so that a layout NeverD gets wrong, or source
+that does not compile, fails.  The C header, which the workbench shows as
+C/C++, compiles as C++ as well.  Without --binary it checks the fixture PDB
+the unit tests use; with --declare it checks the types C, C++, Rust or Go
+files declare, laid out for --data-model, such as a type library NeverD
+ships, and the prototypes they declare too.  A toolchain that is missing is
+reported and skipped.
 """
 from __future__ import annotations
 
@@ -26,6 +26,8 @@ import tempfile
 REPOSITORY = Path(__file__).resolve().parents[1]
 FIXTURES = REPOSITORY / "unittests" / "types" / "fixtures"
 SPELLINGS = ("windows", "ida", "keywords", "portable")
+# Rust names builtins as Windows does, through aliases, or by exact widths.
+RUST_SPELLINGS = ("windows", "portable")
 
 # Windows' own typedefs of the builtins it names, as <ntdef.h> declares them:
 # prototypes of the compiler's intrinsics only match its declarations with
@@ -165,11 +167,14 @@ class Checker:
         if model == "ILP32":
             self.skip("Rust", "32-bit layouts need a 32-bit Rust target")
             return
-        source = self.render("types.rs", "--lang", "rust")
-        result = run([rustc, "--crate-type=lib", "--edition=2021",
-                      "--emit=metadata", "-o", str(self.work / "types.rmeta"),
-                      str(source)])
-        self.report("rust", diagnostics(result))
+        for spelling in RUST_SPELLINGS:
+            source = self.render(f"types-{spelling}.rs", "--lang", "rust",
+                                 "--spelling", spelling)
+            result = run([rustc, "--crate-type=lib", "--edition=2021",
+                          "--emit=metadata", "-o",
+                          str(self.work / f"types-{spelling}.rmeta"),
+                          str(source)])
+            self.report(f"rust {spelling}", diagnostics(result))
 
     def go(self, model):
         go = shutil.which("go")

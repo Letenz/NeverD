@@ -3405,6 +3405,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>정확한 너비(uint32_t)</translation>
     </message>
     <message>
+        <source>Exact widths (u32)</source>
+        <translation>정확한 너비(u32)</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>이름으로 형식 필터링</translation>
     </message>
@@ -3457,8 +3461,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>모든 형식 내보내기…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>C 및 C++에서 기본 제공 형식의 이름</translation>
+        <source>How the source names builtin types</source>
+        <translation>소스에서 기본 제공 형식의 이름</translation>
     </message>
     <message>
         <source>Hex offsets</source>
