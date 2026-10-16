@@ -1194,6 +1194,7 @@
           "neverd types --asserts",
           "neverd types --data-model",
           "neverd types --decimal-offsets",
+          "neverd types --declare",
           "neverd types --download-symbols",
           "neverd types --filter",
           "neverd types --json",
