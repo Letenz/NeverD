@@ -772,6 +772,14 @@ and DWARF contexts, then merge facts in source order. Only immutable input bytes
 are shared. Small and compressed inputs stay serial to avoid setup costs and
 per-worker decompression memory; `NEVERD_THREADS=1` selects the serial path.
 
+A DWARF declaration's type is its own `DW_AT_type`. A DIE without one takes
+the type that the declarations its `DW_AT_specification` and
+`DW_AT_abstract_origin` chain names declare, resolved as return types are:
+conflicting declarations count as none. Function parameters, locals, record
+parameters and global objects read types this way. The out-of-line copy of an
+inlined function names its parameters and locals only by abstract origin, and
+a variable defined apart from its declaration names it only by specification.
+
 ```mermaid
 flowchart LR
   CLI["tools/neverd CLI"] --> CAPI["libneverd C API"]

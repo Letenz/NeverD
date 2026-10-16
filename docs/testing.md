@@ -145,6 +145,13 @@ hexadecimal age, NB10 keys and refusal of unusable identities or unsafe path
 components. `NeverDWorkerPDBLoad` opens a PE without the PDB beside it and finds
 that PDB before opening it.
 
+`DWARFSourceTypes.OriginsAndSpecificationsDeclareTheTypes` builds DWARF in
+which an inlined function's out-of-line copy names its parameter and local
+only by `DW_AT_abstract_origin`, and a variable is defined only by
+`DW_AT_specification` of its declaration. It requires the declarations' types
+for the signature, the authenticated record parameter, the local's width and
+the data object's size, where the loader used to guess `int32_t`.
+
 `MapFileTest.*` holds every safety fixture's linker MAP against its image, all
 six reading as consistent, changes a section's size or a link.exe build stamp
 to see another build refused, and reads GNU ld's file-aligned PE section sizes
