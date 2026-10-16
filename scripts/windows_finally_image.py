@@ -16,6 +16,8 @@ else:
 
 EXPORT = b"nonlocal_finally_return"
 OBSERVATION = re.compile(r"(\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+)\s*")
+GOTO_OBSERVATION = re.compile(
+    r"(\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+)\s*")
 
 
 def captured_input(root: Path, source: Path, profile: str) -> Path:
@@ -34,7 +36,7 @@ def captured_input(root: Path, source: Path, profile: str) -> Path:
     return image
 
 
-def as_library(data: bytes) -> bytes:
+def as_library(data: bytes, export: bytes = EXPORT) -> bytes:
     """Change only loader headers; preserve all source code and language tables.
 
     This fixture's exported function needs imports but no EXE startup. TLS
@@ -44,7 +46,7 @@ def as_library(data: bytes) -> bytes:
     image = PE32(data)
     if image.directory(9) != (0, 0) or image.u16(image.optional - 2) & 0x2000:
         raise ValueError("finally observer requires a TLS-free EXE input")
-    entry = image.entry(EXPORT)
+    entry = image.entry(export)
     code_owner(image, entry, entry + 1, ".text")
     result = bytearray(data)
     struct.pack_into("<H", result, image.optional - 2,
@@ -56,23 +58,30 @@ def as_library(data: bytes) -> bytes:
     return bytes(result)
 
 
-def generated_entry(original: bytes, product: bytes) -> int:
+def generated_entry(original: bytes, product: bytes, export: bytes = EXPORT) -> int:
     before, after = PE32(original), PE32(product)
-    entry = before.entry(EXPORT)
-    if before.base != after.base or after.entry(EXPORT) != entry or original == product:
+    entry = before.entry(export)
+    if before.base != after.base or after.entry(export) != entry or original == product:
         raise ValueError("finally replacement changed its original entry identity")
     target = jump_target(after, entry)
     code_owner(after, target, target + 1, ".ndtext")
     return target
 
 
-def observe(result: dict, base: int, control: bool = False) -> tuple[int, ...]:
-    match = OBSERVATION.fullmatch(result.get("stdout", ""))
+def observe(result: dict, base: int, control: bool = False,
+            form: str = "return") -> tuple[int, ...]:
+    if form not in ("return", "goto"):
+        raise ValueError("unknown native finally observer form")
+    pattern = GOTO_OBSERVATION if form == "goto" else OBSERVATION
+    match = pattern.fullmatch(result.get("stdout", ""))
     if not match or result.get("exit_code") != int(control):
         raise ValueError("native finally observer did not complete")
     values = tuple(map(int, match.groups()))
     expected = (128, 18, 0, 1, 1, 0, 64, base) if control else \
                (123, 13, 0, 1, 1, 1, 64, base)
+    if form == "goto":
+        expected = (128457, 12857, 18567, 1857, 0, 1, 1, 0, 128, base) if control else \
+                   (123457, 12357, 13567, 1357, 0, 1, 1, 1, 128, base)
     if values != expected:
         raise ValueError("finally return, exception chain, guards or load base differs")
     return values
