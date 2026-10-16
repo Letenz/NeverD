@@ -10,6 +10,43 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDeviceQueryExecution."
+    "GenuineWdkRetainsQueriedDeletedDevices/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDeviceQueryExecution."
+    "GenuineWdkRetainsQueriedDeletedDevices/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDeviceQueryExecution."
+    "GenuineWdkRetainsQueriedDeletedDevices/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDeviceQueryExecution."
+    "GenuineWdkRetainsQueriedDeletedDevices/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkDefersCloseUntilLastReference/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkDefersCloseUntilLastReference/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkDefersCloseUntilLastReference/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkDefersCloseUntilLastReference/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkClosesSharedFileHandles/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkClosesSharedFileHandles/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkClosesSharedFileHandles/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkClosesSharedFileHandles/{backend}CheckedRebased")
+
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/KernelFileSystemExecution."
     "OriginalDriverOpensExistingFiles/{backend}LegacyPreferred")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(

@@ -1351,6 +1351,30 @@ foreach(_driver_user_mapping_variable NEVERD_WDM_USER_MAPPING_FIXTURE
   endif()
 endforeach()
 
+set(NEVERD_WDM_DEVICE_QUERIES_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK device-query fixture")
+set(NEVERD_WDM_DEVICE_QUERIES_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK device-query fixture with active CFG")
+set(NEVERD_WDM_FILE_OBJECTS_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK retained file-object fixture")
+set(NEVERD_WDM_FILE_OBJECTS_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK retained file-object fixture with active CFG")
+set(NEVERD_WDM_FILE_HANDLES_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK shared file-handle fixture")
+set(NEVERD_WDM_FILE_HANDLES_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK shared file-handle fixture with active CFG")
+set(_driver_wdm_file_lifetime_definitions)
+foreach(_lifetime_fixture NEVERD_WDM_DEVICE_QUERIES_FIXTURE
+    NEVERD_WDM_DEVICE_QUERIES_CFG_FIXTURE NEVERD_WDM_FILE_OBJECTS_FIXTURE
+    NEVERD_WDM_FILE_OBJECTS_CFG_FIXTURE NEVERD_WDM_FILE_HANDLES_FIXTURE
+    NEVERD_WDM_FILE_HANDLES_CFG_FIXTURE)
+  if(EXISTS "${${_lifetime_fixture}}" AND NOT IS_DIRECTORY "${${_lifetime_fixture}}")
+    get_filename_component(_lifetime_path "${${_lifetime_fixture}}" ABSOLUTE)
+    list(APPEND _driver_wdm_file_lifetime_definitions
+      "${_lifetime_fixture}=\"${_lifetime_path}\"")
+  endif()
+endforeach()
+
 set(NEVERD_WDM_FILE_QUERIES_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK file-information query fixture")
 set(NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE "" CACHE FILEPATH
@@ -1414,6 +1438,7 @@ set(_driver_execution_fixture_definitions
   ${_driver_kmdf_definitions}
   ${_driver_wdm_stack_definitions}
   ${_driver_wdm_owned_irp_definitions}
+  ${_driver_wdm_file_lifetime_definitions}
   ${_driver_wdm_file_queries_definitions}
   ${_driver_wdm_processors_definitions}
   ${_driver_wdm_int64_strings_definitions}

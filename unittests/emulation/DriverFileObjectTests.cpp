@@ -143,8 +143,9 @@ TEST_P(KernelFileObjectExecution, GenuineWdkQueriesBorrowedFileInformation) {
 #endif
 }
 
-TEST_P(KernelFileObjectExecution, OriginalDriverDefersCloseUntilLastReference) {
-  const auto [Backend, Contract, Rebase] = GetParam();
+void exerciseFileObjects(const std::filesystem::path &Image,
+                         ExecutionBackendKind Backend,
+                         ExecutionContract Contract, bool Rebase) {
   auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
   if (!Probe) {
     auto E = Probe.takeError();
@@ -184,10 +185,7 @@ TEST_P(KernelFileObjectExecution, OriginalDriverDefersCloseUntilLastReference) {
       Add(DriverRequestKind::DeviceControl, 0x2000);
       Add(DriverRequestKind::Cleanup, 0x2000);
       Add(DriverRequestKind::Close, 0x2000);
-      auto Result =
-          emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
-                            "driver_file_objects.sys",
-                        Options);
+      auto Result = emulateDriver(Image, Options);
       ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
       EXPECT_EQ(Result->NTStatus, 0u) << Result->Diagnostic;
       EXPECT_EQ(Result->Stop, Mode == 'L' ? DriverStopReason::ModelError
@@ -220,8 +218,9 @@ TEST_P(KernelFileObjectExecution, OriginalDriverDefersCloseUntilLastReference) {
   }
 }
 
-TEST_P(KernelFileObjectExecution, OriginalDriverClosesSharedFileHandles) {
-  const auto [Backend, Contract, Rebase] = GetParam();
+void exerciseFileHandles(const std::filesystem::path &Image,
+                         ExecutionBackendKind Backend,
+                         ExecutionContract Contract, bool Rebase) {
   auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
   if (!Probe) {
     auto E = Probe.takeError();
@@ -256,10 +255,7 @@ TEST_P(KernelFileObjectExecution, OriginalDriverClosesSharedFileHandles) {
           Options.Requests.push_back(std::move(Input));
         }
       }
-      auto Result =
-          emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
-                            "driver_file_handles.sys",
-                        Options);
+      auto Result = emulateDriver(Image, Options);
       ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
       EXPECT_EQ(Result->Stop, Mode == 'L' ? DriverStopReason::ModelError
                                           : DriverStopReason::Returned)
@@ -299,6 +295,50 @@ TEST_P(KernelFileObjectExecution, OriginalDriverClosesSharedFileHandles) {
         EXPECT_TRUE(Result->Devices.empty());
     }
   }
+}
+
+TEST_P(KernelFileObjectExecution, OriginalDriverDefersCloseUntilLastReference) {
+  const auto [Backend, Contract, Rebase] = GetParam();
+  exerciseFileObjects(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                          "driver_file_objects.sys",
+                      Backend, Contract, Rebase);
+}
+
+TEST_P(KernelFileObjectExecution, GenuineWdkDefersCloseUntilLastReference) {
+#if !defined(NEVERD_WDM_FILE_OBJECTS_FIXTURE) ||                               \
+    !defined(NEVERD_WDM_FILE_OBJECTS_CFG_FIXTURE)
+  GTEST_SKIP() << "genuine WDK file-lifetime fixtures were not supplied";
+#else
+  const auto [Backend, Contract, Rebase] = GetParam();
+  exerciseFileObjects(NEVERD_WDM_FILE_OBJECTS_FIXTURE, Backend, Contract,
+                      Rebase);
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  exerciseFileObjects(NEVERD_WDM_FILE_OBJECTS_CFG_FIXTURE, Backend, Contract,
+                      Rebase);
+#endif
+}
+
+TEST_P(KernelFileObjectExecution, OriginalDriverClosesSharedFileHandles) {
+  const auto [Backend, Contract, Rebase] = GetParam();
+  exerciseFileHandles(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                          "driver_file_handles.sys",
+                      Backend, Contract, Rebase);
+}
+
+TEST_P(KernelFileObjectExecution, GenuineWdkClosesSharedFileHandles) {
+#if !defined(NEVERD_WDM_FILE_HANDLES_FIXTURE) ||                               \
+    !defined(NEVERD_WDM_FILE_HANDLES_CFG_FIXTURE)
+  GTEST_SKIP() << "genuine WDK file-lifetime fixtures were not supplied";
+#else
+  const auto [Backend, Contract, Rebase] = GetParam();
+  exerciseFileHandles(NEVERD_WDM_FILE_HANDLES_FIXTURE, Backend, Contract,
+                      Rebase);
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  exerciseFileHandles(NEVERD_WDM_FILE_HANDLES_CFG_FIXTURE, Backend, Contract,
+                      Rebase);
+#endif
 }
 
 TEST_P(KernelFileObjectExecution, GenuineKmdfRestoresFileHandleCaller) {
