@@ -13,6 +13,7 @@
 #ifndef NEVERD_SDK_CAPI_SESSION_IMPL_H
 #define NEVERD_SDK_CAPI_SESSION_IMPL_H
 
+#include "../../pipeline/PipelineCallAbiDetail.h"
 #include "../plugin/PluginManager.h"
 #include "ImageStrings.h"
 #include "LoadOptions.h"
@@ -794,14 +795,22 @@ struct Session {
     // recomputes each function's call information, so once per pipeline is
     // enough for such modules.
     if (!BodyMask || !NativeMedFuncs) {
-      auto Prepared = PipeResult.MedFuncs;
       std::map<va_t, std::string> FuncNames;
-      for (const auto &MF : Prepared)
+      for (const auto &MF : PipeResult.MedFuncs)
         if (!MF.Name.empty())
           FuncNames[MF.Entry] = MF.Name;
-      for (auto &MF : Prepared)
-        recoverCallAbi(MF, Img.Arch, FuncNames, &Img);
-      NativeMedFuncs = std::move(Prepared);
+      // Recover the calls as the module pipeline does, with its evidence:
+      // every callee's arity, the signatures of callees this pipeline did
+      // not keep, and what each function-pointer variable starts at.
+      PipelineResult Recovery;
+      Recovery.MedFuncs = PipeResult.MedFuncs;
+      Recovery.CallMayWriteGPRs = PipeResult.CallMayWriteGPRs;
+      Recovery.CallEntryReadGPRs = PipeResult.CallEntryReadGPRs;
+      Recovery.CallEntryStackArgs = PipeResult.CallEntryStackArgs;
+      Recovery.CallArgumentSources = PipeResult.CallArgumentSources;
+      Recovery.OmittedCallees = PipeResult.OmittedCallees;
+      recoverModuleCallAbi(Img, Recovery, FuncNames);
+      NativeMedFuncs = std::move(Recovery.MedFuncs);
     }
     std::vector<std::pair<va_t, std::string>> ImportMap;
     for (const auto &[Addr, Name] : Img.getImportAddressNames())

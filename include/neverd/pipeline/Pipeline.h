@@ -217,6 +217,13 @@ struct PipelineFunctionAudit {
   bool HasLLVMDefinition = false;
 };
 
+/// Signature bodies of the direct callees a set of functions leaves out.
+struct OmittedCalleeBodies {
+  /// The entries of the functions they were lifted around, in order.
+  std::vector<va_t> Functions;
+  std::vector<MedFunc> Bodies;
+};
+
 struct PipelineResult {
   /// Non-owning identity of the image from which this result was produced. The
   /// image must outlive any safety analysis that consumes this result. Safety
@@ -234,6 +241,17 @@ struct PipelineResult {
   /// Bytes of each GPR family a lifted callee reads before writing (its
   /// register arguments, including pass-throughs), keyed by callee entry.
   std::map<va_t, GPRReadWidths> CallEntryReadGPRs;
+  /// For each function-pointer variable a call may go through, by address,
+  /// the key of the routine whose summary gives that call its arguments: the
+  /// routine the variable starts at (collectPointerVariableCallees), or the
+  /// variable itself for another module's routine, whose prototype fixes the
+  /// summary kept under the variable's address.
+  std::map<va_t, va_t> CallArgumentSources;
+  /// The bodies recoverModuleCallAbi lifted for the direct callees these
+  /// functions leave out, as lifted: another recovery over the same functions
+  /// (the native LLVM route of a session) reuses them instead of lifting them
+  /// again, which costs as much as the rest of recovery.
+  std::shared_ptr<const OmittedCalleeBodies> OmittedCallees;
   /// Bytes of the scalar float each prototyped import returns in the vector
   /// return register, keyed by the stub or slot a call names it by.
   std::map<va_t, uint16_t> CallFloatReturns;
