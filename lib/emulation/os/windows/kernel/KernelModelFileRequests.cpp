@@ -40,11 +40,12 @@ llvm::Error fileRequestError(const llvm::Twine &Text) {
 }
 } // namespace
 
-llvm::Expected<uint64_t> KernelModel::relatedFileDevice(uint64_t Object) const {
+llvm::Expected<uint64_t>
+KernelModel::queryFileDevice(uint64_t Object, FileDeviceQuery Query) const {
   const auto Found = FileObjects.find(Object);
   if (Found == FileObjects.end() || Found->second.State == FileState::Failed ||
       Found->second.State == FileState::Closing)
-    return fileRequestError("related device requires a live file object");
+    return fileRequestError("device query requires a live file object");
   const auto &File = Found->second;
   auto Type = Memory.readInteger(Object, 2);
   auto Size = Memory.readInteger(Object + 2, 2);
@@ -54,22 +55,27 @@ llvm::Expected<uint64_t> KernelModel::relatedFileDevice(uint64_t Object) const {
     return fileRequestError("FILE_OBJECT header differs from its owner");
   auto Device = Memory.readInteger(Object + FileDeviceOffset, 8);
   auto VPB = Memory.readInteger(Object + FileVPBOffset, 8);
-  auto Extension = Memory.readInteger(Object + FileExtensionOffset, 8);
-  if (!Device || !VPB || !Extension)
-    return llvm::joinErrors(
-        Device.takeError(),
-        llvm::joinErrors(VPB.takeError(), Extension.takeError()));
+  if (!Device || !VPB)
+    return llvm::joinErrors(Device.takeError(), VPB.takeError());
   if (*Device != File.Device || !Devices.contains(*Device))
     return fileRequestError(
         "FILE_OBJECT lost its authoritative device identity");
   auto DeviceVPB = Memory.readInteger(*Device + DeviceVPBOffset, 8);
   if (!DeviceVPB)
     return DeviceVPB.takeError();
-  if (*VPB || *DeviceVPB || *Extension)
-    return fileRequestError(
-        "mounted VPB and file-extension routing are unsupported");
+  if (*VPB || *DeviceVPB)
+    return fileRequestError("mounted VPB routing is unsupported");
   if (auto E = validateDeviceTopology())
     return E;
+  // The base query neither follows attachments nor consults file extensions.
+  // Both query forms borrow the result without acquiring a reference.
+  if (Query == FileDeviceQuery::Base)
+    return *Device;
+  auto Extension = Memory.readInteger(Object + FileExtensionOffset, 8);
+  if (!Extension)
+    return Extension.takeError();
+  if (*Extension)
+    return fileRequestError("file-extension routing is unsupported");
   return topAttachedDevice(*Device);
 }
 
@@ -124,7 +130,7 @@ KernelModel::setFileInformation(llvm::ArrayRef<uint64_t> A,
         "same-file I/O must finalize before position setting");
   if (auto E = snapshot())
     return E;
-  auto Top = relatedFileDevice(File.Address);
+  auto Top = queryFileDevice(File.Address, FileDeviceQuery::Related);
   if (!Top)
     return Top.takeError();
   if (uint32_t(A[3]) < 8)
@@ -328,7 +334,7 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
       return E;
     uint64_t Value = GrantedAccess;
     if (Class != 8) {
-      auto Top = relatedFileDevice(File.Address);
+      auto Top = queryFileDevice(File.Address, FileDeviceQuery::Related);
       if (!Top)
         return Top.takeError();
       auto Field = Memory.readInteger(
@@ -393,7 +399,7 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
     return E;
   if (auto E = snapshot())
     return E;
-  auto Top = relatedFileDevice(A[0]);
+  auto Top = queryFileDevice(A[0], FileDeviceQuery::Related);
   if (!Top)
     return Top.takeError();
   auto Route = deviceStack(*Top);

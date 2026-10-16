@@ -125,6 +125,26 @@ void exerciseFileQueries(const std::filesystem::path &Image,
             ++Returned;
           }
         EXPECT_EQ(Returned, 3u);
+        unsigned BaseQueries = 0, RelatedQueries = 0, Lookups = 0;
+        uint64_t BaseDevice = 0;
+        for (const auto &Call : Result->Calls) {
+          if (Call.Name == "IoGetRelatedDeviceObject") {
+            ASSERT_TRUE(Call.Result);
+            BaseDevice = *Call.Result;
+            ++RelatedQueries;
+          } else if (Call.Name == "IoGetBaseFileSystemDeviceObject") {
+            EXPECT_NE(BaseDevice, 0u);
+            EXPECT_EQ(Call.Result, BaseDevice);
+            ++BaseQueries;
+          } else if (Call.Name == "MmGetSystemRoutineAddress") {
+            ASSERT_TRUE(Call.Result);
+            EXPECT_NE(Call.Result, 0u);
+            ++Lookups;
+          }
+        }
+        EXPECT_EQ(BaseQueries, 2u);
+        EXPECT_EQ(RelatedQueries, 1u);
+        EXPECT_EQ(Lookups, 1u);
       }
     }
 }

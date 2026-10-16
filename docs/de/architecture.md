@@ -1912,3 +1912,5 @@ KernelFileSystem hält je FILE_OBJECT ein provider token. Die private Freigabeop
 Die Aliase nutzen bestehende Besitzer von Threads/Prozessen und Ausführungskontexten, auch während Prozessanheftung. `RtlPcToFileHeader` verwendet wie Systemmodulabfragen `LoadedModules`; abgebildete Regionen aus `ImageRAM` ersetzen keine Modulidentität. Hostzustand wird nicht abgefragt.
 
 `KernelMDLCalls` normalisiert den alten Einstieg auf den vorhandenen Mapper mit sechs Argumenten. Cacheattribute, physische Seitenidentität, Rechte und Lebensdauer bleiben bei `KernelPhysicalMemory` und den MDL-Datensätzen. Vollständig freigegebene Kernelabbild-Aliase hinterlassen keine Umgebungsabhängigkeit; Benutzeransichten behalten diese.
+
+`queryFileDevice` in `KernelModelFileRequests` prüft gemeinsam Dateiidentität, Header, Einhängestatus und Topologie. Die Basisabfrage liefert das zur Datei gehörende Gerät; die zugehörige Abfrage prüft zusätzlich das Routing über Dateierweiterungen und wählt das oberste angehängte Gerät. Beide Ergebnisse sind geliehen.

@@ -7269,3 +7269,5 @@ of mappings, current/maximum rights, reserved pages and retained file leases.
 Thread query aliases reuse the existing thread/process and execution-context owners, including during process attachment. `RtlPcToFileHeader` uses `LoadedModules`, alongside system module queries; `ImageRAM` describes mapped regions and is not a substitute for module identity. No host process, thread or module state is consulted.
 
 `KernelMDLCalls` normalizes the legacy mapping entry into the existing six-argument mapper. `KernelPhysicalMemory` and MDL records continue to own cache attributes, page identity, permissions and lifetime. Only fully released kernel image aliases remain recoverable without an environment dependency; user views retain that dependency.
+
+`queryFileDevice` in `KernelModelFileRequests` owns common file identity, header, mount and topology checks. Base queries return the owned file device; related queries additionally validate file-extension routing and select the attached top. Both borrow their result.

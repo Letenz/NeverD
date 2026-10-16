@@ -461,7 +461,9 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   case KernelAPIKind::IoGetAttachedDevice:
     return queryDeviceStack(A[0], DeviceStackQuery::Top);
   case KernelAPIKind::IoGetRelatedDeviceObject:
-    return relatedFileDevice(A[0]);
+    return queryFileDevice(A[0], FileDeviceQuery::Related);
+  case KernelAPIKind::IoGetBaseFileSystemDeviceObject:
+    return queryFileDevice(A[0], FileDeviceQuery::Base);
   case KernelAPIKind::IoQueryFileInformation:
     return beginFileAPIRequest(A, DriverRequestKind::QueryInformation, false,
                                Context);
