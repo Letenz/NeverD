@@ -1797,11 +1797,20 @@ carry these identities; all reaching predecessors and backedges must converge.
 Independent roots start unknown. Partial or overlapping writes invalidate whole
 restoration words; unknown memory writes and exposed frame storage invalidate
 spill evidence. Unsupported effects, incomplete graphs and exhausted work
-retain the original indirect branch. Call preservation comes from `TargetRegInfo`'s
-format-selected ranges. This condition supplies no callee identity or source
-ABI. Successful classification emits an explicit `INDIR_CALL + RETURN` pair;
-HighIR cannot infer another tail call from a successorless `INDIR_BR`. An
-unresolved transfer without a usable switch remains an explicit failure path.
+retain the original indirect branch. A frame description that only unwinds
+the frame (`ExceptionFunction::describesUnwindOnly`: no personality routine,
+handler data, LSDA or language table, as for the FDE every function of an
+ordinary shared library has) runs no handler, so it does not prevent the
+classification; one that names a handler does. A branch whose target derives
+from an address of the function's own code (an `adr` of a switch's case
+labels, which the jump-table resolver left unresolved) is a computed jump
+within the function and keeps its indirect branch; the function's own entry is
+no such address, since a branch there recurses. Call preservation comes from
+`TargetRegInfo`'s format-selected ranges. This condition supplies no callee
+identity or source ABI. Successful classification emits an explicit
+`INDIR_CALL + RETURN` pair; HighIR cannot infer another tail call from a
+successorless `INDIR_BR`. An unresolved transfer without a usable switch
+remains an explicit failure path.
 
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in
@@ -1874,7 +1883,11 @@ unit scales shorten the expression without substituting C array arithmetic or
 assuming that a pointer is in bounds.
 Generic LLVM arithmetic and control builtins do not request target ISA headers.
 Both C routes reject string-literal replacement when loader fixup provenance
-overlaps any candidate byte, including its terminator.
+overlaps any candidate byte, including its terminator. Bytes in code are no
+candidate, as `BinaryImage::isCodeAddress` decides: by the section that holds
+them, so the read-only data a linker maps with the code (the single R+X
+segment of an Android image) still prints as its literals, and by the segment
+only without section headers.
 
 ELF GOT data identities come from the exact relocation symbol snapshot through
 `collectDataSymbolBindings`, shared by HighC and LLVM emission. The loader's
@@ -1939,6 +1952,20 @@ unreached function remains unknown until it has its own evidence or assertion.
 fixed-width read from a `$d` island inside executable storage. Both HighIR and
 LLVM emission require the whole read to stay in the island and reject writable
 or relocated bytes.
+
+The CFG builder proves an ARM `PC + literal` sum at the exact ADD output that
+forms it (`add rD, pc, rT`, or the address of `ldr rD, [pc, rT]`), on every
+path that reaches it, for three kinds of literal: an applied `R_ARM_REL32`
+field, an object's literal that no relocation writes, and a linked image's
+literal that no relocation writes (`ARMLinkedLiteral`). A linked image keeps
+its sections at the distances the static linker resolved such a literal
+against, so the sum is one image address, owned by the section (or the
+segment, without section headers) that holds it. LowToMed replaces the proven
+ADD with that exact address. This matters where the PC of the consuming
+instruction lands on the literal word itself, as in a getter whose literal
+follows its `bx lr`: the PC then equals a literal-pool address, and treating it
+as a reference to that word made the rebuilt access depend on where the copied
+code sat.
 
 After ARM call-arity recovery, MedIR propagates a proven pointer parameter
 through direct calls only when the argument is the exact incoming parameter;
@@ -2282,6 +2309,31 @@ before writing, including arguments it only passes on to its own callees.
 For Win64 calls LowToMed publishes those argument registers as CALL inputs.
 SSA then sees a caller's pass-through argument, and HighC passes exactly the
 arguments the callee reads. Stack arguments follow the 32-byte home area.
+
+A call through a function-pointer variable passes the arguments of the routine
+the variable starts at (`collectPointerVariableCallees`): another module's
+routine, by the prototype the variable's absolute relocation names, or a
+routine of this image, by the summary or signature of the function a relocated
+code pointer holds. The variable has that routine's type, but the call never
+takes the routine's name or no-return contract, since the program may store
+another routine there. `PipelineResult::CallArgumentSources` keys the evidence
+by the variable's address: register-effect summaries read it in their fixed
+point (`RegisterStep::ArgumentsFrom`), LowToMed publishes the reads as CALL
+inputs, and `recoverCallAbi` takes the routine's arity for conventions whose
+calls take their arguments from the caller's setup. A caller's pass-through
+registers and incoming stack slots then become its parameters. Without such
+evidence an indirect call passes only the arguments its caller sets. It never
+passes a prologue save of a callee-saved or link register, a scratch register's
+undefined incoming value (an alignment `push rax`), a slot past a gap in its
+stack arguments, or the register that holds its own target, unless the routine
+takes that register (`cb(ctx, x, y, cb)` may pass and call through one).
+Recovery records where it ended the register arguments at the target
+(`MedCallInfo::TargetRegisterArgIdx`): HighIR's own scan does not extend them
+past it, since dead-code elimination leaves only stale earlier writes of that
+register (`add r0, pc; ldr r0, [r0]; blx r0`), and the C++ virtual-call rule
+that passes a two-load target's object finds none in a register that holds the
+target. HighIR's stack scan takes no prologue save for an indirect call either
+(`isIncomingRegisterSave`, shared with recovery).
 
 `PipelineWideIntReturnEvidence` checks the high-word carrier on every return
 before the shared pipeline widens an x86/ARM32 function to a register-pair

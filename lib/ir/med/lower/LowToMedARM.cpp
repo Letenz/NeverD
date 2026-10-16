@@ -688,10 +688,11 @@ LowToMedConverter::RelativeLiteralOutputs
 LowToMedConverter::armRelativeLiteralOutputs(const LowFunc &Low, Arch TheArch,
                                              BinaryFormat Fmt) const {
   // CFGBuilder proves the complete value of an ARM PC + literal at the exact
-  // ADD output, for an R_ARM_REL32 literal and for an object's literal that no
-  // relocation writes. Preserve that occurrence proof across the LowIR to
-  // MedIR boundary: the literal word is a relative fragment, and treating its
-  // old-image integer as an independent table base loses relocation.
+  // ADD output, for an R_ARM_REL32 literal and for a literal that no
+  // relocation writes in an object or a linked image. Preserve that occurrence
+  // proof across the LowIR to MedIR boundary: the literal word is a relative
+  // fragment, and treating its old-image integer as an independent table base
+  // loses relocation.
   RelativeLiteralOutputs Outputs;
   if (TheArch != Arch::ARM || Fmt != BinaryFormat::ELF || !Image ||
       Image->Arch != Arch::ARM || !Image->isELF() ||
@@ -726,12 +727,14 @@ LowToMedConverter::armRelativeLiteralOutputs(const LowFunc &Low, Arch TheArch,
     const bool RelocationFree =
         Occurrence.Authority ==
         RelocatedInstructionAddressProofKind::ARMRelocationFreeLiteral;
-    if (!RelocationFree &&
+    const bool Linked = Occurrence.Authority ==
+                        RelocatedInstructionAddressProofKind::ARMLinkedLiteral;
+    if (!RelocationFree && !Linked &&
         Occurrence.Authority !=
             RelocatedInstructionAddressProofKind::LoaderField)
       continue;
     const va_t SlotVA =
-        RelocationFree ? Occurrence.LiteralVA : Occurrence.FieldVA;
+        RelocationFree || Linked ? Occurrence.LiteralVA : Occurrence.FieldVA;
     const Segment *Slot = Image->getSegmentFor(SlotVA);
     const uint8_t *Bytes = Image->readVA(SlotVA, 4);
     if (!Slot || !Slot->isReadable() || Slot->isWritable() || !Bytes)
@@ -744,7 +747,16 @@ LowToMedConverter::armRelativeLiteralOutputs(const LowFunc &Low, Arch TheArch,
         armreg::pcReadValue(Occurrence.InstructionAddr, Add->Mode) + Encoded !=
             static_cast<uint32_t>(Occurrence.TargetVA))
       continue;
-    if (RelocationFree) {
+    if (Linked) {
+      // The static linker resolved the literal against the image's fixed
+      // layout. The section (or segment) holding the target owns it.
+      const va_t Owner = Image->layoutAddressOwner(Occurrence.TargetVA);
+      if (Image->IsRelocatable || Occurrence.FieldVA != InvalidVA ||
+          Owner == InvalidVA || Occurrence.TargetOwnerVA != Owner ||
+          !instruction(Occurrence.SeedInstructionAddr) ||
+          Image->hasRelocationProvenanceAt(SlotVA))
+        continue;
+    } else if (RelocationFree) {
       // The assembler resolved the literal, so it can only reach into the
       // ADD's own section.
       const Section *Anchor = Image->getSectionFor(Occurrence.InstructionAddr);

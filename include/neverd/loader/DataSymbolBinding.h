@@ -41,5 +41,21 @@ collectDataSymbolBindings(const BinaryImage &Image);
 /// differently is left out.
 std::map<va_t, std::string>
 collectExternalFunctionPointers(const BinaryImage &Image);
+
+/// The routine a function-pointer variable starts at: another module's
+/// function, by name (collectExternalFunctionPointers), or this image's code,
+/// at the address a relocated code pointer holds.  The variable has the type
+/// of that routine, so a call through it passes the arguments the routine
+/// takes; it never takes the routine's name or contract, since the program may
+/// store another routine there.
+struct PointerVariableCallee {
+  std::string ImportName;
+  va_t LocalEntry = InvalidVA;
+};
+
+/// Each pointer-width word outside import storage that the loader starts at
+/// a routine, by the word's address.
+std::map<va_t, PointerVariableCallee>
+collectPointerVariableCallees(const BinaryImage &Image);
 } // namespace neverd
 #endif

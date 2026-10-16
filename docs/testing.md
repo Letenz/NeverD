@@ -3751,6 +3751,42 @@ first. Its LLVM C must not trap and must compile for all four targets. On an
 x64 host the program runs and must call the initial function, then the one
 stored over it.
 
+`CallsThroughPointerVariablesPassTheirArguments` builds, for each architecture,
+a library whose pointer variables start at prototyped routines (`exit`, `puts`,
+`strcmp`, which a stub library defines), at a static function and at a routine
+nothing describes, and checks HighC and LLVM C. Each caller takes as many
+parameters as the routine its variable starts at and passes them on in order,
+in tail and ordinary calls alike, and the undescribed call passes no invented
+zero or return address. `call_self` passes its variable as the fourth argument
+of a routine that takes four, though the same register holds the call target.
+`PointerVariableCallsRunWithTheirArguments` runs the x64 LLVM C against libc:
+each call reaches its routine with its arguments, a stored function replaces
+the initial one, and the call through `exit` ends the program with the code it
+passed. `IndirectCallsPassNoTargetOrSavedRegisters` assembles ARM calls whose
+first argument register holds only the target, loaded through a table slot,
+which must pass nothing in either backend (not the slot's address as a virtual
+call's object), and a call whose outgoing stores leave a gap below a
+`push {r4, r6, r7, lr}`, whose HighC must not pass the saved link register.
+
+`LLVMCValues.ImageStringsInACodeSegmentFollowTheirSection` requires a string
+in `.rodata` inside an R+X segment to print, its bytes in `.text` not to, and
+the segment rule without section headers.
+
+`LinkedLiteralAddsToTheDataItNames` links an ARM getter whose
+`ldr r0, [pc, r0]` reads its literal right after `bx lr`. It requires the
+`ARMLinkedLiteral` certificate for the static variable at the ADD output,
+LowToMed's exact constant in its place, and a lifted getter that loads the
+variable itself. A relocation on the literal word withdraws the certificate.
+
+`IndirectTailFrame.UnwindOnlyFrameDescriptionKeepsTheTailCall` assembles AArch64
+functions with plain CFI into a shared library: a restored frame's `br x0`
+becomes `INDIR_CALL + RETURN` under its FDE, and a live frame keeps its
+indirect branch, as does a computed jump into the function's own code
+(`adr x1, 1f; add x0, x1, w0, sxtw #2; br x0`), while a tail call through the
+function's own reloaded address stays one. `ExceptionFunctionUnwindOnly`
+checks that an LSDA, a personality routine, handler data or a partial parse
+each count as a handler.
+
 `LocalUnwindTargetRequiresExclusiveSameFrameUses` includes decoded x64 calls
 whose SP save and load occupy different blocks, stale producer changes, opaque
 calls, partial writes, foreign address uses and invalid module/runtime facts.
