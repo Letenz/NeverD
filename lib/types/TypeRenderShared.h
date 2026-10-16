@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// What the C, C++, Rust, Go and Python renderers share: offset comments, names
+/// What the renderers of every language share: offset comments, names
 /// that step around a language's keywords, and where a language's own
 /// layout would put a member, so that a filler can move it to the offset
 /// the library records.
@@ -237,6 +237,11 @@ std::string renderPython(const TypeLibrary &Library, const LocalType &Type,
 std::string renderPythonModule(const TypeLibrary &Library,
                                llvm::ArrayRef<const LocalType *> Types,
                                const RenderOptions &Options);
+std::string renderJavaScript(const TypeLibrary &Library, const LocalType &Type,
+                             const RenderOptions &Options);
+std::string renderJavaScriptModule(const TypeLibrary &Library,
+                                   llvm::ArrayRef<const LocalType *> Types,
+                                   const RenderOptions &Options);
 
 } // namespace neverd::types::render
 

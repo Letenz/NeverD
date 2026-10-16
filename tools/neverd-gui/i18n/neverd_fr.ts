@@ -3774,6 +3774,14 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
         <source>Exact widths (c_uint32)</source>
         <translation>Largeurs exactes (c_uint32)</translation>
     </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>Module JavaScript (*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>Types JavaScript (number, bigint)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::DeclareTypesDialog</name>

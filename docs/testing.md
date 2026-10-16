@@ -332,7 +332,11 @@ compiles the result:
   as aliases (64-bit layouts only);
 - Go with `go vet` for Windows, in both spellings too;
 - Python by running the module with `python3 -I -W error`, in both spellings,
-  where ctypes checks each size and offset (64-bit layouts only).
+  where ctypes checks each size and offset (64-bit layouts only);
+- JavaScript by running the module with `node`, in both spellings, whose
+  checks read and write back every accessor within its record, and by
+  `tsc --noEmit --allowJs --checkJs --strict`, which checks its JSDoc as
+  TypeScript (`--tsc` names the compiler; without one it is skipped).
 
 A missing toolchain is reported and skipped. Without `--binary` it checks the
 fixture:
