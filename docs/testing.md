@@ -295,6 +295,19 @@ renders every kernel type as C, Rust and Go and reads it back; each record
 must keep its size and every member's bit offset and width, and every
 rendered size and offset check must hold.
 
+`TypeFit.*` lands accesses on members (union alternatives, bitfield units,
+array elements, padding and bytes outside a record) and ranks records by
+them, a pointer into a record and quick-open matching included.
+`NeverDMedPointerAccessesTests` gathers the accesses through one pointer from
+hand-built MedIR, through copies and constant additions.
+`SessionCAPITest.LocalTypesFitWhatTheCodeDoesThroughAPointer` ranks the
+fixture's types for `use`'s read of `Device->Size` and keeps a structure
+offset in the operands sidecar. `tools/neverd-worker/tests/local_types_test.py`
+does the same through the worker with the real engine, the listing's
+structure offsets and their undo included, and the GUI controller test
+`structureOffsetsRankTypesByTheCodesAccesses` drives T through the picker on
+the mock engine.
+
 `HeaderLibrary.*` reads the embedded Windows kernel library and checks how a
 header library joins a program's types. After running
 `scripts/generate_windows_kernel_types.py`, check the library in every
