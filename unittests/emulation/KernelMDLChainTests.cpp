@@ -1404,6 +1404,33 @@ protected:
   void SetUp() override { initializeImage(0x180000000); }
 };
 
+TEST_F(KernelImageMDL, LegacyMappingsKeepUserViewsAsRecoveryDependencies) {
+  for (uint64_t Mode : {KernelMode, UserMode}) {
+    initializeImage(0x180000000);
+    if (Mode == UserMode) {
+      Model->enterExecution(profile::StackBase);
+      success(Model->setUserRequestContext(true));
+    }
+    const auto Address = ImageBase + profile::PageSize + 17;
+    const auto MDL = call("IoAllocateMdl", {Address, 31, 0, 0, 0});
+    call("MmProbeAndLockPages", {MDL, KernelMode, IoWriteAccess});
+    const auto Alias = call("MmMapLockedPages", {MDL, Mode});
+    ASSERT_NE(Alias, 0u);
+    put(Alias, 0x71, 1);
+    EXPECT_EQ(get(Address, 1), 0x71u);
+    call("MmUnmapLockedPages", {Alias, MDL});
+    call("MmUnlockPages", {MDL});
+    call("IoFreeMdl", {MDL});
+    const auto Reasons = take(Model->unpackDependencies());
+    if (Mode == KernelMode)
+      EXPECT_TRUE(Reasons.empty());
+    else
+      EXPECT_NE(std::find(Reasons.begin(), Reasons.end(),
+                          "unreconstructed kernel or environment effects"),
+                Reasons.end());
+  }
+}
+
 TEST_F(KernelImageMDL, ReadAliasesSharePagesWithoutChangingImageProtections) {
   const auto Address = ImageBase + profile::PageSize - 4;
   const auto MDL =

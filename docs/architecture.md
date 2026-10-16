@@ -612,6 +612,11 @@ LLVM declaration materialization shares the direct-call ABI rules with exact
 immutable import targets, including FP, variadic and va_list signatures.
 Known integer parameters use the target's pointer-width carrier so narrow
 register aliases and shard order do not choose different declarations.
+A callee nothing describes is declared from its first call's arguments.
+Where the module's calls pass it different numbers of arguments, those past
+the ones every call passes are variadic (`DirectCallArgumentCounts`), so a
+longer later call keeps all of its arguments instead of being cut to the
+first call's.
 `LLVMCallContract` reconciles exact targets revealed by optimization or shard
 linking, drops surplus fixed arguments and adapts integer/pointer carriers.
 Missing arguments, incompatible observed results and musttail changes fail
@@ -2152,6 +2157,22 @@ control-flow edges through the shared reachable-mode analysis. A cross-state
 `BLX` can establish an ARM target without treating an unflagged symbol as ARM
 proof. Decoding is limited to reached instruction spans; an unproved gap in a
 mixed image retains unknown mode.
+The ELF loader pairs each ARM PLT entry with its import by decoding the GOT
+cell the entry's instructions compute (`findARMPLTVeneers`), in mixed ARM/Thumb
+images as in single-mode ones: the PLT is ARM code either way, and a Thumb
+caller's `blx` reaches the same stub. Without the pairing every import call of
+a Thumb library read as an unnamed local function, without its prototype or
+no-return contract.
+A long-branch or interworking thunk a linker wrote between a branch and an
+import's stub stands for that import too: a Thumb tail call enters the ARM PLT
+through lld's `__ThumbV7PILongThunk_*`, a distant A64 call through
+`__AArch64ADRPThunk_*`. `linkerThunkAt` (loader/LinkerThunk) decodes the forms
+`BranchEncoding.def` lists, and signature matching follows a reference
+through the same decoder. Function discovery pairs a thunk with an import
+only when its exact target is a paired stub and only for the
+multi-instruction forms a linker alone writes (`linkerLongBranchThunkAt`); a
+direct jump to a stub ends many a routine. Thunks to the image's own routines
+are not followed into calls yet.
 Validated ARM and Thumb instruction relocations can also seed their exact
 instruction addresses. This can recover an otherwise uncalled function when
 its entry instruction has such a relocation, without assuming that an
@@ -2585,6 +2606,45 @@ register (`add r0, pc; ldr r0, [r0]; blx r0`), and the C++ virtual-call rule
 that passes a two-load target's object finds none in a register that holds the
 target. HighIR's stack scan takes no prologue save for an indirect call either
 (`isIncomingRegisterSave`, shared with recovery).
+
+A caller-saved register holds, after a call, only what that call left in it,
+so no compiler passes that value on as an argument. `ValuesLeftByCalls`
+(`MedCallLeftovers.h`) names such values: each call's clobber of a register it
+may change whole, and each join of nothing else, loops of joins included.
+Clobbers that keep a preserved low half do not count, nor do clobbers the
+struct-return recovery still holds as possible result fields, nor joins the
+exception dispatcher enters with another value. Past the register arguments
+the callee is known to take, the first such register ends a call's register
+arguments, or passes zero where stack arguments follow and need their places.
+An indirect call has no callee to vouch for its stack slots. Where integer
+arguments fill every register before the stack, an unset register below
+those slots shows they are no arguments (an -O0 spill near the call), so they
+end with it.
+That count is the named parameters of a variadic callee and zero for a callee
+nothing describes. Below it the callee reads the register, and the unknown
+value stays. The named count of an AAPCS64 or AAPCS32 variadic routine comes
+from its register save area, which spills the argument registers from the
+first unnamed one to the last (`MedFunc::VariadicFirstRegister`). Recovery
+applies the rule to `MedCallInfo::Args`, and HighIR's hole filling and
+positional fill use the same predicate, since x86-64 HighC builds its call
+arguments with its own scan. Because a variadic routine of the image keeps its
+arity open for its callers' overflow, that arity gives a tail jump to it no
+incoming stack slots to pass on. A call to such a routine records its named
+count (`MedCallInfo::VarArgFixedCount`), so an LLVM declaration of a routine
+the module does not emit stays variadic. A declaration made from one call's
+arguments would cut another call's.
+
+Where every variadic argument travels on the stack (Darwin AArch64, i386
+cdecl), no register save area shows that a routine is variadic. The routine
+is variadic when the `va_list` it passes to a known consumer (`vprintf` and
+the rest of `isVaListConsumer`) points into its own incoming arguments, and
+module recovery then keeps the routine's arity open for its callers. A stub
+the function names leave unnamed takes its import's name, so a wrapper still
+shows through a `sub_` name. A call that takes every argument from the stack
+passes nothing in a slot that holds a scratch register's incoming value where
+the caller takes no parameter in it (the alignment `push eax` above the
+arguments). Such a slot is dropped above the arguments, and below one it
+passes zero.
 
 `PipelineWideIntReturnEvidence` checks the high-word carrier on every return
 before the shared pipeline widens an x86/ARM32 function to a register-pair
@@ -7207,3 +7267,5 @@ of mappings, current/maximum rights, reserved pages and retained file leases.
 `KernelModelRuntime` owns scalar debug argument widths and the common prefix/buffer publication rule. Native variadic calls use the existing call-ABI reader; the explicit x64 `va_list` adapter checks each requested guest scalar with an eight-byte stride. Neither dispatcher nor adapter duplicates format parsing.
 
 Thread query aliases reuse the existing thread/process and execution-context owners, including during process attachment. `RtlPcToFileHeader` uses `LoadedModules`, alongside system module queries; `ImageRAM` describes mapped regions and is not a substitute for module identity. No host process, thread or module state is consulted.
+
+`KernelMDLCalls` normalizes the legacy mapping entry into the existing six-argument mapper. `KernelPhysicalMemory` and MDL records continue to own cache attributes, page identity, permissions and lifetime. Only fully released kernel image aliases remain recoverable without an environment dependency; user views retain that dependency.

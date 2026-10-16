@@ -103,6 +103,16 @@ bool isX64VaStartWord(uint64_t V);
 /// function spills to the stack: the variadic prologue's register save area.
 int countParamRegSpills(const MedFunc &Func, llvm::ArrayRef<uint64_t> Regs);
 
+class VariadicScan;
+
+/// The integer argument register a register save area starts at: the
+/// prologue spills each argument register from the first unnamed one through
+/// the last, still holding its entry value, to consecutive slots, the last
+/// one at \p LastSlot below the entry stack pointer where that is fixed.  The
+/// registers before it carry named parameters.
+int firstSavedArgumentRegister(VariadicScan &S,
+                               std::optional<int64_t> LastSlot);
+
 /// One function's variadic prologue recognition.
 class VariadicScan {
 public:
@@ -129,6 +139,7 @@ private:
 /// integer and vector registers carry named parameters.
 bool hasX64VariadicPrologue(VariadicScan &S, uint64_t &VaStartWord);
 std::optional<int> aapcs64FirstVariadicRegister(VariadicScan &S);
+std::optional<int> aapcs32FirstVariadicRegister(VariadicScan &S);
 bool hasI386VariadicPrologue(VariadicScan &S);
 bool hasAAPCS64VariadicPrologue(VariadicScan &S);
 bool hasDarwinVariadicPrologue(VariadicScan &S);

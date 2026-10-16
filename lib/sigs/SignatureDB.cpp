@@ -10,6 +10,7 @@
 #include "neverd/loader/COFF/RichHeader.h"
 #include "neverd/loader/DirectBranch.h"
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/LinkerThunk.h"
 #include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/SignatureMatcher.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -776,22 +777,6 @@ uint64_t wrapToImage(const BinaryImage &Img, uint64_t Address) {
   return Img.is64Bit() ? Address : static_cast<uint32_t>(Address);
 }
 
-/// The word at \p Address, when the image holds it.
-std::optional<uint32_t> wordAt(const BinaryImage &Img, uint64_t Address) {
-  const uint8_t *Bytes = Img.readVA(Address, sizeof(uint32_t));
-  if (!Bytes)
-    return std::nullopt;
-  return readLE<uint32_t>(Bytes);
-}
-
-/// The halfword at \p Address, when the image holds it.
-std::optional<uint16_t> halfwordAt(const BinaryImage &Img, uint64_t Address) {
-  const uint8_t *Bytes = Img.readVA(Address, sizeof(uint16_t));
-  if (!Bytes)
-    return std::nullopt;
-  return readLE<uint16_t>(Bytes);
-}
-
 /// Where a direct branch goes, and on 32-bit ARM whether it enters its
 /// target in Thumb state.
 struct Branch {
@@ -830,13 +815,6 @@ DirectBranchForms referenceForms(Arch A, InstructionMode Mode) {
   return Forms;
 }
 
-/// The branch a thunk that only jumps on starts with: an unconditional jump.
-DirectBranchForms thunkForms() {
-  DirectBranchForms Forms;
-  Forms.Jumps = true;
-  return Forms;
-}
-
 /// Where the direct branch a reference at \p Offset of the routine at
 /// \p Start describes goes, when the image holds that branch; see
 /// PatternModule::References for the offsets.
@@ -868,158 +846,16 @@ std::optional<Branch> branchTarget(const BinaryImage &Img, uint64_t Start,
   }
 }
 
-/// Where a 32-bit ARM code address \p Address goes, in the state its low bit
-/// says.
-Branch interworkingTarget(const BinaryImage &Img, uint64_t Address) {
-  return Branch{wrapToImage(Img, Address & ~uint64_t(ThumbStateBit)),
-                (Address & ThumbStateBit) != 0};
-}
-
-/// The immediate an ARM-state MOVW (or, when \p Top, MOVT) writes to ip.
-std::optional<BitString> armMoveToIP(uint32_t Word, bool Top) {
-  if (!(Top ? ArmMoveTopToIP : ArmMoveWideToIP).matches(Word))
-    return std::nullopt;
-  return BitString().append(ArmMoveImm4, Word).append(ArmMoveImm12, Word);
-}
-
-/// The immediate a Thumb-2 MOVW (or, when \p Top, MOVT) at \p Address
-/// writes to ip.
-std::optional<BitString> thumbMoveToIP(const BinaryImage &Img, uint64_t Address,
-                                       bool Top) {
-  const std::optional<uint16_t> First = halfwordAt(Img, Address);
-  const std::optional<uint16_t> Second =
-      halfwordAt(Img, Address + ThumbHalfwordBytes);
-  if (!First || !Second ||
-      !(Top ? ThumbMoveTopToIPHigh : ThumbMoveWideToIPHigh).matches(*First) ||
-      !ThumbMoveToIPLow.matches(*Second))
-    return std::nullopt;
-  return BitString()
-      .append(ThumbMoveImm4, *First)
-      .append(ThumbMoveI, *First)
-      .append(ThumbMoveImm3, *Second)
-      .append(ThumbMoveImm8, *Second);
-}
-
-/// The routine an ARM-state linker thunk at \p Address forwards to: an
-/// unconditional B, `ldr pc, [pc, #-4]` and the address after it (ARMv5 and
-/// GNU long branches), or lld's `movw ip; movt ip; [add ip, ip, pc;] bx ip`.
-std::optional<Branch> armThunkTarget(const BinaryImage &Img, uint64_t Address) {
-  if (std::optional<Branch> Jump =
-          directBranch(Img, Address, InstructionMode::ARM, thunkForms()))
-    return Jump;
-  const uint64_t SecondAddress = Address + ArmInstructionBytes;
-  const std::optional<uint32_t> First = wordAt(Img, Address),
-                                Second = wordAt(Img, SecondAddress);
-  if (!First || !Second)
-    return std::nullopt;
-  if (ArmLoadPCFromNextWord.matches(*First))
-    return interworkingTarget(Img, *Second);
-  const std::optional<BitString> Low = armMoveToIP(*First, /*Top=*/false);
-  const std::optional<BitString> High =
-      Low ? armMoveToIP(*Second, /*Top=*/true) : std::nullopt;
-  const uint64_t ThirdAddress = SecondAddress + ArmInstructionBytes;
-  const std::optional<uint32_t> Third =
-      High ? wordAt(Img, ThirdAddress) : std::nullopt;
-  if (!Third)
-    return std::nullopt;
-  const uint64_t Value = BitString(*High).append(*Low).zeroExtended();
-  if (ArmBranchExchangeIP.matches(*Third))
-    return interworkingTarget(Img, Value);
-  // `add ip, ip, pc` reads pc eight bytes past itself.
-  if (ArmAddIPIPPC.matches(*Third)) {
-    const std::optional<uint32_t> Fourth =
-        wordAt(Img, ThirdAddress + ArmInstructionBytes);
-    if (Fourth && ArmBranchExchangeIP.matches(*Fourth))
-      return interworkingTarget(Img, Value + ThirdAddress + ArmPCOffset);
-  }
-  return std::nullopt;
-}
-
-/// The routine a Thumb linker thunk at \p Address forwards to: a B.W, or
-/// lld's `movw ip; movt ip; [add ip, pc;] bx ip`.
-std::optional<Branch> thumbThunkTarget(const BinaryImage &Img,
-                                       uint64_t Address) {
-  if (std::optional<Branch> Jump =
-          directBranch(Img, Address, InstructionMode::Thumb, thunkForms()))
-    return Jump;
-  const uint64_t SecondAddress = Address + ThumbWideInstructionBytes;
-  const std::optional<BitString> Low =
-      thumbMoveToIP(Img, Address, /*Top=*/false);
-  const std::optional<BitString> High =
-      Low ? thumbMoveToIP(Img, SecondAddress, /*Top=*/true) : std::nullopt;
-  if (!High)
-    return std::nullopt;
-  const uint64_t Value = BitString(*High).append(*Low).zeroExtended();
-  const uint64_t ThirdAddress = SecondAddress + ThumbWideInstructionBytes;
-  const std::optional<uint16_t> Third = halfwordAt(Img, ThirdAddress);
-  if (!Third)
-    return std::nullopt;
-  if (ThumbBranchExchangeIP.matches(*Third))
-    return interworkingTarget(Img, Value);
-  // `add ip, pc` reads pc four bytes past itself.
-  if (ThumbAddIPPC.matches(*Third)) {
-    const std::optional<uint16_t> Fourth =
-        halfwordAt(Img, ThirdAddress + ThumbHalfwordBytes);
-    if (Fourth && ThumbBranchExchangeIP.matches(*Fourth))
-      return interworkingTarget(Img, Value + ThirdAddress + ThumbPCOffset);
-  }
-  return std::nullopt;
-}
-
-/// The routine an AArch64 linker thunk at \p Address forwards to: a B,
-/// `adrp x16; add x16, x16, #lo12; br x16`, or `ldr x16, #8; br x16` and the
-/// address after them.
-std::optional<Branch> aarch64ThunkTarget(const BinaryImage &Img,
-                                         uint64_t Address) {
-  if (std::optional<Branch> Jump =
-          directBranch(Img, Address, InstructionMode::Default, thunkForms()))
-    return Jump;
-  const std::optional<uint32_t> First = wordAt(Img, Address);
-  if (!First)
-    return std::nullopt;
-  const uint64_t SecondAddress = Address + A64InstructionBytes;
-  const uint64_t ThirdAddress = SecondAddress + A64InstructionBytes;
-  const std::optional<uint32_t> Second = wordAt(Img, SecondAddress),
-                                Third = wordAt(Img, ThirdAddress);
-  if (!Second || !Third)
-    return std::nullopt;
-  if (A64PageAddressX16.matches(*First) && A64AddX16X16.matches(*Second) &&
-      A64BranchRegisterX16.matches(*Third)) {
-    const int64_t Pages = BitString()
-                              .append(A64PageImmHi, *First)
-                              .append(A64PageImmLo, *First)
-                              .signExtended();
-    const uint64_t Page = llvm::alignDown(Address, A64PageBytes) +
-                          static_cast<uint64_t>(Pages * A64PageBytes);
-    return Branch{Page + A64AddImm12.extract(*Second)};
-  }
-  if (A64LoadX16FromThunkEnd.matches(*First) &&
-      A64BranchRegisterX16.matches(*Second)) {
-    const uint64_t Literal =
-        Address + A64LoadLiteralOffset.extract(*First) * A64InstructionBytes;
-    if (const uint8_t *Bytes = Img.readVA(Literal, sizeof(uint64_t)))
-      return Branch{readLE<uint64_t>(Bytes)};
-  }
-  return std::nullopt;
-}
-
 /// Where the thunk the branch \p To enters jumps to, when all the thunk does
 /// is jump on: an incremental-linking thunk, a branch island, or a linker's
 /// long-branch or interworking thunk.  On 32-bit ARM the thunk runs in the
 /// state \p To enters it in.
 std::optional<Branch> thunkTarget(const BinaryImage &Img, const Branch &To) {
-  switch (Img.Arch) {
-  case Arch::X86:
-  case Arch::X64:
-    return directBranch(Img, To.Target, InstructionMode::Default, thunkForms());
-  case Arch::AArch64:
-    return aarch64ThunkTarget(Img, To.Target);
-  case Arch::ARM:
-    return To.Thumb ? thumbThunkTarget(Img, To.Target)
-                    : armThunkTarget(Img, To.Target);
-  default:
+  const std::optional<LinkerThunk> Thunk = linkerThunkAt(
+      Img, To.Target, To.Thumb ? InstructionMode::Thumb : InstructionMode::ARM);
+  if (!Thunk)
     return std::nullopt;
-  }
+  return Branch{Thunk->Target, Thunk->Thumb};
 }
 
 } // namespace

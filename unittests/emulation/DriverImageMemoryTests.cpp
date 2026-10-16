@@ -70,11 +70,11 @@ TEST_P(DriverImageMemory, ImageMDLAliasesPreserveBytesAndCompleteUnload) {
     }
     for (const auto *Name :
          {"MmProbeAndLockPages", "MmMapLockedPagesSpecifyCache",
-          "MmUnmapLockedPages", "MmUnlockPages"})
+          "MmMapLockedPages", "MmUnmapLockedPages", "MmUnlockPages"})
       EXPECT_EQ(
           std::count_if(Run->Calls.begin(), Run->Calls.end(),
                         [&](const auto &Call) { return Call.Name == Name; }),
-          2)
+          llvm::StringRef(Name) == "MmUnmapLockedPages" ? 4 : 2)
           << Name;
   }
 }

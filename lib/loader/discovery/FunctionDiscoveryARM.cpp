@@ -444,8 +444,8 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
   // The bytes after the call belong to whatever follows -- often a routine in
   // the other instruction set.  A pass that proves routines no-return it did
   // not know of is repeated without the paths it followed past their calls.
-  // A veneer names its import even where the image has not recorded it: a
-  // mixed image keeps its PLT unpaired.  And a shared library's veneer for a
+  // A veneer names its import from its own instructions, which do not depend
+  // on what the loader has recorded.  And a shared library's veneer for a
   // routine the library defines itself goes to that definition unless
   // another module interposes one, so the definition's own code settles
   // whether it returns: the throw helpers of a C++ runtime are no-return
