@@ -1931,3 +1931,5 @@ Gli alias riusano i proprietari di thread/processi e contesti anche durante il c
 `KernelObjectAPIs.def` gestisce identità, arità, valore e limite IRQL della query fissa. Non introduce un registro di callback né interrogazioni al sistema operativo host.
 
 `KernelPhysicalMemory::resolveAddress` associa il `MemoryView` corrente agli intervalli esatti delle allocazioni conservate e alle identità di pagina esistenti, inclusi gli alias. `KernelModel` verifica separatamente leggibilità, processo e residenza. La query non crea identità né blocca pagine; il riempimento ancora mappato non riattiva byte liberati.
+
+`KernelModel::queryPrimaryVirtualAddress` ricava la VA primaria dai record non paginati attivi `PoolAllocation` e da `KernelPhysicalMemory::describe`, poi la verifica con la query diretta. Non aggiunge registri inversi di alias, identità fisiche o blocchi di pagine; gli indirizzi generici di memoria non dimostrano una mappatura primaria.

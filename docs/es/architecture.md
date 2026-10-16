@@ -1934,3 +1934,5 @@ Los alias reutilizan los propietarios de hilos/procesos y contextos, incluso dur
 `KernelObjectAPIs.def` controla identidad, aridad, valor y límite IRQL de la consulta fija. No introduce un registro de callbacks ni consultas al sistema operativo anfitrión.
 
 `KernelPhysicalMemory::resolveAddress` relaciona el `MemoryView` actual con rangos exactos de asignaciones retenidas e identidades de página existentes, incluidos alias. `KernelModel` valida por separado lectura, proceso y residencia. La consulta no asigna identidades ni bloquea páginas; el relleno aún mapeado no reactiva bytes liberados.
+
+`KernelModel::queryPrimaryVirtualAddress` obtiene la VA principal de los registros activos no paginados `PoolAllocation` y de `KernelPhysicalMemory::describe`, y la valida mediante la consulta directa. No añade un registro inverso de alias, identidades físicas ni bloqueos de páginas; las direcciones de almacenamiento genéricas no demuestran una asignación principal.

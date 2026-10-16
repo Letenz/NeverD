@@ -11,6 +11,8 @@
 #include "os/windows/kernel/KernelModel.h"
 #include "os/windows/kernel/WindowsKernelLayout.h"
 
+#include "neverd/emulation/AddressSpace.h"
+
 #include <array>
 #include <functional>
 #include <initializer_list>
@@ -254,6 +256,117 @@ protected:
     success(Model->finishEntry());
   }
 };
+
+TEST_F(KernelMDLUserMapping, PrimaryQueryUsesExactPoolOwnersAndRetirement) {
+  const auto First = pool(17), Second = pool(17);
+  const auto FirstPA = call("MmGetPhysicalAddress", {First});
+  const auto SecondPA = call("MmGetPhysicalAddress", {Second});
+  ASSERT_GT(FirstPA, UINT32_MAX);
+  ASSERT_EQ(FirstPA / profile::PageSize, SecondPA / profile::PageSize);
+  ASSERT_GT(Second - First, 17u);
+  for (const uint64_t Offset : {0u, 1u, 16u}) {
+    EXPECT_EQ(call("MmGetVirtualForPhysical", {FirstPA + Offset}),
+              First + Offset);
+    EXPECT_EQ(call("MmGetVirtualForPhysical", {SecondPA + Offset}),
+              Second + Offset);
+  }
+  rejected(Model->call("MmGetVirtualForPhysical", {FirstPA + 17}));
+  rejected(Model->call("MmGetVirtualForPhysical", {uint32_t(FirstPA)}));
+  rejected(Model->call("MmGetVirtualForPhysical", {}));
+  rejected(Model->call("MmGetVirtualForPhysical", {FirstPA, 0}));
+  call("ExFreePoolWithTag", {First, PoolTag});
+  rejected(Model->call("MmGetVirtualForPhysical", {FirstPA}));
+  EXPECT_EQ(call("MmGetVirtualForPhysical", {SecondPA}), Second);
+  call("ExFreePoolWithTag", {Second, PoolTag});
+  rejected(Model->call("MmGetVirtualForPhysical", {SecondPA}));
+}
+
+TEST_F(KernelMDLUserMapping, PrimaryQueryAdmitsHighIrqlWithoutTakingAPin) {
+  Model->enterExecution(profile::StackBase);
+  const auto Pool = pool();
+  const auto Physical = call("MmGetPhysicalAddress", {Pool + 17});
+  EXPECT_EQ(call("KfRaiseIrql", {15}), 0u);
+  for (unsigned I = 0; I != 3; ++I)
+    EXPECT_EQ(call("MmGetVirtualForPhysical", {Physical}), Pool + 17);
+  call("KeLowerIrql", {0});
+  // The value query must not retain a new allocation or page lock.
+  call("ExFreePoolWithTag", {Pool, PoolTag});
+  rejected(Model->call("MmGetVirtualForPhysical", {Physical}));
+  success(Model->validateExecutionReturn(profile::StackBase, 0));
+}
+
+TEST_F(KernelMDLUserMapping, PrimaryQueryReturnsTheAllocatorMappingForAliases) {
+  const auto IRP = begin();
+  const auto Pool = pool(), MDL = poolMDL(Pool);
+  const auto View = map(MDL, NormalPagePriority | MdlMappingNoWrite);
+  const auto Locked = descriptor(View + 17, 1);
+  call("MmProbeAndLockPages", {Locked, UserMode, IoReadAccess});
+  const auto System =
+      call("MmGetSystemAddressForMdlSafe", {Locked, NormalPagePriority});
+  const auto Physical = call("MmGetPhysicalAddress", {View + 17});
+  EXPECT_EQ(call("MmGetPhysicalAddress", {System}), Physical);
+  EXPECT_EQ(call("MmGetVirtualForPhysical", {Physical}), Pool + 17);
+  call("MmUnmapLockedPages", {View, MDL});
+  EXPECT_EQ(call("MmGetVirtualForPhysical", {Physical}), Pool + 17);
+  process(ProcessB);
+  EXPECT_EQ(call("MmGetVirtualForPhysical", {Physical}), Pool + 17);
+  process(ProcessA);
+  call("MmUnlockPages", {Locked});
+  call("IoFreeMdl", {Locked});
+  call("IoFreeMdl", {MDL});
+  call("ExFreePoolWithTag", {Pool, PoolTag});
+  rejected(Model->call("MmGetVirtualForPhysical", {Physical}));
+  complete(IRP);
+}
+
+TEST_F(KernelMDLUserMapping, PrimaryQueryRejectsReplacedAndProtectedMappings) {
+  const auto Pool = pool(), Other = pool();
+  const auto Physical = call("MmGetPhysicalAddress", {Pool + 17});
+  const auto Replacement = call("MmGetPhysicalAddress", {Other + 17});
+  const auto Original = take(Memory->pinBacking(Pool, profile::PageSize));
+  success(Memory->addressSpace()->unmap(Pool, profile::PageSize));
+  rejected(Model->call("MmGetVirtualForPhysical", {Physical}));
+  success(Memory->mapAlias(Pool, Other, profile::PageSize, Read | Write));
+  EXPECT_EQ(call("MmGetPhysicalAddress", {Pool + 17}), Replacement);
+  rejected(Model->call("MmGetVirtualForPhysical", {Physical}));
+  EXPECT_EQ(call("MmGetVirtualForPhysical", {Replacement}), Other + 17);
+  success(Memory->unmapAlias(Pool, profile::PageSize));
+  const auto &Slice = Original.slices().front();
+  success(Memory->addressSpace()->mapRegion(Pool, Slice.Region, Slice.Offset,
+                                            profile::PageSize, Read));
+  EXPECT_EQ(call("MmGetVirtualForPhysical", {Physical}), Pool + 17);
+  success(Memory->protect(Pool, profile::PageSize, 0));
+  rejected(Model->call("MmGetVirtualForPhysical", {Physical}));
+  EXPECT_FALSE(Memory->fault());
+  success(Memory->protect(Pool, profile::PageSize, Read | Write));
+  EXPECT_EQ(call("MmGetVirtualForPhysical", {Physical}), Pool + 17);
+  call("ExFreePoolWithTag", {Pool, PoolTag});
+  call("ExFreePoolWithTag", {Other, PoolTag});
+}
+
+TEST_F(KernelMDLUserMapping, PrimaryQueryRefusesUnownedPrimaryProjections) {
+  for (const uint64_t Physical : std::array<uint64_t, 3>{0, 1, UINT64_MAX})
+    rejected(Model->call("MmGetVirtualForPhysical", {Physical}));
+  const auto Paged =
+      call("ExAllocatePoolWithTag", {1, profile::PageSize, PoolTag});
+  const auto PagedMDL = descriptor(Paged, profile::PageSize);
+  call("MmProbeAndLockPages", {PagedMDL, KernelMode, IoReadAccess});
+  rejected(Model->call("MmGetVirtualForPhysical",
+                       {call("MmGetPhysicalAddress", {Paged})}));
+  call("MmUnlockPages", {PagedMDL});
+  call("IoFreeMdl", {PagedMDL});
+  call("ExFreePoolWithTag", {Paged, PoolTag});
+  const auto MDL =
+      call("MmAllocatePagesForMdlEx", {0, UINT64_MAX, 0, profile::PageSize,
+                                       MmCached, MmAllocateFullyRequired});
+  const auto System =
+      call("MmGetSystemAddressForMdlSafe", {MDL, NormalPagePriority});
+  rejected(Model->call("MmGetVirtualForPhysical",
+                       {call("MmGetPhysicalAddress", {System})}));
+  call("MmFreePagesFromMdl", {MDL});
+  call("ExFreePool", {MDL});
+  EXPECT_FALSE(Memory->fault());
+}
 
 TEST_F(KernelMDLUserMapping, PhysicalQueryUsesExactPoolBytesAndFullWidthPFNs) {
   Model->enterExecution(profile::StackBase);

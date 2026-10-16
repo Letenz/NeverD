@@ -1997,3 +1997,5 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 `KernelObjects.FilterVersion*` 檢查嚴格參數數量、與呼叫者無關的結果及分頁 IRQL 邊界。原創及真實 WDK CRT 範例在進入點、工作執行緒與卸載階段使用靜態匯入和動態查找呼叫，進入點亦涵蓋 APC_LEVEL。原始兩條指令的探針不注入輔助函式，驗證完整回傳暫存器及無資料記憶體副作用。
 
 `KernelPhysicalRAM.AddressQueries*` 與 `KernelMDLUserMapping.PhysicalQuery*` 涵蓋別名、位址空間身分、虛擬位址重用、精確邊界、完整位寬 PFN、IRQL、頁面鎖定及撤銷映射。真正 WDK 使用者映射夾具以 MDL PFN 核對靜態和動態 `MmGetPhysicalAddress`，涵蓋唯讀使用者檢視、DPC 層級系統檢視及舊鎖定別名存活時的重新映射。
+
+`KernelMDLUserMapping.PrimaryQuery*` 涵蓋精確配置位元組、同頁相鄰擁有者、完整位寬位址、IRQL、釋放、別名、映射替換、讀取保護及不支援的主要映射投影。真正 WDK 夾具執行靜態和動態 `MmGetVirtualForPhysical`，包含 DPC 層級系統檢視，以及舊鎖定別名存活時的使用者虛擬位址重新繫結。

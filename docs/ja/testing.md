@@ -2051,3 +2051,5 @@ CRT 回帰は全バイト／UTF-16 単位、引数幅、変更不要な読み取
 `KernelObjects.FilterVersion*` は正確な引数数、呼び出し元に依存しない結果、ページ可能コードの IRQL 境界を検査します。独自および実際の WDK CRT フィクスチャはエントリ、ワーカー、アンロードで静的/動的呼び出しを行い、エントリでは APC_LEVEL も検査します。元の 2 命令のプローブは補助関数を注入せず、戻りレジスタ全体とデータメモリ副作用の不在を検証します。
 
 `KernelPhysicalRAM.AddressQueries*` と `KernelMDLUserMapping.PhysicalQuery*` は別名、アドレス空間、VA 再利用、境界、全幅 PFN、IRQL、ページ固定、解除済みマッピングを検証します。実際の WDK ユーザーマッピング用フィクスチャは静的・動的な `MmGetPhysicalAddress` を MDL PFN と比較し、読み取り専用ユーザービュー、DPC レベルのシステムビュー、以前の固定別名が残る再マッピングを実行します。
+
+`KernelMDLUserMapping.PrimaryQuery*` は正確な割り当て範囲、同一ページ上の隣接所有者、全幅アドレス、IRQL、解放、別名、マッピング置換、読み取り保護、未対応の主マッピングを検証します。実際の WDK フィクスチャは静的・動的な `MmGetVirtualForPhysical`、DPC レベルのシステムビュー、以前の固定別名が残るユーザー VA の再マッピングを実行します。

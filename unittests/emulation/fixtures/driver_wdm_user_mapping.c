@@ -184,13 +184,22 @@ static VOID MappingWorker(PDEVICE_OBJECT Object, PVOID Context) {
 }
 
 static NTSTATUS CheckPhysicalAddresses(PMDL Mdl, PUCHAR Pool,
-                                       volatile UCHAR *Report) {
+                                       volatile UCHAR *Report,
+                                       BOOLEAN PrimaryQuery) {
   UNICODE_STRING Routine;
   RtlInitUnicodeString(&Routine, L"MmGetPhysicalAddress");
   PHYSICAL_ADDRESS(NTAPI * Query)(PVOID) =
       (PHYSICAL_ADDRESS(NTAPI *)(PVOID))MmGetSystemRoutineAddress(&Routine);
   if (!Query)
     return STATUS_PROCEDURE_NOT_FOUND;
+  PVOID(NTAPI * Reverse)(PHYSICAL_ADDRESS) = NULL;
+  if (PrimaryQuery) {
+    RtlInitUnicodeString(&Routine, L"MmGetVirtualForPhysical");
+    Reverse =
+        (PVOID(NTAPI *)(PHYSICAL_ADDRESS))MmGetSystemRoutineAddress(&Routine);
+    if (!Reverse)
+      return STATUS_PROCEDURE_NOT_FOUND;
+  }
   PUCHAR Other =
       ExAllocatePool2(POOL_FLAG_NON_PAGED, PAGE_SIZE, UserMappingPoolTag);
   if (!Other)
@@ -212,6 +221,11 @@ static NTSTATUS CheckPhysicalAddresses(PMDL Mdl, PUCHAR Pool,
     if ((ULONGLONG)MmGetPhysicalAddress(Pool + UserMappingByteOffset)
             .QuadPart == Expected)
       Report[0] |= 1;
+    PHYSICAL_ADDRESS PrimaryAddress;
+    PrimaryAddress.QuadPart = Expected;
+    if (PrimaryQuery &&
+        MmGetVirtualForPhysical(PrimaryAddress) == Pool + UserMappingByteOffset)
+      Report[0] |= 4;
     View = MmMapLockedPagesSpecifyCache(Mdl, UserMode, MmCached, NULL, FALSE,
                                         NormalPagePriority | MdlMappingNoWrite);
     if ((ULONGLONG)Query(View + UserMappingByteOffset).QuadPart == Expected)
@@ -232,12 +246,15 @@ static NTSTATUS CheckPhysicalAddresses(PMDL Mdl, PUCHAR Pool,
     KeRaiseIrql(DISPATCH_LEVEL, &Old);
     const PHYSICAL_ADDRESS SystemAddress = MmGetPhysicalAddress(System);
     const PHYSICAL_ADDRESS PoolAddress = Query(Pool + UserMappingByteOffset);
+    PVOID SystemPrimary = PrimaryQuery ? Reverse(SystemAddress) : NULL;
     KeLowerIrql(Old);
     // Report is user memory and is only written after restoring APC admission.
     if ((ULONGLONG)SystemAddress.QuadPart == Expected)
       Report[1] |= 1;
     if ((ULONGLONG)PoolAddress.QuadPart == Expected)
       Report[1] |= 2;
+    if (PrimaryQuery && SystemPrimary == Pool + UserMappingByteOffset)
+      Report[1] |= 4;
     ViewMdl = OtherMdl;
     View = MmMapLockedPagesSpecifyCache(OtherMdl, UserMode, MmCached, Requested,
                                         FALSE,
@@ -250,11 +267,19 @@ static NTSTATUS CheckPhysicalAddresses(PMDL Mdl, PUCHAR Pool,
     if (Replacement != Expected &&
         (ULONGLONG)Query(View + UserMappingByteOffset).QuadPart == Replacement)
       Report[2] |= 2;
+    PHYSICAL_ADDRESS ReplacementAddress;
+    ReplacementAddress.QuadPart = Replacement;
+    if (PrimaryQuery &&
+        Reverse(ReplacementAddress) == Other + UserMappingByteOffset)
+      Report[2] |= 4;
     if ((ULONGLONG)MmGetPhysicalAddress(System).QuadPart == Expected)
       Report[3] |= 1;
     if (MmGetMdlPfnArray(LockedMdl)[0] == MmGetMdlPfnArray(Mdl)[0] &&
         MmGetMdlPfnArray(LockedMdl)[0] != MmGetMdlPfnArray(OtherMdl)[0])
       Report[3] |= 2;
+    if (PrimaryQuery &&
+        MmGetVirtualForPhysical(PrimaryAddress) == Pool + UserMappingByteOffset)
+      Report[3] |= 4;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     Status = GetExceptionCode();
   }
@@ -789,8 +814,10 @@ static NTSTATUS Dispatch(PDEVICE_OBJECT Object, PIRP Irp) {
   NTSTATUS Status;
   if (Action == UserMappingPoolAliases)
     Status = CheckAliases(Mdl, Pool, Report);
-  else if (Action == UserMappingPhysicalAddress)
-    Status = CheckPhysicalAddresses(Mdl, Pool, Report);
+  else if (Action == UserMappingPhysicalAddress ||
+           Action == UserMappingPrimaryAddress)
+    Status = CheckPhysicalAddresses(Mdl, Pool, Report,
+                                    Action == UserMappingPrimaryAddress);
   else if (Action == UserMappingShortage)
     Status = CheckShortage(Mdl, Report);
   else if (Action == UserMappingPartialReuse)
