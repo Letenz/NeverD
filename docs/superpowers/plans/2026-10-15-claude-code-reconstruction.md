@@ -742,3 +742,24 @@ or correspondence with the public sandbox-runtime source candidate.
 macOS/Windows managed search, embedded dispatch, apply-seccomp semantics,
 broader tool paths, native extension internals and type/module recovery remain
 open. No filtering bypass is used to turn the missing helper into a pass.
+
+
+## Exact public seccomp filter correspondence
+
+The public source history narrows the filter candidate to sandbox-runtime
+9520430507ce3c354a71b1518e29e76121407ed1. With pinned libseccomp 2.5.4,
+the unchanged generator produces 136-byte x64 and 120-byte ARM64 arrays
+that occur exactly once, byte-for-byte, in each of the four Linux originals.
+The newer candidate's filter differs and remains retained as a rejection.
+All seventeen diagnostic literals in the selected public C helper occur in
+all four originals, but this does not establish whole-function equivalence.
+
+Both standalone static public helper candidates build and produce the
+original no-command usage response in the previously qualified boundaries.
+No positive command, namespace, supervision, optional observation, or kernel
+filter behavior is accepted at this checkpoint. Native client dispatch is
+still absent. The sealed source/data correspondence package retains public
+sources and licenses, generator inputs, both candidates, the rejected filter
+and original offsets/hashes. progress-v25.json keeps all prior evidence and
+the whole recovery objective incomplete. Native Actions policy controls are
+the next check; they cannot substitute for restoring client integration.
