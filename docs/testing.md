@@ -4469,7 +4469,8 @@ and shift facts with concrete LowIR execution at 1/2/4/8-byte widths, including
 overflow, zero shifts and saturating counts. Unknown operands and malformed
 widths supply no fact. The native MSVC input owner also checks chain
 observations in `nonlocal_finally_reenter` across `/Od`/`/O2`, `/GS-`/`/GS` and
-raw/optimized projection. Its exact source state does not discharge the separate
+raw/optimized projection. The focused Windows EH job runs the complete native
+input owner with its verified MSVC images. Its exact source state does not discharge the separate
 CRT guard retirement obligation; native reconstruction remains rejected while
 that proof is incomplete.
 
