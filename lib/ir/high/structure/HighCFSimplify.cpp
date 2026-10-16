@@ -39,6 +39,7 @@
 #include <set>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace neverd {
 
@@ -3891,9 +3892,11 @@ bool groupSwitchCases(std::vector<HighStmt> &Body) {
 }
 
 bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
+  // These indexes are queried by address only. Rewrite order comes from the
+  // statement traversal, including the first label at a duplicate address.
   // Every way a statement address is entered: gotos and __except handlers.
-  std::map<va_t, unsigned> Uses;
-  std::set<va_t> Pinned;
+  std::unordered_map<va_t, unsigned> Uses;
+  std::unordered_set<va_t> Pinned;
   walkStmts(Body, [&](const HighStmt &S) {
     if (S.Kind == StmtKind::Goto && S.GotoTarget != 0 &&
         S.GotoTarget != InvalidVA)
@@ -3925,7 +3928,7 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
   // Statements starting each address anywhere in the tree.  A copied tail
   // keeps its addresses, so a jump names one statement only when exactly one
   // starts its target.
-  std::map<va_t, unsigned> AddressStarts;
+  std::unordered_map<va_t, unsigned> AddressStarts;
   std::function<void(const std::vector<HighStmt> &)> CountStarts =
       [&](const std::vector<HighStmt> &L) {
         for (size_t I = 0; I < L.size(); ++I) {
@@ -4717,12 +4720,12 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     return std::nullopt;
   };
   for (unsigned Applied = 0; Applied < 512; ++Applied) {
-    std::map<va_t, Site> Labels;
+    std::unordered_map<va_t, Site> Labels;
     std::vector<std::pair<Site, va_t>> Gotos;
     std::vector<std::pair<const std::vector<HighStmt> *, size_t>> Chain;
     // Statements starting each address group: a jump can name an address
     // only when exactly one statement starts it.
-    std::map<va_t, unsigned> Starts;
+    std::unordered_map<va_t, unsigned> Starts;
     size_t Order = 0;
     std::function<void(std::vector<HighStmt> &, const void *)> Collect =
         [&](std::vector<HighStmt> &L, const void *Try) {
