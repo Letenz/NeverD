@@ -335,6 +335,7 @@ private:
   llvm::Expected<uint64_t> initializeUnicodeString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> ansiToUnicodeString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> unicodeToAnsiString(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> upcaseUnicodeString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> freeCountedString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> stringFromGUID(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> guidFromString(llvm::ArrayRef<uint64_t> A);

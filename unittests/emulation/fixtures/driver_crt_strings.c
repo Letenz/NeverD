@@ -13,7 +13,7 @@ typedef unsigned long U32;
 typedef unsigned long long U64;
 #ifdef NEVERD_WDK_FIXTURE
 #include <ctype.h>
-#include <ntddk.h>
+#include <ntifs.h>
 #include <ntimage.h>
 #include <string.h>
 // The pinned WDK lacks this declaration; use its PE type for the kernel ABI.
@@ -31,6 +31,14 @@ typedef struct {
   U16 Length, MaximumLength;
   U16 *Buffer;
 } TEXT, *REGISTRY;
+typedef union {
+  long long QuadPart;
+} LARGE_INTEGER;
+__declspec(dllimport) NTSTATUS RtlHashUnicodeString(const TEXT *, U8, U32,
+                                                    U32 *);
+__declspec(dllimport) NTSTATUS RtlUpcaseUnicodeString(TEXT *, const TEXT *, U8);
+__declspec(dllimport) U8 RtlTimeToSecondsSince1980(LARGE_INTEGER *, U32 *);
+__declspec(dllimport) void RtlFreeUnicodeString(TEXT *);
 __declspec(dllimport) int memcpy_s(void *, U64, const void *, U64);
 __declspec(dllimport) int memmove_s(void *, U64, const void *, U64);
 __declspec(dllimport) void *RtlImageNtHeader(void *);
@@ -87,9 +95,65 @@ static __typeof__(&RtlImageNtHeader) volatile ImageHeader = RtlImageNtHeader;
 static __typeof__(&memcpy_s) DynamicMemoryCopy;
 static __typeof__(&memmove_s) DynamicMemoryMove;
 static __typeof__(&RtlImageNtHeader) DynamicImageHeader;
+static __typeof__(&RtlHashUnicodeString) volatile Hash = RtlHashUnicodeString;
+static __typeof__(&RtlUpcaseUnicodeString) volatile Upcase =
+    RtlUpcaseUnicodeString;
+static __typeof__(&RtlTimeToSecondsSince1980) volatile Seconds =
+    RtlTimeToSecondsSince1980;
+static __typeof__(&RtlHashUnicodeString) DynamicHash;
+static __typeof__(&RtlUpcaseUnicodeString) DynamicUpcase;
+static __typeof__(&RtlTimeToSecondsSince1980) DynamicSeconds;
 static DEVICE Device;
 static void *Work;
 static volatile U32 WorkerDone, WorkerFailed;
+
+// Counted helpers permit APC_LEVEL. The entry probes at that level; worker
+// and unload probe at PASSIVE_LEVEL, separately from the CRT's DISPATCH run.
+static NTSTATUS countedProbe(void) {
+  for (U32 Dynamic = 0; Dynamic < 2; ++Dynamic) {
+    U16 Input[] = {'a', 'b', 0x00bf};
+    U16 Output[] = {'!', '!', '!', '!'};
+    TEXT Source = {5, 0, Input};
+    TEXT Destination = {0, sizeof(Output), Output};
+    U32 Value = 0xffffffffu;
+    CHECK(!(Dynamic ? DynamicHash : Hash)(&Source, 1, 0, &Value));
+    CHECK(Value == 4264001);
+    CHECK(!(Dynamic ? DynamicUpcase : Upcase)(&Destination, &Source, 0));
+    CHECK(Destination.Length == 5 && Destination.MaximumLength == 8 &&
+          Output[0] == 'A' && Output[1] == 'B' && Output[2] == '!');
+    Destination.MaximumLength = 4;
+    Destination.Length = 0x1234;
+    CHECK((U32)(Dynamic ? DynamicUpcase : Upcase)(&Destination, &Source, 0) ==
+          0x80000005u);
+    CHECK(Destination.Length == 0x1234 && Output[2] == '!');
+    CHECK(!(Dynamic ? DynamicUpcase : Upcase)(&Destination, &Source, 1));
+    CHECK(Destination.Length == 5 && Destination.MaximumLength == 5 &&
+          Destination.Buffer[0] == 'A' && Destination.Buffer[1] == 'B');
+    RtlFreeUnicodeString(&Destination);
+    CHECK(!Destination.Buffer && !Destination.Length &&
+          !Destination.MaximumLength);
+    Source.Length = 6;
+    CHECK(!(Dynamic ? DynamicHash : Hash)(&Source, 1, 1, &Value));
+    CHECK(Value == 541327550u);
+    CHECK((U32)(Dynamic ? DynamicHash : Hash)(&Source, 0, 2, &Value) ==
+          0xc000000du);
+    CHECK(!Value);
+    LARGE_INTEGER Time;
+    Time.QuadPart = 119600064000000000LL + 1239999999;
+    CHECK((Dynamic ? DynamicSeconds : Seconds)(&Time, &Value));
+    CHECK(Value == 123);
+    Time.QuadPart = 119600064000000000LL - 1;
+    CHECK(!(Dynamic ? DynamicSeconds : Seconds)(&Time, &Value));
+    CHECK(Value == 123);
+    Time.QuadPart = 119600064000000000LL + 0x100000000LL * 10000000 - 1;
+    CHECK((Dynamic ? DynamicSeconds : Seconds)(&Time, &Value));
+    CHECK(Value == 0xffffffffu);
+    Time.QuadPart++;
+    CHECK(!(Dynamic ? DynamicSeconds : Seconds)(&Time, &Value));
+    CHECK(Value == 0xffffffffu);
+  }
+  return 0;
+}
 
 static NTSTATUS probe(void) {
   for (U32 Dynamic = 0; Dynamic < 2; ++Dynamic) {
@@ -163,13 +227,14 @@ static NTSTATUS probe(void) {
 }
 
 static void worker(DEVICE Owner, void *Context) {
-  WorkerFailed = Owner != Device || Context != Device || probe();
+  WorkerFailed =
+      Owner != Device || Context != Device || probe() || countedProbe();
   IoFreeWorkItem(Work);
   WorkerDone = 1;
 }
 static void unload(DRIVER Driver) {
   (void)Driver;
-  if (WorkerDone && !WorkerFailed && !probe())
+  if (WorkerDone && !WorkerFailed && !probe() && !countedProbe())
     IoDeleteDevice(Device);
 }
 static void (*volatile Unload)(DRIVER) = unload;
@@ -183,6 +248,9 @@ NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
   RESOLVE(DynamicMemoryCopy, "memcpy_s");
   RESOLVE(DynamicMemoryMove, "memmove_s");
   RESOLVE(DynamicImageHeader, "RtlImageNtHeader");
+  RESOLVE(DynamicHash, "RtlHashUnicodeString");
+  RESOLVE(DynamicUpcase, "RtlUpcaseUnicodeString");
+  RESOLVE(DynamicSeconds, "RtlTimeToSecondsSince1980");
   RESOLVE(DynamicDigit, "isdigit");
   RESOLVE(DynamicNarrowUpper, "_strupr");
   RESOLVE(DynamicWideLower, "_wcslwr");
@@ -193,6 +261,13 @@ NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
   RESOLVE(DynamicWideCopy, "wcsncpy_s");
 #undef RESOLVE
   U8 Old = 0;
+#ifdef NEVERD_WDK_FIXTURE
+  KeRaiseIrql(APC_LEVEL, &Old);
+#else
+  Old = KfRaiseIrql(1);
+#endif
+  CHECK(!countedProbe());
+  KeLowerIrql(Old);
   const U8 Elevated =
       Registry->Length && Registry->Buffer[Registry->Length / 2 - 1] == 'H';
   if (Elevated) {

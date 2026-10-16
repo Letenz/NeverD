@@ -2366,5 +2366,270 @@ TEST_F(KernelRuntime, RawImageHeaderFencePrecedesSignatureAccess) {
             std::string::npos);
 }
 
+TEST_F(KernelRuntime, UnicodeHashPreservesNarrowCarriersAndRawUnits) {
+  const auto Output = Scratch + 0x100;
+  for (uint64_t Fold : {0u, 1u, 0x100u, 0x101u})
+    for (uint64_t Algorithm : {0ULL, 1ULL, 0x100000001ULL}) {
+      unicode(Scratch, u"ab");
+      // MaximumLength is not consulted; an odd tail is not a code unit.
+      check(Memory->writeInteger(Scratch, 5, 2));
+      check(Memory->writeInteger(Scratch + 2, 0, 2));
+      check(Memory->writeInteger(Output, UINT64_MAX, 8));
+      EXPECT_EQ(
+          invoke("RtlHashUnicodeString", {Scratch, Fold, Algorithm, Output}),
+          0u);
+      EXPECT_EQ(integer(Output, 4), Fold & 255 ? 4264001u : 6363201u);
+      EXPECT_EQ(integer(Output + 4, 4), UINT32_MAX);
+    }
+  for (uint16_t Unit : {0u, 0xbfu, 0xc0u, 0xe9u, 0xd800u, 0xffffu}) {
+    unicode(Scratch, std::u16string(1, Unit));
+    EXPECT_EQ(invoke("RtlHashUnicodeString", {Scratch, 0, 0, Output}), 0u);
+    EXPECT_EQ(integer(Output, 4), Unit);
+  }
+  unicode(Scratch, u"\u00bf");
+  EXPECT_EQ(invoke("RtlHashUnicodeString", {Scratch, 1, 1, Output}), 0u);
+  EXPECT_EQ(integer(Output, 4), 0xbfu);
+  unicode(Scratch, u"a\u00c0");
+  EXPECT_NE(
+      failure("RtlHashUnicodeString", {Scratch, 1, 1, Output}).find("NLS"),
+      std::string::npos);
+  EXPECT_EQ(integer(Output, 4), 0u);
+}
+
+TEST_F(KernelRuntime, UnicodeHashCapturesBufferBeforeClearingAliasedOutput) {
+  unicode(Scratch, u"ab");
+  EXPECT_EQ(invoke("RtlHashUnicodeString", {Scratch, 1, 1, Scratch}), 0u);
+  EXPECT_EQ(integer(Scratch, 4), 0u);
+  unicode(Scratch, u"abc");
+  EXPECT_EQ(invoke("RtlHashUnicodeString", {Scratch, 0, 1, Scratch + 32}), 0u);
+  EXPECT_EQ(integer(Scratch + 32, 4), 'c');
+  unicode(Scratch, u"ab");
+  EXPECT_EQ(invoke("RtlHashUnicodeString", {Scratch, 0, 1, Scratch + 8}), 0u);
+  EXPECT_EQ(integer(Scratch + 8, 4), 6363201u);
+  EXPECT_EQ(invoke("RtlHashUnicodeString", {0, 1, 1, 0}), 0xc000000du);
+  EXPECT_EQ(invoke("RtlHashUnicodeString", {UINT64_MAX, 1, 1, 0}), 0xc000000du);
+  unicode(Scratch, u"ab");
+  check(Memory->writeInteger(Scratch + 8, 0, 8));
+  check(Memory->writeInteger(Scratch + 0x100, UINT32_MAX, 4));
+  EXPECT_EQ(invoke("RtlHashUnicodeString", {Scratch, 1, 2, Scratch + 0x100}),
+            0xc000000du);
+  EXPECT_EQ(integer(Scratch + 0x100, 4), 0u);
+}
+
+TEST_F(KernelRuntime, UnicodeHashFaultsRetainOnlyPrecedingStores) {
+  const auto Output = Scratch + 0x100;
+  check(Memory->writeInteger(Output, UINT32_MAX, 4));
+  EXPECT_FALSE(failure("RtlHashUnicodeString", {Scratch + 0xfffc, 0, 1, Output})
+                   .empty());
+  EXPECT_EQ(integer(Output, 4), UINT32_MAX);
+  resetModel();
+  unicode(Scratch, u"a");
+  check(Memory->writeInteger(Scratch + 8, Scratch + 0xfffe, 8));
+  check(Memory->writeInteger(Scratch, 4, 2));
+  check(Memory->writeInteger(Scratch + 0xfffe, 'a', 2));
+  check(Memory->writeInteger(Output, UINT32_MAX, 4));
+  EXPECT_FALSE(
+      failure("RtlHashUnicodeString", {Scratch, 0, 1, Output}).empty());
+  EXPECT_EQ(integer(Output, 4), 0u);
+}
+
+TEST_F(KernelRuntime, UnicodeUpcaseCountsBytesAndPreservesSequentialOverlap) {
+  const auto Source = Scratch, Destination = Scratch + 0x100;
+  const auto Buffer = Scratch + 0x200;
+  unicode(Source, u"az\u00bf");
+  check(Memory->writeInteger(Source, 7, 2));
+  check(Memory->writeInteger(Source + 2, 0, 2));
+  counted(Destination, Buffer, u"", 8);
+  EXPECT_EQ(invoke("RtlUpcaseUnicodeString", {Destination, Source, 0x100}), 0u);
+  EXPECT_EQ(integer(Destination, 2), 7u);
+  EXPECT_EQ(integer(Destination + 2, 2), 8u);
+  EXPECT_EQ(integer(Buffer, 8), 0x002100bf005a0041ULL);
+  check(Memory->writeInteger(Destination, 0x1234, 2));
+  check(Memory->writeInteger(Destination + 2, 6, 2));
+  check(Memory->writeInteger(Source + 8, 0, 8));
+  EXPECT_EQ(invoke("RtlUpcaseUnicodeString", {Destination, Source, 0}),
+            0x80000005u);
+  EXPECT_EQ(integer(Destination, 2), 0x1234u);
+  unicode(Source, u"abcd");
+  check(Memory->writeInteger(Source, 6, 2));
+  check(Memory->writeInteger(Destination + 8, Source + 34, 8));
+  EXPECT_EQ(invoke("RtlUpcaseUnicodeString", {Destination, Source, 0}), 0u);
+  EXPECT_EQ(integer(Source + 32, 8), 0x0041004100410061ULL);
+  // A one-byte source has no complete unit, so neither Buffer is accessed.
+  check(Memory->writeInteger(Source, 1, 2));
+  check(Memory->writeInteger(Source + 8, 0, 8));
+  check(Memory->writeInteger(Destination + 8, 0, 8));
+  EXPECT_EQ(invoke("RtlUpcaseUnicodeString", {Destination, Source, 0}), 0u);
+  EXPECT_EQ(integer(Destination, 2), 1u);
+  check(Memory->writeInteger(Scratch + 0xfffe, 1, 2));
+  EXPECT_EQ(
+      invoke("RtlUpcaseUnicodeString", {Destination, Scratch + 0xfffe, 0}), 0u);
+}
+
+TEST_F(KernelRuntime, UnicodeUpcaseReloadsAliasedDescriptors) {
+  const auto Source = Scratch, Destination = Scratch + 0x100;
+  unicode(Source, u"ab");
+  check(Memory->writeInteger(Destination + 2, 4, 2));
+  check(Memory->writeInteger(Destination + 8, Source, 8));
+  EXPECT_EQ(invoke("RtlUpcaseUnicodeString", {Destination, Source, 0}), 0u);
+  EXPECT_EQ(integer(Source, 4), 0x00420041u);
+  EXPECT_EQ(integer(Destination, 2), 65u);
+  unicode(Source, u"\u0080b");
+  wide(Scratch + 0x80, u"xc");
+  check(Memory->writeInteger(Destination + 8, Source + 8, 8));
+  EXPECT_EQ(invoke("RtlUpcaseUnicodeString", {Destination, Source, 0}), 0u);
+  EXPECT_EQ(integer(Source + 8, 4), 0x00430080u);
+  // Destination.Buffer is reloaded too: the first output redirects it.
+  unicode(Source, u"\u0080b");
+  check(Memory->writeInteger(Destination + 8, Destination + 8, 8));
+  EXPECT_EQ(invoke("RtlUpcaseUnicodeString", {Destination, Source, 0}), 0u);
+  EXPECT_EQ(integer(Destination + 8), Scratch + 0x80);
+  EXPECT_EQ(integer(Scratch + 0x82, 2), 'B');
+}
+
+TEST_F(KernelRuntime, UnicodeUpcaseSharesPagedStringAllocationAndFailure) {
+  const auto Destination = Scratch + 0x100;
+  unicode(Scratch, u"ab");
+  check(Memory->writeInteger(Scratch, 5, 2));
+  EXPECT_EQ(invoke("RtlUpcaseUnicodeString", {Destination, Scratch, 0x101}),
+            0u);
+  const auto Buffer = integer(Destination + 8);
+  ASSERT_NE(Buffer, 0u);
+  EXPECT_EQ(integer(Destination, 2), 5u);
+  EXPECT_EQ(integer(Destination + 2, 2), 5u);
+  EXPECT_EQ(integer(Buffer, 4), 0x00420041u);
+  EXPECT_EQ(integer(Buffer + 4, 1), 0xcdu);
+  EXPECT_NE(failure("ExFreePoolWithTag", {Buffer, Tag}).find("tag"),
+            std::string::npos);
+  invoke("RtlFreeUnicodeString", {Destination});
+  EXPECT_EQ(integer(Destination), 0u);
+  EXPECT_EQ(integer(Destination + 8), 0u);
+  auto Dead = Model->validateGuestAccess(Buffer, 1, false);
+  ASSERT_TRUE(bool(Dead));
+  EXPECT_NE(llvm::toString(std::move(Dead)).find("freed"), std::string::npos);
+  unicode(Scratch, u"");
+  check(Memory->writeInteger(Destination, 0x1234, 2));
+  EXPECT_NE(failure("RtlUpcaseUnicodeString", {Destination, Scratch, 1})
+                .find("non-zero"),
+            std::string::npos);
+  EXPECT_EQ(integer(Destination, 2), 0x1234u);
+  EXPECT_EQ(integer(Destination + 2, 2), 0u);
+  // Exhaust the same physical arena used by the paged string owner.
+  bool Exhausted = false;
+  for (unsigned I = 0; I < 128; ++I)
+    if (!invoke("ExAllocatePoolWithTag", {1, 65536, Tag})) {
+      Exhausted = true;
+      break;
+    }
+  ASSERT_TRUE(Exhausted);
+  check(Memory->writeInteger(Scratch, 65535, 2));
+  check(Memory->writeInteger(Destination + 8, UINT64_MAX, 8));
+  EXPECT_EQ(invoke("RtlUpcaseUnicodeString", {Destination, Scratch, 1}),
+            0xc0000017u);
+  EXPECT_EQ(integer(Destination, 2), 0x1234u);
+  EXPECT_EQ(integer(Destination + 2, 2), 65535u);
+  EXPECT_EQ(integer(Destination + 8), 0u);
+}
+
+TEST_F(KernelRuntime, UnicodeUpcaseRetainsStoresBeforeNlsAndAccessFailures) {
+  const auto Destination = Scratch + 0x100, Buffer = Scratch + 0x200;
+  unicode(Scratch, u"a\u00c0");
+  counted(Destination, Buffer, u"", 4);
+  check(Memory->writeInteger(Destination, 0x1234, 2));
+  EXPECT_NE(
+      failure("RtlUpcaseUnicodeString", {Destination, Scratch, 0}).find("NLS"),
+      std::string::npos);
+  EXPECT_EQ(integer(Buffer, 4), 0x00210041u);
+  EXPECT_EQ(integer(Destination, 2), 0x1234u);
+  unicode(Scratch, u"ab");
+  check(Memory->writeInteger(Destination + 8, Scratch + 0xfffe, 8));
+  EXPECT_FALSE(
+      failure("RtlUpcaseUnicodeString", {Destination, Scratch, 0}).empty());
+  EXPECT_EQ(integer(Scratch + 0xfffe, 2), 'A');
+  EXPECT_EQ(integer(Destination, 2), 0x1234u);
+}
+
+TEST_F(KernelRuntime, SecondsSince1980PreservesRangeEdgesAndOutputAliases) {
+  constexpr uint64_t Epoch = 119600064000000000ULL;
+  constexpr uint64_t End = Epoch + 0x100000000ULL * 10000000;
+  for (auto [Time, Valid, Seconds] : {std::tuple{Epoch - 1, false, 0u},
+                                      {Epoch, true, 0u},
+                                      {Epoch + 9999999, true, 0u},
+                                      {Epoch + 10000000, true, 1u},
+                                      {End - 1, true, UINT32_MAX},
+                                      {End, false, 0u},
+                                      {uint64_t(INT64_MAX), false, 0u},
+                                      {uint64_t(INT64_MIN), false, 0u},
+                                      {UINT64_MAX, false, 0u},
+                                      {uint64_t(0), false, 0u}}) {
+    check(Memory->writeInteger(Scratch, Time, 8));
+    check(Memory->writeInteger(Scratch + 8, 0x1234567887654321ULL, 8));
+    EXPECT_EQ(invoke("RtlTimeToSecondsSince1980", {Scratch, Scratch + 8}),
+              Valid);
+    EXPECT_EQ(integer(Scratch + 8, 4), Valid ? Seconds : 0x87654321u);
+    EXPECT_EQ(integer(Scratch + 12, 4), 0x12345678u);
+    if (!Valid)
+      EXPECT_EQ(invoke("RtlTimeToSecondsSince1980", {Scratch, 0}), 0u);
+  }
+  const auto Time = Epoch + 1239999999;
+  check(Memory->writeInteger(Scratch, Time, 8));
+  EXPECT_EQ(invoke("RtlTimeToSecondsSince1980", {Scratch, Scratch}), 1u);
+  EXPECT_EQ(integer(Scratch, 4), 123u);
+  EXPECT_EQ(integer(Scratch + 4, 4), Time >> 32);
+}
+
+TEST_F(KernelRuntime, CountedRuntimeHelpersShareIrqlAndLifetimeAdmission) {
+  const auto Destination = Scratch + 0x100, Output = Scratch + 0x200;
+  Model->enterExecution(0x100);
+  const auto Previous = invoke("KfRaiseIrql", {1});
+  unicode(Scratch, u"a");
+  counted(Destination, Output, u"", 2);
+  EXPECT_EQ(invoke("RtlHashUnicodeString", {Scratch, 1, 1, Output}), 0u);
+  EXPECT_EQ(invoke("RtlUpcaseUnicodeString", {Destination, Scratch, 0}), 0u);
+  check(Memory->writeInteger(Output, 119600064000000000ULL, 8));
+  EXPECT_EQ(invoke("RtlTimeToSecondsSince1980", {Output, Output + 8}), 1u);
+  invoke("KfRaiseIrql", {2});
+  EXPECT_NE(failure("RtlHashUnicodeString", {0, 0, 0, 0}).find("IRQL"),
+            std::string::npos);
+  EXPECT_NE(failure("RtlUpcaseUnicodeString", {0, 0, 0}).find("IRQL"),
+            std::string::npos);
+  EXPECT_NE(failure("RtlTimeToSecondsSince1980", {0, 0}).find("IRQL"),
+            std::string::npos);
+  invoke("KeLowerIrql", {1});
+  invoke("KeLowerIrql", {Previous});
+  const auto Pool = invoke("ExAllocatePoolWithTag", {0, 16, Tag});
+  invoke("ExFreePoolWithTag", {Pool, Tag});
+  EXPECT_NE(failure("RtlHashUnicodeString", {Pool, 0, 0, Output}).find("freed"),
+            std::string::npos);
+  EXPECT_NE(
+      failure("RtlUpcaseUnicodeString", {Destination, Pool, 0}).find("freed"),
+      std::string::npos);
+  EXPECT_NE(failure("RtlTimeToSecondsSince1980", {Pool, Output}).find("freed"),
+            std::string::npos);
+}
+
+TEST_F(KernelRuntime, CountedRuntimeHelpersRejectReadOnlyOutputs) {
+  for (unsigned Operation = 0; Operation < 3; ++Operation) {
+    resetModel();
+    const auto Destination = Scratch + 0x100, Output = Scratch + 0x1000;
+    unicode(Scratch, u"a");
+    counted(Destination, Output, u"", 8);
+    check(Memory->writeInteger(Output, 0x1122334455667788ULL, 8));
+    check(Memory->protect(Output, 0x1000, Read));
+    if (Operation == 0)
+      EXPECT_FALSE(
+          failure("RtlHashUnicodeString", {Scratch, 0, 1, Output}).empty());
+    else if (Operation == 1)
+      EXPECT_FALSE(
+          failure("RtlUpcaseUnicodeString", {Destination, Scratch, 0}).empty());
+    else {
+      check(Memory->writeInteger(Scratch, 119600064000000000ULL, 8));
+      EXPECT_FALSE(
+          failure("RtlTimeToSecondsSince1980", {Scratch, Output}).empty());
+    }
+    EXPECT_EQ(integer(Output), 0x1122334455667788ULL);
+  }
+}
+
 } // namespace
 } // namespace neverd::emulation

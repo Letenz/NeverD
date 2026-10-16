@@ -1765,3 +1765,5 @@ KernelFileSystem は FILE_OBJECT ごとに provider token を保持します。�
 `KernelModelRuntime` がカーネル CRT の分類、インプレース変換、チェック付き文字列書き込みを所有します。`KernelCStringAPIs.def` は各呼び出し面にエクスポート識別、引数数、IRQL 条件を供給します。単位アクセスはゲストの権限と寿命検証を再利用し、レポートやアダプターはコピー／エラー意味論を再実装しません。
 
 `KernelMemoryCalls` が検査付きメモリコピーの受付を所有し、既存の move/fill とプール寿命・ユーザーメモリ検証を使う。`KernelModelRuntime` が `RtlImageNtHeader` の生署名検査を所有する。この検査は実行に必要なローダー検証を置き換えず、アダプターも意味論を複製しない。
+
+`KernelModelRuntime` は Unicode ハッシュ、NLS に依存しない共通大文字化、1980 年起点の秒への変換を所有します。`KernelRuntimeCalls` は既存のページプールで文字列を割り当てます。文字列・時刻 API 表がエクスポート、引数数、APC_LEVEL 制約を統一し、フィールドへのアクセス順序は実装側が管理します。
