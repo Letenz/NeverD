@@ -2133,3 +2133,9 @@ Le regressioni coprono thread conservati/scaduti, contesti richiedente/worker/co
 I controlli MDL precedenti coprono chiamate WDK reali statiche e dinamiche, worker collegati, alias di immagini originali, riduzione del modo, IRQL, cambi di processo, descrittori scaduti, mappature duplicate e budget esaurito iniettato. L’esaurimento kernel conserva il MDL e segnala il bugcheck non modellato; quello utente resta intercettabile. Le sonde del wrapper originale verificano solo argomenti e ampiezza del ritorno, non il mapper iniettato.
 
 `KernelFileQueries.BaseDevice*` verifica la base sotto due filtri, riferimenti invariati, puntatori di estensione ignorati, stati di creazione/pulizia/chiusura, record corrotti e IRQL. Le fixture originali e WDK reali normali/CFG eseguono query statiche e dinamiche nella matrice esistente di backend, rilocazione, pianificazione e durata dei chiamanti.
+
+## Offset delle importazioni dylib Darwin
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` controlla +8/-4, modifiche del puntatore TLS e nuovo stato per processo. C, CLI e Python reale coprono i profili. L’inventario obbligatorio diventa 101 metodi per profilo e 303 casi ARM64 corrispondenti; il catalogo nativo comune resta 82. Hardware non disponibile non equivale a esecuzione nativa.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)

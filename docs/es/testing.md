@@ -2138,3 +2138,9 @@ Las regresiones cubren hilos retenidos/caducados, contextos solicitante/worker/v
 Las comprobaciones MDL antiguas cubren llamadas WDK reales estáticas y dinámicas, un trabajador adjunto, alias de imágenes originales, reducción del modo, IRQL, cambios de proceso, descriptores caducados, mapeos duplicados y agotamiento de presupuesto inyectado. El fallo del núcleo conserva el MDL y comunica el bugcheck no modelado; el fallo de usuario puede capturarse. Las sondas del wrapper original solo prueban argumentos y anchura del retorno, no el mapeador inyectado.
 
 `KernelFileQueries.BaseDevice*` comprueba la base bajo dos filtros, referencias sin cambios, punteros de extensión ignorados, estados de creación/limpieza/cierre, registros dañados e IRQL. Las fixtures originales y WDK reales normales/CFG ejecutan consultas estáticas y dinámicas en la matriz existente de motores, reubicación, planificación y vida del llamante.
+
+## Desplazamientos de importaciones dylib de Darwin
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` comprueba +8/-4, cambios del puntero TLS y estado nuevo por proceso. C, CLI y Python real cubren todos los perfiles. El inventario obligatorio pasa a 101 métodos por perfil y 303 casos ARM64 coincidentes; el catálogo nativo común sigue en 82. La ausencia de hardware no cuenta como ejecución nativa.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)

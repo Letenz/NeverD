@@ -1339,6 +1339,58 @@ class ProcessIntegrationTests(unittest.TestCase):
                         self.assertTrue(all(c["result"] == "3e8" for c in calls if c["name"] == "_getpid"))
                         self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
+    def test_darwin_dylib_addends_initialize_data_and_tls_pointers(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        for platform, architecture in (("macos", "x86_64"), ("macos", "arm64"),
+                                       ("ios", "arm64"), ("ios-simulator", "x86_64"),
+                                       ("ios-simulator", "arm64")):
+            profile = f"{platform}-macho64-v1"
+            for kind in ("classic", "chained"):
+                directory = (Path(fixtures) /
+                             f"{platform}-{architecture}-dylib-addends-{kind}").resolve(strict=True)
+                options = {"backend": "unicorn", "instruction_quantum": 1024,
+                           "timeout_microseconds": 5000000,
+                           "darwin": {"modules": [{"name": "@loader_path/libneverd-addends.dylib",
+                                                    "path": str(directory / "libneverd-addends.dylib")}]}}
+                for repeat in range(2):
+                    with self.subTest(profile=profile, architecture=architecture, kind=kind, repeat=repeat):
+                        result = session.emulate_process(str(directory / "main"), profile, json.dumps(options))
+                        self.assertEqual(result["stop_reason"], "exited", result["diagnostic"])
+                        self.assertEqual(result["schema_version"], 1)
+                        self.assertEqual(result["exit_status"], 78)
+                        self.assertEqual(result["stdout_hex"], "")
+                        self.assertEqual(result["stderr_hex"], "")
+                        self.assertEqual(result["services"], [])
+                        calls = result["darwin"]["native_calls"]
+                        names = [call["name"] for call in calls]
+                        self.assertEqual(names.count("_getpid"), 1)
+                        self.assertGreater(names.count("__tlv_get_addr"), 0)
+                        self.assertEqual(set(names), {"_getpid", "__tlv_get_addr"})
+                        self.assertEqual(result["events"], len(calls) + 1)
+                        for call in calls:
+                            self.assertEqual(call["module"], "/usr/lib/libSystem.B.dylib")
+                            self.assertEqual(len(call["arguments"]), 0 if call["name"] == "_getpid" else 1)
+                            self.assertIsNotNone(call["result"])
+                            if call["name"] == "_getpid":
+                                self.assertEqual(call["result"], "3e8")
+                        self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_darwin_lchown_keeps_vnode_and_target_authority(self) -> None:
         self._check_darwin_symbolic_ownership(True)
 

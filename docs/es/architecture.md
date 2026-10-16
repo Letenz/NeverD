@@ -1920,3 +1920,9 @@ Los alias reutilizan los propietarios de hilos/procesos y contextos, incluso dur
 `KernelMDLCalls` normaliza la entrada antigua al mapeador existente de seis argumentos. `KernelPhysicalMemory` y los registros MDL siguen gestionando caché, identidad física, permisos y duración. Solo los alias de imagen del núcleo liberados por completo no dejan dependencia del entorno; las vistas de usuario la conservan.
 
 `queryFileDevice` en `KernelModelFileRequests` centraliza la identidad del archivo, la cabecera, el montaje y la topología. La consulta base devuelve el dispositivo del archivo; la consulta relacionada valida además las rutas de extensión y elige el extremo superior conectado. Ambas devuelven objetos prestados.
+
+## Desplazamientos de importaciones dylib de Darwin
+
+Las importaciones ordinarias fuertes de dylib admiten sumandos de bytes con signo para punteros globales y plantillas TLS. `DarwinImage` combina una sola vez la dirección exportada, el desplazamiento de la biblioteca y el sumando; comprueba desbordamientos y exige pertenencia a los segmentos originales del proveedor elegido. El valor del puntero no implica un ancho de acceso. Las entradas libSystem, los descriptores TLV importados y el enlace diferido conservan sumando cero.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)

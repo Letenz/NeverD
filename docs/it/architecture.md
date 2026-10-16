@@ -1917,3 +1917,9 @@ Gli alias riusano i proprietari di thread/processi e contesti anche durante il c
 `KernelMDLCalls` normalizza l’ingresso precedente nel mapper esistente a sei argomenti. `KernelPhysicalMemory` e i record MDL gestiscono ancora cache, identità fisica, permessi e durata. Solo gli alias di immagini kernel completamente liberati non lasciano dipendenze ambientali; le viste utente le mantengono.
 
 `queryFileDevice` in `KernelModelFileRequests` verifica in comune identità del file, intestazione, montaggio e topologia. La query base restituisce il dispositivo del file; quella correlata verifica anche i percorsi di estensione e sceglie il vertice collegato. Entrambi i risultati sono presi in prestito.
+
+## Offset delle importazioni dylib Darwin
+
+Le importazioni ordinarie forti da dylib ammettono addendi in byte con segno per puntatori globali e modelli TLS. `DarwinImage` combina una sola volta indirizzo esportato, rilocazione della libreria e addendo, controlla gli overflow e limita il risultato ai segmenti originali del fornitore scelto. Il valore del puntatore non implica una larghezza di accesso. Ingressi libSystem, descrittori TLV importati e collegamenti lazy richiedono addendo zero.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)

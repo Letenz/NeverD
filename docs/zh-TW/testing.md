@@ -1983,3 +1983,9 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 舊式 MDL 映射驗證涵蓋真實 WDK 靜態及動態呼叫、附加程序的工作執行緒、原創映像別名、模式窄化、IRQL、程序切換、過期描述符、重複核心映射及注入的別名預算耗盡。核心耗盡保留 MDL 並回報未建模的 bugcheck；使用者耗盡仍可捕捉。原始包裝器探針僅驗證參數轉送與傳回寬度，不驗證注入的映射器。
 
 `KernelFileQueries.BaseDevice*` 檢查基礎裝置與兩層篩選裝置的差異、參照不變、忽略擴充指標、建立／清理／關閉階段、損壞記錄及 IRQL。原創與真實 WDK 一般／CFG 檔案查詢夾具在既有後端、重定位、排程及呼叫端生命週期矩陣中執行靜態與動態基礎查詢。
+
+## Darwin dylib 匯入偏移
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` 驗證 +8/-4、TLS 指標修改與新程序重設，C、CLI 和實際 Python 整合涵蓋各組態。必要清單為每組態101種方法、303個相符 ARM64 身分，共用原生目錄保持82項；無法使用的硬體不計為原生執行。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)

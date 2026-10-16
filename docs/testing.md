@@ -7658,8 +7658,8 @@ checks actual reservation charging and mapping/protection refusal.
 original three-module C workload for all five profiles with classic and chained
 fixups. It checks shared dependencies, duplicate export spellings, relocated data,
 zero-only and initialized TLS, live template mutation and fresh repeated runs.
-The mandatory native inventory now has 100 methods per matching profile, or
-300 matching ARM64 identities; the separate common native catalogue remains 82.
+The mandatory native inventory now has 101 methods per matching profile, or
+303 matching ARM64 identities; the separate common native catalogue remains 82.
 Unavailable transports remain explicit skips. `DarwinNative.StartupDylibsAndTLSMatchOriginalNativeImages`
 compares a system-linked executable and its original libraries with real macOS
 execution. Independent O0/O1/O2 classic/chained controls complement that test.
@@ -7671,6 +7671,27 @@ same explicit catalogue and reports through C and CLI. With
 Run these alongside DarwinImage, linking, memory, existing libSystem calls,
 raw startup and shared process/API regressions before publishing. Guest deadlines
 and event limits are unchanged; native Intel and physical iOS need other hosts.
+
+### Imported Darwin data and TLS pointer offsets
+
+`DarwinAddendFixtures.cmake` builds the original SDK-free C/assembler alias
+workload for all five platform/ISA cells with classic/chained fixups. The +8
+array reference, -4 tail reference and initialized volatile TLS pointer share
+provider storage; the TLS pointer remains changed at exit to check fresh state.
+`DarwinDylibAddends.*` checks original format facts, signed extremes, main-image
+and runtime targets, declared-span versus page padding, and one-byte pointer
+membership. `DarwinDylib.OrdinaryAddendsKeepProviderChoiceWithRepeatedExportSpellings`
+checks ordinal ownership; `NonzeroTLVDescriptorAndLibSystemAddendsRemainExplicitlyRefused`
+retains the exact-entry boundaries.
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` is required on each matching
+native profile. `DarwinNative.StartupDylibAddendsAndTLSTemplatesMatchOriginalImages`
+compares both system-linked formats with original macOS execution; independent
+O0/O1/O2 controls complement it. `DylibAddendsAndTLSPointersKeepIdentityAcrossCAndCLI`
+and the genuine Python `test_darwin_dylib_addends_initialize_data_and_tls_pointers`
+repeat all five profiles. Unavailable hardware remains a skip, with no native
+Intel or physical iOS claim. Common native cases remain 82; required methods
+are 101 per profile, or 303 matching ARM64 identities.
 
 ### Imported Darwin memory calls
 

@@ -1797,3 +1797,9 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 `KernelMDLCalls` 将旧映射入口归一到现有六参数映射器。缓存属性、物理页身份、权限与生命周期仍由 `KernelPhysicalMemory` 和 MDL 记录负责。完整释放的内核映像别名不增加环境依赖；用户视图保留该依赖。
 
 `KernelModelFileRequests` 的 `queryFileDevice` 统一校验文件身份、头部、挂载状态和拓扑。基础查询返回文件所拥有的设备，关联查询另行校验文件扩展路由并选择附加栈顶层；两者均借用返回对象。
+
+## Darwin dylib 导入偏移
+
+普通强 dylib 导入支持带符号的字节偏移，可初始化全局指针与 TLS 模板指针。`DarwinImage` 统一计算导出地址、库的加载偏移及导入加数，检查溢出并限定在所选提供库的原始段范围内；指针值检查不推测访问宽度。libSystem 入口、导入的 TLV 描述符和延迟绑定仍要求零加数。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)

@@ -2152,3 +2152,9 @@ Les régressions couvrent threads conservés/périmés, contextes demandeur/work
 Les contrôles MDL historiques couvrent les appels WDK réels statiques et dynamiques, un worker attaché, les alias d’image originaux, la réduction du mode, l’IRQL, les changements de processus, les descripteurs périmés, les doubles mappages et la pénurie de budget injectée. La pénurie noyau préserve le MDL et signale le bugcheck non modélisé ; celle en mode utilisateur reste interceptable. Les sondes du wrapper original prouvent seulement les arguments transmis et la largeur du retour, pas le mappeur injecté.
 
 `KernelFileQueries.BaseDevice*` vérifie la base sous deux filtres, les références inchangées, les pointeurs d’extension ignorés, les phases de création/nettoyage/fermeture, les enregistrements corrompus et l’IRQL. Les fixtures originales et WDK réelles normales/CFG exécutent les requêtes statiques et dynamiques dans la matrice existante de moteurs, relocalisation, ordonnancement et durée de vie des appelants.
+
+## Décalages des imports dylib Darwin
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` vérifie +8/-4, la modification du pointeur TLS et un nouvel état par processus. C, CLI et Python réel couvrent les profils. L’inventaire obligatoire contient 101 méthodes par profil et 303 cas ARM64 correspondants ; le catalogue natif commun reste 82. Le matériel indisponible ne vaut pas exécution native.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)

@@ -4573,6 +4573,46 @@ TEST_P(DarwinProcess, StartupDylibsShareDataAndKeepThreadLocalInstances) {
     Options.Limits.Events = process_defaults::Events;
   }
 }
+TEST_P(DarwinProcess, StartupDylibAddendsPreserveDataAndTLSAliasing) {
+  Options.InstructionQuantum = 1024;
+  for (const char *Kind : {"classic", "chained"}) {
+    SCOPED_TRACE(Kind);
+    const auto Directory =
+        std::filesystem::path(Path.string() + "-dylib-addends-" + Kind);
+    Options.Darwin =
+        DarwinProcessOptions{{{"@loader_path/libneverd-addends.dylib",
+                               Directory / "libneverd-addends.dylib"}}};
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      SCOPED_TRACE(Repeat);
+      auto R = emulateProcess(Directory / "main", GetParam().OS, Options);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+      EXPECT_EQ(R->ExitStatus, 78);
+      EXPECT_EQ(R->ReturnValue, 78u);
+      EXPECT_TRUE(R->StandardOutput.empty());
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_TRUE(R->Services.empty());
+      unsigned PID = 0, TLS = 0;
+      for (const auto &Call : R->NativeCalls) {
+        PID += Call.Name == "_getpid";
+        TLS += Call.Name == "__tlv_get_addr";
+        EXPECT_TRUE(Call.Result);
+      }
+      EXPECT_EQ(PID, 1u);
+      EXPECT_GT(TLS, 0u);
+      EXPECT_EQ(R->NativeCalls.size(), PID + TLS);
+      EXPECT_EQ(R->Events, R->NativeCalls.size() + 1);
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    }
+    Options.Limits.Events = 1;
+    auto Limited = emulateProcess(Directory / "main", GetParam().OS, Options);
+    ASSERT_TRUE(bool(Limited)) << llvm::toString(Limited.takeError());
+    EXPECT_EQ(Limited->Stop, ProcessStopReason::EventLimit);
+    EXPECT_EQ(Limited->Events, 1u);
+    EXPECT_TRUE(Limited->StandardOutput.empty());
+    Options.Limits.Events = process_defaults::Events;
+  }
+}
 INSTANTIATE_TEST_SUITE_P(Transports, DarwinProcess,
                          testing::ValuesIn(profiles()),
                          [](const testing::TestParamInfo<Profile> &P) {

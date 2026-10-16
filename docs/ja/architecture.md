@@ -1789,3 +1789,9 @@ KernelFileSystem は FILE_OBJECT ごとに provider token を保持します。�
 `KernelMDLCalls` は旧マッピング入口を既存の六引数マッパーに正規化します。キャッシュ属性、物理ページの同一性、権限と寿命は `KernelPhysicalMemory` と MDL レコードが管理します。完全に解放したカーネルイメージの別名だけが環境依存を残さず、ユーザービューは依存を保持します。
 
 `KernelModelFileRequests` の `queryFileDevice` がファイル識別、ヘッダー、マウント状態、トポロジーを共通検証します。基底クエリはファイル所有のデバイスを返し、関連クエリはファイル拡張経路も検証して接続スタックの最上位を選択します。いずれも返却オブジェクトを借用します。
+
+## Darwin dylib インポートのオフセット
+
+通常の強い dylib インポートは、グローバルポインターと TLS テンプレートで符号付きバイト加算値を扱います。`DarwinImage` がエクスポート先アドレス、ライブラリの配置差分、加算値を一度だけ合成し、オーバーフローと選択した提供元の元セグメント内であることを検査します。ポインター値からアクセス幅は推測しません。libSystem 入口、インポートした TLV 記述子、遅延バインドの加算値はゼロに限ります。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)

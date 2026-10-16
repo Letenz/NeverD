@@ -1717,3 +1717,9 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 `KernelMDLCalls` 將舊映射入口正規化至現有六參數映射器。快取屬性、實體頁面身分、權限與生命週期仍由 `KernelPhysicalMemory` 和 MDL 記錄負責。完整釋放的核心映像別名不增加環境相依性；使用者檢視保留該相依性。
 
 `KernelModelFileRequests` 的 `queryFileDevice` 統一驗證檔案身分、標頭、掛載狀態和拓撲。基礎查詢傳回檔案所擁有的裝置，關聯查詢另行驗證檔案擴充路由並選取附加堆疊頂層；兩者均借用傳回物件。
+
+## Darwin dylib 匯入偏移
+
+一般強 dylib 匯入支援帶符號的位元組偏移，可初始化全域指標與 TLS 範本指標。`DarwinImage` 統一計算匯出位址、程式庫載入偏移及匯入加數，檢查溢位並限定在所選提供程式庫的原始區段內；指標值檢查不推測存取寬度。libSystem 入口、匯入的 TLV 描述元和延遲繫結仍要求零加數。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)

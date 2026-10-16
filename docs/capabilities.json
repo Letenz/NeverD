@@ -14185,7 +14185,7 @@
         "Ordinary C imports from strong /usr/lib/libSystem.B.dylib dependencies with compatibility requirement <=1.0 bind Mach-O _read/_write/_close/_getpid/__exit/___error/_open/_lseek/_pread/_pwrite/_dup/_dup2/_mmap/_mprotect/_munmap. LC_MAIN and MH_TWOLEVEL require ordinary positive ordinals, complete original undefined-symbol closure and aligned non-executable file slots. Classic pointer rebase/non-lazy bind, independently complete lazy pointer programs and generic chained PTR_64/PTR_64_OFFSET are validated before publication at admitted image addresses. Weak/threaded/multi-start/authenticated binding, other relocation sources, unknown providers/symbols/addends and initialization/TLS callbacks fail explicitly. SG_READ_ONLY makes current protection R after fixups while preserving the declared maximum; O0/O1/O2 real native permission controls establish restoring RW under a declared RW maximum. Imported-only authenticated gates are RX/max RX and the fresh four-byte main-thread errno is RW/max RW; both remain resident. Wrappers reuse typed kernel effects, return all-one failure with errno, preserve errno on success and retain exact provider/name/arity/full-width carrier evidence in optional schema1 darwin.native_calls. Nonreturning/incomplete results are null; raw-only reports remain compatible. Preparation and execution share the original absolute deadline, event account and charged metadata/model memory. Typed preparation expiry yields Timeout with no guest work while format/map/backend errors retain their types; backend construction is not a hard wall-clock promise. Native O0/O1/O2 controls and the same authored object through system/classic/chained linking use real libSystem. Five software process/C/CLI/Python combinations and three matching ARM64 HVF profiles execute the new route. Current common native catalogue82 and mandatory100/platform require300 matching ARM64 executions. Runtime lazy resolution, dlopen/dlsym, arbitrary dylibs, dyld shared cache, constructors, threads, stdio/malloc and Apple frameworks remain incomplete; Intel HVF and physical iOS remain unqualified. Lazy programs resolve before entry: explicit destination/ordinary ordinal/symbol, pointer type, zero addend, one DO_BIND immediately followed by DONE, no inherited state. Exactly one local executable original rebase plus one lazy bind may normalize at a slot; all raw records and strings remain charged, and every other collision refuses. A strong zero-addend ordinary classic dyld_stub_binder import is admitted only alongside actual lazy bindings and routes to an explicit refusal before C ABI decoding, errno changes or native-call evidence. Six ordinary C functions observe eager stable slots and preserve errno/terminal exit across five software and three matching ARM64 HVF profiles. The native control requests eager binding and compares output/status; no general dyld resolver/private state or default policy across OS versions is claimed.",
         "Ordinary open/lseek/pread/pwrite/dup/dup2 reuse the existing file authority and cursor owner. open records two arguments, or three for low32 O_CREAT; ARM64 reads only the four defined bytes of the promoted int at entry SP, while x64 uses the third GP argument. Original carrier evidence remains separate from zero/default or uint16 mode_t kernel arguments. Failed argument reads precede native-call, errno and file effects; existing return-frame failure records remain distinct. Native O0/O1/O2 controls check shared/independent offsets, positioned IO, dup2 self/replacement/failed-source preservation, offsets above 4GiB, mode and binary bytes. The ordinary C workload exits73, emits460044, and retains40 named calls plus the main-return event. Thread cancellation and compatibility path shims remain unsupported.",
         "Ordinary mmap/mprotect/munmap share DarwinMemory effects. C int protection, flags and FD narrow to 32 bits while full carriers remain observable. mmap rejects zero length or a missing MAP_PRIVATE/MAP_SHARED with MAP_FAILED/EINVAL before kernel effects, then supplies MAP_UNIX03. The raw BSD path retains its semantics. Independent C controls cover anonymous zeroing, rights transitions, error order, mapping lifetime after close, private writes and EOF tails. General shared/fixed/executable mappings and allocators remain unsupported.",
-        "Explicit darwin.modules admits at most 32 exact case-sensitive install names and original input paths for a same-ISA/platform strong acyclic startup MH_DYLIB graph. LC_ID_DYLIB identity and compatibility are checked on every edge; reachable nodes share full-file, resident, metadata, deadline and 65536-record budgets. Ordinary ordinals select actual regular/thread-local exports, including identical names in different providers. No host search or @ expansion occurs. Exact 24-byte TLV descriptors require supported bootstrap fixups, zero input keys, bounded offsets and <=16-byte alignment. TLS storage is physically mapped and charged during preparation; first access copies live relocated contiguous template bytes, preserving prior BSS/gap changes. Every call validates descriptor identity and return frame, preserves non-result GP/vector state and errno, and reports one __tlv_get_addr event. mmap/munmap/mprotect cannot borrow or alter TLS reservations. The original shared-dependency fixture covers rebased data, equal export spellings, initialized/zero-only TLS, cross-image identity, pre-access mutation and fresh process state across five portable profiles and matching ARM64 HVF. Native O0/O1/O2 classic/chained controls compare exit83/stdout440054. Weak/reexport/resolver exports, imported addends, cycles, callbacks, dlopen/dlsym, threads and complete Apple frameworks remain unsupported; native Intel and physical iOS remain unqualified."
+        "Explicit darwin.modules admits at most 32 exact case-sensitive install names and original input paths for a same-ISA/platform strong acyclic startup MH_DYLIB graph. LC_ID_DYLIB identity and compatibility are checked on every edge; reachable nodes share full-file, resident, metadata, deadline and 65536-record budgets. Ordinary ordinals select actual regular/thread-local exports, including identical names in different providers. No host search or @ expansion occurs. Exact 24-byte TLV descriptors require supported bootstrap fixups, zero input keys, bounded offsets and <=16-byte alignment. TLS storage is physically mapped and charged during preparation; first access copies live relocated contiguous template bytes, preserving prior BSS/gap changes. Every call validates descriptor identity and return frame, preserves non-result GP/vector state and errno, and reports one __tlv_get_addr event. mmap/munmap/mprotect cannot borrow or alter TLS reservations. The original shared-dependency fixture covers rebased data, equal export spellings, initialized/zero-only TLS, cross-image identity, pre-access mutation and fresh process state across five portable profiles and matching ARM64 HVF. Native O0/O1/O2 classic/chained controls compare exit83/stdout440054. Ordinary strong dylib addends use checked signed arithmetic and retain one-byte membership in the selected provider's original mapped segment spans, including global and TLS-template pointer initializers. The +8/-4 alias and volatile TLS-pointer fixture checks shared data and fresh process state with native O0/O1/O2 classic/chained controls returning 78. Nonzero libSystem gate, imported TLV descriptor and classic lazy addends remain unsupported. Weak/reexport/resolver exports, cycles, callbacks, dlopen/dlsym, threads and complete Apple frameworks remain unsupported; native Intel and physical iOS remain unqualified."
       ],
       "tests": [
         {
@@ -21817,6 +21817,70 @@
           "target": "NeverDDarwinProcessTests",
           "source": "unittests/emulation/DarwinNativeTests.cpp",
           "filter": "DarwinNative.StartupDylibsAndTLSMatchOriginalNativeImages",
+          "platforms": [
+            "darwin"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylibAddends.*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylib.OrdinaryAddendsKeepProviderChoiceWithRepeatedExportSpellings",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylib.NonzeroTLVDescriptorAndLibSystemAddendsRemainExplicitlyRefused",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.StartupDylibAddendsPreserveDataAndTLSAliasing/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProcessPublicTests",
+          "source": "unittests/emulation/ProcessPublicTests.cpp",
+          "filter": "*/DarwinLibSystemPublic.DylibAddendsAndTLSPointersKeepIdentityAcrossCAndCLI/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinNativeTests.cpp",
+          "filter": "DarwinNative.StartupDylibAddendsAndTLSTemplatesMatchOriginalImages",
           "platforms": [
             "darwin"
           ]

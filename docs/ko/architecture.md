@@ -1766,3 +1766,9 @@ KernelFileSystem은 FILE_OBJECT마다 provider token 하나를 유지합니다. 
 `KernelMDLCalls`는 레거시 매핑 진입점을 기존 여섯 인수 매퍼로 정규화합니다. 캐시 속성, 물리 페이지 식별, 권한과 수명은 `KernelPhysicalMemory`와 MDL 레코드가 관리합니다. 완전히 해제한 커널 이미지 별칭만 환경 의존성을 남기지 않으며 사용자 뷰는 의존성을 유지합니다.
 
 `KernelModelFileRequests`의 `queryFileDevice`가 파일 식별, 헤더, 마운트 상태와 토폴로지를 공통 검증합니다. 기본 쿼리는 파일이 소유한 장치를 반환하고 관련 쿼리는 파일 확장 경로를 추가 검증하여 연결 스택의 최상위를 선택합니다. 두 결과 모두 빌린 객체입니다.
+
+## Darwin dylib 가져오기 오프셋
+
+일반적인 강한 dylib 가져오기는 전역 포인터와 TLS 템플릿에 부호 있는 바이트 가산값을 지원합니다. `DarwinImage`가 내보낸 주소, 라이브러리 배치 차이, 가산값을 한 번만 합성하고 오버플로와 선택한 제공자의 원래 세그먼트 범위를 검사합니다. 포인터 값에서 접근 폭을 추정하지 않습니다. libSystem 진입점, 가져온 TLV 설명자, 지연 바인딩의 가산값은 0이어야 합니다.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)

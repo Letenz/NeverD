@@ -2153,3 +2153,9 @@ Regressionen prüfen gehaltene/veraltete Threads, Anforderer-/Worker-/angeheftet
 Die alten MDL-Aufrufe werden mit echten statischen und dynamischen WDK-Aufrufen, angehängten Workern, eigenen Abbild-Aliasen, Modusverengung, IRQL, Prozesswechseln, abgelaufenen Deskriptoren, doppelten Kernelabbildungen und injiziertem Budgetmangel geprüft. Kernelmangel erhält das MDL und meldet den nicht modellierten Bugcheck; Benutzermangel bleibt abfangbar. Originale Wrapper-Proben prüfen nur Argumentweitergabe und Rückgabebreite, nicht den injizierten Mapper.
 
 `KernelFileQueries.BaseDevice*` prüft die Basis unter zwei Filtern, unveränderte Referenzen, ignorierte Erweiterungszeiger, Erstellungs-/Bereinigungs-/Schließzustände, beschädigte Datensätze und IRQL. Eigene und echte WDK-Fixtures in Normal-/CFG-Varianten führen statische und dynamische Abfragen in der bestehenden Matrix aus Backends, Relokation, Planung und Aufruferlebensdauer aus.
+
+## Darwin dylib Importoffsets
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` prüft +8/-4, Änderungen des TLS-Zeigers und frischen Prozesszustand. C, CLI und echtes Python prüfen alle Profile. Das Pflichtinventar umfasst 101 Methoden je Profil und 303 passende ARM64-Fälle; der gemeinsame native Katalog bleibt 82. Nicht verfügbare Hardware zählt nicht als native Ausführung.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
