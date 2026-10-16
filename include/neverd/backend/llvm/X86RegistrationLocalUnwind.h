@@ -13,6 +13,8 @@
 
 #include "llvm/Support/Error.h"
 
+#include <string>
+
 namespace llvm {
 class Function;
 class FunctionType;
@@ -20,6 +22,8 @@ class LLVMContext;
 } // namespace llvm
 
 namespace neverd::x86_registration {
+
+std::string localUnwindBridgeName(va_t Target, va_t Owner);
 
 llvm::FunctionType *
 localUnwindRuntimeType(llvm::LLVMContext &Context,
@@ -32,7 +36,8 @@ localUnwindRuntimeType(llvm::LLVMContext &Context,
 /// and private capture recovery require separate source and native proofs.
 llvm::Expected<llvm::Function *>
 createLocalUnwindBridge(llvm::Function &Runtime,
-                        RegistrationLocalUnwindContract::Kind Protocol);
+                        RegistrationLocalUnwindContract::Kind Protocol,
+                        va_t Owner = 0);
 
 } // namespace neverd::x86_registration
 

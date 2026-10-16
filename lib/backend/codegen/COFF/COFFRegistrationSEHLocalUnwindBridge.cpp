@@ -17,19 +17,16 @@
 
 namespace neverd::coff_registration {
 
-llvm::Error
-validateSEHLocalUnwindBridge(const llvm::Function &Bridge,
-                             const RegistrationLocalUnwindContract &Source) {
+llvm::Expected<const llvm::Function *>
+inspectSEHLocalUnwindBridge(const llvm::Function &Bridge,
+                            RegistrationLocalUnwindContract::Kind Protocol) {
   using Kind = RegistrationLocalUnwindContract::Kind;
-  const bool EH4 = Source.Protocol == Kind::EH4;
+  const bool EH4 = Protocol == Kind::EH4;
   const auto &Target = Bridge.getParent()->getTargetTriple();
   const auto Pointer = [](llvm::Type *Type) {
     return Type->isPointerTy() && !Type->getPointerAddressSpace();
   };
-  if ((Source.Protocol != Kind::EH3 && !EH4) || !Source.Target ||
-      Source.Target > UINT32_MAX || !Source.ImportSlot ||
-      Source.ImportSlot > UINT32_MAX - 3 ||
-      (Source.Indirect && Source.Target != Source.ImportSlot) ||
+  if ((Protocol != Kind::EH3 && !EH4) ||
       Target.getArch() != llvm::Triple::x86 || !Target.isOSWindows() ||
       !Bridge.hasLocalLinkage() || Bridge.size() != 1 || Bridge.isVarArg() ||
       !Bridge.getReturnType()->isVoidTy() ||
@@ -106,7 +103,6 @@ validateSEHLocalUnwindBridge(const llvm::Function &Bridge,
       Runtime->arg_size() != (EH4 ? 3u : 2u) ||
       Runtime->getCallingConv() != llvm::CallingConv::C ||
       !Runtime->getAttributes().isEmpty() ||
-      Runtime->hasDLLImportStorageClass() != Source.Indirect ||
       !Pointer(Runtime->getArg(0)->getType()) ||
       (EH4 && !Pointer(Runtime->getArg(1)->getType())) ||
       !Runtime->getArg(EH4 ? 2 : 1)->getType()->isIntegerTy(32))
@@ -115,7 +111,27 @@ validateSEHLocalUnwindBridge(const llvm::Function &Bridge,
   auto Identity = rewrite_source::getOriginalVA(*Runtime);
   if (!Identity)
     return Identity.takeError();
-  if (!*Identity || **Identity != Source.Target)
+  if (!*Identity || !**Identity || **Identity > UINT32_MAX)
+    return llvm::createStringError(
+        "local unwind bridge changed its source runtime");
+  return Runtime;
+}
+
+llvm::Error
+validateSEHLocalUnwindBridge(const llvm::Function &Bridge,
+                             const RegistrationLocalUnwindContract &Source) {
+  if (!Source.Target || Source.Target > UINT32_MAX || !Source.ImportSlot ||
+      Source.ImportSlot > UINT32_MAX - 3 ||
+      (Source.Indirect && Source.Target != Source.ImportSlot))
+    return llvm::createStringError("local unwind source runtime is incomplete");
+  auto Runtime = inspectSEHLocalUnwindBridge(Bridge, Source.Protocol);
+  if (!Runtime)
+    return Runtime.takeError();
+  auto Identity = rewrite_source::getOriginalVA(**Runtime);
+  if (!Identity)
+    return Identity.takeError();
+  if (!*Identity || **Identity != Source.Target ||
+      (*Runtime)->hasDLLImportStorageClass() != Source.Indirect)
     return llvm::createStringError(
         "local unwind bridge changed its source runtime");
   return llvm::Error::success();

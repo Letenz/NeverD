@@ -18,6 +18,13 @@
 
 namespace neverd::x86_registration {
 
+std::string localUnwindBridgeName(va_t Target, va_t Owner) {
+  std::string Name = "__nd_seh_local_unwind_" + llvm::utohexstr(Target);
+  if (Owner)
+    Name += "_" + llvm::utohexstr(Owner);
+  return Name;
+}
+
 llvm::FunctionType *
 localUnwindRuntimeType(llvm::LLVMContext &Context,
                        RegistrationLocalUnwindContract::Kind Protocol) {
@@ -31,7 +38,8 @@ localUnwindRuntimeType(llvm::LLVMContext &Context,
 
 llvm::Expected<llvm::Function *>
 createLocalUnwindBridge(llvm::Function &Runtime,
-                        RegistrationLocalUnwindContract::Kind Protocol) {
+                        RegistrationLocalUnwindContract::Kind Protocol,
+                        va_t Owner) {
   using Kind = RegistrationLocalUnwindContract::Kind;
   auto &Module = *Runtime.getParent();
   auto &Context = Module.getContext();
@@ -39,7 +47,7 @@ createLocalUnwindBridge(llvm::Function &Runtime,
   auto Identity = rewrite_source::getOriginalVA(Runtime);
   if (!Identity)
     return Identity.takeError();
-  if ((Protocol != Kind::EH3 && Protocol != Kind::EH4) ||
+  if ((Protocol != Kind::EH3 && Protocol != Kind::EH4) || Owner > UINT32_MAX ||
       Target.getArch() != llvm::Triple::x86 || !Target.isOSWindows() ||
       !*Identity || !**Identity || **Identity > UINT32_MAX ||
       !Runtime.isDeclaration() || !Runtime.hasExternalLinkage() ||
@@ -48,8 +56,7 @@ createLocalUnwindBridge(llvm::Function &Runtime,
       !Runtime.getAttributes().isEmpty())
     return llvm::createStringError(
         "local unwind runtime has no checked PE32 ABI");
-  const std::string Name =
-      "__nd_seh_local_unwind_" + llvm::utohexstr(**Identity);
+  const std::string Name = localUnwindBridgeName(**Identity, Owner);
   if (Module.getNamedValue(Name))
     return llvm::createStringError(
         "local unwind bridge name is already occupied");

@@ -13,6 +13,7 @@
 #include "neverd/backend/llvm/X86RegistrationSEHControl.h"
 #include "neverd/backend/llvm/X86RegistrationSEHException.h"
 #include "neverd/backend/llvm/X86RegistrationSEHJump.h"
+#include "neverd/ir/med/X86RegistrationSEHLocalUnwind.h"
 
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -123,7 +124,8 @@ std::optional<SEHFrameValues> getPrivateSEHFrameValues(
     FrameValues.erase(Value);
   const auto Jumps = getX86RegistrationSEHJumpCalls(Func);
   const auto Bound = getX86RegistrationSEHBoundCalls(Func);
-  if (!Jumps || !Bound)
+  const auto LocalUnwinds = getX86RegistrationSEHLocalUnwinds(Func);
+  if (!Jumps || !Bound || !LocalUnwinds)
     return std::nullopt;
   for (const MedCallInfo &Call : Func.CallInfos) {
     const auto Block = llvm::find_if(
@@ -133,6 +135,8 @@ std::optional<SEHFrameValues> getPrivateSEHFrameValues(
                                 ? &Block->Ops[Call.OpIdx]
                                 : nullptr;
     const auto Jump = Operation ? Jumps->find(Operation->Addr) : Jumps->end();
+    const auto Local =
+        Operation ? LocalUnwinds->find(Operation->Addr) : LocalUnwinds->end();
     // The cookie is decoded by XOR with EBP, so conservative address taint
     // reaches its recovered ECX argument. The exact source occurrence proves
     // that value is the image cookie; native lowering replaces this check with
@@ -147,6 +151,12 @@ std::optional<SEHFrameValues> getPrivateSEHFrameValues(
     for (size_t I = 0; I < Call.Args.size(); ++I)
       if (IsFrame(Call.Args[I]) &&
           !(Operation && Bound->count(Operation->Addr)) &&
+          !(Local != LocalUnwinds->end() &&
+            Local->second.Operation == Operation &&
+            I == (Local->second.Source->Runtime.Protocol ==
+                          RegistrationLocalUnwindContract::Kind::EH4
+                      ? 1u
+                      : 0u)) &&
           (I != 0 || (Jump == Jumps->end() && !CookieCheck)))
         return std::nullopt;
   }
@@ -271,7 +281,8 @@ std::optional<SEHSourceOperations> getCheckedSEHSourceOperations(
   // Ordinary near returns use the outlined callback's C return ABI. Other
   // nonlocal exits still require their own replacement continuation contract.
   if (!getX86RegistrationSEHBoundCalls(Func) ||
-      !getX86RegistrationSEHJumpCalls(Func))
+      !getX86RegistrationSEHJumpCalls(Func) ||
+      !getX86RegistrationSEHLocalUnwinds(Func))
     return std::nullopt;
   const auto ExceptionAccesses = getX86RegistrationSEHExceptionAccesses(Func);
   if (!ExceptionAccesses)

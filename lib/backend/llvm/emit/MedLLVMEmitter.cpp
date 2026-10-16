@@ -1273,6 +1273,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
       resolveX86RegistrationHandlerReference(
           Func.ExceptionMetadata->PersonalityVA);
       declareX86RegistrationJumpRuntimes(Func);
+      declareX86RegistrationLocalUnwinds(Func);
     }
 
   // Build every ordinary block skeleton before emitting the first operation.
