@@ -16,6 +16,7 @@
 #include <map>
 #include <set>
 #include <tuple>
+#include <vector>
 
 namespace neverd::x86_registration {
 
@@ -69,9 +70,12 @@ void discardUnusedSEHCallInputs(MedFunc &Function) {
         return;
       const RegisterKey Register{Op.Inputs[2].ConstVal, Op.Inputs[4].ConstVal};
       const auto Role = static_cast<SEHRegisterRole>(Op.Inputs[1].ConstVal);
-      if (Role == SEHRegisterRole::CallbackInput)
+      if (Role == SEHRegisterRole::CallbackInput) {
+        if (Owner == Owners->end() || !Owner->second.second ||
+            Owner->second.first != Register.first || Block.StartAddr != Op.Addr)
+          return;
         Reads[Register].push_back(Key(Op.Output));
-      else if (Role == SEHRegisterRole::CallInput)
+      } else if (Role == SEHRegisterRole::CallInput)
         Writes[Register].push_back(&Op);
     }
   }
@@ -81,6 +85,12 @@ void discardUnusedSEHCallInputs(MedFunc &Function) {
     if (Clobber.PreservedPrefixSize)
       Use(Clobber.PreservedInput);
   }
+  for (const auto &Call : Function.CallInfos)
+    for (const auto &Argument : Call.Args) {
+      if (!Charge())
+        return;
+      Use(Argument);
+    }
   // No mutation precedes the complete scan. Unknown/malformed transport and
   // budget exhaustion preserve the original conservative parameter recovery.
   for (const auto &[Register, Operations] : Writes) {

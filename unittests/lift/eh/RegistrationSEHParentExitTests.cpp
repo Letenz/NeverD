@@ -16,8 +16,10 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
+#include "neverd/ir/med/X86RegistrationSEHBoundCall.h"
 #include "neverd/ir/med/X86RegistrationSEHCall.h"
 #include "neverd/ir/med/X86RegistrationSEHParentExit.h"
+#include "neverd/ir/med/X86RegistrationSEHRegisters.h"
 #include "neverd/ir/med/X86RegistrationSEHStateStore.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/COFF/COFFLoader.h"
@@ -144,6 +146,143 @@ MedFunc parentFallthrough(bool Runtime) {
 }
 
 } // namespace
+
+TEST(RegistrationSEHParentExit, UnusedTransportDoesNotAddAParentParameter) {
+  using namespace x86_registration;
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Function = parentFallthrough(false);
+    MedVar Value;
+    Value.Kind = MedVar::Reg;
+    Value.TheArch = Arch::X86;
+    Value.RegOff = x86reg::RCX;
+    Value.Id = 20;
+    Value.Size = 4;
+    MedOp Write;
+    Write.Opcode = NdOp::INTRINSIC;
+    Write.Addr = 0x1000;
+    Write.addInput(
+        MedVar::makeConst(unsigned(Intrinsic::X86SEHRegisterWrite), 2));
+    Write.addInput(MedVar::makeConst(unsigned(SEHRegisterRole::CallInput), 1));
+    Write.addInput(MedVar::makeConst(0x1800, 4));
+    Write.addInput(MedVar::makeConst(Write.Addr, 4));
+    Write.addInput(MedVar::makeConst(x86reg::RCX, 2));
+    Write.addInput(Value);
+    MedOp Read = Write;
+    Read.Addr = 0x1800;
+    Read.NumInputs = 5;
+    Read.Inputs[0] =
+        MedVar::makeConst(unsigned(Intrinsic::X86SEHRegisterRead), 2);
+    Read.Inputs[1] =
+        MedVar::makeConst(unsigned(SEHRegisterRole::CallbackInput), 1);
+    Read.Inputs[3] = MedVar::makeConst(Read.Addr, 4);
+    Read.Output = Value;
+    Read.Output.SSAVer = 1;
+    if (Mutation == 4)
+      Read.NumInputs = 4;
+    if (Mutation == 5)
+      Function.RegistrationStates->Blocks[1].Unknown = true;
+    auto &Caller = Function.Blocks[0];
+    auto &Callback = Function.Blocks[1];
+    Caller.Ops.insert(Caller.Ops.begin(), Write);
+    if (Mutation == 9)
+      Caller.Ops.insert(Caller.Ops.begin() + 1, Read);
+    else
+      Callback.Ops.insert(Callback.Ops.begin(), Read);
+    if (Mutation == 1 || Mutation == 2 || Mutation == 3) {
+      MedOp Use;
+      Use.Addr = 0x1801;
+      if (Mutation == 1) {
+        Use.Opcode = NdOp::STORE;
+        Use.addInput(MedVar::makeConst(0x5000, 4));
+        Use.addInput(Read.Output);
+      } else if (Mutation == 2) {
+        Use.Opcode = NdOp::COPY;
+        Use.Output = Read.Output;
+        Use.Output.Id = 21;
+        Use.addInput(Read.Output);
+      } else {
+        Use.Opcode = NdOp::CALL;
+        Use.addInput(MedVar::makeConst(0x5000, 4));
+      }
+      Callback.Ops.insert(Callback.Ops.end() - 1, Use);
+    }
+    if (Mutation == 6) {
+      PhiNode Phi;
+      Phi.Output = Read.Output;
+      Phi.Output.Id = 21;
+      Phi.Args.emplace_back(1, Read.Output);
+      Function.Blocks[2].Phis.push_back(Phi);
+    }
+    if (Mutation == 7) {
+      MedCallClobber Clobber;
+      Clobber.PreservedPrefixSize = 4;
+      Clobber.PreservedInput = Read.Output;
+      Function.CallClobbers.push_back(Clobber);
+    }
+    if (Mutation == 8) {
+      Function.CallInfos.emplace_back();
+      Function.CallInfos.back().Args.push_back(Read.Output);
+    }
+    discardUnusedSEHCallInputs(Function);
+    EXPECT_EQ(Caller.Ops.front().Inputs[5].Kind == MedVar::Unspecified,
+              Mutation == 0);
+  }
+}
+
+TEST(RegistrationSEHParentExit, ParentCallsDoNotRequireAnAbsentJumpProtocol) {
+  auto Function = parentExit(false);
+  auto &States = *Function.RegistrationStates;
+  States.HasBoundSEHCallees = true;
+  States.SEHBoundCallsComplete = false;
+  EXPECT_FALSE(getX86RegistrationSEHBoundCalls(Function));
+  EXPECT_TRUE(getRegistrationSEHNonlocalCalls(Function));
+  States.SEHJumpCapturesComplete = false;
+  EXPECT_FALSE(getRegistrationSEHNonlocalCalls(Function));
+}
+
+TEST(RegistrationSEHParentExit, AdjacentExitRequiresEveryPhysicalAndCFGEdge) {
+  for (bool Detached : {false, true})
+    for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+      SCOPED_TRACE(Detached);
+      SCOPED_TRACE(Mutation);
+      auto Function = parentFallthrough(false);
+      auto &States = *Function.RegistrationStates;
+      auto &Caller = Function.Blocks[0];
+      auto &Callback = Function.Blocks[1];
+      Function.Entry = Caller.StartAddr = 0x17fb;
+      Caller.EndAddr = Callback.StartAddr;
+      States.Blocks[0].Range = {Caller.StartAddr, Caller.EndAddr};
+      Caller.Ops.back().Addr = Caller.StartAddr;
+      States.SEHInvocationExits.front().CallVA = Caller.StartAddr;
+      States.SEHControls.push_back(
+          {RegistrationSEHControlContract::Kind::NearCall, Caller.StartAddr,
+           Caller.EndAddr, Callback.StartAddr});
+      Caller.Ops.back().DoesNotReturn = Detached;
+      Caller.Succs = Detached ? std::vector<int>{} : std::vector<int>{1};
+      Callback.Preds = Detached ? std::vector<int>{} : std::vector<int>{0};
+      if (Mutation == 1)
+        ++Caller.Ops.back().Inputs[0].ConstVal;
+      if (Mutation == 2)
+        States.SEHControls.pop_back();
+      if (Mutation == 3)
+        ++States.SEHControls.back().Target;
+      if (Mutation == 4)
+        Callback.Preds.push_back(1);
+      if (Mutation == 5)
+        Caller.Ops.back().Dead = true;
+      if (Mutation == 6) {
+        Caller.Succs.clear();
+        Caller.Ops.back().DoesNotReturn = false;
+      }
+      const auto Exits = getRegistrationSEHAdjacentExits(Function);
+      EXPECT_EQ(bool(Exits), Mutation == 0);
+      if (!Mutation) {
+        ASSERT_TRUE(Exits);
+        EXPECT_EQ(*Exits, (std::map<int, int>{{0, 1}}));
+      }
+    }
+}
 
 TEST(RegistrationSEHParentExit, FallthroughBindsTheSourceSegmentOffsetCopy) {
   for (bool Wide : {false, true})

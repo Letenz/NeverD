@@ -121,6 +121,7 @@ TEST(RegistrationSEHEpilogue,
       Converter.setBinaryImage(&Image);
       const auto Med =
           Converter.convert(Function, Arch::X86, BinaryFormat::COFF);
+      EXPECT_TRUE(Med.Params.empty());
       const auto Exits = getRegistrationSEHParentExits(Med);
       ASSERT_TRUE(Exits);
       ASSERT_EQ(Exits->size(), 1u);
