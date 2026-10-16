@@ -676,9 +676,18 @@ const std::map<std::uint64_t, FrameRow> JoinFunction = {
     {7, {"ret", "", 0}},
 };
 constexpr std::uint64_t JoinFunctionEntry = Base + 0x60;
+/// In local-types.bin, function_7 reads a _DEVICE through rcx: its Links'
+/// Flink and its Type, then takes the address of its Links' Blink.
+const std::map<std::uint64_t, FrameRow> RecordFunction = {
+    {0, {"mov", "rax, qword ptr [rcx + 8]", 0}},
+    {1, {"movzx", "edx, word ptr [rcx]", 0}},
+    {2, {"lea", "r8, [rcx + 0x10]", 0}},
+    {3, {"add", "rcx, 0x18", 0}},
+};
+constexpr std::uint64_t RecordFunctionEntry = Base + 0x70;
 
-Json fixtureInstructions(neverd_va_t address, int count, bool flow,
-                         bool stack) {
+Json fixtureInstructions(neverd_va_t address, int count, bool flow, bool stack,
+                         bool records = false) {
   Json result = Json::array();
   if (address >= CodeBase && address < CodeBase + sizeof(CodeBytes)) {
     for (int i = 0; i < count; ++i) {
@@ -716,7 +725,9 @@ Json fixtureInstructions(neverd_va_t address, int count, bool flow,
       row["sp"] = 0;
     const auto *rows = entry == FrameFunctionEntry  ? &FrameFunction
                        : entry == JoinFunctionEntry ? &JoinFunction
-                                                    : nullptr;
+                       : records && entry == RecordFunctionEntry
+                           ? &RecordFunction
+                           : nullptr;
     if (const auto frame = rows ? rows->find(offset) : FrameFunction.end();
         rows && frame != rows->end()) {
       row["mnemonic"] = frame->second.mnemonic;
@@ -752,13 +763,16 @@ Json fixtureInstructions(neverd_va_t address, int count, bool flow,
 const char *neverd_disasm_json(neverd_session_t s, neverd_va_t address,
                                int count) {
   session(s)->error.clear();
-  return copy(fixtureInstructions(address, count, false, false).dump());
+  return copy(fixtureInstructions(address, count, false, false,
+                                  session(s)->path.ends_with("local-types.bin"))
+                  .dump());
 }
 const char *neverd_disasm_json_ex(neverd_session_t s, neverd_va_t address,
                                   int count, unsigned options) {
   session(s)->error.clear();
   return copy(fixtureInstructions(address, count, options & NEVERD_DISASM_FLOW,
-                                  options & NEVERD_DISASM_STACK)
+                                  options & NEVERD_DISASM_STACK,
+                                  session(s)->path.ends_with("local-types.bin"))
                   .dump());
 }
 const char *neverd_code_refs_json(neverd_session_t s, neverd_va_t firstEntry,
@@ -896,6 +910,165 @@ Json fixtureLocalType(const std::string &name) {
   return nullptr;
 }
 } // namespace
+
+namespace {
+/// Where \p size bytes at \p offset land in the fixture's record \p name,
+/// as neverd_local_type_member_json says; null for another type.
+Json fixtureLanding(const std::string &name, std::int64_t offset,
+                    std::uint64_t size) {
+  struct Member {
+    std::int64_t start, size;
+    const char *path, *type;
+  };
+  static const std::vector<Member> Device = {
+      {0, 2, "Type", "USHORT"},
+      {8, 8, "Links.Flink", "struct _LIST_ENTRY *"},
+      {16, 8, "Links.Blink", "struct _LIST_ENTRY *"},
+      {24, 8, "Value", "ULONGLONG"}};
+  static const std::vector<Member> List = {
+      {0, 8, "Flink", "struct _LIST_ENTRY *"},
+      {8, 8, "Blink", "struct _LIST_ENTRY *"}};
+  const auto *members = name == "_DEVICE"       ? &Device
+                        : name == "_LIST_ENTRY" ? &List
+                                                : nullptr;
+  if (!members)
+    return nullptr;
+  const std::int64_t bytes = name == "_DEVICE" ? 32 : 16;
+  if (offset < 0 ||
+      offset + static_cast<std::int64_t>(std::max<std::uint64_t>(size, 1)) >
+          bytes)
+    return {{"fit", "outside"}, {"path", ""}, {"memberOffset", 0}};
+  for (const Member &member : *members)
+    if (offset >= member.start && offset < member.start + member.size)
+      return {{"fit", offset != member.start                       ? "inside"
+                      : !size || std::int64_t(size) == member.size ? "exact"
+                                                                   : "start"},
+              {"path", member.path},
+              {"memberOffset", member.start},
+              {"memberSize", member.size},
+              {"type", member.type}};
+  return {{"fit", "padding"}, {"path", ""}, {"memberOffset", 0}};
+}
+} // namespace
+
+const char *neverd_local_types_fit_json(neverd_session_t s,
+                                        const char *request) {
+  auto &state = *session(s);
+  state.error.clear();
+  Json query;
+  try {
+    query = request && *request ? Json::parse(request) : Json::object();
+  } catch (const Json::exception &) {
+    state.error = "malformed request";
+    return nullptr;
+  }
+  Json accesses = query.value("accesses", Json::array());
+  Json target;
+  if (query.contains("target")) {
+    const auto at =
+        parseAddress(query["target"].value("address", std::string("0")));
+    if (!localTypesFixture(s) || at < RecordFunctionEntry ||
+        at > RecordFunctionEntry + 2) {
+      state.error = "the instruction at " + hexAddress(at) +
+                    " reaches no memory through a pointer";
+      return nullptr;
+    }
+    const Json reads = {{{"address", hexAddress(RecordFunctionEntry)},
+                         {"offset", 8},
+                         {"size", 8},
+                         {"use", "read"}},
+                        {{"address", hexAddress(RecordFunctionEntry + 1)},
+                         {"offset", 0},
+                         {"size", 2},
+                         {"use", "read"}},
+                        {{"address", hexAddress(RecordFunctionEntry + 2)},
+                         {"offset", 16},
+                         {"size", 0},
+                         {"use", "address"}}};
+    const Json &own = reads[at - RecordFunctionEntry];
+    target = {{"base", "rcx"},
+              {"offset", own["offset"]},
+              {"size", own["size"]},
+              {"use", own["use"]},
+              {"accesses", reads}};
+    for (const auto &read : reads)
+      accesses.push_back({{"offset", read["offset"]},
+                          {"size", read["size"]},
+                          {"use", read["use"]}});
+  }
+  std::string text = query.value("text", std::string());
+  std::transform(text.begin(), text.end(), text.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  Json candidates = Json::array();
+  for (const std::string name : {"_DEVICE", "_LIST_ENTRY"}) {
+    if (!localTypesFixture(s) || state.forgottenTypes.count(name))
+      continue;
+    std::string lowered = name;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    const auto found = lowered.find(text);
+    if (!text.empty() && found == std::string::npos)
+      continue;
+    Json candidate{{"name", name},
+                   {"kind", "struct"},
+                   {"origin", "pdb"},
+                   {"size", name == "_DEVICE" ? 32 : 16},
+                   {"exactElements", 0}};
+    int exact = 0, partial = 0, padding = 0, outside = 0;
+    Json fits = Json::array();
+    for (const auto &access : accesses) {
+      Json landing = fixtureLanding(name, access.value("offset", 0),
+                                    access.value("size", 0));
+      const auto fit = landing.value("fit", std::string());
+      exact += fit == "exact";
+      partial += fit == "start" || fit == "inside";
+      padding += fit == "padding";
+      outside += fit == "outside";
+      fits.push_back(std::move(landing));
+    }
+    candidate["exact"] = exact;
+    candidate["partial"] = partial;
+    candidate["padding"] = padding;
+    candidate["outside"] = outside;
+    if (!fits.empty())
+      candidate["fits"] = fits;
+    if (!text.empty()) {
+      candidate["matchedName"] = name;
+      candidate["matched"] = {{found, text.size()}};
+    }
+    candidates.push_back(std::move(candidate));
+  }
+  std::stable_sort(
+      candidates.begin(), candidates.end(), [](const Json &l, const Json &r) {
+        return std::make_pair(l["outside"].get<int>(), -l["exact"].get<int>()) <
+               std::make_pair(r["outside"].get<int>(), -r["exact"].get<int>());
+      });
+  Json reply{{"accesses", accesses},
+             {"candidates", candidates},
+             {"total", candidates.size()}};
+  if (!target.is_null())
+    reply["target"] = target;
+  return copy(reply.dump());
+}
+
+const char *neverd_local_type_member_json(neverd_session_t s, const char *name,
+                                          long long offset,
+                                          unsigned long long size,
+                                          const char *) {
+  session(s)->error.clear();
+  Json landing =
+      localTypesFixture(s) && name && !session(s)->forgottenTypes.count(name)
+          ? fixtureLanding(name, offset, size)
+          : Json();
+  if (landing.is_null()) {
+    session(s)->error =
+        std::string("no structure or union named ") + (name ? name : "");
+    return nullptr;
+  }
+  landing["record"] = name;
+  landing["size"] = std::string(name) == "_DEVICE" ? 32 : 16;
+  return copy(landing.dump());
+}
 
 const char *neverd_local_types_json(neverd_session_t s, const char *options) {
   session(s)->error.clear();
@@ -2425,6 +2598,15 @@ int neverd_operand_format_set(neverd_session_t s, neverd_va_t address,
                                        : format.at("base").get<std::string>();
     const bool negate = format.is_object() && format.value("negate", false);
     const bool invert = format.is_object() && format.value("invert", false);
+    // A structure offset names a record of the fixture's types.
+    const auto type = format.is_object() ? format.value("type", std::string())
+                                         : std::string();
+    if (base == "struct" && (negate || invert || !localTypesFixture(s) ||
+                             (type != "_DEVICE" && type != "_LIST_ENTRY") ||
+                             state.forgottenTypes.count(type))) {
+      state.error = "no structure or union named " + type;
+      return -1;
+    }
     if (base == "number" && !negate && !invert)
       operands.erase(operand);
     else
@@ -2432,6 +2614,10 @@ int neverd_operand_format_set(neverd_session_t s, neverd_va_t address,
                            {"base", base},
                            {"negate", negate},
                            {"invert", invert}};
+    if (base == "struct") {
+      operands[operand]["type"] = type;
+      operands[operand]["delta"] = format.value("delta", 0);
+    }
   } catch (const Json::exception &) {
     state.error = "invalid operand format";
     return -1;

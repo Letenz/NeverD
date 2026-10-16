@@ -855,6 +855,14 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>عرض أنواع البرنامج مع تخطيطها ومصدرها</translation>
     </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>إزاحة البنية(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>عرض المعامل كعضو في نوع محلي، مع ترتيب الأنواع حسب مدى توافق وصول الشيفرة معها</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2619,6 +2627,17 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>DWARF loaded: %1</source>
         <translation>تم تحميل DWARF: %1</translation>
     </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>عُرض %n معامل كأعضاء في %1</numerusform>
+            <numerusform>عُرض معامل واحد (%n) كعضو في %1</numerusform>
+            <numerusform>عُرض معاملان (%n) كعضوين في %1</numerusform>
+            <numerusform>عُرضت %n معاملات كأعضاء في %1</numerusform>
+            <numerusform>عُرض %n معاملًا كأعضاء في %1</numerusform>
+            <numerusform>عُرض %n معامل كأعضاء في %1</numerusform>
+        </translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -3860,6 +3879,171 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>السطر %1، العمود %2: %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>الإزاحات التي تقع تمامًا على أعضاء: %1 من %n</numerusform>
+            <numerusform>الإزاحات التي تقع تمامًا على أعضاء: %1 من %n</numerusform>
+            <numerusform>الإزاحات التي تقع تمامًا على أعضاء: %1 من %n</numerusform>
+            <numerusform>الإزاحات التي تقع تمامًا على أعضاء: %1 من %n</numerusform>
+            <numerusform>الإزاحات التي تقع تمامًا على أعضاء: %1 من %n</numerusform>
+            <numerusform>الإزاحات التي تقع تمامًا على أعضاء: %1 من %n</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>الأنواع: %1 من %n</numerusform>
+            <numerusform>الأنواع: %1 من %n</numerusform>
+            <numerusform>الأنواع: %1 من %n</numerusform>
+            <numerusform>الأنواع: %1 من %n</numerusform>
+            <numerusform>الأنواع: %1 من %n</numerusform>
+            <numerusform>الأنواع: %1 من %n</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n بايت</numerusform>
+            <numerusform>%n بايت</numerusform>
+            <numerusform>%n بايتان</numerusform>
+            <numerusform>%n بايتات</numerusform>
+            <numerusform>%n بايتًا</numerusform>
+            <numerusform>%n بايت</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>الأنواع: %n</numerusform>
+            <numerusform>الأنواع: %n</numerusform>
+            <numerusform>الأنواع: %n</numerusform>
+            <numerusform>الأنواع: %n</numerusform>
+            <numerusform>الأنواع: %n</numerusform>
+            <numerusform>الأنواع: %n</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>الوصول</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>اعرض أيضًا التعليمات الأخرى التي تمر عبر %1 كأعضاء (%n)</numerusform>
+            <numerusform>اعرض أيضًا التعليمات الأخرى التي تمر عبر %1 كأعضاء (%n)</numerusform>
+            <numerusform>اعرض أيضًا التعليمات الأخرى التي تمر عبر %1 كأعضاء (%n)</numerusform>
+            <numerusform>اعرض أيضًا التعليمات الأخرى التي تمر عبر %1 كأعضاء (%n)</numerusform>
+            <numerusform>اعرض أيضًا التعليمات الأخرى التي تمر عبر %1 كأعضاء (%n)</numerusform>
+            <numerusform>اعرض أيضًا التعليمات الأخرى التي تمر عبر %1 كأعضاء (%n)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>تطبيق</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>عند %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>البايتات</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>العضو</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>لا يحتوي أي عضو على هذا البايت</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>لا يوجد نوع مطابق.</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>الإزاحة</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>جارٍ قراءة ما تفعله الشيفرة عبر مؤشر المعامل…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>البحث عن الأنواع: اسم، أو typedef، أو Type.member، أو ‎.member</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>إزاحة البنية</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>الرقم %1 كإزاحة داخل بنية أو اتحاد.</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>يحتفظ المعامل برقمه.</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>لا يحتوي البرنامج على بنى أو اتحادات. صرّح عنها في الأنواع المحلية (Shift+F1‎).</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>يشير المسجل إلى %1 بايت داخل %2، عند %3: تقرأ عمليات الوصول التي تسبقه الأعضاءَ الأسبق في السجل، كما يتراجع عنه CONTAINING_RECORD.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>النوع</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>رُتبت الأنواع حسب كيفية وقوع وصول الدالة عبر %1 على أعضائها (%n).</numerusform>
+            <numerusform>رُتبت الأنواع حسب كيفية وقوع وصول الدالة عبر %1 على أعضائها (%n).</numerusform>
+            <numerusform>رُتبت الأنواع حسب كيفية وقوع وصول الدالة عبر %1 على أعضائها (%n).</numerusform>
+            <numerusform>رُتبت الأنواع حسب كيفية وقوع وصول الدالة عبر %1 على أعضائها (%n).</numerusform>
+            <numerusform>رُتبت الأنواع حسب كيفية وقوع وصول الدالة عبر %1 على أعضائها (%n).</numerusform>
+            <numerusform>رُتبت الأنواع حسب كيفية وقوع وصول الدالة عبر %1 على أعضائها (%n).</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>عنوان</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>ترويسة</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>خارج النوع</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>حشو</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>قراءة</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>المؤشر</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>المستخدم</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>كتابة</translation>
     </message>
 </context>
 </TS>

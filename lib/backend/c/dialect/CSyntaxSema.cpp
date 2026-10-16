@@ -105,8 +105,12 @@ public:
     // finds it.
     for (TopLevel &Item : T.Items)
       if (Item.TheKind == TopLevel::Kind::Declaration)
-        for (Decl *D : Item.Decls)
+        for (Decl *D : Item.Decls) {
           declare(D);
+          if (D->Kind == DeclKind::Enumeration)
+            for (Decl *Enumerator : D->Fields)
+              declare(Enumerator);
+        }
     for (TopLevel &Item : T.Items) {
       Error.clear();
       if (Item.TheKind == TopLevel::Kind::Declaration) {
@@ -140,7 +144,7 @@ private:
 
   void declare(const Decl *D) {
     if (D->Name.empty() || D->Kind == DeclKind::Typedef ||
-        D->Kind == DeclKind::Record)
+        D->Kind == DeclKind::Record || D->Kind == DeclKind::Enumeration)
       return;
     const Decl *&Slot = Scopes.back()[D->Name];
     // A definition, or a declaration with named parameters, says most.
@@ -347,8 +351,17 @@ private:
         if (auto Size = Types.sizeOf(E->Written))
           E->Value = static_cast<int64_t>(*Size);
       return setType(E, Types.sizeType());
-    case ExprKind::Offsetof:
+    case ExprKind::Offsetof: {
+      const CType *Of = Types.unqualified(E->Written);
+      if (!Of->isRecord() || !Of->Record->Complete)
+        return fail("offsetof of an incomplete record", E);
+      bool Through = false;
+      E->Field = field(*Of->Record, E->Text, Through);
+      E->ThroughAnonymous = Through;
+      if (!E->Field || E->Field->BitWidth)
+        return fail("offsetof of no field '" + E->Text + "'", E);
       return setType(E, Types.sizeType());
+    }
     case ExprKind::CompoundLiteral:
       if (!initializer(E->Ops.front(), E->Written))
         return false;
@@ -387,6 +400,13 @@ private:
   bool name(Expr *E) {
     if (const Decl *D = lookup(E->Text)) {
       E->Ref = D;
+      // An enumerator is an int constant (C17 6.4.4.3).
+      if (D->Kind == DeclKind::Enumerator) {
+        if (!D->Value)
+          return fail("an enumerator used before its value", E);
+        E->Value = *D->Value;
+        return setType(E, Types.intType());
+      }
       return setType(E, D->Ty, D->Kind != DeclKind::Function);
     }
     if (auto Value = headerConstant(E->Text)) {
@@ -709,10 +729,31 @@ private:
       return setType(E, Base, true);
     if (!Base->isRecord() || !Base->Record->Complete)
       return fail("member of an incomplete record", E);
-    for (const RecordField &Field : Base->Record->Fields)
-      if (Field.Name == E->Text)
-        return setType(E, Field.Type, true);
-    return fail("no field '" + E->Text + "'", E);
+    bool Through = false;
+    E->Field = field(*Base->Record, E->Text, Through);
+    E->ThroughAnonymous = Through;
+    if (!E->Field)
+      return fail("no field '" + E->Text + "'", E);
+    return setType(E, E->Field->Type, true);
+  }
+
+  /// The field of \p Record named \p Name: its own, or a member of an
+  /// anonymous structure or union it holds, which C counts as its own (C17
+  /// 6.7.2.1p13), when \p Through says so.
+  static const RecordField *field(const RecordDef &Record, llvm::StringRef Name,
+                                  bool &Through) {
+    for (const RecordField &Field : Record.Fields) {
+      if (!Field.Name.empty() && Field.Name == Name)
+        return &Field;
+      if (!Field.isAnonymousRecord() || !Field.Type->Record->Complete)
+        continue;
+      bool Inner = false;
+      if (const RecordField *Found = field(*Field.Type->Record, Name, Inner)) {
+        Through = true;
+        return Found;
+      }
+    }
+    return nullptr;
   }
 
   bool initializer(Expr *Init, const CType *Ty) {
@@ -775,8 +816,31 @@ private:
       Scopes.pop_back();
       return Ok;
     }
+    if (D->Kind == DeclKind::Enumeration)
+      return enumerators(D);
     if (D->Init)
       return initializer(D->Init, D->Ty);
+    return true;
+  }
+
+  /// Each enumerator's value: its constant, or the one before it plus one;
+  /// an enumerator int does not hold fails, as the enumeration would not
+  /// be int's (C17 6.7.2.2).
+  bool enumerators(Decl *D) {
+    int64_t Next = 0;
+    for (Decl *Enumerator : D->Fields) {
+      if (Enumerator->Init) {
+        if (!value(Enumerator->Init))
+          return false;
+        if (!Enumerator->Init->Value)
+          return fail("an enumerator whose value is not a constant",
+                      Enumerator->Init);
+        Next = *Enumerator->Init->Value;
+      }
+      if (Next < INT32_MIN || Next > INT32_MAX)
+        return fail("an enumerator int does not hold");
+      Enumerator->Value = Next++;
+    }
     return true;
   }
 

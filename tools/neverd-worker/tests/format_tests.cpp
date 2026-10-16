@@ -45,9 +45,32 @@ struct Format {
   std::vector<NumberFormat> formats = {};
 };
 
+/// The local type `_T`'s members: a structure offset lands in the one that
+/// holds its byte.
+std::optional<StructLanding> landing(std::string_view type, std::int64_t offset,
+                                     unsigned) {
+  struct Member {
+    std::int64_t start, size;
+    const char *path;
+  };
+  static const Member members[] = {{0, 1, "Type"},
+                                   {2, 1, "Size"},
+                                   {0x10, 8, "List.Flink"},
+                                   {0x18, 8, "List.Blink"},
+                                   {0x220, 8, "Process"}};
+  if (type != "_T")
+    return std::nullopt;
+  for (const Member &member : members)
+    if (offset >= member.start && offset < member.start + member.size)
+      return StructLanding{member.path, member.start};
+  return std::nullopt;
+}
+
 std::string format(const Format &input, const FrameNamer *frame = nullptr,
                    std::optional<std::int64_t> stackDepth = std::nullopt) {
+  static const StructNamer structs = landing;
   OperandFacts facts;
+  facts.structs = &structs;
   facts.dialect = OperandDialect::X86;
   facts.mnemonic = input.mnemonic;
   facts.address = 0x401000;
@@ -150,6 +173,28 @@ int main() {
   expectFormat({"mov", "eax, 7", "", "eax, 7", true, user(NumberBase::Char)});
   expectFormat(
       {"mov", "eax, 0x10", "", "eax, 10h", true, user(NumberBase::Offset)});
+  // Structure offsets: a displacement from a register, a number, the
+  // register pointing into the type, and a number no member holds.
+  const auto member = [](std::size_t operand, std::int64_t delta = 0,
+                         std::string type = "_T") {
+    std::vector<NumberFormat> formats(operand + 1);
+    formats[operand] = {NumberBase::Struct, false, false, std::move(type),
+                        delta};
+    return formats;
+  };
+  expectFormat({"mov", "rdi, qword ptr [rcx + 0x220]", "",
+                "rdi, [rcx+_T.Process]", true, member(1)});
+  expectFormat({"mov", "byte ptr [rcx + 2], 0x58", "",
+                "byte ptr [rcx+_T.Size], 58h", true, member(0)});
+  expectFormat({"mov", "eax, dword ptr [rcx + rdx*4 + 0x224]", "",
+                "eax, [rcx+rdx*4+(_T.Process+4)]", true, member(1)});
+  expectFormat({"mov", "al, byte ptr [rcx - 0x10]", "",
+                "al, [rcx+(_T.Type-10h)]", true, member(1, 0x10)});
+  expectFormat({"add", "rcx, 0x18", "", "rcx, _T.List.Blink", true, member(1)});
+  expectFormat({"mov", "rax, qword ptr [rcx + 0x500]", "", "rax, [rcx+500h]",
+                true, member(1)});
+  expectFormat({"mov", "rax, qword ptr [rcx + 0x220]", "", "rax, [rcx+220h]",
+                true, member(1, 0, "_UNKNOWN")});
   // Only the operand the user formats changes.
   expectFormat({"mov",
                 "eax, 0x1a",

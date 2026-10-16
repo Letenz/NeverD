@@ -395,6 +395,8 @@ bool Session::typesChanged(const types::TypeLibrary &Library,
   return Shows;
 }
 
+types::TypeLibrary *Session::readLocalTypes() { return localTypes(*this); }
+
 DebugContext *Session::decompileDebug() {
   if (!Dbg)
     return nullptr;

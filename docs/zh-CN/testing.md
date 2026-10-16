@@ -10,6 +10,10 @@ NeverD 的测试回答三个不同问题：表示形状是否符合预期、完�
 
 `PipelineOutcome.ResolvedCalls*` 检查寄存器分组、call／invoke 身份、栈字节打包与拆分、窄值留在各自的栈槽，以及缺失字节的拒绝。`MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` 检查记录的偏移。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` 覆盖 x64、ARM32、AArch64 的 ELF、PE、Mach-O。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` 覆盖三种格式，拒绝长度被改写、可写或越界范围、同名本地函数、错误源寄存器、替代入口和可重定位镜像。主机 C 差分测试将原始 C 独立按 O0 编译，生成的 C 仍按 O2 编译，避免主机优化器把循环递推算错后污染对照。AArch64 FMA 检查仅在 x86 主机上请求 `-mfma`。
 
+## 具体入口内存种子
+
+运行 `NeverDSymbolicTests`、`NeverDConcolicTests` 和 `NeverDConcolicIntegrationTests`。新增 `LowIRConcolicMemory.*` 及符号层检查覆盖两种字节序、别名写入、独立寄存器/内存空间、缺失和非法范围、重置与晚种子、精确/不足/零预算、来源 epoch、模型宽度、内存候选重新执行及去重；现有六种原生架构/格式组合继续回归。
+
 ## 配置测试构建
 
 除非启用 `BUILD_TESTING`，否则测试不会构建。完整套件通常使用 Release；Debug
@@ -1196,9 +1200,9 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 `windows-alignment-oracle.yml` 通过 `check_windows_alignment.py` 和 `WindowsAlignmentCases.def` 收集 72 项原创 x64 Windows 异常观测：九种对齐 SSE 形式分别覆盖七种非对齐地址/权限场景，以及一个已对齐但页面不可访问的对照。它保留异常代码、参数、故障 PC、保存的上下文、原始输出和源码/二进制哈希，并验证输入与 RAM 未改变。这些观测仅建立 OS 行为依据，不代表 KVM/WHP 执行验收，也不新增 SEH 支持。
 
-在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 58 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
+在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 68 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 133 个负载产生 266 项 WHP 结果：27 个内建映像、66 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5085 CPU + 266 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 108 driver API checks = 5760`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM66 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 135 个负载产生 270 项 WHP 结果：27 个内建映像、68 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 116 driver API checks = 5772`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 真实 WDK 清单也构建 `driver_device_queries.c`、`driver_file_objects.c` 和 `driver_file_handles.c` 的普通及 CFG 版本。`DriverDeviceQueryTests.cpp` 与 `DriverFileObjectTests.cpp` 复用便携调用方的断言，在两种契约、基址和调度策略下检查保留引用后的删除、失败 CREATE、进程身份、最后句柄 CLEANUP 和延迟 CLOSE。三组均列入原生必测项；清单验证独立发现含 `NEVERD_WDK_FIXTURE` 的源码，防止双模式源码遗漏 WDK 构建。
 
@@ -1967,4 +1971,10 @@ KernelFileObjectTests 与 KernelObjectTests 覆盖带类型的指针打开、类
 
 `KernelFileTransfers` 覆盖数据包字段、偏移哨兵、仅追加句柄、零长度、输出别名、立即与挂起状态、工作线程通知和发布前拒绝。`OriginalBufferedNativeFileTransfers` 与 `GenuineWdkBufferedNativeFileTransfers` 跨后端、执行契约、装载地址和调度执行导入及动态查找调用。配置 `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` / `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` 使用真实普通/CFG 映像；不可用后端明确跳过。
 
+受检 CRT 回归覆盖全部字节／UTF-16 单元、参数截断、只读且无需修改的缓冲区、计数／容量边界、截断、空指针顺序、逐步别名、部分故障、释放后的存储及扫描上限。原始 `driver_crt_strings.c` 和真实 `NEVERD_WDM_CRT_STRINGS_FIXTURE`／`NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE` 在入口、工作线程和卸载阶段检查导入与动态解析，并覆盖被动／调度 IRQL 及两种调度模式。原生门禁要求两种契约和加载基址；宿主不可用项明确跳过。
+
+检查型内存回归区分全容量清零与错误时不改写，覆盖零计数指针、完整位宽、重叠、分页／释放／只读存储及操作上限。头部探针覆盖无符号 DOS 偏移、64 位返回值、地址边界、仅签名接受和故障顺序。原创与真实 WDK CRT 夹具在入口、工作线程和卸载中执行导入及动态调用。固定 WDK 头未声明 `RtlImageNtHeader`，夹具为该导出提供本地 ABI 声明；PE 类型与导入库仍来自真实工具包。 固定 WDK 的 ntoskrnl.lib 将 memcpy_s 链接为来宾代码；原创夹具验证直接导入，两种夹具都验证动态导出调用。
+
 `KernelFileTransfers` 验证刷新权限、各设备传输模式下的无缓冲区数据包、完整位宽 Information、分发返回前的发布与释放、工作线程／受限 APC 通知及异步／并发拒绝。已有原创和真实 WDK 文件传输夹具还执行导入及动态查找的刷新调用，包含用户 IOSB 和九种完成情形。
+
+`KernelFileTransfers` 检查控制包字段、ULONG 截断、零长度指针、只读输入复制、IOSB 别名、独立输入／输出边界、延迟完成和原调用线程通知。已有原创及真实 WDK 传输夹具通过导入和动态查找调用两个控制 API，覆盖四种缓冲区形态和九种完成模式。
