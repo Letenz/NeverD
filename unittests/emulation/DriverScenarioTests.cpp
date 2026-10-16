@@ -273,7 +273,8 @@ TEST(DriverScenario, KernelGeneratedRequestsFailBeforeImageLoading) {
        {R"({"requests":[{"kind":"internal_ioctl"}]})",
         R"({"requests":[{"kind":"internal_ioctl","code":3,"file":7}]})",
         R"({"requests":[{"kind":"unlock_all","file":7}]})",
-        R"({"requests":[{"kind":"query_information","file":7}]})"}) {
+        R"({"requests":[{"kind":"query_information","file":7}]})",
+        R"({"requests":[{"kind":"flush_buffers","file":7}]})"}) {
     SCOPED_TRACE(JSON);
     auto Parsed = driverOptionsFromScenarioJSON(JSON);
     ASSERT_FALSE(bool(Parsed));
@@ -282,7 +283,7 @@ TEST(DriverScenario, KernelGeneratedRequestsFailBeforeImageLoading) {
   }
   for (auto Kind :
        {DriverRequestKind::InternalDeviceControl, DriverRequestKind::UnlockAll,
-        DriverRequestKind::QueryInformation}) {
+        DriverRequestKind::QueryInformation, DriverRequestKind::FlushBuffers}) {
     DriverOptions Input;
     DriverRequest Request;
     Request.Kind = Kind;
