@@ -39,10 +39,18 @@ enum class LibSystemGateKind {
 #define NEVERD_DARWIN_LIBSYSTEM_CALL(Name, Symbol, Count, Kernel) Name,
 #include "DarwinLibSystemCalls.def"
 #undef NEVERD_DARWIN_LIBSYSTEM_CALL
-  StubBinder
+  StubBinder,
+  TLVBootstrap
 };
 struct PreparedFixup {
   uint64_t Address, Value;
+};
+struct TLSImage {
+  uint64_t Template, Size, Storage;
+};
+struct TLSDescriptor {
+  size_t Image;
+  uint64_t Offset;
 };
 struct ProcessImage {
   GuestArchitecture Architecture;
@@ -52,6 +60,8 @@ struct ProcessImage {
   std::vector<PreparedFixup> Fixups;
   std::map<uint64_t, LibSystemGateKind> Imports;
   uint64_t MetadataBytes = 0;
+  std::vector<TLSImage> TLS;
+  std::map<uint64_t, TLSDescriptor> TLSDescriptors;
 };
 struct InitialStack {
   uint64_t SP, Argc, Argv, Envp, Apple;

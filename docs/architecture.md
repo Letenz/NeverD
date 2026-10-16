@@ -268,6 +268,11 @@ builtin spellings each language takes and which it takes unless asked;
 `neverd types --json` names the one its source took, in every mode, so that
 an agent reads one object.
 
+`SessionSidecar.cpp` owns the shared atomic write for Session sidecars. Type
+declaration and persistence adapters use that same private helper. Private
+Session LLVM tests compile their actual type/debug owners and sidecar helper
+directly; the shared SDK keeps its existing public C boundary.
+
 The decompiler reads the local types through `LocalTypesDebugContext`
 (`lib/sdk/capi`), which wraps the program's debug context whenever the
 program has local types. The local types are the authority on the program's
@@ -7103,6 +7108,24 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 `MachOProgramLinking` owns strict original-byte classic and generic64 chain facts, complete undefined-symbol closure and preparation bounds. The Darwin process owns provider/symbol admission, pointer publication, read-only-after-fixup protection, authenticated libSystem gates and main-thread errno. `DarwinLibSystemCalls.def` binds exact Mach-O names, arities and typed kernel effects; wrappers reuse `DarwinServices` without inventing raw traps. `DarwinMemory` owns resident model reservations and the original maximum protections. Preparation and execution share `ExecutionBudget`; `ProcessReport` alone serializes optional `darwin.native_calls`. No host dyld or library code is loaded.
 
 `MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
+### Explicit Darwin startup graphs and TLS
+
+`MachOExecutionImage` owns dylib-identity counts and original TLS section facts;
+`MachOProgramLinking` owns dependency identities/versions, export-trie addresses,
+fixups and complete undefined-symbol closure. `DarwinImage` resolves the explicit
+catalogue into one bounded acyclic graph, checks every dependency edge and
+assigns disjoint placements. Its graph-wide input, metadata, record and resident
+ledgers charge shared nodes once and retain one preparation deadline.
+`DarwinTLSPreparation` admits exact descriptors and contiguous template storage,
+publishes keys and physically maps charged TLS reservations before execution.
+`DarwinTLS` alone owns main-thread instantiation and the authenticated TLV return:
+it copies live relocated bytes once, validates descriptor/frame identity and
+preserves non-result registers. `DarwinMemory` keeps TLS reservations resident;
+`ProcessReport` serializes named resolver events through the existing schema.
+Public `DarwinProcessOptions` and `darwin.modules` only supply original inputs;
+no host loader, search, callback execution or second symbol-resolution owner is
+introduced. See [Darwin environments](darwin-emulation.md) for the finite contract.
 
 ### Sequential raw compare-and-exchange
 

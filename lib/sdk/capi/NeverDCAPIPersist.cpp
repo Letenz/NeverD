@@ -21,7 +21,6 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/LoadCandidate.h"
 #include "neverd/loader/Raw/ISAIdentify.h"
-#include "neverd/support/AtomicOutput.h"
 #include "neverd/support/FilePath.h"
 #include "neverd/support/ProjectWriteLock.h"
 #include "neverd/support/StringScan.h"
@@ -50,42 +49,6 @@ static std::filesystem::path annotationPath(const Session *S) {
   auto Path = S->FilePath;
   Path += ".neverd-annotations.json";
   return Path;
-}
-
-bool neverd::sdk::saveSidecar(Session *S, const std::filesystem::path &Path,
-                              llvm::json::Value Values, llvm::StringRef Kind) {
-  const auto UTF8Path = pathToUTF8(Path);
-  auto Temporary = llvm::sys::fs::TempFile::create(
-      UTF8Path + ".tmp-%%%%%%",
-      llvm::sys::fs::owner_read | llvm::sys::fs::owner_write);
-  if (!Temporary) {
-    S->setError("cannot create " + Kind.str() +
-                " temporary file: " + llvm::toString(Temporary.takeError()));
-    return false;
-  }
-  std::error_code WriteError;
-  {
-    // TempFile owns the descriptor. Clear a handled stream error before its
-    // destructor so ENOSPC/EFBIG becomes a C ABI error rather than LLVM abort.
-    llvm::raw_fd_ostream OS(Temporary->FD, false);
-    OS << Values;
-    OS.flush();
-    WriteError = OS.error();
-    OS.clear_error();
-  }
-  if (WriteError) {
-    llvm::consumeError(
-        support::atomic_output::discardTemporaryOutput(*Temporary));
-    S->setError("cannot write " + Kind.str() + ": " + WriteError.message());
-    return false;
-  }
-  if (auto Error = support::atomic_output::closeAndCommitTemporaryOutput(
-          *Temporary, UTF8Path)) {
-    S->setError("cannot save " + Kind.str() + ": " +
-                llvm::toString(std::move(Error)));
-    return false;
-  }
-  return true;
 }
 
 static std::optional<va_t>

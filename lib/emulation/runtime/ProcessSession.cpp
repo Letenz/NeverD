@@ -61,6 +61,10 @@ llvm::Expected<ProcessResult> runProfile(const std::filesystem::path &Path,
                                          ProcessObserver *Observer) {
   if (Options.Windows && Profile != ProcessProfile::WindowsPE64)
     return diagnostic::error(process_report::WindowsProfile);
+  if (Options.Darwin && Profile != ProcessProfile::MacOSMachO64 &&
+      Profile != ProcessProfile::IOSMachO64 &&
+      Profile != ProcessProfile::IOSSimulatorMachO64)
+    return diagnostic::error("process: darwin requires a Darwin profile");
   if (Options.DarwinSystem) {
     if (Profile != ProcessProfile::MacOSMachO64 &&
         Profile != ProcessProfile::IOSMachO64 &&

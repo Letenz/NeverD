@@ -8,6 +8,7 @@
 
 #include "neverd/emulation/AndroidNative.h"
 #include "neverd/emulation/DarwinFileOptions.h"
+#include "neverd/emulation/DarwinProcessOptions.h"
 #include "neverd/emulation/DarwinSystemOptions.h"
 #include "neverd/emulation/DarwinTimeOptions.h"
 #include "neverd/emulation/ExecutionBackend.h"
@@ -15,8 +16,8 @@
 #include "neverd/emulation/ExecutionExit.h"
 #include "neverd/emulation/LinuxFileOptions.h"
 #include "neverd/emulation/LinuxKernelOptions.h"
-#include "neverd/emulation/LinuxSignalOptions.h"
 #include "neverd/emulation/LinuxPriorityOptions.h"
+#include "neverd/emulation/LinuxSignalOptions.h"
 #include "neverd/emulation/LinuxTimeOptions.h"
 #include "neverd/emulation/WindowsProcessOptions.h"
 
@@ -70,6 +71,7 @@ struct ProcessOptions {
   std::optional<DarwinFileOptions> DarwinFiles;
   std::optional<DarwinTimeOptions> DarwinTime;
   std::optional<DarwinSystemOptions> DarwinSystem;
+  std::optional<DarwinProcessOptions> Darwin;
 };
 
 struct ProcessServiceEvent {

@@ -381,6 +381,9 @@ requires every `SessionCAPITest.*` case to execute and pass using repository
 fixtures; it does not claim Windows kernel input coverage.
 `LocalTypesDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
 the conversion and which functions take a prototype without a program.
+Build and run `NeverDSessionLLVMTests` as well: its private Session queries
+link the actual local-type/debug implementations and shared atomic sidecar
+helper into the test executable. It must not acquire a libneverd dependency.
 `scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
 decompiles with the prototypes an IDA dump shows; it decompiles each
 function by address and resolves IDA's typedefs through the shipped headers:
@@ -7564,6 +7567,35 @@ Checked memory regressions distinguish full-capacity clearing from unchanged err
 `KernelFileTransfers` checks native flush access masks, bufferless packets on every device transfer mode, full-width Information, publication and disposal before dispatch returns, worker/guarded notification and rejected async/concurrent calls. The existing original and genuine WDK file-transfer fixtures also execute imported and dynamically resolved flushes, including a user IOSB and the nine completion modes.
 
 `KernelFileTransfers` checks native control packet fields, ULONG truncation, zero-length carriers, copied read-only input, IOSB aliases, separate input/output bounds, deferral and eligible-thread notification. The existing original and genuine WDK transfer fixtures call both control APIs through imports and dynamic lookup across four buffer shapes and nine completion modes.
+
+### Explicit Darwin dylibs and TLS
+
+Build `NeverDDarwinProcessTests`, `NeverDProcessPublicTests` and `neverd` in the
+CPU-emulation profile. `DarwinDylib.*` checks graph identity/version/platform,
+shared input accounting, resident TLS budgets, cycles, malformed layouts and
+preparation timeout. `DarwinLinking.ExportTries*` and
+`ThreadLocalExportMustNameAnAdmittedDescriptor` cover original export facts;
+`DarwinLibSystemTest.TLV*` checks descriptor/frame refusal, live-copy lifetime
+and full GP/vector preservation on both ISAs. `DarwinMemoryTest.MappedTLS*`
+checks actual reservation charging and mapping/protection refusal.
+
+`DarwinProcess.StartupDylibsShareDataAndKeepThreadLocalInstances` compiles the
+original three-module C workload for all five profiles with classic and chained
+fixups. It checks shared dependencies, duplicate export spellings, relocated data,
+zero-only and initialized TLS, live template mutation and fresh repeated runs.
+The mandatory native inventory now has 100 methods per matching profile, or
+300 matching ARM64 identities; the separate common native catalogue remains 82.
+Unavailable transports remain explicit skips. `DarwinNative.StartupDylibsAndTLSMatchOriginalNativeImages`
+compares a system-linked executable and its original libraries with real macOS
+execution. Independent O0/O1/O2 classic/chained controls complement that test.
+
+`DarwinLibSystemPublic.StartupDylibsAndTLSKeepIdentityAcrossCAndCLI` checks the
+same explicit catalogue and reports through C and CLI. With
+`NEVERD_TEST_LIBNEVERD` and `NEVERD_TEST_DARWIN_FIXTURES` set, the real Python
+`test_darwin_startup_dylibs_share_data_and_isolate_tls` repeats every profile.
+Run these alongside DarwinImage, linking, memory, existing libSystem calls,
+raw startup and shared process/API regressions before publishing. Guest deadlines
+and event limits are unchanged; native Intel and physical iOS need other hosts.
 
 ### Imported Darwin memory calls
 

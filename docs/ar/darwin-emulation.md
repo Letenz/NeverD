@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 5edfb602025b5842453dbc5914dad53572f14fdc63e424ca65e66d45415e59c3 -->
+<!-- i18n-source: 6d44f96afae7f68162fb5f61324f22a7893d7ea9bb0e2df38768afc67bf2c060 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -33,7 +33,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 يتطلب `LC_UNIXTHREAD` سجلاً واحداً كاملاً للسجلات العامة الأصلية ذات 64 بت، مع تعيين PC فقط. يحتوي المكدس الأولي argc وargv/envp المنتهيين ومتجه apple منتهياً يتضمن `executable_path=<input filename>`. تُرفض قيم SP والأعلام المخصصة والسجلات الأخرى وflavors الإضافية ونقاط الدخول المتعارضة. لا تُورث بيئة المضيف أو متجه Linux المساعد. المرجع: [معمارية dyld](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-تفشل dylib وimports خارج عقد libSystem المحدود أدناه والبواني/الهادمات ومقاطع TLS وarm64e/PAC وأنواع CPU الفرعية غير المدعومة والتشفير وأوامر التحميل غير المنمذجة قبل التنفيذ. تستخدم PIE المدعومة العناوين المفضلة، وليس ASLR. كتل التوقيع بيانات وصفية وليست تنفيذاً لـ AMFI أو سياسات الاستحقاقات.
+يدعم العقد المحدود أدناه libSystem ومكتبات dylib الصريحة عند البدء وTLS العادي بلغة C للخيط الرئيسي. تبقى البواني/الهادمات واستدعاءات TLS وarm64e/PAC وأنواع CPU غير المدعومة والتشفير والأوامر غير المنمذجة مرفوضة قبل التنفيذ. يحتفظ البرنامج الرئيسي بعنوانه المفضل وتُعطى dylib عناوين منفصلة حتمية. لا تنفذ بيانات التوقيع AMFI أو entitlements.
 
 ## خدمات Darwin
 
@@ -1797,7 +1797,7 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 ## استيراد libSystem محدود
 
-يمكن لملف thin بمعمارية أساسية ربط اعتماد قوي واحد على `/usr/lib/libSystem.B.dylib`. يلزم `LC_MAIN` و`MH_TWOLEVEL` وordinal عادي وطلب توافق لا يتجاوز 1.0. تُفحص تدفقات المؤشرات classic أو سلاسل generic64 كاملة، والرموز غير المعرفة والمواضع الدقيقة وأهداف rebase المحلية. تُرفض الاعتمادات الأخرى وربط weak/threaded وrelocation غير المدعومة والتهيئة وTLS والمؤشرات الموثقة قبل التنفيذ.
+يمكن لبرامج thin الأساسية ومكتبات dylib الصريحة أدناه ربط `/usr/lib/libSystem.B.dylib` بقوة. يلزم مدخل رئيسي `LC_MAIN` و`MH_TWOLEVEL` وordinal عادي ومتطلب توافق libSystem لا يتجاوز 1.0. تُفحص fixups الأصلية classic/generic64 والربط الكامل للرموز غير المعرفة. تبقى الرموز المجهولة وروابط weak/threaded وrelocation الأخرى واستدعاءات التهيئة والمؤشرات الموثقة مرفوضة.
 
 تُخصص مداخل موثقة وerrno جديد للخيط الرئيسي عند وجود imports فقط. تستخدم الأغلفة تأثيرات نواة Darwin المشتركة؛ يحول الخطأ إلى `-1` وerrno ويحفظ النجاح errno السابق. اسم C `_exit` هو Mach-O `__exit`؛ أما C `exit` باسم `_exit` فلا يزال غير مدعوم. تتحقق الدوال العادية من إطار العودة ولا يحتاج الاستدعاء النهائي عنوان عودة. يحفظ التقرير المزوّد والاسم الدقيق وعدد المعاملات وجميع البتات؛ النتيجة غير المكتملة أو غير العائدة هي null. تبقى تقارير raw متوافقة.
 
@@ -1817,7 +1817,7 @@ C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
 C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
-entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
+entry: LC_MAIN main + MH_TWOLEVEL images; ordinary positive ordinals; main preferred base
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
 errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
@@ -1833,9 +1833,32 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
+native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
 ```
 
 ```json
 {"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
+```
+
+## مكتبات dylib صريحة عند البدء وTLS للخيط الرئيسي
+
+يربط `darwin.modules` حتى 32 اسم تثبيت دقيقاً حساساً لحالة الأحرف بمسارات Mach-O الأصلية. تُقرأ الاعتمادات الممكن الوصول إليها فقط، وتُقارن `@loader_path` حرفياً دون بحث عن مكتبات المضيف. تُفحص ISA والمنصة والهوية والإصدار لكل MH_DYLIB ويختار ordinal العادي المزود الفعلي. تحتفظ الصادرات متطابقة الأسماء والاعتمادات المشتركة بهويتها؛ تشترك الملفات الكاملة والبيانات المقيمة في ميزانياتها المخصصة.
+
+يدعم TLS بلغة C البيانات المهيأة والصفرية ومحاذاة حتى 16 بايت. تُحجز ذاكرة كل وحدة وتُحتسب عند التحضير؛ ينسخ أول وصول القالب الحي المتصل بعد relocation، بما في ذلك تغييرات BSS والفجوات السابقة. تُفحص الواصفات وإطارات العودة ولا يجوز إعادة استخدام صفحات TLS أو إلغاء ربطها أو تغيير حمايتها. تقارن اختبارات أصلية O0/O1/O2 classic/chained التنفيذ الأصلي بخمسة ملفات C/CLI/Python. تبقى الدورات والصادرات الضعيفة وإعادة التصدير والاستدعاءات وdlopen/dlsym والخيوط والأطر الكاملة غير منفذة؛ لم يُعتمد Intel الأصلي أو iOS الفعلي.
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"darwin":{"modules":[{"name":"@loader_path/libneverd-base.dylib","path":"/inputs/libneverd-base.dylib"},{"name":"@loader_path/libneverd-leaf.dylib","path":"/inputs/libneverd-leaf.dylib"}]}}
+```
+
+```text
+graph: strong acyclic startup; exact install name; same ISA/platform; MH_DYLIB + LC_ID_DYLIB
+catalogue: max 32; only reachable inputs; no host lookup or @ path expansion
+budget: aggregate full files; aggregate resident mappings/TLS/metadata; 65536 records
+exports: regular / thread-local; ordinary dependency ordinal; rebased actual provider
+TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live contiguous first copy
+resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
+lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
+unsupported: cycles; weak/reexports/resolvers; imported addends; callbacks; dlopen/dlsym; threads
+workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
+native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
 ```
