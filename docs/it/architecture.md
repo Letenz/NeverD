@@ -9,6 +9,10 @@ per modificare NeverD in sicurezza. Copre intenzionalmente solo il codice di
 NeverD; i sottomoduli LLVM, Capstone e Unicorn mantengono la propria
 architettura interna.
 
+## Recupero MXCSR con verifica
+
+`X64MXCSRMask` abilita caricamenti MXCSR e letture/scritture scalari con una maschera effettiva esplicita (`0xffbf` o `0xffff`). L’adattatore x64 definisce gli stati iniziali validi e le transizioni. Il nucleo contabilizza il lavoro e richiede la prova che i bit riservati siano zero; l’opzione senza fault non basta. Le operazioni intrinseche originali restano osservabili. Scritture MXCSR in memoria, interfaccia sorgente e certificati nativi/LLVM richiedono contratti propri.
+
 ## Recupero della memoria a runtime
 
 `X64SegmentedWrites` ammette separatamente scritture FS/GS ordinarie di 1/2/4/8 byte con offset a 64 bit, in uno stato macchina esplicitamente privo di fault. `arch/x86_64` gestisce validazione, ammissione e inizializzazione delle basi simboliche. Il nucleo usa indirizzi lineari completi e la normale invalidazione degli alias. Basi fisse arbitrarie possono sovrapporsi allo stack, ad altri segmenti e a celle di ritorno attive. La capacità è inclusa nelle attestazioni raw. Le interfacce sorgente e di prova nativa senza input di base autenticati continuano a rifiutare questo dominio.

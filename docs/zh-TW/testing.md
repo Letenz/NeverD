@@ -10,6 +10,10 @@ NeverD 的測試回答三個不同問題：表示形狀是否符合預期、完�
 
 `PipelineOutcome.ResolvedCalls*` 檢查暫存器分組、call／invoke 身分、堆疊位元組封裝與拆分、窄值留在各自的堆疊槽，以及缺少位元組時的拒絕。`MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` 檢查記錄的偏移。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` 涵蓋 x64、ARM32、AArch64 的 ELF、PE、Mach-O。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` 涵蓋三種格式，拒絕長度被改寫、可寫或越界範圍、同名本地函式、錯誤來源暫存器、替代入口及可重定位映像。主機 C 差分測試將原始 C 獨立以 O0 編譯，產生的 C 仍以 O2 編譯，避免主機最佳化器錯算迴圈遞推而污染對照。AArch64 FMA 檢查僅在 x86 主機要求 `-mfma`。
 
+## MXCSR 還原檢查
+
+`InterpreterSpecialization.MXCSR*` 涵蓋任意入口狀態、精確記憶體值、保留位元、DAZ、別名、非法形式、節點投影及精確/不足預算。`PEFixedImageTest.RawMXCSR*` 檢查傳統/VEX 原生位元組與繫結遮罩的憑據。機器狀態及原生/LLVM 精化測試確保未使用的能力也不能擴大介面。
+
 ## 分段寫入還原檢查
 
 `InterpreterSpecialization.SegmentedWrite*` 檢查獨立位元組記憶體結果、全部純量寬度、基址加法回繞、堆疊別名、覆寫的指標來源、跨節點失效及精確與不足預算。`SegmentedWritesAndReadsShareLinearMemory` 涵蓋相同及不同段基址。`PEFixedImageTest.RawSegmented*` 檢查原生位元組、有效返回槽別名拒絕及能力變更憑據。既有憑據相容性數值維持不變。建置特化、PE 固定映像、機器狀態及原生/LLVM 細化測試；原始碼與證明拒絕測試也涵蓋未使用的寫入能力。

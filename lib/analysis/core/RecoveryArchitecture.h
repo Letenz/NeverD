@@ -9,6 +9,7 @@
 #define NEVERD_ANALYSIS_CORE_RECOVERYARCHITECTURE_H
 
 #include "neverd/analysis/InterpreterSpecialization.h"
+#include "neverd/symbolic/SymExpr.h"
 
 #include "llvm/Support/Errc.h"
 
@@ -26,6 +27,35 @@ bool supportsRuntimeMemoryOperation(const LowOp &Op,
 void seedRuntimeMemoryState(symbolic::SymContext &Ctx,
                             symbolic::SymState &State,
                             const SpecializationOptions &Options);
+
+/// Architecture-owned control values are separate from guest registers and
+/// instruction-local temporaries. Node projection may forget correlations but
+/// must retain the complete declared architectural domain.
+struct RuntimeControlState {
+  std::vector<symbolic::SymRef> Values;
+};
+
+struct RuntimeControlTransition {
+  /// Exact scalar evaluation only. The original intrinsic remains in LowIR.
+  /// This interface admits no memory writes: those require the core's ordinary
+  /// alias, provenance and return-cell checks.
+  std::vector<LowOp> Ops;
+  std::optional<NdVar> Rejected;
+  std::optional<std::pair<size_t, NdVar>> OutputState;
+  std::string InvalidValueDiagnostic;
+};
+
+llvm::Error validateRuntimeControlOptions(const SpecializationOptions &Options);
+bool supportsRuntimeControlOperation(const LowOp &Op,
+                                     const SpecializationOptions &Options);
+RuntimeControlState
+seedRuntimeControlState(symbolic::SymContext &Ctx,
+                        const SpecializationOptions &Options);
+std::optional<RuntimeControlTransition>
+lowerRuntimeControlOperation(const LowOp &Op, symbolic::SymState &State,
+                             const RuntimeControlState &Controls,
+                             const SpecializationOptions &Options,
+                             llvm::function_ref<NdVar(uint16_t)> Temporary);
 
 struct RawEnvironmentPreparation {
   uint64_t Bytes = 0;

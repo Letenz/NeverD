@@ -4,6 +4,10 @@
 
 # Testing NeverD
 
+## MXCSR recovery checks
+
+`InterpreterSpecialization.MXCSR*` covers arbitrary entry state, exact memory values, reserved bits, DAZ, aliases, malformed forms, node projection and exact/short budgets. `PEFixedImageTest.RawMXCSR*` checks legacy/VEX native bytes and mask-bound receipts. The machine-state and native/LLVM refinement owners verify that unused capabilities cannot expand their interfaces.
+
 ## Segmented store recovery checks
 
 `InterpreterSpecialization.SegmentedWrite*` checks independent byte-memory results, all scalar widths, base-addition wraparound, frame aliases, overwritten pointer origins, cross-node invalidation and exact/short budgets. `SegmentedWritesAndReadsShareLinearMemory` covers equal and distinct segment bases. `PEFixedImageTest.RawSegmented*` checks native bytes, live return-cell alias refusal and changed capability receipts. The existing receipt compatibility cases retain their values. Build the specialization, PE fixed-image, machine-state and native/LLVM refinement test owners; source and proof refusal checks include an unused write capability.
