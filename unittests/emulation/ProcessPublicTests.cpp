@@ -4873,6 +4873,83 @@ TEST_P(DarwinLibSystemPublic,
   }
 #endif
 }
+TEST_P(DarwinLibSystemPublic, StartupDylibsAndTLSKeepIdentityAcrossCAndCLI) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  llvm::SmallString<128> Temporary;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Temporary));
+  const std::filesystem::path Root(Temporary.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const auto &[File, Profile] = GetParam();
+  for (const char *Kind : {"classic", "chained"}) {
+    SCOPED_TRACE(Kind);
+    const auto Directory = std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) /
+                           (std::string(File) + "-dylib-" + Kind);
+    Path = (Directory / "main").string();
+    llvm::json::Array Modules;
+    for (const char *Name : {"libneverd-base.dylib", "libneverd-leaf.dylib"})
+      Modules.push_back(
+          llvm::json::Object{{"name", std::string("@loader_path/") + Name},
+                             {"path", (Directory / Name).string()}});
+    const auto Options = jsonText(llvm::json::Object{
+        {"backend", "unicorn"},
+        {"instruction_quantum", 1024},
+        {"timeout_microseconds", 5000000},
+        {"darwin", llvm::json::Object{{"modules", std::move(Modules)}}}});
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Report));
+      const auto *O = Report->getAsObject();
+      ASSERT_NE(O, nullptr);
+      EXPECT_EQ(O->getInteger(field::Version), 1);
+      EXPECT_EQ(O->getString(field::Stop), "exited")
+          << O->getString(field::Diagnostic).value_or("").str();
+      EXPECT_EQ(O->getInteger(field::ExitStatus), 83);
+      EXPECT_EQ(O->getString(field::Stdout), "440054");
+      EXPECT_EQ(O->getString(field::Stderr), "");
+      ASSERT_NE(O->getArray(field::Services), nullptr);
+      EXPECT_TRUE(O->getArray(field::Services)->empty());
+      const auto *Darwin = O->getObject(field::Darwin);
+      ASSERT_NE(Darwin, nullptr);
+      const auto *Calls = Darwin->getArray(field::NativeCalls);
+      ASSERT_NE(Calls, nullptr);
+      ASSERT_GT(Calls->size(), 10u);
+      EXPECT_EQ(O->getInteger(field::Events), Calls->size() + 1);
+      unsigned GetPID = 0;
+      for (unsigned I = 0; I != Calls->size(); ++I) {
+        const auto *Call = (*Calls)[I].getAsObject();
+        ASSERT_NE(Call, nullptr);
+        const bool Write = I + 1 == Calls->size();
+        const bool PID = Call->getString(field::Name) == "_getpid";
+        GetPID += PID;
+        EXPECT_EQ(Call->getString(field::Name), Write ? "_write"
+                                                : PID ? "_getpid"
+                                                      : "__tlv_get_addr");
+        EXPECT_EQ(Call->getString(field::Module), "/usr/lib/libSystem.B.dylib");
+        ASSERT_NE(Call->getArray(field::Arguments), nullptr);
+        EXPECT_EQ(Call->getArray(field::Arguments)->size(), Write ? 3u
+                                                            : PID ? 0u
+                                                                  : 1u);
+        EXPECT_TRUE(Call->getString(field::Result));
+        if (PID)
+          EXPECT_EQ(Call->getString(field::Result), "3e8");
+      }
+      EXPECT_EQ(GetPID, 2u);
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+      if (!Repeat) {
+        EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),
+                  process_cli::GuestFailure);
+        ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
+      }
+    }
+  }
+#endif
+}
 INSTANTIATE_TEST_SUITE_P(
     Platforms, DarwinLibSystemPublic,
     testing::Values(std::pair{"macos-arm64", MacOSMachO64},

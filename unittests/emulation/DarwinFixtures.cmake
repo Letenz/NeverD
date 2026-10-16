@@ -221,3 +221,4 @@ if(TARGET NeverDProcessPublicTests)
   target_compile_definitions(NeverDProcessPublicTests PRIVATE
     NEVERD_DARWIN_FIXTURE_DIR="${_darwin_fixture_dir}")
 endif()
+include(DarwinDylibFixtures.cmake)

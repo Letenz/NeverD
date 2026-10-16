@@ -7416,3 +7416,32 @@ ARM64 HVF identities are mandatory. Public C/CLI and real Python tests repeat
 the same workload. `DarwinNative.LibSystemMemoryCallsMatchNativeMappingsAndCErrorOrder`
 compares the system-linked object with original native file bytes, anonymous
 zeroing, protection transitions, private mapping lifetime and EOF tails.
+
+### Explicit Darwin dylibs and TLS
+
+Build `NeverDDarwinProcessTests`, `NeverDProcessPublicTests` and `neverd` in the
+CPU-emulation profile. `DarwinDylib.*` checks graph identity/version/platform,
+shared input accounting, resident TLS budgets, cycles, malformed layouts and
+preparation timeout. `DarwinLinking.ExportTries*` and
+`ThreadLocalExportMustNameAnAdmittedDescriptor` cover original export facts;
+`DarwinLibSystemTest.TLV*` checks descriptor/frame refusal, live-copy lifetime
+and full GP/vector preservation on both ISAs. `DarwinMemoryTest.MappedTLS*`
+checks actual reservation charging and mapping/protection refusal.
+
+`DarwinProcess.StartupDylibsShareDataAndKeepThreadLocalInstances` compiles the
+original three-module C workload for all five profiles with classic and chained
+fixups. It checks shared dependencies, duplicate export spellings, relocated data,
+zero-only and initialized TLS, live template mutation and fresh repeated runs.
+The mandatory native inventory now has 100 methods per matching profile, or
+300 matching ARM64 identities; the separate common native catalogue remains 82.
+Unavailable transports remain explicit skips. `DarwinNative.StartupDylibsAndTLSMatchOriginalNativeImages`
+compares a system-linked executable and its original libraries with real macOS
+execution. Independent O0/O1/O2 classic/chained controls complement that test.
+
+`DarwinLibSystemPublic.StartupDylibsAndTLSKeepIdentityAcrossCAndCLI` checks the
+same explicit catalogue and reports through C and CLI. With
+`NEVERD_TEST_LIBNEVERD` and `NEVERD_TEST_DARWIN_FIXTURES` set, the real Python
+`test_darwin_startup_dylibs_share_data_and_isolate_tls` repeats every profile.
+Run these alongside DarwinImage, linking, memory, existing libSystem calls,
+raw startup and shared process/API regressions before publishing. Guest deadlines
+and event limits are unchanged; native Intel and physical iOS need other hosts.

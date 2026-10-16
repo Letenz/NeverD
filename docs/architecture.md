@@ -7002,3 +7002,21 @@ records mmap's early zero-length or missing-sharing-type EINVAL, and adds
 MAP_UNIX03 only to the separate kernel arguments. The common completion path
 owns errno and return-frame publication. DarwinMemory remains the sole owner
 of mappings, current/maximum rights, reserved pages and retained file leases.
+
+### Explicit Darwin startup graphs and TLS
+
+`MachOExecutionImage` owns dylib-identity counts and original TLS section facts;
+`MachOProgramLinking` owns dependency identities/versions, export-trie addresses,
+fixups and complete undefined-symbol closure. `DarwinImage` resolves the explicit
+catalogue into one bounded acyclic graph, checks every dependency edge and
+assigns disjoint placements. Its graph-wide input, metadata, record and resident
+ledgers charge shared nodes once and retain one preparation deadline.
+`DarwinTLSPreparation` admits exact descriptors and contiguous template storage,
+publishes keys and physically maps charged TLS reservations before execution.
+`DarwinTLS` alone owns main-thread instantiation and the authenticated TLV return:
+it copies live relocated bytes once, validates descriptor/frame identity and
+preserves non-result registers. `DarwinMemory` keeps TLS reservations resident;
+`ProcessReport` serializes named resolver events through the existing schema.
+Public `DarwinProcessOptions` and `darwin.modules` only supply original inputs;
+no host loader, search, callback execution or second symbol-resolution owner is
+introduced. See [Darwin environments](darwin-emulation.md) for the finite contract.
