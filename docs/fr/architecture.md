@@ -1904,3 +1904,7 @@ KernelFileSystem conserve un provider token par FILE_OBJECT. L’opération priv
 `KernelModelRuntime` possède la classification CRT, les conversions en place et les écritures de chaînes vérifiées. `KernelCStringAPIs.def` fournit identité exportée, nombre d’arguments et admission IRQL à toutes les voies d’appel. Les accès unitaires réutilisent permissions et durée de vie invitées ; rapports et adaptateurs ne réimplémentent pas les copies ou erreurs.
 
 `KernelMemoryCalls` possède l’admission des copies vérifiées et réutilise move/fill, la durée de vie du pool et les contrôles de mémoire utilisateur. `KernelModelRuntime` possède la sonde de signature brute `RtlImageNtHeader`. Cette sonde ne remplace pas la validation du chargeur ; les adaptateurs ne dupliquent aucune de ces sémantiques.
+
+`KernelModelRuntime` possède le hachage Unicode, la décision commune de mise en majuscules indépendante de NLS et la conversion en secondes depuis 1980. `KernelRuntimeCalls` utilise le propriétaire existant du pool de chaînes paginé. Les tables d’API définissent les exports, le nombre d’arguments et APC_LEVEL ; les propriétaires conservent l’ordre d’accès aux champs.
+
+`uppercaseCharacter` réduit les arguments avant leur admission et délègue à `uppercaseUnicodeUnit`. Les tables CRT et Unicode partagent cette décision avec des identités ABI distinctes ; aucun adaptateur ni paramètre régional hôte ne fournit une seconde correspondance.

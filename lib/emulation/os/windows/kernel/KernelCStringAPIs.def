@@ -6,17 +6,12 @@
 ///
 /// \file
 /// Argument counts, caller-IRQL ceilings and typed operations for the C runtime
-/// string helpers the kernel exports and drivers call directly. Every operation
-/// reads caller-provided guest memory one unit at a time; residency is
-/// enforced per access and a run without a terminator stops at the 1 MiB model
-/// limit. Behavior is modeled 1:1 against the Windows 10.0.19041.6456 kernel
-/// exports cited per entry: counts and search results follow the standard C
-/// semantics, comparisons fold only ASCII A-Z, and the result width matches the
-/// routine (int results are zero-extended to 32 bits, size_t and pointer
-/// results are full width). The IRQL ceiling is Any, matching the exported
-/// leaf routines and the bounded memory helpers; validateGuestAccess still
-/// rejects paged reads and writes above APC_LEVEL. Writers preflight the
-/// complete output, reject overlap, and return the original destination.
+/// scalar/string helpers the kernel exports and drivers call directly. Memory
+/// operations enforce residency per access and a run without a terminator
+/// stops at the 1 MiB model limit. Bounded behavior follows the Windows
+/// 10.0.19041.6456 kernel exports cited per entry; result widths, overlap and
+/// error writes follow each operation's contract. IRQL admission is supplied
+/// per entry, and validateGuestAccess also rejects paged storage above APC_LEVEL.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -145,6 +140,15 @@ NEVERD_KERNEL_CSTRING_API(wcscspn, 2, Any,
 // Pinned x64 kernel CRT: isdigit returns the ctype digit mask (4), narrowing
 // to an unsigned byte except for the signed-int EOF value (RVA 0x3d1fd0).
 NEVERD_KERNEL_CSTRING_API(isdigit, 1, Any, runtime::cIsDigit(uint32_t(A[0])))
+
+// toupper (RVA 0x3d3630) converts a low byte through paged ANSI/UTF-8 and
+// Unicode helpers; only ASCII is independent of the code page. towupper
+// (RVA 0x3d36d0) delegates to RtlUpcaseUnicodeChar with a 16-bit argument.
+// Unlike the in-place CRT routines below, extended mapping requires NLS.
+NEVERD_KERNEL_CSTRING_API(toupper, 1, APC,
+                          runtime::uppercaseCharacter(A[0], true))
+NEVERD_KERNEL_CSTRING_API(towupper, 1, APC,
+                          runtime::uppercaseCharacter(A[0], false))
 
 // These in-place transforms only change ASCII, independently of NLS tables.
 // The narrow upper / wide lower routines tolerate NULL; wide upper does not.

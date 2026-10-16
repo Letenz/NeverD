@@ -138,6 +138,12 @@ EXPORTS
   RtlAnsiStringToUnicodeString
   RtlUnicodeStringToAnsiString
   RtlFreeUnicodeString
+  RtlHashUnicodeString
+  RtlUpcaseUnicodeString
+  RtlUpcaseUnicodeChar
+  toupper
+  towupper
+  RtlTimeToSecondsSince1980
   RtlFreeAnsiString
   MmGetPhysicalMemoryRanges
   RtlInitUnicodeStringEx
