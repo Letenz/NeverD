@@ -785,14 +785,16 @@ class Session:
         enabled: bool = True,
         pdb_path: os.PathLike[str] | str | None = None,
         map_path: os.PathLike[str] | str | None = None,
+        dwarf_path: os.PathLike[str] | str | None = None,
     ) -> None:
         """Choose the debug symbols the next load() reads.
 
         The search happens during load(), so this only takes effect on a
         subsequent one.  Naming a file makes it authoritative: load() then
         fails rather than falling back to a companion file that happens to sit
-        beside the binary.  Pass an empty path to resume searching, or
-        enabled=False to read the image alone.
+        beside the binary.  A PDB or DWARF outranks a MAP, whose names fill
+        only what they leave unnamed.  Pass an empty path to resume searching,
+        or enabled=False to read the image alone.
         """
 
         self._call(
@@ -808,6 +810,11 @@ class Session:
             self._call(
                 "neverd_session_set_map_path",
                 _utf8_argument("MAP path", os.fspath(map_path), allow_empty=True),
+            )
+        if dwarf_path is not None:
+            self._call(
+                "neverd_session_set_dwarf_path",
+                _utf8_argument("DWARF path", os.fspath(dwarf_path), allow_empty=True),
             )
 
     def load(self, path: os.PathLike[str] | str) -> None:

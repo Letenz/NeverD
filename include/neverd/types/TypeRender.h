@@ -125,6 +125,13 @@ BuiltinSpelling spellingOf(const RenderOptions &Options);
 std::string renderType(const TypeLibrary &Library, const LocalType &Type,
                        const RenderOptions &Options);
 
+/// \p Type in C or C++ as \p Options spell builtins, declaring
+/// \p Declarator, or alone when that is empty: `struct S *`, or
+/// `int f(struct S *s)` for a function type and its name.
+std::string spellType(const TypeLibrary &Library, const TypeExpr &Type,
+                      const std::string &Declarator,
+                      const RenderOptions &Options);
+
 /// \p Types and every type they need, in an order that compiles, after what
 /// the spelling needs declared.  Every type when \p Types is empty.
 std::string renderTypes(const TypeLibrary &Library,

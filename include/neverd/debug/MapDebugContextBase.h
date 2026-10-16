@@ -22,6 +22,8 @@
 
 namespace neverd {
 
+struct MapImageLayout;
+
 class MapDebugContextBase : public DebugContext {
 public:
   ~MapDebugContextBase() override = default;
@@ -37,19 +39,30 @@ public:
   static bool isCOFFMapHeader(llvm::StringRef Line);
 
   static bool parseSegOffset(llvm::StringRef Token, uint16_t &Seg,
-                             uint32_t &Offset);
+                             uint64_t &Offset);
 
   /// Parse COFF /MAP content into \p Functions.  Shared between
   /// MSVCMapLoader and LLDMapLoader (which auto-detects this format).
-  static void parseCOFFMapContent(llvm::StringRef Content,
-                                  std::map<va_t, FunctionSym> &Functions,
-                                  uint64_t ImageBase = 0,
-                                  std::map<va_t, DataObjectSym> *DataObjects =
-                                      nullptr);
+  ///
+  /// With \p Layout, the image the MAP is read against places the names: a
+  /// public without link.exe's Rva+Base column (IDA's and Borland's MAPs)
+  /// takes the reading of its segment:offset that puts the most names in the
+  /// image, the image's sections say which names are code, an address of an
+  /// image rebased since the link moves with it, and a name made up from its
+  /// own address (MapAutomaticNames.def) is left out.
+  static void
+  parseCOFFMapContent(llvm::StringRef Content,
+                      std::map<va_t, FunctionSym> &Functions,
+                      uint64_t ImageBase = 0,
+                      std::map<va_t, DataObjectSym> *DataObjects = nullptr,
+                      const MapImageLayout *Layout = nullptr);
 
+  /// With \p Layout, segment N is the image's Nth section, as link.exe
+  /// numbers them.
   static void parseCOFFMapLineNumbers(llvm::StringRef Content,
                                       std::map<va_t, SourceLoc> &Locations,
-                                      uint64_t ImageBase = 0);
+                                      uint64_t ImageBase = 0,
+                                      const MapImageLayout *Layout = nullptr);
 
 protected:
   std::map<va_t, FunctionSym> Functions;

@@ -90,6 +90,24 @@ ParseResult parseGoTypes(llvm::StringRef Source, TypeLibrary &Library,
 ParseResult parseTypes(llvm::StringRef Source, TypeLibrary &Library,
                        const ParseOptions &Options = {});
 
+/// One function's C declaration, as IDA's Y takes it.
+struct FunctionDeclaration {
+  /// The function it names, and its type.
+  std::string Name;
+  std::shared_ptr<const FunctionDef> Function;
+  std::vector<SourceProblem> Problems;
+  bool ok() const { return Function && Problems.empty(); }
+};
+
+/// Reads \p Source as the declaration of one function, such as
+/// `int f(struct S *s, int n)`, its semicolon optional, against the types
+/// \p Library holds, which it does not change.  A declaration that names a
+/// type the library lacks, or defines one, is a problem: the types it uses
+/// are the library's.
+FunctionDeclaration parseFunctionDeclaration(llvm::StringRef Source,
+                                             const TypeLibrary &Library,
+                                             const ParseOptions &Options = {});
+
 } // namespace neverd::types
 
 #endif // NEVERD_TYPES_TYPEPARSE_H

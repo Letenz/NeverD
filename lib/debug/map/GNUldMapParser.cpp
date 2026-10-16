@@ -24,12 +24,18 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <utility>
+
 namespace neverd {
 
 void parseGNUldMap(llvm::StringRef Content,
-                   std::map<va_t, FunctionSym> &Functions) {
+                   std::map<va_t, FunctionSym> &Functions,
+                   std::vector<MapSection> *Sections) {
   bool InTable = false;
   std::string CurrentOutSection;
+  // An output section whose name is too long for its column has its address
+  // and size on the next line.
+  bool AwaitingPlacement = false;
 
   llvm::StringRef Remaining = Content;
   while (!Remaining.empty()) {
@@ -60,8 +66,23 @@ void parseGNUldMap(llvm::StringRef Content,
     if (Tokens.empty())
       continue;
 
+    const auto placeSection = [&](llvm::StringRef AddrText,
+                                  llvm::StringRef SizeText) {
+      unsigned long long Addr, Size;
+      if (Sections && !AddrText.getAsInteger(0, Addr) &&
+          !SizeText.getAsInteger(0, Size))
+        Sections->push_back(MapSection{{}, CurrentOutSection, Addr, Size});
+    };
     if (FirstNonSpace == 0 && Tokens[0].starts_with(".")) {
       CurrentOutSection = Tokens[0].str();
+      AwaitingPlacement = Tokens.size() == 1;
+      if (Tokens.size() >= 3)
+        placeSection(Tokens[1], Tokens[2]);
+      continue;
+    }
+    if (std::exchange(AwaitingPlacement, false) && Tokens.size() == 2 &&
+        Tokens[0].starts_with("0x") && Tokens[1].starts_with("0x")) {
+      placeSection(Tokens[0], Tokens[1]);
       continue;
     }
 

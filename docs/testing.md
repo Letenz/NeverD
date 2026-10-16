@@ -112,6 +112,25 @@ hexadecimal age, NB10 keys and refusal of unusable identities or unsafe path
 components. `NeverDWorkerPDBLoad` opens a PE without the PDB beside it and finds
 that PDB before opening it.
 
+`MapFileTest.*` holds every safety fixture's linker MAP against its image, all
+six reading as consistent, changes a section's size or a link.exe build stamp
+to see another build refused, and reads GNU ld's file-aligned PE section sizes
+and IDA's segment:offset MAPs. `LoadDebugInfoTest.*Map*` checks that a PDB
+outranks the MAP beside it, that a named MAP fills only what the PDB leaves
+unnamed, and that a MAP of another build is passed over beside the binary and
+refused when named unless it is taken unchecked.
+`DebugInfoDiscovery.FindsTheCompanion*` finds DWARF companions by build ID under
+`NEVERD_DEBUG_FILE_DIRECTORY` and by `.gnu_debuglink` and its CRC, from the
+fixtures `unittests/debug/fixtures/Makefile` rebuilds;
+`LoadDebugInfoTest.ANamedDWARFFile*` refuses another build's or machine's file
+and `CompressedDWARFSectionsReadExpanded` reads zlib-compressed sections.
+`SessionCAPITest.DebugFilesLoadedAfterTheImage*` is the workbench flow: the
+open loads the MAP, and a PDB loaded afterwards replaces its names.
+`NeverDWorkerMapReference` runs the MAP and DWARF worker operations against the
+real engine, and `NeverDGuiController` asks the MAP question (the same build,
+declined, another build), asks nothing about it after an accepted PDB, and
+keeps the answer with the project.
+
 `SessionCAPITest.PrepareFunction*` checks analysis without source emission,
 restricted and whole-image scope, repeated and switched entries, address zero,
 unloaded sessions and unknown ARM mode. `NeverDWorkerSourceCache` verifies
@@ -327,6 +346,17 @@ does the same through the worker with the real engine, the listing's
 structure offsets and their undo included, and the GUI controller test
 `structureOffsetsRankTypesByTheCodesAccesses` drives T through the picker on
 the mock engine.
+
+`TypeParse.ReadsOneFunctionsDeclarationAgainstTheLibrary` reads a function's
+declaration against the library without changing it, and refuses one that
+names a type the library lacks, defines one, or declares more than one
+function. `SessionCAPITest.FunctionDeclarationsBindByAddress` states a
+declaration for the fixture's `use` over its PDB's, through the C API:
+where each parameter arrives, the records the first parameter's accesses
+rank, the declaration Convert to struct * proposes, the refused
+declarations, and the sidecar's load. `FunctionDeclarationsNeedNoDebugInformation`
+does the same on the image read without its PDB, of a type the user
+declares, and checks that another function's text stays as it was.
 
 `HeaderLibrary.*` reads the embedded Windows kernel library and checks how a
 header library joins a program's types. After running
