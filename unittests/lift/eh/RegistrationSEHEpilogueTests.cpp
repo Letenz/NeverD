@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/ir/low/X86/RegistrationSEHControl.h"
 #include "gtest/gtest.h"
 
 #include "neverd/ir/low/CFGBuilder.h"
@@ -114,5 +115,149 @@ TEST(RegistrationSEHEpilogue,
       }));
       EXPECT_EQ(State.SEHInvocationExits[0].CallVA, 0u);
       EXPECT_NE(State.SEHInvocationExits[1].CallVA, 0u);
+    }
+}
+
+TEST(RegistrationSEHEpilogue, RequiresImmutableCompleteInstructionBoundaries) {
+  for (bool Scratch : {false, true})
+    for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+      SCOPED_TRACE(Scratch);
+      SCOPED_TRACE(Mutation);
+      auto Image = epilogueImage(Scratch, 0);
+      Decoder Decode;
+      ASSERT_TRUE(Decode.init(Image));
+      auto Function = CFGBuilder().build(Image, Decode, 0x401000);
+      const va_t Start = Image.Segments.front().VA +
+                         Image.Segments.front().Size - (Scratch ? 8 : 7);
+      auto Epilogue = llvm::find_if(Function.Blocks, [&](const auto &Block) {
+        return Block.StartAddr == Start;
+      });
+      ASSERT_NE(Epilogue, Function.Blocks.end());
+      switch (Mutation) {
+      case 1:
+        Image.Segments.front().Flags =
+            Image.Segments.front().Flags | SegmentFlags::Writable;
+        break;
+      case 2:
+        --Image.Segments.front().FileSz;
+        break;
+      case 3:
+        Image.Segments.push_back(Image.Segments.front());
+        break;
+      case 4:
+        Image.Segments.front().Data.back() = 0xcb;
+        break;
+      case 5:
+        Image.Segments.front().Data[Start - 0x401000] = 0x58;
+        break;
+      case 6:
+        Epilogue->InstructionBoundaries.front().TargetMode =
+            LowInstructionTargetMode::Thumb;
+        break;
+      case 7:
+        Epilogue->InstructionBoundaries.front().ControlFlags =
+            LowInstructionControlFlag::Conditional;
+        break;
+      case 8:
+        Epilogue->InstructionBoundaries.back().Immediate = 4;
+        break;
+      case 9:
+        ++Epilogue->InstructionBoundaries.front().Size;
+        break;
+      }
+      RegistrationCallCalleeIndex Index(Image);
+      const auto Controls = Index.sehControlContracts(Function);
+      ASSERT_TRUE(Controls);
+      EXPECT_EQ(
+          llvm::any_of(
+              *Controls,
+              [](const auto &Control) {
+                return Control.Control ==
+                       RegistrationSEHControlContract::Kind::ParentEpilogue;
+              }),
+          Mutation == 0);
+    }
+}
+
+TEST(RegistrationSEHEpilogue, AdjacentCallRequiresCheckedFinallyOwnership) {
+  for (bool EH4 : {false, true})
+    for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
+      SCOPED_TRACE(EH4);
+      SCOPED_TRACE(Mutation);
+      auto Image = epilogueImage(false, 0);
+      auto &EH = Image.ExceptionMetadata.Functions.front();
+      if (EH4) {
+        EH.Encoding = ExceptionEncoding::X86ScopeTableEH4;
+        EH.Personality = ExceptionPersonality::ExceptHandler4;
+      }
+      const va_t Address = EH.Registration->Scopes.front().HandlerVA - 5;
+      const size_t Offset = Address - Image.Segments.front().VA;
+      Decoder Decode;
+      ASSERT_TRUE(Decode.init(Image));
+      DecodedInsn Insn{};
+      ASSERT_EQ(
+          Decode.decodeOneForLift(Image.Segments.front().Data.data() + Offset,
+                                  5, Address, Insn),
+          5);
+      std::vector<LowOp> Ops;
+      Decode.liftToLow(Insn, Ops);
+      ASSERT_EQ(Ops.size(), 2u);
+      ASSERT_EQ(Ops.back().Opcode, NdOp::STORE);
+      switch (Mutation) {
+      case 1:
+        EH.Registration->Scopes.clear();
+        break;
+      case 2:
+        EH.Registration->Scopes.front().IsFinally = false;
+        break;
+      case 3:
+        EH.ParseStatus = ExceptionParseStatus::Partial;
+        break;
+      case 4:
+        EH.Cxx.emplace();
+        break;
+      case 5:
+        EH.CodeRange.End = Address + 5;
+        break;
+      case 6:
+        Image.Segments.front().Flags =
+            Image.Segments.front().Flags | SegmentFlags::Writable;
+        break;
+      case 7:
+        Image.Segments.front().Data[Offset + 1] = 1;
+        break;
+      case 8:
+        Image.BaseRelocations.push_back({Address + 1, 3});
+        break;
+      case 9:
+        Ops.front().Inputs[1].Offset = 8;
+        break;
+      case 10:
+        Ops.back().Inputs[1].Offset = Address;
+        break;
+      case 11:
+        Ops.back().MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+        break;
+      case 12:
+        Ops.back().Seq = 0;
+        break;
+      case 13:
+        Ops.push_back(Ops.front());
+        break;
+      case 14:
+        Image.Format = BinaryFormat::ELF;
+        break;
+      }
+      registration_state::restoreAdjacentSEHFinallyCall(Image, EH, Address, 5,
+                                                        Ops);
+      if (!Mutation) {
+        ASSERT_EQ(Ops.size(), 1u);
+        EXPECT_EQ(Ops.front().Opcode, NdOp::CALL);
+        EXPECT_EQ(Ops.front().Inputs[0], NdVar::cst(Address + 5, 4));
+      } else {
+        ASSERT_GE(Ops.size(), 2u);
+        EXPECT_EQ(Ops.front().Opcode, NdOp::INT_SUB);
+        EXPECT_EQ(Ops[1].Opcode, NdOp::STORE);
+      }
     }
 }

@@ -159,7 +159,7 @@ bool isSEHFinallyCallInstruction(const BinaryImage &Image,
         return Scope.IsFinally && Scope.HandlerVA == Call->Inputs[0].Offset;
       }))
     return false;
-  const auto Bytes = readImmutableCodeBytes(Image, Address, Size);
+  const auto Bytes = readImmutablePE32CodeBytes(Image, Address, Size, {});
   return Bytes && (*Bytes)[0] == 0xe8 &&
          uint32_t(Address + Size +
                   int64_t(readLE<int32_t>(Bytes->data() + 1))) ==

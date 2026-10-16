@@ -72,9 +72,7 @@ TEST(PipelineOutcome, NativeFinallyInputsRetainSourceLLVM) {
               *Result.LlvmModule);
           bool Reconstruct = false;
 #ifdef LLVM_NEVERD_X86_REGISTRATION_EH
-          Reconstruct = (std::string(Profile) == "Od-no-gs" ||
-                         std::string(Profile) == "Od-gs") &&
-                        std::string(Name) == "nonlocal_finally_return";
+          Reconstruct = std::string(Name) == "nonlocal_finally_return";
 #endif
           if (Reconstruct) {
             ASSERT_TRUE(bool(Native)) << llvm::toString(Native.takeError());
@@ -99,7 +97,10 @@ TEST(PipelineOutcome, NativeFinallyInputsRetainSourceLLVM) {
               std::error_code EC = llvm::sys::fs::create_directories(Output);
               ASSERT_FALSE(EC) << EC.message();
               const std::string Prefix =
-                  std::string(Profile) == "Od-gs" ? "return-gs-" : "return-";
+                  std::string(Profile) == "Od-no-gs" ? "return-"
+                  : std::string(Profile) == "Od-gs"
+                      ? "return-gs-"
+                      : "return-" + std::string(Profile) + "-";
               const auto IR = std::filesystem::path(Output) /
                               (Prefix + (NoOpt ? "raw.ll" : "opt.ll"));
               llvm::raw_fd_ostream OS(IR.string(), EC);
