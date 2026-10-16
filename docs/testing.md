@@ -72,9 +72,10 @@ prebuilt-LLVM guidance.
 restoration of ordinary output, reuse of prepared IR, navigation invalidation
 and strict option validation. `SourceLLVMProfiles*` checks separate source and
 module cache identities. `NativeLLVMInspection*` preserves inspection branches
-across source profiles and both view orders. `LLVMViewsDeferOnlyHighIR*`
-checks integer and floating call results, unchanged LLVM/source output and
-resumption without relifting; `FunctionViewRejectsUnknown*` preserves the
+across source profiles and both view orders. `NativeAnalysisViewsDeferOnlyHighIR*`
+checks integer and floating call results, unchanged LowIR/MedIR/CFG/LLVM/source
+output and IR page anchors, and resumption without relifting after analysis
+views; `FunctionViewRejectsUnknown*` preserves the
 prepared function on invalid view names. `LLVMViewShowsTheFunctionInAModuleOfItsOwn`
 builds a glibc PIE: `_start`'s LLVM IR must assemble and verify alone, declare
 the GOT's mirror before the definition under a comment saying what it stands
