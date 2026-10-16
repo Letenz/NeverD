@@ -387,6 +387,15 @@ refreshes its views as after loading signatures. Every declaration drops
 the context, which reads a copy of the library, and the context takes back
 the members it gave.
 
+A RETURN hands back the parameter that arrived in the result register when
+no path from the function's entry to it writes any byte of that register,
+calls a routine, which clobbers it, or enters through an exceptional edge
+(`registerUntouchedFromEntry` in `NdOpReturnLowering.cpp`). AArch64 and ARM
+pass the first argument in the result register, so the bare `ret` beside the
+tail call of `if (b) return g(b); return a;` returns `a`. Whether the
+function returns a value at all stays with the return contracts
+(`settleReturnContracts`).
+
 A unit's member access names a member only where the access reads it
 (`NdType::displayFieldIndexAt`): a field of the access's width, a scalar's
 over a record's of the same width, which no scalar access reads whole, and
