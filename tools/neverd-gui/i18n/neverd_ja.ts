@@ -2325,6 +2325,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>変換するには関数のパラメーターにカーソルを置いてください</translation>
     </message>
     <message>
+        <source>Select &amp;all</source>
+        <translation>すべて選択(&amp;A)</translation>
+    </message>
+    <message>
         <source>Jump to disassembly</source>
         <translation>逆アセンブルへジャンプ</translation>
     </message>

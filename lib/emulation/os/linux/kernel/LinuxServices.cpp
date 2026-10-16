@@ -66,7 +66,8 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::PidFDOpen:
     if (Options.LinuxKernel && Options.LinuxKernel->GKI) {
       return Files.openProcessDescriptor(Event.Arguments[0], Event.Arguments[1],
-                                         *Options.LinuxKernel, Result);
+                                         *Options.LinuxKernel, Result,
+                                         Thread != nullptr);
     }
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = llvm::formatv(Service, Event.Number).str();

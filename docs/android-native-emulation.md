@@ -163,6 +163,12 @@ The supported Bionic subset is:
 - `malloc`, `calloc`, `realloc`, `free`, with live allocation tracking and
   bounded anonymous guest memory. Zero-size allocations may return a unique
   pointer; allocation failure returns NULL and sets ENOMEM.
+  `android.malloc_fill_byte` (0..255, default 0) selects concrete contents for
+  the requested bytes of `malloc` and the growth tail of `realloc`. Use
+  different values to check whether an analysis depends on initial heap bytes.
+  `calloc`, internal model allocations and anonymous `mmap` remain zeroed;
+  page padding is excluded. This input neither models a real allocator history
+  nor establishes the validity of uninitialized reads.
 - `__errno`, `getpid`, `gettid`, `getuid`, `geteuid`, `getgid`, `getegid`.
   Identity queries share the Linux
   process model: PID/TID and real/effective UID/GID are 1000, including raw
