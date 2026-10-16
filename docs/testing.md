@@ -5853,9 +5853,12 @@ Native x64 KVM/WHP/HVF initialization executes `X64MachineProbe.def` in private 
 `NeverDAArch64PAuthTests` runs both checked privilege profiles on available
 Unicorn/KVM/WHP/HVF transports. Independent encodings cover all 128 HINT selectors,
 the twelve admitted disabled-key forms, four unguarded BTI forms,
-zero and high-bit return addresses,
-and rejected non-HINT authentication, stripping, branches and system-register
-access. Every attempt checks the complete scalar/vector inventory, PC and
+zero and high-bit return addresses, and original `XPACLRI` with unsigned low
+48-bit return addresses. The latter are fixed points of PAC stripping in the
+checked translation regime; authentication being disabled alone does not make
+stripping a NOP. `XPACLRI` with higher address bits, non-HINT authentication and
+stripping, authenticated branches and key/control register access remain
+unsupported. Every attempt checks the complete scalar/vector inventory, PC and
 unchanged code/data bytes. Run it together with `NeverDAArch64StateTests`,
 `NeverDAArch64FPTests` and the checked CPU/session regressions after changing
 admission or startup probes. Native platform cells without hardware remain
