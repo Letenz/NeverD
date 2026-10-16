@@ -673,13 +673,13 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI,
-                           "5085 CPU + 262 WHP + 25 SEH + 77 scheduling + 30 "
+                           "5085 CPU + 266 WHP + 25 SEH + 77 scheduling + 30 "
                            "wait sets + 29 driver UNPACK + 6 clock reads "
                            "+ 4 image memory checks + 6 CPUID "
                            "+ 7 kernel snapshots + 10 pool captures "
                            "+ 4 DriverEntry caller checks "
                            "+ 103 driver environment checks "
-                           "+ 100 driver API checks = 5748")
+                           "+ 108 driver API checks = 5760")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
