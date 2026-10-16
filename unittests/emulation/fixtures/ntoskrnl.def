@@ -271,3 +271,6 @@ ExSetResourceOwnerPointerEx
   strncpy_s
   wcscat_s
   wcsncpy_s
+  memcpy_s
+  memmove_s
+  RtlImageNtHeader

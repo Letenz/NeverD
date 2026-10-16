@@ -1099,6 +1099,44 @@ uint64_t foldAsciiUpper(uint64_t Unit) {
 }
 } // namespace
 
+llvm::Expected<uint64_t> imageNtHeader(const KernelModel &Model,
+                                       GuestMemory &Memory, uint64_t Base) {
+  // RtlImageNtHeader calls RtlImageNtHeaderEx with NO_RANGE_CHECK. It validates
+  // DOS and PE signatures, not the machine, optional header or section table.
+  if (!Base || Base == UINT64_MAX)
+    return 0;
+  auto Read = [&](uint64_t Address,
+                  unsigned Width) -> llvm::Expected<uint64_t> {
+    if (auto E = checkBufferRange(Address, Width))
+      return E;
+    if (auto E = Model.validateGuestAccess(Address, Width, false))
+      return E;
+    return Memory.readInteger(Address, Width);
+  };
+  auto Dos = Read(Base, 2);
+  if (!Dos)
+    return Dos.takeError();
+  if (*Dos != 0x5a4d)
+    return 0;
+  if (Base > UINT64_MAX - 60)
+    return runtimeError("DOS header address overflows");
+  auto Offset = Read(Base + 60, 4);
+  if (!Offset)
+    return Offset.takeError();
+  if (*Offset > UINT64_MAX - Base)
+    return 0;
+  const uint64_t Header = Base + *Offset;
+  // The pinned x64 routine applies the original user-address fence to a
+  // low-address image, even though NO_RANGE_CHECK omits the caller image size.
+  constexpr uint64_t UserFence = 0x7ffffffeffff;
+  if (Base < UserFence && Header >= UserFence - 264)
+    return 0;
+  auto Signature = Read(Header, 4);
+  if (!Signature)
+    return Signature.takeError();
+  return *Signature == 0x4550 ? Header : 0;
+}
+
 uint64_t cIsDigit(uint32_t Value) {
   const uint8_t Byte = uint8_t(Value);
   return Value != UINT32_MAX && Byte >= '0' && Byte <= '9' ? 4 : 0;

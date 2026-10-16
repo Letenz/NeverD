@@ -1691,3 +1691,5 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 `KernelModelFileRequests` 負責原生裝置／檔案系統控制的緩衝區擷取與發布。兩者共用檔案保留、呼叫者接續與封包釋放，以產生者的延遲完成規則區分裝置控制和 FSCTL。共用完成驗證器檢查控制輸出界限。
 
 `KernelModelRuntime` 統一負責核心 CRT 分類、原地轉換及受檢字串寫入。`KernelCStringAPIs.def` 向各呼叫入口提供匯出身分、參數數量及 IRQL 准入。逐單元存取沿用客體記憶體權限與生命週期檢查；報告和介接層不重複實作複製或錯誤語意。
+
+`KernelMemoryCalls` 負責檢查型記憶體複製的准入，並沿用移動／填充操作、集區生命週期與使用者記憶體檢查。`KernelModelRuntime` 負責 `RtlImageNtHeader` 原始簽章探測。此探測不能替代執行映像所需的載入器驗證；配接器不重複兩者語義。

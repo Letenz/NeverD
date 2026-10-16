@@ -128,13 +128,21 @@ TEST(DriverKernelAPIIRQL, DebugOutputStopsBelowClockAndIpiLevels) {
 
 TEST(DriverKernelAPIIRQL,
      ResidentByteOperationsAndIrpHelpersPermitAnyX64Level) {
-  const llvm::StringLiteral Names[] = {
-      "memcpy",           "memmove",
-      "memset",           "memcmp",
-      "RtlCopyMemory",    "RtlMoveMemory",
-      "RtlFillMemory",    "RtlCompareMemory",
-      "RtlZeroMemory",    "IoGetCurrentIrpStackLocation",
-      "IoMarkIrpPending", "KeGetCurrentIrql"};
+  const llvm::StringLiteral Names[] = {"memcpy",
+                                       "memmove",
+                                       "memcpy_s",
+                                       "memmove_s",
+                                       "RtlImageNtHeader",
+                                       "memset",
+                                       "memcmp",
+                                       "RtlCopyMemory",
+                                       "RtlMoveMemory",
+                                       "RtlFillMemory",
+                                       "RtlCompareMemory",
+                                       "RtlZeroMemory",
+                                       "IoGetCurrentIrpStackLocation",
+                                       "IoMarkIrpPending",
+                                       "KeGetCurrentIrql"};
   for (auto Name : Names)
     expectLimit(Name, 15);
 }
@@ -154,7 +162,7 @@ TEST(DriverKernelAPIIRQL, UnknownAndInexactSpellingsHaveNoGuessedPolicy) {
   const llvm::StringLiteral Names[] = {
       "",           "ZwNotModeled",           "ZwOpenKeyEx",    "zwopenkey",
       "ZwOpenKey ", "ntoskrnl.exe!ZwOpenKey", "IoCallDriverEx", "DbgPrintEx2",
-      "memcpy_s"};
+      "memcpy__s"};
   for (auto Name : Names) {
     auto Maximum = maximumKernelIRQL(Name);
     if (Maximum) {

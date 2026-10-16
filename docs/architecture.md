@@ -7051,6 +7051,8 @@ KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing
 
 `KernelModelRuntime` owns kernel CRT classification, in-place conversion and checked string writes. `KernelCStringAPIs.def` supplies export identity, argument count and IRQL admission to every caller surface. Unit accesses reuse guest-memory permissions and lifetime guards; reports and adapters do not repeat copy or error semantics.
 
+`KernelMemoryCalls` owns checked memory-copy admission and reuses its existing move/fill operations, including pool lifetime and user-memory checks. `KernelModelRuntime` owns the raw `RtlImageNtHeader` signature probe. This probe is distinct from the loader validation needed to execute an image; adapters do not duplicate either operation.
+
 ### Darwin imported file calls
 
 DarwinLibSystemCalls.def adds exact open/lseek/pread/pwrite/dup/dup2 identities.
