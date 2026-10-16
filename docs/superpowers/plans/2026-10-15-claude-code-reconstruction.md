@@ -977,16 +977,20 @@ first pass authored child-spawn and outside read/write/network denial controls.
 The x64 candidates run under Rosetta on the local ARM64 host. Concurrent first
 attempts timed out; the retained sequential pilot and complete runs pass within
 the existing deadline. Native x64 component execution is independently covered
-by CI. The new Windows full-client search matrix remains pending its own native
-AppContainer workflow; component success alone does not qualify those clients.
+by CI. Native Windows full-client search runs 38949033779 and 38953421549 both pass
+x64 and ARM64, 52 Grep/Glob pairs each. All raw ordered records are independently
+rederived. The second run retains the exact public helper/launcher binaries;
+managed runtime-search-win32-{x64,arm64}-v2 packages bind those bytes to native
+client repeat-build and full module-readback receipts. Each new Windows package
+verifies 2,542 files. The macOS packages separately verify 901 files each.
 
 The public sandbox-runtime 0.0.79 package adds 53 complete structural function
 candidates across all eight captured platform modules, with eleven ambiguous
-shapes per platform retained as unknown. Forty-four candidates have exact
+shapes per platform retained as unknown. Forty-six candidates have exact
 upstream source-map boundaries and formal parameter anchors in public
 TypeScript, adding nineteen written parameter and 22 return annotation
-candidates. Two destructuring links and seven absent/ambiguous exact anchors
-are refused. All 45 selected source files match public Git blobs at
+candidates. Two array-destructuring links now pass exact pattern-boundary and every
+identifier anchor checks; seven absent/ambiguous exact anchors remain refused. All 45 selected source files match public Git blobs at
 d9aac2098351ca17f3743fbaf6ecbd0051b7e00e. The npm provenance signature remains
 unverified and supplies a candidate revision only. Erased original types and
 whole-program equivalence are not established.
@@ -996,5 +1000,52 @@ serialized-model budget, retaining its 256 MiB default and existing analysis
 limits. Eleven controls cover unchanged default output, explicit budget parity,
 malformed/oversized budgets and actual exhaustion before output creation. The
 larger budget permits complete large-module analysis without weakening parser
-or binding refusal. The eight evidence directories and their index rehash in
-756 files. The full recovery objective remains open.
+or binding refusal. The original evidence index rehashes 756 files. Its immutable v2 addendum
+rehashes 767 files and retains ten refusal controls plus Unicode/CRLF checks. The full recovery objective remains open.
+
+
+## Native platform evidence and source-engine client acceptance continuation
+
+macOS now has twenty real selector/version probes plus two bfs child checks per
+architecture. ARGV0 consumption is observed for recognized and unknown values.
+macOS has rg/ug/ugrep/bfs roles; apply-seccomp falls through to the normal CLI.
+Windows has twenty-two native selector/version probes per architecture in the
+qualified AppContainer. Only rg/ug/ugrep roles are recognized; both slash
+characters and lower-case .exe aliases are accepted. Windows environment
+consumption has not independently been observed. These platform differences
+must not be replaced by the Linux rule.
+
+Two minimal call-free Windows classifier capsules match compiled authored typed
+Rust source on 16,811 vectors each, including one-byte alias mutations and
+seeded random bytes. Every emulated call returns to its owned stop within the
+instruction budget. No original entry or syscall executes in the capsule test.
+The new native-role-platform-correspondence-v2 addendum verifies 689 files,
+binding these 33,622 comparisons to macOS/Windows process observations. Its
+manifest is db38ec75997f4ceeedea8a2932685f186a91143318e621cc3aabd7122bed145d.
+Erased producer type names and whole-engine native integration remain open.
+
+Both native focal-sysroot core builds pass the GLIBC_2.17 gate (38952068043),
+but their dynamic rg payload still requires GLIBC_2.34. Static musl is unsuitable
+for the original glibc ARM64 feature profile because it loses PCRE2 JIT. A new
+static GNU search producer (38955193889) passes both native architectures,
+retains JIT and has no ELF interpreter/DT_NEEDED dependency. The exact new core
+combination passes both native source builds in 38956750121. Before admitting
+a runtime, every artifact file, core version requirement and exact embedded
+rg/seccomp byte range is rechecked; no captured client executes in admission.
+
+The new source-native-client workflow rebuilds original-provider clients in
+both layouts twice, checks all module rows, then targets seven actual Bash and
+thirteen built-in Grep/Glob cases per layout. Its direct native path has no
+external rg on PATH and makes no managed descriptor patch. ARM64 is admitted;
+x64 artifacts are being retained and independently qualified. This client suite
+is not accepted until the actual native results are available.
+
+Additional Ugrep 7.8.4/Bfs 4.1.1 source candidates retain pinned archives for all
+selected regex/compression libraries. Exact original transitive versions are
+not proven. Native ARM64 bfs passes its upstream suites; the archive's missing
+Git metadata requires the documented VERSION=4.1.1 build input. Native x64
+static bfs crashes in account-lookup tests; its unqualified public binary,
+runner NSS configuration and debugger controls are retained for diagnosis.
+No failing candidate is integrated or counted as restored. Original static
+library linkage, the private Bun revision, other-platform engine integration,
+wider runtime behavior and complete source/type restoration remain unfinished.
