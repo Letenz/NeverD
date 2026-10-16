@@ -272,7 +272,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
   auto ScopeWrites = Jumps->StateRestores;
   std::set<const llvm::CallBase *> AbnormalFinallyIR;
   std::map<va_t, uint32_t> Protected;
-  std::set<std::pair<va_t, int>> Chain;
+  auto Chain = ParentExits->SourceChainRemovals;
   auto ChainProtocolReads = ParentExits->ChainReads;
   size_t FSReads = 0;
   size_t ExpectedFSReads = ParentExits->ChainReads.size();

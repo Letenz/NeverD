@@ -15,6 +15,7 @@ add_neverd_component_library(NeverDIRMed
   X86/RegistrationSEHCallback.cpp
   X86/RegistrationSEHNonlocalCall.cpp
   X86/RegistrationSEHParentExit.cpp
+  X86/RegistrationSEHParentFallthrough.cpp
   X86/RegistrationSEHParentRoots.cpp
   X86/RegistrationSEHRuntimeReturn.cpp
   X86/RegistrationSEHJump.cpp

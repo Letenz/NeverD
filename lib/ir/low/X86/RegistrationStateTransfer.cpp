@@ -326,6 +326,9 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
           After.AbandonedSEHGuard = false;
           After.JumpCaptures.clear();
           recordChainAccess(Op, Block, RegistrationChainAccess::Kind::Remove);
+          if (!KnownCxx && After.Callback &&
+              !transferSEHParentFallthrough(I, After, Op, Facts))
+            Invalidate();
         } else {
           CompleteChainOperations = false;
           Invalidate();

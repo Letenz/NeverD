@@ -274,12 +274,20 @@ void RegistrationStateSolver::seedEntries() {
   // them with zero and then expose the invented value.
   for (auto &Register : Initial.Frame.Registers)
     Register.MayBeFrame = true;
-  if (Conditional) {
+  const bool ParentEpilogue =
+      SEHControls && !KnownCxx && !Chain.RealignedFrame &&
+      std::any_of(SEHControls->begin(), SEHControls->end(), [](const auto &C) {
+        return C.Control ==
+               RegistrationSEHControlContract::Kind::ParentEpilogue;
+      });
+  if (Conditional || ParentEpilogue) {
     for (unsigned Index = 0; Index != Initial.Frame.Registers.size(); ++Index)
       Initial.Frame.Registers[Index].SavedRegister = uint8_t(Index + 1);
     FrameValue PC;
     PC.MayBeFrame = PC.ReturnPC = true;
     Initial.Frame.Cells[4] = PC;
+  }
+  if (Conditional) {
     for (const auto &[Offset, Value] : Conditional->Arguments)
       Initial.Frame.store(Offset, 4, Value);
     for (const auto &[Offset, Value] : Conditional->ObjectCells)

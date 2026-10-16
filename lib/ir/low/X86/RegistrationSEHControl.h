@@ -8,13 +8,21 @@
 #define NEVERD_IR_LOW_X86_REGISTRATIONSEHCONTROL_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/RegistrationCall.h"
 
 #include "llvm/ADT/ArrayRef.h"
 
 namespace neverd {
 struct BinaryImage;
 struct LowOp;
+struct LowBlock;
 struct RegistrationChainInfo;
+
+/// Authenticate a complete direct parent epilogue. This proves source bytes,
+/// not the identities of the saved registers and return cell it consumes.
+std::optional<RegistrationSEHControlContract>
+getRegistrationSEHParentEpilogue(const BinaryImage &Image,
+                                 const LowBlock &Block);
 
 namespace registration_state {
 

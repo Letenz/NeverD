@@ -125,6 +125,13 @@ RegistrationCallCalleeIndex::sehControlContracts(const LowFunc &Function) {
     }
   for (const auto &[Address, Jump] : FoldedJumps)
     Result.push_back(Jump);
+  for (const auto &Block : Function.Blocks) {
+    if (!registration_abi::chargeCalleeWork(Work, 16))
+      return std::nullopt;
+    if (Function.ExceptionMetadata->ownsCode({Block.StartAddr, Block.EndAddr}))
+      if (auto Epilogue = getRegistrationSEHParentEpilogue(Image, Block))
+        Result.push_back(*Epilogue);
+  }
   return Result;
 }
 

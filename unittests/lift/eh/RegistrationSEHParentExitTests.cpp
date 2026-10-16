@@ -106,7 +106,107 @@ MedFunc parentExit(bool Runtime) {
   return Function;
 }
 
+MedFunc parentFallthrough(bool Runtime) {
+  auto Function = parentExit(Runtime);
+  auto &States = *Function.RegistrationStates;
+  auto &Exit = States.SEHInvocationExits.front();
+  Exit.Exit = RegistrationSEHInvocationExit::Kind::ParentFallthrough;
+  Exit.TargetVA = Exit.EndAddress = 0x180a;
+  auto &Finally = Function.Blocks[1];
+  Finally.EndAddr = 0x180a;
+  States.Blocks[1].Range.End = 0x180a;
+  auto &Remove = Finally.Ops.back();
+  Remove.Opcode = NdOp::STORE;
+  Remove.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+  Remove.Inputs[0] = MedVar::makeConst(0, 4);
+  MedVar Value;
+  Value.Kind = MedVar::Reg;
+  Value.TheArch = Arch::X86;
+  Value.RegOff = x86reg::RCX;
+  Value.Size = 4;
+  Remove.addInput(Value);
+  auto &Target = Function.Blocks[2];
+  Target.StartAddr = 0x180a;
+  Target.EndAddr = 0x1811;
+  States.Blocks[2].Range = {Target.StartAddr, Target.EndAddr};
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = 0x1810;
+  Return.OriginSeq = 0;
+  Target.Ops.push_back(Return);
+  States.ChainOperationsComplete = true;
+  States.ChainAccesses.push_back(
+      {0x1803, 0x180a, 0, RegistrationChainAccess::Kind::Remove});
+  States.SEHControls.push_back(
+      {RegistrationSEHControlContract::Kind::ParentEpilogue, 0x180a, 0x1811,
+       0x1810});
+  return Function;
+}
+
 } // namespace
+
+TEST(RegistrationSEHParentExit, FallthroughRequiresItsRemovalAndWholeEpilogue) {
+  for (bool Runtime : {false, true})
+    for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+      SCOPED_TRACE(Runtime);
+      SCOPED_TRACE(Mutation);
+      auto Function = parentFallthrough(Runtime);
+      auto &States = *Function.RegistrationStates;
+      auto &Remove = Function.Blocks[1].Ops.back();
+      switch (Mutation) {
+      case 1:
+        States.ChainOperationsComplete = false;
+        break;
+      case 2:
+        States.ChainAccesses.clear();
+        break;
+      case 3:
+        States.ChainAccesses.front().AccessKind =
+            RegistrationChainAccess::Kind::Install;
+        break;
+      case 4:
+        States.ChainAccesses.push_back(States.ChainAccesses.front());
+        break;
+      case 5:
+        ++States.ChainAccesses.front().OpSeq;
+        break;
+      case 6:
+        States.SEHControls.clear();
+        break;
+      case 7:
+        ++States.SEHControls.front().EndAddress;
+        break;
+      case 8:
+        States.SEHControls.front().Control =
+            RegistrationSEHControlContract::Kind::NearReturn;
+        break;
+      case 9:
+        Remove.MemoryAddressSpace = NdMemoryAddressSpace::Default;
+        break;
+      case 10:
+        Remove.Inputs[1] = MedVar::makeConst(0, 4);
+        break;
+      case 11:
+        Function.Blocks[2].Ops.back().Dead = true;
+        break;
+      case 12:
+        Function.Blocks[2].Succs = {0};
+        break;
+      case 13:
+        ++States.SEHInvocationExits.front().EndAddress;
+        break;
+      }
+      auto Exits = getRegistrationSEHParentExits(Function);
+      EXPECT_EQ(bool(Exits), Mutation == 0);
+      if (Mutation)
+        continue;
+      ASSERT_EQ(Exits->size(), 1u);
+      EXPECT_EQ(Exits->at(1).Operation, &Remove);
+      const auto Returns = getRegistrationSEHReturns(Function);
+      ASSERT_TRUE(Returns);
+      EXPECT_TRUE(Returns->ReturnBlocks.empty());
+    }
+}
 
 TEST(RegistrationSEHParentExit, BindsOrdinaryAndRuntimeSourceExits) {
   for (bool Runtime : {false, true}) {
@@ -118,7 +218,7 @@ TEST(RegistrationSEHParentExit, BindsOrdinaryAndRuntimeSourceExits) {
     EXPECT_EQ(Exits->at(1).TargetBlock, 2);
     EXPECT_EQ(Exits->at(1).RestoreBlock, 1);
     EXPECT_EQ(Exits->at(1).StackOffset, -64);
-    EXPECT_EQ(Exits->at(1).Branch, &Function.Blocks[1].Ops[1]);
+    EXPECT_EQ(Exits->at(1).Operation, &Function.Blocks[1].Ops[1]);
     EXPECT_EQ(Exits->at(1).Restore, &Function.Blocks[1].Ops[0]);
     EXPECT_EQ(Exits->at(1).Invocations.size(), 1u);
     auto Owners = registrationSEHCallbackOwners(Function);
@@ -522,48 +622,59 @@ TEST(RegistrationSEHParentExit, NativeChainGatePreservesAnalysisOwnership) {
 }
 
 TEST(RegistrationSEHParentExit, FailedOutliningRestoresTheOriginalModule) {
-  for (bool ExistingIntrinsic : {false, true}) {
-    SCOPED_TRACE(ExistingIntrinsic);
-    auto Source = parentExit(false);
-    llvm::LLVMContext Context;
-    llvm::Module Module("parent-rollback", Context);
-    Module.setDataLayout("e-p:32:32");
-    auto *Function = llvm::Function::Create(
-        llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false),
-        llvm::GlobalValue::ExternalLinkage, "parent", Module);
-    auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
-    auto *Finally = llvm::BasicBlock::Create(Context, "finally", Function);
-    auto *Resume = llvm::BasicBlock::Create(Context, "resume", Function);
-    llvm::IRBuilder<> Builder(Entry);
-    Builder.CreateBr(Finally);
-    Builder.SetInsertPoint(Finally);
-    Builder.CreateBr(Resume);
-    Builder.SetInsertPoint(Resume);
-    Builder.CreateRetVoid();
-    if (ExistingIntrinsic)
-      llvm::Intrinsic::getOrInsertDeclaration(&Module,
-                                              llvm::Intrinsic::eh_sjlj_longjmp);
-    const std::map<int, llvm::BasicBlock *> Blocks{
-        {0, Entry}, {1, Finally}, {2, Resume}};
-    auto Plan = x86_registration::prepareSEHParentExits(Source, Blocks, {});
-    ASSERT_TRUE(Plan);
-    const auto Text = [&] {
-      std::string Buffer;
-      llvm::raw_string_ostream Stream(Buffer);
-      Module.print(Stream, nullptr);
-      return Buffer;
-    };
-    const auto Original = Text();
-    {
-      x86_registration::SEHParentExitProjection Projection(*Function,
-                                                           Source.Entry, *Plan);
-      EXPECT_NE(Finally->getTerminator()->getSuccessor(0), Resume);
-      ASSERT_EQ(Projection.calls().size(), 1u);
+  for (bool ExistingIntrinsic : {false, true})
+    for (bool Fallthrough : {false, true}) {
+      SCOPED_TRACE(ExistingIntrinsic);
+      SCOPED_TRACE(Fallthrough);
+      auto Source = Fallthrough ? parentFallthrough(false) : parentExit(false);
+      llvm::LLVMContext Context;
+      llvm::Module Module("parent-rollback", Context);
+      Module.setDataLayout("e-p:32:32");
+      auto *Function = llvm::Function::Create(
+          llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false),
+          llvm::GlobalValue::ExternalLinkage, "parent", Module);
+      auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+      auto *Finally = llvm::BasicBlock::Create(Context, "finally", Function);
+      auto *Resume = llvm::BasicBlock::Create(Context, "resume", Function);
+      llvm::IRBuilder<> Builder(Entry);
+      Builder.CreateBr(Finally);
+      Builder.SetInsertPoint(Finally);
+      std::map<std::pair<va_t, int>, llvm::Instruction *> ChainIR;
+      if (Fallthrough)
+        ChainIR.emplace(std::make_pair(0x1803, 0),
+                        Builder.CreateStore(Builder.getInt32(7),
+                                            llvm::ConstantPointerNull::get(
+                                                Builder.getPtrTy(257))));
+      Builder.CreateBr(Resume);
+      Builder.SetInsertPoint(Resume);
+      Builder.CreateRetVoid();
+      if (ExistingIntrinsic)
+        llvm::Intrinsic::getOrInsertDeclaration(
+            &Module, llvm::Intrinsic::eh_sjlj_longjmp);
+      const std::map<int, llvm::BasicBlock *> Blocks{
+          {0, Entry}, {1, Finally}, {2, Resume}};
+      auto Plan =
+          x86_registration::prepareSEHParentExits(Source, Blocks, {}, &ChainIR);
+      ASSERT_TRUE(Plan);
+      const auto Text = [&] {
+        std::string Buffer;
+        llvm::raw_string_ostream Stream(Buffer);
+        Module.print(Stream, nullptr);
+        return Buffer;
+      };
+      const auto Original = Text();
+      {
+        x86_registration::SEHParentExitProjection Projection(
+            *Function, Source.Entry, *Plan);
+        EXPECT_NE(Finally->getTerminator()->getSuccessor(0), Resume);
+        if (Fallthrough)
+          EXPECT_EQ(ChainIR.begin()->second->getParent(), nullptr);
+        ASSERT_EQ(Projection.calls().size(), 1u);
+        EXPECT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+        Projection.rollback();
+        Projection.rollback();
+      }
       EXPECT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
-      Projection.rollback();
-      Projection.rollback();
+      EXPECT_EQ(Text(), Original);
     }
-    EXPECT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
-    EXPECT_EQ(Text(), Original);
-  }
 }
