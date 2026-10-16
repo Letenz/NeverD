@@ -382,12 +382,46 @@ void appendX86Token(StyledText &out, const Token &token) {
     out.append(token.text, ListingRole::Punctuation);
 }
 
+/// Appends \p value, where an access of \p bytes bytes begins (none for an
+/// address), as a structure offset into \p format's type:
+/// `_KTHREAD.Process`, or `(_KAPC.Type-10h)` in parentheses when
+/// \p grouped and the value lies off the member's start.  False when no
+/// member holds it.
+bool appendStructOffset(StyledText &out, const NumberFormat &format,
+                        std::int64_t value, unsigned bytes,
+                        const StructNamer &structs, bool grouped) {
+  const auto landing = structs(format.type, value + format.delta, bytes);
+  if (!landing)
+    return false;
+  std::string name = format.type;
+  if (!landing->path.empty())
+    name += "." + landing->path;
+  // The member stands for where it begins in the type; the rest is what
+  // the value adds to it, the register's delta taken back.
+  const std::int64_t rest = value - landing->offset;
+  const bool open = grouped && rest != 0;
+  if (open)
+    out.append("(", ListingRole::Punctuation);
+  out.append(name, ListingRole::StructOffset);
+  if (rest) {
+    out.append(rest < 0 ? "-" : "+", ListingRole::Punctuation);
+    out.append(x86Number(rest < 0 ? std::uint64_t(0) - std::uint64_t(rest)
+                                  : std::uint64_t(rest)),
+               ListingRole::Number);
+  }
+  if (open)
+    out.append(")", ListingRole::Punctuation);
+  return true;
+}
+
 /// Appends \p value, a number \p bits wide, as \p format shows it; false
 /// when the format cannot show it (a character that does not print, an
-/// offset no name denotes), so the operand keeps the listing's spelling.
+/// offset no name denotes, a structure offset no member holds), so the
+/// operand keeps the listing's spelling.
 bool appendFormattedNumber(StyledText &out, std::uint64_t value, unsigned bits,
                            const NumberFormat &format,
-                           const LocationNamer &namer) {
+                           const LocationNamer &namer,
+                           const StructNamer *structs) {
   const std::uint64_t mask =
       bits >= 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
   std::uint64_t shown = value & mask;
@@ -439,6 +473,17 @@ bool appendFormattedNumber(StyledText &out, std::uint64_t value, unsigned bits,
     out.append("offset ", ListingRole::Keyword);
     out.append(name.text, name.role, name.address);
     return true;
+  }
+  case NumberBase::Struct: {
+    if (!sign.empty() || !structs)
+      return false;
+    // The value signed in its width: a structure offset may lie before
+    // where the register points.
+    std::uint64_t extended = shown;
+    if (bits < 64 && bits && (shown >> (bits - 1)) & 1)
+      extended |= ~mask;
+    return appendStructOffset(out, format, static_cast<std::int64_t>(extended),
+                              0, *structs, false);
   }
   }
   if (!sign.empty())
@@ -532,6 +577,34 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
         appendX86Token(out, compact[index + 2]);
       }
     };
+    // A structure offset the user gives a register's displacement:
+    // `[rcx+_KTHREAD.Process]`, `[rdx+rax*8+(_FOO.Items+8)]`.  The access
+    // reads as many bytes as its size keyword or register says, and `lea`
+    // reads none.
+    if (format && format->base == NumberBase::Struct && facts.structs &&
+        parsed.base) {
+      unsigned bytes = 0;
+      if (facts.mnemonic != "lea") {
+        bytes = sizeBits(sizeKeyword) / 8;
+        if (!bytes && context.registerSizes.size() == 1)
+          bytes = sizeBits(context.registerSizes.front()) / 8;
+      }
+      StyledText member;
+      if (appendStructOffset(member, *format, parsed.displacement, bytes,
+                             *facts.structs, true)) {
+        appendPrefix(sizeStated);
+        out.append("[", ListingRole::Punctuation);
+        appendX86Token(out, compact[*parsed.base]);
+        if (parsed.index) {
+          out.append("+", ListingRole::Punctuation);
+          appendIndex();
+        }
+        out.append("+", ListingRole::Punctuation);
+        out.append(member);
+        appendSuffix();
+        return;
+      }
+    }
     // A variable of the function's frame: `[rbp+rax*4+var_290]`, or through
     // the stack register `[rsp+48h+var_30]`, which names its distance below
     // the frame's base.  The variable's type states the size unless the
@@ -620,7 +693,8 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
     const std::uint64_t mask =
         bits >= 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
     if (const auto value = plainNumber(tokens, mask);
-        value && appendFormattedNumber(out, *value, bits, *format, namer))
+        value &&
+        appendFormattedNumber(out, *value, bits, *format, namer, facts.structs))
       return;
   }
   // A negative immediate is the unsigned value of the operation's width,
@@ -728,6 +802,48 @@ std::vector<bool> formattableOperands(std::string_view operands,
     result.push_back(showsNumberFormats(dialect) &&
                      plainNumber(operand, ~std::uint64_t(0)).has_value());
   return result;
+}
+
+std::vector<bool> structOperands(std::string_view operands,
+                                 OperandDialect dialect) {
+  std::vector<bool> result;
+  for (const auto &operand : splitOperands(tokenize(operands))) {
+    bool fits = false;
+    if (showsNumberFormats(dialect)) {
+      const auto open =
+          std::find_if(operand.begin(), operand.end(), [](const Token &t) {
+            return t.kind == TokenKind::Punct && t.text == "[";
+          });
+      if (open == operand.end()) {
+        fits = plainNumber(operand, ~std::uint64_t(0)).has_value();
+      } else {
+        const auto close =
+            std::find_if(open, operand.end(), [](const Token &t) {
+              return t.kind == TokenKind::Punct && t.text == "]";
+            });
+        const std::vector<Token> inner(open + 1, close);
+        const X86Address parsed = parseX86Address(inner);
+        // A displacement from the instruction pointer is a location.
+        if (parsed.base) {
+          const auto base = lower(parsed.tokens[*parsed.base].text);
+          fits = base != "rip" && base != "eip";
+        }
+      }
+    }
+    result.push_back(fits);
+  }
+  return result;
+}
+
+std::optional<std::int64_t> operandNumber(std::string_view operands,
+                                          std::size_t index) {
+  const auto pieces = splitOperands(tokenize(operands));
+  if (index >= pieces.size())
+    return std::nullopt;
+  const auto value = plainNumber(pieces[index], ~std::uint64_t(0));
+  if (!value)
+    return std::nullopt;
+  return static_cast<std::int64_t>(*value);
 }
 
 OperandDialect operandDialect(std::string_view architecture) {

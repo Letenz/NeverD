@@ -871,6 +871,14 @@
         <source>Load names from a linker MAP file</source>
         <translation>Charger les noms depuis un fichier MAP de l&apos;éditeur de liens</translation>
     </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>Offset de s&amp;tructure...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>Afficher l&apos;opérande comme membre d&apos;un type local, les types classés selon la façon dont les accès du code leur correspondent</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2659,6 +2667,13 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
         <source>MAP not loaded: %1 does not fit the image as loaded</source>
         <translation>MAP non chargé : %1 ne correspond pas à l&apos;image chargée</translation>
     </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>%n opérande affiché comme membre de %1</numerusform>
+            <numerusform>%n opérandes affichés comme membres de %1</numerusform>
+        </translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -3911,6 +3926,147 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
     <message>
         <source>(%1)</source>
         <translation>(%1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>Décalages tombant exactement sur des membres : %1 sur %n</numerusform>
+            <numerusform>Décalages tombant exactement sur des membres : %1 sur %n</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>%1 sur %n type</numerusform>
+            <numerusform>%1 sur %n types</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n octet</numerusform>
+            <numerusform>%n octets</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>%n type</numerusform>
+            <numerusform>%n types</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>Accès</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>Afficher aussi comme membres les autres instructions qui passent par %1 (%n)</numerusform>
+            <numerusform>Afficher aussi comme membres les autres instructions qui passent par %1 (%n)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Appliquer</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>À %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Octets</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>Membre</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>Aucun membre ne contient cet octet</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>Aucun type ne correspond.</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>Décalage</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>Lecture des accès du code par le pointeur de l&apos;opérande…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>Rechercher des types : un nom, un typedef, Type.membre ou .membre</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>Offset de structure</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>Le nombre %1 comme décalage dans une structure ou une union.</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>L&apos;opérande garde son nombre.</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>Le programme n&apos;a ni structure ni union. Déclarez-les dans Types locaux (Shift+F1).</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>Le registre pointe à %1 octets dans %2, sur %3 : les accès situés avant lui lisent les membres antérieurs de l&apos;enregistrement, comme le défait CONTAINING_RECORD.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Type</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>Types classés selon la façon dont %n accès de la fonction par %1 tombe sur leurs membres.</numerusform>
+            <numerusform>Types classés selon la façon dont les %n accès de la fonction par %1 tombent sur leurs membres.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>adresse</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>en-tête</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>hors du type</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>remplissage</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>lecture</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>le pointeur</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>utilisateur</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>écriture</translation>
     </message>
 </context>
 </TS>

@@ -871,6 +871,14 @@
         <source>Load names from a linker MAP file</source>
         <translation>링커 MAP 파일에서 이름을 불러옵니다</translation>
     </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>구조체 오프셋(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>피연산자를 로컬 형식의 멤버로 표시합니다. 형식은 코드의 액세스가 얼마나 맞는지에 따라 정렬됩니다</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2653,6 +2661,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>MAP not loaded: %1 does not fit the image as loaded</source>
         <translation>MAP를 불러오지 않았습니다: %1은(는) 불러온 이미지와 맞지 않습니다</translation>
     </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>피연산자 %n개를 %1의 멤버로 표시했습니다</numerusform>
+        </translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -3897,6 +3911,141 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>(%1)</source>
         <translation>(%1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>오프셋 %n개 중 %1개가 멤버에 정확히 맞음</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>형식 %n개 중 %1개</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n바이트</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>형식 %n개</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>액세스</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>%1을(를) 거치는 다른 명령 %n개도 멤버로 표시</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>적용</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>위치: %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>바이트</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>멤버</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>이 바이트를 포함하는 멤버가 없습니다</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>일치하는 형식이 없습니다.</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>오프셋</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>피연산자의 포인터를 통한 코드의 액세스를 읽는 중…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>형식 검색: 이름, typedef, Type.member 또는 .member</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>구조체 오프셋</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>숫자 %1을(를) 구조체 또는 공용체 안의 오프셋으로 봅니다.</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>피연산자는 숫자를 그대로 유지합니다.</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>프로그램에 구조체나 공용체가 없습니다. 로컬 형식(Shift+F1)에서 선언하십시오.</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>레지스터는 %2의 %1바이트 위치(%3)를 가리킵니다. 그 앞의 액세스는 CONTAINING_RECORD가 되돌리듯 레코드의 앞쪽 멤버를 읽습니다.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>형식</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>함수에서 %1을(를) 거치는 액세스 %n개가 멤버에 맞는 정도에 따라 형식을 정렬했습니다.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>주소</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>헤더</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>형식 범위 밖</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>패딩</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>읽기</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>포인터</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>사용자</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>쓰기</translation>
     </message>
 </context>
 </TS>

@@ -159,6 +159,9 @@ struct Session {
   std::unique_ptr<LocalTypesDebugContext> LocalTypesDbg;
   bool LocalTypesChecked = false;
   DebugContext *decompileDebug();
+  /// The program's local types, read when first asked for; null with the
+  /// session's error when its PDB's types cannot be read.
+  types::TypeLibrary *readLocalTypes();
   /// After a declaration changes \p Changed in \p Library, or adds
   /// prototypes, drops what read them: the analysis, where prototypes read
   /// them, or the text that printed them.  Whether the decompilation
@@ -509,10 +512,13 @@ struct Session {
   std::map<va_t, DataItem> DataItems;
   /// How the user shows an instruction operand's number
   /// (neverd_operand_format_set): a base of OperandFormats.def, with its sign
-  /// changed or its bits inverted.
+  /// changed or its bits inverted, or for a structure offset the local type
+  /// and how many bytes into it the register points.
   struct OperandFormat {
     std::string Base;
     bool Negate = false, Invert = false;
+    std::string Type;
+    int64_t Delta = 0;
     bool operator==(const OperandFormat &) const = default;
   };
   /// The user's operand formats by instruction address and operand index.

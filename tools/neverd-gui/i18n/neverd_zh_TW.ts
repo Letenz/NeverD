@@ -871,6 +871,14 @@
         <source>Load names from a linker MAP file</source>
         <translation>從連結器 MAP 檔案載入名稱</translation>
     </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>結構位移(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>將運算元顯示為本機型別的成員，型別依程式碼的存取與其相符的程度排序</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2653,6 +2661,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>MAP not loaded: %1 does not fit the image as loaded</source>
         <translation>未載入 MAP：%1 與載入後的映像不符</translation>
     </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>已將 %n 個運算元顯示為 %1 的成員</numerusform>
+        </translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -3897,6 +3911,141 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>(%1)</source>
         <translation>（%1）</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>%n 個位移中有 %1 個恰好落在成員上</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>共 %n 個型別，顯示 %1 個</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n 位元組</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>%n 個型別</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>存取</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>同時將經由 %1 的其他 %n 個指令顯示為成員</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>套用</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>位於 %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>位元組</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>成員</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>沒有成員包含此位元組</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>沒有相符的型別。</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>位移</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>正在讀取程式碼透過運算元指標進行的存取…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>搜尋型別：名稱、typedef、Type.member 或 .member</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>結構位移</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>將數字 %1 作為結構或聯集中的位移。</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>運算元保留原本的數字。</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>程式沒有結構或聯集，可在本機型別（Shift+F1）中宣告。</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>暫存器指向 %2 內 %1 位元組處，即 %3：在它之前的存取讀取的是記錄中較前面的成員，正如 CONTAINING_RECORD 所還原的那樣。</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>型別</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>依函式中經由 %1 的 %n 次存取落在成員上的情形排序型別。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>取位址</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>標頭</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>超出型別範圍</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>填補</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>讀取</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>該指標</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>使用者</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>寫入</translation>
     </message>
 </context>
 </TS>

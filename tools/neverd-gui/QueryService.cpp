@@ -54,6 +54,7 @@ bool readable(const QString &operation) {
                                         "local_types",
                                         "local_type",
                                         "local_types_source",
+                                        "local_types_fit",
                                         "search"};
   return cacheable(operation) || operations.contains(operation);
 }

@@ -1012,7 +1012,7 @@ cl::opt<std::string> TypesSpelling(
     cl::desc("Spell builtins as portable, exact widths (uint32_t, u32, "
              "uint32, ctypes.c_uint32, number), every language's default; as "
              "windows (ULONG; in Rust, Go, Python, JavaScript and Lua aliases "
-             "of exact widths, as wdk-sys declares them); or in C and C++ as "
+             "of exact widths, as wdk-sys declares them), or in C and C++ as "
              "keywords (unsigned long)"),
     cl::init(""), cl::value_desc("style"), cl::sub(TypesCmd));
 cl::opt<bool> TypesAsserts(
@@ -1034,6 +1034,44 @@ cl::list<std::string> TypesDeclare(
 cl::opt<bool> TypesNoOffsets("no-offsets",
                              cl::desc("Leave out the offset comments"),
                              cl::sub(TypesCmd));
+cl::opt<bool> TypesFit(
+    "fit",
+    cl::desc("Rank the structures and unions a pointer may point at by how "
+             "the accesses through it land on their members: those the "
+             "instruction --at makes through its pointer in --func, and each "
+             "--access"),
+    cl::sub(TypesCmd));
+cl::opt<std::string>
+    TypesFunc("func",
+              cl::desc("With --fit --at, the function the instruction is in: "
+                       "its name or entry address (hex)"),
+              cl::init(""), cl::value_desc("function"), cl::sub(TypesCmd));
+cl::opt<std::string>
+    TypesAt("at",
+            cl::desc("With --fit, the instruction (hex) whose memory "
+                     "operand's pointer the accesses go through"),
+            cl::init(""), cl::value_desc("address"), cl::sub(TypesCmd));
+cl::list<std::string> TypesAccess(
+    "access",
+    cl::desc("With --fit, an access through the pointer: offset:size or "
+             "offset:size:read|write|address (size 0), numbers in hex with "
+             "0x or decimal; repeat for more"),
+    cl::value_desc("access"), cl::sub(TypesCmd));
+cl::opt<std::string> TypesMatch(
+    "match",
+    cl::desc("With --fit, keep the types whose name, or a typedef's, "
+             "matches this as an editor's quick open matches; Type.member "
+             "and .member match member paths too"),
+    cl::init(""), cl::value_desc("text"), cl::sub(TypesCmd));
+cl::opt<unsigned> TypesLimit("limit",
+                             cl::desc("With --fit, show at most this many "
+                                      "types (default 10)"),
+                             cl::init(10), cl::sub(TypesCmd));
+cl::opt<std::string> TypesMember(
+    "member",
+    cl::desc("With one --type, where an access of offset[:size] bytes lands "
+             "among its members, as a structure offset names it"),
+    cl::init(""), cl::value_desc("offset[:size]"), cl::sub(TypesCmd));
 
 //===----------------------------------------------------------------------===//
 // Xrefs-specific options
@@ -1439,6 +1477,16 @@ cl::opt<bool> OperandInvert("invert", cl::desc("Invert the number's bits"),
                             cl::sub(OperandsCmd));
 cl::opt<bool> OperandClear("clear", cl::desc("Forget the operand's format"),
                            cl::sub(OperandsCmd));
+cl::opt<std::string> OperandStruct(
+    "struct",
+    cl::desc("Show the number as a structure offset into this local type, "
+             "the member it lands on (IDA's T)"),
+    cl::init(""), cl::value_desc("type"), cl::sub(OperandsCmd));
+cl::opt<long long> OperandDelta(
+    "delta",
+    cl::desc("With --struct, how many bytes into the type the register "
+             "points: the number lands that much further in"),
+    cl::init(0), cl::sub(OperandsCmd));
 cl::opt<std::string>
     ItemEncoding("encoding",
                  cl::desc("The encoding --string reads, as `neverd strings` "

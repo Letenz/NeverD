@@ -216,6 +216,19 @@ public:
   /// else the instruction's last number.  Commits at once, like a rename.
   void formatOperand(Address address, std::optional<int> operand,
                      const QString &action, std::optional<quint64> epoch = {});
+  /// Whether the worker's engine shows structure offsets of local types
+  /// and ranks the types by the code's accesses (local_types_fit).
+  bool showsStructOffsets() const {
+    return capabilities_.contains(QStringLiteral("operand_struct"));
+  }
+  /// Show the operand of the instruction at \p address as a member of the
+  /// local type \p type, the register \p delta bytes into it, and the
+  /// same in each instruction of \p others: one step of the history for up
+  /// to 64 instructions.  Commits at once, like a rename.
+  void formatOperandStruct(Address address, std::optional<int> operand,
+                           const QString &type, qint64 delta,
+                           const QStringList &others,
+                           std::optional<quint64> epoch = {});
   /// Whether the worker's engine keeps the user's data items.
   bool keepsDataItems() const {
     return capabilities_.contains(QStringLiteral("item_define"));

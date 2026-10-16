@@ -315,6 +315,19 @@ renders every kernel type as C, Rust and Go and reads it back; each record
 must keep its size and every member's bit offset and width, and every
 rendered size and offset check must hold.
 
+`TypeFit.*` lands accesses on members (union alternatives, bitfield units,
+array elements, padding and bytes outside a record) and ranks records by
+them, a pointer into a record and quick-open matching included.
+`NeverDMedPointerAccessesTests` gathers the accesses through one pointer from
+hand-built MedIR, through copies and constant additions.
+`SessionCAPITest.LocalTypesFitWhatTheCodeDoesThroughAPointer` ranks the
+fixture's types for `use`'s read of `Device->Size` and keeps a structure
+offset in the operands sidecar. `tools/neverd-worker/tests/local_types_test.py`
+does the same through the worker with the real engine, the listing's
+structure offsets and their undo included, and the GUI controller test
+`structureOffsetsRankTypesByTheCodesAccesses` drives T through the picker on
+the mock engine.
+
 `HeaderLibrary.*` reads the embedded Windows kernel library and checks how a
 header library joins a program's types. After running
 `scripts/generate_windows_kernel_types.py`, check the library in every
@@ -5832,9 +5845,9 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 `windows-alignment-oracle.yml` uses `check_windows_alignment.py` and `WindowsAlignmentCases.def` to collect 72 original x64 Windows exception observations: nine aligned SSE forms across seven misaligned address/permission cases and an aligned inaccessible-page control. It retains exception codes, parameters, fault PCs, saved contexts, raw output and source/binary hashes, and verifies unchanged inputs and RAM. These observations establish OS behavior only; they neither certify KVM/WHP execution nor add SEH support.
 
-With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 58 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
+With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 68 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 266 WHP outcomes from all 133 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 66 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 266 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 108 driver API checks = 5760`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM66 native guest execution remains unverified.
+`NativeDriverTests.def` requires 270 WHP outcomes from all 135 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 68 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 116 driver API checks = 5772`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 The genuine WDK inventory also builds `driver_device_queries.c`, `driver_file_objects.c` and `driver_file_handles.c` in normal and CFG forms. `DriverDeviceQueryTests.cpp` and `DriverFileObjectTests.cpp` reuse the portable callers’ assertions for retained deletion, failed CREATE, process identity, last-handle CLEANUP and deferred CLOSE across both contracts, bases and scheduling policies. All three families have mandatory native gates; inventory validation independently discovers sources with `NEVERD_WDK_FIXTURE` so a dual-mode source cannot silently lose its WDK build.
 
@@ -7443,6 +7456,10 @@ Run `ctest -R 'Binder|GPUCommands|RejectedIndirectGPU|RejectedGPU|StatefulDescri
 then the five OS/memory/session owner labels described above.
 
 `KernelFileTransfers` covers packet fields, offset sentinels, append-only handles, zero lengths, aliased outputs, immediate and pending statuses, worker notification and refusal before publication. `OriginalBufferedNativeFileTransfers` and `GenuineWdkBufferedNativeFileTransfers` execute imported and dynamically resolved calls across backends, contracts, load bases and scheduling. Configure `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` and `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` for genuine normal/CFG images; unavailable backends remain explicit skips.
+
+Checked CRT regressions cover every byte and UTF-16 unit, carrier narrowing, readonly/no-change buffers, count/capacity boundaries, truncation, null ordering, sequential aliases, partial faults, freed storage and the scan bound. Original `driver_crt_strings.c` and genuine `NEVERD_WDM_CRT_STRINGS_FIXTURE` / `NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE` exercise imports and dynamic lookup in entry, worker and unload, at passive/dispatch IRQL and both scheduling modes. The native gate requires both contracts and load bases; unavailable host backends remain explicit skips.
+
+Checked memory regressions distinguish full-capacity clearing from unchanged error output, zero-count pointers, full-width counts, overlap, paged/freed/read-only storage and operation limits. Header probes cover unsigned DOS offsets, 64-bit results, the address fence, signature-only acceptance and fault ordering. The original and genuine WDK CRT fixtures exercise imported/dynamic calls in entry, worker and unload. The WDK fixture uses a local ABI declaration for `RtlImageNtHeader` because the pinned headers omit that export; PE types and import libraries remain from the genuine kit. The pinned WDK ntoskrnl.lib links memcpy_s as guest code. The original fixture verifies its direct import, while both fixtures verify dynamic export calls.
 
 `KernelFileTransfers` checks native flush access masks, bufferless packets on every device transfer mode, full-width Information, publication and disposal before dispatch returns, worker/guarded notification and rejected async/concurrent calls. The existing original and genuine WDK file-transfer fixtures also execute imported and dynamically resolved flushes, including a user IOSB and the nine completion modes.
 

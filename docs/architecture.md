@@ -218,6 +218,29 @@ after the program's PDB and before the user's declarations:
 - a header record laid out with a type the program sizes otherwise is left
   out and reported (`conflicts`).
 
+`TypeFit.h` judges which records a pointer points at by what the code
+does through it, as an analyst checks a guess against the code.
+`memberAt` lands an access of some bytes at an offset on the member that
+holds it: exactly, at its start or inside it, on padding, or outside the
+record.  It prefers, among a union's alternatives, the one the access fits
+best, a named member over an array's element and a scalar over the record
+it begins.  `fitTypes` ranks the records:
+- those that hold every access come first;
+- then the better score, where an access landing exactly on a named member
+  counts most, on an array's element a little less, and one landing in part
+  or on padding counts against;
+- a pointer into a record, as a list entry's is, takes the member start that
+  explains accesses before it best (CONTAINING_RECORD's shift).
+It matches names as an editor's quick open does, a record's typedefs and
+`Type.member` paths included.  The evidence comes from MedIR
+(`MedPointerAccesses`): every load and store whose address is an SSA value
+plus a constant, through copies, and every such address the code passes on.
+`neverd_local_types_fit_json` joins the two for an instruction's memory
+operand, and `neverd_local_type_member_json` names one landing.  A
+structure offset is an operand format (`OperandFormats.def`) that names a
+local type and a delta; the worker spells it from the type's current
+layout, so an edited type renames its operands.
+
 `neverd_types_convert` and `neverd types --data-model` read and render
 declarations without a program, which is how the generator builds the
 library. `neverd_types_languages_json` says, also without a program, which
@@ -7085,6 +7108,10 @@ KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing
 `KernelModelFileRequests` also owns bufferless `ZwFlushBuffersFile` production. Its granted-mask check and immediate publication/disposal differ from deferred native read/write/query packets; all reuse the original-caller notification and single-release owner.
 
 `KernelModelFileRequests` owns native device/filesystem control buffer capture and publication. Both use the same file hold, caller continuation and packet release; producer-specific deferral distinguishes device control from FSCTL. Control output limits are checked by the shared completion validator.
+
+`KernelModelRuntime` owns kernel CRT classification, in-place conversion and checked string writes. `KernelCStringAPIs.def` supplies export identity, argument count and IRQL admission to every caller surface. Unit accesses reuse guest-memory permissions and lifetime guards; reports and adapters do not repeat copy or error semantics.
+
+`KernelMemoryCalls` owns checked memory-copy admission and reuses its existing move/fill operations, including pool lifetime and user-memory checks. `KernelModelRuntime` owns the raw `RtlImageNtHeader` signature probe. This probe is distinct from the loader validation needed to execute an image; adapters do not duplicate either operation.
 
 ### Darwin imported file calls
 

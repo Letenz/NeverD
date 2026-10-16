@@ -959,14 +959,17 @@ bool isOperandBase(llvm::StringRef Base) {
   return false;
 }
 
+/// The longest name a structure offset's type may have.
+constexpr size_t MaxOperandTypeName = 512;
+
 /// The format \p Object describes, or none with \p Error.
 std::optional<Session::OperandFormat>
 parseOperandFormat(const llvm::json::Object &Object, std::string &Error) {
   Session::OperandFormat Format;
   const auto Base = Object.getString("base");
   if (!Base || !isOperandBase(*Base)) {
-    Error = "an operand's base is number, hex, decimal, binary, char or "
-            "offset";
+    Error = "an operand's base is number, hex, decimal, binary, char, offset "
+            "or struct";
     return std::nullopt;
   }
   Format.Base = Base->str();
@@ -980,6 +983,28 @@ parseOperandFormat(const llvm::json::Object &Object, std::string &Error) {
       }
       *Field = *Flag;
     }
+  const llvm::json::Value *Type = Object.get("type");
+  const llvm::json::Value *Delta = Object.get("delta");
+  if (Format.Base != kStructBase) {
+    if (Type || Delta) {
+      Error = "only a structure offset names a type and a delta";
+      return std::nullopt;
+    }
+    return Format;
+  }
+  // The member a structure offset names has no sign of its own to change.
+  const std::optional<llvm::StringRef> Name =
+      Type ? Type->getAsString() : std::nullopt;
+  const std::optional<int64_t> Bytes =
+      Delta ? Delta->getAsInteger() : std::optional<int64_t>(0);
+  if (!Name || Name->empty() || Name->size() > MaxOperandTypeName || !Bytes ||
+      Format.Negate || Format.Invert) {
+    Error = "a structure offset names its local type, an integer delta, and "
+            "neither negates nor inverts";
+    return std::nullopt;
+  }
+  Format.Type = Name->str();
+  Format.Delta = *Bytes;
   return Format;
 }
 
@@ -987,12 +1012,17 @@ llvm::json::Array operandFormatRows(const Session *S) {
   llvm::json::Array Rows;
   for (const auto &[Addr, Operands] : S->OperandFormats) {
     llvm::json::Array List;
-    for (const auto &[Index, Format] : Operands)
-      List.push_back(
-          llvm::json::Object{{"operand", static_cast<int64_t>(Index)},
-                             {"base", Format.Base},
-                             {"negate", Format.Negate},
-                             {"invert", Format.Invert}});
+    for (const auto &[Index, Format] : Operands) {
+      llvm::json::Object Entry{{"operand", static_cast<int64_t>(Index)},
+                               {"base", Format.Base},
+                               {"negate", Format.Negate},
+                               {"invert", Format.Invert}};
+      if (Format.Base == kStructBase) {
+        Entry["type"] = jsonSafeText(Format.Type);
+        Entry["delta"] = Format.Delta;
+      }
+      List.push_back(std::move(Entry));
+    }
     Rows.push_back(llvm::json::Object{{"addr", vaHex(Addr)},
                                       {"operands", std::move(List)}});
   }
@@ -1237,6 +1267,22 @@ int neverd_operand_format_set(neverd_session_t Sess, neverd_va_t Addr,
     if (!Format) {
       S->setError(Error);
       return -1;
+    }
+    // A structure offset names a structure or union of the program's local
+    // types, which a sidecar read later may no longer have; the listing then
+    // shows the number.
+    if (Format->Base == kStructBase) {
+      const types::TypeLibrary *Library = S->readLocalTypes();
+      if (!Library)
+        return -1;
+      const types::LocalType *Record = Library->resolve(Format->Type);
+      if (!Record || !Record->Record || !Record->Record->Defined ||
+          (Record->Kind != types::TypeKind::Struct &&
+           Record->Kind != types::TypeKind::Union)) {
+        S->setError("no structure or union named " +
+                    jsonSafeText(Format->Type));
+        return -1;
+      }
     }
   }
   // The listing's own spelling is no format of the user's.

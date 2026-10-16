@@ -141,3 +141,38 @@ NEVERD_KERNEL_CSTRING_API(wcsspn, 2, Any,
                           runtime::cStringSpan(*this, Memory, A, 2, false))
 NEVERD_KERNEL_CSTRING_API(wcscspn, 2, Any,
                           runtime::cStringSpan(*this, Memory, A, 2, true))
+
+// Pinned x64 kernel CRT: isdigit returns the ctype digit mask (4), narrowing
+// to an unsigned byte except for the signed-int EOF value (RVA 0x3d1fd0).
+NEVERD_KERNEL_CSTRING_API(isdigit, 1, Any, runtime::cIsDigit(uint32_t(A[0])))
+
+// These in-place transforms only change ASCII, independently of NLS tables.
+// The narrow upper / wide lower routines tolerate NULL; wide upper does not.
+// RVA 0x3d0920, 0x3d1a30 and 0x3d1cf0 respectively.
+NEVERD_KERNEL_CSTRING_API(_strupr, 1, Any,
+                          runtime::cStringChangeCase(*this, Memory, A[0], 1,
+                                                     false))
+NEVERD_KERNEL_CSTRING_API(_wcslwr, 1, Any,
+                          runtime::cStringChangeCase(*this, Memory, A[0], 2,
+                                                     true))
+NEVERD_KERNEL_CSTRING_API(_wcsupr, 1, Any,
+                          runtime::cStringChangeCase(*this, Memory, A[0], 2,
+                                                     false))
+
+// Kernel checked writes preserve copied bytes even when the final status is
+// EINVAL / ERANGE, clearing only the first destination unit. SIZE_MAX requests
+// truncation for the counted copies. Their pinned invalid-parameter helper
+// returns without side effects; this is not a user CRT handler contract.
+// RVA 0x3d7670, 0x3d7810, 0x3d7ad0 and 0x3d7d20 respectively.
+NEVERD_KERNEL_CSTRING_API(strcpy_s, 3, Any,
+                          runtime::cStringCheckedWrite(*this, Memory, A, 1,
+                                                       false))
+NEVERD_KERNEL_CSTRING_API(strncpy_s, 4, Any,
+                          runtime::cStringCheckedWrite(*this, Memory, A, 1,
+                                                       false))
+NEVERD_KERNEL_CSTRING_API(wcscat_s, 3, Any,
+                          runtime::cStringCheckedWrite(*this, Memory, A, 2,
+                                                       true))
+NEVERD_KERNEL_CSTRING_API(wcsncpy_s, 4, Any,
+                          runtime::cStringCheckedWrite(*this, Memory, A, 2,
+                                                       false))
