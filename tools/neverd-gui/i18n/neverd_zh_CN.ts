@@ -2339,6 +2339,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     列出引用字符串的指令</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          显示本地类型，或指定名称的类型</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3497,10 +3501,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>偏移</translation>
     </message>
     <message>
-        <source>Bytes</source>
-        <translation>字节</translation>
-    </message>
-    <message>
         <source>Type</source>
         <translation>类型</translation>
     </message>
@@ -3743,6 +3743,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>
             <numerusform>%n 个自己声明</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>选择一个类型以查看其布局和源码</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>没有名为 %1 的本地类型</translation>
     </message>
 </context>
 <context>

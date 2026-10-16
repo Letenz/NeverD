@@ -2730,6 +2730,10 @@ void MainWindow::runCommand(const QString &command, const QString &argument) {
     if (!argument.isEmpty())
       choosers_.value(int(ChooserKind::StringReferences))
           ->setFilterText(argument);
+  } else if (command == QLatin1String("types")) {
+    actions_.action(ActionId::ViewLocalTypes)->trigger();
+    if (!argument.isEmpty())
+      localTypes_->showType(argument);
   }
 }
 

@@ -693,6 +693,27 @@ const char *neverd_local_types_forget(neverd_session_t Sess,
                                            {"decompilation", Decompilation}})));
 }
 
+const char *neverd_types_languages_json(void) {
+  llvm::json::Array Languages;
+  const auto add = [&](types::Language Lang, llvm::StringRef Display) {
+    llvm::json::Array Spellings;
+#define NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go)                         \
+  if (types::spellsBuiltins(Lang, types::BuiltinSpelling::Name))               \
+    Spellings.push_back(Id);
+#include "neverd/types/BuiltinSpellings.def"
+    Languages.push_back(llvm::json::Object{
+        {"id", types::languageId(Lang)},
+        {"display", Display},
+        {"spelling", types::spellingId(types::defaultSpelling(Lang))},
+        {"spellings", std::move(Spellings)}});
+  };
+#define NEVERD_TYPE_LANGUAGE(Name, Id, Display, Spelling)                      \
+  add(types::Language::Name, Display);
+#include "neverd/types/TypeLanguages.def"
+  return dupStr(jsonToString(llvm::json::Value(
+      llvm::json::Object{{"languages", std::move(Languages)}})));
+}
+
 const char *neverd_types_convert(const char *RequestJson) {
   const auto answer = [](llvm::json::Object Reply) {
     return dupStr(jsonToString(llvm::json::Value(std::move(Reply))));

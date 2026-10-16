@@ -144,7 +144,10 @@ after the program's PDB and before the user's declarations:
 
 `neverd_types_convert` and `neverd types --data-model` read and render
 declarations without a program, which is how the generator builds the
-library.
+library. `neverd_types_languages_json` says, also without a program, which
+builtin spellings each language takes and which it takes unless asked;
+`neverd types --json` names the one its source took, in every mode, so that
+an agent reads one object.
 
 The decompiler reads the local types' prototypes through
 `PrototypeDebugContext` (`lib/sdk/capi`). It wraps the program's debug

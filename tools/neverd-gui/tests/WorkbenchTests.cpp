@@ -40,6 +40,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetricsF>
+#include <QHeaderView>
 #include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QJsonArray>
@@ -3894,22 +3895,39 @@ private slots:
     // The filter has the focus, as IDA's quick filter does.
     QTRY_VERIFY(filter->hasFocus());
 
+    // The list leaves the ordinal and the member count out until asked.
+    auto *listHeader = list->header();
+    QVERIFY(listHeader->isSectionHidden(0));
+    QVERIFY(!listHeader->isSectionHidden(1));
+    QVERIFY(listHeader->isSectionHidden(4));
+
     // A record shows its members, the padding between and the union it
-    // holds, the union's bitfield at its bit.
+    // holds, the union's bitfield at its bit: where each lies first, as a
+    // memory map reads, the tree in the member's column.
     types->showType(QStringLiteral("_DEVICE"));
     QTRY_COMPARE(types->currentType(), QStringLiteral("_DEVICE"));
     QTRY_COMPARE(layout->topLevelItemCount(), 4);
-    QCOMPARE(layout->topLevelItem(0)->text(0), QStringLiteral("Type"));
-    QCOMPARE(layout->topLevelItem(1)->text(0), QStringLiteral("(padding)"));
-    QCOMPARE(layout->topLevelItem(1)->text(2), QStringLiteral("0x6"));
-    QCOMPARE(layout->topLevelItem(3)->text(0), QStringLiteral("union"));
-    QCOMPARE(layout->topLevelItem(3)->child(1)->text(1),
+    QCOMPARE(layout->headerItem()->text(0), QStringLiteral("Offset"));
+    QCOMPARE(layout->headerItem()->text(2), QStringLiteral("Member"));
+    QCOMPARE(layout->treePosition(), 2);
+    QCOMPARE(layout->columnCount(), 4);
+    QCOMPARE(layout->topLevelItem(0)->text(2), QStringLiteral("Type"));
+    QCOMPARE(layout->topLevelItem(1)->text(2), QStringLiteral("(padding)"));
+    QCOMPARE(layout->topLevelItem(1)->text(1), QStringLiteral("0x6"));
+    QCOMPARE(layout->topLevelItem(3)->text(2), QStringLiteral("union"));
+    QCOMPARE(layout->topLevelItem(3)->child(1)->text(0),
              QStringLiteral("0x18.0"));
-    QCOMPARE(layout->topLevelItem(3)->child(1)->text(2), QStringLiteral(":1"));
+    QCOMPARE(layout->topLevelItem(3)->child(1)->text(1), QStringLiteral(":1"));
+    // What only source takes is not on the layout's options.
+    auto *dependencies = types->findChild<QCheckBox *>();
+    QVERIFY(dependencies);
+    for (auto *box : types->findChildren<QCheckBox *>())
+      if (box->text() != QLatin1String("Hex offsets"))
+        QVERIFY2(box->isHidden(), qPrintable(box->text()));
 
     // A member's type opens on a double click; Back returns.
     auto *links = layout->topLevelItem(2);
-    QCOMPARE(links->text(0), QStringLiteral("Links"));
+    QCOMPARE(links->text(2), QStringLiteral("Links"));
     emit layout->itemDoubleClicked(links, 0);
     QTRY_COMPARE(types->currentType(), QStringLiteral("_LIST_ENTRY"));
     QTest::keyClick(layout, Qt::Key_Escape);
@@ -3951,6 +3969,8 @@ private slots:
         QStringLiteral("// language c spelling windows")));
     QVERIFY(source->toPlainText().contains(QStringLiteral("struct _DEVICE")));
     QVERIFY(!spelling->isHidden());
+    for (auto *box : types->findChildren<QCheckBox *>())
+      QVERIFY2(!box->isHidden(), qPrintable(box->text()));
     QCOMPARE(
         choices(),
         (QStringList{QStringLiteral("windows"), QStringLiteral("ida"),
@@ -3964,6 +3984,16 @@ private slots:
     QCOMPARE(
         QSettings().value(QStringLiteral("localTypes/goSpelling")).toString(),
         QStringLiteral("windows"));
+
+    // The command line shows a type by name, and says when none has it.
+    auto *output = bench.window->findChild<OutputWindow *>();
+    QVERIFY(output);
+    output->run(QStringLiteral("t _LIST_ENTRY"));
+    QTRY_COMPARE(types->currentType(), QStringLiteral("_LIST_ENTRY"));
+    output->run(QStringLiteral("types _NO_SUCH_TYPE"));
+    QTRY_VERIFY(types->findChild<QLabel *>(QStringLiteral("localTypesSummary"))
+                    ->text()
+                    .contains(QStringLiteral("_NO_SUCH_TYPE")));
 
     // The filter keeps the types whose name holds its text.
     filter->setText(QStringLiteral("list"));

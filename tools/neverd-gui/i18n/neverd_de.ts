@@ -2345,6 +2345,10 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [Text]     Befehle auflisten, die auf Zeichenketten verweisen</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [Name]          lokale Typen oder den genannten Typ anzeigen</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3503,10 +3507,6 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <translation>Offset</translation>
     </message>
     <message>
-        <source>Bytes</source>
-        <translation>Bytes</translation>
-    </message>
-    <message>
         <source>Type</source>
         <translation>Typ</translation>
     </message>
@@ -3757,6 +3757,14 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
             <numerusform>%n deklariert</numerusform>
             <numerusform>%n deklariert</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>Wählen Sie einen Typ, um sein Layout und seinen Quelltext zu sehen</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>Kein lokaler Typ heißt %1</translation>
     </message>
 </context>
 <context>
