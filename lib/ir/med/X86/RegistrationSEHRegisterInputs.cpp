@@ -76,8 +76,43 @@ void discardUnusedSEHCallInputs(MedFunc &Function) {
       if (!Charge() || Op.NumInputs > Op.Inputs.size())
         return;
       if (!isSEHRegisterIntrinsic(Op)) {
-        for (unsigned I = 0; I != Op.NumInputs; ++I)
-          Use(Op.Inputs[I]);
+        // A physical near return also names EAX as its scalar result. When
+        // the exact same value already travels through the checked register
+        // exchange, that spelling is not a second observer of the register.
+        unsigned ReturnedRegisters = 0;
+        if (Returning && Owner != Owners->end() && Owner->second.second &&
+            Returning->ReturnBlocks.count(Block.Id) &&
+            Returning->ReturnBlocks.at(Block.Id) == Owner->second.first &&
+            Op.Opcode == NdOp::RETURN && Op.NumInputs == 1 &&
+            Op.Inputs[0].Size == 4 && !Op.Output.Size &&
+            Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+            Op.MemoryOrdering == NdMemoryOrdering::None)
+          for (const auto &Write : Block.Ops) {
+            if (!Charge())
+              return;
+            if (hasValidSEHRegisterShape(Write) &&
+                Write.Inputs[1].ConstVal ==
+                    unsigned(SEHRegisterRole::CallbackOutput) &&
+                Write.Inputs[2].ConstVal == Owner->second.first &&
+                Write.Inputs[3].ConstVal == Op.Addr &&
+                Write.Inputs[4].ConstVal == x86reg::RAX &&
+                Write.Inputs[5] == Op.Inputs[0] &&
+                Write.Inputs[5].Size == Op.Inputs[0].Size)
+              ++ReturnedRegisters;
+          }
+        if (ReturnedRegisters != 1)
+          for (unsigned I = 0; I != Op.NumInputs; ++I)
+            Use(Op.Inputs[I]);
+        if (Returning && Op.Opcode == NdOp::CALL && Op.Output.Size) {
+          const auto Call =
+              Returning->ReturningCalls.find({Block.Id, Op.Addr, Op.OriginSeq});
+          if (Call != Returning->ReturningCalls.end()) {
+            if (Op.Output.Size != 4 || Op.Output.Id < 0 ||
+                Op.Output.SSAVer <= 0)
+              return;
+            CallerReads[{Call->second, x86reg::RAX}].push_back(Key(Op.Output));
+          }
+        }
         // A call or another intrinsic can consume physical registers through
         // an implicit ABI which has not yet been recovered. Keep all inputs
         // of such a callback, even if no explicit SSA use names the register.

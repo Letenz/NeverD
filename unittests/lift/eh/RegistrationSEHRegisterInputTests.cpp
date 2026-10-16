@@ -174,3 +174,63 @@ TEST(RegistrationSEHRegisterInputs, ReturnedCopiesRequireAnActualObserver) {
                   Mutation == 0 || Mutation == 12 || Mutation == 13);
       }
 }
+
+TEST(RegistrationSEHRegisterInputs, ScalarNearReturnSharesTheRegisterObserver) {
+  for (bool Reverse : {false, true})
+    for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+      SCOPED_TRACE(Reverse);
+      SCOPED_TRACE(Mutation);
+      auto Function = roundTrip(x86reg::RAX);
+      auto &Caller = Function.Blocks[0];
+      auto &Callback = Function.Blocks[1];
+      Caller.Ops[1].Output = registerValue(x86reg::RAX, 4);
+      Callback.Ops.back().addInput(registerValue(x86reg::RAX, 1));
+      switch (Mutation) {
+      case 1:
+        Caller.Ops[1].Output.Size = 0;
+        break;
+      case 2:
+        Function.Blocks[2].Ops.back().addInput(registerValue(x86reg::RAX, 2));
+        break;
+      case 3:
+        Function.Blocks[2].Ops.back().addInput(Caller.Ops[1].Output);
+        break;
+      case 4:
+        Callback.Ops.back().addInput(MedVar::makeConst(0, 4));
+        break;
+      case 5:
+        Callback.Ops.back().MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      case 6:
+        Callback.Ops.back().MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+        break;
+      case 7:
+        Callback.Ops[1].Inputs[4].ConstVal = x86reg::RCX;
+        break;
+      case 8:
+        Callback.Ops.insert(Callback.Ops.end() - 1, Callback.Ops[1]);
+        break;
+      case 9:
+        Callback.Ops.erase(Callback.Ops.begin() + 1);
+        break;
+      case 10:
+        ++Function.RegistrationStates->SEHInvocationExits.front().OpSeq;
+        break;
+      case 11:
+        Caller.Ops[1].Output.Size = 2;
+        break;
+      case 12:
+        Caller.Ops[1].Output.SSAVer = 0;
+        break;
+      case 13:
+        Function.CallInfos.emplace_back();
+        Function.CallInfos.back().Args.push_back(Caller.Ops[1].Output);
+        break;
+      }
+      if (Reverse)
+        std::reverse(Function.Blocks.begin(), Function.Blocks.end());
+      discardUnusedSEHCallInputs(Function);
+      const auto &Input = Function.Blocks[Reverse ? 2 : 0].Ops.front();
+      EXPECT_EQ(Input.Inputs[5].Kind == MedVar::Unspecified, Mutation <= 1);
+    }
+}
