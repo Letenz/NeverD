@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/types/PDBTypeImport.h"
+#include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
 #include <gtest/gtest.h>
@@ -246,6 +247,87 @@ TEST_F(TypeRenderFixture, GoTakesWindowsNamesAsAliases) {
   EXPECT_TRUE(contains(Text, "\t_bitfield uint32"));
   EXPECT_TRUE(contains(Text, ") ReadyTransition() ULONG {"));
   EXPECT_TRUE(contains(Text, ") SetReadyTransition(value ULONG) {"));
+}
+
+TEST_F(TypeRenderFixture, PythonDeclaresRecordsAsCtypesDoes) {
+  RenderOptions Options = in(Language::Python);
+  Options.Asserts = true;
+  const std::string Text = header("_THREAD_LIKE", Options);
+  // Declared first and laid out after, so that a pointer may name a record
+  // laid out later.
+  EXPECT_TRUE(contains(Text, "class _THREAD_LIKE(ctypes.Structure):\n    "
+                             "\"\"\"_THREAD_LIKE: 0x18 (24) bytes.\"\"\"\n"))
+      << Text;
+  EXPECT_LT(Text.find("class _THREAD_LIKE("),
+            Text.find("_THREAD_LIKE._fields_ = ["));
+  // Records in place are classes of their own, which _anonymous_ promotes.
+  EXPECT_TRUE(contains(Text, "class _THREAD_LIKE_0(ctypes.Union):"));
+  EXPECT_TRUE(contains(
+      Text, "_THREAD_LIKE._anonymous_ = (\"Anonymous1\", \"Anonymous2\")\n"));
+  // A run of bitfields is storage read through properties, each run's
+  // storage named apart from the others the record promotes.
+  EXPECT_TRUE(contains(Text, "(\"_bitfield\", ctypes.c_uint32),"));
+  EXPECT_TRUE(contains(Text, "(\"_bitfield1\", ctypes.c_uint32),"));
+  EXPECT_TRUE(
+      contains(Text, "    @property\n    def ReadyTransition(self) -> int:\n"));
+  EXPECT_TRUE(contains(Text, "        return (self._bitfield >> 1) & 0x1\n"));
+  EXPECT_TRUE(contains(Text, "        return (self._bitfield1 >> 2) & 0x1\n"));
+  EXPECT_TRUE(contains(
+      Text, "assert ctypes.sizeof(_THREAD_LIKE) == 0x18, \"_THREAD_LIKE\"\n"));
+  EXPECT_TRUE(contains(Text, "assert _THREAD_LIKE.Tail.offset == 0x10, "
+                             "\"_THREAD_LIKE.Tail\"\n"));
+
+  // A pack lays out as MSVC does, which Python 3.14 asks for by name.
+  EXPECT_TRUE(contains(header("_PACKED", in(Language::Python)),
+                       "_PACKED._pack_ = 1\n_PACKED._layout_ = \"ms\"\n"
+                       "_PACKED._fields_ = [\n"));
+  // Alone, a record's layout is in its class.
+  EXPECT_TRUE(
+      contains(render("_PACKED", in(Language::Python)),
+               "class _PACKED(ctypes.Structure):\n    \"\"\"_PACKED: "
+               "0x7 (7) bytes, packed to 1.\"\"\"\n\n    _pack_ = 1\n"));
+
+  // An enumeration is an IntEnum, its field the underlying integer; a
+  // function's address is ctypes.c_void_p, its C type in the comment.
+  const std::string Device = header("_DEVICE", in(Language::Python));
+  EXPECT_TRUE(contains(Device, "class _POOL_KIND(enum.IntEnum):"));
+  EXPECT_TRUE(contains(Device, "(\"Pool\", ctypes.c_int32),"));
+  EXPECT_TRUE(contains(Device, "enum _POOL_KIND\n"));
+  EXPECT_TRUE(contains(Device, "(\"MajorFunction\", ctypes.c_void_p * 4),"));
+  EXPECT_TRUE(contains(Device, "(*[4])(struct _DEVICE *, "));
+
+  // Windows' names are aliases of exact widths at the top.
+  Options = in(Language::Python);
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Windows = header("_PACKED", Options);
+  EXPECT_TRUE(contains(Windows, "UCHAR = ctypes.c_uint8\n")) << Windows;
+  EXPECT_TRUE(contains(Windows, "(\"Value\", ULONG),"));
+}
+
+TEST(TypeRender, PythonBindsTypedefsAndLaysOutInOrder) {
+  // A typedef is bound before a layout names it; one of an array after the
+  // layout of what it holds, since ctypes sizes an array type once.
+  TypeLibrary Library;
+  ASSERT_TRUE(parseCTypes(R"(
+    typedef struct _NODE NODE;
+    struct _NODE { NODE *Next; unsigned long Value; };
+    typedef struct _PAIR { unsigned char A; unsigned long B; } PAIR;
+    typedef PAIR PAIRS[2];
+    struct _HOLDER { PAIRS Items; NODE Head; };
+  )",
+                          Library)
+                  .ok());
+  const std::string Text = renderTypes(Library, {}, in(Language::Python));
+  const auto at = [&](llvm::StringRef Part) {
+    const size_t Found = Text.find(Part.str());
+    EXPECT_NE(Found, std::string::npos) << Part.str() << "\n" << Text;
+    return Found;
+  };
+  EXPECT_LT(at("NODE = _NODE\n"), at("_NODE._fields_ = ["));
+  EXPECT_LT(at("_PAIR._fields_ = ["), at("PAIRS = PAIR * 2\n"));
+  EXPECT_LT(at("PAIRS = PAIR * 2\n"), at("_HOLDER._fields_ = ["));
+  EXPECT_LT(at("_NODE._fields_ = ["), at("_HOLDER._fields_ = ["));
+  EXPECT_TRUE(contains(Text, "(\"Next\", ctypes.POINTER(NODE)),"));
 }
 
 TEST_F(TypeRenderFixture, RustAndGoKeepPacking) {

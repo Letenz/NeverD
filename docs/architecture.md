@@ -94,12 +94,12 @@ before nesting. It reports a record whose nesting does not flatten back to the
 stream's member list, or whose members cannot sit where they say
 (`layoutProblem`).
 
-`renderType` and `renderTypes` spell types as C, C++, Rust or Go
+`renderType` and `renderTypes` spell types as C, C++, Rust, Go or Python
 (`TypeLanguages.def`), each member marked with its offset. Builtins take
 the spellings each language has (`BuiltinSpellings.def`): C and C++ name
-them as Windows, IDA or the compiler does, or by exact widths; Rust and Go
-by exact widths or by Windows' names, which a module or file declares as
-aliases as wdk-sys does. Every language
+them as Windows, IDA or the compiler does, or by exact widths; Rust, Go and
+Python by exact widths or by Windows' names, which a module or file
+declares as aliases as wdk-sys does. Every language
 reproduces the library's layout exactly. An explicit filler moves a member
 that the language's own rules would place earlier. Rust and Go read what they
 cannot express through accessors whose arithmetic follows C, signed bitfields
@@ -110,7 +110,16 @@ enumerator two enumerations share, take one identifier per language
 it compiles. C's header compiles as C++ too, which the workbench shows it as:
 its checks are `static_assert`, and the character types C declares are left
 to C++'s keywords. Member names stay C's, so one C++ reserves, such as
-`class`, still needs the C++ rendering.
+`class`, still needs the C++ rendering. Function prototypes render in C and
+C++ (`rendersPrototypes`); asked of another language, they fail.
+
+Python is ctypes: a `Structure` or `Union` per record, anonymous records
+promoted by `_anonymous_`, and each run of bitfields one storage field,
+named apart from the others the record promotes, read through properties.
+A module declares its classes first, binds each typedef after those it
+names (an array's after the layout of what it holds, since ctypes sizes an
+array type once), and lays each record out after what it holds by value.
+Python renders only; its declarations do not read back.
 
 `parseTypes` reads C, C++, Rust and Go declarations back into the library
 (`TypeParse.h`), and `layOutRecord` lays each record out under MSVC or
@@ -5412,7 +5421,7 @@ libraries supplied by the CMake helper.
 | `lib/sdk` | Public C ABI, session lifecycle, queries, persistence, plugins, lift/decompile/patch/audit/hunt entry points | Aggregates the engine components into `libneverd` |
 | `lib/pass` | LLVM IR obfuscation passes and MIR pass runner | IR |
 | `lib/debug` | DWARF, PDB, and linker-map debug contexts | IR |
-| `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust and Go | LLVM DebugInfo PDB |
+| `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust, Go and Python | LLVM DebugInfo PDB |
 | `lib/sigs` | Signature parsing, databases, and matching | Loader |
 | `lib/libc` | Known libc names and call-model support | Standalone component |
 | `lib/symbolic` | Width-exact symbolic execution, bounded path exploration, stable control-decision histories, and the exact concrete shadow | LowIR |

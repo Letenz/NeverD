@@ -7,9 +7,10 @@
 /// \file
 /// `neverd types`: the program's local types as the workbench's Local Types
 /// window shows them.  Without --type it lists them; --type lays a type out
-/// (--layout) or renders it, with what it needs, as C, C++, Rust or Go;
-/// --all renders every type as one unit that compiles.  Without a binary,
-/// --data-model converts the --declare files from one language to another.
+/// (--layout) or renders it, with what it needs, as C, C++, Rust, Go or
+/// Python; --all renders every type as one unit that compiles.  Without a
+/// binary, --data-model converts the --declare files from one language to
+/// another.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -29,8 +30,22 @@ using namespace llvm;
 namespace neverd::cli {
 namespace {
 
+/// Whether the engine renders a language --lang may name.
 bool knownLanguage(StringRef Id) {
-  return Id == "c" || Id == "cpp" || Id == "rust" || Id == "go";
+  const char *Raw = neverd_types_languages_json();
+  auto Parsed = json::parse(Raw ? Raw : "");
+  neverd_free_string(Raw);
+  if (!Parsed) {
+    consumeError(Parsed.takeError());
+    return false;
+  }
+  if (const json::Object *Root = Parsed->getAsObject())
+    if (const json::Array *Languages = Root->getArray("languages"))
+      for (const json::Value &Value : *Languages)
+        if (const json::Object *Language = Value.getAsObject();
+            Language && Language->getString("id") == Id)
+          return true;
+  return false;
 }
 
 /// A spelling --spelling may name; empty takes the language's own.
@@ -349,7 +364,7 @@ bool declare(neverd_session_t Sess) {
 /// printed.
 bool optionsValid() {
   if (!knownLanguage(TypesLanguage)) {
-    WithColor::error() << "--lang must be c, cpp, rust or go\n";
+    WithColor::error() << "--lang must be c, cpp, rust, go or python\n";
     return false;
   }
   if (!knownSpelling(TypesSpelling)) {

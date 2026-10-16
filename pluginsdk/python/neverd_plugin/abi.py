@@ -1092,6 +1092,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_types_languages_json",
+    "const char *",
+    [],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_type_declarations_json",
     "const char *",
     ["neverd_session_t"],

@@ -41,12 +41,14 @@ enum class Language : uint8_t {
 
 /// How APIs name \p Lang, such as "rust".
 llvm::StringRef languageId(Language Lang);
+/// Every language's id, as a message lists them: "c, cpp, ... or python".
+std::string languagesText();
 /// The language an API names, if any.
 std::optional<Language> languageNamed(llvm::StringRef Id);
 
 /// How rendered source names builtin types (BuiltinSpellings.def).
 enum class BuiltinSpelling : uint8_t {
-#define NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go) Name,
+#define NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go, Python) Name,
 #include "neverd/types/BuiltinSpellings.def"
 };
 
@@ -76,9 +78,12 @@ struct RenderOptions {
   /// The column offset comments start at.
   unsigned CommentColumn = 64;
   /// When every type renders, the library's function prototypes after them,
-  /// in C and C++.
+  /// in the languages rendersPrototypes says.
   bool Prototypes = false;
 };
+
+/// Whether \p Lang renders function prototypes: C and C++ do.
+bool rendersPrototypes(Language Lang);
 
 /// The spelling \p Options names builtins in.
 BuiltinSpelling spellingOf(const RenderOptions &Options);

@@ -330,7 +330,9 @@ compiles the result:
   workbench shows as C/C++, compiles as C++ as well;
 - Rust with rustc in both of its spellings, exact widths and Windows' names
   as aliases (64-bit layouts only);
-- Go with `go vet` for Windows, in both spellings too.
+- Go with `go vet` for Windows, in both spellings too;
+- Python by running the module with `python3 -I -W error`, in both spellings,
+  where ctypes checks each size and offset (64-bit layouts only).
 
 A missing toolchain is reported and skipped. Without `--binary` it checks the
 fixture:

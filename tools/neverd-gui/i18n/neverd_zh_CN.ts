@@ -3752,6 +3752,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>No local type is named %1</source>
         <translation>没有名为 %1 的本地类型</translation>
     </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>精确宽度（c_uint32）</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::DeclareTypesDialog</name>

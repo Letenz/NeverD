@@ -3766,6 +3766,14 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <source>No local type is named %1</source>
         <translation>Kein lokaler Typ heißt %1</translation>
     </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>Exakte Breiten (c_uint32)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::DeclareTypesDialog</name>

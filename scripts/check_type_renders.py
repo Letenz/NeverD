@@ -3,9 +3,9 @@
 
 `neverd types --all --asserts` renders every local type with compile-time
 checks of each size and offset.  This script renders them in C and C++ with
-every builtin spelling, in Rust and Go with both of their own, and compiles
-each with clang, rustc and go, so that a layout NeverD gets wrong, or source
-that does not compile, fails.  The C header, which the workbench shows as
+every builtin spelling, in Rust, Go and Python with both of their own, and
+compiles each with clang, rustc and go, or runs it with python3, so that a
+layout NeverD gets wrong, or source that does not compile, fails.  The C header, which the workbench shows as
 C/C++, compiles as C++ as well.  Without --binary it checks the fixture PDB
 the unit tests use; with --declare it checks the types C, C++, Rust or Go
 files declare, laid out for --data-model, such as a type library NeverD
@@ -28,7 +28,7 @@ FIXTURES = REPOSITORY / "unittests" / "types" / "fixtures"
 SPELLINGS = ("windows", "ida", "keywords", "portable")
 # Rust and Go name builtins as Windows does, through aliases, or by exact
 # widths.
-RUST_SPELLINGS = GO_SPELLINGS = ("windows", "portable")
+RUST_SPELLINGS = GO_SPELLINGS = PYTHON_SPELLINGS = ("windows", "portable")
 
 # Windows' own typedefs of the builtins it names, as <ntdef.h> declares them:
 # prototypes of the compiler's intrinsics only match its declarations with
@@ -196,6 +196,22 @@ class Checker:
                         diagnostics(result))
 
 
+    def python(self, model):
+        """Python's ctypes check each size and offset as the module runs."""
+        python = shutil.which("python3")
+        if not python:
+            self.skip("Python", "python3 not found")
+            return
+        if model == "ILP32":
+            self.skip("Python", "32-bit layouts need a 32-bit Python")
+            return
+        for spelling in PYTHON_SPELLINGS:
+            source = self.render(f"types-{spelling}.py", "--lang", "python",
+                                 "--spelling", spelling)
+            result = run([python, "-I", "-W", "error", str(source)])
+            self.report(f"python {spelling}", diagnostics(result))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--neverd", required=True,
@@ -247,6 +263,7 @@ def main():
             checker.prototypes(model)
         checker.rust(model)
         checker.go(model)
+        checker.python(model)
     if checker.failures:
         sys.exit(f"{checker.failures} check(s) failed")
     print("every check passed" +
