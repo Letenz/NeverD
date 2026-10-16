@@ -1,24 +1,30 @@
-//===- PrototypeDebugContext.h - Signatures from a type library -*- C++ -*-===//
+//===- LocalTypesDebugContext.h - Debug info from local types ---*- C++ -*-===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// A program's debug information with the signatures it lacks taken from
-/// its local types: a PDB of public symbols names NtCreateFile but gives it
-/// no type, where the Windows kernel's headers declare its prototype.  Only
-/// a function the debug information names and leaves untyped takes one; a
-/// typed declaration of the program's own stays as it is.
+/// A program's debug information completed from its local types, which are
+/// the authority on its records:
+/// - the signatures it lacks: a PDB of public symbols names NtCreateFile but
+///   gives it no type, where the Windows kernel's headers declare its
+///   prototype.  Only a function the debug information names and leaves
+///   untyped takes one; a typed declaration of the program's own stays;
+/// - the members of its records, which the decompiler names its accesses
+///   by, so that a member the user renames reads by its new name;
+/// - the C that defines those records, which a decompiled unit holds.
 ///
 //===----------------------------------------------------------------------===//
 
-#ifndef NEVERD_SDK_CAPI_PROTOTYPEDEBUGCONTEXT_H
-#define NEVERD_SDK_CAPI_PROTOTYPEDEBUGCONTEXT_H
+#ifndef NEVERD_SDK_CAPI_LOCALTYPESDEBUGCONTEXT_H
+#define NEVERD_SDK_CAPI_LOCALTYPESDEBUGCONTEXT_H
 
+#include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/types/LocalTypes.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 
@@ -41,12 +47,17 @@ TypeRef decompilerTypeOf(const types::TypeLibrary &Library,
 /// the prototypes say alone.
 llvm::StringSet<> prototypeTypeNames(const types::TypeLibrary &Library);
 
-class PrototypeDebugContext final : public DebugContext {
+class LocalTypesDebugContext final : public DebugContext {
 public:
   /// \p Inner outlives this; \p Types holds the prototypes and the types
   /// they name.
-  PrototypeDebugContext(const DebugContext &Inner,
-                        std::shared_ptr<const types::TypeLibrary> Types);
+  LocalTypesDebugContext(const DebugContext &Inner,
+                         std::shared_ptr<const types::TypeLibrary> Types);
+  /// Takes back the members it gave the debug information's records, so
+  /// that the context made after a change to the library gives them anew.
+  /// The records are the debug information's, which the session's calls,
+  /// one at a time, share: no decompilation reads them meanwhile.
+  ~LocalTypesDebugContext() override;
 
   /// The inner function, its return type and parameters the library's
   /// prototype of its name where the inner context gives neither.
@@ -95,10 +106,10 @@ public:
                                 int64_t Offset) const override {
     return Inner.resolveFramePointerVariableAt(FuncAddr, UsePC, Offset);
   }
-  /// Records this context made carry their members already.
-  void completeType(const TypeRef &Type) const override {
-    Inner.completeType(Type);
-  }
+  /// A record's members for display from the library, where it defines a
+  /// record of the name and size whose members none have been given yet;
+  /// otherwise the debug information's.
+  void completeType(const TypeRef &Type) const override;
   std::optional<TypeSym> resolveType(uint64_t TypeId) const override {
     return Inner.resolveType(TypeId);
   }
@@ -129,13 +140,35 @@ public:
   /// decompiler cannot describe.
   std::optional<FunctionSym> prototype(llvm::StringRef Name) const;
 
+  /// The C that defines \p Records for a decompiled unit
+  /// (CEmitterOptions::RecordDefinitions): each one the library defines, of
+  /// the name and size the unit reads, whose members the unit names as the
+  /// library does, and what these hold by value.
+  CRecordDefinitions definitions(const std::vector<TypeRef> &Records) const;
+
+  /// The library's types the decompiler has read through this context: the
+  /// records whose members it gave and the types units held.  A change to
+  /// one changes what the decompiler prints.
+  llvm::StringSet<> readTypes() const;
+
 private:
+  /// The record the library defines as \p Name, of \p Size bytes unless
+  /// that is unknown.
+  const types::LocalType *definedRecord(llvm::StringRef Name,
+                                        uint16_t Size) const;
+
   const DebugContext &Inner;
   std::shared_ptr<const types::TypeLibrary> Types;
   mutable std::mutex Mutex;
   mutable llvm::StringMap<std::optional<FunctionSym>> Signatures;
+  /// The debug information's records it gave members to.
+  mutable std::vector<TypeRef> Completed;
+  mutable llvm::DenseSet<const NdType *> CompletedRecords;
+  mutable llvm::StringSet<> Read;
+  /// The library's names C spells otherwise, which a unit cannot name.
+  mutable std::optional<llvm::StringSet<>> RenamedInC;
 };
 
 } // namespace neverd::sdk
 
-#endif // NEVERD_SDK_CAPI_PROTOTYPEDEBUGCONTEXT_H
+#endif // NEVERD_SDK_CAPI_LOCALTYPESDEBUGCONTEXT_H

@@ -489,6 +489,39 @@ TEST(TypeRender, LuaExtendsSignsAndNamesWhatItDeclares) {
                              "16) end\n"));
 }
 
+TEST_F(TypeRenderFixture, EmbeddedCDefinesWhatAUnitNames) {
+  // A decompiled unit holds the records it names, what they hold by value,
+  // and declarations of what they only point to, each under a guard.
+  const LocalType *Device = Library->find("_DEVICE");
+  const LocalType *Uses = Library->find("_USES_FORWARD");
+  ASSERT_TRUE(Device && Uses);
+  RenderOptions Options = in(Language::C);
+  Options.Spelling = BuiltinSpelling::Portable;
+  Options.Asserts = true;
+  const LocalType *Roots[] = {Device, Uses};
+  const EmbeddedC Embedded = renderEmbeddedC(*Library, Roots, Options);
+  const std::string &Text = Embedded.Text;
+  EXPECT_FALSE(contains(Text, "#pragma once")) << Text;
+  EXPECT_TRUE(contains(Text, "#ifndef NEVERD_TYPE__DEVICE\n"
+                             "#define NEVERD_TYPE__DEVICE\n"));
+  EXPECT_TRUE(contains(Text, "struct _DEVICE\n{\n"));
+  EXPECT_TRUE(contains(Text, "static_assert(sizeof(struct _DEVICE) == 0x58"));
+  // By value: defined before the record that holds them.
+  EXPECT_LT(Text.find("union _LARGE_INTEGER\n{"),
+            Text.find("struct _DEVICE\n{"));
+  EXPECT_TRUE(contains(Text, "enum _POOL_KIND"));
+  // Only pointed to: declared.
+  EXPECT_TRUE(contains(Text, "struct _FORWARD_ONLY;\n"));
+  EXPECT_FALSE(contains(Text, "struct _FORWARD_ONLY\n{"));
+  EXPECT_TRUE(llvm::is_contained(
+      Embedded.Records, std::pair<std::string, bool>("_DEVICE", false)));
+  EXPECT_TRUE(llvm::is_contained(
+      Embedded.Records, std::pair<std::string, bool>("_LARGE_INTEGER", true)));
+  EXPECT_TRUE(llvm::is_contained(Embedded.Identifiers, "MustSucceed"));
+  EXPECT_TRUE(llvm::is_contained(Embedded.Types, "_PUSH_LOCK"));
+  EXPECT_FALSE(llvm::is_contained(Embedded.Types, "_FORWARD_ONLY"));
+}
+
 TEST_F(TypeRenderFixture, RustAndGoKeepPacking) {
   EXPECT_TRUE(
       contains(render("_PACKED", in(Language::Rust)), "#[repr(C, packed(1))]"));

@@ -1,10 +1,10 @@
-//===- PrototypeDebugContextTests.cpp - Private prototype completion ----===//
+//===- LocalTypesDebugContextTests.cpp - Local types context --------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 
-#include "PrototypeDebugContext.h"
+#include "LocalTypesDebugContext.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -46,7 +46,7 @@ public:
 
 } // namespace
 
-TEST(PrototypeDebugContext, TypesTheFunctionsDebugInformationLeavesUntyped) {
+TEST(LocalTypesDebugContext, TypesTheFunctionsDebugInformationLeavesUntyped) {
   using namespace neverd;
   auto Library = std::make_shared<types::TypeLibrary>();
   ASSERT_TRUE(types::parseCTypes(R"(
@@ -78,7 +78,7 @@ TEST(PrototypeDebugContext, TypesTheFunctionsDebugInformationLeavesUntyped) {
   Typed.Size = 0x10;
   Typed.ReturnType = NdType::makeInt(8, false);
   Names.Functions[0x5000] = Typed;
-  sdk::PrototypeDebugContext Context(Names, Library);
+  sdk::LocalTypesDebugContext Context(Names, Library);
 
   std::optional<FunctionSym> Pair = Context.resolveFunction(0x1000);
   ASSERT_TRUE(Pair.has_value());
@@ -117,4 +117,70 @@ TEST(PrototypeDebugContext, TypesTheFunctionsDebugInformationLeavesUntyped) {
   EXPECT_TRUE(Context.resolveFunction(0x1008)->Params.empty());
   EXPECT_TRUE(Context.resolveFunction(0x5000)->Params.empty());
   EXPECT_EQ(Context.resolveFunction(0x5000)->ReturnType->Size, 8u);
+}
+
+TEST(LocalTypesDebugContext, GivesTheDebugInformationsRecordsTheirMembers) {
+  using namespace neverd;
+  auto Library = std::make_shared<types::TypeLibrary>();
+  ASSERT_TRUE(types::parseCTypes(R"(
+    typedef union _LARGE {
+      struct { ULONG Low; LONG High; };
+      struct { ULONG Low; LONG High; } u;
+      LONGLONG Quad;
+    } LARGE;
+    typedef struct _HEADER {
+      union {
+        struct { UCHAR Type; UCHAR Absolute; };
+        struct { UCHAR TimerType; UCHAR TimerFlags; };
+        LONG Lock;
+      };
+      ULONG Signal;
+    } HEADER;
+    typedef struct _HOLDER { HEADER Header; LARGE Time; void *Next; } HOLDER;
+  )",
+                                 *Library)
+                  .ok());
+  NamesOnlyDebugContext Names;
+  auto Context = std::make_unique<sdk::LocalTypesDebugContext>(Names, Library);
+  // A record the debug information names but gives no members takes the
+  // library's.
+  const TypeRef Holder = NdType::makeNamedRecord("_HOLDER", 24);
+  Context->completeType(NdType::makePtr(Holder));
+  ASSERT_FALSE(Holder->FieldDisplayNames.empty());
+  // An eight-byte read of the union in place is its scalar, not the record
+  // of the same size; a byte of the header names no one member of the
+  // union's alternatives, and is no header.
+  EXPECT_EQ(Holder->displayFieldPathAt(8, 8), "Time.Quad");
+  EXPECT_EQ(Holder->displayFieldPathAt(0, 1), std::nullopt);
+  EXPECT_EQ(Holder->displayFieldPathAt(4, 4), "Header.Signal");
+  EXPECT_EQ(Holder->displayFieldPathAt(16, 8), "Next");
+  EXPECT_TRUE(Context->readTypes().contains("_HOLDER"));
+
+  // Records of another size, and members given already, stay as they are.
+  const TypeRef Smaller = NdType::makeNamedRecord("_HEADER", 4);
+  Context->completeType(Smaller);
+  EXPECT_TRUE(Smaller->FieldDisplayNames.empty());
+  const TypeRef Own = NdType::makeNamedRecord("_LARGE", 8);
+  Own->FieldDisplayNames = {"Theirs"};
+  Own->FieldDisplayOffsets = {0};
+  Own->FieldDisplayTypes = {NdType::makeInt(8, true)};
+  Context->completeType(Own);
+  EXPECT_EQ(Own->FieldDisplayNames, std::vector<std::string>{"Theirs"});
+
+  // A unit holds the records whose members it names as the library does,
+  // and what they hold by value; one named otherwise stays declared.
+  const CRecordDefinitions Defined = Context->definitions({Holder, Own});
+  EXPECT_NE(Defined.Text.find("struct _HOLDER\n{"), std::string::npos)
+      << Defined.Text;
+  EXPECT_NE(Defined.Text.find("#ifndef NEVERD_TYPE__HOLDER"),
+            std::string::npos);
+  EXPECT_EQ(Defined.Records.count("_HOLDER"), 1u);
+  EXPECT_TRUE(Defined.Records.at("_LARGE")) << "held by value, a union";
+  const CRecordDefinitions Otherwise = Context->definitions({Own});
+  EXPECT_TRUE(Otherwise.Text.empty());
+
+  // The context takes back what it gave, for the next to give anew.
+  Context.reset();
+  EXPECT_TRUE(Holder->FieldDisplayNames.empty());
+  EXPECT_EQ(Own->FieldDisplayNames, std::vector<std::string>{"Theirs"});
 }
