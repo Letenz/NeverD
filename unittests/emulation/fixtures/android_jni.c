@@ -870,6 +870,7 @@ int jni_dex_language(int seed, U64 form, U64 *out) {
   out[6] = C(e, int, 150, child, shared);
   Ref equals = C(e, Ref, 33, object, "equals", "(Ljava/lang/Object;)Z");
   args[0] = b;
+  if (form == 3) return C(e, U8, 69, a, child, equals, args);
   out[7] = C(e, U8, 39, a, equals, args);
   out[8] = C(e, U8, 69, a, object, equals, args);
   Ref literal = C(e, Ref, 113, language, "literal", "()Ljava/lang/String;");

@@ -1,5 +1,7 @@
 package runtime.language;
 public class Child extends Base implements Operation {
+    public static int stage = initialize();
+    private static int initialize() { Events.value = Events.value * 10 + 2; return Events.value; }
     public int extra;
     public Child(int n) { this(n, 7); }
     public Child(int n, int e) { super(n); extra = e; }

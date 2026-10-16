@@ -1,2 +1,2 @@
 package runtime.language;
-public interface Operation { long compute(int n); }
+public interface Operation extends ParentOperation {}

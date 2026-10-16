@@ -170,6 +170,14 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       if (JNI.Dex->findMethod(Lookup, false) != DexMethod)
         return failure("JNI nonvirtual method ID does not match class lookup");
     }
+    if (!DexMethod && JNI.Dex) {
+      auto [Params, ReturnType] = mobile::dalvik::prototype(M.Signature);
+      mobile::dalvik::MethodRef Lookup{"L" + (*Class)->ClassName + ";", M.Name,
+                                       Params, ReturnType};
+      if (JNI.Dex->findMethod(Lookup, false))
+        return failure(
+            "JNI nonvirtual intrinsic ID does not match class lookup");
+    }
     // An inherited ID cannot select a different override in the named class.
     if (M.Op == IdentityEquals && (*Class)->ClassName == "java/lang/String")
       return failure("JNI nonvirtual method ID does not match class lookup");

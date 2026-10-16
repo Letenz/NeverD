@@ -184,6 +184,19 @@ def main():
                     )
                 )
             records.append({"case": label, "stop": "returned", "words": 32})
+    options["android"]["arguments"] = [1, 3, address]
+    request = args.output / "nonvirtual-mismatch.request.json"
+    report = args.output / "nonvirtual-mismatch.report.json"
+    request.write_text(json.dumps(options))
+    run([probe, fixture, "android-aarch64-api28-v1", request, report])
+    result = json.loads(report.read_text())
+    if result[
+        "stop_reason"
+    ] != "runtime_failure" or "nonvirtual intrinsic ID" not in result.get(
+        "diagnostic", ""
+    ):
+        raise AssertionError(("nonvirtual-mismatch", result))
+    records.append({"case": "nonvirtual-mismatch", "stop": "runtime_failure"})
     unchanged = all(
         hashlib.sha256(path.read_bytes()).hexdigest() == identities[str(path)]
         for path in inputs

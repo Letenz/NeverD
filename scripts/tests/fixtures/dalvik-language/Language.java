@@ -60,7 +60,7 @@ public final class Language {
             return -1;
         }
         case 12: return Child.class == new Child(seed).getClass() ? Child.class.getName().hashCode() : -1;
-        case 13: { Child c = new Child(seed, 21); return c.value + c.extra + Child.shared; }
+        case 13: { Child c = new Child(seed, 21); return c.value + c.extra + Child.shared + Child.stage + Child.offset(seed); }
         case 14: { Base b = new Child(seed); return b.name().equals("child") && b.equals(new Child(seed)) ? 1 : 0; }
         case 15:
             try { TEXT.charAt(-1); return -1; }
