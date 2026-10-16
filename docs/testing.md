@@ -315,7 +315,8 @@ compiles the result:
 - C and C++ in all four builtin spellings with clang for the MSVC target, and
   the portable spelling for the GNU target too; the C header, which the
   workbench shows as C/C++, compiles as C++ as well;
-- Rust with rustc (64-bit layouts only);
+- Rust with rustc in both of its spellings, exact widths and Windows' names
+  as aliases (64-bit layouts only);
 - Go with `go vet` for Windows.
 
 A missing toolchain is reported and skipped. Without `--binary` it checks the

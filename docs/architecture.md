@@ -95,7 +95,11 @@ stream's member list, or whose members cannot sit where they say
 (`layoutProblem`).
 
 `renderType` and `renderTypes` spell types as C, C++, Rust or Go
-(`TypeLanguages.def`), each member marked with its offset. Every language
+(`TypeLanguages.def`), each member marked with its offset. Builtins take
+the spellings each language has (`BuiltinSpellings.def`): C and C++ name
+them as Windows, IDA or the compiler does, or by exact widths; Rust by exact
+widths or by Windows' names, which a module declares as aliases as wdk-sys
+does; Go by its own exact widths. Every language
 reproduces the library's layout exactly. An explicit filler moves a member
 that the language's own rules would place earlier. Rust and Go read what they
 cannot express through accessors whose arithmetic follows C, signed bitfields

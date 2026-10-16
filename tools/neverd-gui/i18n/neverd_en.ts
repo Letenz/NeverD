@@ -3411,6 +3411,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Exact widths (uint32_t)</translation>
     </message>
     <message>
+        <source>Exact widths (u32)</source>
+        <translation>Exact widths (u32)</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>Filter types by name</translation>
     </message>
@@ -3463,8 +3467,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Export all types…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>How C and C++ name builtin types</translation>
+        <source>How the source names builtin types</source>
+        <translation>How the source names builtin types</translation>
     </message>
     <message>
         <source>Hex offsets</source>

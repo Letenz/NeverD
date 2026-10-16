@@ -196,6 +196,37 @@ TEST_F(TypeRenderFixture, RustNamesAnonymousRecordsAsWindowsRsDoes) {
                              "{\n        (self._bitfield >> 1) & 0x1\n    }"));
 }
 
+TEST_F(TypeRenderFixture, RustTakesWindowsNamesAsAliases) {
+  // Exact widths unless asked, as windows-rs spells them.
+  EXPECT_TRUE(contains(render("_THREAD_LIKE", in(Language::Rust)),
+                       "    pub MiscFlags: i32,"));
+  RenderOptions Options = in(Language::Rust);
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Text = header("_THREAD_LIKE", Options);
+  // The names the types use, declared as wdk-sys declares them, at the
+  // program's widths.
+  EXPECT_TRUE(contains(Text, "\n/// The Windows headers' names of builtin "
+                             "types.\npub type UCHAR = u8;\npub type LONG = "
+                             "i32;\npub type ULONG = u32;\npub type "
+                             "ULONGLONG = u64;\n"))
+      << Text;
+  EXPECT_TRUE(contains(Text, "    pub Header: ULONGLONG,"));
+  EXPECT_TRUE(contains(Text, "    pub MiscFlags: LONG,"));
+  EXPECT_TRUE(contains(Text, "    pub Tail: [UCHAR; 3],"));
+  // A bitfield reads as its own type; its storage stays a width.
+  EXPECT_TRUE(contains(Text, "    pub _bitfield: u32,"));
+  EXPECT_TRUE(
+      contains(Text, "    pub const fn ReadyTransition(&self) -> ULONG {"));
+  // A spelling Rust does not take renders as its default.
+  Options.Spelling = BuiltinSpelling::IDA;
+  EXPECT_TRUE(
+      contains(header("_THREAD_LIKE", Options), "    pub MiscFlags: i32,"));
+  EXPECT_EQ(spellingOf(Options), BuiltinSpelling::Portable);
+  EXPECT_EQ(spellingsText(Language::Rust), "windows or portable");
+  EXPECT_EQ(spellingsText(Language::Go), "portable");
+  EXPECT_EQ(spellingsText(Language::C), "windows, ida, keywords or portable");
+}
+
 TEST_F(TypeRenderFixture, RustAndGoKeepPacking) {
   EXPECT_TRUE(
       contains(render("_PACKED", in(Language::Rust)), "#[repr(C, packed(1))]"));
