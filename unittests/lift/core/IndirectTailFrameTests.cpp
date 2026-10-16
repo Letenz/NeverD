@@ -10,6 +10,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/support/BinaryLoading.h"
 
 #include "llvm/Support/Error.h"
@@ -63,11 +64,17 @@ TEST_F(IndirectTailFrame, ActiveOrUnknownTailFrameRetainsItsIndirectBranch) {
   auto Image = neverd::loadBinary(compileTailFrameFixture().string());
   ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
   for (const char *Name :
-       {"tail_frame_live", "tail_frame_unknown", "tail_frame_join",
-        "tail_link_changed", "tail_link_unrestored", "tail_link_slot_changed",
-        "tail_link_slot_partial", "tail_unknown_alias", "tail_frame_borrowed",
-        "tail_stack_target", "tail_link_target", "tail_frame_loop",
-        "tail_link_loop", "tail_independent_root"}) {
+       {"tail_frame_live",          "tail_frame_unknown",
+        "tail_frame_join",          "tail_link_changed",
+        "tail_link_unrestored",     "tail_link_slot_changed",
+        "tail_link_slot_partial",   "tail_unknown_alias",
+        "tail_frame_borrowed",      "tail_stack_target",
+        "tail_link_target",         "tail_frame_loop",
+        "tail_link_loop",           "tail_independent_root",
+        "tail_exclusive_live",      "tail_exclusive_link_slot",
+        "tail_atomic_link_slot",    "tail_exclusive_escape",
+        "tail_atomic_escape",       "tail_exclusive_link_load",
+        "tail_unmodelled_intrinsic"}) {
     SCOPED_TRACE(Name);
     const auto Low = build(*Image, Name);
     EXPECT_TRUE(hasOpcode(Low, neverd::NdOp::INDIR_BR));
@@ -81,7 +88,8 @@ TEST_F(IndirectTailFrame,
   ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
   for (const char *Name :
        {"tail_leaf", "tail_frame_balanced", "tail_frame_diamond",
-        "tail_link_restored", "tail_loop_balanced"}) {
+        "tail_link_restored", "tail_loop_balanced", "tail_exclusive_release",
+        "tail_exclusive_pair", "tail_lse_atomics", "tail_value_intrinsic"}) {
     SCOPED_TRACE(Name);
     const auto Low = build(*Image, Name);
     EXPECT_FALSE(hasOpcode(Low, neverd::NdOp::INDIR_BR));
@@ -226,6 +234,38 @@ TEST_F(IndirectTailFrame, UnresolvedLiveFrameCannotPublishACallReturn) {
   }
 }
 
+// The refcount release before libc++'s virtual tail call reaches every C
+// route as a call through the vtable slot it loads, not as a trap.
+TEST_F(IndirectTailFrame, ExclusiveReleaseCallsItsVirtualSlotInEveryRoute) {
+  const auto Object = compileTailFrameFixture();
+  for (unsigned Route : {0u, 1u, 2u}) {
+    SCOPED_TRACE(Route);
+    const auto File = tmpFile("tail-release-" + std::to_string(Route) + ".c");
+    std::vector<std::string> Args = {"decompile", Object.string(),
+                                     "--func",    "tail_exclusive_release",
+                                     "-o",        File.string()};
+    if (Route)
+      Args.push_back("--llvm");
+    if (Route == 2)
+      Args.push_back("--no-opt");
+    const auto Recovered = exec(ndBin(), Args);
+    ASSERT_TRUE(Recovered.ok()) << Recovered.err;
+    std::ifstream Input(File);
+    const std::string Source((std::istreambuf_iterator<char>(Input)), {});
+    EXPECT_EQ(Source.find("unresolved indirect branch"), std::string::npos)
+        << Source;
+    EXPECT_NE(Source.find("(*(void **)((uintptr_t)(*(void **)(arg0)) + 32)))("),
+              std::string::npos)
+        << Source;
+    if (Route)
+      continue;
+    const auto Compiled =
+        exec(NEVERD_TEST_CLANG, {"-target", "aarch64-linux-gnu",
+                                 "-fsyntax-only", "-w", File.string()});
+    EXPECT_TRUE(Compiled.ok()) << Compiled.err << "\n" << Source;
+  }
+}
+
 TEST_F(IndirectTailFrame, IncompleteOrExhaustedGuardPublishesNoCandidate) {
   using namespace neverd;
   const auto &TRI = getTargetRegInfo(Arch::AArch64);
@@ -270,6 +310,75 @@ TEST_F(IndirectTailFrame, IncompleteOrExhaustedGuardPublishesNoCandidate) {
   Incomplete.Blocks[0].Succs.push_back(1);
   EXPECT_TRUE(
       restoredAArch64IndirectTailFrames(Incomplete, BinaryFormat::ELF).empty());
+}
+
+// An exclusive or atomic intrinsic names its address and the value it writes
+// only in the exact shape the AArch64 lifter emits; anything else keeps the
+// guard's refusal.
+TEST(LowIntrinsicMemoryOperands, DecodeOnlyTheLiftedShapes) {
+  using namespace neverd;
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  const NdVar Address = NdVar::reg(TRI.IntParamRegs[1], 8);
+  const NdVar Value = NdVar::reg(TRI.IntParamRegs[2], 8);
+  const NdVar Width = NdVar::cst(8, 2);
+  const auto make = [](Intrinsic Id, NdVar Output,
+                       std::initializer_list<NdVar> Inputs) {
+    LowOp Op;
+    Op.Opcode = NdOp::INTRINSIC;
+    Op.Output = Output;
+    Op.addInput(NdVar::cst(static_cast<uint64_t>(Id), 2));
+    for (const NdVar &Input : Inputs)
+      Op.addInput(Input);
+    return Op;
+  };
+
+  const LowOp Load =
+      make(Intrinsic::A64_Ldaxr, NdVar::tmp(0, 8), {Address, Width});
+  const auto Loaded = lowIntrinsicMemoryOperands(Load);
+  ASSERT_TRUE(Loaded.Complete);
+  EXPECT_EQ(Loaded.Address, &Load.Inputs[1]);
+  EXPECT_EQ(Loaded.StoredValue, nullptr);
+  EXPECT_EQ(Loaded.AccessSize, 8);
+
+  const LowOp Store =
+      make(Intrinsic::A64_Stlxr, NdVar::reg(TRI.IntParamRegs[3], 4),
+           {Value, Address, Width});
+  const auto Stored = lowIntrinsicMemoryOperands(Store);
+  ASSERT_TRUE(Stored.Complete);
+  EXPECT_EQ(Stored.Address, &Store.Inputs[2]);
+  EXPECT_EQ(Stored.StoredValue, &Store.Inputs[1]);
+
+  const LowOp Combine = make(Intrinsic::A64_AtomicOr, NdVar::tmp(0, 8),
+                             {Value, Address, Width, NdVar::cst(5, 1)});
+  const auto Combined = lowIntrinsicMemoryOperands(Combine);
+  ASSERT_TRUE(Combined.Complete);
+  EXPECT_EQ(Combined.Address, &Combine.Inputs[2]);
+  EXPECT_EQ(Combined.StoredValue, &Combine.Inputs[1]);
+
+  const LowOp Malformed[] = {
+      // The loaded value disagrees with the access width.
+      make(Intrinsic::A64_Ldaxr, NdVar::tmp(0, 4), {Address, Width}),
+      // The width is not a constant, or is missing.
+      make(Intrinsic::A64_Ldaxr, NdVar::tmp(0, 8), {Address, Value}),
+      make(Intrinsic::A64_Ldaxr, NdVar::tmp(0, 8), {Address}),
+      // The stored value is narrower than the access.
+      make(Intrinsic::A64_Stlxr, NdVar::tmp(0, 4),
+           {NdVar::reg(TRI.IntParamRegs[2], 4), Address, Width}),
+      // The ordering is not a constant.
+      make(Intrinsic::A64_AtomicOr, NdVar::tmp(0, 8),
+           {Value, Address, Width, Value}),
+      // A supervisor call has no memory contract.
+      make(Intrinsic::Svc, NdVar::reg(TRI.IntParamRegs[0], 8),
+           {NdVar::cst(0, 2)}),
+  };
+  for (const LowOp &Op : Malformed)
+    EXPECT_FALSE(lowIntrinsicMemoryOperands(Op).Complete);
+  LowOp Segmented = Load;
+  Segmented.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+  EXPECT_FALSE(lowIntrinsicMemoryOperands(Segmented).Complete);
+  LowOp Plain = Load;
+  Plain.Opcode = NdOp::LOAD;
+  EXPECT_FALSE(lowIntrinsicMemoryOperands(Plain).Complete);
 }
 
 } // namespace

@@ -2055,8 +2055,14 @@ Whole-word copies, bounded pointer-width stack arithmetic and exact spills
 carry these identities; all reaching predecessors and backedges must converge.
 Independent roots start unknown. Partial or overlapping writes invalidate whole
 restoration words; unknown memory writes and exposed frame storage invalidate
-spill evidence. Unsupported effects, incomplete graphs and exhausted work
-retain the original indirect branch. A frame description that only unwinds
+spill evidence. Atomic read-modify-writes and exclusive loads and stores, whose
+operands `lowMemoryOperands` and `lowIntrinsicMemoryOperands` decode, write only
+their output and the memory at their address: a store among them is an unknown
+memory write, since its ordering and an exclusive store's possible failure keep
+that memory out of the spill facts, and the value one returns is untracked.
+Value-only intrinsics are ordinary values. Other intrinsics, unsupported
+effects, incomplete graphs and exhausted work retain the original indirect
+branch. A frame description that only unwinds
 the frame (`ExceptionFunction::describesUnwindOnly`: no personality routine,
 handler data, LSDA or language table, as for the FDE every function of an
 ordinary shared library has) runs no handler, so it does not prevent the
@@ -3137,6 +3143,13 @@ neither escapes nor ABI call barriers, but their results retain input provenance
 Unlisted, memory-reading and malformed intrinsics retain conservative effects,
 including address operands held in temporaries rather than ABI registers. This
 contract is stronger than eligibility for dead-code elimination.
+`intrinsicMemoryAccessRoles` names the operands of intrinsics whose effects are
+their output and one access to the memory at an explicit address: the AArch64
+exclusive loads and stores and the scalar LSE read-modify-writes.
+`lowIntrinsicMemoryOperands` checks their lifted shape (constant width and
+ordering operands, a loaded or stored value of that width, no segment
+annotation) and returns the view `lowMemoryOperands` gives LOAD, STORE and the
+atomic opcodes; any other intrinsic yields an incomplete view.
 
 COFF loading records validated DWARF FDE extents before heuristic function
 discovery. Those extents also bound named symbols with no size. Debug sections

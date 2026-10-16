@@ -1,4 +1,5 @@
 // Independently constructed native tail-transfer and live-frame controls.
+.arch armv8.1-a
 .text
 .macro BEGIN name
 .p2align 2
@@ -147,6 +148,112 @@ BEGIN tail_link_restored
   ldp x29,x30,[sp],#16
   br x0
 END tail_link_restored
+
+// libc++'s __shared_weak_count::__release_weak: an acquire load and an
+// exclusive decrement loop before the virtual tail call.
+BEGIN tail_exclusive_release
+  add x8,x0,#16
+  ldar x9,[x8]
+  cbz x9,.Lrelease_call
+.Lrelease_retry:
+  ldaxr x9,[x8]
+  sub x10,x9,#1
+  stlxr w11,x10,[x8]
+  cbnz w11,.Lrelease_retry
+  cbz x9,.Lrelease_call
+  ret
+.Lrelease_call:
+  ldr x8,[x0]
+  ldr x1,[x8,#32]
+  br x1
+END tail_exclusive_release
+
+BEGIN tail_exclusive_pair
+.Lpair_retry:
+  ldaxp x2,x3,[x1]
+  add x2,x2,#1
+  stlxp w4,x2,x3,[x1]
+  cbnz w4,.Lpair_retry
+  br x0
+END tail_exclusive_pair
+
+BEGIN tail_lse_atomics
+  ldaddal x2,x3,[x1]
+  swpal x2,x3,[x1]
+  casal x2,x3,[x1]
+  ldclral x2,x3,[x1]
+  stadd x2,[x1]
+  br x0
+END tail_lse_atomics
+
+BEGIN tail_value_intrinsic
+  rbit x1,x1
+  br x0
+END tail_value_intrinsic
+
+BEGIN tail_exclusive_live
+  sub sp,sp,#16
+.Llive_retry:
+  ldaxr x2,[x1]
+  stlxr w3,x2,[x1]
+  cbnz w3,.Llive_retry
+  br x0
+END tail_exclusive_live
+
+// An exclusive store or an atomic swap may overwrite the saved link word.
+BEGIN tail_exclusive_link_slot
+  stp x29,x30,[sp,#-16]!
+  add x2,sp,#8
+.Llink_slot_retry:
+  ldaxr x3,[x2]
+  stlxr w4,x1,[x2]
+  cbnz w4,.Llink_slot_retry
+  ldp x29,x30,[sp],#16
+  br x0
+END tail_exclusive_link_slot
+
+BEGIN tail_atomic_link_slot
+  stp x29,x30,[sp,#-16]!
+  add x2,sp,#8
+  swpal x1,x3,[x2]
+  ldp x29,x30,[sp],#16
+  br x0
+END tail_atomic_link_slot
+
+// A frame address published through an exclusive store or an atomic swap
+// lets a later callee rewrite the saved link word, though no argument
+// register carries it.
+BEGIN tail_exclusive_escape
+  mov x9,sp
+.Lescape_retry:
+  ldaxr x10,[x2]
+  stlxr w11,x9,[x2]
+  cbnz w11,.Lescape_retry
+  stp x29,x30,[sp,#-16]!
+  bl tail_helper
+  ldp x29,x30,[sp],#16
+  br x0
+END tail_exclusive_escape
+
+BEGIN tail_atomic_escape
+  mov x9,sp
+  swpal x9,x10,[x2]
+  stp x29,x30,[sp,#-16]!
+  bl tail_helper
+  ldp x29,x30,[sp],#16
+  br x0
+END tail_atomic_escape
+
+BEGIN tail_exclusive_link_load
+  ldaxr x30,[x1]
+  br x0
+END tail_exclusive_link_load
+
+// A supervisor call has no explicit effect contract.
+BEGIN tail_unmodelled_intrinsic
+  svc #0
+  br x0
+END tail_unmodelled_intrinsic
 
 BEGIN tail_helper
   ret
