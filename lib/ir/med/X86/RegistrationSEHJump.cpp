@@ -26,15 +26,17 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
   if (!Function.RegistrationStates || Function.SkippedSSA)
     return std::nullopt;
   const auto &States = *Function.RegistrationStates;
-  const auto Bound = getX86RegistrationSEHBoundCalls(Function);
-  if (!Bound)
-    return std::nullopt;
   if (!States.SEHJumpCapturesComplete || !States.SEHJumpResumptionsComplete ||
       States.HasSEHJumpCaptures != !States.SEHJumpCaptures.empty())
     return std::nullopt;
   std::map<va_t, X86RegistrationSEHJumpCall> Result;
   if (States.SEHJumpCaptures.empty() && States.SEHJumpResumptions.empty())
     return Result;
+  // An empty jump protocol needs no callee ABI binding. Parent-exit and
+  // finally-register proofs also run before SSA resolves unrelated imports.
+  const auto Bound = getX86RegistrationSEHBoundCalls(Function);
+  if (!Bound)
+    return std::nullopt;
   if (!States.Complete || !States.CallbackStatesComplete ||
       !States.RegistrationLifetimeComplete || !Function.ExceptionMetadata ||
       !Function.ExceptionMetadata->Registration)
