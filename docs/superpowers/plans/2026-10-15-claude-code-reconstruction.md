@@ -486,3 +486,28 @@ candidate runs pass the same seven configuration and 22 behavior comparisons,
 without suppressing date text, missing fields, timeouts or protocol errors.
 This extends layout qualification beyond macOS ARM64 while retaining the
 same bounded feature scope; it does not add a universal equivalence claim.
+
+macOS x64 and Linux ARM64 glibc now also pass complete all-readable module
+readback, three startup checks and freshly paired seven configuration plus
+22 behavior comparisons. The macOS x64 binary is 138,935,696 bytes, SHA-256
+`263da018bd5b55e058d540f8a2e25e1126cf6d4831bc9fc2adc7642b1076d3c3`;
+Linux ARM64 is 146,590,504 bytes, SHA-256
+`167d6fa4c8b3a275b905029c64a1c7c40ba119f5d01b3a161c37b24830de82e7`.
+The first macOS x64 version launch took 56.848 seconds under the qualified
+Rosetta profile. This timing is retained rather than treated as performance
+equivalence. The two musl layouts have completed builds, full module readback
+and startup checks; their fresh behavior comparisons are in progress.
+
+Both Windows all-readable cross-builds have also passed full 2,586-row
+readback. The personal Actions workflow now builds the existing source
+recovery owner from a pinned public NeverD commit, qualifies five owner tests,
+and provides the tool with its matching CRT to each native runner. The runner
+verifies the complete tool bundle, applies seven authored formatting controls,
+and formats all 2,343 captured JavaScript modules. Native readable inventories
+and two independent builds must match the local pinned results before four
+startup and 29 offline comparisons. Windows ARM64 uses x64 emulation for the
+analysis tool, while the client runtime and builds remain native ARM64.
+This new workflow is not yet accepted; its passing previous baseline/editable
+run remains a separate milestone. Captured source and client executables are
+not uploaded; a separate artifact contains only the public formatter, licenses,
+owner-test result and runtime dependencies.
