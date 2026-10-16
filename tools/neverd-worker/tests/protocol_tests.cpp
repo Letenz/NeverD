@@ -47,6 +47,43 @@ int main() {
         "Incorrect network byte order");
   check(parseJson(std::string_view(encoded).substr(4)) == request,
         "Frame round trip failed");
+  const Json payload{
+      {"text", std::string("a\0b", 3) + "\"\\\n中文"},
+      {"items", {nullptr, true, std::numeric_limits<std::uint64_t>::max()}}};
+  const EncodedJson saved(payload);
+  for (const auto *id : {"first", "second\"\\\n"}) {
+    Json envelope{{"request_id", id},
+                  {"payload", nullptr},
+                  {"cancellation_requested", true}};
+    const auto wire = frame(envelope, saved);
+    envelope["payload"] = payload;
+    check(parseJson(std::string_view(wire).substr(4)) == envelope,
+          "Encoded payload changed data or reused an old response envelope");
+    check(frameSize(reinterpret_cast<const unsigned char *>(wire.data())) ==
+              wire.size() - 4,
+          "Encoded payload frame has an incorrect length");
+  }
+  const Json invalidText{{"text", std::string(1, '\xff')}};
+  const auto ordinary = frame(Json{{"payload", invalidText}});
+  const auto reused = frame(Json::object(), EncodedJson(invalidText));
+  check(parseJson(std::string_view(ordinary).substr(4)) ==
+            parseJson(std::string_view(reused).substr(4)),
+        "Encoded payload changed invalid UTF-8 replacement");
+  const auto overhead = frame(Json::object(), EncodedJson(Json(""))).size() - 4;
+  const auto full =
+      frame(Json::object(),
+            EncodedJson(Json(std::string(MaxFrameBytes - overhead, 'x'))));
+  check(full.size() - 4 == MaxFrameBytes,
+        "Exact-limit encoded payload was not framed");
+  rejects(
+      [&] {
+        frame(
+            Json::object(),
+            EncodedJson(Json(std::string(MaxFrameBytes - overhead + 1, 'x'))));
+      },
+      "Over-budget encoded payload was accepted");
+  rejects([&] { frame(Json::array(), saved); },
+          "Encoded payload accepted a non-object envelope");
   rejects(
       [] {
         validateRequest(Json{

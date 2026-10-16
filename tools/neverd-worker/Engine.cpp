@@ -763,6 +763,15 @@ void Engine::invalidate() {
 void Engine::forgetNamedViews() {
   namedViews_.clear();
   namedViewBytes_ = 0;
+  encodedPageBytes_ = 0;
+}
+
+void Engine::forgetEncodedPages() {
+  for (const auto &document : namedViews_) {
+    document->pages.clear();
+    document->pageBytes = 0;
+  }
+  encodedPageBytes_ = 0;
 }
 
 std::shared_ptr<const Engine::NamedView>
@@ -1011,8 +1020,14 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
              (namedViews_.size() >= MaxNamedViews ||
               document->bytes > MaxNamedViewCacheBytes - namedViewBytes_)) {
         namedViewBytes_ -= namedViews_.back()->bytes;
+        encodedPageBytes_ -= namedViews_.back()->pageBytes;
         namedViews_.pop_back();
       }
+      // Keep completed documents ahead of optional encoded pages. Loading a
+      // document may retire pages, but cannot exceed the shared byte limit.
+      if (encodedPageBytes_ >
+          MaxNamedViewCacheBytes - namedViewBytes_ - document->bytes)
+        forgetEncodedPages();
       namedViews_.push_front(document);
       namedViewBytes_ += document->bytes;
     }
@@ -1023,7 +1038,8 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
 std::optional<Json> Engine::namedViewPage(std::uint64_t address,
                                           const std::string &representation,
                                           std::size_t offset, std::size_t limit,
-                                          const Json &options) {
+                                          const Json &options,
+                                          EncodedPayload *encoded) {
   const auto document = namedView(address, representation, options);
   if (!document)
     return std::nullopt;
@@ -1033,6 +1049,13 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
   const std::size_t total = text.empty() ? 0 : namedViewLines_.size();
   const auto start = std::min(offset, total);
   const auto end = start + std::min(limit, total - start);
+  if (encoded)
+    for (auto it = document->pages.begin(); it != document->pages.end(); ++it)
+      if (it->start == start && it->end == end) {
+        *encoded = it->value;
+        document->pages.splice(document->pages.begin(), document->pages, it);
+        return Json(nullptr);
+      }
   const auto startByte = start < namedViewLines_.size() && !text.empty()
                              ? namedViewLines_[start]
                              : text.size();
@@ -1075,6 +1098,32 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
   page["next_offset"] = end == total ? Json(nullptr) : Json(end);
   page["project_id"] = projectId_;
   page["revision"] = revision();
+  if (encoded) {
+    // A page owns only already-serialized payload data. The response envelope
+    // still supplies the current request id, project and cancellation state.
+    *encoded = std::make_shared<EncodedJson>(page);
+    constexpr std::size_t MaxEncodedPages = 64;
+    constexpr std::size_t MaxEncodedBytes = 8 * 1024 * 1024;
+    const auto bytes = (*encoded)->storageBytes() +
+                       sizeof(NamedView::EncodedPage) + 6 * sizeof(void *);
+    if (!namedViews_.empty() && namedViews_.front() == document &&
+        bytes <= MaxEncodedBytes &&
+        bytes <= MaxNamedViewCacheBytes - namedViewBytes_) {
+      if (encodedPageBytes_ > MaxEncodedBytes - bytes ||
+          encodedPageBytes_ > MaxNamedViewCacheBytes - namedViewBytes_ - bytes)
+        forgetEncodedPages();
+      if (document->pages.size() >= MaxEncodedPages) {
+        const auto removed = document->pages.back().bytes;
+        document->pages.pop_back();
+        document->pageBytes -= removed;
+        encodedPageBytes_ -= removed;
+      }
+      document->pages.push_front({start, end, *encoded, bytes});
+      document->pageBytes += bytes;
+      encodedPageBytes_ += bytes;
+    }
+    return Json(nullptr);
+  }
   return page;
 }
 
@@ -1440,6 +1489,20 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
 }
 
 Json Engine::execute(const std::string &operation, const Json &p) {
+  return executeImpl(operation, p, nullptr);
+}
+
+Engine::Reply Engine::executeResponse(const std::string &operation,
+                                      const Json &p) {
+  Reply reply;
+  reply.value = executeImpl(operation, p, &reply.encoded);
+  return reply;
+}
+
+Json Engine::executeImpl(const std::string &operation, const Json &p,
+                         EncodedPayload *encoded) {
+  if (encoded)
+    encoded->reset();
   if (operation == "analysis_snapshot")
     return analysisSnapshot();
   if (operation == "analysis_restore")
@@ -2976,8 +3039,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     if (representation == "low" || representation == "med" ||
         representation == "llvm" || representation == "c" ||
         representation == "llvmc" || spelled) {
-      if (auto named =
-              namedViewPage(address, representation, offset, limit, options))
+      if (auto named = namedViewPage(address, representation, offset, limit,
+                                     options, encoded))
         return std::move(*named);
       if (!options.empty())
         throw Error("unavailable",

@@ -25,7 +25,14 @@ public:
   ~Engine();
   Engine(const Engine &) = delete;
   Engine &operator=(const Engine &) = delete;
+  using EncodedPayload = std::shared_ptr<const EncodedJson>;
+  struct Reply {
+    Json value;
+    EncodedPayload encoded;
+  };
   Json execute(const std::string &operation, const Json &payload);
+  /// The transport uses encoded when present; other operations return value.
+  Reply executeResponse(const std::string &operation, const Json &payload);
   using LoadProgressSink =
       std::function<void(const char *Phase, std::uint64_t Done,
                          std::uint64_t Total, const char *Detail)>;
@@ -69,6 +76,8 @@ public:
   static bool findsSymbolTables();
 
 private:
+  Json executeImpl(const std::string &operation, const Json &payload,
+                   EncodedPayload *encoded);
   neverd_session_t session_ = nullptr;
   std::unique_ptr<ProjectLock> lock_;
   std::unique_ptr<ProjectHistory> history_;
@@ -132,19 +141,30 @@ private:
     std::vector<std::pair<std::size_t, std::size_t>> rowBounds, referenceBounds,
         sourceNameBounds, codeNameBounds;
     std::size_t bytes = 0;
+    // Pages share this document's exact identity and invalidation lifetime.
+    // Their byte allowance is part of the document cache's existing limit.
+    struct EncodedPage {
+      std::size_t start, end;
+      EncodedPayload value;
+      std::size_t bytes;
+    };
+    mutable std::list<EncodedPage> pages;
+    mutable std::size_t pageBytes = 0;
   };
   /// Newest first, bounded by retained bytes as well as document count.
   std::list<std::shared_ptr<const NamedView>> namedViews_;
-  std::size_t namedViewBytes_ = 0;
+  std::size_t namedViewBytes_ = 0, encodedPageBytes_ = 0;
   std::uint64_t namedViewsRevision_ = 0, namedViewsListingGeneration_ = 0;
   void forgetNamedViews();
+  void forgetEncodedPages();
   std::shared_ptr<const NamedView>
   namedView(std::uint64_t address, const std::string &representation,
             const Json &options = Json::object());
   std::optional<Json> namedViewPage(std::uint64_t address,
                                     const std::string &representation,
                                     std::size_t offset, std::size_t limit,
-                                    const Json &options = Json::object());
+                                    const Json &options = Json::object(),
+                                    EncodedPayload *encoded = nullptr);
   /// Function-list order (indices into Listing::functionRows) for the last
   /// filter, sort and listing generation.
   std::string functionOrderKey_;
