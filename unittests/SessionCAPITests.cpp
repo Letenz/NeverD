@@ -3561,15 +3561,21 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
   EXPECT_NE(RustWindows.find("pub Value: ULONG,"), std::string::npos);
   // A spelling the language does not take fails, saying which it takes.
   EXPECT_EQ(neverd_local_types_source(
-                Session, R"({"language":"rust","spelling":"ida"})"),
+                Session, R"({"language":"rust","spelling":"keywords"})"),
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
-            "rust names builtins as windows or portable, not ida");
+            "rust names builtins as portable or windows, not keywords");
   EXPECT_EQ(neverd_local_types_source(
                 Session, R"({"language":"go","spelling":"keywords"})"),
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
-            "go names builtins as windows or portable, not keywords");
+            "go names builtins as portable or windows, not keywords");
+  // IDA's spelling, Microsoft's sized integers, does not render.
+  EXPECT_EQ(neverd_local_types_source(Session,
+                                      R"({"language":"c","spelling":"ida"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "\"spelling\" must be portable, windows or keywords");
   const std::string GoWindows = takeString(neverd_local_types_source(
       Session,
       R"({"language":"go","spelling":"windows","types":["_PACKED"]})"));
@@ -3582,10 +3588,10 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
   EXPECT_NE(Python.find("assert ctypes.sizeof(_PACKED) == 0x7"),
             std::string::npos);
   EXPECT_EQ(neverd_local_types_source(
-                Session, R"({"language":"python","spelling":"ida"})"),
+                Session, R"({"language":"python","spelling":"keywords"})"),
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
-            "python names builtins as windows or portable, not ida");
+            "python names builtins as portable or windows, not keywords");
   // JavaScript reads through a DataView, its accessors checked within
   // their record.
   const std::string Script = takeString(neverd_local_types_source(
@@ -3597,18 +3603,18 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
                 Session, R"({"language":"javascript","spelling":"keywords"})"),
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
-            "javascript names builtins as windows or portable, not keywords");
+            "javascript names builtins as portable or windows, not keywords");
   // Lua reads through string.unpack, its accessors checked as it runs.
   const std::string Lua = takeString(neverd_local_types_source(
       Session, R"({"language":"lua","types":["_PACKED"],"asserts":true})"));
   EXPECT_NE(Lua.find("local T = record(\"_PACKED\", 0x7)"), std::string::npos)
       << Lua;
   EXPECT_NE(Lua.find("check(M._PACKED, function(r)"), std::string::npos);
-  EXPECT_EQ(neverd_local_types_source(Session,
-                                      R"({"language":"lua","spelling":"ida"})"),
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"lua","spelling":"keywords"})"),
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
-            "lua names builtins as windows or portable, not ida");
+            "lua names builtins as portable or windows, not keywords");
   // Prototypes render in C and C++; asked of another language, they fail.
   EXPECT_EQ(neverd_local_types_source(
                 Session, R"({"language":"rust","prototypes":true})"),
@@ -3647,14 +3653,15 @@ TEST(SessionCAPILocalTypes, LanguagesSayHowEachNamesBuiltins) {
     if (Language.getBoolean("prototypes").value_or(false))
       Prototypes += (Prototypes.empty() ? "" : " ") + Id;
   }
+  // Every language spells exact widths unless asked, and lists them first.
   using Choice = std::pair<std::string, std::string>;
-  EXPECT_EQ(Taken["c"], Choice("windows", "windows ida keywords portable"));
-  EXPECT_EQ(Taken["cpp"], Choice("windows", "windows ida keywords portable"));
-  EXPECT_EQ(Taken["rust"], Choice("portable", "windows portable"));
-  EXPECT_EQ(Taken["go"], Choice("portable", "windows portable"));
-  EXPECT_EQ(Taken["python"], Choice("portable", "windows portable"));
-  EXPECT_EQ(Taken["javascript"], Choice("portable", "windows portable"));
-  EXPECT_EQ(Taken["lua"], Choice("portable", "windows portable"));
+  EXPECT_EQ(Taken["c"], Choice("portable", "portable windows keywords"));
+  EXPECT_EQ(Taken["cpp"], Choice("portable", "portable windows keywords"));
+  EXPECT_EQ(Taken["rust"], Choice("portable", "portable windows"));
+  EXPECT_EQ(Taken["go"], Choice("portable", "portable windows"));
+  EXPECT_EQ(Taken["python"], Choice("portable", "portable windows"));
+  EXPECT_EQ(Taken["javascript"], Choice("portable", "portable windows"));
+  EXPECT_EQ(Taken["lua"], Choice("portable", "portable windows"));
   EXPECT_EQ(Reads, "c cpp rust go");
   EXPECT_EQ(Prototypes, "c cpp");
 }

@@ -3397,10 +3397,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Windows 이름(ULONG)</translation>
     </message>
     <message>
-        <source>IDA names (unsigned int)</source>
-        <translation>IDA 이름(unsigned int)</translation>
-    </message>
-    <message>
         <source>C keywords (unsigned long)</source>
         <translation>C 키워드(unsigned long)</translation>
     </message>

@@ -340,7 +340,7 @@ Declared types are covered at each layer:
 Rendered source must also compile with each record's size and offsets checked.
 `scripts/check_type_renders.py` runs `neverd types --all --asserts` and
 compiles the result:
-- C and C++ in all four builtin spellings with clang for the MSVC target, and
+- C and C++ in all three builtin spellings with clang for the MSVC target, and
   the portable spelling for the GNU target too; the C header, which the
   workbench shows as C/C++, compiles as C++ as well;
 - Rust with rustc in both of its spellings, exact widths and Windows' names

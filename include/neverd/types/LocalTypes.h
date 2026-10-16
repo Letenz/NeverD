@@ -49,7 +49,7 @@ enum class BuiltinClass : uint8_t { Void, Bool, Character, Integer, Float };
 /// The builtin types (BuiltinTypes.def).
 enum class Builtin : uint8_t {
 #define NEVERD_BUILTIN_TYPE(Name, Class, Signed, LLP64, LP64, ILP32, Keywords, \
-                            Windows, IDA)                                      \
+                            Windows)                                           \
   Name,
 #include "neverd/types/BuiltinTypes.def"
 };
@@ -61,7 +61,6 @@ struct BuiltinInfo {
   uint8_t Bytes[3]; ///< By DataModel.
   const char *Keywords;
   const char *Windows;
-  const char *IDA;
 };
 
 const BuiltinInfo &builtinInfo(Builtin Type);
