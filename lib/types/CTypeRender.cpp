@@ -806,6 +806,7 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
         Writer.forwardDeclaration(*Found, Declarations);
         Result.Declared.emplace_back(Names.type(Name),
                                      Found->Kind == TypeKind::Union);
+        Result.DeclaredTypes.push_back(Name);
       }
   }
   for (const LocalType *Type : Order) {

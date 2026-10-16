@@ -39,7 +39,12 @@ public:
       : Library(Library), Options(Options), Spelling(spellingOf(Options)),
         Names(Library, Language::Rust) {}
 
-  void definition(const LocalType &Type, std::string &Out);
+  /// \p Type's definition; with \p Paths, how code reaches each member a
+  /// record names in C.
+  void definition(const LocalType &Type, std::string &Out,
+                  std::map<std::string, MemberPath> *Paths = nullptr);
+  /// \p Type, a record, as an opaque type, as the text only points to it.
+  void opaque(const LocalType &Type, std::string &Out) const;
   /// The builtins rendered so far by their Windows names.
   const std::set<Builtin> &aliased() const { return Aliased; }
   /// \p Type as an exact width, as Rust spells it.
@@ -61,6 +66,10 @@ private:
     return Options.Offsets ? offsetText(Byte, Options, Digits) : "";
   }
 
+  /// Records that code reaches \p Place's member through the field \p Hop,
+  /// or the anonymous record it holds.
+  void reach(const Slot &Place, MemberPath::Hop Hop);
+
   const TypeLibrary &Library;
   const RenderOptions &Options;
   const BuiltinSpelling Spelling;
@@ -71,7 +80,25 @@ private:
   uint64_t Base = 0;
   /// The outer record's name.
   std::string Parent;
+  /// Where definition() records the members' paths, the hops from the
+  /// outer record to the one being written, and the field that holds each
+  /// anonymous record written so far, by its type's name.
+  std::map<std::string, MemberPath> *Paths = nullptr;
+  std::vector<MemberPath::Hop> Prefix;
+  std::map<std::string, MemberPath::Hop> Holders;
 };
+
+void RustWriter::reach(const Slot &Place, MemberPath::Hop Hop) {
+  if (!Paths || !Place.Field)
+    return;
+  if (Place.Field->isAnonymous()) {
+    Holders[Place.NestedType] = std::move(Hop);
+    return;
+  }
+  MemberPath &Path = (*Paths)[Place.Field->Name];
+  Path.Hops = Prefix;
+  Path.Hops.push_back(std::move(Hop));
+}
 
 std::string RustWriter::integer(uint64_t Bytes, bool Signed) const {
   if (Bytes != 1 && Bytes != 2 && Bytes != 4 && Bytes != 8 && Bytes != 16)
@@ -233,6 +260,7 @@ void RustWriter::record(const RecordPlan &Plan, bool Outer, std::string &Out) {
       Out += withComment("    pub " + Place.Name + ": " + Type + ",",
                          comment(Base + Place.Byte), Options) +
              "\n";
+      reach(Place, {Place.Name, /*Accessor=*/false});
       UnionSize =
           std::max(UnionSize, Library.sizeOf(*Place.Field->Type).value_or(0));
       break;
@@ -266,7 +294,18 @@ void RustWriter::record(const RecordPlan &Plan, bool Outer, std::string &Out) {
         At = Place.Byte;
     Base = Saved + At;
     Out += '\n';
+    // Its members are reached through the field that holds it.
+    std::map<std::string, MemberPath> *Outer = Paths;
+    const auto Holder = Holders.find(Plan.Nested[I].Name);
+    const bool Held = Paths && Holder != Holders.end();
+    if (Held)
+      Prefix.push_back(Holder->second);
+    else
+      Paths = nullptr;
     record(Plan.Nested[I], /*Outer=*/false, Out);
+    if (Held)
+      Prefix.pop_back();
+    Paths = Outer;
   }
   Base = Saved;
 }
@@ -383,7 +422,17 @@ void RustWriter::enumeration(const std::string &Name, const EnumDef &Enum,
   }
 }
 
-void RustWriter::definition(const LocalType &Type, std::string &Out) {
+void RustWriter::opaque(const LocalType &Type, std::string &Out) const {
+  Out += "/// " + Type.Name + ": only pointed to here.\n";
+  Out += "#[repr(C)]\npub struct " + Names.type(Type.Name) +
+         " {\n    _opaque: [u8; 0],\n}\n";
+}
+
+void RustWriter::definition(const LocalType &Type, std::string &Out,
+                            std::map<std::string, MemberPath> *Members) {
+  Paths = Members;
+  Prefix.clear();
+  Holders.clear();
   const std::string Name = Names.type(Type.Name);
   switch (Type.Kind) {
   case TypeKind::Struct:
@@ -426,6 +475,36 @@ std::string renderRust(const TypeLibrary &Library, const LocalType &Type,
   std::string Out;
   Writer.definition(Type, Out);
   return Out;
+}
+
+EmbeddedSource renderRustEmbedded(const TypeLibrary &Library,
+                                  llvm::ArrayRef<const LocalType *> Defined,
+                                  llvm::ArrayRef<const LocalType *> Declared,
+                                  const RenderOptions &Options) {
+  RustWriter Writer(Library, Options);
+  EmbeddedSource Result;
+  std::string Body;
+  for (const LocalType *Type : Declared) {
+    Body += '\n';
+    Writer.opaque(*Type, Body);
+  }
+  for (const LocalType *Type : Defined) {
+    Body += '\n';
+    std::map<std::string, MemberPath> Paths;
+    Writer.definition(*Type, Body, &Paths);
+    if (Type->Kind == TypeKind::Struct || Type->Kind == TypeKind::Union)
+      Result.Members[Type->Name] = std::move(Paths);
+  }
+  Result.Text = "// " + std::to_string(Defined.size()) +
+                " types, from the program's local types.\n";
+  if (!Writer.aliased().empty()) {
+    Result.Text += "\n/// The Windows headers' names of builtin types.\n";
+    for (Builtin Type : Writer.aliased())
+      Result.Text += "pub type " + std::string(builtinInfo(Type).Windows) +
+                     " = " + Writer.exact(Type, /*Pointee=*/false) + ";\n";
+  }
+  Result.Text += Body;
+  return Result;
 }
 
 std::string renderRustModule(const TypeLibrary &Library,

@@ -26,6 +26,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -103,12 +104,47 @@ struct EmbeddedC {
   std::vector<std::string> Identifiers;
   /// The library's types Text holds, by their names.
   std::vector<std::string> Types;
+  /// The library's records Text only declares, by their names.
+  std::vector<std::string> DeclaredTypes;
 };
 /// \p Roots, records, as another unit holds them, in C: \p Options gives
 /// the spelling, offsets and checks.
 EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
                           llvm::ArrayRef<const LocalType *> Roots,
                           const RenderOptions &Options);
+
+/// How code reaches a member that C names on its own, directly or through
+/// the anonymous records that hold it, in a language that spells the record
+/// otherwise: the fields, and the methods that return a pointer to a
+/// member, that lead to it, the member's own last.
+struct MemberPath {
+  struct Hop {
+    std::string Name;
+    /// A method that returns a pointer to the member, as Go reads a union's
+    /// members and those it cannot align.
+    bool Accessor = false;
+  };
+  std::vector<Hop> Hops;
+};
+
+/// Types as a Rust or Go text holds them beside code that uses them, as a
+/// decompiled function's pseudocode does: no module header (crate
+/// attributes, package, imports).
+struct EmbeddedSource {
+  std::string Text;
+  /// For each record Text defines, by its name, how code reaches each
+  /// member it names in C, by the member's name.  A bit-field, or a member
+  /// the language reads only through a method that takes more, has none.
+  std::map<std::string, std::map<std::string, MemberPath>> Members;
+};
+/// \p Defined as \p Options.Lang, Rust or Go, defines them, and \p Declared,
+/// records the text only points to, as opaque types: as the language
+/// spells the types a C unit holds (EmbeddedC::Types and its declared
+/// records).
+EmbeddedSource renderEmbeddedSource(const TypeLibrary &Library,
+                                    llvm::ArrayRef<const LocalType *> Defined,
+                                    llvm::ArrayRef<const LocalType *> Declared,
+                                    const RenderOptions &Options);
 
 /// Whether \p Lang renders function prototypes: C and C++ do.
 bool rendersPrototypes(Language Lang);

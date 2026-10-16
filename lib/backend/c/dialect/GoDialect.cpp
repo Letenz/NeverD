@@ -823,7 +823,21 @@ private:
       Printed Moved = pointerOffset(value(Base, nullptr), Index, false, PtrTy);
       return Printed{"*" + paren(Moved, PrecUnary), PrecUnary};
     }
-    case ExprKind::Member:
+    case ExprKind::Member: {
+      // A member of one of the program's types, by the fields and methods
+      // that reach it; a method returns a pointer to the member.
+      if (auto Path = localMember(E)) {
+        if (Path->empty())
+          return Printed{"_", PrecAtom};
+        std::string Text = paren(E->Postfix ? value(E->Ops.front(), nullptr)
+                                            : place(E->Ops.front()),
+                                 PrecAtom);
+        for (const SourceDialectLocalTypes::Hop &Hop : *Path)
+          Text += "." + Hop.Name + (Hop.Accessor ? "()" : "");
+        if (Path->back().Accessor)
+          return Printed{"*" + Text, PrecUnary};
+        return Printed{Text, PrecAtom};
+      }
       if (E->Field && E->Field->BitWidth) {
         unsupported("a bit-field");
         return Printed{"_", PrecAtom};
@@ -837,6 +851,7 @@ private:
                            PrecAtom) +
                          "." + E->Text.str(),
                      PrecAtom};
+    }
     case ExprKind::String:
       return Printed{stringLiteral(E), PrecAtom};
     default:
@@ -1436,7 +1451,8 @@ private:
   }
 
   void record(const CType *Ty) {
-    if (!Ty->isRecord() || PrintedRecords.contains(Ty))
+    // The program's types define their records themselves.
+    if (!Ty->isRecord() || PrintedRecords.contains(Ty) || localRecord(Ty))
       return;
     const RecordDef &Record = *Ty->Record;
     // What a Go structure of these fields would not lay out as C does.
