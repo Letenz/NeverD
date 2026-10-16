@@ -4209,10 +4209,10 @@ TEST_F(SessionCAPITest, DebugFilesLoadedAfterTheImageRankAsALoadWouldRankThem) {
   const std::string PDB =
       write("safety_cases_pe_x64.pdb", read("safety_cases_pe_x64.pdb"));
   std::string Map = read("safety_cases_pe_x64.exe.map");
-  const std::string MainRow = "                 main\n";
+  const std::string MainRow = "                 main";
   ASSERT_NE(Map.find(MainRow), std::string::npos);
   Map.replace(Map.find(MainRow), MainRow.size(),
-              "                 map_says_main\n");
+              "                 map_says_main");
   const std::string MapPath = write("safety_cases_pe_x64.exe.map", Map);
   constexpr neverd_va_t Main = 0x140001250;
 
@@ -4282,10 +4282,10 @@ TEST_F(SessionCAPITest, MapReferenceNamesWhatALoadReadsAndHowItHolds) {
   EXPECT_EQ(Map->get("reason"), nullptr);
 
   // A MAP of another layout says where it differs.
-  const std::string Row = "1a70             1a70      351    16 .text\n";
+  const std::string Row = "1a70             1a70      351    16 .text";
   ASSERT_NE(Text.find(Row), std::string::npos);
   Text.replace(Text.find(Row), Row.size(),
-               "1a70             1a70      352    16 .text\n");
+               "1a70             1a70      352    16 .text");
   write("app.map", Text);
   Answer = reference(Image);
   Map = Answer.getObject("map");

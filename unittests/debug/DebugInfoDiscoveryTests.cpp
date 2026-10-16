@@ -1789,16 +1789,22 @@ public:
   ScopedEnvironment(const char *Name, const std::string &Value) : Name(Name) {
     if (const char *Old = std::getenv(Name))
       Previous = Old;
-    ::setenv(Name, Value.c_str(), 1);
+    set(Value.c_str());
   }
-  ~ScopedEnvironment() {
-    if (Previous)
-      ::setenv(Name, Previous->c_str(), 1);
-    else
-      ::unsetenv(Name);
-  }
+  ~ScopedEnvironment() { set(Previous ? Previous->c_str() : nullptr); }
 
 private:
+  void set(const char *Value) {
+#ifdef _WIN32
+    _putenv_s(Name, Value ? Value : "");
+#else
+    if (Value)
+      ::setenv(Name, Value, 1);
+    else
+      ::unsetenv(Name);
+#endif
+  }
+
   const char *Name;
   std::optional<std::string> Previous;
 };
@@ -1826,10 +1832,10 @@ TEST(MapFileTest, AMapThatPlacesASectionElsewhereDescribesAnotherBuild) {
   ScratchDir Dir;
   std::string Text = fixtureText("safety_cases_elf_x64.map");
   // The same link with .text one byte longer.
-  const std::string Row = "1a70             1a70      351    16 .text\n";
+  const std::string Row = "1a70             1a70      351    16 .text";
   const size_t At = Text.find(Row);
   ASSERT_NE(At, std::string::npos);
-  Text.replace(At, Row.size(), "1a70             1a70      352    16 .text\n");
+  Text.replace(At, Row.size(), "1a70             1a70      352    16 .text");
   const MapRead Read = readMapFile(Dir.write("other.map", Text),
                                    fixtureLayout("safety_cases_elf_x64"));
   ASSERT_TRUE(Read.Context);
@@ -1938,11 +1944,11 @@ std::filesystem::path layOutPEWithPDBAndMap(ScratchDir &Dir,
   Dir.writeBytes("safety_cases_pe_x64.pdb",
                  fixtureBytes(safetyFixture("safety_cases_pe_x64.pdb")));
   std::string Map = fixtureText("safety_cases_pe_x64.exe.map");
-  const std::string Main = "                 main\n";
+  const std::string Main = "                 main";
   const size_t At = Map.find(Main);
   EXPECT_NE(At, std::string::npos);
   if (At != std::string::npos)
-    Map.replace(At, Main.size(), "                 map_says_main\n");
+    Map.replace(At, Main.size(), "                 map_says_main");
   Dir.write(MapName, Map);
   return Image;
 }
@@ -2001,10 +2007,10 @@ TEST(LoadDebugInfoTest, AMapOfAnotherBuildIsPassedOverOrRefused) {
       Dir.writeBytes("safety_cases_elf_x64",
                      fixtureBytes(safetyFixture("safety_cases_elf_x64")));
   std::string Text = fixtureText("safety_cases_elf_x64.map");
-  const std::string Row = "1a70             1a70      351    16 .text\n";
+  const std::string Row = "1a70             1a70      351    16 .text";
   const size_t At = Text.find(Row);
   ASSERT_NE(At, std::string::npos);
-  Text.replace(At, Row.size(), "1a70             1a70      352    16 .text\n");
+  Text.replace(At, Row.size(), "1a70             1a70      352    16 .text");
   Dir.write("safety_cases_elf_x64.map", Text);
   auto Img = loadBinary(Image);
   ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());

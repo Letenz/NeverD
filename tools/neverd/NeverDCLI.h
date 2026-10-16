@@ -279,6 +279,7 @@ extern llvm::cl::opt<bool> Verbose;
 extern llvm::cl::opt<bool> JsonOutput;
 extern llvm::cl::opt<bool> NoDebug;
 extern llvm::cl::opt<bool> NoDwarf;
+extern llvm::cl::opt<bool> NoPdb;
 extern llvm::cl::opt<bool> NoSymtab;
 extern llvm::cl::list<std::string> ARMFunctionModeHints;
 extern llvm::cl::opt<std::string> PdbFile;

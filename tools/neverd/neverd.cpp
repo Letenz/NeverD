@@ -154,6 +154,7 @@ static int realMain(int Argc, char *Argv[]) {
   // The debug-symbol search is part of loading, so its policy has to be in
   // place before the load rather than adjusted afterwards.
   neverd_session_set_debug_info_enabled(Sess, NoDebug ? 0 : 1);
+  neverd_session_set_pdb_search(Sess, NoPdb ? 0 : 1);
   neverd_session_set_dwarf_search(Sess, NoDwarf ? 0 : 1);
   neverd_session_set_map_search(Sess, NoMap ? 0 : 1);
   neverd_session_set_symbol_table(Sess, NoSymtab ? 0 : 1);
@@ -168,7 +169,7 @@ static int realMain(int Argc, char *Argv[]) {
   if (SymbolPathOption.getNumOccurrences())
     neverd_session_set_symbol_path(Sess, SymbolPathOption.getValue().c_str());
   // The download goes into a store the load then searches.
-  if (DownloadSymbols && !NoDebug && PdbFile.getValue().empty()) {
+  if (DownloadSymbols && !NoDebug && !NoPdb && PdbFile.getValue().empty()) {
     const auto Report = [](const std::string &Line) {
       if (!JsonOutput)
         errs() << "\r" << Line << "                    \n";
