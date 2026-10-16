@@ -2325,6 +2325,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>请将光标放在函数的参数上以转换它</translation>
     </message>
     <message>
+        <source>Jump to disassembly</source>
+        <translation>跳转到反汇编</translation>
+    </message>
+    <message>
         <source>Synchronize with disassembly</source>
         <translation>与反汇编同步</translation>
     </message>

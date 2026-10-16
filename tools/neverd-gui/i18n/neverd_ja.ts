@@ -2325,6 +2325,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>変換するには関数のパラメーターにカーソルを置いてください</translation>
     </message>
     <message>
+        <source>Jump to disassembly</source>
+        <translation>逆アセンブルへジャンプ</translation>
+    </message>
+    <message>
         <source>Synchronize with disassembly</source>
         <translation>逆アセンブルと同期</translation>
     </message>

@@ -179,7 +179,10 @@ code window showing the same function to the instruction's rows and marks
 them. A code window showing another function stays on it rather than
 decompiling on every step; F5 or Tab opens the new one. The code window's
 context menu turns **Synchronize with disassembly** off to browse apart, and
-the choice is kept. **Tab** from a code window selects its mapped instruction
+the choice is kept; beside it, **Jump to disassembly** shows Tab's key, as
+**Jump to pseudocode** does in the disassembly's menu. Following a cursor costs
+well under a millisecond in a 50,000-line function: neither direction
+decompiles, and the source side only searches the rows it shows. **Tab** from a code window selects its mapped instruction
 in disassembly and moves the focus there; Tab from disassembly selects the
 mapped source row in the last code window used, keeping its representation and
 both panes visible. A folded target row expands, and a new function waits for
