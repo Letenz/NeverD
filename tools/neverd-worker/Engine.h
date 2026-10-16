@@ -68,6 +68,9 @@ public:
   /// Whether the engine ranks local types by the code's accesses through a
   /// pointer (local_types_fit) and names structure offsets by them.
   static bool fitsLocalTypes();
+  /// Whether the engine gives a function the user's C declaration, as IDA's
+  /// Y does (function_type, and "type" in function_edit).
+  static bool typesFunctions();
   /// Whether the engine finds the PDB a PE names before opening it, and
   /// opens a PE without it.
   static bool findsPdbFiles();

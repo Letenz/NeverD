@@ -879,6 +879,22 @@
         <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
         <translation>将操作数显示为本地类型的成员，类型按代码的访问与其吻合的程度排序</translation>
     </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>转换为 struct *(&amp;V)...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>为当前函数或光标处的参数指定 C 类型，输入时即时检查</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>将光标处的参数改为指向本地类型的指针，类型按其访问与之吻合的程度排序</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>设置类型(&amp;Y)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2295,6 +2311,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Local Types</source>
         <translation>本地类型</translation>
+    </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>无法转换参数：%1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>请将光标放在函数内以设置其类型</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>请将光标放在函数的参数上以转换它</translation>
     </message>
     <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
@@ -4046,6 +4074,109 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>write</source>
         <translation>写</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>名称(&amp;N)：</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>指向 %1 的指针，该结构 %n 字节</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>转换为 struct *</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>正在读取代码经由该参数所做的访问…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>参数名称，声明中会保留</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>按函数经由 %1（%2 由此传入）的 %n 次访问落在各类型成员上的情况排序。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>该寄存器</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1，%n 字节</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1，%3 的第 %2 个参数，经 %4 传入。</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1，%3 的第 %2 个参数。</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>应用</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>传入位置</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>第 %1 列：%2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>将函数声明交还给调试信息和分析</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名称</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>正在读取声明…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>可读：%n 个参数</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>设置 %1 的类型</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>反编译器打印的 %1 声明，输入时按本地类型读取。</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>你为 %1 指定的声明，输入时按本地类型读取。</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>函数的声明无法读取，因此不能逐个设置参数类型。请改为设置函数的类型。</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>类型</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>使用分析得出的类型(&amp;A)</translation>
     </message>
 </context>
 </TS>

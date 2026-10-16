@@ -78,6 +78,7 @@ EXPORTS
   ExAllocatePool2
   DbgPrint
   DbgPrintEx
+  vDbgPrintExWithPrefix
   MmGetSystemRoutineAddress
   MmIsAddressValid
   KeRegisterBugCheckReasonCallback
@@ -98,6 +99,7 @@ EXPORTS
   PsLookupProcessByProcessId
   PsLookupThreadByThreadId
   PsGetThreadProcess
+  IoThreadToProcess
   PsIsThreadTerminating
   PsCreateSystemThread
   PsTerminateSystemThread
@@ -129,6 +131,7 @@ EXPORTS
   RtlUnicodeStringToInteger
   PsGetCurrentProcessId
   ExGetPreviousMode
+  PsGetCurrentThreadPreviousMode
   PsGetProcessId
   PsGetCurrentProcess
   PsGetCurrentThread
@@ -280,3 +283,4 @@ ExSetResourceOwnerPointerEx
   memcpy_s
   memmove_s
   RtlImageNtHeader
+  RtlPcToFileHeader

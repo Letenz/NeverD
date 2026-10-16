@@ -1773,3 +1773,7 @@ KernelFileSystem は FILE_OBJECT ごとに provider token を保持します。�
 `KernelModelRuntime` は Unicode ハッシュ、NLS に依存しない共通大文字化、1980 年起点の秒への変換を所有します。`KernelRuntimeCalls` は既存のページプールで文字列を割り当てます。文字列・時刻 API 表がエクスポート、引数数、APC_LEVEL 制約を統一し、フィールドへのアクセス順序は実装側が管理します。
 
 `uppercaseCharacter` は引数幅を縮めてから判定し、既存の `uppercaseUnicodeUnit` に委譲します。CRT と計数文字列 API 表は別の ABI 識別子で同じ映射を使い、アダプターやホストのロケールに別の意味を持たせません。
+
+`KernelModelRuntime` がデバッグ引数の幅と共通のプレフィックス・バッファー公開規則を所有します。通常の可変引数は既存の呼び出し ABI リーダーを使い、明示的な x64 `va_list` アダプターは 8 バイト間隔で要求されたゲストスカラーを検査します。ディスパッチャーとアダプターは書式解析を重複しません。
+
+スレッドクエリの別名は既存のスレッド／プロセスと実行コンテキストの所有者を再利用し、プロセス接続中も一貫します。`RtlPcToFileHeader` はシステムモジュール照会と同じ `LoadedModules` を使います。`ImageRAM` のマッピング範囲はモジュール識別子の代わりになりません。ホスト状態は参照しません。

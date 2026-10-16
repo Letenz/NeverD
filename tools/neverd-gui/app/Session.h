@@ -221,6 +221,17 @@ public:
   bool showsStructOffsets() const {
     return capabilities_.contains(QStringLiteral("operand_struct"));
   }
+  /// Whether the worker's engine gives a function the user's C
+  /// declaration, as IDA's Y does (function_type, function_edit's "type").
+  bool typesFunctions() const {
+    return capabilities_.contains(QStringLiteral("function_type"));
+  }
+  /// Whether it also ranks the local types a parameter points at by the
+  /// code's accesses, as Convert to struct * offers them.
+  bool convertsParameters() const {
+    return typesFunctions() &&
+           capabilities_.contains(QStringLiteral("local_types_fit"));
+  }
   /// Show the operand of the instruction at \p address as a member of the
   /// local type \p type, the register \p delta bytes into it, and the
   /// same in each instruction of \p others: one step of the history for up

@@ -7203,3 +7203,7 @@ of mappings, current/maximum rights, reserved pages and retained file leases.
 `KernelModelRuntime` owns Unicode hashing, the shared NLS-independent uppercase decision and conversion to 1980 epoch seconds. `KernelRuntimeCalls` owns uppercase allocation through the existing paged-string pool. The string/time API tables supply export identity, argument counts and APC_LEVEL admission; field access order remains inside these owners.
 
 `uppercaseCharacter` narrows scalar carriers before admission and delegates to the existing `uppercaseUnicodeUnit` owner. The CRT and counted-string API tables expose the same decision with independent ABI identities; no adapter or host locale supplies a second mapping.
+
+`KernelModelRuntime` owns scalar debug argument widths and the common prefix/buffer publication rule. Native variadic calls use the existing call-ABI reader; the explicit x64 `va_list` adapter checks each requested guest scalar with an eight-byte stride. Neither dispatcher nor adapter duplicates format parsing.
+
+Thread query aliases reuse the existing thread/process and execution-context owners, including during process attachment. `RtlPcToFileHeader` uses `LoadedModules`, alongside system module queries; `ImageRAM` describes mapped regions and is not a substitute for module identity. No host process, thread or module state is consulted.

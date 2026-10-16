@@ -82,6 +82,10 @@ TEST(DriverKernelAPIIRQL, DeviceCreationDeletionAndSymbolicLinksDiffer) {
   expectLimit("IoDeleteSymbolicLink", 0);
   expectLimit("MmGetSystemRoutineAddress", 0);
   expectLimit("RtlGetVersion", 0);
+  expectLimit("IoThreadToProcess", 2);
+  expectLimit("ExGetPreviousMode", 2);
+  expectLimit("PsGetCurrentThreadPreviousMode", 2);
+  expectLimit("RtlPcToFileHeader", 15);
 }
 
 TEST(DriverKernelAPIIRQL,

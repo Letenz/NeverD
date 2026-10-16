@@ -1901,3 +1901,7 @@ KernelFileSystem conserva un provider token per FILE_OBJECT. L’operazione priv
 `KernelModelRuntime` gestisce hash Unicode, conversione comune in maiuscolo indipendente da NLS e secondi dall’epoca 1980. `KernelRuntimeCalls` riusa il proprietario del pool paginato delle stringhe. Le tabelle API definiscono esportazioni, numero di argomenti e APC_LEVEL; l’ordine degli accessi resta nelle implementazioni.
 
 `uppercaseCharacter` riduce gli argomenti prima dell’ammissione e delega a `uppercaseUnicodeUnit`. Le tabelle CRT e Unicode condividono la decisione con identità ABI distinte; adattatori e impostazioni locali dell’host non forniscono una seconda mappatura.
+
+`KernelModelRuntime` possiede le larghezze scalari e la pubblicazione comune di prefisso e buffer. Le chiamate variadiche ordinarie usano il lettore ABI esistente; l’adattatore esplicito x64 `va_list` controlla ogni scalare guest richiesto con passo di otto byte. Dispatcher e adattatore non duplicano l’analisi del formato.
+
+Gli alias riusano i proprietari di thread/processi e contesti anche durante il collegamento a un processo. `RtlPcToFileHeader` usa `LoadedModules` come le query dei moduli di sistema; le regioni di `ImageRAM` non sostituiscono l’identità dei moduli. Non viene consultato stato host.

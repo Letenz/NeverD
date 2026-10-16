@@ -11,7 +11,8 @@
 
 NEVERD_KERNEL_DEBUG_LENGTH("I64", Int64, 64)
 NEVERD_KERNEL_DEBUG_LENGTH("I32", Int32, 32)
-NEVERD_KERNEL_DEBUG_LENGTH("hh", Byte, 8)
+// The kernel formatter repeats the short flag; hh does not select an 8-bit type.
+NEVERD_KERNEL_DEBUG_LENGTH("hh", RepeatedShort, 16)
 NEVERD_KERNEL_DEBUG_LENGTH("ll", LongLong, 64)
 NEVERD_KERNEL_DEBUG_LENGTH("h", Short, 16)
 NEVERD_KERNEL_DEBUG_LENGTH("l", Long, 32)

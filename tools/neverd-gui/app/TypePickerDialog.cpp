@@ -261,16 +261,25 @@ private:
 } // namespace
 
 TypePickerDialog::TypePickerDialog(Session &session, QJsonObject query,
+                                   const QString &parameterName,
                                    QWidget *parent)
-    : QDialog(parent), session_(session), query_(std::move(query)) {
-  setWindowTitle(tr("Structure offset"));
+    : QDialog(parent), session_(session), query_(std::move(query)),
+      printedName_(parameterName),
+      parameter_(query_.contains(QStringLiteral("parameter"))) {
+  setWindowTitle(parameter_ ? tr("Convert to struct *")
+                            : tr("Structure offset"));
   setWindowIcon(icon(QStringLiteral("operand_struct")));
   setSizeGripEnabled(true);
   auto *layout = new QVBoxLayout(this);
+  // A parameter points at a record's start: C declares no pointer into one.
+  if (parameter_)
+    query_.insert(QStringLiteral("shifts"), false);
 
-  subject_ = new QLabel(tr("Reading what the code does through the operand's "
-                           "pointer…"),
-                        this);
+  subject_ = new QLabel(
+      parameter_
+          ? tr("Reading what the code does through the parameter…")
+          : tr("Reading what the code does through the operand's pointer…"),
+      this);
   subject_->setObjectName(QStringLiteral("typePickerSubject"));
   subject_->setWordWrap(true);
   layout->addWidget(subject_);
@@ -346,6 +355,17 @@ TypePickerDialog::TypePickerDialog(Session &session, QJsonObject query,
   summary_ = new QLabel(this);
   summary_->setObjectName(QStringLiteral("typePickerSummary"));
   bottom->addWidget(summary_, 1);
+  if (parameter_) {
+    auto *label = new QLabel(tr("&Name:"), this);
+    name_ = new QLineEdit(printedName_, this);
+    name_->setObjectName(QStringLiteral("typePickerName"));
+    name_->setFont(Theme::instance().codeFont());
+    name_->setToolTip(tr("The parameter's name, which the declaration keeps"));
+    label->setBuddy(name_);
+    bottom->addWidget(label);
+    bottom->addWidget(name_);
+    connect(name_, &QLineEdit::textChanged, this, &TypePickerDialog::preview);
+  }
   auto *buttons = new QDialogButtonBox(this);
   apply_ = buttons->addButton(tr("Apply"), QDialogButtonBox::AcceptRole);
   apply_->setObjectName(QStringLiteral("typePickerApply"));
@@ -378,6 +398,11 @@ TypePickerDialog::TypePickerDialog(Session &session, QJsonObject query,
   search();
 }
 
+QString TypePickerDialog::parameterName() const {
+  const QString name = name_ ? name_->text().trimmed() : QString();
+  return name.isEmpty() ? printedName_ : name;
+}
+
 QStringList TypePickerDialog::others() const {
   if (every_->isHidden() || !every_->isChecked())
     return {};
@@ -407,6 +432,8 @@ void TypePickerDialog::search() {
       payload.insert(it.key(), it.value());
   else
     payload.insert(QStringLiteral("accesses"), accesses_);
+  if (parameter_)
+    payload.insert(QStringLiteral("shifts"), false);
   session_.read(
       QStringLiteral("local_types_fit"), payload, this,
       [this, serial, first](const QJsonObject &reply) {
@@ -442,7 +469,13 @@ void TypePickerDialog::listed(const QJsonObject &payload, bool first) {
                                     .toObject()
                                     .value(QStringLiteral("offset"))
                                     .toInteger();
-    if (target_.isEmpty())
+    if (parameter_)
+      subject_->setText(
+          tr("Types ranked by how the function's %n accesses through %1, "
+             "where %2 arrives, land on their members.",
+             "", int(through.size()))
+              .arg(base.isEmpty() ? tr("the register") : base, printedName_));
+    else if (target_.isEmpty())
       subject_->setText(
           tr("The number %1 as an offset into a structure or union.")
               .arg(number < 0
@@ -505,13 +538,12 @@ void TypePickerDialog::listed(const QJsonObject &payload, bool first) {
 
 void TypePickerDialog::failed(const QString &message, bool first) {
   if (first) {
-    // Without the pointer's accesses the types are searched by name alone.
+    // Without the pointer's accesses the types are searched by name alone,
+    // every one listed until the user types.
     answered_ = true;
     subject_->setText(message);
-    if (!search_->text().trimmed().isEmpty()) {
-      search();
-      return;
-    }
+    search();
+    return;
   }
   list_->clear();
   preview();
@@ -550,8 +582,22 @@ void TypePickerDialog::preview() {
   const QJsonArray fits = candidate.value(QStringLiteral("fits")).toArray();
   const Theme &theme = Theme::instance();
 
+  // What the parameter becomes: a pointer to the type.
+  if (parameter_) {
+    member_->setText(QStringLiteral("%1 *%2").arg(record, parameterName()));
+    member_->setStyleSheet(
+        QStringLiteral("color: %1")
+            .arg(theme.color(ColorRole::ListingStructOffset).name()));
+    memberType_->setText(
+        tr("A pointer to %1, a record of %n bytes", "",
+           int(candidate.value(QStringLiteral("recordSize"))
+                   .toInteger(
+                       candidate.value(QStringLiteral("size")).toInteger())))
+            .arg(record));
+    expression_->clear();
+  }
   // What the operand becomes.
-  const int own = ownAccess();
+  const int own = parameter_ ? -1 : ownAccess();
   if (own >= 0 && own < fits.size()) {
     const QJsonObject fit = fits.at(own).toObject();
     const QString path = fit.value(QStringLiteral("path")).toString();

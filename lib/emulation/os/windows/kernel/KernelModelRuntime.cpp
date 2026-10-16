@@ -180,18 +180,20 @@ struct FormatSpec {
 class Formatter {
   const KernelModel &Model;
   GuestMemory &Memory;
-  ArgumentReader ReadArgument;
+  using TypedArgumentReader =
+      llvm::function_ref<llvm::Expected<uint64_t>(unsigned, unsigned)>;
+  TypedArgumentReader ReadArgument;
   unsigned NextArgument;
   unsigned UsedArguments = 0;
   std::string Output;
 
-  llvm::Expected<uint64_t> argument() {
+  llvm::Expected<uint64_t> argument(unsigned Size) {
     if (UsedArguments == MaxDebugArguments)
       return runtimeError("DbgPrint exceeds the variadic argument limit");
     if (!ReadArgument)
       return runtimeError("DbgPrint variadic argument reader is unavailable");
     ++UsedArguments;
-    return ReadArgument(NextArgument++);
+    return ReadArgument(NextArgument++, Size);
   }
 
   llvm::Error append(llvm::StringRef Text) {
@@ -244,7 +246,7 @@ class Formatter {
     }
     if (Position < Format.size() && Format[Position] == '*') {
       ++Position;
-      auto Width = argument();
+      auto Width = argument(4);
       if (!Width)
         return Width.takeError();
       const int64_t SignedWidth = static_cast<int32_t>(*Width);
@@ -263,7 +265,7 @@ class Formatter {
       ++Position;
       if (Position < Format.size() && Format[Position] == '*') {
         ++Position;
-        auto Precision = argument();
+        auto Precision = argument(4);
         if (!Precision)
           return Precision.takeError();
         const int32_t SignedPrecision = static_cast<int32_t>(*Precision);
@@ -462,7 +464,7 @@ class Formatter {
 
 public:
   Formatter(const KernelModel &Model, GuestMemory &Memory,
-            ArgumentReader ReadArgument, unsigned FirstArgument)
+            TypedArgumentReader ReadArgument, unsigned FirstArgument)
       : Model(Model), Memory(Memory), ReadArgument(ReadArgument),
         NextArgument(FirstArgument) {}
 
@@ -502,7 +504,17 @@ public:
       auto Kind = conversion(Format[Position++]);
       if (!Kind)
         return runtimeError("unsupported DbgPrint conversion specifier");
-      auto Value = argument();
+      // Slots advance by eight bytes on x64, but the kernel reads only the
+      // conversion's scalar width (including byte/WORD character loads).
+      unsigned Size = 8;
+      if (*Kind < Conversion::Pointer)
+        Size = Spec->Bits / 8;
+      else if (*Kind == Conversion::Character)
+        Size =
+            Spec->Length == LengthKind::Wide || Spec->Length == LengthKind::Long
+                ? 2
+                : 1;
+      auto Value = argument(Size);
       if (!Value)
         return Value.takeError();
       if (auto E = render(*Kind, *Spec, *Value))
@@ -511,6 +523,26 @@ public:
     return Output;
   }
 };
+
+std::string debugBuffer(llvm::StringRef Prefix, llvm::StringRef Body) {
+  // The prefix is clipped again for each growing attempt. An empty body can
+  // therefore succeed with only 127 prefix bytes even when the prefix is long.
+  for (unsigned Capacity = 128; Capacity <= MaxDebugBytes; Capacity += 128) {
+    auto Kept = Prefix.take_front(Capacity - 1);
+    if (Body.size() < Capacity - Kept.size()) {
+      std::string Text = (Kept + Body).str();
+      // Successful calls publish strlen(buffer), not the printf byte count.
+      Text.resize(Text.find('\0') == std::string::npos ? Text.size()
+                                                       : Text.find('\0'));
+      return Text;
+    }
+  }
+  // Overflow publishes exactly 511 bytes, even with embedded NUL characters.
+  std::string Text = (Prefix.take_front(MaxDebugBytes - 1) + Body).str();
+  Text.resize(MaxDebugBytes - 2);
+  Text.push_back('\n');
+  return Text;
+}
 } // namespace
 
 llvm::Expected<uint64_t> unicodeOperation(const KernelModel &Model,
@@ -1519,6 +1551,48 @@ llvm::Expected<std::string> formatDebugMessage(const KernelModel &Model,
                                                uint64_t Format,
                                                unsigned FirstArgument,
                                                ArgumentReader ReadArgument) {
-  return Formatter(Model, Memory, ReadArgument, FirstArgument).format(Format);
+  auto Read = [&](unsigned Index, unsigned) -> llvm::Expected<uint64_t> {
+    if (!ReadArgument)
+      return runtimeError("DbgPrint variadic argument reader is unavailable");
+    return ReadArgument(Index);
+  };
+  auto Body = Formatter(Model, Memory, Read, FirstArgument).format(Format);
+  if (!Body)
+    return Body.takeError();
+  return debugBuffer({}, *Body);
+}
+
+llvm::Expected<std::string> formatPrefixedDebugMessage(const KernelModel &Model,
+                                                       GuestMemory &Memory,
+                                                       uint64_t Prefix,
+                                                       uint64_t Format,
+                                                       uint64_t Arguments) {
+  std::string Text;
+  // strlen scans the whole prefix, even if only a small prefix slice is kept.
+  for (uint64_t I = 0;; ++I) {
+    if (auto E = checkBufferRange(Prefix, I + 1))
+      return E;
+    auto Byte = readInteger(Model, Memory, Prefix + I, 1);
+    if (!Byte)
+      return Byte.takeError();
+    if (!*Byte)
+      break;
+    if (*Byte > MaxASCII)
+      return runtimeError("DbgPrint prefix requires an unmodeled code page");
+    if (Text.size() < MaxDebugBytes - 1)
+      Text.push_back(static_cast<char>(*Byte));
+  }
+  auto Read = [&](unsigned Index, unsigned Size) -> llvm::Expected<uint64_t> {
+    const uint64_t Offset = uint64_t(Index) * 8;
+    if (Arguments > UINT64_MAX - Offset)
+      return runtimeError("DbgPrint va_list address overflows");
+    if (auto E = checkBufferRange(Arguments + Offset, Size))
+      return E;
+    return readInteger(Model, Memory, Arguments + Offset, Size);
+  };
+  auto Body = Formatter(Model, Memory, Read, 0).format(Format);
+  if (!Body)
+    return Body.takeError();
+  return debugBuffer(Text, *Body);
 }
 } // namespace neverd::emulation::runtime
