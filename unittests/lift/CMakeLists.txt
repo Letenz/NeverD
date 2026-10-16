@@ -326,6 +326,7 @@ add_neverd_unittest(NeverDLiftTests
   core/MedCallingConvTests.cpp
   core/FPParameterMaskTests.cpp
   core/MedDceImplicitSpTests.cpp
+  core/MedCallLeftoversTests.cpp
   core/MedVariadicTests.cpp
   eh/COFFExceptionTests.cpp
   eh/COFFExceptionARM32UnwindTests.cpp

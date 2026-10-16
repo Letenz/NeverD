@@ -1224,6 +1224,20 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   }
   initializeCxxContinuationPlans(Funcs, BodyMask);
 
+  DirectCallArgumentCounts.clear();
+  for (const auto &Func : Funcs)
+    for (const MedCallInfo &CI : Func.CallInfos) {
+      if (CI.IsIndirect)
+        continue;
+      const size_t Count = CI.Args.size();
+      auto [It, Inserted] =
+          DirectCallArgumentCounts.try_emplace(CI.TargetAddr, Count, Count);
+      if (!Inserted) {
+        It->second.first = std::min(It->second.first, Count);
+        It->second.second = std::max(It->second.second, Count);
+      }
+    }
+
   // PE32 registration prologues push the executable runtime handler address.
   // An import veneer may intentionally have no lifted body. Its checked EH
   // identity still supplies the exact declaration needed by that address use.

@@ -59,8 +59,7 @@ static VOID MappingWorker(PDEVICE_OBJECT Object, PVOID Context) {
     KAPC_STATE Attachment;
     KeStackAttachProcess(Work->Process, &Attachment);
     __try {
-      PUCHAR View = MmMapLockedPagesSpecifyCache(
-          Work->PoolMdl, UserMode, MmCached, NULL, FALSE, NormalPagePriority);
+      PUCHAR View = MmMapLockedPages(Work->PoolMdl, UserMode);
       View[UserMappingByteOffset] = UserMappingWorkerByte;
       Work->Report[0] = Work->Pool[UserMappingByteOffset];
       Work->Report[1] = MmGetSystemAddressForMdlSafe(
@@ -87,13 +86,18 @@ static VOID MappingWorker(PDEVICE_OBJECT Object, PVOID Context) {
 }
 
 static NTSTATUS CheckAliases(PMDL Mdl, PUCHAR Pool, volatile UCHAR *Report) {
+  UNICODE_STRING Routine;
+  RtlInitUnicodeString(&Routine, L"MmMapLockedPages");
+  PVOID(NTAPI * MapLegacy)(PMDL, KPROCESSOR_MODE) = (PVOID(NTAPI *)(
+      PMDL, KPROCESSOR_MODE))MmGetSystemRoutineAddress(&Routine);
+  if (!MapLegacy)
+    return STATUS_PROCEDURE_NOT_FOUND;
   PUCHAR First = NULL, ReadOnly = NULL;
   PMDL Relocked = NULL;
   BOOLEAN Locked = FALSE;
   NTSTATUS Status = STATUS_SUCCESS;
   __try {
-    First = MmMapLockedPagesSpecifyCache(Mdl, UserMode, MmCached, NULL, FALSE,
-                                         NormalPagePriority);
+    First = MmMapLockedPages(Mdl, UserMode);
     ReadOnly =
         MmMapLockedPagesSpecifyCache(Mdl, UserMode, MmCached, NULL, TRUE,
                                      NormalPagePriority | MdlMappingNoWrite);
@@ -118,7 +122,7 @@ static NTSTATUS CheckAliases(PMDL Mdl, PUCHAR Pool, volatile UCHAR *Report) {
       Report[3] |= 2;
     MmUnmapLockedPages(First, Mdl);
     First = NULL;
-    PUCHAR System = MmGetSystemAddressForMdlSafe(Relocked, NormalPagePriority);
+    PUCHAR System = MapLegacy(Relocked, KernelMode);
     if (System && System[0] == UserMappingSecondByte)
       Report[3] |= 4;
   } __except (EXCEPTION_EXECUTE_HANDLER) {

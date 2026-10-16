@@ -2069,6 +2069,10 @@ private:
   /// whose symbol spells one is another function, which a call reaches by its
   /// own name.
   std::set<std::string> PEImportCNames;
+  /// The fewest and the most arguments the module's calls pass each direct
+  /// call target.  A declaration made from one call's arguments would cut
+  /// another call's.
+  std::map<va_t, std::pair<size_t, size_t>> DirectCallArgumentCounts;
   std::map<va_t, std::string> FuncNames;
   // Ordinary LLVM blocks are created for every body-emitted MedFunc before
   // any body operation runs.  This makes blockaddress resolution independent

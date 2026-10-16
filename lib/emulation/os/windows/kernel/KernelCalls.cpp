@@ -107,6 +107,7 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   case KernelAPIKind::MmUnlockPages:
   case KernelAPIKind::MmGetSystemAddressForMdlSafe:
   case KernelAPIKind::MmMapLockedPagesSpecifyCache:
+  case KernelAPIKind::MmMapLockedPages:
   case KernelAPIKind::MmUnmapLockedPages:
   case KernelAPIKind::MmProtectMdlSystemAddress:
     // Complete image pages already belong to the recovered file. Their
@@ -155,6 +156,7 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
       Kind != KernelAPIKind::ProbeForWrite &&
       Kind != KernelAPIKind::MmProbeAndLockPages &&
       Kind != KernelAPIKind::MmMapLockedPagesSpecifyCache &&
+      Kind != KernelAPIKind::MmMapLockedPages &&
       Kind != KernelAPIKind::MmGetSystemAddressForMdlSafe &&
       Kind != KernelAPIKind::MmUnmapLockedPages &&
       Kind != KernelAPIKind::RtlCopyMemory &&
@@ -445,6 +447,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   }
   case KernelAPIKind::MmMapLockedPagesSpecifyCache:
     return mapMDL(A);
+  case KernelAPIKind::MmMapLockedPages:
+    return mapMDL({A[0], A[1], MmCached, 0, 1, HighPagePriority});
   case KernelAPIKind::MmGetSystemAddressForMdlSafe: {
     return mapLockedPages(A[0], static_cast<uint32_t>(A[1]), true);
   }

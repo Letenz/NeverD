@@ -217,6 +217,8 @@ NEVERD_KERNEL_IRQL_API(MmAllocatePagesForMdlEx, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmFreePagesFromMdl, Dispatch)
 NEVERD_KERNEL_IRQL_API(KeFlushIoBuffers, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmMapLockedPagesSpecifyCache, Dispatch)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-mmmaplockedpages
+NEVERD_KERNEL_IRQL_API(MmMapLockedPages, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmGetSystemAddressForMdlSafe, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmUnmapLockedPages, Dispatch)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-mmprotectmdlsystemaddress

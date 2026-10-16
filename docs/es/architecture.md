@@ -1908,3 +1908,5 @@ KernelFileSystem mantiene un provider token por FILE_OBJECT. La operación priva
 `KernelModelRuntime` posee los anchos escalares y la publicación común de prefijo y búfer. Las llamadas variádicas normales usan el lector ABI existente; el adaptador explícito x64 `va_list` valida cada escalar invitado solicitado con pasos de ocho bytes. El despachador y el adaptador no duplican el análisis del formato.
 
 Los alias reutilizan los propietarios de hilos/procesos y contextos, incluso durante la vinculación de procesos. `RtlPcToFileHeader` usa `LoadedModules`, igual que las consultas de módulos del sistema; las regiones de `ImageRAM` no sustituyen la identidad del módulo. No se consulta estado del host.
+
+`KernelMDLCalls` normaliza la entrada antigua al mapeador existente de seis argumentos. `KernelPhysicalMemory` y los registros MDL siguen gestionando caché, identidad física, permisos y duración. Solo los alias de imagen del núcleo liberados por completo no dejan dependencia del entorno; las vistas de usuario la conservan.
