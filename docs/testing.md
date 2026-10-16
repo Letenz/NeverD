@@ -265,7 +265,11 @@ NEVERD_SOURCE_DIALECT=go \
 
 `NeverDSourceDialectTests` checks C++ symbol validation, STL aliases, preserved
 custom template arguments, ATL names, and the C exception projection's native
-calls and handlers. `NeverDSessionCAPITests` checks detected defaults, explicit
+calls and handlers. `ReadsTheDefinitionsOfTheProgramsTypes` reads a unit's
+local types definitions back in C as written, whole in C++, and in Rust and
+Go as far as their structures lay them out, saying why for the rest. Decompiled
+kernel units read back the same way: `NEVERD_SOURCE_DIALECT_CORPUS` on the
+units `scripts/check_decompiled_types.py --keep` writes. `NeverDSessionCAPITests` checks detected defaults, explicit
 language pages and emission caches; `NeverDGuiController` checks the C++ title,
 switching back to C, and absence of a redundant C choice in C-only images.
 `NeverDDebugInfoTests` compares the extent sweep with a pairwise policy oracle,

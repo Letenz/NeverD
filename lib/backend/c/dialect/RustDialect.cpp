@@ -470,6 +470,10 @@ private:
       return Printed{"align_of::<" + type(E->Written) + ">() as " + type(E->Ty),
                      PrecCast};
     case ExprKind::Offsetof:
+      if (E->ThroughAnonymous) {
+        unsupported("a member of an anonymous structure or union");
+        return Printed{"_", PrecAtom};
+      }
       return Printed{"offset_of!(" + type(E->Written) + ", " + E->Text.str() +
                          ") as " + type(E->Ty),
                      PrecCast};
@@ -932,6 +936,14 @@ private:
     }
     case ExprKind::Member: {
       const Expr *Base = E->Ops.front();
+      if (E->Field && E->Field->BitWidth) {
+        unsupported("a bit-field");
+        return Printed{"_", PrecAtom};
+      }
+      if (E->ThroughAnonymous) {
+        unsupported("a member of an anonymous structure or union");
+        return Printed{"_", PrecAtom};
+      }
       if (E->Postfix)
         return Printed{"(*" + paren(value(Base, nullptr), PrecUnary) + ")." +
                            E->Text.str(),
@@ -1466,15 +1478,24 @@ private:
         break;
       case DeclKind::Typedef:
         // Rust names a record and its type alike: a typedef that names a
-        // record by its own tag declares the record.
-        if (D->Ty->isRecord() && type(D->Ty) == escapeIdentifier(D->Name))
-          record(D->Ty);
-        else if (!D->Ty->isInteger())
+        // record by its own tag is the record, which its definition
+        // defines, or which the typedef declares opaque.
+        if (D->Ty->isRecord() && type(D->Ty) == escapeIdentifier(D->Name)) {
+          if (!D->Ty->Record->Complete)
+            record(D->Ty);
+        } else if (!D->Ty->isInteger())
           line("type " + escapeIdentifier(D->Name) + " = " + type(D->Ty) + ";");
         break;
       case DeclKind::Record:
         record(D->Ty);
         break;
+      case DeclKind::Enumeration:
+        // C's enumeration is an int and its enumerators int constants.
+        for (const Decl *Enumerator : D->Fields)
+          line("const " + escapeIdentifier(Enumerator->Name) +
+               ": i32 = " + std::to_string(*Enumerator->Value) + ";");
+        break;
+      case DeclKind::Enumerator:
       case DeclKind::Parameter:
         break;
       }
@@ -1565,17 +1586,35 @@ private:
   }
 
   void record(const CType *Ty) {
-    if (!Ty->isRecord() || !PrintedRecords.insert(Ty).second)
+    if (!Ty->isRecord() || PrintedRecords.contains(Ty))
       return;
-    line("#[repr(C)]");
+    const RecordDef &Record = *Ty->Record;
+    // What a Rust structure of these fields would not lay out as C does.
+    if (Record.Union)
+      return unsupported("a union");
+    for (const RecordField &Field : Record.Fields) {
+      if (Field.BitWidth)
+        return unsupported("a bit-field");
+      if (Field.isAnonymousRecord())
+        return unsupported("an anonymous structure or union");
+      if (Field.Type->Volatile)
+        return unsupported("a volatile member");
+    }
+    PrintedRecords.insert(Ty);
+    std::string Repr = "C";
+    if (Record.Pack)
+      Repr += ", packed(" + std::to_string(Record.Pack) + ")";
+    if (Record.Alignment)
+      Repr += ", align(" + std::to_string(Record.Alignment) + ")";
+    line("#[repr(" + Repr + ")]");
     openBlock("struct " + type(Ty));
     // A record the text only declares stays opaque: its address passes.
-    if (!Ty->Record->Complete) {
+    if (!Record.Complete) {
       line("_opaque: [u8; 0],");
       closeBlock();
       return;
     }
-    for (const RecordField &Field : Ty->Record->Fields)
+    for (const RecordField &Field : Record.Fields)
       line(escapeIdentifier(Field.Name) + ": " + type(Field.Type) + ",");
     closeBlock();
   }
