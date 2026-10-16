@@ -29,7 +29,9 @@ llvm::Error validateExternalExits(const SpecializationResult &Result,
 llvm::Expected<RawEnvironmentPreparation>
 validateRawEnvironmentDeclarations(const SpecializationOptions &Options);
 
-bool runtimeFlagsIntrinsic(const LowOp &Op);
+bool runtimeFlagsIntrinsic(
+    const LowOp &Op,
+    std::optional<InterpreterMachineStateProfile> Profile = std::nullopt);
 
 struct RuntimeTimestampRead {
   std::array<LowOp, 3> Ops;

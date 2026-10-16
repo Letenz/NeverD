@@ -557,7 +557,8 @@ bool supported(const LowOp &Op, const SpecializationOptions &Options) {
   case NdOp::NOP:
     return NoOutput && Op.NumInputs == 0;
   case NdOp::INTRINSIC:
-    return x64::runtimeFlagsIntrinsic(Op) || detail::stringTransferShape(Op) ||
+    return x64::runtimeFlagsIntrinsic(Op, Options.X64FlagsProfile) ||
+           detail::stringTransferShape(Op) ||
            (Options.X64CR8State && detail::taskPriorityOperation(Op));
   default:
     return false;
@@ -3046,8 +3047,8 @@ bool Specializer::evaluate(int Id) {
         }
         TaskPriority = Exec.operandValue(PrioritySlot);
       } else if (Original.Opcode == NdOp::INTRINSIC) {
-        // The allowlist above admits only the two exact x64 flag shapes. Keep
-        // the original runtime operation in the residual while using a fresh
+        // The architecture admits the runtime flag operation. Keep the
+        // original operation in the residual while using a fresh
         // symbolic input for each machine snapshot. Its origin is unknown,
         // especially for the entry-return-slot nonalias proof.
         if (static_cast<Intrinsic>(Original.Inputs[0].Offset) ==

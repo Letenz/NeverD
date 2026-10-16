@@ -204,6 +204,14 @@ Avant une capture complète des drapeaux, chaque drapeau arithmétique ou de dir
 
 Les temporaires LowIR sont propres à une seule instruction native relevée. Chaque octet lu doit avoir été défini auparavant dans cette instruction ; réutiliser un décalage d’une instruction précédente ou annuler algébriquement une valeur indéfinie ne prouve pas la validité du code source. Les constantes d’entrée ne peuvent lier que des registres physiques.
 
+<!-- i18n-section: supervisor-interrupt-control -->
+
+## Contrôle du drapeau d’interruption en mode superviseur
+
+La récupération LowIR brute et les preuves de relation native admettent les formes canoniques x64 `CLI`/`STI` uniquement avec le profil explicite `KernelX64NoFaultV1`. Le composant x64 commun des drapeaux efface ou active IF en préservant tous les autres drapeaux, registres généraux et octets mémoire. La récupération conserve l’opération intrinsèque originale ; les preuves enregistrent sa transition et comparent toujours les drapeaux système finaux, même sans observations des registres ordinaires.
+
+Ce profil fixe CPL0/IOPL0 et exclut les événements asynchrones, la livraison d’événements de débogage et les transitions de privilège. Il n’observe donc pas l’inhibition temporaire des interruptions par STI. Un profil absent ou utilisateur refuse ces instructions ; l’ABI source existante reste limitée à son profil utilisateur. Cette prise en charge ne fournit aucun modèle de livraison des interruptions ni de transition de privilège.
+
 <!-- i18n-section: raw-cmpxchg -->
 
 ## Comparaison et échange dans le modèle raw séquentiel
