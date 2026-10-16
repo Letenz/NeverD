@@ -14,6 +14,12 @@
 namespace neverd {
 using RegistrationCatchIdentity = std::pair<uint32_t, uint32_t>;
 
+/// Source block ownership for SEH callback CFGs, including unreachable tails
+/// after checked nonlocal exits. The key's boolean distinguishes finally
+/// entries from filters; ownership does not invent a reaching state.
+std::optional<std::map<int, std::pair<va_t, bool>>>
+registrationSEHCallbackOwners(const MedFunc &Function);
+
 /// Project the authoritative LowIR invocation stacks onto exact MedIR ranges.
 std::optional<std::map<int, RegistrationCatchIdentity>>
 registrationCatchBlocks(const MedFunc &Function);

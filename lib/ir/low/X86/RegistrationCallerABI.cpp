@@ -157,15 +157,23 @@ bool hasRegistrationCallFrameABI(
                 if (!States->Complete || !States->CallbackStatesComplete ||
                     !States->RegistrationLifetimeComplete ||
                     !States->SEHInvocationExitsComplete ||
+                    !States->SEHJumpResumptionsComplete ||
                     !chargeCalleeWork(Work,
-                                      States->SEHInvocationExits.size()) ||
-                    llvm::none_of(
-                        States->SEHInvocationExits, [&](const auto &Exit) {
-                          return Exit.Exit == RegistrationSEHInvocationExit::
-                                                  Kind::NearReturn &&
-                                 Exit.CallVA == Op.Addr &&
-                                 Exit.EntryVA == Scope.HandlerVA;
-                        }))
+                                      States->SEHInvocationExits.size() +
+                                          States->SEHJumpResumptions.size()) ||
+                    (llvm::none_of(States->SEHInvocationExits,
+                                   [&](const auto &Exit) {
+                                     return Exit.Exit ==
+                                                RegistrationSEHInvocationExit::
+                                                    Kind::NearReturn &&
+                                            Exit.CallVA == Op.Addr &&
+                                            Exit.EntryVA == Scope.HandlerVA;
+                                   }) &&
+                     llvm::none_of(States->SEHJumpResumptions,
+                                   [&](const auto &Resume) {
+                                     return Resume.OrdinaryCall == Op.Addr &&
+                                            Resume.EntryVA == Scope.HandlerVA;
+                                   })))
                   return false;
               }
       if (UseReachability) {

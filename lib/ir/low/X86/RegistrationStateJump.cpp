@@ -136,12 +136,23 @@ bool RegistrationStateSolver::transferJumpResume(size_t I, Domain &After,
   if (KnownCxx || After.Unknown || Facts.Invalid ||
       (EH4 && (!CompleteCookies || !cookiesReady(After.Frame))) ||
       !After.JumpBindingsIntact || Function.Entry != EH.CodeRange.Begin ||
-      !EH.CodeRange.contains(Op.Addr) || Op.Addr > UINT32_MAX - 5 ||
-      Op.Addr + 5 > EH.CodeRange.End || !After.Installed || After.Uninstalled ||
+      Op.Addr > UINT32_MAX - 5 || !After.Installed || After.Uninstalled ||
       After.Levels.empty() || Chain.RealignedFrame ||
       Chain.RegistrationOffset != -16 || Chain.TryLevelOffset != -4 ||
       !Function.hasCompleteLiftCoverage() ||
       After.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride].Offset != 0)
+    return Refuse();
+  // Out-of-line callbacks belong to their authenticated scope, not the
+  // primary function's contiguous code span. Their private stack and physical
+  // invocation are checked below before publishing a resumption.
+  if ((!EH.CodeRange.contains(Op.Addr) || Op.Addr + 5 > EH.CodeRange.End) &&
+      (!After.Callback || After.Parent || !After.Activation.Entry ||
+       After.Activation.Entry != After.Frame.CallbackEntry ||
+       !charge(Chain.Scopes.size() + 1) ||
+       !llvm::any_of(Chain.Scopes, [&](const auto &Scope) {
+         return (Scope.IsFinally ? Scope.HandlerVA : Scope.FilterVA) ==
+                *After.Activation.Entry;
+       })))
     return Refuse();
   const auto SP = After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
   FrameValue Buffer, Value;

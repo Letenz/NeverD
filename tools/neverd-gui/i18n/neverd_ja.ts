@@ -3377,12 +3377,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
 <context>
     <name>neverd::gui::LocalTypesView</name>
     <message>
-        <source>C header (*.h)</source>
-        <translation>C ヘッダー (*.h)</translation>
-    </message>
-    <message>
-        <source>C++ header (*.hpp)</source>
-        <translation>C++ ヘッダー (*.hpp)</translation>
+        <source>C/C++ header (*.h)</source>
+        <translation>C/C++ ヘッダー (*.h)</translation>
     </message>
     <message>
         <source>Rust (*.rs)</source>

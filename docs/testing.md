@@ -313,7 +313,8 @@ Rendered source must also compile with each record's size and offsets checked.
 `scripts/check_type_renders.py` runs `neverd types --all --asserts` and
 compiles the result:
 - C and C++ in all four builtin spellings with clang for the MSVC target, and
-  the portable spelling for the GNU target too;
+  the portable spelling for the GNU target too; the C header, which the
+  workbench shows as C/C++, compiles as C++ as well;
 - Rust with rustc (64-bit layouts only);
 - Go with `go vet` for Windows.
 
@@ -4248,7 +4249,7 @@ bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
 stack-only facts cannot preserve a capture, deallocated buffers refuse and a
 frame-preserving call supplies no scalar result authority.
 
-The EH4 jump matrix repeats thirty-five capture/resumption scenarios with and
+The EH4 jump matrix repeats thirty-seven capture/resumption scenarios with and
 without GS cookies: parent and callback jumps, zero values, filter search, incoming
 parameters, retired scopes, private leaf/graph calls with a live buffer, and
 registered EH3/EH4 helpers borrowing the parent buffer and a scalar object, and
@@ -4273,7 +4274,7 @@ four calls, unwind the same finally, check the restored state and nonvolatile
 register, then raise another exception. The native mutation tests alter the saved
 state slot, read address, volatile accesses, placement, use closure and captured
 projection key while retaining verifier-clean IR. The full source profile now
-contains 144 scenarios; older compiler profiles keep their original membership.
+contains 150 scenarios; older compiler profiles keep their original membership.
 
 The EH4/GS `longjmp-callee`, `longjmp-returning-callee` and
 `longjmp-scalar-callee` variants retain the source helper's registration while
@@ -4324,7 +4325,7 @@ pairs. Native installation mutations change the reload address, volatility,
 atomicity, alignment, selector, projection keys/results, uses and placement
 before the capture. They also remove a projection or compare another value.
 
-`registration_filter_state.s` supplies twelve runtime cases. Five handler-selection
+`registration_filter_state.s` supplies fourteen runtime cases. Five handler-selection
 cases (`longjmp-handler-selected`, `longjmp-handler-cleanup`,
 `longjmp-handler-captured-cursor`, `longjmp-handler-nested-finally` and
 `longjmp-handler-mixed-resumption`) check handler entry state, cleanup/filter
@@ -4332,7 +4333,15 @@ order, actual caller PC, return value and restored FS chain. Handler-only cases
 require the captured continuation to remain unreachable; the mixed case alternates
 selection and continuation, checking distinct traces and restored registers.
 Nested selection abandons both suspended callback invocations. They run with
-EH3, EH4 and EH4+GS. The other seven cases are:
+EH3, EH4 and EH4+GS. Two additional cases, `longjmp-handler-cleanup-jump` and
+`longjmp-handler-nested-cleanup-jump`, supersede selection from a direct or nested
+cleanup. They require traces 236/2367, capture value 42, restored EBX and state 0;
+the selected handler and suspended callback tails must not execute. The six
+protocol variants also cover out-of-line EH4 callbacks. Source mutations reject
+changed buffers/values, incomplete CALLs and parent continuations outside their
+range. MedIR checks exact nested invocation identity and independent ownership
+of unreached callback tails; installation rejects removed noreturn attributes
+and newly inserted normal returns. The other seven cases are:
 `longjmp-filter-correlated-state`, `longjmp-filter-shared-state`,
 `longjmp-filter-captured-cursor`, `longjmp-filter-negative-disposition`,
 `longjmp-filter-skipped-scope`, `longjmp-filter-two-resume-mappings` and

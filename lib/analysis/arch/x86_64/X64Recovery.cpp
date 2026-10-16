@@ -20,6 +20,10 @@
 namespace neverd::analysis::x64 {
 llvm::Expected<RawEnvironmentPreparation>
 validateRawEnvironmentDeclarations(const SpecializationOptions &Options) {
+  if (Options.Architecture != Arch::X64)
+    return llvm::createStringError(
+        llvm::errc::invalid_argument,
+        "x64 recovery requires the x64 architecture");
   RawEnvironmentPreparation Cost;
   if (!Options.hasRawEnvironment())
     return Cost;

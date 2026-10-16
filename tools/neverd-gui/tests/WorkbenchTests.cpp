@@ -3915,14 +3915,26 @@ private slots:
     QTest::keyClick(layout, Qt::Key_Escape);
     QTRY_COMPARE(types->currentType(), QStringLiteral("_DEVICE"));
 
-    // The source in the language of its tab, with the options asked.
-    types->setPage(3);
+    // The source in the language of its tab, with the options asked: C/C++
+    // shows C, and builtins have spellings to choose only there.
+    auto *spelling =
+        types->findChild<QComboBox *>(QStringLiteral("localTypesSpelling"));
+    QVERIFY(spelling);
+    types->setPage(2);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language rust spelling windows")));
+    QVERIFY(spelling->isHidden());
+    types->setPage(3);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language go spelling windows")));
+    QVERIFY(spelling->isHidden());
     types->setPage(1);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language c spelling windows")));
     QVERIFY(source->toPlainText().contains(QStringLiteral("struct _DEVICE")));
+    QVERIFY(!spelling->isHidden());
+    QCOMPARE(QSettings().value(QStringLiteral("localTypes/view")).toString(),
+             QStringLiteral("c"));
 
     // The filter keeps the types whose name holds its text.
     filter->setText(QStringLiteral("list"));
@@ -3950,7 +3962,7 @@ private slots:
     // Ins opens the editor over the list, the main window's keys notwith-
     // standing; a problem stays in it at its place, and a declaration that
     // reads adds its type and shows it.
-    QStringList titles;
+    QStringList titles, languages;
     bool problemShown = false, problemAtItsPlace = false;
     int answers = 0;
     QTimer editor;
@@ -3959,6 +3971,13 @@ private slots:
       auto *text = dialog ? dialog->findChild<QPlainTextEdit *>(
                                 QStringLiteral("declareEditor"))
                           : nullptr;
+      if (auto *language = dialog ? dialog->findChild<QComboBox *>(
+                                        QStringLiteral("declareLanguage"))
+                                  : nullptr;
+          language && languages.isEmpty())
+        for (int index = 0; index < language->count(); ++index)
+          languages.append(language->itemText(index) + QLatin1Char('=') +
+                           language->itemData(index).toString());
       auto *declare =
           dialog ? dialog->findChild<QPushButton *>(QStringLiteral("declare"))
                  : nullptr;
@@ -4001,6 +4020,10 @@ private slots:
     QTest::keyClick(list, Qt::Key_Insert);
     QVERIFY(problemShown);
     QVERIFY(problemAtItsPlace);
+    // C/C++ declares C, the language the window shows it in.
+    QCOMPARE(languages, (QStringList{QStringLiteral("C/C++=c"),
+                                     QStringLiteral("Rust=rust"),
+                                     QStringLiteral("Go=go")}));
     QTRY_COMPARE(list->model()->rowCount(), 4);
     QTRY_COMPARE(types->currentType(), QStringLiteral("OWNER"));
 
