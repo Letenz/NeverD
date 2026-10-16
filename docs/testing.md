@@ -469,6 +469,12 @@ the parameters its prototype declares and its code never reads, and that
 `ExRaiseStatus` the kernel exports without its PDB.
 `IsNoReturnTarget.ExportsAndDeclaredPrototypesNameNoReturnRoutines` covers
 exports and `_Noreturn` prototypes in the no-return index.
+`HighCReturnJoin.BareReturnBesideATailCallReturnsTheParameter` decompiles
+`if (b) return g(b); return a;` with a direct and an indirect tail call for
+x86-64, i386, ARM and AArch64 (`test_return_join.c`) and requires
+`return arg0;` without a trap; on ARM and AArch64 that path is a bare return.
+The HighC route of `IndirectTailFrame.ExclusiveReleaseCallsItsVirtualSlotInEveryRoute`
+has the same early return beside a virtual tail call.
 Build and run `NeverDSessionLLVMTests` as well: its private Session queries
 link the actual local-type/debug implementations and shared atomic sidecar
 helper into the test executable. It must not acquire a libneverd dependency.
