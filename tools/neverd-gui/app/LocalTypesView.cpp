@@ -1,6 +1,7 @@
 #include "LocalTypesView.h"
 
 #include "DeclareTypesDialog.h"
+#include "FlowLayout.h"
 #include "Icons.h"
 #include "ItemViewActivation.h"
 #include "Session.h"
@@ -335,9 +336,11 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   makeRowShrinkable(*tabRow);
   rightLayout->addWidget(tabRow);
 
+  // The options wrap to another row where the pane is too narrow for them,
+  // rather than one running over the next.
   auto *optionRow = new QWidget(right);
-  auto *optionLayout = new QHBoxLayout(optionRow);
-  optionLayout->setContentsMargins(0, 0, 0, 0);
+  optionRow->setObjectName(QStringLiteral("localTypesOptions"));
+  auto *optionLayout = new FlowLayout(optionRow);
   spelling_ = new QComboBox(optionRow);
   spelling_->setObjectName(QStringLiteral("localTypesSpelling"));
   spelling_->setToolTip(tr("How the source names builtin types"));
@@ -359,7 +362,6 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   optionLayout->addWidget(hex_);
   optionLayout->addWidget(dependencies_);
   optionLayout->addWidget(asserts_);
-  optionLayout->addStretch(1);
   makeRowShrinkable(*optionRow);
   rightLayout->addWidget(optionRow);
 
