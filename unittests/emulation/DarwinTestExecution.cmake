@@ -1,0 +1,9 @@
+# Apply after PRE_TEST discovery. These semantic cases repeat whole guest
+# workloads; their aggregate host guard must cover every run in the batch.
+foreach(_neverd_darwin_test IN LISTS NeverDDarwinProcessTests_TESTS)
+  if(_neverd_darwin_test MATCHES
+      "^Transports/DarwinProcess\\.(ImmediateSelectPreservesBitmapsCopiesAndProviderPremises|SymbolicFileSystemsKeepOwnSnapshotAndFollowedTargetSeparate)/")
+    set_tests_properties("${_neverd_darwin_test}" PROPERTIES TIMEOUT 120)
+  endif()
+endforeach()
+unset(_neverd_darwin_test)
