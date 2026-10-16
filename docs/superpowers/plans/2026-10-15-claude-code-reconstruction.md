@@ -693,3 +693,52 @@ source/license files are retained at commit
 This is an unmatched upstream candidate, not a recovered implementation.
 Musl/macOS/Windows managed search, native dispatch, syscall filtering and
 wider functionality remain open. The overall recovery goal is incomplete.
+
+
+## Four Linux managed search packages checked
+
+Both musl distributions now pass the same thirteen Grep/Glob cases for both
+source layouts, adding 52 pairs (104 across all four Linux distributions).
+Their original baselines are fresh, and both unmanaged layouts reproduce the
+actual false no-match failure before the repair. The comparator is unchanged;
+separate captured-source anchors confirm the existing Glob timing rule.
+
+The original x64 musl helper enables PCRE2 JIT, while ARM64 musl disables it.
+The public build profile preserves this measured distinction. Pinned Rust
+Alpine image manifests and SHA-256-pinned, signature-checked APKs supply the
+toolchain; package installation and compilation run offline. Each helper has
+no ELF interpreter or shared-library dependency and passes seven authored
+controls in the corresponding musl boundary. The static launchers separately
+pass six controls per distribution.
+
+At c0c5a05d2609db30680e419e0cf66ced43f2a5fd, all four jobs succeed in
+38872706376 attempt 2 and the independently dispatched 38874053349. The two
+musl helpers reproduce byte-for-byte. Each public package has 85 identical
+data files; only its receipt differs at the derived compiler image ID and the
+three command references to that ID. All remaining receipt values match.
+Both glibc helpers also retain their previously qualified binary hashes.
+
+The first workflow rerun began before its artifacts were fully retained, and
+the initial artifact list was replaced; that incomplete download is excluded
+from repeatability evidence. The later x64 full transfer stalled, then one
+range transfer failed. Complete ranges were retained, the missing range was
+retried, and the assembled archive matched the GitHub API SHA-256 before
+extraction and qualification. Transfer failures do not count as accepted data.
+
+Each new musl runtime package has 649 verified files. Both launchers rebuild
+byte-identically from packaged source and both packaged client layouts pass
+isolated version invocations. progress-v24.json rehashes 200 referenced files
+and keeps the recovery objective incomplete.
+
+The next native boundary is now measured, not merely inferred from callsites.
+On glibc x64 and ARM64, two authored environment controls precede no-command
+ARGV0=apply-seccomp invocations. Originals enter helper usage; both rebuilt
+layouts enter the ordinary Claude CLI. The first x64 readable probe times out
+at 20 seconds; the retained focused retry with a 50-second bound completes in
+19.71 seconds with the same CLI diagnostic. This proves role selection differs,
+but does not qualify syscall policies, nested namespaces, command execution,
+or correspondence with the public sandbox-runtime source candidate.
+
+macOS/Windows managed search, embedded dispatch, apply-seccomp semantics,
+broader tool paths, native extension internals and type/module recovery remain
+open. No filtering bypass is used to turn the missing helper into a pass.
