@@ -449,6 +449,19 @@ template arguments and explicit ABI arguments remain visible. DWARF record
 identities supply type spellings, not guessed layouts or implicit member-call
 conventions. The GUI offers a separate C choice for non-C images and omits it
 when only C is offered.
+
+The reader reads the definitions a unit holds of the program's local types:
+unions, anonymous structures and unions, bit-fields, enumerations,
+`#pragma pack` and `DECLSPEC_ALIGN`, and their `static_assert` and `offsetof`
+checks. A member access reaches a field through anonymous members as C
+counts it. C and C++ keep the definitions as written, and C++ reads the code
+that uses them. Rust and Go spell a record whose fields their own structures
+lay out as C does, Rust's under its packing and alignment, and an
+enumeration as int constants. They show a union, an anonymous member, a
+bit-field or a volatile member as C with its reason, and Go a packed or
+aligned record too, as they do the code that reaches such a member. In Rust
+and Go, a typedef of a record by its own tag is the record: defined where
+the text defines it, opaque where the text only declares it.
 Explicit C keeps native throw calls and separate handler entries with unwind
 metadata in comments; C++ keeps structured exception syntax. Their caches are
 separate. The C exception view depends on the image's original runtime and

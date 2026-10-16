@@ -434,6 +434,10 @@ private:
                          ")))",
                      PrecAtom};
     case ExprKind::Offsetof:
+      if (E->ThroughAnonymous) {
+        unsupported("a member of an anonymous structure or union");
+        return Printed{"_", PrecAtom};
+      }
       return Printed{type(E->Ty) + "(unsafe.Offsetof(" + type(E->Written) +
                          "{}." + E->Text.str() + "))",
                      PrecAtom};
@@ -820,6 +824,14 @@ private:
       return Printed{"*" + paren(Moved, PrecUnary), PrecUnary};
     }
     case ExprKind::Member:
+      if (E->Field && E->Field->BitWidth) {
+        unsupported("a bit-field");
+        return Printed{"_", PrecAtom};
+      }
+      if (E->ThroughAnonymous) {
+        unsupported("a member of an anonymous structure or union");
+        return Printed{"_", PrecAtom};
+      }
       return Printed{paren(E->Postfix ? value(E->Ops.front(), nullptr)
                                       : place(E->Ops.front()),
                            PrecAtom) +
@@ -1370,15 +1382,24 @@ private:
       }
       case DeclKind::Typedef:
         // Go names a record and its type alike: a typedef that names a
-        // record by its own tag declares the record.
-        if (D->Ty->isRecord() && type(D->Ty) == escapeIdentifier(D->Name))
-          record(D->Ty);
-        else if (!D->Ty->isInteger())
+        // record by its own tag is the record, which its definition
+        // defines, or which the typedef declares opaque.
+        if (D->Ty->isRecord() && type(D->Ty) == escapeIdentifier(D->Name)) {
+          if (!D->Ty->Record->Complete)
+            record(D->Ty);
+        } else if (!D->Ty->isInteger())
           line("type " + escapeIdentifier(D->Name) + " = " + type(D->Ty));
         break;
       case DeclKind::Record:
         record(D->Ty);
         break;
+      case DeclKind::Enumeration:
+        // C's enumeration is an int and its enumerators int constants.
+        for (const Decl *Enumerator : D->Fields)
+          line("const " + escapeIdentifier(Enumerator->Name) +
+               " int32 = " + std::to_string(*Enumerator->Value));
+        break;
+      case DeclKind::Enumerator:
       case DeclKind::Parameter:
         break;
       }
@@ -1415,10 +1436,27 @@ private:
   }
 
   void record(const CType *Ty) {
-    if (!Ty->isRecord() || !PrintedRecords.insert(Ty).second)
+    if (!Ty->isRecord() || PrintedRecords.contains(Ty))
       return;
+    const RecordDef &Record = *Ty->Record;
+    // What a Go structure of these fields would not lay out as C does.
+    if (Record.Union)
+      return unsupported("a union");
+    if (Record.Pack)
+      return unsupported("a packed record");
+    if (Record.Alignment)
+      return unsupported("an aligned record");
+    for (const RecordField &Field : Record.Fields) {
+      if (Field.BitWidth)
+        return unsupported("a bit-field");
+      if (Field.isAnonymousRecord())
+        return unsupported("an anonymous structure or union");
+      if (Field.Type->Volatile)
+        return unsupported("a volatile member");
+    }
+    PrintedRecords.insert(Ty);
     // A record the text only declares stays opaque: its address passes.
-    if (!Ty->Record->Complete) {
+    if (!Record.Complete) {
       line("type " + type(Ty) + " struct{}");
       return;
     }
