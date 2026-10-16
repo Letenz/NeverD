@@ -14,10 +14,10 @@ class RegistrationSourceReplayTests(unittest.TestCase):
         self.assertEqual(len(r5), 64)
         eh4_jumps = {name for name in current
                      if name.startswith("eh4-") and "longjmp-" in name}
-        self.assertEqual(len(current), 237)
+        self.assertEqual(len(current), 243)
         parent_exits = {prefix + case for prefix in ("", "eh4-", "eh4-gs-")
                         for case in PARENT_EXIT_CASES}
-        self.assertEqual(len(parent_exits), 21)
+        self.assertEqual(len(parent_exits), 27)
         self.assertTrue(parent_exits <= set(current))
         self.assertEqual(len(eh4_jumps), 118)
         for prefix in ("eh4-", "eh4-gs-"):

@@ -239,6 +239,13 @@ causare un’eccezione, il sorgente deve ricollegare la registration attiva oppu
 rimuoverla al ritorno. Riparazioni non dimostrate e destinazioni esterne al CFG
 padre verificato vengono rifiutate.
 
+Una continuazione può essere raggiunta solo dal salto del finally se ogni
+percorso decodificato della sua coda aciclica confluisce in codice padre già
+attribuito, senza attraversare un ingresso filter o finally. Questa prova fisica
+non concede privilegi di memoria del gestore runtime; il trasferimento SavedESP
+e gli stati in ingresso restano verificati separatamente. Un ritorno privo di
+collegamento al padre o un ciclo non può stabilire tale appartenenza.
+
 
 Le chiamate ordinarie a finally scambiano esplicitamente EAX/ECX/EDX/EBX/ESI/EDI
 tramite slot privati del frame padre, inclusi i valori del ritorno vicino fisico.

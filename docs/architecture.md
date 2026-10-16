@@ -577,6 +577,11 @@ shared MedIR bindings retain the source exits for ABI recovery and decompilation
 Once the native guard proof fails, guard-only lattice changes no longer reschedule
 logical state propagation; the native failure remains permanent. Native return
 projection still binds both near returns and parent branches independently.
+`RegistrationStateSEHParentOwnership` anchors acyclic continuation tails only
+when every physical successor leads to existing parent code. Its possible
+continuations remain separate from ordinary/except entries: they grant neither
+reaching state nor runtime-handler memory privileges before the exact SavedESP
+transfer succeeds. Callback roots, unanchored terminals and cycles are excluded.
 MedIR's `RegistrationSEHParentExit` binds the exact
 SavedESP restore and parent branch; callback ownership stops at this boundary.
 `MedLLVMRegistrationSEHParentExit` projects a private SjLj context transactionally,
