@@ -596,3 +596,30 @@ this a per-run copy. Original sealed evidence remains unchanged.
 Read truncation, broader features, semantic/type/module recovery, native
 implementations, Bun revision differences and source-text/performance
 observability remain open. The complete recovery goal stays active.
+
+
+## Confirmed native search gap and next repair
+
+A new Linux x64 Grep content case finds `NEVERD_SEARCH_NEEDLE` in the original,
+but both rebuilt source layouts report `No matches found`. Direct argv[0]
+controls isolate the boundary: original `argv[0]=rg --version` reports
+ripgrep 14.1.1 with PCRE2 10.45 and revision eecfd55deb. Independent rebuilds
+instead report Claude Code, and reject `--no-config`. The recovered JavaScript
+selects this multicall mode, so matching its source alone does not restore the
+native runtime role. This is an open functional failure, not a passing case.
+
+The first direct probe lacked execute permission on the immutable original;
+its retry uses a hash-checked disposable executable copy. Both attempts and
+the complete Grep wire observations are retained. The immediate repair path is
+to independently build the measured ripgrep/PCRE2 versions, qualify authored
+controls, and compare original embedded search with the client's existing
+system-ripgrep selection. Embedded dispatch itself and the other native
+runtime roles remain explicit gaps.
+
+Seven additional token-cap Read cases pass on all six local distributions
+and both layouts (84 pairs). They exercise real partial-cache and Unicode
+boundary branches at an explicitly declared small cap; default-cap stress and
+live counting are not claimed. Windows expansion is running in
+[38862647678](https://github.com/gmh5225/test_mac_intel/actions/runs/38862647678).
+`progress-v21.json` records these passing cases and the higher-priority search
+failure together. Total goal status remains active.
