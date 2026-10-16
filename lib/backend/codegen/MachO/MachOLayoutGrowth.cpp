@@ -454,9 +454,27 @@ llvm::Expected<bool> reserveMachOSourceUnwind(std::vector<uint8_t> &Binary,
     if (Required > R.SectionSize) {
       if (auto E = reserveMachOCompactUnwindStorage(Candidate, Required)) {
         llvm::consumeError(std::move(E));
-        auto Moved =
-            moveTextSection(Candidate, A, "__unwind_info", Raw->OriginalBytes,
-                            llvm::alignTo(Required, 4096));
+        const uint64_t Capacity = llvm::alignTo(Required, 4096);
+        // Adopt checked prefix growth before placing the compact registry.
+        // The growth owner rebases its TEXT-relative records, so refresh the
+        // payload instead of copying the pre-growth offsets into the new map.
+        auto Header = reserveMachOHeaderStorage(Candidate, A, 512 + Capacity);
+        if (!Header)
+          llvm::consumeError(Header.takeError());
+        else if (*Header) {
+          auto Updated = findMachOCompactUnwindRegion(Candidate);
+          if (!Updated)
+            return Updated.takeError();
+          if (!*Updated)
+            return fail("header growth lost the compact registry");
+          Raw = macho_unwind::parseCompactUnwindRaw(
+              llvm::ArrayRef<uint8_t>(Candidate).slice(
+                  (**Updated).SectionFileOff, (**Updated).SectionSize));
+          if (!Raw)
+            return Raw.takeError();
+        }
+        auto Moved = moveTextSection(Candidate, A, "__unwind_info",
+                                     Raw->OriginalBytes, Capacity);
         if (!Moved)
           return Moved.takeError();
       }

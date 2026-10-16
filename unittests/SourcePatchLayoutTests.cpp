@@ -10,7 +10,9 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/codegen/COFF/COFFLayoutGrowth.h"
+#include "neverd/backend/codegen/MachO/MachOCompactUnwindPatch.h"
 #include "neverd/backend/codegen/MachO/MachOLayoutGrowth.h"
+#include "neverd/loader/MachO/CompactUnwind.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/object/MachOLayout.h"
 #include "neverd/object/PELayout.h"
@@ -278,7 +280,7 @@ TEST(SourcePatchLayout, RefusesInconsistentDebugIdentityWithoutChangingBytes) {
   EXPECT_EQ(B, Before);
 }
 
-std::vector<uint8_t> headerMachO() {
+std::vector<uint8_t> headerMachO(bool BlockTextTail = false) {
   using namespace llvm::MachO;
   std::vector<uint8_t> B(0x3000, 0);
   auto *H = reinterpret_cast<mach_header_64 *>(B.data());
@@ -287,20 +289,24 @@ std::vector<uint8_t> headerMachO() {
   H->cpusubtype = CPU_SUBTYPE_X86_64_ALL;
   H->filetype = MH_EXECUTE;
   H->flags = MH_PIE;
-  H->ncmds = 5;
+  H->ncmds = BlockTextTail ? 6 : 5;
   uint64_t Off = sizeof(*H);
   auto Segment = [&](const char *Name, uint64_t VA, uint64_t Size,
                      uint64_t FileOff, uint64_t FileSize, bool Text) {
     auto *G = reinterpret_cast<segment_command_64 *>(B.data() + Off);
     G->cmd = LC_SEGMENT_64;
-    G->cmdsize = sizeof(*G) + (Text ? sizeof(section_64) : 0);
+    G->cmdsize =
+        sizeof(*G) + (Text ? (BlockTextTail ? 2 : 1) * sizeof(section_64) : 0);
     std::strcpy(G->segname, Name);
     G->vmaddr = VA;
     G->vmsize = Size;
     G->fileoff = FileOff;
     G->filesize = FileSize;
-    G->initprot = G->maxprot = Text ? 5 : FileSize ? 1 : 0;
-    G->nsects = Text ? 1 : 0;
+    G->initprot = G->maxprot = Text                               ? 5
+                               : std::strcmp(Name, "__DATA") == 0 ? 3
+                               : FileSize                         ? 1
+                                                                  : 0;
+    G->nsects = Text ? (BlockTextTail ? 2 : 1) : 0;
     if (Text) {
       auto *S = reinterpret_cast<section_64 *>(G + 1);
       std::strcpy(S->segname, "__TEXT");
@@ -309,11 +315,42 @@ std::vector<uint8_t> headerMachO() {
       S->size = 16;
       S->offset = 0x800;
       S->flags = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS;
+      if (BlockTextTail) {
+        ++S;
+        std::strcpy(S->segname, "__TEXT");
+        std::strcpy(S->sectname, "__unwind_info");
+        S->addr = VA + 0x820;
+        S->offset = 0x820;
+        S->size = 68;
+        S->align = 2;
+      }
     }
     Off += G->cmdsize;
   };
   Segment("__PAGEZERO", 0, 0x100000000, 0, 0, false);
-  Segment("__TEXT", 0x100000000, 0x2000, 0, 0x2000, true);
+  Segment("__TEXT", 0x100000000, BlockTextTail ? 0x1000 : 0x2000, 0,
+          BlockTextTail ? 0x1000 : 0x2000, true);
+  if (BlockTextTail) {
+    Segment("__DATA", 0x100001000, 0x1000, 0x1000, 0x1000, false);
+    std::fill(B.begin() + 0x1000, B.begin() + 0x2000, 0xa5);
+    // One regular compact-unwind entry and its sentinel, with no spare page.
+    auto *U = B.data() + 0x820;
+    writeLE<uint32_t>(U, 1);
+    writeLE<uint32_t>(U + 4, 28);
+    writeLE<uint32_t>(U + 12, 28);
+    writeLE<uint32_t>(U + 20, 28);
+    writeLE<uint32_t>(U + 24, 2);
+    writeLE<uint32_t>(U + 28, 0x800);
+    writeLE<uint32_t>(U + 32, 52);
+    writeLE<uint32_t>(U + 36, 52);
+    writeLE<uint32_t>(U + 40, 0x810);
+    writeLE<uint32_t>(U + 48, 52);
+    writeLE<uint32_t>(U + 52, 2);
+    writeLE<uint16_t>(U + 56, 8);
+    writeLE<uint16_t>(U + 58, 1);
+    writeLE<uint32_t>(U + 60, 0x800);
+    writeLE<uint32_t>(U + 64, 0x01000000);
+  }
   Segment("__LINKEDIT", 0x100002000, 0x1000, 0x2000, 0x1000, false);
   auto *F = reinterpret_cast<linkedit_data_command *>(B.data() + Off);
   F->cmd = LC_FUNCTION_STARTS;
@@ -356,6 +393,50 @@ TEST(SourcePatchLayout, MachOHeaderGrowthKeepsCodeAtOriginalVA) {
   EXPECT_EQ(HeaderVA, 0xfffff000ULL);
   EXPECT_TRUE(
       std::equal(Old.begin() + 0x800, Old.begin() + 0x810, B.begin() + 0x1800));
+
+  // The unwind owner must adopt header growth itself when a DATA mapping
+  // blocks the TEXT tail, then retain the rebased original compact records.
+  auto Tight = headerMachO(true);
+  const auto Before = Tight;
+  auto Grown = reserveMachOSourceUnwind(Tight, Arch::X64, 4096, 4);
+  ASSERT_TRUE(bool(Grown)) << llvm::toString(Grown.takeError());
+  ASSERT_TRUE(*Grown);
+  uint64_t TextVA = 0, CodeOffset = 0;
+  forEachMachOLoadCommand(
+      Tight.data(), Tight.size(),
+      [&](const uint8_t *C, uint32_t ID, uint32_t, bool Is64) {
+        if (ID != getMachOSegmentCmdID(Is64))
+          return;
+        const auto G = readMachOSegment(C, Is64);
+        if (readMachOName(G.SegName) == "__DATA") {
+          EXPECT_EQ(G.VMAddr, 0x100001000ULL);
+          EXPECT_TRUE(std::equal(Before.begin() + 0x1000,
+                                 Before.begin() + 0x2000,
+                                 Tight.begin() + G.FileOff));
+        }
+        if (readMachOName(G.SegName) != "__TEXT")
+          return;
+        TextVA = G.VMAddr;
+        const auto *S = reinterpret_cast<const llvm::MachO::section_64 *>(
+            C + sizeof(llvm::MachO::segment_command_64));
+        for (unsigned I = 0; I < G.NSects; ++I)
+          if (readMachOName(S[I].sectname) == "__text") {
+            EXPECT_EQ(S[I].addr, 0x100000800ULL);
+            CodeOffset = S[I].offset;
+          }
+      });
+  ASSERT_NE(CodeOffset, 0u);
+  EXPECT_TRUE(std::equal(Before.begin() + 0x800, Before.begin() + 0x810,
+                         Tight.begin() + CodeOffset));
+  auto Region = findMachOCompactUnwindRegion(Tight);
+  ASSERT_TRUE(bool(Region)) << llvm::toString(Region.takeError());
+  ASSERT_TRUE(bool(*Region));
+  auto Records =
+      macho_unwind::parseCompactUnwindRaw(llvm::ArrayRef<uint8_t>(Tight).slice(
+          (**Region).SectionFileOff, (**Region).SectionSize));
+  ASSERT_TRUE(bool(Records)) << llvm::toString(Records.takeError());
+  ASSERT_FALSE(Records->Index.empty());
+  EXPECT_EQ(TextVA + Records->Index.front().FunctionOffset, 0x100000800ULL);
 }
 TEST(SourcePatchLayout,
      MachORefusesHeaderRelativeArithmeticWithoutChangingInput) {
@@ -372,6 +453,13 @@ TEST(SourcePatchLayout,
   EXPECT_NE(llvm::toString(R.takeError()).find("relocated Mach header"),
             std::string::npos);
   EXPECT_EQ(B, Old);
+  auto Blocked = headerMachO(true);
+  std::copy(std::begin(Code), std::end(Code), Blocked.begin() + 0x800);
+  const auto Before = Blocked;
+  auto Unwind = reserveMachOSourceUnwind(Blocked, Arch::X64, 4096, 4);
+  ASSERT_FALSE(bool(Unwind));
+  llvm::consumeError(Unwind.takeError());
+  EXPECT_EQ(Blocked, Before);
 }
 TEST(SourcePatchLayout, MachOZeroNotePayloadIsNotUnusedHeaderSpace) {
   using namespace llvm::MachO;
