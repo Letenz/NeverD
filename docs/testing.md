@@ -3770,6 +3770,14 @@ which must pass nothing in either backend (not the slot's address as a virtual
 call's object), and a call whose outgoing stores leave a gap below a
 `push {r4, r6, r7, lr}`, whose HighC must not pass the saved link register.
 
+`ELFARM32ModeTest.MixedImagePairsItsPLTWithTheImports` links a mixed
+ARM/Thumb shared library and requires the PLT entry a Thumb `bl puts` reaches
+to be paired with `puts`. `LinkerThunkToAnImportStandsForTheImport` links a
+stripped Thumb library whose tail call to `puts` goes through lld's thunk: the
+thunk and the PLT entry must both stand for `puts`, and the decompiled caller
+must call `puts` with its string. `LinkerThunk.*` checks each long-branch
+form's target, state and size, and that a direct jump is never a long branch.
+
 `LLVMCValues.ImageStringsInACodeSegmentFollowTheirSection` requires a string
 in `.rodata` inside an R+X segment to print, its bytes in `.text` not to, and
 the segment rule without section headers.

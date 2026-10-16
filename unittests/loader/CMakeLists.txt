@@ -11,6 +11,11 @@ add_neverd_unittest(NeverDNativeBufferTests
   LINK_COMPONENTS Loader Support
 )
 
+add_neverd_unittest(NeverDLinkerThunkTests
+  LinkerThunkTests.cpp
+  LINK_COMPONENTS Loader Support
+)
+
 add_neverd_unittest(NeverDStaticSymbolTableTests
   StaticSymbolTableTests.cpp
   LINK_COMPONENTS Loader Support

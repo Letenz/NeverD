@@ -1940,6 +1940,16 @@ images as in single-mode ones: the PLT is ARM code either way, and a Thumb
 caller's `blx` reaches the same stub. Without the pairing every import call of
 a Thumb library read as an unnamed local function, without its prototype or
 no-return contract.
+A long-branch or interworking thunk a linker wrote between a branch and an
+import's stub stands for that import too: a Thumb tail call enters the ARM PLT
+through lld's `__ThumbV7PILongThunk_*`, a distant A64 call through
+`__AArch64ADRPThunk_*`. `linkerThunkAt` (loader/LinkerThunk) decodes the forms
+`BranchEncoding.def` lists, and signature matching follows a reference
+through the same decoder. Function discovery pairs a thunk with an import
+only when its exact target is a paired stub and only for the
+multi-instruction forms a linker alone writes (`linkerLongBranchThunkAt`); a
+direct jump to a stub ends many a routine. Thunks to the image's own routines
+are not followed into calls yet.
 Validated ARM and Thumb instruction relocations can also seed their exact
 instruction addresses. This can recover an otherwise uncalled function when
 its entry instruction has such a relocation, without assuming that an

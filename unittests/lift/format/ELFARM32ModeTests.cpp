@@ -1220,6 +1220,54 @@ arm_side:
   EXPECT_EQ(Plt->Name, ".plt");
 }
 
+// A Thumb tail call to an import enters the ARM PLT through the thunk lld
+// writes for it (`__ThumbV7PILongThunk_puts`, a symbol the stripped library
+// no longer has), which stands for the import as the PLT entry does.
+TEST_F(ELFARM32ModeTest, LinkerThunkToAnImportStandsForTheImport) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedSharedAssembly("plt_thunk", R"(
+.syntax unified
+.text
+.thumb
+.globl tail_caller
+.type tail_caller,%function
+.thumb_func
+tail_caller:
+  ldr r0, .Lmessage
+.Lpc:
+  add r0, pc
+  b.w puts
+.p2align 2
+.Lmessage:
+  .word message - (.Lpc + 4)
+.section .rodata
+message:
+  .asciz "through the thunk"
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  std::vector<va_t> Stubs;
+  for (const auto &[Stub, Import] : Image->ImportStubIndices)
+    if (Image->Imports[Import].Name == "puts")
+      Stubs.push_back(Stub);
+  ASSERT_EQ(Stubs.size(), 2u) << "the PLT entry and lld's thunk";
+  std::vector<std::string> Owners;
+  for (va_t Stub : Stubs)
+    if (const Section *Owner = Image->getSectionFor(Stub))
+      Owners.push_back(Owner->Name);
+  EXPECT_EQ(Owners, (std::vector<std::string>{".text", ".plt"}));
+
+  // The caller tail-calls the import with its argument.
+  const auto C = exec(ndBin(), {"decompile", tmpFile("plt_thunk.so").string(),
+                                "--func=tail_caller"});
+  ASSERT_TRUE(C.ok()) << C.err;
+  EXPECT_NE(C.out.find("puts(\"through the thunk\")"), std::string::npos)
+      << C.out;
+}
+
 // A library's veneer for a routine the library defines goes to that
 // definition, whose code says it never returns: a C++ runtime's throw
 // helpers end in __cxa_throw without being on any list.
