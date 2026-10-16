@@ -146,40 +146,52 @@ MedFunc parentFallthrough(bool Runtime) {
 } // namespace
 
 TEST(RegistrationSEHParentExit, FallthroughBindsTheSourceSegmentOffsetCopy) {
-  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
-    SCOPED_TRACE(Mutation);
-    auto Function = parentFallthrough(true);
-    auto &Finally = Function.Blocks[1];
-    auto &States = *Function.RegistrationStates;
-    MedOp Copy;
-    Copy.Opcode = NdOp::COPY;
-    Copy.Addr = Finally.Ops.back().Addr;
-    Copy.OriginSeq = 0;
-    Copy.Output.Kind = MedVar::Temp;
-    Copy.Output.Id = 10;
-    Copy.Output.Size = 4;
-    Copy.addInput(MedVar::makeConst(0, 4));
-    Finally.Ops.back().Inputs[0] = Copy.Output;
-    Finally.Ops.back().OriginSeq = 1;
-    States.ChainAccesses.front().OpSeq = 1;
-    States.SEHInvocationExits.front().OpSeq = 1;
-    if (Mutation == 1)
-      Copy.Inputs[0].ConstVal = 4;
-    if (Mutation == 2)
-      --Copy.Addr;
-    if (Mutation == 3)
-      Copy.OriginSeq = -1;
-    if (Mutation == 4)
-      Copy.Output.Id = 11;
-    if (Mutation == 5)
-      Copy.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
-    if (Mutation == 6)
-      Copy.Inputs[0].Size = 8;
-    if (Mutation == 7)
-      Copy.Dead = true;
-    Finally.Ops.insert(Finally.Ops.end() - 1, Copy);
-    EXPECT_EQ(bool(getRegistrationSEHParentExits(Function)), Mutation == 0);
-  }
+  for (bool Wide : {false, true})
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      SCOPED_TRACE(Wide);
+      SCOPED_TRACE(Mutation);
+      auto Function = parentFallthrough(true);
+      auto &Finally = Function.Blocks[1];
+      auto &States = *Function.RegistrationStates;
+      MedOp Copy;
+      Copy.Opcode = NdOp::COPY;
+      Copy.Addr = Finally.Ops.back().Addr;
+      Copy.OriginSeq = 0;
+      Copy.Output.Kind = MedVar::Temp;
+      Copy.Output.Id = 10;
+      Copy.Output.Size = 4;
+      Copy.addInput(MedVar::makeConst(0, 4));
+      MedOp Extend;
+      Extend.Opcode = NdOp::INT_ZEXT;
+      Extend.Addr = Copy.Addr;
+      Extend.OriginSeq = 1;
+      Extend.Output = Copy.Output;
+      Extend.Output.Id = 12;
+      Extend.Output.Size = 8;
+      Extend.addInput(Copy.Output);
+      Finally.Ops.back().Inputs[0] = Wide ? Extend.Output : Copy.Output;
+      Finally.Ops.back().OriginSeq = Wide ? 2 : 1;
+      States.ChainAccesses.front().OpSeq = Wide ? 2 : 1;
+      States.SEHInvocationExits.front().OpSeq = Wide ? 2 : 1;
+      if (Mutation == 1)
+        Copy.Inputs[0].ConstVal = 4;
+      if (Mutation == 2)
+        --Copy.Addr;
+      if (Mutation == 3)
+        Copy.OriginSeq = -1;
+      if (Mutation == 4)
+        Copy.Output.Id = 11;
+      if (Mutation == 5)
+        Copy.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      if (Mutation == 6)
+        Copy.Inputs[0].Size = 2;
+      if (Mutation == 7)
+        Copy.Dead = true;
+      Finally.Ops.insert(Finally.Ops.end() - 1, Copy);
+      if (Wide)
+        Finally.Ops.insert(Finally.Ops.end() - 1, Extend);
+      EXPECT_EQ(bool(getRegistrationSEHParentExits(Function)), Mutation == 0);
+    }
 }
 
 TEST(RegistrationSEHParentExit, FallthroughRequiresItsRemovalAndWholeEpilogue) {

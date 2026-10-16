@@ -18,26 +18,35 @@ namespace neverd {
 namespace {
 
 bool isChainHeadAddress(const MedBlock &Block, const MedOp &Store) {
-  const auto &Address = Store.Inputs[0];
+  MedVar Address = Store.Inputs[0];
   if (Address.Size != 4 && Address.Size != 8)
     return false;
-  if (Address.isConst())
-    return Address.ConstVal == 0;
-  // Before propagation, the x86 lifter materializes the segment offset in an
-  // instruction-local temporary. Bind that exact producer, never a register
-  // with an equal value or a definition borrowed from another instruction.
-  if (Address.Kind != MedVar::Temp || &Store == Block.Ops.data())
-    return false;
-  const auto &Copy = *(&Store - 1);
-  return !Copy.Dead && Copy.Opcode == NdOp::COPY && Copy.NumInputs == 1 &&
-         Copy.Addr == Store.Addr && Copy.OriginSeq >= 0 &&
-         Copy.OriginSeq + 1 == Store.OriginSeq && Copy.Output == Address &&
-         Copy.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-         Copy.MemoryOrdering == NdMemoryOrdering::None &&
-         Copy.RegistrationRoot == MedOp::RegistrationRootKind::None &&
-         !Copy.ExactArguments && !Copy.SourceCallHint &&
-         Copy.Inputs[0].isConst() && Copy.Inputs[0].ConstVal == 0 &&
-         Copy.Inputs[0].Size == Address.Size;
+  // Before propagation, the lifter materializes a 32-bit segment offset and
+  // may zero-extend it to the memory address width. Bind only these adjacent
+  // instruction-local definitions, never a register or another instruction.
+  const MedOp *Next = &Store;
+  for (unsigned Count = 0; Count != 2 && !Address.isConst(); ++Count) {
+    if (Address.Kind != MedVar::Temp || Next == Block.Ops.data())
+      return false;
+    const auto &Def = *(Next - 1);
+    if (Def.Dead || Def.NumInputs != 1 || Def.Addr != Store.Addr ||
+        Def.OriginSeq < 0 || Def.OriginSeq + 1 != Next->OriginSeq ||
+        Def.Output != Address ||
+        Def.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Def.MemoryOrdering != NdMemoryOrdering::None ||
+        Def.RegistrationRoot != MedOp::RegistrationRootKind::None ||
+        Def.ExactArguments || Def.SourceCallHint)
+      return false;
+    const bool Copy =
+        Def.Opcode == NdOp::COPY && Def.Inputs[0].Size == Address.Size;
+    const bool Extend = Def.Opcode == NdOp::INT_ZEXT && Address.Size == 8 &&
+                        Def.Inputs[0].Size == 4;
+    if (!Copy && !Extend)
+      return false;
+    Address = Def.Inputs[0];
+    Next = &Def;
+  }
+  return Address.isConst() && Address.ConstVal == 0;
 }
 
 } // namespace
