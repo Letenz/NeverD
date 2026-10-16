@@ -255,6 +255,174 @@ protected:
   }
 };
 
+TEST_F(KernelMDLUserMapping, PhysicalQueryUsesExactPoolBytesAndFullWidthPFNs) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Size = 2 * profile::PageSize + 33;
+  const auto Pool = pool(Size);
+  const auto MDL = poolMDL(Pool, Size);
+  for (uint64_t Offset : std::array<uint64_t, 5>{0, 17, 4095, 4096, Size - 1}) {
+    const auto Page = ((Pool % profile::PageSize) + Offset) / profile::PageSize;
+    const auto Expected =
+        get(MDL + MDLSize + Page * sizeof(uint64_t)) * profile::PageSize +
+        (Pool + Offset) % profile::PageSize;
+    EXPECT_GT(Expected, UINT32_MAX);
+    EXPECT_EQ(call("MmGetPhysicalAddress", {Pool + Offset}), Expected);
+  }
+  rejected(Model->call("MmGetPhysicalAddress", {}));
+  rejected(Model->call("MmGetPhysicalAddress", {Pool, 0}));
+  rejected(Model->call("MmGetPhysicalAddress", {Pool + Size}));
+  rejected(Model->call("MmGetPhysicalAddress", {Pool ^ (1ULL << 32)}));
+  const auto Expected = call("MmGetPhysicalAddress", {Pool});
+  EXPECT_EQ(call("KfRaiseIrql", {15}), 0u);
+  EXPECT_EQ(call("MmGetPhysicalAddress", {Pool}), Expected);
+  call("KeLowerIrql", {0});
+  call("IoFreeMdl", {MDL});
+  call("ExFreePoolWithTag", {Pool, PoolTag});
+  rejected(Model->call("MmGetPhysicalAddress", {Pool}));
+}
+
+TEST_F(KernelMDLUserMapping, PhysicalQueryRequiresLivePagedPoolResidency) {
+  Model->enterExecution(profile::StackBase);
+  const auto Pool =
+      call("ExAllocatePoolWithTag", {1, profile::PageSize, PoolTag});
+  const auto MDL = descriptor(Pool + 17, 1);
+  rejected(Model->call("MmGetPhysicalAddress", {Pool + 17}));
+  call("MmProbeAndLockPages", {MDL, KernelMode, IoReadAccess});
+  const auto Expected = get(MDL + MDLSize) * profile::PageSize + 17;
+  success(Memory->protect(Pool, profile::PageSize, Read));
+  EXPECT_EQ(call("KfRaiseIrql", {15}), 0u);
+  EXPECT_EQ(call("MmGetPhysicalAddress", {Pool + 17}), Expected);
+  // A live lock establishes page residency, including other owned page bytes.
+  EXPECT_EQ(call("MmGetPhysicalAddress", {Pool + 18}), Expected + 1);
+  call("KeLowerIrql", {0});
+  call("MmUnlockPages", {MDL});
+  rejected(Model->call("MmGetPhysicalAddress", {Pool + 17}));
+  call("IoFreeMdl", {MDL});
+  success(Memory->protect(Pool, profile::PageSize, Read | Write));
+  call("ExFreePoolWithTag", {Pool, PoolTag});
+}
+
+TEST_F(KernelMDLUserMapping, PhysicalQueryFollowsUserRebindingAndLockedAlias) {
+  begin();
+  const auto FirstPool = pool(), SecondPool = pool();
+  const auto First = poolMDL(FirstPool), Second = poolMDL(SecondPool);
+  const auto View = map(First, NormalPagePriority | MdlMappingNoWrite);
+  const auto Original = call("MmGetPhysicalAddress", {FirstPool + 17});
+  EXPECT_EQ(call("MmGetPhysicalAddress", {View + 17}), Original);
+  const auto Locked = descriptor(View + 17, 1);
+  call("MmProbeAndLockPages", {Locked, UserMode, IoReadAccess});
+  const auto System =
+      call("MmGetSystemAddressForMdlSafe", {Locked, NormalPagePriority});
+  call("MmUnmapLockedPages", {View, First});
+  rejected(Model->call("MmGetPhysicalAddress", {View + 17}));
+  EXPECT_EQ(call("MmGetPhysicalAddress", {System}), Original);
+  EXPECT_EQ(map(Second, NormalPagePriority | MdlMappingNoWrite, View), View);
+  const auto Replacement = call("MmGetPhysicalAddress", {SecondPool + 17});
+  EXPECT_NE(Original, Replacement);
+  EXPECT_EQ(call("MmGetPhysicalAddress", {View + 17}), Replacement);
+  EXPECT_EQ(call("MmGetPhysicalAddress", {System}), Original);
+  process(ProcessB);
+  rejected(Model->call("MmGetPhysicalAddress", {View + 17}));
+  EXPECT_EQ(call("MmGetPhysicalAddress", {System}), Original);
+  process(ProcessA);
+  EXPECT_EQ(call("MmGetPhysicalAddress", {View + 17}), Replacement);
+  call("MmUnmapLockedPages", {View, Second});
+  call("MmUnlockPages", {Locked});
+  rejected(Model->call("MmGetPhysicalAddress", {System}));
+  for (const auto MDL : {Locked, First, Second})
+    call("IoFreeMdl", {MDL});
+  for (const auto Pool : {FirstPool, SecondPool})
+    call("ExFreePoolWithTag", {Pool, PoolTag});
+}
+
+TEST_F(KernelMDLUserMapping, PhysicalQueryRetainsPinnedPagesAfterProcessExit) {
+  const auto IRP = begin();
+  const auto User = get(IRP + IRPUserBufferOffset);
+  const auto MDL = descriptor(User + 17, 1);
+  rejected(Model->call("MmGetPhysicalAddress", {User + 17}));
+  call("MmProbeAndLockPages", {MDL, UserMode, IoReadAccess});
+  const auto Expected = call("MmGetPhysicalAddress", {User + 17});
+  EXPECT_EQ(Expected, get(MDL + MDLSize) * profile::PageSize + 17);
+  const auto System =
+      call("MmGetSystemAddressForMdlSafe", {MDL, NormalPagePriority});
+  pending(IRP);
+  success(Model->exitRequestorProcess(IRP));
+  rejected(Model->call("MmGetPhysicalAddress", {User + 17}));
+  EXPECT_EQ(call("MmGetPhysicalAddress", {System}), Expected);
+  call("MmUnlockPages", {MDL});
+  rejected(Model->call("MmGetPhysicalAddress", {System}));
+  call("IoFreeMdl", {MDL});
+  complete(IRP);
+}
+
+TEST_F(KernelMDLUserMapping,
+       PhysicalQueryUsesIndependentPagesAndMappingRights) {
+  const uint64_t Low =
+      physical::PhysicalBase + physical::PhysicalSize - 4 * profile::PageSize;
+  const auto MDL =
+      call("MmAllocatePagesForMdlEx",
+           {Low, Low + profile::PageSize - 1, 2 * profile::PageSize,
+            2 * profile::PageSize, MmCached, MmAllocateFullyRequired});
+  ASSERT_NE(MDL, 0u);
+  ASSERT_EQ(get(MDL + MDLSize + sizeof(uint64_t)), get(MDL + MDLSize) + 2);
+  const auto System =
+      call("MmGetSystemAddressForMdlSafe", {MDL, NormalPagePriority});
+  for (uint64_t Offset : {0ULL, 17ULL, 4095ULL, 4096ULL, 8191ULL}) {
+    const auto Expected =
+        get(MDL + MDLSize + Offset / profile::PageSize * sizeof(uint64_t)) *
+            profile::PageSize +
+        Offset % profile::PageSize;
+    EXPECT_EQ(call("MmGetPhysicalAddress", {System + Offset}), Expected);
+  }
+  EXPECT_EQ(call("MmProtectMdlSystemAddress", {MDL, PageNoAccess}),
+            StatusSuccess);
+  rejected(Model->call("MmGetPhysicalAddress", {System}));
+  EXPECT_FALSE(Memory->fault());
+  EXPECT_EQ(call("MmProtectMdlSystemAddress", {MDL, PageReadOnly}),
+            StatusSuccess);
+  EXPECT_EQ(call("MmGetPhysicalAddress", {System}),
+            get(MDL + MDLSize) * profile::PageSize);
+  call("MmFreePagesFromMdl", {MDL});
+  rejected(Model->call("MmGetPhysicalAddress", {System}));
+  call("ExFreePool", {MDL});
+}
+
+TEST_F(KernelMDLUserMapping, PhysicalQueryRequiresTheAttachedViewsProcess) {
+  const auto IRP = begin();
+  const auto Process = call("IoGetRequestorProcess", {IRP});
+  const auto Pool = pool(), Apc = pool(64);
+  const auto MDL = poolMDL(Pool), View = map(MDL);
+  const auto Expected = call("MmGetPhysicalAddress", {View + 17});
+  const auto [Work, ID] = worker(IRP);
+  rejected(Model->call("MmGetPhysicalAddress", {View + 17}));
+  call("KeStackAttachProcess", {Process, Apc});
+  EXPECT_EQ(call("MmGetPhysicalAddress", {View + 17}), Expected);
+  call("KeUnstackDetachProcess", {Apc});
+  rejected(Model->call("MmGetPhysicalAddress", {View + 17}));
+  finishWorker(Work, ID);
+  process(ProcessA);
+  call("MmUnmapLockedPages", {View, MDL});
+  call("IoFreeMdl", {MDL});
+  call("ExFreePoolWithTag", {Pool, PoolTag});
+  call("ExFreePoolWithTag", {Apc, PoolTag});
+  complete(IRP);
+}
+
+TEST_F(KernelMDLUserMapping, PhysicalQueryRejectsUnknownMemoryWithoutFaulting) {
+  for (const auto Address : std::array<uint64_t, 3>{0, Scratch, UINT64_MAX})
+    rejected(Model->call("MmGetPhysicalAddress", {Address}));
+  EXPECT_FALSE(Memory->fault());
+  const auto Pool = pool();
+  const auto Expected = call("MmGetPhysicalAddress", {Pool});
+  success(Memory->protect(Pool, profile::PageSize, 0));
+  rejected(Model->call("MmGetPhysicalAddress", {Pool}));
+  EXPECT_FALSE(Memory->fault());
+  success(Memory->protect(Pool, profile::PageSize, Read));
+  EXPECT_EQ(call("MmGetPhysicalAddress", {Pool}), Expected);
+  success(Memory->protect(Pool, profile::PageSize, Read | Write));
+  call("ExFreePoolWithTag", {Pool, PoolTag});
+}
+
 TEST_F(KernelMDLUserMapping,
        ProcessProbeNarrowsCarriersAndNormalizesEveryNonzeroOperation) {
   for (auto Access :

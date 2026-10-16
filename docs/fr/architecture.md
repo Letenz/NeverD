@@ -1940,3 +1940,5 @@ Les alias réutilisent les propriétaires existants des threads/processus et des
 `KernelModelIO` possède le wrapper de sonde de processus et la durée de vie de l’attachement privé. Il réutilise le changement de vue partagé et la sonde MDL ordinaire. Aucun stockage APC invité fictif n’est créé et un jeton public nul ne peut détacher cet état. Le propriétaire existant conserve admission et imbrication. L’exception atteint l’invité seulement après restauration réussie ; les erreurs de restauration restent des échecs du modèle.
 
 `KernelObjectAPIs.def` possède identité, arité, valeur et plafond IRQL de cette requête fixe. Aucun registre de callbacks ni appel au système hôte n’est ajouté.
+
+`KernelPhysicalMemory::resolveAddress` associe le `MemoryView` courant aux tranches exactes des allocations conservées et aux identités de pages existantes, y compris les alias. `KernelModel` valide séparément lecture, processus et résidence. La requête ne crée ni identité ni verrou de page ; le remplissage encore mappé ne réactive pas les octets libérés.

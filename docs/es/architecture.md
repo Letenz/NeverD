@@ -1932,3 +1932,5 @@ Los alias reutilizan los propietarios de hilos/procesos y contextos, incluso dur
 `KernelModelIO` controla el envoltorio de comprobación y la vida de la asociación privada. Reutiliza el cambio de vista compartido y la comprobación MDL habitual. No inventa almacenamiento APC invitado ni permite desasociar con un token público cero. El propietario existente mantiene admisión y anidamiento. La excepción llega al invitado solo tras restaurar correctamente; los errores de restauración siguen siendo fallos del modelo.
 
 `KernelObjectAPIs.def` controla identidad, aridad, valor y límite IRQL de la consulta fija. No introduce un registro de callbacks ni consultas al sistema operativo anfitrión.
+
+`KernelPhysicalMemory::resolveAddress` relaciona el `MemoryView` actual con rangos exactos de asignaciones retenidas e identidades de página existentes, incluidos alias. `KernelModel` valida por separado lectura, proceso y residencia. La consulta no asigna identidades ni bloquea páginas; el relleno aún mapeado no reactiva bytes liberados.
