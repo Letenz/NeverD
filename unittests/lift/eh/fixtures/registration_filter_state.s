@@ -9,10 +9,18 @@
 #define FILTER_PERSONALITY __except_handler3
 #define FILTER_UNWIND __seh_longjmp_unwind
 #endif
-#define FILTER_REPEATED_JUMP (REGISTRATION_CASE >= 58 && REGISTRATION_CASE <= 65)
+#define FILTER_REPEATED_JUMP (REGISTRATION_CASE >= 58 && REGISTRATION_CASE <= 67)
 #define FILTER_NESTED_JUMP (FILTER_REPEATED_JUMP && (REGISTRATION_CASE & 1))
+#define FILTER_OTHER_CAPTURE \
+  (REGISTRATION_CASE == 66 || REGISTRATION_CASE == 67 || \
+   REGISTRATION_CASE == 70 || REGISTRATION_CASE == 71 || \
+   REGISTRATION_CASE == 74 || REGISTRATION_CASE == 75)
+#define FILTER_SEARCH_JUMP (REGISTRATION_CASE >= 68 && REGISTRATION_CASE <= 75)
+#define FILTER_NESTED_SEARCH (FILTER_SEARCH_JUMP && (REGISTRATION_CASE & 1))
+#define FILTER_MIXED_SEARCH (REGISTRATION_CASE >= 72 && REGISTRATION_CASE <= 75)
+#define FILTER_SELECTED_SEARCH (REGISTRATION_CASE == 74 || REGISTRATION_CASE == 75)
 #define FILTER_DYNAMIC_VALUE (REGISTRATION_CASE == 64 || REGISTRATION_CASE == 65)
-#if REGISTRATION_CASE == 60 || REGISTRATION_CASE == 61
+#if REGISTRATION_CASE == 60 || REGISTRATION_CASE == 61 || FILTER_OTHER_CAPTURE || FILTER_SEARCH_JUMP
 #define FILTER_JUMP_VALUE 43
 #define FILTER_RESUME_VALUE 43
 #elif REGISTRATION_CASE == 62 || REGISTRATION_CASE == 63
@@ -38,7 +46,11 @@ _registration_entry:
 #if !REGISTRATION_EH4_FILTER
   mov fs:[0],esp
 #endif
+#if FILTER_OTHER_CAPTURE
+  sub esp,176
+#else
   sub esp,96
+#endif
 #if REGISTRATION_EH4_FILTER
   mov eax,[___security_cookie]
   xor dword ptr [ebp-8],eax
@@ -90,8 +102,39 @@ _registration_entry:
 #endif
   test eax,eax
   jnz .Lresumed
+#if FILTER_OTHER_CAPTURE
+  // The second capture owns another stack, saved EBX and unwind bound.
+  // Its cleanup abandons it and restores the first capture instead.
+  sub esp,16
+  mov ebx,8
+  mov dword ptr [ebp-4],1
+#if REGISTRATION_EH4_FILTER
+  .byte 0x68
+  .long ___security_cookie
+#endif
+  push 1
+  .byte 0x68
+  .long FILTER_UNWIND
+#if REGISTRATION_EH4_FILTER
+  push 3
+#else
+  push 2
+#endif
+  lea eax,[ebp-176]
+  push eax
+  call __setjmp3
+#if REGISTRATION_EH4_FILTER
+  add esp,20
+#else
+  add esp,16
+#endif
+  test eax,eax
+  jnz .Lbad
+#endif
   mov ebx,9
-#if FILTER_NESTED_JUMP
+#if FILTER_NESTED_SEARCH
+  mov dword ptr [ebp-4],3
+#elif FILTER_NESTED_JUMP
   mov dword ptr [ebp-4],4
 #endif
 #if REGISTRATION_CASE == 41 || REGISTRATION_CASE == 42
@@ -100,7 +143,11 @@ _registration_entry:
   mov dword ptr [ebp-4],2
 #endif
   push 42
+#if FILTER_OTHER_CAPTURE
+  lea eax,[ebp-176]
+#else
   lea eax,[ebp-96]
+#endif
   push eax
   call __longjmpex
   ud2
@@ -110,7 +157,12 @@ _registration_entry:
 #else
   cmp ebx,6
   jne .Lbad
-#if FILTER_DYNAMIC_VALUE
+#if FILTER_MIXED_SEARCH
+  mov ecx,[_registration_iteration]
+  and ecx,1
+  add ecx,42
+  cmp eax,ecx
+#elif FILTER_DYNAMIC_VALUE
   mov ecx,[_registration_iteration]
   sub ecx,1
   jnz .Lexpected_value
@@ -121,7 +173,7 @@ _registration_entry:
   cmp eax,FILTER_RESUME_VALUE
 #endif
   jne .Lbad
-#if REGISTRATION_CASE == 37 || REGISTRATION_CASE == 57 || FILTER_REPEATED_JUMP
+#if REGISTRATION_CASE == 37 || REGISTRATION_CASE == 57 || FILTER_REPEATED_JUMP || FILTER_SEARCH_JUMP
   cmp dword ptr [ebp-4],0
 #elif REGISTRATION_CASE == 38
   cmp dword ptr [ebp-4],FILTER_SENTINEL
@@ -154,11 +206,34 @@ _registration_entry:
   mov eax,91
   jmp .Lfinish
 .Lfilter:
+#if REGISTRATION_HAS_CALLBACK_LOOP && REGISTRATION_LOOP_IN_FILTER
+  registration_bounded_loop
+#endif
   mov eax,[ebp-100]
   imul eax,eax,10
   add eax,3
   mov [ebp-100],eax
-#if REGISTRATION_CASE == 57
+#if FILTER_SEARCH_JUMP
+  mov dword ptr [ebp-4],0
+#if FILTER_MIXED_SEARCH
+  mov eax,[_registration_iteration]
+  test eax,1
+  jz .Lsearch_continue
+#endif
+  push 43
+  lea eax,[ebp-96]
+  push eax
+  call __longjmpex
+  ud2
+#if FILTER_MIXED_SEARCH
+.Lsearch_continue:
+#if FILTER_SELECTED_SEARCH
+  mov eax,1
+#else
+  mov eax,-1
+#endif
+#endif
+#elif REGISTRATION_CASE == 57
   mov eax,[_registration_iteration]
   test eax,1
   jz .Lmixed_continue
@@ -225,21 +300,36 @@ _registration_entry:
 #endif
   ret
 .Lfinally:
+#if REGISTRATION_HAS_CALLBACK_LOOP && !REGISTRATION_LOOP_IN_FILTER
+  registration_bounded_loop
+#endif
   mov eax,[ebp-100]
   imul eax,eax,10
   add eax,2
   mov [ebp-100],eax
-#if REGISTRATION_CASE == 56
+#if REGISTRATION_CASE == 56 || FILTER_NESTED_SEARCH
   call .Lselected_nested
   jmp .Lafter_nested
 .Lselected_nested:
+#if FILTER_NESTED_SEARCH
+  mov eax,[ebp-100]
+  imul eax,eax,10
+  add eax,6
+  mov [ebp-100],eax
+#endif
 #endif
   push 0
   push 0
   push 0
   push 0xe0420042
   call dword ptr [__imp__RaiseException@16]
-#if REGISTRATION_CASE == 56
+#if REGISTRATION_CASE == 56 || FILTER_NESTED_SEARCH
+#if FILTER_NESTED_SEARCH
+  mov eax,[ebp-100]
+  imul eax,eax,10
+  add eax,7
+  mov [ebp-100],eax
+#endif
   mov eax,0
   ret
 .Lafter_nested:
@@ -276,7 +366,7 @@ _registration_entry:
   jmp .Lfinish
 #endif
 .Lhandler:
-#if REGISTRATION_CASE == 53 || REGISTRATION_CASE == 54 || REGISTRATION_CASE == 56 || REGISTRATION_CASE == 57
+#if REGISTRATION_CASE == 53 || REGISTRATION_CASE == 54 || REGISTRATION_CASE == 56 || REGISTRATION_CASE == 57 || FILTER_SELECTED_SEARCH
   mov esp,[ebp-24]
   cmp dword ptr [ebp-4],0
   jne .Lbad
@@ -284,7 +374,7 @@ _registration_entry:
 #endif
   mov dword ptr [ebp-4],FILTER_SENTINEL
   mov eax,97
-#if REGISTRATION_CASE >= 53 && REGISTRATION_CASE <= 57
+#if (REGISTRATION_CASE >= 53 && REGISTRATION_CASE <= 57) || FILTER_SELECTED_SEARCH
   jmp .Lfinish
 .Lselected:
   mov eax,[ebp-100]
@@ -364,7 +454,7 @@ _registration_entry:
 #endif
 #if REGISTRATION_CASE == 54 || FILTER_REPEATED_JUMP
   .long 1,0,.Lselected_cleanup
-#elif REGISTRATION_CASE == 56
+#elif REGISTRATION_CASE == 56 || FILTER_NESTED_SEARCH
   .long 1,0,.Lselected_nested
 #endif
 #if FILTER_NESTED_JUMP

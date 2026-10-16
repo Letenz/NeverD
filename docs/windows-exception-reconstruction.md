@@ -339,22 +339,46 @@ registers. A still-live capture remains available to later checked transfers.
 Selection and capture resumption remain separate proof outcomes, including
 mixed searches. Selected-filter writes also supply independent cleanup roots.
 A selected handler's cleanup can supersede that selection with a new jump to
-its same live capture and a new scalar value (zero normalizes to one). Each
-value stays paired with its own frame effects throughout local unwind, then
-becomes the resumed EAX value. This restores the capture's unwind bound and retires all suspended finally
+the same or another live capture in its parent frame, with a new scalar value
+(zero normalizes to one). Each destination and value stays paired with its own
+frame effects throughout local unwind. Resumption uses that destination's saved
+registers, ESP and unwind bound, with the new value in EAX. It retires all suspended finally
 invocations, including nested ordinary calls. Out-of-line callbacks retain their
 scope ownership and authenticated physical CALL/RET boundaries. Their unreachable
 tails remain callback code without acquiring a fabricated reaching state.
 LLVM and installation share the same MedIR invocation and callback ownership
 queries; a nonreturning nested call requires both a checked jump exit and no
-ordinary return. Different captures, escaping frame values, recurrent selection,
-and escaping searches still require separate complete transfer proofs.
+ordinary return. A replaced jump records the exact callback call site and target
+capture, without inventing resumption of the abandoned capture. MedIR requires
+every replacement path to close through an acyclic graph of checked transfers;
+source analysis checks both buffers throughout all remaining cleanups. Modified
+or expired buffers, unclosed cycles, escaping frame values, recurrent selection
+and escaping searches refuse reconstruction.
+A search filter called by `RaiseException` inside a suspended finally may also
+jump to the same or another live capture. The shared search interpreter keeps
+these exits separate from signed filter dispositions. Only returning branches
+restore the suspended callback stack; a jump retires the filter and every
+suspended finally invocation, including nested ordinary calls. A filter may
+continue execution or select a handler on one branch and jump on another,
+preserving each branch's frame, continuation and scalar value. The source callback occurrence independently
+proves the destination and buffer lifetime before native reconstruction.
 Scopes without any proved activation remain unsupported.
 Checked reads from mapped PE data retain their runtime bits as scalar jump
 values, including negative values. They keep possible alias provenance: a
 subsequent dereference or a value mixed with a frame address needs its own proof.
 Mapped PE data, including zero-fill storage, retains its runtime values and access permissions;
 overlapping mappings, import writes and escaping frame pointers refuse.
+
+Finite loops in finally callbacks and search filters retain a distinct complete
+frame for each execution step, including register counters, parent cells and
+callback-private storage. A repeated CFG block is permitted only when the
+bounded execution-state graph still closes; recurrent complete states, unknown
+termination and exhausted proof budgets refuse reconstruction. Proven constant
+branches use the same decision as the parent state solver. Outlined PHI copy
+blocks retain their exact source edge and callback owner. Installation follows
+each recovered scalar slot to the parent's exact escape index and checks every
+alias for private, non-atomic scalar access; source-frame accesses and escaping
+addresses cannot acquire copy-block authority.
 
 Ordinary calls from one finally callback to another retain the same physical
 parent frame and give each invocation its own private stack. The source near

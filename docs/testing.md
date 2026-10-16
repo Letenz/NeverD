@@ -112,6 +112,12 @@ policy, signature matching and feature changes between selections. Run these
 with `NeverDPipelineOutcomeTests` and `NeverDSessionCAPITests`; the no-return,
 x87 and jump-table suites cover their shared proof consumers.
 
+`MedDCE.KeepsLivePhiCyclesAndDropsDeadCyclesInEitherBlockOrder` checks register
+DCE liveness through cyclic PHIs, dead-cycle removal and sparse identifiers on
+x86, x64, ARM32 and AArch64. The module jump-table and Windows continuation
+tests cover arbitration after body rebuilds; unchanged bodies may reuse the
+same run-local decision, including its budget refusal.
+
 `SessionCAPITest.DataAccessWidths*` compares retained navigation facts with
 fresh native decoding, preserves renamed source, and checks changed function
 addresses, extents and inventories. It also covers edits, policy/signature
@@ -4324,7 +4330,7 @@ bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
 stack-only facts cannot preserve a capture, deallocated buffers refuse and a
 frame-preserving call supplies no scalar result authority.
 
-The EH4 jump matrix repeats forty-three capture/resumption scenarios with and
+The EH4 jump matrix repeats fifty-nine capture/resumption scenarios with and
 without GS cookies: parent and callback jumps, zero values, filter search, incoming
 parameters, retired scopes, private leaf/graph calls with a live buffer, and
 registered EH3/EH4 helpers borrowing the parent buffer and a scalar object, and
@@ -4349,7 +4355,22 @@ four calls, unwind the same finally, check the restored state and nonvolatile
 register, then raise another exception. The native mutation tests alter the saved
 state slot, read address, volatile accesses, placement, use closure and captured
 projection key while retaining verifier-clean IR. The full source profile now
-contains 168 scenarios; older compiler profiles keep their original membership.
+contains 216 scenarios; older compiler profiles keep their original membership.
+
+`longjmp-finally-{register,frame,private}-loop` and the corresponding
+`longjmp-filter-*` fixtures add 18 EH3/EH4/EH4+GS scenarios. Three iterations
+contribute observable trace digits before a suspended finally continues;
+register, parent-cell and callback-stack counters must all survive reconstruction.
+The complete profile has 4,320 original/generated executions at two bases.
+`RegistrationCallbackLoop` rejects recurrent or unknown counters, bad branch
+identities, live-buffer writes, unbalanced stacks and exhausted work, while
+accepting reordered blocks and successors. `RegistrationSEHPHICopy` checks exact
+source-edge and callback ownership. `RegistrationRecoveredCopy` authenticates
+parent escape indices, both callback frame recipes and all scalar-slot aliases;
+wrong parents, unknown recoveries, address escapes, atomic or mistyped accesses
+and observable frozen values refuse installation. Ten verifier-clean mutations
+per actual outlined copy block also reject changed recovery, storage, operations
+and control flow when replaying the linked source fixtures.
 
 The EH4/GS `longjmp-callee`, `longjmp-returning-callee` and
 `longjmp-scalar-callee` variants retain the source helper's registration while
@@ -4400,7 +4421,7 @@ pairs. Native installation mutations change the reload address, volatility,
 atomicity, alignment, selector, projection keys/results, uses and placement
 before the capture. They also remove a projection or compare another value.
 
-`registration_filter_state.s` supplies twenty runtime cases. Five handler-selection
+`registration_filter_state.s` supplies thirty runtime cases. Five handler-selection
 cases (`longjmp-handler-selected`, `longjmp-handler-cleanup`,
 `longjmp-handler-captured-cursor`, `longjmp-handler-nested-finally` and
 `longjmp-handler-mixed-resumption`) check handler entry state, cleanup/filter
@@ -4423,9 +4444,30 @@ cleanup order, restored registers and registration state. The two
 subtract one, covering negative, zero and positive values without a constant
 proof. Their six protocol variants check EAX on every invocation. State
 mutations reject unauthenticated image reads, dereferencing loaded pointer bits,
-and mixing them with a physical frame address. MedIR checks exact nested invocation identity and independent ownership
+and mixing them with a physical frame address. The two `-other-capture` cases
+capture distinct buffers with different EBX, ESP and unwind bounds. Cleanup
+replaces the pending second capture with the first and value 42 with 43; only
+the first continuation may execute. All six protocol variants check EAX, the
+restored state and registers
+at both bases. `RegistrationReplacementJump` rejects unknown, overlapped or
+modified destination buffers, including writes during subsequent cleanup and
+writes to unused buffer padding; disjoint writes and reordered blocks pass.
+`RegistrationSEHJumpABI` rejects fabricated callback locations, targets,
+duplicate transfers and cyclic or incomplete replacement graphs. MedIR checks
+exact nested invocation identity and independent ownership
 of unreached callback tails; installation rejects removed noreturn attributes
-and newly inserted normal returns. The other seven cases are:
+and newly inserted normal returns. Eight `longjmp-search-filter-*` and
+`longjmp-nested-search-filter-*` cases jump directly from the search filter:
+the original capture, another live capture, or a branch that alternates jumping
+with continue-execution or positive handler selection. All twenty-four protocol
+variants distinguish EAX 43 on
+replacement from the pending value 42, traces 23/263 on abandoned paths and
+235/26375 on returning paths, and restore the destination's registers, state and
+FS chain. `RegistrationFilterJump` checks pure and mixed exits across all three
+protocols. Changed buffers, frame-address values, clobbered capture bytes,
+incomplete CALLs and nondefault memory spaces refuse; disjoint writes and block
+reordering remain valid. Shared filter fixtures live in their own test helper
+files. The other seven cases are:
 `longjmp-filter-correlated-state`, `longjmp-filter-shared-state`,
 `longjmp-filter-captured-cursor`, `longjmp-filter-negative-disposition`,
 `longjmp-filter-skipped-scope`, `longjmp-filter-two-resume-mappings` and

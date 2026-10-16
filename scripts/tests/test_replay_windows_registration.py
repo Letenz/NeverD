@@ -13,8 +13,8 @@ class RegistrationSourceReplayTests(unittest.TestCase):
         self.assertEqual(len(r5), 64)
         eh4_jumps = {name for name in current
                      if name.startswith("eh4-") and "longjmp-" in name}
-        self.assertEqual(len(current), 168)
-        self.assertEqual(len(eh4_jumps), 86)
+        self.assertEqual(len(current), 216)
+        self.assertEqual(len(eh4_jumps), 118)
         for prefix in ("eh4-", "eh4-gs-"):
             for case in ("longjmp-filter-correlated-state", "longjmp-filter-shared-state",
                          "longjmp-filter-captured-cursor", "longjmp-filter-negative-disposition",
@@ -39,7 +39,23 @@ class RegistrationSourceReplayTests(unittest.TestCase):
         "longjmp-handler-cleanup-value", "longjmp-handler-nested-cleanup-value",
         "longjmp-handler-cleanup-zero", "longjmp-handler-nested-cleanup-zero",
         "longjmp-handler-cleanup-dynamic-value",
-        "longjmp-handler-nested-cleanup-dynamic-value"})
+        "longjmp-handler-nested-cleanup-dynamic-value",
+        "longjmp-handler-cleanup-other-capture",
+        "longjmp-handler-nested-cleanup-other-capture",
+        "longjmp-search-filter-jump",
+        "longjmp-nested-search-filter-jump",
+        "longjmp-search-filter-other-capture",
+        "longjmp-nested-search-filter-other-capture",
+        "longjmp-search-filter-mixed-jump",
+        "longjmp-nested-search-filter-mixed-jump",
+        "longjmp-search-filter-selected-jump",
+        "longjmp-nested-search-filter-selected-jump",
+        "longjmp-finally-register-loop",
+        "longjmp-finally-frame-loop",
+        "longjmp-finally-private-loop",
+        "longjmp-filter-register-loop",
+        "longjmp-filter-frame-loop",
+        "longjmp-filter-private-loop"})
         self.assertEqual(set(current) - set(r4) - eh4_jumps, {
             "longjmp-state-activate-call", "longjmp-state-activate-unwind",
             "longjmp-state-retire", "longjmp-state-sentinel",
@@ -60,7 +76,23 @@ class RegistrationSourceReplayTests(unittest.TestCase):
         "longjmp-handler-cleanup-value", "longjmp-handler-nested-cleanup-value",
         "longjmp-handler-cleanup-zero", "longjmp-handler-nested-cleanup-zero",
         "longjmp-handler-cleanup-dynamic-value",
-        "longjmp-handler-nested-cleanup-dynamic-value"})
+        "longjmp-handler-nested-cleanup-dynamic-value",
+        "longjmp-handler-cleanup-other-capture",
+        "longjmp-handler-nested-cleanup-other-capture",
+        "longjmp-search-filter-jump",
+        "longjmp-nested-search-filter-jump",
+        "longjmp-search-filter-other-capture",
+        "longjmp-nested-search-filter-other-capture",
+        "longjmp-search-filter-mixed-jump",
+        "longjmp-nested-search-filter-mixed-jump",
+        "longjmp-search-filter-selected-jump",
+        "longjmp-nested-search-filter-selected-jump",
+        "longjmp-finally-register-loop",
+        "longjmp-finally-frame-loop",
+        "longjmp-finally-private-loop",
+        "longjmp-filter-register-loop",
+        "longjmp-filter-frame-loop",
+        "longjmp-filter-private-loop"})
         self.assertTrue(all(name.startswith("eh4-gs-") for name in set(r4) - set(legacy)))
         with self.assertRaises(ValueError):
             source_cases("unknown")
