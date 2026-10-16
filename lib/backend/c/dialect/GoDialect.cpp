@@ -1369,7 +1369,11 @@ private:
         break;
       }
       case DeclKind::Typedef:
-        if (!D->Ty->isInteger())
+        // Go names a record and its type alike: a typedef that names a
+        // record by its own tag declares the record.
+        if (D->Ty->isRecord() && type(D->Ty) == escapeIdentifier(D->Name))
+          record(D->Ty);
+        else if (!D->Ty->isInteger())
           line("type " + escapeIdentifier(D->Name) + " = " + type(D->Ty));
         break;
       case DeclKind::Record:
@@ -1411,9 +1415,13 @@ private:
   }
 
   void record(const CType *Ty) {
-    if (!Ty->isRecord() || !Ty->Record->Complete ||
-        !PrintedRecords.insert(Ty).second)
+    if (!Ty->isRecord() || !PrintedRecords.insert(Ty).second)
       return;
+    // A record the text only declares stays opaque: its address passes.
+    if (!Ty->Record->Complete) {
+      line("type " + type(Ty) + " struct{}");
+      return;
+    }
     openBlock("type " + type(Ty) + " struct");
     for (const RecordField &Field : Ty->Record->Fields)
       line(escapeIdentifier(Field.Name) + " " + type(Field.Type));
