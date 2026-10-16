@@ -1807,3 +1807,5 @@ KernelFileSystem は FILE_OBJECT ごとに provider token を保持します。�
 `KernelModel::queryPrimaryVirtualAddress` は既存の有効な非ページ `PoolAllocation` 記録と `KernelPhysicalMemory::describe` から主 VA を導き、順方向照会で検証します。逆引き別名レジストリ、物理識別子、ページ固定を追加しません。一般的なバッキングアドレスだけでは主マッピングを証明できません。
 
 `activateStack` と `retireStack` が `ExecutionStacks` を所有し、照会は範囲を現在の `ExecutionThreadKeys` に結び付けます。再有効化は同じ範囲を必要とし、有効範囲の重複や解放サイズの不一致は変更前に拒否します。同じスレッドの入れ子実行も別々の境界を持ちます。これらの環境照会はネイティブ再構築で不透明な依存として残ります。
+
+`LockedMdl::StorageKind` は記述子の格納域とページ由来を分離します。プールと有効スタックが正確な範囲を所有し、共通事前検査が全範囲を確認してから記録を消します。プール解放は変更前に書込権限を確認します。部分構築・アンロックは格納域所有者を保ち、メモリ借用は活動 MDL メタデータとの交差を拒否します。MmCreateMdl は不透明な展開境界を保ちます。

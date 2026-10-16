@@ -1664,6 +1664,10 @@ private:
   llvm::Error initializeRequestPacket(ActiveRequest &Record,
                                       const DriverRequest &Input);
   struct LockedMdl {
+    // Descriptor storage is independent of the described pages and their lock.
+    enum class StorageKind { PrivateArena, NonPagedPool, ExecutionStack };
+    StorageKind Storage = StorageKind::PrivateArena;
+    uint64_t StorageOwner = 0;
     enum class Ownership {
       Request,
       RequestSystemBuffer,
@@ -1700,6 +1704,13 @@ private:
   std::map<uint64_t, LockedMdl> MDLs;
   llvm::Error initializeMDLPhysicalPages(const LockedMdl &State);
   llvm::Expected<uint64_t> allocateMDL(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t> createMDL(uint64_t Record, uint64_t Address,
+                                     uint64_t Size);
+  llvm::Error initializeMDLRecord(uint64_t Record, uint64_t Address,
+                                  uint32_t Size, uint64_t Extent,
+                                  uint16_t Flags);
+  llvm::Error canReleaseMDLStorage(uint64_t Base, uint64_t Size) const;
+  void retireMDLStorage(uint64_t Base, uint64_t Size);
   llvm::Expected<uint64_t>
   allocatePagesForMDL(llvm::ArrayRef<uint64_t> Arguments, bool Extended);
   llvm::Error freePagesFromMDL(uint64_t MDL);
