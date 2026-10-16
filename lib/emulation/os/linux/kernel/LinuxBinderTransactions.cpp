@@ -12,6 +12,7 @@
 #include "LinuxMemory.h"
 
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/FormatVariadic.h"
 
 namespace neverd::emulation::linux_model {
 namespace {
@@ -51,9 +52,24 @@ LinuxFiles::binderCommand(LinuxDeviceState &Device, uint32_t Command,
     return unsupported(Result,
                        "Binder free does not identify an owned live buffer");
   }
-  if (Get32(20) || Get64(40))
-    return unsupported(
-        Result, "Binder transaction flags or object offsets are unmodeled");
+  const bool IsReply = Command == Reply;
+  const uint32_t Flags = Get32(20);
+  // libbinder adds TF_ACCEPT_FDS to ordinary calls, including object-free
+  // ones. It grants no object translation here: nonempty offsets still stop.
+  // TF_STATUS_CODE carries a guest-produced status_t, not a model result.
+  const uint32_t AllowedFlags = IsReply ? 0x08 : 0x10;
+  if ((Flags & ~AllowedFlags) || Get64(40) ||
+      ((Flags & 0x08) && Get64(32) != 4)) {
+    auto Message =
+        llvm::formatv(
+            "Binder transaction command {0:x} target {1:x} code {2:x} flags "
+            "{3:x} "
+            "data_size {4} offsets_size {5}: flags, objects or status payload "
+            "are outside the object-free profile",
+            Command, Get32(0), Get32(16), Flags, Get64(32), Get64(40))
+            .str();
+    return unsupported(Result, Message.c_str());
+  }
   if (Get64(32) > 65536)
     return unsupported(Result, "Binder transaction payload budget exhausted");
   auto &OwnQueue = Device.BinderThreadWork[CurrentTask];
@@ -65,7 +81,6 @@ LinuxFiles::binderCommand(LinuxDeviceState &Device, uint32_t Command,
   };
   std::shared_ptr<LinuxDeviceState> Target, Sender;
   std::shared_ptr<BinderCall> Call;
-  const bool IsReply = Command == Reply;
   if (IsReply) {
     auto I = Device.BinderIncoming.find(CurrentTask);
     if (I == Device.BinderIncoming.end())
@@ -138,7 +153,7 @@ LinuxFiles::binderCommand(LinuxDeviceState &Device, uint32_t Command,
     return std::move(E);
   Target->BinderBuffers.emplace(Offset, BinderBuffer{Size, false});
   BinderWork Work{
-      IsReply ? Replied : Received,       Get32(16), 0,
+      IsReply ? Replied : Received,       Get32(16), Flags,
       IsReply ? 0u : uint32_t(ProcessID), Offset,    IsReply ? nullptr : Call};
   if (IsReply) {
     auto &Queue = Target->BinderThreadWork[Call->Thread];

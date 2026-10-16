@@ -22,7 +22,17 @@ namespace {
 using namespace windows;
 constexpr uint64_t QueryStatusSize = 16;
 constexpr uint64_t QueryStorageSize = QueryStatusSize + dispatcher::EventSize;
-constexpr unsigned QueryMajor = 5;
+
+uint32_t requestMajor(DriverRequestKind Kind) {
+  switch (Kind) {
+#define NEVERD_DRIVER_REQUEST_KIND(Name, Spelling, Major)                      \
+  case DriverRequestKind::Name:                                                \
+    return Major;
+#include "neverd/emulation/DriverRequestKinds.def"
+#undef NEVERD_DRIVER_REQUEST_KIND
+  }
+  return profile::MajorFunctionCount;
+}
 
 llvm::Error fileRequestError(const llvm::Twine &Text) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
@@ -149,7 +159,10 @@ llvm::Expected<uint64_t>
 KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
                                  DriverRequestKind Kind, bool Native,
                                  const KernelContextCapture *Context) {
-  const bool Transfer = Kind != DriverRequestKind::QueryInformation;
+  const bool Query = Kind == DriverRequestKind::QueryInformation;
+  const bool Flush = Kind == DriverRequestKind::FlushBuffers;
+  const bool Transfer =
+      Kind == DriverRequestKind::Read || Kind == DriverRequestKind::Write;
   const bool Write = Kind == DriverRequestKind::Write;
   const auto Process = executionProcessContext();
   if (!Process || Process->RestrictedAttachment ||
@@ -186,7 +199,8 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
     // Zw selects KernelMode for object referencing. The handle's process scope
     // still applies, but its granted mask is not a kernel-mode access check.
     GrantedAccess = Handle->GrantedAccess;
-    Normalized = Transfer
+    Normalized = Flush ? std::array<uint64_t, 5>{Handle->Object, 0, 0, 0, 0}
+                 : Transfer
                      ? std::array<uint64_t, 5>{Handle->Object, 0,
                                                uint32_t(A[6]), A[5], 0}
                      : std::array<uint64_t, 5>{Handle->Object, uint32_t(A[4]),
@@ -205,6 +219,15 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
   if (bool(*Flags & FileSynchronousIO) == File.Asynchronous)
     return fileRequestError(
         "FILE_OBJECT synchronous mode differs from its owner");
+  if (Flush) {
+    // Unlike the read/write producers, flush checks this granted mask even
+    // for a KernelMode handle reference. Named pipes require FILE_WRITE_DATA.
+    const uint32_t Required = (*Flags & 0x80) ? 2u : 6u;
+    if (!(GrantedAccess & Required))
+      return StatusAccessDenied;
+    if (File.Asynchronous || File.State != FileState::Open)
+      return fileRequestError("native flush requires an open synchronous file");
+  }
   uint64_t ByteOffset = 0;
   uint32_t Key = 0;
   if (Transfer) {
@@ -259,7 +282,7 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
       }))
     return fileRequestError(
         "same-file I/O must finalize before a file API request");
-  if (!Transfer && Native &&
+  if (Query && Native &&
       (Class == 8 || Class == 51 || (Class == 14 && !File.Asynchronous))) {
     const unsigned Width = Class == 51 ? 1 : Class == 14 ? 8 : 4;
     if (Length < Width)
@@ -291,7 +314,7 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
       return E;
     return StatusSuccess;
   }
-  if (!Transfer && Native) {
+  if (Query && Native) {
     switch (Class) {
     case 4:
     case 5:
@@ -358,8 +381,9 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
       return E;
   }
   const bool Provider = FileSystem.ownsDevice(*Top);
-  const bool LocalNative = !Transfer && Native && (Class == 16 || Class == 17);
-  if (Native && !Provider && !File.Asynchronous && (Class == 4 || Class == 5)) {
+  const bool LocalNative = Query && Native && (Class == 16 || Class == 17);
+  if (Query && Native && !Provider && !File.Asynchronous &&
+      (Class == 4 || Class == 5)) {
     auto FastIO = Memory.readInteger(
         Devices.at(*Top).OwnerDriver + DriverFastIOOffset, 8);
     if (!FastIO)
@@ -367,7 +391,7 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
     if (*FastIO)
       return fileRequestError("native Fast I/O queries are not implemented");
   }
-  const unsigned Major = Transfer ? (Write ? 4 : 3) : QueryMajor;
+  const unsigned Major = requestMajor(Kind);
   const uint64_t Callback = Provider ? 0 : Result.MajorFunctions[Major];
   if (!Provider && !LocalNative && !Callback &&
       anyInitialized(DispatchBytesWritten, DispatchInitialization,
@@ -440,14 +464,16 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
   ++File.InternalIOHolds;
   DriverRequestResult Observation;
   Observation.Kind = Kind;
-  Observation.Origin = Transfer ? (Write ? DriverRequestOrigin::FileHandleWrite
-                                         : DriverRequestOrigin::FileHandleRead)
+  Observation.Origin = Flush ? DriverRequestOrigin::FileHandleFlush
+                       : Transfer
+                           ? (Write ? DriverRequestOrigin::FileHandleWrite
+                                    : DriverRequestOrigin::FileHandleRead)
                        : Native ? DriverRequestOrigin::FileHandleQuery
                                 : DriverRequestOrigin::FileInformationQuery;
   Observation.Device = Devices.at(File.Device).Name;
   Observation.File = File.ScenarioID;
   Observation.RequestorProcessID = Process->ProcessID;
-  if (!Transfer)
+  if (Query)
     Observation.FileInformationClass = Class;
   Observation.ByteOffset = ByteOffset;
   Observation.IRP = *Packet;
@@ -502,7 +528,8 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
   // The bounded profile uses normal I/O priority. The service tail encodes
   // that hint after producer allocation and before invoking the driver.
   const uint32_t PacketFlags =
-      Transfer
+      Flush ? 0x60000u
+      : Transfer
           ? 0x60000u | (Write ? 0xa00u : 0x900u) |
                 (Write ? (Length ? 0x30u : 0x10u) : (Length ? 0x70u : 0x50u)) |
                 ((*Flags & 8) ? 1u : 0u)
@@ -623,10 +650,12 @@ llvm::Error KernelModel::publishFileRequestCompletion(uint64_t IRP) {
   auto &Query = FileRequests.at(Request.FileRequestID);
   if (Query.CompletionPublished)
     return llvm::Error::success();
-  // IRP_DEFER_IO_COMPLETION leaves an immediate native packet intact until the
-  // producing wrapper regains control. Pending packets notify the requestor
-  // through the same eligible-thread boundary as borrowed queries.
-  if (Query.Native && !Request.PendingMarked && !Request.DispatchReturned)
+  // IRP_DEFER_IO_COMPLETION retains immediate native read/write/query packets
+  // until the producer regains control. Flush does not set that flag: eligible
+  // completion publishes and disposes before dispatch returns. Queued packets
+  // still notify through the original caller boundary.
+  if (Query.Native && Request.Kind != DriverRequestKind::FlushBuffers &&
+      !Request.PendingMarked && !Request.DispatchReturned)
     return llvm::Error::success();
   // IopfCompleteRequest queues requestor APC delivery when a worker or an
   // elevated/guarded caller completes the packet. Eligible API and execution
@@ -650,7 +679,9 @@ llvm::Error KernelModel::publishFileRequestCompletion(uint64_t IRP) {
   // are overwritten by the final API continuation.
   if ((Status >> profile::NTStatusSeverityShift) !=
           profile::NTStatusErrorSeverity &&
-      Observation.Information && Request.Kind != DriverRequestKind::Write) {
+      Observation.Information &&
+      (Request.Kind == DriverRequestKind::Read ||
+       Request.Kind == DriverRequestKind::QueryInformation)) {
     if (auto E = validateGuestAccess(Request.SystemBuffer,
                                      Observation.Information, false))
       return E;

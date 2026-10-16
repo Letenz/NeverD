@@ -26,11 +26,11 @@ import tempfile
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 FIXTURES = REPOSITORY / "unittests" / "types" / "fixtures"
-SPELLINGS = ("windows", "ida", "keywords", "portable")
-# Rust and Go name builtins as Windows does, through aliases, or by exact
-# widths.
+SPELLINGS = ("portable", "windows", "keywords")
+# Rust and Go name builtins by exact widths, or as Windows does, through
+# aliases.
 RUST_SPELLINGS = GO_SPELLINGS = PYTHON_SPELLINGS = JAVASCRIPT_SPELLINGS = \
-    LUA_SPELLINGS = ("windows", "portable")
+    LUA_SPELLINGS = ("portable", "windows")
 
 # Windows' own typedefs of the builtins it names, as <ntdef.h> declares them:
 # prototypes of the compiler's intrinsics only match its declarations with

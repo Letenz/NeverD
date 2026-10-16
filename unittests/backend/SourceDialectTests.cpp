@@ -1057,6 +1057,33 @@ int64_t frame_record(int64_t arg0) {
   }
 }
 
+TEST(SourceDialect, ATypedefOfARecordsOwnTagDeclaresTheRecord) {
+  // Rust and Go name a record and its type alike, so `typedef struct X X`
+  // is the record: defined where the text defines it, opaque where it only
+  // declares it, and never an alias of itself.
+  constexpr const char *Source = R"C(#include <stdint.h>
+typedef struct _OPAQUE _OPAQUE;
+typedef struct _PAIR _PAIR;
+struct _PAIR { int32_t Low; int32_t High; };
+int32_t low(_PAIR *Pair, _OPAQUE *Handle) { return Pair->Low; }
+)C";
+  for (SourceDialect Dialect : {SourceDialect::Go, SourceDialect::Rust}) {
+    const bool Go = Dialect == SourceDialect::Go;
+    const auto View = spell(Source, Dialect);
+    ASSERT_TRUE(View.Unread.empty()) << View.Text;
+    EXPECT_EQ(View.Text.find("_PAIR = _PAIR"), std::string::npos) << View.Text;
+    EXPECT_EQ(View.Text.find("_OPAQUE = _OPAQUE"), std::string::npos);
+    const std::string Pair = Go ? "type _PAIR struct {" : "struct _PAIR {";
+    const auto Defined = View.Text.find(Pair);
+    ASSERT_NE(Defined, std::string::npos) << View.Text;
+    EXPECT_EQ(View.Text.find(Pair, Defined + 1), std::string::npos);
+    EXPECT_NE(View.Text.find(Go ? "type _OPAQUE struct{}"
+                                : "struct _OPAQUE {\n    _opaque: [u8; 0],\n}"),
+              std::string::npos)
+        << View.Text;
+  }
+}
+
 TEST(SourceDialect, RustViewComputesWhatCComputes) {
   std::string Rustc;
   if (const char *FromEnv = std::getenv("NEVERD_TEST_RUSTC"))

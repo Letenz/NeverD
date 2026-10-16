@@ -3876,6 +3876,11 @@ private slots:
 
   void localTypesLayOutAndRenderTheProgramsTypes() {
     QTemporaryDir directory;
+    // A choice kept before exact widths became the default starts over.
+    QSettings().setValue(QStringLiteral("localTypes/spelling"),
+                         QStringLiteral("ida"));
+    QSettings().setValue(QStringLiteral("localTypes/luaSpelling"),
+                         QStringLiteral("windows"));
     Workbench bench;
     bench.window->openFile(
         writeFixture(directory, QStringLiteral("local-types.bin")));
@@ -3946,23 +3951,24 @@ private slots:
         ids.append(spelling->itemData(index).toString());
       return ids;
     };
+    // Exact widths come first, every language's default.
+    const QStringList twoSpellings{QStringLiteral("portable"),
+                                   QStringLiteral("windows")};
     types->setPage(2);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language rust spelling portable")));
     QVERIFY(!spelling->isHidden());
-    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
-                                     QStringLiteral("portable")}));
-    spelling->setCurrentIndex(0);
+    QCOMPARE(choices(), twoSpellings);
+    spelling->setCurrentIndex(1);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language rust spelling windows")));
     types->setPage(3);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language go spelling portable")));
     QVERIFY(!spelling->isHidden());
-    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
-                                     QStringLiteral("portable")}));
-    QCOMPARE(spelling->itemText(1), QStringLiteral("Exact widths (uint32)"));
-    spelling->setCurrentIndex(0);
+    QCOMPARE(choices(), twoSpellings);
+    QCOMPARE(spelling->itemText(0), QStringLiteral("Exact widths (uint32)"));
+    spelling->setCurrentIndex(1);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language go spelling windows")));
     // Python renders through ctypes, with its own two spellings.
@@ -3970,9 +3976,8 @@ private slots:
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language python spelling portable")));
     QVERIFY(!spelling->isHidden());
-    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
-                                     QStringLiteral("portable")}));
-    QCOMPARE(spelling->itemText(1), QStringLiteral("Exact widths (c_uint32)"));
+    QCOMPARE(choices(), twoSpellings);
+    QCOMPARE(spelling->itemText(0), QStringLiteral("Exact widths (c_uint32)"));
     // JavaScript whose JSDoc TypeScript checks, as one tab.
     const auto *tabBar =
         types->findChild<QTabBar *>(QStringLiteral("localTypesTabs"));
@@ -3981,37 +3986,37 @@ private slots:
     types->setPage(5);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language javascript spelling portable")));
-    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
-                                     QStringLiteral("portable")}));
-    QCOMPARE(spelling->itemText(1),
+    QCOMPARE(choices(), twoSpellings);
+    QCOMPARE(spelling->itemText(0),
              QStringLiteral("JavaScript types (number, bigint)"));
     // Lua, whose spelling names the C types its comments give.
     QCOMPARE(tabBar->tabText(6), QStringLiteral("Lua"));
     types->setPage(6);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language lua spelling portable")));
-    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
-                                     QStringLiteral("portable")}));
+    QCOMPARE(choices(), twoSpellings);
     types->setPage(1);
     QTRY_VERIFY(source->toPlainText().startsWith(
-        QStringLiteral("// language c spelling windows")));
+        QStringLiteral("// language c spelling portable")));
     QVERIFY(source->toPlainText().contains(QStringLiteral("struct _DEVICE")));
     QVERIFY(!spelling->isHidden());
     for (auto *box : types->findChildren<QCheckBox *>())
       QVERIFY2(!box->isHidden(), qPrintable(box->text()));
-    QCOMPARE(
-        choices(),
-        (QStringList{QStringLiteral("windows"), QStringLiteral("ida"),
-                     QStringLiteral("keywords"), QStringLiteral("portable")}));
-    QCOMPARE(spelling->currentData().toString(), QStringLiteral("windows"));
+    QCOMPARE(choices(),
+             (QStringList{QStringLiteral("portable"), QStringLiteral("windows"),
+                          QStringLiteral("keywords")}));
+    QCOMPARE(spelling->currentData().toString(), QStringLiteral("portable"));
     QCOMPARE(QSettings().value(QStringLiteral("localTypes/view")).toString(),
              QStringLiteral("c"));
+    QCOMPARE(QSettings()
+                 .value(QStringLiteral("localTypes/spellings/rust"))
+                 .toString(),
+             QStringLiteral("windows"));
     QCOMPARE(
-        QSettings().value(QStringLiteral("localTypes/rustSpelling")).toString(),
+        QSettings().value(QStringLiteral("localTypes/spellings/go")).toString(),
         QStringLiteral("windows"));
-    QCOMPARE(
-        QSettings().value(QStringLiteral("localTypes/goSpelling")).toString(),
-        QStringLiteral("windows"));
+    QVERIFY(!QSettings().contains(QStringLiteral("localTypes/spelling")));
+    QVERIFY(!QSettings().contains(QStringLiteral("localTypes/luaSpelling")));
 
     // The command line shows a type by name, and says when none has it.
     auto *output = bench.window->findChild<OutputWindow *>();

@@ -10,6 +10,10 @@
 
 تفحص `PipelineOutcome.ResolvedCalls*` مجموعات السجلات وهوية call/invoke وجمع بايتات المكدس وتقسيمها ووضع القيم الضيقة في خاناتها ورفض البايتات الناقصة. وتفحص `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` الإزاحات المسجلة. تغطي `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` معماريات x64 وARM32 وAArch64 بصيغ ELF وPE وMach-O. تفحص `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` الصيغ الثلاث وترفض الأطوال المعدلة والنطاقات القابلة للكتابة أو المتجاوزة وحدود المصدر، والدوال المحلية ذات الاسم نفسه، وسجلات المصدر الخاطئة، والمداخل البديلة، والصور القابلة لإعادة التموضع. تُجمّع اختبارات C التفاضلية المرجع بشكل مستقل مع O0 والكود المولد مع O2، كي لا يفسد خطأ محسّن المضيف في حساب تكراري النتيجة المرجعية. يطلب فحص FMA على AArch64 الخيار `-mfma` على مضيفات x86 فقط.
 
+## بذور ذاكرة الدخول الملموسة
+
+شغّل `NeverDSymbolicTests` و`NeverDConcolicTests` و`NeverDConcolicIntegrationTests`. تغطي `LowIRConcolicMemory.*` واختبارات الطبقة الرمزية ترتيبي البايتات، والكتابات المتداخلة، والبنوك المستقلة، والنطاقات المفقودة وغير الصالحة، وإعادة الضبط والبذور المتأخرة، وحدود الميزانية، والحقب، وعرض النموذج، وإعادة تنفيذ المرشحين وإزالة التكرار. تستمر مصفوفة الصيغ والمعماريات الأصلية.
+
 ## تهيئة بناء الاختبار
 
 تكون الاختبارات معطلة ما لم يُفعّل `BUILD_TESTING`. يمثل Release الخيار العادي
@@ -2028,7 +2032,4 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 
 يتحقق `KernelFileTransfers` من حقول الحزمة والإزاحات الخاصة ومقابض الإلحاق والطول الصفري وتداخل المخرجات والحالات الفورية والمعلّقة وإشعار العامل والرفض قبل النشر. ينفذ `OriginalBufferedNativeFileTransfers` / `GenuineWdkBufferedNativeFileTransfers` الاستدعاءات المستوردة والمحلولة ديناميكياً عبر الخلفيات والعقود وعناوين التحميل والجدولة. اضبط `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` / `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` لصور WDK الأصلية العادية/CFG؛ وتُتخطى الخلفيات غير المتاحة صراحةً.
 
-
-## بذور ذاكرة الدخول الملموسة
-
-شغّل `NeverDSymbolicTests` و`NeverDConcolicTests` و`NeverDConcolicIntegrationTests`. تغطي `LowIRConcolicMemory.*` واختبارات الطبقة الرمزية ترتيبي البايتات، والكتابات المتداخلة، والبنوك المستقلة، والنطاقات المفقودة وغير الصالحة، وإعادة الضبط والبذور المتأخرة، وحدود الميزانية، والحقب، وعرض النموذج، وإعادة تنفيذ المرشحين وإزالة التكرار. تستمر مصفوفة الصيغ والمعماريات الأصلية.
+تتحقق `KernelFileTransfers` من صلاحيات flush والحزم بلا مخزن مؤقت لكل أنماط نقل الجهاز وقيمة Information الكاملة والنشر والتحرير قبل العودة وإخطار العامل أو المنطقة المحمية ورفض الاستدعاءات غير المتزامنة والمتزامنة على الملف نفسه. تنفذ تجهيزات النقل الأصلية وWDK القائمة أيضاً استدعاءات flush المستوردة والمحلولة ديناميكياً، بما يشمل IOSB للمستخدم وتسعة أنماط إكمال.

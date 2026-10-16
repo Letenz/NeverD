@@ -12,6 +12,10 @@ l’agrégat plus large avant une pull request à haut risque.
 
 `PipelineOutcome.ResolvedCalls*` vérifie les groupes de registres, l’identité call/invoke, le regroupement et la division des octets de pile, les valeurs étroites dans leurs propres emplacements, ainsi que le refus d’octets manquants. `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` vérifie les décalages enregistrés. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` couvre x64, ARM32 et AArch64 en ELF, PE et Mach-O. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` couvre ces trois formats et rejette les longueurs écrasées, les plages modifiables ou débordantes, les fonctions locales homonymes, les mauvais registres source, les entrées alternatives et les images relogeables. Les tests différentiels C compilent la référence séparément à O0 et le C généré à O2, afin qu’une erreur d’optimisation d’une récurrence sur l’hôte ne corrompe pas l’oracle. Le test FMA AArch64 ne demande `-mfma` que sur les hôtes x86.
 
+## Graines concrètes de mémoire initiale
+
+Exécuter `NeverDSymbolicTests`, `NeverDConcolicTests` et `NeverDConcolicIntegrationTests`. `LowIRConcolicMemory.*` et les tests symboliques couvrent les deux ordres d’octets, alias d’écriture, banques séparées, plages absentes/invalides, réinitialisation et graines tardives, budgets limites, époques, largeurs du modèle, rejeu et déduplication. La matrice native des formats et architectures est conservée.
+
 ## Configurer une compilation de test
 
 Les tests sont désactivés sans `BUILD_TESTING`. Une compilation Release est le
@@ -2117,7 +2121,4 @@ Les régressions vérifient toute la largeur, les bases admises, les capacités 
 
 `KernelFileTransfers` vérifie paquets, déplacements spéciaux, ajout seul, longueur nulle, alias de sortie, états immédiats/en attente, notification du worker et refus avant publication. `OriginalBufferedNativeFileTransfers` / `GenuineWdkBufferedNativeFileTransfers` exécutent les appels importés et résolus dynamiquement selon backend, contrat, adresse et ordonnancement. Configurer `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` / `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` pour les images WDK normales/CFG ; les backends indisponibles sont explicitement ignorés.
 
-
-## Graines concrètes de mémoire initiale
-
-Exécuter `NeverDSymbolicTests`, `NeverDConcolicTests` et `NeverDConcolicIntegrationTests`. `LowIRConcolicMemory.*` et les tests symboliques couvrent les deux ordres d’octets, alias d’écriture, banques séparées, plages absentes/invalides, réinitialisation et graines tardives, budgets limites, époques, largeurs du modèle, rejeu et déduplication. La matrice native des formats et architectures est conservée.
+`KernelFileTransfers` vérifie les droits de flush, les paquets sans tampon pour chaque mode de transfert, Information sur 64 bits, la publication/libération avant retour, les notifications worker/région protégée et le rejet des appels asynchrones/concurrents. Les fixtures originales et WDK existantes exécutent aussi les flushes importés et résolus dynamiquement, avec IOSB utilisateur et neuf modes d’achèvement.

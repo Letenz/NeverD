@@ -7,6 +7,10 @@
 本指南說明貢獻者安全修改 NeverD 所需理解的生產邊界。內容刻意只涵蓋
 NeverD 自有程式碼；LLVM、Capstone 與 Unicorn 子模組各自維護內部架構。
 
+## 具體入口記憶體種子
+
+`SymExecConcreteShadow` 在執行前接收依位址排列的 RAM 位元組；僅更新具體狀態，符號端的入口記憶體維持自由輸入。C++ `LowIRConcolicOptions::InitialMemory` 的 `MaxMemorySeedBytes` 預設上限為 1 MiB，零預算不接受位元組；空白、重疊或繞回範圍會拒絕。記憶體報告採版本 2，保留 `InitialMemory` 與候選 `MemorySeed`。投影僅接受已有種子涵蓋、epoch 為零的暫存器或絕對記憶體來源；查詢、重新執行和去重包含兩類位元組。缺漏、符號基底與近似效果繼續拒絕，寫入正常更新具體記憶體。暫停時可由 `ProcessView::read` 讀取已提交 RAM；寫入前鉤子不能代表完整快照。觀測不證明所有權、生命週期、不變性或不相交；候選只驗證指定分支和先前決策。版本 1 的 C/JSON、Python 與 CLI 仍只接受暫存器。
+
 ## 原始碼與物件替換邊界
 
 `SourcePatchCompiler` 負責編譯器身分與製品選擇。`validateSourcePatchTarget` 統一決定原始碼與外部 IR 的目標准入，目標三元組本身不足以證明支援。`bindSourcePatch` 確認 IR 入口映射；`PatchObject` 負責原生區段、重定位與 FDE 範圍證據。`publishSourcePatch` 暫存、檢查並獨占發佈完整交易。`COFFSourceImage` 負責 PE x86/x64/ARM32/ARM64 的新儲存與展開表；提升後的重寫仍要求獨立的原 EH 證據。參見[原始碼 patch](source-patching.md)。
@@ -1682,6 +1686,4 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 
 `KernelModelFileRequests` 也統一擁有同步緩衝 `ZwReadFile` / `ZwWriteFile`。產生端負責控制代碼範圍、偏移與鍵擷取及寫入資料副本。共用完成路徑只在原呼叫端符合通知條件時發布讀取位元組與 IOSB，並各釋放一次自有封包和緩衝區。儲存驅動程式負責內容與檔案位置變更。
 
-## 具體入口記憶體種子
-
-`SymExecConcreteShadow` 在執行前接收依位址排列的 RAM 位元組；僅更新具體狀態，符號端的入口記憶體維持自由輸入。C++ `LowIRConcolicOptions::InitialMemory` 的 `MaxMemorySeedBytes` 預設上限為 1 MiB，零預算不接受位元組；空白、重疊或繞回範圍會拒絕。記憶體報告採版本 2，保留 `InitialMemory` 與候選 `MemorySeed`。投影僅接受已有種子涵蓋、epoch 為零的暫存器或絕對記憶體來源；查詢、重新執行和去重包含兩類位元組。缺漏、符號基底與近似效果繼續拒絕，寫入正常更新具體記憶體。暫停時可由 `ProcessView::read` 讀取已提交 RAM；寫入前鉤子不能代表完整快照。觀測不證明所有權、生命週期、不變性或不相交；候選只驗證指定分支和先前決策。版本 1 的 C/JSON、Python 與 CLI 仍只接受暫存器。
+`KernelModelFileRequests` 也擁有無緩衝區的 `ZwFlushBuffersFile` 產生路徑。其權限遮罩檢查及立即發布／釋放規則與延遲完成的原生讀寫／查詢封包不同；各路徑共用原呼叫者通知及單次釋放的擁有者。

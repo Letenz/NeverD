@@ -108,6 +108,31 @@ TEST(TypeParse, ReadsAnonymousRecordsAndWindowsNames) {
   EXPECT_EQ(Thread.Size, 16u);
 }
 
+TEST(TypeParse, ReadsMicrosoftsSizedIntegersAsIDAWritesThem) {
+  // IDA's local types spell builtins by Microsoft's sized integers.
+  const TypeLibrary Library = parsed(R"(
+    struct _IDA_LIKE
+    {
+        unsigned __int8 Type;
+        __int16 Size;
+        unsigned int Flags;
+        __int64 Count;
+        unsigned __int64 Mask;
+    };
+  )");
+  const RecordDef &Record = recordOf(Library, "_IDA_LIKE");
+  EXPECT_EQ(shapeOf(Record), "struct{Type@0 Size@2 Flags@4 Count@8 Mask@16}");
+  EXPECT_EQ(Record.Size, 24u);
+  const auto builtinOf = [&](size_t Index) {
+    return Record.Members[Index].Type->TheBuiltin;
+  };
+  EXPECT_EQ(builtinOf(0), Builtin::UChar);
+  EXPECT_EQ(builtinOf(1), Builtin::Short);
+  EXPECT_EQ(builtinOf(2), Builtin::UInt);
+  EXPECT_EQ(builtinOf(3), Builtin::LongLong);
+  EXPECT_EQ(builtinOf(4), Builtin::ULongLong);
+}
+
 TEST(TypeParse, KeepsPackingAndDeclaredAlignment) {
   const TypeLibrary Library = parsed(R"(
     #pragma pack(push, 1)
@@ -306,8 +331,9 @@ TEST(TypeParse, ConvertsWithoutAProgram) {
   RenderOptions Prototypes;
   Prototypes.Prototypes = true;
   const std::string Header = renderTypes(Library, {}, Prototypes);
-  EXPECT_NE(Header.find("NTSTATUS Pair(PPAIR Out, ULONG Flags);"),
-            std::string::npos);
+  EXPECT_NE(Header.find("NTSTATUS Pair(PPAIR Out, uint32_t Flags);"),
+            std::string::npos)
+      << Header;
   TypeLibrary Back;
   ASSERT_TRUE(parseCTypes(Header, Back).ok());
   ASSERT_NE(Back.findPrototype("Pair"), nullptr);
@@ -530,8 +556,8 @@ TEST(TypeParse, ReadsBackTheFixtureAsRendered) {
   auto Library = importPDBTypes(NEVERD_TYPES_FIXTURES "/local_types.pdb");
   ASSERT_TRUE(bool(Library)) << llvm::toString(Library.takeError());
   for (BuiltinSpelling Spelling :
-       {BuiltinSpelling::Windows, BuiltinSpelling::IDA,
-        BuiltinSpelling::Keywords, BuiltinSpelling::Portable})
+       {BuiltinSpelling::Portable, BuiltinSpelling::Windows,
+        BuiltinSpelling::Keywords})
     expectRoundTrip(**Library, Language::C, Spelling);
   expectRoundTrip(**Library, Language::Cpp);
   expectRoundTrip(**Library, Language::Rust);

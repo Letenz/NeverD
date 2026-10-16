@@ -115,72 +115,76 @@ QString declaredIn(const QString &language) {
   return QStringLiteral("c");
 }
 
-/// How C and C++, and the layout, spell builtins (the engine's spellings).
+/// How C and C++, and the layout, spell builtins (the engine's spellings),
+/// exact widths, the default, first.
 struct Spelling {
   const char *id;
   const char *title;
 };
 constexpr Spelling Spellings[] = {
-    {"windows",
-     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
-    {"ida", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
-                              "IDA names (unsigned int)")},
-    {"keywords", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
-                                   "C keywords (unsigned long)")},
     {"portable", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
                                    "Exact widths (uint32_t)")},
-};
-/// How Rust and Go do: Windows' names, which they declare as aliases as
-/// wdk-sys does, or exact widths.
-constexpr Spelling RustSpellings[] = {
     {"windows",
      QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
+    {"keywords", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
+                                   "C keywords (unsigned long)")},
+};
+/// How Rust and Go do: exact widths, or Windows' names, which they declare
+/// as aliases as wdk-sys does.
+constexpr Spelling RustSpellings[] = {
     {"portable",
      QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Exact widths (u32)")},
+    {"windows",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
 };
 constexpr Spelling GoSpellings[] = {
-    {"windows",
-     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
     {"portable",
      QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Exact widths (uint32)")},
-};
-constexpr Spelling PythonSpellings[] = {
     {"windows",
      QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
+};
+constexpr Spelling PythonSpellings[] = {
     {"portable", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
                                    "Exact widths (c_uint32)")},
+    {"windows",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
 };
 // Lua's values are its integers either way; the spelling names the C types
 // the comments give.
 constexpr Spelling LuaSpellings[] = {
-    {"windows",
-     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
     {"portable", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
                                    "Exact widths (uint32_t)")},
-};
-constexpr Spelling JavaScriptSpellings[] = {
     {"windows",
      QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
+};
+constexpr Spelling JavaScriptSpellings[] = {
     {"portable", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
                                    "JavaScript types (number, bigint)")},
+    {"windows",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
 };
 
-/// The spellings each language chooses from, where the choice is kept and
-/// what it is until chosen.  C's serves the layout too.
+/// The spellings each language chooses from, the first until one is
+/// chosen, and where the choice is kept.  C's serves the layout too.
 struct SpellingChoice {
   const char *language;
   std::span<const Spelling> spellings;
   const char *setting;
-  const char *initial;
 };
 const SpellingChoice SpellingChoices[] = {
-    {"c", Spellings, "localTypes/spelling", "windows"},
-    {"rust", RustSpellings, "localTypes/rustSpelling", "portable"},
-    {"go", GoSpellings, "localTypes/goSpelling", "portable"},
-    {"python", PythonSpellings, "localTypes/pythonSpelling", "portable"},
-    {"javascript", JavaScriptSpellings, "localTypes/javascriptSpelling",
-     "portable"},
-    {"lua", LuaSpellings, "localTypes/luaSpelling", "portable"},
+    {"c", Spellings, "localTypes/spellings/c"},
+    {"rust", RustSpellings, "localTypes/spellings/rust"},
+    {"go", GoSpellings, "localTypes/spellings/go"},
+    {"python", PythonSpellings, "localTypes/spellings/python"},
+    {"javascript", JavaScriptSpellings, "localTypes/spellings/javascript"},
+    {"lua", LuaSpellings, "localTypes/spellings/lua"},
+};
+/// Where the choices were kept until exact widths became every language's
+/// default (2026-10): the choices made until then start over.
+constexpr const char *RetiredSpellingSettings[] = {
+    "localTypes/spelling",           "localTypes/rustSpelling",
+    "localTypes/goSpelling",         "localTypes/pythonSpelling",
+    "localTypes/javascriptSpelling", "localTypes/luaSpelling",
 };
 
 /// The choice \p language makes: C++'s and the layout's are C's.
@@ -460,18 +464,19 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
       shown = int(I) + 1;
   tabs_->setCurrentIndex(shown);
   pages_->setCurrentIndex(tabs_->currentIndex() ? 1 : 0);
+  for (const char *retired : RetiredSpellingSettings)
+    QSettings().remove(QString::fromLatin1(retired));
   for (const SpellingChoice &choice : SpellingChoices) {
     // A choice the language does not offer, as a setting of another build
-    // may hold, is the initial one.
-    QString chosen = settings
-                         .value(QString::fromLatin1(choice.setting),
-                                QString::fromLatin1(choice.initial))
-                         .toString();
+    // may hold, is the first.
+    const QString initial = QString::fromLatin1(choice.spellings.front().id);
+    QString chosen =
+        settings.value(QString::fromLatin1(choice.setting), initial).toString();
     if (std::none_of(choice.spellings.begin(), choice.spellings.end(),
                      [&](const Spelling &entry) {
                        return chosen == QLatin1String(entry.id);
                      }))
-      chosen = QString::fromLatin1(choice.initial);
+      chosen = initial;
     spellings_.insert(QString::fromLatin1(choice.language), chosen);
   }
   showSpellings();

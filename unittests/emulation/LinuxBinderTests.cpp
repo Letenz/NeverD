@@ -152,11 +152,27 @@ TEST_P(LinuxBinder, TransactionBuffersKeepLP64LayoutAndPeerOwnership) {
   };
   std::vector<uint8_t> Tx(64);
   llvm::support::endian::write32le(Tx.data() + 16, 0x12345678);
+  llvm::support::endian::write32le(Tx.data() + 20, 16); // TF_ACCEPT_FDS
   llvm::support::endian::write64le(Tx.data() + 32, 3);
   llvm::support::endian::write64le(Tx.data() + 48, Base + 2048);
   llvm::cantFail(cpu().write(Base + 1024, Tx));
   const uint8_t Payload[] = {0x00, 0xff, 0x61};
   llvm::cantFail(cpu().write(Base + 2048, Payload));
+  for (uint32_t Flags : {1u, 8u, 0x80000010u, 16u}) {
+    SCOPED_TRACE(Flags);
+    auto Invalid = Tx;
+    llvm::support::endian::write32le(Invalid.data() + 20, Flags);
+    if (Flags == 16)
+      llvm::support::endian::write64le(Invalid.data() + 40, 8);
+    llvm::cantFail(cpu().write(Base + 1024, Invalid));
+    ASSERT_FALSE(Send(Client, 0x40406300, Base + 1024, 64));
+    EXPECT_NE(Report.Diagnostic.find("code 0x12345678 flags 0x"),
+              std::string::npos)
+        << Report.Diagnostic;
+    EXPECT_EQ(read(ServerMap, 4096), std::vector<uint8_t>(4096, 0));
+    EXPECT_EQ(llvm::support::endian::read64le(read(Base + 264, 8).data()), 0u);
+  }
+  llvm::cantFail(cpu().write(Base + 1024, Tx));
   ASSERT_EQ(Send(Client, 0x40406300, Base + 1024, 64), 0u);
   ASSERT_EQ(Send(Server, 0x630c, 0, 0), 0u);
   llvm::cantFail(cpu().write(Base + 768, std::vector<uint8_t>(128, 0xa5)));
@@ -168,6 +184,7 @@ TEST_P(LinuxBinder, TransactionBuffersKeepLP64LayoutAndPeerOwnership) {
   llvm::support::endian::write32le(Expected.data(), 0x720c);
   llvm::support::endian::write32le(Expected.data() + 4, 0x80407202);
   llvm::support::endian::write32le(Expected.data() + 24, 0x12345678);
+  llvm::support::endian::write32le(Expected.data() + 28, 16);
   llvm::support::endian::write32le(Expected.data() + 32,
                                    linux_model::ProcessID);
   llvm::support::endian::write32le(Expected.data() + 36, linux_model::UserID);
@@ -180,6 +197,17 @@ TEST_P(LinuxBinder, TransactionBuffersKeepLP64LayoutAndPeerOwnership) {
   const uint8_t Answer[] = {0x78, 0x56, 0x34};
   llvm::cantFail(cpu().write(Base + 2048, Answer));
   EXPECT_EQ(read(ServerMap, 3), std::vector<uint8_t>({0x00, 0xff, 0x61}));
+  for (uint32_t Flags : {8u, 16u}) {
+    auto Invalid = Tx; // A status reply requires exactly four payload bytes.
+    llvm::support::endian::write32le(Invalid.data() + 20, Flags);
+    llvm::cantFail(cpu().write(Base + 1024, Invalid));
+    ASSERT_FALSE(Send(Server, 0x40406301, Base + 1024, 64));
+    EXPECT_EQ(read(ClientMap, 4096), std::vector<uint8_t>(4096, 0));
+    EXPECT_EQ(llvm::support::endian::read64le(read(Base + 264, 8).data()), 0u);
+  }
+  // Successful retry proves refusal did not consume the pending call.
+  llvm::support::endian::write32le(Tx.data() + 20, 0);
+  llvm::cantFail(cpu().write(Base + 1024, Tx));
   ASSERT_EQ(Send(Server, 0x40406301, Base + 1024, 64), 0u);
   record(0, 0, 0, 128, Base + 768);
   ASSERT_EQ(call(ServiceKind::Ioctl, Client, 0xc0306201, Base + 256), 0u);

@@ -97,11 +97,14 @@ stream's member list, or whose members cannot sit where they say
 `renderType` and `renderTypes` spell types as C, C++, Rust, Go, Python,
 JavaScript or Lua (`TypeLanguages.def`), each member marked with its
 offset. Builtins take the spellings each language has (`TypeLanguages.def`
-lists them, `BuiltinSpellings.def` names them): C and C++ name them as
-Windows, IDA or the compiler does, or by exact widths; Rust, Go, Python,
-JavaScript and Lua by exact widths or by Windows' names, which a module or
-file declares as aliases as wdk-sys does (Lua's comments only, its values
-being its integers either way). Every language
+lists them, `BuiltinSpellings.def` names them), and every language names
+them by exact widths unless asked: `uint32_t`, `u32`, `uint32`,
+`ctypes.c_uint32`, a JavaScript `number`. Each also takes Windows' names,
+which Rust, Go, Python, JavaScript and Lua declare as aliases as wdk-sys
+does (Lua's comments only, its values being its integers either way), and C
+and C++ the compiler's keywords too. IDA's own spelling, Microsoft's sized
+integers, reads in as C but does not render, being neither portable nor
+what the program's headers say. Every language
 reproduces the library's layout exactly. An explicit filler moves a member
 that the language's own rules would place earlier. Rust and Go read what they
 cannot express through accessors whose arithmetic follows C, signed bitfields
@@ -2087,19 +2090,43 @@ Neither view gives the frame a slot holding that address, so the read would
 otherwise print as an unassigned local or a zero.
 
 When HighC must keep a frame whole, it declares the frame bytes as
-`stack_storage` with `frame_base` pointing into them. The storage prints as one
-record laid out exactly like those bytes, as the LLVM C route prints `frame0`.
-A displacement becomes a member when every access the writer can place there
-is a plain integer read or write of one width and signedness, at an aligned
-offset inside the storage, clear of every other access. The member keeps the
-slot's name from before the storage replaced it, else `var_mXX`, and prints as
-`stack_storage.var_m10`. Gaps are named `gapXX` by offset. A debug object of
-another type (a record, an array, a pointer or an enumeration) keeps its bytes
-raw, and a debug integer must have the access width. Every other access stays
-a raw access through `frame_base` to the same object, so a member and the bytes
-around it always alias. The record's tag is `frame_<entry>`: the C++, Go and
-Rust views parse the HighC text into one namespace of record tags, and the Go
-and Rust views print the record's type where the frame is declared.
+`stack_storage`, one record laid out exactly like those bytes, as the LLVM C
+route prints `frame0`. Every frame access and address the writer can certify
+names a member of it:
+
+- A scalar member holds the widest accesses at a displacement when they cover
+  every access overlapping them, at an offset aligned to their width. It has
+  the type the widest plain accesses agree on, else an integer of their width,
+  and the reads choose its signedness. On a 64-bit target a pointer of that
+  width is the bits of an unsigned integer member, and a 16-byte integer is a
+  member too.
+- An access narrower than its member, or of another kind, is a view of the
+  member's bytes, spelled as any other scalar access:
+  `*(uint32_t *)&stack_storage.var_m10`, or `*(_DWORD *)...` in the alias
+  spelling. A read of the member's width and the other signedness converts it.
+- Accesses that straddle each other share one byte array,
+  `uint8_t var_m30[10]`, which their views index.
+- A frame address taken outside every member names a byte array that runs to
+  the next member, access or address.
+
+Addresses print as the member holding them: `(uintptr_t)&stack_storage.var_m48`,
+`(CStringT*)&stack_storage.var_m48` for a pointer parameter, or
+`&stack_storage.var_m48[8]` inside an array. Frame aliases print the address
+they hold at each use, so a frame pointer joined across a try's normal and
+exceptional edges is one address and never a variable. A 16-byte integer that
+no member may hold at its alignment is one copy of its bytes:
+`__builtin_memset(&stack_storage.var_m50, 0, 16)`, or a `__builtin_memcpy` from
+a fresh carrier of its exact width. A member keeps the slot's name from before
+the storage replaced it, else `var_mXX` (`var_XX` above the entry stack
+pointer). Gaps are named `gapXX` by offset. A debug object of another type (a
+record, an array, a pointer or an enumeration) keeps its bytes raw, and a debug
+integer must have the access width. `frame_base`, the entry stack pointer's
+address in the storage, is declared only when the body reads it: for such raw
+bytes and for displacements outside the storage. Every access reaches the same
+object, so a member and the bytes around it always alias. The record's tag is
+`frame_<entry>`: the C++, Go and Rust views parse the HighC text into one
+namespace of record tags, and the Go and Rust views print the record's type
+where the frame is declared.
 
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
@@ -6915,6 +6942,8 @@ The finite intrinsic catalogue and value semantics live in `dalvik::Library`;
 JNI retains opaque identities and argument/reference transport only.
 `LinuxBinderTransactions` routes object-free messages between guest-owned opens;
 LinuxMemory owns their read-only arenas and every service body remains guest code.
+It preserves admitted libbinder request/status flags at this shared transport
+boundary. No frontend interprets a status payload or invents a service result.
 `LinuxGPUCommands` owns explicitly selected PM4 admission and execution, using
 MemoryView physical pins and the existing KGSL context/memstore owner.
 `LinuxGPUObjects` allocates retained RAM through `AddressSpace::allocateBacking`
@@ -7002,6 +7031,8 @@ KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing
 `RecoveryArchitecture` selects the native contract from `SpecializationOptions::Architecture`, independently of the build host. The existing default is x64; a target without an adapter refuses explicitly. `arch/x86_64` owns native option encoding, primary-image range rules, external-exit matching costs and physical-exit receipts. Core owns generic budgets, policy encoding and graph/evidence integrity. The x64 option and receipt digests retain their existing byte encoding; both expected and stored architecture identities are checked before validating the declaration. `RawArchitectureReceiptCompatibility` fixes pre-refactor digest values, and architecture-mismatch controls forbid relabeling x64 evidence as ARM64. This boundary does not implement ARM64 native recovery.
 
 `KernelModelFileRequests` also owns synchronous buffered `ZwReadFile` and `ZwWriteFile`. Handle scope, offset/key capture and copied write input belong to the producer. Shared completion publishes read bytes and IOSB in the eligible original caller, then disposes each owned packet and buffer once. Storage drivers own content and file-position changes.
+
+`KernelModelFileRequests` also owns bufferless `ZwFlushBuffersFile` production. Its granted-mask check and immediate publication/disposal differ from deferred native read/write/query packets; all reuse the original-caller notification and single-release owner.
 
 ### Darwin imported file calls
 

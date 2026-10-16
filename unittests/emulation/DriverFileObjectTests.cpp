@@ -14,6 +14,7 @@
 
 #include <filesystem>
 #include <map>
+#include <string_view>
 #include <tuple>
 
 namespace neverd::emulation {
@@ -519,15 +520,26 @@ void exerciseFileTransfers(const std::filesystem::path &Image,
       ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
       ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
       ASSERT_TRUE(Result->UnloadCompleted) << Result->Diagnostic;
-      ASSERT_EQ(Result->Requests.size(), Options.Requests.size() + 7)
+      ASSERT_EQ(Result->Requests.size(), Options.Requests.size() + 9)
           << driverResultJSON(*Result);
       const uint32_t Status = Mode == 'W' ? 0x80000005u
                               : Mode == 'E' || Mode == 'R' || Mode == 'M'
                                   ? 0xc0000001u
                                   : 0u;
-      unsigned Index = 0;
+      unsigned Index = 0, Flushes = 0;
       for (const auto &Request : Result->Requests) {
         EXPECT_TRUE(Request.Completed);
+        if (Request.Kind == DriverRequestKind::FlushBuffers) {
+          EXPECT_EQ(Request.Origin, DriverRequestOrigin::FileHandleFlush);
+          EXPECT_EQ(Request.IOStatus, Status);
+          EXPECT_EQ(Request.Information, 0x100000007ull);
+          EXPECT_TRUE(Request.Output.empty());
+          EXPECT_FALSE(Request.FileInformationClass);
+          EXPECT_EQ(Request.File, 0x1000u);
+          EXPECT_EQ(Request.RequestorProcessID, 0x2000u);
+          ++Flushes;
+          continue;
+        }
         if (Request.Kind != DriverRequestKind::Read &&
             Request.Kind != DriverRequestKind::Write) {
           EXPECT_EQ(Request.IOStatus, 0u);
@@ -554,15 +566,18 @@ void exerciseFileTransfers(const std::filesystem::path &Image,
         ++Index;
       }
       EXPECT_EQ(Index, 6u);
+      EXPECT_EQ(Flushes, 2u);
       EXPECT_TRUE(Result->Devices.empty());
-      for (const char *Name : {"ZwReadFile", "ZwWriteFile"}) {
+      for (const char *Name :
+           {"ZwReadFile", "ZwWriteFile", "ZwFlushBuffersFile"}) {
         unsigned Calls = 0;
         for (const auto &Call : Result->Calls)
           if (Call.Name == Name) {
             EXPECT_EQ(Call.Result, Mode == 'M' ? 0 : Status);
             ++Calls;
           }
-        EXPECT_EQ(Calls, 3u);
+        EXPECT_EQ(Calls,
+                  std::string_view(Name) == "ZwFlushBuffersFile" ? 2u : 3u);
       }
     }
 }

@@ -7,6 +7,10 @@
 本指南说明贡献者安全修改 NeverD 所需了解的生产边界。内容有意仅涵盖
 NeverD 自有代码；LLVM、Capstone 和 Unicorn 子模块维护各自的内部架构。
 
+## 具体入口内存种子
+
+`SymExecConcreteShadow` 在执行前接收按地址排列的 RAM 字节；它们只进入具体状态，符号侧的入口内存仍为自由输入。C++ `LowIRConcolicOptions::InitialMemory` 默认受 `MaxMemorySeedBytes` 的 1 MiB 总量限制，零预算不接收字节；空、重叠和回绕范围明确拒绝。使用内存的报告为版本 2，保留 `InitialMemory` 和候选的 `MemorySeed`。投影仅接受已覆盖的 epoch-zero 寄存器或绝对内存来源，并用两类字节重新计算查询、从头重放及去重。缺字节、符号基址来源和近似效果继续拒绝；写入按正常别名规则修改具体内存。`ProcessView::read` 可在暂停时捕获已提交 RAM，写入前的钩子不构成完整快照。观测不证明区域归属、寿命、不变性或不相交；候选仅验证指定分支及先前决策，不证明后续路径或完整等价。C/JSON、Python 和 CLI 的版本 1 接口仍只接收寄存器。
+
 ## 源码与对象替换边界
 
 `SourcePatchCompiler` 负责编译器身份和制品选择。`validateSourcePatchTarget` 统一决定源码与外部 IR 的目标准入，目标三元组本身不足以证明支持。`bindSourcePatch` 确认 IR 入口映射；`PatchObject` 负责原生节、重定位和 FDE 范围证据。`publishSourcePatch` 暂存、检查并独占发布完整事务。`COFFSourceImage` 负责 PE x86/x64/ARM32/ARM64 的新存储和展开表；提升后的重写继续要求独立的原 EH 证据。参见[源码 patch](source-patching.md)。
@@ -1762,6 +1766,4 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 
 `KernelModelFileRequests` 也统一拥有同步缓冲 `ZwReadFile` / `ZwWriteFile`。生产者负责句柄作用域、偏移和键捕获，以及写入数据的副本。共享完成路径只在原调用方满足通知条件时发布读取字节和 IOSB，并各释放一次自有数据包与缓冲区。存储驱动负责内容和文件位置变更。
 
-## 具体入口内存种子
-
-`SymExecConcreteShadow` 在执行前接收按地址排列的 RAM 字节；它们只进入具体状态，符号侧的入口内存仍为自由输入。C++ `LowIRConcolicOptions::InitialMemory` 默认受 `MaxMemorySeedBytes` 的 1 MiB 总量限制，零预算不接收字节；空、重叠和回绕范围明确拒绝。使用内存的报告为版本 2，保留 `InitialMemory` 和候选的 `MemorySeed`。投影仅接受已覆盖的 epoch-zero 寄存器或绝对内存来源，并用两类字节重新计算查询、从头重放及去重。缺字节、符号基址来源和近似效果继续拒绝；写入按正常别名规则修改具体内存。`ProcessView::read` 可在暂停时捕获已提交 RAM，写入前的钩子不构成完整快照。观测不证明区域归属、寿命、不变性或不相交；候选仅验证指定分支及先前决策，不证明后续路径或完整等价。C/JSON、Python 和 CLI 的版本 1 接口仍只接收寄存器。
+`KernelModelFileRequests` 同时拥有无缓冲区的 `ZwFlushBuffersFile` 生产路径。其授权掩码检查和立即发布／释放规则与延迟完成的原生读写／查询包不同；各路径共用原调用者通知和唯一释放所有者。
