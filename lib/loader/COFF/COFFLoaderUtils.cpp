@@ -471,6 +471,8 @@ void parseSymbolTable(const COFFObjectFile &Obj, BinaryImage &Img,
 
     if (CoffSym.getSectionNumber() == llvm::COFF::IMAGE_SYM_UNDEFINED)
       continue;
+    if (!Img.IsRelocatable && isDebugRecord(CoffSym))
+      continue;
 
     uint64_t Addr = CoffSym.getValue();
     if (CoffSym.getSectionNumber() > 0) {
@@ -505,6 +507,7 @@ void parseSymbolTable(const COFFObjectFile &Obj, BinaryImage &Img,
     S.Name = NameOrErr->str();
     S.Addr = Addr;
     S.IsFunc = IsFunc;
+    S.IsSection = !Img.IsRelocatable && isSectionDefinition(CoffSym);
     Img.Symbols.push_back(std::move(S));
   }
   LLVM_DEBUG(llvm::dbgs() << "coff: parsed " << Img.Symbols.size()

@@ -15,6 +15,7 @@
 #include "neverd/loader/StaticSymbolTable.h"
 
 #include "neverd/Common.h"
+#include "neverd/loader/COFF/COFFLoaderUtils.h"
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/loader/ObjectFileUtils.h"
@@ -135,10 +136,13 @@ coffTable(const llvm::object::COFFObjectFile &Obj, size_t MaxNames) {
       continue;
     }
     // As parseSymbolTable reads them: named and defined, and placed at an
-    // address, which a symbol outside every section has only as its value.
+    // address, which a symbol outside every section has only as its value;
+    // the names among them, without a section's own symbol.
     if (Name->empty() ||
         Symbol.getSectionNumber() == llvm::COFF::IMAGE_SYM_UNDEFINED ||
-        (Symbol.getSectionNumber() < 0 && Symbol.getValue() == 0))
+        (Symbol.getSectionNumber() < 0 && Symbol.getValue() == 0) ||
+        coff_loader::isDebugRecord(Symbol) ||
+        coff_loader::isSectionDefinition(Symbol))
       continue;
     Names.add(*Name,
               Symbol.getComplexType() == llvm::COFF::IMAGE_SYM_DTYPE_FUNCTION,
