@@ -1381,16 +1381,19 @@ std::string LLVMCWriter::sourceScalarType(llvm::Type *T, bool Signed) const {
 
 std::string
 LLVMCWriter::sourceFunctionDeclaration(const llvm::Function &Fn,
-                                       llvm::StringRef Declarator) const {
+                                       llvm::StringRef Declarator,
+                                       std::optional<unsigned> Params) const {
   auto *FT = Fn.getFunctionType();
+  const unsigned Count =
+      Params ? std::min(*Params, FT->getNumParams()) : FT->getNumParams();
   std::string Result =
       sourceScalarType(FT->getReturnType(),
                        Fn.hasFnAttribute(LLVMSourceSignedResult)) +
       " " + Declarator.str() + "(";
-  if (FT->getNumParams() == 0 && !FT->isVarArg()) {
+  if (Count == 0 && !FT->isVarArg()) {
     Result += "void";
-  } else if (FT->getNumParams()) {
-    for (unsigned I = 0; I < FT->getNumParams(); ++I) {
+  } else if (Count) {
+    for (unsigned I = 0; I < Count; ++I) {
       if (I)
         Result += ", ";
       Result += sourceScalarType(
@@ -1452,7 +1455,9 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
       continue;
     }
 
-    OS << sourceFunctionDeclaration(Fn, Name);
+    // Calls the callee's prototype decides pass as many arguments as it
+    // takes (printedCallArgLimit), which the declaration takes too.
+    OS << sourceFunctionDeclaration(Fn, Name, prototypedParamCount(Fn));
     // An import whose identifier is not its symbol links by the symbol, which
     // a comment spells as its language does.
     std::string Comment;

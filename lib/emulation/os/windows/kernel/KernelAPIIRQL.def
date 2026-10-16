@@ -263,6 +263,7 @@ NEVERD_KERNEL_IRQL_API(IoGetAttachedDevice, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoGetRelatedDeviceObject, Dispatch)
 // The reserved base-file query uses this profile's device-query ceiling.
 NEVERD_KERNEL_IRQL_API(IoGetBaseFileSystemDeviceObject, Dispatch)
+NEVERD_KERNEL_IRQL_API(IoGetDeviceObjectPointer, Passive)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ioqueryfileinformation
 // Reserved helper: the supported target-kernel query path can block.
 NEVERD_KERNEL_IRQL_API(IoQueryFileInformation, Passive)

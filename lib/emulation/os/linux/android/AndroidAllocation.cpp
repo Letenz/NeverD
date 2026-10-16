@@ -8,9 +8,10 @@
 #include "neverd/emulation/CPU.h"
 
 #include <algorithm>
+#include <array>
 
 namespace neverd::emulation::android_model {
-llvm::Expected<uint64_t> Bionic::allocate(uint64_t Size) {
+llvm::Expected<uint64_t> Bionic::allocate(uint64_t Size, uint8_t FillByte) {
   uint64_t Effective = std::max(uint64_t(1), Size);
   if (Effective > Options.MemoryLimit ||
       Effective > UINT64_MAX - PageSize + 1) {
@@ -35,6 +36,16 @@ llvm::Expected<uint64_t> Bionic::allocate(uint64_t Size) {
       return std::move(E);
     return uint64_t(0);
   }
+  if (FillByte && Size) {
+    std::array<uint8_t, PageSize> Bytes;
+    Bytes.fill(FillByte);
+    for (uint64_t Offset = 0; Offset < Size; Offset += Bytes.size())
+      if (auto E =
+              CPU.write(**Address + Offset,
+                        llvm::ArrayRef(Bytes).take_front(
+                            std::min<uint64_t>(Bytes.size(), Size - Offset))))
+        return std::move(E);
+  }
   Allocations.emplace(**Address, Allocation{Size, Mapped});
   return **Address;
 }
@@ -55,7 +66,7 @@ llvm::Error Bionic::release(uint64_t Address) {
   return llvm::Error::success();
 }
 BionicResult Bionic::malloc(const NativeCallEvent &Call) {
-  auto Address = allocate(Call.Arguments[0]);
+  auto Address = allocate(Call.Arguments[0], Options.Android->MallocFillByte);
   if (!Address)
     return Address.takeError();
   return value(*Address);
@@ -91,12 +102,12 @@ BionicResult Bionic::realloc(const NativeCallEvent &Call) {
       if (auto E = CPU.read(A[0], Saved))
         return std::move(E);
   }
-  auto Address = allocate(Size);
+  auto Address = allocate(Size, Options.Android->MallocFillByte);
   if (!Address)
     return Address.takeError();
   if (!*Address)
     return value(0);
-  // Anonymous allocations keep the growth region zeroed.
+  // Preserve the old prefix; the caller-selected fill remains in new bytes.
   if (!Saved.empty())
     if (auto E = CPU.write(*Address, Saved))
       return std::move(E);

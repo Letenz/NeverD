@@ -2331,6 +2331,10 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
         <translation>Placez le curseur sur un paramètre de la fonction pour le convertir</translation>
     </message>
     <message>
+        <source>Select &amp;all</source>
+        <translation>&amp;Tout sélectionner</translation>
+    </message>
+    <message>
         <source>Jump to disassembly</source>
         <translation>Aller au désassemblage</translation>
     </message>

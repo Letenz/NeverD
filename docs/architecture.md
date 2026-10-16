@@ -216,6 +216,15 @@ they do not join undo history.
 Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
 the system's types and prototypes that its debug information lacks: the
 Windows kernel's PDB names records, but no typedefs and no prototypes.
+They are the one source of what a known routine takes and returns, as IDA's
+type libraries are beside its signatures: signatures (`signatures/`)
+recognize a routine by its bytes and only name it. A platform or an
+architecture joins by a header under `lib/types/headers/` and a row of the
+table naming the data model, format, architecture and subsystem it
+describes, and the spelling its headers name builtins in, which shows its
+declarations as they read (Windows' `ULONG`); its calling convention's rules
+then place each parameter (`placeSourceParameters`, one file per
+convention).
 `scripts/generate_windows_kernel_types.py` renders what `<ntifs.h>` declares,
 from mingw-w64's DDK headers, into `lib/types/headers/WindowsKernelX64.h`.
 The build embeds the file, and `headerLibrary` reads it once. The C API joins
@@ -312,12 +321,36 @@ records:
   a pointer is declared as that pointer, and converts where the code
   computes with it, as does a pointer member it reads.
 
-It also completes the functions the debug information names but leaves
-untyped from the prototype of their name, as the kernel's public symbols
-are completed from `<ntifs.h>`. A function the debug information types
-keeps its own type, and a variadic prototype is not used, because its calls
-pass more than it declares. The prototype's types convert to the
-decompiler's types:
+It also types the functions no debug information types from the prototype
+of the name each is shown under, as the kernel's exports are typed from
+`<ntifs.h>`, with a PDB of public symbols or with none. That name is the one
+the image states (`BinaryImage::statedFunctionNameAt`, as
+`getFunctionNameAt` chooses it): the export at the entry, else a symbol a
+producer stated, a PDB's function names among them; else the debug
+information's. A name analysis or the user gave says nothing of what the
+function is. Where a linker folded identical functions, one entry carries
+the names of each (`statedFunctionNamesAt`), and it takes the shown name's
+prototype only where every other name's that has one takes and returns
+alike (`passesAlike`): as many parameters, each of the same class and size,
+and the same return. `ExFreePool`'s one parameter is not `ExFreePoolWithTag`'s
+two, nor does `KeClearEvent` return `KeResetEvent`'s `LONG`, so which one the
+code follows is unknown, and such an entry keeps the signature its code
+gives. Another name's prototype is never borrowed. A function the debug
+information types keeps its own type, and a variadic prototype is not used,
+because its calls pass more than it declares. The signature records the
+library that declares the prototype and the declaration as it reads there,
+which HighC prints above the function (`neverd.prototype`).
+
+A call through an import's slot or stub reaches a routine another module
+exports, which takes the prototype of the import's name: `resolveFunction`
+gives it at the slot or stub to the C backends, which declare and call it
+so, and `resolvePrototype` gives it by name to the call analysis, which
+passes exactly its parameters where the libc tables know none of the name
+(`importPrototypeArguments`), and to the return contracts. A callee the
+pipeline does not decompile returns what its declaration says, as the C
+writers read it, so that a caller returning what a `void` routine left in
+RAX returns nothing too. The prototype's types convert to the decompiler's
+types:
 - records become named records that C passes and returns by value, with
   their members' names for display;
 - typedefs become what they name, and enumerations their underlying
@@ -4531,6 +4564,14 @@ the pending service or quantum and charges all threads to one budget.
 Linux's optional `ThreadContext` is the sole identity and thread-exit input
 for named, variadic and raw services; an absent context retains the existing
 single-thread Linux contract. Bionic process state is never copied on a switch.
+Fixed foreign task observations cannot occupy the identity range reserved for
+Android children. `LinuxPIDFD` reads local task membership from the same live
+provider as `/proc`; the fixed catalogue does not freeze child existence.
+Local thread-bound pidfds remain unsupported until exit readiness is modeled.
+`AndroidAllocation` owns the optional `malloc_fill_byte` input: only explicit
+`malloc` and `realloc` requests use it, before preserving a reallocated prefix.
+`calloc` and internal allocations retain zero initialization. No CPU backend
+selects a fill value or treats it as evidence about a real allocator.
 Once ownership comes from active guest callback frames. Bionic writes the
 completion state before the scheduler wakes waiting threads; the scheduler
 rechecks guest memory before completing each original import. Unknown owners,
@@ -7361,3 +7402,5 @@ entry-resolved addresses, never device replies or a second ABI decoder.
 `LinuxServices` supplies the current task; Android supplies its native return
 address. `ProcessReport` serializes the optional stream. Trace limits and
 capture failures cannot replace the original service outcome.
+
+`KernelModelFileCreate` owns device-pointer opens within the existing `FileOperation`. Namespace resolution, CREATE packets and final release share the ordinary file-open owner. The object manager acquires the file reference through the private handle; `queryFileDevice` supplies the related device, and the existing handle-close continuation performs CLEANUP. The original caller releases its critical region only after that continuation completes. Public output overlap cannot replace the private referenced object.

@@ -96,8 +96,11 @@ public:
   void recordSourceNames(const llvm::Module &Mod);
   std::string functionIdentifier(const llvm::Function &Fn) const;
   std::string sourceScalarType(llvm::Type *Type, bool Signed) const;
-  std::string sourceFunctionDeclaration(const llvm::Function &Fn,
-                                        llvm::StringRef Declarator) const;
+  /// \p Fn's C declaration of \p Declarator; with \p Params, of its first
+  /// that many parameters only.
+  std::string sourceFunctionDeclaration(
+      const llvm::Function &Fn, llvm::StringRef Declarator,
+      std::optional<unsigned> Params = std::nullopt) const;
   /// The C name of global \p Name: the module names a global by its symbol
   /// (cNameOfLLVMName), but a declaration of an import by the name its
   /// import entry lists, which is already the C name on some formats.
@@ -523,6 +526,15 @@ public:
   /// \p Call: its debug information or the MSVC callee table.
   TypeRef expectedCallArgType(const llvm::CallBase &Call, unsigned Index) const;
   std::optional<FunctionSym> debugCallee(const llvm::CallBase &Call) const;
+  /// The debug information's function, or the prototype of its name, that
+  /// \p Callee is: by its original address, its slot, or the address its
+  /// name spells.
+  std::optional<FunctionSym> debugFunction(const llvm::Function &Callee) const;
+  /// How many arguments the calls to \p Callee pass where its prototype
+  /// decides them (printedCallArgLimit), which its declaration then takes;
+  /// none where its machine parameters do.
+  std::optional<unsigned>
+  prototypedParamCount(const llvm::Function &Callee) const;
   bool looksLikeHiddenSretOperand(const llvm::Value *Arg) const;
   std::string printedCalleeName(const llvm::CallBase &Call) const;
   /// MSVC ctor/dtor that returns `this` and whose result is unread. A store

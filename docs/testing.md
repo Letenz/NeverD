@@ -4,6 +4,16 @@
 
 # Testing NeverD
 
+`AndroidThread.ForeignTasks*` checks foreign pidfds and CPU-clock observations
+while children live and after they exit, raw and Bionic errno results, identity
+reservation conflicts, invalid flags and refusal of unsupported local thread
+pidfd lifetimes. `LinuxPIDFD.*` retains the fixed-catalogue kernel matrix.
+
+`AndroidAllocation.*` checks explicit heap-fill inputs with cross-page copies,
+`calloc` zeros, `realloc` growth/shrinkage, failed allocation ownership and
+zero-size identities at O0/O2 across Android relocation formats and available
+Unicorn/HVF backends. `AndroidAllocationOptions.*` rejects non-byte inputs.
+
 ## MXCSR recovery checks
 
 `InterpreterSpecialization.MXCSR*` covers arbitrary entry state, exact memory values, reserved bits, DAZ, aliases, malformed forms, node projection and exact/short budgets. `PEFixedImageTest.RawMXCSR*` checks legacy/VEX native bytes and mask-bound receipts. The machine-state and native/LLVM refinement owners verify that unused capabilities cannot expand their interfaces.
@@ -270,7 +280,11 @@ into another function that must not decompile, then turns synchronization off
 and on from the context menu. `pseudocodeNumbersTakeTheBaseTheUserPicks` covers
 H's toggle, the context menu's bases and their previews, `#`, undo, and a
 refused character constant; `codeEditKeepsThePlaceInALongFunction` checks that
-the reload after an edit puts the cursor and the view back on a third-page row; `NeverDWorkerCodeEdits` checks the literal scan
+the reload after an edit puts the cursor and the view back on a third-page row;
+`codeTextSelectsLikeAnEditor` presses Ctrl+A while pages still arrive and
+after the load, drags beyond the bottom edge until the view scrolls past the
+first page, and right-clicks inside the selection to keep it for Copy;
+`NeverDWorkerCodeEdits` checks the literal scan
 and type-keeping spellings of `neverd/support/IntegerLiterals.h` for C, Rust
 and Go. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks
 listing jumps, rows beyond the first page, folded operations, secondary address
@@ -414,13 +428,38 @@ ntoskrnl.exe and its PDB,
 and checks that the headers join its PDB without conflicts.
 `SessionCAPIKernelInputs.KernelFunctionsDecompileWithTheirPrototypes` decompiles
 `NtCreateFile`, `IoAllocateIrp`, `PsCreateSystemThread` and
-`IofCompleteRequest` and checks the signatures the headers give them.
+`IofCompleteRequest` and checks the signatures the headers give them; also
+`IoThreadToProcess`, which the linker folded with `PsGetThreadProcess` so
+that the PDB names neither, and `FsRtlAreNamesEqual`, exported under another
+name than the PDB's. `SessionCAPIKernelInputs.KernelExportsTakeTheirPrototypesWithoutThePDB`
+loads the kernel without its PDB and checks `NtCreateFile` again.
 Run these external-input checks with `--gtest_filter=SessionCAPIKernelInputs.*`.
 Without the two inputs they remain explicit skips. The Linux Lift qualification
 requires every `SessionCAPITest.*` case to execute and pass using repository
 fixtures; it does not claim Windows kernel input coverage.
 `LocalTypesDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
 the conversion and which functions take a prototype without a program.
+`LocalTypesDebugContext.TypesTheFunctionsByTheNamesTheyAreShownUnder` covers
+the name a function takes its prototype by: its export or a symbol the
+program states, else the debug information's, and never the other name of a
+function the linker folded with it, nor one analysis gave.
+`LocalTypesDebugContext.NamesTheHeaderLibraryAPrototypeComesFrom` checks the
+library and the declaration the signature records.
+`SessionCAPITest.KnownRoutinesTakeTheirPrototypesByTheirNames` loads
+`unittests/types/fixtures/known_routines.sys`, a driver without debug
+information whose exports have the names of kernel routines, three pairs of
+them folded, one pair returning differently, and checks the signatures and
+the `neverd.prototype` comment HighC prints.
+`SessionCAPITest.KernelImportsPassWhatTheirPrototypesTake` loads
+`kernel_imports.sys`, a driver calling kernel imports, and checks that a call
+passes what the prototype takes, a tail call forwarding it, and that the unit
+declares the imports as the headers do.
+`HeaderLibrary.DeclaresTheKernelRoutinesTheCallAnalysisFixes` checks that the
+kernel's headers and `WindowsKernelRoutines.inc` agree on the bytes each
+parameter of a routine both know takes, and
+`ReturnContracts.ACallToAFunctionDeclaredVoidElsewhereHandsBackNoValue` and
+`AStubOfAnImportDeclaredVoidReturnsNoValue` cover the return contracts that
+read declarations.
 Build and run `NeverDSessionLLVMTests` as well: its private Session queries
 link the actual local-type/debug implementations and shared atomic sidecar
 helper into the test executable. It must not acquire a libneverd dependency.
@@ -7019,6 +7058,16 @@ boundary, including absent, duplicated, changed and unsafe target sets.
 `SourceRequiresExplicitIndependentEntry` rejects disconnected protected paths
 without a published source entry and accepts the same graph once that entry
 can receive explicit unknown values.
+`TheX87ContextHandleIsNotAFrameValue` proves the frame of a handler that starts
+with `fninit`, whose x87 context handle the CFG builder begins at each root.
+`TheHandlerBeginsTheX87ContextBeforeUsingIt` and
+`OnlyTheX87ContextHandleIsAdmitted` refuse a handler that reads the handle
+before beginning it and a handle copied into an ordinary register.
+`MedSEHHandlerEntry.AHandlerResumingAtANopEndsTheArmThere` ends an `__except`
+arm that resumes at a `nop` without a jump, and
+`X86_64_PipelineE2E.DecompileC_MinGWStartupSEHWithX87Callee` decompiles
+MinGW-w64-shaped startup code (`test_mingw_startup_seh.s`) whose guarded callee
+resets the x87 state.
 Malformed unwind/prologue and converted-SP checks run with source projection
 enabled too. `WindowsEHModesCorpus.DecompileMatrixFailsClosedWithAuditableExceptionMetadata`
 runs the original eleven-case matrix, including the complete x64 xcpt4 image.
@@ -7724,3 +7773,5 @@ integration exercises the same report through the public C SDK.
 `NeverDHighCSupervisorCallTests` verifies that an unmodeled live ARM/AArch64
 SVC result returns a recoverable emission error. Unused results retain the
 side-effecting statement without acquiring a Linux syscall contract.
+
+`KernelDevicePointer.*` checks retained references, overlapping outputs, failed and informational opens, caller/APC restoration across pending CREATE and CLEANUP, argument widths, sharing, output-fault store order, admission and unload. The original and genuine WDK filesystem fixture adds immediate, worker-completed CREATE, worker-completed CLEANUP and unload-held pointer modes, including dynamic lookup. `KernelFileSystemExecution.*OpensExistingFiles` runs both scheduling modes, contracts and image bases; unavailable transports remain explicit skips.

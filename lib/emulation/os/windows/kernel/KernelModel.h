@@ -1347,8 +1347,11 @@ private:
   finishFileRequestDispatch(uint64_t Token, uint64_t ReturnValue);
   struct FileOperation {
     bool CancelOpen = false;
+    bool DevicePointer = false, PointerPublished = false,
+         CriticalRegion = false;
     uint64_t File = 0, IRP = 0, Root = 0;
     uint64_t HandleOutput = 0, StatusOutput = 0, ReservedHandle = 0;
+    uint64_t FileOutput = 0, DeviceOutput = 0;
     uint64_t Storage = 0, StorageSize = 0, AccessState = 0;
     uint64_t CallerExecution = 0, CallerThread = 0;
     uint32_t CallerProcess = 0, Access = 0, Attributes = 0;
@@ -1360,8 +1363,13 @@ private:
   std::map<uint64_t, FileOperation> FileOperations;
   uint64_t NextFileOperation = 1;
   std::optional<uint64_t> PendingFileOperation;
-  llvm::Expected<uint64_t> createFile(llvm::ArrayRef<uint64_t> A, bool OpenOnly,
+  enum class FileOpenKind { Create, Open, DevicePointer };
+  llvm::Expected<uint64_t> createFile(llvm::ArrayRef<uint64_t> A,
+                                      FileOpenKind Kind,
                                       const KernelContextCapture *Context);
+  llvm::Expected<uint64_t>
+  getDeviceObjectPointer(llvm::ArrayRef<uint64_t> A,
+                         const KernelContextCapture *Context);
   llvm::Expected<uint64_t> cancelFileOpen(llvm::ArrayRef<uint64_t> A,
                                           const KernelContextCapture *Context);
   llvm::Expected<bool> fileOperationReady(uint64_t ID) const;

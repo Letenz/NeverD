@@ -771,3 +771,5 @@ ASCII 名、名前空間リンク、RootDirectory として保持したディレ
 `MmMapLockedPages` は既存のマッパーを使い、キャッシュ済みページ、HIGH 優先度、資源不足時の bugcheck を指定します。カーネルマッピングは DISPATCH_LEVEL まで、プロセス所有のユーザービューは APC_LEVEL まで許可し、後者の資源不足は既存の例外になります。bugcheck 指定のカーネル資源不足は明示的なモデルエラーで停止し、成功として NULL を返しません。実際の bugcheck 処理は未対応です。
 
 [`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject) は有効なファイルの基底デバイスを借用し、接続スタックの走査、参照の追加、ファイル拡張の参照を行いません。本プロファイルは所有済みの未マウント経路と IRQL <= DISPATCH_LEVEL に限定され、マウント済み VPB や所有者・トポロジーの不整合は明示的に停止します。Microsoft は本ルーチンをシステム用に予約しており、この IRQL 上限は公開 Windows 契約ではなくモデル方針です。
+
+[`IoGetDeviceObjectPointer`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-iogetdeviceobjectpointer) は特殊カーネル APC が有効な PASSIVE_LEVEL で、宣言済みの既存ファイルを開きます。名前は大文字小文字を区別せず、内部カーネルハンドル、読み書き共有、非同期の非ディレクトリ指定を使います。返されたファイル参照はデバイスを保持し、呼び出し側が `ObfDereferenceObject` で解放します。出力が重なる場合もファイル、デバイスの順に書き込みます。CREATE と内部ハンドルの CLEANUP は保留可能で、元のスレッドは両方の完了までクリティカル領域を保持します。デバイス名のみのオープン、ボリュームオープン、マウント済み VPB、ファイル拡張の経路、未知のプロバイダーは未対応です。
