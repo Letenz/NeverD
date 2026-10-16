@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 124a88c959c13d8407e343d17f7964de3af1071a89f0c6430eaab22959ce3ebc -->
+<!-- i18n-source: 39a521d14dfb31f7e045451a8039cdc180e2e6fabd816f96a0c746ddfa3d19f1 -->
 
 [← 文件索引](README.md)
 
@@ -29,11 +29,11 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 區段保留目前／最大權限與零填入。`__PAGEZERO` 只保留位址，不配置整段實體記憶體。執行前檢查檔案／VM 範圍、OS 頁對齊、取整後重疊、標頭歸屬、可執行進入點及預算。標頭區段必須可讀且可執行；保護頁和私有返回入口持續保留。檔案最後一頁保留至頁界或 EOF 的原始位元組，其後完整 VM 頁清零，依據 [XNU 載入器](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/mach_loader.c)。
 
-`LC_MAIN` 接收 `argc`、`argv`、`envp` 和 apple 向量四個整數參數；返回值低八位元成為退出狀態。只在無匯入的這種進入交接中接受 `/usr/lib/dyld`，不執行宿主 dyld。非零 `stacksize` 會拒絕，因為呼叫端明確的 `stack_size` 掌握預算。
+`LC_MAIN` 接收 `argc`、`argv`、`envp` 和 apple 向量四個整數參數；返回值低八位元成為退出狀態。在符合下述有限匯入契約的這種進入交接中接受 `/usr/lib/dyld`，不執行宿主 dyld。非零 `stacksize` 會拒絕，因為呼叫端明確的 `stack_size` 掌握預算。
 
 `LC_UNIXTHREAD` 要求恰好一份完整的原生 64 位元一般暫存器紀錄，只有 PC 已設定。起始堆疊含 argc、以零結尾的 argv/envp，以及含 `executable_path=<input filename>` 的零結尾 apple 向量。自訂 SP、旗標、其他暫存器、額外 flavor 或衝突進入點均拒絕。不繼承宿主環境或 Linux 輔助向量。參考 [dyld 架構](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md)。
 
-外部 dylib、匯入、rebases/chained fixups、建構／解構函式、TLS 區段、arm64e/PAC、其他不支援的 CPU 子型別、加密內容與未建模載入命令，都在執行前失敗。無 fixup 的 PIE 使用偏好位址，並非 ASLR。簽章資料只是中繼資料，不實作 AMFI 或 entitlement 政策。
+下述有限 libSystem 契約以外的 dylib 和匯入、建構／解構函式、TLS 區段、arm64e/PAC、其他不支援的 CPU 子型別、加密內容與未建模載入命令，都在執行前失敗。支援的 PIE 使用偏好位址，並非 ASLR。簽章資料只是中繼資料，不實作 AMFI 或 entitlement 政策。
 
 ## Darwin 服務
 
@@ -1795,4 +1795,40 @@ lchown364 / final symbolic vnode / existing ownership_mutations grants
 lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / main58 stdoutW / virtual1281 guarded bytes
 native preparation489 observations including258 lchown / ARM64 O0 O1 O2
 common native82 / mandatory95 per matching platform / ARM64 required285
+```
+
+## 有界 libSystem 匯入
+
+基線架構的薄執行檔可繫結一個強依賴 `/usr/lib/libSystem.B.dylib`。必須有 `LC_MAIN`、`MH_TWOLEVEL` 及一般庫 ordinal，相容版本需求不得超過 1.0。載入器完整驗證原始 classic 指標流或 generic64 鏈、未定義符號、精確槽與本地 rebase 目標。其他庫/符號、weak/threaded 繫結、未支援 relocation、初始化、TLS 與認證指標會在執行前失敗。
+
+僅在存在匯入時配置函式入口及每次全新的主執行緒 errno。包裝函式共用原始 Darwin 核心行為，失敗轉成 `-1` 與 errno，成功保留 errno。C `_exit` 的 Mach-O 名為 `__exit`；C `exit` 的 `_exit` 仍不支援。普通函式驗證返回框架；不返回的 `_exit` 無需可用返回位址。報告保留庫、連結名、參數數量及完整位元；未完成或不返回的結果為 null，原始系統呼叫報告保持相容。
+
+`SG_READ_ONLY` 只收緊 fixup 後的目前權限，保留宣告的最大權限；原生 O0/O1/O2 證明讀寫最大權限允許 `mprotect` 恢復寫入。入口與 errno 保留頁不能由來賓解除映射或變更保護。準備及執行共用期限、事件帳戶與既有記憶體預算。
+
+同一自製物件以系統、classic、chained 連結在真實 libSystem 上執行；五種平台/架構經進程/C/CLI/Python 驗證，三個 ARM64 HVF profile 實際執行。任意 dylib、dlopen/dlsym、dyld shared cache、建構函式、執行緒及 Apple 框架仍未完成，Intel HVF 與實體 iOS 未驗收。
+
+classic lazy 指標在進入客體前預先解析。每個程式必須自行指定目的槽、普通函式庫 ordinal 與符號，僅允許指標型別、零 addend，以及一條緊接 DONE 的 DO_BIND，不繼承前一程式狀態。只有同槽的一次本地可執行 rebase 與一次 lazy bind 可合併，兩筆原始記錄都計入預算。dyld_stub_binder 僅可作為伴隨實際 lazy 呼叫的強、零 addend 普通 classic bind；執行其閘道會在讀取 C 框架或參數、修改 errno 或記錄呼叫之前失敗。這支援穩定的預解析指標，不實作執行期 resolver 或 dyld 私有狀態。六函式原生與客體樣本比較槽位穩定性、輸出與結束狀態。
+
+```text
+provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
+C -> Mach-O: read -> _read; write -> _write; close -> _close
+C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
+fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
+unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
+errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
+SG_READ_ONLY: current R after fixup; original declared maximum is retained
+gates: RX/max RX; errno: RW/max RW; both resident model reservations
+budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
+preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
+report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
+call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
+basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
+_exit: status 35; stdout_hex 58; named calls 2; events 2
+native common catalogue: 82; required methods/platform: 97; matching ARM64 identities: 291
+```
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
 ```

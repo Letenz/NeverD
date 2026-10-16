@@ -604,26 +604,9 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
   Facts.CxxContinuationAtExit = CatchReturn.has_value();
   Facts.NoReturnAtExit = NoReturnAtExit;
   if (!NoReturnAtExit && !Facts.InvocationAtExit) {
-    std::optional<va_t> SelectedBranch;
-    if (!Facts.Invalid && !After.Unknown && Block.Succs.size() == 2 &&
-        !Block.Ops.empty()) {
-      const auto &Branch = Block.Ops.back();
-      if (Branch.Opcode == NdOp::COND_BR && Branch.NumInputs == 2 &&
-          Branch.Inputs[0].isConst()) {
-        const auto Condition = Transfer.read(Branch.Inputs[1]);
-        const auto Taken = Entries.find(Branch.Inputs[0].Offset);
-        const auto Fallthrough = Entries.find(Block.EndAddr);
-        if (Condition.Constant && !Condition.MayBeFrame &&
-            Taken != Entries.end() && Fallthrough != Entries.end() &&
-            Taken != Fallthrough &&
-            llvm::is_contained(Block.Succs,
-                               Function.Blocks[Taken->second].Id) &&
-            llvm::is_contained(Block.Succs,
-                               Function.Blocks[Fallthrough->second].Id))
-          SelectedBranch =
-              *Condition.Constant ? Branch.Inputs[0].Offset : Block.EndAddr;
-      }
-    }
+    const auto SelectedBranch = !Facts.Invalid && !After.Unknown
+                                    ? knownSuccessor(Block, Transfer)
+                                    : std::nullopt;
     for (int Successor : Block.Succs) {
       auto It = Index.find(Successor);
       if (It == Index.end()) {

@@ -52,6 +52,19 @@ def run(executable):
         assert '    _layout_ = "ms"\n' in python["source"], python
         unread = ok(owner, "local_types_declare", {"language": "python", "source": "X = 1"})
         assert unread["types"] == [] and "do not read" in unread["problems"][0]["message"], unread
+        # JavaScript reads through a DataView, and declares nothing.
+        script = ok(owner, "local_types_source", {"language": "javascript", "types": ["_PACKED"],
+                                                  "dependencies": False})
+        assert script["language"] == "javascript", script
+        assert "export class _PACKED {" in script["source"], script
+        unread = ok(owner, "local_types_declare", {"language": "javascript", "source": "export {}"})
+        assert unread["types"] == [] and "do not read" in unread["problems"][0]["message"], unread
+        # Lua reads through string.unpack, and declares nothing.
+        lua = ok(owner, "local_types_source", {"language": "lua", "types": ["_PACKED"],
+                                               "dependencies": False})
+        assert lua["language"] == "lua" and 'record("_PACKED", 0x7)' in lua["source"], lua
+        unread = ok(owner, "local_types_declare", {"language": "lua", "source": "return {}"})
+        assert unread["types"] == [] and "do not read" in unread["problems"][0]["message"], unread
         # Prototypes render in C and C++ only, and fail elsewhere.
         refused = owner.call("local_types_source", {"language": "python", "prototypes": True})
         assert refused["status"] == "error" and "c and cpp" in refused["error"]["message"], refused

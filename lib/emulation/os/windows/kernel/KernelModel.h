@@ -1311,20 +1311,25 @@ private:
   finishFileHandleDispatch(uint64_t Token, uint64_t ReturnValue);
   struct FileInformationQuery {
     uint64_t File = 0, IRP = 0, ReturnedLength = 0, Storage = 0;
+    uint64_t StatusOutput = 0;
+    std::array<uint8_t, 16> StatusBytes{};
     uint64_t CallerExecution = 0, CallerThread = 0;
     uint32_t CallerProcess = 0;
     uint32_t Status = 0, Information = 0;
     bool Released = false;
     bool CompletionPublished = false;
     bool CriticalRegion = false;
+    bool Native = false, PacketReleased = false, CopyStatusBlock = false;
   };
   std::map<uint64_t, FileInformationQuery> FileInformationQueries;
   uint64_t NextFileInformationQuery = 1;
   std::optional<uint64_t> PendingFileQueryContinuation;
   llvm::Expected<uint64_t> relatedFileDevice(uint64_t File) const;
   llvm::Expected<uint64_t>
-  queryFileInformation(llvm::ArrayRef<uint64_t> A,
+  queryFileInformation(llvm::ArrayRef<uint64_t> A, bool Native,
                        const KernelContextCapture *Context);
+  bool nativeFileQuery(uint64_t ID) const;
+  llvm::Error releaseNativeFileQueryPacket(uint64_t IRP);
   llvm::Error validateFileQueryInterrupts(const KernelContextCapture *Context);
   llvm::Error publishFileQueryCompletion(uint64_t IRP);
   llvm::Expected<bool> fileInformationQueryReady(uint64_t ID) const;

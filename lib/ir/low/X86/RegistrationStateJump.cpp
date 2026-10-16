@@ -179,7 +179,8 @@ bool RegistrationStateSolver::transferJumpResume(size_t I, Domain &After,
   const auto ParentSP = After.Frame.load(-24, 4).Offset;
   if (Capture == After.JumpCaptures.end() || Buffer.ReturnPC ||
       Buffer.CallbackAddress || Buffer.EntryOffset || Buffer.SEHException ||
-      Value.MayBeFrame || !ParentSP || *ParentSP > Capture->first ||
+      !Value.isFrameIndependentScalar() || !ParentSP ||
+      *ParentSP > Capture->first ||
       !hasSEHJumpCapture(After.Frame, Capture->second) ||
       !Entries.count(Capture->second.ReturnPC) ||
       (After.Callback && (!SEHControls || !validateSEHInvocationBlock(I))) ||
@@ -202,18 +203,29 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
     return true;
   };
   SEHFrameOutcomes Outcomes;
+  SEHJumpUnwind Jump{Saved, Value, After.JumpCaptures, {}, {}, {}};
   SEHHandlerOutcomes Selected;
   std::vector<RegistrationObjectExtent> Writes;
-  std::set<RegistrationSEHJumpState> StateRestores;
   for (int32_t Level : After.Levels)
     if (!runSEHUnwind(After.Frame, Level, uint32_t(Saved.Level), Outcomes,
-                      Writes, &Saved, &Value, &StateRestores, &Selected))
+                      Writes, &Jump, &Selected))
       return Refuse();
-  for (const auto &Write : Writes)
-    if (Write.Begin <
-            int64_t(Saved.BufferOffset) + SEHJumpCapture::BufferBytes &&
-        Saved.BufferOffset < Write.End)
+  const auto Unmodified = [&](const SEHJumpCapture &Capture) {
+    if (!charge(Writes.size() + 1))
+      return false;
+    return llvm::none_of(Writes, [&](const auto &Write) {
+      return Write.Begin <
+                 int64_t(Capture.BufferOffset) + SEHJumpCapture::BufferBytes &&
+             Capture.BufferOffset < Write.End;
+    });
+  };
+  if (!Unmodified(Saved))
+    return Refuse();
+  for (const auto &[Buffer, Frames] : Jump.Resumed) {
+    const auto Capture = After.JumpCaptures.find(Buffer);
+    if (Capture == After.JumpCaptures.end() || !Unmodified(Capture->second))
       return Refuse();
+  }
   RegistrationSEHJumpResume Receipt{Op.Addr,
                                     Op.Seq,
                                     Saved.Call,
@@ -236,7 +248,10 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
     Receipt.ResumedLevels.push_back(Level);
   for (const auto &[Scope, Frames] : Selected)
     Receipt.SelectedScopes.push_back(Scope);
-  Receipt.StateRestores.assign(StateRestores.begin(), StateRestores.end());
+  Receipt.StateRestores.assign(Jump.StateRestores.begin(),
+                               Jump.StateRestores.end());
+  Receipt.Replacements.assign(Jump.Replacements.begin(),
+                              Jump.Replacements.end());
   const SEHExitKey Identity{Receipt.EntryVA, Receipt.OrdinaryCall, Op.Addr,
                             Op.Seq};
   const auto [It, New] = JumpResumptions.emplace(Identity, Receipt);
@@ -245,14 +260,17 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
     Previous.ResumedLevels = Receipt.ResumedLevels;
     Previous.StateRestores = Receipt.StateRestores;
     Previous.SelectedScopes = Receipt.SelectedScopes;
+    Previous.Replacements = Receipt.Replacements;
     if (Previous != Receipt)
       return Refuse();
     auto &Restores = It->second.StateRestores;
     auto &Levels = It->second.ResumedLevels;
     auto &Scopes = It->second.SelectedScopes;
+    auto &Replacements = It->second.Replacements;
     if (!charge(Levels.size() + Receipt.ResumedLevels.size() + Restores.size() +
                 Receipt.StateRestores.size() + Scopes.size() +
-                Receipt.SelectedScopes.size()))
+                Receipt.SelectedScopes.size() + Replacements.size() +
+                Receipt.Replacements.size()))
       return Refuse();
     Restores.insert(Restores.end(), Receipt.StateRestores.begin(),
                     Receipt.StateRestores.end());
@@ -267,10 +285,21 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
                   Receipt.SelectedScopes.end());
     llvm::sort(Scopes);
     Scopes.erase(std::unique(Scopes.begin(), Scopes.end()), Scopes.end());
+    Replacements.insert(Replacements.end(), Receipt.Replacements.begin(),
+                        Receipt.Replacements.end());
+    llvm::sort(Replacements);
+    Replacements.erase(std::unique(Replacements.begin(), Replacements.end()),
+                       Replacements.end());
   }
-  if (!Outcomes.empty() &&
-      !mergeSEHJumpContinuation(After, Saved, Value, std::move(Outcomes)))
-    return Refuse();
+  for (auto &[Buffer, Resumed] : Jump.Resumed) {
+    const auto Capture = After.JumpCaptures.find(Buffer);
+    if (Capture == After.JumpCaptures.end())
+      return Refuse();
+    for (auto &[ResumeValue, Frames] : Resumed)
+      if (!mergeSEHJumpContinuation(After, Capture->second, ResumeValue,
+                                    std::move(Frames)))
+        return Refuse();
+  }
   for (auto &[Scope, Frames] : Selected)
     for (auto &[Level, Frame] : Frames) {
       if (!charge(After.snapshotWork() + Frame.cellCount() + 10))

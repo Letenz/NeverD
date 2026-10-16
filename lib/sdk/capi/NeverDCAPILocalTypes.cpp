@@ -706,7 +706,7 @@ const char *neverd_types_languages_json(void) {
   llvm::json::Array Languages;
   const auto add = [&](types::Language Lang, llvm::StringRef Display) {
     llvm::json::Array Spellings;
-#define NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go, Python)                 \
+#define NEVERD_BUILTIN_SPELLING(Name, Id)                                      \
   if (types::spellsBuiltins(Lang, types::BuiltinSpelling::Name))               \
     Spellings.push_back(Id);
 #include "neverd/types/BuiltinSpellings.def"
@@ -714,7 +714,9 @@ const char *neverd_types_languages_json(void) {
         {"id", types::languageId(Lang)},
         {"display", Display},
         {"spelling", types::spellingId(types::defaultSpelling(Lang))},
-        {"spellings", std::move(Spellings)}});
+        {"spellings", std::move(Spellings)},
+        {"reads", types::readsDeclarations(Lang)},
+        {"prototypes", types::rendersPrototypes(Lang)}});
   };
 #define NEVERD_TYPE_LANGUAGE(Name, Id, Display, Spelling)                      \
   add(types::Language::Name, Display);

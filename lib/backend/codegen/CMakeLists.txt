@@ -38,6 +38,7 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFRegistrationCxxIR.cpp
   COFF/COFFRegistrationCxxEdges.cpp
   COFF/COFFRegistrationCopyEdges.cpp
+  COFF/COFFRegistrationCopySlots.cpp
   COFF/COFFRegistrationCxxCall.cpp
   COFF/COFFRegistrationCxxCatch.cpp
   COFF/COFFRegistrationCxxContinuation.cpp

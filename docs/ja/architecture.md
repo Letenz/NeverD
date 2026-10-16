@@ -1717,6 +1717,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymState` が 2^64 を法とする相対座標を使うのは、シンボリックな基底が 64 ビットの領域だけです。相対座標のゼロをまたぐ読み取りは、折り返さない二つの範囲に分割し、各入力の由来を一つの範囲内に保ちます。書き込みは値全体を保存します。絶対メモリ、レジスタ、一時記憶域の範囲オーバーフローは引き続き拒否します。この索引規則は実アドレスの有効性、非エイリアス性、フレーム分離を前提として与えません。通常の領域間無効化と STORE ごとの保存証明は変わらず、Unicorn、KVM、WHP が同じ解析規則を共有します。
 
+### 有界 libSystem インポート
+
+`MachOProgramLinking` は元の classic/generic64 形式、完全な未定義シンボル閉包、準備予算を所有します。Darwin process は提供元/シンボル許可、ポインタ公開、fixup 後の読み取り専用化、libSystem 入口と errno を管理します。`DarwinLibSystemCalls.def` の名前と引数数は `DarwinServices` の型付き効果に結び付き、raw trap を捏造しません。予約と最大保護は `DarwinMemory`、共有期限は `ExecutionBudget`、任意の `darwin.native_calls` 出力は `ProcessReport` が所有し、ホストのライブラリはロードしません。
+
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
 ### 逐次 raw 実行での比較交換
 
 `SymExec` は受け入れられた raw `ATOMIC_CMPXCHG` の値の意味論を所有します。出力を書き戻す前にアドレス、期待値、更新値、旧値を取得し、`ite(Old == Expected, Desired, Old)` を一度だけコミットします。`SymState` はその書き込みのバイト効果、エイリアスの無効化、保存予算を担当します。`InterpreterSpecialization` は受け入れと由来を管理します。Old には書き込み前のメモリ由来を使い、条件付き書き込みには Old、期待値、更新値の由来を保守的に統合し、重なり得るアフィンスピルの事実を破棄します。比較が失敗しても、書き込み範囲全体と保護された戻りセルの分離証明が必要です。残余には元の原子操作、メモリ順序、発生回数を保持し、拒否時には部分的な残余 CFG を公開しません。
@@ -1737,6 +1743,10 @@ KernelModelObjects が共通オブジェクト表でハンドルとポインタ�
 `KernelFileSystem` / `KernelModel` / `DriverFileSystemJSON` / `DeviceOwnerKind` / `isPnpProviderDevice`: `configuration.filesystem` は入力、上位 `filesystem` は独立した状態で、`device_object` と各ノードの `end_of_file` を追加します。実行や投影検証の停止後も状態を保持します。`devices` はゲストのみです。アンロード時にセッションボリュームは残せますが、ゲストの参照、ハンドル、接続、IRP は解放が必要です。`[]` を含む宣言は未再構築依存性を保持し、実行可能 UNPACK 復元を禁止します。旧 Unicorn は拒否書き込みを停止前に反映する場合があり、投影エラーを診断に残します。
 
 KernelFileSystem は FILE_OBJECT ごとに provider token を保持します。非公開の共有処理は許可済みノードとマッピング済みアクセスを受け取り、共有競合を双方向に検査します。メタデータのみのアクセスは競合に含みません。CLEANUP は共有制限を解除して token を保持し、CLOSE はクリーンアップ済み token を削除します。参照が残るオブジェクトも 1024 個の上限に含みます。厳密な対応検証で token とファイルオブジェクトの所有者を照合します。 `KernelModelFileCreate` が CREATE と取消を生成し、コールバック前にハンドル容量を予約します。`DriverSession` は非同期処理と入れ子の CLOSE で呼出元を保持します。共通オブジェクト所有者がハンドルを公開し、名前検索は実際のディレクトリを保持します。シナリオの終了意図は独立し、スナップショットとアンロードが token を双方向検証します。
+
+`KernelModelFileQueries` が IoQueryFileInformation の借用バッファーと ZwQueryInformationFile の専用バッファーの継続、結果公開、解放を所有します。KernelMode ハンドル参照はオブジェクト所有者を再利用します。ネイティブ SystemBuffer は物理メモリー所有者に登録し、通常の要求解放からクエリ所有者へ委ねます。`KernelFileSystem::queryInformation` のみが保持オープントークンから宣言メタデータを符号化します。終端経路は実際の IRP クラスと長さを使い、アダプターやレポートはメタデータを再構築しません。
+
+`KernelModelIO` は `FILE_OBJECT.CurrentByteOffset` を変更せずに転送の所有権を解放します。要求オフセットと完了バイト数はファイルシステムによる位置更新の代わりにはなりません。同期ファイルのネイティブ Position クエリは保持されたフィールドを読みます。
 
 ### 生環境のアーキテクチャ所有権
 

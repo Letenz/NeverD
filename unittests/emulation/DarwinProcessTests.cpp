@@ -4245,6 +4245,161 @@ TEST_P(DarwinProcess, ImmediatePselectPreservesTimespecMasksAndSharedBitmaps) {
   }
 }
 
+TEST_P(DarwinProcess, LibSystemImportsPreserveErrnoAndRawKernelAuthority) {
+  Options.InstructionQuantum = 1024;
+  Options.Arguments = {"libsystem"};
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->StandardInput = {'a', 'b', 0, 'c', 'd'};
+  const char *Names[] = {"___error", "___error", "_getpid", "_getpid", "_write",
+                         "_write",   "_read",    "_write",  "_read",   "_close",
+                         "_close",   "_read",    "_write",  "_close"};
+  const unsigned Counts[] = {0, 0, 0, 0, 3, 3, 3, 3, 3, 1, 1, 3, 3, 1};
+  const uint64_t Errno =
+      0x00007fffffbf0000ULL +
+      (GetParam().ISA == GuestArchitecture::X64 ? 4096 : 16384);
+  const uint64_t Values[] = {
+      Errno,      Errno, 1000,       1000, 4,          UINT64_MAX, UINT64_MAX,
+      UINT64_MAX, 3,     UINT64_MAX, 0,    UINT64_MAX, 1,          UINT64_MAX};
+  for (const char *Kind : {"classic", "chained"}) {
+    SCOPED_TRACE(Kind);
+    auto Linked = std::filesystem::path(Path.string() + "-libsystem-" + Kind);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      auto R = emulateProcess(Linked, GetParam().OS, Options);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+      EXPECT_EQ(R->ExitStatus, 58);
+      EXPECT_EQ(R->ReturnValue, 58);
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      EXPECT_EQ(R->StandardOutput, std::string("A\0\xff"
+                                               "B!",
+                                               5));
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_TRUE(R->Services.empty());
+      EXPECT_EQ(R->Events, 15u);
+      ASSERT_EQ(R->NativeCalls.size(), 14u);
+      for (unsigned I = 0; I != 14; ++I) {
+        SCOPED_TRACE(I);
+        const auto &Call = R->NativeCalls[I];
+        EXPECT_EQ(Call.Name, Names[I]);
+        EXPECT_EQ(Call.Module, "/usr/lib/libSystem.B.dylib");
+        EXPECT_EQ(Call.ArgumentCount, Counts[I]);
+        EXPECT_EQ(Call.Result, Values[I]);
+        EXPECT_TRUE(Call.ReturnAddress.has_value());
+      }
+      EXPECT_EQ(R->NativeCalls[12].Arguments[0], 0x1234567800000001ULL);
+      EXPECT_EQ(R->NativeCalls[13].Arguments[0], 0x12345678ffffffffULL);
+    }
+    Options.Arguments = {"libsystem", "exit"};
+    auto Exit = emulateProcess(Linked, GetParam().OS, Options);
+    ASSERT_TRUE(bool(Exit)) << llvm::toString(Exit.takeError());
+    ASSERT_EQ(Exit->Stop, ProcessStopReason::Exited) << Exit->Diagnostic;
+    EXPECT_EQ(Exit->ExitStatus, 35);
+    EXPECT_EQ(Exit->StandardOutput, "X");
+    EXPECT_TRUE(Exit->Services.empty());
+    EXPECT_EQ(Exit->Events, 2u);
+    ASSERT_EQ(Exit->NativeCalls.size(), 2u);
+    EXPECT_EQ(Exit->NativeCalls[1].Name, "__exit");
+    EXPECT_EQ(Exit->NativeCalls[1].Arguments[0], 0x123u);
+    EXPECT_FALSE(Exit->NativeCalls[1].Result);
+    Options.Arguments = {"libsystem", "noreturn"};
+    auto Terminal = emulateProcess(Linked, GetParam().OS, Options);
+    ASSERT_TRUE(bool(Terminal)) << llvm::toString(Terminal.takeError());
+    EXPECT_EQ(Terminal->Stop, ProcessStopReason::Exited)
+        << Terminal->Diagnostic;
+    EXPECT_EQ(Terminal->ExitStatus, 35);
+    ASSERT_EQ(Terminal->NativeCalls.size(), 1u);
+    EXPECT_EQ(Terminal->NativeCalls[0].Name, "__exit");
+    EXPECT_FALSE(Terminal->NativeCalls[0].Result);
+    EXPECT_TRUE(Terminal->StandardOutput.empty());
+    Options.Arguments = {"libsystem", "frame"};
+    auto Frame = emulateProcess(Linked, GetParam().OS, Options);
+    ASSERT_TRUE(bool(Frame)) << llvm::toString(Frame.takeError());
+    EXPECT_EQ(Frame->Stop, ProcessStopReason::RuntimeFailure);
+    EXPECT_EQ(Frame->Diagnostic, "invalid Darwin libSystem return frame");
+    ASSERT_EQ(Frame->NativeCalls.size(), 1u);
+    EXPECT_EQ(Frame->NativeCalls[0].Name, "_getpid");
+    EXPECT_FALSE(Frame->NativeCalls[0].Result);
+    EXPECT_TRUE(Frame->Services.empty());
+    Options.Arguments = {"libsystem", "spoof"};
+    auto Spoof = emulateProcess(Linked, GetParam().OS, Options);
+    ASSERT_TRUE(bool(Spoof)) << llvm::toString(Spoof.takeError());
+    EXPECT_EQ(Spoof->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_TRUE(Spoof->NativeCalls.empty());
+    Options.Arguments = {"libsystem"};
+    Options.Limits.Events = 1;
+    auto Limited = emulateProcess(Linked, GetParam().OS, Options);
+    ASSERT_TRUE(bool(Limited)) << llvm::toString(Limited.takeError());
+    EXPECT_EQ(Limited->Stop, ProcessStopReason::EventLimit);
+    EXPECT_EQ(Limited->Events, 1u);
+    EXPECT_TRUE(Limited->Services.empty());
+    EXPECT_TRUE(Limited->StandardOutput.empty());
+    ASSERT_EQ(Limited->NativeCalls.size(), 1u);
+    EXPECT_EQ(Limited->NativeCalls[0].Name, "___error");
+    EXPECT_EQ(Limited->NativeCalls[0].Result, Errno);
+    Options.Limits.Events = process_defaults::Events;
+  }
+}
+
+TEST_P(DarwinProcess, ClassicLazyImportsResolveBeforeCallsAndKeepSlotsStable) {
+  Options.InstructionQuantum = 1024;
+  Options.Arguments = {"lazy"};
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->StandardInput.emplace();
+  const auto Linked = std::filesystem::path(Path.string() + "-libsystem-lazy");
+  const char *Names[] = {"___error", "___error", "_getpid", "_getpid", "_write",
+                         "_write",   "_read",    "_close",  "_read",   "_close",
+                         "_getpid",  "_write",   "__exit"};
+  const unsigned Counts[] = {0, 0, 0, 0, 3, 3, 3, 1, 3, 1, 0, 3, 1};
+  const uint64_t Errno =
+      0x00007fffffbf0000ULL +
+      (GetParam().ISA == GuestArchitecture::X64 ? 4096 : 16384);
+  const std::optional<uint64_t> Values[] = {
+      Errno, Errno,      1000,       1000, 3, UINT64_MAX,  0,
+      0,     UINT64_MAX, UINT64_MAX, 1000, 1, std::nullopt};
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = emulateProcess(Linked, GetParam().OS, Options);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 83);
+    EXPECT_FALSE(R->ReturnValue);
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    EXPECT_EQ(R->StandardOutput, std::string("A\0ZS", 4));
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_TRUE(R->Services.empty());
+    EXPECT_EQ(R->Events, 13u);
+    ASSERT_EQ(R->NativeCalls.size(), 13u);
+    for (unsigned I = 0; I != 13; ++I) {
+      const auto &Call = R->NativeCalls[I];
+      EXPECT_EQ(Call.Name, Names[I]);
+      EXPECT_EQ(Call.Module, "/usr/lib/libSystem.B.dylib");
+      EXPECT_EQ(Call.ArgumentCount, Counts[I]);
+      EXPECT_EQ(Call.Result, Values[I]);
+      EXPECT_EQ(Call.ReturnAddress.has_value(), I != 12);
+    }
+  }
+  Options.Arguments.push_back("exit");
+  auto Exit = emulateProcess(Linked, GetParam().OS, Options);
+  ASSERT_TRUE(bool(Exit)) << llvm::toString(Exit.takeError());
+  EXPECT_EQ(Exit->Stop, ProcessStopReason::Exited) << Exit->Diagnostic;
+  EXPECT_EQ(Exit->ExitStatus, 35);
+  EXPECT_EQ(Exit->StandardOutput, "X");
+  ASSERT_EQ(Exit->NativeCalls.size(), 2u);
+  EXPECT_EQ(Exit->NativeCalls.back().Name, "__exit");
+  EXPECT_EQ(Exit->NativeCalls.back().Arguments[0], 0x123u);
+  EXPECT_FALSE(Exit->NativeCalls.back().Result);
+  Options.Arguments.pop_back();
+  Options.Limits.Events = 1;
+  auto Limited = emulateProcess(Linked, GetParam().OS, Options);
+  ASSERT_TRUE(bool(Limited)) << llvm::toString(Limited.takeError());
+  EXPECT_EQ(Limited->Stop, ProcessStopReason::EventLimit);
+  EXPECT_EQ(Limited->Events, 1u);
+  EXPECT_TRUE(Limited->Services.empty());
+  EXPECT_TRUE(Limited->StandardOutput.empty());
+  ASSERT_EQ(Limited->NativeCalls.size(), 1u);
+  EXPECT_EQ(Limited->NativeCalls.front().Name, "___error");
+  EXPECT_EQ(Limited->NativeCalls.front().Result, Errno);
+}
+
 INSTANTIATE_TEST_SUITE_P(Transports, DarwinProcess,
                          testing::ValuesIn(profiles()),
                          [](const testing::TestParamInfo<Profile> &P) {

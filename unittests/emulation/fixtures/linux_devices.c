@@ -9,6 +9,23 @@
 typedef unsigned long U64;
 typedef long I64;
 typedef unsigned int U32;
+#ifndef __ANDROID__
+// Freestanding compilers may lower aggregate initialization/copies to these.
+void *memset(void *Destination, int Value, U64 Count) {
+  volatile unsigned char *Out = Destination;
+  for (U64 I = 0; I != Count; ++I)
+    Out[I] = (unsigned char)Value;
+  return Destination;
+}
+void *memcpy(void *Destination, const void *Source, U64 Count) {
+  volatile unsigned char *Out = Destination;
+  const volatile unsigned char *In = Source;
+  for (U64 I = 0; I != Count; ++I)
+    Out[I] = In[I];
+  return Destination;
+}
+#endif
+
 #if defined(__aarch64__)
 enum {
   OpenAt = 56,
@@ -567,6 +584,211 @@ U64 devices_gpu_rejected(U64 Mode, U64 Buffer) {
       (struct GPUSubmit){context[1], cmd.gpu, Mode == 3 ? 2 : 5, 0xdeadbeef, 0};
   return invoke(0, 3, 0xc0200910, (U64)submit);
 }
+enum {
+  ObjectAlloc = 0xc0300945,
+  ObjectInfo = 0xc0300947,
+  ObjectFree = 0x40200946
+};
+struct GPUObjectAlloc {
+  U64 size, flags, va_length, mmap_size;
+  U32 id, metadata_length;
+  U64 metadata;
+};
+struct GPUObjectInfo {
+  U64 gpu, flags, size, va_length, user;
+  U32 id, padding;
+};
+struct GPUObjectFree {
+  U64 flags, private_data;
+  U32 id, type, length, padding;
+};
+_Static_assert(sizeof(struct GPUObjectAlloc) == 48, "LP64 object allocation");
+_Static_assert(sizeof(struct GPUObjectInfo) == 48, "LP64 object query");
+_Static_assert(sizeof(struct GPUObjectFree) == 32, "LP64 object release");
+
+U64 devices_gpu_objects(U64 Route, U64 Commands) {
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  CHECK(raw(Dup, 3, 0, 0), 4);
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 5);
+  struct GPUObjectAlloc a = {5001, 0, 0x7788, 0xaabb, 0, 0, (U64)-1};
+  struct GPUObjectAlloc b = {4096, 0x01000000, 0, 0, 0, 0, 0};
+  CHECK(invoke(Route, 3, ObjectAlloc, (U64)&a), 0);
+  CHECK(invoke(Route, 4, ObjectAlloc, (U64)&b), 0);
+  CHECK(a.size, 8192);
+  CHECK(a.mmap_size, 12288);
+  CHECK(a.va_length, 0x7788);
+  CHECK(a.metadata, (U64)-1);
+  CHECK(a.flags, 0);
+  CHECK(b.size, 4096);
+  CHECK(b.flags, 0x01000000);
+  U64 readonly_cpu = raw6(Map, 0, 4096, 3, 1, 3, (U64)b.id * 4096);
+  if (readonly_cpu > (U64)-4096)
+    return __LINE__;
+  *(volatile U32 *)readonly_cpu = 0xaabbccdd; // GPU-only permission flag.
+  CHECK(*(volatile U32 *)readonly_cpu, 0xaabbccdd);
+  CHECK(raw(Unmap, readonly_cpu, 4096, 0), 0);
+  if (!a.id || !b.id || a.id == b.id)
+    return __LINE__;
+  struct GPUObjectInfo q = {0, 0, 0, 0, 0, a.id, 0x1234};
+  CHECK(invoke(Route, 5, ObjectInfo, (U64)&q), 0);
+  CHECK(q.flags, 0);
+  CHECK(q.size, 8192);
+  CHECK(q.va_length, 12288);
+  CHECK(q.user, 0);
+  CHECK(q.padding, 0x1234);
+  U64 gpu = q.gpu;
+  if (!gpu || (gpu & 4095))
+    return __LINE__;
+  CHECK(raw6(Map, 0, 4096, 3, 1, 3, (U64)a.id * 4096), -34);
+  U64 cpu = raw6(Map, 0, 8192, 3, 1, 4, (U64)a.id * 4096);
+  if (cpu > (U64)-4096)
+    return __LINE__;
+  volatile U32 *p = (volatile U32 *)cpu;
+  for (U32 i = 0; i != 2048; ++i)
+    CHECK(p[i], 0);
+  p[0] = 0x12345678;
+  p[2047] = 0x11223344;
+  CHECK(raw6(Map, 0, 8192, 3, 1, 5, gpu), -16);
+  CHECK(invoke(Route, 5, ObjectInfo, (U64)&q), 0);
+  CHECK(q.user, cpu);
+  CHECK(q.gpu, gpu);
+  CHECK(raw(Protect, cpu, 8192, 1), 0);
+  CHECK(p[0], 0x12345678);
+  CHECK(raw(Protect, cpu, 8192, 3), 0);
+  if (Commands) {
+    U32 context[2] = {0x12, 0};
+    CHECK(invoke(Route, 5, CreateContext, (U64)context), 0);
+    U64 code = raw6(Map, 0, 4096, 3, 0x22, (U64)-1, 0);
+    if (code > (U64)-4096)
+      return __LINE__;
+    struct GPUMap cmd = {-1, 0, 4096, 0, code, 2, 0x01000000};
+    CHECK(invoke(Route, 5, 0xc0300915, (U64)&cmd), 0);
+    volatile U32 *c = (volatile U32 *)code;
+    c[0] = 0xc0013d00;
+    c[1] = (U32)gpu + 8188;
+    c[2] = 0xfedcba98;
+    struct GPUSubmit submit = {context[1], cmd.gpu, 3, 0xdeadbeef, 0};
+    CHECK(invoke(Route, 5, 0xc0200910, (U64)&submit), 0);
+    CHECK(submit.timestamp, 1);
+    CHECK(p[2047], 0xfedcba98);
+    CHECK(p[0], 0x12345678);
+    CHECK(invoke(Route, 5, 0x40080921, (U64)&cmd.gpu), 0);
+    CHECK(raw(Unmap, code, 4096, 0), 0);
+    CHECK(invoke(Route, 5, DestroyContext, (U64)&context[1]), 0);
+  }
+  // Unmapping alone retains the allocation; remapping sees the same bytes.
+  CHECK(raw(Unmap, cpu, 8192, 0), 0);
+  CHECK(invoke(Route, 5, ObjectInfo, (U64)&q), 0);
+  CHECK(q.user, 0);
+  cpu = raw6(Map, 0, 8192, 3, 1, 5, gpu);
+  if (cpu > (U64)-4096)
+    return __LINE__;
+  p = (volatile U32 *)cpu;
+  CHECK(p[0], 0x12345678);
+  CHECK(p[2047], Commands ? 0xfedcba98 : 0x11223344);
+  struct GPUObjectFree f = {0, (U64)-1, a.id, 99, 99, 0x9876};
+  CHECK(invoke(Route, 4, ObjectFree, (U64)&f), 0);
+  CHECK(invoke(0, 5, ObjectFree, (U64)&f), -16);
+  CHECK(invoke(Route, 5, ObjectInfo, (U64)&q), 0);
+  CHECK(q.user, cpu);
+  CHECK(q.gpu, gpu);
+  CHECK(p[0], 0x12345678);
+  // The mapping retains the open/process owner even after every FD closes.
+  CHECK(raw(Close, 3, 0, 0), 0);
+  CHECK(raw(Close, 4, 0, 0), 0);
+  CHECK(raw(Close, 5, 0, 0), 0);
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  CHECK(invoke(Route, 3, ObjectInfo, (U64)&q), 0);
+  CHECK(raw(Unmap, cpu, 8192, 0), 0);
+  CHECK(invoke(0, 3, ObjectInfo, (U64)&q), -22);
+  CHECK(q.gpu, gpu); // Failure did not overwrite the caller's record.
+  CHECK(invoke(0, 3, ObjectFree, (U64)&f), -22);
+  q.id = b.id;
+  CHECK(invoke(Route, 3, ObjectInfo, (U64)&q), 0);
+  CHECK(q.flags, 0x01000000);
+  CHECK(invoke(Route, 3, 0x40080921, (U64)&q.gpu), 0);
+  CHECK(invoke(0, 3, ObjectInfo, (U64)&q), -22);
+  a.size = 4096;
+  a.id = 0;
+  CHECK(invoke(Route, 3, ObjectAlloc, (U64)&a), 0);
+  cpu = raw6(Map, 0, 4096, 3, 1, 3, (U64)a.id * 4096);
+  if (cpu > (U64)-4096)
+    return __LINE__;
+  p = (volatile U32 *)cpu;
+  for (U32 i = 0; i != 1024; ++i)
+    CHECK(p[i], 0);
+  CHECK(raw(Unmap, cpu, 4096, 0), 0);
+  f.id = a.id;
+  CHECK(invoke(Route, 3, ObjectFree, (U64)&f), 0);
+  a.size = 0;
+  CHECK(invoke(0, 3, ObjectAlloc, (U64)&a), -22);
+  a.size = 0x100000000UL;
+  CHECK(invoke(0, 3, ObjectAlloc, (U64)&a), -22);
+  CHECK(raw(Close, 3, 0, 0), 0);
+  return 0;
+}
+
+// A stopped unsupported operation must preserve both its record and RAM.
+U64 devices_gpu_objects_rejected(U64 Mode, U64 Buffer) {
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  struct GPUObjectAlloc *a = (struct GPUObjectAlloc *)Buffer;
+  *a = (struct GPUObjectAlloc){8192, 0, 0, 0xabcdef, 0xdeadbeef, 0, 0};
+  if (Mode == 0 || Mode == 1 || Mode == 2) {
+    if (Mode == 0)
+      a->flags = 0x100000000UL;
+    if (Mode == 1)
+      a->metadata_length = 1;
+    if (Mode == 2)
+      CHECK(raw(Protect, Buffer, 4096, 1), 0);
+    return invoke(0, 3, ObjectAlloc, Buffer);
+  }
+  CHECK(invoke(0, 3, ObjectAlloc, Buffer), 0);
+  U64 cpu = raw6(Map, 0x22000000, 8192, 3, 1, 3, (U64)a->id * 4096);
+  CHECK(cpu, 0x22000000);
+  *(volatile U32 *)cpu = 0x76543210;
+  if (Mode == 3)
+    return raw(Unmap, cpu, 4096, 0);
+  if (Mode == 4)
+    return raw(Protect, cpu, 4096, 1);
+  if (Mode == 5) {
+    struct GPUObjectFree *f = (struct GPUObjectFree *)(Buffer + 64);
+    *f = (struct GPUObjectFree){1, 0, a->id, 1, 0, 0};
+    return invoke(0, 3, ObjectFree, (U64)f);
+  }
+  CHECK(raw(Unmap, cpu, 8192, 0), 0);
+  if (Mode == 7) {
+    struct GPUObjectInfo q = {0, 0, 0, 0, 0, a->id, 0};
+    CHECK(invoke(0, 3, ObjectInfo, (U64)&q), 0);
+    return raw6(Map, cpu, 8192, 3, 1, 3, q.gpu + 4096);
+  }
+  return raw6(Map, cpu, a->mmap_size, 3, 1, 3, (U64)a->id * 4096);
+}
+
+U64 devices_gpu_object_write_rejected(U64 Mode, U64 Buffer) {
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  U32 context[2] = {0x12, 0};
+  CHECK(invoke(0, 3, CreateContext, (U64)context), 0);
+  CHECK(raw6(Map, 0x22000000, 4096, 1, 1, 3, 4096), 0x22000000);
+  struct GPUObjectAlloc a = {4096, Mode ? 0 : 0x01000000, 0, 0, 0, 0, 0};
+  CHECK(invoke(0, 3, ObjectAlloc, (U64)&a), 0);
+  CHECK(raw6(Map, 0x23000000, 4096, 3, 1, 3, (U64)a.id * 4096), 0x23000000);
+  struct GPUObjectInfo q = {0, 0, 0, 0, 0, a.id, 0};
+  CHECK(invoke(0, 3, ObjectInfo, (U64)&q), 0);
+  U64 code = raw6(Map, 0, 4096, 3, 0x22, (U64)-1, 0);
+  struct GPUMap cmd = {-1, 0, 4096, 0, code, 2, 0};
+  CHECK(invoke(0, 3, 0xc0300915, (U64)&cmd), 0);
+  volatile U32 *c = (volatile U32 *)code;
+  c[0] = 0xc0013d00;
+  c[1] = (U32)q.gpu;
+  c[2] = 0x76543210;
+  c[3] = 0xc0009900;
+  c[4] = 0; // An unsupported suffix cannot retire a prefix.
+  struct GPUSubmit *submit = (struct GPUSubmit *)Buffer;
+  *submit =
+      (struct GPUSubmit){context[1], cmd.gpu, Mode ? 5 : 3, 0xdeadbeef, 0};
+  return invoke(0, 3, 0xc0200910, (U64)submit);
+}
+
 #ifdef __ANDROID__
 extern int pthread_create(U64 *, const void *, void *(*)(void *), void *);
 extern int pthread_join(U64, void **);
@@ -599,11 +821,12 @@ void process_main(U64 *Stack) {
   if (Stack[0] > 1) {
     char Mode = ((const char *)Stack[2])[0];
     if (Mode == 'd' || Mode == 'u' || Mode == 'k' || Mode == 'b' ||
-        Mode == 'g') {
+        Mode == 'g' || Mode == 'o') {
       U64 Status = Mode == 'd'   ? devices_duplicates(0)
                    : Mode == 'u' ? devices_updates()
                    : Mode == 'k' ? devices_contexts(0)
                    : Mode == 'g' ? devices_gpu_commands(0)
+                   : Mode == 'o' ? devices_gpu_objects(0, 1)
                                  : devices_busy_poll();
       raw(Exit, Status, 0, 0);
       __builtin_trap();

@@ -22,6 +22,7 @@ bool RegistrationStateSolver::applySEHContinueFilters(size_t I, Domain &State,
 
   SEHFrameOutcomes Continued;
   SEHHandlerOutcomes Selected;
+  SEHUnwindJump Jump{State.JumpCaptures, {}};
   for (int32_t Level : State.Levels) {
     if (!validLevel(Level) ||
         !charge(State.Frame.cellCount() +
@@ -31,7 +32,7 @@ bool RegistrationStateSolver::applySEHContinueFilters(size_t I, Domain &State,
     Frame.store(*Chain.TryLevelOffset, 4,
                 FrameValue::constant(uint32_t(Level)));
     if (!runSEHFilterSearch(Frame, nullptr, Continued,
-                            /*RequireResume=*/false, &Selected))
+                            /*RequireResume=*/false, &Selected, &Jump))
       return false;
   }
 
@@ -48,9 +49,9 @@ bool RegistrationStateSolver::applySEHContinueFilters(size_t I, Domain &State,
       dispatchBlock(I, Search, Facts);
     }
 
-  // If every filter selects a handler, ordinary fallthrough is unreachable.
-  // Keeping its existing overapproximation cannot supply a returning frame;
-  // nonlocal-unwind proofs independently close each selected handler path.
+  // Selection and nonlocal jumps retire the suspended invocation. Keeping
+  // its existing overapproximation cannot supply a returning frame; source
+  // callback occurrences and nonlocal unwind independently close those exits.
   if (Continued.empty())
     return true;
 

@@ -89,7 +89,29 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-handler-nested-finally": (56, 23),
               "longjmp-handler-mixed-resumption": (57, 23),
               "longjmp-handler-cleanup-jump": (58, 236),
-              "longjmp-handler-nested-cleanup-jump": (59, 2367)})
+              "longjmp-handler-nested-cleanup-jump": (59, 2367),
+              "longjmp-handler-cleanup-value": (60, 236),
+              "longjmp-handler-nested-cleanup-value": (61, 2367),
+              "longjmp-handler-cleanup-zero": (62, 236),
+              "longjmp-handler-nested-cleanup-zero": (63, 2367),
+              "longjmp-handler-cleanup-dynamic-value": (64, 236),
+              "longjmp-handler-nested-cleanup-dynamic-value": (65, 2367),
+              "longjmp-handler-cleanup-other-capture": (66, 236),
+              "longjmp-handler-nested-cleanup-other-capture": (67, 2367),
+              "longjmp-search-filter-jump": (68, 23),
+              "longjmp-nested-search-filter-jump": (69, 263),
+              "longjmp-search-filter-other-capture": (70, 23),
+              "longjmp-nested-search-filter-other-capture": (71, 263),
+              "longjmp-search-filter-mixed-jump": (72, 23),
+              "longjmp-nested-search-filter-mixed-jump": (73, 263),
+              "longjmp-search-filter-selected-jump": (74, 23),
+              "longjmp-nested-search-filter-selected-jump": (75, 263),
+              "longjmp-finally-register-loop": (76, 6662345),
+              "longjmp-finally-frame-loop": (77, 6662345),
+              "longjmp-finally-private-loop": (78, 6662345),
+              "longjmp-filter-register-loop": (79, 2666345),
+              "longjmp-filter-frame-loop": (80, 2666345),
+              "longjmp-filter-private-loop": (81, 2666345)})
 EH4_JUMP_CASES = ("longjmp-finally", "longjmp-zero", "longjmp-filter",
                   "longjmp-parameter", "longjmp-callback",
                   "longjmp-unwind-callback", "longjmp-callback-zero",
@@ -103,7 +125,27 @@ EH4_JUMP_CASES = ("longjmp-finally", "longjmp-zero", "longjmp-filter",
                   "longjmp-handler-selected", "longjmp-handler-cleanup",
                   "longjmp-handler-captured-cursor", "longjmp-handler-nested-finally",
                   "longjmp-handler-mixed-resumption", "longjmp-handler-cleanup-jump",
-                  "longjmp-handler-nested-cleanup-jump")
+                  "longjmp-handler-nested-cleanup-jump", "longjmp-handler-cleanup-value",
+                  "longjmp-handler-nested-cleanup-value", "longjmp-handler-cleanup-zero",
+                  "longjmp-handler-nested-cleanup-zero",
+                  "longjmp-handler-cleanup-dynamic-value",
+                  "longjmp-handler-nested-cleanup-dynamic-value",
+                  "longjmp-handler-cleanup-other-capture",
+                  "longjmp-handler-nested-cleanup-other-capture",
+                  "longjmp-search-filter-jump",
+                  "longjmp-nested-search-filter-jump",
+                  "longjmp-search-filter-other-capture",
+                  "longjmp-nested-search-filter-other-capture",
+                  "longjmp-search-filter-mixed-jump",
+                  "longjmp-nested-search-filter-mixed-jump",
+                  "longjmp-search-filter-selected-jump",
+                  "longjmp-nested-search-filter-selected-jump",
+                  "longjmp-finally-register-loop",
+                  "longjmp-finally-frame-loop",
+                  "longjmp-finally-private-loop",
+                  "longjmp-filter-register-loop",
+                  "longjmp-filter-frame-loop",
+                  "longjmp-filter-private-loop")
 CASES.update({prefix + name: CASES[name]
               for prefix in ("eh4-", "eh4-gs-") for name in EH4_JUMP_CASES})
 CASES.update({prefix + name: (number, 23)
@@ -321,17 +363,22 @@ def main(argv: list[str] | None = None) -> int:
             (output / f"{name}.def").write_text(definition, encoding="utf-8")
             commands.append([linker, "/lib", f"/def:{output / (name + '.def')}",
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
-        sources = (["registration_multistate_jump.s"] +
-                   (["registration_eh4_runtime.c"] if eh4 else []) if case == 52
-                   else ["registration_filter_state_eh4.s" if 36 <= case <= 42 or 53 <= case <= 59 else
-                         "registration_jump_eh4.s" if jump else "registration_seh4.s",
-                    "registration_eh4_runtime.c"] if eh4
-                   else ["registration_shared_calls.s" if case == 47 else
-                         "registration_deep_scopes.s" if case in (45, 46, 48, 49) else
-                         "registration_state_dispatch.s" if case in (43, 44) else
-                         "registration_filter_state.s" if case >= 36 else
-                         "registration_state.s" if case >= 30 else
-                         "registration_jump.s" if jump else "registration_seh3.s"])
+        if 76 <= case <= 81:
+            sources = ["registration_callback_loop.s"]
+            if eh4:
+                sources.append("registration_eh4_runtime.c")
+        else:
+            sources = (["registration_multistate_jump.s"] +
+                       (["registration_eh4_runtime.c"] if eh4 else []) if case == 52
+                       else ["registration_filter_state_eh4.s" if 36 <= case <= 42 or 53 <= case <= 75 else
+                             "registration_jump_eh4.s" if jump else "registration_seh4.s",
+                        "registration_eh4_runtime.c"] if eh4
+                       else ["registration_shared_calls.s" if case == 47 else
+                             "registration_deep_scopes.s" if case in (45, 46, 48, 49) else
+                             "registration_state_dispatch.s" if case in (43, 44) else
+                             "registration_filter_state.s" if case >= 36 else
+                             "registration_state.s" if case >= 30 else
+                             "registration_jump.s" if jump else "registration_seh3.s"])
         sources.append("registration_observer.c")
         if case in (49, 51):
             sources.append("registration_private_graph.s")
@@ -341,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
         for source in sources:
             commands.append([compiler, "--target=i686-pc-windows-msvc", "-O0",
                              f"-DREGISTRATION_CASE={case}",
+                             f"-DREGISTRATION_LOOP_EH4={int(eh4)}",
                              "-DREGISTRATION_FORWARD_ONLY=1", f"-DREGISTRATION_EXPECT_GS={int(gs)}",
                              f"-DREGISTRATION_HELPER_GS={int(helper_gs)}",
                              *([f"-DREGISTRATION_MULTISTATE_EH4={int(eh4)}"] if case == 52 else []),

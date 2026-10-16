@@ -103,7 +103,7 @@ protected:
 };
 
 TEST_F(DriverScenarioPublic, DeclaredFileSystemStateReachesCABIAndCLIOnStop) {
-  for (char Mode : {'S', 'W', 'C', 'P', 'X', 'U', 'R'}) {
+  for (char Mode : {'S', 'W', 'C', 'P', 'X', 'U', 'R', 'Q'}) {
     SCOPED_TRACE(Mode);
     const std::string Scenario =
         std::string(R"({"service_name":"DeclaredFileSystem)") + Mode +
@@ -118,12 +118,12 @@ TEST_F(DriverScenarioPublic, DeclaredFileSystemStateReachesCABIAndCLIOnStop) {
         Session, fixture("driver_filesystem_provider").c_str(),
         Scenario.c_str(), nullptr));
     ASSERT_FALSE(FromC.empty()) << error();
-    // X deliberately completes a CREATE with failure after cancellation.
-    // The driver handles that failure, but the CLI still reports its request.
+    // X handles a cancelled CREATE; Q handles a short metadata buffer. The
+    // report and CLI exit preserve those failed requests after driver success.
     const auto FromCLI = runCLI(Scenario,
-                                Mode == 'W'   ? 3
-                                : Mode == 'X' ? 2
-                                              : 0,
+                                Mode == 'W'                  ? 3
+                                : Mode == 'X' || Mode == 'Q' ? 2
+                                                             : 0,
                                 "driver_filesystem_provider");
     for (const auto &Text : {FromC, FromCLI}) {
       auto Parsed = llvm::json::parse(Text);
@@ -145,6 +145,52 @@ TEST_F(DriverScenarioPublic, DeclaredFileSystemStateReachesCABIAndCLIOnStop) {
           EXPECT_TRUE(Request.getString("filesystem_device"));
           EXPECT_TRUE(Request.get("filesystem_file_id"));
           EXPECT_EQ(Request.getBoolean("completed"), true);
+        }
+        if (Mode == 'Q') {
+          struct ExpectedQuery {
+            unsigned Class;
+            llvm::StringRef Bytes;
+          };
+          const ExpectedQuery Metadata[] = {
+              {4, "010000000000000002000000000000000300000000000000"
+                  "04000000000000002000000000000000"},
+              {5, "001000000000000004000000000000000100000000000000"},
+              {6, "ffffffffffffffff"},
+              {9, "0a0000005c004400610074006100"},
+              {34, "010000000000000002000000000000000300000000000000"
+                   "040000000000000000100000000000000400000000000000"
+                   "2000000000000000"},
+              {35, "2000000000000000"}};
+          unsigned Index = 0;
+          for (const auto &Value : *Requests) {
+            const auto &Request = *Value.getAsObject();
+            if (Request.getString("kind") != "query_information")
+              continue;
+            ASSERT_LT(Index, 16u);
+            ExpectedQuery Expected = Metadata[Index % 6];
+            uint32_t Status = 0;
+            if (Index == 12) {
+              Expected = {5, ""};
+              Status = 0xc0000004;
+            } else if (Index == 13) {
+              Expected = {9, "0a0000005c004400"};
+              Status = 0x80000005;
+            } else if (Index >= 14) {
+              Expected = Index == 14 ? ExpectedQuery{16, "20000000"}
+                                     : ExpectedQuery{17, "ff010000"};
+            }
+            EXPECT_EQ(Request.getString("origin"),
+                      Index < 6 ? "IoQueryFileInformation"
+                                : "ZwQueryInformationFile");
+            EXPECT_EQ(Request.getInteger("file_information_class"),
+                      Expected.Class);
+            EXPECT_EQ(Request.getInteger("io_status"), Status);
+            EXPECT_EQ(Request.getInteger("information"),
+                      Expected.Bytes.size() / 2);
+            EXPECT_EQ(Request.getString("output_hex"), Expected.Bytes);
+            ++Index;
+          }
+          EXPECT_EQ(Index, 16u);
         }
       }
       const auto *State = Report->getArray("filesystem");

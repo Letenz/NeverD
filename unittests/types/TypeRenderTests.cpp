@@ -330,6 +330,165 @@ TEST(TypeRender, PythonBindsTypedefsAndLaysOutInOrder) {
   EXPECT_TRUE(contains(Text, "(\"Next\", ctypes.POINTER(NODE)),"));
 }
 
+TEST_F(TypeRenderFixture, JavaScriptReadsRecordsThroughDataView) {
+  RenderOptions Options = in(Language::JavaScript);
+  Options.Asserts = true;
+  const std::string Thread = header("_THREAD_LIKE", Options);
+  // TypeScript checks the module by its JSDoc.
+  EXPECT_TRUE(Thread.starts_with("// @ts-check\n")) << Thread;
+  EXPECT_TRUE(contains(Thread, "export class _THREAD_LIKE {\n"));
+  EXPECT_TRUE(contains(Thread, "  static size = 0x18;\n"));
+  // The caller gives the bytes, where the record begins and their order.
+  EXPECT_TRUE(contains(
+      Thread, "  constructor(view, offset = 0, littleEndian = true) {"));
+  // An anonymous record's members are the record's own, as C reaches them;
+  // a bitfield reads its unit in 32-bit arithmetic.
+  EXPECT_TRUE(contains(Thread, "  get ReadyTransition() { return "
+                               "(this.#view.getUint32(this.#offset + 0x08, "
+                               "this.#little) >>> 1) & 0x1; }\n"));
+  EXPECT_TRUE(contains(Thread, "(unit & 0xFFFFFFFD) | ((value << 1) & 0x2)"));
+  EXPECT_FALSE(contains(Thread, "class _THREAD_LIKE_0"));
+  // An array's elements by index, which the module checks.
+  EXPECT_TRUE(contains(Thread, "  Tail(i) { return this.#view.getUint8("
+                               "this.#offset + 0x10 + 1 * index(i, 3)); }\n"));
+  EXPECT_TRUE(contains(Thread, "function index(i, count) {"));
+  // Each accessor read and written back within a buffer of the record's
+  // size, which throws past its end.
+  EXPECT_TRUE(contains(Thread, "check(_THREAD_LIKE, (r) => {\n"
+                               "  r.Header = r.Header;\n"));
+  EXPECT_TRUE(contains(Thread, "  r.setTail(2, r.Tail(2));\n"));
+
+  const std::string Device = header("_DEVICE", Options);
+  // A record held in place is a view of its bytes; an eight-byte value,
+  // a pointer's address among them, is a bigint.
+  EXPECT_TRUE(contains(Device, "  get Links() { return new _LIST_ENTRY("
+                               "this.#view, this.#offset + 0x08, "
+                               "this.#little); }\n"));
+  EXPECT_TRUE(contains(Device, "[0x08, _LIST_ENTRY.size]"));
+  EXPECT_TRUE(contains(Device, "  MajorFunction(i) { return "
+                               "this.#view.getBigUint64(this.#offset + 0x18 + "
+                               "8 * index(i, 4), this.#little); }\n"));
+  // An enumeration is a frozen object, its field the underlying integer.
+  EXPECT_TRUE(contains(Device, "export const _POOL_KIND = Object.freeze({\n"));
+  EXPECT_TRUE(contains(Device, "  MustSucceed: -2147483648,\n"));
+  EXPECT_TRUE(contains(Device, "/** @typedef {number} _POOL_KIND */\n"));
+  EXPECT_TRUE(contains(Device, "/** 0x50 enum _POOL_KIND Pool @returns "
+                               "{_POOL_KIND} */\n  get Pool() { return "
+                               "this.#view.getInt32("));
+
+  // A bitfield of an eight-byte unit reads as a bigint.
+  EXPECT_TRUE(contains(header("_PUSH_LOCK", in(Language::JavaScript)),
+                       "  get Shared() { return BigInt.asUintN(60, "
+                       "this.#view.getBigUint64(this.#offset + 0x0, "
+                       "this.#little) >> 4n); }\n"));
+
+  // Windows' names are typedefs of the JavaScript types.
+  Options = in(Language::JavaScript);
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Windows = header("_PACKED", Options);
+  EXPECT_TRUE(contains(Windows, "/** @typedef {number} ULONG */\n")) << Windows;
+  EXPECT_TRUE(contains(Windows, "@returns {ULONG} */"));
+}
+
+TEST(TypeRender, JavaScriptExtendsSignsAndNamesWhatItDeclares) {
+  TypeLibrary Library;
+  ASSERT_TRUE(parseCTypes(R"(
+    typedef struct _NODE NODE, *PNODE;
+    struct _NODE { PNODE Next; int Low : 3; int High : 29; };
+    struct DataView { int constructor; __int128 Wide; };
+  )",
+                          Library)
+                  .ok());
+  const std::string Text = renderTypes(Library, {}, in(Language::JavaScript));
+  // A signed field's top bit is the 32nd and back.
+  EXPECT_TRUE(contains(Text, "  get Low() { return (this.#view.getUint32("
+                             "this.#offset + 0x08, this.#little) << 29) >> "
+                             "29; }\n"))
+      << Text;
+  EXPECT_TRUE(contains(Text, "  get High() { return (this.#view.getUint32("
+                             "this.#offset + 0x08, this.#little) << 0) >> "
+                             "3; }\n"));
+  // A typedef of a record names its class; one of a pointer, its address.
+  EXPECT_TRUE(contains(Text, "/** @typedef {_NODE} NODE */\n"));
+  EXPECT_TRUE(contains(Text, "export const NODE = _NODE;\n"));
+  EXPECT_TRUE(contains(Text, "/** @typedef {bigint} PNODE The address of "));
+  EXPECT_TRUE(contains(Text, "@returns {PNODE} */\n  get Next() {"));
+  // What the module itself names, and a class's own words, step aside.
+  EXPECT_TRUE(contains(Text, "export class DataView_ {"));
+  EXPECT_TRUE(contains(Text, "  get constructor_() {"));
+  // Sixteen bytes read as one bigint from two halves.
+  EXPECT_TRUE(contains(Text, "  get Wide() { return this.#wide("));
+  EXPECT_TRUE(contains(Text, "  #wide(at, signed) {"));
+}
+
+TEST_F(TypeRenderFixture, LuaReadsRecordsThroughStringUnpack) {
+  RenderOptions Options = in(Language::Lua);
+  Options.Asserts = true;
+  const std::string Thread = header("_THREAD_LIKE", Options);
+  // A module of record types, each in a block of its own.
+  EXPECT_TRUE(Thread.starts_with("-- ")) << Thread;
+  EXPECT_TRUE(contains(Thread, "local M = {}\n"));
+  EXPECT_TRUE(contains(Thread, "do\n  local T = record(\"_THREAD_LIKE\", "
+                               "0x18)\n  M._THREAD_LIKE = T\n"));
+  EXPECT_TRUE(Thread.ends_with("return M\n"));
+  // An anonymous record's members are the record's own; a bitfield masks
+  // its unit, which string.pack takes whole.
+  EXPECT_TRUE(contains(Thread, "  function T.get.ReadyTransition(r) return "
+                               "(get(r, 0x08, \"I4\") >> 1) & 0x1 end\n"));
+  EXPECT_TRUE(contains(Thread, "put(r, 0x08, \"I4\", (get(r, 0x08, \"I4\") & "
+                               "0xFFFFFFFD) | ((value << 1) & 0x2))"));
+  // An array's elements by index, through methods.
+  EXPECT_TRUE(contains(Thread, "  function T.methods.Tail(r, i) return "
+                               "get(r, 0x10 + 1 * index(i, 3), \"B\") end\n"));
+  EXPECT_TRUE(contains(Thread, "  function T.methods.setTail(r, i, value)"));
+  // Each accessor read and written back within bytes of the record's size.
+  EXPECT_TRUE(contains(Thread, "check(M._THREAD_LIKE, function(r)\n"
+                               "  r.Header = r.Header\n"));
+  EXPECT_TRUE(contains(Thread, "  r:setTail(2, r:Tail(2))\n"));
+
+  const std::string Device = header("_DEVICE", Options);
+  // A record held in place is a view of the same bytes; a pointer reads
+  // as its address.
+  EXPECT_TRUE(contains(Device, "  function T.get.Links(r) return "
+                               "M._LIST_ENTRY.view(r[BYTES], r[AT] + 0x08, "
+                               "r[ORDER] == \">\") end\n"));
+  EXPECT_TRUE(contains(Device, "{ 0x08, M._LIST_ENTRY.size }"));
+  EXPECT_TRUE(contains(Device, "-- 0x38 struct _DEVICE *Next: address\n"));
+  EXPECT_TRUE(contains(Device, "M._POOL_KIND = {\n"));
+  EXPECT_TRUE(contains(Device, "  MustSucceed = -2147483648,\n"));
+  EXPECT_TRUE(contains(Device, "  function T.get.Pool(r) return get(r, "
+                               "0x50, \"i4\") end\n"));
+
+  // A signed bitfield extends its top bit; an eight-byte unit is one of
+  // Lua's integers.
+  EXPECT_TRUE(contains(header("_PUSH_LOCK", in(Language::Lua)),
+                       "  function T.get.Shared(r) return (get(r, 0x0, "
+                       "\"I8\") >> 4) & 0xFFFFFFFFFFFFFFF end\n"));
+}
+
+TEST(TypeRender, LuaExtendsSignsAndNamesWhatItDeclares) {
+  TypeLibrary Library;
+  ASSERT_TRUE(parseCTypes(R"(
+    typedef struct _NODE NODE, *PNODE;
+    struct _NODE { PNODE Next; int Low : 3; int end; __int128 Wide; };
+  )",
+                          Library)
+                  .ok());
+  const std::string Text = renderTypes(Library, {}, in(Language::Lua));
+  EXPECT_TRUE(contains(Text, "  function T.get.Low(r) local v = get(r, "
+                             "0x08, \"I4\") & 0x7; return (v ~ 0x4) - 0x4 "
+                             "end\n"))
+      << Text;
+  // A typedef of a record names its type; one of a pointer, an address.
+  EXPECT_TRUE(contains(Text, "M.NODE = M._NODE\n"));
+  EXPECT_TRUE(contains(Text, "-- PNODE is struct _NODE *, which reads as an "
+                             "address.\n"));
+  // Lua's words step aside; sixteen bytes read as the string they are.
+  EXPECT_TRUE(contains(Text, "  function T.get.end_(r)"));
+  EXPECT_TRUE(contains(Text, "  function T.get.Wide(r) return raw(r, 0x10, "
+                             "16) end\n"));
+}
+
 TEST_F(TypeRenderFixture, RustAndGoKeepPacking) {
   EXPECT_TRUE(
       contains(render("_PACKED", in(Language::Rust)), "#[repr(C, packed(1))]"));

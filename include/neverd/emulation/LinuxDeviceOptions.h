@@ -59,6 +59,9 @@ struct LinuxKGSLContexts {
   /// synchronously; only CP_NOP and one-word CP_MEM_WRITE are executable.
   /// Not a shader engine or a hardware scheduling/timing model.
   bool SynchronousA3xx = false;
+  /// Coherent, bounded GPUOBJ_ALLOC/INFO/FREE RAM objects and whole-object
+  /// mappings. No shader, cache maintenance, secure or asynchronous allocation.
+  bool MemoryObjects = false;
 };
 
 struct LinuxDeviceOptions {

@@ -1941,16 +1941,18 @@ ParseResult parseTypes(llvm::StringRef Source, TypeLibrary &Library,
     return parseRustTypes(Source, Library, Options);
   case Language::Go:
     return parseGoTypes(Source, Library, Options);
-  case Language::Python: {
-    // Python renders, but reads in none of its forms.
-    ParseResult Result;
-    Result.Problems.push_back(
-        {1, 1,
-         "Python declarations do not read; declare in C/C++, Rust or Go"});
-    return Result;
+  case Language::Python:
+  case Language::JavaScript:
+  case Language::Lua:
+    break;
   }
-  }
-  return ParseResult();
+  // The language renders, but reads in none of its forms.
+  ParseResult Result;
+  Result.Problems.push_back(
+      {1, 1,
+       languageDisplay(Options.Lang).str() +
+           " declarations do not read; declare in C/C++, Rust or Go"});
+  return Result;
 }
 
 ParseResult parseCTypes(llvm::StringRef Source, TypeLibrary &Library,

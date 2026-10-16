@@ -48,7 +48,7 @@ std::optional<Language> languageNamed(llvm::StringRef Id);
 
 /// How rendered source names builtin types (BuiltinSpellings.def).
 enum class BuiltinSpelling : uint8_t {
-#define NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go, Python) Name,
+#define NEVERD_BUILTIN_SPELLING(Name, Id) Name,
 #include "neverd/types/BuiltinSpellings.def"
 };
 
@@ -84,6 +84,11 @@ struct RenderOptions {
 
 /// Whether \p Lang renders function prototypes: C and C++ do.
 bool rendersPrototypes(Language Lang);
+/// Whether \p Lang's declarations read back (TypeParse.h): C, C++, Rust
+/// and Go's do; Python, JavaScript and Lua render only.
+bool readsDeclarations(Language Lang);
+/// How the workbench shows \p Lang, such as "Rust".
+llvm::StringRef languageDisplay(Language Lang);
 
 /// The spelling \p Options names builtins in.
 BuiltinSpelling spellingOf(const RenderOptions &Options);

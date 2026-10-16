@@ -7,10 +7,10 @@
 /// \file
 /// `neverd types`: the program's local types as the workbench's Local Types
 /// window shows them.  Without --type it lists them; --type lays a type out
-/// (--layout) or renders it, with what it needs, as C, C++, Rust, Go or
-/// Python; --all renders every type as one unit that compiles.  Without a
-/// binary, --data-model converts the --declare files from one language to
-/// another.
+/// (--layout) or renders it, with what it needs, as C, C++, Rust, Go,
+/// Python, JavaScript or Lua; --all renders every type as one unit that
+/// compiles.  Without a binary, --data-model converts the --declare files
+/// from one language to another.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -30,22 +30,34 @@ using namespace llvm;
 namespace neverd::cli {
 namespace {
 
-/// Whether the engine renders a language --lang may name.
-bool knownLanguage(StringRef Id) {
+/// The languages the engine renders, as --lang names them.
+std::vector<std::string> languageIds() {
+  std::vector<std::string> Ids;
   const char *Raw = neverd_types_languages_json();
   auto Parsed = json::parse(Raw ? Raw : "");
   neverd_free_string(Raw);
   if (!Parsed) {
     consumeError(Parsed.takeError());
-    return false;
+    return Ids;
   }
   if (const json::Object *Root = Parsed->getAsObject())
     if (const json::Array *Languages = Root->getArray("languages"))
       for (const json::Value &Value : *Languages)
-        if (const json::Object *Language = Value.getAsObject();
-            Language && Language->getString("id") == Id)
-          return true;
-  return false;
+        if (const json::Object *Language = Value.getAsObject())
+          if (std::optional<StringRef> Id = Language->getString("id"))
+            Ids.push_back(Id->str());
+  return Ids;
+}
+
+/// \p Ids as a message lists them: "c, cpp or rust".
+std::string listed(ArrayRef<std::string> Ids) {
+  std::string Text;
+  for (size_t I = 0; I < Ids.size(); ++I) {
+    if (I)
+      Text += I + 1 == Ids.size() ? " or " : ", ";
+    Text += Ids[I];
+  }
+  return Text;
 }
 
 /// A spelling --spelling may name; empty takes the language's own.
@@ -363,8 +375,9 @@ bool declare(neverd_session_t Sess) {
 /// The checks of options both ways of running share; false with an error
 /// printed.
 bool optionsValid() {
-  if (!knownLanguage(TypesLanguage)) {
-    WithColor::error() << "--lang must be c, cpp, rust, go or python\n";
+  if (const std::vector<std::string> Languages = languageIds();
+      !is_contained(Languages, TypesLanguage.getValue())) {
+    WithColor::error() << "--lang must be " << listed(Languages) << "\n";
     return false;
   }
   if (!knownSpelling(TypesSpelling)) {

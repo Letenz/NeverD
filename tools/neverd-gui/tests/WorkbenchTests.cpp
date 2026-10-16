@@ -61,6 +61,7 @@
 #include <QSizeGrip>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTest>
@@ -3972,6 +3973,25 @@ private slots:
     QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
                                      QStringLiteral("portable")}));
     QCOMPARE(spelling->itemText(1), QStringLiteral("Exact widths (c_uint32)"));
+    // JavaScript whose JSDoc TypeScript checks, as one tab.
+    const auto *tabBar =
+        types->findChild<QTabBar *>(QStringLiteral("localTypesTabs"));
+    QVERIFY(tabBar);
+    QCOMPARE(tabBar->tabText(5), QStringLiteral("JS/TS"));
+    types->setPage(5);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language javascript spelling portable")));
+    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
+                                     QStringLiteral("portable")}));
+    QCOMPARE(spelling->itemText(1),
+             QStringLiteral("JavaScript types (number, bigint)"));
+    // Lua, whose spelling names the C types its comments give.
+    QCOMPARE(tabBar->tabText(6), QStringLiteral("Lua"));
+    types->setPage(6);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language lua spelling portable")));
+    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
+                                     QStringLiteral("portable")}));
     types->setPage(1);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language c spelling windows")));

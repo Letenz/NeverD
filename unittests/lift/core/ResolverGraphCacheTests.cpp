@@ -39,6 +39,78 @@ struct ResolverGraphCacheTestAccess {
     bool operator==(const Answer &) const = default;
   };
 
+  enum class LoadCase {
+    Single,
+    Reload,
+    StoreBarrier,
+    CallBarrier,
+    Ordered,
+    Width
+  };
+
+  static Query seedDemandedLoadAddress(CFGBuilder &B, const BinaryImage &Image,
+                                       LoadCase Kind, uint16_t LoadSize = 1) {
+    B.CurrentImg = &Image;
+    B.CurrentFuncEntry = 0x100;
+    B.JumpTableProofContextComplete = true;
+    B.PersistentCFGRoots = {0x100};
+    B.BlockStarts = {0x100};
+    auto &R = B.Insns[0x100];
+    R.Addr = 0x100;
+    R.Size = 1;
+    auto Emit = [&](NdOp Code, NdVar Output,
+                    std::initializer_list<NdVar> Inputs) -> LowOp & {
+      LowOp Op;
+      Op.Addr = R.Addr;
+      Op.Seq = static_cast<int>(R.Ops.size());
+      Op.Opcode = Code;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      R.Ops.push_back(Op);
+      return R.Ops.back();
+    };
+    const auto Width = static_cast<uint16_t>(Image.getPointerSize());
+    NdVar Address = NdVar::reg(0, Width);
+    // The address is deliberately deep and non-affine. A load occurrence
+    // remains one value even when its unrelated address exceeds proof depth.
+    for (unsigned I = 0; I < 64; ++I) {
+      const auto Next = NdVar::tmp(0x8000 + I * 16, Width);
+      Emit(NdOp::INT_XOR, Next, {Address, NdVar::scalar(I + 1, Width)});
+      Address = Next;
+    }
+    const auto First =
+        NdVar::tmp(0x9000, Kind == LoadCase::Width ? LoadSize + 1 : LoadSize);
+    const int FirstSeq = Emit(NdOp::LOAD, First, {Address}).Seq;
+    NdVar Candidate = First;
+    if (Kind != LoadCase::Single) {
+      if (Kind == LoadCase::StoreBarrier)
+        Emit(NdOp::STORE, {}, {Address, NdVar::scalar(7, LoadSize)});
+      if (Kind == LoadCase::CallBarrier)
+        Emit(NdOp::CALL, {}, {NdVar::address(0x400, Width)});
+      Candidate = NdVar::tmp(0x9100, LoadSize);
+      auto &Load = Emit(NdOp::LOAD, Candidate, {Address});
+      if (Kind == LoadCase::Ordered)
+        Load.MemoryOrdering = NdMemoryOrdering::Acquire;
+    }
+    auto &End = B.Insns[0x101];
+    End.Addr = 0x101;
+    End.Size = 1;
+    End.IsRet = true;
+    LowOp Ret;
+    Ret.Opcode = NdOp::RETURN;
+    Ret.Addr = End.Addr;
+    Ret.addInput(Candidate);
+    End.Ops.push_back(Ret);
+    Query Q;
+    Q.Candidate = Candidate;
+    Q.UseAddr = End.Addr;
+    Q.UseSeq = 0;
+    Q.Alternatives = {{First, R.Addr, FirstSeq, true}};
+    Q.AllowZeroExtension = true;
+    return Q;
+  }
+
   static void seed(CFGBuilder &B, const BinaryImage &Image,
                    unsigned Length = 3) {
     B.CurrentImg = &Image;
@@ -1215,6 +1287,71 @@ BinaryImage image() {
 void expectColdAnswer(CFGBuilder &B, const Access::Answer &Warm) {
   Access::clear(B);
   EXPECT_EQ(Access::query(B), Warm);
+}
+
+TEST(ResolverLoadAddress, OpaqueLoadIdentityDoesNotRequireItsAddressValue) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (auto Kind :
+           {Access::LoadCase::Single, Access::LoadCase::StoreBarrier,
+            Access::LoadCase::CallBarrier, Access::LoadCase::Ordered,
+            Access::LoadCase::Width}) {
+        SCOPED_TRACE(static_cast<unsigned>(Target));
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(static_cast<unsigned>(Kind));
+        auto Image = image();
+        Image.Arch = Target;
+        Image.Format = Format;
+        Image.Bits = Target == Arch::X64 || Target == Arch::AArch64
+                         ? Bitness::Bits64
+                         : Bitness::Bits32;
+        CFGBuilder B;
+        const auto Q = Access::seedDemandedLoadAddress(B, Image, Kind);
+        const auto Answer = Access::batch(B, {Q}, 1000000, 8);
+        ASSERT_TRUE(Answer.Complete);
+        EXPECT_EQ(Answer.QueryComplete, (std::vector<bool>{true}));
+        EXPECT_EQ(Answer.Values,
+                  (std::vector<bool>{Kind == Access::LoadCase::Single}));
+        EXPECT_EQ(Access::batch(B, {Q}, 1000000, 8), Answer);
+      }
+}
+
+TEST(ResolverLoadAddress, ReusedLoadStillRequiresCompleteAddressEquality) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Target));
+    auto Image = image();
+    Image.Arch = Target;
+    Image.Bits = Target == Arch::X64 || Target == Arch::AArch64
+                     ? Bitness::Bits64
+                     : Bitness::Bits32;
+    CFGBuilder B;
+    const auto Q =
+        Access::seedDemandedLoadAddress(B, Image, Access::LoadCase::Reload);
+    const auto Full = Access::batch(B, {Q}, 1000000, 128);
+    ASSERT_TRUE(Full.Complete);
+    EXPECT_EQ(Full.Values, (std::vector<bool>{true}));
+    const auto Shallow = Access::batch(B, {Q}, 1000000, 8);
+    EXPECT_FALSE(Shallow.Complete);
+    EXPECT_EQ(Shallow.Values, (std::vector<bool>{false}));
+    EXPECT_EQ(Shallow.QueryComplete, (std::vector<bool>{false}));
+  }
+}
+
+TEST(ResolverLoadAddress, ARMELFLiteralStillRequiresItsAddressValue) {
+  auto Image = image();
+  Image.Arch = Arch::ARM;
+  Image.Format = BinaryFormat::ELF;
+  Image.Bits = Bitness::Bits32;
+  CFGBuilder B;
+  const auto Q =
+      Access::seedDemandedLoadAddress(B, Image, Access::LoadCase::Single, 4);
+  const auto Shallow = Access::batch(B, {Q}, 1000000, 8);
+  EXPECT_FALSE(Shallow.Complete);
+  EXPECT_EQ(Shallow.Values, (std::vector<bool>{false}));
+  const auto Full = Access::batch(B, {Q}, 1000000, 128);
+  ASSERT_TRUE(Full.Complete);
+  EXPECT_EQ(Full.Values, (std::vector<bool>{true}));
 }
 
 TEST(ResolverGuardPredicates, CompoundGuardsPreserveEveryJoinedInput) {

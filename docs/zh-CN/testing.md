@@ -1198,7 +1198,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 58 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 131 个负载产生 262 项 WHP 结果：27 个内建映像、64 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5085 CPU + 262 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 92 driver API checks = 5740`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 131 个负载产生 262 项 WHP 结果：27 个内建映像、64 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5085 CPU + 262 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 100 driver API checks = 5748`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 真实 WDK 清单也构建 `driver_device_queries.c`、`driver_file_objects.c` 和 `driver_file_handles.c` 的普通及 CFG 版本。`DriverDeviceQueryTests.cpp` 与 `DriverFileObjectTests.cpp` 复用便携调用方的断言，在两种契约、基址和调度策略下检查保留引用后的删除、失败 CREATE、进程身份、最后句柄 CLEANUP 和延迟 CLOSE。三组均列入原生必测项；清单验证独立发现含 `NEVERD_WDK_FIXTURE` 的源码，防止双模式源码遗漏 WDK 构建。
 
@@ -1948,7 +1948,9 @@ Linux 原生验收还执行完整的 `HighSwiftEmitter` 测试集，覆盖寄存
 
 KernelFileObjectTests 与 KernelObjectTests 覆盖带类型的指针打开、类型不匹配时清零输出、通用权限、每进程及全局句柄计数、回调内重开拒绝、错误路由后重试、请求进程退出、重复清理及挂起最终关闭。KernelPnpRequestTests 验证延迟 CLEANUP 的下层响应；KernelFrameworkFileTests 验证回调进程和 LOCK_CONTROL 路由。原创 driver_file_objects.c 保留指针生命周期测试。原创 driver_file_handles.c 在协作式及 17 指令调度下检查同步／挂起 CLEANUP 与 CLOSE、系统工作线程释放、编号复用和故意泄漏。真实 WDK 夹具 driver_kmdf_file_handles.c 检查系统进程清理、恢复调用方关闭及无清理回调的路径；配置 NEVERD_KMDF_FILE_HANDLES_FIXTURE 和可选 NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE。DriverFileObjectTests 覆盖可用后端、两种契约及基址。缺失 WDK 产物或后端会明确跳过。文件系统操作仍需单独覆盖。 场景发起的 KMDF CLEANUP/CLOSE 保留调用进程、线程及 PreviousMode；夹具 F 模式在另一个文件的 CLEANUP 中关闭保留句柄，并检查返回后的上下文恢复。
 
-`KernelFileQueryTests.cpp` 检查查询包字段、借用内存、立即和挂起状态发布、非法输出、工作线程通知、文件保留及最终 CLOSE。`DriverFileObjectTests.cpp` 在不同契约、后端、加载基址及协作式/指令时钟调度下执行原创 `driver_file_queries.c`。可选 `NEVERD_WDM_FILE_QUERIES_FIXTURE` 与 `NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE` 使用真实 WDK 头文件和导入库，并覆盖启用 CFG 的映像。缺少后端或外部用例时明确跳过；这些测试不代表文件系统提供方或通用 APC 交付已经实现。
+`KernelFileQueryTests.cpp` 覆盖借用和原生独立缓冲数据包、立即／挂起发布、IOSB 别名和填充、工作线程完成、存储存活、本地类、句柄作用域、IRQL/APC 和拒绝边界。`KernelFileCreateTests.cpp` 与 `DriverFileSystemTests.cpp` 验证六类声明元数据、精确长度、名称截断和打开身份。原创 driver_file_queries.c 与 driver_filesystem_provider.c 跨可用后端、契约、基址和协作／17 指令调度运行；真实普通／CFG 镜像使用 NEVERD_WDM_FILE_QUERIES_FIXTURE、NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE、NEVERD_WDM_FILESYSTEM_FIXTURE、NEVERD_WDM_FILESYSTEM_CFG_FIXTURE。C API/CLI/Python 检查来源、完整输出和已处理的失败状态。原始内核有界探针验证 156 项生产者与 18 项完成场景，分配器、分发和通知边界均显式标注，不证明完整文件系统或通用 APC。缺少硬件或外部镜像仍为显式跳过。
+
+`KernelIRPStack.ReadWriteCompletionPreservesStoredFilePosition` 以独立的 64 位位置检查同步／异步文件、立即／挂起完成、成功／警告／错误及零／非零长度。真实普通／CFG `driver_wdm_stack.c` 夹具在 READ、WRITE 和清理之间再次读取位置。
 
 处理器回归覆盖输出边界、NULL、嵌套恢复、非法 IRQL 和导入身份。原创 `driver_processors.c` 在不同后端、契约、基址及调度下执行入口、工作线程和 DPC。可选 `NEVERD_WDM_PROCESSORS_FIXTURE` 与 `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` 使用真实 WDK 普通/CFG 映像验证内联调用和动态导出；不可用的执行后端明确跳过。
 
@@ -1959,4 +1961,6 @@ KernelFileObjectTests 与 KernelObjectTests 覆盖带类型的指针打开、类
 
 `KernelFileCreateTests.cpp` 覆盖生产者返回前保留数据包、共享失败、异步期间保留相对根目录、显式取消、失败／别名输出与卸载清理。`DriverFileSystemExecutionTests.cpp` 在两种契约、基址及可用后端上执行原创和真实 WDK 普通／CFG 调用方，包含协作式和指令时钟调度。C API／CLI／Python 保留相同文件身份。不可用后端仍计为跳过。原始内核探针区分 CREATE／取消数据包保留与普通 IRP 释放；事件和 APC 替换边界不证明完整文件系统或内核。
 
-`longjmp-handler-cleanup-jump` 与 `longjmp-handler-nested-cleanup-jump` 在所选 handler 的直接或嵌套 cleanup 中取消选择并重新跳转。EH3、EH4、EH4+GS 六组变体在两个基址对比原始与九种生成映像，检查轨迹 236/2367、值 42、恢复的 EBX 与状态 0。源、MedIR 和安装器变异拒绝错误缓冲区或值、伪造调用身份、错误回调归属、缺失 noreturn 及新增普通返回。完整源配置含 150 个场景，旧编译器配置保持原成员。
+`longjmp-handler-cleanup-jump` 与 `longjmp-handler-nested-cleanup-jump` 在所选 handler 的直接或嵌套 cleanup 中取消选择并重新跳转。EH3、EH4、EH4+GS 六组变体在两个基址对比原始与九种生成映像，检查轨迹 236/2367、值 42、恢复的 EBX 与状态 0。源、MedIR 和安装器变异拒绝错误缓冲区、帧地址值逃逸、伪造调用身份、错误回调归属、缺失 noreturn 及新增普通返回。`longjmp-handler-cleanup-value`、`longjmp-handler-nested-cleanup-value` 及对应的 `-zero` 场景另外覆盖 12 组协议变体，将原跳转值 42 替换为 43 或零，验证恢复后的 EAX 为 43 或 1。另有两个 `-dynamic-value` 场景共六组协议变体，从可变映像数据读取迭代次数后减一，检查负值、零与正值的恢复。完整源配置现含 216 个场景，旧编译器配置保持原成员。
+
+`longjmp-finally-{register,frame,private}-loop` 与对应的 `longjmp-filter-*` 增加 18 个 EH3/EH4/EH4+GS 场景。三次迭代写入可观察的轨迹，区分寄存器、父帧槽及回调私有栈计数器；完整配置在两个基址执行 4,320 个原始与生成映像。`RegistrationCallbackLoop` 覆盖终止、重现状态、未知计数器、错误分支、缓冲区破坏、栈平衡及预算耗尽。`RegistrationSEHPHICopy` 和 `RegistrationRecoveredCopy` 验证源边、回调归属、父帧恢复及所有标量槽别名；错误索引、地址逃逸、原子或错宽访问、可观察的未定义值必须拒绝安装。
