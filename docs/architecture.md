@@ -6969,6 +6969,8 @@ KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing
 
 `KernelModelFileRequests` also owns synchronous buffered `ZwReadFile` and `ZwWriteFile`. Handle scope, offset/key capture and copied write input belong to the producer. Shared completion publishes read bytes and IOSB in the eligible original caller, then disposes each owned packet and buffer once. Storage drivers own content and file-position changes.
 
+`KernelModelFileRequests` also owns bufferless `ZwFlushBuffersFile` production. Its granted-mask check and immediate publication/disposal differ from deferred native read/write/query packets; all reuse the original-caller notification and single-release owner.
+
 ### Darwin imported file calls
 
 DarwinLibSystemCalls.def adds exact open/lseek/pread/pwrite/dup/dup2 identities.

@@ -2001,3 +2001,5 @@ KernelFileObjectTests と KernelObjectTests は型付きオープン、型不一
 `KernelFileCreateTests.cpp` はパケット保持、共有失敗、非同期の相対ルート保持、明示的取消、失敗／出力エイリアス、アンロードを検証します。`DriverFileSystemExecutionTests.cpp` は両契約、両基址、利用可能バックエンドで独自および実際の WDK 通常／CFG ドライバーを協調・命令時計スケジュールで実行します。C API／CLI／Python も同じ識別を保持します。利用不可はスキップであり、イベントや APC のプローブ境界は完全なカーネルを証明しません。
 
 `KernelFileTransfers` はパケット、オフセット特殊値、追記専用ハンドル、長さゼロ、出力エイリアス、即時・保留状態、ワーカー通知、公開前の拒否を検証します。`OriginalBufferedNativeFileTransfers` / `GenuineWdkBufferedNativeFileTransfers` はバックエンド、契約、ロード位置、スケジューリングを変えてインポートと動的解決を実行します。実 WDK の通常/CFG イメージには `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` / `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` を設定します。利用不能なバックエンドは明示的にスキップします。
+
+`KernelFileTransfers` はフラッシュ権限、全デバイス転送方式でのバッファなしパケット、64 ビット Information、ディスパッチ復帰前の公開・解放、ワーカー／ガード領域の通知、非同期／同時呼び出し拒否を検証します。既存の独自・実 WDK 転送フィクスチャも、ユーザー IOSB と九つの完了条件でインポート・動的検索のフラッシュを実行します。
