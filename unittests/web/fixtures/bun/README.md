@@ -23,6 +23,35 @@ nor runs input, restores erased names or types, or proves behavioral
 equivalence. Errors and failed source checks return a nonzero status. This
 manual tool has no production dependency and uses no external parser.
 
+`neverd-web-source-model` is a separate explicit local disclosure tool for
+development comparisons. It uses the shared Large parser and lexical binding
+owner, never a recovery tree, and records complete syntax/attribute/child
+arrays plus scopes, declarations and reference-resolution states. UTF-16
+values remain code-unit arrays and numeric attributes retain binary64 bits.
+Output has a separate 256 MiB reservation ceiling and a fresh destination.
+
+```console
+cmake --build build-web-dev --target neverd-web-source-model
+build-web-dev/bin/neverd-web-source-model module /absolute/input.js /absolute/new-model
+```
+
+The model includes private original names and values. A partial lexical result
+remains partial; this tool neither renames bindings nor claims dependency,
+runtime-call, type or behavior equivalence. It is not exposed through the
+ordinary session metadata or worker/MCP APIs.
+
+`neverd-web-source-map-model` similarly exports basic or embedded-section
+source maps through the shared offline decoder. Its fresh output contains the
+original map, complete decoded anchors and private names/contents, and hashes.
+It shares the decoder's input/segment limits and has a separate 256 MiB output
+reservation ceiling. Names and roots are untrusted metadata; this tool never
+opens source paths, fetches URLs or asserts original-source provenance.
+
+```console
+cmake --build build-web-dev --target neverd-web-source-map-model
+build-web-dev/bin/neverd-web-source-map-model /absolute/input.js.map /absolute/new-map-model
+```
+
 For independent graph readback without source rewriting, explicitly build
 `neverd-web-bun-inventory`, then run:
 
