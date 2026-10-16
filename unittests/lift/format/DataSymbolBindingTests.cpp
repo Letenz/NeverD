@@ -640,8 +640,8 @@ TEST_F(DataSymbolBindingTest, VariadicCallsPassOnlyWhatTheirCallerSets) {
       {"fmt_one", "note", 2},
       {"fmt_import", "ext_note", 1},
       {"fwd3", "note", 4}};
-  for (const char *Target :
-       {"x86_64-linux-gnu", "armv7-linux-gnueabi", "aarch64-linux-gnu"}) {
+  for (const char *Target : {"x86_64-linux-gnu", "i386-linux-gnu",
+                             "armv7-linux-gnueabi", "aarch64-linux-gnu"}) {
     SCOPED_TRACE(Target);
     auto Loaded = loadBinary(variadicLibrary(Target));
     ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());

@@ -3774,10 +3774,11 @@ call's object), and a call whose outgoing stores leave a gap below a
 function that calls an import nothing describes with one argument, then
 with three; its LLVM C must keep each call's arguments.
 
-`VariadicCallsPassOnlyWhatTheirCallerSets` builds, for x86-64, ARM and AArch64,
-a library whose functions call a variadic routine (a `vprintf` wrapper with
-one named parameter) and an undescribed variadic import after a join of two
-calls, and tail-call the routine with every argument register set. HighC and
+`VariadicCallsPassOnlyWhatTheirCallerSets` builds, for x86-64, i386, ARM and
+AArch64, a library whose functions call a variadic routine (a `vprintf`
+wrapper with one named parameter) and an undescribed variadic import after a
+join of two calls, and call the routine with every argument register set (a
+tail call on the register ABIs, after an alignment `push` on i386). HighC and
 LLVM C must pass exactly the format and the arguments each caller sets: no
 trap on a register earlier calls left behind, and no incoming stack slot taken
 for the routine's open arity. `MedCallLeftovers.JoinsOfCallClobbersOnly`

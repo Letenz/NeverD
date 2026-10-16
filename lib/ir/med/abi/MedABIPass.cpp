@@ -650,6 +650,12 @@ void recoverCallAbi(
           FnIt != FuncNames.end()
               ? FnIt->second
               : (kAutoFuncPrefix + llvm::utohexstr(CI.TargetAddr)).str();
+      // A stub the names leave unnamed still reaches its import, whose name
+      // its prototype and va_list contract go by.
+      if (Img && !CI.IsIndirect && CI.TargetName.starts_with(kAutoFuncPrefix))
+        if (std::string Import = importCalleeName(*Img, CI.TargetAddr);
+            !Import.empty())
+          CI.TargetName = std::move(Import);
       // An ordinary SEH finally CALL uses the checked shared-frame protocol.
       // Its caller's private PUSHes are saved temporaries, not cdecl argument
       // setup. Native lowering supplies its separately proved frame operand.
@@ -1662,6 +1668,42 @@ void recoverCallAbi(
         FromStackScan[Slot] = true;
       }
 
+      // A call that takes every argument from the stack is passed nothing by
+      // what a scratch register held at entry where this function takes no
+      // parameter in it: the alignment `push eax` above a call's arguments
+      // stores what no caller set.  On top of the arguments it is dropped;
+      // below one it keeps its place, as zero.
+      if (StackOnlyCall && !CheckedStackCall && !CI.IsIndirect) {
+        // Version zero alone does not make an entry value: a call's result
+        // can be bound to a fresh variable that no rename touched.
+        auto unsetIncoming = [&](const MedVar &V) {
+          if (V.Kind != MedVar::Reg || V.SSAVer != 0 || V.Size == 0 ||
+              V.Size > TRI.PointerSize || TRI.isStackPointer(V.RegOff) ||
+              TRI.isCalleeSaveReg(V.RegOff) || TRI.isLinkRegister(V.RegOff) ||
+              TRI.isVectorReg(V.RegOff) || isDefinedValue(V))
+            return false;
+          return llvm::none_of(Func.Params, [&](const MedVar &P) {
+            return P.RegOff != kNoParamReg && P.RegOff < V.RegOff + V.Size &&
+                   V.RegOff < P.RegOff + std::max<uint16_t>(P.Size, 1);
+          });
+        };
+        bool OnTop = true;
+        for (int K = MaxArgs - 1; K >= 0; --K) {
+          if (!FoundMask[K] || !FromStackScan[K])
+            continue;
+          if (!unsetIncoming(Found[K])) {
+            OnTop = false;
+          } else if (OnTop) {
+            FoundMask[K] = false;
+            FromStackScan[K] = false;
+            Found[K] = MedVar();
+          } else {
+            Found[K] =
+                MedVar::makeConst(0, static_cast<uint16_t>(TRI.PointerSize));
+          }
+        }
+      }
+
       // Pack two AAPCS64-packed sub-8-byte integer stack arguments into one
       // 8-byte slot value (Apple arm64 places e.g. `int a8@[sp+0], a9@[sp+4]`
       // in a single slot).  The reverse slot scan above kept only one store per
@@ -2410,12 +2452,18 @@ void recoverCallAbi(
       for (auto &A : StackPart)
         CI.Args.push_back(A);
 
-      // A Darwin wrapper is variadic only when its exact recovered call
+      // Where every variadic argument is on the stack (Darwin AArch64, i386
+      // cdecl), a wrapper is variadic only when its exact recovered call
       // argument to a known va_list consumer is a pointer-width value derived
-      // from the entry SP.  CI.Args is SSA-bound at this call site, so a later
-      // write to x2/x3 cannot be mistaken for the consumed va_list.  Ordinary
-      // variadic calls and ambiguous provenance remain unmarked.
-      if (!CI.IsIndirect && VariadicOnStack && !CI.Args.empty()) {
+      // from the entry SP: its va_start points at its own incoming arguments,
+      // which it passes on, and no register save area shows it.  CI.Args is
+      // SSA-bound at this call site, so a later write to x2/x3 cannot be
+      // mistaken for the consumed va_list.  Ordinary variadic calls and
+      // ambiguous provenance remain unmarked.
+      const bool StackVariadicArguments =
+          VariadicOnStack ||
+          (Convention && Convention->StackOnlyVariadicCallees);
+      if (!CI.IsIndirect && StackVariadicArguments && !CI.Args.empty()) {
         const llvm::StringRef Bare = stripLeadingUnderscores(CI.TargetName);
         const bool InternalVaListConsumer =
             CalleeConsumesVaList &&
@@ -2438,7 +2486,10 @@ void recoverCallAbi(
               if (InternalVaListConsumer) {
                 const int FixedPrefix =
                     std::max(0, static_cast<int>(CI.Args.size()) - 1);
-                if (CalleeRegArity &&
+                // Its named parameters are register ones only where variadic
+                // arguments leave the registers to them (Darwin); a cdecl
+                // wrapper takes every one on the stack.
+                if (CalleeRegArity && VariadicOnStack &&
                     (*CalleeRegArity)[Func.Entry] < FixedPrefix)
                   (*CalleeRegArity)[Func.Entry] = FixedPrefix;
                 if (CalleeTotalArity &&

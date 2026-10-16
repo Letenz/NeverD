@@ -2392,6 +2392,18 @@ count (`MedCallInfo::VarArgFixedCount`), so an LLVM declaration of a routine
 the module does not emit stays variadic. A declaration made from one call's
 arguments would cut another call's.
 
+Where every variadic argument travels on the stack (Darwin AArch64, i386
+cdecl), no register save area shows that a routine is variadic. The routine
+is variadic when the `va_list` it passes to a known consumer (`vprintf` and
+the rest of `isVaListConsumer`) points into its own incoming arguments, and
+module recovery then keeps the routine's arity open for its callers. A stub
+the function names leave unnamed takes its import's name, so a wrapper still
+shows through a `sub_` name. A call that takes every argument from the stack
+passes nothing in a slot that holds a scratch register's incoming value where
+the caller takes no parameter in it (the alignment `push eax` above the
+arguments). Such a slot is dropped above the arguments, and below one it
+passes zero.
+
 `PipelineWideIntReturnEvidence` checks the high-word carrier on every return
 before the shared pipeline widens an x86/ARM32 function to a register-pair
 result. Caller liveness only proposes candidates. Independent entries, unknown
