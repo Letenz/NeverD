@@ -603,3 +603,79 @@ U64 jni_dex_call(const char *class_name, const char *name, const char *signature
   }
   return result;
 }
+
+/* A sequence of standard JNI calls, with no Java results encoded here. */
+struct DexStep {
+  char class_name[64];
+  U64 input;
+};
+int jni_dex_state(const struct DexStep *, U64, U64 *, U64);
+struct DexWorker {
+  const struct DexStep *step;
+  U64 *results;
+};
+static void *dex_worker(void *opaque) {
+  const struct DexWorker *worker = opaque;
+  U64 result = jni_dex_state(worker->step, 1, worker->results, 0);
+  int detached = C(vm, int, 5);
+  return (void *)(result ? result : detached ? ~0ULL : 0);
+}
+static U64 dex_exception(Handle e) {
+  if (!C(e, U8, 228))
+    return 0;
+  Ref exception = C(e, Ref, 15);
+  C(e, void, 17);
+  const char *names[] = {"java/lang/ExceptionInInitializerError",
+                         "java/lang/NoClassDefFoundError",
+                         "java/lang/ArithmeticException"};
+  U64 status = 4;
+  for (unsigned i = 0; i < 3; ++i) {
+    Ref type = C(e, Ref, 6, names[i]);
+    if (C(e, U8, 32, exception, type))
+      status = i + 1;
+    C(e, void, 23, type);
+  }
+  if (status <= 2) {
+    Ref base = C(e, Ref, 6, "java/lang/LinkageError");
+    if (!C(e, U8, 32, exception, base))
+      status = 5;
+    C(e, void, 23, base);
+  }
+  C(e, void, 23, exception);
+  return status;
+}
+int jni_dex_state(const struct DexStep *steps, U64 count, U64 *results,
+                  U64 detach) {
+  Handle e = attach();
+  CHECK(e && count <= 64);
+  for (U64 i = 0; i < count; ++i) {
+    if (detach == 2 && i % 2) {
+      struct DexWorker worker = {steps + i, results + 2 * i};
+      U64 thread;
+      void *returned = (void *)1;
+      CHECK(!pthread_create(&thread, 0, dex_worker, &worker));
+      CHECK(!pthread_join(thread, &returned) && !returned);
+      continue;
+    }
+    U64 result = 0;
+    Ref cl = C(e, Ref, 6, steps[i].class_name);
+    U64 status = dex_exception(e);
+    if (!status) {
+      Ref method = C(e, Ref, 113, cl, "step", "(I)J");
+      status = dex_exception(e);
+      if (!status) {
+        result = C(e, U64, 134, cl, method, &steps[i].input);
+        status = dex_exception(e);
+      }
+      C(e, void, 23, cl);
+    }
+    results[2 * i] = status;
+    results[2 * i + 1] = result;
+    if (detach == 1) {
+      CHECK(!C(vm, int, 5));
+      e = attach();
+      CHECK(e);
+    }
+  }
+  return 0;
+}

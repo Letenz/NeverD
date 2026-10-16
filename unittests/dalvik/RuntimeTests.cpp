@@ -10,6 +10,8 @@
 
 #include "neverd/dalvik/Runtime.h"
 
+#include <tuple>
+
 namespace neverd::mobile::dalvik {
 namespace {
 Instruction insn(uint32_t pc, const char *op, std::vector<unsigned> regs = {}) {
@@ -93,14 +95,14 @@ TEST(DalvikRuntime, ResourceAndInstructionBoundariesFailExplicitly) {
   EXPECT_EQ(run(fixture({insn(0, "monitor-enter", {0})})).stop,
             ExecutionStop::Unsupported);
 }
-TEST(DalvikRuntime,
-     NoObjectStateClassInitializationOrExceptionHandlersAreGuessed) {
+TEST(DalvikRuntime, NoObjectStateHierarchyOrExceptionHandlersAreGuessed) {
   auto c = fixture({insn(0, "return-void")}, 0, "V");
-  auto init = c.methods[0];
-  init.reference.name = "<clinit>";
-  c.methods.push_back(init);
+  Field field;
+  field.reference = {c.name, "object", "Ljava/lang/Object;"};
+  field.access = {"static"};
+  c.fields.push_back(field);
   EXPECT_EQ(run(c).stop, ExecutionStop::Unsupported);
-  c.methods.pop_back();
+  c.fields.clear();
   c.methods[0].tries.push_back({0, 1, {}});
   EXPECT_EQ(run(c).stop, ExecutionStop::Unsupported);
   c.methods[0].tries.clear();
@@ -138,6 +140,155 @@ TEST(DalvikRuntime, DivisionOverflowAndZeroPreserveJavaBehavior) {
   r = run(fixture(code));
   EXPECT_EQ(r.stop, ExecutionStop::Thrown);
   EXPECT_EQ(r.exception, "java/lang/ArithmeticException");
+}
+
+Instruction constant(uint32_t pc, int64_t value) {
+  auto i = insn(pc, "const", {0});
+  i.literal = value;
+  return i;
+}
+Instruction fieldAccess(uint32_t pc, const char *op, const FieldRef &field) {
+  auto i = insn(pc, op, {0});
+  i.reference = field;
+  return i;
+}
+Class counter() {
+  Field field;
+  field.reference = {"Ltest/Values;", "count", "I"};
+  field.access = {"static"};
+  field.value = int64_t(7);
+  auto add = insn(2, "add-int/lit8", {0, 0});
+  add.literal = int64_t(1);
+  auto c = fixture({fieldAccess(0, "sget", field.reference), add,
+                    fieldAccess(4, "sput", field.reference),
+                    insn(6, "return", {0})});
+  c.fields.push_back(field);
+  Method init;
+  init.reference = {c.name, "<clinit>", {}, "V"};
+  init.access = {"static", "constructor"};
+  init.registers = 1;
+  init.instructions = {fieldAccess(0, "sget", field.reference), add,
+                       fieldAccess(4, "sput", field.reference),
+                       insn(6, "return-void")};
+  c.methods.push_back(init);
+  return c;
+}
+ExecutionResult call(Runtime &runtime, const Method &method) {
+  return runtime.execute(
+      method, {}, [] { return ExecutionStop::Returned; }, 65536);
+}
+TEST(DalvikRuntime, StaticStatePersistsOnlyWithinItsWorkload) {
+  auto c = counter();
+  auto ref = c.methods[0].reference;
+  Program p({c});
+  Runtime a(p), b(p);
+  auto method = p.findStatic(ref);
+  EXPECT_EQ(call(a, *method).value, 9U);
+  EXPECT_EQ(call(a, *method).value, 10U);
+  EXPECT_EQ(call(b, *method).value, 9U);
+}
+TEST(DalvikRuntime, FailedInitializationIsNotRetried) {
+  auto c = counter();
+  auto zero = insn(5, "const/4", {1});
+  zero.literal = int64_t(0);
+  c.methods[1].registers = 2;
+  c.methods[1].instructions = {constant(0, 1), zero,
+                               insn(6, "div-int", {0, 0, 1}),
+                               insn(8, "return-void")};
+  auto ref = c.methods[0].reference;
+  Program p({c});
+  Runtime runtime(p);
+  auto first = call(runtime, *p.findStatic(ref));
+  EXPECT_EQ(first.stop, ExecutionStop::Thrown);
+  EXPECT_EQ(first.exception, "java/lang/ExceptionInInitializerError");
+  EXPECT_NE(first.diagnostic.find("code-unit 6"), std::string::npos);
+  auto again = call(runtime, *p.findStatic(ref));
+  EXPECT_EQ(again.stop, ExecutionStop::Thrown);
+  EXPECT_EQ(again.exception, "java/lang/NoClassDefFoundError");
+}
+TEST(DalvikRuntime, InterruptedInitializationCannotResumeWithPartialState) {
+  for (auto stop : {ExecutionStop::InstructionLimit, ExecutionStop::Timeout,
+                    ExecutionStop::Unsupported}) {
+    auto c = counter();
+    auto ref = c.methods[0].reference;
+    Program p({c});
+    Runtime runtime(p);
+    unsigned admitted = 0;
+    auto first = runtime.execute(
+        *p.findStatic(ref), {},
+        [&] { return ++admitted > 3 ? stop : ExecutionStop::Returned; }, 65536);
+    EXPECT_EQ(first.stop, stop);
+    auto again = call(runtime, *p.findStatic(ref));
+    EXPECT_EQ(again.stop, stop);
+    EXPECT_EQ(again.diagnostic, first.diagnostic);
+  }
+}
+TEST(DalvikRuntime, StaticFieldWidthAndFinalWritesAreChecked) {
+  auto c = counter();
+  c.methods[0].instructions[0].opcode = "sget-wide";
+  EXPECT_EQ(run(c).stop, ExecutionStop::Invalid);
+  c = counter();
+  c.fields[0].access.insert("final");
+  EXPECT_EQ(run(c).stop, ExecutionStop::Invalid);
+  c = counter();
+  c.fields[0].access.insert("volatile");
+  EXPECT_EQ(run(c).stop, ExecutionStop::Unsupported);
+  c = counter();
+  c.fields[0].access.erase("static");
+  EXPECT_EQ(run(c).stop, ExecutionStop::Unsupported);
+}
+TEST(DalvikRuntime, EncodedValuesAreCanonicalAndFieldStoresNarrow) {
+  for (auto [type, op, input, output] :
+       {std::tuple{"B", "byte", 0x1234ff, uint64_t(0xffffffff)},
+        std::tuple{"S", "short", 0x12ffff, uint64_t(0xffffffff)},
+        std::tuple{"C", "char", 0x12ffff, uint64_t(0xffff)}}) {
+    auto c = counter();
+    c.fields[0].reference.type = type;
+    c.fields[0].value = std::monostate{};
+    c.methods.pop_back();
+    auto field = c.fields[0].reference;
+    c.methods[0].instructions = {
+        constant(0, input),
+        fieldAccess(3, (std::string("sput-") + op).c_str(), field),
+        fieldAccess(5, (std::string("sget-") + op).c_str(), field),
+        insn(7, "return", {0})};
+    auto result = run(c);
+    EXPECT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    EXPECT_EQ(result.value, output);
+    c.fields[0].value = int64_t(65536);
+    EXPECT_EQ(run(c).stop, ExecutionStop::Invalid);
+  }
+}
+TEST(DalvikRuntime, ClassInitializersCannotBeCalledExplicitly) {
+  auto c = counter();
+  Program p({c});
+  Runtime runtime(p);
+  auto result = call(runtime, *p.findStatic(c.methods[1].reference));
+  EXPECT_EQ(result.stop, ExecutionStop::Invalid);
+}
+TEST(DalvikRuntime, PublicMembersDoNotExposeAnInaccessibleDeclaringClass) {
+  Class target;
+  target.name = "Lhidden/Other;";
+  target.superclass = "Ljava/lang/Object;";
+  Field field;
+  field.reference = {target.name, "value", "I"};
+  field.access = {"public", "static"};
+  field.value = int64_t(7);
+  target.fields.push_back(field);
+  auto caller = fixture(
+      {fieldAccess(0, "sget", field.reference), insn(2, "return", {0})});
+  auto ref = caller.methods[0].reference;
+  for (bool visible : {false, true}) {
+    if (visible)
+      target.access.insert("public");
+    Program p({caller, target});
+    Runtime runtime(p);
+    auto result = call(runtime, *p.findStatic(ref));
+    EXPECT_EQ(result.stop,
+              visible ? ExecutionStop::Returned : ExecutionStop::Unsupported);
+    if (visible)
+      EXPECT_EQ(result.value, 7U);
+  }
 }
 } // namespace
 } // namespace neverd::mobile::dalvik

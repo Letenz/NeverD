@@ -6712,20 +6712,27 @@ Java source emission. The shared module depends on LLVM Support and zlib, not
 CLI/session state or CPU transports. The existing pinned zlib fallback has one
 CMake owner. This does not add a second instruction decoder.
 
-`dalvik::Program` owns immutable explicit class declarations and integral static
-method execution over decoded instructions. Frames own typed 32-bit register
+`dalvik::Program` owns immutable explicit class declarations; `dalvik::Runtime`
+owns a workload's static integral fields, initialization states and execution
+over those decoded instructions. Frames own typed 32-bit register
 words and overlapping-wide invalidation; arithmetic has one unsigned-bit
 implementation of Java integer semantics. Calls share one owner-provided
 instruction/deadline callback and bounded frame storage. Missing semantics
 produce a typed stop, with method identity and code-unit PC.
 
-`AndroidDex` admits API-28 DEX bytes before native execution and binds Program's
+`AndroidDex` admits API-28 DEX bytes before native execution and binds Runtime's
 budget and exceptions to the existing Bionic workload VM. `AndroidJNIMethods`
 keeps opaque method IDs, call-form/type checks and argument transport; it never
 interprets instructions or stores caller-provided successful results. JSON only
 accepts strict explicit hex images. There is no host JVM, implicit classpath,
-network or phone dependency. The initial supported class contract excludes
-stateful initialization, fields, hierarchy dispatch, objects and handlers.
+network or phone dependency. JNI owns a single Runtime for the workload, separate
+from disposable local references and thread attachments. Initialization and
+static field instructions have one semantic owner in Runtime, including recursive
+initialization, persistent erroneous classes and terminal non-Java stops.
+Program's convenience execute creates a fresh Runtime; repeated calls must use
+the workload instance. Execution is synchronous, without Java preemption or a
+concurrent Java memory-model claim. The supported class contract excludes
+instance/object/floating/volatile fields, hierarchy dispatch, objects and handlers.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.

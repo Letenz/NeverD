@@ -7127,7 +7127,8 @@ Android service or shader coverage.
 
 `NeverDDalvikTests` checks the decoded executor's uninitialized/torn registers,
 overlapping wide moves, division exceptions/overflow, budget/stack stops,
-result-use rules and refusal of class initialization/handlers/unknown opcodes.
+result-use rules, per-workload static state, initialization failures, terminal
+resource stops, field widths/final stores and refusal of handlers/unknown opcodes.
 `NeverDMobileTests` must also run when changing the shared DEX reader or models;
 mobile recovery and JNI execution share those owners.
 
@@ -7150,6 +7151,18 @@ objects/handlers, corrupt/duplicate DEX and JNI-disabled admission. Logs and
 request/report files stay in the explicit output directory. Missing JDK/D8 or
 CPU transports are unavailable evidence, not a passing substitute. The runtime
 itself does not launch these preparation tools or use a device.
+
+Run `scripts/test_android_dex_state.py` with the same arguments for persistent
+class state. The original Java oracle emits every sequential return value and
+exception identity; the native fixture records the same sequence through JNI.
+Cases include encoded/default values, all integral field widths, dynamic final
+initialization, both orders of cyclic initialization, ordinary division failure
+without rollback, failed initializer effects without retry, nested initializer
+errors and subsequent NoClassDefFoundError. Each sequence runs with retained JNI
+attachment, repeated detach/reattach, and alternating joined guest threads.
+Instance/volatile fields and unsupported or looping initializers retain explicit
+failure boundaries. These are supplied synthetic programs, not evidence for
+unavailable application DEX, Binder services or shaders.
 
 Processor regressions cover output boundaries, NULL, nested restores, invalid IRQL and import identity. Original `driver_processors.c` exercises entry, worker and DPC contexts across backends, contracts, bases and scheduling. Optional `NEVERD_WDM_PROCESSORS_FIXTURE` and `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` verify genuine WDK inline calls and dynamic exports with normal/active CFG images; missing transports remain explicit skips.
 

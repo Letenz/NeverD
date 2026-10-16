@@ -54,23 +54,28 @@ llvm::Error Bionic::initializeDex() {
                      std::make_move_iterator(Part.end()));
     }
     JNI.Dex = std::make_shared<mobile::dalvik::Program>(std::move(Classes));
+    JNI.DexRuntime = std::make_shared<mobile::dalvik::Runtime>(*JNI.Dex);
   } catch (const mobile::Error &E) {
     return failure(llvm::Twine("invalid supplied DEX: ") + E.what());
   }
   return llvm::Error::success();
 }
-BionicResult Bionic::executeDex(const mobile::dalvik::Method &Method,
-                                llvm::ArrayRef<uint64_t> Arguments) {
+BionicResult Bionic::executeDex(const mobile::dalvik::Method *Method,
+                                llvm::ArrayRef<uint64_t> Arguments,
+                                llvm::StringRef Class) {
   using mobile::dalvik::ExecutionStop;
-  auto Executed = JNI.Dex->execute(
-      Method, {Arguments.data(), Arguments.size()},
-      [&] {
-        if (!Budget.remainingMicroseconds())
-          return ExecutionStop::Timeout;
-        return Budget.consumeInstructions() ? ExecutionStop::Returned
-                                            : ExecutionStop::InstructionLimit;
-      },
-      std::min<uint64_t>(Options.StackSize, Options.MemoryLimit / 256));
+  auto Admit = [&] {
+    if (!Budget.remainingMicroseconds())
+      return ExecutionStop::Timeout;
+    return Budget.consumeInstructions() ? ExecutionStop::Returned
+                                        : ExecutionStop::InstructionLimit;
+  };
+  const auto Stack =
+      std::min<uint64_t>(Options.StackSize, Options.MemoryLimit / 256);
+  auto Executed =
+      Method ? JNI.DexRuntime->execute(
+                   *Method, {Arguments.data(), Arguments.size()}, Admit, Stack)
+             : JNI.DexRuntime->initialize(Class.str(), Admit, Stack);
   if (Executed.stop == ExecutionStop::Returned)
     return value(Executed.value);
   if (Executed.stop == ExecutionStop::Thrown) {

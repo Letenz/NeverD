@@ -20,6 +20,7 @@
 
 namespace neverd::mobile::dalvik {
 class Program;
+class Runtime;
 struct Method;
 } // namespace neverd::mobile::dalvik
 
@@ -66,6 +67,7 @@ struct JNIState {
   // IDs are separate from references and survive local-frame/thread teardown.
   std::set<unsigned> ResolvedMethods;
   std::shared_ptr<const mobile::dalvik::Program> Dex;
+  std::shared_ptr<mobile::dalvik::Runtime> DexRuntime;
   std::map<uint64_t, const mobile::dalvik::Method *> DexMethods;
   std::map<std::string, std::shared_ptr<JNIObject>> MethodConstants;
   // Retain bounded objects until workload teardown. Weak element edges avoid

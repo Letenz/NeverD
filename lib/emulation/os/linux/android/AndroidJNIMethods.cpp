@@ -136,6 +136,14 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
         auto [Params, Return] = mobile::dalvik::prototype(*Signature);
         mobile::dalvik::MethodRef Ref{"L" + (*Receiver)->ClassName + ";", *Name,
                                       std::move(Params), std::move(Return)};
+        if (JNI.Dex->containsClass(Ref.owner)) {
+          auto Initialized = executeDex(nullptr, {}, Ref.owner);
+          if (!Initialized || !*Initialized ||
+              JNI.Threads.at(threadID()).Exception)
+            return Initialized;
+          if (Ref.name.starts_with('<'))
+            return failure("JNI cannot explicitly invoke a DEX initializer");
+        }
         if (const auto *Body = JNI.Dex->findStatic(Ref)) {
           if (auto Reason = JNI.Dex->unsupported(*Body)) {
             auto Stopped = unsupportedImport(Call);
@@ -241,7 +249,7 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
     Values.push_back(V);
   }
   if (DexMethod)
-    return executeDex(*DexMethod, Values);
+    return executeDex(DexMethod, Values);
   auto Ref = [&](std::shared_ptr<JNIObject> Object) -> BionicResult {
     auto R = jniReference(std::move(Object));
     if (!R)

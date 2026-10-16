@@ -127,14 +127,131 @@ U binary(std::string_view op, U left, U right, const Frame &frame) {
   halt(ExecutionStop::Unsupported, frame.method, frame.pc,
        "unsupported integer operation " + std::string(op));
 }
-struct Engine {
+} // namespace
+
+struct Runtime::State {
+  const Program &program;
+  struct ClassState {
+    enum Status {
+      Prepared,
+      Initializing,
+      Initialized,
+      Erroneous
+    } status = Prepared;
+    std::map<const Field *, uint64_t> fields;
+  };
+  std::map<const Class *, ClassState> classes;
+  std::optional<ExecutionResult> stopped;
+  struct Engine;
+  ExecutionResult invoke(const std::function<uint64_t()> &body) {
+    if (stopped)
+      return *stopped;
+    try {
+      return {ExecutionStop::Returned, body(), {}, {}};
+    } catch (const Halt &halt) {
+      if (halt.result.stop != ExecutionStop::Thrown)
+        stopped = halt.result;
+      return halt.result;
+    }
+  }
+};
+
+struct Runtime::State::Engine {
+  State &state;
   const Program &program;
   const AdmitInstruction &admit;
   uint64_t remaining_stack;
+  Engine(State &state, const AdmitInstruction &admit, uint64_t stack)
+      : state(state), program(state.program), admit(admit),
+        remaining_stack(stack) {
+    if (!admit)
+      throw Error("DEX execution requires an instruction budget");
+  }
+  bool accessible(const std::string &owner, const Access &access,
+                  const std::string &caller) const {
+    if (owner == caller)
+      return true;
+    const auto *klass = program.findClass(owner);
+    auto package = [](std::string_view name) {
+      const auto slash = name.rfind('/');
+      return slash == name.npos ? std::string_view() : name.substr(0, slash);
+    };
+    // Package/protected/private member resolution remains outside this subset;
+    // a public member still cannot expose an inaccessible declaring class.
+    return klass && has(access, "public") &&
+           (has(klass->access, "public") || package(owner) == package(caller));
+  }
+  void initialize(std::string_view name, unsigned depth) {
+    auto fail = [&](ExecutionStop stop, std::string message,
+                    std::string exception = {}) {
+      throw Halt{
+          {stop, 0, std::move(exception), std::string(name) + ": " + message}};
+    };
+    if (auto reason = program.unsupportedClass(name))
+      fail(ExecutionStop::Unsupported, *reason);
+    const auto *klass = program.findClass(name);
+    auto [entry, inserted] = state.classes.try_emplace(klass);
+    auto &storage = entry->second;
+    if (inserted) {
+      // DEX encoded values are installed before <clinit>, including when a
+      // recursive initialization reads this class's partially initialized
+      // state.
+      for (const auto &field : klass->fields) {
+        uint64_t value = 0;
+        const auto &type = field.reference.type;
+        if (auto integer = std::get_if<int64_t>(&field.value)) {
+          value = narrow(uint64_t(*integer), type);
+          int64_t canonical =
+              type == "J" ? std::bit_cast<int64_t>(value)
+              : type == "C" || type == "Z"
+                  ? int64_t(value)
+                  : int64_t(std::bit_cast<int32_t>(uint32_t(value)));
+          if (canonical != *integer || (type == "Z" && value > 1))
+            fail(ExecutionStop::Invalid, "noncanonical static field value");
+        } else if (auto boolean = std::get_if<bool>(&field.value)) {
+          if (type != "Z")
+            fail(ExecutionStop::Invalid, "boolean value in nonboolean field");
+          value = *boolean;
+        } else if (!std::holds_alternative<std::monostate>(field.value))
+          fail(ExecutionStop::Invalid, "incompatible static field value");
+        storage.fields.emplace(&field, value);
+      }
+    }
+    if (storage.status == ClassState::Initialized ||
+        storage.status == ClassState::Initializing)
+      return;
+    if (storage.status == ClassState::Erroneous)
+      fail(ExecutionStop::Thrown, "class initialization previously failed",
+           "java/lang/NoClassDefFoundError");
+    storage.status = ClassState::Initializing;
+    try {
+      for (const auto &method : klass->methods)
+        if (method.reference.name == "<clinit>") {
+          if (!method.reference.parameters.empty() ||
+              method.reference.returns != "V")
+            fail(ExecutionStop::Invalid, "malformed class initializer");
+          run(method, {}, depth, true);
+        }
+      storage.status = ClassState::Initialized;
+    } catch (Halt &halt) {
+      if (halt.result.stop == ExecutionStop::Thrown) {
+        storage.status = ClassState::Erroneous;
+        // ArithmeticException is the only non-Error Java throwable produced
+        // by the integral executor. Nested initialization Errors propagate.
+        if (halt.result.exception == "java/lang/ArithmeticException")
+          halt.result.exception = "java/lang/ExceptionInInitializerError";
+      }
+      throw;
+    }
+  }
   uint64_t run(const Method &method, std::span<const uint64_t> args,
-               unsigned depth) {
+               unsigned depth, bool initializer = false) {
     if (auto reason = program.unsupported(method))
       halt(ExecutionStop::Unsupported, method, 0, *reason);
+    if (method.reference.name.starts_with('<') && !initializer)
+      halt(ExecutionStop::Invalid, method, 0,
+           "explicit initializer invocation");
+    initialize(method.reference.owner, depth);
     const uint64_t bytes = uint64_t(method.registers) * sizeof(Register) +
                            method.instructions.size() * 64 + 256;
     if (depth >= 64 || bytes > remaining_stack)
@@ -262,10 +379,10 @@ struct Engine {
                "unmodeled static method " + reference->identity());
         if (auto reason = program.unsupported(*callee))
           halt(ExecutionStop::Unsupported, method, frame.pc, *reason);
-        if (callee->reference.owner != method.reference.owner &&
-            !has(callee->access, "public"))
+        if (!accessible(callee->reference.owner, callee->access,
+                        method.reference.owner))
           halt(ExecutionStop::Unsupported, method, frame.pc,
-               "nonpublic cross-class call");
+               "inaccessible cross-class call");
         std::vector<uint64_t> values;
         size_t word = 0;
         for (const auto &type : reference->parameters) {
@@ -286,6 +403,49 @@ struct Engine {
         pending_type = reference->returns;
         if (pending_type != "V")
           pending = value;
+      } else if (op.starts_with("sget") || op.starts_with("sput")) {
+        count(1);
+        auto reference = std::get_if<FieldRef>(&insn.reference);
+        if (!reference)
+          frame.invalid("missing field reference");
+        auto field = program.findStaticField(*reference);
+        if (!field)
+          halt(ExecutionStop::Unsupported, method, frame.pc,
+               "unmodeled static field");
+        if (!accessible(reference->owner, field->access,
+                        method.reference.owner))
+          halt(ExecutionStop::Unsupported, method, frame.pc,
+               "inaccessible cross-class field");
+        auto suffix = op.substr(4);
+        std::string_view type = suffix.empty()         ? "I"
+                                : suffix == "-wide"    ? "J"
+                                : suffix == "-boolean" ? "Z"
+                                : suffix == "-byte"    ? "B"
+                                : suffix == "-char"    ? "C"
+                                : suffix == "-short"   ? "S"
+                                                       : "";
+        if (type.empty())
+          halt(ExecutionStop::Unsupported, method, frame.pc,
+               "unsupported static field opcode");
+        if (reference->type != type)
+          frame.invalid("static field opcode/type mismatch");
+        bool write = op.starts_with("sput");
+        if (write && has(field->access, "final") &&
+            (method.reference.owner != reference->owner ||
+             method.reference.name != "<clinit>"))
+          frame.invalid("final static field write outside its initializer");
+        auto bits = write ? frame.get(r[0], type == "J") : 0;
+        initialize(reference->owner, depth + 1);
+        auto &value = state.classes.at(program.findClass(reference->owner))
+                          .fields.at(field);
+        if (write) {
+          // The field instruction narrows at the store, unlike a method's
+          // typed return/argument boundary. Boolean registers must be 0 or 1.
+          if (type == "Z" && bits > 1)
+            frame.invalid("noncanonical boolean field store");
+          value = narrow(bits, type);
+        } else
+          frame.put(r[0], value, type == "J");
       } else if (op == "cmp-long") {
         count(3);
         auto a = std::bit_cast<int64_t>(frame.get(r[1], true));
@@ -343,7 +503,6 @@ struct Engine {
     frame.invalid("execution fell off method body");
   }
 };
-} // namespace
 
 Program::Program(std::vector<Class> declarations) {
   for (auto &item : declarations) {
@@ -356,7 +515,18 @@ Program::Program(std::vector<Class> declarations) {
   }
 }
 bool Program::containsClass(std::string_view name) const {
-  return classes.contains(std::string(name));
+  return findClass(name) != nullptr;
+}
+const Class *Program::findClass(std::string_view name) const {
+  auto it = classes.find(std::string(name));
+  return it == classes.end() ? nullptr : &it->second;
+}
+const Field *Program::findStaticField(const FieldRef &reference) const {
+  if (auto klass = findClass(reference.owner))
+    for (const auto &field : klass->fields)
+      if (field.reference == reference && has(field.access, "static"))
+        return &field;
+  return nullptr;
 }
 const Method *Program::findStatic(const MethodRef &reference) const {
   auto owner = classes.find(reference.owner);
@@ -374,11 +544,12 @@ Program::unsupportedClass(std::string_view name) const {
     return "class is not supplied by DEX";
   const auto &klass = owner->second;
   if (klass.superclass != "Ljava/lang/Object;" || !klass.interfaces.empty() ||
-      !klass.fields.empty() || has(klass.access, "interface"))
-    return "DEX class requires unmodeled hierarchy or field state";
-  for (const auto &m : klass.methods)
-    if (m.reference.name == "<clinit>")
-      return "DEX class initialization is unsupported";
+      has(klass.access, "interface"))
+    return "DEX class requires unmodeled hierarchy";
+  for (const auto &field : klass.fields)
+    if (!has(field.access, "static") || !integral(field.reference.type) ||
+        has(field.access, "volatile"))
+      return "DEX instance, object, floating or volatile field is unsupported";
   return std::nullopt;
 }
 std::optional<std::string> Program::unsupported(const Method &method) const {
@@ -404,15 +575,26 @@ ExecutionResult Program::execute(const Method &method,
                                  std::span<const uint64_t> args,
                                  const AdmitInstruction &admit,
                                  uint64_t stack_bytes) const {
-  try {
-    if (!admit)
-      throw Error("DEX execution requires an instruction budget");
-    return {ExecutionStop::Returned,
-            Engine{*this, admit, stack_bytes}.run(method, args, 0),
-            {},
-            {}};
-  } catch (const Halt &stopped) {
-    return stopped.result;
-  }
+  Runtime runtime(*this);
+  return runtime.execute(method, args, admit, stack_bytes);
+}
+Runtime::Runtime(const Program &program)
+    : state(std::make_unique<State>(program)) {}
+Runtime::~Runtime() = default;
+ExecutionResult Runtime::initialize(std::string_view descriptor,
+                                    const AdmitInstruction &admit,
+                                    uint64_t stack_bytes) {
+  return state->invoke([&] {
+    State::Engine(*state, admit, stack_bytes).initialize(descriptor, 0);
+    return uint64_t(0);
+  });
+}
+ExecutionResult Runtime::execute(const Method &method,
+                                 std::span<const uint64_t> args,
+                                 const AdmitInstruction &admit,
+                                 uint64_t stack_bytes) {
+  return state->invoke([&] {
+    return State::Engine(*state, admit, stack_bytes).run(method, args, 0);
+  });
 }
 } // namespace neverd::mobile::dalvik

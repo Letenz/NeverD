@@ -21,6 +21,11 @@ llvm::StringRef parent(llvm::StringRef Name) {
     return "java/lang/Throwable";
   if (Name == "java/lang/OutOfMemoryError")
     return "java/lang/Error";
+  if (Name == "java/lang/ExceptionInInitializerError" ||
+      Name == "java/lang/NoClassDefFoundError")
+    return "java/lang/LinkageError";
+  if (Name == "java/lang/LinkageError")
+    return "java/lang/Error";
   if (Name == "java/lang/ArrayIndexOutOfBoundsException" ||
       Name == "java/lang/StringIndexOutOfBoundsException")
     return "java/lang/IndexOutOfBoundsException";
@@ -75,6 +80,9 @@ Bionic::jniClass(llvm::StringRef Name) {
                Name == "java/lang/NegativeArraySizeException" ||
                Name == "java/lang/ArrayStoreException" ||
                Name == "java/lang/OutOfMemoryError" ||
+               Name == "java/lang/LinkageError" ||
+               Name == "java/lang/ExceptionInInitializerError" ||
+               Name == "java/lang/NoClassDefFoundError" ||
                Name == "[Ljava/lang/Object;" || Name == "[Ljava/lang/String;" ||
                (Name.size() == 2 && Name[0] == '[' &&
                 llvm::StringRef("ZBCSIJFD").contains(Name[1]));
@@ -143,6 +151,12 @@ BionicResult Bionic::jniObjects(unsigned Slot, const NativeCallEvent &Call) {
     auto Class = jniClass(*Name);
     if (!Class)
       return Class.takeError();
+    const auto Descriptor = "L" + *Name + ";";
+    if (JNI.Dex && JNI.Dex->containsClass(Descriptor)) {
+      auto Initialized = executeDex(nullptr, {}, Descriptor);
+      if (!Initialized || !*Initialized || Thread.Exception)
+        return Initialized;
+    }
     return Ref(*Class);
   }
   if (Slot == 15)
