@@ -63,6 +63,7 @@ void addCOFFRegions(const llvm::object::COFFObjectFile &Obj,
       llvm::consumeError(Name.takeError());
     Region.Address = Layout.Base + Sec->VirtualAddress;
     Region.Size = Sec->VirtualSize ? Sec->VirtualSize : Sec->SizeOfRawData;
+    Region.FileSize = Sec->SizeOfRawData;
     Region.Executable =
         Sec->Characteristics &
         (llvm::COFF::IMAGE_SCN_MEM_EXECUTE | llvm::COFF::IMAGE_SCN_CNT_CODE);
@@ -233,7 +234,7 @@ MapCheck checkMap(const MapFacts &Facts, const MapFileContext &Names,
       continue;
     const uint64_t Address =
         Facts.RelativeSections ? Layout.Base + Placed.Address : Placed.Address;
-    if (Address != Region->Address || Placed.Size != Region->Size) {
+    if (Address != Region->Address || !Region->sizedAs(Placed.Size)) {
       Check.MapPlaced = Placed;
       Check.MapPlaced.Address = Address;
       Check.ImagePlaced = {Region->Segment, Region->Name, Region->Address,
@@ -386,12 +387,14 @@ MapImageLayout mapImageLayout(const BinaryImage &Img,
   MapImageLayout Layout;
   Layout.Format = Img.Format;
   Layout.Base = Img.Base;
-  for (const Segment &Seg : Img.Segments)
-    Layout.Sections.push_back({{},
-                               Seg.Name,
-                               Seg.VA,
-                               Seg.Size,
-                               hasFlag(Seg.Flags, SegmentFlags::Executable)});
+  for (const Segment &Seg : Img.Segments) {
+    MapImageLayout::Region Region;
+    Region.Name = Seg.Name;
+    Region.Address = Seg.VA;
+    Region.Size = Seg.Size;
+    Region.Executable = hasFlag(Seg.Flags, SegmentFlags::Executable);
+    Layout.Sections.push_back(std::move(Region));
+  }
   return Layout;
 }
 

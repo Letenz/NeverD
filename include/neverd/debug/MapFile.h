@@ -88,7 +88,14 @@ struct MapImageLayout {
     std::string Name;
     va_t Address = 0;
     uint64_t Size = 0;
+    /// The bytes a PE section holds in the file, its size rounded up to the
+    /// file alignment, which GNU ld lists as the section's size; 0 elsewhere.
+    uint64_t FileSize = 0;
     bool Executable = false;
+    /// Whether a MAP that sizes this section \p Bytes places it as it is.
+    bool sizedAs(uint64_t Bytes) const {
+      return Bytes == Size || (FileSize != 0 && Bytes == FileSize);
+    }
     bool contains(va_t Addr) const {
       return Addr >= Address && Addr - Address < Size;
     }

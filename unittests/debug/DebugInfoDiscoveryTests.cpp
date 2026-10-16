@@ -1849,6 +1849,39 @@ TEST(MapFileTest, AMapThatPlacesASectionElsewhereDescribesAnotherBuild) {
             "0x1A70 (0x351 bytes)");
 }
 
+// GNU ld lists a PE section at the size it takes in the file, rounded up to
+// the file alignment, where lld lists its virtual size.
+TEST(MapFileTest, AGNUMapSizesAPESectionAsTheFileHoldsIt) {
+  MapImageLayout Layout;
+  Layout.Format = BinaryFormat::COFF;
+  Layout.Base = 0x140000000;
+  Layout.Sections.push_back(
+      {{}, ".text", 0x140001000, 0x1890, /*FileSize=*/0x1a00, true});
+  Layout.Sections.push_back(
+      {{}, ".bss", 0x140007000, 0x180, /*FileSize=*/0, false});
+  const auto map = [](llvm::StringRef TextSize) {
+    return "Linker script and memory map\n\n"
+           ".text           0x0000000140001000     " +
+           TextSize.str() +
+           "\n"
+           " .text          0x0000000140001480       0xc0 demo.o\n"
+           "                0x0000000140001480                main\n"
+           ".bss            0x0000000140007000      0x180\n";
+  };
+  ScratchDir Dir;
+  for (llvm::StringRef Size : {"0x1a00", "0x1890"}) {
+    SCOPED_TRACE(Size.str());
+    const MapRead Read = readMapFile(Dir.write("demo.map", map(Size)), Layout);
+    ASSERT_TRUE(Read.Context);
+    EXPECT_EQ(Read.Facts.Dialect, MapDialect::GNU);
+    EXPECT_EQ(Read.Check.Match, MapMatch::Consistent);
+  }
+  const MapRead Other =
+      readMapFile(Dir.write("other.map", map("0x1c00")), Layout);
+  EXPECT_EQ(Other.Check.Match, MapMatch::Mismatch);
+  EXPECT_EQ(Other.Check.Reason, MapMismatch::Section);
+}
+
 TEST(MapFileTest, ALinkExeMapIsVerifiedByTheBuildStampItRecords) {
   const auto map = [](llvm::StringRef Stamp) {
     return " safety_cases_pe_x64\n\n Timestamp is " + Stamp.str() +
