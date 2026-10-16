@@ -937,11 +937,11 @@ cl::opt<std::string>
                   cl::init("c"), cl::value_desc("language"), cl::sub(TypesCmd));
 cl::opt<std::string> TypesSpelling(
     "spelling",
-    cl::desc("Spell builtins as windows (ULONG), ida (unsigned int), "
-             "keywords (unsigned long) or portable (uint32_t) in C and C++, "
-             "windows by default; as windows (aliases, as wdk-sys declares "
-             "them) or portable (u32, uint32, ctypes.c_uint32, number: the "
-             "default) in Rust, Go, Python, JavaScript and Lua"),
+    cl::desc("Spell builtins as portable, exact widths (uint32_t, u32, "
+             "uint32, ctypes.c_uint32, number), every language's default; as "
+             "windows (ULONG; in Rust, Go, Python, JavaScript and Lua aliases "
+             "of exact widths, as wdk-sys declares them); or in C and C++ as "
+             "keywords (unsigned long)"),
     cl::init(""), cl::value_desc("style"), cl::sub(TypesCmd));
 cl::opt<bool> TypesAsserts(
     "asserts",

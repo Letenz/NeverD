@@ -97,11 +97,14 @@ stream's member list, or whose members cannot sit where they say
 `renderType` and `renderTypes` spell types as C, C++, Rust, Go, Python,
 JavaScript or Lua (`TypeLanguages.def`), each member marked with its
 offset. Builtins take the spellings each language has (`TypeLanguages.def`
-lists them, `BuiltinSpellings.def` names them): C and C++ name them as
-Windows, IDA or the compiler does, or by exact widths; Rust, Go, Python,
-JavaScript and Lua by exact widths or by Windows' names, which a module or
-file declares as aliases as wdk-sys does (Lua's comments only, its values
-being its integers either way). Every language
+lists them, `BuiltinSpellings.def` names them), and every language names
+them by exact widths unless asked: `uint32_t`, `u32`, `uint32`,
+`ctypes.c_uint32`, a JavaScript `number`. Each also takes Windows' names,
+which Rust, Go, Python, JavaScript and Lua declare as aliases as wdk-sys
+does (Lua's comments only, its values being its integers either way), and C
+and C++ the compiler's keywords too. IDA's own spelling, Microsoft's sized
+integers, reads in as C but does not render, being neither portable nor
+what the program's headers say. Every language
 reproduces the library's layout exactly. An explicit filler moves a member
 that the language's own rules would place earlier. Rust and Go read what they
 cannot express through accessors whose arithmetic follows C, signed bitfields
