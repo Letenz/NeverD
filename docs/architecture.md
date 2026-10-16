@@ -329,7 +329,10 @@ the image states (`BinaryImage::statedFunctionNameAt`, as
 producer stated, a PDB's function names among them; else the debug
 information's; else the name signatures recognized the function's bytes by
 (`SignatureDB::buildNameMap`). A name analysis or the user gave otherwise
-says nothing of what the function is. Where a linker folded identical
+says nothing of what the function is. A linked COFF image's section symbols,
+which GNU ld keeps at each object's first function or variable
+(`Symbol::IsSection`), name nothing there or in `findSymbolAt`; they only
+bound what each object contributed. Where a linker folded identical
 functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's
 prototype only where every other name's that has one takes and returns
