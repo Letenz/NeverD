@@ -584,6 +584,11 @@ reaching state nor runtime-handler memory privileges before the exact SavedESP
 transfer succeeds. Callback roots, unanchored terminals and cycles are excluded.
 MedIR's `RegistrationSEHParentExit` binds the exact
 SavedESP restore and parent branch; callback ownership stops at this boundary.
+`RegistrationSEHParentRoots` gives an exclusively resumed parent block its own
+established EBP definition before SSA renaming. Every actual incoming edge must
+be a bound parent transfer; ordinary or independent entries keep their existing
+definitions. This prevents the callback's private runtime seed from escaping
+into parent code while preserving the current data registers and restored ESP.
 `MedLLVMRegistrationSEHParentExit` projects a private SjLj context transactionally,
 after checked PHI copies. `COFFRegistrationSEHParentExit` independently checks
 every context alias, capture and transfer; its source companion binds the

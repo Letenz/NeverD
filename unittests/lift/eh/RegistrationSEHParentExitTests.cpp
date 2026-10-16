@@ -8,11 +8,13 @@
 
 #include "../../../lib/backend/codegen/COFF/COFFRegistrationSEHParentExit.h"
 #include "../../../lib/backend/llvm/X86/MedLLVMRegistrationSEHParentExit.h"
+#include "../../../lib/ir/med/X86/RegistrationRoots.h"
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
 #include "neverd/ir/med/X86RegistrationSEHCall.h"
 #include "neverd/ir/med/X86RegistrationSEHParentExit.h"
@@ -286,6 +288,109 @@ TEST(RegistrationSEHParentExit, OneBranchMayEndSeveralInvocations) {
   ASSERT_EQ(Exits->at(1).Invocations.size(), 2u);
   --Function.RegistrationStates->SEHInvocationExits.back().StackOffset;
   EXPECT_FALSE(getRegistrationSEHParentExits(Function));
+}
+
+TEST(RegistrationSEHParentExit, ParentFrameRequiresOnlyBoundIncomingTransfers) {
+  for (bool Runtime : {false, true}) {
+    for (unsigned Mutation = 0; Mutation != 20; ++Mutation) {
+      SCOPED_TRACE(Runtime);
+      SCOPED_TRACE(Mutation);
+      auto Function = parentExit(Runtime);
+      Function.ExceptionMetadata->Registration->TryLevelOffset = -4;
+      Function.Blocks[0].Succs.clear();
+      Function.Blocks[2].Preds = {1};
+      MedOp Frame;
+      Frame.Opcode = NdOp::COPY;
+      Frame.Addr = 0x1800;
+      Frame.RegistrationRoot =
+          MedOp::RegistrationRootKind::EstablishedFramePointer;
+      Frame.Output.Kind = MedVar::Reg;
+      Frame.Output.TheArch = Arch::X86;
+      Frame.Output.RegOff = x86reg::RBP;
+      Frame.Output.Size = 4;
+      Frame.Output.Id = 17;
+      Frame.addInput(Frame.Output);
+      Function.Blocks[1].Ops.insert(Function.Blocks[1].Ops.begin(), Frame);
+      LowFunc Low;
+      Low.Entry = Function.Entry;
+      Low.ExceptionMetadata = Function.ExceptionMetadata;
+      Arch Architecture = Arch::X86;
+      BinaryFormat Format = BinaryFormat::COFF;
+      auto &Root = Function.Blocks[1].Ops.front();
+      switch (Mutation) {
+      case 1:
+        Function.Blocks[0].Succs = {2};
+        Function.Blocks[2].Preds.push_back(0);
+        break;
+      case 2:
+        Low.OrdinaryModuleAnalysisRoots.insert(0x1100);
+        break;
+      case 3:
+        ++Low.Entry;
+        break;
+      case 4:
+        Root.Output.Size = 2;
+        break;
+      case 5:
+        Root.Inputs[0].RegOff = x86reg::RSP;
+        break;
+      case 6:
+        Root.OriginSeq = 9;
+        break;
+      case 7:
+        Function.Blocks[1].Ops.insert(Function.Blocks[1].Ops.begin(), Frame);
+        break;
+      case 8:
+        Root.RegistrationRoot = MedOp::RegistrationRootKind::None;
+        break;
+      case 9:
+        ++Root.Addr;
+        break;
+      case 10:
+        ++Function.RegistrationStates->SEHInvocationExits.front().TargetVA;
+        break;
+      case 11:
+        Function.RegistrationStates->Blocks[2].Unknown = true;
+        break;
+      case 12:
+        Low.ExceptionMetadata->Registration->RegistrationOffset = -20;
+        break;
+      case 13:
+        Architecture = Arch::X64;
+        break;
+      case 14:
+        Format = BinaryFormat::ELF;
+        break;
+      case 15:
+        Function.Blocks[2].Preds = {0};
+        break;
+      case 16:
+        Function.Blocks[2].Preds.push_back(1);
+        break;
+      case 17:
+        Function.Blocks[2].ExceptionalPreds.emplace_back();
+        break;
+      case 18:
+        Function.RegistrationStates->SEHParentChainComplete = false;
+        break;
+      case 19:
+        std::reverse(Function.Blocks.begin(), Function.Blocks.end());
+        break;
+      }
+      x86_registration::RegistrationRoots(Low, Architecture, Format)
+          .seedSEHParentFrames(Function);
+      const auto Target = llvm::find_if(
+          Function.Blocks, [](const auto &Block) { return Block.Id == 2; });
+      ASSERT_NE(Target, Function.Blocks.end());
+      const bool Seeded = Mutation == 0 || Mutation == 18 || Mutation == 19;
+      ASSERT_EQ(Target->Ops.size(), Seeded ? 1u : 0u);
+      if (Seeded) {
+        EXPECT_TRUE(hasValidRegistrationRootShape(Target->Ops.front()));
+        EXPECT_EQ(Target->Ops.front().Output, Frame.Output);
+        EXPECT_EQ(Target->Ops.front().Addr, Target->StartAddr);
+      }
+    }
+  }
 }
 
 TEST(RegistrationSEHParentExit, RestoreMustDominateTheBranchInItsOwnCallback) {
