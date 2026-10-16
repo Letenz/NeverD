@@ -354,6 +354,14 @@ every replacement path to close through an acyclic graph of checked transfers;
 source analysis checks both buffers throughout all remaining cleanups. Modified
 or expired buffers, unclosed cycles, escaping frame values, recurrent selection
 and escaping searches refuse reconstruction.
+A search filter called by `RaiseException` inside a suspended finally may also
+jump to the same or another live capture. The shared search interpreter keeps
+these exits separate from signed filter dispositions. Only returning branches
+restore the suspended callback stack; a jump retires the filter and every
+suspended finally invocation, including nested ordinary calls. A filter may
+continue execution or select a handler on one branch and jump on another,
+preserving each branch's frame, continuation and scalar value. The source callback occurrence independently
+proves the destination and buffer lifetime before native reconstruction.
 Scopes without any proved activation remain unsupported.
 Checked reads from mapped PE data retain their runtime bits as scalar jump
 values, including negative values. They keep possible alias provenance: a

@@ -97,7 +97,15 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-handler-cleanup-dynamic-value": (64, 236),
               "longjmp-handler-nested-cleanup-dynamic-value": (65, 2367),
               "longjmp-handler-cleanup-other-capture": (66, 236),
-              "longjmp-handler-nested-cleanup-other-capture": (67, 2367)})
+              "longjmp-handler-nested-cleanup-other-capture": (67, 2367),
+              "longjmp-search-filter-jump": (68, 23),
+              "longjmp-nested-search-filter-jump": (69, 263),
+              "longjmp-search-filter-other-capture": (70, 23),
+              "longjmp-nested-search-filter-other-capture": (71, 263),
+              "longjmp-search-filter-mixed-jump": (72, 23),
+              "longjmp-nested-search-filter-mixed-jump": (73, 263),
+              "longjmp-search-filter-selected-jump": (74, 23),
+              "longjmp-nested-search-filter-selected-jump": (75, 263)})
 EH4_JUMP_CASES = ("longjmp-finally", "longjmp-zero", "longjmp-filter",
                   "longjmp-parameter", "longjmp-callback",
                   "longjmp-unwind-callback", "longjmp-callback-zero",
@@ -117,7 +125,15 @@ EH4_JUMP_CASES = ("longjmp-finally", "longjmp-zero", "longjmp-filter",
                   "longjmp-handler-cleanup-dynamic-value",
                   "longjmp-handler-nested-cleanup-dynamic-value",
                   "longjmp-handler-cleanup-other-capture",
-                  "longjmp-handler-nested-cleanup-other-capture")
+                  "longjmp-handler-nested-cleanup-other-capture",
+                  "longjmp-search-filter-jump",
+                  "longjmp-nested-search-filter-jump",
+                  "longjmp-search-filter-other-capture",
+                  "longjmp-nested-search-filter-other-capture",
+                  "longjmp-search-filter-mixed-jump",
+                  "longjmp-nested-search-filter-mixed-jump",
+                  "longjmp-search-filter-selected-jump",
+                  "longjmp-nested-search-filter-selected-jump")
 CASES.update({prefix + name: CASES[name]
               for prefix in ("eh4-", "eh4-gs-") for name in EH4_JUMP_CASES})
 CASES.update({prefix + name: (number, 23)
@@ -337,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
         sources = (["registration_multistate_jump.s"] +
                    (["registration_eh4_runtime.c"] if eh4 else []) if case == 52
-                   else ["registration_filter_state_eh4.s" if 36 <= case <= 42 or 53 <= case <= 67 else
+                   else ["registration_filter_state_eh4.s" if 36 <= case <= 42 or 53 <= case <= 75 else
                          "registration_jump_eh4.s" if jump else "registration_seh4.s",
                     "registration_eh4_runtime.c"] if eh4
                    else ["registration_shared_calls.s" if case == 47 else

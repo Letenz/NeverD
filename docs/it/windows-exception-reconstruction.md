@@ -223,3 +223,5 @@ La sola decodifica non amplia l’allow-list. Il criterio è preservare il
 comportamento delle eccezioni nell’immagine finale collegata.
 
 Il cleanup del handler selezionato può saltare alla stessa cattura o a un’altra cattura valida del frame padre, cambiando il valore scalare (zero diventa uno). Ogni destinazione e valore mantiene i propri effetti sul frame; la ripresa ripristina registri, ESP e limite di unwind della destinazione effettiva. Le chiamate finally sospese e annidate vengono annullate. MedIR lega ogni sostituzione al punto esatto della chiamata callback e alla cattura, richiedendo percorsi completi in un grafo aciclico. Entrambi i buffer devono restare validi durante tutti i cleanup rimanenti; scritture sovrapposte, buffer scaduti, cicli non provati e indirizzi del frame che sfuggono sono rifiutati.
+
+Un filtro chiamato da RaiseException dentro un finally sospeso può saltare alla stessa cattura o a un’altra valida, oppure ritornare da un altro ramo. Gli effetti di ritorno e salto rimangono distinti; il salto termina il filtro e tutti i finally sospesi e annidati, mantenendo la propria destinazione e il proprio valore.

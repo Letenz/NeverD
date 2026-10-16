@@ -226,3 +226,5 @@ Poder decodificar un record no basta para ampliar la allow-list. El criterio es
 preservar el comportamiento de excepciones en la imagen final enlazada.
 
 El cleanup del handler seleccionado puede saltar a la misma captura o a otra captura válida del marco padre y cambiar el valor escalar (cero pasa a uno). Cada destino y valor conserva sus efectos sobre el marco; la reanudación restaura los registros, ESP y el límite de desenrollado del destino real. El salto cancela los finally suspendidos y anidados. MedIR vincula cada reemplazo con el punto exacto de llamada del callback y su captura, y exige rutas completas en un grafo acíclico. Ambos búferes deben seguir válidos durante todos los cleanups restantes; se rechazan escrituras superpuestas, búferes caducados, ciclos sin prueba y direcciones de marco que escapan.
+
+Un filtro invocado por RaiseException dentro de un finally suspendido puede saltar a la misma captura o a otra válida, o retornar por otra rama. Los efectos de retorno y salto se mantienen separados; el salto termina el filtro y todos los finally suspendidos y anidados, conservando su destino y valor.

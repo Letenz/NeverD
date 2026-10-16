@@ -234,3 +234,5 @@ HighC state annotation、personality binding 保留、重建 try/catch graph，�
 exception behavior 得到保留。
 
 所選 handler 的 cleanup 可跳至同一父框架內的原 capture 或另一有效 capture，並改變純量返回值（零轉為一）。各目標與值分別保留其框架效果，恢復實際目標保存的暫存器、ESP 和展開邊界，並終止被掛起的巢狀 finally 呼叫。MedIR 將替換綁定至準確的回呼呼叫點與 capture，要求無環轉移圖中的每條路徑都有完整結果。剩餘 cleanup 全程檢查兩個緩衝區；重疊寫入、過期緩衝區、未證明的循環及框架位址逸出均被拒絕。
+
+被掛起的 finally 內部呼叫 RaiseException 時，搜尋 filter 也可跳至原 capture 或另一有效 capture，並在其他分支返回。返回與跳轉的框架效果分別記錄；跳轉終止 filter 及所有被掛起的巢狀 finally，保留自己的目標與值。

@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Separates returning filter effects from paths which select a handler.
+/// Separates returning search effects from handler and nonlocal exits.
 
 #include "RegistrationStateSolver.h"
 
@@ -17,7 +17,7 @@ namespace neverd::registration_state {
 bool RegistrationStateSolver::runSEHFilterSearch(
     const FrameState &Parent, std::vector<RegistrationObjectExtent> *Writes,
     SEHFrameOutcomes &Outcomes, bool RequireResume,
-    SEHHandlerOutcomes *Selected) {
+    SEHHandlerOutcomes *Selected, SEHUnwindJump *Jump) {
   if (KnownCxx || !Chain.TryLevelOffset ||
       (EH4 && (!CompleteCookies || !cookiesReady(Parent))))
     return false;
@@ -55,9 +55,8 @@ bool RegistrationStateSolver::runSEHFilterSearch(
       continue;
     }
     SEHFilterOutcomes Returned;
-    if (!Scope.FilterVA ||
-        !runSEHCallbackFrame(Scope.FilterVA, Current.Frame, false, Writes,
-                             nullptr, &Returned))
+    if (!Scope.FilterVA || !runSEHCallbackFrame(Scope.FilterVA, Current.Frame,
+                                                false, Writes, Jump, &Returned))
       return false;
     for (auto &[Disposition, Frames] : Returned)
       for (auto &[State, Frame] : Frames) {
@@ -84,7 +83,7 @@ bool RegistrationStateSolver::runSEHFilterSearch(
       }
   }
   return !RequireResume || !Outcomes.empty() ||
-         (Selected && !Selected->empty());
+         (Selected && !Selected->empty()) || (Jump && !Jump->Resumed.empty());
 }
 
 } // namespace neverd::registration_state
