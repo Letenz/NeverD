@@ -830,6 +830,7 @@ _C_TYPES: dict[str, object] = {
     "size_t": ctypes.c_size_t,
     "unsigned": ctypes.c_uint,
     "unsigned short": ctypes.c_ushort,
+    "long long": ctypes.c_longlong,
     "unsigned long long": ctypes.c_ulonglong,
     "neverd_session_t": SessionHandle,
     "neverd_va_t": VirtualAddress,
@@ -1083,6 +1084,21 @@ _declare(
     "neverd_local_types_forget",
     "const char *",
     ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_local_types_fit_json",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_local_type_member_json",
+    "const char *",
+    [
+        "neverd_session_t", "const char *", "long long",
+        "unsigned long long", "const char *",
+    ],
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
