@@ -327,8 +327,10 @@ of the name each is shown under, as the kernel's exports are typed from
 the image states (`BinaryImage::statedFunctionNameAt`, as
 `getFunctionNameAt` chooses it): the export at the entry, else a symbol a
 producer stated, a PDB's function names among them; else the debug
-information's. A name analysis or the user gave says nothing of what the
-function is. Where a linker folded identical functions, one entry carries
+information's; else the name signatures recognized the function's bytes by
+(`SignatureDB::buildNameMap`). A name analysis or the user gave otherwise
+says nothing of what the function is. Where a linker folded identical
+functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's
 prototype only where every other name's that has one takes and returns
 alike (`passesAlike`): as many parameters, each of the same class and size,
@@ -339,7 +341,13 @@ gives. Another name's prototype is never borrowed. A function the debug
 information types keeps its own type, and a variadic prototype is not used,
 because its calls pass more than it declares. The signature records the
 library that declares the prototype and the declaration as it reads there,
-which HighC prints above the function (`neverd.prototype`).
+which HighC prints above the function (`neverd.prototype`). HighC's
+definition prints, after the parameters the code reads, the declared ones
+after them that it never reads, such as a system call stub's stack arguments
+its dispatcher takes (`unreadDeclaredParams`): integers and pointers after
+integers and pointers, which take the next slots in every convention. A call
+in the same unit passes them, or zero where the call site determined none,
+as the callee never reads it.
 
 A call through an import's slot or stub reaches a routine another module
 exports, which takes the prototype of the import's name: `resolveFunction`
@@ -349,7 +357,13 @@ passes exactly its parameters where the libc tables know none of the name
 (`importPrototypeArguments`), and to the return contracts. A callee the
 pipeline does not decompile returns what its declaration says, as the C
 writers read it, so that a caller returning what a `void` routine left in
-RAX returns nothing too. The prototype's types convert to the decompiler's
+RAX returns nothing too. A routine never returns where its name says so, as
+the tables (`isNoReturnFunction`) or a `_Noreturn` prototype
+(`resolvePrototype`) do: an import, a symbol, or an export the image's own
+code calls (`NoReturnTargetIndex`). A whole program's output
+(`neverd_decompile_all`) reads the session's local types over its own image
+and debug information when the session holds the same file, as the command
+line loads it first. The prototype's types convert to the decompiler's
 types:
 - records become named records that C passes and returns by value, with
   their members' names for display;

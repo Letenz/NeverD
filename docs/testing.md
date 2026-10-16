@@ -459,7 +459,13 @@ kernel's headers and `WindowsKernelRoutines.inc` agree on the bytes each
 parameter of a routine both know takes, and
 `ReturnContracts.ACallToAFunctionDeclaredVoidElsewhereHandsBackNoValue` and
 `AStubOfAnImportDeclaredVoidReturnsNoValue` cover the return contracts that
-read declarations.
+read declarations. `known_routines.sys` also checks that `KeSetEvent` prints
+the parameters its prototype declares and its code never reads, and that
+`neverd_decompile_all` takes the prototypes; the kernel inputs check
+`ZwCreateKey`'s seven parameters and that `FsRtlAllocatePool` stops at the
+`ExRaiseStatus` the kernel exports without its PDB.
+`IsNoReturnTarget.ExportsAndDeclaredPrototypesNameNoReturnRoutines` covers
+exports and `_Noreturn` prototypes in the no-return index.
 Build and run `NeverDSessionLLVMTests` as well: its private Session queries
 link the actual local-type/debug implementations and shared atomic sidecar
 helper into the test executable. It must not acquire a libneverd dependency.

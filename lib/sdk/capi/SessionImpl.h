@@ -1046,7 +1046,10 @@ struct PipelineRunner {
   PipelineResult Result;
 
   bool load(const char *InputPath, std::string &Err, const Session *Policy);
-  bool run(PipelineOptions Opts, std::string &Err);
+  /// Runs the pipeline over the image with \p Debug, else the image's own
+  /// debug information.
+  bool run(PipelineOptions Opts, std::string &Err,
+           DebugContext *Debug = nullptr);
 };
 
 /// Writes \p Values to the sidecar \p Path through a temporary file, so a

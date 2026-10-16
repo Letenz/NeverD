@@ -76,6 +76,8 @@ struct FunctionSym {
   /// that prototype as the library declares it, in C.  Empty otherwise.
   std::string PrototypeLibrary;
   std::string PrototypeDeclaration;
+  /// The function never returns, as its declaration says (`_Noreturn`).
+  bool NoReturn = false;
 
   bool contains(va_t Address) const {
     return Address >= Addr && Address - Addr < Size;
