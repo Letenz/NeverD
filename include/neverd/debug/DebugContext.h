@@ -70,6 +70,12 @@ struct FunctionSym {
   /// of its own, such as Go's register ABI, or one the debug information
   /// does not name: no C placement rules locate its parameters.
   bool PlatformConvention = true;
+  /// Where a known routine's return and parameters come from when neither
+  /// the debug information nor the user gives them: the type library whose
+  /// prototype of the function's name gives them (windows-kernel-x64), and
+  /// that prototype as the library declares it, in C.  Empty otherwise.
+  std::string PrototypeLibrary;
+  std::string PrototypeDeclaration;
 
   bool contains(va_t Address) const {
     return Address >= Addr && Address - Addr < Size;

@@ -1638,6 +1638,20 @@ struct BinaryImage {
     return (kAutoFuncPrefix + llvm::utohexstr(Addr)).str();
   }
 
+  /// The name the program itself states for the function at \p Addr, as
+  /// getFunctionNameAt chooses it: the export there, else the symbol of the
+  /// highest functionNameRank where a producer stated it.  Empty where only
+  /// analysis or the user names the function, which says nothing of what
+  /// the function is.
+  llvm::StringRef statedFunctionNameAt(va_t Addr) const {
+    if (const Export *Exp = findExportAt(Addr); Exp && !Exp->Name.empty())
+      return Exp->Name;
+    if (const Symbol *Best = functionNameSymbolAt(Addr);
+        Best && Best->Origin == NameOrigin::Stated)
+      return Best->Name;
+    return {};
+  }
+
   /// The name the function at \p Addr is listed and called under when its
   /// symbol names it \p Name: the name itself, or the number
   /// numberSharedFunctionNames() gave it where functions at lower addresses

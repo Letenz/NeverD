@@ -5892,7 +5892,15 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   }
 
   writeExceptionAnnotation(Func);
-  if (Opts.EmitComments && DebugFn) {
+  if (Opts.EmitComments && DebugFn && !DebugFn->PrototypeLibrary.empty()) {
+    // The prototype the signature comes from, as its library declares it.
+    std::string Declaration = DebugFn->PrototypeDeclaration;
+    for (size_t At = Declaration.find("*/"); At != std::string::npos;
+         At = Declaration.find("*/", At))
+      Declaration.insert(At + 1, " ");
+    OS << "/* neverd.prototype: " << DebugFn->PrototypeLibrary << ": "
+       << Declaration << " */\n";
+  } else if (Opts.EmitComments && DebugFn) {
     OS << "/* neverd.debug: return=";
     if (const TypeRef Return = cDisplayType(DebugFn->ReturnType); !Return)
       OS << "(none)";

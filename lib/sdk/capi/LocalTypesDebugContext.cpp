@@ -296,9 +296,11 @@ llvm::StringSet<> prototypeTypeNames(const types::TypeLibrary &Library) {
 
 LocalTypesDebugContext::LocalTypesDebugContext(
     const DebugContext &Inner, std::shared_ptr<const types::TypeLibrary> Types,
-    std::map<va_t, std::string> Declarations)
+    std::map<va_t, std::string> Declarations, const BinaryImage *Image,
+    std::vector<types::HeaderLibrary> Headers)
     : Inner(Inner), Types(std::move(Types)),
-      Declarations(std::move(Declarations)) {}
+      Declarations(std::move(Declarations)), Image(Image),
+      Headers(std::move(Headers)) {}
 
 LocalTypesDebugContext::~LocalTypesDebugContext() {
   std::lock_guard<std::mutex> Guard(Mutex);
@@ -478,15 +480,51 @@ llvm::StringSet<> LocalTypesDebugContext::readTypes() const {
   return Names;
 }
 
+std::optional<types::HeaderLibrary> LocalTypesDebugContext::prototypeHeader(
+    llvm::StringRef Name, const types::FunctionDef *Function) const {
+  // Joining a header library shares its prototypes.
+  for (const types::HeaderLibrary Library : Headers)
+    if (const types::TypeLibrary *Header = types::headerLibrary(Library))
+      if (Header->findPrototype(Name) == Function)
+        return Library;
+  return std::nullopt;
+}
+
 std::optional<FunctionSym>
 LocalTypesDebugContext::prototype(llvm::StringRef Name) const {
   std::lock_guard<std::mutex> Guard(Mutex);
   if (auto Known = Signatures.find(Name); Known != Signatures.end())
     return Known->second;
   std::optional<FunctionSym> &Signature = Signatures[Name];
-  if (const types::FunctionDef *Function = Types->findPrototype(Name))
-    Signature = signatureOf(*Types, *Function, Name);
+  const auto Function = Types->prototypes().find(Name);
+  if (Function == Types->prototypes().end() || !Function->second)
+    return Signature;
+  Signature = signatureOf(*Types, *Function->second, Name);
+  if (!Signature)
+    return Signature;
+  const std::optional<types::HeaderLibrary> Header =
+      prototypeHeader(Name, Function->second.get());
+  Signature->PrototypeLibrary =
+      Header ? types::headerLibraryName(*Header).str() : "local-types";
+  types::RenderOptions Options;
+  Options.Lang = types::Language::C;
+  if (Header)
+    Options.Spelling = types::headerLibrarySpelling(*Header);
+  Signature->PrototypeDeclaration =
+      (Function->second->NoReturn ? "_Noreturn " : "") +
+      types::spellType(*Types, *types::makeFunction(Function->second),
+                       Name.str(), Options);
   return Signature;
+}
+
+std::string LocalTypesDebugContext::statedName(va_t Entry) const {
+  if (!Image)
+    return {};
+  std::lock_guard<std::mutex> Guard(Mutex);
+  auto [Known, Added] = StatedNames.try_emplace(Entry);
+  if (Added)
+    Known->second = Image->statedFunctionNameAt(Entry).str();
+  return Known->second;
 }
 
 std::optional<FunctionSym> LocalTypesDebugContext::declared(va_t Entry) const {
@@ -508,11 +546,11 @@ std::optional<FunctionSym> LocalTypesDebugContext::declared(va_t Entry) const {
 std::optional<FunctionSym>
 LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   std::optional<FunctionSym> Function = Inner.resolveFunction(Addr);
+  const bool AtEntry = Function && Function->Addr == Addr;
   // The user's declaration states the function's parameters and return,
   // whatever the debug information says; its name and extent stay.
   if (std::optional<FunctionSym> User = declared(Addr)) {
-    FunctionSym Declared =
-        Function && Function->Addr == Addr ? *Function : FunctionSym();
+    FunctionSym Declared = AtEntry ? *Function : FunctionSym();
     Declared.Addr = Addr;
     Declared.ReturnType = std::move(User->ReturnType);
     Declared.Params = std::move(User->Params);
@@ -521,16 +559,31 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
     Declared.PlatformConvention = true;
     return Declared;
   }
-  // Only a function the debug information names at its entry and leaves
-  // untyped: a declaration of the program's own describes its build.
-  if (!Function || Function->Addr != Addr || Function->Name.empty() ||
-      Function->ReturnType || !Function->Params.empty())
+  // A declaration of the program's own describes its build.
+  if (AtEntry && (Function->ReturnType || !Function->Params.empty()))
     return Function;
-  if (std::optional<FunctionSym> Declared = prototype(Function->Name)) {
-    Function->ReturnType = std::move(Declared->ReturnType);
-    Function->Params = std::move(Declared->Params);
-  }
-  return Function;
+  // The prototype of the name the function is displayed under: the export
+  // or symbol the image states, else the debug information's name.  Where a
+  // linker folded identical functions, the other names at the entry name
+  // other functions, whose prototypes need not agree with this one's.
+  std::string Name = statedName(Addr);
+  if (Name.empty() && AtEntry)
+    Name = Function->Name;
+  if (Name.empty())
+    return Function;
+  std::optional<FunctionSym> Known = prototype(Name);
+  if (!Known)
+    return Function;
+  FunctionSym Typed = AtEntry ? *Function : FunctionSym();
+  Typed.Addr = Addr;
+  Typed.ReturnType = std::move(Known->ReturnType);
+  Typed.Params = std::move(Known->Params);
+  if (Known->CallConv != DebugCallConv::Unknown)
+    Typed.CallConv = Known->CallConv;
+  Typed.PlatformConvention = true;
+  Typed.PrototypeLibrary = std::move(Known->PrototypeLibrary);
+  Typed.PrototypeDeclaration = std::move(Known->PrototypeDeclaration);
+  return Typed;
 }
 
 } // namespace neverd::sdk
