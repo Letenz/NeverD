@@ -93,7 +93,7 @@ LinuxFiles::gpuIoctl(LinuxDeviceState &Device, uint32_t Request,
     if (auto E = CPU.write(Argument, Data))
       return std::move(E);
     GPU.Allocations.emplace(Address,
-                            GPUAllocation{std::move(*Backing), ReadOnly});
+                            GPUAllocation{std::move(*Backing), Flags | 0x60});
     GPU.NextAddress = Address + Length + 4096;
     return Outcome(0);
   }
@@ -113,7 +113,7 @@ LinuxFiles::gpuIoctl(LinuxDeviceState &Device, uint32_t Request,
     --I;
     if (Address - I->first > I->second.Bytes.size() ||
         Length > I->second.Bytes.size() - (Address - I->first) ||
-        (Write && I->second.ReadOnly))
+        (Write && (I->second.Flags & kgsl::GPUReadOnly)))
       return std::optional<MemoryView>();
     auto View = I->second.Bytes.subview(Address - I->first, Length);
     if (!View)
