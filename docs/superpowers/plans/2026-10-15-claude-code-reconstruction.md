@@ -664,3 +664,32 @@ bounded repair and the still-open whole-recovery objective. Embedded rg
 dispatch, apply-seccomp, other distributions and broader functionality remain
 open. Native Linux ARM64 expansion is underway; its original thirteen-case
 search baseline already passes.
+
+
+## Both glibc Linux managed search packages checked
+
+Linux ARM64 now repeats the same thirteen original-versus-managed search
+cases for both layouts, adding 26 pairs (52 across both glibc platforms).
+Before applying the adapter, both ARM64 rebuilds reproduce the actual false
+no-match failure and their native argv[0]=rg probes enter the Claude CLI.
+The original reports ripgrep 14.1.1 / PCRE2 10.45, NEON and JIT. The managed
+component and launcher pass seven and six authored controls respectively.
+The source-proven Glob timing rule is unchanged; a separate ARM64 source
+anchor confirms the same Date.now subtraction.
+
+The ARM64 public helper was rebuilt in a distinct native job on the same
+commit in run 38868717218 attempt 2. Its binary and complete artifact file
+contents match attempt 1. The runtime package has 640 verified files; both
+launchers independently rebuild identically and both packaged clients pass
+isolated version invocations. progress-v23.json references both checked
+packages, all eight Read/Edit14 and token-cap7 supplements, and remaining
+work; 172 referenced files were rehashed.
+
+A literal callsite inventory distinguishes the next native boundary:
+apply-seccomp uses ARGV0 in the shell environment and /proc/self/fd/3, not
+necessarily the rg execve argv[0] path. Seven public sandbox-runtime 0.0.79
+source/license files are retained at commit
+0ded0c80bf8f44b64b30ad9e6bfc084cb9fc9dc5 with Git blob and SHA256 checks.
+This is an unmatched upstream candidate, not a recovered implementation.
+Musl/macOS/Windows managed search, native dispatch, syscall filtering and
+wider functionality remain open. The overall recovery goal is incomplete.
