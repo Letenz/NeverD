@@ -95,7 +95,9 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-handler-cleanup-zero": (62, 236),
               "longjmp-handler-nested-cleanup-zero": (63, 2367),
               "longjmp-handler-cleanup-dynamic-value": (64, 236),
-              "longjmp-handler-nested-cleanup-dynamic-value": (65, 2367)})
+              "longjmp-handler-nested-cleanup-dynamic-value": (65, 2367),
+              "longjmp-handler-cleanup-other-capture": (66, 236),
+              "longjmp-handler-nested-cleanup-other-capture": (67, 2367)})
 EH4_JUMP_CASES = ("longjmp-finally", "longjmp-zero", "longjmp-filter",
                   "longjmp-parameter", "longjmp-callback",
                   "longjmp-unwind-callback", "longjmp-callback-zero",
@@ -113,7 +115,9 @@ EH4_JUMP_CASES = ("longjmp-finally", "longjmp-zero", "longjmp-filter",
                   "longjmp-handler-nested-cleanup-value", "longjmp-handler-cleanup-zero",
                   "longjmp-handler-nested-cleanup-zero",
                   "longjmp-handler-cleanup-dynamic-value",
-                  "longjmp-handler-nested-cleanup-dynamic-value")
+                  "longjmp-handler-nested-cleanup-dynamic-value",
+                  "longjmp-handler-cleanup-other-capture",
+                  "longjmp-handler-nested-cleanup-other-capture")
 CASES.update({prefix + name: CASES[name]
               for prefix in ("eh4-", "eh4-gs-") for name in EH4_JUMP_CASES})
 CASES.update({prefix + name: (number, 23)
@@ -333,7 +337,7 @@ def main(argv: list[str] | None = None) -> int:
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
         sources = (["registration_multistate_jump.s"] +
                    (["registration_eh4_runtime.c"] if eh4 else []) if case == 52
-                   else ["registration_filter_state_eh4.s" if 36 <= case <= 42 or 53 <= case <= 65 else
+                   else ["registration_filter_state_eh4.s" if 36 <= case <= 42 or 53 <= case <= 67 else
                          "registration_jump_eh4.s" if jump else "registration_seh4.s",
                     "registration_eh4_runtime.c"] if eh4
                    else ["registration_shared_calls.s" if case == 47 else

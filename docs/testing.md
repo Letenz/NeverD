@@ -4249,7 +4249,7 @@ bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
 stack-only facts cannot preserve a capture, deallocated buffers refuse and a
 frame-preserving call supplies no scalar result authority.
 
-The EH4 jump matrix repeats forty-three capture/resumption scenarios with and
+The EH4 jump matrix repeats forty-five capture/resumption scenarios with and
 without GS cookies: parent and callback jumps, zero values, filter search, incoming
 parameters, retired scopes, private leaf/graph calls with a live buffer, and
 registered EH3/EH4 helpers borrowing the parent buffer and a scalar object, and
@@ -4274,7 +4274,7 @@ four calls, unwind the same finally, check the restored state and nonvolatile
 register, then raise another exception. The native mutation tests alter the saved
 state slot, read address, volatile accesses, placement, use closure and captured
 projection key while retaining verifier-clean IR. The full source profile now
-contains 168 scenarios; older compiler profiles keep their original membership.
+contains 174 scenarios; older compiler profiles keep their original membership.
 
 The EH4/GS `longjmp-callee`, `longjmp-returning-callee` and
 `longjmp-scalar-callee` variants retain the source helper's registration while
@@ -4325,7 +4325,7 @@ pairs. Native installation mutations change the reload address, volatility,
 atomicity, alignment, selector, projection keys/results, uses and placement
 before the capture. They also remove a projection or compare another value.
 
-`registration_filter_state.s` supplies twenty runtime cases. Five handler-selection
+`registration_filter_state.s` supplies twenty-two runtime cases. Five handler-selection
 cases (`longjmp-handler-selected`, `longjmp-handler-cleanup`,
 `longjmp-handler-captured-cursor`, `longjmp-handler-nested-finally` and
 `longjmp-handler-mixed-resumption`) check handler entry state, cleanup/filter
@@ -4348,7 +4348,17 @@ cleanup order, restored registers and registration state. The two
 subtract one, covering negative, zero and positive values without a constant
 proof. Their six protocol variants check EAX on every invocation. State
 mutations reject unauthenticated image reads, dereferencing loaded pointer bits,
-and mixing them with a physical frame address. MedIR checks exact nested invocation identity and independent ownership
+and mixing them with a physical frame address. The two `-other-capture` cases
+capture distinct buffers with different EBX, ESP and unwind bounds. Cleanup
+replaces the pending second capture with the first and value 42 with 43; only
+the first continuation may execute. All six protocol variants check EAX, the
+restored state and registers
+at both bases. `RegistrationReplacementJump` rejects unknown, overlapped or
+modified destination buffers, including writes during subsequent cleanup and
+writes to unused buffer padding; disjoint writes and reordered blocks pass.
+`RegistrationSEHJumpABI` rejects fabricated callback locations, targets,
+duplicate transfers and cyclic or incomplete replacement graphs. MedIR checks
+exact nested invocation identity and independent ownership
 of unreached callback tails; installation rejects removed noreturn attributes
 and newly inserted normal returns. The other seven cases are:
 `longjmp-filter-correlated-state`, `longjmp-filter-shared-state`,
