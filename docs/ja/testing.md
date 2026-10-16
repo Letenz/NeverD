@@ -2053,3 +2053,5 @@ CRT 回帰は全バイト／UTF-16 単位、引数幅、変更不要な読み取
 `KernelPhysicalRAM.AddressQueries*` と `KernelMDLUserMapping.PhysicalQuery*` は別名、アドレス空間、VA 再利用、境界、全幅 PFN、IRQL、ページ固定、解除済みマッピングを検証します。実際の WDK ユーザーマッピング用フィクスチャは静的・動的な `MmGetPhysicalAddress` を MDL PFN と比較し、読み取り専用ユーザービュー、DPC レベルのシステムビュー、以前の固定別名が残る再マッピングを実行します。
 
 `KernelMDLUserMapping.PrimaryQuery*` は正確な割り当て範囲、同一ページ上の隣接所有者、全幅アドレス、IRQL、解放、別名、マッピング置換、読み取り保護、未対応の主マッピングを検証します。実際の WDK フィクスチャは静的・動的な `MmGetVirtualForPhysical`、DPC レベルのシステムビュー、以前の固定別名が残るユーザー VA の再マッピングを実行します。
+
+`DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*` は有効化、解放、入れ子環境の復元、全幅境界、IRQL、プロセス接続、出力重複、High→Low の障害時書き込み順序を検証します。独自版と実際の WDK CRT フィクスチャは入口・ワーカー・アンロードで両 API を静的・動的に呼び、ローカル変数の範囲と DISPATCH_LEVEL での境界を確認します。

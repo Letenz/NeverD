@@ -1999,3 +1999,5 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 `KernelPhysicalRAM.AddressQueries*` 與 `KernelMDLUserMapping.PhysicalQuery*` 涵蓋別名、位址空間身分、虛擬位址重用、精確邊界、完整位寬 PFN、IRQL、頁面鎖定及撤銷映射。真正 WDK 使用者映射夾具以 MDL PFN 核對靜態和動態 `MmGetPhysicalAddress`，涵蓋唯讀使用者檢視、DPC 層級系統檢視及舊鎖定別名存活時的重新映射。
 
 `KernelMDLUserMapping.PrimaryQuery*` 涵蓋精確配置位元組、同頁相鄰擁有者、完整位寬位址、IRQL、釋放、別名、映射替換、讀取保護及不支援的主要映射投影。真正 WDK 夾具執行靜態和動態 `MmGetVirtualForPhysical`，包含 DPC 層級系統檢視，以及舊鎖定別名存活時的使用者虛擬位址重新繫結。
+
+`DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*` 涵蓋啟用、回收、巢狀環境還原、完整位寬邊界、IRQL、行程附加、輸出重疊及先 High 後 Low 的錯誤寫入順序。原創和真正 WDK CRT 夾具在進入點、工作執行緒和卸載時靜態及動態呼叫兩項查詢，檢查區域變數位於傳回範圍內，並在 DISPATCH_LEVEL 再次查詢邊界。

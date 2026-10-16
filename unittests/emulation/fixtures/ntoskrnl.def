@@ -126,6 +126,8 @@ EXPORTS
   IoGetRelatedDeviceObject
   IoGetBaseFileSystemDeviceObject
   IoGetDeviceObjectPointer
+  IoGetInitialStack
+  IoGetStackLimits
   KeStackAttachProcess
   KeUnstackDetachProcess
   RtlInitAnsiString

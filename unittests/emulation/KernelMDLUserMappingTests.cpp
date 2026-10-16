@@ -257,6 +257,31 @@ protected:
   }
 };
 
+TEST_F(KernelMDLUserMapping, StackQueryRetainsBoundsAcrossProcessAttachment) {
+  const auto IRP = begin();
+  const auto Process = call("IoGetRequestorProcess", {IRP});
+  const auto Apc = pool(64);
+  constexpr uint64_t Base = profile::CallbackStackBase;
+  constexpr uint64_t Size = profile::CallbackStackSize;
+  success(Memory->map(Base, Size, Read | Write));
+  success(Model->activateStack(Base, Size));
+  const auto [Work, ID] = worker(IRP);
+  const auto Initial = call("IoGetInitialStack", {});
+  EXPECT_EQ(Initial, Base + Size);
+  call("KeStackAttachProcess", {Process, Apc});
+  EXPECT_EQ(call("IoGetInitialStack", {}), Initial);
+  call("IoGetStackLimits", {Scratch + 0x400, Scratch + 0x408});
+  EXPECT_EQ(get(Scratch + 0x400), Base);
+  EXPECT_EQ(get(Scratch + 0x408), Initial);
+  call("KeUnstackDetachProcess", {Apc});
+  EXPECT_EQ(call("IoGetInitialStack", {}), Initial);
+  finishWorker(Work, ID);
+  success(Model->retireStack(Base, Size));
+  process(ProcessA);
+  call("ExFreePoolWithTag", {Apc, PoolTag});
+  complete(IRP);
+}
+
 TEST_F(KernelMDLUserMapping, PrimaryQueryUsesExactPoolOwnersAndRetirement) {
   const auto First = pool(17), Second = pool(17);
   const auto FirstPA = call("MmGetPhysicalAddress", {First});

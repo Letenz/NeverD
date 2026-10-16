@@ -1733,3 +1733,5 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 `KernelPhysicalMemory::resolveAddress` 將目前 `MemoryView` 與保留的精確配置切片和既有頁面身分匹配，包括別名。`KernelModel` 分別檢查映射可讀性、行程環境及駐留狀態。查詢不配置新身分或鎖定頁面；仍映射的頁面填補不能恢復已釋放位元組的生命週期。
 
 `KernelModel::queryPrimaryVirtualAddress` 依據既有存活的非分頁 `PoolAllocation` 記錄及 `KernelPhysicalMemory::describe` 推導主要虛擬位址，再透過正向查詢驗證。不新增反向別名登錄、實體身分或頁面鎖定；通用後備位址不能證明主要映射。
+
+`activateStack` 和 `retireStack` 管理 `ExecutionStacks`；查詢將範圍繫結至目前的 `ExecutionThreadKeys` 身分。再次啟用須保留精確範圍，存活堆疊重疊或回收範圍不符會在修改前拒絕。共用執行緒的巢狀執行仍保有獨立邊界。這些環境查詢在原生解殼重建中仍是不透明相依項。

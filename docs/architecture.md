@@ -7433,3 +7433,5 @@ capture failures cannot replace the original service outcome.
 `KernelPhysicalMemory::resolveAddress` matches the current `MemoryView` to exact retained allocation slices and existing page identities, including aliases. `KernelModel` separately admits readable mappings, process context and residency. A query neither allocates an identity nor pins a page; surviving mapped page padding cannot revive retired bytes.
 
 `KernelModel::queryPrimaryVirtualAddress` derives the primary VA from existing live nonpaged `PoolAllocation` records and `KernelPhysicalMemory::describe`, then authenticates it through the forward query. It adds no reverse-alias registry, physical identity or pin; generic backing addresses do not establish a primary mapping.
+
+`activateStack` and `retireStack` own `ExecutionStacks`; queries bind that extent to the current `ExecutionThreadKeys` identity. Exact reactivation preserves the extent, while overlapping live stacks and mismatched retirement fail before mutation. Nested executions keep separate bounds even when sharing a thread. These environment queries remain opaque to native unpack reconstruction.
