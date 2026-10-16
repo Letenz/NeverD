@@ -534,6 +534,58 @@ TEST_F(TypeRenderFixture, EmbeddedCDefinesWhatAUnitNames) {
   EXPECT_FALSE(llvm::is_contained(Embedded.Types, "_FORWARD_ONLY"));
 }
 
+TEST_F(TypeRenderFixture, EmbeddedSourceSaysHowCodeReachesEachMember) {
+  // The types a C unit holds, as Rust and Go pseudocode holds them beside
+  // the code, and how that code reaches the members C names on their own.
+  const LocalType *Thread = Library->find("_THREAD_LIKE");
+  const LocalType *Packed = Library->find("_PACKED");
+  const LocalType *Integer = Library->find("_LARGE_INTEGER");
+  const LocalType *Forward = Library->find("_FORWARD_ONLY");
+  ASSERT_TRUE(Thread && Packed && Integer && Forward);
+  const LocalType *Defined[] = {Thread, Packed, Integer};
+  const LocalType *Declared[] = {Forward};
+  const auto hops = [](const EmbeddedSource &Source, llvm::StringRef Record,
+                       llvm::StringRef Member) {
+    std::string Text;
+    const auto Members = Source.Members.find(Record.str());
+    if (Members == Source.Members.end())
+      return Text;
+    const auto Path = Members->second.find(Member.str());
+    if (Path == Members->second.end())
+      return Text;
+    for (const MemberPath::Hop &Hop : Path->second.Hops)
+      Text += (Text.empty() ? "" : ".") + Hop.Name + (Hop.Accessor ? "()" : "");
+    return Text;
+  };
+  const EmbeddedSource Rust =
+      renderEmbeddedSource(*Library, Defined, Declared, in(Language::Rust));
+  // No module header: the text sits beside the code.
+  EXPECT_FALSE(contains(Rust.Text, "#![allow")) << Rust.Text;
+  EXPECT_FALSE(contains(Rust.Text, "use core::ffi::c_void;"));
+  EXPECT_TRUE(contains(Rust.Text, "pub struct _FORWARD_ONLY {\n    "
+                                  "_opaque: [u8; 0],\n}"));
+  EXPECT_TRUE(contains(Rust.Text, "pub union _THREAD_LIKE_0 {"));
+  EXPECT_EQ(hops(Rust, "_THREAD_LIKE", "Header"), "Header");
+  EXPECT_EQ(hops(Rust, "_THREAD_LIKE", "MiscFlags"), "Anonymous1.MiscFlags");
+  EXPECT_EQ(hops(Rust, "_PACKED", "Value"), "Value");
+  EXPECT_EQ(hops(Rust, "_LARGE_INTEGER", "QuadPart"), "QuadPart");
+  // A bit-field reads through its own methods, which no path names.
+  EXPECT_EQ(hops(Rust, "_THREAD_LIKE", "AutoBoostActive"), "");
+  // Go reads a union's members, and what it cannot align, through
+  // methods that return pointers to them.
+  const EmbeddedSource Go =
+      renderEmbeddedSource(*Library, Defined, Declared, in(Language::Go));
+  EXPECT_FALSE(contains(Go.Text, "package ")) << Go.Text;
+  EXPECT_FALSE(contains(Go.Text, "import "));
+  EXPECT_TRUE(contains(Go.Text, "type _FORWARD_ONLY struct{}"));
+  EXPECT_EQ(hops(Go, "_THREAD_LIKE", "MiscFlags"), "Anonymous1.MiscFlags()");
+  EXPECT_EQ(hops(Go, "_PACKED", "Tag"), "Tag");
+  EXPECT_EQ(hops(Go, "_PACKED", "Value"), "Value()");
+  EXPECT_EQ(hops(Go, "_LARGE_INTEGER", "QuadPart"), "QuadPart()");
+  EXPECT_TRUE(renderEmbeddedSource(*Library, Defined, Declared, in(Language::C))
+                  .Text.empty());
+}
+
 TEST_F(TypeRenderFixture, RustAndGoKeepPacking) {
   EXPECT_TRUE(
       contains(render("_PACKED", in(Language::Rust)), "#[repr(C, packed(1))]"));

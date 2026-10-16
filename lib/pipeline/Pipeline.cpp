@@ -533,8 +533,8 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     return Result;
   }
 
-  // Both source routes need the same ABI/return recovery. LLVM views can
-  // postpone only the HighIR projection; they must not bypass those proofs.
+  // Source and analysis views share ABI/return recovery. Views that do not
+  // consume HighIR postpone only that projection, retaining those proofs.
   if (Opts.DeferHighIR && !Opts.DumpHigh) {
     Trace.start(NativePipelineTrace::Stage::HighIR);
     try {

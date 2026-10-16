@@ -170,6 +170,9 @@ public:
   /// stands for that enumeration.  What the debug information gave types of
   /// the name, members or enumerators, must agree with the library too.
   CRecordDefinitions definitions(const std::vector<TypeRef> &Records) const;
+  /// The copy of the library this context reads, which its definitions
+  /// render.
+  const types::TypeLibrary &library() const { return *Types; }
 
   /// The library's types the decompiler has read through this context: the
   /// records whose members it gave and the types units held.  A change to

@@ -76,9 +76,10 @@ prebuilt-LLVM guidance.
 restoration of ordinary output, reuse of prepared IR, navigation invalidation
 and strict option validation. `SourceLLVMProfiles*` checks separate source and
 module cache identities. `NativeLLVMInspection*` preserves inspection branches
-across source profiles and both view orders. `LLVMViewsDeferOnlyHighIR*`
-checks integer and floating call results, unchanged LLVM/source output and
-resumption without relifting; `FunctionViewRejectsUnknown*` preserves the
+across source profiles and both view orders. `NativeAnalysisViewsDeferOnlyHighIR*`
+checks integer and floating call results, unchanged LowIR/MedIR/CFG/LLVM/source
+output and IR page anchors, and resumption without relifting after analysis
+views; `FunctionViewRejectsUnknown*` preserves the
 prepared function on invalid view names. `LLVMViewShowsTheFunctionInAModuleOfItsOwn`
 builds a glibc PIE: `_start`'s LLVM IR must assemble and verify alone, declare
 the GOT's mirror before the definition under a comment saying what it stands
@@ -313,7 +314,14 @@ NEVERD_SOURCE_DIALECT=go \
 custom template arguments, ATL names, and the C exception projection's native
 calls and handlers. `ReadsTheDefinitionsOfTheProgramsTypes` reads a unit's
 local types definitions back in C as written, whole in C++, and in Rust and
-Go as far as their structures lay them out, saying why for the rest. Decompiled
+Go as far as their structures lay them out, saying why for the rest.
+`TheProgramsTypesSpellTheirRecordsAndTheirMembers` gives Rust and Go the
+program's types and checks the paths their code reaches members by;
+`TypeRender.EmbeddedSourceSaysHowCodeReachesEachMember` checks those paths
+as the renderers write them. `SessionCAPITest.RustAndGoPseudocodeDefineTheProgramsTypesAsTheyDo`
+reads `unittests/types/fixtures/rust_types.exe`, which reads as Rust and as
+Go, through both views; its Rust and Go views compile with rustc and
+`go vet`. Decompiled
 kernel units read back the same way: `NEVERD_SOURCE_DIALECT_CORPUS` on the
 units `scripts/check_decompiled_types.py --keep` writes. `NeverDSessionCAPITests` checks detected defaults, explicit
 language pages and emission caches; `NeverDGuiController` checks the C++ title,
@@ -5857,9 +5865,12 @@ Native x64 KVM/WHP/HVF initialization executes `X64MachineProbe.def` in private 
 `NeverDAArch64PAuthTests` runs both checked privilege profiles on available
 Unicorn/KVM/WHP/HVF transports. Independent encodings cover all 128 HINT selectors,
 the twelve admitted disabled-key forms, four unguarded BTI forms,
-zero and high-bit return addresses,
-and rejected non-HINT authentication, stripping, branches and system-register
-access. Every attempt checks the complete scalar/vector inventory, PC and
+zero and high-bit return addresses, and original `XPACLRI` with unsigned low
+48-bit return addresses. The latter are fixed points of PAC stripping in the
+checked translation regime; authentication being disabled alone does not make
+stripping a NOP. `XPACLRI` with higher address bits, non-HINT authentication and
+stripping, authenticated branches and key/control register access remain
+unsupported. Every attempt checks the complete scalar/vector inventory, PC and
 unchanged code/data bytes. Run it together with `NeverDAArch64StateTests`,
 `NeverDAArch64FPTests` and the checked CPU/session regressions after changing
 admission or startup probes. Native platform cells without hardware remain
