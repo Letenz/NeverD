@@ -1773,3 +1773,5 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 `KernelModelRuntime` 统一负责内核 CRT 分类、原地转换和受检字符串写入。`KernelCStringAPIs.def` 向各调用入口提供导出身份、参数数量和 IRQL 准入。逐单元访问复用来宾内存权限及生命周期检查，报告和适配层不重复实现复制或错误语义。
 
 `KernelMemoryCalls` 负责检查型内存复制的准入并复用移动／填充操作，包括池生命周期和用户内存检查。`KernelModelRuntime` 负责 `RtlImageNtHeader` 原始签名探测。探测结果不能替代执行镜像所需的加载器验证；适配器不重复实现这两种语义。
+
+`KernelModelRuntime` 统一负责 Unicode 哈希、不依赖 NLS 的大写映射及 1980 纪元秒数转换。`KernelRuntimeCalls` 通过已有分页字符串池分配大写输出。字符串和时间 API 表统一导出身份、参数个数与 APC_LEVEL 限制；字段访问顺序由实现层负责。

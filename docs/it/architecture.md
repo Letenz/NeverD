@@ -1893,3 +1893,5 @@ KernelFileSystem conserva un provider token per FILE_OBJECT. L’operazione priv
 `KernelModelRuntime` gestisce classificazione CRT, conversione sul posto e scritture controllate di stringhe. `KernelCStringAPIs.def` fornisce identità esportata, numero di argomenti e ammissione IRQL a ogni percorso. Gli accessi per unità riusano permessi e controlli di durata del guest; report e adattatori non duplicano la semantica di copia o errore.
 
 `KernelMemoryCalls` possiede l’ammissione delle copie controllate e riusa move/fill, durata del pool e controlli di memoria utente. `KernelModelRuntime` possiede la verifica della firma grezza `RtlImageNtHeader`. Questa verifica non sostituisce la convalida del loader necessaria all’esecuzione; gli adattatori non duplicano le due semantiche.
+
+`KernelModelRuntime` gestisce hash Unicode, conversione comune in maiuscolo indipendente da NLS e secondi dall’epoca 1980. `KernelRuntimeCalls` riusa il proprietario del pool paginato delle stringhe. Le tabelle API definiscono esportazioni, numero di argomenti e APC_LEVEL; l’ordine degli accessi resta nelle implementazioni.
