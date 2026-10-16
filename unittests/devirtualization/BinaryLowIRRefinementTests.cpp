@@ -3200,6 +3200,23 @@ TEST(BinaryLowIRRefinement, TaskPriorityContractCannotCertifyUnusedState) {
           Status::Unsupported);
 }
 
+TEST(BinaryLowIRRefinement, MXCSRContractCannotCertifyUnusedState) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete());
+  P.Options.X64MXCSRMask = 0xffbf;
+  const auto Proof = P.check(R.Residual);
+  refused(Proof, Status::Unsupported);
+  EXPECT_NE(Proof.Proof.Diagnostic.find("MXCSR state"), std::string::npos);
+  const auto Independence =
+      checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
+  EXPECT_EQ(Independence.Proof.Status, LowIRIndependenceStatus::Unsupported);
+  EXPECT_FALSE(Independence.Certificate);
+  refused(checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options, R.Residual,
+                                         P.Contract, {}),
+          Status::Unsupported);
+}
+
 TEST(BinaryLowIRRefinement, StoreSeparationUsesExplicitEntryAlignment) {
   // MOV RAX,[RCX]; AND RAX,-16; MOV qword ptr [RAX],7; RET.
   Program P({0x48, 0x8b, 0x01, 0x48, 0x83, 0xe0, 0xf0, 0x48, 0xc7, 0x00, 7, 0,

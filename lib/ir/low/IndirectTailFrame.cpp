@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 
 #include <algorithm>
 #include <bit>
@@ -134,6 +135,19 @@ class TailFrameGuard {
     return true;
   }
 
+  /// A store whose target the frame does not track exactly may hit any spill:
+  /// forget them all, and let every stack-derived word it drops or writes
+  /// escape.
+  bool clobberSpills(FrameState &State, const FrameWord &Value) {
+    if (!charge(State.Spills.size()))
+      return false;
+    for (const auto &[Offset, Spill] : State.Spills)
+      State.Escaped |= Spill.MayBeStack;
+    State.Spills.clear();
+    State.Escaped |= Value.MayBeStack;
+    return true;
+  }
+
   bool forgetTemps(FrameState &State) {
     if (!charge(State.Values.size()))
       return false;
@@ -225,14 +239,12 @@ class TailFrameGuard {
         // an exact known spill; untracked loads provide no restoration fact.
         Result = {};
         if (Op.Opcode == NdOp::STORE) {
-          if (!charge(State.Spills.size()))
-            return false;
           if (!Exact) {
-            for (const auto &[Offset, Spill] : State.Spills)
-              State.Escaped |= Spill.MayBeStack;
-            State.Spills.clear();
-            State.Escaped |= Value.MayBeStack;
+            if (!clobberSpills(State, Value))
+              return false;
           } else {
+            if (!charge(State.Spills.size()))
+              return false;
             std::erase_if(State.Spills, [&](const auto &Item) {
               const bool Overlap =
                   Item.first < Address.Offset + Memory.AccessSize &&
@@ -287,9 +299,25 @@ class TailFrameGuard {
       case NdOp::ATOMIC_XCHG:
       case NdOp::ATOMIC_ADD:
       case NdOp::ATOMIC_CMPXCHG:
-      case NdOp::INTRINSIC:
-        // No implicit memory/register effect contract is invented here.
-        return false;
+      case NdOp::INTRINSIC: {
+        if (lowIntrinsicHasOnlyValueEffects(Op))
+          break;
+        // An atomic or exclusive access writes only its output and the memory
+        // at its address.  Its ordering, and an exclusive store's possible
+        // failure, keep that memory out of the spill facts, and the value it
+        // returns is untracked.  No implicit memory/register effect contract
+        // is invented for any other intrinsic.
+        const auto Memory = Op.Opcode == NdOp::INTRINSIC
+                                ? lowIntrinsicMemoryOperands(Op)
+                                : lowMemoryOperands(Op);
+        FrameWord Value;
+        if (!Memory.Complete || !Memory.Address ||
+            (Memory.StoredValue && (!read(State, *Memory.StoredValue, Value) ||
+                                    !clobberSpills(State, Value))))
+          return false;
+        Result = {};
+        break;
+      }
       default:
         break;
       }

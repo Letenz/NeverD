@@ -520,3 +520,55 @@ u64 threads_priority(u64 *out, u64 mode) {
   out[11] = *__errno();
   return 0;
 }
+
+static u64 *TaskOutput;
+static u64 raw_pidfd(u64 pid, u64 flags) {
+  register u64 x0 __asm__("x0") = pid;
+  register u64 x1 __asm__("x1") = flags;
+  register u64 x8 __asm__("x8") = 434;
+  __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x8) : "memory", "cc");
+  return x0;
+}
+static void *task_catalogue_child(void *unused) {
+  (void)unused;
+  u64 *out = TaskOutput;
+  out[16] = gettid();
+  out[17] = raw_pidfd(out[16], 0);
+  out[18] = syscall(434, out[16], 0UL);
+  out[19] = *__errno();
+  out[20] = raw_pidfd(2000, 0);
+  out[21] = raw_call(57, out[20]);
+  out[22] = syscall(113, (long)((~out[16] << 3) | 2), out + 24);
+  out[26] = syscall(113, -16006L, out + 27);
+  __atomic_store_n(out, 1, __ATOMIC_RELEASE);
+  while (!__atomic_load_n(out + 6, __ATOMIC_ACQUIRE))
+    gettid();
+  return 0;
+}
+u64 threads_task_catalogue(u64 *out, u64 mode) {
+  TaskOutput = out;
+  u64 child;
+  if (pthread_create(&child, 0, task_catalogue_child, 0))
+    return 1;
+  while (!__atomic_load_n(out, __ATOMIC_ACQUIRE))
+    gettid();
+  out[1] = raw_pidfd(2000, 0);
+  out[2] = raw_call(57, out[1]);
+  out[3] = raw_pidfd(out[16], 0);
+  out[4] = raw_pidfd(3000, 0);
+  out[5] = raw_pidfd(1002, 0);
+  out[30] = raw_pidfd(out[16], ~(u64)0);
+  if (mode)
+    out[31] = raw_pidfd(mode == 1 ? out[16] : 1000, 0x80);
+  __atomic_store_n(out + 6, 1, __ATOMIC_RELEASE);
+  out[7] = pthread_join(child, 0);
+  out[8] = raw_pidfd(out[16], 0);
+  out[9] = raw_pidfd(2000, 0);
+  out[10] = raw_call(57, out[9]);
+  out[11] = raw_pidfd(1000, 0);
+  out[12] = raw_call(57, out[11]);
+  out[13] = gettid();
+  out[14] = syscall(113, (long)((~out[16] << 3) | 2), out + 32);
+  out[15] = *__errno();
+  return 0;
+}

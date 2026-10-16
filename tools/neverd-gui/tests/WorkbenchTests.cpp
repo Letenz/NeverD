@@ -1081,6 +1081,68 @@ private slots:
     QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
   }
 
+  void contextMenusOfferTabWithItsKey() {
+    // Tab's switch to the other pane is in both context menus with its key:
+    // a code window's as Jump to disassembly beside the synchronization
+    // switch, the disassembly's as Jump to pseudocode.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    const Address function = Base + 0x140;
+    assembly->navigate(function);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 3);
+    code->setPreludeFolded(false);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    code->setCursorLine(3);
+    assembly->navigate(function, false);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
+    QString shown;
+    bool jumpOffered = true;
+    withCodeMenu(code, [&](QMenu *menu) {
+      auto *cross =
+          menu->findChild<QAction *>(QStringLiteral("codeJumpDisassembly"));
+      QVERIFY(cross);
+      shown = cross->text();
+      // The disassembly's own wording would point back at this window.
+      jumpOffered =
+          menu->actions().contains(bench.action(ActionId::JumpPseudocode));
+      cross->trigger();
+    });
+    QCOMPARE(shown, QStringLiteral("Jump to disassembly\tTab"));
+    QVERIFY(!jumpOffered);
+    QTRY_VERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(function + 6));
+
+    QStringList texts;
+    QTimer probe;
+    connect(&probe, &QTimer::timeout, this, [&] {
+      auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+      if (!menu)
+        return;
+      probe.stop();
+      for (const QAction *action : menu->actions())
+        texts << action->text();
+      menu->close();
+    });
+    probe.start(5);
+    emit assembly->contextMenuRequested(assembly->mapToGlobal(QPoint(40, 40)));
+    QVERIFY(texts.contains(bench.action(ActionId::JumpPseudocode)->text()));
+    QCOMPARE(bench.action(ActionId::JumpPseudocode)->shortcut(),
+             QKeySequence(Qt::Key_Tab));
+  }
+
   void assemblyAndCodeCursorsFollowEachOther() {
     // A move in the disassembly takes a code window showing the same
     // function to the instruction's row and leaves the focus there; a code
@@ -1259,6 +1321,137 @@ private slots:
             code->allText().contains(QStringLiteral("v1 & 4294967295U;")),
         OpenTimeoutMs);
     QVERIFY(code->allText().contains(QStringLiteral("v0 + 030; /* 8 */")));
+  }
+
+  void codeTextSelectsLikeAnEditor() {
+    // Ctrl+A selects the whole function, a drag held below the text scrolls
+    // and extends the selection past the first screen, and a right click
+    // inside the selection keeps it for Copy, as in an editor.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers-paged.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address function = Base + 0x140;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    // Ctrl+A while pages still arrive selects the whole function once the
+    // last one is in, its folded prelude included.
+    bool pressed = false;
+    QObject context;
+    connect(code->verticalScrollBar(), &QScrollBar::rangeChanged, &context,
+            [&] {
+              if (pressed || !code->loading() || code->lineCount() == 0)
+                return;
+              pressed = true;
+              QTest::keyClick(code, Qt::Key_A, Qt::ControlModifier);
+            });
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 600,
+                             OpenTimeoutMs);
+    QVERIFY(pressed);
+    QCOMPARE(code->selectedText(), code->allText());
+    code->setPreludeFolded(false);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+
+    QTest::keyClick(code, Qt::Key_A, Qt::ControlModifier);
+    QCOMPARE(code->selectedText(), code->allText());
+    bench.action(ActionId::EditCopy)->trigger();
+    QCOMPARE(clipboardText(), code->allText());
+
+    code->setCursorLine(0);
+    QCOMPARE(code->verticalScrollBar()->value(), 0);
+    const int height = int(
+        std::ceil(QFontMetricsF(Theme::instance().codeFont()).lineSpacing()));
+    QTest::mousePress(code->viewport(), Qt::LeftButton, {},
+                      QPoint(60, 2 * height + height / 2));
+    const QPoint below(60, code->viewport()->height() + 3 * height);
+    QTest::mouseMove(code->viewport(), below);
+    QTRY_VERIFY(code->verticalScrollBar()->value() > 100);
+    QTest::mouseRelease(code->viewport(), Qt::LeftButton, {}, below);
+    const int last = code->cursorLine();
+    QVERIFY(last > 100);
+    const QString selected = code->selectedText();
+    QCOMPARE(int(selected.count(QLatin1Char('\n'))), last - 2);
+
+    // A right click inside the selection keeps it, and the menu's Copy,
+    // beside Select all, copies it.
+    QApplication::clipboard()->clear();
+    const QPoint inside(60, code->viewport()->height() / 2);
+    QTest::mousePress(code->viewport(), Qt::RightButton, {}, inside);
+    QTest::mouseRelease(code->viewport(), Qt::RightButton, {}, inside);
+    QCOMPARE(code->selectedText(), selected);
+    auto *copy = bench.action(ActionId::EditCopy);
+    bool clicked = false;
+    QTimer clicker;
+    connect(&clicker, &QTimer::timeout, this, [&] {
+      auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+      if (!menu)
+        return;
+      clicker.stop();
+      clicked = menu->actions().contains(copy) &&
+                menu->findChild<QAction *>(QStringLiteral("codeSelectAll"));
+      if (clicked)
+        QTest::mouseClick(menu, Qt::LeftButton, {},
+                          menu->actionGeometry(copy).center());
+      if (menu->isVisible())
+        menu->close();
+    });
+    clicker.start(5);
+    QContextMenuEvent request(QContextMenuEvent::Mouse, inside,
+                              code->viewport()->mapToGlobal(inside));
+    QApplication::sendEvent(code->viewport(), &request);
+    QVERIFY(clicked);
+    QCOMPARE(clipboardText(), selected);
+    QCOMPARE(code->selectedText(), selected);
+  }
+
+  void codeEditKeepsThePlaceInALongFunction() {
+    // An edit loads the function's pages again. The first page used to
+    // clamp the cursor and the view, which then stayed near its end: the
+    // cursor on a number of the third page jumped away from it.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers-paged.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address function = Base + 0x140;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 600,
+                             OpenTimeoutMs);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    code->setCursorLine(0);
+    QVERIFY(code->findText(QStringLiteral("24"), true));
+    const int line = code->cursorLine();
+    const int top = code->verticalScrollBar()->value();
+    QVERIFY(line > 512);
+    QVERIFY(top > 256);
+    bench.action(ActionId::EditOperandDecimal)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(QStringLiteral("return v0 + 0x18;")),
+        OpenTimeoutMs);
+    QCOMPARE(code->cursorLine(), line);
+    QCOMPARE(code->verticalScrollBar()->value(), top);
+    const auto target = code->numberTarget();
+    QVERIFY(target.has_value());
+    QCOMPARE(target->shown, neverd::LiteralRadix::Hex);
   }
 
   void graphJumpDuringFunctionLoadKeepsLatestAddress() {

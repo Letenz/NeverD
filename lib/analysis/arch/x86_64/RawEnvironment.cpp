@@ -27,6 +27,10 @@ std::string optionsDigest(const SpecializationOptions &O) {
     H.number(O.X64SegmentedWrites);
   }
   H.number(O.X64CR8State);
+  if (O.X64MXCSRMask) {
+    H.text("x64-mxcsr-mask-v1");
+    H.number(*O.X64MXCSRMask);
+  }
   H.number(O.X64MachineExits.size());
   for (const auto &E : O.X64MachineExits) {
     H.number(E.Version);

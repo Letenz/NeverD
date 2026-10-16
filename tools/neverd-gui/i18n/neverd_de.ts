@@ -2331,6 +2331,14 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <translation>Setzen Sie den Cursor auf einen Parameter der Funktion, um ihn umzuwandeln</translation>
     </message>
     <message>
+        <source>Select &amp;all</source>
+        <translation>&amp;Alles auswählen</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>Zur Disassemblierung springen</translation>
+    </message>
+    <message>
         <source>Synchronize with disassembly</source>
         <translation>Mit Disassemblierung synchronisieren</translation>
     </message>

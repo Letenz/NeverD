@@ -2325,6 +2325,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>請將游標放在函式的參數上以轉換它</translation>
     </message>
     <message>
+        <source>Select &amp;all</source>
+        <translation>全選(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>跳至反組譯</translation>
+    </message>
+    <message>
         <source>Synchronize with disassembly</source>
         <translation>與反組譯同步</translation>
     </message>

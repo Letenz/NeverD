@@ -10,6 +10,7 @@
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QTimer>
 #include <QVector>
 #include <QWidget>
 #include <optional>
@@ -100,6 +101,8 @@ public:
   bool findText(const QString &text, bool forward);
   /// Move the cursor to \p line and reveal it.
   void setCursorLine(int line) { moveCursor(line, 0, false); }
+  /// Select the whole text, as Ctrl+A does, without moving the view.
+  void selectAll();
   /// The displayed line the cursor is on.
   int cursorLine() const { return cursorLine_; }
   int lineCount() const { return int(lines_.size()); }
@@ -238,6 +241,14 @@ private:
   LibraryCodeView library_;
   std::optional<Address> function_;
   std::optional<Address> pendingAddress_, selectedAddress_;
+  /// Where the cursor and the view were when the same function loads again,
+  /// after an edit: the source lines of the cursor and of the first shown
+  /// line, and the cursor's column. The first pages clamp both, so the
+  /// complete text puts them back.
+  struct SourcePlace {
+    int cursorLine = 0, cursorColumn = 0, topLine = 0;
+  };
+  std::optional<SourcePlace> placeAfterLoad_;
   QString representation_, status_, highlight_;
   QJsonObject sourceOptions_, renderedOptions_;
   quint64 serial_ = 0;
@@ -291,6 +302,14 @@ private:
   int cursorLine_ = 0, cursorColumn_ = 0;
   std::optional<std::pair<int, int>> anchor_;
   bool selecting_ = false;
+  /// Extend the selection to a point of the viewport, as dragging does; a
+  /// point beyond an edge reaches the line at that edge.
+  void dragTo(const QPoint &position);
+  /// Ctrl+A during a load selects the whole text once the last page is in.
+  bool selectAllAfterLoad_ = false;
+  /// Scrolls the text while a drag holds the mouse beyond an edge.
+  QTimer dragScroll_;
+  QPoint dragPoint_;
   /// The cursor follows the disassembly, which needs no word of the move.
   bool following_ = false;
   QVector<int> marked_;

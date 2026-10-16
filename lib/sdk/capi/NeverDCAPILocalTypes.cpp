@@ -78,7 +78,8 @@ void joinHeaders(Session &S) {
       Joined.Merge = types::mergeHeaderTypes(*S.LocalTypes, *Headers);
     S.LocalTypeHeaders.push_back(std::move(Joined));
   };
-#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Form, Machine, Sub)       \
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Form, Machine, Sub,       \
+                              Spelling)                                        \
   if (S.Img.Format == BinaryFormat::Form && S.Img.Arch == Arch::Machine &&     \
       Subsystem == Sub &&                                                      \
       S.LocalTypes->dataModel() == types::DataModel::Model)                    \
@@ -454,14 +455,12 @@ bool Session::checkFunctionDeclaration(const std::string &Text,
 }
 
 DebugContext *Session::decompileDebug() {
-  std::map<va_t, std::string> Declarations = functionDeclarations();
-  if (!Dbg && Declarations.empty())
-    return nullptr;
   if (LocalTypesDbg)
     return LocalTypesDbg.get();
   if (LocalTypesChecked)
     return Dbg.get();
   LocalTypesChecked = true;
+  std::map<va_t, std::string> Declarations = functionDeclarations();
   // Reading the types may fail, as a PDB's may; the decompilation goes on
   // with the program's debug information alone, its error untouched, and
   // the user's declarations read against the types every image has.
@@ -470,11 +469,21 @@ DebugContext *Session::decompileDebug() {
   LastError = Error;
   if (!Library && Declarations.empty())
     return Dbg.get();
+  // An image without debug information takes the declarations the user
+  // gives its functions and the prototypes of the routines its names are
+  // those of, as the Windows kernel's headers declare its exports.
+  if (!Dbg && Declarations.empty() &&
+      (!Library || Library->prototypes().empty()))
+    return nullptr;
+  std::vector<types::HeaderLibrary> Headers;
+  for (const JoinedHeaders &Joined : LocalTypeHeaders)
+    if (Joined.Error.empty())
+      Headers.push_back(Joined.Library);
   LocalTypesDbg = std::make_unique<LocalTypesDebugContext>(
       Dbg ? *Dbg : static_cast<const DebugContext &>(NoDebugInfo),
       Library ? std::make_shared<types::TypeLibrary>(*Library)
               : std::make_shared<types::TypeLibrary>(dataModelOf(Img)),
-      std::move(Declarations));
+      std::move(Declarations), &Img, std::move(Headers));
   return LocalTypesDbg.get();
 }
 

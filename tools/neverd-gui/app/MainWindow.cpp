@@ -2967,17 +2967,38 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
     if (auto *action = actions_.action(id); action->isEnabled())
       menu.addAction(action);
   menu.addSeparator();
-  for (const auto id : {ActionId::ViewToggleGraph, ActionId::ViewPseudocode,
-                        ActionId::ViewMedIR})
+  menu.addAction(actions_.action(ActionId::ViewToggleGraph));
+  // Tab, the switch to the other pane's row, with its key; a code window
+  // names it by where it goes.
+  if (!focusedCodeView())
+    menu.addAction(actions_.action(ActionId::JumpPseudocode));
+  for (const auto id : {ActionId::ViewPseudocode, ActionId::ViewMedIR})
     menu.addAction(actions_.action(id));
   menu.addSeparator();
   menu.addAction(actions_.action(ActionId::EditCopy));
   menu.addAction(actions_.action(ActionId::EditCopyAddress));
+  // A code window selects its whole text for Copy, as an editor does.
+  if (auto *code = focusedCodeView()) {
+    auto *all = menu.addAction(icon(QStringLiteral("select_all")),
+                               tr("Select &all") + QLatin1Char('\t') +
+                                   QKeySequence(QKeySequence::SelectAll)
+                                       .toString(QKeySequence::NativeText));
+    all->setObjectName(QStringLiteral("codeSelectAll"));
+    connect(all, &QAction::triggered, code->text(), &CodeText::selectAll);
+  }
   // A code window's folds: the declarations before the function and the
   // recognized library operations.
   if (auto *code = focusedCodeView()) {
     CodeText *text = code->text();
     menu.addSeparator();
+    // Tab goes to the row's instruction and takes the focus there.
+    auto *jump = actions_.action(ActionId::JumpPseudocode);
+    auto *cross =
+        menu.addAction(icon(QStringLiteral("jump_disassembly")),
+                       tr("Jump to disassembly") + QLatin1Char('\t') +
+                           jump->shortcut().toString(QKeySequence::NativeText));
+    cross->setObjectName(QStringLiteral("codeJumpDisassembly"));
+    connect(cross, &QAction::triggered, jump, &QAction::trigger);
     // Hex-Rays' Synchronize with: the code and the disassembly follow each
     // other's cursor, or browse apart with Tab to cross over.
     auto *follow = menu.addAction(icon(QStringLiteral("sync")),

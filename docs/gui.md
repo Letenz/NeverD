@@ -179,7 +179,10 @@ code window showing the same function to the instruction's rows and marks
 them. A code window showing another function stays on it rather than
 decompiling on every step; F5 or Tab opens the new one. The code window's
 context menu turns **Synchronize with disassembly** off to browse apart, and
-the choice is kept. **Tab** from a code window selects its mapped instruction
+the choice is kept; beside it, **Jump to disassembly** shows Tab's key, as
+**Jump to pseudocode** does in the disassembly's menu. Following a cursor costs
+well under a millisecond in a 50,000-line function: neither direction
+decompiles, and the source side only searches the rows it shows. **Tab** from a code window selects its mapped instruction
 in disassembly and moves the focus there; Tab from disassembly selects the
 mapped source row in the last code window used, keeping its representation and
 both panes visible. A folded target row expands, and a new function waits for
@@ -277,7 +280,11 @@ declare one-byte-aligned, `may_alias` types instead. A call argument that points
 to a string, directly or through a pointer the image holds, shows the string
 beside it, after its encoding unless that is ASCII or UTF-8:
 `puts(u8s /* "你好" */)`, `/* GBK "中文" */`. Copy and export always use the
-complete code.
+complete code. Text selects as in an editor: drag with the mouse, which scrolls
+while it is held beyond an edge, extend with Shift and the arrows or a Shift
+click, or press **Ctrl+A** (also **Select all** in the context menu) for the
+whole function; **Ctrl+C** or the context menu's **Copy** copies it, and a
+right click inside the selection keeps it.
 
 Global data is declared the way C source declares it, with the value the image
 holds: a string the code reaches by its address is its array

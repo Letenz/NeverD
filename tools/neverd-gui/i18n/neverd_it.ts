@@ -2331,6 +2331,14 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
         <translation>Posiziona il cursore su un parametro della funzione per convertirlo</translation>
     </message>
     <message>
+        <source>Select &amp;all</source>
+        <translation>Seleziona &amp;tutto</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>Vai al disassemblato</translation>
+    </message>
+    <message>
         <source>Synchronize with disassembly</source>
         <translation>Sincronizza con il disassemblato</translation>
     </message>

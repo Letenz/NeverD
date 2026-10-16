@@ -2355,6 +2355,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>ضع المؤشر على معامل للدالة لتحويله</translation>
     </message>
     <message>
+        <source>Select &amp;all</source>
+        <translation>تحديد الكل(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>الانتقال إلى التفكيك</translation>
+    </message>
+    <message>
         <source>Synchronize with disassembly</source>
         <translation>المزامنة مع التفكيك</translation>
     </message>

@@ -2325,6 +2325,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>변환하려면 함수의 매개변수에 커서를 두세요</translation>
     </message>
     <message>
+        <source>Select &amp;all</source>
+        <translation>모두 선택(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>디스어셈블리로 이동</translation>
+    </message>
+    <message>
         <source>Synchronize with disassembly</source>
         <translation>디스어셈블리와 동기화</translation>
     </message>
