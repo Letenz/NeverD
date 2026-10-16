@@ -12,6 +12,7 @@
 #include "os/windows/kernel/WindowsKernelLayout.h"
 
 #include <array>
+#include <functional>
 #include <initializer_list>
 
 namespace neverd::emulation {
@@ -22,6 +23,7 @@ class AliasBudgetMemory : public GuestMemory {
 public:
   explicit AliasBudgetMemory(GuestMemory &Storage) : Storage(Storage) {}
   bool Exhausted = false;
+  std::function<void(uint64_t)> ObserveAccess;
   std::shared_ptr<AddressSpace> addressSpace() const override {
     return Storage.addressSpace();
   }
@@ -77,6 +79,8 @@ public:
   }
   llvm::Expected<bool> canAccess(uint64_t Address, uint64_t Size,
                                  unsigned Permissions) const override {
+    if (ObserveAccess)
+      ObserveAccess(Address);
     return Storage.canAccess(Address, Size, Permissions);
   }
   llvm::Error readBacking(uint64_t Address,
@@ -178,7 +182,9 @@ protected:
     put(IRP + IRPInformationOffset, 0);
     call("IofCompleteRequest", {IRP, 0});
   }
-  uint64_t begin(uint32_t File = 1, uint32_t Process = ProcessA) {
+  uint64_t
+  begin(uint32_t File = 1, uint32_t Process = ProcessA,
+        DriverUserPageAccess Access = DriverUserPageAccess::ReadWrite) {
     DriverRequest Create;
     Create.Kind = DriverRequestKind::Create;
     Create.Device = DeviceName;
@@ -194,6 +200,7 @@ protected:
     IO.RequestorProcessID = Process;
     IO.ControlCode = 0x222000 | MethodNeither;
     IO.OutputSize = 2 * profile::PageSize;
+    IO.UserOutputAccess = Access;
     const auto IRP = take(Model->beginRequest(IO)).IRP;
     process(Process);
     return IRP;
@@ -201,6 +208,21 @@ protected:
   void pending(uint64_t IRP) {
     call("IoMarkIrpPending", {IRP});
     success(Model->recordDispatchReturn(IRP, StatusPending));
+  }
+  std::pair<uint64_t, uint64_t> worker(uint64_t IRP) {
+    const auto Work = call("IoAllocateWorkItem", {get(Scratch)});
+    call("IoQueueWorkItem", {Work, Entry, profile::DelayedWorkQueue, 0});
+    pending(IRP);
+    success(Model->setUserRequestContext(false));
+    auto Scheduled = take(Model->nextScheduled(false));
+    EXPECT_TRUE(Scheduled);
+    Model->enterExecution(profile::CallbackStackBase);
+    return {Work, Scheduled ? Scheduled->ID : 0};
+  }
+  void finishWorker(uint64_t Work, uint64_t ID) {
+    success(Model->validateExecutionReturn(profile::CallbackStackBase, 0));
+    success(Model->finishScheduled(ID));
+    call("IoFreeWorkItem", {Work});
   }
   void SetUp() override {
     Memory = take(UnicornBackend::create(8 * 1024 * 1024));
@@ -232,6 +254,269 @@ protected:
     success(Model->finishEntry());
   }
 };
+
+TEST_F(KernelMDLUserMapping,
+       ProcessProbeNarrowsCarriersAndNormalizesEveryNonzeroOperation) {
+  for (auto Access :
+       {DriverUserPageAccess::ReadOnly, DriverUserPageAccess::ReadWrite}) {
+    const auto IRP = begin(uint32_t(Access) + 1, ProcessA, Access);
+    const auto User = get(IRP + IRPUserBufferOffset);
+    const auto Process = call("IoGetRequestorProcess", {IRP});
+    const auto MDL = descriptor(User + 17, 31);
+    for (uint64_t Mode : {0x100ULL, 0x101ULL})
+      for (uint64_t Operation :
+           {0ULL, 0x100000000ULL, 1ULL, 2ULL, 3ULL, 0xffffffffULL}) {
+        SCOPED_TRACE(Mode);
+        SCOPED_TRACE(Operation);
+        const bool WriteLock = uint32_t(Operation) != 0;
+        if (WriteLock && Access == DriverUserPageAccess::ReadOnly) {
+          EXPECT_EQ(raised(Model->call("MmProbeAndLockProcessPages",
+                                       {MDL, Process, Mode, Operation})),
+                    exceptions::StatusAccessViolation);
+          EXPECT_EQ(get(MDL + MDLFlagsOffset, 2), 0u);
+          continue;
+        }
+        call("MmProbeAndLockProcessPages", {MDL, Process, Mode, Operation});
+        const auto Alias =
+            call("MmGetSystemAddressForMdlSafe", {MDL, NormalPagePriority});
+        EXPECT_TRUE(allowed(Alias, Read));
+        EXPECT_EQ(allowed(Alias, Write), WriteLock);
+        if (WriteLock) {
+          put(Alias, 0x72, 1);
+          EXPECT_EQ(get(User + 17, 1), 0x72u);
+        }
+        call("MmUnlockPages", {MDL});
+      }
+    EXPECT_EQ(call("IoGetCurrentProcess", {}), Process);
+    EXPECT_EQ(call("ExGetPreviousMode", {}), UserMode);
+    call("IoFreeMdl", {MDL});
+    complete(IRP);
+    success(Model->recordDispatchReturn(IRP, StatusSuccess));
+    success(Model->finalizeRequest(IRP));
+  }
+}
+
+TEST_F(KernelMDLUserMapping, ProcessProbeRequiresExactArityAndApcIrql) {
+  begin();
+  const auto Process = call("IoGetCurrentProcess", {});
+  const auto Pool = pool();
+  const auto MDL = descriptor(Pool, 1);
+  rejected(Model->call("MmProbeAndLockProcessPages", {MDL, Process, 0}));
+  rejected(Model->call("MmProbeAndLockProcessPages", {MDL, Process, 0, 0, 0}));
+  rejected(Model->call("MmProbeAndLockProcessPages", {MDL, Process, 2, 0}));
+  rejected(Model->call("MmProbeAndLockProcessPages",
+                       {MDL, Process ^ (uint64_t(1) << 32), 0, 0}));
+  call("KfRaiseIrql", {APCLevel});
+  call("KfRaiseIrql", {scheduler::DispatchLevel});
+  rejected(Model->call("MmProbeAndLockProcessPages", {MDL, Process, 0, 0}));
+  EXPECT_EQ(get(MDL + MDLFlagsOffset, 2), 0u);
+  // The ordinary nonpaged-pool probe has a different IRQL ceiling.
+  call("MmProbeAndLockPages", {MDL, KernelMode, IoReadAccess});
+  call("KeLowerIrql", {APCLevel});
+  call("MmUnlockPages", {MDL});
+  call("MmProbeAndLockProcessPages", {MDL, Process, 0, 3});
+  call("MmUnlockPages", {MDL});
+  call("KeLowerIrql", {scheduler::PassiveLevel});
+  call("IoFreeMdl", {MDL});
+  call("ExFreePoolWithTag", {Pool, PoolTag});
+}
+
+TEST_F(KernelMDLUserMapping,
+       ProcessProbeChangesOnlyTheWorkersAddressSpaceDuringTheProbe) {
+  const auto IRP = begin();
+  const auto Process = call("IoGetRequestorProcess", {IRP});
+  const auto User = get(IRP + IRPUserBufferOffset);
+  const auto MDL = descriptor(User + profile::PageSize - 1, 2);
+  const auto [Work, ID] = worker(IRP);
+  const auto System = call("IoGetCurrentProcess", {});
+  const auto Thread = call("PsGetCurrentThread", {});
+  const auto ThreadID = call("PsGetCurrentThreadId", {});
+  bool Observed = false;
+  Budget->ObserveAccess = [&](uint64_t Address) {
+    if (Address != User + profile::PageSize - 1 || Observed)
+      return;
+    Observed = true;
+    EXPECT_EQ(call("IoGetCurrentProcess", {}), Process);
+    EXPECT_EQ(call("IoThreadToProcess", {Thread}), System);
+    EXPECT_EQ(call("PsGetCurrentThread", {}), Thread);
+    EXPECT_EQ(call("PsGetCurrentThreadId", {}), ThreadID);
+    EXPECT_EQ(call("ExGetPreviousMode", {}), KernelMode);
+    rejected(Model->call("KeUnstackDetachProcess", {0}));
+  };
+  call("MmProbeAndLockProcessPages", {MDL, Process, 0x101, 3});
+  Budget->ObserveAccess = {};
+  EXPECT_TRUE(Observed);
+  EXPECT_EQ(call("IoGetCurrentProcess", {}), System);
+  EXPECT_EQ(call("IoThreadToProcess", {Thread}), System);
+  EXPECT_EQ(call("PsGetCurrentThreadId", {}), ThreadID);
+  EXPECT_EQ(call("PsGetCurrentThreadPreviousMode", {}), KernelMode);
+  EXPECT_FALSE(allowed(User, Read));
+  const auto Alias =
+      call("MmGetSystemAddressForMdlSafe", {MDL, NormalPagePriority});
+  put(Alias, 0x8173, 2);
+  std::array<uint8_t, 2> Bytes;
+  success(Memory->readBacking(User + profile::PageSize - 1, Bytes));
+  EXPECT_EQ(Bytes, (std::array<uint8_t, 2>{0x73, 0x81}));
+  call("MmUnlockPages", {MDL});
+  EXPECT_FALSE(allowed(Alias, Read));
+  call("IoFreeMdl", {MDL});
+  finishWorker(Work, ID);
+}
+
+TEST_F(KernelMDLUserMapping,
+       ProcessProbeRestoresTheWorkerAfterGuestAndModelErrors) {
+  const auto IRP = begin(1, ProcessA, DriverUserPageAccess::ReadOnly);
+  const auto Process = call("IoGetRequestorProcess", {IRP});
+  const auto User = get(IRP + IRPUserBufferOffset);
+  const auto MDL = descriptor(User, 1);
+  const auto [Work, ID] = worker(IRP);
+  const auto System = call("IoGetCurrentProcess", {});
+  EXPECT_EQ(raised(Model->call("MmProbeAndLockProcessPages",
+                               {MDL, Process, UserMode, 3})),
+            exceptions::StatusAccessViolation);
+  EXPECT_EQ(call("IoGetCurrentProcess", {}), System);
+  EXPECT_EQ(get(MDL + MDLFlagsOffset, 2), 0u);
+  EXPECT_FALSE(allowed(User, Read));
+  rejected(Model->call("MmProbeAndLockProcessPages", {MDL, Process, 2, 0}));
+  rejected(Model->call("MmProbeAndLockProcessPages", {0, Process, 1, 0}));
+  EXPECT_EQ(call("IoGetCurrentProcess", {}), System);
+  EXPECT_FALSE(allowed(User, Read));
+  call("MmProbeAndLockProcessPages", {MDL, Process, UserMode, IoReadAccess});
+  call("MmUnlockPages", {MDL});
+  call("IoFreeMdl", {MDL});
+  EXPECT_FALSE(Memory->fault());
+  finishWorker(Work, ID);
+}
+
+TEST_F(KernelMDLUserMapping, ProcessProbeRestoresThePreviousNestedAttachment) {
+  const auto FirstIRP = begin();
+  const auto FirstProcess = call("IoGetRequestorProcess", {FirstIRP});
+  const auto FirstUser = get(FirstIRP + IRPUserBufferOffset);
+  pending(FirstIRP);
+  const auto SecondIRP = begin(2, ProcessB);
+  const auto SecondProcess = call("IoGetRequestorProcess", {SecondIRP});
+  const auto SecondUser = get(SecondIRP + IRPUserBufferOffset);
+  const auto MDL = descriptor(SecondUser, 1);
+  const auto Unbuilt = descriptor(SecondUser, 1);
+  const auto State = pool(KAPCStateSize);
+  const auto [Work, ID] = worker(SecondIRP);
+  const auto System = call("IoGetCurrentProcess", {});
+  call("KeStackAttachProcess", {FirstProcess, State});
+  call("MmProbeAndLockProcessPages",
+       {MDL, SecondProcess, UserMode, IoWriteAccess});
+  EXPECT_EQ(call("IoGetCurrentProcess", {}), FirstProcess);
+  EXPECT_TRUE(allowed(FirstUser, Read | Write));
+  EXPECT_FALSE(allowed(SecondUser, Read));
+  rejected(Model->call("MmProbeAndLockProcessPages",
+                       {Unbuilt, SecondProcess, 2, IoReadAccess}));
+  EXPECT_EQ(call("IoGetCurrentProcess", {}), FirstProcess);
+  call("KeUnstackDetachProcess", {State});
+  EXPECT_EQ(call("IoGetCurrentProcess", {}), System);
+  call("MmUnlockPages", {MDL});
+  call("IoFreeMdl", {MDL});
+  call("IoFreeMdl", {Unbuilt});
+  call("ExFreePoolWithTag", {State, PoolTag});
+  finishWorker(Work, ID);
+}
+
+TEST_F(KernelMDLUserMapping,
+       ProcessProbeRefusesUnknownExitedAndNonrequestingTargets) {
+  const auto IRP = begin();
+  const auto Process = call("IoGetRequestorProcess", {IRP});
+  const auto MDL = descriptor(get(IRP + IRPUserBufferOffset), 1);
+  process(ProcessB);
+  rejected(Model->call("MmProbeAndLockProcessPages", {MDL, Process, 1, 0}));
+  process(ProcessA);
+  const auto [Work, ID] = worker(IRP);
+  const auto System = call("IoGetCurrentProcess", {});
+  for (uint64_t Target :
+       {uint64_t(0), Process ^ (uint64_t(1) << 32), Process + 1})
+    rejected(Model->call("MmProbeAndLockProcessPages", {MDL, Target, 1, 0}));
+  complete(IRP);
+  rejected(Model->call("MmProbeAndLockProcessPages", {MDL, Process, 1, 0}));
+  success(Model->exitRequestorProcess(IRP));
+  rejected(Model->call("MmProbeAndLockProcessPages", {MDL, Process, 1, 0}));
+  EXPECT_EQ(call("IoGetCurrentProcess", {}), System);
+  EXPECT_EQ(get(MDL + MDLFlagsOffset, 2), 0u);
+  call("IoFreeMdl", {MDL});
+  finishWorker(Work, ID);
+}
+
+TEST_F(KernelMDLUserMapping,
+       ProcessProbeAttachmentShortageLeavesItsMdlAndCallerUntouched) {
+  const auto IRP = begin();
+  const auto Process = call("IoGetRequestorProcess", {IRP});
+  const auto Pool = pool();
+  const auto Source = poolMDL(Pool);
+  const auto View = map(Source);
+  const auto MDL = descriptor(View, 1);
+  const auto [Work, ID] = worker(IRP);
+  const auto System = call("IoGetCurrentProcess", {});
+  Budget->Exhausted = true;
+  auto Failed = Model->call("MmProbeAndLockProcessPages", {MDL, Process, 1, 0});
+  ASSERT_FALSE(bool(Failed));
+  auto Error = Failed.takeError();
+  EXPECT_TRUE(Error.isA<GuestMemoryLimitError>());
+  llvm::consumeError(std::move(Error));
+  EXPECT_EQ(call("IoGetCurrentProcess", {}), System);
+  EXPECT_EQ(get(MDL + MDLFlagsOffset, 2), 0u);
+  EXPECT_FALSE(allowed(View, Read));
+  Budget->Exhausted = false;
+  call("MmProbeAndLockProcessPages", {MDL, Process, 1, 0});
+  call("MmUnlockPages", {MDL});
+  call("IoFreeMdl", {MDL});
+  finishWorker(Work, ID);
+  process(ProcessA);
+  call("MmUnmapLockedPages", {View, Source});
+  call("IoFreeMdl", {Source});
+  call("ExFreePoolWithTag", {Pool, PoolTag});
+}
+
+TEST_F(KernelMDLUserMapping,
+       ProcessProbeDoesNotHideAFailedRestorationBehindTheGuestException) {
+  const auto FirstIRP = begin();
+  const auto FirstProcess = call("IoGetRequestorProcess", {FirstIRP});
+  const auto Source = poolMDL(pool());
+  const auto FirstView = map(Source);
+  pending(FirstIRP);
+  const auto SecondIRP = begin(2, ProcessB, DriverUserPageAccess::ReadOnly);
+  const auto SecondProcess = call("IoGetRequestorProcess", {SecondIRP});
+  const auto User = get(SecondIRP + IRPUserBufferOffset);
+  const auto MDL = descriptor(User, 1);
+  const auto State = pool(KAPCStateSize);
+  const auto [Work, ID] = worker(SecondIRP);
+  call("KeStackAttachProcess", {FirstProcess, State});
+  Budget->ObserveAccess = [&](uint64_t Address) {
+    if (Address == User)
+      Budget->Exhausted = true;
+  };
+  auto Probed = Model->call("MmProbeAndLockProcessPages",
+                            {MDL, SecondProcess, UserMode, IoWriteAccess});
+  Budget->ObserveAccess = {};
+  ASSERT_FALSE(bool(Probed));
+  unsigned Faults = 0, Shortages = 0;
+  llvm::handleAllErrors(
+      Probed.takeError(),
+      [&](const KernelGuestException &Error) {
+        EXPECT_EQ(Error.code(), exceptions::StatusAccessViolation);
+        ++Faults;
+      },
+      [&](const GuestMemoryLimitError &) { ++Shortages; },
+      [&](const llvm::ErrorInfoBase &Error) {
+        ADD_FAILURE() << Error.message();
+      });
+  EXPECT_EQ(Faults, 1u);
+  EXPECT_EQ(Shortages, 1u);
+  EXPECT_EQ(call("IoGetCurrentProcess", {}), SecondProcess);
+  EXPECT_EQ(get(MDL + MDLFlagsOffset, 2), 0u);
+  EXPECT_FALSE(allowed(FirstView, Read));
+  rejected(Model->call("KeUnstackDetachProcess", {0}));
+  auto Returned = Model->validateExecutionReturn(profile::CallbackStackBase, 0);
+  EXPECT_TRUE(bool(Returned));
+  llvm::consumeError(std::move(Returned));
+  // A failed restoration is terminal; it cannot publish a normal callback
+  // return or transfer the private attachment to a public APC-state token.
+}
 
 TEST_F(KernelMDLUserMapping,
        LegacyMappingsShareOwnedBytesAndModeSpecificPermissions) {

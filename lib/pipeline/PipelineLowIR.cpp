@@ -3606,7 +3606,14 @@ struct PipelineAnalysisCache::Impl {
         Targets(Img,
                 Dbg ? libc::NoReturnTargetIndex::NameResolver(
                           [Dbg](va_t Addr) { return Dbg->functionName(Addr); })
-                    : libc::NoReturnTargetIndex::NameResolver()),
+                    : libc::NoReturnTargetIndex::NameResolver(),
+                Dbg ? libc::NoReturnTargetIndex::DeclaredNoReturn(
+                          [Dbg](llvm::StringRef Name) {
+                            const std::optional<FunctionSym> Prototype =
+                                Dbg->resolvePrototype(Name);
+                            return Prototype && Prototype->NoReturn;
+                          })
+                    : libc::NoReturnTargetIndex::DeclaredNoReturn()),
         Roots(Img), Owners(Img),
         Callees(Img, &this->Entries, &Targets, &Roots, &Owners),
         Graphs(createX87CallGraphCache(&Callees, &Targets, RetainBodies)) {}

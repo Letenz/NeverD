@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Reconstruct a genuine MSVC PE32 finally return and compare its execution.
+"""Reconstruct a genuine MSVC PE32 nonlocal finally and compare its execution.
 
-The checked return export is loaded under an outer SEH observer. Header-only
+The checked export is loaded under an outer SEH observer. Header-only
 EXE-to-DLL adaptation leaves source code intact and avoids unrelated CRT startup.
-Other nonlocal forms are checked for analysis/refusal by the native test owner.
+The observer checks return values, the exception chain and stack guards.
 """
 from __future__ import annotations
 
@@ -21,11 +21,11 @@ import xml.etree.ElementTree as ET
 if __package__:
     from .check_windows_registration_eh import run_image
     from .windows_registration_runtime import load_runtime, validate_runtime
-    from .windows_finally_image import PE32, EXPORT, captured_input, as_library, generated_entry, observe
+    from .windows_finally_image import PE32, captured_input, as_library, generated_entry, observe
 else:
     from check_windows_registration_eh import run_image
     from windows_registration_runtime import load_runtime, validate_runtime
-    from windows_finally_image import PE32, EXPORT, captured_input, as_library, generated_entry, observe
+    from windows_finally_image import PE32, captured_input, as_library, generated_entry, observe
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "unittests/lift/eh/fixtures"
@@ -39,6 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--patch-binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--profile", choices=("Od-no-gs", "Od-gs", "O2-no-gs", "O2-gs"), default="Od-no-gs")
+    parser.add_argument("--form", choices=("return", "goto"), default="return")
     parser.add_argument("--compiler", default="clang")
     parser.add_argument("--linker", default="lld-link")
     parser.add_argument("--wine")
@@ -49,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--timeout must be positive and finite")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    report = {"schema": 1, "evidence": "reconstructed-msvc-finally-return",
+    report = {"schema": 1, "evidence": "reconstructed-msvc-finally-" + args.form,
               "profile": "x86/" + args.profile, "passed": False, "steps": [], "observations": []}
     environment = os.environ.copy()
 
@@ -85,6 +86,9 @@ def main(argv: list[str] | None = None) -> int:
                            NEVERD_NONLOCAL_FINALLY_OUTPUT=str(output))
         ir_prefix = {"Od-no-gs": "return-", "Od-gs": "return-gs-"}.get(
             args.profile, "return-" + args.profile + "-")
+        if args.form == "goto":
+            ir_prefix = "goto-" + args.profile + "-"
+        export = b"nonlocal_finally_" + args.form.encode("ascii")
         ir_names = [ir_prefix + form + ".ll" for form in ("raw", "opt")]
         for name in ["native-inputs.xml", *ir_names]:
             (output / name).unlink(missing_ok=True)
@@ -100,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("native finally proof did not emit both IR variants")
 
         observer = FIXTURES / "nonlocal_finally_observer.c"
+        if args.form == "goto":
+            observer = FIXTURES / "nonlocal_finally_goto_observer.c"
         run([compiler, "--target=i686-pc-windows-msvc", "-O1", "-fms-extensions",
              "-fexceptions", "-fno-stack-protector", "-c", str(observer),
              "-o", str(output / "observer.obj")])
@@ -121,14 +127,14 @@ def main(argv: list[str] | None = None) -> int:
                 image.unlink(missing_ok=True)
                 run([str(args.patch_binary.resolve()), "patch", str(original), *options,
                      f"--mode={mode}", "-o", str(image)])
-                generated_entry(source_data, image.read_bytes())
+                generated_entry(source_data, image.read_bytes(), export)
                 images.append((name, image, True, False))
         for name, image, generated, negative in images:
             data = image.read_bytes()
             for base in (0x14000000, 0x18000000):
                 case = output / f"{name}-{base:x}"
                 case.mkdir(exist_ok=True)
-                adapted = as_library(PE32(data).rebase(base))
+                adapted = as_library(PE32(data).rebase(base), export)
                 (case / "target.dll").write_bytes(adapted)
                 shutil.copy(output / "observer.exe", case / "observer.exe")
                 shutil.copy(runtime, case / runtime.name)
@@ -140,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
                     "loaded_sha256": hashlib.sha256(adapted).hexdigest(),
                     "runtime": result}
                 report["observations"].append(observation)
-                observation["values"] = observe(result, base, negative)
+                observation["values"] = observe(result, base, negative, args.form)
         report["passed"] = True
     except (OSError, ValueError, struct.error, ET.ParseError, subprocess.TimeoutExpired) as error:
         report["error"] = str(error)

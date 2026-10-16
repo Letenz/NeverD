@@ -72,7 +72,7 @@ TEST(PipelineOutcome, NativeFinallyInputsRetainSourceLLVM) {
               *Result.LlvmModule);
           bool Reconstruct = false;
 #ifdef LLVM_NEVERD_X86_REGISTRATION_EH
-          Reconstruct = std::string(Name) == "nonlocal_finally_return";
+          Reconstruct = true;
 #endif
           if (Reconstruct) {
             ASSERT_TRUE(bool(Native)) << llvm::toString(Native.takeError());
@@ -86,7 +86,8 @@ TEST(PipelineOutcome, NativeFinallyInputsRetainSourceLLVM) {
                   << llvm::toString(Identity.takeError());
               if (Function.isDeclaration() || *Identity != Export->Addr)
                 continue;
-              EXPECT_EQ(Function.arg_size(), 1u);
+              EXPECT_EQ(Function.arg_size(),
+                        std::string(Name) == "nonlocal_finally_goto" ? 2u : 1u);
               auto Error =
                   validateCOFFRegistrationIR(Function, *Source, *Image);
               ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
@@ -98,7 +99,9 @@ TEST(PipelineOutcome, NativeFinallyInputsRetainSourceLLVM) {
               std::error_code EC = llvm::sys::fs::create_directories(Output);
               ASSERT_FALSE(EC) << EC.message();
               const std::string Prefix =
-                  std::string(Profile) == "Od-no-gs" ? "return-"
+                  std::string(Name) == "nonlocal_finally_goto"
+                      ? "goto-" + std::string(Profile) + "-"
+                  : std::string(Profile) == "Od-no-gs" ? "return-"
                   : std::string(Profile) == "Od-gs"
                       ? "return-gs-"
                       : "return-" + std::string(Profile) + "-";
@@ -109,8 +112,7 @@ TEST(PipelineOutcome, NativeFinallyInputsRetainSourceLLVM) {
               Result.LlvmModule->print(OS, nullptr);
             }
           } else {
-            // A source-handler identity alone cannot supply missing nonlocal
-            // exit or cookie proofs in the other native MSVC forms.
+            // Native source identity requires the matching LLVM frame support.
             EXPECT_FALSE(bool(Native));
           }
           if (!Native)

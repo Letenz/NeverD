@@ -36,7 +36,8 @@ struct RegistrationSEHParentExitContract {
 /// checks native structure without granting it a source control-flow identity.
 llvm::Expected<RegistrationSEHParentExitContract> bindSEHParentExitContext(
     const llvm::Function &Parent, va_t Owner,
-    const std::map<CallbackKey, const llvm::Function *> &Callbacks);
+    const std::map<CallbackKey, const llvm::Function *> &Callbacks,
+    const std::set<const llvm::LoadInst *> &LocalUnwindChainLoads = {});
 
 /// Bind the checked transfers to independently replayed source instructions.
 llvm::Error

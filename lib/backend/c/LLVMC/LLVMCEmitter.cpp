@@ -609,8 +609,13 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
         if (llvm::isa<llvm::FenceInst>(&Inst))
           HasCIntrinsics = true;
         if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
-          if (isLLVMX86SegmentedAddressSpace(LI->getPointerAddressSpace()))
+          if (isLLVMX86SegmentedAddressSpace(LI->getPointerAddressSpace())) {
             HasCIntrinsics = true;
+            // Windows reads the segment as MSVC's <intrin.h> spells it
+            // (__readgsqword).
+            if (Opts.Format == BinaryFormat::COFF)
+              Headers.insert("intrin.h");
+          }
           NeedsUnalignedTypes |=
               LI->isSimple() && LI->getPointerAddressSpace() == 0 &&
               !c_memory::alias(typeToCLLVM(LI->getType()), Opts.ScalarPointers)
@@ -658,6 +663,12 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                 Asm->getAsmString() == "pushl $0\n\tpopfl")
               Headers.insert(Opts.Format == BinaryFormat::COFF ? "intrin.h"
                                                                : "x86intrin.h");
+            // A control or debug register move prints as MSVC's __readcr8 or
+            // __writedr (renderX86InlineAsm).
+            if (const llvm::StringRef Text = Asm->getAsmString();
+                Opts.Format == BinaryFormat::COFF && Text.starts_with("mov ") &&
+                (Text.contains("%cr") || Text.contains("%dr")))
+              Headers.insert("intrin.h");
             if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
                 (Asm->getAsmString() == "ldmxcsr ($0)" ||
                  Asm->getAsmString() == "stmxcsr ($0)"))

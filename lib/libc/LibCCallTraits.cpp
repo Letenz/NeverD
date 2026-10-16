@@ -377,42 +377,55 @@ bool isNoReturnTarget(const BinaryImage &Img, va_t Target) {
   if (const Symbol *Sym = Img.findSymbolAt(Target))
     if (isNoReturnFunction(Sym->Name))
       return true;
+  // A routine the image exports, which its own code calls.
+  if (const Export *Exp = Img.findExportAt(Target))
+    if (isNoReturnFunction(Exp->Name))
+      return true;
   return false;
 }
 
 NoReturnTargetIndex::NoReturnTargetIndex(const BinaryImage &Img,
-                                         NameResolver ResolveName)
+                                         NameResolver ResolveName,
+                                         DeclaredNoReturn Declared)
     : Image(&Img), SymbolsIndexed(Img.LoadOnlyFunctionEntries.empty()),
-      ResolveName(std::move(ResolveName)) {
+      ResolveName(std::move(ResolveName)), Declared(std::move(Declared)) {
+  const auto NoReturn = [&](llvm::StringRef Name) {
+    return isNoReturnFunction(Name) ||
+           (this->Declared && !Name.empty() && this->Declared(Name));
+  };
   // Preserve first-IAT precedence even when its name is empty or returning.
   // Only an address absent from the IAT map can use an exact stub spelling.
   std::set<va_t> ImportAddresses;
   for (const Import &Imp : Img.Imports)
-    if (ImportAddresses.insert(Imp.IATAddr).second &&
-        isNoReturnFunction(Imp.Name))
+    if (ImportAddresses.insert(Imp.IATAddr).second && NoReturn(Imp.Name))
       Targets.insert(Imp.IATAddr);
   for (const auto &[Address, Index] : Img.ImportStubIndices)
     if (!ImportAddresses.count(Address) && Index < Img.Imports.size() &&
-        isNoReturnFunction(Img.Imports[Index].Name))
+        NoReturn(Img.Imports[Index].Name))
       Targets.insert(Address);
   // Pointer slots the loader binds to imports, which x86 calls through as
   // `call [slot]`; an import directory entry for the same slot decides.
   const ImportStorageSlotCollection Storage = Img.collectImportStorageSlots();
   for (const auto &[SlotVA, Slot] : Storage.Slots)
     if (!ImportAddresses.count(SlotVA) && !Storage.Conflicts.count(SlotVA) &&
-        Slot.Addend == 0 && isNoReturnFunction(Slot.Name))
+        Slot.Addend == 0 && NoReturn(Slot.Name))
       Targets.insert(SlotVA);
 
   // A returning import still permits the first same-address symbol to prove
   // no-return. Later symbol aliases do not override that first symbol.
   // `--func` already has the IAT map; walking every image symbol is the
-  // whole-PE cost that single-function export is trying to skip.
+  // whole-PE cost that single-function export is trying to skip.  The first
+  // export at an address proves it too: the image's own code calls the
+  // routines it exports, such as the kernel's ExRaiseStatus.
   if (SymbolsIndexed) {
     std::set<va_t> SymbolAddresses;
     for (const Symbol &Sym : Img.Symbols)
-      if (SymbolAddresses.insert(Sym.Addr).second &&
-          isNoReturnFunction(Sym.Name))
+      if (SymbolAddresses.insert(Sym.Addr).second && NoReturn(Sym.Name))
         Targets.insert(Sym.Addr);
+    std::set<va_t> ExportAddresses;
+    for (const Export &Exp : Img.Exports)
+      if (ExportAddresses.insert(Exp.Addr).second && NoReturn(Exp.Name))
+        Targets.insert(Exp.Addr);
   }
   Targets.erase(InvalidVA);
 }
@@ -437,11 +450,18 @@ bool NoReturnTargetIndex::contains(const BinaryImage &Img, va_t Target) const {
   auto [It, Inserted] = LazyAnswers.try_emplace(Target, false);
   if (!Inserted)
     return It->second;
+  const auto NoReturn = [&](llvm::StringRef Name) {
+    return isNoReturnFunction(Name) ||
+           (Declared && !Name.empty() && Declared(Name));
+  };
   if (const Symbol *Sym = Img.findSymbolAt(Target))
-    It->second = isNoReturnFunction(Sym->Name);
+    It->second = NoReturn(Sym->Name);
   else if (ResolveName)
     if (std::optional<std::string> Name = ResolveName(Target))
-      It->second = isNoReturnFunction(*Name);
+      It->second = NoReturn(*Name);
+  if (!It->second)
+    if (const Export *Exp = Img.findExportAt(Target))
+      It->second = NoReturn(Exp->Name);
   return It->second;
 }
 

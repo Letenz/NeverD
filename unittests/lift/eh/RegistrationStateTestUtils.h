@@ -26,6 +26,7 @@ void addFinallyTailJump(LowBlock &Call, LowBlock &Resume,
 /// Preserve the physical CALL boundary while adding an unproved later effect.
 void addFinallyCallTrailingEffect(LowBlock &Call);
 LowFunc makeBranchingFrame();
+LowFunc makeCookieFrame(bool GS = false);
 LowFunc makeJumpFrame(unsigned Mutation = 0);
 void initializeEH4JumpFrame(LowFunc &Function, bool GS = false);
 LowFunc makeCxxCatchContinuation(bool IncludeResume = true);

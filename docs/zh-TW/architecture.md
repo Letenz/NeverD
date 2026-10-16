@@ -1717,3 +1717,7 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 `KernelMDLCalls` 將舊映射入口正規化至現有六參數映射器。快取屬性、實體頁面身分、權限與生命週期仍由 `KernelPhysicalMemory` 和 MDL 記錄負責。完整釋放的核心映像別名不增加環境相依性；使用者檢視保留該相依性。
 
 `KernelModelFileRequests` 的 `queryFileDevice` 統一驗證檔案身分、標頭、掛載狀態和拓撲。基礎查詢傳回檔案所擁有的裝置，關聯查詢另行驗證檔案擴充路由並選取附加堆疊頂層；兩者均借用傳回物件。
+
+`KernelModelFileCreate` 在現有 `FileOperation` 中管理裝置指標開啟。名稱解析、CREATE 封包和最終釋放共用一般檔案開啟的狀態管理。物件管理員透過內部控制代碼取得檔案參考，`queryFileDevice` 提供關聯裝置，現有關閉續接執行 CLEANUP。續接完成後才離開原呼叫執行緒的臨界區。公開輸出重疊不會替換內部保留的檔案物件。
+
+`KernelModelIO` 負責處理程序鎖頁包裝及私有附加生命週期，重用共用處理程序檢視切換和一般 MDL 探測。私有附加不偽造客體 APC 儲存，也不能以公開介面的零權杖解除；准入和巢狀關係仍由原附加擁有者管理。只有還原成功後才向客體傳遞探測例外；還原錯誤仍為模型失敗。

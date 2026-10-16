@@ -483,7 +483,7 @@ DebugContext *Session::decompileDebug() {
       Dbg ? *Dbg : static_cast<const DebugContext &>(NoDebugInfo),
       Library ? std::make_shared<types::TypeLibrary>(*Library)
               : std::make_shared<types::TypeLibrary>(dataModelOf(Img)),
-      std::move(Declarations), &Img, std::move(Headers));
+      std::move(Declarations), &Img, std::move(Headers), SigDB.buildNameMap());
   return LocalTypesDbg.get();
 }
 

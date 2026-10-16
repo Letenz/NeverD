@@ -70,6 +70,23 @@ bool hasRegistrationCallFrameABI(
         continue;
       if (States && States->Complete && States->CallbackStatesComplete &&
           States->RegistrationLifetimeComplete &&
+          States->SEHLocalUnwindsComplete) {
+        if (!chargeCalleeWork(Work, States->SEHLocalUnwinds.size()))
+          return false;
+        const auto Local =
+            llvm::find_if(States->SEHLocalUnwinds, [&](const auto &Call) {
+              return Call.Address == Op.Addr && Call.OpSeq == Op.Seq;
+            });
+        if (Local != States->SEHLocalUnwinds.end()) {
+          if (!hasCheckedX86LocalUnwindCall(Image, Function, Op, *Local, Work))
+            return false;
+          // The exact CRT invocation is separately projected and replayed by
+          // native lowering. It cannot use an ordinary frame-oblivious ABI.
+          continue;
+        }
+      }
+      if (States && States->Complete && States->CallbackStatesComplete &&
+          States->RegistrationLifetimeComplete &&
           States->SEHBoundCallsComplete && States->SEHJumpCapturesComplete &&
           States->SEHJumpResumptionsComplete) {
         if (!chargeCalleeWork(Work, States->SEHBoundCalls.size()))

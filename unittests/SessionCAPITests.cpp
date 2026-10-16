@@ -3898,6 +3898,10 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsDecompileWithTheirPrototypes) {
             std::string::npos);
   // Exported under another name than the PDB's RtlAreNamesEqual.
   EXPECT_NE(signature("FsRtlAreNamesEqual").find("Name1, "), std::string::npos);
+  // A system call stub reads none of the arguments its dispatcher takes from
+  // the stack; its definition still takes all seven.
+  EXPECT_NE(signature("ZwCreateKey").find(" Disposition) {"),
+            std::string::npos);
 }
 
 TEST_F(SessionCAPIKernelInputs, KernelExportsTakeTheirPrototypesWithoutThePDB) {
@@ -3917,6 +3921,13 @@ TEST_F(SessionCAPIKernelInputs, KernelExportsTakeTheirPrototypesWithoutThePDB) {
       << Source;
   EXPECT_NE(Source.find("ULONG EaLength) */"), std::string::npos) << Source;
   EXPECT_NE(Source.find("uint32_t EaLength) {"), std::string::npos) << Source;
+  // ExRaiseStatus, which the kernel exports and calls, never returns: the
+  // path that raises hands nothing back.
+  const int Allocate = neverd_func_find_by_name(Session, "FsRtlAllocatePool");
+  ASSERT_GE(Allocate, 0);
+  const std::string Pool = takeString(
+      neverd_decompile(Session, neverd_func_entry(Session, Allocate)));
+  EXPECT_EQ(Pool.find("unknown"), std::string::npos) << Pool;
 }
 
 TEST_F(SessionCAPITest, FunctionsHoldTheRecordsTheirPDBTypes) {
@@ -4324,6 +4335,21 @@ TEST_F(SessionCAPITest, KnownRoutinesTakeTheirPrototypesByTheirNames) {
   const std::string Clear = decompile("KeClearEvent");
   EXPECT_EQ(Clear.find("neverd.prototype"), std::string::npos) << Clear;
   EXPECT_EQ(Clear.find("void KeClearEvent("), std::string::npos) << Clear;
+  // The parameters the prototype declares after those the code reads, which
+  // its callers pass, follow them.
+  const std::string Set = decompile("KeSetEvent");
+  EXPECT_NE(Set.find(" Event, int32_t Increment, uint8_t Wait) {"),
+            std::string::npos)
+      << Set;
+  // The whole program's C takes the same prototypes, over the functions the
+  // session lets it decompile.
+  const std::string All =
+      takeString(neverd_decompile_all(Session, Driver.c_str(), 0, 0, 0));
+  EXPECT_NE(All.find("/* neverd.prototype: windows-kernel-x64: LONG "
+                     "KeSetEvent(PRKEVENT Event, KPRIORITY Increment, "
+                     "BOOLEAN Wait) */"),
+            std::string::npos)
+      << All;
 }
 
 TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
