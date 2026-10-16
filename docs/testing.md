@@ -3770,6 +3770,10 @@ which must pass nothing in either backend (not the slot's address as a virtual
 call's object), and a call whose outgoing stores leave a gap below a
 `push {r4, r6, r7, lr}`, whose HighC must not pass the saved link register.
 
+`UndescribedCalleesKeepEveryCallsArguments` builds an x86-64 and an i386
+function that calls an import nothing describes with one argument, then
+with three; its LLVM C must keep each call's arguments.
+
 `ELFARM32ModeTest.MixedImagePairsItsPLTWithTheImports` links a mixed
 ARM/Thumb shared library and requires the PLT entry a Thumb `bl puts` reaches
 to be paired with `puts`. `LinkerThunkToAnImportStandsForTheImport` links a

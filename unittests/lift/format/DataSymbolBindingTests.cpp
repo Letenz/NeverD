@@ -20,6 +20,7 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cctype>
 #include <cstring>
 #include <iterator>
 #include <map>
@@ -223,6 +224,42 @@ protected:
         Names.push_back(Part.rsplit(' ').second.ltrim('*').str());
     }
     return Names;
+  }
+
+  /// How many arguments each call of \p Callee in \p Body passes, in order.
+  static std::vector<int> callArgumentCounts(const std::string &Body,
+                                             const std::string &Callee) {
+    std::vector<int> Counts;
+    for (size_t At = Body.find(Callee + "("); At != std::string::npos;
+         At = Body.find(Callee + "(", At + 1)) {
+      if (At > 0 && (std::isalnum(static_cast<unsigned char>(Body[At - 1])) ||
+                     Body[At - 1] == '_'))
+        continue;
+      int Depth = 0, Count = 0;
+      bool Quoted = false, Any = false;
+      for (size_t I = At + Callee.size(); I < Body.size(); ++I) {
+        const char C = Body[I];
+        if (Quoted) {
+          if (C == '\\')
+            ++I;
+          else if (C == '"')
+            Quoted = false;
+          continue;
+        }
+        if (C == '"')
+          Quoted = true;
+        else if (C == '(' && ++Depth == 1)
+          continue;
+        else if (C == ')' && --Depth == 0) {
+          Counts.push_back(Any ? Count + 1 : 0);
+          break;
+        } else if (C == ',' && Depth == 1)
+          ++Count;
+        if (Depth >= 1 && !std::isspace(static_cast<unsigned char>(C)))
+          Any = true;
+      }
+    }
+    return Counts;
   }
 
   std::string source(const BinaryImage &Image, bool LLVM,
@@ -512,6 +549,34 @@ TEST_F(DataSymbolBindingTest, CallsThroughPointerVariablesPassTheirArguments) {
       EXPECT_EQ(Plain.find("(0)"), std::string::npos) << Plain;
       EXPECT_EQ(Plain.find("return_address"), std::string::npos) << Plain;
     }
+  }
+}
+
+// LLVM declares a callee nothing describes from the module's calls.  Where
+// they pass it different numbers of arguments, a declaration made from the
+// first call's would cut a longer later call's.
+TEST_F(DataSymbolBindingTest, UndescribedCalleesKeepEveryCallsArguments) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "requires cross-target Clang and ld.lld";
+  for (const char *Target : {"x86_64-linux-gnu", "i386-linux-gnu"}) {
+    SCOPED_TRACE(Target);
+    const auto Stub =
+        sharedLibrary(Target, "nstub",
+                      "int ext_note(const char *f, ...) { return f != 0; }\n");
+    auto Loaded = loadBinary(
+        sharedLibrary(Target, "twice",
+                      "int ext_note(const char *, ...);\n"
+                      "__attribute__((noinline)) int twice(int c) {\n"
+                      "  ext_note(\"start\\n\");\n"
+                      "  return ext_note(\"%d %d\\n\", c, c + 1);\n"
+                      "}\n",
+                      {Stub.string()}));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    const auto C = source(*Loaded, /*LLVM=*/true, {"twice"});
+    const std::string Body = functionBody(C, "twice");
+    ASSERT_FALSE(Body.empty()) << C;
+    EXPECT_EQ(callArgumentCounts(Body, "ext_note"), (std::vector<int>{1, 3}))
+        << Body;
   }
 }
 

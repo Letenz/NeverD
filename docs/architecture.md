@@ -437,6 +437,11 @@ LLVM declaration materialization shares the direct-call ABI rules with exact
 immutable import targets, including FP, variadic and va_list signatures.
 Known integer parameters use the target's pointer-width carrier so narrow
 register aliases and shard order do not choose different declarations.
+A callee nothing describes is declared from its first call's arguments.
+Where the module's calls pass it different numbers of arguments, those past
+the ones every call passes are variadic (`DirectCallArgumentCounts`), so a
+longer later call keeps all of its arguments instead of being cut to the
+first call's.
 `LLVMCallContract` reconciles exact targets revealed by optimization or shard
 linking, drops surplus fixed arguments and adapts integer/pointer carriers.
 Missing arguments, incompatible observed results and musttail changes fail
