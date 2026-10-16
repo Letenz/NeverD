@@ -38,8 +38,7 @@ function(neverd_require_unicorn)
         "$<$<COMPILE_LANGUAGE:C>:/FI${_neverd_crc_header}>")
     else()
       target_compile_options(${_neverd_crc_target} PRIVATE
-        "$<$<COMPILE_LANGUAGE:C>:-include>"
-        "$<$<COMPILE_LANGUAGE:C>:${_neverd_crc_header}>")
+        "$<$<COMPILE_LANGUAGE:C>:SHELL:-include \"${_neverd_crc_header}\">")
     endif()
   endforeach()
   if(WIN32)
