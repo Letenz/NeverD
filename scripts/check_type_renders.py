@@ -5,7 +5,8 @@
 checks of each size and offset.  This script renders them in C and C++ with
 every builtin spelling, in Rust and in Go, and compiles each with clang,
 rustc and go, so that a layout NeverD gets wrong, or source that does not
-compile, fails.  Without --binary it checks the fixture PDB the unit tests
+compile, fails.  The C header, which the workbench shows as C/C++, compiles
+as C++ as well.  Without --binary it checks the fixture PDB the unit tests
 use; with --declare it checks the types C, C++, Rust or Go files declare,
 laid out for --data-model, such as a type library NeverD ships, and the
 prototypes they declare too.  A toolchain that is missing is reported and
@@ -117,24 +118,29 @@ class Checker:
             self.skip("C and C++", f"{self.arguments.clang} not found")
             return
         msvc, gnu, _ = TARGETS[model]
+        cxx = clang + "++" if shutil.which(clang + "++") else clang
         for spelling in SPELLINGS:
-            for language, suffix, standard in (("c", ".h", "-std=c11"),
-                                               ("cpp", ".hpp", "-std=c++20")):
+            for language, suffix in (("c", ".h"), ("cpp", ".hpp")):
                 header = self.render(f"types-{spelling}{suffix}", "--lang",
                                      language, "--spelling", spelling)
-                unit = header.with_suffix(".c" if language == "c" else ".cpp")
-                unit.write_text(f'#include "{header.name}"\n', encoding="utf-8")
+                # The C header is C's and C++'s; the C++ one is C++'s.
+                units = [("c++", "-std=c++20", header.stem + "-cpp.cpp")]
+                if language == "c":
+                    units.insert(0, ("c", "-std=c11", header.stem + ".c"))
                 targets = [msvc] + ([gnu] if spelling == "portable" else [])
-                for target in targets:
-                    driver = clang if language == "c" else clang + "++"
-                    if language == "cpp" and not shutil.which(driver):
-                        driver = clang
-                    result = run([driver, f"--target={target}", "-fsyntax-only",
-                                  standard, "-x",
-                                  "c" if language == "c" else "c++", str(unit)],
-                                 cwd=self.work)
-                    self.report(f"{language} {spelling} {target}",
-                                diagnostics(result))
+                for unit_language, standard, name in units:
+                    unit = self.work / name
+                    unit.write_text(f'#include "{header.name}"\n',
+                                    encoding="utf-8")
+                    driver = clang if unit_language == "c" else cxx
+                    for target in targets:
+                        result = run([driver, f"--target={target}",
+                                      "-fsyntax-only", standard, "-x",
+                                      unit_language, str(unit)], cwd=self.work)
+                        what = language if unit_language == "c" or \
+                            language == "cpp" else "c as c++"
+                        self.report(f"{what} {spelling} {target}",
+                                    diagnostics(result))
 
     def prototypes(self, model):
         """The prototypes, with Windows' typedefs, for the MSVC target."""

@@ -3383,12 +3383,8 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
 <context>
     <name>neverd::gui::LocalTypesView</name>
     <message>
-        <source>C header (*.h)</source>
-        <translation>Header C (*.h)</translation>
-    </message>
-    <message>
-        <source>C++ header (*.hpp)</source>
-        <translation>Header C++ (*.hpp)</translation>
+        <source>C/C++ header (*.h)</source>
+        <translation>Header C/C++ (*.h)</translation>
     </message>
     <message>
         <source>Rust (*.rs)</source>
