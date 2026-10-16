@@ -1,0 +1,42 @@
+# Rebuild recipes for the separate-debug-file fixtures.
+#
+# companion.so keeps only a build ID and a .gnu_debuglink naming
+# companion.so.debug, the file objcopy --only-keep-debug split its DWARF
+# into.  companion-nobuildid.so links without a build ID, so only its debug
+# link's CRC identifies the same companion.debug, which it names.
+# companion-zlib.debug is companion.so.debug with its sections compressed, as
+# distribution debug packages ship them.
+
+CLANG ?= clang
+OBJCOPY ?= objcopy
+CFLAGS := --target=x86_64-unknown-linux-gnu -O1 -g -fPIC -nostdlib -shared \
+	-fuse-ld=lld -fdebug-compilation-dir=. -fdebug-prefix-map=$(CURDIR)=.
+
+.PHONY: all clean
+
+all: companion.so companion.so.debug companion-nobuildid.so companion.debug \
+	companion-zlib.debug
+
+companion.full: companion.c
+	$(CLANG) $(CFLAGS) -Wl,--build-id=sha1 $< -o $@
+
+companion.so.debug: companion.full
+	$(OBJCOPY) --only-keep-debug $< $@
+
+companion.so: companion.full companion.so.debug
+	$(OBJCOPY) --strip-debug --add-gnu-debuglink=companion.so.debug $< $@
+
+companion-nobuildid.full: companion.c
+	$(CLANG) $(CFLAGS) -Wl,--build-id=none $< -o $@
+
+companion.debug: companion-nobuildid.full
+	$(OBJCOPY) --only-keep-debug $< $@
+
+companion-nobuildid.so: companion-nobuildid.full companion.debug
+	$(OBJCOPY) --strip-debug --add-gnu-debuglink=companion.debug $< $@
+
+companion-zlib.debug: companion.so.debug
+	$(OBJCOPY) --compress-debug-sections=zlib $< $@
+
+clean:
+	rm -f companion.full companion-nobuildid.full

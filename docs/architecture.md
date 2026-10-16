@@ -72,6 +72,43 @@ the file through the strict PDB loader.
 or before the PDB they chose loads. Epoch and request guards retire downloads on
 document changes, and network errors do not change the image.
 
+## Debug information files
+
+`debug/DebugInfoDiscovery` owns which debug files an image is read with and how
+their names rank: a PDB or DWARF, which also carries types and lines, before a
+linker MAP, which names addresses and nothing more. The PDB or DWARF is the
+session's debug context; a MAP the caller names is a names-only supplement
+published after it (`applyDebugInfo`), so it fills only the addresses the PDB or
+DWARF leaves unnamed. The MAP beside an image is read only when no PDB or DWARF
+describes it. `debug/MapFile` reads a MAP in its linker's dialect against the
+image's layout, read from its headers: link.exe's segment:offset publics are
+placed through the image's section numbering, which also reads IDA's and
+Borland's MAPs without an Rva+Base column, and names made up from an address
+(`MapAutomaticNames.def`) are left out. It also holds the MAP against the image
+(`MapMatches.def`): link.exe and lld-link record the build stamp, the other
+dialects the output sections' addresses and sizes, and most functions outside
+the image's code mean another layout. Discovery passes over a MAP that
+mismatches; a named one fails the load unless the request takes it unchecked.
+
+DWARF companions are found in GDB's order (`DWARFLocation.def`): the image's own
+sections, a `.dSYM` beside a Mach-O image, the file a debug directory keeps under
+an ELF image's build ID, the file its `.gnu_debuglink` names with the CRC it
+records, then a `.debug` file named after it. `debug/DebugFileIdentity` reads
+the identities they share; a companion of another build ID is passed over, and
+a DWARF file the user names must be of the image's machine and build. A
+companion stays `UnauthenticatedCompanion` trust: its names and lines load, its
+object extents do not. `debug/CompressedSections` expands SHF_COMPRESSED
+sections before the DWARF reader sees them, since the LLVM NeverD links may
+lack the decompressors.
+
+A debug file loaded into an open session (`neverd_session_load_pdb_ex`,
+`neverd_session_load_dwarf`, `neverd_session_load_map`) reads the image again
+with the options it was loaded with and publishes the session's whole request
+in rank order (`reloadDebugInformation`), so the result is the one a load that
+named the file gives: a PDB loaded after a MAP replaces the MAP's names. User
+names, comments and edits are kept, and the session is left as it was when the
+input changed or a file fails to load.
+
 ## Local types boundary
 
 `lib/types` (NeverDTypes) owns a program's named types as a reader sees and

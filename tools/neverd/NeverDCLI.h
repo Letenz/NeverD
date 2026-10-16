@@ -279,6 +279,7 @@ extern llvm::cl::opt<bool> Verbose;
 extern llvm::cl::opt<bool> JsonOutput;
 extern llvm::cl::opt<bool> NoDebug;
 extern llvm::cl::opt<bool> NoDwarf;
+extern llvm::cl::opt<bool> NoPdb;
 extern llvm::cl::opt<bool> NoSymtab;
 extern llvm::cl::list<std::string> ARMFunctionModeHints;
 extern llvm::cl::opt<std::string> PdbFile;
@@ -286,6 +287,9 @@ extern llvm::cl::opt<bool> PdbUnverified;
 extern llvm::cl::opt<std::string> SymbolPathOption;
 extern llvm::cl::opt<bool> DownloadSymbols;
 extern llvm::cl::opt<std::string> MapFile;
+extern llvm::cl::opt<bool> MapUnchecked;
+extern llvm::cl::opt<bool> NoMap;
+extern llvm::cl::opt<std::string> DwarfFile;
 extern llvm::cl::opt<bool> NoOpt;
 extern llvm::cl::opt<size_t> MaxFunc;
 

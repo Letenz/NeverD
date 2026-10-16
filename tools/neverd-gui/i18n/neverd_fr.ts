@@ -856,6 +856,22 @@
         <translation>Afficher les types du programme avec leur disposition et leur source</translation>
     </message>
     <message>
+        <source>D&amp;WARF file...</source>
+        <translation>Fichier D&amp;WARF...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>Charger les informations de débogage depuis un fichier DWARF séparé, une copie avec ses symboles ou un .dSYM</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>Fichier &amp;MAP...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>Charger les noms depuis un fichier MAP de l&apos;éditeur de liens</translation>
+    </message>
+    <message>
         <source>S&amp;tructure offset...</source>
         <translation>Offset de s&amp;tructure...</translation>
     </message>
@@ -2286,6 +2302,38 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
         <source>Local Types</source>
         <translation>Types locaux</translation>
     </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>Impossible de déterminer si %1 a un fichier MAP : %2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>Charger un fichier DWARF</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>Charger un fichier MAP</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>Fichiers MAP (*.map);;Tous les fichiers (*)</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>Charger un fichier MAP d&apos;une autre version</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent l&apos;analyse en erreur.</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>Fichiers DWARF (*.debug *.dSYM);;Tous les fichiers (*)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2602,6 +2650,22 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
     <message>
         <source>DWARF loaded: %1</source>
         <translation>DWARF chargé : %1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>Ouvert sans le fichier MAP placé à côté du fichier d&apos;entrée, selon votre choix</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>MAP chargé sans vérification : %1 (%2 noms ajoutés, d&apos;une autre version)</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>MAP chargé : %1 (%2 noms ajoutés)</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>MAP non chargé : %1 ne correspond pas à l&apos;image chargée</translation>
     </message>
     <message numerus="yes">
         <source>Showed %n operands as members of %1</source>
@@ -3819,6 +3883,49 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>Ligne %1, colonne %2 : %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>Fichier MAP de %1, %2 noms. Son horodatage de compilation correspond à celui du fichier d&apos;entrée.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>Fichier MAP de %1, %2 noms. Ses sections se trouvent là où le fichier d&apos;entrée les a.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>Fichier MAP de %1, %2 noms. Il n&apos;enregistre rien qui puisse être vérifié par rapport au fichier d&apos;entrée.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>Fichier MAP de %1, %2 noms. Il enregistre l&apos;horodatage de compilation %3, mais celui du fichier d&apos;entrée est %4 : il appartient à une autre version.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>Fichier MAP de %1, %2 noms. Il place %3 à %4, sur %5 octets, mais le fichier d&apos;entrée l&apos;a à %6, sur %7 octets : il appartient à une autre version.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>Fichier MAP de %1, %2 noms. %3 de ses %4 fonctions se trouvent hors du code du fichier d&apos;entrée : il appartient à une autre version.</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>Fichier MAP trouvé</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>Charger quand même le fichier MAP ?</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>Charger le fichier MAP ?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
     </message>
 </context>
 <context>
