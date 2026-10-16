@@ -2339,6 +2339,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     文字列を参照する命令を一覧表示</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          ローカル型、または指定した型を表示</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3497,10 +3501,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>オフセット</translation>
     </message>
     <message>
-        <source>Bytes</source>
-        <translation>バイト</translation>
-    </message>
-    <message>
         <source>Type</source>
         <translation>型</translation>
     </message>
@@ -3743,6 +3743,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>
             <numerusform>宣言 %n 個</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>型を選択すると、そのレイアウトとソースを表示します</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>%1 という名前のローカル型はありません</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>正確な幅（c_uint32）</translation>
     </message>
 </context>
 <context>

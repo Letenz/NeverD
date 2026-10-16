@@ -2351,6 +2351,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     показать инструкции, ссылающиеся на строки</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          показать локальные типы или указанный тип</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3509,10 +3513,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Смещение</translation>
     </message>
     <message>
-        <source>Bytes</source>
-        <translation>Байты</translation>
-    </message>
-    <message>
         <source>Type</source>
         <translation>Тип</translation>
     </message>
@@ -3771,6 +3771,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
             <numerusform>%n объявлено</numerusform>
             <numerusform>%n объявлено</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>Выберите тип, чтобы увидеть его размещение и исходный код</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>Нет локального типа с именем %1</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>Точная ширина (c_uint32)</translation>
     </message>
 </context>
 <context>

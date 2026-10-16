@@ -5735,6 +5735,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     return constrainPredicate(std::move(Value), std::move(Condition), Taken, 0);
   };
 
+  auto supportsRelocatedLiteral = [&](uint16_t Size) {
+    return CurrentImg->isELF() && CurrentImg->Arch == Arch::ARM && Size == 4;
+  };
   auto relocatedLiteralValue = [&](va_t Slot, uint16_t Size) -> ResolverValue {
     // ARM ELF materializes a data/code address as
     //   ldr rN, [pc, #literal]
@@ -5744,7 +5747,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     // relocation symbol.  Preserve that owner so the exact ADD below can
     // complete the address without treating an arbitrary integer literal as
     // relocation evidence.
-    if (!CurrentImg->isELF() || CurrentImg->Arch != Arch::ARM || Size != 4)
+    if (!supportsRelocatedLiteral(Size))
       return {};
     if (!consumeEvidence(CurrentImg->Segments.size()))
       return {};
@@ -5949,9 +5952,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     bool Found = false;
     for (int I = std::min(Before, static_cast<int>(B.Ops.size())) - 1; I >= 0;
          --I) {
-      const auto Previous = Graph.Definitions.previous(
-          Block, B.Ops, I + 1, FrameRegister, Query, TRI, LaneViews,
-          consumeEvidence);
+      const auto Previous =
+          Graph.Definitions.previous(Block, B.Ops, I + 1, FrameRegister, Query,
+                                     TRI, LaneViews, consumeEvidence);
       if (!Previous) {
         Found = true;
         break;
@@ -7391,9 +7394,20 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         // candidate's evidence budget before reaching its dominating spill.
         const bool HasFrameSlot =
             canonicalFrameSlotKey(Block, I - 1, Address, SlotBase, SlotOffset);
+        // Only literal recovery or an earlier compatible load needs the
+        // generic address value. A barrier or the end of the search can rule
+        // out reuse without expanding unrelated loop-carried address inputs.
         ResolverResult AddressValue = resolverInvalid();
-        if (!HasFrameSlot) {
-          AddressValue = resolveOperand(Block, I, Address, Depth + 1);
+        bool AddressResolved = false;
+        auto resolveLoadAddress = [&] {
+          if (!AddressResolved) {
+            AddressResolved = true;
+            AddressValue = resolveOperand(Block, I, Address, Depth + 1);
+          }
+          return AddressValue.Kind == ResolverResultKind::Value;
+        };
+        if (!HasFrameSlot && supportsRelocatedLiteral(Def.Output.Size)) {
+          resolveLoadAddress();
           if (AddressValue.Kind == ResolverResultKind::Value &&
               AddressValue.Value &&
               AddressValue.Value->K == ResolverValueExpr::Kind::Constant &&
@@ -7436,7 +7450,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                    Op.Output.Size == Def.Output.Size &&
                    Op.MemoryAddressSpace == Def.MemoryAddressSpace;
           };
-          if (AddressValue.Kind == ResolverResultKind::Value &&
+          if ((!AddressResolved ||
+               AddressValue.Kind == ResolverResultKind::Value) &&
               Def.MemoryOrdering == NdMemoryOrdering::None) {
             int SearchBlock = Block;
             int SearchEnd = I;
@@ -7454,6 +7469,10 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                 }
                 if (!SameLoad(Op))
                   continue;
+                if (!resolveLoadAddress()) {
+                  Stop = true;
+                  break;
+                }
                 const NdVar &EarlierAddress =
                     Op.NumInputs >= 2 ? Op.Inputs[1] : Op.Inputs[0];
                 const std::array<ResolverResult, 2> Addresses = {

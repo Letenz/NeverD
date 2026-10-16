@@ -2345,6 +2345,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     list the instructions that refer to strings</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          show the local types, or the type named</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3503,10 +3507,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Offset</translation>
     </message>
     <message>
-        <source>Bytes</source>
-        <translation>Bytes</translation>
-    </message>
-    <message>
         <source>Type</source>
         <translation>Type</translation>
     </message>
@@ -3757,6 +3757,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
             <numerusform>%n declared</numerusform>
             <numerusform>%n declared</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>Select a type to see its layout and source</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>No local type is named %1</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>Exact widths (c_uint32)</translation>
     </message>
 </context>
 <context>

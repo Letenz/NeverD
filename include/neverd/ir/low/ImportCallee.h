@@ -17,7 +17,10 @@
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/ADT/ArrayRef.h"
+
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <string>
 
@@ -50,9 +53,9 @@ inline std::string importCalleeName(const BinaryImage &Img, va_t Addr) {
 
 /// The constant address the value \p Var holds at op \p Index of \p Block
 /// was loaded from: its last write before there, in the block or the chain
-/// of single predecessors above it, is a load from an address that folds to
-/// a constant (`mov rax, [rip+slot]`).
-inline std::optional<va_t> loadedCallSlot(const LowFunc &F,
+/// of single predecessors above it among \p Blocks, is a load from an address
+/// that folds to a constant (`mov rax, [rip+slot]`).
+inline std::optional<va_t> loadedCallSlot(llvm::ArrayRef<LowBlock> Blocks,
                                           const LowBlock &Block, size_t Index,
                                           NdVar Var) {
   auto Same = [](const NdVar &A, const NdVar &B) {
@@ -102,9 +105,9 @@ inline std::optional<va_t> loadedCallSlot(const LowFunc &F,
           !Cur->ExceptionalPreds.empty())
         return std::nullopt;
       const int Pred = Cur->Preds.front();
-      auto It = std::find_if(F.Blocks.begin(), F.Blocks.end(),
+      auto It = std::find_if(Blocks.begin(), Blocks.end(),
                              [&](const LowBlock &B) { return B.Id == Pred; });
-      if (It == F.Blocks.end())
+      if (It == Blocks.end())
         return std::nullopt;
       Cur = &*It;
       End = Cur->Ops.size();
@@ -130,6 +133,37 @@ inline std::optional<va_t> loadedCallSlot(const LowFunc &F,
     return std::nullopt;
   }
   return std::nullopt;
+}
+
+inline std::optional<va_t> loadedCallSlot(const LowFunc &F,
+                                          const LowBlock &Block, size_t Index,
+                                          NdVar Var) {
+  return loadedCallSlot(llvm::ArrayRef<LowBlock>(F.Blocks), Block, Index, Var);
+}
+
+/// The routine whose arguments the indirect call \p Op passes, as
+/// \p ArgumentSources keys it by the address of the function-pointer variable
+/// the call goes through (collectPointerVariableCallees): the call's constant
+/// slot, or the slot its target register was loaded from.
+inline std::optional<va_t>
+pointerVariableArgumentsFrom(const std::map<va_t, va_t> *ArgumentSources,
+                             llvm::ArrayRef<LowBlock> Blocks,
+                             const LowBlock &Block, size_t Index,
+                             const LowOp &Op) {
+  if (!ArgumentSources || ArgumentSources->empty() ||
+      Op.Opcode != NdOp::INDIR_CALL || Op.NumInputs == 0)
+    return std::nullopt;
+  std::optional<va_t> Slot;
+  if (Op.Inputs[0].isConst())
+    Slot = Op.Inputs[0].Offset;
+  else if (Op.Inputs[0].isReg())
+    Slot = loadedCallSlot(Blocks, Block, Index, Op.Inputs[0]);
+  if (!Slot)
+    return std::nullopt;
+  const auto It = ArgumentSources->find(*Slot);
+  if (It == ArgumentSources->end())
+    return std::nullopt;
+  return It->second;
 }
 
 } // namespace neverd

@@ -70,6 +70,9 @@ private:
   void requestLayout();
   void requestSource();
   void laidOut(const QJsonObject &type);
+  /// Sizes the layout's columns to what they hold, the member's within
+  /// what the view leaves the types.
+  void fitLayoutColumns();
   void addMembers(QTreeWidgetItem *parent, const QJsonArray &members);
   void exportTypes(const QStringList &names);
   void copy();

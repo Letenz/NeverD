@@ -23,6 +23,7 @@ add_neverd_component_library(NeverDTypes
   HeaderLibrary.cpp
   LocalTypes.cpp
   PDBTypeImport.cpp
+  PythonTypeRender.cpp
   RustTypeParser.cpp
   RustTypeRender.cpp
   TypeJSON.cpp

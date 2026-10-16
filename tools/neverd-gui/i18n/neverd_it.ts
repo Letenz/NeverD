@@ -2345,6 +2345,10 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     elenca le istruzioni che fanno riferimento a stringhe</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          mostra i tipi locali, o il tipo indicato</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3503,10 +3507,6 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
         <translation>Offset</translation>
     </message>
     <message>
-        <source>Bytes</source>
-        <translation>Byte</translation>
-    </message>
-    <message>
         <source>Type</source>
         <translation>Tipo</translation>
     </message>
@@ -3757,6 +3757,22 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
             <numerusform>%n dichiarato</numerusform>
             <numerusform>%n dichiarati</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>Seleziona un tipo per vederne il layout e il sorgente</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>Nessun tipo locale si chiama %1</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>Larghezze esatte (c_uint32)</translation>
     </message>
 </context>
 <context>

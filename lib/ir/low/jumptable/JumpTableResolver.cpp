@@ -66,6 +66,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/symbolic/SymDispatch.h"
 
 #include "llvm/Support/Debug.h"
@@ -6343,7 +6344,9 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
           if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2)
             AddQuery(Op.Inputs[1], Op);
           if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
-              Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::RETURN) {
+              (Op.Opcode == NdOp::INTRINSIC &&
+               !lowIntrinsicHasOnlyValueEffects(Op)) ||
+              Op.Opcode == NdOp::RETURN) {
             if (!consumeCandidateEvidence(Op.NumInputs)) {
               QueryConstructionComplete = false;
               AnalysisComplete = false;

@@ -159,6 +159,7 @@ private:
   BionicResult jniObjects(unsigned Slot, const NativeCallEvent &Call);
   BionicResult jniStrings(unsigned Slot, const NativeCallEvent &Call);
   BionicResult jniArrays(unsigned Slot, const NativeCallEvent &Call);
+  bool jniAssignable(llvm::StringRef Source, llvm::StringRef Destination) const;
   BionicResult jniMethods(unsigned Slot, const NativeCallEvent &Call);
   BionicResult jniFields(unsigned Slot, const NativeCallEvent &Call);
   BionicResult

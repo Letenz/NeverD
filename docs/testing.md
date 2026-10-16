@@ -330,7 +330,9 @@ compiles the result:
   workbench shows as C/C++, compiles as C++ as well;
 - Rust with rustc in both of its spellings, exact widths and Windows' names
   as aliases (64-bit layouts only);
-- Go with `go vet` for Windows, in both spellings too.
+- Go with `go vet` for Windows, in both spellings too;
+- Python by running the module with `python3 -I -W error`, in both spellings,
+  where ctypes checks each size and offset (64-bit layouts only).
 
 A missing toolchain is reported and skipped. Without `--binary` it checks the
 fixture:
@@ -1819,6 +1821,11 @@ and remaining budgets at every small-fixture budget boundary. Equal-size
 instruction, edge, root and ownership changes must replace the graph; rolled
 back and temporary override payloads cannot leave borrowed pointers behind.
 Resource failure and value-analysis incompleteness remain distinct.
+`ResolverLoadAddress.*` checks that one opaque load retains its identity when
+its unused address exceeds the proof depth. Across four architectures and
+three formats, stores, calls, ordered reads and incompatible widths prevent
+load reuse. Compatible reloads and ARM ELF literals still require complete
+address reconstruction; warm queries retain the same result and budget.
 `ResolverPendingCycles.*` checks nested loops whose late definitions must reach
 every batched query, in both query orders and in isolated queries. Register and
 private-frame variants cover x86, x64, ARM and AArch64 across ELF, COFF and
@@ -1993,6 +2000,13 @@ same-field independent contexts with no memory consumer, missing PC-relative
 sources, repeated long blocks, final recording and cross-function exhaustion.
 Every exhaustion must protect the nonempty request set. Existing cross-target
 jump-table and returned-code tests exercise the shared collector's semantics.
+
+`ModuleIntrinsicEffects` validates scalar value-only shapes across x87, BMI2,
+ARM and AArch64. `ModuleJumpTableBudget` also checks a pure instruction after a
+real call with clobbered input lanes, unused address inputs, later result/input
+escapes, explicit temporary address operands of memory intrinsics and malformed
+contracts. These tests retain real loader-backed relocation occurrences and
+must protect table slots whenever an observable use remains.
 
 `ModuleAdjacentTable.*` uses real ELF32/ELF64 adjacent absolute tables in both
 function orders. It checks final x87 returns, independent roots, an unsplit
@@ -3750,6 +3764,42 @@ straight from memory (`call [rip+disp]`) and loads this one into a register
 first. Its LLVM C must not trap and must compile for all four targets. On an
 x64 host the program runs and must call the initial function, then the one
 stored over it.
+
+`CallsThroughPointerVariablesPassTheirArguments` builds, for each architecture,
+a library whose pointer variables start at prototyped routines (`exit`, `puts`,
+`strcmp`, which a stub library defines), at a static function and at a routine
+nothing describes, and checks HighC and LLVM C. Each caller takes as many
+parameters as the routine its variable starts at and passes them on in order,
+in tail and ordinary calls alike, and the undescribed call passes no invented
+zero or return address. `call_self` passes its variable as the fourth argument
+of a routine that takes four, though the same register holds the call target.
+`PointerVariableCallsRunWithTheirArguments` runs the x64 LLVM C against libc:
+each call reaches its routine with its arguments, a stored function replaces
+the initial one, and the call through `exit` ends the program with the code it
+passed. `IndirectCallsPassNoTargetOrSavedRegisters` assembles ARM calls whose
+first argument register holds only the target, loaded through a table slot,
+which must pass nothing in either backend (not the slot's address as a virtual
+call's object), and a call whose outgoing stores leave a gap below a
+`push {r4, r6, r7, lr}`, whose HighC must not pass the saved link register.
+
+`LLVMCValues.ImageStringsInACodeSegmentFollowTheirSection` requires a string
+in `.rodata` inside an R+X segment to print, its bytes in `.text` not to, and
+the segment rule without section headers.
+
+`LinkedLiteralAddsToTheDataItNames` links an ARM getter whose
+`ldr r0, [pc, r0]` reads its literal right after `bx lr`. It requires the
+`ARMLinkedLiteral` certificate for the static variable at the ADD output,
+LowToMed's exact constant in its place, and a lifted getter that loads the
+variable itself. A relocation on the literal word withdraws the certificate.
+
+`IndirectTailFrame.UnwindOnlyFrameDescriptionKeepsTheTailCall` assembles AArch64
+functions with plain CFI into a shared library: a restored frame's `br x0`
+becomes `INDIR_CALL + RETURN` under its FDE, and a live frame keeps its
+indirect branch, as does a computed jump into the function's own code
+(`adr x1, 1f; add x0, x1, w0, sxtw #2; br x0`), while a tail call through the
+function's own reloaded address stays one. `ExceptionFunctionUnwindOnly`
+checks that an LSDA, a personality routine, handler data or a partial parse
+each count as a handler.
 
 `LocalUnwindTargetRequiresExclusiveSameFrameUses` includes decoded x64 calls
 whose SP save and load occupy different blocks, stale producer changes, opaque
@@ -7151,7 +7201,8 @@ Android service or shader coverage.
 `NeverDDalvikTests` checks the decoded executor's uninitialized/torn registers,
 overlapping wide moves, division exceptions/overflow, budget/stack stops,
 result-use rules, per-workload static state, initialization failures, terminal
-resource stops, field widths/final stores and refusal of handlers/unknown opcodes.
+resource stops, field widths/final stores, handler/throwable identity and refusal
+of malformed handlers or unknown opcodes.
 `NeverDMobileTests` must also run when changing the shared DEX reader or models;
 mobile recovery and JNI execution share those owners.
 
@@ -7170,7 +7221,8 @@ overflow, negative/oversized shifts, signed division/remainder, narrow returns,
 wide arguments, branches, packed/sparse switches, loops, recursion and
 cross-class calls, through ordinary/V/A JNI forms. Negative workloads cover
 division exceptions, loops exhausting the shared native budget, recursion,
-objects/handlers, corrupt/duplicate DEX and JNI-disabled admission. Logs and
+unknown Object methods, corrupt/duplicate DEX and JNI-disabled admission.
+The formerly unsupported arithmetic handler now has a positive result oracle. Logs and
 request/report files stay in the explicit output directory. Missing JDK/D8 or
 CPU transports are unavailable evidence, not a passing substitute. The runtime
 itself does not launch these preparation tools or use a device.
@@ -7196,6 +7248,18 @@ Separate negative calls check accessor mismatch, final writes, bad receivers,
 forged field IDs and model heap limits. Decoded-model unit cases independently
 check forged register references, constructor ordering/aliasing, array payload
 bounds, component types, cyclic field storage and terminal resource stops.
+
+Run `scripts/test_android_dex_language.py` with the same JDK/D8/backend flags
+for strings, library execution, handlers and inheritance. Original class files
+run on the JVM; D8 supplies the distinct instruction stream executed by NeverD.
+Cases compare exact UTF-16 units and hashes, literal/intern identities, message
+identity, ordered catch/rethrow/finally side effects and repeated unwinding.
+JNI bridge cases compare complete output arrays for virtual/interface/nonvirtual
+calls, inherited fields, class identity, Throwable round trips and references
+after reattachment. Unknown library and synchronized calls inside catch-all
+regions must stop rather than return a guessed success. The separate sequence
+oracle resets its explicit side-effect input between calls for adapter reuse;
+its preparation is not itself a NeverD execution claim.
 
 
 Processor regressions cover output boundaries, NULL, nested restores, invalid IRQL and import identity. Original `driver_processors.c` exercises entry, worker and DPC contexts across backends, contracts, bases and scheduling. Optional `NEVERD_WDM_PROCESSORS_FIXTURE` and `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` verify genuine WDK inline calls and dynamic exports with normal/active CFG images; missing transports remain explicit skips.

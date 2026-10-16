@@ -3574,6 +3574,24 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
       Session,
       R"({"language":"go","spelling":"windows","types":["_PACKED"]})"));
   EXPECT_NE(GoWindows.find("type ULONG = uint32\n"), std::string::npos);
+  // Python is ctypes, its checks run as the module does.
+  const std::string Python = takeString(neverd_local_types_source(
+      Session, R"({"language":"python","types":["_PACKED"],"asserts":true})"));
+  EXPECT_NE(Python.find("class _PACKED(ctypes.Structure):"), std::string::npos)
+      << Python;
+  EXPECT_NE(Python.find("assert ctypes.sizeof(_PACKED) == 0x7"),
+            std::string::npos);
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"python","spelling":"ida"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "python names builtins as windows or portable, not ida");
+  // Prototypes render in C and C++; asked of another language, they fail.
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"rust","prototypes":true})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "\"prototypes\" render in c and cpp, not rust");
 
   EXPECT_EQ(neverd_local_type_json(Session, "_NO_SUCH_TYPE", nullptr), nullptr);
   EXPECT_NE(takeString(neverd_last_error(Session)).find("_NO_SUCH_TYPE"),
@@ -3581,6 +3599,31 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
   EXPECT_EQ(neverd_local_types_source(Session, R"({"language":"pascal"})"),
             nullptr);
   EXPECT_EQ(neverd_local_types_json(Session, "[1]"), nullptr);
+}
+
+TEST(SessionCAPILocalTypes, LanguagesSayHowEachNamesBuiltins) {
+  // Without a program, what each language takes, for a frontend's choices
+  // and an agent's.
+  auto Parsed = llvm::json::parse(takeString(neverd_types_languages_json()));
+  ASSERT_TRUE(static_cast<bool>(Parsed));
+  const llvm::json::Array *Languages =
+      Parsed->getAsObject()->getArray("languages");
+  ASSERT_NE(Languages, nullptr);
+  std::map<std::string, std::pair<std::string, std::string>> Taken;
+  for (const llvm::json::Value &Value : *Languages) {
+    const llvm::json::Object &Language = *Value.getAsObject();
+    std::string Spellings;
+    for (const llvm::json::Value &Id : *Language.getArray("spellings"))
+      Spellings += (Spellings.empty() ? "" : " ") + Id.getAsString()->str();
+    Taken[Language.getString("id")->str()] = {
+        Language.getString("spelling")->str(), Spellings};
+  }
+  using Choice = std::pair<std::string, std::string>;
+  EXPECT_EQ(Taken["c"], Choice("windows", "windows ida keywords portable"));
+  EXPECT_EQ(Taken["cpp"], Choice("windows", "windows ida keywords portable"));
+  EXPECT_EQ(Taken["rust"], Choice("portable", "windows portable"));
+  EXPECT_EQ(Taken["go"], Choice("portable", "windows portable"));
+  EXPECT_EQ(Taken["python"], Choice("portable", "windows portable"));
 }
 
 TEST_F(SessionCAPITest, DeclaredTypesJoinThePDBsAndStayWithTheProject) {

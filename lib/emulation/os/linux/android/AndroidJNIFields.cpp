@@ -57,7 +57,8 @@ BionicResult Bionic::jniFields(unsigned Slot, const NativeCallEvent &Call) {
                    : Type != std::string(1, Kind)))
     return failure("JNI field accessor type or storage kind mismatch");
   if (Static && ((*Receiver)->Type != JNIObject::Class ||
-                 "L" + (*Receiver)->ClassName + ";" != Field.reference.owner))
+                 !JNI.Dex->assignable("L" + (*Receiver)->ClassName + ";",
+                                      Field.reference.owner)))
     return failure("JNI static field class mismatch");
   uint64_t Bits = A[3];
   if (Write && Kind == 'L') {

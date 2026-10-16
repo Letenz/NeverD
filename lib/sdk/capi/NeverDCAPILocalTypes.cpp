@@ -289,7 +289,7 @@ bool readRender(const llvm::json::Object &Options, types::RenderOptions &Render,
     std::optional<types::Language> Lang =
         Id ? types::languageNamed(*Id) : std::nullopt;
     if (!Lang) {
-      Error = "\"language\" must be c, cpp, rust or go";
+      Error = "\"language\" must be " + types::languagesText();
       return false;
     }
     Render.Lang = *Lang;
@@ -305,11 +305,20 @@ bool readRender(const llvm::json::Object &Options, types::RenderOptions &Render,
                 .str();
     return false;
   }
-  return readFlag(Options, "offsets", Render.Offsets, Error) &&
-         readFlag(Options, "hexOffsets", Render.HexOffsets, Error) &&
-         readFlag(Options, "asserts", Render.Asserts, Error) &&
-         readFlag(Options, "prototypes", Render.Prototypes, Error) &&
-         readFlag(Options, "dependencies", Dependencies, Error);
+  if (!readFlag(Options, "offsets", Render.Offsets, Error) ||
+      !readFlag(Options, "hexOffsets", Render.HexOffsets, Error) ||
+      !readFlag(Options, "asserts", Render.Asserts, Error) ||
+      !readFlag(Options, "prototypes", Render.Prototypes, Error) ||
+      !readFlag(Options, "dependencies", Dependencies, Error))
+    return false;
+  // Prototypes asked of a language that renders none fail, not vanish.
+  if (Render.Prototypes && !types::rendersPrototypes(Render.Lang)) {
+    Error = ("\"prototypes\" render in c and cpp, not " +
+             types::languageId(Render.Lang))
+                .str();
+    return false;
+  }
+  return true;
 }
 
 /// The types \p Options' "types" names in \p Library, in order; false with
@@ -416,7 +425,7 @@ const char *neverd_local_types_json(neverd_session_t Sess,
     std::optional<llvm::StringRef> Id = Value->getAsString();
     Lang = Id ? types::languageNamed(*Id) : std::nullopt;
     if (!Lang) {
-      S->setError("\"language\" must be c, cpp, rust or go");
+      S->setError("\"language\" must be " + types::languagesText());
       return nullptr;
     }
   }
@@ -691,6 +700,27 @@ const char *neverd_local_types_forget(neverd_session_t Sess,
       llvm::json::Value(llvm::json::Object{{"removed", std::move(Names)},
                                            {"usedBy", std::move(UsedBy)},
                                            {"decompilation", Decompilation}})));
+}
+
+const char *neverd_types_languages_json(void) {
+  llvm::json::Array Languages;
+  const auto add = [&](types::Language Lang, llvm::StringRef Display) {
+    llvm::json::Array Spellings;
+#define NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go, Python)                 \
+  if (types::spellsBuiltins(Lang, types::BuiltinSpelling::Name))               \
+    Spellings.push_back(Id);
+#include "neverd/types/BuiltinSpellings.def"
+    Languages.push_back(llvm::json::Object{
+        {"id", types::languageId(Lang)},
+        {"display", Display},
+        {"spelling", types::spellingId(types::defaultSpelling(Lang))},
+        {"spellings", std::move(Spellings)}});
+  };
+#define NEVERD_TYPE_LANGUAGE(Name, Id, Display, Spelling)                      \
+  add(types::Language::Name, Display);
+#include "neverd/types/TypeLanguages.def"
+  return dupStr(jsonToString(llvm::json::Value(
+      llvm::json::Object{{"languages", std::move(Languages)}})));
 }
 
 const char *neverd_types_convert(const char *RequestJson) {
