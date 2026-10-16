@@ -4000,6 +4000,20 @@ and the HighC compiles for AArch64.
 `LowIntrinsicMemoryOperands.DecodeOnlyTheLiftedShapes` rejects width, ordering
 and segment mismatches and intrinsics without a memory contract.
 
+The restored-frame list also covers libc++'s `__release_shared` (a call, then
+an exclusive decrement through the object while the link word is saved), a
+plain store through an incoming pointer (`tail_unknown_alias`), a `brk` path,
+`udf` padding and a thread-pointer `mrs`. The retained list keeps the branch
+for a store through a frame-derived address, after a frame address leaves
+through an untracked store, after one is read back through an address the
+spills cannot follow, after half of one is stored where no spill records it,
+after one is stored above the frame, and when `mrs` writes the link register.
+`LowIntrinsicEffects.OutputOnlyReadsAndTraps` checks the two predicates.
+`IndirectTailFrame.ItaniumTableForwardsOnlyFromCoveredBranches` links a
+shared library whose C++ tables cover one branch with a call site that names
+no landing pad (a tail call) and leave another uncovered, as a `noexcept`
+destructor's empty table does (kept).
+
 `LocalUnwindTargetRequiresExclusiveSameFrameUses` includes decoded x64 calls
 whose SP save and load occupy different blocks, stale producer changes, opaque
 calls, partial writes, foreign address uses and invalid module/runtime facts.
