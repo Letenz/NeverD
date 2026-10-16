@@ -9,6 +9,19 @@
 #define FILTER_PERSONALITY __except_handler3
 #define FILTER_UNWIND __seh_longjmp_unwind
 #endif
+#define FILTER_REPEATED_JUMP (REGISTRATION_CASE >= 58 && REGISTRATION_CASE <= 65)
+#define FILTER_NESTED_JUMP (FILTER_REPEATED_JUMP && (REGISTRATION_CASE & 1))
+#define FILTER_DYNAMIC_VALUE (REGISTRATION_CASE == 64 || REGISTRATION_CASE == 65)
+#if REGISTRATION_CASE == 60 || REGISTRATION_CASE == 61
+#define FILTER_JUMP_VALUE 43
+#define FILTER_RESUME_VALUE 43
+#elif REGISTRATION_CASE == 62 || REGISTRATION_CASE == 63
+#define FILTER_JUMP_VALUE 0
+#define FILTER_RESUME_VALUE 1
+#else
+#define FILTER_JUMP_VALUE 42
+#define FILTER_RESUME_VALUE 42
+#endif
 .intel_syntax noprefix
 .text
 .globl _registration_entry
@@ -78,7 +91,7 @@ _registration_entry:
   test eax,eax
   jnz .Lresumed
   mov ebx,9
-#if REGISTRATION_CASE == 59
+#if FILTER_NESTED_JUMP
   mov dword ptr [ebp-4],4
 #endif
 #if REGISTRATION_CASE == 41 || REGISTRATION_CASE == 42
@@ -97,9 +110,18 @@ _registration_entry:
 #else
   cmp ebx,6
   jne .Lbad
-  cmp eax,42
+#if FILTER_DYNAMIC_VALUE
+  mov ecx,[_registration_iteration]
+  sub ecx,1
+  jnz .Lexpected_value
+  mov ecx,1
+.Lexpected_value:
+  cmp eax,ecx
+#else
+  cmp eax,FILTER_RESUME_VALUE
+#endif
   jne .Lbad
-#if REGISTRATION_CASE == 37 || REGISTRATION_CASE == 57 || REGISTRATION_CASE == 58 || REGISTRATION_CASE == 59
+#if REGISTRATION_CASE == 37 || REGISTRATION_CASE == 57 || FILTER_REPEATED_JUMP
   cmp dword ptr [ebp-4],0
 #elif REGISTRATION_CASE == 38
   cmp dword ptr [ebp-4],FILTER_SENTINEL
@@ -145,8 +167,8 @@ _registration_entry:
 .Lmixed_continue:
   mov eax,-1
 .Lmixed_return:
-#elif REGISTRATION_CASE == 53 || REGISTRATION_CASE == 54 || REGISTRATION_CASE == 56 || REGISTRATION_CASE == 58 || REGISTRATION_CASE == 59
-#if REGISTRATION_CASE == 54 || REGISTRATION_CASE == 58 || REGISTRATION_CASE == 59
+#elif REGISTRATION_CASE == 53 || REGISTRATION_CASE == 54 || REGISTRATION_CASE == 56 || FILTER_REPEATED_JUMP
+#if REGISTRATION_CASE == 54 || FILTER_REPEATED_JUMP
   // The search cursor stays at scope 1 while its state write adds cleanup 3.
   mov dword ptr [ebp-4],3
 #endif
@@ -286,13 +308,13 @@ _registration_entry:
 #if REGISTRATION_EH4_FILTER
 #include "registration_eh4_personality.inc"
 #endif
-#if REGISTRATION_CASE == 54 || REGISTRATION_CASE == 58 || REGISTRATION_CASE == 59
+#if REGISTRATION_CASE == 54 || FILTER_REPEATED_JUMP
 .Lselected_cleanup:
   mov eax,[ebp-100]
   imul eax,eax,10
   add eax,6
   mov [ebp-100],eax
-#if REGISTRATION_CASE == 59
+#if FILTER_NESTED_JUMP
   call .Lcleanup_jump
   jmp .Lcleanup_return
 .Lcleanup_jump:
@@ -301,14 +323,20 @@ _registration_entry:
   add eax,7
   mov [ebp-100],eax
 #endif
-#if REGISTRATION_CASE == 58 || REGISTRATION_CASE == 59
-  push 42
+#if FILTER_REPEATED_JUMP
+#if FILTER_DYNAMIC_VALUE
+  mov eax,[_registration_iteration]
+  sub eax,1
+  push eax
+#else
+  push FILTER_JUMP_VALUE
+#endif
   lea eax,[ebp-96]
   push eax
   call __longjmpex
   ud2
 #endif
-#if REGISTRATION_CASE == 59
+#if FILTER_NESTED_JUMP
 .Lcleanup_return:
 #endif
   ret
@@ -334,12 +362,12 @@ _registration_entry:
   .long 0,.Lfilter,.Lhandler
   .long 1,0,.Lfinally
 #endif
-#if REGISTRATION_CASE == 54 || REGISTRATION_CASE == 58 || REGISTRATION_CASE == 59
+#if REGISTRATION_CASE == 54 || FILTER_REPEATED_JUMP
   .long 1,0,.Lselected_cleanup
 #elif REGISTRATION_CASE == 56
   .long 1,0,.Lselected_nested
 #endif
-#if REGISTRATION_CASE == 59
+#if FILTER_NESTED_JUMP
   .long 1,0,.Lcleanup_jump
 #endif
   .long 0,0,0

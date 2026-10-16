@@ -26,14 +26,9 @@ bool RegistrationStateSolver::recordSEHUnwindJump(size_t I, const LowOp &Op,
       !hasSEHJumpCapture(State, Jump.Capture))
     return false;
   const auto Value = State.loadCallback(SP->Offset + 4, 4);
-  const auto Normalize = [](const FrameValue &V) {
-    return V.Constant == 0 ? FrameValue::constant(1) : V;
-  };
-  // A different capture or value requires its own continuation recipe.
-  if (!Value.Constant || !Jump.Value.Constant || Value.MayBeFrame ||
-      Jump.Value.MayBeFrame || Normalize(Value) != Normalize(Jump.Value))
+  if (!Value.isFrameIndependentScalar())
     return false;
-  return mergeSEHFrameOutcome(Jump.Resumed, State);
+  return mergeSEHFrameOutcome(Jump.Resumed[Value], State);
 }
 
 } // namespace neverd::registration_state

@@ -339,18 +339,21 @@ registers. A still-live capture remains available to later checked transfers.
 Selection and capture resumption remain separate proof outcomes, including
 mixed searches. Selected-filter writes also supply independent cleanup roots.
 A selected handler's cleanup can supersede that selection with a new jump to
-its same live capture and a proved equal constant value (zero normalizes to one).
-This restores the capture's unwind bound and retires all suspended finally
+its same live capture and a new scalar value (zero normalizes to one). Each
+value stays paired with its own frame effects throughout local unwind, then
+becomes the resumed EAX value. This restores the capture's unwind bound and retires all suspended finally
 invocations, including nested ordinary calls. Out-of-line callbacks retain their
 scope ownership and authenticated physical CALL/RET boundaries. Their unreachable
 tails remain callback code without acquiring a fabricated reaching state.
 LLVM and installation share the same MedIR invocation and callback ownership
 queries; a nonreturning nested call requires both a checked jump exit and no
-ordinary return. Different captures or values, unknown value equality, recurrent
-selection, and escaping searches still require separate complete transfer proofs.
+ordinary return. Different captures, escaping frame values, recurrent selection,
+and escaping searches still require separate complete transfer proofs.
 Scopes without any proved activation remain unsupported.
-Mapped PE data,
-including zero-fill storage, retains its runtime values and access permissions;
+Checked reads from mapped PE data retain their runtime bits as scalar jump
+values, including negative values. They keep possible alias provenance: a
+subsequent dereference or a value mixed with a frame address needs its own proof.
+Mapped PE data, including zero-fill storage, retains its runtime values and access permissions;
 overlapping mappings, import writes and escaping frame pointers refuse.
 
 Ordinary calls from one finally callback to another retain the same physical

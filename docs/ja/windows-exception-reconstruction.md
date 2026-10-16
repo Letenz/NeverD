@@ -235,4 +235,4 @@ IP-to-state map を検証します。parser 変更時は共通モデルを使う
 decode できるだけで allow-list を広げてはいけません。最終 linked image で runtime exception
 behavior が保存されることが受理条件です。
 
-選択された handler の cleanup は、同じ有効な capture と等しいと証明された定数値（0 は 1 に正規化）で再度ジャンプできます。handler と中断中の入れ子 finally 呼び出しを取り消し、capture の unwind 境界を復元します。関数本体の範囲外の callback と到達不能な末尾も、検証済みの所属を保持します。別の capture、異なる値、同値性が不明な値には独立した証明が必要です。
+選択された handler の cleanup は、同じ有効な capture に新しいスカラー値で再度ジャンプできます（0 は 1 に正規化）。unwind 中は各値とそのフレームへの効果を組として保持し、再開時の EAX に反映します。handler と中断中の入れ子 finally 呼び出しを取り消し、capture の unwind 境界を復元します。関数本体の範囲外の callback と到達不能な末尾も、検証済みの所属を保持します。別の capture やフレームアドレスの流出には独立した証明が必要です。
