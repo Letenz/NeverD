@@ -1,10 +1,10 @@
 // The Windows kernel's types and prototypes for x64 (LLP64), as a driver
-// declares them with <ntifs.h> for Windows 10 2004.  Generated on
-// 2026-10-15 by scripts/generate_windows_kernel_types.py from the
-// DDK and SDK headers of mingw-w64 13.0.0-2ubuntu1: changed from them, as
-// NeverD reads and renders their declarations again.  The headers'
-// notices are in LICENSES/mingw-w64-headers.txt.  Do not edit;
-// generate it again.
+// declares them with <ntifs.h> for Windows 10 2004.  Generated
+// on 2026-10-16 by scripts/generate_windows_types.py --target kernel-x64
+// from the DDK and SDK headers of mingw-w64 13.0.0-2ubuntu1: changed from
+// them, as NeverD reads and renders their declarations again.  The
+// headers' notices are in LICENSES/mingw-w64-headers.txt.  Do not
+// edit; generate it again.
 // 3429 types, 1596 prototypes, rendered by NeverD.
 #pragma once
 

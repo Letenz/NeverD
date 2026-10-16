@@ -691,6 +691,13 @@ std::vector<TypeFit> fitTypes(const TypeLibrary &Library, const FitQuery &Query,
         return LC.key() < RC.key();
       if (L.MatchScore != R.MatchScore)
         return L.MatchScore > R.MatchScore;
+      // Of records the accesses fit alike, the program's own describe its
+      // build: a system's headers declare thousands of small records, such
+      // as ACE_HEADER, that a few accesses fit as tightly by chance.
+      const int LO = originRank(L.Type->Origin),
+                RO = originRank(R.Type->Origin);
+      if (LO != RO)
+        return LO < RO;
       if (Keys[A].first != Keys[B].first)
         return Keys[A].first < Keys[B].first;
     } else {

@@ -412,14 +412,15 @@ declarations, and the sidecar's load. `FunctionDeclarationsNeedNoDebugInformatio
 does the same on the image read without its PDB, of a type the user
 declares, and checks that another function's text stays as it was.
 
-`HeaderLibrary.*` reads the embedded Windows kernel library and checks how a
+`HeaderLibrary.*` reads the embedded Windows libraries and checks how a
 header library joins a program's types. After running
-`scripts/generate_windows_kernel_types.py`, check the library in every
-language:
+`scripts/generate_windows_types.py`, check each library in every language:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsKernelX64.h --data-model LLP64
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/WindowsUserX64.h --data-model LLP64
 ```
 
 With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
@@ -454,6 +455,16 @@ the `neverd.prototype` comment HighC prints.
 `kernel_imports.sys`, a driver calling kernel imports, and checks that a call
 passes what the prototype takes, a tail call forwarding it, and that the unit
 declares the imports as the headers do.
+`SessionCAPITest.UserImportsPassWhatTheirPrototypesTake` loads
+`user_imports.exe`, a console program calling kernel32, user32 and ntdll,
+and checks that it joins the user mode headers and then the kernel's, that
+`CreateFileW` takes the parameter its caller forwards as the first of seven,
+that `ZwClose` takes the kernel headers' prototype, that a function stops at
+`ExitProcess` rather than running into the next one, and that an export
+reading no parameter shows the one its prototype declares.
+`SessionCAPITest.LocalTypesFitWhatTheCodeDoesThroughAPointer` checks that the
+program's own record ranks before a header record the accesses fit as
+exactly.
 `HeaderLibrary.DeclaresTheKernelRoutinesTheCallAnalysisFixes` checks that the
 kernel's headers and `WindowsKernelRoutines.inc` agree on the bytes each
 parameter of a routine both know takes, and
@@ -768,6 +779,10 @@ lifts a raw five-integer kernel that saves XMM6/XMM7 with optimization enabled
 and disabled, then executes its LLVM-derived C at O0/O2 with UB traps for
 1,024 independent argument tuples. This checks host C execution, not native
 execution of every source architecture.
+`Win64CallContract.CallersPassWhatAnExportedRoutinesPrototypeDeclares`
+(`NeverDWin64CallContractTests`) checks that a routine the image exports,
+whose name binds a prototype, reads the parameters it declares, a system call
+stub's fifth on the stack too, together with any its body reads past them.
 
 `NeverDFPParameterMaskTests` runs the shared ABI suite and `FPParameterMask.*`.
 The mask controls retain live bytes, earlier stores, ambiguous definitions and

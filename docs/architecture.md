@@ -219,16 +219,21 @@ Windows kernel's PDB names records, but no typedefs and no prototypes.
 They are the one source of what a known routine takes and returns, as IDA's
 type libraries are beside its signatures: signatures (`signatures/`)
 recognize a routine by its bytes and only name it. A platform or an
-architecture joins by a header under `lib/types/headers/` and a row of the
-table naming the data model, format, architecture and subsystem it
-describes, and the spelling its headers name builtins in, which shows its
-declarations as they read (Windows' `ULONG`); its calling convention's rules
-then place each parameter (`placeSourceParameters`, one file per
-convention).
-`scripts/generate_windows_kernel_types.py` renders what `<ntifs.h>` declares,
-from mingw-w64's DDK headers, into `lib/types/headers/WindowsKernelX64.h`.
-The build embeds the file, and `headerLibrary` reads it once. The C API joins
-a library to an image the table names (an x64 PE of the native subsystem)
+architecture joins by a header under `lib/types/headers/`, a row of
+`HeaderLibraries.def` naming its data model and the spelling its headers
+name builtins in, which shows its declarations as they read (Windows'
+`ULONG`), and rows of `HeaderLibraryImages.def`: how an image's headers tell
+its kind (a PE's subsystem), and the libraries an image of each kind and
+architecture joins, in order. Its calling convention's rules then place
+each parameter (`placeSourceParameters`, one file per convention).
+`scripts/generate_windows_types.py` renders, from mingw-w64's headers, what
+a driver's `<ntifs.h>` declares into `lib/types/headers/WindowsKernelX64.h`,
+and what a program's `<windows.h>`, `<winternl.h>` and the headers of the
+libraries programs most often call declare into `WindowsUserX64.h`. The
+build embeds the files, and `headerLibrary` reads each once. The C API joins
+the libraries the table names to an image (an x64 PE of the native
+subsystem joins the kernel's; one of the Windows GUI or console subsystem
+joins user mode's, then the kernel's for the native API ntdll exports)
 after the program's PDB and before the user's declarations:
 - a header type joins only where the program has no type of its name;
 - a typedef names the program's type, as C binds it;
@@ -354,7 +359,12 @@ exports, which takes the prototype of the import's name: `resolveFunction`
 gives it at the slot or stub to the C backends, which declare and call it
 so, and `resolvePrototype` gives it by name to the call analysis, which
 passes exactly its parameters where the libc tables know none of the name
-(`importPrototypeArguments`), and to the return contracts. A callee the
+(`importPrototypeArguments`), and to the return contracts. A routine the image
+exports, whose name binds a prototype, is called with at least what the
+prototype declares, as its export fixes the convention for the callers within
+the image too: the declared parameters join what its body reads in its own
+summary, so that a system call stub's callers pass the stack arguments its
+dispatcher reads, and a body that reads past them keeps those. A callee the
 pipeline does not decompile returns what its declaration says, as the C
 writers read it, so that a caller returning what a `void` routine left in
 RAX returns nothing too. A routine never returns where its name says so, as
