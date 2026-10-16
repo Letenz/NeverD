@@ -15,9 +15,9 @@
 ///   Rust  Whether Rust takes it.
 ///   Go    Whether Go takes it.
 ///
-/// Windows   ULONG and UCHAR, as the Windows headers name them; Rust
-///           declares them as aliases of exact widths, as wdk-sys does
-///           (pub type ULONG = u32).
+/// Windows   ULONG and UCHAR, as the Windows headers name them; Rust and
+///           Go declare them as aliases of exact widths, as wdk-sys does
+///           (pub type ULONG = u32, type ULONG = uint32).
 /// IDA       unsigned int and unsigned __int8, as IDA's local types do.
 /// Keywords  unsigned long, as the compiler recorded it.
 /// Portable  Exact widths: uint32_t in C, u32 in Rust, uint32 in Go.
@@ -28,7 +28,7 @@
 #define NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go)
 #endif
 
-NEVERD_BUILTIN_SPELLING(Windows, "windows", true, true, false)
+NEVERD_BUILTIN_SPELLING(Windows, "windows", true, true, true)
 NEVERD_BUILTIN_SPELLING(IDA, "ida", true, false, false)
 NEVERD_BUILTIN_SPELLING(Keywords, "keywords", true, false, false)
 NEVERD_BUILTIN_SPELLING(Portable, "portable", true, true, true)

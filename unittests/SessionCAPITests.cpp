@@ -3566,12 +3566,14 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
   EXPECT_EQ(takeString(neverd_last_error(Session)),
             "rust names builtins as windows or portable, not ida");
   EXPECT_EQ(neverd_local_types_source(
-                Session, R"({"language":"go","spelling":"windows"})"),
+                Session, R"({"language":"go","spelling":"keywords"})"),
             nullptr);
-  EXPECT_FALSE(
-      takeString(neverd_local_types_source(
-                     Session, R"({"language":"go","spelling":"portable"})"))
-          .empty());
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "go names builtins as windows or portable, not keywords");
+  const std::string GoWindows = takeString(neverd_local_types_source(
+      Session,
+      R"({"language":"go","spelling":"windows","types":["_PACKED"]})"));
+  EXPECT_NE(GoWindows.find("type ULONG = uint32\n"), std::string::npos);
 
   EXPECT_EQ(neverd_local_type_json(Session, "_NO_SUCH_TYPE", nullptr), nullptr);
   EXPECT_NE(takeString(neverd_last_error(Session)).find("_NO_SUCH_TYPE"),

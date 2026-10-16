@@ -3415,6 +3415,10 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <translation>Exakte Breiten (u32)</translation>
     </message>
     <message>
+        <source>Exact widths (uint32)</source>
+        <translation>Exakte Breiten (uint32)</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>Typen nach Namen filtern</translation>
     </message>

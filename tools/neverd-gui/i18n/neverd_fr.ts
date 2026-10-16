@@ -3415,6 +3415,10 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
         <translation>Largeurs exactes (u32)</translation>
     </message>
     <message>
+        <source>Exact widths (uint32)</source>
+        <translation>Largeurs exactes (uint32)</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>Filtrer les types par nom</translation>
     </message>
