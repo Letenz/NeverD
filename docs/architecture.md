@@ -6974,3 +6974,12 @@ DarwinFiles continues to own all file authority, effects and descriptor cursors;
 no loader, public transport, generic IntegerABI or report schema gains a second
 semantic owner. Native controls and direct boundary checks separate defined
 stack bytes, full carriers, kernel narrowing and final metadata.
+
+### Ordinary libSystem memory calls
+
+DarwinLibSystem prepares C mmap/mprotect/munmap carriers without changing the
+raw BSD entry. Its argument reader narrows C int protection/flags/descriptors,
+records mmap's early zero-length or missing-sharing-type EINVAL, and adds
+MAP_UNIX03 only to the separate kernel arguments. The common completion path
+owns errno and return-frame publication. DarwinMemory remains the sole owner
+of mappings, current/maximum rights, reserved pages and retained file leases.

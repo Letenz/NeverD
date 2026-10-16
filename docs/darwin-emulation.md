@@ -2704,11 +2704,14 @@ Classic lazy pointer programs are resolved eagerly before entry. Each program mu
 
 `open`, `lseek`, `pread`, `pwrite`, `dup` and `dup2` share the existing file catalogue, mutations and descriptor cursors. `open` records two arguments, or three when low-32-bit flags include O_CREAT. Its optional promoted int occupies four defined bytes at entry SP on ARM64 (padding is not read); x64 uses the third GP argument. The report preserves that carrier while a separate kernel argument narrows mode to 16 bits. With no O_CREAT, mode is zero and optional storage is not read; the required x64 return address is still validated. Argument-read failures precede call records, errno and file effects. This follows [Apple's ARM64 ABI](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms) and the [XNU open wrapper](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c). Native O0/O1/O2 controls cover shared offsets, positioned IO, dup2 failures, offsets above 4 GiB, mode narrowing and binary bytes. Thread cancellation and compatibility path shims remain outside this model.
 
+`mmap`, `mprotect` and `munmap` reuse the existing memory mappings, protections, resident reservations and file leases. The C wrapper narrows protection, flag and descriptor arguments to 32 bits while reports retain their original carriers. `mmap` returns MAP_FAILED with EINVAL for zero length or absent MAP_PRIVATE/MAP_SHARED before kernel effects, then supplies MAP_UNIX03 for admitted calls; raw BSD semantics stay unchanged. This follows the [XNU UNIX03 wrapper](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/libsyscall/wrappers/unix03/mmap.c). Original C controls cover zero-filled anonymous pages, protection changes, error order, closed-descriptor mapping lifetime, private writes and partial EOF pages. Shared/fixed/executable mappings and allocator behavior remain outside this increment.
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
+C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
@@ -2724,7 +2727,8 @@ basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
 classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
-native common catalogue: 82; required methods/platform: 98; matching ARM64 identities: 294
+memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
+native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
 ```
 
 ```json

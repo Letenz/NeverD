@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 9087505960d4cc4b5cf6a7c11547f25f65721975e0679c47f898ae3f18a0fcf8 -->
+<!-- i18n-source: 5edfb602025b5842453dbc5914dad53572f14fdc63e424ca65e66d45415e59c3 -->
 
 [← Indice della documentazione](README.md)
 
@@ -1809,11 +1809,14 @@ I puntatori classic lazy vengono risolti prima dell’ingresso. Ogni programma d
 
 `open`, `lseek`, `pread`, `pwrite`, `dup` e `dup2` condividono catalogo, modifiche e cursori esistenti. `open` registra due argomenti, oppure tre quando i 32 bit inferiori dei flag includono O_CREAT. ARM64 legge l'int promosso opzionale nei quattro byte definiti allo SP d'ingresso, senza padding; x64 usa il terzo argomento GP. Il rapporto conserva il valore originale e l'argomento kernel riduce mode a 16 bit. Senza O_CREAT, mode è zero e la memoria opzionale non viene letta; resta la verifica del ritorno x64. Errori di lettura precedono registrazioni, errno ed effetti sui file. Riferimenti: [ABI ARM64 Apple](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms), [open XNU](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c). I controlli nativi O0/O1/O2 coprono cursori condivisi, I/O posizionale, errori dup2, offset oltre 4 GiB, mode e dati binari. Cancellazione dei thread e percorsi di compatibilità restano esclusi.
 
+`mmap`, `mprotect` e `munmap` riutilizzano mappature, protezioni, riserve residenti e riferimenti ai file esistenti. Il wrapper C riduce protezioni, flag e descrittori a 32 bit, conservando nei report i valori originali. `mmap` restituisce MAP_FAILED con EINVAL per lunghezza zero o assenza di MAP_PRIVATE/MAP_SHARED prima degli effetti del kernel, quindi aggiunge MAP_UNIX03 alle chiamate ammesse; la semantica BSD grezza resta invariata. Secondo il [wrapper UNIX03 di XNU](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/libsyscall/wrappers/unix03/mmap.c), controlli C originali coprono pagine anonime azzerate, protezioni, ordine degli errori, durata dopo la chiusura, scritture private e pagina finale EOF. Mappature condivise, fisse o eseguibili e allocatori restano fuori da questo incremento.
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
+C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
@@ -1829,7 +1832,8 @@ basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
 classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
-native common catalogue: 82; required methods/platform: 98; matching ARM64 identities: 294
+memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
+native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
 ```
 
 ```json

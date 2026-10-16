@@ -15,6 +15,7 @@
 #include "DarwinFileTestData.h"
 #include "DarwinFullSynchronizationTestData.h"
 #include "DarwinLibSystemFileTestData.h"
+#include "DarwinLibSystemMemoryTestData.h"
 #include "DarwinModeTestData.h"
 #include "DarwinOwnershipTestData.h"
 #include "DarwinSymbolicLinkFileSystemTestData.h"
@@ -4464,6 +4465,63 @@ TEST_P(DarwinProcess, LibSystemFileCallsShareCursorsAndDecodeOptionalMode) {
     EXPECT_FALSE(Unknown->NativeCalls.back().Result);
     EXPECT_TRUE(Unknown->StandardOutput.empty());
     Options.DarwinFiles = darwin_test::libSystemFileOptions();
+  }
+}
+
+TEST_P(DarwinProcess, LibSystemMemoryCallsPreserveMappingsAndCErrorOrder) {
+  const auto Page = GetParam().ISA == GuestArchitecture::X64 ? 4096u : 16384u;
+  Options.InstructionQuantum = 1024;
+  Options.Arguments = {"memory", std::to_string(Page), "/data"};
+  Options.DarwinFiles = darwin_test::libSystemMemoryOptions(Page);
+  for (const char *Kind : {"classic", "chained"}) {
+    SCOPED_TRACE(Kind);
+    const auto Linked =
+        std::filesystem::path(Path.string() + "-libsystem-memory-" + Kind);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      auto R = emulateProcess(Linked, GetParam().OS, Options);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+      EXPECT_EQ(R->ExitStatus, 79);
+      EXPECT_EQ(R->ReturnValue, 79u);
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      EXPECT_EQ(R->StandardOutput, std::string("M\0P", 3));
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_TRUE(R->Services.empty());
+      EXPECT_EQ(R->Events, 19u);
+      ASSERT_EQ(R->NativeCalls.size(),
+                std::size(darwin_test::LibSystemMemoryCalls));
+      for (unsigned I = 0; I != R->NativeCalls.size(); ++I) {
+        const auto &Call = R->NativeCalls[I];
+        const auto &Expected = darwin_test::LibSystemMemoryCalls[I];
+        EXPECT_EQ(Call.Name, Expected.Name);
+        EXPECT_EQ(Call.ArgumentCount, Expected.Count);
+        EXPECT_EQ(Call.Module, "/usr/lib/libSystem.B.dylib");
+        EXPECT_TRUE(Call.ReturnAddress);
+        EXPECT_TRUE(Call.Result);
+      }
+      for (unsigned I : {1u, 2u, 5u, 9u, 10u})
+        EXPECT_EQ(R->NativeCalls[I].Result, UINT64_MAX);
+      const auto Address = R->NativeCalls[3].Result;
+      ASSERT_TRUE(Address);
+      EXPECT_NE(*Address, UINT64_MAX);
+      EXPECT_EQ(R->NativeCalls[4].Arguments[0], *Address);
+      EXPECT_EQ(R->NativeCalls[5].Arguments[0], *Address + 1);
+      EXPECT_EQ(R->NativeCalls[8].Arguments[0], *Address);
+      EXPECT_EQ(uint32_t(R->NativeCalls[3].Arguments[3]), 0x1002u);
+      EXPECT_EQ(R->NativeCalls[12].Arguments[5], Page);
+      EXPECT_EQ(R->NativeCalls[15].Arguments[3], Page);
+      EXPECT_EQ(Options.DarwinFiles->Files,
+                darwin_test::libSystemMemoryOptions(Page).Files);
+    }
+    Options.Limits.Events = 3;
+    auto Limited = emulateProcess(Linked, GetParam().OS, Options);
+    ASSERT_TRUE(bool(Limited));
+    EXPECT_EQ(Limited->Stop, ProcessStopReason::EventLimit);
+    EXPECT_EQ(Limited->Events, 3u);
+    ASSERT_EQ(Limited->NativeCalls.size(), 3u);
+    EXPECT_TRUE(Limited->StandardOutput.empty());
+    EXPECT_EQ(Limited->NativeCalls.back().Result, UINT64_MAX);
+    Options.Limits.Events = process_defaults::Events;
   }
 }
 

@@ -14,6 +14,8 @@ foreach(_darwin_link_kind classic chained)
   endif()
   configure_file(fixtures/darwin_libsystem_files.tbd.in
     "${_darwin_fixture_dir}/libsystem-files-${_darwin_link_kind}.tbd" @ONLY)
+  configure_file(fixtures/darwin_libsystem_memory.tbd.in
+    "${_darwin_fixture_dir}/libsystem-memory-${_darwin_link_kind}.tbd" @ONLY)
 endforeach()
 set(_darwin_outputs)
 foreach(_darwin_profile macos ios ios-simulator)
@@ -114,6 +116,34 @@ foreach(_darwin_profile macos ios ios-simulator)
         VERBATIM)
       list(APPEND _darwin_outputs "${_darwin_files_output}")
     endforeach()
+    set(_darwin_memory_object "${_darwin_output}-libsystem-memory.o")
+    add_custom_command(OUTPUT "${_darwin_memory_object}"
+      COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" "--target=${_darwin_target}"
+        -std=c11 -ffreestanding -fno-builtin -fno-stack-protector
+        -nostdinc -isysroot "${_darwin_fixture_dir}"
+        -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
+        -fno-asynchronous-unwind-tables -O1 -c
+        "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/darwin_libsystem_memory.c"
+        -o "${_darwin_memory_object}"
+      DEPENDS fixtures/darwin_libsystem_memory.c VERBATIM)
+    foreach(_darwin_link_kind classic chained)
+      if(_darwin_link_kind STREQUAL "classic")
+        set(_darwin_fixup_flag -no_fixup_chains)
+      else()
+        set(_darwin_fixup_flag -fixup_chains)
+      endif()
+      set(_darwin_memory_output "${_darwin_output}-libsystem-memory-${_darwin_link_kind}")
+      add_custom_command(OUTPUT "${_darwin_memory_output}"
+        COMMAND "${NEVERD_PROCESS_LD64}" -arch "${_darwin_arch}"
+          -platform_version "${_darwin_profile}" 14.0 14.0 -e _main
+          "${_darwin_fixup_flag}" "${_darwin_memory_object}"
+          "${_darwin_fixture_dir}/libsystem-memory-${_darwin_link_kind}.tbd"
+          -o "${_darwin_memory_output}"
+        DEPENDS "${_darwin_memory_object}"
+          "${_darwin_fixture_dir}/libsystem-memory-${_darwin_link_kind}.tbd"
+        VERBATIM)
+      list(APPEND _darwin_outputs "${_darwin_memory_output}")
+    endforeach()
   endforeach()
 endforeach()
 add_custom_target(NeverDDarwinFixtures DEPENDS ${_darwin_outputs})
@@ -174,6 +204,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND NOT CMAKE_CROSSCOMPILING)
   add_dependencies(NeverDDarwinProcessTests NeverDDarwinFilesNativeOracle)
   target_compile_definitions(NeverDDarwinProcessTests PRIVATE
     NEVERD_DARWIN_FILES_NATIVE_ORACLE="${_darwin_files_native}")
+  set(_darwin_memory_native "${_darwin_fixture_dir}/macos-libsystem-memory-native")
+  add_custom_command(OUTPUT "${_darwin_memory_native}"
+    COMMAND xcrun clang -arch "${_darwin_native_arch}" -Wl,-no_fixup_chains
+      "${_darwin_fixture_dir}/macos-${_darwin_native_arch}-libsystem-memory.o"
+      -o "${_darwin_memory_native}"
+    DEPENDS "${_darwin_fixture_dir}/macos-${_darwin_native_arch}-libsystem-memory.o"
+    VERBATIM)
+  add_custom_target(NeverDDarwinMemoryNativeOracle DEPENDS "${_darwin_memory_native}")
+  add_dependencies(NeverDDarwinProcessTests NeverDDarwinMemoryNativeOracle)
+  target_compile_definitions(NeverDDarwinProcessTests PRIVATE
+    NEVERD_DARWIN_MEMORY_NATIVE_ORACLE="${_darwin_memory_native}")
 endif()
 if(TARGET NeverDProcessPublicTests)
   add_dependencies(NeverDProcessPublicTests NeverDDarwinFixtures)

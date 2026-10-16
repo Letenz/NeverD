@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 9087505960d4cc4b5cf6a7c11547f25f65721975e0679c47f898ae3f18a0fcf8 -->
+<!-- i18n-source: 5edfb602025b5842453dbc5914dad53572f14fdc63e424ca65e66d45415e59c3 -->
 
 [← 文档索引](README.md)
 
@@ -1915,11 +1915,14 @@ classic lazy 指针程序会在进入来宾前提前解析。每个程序必须�
 
 `open`、`lseek`、`pread`、`pwrite`、`dup` 和 `dup2` 共用已有文件目录、变更及描述符游标。`open` 通常记录两个参数，低 32 位 flags 含 O_CREAT 时记录三个。ARM64 的可选提升 int 只读取入口 SP 的四个有效字节，不读取填充；x64 使用第三个通用寄存器参数。报告保留原始载体，独立的内核参数把 mode 截断至 16 位。没有 O_CREAT 时 mode 为零且不读取可选存储；x64 必需的返回地址仍正常验证。参数读取失败先于调用记录、errno 和文件副作用。此契约依据 [Apple ARM64 ABI](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms) 和 [XNU open 包装函数](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c)。O0/O1/O2 原生对照覆盖共享偏移、定位 I/O、dup2 失败、超过 4 GiB 的偏移、mode 截断和二进制内容。线程取消和兼容路径转换仍不支持。
 
+`mmap`、`mprotect` 和 `munmap` 复用现有内存映射、权限、常驻保留区和文件引用。C 包装层将保护位、标志和描述符收窄为 32 位，报告仍保留原始参数。`mmap` 在长度为零或缺少 MAP_PRIVATE/MAP_SHARED 时先返回 MAP_FAILED 并设置 EINVAL，再为可进入内核的调用补上 MAP_UNIX03；原始 BSD 语义不变。依据为 [XNU UNIX03 包装层](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/libsyscall/wrappers/unix03/mmap.c)。原创 C 对照覆盖匿名页清零、权限切换、错误顺序、关闭描述符后的映射寿命、私有写入和 EOF 尾页。本次不扩展共享、固定、可执行映射或分配器行为。
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
+C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
@@ -1935,7 +1938,8 @@ basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
 classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
-native common catalogue: 82; required methods/platform: 98; matching ARM64 identities: 294
+memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
+native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
 ```
 
 ```json

@@ -7395,3 +7395,14 @@ The kernel-owner test also observes allocation capacity, ID/address reuse and
 unmap-after-refused-free state, so unchanged output bytes alone cannot hide a
 partially committed allocation or pending free.
 These fixtures do not supply an Android system-service implementation or shader.
+
+### Imported Darwin memory calls
+
+`DarwinLibSystemTest.Memory*` checks C argument widths, original carriers, early
+errno, transport failure before effects and resident gate reservations on both
+ISAs. `DarwinProcess.LibSystemMemoryCallsPreserveMappingsAndCErrorOrder` runs
+ordinary C through classic/chained bindings on all five profiles; matching
+ARM64 HVF identities are mandatory. Public C/CLI and real Python tests repeat
+the same workload. `DarwinNative.LibSystemMemoryCallsMatchNativeMappingsAndCErrorOrder`
+compares the system-linked object with original native file bytes, anonymous
+zeroing, protection transitions, private mapping lifetime and EOF tails.

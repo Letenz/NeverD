@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 9087505960d4cc4b5cf6a7c11547f25f65721975e0679c47f898ae3f18a0fcf8 -->
+<!-- i18n-source: 5edfb602025b5842453dbc5914dad53572f14fdc63e424ca65e66d45415e59c3 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -1811,11 +1811,14 @@ classic lazy ポインタは実行開始前に解決する。各プログラム�
 
 `open`、`lseek`、`pread`、`pwrite`、`dup`、`dup2` は既存のファイル、変更権限、記述子カーソルを共有します。`open` の記録は通常 2 引数で、flags の下位 32 ビットに O_CREAT があれば 3 引数です。可変の昇格 int は ARM64 では入口 SP の有効な 4 バイトだけを読み、パディングを読みません。x64 は第 3 汎用レジスタ引数を使います。記録は元の値を保持し、カーネル用 mode だけを 16 ビットに狭めます。O_CREAT がなければ mode はゼロで、任意引数の格納先は読みません。x64 の戻りアドレス検証は必要です。引数読取失敗は記録、errno、ファイル操作に先行します。[Apple ARM64 ABI](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms) と [XNU open](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c) に基づきます。O0/O1/O2 のネイティブ対照は共有オフセット、位置指定 I/O、dup2 の失敗、4 GiB 超の位置、mode とバイナリ内容を検証します。スレッドキャンセルと互換パス変換は対象外です。
 
+`mmap`、`mprotect`、`munmap` は既存のマッピング、保護属性、常駐予約領域、ファイル参照を再利用します。C ラッパーは保護値・フラグ・記述子を 32 ビットに変換し、レポートには元の値を保持します。`mmap` は長さゼロ、または MAP_PRIVATE/MAP_SHARED の欠落をカーネル処理より先に MAP_FAILED と EINVAL で拒否し、許可された呼び出しに MAP_UNIX03 を付加します。生の BSD 呼び出しは変わりません。[XNU UNIX03 ラッパー](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/libsyscall/wrappers/unix03/mmap.c)に基づき、独自 C プログラムで匿名ページのゼロ初期化、保護変更、エラー順序、記述子を閉じた後の存続、私的書き込み、EOF の末尾ページを検証します。共有・固定・実行可能マッピングやアロケーターは本変更の対象外です。
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
+C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
@@ -1831,7 +1834,8 @@ basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
 classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
-native common catalogue: 82; required methods/platform: 98; matching ARM64 identities: 294
+memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
+native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
 ```
 
 ```json
