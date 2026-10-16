@@ -855,6 +855,22 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>프로그램의 형식을 레이아웃 및 소스와 함께 표시합니다</translation>
     </message>
+    <message>
+        <source>D&amp;WARF file...</source>
+        <translation>DWARF 파일(&amp;W)...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>별도의 DWARF 파일, 스트립하지 않은 사본 또는 .dSYM에서 디버그 정보를 불러옵니다</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>MAP 파일(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>링커 MAP 파일에서 이름을 불러옵니다</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2272,6 +2288,38 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Local Types</source>
         <translation>로컬 형식</translation>
     </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>%1에 MAP 파일이 있는지 확인할 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>DWARF 파일 불러오기</translation>
+    </message>
+    <message>
+        <source>Debug files (*.debug *.dbg *.sym);;All files (*)</source>
+        <translation>디버그 파일 (*.debug *.dbg *.sym);;모든 파일 (*)</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>MAP 파일 불러오기</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>MAP 파일 (*.map);;모든 파일 (*)</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>다른 빌드의 MAP 파일 불러오기</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+그래도 이름을 불러오시겠습니까? 잘못된 주소의 이름은 분석을 오도합니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2588,6 +2636,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>DWARF loaded: %1</source>
         <translation>DWARF를 불러왔습니다: %1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>선택한 대로 입력 파일 옆의 MAP 파일 없이 열었습니다</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>MAP를 대조 없이 불러왔습니다: %1 (추가된 이름 %2개, 다른 빌드의 파일)</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>MAP를 불러왔습니다: %1 (추가된 이름 %2개)</translation>
     </message>
 </context>
 <context>
@@ -3790,6 +3850,49 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>%1행 %2열: %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>%1 MAP, 이름 %2개. 빌드 타임스탬프가 입력 파일과 일치합니다.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>%1 MAP, 이름 %2개. 섹션 위치가 입력 파일과 일치합니다.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>%1 MAP, 이름 %2개. 입력 파일과 대조할 정보가 기록되어 있지 않습니다.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>%1 MAP, 이름 %2개. 기록된 빌드 타임스탬프는 %3이지만 입력 파일은 %4입니다: 다른 빌드의 파일입니다.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>%1 MAP, 이름 %2개. %3을(를) %4(%5바이트)에 두지만 입력 파일에서는 %6(%7바이트)에 있습니다: 다른 빌드의 파일입니다.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>%1 MAP, 이름 %2개. 함수 %4개 중 %3개가 입력 파일의 코드 밖에 있습니다: 다른 빌드의 파일입니다.</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>MAP 파일을 찾았습니다</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>그래도 MAP 파일을 불러오시겠습니까?</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>MAP 파일을 불러오시겠습니까?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
     </message>
 </context>
 </TS>

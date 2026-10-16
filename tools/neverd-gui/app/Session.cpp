@@ -25,10 +25,11 @@ constexpr char StringPreferredKey[] = "strings/preferred";
 constexpr char StringMinLengthKey[] = "strings/minLength";
 constexpr int MaxRecentFiles = 10;
 /// The project's record of the user's answers about its debug information:
-/// the PDB to load or {"mode":"none"}, and {"mode":"none"} for declined
-/// DWARF or a declined symbol table.
+/// the PDB, DWARF or MAP file to load, or {"mode":"none"} for one declined,
+/// and {"mode":"none"} for a declined symbol table.
 constexpr char PdbInputState[] = "pdb-input.json";
 constexpr char DwarfInputState[] = "dwarf-input.json";
+constexpr char MapInputState[] = "map-input.json";
 constexpr char SymbolsInputState[] = "symbols-input.json";
 
 /// Keep \p options' answers about debug information with the project.
@@ -40,6 +41,9 @@ void insertChoices(QHash<QString, QByteArray> &state,
   if (!options.dwarf.isEmpty())
     state.insert(QLatin1String(DwarfInputState),
                  QJsonDocument(options.dwarf).toJson(QJsonDocument::Compact));
+  if (!options.map.isEmpty())
+    state.insert(QLatin1String(MapInputState),
+                 QJsonDocument(options.map).toJson(QJsonDocument::Compact));
   if (!options.symbols.isEmpty())
     state.insert(QLatin1String(SymbolsInputState),
                  QJsonDocument(options.symbols).toJson(QJsonDocument::Compact));
@@ -456,6 +460,10 @@ void Session::sendOpen(const QString &requested, const QString &path,
     options.dwarf =
         QJsonDocument::fromJson(state.value(QLatin1String(DwarfInputState)))
             .object();
+  if (options.map.isEmpty())
+    options.map =
+        QJsonDocument::fromJson(state.value(QLatin1String(MapInputState)))
+            .object();
   if (options.symbols.isEmpty())
     options.symbols =
         QJsonDocument::fromJson(state.value(QLatin1String(SymbolsInputState)))
@@ -467,6 +475,8 @@ void Session::sendOpen(const QString &requested, const QString &path,
     payload.insert(QStringLiteral("pdb"), options.pdb);
   if (!options.dwarf.isEmpty())
     payload.insert(QStringLiteral("dwarf"), options.dwarf);
+  if (!options.map.isEmpty())
+    payload.insert(QStringLiteral("map"), options.map);
   if (!options.symbols.isEmpty())
     payload.insert(QStringLiteral("symbols"), options.symbols);
   if (!options.loader.isEmpty())
@@ -552,6 +562,12 @@ void Session::sendOpen(const QString &requested, const QString &path,
                            .arg(QDir::toNativeSeparators(
                                debug.value("path").toString())),
                        0);
+        if (payload.value("map").toObject().value("mode").toString() ==
+            QLatin1String("none"))
+          emit message(tr("Opened without the MAP file beside the input, as "
+                          "chosen"),
+                       0);
+        reportMaps(payload.value("debug_info").toObject());
         if (std::exchange(reloading_, false))
           emit message(tr("Reloaded the input file"), 0);
         emit opened();
@@ -945,6 +961,66 @@ void Session::loadPdb(const QJsonObject &selection) {
             emit stateChanged();
             reportPdb(result);
           });
+}
+
+void Session::loadMap(const QJsonObject &selection) {
+  if (!loaded_ || !loadsMapFiles())
+    return;
+  command(QStringLiteral("map_load"), selection,
+          [this](const QJsonObject &result) {
+            loadOptions_.map = {{"path", result.value("path")},
+                                {"mode", result.value("mode")},
+                                {"stamp", result.value("stamp")}};
+            functionCount_ =
+                result.value("function_count").toInteger(functionCount_);
+            metadata_.insert(QStringLiteral("debug_info"),
+                             result.value("debug_info"));
+            metadata_.insert(QStringLiteral("map"), loadOptions_.map);
+            emit functionsChanged();
+            emit stateChanged();
+            reportMaps(result.value("debug_info").toObject());
+          });
+}
+
+void Session::loadDwarf(const QJsonObject &selection) {
+  if (!loaded_ || !loadsDwarfFiles())
+    return;
+  command(QStringLiteral("dwarf_load"), selection,
+          [this](const QJsonObject &result) {
+            loadOptions_.dwarf = {{"path", result.value("path")},
+                                  {"stamp", result.value("stamp")}};
+            functionCount_ =
+                result.value("function_count").toInteger(functionCount_);
+            metadata_.insert(QStringLiteral("debug_info"),
+                             result.value("debug_info"));
+            metadata_.insert(QStringLiteral("dwarf"), loadOptions_.dwarf);
+            emit functionsChanged();
+            emit stateChanged();
+            emit message(tr("DWARF loaded: %1")
+                             .arg(QDir::toNativeSeparators(
+                                 result.value("path").toString())),
+                         0);
+          });
+}
+
+void Session::reportMaps(const QJsonObject &debug) {
+  for (const auto &value : debug.value("files").toArray()) {
+    const auto file = value.toObject();
+    if (file.value("kind").toString() != QLatin1String("map"))
+      continue;
+    const QString path =
+        QDir::toNativeSeparators(file.value("path").toString());
+    const qint64 names = file.value("names").toInteger();
+    if (file.value("match").toString() == QLatin1String("mismatch"))
+      emit message(
+          tr("MAP loaded unchecked: %1 (%2 names added, of another build)")
+              .arg(path)
+              .arg(names),
+          1);
+    else
+      emit message(tr("MAP loaded: %1 (%2 names added)").arg(path).arg(names),
+                   0);
+  }
 }
 
 void Session::reportPdb(const QJsonObject &result) {

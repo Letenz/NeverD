@@ -855,6 +855,22 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>Muestra los tipos del programa con su disposición y su código fuente</translation>
     </message>
+    <message>
+        <source>D&amp;WARF file...</source>
+        <translation>Archivo D&amp;WARF...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>Cargar información de depuración desde un archivo DWARF independiente, una copia con sus símbolos o un .dSYM</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>Archivo &amp;MAP...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>Cargar nombres desde un archivo MAP del enlazador</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2278,6 +2294,38 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Local Types</source>
         <translation>Tipos locales</translation>
     </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>No se pudo determinar si %1 tiene un archivo MAP: %2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>Cargar archivo DWARF</translation>
+    </message>
+    <message>
+        <source>Debug files (*.debug *.dbg *.sym);;All files (*)</source>
+        <translation>Archivos de depuración (*.debug *.dbg *.sym);;Todos los archivos (*)</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>Cargar archivo MAP</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>Archivos MAP (*.map);;Todos los archivos (*)</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>Cargar un archivo MAP de otra compilación</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+¿Cargar sus nombres de todos modos? Los nombres en direcciones equivocadas engañan al análisis.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2594,6 +2642,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>DWARF loaded: %1</source>
         <translation>DWARF cargado: %1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>Abierto sin el archivo MAP junto al archivo de entrada, según lo elegido</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>MAP cargado sin comprobar: %1 (%2 nombres añadidos, de otra compilación)</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>MAP cargado: %1 (%2 nombres añadidos)</translation>
     </message>
 </context>
 <context>
@@ -3804,6 +3864,49 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>Línea %1, columna %2: %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>MAP de %1, %2 nombres. Su marca de compilación coincide con la del archivo de entrada.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>MAP de %1, %2 nombres. Sus secciones están donde las tiene el archivo de entrada.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>MAP de %1, %2 nombres. No registra nada que se pueda comprobar con el archivo de entrada.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>MAP de %1, %2 nombres. Registra la marca de compilación %3, pero la del archivo de entrada es %4: pertenece a otra compilación.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>MAP de %1, %2 nombres. Sitúa %3 en %4, con %5 bytes, pero el archivo de entrada lo tiene en %6, con %7 bytes: pertenece a otra compilación.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>MAP de %1, %2 nombres. %3 de sus %4 funciones quedan fuera del código del archivo de entrada: pertenece a otra compilación.</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>Se encontró un archivo MAP</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>¿Cargar el archivo MAP de todos modos?</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>¿Cargar el archivo MAP?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
     </message>
 </context>
 </TS>

@@ -855,6 +855,22 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>عرض أنواع البرنامج مع تخطيطها ومصدرها</translation>
     </message>
+    <message>
+        <source>D&amp;WARF file...</source>
+        <translation>ملف DWARF(&amp;W)...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>تحميل معلومات التصحيح من ملف DWARF منفصل أو من نسخة لم تُجرَّد من رموزها أو من ‎.dSYM</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>ملف MAP(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>تحميل الأسماء من ملف MAP الخاص بالرابط</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2302,6 +2318,38 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Local Types</source>
         <translation>الأنواع المحلية</translation>
     </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>تعذّر تحديد ما إذا كان لـ %1 ملف MAP: %2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>تحميل ملف DWARF</translation>
+    </message>
+    <message>
+        <source>Debug files (*.debug *.dbg *.sym);;All files (*)</source>
+        <translation>ملفات التصحيح (*.debug *.dbg *.sym);;جميع الملفات (*)</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>تحميل ملف MAP</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>ملفات MAP (*.map);;جميع الملفات (*)</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>تحميل ملف MAP من بناء آخر</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+هل تريد تحميل أسمائه رغم ذلك؟ الأسماء الموضوعة عند عناوين خاطئة تضلل التحليل.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2618,6 +2666,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>DWARF loaded: %1</source>
         <translation>تم تحميل DWARF: %1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>تم الفتح دون ملف MAP المجاور لملف الإدخال، كما اخترت</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>تم تحميل MAP دون تحقق: %1 (عدد الأسماء المضافة: %2، من بناء آخر)</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>تم تحميل MAP: %1 (عدد الأسماء المضافة: %2)</translation>
     </message>
 </context>
 <context>
@@ -3860,6 +3920,49 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>السطر %1، العمود %2: %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>ملف MAP من ‎%1، عدد الأسماء: %2. ختم البناء فيه يطابق ملف الإدخال.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>ملف MAP من ‎%1، عدد الأسماء: %2. أقسامه في المواضع نفسها التي في ملف الإدخال.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>ملف MAP من ‎%1، عدد الأسماء: %2. لا يسجّل شيئًا يمكن مطابقته مع ملف الإدخال.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>ملف MAP من ‎%1، عدد الأسماء: %2. يسجّل ختم البناء ‎%3، لكن ختم ملف الإدخال ‎%4: إنه ينتمي إلى بناء آخر.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>ملف MAP من ‎%1، عدد الأسماء: %2. يضع ‎%3 عند ‎%4 (عدد البايتات: ‎%5)، لكن ملف الإدخال يضعه عند ‎%6 (عدد البايتات: ‎%7): إنه ينتمي إلى بناء آخر.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>ملف MAP من ‎%1، عدد الأسماء: %2. عدد دواله الواقعة خارج شيفرة ملف الإدخال: ‎%3 من ‎%4، إنه ينتمي إلى بناء آخر.</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>تم العثور على ملف MAP</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>هل تريد تحميل ملف MAP رغم ذلك؟</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>هل تريد تحميل ملف MAP؟</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
     </message>
 </context>
 </TS>

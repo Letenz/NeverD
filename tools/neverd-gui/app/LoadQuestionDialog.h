@@ -22,7 +22,9 @@ class LoadQuestionDialog : public QDialog {
 public:
   /// What a question shows.  \p detail, when not empty, sits below the
   /// question in a label named \p detailName, elided with \p elide and whole
-  /// in its tooltip, or \p detailToolTip when that is given.
+  /// in its tooltip, or \p detailToolTip when that is given.  \p note, when
+  /// not empty, follows it word-wrapped in a label named \p noteName, with
+  /// \p noteToolTip.  A \p cautious question makes No the default answer.
   struct Text {
     QString title;
     QString question;
@@ -30,6 +32,10 @@ public:
     QString detailName;
     Qt::TextElideMode elide = Qt::ElideMiddle;
     QString detailToolTip;
+    QString note;
+    QString noteName;
+    QString noteToolTip;
+    bool cautious = false;
   };
 
   /// Yes accepts the dialog; No, Escape and closing it reject it.
