@@ -6,6 +6,8 @@
 /// \file
 /// Checks immutable SEH invocation, restore and parent branch evidence.
 
+#include "RegistrationSEHParentFallthrough.h"
+
 #include "neverd/Limits.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/X86RegistrationSEHParentExit.h"
@@ -28,9 +30,8 @@ getRegistrationSEHParentExits(const MedFunc &Function) {
   std::map<int, RegistrationSEHParentExit> Result;
   if (States.SEHInvocationExits.size() > limits::kMaxRegistrationEHStateWork)
     return std::nullopt;
-  if (llvm::none_of(States.SEHInvocationExits, [](const auto &Exit) {
-        return Exit.Exit == RegistrationSEHInvocationExit::Kind::ParentJump;
-      }))
+  if (llvm::none_of(States.SEHInvocationExits,
+                    [](const auto &Exit) { return Exit.isParentExit(); }))
     return Result;
   if (!States.Complete || !States.CallbackStatesComplete ||
       !States.RegistrationLifetimeComplete || !Function.ExceptionMetadata)
@@ -105,7 +106,7 @@ getRegistrationSEHParentExits(const MedFunc &Function) {
            Op.MemoryOrdering == NdMemoryOrdering::None;
   };
   for (const auto &Exit : States.SEHInvocationExits) {
-    if (Exit.Exit != RegistrationSEHInvocationExit::Kind::ParentJump)
+    if (!Exit.isParentExit())
       continue;
     const auto Branch = Operations.find({Exit.Address, Exit.OpSeq});
     const auto Restore =
@@ -129,10 +130,17 @@ getRegistrationSEHParentExits(const MedFunc &Function) {
     const auto *SourceState = Reaching.at(Block->Id);
     const auto *TargetState = Reaching.at(Target->second->Id);
     const auto *RestoreState = Reaching.at(RestoreBlock->Id);
-    if (!Ordinary(*Op) || Op->Opcode != NdOp::BRANCH || Op->Output.Size ||
-        Op->NumInputs != 1 || !Op->Inputs[0].isConst() ||
-        (Op->Inputs[0].Size != 4 && Op->Inputs[0].Size != 8) ||
-        Op->Inputs[0].ConstVal != Exit.TargetVA || &Block->Ops.back() != Op ||
+    const bool Jump =
+        Exit.Exit == RegistrationSEHInvocationExit::Kind::ParentJump;
+    const bool TransferShape =
+        Jump
+            ? Ordinary(*Op) && Op->Opcode == NdOp::BRANCH && !Op->Output.Size &&
+                  Op->NumInputs == 1 && Op->Inputs[0].isConst() &&
+                  (Op->Inputs[0].Size == 4 || Op->Inputs[0].Size == 8) &&
+                  Op->Inputs[0].ConstVal == Exit.TargetVA
+            : isRegistrationSEHParentFallthrough(*Block, *Op, *Target->second,
+                                                 States, Exit, Work);
+    if (!TransferShape || &Block->Ops.back() != Op ||
         Block->EndAddr != Exit.EndAddress || Op->Addr < Block->StartAddr ||
         Op->Addr >= Block->EndAddr ||
         Block->Succs != std::vector<int>{Target->second->Id} ||
@@ -166,7 +174,7 @@ getRegistrationSEHParentExits(const MedFunc &Function) {
                                              RestoreOp,
                                              {}});
     auto &Bound = It->second;
-    if (!New && (Bound.EntryVA != Exit.EntryVA || Bound.Branch != Op ||
+    if (!New && (Bound.EntryVA != Exit.EntryVA || Bound.Operation != Op ||
                  Bound.Restore != RestoreOp ||
                  Bound.TargetBlock != Target->second->Id ||
                  Bound.StackOffset != Exit.StackOffset))
@@ -211,7 +219,7 @@ getRegistrationSEHParentExits(const MedFunc &Function) {
     }
     if (Exit.RestoreBlock == Id) {
       const auto &Ops = Blocks.at(Id)->Ops;
-      if (Exit.Restore >= Exit.Branch || Exit.Restore < Ops.data())
+      if (Exit.Restore >= Exit.Operation || Exit.Restore < Ops.data())
         return std::nullopt;
     }
   }

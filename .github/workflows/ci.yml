@@ -2423,7 +2423,7 @@ jobs:
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         run: |
           python -m unittest scripts.tests.test_windows_finally_image -v
-          for profile in Od-no-gs Od-gs; do
+          for profile in Od-no-gs Od-gs O2-no-gs O2-gs; do
             python scripts/check_windows_finally_rewrite.py \
               --inputs build-windows-eh/nonlocal-finally \
               --runtime-libs build-windows-eh/cxx-source-inputs/runtime-libs \

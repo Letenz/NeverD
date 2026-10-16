@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Reconstruct a genuine MSVC PE32 finally return and compare its execution.
 
-The checked Od export is loaded under an outer SEH observer. Header-only
+The checked return export is loaded under an outer SEH observer. Header-only
 EXE-to-DLL adaptation leaves source code intact and avoids unrelated CRT startup.
-Other source profiles are checked for analysis/refusal by the native test owner.
+Other nonlocal forms are checked for analysis/refusal by the native test owner.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--test-binary", type=Path, required=True)
     parser.add_argument("--patch-binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--profile", choices=("Od-no-gs", "Od-gs"), default="Od-no-gs")
+    parser.add_argument("--profile", choices=("Od-no-gs", "Od-gs", "O2-no-gs", "O2-gs"), default="Od-no-gs")
     parser.add_argument("--compiler", default="clang")
     parser.add_argument("--linker", default="lld-link")
     parser.add_argument("--wine")
@@ -83,7 +83,8 @@ def main(argv: list[str] | None = None) -> int:
 
         environment.update(NEVERD_NONLOCAL_FINALLY_INPUTS=str(inputs),
                            NEVERD_NONLOCAL_FINALLY_OUTPUT=str(output))
-        ir_prefix = "return-gs-" if args.profile == "Od-gs" else "return-"
+        ir_prefix = {"Od-no-gs": "return-", "Od-gs": "return-gs-"}.get(
+            args.profile, "return-" + args.profile + "-")
         ir_names = [ir_prefix + form + ".ll" for form in ("raw", "opt")]
         for name in ["native-inputs.xml", *ir_names]:
             (output / name).unlink(missing_ok=True)

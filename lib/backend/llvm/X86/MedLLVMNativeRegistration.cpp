@@ -140,7 +140,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   std::set<llvm::BasicBlock *> CallbackBlocks;
   const auto CallbackOwners = registrationSEHCallbackOwners(Func);
   const auto ParentExits = x86_registration::prepareSEHParentExits(
-      Func, OriginalBlockMap, PHICopyEdges);
+      Func, OriginalBlockMap, PHICopyEdges, &RegistrationChainIR);
   if (!CallbackOwners || !ParentExits)
     return false;
   std::map<int, int> ParentEdges;
@@ -429,7 +429,10 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   // Callback frame recovery changes EBP while the compiler owns FS:[0]. A
   // source callback which observes that chain needs a separate remap proof.
   for (llvm::Instruction *Instruction : ChainInstructions)
-    if (AllCallbackBlocks.count(Instruction->getParent()))
+    if (AllCallbackBlocks.count(Instruction->getParent()) &&
+        llvm::none_of(ParentExits->ChainRemovals, [&](const auto &Removal) {
+          return Removal.second == Instruction;
+        }))
       return false;
   std::vector<CallPlan> Calls;
   std::vector<x86_registration::SEHNestedFinallyCall> NestedFinallyCalls;
@@ -698,6 +701,8 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   }
 
   for (const RegistrationChainAccess &Access : States.ChainAccesses) {
+    if (ParentExits->ChainRemovals.count({Access.Address, Access.OpSeq}))
+      continue;
     llvm::Instruction *Instruction =
         RegistrationChainIR.at({Access.Address, Access.OpSeq});
     llvm::IRBuilder<> B(Instruction);

@@ -26,7 +26,7 @@ struct RegistrationSEHParentExit {
   int TargetBlock = -1;
   int RestoreBlock = -1;
   int32_t StackOffset = 0;
-  const MedOp *Branch = nullptr;
+  const MedOp *Operation = nullptr;
   const MedOp *Restore = nullptr;
   std::vector<const RegistrationSEHInvocationExit *> Invocations;
 };

@@ -4,6 +4,10 @@
 
 # Testing NeverD
 
+## Segmented store recovery checks
+
+`InterpreterSpecialization.SegmentedWrite*` checks independent byte-memory results, all scalar widths, base-addition wraparound, frame aliases, overwritten pointer origins, cross-node invalidation and exact/short budgets. `SegmentedWritesAndReadsShareLinearMemory` covers equal and distinct segment bases. `PEFixedImageTest.RawSegmented*` checks native bytes, live return-cell alias refusal and changed capability receipts. The existing receipt compatibility cases retain their values. Build the specialization, PE fixed-image, machine-state and native/LLVM refinement test owners; source and proof refusal checks include an unused write capability.
+
 ## Concrete entry-memory concolic replay
 
 Build `NeverDSymbolicTests`, `NeverDConcolicTests` and
@@ -212,6 +216,9 @@ colliding or shadowed names. The controller edits source, C and LLVM C with a
 pinned view and a different hidden assembly location, then checks undo/redo,
 save/restart and instruction-mapped comments. Snapshot coverage also verifies
 that read-only replicas load these edits without changing durable owner files.
+Source-name checks preserve unordered spans, distinguish partial overlap from
+complete token containment, keep adjacent spans separate, reject duplicate or
+overlapping accepted ranges, and remap every name after repeated renames.
 
 `NeverDWorkerSourceCache` counts actual preparation and source-page calls across
 A-to-B-to-A navigation, including a subsequent graph or IR request. It checks
@@ -346,6 +353,18 @@ does the same through the worker with the real engine, the listing's
 structure offsets and their undo included, and the GUI controller test
 `structureOffsetsRankTypesByTheCodesAccesses` drives T through the picker on
 the mock engine.
+
+`NdTypeDisplayPaths.ArrayMembersNameTheirElements` names an array member's
+elements as a record names its members: the element an access of its width
+reads, the element an address inside the array points at, members of record
+elements, and arrays of arrays. Half an element, a wider read of characters
+and two arrays overlaying each other stay raw, and a record alternative keeps
+its bytes from an array overlaying it.
+`HighCPointerAddresses.ArrayMembersPrintTheirElements` prints `Apc->Reserved[1]`
+for a store 40 bytes into a declared record like the kernel's `_KAPC`, an
+untyped pointer stored to a record pointer member without a cast, and an
+integer stored to one with its conversion. LLVM-C names no elements: its
+lookups pass `ArrayElements` false.
 
 `TypeParse.ReadsOneFunctionsDeclarationAgainstTheLibrary` reads a function's
 declaration against the library without changing it, and refuses one that
@@ -5834,9 +5853,12 @@ Native x64 KVM/WHP/HVF initialization executes `X64MachineProbe.def` in private 
 `NeverDAArch64PAuthTests` runs both checked privilege profiles on available
 Unicorn/KVM/WHP/HVF transports. Independent encodings cover all 128 HINT selectors,
 the twelve admitted disabled-key forms, four unguarded BTI forms,
-zero and high-bit return addresses,
-and rejected non-HINT authentication, stripping, branches and system-register
-access. Every attempt checks the complete scalar/vector inventory, PC and
+zero and high-bit return addresses, and original `XPACLRI` with unsigned low
+48-bit return addresses. The latter are fixed points of PAC stripping in the
+checked translation regime; authentication being disabled alone does not make
+stripping a NOP. `XPACLRI` with higher address bits, non-HINT authentication and
+stripping, authenticated branches and key/control register access remain
+unsupported. Every attempt checks the complete scalar/vector inventory, PC and
 unchanged code/data bytes. Run it together with `NeverDAArch64StateTests`,
 `NeverDAArch64FPTests` and the checked CPU/session regressions after changing
 admission or startup probes. Native platform cells without hardware remain

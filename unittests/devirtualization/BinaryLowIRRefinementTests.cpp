@@ -3144,13 +3144,16 @@ TEST(BinaryLowIRRefinement, SegmentedContractCannotCertifyEvenAnUnusedBase) {
   const auto R = P.recover();
   ASSERT_TRUE(R.complete()) << R.Diagnostic;
   ASSERT_TRUE(P.check(R.Residual).proved());
-  P.Options.X64SegmentedReads = true;
-  EXPECT_TRUE(P.recover().complete());
-  refused(P.check(R.Residual), Status::Unsupported);
-  const auto Independence =
-      checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
-  EXPECT_EQ(Independence.Proof.Status, LowIRIndependenceStatus::Unsupported);
-  EXPECT_FALSE(Independence.Certificate);
+  for (bool Write : {false, true}) {
+    P.Options.X64SegmentedReads = !Write;
+    P.Options.X64SegmentedWrites = Write;
+    EXPECT_TRUE(P.recover().complete());
+    refused(P.check(R.Residual), Status::Unsupported);
+    const auto Independence =
+        checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
+    EXPECT_EQ(Independence.Proof.Status, LowIRIndependenceStatus::Unsupported);
+    EXPECT_FALSE(Independence.Certificate);
+  }
 }
 
 TEST(BinaryLowIRRefinement, TaskPriorityBinaryTransitionsRetainKernelEffects) {

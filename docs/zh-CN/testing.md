@@ -10,6 +10,10 @@ NeverD 的测试回答三个不同问题：表示形状是否符合预期、完�
 
 `PipelineOutcome.ResolvedCalls*` 检查寄存器分组、call／invoke 身份、栈字节打包与拆分、窄值留在各自的栈槽，以及缺失字节的拒绝。`MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` 检查记录的偏移。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` 覆盖 x64、ARM32、AArch64 的 ELF、PE、Mach-O。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` 覆盖三种格式，拒绝长度被改写、可写或越界范围、同名本地函数、错误源寄存器、替代入口和可重定位镜像。主机 C 差分测试将原始 C 独立按 O0 编译，生成的 C 仍按 O2 编译，避免主机优化器把循环递推算错后污染对照。AArch64 FMA 检查仅在 x86 主机上请求 `-mfma`。
 
+## 分段写入恢复检查
+
+`InterpreterSpecialization.SegmentedWrite*` 检查独立字节内存结果、全部标量宽度、基址加法回绕、栈帧别名、被覆盖的指针来源、跨节点失效以及精确和不足预算。`SegmentedWritesAndReadsShareLinearMemory` 覆盖相同与不同段基址。`PEFixedImageTest.RawSegmented*` 检查原生字节、活跃返回槽别名拒绝和能力变更后的凭据。既有凭据兼容性数值保持不变。构建特化、PE 固定镜像、机器状态及原生/LLVM 细化测试；源码与证明拒绝测试也覆盖未使用的写入能力。
+
 ## 具体入口内存种子
 
 运行 `NeverDSymbolicTests`、`NeverDConcolicTests` 和 `NeverDConcolicIntegrationTests`。新增 `LowIRConcolicMemory.*` 及符号层检查覆盖两种字节序、别名写入、独立寄存器/内存空间、缺失和非法范围、重置与晚种子、精确/不足/零预算、来源 epoch、模型宽度、内存候选重新执行及去重；现有六种原生架构/格式组合继续回归。
