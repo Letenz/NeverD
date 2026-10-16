@@ -208,6 +208,86 @@ TEST_P(AndroidThread, NiceStateInheritsAtCreationAndEndsWithTheChildTask) {
       EXPECT_EQ(word(R, 64 + I), Grandchild[I]) << I;
   }
 }
+TEST_P(AndroidThread, ForeignTasksCoexistWithLiveAndExitedChildren) {
+  Options.LinuxFiles.emplace();
+  auto &Kernel = Options.LinuxKernel.emplace();
+  Kernel.Tasks.emplace().emplace(2000, LinuxKernelTask{true});
+  Options.LinuxTime.emplace().Clocks = {{2, {7, 9}}, {-16006, {11, 13}}};
+  for (auto Backend :
+       {ExecutionBackendKind::Unicorn, ExecutionBackendKind::HVF}) {
+    ExecutionConfiguration C;
+    C.Backend = Backend;
+    C.Architecture = GuestArchitecture::AArch64;
+    C.Contract = ExecutionContract::CheckedUserAArch64;
+    auto Probe = probeExecutionBackend(C);
+    ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+    if (Probe->Availability != BackendAvailability::Available) {
+      ASSERT_FALSE(requireHvf(Backend, GuestArchitecture::AArch64))
+          << Probe->Reason;
+      RecordProperty("unavailable_transport_" +
+                         std::to_string(unsigned(Backend)),
+                     Probe->Reason);
+      continue;
+    }
+    Options.Backend = Backend;
+    for (auto GKI :
+         {AndroidGKIKernel::Android12_5_10, AndroidGKIKernel::Android17_6_18}) {
+      Kernel.GKI = GKI;
+      const uint64_t NonLeader =
+          GKI == AndroidGKIKernel::Android17_6_18 ? 2 : 22;
+      auto R = run("threads_task_catalogue");
+      returned(R, 0);
+      std::array<uint64_t, 128> Expected{};
+      Expected[0] = Expected[6] = 1;
+      Expected[1] = Expected[9] = Expected[11] = Expected[20] = 3;
+      Expected[3] = Expected[17] = uint64_t(0) - NonLeader;
+      Expected[4] = Expected[5] = Expected[8] = uint64_t(0) - 3;
+      Expected[13] = 1000;
+      Expected[16] = 1001;
+      Expected[14] = Expected[18] = UINT64_MAX;
+      Expected[15] = 22;
+      Expected[19] = NonLeader;
+      Expected[24] = 7;
+      Expected[25] = 9;
+      Expected[27] = 11;
+      Expected[28] = 13;
+      Expected[30] = uint64_t(0) - 22;
+      for (unsigned I = 0; I < Expected.size(); ++I)
+        EXPECT_EQ(word(R, I), Expected[I]) << I;
+      ASSERT_EQ(R.NativeThreads.size(), 2u);
+      EXPECT_TRUE(R.NativeThreads[1].Retired);
+      if (GKI == AndroidGKIKernel::Android17_6_18)
+        for (unsigned Mode : {1, 2}) {
+          R = run("threads_task_catalogue", Mode);
+          EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService)
+              << R.Diagnostic;
+          EXPECT_NE(R.Diagnostic.find("guest-thread descriptor lifetime"),
+                    std::string::npos);
+          ASSERT_FALSE(R.Services.empty());
+          EXPECT_EQ(R.Services.back().Number, 434u);
+          EXPECT_FALSE(R.Services.back().Result);
+          EXPECT_EQ(word(R, 6), 0u);
+        }
+    }
+  }
+}
+TEST_P(AndroidThread, ForeignCatalogueCannotPreclaimFutureChildIdentities) {
+  auto &Kernel = Options.LinuxKernel.emplace();
+  Kernel.GKI = AndroidGKIKernel::Android12_5_10;
+  Kernel.Tasks.emplace();
+  returned(run("threads_identity"), 0);
+  for (uint32_t ID : {1001, 1007}) {
+    Kernel.Tasks->emplace(ID, LinuxKernelTask{true});
+    auto R =
+        emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), linux_model::KernelOptions);
+    Kernel.Tasks->clear();
+  }
+  Kernel.Tasks->emplace(1008, LinuxKernelTask{true});
+  returned(run("threads_identity"), 0);
+}
+
 TEST_P(AndroidThread, NiceStateWithoutParentInputsRemainsUnmodeled) {
   for (bool Present : {false, true}) {
     if (Present)

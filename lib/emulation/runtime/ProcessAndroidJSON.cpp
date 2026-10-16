@@ -63,6 +63,13 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         Out.ThreadLimit = *N;
       else
         Out.TraceLimit = *N;
+    } else if (Name == field::MallocFillByte) {
+      auto N = number(V, Name);
+      if (!N)
+        return N.takeError();
+      if (*N > UINT8_MAX)
+        return invalid(Name);
+      Out.MallocFillByte = static_cast<uint8_t>(*N);
     } else if (Name == field::Initialize || Name == field::DrainThreads ||
                Name == field::JNI) {
       auto B = V.getAsBoolean();
