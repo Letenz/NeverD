@@ -16,7 +16,8 @@ namespace neverd::registration_state {
 
 bool RegistrationStateSolver::runSEHFilterSearch(
     const FrameState &Parent, std::vector<RegistrationObjectExtent> *Writes,
-    SEHFrameOutcomes &Outcomes, bool RequireResume) {
+    SEHFrameOutcomes &Outcomes, bool RequireResume,
+    SEHHandlerOutcomes *Selected) {
   if (KnownCxx || !Chain.TryLevelOffset ||
       (EH4 && (!CompleteCookies || !cookiesReady(Parent))))
     return false;
@@ -71,14 +72,19 @@ bool RegistrationStateSolver::runSEHFilterSearch(
           // filter. Its state write affects later unwind, not this cursor.
           Pending.push_back(
               {std::move(Frame), Scope.EnclosingLevel, Current.Steps});
-        } else if (RequireResume) {
-          // A selected handler abandons this invocation. It contributes no
-          // ordinary returning frame, and prevents a closed resumption proof.
-          return false;
+        } else if (RequireResume || Selected) {
+          // Selection abandons the suspended invocation. The unwind owner
+          // must finish the selected scope's local unwind before dispatch.
+          if (!Selected || !Scope.HandlerVA ||
+              !Entries.count(Scope.HandlerVA) ||
+              !mergeSEHFrameOutcome((*Selected)[uint32_t(Current.Cursor)],
+                                    std::move(Frame)))
+            return false;
         }
       }
   }
-  return !RequireResume || !Outcomes.empty();
+  return !RequireResume || !Outcomes.empty() ||
+         (Selected && !Selected->empty());
 }
 
 } // namespace neverd::registration_state

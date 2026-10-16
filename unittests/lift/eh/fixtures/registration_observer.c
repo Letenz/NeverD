@@ -21,7 +21,7 @@ unsigned registration_parameter_after;
 static unsigned observed_caller;
 unsigned registration_trace;
 #if (REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 49) ||                    \
-    REGISTRATION_CASE == 52
+    (REGISTRATION_CASE == 52 || REGISTRATION_CASE == 57)
 unsigned registration_iteration;
 #endif
 #if REGISTRATION_CASE >= 48 && REGISTRATION_CASE <= 51
@@ -47,6 +47,12 @@ unsigned registration_helper_visits;
 #define EXPECTED_TRACE ((iterations & 1) + 1)
 #elif REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 42
 #define EXPECTED_TRACE 2345
+#elif REGISTRATION_CASE == 57
+#define EXPECTED_TRACE ((iterations & 1) ? 23u : 235u)
+#elif REGISTRATION_CASE == 54
+#define EXPECTED_TRACE 236u
+#elif REGISTRATION_CASE == 55
+#define EXPECTED_TRACE 234u
 #elif REGISTRATION_CASE == 9 || REGISTRATION_CASE == 10 ||                     \
     REGISTRATION_CASE == 12 || REGISTRATION_CASE >= 13
 #define EXPECTED_TRACE 23u
@@ -79,7 +85,7 @@ void mainCRTStartup(void) {
   for (; iterations != 4; ++iterations) {
     registration_trace = 0;
 #if (REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 49) ||                    \
-    REGISTRATION_CASE == 52
+    (REGISTRATION_CASE == 52 || REGISTRATION_CASE == 57)
     registration_iteration = iterations;
 #endif
 #if REGISTRATION_CASE >= 48 && REGISTRATION_CASE <= 51

@@ -18,9 +18,11 @@ namespace neverd::registration_state {
 bool RegistrationStateSolver::runLocalFinally(
     va_t Target, FrameState &Parent, bool OrdinaryInvocation,
     std::vector<RegistrationObjectExtent> *Writes, const SEHJumpCapture *Jump,
-    const FrameValue *JumpValue, SEHFrameOutcomes *Outcomes) {
+    const FrameValue *JumpValue, SEHFrameOutcomes *Outcomes,
+    SEHHandlerOutcomes *Selected) {
   return runSEHCallbackFrame(Target, Parent, OrdinaryInvocation, Writes, Jump,
-                             JumpValue, nullptr, 0, std::nullopt, Outcomes);
+                             JumpValue, nullptr, 0, std::nullopt, Outcomes,
+                             Selected);
 }
 
 bool RegistrationStateSolver::runSEHCallbackFrame(
@@ -28,8 +30,9 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
     std::vector<RegistrationObjectExtent> *Writes, const SEHJumpCapture *Jump,
     const FrameValue *JumpValue, SEHFilterOutcomes *FilterOutcomes,
     unsigned Depth, std::optional<int32_t> ParentStackOffset,
-    SEHFrameOutcomes *Outcomes) {
-  if (FilterOutcomes && (OrdinaryInvocation || Jump || JumpValue || Outcomes))
+    SEHFrameOutcomes *Outcomes, SEHHandlerOutcomes *Selected) {
+  if (FilterOutcomes &&
+      (OrdinaryInvocation || Jump || JumpValue || Outcomes || Selected))
     return false;
   const auto Entry = Entries.find(Target);
   // An ordinary CALL has a proved current ESP and its own return PC. SavedESP
@@ -84,6 +87,7 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
   std::map<Key, std::set<Key>> Edges;
   SEHFrameOutcomes Returned;
   SEHFilterOutcomes FilterReturned;
+  SEHHandlerOutcomes SelectedHandlers;
   const auto RecordReturn = [&](const FrameState &State) {
     if (!FilterOutcomes)
       return mergeSEHFrameOutcome(Returned, State);
@@ -115,6 +119,7 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
       return false;
     bool HasReturn = false;
     bool HasResume = false;
+    bool Abandoned = false;
     std::set<va_t> ProvenStores;
     SEHFrameOutcomes NestedOutcomes;
     std::optional<size_t> ResumeAt;
@@ -147,8 +152,19 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
             !JumpRuntime->Raise(Op, State, WorkUsed) ||
             State.loadCallback(SP->Offset + 4, 4).Constant != 0 ||
             !runSEHFilterSearch(State, Writes, Continued,
-                                /*RequireResume=*/true))
+                                /*RequireResume=*/true,
+                                Selected ? &SelectedHandlers : nullptr))
           return false;
+        if (Continued.empty()) {
+          if (Source->second.second.FirstOp + Source->second.second.OpCount !=
+              OpIndex + 1)
+            return false;
+          // No instruction after this call executes on a selected path.
+          // Limit the source-store audit to the actual suspended prefix.
+          Abandoned = true;
+          ResumeAt = OpIndex + 1;
+          break;
+        }
         // Continue execution restores this suspended invocation, including
         // its nonvolatile registers and private stack. Search-filter writes
         // to the parent remain visible after the stdcall consumes its args.
@@ -183,8 +199,13 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
             FinallyTargets.count(Op.Inputs[0].Offset)) {
           if (FilterOutcomes ||
               !runSEHNestedFinallyFrame(I, Op, State, *ParentSP, Writes, Depth,
-                                        NestedOutcomes))
+                                        NestedOutcomes,
+                                        Selected ? &SelectedHandlers : nullptr))
             return false;
+          if (NestedOutcomes.empty()) {
+            Abandoned = true;
+            ResumeAt = OpIndex + 1;
+          }
           // The shared CALL proof permits only the checked tail JMP after
           // this call. Its successors can be resumed once per returned state.
           break;
@@ -322,6 +343,8 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
          Store != Stores.end() && Store->first < End; ++Store)
       if (!ProvenStores.count(Store->first))
         return false;
+    if (Abandoned)
+      continue;
     if (ResumeAt && *ResumeAt < Block.Ops.size()) {
       for (const auto &[Level, Frame] : NestedOutcomes)
         if (!Enqueue(Current, I, *ResumeAt, Level, Frame))
@@ -345,10 +368,11 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
           return false;
       }
   }
-  if (Returned.empty() && FilterReturned.empty())
+  if (Returned.empty() && FilterReturned.empty() && SelectedHandlers.empty())
     return false;
-  // Every reachable abstract path must return. A fixed point with one return
-  // arm and one recurrent arm is not a proof that this invocation returns.
+  // Every reachable path must return or select a handler. A fixed point with a
+  // return arm and one recurrent arm is not a proof that this invocation
+  // returns.
   std::map<Key, size_t> Predecessors;
   for (const auto &[Node, Frame] : Incoming) {
     if (!charge(1 + Edges[Node].size()))
@@ -388,6 +412,11 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
       }
     return true;
   }
+  for (auto &[Scope, Frames] : SelectedHandlers)
+    for (auto &[Level, Frame] : Frames)
+      if (!Selected ||
+          !mergeSEHFrameOutcome((*Selected)[Scope], std::move(Frame)))
+        return false;
   std::optional<FrameState> Joined;
   for (auto &[Level, ReturnedFrame] : Returned) {
     FrameState Projected = Parent;
@@ -414,7 +443,8 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
   // to select the next runtime action.
   if (!Outcomes && Returned.size() != 1)
     return false;
-  Parent = std::move(*Joined);
+  if (Joined)
+    Parent = std::move(*Joined);
   return true;
 }
 

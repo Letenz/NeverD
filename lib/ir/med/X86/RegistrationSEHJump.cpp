@@ -138,7 +138,7 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
     const auto Capture = Captures.find(Resume.CaptureCall);
     if (++Work > limits::kMaxRegistrationEHStateWork || !Call ||
         Capture == Captures.end() || (Call->Capture && !Call->Resume) ||
-        Resume.ResumedLevels.empty() ||
+        (Resume.ResumedLevels.empty() && Resume.SelectedScopes.empty()) ||
         Resume.TargetVA != Capture->second->EndAddress ||
         Resume.BufferOffset != Capture->second->BufferOffset ||
         Resume.StackOffset != Capture->second->StackOffset)
@@ -156,8 +156,13 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
         return std::nullopt;
     } else if (!Resume.ValueOffset || !Call->Operation->DoesNotReturn)
       return std::nullopt;
-    Work += Resume.ResumedLevels.size() + Resume.StateRestores.size();
+    Work += Resume.ResumedLevels.size() + Resume.StateRestores.size() +
+            Resume.SelectedScopes.size();
     if (Work > limits::kMaxRegistrationEHStateWork ||
+        !llvm::is_sorted(Resume.SelectedScopes) ||
+        std::adjacent_find(Resume.SelectedScopes.begin(),
+                           Resume.SelectedScopes.end()) !=
+            Resume.SelectedScopes.end() ||
         !llvm::is_sorted(Resume.ResumedLevels) ||
         std::adjacent_find(Resume.ResumedLevels.begin(),
                            Resume.ResumedLevels.end()) !=
@@ -167,10 +172,27 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
                            Resume.StateRestores.end()) !=
             Resume.StateRestores.end())
       return std::nullopt;
+    for (uint32_t ScopeIndex : Resume.SelectedScopes) {
+      if (ScopeIndex >= Chain.Scopes.size())
+        return std::nullopt;
+      const auto &Scope = Chain.Scopes[ScopeIndex];
+      const auto Handler = Blocks.find(Scope.HandlerVA);
+      if (Scope.IsFinally || !Scope.FilterVA || Handler == Blocks.end())
+        return std::nullopt;
+      const auto State = BlockStates.find(Handler->second->Id);
+      if (State != BlockStates.end())
+        Work += State->second->Levels.size();
+      if (Work > limits::kMaxRegistrationEHStateWork ||
+          State == BlockStates.end() || !State->second->Reached ||
+          State->second->Unknown || State->second->CallbackOnly ||
+          !llvm::is_contained(State->second->Levels, Scope.EnclosingLevel))
+        return std::nullopt;
+    }
     auto &Plan = ResumeLevels[Resume.CaptureCall];
     Plan.Levels.insert(Resume.ResumedLevels.begin(),
                        Resume.ResumedLevels.end());
-    Plan.Complete &= !Resume.StateRestores.empty();
+    Plan.Complete &=
+        Resume.ResumedLevels.empty() || !Resume.StateRestores.empty();
     std::set<int32_t> Restored;
     for (const auto &State : Resume.StateRestores) {
       if (!ValidState(State.FrameLevel) || !ValidState(State.ResumeLevel) ||
@@ -227,11 +249,13 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
       auto Previous = *Call->Resume;
       if (Previous.OrdinaryCall == Resume.OrdinaryCall &&
           (Previous.ResumedLevels != Resume.ResumedLevels ||
-           Previous.StateRestores != Resume.StateRestores))
+           Previous.StateRestores != Resume.StateRestores ||
+           Previous.SelectedScopes != Resume.SelectedScopes))
         return std::nullopt;
       Previous.OrdinaryCall = Resume.OrdinaryCall;
       Previous.ResumedLevels = Resume.ResumedLevels;
       Previous.StateRestores = Resume.StateRestores;
+      Previous.SelectedScopes = Resume.SelectedScopes;
       if (Previous != Resume)
         return std::nullopt;
       continue;
@@ -242,7 +266,7 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
   std::erase_if(Result, [](const auto &Item) { return !Item.second.Capture; });
   for (auto &[Address, Call] : Result) {
     const auto Level = ResumeLevels.find(Call.Capture->Address);
-    if (Level == ResumeLevels.end()) {
+    if (Level == ResumeLevels.end() || Level->second.Levels.empty()) {
       if (Call.Capture->Levels.size() == 1)
         Call.ResumeLevel = Call.Capture->Levels.front();
       else

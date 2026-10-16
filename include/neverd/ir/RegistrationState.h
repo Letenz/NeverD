@@ -224,8 +224,9 @@ struct RegistrationSEHJumpState {
 };
 
 /// A live SEH buffer supplies one physical capture PC and restored ESP. The
-/// source invocation is retired by the authenticated nonlocal runtime call;
-/// this is distinct from an ordinary CALL return or a target-wide noreturn.
+/// source invocation is retired by the authenticated nonlocal runtime call.
+/// Unwind may either restore the capture or select an exception handler;
+/// neither path is an ordinary CALL return or a target-wide noreturn.
 struct RegistrationSEHJumpResume {
   va_t Address = InvalidVA;
   int OpSeq = -1;
@@ -250,6 +251,10 @@ struct RegistrationSEHJumpResume {
   /// resumption requires a single final state for each captured bound and
   /// observable logical frame state.
   std::vector<RegistrationSEHJumpState> StateRestores;
+  /// Sorted unique source scopes selected by an exception raised during
+  /// unwind. These paths enter their handlers and abandon this capture;
+  /// they never contribute a restored register or state projection.
+  std::vector<uint32_t> SelectedScopes;
   bool operator==(const RegistrationSEHJumpResume &) const = default;
 };
 
