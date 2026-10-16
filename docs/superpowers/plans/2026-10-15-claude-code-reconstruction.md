@@ -763,3 +763,87 @@ sources and licenses, generator inputs, both candidates, the rejected filter
 and original offsets/hashes. progress-v25.json keeps all prior evidence and
 the whole recovery objective incomplete. Native Actions policy controls are
 the next check; they cannot substitute for restoring client integration.
+
+
+## Native public seccomp component controls
+
+The pinned public helper now builds on native x64 and ARM64 runners and
+reproduces the local helper binary hashes exactly. Two compilations within
+each job also match. At 2d3891bfc1a4115a68efeddd244d0ae9c3e41583, run
+38881785369 passes four jobs across Ubuntu 22.04 and 24.04. Each job records
+eight syscall cases before filtering, after filtering, and after exec, plus
+malformed-filter rejection. All five denied operations differ from their
+native baseline, while three unaffected operations preserve their behavior.
+
+Both Ubuntu 22.04 jobs execute the public helper's command path and check
+exit status 37, policy results, fresh PID/user/mount namespaces, exactly two
+visible processes, cleared effective/ambient capabilities, child signal exit
+relay and missing-executable rejection. Ubuntu 24.04 denies setgroups in the
+nested user namespace; that limitation is retained separately. No host policy
+changes are applied. The 419-file seccomp-native-policy-v1 evidence package
+retains public code/licenses, exact inputs, diagnostics and an independent
+artifact verifier. progress-v26.json rehashes 207 referenced files.
+
+A subsequent original-role comparison is being qualified in a separate
+empty-root bubblewrap boundary. Its first preparation lacked file mount
+targets in a read-only root. The second lost the dynamic loader execute mode
+while copying dependencies; its authored exec driver returned 126, so the
+original entry did not run. The premature execution flag in that historical
+receipt is explicitly corrected in a separate failure record. The recipe now
+retains runtime modes and requires an authored dynamically linked boundary
+control before the original, and distinguishes an attempt from confirmed
+entry. Neither failed attempt counts as native-role acceptance.
+
+The source callsite opens /proc/self/exe with O_PATH, then invokes fd 3 with
+ARGV0=apply-seccomp and closes fd 3 before the payload. A future managed
+adapter can route that descriptor to a verified helper while preserving the
+existing invocation and closure. This is a recorded integration candidate,
+not an implemented or qualified client repair. The overall goal remains open.
+
+
+## Managed helper descriptor integration candidates
+
+Original-role acceptance now passes seven direct and four descriptor cases on
+both native glibc architectures: 22 pairs. The caller contract uses O_PATH,
+descriptor 3, ARGV0=apply-seccomp and /proc/self/fd/3; the controlled payload
+confirms inheritance and successful close before work. At public helper commit
+9b186a3737ddfa176f7c0650475e285ac7f9dc43, run 38910479754 passes all four
+Ubuntu 22.04/24.04 jobs. Both static launcher variants and the helper reproduce
+local hashes in every profile; each job builds them independently twice.
+
+Separate x64 and ARM64 source workspaces now change only the descriptor
+provider in module 236. The managed provider requires an absolute helper path;
+the launcher selects its packaged helper and rejects unavailable, nonexecutable
+or symlink dependencies. The original descriptor mapping, shell invocation
+and close wrapper remain intact. Four client variants build and independent
+NeverD readback matches all 2,589 modules/assets per variant. Preserved builds
+change only module 236; all-readable builds match their actual source selection.
+
+Ten authored launcher controls pass per architecture. Two instrumented CLI
+experiments invoke the actual recovered provider: missing path rejects, the
+selected descriptor resolves to the managed helper, the close wrapper matches,
+and inherited fd 3 enters the real public helper usage path. The diagnostic
+entry edit is kept separate from the delivered clients. Both ordinary layouts
+start on each architecture, and all 52 original-versus-candidate Grep/Glob pairs
+pass with the previously source-proven comparator unchanged.
+
+Two separately sealed runtime-sandbox-linux-{x64,arm64}-candidate-v1 packages
+contain both client variants, launcher/helper sources, source edit recipe,
+public dependency inputs, independent readback, protocols and qualified
+component observations. Their 1,109 and 1,160 files respectively rehash. Each
+packaged preserved client rebuilds byte-identically from the previously sealed
+editable development package. The base development packages remain untouched.
+
+A ZIP transport stall is retained and recovered by checked 512 KiB ranges;
+all ten current native artifacts match API SHA-256 and ZIP CRC before admission.
+The evidence sealer initially selected local transport scratch directories with
+a broad prefix; its pre-seal private-header guard rejected them. Those copies
+were moved to a private diagnostic area and only exact artifact names were
+admitted. No signed download header entered the sealed packages or a public
+upload. An initial smoke probe likewise retained an artifact's missing execute
+mode; a hash-checked owned executable copy resolves that test setup issue.
+
+The actual complete Bash tool sandbox flow is still unqualified. External
+signal forwarding, optional observation, full helper function correspondence,
+original built-in engine dispatch and broader reconstruction work remain open.
+progress-v28.json must preserve this distinction and must not complete the goal.
