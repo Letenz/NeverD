@@ -35,10 +35,10 @@ NEVERD_DRIVER_REQUEST_ORIGIN(FrameworkUsbIdle, "framework_usb_idle")
 NEVERD_DRIVER_REQUEST_ORIGIN(DriverAllocatedIRP, "driver_allocated_irp")
 NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleClose, "file_handle_close")
 NEVERD_DRIVER_REQUEST_ORIGIN(FileInformationQuery, "IoQueryFileInformation")
-NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleQuery, "ZwQueryInformationFile")
 NEVERD_DRIVER_REQUEST_ORIGIN(FileCreate, "file_create")
 NEVERD_DRIVER_REQUEST_ORIGIN(FileCancelOpen, "IoCancelFileOpen")
 NEVERD_DRIVER_REQUEST_ORIGIN(FileFinalClose, "file_final_close")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleQuery, "ZwQueryInformationFile")
 #endif
 
 #ifdef NEVERD_DRIVER_POWER_DEVICE_STATE
