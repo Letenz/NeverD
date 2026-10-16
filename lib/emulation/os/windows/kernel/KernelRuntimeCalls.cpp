@@ -422,4 +422,15 @@ llvm::Expected<uint64_t> KernelModel::debugMessage(
   return StatusSuccess;
 }
 
+llvm::Expected<uint64_t>
+KernelModel::prefixedDebugMessage(llvm::ArrayRef<uint64_t> A) {
+  auto Text =
+      runtime::formatPrefixedDebugMessage(*this, Memory, A[0], A[3], A[4]);
+  if (!Text)
+    return Text.takeError();
+  // Component and level filters share the enabled observation profile.
+  Result.Messages.push_back(std::move(*Text));
+  return StatusSuccess;
+}
+
 } // namespace neverd::emulation

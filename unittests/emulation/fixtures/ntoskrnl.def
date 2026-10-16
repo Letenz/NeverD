@@ -78,6 +78,7 @@ EXPORTS
   ExAllocatePool2
   DbgPrint
   DbgPrintEx
+  vDbgPrintExWithPrefix
   MmGetSystemRoutineAddress
   MmIsAddressValid
   KeRegisterBugCheckReasonCallback

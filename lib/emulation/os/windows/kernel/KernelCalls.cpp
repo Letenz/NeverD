@@ -550,6 +550,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
     return debugMessage(A, 0, ReadArgument);
   case KernelAPIKind::DbgPrintEx:
     return debugMessage(A, 2, ReadArgument);
+  case KernelAPIKind::vDbgPrintExWithPrefix:
+    return prefixedDebugMessage(A);
   case KernelAPIKind::KeGetCurrentIrql:
     return CurrentIRQL;
   case KernelAPIKind::memcpy_s:

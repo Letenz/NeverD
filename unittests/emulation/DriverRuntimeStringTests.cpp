@@ -74,7 +74,16 @@ protected:
           EXPECT_EQ(Calls[Name], Count) << Name;
         for (const char *Name : {"toupper", "towupper", "RtlUpcaseUnicodeChar"})
           EXPECT_EQ(Calls[Name], 12u) << Name;
-        EXPECT_EQ(Calls["MmGetSystemRoutineAddress"], 17u);
+        EXPECT_EQ(Calls["MmGetSystemRoutineAddress"], 18u);
+        EXPECT_EQ(Calls["vDbgPrintExWithPrefix"], 24u);
+        ASSERT_EQ(Result->Messages.size(), 24u);
+        for (unsigned I = 0; I < 24; I += 4) {
+          EXPECT_EQ(Result->Messages[I], "crt:384|1122334455667788|abc");
+          EXPECT_EQ(Result->Messages[I + 1], std::string(127, 'P'));
+          EXPECT_EQ(Result->Messages[I + 2],
+                    "crt:" + std::string(506, '0') + "\n");
+          EXPECT_EQ(Result->Messages[I + 3], "crt:A");
+        }
       }
   }
 };
