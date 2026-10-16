@@ -74,6 +74,15 @@ public:
   /// Whether the engine finds an image's static symbol table before opening
   /// it, and opens the image as if stripped.
   static bool findsSymbolTables();
+  /// Whether the engine finds the linker MAP beside an input before opening
+  /// it, and opens the image without it.
+  static bool findsMapFiles();
+  /// Whether the engine loads a chosen MAP file into an open image
+  /// (map_inspect, map_load).
+  static bool loadsMapFiles();
+  /// Whether the engine loads a chosen DWARF file into an open image
+  /// (dwarf_load).
+  static bool loadsDwarfFiles();
 
 private:
   Json executeImpl(const std::string &operation, const Json &payload,
@@ -98,8 +107,12 @@ private:
   std::string projectId_;
   Json openOptions_, signatureInputs_ = Json::array();
   Json pdbInput_ = nullptr, pdbDisplayNames_ = Json::array();
-  /// {"mode":"none"} when the user declined the image's DWARF, else null.
+  /// {"mode":"none"} when the user declined the image's DWARF, the file
+  /// chosen for it as {"path","stamp"}, else null.
   Json dwarfInput_ = nullptr;
+  /// {"mode":"none"} when the user declined the MAP beside the input, the
+  /// MAP file chosen for it as {"path","mode","stamp"}, else null.
+  Json mapInput_ = nullptr;
   /// {"mode":"none"} when the user declined the image's static symbol
   /// table, else null.
   Json symbolsInput_ = nullptr;

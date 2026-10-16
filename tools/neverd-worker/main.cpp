@@ -261,6 +261,14 @@ Json hello() {
     result["capabilities"].push_back("dwarf_reference");
   if (Engine::findsSymbolTables())
     result["capabilities"].push_back("symbol_table_reference");
+  if (Engine::findsMapFiles())
+    result["capabilities"].push_back("map_reference");
+  if (Engine::loadsMapFiles()) {
+    result["capabilities"].push_back("map_inspect");
+    result["capabilities"].push_back("map_load");
+  }
+  if (Engine::loadsDwarfFiles())
+    result["capabilities"].push_back("dwarf_load");
   result["web"] = WebEngine::capabilities();
   return result;
 }
