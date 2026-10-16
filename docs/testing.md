@@ -3984,6 +3984,22 @@ function's own reloaded address stays one. `ExceptionFunctionUnwindOnly`
 checks that an LSDA, a personality routine, handler data or a partial parse
 each count as a handler.
 
+`IndirectTailFrame.RestoredNativeFrameRetainsItsFunctionPointerTailCall` also
+covers libc++'s `__shared_weak_count::__release_weak` (an acquire load and an
+`ldaxr`/`stlxr` decrement loop before a virtual tail call), an exclusive pair
+loop, LSE atomics (`ldaddal`, `swpal`, `casal`, `ldclral`, `stadd`) and a
+value-only `rbit`. `ActiveOrUnknownTailFrameRetainsItsIndirectBranch` keeps
+the branch when an exclusive store or an atomic swap may overwrite the saved
+link word, when one publishes a frame address that a later callee could use
+though no argument register holds it, when `ldaxr` loads the link register,
+in a live frame, and after an `svc`.
+`IndirectTailFrame.ExclusiveReleaseCallsItsVirtualSlotInEveryRoute` decompiles
+the `__release_weak` shape through HighC, LLVM-C and unoptimized LLVM-C: none
+keeps the unresolved-branch trap, each calls through the loaded vtable slot,
+and the HighC compiles for AArch64.
+`LowIntrinsicMemoryOperands.DecodeOnlyTheLiftedShapes` rejects width, ordering
+and segment mismatches and intrinsics without a memory contract.
+
 `LocalUnwindTargetRequiresExclusiveSameFrameUses` includes decoded x64 calls
 whose SP save and load occupy different blocks, stale producer changes, opaque
 calls, partial writes, foreign address uses and invalid module/runtime facts.
