@@ -12,14 +12,11 @@
 
 namespace neverd::x86_registration {
 
-std::optional<std::set<const MedOp *>> getSEHFrameStores(const MedFunc &Source,
-                                                         uint64_t EntrySP,
-                                                         uint64_t FrameBytes) {
+std::optional<SEHFrameOffsets> getSEHFrameOffsets(const MedFunc &Source) {
   if (!Source.RegistrationStates || !Source.RegistrationStates->Complete ||
       !Source.RegistrationStates->CallbackStatesComplete ||
       !Source.RegistrationStates->RegistrationLifetimeComplete ||
-      Source.SkippedSSA || EntrySP < 4 || EntrySP > FrameBytes ||
-      FrameBytes > UINT32_MAX)
+      Source.SkippedSSA)
     return std::nullopt;
   using Identity = std::pair<va_t, int>;
   using ValueKey = std::tuple<MedVar::VarKind, int, int>;
@@ -46,6 +43,7 @@ std::optional<std::set<const MedOp *>> getSEHFrameStores(const MedFunc &Source,
     unsigned Definitions = 0;
   };
   std::map<ValueKey, Definition> Values;
+  std::map<ValueKey, std::pair<unsigned, uint16_t>> Definitions;
   std::set<Identity> Seen;
   for (const auto &Block : Source.Blocks)
     for (const auto &Op : Block.Ops) {
@@ -62,7 +60,12 @@ std::optional<std::set<const MedOp *>> getSEHFrameStores(const MedFunc &Source,
                .second)
         return std::nullopt;
     }
-  const auto Count = [&](const MedVar &Value) {
+  const auto Count = [&](const MedVar &Value, bool Available) {
+    if (Value.Size && !Value.isConst()) {
+      auto &Definition = Definitions[Key(Value)];
+      ++Definition.first;
+      Definition.second = Available ? Value.Size : 0;
+    }
     const auto Found = Values.find(Key(Value));
     if (Value.Size && Found != Values.end())
       ++Found->second.Definitions;
@@ -71,24 +74,45 @@ std::optional<std::set<const MedOp *>> getSEHFrameStores(const MedFunc &Source,
     for (const auto &Phi : Block.Phis) {
       if (++Work > limits::kMaxRegistrationEHStateWork)
         return std::nullopt;
-      Count(Phi.Output);
+      Count(Phi.Output, true);
     }
     for (const auto &Op : Block.Ops) {
       if (++Work > limits::kMaxRegistrationEHStateWork)
         return std::nullopt;
-      Count(Op.Output);
+      Count(Op.Output, !Op.Dead);
       for (const auto &Output : Op.IntrinsicOutputs) {
         if (++Work > limits::kMaxRegistrationEHStateWork)
           return std::nullopt;
-        Count(Output);
+        Count(Output, false);
       }
     }
   }
   for (const auto &Clobber : Source.CallClobbers) {
     if (++Work > limits::kMaxRegistrationEHStateWork)
       return std::nullopt;
-    Count(Clobber.Value);
+    Count(Clobber.Value, false);
   }
+  SEHFrameOffsets Result;
+  for (const auto &[Value, Definition] : Values)
+    if (Definition.Definitions == 1)
+      Result.Values.emplace(
+          Value, SEHFrameOffsets::Offset{Definition.Offset,
+                                         Definition.Operation->Output.Size});
+  for (const auto &[Value, Definition] : Definitions)
+    if (Definition.first == 1 && Definition.second)
+      Result.UniqueDefinitions.emplace(Value, Definition.second);
+  return Result;
+}
+
+std::optional<std::set<const MedOp *>> getSEHFrameStores(const MedFunc &Source,
+                                                         uint64_t EntrySP,
+                                                         uint64_t FrameBytes) {
+  if (EntrySP < 4 || EntrySP > FrameBytes || FrameBytes > UINT32_MAX)
+    return std::nullopt;
+  const auto Offsets = getSEHFrameOffsets(Source);
+  if (!Offsets)
+    return std::nullopt;
+  size_t Work = 0;
   std::set<const MedOp *> Result;
   for (const auto &Block : Source.Blocks)
     for (const auto &Op : Block.Ops) {
@@ -96,14 +120,12 @@ std::optional<std::set<const MedOp *>> getSEHFrameStores(const MedFunc &Source,
         return std::nullopt;
       if (Op.Opcode != NdOp::STORE || Op.NumInputs != 2 || Op.Dead ||
           Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-          Op.MemoryOrdering != NdMemoryOrdering::None || !Valid(Op.Inputs[0]) ||
-          !Op.Inputs[1].Size)
+          Op.MemoryOrdering != NdMemoryOrdering::None || !Op.Inputs[1].Size)
         continue;
-      const auto Found = Values.find(Key(Op.Inputs[0]));
-      if (Found == Values.end() || Found->second.Definitions != 1 ||
-          Found->second.Operation->Output.Size != Op.Inputs[0].Size)
+      const auto FrameOffset = Offsets->get(Op.Inputs[0]);
+      if (!FrameOffset)
         continue;
-      const int64_t Offset = int64_t(EntrySP) - 4 + Found->second.Offset;
+      const int64_t Offset = int64_t(EntrySP) - 4 + *FrameOffset;
       if (Offset >= 0 && uint64_t(Offset) <= FrameBytes &&
           Op.Inputs[1].Size <= FrameBytes - uint64_t(Offset))
         Result.insert(&Op);

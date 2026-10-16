@@ -92,6 +92,8 @@ std::optional<SEHFrameValues> getPrivateSEHFrameValues(
   auto IsUnrelocated = [&](const MedVar &V) {
     return !IsFrame(V) || IsScalar(V);
   };
+  const auto FrameOffsets =
+      RuntimeScalars.empty() ? std::nullopt : getSEHFrameOffsets(Func);
   Changed = !RuntimeScalars.empty();
   while (Changed) {
     Changed = false;
@@ -118,6 +120,12 @@ std::optional<SEHFrameValues> getPrivateSEHFrameValues(
             llvm::any_of(Inputs, IsScalar))
           Changed |= RuntimeScalars.insert(Key(Op.Output)).second;
       }
+    }
+    if (FrameOffsets) {
+      const auto PreviousSize = RuntimeScalars.size();
+      if (!extendSEHScalarSpills(Func, *FrameOffsets, RuntimeScalars, Work))
+        return std::nullopt;
+      Changed |= RuntimeScalars.size() != PreviousSize;
     }
   }
   for (const auto &Value : RuntimeScalars)

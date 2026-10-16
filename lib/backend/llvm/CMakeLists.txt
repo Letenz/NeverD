@@ -60,6 +60,7 @@ add_neverd_component_library(NeverDBackendLLVM
   X86/MedLLVMRegistrationIncoming.cpp
   X86/MedLLVMRegistrationSEHProof.cpp
   X86/MedLLVMRegistrationSEHFrameStores.cpp
+  X86/MedLLVMRegistrationSEHScalarSpills.cpp
   X86/MedLLVMRegistrationSEHDynamicScope.cpp
   X86/MedLLVMRegistrationSEHJump.cpp
   X86/RegistrationLocalUnwindBridge.cpp
