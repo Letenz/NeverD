@@ -132,8 +132,6 @@ std::string CWriter::builtin(Builtin Type) const {
   switch (spellingOf(Options)) {
   case BuiltinSpelling::Windows:
     return Info.Windows;
-  case BuiltinSpelling::IDA:
-    return Info.IDA;
   case BuiltinSpelling::Keywords:
     return Info.Keywords;
   case BuiltinSpelling::Portable:
@@ -646,11 +644,6 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
     Out += "#endif\n";
     break;
   }
-  case BuiltinSpelling::IDA:
-    Out += "\n#ifndef _MSC_VER\n#define __int8 char\n#define __int16 "
-           "short\n#define __int32 int\n#define __int64 long long\n#endif\n";
-    Out += namedBuiltins(Writer, Library, Cpp);
-    break;
   case BuiltinSpelling::Keywords:
     if (LongChecked)
       Out +=

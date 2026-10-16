@@ -6,7 +6,9 @@
 
 #include "neverd/symbolic/SymConcrete.h"
 
+#include <iterator>
 #include <limits>
+#include <map>
 #include <set>
 
 namespace neverd::symbolic {
@@ -16,6 +18,7 @@ struct SymExecConcreteShadow::Impl {
   std::unique_ptr<SymState> State;
   std::unique_ptr<SymExec> Executor;
   std::set<uint64_t> SeededBytes;
+  std::map<uint64_t, uint64_t> SeededMemory;
   bool Trusted = false;
   bool Started = false;
 
@@ -26,6 +29,7 @@ struct SymExecConcreteShadow::Impl {
     State = std::make_unique<SymState>(*Context, ByteOrder);
     Executor = std::make_unique<SymExec>(*Context, *State);
     SeededBytes.clear();
+    SeededMemory.clear();
     Trusted = true;
     Started = false;
   }
@@ -70,6 +74,25 @@ bool SymExecConcreteShadow::setRegister(uint64_t Offset, uint16_t Bytes,
 
   P->State->write(SymSpace::Register, Offset,
                   P->Context->mkConst(uint32_t(Bytes) * 8, Value));
+  return true;
+}
+
+bool SymExecConcreteShadow::setMemory(uint64_t Address,
+                                      llvm::ArrayRef<uint8_t> Bytes) {
+  if (!P->Trusted || P->Started || Bytes.empty() ||
+      Bytes.size() - 1 > std::numeric_limits<uint64_t>::max() - Address)
+    return P->fail();
+
+  const uint64_t Last = Address + Bytes.size() - 1;
+  const auto Next = P->SeededMemory.lower_bound(Address);
+  if ((Next != P->SeededMemory.end() && Next->first <= Last) ||
+      (Next != P->SeededMemory.begin() && std::prev(Next)->second >= Address))
+    return P->fail();
+
+  P->SeededMemory.emplace_hint(Next, Address, Last);
+  for (size_t I = 0; I < Bytes.size(); ++I)
+    P->State->write(SymSpace::Memory, Address + I,
+                    P->Context->mkConst(8, Bytes[I]));
   return true;
 }
 

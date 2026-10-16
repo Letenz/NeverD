@@ -144,6 +144,12 @@ NEVERD_VIEW_ACTION(EditOperandOffset, QT_TRANSLATE_NOOP("Actions", "&Offset"),
                    "O", "operand_offset",
                    QT_TRANSLATE_NOOP("Actions", "Show the operand's number as "
                                                 "the address it names"))
+NEVERD_VIEW_ACTION(
+    EditOperandStruct, QT_TRANSLATE_NOOP("Actions", "S&tructure offset..."),
+    "T", "operand_struct",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Show the operand as a member of a local type, the "
+                      "types ranked by how the code's accesses fit them"))
 NEVERD_VIEW_ACTION(EditOperandNegate,
                    QT_TRANSLATE_NOOP("Actions", "Change &sign"), "_",
                    "operand_negate",

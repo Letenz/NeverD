@@ -855,6 +855,14 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>Show the program's types with their layouts and source</translation>
     </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>S&amp;tructure offset...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2595,6 +2603,13 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>DWARF loaded: %1</source>
         <translation>DWARF loaded: %1</translation>
     </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>Showed %n operands as members of %1</numerusform>
+            <numerusform>Showed %n operands as members of %1</numerusform>
+        </translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -3403,10 +3418,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Windows names (ULONG)</translation>
     </message>
     <message>
-        <source>IDA names (unsigned int)</source>
-        <translation>IDA names (unsigned int)</translation>
-    </message>
-    <message>
         <source>C keywords (unsigned long)</source>
         <translation>C keywords (unsigned long)</translation>
     </message>
@@ -3808,6 +3819,147 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>Line %1, column %2: %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>%1 of %n offsets land exactly on members</numerusform>
+            <numerusform>%1 of %n offsets land exactly on members</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>%1 of %n types</numerusform>
+            <numerusform>%1 of %n types</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n bytes</numerusform>
+            <numerusform>%n bytes</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>%n types</numerusform>
+            <numerusform>%n types</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>Access</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>Also show the %n other instructions that go through %1 as members</numerusform>
+            <numerusform>Also show the %n other instructions that go through %1 as members</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Apply</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>At %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Bytes</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>Member</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>No member holds this byte</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>No type matches.</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>Offset</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>Reading what the code does through the operand&apos;s pointer…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>Search types: a name, a typedef, Type.member or .member</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>Structure offset</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>The number %1 as an offset into a structure or union.</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>The operand keeps its number.</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>The program has no structures or unions. Declare them in Local types (Shift+F1).</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Type</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</numerusform>
+            <numerusform>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>address</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>header</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>outside the type</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>padding</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>read</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>the pointer</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>user</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>write</translation>
     </message>
 </context>
 </TS>

@@ -103,16 +103,32 @@ BuiltinSpelling defaultSpelling(Language Lang) {
   return BuiltinSpelling::Portable;
 }
 
-std::string spellingsText(Language Lang) {
-  std::vector<llvm::StringRef> Ids;
-  for (const SpellingName &Entry : Spellings)
-    if (spellsBuiltins(Lang, Entry.Spelling))
-      Ids.push_back(Entry.Id);
+std::vector<BuiltinSpelling> spellingsOf(Language Lang) {
+  std::vector<BuiltinSpelling> Out;
+  for (const LanguageSpelling &Entry : Taken)
+    if (Entry.Lang == Lang)
+      Out.push_back(Entry.Spelling);
+  return Out;
+}
+
+std::string spellingsText() {
   std::string Text;
-  for (size_t I = 0; I < Ids.size(); ++I) {
+  constexpr size_t Count = std::size(Spellings);
+  for (size_t I = 0; I < Count; ++I) {
     if (I)
-      Text += I + 1 == Ids.size() ? " or " : ", ";
-    Text += Ids[I].str();
+      Text += I + 1 == Count ? " or " : ", ";
+    Text += Spellings[I].Id;
+  }
+  return Text;
+}
+
+std::string spellingsText(Language Lang) {
+  const std::vector<BuiltinSpelling> Listed = spellingsOf(Lang);
+  std::string Text;
+  for (size_t I = 0; I < Listed.size(); ++I) {
+    if (I)
+      Text += I + 1 == Listed.size() ? " or " : ", ";
+    Text += spellingId(Listed[I]).str();
   }
   return Text;
 }

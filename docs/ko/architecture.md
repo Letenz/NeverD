@@ -8,6 +8,10 @@
 설명합니다. 의도적으로 NeverD 소유 코드만 다루며 LLVM, Capstone, Unicorn
 서브모듈은 각자의 내부 아키텍처를 유지합니다.
 
+## 구체적 진입 메모리 시드
+
+`SymExecConcreteShadow`는 실행 전에 주소 순서의 RAM 바이트를 받습니다. 구체 상태만 초기화하며 기호 상태의 진입 메모리는 자유 입력으로 남습니다. C++ `InitialMemory`는 `MaxMemorySeedBytes`로 제한됩니다(기본 1 MiB, 0은 바이트를 허용하지 않음). 비어 있거나 겹치거나 주소가 순환하는 범위는 거부합니다. 메모리 보고서는 버전 2이며 `InitialMemory`와 후보의 `MemorySeed`를 보존합니다. 투영은 시드가 덮는 epoch-zero 레지스터 또는 절대 메모리 입력만 허용하고, 질의 평가·새 재실행·중복 제거에 두 종류의 바이트를 모두 사용합니다. 누락된 바이트, 기호 기준 주소와 근사 효과는 계속 거부하며 저장은 구체 메모리를 정상 갱신합니다. 정지 상태의 `ProcessView::read`로 커밋된 RAM을 읽을 수 있지만 접근 전 후크는 완전한 스냅샷이 아닙니다. 관측은 소유권·수명·불변성·비중첩을 증명하지 않습니다. 후보는 대상 분기와 앞선 결정만 검증합니다. 버전 1 C/JSON, Python 및 CLI는 레지스터 전용입니다.
+
 ## 소스 및 오브젝트 대체 경계
 
 `SourcePatchCompiler`는 컴파일러 식별과 산출물 선택을 담당합니다. `validateSourcePatchTarget`는 소스와 외부 IR의 공통 대상 판정이며 대상 트리플만으로 지원을 증명할 수 없습니다. `bindSourcePatch`는 IR 진입점 매핑을 확인하고 `PatchObject`는 네이티브 섹션, 재배치 및 FDE 범위 증거를 관리합니다. `publishSourcePatch`는 준비, 검증 및 배타적 출력을 담당합니다. `COFFSourceImage`는 PE x86/x64/ARM32/ARM64의 새 저장 공간과 언와인드 테이블을 담당하며 리프팅 후 재작성은 원래 EH의 별도 증거를 요구합니다. [소스 패치](source-patching.md)를 참조하세요.
@@ -1732,3 +1736,9 @@ KernelFileSystem은 FILE_OBJECT마다 provider token 하나를 유지합니다. 
 `KernelModelFileRequests`는 동기 버퍼 방식의 `ZwReadFile` / `ZwWriteFile`도 소유합니다. 생성자는 핸들 범위, 오프셋과 키, 쓰기 입력 복사본을 보존합니다. 공통 완료 경로는 알림 가능한 원래 호출자에서 읽기 바이트와 IOSB를 공개하고 소유 패킷과 버퍼를 한 번씩 해제합니다. 내용과 파일 위치 변경은 저장 장치 드라이버가 담당합니다.
 
 `KernelModelFileRequests`는 버퍼 없는 `ZwFlushBuffersFile` 생성도 소유합니다. 권한 마스크 확인과 즉시 게시·해제 규칙은 지연 완료하는 네이티브 읽기/쓰기/조회와 다르며, 원래 호출자 알림과 단일 해제 소유자를 공유합니다.
+
+`KernelModelFileRequests`가 네이티브 제어 버퍼 캡처와 게시를 소유합니다. 파일 유지, 호출자 연속 실행과 패킷 해제를 공유하며 생산자의 지연 완료 규칙으로 장치 제어와 FSCTL을 구분합니다. 공통 완료 검증기가 출력 한계를 확인합니다.
+
+`KernelModelRuntime`이 커널 CRT 분류, 제자리 변환과 검사된 문자열 쓰기를 소유합니다. `KernelCStringAPIs.def`는 모든 호출 경로에 내보내기 식별자, 인수 개수와 IRQL 조건을 제공합니다. 단위 접근은 게스트 권한과 수명 검증을 재사용하며 보고서/어댑터가 복사 및 오류 의미를 중복 구현하지 않습니다.
+
+`KernelMemoryCalls`가 검사형 메모리 복사 진입을 소유하며 기존 move/fill, 풀 수명 및 사용자 메모리 검사를 재사용한다. `KernelModelRuntime`이 `RtlImageNtHeader` 원시 서명 검사를 소유한다. 이는 이미지 실행에 필요한 로더 검증을 대체하지 않으며 어댑터는 의미를 복제하지 않는다.

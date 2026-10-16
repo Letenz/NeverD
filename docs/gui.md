@@ -463,6 +463,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | N | Rename the name under the cursor, or the address: a function at its entry, data, a label in code |
 | P | Create a function at the address (**Edit → Functions** also deletes the current one) |
 | D / A / U | Make data (again for the next size) / a string / bytes of the item |
+| T | Show the operand as a structure offset, the local types ranked by the code's accesses |
 | C | Define native instructions from the selected byte through a basic block |
 | : or ; | Comment the address |
 | Alt+M / Ctrl+M | Mark a position / jump to a marked position |
@@ -876,6 +877,28 @@ of undo history and is kept in `<input>.neverd-operands.json`, which the command
 line reads and writes too (`neverd operands <input> --addr <address> --operand 1
 --base decimal`, `--negate`, `--invert`, `--clear`; the address lies in
 executable code).
+
+**Edit → Operand type → Structure offset** (T, as IDA's) shows the operand as a
+member of a structure or union of the program's local types:
+`mov rdi, [rcx+_KTHREAD.Process]`. The types are ranked by what the function's
+code does through the same pointer. The engine gathers every load, store and
+address the function takes through the register's value, copies such as
+`mov rbx, rcx` included. A type whose members those accesses land on exactly,
+at their widths, comes first; one some access falls outside of comes last. The
+search matches type names and their typedefs as an editor's quick open does
+(`kthr`, `PKAPC`), member paths after a dot (`irp.curstack`) and `.member` in
+every type. The preview shows what the operand becomes and where each access
+lands, marked when it lands inside a member, on padding or outside the type.
+A pointer into a record, as a list entry's is, gets the member it points at
+and its delta (`[rcx+(_KAPC.Type-10h)]`). Apply shows the operand as a member
+and, unless unchecked, every other instruction that goes through the same
+pointer, in one step of undo history. A number (`add rcx, 18h`) takes a
+structure offset as an address in the type. The format keeps the type's name,
+so a member renamed in Local types shows its new name, and the number returns
+where the type no longer has a member. The command line sets it
+(`neverd operands <input> --addr <address> --struct _KTHREAD`, `--delta 16`)
+and ranks the types as the window does (`neverd types <input> --fit --func
+<function> --at <address>`, `--match <text>`, `--access 0x220:8`).
 
 Opening a file never starts whole-program analysis. The listing, function list,
 references and graph come from the loader and from per-function work: a

@@ -28,6 +28,7 @@ add_neverd_component_library(NeverDTypes
   PythonTypeRender.cpp
   RustTypeParser.cpp
   RustTypeRender.cpp
+  TypeFit.cpp
   TypeJSON.cpp
   TypeLayout.cpp
   TypeRender.cpp

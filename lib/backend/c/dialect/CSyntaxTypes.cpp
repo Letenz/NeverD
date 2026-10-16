@@ -168,6 +168,22 @@ const CType *TypeContext::record(llvm::StringRef Spelling) {
   return intern(std::move(T));
 }
 
+const CType *TypeContext::anonymousRecord(bool Union) {
+  // No tag names it: a spelling no C names a record by keeps it apart.
+  const std::string Spelling = std::string(Union ? "union" : "struct") +
+                               " <anonymous " + std::to_string(Anonymous++) +
+                               ">";
+  const CType *T = record(Spelling);
+  RecordDef *Def = recordDef(Spelling);
+  Def->Union = Union;
+  Def->Anonymous = true;
+  return T;
+}
+
+const CType *TypeContext::enumeration(llvm::StringRef Name) {
+  return integer(32, /*Signed=*/true, ("enum " + Name).str());
+}
+
 const CType *TypeContext::qualified(const CType *T, bool Const, bool Volatile,
                                     unsigned AddressSpace) {
   if ((!Const || T->Const) && (!Volatile || T->Volatile) &&

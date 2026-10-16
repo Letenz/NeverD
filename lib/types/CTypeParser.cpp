@@ -370,7 +370,7 @@ const llvm::StringMap<Builtin> &builtinWords() {
         Map.try_emplace(Word, Type);
     };
 #define NEVERD_BUILTIN_TYPE(Name, Class, Signed, LLP64, LP64, ILP32, Keywords, \
-                            Windows, IDA)                                      \
+                            Windows)                                           \
   add(Windows, Builtin::Name);
 #include "neverd/types/BuiltinTypes.def"
     for (const auto &[Word, Type] :

@@ -257,7 +257,19 @@ to resume from write_consumed. A delivered transaction can request a new looper
 through the leading BR_SPAWN_LOOPER word, under the same thread-pool rules as
 control reads. Private thread work and process work retain kernel read eligibility.
 
-This subset admits synchronous flags-zero, offsets-free messages, at most one
+Object-free synchronous requests also accept TF_ACCEPT_FDS, as emitted by
+libbinder's ordinary `transact`. The bit is delivered intact; it does not
+authorize FD translation, and a nonempty object-offset table still stops.
+Replies accept TF_STATUS_CODE only with exactly four guest-provided bytes.
+They preserve the flag and payload in the caller's read-only arena; no service
+error or success value is invented. Other request/reply flags remain unsupported.
+Rejected flags, objects and status sizes report the command, target, transaction
+code, flags and lengths before allocating a reply buffer or consuming the call.
+These transport conventions follow the pinned
+[Binder UAPI](https://android.googlesource.com/kernel/msm/+/a80b2e0035e75c0460b54e2217ca0104631d547d/include/uapi/linux/android/binder.h)
+and [libbinder producer/consumer](https://android.googlesource.com/platform/frameworks/native/+/2d5e05b44248e445af986ca8410c6e98c6ba3533/libs/binder/IPCThreadState.cpp).
+
+This subset admits synchronous, offsets-free messages, at most one
 transaction per write batch, 64 live buffers/work items per queue, and 64 KiB per
 payload. Object/FD translation, one-way or nested calls, security policies,
 peer-death processing and blocking scheduling remain explicit gaps. Partial
@@ -279,13 +291,23 @@ process GPU address space across independent opens; returned flags include
 USERMEM_ADDR. Physical pins survive CPU unmapping and virtual-address reuse.
 SHAREDMEM_FREE releases a registered base address.
 
-Legacy RINGBUFFER_ISSUEIBCMDS admits one flags-zero IB of at most 4096 words.
+Legacy RINGBUFFER_ISSUEIBCMDS admits one flags-zero root IB. A shared 4096-word
+budget counts the root and every executed child, including repeated visits.
 The type-3 CP_NOP payload is skipped according to its packet extent;
 one-word CP_MEM_WRITE writes its actual operand into a registered writable GPU
-allocation. Admission checks every packet, range, alignment and permission
-before any write. Predicate/reserved bits, unknown opcodes, truncated packets
-and command-buffer self-modification fail explicitly. There is no shader,
-register, draw, indirect-list or type-7 implementation.
+allocation. CP_INDIRECT_BUFFER_PFE/PFD contain a 32-bit GPU address and a word
+count. One indirect level is admitted; execution returns to the parent, and
+repeated sibling calls execute again. Their prefetch distinction has no timing
+effect under this synchronous coherent-RAM contract.
+
+Admission checks the entire reachable program before any write. It retains
+physical fetch ranges, then rejects every store overlapping any of them,
+including a child discovered after the store or a different GPU address alias.
+Recursive/overlapping active buffers, deeper nesting, empty/unmapped ranges,
+predicate/reserved bits, unknown opcodes and truncated packets fail explicitly.
+Refusals identify the buffer, word offset and packet header when available.
+These are model limits, not claimed hardware limits. There is no shader,
+register, draw, submission-list or type-7 implementation.
 
 An admitted command buffer drains at the stopped CPU boundary. Its owned queued,
 consumed and retired timestamps advance together; mapped memstore aliases observe
@@ -299,6 +321,8 @@ These ABI/packet facts were independently implemented from the pinned
 [submission and memory owner](https://android.googlesource.com/kernel/msm/+/973f4134d9deb396415846f902848f0a32cb4cfa/drivers/gpu/msm/kgsl.c),
 [ringbuffer packet producer](https://android.googlesource.com/kernel/msm/+/973f4134d9deb396415846f902848f0a32cb4cfa/drivers/gpu/msm/adreno_ringbuffer.c)
 and [PM4 encoding](https://android.googlesource.com/kernel/msm/+/a65478df351382d255d293d745aee9bae3a3a741/drivers/gpu/msm/adreno_pm4types.h).
+The indirect forms also follow the pinned
+[legacy IB encoding](https://android.googlesource.com/kernel/msm/+/2db776e4f994f895799dd7cb47397db6bfe1e616/drivers/gpu/msm/adreno_pm4types.h).
 
 ### Owned GPU memory objects
 
