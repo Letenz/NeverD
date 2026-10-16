@@ -132,7 +132,7 @@ add_neverd_unittest(NeverDLocalTypesDebugContextTests
   LocalTypesDebugContextTests.cpp
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi/LocalTypesDebugContext.cpp"
   "${CMAKE_SOURCE_DIR}/lib/ir/NdTypes.cpp"
-  LINK_COMPONENTS Types
+  LINK_COMPONENTS Types Loader
 )
 target_include_directories(NeverDLocalTypesDebugContextTests PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi")

@@ -414,13 +414,38 @@ ntoskrnl.exe and its PDB,
 and checks that the headers join its PDB without conflicts.
 `SessionCAPIKernelInputs.KernelFunctionsDecompileWithTheirPrototypes` decompiles
 `NtCreateFile`, `IoAllocateIrp`, `PsCreateSystemThread` and
-`IofCompleteRequest` and checks the signatures the headers give them.
+`IofCompleteRequest` and checks the signatures the headers give them; also
+`IoThreadToProcess`, which the linker folded with `PsGetThreadProcess` so
+that the PDB names neither, and `FsRtlAreNamesEqual`, exported under another
+name than the PDB's. `SessionCAPIKernelInputs.KernelExportsTakeTheirPrototypesWithoutThePDB`
+loads the kernel without its PDB and checks `NtCreateFile` again.
 Run these external-input checks with `--gtest_filter=SessionCAPIKernelInputs.*`.
 Without the two inputs they remain explicit skips. The Linux Lift qualification
 requires every `SessionCAPITest.*` case to execute and pass using repository
 fixtures; it does not claim Windows kernel input coverage.
 `LocalTypesDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
 the conversion and which functions take a prototype without a program.
+`LocalTypesDebugContext.TypesTheFunctionsByTheNamesTheyAreShownUnder` covers
+the name a function takes its prototype by: its export or a symbol the
+program states, else the debug information's, and never the other name of a
+function the linker folded with it, nor one analysis gave.
+`LocalTypesDebugContext.NamesTheHeaderLibraryAPrototypeComesFrom` checks the
+library and the declaration the signature records.
+`SessionCAPITest.KnownRoutinesTakeTheirPrototypesByTheirNames` loads
+`unittests/types/fixtures/known_routines.sys`, a driver without debug
+information whose exports have the names of kernel routines, three pairs of
+them folded, one pair returning differently, and checks the signatures and
+the `neverd.prototype` comment HighC prints.
+`SessionCAPITest.KernelImportsPassWhatTheirPrototypesTake` loads
+`kernel_imports.sys`, a driver calling kernel imports, and checks that a call
+passes what the prototype takes, a tail call forwarding it, and that the unit
+declares the imports as the headers do.
+`HeaderLibrary.DeclaresTheKernelRoutinesTheCallAnalysisFixes` checks that the
+kernel's headers and `WindowsKernelRoutines.inc` agree on the bytes each
+parameter of a routine both know takes, and
+`ReturnContracts.ACallToAFunctionDeclaredVoidElsewhereHandsBackNoValue` and
+`AStubOfAnImportDeclaredVoidReturnsNoValue` cover the return contracts that
+read declarations.
 Build and run `NeverDSessionLLVMTests` as well: its private Session queries
 link the actual local-type/debug implementations and shared atomic sidecar
 helper into the test executable. It must not acquire a libneverd dependency.

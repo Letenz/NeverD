@@ -273,8 +273,9 @@ private:
     return std::nullopt;
   }
 
-  /// Whether a routine called \p Name returns nothing by its prototype, or
-  /// as an MSVC destructor.  None when neither knows it.
+  /// Whether a routine called \p Name returns nothing by its prototype, the
+  /// libc tables' or one the program's types declare, or as an MSVC
+  /// destructor.  None when none knows it.
   std::optional<bool> namedNoValue(llvm::StringRef Name) const {
     if (Name.empty())
       return std::nullopt;
@@ -287,6 +288,11 @@ private:
     if (const std::optional<bool> Returns =
             libc::libcReturnsValue(CName, Img.abiFormat()))
       return !*Returns;
+    if (Dbg)
+      if (const std::optional<FunctionSym> Declared =
+              Dbg->resolvePrototype(CName);
+          Declared && Declared->ReturnType)
+        return Declared->ReturnType->Kind == NdTypeKind::Void;
     return std::nullopt;
   }
 
@@ -325,11 +331,17 @@ private:
                                               Load.Inputs[0].isConst())
           Slot = static_cast<va_t>(Load.Inputs[0].ConstVal);
     // A callee's declaration decides, then a prototype of its name, then
-    // what this pass settled for it.
+    // what this pass settled for it.  One this pass does not decompile is
+    // declared as the C writers read it, by the debug information or a
+    // prototype of its name: the call they print returns nothing then.
     if (Target) {
       if (const auto Declaration = Declared.find(*Target);
           Declaration != Declared.end())
         return Declaration->second;
+      if (Dbg && !Facts.count(*Target))
+        if (const auto Debug = Dbg->resolveFunction(*Target);
+            Debug && Debug->Addr == *Target && Debug->ReturnType)
+          return Debug->ReturnType->Kind == NdTypeKind::Void;
       if (const auto Name = Names.find(*Target); Name != Names.end())
         if (const std::optional<bool> None = namedNoValue(Name->second))
           return *None;
