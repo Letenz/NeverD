@@ -646,6 +646,8 @@ std::string renderType(const TypeLibrary &Library, const LocalType &Type,
     return render::renderPython(Library, Type, Options);
   case Language::JavaScript:
     return render::renderJavaScript(Library, Type, Options);
+  case Language::Lua:
+    return render::renderLua(Library, Type, Options);
   }
   return std::string();
 }
@@ -670,6 +672,8 @@ std::string renderTypes(const TypeLibrary &Library,
     return render::renderPythonModule(Library, Types, Options);
   case Language::JavaScript:
     return render::renderJavaScriptModule(Library, Types, Options);
+  case Language::Lua:
+    return render::renderLuaModule(Library, Types, Options);
   }
   return std::string();
 }

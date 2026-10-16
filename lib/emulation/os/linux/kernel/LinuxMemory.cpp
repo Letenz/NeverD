@@ -20,11 +20,6 @@ bool freeRange(llvm::ArrayRef<AddressMapping> Ranges, uint64_t Address,
       return false;
   return true;
 }
-unsigned permissions(uint64_t Protection) {
-  return UserAccessible | (Protection & ProtRead ? Read : 0u) |
-         (Protection & ProtWrite ? Write : 0u) |
-         (Protection & ProtExecute ? Execute : 0u);
-}
 bool supportedProtection(uint64_t Protection) {
   // Write-only and execute-only differ across hardware/personality/pkey
   // policies. Admit only the explicit common readable combinations or NONE.
@@ -32,6 +27,12 @@ bool supportedProtection(uint64_t Protection) {
          (!Protection || (Protection & ProtRead));
 }
 } // namespace
+
+unsigned LinuxMemory::permissions(uint64_t Protection) {
+  return UserAccessible | (Protection & ProtRead ? Read : 0u) |
+         (Protection & ProtWrite ? Write : 0u) |
+         (Protection & ProtExecute ? Execute : 0u);
+}
 
 LinuxMemory::LinuxMemory(AddressSpace &Space, const MemoryLayout &Layout,
                          uint64_t InitialBreak, const ProcessOptions &Options)
@@ -286,6 +287,7 @@ llvm::Expected<uint64_t> LinuxMemory::unmap(const ProcessServiceEvent &Event) {
   auto Removed = unmapPages(Address, *Size);
   if (!Removed)
     return Removed.takeError();
+  retireGPUObjects(Address, *Size);
   return 0;
 }
 llvm::Expected<uint64_t> LinuxMemory::setBreak(uint64_t Address) {
@@ -338,6 +340,22 @@ LinuxMemory::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
       return Value.takeError();
     return std::optional<uint64_t>(*Value);
   };
+  if (Kind == ServiceKind::Mprotect || Kind == ServiceKind::Munmap ||
+      Kind == ServiceKind::Madvise) {
+    const auto Size = roundSize(Event.Arguments[1]);
+    if (Size && Event.Arguments[0] % PageSize == 0 &&
+        validRange(Event.Arguments[0], *Size) &&
+        overlapsGPUObject(Event.Arguments[0], *Size) &&
+        (Kind == ServiceKind::Madvise ||
+         (Kind == ServiceKind::Mprotect &&
+          (Event.Arguments[2] & ProtExecute)) ||
+         overlapsGPUObject(Event.Arguments[0], *Size, true))) {
+      Result.Stop = ProcessStopReason::UnsupportedService;
+      Result.Diagnostic =
+          "GPU object VMA splitting, execution or advice is unmodeled";
+      return std::optional<uint64_t>();
+    }
+  }
   switch (Kind) {
   case ServiceKind::Mmap:
     if (!supportedProtection(Event.Arguments[2]) ||

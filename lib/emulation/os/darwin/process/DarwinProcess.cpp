@@ -113,12 +113,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     if (!Resources->remainingMicroseconds())
       return preparationTimeout(Profile, Options, Image->Architecture,
                                 Image->Plan.Entry);
-    const uint64_t Value =
-        Fixup.Bind ? LibSystemGate +
-                         *libSystemImport(Fixup.Symbol) * LibSystemGateStride
-                   : Fixup.Target;
     uint8_t Bytes[8];
-    llvm::support::endian::write64le(Bytes, Value);
+    llvm::support::endian::write64le(Bytes, Fixup.Value);
     if (auto E = (*Space)->write(Fixup.Address, Bytes))
       return std::move(E);
   }

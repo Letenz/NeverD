@@ -23,6 +23,7 @@ add_neverd_component_library(NeverDTypes
   HeaderLibrary.cpp
   JavaScriptTypeRender.cpp
   LocalTypes.cpp
+  LuaTypeRender.cpp
   PDBTypeImport.cpp
   PythonTypeRender.cpp
   RustTypeParser.cpp
@@ -30,6 +31,7 @@ add_neverd_component_library(NeverDTypes
   TypeJSON.cpp
   TypeLayout.cpp
   TypeRender.cpp
+  ViewPlan.cpp
   ${NEVERD_HEADER_LIBRARY_INCS}
 )
 

@@ -336,7 +336,10 @@ compiles the result:
 - JavaScript by running the module with `node`, in both spellings, whose
   checks read and write back every accessor within its record, and by
   `tsc --noEmit --allowJs --checkJs --strict`, which checks its JSDoc as
-  TypeScript (`--tsc` names the compiler; without one it is skipped).
+  TypeScript (`--tsc` names the compiler; without one it is skipped);
+- Lua by running the module with Lua 5.3 or later, in both spellings, whose
+  checks do the same (`--lua` names the interpreter, `lua5.4`, `lua5.3` or
+  `lua` by default).
 
 A missing toolchain is reported and skipped. Without `--binary` it checks the
 fixture:
@@ -7306,3 +7309,23 @@ Integer formatting regressions verify full-width values, all admitted radices, e
 `DriverFileSystemTests.cpp` and `KernelFileSystemTests.cpp` cover admission limits, required zero values, exact owner snapshots, pre-entry multi-volume identity, simultaneous PnP devices, route rejection before IRP adoption, protected projection and unload leak detection. `DriverFileSystemExecutionTests.cpp` runs original and genuine WDK normal/CFG fixtures across available backends, contracts, bases and scheduling; configure `NEVERD_WDM_FILESYSTEM_FIXTURE` and `NEVERD_WDM_FILESYSTEM_CFG_FIXTURE`. `DriverScenarioPublic` and `test_driver_filesystem_integration.py` check C API/CLI/Python state on success and stop. The Python test uses `NEVERD_TEST_DRIVER_FILESYSTEM_FIXTURE` and `NEVERD_TEST_LIBNEVERD`. `UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery` checks unused empty declarations. Unavailable backends remain explicit skips.
 
 `KernelFileCreateTests.cpp` covers packets retained until producer return, sharing failures, relative roots held across pending work, explicit cancellation, failure/aliased publication and DriverUnload teardown. `DriverFileSystemExecutionTests.cpp` executes original and genuine WDK normal/CFG callers across both contracts, bases and available backends, with cooperative and instruction-clock scheduling. C API/CLI/Python preserve the same file identities. Unavailable backends remain skips. Original kernel completion probes distinguish retained CREATE/cancel packets from ordinary consumed IRPs; their event and APC boundaries do not establish a complete filesystem or kernel.
+
+### KGSL object storage and lifetime
+
+Build `NeverDMemoryLifecycleTests`, `NeverDLinuxProcessTests`,
+`NeverDAndroidNativeTests`, `NeverDProcessPublicTests` and `neverd-process-probe`.
+Run `ctest -R 'UnmappedBacking|GPUObject|GPUCommands|RejectedGPU|StatefulDevices|StatefulDescriptorsPages'`.
+The original C fixture checks zeroed allocation, unaligned-size rounding, full
+query records, shared independent opens/dup, CPU/PM4 coherence, remapping,
+pending free, last-FD closure, final-unmap retirement and zeroed reuse on both
+LP64 kernel ABIs and Bionic call routes. Refusal checks preserve complete
+records and data for metadata, flags, read-only output, split VMAs and async
+free. The shared RAM test verifies capacity and identity without a virtual
+mapping. C API/CLI and Python integration use the same authored guest.
+Broaden to the memory-lifecycle, Linux-process, Android-native, execution-session
+and process-public labels before publishing changes to these shared owners.
+The raw `GPUObjectStorage` case and Android object lifecycle/address-range cases
+have a 30-second per-execution wall budget for word-by-word O0 page checks on
+contended hosts; their guest instruction and event budgets are unchanged.
+Existing device cases retain their deadlines.
+These fixtures do not supply an Android system-service implementation or shader.

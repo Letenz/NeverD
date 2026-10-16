@@ -102,6 +102,9 @@ constexpr SourceLanguage Languages[] = {
      QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
                        "JavaScript module (*.js *.mjs)"),
      "js", false},
+    {"lua", "Lua",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Lua (*.lua)"), "lua",
+     false},
 };
 /// The language types shown in \p language are declared in: that one, or C
 /// where it renders only.
@@ -147,6 +150,14 @@ constexpr Spelling PythonSpellings[] = {
     {"portable", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
                                    "Exact widths (c_uint32)")},
 };
+// Lua's values are its integers either way; the spelling names the C types
+// the comments give.
+constexpr Spelling LuaSpellings[] = {
+    {"windows",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
+    {"portable", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
+                                   "Exact widths (uint32_t)")},
+};
 constexpr Spelling JavaScriptSpellings[] = {
     {"windows",
      QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
@@ -169,6 +180,7 @@ const SpellingChoice SpellingChoices[] = {
     {"python", PythonSpellings, "localTypes/pythonSpelling", "portable"},
     {"javascript", JavaScriptSpellings, "localTypes/javascriptSpelling",
      "portable"},
+    {"lua", LuaSpellings, "localTypes/luaSpelling", "portable"},
 };
 
 /// The choice \p language makes: C++'s and the layout's are C's.

@@ -6,9 +6,15 @@
 /// \file Exact binding, rebase, malformed metadata and preparation bounds.
 #include "DarwinTestImage.h"
 #include "gtest/gtest.h"
+#include "os/darwin/kernel/DarwinEntropy.h"
+#include "os/darwin/kernel/DarwinFiles.h"
+#include "os/darwin/kernel/DarwinMemory.h"
+#include "os/darwin/process/DarwinLibSystem.h"
 #include "os/darwin/process/DarwinProcess.h"
 
 #include "neverd/loader/MachO/MachOProgramLinking.h"
+
+#include <set>
 
 namespace neverd::emulation {
 namespace {
@@ -87,6 +93,99 @@ struct LinkingImage : darwin_test::Image {
     }
   }
 };
+void appendULEB(std::vector<uint8_t> &Bytes, uint64_t Value) {
+  do {
+    uint8_t Byte = Value & 127;
+    Value >>= 7;
+    Bytes.push_back(Byte | (Value ? 128 : 0));
+  } while (Value);
+}
+std::vector<uint8_t> lazyProgram(uint64_t Offset, llvm::StringRef Name,
+                                 unsigned Fields = 7) {
+  std::vector<uint8_t> Bytes;
+  if (Fields & 1) {
+    Bytes.push_back(0x72);
+    appendULEB(Bytes, Offset);
+  }
+  if (Fields & 2)
+    Bytes.push_back(0x11);
+  if (Fields & 4) {
+    Bytes.push_back(0x40);
+    Bytes.insert(Bytes.end(), Name.begin(), Name.end());
+    Bytes.push_back(0);
+  }
+  Bytes.push_back(0x90);
+  Bytes.push_back(0);
+  return Bytes;
+}
+struct LazyImage : LinkingImage {
+  size_t Lazy, Rebases, Ordinary;
+  explicit LazyImage(llvm::ArrayRef<llvm::StringRef> Calls = {"_write",
+                                                              "_getpid"},
+                     bool Binder = true, bool X64 = false)
+      : LinkingImage(false, X64) {
+    const size_t DataSize = ((Calls.size() + 1) * 8 + 16383) & ~size_t(16383);
+    const size_t End = 16384 + DataSize;
+    Rebases = End + 256;
+    Ordinary = End + 288;
+    Lazy = End + 512;
+    Bytes.resize(std::max<size_t>(49152, Lazy + Calls.size() * 40 + 64), 0);
+    u64(Data + 32, DataSize);
+    u64(Data + 48, DataSize);
+    std::set<std::string> Names;
+    for (auto Name : Calls)
+      Names.insert(Name.str());
+    if (Binder)
+      Names.insert("dyld_stub_binder");
+    u32(Symbols + 8, End);
+    u32(Symbols + 12, Names.size());
+    u32(Symbols + 16, End + 128);
+    u32(Dynamic + 28, Names.size());
+    size_t Index = 0, StringOffset = 1;
+    Bytes[End + 128] = 0;
+    for (const auto &Name : Names) {
+      const auto At = End + Index++ * 16;
+      std::fill_n(Bytes.begin() + At, 16, 0);
+      u32(At, StringOffset);
+      Bytes[At + 4] = uint8_t(N_EXT) | uint8_t(N_UNDF);
+      Bytes[At + 6] = Name == "dyld_stub_binder" ? 0 : 1;
+      Bytes[At + 7] = 1;
+      std::copy(Name.begin(), Name.end(),
+                Bytes.begin() + End + 128 + StringOffset);
+      StringOffset += Name.size();
+      Bytes[End + 128 + StringOffset++] = 0;
+    }
+    u32(Symbols + 20, StringOffset);
+    std::vector<uint8_t> RebaseBytes{0x11, 0x22, 0, 0x60};
+    appendULEB(RebaseBytes, Calls.size());
+    RebaseBytes.push_back(0);
+    std::copy(RebaseBytes.begin(), RebaseBytes.end(), Bytes.begin() + Rebases);
+    u32(Fixups + 8, Rebases);
+    u32(Fixups + 12, RebaseBytes.size());
+    std::vector<uint8_t> Programs;
+    for (size_t I = 0; I < Calls.size(); ++I) {
+      u64(16384 + I * 8, Base + 4096);
+      auto Program = lazyProgram(I * 8, Calls[I]);
+      Programs.insert(Programs.end(), Program.begin(), Program.end());
+    }
+    setLazy(Programs);
+    u32(Fixups + 16, Ordinary);
+    u32(Fixups + 20, 0);
+    if (Binder) {
+      auto Binding = lazyProgram(Calls.size() * 8, "dyld_stub_binder");
+      Binding.insert(Binding.begin(), 0x51);
+      std::copy(Binding.begin(), Binding.end(), Bytes.begin() + Ordinary);
+      u32(Fixups + 20, Binding.size());
+    }
+  }
+  void setLazy(llvm::ArrayRef<uint8_t> Programs) {
+    if (Lazy + Programs.size() > Bytes.size())
+      Bytes.resize(Lazy + Programs.size());
+    std::copy(Programs.begin(), Programs.end(), Bytes.begin() + Lazy);
+    u32(Fixups + 32, Lazy);
+    u32(Fixups + 36, Programs.size());
+  }
+};
 llvm::Expected<MachOProgramLinking> linking(const LinkingImage &I) {
   return readMachOProgramLinking(I.Bytes, 1 << 20,
                                  [] { return llvm::Error::success(); });
@@ -97,6 +196,315 @@ void refused(const LinkingImage &I, llvm::StringRef Reason) {
   ASSERT_FALSE(bool(R));
   const auto Message = llvm::toString(R.takeError());
   EXPECT_NE(Message.find(Reason.str()), std::string::npos) << Message;
+}
+TEST(DarwinLinking, IndependentLazyProgramsNormalizeOnlyTheirExactRebaseSlots) {
+  for (bool X64 : {false, true}) {
+    LazyImage I({"_write", "_getpid"}, true, X64);
+    auto Original = I.Bytes;
+    auto R = linking(I);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Fixups.size(), 3u);
+    for (unsigned N = 0; N != 2; ++N) {
+      const auto &F = R->Fixups[N];
+      EXPECT_EQ(F.Address, I.Base + 16384 + N * 8);
+      EXPECT_TRUE(F.Bind);
+      EXPECT_EQ(F.Origin, MachOProgramFixupOrigin::ClassicLazyBind);
+      EXPECT_EQ(F.Symbol, N ? "_getpid" : "_write");
+      EXPECT_EQ(F.LibraryOrdinal, 1);
+      EXPECT_EQ(F.Addend, 0);
+    }
+    EXPECT_EQ(R->Fixups[2].Symbol, "dyld_stub_binder");
+    EXPECT_EQ(R->Fixups[2].Origin, MachOProgramFixupOrigin::ClassicBind);
+    EXPECT_EQ(I.Bytes, Original);
+    auto Programs = lazyProgram(0, "_write");
+    auto Second = lazyProgram(8, "_getpid");
+    Programs.insert(Programs.end(), Second.begin(), Second.end());
+    Programs.insert(Programs.end(), 8, 0);
+    I.setLazy(Programs);
+    auto Padded = linking(I);
+    ASSERT_TRUE(bool(Padded)) << llvm::toString(Padded.takeError());
+    EXPECT_EQ(Padded->Fixups.size(), 3u);
+  }
+}
+TEST(DarwinLinking, LazyProgramsCannotInheritFieldsOrChangeStateAfterBinding) {
+  for (unsigned Missing : {1u, 2u, 4u}) {
+    LazyImage I;
+    auto First = lazyProgram(0, "_write");
+    auto Second = lazyProgram(8, "_getpid", 7 ^ Missing);
+    First.insert(First.end(), Second.begin(), Second.end());
+    I.setLazy(First);
+    refused(I, "requires its own destination, ordinal and symbol");
+  }
+  for (uint8_t After : {0x11, 0x40, 0x51, 0x60, 0x72, 0x90}) {
+    LazyImage I({"_write"});
+    auto Program = lazyProgram(0, "_write");
+    Program.insert(Program.end() - 1, After);
+    I.setLazy(Program);
+    refused(I, "immediately by DONE");
+  }
+  LazyImage MissingDone({"_write"});
+  auto Program = lazyProgram(0, "_write");
+  Program.pop_back();
+  MissingDone.setLazy(Program);
+  refused(MissingDone, "unterminated lazy");
+  LazyImage EmptyProgram;
+  auto First = lazyProgram(0, "_write");
+  First.push_back(0);
+  auto Second = lazyProgram(8, "_getpid");
+  First.insert(First.end(), Second.begin(), Second.end());
+  EmptyProgram.setLazy(First);
+  refused(EmptyProgram, "incomplete lazy");
+}
+TEST(DarwinLinking, LazyProgramsRefuseMalformedAndUnsupportedFields) {
+  const std::vector<std::pair<std::vector<uint8_t>, const char *>> Prefixes = {
+      {{0x52}, "pointer type"},
+      {{0x60, 1}, "nonzero lazy"},
+      {{0x60, 0x7f}, "nonzero lazy"},
+      {{0x30}, "unsupported lazy"},
+      {{0x41, '_', 'w', 'r', 'i', 't', 'e', 0}, "symbol flags"},
+      {{0xd0}, "unsupported lazy"},
+      {{0x80, 0}, "unsupported lazy"},
+      {{0x21, 1}, "ordinal opcode"}};
+  for (const auto &[Prefix, Reason] : Prefixes) {
+    LazyImage I({"_write"});
+    auto Program = Prefix;
+    auto Valid = lazyProgram(0, "_write");
+    Program.insert(Program.end(), Valid.begin(), Valid.end());
+    I.setLazy(Program);
+    refused(I, Reason);
+  }
+  for (uint8_t Op : {0x20, 0x60, 0x72}) {
+    LazyImage I({"_write"});
+    I.setLazy({Op, 0x80});
+    refused(I, Op == 0x60 ? "SLEB128" : "ULEB128");
+    std::vector<uint8_t> Overflow{Op};
+    Overflow.insert(Overflow.end(), 12, 0xff);
+    Overflow.push_back(0);
+    I.setLazy(Overflow);
+    refused(I, Op == 0x60 ? "SLEB128" : "ULEB128");
+  }
+  LazyImage Ordinal({"_write"});
+  auto Program = lazyProgram(0, "_write");
+  Program[2] = 0x10;
+  Ordinal.setLazy(Program);
+  refused(Ordinal, "ordinary dependency ordinal");
+  LazyImage TruncatedName({"_write"});
+  TruncatedName.setLazy({0x40, '_', 'w'});
+  refused(TruncatedName, "unterminated symbol");
+  LazyImage ExplicitDefaults({"_write"});
+  Program = {0x51, 0x60, 0};
+  auto Rest = lazyProgram(0, "_write");
+  Program.insert(Program.end(), Rest.begin(), Rest.end());
+  ExplicitDefaults.setLazy(Program);
+  auto R = linking(ExplicitDefaults);
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+}
+TEST(DarwinLinking, LazyNormalizationCannotHideAnyOtherDestinationCollision) {
+  LazyImage NonExecutable;
+  NonExecutable.u64(16384, NonExecutable.Base + 16384);
+  refused(NonExecutable, "local executable bytes");
+  LazyImage DuplicateRebase;
+  const uint8_t RebaseBytes[] = {0x11, 0x22, 0, 0x51, 0x22, 0, 0x51, 0};
+  std::copy(std::begin(RebaseBytes), std::end(RebaseBytes),
+            DuplicateRebase.Bytes.begin() + DuplicateRebase.Rebases);
+  DuplicateRebase.u32(DuplicateRebase.Fixups + 12, sizeof(RebaseBytes));
+  refused(DuplicateRebase, "duplicate");
+  LazyImage DuplicateLazy({"_write"});
+  auto Program = lazyProgram(0, "_write");
+  auto Copy = Program;
+  Program.insert(Program.end(), Copy.begin(), Copy.end());
+  DuplicateLazy.setLazy(Program);
+  refused(DuplicateLazy, "duplicate");
+  LazyImage OrdinaryCollision({"_write"});
+  OrdinaryCollision.u32(OrdinaryCollision.Fixups + 12, 0);
+  Program = lazyProgram(0, "dyld_stub_binder");
+  Program.insert(Program.begin(), 0x51);
+  std::copy(Program.begin(), Program.end(),
+            OrdinaryCollision.Bytes.begin() + OrdinaryCollision.Ordinary);
+  OrdinaryCollision.u32(OrdinaryCollision.Fixups + 20, Program.size());
+  refused(OrdinaryCollision, "duplicate");
+  LazyImage Unaligned({"_write"});
+  Unaligned.setLazy(lazyProgram(4, "_write"));
+  refused(Unaligned, "aligned");
+}
+TEST(DarwinLinking, LazyRawRecordLimitsSurviveNormalization) {
+  std::vector<llvm::StringRef> Names(32768, "_write");
+  LazyImage Exact(Names, false);
+  auto R = readMachOProgramLinking(Exact.Bytes, 64 << 20,
+                                   [] { return llvm::Error::success(); });
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+  EXPECT_EQ(R->Fixups.size(), 32768u); // 65,536 raw rebase/bind records.
+  LazyImage OneMore(Names, true);      // Adds one ordinary binder record.
+  auto TooMany = readMachOProgramLinking(OneMore.Bytes, 64 << 20,
+                                         [] { return llvm::Error::success(); });
+  ASSERT_FALSE(bool(TooMany));
+  EXPECT_NE(llvm::toString(TooMany.takeError()).find("too many fixup records"),
+            std::string::npos);
+}
+TEST(DarwinLinking, LazyMetadataAndDeadlinesCannotPublishPartialNormalization) {
+  LazyImage I;
+  const auto Original = I.Bytes;
+  unsigned Checks = 0;
+  auto Full = readMachOProgramLinking(I.Bytes, 1 << 20, [&] {
+    ++Checks;
+    return llvm::Error::success();
+  });
+  ASSERT_TRUE(bool(Full)) << llvm::toString(Full.takeError());
+  auto Exact = readMachOProgramLinking(I.Bytes, Full->MetadataBytes,
+                                       [] { return llvm::Error::success(); });
+  ASSERT_TRUE(bool(Exact)) << llvm::toString(Exact.takeError());
+  auto Under = readMachOProgramLinking(I.Bytes, Full->MetadataBytes - 1,
+                                       [] { return llvm::Error::success(); });
+  ASSERT_FALSE(bool(Under));
+  EXPECT_NE(llvm::toString(Under.takeError()).find("byte limit"),
+            std::string::npos);
+  for (unsigned Stop : {1u, Checks / 2, Checks}) {
+    unsigned Seen = 0;
+    auto Expired =
+        readMachOProgramLinking(I.Bytes, 1 << 20, [&]() -> llvm::Error {
+          if (++Seen == Stop)
+            return llvm::make_error<darwin_model::PreparationTimeout>(
+                GuestArchitecture::AArch64, I.Base + 4096);
+          return llvm::Error::success();
+        });
+    ASSERT_FALSE(bool(Expired));
+    auto E = Expired.takeError();
+    EXPECT_TRUE(E.isA<darwin_model::PreparationTimeout>());
+    llvm::consumeError(std::move(E));
+  }
+  EXPECT_EQ(I.Bytes, Original);
+}
+TEST(DarwinLinking,
+     BinderAdmissionRequiresStrongOrdinaryBindingAndActualLazyCalls) {
+  auto Load = [](const LinkingImage &I) {
+    darwin_test::TemporaryImage File(I);
+    return darwin_model::loadImage(File.path(), darwin_model::macOSProfile(),
+                                   {});
+  };
+  auto Reject = [&](const LinkingImage &I, llvm::StringRef Reason) {
+    auto R = Load(I);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find(Reason.str()),
+              std::string::npos);
+  };
+  LazyImage BinderOnly({}, true);
+  BinderOnly.setLazy({0, 0});
+  Reject(BinderOnly, "libSystem import: dyld_stub_binder");
+  LazyImage LazyBinder({"dyld_stub_binder"}, false);
+  Reject(LazyBinder, "libSystem import: dyld_stub_binder");
+  LinkingImage ChainedBinder(true);
+  constexpr char Binder[] = "dyld_stub_binder";
+  std::copy(std::begin(Binder), std::end(Binder),
+            ChainedBinder.Bytes.begin() + 32785);
+  ChainedBinder.u32(ChainedBinder.Symbols + 20, sizeof(Binder) + 1);
+  std::copy(std::begin(Binder), std::end(Binder),
+            ChainedBinder.Bytes.begin() + ChainedBinder.Chain + 76);
+  ChainedBinder.u32(ChainedBinder.Fixups + 12, 76 + sizeof(Binder));
+  Reject(ChainedBinder, "libSystem import: dyld_stub_binder");
+  LazyImage Unknown({"_malloc"});
+  Reject(Unknown, "libSystem import: _malloc");
+  LazyImage Provider;
+  Provider.Bytes[Provider.Dependency + 24] = 'x';
+  Reject(Provider, "provider");
+  LazyImage Weak;
+  const auto Symbols =
+      llvm::support::endian::read32le(Weak.Bytes.data() + Weak.Symbols + 8);
+  Weak.Bytes[Symbols + 2 * 16 + 6] |= N_WEAK_REF;
+  Weak.Bytes[Weak.Ordinary + 4] = 0x41;
+  Reject(Weak, "libSystem import: dyld_stub_binder");
+  LazyImage Addend;
+  auto Ordinary = lazyProgram(16, "dyld_stub_binder");
+  Ordinary.insert(Ordinary.begin(), 0x51);
+  Ordinary.insert(Ordinary.end() - 2, {0x60, 1});
+  std::copy(Ordinary.begin(), Ordinary.end(),
+            Addend.Bytes.begin() + Addend.Ordinary);
+  Addend.u32(Addend.Fixups + 20, Ordinary.size());
+  Reject(Addend, "libSystem import: dyld_stub_binder");
+  LazyImage Good;
+  auto R = Load(Good);
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+  EXPECT_EQ(R->Fixups.size(), 3u);
+  EXPECT_EQ(R->Imports.size(), 3u);
+  EXPECT_EQ(R->Fixups[0].Value,
+            darwin_model::value::LibSystemGate +
+                unsigned(darwin_model::LibSystemGateKind::Write) *
+                    darwin_model::value::LibSystemGateStride);
+  EXPECT_EQ(R->Imports.at(R->Fixups[2].Value),
+            darwin_model::LibSystemGateKind::StubBinder);
+}
+TEST(DarwinLinking, BinderRefusalPrecedesCFrameDecodingAndPreservesErrno) {
+  using namespace darwin_model;
+  for (bool X64 : {false, true}) {
+    LazyImage I({"_write", "_getpid"}, true, X64);
+    darwin_test::TemporaryImage File(I);
+    auto Image = loadImage(File.path(), macOSProfile(), {});
+    ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+    auto Physical = PhysicalMemory::create(1 << 20);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Space = AddressSpace::create(*Physical, 1 << 20);
+    ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+    llvm::cantFail(prepareLibSystem(**Space, *Image));
+    const auto Errno = value::LibSystemGate + Image->Memory.PageSize;
+    llvm::cantFail((*Space)->writeInteger(Errno, 91, 4));
+    auto Backend =
+        createExecutionBackend(ExecutionBackendKind::Unicorn,
+                               X64 ? ExecutionContract::CheckedUserX64
+                                   : ExecutionContract::CheckedUserAArch64,
+                               *Space, Image->Architecture);
+    ASSERT_TRUE(bool(Backend)) << llvm::toString(Backend.takeError());
+    auto &CPU = *Backend->CPU;
+    const auto SP = X64 ? CPURegister::X64SP : CPURegister::AArch64SP;
+    llvm::cantFail(CPU.writeRegister(SP, {UINT64_MAX, 0}));
+    ProcessOptions Options;
+    DarwinMemory Memory(**Space, Image->Memory, Options);
+    DarwinFiles Files(**Space, Options.DarwinFiles);
+    DarwinEntropy Entropy(Options.DarwinSystem);
+    ProcessResult Result{ProcessProfile::MacOSMachO64, Image->Architecture,
+                         ExecutionBackendKind::Unicorn, "binder refusal"};
+    ServiceRequest Request{
+        X64 ? ServiceRequestKind::X64Syscall : ServiceRequestKind::AArch64SVC,
+        Image->Fixups[2].Value, 0, uint16_t(value::LibSystemSVC)};
+    auto R = invokeLibSystem(CPU, Memory, Files, Entropy, *Image,
+                             LibSystemGateKind::StubBinder, Request, Options,
+                             Result);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), diagnostic::LibSystemResolver);
+    EXPECT_TRUE(Result.NativeCalls.empty());
+    EXPECT_TRUE(Result.Services.empty());
+    EXPECT_EQ(llvm::cantFail((*Space)->readInteger(Errno, 4)), 91u);
+    EXPECT_EQ(llvm::cantFail(CPU.readRegister(SP))[0], UINT64_MAX);
+  }
+}
+TEST(DarwinLinking, ExecutingTheAdmittedBinderGateFailsWithoutACallRecord) {
+  for (bool X64 : {false, true}) {
+    LazyImage I({"_write", "_getpid"}, true, X64);
+    if (X64) {
+      // xor %esp,%esp; jmp *binder_slot(%rip). There is no C return frame.
+      const uint8_t Code[] = {0x31, 0xe4, 0xff, 0x25};
+      std::copy(std::begin(Code), std::end(Code), I.Bytes.begin() + 4096);
+      I.u32(4100, 16384 + 16 - 4104);
+    } else {
+      // mov x0,#0; mov sp,x0; adrp x16,data; ldr x16,[x16,#16]; br x16.
+      I.u32(4096, 0xd2800000);
+      I.u32(4100, 0x9100001f);
+      I.u32(4104, 0xf0000010);
+      I.u32(4108, 0xf9400a10);
+      I.u32(4112, 0xd61f0200);
+    }
+    darwin_test::TemporaryImage File(I);
+    ProcessOptions Options;
+    Options.Backend = ExecutionBackendKind::Unicorn;
+    auto R = darwin_model::runProcess(File.path(), darwin_model::macOSProfile(),
+                                      Options);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::RuntimeFailure);
+    EXPECT_EQ(R->Diagnostic, darwin_model::diagnostic::LibSystemResolver);
+    EXPECT_EQ(R->Events, 1u);
+    EXPECT_TRUE(R->NativeCalls.empty());
+    EXPECT_TRUE(R->Services.empty());
+    EXPECT_TRUE(R->StandardOutput.empty());
+    EXPECT_FALSE(R->ExitStatus);
+  }
 }
 TEST(DarwinLinking, ClassicAndChainedRetainExactOriginalFixupFacts) {
   for (bool Chain : {false, true})
@@ -151,10 +559,10 @@ TEST(DarwinLinking, RejectsIncompleteMalformedAndAmbiguousClassicBindings) {
   LinkingImage RebaseType(false);
   RebaseType.Bytes[RebaseType.Rebase] = 0x40; // ADD_ADDR_IMM_SCALED zero.
   refused(RebaseType, "pointer type");
-  LinkingImage Lazy(false);
-  Lazy.u32(Lazy.Fixups + 32, Lazy.Bind + 32);
-  Lazy.u32(Lazy.Fixups + 36, 1);
-  refused(Lazy, "weak/lazy");
+  LinkingImage Weak(false);
+  Weak.u32(Weak.Fixups + 24, Weak.Bind + 32);
+  Weak.u32(Weak.Fixups + 28, 1);
+  refused(Weak, "weak binding");
   LinkingImage Unknown(false);
   Unknown.Bytes[Unknown.Bind + 2] = 'x';
   refused(Unknown, "undefined symbol");

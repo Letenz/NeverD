@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 00509a4718fb83deef9b9430e71183313790e9707bed10468cdbd18f5c715de3 -->
+<!-- i18n-source: 39a521d14dfb31f7e045451a8039cdc180e2e6fabd816f96a0c746ddfa3d19f1 -->
 
 [← 文档索引](README.md)
 
@@ -1903,7 +1903,7 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 ## 有界 libSystem 导入
 
-基线架构的薄可执行文件可绑定一个强依赖 `/usr/lib/libSystem.B.dylib`。导入要求 `LC_MAIN`、`MH_TWOLEVEL` 和普通库 ordinal，声明的兼容版本需求不得超过 1.0。加载器从原始字节完整验证 classic 指针流或 generic64 链，包括未定义符号、精确槽、本地 rebase 目标及元数据预算。其他库和符号、weak/lazy/threaded 绑定、节或外部/本地 relocation、初始化函数、TLS 和认证指针会在执行前明确失败。
+基线架构的薄可执行文件可绑定一个强依赖 `/usr/lib/libSystem.B.dylib`。导入要求 `LC_MAIN`、`MH_TWOLEVEL` 和普通库 ordinal，声明的兼容版本需求不得超过 1.0。加载器从原始字节完整验证 classic 指针流或 generic64 链，包括未定义符号、精确槽、本地 rebase 目标及元数据预算。其他库和符号、weak/threaded 绑定、节或外部/本地 relocation、初始化函数、TLS 和认证指针会在执行前明确失败。
 
 仅有导入时才分配经过认证的标量函数入口和每次运行全新的主线程 errno 存储。包装函数共用原有 Darwin 内核行为，把错误转换为 `-1` 和 errno，成功调用保留 errno。C `_exit` 对应 Mach-O `__exit`；C `exit`（Mach-O `_exit`）仍不支持。普通函数需要有效返回帧，不返回的 `_exit` 无需可用返回地址。报告保留库、精确链接名、声明的参数数量和完整载体位值；未完成或不返回的调用结果为 null。只有原始系统调用的报告保持兼容。
 
@@ -1911,13 +1911,15 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 独立原生控制覆盖 O0/O1/O2，同一作者编写的对象经系统、classic、chained 链接后都在真实 libSystem 上执行。进程/C/CLI/Python 覆盖五个平台/架构组合，匹配的 ARM64 HVF 覆盖 macOS、iOS 设备和 Simulator。这个有限单线程契约尚未补齐 dlopen/dlsym、任意 dylib、dyld shared cache、构造函数、线程、Objective-C/Swift 框架，也未完成 Intel HVF 或真实 iOS 设备验收。
 
+classic lazy 指针程序会在进入来宾前提前解析。每个程序必须独立声明目标槽、普通库 ordinal 和符号；仅允许指针类型、零 addend，以及一条紧接 DONE 的 DO_BIND，不继承上一程序的状态。一个指向本地可执行原始字节的 rebase 可与同槽的一次 lazy bind 合并，但两条原始记录都计入预算，其他重复或重叠均拒绝。`dyld_stub_binder` 仅在存在实际 lazy 调用时作为强、零 addend 的普通 classic bind 接受；进入其拒绝门会在读取 C 调用帧或参数、修改 errno 或记录原生调用前失败。这支持普通调用桩及稳定的预解析指针，不实现运行时 lazy resolver 或 dyld 私有状态。六函数 C 样本在调用前和重复调用后检查全部槽；原生对照请求提前绑定，并与来宾比较输出和退出状态。
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
-fixups: classic non-lazy pointer bind/rebase; DYLD_CHAINED_PTR_64 / PTR_64_OFFSET
-unsupported: weak/lazy/threaded streams; authenticated/multi-start chains; other relocations
+fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
+unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
 errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
 SG_READ_ONLY: current R after fixup; original declared maximum is retained
 gates: RX/max RX; errno: RW/max RW; both resident model reservations
@@ -1926,8 +1928,9 @@ preparation timeout: typed Timeout, zero guest work; original format/backend err
 report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
 call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
 basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
-native common catalogue: 82; required methods/platform: 96; matching ARM64 identities: 288
+native common catalogue: 82; required methods/platform: 97; matching ARM64 identities: 291
 ```
 
 ```json

@@ -3598,6 +3598,17 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
             "javascript names builtins as windows or portable, not keywords");
+  // Lua reads through string.unpack, its accessors checked as it runs.
+  const std::string Lua = takeString(neverd_local_types_source(
+      Session, R"({"language":"lua","types":["_PACKED"],"asserts":true})"));
+  EXPECT_NE(Lua.find("local T = record(\"_PACKED\", 0x7)"), std::string::npos)
+      << Lua;
+  EXPECT_NE(Lua.find("check(M._PACKED, function(r)"), std::string::npos);
+  EXPECT_EQ(neverd_local_types_source(Session,
+                                      R"({"language":"lua","spelling":"ida"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "lua names builtins as windows or portable, not ida");
   // Prototypes render in C and C++; asked of another language, they fail.
   EXPECT_EQ(neverd_local_types_source(
                 Session, R"({"language":"rust","prototypes":true})"),
@@ -3643,6 +3654,7 @@ TEST(SessionCAPILocalTypes, LanguagesSayHowEachNamesBuiltins) {
   EXPECT_EQ(Taken["go"], Choice("portable", "windows portable"));
   EXPECT_EQ(Taken["python"], Choice("portable", "windows portable"));
   EXPECT_EQ(Taken["javascript"], Choice("portable", "windows portable"));
+  EXPECT_EQ(Taken["lua"], Choice("portable", "windows portable"));
   EXPECT_EQ(Reads, "c cpp rust go");
   EXPECT_EQ(Prototypes, "c cpp");
 }

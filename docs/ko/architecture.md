@@ -1698,6 +1698,8 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `MachOProgramLinking`은 원본 classic/generic64 사실, 완전한 미정의 심볼 폐쇄 및 준비 예산을 소유합니다. Darwin process는 공급자/심볼 허용, 포인터 게시, fixup 후 읽기 보호, libSystem 진입과 errno를 관리합니다. `DarwinLibSystemCalls.def`의 정확한 이름과 인수 개수는 `DarwinServices`의 타입 효과를 재사용하며 raw trap을 만들지 않습니다. 예약과 최대 보호는 `DarwinMemory`, 공통 기한은 `ExecutionBudget`, 선택적 `darwin.native_calls` 출력은 `ProcessReport`가 소유하고 호스트 라이브러리를 로드하지 않습니다.
 
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
 ### 순차 raw 실행의 비교 교환
 
 `SymExec`는 허용된 raw `ATOMIC_CMPXCHG`의 값 의미론을 담당합니다. 출력을 게시하기 전에 주소, 기대값, 새 값, 이전 값을 확보하고 `ite(Old == Expected, Desired, Old)`를 한 번 커밋합니다. `SymState`는 해당 쓰기의 바이트 효과, 별칭 무효화와 보존 예산을 담당합니다. `InterpreterSpecialization`은 허용과 출처를 관리합니다. Old에는 쓰기 전 메모리 출처를 사용하고, 조건부 쓰기는 Old·기대값·새 값의 출처를 보수적으로 합치며 겹칠 수 있는 아핀 스필 사실을 무효화합니다. 비교가 실패해도 전체 쓰기 범위와 보호된 반환 셀의 분리를 증명해야 합니다. 잔여 코드에는 원래 원자 연산, 메모리 순서와 발생 횟수를 유지하며, 거부 시 부분 잔여 CFG를 게시하지 않습니다.

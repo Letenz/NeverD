@@ -2692,7 +2692,7 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 ## Bounded libSystem imports
 
-Thin baseline executables may bind a single strong `/usr/lib/libSystem.B.dylib` dependency under the finite contract below. Imports require `LC_MAIN`, `MH_TWOLEVEL` and an ordinary provider ordinal; the declared compatibility requirement must not exceed 1.0. The loader validates original classic pointer streams or generic64 chains, including all undefined symbols, exact slots, local rebase targets and bounded metadata. Unsupported dependencies, symbols, weak/lazy/threaded binding, section/external/local relocations, initializers, TLS and authenticated pointers fail before execution.
+Thin baseline executables may bind a single strong `/usr/lib/libSystem.B.dylib` dependency under the finite contract below. Imports require `LC_MAIN`, `MH_TWOLEVEL` and an ordinary provider ordinal; the declared compatibility requirement must not exceed 1.0. The loader validates original classic pointer streams or generic64 chains, including all undefined symbols, exact slots, local rebase targets and bounded metadata. Unsupported dependencies, symbols, weak/threaded binding, section/external/local relocations, initializers, TLS and authenticated pointers fail before execution.
 
 The process maps authenticated scalar call gates and one fresh main-thread errno word only when imports are present. Named wrappers share the raw Darwin kernel effects; they convert errors to `-1` and errno, while successful calls preserve errno. C `_exit` is Mach-O `__exit`; C `exit` (Mach-O `_exit`) remains unsupported. Ordinary functions require a valid return frame; a terminal `_exit` needs no usable return address. Calls retain provider, exact linkage name, declared argument count and complete carrier bits. Incomplete or nonreturning calls have a null result. Raw-only reports remain unchanged.
 
@@ -2700,13 +2700,15 @@ The process maps authenticated scalar call gates and one fresh main-thread errno
 
 Independent native controls cover O0/O1/O2. The same authored object runs through the system linker, classic linking and chained linking against real libSystem. Portable process/C/CLI/Python checks cover all five platform/ISA combinations; matching ARM64 HVF checks cover macOS, iOS-device and Simulator profiles. This finite single-thread contract does not complete dlopen/dlsym, arbitrary dylib loading, dyld shared cache, constructors, threads, Objective-C/Swift frameworks, Intel HVF or physical iOS qualification.
 
+Classic lazy pointer programs are resolved eagerly before entry. Each program must explicitly name its destination, ordinary provider ordinal and symbol; only pointer type and zero addend are admitted, with one DO_BIND immediately followed by DONE and no inherited state. One exact original rebase to local executable bytes plus one lazy bind may share a slot; both raw records consume the budget, and all other collisions fail. `dyld_stub_binder` is admitted only as a strong, zero-addend ordinary classic bind alongside actual lazy calls. Entering its refusal gate fails before C frame/argument decoding, errno changes or a native-call record. This supports ordinary call stubs with stable prepared pointers, without implementing the runtime lazy resolver or dyld private state. The six-function C fixture observes all slots before calls and after repeated calls; a native control requests eager binding and compares output/status with guest execution.
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
-fixups: classic non-lazy pointer bind/rebase; DYLD_CHAINED_PTR_64 / PTR_64_OFFSET
-unsupported: weak/lazy/threaded streams; authenticated/multi-start chains; other relocations
+fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
+unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
 errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
 SG_READ_ONLY: current R after fixup; original declared maximum is retained
 gates: RX/max RX; errno: RW/max RW; both resident model reservations
@@ -2715,8 +2717,9 @@ preparation timeout: typed Timeout, zero guest work; original format/backend err
 report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
 call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
 basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
-native common catalogue: 82; required methods/platform: 96; matching ARM64 identities: 288
+native common catalogue: 82; required methods/platform: 97; matching ARM64 identities: 291
 ```
 
 ```json

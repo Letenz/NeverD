@@ -34,6 +34,7 @@ public:
             ProcessResult &Result,
             std::shared_ptr<LinuxDeviceState> Owner = {});
   bool contextIdle(const LinuxDeviceState &Device, uint32_t ID) const;
+  llvm::Expected<MemoryView> allocateGPUObject(uint64_t Size);
   llvm::Error
   synchronizeDevices(uint64_t Elapsed,
                      const std::optional<LinuxFileOptions> &Options);
@@ -44,6 +45,7 @@ public:
                                         uint64_t Offset, uint64_t Size) const;
 
 private:
+  static unsigned permissions(uint64_t Protection);
   AddressSpace &Space;
   const ProcessOptions &Options;
   std::vector<LinuxProcMapping> ProcMappings;
@@ -61,6 +63,17 @@ private:
     std::shared_ptr<LinuxDeviceState> Owner;
   };
   std::vector<DeviceAlias> ReadOnlyDeviceRanges;
+  struct GPUAlias {
+    uint64_t Begin, Size, GPUAddress, Offset;
+    std::shared_ptr<LinuxDeviceState> Owner;
+  };
+  std::vector<GPUAlias> GPUObjectRanges;
+  bool overlapsGPUObject(uint64_t Address, uint64_t Size,
+                         bool PartialOnly = false) const;
+  void retireGPUObjects(uint64_t Address, uint64_t Size);
+  llvm::Expected<std::optional<uint64_t>>
+  mapGPUObject(const ProcessServiceEvent &Event,
+               std::shared_ptr<LinuxDeviceState> Owner, ProcessResult &Result);
   struct DeviceState {
     std::vector<uint8_t> Bytes;
     size_t NextUpdate = 0;

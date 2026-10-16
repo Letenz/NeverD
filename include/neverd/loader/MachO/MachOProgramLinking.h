@@ -20,12 +20,19 @@ struct MachOProgramDependency {
   std::string Name;
   uint32_t CurrentVersion = 0, CompatibilityVersion = 0;
 };
+enum class MachOProgramFixupOrigin {
+  ClassicRebase,
+  ClassicBind,
+  ClassicLazyBind,
+  Chained
+};
 struct MachOProgramFixup {
   uint64_t Address = 0, Target = 0;
   std::string Symbol;
   int64_t Addend = 0;
   int32_t LibraryOrdinal = 0;
   bool Bind = false, WeakImport = false;
+  MachOProgramFixupOrigin Origin = MachOProgramFixupOrigin::ClassicRebase;
 };
 struct MachOProgramLinking {
   std::vector<MachOProgramDependency> Dependencies;
@@ -34,8 +41,11 @@ struct MachOProgramLinking {
   uint64_t MetadataBytes = 0;
 };
 /// Read original bytes, never analysis-patched pointers or host libraries.
-/// Ordinary pointer rebase/bind streams and non-authenticated generic 64-bit
-/// chains are supported. Malformed, ambiguous, excessive and unsupported
+/// Ordinary pointer streams, independently complete lazy pointer programs and
+/// non-authenticated generic 64-bit chains are supported. One classic rebase
+/// to local executable bytes may precede a lazy bind at the exact same slot;
+/// both raw records are charged and one final binding is published.
+/// Malformed, ambiguous, excessive and unsupported
 /// inputs return an error, never a partial result. CheckPreparation is called
 /// before parsing and during expansion; its caller-owned errors propagate
 /// unchanged, without coupling the format reader to an execution runtime.

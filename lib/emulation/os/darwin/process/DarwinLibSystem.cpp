@@ -20,14 +20,18 @@ constexpr LibSystemBinding Bindings[] = {
 #include "DarwinLibSystemCalls.def"
 #undef NEVERD_DARWIN_LIBSYSTEM_CALL
 };
+static_assert(unsigned(LibSystemGateKind::StubBinder) == std::size(Bindings));
 } // namespace
-std::optional<unsigned> libSystemImport(llvm::StringRef Symbol) {
+std::optional<LibSystemGateKind> libSystemImport(llvm::StringRef Symbol) {
+  if (Symbol == "dyld_stub_binder")
+    return LibSystemGateKind::StubBinder;
   for (unsigned I = 0; I < std::size(Bindings); ++I)
     if (Bindings[I].Symbol == Symbol)
-      return I;
+      return LibSystemGateKind(I);
   return std::nullopt;
 }
-const LibSystemBinding &libSystemBinding(unsigned Index) {
+const LibSystemBinding &libSystemBinding(LibSystemGateKind Kind) {
+  const auto Index = unsigned(Kind);
   assert(Index < std::size(Bindings));
   return Bindings[Index];
 }
@@ -60,8 +64,10 @@ llvm::Error prepareLibSystem(AddressSpace &Space, const ProcessImage &Image) {
 llvm::Expected<bool>
 invokeLibSystem(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
                 DarwinEntropy &Entropy, const ProcessImage &Image,
-                unsigned Binding, const ServiceRequest &Request,
+                LibSystemGateKind Binding, const ServiceRequest &Request,
                 const ProcessOptions &Options, ProcessResult &Result) {
+  if (Binding == LibSystemGateKind::StubBinder)
+    return failure(diagnostic::LibSystemResolver);
   const auto &Definition = libSystemBinding(Binding);
   const bool X64 = Image.Architecture == GuestArchitecture::X64;
   auto ABI = IntegerABI::get(X64 ? IntegerCallingConvention::SysVAMD64

@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 00509a4718fb83deef9b9430e71183313790e9707bed10468cdbd18f5c715de3 -->
+<!-- i18n-source: 39a521d14dfb31f7e045451a8039cdc180e2e6fabd816f96a0c746ddfa3d19f1 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -1797,7 +1797,7 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 ## استيراد libSystem محدود
 
-يمكن لملف thin بمعمارية أساسية ربط اعتماد قوي واحد على `/usr/lib/libSystem.B.dylib`. يلزم `LC_MAIN` و`MH_TWOLEVEL` وordinal عادي وطلب توافق لا يتجاوز 1.0. تُفحص تدفقات المؤشرات classic أو سلاسل generic64 كاملة، والرموز غير المعرفة والمواضع الدقيقة وأهداف rebase المحلية. تُرفض الاعتمادات الأخرى وربط weak/lazy/threaded وrelocation غير المدعومة والتهيئة وTLS والمؤشرات الموثقة قبل التنفيذ.
+يمكن لملف thin بمعمارية أساسية ربط اعتماد قوي واحد على `/usr/lib/libSystem.B.dylib`. يلزم `LC_MAIN` و`MH_TWOLEVEL` وordinal عادي وطلب توافق لا يتجاوز 1.0. تُفحص تدفقات المؤشرات classic أو سلاسل generic64 كاملة، والرموز غير المعرفة والمواضع الدقيقة وأهداف rebase المحلية. تُرفض الاعتمادات الأخرى وربط weak/threaded وrelocation غير المدعومة والتهيئة وTLS والمؤشرات الموثقة قبل التنفيذ.
 
 تُخصص مداخل موثقة وerrno جديد للخيط الرئيسي عند وجود imports فقط. تستخدم الأغلفة تأثيرات نواة Darwin المشتركة؛ يحول الخطأ إلى `-1` وerrno ويحفظ النجاح errno السابق. اسم C `_exit` هو Mach-O `__exit`؛ أما C `exit` باسم `_exit` فلا يزال غير مدعوم. تتحقق الدوال العادية من إطار العودة ولا يحتاج الاستدعاء النهائي عنوان عودة. يحفظ التقرير المزوّد والاسم الدقيق وعدد المعاملات وجميع البتات؛ النتيجة غير المكتملة أو غير العائدة هي null. تبقى تقارير raw متوافقة.
 
@@ -1805,13 +1805,15 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 يُربط الكائن المكتوب مستقلاً بطرق system/classic/chained ويعمل مع libSystem الحقيقي. تغطي process/C/CLI/Python خمس تركيبات منصة/ISA وثلاثة ملفات ARM64 HVF متوافقة. لا يزال تحميل dylib العام وdlopen/dlsym وshared cache والبواني والخيوط وأطر Apple وIntel HVF واعتماد iOS الفعلي غير مكتمل.
 
+تُحل مؤشرات classic lazy قبل الدخول. يحدد كل برنامج وجهته وordinal العادي ورمزه دون وراثة الحالة، مع نوع مؤشر وaddend صفري وتعليمة DO_BIND واحدة تتبعها DONE مباشرة. يُدمج فقط rebase واحد إلى بايتات محلية قابلة للتنفيذ مع lazy bind للخانة نفسها، ويُحتسب السجلان في الميزانية. يتطلب dyld_stub_binder ربط classic عاديًا قويًا بلا addend واستدعاءات lazy فعلية. يفشل تنفيذه قبل قراءة إطار C والمعاملات أو تعديل errno أو تسجيل الاستدعاء. لا يُنفذ محلل وقت التشغيل أو حالة dyld الخاصة. يتحقق المرجع الأصلي والضيف من ثبات المؤشرات والمخرجات وحالة الدوال الست.
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
-fixups: classic non-lazy pointer bind/rebase; DYLD_CHAINED_PTR_64 / PTR_64_OFFSET
-unsupported: weak/lazy/threaded streams; authenticated/multi-start chains; other relocations
+fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
+unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
 errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
 SG_READ_ONLY: current R after fixup; original declared maximum is retained
 gates: RX/max RX; errno: RW/max RW; both resident model reservations
@@ -1820,8 +1822,9 @@ preparation timeout: typed Timeout, zero guest work; original format/backend err
 report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
 call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
 basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
-native common catalogue: 82; required methods/platform: 96; matching ARM64 identities: 288
+native common catalogue: 82; required methods/platform: 97; matching ARM64 identities: 291
 ```
 
 ```json
