@@ -13,6 +13,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/solver/BitVectorSolver.h"
 #include "neverd/symbolic/SymExec.h"
 
 #include <limits>
@@ -140,7 +141,9 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
         std::map<NdMemoryAddressSpace, uint64_t> SegmentBases = {},
         std::optional<uint64_t> TaskPriority = std::nullopt,
         llvm::ArrayRef<uint64_t> Timestamps = {},
-        std::map<uint64_t, uint8_t> *FinalMemory = nullptr) {
+        std::map<uint64_t, uint8_t> *FinalMemory = nullptr,
+        std::optional<uint32_t> MXCSR = std::nullopt,
+        uint32_t WritableMask = 0xffbf, uint32_t *FinalMXCSR = nullptr) {
   using Location = std::pair<VnodeSpace, uint64_t>;
   std::map<Location, uint8_t> Bytes;
   bool Defined = true;
@@ -301,6 +304,8 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
           return std::nullopt;
         if (FinalMemory)
           *FinalMemory = std::move(Memory);
+        if (FinalMXCSR && MXCSR)
+          *FinalMXCSR = *MXCSR;
         return Value;
       }
       case NdOp::NOP:
@@ -325,6 +330,32 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
           if (!TaskPriority || Value > 15)
             return std::nullopt;
           TaskPriority = Value;
+        } else if (Op.Inputs[0].Offset ==
+                   static_cast<uint64_t>(Intrinsic::Ldmxcsr)) {
+          const auto Address = read(Op.Inputs[1]);
+          if (!MXCSR || Address > UINT64_MAX - 3)
+            return std::nullopt;
+          uint32_t Word = 0;
+          for (unsigned Byte = 0; Byte != 4; ++Byte) {
+            const auto Found = Memory.find(Address + Byte);
+            if (Found == Memory.end())
+              return std::nullopt;
+            Word |= uint32_t(Found->second) << (8 * Byte);
+          }
+          if (Word & ~WritableMask)
+            return std::nullopt;
+          MXCSR = Word;
+        } else if (Op.Inputs[0].Offset ==
+                   static_cast<uint64_t>(Intrinsic::X86ReadMXCSR)) {
+          if (!MXCSR || (*MXCSR & ~WritableMask))
+            return std::nullopt;
+          write(Op.Output, *MXCSR);
+        } else if (Op.Inputs[0].Offset ==
+                   static_cast<uint64_t>(Intrinsic::X86WriteMXCSR)) {
+          const auto Word = read(Op.Inputs[1]);
+          if (!MXCSR || (Word & ~uint64_t(WritableMask)))
+            return std::nullopt;
+          MXCSR = static_cast<uint32_t>(Word);
         } else if (Op.Inputs[0].Offset ==
                    static_cast<uint64_t>(Intrinsic::Rdtsc)) {
           if (TimestampIndex == Timestamps.size() || !TimestampOutputs.empty())
@@ -4629,6 +4660,7 @@ TEST(InterpreterSpecialization, TimestampTransitionMatchesCompleteStateOracle) {
     EXPECT_FALSE(x64::lowerRuntimeTimestampRead(I, Invalid));
 }
 
+#include "MXCSRRecoveryTests.inc"
 #include "SegmentedStoreTests.inc"
 
 } // namespace
