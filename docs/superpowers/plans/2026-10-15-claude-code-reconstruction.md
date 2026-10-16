@@ -371,9 +371,50 @@ old/new date-literal difference without broadening normalization. Startup
 performance equivalence is not claimed.
 
 This closes the macOS ARM64 editable-workspace gap, not the overall goal.
-The other seven editable workspaces remain to be qualified. Across all eight
-distributions there are 16,676 distinct source-format/hash pairs, so module
-indices or superficially similar source cannot substitute for target-specific
-evidence. An upstream package matching captured dependency version metadata
-has been retained for later type/structure matching, without yet attributing
-its types to recovered client code.
+Across all eight distributions there are 16,676 distinct source-format/hash
+pairs, so module indices or superficially similar source cannot substitute
+for target-specific evidence.
+
+## Editable development deliveries across platforms
+
+All seven remaining distributions now have their own complete readable source
+workspaces and explicit source-selection adapters around the previously
+qualified target recipes. Every unchanged default build reproduces its
+qualified baseline hash. A separate workspace changes one unique CLI version
+literal in the original entry source, with all other source selections and
+native assets preserved. Independent NeverD inventories verify every module
+row, entry/startup/runtime metadata and empty cache bodies in each edited
+binary. Seven corruption controls exercise the inventory comparator; the
+source selector passes 19 positive/refusal controls with the exact parser,
+ICU dependencies and snapshot harness pinned.
+
+The five additional macOS/Linux targets pass three baseline smoke checks and
+the changed-version execution probe. Their sealed development directories
+retain the original immutable delivery and all source/qualification receipts;
+every delivered file has been reread and hashed. Both Windows edited
+cross-builds also match two independent native builds. Their native
+[Actions acceptance](https://github.com/gmh5225/test_mac_intel/actions/runs/38844069619)
+passes at `12eaa2ec3744bf2af9a76956b73678980be475a0`, including all 2,586
+edited module rows and the changed version output in fresh capability-free
+AppContainers. The previous four smoke and 29 configuration/behavior cases
+pass again on both architectures. The Windows development deliveries retain
+these diagnostic receipts and the exact accepted CI sources.
+
+These checks qualify the default preserved-source layout and one explicit
+edit. The unchanged binary identity carries the earlier 29-case baseline
+evidence; it does not establish behavior equivalence for arbitrary edits.
+All-readable execution beyond the original macOS ARM64 qualification remains
+unverified. The Linux x64 legacy inventory uses a different schema; its first
+assembly failure is retained, followed by schema-specific validation of every
+baseline file. No baseline delivery was modified.
+
+Dependency recovery now has a concrete expression-level match beyond version
+metadata: the complete `formatDateDifference` function and export alias match
+the retained Apache-2.0 gRPC 1.14.4 package in all eight distributions. The
+narrow matcher preserves operator order, calls, numeric constants and the
+string value; six authored changes must be refused. Shared-parser syntax
+receipts and original byte ranges anchor the result. The upstream declaration
+is a contract candidate only; erased original TypeScript annotations have not
+been proven or inserted into executable source. Whole-package structure,
+full feature coverage, native implementations and runtime revision differences
+remain open under the active overall goal.
