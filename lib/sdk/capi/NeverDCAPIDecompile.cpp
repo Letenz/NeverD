@@ -431,7 +431,7 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
   }
   try {
     HighCEmitter Emitter;
-    Emitter.emit(Single, OS, Opts, S->Dbg.get());
+    Emitter.emit(Single, OS, Opts, S->decompileDebug());
   } catch (const std::exception &Error) {
     S->setError(emissionFailure(Error));
     return dupStr(std::string());
@@ -492,7 +492,7 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
   }
   try {
     LLVMCEmitter Emitter;
-    Emitter.emit(*Native->Module, OS, Opts, S->Dbg.get(), &S->Img, LF);
+    Emitter.emit(*Native->Module, OS, Opts, S->decompileDebug(), &S->Img, LF);
   } catch (const std::exception &Error) {
     S->setError(emissionFailure(Error));
     return dupStr(std::string());
@@ -992,7 +992,7 @@ struct ScopedSourceView {
         Variant->LibraryRecognitions = S.PipeResult.LibraryRecognitions;
         PipelineOptions Policy;
         Policy.SymbolicHighC = true;
-        Pipeline().rebuildHighIR(S.Img, Policy, *Variant, S.Dbg.get());
+        Pipeline().rebuildHighIR(S.Img, Policy, *Variant, S.decompileDebug());
         S.EnhancedHighIR = std::make_unique<Session::HighIRVariant>(
             Session::HighIRVariant{std::move(Variant->HighFuncs),
                                    std::move(Variant->HighSources)});

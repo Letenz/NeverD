@@ -8,25 +8,27 @@
 /// The languages local types render in, and the words each reserves, which
 /// a member name must step around.
 ///
-/// NEVERD_TYPE_LANGUAGE(Name, Id, Display)
+/// NEVERD_TYPE_LANGUAGE(Name, Id, Display, Spelling)
 ///   Id       How APIs, the CLI and settings name the language.
 ///   Display  How the workbench shows it.
+///   Spelling How it names builtins unless asked (BuiltinSpellings.def).
 /// NEVERD_TYPE_KEYWORD(Language, Word)
 ///   A word Language reserves.  C++ reserves C's words too.
 ///
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_TYPE_LANGUAGE
-#define NEVERD_TYPE_LANGUAGE(Name, Id, Display)
+#define NEVERD_TYPE_LANGUAGE(Name, Id, Display, Spelling)
 #endif
 #ifndef NEVERD_TYPE_KEYWORD
 #define NEVERD_TYPE_KEYWORD(Language, Word)
 #endif
 
-NEVERD_TYPE_LANGUAGE(C, "c", "C")
-NEVERD_TYPE_LANGUAGE(Cpp, "cpp", "C++")
-NEVERD_TYPE_LANGUAGE(Rust, "rust", "Rust")
-NEVERD_TYPE_LANGUAGE(Go, "go", "Go")
+NEVERD_TYPE_LANGUAGE(C, "c", "C", Windows)
+NEVERD_TYPE_LANGUAGE(Cpp, "cpp", "C++", Windows)
+NEVERD_TYPE_LANGUAGE(Rust, "rust", "Rust", Portable)
+NEVERD_TYPE_LANGUAGE(Go, "go", "Go", Portable)
+NEVERD_TYPE_LANGUAGE(Python, "python", "Python", Portable)
 
 NEVERD_TYPE_KEYWORD(C, "auto")
 NEVERD_TYPE_KEYWORD(C, "break")
@@ -202,6 +204,42 @@ NEVERD_TYPE_KEYWORD(Go, "struct")
 NEVERD_TYPE_KEYWORD(Go, "switch")
 NEVERD_TYPE_KEYWORD(Go, "type")
 NEVERD_TYPE_KEYWORD(Go, "var")
+
+NEVERD_TYPE_KEYWORD(Python, "False")
+NEVERD_TYPE_KEYWORD(Python, "None")
+NEVERD_TYPE_KEYWORD(Python, "True")
+NEVERD_TYPE_KEYWORD(Python, "and")
+NEVERD_TYPE_KEYWORD(Python, "as")
+NEVERD_TYPE_KEYWORD(Python, "assert")
+NEVERD_TYPE_KEYWORD(Python, "async")
+NEVERD_TYPE_KEYWORD(Python, "await")
+NEVERD_TYPE_KEYWORD(Python, "break")
+NEVERD_TYPE_KEYWORD(Python, "class")
+NEVERD_TYPE_KEYWORD(Python, "continue")
+NEVERD_TYPE_KEYWORD(Python, "def")
+NEVERD_TYPE_KEYWORD(Python, "del")
+NEVERD_TYPE_KEYWORD(Python, "elif")
+NEVERD_TYPE_KEYWORD(Python, "else")
+NEVERD_TYPE_KEYWORD(Python, "except")
+NEVERD_TYPE_KEYWORD(Python, "finally")
+NEVERD_TYPE_KEYWORD(Python, "for")
+NEVERD_TYPE_KEYWORD(Python, "from")
+NEVERD_TYPE_KEYWORD(Python, "global")
+NEVERD_TYPE_KEYWORD(Python, "if")
+NEVERD_TYPE_KEYWORD(Python, "import")
+NEVERD_TYPE_KEYWORD(Python, "in")
+NEVERD_TYPE_KEYWORD(Python, "is")
+NEVERD_TYPE_KEYWORD(Python, "lambda")
+NEVERD_TYPE_KEYWORD(Python, "nonlocal")
+NEVERD_TYPE_KEYWORD(Python, "not")
+NEVERD_TYPE_KEYWORD(Python, "or")
+NEVERD_TYPE_KEYWORD(Python, "pass")
+NEVERD_TYPE_KEYWORD(Python, "raise")
+NEVERD_TYPE_KEYWORD(Python, "return")
+NEVERD_TYPE_KEYWORD(Python, "try")
+NEVERD_TYPE_KEYWORD(Python, "while")
+NEVERD_TYPE_KEYWORD(Python, "with")
+NEVERD_TYPE_KEYWORD(Python, "yield")
 
 #undef NEVERD_TYPE_LANGUAGE
 #undef NEVERD_TYPE_KEYWORD

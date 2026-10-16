@@ -21,6 +21,11 @@ public:
     language_ = language;
     keywords_.clear();
     builtins_.clear();
+    // Python comments with #, which C and Rust start a directive or an
+    // attribute with.
+    const bool python = language == QLatin1String("python");
+    commentMarker_ = python ? QStringLiteral("#") : QStringLiteral("//");
+    directives_ = !python;
     const QString family =
         language == QLatin1String("cpp") ? QStringLiteral("c") : language;
 #define NEVERD_TYPE_SOURCE_KEYWORD(Language, Word)                             \
@@ -60,12 +65,12 @@ protected:
       result.setForeground(theme.color(role));
       return result;
     };
-    int comment = text.indexOf(QLatin1String("//"));
+    int comment = text.indexOf(commentMarker_);
     if (comment < 0)
       comment = int(text.size());
     const QString code = text.left(comment);
     const QString trimmed = code.trimmed();
-    if (trimmed.startsWith(QLatin1Char('#'))) {
+    if (directives_ && trimmed.startsWith(QLatin1Char('#'))) {
       // A directive, or a Rust attribute.
       setFormat(0, comment, format(ColorRole::ListingDirective));
     } else {
@@ -104,6 +109,8 @@ protected:
 
 private:
   QString language_;
+  QString commentMarker_ = QStringLiteral("//");
+  bool directives_ = true;
   QSet<QString> keywords_, builtins_, names_;
 };
 

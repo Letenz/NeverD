@@ -99,7 +99,9 @@ bool RegistrationStateSolver::enterOrdinaryFinally(size_t I,
       Chain.RealignedFrame ||
       Before.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride].Offset !=
           0 ||
-      Entry == Entries.end() || !validateSEHCallContinuation(I, Op) ||
+      Entry == Entries.end() ||
+      !validateSEHCallContinuation(
+          I, Op, CallbackCall ? *Before.Activation.Entry : 0) ||
       !charge(Before.Frame.cellCount() + 10))
     return Refuse();
   Domain Root = Before;

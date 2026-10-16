@@ -109,9 +109,14 @@ std::optional<ImageCString> imageCString(const BinaryImage *Img, va_t Addr);
 /// have Size 0.
 inline bool isMsvcClassValueReturn(const TypeRef &Ty, Arch Architecture,
                                    BinaryFormat Format) {
+  // A record the source says is C's (NdRecordPassing::ByValue) returns in
+  // RAX when it fills one, two, four or eight bytes, as Win64 placement
+  // reads it too; a class may not.
   return Architecture == Arch::X64 && Format == BinaryFormat::COFF && Ty &&
          Ty->Kind == NdTypeKind::Struct && !Ty->SourceName.empty() &&
-         !Ty->IsEnum;
+         !Ty->IsEnum &&
+         !(Ty->Passing == NdRecordPassing::ByValue &&
+           (Ty->Size == 1 || Ty->Size == 2 || Ty->Size == 4 || Ty->Size == 8));
 }
 
 /// TPI sometimes writes `CStringT*` for a class-by-value return, and sometimes
@@ -120,10 +125,12 @@ inline bool isMsvcClassValueReturn(const TypeRef &Ty, Arch Architecture,
 inline bool isMsvcPointerEncodedClassReturn(const TypeRef &Ty,
                                             Arch Architecture,
                                             BinaryFormat Format) {
+  // A C declaration's pointer to a record is a pointer, in RAX.
   return Architecture == Arch::X64 && Format == BinaryFormat::COFF && Ty &&
          Ty->Kind == NdTypeKind::Ptr && Ty->Pointee &&
          Ty->Pointee->Kind == NdTypeKind::Struct &&
-         !Ty->Pointee->SourceName.empty() && !Ty->Pointee->IsEnum;
+         !Ty->Pointee->SourceName.empty() && !Ty->Pointee->IsEnum &&
+         Ty->Pointee->Passing != NdRecordPassing::ByValue;
 }
 
 /// MSVC x64 returns a named C++ class/struct through a hidden pointer in RCX.

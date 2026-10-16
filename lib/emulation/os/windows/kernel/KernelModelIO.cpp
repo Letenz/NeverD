@@ -1496,7 +1496,7 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
       return E;
   }
   for (const auto &[IRP, Record] : Requests) {
-    if (Record.Completed)
+    if (Record.Completed && !Record.FileOperation)
       continue;
     const auto *Request = &Record;
     if (auto E = Check(Request->IRP, IRPSize, [&](uint64_t Offset) {

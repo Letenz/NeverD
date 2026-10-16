@@ -68,6 +68,14 @@ const BuiltinInfo &builtinInfo(Builtin Type);
 unsigned builtinBytes(Builtin Type, DataModel Model);
 unsigned pointerBytes(DataModel Model);
 
+/// Whether the Windows headers name \p Type by a typedef of their own, as
+/// ULONG and HRESULT: the upper-case names of BuiltinTypes.def's Windows
+/// column.  VOID is a macro there, and the column's other names are C's and
+/// C++'s own, such as char16_t.
+bool windowsTypedef(Builtin Type);
+/// The builtin the Windows headers' typedef \p Name names, if any.
+std::optional<Builtin> windowsTypedefNamed(llvm::StringRef Name);
+
 /// What a named type is.
 enum class TypeKind : uint8_t { Struct, Union, Enum, Typedef, Function };
 

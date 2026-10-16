@@ -35,26 +35,39 @@ namespace neverd::types {
 
 /// The languages local types render in (TypeLanguages.def).
 enum class Language : uint8_t {
-#define NEVERD_TYPE_LANGUAGE(Name, Id, Display) Name,
+#define NEVERD_TYPE_LANGUAGE(Name, Id, Display, Spelling) Name,
 #include "neverd/types/TypeLanguages.def"
 };
 
 /// How APIs name \p Lang, such as "rust".
 llvm::StringRef languageId(Language Lang);
+/// Every language's id, as a message lists them: "c, cpp, ... or python".
+std::string languagesText();
 /// The language an API names, if any.
 std::optional<Language> languageNamed(llvm::StringRef Id);
 
-/// How C and C++ spell builtin types.
+/// How rendered source names builtin types (BuiltinSpellings.def).
 enum class BuiltinSpelling : uint8_t {
-  Windows,  ///< ULONG and UCHAR, as the Windows headers name them.
-  IDA,      ///< unsigned int and unsigned __int8, as IDA's local types do.
-  Keywords, ///< unsigned long, as the compiler recorded it.
-  Portable, ///< uint32_t and the other exact-width types of <stdint.h>.
+#define NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go, Python) Name,
+#include "neverd/types/BuiltinSpellings.def"
 };
+
+/// How APIs name \p Spelling, such as "windows".
+llvm::StringRef spellingId(BuiltinSpelling Spelling);
+/// The spelling an API names, if any.
+std::optional<BuiltinSpelling> spellingNamed(llvm::StringRef Id);
+/// Whether \p Lang names builtins as \p Spelling.
+bool spellsBuiltins(Language Lang, BuiltinSpelling Spelling);
+/// How \p Lang names builtins unless asked.
+BuiltinSpelling defaultSpelling(Language Lang);
+/// The spellings \p Lang takes, by their ids: "windows or portable".
+std::string spellingsText(Language Lang);
 
 struct RenderOptions {
   Language Lang = Language::C;
-  BuiltinSpelling Spelling = BuiltinSpelling::Windows;
+  /// How builtins are named; the language's default when unset, or when
+  /// the language does not take it.
+  std::optional<BuiltinSpelling> Spelling;
   /// A comment with each member's offset.
   bool Offsets = true;
   /// Offsets in hexadecimal rather than decimal.
@@ -65,9 +78,15 @@ struct RenderOptions {
   /// The column offset comments start at.
   unsigned CommentColumn = 64;
   /// When every type renders, the library's function prototypes after them,
-  /// in C and C++.
+  /// in the languages rendersPrototypes says.
   bool Prototypes = false;
 };
+
+/// Whether \p Lang renders function prototypes: C and C++ do.
+bool rendersPrototypes(Language Lang);
+
+/// The spelling \p Options names builtins in.
+BuiltinSpelling spellingOf(const RenderOptions &Options);
 
 /// \p Type's declaration, alone.
 std::string renderType(const TypeLibrary &Library, const LocalType &Type,

@@ -266,6 +266,12 @@ TEST_F(KernelFileCreate, FilterSeesOriginalPacketAndCannotForgeSuccess) {
   rejects(Model->call("IofCompleteRequest", {IRP, 0}), "terminal provider");
   EXPECT_EQ(forward(IRP), 0u);
   ok(Model->validateGuestAccess(IRP + IRPStatusOffset, 4, false));
+  rejects(Model->validateGuestAccess(IRP + IRPStatusOffset, 4, true),
+          "read-only");
+  rejects(Model->validateGuestAccess(IRP + IRPFlagsOffset, 4, true),
+          "read-only");
+  ok(Model->validateGuestAccess(Security + 0x10, 4, false));
+  rejects(Model->validateGuestAccess(Security + 0x10, 4, true), "read-only");
   EXPECT_EQ(read(IRP + IRPStatusOffset, 4), 0u);
   EXPECT_EQ(read(IRP + IRPInformationOffset), 1u);
   EXPECT_EQ(call("KeReadStateEvent", {File + FileEventOffset}), 0u);

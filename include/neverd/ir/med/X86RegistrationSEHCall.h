@@ -32,6 +32,12 @@ struct RegistrationSEHReturns {
 std::optional<RegistrationSEHReturns>
 getRegistrationSEHReturns(const MedFunc &Function);
 
+/// Bind ordinary finally calls with checked nonlocal jump exits. A call can
+/// also have normal returns; consumers must prove their absence separately
+/// before assigning noreturn to the generated invocation.
+std::optional<std::map<std::tuple<int, va_t, int>, va_t>>
+getRegistrationSEHNonlocalCalls(const MedFunc &Function);
+
 } // namespace neverd
 
 #endif // NEVERD_IR_MED_X86REGISTRATIONSEHCALL_H

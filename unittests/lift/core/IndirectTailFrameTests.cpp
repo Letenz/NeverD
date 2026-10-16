@@ -14,6 +14,7 @@
 
 #include "llvm/Support/Error.h"
 
+#include <fstream>
 #include <iterator>
 
 namespace {
@@ -87,6 +88,119 @@ TEST_F(IndirectTailFrame,
     EXPECT_TRUE(hasOpcode(Low, neverd::NdOp::INDIR_CALL));
     EXPECT_TRUE(hasOpcode(Low, neverd::NdOp::RETURN));
   }
+}
+
+// A frame description that only unwinds -- the FDE every function of an
+// ordinary shared library has -- leaves a restored frame's branch a tail call,
+// while a live frame still keeps its indirect branch, and so does a computed
+// jump into the function's own code (a switch whose table stays unresolved),
+// though not a branch to the function's own entry, which recurses.
+TEST_F(IndirectTailFrame, UnwindOnlyFrameDescriptionKeepsTheTailCall) {
+  const auto Source = tmpFile("tail-cfi.s");
+  std::ofstream(Source) << R"(.text
+.p2align 2
+.globl tail_cfi_leaf
+.type tail_cfi_leaf,@function
+tail_cfi_leaf:
+  .cfi_startproc
+  br x0
+  .cfi_endproc
+.size tail_cfi_leaf,.-tail_cfi_leaf
+.p2align 2
+.globl tail_cfi_live
+.type tail_cfi_live,@function
+tail_cfi_live:
+  .cfi_startproc
+  sub sp, sp, #64
+  .cfi_def_cfa_offset 64
+  br x0
+  .cfi_endproc
+.size tail_cfi_live,.-tail_cfi_live
+.p2align 2
+.globl tail_cfi_switch
+.type tail_cfi_switch,@function
+tail_cfi_switch:
+  .cfi_startproc
+  adr x1, 1f
+  add x0, x1, w0, sxtw #2
+  br x0
+1:
+  mov w0, #1
+  ret
+  .cfi_endproc
+.size tail_cfi_switch,.-tail_cfi_switch
+.p2align 2
+.globl tail_cfi_self
+.type tail_cfi_self,@function
+tail_cfi_self:
+.Ltail_cfi_self:
+  .cfi_startproc
+  sub sp, sp, #16
+  .cfi_def_cfa_offset 16
+  adr x1, .Ltail_cfi_self
+  str x1, [sp, #8]
+  ldr x1, [sp, #8]
+  add sp, sp, #16
+  .cfi_def_cfa_offset 0
+  cbz x0, 1f
+  sub x0, x0, #1
+  br x1
+1:
+  ret
+  .cfi_endproc
+.size tail_cfi_self,.-tail_cfi_self
+)";
+  const auto Object = tmpFile("tail-cfi.o");
+  const auto Library = tmpFile("tail-cfi.so");
+  const auto Built =
+      exec(NEVERD_TEST_CLANG, {"-target", "aarch64-linux-gnu", "-c",
+                               Source.string(), "-o", Object.string()});
+  ASSERT_TRUE(Built.ok()) << Built.err;
+  const auto Linked =
+      exec("ld.lld", {"-shared", Object.string(), "-o", Library.string()});
+  ASSERT_TRUE(Linked.ok()) << Linked.err;
+  auto Image = neverd::loadBinary(Library.string());
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+
+  const auto Leaf = build(*Image, "tail_cfi_leaf");
+  ASSERT_TRUE(Leaf.ExceptionMetadata.has_value());
+  EXPECT_TRUE(Leaf.ExceptionMetadata->describesUnwindOnly());
+  EXPECT_FALSE(hasOpcode(Leaf, neverd::NdOp::INDIR_BR));
+  EXPECT_TRUE(hasOpcode(Leaf, neverd::NdOp::INDIR_CALL));
+  EXPECT_TRUE(hasOpcode(Leaf, neverd::NdOp::RETURN));
+
+  const auto Live = build(*Image, "tail_cfi_live");
+  EXPECT_TRUE(hasOpcode(Live, neverd::NdOp::INDIR_BR));
+  EXPECT_FALSE(hasOpcode(Live, neverd::NdOp::INDIR_CALL));
+
+  const auto Switch = build(*Image, "tail_cfi_switch");
+  ASSERT_TRUE(Switch.ExceptionMetadata.has_value());
+  EXPECT_TRUE(hasOpcode(Switch, neverd::NdOp::INDIR_BR));
+  EXPECT_FALSE(hasOpcode(Switch, neverd::NdOp::INDIR_CALL));
+  // A branch to the function's own entry recurses: it stays a tail call.
+  const auto Self = build(*Image, "tail_cfi_self");
+  EXPECT_FALSE(hasOpcode(Self, neverd::NdOp::INDIR_BR));
+  EXPECT_TRUE(hasOpcode(Self, neverd::NdOp::INDIR_CALL));
+}
+
+// Only a record that names no handler of the frame lets a branch out of it be
+// a tail call.
+TEST(ExceptionFunctionUnwindOnly, RecordsThatNameAHandlerDoNot) {
+  neverd::ExceptionFunction Plain;
+  Plain.Dwarf.emplace();
+  EXPECT_TRUE(Plain.describesUnwindOnly());
+  neverd::ExceptionFunction WithLSDA = Plain;
+  WithLSDA.Dwarf->LSDAVA = 0x4000;
+  EXPECT_FALSE(WithLSDA.describesUnwindOnly());
+  neverd::ExceptionFunction WithPersonality = Plain;
+  WithPersonality.PersonalityVA = 0x5000;
+  EXPECT_FALSE(WithPersonality.describesUnwindOnly());
+  neverd::ExceptionFunction WithHandlerData = Plain;
+  WithHandlerData.HandlerDataVA = 0x6000;
+  EXPECT_FALSE(WithHandlerData.describesUnwindOnly());
+  neverd::ExceptionFunction Partial = Plain;
+  Partial.ParseStatus = neverd::ExceptionParseStatus::Partial;
+  EXPECT_FALSE(Partial.describesUnwindOnly());
 }
 
 TEST_F(IndirectTailFrame, UnresolvedLiveFrameCannotPublishACallReturn) {

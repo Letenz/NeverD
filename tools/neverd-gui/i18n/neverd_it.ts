@@ -2345,6 +2345,10 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     elenca le istruzioni che fanno riferimento a stringhe</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          mostra i tipi locali, o il tipo indicato</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3383,12 +3387,8 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
 <context>
     <name>neverd::gui::LocalTypesView</name>
     <message>
-        <source>C header (*.h)</source>
-        <translation>Header C (*.h)</translation>
-    </message>
-    <message>
-        <source>C++ header (*.hpp)</source>
-        <translation>Header C++ (*.hpp)</translation>
+        <source>C/C++ header (*.h)</source>
+        <translation>Header C/C++ (*.h)</translation>
     </message>
     <message>
         <source>Rust (*.rs)</source>
@@ -3413,6 +3413,14 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
     <message>
         <source>Exact widths (uint32_t)</source>
         <translation>Larghezze esatte (uint32_t)</translation>
+    </message>
+    <message>
+        <source>Exact widths (u32)</source>
+        <translation>Larghezze esatte (u32)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>Larghezze esatte (uint32)</translation>
     </message>
     <message>
         <source>Filter types by name</source>
@@ -3467,8 +3475,8 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
         <translation>Esporta tutti i tipi…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>Come C e C++ chiamano i tipi predefiniti</translation>
+        <source>How the source names builtin types</source>
+        <translation>Come il sorgente chiama i tipi predefiniti</translation>
     </message>
     <message>
         <source>Hex offsets</source>
@@ -3497,10 +3505,6 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
     <message>
         <source>Offset</source>
         <translation>Offset</translation>
-    </message>
-    <message>
-        <source>Bytes</source>
-        <translation>Byte</translation>
     </message>
     <message>
         <source>Type</source>
@@ -3753,6 +3757,22 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
             <numerusform>%n dichiarato</numerusform>
             <numerusform>%n dichiarati</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>Seleziona un tipo per vederne il layout e il sorgente</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>Nessun tipo locale si chiama %1</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>Larghezze esatte (c_uint32)</translation>
     </message>
 </context>
 <context>

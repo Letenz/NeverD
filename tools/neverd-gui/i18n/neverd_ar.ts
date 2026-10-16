@@ -2369,6 +2369,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     سرد التعليمات التي تشير إلى سلاسل نصية</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          عرض الأنواع المحلية، أو النوع المسمى</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3407,12 +3411,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
 <context>
     <name>neverd::gui::LocalTypesView</name>
     <message>
-        <source>C header (*.h)</source>
-        <translation>ترويسة C ‎(*.h)</translation>
-    </message>
-    <message>
-        <source>C++ header (*.hpp)</source>
-        <translation>ترويسة C++ ‎(*.hpp)</translation>
+        <source>C/C++ header (*.h)</source>
+        <translation>ترويسة C/C++ ‎(*.h)</translation>
     </message>
     <message>
         <source>Rust (*.rs)</source>
@@ -3437,6 +3437,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Exact widths (uint32_t)</source>
         <translation>عروض دقيقة ‎(uint32_t)</translation>
+    </message>
+    <message>
+        <source>Exact widths (u32)</source>
+        <translation>عروض دقيقة ‎(u32)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>عروض دقيقة ‎(uint32)</translation>
     </message>
     <message>
         <source>Filter types by name</source>
@@ -3491,8 +3499,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>تصدير كل الأنواع…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>كيف تسمّي C وC++ الأنواع المضمّنة</translation>
+        <source>How the source names builtin types</source>
+        <translation>كيف يسمّي المصدر الأنواع المضمّنة</translation>
     </message>
     <message>
         <source>Hex offsets</source>
@@ -3521,10 +3529,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Offset</source>
         <translation>الإزاحة</translation>
-    </message>
-    <message>
-        <source>Bytes</source>
-        <translation>البايتات</translation>
     </message>
     <message>
         <source>Type</source>
@@ -3809,6 +3813,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
             <numerusform>%n مصرَّح بها</numerusform>
             <numerusform>%n مصرَّح بها</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>اختر نوعًا لعرض تخطيطه ومصدره</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>لا يوجد نوع محلي باسم %1</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python ‎(*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>عروض دقيقة ‎(c_uint32)</translation>
     </message>
 </context>
 <context>

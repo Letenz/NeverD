@@ -2345,6 +2345,10 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [texte]    lister les instructions qui font référence à des chaînes</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [nom]           afficher les types locaux, ou le type nommé</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3383,12 +3387,8 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
 <context>
     <name>neverd::gui::LocalTypesView</name>
     <message>
-        <source>C header (*.h)</source>
-        <translation>En-tête C (*.h)</translation>
-    </message>
-    <message>
-        <source>C++ header (*.hpp)</source>
-        <translation>En-tête C++ (*.hpp)</translation>
+        <source>C/C++ header (*.h)</source>
+        <translation>En-tête C/C++ (*.h)</translation>
     </message>
     <message>
         <source>Rust (*.rs)</source>
@@ -3413,6 +3413,14 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
     <message>
         <source>Exact widths (uint32_t)</source>
         <translation>Largeurs exactes (uint32_t)</translation>
+    </message>
+    <message>
+        <source>Exact widths (u32)</source>
+        <translation>Largeurs exactes (u32)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>Largeurs exactes (uint32)</translation>
     </message>
     <message>
         <source>Filter types by name</source>
@@ -3467,8 +3475,8 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
         <translation>Exporter tous les types…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>Noms que C et C++ donnent aux types intégrés</translation>
+        <source>How the source names builtin types</source>
+        <translation>Noms que le code source donne aux types intégrés</translation>
     </message>
     <message>
         <source>Hex offsets</source>
@@ -3497,10 +3505,6 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
     <message>
         <source>Offset</source>
         <translation>Décalage</translation>
-    </message>
-    <message>
-        <source>Bytes</source>
-        <translation>Octets</translation>
     </message>
     <message>
         <source>Type</source>
@@ -3753,6 +3757,22 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
             <numerusform>%n déclaré</numerusform>
             <numerusform>%n déclarés</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>Sélectionnez un type pour voir sa disposition et sa source</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>Aucun type local ne se nomme %1</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>Largeurs exactes (c_uint32)</translation>
     </message>
 </context>
 <context>

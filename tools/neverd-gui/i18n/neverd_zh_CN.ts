@@ -2339,6 +2339,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     列出引用字符串的指令</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          显示本地类型，或指定名称的类型</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3377,12 +3381,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
 <context>
     <name>neverd::gui::LocalTypesView</name>
     <message>
-        <source>C header (*.h)</source>
-        <translation>C 头文件 (*.h)</translation>
-    </message>
-    <message>
-        <source>C++ header (*.hpp)</source>
-        <translation>C++ 头文件 (*.hpp)</translation>
+        <source>C/C++ header (*.h)</source>
+        <translation>C/C++ 头文件 (*.h)</translation>
     </message>
     <message>
         <source>Rust (*.rs)</source>
@@ -3407,6 +3407,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Exact widths (uint32_t)</source>
         <translation>精确宽度（uint32_t）</translation>
+    </message>
+    <message>
+        <source>Exact widths (u32)</source>
+        <translation>精确宽度（u32）</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>精确宽度（uint32）</translation>
     </message>
     <message>
         <source>Filter types by name</source>
@@ -3461,8 +3469,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>导出全部类型…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>C 和 C++ 对内置类型的命名方式</translation>
+        <source>How the source names builtin types</source>
+        <translation>源码对内置类型的命名方式</translation>
     </message>
     <message>
         <source>Hex offsets</source>
@@ -3491,10 +3499,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Offset</source>
         <translation>偏移</translation>
-    </message>
-    <message>
-        <source>Bytes</source>
-        <translation>字节</translation>
     </message>
     <message>
         <source>Type</source>
@@ -3739,6 +3743,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>
             <numerusform>%n 个自己声明</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>选择一个类型以查看其布局和源码</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>没有名为 %1 的本地类型</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>精确宽度（c_uint32）</translation>
     </message>
 </context>
 <context>

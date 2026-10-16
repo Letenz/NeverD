@@ -2149,6 +2149,15 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         throw;
       }
     }
+    // A prototype the decompiler reads, or a type it names, changed: the
+    // engine let its analysis go, as loading signatures does, and every view
+    // reads anew.
+    if (result.value("decompilation", false)) {
+      analyzed_ = false;
+      preparedFunction_.reset();
+      invalidate();
+      ++revision_;
+    }
     return result;
   }
   if (operation == "local_types" || operation == "local_type" ||

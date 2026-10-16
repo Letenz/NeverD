@@ -694,6 +694,14 @@ enum class RelocatedInstructionAddressProofKind : uint8_t {
   /// literal LOAD is the seed, LiteralVA names the word it read, and the CFG
   /// builder proves that LOAD's value reaches the exact ADD output.
   ARMRelocationFreeLiteral,
+  /// An A32 or T32 `ldr rT, [pc, #k]` literal of a linked ELF image that no
+  /// relocation writes, added to the architectural PC (`add rD, pc, rT` or the
+  /// address of `ldr rD, [pc, rT]`): the static linker resolved the difference
+  /// against the image's fixed layout, so the sum names one address, owned by
+  /// the section (or, without section headers, the segment) that holds it.
+  /// As for ARMRelocationFreeLiteral, the literal LOAD is the seed and
+  /// LiteralVA names the word it read.
+  ARMLinkedLiteral,
 };
 
 /// One exact full-width arithmetic step in a relocation-free AArch64 address
@@ -767,8 +775,9 @@ struct RelocatedInstructionAddressOccurrence {
   NdOp DereferenceOpcode = NdOp::NOP;
   NdVar DereferenceAddressWitness = {};
   uint16_t DereferenceAccessSize = 0;
-  /// The unrelocated literal word an ARMRelocationFreeLiteral seed read.  It
-  /// is not a loader field, so FieldVA stays invalid.
+  /// The unrelocated literal word an ARMRelocationFreeLiteral or
+  /// ARMLinkedLiteral seed read.  It is not a loader field, so FieldVA stays
+  /// invalid.
   va_t LiteralVA = InvalidVA;
 
   bool operator==(const RelocatedInstructionAddressOccurrence &Other) const =

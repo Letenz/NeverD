@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/types/PDBTypeImport.h"
+#include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
 #include <gtest/gtest.h>
@@ -158,9 +159,13 @@ TEST_F(TypeRenderFixture, AHeaderDefinesWhatATypeHoldsFirst) {
   }
   EXPECT_FALSE(contains(Text, "_THREAD_LIKE"));
   EXPECT_TRUE(contains(Text, "typedef uint32_t ULONG;"));
-  EXPECT_TRUE(contains(Text,
-                       "_Static_assert(offsetof(struct _DEVICE, Pool) == 0x50, "
-                       "\"_DEVICE.Pool\");"));
+  // The header compiles as C++ too: C names its check as C++ does.
+  EXPECT_TRUE(contains(Text, "#if !defined(__cplusplus) && "
+                             "!defined(static_assert)\n#define static_assert "
+                             "_Static_assert\n#endif\n"));
+  EXPECT_TRUE(
+      contains(Text, "\nstatic_assert(offsetof(struct _DEVICE, Pool) == 0x50, "
+                     "\"_DEVICE.Pool\");"));
 }
 
 TEST_F(TypeRenderFixture, CppNamesTypesBare) {
@@ -190,6 +195,139 @@ TEST_F(TypeRenderFixture, RustNamesAnonymousRecordsAsWindowsRsDoes) {
   EXPECT_TRUE(contains(Text, "    pub _bitfield: u32,"));
   EXPECT_TRUE(contains(Text, "    pub const fn ReadyTransition(&self) -> u32 "
                              "{\n        (self._bitfield >> 1) & 0x1\n    }"));
+}
+
+TEST_F(TypeRenderFixture, RustTakesWindowsNamesAsAliases) {
+  // Exact widths unless asked, as windows-rs spells them.
+  EXPECT_TRUE(contains(render("_THREAD_LIKE", in(Language::Rust)),
+                       "    pub MiscFlags: i32,"));
+  RenderOptions Options = in(Language::Rust);
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Text = header("_THREAD_LIKE", Options);
+  // The names the types use, declared as wdk-sys declares them, at the
+  // program's widths.
+  EXPECT_TRUE(contains(Text, "\n/// The Windows headers' names of builtin "
+                             "types.\npub type UCHAR = u8;\npub type LONG = "
+                             "i32;\npub type ULONG = u32;\npub type "
+                             "ULONGLONG = u64;\n"))
+      << Text;
+  EXPECT_TRUE(contains(Text, "    pub Header: ULONGLONG,"));
+  EXPECT_TRUE(contains(Text, "    pub MiscFlags: LONG,"));
+  EXPECT_TRUE(contains(Text, "    pub Tail: [UCHAR; 3],"));
+  // A bitfield reads as its own type; its storage stays a width.
+  EXPECT_TRUE(contains(Text, "    pub _bitfield: u32,"));
+  EXPECT_TRUE(
+      contains(Text, "    pub const fn ReadyTransition(&self) -> ULONG {"));
+  // A spelling Rust does not take renders as its default.
+  Options.Spelling = BuiltinSpelling::IDA;
+  EXPECT_TRUE(
+      contains(header("_THREAD_LIKE", Options), "    pub MiscFlags: i32,"));
+  EXPECT_EQ(spellingOf(Options), BuiltinSpelling::Portable);
+  EXPECT_EQ(spellingsText(Language::Rust), "windows or portable");
+  EXPECT_EQ(spellingsText(Language::Go), "windows or portable");
+  EXPECT_EQ(spellingsText(Language::C), "windows, ida, keywords or portable");
+}
+
+TEST_F(TypeRenderFixture, GoTakesWindowsNamesAsAliases) {
+  // Exact widths unless asked, as golang.org/x/sys/windows spells them.
+  EXPECT_TRUE(
+      contains(render("_THREAD_LIKE", in(Language::Go)), "\tHeader uint64"));
+  RenderOptions Options = in(Language::Go);
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Text = header("_THREAD_LIKE", Options);
+  EXPECT_TRUE(contains(Text, "\n// The Windows headers' names of builtin "
+                             "types.\ntype UCHAR = uint8\ntype LONG = "
+                             "int32\ntype ULONG = uint32\ntype ULONGLONG = "
+                             "uint64\n"))
+      << Text;
+  EXPECT_TRUE(contains(Text, "\tHeader ULONGLONG"));
+  EXPECT_TRUE(contains(Text, "\tTail [3]UCHAR"));
+  EXPECT_TRUE(contains(Text, ") MiscFlags() *LONG {"));
+  // A bitfield reads as its own type; its storage stays a width.
+  EXPECT_TRUE(contains(Text, "\t_bitfield uint32"));
+  EXPECT_TRUE(contains(Text, ") ReadyTransition() ULONG {"));
+  EXPECT_TRUE(contains(Text, ") SetReadyTransition(value ULONG) {"));
+}
+
+TEST_F(TypeRenderFixture, PythonDeclaresRecordsAsCtypesDoes) {
+  RenderOptions Options = in(Language::Python);
+  Options.Asserts = true;
+  const std::string Text = header("_THREAD_LIKE", Options);
+  // Declared first and laid out after, so that a pointer may name a record
+  // laid out later.
+  EXPECT_TRUE(contains(Text, "class _THREAD_LIKE(ctypes.Structure):\n    "
+                             "\"\"\"_THREAD_LIKE: 0x18 (24) bytes.\"\"\"\n"))
+      << Text;
+  EXPECT_LT(Text.find("class _THREAD_LIKE("),
+            Text.find("_THREAD_LIKE._fields_ = ["));
+  // Records in place are classes of their own, which _anonymous_ promotes.
+  EXPECT_TRUE(contains(Text, "class _THREAD_LIKE_0(ctypes.Union):"));
+  EXPECT_TRUE(contains(
+      Text, "_THREAD_LIKE._anonymous_ = (\"Anonymous1\", \"Anonymous2\")\n"));
+  // A run of bitfields is storage read through properties, each run's
+  // storage named apart from the others the record promotes.
+  EXPECT_TRUE(contains(Text, "(\"_bitfield\", ctypes.c_uint32),"));
+  EXPECT_TRUE(contains(Text, "(\"_bitfield1\", ctypes.c_uint32),"));
+  EXPECT_TRUE(
+      contains(Text, "    @property\n    def ReadyTransition(self) -> int:\n"));
+  EXPECT_TRUE(contains(Text, "        return (self._bitfield >> 1) & 0x1\n"));
+  EXPECT_TRUE(contains(Text, "        return (self._bitfield1 >> 2) & 0x1\n"));
+  EXPECT_TRUE(contains(
+      Text, "assert ctypes.sizeof(_THREAD_LIKE) == 0x18, \"_THREAD_LIKE\"\n"));
+  EXPECT_TRUE(contains(Text, "assert _THREAD_LIKE.Tail.offset == 0x10, "
+                             "\"_THREAD_LIKE.Tail\"\n"));
+
+  // A pack lays out as MSVC does, which Python 3.14 asks for by name.
+  EXPECT_TRUE(contains(header("_PACKED", in(Language::Python)),
+                       "_PACKED._pack_ = 1\n_PACKED._layout_ = \"ms\"\n"
+                       "_PACKED._fields_ = [\n"));
+  // Alone, a record's layout is in its class.
+  EXPECT_TRUE(
+      contains(render("_PACKED", in(Language::Python)),
+               "class _PACKED(ctypes.Structure):\n    \"\"\"_PACKED: "
+               "0x7 (7) bytes, packed to 1.\"\"\"\n\n    _pack_ = 1\n"));
+
+  // An enumeration is an IntEnum, its field the underlying integer; a
+  // function's address is ctypes.c_void_p, its C type in the comment.
+  const std::string Device = header("_DEVICE", in(Language::Python));
+  EXPECT_TRUE(contains(Device, "class _POOL_KIND(enum.IntEnum):"));
+  EXPECT_TRUE(contains(Device, "(\"Pool\", ctypes.c_int32),"));
+  EXPECT_TRUE(contains(Device, "enum _POOL_KIND\n"));
+  EXPECT_TRUE(contains(Device, "(\"MajorFunction\", ctypes.c_void_p * 4),"));
+  EXPECT_TRUE(contains(Device, "(*[4])(struct _DEVICE *, "));
+
+  // Windows' names are aliases of exact widths at the top.
+  Options = in(Language::Python);
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Windows = header("_PACKED", Options);
+  EXPECT_TRUE(contains(Windows, "UCHAR = ctypes.c_uint8\n")) << Windows;
+  EXPECT_TRUE(contains(Windows, "(\"Value\", ULONG),"));
+}
+
+TEST(TypeRender, PythonBindsTypedefsAndLaysOutInOrder) {
+  // A typedef is bound before a layout names it; one of an array after the
+  // layout of what it holds, since ctypes sizes an array type once.
+  TypeLibrary Library;
+  ASSERT_TRUE(parseCTypes(R"(
+    typedef struct _NODE NODE;
+    struct _NODE { NODE *Next; unsigned long Value; };
+    typedef struct _PAIR { unsigned char A; unsigned long B; } PAIR;
+    typedef PAIR PAIRS[2];
+    struct _HOLDER { PAIRS Items; NODE Head; };
+  )",
+                          Library)
+                  .ok());
+  const std::string Text = renderTypes(Library, {}, in(Language::Python));
+  const auto at = [&](llvm::StringRef Part) {
+    const size_t Found = Text.find(Part.str());
+    EXPECT_NE(Found, std::string::npos) << Part.str() << "\n" << Text;
+    return Found;
+  };
+  EXPECT_LT(at("NODE = _NODE\n"), at("_NODE._fields_ = ["));
+  EXPECT_LT(at("_PAIR._fields_ = ["), at("PAIRS = PAIR * 2\n"));
+  EXPECT_LT(at("PAIRS = PAIR * 2\n"), at("_HOLDER._fields_ = ["));
+  EXPECT_LT(at("_NODE._fields_ = ["), at("_HOLDER._fields_ = ["));
+  EXPECT_TRUE(contains(Text, "(\"Next\", ctypes.POINTER(NODE)),"));
 }
 
 TEST_F(TypeRenderFixture, RustAndGoKeepPacking) {
@@ -274,6 +412,30 @@ TEST(TypeRender, GoReadsAFlexibleArrayThroughAnAccessor) {
       renderType(Library, *Library.find("_LIST"), in(Language::Go));
   EXPECT_FALSE(contains(Text, "\tItems [0]uint16"));
   EXPECT_TRUE(contains(Text, "func (s *_LIST) Items(n int) []uint16 {"));
+}
+
+TEST(TypeRender, CCharacterTypesLeaveCppItsKeywords) {
+  // C declares the character types C++ has keywords for, so that its header
+  // compiles as either; char8_t is a keyword from C++20.
+  TypeLibrary Library;
+  Library.define(structure("_TEXT", 4,
+                           {member("Narrow", makeBuiltin(Builtin::Char8), 0),
+                            member("Wide", makeBuiltin(Builtin::Char16), 2)}));
+  for (BuiltinSpelling Spelling :
+       {BuiltinSpelling::Windows, BuiltinSpelling::Keywords}) {
+    RenderOptions Options = in(Language::C);
+    Options.Spelling = Spelling;
+    const std::string Text = renderTypes(Library, {}, Options);
+    EXPECT_TRUE(contains(Text, "#if !defined(__cplusplus) || "
+                               "!defined(__cpp_char8_t)\ntypedef uint8_t "
+                               "char8_t;\n#endif\n"))
+        << Text;
+    EXPECT_TRUE(contains(Text, "#ifndef __cplusplus\ntypedef uint16_t "
+                               "char16_t;\n#endif\n"))
+        << Text;
+  }
+  EXPECT_FALSE(contains(renderTypes(Library, {}, in(Language::Cpp)),
+                        "typedef uint16_t char16_t;"));
 }
 
 TEST(TypeRender, NamesStepAroundKeywords) {

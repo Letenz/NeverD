@@ -73,6 +73,10 @@ struct CallArgScan {
   /// entry stack pointer, above the return address on x86, and no argument
   /// was pushed.
   bool TailJump = false;
+  /// The call is indirect: as call-ABI recovery does, the scan takes no
+  /// prologue save of a register's incoming value for one of its stack
+  /// arguments (isIncomingRegisterSave).
+  bool Indirect = false;
   /// Register arguments a summarized callee reads (MedOp::CalleeRegisterArgs),
   /// or -1 when the callee has no summary.
   int CalleeRegisterArgs = -1;

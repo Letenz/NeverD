@@ -224,3 +224,5 @@ Neue native Formen müssen im selben Change enthalten:
 
 Decodierbarkeit allein erweitert niemals die Allow-List. Entscheidend ist die
 Erhaltung des Runtime-Ausnahmeverhaltens im final gelinkten Image.
+
+Ein Cleanup des ausgewählten Handlers darf mit demselben gültigen Capture und nachweislich gleichem konstantem Wert erneut springen (null wird eins). Der Sprung verwirft den Handler und alle ausgesetzten Finally-Aufrufe und stellt die Unwind-Grenze des Captures wieder her. Ausgelagerte Callbacks und unerreichbare Enden behalten ihre geprüfte Zugehörigkeit. Andere Captures oder Werte und unbekannte Wertgleichheit benötigen eigene Beweise.
