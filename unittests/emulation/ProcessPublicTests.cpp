@@ -4726,6 +4726,7 @@ TEST_P(DarwinLibSystemPublic,
   const auto Output = (Root / OutputFile).string();
   const auto &[File, Profile] = GetParam();
   for (const char *Kind : {"classic", "chained"}) {
+    SCOPED_TRACE(Kind);
     Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) /
             (std::string(File) + "-libsystem-files-" + Kind))
                .string();

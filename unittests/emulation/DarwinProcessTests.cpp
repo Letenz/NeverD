@@ -4406,6 +4406,7 @@ TEST_P(DarwinProcess, LibSystemFileCallsShareCursorsAndDecodeOptionalMode) {
   Options.Arguments = {"files", "/data", "/created", "/missing"};
   Options.DarwinFiles = darwin_test::libSystemFileOptions();
   for (const char *Kind : {"classic", "chained"}) {
+    SCOPED_TRACE(Kind);
     const auto Linked =
         std::filesystem::path(Path.string() + "-libsystem-files-" + Kind);
     for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {

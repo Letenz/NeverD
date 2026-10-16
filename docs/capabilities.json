@@ -21335,7 +21335,40 @@
           "runner": "gtest",
           "target": "NeverDDarwinProcessTests",
           "source": "unittests/emulation/DarwinLibSystemTests.cpp",
-          "filter": "*/DarwinLibSystemTest.*/*",
+          "filter": "*/DarwinLibSystemTest.OpenSeparatesModeCarrierFromKernelModeAndMetadata/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLibSystemTests.cpp",
+          "filter": "*/DarwinLibSystemTest.OpenWithoutCreateDoesNotReadOptionalStorage/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLibSystemTests.cpp",
+          "filter": "*/DarwinLibSystemTest.OptionalModeTransportFailureCannotPublishEffects/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLibSystemTests.cpp",
+          "filter": "*/DarwinLibSystemTest.MissingStackBytesKeepTheirDistinctCallBoundary/*",
           "platforms": [
             "darwin",
             "linux",

@@ -136,7 +136,8 @@ protected:
     CPU->Registers[ABI.info().StackPointer] = {SP, 0};
     CPU->Registers[ABI.info().Arguments[0]] = {Data, 0};
     CPU->Registers[ABI.info().Arguments[1]] = {0x1122334400000a02ULL, 0};
-    CPU->Registers[ABI.info().Arguments[2]] = {0xaabbccdd123401a1ULL, 0};
+    CPU->Registers[ABI.info().Arguments[2]] = {
+        GetParam() ? 0xaabbccdd123401a1ULL : 0x5566778899abcdefULL, 0};
     if (GetParam())
       llvm::cantFail(Space->writeInteger(SP, Code, 8));
     else {

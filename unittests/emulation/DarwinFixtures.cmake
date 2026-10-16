@@ -5,6 +5,16 @@ if(NOT NEVERD_TEST_CLANG_EXECUTABLE OR NOT NEVERD_PROCESS_LD64)
 endif()
 set(_darwin_fixture_dir "${CMAKE_CURRENT_BINARY_DIR}/darwin-fixtures")
 file(MAKE_DIRECTORY "${_darwin_fixture_dir}")
+# LLD can retain an unused dyld_stub_binder import with chained fixups. Only
+# the classic lazy fixture exports it; each image must have a binding closure.
+foreach(_darwin_link_kind classic chained)
+  set(_darwin_files_binder "")
+  if(_darwin_link_kind STREQUAL "classic")
+    set(_darwin_files_binder ", dyld_stub_binder")
+  endif()
+  configure_file(fixtures/darwin_libsystem_files.tbd.in
+    "${_darwin_fixture_dir}/libsystem-files-${_darwin_link_kind}.tbd" @ONLY)
+endforeach()
 set(_darwin_outputs)
 foreach(_darwin_profile macos ios ios-simulator)
   foreach(_darwin_arch x86_64 arm64)
@@ -97,9 +107,10 @@ foreach(_darwin_profile macos ios ios-simulator)
         COMMAND "${NEVERD_PROCESS_LD64}" -arch "${_darwin_arch}"
           -platform_version "${_darwin_profile}" 14.0 14.0 -e _main
           "${_darwin_fixup_flag}" "${_darwin_files_object}"
-          "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/darwin_libsystem_files.tbd"
+          "${_darwin_fixture_dir}/libsystem-files-${_darwin_link_kind}.tbd"
           -o "${_darwin_files_output}"
-        DEPENDS "${_darwin_files_object}" fixtures/darwin_libsystem_files.tbd
+        DEPENDS "${_darwin_files_object}"
+          "${_darwin_fixture_dir}/libsystem-files-${_darwin_link_kind}.tbd"
         VERBATIM)
       list(APPEND _darwin_outputs "${_darwin_files_output}")
     endforeach()
