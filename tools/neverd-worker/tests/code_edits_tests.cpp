@@ -1,8 +1,11 @@
 #include "CodeEdits.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 using namespace neverd::worker;
 
@@ -52,9 +55,101 @@ void refused(const Json &view, const Json &request, const std::string &code) {
     check(error.code == code, "Wrong edit rejection");
   }
 }
+Json sourceName(std::size_t begin, std::size_t end) {
+  return {{"begin_byte", begin}, {"end_byte", end}, {"address", "0x1100"}};
+}
+void sourceSpanBoundaries() {
+  auto spelling = page("fini fini fini fini fini");
+  spelling["identifier_symbols"] = Json::array(
+      {{{"identifier", "fini"}, {"symbol", "_fini"}, {"address", "0x1100"}}});
+  spelling["source_names"] =
+      Json::array({sourceName(6, 7), sourceName(1, 3), sourceName(16, 16),
+                   sourceName(9, 10)});
+  CodeEdits::spellIdentifierSymbols(spelling);
+  std::vector<std::size_t> added;
+  for (const auto &name : spelling.at("source_names"))
+    if (name.contains("identifier"))
+      added.push_back(name.at("begin_byte").get<std::size_t>());
+  check(added == std::vector<std::size_t>({10, 20}),
+        "Spelling changed partial overlap or touching span boundaries");
+
+  const std::string text = "int target(void) { return callee(); }\n";
+  const auto begin = text.find("callee");
+  auto adjacent = page(text);
+  adjacent["source_names"] = Json::array(
+      {sourceName(begin + 3, begin + 6), sourceName(begin, begin + 3)});
+  decorate(adjacent);
+  const auto &names = adjacent.at("code_names");
+  check(names.size() == 4 && names[0].at("original") == "lee" &&
+            names[1].at("original") == "cal" &&
+            names[3].at("original") == "callee",
+        "Adjacent spans were merged or partial coverage hid the full token");
+
+  // Accepted spans may arrive in either order. Containment and duplicate
+  // starts must be rejected just like a partial overlap.
+  const std::vector<std::pair<std::size_t, std::size_t>> overlaps = {
+      {0, 6}, {1, 3}, {3, 8}, {0, 3}};
+  for (const auto &[left, right] : overlaps) {
+    for (bool reverse : {false, true}) {
+      auto invalid = page(text);
+      auto a = sourceName(begin, begin + 6);
+      auto b = sourceName(begin + left, begin + right);
+      invalid["source_names"] =
+          reverse ? Json::array({b, a}) : Json::array({a, b});
+      try {
+        decorate(invalid);
+        check(false, "Overlapping explicit source names were accepted");
+      } catch (const Error &error) {
+        check(error.code == "invalid_engine_result",
+              "Overlapping source names produced the wrong error");
+      }
+    }
+  }
+
+  auto ignored = page(text);
+  ignored["source_names"] = Json::array({sourceName(begin, begin + 6),
+                                         sourceName(begin + 2, begin + 2),
+                                         sourceName(begin + 3, begin + 1),
+                                         sourceName(begin, text.size() + 1),
+                                         {{"begin_byte", begin + 1},
+                                          {"end_byte", begin + 4},
+                                          {"symbol", "unknown"}}});
+  decorate(ignored);
+  check(ignored.at("code_names").size() == 2,
+        "Invalid or unresolved spans interfered with accepted source names");
+}
+
+void manySourceNames() {
+  std::string text = "int target(void) {\n";
+  Json spans = Json::array();
+  for (unsigned i = 0; i < 256; ++i) {
+    spans.push_back(sourceName(text.size() + 2, text.size() + 8));
+    text += "  callee();\n";
+  }
+  text += "  return 0;\n}\n";
+  std::reverse(spans.begin(), spans.end());
+  auto view = page(text);
+  view["source_names"] = spans;
+  decorate(view, nullptr,
+           Json::array({{{"addr", "0x1100"}, {"renamed", "renamed_callee"}}}));
+  check(view.at("code_names").size() == 257 &&
+            view.at("source_names").size() == 256 &&
+            view.at("rows").size() == 259,
+        "Unordered source names lost edit targets or source rows");
+  const auto &rendered = view.at("text").get_ref<const std::string &>();
+  for (const auto &span : view.at("source_names")) {
+    const auto begin = span.at("begin_byte").get<std::size_t>();
+    const auto end = span.at("end_byte").get<std::size_t>();
+    check(end <= rendered.size() && begin < end &&
+              rendered.substr(begin, end - begin) == "renamed_callee",
+          "A renamed explicit source span lost its displayed edit target");
+  }
+}
 } // namespace
 
 int main() {
+  sourceSpanBoundaries();
+  manySourceNames();
   const std::string source =
       "extern int32_t global_data; /* 0x2000 */\n"
       "int32_t callee(int32_t);\n"

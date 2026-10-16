@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <regex>
 #include <set>
 #include <string_view>
@@ -31,6 +32,35 @@ bool source(const std::string &name) {
   return name == "c" || name == "llvmc" || name == "source" || name == "cpp" ||
          name == "rust" || name == "go";
 }
+// Prefix maxima answer exact interval predicates even for unsorted,
+// overlapping or empty input spans. Never merge neighbouring spans.
+class SourceSpanIndex {
+  std::vector<std::pair<std::size_t, std::size_t>> spans_;
+
+public:
+  template <class Iterator>
+  SourceSpanIndex(Iterator begin, Iterator end) : spans_(begin, end) {
+    std::sort(spans_.begin(), spans_.end());
+    std::size_t maximum = 0;
+    for (auto &span : spans_) {
+      maximum = std::max(maximum, span.second);
+      span.second = maximum;
+    }
+  }
+  bool overlaps(std::size_t begin, std::size_t end) const {
+    const auto after = std::lower_bound(
+        spans_.begin(), spans_.end(), end,
+        [](const auto &span, std::size_t end) { return span.first < end; });
+    return after != spans_.begin() && std::prev(after)->second > begin;
+  }
+  bool contains(std::size_t begin, std::size_t end) const {
+    const auto after = std::upper_bound(
+        spans_.begin(), spans_.end(), begin,
+        [](std::size_t begin, const auto &span) { return begin < span.first; });
+    return after != spans_.begin() && std::prev(after)->second >= end;
+  }
+};
+
 struct Token {
   std::size_t begin, end;
   std::string text;
@@ -335,13 +365,11 @@ void CodeEdits::spellIdentifierSymbols(Json &view) {
   for (const auto &name : names)
     spelled.emplace_back(name.value("begin_byte", std::size_t{0}),
                          name.value("end_byte", std::size_t{0}));
+  const SourceSpanIndex covered(spelled.begin(), spelled.end());
   const auto &text = view["text"].get_ref<const std::string &>();
   for (const auto &token : tokens(text)) {
     const auto found = named.find(token.text);
-    if (found == named.end() ||
-        std::any_of(spelled.begin(), spelled.end(), [&](const auto &span) {
-          return token.begin < span.second && token.end > span.first;
-        }))
+    if (found == named.end() || covered.overlaps(token.begin, token.end))
       continue;
     const Json &name = *found->second;
     names.push_back({{"begin_byte", token.begin},
@@ -578,7 +606,7 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
   };
   std::vector<Replacement> replacements;
   Json names = Json::array();
-  std::vector<std::pair<std::size_t, std::size_t>> spelled;
+  std::set<std::pair<std::size_t, std::size_t>> spelled;
   for (const auto &name : view.value("source_names", Json::array())) {
     const auto begin = name.value("begin_byte", std::size_t{0});
     const auto end = name.value("end_byte", std::size_t{0});
@@ -592,24 +620,23 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
                                       name.value("identifier", std::string())));
     if (!at)
       continue;
-    if (std::any_of(spelled.begin(), spelled.end(), [&](const auto &span) {
-          return begin < span.second && end > span.first;
-        }))
+    const auto following = spelled.lower_bound({begin, 0});
+    if ((following != spelled.end() && following->first < end) ||
+        (following != spelled.begin() && std::prev(following)->second > begin))
       throw Error("invalid_engine_result", "Overlapping source name spans");
     names.push_back({{"begin_byte", begin},
                      {"end_byte", end},
                      {"kind", "address"},
                      {"address", hexAddress(*at)},
                      {"original", original.substr(begin, end - begin)}});
-    spelled.emplace_back(begin, end);
+    spelled.emplace(begin, end);
     if (const auto shown = shownName(*at, original.substr(begin, end - begin)))
       replacements.push_back({begin, end, *shown});
   }
+  const SourceSpanIndex covered(spelled.begin(), spelled.end());
   for (std::size_t i = 0; i < ts.size(); ++i) {
     const auto &token = ts[i];
-    if (std::any_of(spelled.begin(), spelled.end(), [&](const auto &span) {
-          return token.begin >= span.first && token.end <= span.second;
-        }))
+    if (covered.contains(token.begin, token.end))
       continue;
     if (!identifier(token.text) || member(ts, i))
       continue;
