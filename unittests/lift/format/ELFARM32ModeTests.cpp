@@ -1181,6 +1181,45 @@ callee:
   EXPECT_EQ(Image->Mode, InstructionMode::MixedARMThumb);
 }
 
+// A mixed ARM/Thumb image pairs its ARM PLT with the imports as a
+// single-mode one does: a Thumb caller's `blx` reaches the same stub, and
+// without the pairing each of its import calls read as an unnamed routine.
+TEST_F(ELFARM32ModeTest, MixedImagePairsItsPLTWithTheImports) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedSharedAssembly("mixed_plt", R"(
+.syntax unified
+.text
+.thumb
+.globl caller
+.type caller,%function
+.thumb_func
+caller:
+  push {r4, lr}
+  bl puts
+  pop {r4, pc}
+.arm
+.p2align 2
+.globl arm_side
+.type arm_side,%function
+arm_side:
+  bx lr
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  EXPECT_EQ(Image->Mode, InstructionMode::MixedARMThumb);
+  std::vector<va_t> Stubs;
+  for (const auto &[Stub, Import] : Image->ImportStubIndices)
+    if (Image->Imports[Import].Name == "puts")
+      Stubs.push_back(Stub);
+  ASSERT_EQ(Stubs.size(), 1u);
+  const Section *Plt = Image->getSectionFor(Stubs.front());
+  ASSERT_NE(Plt, nullptr);
+  EXPECT_EQ(Plt->Name, ".plt");
+}
+
 // A library's veneer for a routine the library defines goes to that
 // definition, whose code says it never returns: a C++ runtime's throw
 // helpers end in __cxa_throw without being on any list.

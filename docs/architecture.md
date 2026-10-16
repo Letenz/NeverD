@@ -1934,6 +1934,12 @@ control-flow edges through the shared reachable-mode analysis. A cross-state
 `BLX` can establish an ARM target without treating an unflagged symbol as ARM
 proof. Decoding is limited to reached instruction spans; an unproved gap in a
 mixed image retains unknown mode.
+The ELF loader pairs each ARM PLT entry with its import by decoding the GOT
+cell the entry's instructions compute (`findARMPLTVeneers`), in mixed ARM/Thumb
+images as in single-mode ones: the PLT is ARM code either way, and a Thumb
+caller's `blx` reaches the same stub. Without the pairing every import call of
+a Thumb library read as an unnamed local function, without its prototype or
+no-return contract.
 Validated ARM and Thumb instruction relocations can also seed their exact
 instruction addresses. This can recover an otherwise uncalled function when
 its entry instruction has such a relocation, without assuming that an

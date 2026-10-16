@@ -149,8 +149,9 @@ std::map<va_t, size_t> findARMPLTVeneers(const BinaryImage &Img) {
 }
 
 size_t recordARMPLTVeneers(BinaryImage &Img) {
-  if (!isSingleInstructionMode(Img.Mode))
-    return 0;
+  // A mixed ARM/Thumb image pairs its veneers too: the PLT is ARM code
+  // whatever the rest is, findARMPLTVeneers reads only ARM encodings, and a
+  // stub's import identity does not depend on the callers' instruction set.
   size_t Paired = 0;
   for (const auto &[VA, Import] : findARMPLTVeneers(Img))
     if (Img.recordImportStub(VA, Import))
