@@ -381,6 +381,9 @@ requires every `SessionCAPITest.*` case to execute and pass using repository
 fixtures; it does not claim Windows kernel input coverage.
 `LocalTypesDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
 the conversion and which functions take a prototype without a program.
+Build and run `NeverDSessionLLVMTests` as well: its private Session queries
+link the actual local-type/debug implementations and shared atomic sidecar
+helper into the test executable. It must not acquire a libneverd dependency.
 `scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
 decompiles with the prototypes an IDA dump shows; it decompiles each
 function by address and resolves IDA's typedefs through the shipped headers:

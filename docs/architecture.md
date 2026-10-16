@@ -268,6 +268,11 @@ builtin spellings each language takes and which it takes unless asked;
 `neverd types --json` names the one its source took, in every mode, so that
 an agent reads one object.
 
+`SessionSidecar.cpp` owns the shared atomic write for Session sidecars. Type
+declaration and persistence adapters use that same private helper. Private
+Session LLVM tests compile their actual type/debug owners and sidecar helper
+directly; the shared SDK keeps its existing public C boundary.
+
 The decompiler reads the local types through `LocalTypesDebugContext`
 (`lib/sdk/capi`), which wraps the program's debug context whenever the
 program has local types. The local types are the authority on the program's

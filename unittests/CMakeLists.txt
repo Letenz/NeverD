@@ -118,7 +118,7 @@ add_neverd_unittest(NeverDSessionLLVMTests
   SessionLLVMTests.cpp
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi/LocalTypesDebugContext.cpp"
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi/NeverDCAPILocalTypes.cpp"
-  "${CMAKE_SOURCE_DIR}/lib/sdk/capi/NeverDCAPIPersist.cpp"
+  "${CMAKE_SOURCE_DIR}/lib/sdk/capi/SessionSidecar.cpp"
   LINK_COMPONENTS Pipeline Types
   LINK_LIBS neverd-plugin-runtime-test-support
 )
