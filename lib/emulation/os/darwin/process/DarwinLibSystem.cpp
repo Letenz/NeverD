@@ -1,0 +1,139 @@
+//===- DarwinLibSystem.cpp - Authenticated imported libc calls -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file Finite libSystem function ABI, errno and shared kernel effects.
+#include "DarwinLibSystem.h"
+
+#include "neverd/emulation/AddressSpace.h"
+
+#include "llvm/Support/Endian.h"
+
+#include <algorithm>
+
+namespace neverd::emulation::darwin_model {
+namespace {
+constexpr LibSystemBinding Bindings[] = {
+#define NEVERD_DARWIN_LIBSYSTEM_CALL(Name, Symbol, Count, Kernel)              \
+  {Symbol, Count, Kernel},
+#include "DarwinLibSystemCalls.def"
+#undef NEVERD_DARWIN_LIBSYSTEM_CALL
+};
+static_assert(unsigned(LibSystemGateKind::StubBinder) == std::size(Bindings));
+} // namespace
+std::optional<LibSystemGateKind> libSystemImport(llvm::StringRef Symbol) {
+  if (Symbol == "dyld_stub_binder")
+    return LibSystemGateKind::StubBinder;
+  for (unsigned I = 0; I < std::size(Bindings); ++I)
+    if (Bindings[I].Symbol == Symbol)
+      return LibSystemGateKind(I);
+  return std::nullopt;
+}
+const LibSystemBinding &libSystemBinding(LibSystemGateKind Kind) {
+  const auto Index = unsigned(Kind);
+  assert(Index < std::size(Bindings));
+  return Bindings[Index];
+}
+llvm::Error prepareLibSystem(AddressSpace &Space, const ProcessImage &Image) {
+  if (Image.Imports.empty())
+    return llvm::Error::success();
+  const auto Page = Image.Memory.PageSize;
+  for (uint64_t Address : {value::LibSystemGate, value::LibSystemGate + Page})
+    if (auto E = Space.map(Address, Page, Read | Write | UserAccessible))
+      return E;
+  std::vector<uint8_t> Gates(Page, 0);
+  for (const auto &[Address, Index] : Image.Imports) {
+    const auto Offset = Address - value::LibSystemGate;
+    assert(Offset + value::LibSystemGateStride <= Gates.size());
+    if (Image.Architecture == GuestArchitecture::X64) {
+      Gates[Offset] = 0x0f; // syscall; no implicit successful fallthrough.
+      Gates[Offset + 1] = 0x05;
+      Gates[Offset + 2] = 0xcc;
+    } else {
+      llvm::support::endian::write32le(Gates.data() + Offset,
+                                       0xd4000001 | (value::LibSystemSVC << 5));
+      llvm::support::endian::write32le(Gates.data() + Offset + 4, 0xd4200000);
+    }
+  }
+  if (auto E = Space.write(value::LibSystemGate, Gates))
+    return E;
+  return Space.protect(value::LibSystemGate, Page,
+                       Read | Execute | UserAccessible);
+}
+llvm::Expected<bool>
+invokeLibSystem(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
+                DarwinEntropy &Entropy, const ProcessImage &Image,
+                LibSystemGateKind Binding, const ServiceRequest &Request,
+                const ProcessOptions &Options, ProcessResult &Result) {
+  if (Binding == LibSystemGateKind::StubBinder)
+    return failure(diagnostic::LibSystemResolver);
+  const auto &Definition = libSystemBinding(Binding);
+  const bool X64 = Image.Architecture == GuestArchitecture::X64;
+  auto ABI = IntegerABI::get(X64 ? IntegerCallingConvention::SysVAMD64
+                                 : IntegerCallingConvention::AAPCS64);
+  if (!ABI)
+    return ABI.takeError();
+  auto SP = CPU.readRegister(ABI->info().StackPointer);
+  if (!SP)
+    return SP.takeError();
+  auto ReturnSP = ABI->returnStackPointer((*SP)[0]);
+  if (!ReturnSP)
+    return ReturnSP.takeError();
+  NativeCallEvent Call;
+  Call.PC = Request.PC;
+  Call.Name = Definition.Symbol.str();
+  Call.Module = value::LibSystemPath;
+  Call.ArgumentCount = Definition.Arguments;
+  for (unsigned I = 0; I < Definition.Arguments; ++I) {
+    auto Argument = ABI->readArgument(CPU, (*SP)[0], I);
+    if (!Argument)
+      return Argument.takeError();
+    Call.Arguments[I] = *Argument;
+  }
+  Result.NativeCalls.push_back(std::move(Call));
+  uint64_t ReturnPC = 0;
+  if (Definition.Kernel != ServiceKind::Exit) {
+    auto Address = ABI->readReturnAddress(CPU, (*SP)[0]);
+    if (!Address)
+      return Address.takeError();
+    ReturnPC = *Address;
+    auto Executable =
+        CPU.canAccess(ReturnPC, X64 ? 1 : 4, Execute | UserAccessible);
+    if (!Executable)
+      return Executable.takeError();
+    if (!*Executable || (!X64 && ReturnPC % 4))
+      return failure(diagnostic::LibSystemFrame);
+    Result.NativeCalls.back().ReturnAddress = ReturnPC;
+  }
+  uint64_t Value = value::LibSystemGate + Image.Memory.PageSize;
+  if (Definition.Kernel) {
+    ProcessServiceEvent Event{Request.PC, 0, {}, std::nullopt};
+    std::copy_n(Result.NativeCalls.back().Arguments.begin(),
+                Definition.Arguments, Event.Arguments.begin());
+    auto Returned = handleService(*Definition.Kernel, CPU, Memory, Files,
+                                  Entropy, Event, Options, Result);
+    if (!Returned)
+      return Returned.takeError();
+    if (!*Returned)
+      return false;
+    Value = (**Returned).Value;
+    if ((**Returned).Error) {
+      if (auto E = CPU.writeInteger(
+              value::LibSystemGate + Image.Memory.PageSize, Value, 4))
+        return std::move(E);
+      Value = UINT64_MAX;
+    }
+  }
+  if (auto E = CPU.writeRegister(ABI->info().Result, {Value, 0}))
+    return std::move(E);
+  if (auto E = CPU.writeRegister(ABI->info().StackPointer, {*ReturnSP, 0}))
+    return std::move(E);
+  if (auto E = CPU.writeRegister(
+          X64 ? CPURegister::X64PC : CPURegister::AArch64PC, {ReturnPC, 0}))
+    return std::move(E);
+  Result.NativeCalls.back().Result = Value;
+  Result.PC = ReturnPC;
+  return true;
+}
+} // namespace neverd::emulation::darwin_model

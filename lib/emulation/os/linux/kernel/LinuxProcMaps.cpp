@@ -78,6 +78,10 @@ LinuxMemory::procMappings() const {
       Cut(A.Begin);
       Cut(A.End);
     }
+    for (const auto &A : GPUObjectRanges) {
+      Cut(A.Begin);
+      Cut(A.Begin + A.Size);
+    }
     Cut(MinimumBreak);
     Cut(*roundSize(ProgramBreak));
     Cut(GuardBase + PageSize);
@@ -108,6 +112,18 @@ LinuxMemory::procMappings() const {
         M.Shared = true;
         M.Offset = A.Mapping->Offset + A.Offset + M.Address - A.Begin;
         if (A.Owner && Options.LinuxFiles)
+          for (const auto &[Path, Device] : Options.LinuxFiles->Devices)
+            if (&Device == A.Owner->Options)
+              M.Path = Path;
+        Labeled = true;
+        break;
+      }
+      for (const auto &A : GPUObjectRanges) {
+        if (M.Address < A.Begin || M.Address - A.Begin >= A.Size)
+          continue;
+        M.Shared = true;
+        M.Offset = A.Offset + M.Address - A.Begin;
+        if (Options.LinuxFiles)
           for (const auto &[Path, Device] : Options.LinuxFiles->Devices)
             if (&Device == A.Owner->Options)
               M.Path = Path;

@@ -299,3 +299,42 @@ These ABI/packet facts were independently implemented from the pinned
 [submission and memory owner](https://android.googlesource.com/kernel/msm/+/973f4134d9deb396415846f902848f0a32cb4cfa/drivers/gpu/msm/kgsl.c),
 [ringbuffer packet producer](https://android.googlesource.com/kernel/msm/+/973f4134d9deb396415846f902848f0a32cb4cfa/drivers/gpu/msm/adreno_ringbuffer.c)
 and [PM4 encoding](https://android.googlesource.com/kernel/msm/+/a65478df351382d255d293d745aee9bae3a3a741/drivers/gpu/msm/adreno_pm4types.h).
+
+### Owned GPU memory objects
+
+`"memory_objects":true` in `kgsl_contexts` separately opts into LP64
+GPUOBJ_ALLOC/INFO/FREE and SHAREDMEM_FREE. It requires an O_RDWR device;
+`synchronous_a3xx` is needed only to execute PM4. Static ioctl observations
+cannot shadow these requests. Unknown/non-Boolean settings are rejected.
+
+Objects own zero-initialized physical RAM in NeverD, charged to the workload
+memory budget. Zero/GPUREADONLY allocation flags and zero metadata length are
+admitted. Nonzero sizes through eight 4 KiB pages are rounded up; a GPU-only
+4 KiB guard contributes to the returned footprint. IDs and GPU addresses are
+process-scoped across independent opens and descriptor aliases; allocation
+choices are deterministic model policy, not captured hardware addresses.
+At most 64 objects/imports share the address space. Query returns live size,
+flags, GPU address, footprint and current CPU mapping address, preserving the
+caller's padding. Unknown IDs return EINVAL; unsupported flags, metadata or
+resource limits stop explicitly.
+
+MAP_SHARED accepts one complete data mapping by `id * 4096` or GPU base,
+with PROT_NONE, PROT_READ or PROT_READ|PROT_WRITE. CPU and admitted PM4 writes
+use the same retained bytes. GPUREADONLY restricts GPU writes, not CPU writes.
+A second active mapping returns EBUSY; an incorrect size returns ERANGE.
+Interior GPU-address offsets, mapping the guard, executable mappings, VMA
+splitting and advice stop rather
+than inventing fault delivery or driver VMA callbacks. Whole-range mprotect
+and munmap are supported. Dynamic proc maps labels use the same mapping owner.
+
+An immediate free while mapped marks the object pending; query and existing
+mapping access remain valid, and a second free returns EBUSY. Final unmap
+retires a pending object; unmapping a live object preserves its contents for
+remapping. VMAs retain their open and process owner after FD closure. Freed
+storage is zeroed before reuse. Asynchronous timestamp/fence frees, imports
+through GPUOBJ_IMPORT, cache maintenance, secure/SVM allocations and shaders
+remain unsupported. The resource model is not a physical GPU/cache model.
+
+The independently written implementation uses the pinned
+[GPU object UAPI](https://android.googlesource.com/kernel/msm/+/25423157b70a8f2250860e72e63b29e28872220c/include/uapi/linux/msm_kgsl.h)
+and [allocation, query and VMA lifetime owner](https://android.googlesource.com/kernel/msm/+/2db776e4f994f895799dd7cb47397db6bfe1e616/drivers/gpu/msm/kgsl.c).

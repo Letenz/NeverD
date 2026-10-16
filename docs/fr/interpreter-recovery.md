@@ -360,3 +360,11 @@ Les rejeux de préfixe d’entrée visitent les branches en attente avant de dé
 
 
 La recherche d’alignement transmet `MaxCuts` au moteur d’inférence commun. Après validation de l’entrée et sélection d’un ensemble couvrant tous les cycles, un ensemble trop grand est refusé avant l’exploration symbolique de l’entrée ou l’élargissement. Cette limite par plan ne réduit ni `MaxCutpointAttempts` ni les essais valides à une seule coupure. Le travail de sélection des familles filtrées reste comptabilisé. L’inférence autonome et native conserve ses limites ; toute relation acceptée exige toujours le vérificateur complet inchangé.
+
+<!-- i18n-section: immutable-wide-reads -->
+
+## Lectures larges immuables complètes
+
+Sous `ExplicitMachineState` et `NormalNonfaultingExecution`, un `LOAD` admis de 16 octets n’utilise l’image immuable que si chaque adresse possible possède une preuve complète de 16 octets. L’exécution symbolique conserve les 128 bits. Le résidu matérialise des parties scalaires dans l’ordre de stockage et capture toute adresse pouvant chevaucher la destination avant la première écriture. Les deux ordres des octets partagent cette règle ; chaque opération émise consomme le budget existant.
+
+Un domaine incomplet ou une étendue immuable indisponible conserve la lecture entière à l’exécution, sans preuve partielle. Une longueur malformée renvoyée par le fournisseur entraîne un refus. Ni la mémoire modifiable ni les observations d’exécution ne confèrent d’autorité immuable. Les reçus bruts lient tous les octets, moitié haute comprise. L’enveloppe source et les preuves natives indépendantes gardent leurs exigences de largeur et d’environnement.

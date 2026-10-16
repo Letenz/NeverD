@@ -29,7 +29,9 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
     SEHFilterOutcomes *FilterOutcomes, unsigned Depth,
     std::optional<int32_t> ParentStackOffset, SEHFrameOutcomes *Outcomes,
     SEHHandlerOutcomes *Selected) {
-  if (FilterOutcomes && (OrdinaryInvocation || Jump || Outcomes || Selected))
+  // A filter may leave through a jump; only its actual returns contribute
+  // dispositions and restore the suspended callback frame.
+  if (FilterOutcomes && (OrdinaryInvocation || Outcomes || Selected))
     return false;
   const auto Entry = Entries.find(Target);
   // An ordinary CALL has a proved current ESP and its own return PC. SavedESP
@@ -149,13 +151,13 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
             State.loadCallback(SP->Offset + 4, 4).Constant != 0 ||
             !runSEHFilterSearch(State, Writes, Continued,
                                 /*RequireResume=*/true,
-                                Selected ? &SelectedHandlers : nullptr))
+                                Selected ? &SelectedHandlers : nullptr, Jump))
           return false;
         if (Continued.empty()) {
           if (Source->second.second.FirstOp + Source->second.second.OpCount !=
               OpIndex + 1)
             return false;
-          // No instruction after this call executes on a selected path.
+          // Selection or a jump abandons all instructions after this call.
           // Limit the source-store audit to the actual suspended prefix.
           Abandoned = true;
           ResumeAt = OpIndex + 1;
@@ -266,9 +268,10 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
               (Write && Transfer.read(*Memory.StoredValue).MayBeFrame))
             return false;
           if (!Write) {
-            // Mutable image contents may contain pointer bits. Storage
-            // ownership never turns those bits into an exact frame value.
-            Transfer.write(Op, FrameValue::taint(true));
+            // These runtime bits survive frame relocation. They remain
+            // potentially aliasing pointers, but scalar observations do not
+            // depend on either regenerated private stack's placement.
+            Transfer.write(Op, FrameValue::taint(true, true));
             continue;
           }
         } else if (!Address.Offset || *Address.Offset < *ParentSP ||

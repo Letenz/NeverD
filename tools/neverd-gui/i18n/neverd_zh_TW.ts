@@ -3752,6 +3752,26 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>No local type is named %1</source>
         <translation>沒有名為 %1 的本機型別</translation>
     </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>精確寬度（c_uint32）</translation>
+    </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>JavaScript 模組 (*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>JavaScript 型別（number、bigint）</translation>
+    </message>
+    <message>
+        <source>Lua (*.lua)</source>
+        <translation>Lua (*.lua)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::DeclareTypesDialog</name>

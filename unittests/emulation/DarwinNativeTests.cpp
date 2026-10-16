@@ -1269,6 +1269,70 @@ TEST(DarwinNative,
 #endif
 }
 
+TEST(DarwinNative, ClassicLazyImportsMatchEagerNativeSlotObservations) {
+#ifndef NEVERD_DARWIN_LAZY_NATIVE_ORACLE
+  GTEST_SKIP() << "native Darwin reference requires a macOS build host";
+#else
+  llvm::SmallString<128> Temporary;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-native-lazy", Temporary));
+  const std::filesystem::path Root(Temporary.str().str());
+  bool Passed = false;
+  auto Cleanup = llvm::scope_exit([&] {
+    if (Passed)
+      std::filesystem::remove_all(Root);
+  });
+  const std::string Program = NEVERD_DARWIN_LAZY_NATIVE_ORACLE;
+  const auto Input = (Root / "stdin").string();
+  std::ofstream(Input).close();
+  // Ask the native loader for the same preparation-time resolution policy.
+  // The default loader policy on other macOS releases is not inferred here.
+  const llvm::StringRef Environment[] = {"DYLD_BIND_AT_LAUNCH=1"};
+  for (bool Terminal : {false, true}) {
+    const auto Output =
+        (Root / (Terminal ? "exit.stdout" : "normal.stdout")).string();
+    const auto Error =
+        (Root / (Terminal ? "exit.stderr" : "normal.stderr")).string();
+    const std::optional<llvm::StringRef> Redirects[] = {Input, Output, Error};
+    std::vector<llvm::StringRef> Arguments{Program};
+    if (Terminal)
+      Arguments.push_back("exit");
+    std::string LaunchError;
+    bool ExecutionFailed = false;
+    const auto Status = llvm::sys::ExecuteAndWait(
+        Program, Arguments, llvm::ArrayRef(Environment), Redirects, 5, 0,
+        &LaunchError, &ExecutionFailed);
+    ASSERT_FALSE(ExecutionFailed) << LaunchError;
+    auto Out = llvm::MemoryBuffer::getFile(Output),
+         Err = llvm::MemoryBuffer::getFile(Error);
+    ASSERT_TRUE(bool(Out));
+    ASSERT_TRUE(bool(Err));
+    ASSERT_EQ(Status, Terminal ? 35 : 83)
+        << LaunchError << (*Err)->getBuffer().str();
+    EXPECT_EQ((*Out)->getBuffer(),
+              Terminal ? llvm::StringRef("X") : llvm::StringRef("A\0ZS", 4));
+    EXPECT_TRUE((*Err)->getBuffer().empty());
+    ProcessOptions Options;
+    Options.Backend = ExecutionBackendKind::Unicorn;
+    Options.InstructionQuantum = 1024;
+    Options.Arguments = {"lazy"};
+    Options.DarwinFiles.emplace();
+    Options.DarwinFiles->StandardInput.emplace();
+    if (Terminal)
+      Options.Arguments.push_back("exit");
+    auto Guest = emulateProcess(Program, ProcessProfile::MacOSMachO64, Options);
+    ASSERT_TRUE(bool(Guest)) << llvm::toString(Guest.takeError());
+    EXPECT_EQ(Guest->Stop, ProcessStopReason::Exited) << Guest->Diagnostic;
+    EXPECT_EQ(Guest->ExitStatus, Status);
+    EXPECT_EQ(Guest->StandardOutput, (*Out)->getBuffer());
+    EXPECT_TRUE(Guest->StandardError.empty());
+    EXPECT_TRUE(Guest->Services.empty());
+    EXPECT_EQ(Guest->NativeCalls.size(), Terminal ? 2u : 13u);
+  }
+  Passed = !HasFailure();
+#endif
+}
+
 TEST(DarwinNative, DirectoryOwnershipWorkloadMatchesOwnedNativeObjectLifetime) {
 #ifndef NEVERD_DARWIN_NATIVE_ORACLE
   GTEST_SKIP() << "native Darwin reference requires a macOS build host";

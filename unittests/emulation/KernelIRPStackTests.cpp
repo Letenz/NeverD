@@ -277,6 +277,58 @@ TEST_F(KernelIRPStack, AsynchronousFileOverlapsReadsWithoutImplicitPosition) {
   EXPECT_EQ(get(File + FileCurrentByteOffset), 0u);
 }
 
+TEST_F(KernelIRPStack, ReadWriteCompletionPreservesStoredFilePosition) {
+  for (bool Async : {false, true}) {
+    DriverRequest Create;
+    Create.Kind = DriverRequestKind::Create;
+    Create.Device = "\\Device\\StackLower";
+    Create.AsynchronousFile = Async;
+    const auto Open = take(Model->beginRequest(Create));
+    const uint64_t File = get(current(Open.IRP) + StackFileOffset);
+    status(Open.IRP);
+    call("IofCompleteRequest", {Open.IRP, 0});
+    archive(Open.IRP);
+    for (auto Kind : {DriverRequestKind::Read, DriverRequestKind::Write})
+      for (uint32_t Status : {0u, 0x80000005u, 0xc0000001u})
+        for (uint32_t Length : {0u, 4u})
+          for (bool PendingIO : {false, true}) {
+            SCOPED_TRACE(::testing::Message()
+                         << Async << ' ' << unsigned(Kind) << ' ' << Status
+                         << ' ' << Length << ' ' << PendingIO);
+            // Seed retained owner state independently of the requested offset.
+            // Completion has no authority to seek a guest device's file.
+            constexpr uint64_t Position = 0x1122334455;
+            success(Memory->writeInteger(File + FileCurrentByteOffset, Position,
+                                         8));
+            DriverRequest Input;
+            Input.Kind = Kind;
+            Input.ByteOffset = 42;
+            if (Kind == DriverRequestKind::Read)
+              Input.OutputSize = Length;
+            else
+              Input.Input.assign(Length, 0x5a);
+            const auto Transfer = take(Model->beginRequest(Input));
+            if (PendingIO) {
+              call("IoMarkIrpPending", {Transfer.IRP});
+              success(Model->recordDispatchReturn(Transfer.IRP, Pending));
+            }
+            status(Transfer.IRP, Status, Length);
+            call("IofCompleteRequest", {Transfer.IRP, 0});
+            EXPECT_EQ(get(File + FileCurrentByteOffset), Position);
+            if (!PendingIO)
+              success(Model->recordDispatchReturn(Transfer.IRP, Status));
+            success(Model->finalizeRequest(Transfer.IRP));
+            EXPECT_EQ(get(File + FileCurrentByteOffset), Position);
+          }
+    for (auto Kind : {DriverRequestKind::Cleanup, DriverRequestKind::Close}) {
+      const uint64_t IRP = begin(Kind);
+      status(IRP);
+      call("IofCompleteRequest", {IRP, 0});
+      archive(IRP);
+    }
+  }
+}
+
 TEST_F(KernelIRPStack, CopyUsesCountedSlotsAndPreservesTheOriginalOperation) {
   const uint64_t IRP = io();
   const uint64_t Top = IRP + IRPSize + StackSize;

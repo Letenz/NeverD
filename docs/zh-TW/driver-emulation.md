@@ -684,15 +684,23 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 
 `RtlCaptureContext` 在 checked-x64 Unicorn/KVM/WHP 共用匯入與動態實作，要求 IRQL <= DISPATCH_LEVEL。記錄須為 16 位元組對齊、完整可讀寫的 1232 位元組核心 RAM。只寫入 `[48,72)`、`[120,262)`、`[280,284)`、`[416,672)`，保留其餘位元組及 x87 資料/指標、MXCSR mask。ContextFlags=`0x10000f`，呼叫者 RSP=入口 RSP+8，RIP 來自實際返回槽；入口 RSP-8 寫入 8 位元組旗標，RAX 為零擴展 EFLAGS，算術旗標依 ADD(入口 RSP-8,8) 更新。DS/ES/FS/GS 使用 checked 邏輯 SS，不代表主機或原始後端值。完整記錄、返回槽與暫存槽須通過普通核心 RAM、有效物件、權限與唯一實體映射檢查，記錄不可重疊返回/暫存範圍；入口 RSP 模 16 為 8。擷取或驗證失敗不改 CPU/RAM，legacy 明確拒絕。此有界模型不代表所有 Windows 實作；即使覆寫擷取內容仍保留環境相依性，不授予 UNPACK 還原或符號前提。
 
-檔案物件以位址維持唯一身分，由情境控制代碼、額外控制代碼與呼叫端指標共同參考。ObOpenObjectByPointer 支援已建立的 FILE_OBJECT、核心存取和選用 OBJ_KERNEL_HANDLE，並將通用檔案權限映射為具體權限。關閉某行程最後一個控制代碼時，若其他行程仍持有控制代碼，便傳送 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL；全域最後一個才傳送 CLEANUP。延後的情境 CLEANUP 保留宣告的下層回應。即使編號已重用，CLOSE 仍等待最後的控制代碼、指標及關閉續調。核心控制代碼屬於系統行程：CLEANUP 暫時使用該有效行程，保留呼叫執行緒、建立行程及 PreviousMode；CLOSE 恢復實際釋放者的行程。暫止回呼暫停釋放者。在提供者成功開啟之前失敗的 CREATE，僅保留帶參考的儲存空間並清除裝置關聯；明確取消的提供者開啟仍保留裝置，直到 CLOSE。每個關聯物件只計入一次 DEVICE_OBJECT.ReferenceCount。WDM 與 KMDF 共用生命週期；一般 KMDF 裝置以 STATUS_INVALID_DEVICE_REQUEST 完成 LOCK_CONTROL。關閉回呼內重開、存在未完成檔案 I/O 時關閉、KMDF 篩選驅動程式的 LOCK_CONTROL 轉送、名稱查詢及提供者資料／控制 I/O 仍未支援。
+檔案物件以位址維持唯一身分，由情境控制代碼、額外控制代碼與呼叫端指標共同參考。ObOpenObjectByPointer 支援已建立的 FILE_OBJECT、核心存取和選用 OBJ_KERNEL_HANDLE，並將通用檔案權限映射為具體權限。關閉某行程最後一個控制代碼時，若其他行程仍持有控制代碼，便傳送 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL；全域最後一個才傳送 CLEANUP。延後的情境 CLEANUP 保留宣告的下層回應。即使編號已重用，CLOSE 仍等待最後的控制代碼、指標及關閉續調。核心控制代碼屬於系統行程：CLEANUP 暫時使用該有效行程，保留呼叫執行緒、建立行程及 PreviousMode；CLOSE 恢復實際釋放者的行程。暫止回呼暫停釋放者。在提供者成功開啟之前失敗的 CREATE，僅保留帶參考的儲存空間並清除裝置關聯；明確取消的提供者開啟仍保留裝置，直到 CLOSE。每個關聯物件只計入一次 DEVICE_OBJECT.ReferenceCount。WDM 與 KMDF 共用生命週期；一般 KMDF 裝置以 STATUS_INVALID_DEVICE_REQUEST 完成 LOCK_CONTROL。關閉回呼內重開、存在未完成檔案 I/O 時關閉、KMDF 篩選驅動程式的 LOCK_CONTROL 轉送、提供者資料／控制 I/O 仍未支援。
 
 ## 檔案資訊查詢 IRP
 
-`IoQueryFileInformation` 對現有已建模 WDM 檔案的裝置堆疊發送真正的 `IRP_MJ_QUERY_INFORMATION`，資訊由客體驅動程式提供，不虛構檔案系統中繼資料。呼叫端須具有已知行程與執行緒、處於 PASSIVE_LEVEL，並啟用中斷及特殊核心 APC。同一檔案的重疊 I/O、已掛載 VPB、檔案擴充路由、框架擁有的被查詢檔案及非同步查詢最後參考所需的延遲刪除均明確不支援。`IoGetRelatedDeviceObject` 在 IRQL <= DISPATCH_LEVEL 傳回經驗證的未掛載裝置堆疊頂端。
+`IoQueryFileInformation` 對現有已建模 WDM 檔案的裝置堆疊發送真正的 `IRP_MJ_QUERY_INFORMATION`，資訊由客體驅動程式或明確宣告的檔案系統提供者提供。呼叫端須具有已知行程與執行緒、處於 PASSIVE_LEVEL，並啟用中斷及特殊核心 APC。同一檔案的重疊 I/O、已掛載 VPB、檔案擴充路由、框架擁有的被查詢檔案及非同步查詢最後參考所需的延遲刪除均明確不支援。`IoGetRelatedDeviceObject` 在 IRQL <= DISPATCH_LEVEL 傳回經驗證的未掛載裝置堆疊頂端。
 
 查詢借用呼叫端緩衝區直到完成。非暫止呼叫傳回分派狀態，暫止呼叫傳回完成狀態；立即以錯誤狀態完成時不發布私有 IOSB，傳回長度為零。工作執行緒完成通知在原呼叫端恢復時交付。同步查詢保留檔案至最終 CLOSE 結束，之後僅寫入四位元組 ReturnedLength，保留相鄰位元組並允許與輸出緩衝區重疊。報告使用 kind `query_information`、origin `IoQueryFileInformation` 及 `file_information_class`；情境輸入不能建立此類請求。類別 75 轉為 71 並設定堆疊旗標 1，其餘類別直接傳給客體驅動程式，不代表已實作各類檔案系統語意。
 
 同步查詢在最終 CLOSE 結束前維持臨界區域，隨後還原呼叫端原有的 APC 狀態。待交付通知在符合條件的核心 API 返回邊界及所屬執行緒恢復客體指令前可見，包括退出防護區域和還原 IRQL。報告位元組在原行程中擷取，完成查詢的工作執行緒不會讀取其使用者緩衝區。配置失敗會重設同步檔案事件，但不修改 ReturnedLength。
+
+`ZwQueryInformationFile` 透過共同查詢擁有者解析具行程範圍的檔案控制代碼，另行配置清零的 SystemBuffer，借用呼叫端輸出。本機類別為 Access (8)、同步 Position (14)、Mode (16)、Alignment (17)、IsRemoteDevice (51)；Mode 與 Alignment 仍建立自有 IRP。轉送類別為 4/5/6/7/9/14/21/22/28/34/35/59/71/75，非同步 Position 轉送，75 改為 71 並設堆疊旗標 1。KernelMode 參考保留控制代碼範圍，但不檢查已授權存取遮罩；報告來源為 `ZwQueryInformationFile`。
+
+來賓裝置的 READ/WRITE 完成會保留已儲存的 `FILE_OBJECT.CurrentByteOffset`，包括同步傳輸和零位元組傳輸。請求中的明確 `byte_offset` 本身不會改變檔案位置；位置變化需要已實作的檔案系統或檔案定位操作。
+
+立即完成保留原生封包直到派送返回。非錯誤完成先複製輸出，再寫 Information 及四位元組 Status；立即錯誤保留呼叫端 IOSB。暫止完成通知原先可交付的執行緒；非同步暫止呼叫返回時複製完整私有 16 位元組 IOSB，其他寫入保留填補位元組。共用實體記憶體擁有者控制回收。原生 Fast I/O、未列類別、零長度緩衝呼叫和過短 Mode/Alignment 緩衝均明確拒絕，並非通用 NtQueryInformationFile 或 APC 支援。
+
+宣告式提供者透過保留的開啟 token 回答 Basic (4)、Standard (5)、Internal (6)、Name (9)、NetworkOpen (34)、AttributeTag (35)，保留時間戳、配置大小、EOF、屬性及完整 64 位元檔案 ID。名稱為准入 ASCII 路徑的磁碟區相對 UTF-16 編碼。固定結構過短回傳 STATUS_INFO_LENGTH_MISMATCH；名稱至少需八位元組，截斷時只傳回完整 UTF-16 單元、STATUS_BUFFER_OVERFLOW 與完整名稱長度。兩個 API 共用編碼器及實際客體篩選器路徑，其他提供者類別仍未支援。
 
 ## 處理器身分與 DPC 層級提升
 
@@ -703,7 +711,7 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 
 ## 宣告式檔案系統清單
 
-選用的 `filesystem` 在 DriverEntry 前宣告工作階段磁碟區。省略表示可用性未知，`[]` 表示無提供者；每個磁碟區明確包含根目錄。現有節點可經真實 CREATE 請求開啟，入口為 `ZwOpenFile` 及 `ZwCreateFile`、`IoCreateFile` 的 FILE_OPEN 形式。名稱查找、來賓篩選器、共用、控制代碼與指標生命週期使用共同擁有者，不讀取主機檔案。新增、覆寫、刪除、中繼資料查詢、資料 I/O、列舉與檔案系統控制仍未實作。
+選用的 `filesystem` 在 DriverEntry 前宣告工作階段磁碟區。省略表示可用性未知，`[]` 表示無提供者；每個磁碟區明確包含根目錄。現有節點可經真實 CREATE 請求開啟，入口為 `ZwOpenFile` 及 `ZwCreateFile`、`IoCreateFile` 的 FILE_OPEN 形式。名稱查找、來賓篩選器、共用、控制代碼與指標生命週期使用共同擁有者，不讀取主機檔案。新增、覆寫、刪除、資料 I/O、列舉與檔案系統控制仍未實作。
 
 名稱與路徑限可列印 ASCII，忽略大小寫辨識；父目錄須明確宣告，64 位元檔案 ID 在各磁碟區內唯一。不接受別名、串流、連結、重新解析點及 Unicode 路徑。每個節點必須提供類型、屬性、配置大小及四個非負有號 64 位元時間戳記，包含零。檔案須提供精確十六進位 `data`，空檔案使用空字串；EOF 為位元組數。目錄不含 data 且配置為零。磁區為 512–4096 的二次方，配置須對齊磁區並涵蓋 EOF；對齊遮罩為小於磁區大小的 2^n−1。`full_access` 僅排除 ACL 拒絕。
 

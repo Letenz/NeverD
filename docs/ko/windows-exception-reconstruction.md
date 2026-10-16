@@ -227,4 +227,6 @@ map을 검증합니다. parser 변경 시 공통 모델을 쓰는 ARM format cas
 decode 가능하다는 이유만으로 allow-list를 넓히지 않습니다. 최종 linked image에서 runtime
 exception behavior가 보존되는 것이 수용 기준입니다.
 
-선택된 handler의 cleanup은 동일한 유효 capture와 같다고 증명된 상수 값으로 다시 점프할 수 있습니다(0은 1로 정규화). 이 점프는 handler와 중단된 중첩 finally 호출을 취소하고 capture의 unwind 경계를 복원합니다. 함수 본체 밖의 callback과 도달 불가능한 꼬리도 검증된 소속을 유지합니다. 다른 capture, 다른 값 또는 동등성이 불명확한 값은 별도 증명이 필요합니다.
+선택된 handler의 cleanup은 부모 프레임의 동일한 capture 또는 다른 유효 capture로 새 스칼라 값을 사용해 점프할 수 있습니다(0은 1로 정규화). 각 대상과 값을 프레임 효과와 함께 유지하며, 실제 대상의 저장된 레지스터, ESP 및 unwind 경계를 복원합니다. 중단된 중첩 finally 호출도 종료합니다. MedIR는 각 대체를 정확한 callback 호출 위치와 capture에 연결하고, 비순환 전이 그래프의 모든 경로가 완결되도록 요구합니다. 남은 cleanup 전체에서 두 버퍼의 유효성을 확인하며, 겹치는 쓰기, 만료된 버퍼, 증명되지 않은 순환과 프레임 주소 유출은 거부합니다.
+
+중단된 finally의 RaiseException이 호출한 검색 filter도 동일한 capture나 다른 유효 capture로 점프하거나 다른 분기에서 반환할 수 있습니다. 반환과 점프의 프레임 효과를 분리하며, 점프는 filter와 중단된 모든 중첩 finally를 종료하고 자신의 대상과 값을 유지합니다.

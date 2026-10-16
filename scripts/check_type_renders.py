@@ -3,9 +3,10 @@
 
 `neverd types --all --asserts` renders every local type with compile-time
 checks of each size and offset.  This script renders them in C and C++ with
-every builtin spelling, in Rust and Go with both of their own, and compiles
-each with clang, rustc and go, so that a layout NeverD gets wrong, or source
-that does not compile, fails.  The C header, which the workbench shows as
+every builtin spelling, in Rust, Go, Python, JavaScript and Lua with both
+of their own, and compiles each with clang, rustc and go, or runs it with
+python3, node or Lua 5.3+, tsc checking JavaScript's JSDoc too, so that a
+layout NeverD gets wrong, or source that does not compile, fails.  The C header, which the workbench shows as
 C/C++, compiles as C++ as well.  Without --binary it checks the fixture PDB
 the unit tests use; with --declare it checks the types C, C++, Rust or Go
 files declare, laid out for --data-model, such as a type library NeverD
@@ -28,7 +29,8 @@ FIXTURES = REPOSITORY / "unittests" / "types" / "fixtures"
 SPELLINGS = ("windows", "ida", "keywords", "portable")
 # Rust and Go name builtins as Windows does, through aliases, or by exact
 # widths.
-RUST_SPELLINGS = GO_SPELLINGS = ("windows", "portable")
+RUST_SPELLINGS = GO_SPELLINGS = PYTHON_SPELLINGS = JAVASCRIPT_SPELLINGS = \
+    LUA_SPELLINGS = ("windows", "portable")
 
 # Windows' own typedefs of the builtins it names, as <ntdef.h> declares them:
 # prototypes of the compiler's intrinsics only match its declarations with
@@ -195,6 +197,57 @@ class Checker:
             self.report(f"go {spelling} {TARGETS[model][2]}",
                         diagnostics(result))
 
+    def python(self, model):
+        """Python's ctypes check each size and offset as the module runs."""
+        python = shutil.which("python3")
+        if not python:
+            self.skip("Python", "python3 not found")
+            return
+        if model == "ILP32":
+            self.skip("Python", "32-bit layouts need a 32-bit Python")
+            return
+        for spelling in PYTHON_SPELLINGS:
+            source = self.render(f"types-{spelling}.py", "--lang", "python",
+                                 "--spelling", spelling)
+            result = run([python, "-I", "-W", "error", str(source)])
+            self.report(f"python {spelling}", diagnostics(result))
+
+    def javascript(self):
+        """Node runs the module, whose checks read and write every accessor
+        within its record, and tsc checks its JSDoc as TypeScript does."""
+        node = shutil.which("node")
+        if not node:
+            self.skip("JavaScript", "node not found")
+            return
+        tsc = shutil.which(self.arguments.tsc)
+        if not tsc:
+            self.skip("TypeScript", f"{self.arguments.tsc} not found")
+        for spelling in JAVASCRIPT_SPELLINGS:
+            # .mjs: Node reads the file as the module it is.
+            module = self.render(f"types-{spelling}.mjs", "--lang",
+                                 "javascript", "--spelling", spelling)
+            self.report(f"javascript {spelling}",
+                        diagnostics(run([node, str(module)])))
+            if tsc:
+                result = run([tsc, "--noEmit", "--allowJs", "--checkJs",
+                              "--strict", "--target", "es2022", "--module",
+                              "es2022", str(module)])
+                self.report(f"typescript {spelling}", diagnostics(result))
+
+    def lua(self):
+        """Lua 5.3 or later runs the module, whose checks read and write
+        every accessor within its record."""
+        lua = next(filter(None, (shutil.which(name)
+                                 for name in self.arguments.lua)), None)
+        if not lua:
+            self.skip("Lua", f"none of {', '.join(self.arguments.lua)} found")
+            return
+        for spelling in LUA_SPELLINGS:
+            module = self.render(f"types-{spelling}.lua", "--lang", "lua",
+                                 "--spelling", spelling)
+            self.report(f"lua {spelling}",
+                        diagnostics(run([lua, str(module)])))
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -212,9 +265,18 @@ def main():
                         help="the data model --declare files lay out for")
     parser.add_argument("--clang", default="clang",
                         help="the clang driver C and C++ compile with")
+    parser.add_argument("--tsc", default="tsc",
+                        help="the TypeScript compiler JavaScript's JSDoc "
+                             "checks with")
+    parser.add_argument("--lua", action="append", default=None,
+                        help="a Lua 5.3+ interpreter to run Lua with; repeat "
+                             "for others to try (default lua5.4, lua5.3, "
+                             "lua)")
     parser.add_argument("--keep", default=None,
                         help="keep the rendered sources in this directory")
     arguments = parser.parse_args()
+    if arguments.lua is None:
+        arguments.lua = ["lua5.4", "lua5.3", "lua"]
     if arguments.pdb is None and arguments.binary == str(
             FIXTURES / "local_types.exe"):
         arguments.pdb = str(FIXTURES / "local_types.pdb")
@@ -247,6 +309,9 @@ def main():
             checker.prototypes(model)
         checker.rust(model)
         checker.go(model)
+        checker.python(model)
+        checker.javascript()
+        checker.lua()
     if checker.failures:
         sys.exit(f"{checker.failures} check(s) failed")
     print("every check passed" +

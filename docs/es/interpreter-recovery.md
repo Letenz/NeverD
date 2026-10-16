@@ -359,3 +359,11 @@ La repetición de prefijos de entrada visita las ramas pendientes antes de segui
 
 
 La búsqueda de alineación transmite `MaxCuts` al motor común de inferencia. Tras validar la entrada y seleccionar un conjunto que cubra todos los ciclos, rechaza los conjuntos demasiado grandes antes de explorar simbólicamente la entrada o ampliar las invariantes. Este límite por plan no reduce `MaxCutpointAttempts` ni los intentos válidos con un solo corte. El trabajo de selección de las familias filtradas sigue contabilizado. La inferencia independiente y nativa conserva sus límites; toda relación aceptada sigue requiriendo el verificador completo sin cambios.
+
+<!-- i18n-section: immutable-wide-reads -->
+
+## Lecturas anchas inmutables completas
+
+Con `ExplicitMachineState` y `NormalNonfaultingExecution`, un `LOAD` admitido de 16 bytes solo usa la imagen inmutable si cada dirección posible tiene una prueba completa de 16 bytes. La ejecución simbólica conserva los 128 bits. El residuo materializa partes escalares en orden de almacenamiento y captura la dirección que pueda solaparse antes de escribir cualquier byte de destino. Ambos órdenes de bytes comparten esta regla; cada operación emitida consume el presupuesto existente.
+
+Un dominio incompleto o un intervalo inmutable no disponible conserva toda la lectura en ejecución, sin pruebas parciales. Una longitud incorrecta devuelta por el proveedor provoca el rechazo. La memoria modificable y las observaciones de ejecución no otorgan autoridad de inmutabilidad. Los comprobantes brutos vinculan todos los bytes, incluida la mitad superior. La envoltura de código fuente y las pruebas nativas independientes mantienen sus requisitos de anchura y entorno.

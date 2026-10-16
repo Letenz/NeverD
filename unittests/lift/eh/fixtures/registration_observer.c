@@ -21,7 +21,9 @@ unsigned registration_parameter_after;
 static unsigned observed_caller;
 unsigned registration_trace;
 #if (REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 49) ||                    \
-    (REGISTRATION_CASE == 52 || REGISTRATION_CASE == 57)
+    (REGISTRATION_CASE == 52 || REGISTRATION_CASE == 57 ||                     \
+     REGISTRATION_CASE == 64 || REGISTRATION_CASE == 65 ||                     \
+     (REGISTRATION_CASE >= 72 && REGISTRATION_CASE <= 75))
 unsigned registration_iteration;
 #endif
 #if REGISTRATION_CASE >= 48 && REGISTRATION_CASE <= 51
@@ -47,11 +49,25 @@ unsigned registration_helper_visits;
 #define EXPECTED_TRACE ((iterations & 1) + 1)
 #elif REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 42
 #define EXPECTED_TRACE 2345
+#elif REGISTRATION_CASE == 68 || REGISTRATION_CASE == 70 ||                    \
+    REGISTRATION_CASE == 74
+#define EXPECTED_TRACE 23u
+#elif REGISTRATION_CASE == 69 || REGISTRATION_CASE == 71 ||                    \
+    REGISTRATION_CASE == 75
+#define EXPECTED_TRACE 263u
+#elif REGISTRATION_CASE == 72
+#define EXPECTED_TRACE ((iterations & 1) ? 23u : 235u)
+#elif REGISTRATION_CASE == 73
+#define EXPECTED_TRACE ((iterations & 1) ? 263u : 26375u)
 #elif REGISTRATION_CASE == 57
 #define EXPECTED_TRACE ((iterations & 1) ? 23u : 235u)
-#elif REGISTRATION_CASE == 54 || REGISTRATION_CASE == 58
+#elif REGISTRATION_CASE == 54 || REGISTRATION_CASE == 58 ||                    \
+    REGISTRATION_CASE == 60 || REGISTRATION_CASE == 62 ||                      \
+    REGISTRATION_CASE == 64 || REGISTRATION_CASE == 66
 #define EXPECTED_TRACE 236u
-#elif REGISTRATION_CASE == 59
+#elif REGISTRATION_CASE == 59 || REGISTRATION_CASE == 61 ||                    \
+    REGISTRATION_CASE == 63 || REGISTRATION_CASE == 65 ||                      \
+    REGISTRATION_CASE == 67
 #define EXPECTED_TRACE 2367u
 #elif REGISTRATION_CASE == 55
 #define EXPECTED_TRACE 234u
@@ -87,7 +103,9 @@ void mainCRTStartup(void) {
   for (; iterations != 4; ++iterations) {
     registration_trace = 0;
 #if (REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 49) ||                    \
-    (REGISTRATION_CASE == 52 || REGISTRATION_CASE == 57)
+    (REGISTRATION_CASE == 52 || REGISTRATION_CASE == 57 ||                     \
+     REGISTRATION_CASE == 64 || REGISTRATION_CASE == 65 ||                     \
+     (REGISTRATION_CASE >= 72 && REGISTRATION_CASE <= 75))
     registration_iteration = iterations;
 #endif
 #if REGISTRATION_CASE >= 48 && REGISTRATION_CASE <= 51

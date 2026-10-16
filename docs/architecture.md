@@ -94,12 +94,14 @@ before nesting. It reports a record whose nesting does not flatten back to the
 stream's member list, or whose members cannot sit where they say
 (`layoutProblem`).
 
-`renderType` and `renderTypes` spell types as C, C++, Rust or Go
-(`TypeLanguages.def`), each member marked with its offset. Builtins take
-the spellings each language has (`BuiltinSpellings.def`): C and C++ name
-them as Windows, IDA or the compiler does, or by exact widths; Rust and Go
-by exact widths or by Windows' names, which a module or file declares as
-aliases as wdk-sys does. Every language
+`renderType` and `renderTypes` spell types as C, C++, Rust, Go, Python,
+JavaScript or Lua (`TypeLanguages.def`), each member marked with its
+offset. Builtins take the spellings each language has (`TypeLanguages.def`
+lists them, `BuiltinSpellings.def` names them): C and C++ name them as
+Windows, IDA or the compiler does, or by exact widths; Rust, Go, Python,
+JavaScript and Lua by exact widths or by Windows' names, which a module or
+file declares as aliases as wdk-sys does (Lua's comments only, its values
+being its integers either way). Every language
 reproduces the library's layout exactly. An explicit filler moves a member
 that the language's own rules would place earlier. Rust and Go read what they
 cannot express through accessors whose arithmetic follows C, signed bitfields
@@ -110,7 +112,41 @@ enumerator two enumerations share, take one identifier per language
 it compiles. C's header compiles as C++ too, which the workbench shows it as:
 its checks are `static_assert`, and the character types C declares are left
 to C++'s keywords. Member names stay C's, so one C++ reserves, such as
-`class`, still needs the C++ rendering.
+`class`, still needs the C++ rendering. Function prototypes render in C and
+C++ (`rendersPrototypes`); asked of another language, they fail.
+
+Python is ctypes: a `Structure` or `Union` per record, anonymous records
+promoted by `_anonymous_`, and each run of bitfields one storage field,
+named apart from the others the record promotes, read through properties.
+A module declares its classes first, binds each typedef after those it
+names (an array's after the layout of what it holds, since ctypes sizes an
+array type once), and lays each record out after what it holds by value.
+Python renders only; its declarations do not read back.
+
+JavaScript and Lua read a record as a view over its bytes, which
+`ViewPlan` plans for both: an accessor per member at the offset the library
+records, made on the bytes, the offset the record begins at and their byte
+order (little-endian unless the caller says). An anonymous record's members
+are the parent's, as C reaches them; a named member of a record defined in
+place reads through a class of its own. Array elements read through methods
+that take their index, bitfields through accessors whose arithmetic follows
+C. With asserts, a module reads and writes back every accessor in bytes of
+its record's size, which fails past their end. Each language only spells
+the plan:
+- JavaScript reads through a `DataView` class per record. Integers of up to
+  four bytes are numbers and wider ones bigints, as `DataView` reads them; a
+  pointer is its address. Bitfields take 32-bit arithmetic for units of up
+  to four bytes and bigints for eight. JSDoc types every accessor, so the
+  one module is the workbench's JS/TS: TypeScript checks it with `checkJs`.
+- Lua 5.3 and later read through `string.unpack` and `string.pack`, a
+  record type per record whose views share a bytes object. Values are Lua's
+  64-bit integers, an unsigned one of eight bytes past 2^63 wrapping as they
+  do, and bytes no integer holds, such as a 16-byte integer's, are the
+  string they are. LuaJIT, which lacks both, is not a target.
+
+Python, JavaScript and Lua render only, and no language but C and C++
+renders prototypes (`rendersPrototypes`, `readsDeclarations`; the C API's
+language list says both).
 
 `parseTypes` reads C, C++, Rust and Go declarations back into the library
 (`TypeParse.h`), and `layOutRecord` lays each record out under MSVC or
@@ -2815,6 +2851,15 @@ For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X87Context.h` o
 
 ## IR representations and routes
 
+`IntrinsicValueEffects` defines positive, shape-validated contracts for operations
+whose effects are entirely explicit values. `LowIntrinsicEffects` additionally
+validates LowIR operands and memory annotations. Jump-table consumer analysis and
+module address-use collection share this classification: pure operations are
+neither escapes nor ABI call barriers, but their results retain input provenance.
+Unlisted, memory-reading and malformed intrinsics retain conservative effects,
+including address operands held in temporaries rather than ABI registers. This
+contract is stronger than eligibility for dead-code elimination.
+
 COFF loading records validated DWARF FDE extents before heuristic function
 discovery. Those extents also bound named symbols with no size. Debug sections
 do not supply pointer-table or relocation-scan roots, including debug ranges
@@ -5436,7 +5481,7 @@ libraries supplied by the CMake helper.
 | `lib/sdk` | Public C ABI, session lifecycle, queries, persistence, plugins, lift/decompile/patch/audit/hunt entry points | Aggregates the engine components into `libneverd` |
 | `lib/pass` | LLVM IR obfuscation passes and MIR pass runner | IR |
 | `lib/debug` | DWARF, PDB, and linker-map debug contexts | IR |
-| `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust and Go | LLVM DebugInfo PDB |
+| `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust, Go, Python, JavaScript and Lua | LLVM DebugInfo PDB |
 | `lib/sigs` | Signature parsing, databases, and matching | Loader |
 | `lib/libc` | Known libc names and call-model support | Standalone component |
 | `lib/symbolic` | Width-exact symbolic execution, bounded path exploration, stable control-decision histories, and the exact concrete shadow | LowIR |
@@ -6771,6 +6816,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymState` uses modulo-2^64 relative coordinates only for regions with a 64-bit symbolic base. A read crossing relative zero splits into two nonwrapping spans, keeping each input origin within one span; a store writes the complete value. Absolute-memory, register and temporary bank range overflow still refuses. This indexing rule supplies no actual-address validity, nonalias or frame-separation premise; ordinary cross-region invalidation and per-STORE preservation proofs remain unchanged. Unicorn, KVM and WHP share this analysis rule.
 
+### Bounded libSystem imports
+
+`MachOProgramLinking` owns strict original-byte classic and generic64 chain facts, complete undefined-symbol closure and preparation bounds. The Darwin process owns provider/symbol admission, pointer publication, read-only-after-fixup protection, authenticated libSystem gates and main-thread errno. `DarwinLibSystemCalls.def` binds exact Mach-O names, arities and typed kernel effects; wrappers reuse `DarwinServices` without inventing raw traps. `DarwinMemory` owns resident model reservations and the original maximum protections. Preparation and execution share `ExecutionBudget`; `ProcessReport` alone serializes optional `darwin.native_calls`. No host dyld or library code is loaded.
+
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
 ### Sequential raw compare-and-exchange
 
 `SymExec` owns the value semantics of admitted raw `ATOMIC_CMPXCHG`: capture address, expected, desired and old value before publishing the output, then commit `ite(Old == Expected, Desired, Old)` once. `SymState` owns that write's byte effects, alias invalidation and preservation budget. `InterpreterSpecialization` owns admission and provenance: Old uses the pre-write memory origin; conditional writes conservatively combine Old, expected and desired origins and invalidate possibly overlapping affine spills. Even a failed comparison requires the complete write footprint to be separated from protected return cells. The original atomic operation, ordering and occurrence remain in the residual; refusal publishes no partial residual CFG.
@@ -6801,11 +6852,17 @@ alternate semantics or service responses. JNI object limits and Binder stream
 admission fail explicitly rather than borrowing a host VM or driver.
 `AndroidJNIMethods` owns JNI method identities and descriptor/argument binding;
 all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
-The finite intrinsic catalogue remains in that owner.
+The finite intrinsic catalogue and value semantics live in `dalvik::Library`;
+JNI retains opaque identities and argument/reference transport only.
 `LinuxBinderTransactions` routes object-free messages between guest-owned opens;
 LinuxMemory owns their read-only arenas and every service body remains guest code.
 `LinuxGPUCommands` owns explicitly selected PM4 admission and execution, using
-MemoryView physical pins and the existing KGSL context/memstore owner. JSON
+MemoryView physical pins and the existing KGSL context/memstore owner.
+`LinuxGPUObjects` allocates retained RAM through `AddressSpace::allocateBacking`
+without publishing CPU mappings. The process GPU allocation table owns IDs,
+addresses and pending-free state; LinuxMemory owns the exact CPU VMAs and
+retains their device opens. Object mappings and PM4 reuse the same physical
+bytes. JSON
 adapters declare these contracts and never infer methods, services or commands.
 
 
@@ -6841,8 +6898,14 @@ static field instructions have one semantic owner in Runtime, including recursiv
 initialization, persistent erroneous classes and terminal non-Java stops.
 Program's convenience execute creates a fresh Runtime; repeated calls must use
 the workload instance. Execution is synchronous, without Java preemption or a
-concurrent Java memory-model claim. The supported class contract excludes floating/volatile fields, hierarchy
-and interface dispatch, synchronization and exception handlers.
+concurrent Java memory-model claim. The supported class contract excludes
+floating/volatile fields, synchronization and default interface bodies.
+`Program` owns superclass/interface assignability and member resolution;
+Runtime selects virtual, super and direct targets, allocates inherited fields,
+and initializes supplied superclasses before child initializers. Explicit
+public abstract interfaces are admitted without inventing implementations.
+Constructor chaining retains an uninitialized identity until the outermost
+constructor returns; premature escape remains a clear stop.
 
 `dalvik::Heap` is the single retained Java object/array owner for JNI and DEX.
 Its bounded identities are separate from native reference handles and guest
@@ -6855,10 +6918,25 @@ host ownership cycles while the heap retains objects until workload teardown.
 Java reference assignability, including array covariance, has one shared owner.
 Uninitialized construction and unsupported constructor escape fail explicitly.
 
+`dalvik::Library` is the single implementation of the bounded UTF-16 String,
+Object, Class and Throwable value methods called by JNI and DEX. Heap owns
+class identity, literal/intern pools and retained storage accounting; JNI local
+handles do not duplicate those pools. DEX constants preserve NUL and isolated
+surrogate units. Library work shares the caller's budget and deadline.
+Runtime consumes decoded ordered try regions, routes only Java throws, and
+preserves the same heap throwable through move-exception, rethrow and JNI.
+Frame storage is released on every unwind, including caught exceptions;
+resource/unsupported stops remain terminal and cannot be caught by Java.
+This is neither a second decoder nor an ART/JVM class-loader implementation.
+
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
 
 KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing operation accepts an already admitted node and mapped access, checks both directions, and excludes metadata-only opens from sharing conflicts. CLEANUP releases sharing without retiring the token; CLOSE removes the cleaned token. Cleaned retained bodies still count toward the 1024-open bound. Exact binding validation compares tokens with the file-object owner. `KernelModelFileCreate` owns CREATE and cancellation producers and reserves handle capacity before callbacks. `DriverSession` retains the original caller through pending work and nested CLOSE. The common object owner publishes the handle; namespace lookup retains a real directory body, and the terminal provider reads the admitted packet. Scenario close intent remains separate. Bidirectional token checks run on snapshot and unload.
+
+`KernelModelFileQueries` owns both borrowed IoQueryFileInformation and buffered ZwQueryInformationFile continuations, caller publication and packet disposal. KernelMode handle references reuse the object owner. Native SystemBuffer allocations register with the physical-memory owner; ordinary request retirement leaves them to the query owner. `KernelFileSystem::queryInformation` alone encodes declared metadata from retained open tokens. The terminal route consumes the actual admitted IRP class and length; adapters and reports do not reconstruct metadata.
+
+`KernelModelIO` retires transfer ownership without changing `FILE_OBJECT.CurrentByteOffset`. A request offset and completion byte count cannot substitute for a filesystem position update; synchronous native Position queries read the retained field.
 
 ### Raw environment architecture ownership
 

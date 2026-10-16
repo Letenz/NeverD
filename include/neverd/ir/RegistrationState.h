@@ -223,10 +223,21 @@ struct RegistrationSEHJumpState {
   auto operator<=>(const RegistrationSEHJumpState &) const = default;
 };
 
+/// A checked callback jump which abandons a pending jump for another live
+/// capture. Bind the exact source occurrence and callback owner, never only
+/// the runtime helper's address or the replacement capture's destination.
+struct RegistrationSEHJumpReplacement {
+  va_t Address = InvalidVA;
+  int OpSeq = -1;
+  va_t EntryVA = InvalidVA;
+  va_t CaptureCall = InvalidVA;
+  auto operator<=>(const RegistrationSEHJumpReplacement &) const = default;
+};
+
 /// A live SEH buffer supplies one physical capture PC and restored ESP. The
 /// source invocation is retired by the authenticated nonlocal runtime call.
-/// Unwind may either restore the capture or select an exception handler;
-/// neither path is an ordinary CALL return or a target-wide noreturn.
+/// Unwind may restore the capture, select a handler or transfer to another
+/// capture. None is an ordinary CALL return or a target-wide noreturn.
 struct RegistrationSEHJumpResume {
   va_t Address = InvalidVA;
   int OpSeq = -1;
@@ -255,6 +266,9 @@ struct RegistrationSEHJumpResume {
   /// unwind. These paths enter their handlers and abandon this capture;
   /// they never contribute a restored register or state projection.
   std::vector<uint32_t> SelectedScopes;
+  /// Sorted unique callback transfers which resume a different capture.
+  /// Their frame and register effects never become this capture's outcomes.
+  std::vector<RegistrationSEHJumpReplacement> Replacements;
   bool operator==(const RegistrationSEHJumpResume &) const = default;
 };
 

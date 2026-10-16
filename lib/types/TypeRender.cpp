@@ -21,25 +21,35 @@ namespace {
 struct LanguageName {
   Language Lang;
   const char *Id;
+  const char *Display;
   BuiltinSpelling Spelling;
 };
 
 constexpr LanguageName Languages[] = {
 #define NEVERD_TYPE_LANGUAGE(Name, Id, Display, Spelling)                      \
-  {Language::Name, Id, BuiltinSpelling::Spelling},
+  {Language::Name, Id, Display, BuiltinSpelling::Spelling},
 #include "neverd/types/TypeLanguages.def"
 };
 
 struct SpellingName {
   BuiltinSpelling Spelling;
   const char *Id;
-  bool C, Rust, Go;
 };
 
 constexpr SpellingName Spellings[] = {
-#define NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go)                         \
-  {BuiltinSpelling::Name, Id, C, Rust, Go},
+#define NEVERD_BUILTIN_SPELLING(Name, Id) {BuiltinSpelling::Name, Id},
 #include "neverd/types/BuiltinSpellings.def"
+};
+
+struct LanguageSpelling {
+  Language Lang;
+  BuiltinSpelling Spelling;
+};
+
+constexpr LanguageSpelling Taken[] = {
+#define NEVERD_TYPE_SPELLING(Lang, Spelling)                                   \
+  {Language::Lang, BuiltinSpelling::Spelling},
+#include "neverd/types/TypeLanguages.def"
 };
 
 struct Keyword {
@@ -80,18 +90,9 @@ std::optional<BuiltinSpelling> spellingNamed(llvm::StringRef Id) {
 }
 
 bool spellsBuiltins(Language Lang, BuiltinSpelling Spelling) {
-  for (const SpellingName &Entry : Spellings)
-    if (Entry.Spelling == Spelling) {
-      switch (Lang) {
-      case Language::C:
-      case Language::Cpp:
-        return Entry.C;
-      case Language::Rust:
-        return Entry.Rust;
-      case Language::Go:
-        return Entry.Go;
-      }
-    }
+  for (const LanguageSpelling &Entry : Taken)
+    if (Entry.Lang == Lang && Entry.Spelling == Spelling)
+      return true;
   return false;
 }
 
@@ -120,6 +121,33 @@ BuiltinSpelling spellingOf(const RenderOptions &Options) {
   return Options.Spelling && spellsBuiltins(Options.Lang, *Options.Spelling)
              ? *Options.Spelling
              : defaultSpelling(Options.Lang);
+}
+
+bool rendersPrototypes(Language Lang) {
+  return Lang == Language::C || Lang == Language::Cpp;
+}
+
+bool readsDeclarations(Language Lang) {
+  return Lang == Language::C || Lang == Language::Cpp ||
+         Lang == Language::Rust || Lang == Language::Go;
+}
+
+llvm::StringRef languageDisplay(Language Lang) {
+  for (const LanguageName &Entry : Languages)
+    if (Entry.Lang == Lang)
+      return Entry.Display;
+  return "";
+}
+
+std::string languagesText() {
+  std::string Text;
+  constexpr size_t Count = std::size(Languages);
+  for (size_t I = 0; I < Count; ++I) {
+    if (I)
+      Text += I + 1 == Count ? " or " : ", ";
+    Text += Languages[I].Id;
+  }
+  return Text;
 }
 
 llvm::StringRef languageId(Language Lang) {
@@ -187,6 +215,17 @@ constexpr const char *GoPredeclared[] = {
     "uint64", "uintptr",    "unsafe",
 };
 
+/// What a Python module of local types imports, and the builtin its classes
+/// decorate with, which a type of the same name would hide.
+constexpr const char *PythonPredeclared[] = {"ctypes", "enum", "property"};
+
+/// What a JavaScript module of local types reads from the global scope and
+/// declares itself, which a type of the same name would hide.
+constexpr const char *JavaScriptPredeclared[] = {
+    "ArrayBuffer", "BigInt", "DataView",   "Infinity",   "NaN",   "Number",
+    "Object",      "check",  "RangeError", "Uint8Array", "index", "undefined",
+};
+
 /// Rust's primitive types, which a type of the same name would hide.
 constexpr const char *RustPrimitives[] = {
     "bool",  "char", "f32", "f64", "i8",  "i16", "i32",  "i64",   "i128",
@@ -230,6 +269,14 @@ std::string NameSpelling::identifier(llvm::StringRef Name,
         return Text + "_";
   if (TypeName && Lang == Language::Rust)
     for (const char *Word : RustPrimitives)
+      if (Text == Word)
+        return Text + "_";
+  if (TypeName && Lang == Language::Python)
+    for (const char *Word : PythonPredeclared)
+      if (Text == Word)
+        return Text + "_";
+  if (TypeName && Lang == Language::JavaScript)
+    for (const char *Word : JavaScriptPredeclared)
       if (Text == Word)
         return Text + "_";
   return escapedName(Lang, Text);
@@ -286,13 +333,14 @@ std::string NameSpelling::member(llvm::StringRef Name) const {
 }
 
 std::string withComment(std::string Code, llvm::StringRef Comment,
-                        const RenderOptions &Options) {
+                        const RenderOptions &Options, llvm::StringRef Marker) {
   if (Comment.empty())
     return Code;
   const size_t Column =
       std::max<size_t>(Options.CommentColumn, Code.size() + 1);
   Code.append(Column - Code.size(), ' ');
-  Code += "// ";
+  Code += Marker;
+  Code += ' ';
   Code += Comment;
   return Code;
 }
@@ -594,6 +642,12 @@ std::string renderType(const TypeLibrary &Library, const LocalType &Type,
     return render::renderRust(Library, Type, Options);
   case Language::Go:
     return render::renderGo(Library, Type, Options);
+  case Language::Python:
+    return render::renderPython(Library, Type, Options);
+  case Language::JavaScript:
+    return render::renderJavaScript(Library, Type, Options);
+  case Language::Lua:
+    return render::renderLua(Library, Type, Options);
   }
   return std::string();
 }
@@ -614,6 +668,12 @@ std::string renderTypes(const TypeLibrary &Library,
     return render::renderRustModule(Library, Types, Options);
   case Language::Go:
     return render::renderGoFile(Library, Types, Options);
+  case Language::Python:
+    return render::renderPythonModule(Library, Types, Options);
+  case Language::JavaScript:
+    return render::renderJavaScriptModule(Library, Types, Options);
+  case Language::Lua:
+    return render::renderLuaModule(Library, Types, Options);
   }
   return std::string();
 }

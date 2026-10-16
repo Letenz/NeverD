@@ -3822,6 +3822,26 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>No local type is named %1</source>
         <translation>لا يوجد نوع محلي باسم %1</translation>
     </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python ‎(*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>عروض دقيقة ‎(c_uint32)</translation>
+    </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>وحدة JavaScript ‎(*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>أنواع JavaScript ‎(number, bigint)</translation>
+    </message>
+    <message>
+        <source>Lua (*.lua)</source>
+        <translation>Lua ‎(*.lua)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::DeclareTypesDialog</name>

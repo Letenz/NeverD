@@ -61,6 +61,7 @@
 #include <QSizeGrip>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTest>
@@ -3964,6 +3965,33 @@ private slots:
     spelling->setCurrentIndex(0);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language go spelling windows")));
+    // Python renders through ctypes, with its own two spellings.
+    types->setPage(4);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language python spelling portable")));
+    QVERIFY(!spelling->isHidden());
+    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
+                                     QStringLiteral("portable")}));
+    QCOMPARE(spelling->itemText(1), QStringLiteral("Exact widths (c_uint32)"));
+    // JavaScript whose JSDoc TypeScript checks, as one tab.
+    const auto *tabBar =
+        types->findChild<QTabBar *>(QStringLiteral("localTypesTabs"));
+    QVERIFY(tabBar);
+    QCOMPARE(tabBar->tabText(5), QStringLiteral("JS/TS"));
+    types->setPage(5);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language javascript spelling portable")));
+    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
+                                     QStringLiteral("portable")}));
+    QCOMPARE(spelling->itemText(1),
+             QStringLiteral("JavaScript types (number, bigint)"));
+    // Lua, whose spelling names the C types its comments give.
+    QCOMPARE(tabBar->tabText(6), QStringLiteral("Lua"));
+    types->setPage(6);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language lua spelling portable")));
+    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
+                                     QStringLiteral("portable")}));
     types->setPage(1);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language c spelling windows")));
@@ -4022,6 +4050,7 @@ private slots:
     // standing; a problem stays in it at its place, and a declaration that
     // reads adds its type and shows it.
     QStringList titles, languages;
+    QString chosen;
     bool problemShown = false, problemAtItsPlace = false;
     int answers = 0;
     QTimer editor;
@@ -4033,10 +4062,12 @@ private slots:
       if (auto *language = dialog ? dialog->findChild<QComboBox *>(
                                         QStringLiteral("declareLanguage"))
                                   : nullptr;
-          language && languages.isEmpty())
+          language && languages.isEmpty()) {
+        chosen = language->currentData().toString();
         for (int index = 0; index < language->count(); ++index)
           languages.append(language->itemText(index) + QLatin1Char('=') +
                            language->itemData(index).toString());
+      }
       auto *declare =
           dialog ? dialog->findChild<QPushButton *>(QStringLiteral("declare"))
                  : nullptr;
@@ -4075,10 +4106,13 @@ private slots:
               qobject_cast<QDialog *>(QApplication::activeModalWidget()))
         dialog->reject();
     });
+    // From a tab that renders only, as Python's, the editor declares C.
+    types->setPage(4);
     list->setFocus();
     QTest::keyClick(list, Qt::Key_Insert);
     QVERIFY(problemShown);
     QVERIFY(problemAtItsPlace);
+    QCOMPARE(chosen, QStringLiteral("c"));
     // C/C++ declares C, the language the window shows it in.
     QCOMPARE(languages, (QStringList{QStringLiteral("C/C++=c"),
                                      QStringLiteral("Rust=rust"),

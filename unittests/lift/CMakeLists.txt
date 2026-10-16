@@ -1408,10 +1408,13 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationSEHExceptionTests.cpp
   eh/RegistrationJumpStateTests.cpp
   eh/RegistrationMultiStateJumpTests.cpp
+  eh/RegistrationReplacementJumpTests.cpp
   eh/RegistrationPrivateCallStateTests.cpp
   eh/RegistrationBoundCallStateTests.cpp
   eh/RegistrationJumpTestUtils.cpp
   eh/RegistrationFilterStateTests.cpp
+  eh/RegistrationFilterTestUtils.cpp
+  eh/RegistrationFilterJumpTests.cpp
   eh/RegistrationSEHTryLevelTests.cpp
   eh/RegistrationScalarCallStateTests.cpp
   eh/RegistrationRuntimeMemberStateTests.cpp

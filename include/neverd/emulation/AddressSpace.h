@@ -28,6 +28,10 @@ public:
   ~AddressSpace() override;
   std::shared_ptr<AddressSpace> addressSpace() const override;
   std::shared_ptr<const void> identity() const;
+  /// Allocate zeroed, page-sized RAM without publishing a virtual mapping.
+  /// The returned view retains this space's physical owner and identity;
+  /// allocation capacity is returned when its final view/mapping is released.
+  llvm::Expected<MemoryView> allocateBacking(uint64_t Size);
   llvm::Expected<MemoryView> pinBacking(uint64_t, uint64_t) const override;
   llvm::Error validatePinned(const MemoryView &, uint64_t,
                              uint64_t) const override;

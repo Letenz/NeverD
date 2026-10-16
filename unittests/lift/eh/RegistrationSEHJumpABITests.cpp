@@ -6,6 +6,7 @@
 /// \file
 /// Keep incidental register and private-stack values out of jump-call ABIs.
 
+#include "../../../lib/ir/med/X86/RegistrationSEHJumpPrivate.h"
 #include "gtest/gtest.h"
 
 #include "neverd/ir/med/MedABIPass.h"
@@ -577,6 +578,134 @@ TEST(RegistrationSEHJumpABI, BindsNestedNonlocalCallsToTheirInvocation) {
     ASSERT_NE(Finally, Function.CallInfos.end());
     EXPECT_TRUE(Finally->Args.empty());
     EXPECT_EQ(Finally->IntegerRegisterArgCount, 0);
+  }
+}
+
+TEST(RegistrationSEHJumpABI, ReplacementsBindTheActualCallbackAndCapture) {
+  for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    JumpCallFixture F;
+    auto &Function = F.Function;
+    auto &States = *Function.RegistrationStates;
+    Function.ExceptionMetadata->CodeRange.End = 0x1045;
+    Function.ExceptionMetadata->Registration->Scopes.push_back(
+        {0, 0, 0x1800, true});
+    auto Callback = Function.Blocks[1];
+    Callback.Id = 3;
+    Callback.StartAddr = 0x1800;
+    Callback.EndAddr = 0x1825;
+    Callback.Ops.back().Addr = 0x1820;
+    auto Caller = Function.Blocks[1];
+    Caller.Id = 2;
+    Caller.StartAddr = 0x1035;
+    Caller.EndAddr = 0x1045;
+    Caller.Ops.front().Inputs[1] = MedVar::makeConst(176, 4);
+    Caller.Ops.back().Addr = 0x1040;
+    Caller.Ops.back().OriginSeq = 40;
+    auto Capture = Function.Blocks[0];
+    Capture.Id = 1;
+    Capture.StartAddr = 0x1015;
+    Capture.EndAddr = 0x1035;
+    Capture.Succs = {2};
+    Capture.Ops.front().Inputs[1] = MedVar::makeConst(176, 4);
+    Capture.Ops.back().Addr = 0x1030;
+    Capture.Ops.back().OriginSeq = 30;
+    Function.Blocks[1] = std::move(Capture);
+    Function.Blocks.push_back(std::move(Caller));
+    Function.Blocks.push_back(std::move(Callback));
+    States.Blocks.clear();
+    for (const auto &Block : Function.Blocks) {
+      RegistrationBlockState State;
+      State.BlockId = Block.Id;
+      State.Range = {Block.StartAddr, Block.EndAddr};
+      State.Levels = {0};
+      State.Reached = true;
+      State.CallbackOnly = Block.Id == 3;
+      States.Blocks.push_back(std::move(State));
+    }
+    States.SEHJumpCaptures.push_back(
+        {0x1030, 0x1035, 30, 0x2000, 0x3000, -176, -208, {0}});
+    auto CallbackResume = States.SEHJumpResumptions.front();
+    CallbackResume.Address = 0x1820;
+    CallbackResume.EntryVA = 0x1800;
+    CallbackResume.ValueOffset = -8;
+    auto &CallerResume = States.SEHJumpResumptions.front();
+    CallerResume.Address = 0x1040;
+    CallerResume.OpSeq = 40;
+    CallerResume.CaptureCall = 0x1030;
+    CallerResume.TargetVA = 0x1035;
+    CallerResume.BufferOffset = -176;
+    CallerResume.StackOffset = -208;
+    CallerResume.ValueOffset = -212;
+    CallerResume.ResumedLevels.clear();
+    CallerResume.Replacements = {{0x1820, 20, 0x1800, 0x1010}};
+    auto &Replacement = CallerResume.Replacements.front();
+    if (Mutation == 1)
+      ++Replacement.Address;
+    if (Mutation == 2)
+      ++Replacement.OpSeq;
+    if (Mutation == 3)
+      ++Replacement.EntryVA;
+    if (Mutation == 4)
+      ++Replacement.CaptureCall;
+    if (Mutation == 5)
+      Replacement.CaptureCall = CallerResume.CaptureCall;
+    if (Mutation == 6)
+      CallerResume.Replacements.push_back(Replacement);
+    if (Mutation == 7)
+      CallbackResume.ResumedLevels.clear();
+    if (Mutation == 8)
+      Replacement.EntryVA = CallbackResume.EntryVA = 0;
+    if (Mutation == 9)
+      Function.Blocks.back().Ops.back().DoesNotReturn = false;
+    if (Mutation == 10)
+      CallbackResume.BufferOffset = -176;
+    if (Mutation == 11)
+      CallerResume.Replacements.clear();
+    if (Mutation == 12)
+      CallerResume.ResumedLevels = {0};
+    States.SEHJumpResumptions.push_back(std::move(CallbackResume));
+    if (Mutation == 13)
+      std::reverse(States.SEHJumpResumptions.begin(),
+                   States.SEHJumpResumptions.end());
+    const auto Calls = getX86RegistrationSEHJumpCalls(Function);
+    EXPECT_EQ(bool(Calls), Mutation == 0 || Mutation >= 12);
+    if (Calls) {
+      EXPECT_EQ(Calls->at(0x1040).Capture->Address, 0x1030u);
+      EXPECT_EQ(Calls->at(0x1820).Capture->Address, 0x1010u);
+    }
+  }
+}
+
+TEST(RegistrationSEHJumpABI, ReplacementsMustCloseEveryCallbackPath) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    RegistrationStateAnalysis States;
+    RegistrationSEHJumpResume First, Second;
+    First.Address = First.EntryVA = 0x1800;
+    First.OpSeq = 1;
+    First.CaptureCall = 0x1010;
+    First.Replacements = {{0x1900, 2, 0x1900, 0x1020}};
+    Second.Address = Second.EntryVA = 0x1900;
+    Second.OpSeq = 2;
+    Second.CaptureCall = 0x1020;
+    Second.ResumedLevels = {0};
+    if (Mutation == 1 || Mutation == 2) {
+      Second.Replacements = {{0x1800, 1, 0x1800, 0x1010}};
+      if (Mutation == 1)
+        Second.ResumedLevels.clear();
+    }
+    if (Mutation == 3) {
+      Second.ResumedLevels.clear();
+      Second.SelectedScopes = {0};
+    }
+    States.SEHJumpResumptions = {First, Second};
+    if (Mutation == 4)
+      std::reverse(States.SEHJumpResumptions.begin(),
+                   States.SEHJumpResumptions.end());
+    size_t Work = 0;
+    EXPECT_EQ(hasCompleteSEHJumpReplacements(States, Work),
+              Mutation == 0 || Mutation >= 3);
   }
 }
 

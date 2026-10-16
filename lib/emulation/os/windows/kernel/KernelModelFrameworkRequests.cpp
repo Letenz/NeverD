@@ -74,7 +74,8 @@ llvm::Error KernelModel::validateRequestCompletion(uint64_t IRP,
       if (!Success && File->second.ProviderOpen && !File->second.OpenCancelled)
         return frameworkRequestError(
             "failed provider CREATE requires IoCancelFileOpen");
-    } else if (!Request->FileSystemReceived) {
+    } else if (Request->Kind != DriverRequestKind::QueryInformation &&
+               !Request->FileSystemReceived) {
       return frameworkRequestError(
           "file lifecycle completion requires terminal provider receipt");
     }

@@ -9,7 +9,7 @@
 //===----------------------------------------------------------------------===//
 #include "AndroidArguments.h"
 
-#include "neverd/dalvik/Runtime.h"
+#include "neverd/dalvik/Library.h"
 
 #include "llvm/Support/Endian.h"
 
@@ -17,67 +17,9 @@
 
 namespace neverd::emulation::android_model {
 namespace {
-enum Operation {
-  GetClass,
-  IdentityEquals,
-  ClassName,
-  IsArray,
-  Length,
-  Empty,
-  CharAt,
-  Hash,
-  Equals,
-  ToString,
-  Concat,
-  Substring,
-  Compare,
-  StartsWith,
-  EndsWith,
-  IndexOf,
-  GetChars,
-  ToChars,
-  Construct,
-  ValueOf
-};
-struct Method {
-  const char *Class, *Name, *Signature;
-  Operation Op;
-  bool Static = false;
-};
-// These classes have no observable class initializer in this profile.
-constexpr Method Methods[] = {
-    {"java/lang/Object", "getClass", "()Ljava/lang/Class;", GetClass},
-    {"java/lang/Object", "equals", "(Ljava/lang/Object;)Z", IdentityEquals},
-    {"java/lang/Class", "getName", "()Ljava/lang/String;", ClassName},
-    {"java/lang/Class", "isArray", "()Z", IsArray},
-    {"java/lang/String", "length", "()I", Length},
-    {"java/lang/String", "isEmpty", "()Z", Empty},
-    {"java/lang/String", "charAt", "(I)C", CharAt},
-    {"java/lang/String", "hashCode", "()I", Hash},
-    {"java/lang/String", "equals", "(Ljava/lang/Object;)Z", Equals},
-    {"java/lang/String", "toString", "()Ljava/lang/String;", ToString},
-    {"java/lang/String", "concat", "(Ljava/lang/String;)Ljava/lang/String;",
-     Concat},
-    {"java/lang/String", "substring", "(I)Ljava/lang/String;", Substring},
-    {"java/lang/String", "substring", "(II)Ljava/lang/String;", Substring},
-    {"java/lang/String", "compareTo", "(Ljava/lang/String;)I", Compare},
-    {"java/lang/String", "startsWith", "(Ljava/lang/String;)Z", StartsWith},
-    {"java/lang/String", "startsWith", "(Ljava/lang/String;I)Z", StartsWith},
-    {"java/lang/String", "endsWith", "(Ljava/lang/String;)Z", EndsWith},
-    {"java/lang/String", "indexOf", "(Ljava/lang/String;)I", IndexOf},
-    {"java/lang/String", "indexOf", "(Ljava/lang/String;I)I", IndexOf},
-    {"java/lang/String", "getChars", "(II[CI)V", GetChars},
-    {"java/lang/String", "toCharArray", "()[C", ToChars},
-    {"java/lang/String", "<init>", "()V", Construct},
-    {"java/lang/String", "<init>", "(Ljava/lang/String;)V", Construct},
-    {"java/lang/String", "<init>", "([C)V", Construct},
-    {"java/lang/String", "<init>", "([CII)V", Construct},
-    {"java/lang/String", "valueOf", "(I)Ljava/lang/String;", ValueOf, true},
-    {"java/lang/String", "valueOf", "(J)Ljava/lang/String;", ValueOf, true},
-    {"java/lang/String", "valueOf", "(Z)Ljava/lang/String;", ValueOf, true},
-    {"java/lang/String", "valueOf", "(C)Ljava/lang/String;", ValueOf, true},
-    {"java/lang/String", "valueOf", "([C)Ljava/lang/String;", ValueOf, true},
-};
+using namespace mobile::dalvik;
+using Method = LibraryMethod;
+const auto Methods = libraryMethods();
 constexpr uint64_t MethodBase = jni_abi::Base + 0x1000000;
 constexpr uint64_t DexMethodBase = MethodBase + 0x100000;
 std::string objectClass(const JNIObject &Object) {
@@ -135,7 +77,8 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
             return failure("JNI cannot explicitly invoke a DEX initializer");
         }
         if (const auto *Body = JNI.Dex->findMethod(Ref, Slot == 113)) {
-          if (auto Reason = JNI.Dex->unsupported(*Body)) {
+          if (auto Reason = JNI.Dex->unsupported(*Body);
+              Reason && !mobile::dalvik::has(Body->access, "abstract")) {
             auto Stopped = unsupportedImport(Call);
             Result.Diagnostic += " (" + *Reason + ")";
             return Stopped;
@@ -159,7 +102,9 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       if (*Name != M.Name || *Signature != M.Signature ||
           M.Static != (Slot == 113) ||
           !jniAssignable((*Receiver)->ClassName, M.Class) ||
-          (M.Op == Construct && (*Receiver)->ClassName != M.Class))
+          ((M.Op == Construct || M.Op == ThrowableConstruct ||
+            M.Op == ObjectConstruct) &&
+           (*Receiver)->ClassName != M.Class))
         continue;
       JNI.ResolvedMethods.insert(I);
       return value(MethodBase + I * 8);
@@ -198,12 +143,15 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
   const unsigned Base = New ? 28 : Static ? 114 : Nonvirtual ? 64 : 34;
   const unsigned Form = (Slot - Base) % 3;
   const char RequestedReturn = New ? 'V' : "LZBCSIJFDV"[(Slot - Base) / 3];
-  if (M.Static != Static || (New != (M.Op == Construct)) ||
+  if (M.Static != Static ||
+      (New != ((M.Op == Construct || M.Op == ThrowableConstruct ||
+                M.Op == ObjectConstruct))) ||
       RequestedReturn != (Return == '[' ? 'L' : Return))
     return failure("JNI method invocation kind or return type mismatch");
   if (Static || New) {
     if ((*Receiver)->Type != JNIObject::Class ||
-        (*Receiver)->ClassName != M.Class)
+        (New ? (*Receiver)->ClassName != M.Class
+             : !jniAssignable((*Receiver)->ClassName, M.Class)))
       return failure("JNI static method/constructor class mismatch");
   } else if (!jniAssignable(objectClass(**Receiver), M.Class)) {
     return failure("JNI method receiver type mismatch");
@@ -216,6 +164,20 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
         !jniAssignable(objectClass(**Receiver), (*Class)->ClassName) ||
         !jniAssignable((*Class)->ClassName, M.Class))
       return failure("JNI nonvirtual method class mismatch");
+    if (DexMethod) {
+      auto Lookup = DexMethod->reference;
+      Lookup.owner = "L" + (*Class)->ClassName + ";";
+      if (JNI.Dex->findMethod(Lookup, false) != DexMethod)
+        return failure("JNI nonvirtual method ID does not match class lookup");
+    }
+    if (!DexMethod && JNI.Dex) {
+      auto [Params, ReturnType] = mobile::dalvik::prototype(M.Signature);
+      mobile::dalvik::MethodRef Lookup{"L" + (*Class)->ClassName + ";", M.Name,
+                                       Params, ReturnType};
+      if (JNI.Dex->findMethod(Lookup, false))
+        return failure(
+            "JNI nonvirtual intrinsic ID does not match class lookup");
+    }
     // An inherited ID cannot select a different override in the named class.
     if (M.Op == IdentityEquals && (*Class)->ClassName == "java/lang/String")
       return failure("JNI nonvirtual method ID does not match class lookup");
@@ -251,14 +213,14 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       V = uint16_t(V);
     Values.push_back(V);
   }
+  for (unsigned I = 0; I < Values.size(); ++I)
+    if (Types[I] == 'L') {
+      auto Object = jniObject(Values[I]);
+      if (!Object)
+        return Object.takeError();
+      Values[I] = *Object ? (*Object)->Identity : 0;
+    }
   if (DexMethod) {
-    for (unsigned I = 0; I < Values.size(); ++I)
-      if (Types[I] == 'L') {
-        auto Object = jniObject(Values[I]);
-        if (!Object)
-          return Object.takeError();
-        Values[I] = *Object ? (*Object)->Identity : 0;
-      }
     uint64_t Instance = 0;
     if (New) {
       auto Allocated = allocateDex(DexMethod->reference.owner, false);
@@ -269,6 +231,13 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       Instance = (*Receiver)->Identity;
     if (!Static)
       Values.insert(Values.begin(), Instance);
+    if (!Static && !New && !Nonvirtual &&
+        !mobile::dalvik::has(DexMethod->access, "private")) {
+      DexMethod = JNI.Dex->virtualMethod(
+          DexMethod->reference, mobile::dalvik::objectDescriptor(**Receiver));
+      if (!DexMethod)
+        return failure("JNI virtual method has no supplied body");
+    }
     auto Executed = executeDex(DexMethod, Values);
     if (!Executed || !*Executed || JNI.Threads.at(threadID()).Exception)
       return Executed;
@@ -281,191 +250,38 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
     }
     return Executed;
   }
-  auto Ref = [&](std::shared_ptr<JNIObject> Object) -> BionicResult {
-    auto R = jniReference(std::move(Object));
-    if (!R)
-      return R.takeError();
-    return value(*R);
-  };
-  auto Throw = [&](llvm::StringRef Class) -> BionicResult {
-    if (auto E = jniException(Class))
-      return std::move(E);
-    return value(0);
-  };
-  auto Make = [&](llvm::ArrayRef<uint8_t> Bytes,
-                  bool Array = false) -> BionicResult {
-    auto Object =
-        jniNewObject(Array ? JNIObject::PrimitiveArray : JNIObject::String,
-                     Array ? "[C" : "java/lang/String", Bytes.size());
-    if (!Object)
-      return Object.takeError();
-    (*Object)->Bytes.assign(Bytes.begin(), Bytes.end());
-    (*Object)->Length = Bytes.size() / 2;
-    if (Array)
-      (*Object)->ElementSize = 2;
-    return Ref(*Object);
-  };
-  auto Cached = [&](const std::string &Key,
-                    llvm::ArrayRef<uint8_t> Bytes) -> BionicResult {
-    auto I = JNI.MethodConstants.find(Key);
-    if (I != JNI.MethodConstants.end())
-      return Ref(I->second);
-    auto Object =
-        jniNewObject(JNIObject::String, "java/lang/String", Bytes.size());
-    if (!Object)
-      return Object.takeError();
-    (*Object)->Bytes.assign(Bytes.begin(), Bytes.end());
-    (*Object)->Length = Bytes.size() / 2;
-    JNI.MethodConstants.emplace(Key, *Object);
-    return Ref(*Object);
-  };
-  const auto &Object = *Receiver;
-  const auto &Bytes = Object->Bytes;
-  auto Unit = [](llvm::ArrayRef<uint8_t> B, size_t I) {
-    return llvm::support::endian::read16le(B.data() + I * 2);
-  };
-  if (M.Op == GetClass) {
-    auto Class = jniClass(objectClass(*Object));
-    if (!Class)
-      return Class.takeError();
-    return Ref(*Class);
-  }
-  if (M.Op == ClassName) {
-    std::vector<uint8_t> Name;
-    for (char C : Object->ClassName) {
-      Name.push_back(C == '/' ? '.' : C);
-      Name.push_back(0);
+  if (JNI.Dex && !Static && !New && !Nonvirtual) {
+    auto [Params, ResultType] = mobile::dalvik::prototype(M.Signature);
+    mobile::dalvik::MethodRef Ref{"L" + std::string(M.Class) + ";", M.Name,
+                                  Params, ResultType};
+    if (auto Body = JNI.Dex->virtualMethod(
+            Ref, mobile::dalvik::objectDescriptor(**Receiver))) {
+      Values.insert(Values.begin(), (*Receiver)->Identity);
+      auto Executed = executeDex(Body, Values);
+      if (!Executed || !*Executed || JNI.Threads.at(threadID()).Exception)
+        return Executed;
+      if (Return == 'L' || Return == '[') {
+        auto R = jniReference(JNI.Heap->get(std::get<uint64_t>(**Executed)));
+        if (!R)
+          return R.takeError();
+        return value(*R);
+      }
+      return Executed;
     }
-    return Cached("class:" + Object->ClassName, Name);
   }
-  if (M.Op == IsArray)
-    return value(llvm::StringRef(Object->ClassName).starts_with("["));
-  if (M.Op == Length || M.Op == Empty)
-    return value(M.Op == Length ? Object->Length : Object->Length == 0);
-  if (M.Op == ToString)
-    return Ref(Object);
-  if (M.Op == ToChars)
-    return Make(Bytes, true);
-  if (M.Op == Hash) {
-    uint32_t Hash = 0;
-    for (size_t I = 0; I < Object->Length; ++I)
-      Hash = Hash * 31 + Unit(Bytes, I);
-    return value(Hash);
+  auto Executed = runDex([&](const auto &Admit, uint64_t) {
+    return mobile::dalvik::executeLibrary(
+        *JNI.Heap, M, Static || New ? 0 : (*Receiver)->Identity, Values, Admit,
+        Nonvirtual, JNI.Dex.get());
+  });
+  if (!Executed || !*Executed || JNI.Threads.at(threadID()).Exception)
+    return Executed;
+  if (New || Return == 'L' || Return == '[') {
+    auto Ref = jniReference(JNI.Heap->get(std::get<uint64_t>(**Executed)));
+    if (!Ref)
+      return Ref.takeError();
+    return value(*Ref);
   }
-  if (M.Op == CharAt) {
-    if (uint32_t(Values[0]) >= Object->Length)
-      return Throw("java/lang/StringIndexOutOfBoundsException");
-    return value(Unit(Bytes, uint32_t(Values[0])));
-  }
-  if (M.Op == Substring) {
-    const uint32_t Begin = Values[0];
-    const uint32_t End = Values.size() == 2 ? Values[1] : Object->Length;
-    if (Begin > End || End > Object->Length)
-      return Throw("java/lang/StringIndexOutOfBoundsException");
-    if (Begin == 0 && End == Object->Length)
-      return Ref(Object);
-    return Make(llvm::ArrayRef(Bytes).slice(Begin * 2, (End - Begin) * 2));
-  }
-  if (M.Op == ValueOf && Types[0] != 'L') {
-    if (Types[0] == 'C') {
-      uint8_t B[2];
-      llvm::support::endian::write16le(B, Values[0]);
-      return Make(B);
-    }
-    std::string Text = Types[0] == 'Z'   ? (Values[0] ? "true" : "false")
-                       : Types[0] == 'J' ? std::to_string(int64_t(Values[0]))
-                                         : std::to_string(int32_t(Values[0]));
-    std::vector<uint8_t> B;
-    for (char C : Text) {
-      B.push_back(C);
-      B.push_back(0);
-    }
-    if (Types[0] == 'Z' ||
-        (Types[0] == 'I' && int32_t(Values[0]) == INT32_MIN) ||
-        (Types[0] == 'J' && int64_t(Values[0]) == INT64_MIN))
-      return Cached("literal:" + Text, B);
-    // Android libcore's Integer.toString shares the -99..99 value strings;
-    // Long.toString and other integer values allocate independent strings.
-    if (Types[0] == 'I' && int32_t(Values[0]) > -100 &&
-        int32_t(Values[0]) < 100)
-      return Cached("integer:" + Text, B);
-    return Make(B);
-  }
-  if (M.Op == Construct && Values.empty())
-    return Make({});
-  // Resolve reference arguments before any object/array mutation.
-  auto Other = jniObject(Values[M.Op == GetChars ? 2 : 0]);
-  if (!Other)
-    return Other.takeError();
-  if (M.Op == IdentityEquals &&
-      (Nonvirtual || Object->Type != JNIObject::String))
-    return value(Object == *Other);
-  if (M.Op == Equals || M.Op == IdentityEquals)
-    return value(*Other && (*Other)->Type == JNIObject::String &&
-                 Bytes == (*Other)->Bytes);
-  if (M.Op == GetChars) {
-    const uint32_t Begin = Values[0], End = Values[1], Destination = Values[3];
-    if (!*Other)
-      return Throw("java/lang/NullPointerException");
-    if ((*Other)->ClassName != "[C")
-      return failure("JNI method char array parameter type mismatch");
-    if (Begin > End || End > Object->Length)
-      return Throw("java/lang/StringIndexOutOfBoundsException");
-    if (Destination > (*Other)->Length ||
-        End - Begin > (*Other)->Length - Destination)
-      return Throw("java/lang/ArrayIndexOutOfBoundsException");
-    std::copy(Bytes.begin() + Begin * 2, Bytes.begin() + End * 2,
-              (*Other)->Bytes.begin() + Destination * 2);
-    return value(0);
-  }
-  if (!*Other)
-    return Throw("java/lang/NullPointerException");
-  const bool Array = Signature.contains("[C");
-  if ((Array && (*Other)->ClassName != "[C") ||
-      (!Array && (*Other)->Type != JNIObject::String))
-    return failure("JNI method reference parameter type mismatch");
-  const auto &Right = (*Other)->Bytes;
-  if (M.Op == Construct || M.Op == ValueOf) {
-    const uint32_t Begin = Values.size() == 3 ? Values[1] : 0;
-    const uint32_t Count = Values.size() == 3 ? Values[2] : (*Other)->Length;
-    if (Begin > (*Other)->Length || Count > (*Other)->Length - Begin)
-      return Throw("java/lang/StringIndexOutOfBoundsException");
-    return Make(llvm::ArrayRef(Right).slice(Begin * 2, Count * 2));
-  }
-  if (M.Op == Concat) {
-    if (Right.empty())
-      return Ref(Object);
-    if (Right.size() > Options.MemoryLimit / 2 - Bytes.size())
-      return failure("JNI concatenated string storage budget exhausted");
-    std::vector<uint8_t> Joined = Bytes;
-    Joined.insert(Joined.end(), Right.begin(), Right.end());
-    return Make(Joined);
-  }
-  if (M.Op == Compare) {
-    for (size_t I = 0; I < std::min(Object->Length, (*Other)->Length); ++I)
-      if (Unit(Bytes, I) != Unit(Right, I))
-        return value(
-            uint32_t(int32_t(Unit(Bytes, I)) - int32_t(Unit(Right, I))));
-    return value(uint32_t(Object->Length - (*Other)->Length));
-  }
-  int64_t Offset = Values.size() == 2 ? int32_t(Values[1]) : 0;
-  if (M.Op == EndsWith)
-    Offset = int64_t(Object->Length) - int64_t((*Other)->Length);
-  auto Match = [&](uint64_t At) {
-    return At <= Object->Length && (*Other)->Length <= Object->Length - At &&
-           std::equal(Right.begin(), Right.end(), Bytes.begin() + At * 2);
-  };
-  if (M.Op == StartsWith || M.Op == EndsWith)
-    return value(Offset >= 0 && Match(Offset));
-  assert(M.Op == IndexOf);
-  Offset = std::clamp<int64_t>(Offset, 0, Object->Length);
-  // Both strings are bounded by the object budget; also bound quadratic search.
-  if (Right.size() &&
-      uint64_t(Object->Length - Offset) > 1048576 / Right.size())
-    return failure("JNI string search work budget exhausted");
-  for (uint64_t I = Offset; I <= Object->Length; ++I)
-    if (Match(I))
-      return value(I);
-  return value(uint32_t(-1));
+  return Executed;
 }
 } // namespace neverd::emulation::android_model

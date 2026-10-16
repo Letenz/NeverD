@@ -591,3 +591,11 @@ Entry-prefix replays visit queued branches before extending an earlier loop agai
 
 
 Alignment forwards `MaxCuts` to the shared inference owner. After input validation and complete feedback-cut selection, an oversized set fails before symbolic entry exploration or widening. This per-plan cap does not reduce `MaxCutpointAttempts` or legal single-cut retries. Filtered families retain their charged selection work. Standalone and native inference keep their existing limits; every accepted relation still requires the unchanged complete checker.
+
+<!-- i18n-section: immutable-wide-reads -->
+
+## Complete immutable wide reads
+
+Under `ExplicitMachineState` and `NormalNonfaultingExecution`, an admitted 16-byte `LOAD` can use immutable image evidence only when every feasible address has a complete 16-byte witness. Symbolic execution retains all 128 bits. Residual materialization uses scalar parts in storage order and captures an overlapping address before writing any destination byte. Both byte orders share this rule. Every emitted operation consumes the existing operation budget.
+
+An incomplete address domain or unavailable immutable span retains the whole runtime read without partial witnesses. A provider returning a malformed byte extent refuses the result. Writable memory and runtime observations do not acquire immutable authority. Raw receipts bind all witness bytes, including the upper half. Source wrapping and independent native proofs keep their existing width and environment requirements.

@@ -20,13 +20,10 @@ namespace neverd::registration_state {
 
 bool RegistrationStateSolver::runSEHUnwind(
     FrameState Frame, int32_t Level, uint32_t Bound, SEHFrameOutcomes &Outcomes,
-    std::vector<RegistrationObjectExtent> &Writes, const SEHJumpCapture *Jump,
-    const FrameValue *JumpValue,
-    std::set<RegistrationSEHJumpState> *StateRestores,
+    std::vector<RegistrationObjectExtent> &Writes, SEHJumpUnwind *Jump,
     SEHHandlerOutcomes *Selected) {
   if (KnownCxx || !Chain.TryLevelOffset || !validLevel(Level) ||
-      bool(Jump) != bool(JumpValue) ||
-      (Jump && Bound != uint32_t(Jump->Level)) ||
+      (Jump && Bound != uint32_t(Jump->Capture.Level)) ||
       (EH4 && (!CompleteCookies || !cookiesReady(Frame))))
     return false;
   struct Step {
@@ -34,16 +31,24 @@ bool RegistrationStateSolver::runSEHUnwind(
     int32_t VisibleLevel;
     uint32_t Bound;
     std::optional<uint32_t> Handler;
+    FrameValue Value;
+    std::optional<int32_t> Destination;
+    std::optional<RegistrationSEHJumpReplacement> Replacement;
     bool Leave = false;
   };
   Frame.store(*Chain.TryLevelOffset, 4, FrameValue::constant(uint32_t(Level)));
   std::vector<Step> Pending;
-  Pending.push_back({std::move(Frame), Level, Bound, std::nullopt});
+  Pending.push_back(
+      {std::move(Frame), Level, Bound, std::nullopt,
+       Jump ? Jump->Value : FrameValue{},
+       Jump ? std::optional(Jump->Capture.BufferOffset) : std::nullopt,
+       std::nullopt});
   // Keep only the active DFS path. Copying the entire path into every next
   // step makes even a straight scope chain quadratic in frame storage/work.
   // Equal frames must have equal proved TryLevel cells, so other levels need
   // neither a frame comparison nor a separate copy of the ancestry.
-  using Position = std::tuple<int32_t, uint32_t, std::optional<uint32_t>>;
+  using Position = std::tuple<int32_t, uint32_t, std::optional<uint32_t>,
+                              FrameValue, std::optional<int32_t>>;
   std::map<Position, std::vector<FrameState>> Ancestors;
   while (!Pending.empty()) {
     Step Current = std::move(Pending.back());
@@ -51,8 +56,9 @@ bool RegistrationStateSolver::runSEHUnwind(
     if (!charge(1 + 2 * std::bit_width(Ancestors.size() + 1)))
       return false;
     if (Current.Leave) {
-      auto It = Ancestors.find(
-          {Current.VisibleLevel, Current.Bound, Current.Handler});
+      auto It =
+          Ancestors.find({Current.VisibleLevel, Current.Bound, Current.Handler,
+                          Current.Value, Current.Destination});
       assert(It != Ancestors.end() && !It->second.empty());
       const auto &Last = It->second.back();
       if (!charge(Last.cellCount() + Last.OtherRegisterBytes.size() + 1))
@@ -88,11 +94,26 @@ bool RegistrationStateSolver::runSEHUnwind(
           return false;
         continue;
       }
-      if (StateRestores) {
+      if (Jump) {
+        const auto Capture = Current.Destination
+                                 ? Jump->Captures.find(*Current.Destination)
+                                 : Jump->Captures.end();
+        if (Capture == Jump->Captures.end() ||
+            !hasSEHJumpCapture(Current.Frame, Capture->second) ||
+            !mergeSEHFrameOutcome(
+                Jump->Resumed[*Current.Destination][Current.Value],
+                Current.Frame))
+          return false;
         if (!charge(1))
           return false;
-        StateRestores->insert(
-            {Current.VisibleLevel, Walk, Jump ? Jump->Level : int32_t(Bound)});
+        if (*Current.Destination != Jump->Capture.BufferOffset) {
+          if (!Current.Replacement)
+            return false;
+          Jump->Replacements.insert(*Current.Replacement);
+          continue;
+        }
+        Jump->StateRestores.insert(
+            {Current.VisibleLevel, Walk, Jump->Capture.Level});
       }
       if (!mergeSEHFrameOutcome(Outcomes, std::move(Current.Frame)))
         return false;
@@ -100,7 +121,8 @@ bool RegistrationStateSolver::runSEHUnwind(
     }
     if (Walk < 0 || size_t(Walk) >= Chain.Scopes.size())
       return false;
-    auto &AtLevel = Ancestors[{Walk, Current.Bound, Current.Handler}];
+    auto &AtLevel = Ancestors[{Walk, Current.Bound, Current.Handler,
+                               Current.Value, Current.Destination}];
     for (const auto &Ancestor : AtLevel) {
       if (!charge(Ancestor.cellCount() + Ancestor.OtherRegisterBytes.size() +
                   Current.Frame.cellCount() +
@@ -117,7 +139,14 @@ bool RegistrationStateSolver::runSEHUnwind(
     AtLevel.push_back(Current.Frame);
     // Leave after all children, so siblings may converge on the same frame
     // without borrowing each other's ancestry or hiding a recurrent path.
-    Pending.push_back({{}, Walk, Current.Bound, Current.Handler, true});
+    Pending.push_back({{},
+                       Walk,
+                       Current.Bound,
+                       Current.Handler,
+                       Current.Value,
+                       Current.Destination,
+                       Current.Replacement,
+                       true});
     const auto &Scope = Chain.Scopes[Walk];
     Current.Frame.store(*Chain.TryLevelOffset, 4,
                         FrameValue::constant(uint32_t(Scope.EnclosingLevel)));
@@ -125,7 +154,7 @@ bool RegistrationStateSolver::runSEHUnwind(
     SEHHandlerOutcomes Selections;
     std::optional<SEHUnwindJump> Repeated;
     if (Jump)
-      Repeated.emplace(SEHUnwindJump{*Jump, *JumpValue, {}});
+      Repeated.emplace(SEHUnwindJump{Jump->Captures, {}});
     if (Scope.IsFinally) {
       if (!runLocalFinally(Scope.HandlerVA, Current.Frame, false, &Writes,
                            Repeated ? &*Repeated : nullptr, &Returned,
@@ -144,26 +173,41 @@ bool RegistrationStateSolver::runSEHUnwind(
       // must project the old logical cell through those remaining steps.
       Pending.push_back({std::move(NextFrame),
                          Scope.IsFinally ? NextLevel : Current.VisibleLevel,
-                         Current.Bound, Current.Handler});
+                         Current.Bound, Current.Handler, Current.Value,
+                         Current.Destination, Current.Replacement});
     }
     for (auto &[ScopeIndex, Frames] : Selections) {
       if (ScopeIndex >= Chain.Scopes.size() ||
           Chain.Scopes[ScopeIndex].IsFinally || !charge(Frames.size() + 1))
         return false;
       for (auto &[NextLevel, NextFrame] : Frames)
-        Pending.push_back(
-            {std::move(NextFrame), NextLevel, ScopeIndex, ScopeIndex});
+        Pending.push_back({std::move(NextFrame), NextLevel, ScopeIndex,
+                           ScopeIndex, Current.Value, Current.Destination,
+                           Current.Replacement});
     }
     if (Repeated)
-      for (auto &[NextLevel, NextFrame] : Repeated->Resumed) {
+      for (auto &[Transfer, Frames] : Repeated->Resumed) {
         // A new jump reloads the current state but restores the capture's
         // bound. The pending handler and its bound no longer own this path.
-        NextFrame.leaveCallback();
-        Pending.push_back(
-            {std::move(NextFrame), NextLevel, Bound, std::nullopt});
+        if (!charge(Frames.size() + 1))
+          return false;
+        const auto Capture = Jump->Captures.find(Transfer.BufferOffset);
+        if (Capture == Jump->Captures.end())
+          return false;
+        auto Replacement = Current.Replacement;
+        if (!Replacement && Transfer.BufferOffset != Jump->Capture.BufferOffset)
+          Replacement = Transfer.Source;
+        for (auto &[NextLevel, NextFrame] : Frames) {
+          NextFrame.leaveCallback();
+          Pending.push_back({std::move(NextFrame), NextLevel,
+                             uint32_t(Capture->second.Level), std::nullopt,
+                             Transfer.Value, Transfer.BufferOffset,
+                             Replacement});
+        }
       }
   }
-  return !Outcomes.empty() || (Selected && !Selected->empty());
+  return !Outcomes.empty() || (Selected && !Selected->empty()) ||
+         (Jump && !Jump->Resumed.empty());
 }
 
 } // namespace neverd::registration_state

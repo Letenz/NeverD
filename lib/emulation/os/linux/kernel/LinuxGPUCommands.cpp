@@ -70,8 +70,10 @@ LinuxFiles::gpuIoctl(LinuxDeviceState &Device, uint32_t Request,
           Result, "GPU mapping requires ordinary user RAM and admitted flags");
     if (!Host || !Length || Host % 4096 || Length % 4096 || Get64(24))
       return Outcome(uint64_t(0) - InvalidArgument);
-    if (Length > 32768 || GPU.Allocations.size() >= 64 ||
-        GPU.NextAddress + Length + 4096 > 0x100000000ULL)
+    const auto GPUAddress =
+        kgsl::allocationAddress(*Device.Options, GPU.NextAddress, Length);
+    if (Length > kgsl::MaximumAllocation ||
+        GPU.Allocations.size() >= kgsl::MaximumAllocations || !GPUAddress)
       return unsupported(Result, "GPU pinned memory budget exhausted");
     if (Host > Layout.UserLimit || Length > Layout.UserLimit - Host)
       return Outcome(uint64_t(0) - BadAddress);
@@ -85,14 +87,14 @@ LinuxFiles::gpuIoctl(LinuxDeviceState &Device, uint32_t Request,
     auto Backing = CPU.pinBacking(Host, Length);
     if (!Backing)
       return Backing.takeError();
-    const uint64_t Address = GPU.NextAddress;
+    const uint64_t Address = *GPUAddress;
     llvm::support::endian::write64le(Data + 8, Address);
     llvm::support::endian::write32le(Data + 44, Flags | 0x60); // USERMEM_ADDR
     if (auto E = CPU.write(Argument, Data))
       return std::move(E);
     GPU.Allocations.emplace(Address,
                             GPUAllocation{std::move(*Backing), ReadOnly});
-    GPU.NextAddress += Length + 4096;
+    GPU.NextAddress = Address + Length + 4096;
     return Outcome(0);
   }
   const uint32_t ID = Get32(0), Words = Get32(16);

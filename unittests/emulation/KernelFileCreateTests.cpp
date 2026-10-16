@@ -192,6 +192,48 @@ TEST_F(KernelFileCreate, IndependentBodiesShareNodesAndCloseWithoutScenario) {
   ok(Model->snapshot());
 }
 
+TEST_F(KernelFileCreate, QueriesDeclaredMetadataThroughBothProducerContracts) {
+  for (bool Native : {false, true}) {
+    const auto Handle = open();
+    const auto File = *Result.Requests.back().FileObject;
+    const auto OpenID = Result.Requests.back().FileOpenOperation;
+    const uint64_t Buffer = Scratch + 0x800, IOSB = Scratch + 0x900;
+    for (auto [Class, Size] : {std::pair{4u, 40u},
+                               {5u, 24u},
+                               {6u, 8u},
+                               {9u, 14u},
+                               {34u, 56u},
+                               {35u, 8u}}) {
+      SCOPED_TRACE(::testing::Message() << Native << ' ' << Class);
+      ok(Memory->write(Buffer, std::vector<uint8_t>(64, 0xa5)));
+      if (Native)
+        call("ZwQueryInformationFile", {Handle, IOSB, Buffer, 64, Class});
+      else
+        call("IoQueryFileInformation", {File, Class, 64, Buffer, IOSB});
+      auto Pending = Model->takeFileAPIContinuation();
+      ASSERT_TRUE(Pending);
+      EXPECT_EQ(finish(*Pending), 0u);
+      EXPECT_EQ(read(Native ? IOSB + 8 : IOSB, Native ? 8 : 4), Size);
+      EXPECT_EQ(Result.Requests.back().FileOpenOperation, OpenID);
+      EXPECT_EQ(Result.Requests.back().FileSystemFileID, 1u);
+      EXPECT_EQ(Result.Requests.back().Output.size(), Size);
+      EXPECT_EQ(read(Buffer + Size, 1), 0xa5u);
+      if (Class == 4 || Class == 34)
+        EXPECT_EQ(read(Buffer + (Class == 4 ? 32 : 48), 4), 0x80u);
+      if (Class == 5)
+        EXPECT_EQ(read(Buffer + 16, 4), 1u);
+      if (Class == 6)
+        EXPECT_EQ(read(Buffer), 1u);
+      if (Class == 9) {
+        EXPECT_EQ(read(Buffer, 4), 10u);
+        EXPECT_EQ(read(Buffer + 4, 2), uint64_t('\\'));
+      }
+    }
+    EXPECT_EQ(call("ZwClose", {Handle}), 0u);
+    ok(Model->snapshot());
+  }
+}
+
 TEST_F(KernelFileCreate, CleanupReleasesSharingBeforeLastPointerClose) {
   const auto Handle = open("\\Device\\OpenVolume\\Data", 0x100081, 0);
   const auto File = *Result.Requests.front().FileObject;
@@ -266,6 +308,12 @@ TEST_F(KernelFileCreate, FilterSeesOriginalPacketAndCannotForgeSuccess) {
   rejects(Model->call("IofCompleteRequest", {IRP, 0}), "terminal provider");
   EXPECT_EQ(forward(IRP), 0u);
   ok(Model->validateGuestAccess(IRP + IRPStatusOffset, 4, false));
+  rejects(Model->validateGuestAccess(IRP + IRPStatusOffset, 4, true),
+          "read-only");
+  rejects(Model->validateGuestAccess(IRP + IRPFlagsOffset, 4, true),
+          "read-only");
+  ok(Model->validateGuestAccess(Security + 0x10, 4, false));
+  rejects(Model->validateGuestAccess(Security + 0x10, 4, true), "read-only");
   EXPECT_EQ(read(IRP + IRPStatusOffset, 4), 0u);
   EXPECT_EQ(read(IRP + IRPInformationOffset), 1u);
   EXPECT_EQ(call("KeReadStateEvent", {File + FileEventOffset}), 0u);

@@ -95,7 +95,8 @@ TEST(DalvikRuntime, ResourceAndInstructionBoundariesFailExplicitly) {
   EXPECT_EQ(run(fixture({insn(0, "monitor-enter", {0})})).stop,
             ExecutionStop::Unsupported);
 }
-TEST(DalvikRuntime, FloatingStateHierarchyAndExceptionHandlersAreNotGuessed) {
+TEST(DalvikRuntime,
+     FloatingStateUnknownHierarchyAndMalformedHandlersFailClearly) {
   auto c = fixture({insn(0, "return-void")}, 0, "V");
   Field field;
   field.reference = {c.name, "floating", "F"};
@@ -104,7 +105,7 @@ TEST(DalvikRuntime, FloatingStateHierarchyAndExceptionHandlersAreNotGuessed) {
   EXPECT_EQ(run(c).stop, ExecutionStop::Unsupported);
   c.fields.clear();
   c.methods[0].tries.push_back({0, 1, {}});
-  EXPECT_EQ(run(c).stop, ExecutionStop::Unsupported);
+  EXPECT_EQ(run(c).stop, ExecutionStop::Invalid);
   c.methods[0].tries.clear();
   c.superclass = "Lunknown/Base;";
   EXPECT_EQ(run(c).stop, ExecutionStop::Unsupported);
@@ -476,6 +477,105 @@ TEST(DalvikRuntime, FinalInstanceStoresAreRestrictedToTheConstructingReceiver) {
   auto result =
       runtime.execute(*p.findMethod(ctor.reference, false), args, admit, 65536);
   EXPECT_EQ(result.stop, ExecutionStop::Invalid);
+}
+TEST(DalvikRuntime, CatchRethrowRetainsTheOriginalHeapObject) {
+  auto c = fixture({insn(0, "throw", {1}), insn(1, "move-exception", {0}),
+                    insn(2, "throw", {0})},
+                   2, "V");
+  c.methods[0].reference.parameters = {"Ljava/lang/RuntimeException;"};
+  c.methods[0].tries = {{0, 1, {{"Ljava/lang/Exception;", 1}}}};
+  Program program({c});
+  auto heap = std::make_shared<Heap>();
+  auto exception =
+      heap->allocate(Object::Throwable, "java/lang/RuntimeException", 0);
+  Runtime runtime(program, heap);
+  uint64_t args[] = {exception->Identity};
+  auto result = runtime.execute(
+      *program.findStatic(c.methods[0].reference), args,
+      [] { return ExecutionStop::Returned; }, 65536);
+  EXPECT_EQ(result.stop, ExecutionStop::Thrown);
+  EXPECT_EQ(result.throwable, exception->Identity);
+  EXPECT_EQ(result.exception, "java/lang/RuntimeException");
+}
+TEST(DalvikRuntime, CatchCannotSwallowUnsupportedOrResourceStops) {
+  auto c = fixture({insn(0, "monitor-enter", {0}),
+                    insn(1, "move-exception", {0}), insn(2, "return-void")},
+                   1, "V");
+  c.methods[0].tries = {{0, 1, {{std::nullopt, 1}}}};
+  EXPECT_EQ(run(c).stop, ExecutionStop::Unsupported);
+  c.methods[0].instructions[0] = insn(0, "goto");
+  c.methods[0].instructions[0].target = 0;
+  EXPECT_EQ(run(c, 7).stop, ExecutionStop::InstructionLimit);
+  c.methods[0].instructions[0] = insn(0, "move-exception", {0});
+  EXPECT_EQ(run(c).stop, ExecutionStop::Invalid);
+}
+TEST(DalvikRuntime, HandlerOrderingAndIgnoredThrowableFollowDEXControlFlow) {
+  auto c =
+      fixture({constant(0, 0), insn(1, "throw", {0}), constant(2, 11),
+               insn(3, "return", {0}), constant(4, 22), insn(5, "return", {0})},
+              1);
+  c.methods[0].tries = {{1,
+                         2,
+                         {{"Ljava/lang/RuntimeException;", 2},
+                          {"Ljava/lang/NullPointerException;", 4}}}};
+  auto result = run(c);
+  EXPECT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+  EXPECT_EQ(result.value, 11U);
+  c.methods[0].tries[0].handlers[0].type = "Ljava/lang/ArithmeticException;";
+  EXPECT_EQ(run(c).value, 22U);
+}
+TEST(DalvikRuntime, CyclicHierarchyAndUnmodeledInterfaceBodiesStop) {
+  auto a = fixture({insn(0, "return-void")}, 0, "V");
+  a.superclass = a.name;
+  EXPECT_EQ(run(a).stop, ExecutionStop::Unsupported);
+  a.superclass = "Ljava/lang/Object;";
+  a.access = {"public", "interface"};
+  EXPECT_EQ(run(a).stop, ExecutionStop::Unsupported);
+}
+TEST(DalvikRuntime, LiteralInterningRetainsUTF16UnitsAndWorkloadIdentity) {
+  Heap heap;
+  std::string text("A\0", 2);
+  text += "\xf0\x9f\x98\x80\xed\xa0\x80";
+  auto a = heap.literal(text), b = heap.literal(text);
+  ASSERT_TRUE(a);
+  EXPECT_EQ(a, b);
+  EXPECT_EQ(a->Length, 5U);
+  EXPECT_EQ(a->Bytes,
+            (std::vector<uint8_t>{65, 0, 0, 0, 0x3d, 0xd8, 0, 0xde, 0, 0xd8}));
+  auto copy =
+      heap.allocate(Object::String, "java/lang/String", a->Bytes.size());
+  copy->Bytes = a->Bytes;
+  copy->Length = a->Length;
+  EXPECT_EQ(heap.intern(copy), a);
+  Heap fresh;
+  EXPECT_NE(fresh.literal(text), a);
+  EXPECT_THROW(javaStringBytes("\xc0\x80"), Error);
+}
+TEST(DalvikRuntime, InterfaceCannotBeInstantiatedEvenWithoutAbstractFlag) {
+  Class c;
+  c.name = "Ltest/Interface;";
+  c.superclass = "Ljava/lang/Object;";
+  c.access = {"public", "interface"};
+  Program program({c});
+  Runtime runtime(program);
+  auto result = runtime.allocate(
+      c.name, false, [] { return ExecutionStop::Returned; }, 65536);
+  EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
+}
+TEST(DalvikRuntime, FinitePlatformMarkerInterfacesPreserveAssignability) {
+  EXPECT_TRUE(
+      referenceAssignable("Ljava/lang/String;", "Ljava/io/Serializable;"));
+  EXPECT_TRUE(
+      referenceAssignable("Ljava/lang/Class;", "Ljava/io/Serializable;"));
+  EXPECT_TRUE(referenceAssignable("Ljava/lang/ArithmeticException;",
+                                  "Ljava/io/Serializable;"));
+  EXPECT_FALSE(
+      referenceAssignable("Ljava/lang/Object;", "Ljava/io/Serializable;"));
+  Class c;
+  c.name = "Ltest/Problem;";
+  c.superclass = "Ljava/lang/RuntimeException;";
+  Program program({c});
+  EXPECT_TRUE(program.assignable(c.name, "Ljava/io/Serializable;"));
 }
 } // namespace
 } // namespace neverd::mobile::dalvik

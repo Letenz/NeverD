@@ -227,6 +227,9 @@ private:
                                                        uint32_t Request,
                                                        uint64_t Argument,
                                                        ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>>
+  gpuObjectIoctl(LinuxDeviceState &Device, uint32_t Request, uint64_t Argument,
+                 ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>> gpuIoctl(LinuxDeviceState &Device,
                                                    uint32_t Request,
                                                    uint64_t Argument,

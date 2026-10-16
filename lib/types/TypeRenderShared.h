@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// What the C, C++, Rust and Go renderers share: offset comments, names
+/// What the renderers of every language share: offset comments, names
 /// that step around a language's keywords, and where a language's own
 /// layout would put a member, so that a filler can move it to the offset
 /// the library records.
@@ -80,9 +80,11 @@ private:
   std::vector<std::pair<std::string, std::string>> Renamed;
 };
 
-/// \p Code followed by "// Comment" at the comment column.
+/// \p Code followed by "// Comment" at the comment column, or the comment
+/// \p Marker the language starts one with.
 std::string withComment(std::string Code, llvm::StringRef Comment,
-                        const RenderOptions &Options);
+                        const RenderOptions &Options,
+                        llvm::StringRef Marker = "//");
 
 uint64_t alignTo(uint64_t Value, uint64_t Alignment);
 
@@ -230,6 +232,21 @@ std::string renderGo(const TypeLibrary &Library, const LocalType &Type,
 std::string renderGoFile(const TypeLibrary &Library,
                          llvm::ArrayRef<const LocalType *> Types,
                          const RenderOptions &Options);
+std::string renderPython(const TypeLibrary &Library, const LocalType &Type,
+                         const RenderOptions &Options);
+std::string renderPythonModule(const TypeLibrary &Library,
+                               llvm::ArrayRef<const LocalType *> Types,
+                               const RenderOptions &Options);
+std::string renderJavaScript(const TypeLibrary &Library, const LocalType &Type,
+                             const RenderOptions &Options);
+std::string renderJavaScriptModule(const TypeLibrary &Library,
+                                   llvm::ArrayRef<const LocalType *> Types,
+                                   const RenderOptions &Options);
+std::string renderLua(const TypeLibrary &Library, const LocalType &Type,
+                      const RenderOptions &Options);
+std::string renderLuaModule(const TypeLibrary &Library,
+                            llvm::ArrayRef<const LocalType *> Types,
+                            const RenderOptions &Options);
 
 } // namespace neverd::types::render
 

@@ -149,12 +149,33 @@ using SEHFilterOutcomes = std::map<uint32_t, SEHFrameOutcomes>;
 /// filter-written state which controls the following local unwind.
 using SEHHandlerOutcomes = std::map<uint32_t, SEHFrameOutcomes>;
 
+/// A replacement jump can change EAX without changing its captured buffer.
+/// Pair each value with the frame effects which actually resume with it.
+using SEHJumpFrameOutcomes = std::map<FrameValue, SEHFrameOutcomes>;
+
+struct SEHUnwindJumpValue {
+  int32_t BufferOffset;
+  FrameValue Value;
+  RegistrationSEHJumpReplacement Source;
+  auto operator<=>(const SEHUnwindJumpValue &) const = default;
+};
+
 // A repeated jump retires the pending handler and every suspended callback.
 // Its frames must not be projected through an ordinary callback return.
 struct SEHUnwindJump {
+  const std::map<int32_t, SEHJumpCapture> &Captures;
+  std::map<SEHUnwindJumpValue, SEHFrameOutcomes> Resumed;
+};
+
+/// Each destination keeps its own saved registers, stack and unwind bound.
+/// Only paths restoring Capture contribute its state projection or levels.
+struct SEHJumpUnwind {
   const SEHJumpCapture &Capture;
   const FrameValue &Value;
-  SEHFrameOutcomes Resumed;
+  const std::map<int32_t, SEHJumpCapture> &Captures;
+  std::map<int32_t, SEHJumpFrameOutcomes> Resumed;
+  std::set<RegistrationSEHJumpState> StateRestores;
+  std::set<RegistrationSEHJumpReplacement> Replacements;
 };
 
 struct BlockFacts {
@@ -262,9 +283,7 @@ private:
   bool runSEHUnwind(FrameState Frame, int32_t Level, uint32_t Bound,
                     SEHFrameOutcomes &Outcomes,
                     std::vector<RegistrationObjectExtent> &Writes,
-                    const SEHJumpCapture *Jump = nullptr,
-                    const FrameValue *JumpValue = nullptr,
-                    std::set<RegistrationSEHJumpState> *StateRestores = nullptr,
+                    SEHJumpUnwind *Jump = nullptr,
                     SEHHandlerOutcomes *Selected = nullptr);
   bool runLocalFinally(va_t Target, FrameState &Parent,
                        bool OrdinaryInvocation = false,
@@ -291,7 +310,8 @@ private:
   bool runSEHFilterSearch(const FrameState &Parent,
                           std::vector<RegistrationObjectExtent> *Writes,
                           SEHFrameOutcomes &Outcomes, bool RequireResume,
-                          SEHHandlerOutcomes *Selected = nullptr);
+                          SEHHandlerOutcomes *Selected = nullptr,
+                          SEHUnwindJump *Jump = nullptr);
   bool mergeSEHJumpContinuation(const Domain &Source,
                                 const SEHJumpCapture &Saved,
                                 const FrameValue &Value,

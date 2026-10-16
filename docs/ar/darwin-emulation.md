@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 124a88c959c13d8407e343d17f7964de3af1071a89f0c6430eaab22959ce3ebc -->
+<!-- i18n-source: 39a521d14dfb31f7e045451a8039cdc180e2e6fabd816f96a0c746ddfa3d19f1 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -29,11 +29,11 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 تحافظ المقاطع على الصلاحيات الحالية والقصوى والملء بالأصفار. يحجز `__PAGEZERO` العناوين دون تخصيص امتداده كاملاً. تُفحص نطاقات الملف وVM ومحاذاة صفحات النظام والتداخل بعد التقريب وملكية الرأس والدخول القابل للتنفيذ والميزانية. يجب أن يكون مقطع الرأس قابلاً للقراءة والتنفيذ؛ وتبقى صفحات الحماية وبوابة العودة الخاصة محجوزة. تحتفظ آخر صفحة ملف بالبايتات حتى حد الصفحة أو EOF، وتُصفّر صفحات VM الكاملة التالية، وفق [محمّل XNU](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/mach_loader.c).
 
-يتلقى `LC_MAIN` كلاً من `argc` و`argv` و`envp` ومتجه apple كأربعة معاملات صحيحة؛ وتشكل البتات الثمانية الدنيا من القيمة المعادة حالة الخروج. يُقبل `/usr/lib/dyld` فقط لتسليم الدخول هذا دون imports، ولا يُشغّل dyld المضيف. تُرفض قيمة `stacksize` غير الصفرية لأن خيار المستدعي `stack_size` يملك الميزانية.
+يتلقى `LC_MAIN` كلاً من `argc` و`argv` و`envp` ومتجه apple كأربعة معاملات صحيحة؛ وتشكل البتات الثمانية الدنيا من القيمة المعادة حالة الخروج. يُقبل `/usr/lib/dyld` مع `LC_MAIN` ضمن عقد imports المحدود أدناه، ولا يُشغّل dyld المضيف. تُرفض قيمة `stacksize` غير الصفرية لأن خيار المستدعي `stack_size` يملك الميزانية.
 
 يتطلب `LC_UNIXTHREAD` سجلاً واحداً كاملاً للسجلات العامة الأصلية ذات 64 بت، مع تعيين PC فقط. يحتوي المكدس الأولي argc وargv/envp المنتهيين ومتجه apple منتهياً يتضمن `executable_path=<input filename>`. تُرفض قيم SP والأعلام المخصصة والسجلات الأخرى وflavors الإضافية ونقاط الدخول المتعارضة. لا تُورث بيئة المضيف أو متجه Linux المساعد. المرجع: [معمارية dyld](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-تفشل dylib الخارجية وimports وrebases/chained fixups والبواني/الهادمات ومقاطع TLS وarm64e/PAC وأنواع CPU الفرعية غير المدعومة والتشفير وأوامر التحميل غير المنمذجة قبل التنفيذ. تستخدم PIE دون fixups العناوين المفضلة، وليس ASLR. كتل التوقيع بيانات وصفية وليست تنفيذاً لـ AMFI أو سياسات الاستحقاقات.
+تفشل dylib وimports خارج عقد libSystem المحدود أدناه والبواني/الهادمات ومقاطع TLS وarm64e/PAC وأنواع CPU الفرعية غير المدعومة والتشفير وأوامر التحميل غير المنمذجة قبل التنفيذ. تستخدم PIE المدعومة العناوين المفضلة، وليس ASLR. كتل التوقيع بيانات وصفية وليست تنفيذاً لـ AMFI أو سياسات الاستحقاقات.
 
 ## خدمات Darwin
 
@@ -1793,4 +1793,40 @@ lchown364 / final symbolic vnode / existing ownership_mutations grants
 lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / main58 stdoutW / virtual1281 guarded bytes
 native preparation489 observations including258 lchown / ARM64 O0 O1 O2
 common native82 / mandatory95 per matching platform / ARM64 required285
+```
+
+## استيراد libSystem محدود
+
+يمكن لملف thin بمعمارية أساسية ربط اعتماد قوي واحد على `/usr/lib/libSystem.B.dylib`. يلزم `LC_MAIN` و`MH_TWOLEVEL` وordinal عادي وطلب توافق لا يتجاوز 1.0. تُفحص تدفقات المؤشرات classic أو سلاسل generic64 كاملة، والرموز غير المعرفة والمواضع الدقيقة وأهداف rebase المحلية. تُرفض الاعتمادات الأخرى وربط weak/threaded وrelocation غير المدعومة والتهيئة وTLS والمؤشرات الموثقة قبل التنفيذ.
+
+تُخصص مداخل موثقة وerrno جديد للخيط الرئيسي عند وجود imports فقط. تستخدم الأغلفة تأثيرات نواة Darwin المشتركة؛ يحول الخطأ إلى `-1` وerrno ويحفظ النجاح errno السابق. اسم C `_exit` هو Mach-O `__exit`؛ أما C `exit` باسم `_exit` فلا يزال غير مدعوم. تتحقق الدوال العادية من إطار العودة ولا يحتاج الاستدعاء النهائي عنوان عودة. يحفظ التقرير المزوّد والاسم الدقيق وعدد المعاملات وجميع البتات؛ النتيجة غير المكتملة أو غير العائدة هي null. تبقى تقارير raw متوافقة.
+
+يغير `SG_READ_ONLY` الحماية الحالية إلى القراءة بعد fixups مع إبقاء الحد الأقصى المعلن. تؤكد مشاهدات O0/O1/O2 الأصلية أن `mprotect` يستعيد الكتابة إذا كان الحد RW. ترفض صفحات المداخل وerrno المحجوزة إلغاء التعيين أو تغيير الحماية من الضيف. يشترك الإعداد والتنفيذ في الموعد وحساب الأحداث وميزانية الذاكرة الموجودة.
+
+يُربط الكائن المكتوب مستقلاً بطرق system/classic/chained ويعمل مع libSystem الحقيقي. تغطي process/C/CLI/Python خمس تركيبات منصة/ISA وثلاثة ملفات ARM64 HVF متوافقة. لا يزال تحميل dylib العام وdlopen/dlsym وshared cache والبواني والخيوط وأطر Apple وIntel HVF واعتماد iOS الفعلي غير مكتمل.
+
+تُحل مؤشرات classic lazy قبل الدخول. يحدد كل برنامج وجهته وordinal العادي ورمزه دون وراثة الحالة، مع نوع مؤشر وaddend صفري وتعليمة DO_BIND واحدة تتبعها DONE مباشرة. يُدمج فقط rebase واحد إلى بايتات محلية قابلة للتنفيذ مع lazy bind للخانة نفسها، ويُحتسب السجلان في الميزانية. يتطلب dyld_stub_binder ربط classic عاديًا قويًا بلا addend واستدعاءات lazy فعلية. يفشل تنفيذه قبل قراءة إطار C والمعاملات أو تعديل errno أو تسجيل الاستدعاء. لا يُنفذ محلل وقت التشغيل أو حالة dyld الخاصة. يتحقق المرجع الأصلي والضيف من ثبات المؤشرات والمخرجات وحالة الدوال الست.
+
+```text
+provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
+C -> Mach-O: read -> _read; write -> _write; close -> _close
+C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
+fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
+unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
+errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
+SG_READ_ONLY: current R after fixup; original declared maximum is retained
+gates: RX/max RX; errno: RW/max RW; both resident model reservations
+budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
+preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
+report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
+call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
+basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
+_exit: status 35; stdout_hex 58; named calls 2; events 2
+native common catalogue: 82; required methods/platform: 97; matching ARM64 identities: 291
+```
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
 ```
