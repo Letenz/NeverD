@@ -35,6 +35,34 @@ const LibSystemBinding &libSystemBinding(LibSystemGateKind Kind) {
   assert(Index < std::size(Bindings));
   return Bindings[Index];
 }
+llvm::Expected<LibSystemArguments>
+readLibSystemArguments(ExecutionBackend &CPU, const IntegerABI &ABI,
+                       uint64_t SP, LibSystemGateKind Kind) {
+  LibSystemArguments Arguments;
+  Arguments.Count = libSystemBinding(Kind).Arguments;
+  for (unsigned I = 0; I < Arguments.Count; ++I) {
+    auto Value = ABI.readArgument(CPU, SP, I);
+    if (!Value)
+      return Value.takeError();
+    Arguments.Carriers[I] = *Value;
+  }
+  if (Kind == LibSystemGateKind::Open &&
+      (uint32_t(Arguments.Carriers[1]) & value::OpenCreate)) {
+    // Apple's ARM64 varargs use stack slots even with unused GP registers.
+    // Only the promoted int's four bytes are defined, not the slot padding.
+    auto Mode = ABI.info().Architecture == GuestArchitecture::X64
+                    ? ABI.readArgument(CPU, SP, 2)
+                    : CPU.readInteger(SP, 4);
+    if (!Mode)
+      return Mode.takeError();
+    Arguments.Carriers[2] = *Mode;
+    Arguments.Count = 3;
+  }
+  Arguments.Kernel = Arguments.Carriers;
+  if (Kind == LibSystemGateKind::Open)
+    Arguments.Kernel[2] = uint16_t(Arguments.Kernel[2]);
+  return Arguments;
+}
 llvm::Error prepareLibSystem(AddressSpace &Space, const ProcessImage &Image) {
   if (Image.Imports.empty())
     return llvm::Error::success();
@@ -80,17 +108,16 @@ invokeLibSystem(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
   auto ReturnSP = ABI->returnStackPointer((*SP)[0]);
   if (!ReturnSP)
     return ReturnSP.takeError();
+  auto Arguments = readLibSystemArguments(CPU, *ABI, (*SP)[0], Binding);
+  if (!Arguments)
+    return Arguments.takeError();
   NativeCallEvent Call;
   Call.PC = Request.PC;
   Call.Name = Definition.Symbol.str();
   Call.Module = value::LibSystemPath;
-  Call.ArgumentCount = Definition.Arguments;
-  for (unsigned I = 0; I < Definition.Arguments; ++I) {
-    auto Argument = ABI->readArgument(CPU, (*SP)[0], I);
-    if (!Argument)
-      return Argument.takeError();
-    Call.Arguments[I] = *Argument;
-  }
+  Call.ArgumentCount = Arguments->Count;
+  std::copy_n(Arguments->Carriers.begin(), Arguments->Count,
+              Call.Arguments.begin());
   Result.NativeCalls.push_back(std::move(Call));
   uint64_t ReturnPC = 0;
   if (Definition.Kernel != ServiceKind::Exit) {
@@ -108,9 +135,7 @@ invokeLibSystem(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
   }
   uint64_t Value = value::LibSystemGate + Image.Memory.PageSize;
   if (Definition.Kernel) {
-    ProcessServiceEvent Event{Request.PC, 0, {}, std::nullopt};
-    std::copy_n(Result.NativeCalls.back().Arguments.begin(),
-                Definition.Arguments, Event.Arguments.begin());
+    ProcessServiceEvent Event{Request.PC, 0, Arguments->Kernel, std::nullopt};
     auto Returned = handleService(*Definition.Kernel, CPU, Memory, Files,
                                   Entropy, Event, Options, Result);
     if (!Returned)

@@ -6917,3 +6917,18 @@ KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing
 ### Raw environment architecture ownership
 
 `RecoveryArchitecture` selects the native contract from `SpecializationOptions::Architecture`, independently of the build host. The existing default is x64; a target without an adapter refuses explicitly. `arch/x86_64` owns native option encoding, primary-image range rules, external-exit matching costs and physical-exit receipts. Core owns generic budgets, policy encoding and graph/evidence integrity. The x64 option and receipt digests retain their existing byte encoding; both expected and stored architecture identities are checked before validating the declaration. `RawArchitectureReceiptCompatibility` fixes pre-refactor digest values, and architecture-mismatch controls forbid relabeling x64 evidence as ARM64. This boundary does not implement ARM64 native recovery.
+
+### Darwin imported file calls
+
+DarwinLibSystemCalls.def adds exact open/lseek/pread/pwrite/dup/dup2 identities.
+DarwinLibSystem owns the sole argument reader, returning separate original
+carriers and kernel arguments. open has two fixed arguments; only low-32-bit
+O_CREAT reads its promoted int, from four defined bytes at entry SP on ARM64
+or the third GP argument on x64. The report retains that carrier and dynamic
+arity; the kernel receives an explicit zero or 16-bit mode_t. Missing argument
+bytes and transport errors precede call/errno/file publication. The existing
+return-frame and post-service transport contracts remain unchanged.
+DarwinFiles continues to own all file authority, effects and descriptor cursors;
+no loader, public transport, generic IntegerABI or report schema gains a second
+semantic owner. Native controls and direct boundary checks separate defined
+stack bytes, full carriers, kernel narrowing and final metadata.
