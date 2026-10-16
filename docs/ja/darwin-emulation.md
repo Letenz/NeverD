@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 124a88c959c13d8407e343d17f7964de3af1071a89f0c6430eaab22959ce3ebc -->
+<!-- i18n-source: 2dececbb333d44745a37cffde5543a187cfe8daacdeb237691dae825824997c8 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -29,11 +29,11 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 セグメントは現在と最大の権限、ゼロ埋めを保持します。`__PAGEZERO` は広大な実メモリを割り当てずアドレスを予約します。ファイル/VM 範囲、OS ページ整列、丸め後の重複、ヘッダーの所属、実行可能エントリ、予算を確認します。ヘッダーセグメントは読み取りと実行が可能である必要があります。ガードページと専用の復帰ゲートは予約されたままです。最後のファイルページはページ境界または EOF まで元のバイトを保ち、後続の完全な VM ページをゼロ化します。[XNU ローダー](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/mach_loader.c)に基づきます。
 
-`LC_MAIN` は `argc`、`argv`、`envp`、apple ベクターを四つの整数引数で受け取り、戻り値の下位八ビットが終了ステータスになります。`/usr/lib/dyld` はインポートのないこのエントリ引き渡しに限り許可し、ホストの dyld は実行しません。非ゼロの `stacksize` は拒否します。予算を決めるのは呼び出し元の `stack_size` です。
+`LC_MAIN` は `argc`、`argv`、`envp`、apple ベクターを四つの整数引数で受け取り、戻り値の下位八ビットが終了ステータスになります。`/usr/lib/dyld` は下記の有限インポート契約を満たす `LC_MAIN` の引き渡しで許可し、ホストの dyld は実行しません。非ゼロの `stacksize` は拒否します。予算を決めるのは呼び出し元の `stack_size` です。
 
 `LC_UNIXTHREAD` は PC だけが設定された完全なネイティブ 64 ビット汎用レジスタレコードを一つだけ許可します。初期スタックは argc、終端付き argv/envp、`executable_path=<input filename>` を含む終端付き apple ベクターで構成します。独自 SP/フラグ、他のレジスタ、追加 flavor、矛盾するエントリを拒否し、ホスト環境や Linux 補助ベクターを継承しません。[dyld の設計](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md)を参照してください。
 
-外部 dylib、インポート、rebases/chained fixups、コンストラクター/デストラクター、TLS セクション、arm64e/PAC、未対応 CPU サブタイプ、暗号化、未モデル化ロードコマンドは実行前に失敗します。fixup のない PIE は優先アドレスを使い、ASLR ではありません。署名 blob はメタデータであり、AMFI や entitlement ポリシーを実装しません。
+以下の有限 libSystem、明示的な起動 dylib、通常の C メインスレッド TLS に対応します。コンストラクター/デストラクター、TLS コールバック、arm64e/PAC、未対応 CPU サブタイプ、暗号化、未モデル化コマンドは実行前に拒否します。主実行形式は優先アドレス、dylib は決定的な独立アドレスを使います。署名メタデータは AMFI や entitlement を実装しません。
 
 ## Darwin サービス
 
@@ -1796,3 +1796,78 @@ lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / ma
 native preparation489 observations including258 lchown / ARM64 O0 O1 O2
 common native82 / mandatory95 per matching platform / ARM64 required285
 ```
+
+## 有界 libSystem インポート
+
+ベースラインの thin 実行形式と以下の明示的な起動 dylib は、強い依存 `/usr/lib/libSystem.B.dylib` を結合できます。主入口は `LC_MAIN`、名前空間は `MH_TWOLEVEL`、依存は通常の ordinal を使い、libSystem 互換要求は 1.0 以下です。元の classic/generic64 fixup と未定義シンボルの完全な結合を検証します。未知のシンボル、weak/threaded 結合、他の relocation、初期化コールバック、認証ポインタは拒否します。
+
+インポートがある場合だけ認証済み入口と新しい主スレッド errno を配置します。ラッパーは Darwin カーネル効果を共有し、エラーを `-1` と errno に変換し、成功時は errno を保持します。C `_exit` は Mach-O `__exit`、C `exit` は未対応の `_exit` です。通常呼び出しは戻りフレームを検証し、終了専用呼び出しは戻り先を必要としません。レポートは提供元、正確な名前、引数数、全ビットを保持し、未完了または非復帰の結果は null です。従来の raw レポートは互換です。
+
+`SG_READ_ONLY` は fixup 後の現在権限だけを読み取り専用にし、最大権限を保持します。O0/O1/O2 の実機観測で、最大 RW なら `mprotect` で書き込みを復元できることを確認しました。入口と errno の予約ページはゲストによる解除や再保護を拒否します。準備と実行は期限、イベント、既存メモリ予算を共有します。
+
+同一の独立作成オブジェクトを system/classic/chained でリンクし、実際の libSystem で実行します。五つのプラットフォーム/ISA を process/C/CLI/Python、三つの対応 ARM64 HVF profile で確認します。任意 dylib、dlopen/dlsym、shared cache、コンストラクター、スレッド、Apple フレームワーク、Intel HVF と実機 iOS の完全対応は未完了です。
+
+classic lazy ポインタは実行開始前に解決する。各プログラムは格納先、通常の ordinal、シンボルを独立して指定し、ポインタ型、ゼロ addend、一回の DO_BIND と直後の DONE のみを認める。状態を継承せず、ローカル実行可能バイトを指す一つの rebase と同じスロットの lazy bind のみ統合し、両レコードを予算に計上する。dyld_stub_binder は実際の lazy 呼び出しに伴う強い通常 classic bind、ゼロ addend に限る。その実行は C フレーム・引数の読取り、errno 更新、呼び出し記録より前に失敗する。実行時 resolver や dyld 内部状態は実装しない。六関数のネイティブ対照とゲストはポインタの安定性、出力、終了状態を確認する。
+
+`open`、`lseek`、`pread`、`pwrite`、`dup`、`dup2` は既存のファイル、変更権限、記述子カーソルを共有します。`open` の記録は通常 2 引数で、flags の下位 32 ビットに O_CREAT があれば 3 引数です。可変の昇格 int は ARM64 では入口 SP の有効な 4 バイトだけを読み、パディングを読みません。x64 は第 3 汎用レジスタ引数を使います。記録は元の値を保持し、カーネル用 mode だけを 16 ビットに狭めます。O_CREAT がなければ mode はゼロで、任意引数の格納先は読みません。x64 の戻りアドレス検証は必要です。引数読取失敗は記録、errno、ファイル操作に先行します。[Apple ARM64 ABI](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms) と [XNU open](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c) に基づきます。O0/O1/O2 のネイティブ対照は共有オフセット、位置指定 I/O、dup2 の失敗、4 GiB 超の位置、mode とバイナリ内容を検証します。スレッドキャンセルと互換パス変換は対象外です。
+
+`mmap`、`mprotect`、`munmap` は既存のマッピング、保護属性、常駐予約領域、ファイル参照を再利用します。C ラッパーは保護値・フラグ・記述子を 32 ビットに変換し、レポートには元の値を保持します。`mmap` は長さゼロ、または MAP_PRIVATE/MAP_SHARED の欠落をカーネル処理より先に MAP_FAILED と EINVAL で拒否し、許可された呼び出しに MAP_UNIX03 を付加します。生の BSD 呼び出しは変わりません。[XNU UNIX03 ラッパー](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/libsyscall/wrappers/unix03/mmap.c)に基づき、独自 C プログラムで匿名ページのゼロ初期化、保護変更、エラー順序、記述子を閉じた後の存続、私的書き込み、EOF の末尾ページを検証します。共有・固定・実行可能マッピングやアロケーターは本変更の対象外です。
+
+```text
+provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
+C -> Mach-O: read -> _read; write -> _write; close -> _close
+C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
+C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
+entry: LC_MAIN main + MH_TWOLEVEL images; ordinary positive ordinals; main preferred base
+fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
+unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
+errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
+SG_READ_ONLY: current R after fixup; original declared maximum is retained
+gates: RX/max RX; errno: RW/max RW; both resident model reservations
+budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
+preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
+report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
+call carriers: hex; full GP bits or defined ARM64 int vararg bytes; exact arity; null result if incomplete/nonreturning
+open: 2 args or 3 with O_CREAT; ARM64 mode int at SP, x64 third GP; kernel mode_t 16 bits
+basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
+_exit: status 35; stdout_hex 58; named calls 2; events 2
+file calls: main status 73; stdout_hex 460044; named calls 40; events 41
+memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
+native common catalogue: 82; required methods/platform: 101; matching ARM64 identities: 303
+```
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
+```
+
+## 明示的な起動 dylib とメインスレッド TLS
+
+`darwin.modules` は大文字小文字を区別する正確なインストール名と元の Mach-O パスを最大 32 件指定します。到達可能な依存だけを読み、`@loader_path` は文字どおり比較します。ホストのライブラリ検索は行いません。MH_DYLIB の ISA、プラットフォーム、識別名、バージョンを検証し、通常の ordinal が実際の提供元を選びます。同名エクスポートと共有依存の識別を保ち、入力全体と常駐データを共通の予算で制限します。
+
+初期値あり/ゼロ初期化の通常 C TLS は最大 16 バイト整列をサポートします。準備時に各モジュールの領域を確保し、初回アクセスで再配置済みのライブテンプレートを連続コピーします。先行する BSS/隙間の変更も維持します。記述子と戻りフレームを検証し、TLS ページの再利用、解放、保護変更を拒否します。独自の O0/O1/O2 classic/chained ネイティブ対照と五つの C/CLI/Python プロファイルで比較します。循環、弱い/再エクスポート、初期化/終了コールバック、dlopen/dlsym、スレッド、完全なフレームワークは未実装です。Intel ネイティブと実機 iOS は未検証です。
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"darwin":{"modules":[{"name":"@loader_path/libneverd-base.dylib","path":"/inputs/libneverd-base.dylib"},{"name":"@loader_path/libneverd-leaf.dylib","path":"/inputs/libneverd-leaf.dylib"}]}}
+```
+
+```text
+graph: strong acyclic startup; exact install name; same ISA/platform; MH_DYLIB + LC_ID_DYLIB
+catalogue: max 32; only reachable inputs; no host lookup or @ path expansion
+budget: aggregate full files; aggregate resident mappings/TLS/metadata; 65536 records
+exports: regular / thread-local; ordinary dependency ordinal; rebased actual provider
+TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live contiguous first copy
+resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
+lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
+addends: checked signed ordinary provider offsets; data/TLS initializers; original provider spans only
+unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; callbacks; dlopen/dlsym; threads
+workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
+native common catalogue: 82; required methods/platform: 101; matching ARM64 identities: 303
+```
+
+## Darwin dylib インポートのオフセット
+
+通常の強い dylib インポートは、グローバルポインターと TLS テンプレートで符号付きバイト加算値を扱います。`DarwinImage` がエクスポート先アドレス、ライブラリの配置差分、加算値を一度だけ合成し、オーバーフローと選択した提供元の元セグメント内であることを検査します。ポインター値からアクセス幅は推測しません。libSystem 入口、インポートした TLV 記述子、遅延バインドの加算値はゼロに限ります。
+
+元の O0/O1/O2 classic/chained ネイティブ対照は、空の出力で終了値 78 を返します。C・CLI・Python は全 5 プロファイルを検証します。Intel のネイティブ実行と iOS 実機は未検証です。

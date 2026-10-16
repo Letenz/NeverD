@@ -14,6 +14,10 @@
 //   Library  - a library function (a note analysis does not read).
 //   Static   - a function with internal linkage (a note).
 // NEVERD_FUNCTION_COLOR(Key): the "#RRGGBB" color the function shows in.
+// NEVERD_FUNCTION_TYPE(Member, Key): the C declaration of the function, as
+//   IDA's Y sets it: the decompiler prints its parameters and binds them to
+//   the registers and stack slots its calling convention passes them in,
+//   ahead of the debug information.  It reads against the local types.
 //
 //===----------------------------------------------------------------------===//
 
@@ -23,11 +27,16 @@
 #ifndef NEVERD_FUNCTION_COLOR
 #define NEVERD_FUNCTION_COLOR(Key)
 #endif
+#ifndef NEVERD_FUNCTION_TYPE
+#define NEVERD_FUNCTION_TYPE(Member, Key)
+#endif
 
 NEVERD_FUNCTION_FLAG(NoReturn, "noreturn")
 NEVERD_FUNCTION_FLAG(Library, "library")
 NEVERD_FUNCTION_FLAG(Static, "static")
 NEVERD_FUNCTION_COLOR("color")
+NEVERD_FUNCTION_TYPE(Type, "type")
 
 #undef NEVERD_FUNCTION_FLAG
 #undef NEVERD_FUNCTION_COLOR
+#undef NEVERD_FUNCTION_TYPE

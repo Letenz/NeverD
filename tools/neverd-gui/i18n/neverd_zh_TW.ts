@@ -855,6 +855,46 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>顯示程式的型別及其記憶體配置與原始碼</translation>
     </message>
+    <message>
+        <source>D&amp;WARF file...</source>
+        <translation>DWARF 檔案(&amp;W)...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>從獨立的 DWARF 檔案、未移除符號的副本或 .dSYM 載入偵錯資訊</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>MAP 檔案(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>從連結器 MAP 檔案載入名稱</translation>
+    </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>結構位移(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>將運算元顯示為本機型別的成員，型別依程式碼的存取與其相符的程度排序</translation>
+    </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>轉換為 struct *(&amp;V)...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>為目前函式或游標處的參數指定 C 型別，輸入時即時檢查</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>將游標處的參數改為指向本機型別的指標，型別依其存取與之相符的程度排序</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>設定型別(&amp;Y)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2272,6 +2312,74 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Local Types</source>
         <translation>本機型別</translation>
     </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>無法轉換參數：%1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>請將游標放在函式內以設定其型別</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>請將游標放在函式的參數上以轉換它</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>全選(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>跳至反組譯</translation>
+    </message>
+    <message>
+        <source>Synchronize with disassembly</source>
+        <translation>與反組譯同步</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>八進位(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>請將游標放在虛擬碼的數字上以變更其進位</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 在該進位下無法保持相同型別</translation>
+    </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>無法判斷 %1 是否有 MAP 檔案：%2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>載入 DWARF 檔案</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>載入 MAP 檔案</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>MAP 檔案 (*.map);;所有檔案 (*)</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>載入其他版本的 MAP 檔案</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+是否仍然載入其中的名稱？位於錯誤位址的名稱會誤導分析。</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>DWARF 檔案 (*.debug *.dSYM);;所有檔案 (*)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2338,6 +2446,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     列出參照字串的指令</translation>
+    </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          顯示本機型別，或指定名稱的型別</translation>
     </message>
 </context>
 <context>
@@ -2584,6 +2696,28 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>DWARF loaded: %1</source>
         <translation>已載入 DWARF：%1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>已依選擇開啟，未載入輸入檔案旁的 MAP 檔案</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>已不經核對載入 MAP：%1（新增 %2 個名稱，屬於其他版本）</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>已載入 MAP：%1（新增 %2 個名稱）</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>未載入 MAP：%1 與載入後的映像不符</translation>
+    </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>已將 %n 個運算元顯示為 %1 的成員</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -3393,10 +3527,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Windows 名稱（ULONG）</translation>
     </message>
     <message>
-        <source>IDA names (unsigned int)</source>
-        <translation>IDA 名稱（unsigned int）</translation>
-    </message>
-    <message>
         <source>C keywords (unsigned long)</source>
         <translation>C 關鍵字（unsigned long）</translation>
     </message>
@@ -3407,6 +3537,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Exact widths (u32)</source>
         <translation>精確寬度（u32）</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>精確寬度（uint32）</translation>
     </message>
     <message>
         <source>Filter types by name</source>
@@ -3491,10 +3625,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Offset</source>
         <translation>位移</translation>
-    </message>
-    <message>
-        <source>Bytes</source>
-        <translation>位元組</translation>
     </message>
     <message>
         <source>Type</source>
@@ -3740,6 +3870,34 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
             <numerusform>%n 個自行宣告</numerusform>
         </translation>
     </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>選擇一個型別以檢視其配置和原始碼</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>沒有名為 %1 的本機型別</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>精確寬度（c_uint32）</translation>
+    </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>JavaScript 模組 (*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>JavaScript 型別（number、bigint）</translation>
+    </message>
+    <message>
+        <source>Lua (*.lua)</source>
+        <translation>Lua (*.lua)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::DeclareTypesDialog</name>
@@ -3762,6 +3920,287 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>第 %1 列，第 %2 欄：%3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>%1 MAP，%2 個名稱。其建置時間戳記與輸入檔案相符。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>%1 MAP，%2 個名稱。其各區段的位置與輸入檔案相符。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>%1 MAP，%2 個名稱。其中沒有可與輸入檔案核對的資訊。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>%1 MAP，%2 個名稱。其記錄的建置時間戳記為 %3，而輸入檔案的為 %4：它屬於其他版本。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>%1 MAP，%2 個名稱。它將 %3 置於 %4，%5 位元組，而輸入檔案中它位於 %6，%7 位元組：它屬於其他版本。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>%1 MAP，%2 個名稱。其 %4 個函式中有 %3 個位於輸入檔案的程式碼之外：它屬於其他版本。</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>找到 MAP 檔案</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>是否仍然載入 MAP 檔案？</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>是否載入 MAP 檔案？</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>（%1）</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>%n 個位移中有 %1 個恰好落在成員上</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>共 %n 個型別，顯示 %1 個</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n 位元組</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>%n 個型別</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>存取</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>同時將經由 %1 的其他 %n 個指令顯示為成員</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>套用</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>位於 %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>位元組</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>成員</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>沒有成員包含此位元組</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>沒有相符的型別。</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>位移</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>正在讀取程式碼透過運算元指標進行的存取…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>搜尋型別：名稱、typedef、Type.member 或 .member</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>結構位移</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>將數字 %1 作為結構或聯集中的位移。</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>運算元保留原本的數字。</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>程式沒有結構或聯集，可在本機型別（Shift+F1）中宣告。</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>暫存器指向 %2 內 %1 位元組處，即 %3：在它之前的存取讀取的是記錄中較前面的成員，正如 CONTAINING_RECORD 所還原的那樣。</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>型別</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>依函式中經由 %1 的 %n 次存取落在成員上的情形排序型別。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>取位址</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>標頭</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>超出型別範圍</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>填補</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>讀取</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>該指標</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>使用者</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>寫入</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>名稱(&amp;N)：</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>指向 %1 的指標，該結構 %n 位元組</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>轉換為 struct *</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>正在讀取程式碼經由該參數所做的存取…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>參數名稱，宣告中會保留</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>依函式經由 %1（%2 由此傳入）的 %n 次存取落在各型別成員上的情形排序。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>該暫存器</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1，%n 位元組</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1，%3 的第 %2 個參數，經 %4 傳入。</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1，%3 的第 %2 個參數。</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>套用</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>傳入位置</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>第 %1 欄：%2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>將函式宣告交還給偵錯資訊與分析</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名稱</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>正在讀取宣告…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>可讀：%n 個參數</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>設定 %1 的型別</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>反編譯器印出的 %1 宣告，輸入時依本機型別讀取。</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>你為 %1 指定的宣告，輸入時依本機型別讀取。</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>函式的宣告無法讀取，因此不能逐一設定參數型別。請改為設定函式的型別。</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>型別</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>使用分析得出的型別(&amp;A)</translation>
     </message>
 </context>
 </TS>

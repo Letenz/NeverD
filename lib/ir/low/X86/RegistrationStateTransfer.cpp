@@ -205,6 +205,8 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
             RegistrationCookieCheck{
                 Op.Addr, Op.Addr + Boundary->second.second.Size, Op.Seq});
     }
+    if (!validateSEHParentChainUse(After, Op, Transfer))
+      Result.SEHParentChainComplete = false;
     if (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)) {
       CompleteImageReads = false;
       if (CheckCalls) {
@@ -301,10 +303,18 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
           After.Unknown = false;
           After.Uninstalled = false;
           After.Installed = true;
+          After.AbandonedSEHGuard = false;
           After.JumpCaptures.clear();
           ProvenInstallation = true;
           if (EH4 && !cookiesReady(After.Frame))
             CompleteCookies = false;
+          recordChainAccess(Op, Block, RegistrationChainAccess::Kind::Install);
+        } else if (Address.Constant == uint32_t{0} && Width == 4 && AtEnd &&
+                   Stored.Offset == Chain.RegistrationOffset &&
+                   canReconnectSEHParentChain(After)) {
+          // Republish the same live node after abandoning a CRT callback.
+          // Keep its current TryLevel and buffer bindings, unlike first entry.
+          After.AbandonedSEHGuard = false;
           recordChainAccess(Op, Block, RegistrationChainAccess::Kind::Install);
         } else if (Address.Constant == uint32_t{0} && Width == 4 && AtEnd &&
                    Stored.PreviousChain && After.Installed &&
@@ -313,8 +323,12 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
           After.Unknown = false;
           After.Uninstalled = true;
           After.Installed = false;
+          After.AbandonedSEHGuard = false;
           After.JumpCaptures.clear();
           recordChainAccess(Op, Block, RegistrationChainAccess::Kind::Remove);
+          if (!KnownCxx && After.Callback &&
+              !transferSEHParentFallthrough(I, After, Op, Facts))
+            Invalidate();
         } else {
           CompleteChainOperations = false;
           Invalidate();
@@ -416,7 +430,12 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     bool CheckedCall = false;
     const bool JumpCapture = transferJumpCapture(I, After, Op, Facts, CallSP);
     const bool JumpResume = transferJumpResume(I, After, Op, Facts);
-    if (!JumpCapture && !JumpResume &&
+    const auto LocalSP = !JumpCapture && !JumpResume
+                             ? transferLocalUnwind(I, After, Op, Facts)
+                             : std::nullopt;
+    if (LocalSP)
+      CallSP = *LocalSP;
+    if (!JumpCapture && !JumpResume && !LocalSP &&
         !transferOrdinaryFinally(I, After, Op, Facts, CallSP))
       if (auto Call = transferCall(I, After, Op, Facts)) {
         CheckedCall = true;
@@ -426,8 +445,6 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
         if (NoReturnAtExit)
           NoReturnEnd = Call->EndAddress;
       }
-    if (auto SP = transferLocalUnwind(I, After, Op, Facts))
-      CallSP = *SP;
     if (!CallSP)
       CallSP = transferControlFP(Before, After, Op, Facts, CallException);
     if (!CallSP && JumpRuntime && JumpRuntime->Raise &&
@@ -604,26 +621,9 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
   Facts.CxxContinuationAtExit = CatchReturn.has_value();
   Facts.NoReturnAtExit = NoReturnAtExit;
   if (!NoReturnAtExit && !Facts.InvocationAtExit) {
-    std::optional<va_t> SelectedBranch;
-    if (!Facts.Invalid && !After.Unknown && Block.Succs.size() == 2 &&
-        !Block.Ops.empty()) {
-      const auto &Branch = Block.Ops.back();
-      if (Branch.Opcode == NdOp::COND_BR && Branch.NumInputs == 2 &&
-          Branch.Inputs[0].isConst()) {
-        const auto Condition = Transfer.read(Branch.Inputs[1]);
-        const auto Taken = Entries.find(Branch.Inputs[0].Offset);
-        const auto Fallthrough = Entries.find(Block.EndAddr);
-        if (Condition.Constant && !Condition.MayBeFrame &&
-            Taken != Entries.end() && Fallthrough != Entries.end() &&
-            Taken != Fallthrough &&
-            llvm::is_contained(Block.Succs,
-                               Function.Blocks[Taken->second].Id) &&
-            llvm::is_contained(Block.Succs,
-                               Function.Blocks[Fallthrough->second].Id))
-          SelectedBranch =
-              *Condition.Constant ? Branch.Inputs[0].Offset : Block.EndAddr;
-      }
-    }
+    const auto SelectedBranch = !Facts.Invalid && !After.Unknown
+                                    ? knownSuccessor(Block, Transfer)
+                                    : std::nullopt;
     for (int Successor : Block.Succs) {
       auto It = Index.find(Successor);
       if (It == Index.end()) {

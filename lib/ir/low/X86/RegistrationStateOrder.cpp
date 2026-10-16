@@ -65,6 +65,8 @@ bool RegistrationStateSolver::initializeOrder() {
     for (size_t I = 0; I != Seen.size(); ++I)
       if (Seen[I])
         SEHParentEntries.insert(Function.Blocks[I].StartAddr);
+    if (!extendSEHParentOwnership())
+      return false;
   }
   for (const auto &[Address, Index] : Entries)
     if (!Visit(Index))

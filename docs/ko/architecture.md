@@ -8,6 +8,18 @@
 설명합니다. 의도적으로 NeverD 소유 코드만 다루며 LLVM, Capstone, Unicorn
 서브모듈은 각자의 내부 아키텍처를 유지합니다.
 
+## MXCSR 복원의 엄격한 검증
+
+`X64MXCSRMask`는 명시적인 유효 마스크(`0xffbf` 또는 `0xffff`)로 원시 MXCSR 로드와 스칼라 상태 읽기/쓰기를 활성화합니다. x64 어댑터는 유효한 초기 상태와 전이를 소유하며 코어는 작업 예산을 계산하고 예약 비트가 0이라는 증명을 요구합니다. 무결함 플래그만으로는 증명할 수 없습니다. 원래 내장 연산은 유지됩니다. MXCSR 메모리 저장, 소스 래핑 및 네이티브/LLVM 인증에는 별도의 계약이 필요합니다.
+
+## 런타임 메모리 복원
+
+`X64SegmentedWrites`는 명시적인 비폴트 머신 상태에서 64비트 오프셋을 사용하는 일반 1/2/4/8바이트 FS/GS 쓰기를 독립적으로 허용합니다. `arch/x86_64`가 옵션 검증, 연산 허용 및 기호 베이스 초기화를 담당합니다. 코어는 전체 선형 주소와 일반 별칭 무효화를 사용합니다. 임의의 고정 베이스는 프레임, 다른 세그먼트 및 활성 반환 슬롯과 겹칠 수 있습니다. 이 기능은 raw 복원 증빙에 포함됩니다. 인증된 베이스 입력이 없는 소스 및 네이티브 증명 인터페이스는 이 영역을 계속 거부합니다.
+
+## 구체적 진입 메모리 시드
+
+`SymExecConcreteShadow`는 실행 전에 주소 순서의 RAM 바이트를 받습니다. 구체 상태만 초기화하며 기호 상태의 진입 메모리는 자유 입력으로 남습니다. C++ `InitialMemory`는 `MaxMemorySeedBytes`로 제한됩니다(기본 1 MiB, 0은 바이트를 허용하지 않음). 비어 있거나 겹치거나 주소가 순환하는 범위는 거부합니다. 메모리 보고서는 버전 2이며 `InitialMemory`와 후보의 `MemorySeed`를 보존합니다. 투영은 시드가 덮는 epoch-zero 레지스터 또는 절대 메모리 입력만 허용하고, 질의 평가·새 재실행·중복 제거에 두 종류의 바이트를 모두 사용합니다. 누락된 바이트, 기호 기준 주소와 근사 효과는 계속 거부하며 저장은 구체 메모리를 정상 갱신합니다. 정지 상태의 `ProcessView::read`로 커밋된 RAM을 읽을 수 있지만 접근 전 후크는 완전한 스냅샷이 아닙니다. 관측은 소유권·수명·불변성·비중첩을 증명하지 않습니다. 후보는 대상 분기와 앞선 결정만 검증합니다. 버전 1 C/JSON, Python 및 CLI는 레지스터 전용입니다.
+
 ## 소스 및 오브젝트 대체 경계
 
 `SourcePatchCompiler`는 컴파일러 식별과 산출물 선택을 담당합니다. `validateSourcePatchTarget`는 소스와 외부 IR의 공통 대상 판정이며 대상 트리플만으로 지원을 증명할 수 없습니다. `bindSourcePatch`는 IR 진입점 매핑을 확인하고 `PatchObject`는 네이티브 섹션, 재배치 및 FDE 범위 증거를 관리합니다. `publishSourcePatch`는 준비, 검증 및 배타적 출력을 담당합니다. `COFFSourceImage`는 PE x86/x64/ARM32/ARM64의 새 저장 공간과 언와인드 테이블을 담당하며 리프팅 후 재작성은 원래 EH의 별도 증거를 요구합니다. [소스 패치](source-patching.md)를 참조하세요.
@@ -1694,6 +1706,18 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymState`는 기호 기준 주소가 64비트인 영역에만 모듈로 2^64 상대 좌표를 사용합니다. 상대 좌표 0을 가로지르는 읽기는 순환하지 않는 두 구간으로 나누어 각 입력의 출처를 한 구간 안에 유지하며, 쓰기는 전체 값을 저장합니다. 절대 메모리, 레지스터, 임시 저장소의 범위 오버플로는 계속 거부합니다. 이 인덱싱 규칙은 실제 주소의 유효성, 비별칭성 또는 프레임 분리를 전제로 제공하지 않습니다. 일반적인 영역 간 무효화와 STORE별 보존 증명은 그대로이며 Unicorn, KVM, WHP가 이 분석 규칙을 공유합니다.
 
+### 유한 libSystem 가져오기
+
+`MachOProgramLinking`은 원본 classic/generic64 사실, 완전한 미정의 심볼 폐쇄 및 준비 예산을 소유합니다. Darwin process는 공급자/심볼 허용, 포인터 게시, fixup 후 읽기 보호, libSystem 진입과 errno를 관리합니다. `DarwinLibSystemCalls.def`의 정확한 이름과 인수 개수는 `DarwinServices`의 타입 효과를 재사용하며 raw trap을 만들지 않습니다. 예약과 최대 보호는 `DarwinMemory`, 공통 기한은 `ExecutionBudget`, 선택적 `darwin.native_calls` 출력은 `ProcessReport`가 소유하고 호스트 라이브러리를 로드하지 않습니다.
+
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
+### Darwin dylib 가져오기 오프셋
+
+일반적인 강한 dylib 가져오기는 전역 포인터와 TLS 템플릿에 부호 있는 바이트 가산값을 지원합니다. `DarwinImage`가 내보낸 주소, 라이브러리 배치 차이, 가산값을 한 번만 합성하고 오버플로와 선택한 제공자의 원래 세그먼트 범위를 검사합니다. 포인터 값에서 접근 폭을 추정하지 않습니다. libSystem 진입점, 가져온 TLV 설명자, 지연 바인딩의 가산값은 0이어야 합니다.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### 순차 raw 실행의 비교 교환
 
 `SymExec`는 허용된 raw `ATOMIC_CMPXCHG`의 값 의미론을 담당합니다. 출력을 게시하기 전에 주소, 기대값, 새 값, 이전 값을 확보하고 `ite(Old == Expected, Desired, Old)`를 한 번 커밋합니다. `SymState`는 해당 쓰기의 바이트 효과, 별칭 무효화와 보존 예산을 담당합니다. `InterpreterSpecialization`은 허용과 출처를 관리합니다. Old에는 쓰기 전 메모리 출처를 사용하고, 조건부 쓰기는 Old·기대값·새 값의 출처를 보수적으로 합치며 겹칠 수 있는 아핀 스필 사실을 무효화합니다. 비교가 실패해도 전체 쓰기 범위와 보호된 반환 셀의 분리를 증명해야 합니다. 잔여 코드에는 원래 원자 연산, 메모리 순서와 발생 횟수를 유지하며, 거부 시 부분 잔여 CFG를 게시하지 않습니다.
@@ -1715,6 +1739,46 @@ KernelModelObjects는 공통 객체 표에서 파일 핸들과 포인터 수를 
 
 KernelFileSystem은 FILE_OBJECT마다 provider token 하나를 유지합니다. 비공개 공유 연산은 허용된 노드와 매핑된 접근 권한을 받아 양방향 공유 충돌을 검사하며, 메타데이터 전용 접근은 충돌에서 제외합니다. CLEANUP은 공유 제한을 해제하고 token을 유지하며 CLOSE는 정리된 token을 제거합니다. 참조가 남은 정리된 객체도 1024개 제한에 포함됩니다. 엄격한 바인딩 검증은 token을 파일 객체 소유자와 대조합니다. `KernelModelFileCreate`는 CREATE와 취소를 생성하고 콜백 전에 핸들 용량을 예약합니다. `DriverSession`은 비동기 작업과 중첩 CLOSE에서 원래 호출자를 유지합니다. 공통 객체 소유자가 핸들을 게시하고 이름 조회는 실제 디렉터리를 유지합니다. 시나리오 닫기 의도는 별도이며 스냅샷과 언로드가 token을 양방향 검증합니다.
 
+`KernelModelFileRequests`는 IoQueryFileInformation의 빌린 버퍼와 ZwQueryInformationFile의 독립 버퍼에 대한 연속 실행, 결과 공개 및 패킷 해제를 소유합니다. KernelMode 핸들 참조는 객체 소유자를 사용합니다. 네이티브 SystemBuffer는 물리 메모리 소유자에 등록하며 일반 요청 해제는 이를 조회 소유자에게 맡깁니다. `KernelFileSystem::queryInformation`만 유지된 열기 토큰으로 선언 메타데이터를 인코딩합니다. 종단 경로는 실제 IRP 클래스와 길이를 사용하고 어댑터와 보고서는 메타데이터를 재구성하지 않습니다.
+
+`KernelModelIO`는 `FILE_OBJECT.CurrentByteOffset`을 바꾸지 않고 전송 소유권을 해제합니다. 요청 오프셋과 완료 바이트 수는 파일 시스템의 위치 갱신을 대신할 수 없으며, 동기 파일의 네이티브 Position 조회는 유지된 필드를 읽습니다.
+
 ### 원시 환경의 아키텍처 소유권
 
 `RecoveryArchitecture`는 빌드 호스트와 무관하게 `SpecializationOptions::Architecture`에서 네이티브 계약을 선택합니다. 기존 기본값은 x64이며 어댑터가 없는 대상은 명시적으로 거부합니다. `arch/x86_64`는 네이티브 옵션 인코딩, 기본 이미지 범위 규칙, 외부 종료 일치 비용과 물리적 종료 증빙을 소유합니다. core는 공통 예산, 정책 인코딩, 그래프와 증거의 무결성을 소유합니다. x64 다이제스트의 바이트 인코딩은 유지하며 선언 검증 전에 예상 및 저장된 아키텍처를 확인합니다. `RawArchitectureReceiptCompatibility`는 변경 전 다이제스트를 고정하고 불일치 테스트는 x64 증거를 ARM64로 바꾸어 표시하는 것을 거부합니다. ARM64 네이티브 복구는 아직 구현하지 않습니다.
+
+`KernelModelFileRequests`는 동기 버퍼 방식의 `ZwReadFile` / `ZwWriteFile`도 소유합니다. 생성자는 핸들 범위, 오프셋과 키, 쓰기 입력 복사본을 보존합니다. 공통 완료 경로는 알림 가능한 원래 호출자에서 읽기 바이트와 IOSB를 공개하고 소유 패킷과 버퍼를 한 번씩 해제합니다. 내용과 파일 위치 변경은 저장 장치 드라이버가 담당합니다.
+
+`KernelModelFileRequests`는 버퍼 없는 `ZwFlushBuffersFile` 생성도 소유합니다. 권한 마스크 확인과 즉시 게시·해제 규칙은 지연 완료하는 네이티브 읽기/쓰기/조회와 다르며, 원래 호출자 알림과 단일 해제 소유자를 공유합니다.
+
+`KernelModelFileRequests`가 네이티브 제어 버퍼 캡처와 게시를 소유합니다. 파일 유지, 호출자 연속 실행과 패킷 해제를 공유하며 생산자의 지연 완료 규칙으로 장치 제어와 FSCTL을 구분합니다. 공통 완료 검증기가 출력 한계를 확인합니다.
+
+`KernelModelRuntime`이 커널 CRT 분류, 제자리 변환과 검사된 문자열 쓰기를 소유합니다. `KernelCStringAPIs.def`는 모든 호출 경로에 내보내기 식별자, 인수 개수와 IRQL 조건을 제공합니다. 단위 접근은 게스트 권한과 수명 검증을 재사용하며 보고서/어댑터가 복사 및 오류 의미를 중복 구현하지 않습니다.
+
+`KernelMemoryCalls`가 검사형 메모리 복사 진입을 소유하며 기존 move/fill, 풀 수명 및 사용자 메모리 검사를 재사용한다. `KernelModelRuntime`이 `RtlImageNtHeader` 원시 서명 검사를 소유한다. 이는 이미지 실행에 필요한 로더 검증을 대체하지 않으며 어댑터는 의미를 복제하지 않는다.
+
+`OptimizationGuards`는 LLVM의 `optnone` 검사를 보완합니다. 보호된 함수를 정의하는 모듈에서는 CFG나 콜백 인수를 바꿀 수 있는 선택적 모듈 및 호출 그래프 최적화를 건너뜁니다. 필수 어댑터와 일반 함수 최적화는 계속 실행됩니다. 등록 체인 소스 투영은 네이티브 재구성이 연결할 때까지 프롤로그 저장의 메모리 기록을 유지합니다.
+
+`COFFRegistrationEH4Wrapper`가 보존된 EH4 전달을 증명합니다. `COFFRegistrationScalarLeaf`는 유한한 순방향 CFG, 레지스터와 플래그 초기화, 전용 MXCSR 저장소와 런타임 이미지 데이터를 검사합니다. 호출자 프레임 읽기, 주소 유출, 알 수 없는 호출, 명령 중첩과 불완전한 반환을 거부합니다. LLVM 출력과 독립 COFF 검증은 같은 로더 증명을 사용하며 원래 코드와 동적 읽기를 유지합니다.
+
+`KernelModelRuntime`이 Unicode 해시, NLS와 무관한 공통 대문자 매핑, 1980 기준 초 변환을 담당합니다. `KernelRuntimeCalls`는 기존 페이징 문자열 풀로 출력을 할당합니다. 문자열/시간 API 표가 내보내기 식별자, 인수 수, APC_LEVEL 제한을 통일하고 필드 접근 순서는 구현 계층이 관리합니다.
+
+`uppercaseCharacter`는 스칼라 인수를 좁힌 후 허용 여부를 확인하고 기존 `uppercaseUnicodeUnit`에 위임합니다. CRT와 계수형 문자열 API 표는 별도 ABI 식별자로 같은 매핑을 사용하며 어댑터나 호스트 로캘이 다른 의미를 제공하지 않습니다.
+
+`KernelModelRuntime`이 디버그 인수 너비와 공통 접두사 및 버퍼 게시 규칙을 소유합니다. 일반 가변 인수는 기존 호출 ABI 리더를 쓰고 명시적 x64 `va_list` 어댑터는 8바이트 간격으로 요청된 게스트 스칼라를 검사합니다. 디스패처와 어댑터는 형식 파싱을 복제하지 않습니다.
+
+스레드 조회 별칭은 기존 스레드/프로세스 및 실행 컨텍스트 소유자를 재사용하며 프로세스 연결 중에도 일관됩니다. `RtlPcToFileHeader`는 시스템 모듈 조회와 같은 `LoadedModules`를 사용합니다. `ImageRAM`의 매핑 범위는 모듈 ID를 대체하지 않습니다. 호스트 상태를 참조하지 않습니다.
+
+`KernelMDLCalls`는 레거시 매핑 진입점을 기존 여섯 인수 매퍼로 정규화합니다. 캐시 속성, 물리 페이지 식별, 권한과 수명은 `KernelPhysicalMemory`와 MDL 레코드가 관리합니다. 완전히 해제한 커널 이미지 별칭만 환경 의존성을 남기지 않으며 사용자 뷰는 의존성을 유지합니다.
+
+`KernelModelFileRequests`의 `queryFileDevice`가 파일 식별, 헤더, 마운트 상태와 토폴로지를 공통 검증합니다. 기본 쿼리는 파일이 소유한 장치를 반환하고 관련 쿼리는 파일 확장 경로를 추가 검증하여 연결 스택의 최상위를 선택합니다. 두 결과 모두 빌린 객체입니다.
+
+`KernelModelFileCreate`는 기존 `FileOperation`에서 장치 포인터 열기를 관리합니다. 이름 확인, CREATE 패킷과 최종 해제는 일반 파일 열기와 공유합니다. 개체 관리자가 내부 핸들로 파일 참조를 얻고 `queryFileDevice`가 관련 장치를 반환하며 기존 핸들 닫기 연속 실행이 CLEANUP을 처리합니다. 완료 후에만 원래 호출 스레드의 임계 영역을 해제합니다. 공개 출력의 겹침은 내부 참조 개체를 바꾸지 않습니다.
+
+`KernelModelIO`가 프로세스 검사 래퍼와 내부 연결 수명을 관리하며 공유 프로세스 뷰 전환과 일반 MDL 검사를 재사용합니다. 내부 연결은 게스트 APC 저장소를 만들어 내지 않으며 공개 API의 0 토큰으로 해제할 수 없습니다. 허용 조건과 중첩은 기존 연결 소유자가 관리합니다. 복원이 성공해야 검사 예외를 게스트에 전달하며 복원 오류는 모델 실패로 유지됩니다.
+
+`KernelObjectAPIs.def`가 고정 콜백 버전 조회의 식별, 인수 개수, 값 및 IRQL 상한을 관리합니다. 콜백 레지스트리나 호스트 운영체제 조회는 추가하지 않습니다.
+
+`KernelPhysicalMemory::resolveAddress`는 현재 `MemoryView`를 보존된 정확한 할당 범위와 기존 페이지 식별자에 대조하며 별칭도 처리합니다. `KernelModel`은 읽기 권한, 프로세스 컨텍스트 및 상주 상태를 별도로 검사합니다. 조회는 식별자나 페이지 잠금을 생성하지 않으며, 매핑이 남은 페이지의 패딩으로 해제된 바이트를 되살리지 않습니다.
+
+`KernelModel::queryPrimaryVirtualAddress`는 기존 활성 비페이징 `PoolAllocation` 기록과 `KernelPhysicalMemory::describe`에서 기본 VA를 구한 뒤 정방향 조회로 검증합니다. 역방향 별칭 등록부, 물리 식별자 또는 페이지 잠금을 추가하지 않습니다. 일반 저장소 주소만으로 기본 매핑을 입증할 수 없습니다.

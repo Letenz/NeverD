@@ -7,6 +7,18 @@
 本指南说明贡献者安全修改 NeverD 所需了解的生产边界。内容有意仅涵盖
 NeverD 自有代码；LLVM、Capstone 和 Unicorn 子模块维护各自的内部架构。
 
+## MXCSR 还原的严格校验
+
+`X64MXCSRMask` 通过显式有效掩码（`0xffbf` 或 `0xffff`）启用原始 MXCSR 加载及标量状态读写。x64 适配器负责合法入口状态域和状态转换；核心负责预算计费，并要求证明保留位为零。无故障标志本身不构成该证明。原始内建操作保持可观测。MXCSR 内存存储、源代码包装和原生/LLVM 证书仍需各自的契约。
+
+## 运行态内存恢复
+
+`X64SegmentedWrites` 独立允许显式无故障机器状态下、使用 64 位偏移的普通 1/2/4/8 字节 FS/GS 写入。`arch/x86_64` 负责运行态内存选项验证、操作准入和符号基址初始化。核心使用完整线性地址和正常别名失效规则；任意固定基址仍可能与栈帧、其他段和活跃返回槽重叠。该能力写入原始恢复凭据。缺少已认证基址输入的源码与原生证明接口继续拒绝此执行域。
+
+## 具体入口内存种子
+
+`SymExecConcreteShadow` 在执行前接收按地址排列的 RAM 字节；它们只进入具体状态，符号侧的入口内存仍为自由输入。C++ `LowIRConcolicOptions::InitialMemory` 默认受 `MaxMemorySeedBytes` 的 1 MiB 总量限制，零预算不接收字节；空、重叠和回绕范围明确拒绝。使用内存的报告为版本 2，保留 `InitialMemory` 和候选的 `MemorySeed`。投影仅接受已覆盖的 epoch-zero 寄存器或绝对内存来源，并用两类字节重新计算查询、从头重放及去重。缺字节、符号基址来源和近似效果继续拒绝；写入按正常别名规则修改具体内存。`ProcessView::read` 可在暂停时捕获已提交 RAM，写入前的钩子不构成完整快照。观测不证明区域归属、寿命、不变性或不相交；候选仅验证指定分支及先前决策，不证明后续路径或完整等价。C/JSON、Python 和 CLI 的版本 1 接口仍只接收寄存器。
+
 ## 源码与对象替换边界
 
 `SourcePatchCompiler` 负责编译器身份和制品选择。`validateSourcePatchTarget` 统一决定源码与外部 IR 的目标准入，目标三元组本身不足以证明支持。`bindSourcePatch` 确认 IR 入口映射；`PatchObject` 负责原生节、重定位和 FDE 范围证据。`publishSourcePatch` 暂存、检查并独占发布完整事务。`COFFSourceImage` 负责 PE x86/x64/ARM32/ARM64 的新存储和展开表；提升后的重写继续要求独立的原 EH 证据。参见[源码 patch](source-patching.md)。
@@ -1725,6 +1737,18 @@ i386/ELF 联合有限域证明在全部消费者对受限所有者图重放索�
 
 `SymState` 仅对基址为 64 位的符号区域使用模 2^64 的相对坐标。跨过相对零点的读取拆成两个不回绕的区间，使每项输入来源都留在一个区间内；写入保留完整值。绝对内存、寄存器和临时存储区的范围溢出仍被拒绝。这一索引规则不提供实际地址有效性、不别名或栈帧分离前提；普通的跨区域失效和逐 STORE 保存证明保持不变。Unicorn、KVM 和 WHP 共用此分析规则。
 
+### 有界 libSystem 导入
+
+`MachOProgramLinking` 负责原始字节的严格 classic/generic64 链事实、完整未定义符号闭合及准备预算。Darwin 进程负责库和符号准入、指针发布、fixup 后只读保护、经过认证的 libSystem 入口与主线程 errno。`DarwinLibSystemCalls.def` 绑定精确链接名、参数数量及类型化内核行为，复用 `DarwinServices` 而不伪造原始 trap。`DarwinMemory` 统一负责驻留模型保留页和原始最大权限。准备与执行共用 `ExecutionBudget`，可选 `darwin.native_calls` 仅由 `ProcessReport` 序列化；不加载宿主 dyld 或库代码。
+
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
+### Darwin dylib 导入偏移
+
+普通强 dylib 导入支持带符号的字节偏移，可初始化全局指针与 TLS 模板指针。`DarwinImage` 统一计算导出地址、库的加载偏移及导入加数，检查溢出并限定在所选提供库的原始段范围内；指针值检查不推测访问宽度。libSystem 入口、导入的 TLV 描述符和延迟绑定仍要求零加数。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### 顺序执行域内的原始比较交换
 
 `SymExec` 负责获准的原始 `ATOMIC_CMPXCHG` 的值语义：发布输出前捕获地址、期望值、目标值和旧值，再一次性提交 `ite(Old == Expected, Desired, Old)`。`SymState` 负责该次写入的字节效果、别名失效和保存预算。`InterpreterSpecialization` 负责准入与来源：Old 使用写入前的内存来源；条件写入保守合并 Old、期望值与目标值的来源，并撤销可能重叠的仿射溢出存储事实。即使比较失败，也须证明完整写入范围与受保护返回单元分离。残余程序保留原子操作、内存序及发生次数；拒绝时不发布部分残余 CFG。
@@ -1746,6 +1770,46 @@ KernelModelObjects 在共用对象表中管理文件句柄和指针计数。Kern
 
 KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共享操作接收已获准的节点及已映射权限，双向检查共享冲突；仅访问元数据的打开不参与冲突。CLEANUP 释放共享限制但保留 token，CLOSE 删除已清理的 token。仍被引用的已清理对象也计入 1024 个打开的上限。严格绑定校验将 token 与文件对象 owner 对照。 `KernelModelFileCreate` 拥有 CREATE 和取消生产者，在回调前保留句柄容量。`DriverSession` 在异步操作与嵌套 CLOSE 中保留原调用者。统一对象所有者发布句柄；名称查找保留真实目录对象，终端提供方读取已准入数据包。场景关闭意图独立保留，快照与卸载执行双向 token 校验。
 
+`KernelModelFileRequests` 统一拥有借用缓冲的 IoQueryFileInformation 与独立缓冲的 ZwQueryInformationFile 续调、调用方结果发布和数据包回收。KernelMode 句柄引用复用对象所有者。原生 SystemBuffer 向物理内存所有者登记，普通请求回收把它留给查询所有者处理。只有 `KernelFileSystem::queryInformation` 根据保留的打开 token 编码声明元数据；终端路径读取实际获准 IRP 的类与长度，适配层和报告层不重建元数据。
+
+`KernelModelIO` 回收传输所有权时不修改 `FILE_OBJECT.CurrentByteOffset`。请求偏移与完成字节数不能替代文件系统的位置更新；同步原生 Position 查询读取保留的字段。
+
 ### 原始环境的架构归属
 
 `RecoveryArchitecture` 根据 `SpecializationOptions::Architecture` 选择原生契约，与编译主机无关。现有默认值为 x64；没有适配器的架构明确拒绝。`arch/x86_64` 负责原生选项编码、主映像范围规则、外部退出匹配成本和物理退出回执。core 负责通用预算、策略编码及图与证据的完整性。x64 选项和回执摘要保留原有字节编码；验证声明前检查预期与存储的架构标识。`RawArchitectureReceiptCompatibility` 固定重构前的摘要值，架构不匹配测试禁止把 x64 证据改标为 ARM64。这一边界尚未实现 ARM64 原生恢复。
+
+`KernelModelFileRequests` 也统一拥有同步缓冲 `ZwReadFile` / `ZwWriteFile`。生产者负责句柄作用域、偏移和键捕获，以及写入数据的副本。共享完成路径只在原调用方满足通知条件时发布读取字节和 IOSB，并各释放一次自有数据包与缓冲区。存储驱动负责内容和文件位置变更。
+
+`KernelModelFileRequests` 同时拥有无缓冲区的 `ZwFlushBuffersFile` 生产路径。其授权掩码检查和立即发布／释放规则与延迟完成的原生读写／查询包不同；各路径共用原调用者通知和唯一释放所有者。
+
+`KernelModelFileRequests` 负责原生设备／文件系统控制的缓冲区捕获和发布。两者共用文件保留、调用者续接及数据包释放，以生产者的延迟完成规则区分设备控制与 FSCTL。共用完成验证器检查控制输出边界。
+
+`KernelModelRuntime` 统一负责内核 CRT 分类、原地转换和受检字符串写入。`KernelCStringAPIs.def` 向各调用入口提供导出身份、参数数量和 IRQL 准入。逐单元访问复用来宾内存权限及生命周期检查，报告和适配层不重复实现复制或错误语义。
+
+`KernelMemoryCalls` 负责检查型内存复制的准入并复用移动／填充操作，包括池生命周期和用户内存检查。`KernelModelRuntime` 负责 `RtlImageNtHeader` 原始签名探测。探测结果不能替代执行镜像所需的加载器验证；适配器不重复实现这两种语义。
+
+`OptimizationGuards` 补充 LLVM 的 `optnone` 检查：模块中有受保护函数时，跳过可能改写其 CFG 或把回调实参替换成 poison 的可选模块及调用图优化。必需的适配器和普通函数优化继续运行。注册链源码投影保留序言保存操作的内存记录，供原生重建绑定。
+
+`COFFRegistrationEH4Wrapper` 负责保留的 EH4 转发证明。`COFFRegistrationScalarLeaf` 检查有界且仅向前的标量 CFG、寄存器与标志初始化、私有 MXCSR 存储及映像运行时数据；拒绝调用者栈帧读取、地址逃逸、未知调用、指令重叠及不完整返回。LLVM 发射和独立 COFF 校验共用加载器证明，原包装器、辅助函数及动态数据读取继续在原位执行。
+
+`KernelModelRuntime` 统一负责 Unicode 哈希、不依赖 NLS 的大写映射及 1980 纪元秒数转换。`KernelRuntimeCalls` 通过已有分页字符串池分配大写输出。字符串和时间 API 表统一导出身份、参数个数与 APC_LEVEL 限制；字段访问顺序由实现层负责。
+
+`uppercaseCharacter` 先收窄标量参数，再进行准入检查并委托已有 `uppercaseUnicodeUnit`。CRT 与计数字符串 API 表以各自 ABI 身份共享映射；适配层和宿主区域设置不提供另一套语义。
+
+`KernelModelRuntime` 统一拥有调试参数的标量宽度及前缀和缓冲发布规则。普通变参调用使用已有调用 ABI 读取器；显式 x64 `va_list` 适配器按八字节步长检查每个实际请求的客户机标量。分派器和适配器不重复解析格式。
+
+线程查询别名复用既有线程／进程和执行上下文所有者，进程附加期间也保持一致。`RtlPcToFileHeader` 与系统模块查询共用 `LoadedModules`；`ImageRAM` 表示映射区间，不能代替模块身份。实现不读取宿主进程、线程或模块状态。
+
+`KernelMDLCalls` 将旧映射入口归一到现有六参数映射器。缓存属性、物理页身份、权限与生命周期仍由 `KernelPhysicalMemory` 和 MDL 记录负责。完整释放的内核映像别名不增加环境依赖；用户视图保留该依赖。
+
+`KernelModelFileRequests` 的 `queryFileDevice` 统一校验文件身份、头部、挂载状态和拓扑。基础查询返回文件所拥有的设备，关联查询另行校验文件扩展路由并选择附加栈顶层；两者均借用返回对象。
+
+`KernelModelFileCreate` 在现有 `FileOperation` 中管理设备指针打开。名称解析、CREATE 数据包和最终释放复用普通文件打开的状态管理。对象管理器通过内部句柄取得文件引用，`queryFileDevice` 提供关联设备，现有句柄关闭续接执行 CLEANUP。续接完成后才退出原调用线程的临界区。公共输出重叠不会替换内部保留的文件对象。
+
+`KernelModelIO` 负责进程锁页包装及私有附加生命周期，复用共享进程视图切换和普通 MDL 探测。私有附加不伪造来宾 APC 存储，也不能用公开接口的零令牌解除；准入和嵌套仍由原附加所有者管理。只有恢复成功后才向来宾传递探测异常；恢复错误仍作为模型失败。
+
+`KernelObjectAPIs.def` 统一负责固定回调版本查询的标识、参数数量、值与 IRQL 上限，不引入回调注册表或宿主操作系统查询。
+
+`KernelPhysicalMemory::resolveAddress` 将当前 `MemoryView` 与保留的精确分配切片和既有页身份匹配，包括别名。`KernelModel` 单独检查映射可读性、进程上下文及驻留状态。查询不分配新身份或锁页；仍映射的页填充不能恢复已释放字节的生命周期。
+
+`KernelModel::queryPrimaryVirtualAddress` 依据既有存活的非分页 `PoolAllocation` 记录和 `KernelPhysicalMemory::describe` 推导主虚拟地址，再通过正向查询验证。不新增反向别名登记、物理身份或页锁；通用后备地址不能证明主映射。

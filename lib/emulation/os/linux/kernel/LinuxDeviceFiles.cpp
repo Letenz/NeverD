@@ -33,6 +33,8 @@ llvm::Error validateDeviceOptions(const LinuxDeviceOptions &Options,
         (uint64_t(Options.KGSL->ContextLimit) + 1) * kgsl::SlotBytes >
             Mapping->Bytes.size())
       return failure(DeviceOptions);
+    if (Options.KGSL->MemoryObjects && Options.AccessMode != 2)
+      return failure(DeviceOptions);
     if (Options.KGSL->SynchronousA3xx && !Mapping->Updates.empty())
       return failure(DeviceOptions);
   }
@@ -69,9 +71,12 @@ llvm::Error validateDeviceOptions(const LinuxDeviceOptions &Options,
     if (Ranges[I].first < Ranges[I - 1].second)
       return failure(DeviceOptions);
   for (const auto &Call : Options.Ioctls) {
-    if (Options.KGSL && (kgsl::isContextRequest(Call.Request) ||
-                         (Options.KGSL->SynchronousA3xx &&
-                          kgsl::isCommandRequest(Call.Request))))
+    if (Options.KGSL &&
+        (kgsl::isContextRequest(Call.Request) ||
+         (Options.KGSL->SynchronousA3xx &&
+          kgsl::isCommandRequest(Call.Request)) ||
+         (Options.KGSL->MemoryObjects && (kgsl::isObjectRequest(Call.Request) ||
+                                          Call.Request == kgsl::FreeMemory))))
       return failure(DeviceOptions);
     if (Call.Result < -4095 || Call.Memory.size() > DeviceMemoryLimit)
       return failure(DeviceOptions);
@@ -121,6 +126,9 @@ LinuxFiles::deviceIoctl(uint32_t FD, uint32_t Request, uint64_t Argument,
     return binderIoctl(*Device, Request, Argument, Result);
   if (Device->Options->KGSL && kgsl::isContextRequest(Request))
     return contextIoctl(*Device, Request, Argument, Result);
+  if (Device->Options->KGSL && Device->Options->KGSL->MemoryObjects &&
+      (kgsl::isObjectRequest(Request) || Request == kgsl::FreeMemory))
+    return gpuObjectIoctl(*Device, Request, Argument, Result);
   if (Device->Options->KGSL && Device->Options->KGSL->SynchronousA3xx &&
       kgsl::isCommandRequest(Request))
     return gpuIoctl(*Device, Request, Argument, Result);

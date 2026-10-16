@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../../UnalignedMemory.h"
 #include "../X86FPStateHelpers.h"
 
 #include "neverd/Limits.h"
@@ -465,12 +466,12 @@ renderSegmentedString(Arch TheArch, const HighExpr &Call,
 
   std::string Result = "do {\n";
   if (IsMovs || IsLods || IsCmps || IsOuts)
-    Result += "    uintptr_t neverd_si = (uintptr_t)(" +
-              ExprFn(*Call.Operands[0]) + ");\n";
+    Result += "    uintptr_t neverd_si = " +
+              c_memory::integerOperand(ExprFn(*Call.Operands[0])) + ";\n";
   if (IsMovs || IsStos || IsCmps || IsScas || IsIns) {
     const size_t DiIndex = (IsMovs || IsCmps) ? 1 : 0;
-    Result += "    uintptr_t neverd_di = (uintptr_t)(" +
-              ExprFn(*Call.Operands[DiIndex]) + ");\n";
+    Result += "    uintptr_t neverd_di = " +
+              c_memory::integerOperand(ExprFn(*Call.Operands[DiIndex])) + ";\n";
   }
   size_t CountIndex = 1;
   if (IsMovs || IsCmps) {
@@ -1295,10 +1296,47 @@ const char *x86SizedIntrinsicCName(Intrinsic Id, uint16_t ResultBytes) {
 }
 
 bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
-  return isMovs(Id) || isStos(Id) || Id == Intrinsic::Lidt ||
-         Id == Intrinsic::Sidt || Id == Intrinsic::Invlpg ||
-         Id == Intrinsic::Ldmxcsr || Id == Intrinsic::Stmxcsr ||
-         Id == Intrinsic::Pushf || Id == Intrinsic::Popf;
+  if (isMovs(Id) || isStos(Id))
+    return true;
+  switch (Id) {
+  // What Microsoft's <intrin.h> declares and the GNU headers do not.
+  case Intrinsic::Lidt:
+  case Intrinsic::Sidt:
+  case Intrinsic::Invlpg:
+  case Intrinsic::Ldmxcsr:
+  case Intrinsic::Stmxcsr:
+  case Intrinsic::Pushf:
+  case Intrinsic::Popf:
+  case Intrinsic::Rdmsr:
+  case Intrinsic::Wrmsr:
+  case Intrinsic::Rdpmc:
+  case Intrinsic::SegmentLimit:
+  case Intrinsic::Hlt:
+  case Intrinsic::Int3:
+  case Intrinsic::Ud2:
+  case Intrinsic::Vmcall:
+  case Intrinsic::Swapgs:
+  case Intrinsic::Nop:
+  case Intrinsic::In:
+  case Intrinsic::Out:
+  case Intrinsic::Insb:
+  case Intrinsic::Outsb:
+  case Intrinsic::ReadCr0:
+  case Intrinsic::ReadCr2:
+  case Intrinsic::ReadCr3:
+  case Intrinsic::ReadCr4:
+  case Intrinsic::ReadCr8:
+  case Intrinsic::WriteCr0:
+  case Intrinsic::WriteCr2:
+  case Intrinsic::WriteCr3:
+  case Intrinsic::WriteCr4:
+  case Intrinsic::WriteCr8:
+  case Intrinsic::ReadDr:
+  case Intrinsic::WriteDr:
+    return true;
+  default:
+    return false;
+  }
 }
 
 bool x86UsesImplicitRegisterAsm(Intrinsic Id) {

@@ -148,6 +148,10 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
                  gprFamilyOf(Scan.TheArch, Stored.RegOff);
         }))
       return;
+    // Nor does an indirect call take a prologue's save of a register's
+    // incoming value (`push {r4, r6, r7, lr}` above the outgoing area).
+    if (Scan.Indirect && isIncomingRegisterSave(TRI, Stored))
+      return;
 
     const MedVar &AddrVar = Prev.Inputs[0];
     int64_t StackOff = -1;
@@ -500,6 +504,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
 
   const int MaxArgs = limits::kMaxCallArgs;
   std::vector<ExprPtr> Found(MaxArgs);
+  // The value the block's own write leaves in each argument register.
+  std::vector<std::optional<MedVar>> FoundSource(MaxArgs);
 
   const auto &TRI = getTargetRegInfo(TargetArch);
   const BinaryFormat Format =
@@ -535,10 +541,13 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     if (Prev.Output.Kind == MedVar::Reg && Prev.Output.Size > 0) {
       const int ArgIdx = integerSlot(Prev.Output.RegOff);
       if (ArgIdx >= 0 && ArgIdx < MaxArgs && !Found[ArgIdx]) {
-        if (Prev.Opcode == NdOp::COPY && Prev.NumInputs >= 1)
+        if (Prev.Opcode == NdOp::COPY && Prev.NumInputs >= 1) {
           Found[ArgIdx] = medvarToExpr(Prev.Inputs[0]);
-        else
+          FoundSource[ArgIdx] = Prev.Inputs[0];
+        } else {
           Found[ArgIdx] = medOpToExpr(Prev);
+          FoundSource[ArgIdx] = Prev.Output;
+        }
       }
     }
   }
@@ -669,6 +678,17 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     JoinsSeen.clear();
     return PhiOutputVars.count(varKey(LiveIn)) && !SetInFunction(LiveIn);
   };
+  // Nor does what earlier calls left in the register on every path
+  // (ValuesLeftByCalls), though the register carries a parameter on entry.
+  auto LeftByCall = [&](const MedVar &LiveIn) {
+    if (!CurMed)
+      return false;
+    if (LeftByCallsFor != CurMed) {
+      LeftByCalls.emplace(*CurMed);
+      LeftByCallsFor = CurMed;
+    }
+    return LeftByCalls->contains(LiveIn);
+  };
   auto tryPredSetupArg = [&](int K) -> bool {
     MedVar LiveIn;
     if (!reachingRegAtBlockEntry(CurBlock, ParamRegs[K], LiveIn))
@@ -795,10 +815,11 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     // value reaching the call (`fprintf(stderr, fmt)` after a join; a
     // `jmp rax` alone in its block in register_tm_clones).  Where an import
     // takes every argument on the stack (i386), none is in a register.
-    if (const unsigned Fixed =
-            Convention && Convention->RegparmOnlyForInternalCalls
-                ? 0
-                : importFixedArgCount(CallIdx, Ops, ResolvedSlot))
+    const unsigned Fixed =
+        Convention && Convention->RegparmOnlyForInternalCalls
+            ? 0
+            : importFixedArgCount(CallIdx, Ops, ResolvedSlot);
+    if (Fixed)
       FillLast =
           std::max(FillLast, std::min(static_cast<int>(Fixed),
                                       static_cast<int>(ParamRegs.size())) -
@@ -810,8 +831,10 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       MedVar LiveIn;
       if (!reachingRegAtBlockEntry(CurBlock, ParamRegs[K], LiveIn))
         continue;
-      // The arguments end before such a join.
-      if (EntryJoin(LiveIn)) {
+      // The arguments end before such a join, and past the fixed ones an
+      // import reads, before what earlier calls left.
+      if (EntryJoin(LiveIn) ||
+          (K >= static_cast<int>(Fixed) && LeftByCall(LiveIn))) {
         std::fill(Found.begin() + K, Found.end(), nullptr);
         break;
       }
@@ -1025,6 +1048,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   Scan.TailJump = CallIdx + 1 < Ops.size() &&
                   Ops[CallIdx + 1].Opcode == NdOp::RETURN &&
                   Ops[CallIdx + 1].Addr == Ops[CallIdx].Addr;
+  Scan.Indirect =
+      CallIdx < Ops.size() && Ops[CallIdx].Opcode == NdOp::INDIR_CALL;
   Scan.StoreScanWindow = limits::kCallArgStoreScanWindow;
   Scan.ExtraWindows = ExtraWindows;
   auto ToExpr = [this](const MedVar &V) { return medvarToExpr(V); };
@@ -1033,9 +1058,15 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   auto ReachingRegArg = [&](int Index) -> ExprPtr {
     if (Index < 0 || Index >= static_cast<int>(ParamRegs.size()))
       return nullptr;
+    // What earlier calls left there passes no value where the callee is not
+    // known to read the register: the slot still takes its place, as zero.
+    // A register it reads keeps its unknown value.
     MedVar LiveIn;
-    if (reachingRegAtBlockEntry(CurBlock, ParamRegs[Index], LiveIn))
-      return medvarToExpr(LiveIn);
+    if (reachingRegAtBlockEntry(CurBlock, ParamRegs[Index], LiveIn)) {
+      const bool Read =
+          CallIdx < Ops.size() && Ops[CallIdx].CalleeRegisterArgs > Index;
+      return !Read && LeftByCall(LiveIn) ? nullptr : medvarToExpr(LiveIn);
+    }
     // A register this function never writes, at its only call, still holds
     // its incoming value: a recovered parameter is passed straight through.
     if (auto Param = untouchedParamRegister(ParamRegs[Index]))
@@ -1259,6 +1290,16 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     return Collected;
   };
 
+  // Where call-ABI recovery ended an indirect call's register arguments at
+  // the register that holds its target, no scan goes past that position:
+  // the target's earlier writes, which dead-code elimination left, are stale
+  // there (`add r0, pc; ldr r0, [r0]; blx r0`).
+  size_t TargetLimit = static_cast<size_t>(MaxArgs);
+  if (CurMed)
+    if (const MedCallInfo *Info =
+            CurMed->findCall(CurBlock.Id, static_cast<int>(CallIdx));
+        Info && Info->TargetRegisterArgIdx >= 0)
+      TargetLimit = static_cast<size_t>(Info->TargetRegisterArgIdx);
   if (Hinted.empty() && CurMed) {
     if (const MedCallInfo *CI =
             CurMed->findCall(CurBlock.Id, static_cast<int>(CallIdx))) {
@@ -1277,8 +1318,16 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       const bool CompleteSetup = SetupConvention && !CI->IsIndirect;
       size_t Recovered = CI->Args.size();
       if (SetupConvention && CI->IsIndirect) {
-        if (Convention->RegparmOnlyForInternalCalls)
+        // The scan gives such a call its stack arguments, though not the
+        // incoming ones a tail jump passes on untouched, which recovery
+        // promotes to stack parameters.
+        if (Convention->RegparmOnlyForInternalCalls) {
           Recovered = 0;
+          while (Recovered < CI->Args.size() &&
+                 CI->Args[Recovered].Kind == MedVar::Param &&
+                 CI->Args[Recovered].RegOff == kNoParamReg)
+            ++Recovered;
+        }
         for (size_t K = 0; K < Recovered; ++K) {
           JoinsSeen.clear();
           if (!SetInFunction(CI->Args[K])) {
@@ -1287,7 +1336,9 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
           }
         }
       }
-      if (SetupConvention ? CompleteSetup || Recovered : !CI->Args.empty()) {
+      if (SetupConvention ? CompleteSetup || Recovered ||
+                                TargetLimit < static_cast<size_t>(MaxArgs)
+                          : !CI->Args.empty()) {
         std::vector<ExprPtr> FromABI;
         FromABI.reserve(Recovered);
         for (size_t K = 0; K < Recovered; ++K) {
@@ -1302,9 +1353,18 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
           }
           FromABI.push_back(std::move(Arg));
         }
+        // The register that holds an indirect call's target is no argument
+        // (`mov r2, r0; mov r0, r1; blx r2`).
+        const MedVar &Target = Ops[CallIdx].Inputs[0];
+        auto HoldsTarget = [&](size_t I) {
+          const std::optional<MedVar> &Source = FoundSource[I];
+          return CI->IsIndirect && !Target.isConst() && Source &&
+                 Source->Kind == Target.Kind && Source->Id == Target.Id &&
+                 Source->SSAVer == Target.SSAVer;
+        };
         size_t End = FromABI.size();
-        while (!CompleteSetup && End < static_cast<size_t>(MaxArgs) &&
-               Found[End] && Found[End]->Kind != ExprKind::Undef)
+        while (!CompleteSetup && End < TargetLimit && Found[End] &&
+               Found[End]->Kind != ExprKind::Undef && !HoldsTarget(End))
           ++End;
         for (size_t I = FromABI.size(); I < End; ++I)
           FromABI.push_back(Found[I]);
@@ -1344,7 +1404,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     if (ExactRegisters && K >= ReadSlots &&
         K < static_cast<int>(ParamRegs.size()))
       continue;
-    if (K >= ReadSlots && (!Found[K] || Found[K]->Kind == ExprKind::Undef))
+    if (K >= ReadSlots && (!Found[K] || Found[K]->Kind == ExprKind::Undef ||
+                           static_cast<size_t>(K) >= TargetLimit))
       break;
     End = static_cast<size_t>(K) + 1;
   }

@@ -172,7 +172,8 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   auto &CPU = (*Session)->cpu();
   linux_model::LinuxServices Kernel(CPU, Layout, Linked->InitialBreak, Options,
                                     Result);
-  GuestThreads Threads(CPU, *Calls, Options, Result, Kernel.clock());
+  GuestThreads Threads(CPU, *Calls, Options, Result, Kernel.clock(),
+                       Kernel.priority());
   if (auto E = Threads.initialize(StackBase))
     return std::move(E);
   if (auto E = Kernel.initializeProc())
@@ -408,6 +409,16 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     auto Import = Linked->Imports.find(Request->PC);
     if (Request->Immediate == ModelTrap && Import != Linked->Imports.end()) {
       NativeCallEvent Event{Request->PC, Import->second};
+      if (Options.LinuxFiles && Options.LinuxFiles->IoctlTrace &&
+          (Event.Name == "ioctl" || Event.Name == "syscall")) {
+        // AArch64 reads the link register, not guest stack memory. Missing
+        // observation must not change the native call's result.
+        auto Return = Calls->readReturnAddress(CPU, 0);
+        if (Return)
+          Event.ReturnAddress = *Return;
+        else
+          llvm::consumeError(Return.takeError());
+      }
       if (Threads.enabled())
         Event.ThreadID = Threads.id();
       auto Provider = Linked->DynamicProviders.find(Request->PC);

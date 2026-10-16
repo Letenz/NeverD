@@ -33,6 +33,11 @@ namespace limits {
 /// real .bss, so legitimate binaries are unaffected.
 constexpr uint64_t kMaxSegmentZeroFill = 1ull << 30; // 1 GiB
 
+/// Most bytes the compressed sections of one debug file expand to: a crafted
+/// header cannot ask for more, and the largest real debug files stay well
+/// under it.
+constexpr uint64_t kMaxExpandedDebugSections = 4ull << 30; // 4 GiB
+
 /// Address room the ELF loader leaves after an undefined data symbol of a
 /// relocatable object, past the furthest offset a relocation states: code
 /// reaches a field of an undefined struct at an offset no relocation states
@@ -675,8 +680,9 @@ constexpr size_t kMinParallelIRWorkItems = 32;
 // C output formatting
 //===----------------------------------------------------------------------===//
 
-/// Threshold below which integer constants are printed in decimal
-/// rather than hexadecimal in decompiled C output.
+/// The magnitude up to which a negative integer constant prints in decimal
+/// in decompiled C, and any constant in HighIR dumps; C writes non-negative
+/// constants in their natural base (neverd/support/IntegerLiterals.h).
 constexpr uint64_t kDecimalConstThreshold = 4096;
 
 /// Display-only TPI member / enumerator names.  Structs stay small;

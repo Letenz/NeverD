@@ -69,6 +69,75 @@ KernelModel::initializeUnicodeString(llvm::ArrayRef<uint64_t> A) {
 }
 
 llvm::Expected<uint64_t>
+KernelModel::upcaseUnicodeString(llvm::ArrayRef<uint64_t> A) {
+  auto Read = [&](uint64_t Base, unsigned Offset,
+                  unsigned Size) -> llvm::Expected<uint64_t> {
+    if (auto E = runtime::checkBufferRange(Base, uint64_t(Offset) + Size))
+      return E;
+    if (auto E = validateGuestAccess(Base + Offset, Size, false))
+      return E;
+    return Memory.readInteger(Base + Offset, Size);
+  };
+  auto Write = [&](uint64_t Base, unsigned Offset, uint64_t Value,
+                   unsigned Size) -> llvm::Error {
+    if (auto E = runtime::checkBufferRange(Base, uint64_t(Offset) + Size))
+      return E;
+    if (auto E = validateGuestAccess(Base + Offset, Size, true))
+      return E;
+    return Memory.writeInteger(Base + Offset, Value, Size);
+  };
+  auto Length = Read(A[1], 0, 2);
+  if (!Length)
+    return Length.takeError();
+  if (uint8_t(A[2])) {
+    if (auto E = Write(A[0], UnicodeMaximumOffset, *Length, 2))
+      return E;
+    auto Buffer =
+        allocatePool({PoolPaged, *Length, RuntimeStringPoolTag}, false);
+    if (!Buffer)
+      return Buffer.takeError();
+    if (auto E = Write(A[0], UnicodeBufferOffset, *Buffer, 8))
+      return E;
+    if (!*Buffer)
+      return StatusNoMemory;
+    Length = Read(A[1], 0, 2);
+    if (!Length)
+      return Length.takeError();
+  } else {
+    auto Maximum = Read(A[0], UnicodeMaximumOffset, 2);
+    if (!Maximum)
+      return Maximum.takeError();
+    if (*Length > *Maximum)
+      return StatusBufferOverflow;
+  }
+  const unsigned Units = *Length / 2;
+  for (unsigned I = 0; I < Units; ++I) {
+    // Payload stores can alias either descriptor. The pinned routine reloads
+    // both Buffer fields on every iteration and Length only after the loop.
+    auto Source = Read(A[1], UnicodeBufferOffset, 8);
+    if (!Source)
+      return Source.takeError();
+    auto Unit = Read(*Source, I * 2, 2);
+    if (!Unit)
+      return Unit.takeError();
+    auto Upper = runtime::uppercaseUnicodeUnit(*Unit);
+    if (!Upper)
+      return Upper.takeError();
+    auto Destination = Read(A[0], UnicodeBufferOffset, 8);
+    if (!Destination)
+      return Destination.takeError();
+    if (auto E = Write(*Destination, I * 2, *Upper, 2))
+      return E;
+  }
+  Length = Read(A[1], 0, 2);
+  if (!Length)
+    return Length.takeError();
+  if (auto E = Write(A[0], 0, *Length, 2))
+    return E;
+  return StatusSuccess;
+}
+
+llvm::Expected<uint64_t>
 KernelModel::ansiToUnicodeString(llvm::ArrayRef<uint64_t> A) {
   // RtlAnsiStringToUnicodeString (RVA 0x6f6840) stores Length before checking
   // capacity and replaces Buffer when it allocates, even on failure.
@@ -349,6 +418,17 @@ llvm::Expected<uint64_t> KernelModel::debugMessage(
   if (!Text)
     return Text.takeError();
   // The observation profile enables all debugger component/level filters.
+  Result.Messages.push_back(std::move(*Text));
+  return StatusSuccess;
+}
+
+llvm::Expected<uint64_t>
+KernelModel::prefixedDebugMessage(llvm::ArrayRef<uint64_t> A) {
+  auto Text =
+      runtime::formatPrefixedDebugMessage(*this, Memory, A[0], A[3], A[4]);
+  if (!Text)
+    return Text.takeError();
+  // Component and level filters share the enabled observation profile.
   Result.Messages.push_back(std::move(*Text));
   return StatusSuccess;
 }

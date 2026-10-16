@@ -20,6 +20,31 @@ std::optional<uint64_t> sizeOf(const TypeLibrary &Library,
               : std::nullopt;
 }
 
+/// The bytes the Win64 convention passes a parameter of \p Type in: a
+/// scalar's own, a record's of 1, 2, 4 or 8 bytes, and a pointer's for a
+/// larger record, which goes by its address, or an array, which decays.
+std::optional<uint64_t> win64Bytes(const TypeLibrary &Library,
+                                   const TypeExpr &Type) {
+  const TypeExpr *Named = &Type;
+  for (unsigned Depth = 0; Depth < 32 && Named->Kind == TypeExprKind::Named;
+       ++Depth) {
+    const LocalType *Typedef = Library.find(Named->Name);
+    if (!Typedef || Typedef->Kind != TypeKind::Typedef || !Typedef->Target)
+      break;
+    Named = Typedef->Target.get();
+  }
+  if (Named->Kind == TypeExprKind::Array)
+    return 8;
+  const std::optional<uint64_t> Size = Library.sizeOf(*Named);
+  const bool Record = Named->Kind == TypeExprKind::Record ||
+                      (Named->Kind == TypeExprKind::Named &&
+                       (Named->NamedKind == TypeKind::Struct ||
+                        Named->NamedKind == TypeKind::Union));
+  if (Record && Size && *Size != 1 && *Size != 2 && *Size != 4 && *Size != 8)
+    return 8;
+  return Size;
+}
+
 } // namespace
 
 TEST(HeaderLibrary, TheKernelsReadsAsADriverDeclaresIt) {
@@ -90,4 +115,35 @@ TEST(HeaderLibrary, JoinsWhereTheProgramHasNoTypeOfTheName) {
   // The program's own prototype stays.
   EXPECT_EQ(Program.findPrototype("Use")->Return->TheBuiltin, Builtin::ULong);
   EXPECT_EQ(Merge.Prototypes, 0u);
+}
+
+TEST(HeaderLibrary, DeclaresTheKernelRoutinesTheCallAnalysisFixes) {
+  // WindowsKernelRoutines.inc fixes the bytes each parameter of a routine
+  // takes, which the call analysis reads before any prototype; the kernel's
+  // headers declare the same routines and must agree.
+  const TypeLibrary *Kernel = headerLibrary(HeaderLibrary::WindowsKernelX64);
+  ASSERT_NE(Kernel, nullptr);
+  struct Routine {
+    llvm::StringRef Name;
+    std::vector<uint64_t> Bytes;
+  };
+  const Routine Routines[] = {
+#define ND_WINDOWS_DISPATCH_THUNK(Name)
+#define ND_WINDOWS_PROTO(Name, ...) {Name, {__VA_ARGS__}},
+#include "neverd/libc/WindowsKernelRoutines.inc"
+#undef ND_WINDOWS_PROTO
+#undef ND_WINDOWS_DISPATCH_THUNK
+  };
+  size_t Declared = 0;
+  for (const Routine &R : Routines) {
+    const FunctionDef *Function = Kernel->findPrototype(R.Name);
+    if (!Function)
+      continue;
+    ++Declared;
+    ASSERT_EQ(Function->Params.size(), R.Bytes.size()) << R.Name.str();
+    for (size_t I = 0; I < R.Bytes.size(); ++I)
+      EXPECT_EQ(win64Bytes(*Kernel, *Function->Params[I].Type), R.Bytes[I])
+          << R.Name.str() << " parameter " << I;
+  }
+  EXPECT_GT(Declared, 0u);
 }

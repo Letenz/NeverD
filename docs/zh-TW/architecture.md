@@ -7,6 +7,18 @@
 本指南說明貢獻者安全修改 NeverD 所需理解的生產邊界。內容刻意只涵蓋
 NeverD 自有程式碼；LLVM、Capstone 與 Unicorn 子模組各自維護內部架構。
 
+## MXCSR 還原的嚴格驗證
+
+`X64MXCSRMask` 透過明確的有效遮罩（`0xffbf` 或 `0xffff`）啟用原始 MXCSR 載入及純量狀態讀寫。x64 配接器負責合法入口狀態域和轉換；核心計算工作預算，並要求證明保留位元為零。無故障旗標本身不構成該證明。原始內建操作保留可觀測效果。MXCSR 記憶體寫入、原始碼包裝及原生/LLVM 憑證仍需各自的契約。
+
+## 執行期記憶體還原
+
+`X64SegmentedWrites` 獨立允許明確無故障機器狀態下、使用 64 位元偏移的普通 1/2/4/8 位元組 FS/GS 寫入。`arch/x86_64` 負責執行期記憶體選項驗證、操作准入與符號基址初始化。核心使用完整線性位址及一般別名失效規則；任意固定基址仍可能與堆疊框架、其他段及有效返回槽重疊。此能力納入原始還原憑據。缺少已認證基址輸入的原始碼與原生證明介面持續拒絕此執行域。
+
+## 具體入口記憶體種子
+
+`SymExecConcreteShadow` 在執行前接收依位址排列的 RAM 位元組；僅更新具體狀態，符號端的入口記憶體維持自由輸入。C++ `LowIRConcolicOptions::InitialMemory` 的 `MaxMemorySeedBytes` 預設上限為 1 MiB，零預算不接受位元組；空白、重疊或繞回範圍會拒絕。記憶體報告採版本 2，保留 `InitialMemory` 與候選 `MemorySeed`。投影僅接受已有種子涵蓋、epoch 為零的暫存器或絕對記憶體來源；查詢、重新執行和去重包含兩類位元組。缺漏、符號基底與近似效果繼續拒絕，寫入正常更新具體記憶體。暫停時可由 `ProcessView::read` 讀取已提交 RAM；寫入前鉤子不能代表完整快照。觀測不證明所有權、生命週期、不變性或不相交；候選只驗證指定分支和先前決策。版本 1 的 C/JSON、Python 與 CLI 仍只接受暫存器。
+
 ## 原始碼與物件替換邊界
 
 `SourcePatchCompiler` 負責編譯器身分與製品選擇。`validateSourcePatchTarget` 統一決定原始碼與外部 IR 的目標准入，目標三元組本身不足以證明支援。`bindSourcePatch` 確認 IR 入口映射；`PatchObject` 負責原生區段、重定位與 FDE 範圍證據。`publishSourcePatch` 暫存、檢查並獨占發佈完整交易。`COFFSourceImage` 負責 PE x86/x64/ARM32/ARM64 的新儲存與展開表；提升後的重寫仍要求獨立的原 EH 證據。參見[原始碼 patch](source-patching.md)。
@@ -1645,6 +1657,18 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymState` 僅對基底位址為 64 位元的符號區域使用模 2^64 的相對座標。跨越相對零點的讀取分成兩個不回繞的區間，使每項輸入來源都位於單一區間內；寫入保留完整值。絕對記憶體、暫存器與暫存儲存區的範圍溢位仍被拒絕。此索引規則不提供實際位址有效性、不別名或堆疊框架分離前提；一般的跨區域失效與逐 STORE 保存證明保持不變。Unicorn、KVM 與 WHP 共用此分析規則。
 
+### 有界 libSystem 匯入
+
+`MachOProgramLinking` 擁有嚴格原始 classic/generic64 事實、完整未定義符號閉合與準備預算。Darwin 進程管理庫/符號准入、指標發布、fixup 後唯讀、libSystem 入口與 errno。`DarwinLibSystemCalls.def` 將精確名稱和參數數量繫結到 `DarwinServices` 核心效果，不捏造原始 trap。`DarwinMemory` 管理保留頁與原始最大權限；`ExecutionBudget` 共用期限，`ProcessReport` 輸出可選 `darwin.native_calls`，不載入宿主庫。
+
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
+### Darwin dylib 匯入偏移
+
+一般強 dylib 匯入支援帶符號的位元組偏移，可初始化全域指標與 TLS 範本指標。`DarwinImage` 統一計算匯出位址、程式庫載入偏移及匯入加數，檢查溢位並限定在所選提供程式庫的原始區段內；指標值檢查不推測存取寬度。libSystem 入口、匯入的 TLV 描述元和延遲繫結仍要求零加數。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### 循序執行範圍內的原始比較交換
 
 `SymExec` 負責獲准的原始 `ATOMIC_CMPXCHG` 的值語義：發佈輸出前擷取位址、預期值、目標值及舊值，再一次提交 `ite(Old == Expected, Desired, Old)`。`SymState` 負責該次寫入的位元組效果、別名失效及保存預算。`InterpreterSpecialization` 負責接納與來源：Old 使用寫入前的記憶體來源；條件寫入保守合併 Old、預期值與目標值的來源，並撤銷可能重疊的仿射溢出儲存事實。即使比較失敗，也須證明完整寫入範圍與受保護返回單元分離。殘餘程式保留原子操作、記憶體順序及發生次數；拒絕時不發佈部分殘餘 CFG。
@@ -1666,6 +1690,46 @@ KernelModelObjects 在共用物件表管理檔案控制代碼與指標計數。K
 
 KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共享操作接收已獲准的節點及已映射權限，雙向檢查共享衝突；僅存取中繼資料的開啟不參與衝突。CLEANUP 釋放共享限制但保留 token，CLOSE 刪除已清理的 token。仍被參照的已清理物件也計入 1024 個開啟的上限。嚴格綁定驗證將 token 與檔案物件 owner 對照。 `KernelModelFileCreate` 擁有 CREATE 與取消生產者，在回呼前保留控制代碼容量。`DriverSession` 在非同步操作與巢狀 CLOSE 中保留原呼叫者。共同物件擁有者發布控制代碼；名稱查找保留真實目錄物件，終端提供者讀取已准入封包。場景關閉意圖獨立保留，快照與卸載執行雙向 token 驗證。
 
+`KernelModelFileRequests` 共同擁有借用緩衝的 IoQueryFileInformation 與獨立緩衝的 ZwQueryInformationFile 續調、呼叫端發布及封包回收。KernelMode 控制代碼參考重用物件擁有者。原生 SystemBuffer 向實體記憶體擁有者登記，一般要求回收留待查詢擁有者處理。僅 `KernelFileSystem::queryInformation` 依保留的開啟 token 編碼宣告中繼資料；終端路徑使用實際 IRP 類別與長度，介接和報告層不重建資料。
+
+`KernelModelIO` 回收傳輸所有權時不修改 `FILE_OBJECT.CurrentByteOffset`。請求偏移與完成位元組數不能替代檔案系統的位置更新；同步原生 Position 查詢讀取保留的欄位。
+
 ### 原始環境的架構歸屬
 
 `RecoveryArchitecture` 根據 `SpecializationOptions::Architecture` 選擇原生契約，與編譯主機無關。現有預設值為 x64；沒有轉接器的架構明確拒絕。`arch/x86_64` 負責原生選項編碼、主映像範圍規則、外部退出比對成本及實體退出回執。core 負責通用預算、策略編碼及圖與證據的完整性。x64 選項與回執摘要保留原有位元組編碼；驗證宣告前檢查預期與儲存的架構識別。`RawArchitectureReceiptCompatibility` 固定重構前的摘要值，架構不符測試禁止把 x64 證據改標為 ARM64。此邊界尚未實作 ARM64 原生恢復。
+
+`KernelModelFileRequests` 也統一擁有同步緩衝 `ZwReadFile` / `ZwWriteFile`。產生端負責控制代碼範圍、偏移與鍵擷取及寫入資料副本。共用完成路徑只在原呼叫端符合通知條件時發布讀取位元組與 IOSB，並各釋放一次自有封包和緩衝區。儲存驅動程式負責內容與檔案位置變更。
+
+`KernelModelFileRequests` 也擁有無緩衝區的 `ZwFlushBuffersFile` 產生路徑。其權限遮罩檢查及立即發布／釋放規則與延遲完成的原生讀寫／查詢封包不同；各路徑共用原呼叫者通知及單次釋放的擁有者。
+
+`KernelModelFileRequests` 負責原生裝置／檔案系統控制的緩衝區擷取與發布。兩者共用檔案保留、呼叫者接續與封包釋放，以產生者的延遲完成規則區分裝置控制和 FSCTL。共用完成驗證器檢查控制輸出界限。
+
+`KernelModelRuntime` 統一負責核心 CRT 分類、原地轉換及受檢字串寫入。`KernelCStringAPIs.def` 向各呼叫入口提供匯出身分、參數數量及 IRQL 准入。逐單元存取沿用客體記憶體權限與生命週期檢查；報告和介接層不重複實作複製或錯誤語意。
+
+`KernelMemoryCalls` 負責檢查型記憶體複製的准入，並沿用移動／填充操作、集區生命週期與使用者記憶體檢查。`KernelModelRuntime` 負責 `RtlImageNtHeader` 原始簽章探測。此探測不能替代執行映像所需的載入器驗證；配接器不重複兩者語義。
+
+`OptimizationGuards` 補充 LLVM 的 `optnone` 檢查：模組內有受保護函式時，略過可能改寫其 CFG 或將回呼引數替換為 poison 的選用模組與呼叫圖最佳化。必要適配器與一般函式最佳化仍執行。註冊鏈來源投影保留序言儲存的記憶體記錄，供原生重建綁定。
+
+`COFFRegistrationEH4Wrapper` 負責保留的 EH4 轉送證明。`COFFRegistrationScalarLeaf` 檢查有界且只向前的純量 CFG、暫存器與旗標初始化、私有 MXCSR 儲存及映像執行階段資料；拒絕呼叫者框架讀取、位址逸出、未知呼叫、指令重疊及不完整返回。LLVM 發射與獨立 COFF 驗證共用載入器證明，原包裝器、輔助函式及動態資料讀取繼續原位執行。
+
+`KernelModelRuntime` 統一負責 Unicode 雜湊、不依賴 NLS 的大寫映射及 1980 紀元秒數轉換。`KernelRuntimeCalls` 透過既有分頁字串集區配置輸出。字串與時間 API 表統一匯出身分、參數數量及 APC_LEVEL 限制；欄位存取順序由實作層負責。
+
+`uppercaseCharacter` 先縮窄純量參數，再檢查准入並委託既有 `uppercaseUnicodeUnit`。CRT 與計數字串 API 表以各自 ABI 身分共用映射，介接層與宿主地區設定不提供另一套語意。
+
+`KernelModelRuntime` 統一擁有偵錯參數純量寬度及前綴和緩衝發布規則。一般變參呼叫使用既有呼叫 ABI 讀取器；明確的 x64 `va_list` 配接器以八位元組步長檢查每個實際請求的客體純量。分派器及配接器不重複解析格式。
+
+執行緒查詢別名共用既有執行緒／行程及執行上下文所有者，行程附加期間亦然。`RtlPcToFileHeader` 與系統模組查詢共用 `LoadedModules`；`ImageRAM` 表示映射區間，不能代替模組身分。實作不讀取主機行程、執行緒或模組狀態。
+
+`KernelMDLCalls` 將舊映射入口正規化至現有六參數映射器。快取屬性、實體頁面身分、權限與生命週期仍由 `KernelPhysicalMemory` 和 MDL 記錄負責。完整釋放的核心映像別名不增加環境相依性；使用者檢視保留該相依性。
+
+`KernelModelFileRequests` 的 `queryFileDevice` 統一驗證檔案身分、標頭、掛載狀態和拓撲。基礎查詢傳回檔案所擁有的裝置，關聯查詢另行驗證檔案擴充路由並選取附加堆疊頂層；兩者均借用傳回物件。
+
+`KernelModelFileCreate` 在現有 `FileOperation` 中管理裝置指標開啟。名稱解析、CREATE 封包和最終釋放共用一般檔案開啟的狀態管理。物件管理員透過內部控制代碼取得檔案參考，`queryFileDevice` 提供關聯裝置，現有關閉續接執行 CLEANUP。續接完成後才離開原呼叫執行緒的臨界區。公開輸出重疊不會替換內部保留的檔案物件。
+
+`KernelModelIO` 負責處理程序鎖頁包裝及私有附加生命週期，重用共用處理程序檢視切換和一般 MDL 探測。私有附加不偽造客體 APC 儲存，也不能以公開介面的零權杖解除；准入和巢狀關係仍由原附加擁有者管理。只有還原成功後才向客體傳遞探測例外；還原錯誤仍為模型失敗。
+
+`KernelObjectAPIs.def` 統一負責固定回呼版本查詢的識別、參數數量、值與 IRQL 上限，不引入回呼登錄表或主機作業系統查詢。
+
+`KernelPhysicalMemory::resolveAddress` 將目前 `MemoryView` 與保留的精確配置切片和既有頁面身分匹配，包括別名。`KernelModel` 分別檢查映射可讀性、行程環境及駐留狀態。查詢不配置新身分或鎖定頁面；仍映射的頁面填補不能恢復已釋放位元組的生命週期。
+
+`KernelModel::queryPrimaryVirtualAddress` 依據既有存活的非分頁 `PoolAllocation` 記錄及 `KernelPhysicalMemory::describe` 推導主要虛擬位址，再透過正向查詢驗證。不新增反向別名登錄、實體身分或頁面鎖定；通用後備位址不能證明主要映射。

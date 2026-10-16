@@ -26,6 +26,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -41,12 +42,14 @@ enum class Language : uint8_t {
 
 /// How APIs name \p Lang, such as "rust".
 llvm::StringRef languageId(Language Lang);
+/// Every language's id, as a message lists them: "c, cpp, ... or python".
+std::string languagesText();
 /// The language an API names, if any.
 std::optional<Language> languageNamed(llvm::StringRef Id);
 
 /// How rendered source names builtin types (BuiltinSpellings.def).
 enum class BuiltinSpelling : uint8_t {
-#define NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go) Name,
+#define NEVERD_BUILTIN_SPELLING(Name, Id) Name,
 #include "neverd/types/BuiltinSpellings.def"
 };
 
@@ -58,8 +61,12 @@ std::optional<BuiltinSpelling> spellingNamed(llvm::StringRef Id);
 bool spellsBuiltins(Language Lang, BuiltinSpelling Spelling);
 /// How \p Lang names builtins unless asked.
 BuiltinSpelling defaultSpelling(Language Lang);
-/// The spellings \p Lang takes, by their ids: "windows or portable".
+/// The spellings \p Lang takes, its default first (TypeLanguages.def).
+std::vector<BuiltinSpelling> spellingsOf(Language Lang);
+/// The spellings \p Lang takes, by their ids: "portable or windows".
 std::string spellingsText(Language Lang);
+/// Every spelling, by its id: "portable, windows or keywords".
+std::string spellingsText();
 
 struct RenderOptions {
   Language Lang = Language::C;
@@ -76,9 +83,76 @@ struct RenderOptions {
   /// The column offset comments start at.
   unsigned CommentColumn = 64;
   /// When every type renders, the library's function prototypes after them,
-  /// in C and C++.
+  /// in the languages rendersPrototypes says.
   bool Prototypes = false;
 };
+
+/// C that another unit holds, as a decompiled function's does: the
+/// definitions of the records it names and of what they hold by value, the
+/// typedefs and enumerations these name, and declarations of the records
+/// they only point to.  Each type sits under a guard of its own, so that
+/// units holding the same types concatenate.
+struct EmbeddedC {
+  std::string Text;
+  /// The records Text defines, by their C names, and whether each is a
+  /// union.
+  std::vector<std::pair<std::string, bool>> Records;
+  /// The records Text only declares, which it points to, likewise.
+  std::vector<std::pair<std::string, bool>> Declared;
+  /// The ordinary identifiers Text declares, the names of typedefs and of
+  /// enumerators, which the unit's own names step around.
+  std::vector<std::string> Identifiers;
+  /// The library's types Text holds, by their names.
+  std::vector<std::string> Types;
+  /// The library's records Text only declares, by their names.
+  std::vector<std::string> DeclaredTypes;
+};
+/// \p Roots, records, as another unit holds them, in C: \p Options gives
+/// the spelling, offsets and checks.
+EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
+                          llvm::ArrayRef<const LocalType *> Roots,
+                          const RenderOptions &Options);
+
+/// How code reaches a member that C names on its own, directly or through
+/// the anonymous records that hold it, in a language that spells the record
+/// otherwise: the fields, and the methods that return a pointer to a
+/// member, that lead to it, the member's own last.
+struct MemberPath {
+  struct Hop {
+    std::string Name;
+    /// A method that returns a pointer to the member, as Go reads a union's
+    /// members and those it cannot align.
+    bool Accessor = false;
+  };
+  std::vector<Hop> Hops;
+};
+
+/// Types as a Rust or Go text holds them beside code that uses them, as a
+/// decompiled function's pseudocode does: no module header (crate
+/// attributes, package, imports).
+struct EmbeddedSource {
+  std::string Text;
+  /// For each record Text defines, by its name, how code reaches each
+  /// member it names in C, by the member's name.  A bit-field, or a member
+  /// the language reads only through a method that takes more, has none.
+  std::map<std::string, std::map<std::string, MemberPath>> Members;
+};
+/// \p Defined as \p Options.Lang, Rust or Go, defines them, and \p Declared,
+/// records the text only points to, as opaque types: as the language
+/// spells the types a C unit holds (EmbeddedC::Types and its declared
+/// records).
+EmbeddedSource renderEmbeddedSource(const TypeLibrary &Library,
+                                    llvm::ArrayRef<const LocalType *> Defined,
+                                    llvm::ArrayRef<const LocalType *> Declared,
+                                    const RenderOptions &Options);
+
+/// Whether \p Lang renders function prototypes: C and C++ do.
+bool rendersPrototypes(Language Lang);
+/// Whether \p Lang's declarations read back (TypeParse.h): C, C++, Rust
+/// and Go's do; Python, JavaScript and Lua render only.
+bool readsDeclarations(Language Lang);
+/// How the workbench shows \p Lang, such as "Rust".
+llvm::StringRef languageDisplay(Language Lang);
 
 /// The spelling \p Options names builtins in.
 BuiltinSpelling spellingOf(const RenderOptions &Options);
@@ -86,6 +160,13 @@ BuiltinSpelling spellingOf(const RenderOptions &Options);
 /// \p Type's declaration, alone.
 std::string renderType(const TypeLibrary &Library, const LocalType &Type,
                        const RenderOptions &Options);
+
+/// \p Type in C or C++ as \p Options spell builtins, declaring
+/// \p Declarator, or alone when that is empty: `struct S *`, or
+/// `int f(struct S *s)` for a function type and its name.
+std::string spellType(const TypeLibrary &Library, const TypeExpr &Type,
+                      const std::string &Declarator,
+                      const RenderOptions &Options);
 
 /// \p Types and every type they need, in an order that compiles, after what
 /// the spelling needs declared.  Every type when \p Types is empty.

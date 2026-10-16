@@ -72,8 +72,14 @@ default for code views and text fields.
 
 Double-clicking a function name in a code view follows it in that same window,
 keeping its C or LLVM C representation even when the window is locked. Back and
-forward navigation also stays in the active code window. Imports and global
+forward navigation also stays in the active code window, and within a function
+takes its cursor to the row of the place it returns to. Imports and global
 objects continue to open at their addresses in the disassembly or hex view.
+Double-clicking a goto's label (`goto L_14024FAB5;`) moves the cursor to the
+label and the disassembly to the block it labels, as IDA's labels do; Back
+returns to the goto. Pseudocode and C name a label after its block's address,
+so the label's row maps to that block: clicking it, or Tab, goes there too.
+LLVM C numbers its labels, which name no address.
 
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
@@ -171,15 +177,43 @@ shows the whole function and the visible area.
 
 Opening a file or database starts with disassembly and does not generate
 pseudocode, including when a saved desktop had it open. **F5** or **Tab** opens
-Pseudocode on the right of disassembly. The panes browse independently: clicks,
-arrow keys and scrolling do not move the other pane. **Tab** from a code window
-selects its mapped instruction in disassembly; Tab from disassembly selects the
+Pseudocode on the right of disassembly. The cursors follow each other, as
+Hex-Rays' synchronized views do: a click or arrow key on a code row mapped to
+an instruction moves the disassembly cursor there, keeping the focus in the
+code and adding no jump to the history, and a move in the disassembly takes a
+code window showing the same function to the instruction's rows and marks
+them. A code window showing another function stays on it rather than
+decompiling on every step; F5 or Tab opens the new one. The code window's
+context menu turns **Synchronize with disassembly** off to browse apart, and
+the choice is kept; beside it, **Jump to disassembly** shows Tab's key, as
+**Jump to pseudocode** does in the disassembly's menu. Following a cursor costs
+well under a millisecond in a 50,000-line function: neither direction
+decompiles, and the source side only searches the rows it shows. **Tab** from a code window selects its mapped instruction
+in disassembly and moves the focus there; Tab from disassembly selects the
 mapped source row in the last code window used, keeping its representation and
 both panes visible. A folded target row expands, and a new function waits for
 all its source pages before selecting the row. An unmapped source row falls
 back to its function entry with a message; an unmapped instruction reports that
 no source row is available and keeps the existing source cursor. Closing or
 hiding a pane stops its requests; showing it again resumes its own function.
+
+Pseudocode writes a number in hexadecimal, as the disassembly shows it, unless
+its decimal digits are its natural reading: a value up to 10 or a round decimal
+number such as 100, 999 or 5000 (Ghidra's choice). Negative numbers read in
+decimal, and a C literal keeps the type the decompiler gave it. The CLI's C
+output follows the same rule; C through LLVM also keeps decimal where a
+hexadecimal literal would need a suffix to keep its type.
+
+Right-click a number in pseudocode for its bases, each showing what the number
+would read in it: the decompiler's own choice (**Number**, `#`),
+**Hexadecimal** (`Q`), **Decimal**, **Octal**, **Binary** (`B`) and
+**Character** (`R`). **H** toggles between hexadecimal and decimal, as in
+Hex-Rays. A C literal keeps its type in every base, taking the suffix that
+keeps it (`0xFFFFFFFF` reads `4294967295U`), and a character constant holds
+only ASCII characters of an int (`'eliF'`); a base that would change the
+number is refused with a message. The base belongs to the number on its line,
+is a step of the history, and is kept with the project like a source comment;
+a line the decompiler writes differently afterwards drops it.
 
 Native HighC keeps ordinary cleanup but skips optional symbolic expression
 simplification by default. Use the source window's **Optimization** menu or
@@ -241,8 +275,8 @@ source once and pages it from there; a function longer than one page keeps the l
 such as `main`. The
 LLVM views translate the current function alone,
 with the others declared, so a function the engine refuses to translate shows
-its reason without affecting other functions. Tab navigates using explicit
-instruction mappings. C opens at the function: the includes, support types and
+its reason without affecting other functions. Synchronization and Tab
+navigate using explicit instruction mappings. C opens at the function: the includes, support types and
 declarations before its definition fold into one line. Recognized library
 operations in C can fold into one-line summaries too. Click a summary or press
 Keypad + on it to expand it; Keypad - folds the declarations again, and the
@@ -259,7 +293,11 @@ declare one-byte-aligned, `may_alias` types instead. A call argument that points
 to a string, directly or through a pointer the image holds, shows the string
 beside it, after its encoding unless that is ASCII or UTF-8:
 `puts(u8s /* "你好" */)`, `/* GBK "中文" */`. Copy and export always use the
-complete code.
+complete code. Text selects as in an editor: drag with the mouse, which scrolls
+while it is held beyond an edge, extend with Shift and the arrows or a Shift
+click, or press **Ctrl+A** (also **Select all** in the context menu) for the
+whole function; **Ctrl+C** or the context menu's **Copy** copies it, and a
+right click inside the selection keeps it.
 
 Global data is declared the way C source declares it, with the value the image
 holds: a string the code reaches by its address is its array
@@ -463,6 +501,8 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | N | Rename the name under the cursor, or the address: a function at its entry, data, a label in code |
 | P | Create a function at the address (**Edit → Functions** also deletes the current one) |
 | D / A / U | Make data (again for the next size) / a string / bytes of the item |
+| T | Show the operand as a structure offset, the local types ranked by the code's accesses |
+| Y | Set the type of the parameter under the pseudocode cursor, or the current function's declaration, checked as you type |
 | C | Define native instructions from the selected byte through a basic block |
 | : or ; | Comment the address |
 | Alt+M / Ctrl+M | Mark a position / jump to a marked position |
@@ -698,19 +738,46 @@ since then loads without asking.
 
 Opening an ELF or Mach-O image with DWARF asks **DWARF info found** — *Load
 DWARF debug information?* — as IDA does, before the file loads. When the DWARF
-is not in the input itself, the dialog names the file that holds it: the
-`.dSYM` bundle beside a Mach-O image, or a split `.debug` file beside the
-image, which is found by its name alone (`<image>.debug`, `<stem>.debug` or
-`.debug/<image>`) and not by its build ID or debug link. **Yes** loads it, and
-the Output window names what loaded; for a `.dSYM` bundle it names the image
-the bundle belongs to. **No**, Escape or closing the dialog opens the file
-without its DWARF, which the project keeps, so reopening it does not load the
-DWARF either; a linker map beside the input still loads. IDA's import options
+is not in the input itself, the dialog names the file that holds it, found in
+GDB's order: the `.dSYM` bundle beside a Mach-O image, the file a debug
+directory keeps under the image's build ID
+(`/usr/lib/debug/.build-id/xx/yyyy.debug`, where distribution debug packages
+install it; `NEVERD_DEBUG_FILE_DIRECTORY` lists other directories), the file the
+image's `.gnu_debuglink` names, beside it, in `.debug/` beside it or under a
+debug directory, and a split `.debug` file named after it (`<image>.debug`,
+`<stem>.debug` or `.debug/<image>`). A companion that records another build ID
+than the image, or a linked file of another CRC, is passed over, and compressed
+debug sections are read expanded. **Yes** loads it, and the Output window names
+what loaded; for a `.dSYM` bundle it names the image the bundle belongs to.
+**No**, Escape or closing the dialog opens the file without its DWARF, which
+the project keeps, so reopening it does not load the DWARF either. IDA's import options
 (global names, types, calling conventions, line numbers) are not offered,
 because the engine reads DWARF whole or not at all. Projects, files opened with
 **Load debug information** cleared, and SBF programs, whose debug information
 is never read, are not asked. The command line reads the image without its
 DWARF with `--no-dwarf`.
+
+A linker MAP names functions and data by address and nothing more, so a PDB's
+or DWARF's names outrank its own. The MAP beside the input (`<stem>.map` or
+`<name>.map`) loads only for an image no PDB or DWARF describes: one that has
+none, or whose PDB or DWARF the user declined. Only then does opening it ask
+**MAP file found** — *Load the MAP file?* — after the PDB and DWARF questions;
+IDA reads no MAP. The dialog names the file, the linker that wrote it (link.exe
+and lld-link `/MAP`, whose layout Borland's and IDA's MAPs share, lld-link
+`/lldmap`, ld.lld, GNU ld or ld64) and how many names it gives, with its first
+names in the tooltip, and says whether it belongs to the input's build: a
+link.exe MAP records the build stamp, and the others place the output sections
+the input has. A MAP of another build — another stamp, a section placed
+elsewhere, or most of its functions outside the input's code — asks *Load the
+MAP file anyway?* with **No** the default, since the open would pass over it;
+**Yes** loads it unchecked, which the project keeps. **No**, Escape or closing
+the dialog opens the file without the MAP, which the project keeps too. The
+Output window names the MAP that loaded and the names it added, and says so
+when a binary file's MAP, which can be held against the image only as it
+loads, does not fit it. The command line reads an image without the MAP beside
+it with `--no-map`, names one with `--map`, which a PDB or DWARF still
+outranks unless `--no-pdb` or `--no-dwarf` declines it, and takes one of
+another build with `--map-unchecked`.
 
 Anyone can write names into a symbol table, to mislead whoever reads the
 program. Opening an image with a static symbol table, the table `strip`
@@ -729,6 +796,17 @@ DWARF and PDB names have their own questions, and `main` is still named when
 the analysis finds it from the start-up code. Object files, whose relocations
 need their symbols, are not asked. The command line reads the image without
 its symbol table with `--no-symtab`.
+
+**File → Load file** loads a debug file into the open image: **PDB file...**
+for a PE, **DWARF file...** for an ELF or Mach-O image — a split `.debug` file,
+an unstripped copy or a `.dSYM` (the DWARF file inside it), whose machine and
+any build ID or UUID must be the image's — and **MAP file...** for any image
+but an EVM or SBF program. A MAP of another build asks before it loads. The
+image is read again with every debug file it has, in rank order, so a PDB or
+DWARF loaded after a MAP replaces the MAP's names, and a MAP loaded after them
+fills only what they leave unnamed. The project keeps the files chosen, and
+reopening it loads them again; one that no longer loads leaves the project open
+without it, with a warning. The command line names a DWARF file with `--dwarf`.
 
 **File → Load file → PDB file...** selects a PDB anywhere on disk for the
 currently loaded PE. A matching CodeView identity applies its debug symbols and
@@ -876,6 +954,55 @@ of undo history and is kept in `<input>.neverd-operands.json`, which the command
 line reads and writes too (`neverd operands <input> --addr <address> --operand 1
 --base decimal`, `--negate`, `--invert`, `--clear`; the address lies in
 executable code).
+
+**Edit → Operand type → Structure offset** (T, as IDA's) shows the operand as a
+member of a structure or union of the program's local types:
+`mov rdi, [rcx+_KTHREAD.Process]`. The types are ranked by what the function's
+code does through the same pointer. The engine gathers every load, store and
+address the function takes through the register's value, copies such as
+`mov rbx, rcx` included. A type whose members those accesses land on exactly,
+at their widths, comes first; one some access falls outside of comes last. The
+search matches type names and their typedefs as an editor's quick open does
+(`kthr`, `PKAPC`), member paths after a dot (`irp.curstack`) and `.member` in
+every type. The preview shows what the operand becomes and where each access
+lands, marked when it lands inside a member, on padding or outside the type.
+A pointer into a record, as a list entry's is, gets the member it points at
+and its delta (`[rcx+(_KAPC.Type-10h)]`). Apply shows the operand as a member
+and, unless unchecked, every other instruction that goes through the same
+pointer, in one step of undo history. A number (`add rcx, 18h`) takes a
+structure offset as an address in the type. The format keeps the type's name,
+so a member renamed in Local types shows its new name, and the number returns
+where the type no longer has a member. The command line sets it
+(`neverd operands <input> --addr <address> --struct _KTHREAD`, `--delta 16`)
+and ranks the types as the window does (`neverd types <input> --fit --func
+<function> --at <address>`, `--match <text>`, `--access 0x220:8`).
+
+**Edit → Set type** (Y, as IDA's) gives a function a C declaration of the
+program's local types, which the decompiler prints and binds each parameter
+by, ahead of the debug information. In pseudocode, with the cursor on a
+parameter, it types that parameter alone. Elsewhere, and in the disassembly,
+it edits the function's whole declaration. The dialog starts from the
+declaration as the decompiler prints it. Each keystroke reads the text
+against the local types, and the dialog then shows one of two things:
+- the resulting declaration and, for each parameter, the register or stack
+  slot it arrives in;
+- where the text stops reading and why (`At column 26: 'NOPE' names no type`),
+  where Enter puts the cursor.
+Typing a name lists the local types it matches, ranked as the
+structure offset search ranks them; Ctrl+Space lists them at once. A
+declaration the user gave can go back to what analysis and the debug
+information say. **Edit → Convert to struct *** (in the pseudocode context menu
+after Set type, as Hex-Rays offers it) makes the parameter under the cursor a
+pointer to a local type. The types are ranked by what the function does
+through the register the parameter arrives in, with the same preview of each
+access as a structure offset, and the parameter can take a new name in the
+same step. Either change is one step of undo history, kept in
+`<input>.neverd-functions.json`; callers see the new prototype. Names the user
+gave the function's locals stay while the code keeps its locals. The command
+line does the same (`neverd function-edits <input> --declaration <entry>`,
+`--retype '0=struct _KAPC *Apc' --apply`, `--check '<declaration>'`,
+`--edit <entry> --set 'type=<declaration>'`, `neverd types <input> --fit
+--func <function> --param 0`).
 
 Opening a file never starts whole-program analysis. The listing, function list,
 references and graph come from the loader and from per-function work: a

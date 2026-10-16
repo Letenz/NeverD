@@ -47,11 +47,15 @@ bool readable(const QString &operation) {
                                         "pdb_inspect",
                                         "pdb_reference",
                                         "dwarf_reference",
+                                        "map_reference",
+                                        "map_inspect",
                                         "symbol_table_reference",
                                         "function_attributes",
+                                        "function_type",
                                         "local_types",
                                         "local_type",
                                         "local_types_source",
+                                        "local_types_fit",
                                         "search"};
   return cacheable(operation) || operations.contains(operation);
 }
@@ -61,6 +65,8 @@ bool command(const QString &operation) {
                                         "analyze",
                                         "signatures_load",
                                         "pdb_load",
+                                        "dwarf_load",
+                                        "map_load",
                                         "annotation_set",
                                         "rename",
                                         "code_edit",

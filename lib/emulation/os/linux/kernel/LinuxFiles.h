@@ -61,8 +61,8 @@ public:
   mappingDevice(uint32_t FD) const;
   std::optional<uint64_t>
   openProcessDescriptor(uint32_t PID, uint32_t Flags,
-                        const LinuxKernelOptions &Kernel,
-                        ProcessResult &Result);
+                        const LinuxKernelOptions &Kernel, ProcessResult &Result,
+                        bool DynamicThreads = false);
   llvm::Expected<std::optional<uint64_t>>
   poll(const ProcessServiceEvent &Event,
        const std::optional<LinuxKernelOptions> &Kernel, ProcessResult &Result);
@@ -135,6 +135,9 @@ private:
   std::set<uint32_t> CloseOnExec;
   std::function<std::vector<ProcTask>()> TaskProvider;
   uint32_t CurrentTask = ThreadID;
+  uint64_t IoctlTraceBytes = 0;
+  llvm::Expected<std::optional<uint64_t>>
+  tracedIoctl(const ProcessServiceEvent &Event, ProcessResult &Result);
   std::vector<std::weak_ptr<LinuxDeviceState>> DeviceDescriptions;
   std::map<std::string, MutableFile> MutableFiles;
   std::map<std::string, uint64_t> Inodes;
@@ -227,6 +230,9 @@ private:
                                                        uint32_t Request,
                                                        uint64_t Argument,
                                                        ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>>
+  gpuObjectIoctl(LinuxDeviceState &Device, uint32_t Request, uint64_t Argument,
+                 ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>> gpuIoctl(LinuxDeviceState &Device,
                                                    uint32_t Request,
                                                    uint64_t Argument,

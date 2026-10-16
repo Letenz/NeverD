@@ -86,6 +86,10 @@ RegistrationRoots::RegistrationRoots(const LowFunc &Low, Arch Architecture,
 }
 
 void RegistrationRoots::disconnectNoReturnFallthroughs(MedFunc &Func) const {
+  if (Direct && HasSEHFrame) {
+    disconnectAdjacentSEHCalls(Func);
+    return;
+  }
   if (!(Direct || Realigned) || !HasCxxFrame || !Low.RegistrationStates ||
       !Low.RegistrationStates->Complete ||
       !Low.RegistrationStates->CallFrameEffectsComplete ||

@@ -26,7 +26,8 @@
 namespace neverd::types {
 
 enum class HeaderLibrary : uint8_t {
-#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Format, Arch, Subsystem)  \
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Format, Arch, Subsystem,  \
+                              Spelling)                                        \
   Id,
 #include "neverd/types/HeaderLibraries.def"
 };
@@ -36,6 +37,11 @@ llvm::StringRef headerLibraryName(HeaderLibrary Library);
 
 /// The library's declarations as C, as NeverD embeds them.
 llvm::StringRef headerLibrarySource(HeaderLibrary Library);
+
+enum class BuiltinSpelling : uint8_t;
+/// The spelling the library's headers name builtins in, which shows one of
+/// its declarations as they read it: Windows' ULONG.
+BuiltinSpelling headerLibrarySpelling(HeaderLibrary Library);
 
 /// The library read from its declarations the first time it is asked for,
 /// every type's origin Header; null with \p Error when they do not read.

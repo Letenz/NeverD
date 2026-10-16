@@ -43,6 +43,14 @@ NEVERD_ACTION(FileLoadPdb, QT_TRANSLATE_NOOP("Actions", "&PDB file..."), "",
               "symbol_file",
               QT_TRANSLATE_NOOP("Actions",
                                 "Load symbols from a selected PDB file"))
+NEVERD_ACTION(FileLoadDwarf, QT_TRANSLATE_NOOP("Actions", "D&WARF file..."), "",
+              "dwarf_file",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Load debug information from a separate "
+                                "DWARF file, unstripped copy or .dSYM"))
+NEVERD_ACTION(FileLoadMap, QT_TRANSLATE_NOOP("Actions", "&MAP file..."), "",
+              "map_file",
+              QT_TRANSLATE_NOOP("Actions", "Load names from a linker MAP file"))
 NEVERD_ACTION(
     FileLoadSignatures,
     QT_TRANSLATE_NOOP("Actions", "&FLIRT signature file..."), "", "signatures",
@@ -91,6 +99,19 @@ NEVERD_VIEW_ACTION(EditCopyAddress,
 NEVERD_VIEW_ACTION(EditRename, QT_TRANSLATE_NOOP("Actions", "Re&name..."), "N",
                    "rename",
                    QT_TRANSLATE_NOOP("Actions", "Rename the current address"))
+NEVERD_VIEW_ACTION(
+    EditSetType, QT_TRANSLATE_NOOP("Actions", "Set t&ype..."), "Y", "set_type",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Give the current function, or the parameter under the "
+                      "cursor, a C type, checked as you type"))
+NEVERD_VIEW_ACTION(
+    EditConvertToStruct,
+    QT_TRANSLATE_NOOP("Actions", "Con&vert to struct *..."), "",
+    "operand_struct",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Make the parameter under the cursor a pointer to a "
+                      "local type, the types ranked by how its accesses fit "
+                      "them"))
 NEVERD_VIEW_ACTION(EditCreateFunction,
                    QT_TRANSLATE_NOOP("Actions", "Create &function"), "P",
                    "function_create",
@@ -144,6 +165,12 @@ NEVERD_VIEW_ACTION(EditOperandOffset, QT_TRANSLATE_NOOP("Actions", "&Offset"),
                    "O", "operand_offset",
                    QT_TRANSLATE_NOOP("Actions", "Show the operand's number as "
                                                 "the address it names"))
+NEVERD_VIEW_ACTION(
+    EditOperandStruct, QT_TRANSLATE_NOOP("Actions", "S&tructure offset..."),
+    "T", "operand_struct",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Show the operand as a member of a local type, the "
+                      "types ranked by how the code's accesses fit them"))
 NEVERD_VIEW_ACTION(EditOperandNegate,
                    QT_TRANSLATE_NOOP("Actions", "Change &sign"), "_",
                    "operand_negate",
@@ -199,7 +226,7 @@ NEVERD_VIEW_ACTION(
     QT_TRANSLATE_NOOP("Actions", "Move to the start of the previous function"))
 NEVERD_VIEW_ACTION(
     JumpPseudocode, QT_TRANSLATE_NOOP("Actions", "Jump to pseudo&code"), "Tab",
-    "pseudocode",
+    "jump_pseudocode",
     QT_TRANSLATE_NOOP("Actions", "Switch between disassembly and pseudocode"))
 NEVERD_VIEW_ACTION(JumpAnywhere,
                    QT_TRANSLATE_NOOP("Actions", "Jump &anywhere..."), "G",

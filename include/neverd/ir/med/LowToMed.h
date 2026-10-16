@@ -111,6 +111,11 @@ public:
   void setCallEntryReadGPRs(const std::map<va_t, GPRReadWidths> *M) {
     CallEntryReadGPRs = M;
   }
+  /// The routine whose summary gives a call through each function-pointer
+  /// variable its arguments (PipelineResult::CallArgumentSources).
+  void setCallArgumentSources(const std::map<va_t, va_t> *M) {
+    CallArgumentSources = M;
+  }
   /// Direct-callee incoming stack reads (PipelineResult::CallEntryStackArgs).
   void setCallEntryStackArgs(const std::map<va_t, int> *M) {
     CallEntryStackArgs = M;
@@ -187,6 +192,9 @@ private:
   void bindSourceCalls(MedFunc &Func, const LowFunc &Low, BinaryFormat Fmt);
   MedVar ndVarToMedVar(const NdVar &VN);
   void fixupSubRegisters(MedFunc &Func);
+  /// Keep the architectural data registers of checked ordinary SEH callbacks
+  /// on explicit state edges before SSA applies the ordinary calling ABI.
+  void modelSEHFinallyRegisters(MedFunc &Func);
 
   // --- Architecture-specific sub-register fixups (LLVM target-dispatch) ---
   // Each helper guards on TargetArch internally and is a no-op on other
@@ -280,6 +288,9 @@ private:
   /// The import slot the register an INDIR_CALL being converted goes
   /// through was loaded from, else 0.
   va_t RegisterCallSlot = 0;
+  /// The routine whose summary gives the INDIR_CALL being converted its
+  /// arguments, by the function-pointer variable it goes through, else 0.
+  va_t CallArgumentsFrom = 0;
   void buildSsa(MedFunc &Func, const LowFunc &Low);
   void runDce(MedFunc &Func);
   void propagate(MedFunc &Func);
@@ -337,6 +348,7 @@ private:
   const std::map<va_t, int> *CalleePopMap = nullptr;
   const std::map<va_t, uint32_t> *CallMayWriteGPRs = nullptr;
   const std::map<va_t, GPRReadWidths> *CallEntryReadGPRs = nullptr;
+  const std::map<va_t, va_t> *CallArgumentSources = nullptr;
   const std::map<va_t, int> *CallEntryStackArgs = nullptr;
   const std::set<va_t> *CallDispatchThunks = nullptr;
   const std::map<va_t, int> *CallVariadicFrom = nullptr;

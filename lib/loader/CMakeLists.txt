@@ -41,6 +41,8 @@ add_neverd_component_library(NeverDLoader
   COFF/eh/COFFRegistrationEHPointers.cpp
   COFF/eh/COFFRegistrationEHFuncInfo.cpp
   COFF/eh/COFFRegistrationEHHandler.cpp
+  COFF/eh/COFFRegistrationEH4Wrapper.cpp
+  COFF/eh/COFFRegistrationScalarLeaf.cpp
   COFF/eh/COFFRegistrationEHPersonality.cpp
   COFF/eh/COFFRegistrationEHScan.cpp
   COFF/eh/COFFRegistrationEHScopeTable.cpp
@@ -84,6 +86,7 @@ add_neverd_component_library(NeverDLoader
   Go/GoPclntab.cpp
   Go/GoRuntimeEH.cpp
   Go/GoStackMaps.cpp
+  LinkerThunk.cpp
   Loader.cpp
   ObjectExterns.cpp
   PointerRelocation.cpp
@@ -100,6 +103,7 @@ add_neverd_component_library(NeverDLoader
   MachO/MachOCompactUnwindEncoding.cpp
   MachO/MachODyldBind.cpp
   MachO/MachODyldRebase.cpp
+  MachO/MachOProgramLinking.cpp
   MachO/MachOExceptions.cpp
   MachO/MachOI386Relocations.cpp
   MachO/MachOIndirectSymbols.cpp

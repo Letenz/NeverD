@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QKeySequence>
@@ -69,14 +70,17 @@ private:
   void requestLayout();
   void requestSource();
   void laidOut(const QJsonObject &type);
+  /// Sizes the layout's columns to what they hold, the member's within
+  /// what the view leaves the types.
+  void fitLayoutColumns();
   void addMembers(QTreeWidgetItem *parent, const QJsonArray &members);
   void exportTypes(const QStringList &names);
   void copy();
   void back();
   void open(const QString &name, bool remember);
   QString language() const;
-  /// How \p language names builtins as chosen: C's spelling for the layout
-  /// and C/C++, Rust's for Rust, none for Go, which has one way.
+  /// How \p language names builtins as chosen: C's spelling serves the
+  /// layout as well as C/C++.
   QString spelling(const QString &language) const;
   /// The spellings the tab shown chooses from, the chosen one current.
   void showSpellings();
@@ -105,7 +109,8 @@ private:
   QPlainTextEdit *source_ = nullptr;
   TypeSourceHighlighter *highlighter_ = nullptr;
   QComboBox *spelling_ = nullptr;
-  QString cSpelling_, rustSpelling_;
+  /// The spelling chosen for each language, by its id.
+  QHash<QString, QString> spellings_;
   QCheckBox *hex_ = nullptr, *dependencies_ = nullptr, *asserts_ = nullptr;
   QToolButton *copy_ = nullptr, *export_ = nullptr;
   QToolButton *add_ = nullptr, *edit_ = nullptr, *delete_ = nullptr;

@@ -32,6 +32,7 @@
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/sbf/emit/SBFCEmitter.h"
 #include "neverd/sbf/emit/SBFRustEmitter.h"
+#include "neverd/types/TypeRender.h"
 
 #include "llvm/ADT/DenseSet.h"
 
@@ -337,7 +338,8 @@ int neverd_prepare_function_view(neverd_session_t Sess, neverd_va_t FuncEntry,
     return 0;
   }
   return prepareFunction(Sess, FuncEntry,
-                         /*NeedHighIR=*/Stage != "llvm" && Stage != "llvmc");
+                         /*NeedHighIR=*/Stage != "low" && Stage != "med" &&
+                             Stage != "llvm" && Stage != "llvmc");
 }
 
 static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
@@ -429,9 +431,24 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     SourceMap->HighSources = &S->PipeResult.HighSources;
     Opts.SourceMap = SourceMap;
   }
+  DebugContext *Debug = S->decompileDebug();
+  // The program's records, as its local types define them, which the
+  // source map keeps for another language's spelling of the unit.
+  if (SourceMap)
+    SourceMap->LocalTypes.reset();
+  if (const LocalTypesDebugContext *Local = S->LocalTypesDbg.get();
+      Local && Debug == Local)
+    Opts.RecordDefinitions = [Local,
+                              SourceMap](const std::vector<TypeRef> &Records) {
+      CRecordDefinitions Definitions = Local->definitions(Records);
+      if (SourceMap && !Definitions.Text.empty())
+        SourceMap->LocalTypes = CSourceLocalTypes{
+            Definitions.Text, Definitions.Types, Definitions.DeclaredTypes};
+      return Definitions;
+    };
   try {
     HighCEmitter Emitter;
-    Emitter.emit(Single, OS, Opts, S->Dbg.get());
+    Emitter.emit(Single, OS, Opts, Debug);
   } catch (const std::exception &Error) {
     S->setError(emissionFailure(Error));
     return dupStr(std::string());
@@ -490,9 +507,16 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
     SourceMap->LLVMSources = Native->Sources.get();
     Opts.SourceMap = SourceMap;
   }
+  DebugContext *Debug = S->decompileDebug();
+  // The program's records, as its local types define them.
+  if (const LocalTypesDebugContext *Local = S->LocalTypesDbg.get();
+      Local && Debug == Local)
+    Opts.RecordDefinitions = [Local](const std::vector<TypeRef> &Records) {
+      return Local->definitions(Records);
+    };
   try {
     LLVMCEmitter Emitter;
-    Emitter.emit(*Native->Module, OS, Opts, S->Dbg.get(), &S->Img, LF);
+    Emitter.emit(*Native->Module, OS, Opts, Debug, &S->Img, LF);
   } catch (const std::exception &Error) {
     S->setError(emissionFailure(Error));
     return dupStr(std::string());
@@ -556,6 +580,54 @@ std::string unofferedDialectReason(SourceDialect Dialect,
       .str();
 }
 
+/// The local types \p Original, a HighC unit, defines (CSourceMap::LocalTypes)
+/// as \p Dialect, Rust or Go, defines them, from the library they were
+/// rendered from, and how its code reaches their members; none when the
+/// text holds no definitions, or not once.
+std::optional<SourceDialectLocalTypes>
+dialectLocalTypes(const Session &S, llvm::StringRef Original,
+                  const CSourceMap &Map, SourceDialect Dialect) {
+  const LocalTypesDebugContext *Local = S.LocalTypesDbg.get();
+  if (!Map.LocalTypes || !Local)
+    return std::nullopt;
+  const size_t At = Original.find(Map.LocalTypes->Text);
+  if (At == llvm::StringRef::npos ||
+      Original.find(Map.LocalTypes->Text, At + 1) != llvm::StringRef::npos)
+    return std::nullopt;
+  const types::TypeLibrary &Library = Local->library();
+  const auto found = [&](const std::vector<std::string> &Names) {
+    std::vector<const types::LocalType *> Types;
+    for (const std::string &Name : Names)
+      if (const types::LocalType *Type = Library.find(Name))
+        Types.push_back(Type);
+    return Types;
+  };
+  types::RenderOptions Render;
+  Render.Lang = Dialect == SourceDialect::Rust ? types::Language::Rust
+                                               : types::Language::Go;
+  // As the C does: exact widths, with the checks of every layout.
+  Render.Spelling = types::BuiltinSpelling::Portable;
+  Render.Asserts = true;
+  const types::EmbeddedSource Embedded =
+      types::renderEmbeddedSource(Library, found(Map.LocalTypes->Types),
+                                  found(Map.LocalTypes->DeclaredTypes), Render);
+  SourceDialectLocalTypes Result;
+  Result.CBegin = At;
+  Result.CEnd = At + Map.LocalTypes->Text.size();
+  Result.Text = Embedded.Text;
+  for (const auto &[Record, Members] : Embedded.Members) {
+    auto &Paths = Result.Members[Record];
+    for (const auto &[Name, Path] : Members) {
+      auto &Hops = Paths[Name];
+      for (const types::MemberPath::Hop &Hop : Path.Hops)
+        Hops.push_back({Hop.Name, Hop.Accessor});
+    }
+  }
+  for (const std::string &Name : Map.LocalTypes->DeclaredTypes)
+    Result.Opaque.insert(Name);
+  return Result;
+}
+
 /// \p Entry's HighC source spelled in \p Dialect, with its library regions
 /// and definition moved to the spelled text, kept with the C it spells.
 const Session::FunctionSource &dialectSource(neverd_session_t Sess, va_t Entry,
@@ -581,6 +653,8 @@ const Session::FunctionSource &dialectSource(neverd_session_t Sess, va_t Entry,
   Options.Format = S.Img.abiFormat();
   Options.Names = Map.Names;
   const llvm::StringRef Original(Raw);
+  if (Dialect == SourceDialect::Rust || Dialect == SourceDialect::Go)
+    Options.LocalTypes = dialectLocalTypes(S, Original, Map, Dialect);
   SourceDialectText Spelled = spellInDialect(Original, Options);
   for (CSourceRegion &Region : Map.Regions) {
     std::vector<CSourceSpan> Spans;
@@ -845,7 +919,7 @@ const char *neverd_ir_low(neverd_session_t Sess, neverd_va_t FuncEntry) {
   auto *S = toSession(Sess);
   S->clearError();
 
-  if (!S->ensurePipeline())
+  if (!S->ensurePipeline(/*NeedHighIR=*/false))
     return dupStr(std::string());
 
   if (S->PipeResult.EVM)
@@ -871,7 +945,7 @@ const char *neverd_ir_med(neverd_session_t Sess, neverd_va_t FuncEntry) {
   auto *S = toSession(Sess);
   S->clearError();
 
-  if (!S->ensurePipeline())
+  if (!S->ensurePipeline(/*NeedHighIR=*/false))
     return dupStr(std::string());
 
   if (S->PipeResult.EVM)
@@ -992,7 +1066,7 @@ struct ScopedSourceView {
         Variant->LibraryRecognitions = S.PipeResult.LibraryRecognitions;
         PipelineOptions Policy;
         Policy.SymbolicHighC = true;
-        Pipeline().rebuildHighIR(S.Img, Policy, *Variant, S.Dbg.get());
+        Pipeline().rebuildHighIR(S.Img, Policy, *Variant, S.decompileDebug());
         S.EnhancedHighIR = std::make_unique<Session::HighIRVariant>(
             Session::HighIRVariant{std::move(Variant->HighFuncs),
                                    std::move(Variant->HighSources)});
@@ -1174,7 +1248,7 @@ const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
       Result["mapping_status"] = "unsupported_representation";
       return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
     }
-    if (!S->ensurePipeline())
+    if (!S->ensurePipeline(/*NeedHighIR=*/false))
       return nullptr;
     if (S->PipeResult.EVM || S->PipeResult.SBF) {
       Result["mapping_status"] = "unsupported_architecture";
@@ -1428,6 +1502,39 @@ static std::vector<FuncInfo> runFunctions(const PipelineRunner &R) {
   return Functions;
 }
 
+/// The local types of the session's input, over \p R's own image and debug
+/// information, when the session holds the file \p InputPath names, as the
+/// command line loads it first: the prototypes of the routines the program
+/// names and calls, the user's declarations and the records units define.
+/// Null where the session holds another file or has nothing to add.
+static std::unique_ptr<LocalTypesDebugContext>
+localTypesOf(Session *S, const char *InputPath, PipelineRunner &R,
+             const DebugContext &NoDebugInformation) {
+  if (!S || !S->Loaded || S->FilePath.empty())
+    return nullptr;
+  std::error_code Error;
+  if (!std::filesystem::equivalent(S->FilePath,
+                                   std::filesystem::u8path(InputPath), Error))
+    return nullptr;
+  std::map<va_t, std::string> Declarations = S->functionDeclarations();
+  // Types that do not read, as a PDB's may not, leave the output as the
+  // program's debug information alone makes it, the session's error kept.
+  const std::string LastError = S->LastError;
+  const types::TypeLibrary *Library = S->readLocalTypes();
+  S->LastError = LastError;
+  if (!Library ||
+      (!R.Dbg && Declarations.empty() && Library->prototypes().empty()))
+    return nullptr;
+  std::vector<types::HeaderLibrary> Headers;
+  for (const Session::JoinedHeaders &Joined : S->LocalTypeHeaders)
+    if (Joined.Error.empty())
+      Headers.push_back(Joined.Library);
+  return std::make_unique<LocalTypesDebugContext>(
+      R.Dbg ? *R.Dbg : NoDebugInformation,
+      std::make_shared<types::TypeLibrary>(*Library), std::move(Declarations),
+      &R.Img, std::move(Headers), S->SigDB.buildNameMap());
+}
+
 static const char *decompileAllImpl(neverd_session_t Sess,
                                     const char *InputPath, int UseLlvmRoute,
                                     neverd_output_language_t Language,
@@ -1440,6 +1547,13 @@ static const char *decompileAllImpl(neverd_session_t Sess,
       S->setError(Err);
     return nullptr;
   }
+  const NullDebugContext NoDebugInformation;
+  const std::unique_ptr<LocalTypesDebugContext> LocalTypes =
+      localTypesOf(S, InputPath, R, NoDebugInformation);
+  DebugContext *Debug = LocalTypes ? LocalTypes.get() : R.Dbg.get();
+  const auto RecordDefinitions = [&](const std::vector<TypeRef> &Records) {
+    return LocalTypes->definitions(Records);
+  };
 
   PipelineOptions Opts;
   Opts.NoOpt = NoOpt != 0;
@@ -1466,7 +1580,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
       }
     }
   }
-  if (!R.run(Opts, Err)) {
+  if (!R.run(Opts, Err, Debug)) {
     if (S)
       S->setError(Err);
     return nullptr;
@@ -1593,9 +1707,11 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     COpts.Format = R.Img.abiFormat();
     COpts.UserNames = S ? &S->Renames : nullptr;
     COpts.AccessWidths = AccessWidths ? &*AccessWidths : nullptr;
+    if (LocalTypes)
+      COpts.RecordDefinitions = RecordDefinitions;
     try {
       LLVMCEmitter Emitter;
-      Emitter.emit(*R.Result.LlvmModule, OS, COpts, R.Dbg.get(), &R.Img);
+      Emitter.emit(*R.Result.LlvmModule, OS, COpts, Debug, &R.Img);
     } catch (const std::exception &Error) {
       if (S)
         S->setError(emissionFailure(Error));
@@ -1612,9 +1728,11 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     COpts.StructuredExceptionSyntax = Dialect.has_value();
     if (Dialect)
       COpts.SourceNames = &Names;
+    if (LocalTypes)
+      COpts.RecordDefinitions = RecordDefinitions;
     try {
       HighCEmitter Emitter;
-      Emitter.emit(R.Result.HighFuncs, OS, COpts, R.Dbg.get());
+      Emitter.emit(R.Result.HighFuncs, OS, COpts, Debug);
     } catch (const std::exception &Error) {
       if (S)
         S->setError(emissionFailure(Error));

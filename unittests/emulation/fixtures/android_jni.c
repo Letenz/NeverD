@@ -219,7 +219,7 @@ int jni_stale_ref(void) {
 int jni_unknown_method(void) {
   Handle e = attach();
   Ref cls = C(e, Ref, 6, "java/lang/String");
-  return (int)C(e, Ref, 33, cls, "intern", "()Ljava/lang/String;");
+  return (int)C(e, Ref, 33, cls, "trim", "()Ljava/lang/String;");
 }
 int jni_invalid_utf8(void) {
   Handle e = attach();
@@ -677,5 +677,261 @@ int jni_dex_state(const struct DexStep *steps, U64 count, U64 *results,
       CHECK(e);
     }
   }
+  return 0;
+}
+
+/* Bidirectional object/field/array access. Java bodies and expected values are
+ * supplied externally; this fixture only exercises the standard JNI ABI. */
+static Ref dex_new_v(Handle e, Ref cl, Ref ctor, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, ctor);
+  Ref result = C(e, Ref, 29, cl, ctor, ap);
+  __builtin_va_end(ap);
+  return result;
+}
+static U64 dex_instance_v(Handle e, Ref object, Ref method, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, method);
+  U64 result = C(e, U64, 53, object, method, ap);
+  __builtin_va_end(ap);
+  return result;
+}
+int jni_dex_objects(int seed, U64 form, U64 scenario, U64 *out) {
+  Handle e = attach();
+  Ref cl = C(e, Ref, 6, "runtime/objects/Box");
+  Ref ctor = C(e, Ref, 33, cl, "<init>", "(I)V");
+  U64 arg = (unsigned)seed;
+  Ref box = form == 0 ? C(e, Ref, 28, cl, ctor, seed)
+          : form == 1 ? dex_new_v(e, cl, ctor, seed) : C(e, Ref, 30, cl, ctor, &arg);
+  CHECK(box && !C(e, U8, 228));
+  const char *names[] = {"value", "wide", "flag", "small", "unit", "half", "serial",
+                          "tag", "bytes", "peers"};
+  const char *types[] = {"I", "J", "Z", "B", "C", "S", "I", "Ljava/lang/Object;",
+                          "[B", "[Lruntime/objects/Box;"};
+  Ref fields[10];
+  for (unsigned i = 0; i < 10; ++i) fields[i] = C(e, Ref, 94, cl, names[i], types[i]);
+  if (scenario == 1) return C(e, U64, 101, box, fields[0]);
+  if (scenario == 2) { C(e, void, 109, box, fields[6], 3); return 0; }
+  if (scenario == 3) return C(e, int, 100, cl, fields[0]);
+  if (scenario == 4) return C(e, int, 100, box, 0x12345678ULL);
+  if (scenario == 5) {
+    Ref method = C(e, Ref, 113, cl, "exhaust", "()Ljava/lang/Object;");
+    return C(e, Ref, 116, cl, method, (void *)0);
+  }
+  if (scenario == 6) {
+    Ref count = C(e, Ref, 144, cl, "count", "I");
+    int before = C(e, int, 150, cl, count);
+    Ref raw = C(e, Ref, 27, cl);
+    CHECK(raw && !C(e, int, 100, raw, fields[0]) && !C(e, U64, 101, raw, fields[1]));
+    CHECK(!C(e, Ref, 95, raw, fields[8]) && !C(e, int, 100, raw, fields[6]));
+    C(e, void, 109, raw, fields[0], 19);
+    CHECK(C(e, int, 100, raw, fields[0]) == 19 && C(e, int, 150, cl, count) == before);
+    return 0;
+  }
+  out[0] = (unsigned)C(e, int, 100, box, fields[0]);
+  out[1] = C(e, U64, 101, box, fields[1]);
+  out[2] = C(e, U8, 96, box, fields[2]);
+  out[3] = (unsigned)(int)C(e, signed char, 97, box, fields[3]);
+  out[4] = C(e, U16, 98, box, fields[4]);
+  out[5] = (unsigned)(int)C(e, short, 99, box, fields[5]);
+  out[6] = (unsigned)C(e, int, 100, box, fields[6]);
+  C(e, void, 109, box, fields[0], seed ^ 0x55555555);
+  C(e, void, 110, box, fields[1], 0xfedcba9876543210ULL);
+  C(e, void, 105, box, fields[2], 1);
+  C(e, void, 106, box, fields[3], -128);
+  C(e, void, 107, box, fields[4], 65535);
+  C(e, void, 108, box, fields[5], -32768);
+  Ref calculate = C(e, Ref, 33, cl, "calculate", "(I)J");
+  arg = 17;
+  out[7] = form == 0 ? C(e, U64, 52, box, calculate, 17)
+           : form == 1 ? dex_instance_v(e, box, calculate, 17)
+           : form == 3 ? C(e, U64, 84, box, cl, calculate, &arg)
+                       : C(e, U64, 54, box, calculate, &arg);
+  out[8] = (unsigned)C(e, int, 100, box, fields[0]);
+  Ref bytes = C(e, Ref, 95, box, fields[8]);
+  U8 buffer[5];
+  C(e, void, 200, bytes, 0, 5, buffer);
+  out[9] = buffer[1];
+  Ref echo = C(e, Ref, 33, cl, "echo", "(Ljava/lang/Object;)Ljava/lang/Object;");
+  Ref echoed = C(e, Ref, 36, box, echo, &bytes);
+  out[10] = C(e, U8, 24, bytes, echoed);
+  Ref tag = C(e, Ref, 95, box, fields[7]);
+  out[11] = C(e, U8, 24, bytes, tag);
+  U8 *borrowed = C(e, U8 *, 184, bytes, (void *)0);
+  borrowed[0] = 42;
+  C(e, void, 192, bytes, borrowed, 0);
+  C(e, void, 200, bytes, 0, 5, buffer);
+  out[12] = buffer[0];
+  Ref peers = C(e, Ref, 172, 2, cl, (Ref)0);
+  C(e, void, 174, peers, 1, box);
+  C(e, void, 104, box, fields[9], peers);
+  Ref observed_peers = C(e, Ref, 95, box, fields[9]);
+  Ref observed_box = C(e, Ref, 173, observed_peers, 1);
+  out[13] = C(e, U8, 24, box, observed_box);
+  Ref make = C(e, Ref, 113, cl, "make", "(I)Lruntime/objects/Box;");
+  arg = (unsigned)-3;
+  Ref made = C(e, Ref, 116, cl, make, &arg);
+  Ref made_peers = C(e, Ref, 95, made, fields[9]);
+  Ref made_self = C(e, Ref, 173, made_peers, 0);
+  out[14] = C(e, U8, 24, made, made_self);
+  Ref saved = C(e, Ref, 144, cl, "saved", "Lruntime/objects/Box;");
+  Ref shared = C(e, Ref, 144, cl, "shared", "[B");
+  Ref count = C(e, Ref, 144, cl, "count", "I");
+  Ref saved_value = C(e, Ref, 145, cl, saved);
+  out[15] = C(e, U8, 24, made, saved_value);
+  Ref shared_value = C(e, Ref, 145, cl, shared);
+  Ref made_bytes = C(e, Ref, 95, made, fields[8]);
+  out[16] = C(e, U8, 24, made_bytes, shared_value);
+  C(e, void, 159, cl, count, 99);
+  arg = 0;
+  Ref next = C(e, Ref, 30, cl, ctor, &arg);
+  out[17] = (unsigned)C(e, int, 100, next, fields[6]);
+  C(e, void, 154, cl, saved, box);
+  saved_value = C(e, Ref, 145, cl, saved);
+  out[18] = C(e, U8, 24, box, saved_value);
+  Ref arrays = C(e, Ref, 113, cl, "arrays", "(I)J");
+  arg = (unsigned)seed;
+  out[19] = C(e, U64, 134, cl, arrays, &arg);
+  Ref fault = C(e, Ref, 113, cl, "fault", "(I)I");
+  const char *exceptions[] = {"java/lang/NullPointerException", "java/lang/ArrayIndexOutOfBoundsException",
+    "java/lang/NegativeArraySizeException", "java/lang/ArrayStoreException", "java/lang/ClassCastException"};
+  for (arg = 0; arg < 5; ++arg) {
+    C(e, int, 131, cl, fault, &arg);
+    CHECK(C(e, U8, 228));
+    Ref exception = C(e, Ref, 15);
+    C(e, void, 17);
+    Ref type = C(e, Ref, 6, exceptions[arg]);
+    out[20 + arg] = C(e, U8, 32, exception, type) ? arg + 1 : 0;
+  }
+  arg = (unsigned)-21;
+  out[25] = C(e, U64, 54, box, calculate, &arg);
+  C(e, void, 200, bytes, 0, 5, buffer);
+  out[26] = buffer[1];
+  out[27] = C(e, U8, 24, peers, observed_peers);
+  Ref global = C(e, Ref, 21, box);
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  out[28] = (unsigned)C(e, int, 100, global, fields[0]);
+  cl = C(e, Ref, 6, "runtime/objects/Box");
+  out[29] = (unsigned)C(e, int, 150, cl, count);
+  C(e, void, 22, global);
+  Ref leaf = C(e, Ref, 176, 3);
+  Ref leaf_class = C(e, Ref, 31, leaf);
+  Ref nested = C(e, Ref, 172, 1, leaf_class, leaf);
+  Ref nested_class = C(e, Ref, 31, nested);
+  CHECK(C(e, U8, 32, nested, nested_class));
+  out[30] = C(e, int, 171, nested) + C(e, int, 171, leaf);
+  Ref sf = C(e, Ref, 144, cl, "staticFlag", "Z");
+  Ref sb = C(e, Ref, 144, cl, "staticSmall", "B");
+  Ref sc = C(e, Ref, 144, cl, "staticUnit", "C");
+  Ref ss = C(e, Ref, 144, cl, "staticHalf", "S");
+  Ref sj = C(e, Ref, 144, cl, "staticWide", "J");
+  C(e, void, 155, cl, sf, 1);
+  C(e, void, 156, cl, sb, -120);
+  C(e, void, 157, cl, sc, 65534);
+  C(e, void, 158, cl, ss, -30000);
+  C(e, void, 160, cl, sj, 0x123456789abcdef0ULL);
+  U64 sum = C(e, U64, 151, cl, sj) + (long long)C(e, signed char, 147, cl, sb)
+      + C(e, U16, 148, cl, sc) + (long long)C(e, short, 149, cl, ss)
+      + (C(e, U8, 146, cl, sf) ? 17 : 0);
+  Ref statics = C(e, Ref, 113, cl, "statics", "()J");
+  out[31] = C(e, U64, 134, cl, statics, (void *)0);
+  CHECK(sum == out[31]);
+  CHECK(!C(e, U8, 228));
+  return 0;
+}
+
+/* Cross-boundary identities and dispatch; Java values are computed by DEX. */
+#define J(E, R, S, ...) ((R (*)(Handle, ...))(*(E))[S])((E), __VA_ARGS__)
+int jni_dex_language(int seed, U64 form, U64 *out) {
+  Handle e = attach();
+  Ref child = C(e, Ref, 6, "runtime/language/Child");
+  Ref base = C(e, Ref, 6, "runtime/language/Base");
+  Ref iface = C(e, Ref, 6, "runtime/language/Operation");
+  Ref object = C(e, Ref, 6, "java/lang/Object");
+  Ref language = C(e, Ref, 6, "runtime/language/Language");
+  Ref string = C(e, Ref, 6, "java/lang/String");
+  U64 args[2] = {(unsigned)seed, 0};
+  Ref ctor = C(e, Ref, 33, child, "<init>", "(I)V");
+  Ref a = C(e, Ref, 30, child, ctor, args);
+  Ref b = C(e, Ref, 30, child, ctor, args);
+  Ref compute = C(e, Ref, 33, base, "compute", "(I)J");
+  args[0] = 17;
+  out[0] = form == 0 ? C(e, U64, 52, a, compute, 17) : form == 1 ?
+      dex_instance_v(e, a, compute, 17) : C(e, U64, 54, a, compute, args);
+  out[1] = C(e, U64, 84, a, base, compute, args);
+  Ref interface_method = C(e, Ref, 33, iface, "compute", "(I)J");
+  out[2] = C(e, U64, 54, a, interface_method, args);
+  Ref field = C(e, Ref, 94, child, "value", "I");
+  out[3] = (unsigned)C(e, int, 100, a, field);
+  out[4] = C(e, U8, 24, J(e, Ref, 10, child), base);
+  out[5] = C(e, U8, 11, child, iface) + 2 * C(e, U8, 11, base, child);
+  Ref shared = C(e, Ref, 144, child, "shared", "I");
+  out[6] = C(e, int, 150, child, shared);
+  Ref equals = C(e, Ref, 33, object, "equals", "(Ljava/lang/Object;)Z");
+  args[0] = b;
+  if (form == 3) return C(e, U8, 69, a, child, equals, args);
+  out[7] = C(e, U8, 39, a, equals, args);
+  out[8] = C(e, U8, 69, a, object, equals, args);
+  Ref literal = C(e, Ref, 113, language, "literal", "()Ljava/lang/String;");
+  Ref text = C(e, Ref, 116, language, literal, (void *)0);
+  U16 units[] = {'A', 0, 0xd83d, 0xde00, 0xd800, 0xffff, 'Z'};
+  Ref native = C(e, Ref, 163, units, 7);
+  Ref intern = C(e, Ref, 33, string, "intern", "()Ljava/lang/String;");
+  Ref interned = C(e, Ref, 36, native, intern, (void *)0);
+  out[9] = C(e, U8, 24, text, interned);
+  out[10] = (unsigned)C(e, int, 51, native, J(e, Ref, 33, string, "hashCode", "()I"), (void *)0);
+  Ref name = C(e, Ref, 36, a, J(e, Ref, 33, base, "name", "()Ljava/lang/String;"), (void *)0);
+  out[11] = C(e, int, 164, name);
+  C(e, void, 143, language, J(e, Ref, 113, language, "escape", "()V"), (void *)0);
+  CHECK(C(e, U8, 228));
+  Ref thrown = C(e, Ref, 15);
+  C(e, void, 17);
+  Ref saved = C(e, Ref, 145, language, J(e, Ref, 144, language, "saved", "Ljava/lang/Throwable;"));
+  out[12] = C(e, U8, 24, thrown, saved);
+  Ref problem = C(e, Ref, 6, "runtime/language/Problem");
+  out[13] = C(e, int, 100, thrown, J(e, Ref, 94, problem, "code", "I"));
+  Ref throwable = C(e, Ref, 6, "java/lang/Throwable");
+  Ref message_method = C(e, Ref, 33, throwable, "getMessage", "()Ljava/lang/String;");
+  Ref message = C(e, Ref, 36, thrown, message_method, (void *)0);
+  args[0] = C(e, Ref, 167, "detail");
+  out[14] = C(e, U8, 39, message, J(e, Ref, 33, string, "equals", "(Ljava/lang/Object;)Z"), args);
+  C(e, int, 13, thrown);
+  Ref again = C(e, Ref, 15);
+  C(e, void, 17);
+  out[15] = C(e, U8, 24, thrown, again);
+  out[16] = C(e, U8, 24, J(e, Ref, 31, thrown), problem);
+  Ref exception = C(e, Ref, 6, "java/lang/RuntimeException");
+  Ref ex = C(e, Ref, 30, exception, J(e, Ref, 33, exception, "<init>", "(Ljava/lang/String;)V"), args);
+  out[17] = C(e, U8, 32, ex, throwable);
+  out[18] = C(e, U8, 24, J(e, Ref, 36, ex, message_method, (void *)0), args[0]);
+  Ref global = C(e, Ref, 21, text);
+  CHECK(C(vm, int, 5) == 0);
+  e = attach();
+  language = C(e, Ref, 6, "runtime/language/Language");
+  out[19] = C(e, U8, 24, global, J(e, Ref, 116, language, literal, (void *)0));
+  C(e, void, 22, global);
+  return 0;
+}
+
+#undef J
+
+int jni_string_intern_identity(void) {
+  Handle e = attach();
+  Ref cls = C(e, Ref, 6, "java/lang/String");
+  Ref intern = C(e, Ref, 33, cls, "intern", "()Ljava/lang/String;");
+  Ref a = C(e, Ref, 167, "independent");
+  Ref b = C(e, Ref, 167, "independent");
+  CHECK(!C(e, U8, 24, a, b));
+  Ref first = C(e, Ref, 36, a, intern, (void *)0);
+  Ref second = C(e, Ref, 36, b, intern, (void *)0);
+  CHECK(C(e, U8, 24, a, first) && C(e, U8, 24, first, second));
+  Ref global = C(e, Ref, 21, first);
+  CHECK(C(vm, int, 5) == 0);
+  e = attach();
+  Ref c = C(e, Ref, 167, "independent");
+  Ref third = C(e, Ref, 36, c, intern, (void *)0);
+  CHECK(C(e, U8, 24, global, third));
+  C(e, void, 22, global);
   return 0;
 }

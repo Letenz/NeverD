@@ -204,6 +204,14 @@ Avant une capture complète des drapeaux, chaque drapeau arithmétique ou de dir
 
 Les temporaires LowIR sont propres à une seule instruction native relevée. Chaque octet lu doit avoir été défini auparavant dans cette instruction ; réutiliser un décalage d’une instruction précédente ou annuler algébriquement une valeur indéfinie ne prouve pas la validité du code source. Les constantes d’entrée ne peuvent lier que des registres physiques.
 
+<!-- i18n-section: supervisor-interrupt-control -->
+
+## Contrôle du drapeau d’interruption en mode superviseur
+
+La récupération LowIR brute et les preuves de relation native admettent les formes canoniques x64 `CLI`/`STI` uniquement avec le profil explicite `KernelX64NoFaultV1`. Le composant x64 commun des drapeaux efface ou active IF en préservant tous les autres drapeaux, registres généraux et octets mémoire. La récupération conserve l’opération intrinsèque originale ; les preuves enregistrent sa transition et comparent toujours les drapeaux système finaux, même sans observations des registres ordinaires.
+
+Ce profil fixe CPL0/IOPL0 et exclut les événements asynchrones, la livraison d’événements de débogage et les transitions de privilège. Il n’observe donc pas l’inhibition temporaire des interruptions par STI. Un profil absent ou utilisateur refuse ces instructions ; l’ABI source existante reste limitée à son profil utilisateur. Cette prise en charge ne fournit aucun modèle de livraison des interruptions ni de transition de privilège.
+
 <!-- i18n-section: raw-cmpxchg -->
 
 ## Comparaison et échange dans le modèle raw séquentiel
@@ -360,3 +368,17 @@ Les rejeux de préfixe d’entrée visitent les branches en attente avant de dé
 
 
 La recherche d’alignement transmet `MaxCuts` au moteur d’inférence commun. Après validation de l’entrée et sélection d’un ensemble couvrant tous les cycles, un ensemble trop grand est refusé avant l’exploration symbolique de l’entrée ou l’élargissement. Cette limite par plan ne réduit ni `MaxCutpointAttempts` ni les essais valides à une seule coupure. Le travail de sélection des familles filtrées reste comptabilisé. L’inférence autonome et native conserve ses limites ; toute relation acceptée exige toujours le vérificateur complet inchangé.
+
+<!-- i18n-section: immutable-wide-reads -->
+
+## Lectures larges immuables complètes
+
+Sous `ExplicitMachineState` et `NormalNonfaultingExecution`, un `LOAD` admis de 16 octets n’utilise l’image immuable que si chaque adresse possible possède une preuve complète de 16 octets. L’exécution symbolique conserve les 128 bits. Le résidu matérialise des parties scalaires dans l’ordre de stockage et capture toute adresse pouvant chevaucher la destination avant la première écriture. Les deux ordres des octets partagent cette règle ; chaque opération émise consomme le budget existant.
+
+Un domaine incomplet ou une étendue immuable indisponible conserve la lecture entière à l’exécution, sans preuve partielle. Une longueur malformée renvoyée par le fournisseur entraîne un refus. Ni la mémoire modifiable ni les observations d’exécution ne confèrent d’autorité immuable. Les reçus bruts lient tous les octets, moitié haute comprise. L’enveloppe source et les preuves natives indépendantes gardent leurs exigences de largeur et d’environnement.
+
+<!-- i18n-section: unrooted-native-stack -->
+
+## Transferts internes après un changement de pile
+
+Les régions machine brutes explicites peuvent suivre les instructions near CALL et RET internes même si le pointeur de pile courant ne se représente plus relativement à celui de l’entrée. L’adaptateur d’architecture conserve la capture de cible, l’empilement, la lecture du mot de retour et le dépilement réels. Chaque retour interne exige toujours une preuve exhaustive des cibles finies à partir du mot réellement présent sur la pile. Seules les cellules de retour prouvées relatives à l’entrée entrent dans la projection et l’inventaire de préservation du cadre ; une relation perdue à une frontière du graphe peut encore entraîner un refus. La récupération des fonctions ordinaires conserve ses exigences de restauration du cadre. Ce résultat concerne une région brute ; la composition de la fonction entière et l’équivalence source ou native restent à prouver séparément.

@@ -70,6 +70,14 @@ struct FunctionSym {
   /// of its own, such as Go's register ABI, or one the debug information
   /// does not name: no C placement rules locate its parameters.
   bool PlatformConvention = true;
+  /// Where a known routine's return and parameters come from when neither
+  /// the debug information nor the user gives them: the type library whose
+  /// prototype of the function's name gives them (windows-kernel-x64), and
+  /// that prototype as the library declares it, in C.  Empty otherwise.
+  std::string PrototypeLibrary;
+  std::string PrototypeDeclaration;
+  /// The function never returns, as its declaration says (`_Noreturn`).
+  bool NoReturn = false;
 
   bool contains(va_t Address) const {
     return Address >= Addr && Address - Addr < Size;
@@ -198,6 +206,15 @@ public:
   virtual ~DebugContext() = default;
 
   virtual std::optional<FunctionSym> resolveFunction(va_t Addr) const = 0;
+  /// The prototype of the routine named \p Name, by its C name, as the
+  /// program's types declare it: a header library's for a routine another
+  /// module exports, as the Windows kernel's headers declare what drivers
+  /// import.  None where none declares one the decompiler can describe.
+  virtual std::optional<FunctionSym>
+  resolvePrototype(llvm::StringRef Name) const {
+    (void)Name;
+    return std::nullopt;
+  }
   /// Public name only.  PDB `--func` must not walk the owning module's
   /// S_LOCAL stream just to replace `sub_<va>`.
   virtual std::optional<std::string> functionName(va_t Addr) const {

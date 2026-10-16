@@ -39,6 +39,13 @@ std::shared_ptr<AddressSpace> AddressSpace::addressSpace() const {
 std::shared_ptr<const void> AddressSpace::identity() const {
   return State->Identity;
 }
+llvm::Expected<MemoryView> AddressSpace::allocateBacking(uint64_t Size) {
+  auto Region = State->Memory->allocate(Size);
+  if (!Region)
+    return Region.takeError();
+  return MemoryView(State->Memory, State->Identity, Size,
+                    {{std::move(*Region), 0, Size}});
+}
 llvm::Expected<MemoryView> AddressSpace::pinBacking(uint64_t Address,
                                                     uint64_t Size) const {
   auto &RAM = *State->Memory->State;

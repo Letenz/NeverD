@@ -9,6 +9,18 @@ per modificare NeverD in sicurezza. Copre intenzionalmente solo il codice di
 NeverD; i sottomoduli LLVM, Capstone e Unicorn mantengono la propria
 architettura interna.
 
+## Recupero MXCSR con verifica
+
+`X64MXCSRMask` abilita caricamenti MXCSR e letture/scritture scalari con una maschera effettiva esplicita (`0xffbf` o `0xffff`). L’adattatore x64 definisce gli stati iniziali validi e le transizioni. Il nucleo contabilizza il lavoro e richiede la prova che i bit riservati siano zero; l’opzione senza fault non basta. Le operazioni intrinseche originali restano osservabili. Scritture MXCSR in memoria, interfaccia sorgente e certificati nativi/LLVM richiedono contratti propri.
+
+## Recupero della memoria a runtime
+
+`X64SegmentedWrites` ammette separatamente scritture FS/GS ordinarie di 1/2/4/8 byte con offset a 64 bit, in uno stato macchina esplicitamente privo di fault. `arch/x86_64` gestisce validazione, ammissione e inizializzazione delle basi simboliche. Il nucleo usa indirizzi lineari completi e la normale invalidazione degli alias. Basi fisse arbitrarie possono sovrapporsi allo stack, ad altri segmenti e a celle di ritorno attive. La capacità è inclusa nelle attestazioni raw. Le interfacce sorgente e di prova nativa senza input di base autenticati continuano a rifiutare questo dominio.
+
+## Seed concreti della memoria iniziale
+
+`SymExecConcreteShadow` riceve byte RAM in ordine di indirizzo prima di eseguire; la memoria simbolica iniziale rimane libera. In C++, `InitialMemory` è limitata da `MaxMemorySeedBytes` (1 MiB predefinito; zero non accetta byte). Intervalli vuoti, sovrapposti o con riporto vengono rifiutati. I rapporti con memoria usano la versione 2 e conservano `InitialMemory` e `MemorySeed` di ogni candidato. La proiezione accetta solo ingressi di registro o memoria assoluta di epoca zero coperti dal seed. Verifica della query, nuova esecuzione e deduplicazione includono entrambi gli insiemi di byte. Byte mancanti, basi simboliche ed effetti approssimati restano rifiutati; le scritture aggiornano normalmente la memoria concreta. `ProcessView::read` legge RAM confermata a processo fermo; gli eventi prima dell’accesso non sono uno snapshot completo. L’osservazione non prova proprietà, durata, immutabilità o disgiunzione. Il candidato verifica soltanto la decisione scelta e quelle precedenti. C/JSON, Python e CLI restano basati sui registri nella versione 1.
+
 ## Confine della sostituzione di sorgenti e oggetti
 
 `SourcePatchCompiler` gestisce identità del compilatore e scelta dell’artefatto. `validateSourcePatchTarget` ammette i target comuni a sorgenti e IR fornito; la sola tripla non prova il supporto. `bindSourcePatch` autentica gli ingressi IR; `PatchObject` gestisce sezioni native, rilocazioni e prove degli intervalli FDE. `publishSourcePatch` prepara, verifica e pubblica la transazione esatta. `COFFSourceImage` gestisce nuovo spazio e tabelle di unwinding PE x86/x64/ARM32/ARM64; le riscritture del codice sollevato mantengono prove EH originali separate. Vedere [le patch da sorgente](source-patching.md).
@@ -1845,6 +1857,18 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymState` usa coordinate relative modulo 2^64 solo per regioni con base simbolica a 64 bit. Una lettura che attraversa lo zero relativo viene divisa in due intervalli senza riavvolgimento, mantenendo ogni origine di input all’interno di un solo intervallo; una scrittura conserva il valore completo. Gli overflow degli intervalli nei banchi di memoria assoluta, registri e temporanei vengono ancora rifiutati. Questa regola di indicizzazione non fornisce premesse sulla validità dell’indirizzo reale, sull’assenza di alias o sulla separazione dei frame; l’invalidazione ordinaria tra regioni e le prove di conservazione per STORE restano invariate. Unicorn, KVM e WHP condividono questa regola di analisi.
 
+### Import libSystem limitati
+
+`MachOProgramLinking` possiede fatti originali classic/generic64 rigorosi, chiusura completa dei simboli e limiti di preparazione. Il processo Darwin ammette provider/simboli e pubblica puntatori, protezioni dopo fixup, ingressi libSystem ed errno. `DarwinLibSystemCalls.def` lega nomi e arità agli effetti di `DarwinServices` senza inventare trap raw. `DarwinMemory` possiede riserve e massimi; `ExecutionBudget` condivide la scadenza e `ProcessReport` serializza il blocco facoltativo `darwin.native_calls`. Non vengono caricate librerie host.
+
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
+### Offset delle importazioni dylib Darwin
+
+Le importazioni ordinarie forti da dylib ammettono addendi in byte con segno per puntatori globali e modelli TLS. `DarwinImage` combina una sola volta indirizzo esportato, rilocazione della libreria e addendo, controlla gli overflow e limita il risultato ai segmenti originali del fornitore scelto. Il valore del puntatore non implica una larghezza di accesso. Ingressi libSystem, descrittori TLV importati e collegamenti lazy richiedono addendo zero.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### Confronto e scambio nel modello raw sequenziale
 
 `SymExec` possiede la semantica dei valori di `ATOMIC_CMPXCHG` raw ammesso: acquisisce indirizzo, valore atteso, desiderato e precedente prima di pubblicare l’output, poi scrive una sola volta `ite(Old == Expected, Desired, Old)`. `SymState` gestisce gli effetti sui byte, l’invalidazione degli alias e il budget di conservazione di tale scrittura. `InterpreterSpecialization` gestisce ammissione e provenienza: Old usa la provenienza della memoria prima della scrittura; la scrittura condizionale combina conservativamente le provenienze di Old, atteso e desiderato e invalida i fatti sugli spill affini che potrebbero sovrapporsi. Anche un confronto fallito richiede di separare l’intero intervallo di scrittura dalle celle di ritorno protette. Operazione atomica, ordinamento e occorrenze restano nel residuo; un rifiuto non pubblica un CFG residuo parziale.
@@ -1866,6 +1890,46 @@ KernelModelObjects possiede contatori comuni di handle e puntatori. KernelModelF
 
 KernelFileSystem conserva un provider token per FILE_OBJECT. L’operazione privata di condivisione riceve un nodo già ammesso e diritti già mappati, controlla i conflitti in entrambe le direzioni ed esclude gli accessi ai soli metadati. CLEANUP rilascia i vincoli e mantiene il token; CLOSE elimina il token ripulito. Gli oggetti ripuliti ancora referenziati rientrano nel limite di 1024 aperture. La verifica esatta confronta i token con il proprietario degli oggetti file. `KernelModelFileCreate` produce CREATE e annullamento e riserva handle prima dei callback. `DriverSession` conserva il chiamante durante attese e CLOSE annidati. Il proprietario comune pubblica l’handle e la ricerca trattiene la directory reale. L’intenzione di chiusura dello scenario resta separata. Snapshot e scaricamento verificano i token in entrambe le direzioni.
 
+`KernelModelFileRequests` possiede continuazioni, pubblicazione e rilascio di IoQueryFileInformation con buffer prestato e ZwQueryInformationFile con buffer proprio. Gli handle KernelMode riusano il proprietario degli oggetti. SystemBuffer si registra nel proprietario della memoria fisica; il rilascio ordinario lo lascia al proprietario della query. Solo `KernelFileSystem::queryInformation` codifica i metadati dichiarati dai token conservati. Il terminale legge classe e lunghezza dell’IRP effettivo; adattatori e report non ricostruiscono metadati.
+
+`KernelModelIO` rilascia la proprietà del trasferimento senza cambiare `FILE_OBJECT.CurrentByteOffset`. Offset richiesto e byte completati non sostituiscono un aggiornamento della posizione da parte del file system; le query Position native per file sincroni leggono il campo conservato.
+
 ### Responsabilità architetturale dell’ambiente grezzo
 
 `RecoveryArchitecture` seleziona il contratto nativo da `SpecializationOptions::Architecture`, indipendentemente dall’host di compilazione. Il valore predefinito resta x64; un target senza adattatore viene rifiutato esplicitamente. `arch/x86_64` gestisce codifica delle opzioni native, intervalli dell’immagine primaria, costi di confronto delle uscite e ricevute delle uscite fisiche. Il core gestisce budget comuni, codifica delle politiche e integrità di grafo e prove. La codifica dei digest x64 resta invariata; le architetture attesa e memorizzata vengono controllate prima della dichiarazione. `RawArchitectureReceiptCompatibility` fissa i digest precedenti e i test di discordanza impediscono di rinominare prove x64 come ARM64. Il recupero nativo ARM64 non è ancora implementato.
+
+`KernelModelFileRequests` possiede anche i trasferimenti sincroni bufferizzati `ZwReadFile` / `ZwWriteFile`. Il produttore acquisisce ambito dell’handle, offset, chiave e copia dei dati scritti. Il completamento condiviso pubblica byte letti e IOSB nel chiamante originale idoneo, poi libera ogni pacchetto e buffer posseduto una sola volta. Il driver di archiviazione possiede le modifiche a contenuto e posizione.
+
+`KernelModelFileRequests` possiede anche la produzione senza buffer di `ZwFlushBuffersFile`. Controllo della maschera di accesso e pubblicazione/rilascio immediati differiscono dai pacchetti nativi differiti di lettura, scrittura e query; notifica al chiamante originale e rilascio singolo restano condivisi.
+
+`KernelModelFileRequests` gestisce acquisizione e pubblicazione dei buffer di controllo nativi. Ritenzione del file, continuazione del chiamante e rilascio del pacchetto sono condivisi; il differimento del produttore distingue controllo dispositivo e FSCTL. Il validatore comune verifica i limiti dell’uscita.
+
+`KernelModelRuntime` gestisce classificazione CRT, conversione sul posto e scritture controllate di stringhe. `KernelCStringAPIs.def` fornisce identità esportata, numero di argomenti e ammissione IRQL a ogni percorso. Gli accessi per unità riusano permessi e controlli di durata del guest; report e adattatori non duplicano la semantica di copia o errore.
+
+`KernelMemoryCalls` possiede l’ammissione delle copie controllate e riusa move/fill, durata del pool e controlli di memoria utente. `KernelModelRuntime` possiede la verifica della firma grezza `RtlImageNtHeader`. Questa verifica non sostituisce la convalida del loader necessaria all’esecuzione; gli adattatori non duplicano le due semantiche.
+
+`OptimizationGuards` integra il controllo `optnone` di LLVM: i passaggi facoltativi di modulo e grafo delle chiamate vengono saltati se esiste una funzione protetta, perché possono modificarne il CFG o sostituire gli argomenti del callback con poison. Gli adattatori obbligatori e le ottimizzazioni delle funzioni ordinarie restano attivi. La proiezione conserva le scritture di salvataggio del prologo fino al loro collegamento nella ricostruzione nativa.
+
+`COFFRegistrationEH4Wrapper` possiede la prova dell’inoltro EH4 conservato. `COFFRegistrationScalarLeaf` verifica un CFG scalare limitato solo in avanti, registri e flag inizializzati, memoria MXCSR privata e dati runtime dell’immagine. Rifiuta letture del frame chiamante, indirizzi sfuggiti, chiamate ignote, istruzioni sovrapposte e ritorni incompleti. LLVM e la verifica COFF indipendente condividono la prova del loader; codice originale e letture dinamiche restano in posizione.
+
+`KernelModelRuntime` gestisce hash Unicode, conversione comune in maiuscolo indipendente da NLS e secondi dall’epoca 1980. `KernelRuntimeCalls` riusa il proprietario del pool paginato delle stringhe. Le tabelle API definiscono esportazioni, numero di argomenti e APC_LEVEL; l’ordine degli accessi resta nelle implementazioni.
+
+`uppercaseCharacter` riduce gli argomenti prima dell’ammissione e delega a `uppercaseUnicodeUnit`. Le tabelle CRT e Unicode condividono la decisione con identità ABI distinte; adattatori e impostazioni locali dell’host non forniscono una seconda mappatura.
+
+`KernelModelRuntime` possiede le larghezze scalari e la pubblicazione comune di prefisso e buffer. Le chiamate variadiche ordinarie usano il lettore ABI esistente; l’adattatore esplicito x64 `va_list` controlla ogni scalare guest richiesto con passo di otto byte. Dispatcher e adattatore non duplicano l’analisi del formato.
+
+Gli alias riusano i proprietari di thread/processi e contesti anche durante il collegamento a un processo. `RtlPcToFileHeader` usa `LoadedModules` come le query dei moduli di sistema; le regioni di `ImageRAM` non sostituiscono l’identità dei moduli. Non viene consultato stato host.
+
+`KernelMDLCalls` normalizza l’ingresso precedente nel mapper esistente a sei argomenti. `KernelPhysicalMemory` e i record MDL gestiscono ancora cache, identità fisica, permessi e durata. Solo gli alias di immagini kernel completamente liberati non lasciano dipendenze ambientali; le viste utente le mantengono.
+
+`queryFileDevice` in `KernelModelFileRequests` verifica in comune identità del file, intestazione, montaggio e topologia. La query base restituisce il dispositivo del file; quella correlata verifica anche i percorsi di estensione e sceglie il vertice collegato. Entrambi i risultati sono presi in prestito.
+
+`KernelModelFileCreate` gestisce questa apertura nel `FileOperation` esistente. Risoluzione dei nomi, pacchetti CREATE e rilascio finale condividono il proprietario delle normali aperture. Il gestore oggetti acquisisce il riferimento tramite l’handle interno, `queryFileDevice` fornisce il dispositivo associato e la continuazione di chiusura esistente esegue CLEANUP. Solo dopo si lascia la regione critica del thread originale. Output pubblici sovrapposti non sostituiscono l’oggetto referenziato interno.
+
+`KernelModelIO` gestisce il wrapper di controllo e la durata del collegamento privato, riusando cambio di vista condiviso e controllo MDL ordinario. Non inventa memoria APC guest e non consente il distacco tramite token pubblico zero. Ammissione e annidamento rimangono al proprietario esistente. L’eccezione raggiunge il guest soltanto dopo il ripristino riuscito; gli errori di ripristino restano errori del modello.
+
+`KernelObjectAPIs.def` gestisce identità, arità, valore e limite IRQL della query fissa. Non introduce un registro di callback né interrogazioni al sistema operativo host.
+
+`KernelPhysicalMemory::resolveAddress` associa il `MemoryView` corrente agli intervalli esatti delle allocazioni conservate e alle identità di pagina esistenti, inclusi gli alias. `KernelModel` verifica separatamente leggibilità, processo e residenza. La query non crea identità né blocca pagine; il riempimento ancora mappato non riattiva byte liberati.
+
+`KernelModel::queryPrimaryVirtualAddress` ricava la VA primaria dai record non paginati attivi `PoolAllocation` e da `KernelPhysicalMemory::describe`, poi la verifica con la query diretta. Non aggiunge registri inversi di alias, identità fisiche o blocchi di pagine; gli indirizzi generici di memoria non dimostrano una mappatura primaria.

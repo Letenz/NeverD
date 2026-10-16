@@ -39,6 +39,12 @@ _Static_assert(FIELD_OFFSET(DEVICE_OBJECT, DeviceType) == 0x48,
                "device type ABI");
 _Static_assert(FIELD_OFFSET(DRIVER_OBJECT, DriverUnload) == 0x68,
                "driver unload ABI");
+_Static_assert(sizeof(FILE_BASIC_INFORMATION) == 40,
+               "basic file information ABI");
+_Static_assert(sizeof(FILE_STANDARD_INFORMATION) == 24,
+               "standard file information ABI");
+_Static_assert(sizeof(FILE_NETWORK_OPEN_INFORMATION) == 56,
+               "network file information ABI");
 #else
 typedef int NTSTATUS;
 typedef void *DEVICE;
@@ -73,6 +79,11 @@ __declspec(dllimport) DEVICE IoAttachDeviceToDeviceStack(DEVICE, DEVICE);
 __declspec(dllimport) void IoDetachDevice(DEVICE);
 __declspec(dllimport) DEVICE IoGetAttachedDeviceReference(DEVICE);
 __declspec(dllimport) DEVICE IoGetDeviceAttachmentBaseRef(DEVICE);
+__declspec(dllimport) NTSTATUS IoGetDeviceObjectPointer(TEXT *, U32, FILEPTR *,
+                                                        DEVICE *);
+__declspec(dllimport) void *MmGetSystemRoutineAddress(TEXT *);
+__declspec(dllimport) U8 KeAreApcsDisabled(void);
+__declspec(dllimport) U8 KeAreAllApcsDisabled(void);
 __declspec(dllimport) void *IoAllocateWorkItem(DEVICE);
 __declspec(dllimport) void IoQueueWorkItem(void *, void (*)(DEVICE, void *),
                                            U32, void *);
@@ -90,6 +101,10 @@ __declspec(dllimport) NTSTATUS IofCallDriver(DEVICE, PACKET);
 __declspec(dllimport) NTSTATUS ZwClose(HANDLE);
 __declspec(dllimport) void ObfReferenceObject(void *);
 __declspec(dllimport) void *PsGetCurrentThread(void);
+__declspec(dllimport) NTSTATUS ZwQueryInformationFile(HANDLE, IOSTATUS *,
+                                                      void *, U32, U32);
+__declspec(dllimport) NTSTATUS IoQueryFileInformation(void *, U32, U32, void *,
+                                                      U32 *);
 #endif
 #define CHECK(C)                                                               \
   do {                                                                         \
@@ -104,6 +119,7 @@ static U16 Mode;
 static HANDLE HeldHandle;
 static FILEPTR OpenedFile, HeldFile;
 static PACKET PendingOpen;
+static U8 PendingMajor;
 static U32 OpenCreates, OpenCleanups, OpenCloses;
 
 static NTSTATUS cancelCompletion(DEVICE Device, PACKET Irp, void *Context) {
@@ -130,7 +146,8 @@ static NTSTATUS forwardOpen(PACKET Irp, U8 Major) {
   return IofCallDriver(Volume, Irp);
 }
 static void openWorker(DEVICE Device, void *Context) {
-  if (Device != Guest || Context != PendingOpen || forwardOpen(PendingOpen, 0))
+  if (Device != Guest || Context != PendingOpen ||
+      forwardOpen(PendingOpen, PendingMajor))
     Failed = 1;
   IoFreeWorkItem(Work);
   Done = 1;
@@ -140,6 +157,9 @@ static NTSTATUS fileDispatch(DEVICE Device, PACKET Irp) {
   U8 Major = Stack[0];
   FILEPTR File = *(FILEPTR *)(Stack + 0x30);
   CHECK(Device == Guest && File == *(FILEPTR *)((U8 *)Irp + 0xc0));
+  U8 Pointer = Mode == 'B' || Mode == 'V' || Mode == 'K' || Mode == 'T';
+  if (Pointer && (Major == 0 || Major == 18))
+    CHECK(KeAreApcsDisabled() && !KeAreAllApcsDisabled());
   if (!Major) {
     U8 *Security = *(U8 **)(Stack + 8);
     CHECK(*(U32 *)((U8 *)Irp + 0x10) == 0x884);
@@ -149,16 +169,34 @@ static NTSTATUS fileDispatch(DEVICE Device, PACKET Irp) {
     CHECK(*(void **)(Security + 8));
     OpenedFile = File;
     ++OpenCreates;
-    if (Mode == 'P' && !Done) {
+    if (Pointer) {
+      CHECK(*(U32 *)(Stack + 0x10) == 0x1000040);
+      CHECK(*(U16 *)(Stack + 0x1a) == 3);
+    }
+    if ((Mode == 'P' || Mode == 'V') && !Done) {
       PendingOpen = Irp;
+      PendingMajor = Major;
       Stack[3] |= 1;
       Work = IoAllocateWorkItem(Guest);
       CHECK(Work);
       IoQueueWorkItem(Work, openWorker, 1, Irp);
       return 0x103;
     }
+  } else if (Major == 5) {
+    CHECK(Mode == 'Q' && File == OpenedFile);
+    CHECK(*(U32 *)((U8 *)Irp + 0x10) == 0x870 ||
+          *(U32 *)((U8 *)Irp + 0x10) == 0x10);
   } else if (Major == 18) {
     ++OpenCleanups;
+    if (Mode == 'K' && !Done) {
+      PendingOpen = Irp;
+      PendingMajor = Major;
+      Stack[3] |= 1;
+      Work = IoAllocateWorkItem(Guest);
+      CHECK(Work);
+      IoQueueWorkItem(Work, openWorker, 1, Irp);
+      return 0x103;
+    }
     if (Mode == 'X') {
       CHECK(*(U32 *)((U8 *)Irp + 0x10) == 0x404);
       CHECK(*(void **)((U8 *)Irp + 0x48) == (U8 *)Irp + 0x30);
@@ -170,6 +208,63 @@ static NTSTATUS fileDispatch(DEVICE Device, PACKET Irp) {
     ++OpenCloses;
   }
   return forwardOpen(Irp, Major);
+}
+static NTSTATUS metadata(HANDLE Handle) {
+  const U32 Classes[] = {4, 5, 6, 9, 34, 35};
+  const U32 Sizes[] = {40, 24, 8, 14, 56, 8};
+  for (U32 Native = 0; Native != 2; ++Native)
+    for (U32 I = 0; I != 6; ++I) {
+      U64 Buffer[8];
+      IOSTATUS Status;
+      U32 Returned = 0xdeadbeef;
+      for (U32 J = 0; J != 8; ++J)
+        Buffer[J] = 0xa5a5a5a5a5a5a5a5ull;
+      NTSTATUS Code =
+          Native ? ZwQueryInformationFile(Handle, &Status, Buffer,
+                                          sizeof(Buffer), Classes[I])
+                 : IoQueryFileInformation(OpenedFile, Classes[I],
+                                          sizeof(Buffer), Buffer, &Returned);
+      CHECK(!Code && (Native ? Status.Information : Returned) == Sizes[I]);
+      CHECK(((U8 *)Buffer)[Sizes[I]] == 0xa5);
+      if (Classes[I] == 4 || Classes[I] == 34) {
+        CHECK(Buffer[0] == 1 && Buffer[1] == 2 && Buffer[2] == 3 &&
+              Buffer[3] == 4);
+        CHECK(*(U32 *)((U8 *)Buffer + (Classes[I] == 4 ? 32 : 48)) == 0x20);
+      }
+      if (Classes[I] == 5) {
+        CHECK(Buffer[0] == 4096 && Buffer[1] == 4);
+        CHECK(*(U32 *)((U8 *)Buffer + 16) == 1 && ((U8 *)Buffer)[20] == 0 &&
+              ((U8 *)Buffer)[21] == 0);
+      }
+      if (Classes[I] == 6)
+        CHECK(Buffer[0] == ~0ull);
+      if (Classes[I] == 9) {
+        CHECK(*(U32 *)Buffer == 10);
+        CHECK(((U16 *)Buffer)[2] == '\\' && ((U16 *)Buffer)[3] == 'D');
+      }
+      if (Classes[I] == 34)
+        CHECK(Buffer[4] == 4096 && Buffer[5] == 4);
+    }
+  U64 Buffer[8];
+  IOSTATUS Status;
+  *(U64 *)&Status = 0xa5a5a5a5a5a5a5a5ull;
+  Status.Information = 0xa5a5a5a5a5a5a5a5ull;
+  CHECK((U32)ZwQueryInformationFile(Handle, &Status, Buffer, 23, 5) ==
+        0xc0000004);
+  CHECK(*(U64 *)&Status == 0xa5a5a5a5a5a5a5a5ull &&
+        Status.Information == 0xa5a5a5a5a5a5a5a5ull);
+  CHECK((U32)ZwQueryInformationFile(Handle, &Status, Buffer, 9, 9) ==
+        0x80000005);
+  CHECK(Status.Information == 8 && *(U32 *)Buffer == 10);
+  const U32 Local[] = {8, 14, 16, 17, 51};
+  const U32 Values[] = {0x100081, 0, 0x20, 511, 0};
+  for (U32 I = 0; I != 5; ++I) {
+    Buffer[0] = 0;
+    CHECK(!ZwQueryInformationFile(Handle, &Status, Buffer, sizeof(Buffer),
+                                  Local[I]));
+    CHECK(*(U32 *)Buffer == Values[I]);
+  }
+  return 0;
 }
 static NTSTATUS openCases(void) {
   TEXT Name;
@@ -191,6 +286,8 @@ static NTSTATUS openCases(void) {
     Returned = ZwOpenFile(&Handle, 0x100081, &Attr, &Status, 7, 0x60);
   }
   CHECK(!Returned && Handle && !*(U32 *)&Status && Status.Information == 1);
+  if (Mode == 'Q')
+    CHECK(!metadata(Handle));
   if (Mode == 'P')
     CHECK(Done && !Failed);
   if (Mode == 'U') {
@@ -228,11 +325,44 @@ static void fileUnload(DRIVER Driver) {
     if (OpenCloses || OpenCleanups != 1)
       return;
     ObfDereferenceObject(HeldFile);
+  } else if (HeldFile) {
+    if (OpenCloses || OpenCleanups != 1)
+      return;
+    ObfDereferenceObject(HeldFile);
   }
   if (OpenCreates != OpenCleanups || OpenCleanups != OpenCloses)
     return;
   IoDetachDevice(Volume);
   IoDeleteDevice(Guest);
+}
+
+static NTSTATUS pointerCases(void) {
+  TEXT Name;
+  FILEPTR File = 0;
+  DEVICE Device = 0;
+  typedef NTSTATUS (*OPENPOINTER)(TEXT *, U32, FILEPTR *, DEVICE *);
+  OPENPOINTER Open = IoGetDeviceObjectPointer;
+  if (Mode == 'T') {
+    RtlInitUnicodeString(&Name, (const U16 *)L"IoGetDeviceObjectPointer");
+    Open = (OPENPOINTER)MmGetSystemRoutineAddress(&Name);
+    CHECK(Open);
+  }
+  RtlInitUnicodeString(&Name, (const U16 *)L"\\Device\\DeclaredVolume\\Data");
+  CHECK(!KeAreApcsDisabled());
+  CHECK(!Open(&Name, 0x100081, &File, &Device));
+  CHECK(File == OpenedFile && Device == Guest);
+  CHECK(!KeAreApcsDisabled() && !KeAreAllApcsDisabled());
+  CHECK(OpenCreates == 1 && OpenCleanups == 1 && OpenCloses == 0);
+  CHECK((*(U32 *)((U8 *)File + 0x50) & 0x4002) == 0x4000);
+  if (Mode == 'V' || Mode == 'K')
+    CHECK(Done && !Failed);
+  if (Mode == 'T')
+    HeldFile = File;
+  else {
+    ObfDereferenceObject(File);
+    CHECK(OpenCloses == 1);
+  }
+  return 0;
 }
 
 static NTSTATUS referenceVolume(DEVICE *Result) {
@@ -276,8 +406,9 @@ NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
   Mode = Registry->Length ? Registry->Buffer[Registry->Length / 2 - 1] : 0;
   CHECK(!IoCreateDevice(Driver, 0, 0, 0x22, 0, 0, &Guest));
   const NTSTATUS Status = referenceVolume(&Volume);
-  U8 Opens =
-      Mode == 'C' || Mode == 'P' || Mode == 'X' || Mode == 'U' || Mode == 'R';
+  U8 Opens = Mode == 'C' || Mode == 'P' || Mode == 'X' || Mode == 'U' ||
+             Mode == 'R' || Mode == 'Q' || Mode == 'B' || Mode == 'V' ||
+             Mode == 'K' || Mode == 'T';
   if (!Opens && Mode != 'S' && Mode != 'L' && Mode != 'G' && Mode != 'F' &&
       Mode != 'W') {
     CHECK((U32)Status == 0xc0000034u && !Volume);
@@ -297,10 +428,12 @@ NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
   CHECK(IoAttachDeviceToDeviceStack(Guest, Volume) == Volume);
   if (Opens) {
     for (U32 Major = 0; Major != 28; ++Major)
-      if (Major == 0 || Major == 2 || Major == 18)
+      if (Major == 0 || Major == 2 || Major == 5 || Major == 18)
         *(NTSTATUS(**)(DEVICE, PACKET))((U8 *)Driver + 0x70 + Major * 8) =
             fileDispatch;
     *(void (**)(DRIVER))((U8 *)Driver + 0x68) = fileUnload;
+    if (Mode == 'B' || Mode == 'V' || Mode == 'K' || Mode == 'T')
+      return pointerCases();
     return openCases();
   }
   CHECK(*(U32 *)((U8 *)Guest + 0x98) == 511);

@@ -359,7 +359,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `GetScatterGatherList`, `PutScatterGatherList` | DISPATCH_LEVEL の表メソッド。実際のインライン／資源待ちコールバック、固定 MDL ビュー、明示的解放 |
 | `AllocateAdapterChannel`, `MapTransfer`, `FlushAdapterBuffers`, `FreeMapRegisters` | 変換付きバスマスターチャネルのコールバック、共有レジスター上限、連続 MDL 断片、全体フラッシュ、正確な保持レジスター解放 |
 | `KeFlushIoBuffers` | 有効なロック済み／非ページ MDL のコヒーレント CPU キャッシュフラッシュ。DMA マッピングは解放しない |
-| `MmMapLockedPagesSpecifyCache`、`MmGetSystemAddressForMdlSafe`、`MmUnmapLockedPages` | ユーザー／システムマッピングは物理ページのキャッシュ属性と各権限を維持。非ページプール MDL は安全なヘルパーで元のシステムマッピングを再利用 |
+| `MmMapLockedPages`、`MmMapLockedPagesSpecifyCache`、`MmGetSystemAddressForMdlSafe`、`MmUnmapLockedPages` | ユーザー／システムマッピングは物理ページのキャッシュ属性と各権限を維持。非ページプール MDL は安全なヘルパーで元のシステムマッピングを再利用 |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | 独立または IRP に関連付けた非ページプール／ユーザー MDL、変更可能なチェーンリンク、独立したロックとシステム別名。クォータは未対応 |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | 明示的なセッションレジストリ、ハンドルごとの権限と寿命、クエリバッファーサイズと変更。ホストレジストリは使用しない |
 | `ZwEnumerateValueKey` | 作成順で Basic、Full、Partial 値情報を列挙。置換は索引を維持し、削除は索引を詰め、再作成は末尾に追加。`KEY_QUERY_VALUE` が必要で、範囲外は `STATUS_NO_MORE_ENTRIES`。値照会と直列化を共有し、x64 Full データは8バイト境界、空データのオフセットは `0xffffffff`。パディングと不完全な UTF-16 単位は保持 |
@@ -375,7 +375,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `PoCallDriver`, `PoStartNextPowerIrp` | 管理対象電源 IRP の転送と追加ハンドシェイクなしの Vista+ 検証 |
 | `PoSetPowerState`, `PoRequestPowerIrp` | デバイス別通知状態と明示 PDO FIFO に基づく実際の子要求。範囲は上記 |
 | `IoCreateSymbolicLink`、`IoDeleteSymbolicLink` | 1 セッションの名前空間内の ASCII `\DosDevices\Name` または `\??\Name`。リンク先は `\Device\Name` |
-| `DbgPrint`、`DbgPrintEx` | 検査付き Win64 可変引数の書式処理。出力は最大 512 バイトで、デバッガーフィルターはすべて有効 |
+| `DbgPrint`、`DbgPrintEx`、`vDbgPrintExWithPrefix` | 検査付き Win64 可変引数の書式処理。出力は最大 511 バイトで、デバッガーフィルターはすべて有効 |
 | `IoGetCurrentIrpStackLocation` | 現在モデル化している IRP のスタック位置を返す。通常コンパイルされた WDM マクロも同じゲストフィールドを読む |
 | `KeGetCurrentIrql` | 明示的な引き上げと復元を含む現在の IRQL/CR8 を読みます。ディスパッチとワーク項目は `PASSIVE_LEVEL`、DPC は `DISPATCH_LEVEL` で開始します |
 | `KfRaiseIrql`, `KeLowerIrql` | 実際の x64 WDK IRQL 昇降インポートとインライン補助関数。各実行は復帰前に保存値を LIFO 順に復元します。IRQL <= APC_LEVEL の合法な待機は保存した昇降状態を維持し、待機時の IRQL で再開します。DISPATCH_LEVEL のロック保持中は中断できません。CR8 は各変更を反映し、設定した CPU0 イベントの先取りには `scheduling` を使用します。任意の割り込みネストは未対応です。 |
@@ -397,7 +397,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `KeInitializeSemaphore`, `KeReleaseSemaphore`, `KeReadStateSemaphore` | 正の上限を持つ常駐カウントセマフォです。成功した待機ごとに 1 減算します。解放は Increment=0 と Wait=FALSE に限定し、上限超過は `STATUS_SEMAPHORE_LIMIT_EXCEEDED` を発生させます。 |
 | `KeInitializeMutex`, `KeReleaseMutex`, `KeReadStateMutex` | 常駐 KMUTEX は論理スレッドが所有し、ネストしたコールバックと SEH をまたいで再帰取得できます。KeReleaseMutex は直前の符号付きシグナル状態を返し、所有者と一致する DISPATCH_LEVEL 取得状態を要求し、Wait=FALSE のみ受け付けます。保持中は最外層の復帰、再初期化、領域解放を拒否します。所有者以外の解放は `STATUS_MUTANT_NOT_OWNED` を発生させます。 |
 | `PsCreateSystemThread`, `PsTerminateSystemThread` | システムプロセスのスレッドを独立したゲストスタックで `PASSIVE_LEVEL` 実行します。終了はオブジェクトをシグナル状態にして戻らず、開始ルーチンの通常復帰は明示的に停止します。NULL プロセスハンドル、任意の `ClientId`、NULL またはカーネルハンドルだけの属性に対応します。APC 配信と別プロセス内の作成は未対応です。 |
-| `PsLookupProcessByProcessId`, `PsLookupThreadByThreadId`, `PsGetThreadProcess`, `PsIsThreadTerminating` | 既知のシステム/要求元プロセス ID と発行済みスレッド ID を検索し、未知の ID は `STATUS_INVALID_CID` になります。保持されたスレッドの作成元プロセスと終了状態を照会できます。プロセス識別子はセッションが保持し、検索は失効したユーザーメモリを復元しません。 |
+| `PsLookupProcessByProcessId`, `PsLookupThreadByThreadId`, `PsGetThreadProcess`, `IoThreadToProcess`, `PsIsThreadTerminating` | 既知のシステム/要求元プロセス ID と発行済みスレッド ID を検索し、未知の ID は `STATUS_INVALID_CID` になります。保持されたスレッドの作成元プロセスと終了状態を照会できます。プロセス識別子はセッションが保持し、検索は失効したユーザーメモリを復元しません。 |
 | `ObGetObjectType`, `ObfReferenceObject`, `ObfDereferenceObject`, `ObReferenceObjectByPointer`, `ObReferenceObjectByHandle`, `ObOpenObjectByPointer`, `ZwClose` | 不透明な型識別子、型付き参照、複数ハンドルの寿命を一元管理します。ポインター参照は両アクセスモードで指定型を検証します。ハンドル参照は `UserMode` で付与権限を検証し、カーネルハンドルを拒否します。任意の `OBJECT_HANDLE_INFORMATION` が付与権限を返します。`ObOpenObjectByPointer` は `KernelMode`、NULL アクセス状態、ゼロまたは `OBJ_KERNEL_HANDLE` に対応します。プロセス/スレッドハンドルの汎用権限、ACL、疑似ハンドル、ファイル参照は未対応です。DriverUnload 前に呼出元の全参照とハンドルを解放する必要があります。 |
 | `ObQueryNameString`, `ObReferenceObjectByName`, `ZwOpenDirectoryObject`, `ZwOpenSymbolicLinkObject`, `ZwQuerySymbolicLinkObject`, `ZwQueryObject` | ASCII 名は共有セッション名前空間（ルート、`\Driver`、`\Device`、`\FileSystem`、単一のグローバル DOS マップ `\GLOBAL??` と `\??`/`\DosDevices` 別名）で解決します。名前参照は KernelMode、既知の型、DesiredAccess=0、アクセス状態/解析コンテキストなし、任意の OBJ_CASE_INSENSITIVE のみを受け付けます。外部ドライバー、レジストリ名解析、ファイルオブジェクト、Unicode 折り畳み、セキュリティ検査、解析コールバックは未対応です。ZwQueryObject は ObjectNameInformation のみです。ディレクトリ/リンクの相対オープンと汎用権限変換に対応し、Zw 照会はカーネル権限規則を使います。名前照会は必要サイズを返し、リンク照会は取得時の MaximumLength バイトを保持します。削除されたリンクの名前は最後のハンドル終了まで残り、ポインター参照は切り離された物体を保持します。デバイス名は削除時に消え、I/O 保持がなくなるとドライバー一覧から外れ、ポインター参照は記憶域を保持します。 |
 | `PsProcessType`, `PsThreadType`, `IoDriverObjectType`, `IoFileObjectType`, `ExEventObjectType`, `ExSemaphoreObjectType`, `PsJobType`, `SeTokenObjectType`, `PsInitialSystemProcess`, `KeNumberProcessors`, `KdDebuggerEnabled`, `KdDebuggerNotPresent` | 読み取り専用・実行不可の PE データです。静的インポートと動的検索は同じアドレスを返します。型ポインターはオブジェクト管理の識別子を共有し、セッション DRIVER_OBJECT は型照会とポインター参照に対応します。型トークンの公開だけでは他のクラスを実装しません。`PsInitialSystemProcess` はシステムプロセス、`KeNumberProcessors` は単一プロセッサーマスクに従います。デバッガーバイトの読み取りには `debugger_state` にブール値 `enabled` と `not_present` が必要です。省略時は既定状態を与えません。両実行契約に対応します。 |
@@ -684,15 +684,23 @@ PASSIVE_LEVEL で長さが 4 未満なら結果に触れず `STATUS_INFO_LENGTH_
 
 `RtlCaptureContext` は checked-x64 Unicorn/KVM/WHP で共通の静的/動的実装を使い、IRQL <= DISPATCH_LEVEL を要求します。16 バイト境界の読み書き可能な 1232 バイトのカーネル記録に、`[48,72)`、`[120,262)`、`[280,284)`、`[416,672)` だけを書きます。他のバイト、x87 データ/ポインタ、MXCSR mask は保持します。ContextFlags=`0x10000f`、呼び出し元 RSP=入口 RSP+8、RIP は実際の戻りスロットです。入口 RSP-8 に 8 バイトのフラグを書き、RAX はゼロ拡張 EFLAGS、算術フラグは ADD(入口 RSP-8,8) に従います。DS/ES/FS/GS は checked 論理 SS であり、ホストや生の転送値ではありません。記録全体、戻り/一時領域は通常のカーネル RAM、寿命、権限、一意の物理マッピングを検証し、記録との重複を拒否します。入口 RSP は 16 を法として 8。取得/検証失敗は CPU/RAM を変更せず、legacy を拒否します。全 Windows 実装を意味せず、上書き後も環境依存を保持し、UNPACK 復元や記号的前提を許可しません。
 
-ファイル本体はアドレスごとに一意で、シナリオハンドル、追加ハンドル、呼び出し元のポインターが共有します。ObOpenObjectByPointer は作成済み FILE_OBJECT のカーネルアクセスと任意の OBJ_KERNEL_HANDLE を扱い、汎用権限を具体的な権限に変換します。プロセスの最後のハンドルを閉じても別プロセスにハンドルが残る場合は IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL、全体の最後なら CLEANUP を送ります。遅延 CLEANUP は宣言された下位応答を保持します。番号を再利用しても CLOSE は最後のハンドル、ポインター、終了継続を待ちます。カーネルハンドルの CLEANUP はシステムプロセスへ一時的に移り、スレッド、作成プロセス、PreviousMode を維持します。CLOSE は解放元のプロセスへ戻ります。保留中は解放元を待機させます。提供元のオープン成立前に CREATE が失敗した場合は、参照された本体だけを残しデバイス関連を除きます。明示的に取り消したオープンは CLOSE までデバイスを保持します。各関連本体は DEVICE_OBJECT.ReferenceCount に一度だけ数えられます。WDM と KMDF は寿命を共有し、通常の KMDF デバイスは LOCK_CONTROL を STATUS_INVALID_DEVICE_REQUEST で完了します。終了コールバック中の再オープン、未完了 I/O がある場合の終了、KMDF フィルターの LOCK_CONTROL 転送、名前照会、提供元のデータ／制御 I/O は未対応です。
+ファイル本体はアドレスごとに一意で、シナリオハンドル、追加ハンドル、呼び出し元のポインターが共有します。ObOpenObjectByPointer は作成済み FILE_OBJECT のカーネルアクセスと任意の OBJ_KERNEL_HANDLE を扱い、汎用権限を具体的な権限に変換します。プロセスの最後のハンドルを閉じても別プロセスにハンドルが残る場合は IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL、全体の最後なら CLEANUP を送ります。遅延 CLEANUP は宣言された下位応答を保持します。番号を再利用しても CLOSE は最後のハンドル、ポインター、終了継続を待ちます。カーネルハンドルの CLEANUP はシステムプロセスへ一時的に移り、スレッド、作成プロセス、PreviousMode を維持します。CLOSE は解放元のプロセスへ戻ります。保留中は解放元を待機させます。提供元のオープン成立前に CREATE が失敗した場合は、参照された本体だけを残しデバイス関連を除きます。明示的に取り消したオープンは CLOSE までデバイスを保持します。各関連本体は DEVICE_OBJECT.ReferenceCount に一度だけ数えられます。WDM と KMDF は寿命を共有し、通常の KMDF デバイスは LOCK_CONTROL を STATUS_INVALID_DEVICE_REQUEST で完了します。終了コールバック中の再オープン、未完了 I/O がある場合の終了、KMDF フィルターの LOCK_CONTROL 転送、提供元のデータ／制御 I/O は未対応です。
 
 ## ファイル情報クエリ IRP
 
-`IoQueryFileInformation` は既存のモデル化された WDM ファイルのデバイススタックに実際の `IRP_MJ_QUERY_INFORMATION` を送信します。情報はゲストドライバーが提供し、ファイルシステムのメタデータは生成しません。既知のプロセスとスレッド、PASSIVE_LEVEL、有効な割り込みと特殊カーネル APC が必要です。同じファイルの重複 I/O、マウント済み VPB、ファイル拡張ルーティング、フレームワーク所有ファイル、非同期クエリの最終参照に伴う遅延削除は明示的に未対応です。`IoGetRelatedDeviceObject` は IRQL <= DISPATCH_LEVEL で検証済みの未マウントスタックの最上位を返します。
+`IoQueryFileInformation` は既存のモデル化された WDM ファイルのデバイススタックに実際の `IRP_MJ_QUERY_INFORMATION` を送信します。情報はゲストドライバーまたは明示的に宣言したファイルシステム提供元が供給します。既知のプロセスとスレッド、PASSIVE_LEVEL、有効な割り込みと特殊カーネル APC が必要です。同じファイルの重複 I/O、マウント済み VPB、ファイル拡張ルーティング、フレームワーク所有ファイル、非同期クエリの最終参照に伴う遅延削除は明示的に未対応です。`IoGetRelatedDeviceObject` は IRQL <= DISPATCH_LEVEL で検証済みの未マウントスタックの最上位を返します。
 
 バッファは完了まで呼び出し元から借用します。非保留時はディスパッチ状態、保留時は完了状態を返します。即時エラー完了では私有 IOSB が公開されず、返却長はゼロです。ワーカーの完了通知は元の呼び出し元の再開時に渡します。同期クエリは最終 CLOSE までファイルを保持し、その後 ReturnedLength の四バイトだけを書き込みます。隣接バイトと出力とのエイリアスを保持します。レポートは kind `query_information`、origin `IoQueryFileInformation`、`file_information_class` を使い、この kind はシナリオ入力では指定できません。クラス 75 はクラス 71 とスタックフラグ 1 に変換し、他の番号はゲストへ渡します。クラス別のプロバイダー動作を実装したことにはなりません。
 
 同期クエリは最終 CLOSE までクリティカル領域を保持し、呼び出し元の以前の APC 状態を復元します。保留通知は、ガード領域からの退出や IRQL 復元を含む適格なカーネル API の復帰時、および所有スレッドのゲスト命令再開前に可視になります。レポートのバイト列は元のプロセスで取得するため、完了ワーカーはユーザーバッファを読みません。割り当て失敗時は同期ファイルイベントをリセットし、ReturnedLength は変更しません。
+
+`ZwQueryInformationFile` は共通のクエリ所有者でプロセス範囲のファイルハンドルを解決し、別のゼロ初期化 SystemBuffer を確保して呼び出し元の出力を借用します。ローカルクラスは Access (8)、同期 Position (14)、Mode (16)、Alignment (17)、IsRemoteDevice (51) で、Mode と Alignment は専用 IRP を作成します。転送クラスは 4/5/6/7/9/14/21/22/28/34/35/59/71/75 です。非同期 Position は転送し、75 は 71 とスタックフラグ 1 に変換します。KernelMode 参照はハンドルの範囲を守り、許可アクセスマスクを検査しません。レポートの origin は `ZwQueryInformationFile` です。
+
+ゲストデバイスの READ/WRITE 完了は、同期転送やゼロバイト転送でも、保存された `FILE_OBJECT.CurrentByteOffset` を維持します。要求の明示的な `byte_offset` 自体はファイル位置を変更しません。位置の変更には、実装済みのファイルシステム処理または位置設定操作が必要です。
+
+即時完了はディスパッチ復帰までパケットを保持します。エラーでない完了は出力をコピーしてから Information と四バイトの Status を書き、即時エラーは呼び出し元 IOSB を変更しません。保留完了は元の配信可能スレッドに通知します。非同期保留呼び出しは復帰時に私有 IOSB の全 16 バイトをコピーし、他の書き込みはパディングを保持します。共通の物理メモリー所有者が解放を管理します。ネイティブ Fast I/O、未記載クラス、ゼロ長バッファー、短い Mode/Alignment バッファーは拒否し、汎用 NtQueryInformationFile や APC を提供しません。
+
+宣言済み提供元は保持されたオープントークンから Basic (4)、Standard (5)、Internal (6)、Name (9)、NetworkOpen (34)、AttributeTag (35) を返します。時刻、割り当て、EOF、属性、64 ビット ID は宣言値を保持します。名前は許可された ASCII パスのボリューム相対 UTF-16 です。固定構造の短いバッファーは STATUS_INFO_LENGTH_MISMATCH。名前には八バイト以上が必要で、切り詰め時は完全な UTF-16 単位、STATUS_BUFFER_OVERFLOW、完全な名前長を返します。両 API はエンコーダーと実際のゲストフィルター経路を共有し、他の提供元クラスは未対応です。
 
 ## プロセッサ識別と DPC レベルへの昇格
 
@@ -703,7 +711,7 @@ PASSIVE_LEVEL で長さが 4 未満なら結果に触れず `STATUS_INFO_LENGTH_
 
 ## 宣言されたファイルシステム一覧
 
-任意の `filesystem` は DriverEntry 前にセッションのボリュームを宣言します。省略は可用性不明、`[]` は提供元なしで、各ボリュームには明示的なルートが必要です。既存ノードは `ZwOpenFile` と `ZwCreateFile`、`IoCreateFile` の FILE_OPEN で実際の CREATE 要求を通じて開けます。名前検索、ゲストフィルター、共有、ハンドルと参照の寿命は共通の所有者を使い、ホストファイルを読みません。新規作成、上書き、削除、メタデータ照会、データ I/O、列挙、制御は未対応です。
+任意の `filesystem` は DriverEntry 前にセッションのボリュームを宣言します。省略は可用性不明、`[]` は提供元なしで、各ボリュームには明示的なルートが必要です。既存ノードは `ZwOpenFile` と `ZwCreateFile`、`IoCreateFile` の FILE_OPEN で実際の CREATE 要求を通じて開けます。名前検索、ゲストフィルター、共有、ハンドルと参照の寿命は共通の所有者を使い、ホストファイルを読みません。新規作成、上書き、削除、データ I/O、列挙、制御は未対応です。
 
 名前とパスは表示可能 ASCII で、大文字小文字を区別しない識別、明示的な親ディレクトリ、ボリュームごとに一意の 64 ビット ID を使います。別名、ストリーム、リンク、再解析点、Unicode は未対応です。種類、属性、割当量、4 個の非負 signed64 時刻はゼロでも必須です。ファイルの `data` は空文字列を含む正確な16進バイト列で EOF を決めます。ディレクトリには data がなく割当量はゼロです。セクターは 512–4096 の2の累乗、割当量はセクター整列で EOF 以上、マスクはセクター未満の 2^n−1 です。`full_access` は ACL 拒否だけを除外します。
 
@@ -739,3 +747,37 @@ PASSIVE_LEVEL で長さが 4 未満なら結果に触れず `STATUS_INFO_LENGTH_
 
 
 ASCII 名、名前空間リンク、RootDirectory として保持したディレクトリハンドルに対応します。ルート接尾辞 `\` は、未対応の接尾辞なしボリュームオープンと区別します。ディレクトリ／非ディレクトリ、同期非アラートの指定を扱います。`IoCancelFileOpen` は未公開の下位成功オープンへ CLEANUP を送り、最後の参照解放が CLOSE を送ります。取消なしの上位失敗は拒否します。DriverEntry のハンドルは DriverUnload で閉じられます。非同期処理と入れ子の解放でも完了、ディスパッチ、API の戻り値を保持します。報告は `file_object`、`file_open_operation`、`filesystem_device`、`filesystem_file_id` を使い、ドライバー作成要求の `file` は null です。EA、デバイスヒント、バイナリ ID、再解析、oplock、トランザクション、ACL、ファイル名ストレージの交換、フレームワーク経路は未対応です。
+
+`ZwReadFile` / `ZwWriteFile` はバッファー方式のデバイススタック上で開いた同期 WDM ファイルを扱います。PASSIVE_LEVEL、中断と特殊カーネル APC の有効化、NULL の Event・APC ルーチン・コンテキストが必要です。KernelMode はハンドルのスコープを維持し、許可マスクを検査しませんが、追記専用書き込みはオフセット −1 を使います。NULL または −2 は保存された位置を使い、他の負値は書き込みの −1 を除いて無効です。長さとキーは ULONG です。書き込み入力は派発前にコピーし、読み取り完了はバイト列、Information、4 バイトの Status の順に公開します。即時エラーは呼び出し元の IOSB を保持し、保留エラーは公開します。保留呼び出しは元の呼び出し元を保持して完了を待ち、長さゼロでも派発します。共通完了処理はファイル位置を変更しません。上限は 1 MiB です。非同期ファイル、direct/neither I/O、キャッシュ Fast I/O、完了ポート、フレームワークのルート、宣言プロバイダーのデータ I/O は未対応です。報告元は `ZwReadFile` / `ZwWriteFile` です。
+
+`ZwSetInformationFile` は同じファイル所有者で同期 FilePositionInformation (14) を実装します。入力を 8 バイト取得し、Length >= 8 と非負の符号付き 64 ビット位置を要求します。デバイスのセクターサイズが非ゼロなら非キャッシュ時の整列も検査します。保存位置を変更してから 4 バイトの Status と 8 バイトの Information=0 を書き、IOSB の余白と出力障害前の書き込みを保持します。IRP は生成せず、ファイルイベントもリセットしません。ハンドル範囲、呼び出し元条件、同一ファイルの直列化はファイル API 契約に従います。他のクラスと非同期位置設定は未対応です。位置照会と後続の NULL/−2 読み書きオフセットはこの状態を参照します。
+
+`ZwFlushBuffersFile` は開かれた同期 WDM ファイルハンドルに対応します。KernelMode でも FILE_WRITE_DATA または FILE_APPEND_DATA を要求し、名前付きパイプのファイルフラグがある場合は FILE_WRITE_DATA を要求します。バッファを持たない要求は major 9/minor 0 を使い、遅延完了フラグを設定しません。条件を満たす即時完了はディスパッチの復帰前に IOSB を公開し、パケットを解放します。ワーカー、ガード領域、昇格 IRQL での完了は元の呼び出し元への通知を待ちます。Information は 64 ビットのままで、出力コピーとファイル位置変更は行いません。非同期ファイル、宣言プロバイダーのフラッシュ、フレームワーク経路は未対応です。報告の種類は `flush_buffers`、生成元は `ZwFlushBuffersFile` です。シナリオからこのカーネル生成要求は作れません。
+
+`ZwDeviceIoControlFile` と `ZwFsControlFile` は、開かれた同期 WDM ハンドル、METHOD_BUFFERED、NULL の Event/APC 引数に対応します。共通の所有者が ULONG の長さとコードを取得し、入力をコピーし、残りの出力領域をゼロ化します。出力は要求サイズに制限され、出力なしでは Information の全ビットを保持してコピーしません。デバイス制御は通知可能なら即時完了し、FSCTL は即時完了パケットをサービス末尾まで保持します。元の呼び出し元への通知、IOSB パディングとファイル位置を維持します。KernelMode は権限マスク検査を省略し、読み書きスタックフラグを伝播します。上限は 1 MiB。非同期、direct/neither、デバイス Fast I/O、IOCP、内部バッファ迂回、プロバイダー／フレームワーク経路、コード 0x94264/0x98268/0x9042c/0x90020 は未対応です。長さが非ゼロの NULL 入力は拒否します。生成元は API 名で、`fsctl` はカーネルのみが生成できます。
+
+カーネル CRT は `isdigit`、`_strupr`、`_wcslwr`、`_wcsupr`、`strcpy_s`、`strncpy_s`、`wcscat_s`、`wcsncpy_s` をサポートします。数字判定は int／バイトへの切り詰め後にマスク 4 を返し、EOF を別扱いにします。インプレース変換は ASCII のみを変更し、その他のバイト／UTF-16 単位を保持します。NLS 表は使用しません。チェック付き書き込みは逐次ストア、エラー値 22／34／80、エラー時の先頭単位のゼロ化、size_t 全幅の `_TRUNCATE` を保持します。後続のアクセス障害でも先行ストアは残ります。ゼロ件数、NULL、部分出力、エイリアスは固定カーネルの動作に従い、移植可能な C の重複保証ではありません。1 MiB 制限は実際の走査／書き込みに適用され、未使用容量はアクセスしません。ページ可能領域の IRQL 制限も維持します。
+
+カーネルの `memcpy_s` と `memmove_s` はアクセス可能な有界バッファと完全幅の size_t を扱う。ゼロ長ではポインターにアクセスせず、成功時は重なりを move として処理する。無効な引数は 22 または 34 を返し、エラー時に指定容量をゼロ化するのは `memcpy_s` のみである。既存の 1 MiB 制限、寿命、IRQL 検証を再利用し、最適化コピーが故障した際の部分 SIMD 書き込みは再現しない。`RtlImageNtHeader` は MZ、符号なし DOS オフセット、PE 署名と固定 x64 カーネルのユーザーアドレス境界を検査する。オプションヘッダー、セクション、ロード可能性は検証しない。不正な署名は NULL、不正なメモリは明示的な実行停止となる。
+
+`RtlHashUnicodeString`、`RtlUpcaseUnicodeString`、`RtlTimeToSecondsSince1980` は APC_LEVEL 以下で使用できます。ハッシュ方式 0/1 は x65599 を使い、Length の読み取り前に出力をゼロ化し、MaximumLength を参照しません。大文字小文字を区別する場合は全 UTF-16 単位を受け入れます。大文字化を伴う処理は U+00C0 未満を扱い、それ以上は未モデル化の NLS 表を明示的に要求します。大文字化は重複領域への順次書き込み、各単位での Buffer 再読取、最後の Length 再読取を保持し、終端文字を追加しません。割り当ては共有ページプール `Strg` と `RtlFreeUnicodeString` を使い、ゼロ長の割り当ては未対応です。奇数 Length は完全な単位のみ処理します。時刻変換は 100 ns 単位を秒に切り捨て、1980 年の起点を差し引き、ULONG 範囲内でのみ 4 バイトを書き込みます。範囲外では出力を変更しません。
+
+`toupper`、`towupper`、`RtlUpcaseUnicodeChar` は APC_LEVEL 制約と計数 Unicode 処理の大文字化を共有します。カーネルの toupper は入力の下位バイトを使い、ASCII のみ受け入れます。EOF のバイト値を含む拡張値には未モデル化のコードページが必要です。ワイド入力は 16 ビットに切り詰め、U+00C0 未満を扱い、その他は NLS を明示的に要求します。これらはインプレース CRT 変換とは別のカーネル補助関数を呼ぶため、両者の規則を混同しません。
+
+`vDbgPrintExWithPrefix` は `DbgPrint` / `DbgPrintEx` と有限フォーマッター、全フィルター有効の観測モデル、DIRQL 上限を共有します。ゲスト x64 `va_list` は 8 バイト単位で進み、実際のスカラー幅だけを読みます。`hh` は固定カーネルの 16 ビット short 規則です。プレフィックスのバッファーは 128/256/384/512 バイトで、成功時は最初の NUL まで、最終オーバーフロー時は改行で終わる 511 バイトを公開します。公開前に本文全体（上限 512 バイト）を検査するため、切り詰めても無効・未対応の末尾は許可されません。ASCII プレフィックスは 1 MiB 以内で終端まで走査します。Unicode 変換には PASSIVE_LEVEL が必要です。ホストのフィルター、デバッグコールバック、通信は未モデル化です。
+
+`IoThreadToProcess` は保持されたスレッドの作成元プロセス識別子を共有します。`PsGetCurrentThreadPreviousMode` は `ExGetPreviousMode` と状態および DISPATCH_LEVEL 上限を共有し、従来の広すぎる制限を修正します。`RtlPcToFileHeader` は固定モジュール一覧を全幅アドレスで検索し、PC を読み出さずに 8 バイトを書きます。不一致ならゼロです。この限定非ページクエリは常駐出力で全有効 IRQL を許可します。一覧の欠如は明示的な失敗で、動的アンワインド表と retpoline 範囲は対象外です。
+
+`MmMapLockedPages` は既存のマッパーを使い、キャッシュ済みページ、HIGH 優先度、資源不足時の bugcheck を指定します。カーネルマッピングは DISPATCH_LEVEL まで、プロセス所有のユーザービューは APC_LEVEL まで許可し、後者の資源不足は既存の例外になります。bugcheck 指定のカーネル資源不足は明示的なモデルエラーで停止し、成功として NULL を返しません。実際の bugcheck 処理は未対応です。
+
+[`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject) は有効なファイルの基底デバイスを借用し、接続スタックの走査、参照の追加、ファイル拡張の参照を行いません。本プロファイルは所有済みの未マウント経路と IRQL <= DISPATCH_LEVEL に限定され、マウント済み VPB や所有者・トポロジーの不整合は明示的に停止します。Microsoft は本ルーチンをシステム用に予約しており、この IRQL 上限は公開 Windows 契約ではなくモデル方針です。
+
+[`IoGetDeviceObjectPointer`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-iogetdeviceobjectpointer) は特殊カーネル APC が有効な PASSIVE_LEVEL で、宣言済みの既存ファイルを開きます。名前は大文字小文字を区別せず、内部カーネルハンドル、読み書き共有、非同期の非ディレクトリ指定を使います。返されたファイル参照はデバイスを保持し、呼び出し側が `ObfDereferenceObject` で解放します。出力が重なる場合もファイル、デバイスの順に書き込みます。CREATE と内部ハンドルの CLEANUP は保留可能で、元のスレッドは両方の完了までクリティカル領域を保持します。デバイス名のみのオープン、ボリュームオープン、マウント済み VPB、ファイル拡張の経路、未知のプロバイダーは未対応です。
+
+`MmProbeAndLockProcessPages` は IRQL <= APC_LEVEL で既存の MDL プローブを利用します。モードは下位 8 ビット、操作は下位 32 ビットを使用し、ゼロは読み取り、それ以外は書き込みです。同一プロセスではアタッチしません。別プロセスでは既存のワーク項目/システムスレッド制限を維持し、要求が存続する既知の生存ユーザープロセスが必要です。私有アタッチは成功時とプローブ例外時に元のプロセスを復元し、スレッド識別と以前のモードを維持します。復元失敗は明示的に停止します。前景での別プロセスへのアタッチや任意のプロセスオブジェクトは未対応です。WDK はこのルーチンをシステム用に予約しています。
+
+`ObGetFilterVersion` は固定プロファイルのオブジェクトコールバック登録 ABI バージョン `0x100` を返し、引数やオブジェクト参照を必要としません。ページ可能なこのクエリは IRQL <= APC_LEVEL に制限されます。バージョン照会のみであり、コールバックの登録と配送は未対応です。
+
+`MmGetPhysicalAddress` は現在のマッピングから、読み取り可能で有効な非ページプール、独立した物理ページ、固定済み RAM を照会します。ユーザービューには既存のプロセスと IRQL 制約が適用されます。既存の全幅物理識別子とバイトオフセットを返し、不明な常駐状態、パディング、解除済みビュー、解放済みバイトは明示的に拒否します。DMA アドレスは提供しません。
+
+`MmGetVirtualForPhysical` は、有効な非ページプール割り当ての正確なバイト範囲に限り、アロケータが所有する主アドレスを返します。現在の主マッピングは読み取り可能で、照会した物理識別子と一致する必要があります。別名の再マッピングで所有者は変わりません。このプロファイルはページプール、独立した物理ページ、内部バッキングの主マッピングを定義せず、明示的に拒否します。この限定された非ページ照会は任意の IRQL で実行できます。

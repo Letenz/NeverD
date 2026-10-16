@@ -63,7 +63,7 @@ protected:
     }
     Probe->CPU.reset();
     for (bool Scheduled : {false, true})
-      for (char Mode : {'C', 'P', 'X', 'U', 'R'}) {
+      for (char Mode : {'C', 'P', 'X', 'U', 'R', 'Q', 'B', 'V', 'K', 'T'}) {
         SCOPED_TRACE(::testing::Message()
                      << Image << ' ' << Scheduled << ' ' << Mode);
         DriverOptions Options;
@@ -90,6 +90,29 @@ protected:
           EXPECT_TRUE(Request.FileOpenOperation);
           EXPECT_TRUE(Request.FileSystemDevice);
           EXPECT_TRUE(Request.FileSystemFileID);
+        }
+        if (Mode == 'B' || Mode == 'V' || Mode == 'K' || Mode == 'T') {
+          ASSERT_EQ(Result->Requests.size(), 3u);
+          EXPECT_EQ(Result->Requests[0].Kind, DriverRequestKind::Create);
+          EXPECT_EQ(Result->Requests[1].Kind, DriverRequestKind::Cleanup);
+          EXPECT_EQ(Result->Requests[2].Kind, DriverRequestKind::Close);
+          EXPECT_EQ(Result->Requests[0].Origin,
+                    DriverRequestOrigin::FileCreate);
+          EXPECT_EQ(Result->Requests[1].Origin,
+                    DriverRequestOrigin::FileHandleClose);
+          EXPECT_EQ(Result->Requests[2].Origin,
+                    DriverRequestOrigin::FileFinalClose);
+          unsigned Opens = 0, Lookups = 0;
+          for (const auto &Call : Result->Calls) {
+            if (Call.Name == "IoGetDeviceObjectPointer") {
+              ++Opens;
+              EXPECT_EQ(Call.Result, std::optional<uint64_t>{0});
+            }
+            if (Call.Name == "MmGetSystemRoutineAddress")
+              ++Lookups;
+          }
+          EXPECT_EQ(Opens, 1u);
+          EXPECT_EQ(Lookups, Mode == 'T' ? 1u : 0u);
         }
         auto JSON = llvm::json::parse(driverResultJSON(*Result));
         ASSERT_TRUE(bool(JSON)) << llvm::toString(JSON.takeError());

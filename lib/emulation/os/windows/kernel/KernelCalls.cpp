@@ -49,7 +49,7 @@ llvm::Expected<uint64_t> KernelModel::call(
   auto Value = dispatchKernelCall(Name, A, ReadArgument, Context);
   if (!Value)
     return Value;
-  if (auto E = deliverFileQueryCompletions(Context))
+  if (auto E = deliverFileRequestCompletions(Context))
     return E;
   return Value;
 }
@@ -107,6 +107,7 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   case KernelAPIKind::MmUnlockPages:
   case KernelAPIKind::MmGetSystemAddressForMdlSafe:
   case KernelAPIKind::MmMapLockedPagesSpecifyCache:
+  case KernelAPIKind::MmMapLockedPages:
   case KernelAPIKind::MmUnmapLockedPages:
   case KernelAPIKind::MmProtectMdlSystemAddress:
     // Complete image pages already belong to the recovered file. Their
@@ -144,15 +145,22 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
       Kind != KernelAPIKind::PsGetCurrentProcessId &&
       Kind != KernelAPIKind::PsGetProcessId &&
       Kind != KernelAPIKind::PsGetThreadProcess &&
+      Kind != KernelAPIKind::IoThreadToProcess &&
       Kind != KernelAPIKind::IoGetRequestorProcessId &&
       Kind != KernelAPIKind::ExGetPreviousMode &&
+      Kind != KernelAPIKind::PsGetCurrentThreadPreviousMode &&
+      Kind != KernelAPIKind::RtlPcToFileHeader &&
       Kind != KernelAPIKind::KeGetCurrentIrql &&
       Kind != KernelAPIKind::KeGetCurrentProcessorNumberEx &&
       Kind != KernelAPIKind::ProbeForRead &&
       Kind != KernelAPIKind::ProbeForWrite &&
       Kind != KernelAPIKind::MmProbeAndLockPages &&
+      Kind != KernelAPIKind::MmProbeAndLockProcessPages &&
       Kind != KernelAPIKind::MmMapLockedPagesSpecifyCache &&
+      Kind != KernelAPIKind::MmMapLockedPages &&
       Kind != KernelAPIKind::MmGetSystemAddressForMdlSafe &&
+      Kind != KernelAPIKind::MmGetPhysicalAddress &&
+      Kind != KernelAPIKind::MmGetVirtualForPhysical &&
       Kind != KernelAPIKind::MmUnmapLockedPages &&
       Kind != KernelAPIKind::RtlCopyMemory &&
       Kind != KernelAPIKind::RtlMoveMemory)
@@ -179,7 +187,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   case KernelAPIKind::ProbeForWrite:
     return probeUserBuffer(A[0], A[1], uint32_t(A[2]),
                            Kind == KernelAPIKind::ProbeForWrite);
-  case KernelAPIKind::ExGetPreviousMode: {
+  case KernelAPIKind::ExGetPreviousMode:
+  case KernelAPIKind::PsGetCurrentThreadPreviousMode: {
     auto Context = executionProcessContext();
     return uint64_t(Context ? Context->PreviousMode : KernelMode);
   }
@@ -189,6 +198,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
         A, Kind == KernelAPIKind::ZwQuerySystemInformation);
   case KernelAPIKind::RtlGetVersion:
     return queryVersion(A[0]);
+  case KernelAPIKind::RtlPcToFileHeader:
+    return pcToFileHeader(A[0], A[1]);
   case KernelAPIKind::RtlCaptureContext:
     return captureCallerContext(A[0], Context);
   case KernelAPIKind::PsGetCurrentProcessId:
@@ -350,6 +361,10 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
     return queryPhysicalMemoryRanges();
   case KernelAPIKind::MmIsAddressValid:
     return isResidentKernelAddress(A[0]);
+  case KernelAPIKind::MmGetPhysicalAddress:
+    return queryPhysicalAddress(A[0]);
+  case KernelAPIKind::MmGetVirtualForPhysical:
+    return queryPrimaryVirtualAddress(A[0]);
   case KernelAPIKind::KeRegisterBugCheckReasonCallback:
     return registerBugCheckCallback(A[0], A[1], uint32_t(A[2]), A[3]);
   case KernelAPIKind::KeDeregisterBugCheckReasonCallback:
@@ -418,6 +433,12 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
       return E;
     return 0;
   }
+  case KernelAPIKind::MmProbeAndLockProcessPages: {
+    if (auto E =
+            probeAndLockProcessPages(A[0], A[1], uint8_t(A[2]), uint32_t(A[3])))
+      return E;
+    return 0;
+  }
   case KernelAPIKind::MmUnlockPages: {
     if (auto E = unlockPages(A[0]))
       return E;
@@ -439,6 +460,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   }
   case KernelAPIKind::MmMapLockedPagesSpecifyCache:
     return mapMDL(A);
+  case KernelAPIKind::MmMapLockedPages:
+    return mapMDL({A[0], A[1], MmCached, 0, 1, HighPagePriority});
   case KernelAPIKind::MmGetSystemAddressForMdlSafe: {
     return mapLockedPages(A[0], static_cast<uint32_t>(A[1]), true);
   }
@@ -451,14 +474,37 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   case KernelAPIKind::IoGetAttachedDevice:
     return queryDeviceStack(A[0], DeviceStackQuery::Top);
   case KernelAPIKind::IoGetRelatedDeviceObject:
-    return relatedFileDevice(A[0]);
+    return queryFileDevice(A[0], FileDeviceQuery::Related);
+  case KernelAPIKind::IoGetBaseFileSystemDeviceObject:
+    return queryFileDevice(A[0], FileDeviceQuery::Base);
+  case KernelAPIKind::IoGetDeviceObjectPointer:
+    return getDeviceObjectPointer(A, Context);
   case KernelAPIKind::IoQueryFileInformation:
-    return queryFileInformation(A, Context);
+    return beginFileAPIRequest(A, DriverRequestKind::QueryInformation, false,
+                               Context);
+  case KernelAPIKind::ZwQueryInformationFile:
+    return beginFileAPIRequest(A, DriverRequestKind::QueryInformation, true,
+                               Context);
+  case KernelAPIKind::ZwReadFile:
+    return beginFileAPIRequest(A, DriverRequestKind::Read, true, Context);
+  case KernelAPIKind::ZwWriteFile:
+    return beginFileAPIRequest(A, DriverRequestKind::Write, true, Context);
+  case KernelAPIKind::ZwSetInformationFile:
+    return setFileInformation(A, Context);
+  case KernelAPIKind::ZwFlushBuffersFile:
+    return beginFileAPIRequest(A, DriverRequestKind::FlushBuffers, true,
+                               Context);
+  case KernelAPIKind::ZwDeviceIoControlFile:
+    return beginFileAPIRequest(A, DriverRequestKind::DeviceControl, true,
+                               Context);
+  case KernelAPIKind::ZwFsControlFile:
+    return beginFileAPIRequest(A, DriverRequestKind::FileSystemControl, true,
+                               Context);
   case KernelAPIKind::ZwCreateFile:
   case KernelAPIKind::IoCreateFile:
-    return createFile(A, false, Context);
+    return createFile(A, FileOpenKind::Create, Context);
   case KernelAPIKind::ZwOpenFile:
-    return createFile(A, true, Context);
+    return createFile(A, FileOpenKind::Open, Context);
   case KernelAPIKind::IoCancelFileOpen:
     return cancelFileOpen(A, Context);
   case KernelAPIKind::IoGetAttachedDeviceReference:
@@ -489,8 +535,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   case KernelAPIKind::IofCompleteRequest:
   case KernelAPIKind::IoCompleteRequest: {
     const auto *Request = requestForIRP(A[0]);
-    if (Request && Request->FileQueryOperation)
-      if (auto E = validateFileQueryInterrupts(Context))
+    if (Request && Request->FileRequestID)
+      if (auto E = validateFileAPIInterrupts(Context))
         return E;
     return completeDriverRequest(A);
   }
@@ -531,8 +577,16 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
     return debugMessage(A, 0, ReadArgument);
   case KernelAPIKind::DbgPrintEx:
     return debugMessage(A, 2, ReadArgument);
+  case KernelAPIKind::vDbgPrintExWithPrefix:
+    return prefixedDebugMessage(A);
   case KernelAPIKind::KeGetCurrentIrql:
     return CurrentIRQL;
+  case KernelAPIKind::memcpy_s:
+    return checkedMemoryCopy(A, true);
+  case KernelAPIKind::memmove_s:
+    return checkedMemoryCopy(A, false);
+  case KernelAPIKind::RtlImageNtHeader:
+    return runtime::imageNtHeader(*this, Memory, A[0]);
   case KernelAPIKind::memcpy:
   case KernelAPIKind::memmove:
   case KernelAPIKind::memset:

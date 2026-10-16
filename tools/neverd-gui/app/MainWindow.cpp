@@ -18,6 +18,7 @@
 #include "ListingView.h"
 #include "LoadFileDialog.h"
 #include "LocalTypesView.h"
+#include "MapPromptDialog.h"
 #include "MicrosoftSymbols.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
@@ -27,10 +28,12 @@
 #include "Resolve.h"
 #include "SecondaryTextDelegate.h"
 #include "Session.h"
+#include "SetTypeDialog.h"
 #include "SettingsKeys.h"
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
 #include "TitleBar.h"
+#include "TypePickerDialog.h"
 #include "WindowFrame.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
@@ -98,6 +101,8 @@ constexpr char LayoutFileName[] = "desktop.json";
 /// The level of a session message that reports an error.
 constexpr int ErrorMessageLevel = 2;
 constexpr char OpcodeBytesKey[] = "listing/opcodeBytes";
+// Whether the code windows and the disassembly follow each other's cursor.
+constexpr char SynchronizeCodeKey[] = "code/synchronize";
 constexpr char AnalysisIndicatorKey[] = "analysis/indicator";
 constexpr char BinaryProcessorKey[] = "load/binaryProcessor";
 // String search defaults and bounds (the worker's string_options).
@@ -237,6 +242,7 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
     : KDDockWidgets::QtWidgets::MainWindow(QStringLiteral("NeverDMainWindow")),
       session_(session), mcp_(mcp), broker_(broker), actions_(this) {
   instance_ = this;
+  synchronizeCode_ = QSettings().value(SynchronizeCodeKey, true).toBool();
   frame_ = WindowFrame::attach(*this);
   setWindowIcon(icon(QStringLiteral("app")));
   setCenterWidgetMargins(dockAreaMargins());
@@ -651,6 +657,9 @@ void MainWindow::buildDocks() {
                   lastCodeView_.clear();
                 if (it.key() != QLatin1String(OutputDock))
                   hexActive_ = it.key() == QLatin1String(HexDock);
+                // What the commands act on follows the view: a pseudocode
+                // window converts a parameter, the disassembly an operand.
+                updateActions();
                 return;
               }
           });
@@ -703,8 +712,25 @@ CodeView *MainWindow::codeView(const QString &representation) {
                   tr("This instruction has no source-line address mapping."),
                   1);
           });
+  // A click or key that moves the code's cursor takes the disassembly to the
+  // row's instruction, as Hex-Rays' synchronized views do, leaving the focus
+  // and the jump history alone; Tab also moves the focus there.
+  connect(view->text(), &CodeText::locationChanged, this,
+          [this, view](Address address) {
+            if (synchronizeCode_ && view->text()->hasFocus())
+              disassembly_->navigate(address, false);
+          });
   connect(view->text(), &CodeText::nameActivated, this,
           [this, view](const QString &name) { activateCodeName(view, name); });
+  // A goto label's block shows in the disassembly, whose history keeps the
+  // goto's place for Back, while the code goes to the label.
+  connect(view->text(), &CodeText::labelActivated, this,
+          [this, view](Address address) {
+            ++codeNavigationSerial_;
+            if (const auto function = view->text()->function())
+              navigateCodeFunction(view, address, *function,
+                                   view->text()->currentAddress());
+          });
   // Data shows in the disassembly, as an import's name does.
   connect(view->text(), &CodeText::objectActivated, this,
           [this](Address address) { jump(address); });
@@ -1056,6 +1082,10 @@ void MainWindow::navigateHistory(bool forward) {
           const auto function = disassembly_->listing()->currentFunction();
           if (function && view->text()->function() != function)
             view->showFunction(*function);
+          // Within the function the code goes back to the row it left, such
+          // as the goto whose label it went to.
+          else if (const auto address = disassembly_->currentAddress())
+            view->text()->revealAddress(*address);
           view->text()->setFocus();
         },
         Qt::SingleShotConnection);
@@ -1073,7 +1103,25 @@ void MainWindow::synchronize(Address address, QObject *source) {
     hex_->setCurrent(address, 1);
   const auto function = currentFunction();
   session_.publishSelection(address, function, QStringLiteral("disassembly"));
+  // The user's own move in the disassembly takes the code windows showing
+  // its function to the instruction's rows. One showing another function
+  // stays: following it would decompile on every step.
+  if (synchronizeCode_ && function &&
+      disassembly_->isAncestorOf(QApplication::focusWidget()))
+    for (auto *view : visibleCodeViews())
+      if (view->text()->function() == function)
+        view->text()->revealAddress(address);
   updateActions();
+}
+
+QVector<CodeView *> MainWindow::visibleCodeViews() const {
+  QVector<CodeView *> views;
+  for (const char *id : {PseudocodeDock, RepresentationDock})
+    if (auto *dock = docks_.value(QLatin1String(id)))
+      if (auto *view = qobject_cast<CodeView *>(dock->widget());
+          view && view->isVisible())
+        views.append(view);
+  return views;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1095,6 +1143,8 @@ void MainWindow::connectActions() {
   });
   on(ActionId::FileReload, [this] { reloadInput(); });
   on(ActionId::FileLoadPdb, [this] { loadPdb(); });
+  on(ActionId::FileLoadDwarf, [this] { loadDwarf(); });
+  on(ActionId::FileLoadMap, [this] { loadMap(); });
   on(ActionId::FileLoadSignatures, [this] {
     const auto path = QFileDialog::getOpenFileName(
         this, tr("Load signature pack"), {},
@@ -1162,9 +1212,16 @@ void MainWindow::connectActions() {
   });
   // An operand's number shows in the base the user picks, with its sign or
   // bits changed: the number under the cursor, else the line's last number.
+  // A pseudocode number takes the bases, H toggling between hexadecimal and
+  // decimal as Hex-Rays' H does.
   const auto formatOperand = [this](const QString &action) {
-    if (focusedCodeView())
+    if (auto *code = focusedCodeView()) {
+      if (action == QLatin1String("decimal"))
+        formatCodeNumber(code, std::nullopt);
+      else if (const auto radix = literalRadixNamed(action.toStdString()))
+        formatCodeNumber(code, *radix);
       return;
+    }
     if (const auto address = currentAddress())
       session_.formatOperand(*address, disassembly_->currentOperand(), action);
   };
@@ -1174,7 +1231,13 @@ void MainWindow::connectActions() {
 #include "neverd/OperandFormats.def"
            std::pair{ActionId::EditOperandNegate, QStringLiteral("negate")},
            std::pair{ActionId::EditOperandInvert, QStringLiteral("invert")}})
-    on(id, [formatOperand, action] { formatOperand(action); });
+    // A structure offset names a type the user picks first.
+    on(id, [this, formatOperand, action] {
+      if (action == QLatin1String("struct"))
+        chooseStructOffset();
+      else
+        formatOperand(action);
+    });
   // Data items are the disassembly's; a pseudocode window keeps its keys.
   for (const auto &[id, action] :
        {std::pair{ActionId::EditDefineCode, QStringLiteral("code")},
@@ -1187,6 +1250,8 @@ void MainWindow::connectActions() {
       if (const auto address = currentAddress())
         session_.defineItem(*address, action);
     });
+  on(ActionId::EditSetType, [this] { setType(); });
+  on(ActionId::EditConvertToStruct, [this] { convertToStruct(); });
   on(ActionId::JumpBack, [this] { navigateHistory(false); });
   on(ActionId::JumpForward, [this] { navigateHistory(true); });
   on(ActionId::JumpNextFunction, [this] { stepFunction(true); });
@@ -1437,13 +1502,31 @@ void MainWindow::updateActions() {
       ->setEnabled(loaded && disassembly_->canGoForward());
   actions_.action(ActionId::EditUndo)->setEnabled(loaded && session_.canUndo());
   actions_.action(ActionId::EditRedo)->setEnabled(loaded && session_.canRedo());
+  // A debug file the user chose is kept with the project.
   actions_.action(ActionId::FileSave)
       ->setEnabled(loaded && (session_.dirty() ||
-                              session_.metadata().value("pdb").isObject()));
+                              session_.metadata().value("pdb").isObject() ||
+                              session_.metadata().value("dwarf").isObject() ||
+                              session_.metadata().value("map").isObject()));
+  // A PE has a PDB, an ELF or Mach-O image DWARF, and any image a MAP but
+  // the EVM and SBF programs, which describe themselves.
+  const QString format = session_.format();
+  const bool selfDescribed =
+      format == QLatin1String("EVM") ||
+      session_.architecture().compare(QLatin1String("sbf"),
+                                      Qt::CaseInsensitive) == 0;
+  const bool loadsDebugFile = loaded && !session_.opening();
   actions_.action(ActionId::FileLoadPdb)
-      ->setEnabled(loaded && !session_.opening() &&
-                   session_.format() == QLatin1String("PE") &&
+      ->setEnabled(loadsDebugFile && format == QLatin1String("PE") &&
                    session_.loadsPdbFiles());
+  actions_.action(ActionId::FileLoadDwarf)
+      ->setEnabled(loadsDebugFile && !selfDescribed &&
+                   (format == QLatin1String("ELF") ||
+                    format == QLatin1String("Mach-O")) &&
+                   session_.loadsDwarfFiles());
+  actions_.action(ActionId::FileLoadMap)
+      ->setEnabled(loadsDebugFile && !selfDescribed &&
+                   session_.loadsMapFiles());
   actions_.action(ActionId::EditRename)
       ->setEnabled(location && !session_.readOnly());
   // A function starts where none starts yet; the one the cursor is in can
@@ -1469,12 +1552,32 @@ void MainWindow::updateActions() {
       ->setEnabled(dataItems && !focusedCodeView());
   const bool operandFormats =
       location && !session_.readOnly() && session_.keepsOperandFormats();
+  CodeView *code = focusedCodeView();
+  // A pseudocode window's numbers take the bases; offsets, signs and
+  // complements are the disassembly's.
+  const bool codeNumbers = code && loaded && !session_.readOnly() &&
+                           CodeView::isSource(code->representation()) &&
+                           code->text()->function().has_value();
+  for (const auto id : {ActionId::EditOperandNumber, ActionId::EditOperandHex,
+                        ActionId::EditOperandDecimal,
+                        ActionId::EditOperandBinary, ActionId::EditOperandChar})
+    actions_.action(id)->setEnabled(code ? codeNumbers : operandFormats);
   for (const auto id :
-       {ActionId::EditOperandNumber, ActionId::EditOperandHex,
-        ActionId::EditOperandDecimal, ActionId::EditOperandBinary,
-        ActionId::EditOperandChar, ActionId::EditOperandOffset,
-        ActionId::EditOperandNegate, ActionId::EditOperandInvert})
-    actions_.action(id)->setEnabled(operandFormats);
+       {ActionId::EditOperandOffset, ActionId::EditOperandNegate,
+        ActionId::EditOperandInvert})
+    actions_.action(id)->setEnabled(operandFormats && !code);
+  // A structure offset is the disassembly's; a pseudocode window's
+  // parameters take a type instead.
+  actions_.action(ActionId::EditOperandStruct)
+      ->setEnabled(operandFormats && session_.showsStructOffsets() && !code);
+  const bool declarations =
+      location && !session_.readOnly() && session_.typesFunctions();
+  actions_.action(ActionId::EditSetType)
+      ->setEnabled(declarations && (code ? code->text()->function().has_value()
+                                         : currentFunction().has_value()));
+  actions_.action(ActionId::EditConvertToStruct)
+      ->setEnabled(declarations && session_.convertsParameters() && code &&
+                   code->text()->function().has_value());
   actions_.action(ActionId::EditComment)
       ->setEnabled(location && !session_.readOnly());
   actions_.action(ActionId::EditRepeatableComment)
@@ -1640,7 +1743,11 @@ void MainWindow::openAskingForDebugFiles(const QString &path,
           dialog.exec();
           auto chosen = options;
           chosen.pdb = dialog.choice();
-          openNow(path, chosen);
+          // A PDB outranks a MAP: the MAP is asked about only without one.
+          if (chosen.pdb.contains(QStringLiteral("path")))
+            openNow(path, chosen);
+          else
+            openAskingForMap(path, chosen);
         });
       },
       [this, path, options](const QString &, const QString &message) {
@@ -1652,7 +1759,7 @@ void MainWindow::openAskingForDebugFiles(const QString &path,
 
 void MainWindow::openAskingForDwarf(const QString &path, LoadOptions options) {
   if (!options.dwarf.isEmpty() || !session_.findsDwarf()) {
-    openNow(path, options);
+    openAskingForMap(path, options);
     return;
   }
   session_.read(
@@ -1660,7 +1767,7 @@ void MainWindow::openAskingForDwarf(const QString &path, LoadOptions options) {
       [this, path, options](const QJsonObject &payload) {
         const auto reference = payload.value("dwarf").toObject();
         if (reference.isEmpty()) {
-          openNow(path, options);
+          openAskingForMap(path, options);
           return;
         }
         // A modal must run after the query delivery barrier is released.
@@ -1670,15 +1777,60 @@ void MainWindow::openAskingForDwarf(const QString &path, LoadOptions options) {
           DwarfPromptDialog dialog(reference, isVisible() ? this : nullptr);
           dialog.setAttribute(Qt::WA_QuitOnClose, false);
           auto chosen = options;
-          if (dialog.exec() != QDialog::Accepted)
-            chosen.dwarf = {{"mode", "none"}};
-          openNow(path, chosen);
+          // DWARF outranks a MAP: the MAP is asked about only without it.
+          if (dialog.exec() == QDialog::Accepted) {
+            openNow(path, chosen);
+            return;
+          }
+          chosen.dwarf = {{"mode", "none"}};
+          openAskingForMap(path, chosen);
         });
       },
       [this, path, options](const QString &, const QString &message) {
         output_->append(
             tr("Could not tell whether %1 has DWARF: %2").arg(path, message),
             1);
+        openNow(path, options);
+      });
+}
+
+void MainWindow::openAskingForMap(const QString &path, LoadOptions options) {
+  // The questions before this one found no PDB or DWARF, or the user
+  // declined it: only then does the open read the MAP beside the input.
+  if (!options.map.isEmpty() || !session_.findsMapFiles()) {
+    openNow(path, options);
+    return;
+  }
+  session_.read(
+      QStringLiteral("map_reference"), {{"path", path}}, this,
+      [this, path, options](const QJsonObject &payload) {
+        const auto reference = payload.value("map").toObject();
+        if (reference.isEmpty()) {
+          openNow(path, options);
+          return;
+        }
+        // A modal must run after the query delivery barrier is released.
+        QTimer::singleShot(0, this, [this, path, options, reference] {
+          // It greets alone before the workbench shows, as the others do;
+          // No, Escape and closing it load the input without the MAP.
+          MapPromptDialog dialog(reference, isVisible() ? this : nullptr);
+          dialog.setAttribute(Qt::WA_QuitOnClose, false);
+          auto chosen = options;
+          if (dialog.exec() != QDialog::Accepted)
+            chosen.map = {{"mode", "none"}};
+          // The open passes over a MAP of another build unless it is named.
+          else if (MapPromptDialog::mismatched(reference))
+            chosen.map = {{"path", reference.value("path")},
+                          {"mode", "unchecked"}};
+          else
+            chosen.acceptedMap = reference.value("path").toString();
+          openNow(path, chosen);
+        });
+      },
+      [this, path, options](const QString &, const QString &message) {
+        output_->append(tr("Could not tell whether %1 has a MAP file: %2")
+                            .arg(path, message),
+                        1);
         openNow(path, options);
       });
 }
@@ -1814,6 +1966,60 @@ void MainWindow::loadPdb() {
           session_.loadPdb(selection);
         });
       });
+}
+
+void MainWindow::loadDwarf() {
+  if (!session_.loaded() || !session_.loadsDwarfFiles())
+    return;
+  const auto epoch = session_.epoch();
+  const auto path = QFileDialog::getOpenFileName(
+      this, tr("Load DWARF file"),
+      QFileInfo(session_.projectPath()).absolutePath(),
+      tr("DWARF files (*.debug *.dSYM);;All files (*)"));
+  if (path.isEmpty() || !session_.loaded() || session_.epoch() != epoch)
+    return;
+  session_.loadDwarf({{"path", path}});
+}
+
+void MainWindow::loadMap() {
+  if (!session_.loaded() || !session_.loadsMapFiles())
+    return;
+  const auto epoch = session_.epoch();
+  const auto path = QFileDialog::getOpenFileName(
+      this, tr("Load MAP file"),
+      QFileInfo(session_.projectPath()).absolutePath(),
+      tr("MAP files (*.map);;All files (*)"));
+  if (path.isEmpty() || !session_.loaded() || session_.epoch() != epoch)
+    return;
+  session_.read(QStringLiteral("map_inspect"), {{"path", path}}, this,
+                [this, epoch](const QJsonObject &facts) {
+                  // A modal must run after the query delivery barrier is
+                  // released.
+                  QTimer::singleShot(0, this, [this, epoch, facts] {
+                    confirmMap(facts, epoch);
+                  });
+                });
+}
+
+void MainWindow::confirmMap(const QJsonObject &facts, quint64 epoch) {
+  if (!session_.loaded() || session_.epoch() != epoch)
+    return;
+  QString mode = QStringLiteral("checked");
+  if (MapPromptDialog::mismatched(facts)) {
+    const auto answer = QMessageBox::warning(
+        this, tr("Load a MAP file of another build"),
+        tr("%1\n\nLoad its names anyway? Names at the wrong addresses "
+           "mislead the analysis.")
+            .arg(MapPromptDialog::description(facts)),
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes || !session_.loaded() ||
+        session_.epoch() != epoch)
+      return;
+    mode = QStringLiteral("unchecked");
+  }
+  session_.loadMap({{"path", facts.value("path")},
+                    {"mode", mode},
+                    {"stamp", facts.value("stamp")}});
 }
 
 void MainWindow::applyIndicator() {
@@ -2730,11 +2936,19 @@ void MainWindow::runCommand(const QString &command, const QString &argument) {
     if (!argument.isEmpty())
       choosers_.value(int(ChooserKind::StringReferences))
           ->setFilterText(argument);
+  } else if (command == QLatin1String("types")) {
+    actions_.action(ActionId::ViewLocalTypes)->trigger();
+    if (!argument.isEmpty())
+      localTypes_->showType(argument);
   }
 }
 
 void MainWindow::contextMenu(const QPoint &globalPosition) {
+  // The click moved the cursor: the commands act where it is now.
+  updateActions();
   QMenu menu(this);
+  if (auto *code = focusedCodeView())
+    addNumberActions(menu, code);
   for (const auto id : {ActionId::JumpOperand, ActionId::JumpXrefOperand,
                         ActionId::JumpXrefsTo, ActionId::JumpXrefsFrom})
     menu.addAction(actions_.action(id));
@@ -2742,9 +2956,23 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   if (auto *edit = actions_.action(ActionId::EditFunction); edit->isEnabled())
     menu.addAction(edit);
   menu.addSeparator();
-  for (const auto id :
-       {ActionId::EditRename, ActionId::EditComment, ActionId::EditBookmark})
+  menu.addAction(actions_.action(ActionId::EditRename));
+  // Hex-Rays offers a variable's type, and a parameter's pointer to a
+  // record, after its rename.
+  if (auto *type = actions_.action(ActionId::EditSetType); type->isEnabled())
+    menu.addAction(type);
+  if (auto *convert = actions_.action(ActionId::EditConvertToStruct);
+      convert->isEnabled()) {
+    const auto target = focusedCodeView()->text()->renameTarget();
+    if (target && target->contains(QStringLiteral("parameter")))
+      menu.addAction(convert);
+  }
+  for (const auto id : {ActionId::EditComment, ActionId::EditBookmark})
     menu.addAction(actions_.action(id));
+  // IDA offers the operand's structure offset after its rename.
+  if (auto *structure = actions_.action(ActionId::EditOperandStruct);
+      structure->isEnabled() && !focusedCodeView())
+    menu.addAction(structure);
   for (const auto id :
        {ActionId::EditCreateFunction, ActionId::EditDeleteFunction,
         ActionId::EditDefineCode, ActionId::EditDefineData,
@@ -2752,17 +2980,49 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
     if (auto *action = actions_.action(id); action->isEnabled())
       menu.addAction(action);
   menu.addSeparator();
-  for (const auto id : {ActionId::ViewToggleGraph, ActionId::ViewPseudocode,
-                        ActionId::ViewMedIR})
+  menu.addAction(actions_.action(ActionId::ViewToggleGraph));
+  // Tab, the switch to the other pane's row, with its key; a code window
+  // names it by where it goes.
+  if (!focusedCodeView())
+    menu.addAction(actions_.action(ActionId::JumpPseudocode));
+  for (const auto id : {ActionId::ViewPseudocode, ActionId::ViewMedIR})
     menu.addAction(actions_.action(id));
   menu.addSeparator();
   menu.addAction(actions_.action(ActionId::EditCopy));
   menu.addAction(actions_.action(ActionId::EditCopyAddress));
+  // A code window selects its whole text for Copy, as an editor does.
+  if (auto *code = focusedCodeView()) {
+    auto *all = menu.addAction(icon(QStringLiteral("select_all")),
+                               tr("Select &all") + QLatin1Char('\t') +
+                                   QKeySequence(QKeySequence::SelectAll)
+                                       .toString(QKeySequence::NativeText));
+    all->setObjectName(QStringLiteral("codeSelectAll"));
+    connect(all, &QAction::triggered, code->text(), &CodeText::selectAll);
+  }
   // A code window's folds: the declarations before the function and the
   // recognized library operations.
   if (auto *code = focusedCodeView()) {
     CodeText *text = code->text();
     menu.addSeparator();
+    // Tab goes to the row's instruction and takes the focus there.
+    auto *jump = actions_.action(ActionId::JumpPseudocode);
+    auto *cross =
+        menu.addAction(icon(QStringLiteral("jump_disassembly")),
+                       tr("Jump to disassembly") + QLatin1Char('\t') +
+                           jump->shortcut().toString(QKeySequence::NativeText));
+    cross->setObjectName(QStringLiteral("codeJumpDisassembly"));
+    connect(cross, &QAction::triggered, jump, &QAction::trigger);
+    // Hex-Rays' Synchronize with: the code and the disassembly follow each
+    // other's cursor, or browse apart with Tab to cross over.
+    auto *follow = menu.addAction(icon(QStringLiteral("sync")),
+                                  tr("Synchronize with disassembly"));
+    follow->setObjectName(QStringLiteral("codeSynchronize"));
+    follow->setCheckable(true);
+    follow->setChecked(synchronizeCode_);
+    connect(follow, &QAction::toggled, this, [this](bool enabled) {
+      synchronizeCode_ = enabled;
+      QSettings().setValue(SynchronizeCodeKey, enabled);
+    });
     code->addSourceActions(menu);
     if (text->hasPrelude()) {
       const bool folded = text->preludeFolded();
@@ -2815,6 +3075,201 @@ void MainWindow::functionsMenu(const QPoint &position) {
   connect(rowRemove, &QAction::triggered, this,
           [this, entry = *entry] { session_.deleteFunction(entry); });
   menu.exec(table->viewport()->mapToGlobal(position));
+}
+
+void MainWindow::chooseStructOffset() {
+  // Pseudocode windows keep their keys.
+  if (focusedCodeView() || !session_.showsStructOffsets())
+    return;
+  const auto address = currentAddress();
+  if (!address)
+    return;
+  QJsonObject query{{"address", hexAddress(*address)}};
+  if (const auto function = currentFunction())
+    query.insert(QStringLiteral("function"), hexAddress(*function));
+  if (const auto operand = disassembly_->currentOperand())
+    query.insert(QStringLiteral("operand"), *operand);
+  // The edit goes to the session the dialog was opened for.
+  const auto epoch = session_.epoch();
+  TypePickerDialog dialog(session_, query, {}, this);
+  if (dialog.exec() != QDialog::Accepted || session_.epoch() != epoch)
+    return;
+  session_.formatOperandStruct(*address, dialog.operand(), dialog.typeName(),
+                               dialog.delta(), dialog.others(), epoch);
+}
+
+void MainWindow::setType() {
+  if (session_.readOnly() || !session_.typesFunctions())
+    return;
+  // The parameter under a pseudocode cursor, else the function the cursor
+  // is in, as Y types a variable or the function in IDA.
+  const QPointer<CodeView> view = focusedCodeView();
+  std::optional<Address> function;
+  std::optional<int> parameter;
+  QString name;
+  if (view) {
+    function = view->text()->function();
+    if (const auto target = view->text()->renameTarget();
+        target && target->contains(QStringLiteral("parameter"))) {
+      parameter = target->value(QStringLiteral("parameter")).toInt();
+      name = target->value(QStringLiteral("name")).toString();
+    }
+  } else {
+    function = currentFunction();
+  }
+  if (!function) {
+    output_->append(tr("Put the cursor in a function to set its type"), 1);
+    return;
+  }
+  if (name.isEmpty())
+    name = displayAddress(*function);
+  const auto epoch = session_.epoch();
+  SetTypeDialog dialog(session_, *function, parameter, name, this);
+  const bool accepted = dialog.exec() == QDialog::Accepted;
+  if (view) {
+    view->window()->activateWindow();
+    view->text()->setFocus();
+  }
+  if (!accepted || session_.epoch() != epoch)
+    return;
+  session_.editFunction(
+      *function,
+      {{"type", dialog.resets() ? QJsonValue(QJsonValue::Null)
+                                : QJsonValue(dialog.declaration())}},
+      epoch);
+}
+
+void MainWindow::convertToStruct() {
+  CodeView *code = focusedCodeView();
+  if (!code || session_.readOnly() || !session_.convertsParameters())
+    return;
+  const QPointer<CodeView> view = code;
+  const auto function = code->text()->function();
+  const auto target = code->text()->renameTarget();
+  if (!function || !target || !target->contains(QStringLiteral("parameter"))) {
+    output_->append(
+        tr("Put the cursor on a parameter of the function to convert it"), 1);
+    return;
+  }
+  const int parameter = target->value(QStringLiteral("parameter")).toInt();
+  const QString name = target->value(QStringLiteral("name")).toString();
+  const auto epoch = session_.epoch();
+  TypePickerDialog dialog(
+      session_, {{"function", hexAddress(*function)}, {"parameter", parameter}},
+      name, this);
+  const bool accepted = dialog.exec() == QDialog::Accepted;
+  if (view) {
+    view->window()->activateWindow();
+    view->text()->setFocus();
+  }
+  if (!accepted || session_.epoch() != epoch)
+    return;
+  // The type names the parameter too when the user gave it another name.
+  QString type = dialog.typeName() + QStringLiteral(" *");
+  if (dialog.parameterName() != name)
+    type += dialog.parameterName();
+  session_.read(
+      QStringLiteral("function_type"),
+      {{"address", hexAddress(*function)},
+       {"parameter", parameter},
+       {"type", type}},
+      this,
+      [this, function = *function, epoch](const QJsonObject &reply) {
+        if (session_.epoch() == epoch)
+          session_.editFunction(
+              function, {{"type", reply.value(QStringLiteral("declaration"))}},
+              epoch);
+      },
+      [this](const QString &, const QString &message) {
+        output_->append(tr("Cannot convert the parameter: %1").arg(message), 2);
+      });
+}
+
+void MainWindow::formatCodeNumber(CodeView *code,
+                                  std::optional<LiteralRadix> radix) {
+  if (session_.readOnly())
+    return;
+  const auto function = code->text()->function();
+  const auto target = code->text()->numberTarget();
+  if (!function || !target) {
+    output_->append(tr("Put the cursor on a number of the pseudocode to "
+                       "change its base"),
+                    1);
+    return;
+  }
+  const auto base =
+      radix.value_or(target->shown == LiteralRadix::Hex ? LiteralRadix::Decimal
+                                                        : LiteralRadix::Hex);
+  // A base whose spelling would change the literal's C type, or a character
+  // constant of something else than ASCII characters, says so instead.
+  if (base != LiteralRadix::Number &&
+      !spellIntegerLiteral(target->literal, base, target->syntax)) {
+    output_->append(tr("%1 has no spelling in that base with the same type")
+                        .arg(QString::fromStdString(target->literal.Text)),
+                    1);
+    return;
+  }
+  const auto name = literalRadixName(base);
+  session_.editCode(
+      {{"address", hexAddress(*function)},
+       {"representation", code->representation()},
+       {"source_options", code->text()->sourceOptions()},
+       {"kind", "number"},
+       {"line", target->line},
+       {"anchor", target->anchor},
+       {"index", target->index},
+       {"radix", QString::fromLatin1(name.data(), qsizetype(name.size()))}},
+      session_.epoch());
+}
+
+void MainWindow::addNumberActions(QMenu &menu, CodeView *code) {
+  const auto target = code->text()->numberTarget();
+  if (!target || session_.readOnly())
+    return;
+  // Each base shows what the number would read in it, the decompiler's own
+  // choice first; the one the user gave it is checked.
+  auto *group = new QActionGroup(&menu);
+  const QPointer<CodeView> view = code;
+  const auto add = [&](LiteralRadix radix, const QIcon &image,
+                       const QString &title) {
+    const auto spelled =
+        radix == LiteralRadix::Number
+            ? std::optional(target->literal.Text)
+            : spellIntegerLiteral(target->literal, radix, target->syntax);
+    auto *action =
+        menu.addAction(image, spelled ? title + QLatin1Char('\t') +
+                                            QString::fromStdString(*spelled)
+                                      : title);
+    action->setObjectName(QStringLiteral("codeNumber_") +
+                          QString::fromLatin1(literalRadixName(radix).data()));
+    action->setCheckable(true);
+    action->setChecked(target->chosen == radix);
+    action->setEnabled(spelled.has_value());
+    group->addAction(action);
+    connect(action, &QAction::triggered, this, [this, view, radix] {
+      if (view)
+        formatCodeNumber(view, radix);
+    });
+  };
+  const auto like = [this](ActionId id) {
+    auto *action = actions_.action(id);
+    return std::pair{action->icon(), action->text()};
+  };
+  for (const auto &[radix, id] :
+       {std::pair{LiteralRadix::Number, ActionId::EditOperandNumber},
+        std::pair{LiteralRadix::Hex, ActionId::EditOperandHex},
+        std::pair{LiteralRadix::Decimal, ActionId::EditOperandDecimal}}) {
+    const auto [image, title] = like(id);
+    add(radix, image, title);
+  }
+  add(LiteralRadix::Octal, icon(QStringLiteral("operand_octal")), tr("Octa&l"));
+  for (const auto &[radix, id] :
+       {std::pair{LiteralRadix::Binary, ActionId::EditOperandBinary},
+        std::pair{LiteralRadix::Char, ActionId::EditOperandChar}}) {
+    const auto [image, title] = like(id);
+    add(radix, image, title);
+  }
+  menu.addSeparator();
 }
 
 void MainWindow::editFunction(Address entry) {

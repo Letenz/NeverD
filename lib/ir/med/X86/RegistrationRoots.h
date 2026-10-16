@@ -31,6 +31,10 @@ public:
   /// Remove ordinary fallthrough only at an exact, checked no-return source
   /// call. Keep exceptional edges and continuation blocks for SSA rooting.
   void disconnectNoReturnFallthroughs(MedFunc &Func) const;
+  /// Separate a callback's private EBP definition from a parent continuation
+  /// reached exclusively through checked SavedESP transfers. Run after runtime
+  /// live-in definitions are materialized and before SSA renaming.
+  void seedSEHParentFrames(MedFunc &Func) const;
   /// An isolated, exact EH3/EH4 table entry retains its personality frame
   /// even when state propagation is incomplete. True denotes a callback's
   /// private stack; false denotes an except body resuming the parent frame.
@@ -42,6 +46,7 @@ public:
                   std::optional<std::pair<va_t, int32_t>> RestoredSP) const;
 
 private:
+  void disconnectAdjacentSEHCalls(MedFunc &Func) const;
   void removeUnreachedBlocks(MedFunc &Func) const;
   const LowFunc &Low;
   bool HasSEHFrame = false;

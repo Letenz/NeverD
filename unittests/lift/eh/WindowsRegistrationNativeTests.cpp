@@ -7,11 +7,14 @@
 #include "../../../lib/backend/codegen/COFF/COFFSourceCallSymbols.h"
 #include "RegistrationCxxContinuationTestUtils.h"
 #include "RegistrationNativeEmitterTestPeer.h"
+#include "RegistrationSEHCopyIRMutations.h"
 #include "RegistrationSEHDynamicScopeTestUtils.h"
 #include "RegistrationSEHExceptionNativeTestUtils.h"
 #include "RegistrationSEHFinallyIRMutations.h"
 #include "RegistrationSEHJumpNativeTestUtils.h"
 #include "RegistrationSEHNullAccessTestUtils.h"
+#include "RegistrationSEHParentExitIRMutations.h"
+#include "RegistrationSEHRegisterIRMutations.h"
 #include "RegistrationSEHStateDispatchTestUtils.h"
 #include "gtest/gtest.h"
 
@@ -1864,7 +1867,10 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
                RegistrationSEHBoundCall::Kind::PreservedHelper;
       }))
     registration_test::checkSEHRuntimeEdits(*Parent, EH, Image);
+  registration_test::checkSEHCopyEdits(*Parent, EH, Image);
   registration_test::checkSEHFinallyEdits(*Parent, EH, Image);
+  registration_test::checkSEHParentExitEdits(*Parent, EH, Image);
+  registration_test::checkSEHRegisterEdits(*Parent, EH, Image);
   registration_test::checkSEHNullReadEdits(*Parent, Med, EH, Image);
   registration_test::checkDynamicSEHCallEdits(*Parent, EH, Image);
   if (llvm::any_of(Low.RegistrationStates->Blocks, [](const auto &B) {
@@ -1884,7 +1890,12 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
     const auto Message = llvm::toString(std::move(Failure));
     EXPECT_NE(Message.find(Diagnostic.str()), std::string::npos) << Message;
   };
-  if (!Low.RegistrationStates->SEHInvocationExits.empty())
+  if (llvm::any_of(
+          Low.RegistrationStates->SEHInvocationExits, [](const auto &Exit) {
+            return Exit.Exit ==
+                       RegistrationSEHInvocationExit::Kind::NearReturn &&
+                   Exit.CallVA;
+          }))
     RejectMutation(
         "an ordinary finally invocation must return to its caller",
         [](llvm::Function &F) {
@@ -1911,7 +1922,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   RejectMutation(
       "edited LLVM cannot overwrite either registration scope format",
       [&](llvm::Function &F) {
-        llvm::IRBuilder<> B(F.getEntryBlock().getTerminator());
+        llvm::IRBuilder<> B(registration_test::sourceSetupMutationPoint(F));
         const std::string Name =
             "__nd_data_" + llvm::utohexstr(EH.Registration->ScopeTableVA);
         auto *Target = F.getParent()->getNamedGlobal(Name);
@@ -1952,7 +1963,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
             auto *Cookie = F.getParent()->getNamedGlobal("__security_cookie");
             if (!Cookie)
               return false;
-            llvm::IRBuilder<> B(F.getEntryBlock().getTerminator());
+            llvm::IRBuilder<> B(registration_test::sourceSetupMutationPoint(F));
             llvm::Value *Target = Cookie;
             if (Table)
               Target = new llvm::GlobalVariable(
@@ -2035,7 +2046,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   RejectMutation(
       "unmarked image memory read cannot bypass source occurrence checks",
       [](llvm::Function &F) {
-        llvm::IRBuilder<> B(F.getEntryBlock().getTerminator());
+        llvm::IRBuilder<> B(registration_test::sourceSetupMutationPoint(F));
         auto *Global =
             new llvm::GlobalVariable(*F.getParent(), B.getInt32Ty(), false,
                                      llvm::GlobalValue::ExternalLinkage,
@@ -2048,7 +2059,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
     RejectMutation(
         "unindexed image memory operation cannot launder a caller address",
         [Atomic](llvm::Function &F) {
-          llvm::IRBuilder<> B(F.getEntryBlock().getTerminator());
+          llvm::IRBuilder<> B(registration_test::sourceSetupMutationPoint(F));
           auto *Global = new llvm::GlobalVariable(
               *F.getParent(), B.getInt32Ty(), false,
               llvm::GlobalValue::ExternalLinkage, nullptr,
@@ -2341,7 +2352,8 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
         for (auto &Block : F)
           for (auto &I : Block) {
             auto *Head = llvm::dyn_cast<llvm::LoadInst>(&I);
-            if (!Head || Head->getPointerAddressSpace() != 257)
+            if (!Head || Head->getPointerAddressSpace() != 257 ||
+                !llvm::isa_and_nonnull<llvm::IntToPtrInst>(Head->getNextNode()))
               continue;
             auto *Pointer = Head->getNextNode();
             auto *Previous = Pointer ? Pointer->getNextNode() : nullptr;

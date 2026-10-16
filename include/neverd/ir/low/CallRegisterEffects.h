@@ -110,6 +110,13 @@ struct RegisterStep {
   /// the slot the loader binds.  An import whose prototype fixes its entry
   /// reads (solveCallRegisterEffects) reads exactly those.
   va_t ImportCallee = InvalidVA;
+  /// The routine whose entry reads give an indirect call its arguments: the
+  /// one the function-pointer variable it goes through starts at
+  /// (PointerVariableCallee), keyed as that routine's summary is (the
+  /// variable's own address for another module's routine, whose prototype
+  /// fixes the reads).  Unlike ImportCallee, nothing else about the call
+  /// follows from it.
+  va_t ArgumentsFrom = InvalidVA;
   /// Nothing after this step executes (a call that does not return).
   bool Exits = false;
   /// A call whose arguments a contract at this site fixes (a printf-family
@@ -175,16 +182,20 @@ struct LocalRegisterEffect {
 /// never returning (a flagged call, or a tail call the LowIR contract keeps
 /// unflagged) ends its path: nothing it writes reaches a caller.
 /// A call whose instruction address \p FixedCallReads names reads exactly
-/// those bytes (RegisterStep::FixedArguments).
+/// those bytes (RegisterStep::FixedArguments).  A call through a
+/// function-pointer variable whose address \p ArgumentSources names reads
+/// what the routine it names reads (RegisterStep::ArgumentsFrom).
 LocalRegisterEffect localRegisterEffect(
     const BinaryImage &Img, const LowFunc &F,
     const libc::NoReturnTargetIndex *NoReturnTargets = nullptr,
-    const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr);
+    const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr,
+    const std::map<va_t, va_t> *ArgumentSources = nullptr);
 
 LocalRegisterEffect localRegisterEffect(
     const BinaryImage &Img, CallRegisterBodyView F,
     const libc::NoReturnTargetIndex *NoReturnTargets = nullptr,
-    const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr);
+    const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr,
+    const std::map<va_t, va_t> *ArgumentSources = nullptr);
 
 struct CallRegisterSummaries {
   /// Families a call may change, for functions whose whole call tree is

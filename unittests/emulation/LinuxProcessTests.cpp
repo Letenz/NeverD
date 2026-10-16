@@ -305,6 +305,47 @@ TEST_P(LinuxProcess, StatefulDescriptorsPagesAndContextsShareOneKernelOwner) {
     }
   }
 }
+TEST_P(LinuxProcess, GPUObjectStorageChecksCompletePagesAndLifetime) {
+  // Original O0 code checks every word of three pages. Keep the guest
+  // instruction/event limits, while allowing a contended software CPU.
+  Options.Limits.TimeoutMicroseconds = 30000000;
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.KGSL->SynchronousA3xx = true;
+  D.KGSL->MemoryObjects = true;
+  Options.LinuxFiles.emplace().Devices["/fixture/control"] = D;
+  Options.Arguments = {"devices", "o"};
+  Options.InstructionQuantum = 1024;
+  for (const char *Optimization : {"O0", "O2"}) {
+    SCOPED_TRACE(Optimization);
+    auto DevicePath = Path.parent_path() / (Path.stem().string() + "-devices-" +
+                                            Optimization + ".elf");
+    auto R = emulateProcess(DevicePath, ProcessProfile::LinuxELF64, Options);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 0u);
+  }
+}
+
+TEST_P(LinuxProcess, LegacyGPUObjectsShareModernState) {
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.KGSL->SynchronousA3xx = true;
+  D.KGSL->MemoryObjects = true;
+  Options.LinuxFiles.emplace().Devices["/fixture/control"] = D;
+  Options.Arguments = {"devices", "l"};
+  Options.InstructionQuantum = 1024;
+  for (const char *Optimization : {"O0", "O2"}) {
+    SCOPED_TRACE(Optimization);
+    auto DevicePath = Path.parent_path() / (Path.stem().string() + "-devices-" +
+                                            Optimization + ".elf");
+    auto R = emulateProcess(DevicePath, ProcessProfile::LinuxELF64, Options);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 0u);
+  }
+}
+
 TEST_P(LinuxProcess, MemoryFileOpenFlagsRetainObservedPathErrors) {
   Options.LinuxFiles.emplace();
   Options.LinuxFiles->Files["/fixture/data"] = {0, 0xff, 0x41};

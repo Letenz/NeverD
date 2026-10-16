@@ -855,6 +855,46 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>Typen des Programms mit Layout und Quelltext anzeigen</translation>
     </message>
+    <message>
+        <source>D&amp;WARF file...</source>
+        <translation>D&amp;WARF-Datei...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>Debuginformationen aus einer separaten DWARF-Datei, einer Kopie mit Symbolen oder einem .dSYM laden</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>&amp;MAP-Datei...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>Namen aus einer Linker-MAP-Datei laden</translation>
+    </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>S&amp;trukturoffset...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>Operanden als Feld eines lokalen Typs anzeigen; die Typen sind danach geordnet, wie gut die Zugriffe des Codes zu ihnen passen</translation>
+    </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>In struct * &amp;verwandeln...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>Der aktuellen Funktion oder dem Parameter unter dem Cursor einen C-Typ geben, der beim Tippen geprüft wird</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>Den Parameter unter dem Cursor zu einem Zeiger auf einen lokalen Typ machen; die Typen sind danach geordnet, wie gut seine Zugriffe zu ihnen passen</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>T&amp;yp festlegen...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2278,6 +2318,74 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <source>Local Types</source>
         <translation>Lokale Typen</translation>
     </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>Der Parameter kann nicht umgewandelt werden: %1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>Setzen Sie den Cursor in eine Funktion, um ihren Typ festzulegen</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>Setzen Sie den Cursor auf einen Parameter der Funktion, um ihn umzuwandeln</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>&amp;Alles auswählen</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>Zur Disassemblierung springen</translation>
+    </message>
+    <message>
+        <source>Synchronize with disassembly</source>
+        <translation>Mit Disassemblierung synchronisieren</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>Okta&amp;l</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>Setzen Sie den Cursor auf eine Zahl im Pseudocode, um ihre Basis zu ändern</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 lässt sich in dieser Basis nicht mit demselben Typ schreiben</translation>
+    </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>Ob %1 eine MAP-Datei hat, ließ sich nicht ermitteln: %2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>DWARF-Datei laden</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>MAP-Datei laden</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>MAP-Dateien (*.map);;Alle Dateien (*)</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>MAP-Datei eines anderen Builds laden</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die Irre.</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>DWARF-Dateien (*.debug *.dSYM);;Alle Dateien (*)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2344,6 +2452,10 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [Text]     Befehle auflisten, die auf Zeichenketten verweisen</translation>
+    </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [Name]          lokale Typen oder den genannten Typ anzeigen</translation>
     </message>
 </context>
 <context>
@@ -2590,6 +2702,29 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <message>
         <source>DWARF loaded: %1</source>
         <translation>DWARF geladen: %1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>Wie gewählt ohne die MAP-Datei neben der Eingabedatei geöffnet</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>MAP ungeprüft geladen: %1 (%2 Namen hinzugefügt, aus einem anderen Build)</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>MAP geladen: %1 (%2 Namen hinzugefügt)</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>MAP nicht geladen: %1 passt nicht zum geladenen Image</translation>
+    </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>%n Operand als Feld von %1 angezeigt</numerusform>
+            <numerusform>%n Operanden als Felder von %1 angezeigt</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -3399,10 +3534,6 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <translation>Windows-Namen (ULONG)</translation>
     </message>
     <message>
-        <source>IDA names (unsigned int)</source>
-        <translation>IDA-Namen (unsigned int)</translation>
-    </message>
-    <message>
         <source>C keywords (unsigned long)</source>
         <translation>C-Schlüsselwörter (unsigned long)</translation>
     </message>
@@ -3413,6 +3544,10 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <message>
         <source>Exact widths (u32)</source>
         <translation>Exakte Breiten (u32)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>Exakte Breiten (uint32)</translation>
     </message>
     <message>
         <source>Filter types by name</source>
@@ -3497,10 +3632,6 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <message>
         <source>Offset</source>
         <translation>Offset</translation>
-    </message>
-    <message>
-        <source>Bytes</source>
-        <translation>Bytes</translation>
     </message>
     <message>
         <source>Type</source>
@@ -3754,6 +3885,34 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
             <numerusform>%n deklariert</numerusform>
         </translation>
     </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>Wählen Sie einen Typ, um sein Layout und seinen Quelltext zu sehen</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>Kein lokaler Typ heißt %1</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>Exakte Breiten (c_uint32)</translation>
+    </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>JavaScript-Modul (*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>JavaScript-Typen (number, bigint)</translation>
+    </message>
+    <message>
+        <source>Lua (*.lua)</source>
+        <translation>Lua (*.lua)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::DeclareTypesDialog</name>
@@ -3776,6 +3935,297 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>Zeile %1, Spalte %2: %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>%1-MAP, %2 Namen. Ihr Build-Zeitstempel stimmt mit der Eingabedatei überein.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>%1-MAP, %2 Namen. Ihre Abschnitte liegen dort, wo die Eingabedatei sie hat.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>%1-MAP, %2 Namen. Sie enthält nichts, was sich mit der Eingabedatei abgleichen ließe.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>%1-MAP, %2 Namen. Sie verzeichnet den Build-Zeitstempel %3, die Eingabedatei aber %4: Sie gehört zu einem anderen Build.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>%1-MAP, %2 Namen. Sie legt %3 an %4 mit %5 Bytes, die Eingabedatei hat es aber an %6 mit %7 Bytes: Sie gehört zu einem anderen Build.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>%1-MAP, %2 Namen. %3 ihrer %4 Funktionen liegen außerhalb des Codes der Eingabedatei: Sie gehört zu einem anderen Build.</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>MAP-Datei gefunden</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>MAP-Datei trotzdem laden?</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>MAP-Datei laden?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>Genau auf Feldern: %1 von %n Offset</numerusform>
+            <numerusform>Genau auf Feldern: %1 von %n Offsets</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>%1 von %n Typ</numerusform>
+            <numerusform>%1 von %n Typen</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n Byte</numerusform>
+            <numerusform>%n Bytes</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>%n Typ</numerusform>
+            <numerusform>%n Typen</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>Zugriff</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>Auch den %n anderen Befehl, der über %1 zugreift, als Feld anzeigen</numerusform>
+            <numerusform>Auch die %n anderen Befehle, die über %1 zugreifen, als Felder anzeigen</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Anwenden</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>Bei %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Bytes</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>Feld</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>Kein Feld enthält dieses Byte</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>Kein Typ passt.</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>Offset</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>Die Zugriffe des Codes über den Zeiger des Operanden werden gelesen…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>Typen suchen: ein Name, ein typedef, Typ.Feld oder .Feld</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>Strukturoffset</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>Die Zahl %1 als Offset in eine Struktur oder Union.</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>Der Operand behält seine Zahl.</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>Das Programm hat keine Strukturen oder Unions. Sie lassen sich unter Lokale Typen (Shift+F1) deklarieren.</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>Das Register zeigt %1 Bytes weit in %2, auf %3: Die Zugriffe davor lesen frühere Felder des Datensatzes, wie es CONTAINING_RECORD rückgängig macht.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Typ</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>Typen danach geordnet, wie der %n Zugriff der Funktion über %1 auf ihren Feldern landet.</numerusform>
+            <numerusform>Typen danach geordnet, wie die %n Zugriffe der Funktion über %1 auf ihren Feldern landen.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>Adresse</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>Header</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>außerhalb des Typs</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>Auffüllung</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>Lesen</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>den Zeiger</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>Benutzer</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>Schreiben</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>&amp;Name:</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>Ein Zeiger auf %1, einen Datensatz von %n Byte</numerusform>
+            <numerusform>Ein Zeiger auf %1, einen Datensatz von %n Bytes</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>In struct * umwandeln</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>Es wird gelesen, was der Code über den Parameter tut…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>Der Name des Parameters, den die Deklaration behält</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>Typen danach geordnet, wie der %n Zugriff der Funktion über %1, wo %2 ankommt, auf ihren Feldern landet.</numerusform>
+            <numerusform>Typen danach geordnet, wie die %n Zugriffe der Funktion über %1, wo %2 ankommt, auf ihren Feldern landen.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>das Register</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1, %n Byte</numerusform>
+            <numerusform>%1, %n Bytes</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1, Parameter %2 von %3, kommt in %4 an.</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1, Parameter %2 von %3.</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Anwenden</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>Kommt an in</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>In Spalte %1: %2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>Die Deklaration der Funktion wieder ihren Debuginformationen und der Analyse überlassen</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Name</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>Deklaration wird gelesen…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>Gültig: %n Parameter</numerusform>
+            <numerusform>Gültig: %n Parameter</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>Typ von %1 festlegen</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>Die Deklaration von %1, wie der Decompiler sie ausgibt, beim Tippen gegen die lokalen Typen gelesen.</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>Die Deklaration, die Sie %1 gegeben haben, beim Tippen gegen die lokalen Typen gelesen.</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>Die Deklaration der Funktion lässt sich nicht lesen, daher können ihre Parameter nicht einzeln typisiert werden. Legen Sie stattdessen den Typ der Funktion fest.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Typ</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>Typ der &amp;Analyse verwenden</translation>
     </message>
 </context>
 </TS>

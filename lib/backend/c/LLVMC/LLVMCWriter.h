@@ -96,13 +96,22 @@ public:
   void recordSourceNames(const llvm::Module &Mod);
   std::string functionIdentifier(const llvm::Function &Fn) const;
   std::string sourceScalarType(llvm::Type *Type, bool Signed) const;
-  std::string sourceFunctionDeclaration(const llvm::Function &Fn,
-                                        llvm::StringRef Declarator) const;
+  /// \p Fn's C declaration of \p Declarator; with \p Params, of its first
+  /// that many parameters only.
+  std::string sourceFunctionDeclaration(
+      const llvm::Function &Fn, llvm::StringRef Declarator,
+      std::optional<unsigned> Params = std::nullopt) const;
   /// The C name of global \p Name: the module names a global by its symbol
   /// (cNameOfLLVMName), but a declaration of an import by the name its
   /// import entry lists, which is already the C name on some formats.
   llvm::StringRef cNameOfGlobal(llvm::StringRef Name, bool Declaration) const;
   void writeIncludes(llvm::Module &Mod);
+  /// What writeModule writes after the includes.
+  void writeModuleBody(llvm::Module &Mod);
+  /// The program's records \p Text names, as its local types define them
+  /// (CEmitterOptions::RecordDefinitions), and the typedefs of their tags
+  /// it spells them by.
+  void writeRecordDefinitions(llvm::StringRef Text);
   void writeStructDefs(llvm::Module &Mod);
   std::string aggregateMemberPath(llvm::Type *Ty,
                                   llvm::ArrayRef<unsigned> Indices);
@@ -222,6 +231,17 @@ public:
     std::string Text;
     TypeRef Type;
   };
+  /// \p Text, a member of type \p Member that \p Load reads, as the value
+  /// the load gives: an integer read of a pointer member converts it.
+  std::string memberAsAccessed(const llvm::LoadInst &Load, std::string Text,
+                               const TypeRef &Member) const;
+  /// The parameters the signature types as pointers, from the debug
+  /// information or the local types, which the code computes with as
+  /// integers.
+  std::set<const llvm::Argument *> PointerParams;
+  /// The pointer type the signature returns, where the code returns it as
+  /// an integer; empty otherwise.
+  std::string PointerReturnType;
   TypeRef typeOfValue(const llvm::Value *V) const;
   std::string indirectCalleeStr(const llvm::Value *Callee,
                                 bool MarkChain = false);
@@ -506,6 +526,15 @@ public:
   /// \p Call: its debug information or the MSVC callee table.
   TypeRef expectedCallArgType(const llvm::CallBase &Call, unsigned Index) const;
   std::optional<FunctionSym> debugCallee(const llvm::CallBase &Call) const;
+  /// The debug information's function, or the prototype of its name, that
+  /// \p Callee is: by its original address, its slot, or the address its
+  /// name spells.
+  std::optional<FunctionSym> debugFunction(const llvm::Function &Callee) const;
+  /// How many arguments the calls to \p Callee pass where its prototype
+  /// decides them (printedCallArgLimit), which its declaration then takes;
+  /// none where its machine parameters do.
+  std::optional<unsigned>
+  prototypedParamCount(const llvm::Function &Callee) const;
   bool looksLikeHiddenSretOperand(const llvm::Value *Arg) const;
   std::string printedCalleeName(const llvm::CallBase &Call) const;
   /// MSVC ctor/dtor that returns `this` and whose result is unread. A store
@@ -859,6 +888,8 @@ public:
   std::optional<FunctionSym> DebugFn;
   TypeRef DebugThisRecord;
   const llvm::Argument *DebugThisArg = nullptr;
+  /// The type the debug information gives each parameter.
+  std::map<const llvm::Argument *, TypeRef> ParamDebugTypes;
   va_t FunctionEntry = 0;
   const llvm::AllocaInst *SyntheticFrame = nullptr;
   uint64_t FrameBaseOffset = 0;

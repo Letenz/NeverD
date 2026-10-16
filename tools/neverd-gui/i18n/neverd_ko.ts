@@ -855,6 +855,46 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>프로그램의 형식을 레이아웃 및 소스와 함께 표시합니다</translation>
     </message>
+    <message>
+        <source>D&amp;WARF file...</source>
+        <translation>DWARF 파일(&amp;W)...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>별도의 DWARF 파일, 스트립하지 않은 사본 또는 .dSYM에서 디버그 정보를 불러옵니다</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>MAP 파일(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>링커 MAP 파일에서 이름을 불러옵니다</translation>
+    </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>구조체 오프셋(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>피연산자를 로컬 형식의 멤버로 표시합니다. 형식은 코드의 액세스가 얼마나 맞는지에 따라 정렬됩니다</translation>
+    </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>struct *로 변환(&amp;V)...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>현재 함수 또는 커서 아래 매개변수에 C 형식을 지정합니다. 입력하는 동안 검사됩니다</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>커서 아래 매개변수를 로컬 형식에 대한 포인터로 만듭니다. 형식은 그 액세스가 얼마나 맞는지에 따라 정렬됩니다</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>형식 설정(&amp;Y)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2272,6 +2312,74 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Local Types</source>
         <translation>로컬 형식</translation>
     </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>매개변수를 변환할 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>형식을 설정하려면 함수 안에 커서를 두세요</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>변환하려면 함수의 매개변수에 커서를 두세요</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>모두 선택(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>디스어셈블리로 이동</translation>
+    </message>
+    <message>
+        <source>Synchronize with disassembly</source>
+        <translation>디스어셈블리와 동기화</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>8진수(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>진법을 바꾸려면 의사 코드의 숫자에 커서를 두세요</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1은(는) 해당 진법에서 같은 형식으로 표기할 수 없습니다</translation>
+    </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>%1에 MAP 파일이 있는지 확인할 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>DWARF 파일 불러오기</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>MAP 파일 불러오기</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>MAP 파일 (*.map);;모든 파일 (*)</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>다른 빌드의 MAP 파일 불러오기</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+그래도 이름을 불러오시겠습니까? 잘못된 주소의 이름은 분석을 오도합니다.</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>DWARF 파일 (*.debug *.dSYM);;모든 파일 (*)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2338,6 +2446,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     문자열을 참조하는 명령어 나열</translation>
+    </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          로컬 형식 또는 지정한 형식 표시</translation>
     </message>
 </context>
 <context>
@@ -2584,6 +2696,28 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>DWARF loaded: %1</source>
         <translation>DWARF를 불러왔습니다: %1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>선택한 대로 입력 파일 옆의 MAP 파일 없이 열었습니다</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>MAP를 대조 없이 불러왔습니다: %1 (추가된 이름 %2개, 다른 빌드의 파일)</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>MAP를 불러왔습니다: %1 (추가된 이름 %2개)</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>MAP를 불러오지 않았습니다: %1은(는) 불러온 이미지와 맞지 않습니다</translation>
+    </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>피연산자 %n개를 %1의 멤버로 표시했습니다</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -3393,10 +3527,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Windows 이름(ULONG)</translation>
     </message>
     <message>
-        <source>IDA names (unsigned int)</source>
-        <translation>IDA 이름(unsigned int)</translation>
-    </message>
-    <message>
         <source>C keywords (unsigned long)</source>
         <translation>C 키워드(unsigned long)</translation>
     </message>
@@ -3407,6 +3537,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Exact widths (u32)</source>
         <translation>정확한 너비(u32)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>정확한 너비(uint32)</translation>
     </message>
     <message>
         <source>Filter types by name</source>
@@ -3491,10 +3625,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Offset</source>
         <translation>오프셋</translation>
-    </message>
-    <message>
-        <source>Bytes</source>
-        <translation>바이트</translation>
     </message>
     <message>
         <source>Type</source>
@@ -3740,6 +3870,34 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
             <numerusform>직접 선언 %n개</numerusform>
         </translation>
     </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>형식을 선택하면 레이아웃과 소스를 볼 수 있습니다</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>이름이 %1인 로컬 형식이 없습니다</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>정확한 너비(c_uint32)</translation>
+    </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>JavaScript 모듈 (*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>JavaScript 형식(number, bigint)</translation>
+    </message>
+    <message>
+        <source>Lua (*.lua)</source>
+        <translation>Lua (*.lua)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::DeclareTypesDialog</name>
@@ -3762,6 +3920,287 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>%1행 %2열: %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>%1 MAP, 이름 %2개. 빌드 타임스탬프가 입력 파일과 일치합니다.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>%1 MAP, 이름 %2개. 섹션 위치가 입력 파일과 일치합니다.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>%1 MAP, 이름 %2개. 입력 파일과 대조할 정보가 기록되어 있지 않습니다.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>%1 MAP, 이름 %2개. 기록된 빌드 타임스탬프는 %3이지만 입력 파일은 %4입니다: 다른 빌드의 파일입니다.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>%1 MAP, 이름 %2개. %3을(를) %4(%5바이트)에 두지만 입력 파일에서는 %6(%7바이트)에 있습니다: 다른 빌드의 파일입니다.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>%1 MAP, 이름 %2개. 함수 %4개 중 %3개가 입력 파일의 코드 밖에 있습니다: 다른 빌드의 파일입니다.</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>MAP 파일을 찾았습니다</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>그래도 MAP 파일을 불러오시겠습니까?</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>MAP 파일을 불러오시겠습니까?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>오프셋 %n개 중 %1개가 멤버에 정확히 맞음</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>형식 %n개 중 %1개</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n바이트</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>형식 %n개</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>액세스</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>%1을(를) 거치는 다른 명령 %n개도 멤버로 표시</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>적용</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>위치: %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>바이트</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>멤버</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>이 바이트를 포함하는 멤버가 없습니다</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>일치하는 형식이 없습니다.</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>오프셋</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>피연산자의 포인터를 통한 코드의 액세스를 읽는 중…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>형식 검색: 이름, typedef, Type.member 또는 .member</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>구조체 오프셋</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>숫자 %1을(를) 구조체 또는 공용체 안의 오프셋으로 봅니다.</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>피연산자는 숫자를 그대로 유지합니다.</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>프로그램에 구조체나 공용체가 없습니다. 로컬 형식(Shift+F1)에서 선언하십시오.</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>레지스터는 %2의 %1바이트 위치(%3)를 가리킵니다. 그 앞의 액세스는 CONTAINING_RECORD가 되돌리듯 레코드의 앞쪽 멤버를 읽습니다.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>형식</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>함수에서 %1을(를) 거치는 액세스 %n개가 멤버에 맞는 정도에 따라 형식을 정렬했습니다.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>주소</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>헤더</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>형식 범위 밖</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>패딩</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>읽기</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>포인터</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>사용자</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>쓰기</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>이름(&amp;N):</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>%1에 대한 포인터(%n바이트 구조)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>struct *로 변환</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>코드가 매개변수를 통해 하는 일을 읽는 중…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>선언에 유지되는 매개변수 이름</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>%2이(가) 전달되는 %1을(를) 통한 함수의 액세스 %n개가 멤버에 어떻게 맞는지에 따라 형식을 정렬했습니다.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>레지스터</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1, %n바이트</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1: %3의 매개변수 %2이며 %4(으)로 전달됩니다.</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1: %3의 매개변수 %2입니다.</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>적용</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>전달 위치</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>%1번째 열: %2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>함수 선언을 디버그 정보와 분석 결과로 되돌립니다</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>이름</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>선언을 읽는 중…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>읽기 성공: 매개변수 %n개</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>%1의 형식 설정</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>디컴파일러가 출력하는 %1의 선언입니다. 입력하는 동안 로컬 형식에 따라 읽습니다.</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>%1에 지정한 선언입니다. 입력하는 동안 로컬 형식에 따라 읽습니다.</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>함수 선언을 읽을 수 없어 매개변수 형식을 하나씩 지정할 수 없습니다. 대신 함수의 형식을 설정하세요.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>형식</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>분석 형식 사용(&amp;A)</translation>
     </message>
 </context>
 </TS>

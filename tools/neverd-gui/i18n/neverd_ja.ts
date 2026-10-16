@@ -855,6 +855,46 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>プログラムの型をレイアウトとソースとともに表示</translation>
     </message>
+    <message>
+        <source>D&amp;WARF file...</source>
+        <translation>DWARF ファイル(&amp;W)...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>別の DWARF ファイル、ストリップしていないコピー、または .dSYM からデバッグ情報を読み込みます</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>MAP ファイル(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>リンカーの MAP ファイルから名前を読み込みます</translation>
+    </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>構造体オフセット(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>オペランドをローカル型のメンバーとして表示します。型はコードのアクセスとの一致度で並べ替えられます</translation>
+    </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>struct * に変換(&amp;V)...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>現在の関数、またはカーソル位置のパラメーターに C の型を付けます。入力中に検証されます</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>カーソル位置のパラメーターをローカル型へのポインターにします。型はそのアクセスとの一致度で並べ替えられます</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>型を設定(&amp;Y)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2272,6 +2312,74 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Local Types</source>
         <translation>ローカル型</translation>
     </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>パラメーターを変換できません: %1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>型を設定するには関数内にカーソルを置いてください</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>変換するには関数のパラメーターにカーソルを置いてください</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>すべて選択(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>逆アセンブルへジャンプ</translation>
+    </message>
+    <message>
+        <source>Synchronize with disassembly</source>
+        <translation>逆アセンブルと同期</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>8 進数(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>基数を変更するには疑似コードの数値にカーソルを置いてください</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 はその基数では同じ型で表記できません</translation>
+    </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>%1 に MAP ファイルがあるかどうか判別できませんでした：%2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>DWARF ファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>MAP ファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>MAP ファイル (*.map);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>別のビルドの MAP ファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+それでも名前を読み込みますか？誤ったアドレスの名前は解析を誤らせます。</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>DWARF ファイル (*.debug *.dSYM);;すべてのファイル (*)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2338,6 +2446,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     文字列を参照する命令を一覧表示</translation>
+    </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          ローカル型、または指定した型を表示</translation>
     </message>
 </context>
 <context>
@@ -2584,6 +2696,28 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>DWARF loaded: %1</source>
         <translation>DWARF を読み込みました：%1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>選択どおり、入力ファイルの横にある MAP ファイルを読み込まずに開きました</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>MAP を照合せずに読み込みました：%1（追加した名前 %2 個、別のビルドのもの）</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>MAP を読み込みました：%1（追加した名前 %2 個）</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>MAP を読み込みませんでした：%1 は読み込んだイメージと一致しません</translation>
+    </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>%n 個のオペランドを %1 のメンバーとして表示しました</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -3393,10 +3527,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Windows の名前（ULONG）</translation>
     </message>
     <message>
-        <source>IDA names (unsigned int)</source>
-        <translation>IDA の名前（unsigned int）</translation>
-    </message>
-    <message>
         <source>C keywords (unsigned long)</source>
         <translation>C のキーワード（unsigned long）</translation>
     </message>
@@ -3407,6 +3537,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Exact widths (u32)</source>
         <translation>正確な幅（u32）</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>正確な幅（uint32）</translation>
     </message>
     <message>
         <source>Filter types by name</source>
@@ -3491,10 +3625,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Offset</source>
         <translation>オフセット</translation>
-    </message>
-    <message>
-        <source>Bytes</source>
-        <translation>バイト</translation>
     </message>
     <message>
         <source>Type</source>
@@ -3740,6 +3870,34 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
             <numerusform>宣言 %n 個</numerusform>
         </translation>
     </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>型を選択すると、そのレイアウトとソースを表示します</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>%1 という名前のローカル型はありません</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>正確な幅（c_uint32）</translation>
+    </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>JavaScript モジュール (*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>JavaScript の型（number、bigint）</translation>
+    </message>
+    <message>
+        <source>Lua (*.lua)</source>
+        <translation>Lua (*.lua)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::DeclareTypesDialog</name>
@@ -3762,6 +3920,287 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>%1 行 %2 列：%3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>%1 の MAP、名前 %2 個。ビルドのタイムスタンプが入力ファイルと一致します。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>%1 の MAP、名前 %2 個。セクションの位置が入力ファイルと一致します。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>%1 の MAP、名前 %2 個。入力ファイルと照合できる情報は記録されていません。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>%1 の MAP、名前 %2 個。記録されたビルドのタイムスタンプは %3 ですが、入力ファイルは %4 です：別のビルドのものです。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>%1 の MAP、名前 %2 個。%3 を %4（%5 バイト）に配置していますが、入力ファイルでは %6（%7 バイト）にあります：別のビルドのものです。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>%1 の MAP、名前 %2 個。関数 %4 個のうち %3 個が入力ファイルのコードの外にあります：別のビルドのものです。</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>MAP ファイルが見つかりました</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>それでも MAP ファイルを読み込みますか？</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>MAP ファイルを読み込みますか？</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>（%1）</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>%n 個のオフセットのうち %1 個がメンバーにちょうど一致</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>%n 個中 %1 個の型</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n バイト</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>%n 個の型</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>アクセス</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>%1 を経由するほかの %n 個の命令もメンバーとして表示</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>適用</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>場所：%1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>バイト</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>メンバー</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>このバイトを含むメンバーはありません</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>一致する型はありません。</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>オフセット</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>オペランドのポインター経由でコードが行うアクセスを読み取っています…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>型を検索：名前、typedef、Type.member、.member</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>構造体オフセット</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>数値 %1 を構造体または共用体内のオフセットとして扱います。</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>オペランドは数値のままです。</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>プログラムには構造体も共用体もありません。ローカル型（Shift+F1）で宣言してください。</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>レジスタは %2 の先頭から %1 バイトの位置（%3）を指しています。それより前へのアクセスは、CONTAINING_RECORD が戻すように、レコードの前方のメンバーを読み取ります。</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>型</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>関数内で %1 を経由する %n 回のアクセスがメンバーにどう一致するかで型を並べています。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>アドレス</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>ヘッダー</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>型の範囲外</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>パディング</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>読み取り</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>ポインター</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>ユーザー</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>書き込み</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>名前(&amp;N):</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>%1 へのポインター（%n バイトの構造）</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>struct * に変換</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>コードがパラメーター経由で行う処理を読み込んでいます…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>宣言に残るパラメーター名</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>%2 が渡される %1 経由の関数のアクセス %n 件が、メンバーにどう当たるかで型を並べ替えています。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>レジスター</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1、%n バイト</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1 は %3 のパラメーター %2 で、%4 で渡されます。</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1 は %3 のパラメーター %2 です。</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>適用</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>渡し先</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>%1 列目: %2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>関数の宣言をデバッグ情報と解析の結果に戻します</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名前</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>宣言を読み込んでいます…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>読み込み OK: パラメーター %n 個</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>%1 の型を設定</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>デコンパイラーが出力する %1 の宣言です。入力中にローカル型に照らして読み込まれます。</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>%1 に指定した宣言です。入力中にローカル型に照らして読み込まれます。</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>関数の宣言を読み込めないため、パラメーターを個別に型付けできません。代わりに関数の型を設定してください。</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>型</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>解析の型を使用(&amp;A)</translation>
     </message>
 </context>
 </TS>

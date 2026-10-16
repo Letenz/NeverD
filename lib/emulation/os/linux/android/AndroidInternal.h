@@ -159,7 +159,13 @@ private:
   BionicResult jniObjects(unsigned Slot, const NativeCallEvent &Call);
   BionicResult jniStrings(unsigned Slot, const NativeCallEvent &Call);
   BionicResult jniArrays(unsigned Slot, const NativeCallEvent &Call);
+  bool jniAssignable(llvm::StringRef Source, llvm::StringRef Destination) const;
   BionicResult jniMethods(unsigned Slot, const NativeCallEvent &Call);
+  BionicResult jniFields(unsigned Slot, const NativeCallEvent &Call);
+  BionicResult
+  runDex(const std::function<mobile::dalvik::ExecutionResult(
+             const mobile::dalvik::AdmitInstruction &, uint64_t)> &Body);
+  BionicResult allocateDex(llvm::StringRef Class, bool Initialized);
   // Null Method requests class initialization without a method invocation.
   BionicResult executeDex(const mobile::dalvik::Method *Method,
                           llvm::ArrayRef<uint64_t> Arguments,
@@ -181,7 +187,7 @@ private:
   llvm::Error access(uint64_t Address, uint64_t Size, unsigned Permissions);
   llvm::Expected<uint8_t> byte(uint64_t Address);
   llvm::Expected<std::string> string(uint64_t Address);
-  llvm::Expected<uint64_t> allocate(uint64_t Size);
+  llvm::Expected<uint64_t> allocate(uint64_t Size, uint8_t FillByte = 0);
   llvm::Error release(uint64_t Address);
   llvm::Error setErrno(uint32_t Value);
   BionicResult linkerError(llvm::StringRef Message, uint64_t ReturnValue = 0);

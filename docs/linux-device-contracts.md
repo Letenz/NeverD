@@ -257,7 +257,19 @@ to resume from write_consumed. A delivered transaction can request a new looper
 through the leading BR_SPAWN_LOOPER word, under the same thread-pool rules as
 control reads. Private thread work and process work retain kernel read eligibility.
 
-This subset admits synchronous flags-zero, offsets-free messages, at most one
+Object-free synchronous requests also accept TF_ACCEPT_FDS, as emitted by
+libbinder's ordinary `transact`. The bit is delivered intact; it does not
+authorize FD translation, and a nonempty object-offset table still stops.
+Replies accept TF_STATUS_CODE only with exactly four guest-provided bytes.
+They preserve the flag and payload in the caller's read-only arena; no service
+error or success value is invented. Other request/reply flags remain unsupported.
+Rejected flags, objects and status sizes report the command, target, transaction
+code, flags and lengths before allocating a reply buffer or consuming the call.
+These transport conventions follow the pinned
+[Binder UAPI](https://android.googlesource.com/kernel/msm/+/a80b2e0035e75c0460b54e2217ca0104631d547d/include/uapi/linux/android/binder.h)
+and [libbinder producer/consumer](https://android.googlesource.com/platform/frameworks/native/+/2d5e05b44248e445af986ca8410c6e98c6ba3533/libs/binder/IPCThreadState.cpp).
+
+This subset admits synchronous, offsets-free messages, at most one
 transaction per write batch, 64 live buffers/work items per queue, and 64 KiB per
 payload. Object/FD translation, one-way or nested calls, security policies,
 peer-death processing and blocking scheduling remain explicit gaps. Partial
@@ -279,13 +291,23 @@ process GPU address space across independent opens; returned flags include
 USERMEM_ADDR. Physical pins survive CPU unmapping and virtual-address reuse.
 SHAREDMEM_FREE releases a registered base address.
 
-Legacy RINGBUFFER_ISSUEIBCMDS admits one flags-zero IB of at most 4096 words.
+Legacy RINGBUFFER_ISSUEIBCMDS admits one flags-zero root IB. A shared 4096-word
+budget counts the root and every executed child, including repeated visits.
 The type-3 CP_NOP payload is skipped according to its packet extent;
 one-word CP_MEM_WRITE writes its actual operand into a registered writable GPU
-allocation. Admission checks every packet, range, alignment and permission
-before any write. Predicate/reserved bits, unknown opcodes, truncated packets
-and command-buffer self-modification fail explicitly. There is no shader,
-register, draw, indirect-list or type-7 implementation.
+allocation. CP_INDIRECT_BUFFER_PFE/PFD contain a 32-bit GPU address and a word
+count. One indirect level is admitted; execution returns to the parent, and
+repeated sibling calls execute again. Their prefetch distinction has no timing
+effect under this synchronous coherent-RAM contract.
+
+Admission checks the entire reachable program before any write. It retains
+physical fetch ranges, then rejects every store overlapping any of them,
+including a child discovered after the store or a different GPU address alias.
+Recursive/overlapping active buffers, deeper nesting, empty/unmapped ranges,
+predicate/reserved bits, unknown opcodes and truncated packets fail explicitly.
+Refusals identify the buffer, word offset and packet header when available.
+These are model limits, not claimed hardware limits. There is no shader,
+register, draw, submission-list or type-7 implementation.
 
 An admitted command buffer drains at the stopped CPU boundary. Its owned queued,
 consumed and retired timestamps advance together; mapped memstore aliases observe
@@ -299,3 +321,113 @@ These ABI/packet facts were independently implemented from the pinned
 [submission and memory owner](https://android.googlesource.com/kernel/msm/+/973f4134d9deb396415846f902848f0a32cb4cfa/drivers/gpu/msm/kgsl.c),
 [ringbuffer packet producer](https://android.googlesource.com/kernel/msm/+/973f4134d9deb396415846f902848f0a32cb4cfa/drivers/gpu/msm/adreno_ringbuffer.c)
 and [PM4 encoding](https://android.googlesource.com/kernel/msm/+/a65478df351382d255d293d745aee9bae3a3a741/drivers/gpu/msm/adreno_pm4types.h).
+The indirect forms also follow the pinned
+[legacy IB encoding](https://android.googlesource.com/kernel/msm/+/2db776e4f994f895799dd7cb47397db6bfe1e616/drivers/gpu/msm/adreno_pm4types.h).
+
+### Owned GPU memory objects
+
+`"memory_objects":true` in `kgsl_contexts` separately opts into LP64
+GPUOBJ_ALLOC/INFO/FREE, GPUMEM_ALLOC_ID/GET_INFO/FREE_ID and SHAREDMEM_FREE.
+It requires an O_RDWR device;
+`synchronous_a3xx` is needed only to execute PM4. Static ioctl observations
+cannot shadow these requests. Unknown/non-Boolean settings are rejected.
+
+Objects own zero-initialized physical RAM in NeverD, charged to the workload
+memory budget. GPUREADONLY, FORCE_32BIT, alignment hints and zero metadata
+length are admitted. The 4 KiB page profile normalizes the alignment exponent
+to 12–25 and returns the effective flags. Addresses honor that alignment even
+when skipping explicit device mappings. Nonzero sizes through eight 4 KiB
+pages are rounded up; a GPU-only
+4 KiB guard contributes to the returned footprint. IDs and GPU addresses are
+process-scoped across independent opens and descriptor aliases; allocation
+choices are deterministic model policy, not captured hardware addresses.
+At most 64 objects/imports share the address space. Query returns live size,
+flags, GPU address, footprint and current CPU mapping address, preserving the
+caller's padding. Unknown IDs return EINVAL; unsupported flags, metadata or
+resource limits stop explicitly.
+
+The legacy LP64 requests use 48-byte allocation, 72-byte query and 8-byte
+release records (`0xc0300934`, `0xc0480936`, `0xc0080935`). They address the
+same objects as GPUOBJ, including mappings and pending frees. Legacy allocation
+implicitly sets FORCE_32BIT; its 32-bit flags field omits that upper bit, while
+GPUOBJ_INFO reports it. All modeled addresses currently fit below 4 GiB.
+GPUMEM_GET_INFO prioritizes a nonzero ID, otherwise accepts an address within
+the object's data and returns the base. It does not search by address after an
+invalid ID, or admit the guard as data. Reserved fields survive copyout,
+including FREE_ID's padding. Complete writable output is required before any
+state mutation; unsupported copyout stops without partial effects. Querying a
+legacy user-address import through GET_INFO stops explicitly because its
+kernel allocation ID is not modeled. Other legacy structure layouts are not
+inferred from matching request numbers.
+
+MAP_SHARED accepts one complete data mapping by `id * 4096` or GPU base,
+with PROT_NONE, PROT_READ or PROT_READ|PROT_WRITE. CPU and admitted PM4 writes
+use the same retained bytes. GPUREADONLY restricts GPU writes, not CPU writes.
+A second active mapping returns EBUSY; an incorrect size returns ERANGE.
+Interior GPU-address offsets, mapping the guard, executable mappings, VMA
+splitting and advice stop rather
+than inventing fault delivery or driver VMA callbacks. Whole-range mprotect
+and munmap are supported. Dynamic proc maps labels use the same mapping owner.
+
+An immediate free while mapped marks the object pending; query and existing
+mapping access remain valid, and a second free returns EBUSY. Final unmap
+retires a pending object; unmapping a live object preserves its contents for
+remapping. VMAs retain their open and process owner after FD closure. Freed
+storage is zeroed before reuse. Asynchronous timestamp/fence frees, imports
+through GPUOBJ_IMPORT, cache maintenance, secure/SVM allocations and shaders
+remain unsupported. The resource model is not a physical GPU/cache model.
+
+The independently written implementation uses the pinned
+[GPU object UAPI](https://android.googlesource.com/kernel/msm/+/25423157b70a8f2250860e72e63b29e28872220c/include/uapi/linux/msm_kgsl.h)
+and [allocation, query and VMA lifetime owner](https://android.googlesource.com/kernel/msm/+/2db776e4f994f895799dd7cb47397db6bfe1e616/drivers/gpu/msm/kgsl.c).
+The LP64 legacy layouts use the same revision's
+[UAPI](https://android.googlesource.com/kernel/msm/+/2db776e4f994f895799dd7cb47397db6bfe1e616/include/uapi/linux/msm_kgsl.h),
+with the page-alignment floor defined by its
+[shared-memory allocator](https://android.googlesource.com/kernel/msm/+/2db776e4f994f895799dd7cb47397db6bfe1e616/drivers/gpu/msm/kgsl_sharedmem.c).
+
+## Optional ioctl memory evidence
+
+`linux_files.ioctl_trace` observes the shared raw/Bionic ioctl boundary. It
+records narrowed FD/request, argument, PC, thread, raw Linux result bits and,
+for Android wrappers, the guest return address (a tail call retains its
+caller's return address). It neither interprets an unknown ioctl nor supplies
+a reply. A null result is an unfinished/refused boundary, not success.
+
+```json
+"ioctl_trace": {
+  "event_limit": 1024,
+  "byte_limit": 65536,
+  "requests": [{
+    "request": 2701131777,
+    "memory": [
+      {"offset": 0, "size": 24},
+      {"pointer_offset": 8, "offset": 0, "size": 16}
+    ]
+  }]
+}
+```
+
+Each range is an explicit observation extent. `pointer_offset` reads one
+little-endian LP64 pointer at argument+offset at entry; both snapshots read
+the resulting address plus `offset`, even if the service changes the pointer
+cell. Sizes are not inferred from ioctl number bits, pointer values or guest
+allocation extents. GPU virtual addresses are not CPU pointers. This is not
+a recursive Binder parcel decoder or a GPU/shader program extractor.
+
+The optional top-level `ioctl_trace` report includes `memory` rows with
+`address`, `size`, `before_hex`, `after_hex`, `before_status`, and `after_status`.
+Only `complete` means the entire declared range was captured. `unreadable`,
+`address_overflow`, `backend_error`, `byte_limit`, and
+`unresolved_entry_address` distinguish absent evidence from an empty payload.
+Unknown request numbers still have a metadata row with an empty range list.
+No trace fields are emitted when the option is absent.
+
+Limits are 4096 events, 1 MiB attempted read bytes (including pointer cells and
+both phases), 64 unique requests, 16 ranges per request and 4096 bytes per
+range. Whole ranges are retained or omitted; no zero padding or partial-read
+success is reported. `ioctl_trace_truncated` marks event/byte exhaustion.
+Capture failure/exhaustion does not change guest results, device transaction
+consumption, writes or virtual time. Only ordinary guest RAM is observed;
+these snapshots do not authorize host/device reads or provide general memory
+provenance. Bounded observations are evidence for the executed input, not an
+all-path proof.

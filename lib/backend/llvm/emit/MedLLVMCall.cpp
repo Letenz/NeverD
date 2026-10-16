@@ -1014,10 +1014,25 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         }
       }
 
+      // A callee the module neither defines nor describes is declared from
+      // this call's arguments.  Where the module's calls pass it different
+      // numbers of arguments, those past the ones every call passes are
+      // variadic: a declaration from this call's would cut a longer call's.
+      auto undescribedCalleeType = [&](bool VarArg) {
+        std::vector<llvm::Type *> Fixed = ArgTypes;
+        if (!VarArg && AggregateRetTy == nullptr && CI && !CI->IsIndirect)
+          if (const auto It = DirectCallArgumentCounts.find(CI->TargetAddr);
+              It != DirectCallArgumentCounts.end() &&
+              It->second.first != It->second.second) {
+            VarArg = true;
+            Fixed.resize(std::min(Fixed.size(), It->second.first));
+          }
+        return llvm::FunctionType::get(DefaultRetTy, Fixed, VarArg);
+      };
       if (!Callee && !CalleeName.empty()) {
         bool UseVarArg = getTargetRegInfo(TargetArch).UnknownExternIsVarArg &&
                          AggregateRetTy == nullptr;
-        auto *FT = llvm::FunctionType::get(DefaultRetTy, ArgTypes, UseVarArg);
+        auto *FT = undescribedCalleeType(UseVarArg);
         Callee = llvm::Function::Create(FT, llvm::GlobalValue::ExternalLinkage,
                                         CalleeName, Mod);
         Callee->setCallingConv(llvm::CallingConv::C);
@@ -1027,7 +1042,7 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         auto StubName = (kAutoFuncPrefix + llvm::utohexstr(CallAddr)).str();
         Callee = Mod->getFunction(StubName);
         if (!Callee) {
-          auto *StubTy = llvm::FunctionType::get(DefaultRetTy, ArgTypes, false);
+          auto *StubTy = undescribedCalleeType(false);
           Callee = llvm::Function::Create(
               StubTy, llvm::GlobalValue::ExternalLinkage, StubName, Mod);
           Callee->addFnAttr(llvm::Attribute::NullPointerIsValid);
@@ -1053,6 +1068,12 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   if (!Callee && Target)
     Callee = llvm::dyn_cast_or_null<llvm::Function>(KnownTarget);
   if (auto *Runtime = prepareX86RegistrationSEHRuntimeCall(Op, Builder, Args)) {
+    Callee = Runtime;
+    KnownTarget = Runtime;
+    Target = nullptr;
+  }
+  if (auto *Runtime =
+          prepareX86RegistrationLocalUnwindCall(Op, Builder, Args)) {
     Callee = Runtime;
     KnownTarget = Runtime;
     Target = nullptr;

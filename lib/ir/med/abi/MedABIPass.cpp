@@ -18,11 +18,14 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/ir/med/IndirectCallSlot.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedReturnArguments.h"
 #include "neverd/ir/med/X86RegistrationCall.h"
 #include "neverd/ir/med/X86RegistrationSEHCall.h"
 #include "neverd/ir/med/X86RegistrationSEHJump.h"
+#include "neverd/ir/med/X86RegistrationSEHLocalUnwind.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/object/SectionNames.h"
@@ -426,19 +429,20 @@ IntegerArgumentLayout integerArgumentLayoutOf(const MedFunc &Func,
   return Layout;
 }
 
-void recoverCallAbi(MedFunc &Func, Arch TheArch,
-                    const std::map<va_t, std::string> &FuncNames,
-                    const BinaryImage *Img, std::map<va_t, int> *CalleeRegArity,
-                    std::map<va_t, int> *CalleeTotalArity,
-                    const std::map<va_t, int> *CalleeFPArity,
-                    const std::map<va_t, uint16_t> *CalleeFPReturnSize,
-                    const std::map<va_t, std::vector<uint64_t>> *CalleeFPRegs,
-                    const std::map<va_t, bool> *CalleeHasSret,
-                    std::map<va_t, bool> *CalleeIsVariadic,
-                    const std::map<va_t, bool> *CalleeConsumesVaList,
-                    const std::set<va_t> *FrameLocalLeafCallees,
-                    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs,
-                    const std::set<va_t> *VectorArgumentCallees) {
+void recoverCallAbi(
+    MedFunc &Func, Arch TheArch, const std::map<va_t, std::string> &FuncNames,
+    const BinaryImage *Img, std::map<va_t, int> *CalleeRegArity,
+    std::map<va_t, int> *CalleeTotalArity,
+    const std::map<va_t, int> *CalleeFPArity,
+    const std::map<va_t, uint16_t> *CalleeFPReturnSize,
+    const std::map<va_t, std::vector<uint64_t>> *CalleeFPRegs,
+    const std::map<va_t, bool> *CalleeHasSret,
+    std::map<va_t, bool> *CalleeIsVariadic,
+    const std::map<va_t, bool> *CalleeConsumesVaList,
+    const std::set<va_t> *FrameLocalLeafCallees,
+    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs,
+    const std::set<va_t> *VectorArgumentCallees,
+    const std::map<va_t, PointerVariableCallee> *PointerCallees) {
   Func.CallInfos.clear();
 
   const auto &TRI = getTargetRegInfo(TheArch);
@@ -452,14 +456,24 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                                : std::nullopt;
   // Result normalization can erase unrelated operations during recovery.
   // Retain stable source identities, not pointers into an operation vector.
-  std::map<std::tuple<int, va_t, int, va_t>, unsigned> SEHJumpABIs;
+  std::map<std::tuple<int, va_t, int, va_t>, unsigned> SEHStackABIs;
   if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
     if (const auto Calls = getX86RegistrationSEHJumpCalls(Func))
       for (const auto &[Address, Call] : *Calls)
-        SEHJumpABIs.emplace(std::make_tuple(Call.Block, Address,
-                                            Call.Operation->OriginSeq,
-                                            Call.Operation->Inputs[0].ConstVal),
-                            Call.stackArgumentWords());
+        SEHStackABIs.emplace(
+            std::make_tuple(Call.Block, Address, Call.Operation->OriginSeq,
+                            Call.Operation->Inputs[0].ConstVal),
+            Call.stackArgumentWords());
+  if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
+    if (const auto Calls = getX86RegistrationSEHLocalUnwinds(Func))
+      for (const auto &[Address, Call] : *Calls)
+        SEHStackABIs.emplace(
+            std::make_tuple(Call.Block, Address, Call.Operation->OriginSeq,
+                            Call.Operation->Inputs[0].ConstVal),
+            Call.Source->Runtime.Protocol ==
+                    RegistrationLocalUnwindContract::Kind::EH4
+                ? 3u
+                : 2u);
   const auto FPParamRegs = TRI.floatingParamRegs(Fmt);
   const CallArgumentConvention *Convention =
       callArgumentConvention(TheArch, Fmt);
@@ -498,6 +512,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
   // only names the incoming value.
   std::set<std::tuple<int, int, int>> DefinedValues;
   bool DefinedValuesBuilt = false;
+  // What earlier calls left in each register, once a call asks.
+  std::optional<ValuesLeftByCalls> LeftByCalls;
   auto isDefinedValue = [&](const MedVar &V) {
     if (!DefinedValuesBuilt) {
       for (const auto &B : Func.Blocks) {
@@ -588,6 +604,10 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
     if (P.Id >= FreshId)
       FreshId = P.Id + 1;
 
+  // Operations are inserted only after the loop below, so the index stays
+  // valid in it.
+  MedDefinitionIndex Definitions(Func);
+  auto lookupDefinition = [&](const MedVar &V) { return Definitions.find(V); };
   for (auto &Blk : Func.Blocks) {
     for (size_t OI = 0; OI < Blk.Ops.size(); ++OI) {
       auto &Op = Blk.Ops[OI];
@@ -641,6 +661,12 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           FnIt != FuncNames.end()
               ? FnIt->second
               : (kAutoFuncPrefix + llvm::utohexstr(CI.TargetAddr)).str();
+      // A stub the names leave unnamed still reaches its import, whose name
+      // its prototype and va_list contract go by.
+      if (Img && !CI.IsIndirect && CI.TargetName.starts_with(kAutoFuncPrefix))
+        if (std::string Import = importCalleeName(*Img, CI.TargetAddr);
+            !Import.empty())
+          CI.TargetName = std::move(Import);
       // An ordinary SEH finally CALL uses the checked shared-frame protocol.
       // Its caller's private PUSHes are saved temporaries, not cdecl argument
       // setup. Native lowering supplies its separately proved frame operand.
@@ -663,9 +689,14 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           continue;
         }
       }
-      const auto SEHJumpABI =
-          SEHJumpABIs.find({Blk.Id, Op.Addr, Op.OriginSeq, CI.TargetAddr});
-      const bool SEHJump = SEHJumpABI != SEHJumpABIs.end();
+      if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF &&
+          recoverI386RegistrationCookieCall(Func, Blk, OI, TRI, CI)) {
+        Func.CallInfos.push_back(std::move(CI));
+        continue;
+      }
+      const auto SEHStackABI =
+          SEHStackABIs.find({Blk.Id, Op.Addr, Op.OriginSeq, CI.TargetAddr});
+      const bool SEHStackCall = SEHStackABI != SEHStackABIs.end();
       // In a relocatable object EVERY direct call's target operand is a
       // placeholder (0 / the next-instruction-relative encoding); the real
       // callee is named by the branch relocation, and the per-VA callee
@@ -706,11 +737,22 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           CI.TargetName = std::move(Name);
           IsIndirectImport = true;
         }
+      // The routine the function-pointer variable an indirect call goes
+      // through starts at: the call passes its arguments, but takes neither
+      // its name nor its contract (PointerVariableCallee).
+      const PointerVariableCallee *VariableCallee = nullptr;
+      if (CI.IsIndirect && !IsIndirectImport && PointerCallees &&
+          !PointerCallees->empty())
+        if (const std::optional<va_t> Slot =
+                indirectCallSlot(Func, Op, lookupDefinition))
+          if (const auto Callee = PointerCallees->find(*Slot);
+              Callee != PointerCallees->end())
+            VariableCallee = &Callee->second;
 
       // An external placeholder collision, indirect call or import keeps its
       // existing output here (promoteFloatCallResult).
-      if (!SEHJump && !CI.IsIndirect && !IsRelocExtern && !IsDirectImport &&
-          CalleeFPReturnSize)
+      if (!SEHStackCall && !CI.IsIndirect && !IsRelocExtern &&
+          !IsDirectImport && CalleeFPReturnSize)
         if (auto SizeIt = CalleeFPReturnSize->find(CI.TargetAddr);
             SizeIt != CalleeFPReturnSize->end())
           promoteFloatCallResult(Func, Blk, OI, SizeIt->second, TheArch);
@@ -723,6 +765,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       std::optional<libc::LibCArity> ExternalArity;
       if (!CI.IsIndirect || IsIndirectImport)
         ExternalArity = libc::libcArityForSymbol(CI.TargetName);
+      else if (VariableCallee && !VariableCallee->ImportName.empty())
+        ExternalArity = libc::libcArityForSymbol(VariableCallee->ImportName);
 
       // The callee's integer register-argument count, if it is a known direct
       // intra-module target; -1 when unknown (external / indirect).  Used to
@@ -734,6 +778,13 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         if (AIt != CalleeRegArity->end())
           CalleeRegArgs = AIt->second;
       }
+      // A variable this image's routine starts at passes that routine's.
+      const va_t VariableEntry =
+          VariableCallee ? VariableCallee->LocalEntry : InvalidVA;
+      if (VariableEntry != InvalidVA && CalleeRegArity)
+        if (auto AIt = CalleeRegArity->find(VariableEntry);
+            AIt != CalleeRegArity->end())
+          CalleeRegArgs = AIt->second;
       // A direct callee with its own register order takes its register
       // arguments in that order.
       if (!CI.IsIndirect && !IsRelocExtern && !IsDirectImport && CalleeIntRegs)
@@ -753,6 +804,12 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         if (AIt != CalleeTotalArity->end())
           CalleeArgs = AIt->second;
       }
+      if (VariableEntry != InvalidVA && CalleeTotalArity)
+        if (auto AIt = CalleeTotalArity->find(VariableEntry);
+            AIt != CalleeTotalArity->end())
+          CalleeArgs = AIt->second;
+      const bool UseVariableArity =
+          VariableEntry != InvalidVA && CalleeRegArgs >= 0 && CalleeArgs >= 0;
       // A prototyped import's argument positions, as its summary counts them
       // (MedOp::CalleeStackArgs), bound a forwarder's however it reaches the
       // import: through a stub, or through the slot as a thunk jumps.
@@ -767,7 +824,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // also lets a compiler-generated helper pass an incoming exception
       // object straight through without an explicit register write.
       const bool UseExternalArity =
-          !SEHJump && ExternalArity.has_value() &&
+          !SEHStackCall && ExternalArity.has_value() &&
           (IsDirectImport || IsRelocExtern || CalleeRegArgs < 0);
       if (UseExternalArity) {
         // Where only internal functions take regparm register arguments, an
@@ -801,12 +858,12 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                                     ? registrationCallABI(Func, Blk, Op)
                                     : std::nullopt;
       const bool RuntimeThrow = Registration && Registration->RuntimeThrow;
-      // The checked capture/resume protocol also owns its exact stack-only
-      // arity. Incidental GPR/FP values cannot precede the buffer argument.
-      const bool CheckedStackCall = RuntimeThrow || SEHJump;
+      // Checked capture, resume and local-unwind protocols own their exact
+      // stack-only arities. Incidental registers cannot become arguments.
+      const bool CheckedStackCall = RuntimeThrow || SEHStackCall;
       if (CheckedStackCall) {
         CalleeRegArgs = 0;
-        CalleeArgs = SEHJump ? SEHJumpABI->second : 2;
+        CalleeArgs = SEHStackCall ? SEHStackABI->second : 2;
       }
       // Checked ordinary members and constructors own exactly one ECX
       // receiver plus their proved scalar stack words. Other live registers
@@ -1147,10 +1204,16 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // truncates any surplus to the callee arity) fill the remaining
       // consecutive register slots from the value reaching the call across the
       // CFG.
+      // The incoming registers earlier calls made parameters: one this call
+      // promotes for an argument it then drops is no parameter.
+      std::set<uint64_t> PromotedBefore;
+      for (const auto &Promoted : PromoteParams)
+        PromotedBefore.insert(Promoted.first);
       bool Arg0FromInBlock = FoundMask[0];
-      if ((!CI.IsIndirect || UseExternalArity) && IntRegArgsApply)
+      if ((!CI.IsIndirect || UseExternalArity || UseVariableArity) &&
+          IntRegArgsApply)
         for (int K = 0; K < NumIntParamRegs && K < MaxArgs; ++K) {
-          if (UseExternalArity && K >= CalleeRegArgs)
+          if ((UseExternalArity || UseVariableArity) && K >= CalleeRegArgs)
             break;
           if (FoundMask[K])
             continue;
@@ -1168,7 +1231,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                                       IntegerLayout, AllowLiveIn, &FromLiveIn);
           if (!V)
             break;
-          if (IsIndirectImport && (FromLiveIn || V->Kind == MedVar::Param) &&
+          if ((IsIndirectImport || VariableCallee) &&
+              (FromLiveIn || V->Kind == MedVar::Param) &&
               !incomingArgumentReachesCall(Ctx, K))
             break;
           Found[K] = *V;
@@ -1295,6 +1359,31 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           Policy->TakeIndirectCallRegisters)
         Policy->TakeIndirectCallRegisters(Ctx);
 
+      // The value an indirect call jumps to is its target, not an argument: a
+      // register that only holds it (`ldr r1, [pc, r1]; blx r1`) ends the
+      // register arguments unless an argument above it was set, or the
+      // routine the call reaches takes that one (`cb(ctx, x, y, cb)` may pass
+      // r3 and call through it): by its arity, or by the register arguments
+      // its summary publishes (MedOp::CalleeRegisterArgs).
+      if (CI.IsIndirect && Op.NumInputs >= 1 && !Op.Inputs[0].isConst()) {
+        int Highest = -1;
+        for (int K = 0; K < MaxArgs; ++K)
+          if (FoundMask[K])
+            Highest = K;
+        const MedVar &Target = Op.Inputs[0];
+        const bool RoutineTakesIt = ((UseExternalArity || UseVariableArity) &&
+                                     Highest < CalleeRegArgs) ||
+                                    Highest < Op.CalleeRegisterArgs;
+        if (Highest >= 0 && !FromStackScan[Highest] && !RoutineTakesIt &&
+            Found[Highest].Kind == Target.Kind &&
+            Found[Highest].Id == Target.Id &&
+            Found[Highest].SSAVer == Target.SSAVer) {
+          FoundMask[Highest] = false;
+          Found[Highest] = MedVar();
+          CI.TargetRegisterArgIdx = Highest;
+        }
+      }
+
       if (IndirectTargetArgIdx && *IndirectTargetArgIdx >= 0 &&
           *IndirectTargetArgIdx < MaxArgs && FoundMask[*IndirectTargetArgIdx]) {
         std::optional<int> ValueArgIdx = resolveIndirectTargetArgIdx(
@@ -1313,8 +1402,9 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       if (CI.IsIndirect && RegArgsApply && Op.NumInputs >= 1) {
         // A C callback table can have exactly the same two-load shape as a
         // C++ vtable. Its address does not override an actual first argument
-        // already reaching the call (including a literal such as f(8)).
-        if (!FoundMask[0])
+        // already reaching the call (including a literal such as f(8)), and
+        // a first argument register that holds the target holds no object.
+        if (!FoundMask[0] && CI.TargetRegisterArgIdx != 0)
           if (auto Obj =
                   vtableCallObject(Blk, static_cast<int>(OI), Op.Inputs[0])) {
             Found[0] = *Obj;
@@ -1453,9 +1543,16 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
 
         // For an indirect call the callee signature is unknown, so an argument
         // that happens to live in a callee-saved register (a loop-carried local
-        // clang parked there) must NOT be filtered out as a register save:
-        // every SP-relative store in the call's own block is an outgoing
-        // argument.
+        // clang parked there) must NOT be filtered out as a register save.
+        // Its incoming value, which a prologue saves (`stp x29, x30`,
+        // `push {r11, lr}`), is no argument, and neither is the undefined
+        // incoming value of a scratch register (an alignment `push rax`).
+        if (CI.IsIndirect &&
+            (isIncomingRegisterSave(TRI, Prev.Inputs[1]) ||
+             isUndefinedIncomingScratch(TRI, TheArch, Convention,
+                                        DefaultIntegerLayout.Registers,
+                                        Prev.Inputs[1])))
+          continue;
         if (!CI.IsIndirect && isIncomingRegisterSave(TRI, Prev.Inputs[1])) {
           // A prologue register save spills the callee-save register's
           // *incoming* (live-in, SSA version 0) value, as `push {r11, lr}`
@@ -1575,9 +1672,52 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
             (Offset - CallLayout.CallStackBase) / CallLayout.SlotBytes;
         if (Slot < 0 || Slot >= MaxArgs || FoundMask[Slot])
           continue;
+        // As in the block's own scan: a saved or undefined incoming register
+        // is no argument of an indirect call.
+        if (CI.IsIndirect &&
+            (isIncomingRegisterSave(TRI, Value) ||
+             isUndefinedIncomingScratch(TRI, TheArch, Convention,
+                                        DefaultIntegerLayout.Registers, Value)))
+          continue;
         Found[Slot] = Value;
         FoundMask[Slot] = true;
         FromStackScan[Slot] = true;
+      }
+
+      // A call that takes every argument from the stack is passed nothing by
+      // what a scratch register held at entry where this function takes no
+      // parameter in it: the alignment `push eax` above a call's arguments
+      // stores what no caller set.  On top of the arguments it is dropped;
+      // below one it keeps its place, as zero.
+      if (StackOnlyCall && !CheckedStackCall && !CI.IsIndirect) {
+        // Version zero alone does not make an entry value: a call's result
+        // can be bound to a fresh variable that no rename touched.
+        auto unsetIncoming = [&](const MedVar &V) {
+          if (V.Kind != MedVar::Reg || V.SSAVer != 0 || V.Size == 0 ||
+              V.Size > TRI.PointerSize || TRI.isStackPointer(V.RegOff) ||
+              TRI.isCalleeSaveReg(V.RegOff) || TRI.isLinkRegister(V.RegOff) ||
+              TRI.isVectorReg(V.RegOff) || isDefinedValue(V))
+            return false;
+          return llvm::none_of(Func.Params, [&](const MedVar &P) {
+            return P.RegOff != kNoParamReg && P.RegOff < V.RegOff + V.Size &&
+                   V.RegOff < P.RegOff + std::max<uint16_t>(P.Size, 1);
+          });
+        };
+        bool OnTop = true;
+        for (int K = MaxArgs - 1; K >= 0; --K) {
+          if (!FoundMask[K] || !FromStackScan[K])
+            continue;
+          if (!unsetIncoming(Found[K])) {
+            OnTop = false;
+          } else if (OnTop) {
+            FoundMask[K] = false;
+            FromStackScan[K] = false;
+            Found[K] = MedVar();
+          } else {
+            Found[K] =
+                MedVar::makeConst(0, static_cast<uint16_t>(TRI.PointerSize));
+          }
+        }
       }
 
       // Pack two AAPCS64-packed sub-8-byte integer stack arguments into one
@@ -1833,9 +1973,18 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           if (Param.RegOff != kNoParamReg)
             ++CallerStackBase;
       }
+      // A variadic routine of the image keeps its arity open for the
+      // overflow its callers pass (callRecoveryTotalArity), which says
+      // nothing of what a tail jump to it passes on untouched.
+      bool OpenVariadicArity = false;
+      if (!CI.IsIndirect && !UseExternalArity && CalleeIsVariadic)
+        if (const auto VIt = CalleeIsVariadic->find(CI.TargetAddr);
+            VIt != CalleeIsVariadic->end())
+          OpenVariadicArity = VIt->second;
       if (IsTailJump &&
-          (!CI.IsIndirect || ImportStackArgs || UseExternalArity) &&
-          CalleeArgs > CalleeStackBase) {
+          (!CI.IsIndirect || ImportStackArgs || UseExternalArity ||
+           UseVariableArity) &&
+          !OpenVariadicArity && CalleeArgs > CalleeStackBase) {
         for (int K = CalleeStackBase; K < CalleeArgs && K < MaxArgs; ++K) {
           if (FoundMask[K])
             continue;
@@ -2045,6 +2194,14 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         }
       }
 
+      // A variable this image's routine starts at passes no more than that
+      // routine takes.
+      if (UseVariableArity)
+        for (int K = std::max(0, CalleeArgs); K < MaxArgs; ++K) {
+          FoundMask[K] = false;
+          Found[K] = MedVar();
+          FromStackScan[K] = false;
+        }
       // Bound a direct call to a known non-variadic libc function to its true
       // arity.  The heuristic register/FP/stack scans over-collect arguments
       // for an external callee whose signature is unknown -- a dead incoming
@@ -2149,6 +2306,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         }
       }
       std::vector<MedVar> IntPart, StackPart;
+      // The register slot each of IntPart's arguments was found in.
+      std::vector<int> IntPartSlots;
       // Each stack argument's offset from the first stack argument: the
       // slot the stack scan found it in.
       const int StackArgBase = StackAfterUsedRegisters ? FirstStackSlot
@@ -2170,8 +2329,11 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           // the first gap ends the run -- skipping past it would re-collect the
           // caller's own local function-pointer stores (at higher frame
           // offsets) as spurious trailing varargs and shift the callee's reads.
+          // Only a register gap: stack arguments are contiguous, and a slot
+          // past a stack gap holds whatever an earlier push left there (an
+          // i386 get-PC call's return address).
           if (CI.IsIndirect && FoundFP.empty() && !IndirectSretSetup &&
-              DarwinVarArgBase < 0) {
+              DarwinVarArgBase < 0 && K < StackArgBase) {
             bool Higher = false;
             for (int H = K + 1; H < AssembleEnd; ++H)
               if (FoundMask[H] && FromStackScan[H]) {
@@ -2191,8 +2353,10 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         // with no integer register argument); assemble it after the FP
         // arguments.  A gap lane belongs to whichever range its index falls in.
         if (K < NumIntRegArgs && (Gap || !FromStackScan[K])) {
-          if (K < IntCap)
+          if (K < IntCap) {
             IntPart.push_back(A);
+            IntPartSlots.push_back(K);
+          }
         } else {
           StackPart.push_back(A);
           StackPartOffsets.push_back(static_cast<int64_t>(K - StackArgBase) *
@@ -2211,6 +2375,49 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           int Span = Found[K].Size / TRI.PointerSize;
           if (Span > 1)
             K += Span - 1;
+        }
+      }
+      // A register that holds, on every path to the call, only what earlier
+      // calls left in it was set for no argument of this one.  Past the
+      // register arguments the callee is known to take -- the named ones of
+      // a variadic callee, whose save area spills the rest
+      // (callRegisterArity), or none where nothing says what it takes -- the
+      // first such register ends the call's register arguments; where stack
+      // arguments follow, which keep their places, each such register passes
+      // zero.  Passed on, it would be an unknown value, which HighC traps on
+      // before the call where the program passed what the callee never reads.
+      // Below that the callee reads the register, and its unknown value stays.
+      if (IntRegArgsApply && !CheckedStackCall && !RegistrationObjectCall) {
+        int Known = 0;
+        if (!CI.IsIndirect || UseExternalArity || UseVariableArity)
+          Known = std::max(CalleeRegArgs, 0);
+        if (CI.IsIndirect)
+          Known = std::max<int>(Known, Op.CalleeRegisterArgs);
+        for (size_t I = 0; I < IntPart.size(); ++I) {
+          if (IntPartSlots[I] < Known)
+            continue;
+          if (!LeftByCalls)
+            LeftByCalls.emplace(Func);
+          if (!LeftByCalls->contains(IntPart[I]))
+            continue;
+          // An indirect call has no callee to say its stack slots are
+          // arguments, and where integer arguments fill every register
+          // before the stack, a register no one set below them shows they
+          // are not (an -O0 spill near the call).
+          const bool NoStackArguments =
+              StackPart.empty() || (CI.IsIndirect && !PositionalSlots);
+          if (NoStackArguments) {
+            for (size_t J = I; J < IntPart.size(); ++J)
+              if (IntPart[J].Kind == MedVar::Param &&
+                  !PromotedBefore.count(IntPart[J].RegOff))
+                PromoteParams.erase(IntPart[J].RegOff);
+            IntPart.resize(I);
+            StackPart.clear();
+            StackPartOffsets.clear();
+            break;
+          }
+          IntPart[I] =
+              MedVar::makeConst(0, static_cast<uint16_t>(TRI.PointerSize));
         }
       }
       // A variadic callee that takes its vector argument registers as
@@ -2261,12 +2468,18 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       for (auto &A : StackPart)
         CI.Args.push_back(A);
 
-      // A Darwin wrapper is variadic only when its exact recovered call
+      // Where every variadic argument is on the stack (Darwin AArch64, i386
+      // cdecl), a wrapper is variadic only when its exact recovered call
       // argument to a known va_list consumer is a pointer-width value derived
-      // from the entry SP.  CI.Args is SSA-bound at this call site, so a later
-      // write to x2/x3 cannot be mistaken for the consumed va_list.  Ordinary
-      // variadic calls and ambiguous provenance remain unmarked.
-      if (!CI.IsIndirect && VariadicOnStack && !CI.Args.empty()) {
+      // from the entry SP: its va_start points at its own incoming arguments,
+      // which it passes on, and no register save area shows it.  CI.Args is
+      // SSA-bound at this call site, so a later write to x2/x3 cannot be
+      // mistaken for the consumed va_list.  Ordinary variadic calls and
+      // ambiguous provenance remain unmarked.
+      const bool StackVariadicArguments =
+          VariadicOnStack ||
+          (Convention && Convention->StackOnlyVariadicCallees);
+      if (!CI.IsIndirect && StackVariadicArguments && !CI.Args.empty()) {
         const llvm::StringRef Bare = stripLeadingUnderscores(CI.TargetName);
         const bool InternalVaListConsumer =
             CalleeConsumesVaList &&
@@ -2289,7 +2502,10 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
               if (InternalVaListConsumer) {
                 const int FixedPrefix =
                     std::max(0, static_cast<int>(CI.Args.size()) - 1);
-                if (CalleeRegArity &&
+                // Its named parameters are register ones only where variadic
+                // arguments leave the registers to them (Darwin); a cdecl
+                // wrapper takes every one on the stack.
+                if (CalleeRegArity && VariadicOnStack &&
                     (*CalleeRegArity)[Func.Entry] < FixedPrefix)
                   (*CalleeRegArity)[Func.Entry] = FixedPrefix;
                 if (CalleeTotalArity &&
@@ -2393,6 +2609,16 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
 
       if (!CI.IsIndirect && DarwinVarArgBase >= 0)
         CI.VarArgFixedCount = DarwinVarArgBase;
+      // A variadic routine of the image whose save area says how many named
+      // register parameters it has takes the rest variadically, which a
+      // declaration of it where it is not emitted keeps: one made from a
+      // call's own arguments would cut another call's.  Every register of a
+      // routine that takes its vector ones (System V) is a parameter.
+      else if (!CI.IsIndirect && OpenVariadicArity && CalleeRegArgs > 0 &&
+               CalleeRegArgs < NumIntParamRegs &&
+               !(VectorArgumentCallees &&
+                 VectorArgumentCallees->count(CI.TargetAddr)))
+        CI.VarArgFixedCount = CalleeRegArgs;
       Func.CallInfos.push_back(std::move(CI));
       if (!CallLaneOps.empty())
         Pending.push_back(

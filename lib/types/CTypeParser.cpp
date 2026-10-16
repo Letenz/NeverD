@@ -370,7 +370,7 @@ const llvm::StringMap<Builtin> &builtinWords() {
         Map.try_emplace(Word, Type);
     };
 #define NEVERD_BUILTIN_TYPE(Name, Class, Signed, LLP64, LP64, ILP32, Keywords, \
-                            Windows, IDA)                                      \
+                            Windows)                                           \
   add(Windows, Builtin::Name);
 #include "neverd/types/BuiltinTypes.def"
     for (const auto &[Word, Type] :
@@ -1941,8 +1941,18 @@ ParseResult parseTypes(llvm::StringRef Source, TypeLibrary &Library,
     return parseRustTypes(Source, Library, Options);
   case Language::Go:
     return parseGoTypes(Source, Library, Options);
+  case Language::Python:
+  case Language::JavaScript:
+  case Language::Lua:
+    break;
   }
-  return ParseResult();
+  // The language renders, but reads in none of its forms.
+  ParseResult Result;
+  Result.Problems.push_back(
+      {1, 1,
+       languageDisplay(Options.Lang).str() +
+           " declarations do not read; declare in C/C++, Rust or Go"});
+  return Result;
 }
 
 ParseResult parseCTypes(llvm::StringRef Source, TypeLibrary &Library,
@@ -1956,6 +1966,64 @@ ParseResult parseCTypes(llvm::StringRef Source, TypeLibrary &Library,
   if (Result.Problems.empty() || Options.KeepGoing)
     Library = std::move(Scratch);
   return Result;
+}
+
+FunctionDeclaration parseFunctionDeclaration(llvm::StringRef Source,
+                                             const TypeLibrary &Library,
+                                             const ParseOptions &Options) {
+  FunctionDeclaration Declared;
+  ParseResult Result;
+  // A prototype is typed without its semicolon as often as with it.
+  std::string Text = Source.rtrim().str();
+  if (!llvm::StringRef(Text).ends_with(";") &&
+      !llvm::StringRef(Text).ends_with("}"))
+    Text += ";";
+  std::vector<Token> Tokens = Lexer(Text, Result.Problems).run();
+  if (Result.Problems.empty()) {
+    TypeLibrary Scratch(Library);
+    ParseOptions One = Options;
+    One.KeepGoing = false;
+    Parser(std::move(Tokens), Scratch, One, Result).run();
+    if (Result.Problems.empty()) {
+      if (Result.Prototypes.size() != 1)
+        Result.Problems.push_back(
+            {1, 1,
+             Result.Prototypes.empty()
+                 ? "this declares no function"
+                 : "this declares " + std::to_string(Result.Prototypes.size()) +
+                       " functions; declare one"});
+      else if (!Result.Types.empty())
+        Result.Problems.push_back(
+            {1, 1,
+             Library.find(Result.Types.front())
+                 ? "the declaration defines " + Result.Types.front() +
+                       " again; a function's declaration only uses types"
+                 : Result.Types.front() +
+                       " is not a local type; declare it among the local "
+                       "types first"});
+      else {
+        Declared.Name = Result.Prototypes.front();
+        Declared.Function = Scratch.prototypes().lookup(Declared.Name);
+        // A name C lets a declaration use before it is defined, such as
+        // `struct S *`, must still be one of the library's.
+        LocalType Signature;
+        Signature.Kind = TypeKind::Function;
+        Signature.Function = Declared.Function;
+        for (const std::string &Name : mentionedTypeNames(Signature))
+          if (!Library.find(Name)) {
+            Result.Problems.push_back(
+                {1, 1,
+                 Name + " is not a local type; declare it among the local "
+                        "types first"});
+            break;
+          }
+      }
+    }
+  }
+  Declared.Problems = std::move(Result.Problems);
+  if (!Declared.Problems.empty())
+    Declared.Function.reset();
+  return Declared;
 }
 
 } // namespace neverd::types

@@ -6,6 +6,8 @@
 #include "ChooserView.h"
 #include "Session.h"
 
+#include "neverd/support/IntegerLiterals.h"
+
 #include <QHash>
 #include <QJsonArray>
 #include <QPointer>
@@ -141,6 +143,8 @@ private:
                             std::optional<Address> from);
   void navigateHistory(bool forward);
   void synchronize(Address address, QObject *source);
+  /// The pseudocode and IR windows that are showing.
+  QVector<CodeView *> visibleCodeViews() const;
   void updateActions();
   void updateStatusBar();
   void updateTitle();
@@ -160,11 +164,16 @@ private:
   /// then about its debug information.
   void openAskingForSymbols(const QString &path, LoadOptions options);
   /// Open \p path once the user answered whether to load the PDB a PE
-  /// names or the DWARF of an ELF or Mach-O image.
+  /// names or the DWARF of an ELF or Mach-O image, and then, without either,
+  /// the linker MAP beside it.
   void openAskingForDebugFiles(const QString &path, LoadOptions options);
   /// Open \p path once the user answered whether to load the DWARF of the
-  /// ELF or Mach-O image, if it has any.
+  /// ELF or Mach-O image, if it has any, and without it the MAP.
   void openAskingForDwarf(const QString &path, LoadOptions options);
+  /// Open \p path once the user answered whether to load the linker MAP
+  /// beside it, if it has one: a PDB's or DWARF's names outrank a MAP's, so
+  /// it is asked about only for an image that loads without them.
+  void openAskingForMap(const QString &path, LoadOptions options);
   /// Show the workbench and start loading \p path.
   void openNow(const QString &path, const LoadOptions &options);
   void chooseLoader(const QString &path);
@@ -177,6 +186,21 @@ private:
   void rename();
   /// IDA's Edit function dialog for the function at \p entry.
   void editFunction(Address entry);
+  /// T: the operand under the cursor as a member of the local type the
+  /// user picks among those the code's accesses fit (TypePickerDialog).
+  void chooseStructOffset();
+  /// IDA's Y: the type of the parameter under a pseudocode cursor, else the
+  /// declaration of the current function.
+  void setType();
+  /// Hex-Rays' Convert to struct *: the parameter under the pseudocode
+  /// cursor made a pointer to the local type its accesses fit.
+  void convertToStruct();
+  /// Show the number under \p code's cursor in \p radix; without one, H's
+  /// toggle between hexadecimal and decimal, as in Hex-Rays.
+  void formatCodeNumber(CodeView *code, std::optional<LiteralRadix> radix);
+  /// The bases of the number under \p code's cursor, each with what it
+  /// would read, at the top of its context menu.
+  void addNumberActions(QMenu &menu, CodeView *code);
   /// The Functions window's context menu for the row at \p position.
   void functionsMenu(const QPoint &position);
   void comment();
@@ -207,6 +231,15 @@ private:
   void showCommandPalette();
   void exportCurrent(bool pseudocode);
   void loadPdb();
+  /// File, Load file, DWARF file: the DWARF of the open ELF or Mach-O image
+  /// from a separate file the user picks.
+  void loadDwarf();
+  /// File, Load file, MAP file: names from a linker MAP the user picks,
+  /// confirmed first when it describes another build.
+  void loadMap();
+  /// Load the MAP \p facts describe, as map_inspect read it, once the user
+  /// confirmed a MAP of another build; nothing when the session changed.
+  void confirmMap(const QJsonObject &facts, quint64 epoch);
   void runCommand(const QString &command, const QString &argument);
   void saveDesktop();
   void restoreDesktop();
@@ -266,6 +299,8 @@ private:
   bool searchDown_ = true;
   quint64 codeNavigationSerial_ = 0;
   bool codeHistoryNavigation_ = false;
+  /// Code windows and the disassembly follow each other's cursor.
+  bool synchronizeCode_ = true;
   bool hexActive_ = false;
   bool quitting_ = false;
   bool layoutInitialized_ = false;

@@ -89,8 +89,7 @@ def main():
         for detach in (0, 1, 2):
             execute(f'{order}-detach-{detach}', cases, detach)
             compared += len(cases)
-    for name, stop, limit in [('InstanceField', 'runtime_failure', 100000),
-                              ('VolatileField', 'runtime_failure', 100000),
+    for name, stop, limit in [('VolatileField', 'runtime_failure', 100000),
                               ('UnsupportedInitializer', 'unsupported_service', 100000),
                               ('EndlessInitializer', 'instruction_limit', 2000)]:
         execute(name, [(f'runtime/state/{name}', 0, 0, 0)], 0, stop, limit)

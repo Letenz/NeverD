@@ -46,6 +46,47 @@ std::vector<uint8_t> instructionBytes(GuestArchitecture ISA,
                                      ARM[N]);
   return Bytes;
 }
+TEST(MemoryLifecycle, UnmappedBackingRetainsCapacityAndIdentity) {
+  auto RAM = ram(PageSize * 2);
+  auto A = space(RAM), B = space(RAM);
+  const auto Generation = A->mappingGeneration();
+  auto View = llvm::cantFail(A->allocateBacking(PageSize * 2));
+  EXPECT_EQ(View.addressSpaceIdentity(), A->identity());
+  EXPECT_EQ(A->mappedBytes(), 0u);
+  EXPECT_EQ(A->mappingGeneration(), Generation);
+  std::vector<uint8_t> Bytes(PageSize * 2, 0xff);
+  ASSERT_EQ(llvm::toString(View.read(0, Bytes)), "");
+  EXPECT_EQ(Bytes, std::vector<uint8_t>(PageSize * 2));
+  auto Full = B->allocateBacking(PageSize);
+  ASSERT_FALSE(bool(Full));
+  auto Error = Full.takeError();
+  EXPECT_TRUE(Error.isA<GuestMemoryLimitError>());
+  llvm::consumeError(std::move(Error));
+  auto Invalid = A->allocateBacking(1);
+  ASSERT_FALSE(bool(Invalid));
+  llvm::consumeError(Invalid.takeError());
+  {
+    auto Slice = View.slices().front();
+    ASSERT_EQ(llvm::toString(
+                  B->mapRegion(Data, Slice.Region, 0, PageSize, Read | Write)),
+              "");
+  }
+  const uint8_t Value[] = {1, 2, 3, 4};
+  ASSERT_EQ(llvm::toString(View.write(0, Value)), "");
+  EXPECT_EQ(llvm::cantFail(B->readInteger(Data, 4)), 0x04030201u);
+  View = {};
+  A.reset();
+  EXPECT_EQ(RAM->allocatedBytes(), PageSize * 2);
+  ASSERT_EQ(llvm::toString(B->unmap(Data, PageSize)), "");
+  EXPECT_EQ(RAM->allocatedBytes(), 0u);
+  auto Reused = llvm::cantFail(B->allocateBacking(PageSize));
+  ASSERT_EQ(llvm::toString(
+                Reused.read(0, llvm::MutableArrayRef(Bytes).take_front(4))),
+            "");
+  EXPECT_EQ(std::vector<uint8_t>(Bytes.begin(), Bytes.begin() + 4),
+            std::vector<uint8_t>(4));
+}
+
 TEST(MemoryLifecycle, DistinctSpacesAndSharedRegionsHaveIndependentLifetimes) {
   auto RAM = ram();
   auto A = space(RAM), B = space(RAM);

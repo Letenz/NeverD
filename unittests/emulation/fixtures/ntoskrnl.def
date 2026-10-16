@@ -68,8 +68,10 @@ EXPORTS
   IoCancelFileOpen
   IofCallDriver
   MmMapLockedPagesSpecifyCache
+  MmMapLockedPages
   MmUnmapLockedPages
   MmProbeAndLockPages
+  MmProbeAndLockProcessPages
   MmUnlockPages
   IoAllocateMdl
   IoFreeMdl
@@ -78,8 +80,11 @@ EXPORTS
   ExAllocatePool2
   DbgPrint
   DbgPrintEx
+  vDbgPrintExWithPrefix
   MmGetSystemRoutineAddress
   MmIsAddressValid
+  MmGetPhysicalAddress
+  MmGetVirtualForPhysical
   KeRegisterBugCheckReasonCallback
   KeDeregisterBugCheckReasonCallback
   RtlCopyUnicodeString
@@ -95,9 +100,11 @@ EXPORTS
   ObReferenceObjectByPointer
   ObOpenObjectByPointer
   ObGetObjectType
+  ObGetFilterVersion
   PsLookupProcessByProcessId
   PsLookupThreadByThreadId
   PsGetThreadProcess
+  IoThreadToProcess
   PsIsThreadTerminating
   PsCreateSystemThread
   PsTerminateSystemThread
@@ -109,7 +116,16 @@ EXPORTS
   KeLeaveGuardedRegion
   IoGetCurrentProcess
   IoQueryFileInformation
+  ZwQueryInformationFile
+  ZwReadFile
+  ZwWriteFile
+  ZwSetInformationFile
+  ZwFlushBuffersFile
+  ZwDeviceIoControlFile
+  ZwFsControlFile
   IoGetRelatedDeviceObject
+  IoGetBaseFileSystemDeviceObject
+  IoGetDeviceObjectPointer
   KeStackAttachProcess
   KeUnstackDetachProcess
   RtlInitAnsiString
@@ -122,6 +138,7 @@ EXPORTS
   RtlUnicodeStringToInteger
   PsGetCurrentProcessId
   ExGetPreviousMode
+  PsGetCurrentThreadPreviousMode
   PsGetProcessId
   PsGetCurrentProcess
   PsGetCurrentThread
@@ -131,6 +148,12 @@ EXPORTS
   RtlAnsiStringToUnicodeString
   RtlUnicodeStringToAnsiString
   RtlFreeUnicodeString
+  RtlHashUnicodeString
+  RtlUpcaseUnicodeString
+  RtlUpcaseUnicodeChar
+  toupper
+  towupper
+  RtlTimeToSecondsSince1980
   RtlFreeAnsiString
   MmGetPhysicalMemoryRanges
   RtlInitUnicodeStringEx
@@ -255,3 +278,16 @@ ExSetResourceOwnerPointerEx
   ZwOpenSymbolicLinkObject
   ZwQuerySymbolicLinkObject
   ZwQueryObject
+
+  isdigit
+  _strupr
+  _wcslwr
+  _wcsupr
+  strcpy_s
+  strncpy_s
+  wcscat_s
+  wcsncpy_s
+  memcpy_s
+  memmove_s
+  RtlImageNtHeader
+  RtlPcToFileHeader

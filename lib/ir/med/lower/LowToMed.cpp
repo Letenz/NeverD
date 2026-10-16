@@ -30,6 +30,7 @@
 #include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/ir/med/X86RegistrationCall.h"
 #include "neverd/ir/med/X86RegistrationEntry.h"
+#include "neverd/ir/med/X86RegistrationSEHRegisters.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -273,10 +274,13 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
       LOp.NumInputs == 0)
     return;
   // The callee's address, or the import slot a register the call goes
-  // through was loaded from (RegisterCallSlot).
+  // through was loaded from (RegisterCallSlot).  A call through a
+  // function-pointer variable reads the arguments of the routine the
+  // variable starts at (CallArgumentsFrom); nothing else follows from it.
   const va_t Key =
       LOp.Inputs[0].isConst() ? LOp.Inputs[0].Offset : RegisterCallSlot;
-  if (!Key)
+  const va_t ArgumentsKey = CallArgumentsFrom ? CallArgumentsFrom : Key;
+  if (!ArgumentsKey)
     return;
   // Publish the register arguments the callee reads as uses, so SSA sees a
   // pass-through argument and the call site knows its arity.  The calling
@@ -299,7 +303,8 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   // arguments a prototyped import reads (CallEntryStackArgs).
   if (Convention && Convention->StackArgumentSummary &&
       !Convention->RegisterArgumentsFromCalleeSummary && CallEntryStackArgs)
-    if (auto S = CallEntryStackArgs->find(Key); S != CallEntryStackArgs->end())
+    if (auto S = CallEntryStackArgs->find(ArgumentsKey);
+        S != CallEntryStackArgs->end())
       MOp.CalleeStackArgs = static_cast<int8_t>(std::min(
           S->second, static_cast<int>(std::numeric_limits<int8_t>::max())));
   const llvm::ArrayRef<uint64_t> ArgRegs = TRI.integerParamRegs(TargetFormat);
@@ -325,7 +330,7 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
     MOp.CalleeRegisterArgs = Count;
   } else if (Convention && Convention->RegisterArgumentsFromCalleeSummary &&
              CallEntryReadGPRs && MOp.NumInputs == 1)
-    if (auto R = CallEntryReadGPRs->find(Key);
+    if (auto R = CallEntryReadGPRs->find(ArgumentsKey);
         R != CallEntryReadGPRs->end() &&
         !(Convention->SummaryListsNoParameters &&
           Convention->SummaryListsNoParameters(R->second))) {
@@ -375,7 +380,7 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
       // passes: the argument registers set on every path to the call.  An
       // unread fixed slot below them carries zero as above.
       if (CallVariadicFrom && Convention->VariadicFromSummary)
-        if (auto V = CallVariadicFrom->find(Key);
+        if (auto V = CallVariadicFrom->find(ArgumentsKey);
             V != CallVariadicFrom->end()) {
           int8_t Passed = Count;
           for (int8_t I = static_cast<int8_t>(V->second); I < Slots; ++I)
@@ -406,12 +411,12 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
         MOp.CalleeVectorArgWidths = Widths;
       }
       if (CallEntryStackArgs && Convention->StackArgumentSummary)
-        if (auto S = CallEntryStackArgs->find(Key);
+        if (auto S = CallEntryStackArgs->find(ArgumentsKey);
             S != CallEntryStackArgs->end())
           MOp.CalleeStackArgs = static_cast<int8_t>(std::min(
               S->second, static_cast<int>(std::numeric_limits<int8_t>::max())));
     }
-  if (!CallMayWriteGPRs)
+  if (!CallMayWriteGPRs || !Key)
     return;
   auto It = CallMayWriteGPRs->find(Key);
   if (It == CallMayWriteGPRs->end())
@@ -828,6 +833,17 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
                 loadedCallSlot(Low, LB, LowOpIndex, LOp.Inputs[0]);
             Slot && !importCalleeName(*Image, *Slot).empty())
           RegisterCallSlot = *Slot;
+      // An import's slot names the import; any other function-pointer
+      // variable gives the call only the arguments of what it starts at.
+      CallArgumentsFrom = 0;
+      if (LOp.Opcode == NdOp::INDIR_CALL && LOp.NumInputs >= 1 &&
+          !RegisterCallSlot && Image && CallArgumentSources &&
+          !CallArgumentSources->empty() &&
+          !(LOp.Inputs[0].isConst() &&
+            !importCalleeName(*Image, LOp.Inputs[0].Offset).empty()))
+        if (const std::optional<va_t> Source = pointerVariableArgumentsFrom(
+                CallArgumentSources, Low.Blocks, LB, LowOpIndex, LOp))
+          CallArgumentsFrom = *Source;
       if (!bindFormattedCall(MB, MOp, LOp))
         applyCallRegisterEffect(MOp, LOp);
       if (TheArch == Arch::X86 && Low.RegistrationStates &&
@@ -970,6 +986,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     bindSourceCalls(Func, Low, Fmt);
     modelKnownWideCallReturns(Func);
     debugVerifyMedFunc(Func, "modelKnownWideCallReturns");
+
+    modelSEHFinallyRegisters(Func);
+    debugVerifyMedFunc(Func, "modelSEHFinallyRegisters");
 
     fixupSubRegisters(Func);
     debugVerifyMedFunc(Func, "fixupSubRegisters");
@@ -1133,6 +1152,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     mergeLoopCarriedVectorReads(Func);
     debugVerifyMedFunc(Func, "mergeLoopCarriedVectorReads");
 
+    x86_registration::discardUnusedSEHCallInputs(Func);
     detectCc(Func, TheArch, Fmt);
     completeX86RegistrationEntryParameters(Func);
     debugVerifyMedFunc(Func, "detectCc");

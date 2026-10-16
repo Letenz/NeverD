@@ -59,13 +59,21 @@ add_neverd_component_library(NeverDBackendLLVM
   eh/MedLLVMNativeSEH.cpp
   X86/MedLLVMRegistrationIncoming.cpp
   X86/MedLLVMRegistrationSEHProof.cpp
+  X86/MedLLVMRegistrationSEHFrameStores.cpp
+  X86/MedLLVMRegistrationSEHScalarSpills.cpp
   X86/MedLLVMRegistrationSEHDynamicScope.cpp
   X86/MedLLVMRegistrationSEHJump.cpp
+  X86/RegistrationLocalUnwindBridge.cpp
+  X86/MedLLVMRegistrationLocalUnwindRuntime.cpp
+  X86/MedLLVMRegistrationSEHLocalUnwind.cpp
+  X86/MedLLVMRegistrationSEHStackRestore.cpp
+  X86/MedLLVMRegistrationSEHParentExit.cpp
   X86/MedLLVMRegistrationSEHJumpState.cpp
   X86/MedLLVMRegistrationSEHBoundCall.cpp
   X86/MedLLVMRegistrationSEHRuntime.cpp
   X86/MedLLVMRegistrationSEHRuntimeCallback.cpp
   X86/MedLLVMRegistrationSEHFinally.cpp
+  X86/MedLLVMRegistrationSEHRegisters.cpp
   X86/MedLLVMRegistrationSEHState.cpp
   X86/MedLLVMRegistrationSEHStateDispatch.cpp
   X86/MedLLVMRegistrationSEHJumpCallback.cpp
@@ -76,6 +84,7 @@ add_neverd_component_library(NeverDBackendLLVM
   X86/MedLLVMNativeRegistrationCxx.cpp
   X86/MedLLVMRegistrationHandler.cpp
   X86/MedLLVMRegistrationCxxCatch.cpp
+  X86/MedLLVMRegistrationCopyBlocks.cpp
   X86/MedLLVMRegistrationCxxBlocks.cpp
   X86/MedLLVMRegistrationCxxCall.cpp
   X86/MedLLVMRegistrationCxxObjectCall.cpp

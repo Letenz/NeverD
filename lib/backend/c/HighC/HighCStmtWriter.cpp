@@ -34,6 +34,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <stdexcept>
 
 namespace neverd {
 
@@ -270,6 +271,12 @@ void writeCxxCatchType(llvm::raw_ostream &OS, const HighEHClause &Clause) {
   }
   if ((Clause.Adjectives & kCxxCatchReference) != 0)
     OS << " &";
+}
+
+/// Whether \p E is the integer constant zero, which C converts to the null
+/// pointer of any type.
+bool isZeroConstant(const HighExpr &E) {
+  return E.Kind == ExprKind::Const && E.ConstVal == 0;
 }
 
 } // namespace
@@ -595,7 +602,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       // result needs an explicit output model, rather than an invented value.
       if (!CurrentFunc ||
           (Stmt.Dst->Kind != ExprKind::Var && Stmt.Dst->Kind != ExprKind::Phi))
-        llvm::report_fatal_error("HighC cannot render an SVC result");
+        throw std::invalid_argument("HighC cannot render an SVC result");
       bool ResultUsed = false;
       const MedVar Result = Stmt.Dst->Var;
       std::function<void(const HighExpr &)> FindUse = [&](const HighExpr &E) {
@@ -617,7 +624,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         });
       });
       if (ResultUsed)
-        llvm::report_fatal_error("HighC cannot render a live SVC result");
+        throw std::invalid_argument("HighC cannot render a live SVC result");
       emitIndent(Indent);
       OS << statementCallText(*Stmt.Val) << ";\n";
       break;
@@ -749,12 +756,21 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           }
         }
       }
-      std::string Value =
-          storedValueText(*Stmt.Val, Stmt.Dst->Type, Stmt.Dst->MemoryOrdering);
-      if (Stmt.Dst->Type && Stmt.Val->Type &&
-          Stmt.Dst->Type->Kind == NdTypeKind::Int &&
-          Stmt.Val->Type->Kind == NdTypeKind::Ptr)
-        Value = "(" + typeToC(Stmt.Dst->Type) + ")(uintptr_t)(" + Value + ")";
+      auto ValueText = [&] {
+        std::string Value = storedValueText(*Stmt.Val, Stmt.Dst->Type,
+                                            Stmt.Dst->MemoryOrdering);
+        if (Stmt.Dst->Type && Stmt.Val->Type &&
+            Stmt.Dst->Type->Kind == NdTypeKind::Int &&
+            Stmt.Val->Type->Kind == NdTypeKind::Ptr)
+          Value = "(" + typeToC(Stmt.Dst->Type) + ")(uintptr_t)(" + Value + ")";
+        return Value;
+      };
+      if (Stmt.Dst->MemoryOrdering == NdMemoryOrdering::None &&
+          Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          writeFrameRecordStore(*Stmt.Dst->Operands[0], Stmt.Dst->Type,
+                                *Stmt.Val, Indent, ValueText))
+        break;
+      std::string Value = ValueText();
       bool ExactImageBytes = false;
       if (Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default)
         if (auto VA = constAddress(*Stmt.Dst->Operands[0]))
@@ -990,6 +1006,52 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                                  Stmt.StoreVal->Op == NdOp::INT_SEXT);
             Value = "(" + typeToC(MemberType) + ")(" +
                     (Signed ? "intptr_t" : "uintptr_t") + ")(" + Value + ")";
+          } else if (!Overlayed && MemberType && StoredType &&
+                     MemberType->Kind != NdTypeKind::Float &&
+                     StoredType->Kind != NdTypeKind::Float &&
+                     (MemberType->Kind == NdTypeKind::Ptr ||
+                      StoredType->Kind == NdTypeKind::Ptr) &&
+                     !isZeroConstant(*Stmt.StoreVal) &&
+                     memberOfDefinedRecord(*Stmt.StoreAddr)) {
+            // A member the unit's definitions declare takes their type,
+            // which C converts the stored bytes' type to only by a cast:
+            // an address to a pointer of another type, or an integer.  An
+            // address the code holds as an integer is cast as the address.
+            // C converts an untyped pointer to an object pointer itself.
+            const auto untyped = [&](const TypeRef &Type) {
+              return Type && Type->Kind == NdTypeKind::Ptr &&
+                     (!Type->Pointee ||
+                      Type->Pointee->Kind == NdTypeKind::Void) &&
+                     Type->Size == MemberType->Size;
+            };
+            const bool ObjectMember =
+                MemberType->Kind == NdTypeKind::Ptr &&
+                !(MemberType->Pointee &&
+                  MemberType->Pointee->Kind == NdTypeKind::Func);
+            bool Untyped = untyped(StoredType);
+            if (MemberType->Kind == NdTypeKind::Ptr)
+              if (const HighExpr *Address =
+                      peelIntegerViewOps(Stmt.StoreVal.get())) {
+                if (Address != Stmt.StoreVal.get() && Address->Type &&
+                    Address->Type->Kind == NdTypeKind::Ptr &&
+                    Address->Type->Size == MemberType->Size) {
+                  Value = exprStr(*Address);
+                  Untyped = untyped(Address->Type);
+                }
+                // A parameter the signature types as a pointer, stored
+                // whole, is its address.
+                else if ((Address->Kind == ExprKind::Var ||
+                          Address->Kind == ExprKind::Phi) &&
+                         Address->Var.Kind == MedVar::Param)
+                  if (const TypeRef Declared = debugParamType(Address->Var);
+                      Declared && Declared->Kind == NdTypeKind::Ptr &&
+                      Declared->Size == MemberType->Size) {
+                    Value = copyForwardName(varName(Address->Var));
+                    Untyped = untyped(Declared);
+                  }
+              }
+            if (!(ObjectMember && Untyped))
+              Value = "(__typeof__(" + *Member + "))(" + Value + ")";
           }
           OS << Value;
         }
@@ -1059,18 +1121,15 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       }
     }
     if (Stmt.MemoryOrdering == NdMemoryOrdering::None &&
-        Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
-      if (auto Member =
-              frameRecordMember(*Stmt.StoreAddr, Stmt.StoreVal->Type)) {
-        emitIndent(Indent);
-        OS << *Member << " = "
-           << (isUnknownCallOperand(Stmt.StoreVal.get())
-                   ? "0"
-                   : storedValueText(*Stmt.StoreVal, Stmt.StoreVal->Type,
-                                     Stmt.MemoryOrdering))
-           << ";\n";
-        break;
-      }
+        Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        writeFrameRecordStore(
+            *Stmt.StoreAddr, Stmt.StoreVal->Type, *Stmt.StoreVal, Indent, [&] {
+              return isUnknownCallOperand(Stmt.StoreVal.get())
+                         ? std::string("0")
+                         : storedValueText(*Stmt.StoreVal, Stmt.StoreVal->Type,
+                                           Stmt.MemoryOrdering);
+            }))
+      break;
     bool ExactImageBytes = false;
     if (Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
       if (auto VA = constAddress(*Stmt.StoreAddr))
@@ -2920,6 +2979,31 @@ bool HighCWriter::isInplaceAddStore(const HighStmt &S, int64_t &Delta) const {
       return false;
   const HighExpr *Base = asIncrementBase(*S.StoreVal, Delta);
   return Base && incrementBaseMatchesAddr(*Base, *S.StoreAddr);
+}
+
+bool HighCWriter::writeFrameRecordStore(
+    const HighExpr &Addr, const TypeRef &Ty, const HighExpr &Value, int Indent,
+    llvm::function_ref<std::string()> ValueText) {
+  if (auto Member = frameRecordMember(Addr, Ty)) {
+    emitIndent(Indent);
+    OS << *Member << " = " << frameRecordStored(Ty, ValueText()) << ";\n";
+    return true;
+  }
+  // A 16-byte integer at bytes a member holds, which no scalar of that width
+  // may name at their alignment: one copy of its bytes from a fresh carrier
+  // of its exact width, as writeMemoryStore makes.
+  if (!Ty || Ty->Kind != NdTypeKind::Int || Ty->Size != 16)
+    return false;
+  const auto Bytes = frameRecordBytes(Addr, Ty->Size);
+  if (!Bytes)
+    return false;
+  emitIndent(Indent);
+  if (Value.Kind == ExprKind::Const && Value.ConstVal == 0)
+    OS << "__builtin_memset(" << *Bytes << ", 0, 16);\n";
+  else
+    OS << "__builtin_memcpy(" << *Bytes << ", &(" << memoryTypeName(Ty) << "){"
+       << ValueText() << "}, 16);\n";
+  return true;
 }
 
 std::string HighCWriter::formatInplaceAdd(const TypeRef &Ty,

@@ -111,93 +111,95 @@ struct NdType {
   /// and no display members, and authorize no spelling or extents.
   std::vector<NdScalarLeaf> ScalarLeaves;
 
-  /// Unique display field at exactly \p Offset.  Ambiguous or unnamed
-  /// slots return nullopt; do not guess a member.  A nonzero
-  /// \p AccessSize keeps the unique overlay whose type width matches
-  /// (CPtred `_m_nRef` vs `_m_pNext` at +8). Same-width overlays stay raw.
-  std::optional<std::string> displayFieldNameAt(uint64_t Offset,
-                                                uint16_t AccessSize = 0) const {
+  /// The index of the unique display field at exactly \p Offset.
+  /// Ambiguous or unnamed slots return nullopt; do not guess a member.  A
+  /// nonzero \p AccessSize keeps the unique overlay whose type width
+  /// matches (CPtred `_m_nRef` vs `_m_pNext` at +8), a scalar's over a
+  /// record's of that width, which no scalar access reads whole
+  /// (`QuadPart` over the `u` of a LARGE_INTEGER).  Same-width scalar
+  /// overlays stay raw.
+  std::optional<size_t> displayFieldIndexAt(uint64_t Offset,
+                                            uint16_t AccessSize = 0) const {
     if (Kind != NdTypeKind::Struct ||
         FieldDisplayNames.size() != FieldDisplayOffsets.size())
       return std::nullopt;
     const bool FilterSize = AccessSize != 0 && FieldDisplayTypes.size() ==
                                                    FieldDisplayOffsets.size();
-    const std::string *Found = nullptr;
+    std::optional<size_t> Found;
+    bool FoundRecord = false;
     for (size_t I = 0; I < FieldDisplayOffsets.size(); ++I) {
       if (FieldDisplayOffsets[I] != Offset || FieldDisplayNames[I].empty())
         continue;
+      bool Record = false;
       if (FilterSize) {
         const auto &Ty = FieldDisplayTypes[I];
         if (Ty && Ty->Size != 0 && Ty->Size != AccessSize)
           continue;
+        Record = Ty && Ty->Kind == NdTypeKind::Struct && !Ty->IsEnum;
       }
-      if (Found && *Found != FieldDisplayNames[I])
-        return std::nullopt;
-      Found = &FieldDisplayNames[I];
+      if (Found && FieldDisplayNames[*Found] != FieldDisplayNames[I]) {
+        if (FoundRecord == Record)
+          return std::nullopt;
+        if (FoundRecord) {
+          Found = I;
+          FoundRecord = false;
+        }
+        continue;
+      }
+      Found = I;
+      FoundRecord = Record;
     }
-    if (!Found)
-      return std::nullopt;
-    return *Found;
+    return Found;
   }
 
+  /// The name of the unique display field at exactly \p Offset
+  /// (displayFieldIndexAt).
+  std::optional<std::string> displayFieldNameAt(uint64_t Offset,
+                                                uint16_t AccessSize = 0) const {
+    if (const std::optional<size_t> Index =
+            displayFieldIndexAt(Offset, AccessSize))
+      return FieldDisplayNames[*Index];
+    return std::nullopt;
+  }
+
+  /// \p ArrayElements false keeps an array a single member, as a writer that
+  /// names no elements reads it.
   std::shared_ptr<NdType> displayFieldTypeAt(uint64_t Offset,
-                                             uint16_t AccessSize = 0) const {
+                                             uint16_t AccessSize = 0,
+                                             bool ArrayElements = true) const {
     if (Kind != NdTypeKind::Struct ||
         FieldDisplayNames.size() != FieldDisplayOffsets.size() ||
         FieldDisplayTypes.size() != FieldDisplayOffsets.size())
       return nullptr;
-    std::shared_ptr<NdType> ExactTy;
-    const std::string *ExactName = nullptr;
-    for (size_t I = 0; I < FieldDisplayOffsets.size(); ++I) {
-      if (FieldDisplayOffsets[I] != Offset || FieldDisplayNames[I].empty())
-        continue;
-      if (AccessSize != 0) {
-        const auto &Ty = FieldDisplayTypes[I];
-        if (Ty && Ty->Size != 0 && Ty->Size != AccessSize)
-          continue;
-      }
-      if (ExactName && *ExactName != FieldDisplayNames[I])
-        return nullptr;
-      ExactName = &FieldDisplayNames[I];
-      ExactTy = FieldDisplayTypes[I];
-    }
-    if (ExactName) {
+    if (const std::optional<size_t> Exact =
+            displayFieldIndexAt(Offset, AccessSize)) {
+      const std::shared_ptr<NdType> &ExactTy = FieldDisplayTypes[*Exact];
       if (ExactTy && ExactTy->Kind == NdTypeKind::Struct && !ExactTy->IsEnum)
-        if (auto Inner = ExactTy->displayFieldTypeAt(0, AccessSize))
+        if (auto Inner =
+                ExactTy->displayFieldTypeAt(0, AccessSize, ArrayElements))
           return Inner;
       return ExactTy;
     }
-    size_t Best = static_cast<size_t>(-1);
-    for (size_t I = 0; I < FieldDisplayOffsets.size(); ++I) {
-      if (FieldDisplayNames[I].empty() || !FieldDisplayTypes[I] ||
-          FieldDisplayTypes[I]->Kind != NdTypeKind::Struct ||
-          FieldDisplayOffsets[I] > Offset)
-        continue;
-      const uint64_t Rel =
-          Offset - static_cast<uint64_t>(FieldDisplayOffsets[I]);
-      if (Rel != 0 && (FieldDisplayTypes[I]->Size == 0 ||
-                       Rel >= FieldDisplayTypes[I]->Size))
-        continue;
-      if (Best == static_cast<size_t>(-1) ||
-          FieldDisplayOffsets[I] > FieldDisplayOffsets[Best]) {
-        Best = I;
-        continue;
-      }
-      if (FieldDisplayOffsets[I] == FieldDisplayOffsets[Best] &&
-          FieldDisplayNames[I] != FieldDisplayNames[Best])
-        return nullptr;
-    }
-    if (Best == static_cast<size_t>(-1))
+    const std::optional<size_t> Best =
+        displayContainerAt(Offset, ArrayElements);
+    if (!Best)
       return nullptr;
+    const std::shared_ptr<NdType> &Container = FieldDisplayTypes[*Best];
     const uint64_t Rel =
-        Offset - static_cast<uint64_t>(FieldDisplayOffsets[Best]);
+        Offset - static_cast<uint64_t>(FieldDisplayOffsets[*Best]);
+    if (Container->Kind == NdTypeKind::Array)
+      return displayElementTypeAt(*Container, Rel, AccessSize);
     if (Rel == 0) {
       if (auto Inner =
-              FieldDisplayTypes[Best]->displayFieldTypeAt(0, AccessSize))
+              Container->displayFieldTypeAt(0, AccessSize, ArrayElements))
         return Inner;
-      return FieldDisplayTypes[Best];
+      // The record itself only where the access reads it whole.
+      if (AccessSize != 0 && Container->Size != 0 &&
+          Container->Size != AccessSize)
+        return nullptr;
+      return Container;
     }
-    return FieldDisplayTypes[Best]->displayFieldTypeAt(Rel, AccessSize);
+    return Container->displayFieldTypeAt(Rel, AccessSize, ArrayElements);
   }
 
   /// Unique display path at \p Offset, including nested record steps
@@ -206,7 +208,8 @@ struct NdType {
   /// pick one overlay at a shared offset; same-width overlays stay raw.
   std::optional<std::string>
   displayFieldPathAt(uint64_t Offset, uint16_t AccessSize = 0,
-                     bool EnterNestedAtZero = true) const {
+                     bool EnterNestedAtZero = true,
+                     bool ArrayElements = true) const {
     if (auto Exact = displayFieldNameAt(Offset, AccessSize)) {
       if (EnterNestedAtZero &&
           FieldDisplayTypes.size() == FieldDisplayOffsets.size()) {
@@ -217,53 +220,145 @@ struct NdType {
               FieldDisplayTypes[I]->IsEnum)
             continue;
           if (auto Inner = FieldDisplayTypes[I]->displayFieldPathAt(
-                  0, AccessSize, EnterNestedAtZero))
+                  0, AccessSize, EnterNestedAtZero, ArrayElements))
             return *Exact + "." + *Inner;
         }
       }
       return Exact;
     }
+    const std::optional<size_t> Best =
+        displayContainerAt(Offset, ArrayElements);
+    if (!Best)
+      return std::nullopt;
+    const std::shared_ptr<NdType> &Container = FieldDisplayTypes[*Best];
+    const std::string &Name = FieldDisplayNames[*Best];
+    const uint64_t Rel =
+        Offset - static_cast<uint64_t>(FieldDisplayOffsets[*Best]);
+    if (Container->Kind == NdTypeKind::Array)
+      return displayElementPathAt(Name, *Container, Rel, AccessSize,
+                                  EnterNestedAtZero);
+    if (Rel == 0) {
+      if (EnterNestedAtZero) {
+        if (auto Inner = Container->displayFieldPathAt(
+                0, AccessSize, EnterNestedAtZero, ArrayElements))
+          return Name + "." + *Inner;
+      }
+      // The record itself only where the access reads it whole: a byte of a
+      // header is no header.
+      if (AccessSize != 0 && Container->Size != 0 &&
+          Container->Size != AccessSize)
+        return std::nullopt;
+      return Name;
+    }
+    auto Inner = Container->displayFieldPathAt(
+        Rel, AccessSize, EnterNestedAtZero, ArrayElements);
+    if (!Inner)
+      return std::nullopt;
+    return Name + "." + *Inner;
+  }
+
+  /// The display field of a record type that holds the byte at \p Offset
+  /// with others: the record or array member that starts last at or before
+  /// it.  None where none holds it, or two such members start together
+  /// under different names, as a union's alternatives do.
+  std::optional<size_t> displayContainerAt(uint64_t Offset,
+                                           bool ArrayElements = true) const {
     if (Kind != NdTypeKind::Struct ||
         FieldDisplayNames.size() != FieldDisplayOffsets.size() ||
         FieldDisplayTypes.size() != FieldDisplayOffsets.size())
       return std::nullopt;
-    size_t Best = static_cast<size_t>(-1);
+    std::optional<size_t> Best;
     for (size_t I = 0; I < FieldDisplayOffsets.size(); ++I) {
-      if (FieldDisplayNames[I].empty() || !FieldDisplayTypes[I] ||
-          FieldDisplayTypes[I]->Kind != NdTypeKind::Struct ||
+      const auto &Ty = FieldDisplayTypes[I];
+      if (FieldDisplayNames[I].empty() || !Ty ||
+          (Ty->Kind != NdTypeKind::Struct &&
+           (!ArrayElements || Ty->Kind != NdTypeKind::Array || !Ty->ElemType ||
+            Ty->ElemType->Size == 0 || Ty->Size == 0)) ||
           FieldDisplayOffsets[I] > Offset)
         continue;
       const uint64_t Rel =
           Offset - static_cast<uint64_t>(FieldDisplayOffsets[I]);
-      if (Rel != 0 && (FieldDisplayTypes[I]->Size == 0 ||
-                       Rel >= FieldDisplayTypes[I]->Size))
+      if (Rel != 0 && (Ty->Size == 0 || Rel >= Ty->Size))
         continue;
-      if (Best == static_cast<size_t>(-1) ||
-          FieldDisplayOffsets[I] > FieldDisplayOffsets[Best]) {
+      if (!Best || FieldDisplayOffsets[I] > FieldDisplayOffsets[*Best]) {
         Best = I;
         continue;
       }
-      if (FieldDisplayOffsets[I] == FieldDisplayOffsets[Best] &&
-          FieldDisplayNames[I] != FieldDisplayNames[Best])
-        return std::nullopt;
-    }
-    if (Best == static_cast<size_t>(-1))
-      return std::nullopt;
-    const uint64_t Rel =
-        Offset - static_cast<uint64_t>(FieldDisplayOffsets[Best]);
-    if (Rel == 0) {
-      if (EnterNestedAtZero) {
-        if (auto Inner = FieldDisplayTypes[Best]->displayFieldPathAt(
-                0, AccessSize, EnterNestedAtZero))
-          return FieldDisplayNames[Best] + "." + *Inner;
+      if (FieldDisplayOffsets[I] == FieldDisplayOffsets[*Best] &&
+          FieldDisplayNames[I] != FieldDisplayNames[*Best]) {
+        // A record alternative names its bytes as before arrays held
+        // elements; an array overlaying it gives way.
+        const bool BestArray =
+            FieldDisplayTypes[*Best]->Kind == NdTypeKind::Array;
+        const bool Array = Ty->Kind == NdTypeKind::Array;
+        if (BestArray && !Array)
+          Best = I;
+        else if (BestArray == Array)
+          return std::nullopt;
       }
-      return FieldDisplayNames[Best];
     }
-    auto Inner = FieldDisplayTypes[Best]->displayFieldPathAt(Rel, AccessSize,
-                                                             EnterNestedAtZero);
-    if (!Inner)
+    return Best;
+  }
+
+  /// The element of the array \p Array, named \p Name, that holds the
+  /// \p AccessSize bytes \p Rel bytes into it: `Name[i]` where the access
+  /// reads the element whole or takes an address in the array, or a path
+  /// into a record or array element (`Name[i].x`, `Name[i][j]`).  None
+  /// where no element holds the bytes whole.
+  static std::optional<std::string>
+  displayElementPathAt(const std::string &Name, const NdType &Array,
+                       uint64_t Rel, uint16_t AccessSize,
+                       bool EnterNestedAtZero) {
+    const std::shared_ptr<NdType> &Elem = Array.ElemType;
+    if (!Elem || Elem->Size == 0 || Rel >= Array.Size)
       return std::nullopt;
-    return FieldDisplayNames[Best] + "." + *Inner;
+    const std::string Element =
+        Name + "[" + std::to_string(Rel / Elem->Size) + "]";
+    const uint64_t Inner = Rel % Elem->Size;
+    const bool Record = Elem->Kind == NdTypeKind::Struct && !Elem->IsEnum;
+    if (Inner == 0) {
+      if (Record && EnterNestedAtZero)
+        if (auto Member =
+                Elem->displayFieldPathAt(0, AccessSize, EnterNestedAtZero))
+          return Element + "." + *Member;
+      if (AccessSize == 0 || AccessSize == Elem->Size)
+        return Element;
+    }
+    if (Record) {
+      if (Inner == 0)
+        return std::nullopt;
+      auto Member =
+          Elem->displayFieldPathAt(Inner, AccessSize, EnterNestedAtZero);
+      if (!Member)
+        return std::nullopt;
+      return Element + "." + *Member;
+    }
+    if (Elem->Kind == NdTypeKind::Array)
+      return displayElementPathAt(Element, *Elem, Inner, AccessSize,
+                                  EnterNestedAtZero);
+    return std::nullopt;
+  }
+
+  /// The type of what displayElementPathAt names.
+  static std::shared_ptr<NdType>
+  displayElementTypeAt(const NdType &Array, uint64_t Rel, uint16_t AccessSize) {
+    const std::shared_ptr<NdType> &Elem = Array.ElemType;
+    if (!Elem || Elem->Size == 0 || Rel >= Array.Size)
+      return nullptr;
+    const uint64_t Inner = Rel % Elem->Size;
+    const bool Record = Elem->Kind == NdTypeKind::Struct && !Elem->IsEnum;
+    if (Inner == 0) {
+      if (Record)
+        if (auto Member = Elem->displayFieldTypeAt(0, AccessSize))
+          return Member;
+      if (AccessSize == 0 || AccessSize == Elem->Size)
+        return Elem;
+    }
+    if (Record)
+      return Inner == 0 ? nullptr : Elem->displayFieldTypeAt(Inner, AccessSize);
+    if (Elem->Kind == NdTypeKind::Array)
+      return displayElementTypeAt(*Elem, Inner, AccessSize);
+    return nullptr;
   }
 
   NdType() = default;

@@ -7,6 +7,8 @@
 /// \file
 /// Bind checked nonlocal jump lifetimes to their surviving MedIR calls.
 
+#include "RegistrationSEHJumpPrivate.h"
+
 #include "neverd/Limits.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/X86RegistrationSEHBoundCall.h"
@@ -24,15 +26,17 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
   if (!Function.RegistrationStates || Function.SkippedSSA)
     return std::nullopt;
   const auto &States = *Function.RegistrationStates;
-  const auto Bound = getX86RegistrationSEHBoundCalls(Function);
-  if (!Bound)
-    return std::nullopt;
   if (!States.SEHJumpCapturesComplete || !States.SEHJumpResumptionsComplete ||
       States.HasSEHJumpCaptures != !States.SEHJumpCaptures.empty())
     return std::nullopt;
   std::map<va_t, X86RegistrationSEHJumpCall> Result;
   if (States.SEHJumpCaptures.empty() && States.SEHJumpResumptions.empty())
     return Result;
+  // An empty jump protocol needs no callee ABI binding. Parent-exit and
+  // finally-register proofs also run before SSA resolves unrelated imports.
+  const auto Bound = getX86RegistrationSEHBoundCalls(Function);
+  if (!Bound)
+    return std::nullopt;
   if (!States.Complete || !States.CallbackStatesComplete ||
       !States.RegistrationLifetimeComplete || !Function.ExceptionMetadata ||
       !Function.ExceptionMetadata->Registration)
@@ -138,7 +142,8 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
     const auto Capture = Captures.find(Resume.CaptureCall);
     if (++Work > limits::kMaxRegistrationEHStateWork || !Call ||
         Capture == Captures.end() || (Call->Capture && !Call->Resume) ||
-        (Resume.ResumedLevels.empty() && Resume.SelectedScopes.empty()) ||
+        (Resume.ResumedLevels.empty() && Resume.SelectedScopes.empty() &&
+         Resume.Replacements.empty()) ||
         Resume.TargetVA != Capture->second->EndAddress ||
         Resume.BufferOffset != Capture->second->BufferOffset ||
         Resume.StackOffset != Capture->second->StackOffset)
@@ -250,12 +255,14 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
       if (Previous.OrdinaryCall == Resume.OrdinaryCall &&
           (Previous.ResumedLevels != Resume.ResumedLevels ||
            Previous.StateRestores != Resume.StateRestores ||
-           Previous.SelectedScopes != Resume.SelectedScopes))
+           Previous.SelectedScopes != Resume.SelectedScopes ||
+           Previous.Replacements != Resume.Replacements))
         return std::nullopt;
       Previous.OrdinaryCall = Resume.OrdinaryCall;
       Previous.ResumedLevels = Resume.ResumedLevels;
       Previous.StateRestores = Resume.StateRestores;
       Previous.SelectedScopes = Resume.SelectedScopes;
+      Previous.Replacements = Resume.Replacements;
       if (Previous != Resume)
         return std::nullopt;
       continue;
@@ -263,6 +270,8 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
     Call->Capture = Capture->second;
     Call->Resume = &Resume;
   }
+  if (!hasCompleteSEHJumpReplacements(States, Work))
+    return std::nullopt;
   std::erase_if(Result, [](const auto &Item) { return !Item.second.Capture; });
   for (auto &[Address, Call] : Result) {
     const auto Level = ResumeLevels.find(Call.Capture->Address);

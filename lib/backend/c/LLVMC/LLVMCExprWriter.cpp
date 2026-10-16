@@ -25,6 +25,7 @@
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/StringLiteralSymbols.h"
+#include "neverd/support/IntegerLiterals.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -67,8 +68,20 @@ std::string integerConstantText(const llvm::APInt &Bits) {
   // The positive magnitude of INT64_MIN is not a signed decimal C literal.
   if (Bits.getBitWidth() == 64 && Bits.isMinSignedValue())
     return "(-9223372036854775807LL - 1)";
-  return Bits.isNegative() ? std::to_string(Bits.getSExtValue())
-                           : std::to_string(Bits.getZExtValue());
+  if (Bits.isNegative())
+    return std::to_string(Bits.getSExtValue());
+  // A number reads in its natural base, as HighC writes it, where the
+  // hexadecimal literal has the decimal one's type without a suffix: the
+  // literal parsers here read no suffix.
+  IntegerLiteral Literal;
+  Literal.Value = Bits.getZExtValue();
+  Literal.Text = std::to_string(Literal.Value);
+  if (naturalLiteralRadix(Literal.Value) == LiteralRadix::Hex)
+    if (auto Hex =
+            spellIntegerLiteral(Literal, LiteralRadix::Hex, LiteralSyntax::C);
+        Hex && Hex->find_first_of("uUlL") == std::string::npos)
+      return *Hex;
+  return Literal.Text;
 }
 
 // Fold only literal integer DAGs. Do not borrow display-time load values or
@@ -1140,6 +1153,8 @@ void completeDisplayRecord(DebugContext *Dbg, const TypeRef &Ty) {
   }
 }
 
+// LLVM-C names members only: every display lookup here passes
+// ArrayElements false, so an array stays one member, as this takes it.
 std::optional<std::string> canonicalizeDisplayPath(llvm::StringRef Field) {
   std::string Path;
   llvm::StringRef Rest(Field);
@@ -1653,8 +1668,10 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       const bool Hit =
           Candidate == 0 ||
           (!Array && (argListStandardField(Slot.Type, Candidate, AccessSize) ||
-                      (Slot.Type &&
-                       Slot.Type->displayFieldPathAt(Candidate, AccessSize))));
+                      (Slot.Type && Slot.Type->displayFieldPathAt(
+                                        Candidate, AccessSize,
+                                        /*EnterNestedAtZero=*/true,
+                                        /*ArrayElements=*/false))));
       if (!Hit) {
         if (Slot.DebugType && Cover && !Slot.Name.empty() && !Container) {
           Container = &Slot;
@@ -1678,8 +1695,13 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       if (!Var->Type || (Var->Type->Size && Candidate >= Var->Type->Size))
         continue;
       if (Var->Type->Kind == NdTypeKind::Array ||
-          (!Var->Type->displayFieldPathAt(Candidate, AccessSize) &&
-           !(AccessSize == 0 && Var->Type->displayFieldPathAt(Candidate)))) {
+          (!Var->Type->displayFieldPathAt(Candidate, AccessSize,
+                                          /*EnterNestedAtZero=*/true,
+                                          /*ArrayElements=*/false) &&
+           !(AccessSize == 0 &&
+             Var->Type->displayFieldPathAt(Candidate, 0,
+                                           /*EnterNestedAtZero=*/true,
+                                           /*ArrayElements=*/false)))) {
         if (Var->Type->Size && Remember(Off - Candidate, *Var)) {
           Container = &FrameSlots[Off - Candidate];
           ContainerRel = Candidate;
@@ -1823,11 +1845,13 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       return Out;
     }
     if (AccessSize && Display) {
-      if (auto Field = Display->displayFieldPathAt(
-              0, AccessSize, /*EnterNestedAtZero=*/true)) {
+      if (auto Field = Display->displayFieldPathAt(0, AccessSize,
+                                                   /*EnterNestedAtZero=*/true,
+                                                   /*ArrayElements=*/false)) {
         if (auto Path = canonicalizeDisplayPath(*Field)) {
           Out.Text = FieldText(*Path);
-          Out.Type = Display->displayFieldTypeAt(0, AccessSize);
+          Out.Type = Display->displayFieldTypeAt(0, AccessSize,
+                                                 /*ArrayElements=*/false);
           return Out;
         }
       }
@@ -1836,7 +1860,7 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       if (auto Field = Display->displayFieldNameAt(0)) {
         if (auto Path = canonicalizeDisplayPath(*Field)) {
           Out.Text = FieldText(*Path);
-          Out.Type = Display->displayFieldTypeAt(0);
+          Out.Type = Display->displayFieldTypeAt(0, 0, /*ArrayElements=*/false);
           return Out;
         }
       }
@@ -1870,17 +1894,21 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
   }
   const bool EnterNested = !AddressOf;
   auto Field = Display
-                   ? Display->displayFieldPathAt(Rel, AccessSize, EnterNested)
+                   ? Display->displayFieldPathAt(Rel, AccessSize, EnterNested,
+                                                 /*ArrayElements=*/false)
                    : std::nullopt;
   if (!Field && AccessSize == 0 && Display)
-    Field = Display->displayFieldPathAt(Rel, 0, EnterNested);
+    Field = Display->displayFieldPathAt(Rel, 0, EnterNested,
+                                        /*ArrayElements=*/false);
   auto Path = Field ? canonicalizeDisplayPath(*Field) : std::nullopt;
   if (!Path && Owner->Type && Display.get() != Owner->Type.get()) {
-    Field = Owner->Type->displayFieldPathAt(Rel, AccessSize, EnterNested);
+    Field = Owner->Type->displayFieldPathAt(Rel, AccessSize, EnterNested,
+                                            /*ArrayElements=*/false);
     Path = Field ? canonicalizeDisplayPath(*Field) : std::nullopt;
     if (Path) {
       Out.Text = OwnerText + "." + *Path;
-      Out.Type = Owner->Type->displayFieldTypeAt(Rel, AccessSize);
+      Out.Type = Owner->Type->displayFieldTypeAt(Rel, AccessSize,
+                                                 /*ArrayElements=*/false);
       if (AddressOf)
         Out.Text = "&" + Out.Text;
       return Out;
@@ -1899,7 +1927,9 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     return std::nullopt;
   }
   Out.Text = FieldText(*Path);
-  Out.Type = Display ? Display->displayFieldTypeAt(Rel, AccessSize) : nullptr;
+  Out.Type = Display ? Display->displayFieldTypeAt(Rel, AccessSize,
+                                                   /*ArrayElements=*/false)
+                     : nullptr;
   if (AddressOf)
     Out.Text = "&" + Out.Text;
   return Out;
@@ -2043,7 +2073,8 @@ TypeRef LLVMCWriter::typeOfValue(const llvm::Value *V) const {
   if (Peeled->second == 0 && DebugFn && !DebugFn->Params.empty())
     return DebugFn->Params[0].second;
   completeDisplayRecord(Dbg, DebugThisRecord);
-  return DebugThisRecord->displayFieldTypeAt(Peeled->second);
+  return DebugThisRecord->displayFieldTypeAt(Peeled->second, 0,
+                                             /*ArrayElements=*/false);
 }
 
 std::optional<LLVMCWriter::TypedAccess>
@@ -2095,11 +2126,27 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       Rec = TyIt->second->Pointee;
       BaseName = Text->second;
     }
+  } else if (const auto *Arg = llvm::dyn_cast<llvm::Argument>(Peeled->first)) {
+    // A parameter the signature types as a record's address, in a unit
+    // that defines the program's records.
+    const auto Type = ParamDebugTypes.find(Arg);
+    const auto Name = ValNames.find(Arg);
+    if (!Opts.RecordDefinitions || Opts.PreserveLLVMFunctionTypes ||
+        Type == ParamDebugTypes.end() || !Type->second ||
+        Type->second->Kind != NdTypeKind::Ptr || !Type->second->Pointee ||
+        Type->second->Pointee->Kind != NdTypeKind::Struct ||
+        Type->second->Pointee->IsEnum ||
+        cNamedTypeSpelling(Type->second->Pointee->SourceName).empty() ||
+        Name == ValNames.end() || Name->second.empty())
+      return std::nullopt;
+    Rec = Type->second->Pointee;
+    BaseName = Name->second;
   } else
     return std::nullopt;
   completeDisplayRecord(Dbg, Rec);
   auto Field =
-      Rec->displayFieldPathAt(Peeled->second, AccessSize, EnterNestedAtZero);
+      Rec->displayFieldPathAt(Peeled->second, AccessSize, EnterNestedAtZero,
+                              /*ArrayElements=*/false);
   if (!Field)
     return std::nullopt;
   auto Path = canonicalizeDisplayPath(*Field);
@@ -2107,7 +2154,8 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     return std::nullopt;
   TypedAccess Out;
   Out.Text = BaseName + "->" + *Path;
-  Out.Type = Rec->displayFieldTypeAt(Peeled->second, AccessSize);
+  Out.Type = Rec->displayFieldTypeAt(Peeled->second, AccessSize,
+                                     /*ArrayElements=*/false);
   return Out;
 }
 
@@ -2826,9 +2874,30 @@ void LLVMCWriter::markIndirectCalleeChains(llvm::Function &Fn) {
         (void)indirectCalleeStr(CB->getCalledOperand(), /*MarkChain=*/true);
 }
 
+std::string LLVMCWriter::memberAsAccessed(const llvm::LoadInst &Load,
+                                          std::string Text,
+                                          const TypeRef &Member) const {
+  // Only a unit that defines the program's records gives its members their
+  // declared types.
+  if (!Opts.RecordDefinitions || !Member)
+    return Text;
+  llvm::Type *Type = Load.getType();
+  if ((Member->Kind == NdTypeKind::Ptr && Type->isIntegerTy()) ||
+      (Member->Kind == NdTypeKind::Int && Type->isPointerTy()))
+    return "((" + typeToCLLVM(Type) + ")(uintptr_t)(" + Text + "))";
+  return Text;
+}
+
 std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
   if (PointerSpelling)
     *PointerSpelling = false;
+  // A parameter the signature types as a pointer is the integer the code
+  // computes with.
+  if (const auto *Arg = llvm::dyn_cast<llvm::Argument>(V);
+      Arg && PointerParams.count(Arg))
+    if (auto Name = ValNames.find(Arg); Name != ValNames.end())
+      return "((" + typeToCLLVM(Arg->getType()) + ")(uintptr_t)" +
+             Name->second + ")";
   if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(V))
     if (auto Text = codeSectionAddressText(*CI))
       return *Text;
@@ -2963,25 +3032,33 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
   }
   if (auto Text = ValueTexts.find(V);
       Text != ValueTexts.end() && !Text->second.empty()) {
+    const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V);
+    const TypeRef Member = [&]() -> TypeRef {
+      if (!LI)
+        return nullptr;
+      const auto Type = ValueTypes.find(LI);
+      return Type != ValueTypes.end() ? Type->second : nullptr;
+    }();
     // Cached field/index spellings still evaluate the original memory load.
     // A cached variable name does not: never attribute that reference as an
     // emitted memory operation.
-    if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V);
-        SourceRecorder && LI) {
+    if (SourceRecorder && LI) {
       auto Access = typedRecordAccess(LI->getPointerOperand(),
                                       llvmAccessSize(LI->getType()));
       if (!Access)
         Access = typedIndexAccess(LI->getPointerOperand());
       if (Access && Access->Text == Text->second)
-        return SourceRecorder->expression(*LI, Text->second);
+        return SourceRecorder->expression(
+            *LI, memberAsAccessed(*LI, Text->second, Member));
     }
-    return Text->second;
+    return LI ? memberAsAccessed(*LI, Text->second, Member) : Text->second;
   }
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
     if (auto Acc = typedRecordAccess(LI->getPointerOperand(),
-                                     llvmAccessSize(LI->getType())))
-      return SourceRecorder ? SourceRecorder->expression(*LI, Acc->Text)
-                            : Acc->Text;
+                                     llvmAccessSize(LI->getType()))) {
+      std::string Read = memberAsAccessed(*LI, Acc->Text, Acc->Type);
+      return SourceRecorder ? SourceRecorder->expression(*LI, Read) : Read;
+    }
   }
   if (std::string Text = composedReprintText(V); !Text.empty())
     return Text;

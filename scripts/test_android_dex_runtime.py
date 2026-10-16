@@ -127,7 +127,7 @@ def main():
         execute('forever', '(II)I', [0, 1], form, stop='instruction_limit', instructions=2000)
         execute('recurse', '(II)I', [10000, 1], form, stop='unsupported_service')
         execute('objectState', '(II)I', [0, 1], form, stop='unsupported_service')
-        execute('handled', '(II)I', [7, 0], form, stop='unsupported_service')
+        execute('handled', '(II)I', [7, 0], form, expected=77)
     execute('mix', '(II)I', [1, 2], 2, kind=1, stop='runtime_failure')
     execute('absent', '(II)I', [1, 2], 2, stop='unsupported_service')
     execute('mix', '(II)I', [1, 2], 2, images=[dex, dex], error='duplicate supplied DEX class')

@@ -20,3 +20,10 @@ NEVERD_KERNEL_RUNTIME_TIME_API(RtlTimeToTimeFields, 2, Any,
                                runtime::timeToTimeFields(*this, Memory, A))
 NEVERD_KERNEL_RUNTIME_TIME_API(RtlTimeFieldsToTime, 2, Any,
                                runtime::timeFieldsToTime(*this, Memory, A))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-rtltimetosecondssince1980
+// RVA 0x394d60 truncates 100 ns ticks to seconds before subtracting the
+// epoch. Out-of-range values return FALSE without accessing the output.
+NEVERD_KERNEL_RUNTIME_TIME_API(RtlTimeToSecondsSince1980, 2, APC,
+                               runtime::timeToSecondsSince1980(*this, Memory,
+                                                               A))

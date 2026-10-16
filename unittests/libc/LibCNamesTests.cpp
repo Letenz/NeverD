@@ -813,6 +813,42 @@ TEST(IsNoReturnTarget, RestrictedLoadAnswersEachTargetOnDemand) {
   EXPECT_EQ(Lookups, 0u);
 }
 
+TEST(IsNoReturnTarget, ExportsAndDeclaredPrototypesNameNoReturnRoutines) {
+  // The kernel calls the ExRaiseStatus it exports, which no symbol names
+  // without its PDB; a header library declares ExitProcess _Noreturn.
+  BinaryImage Img;
+  Export Raise;
+  Raise.Name = "ExRaiseStatus";
+  Raise.Addr = 0x1000;
+  Img.Exports.push_back(Raise);
+  Export Exit;
+  Exit.Name = "ExitProcess";
+  Exit.Addr = 0x2000;
+  Img.Exports.push_back(Exit);
+  Import Imported;
+  Imported.Name = "ExitThread";
+  Imported.IATAddr = 0x3000;
+  Img.Imports.push_back(Imported);
+  const auto Declared = [](llvm::StringRef Name) {
+    return Name == "ExitProcess" || Name == "ExitThread";
+  };
+  const NoReturnTargetIndex Tables(Img);
+  EXPECT_TRUE(Tables.contains(Img, 0x1000));
+  EXPECT_FALSE(Tables.contains(Img, 0x2000));
+  EXPECT_FALSE(Tables.contains(Img, 0x3000));
+  const NoReturnTargetIndex Prototypes(Img, {}, Declared);
+  EXPECT_TRUE(Prototypes.contains(Img, 0x1000));
+  EXPECT_TRUE(Prototypes.contains(Img, 0x2000));
+  EXPECT_TRUE(Prototypes.contains(Img, 0x3000));
+  EXPECT_TRUE(isNoReturnTarget(Img, 0x1000));
+  // A restricted load answers each target the same way.
+  Img.LoadOnlyFunctionEntries.insert(0x4000);
+  const NoReturnTargetIndex Restricted(Img, {}, Declared);
+  EXPECT_TRUE(Restricted.contains(Img, 0x1000));
+  EXPECT_TRUE(Restricted.contains(Img, 0x2000));
+  EXPECT_FALSE(Restricted.contains(Img, 0x4000));
+}
+
 TEST(IsReturnsTwiceFunction, SetjmpFamily) {
   EXPECT_TRUE(isReturnsTwiceFunction("vfork"));
   EXPECT_TRUE(isReturnsTwiceFunction("_vfork"));

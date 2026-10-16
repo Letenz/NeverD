@@ -50,10 +50,10 @@ public:
     ::close(descriptor_);
 #endif
   }
-  bool send(const Json &message) {
+  bool send(const Json &message, const EncodedJson *payload = nullptr) {
     std::string encoded;
     try {
-      encoded = frame(message);
+      encoded = payload ? frame(message, *payload) : frame(message);
     } catch (const Error &) {
       Json failure = message;
       failure["status"] = "budget_exceeded";
@@ -238,6 +238,8 @@ Json hello() {
   if (Engine::statesFunctionAttributes())
     for (const char *operation : {"function_attributes", "function_edit"})
       result["capabilities"].push_back(operation);
+  if (Engine::typesFunctions())
+    result["capabilities"].push_back("function_type");
   if (Engine::keepsDataItems())
     result["capabilities"].push_back("item_define");
   if (Engine::keepsOperandFormats())
@@ -257,10 +259,24 @@ Json hello() {
   if (Engine::declaresLocalTypes())
     for (const char *operation : {"local_types_declare", "local_types_forget"})
       result["capabilities"].push_back(operation);
+  // Structure offsets are operand formats that name local types.
+  if (Engine::fitsLocalTypes()) {
+    result["capabilities"].push_back("local_types_fit");
+    if (Engine::keepsOperandFormats())
+      result["capabilities"].push_back("operand_struct");
+  }
   if (Engine::findsDwarf())
     result["capabilities"].push_back("dwarf_reference");
   if (Engine::findsSymbolTables())
     result["capabilities"].push_back("symbol_table_reference");
+  if (Engine::findsMapFiles())
+    result["capabilities"].push_back("map_reference");
+  if (Engine::loadsMapFiles()) {
+    result["capabilities"].push_back("map_inspect");
+    result["capabilities"].push_back("map_load");
+  }
+  if (Engine::loadsDwarfFiles())
+    result["capabilities"].push_back("dwarf_load");
   result["web"] = WebEngine::capabilities();
   return result;
 }
@@ -313,6 +329,7 @@ void executeLoop(State &state, Transport &transport) {
         return webRequest ? web.projectId() : engine.projectId();
       };
       Json result;
+      Engine::EncodedPayload encodedPayload;
       try {
         if (value.contains("expected_revision") &&
             value["expected_revision"] != revision())
@@ -333,13 +350,16 @@ void executeLoop(State &state, Transport &transport) {
                                    {"detail", Detail ? Detail : ""}}));
         });
         const auto input = value.value("payload", Json::object());
-        auto payload =
-            webRequest ? web.execute(op, input) : engine.execute(op, input);
-        result =
-            response(value, revision(), project(), "ok", std::move(payload));
+        auto reply = webRequest ? Engine::Reply{web.execute(op, input), {}}
+                                : engine.executeResponse(op, input);
+        encodedPayload = std::move(reply.encoded);
+        result = response(value, revision(), project(), "ok",
+                          std::move(reply.value));
       } catch (const Error &error) {
+        encodedPayload.reset();
         result = failure(value, revision(), project(), error);
       } catch (const std::exception &error) {
+        encodedPayload.reset();
         result = failure(value, revision(), project(),
                          Error("engine_error", webRequest ? "Web adapter failed"
                                                           : error.what()));
@@ -365,7 +385,7 @@ void executeLoop(State &state, Transport &transport) {
         state.pending.erase(value["request_id"].get<std::string>());
         state.active.reset();
       }
-      if (!transport.send(result))
+      if (!transport.send(result, encodedPayload.get()))
         break;
     }
   } catch (const std::exception &error) {

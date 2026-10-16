@@ -3144,13 +3144,16 @@ TEST(BinaryLowIRRefinement, SegmentedContractCannotCertifyEvenAnUnusedBase) {
   const auto R = P.recover();
   ASSERT_TRUE(R.complete()) << R.Diagnostic;
   ASSERT_TRUE(P.check(R.Residual).proved());
-  P.Options.X64SegmentedReads = true;
-  EXPECT_TRUE(P.recover().complete());
-  refused(P.check(R.Residual), Status::Unsupported);
-  const auto Independence =
-      checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
-  EXPECT_EQ(Independence.Proof.Status, LowIRIndependenceStatus::Unsupported);
-  EXPECT_FALSE(Independence.Certificate);
+  for (bool Write : {false, true}) {
+    P.Options.X64SegmentedReads = !Write;
+    P.Options.X64SegmentedWrites = Write;
+    EXPECT_TRUE(P.recover().complete());
+    refused(P.check(R.Residual), Status::Unsupported);
+    const auto Independence =
+        checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
+    EXPECT_EQ(Independence.Proof.Status, LowIRIndependenceStatus::Unsupported);
+    EXPECT_FALSE(Independence.Certificate);
+  }
 }
 
 TEST(BinaryLowIRRefinement, TaskPriorityBinaryTransitionsRetainKernelEffects) {
@@ -3188,6 +3191,23 @@ TEST(BinaryLowIRRefinement, TaskPriorityContractCannotCertifyUnusedState) {
   refused(Proof, Status::Unsupported);
   EXPECT_NE(Proof.Proof.Diagnostic.find("task-priority state"),
             std::string::npos);
+  const auto Independence =
+      checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
+  EXPECT_EQ(Independence.Proof.Status, LowIRIndependenceStatus::Unsupported);
+  EXPECT_FALSE(Independence.Certificate);
+  refused(checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options, R.Residual,
+                                         P.Contract, {}),
+          Status::Unsupported);
+}
+
+TEST(BinaryLowIRRefinement, MXCSRContractCannotCertifyUnusedState) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete());
+  P.Options.X64MXCSRMask = 0xffbf;
+  const auto Proof = P.check(R.Residual);
+  refused(Proof, Status::Unsupported);
+  EXPECT_NE(Proof.Proof.Diagnostic.find("MXCSR state"), std::string::npos);
   const auto Independence =
       checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
   EXPECT_EQ(Independence.Proof.Status, LowIRIndependenceStatus::Unsupported);
@@ -3440,5 +3460,7 @@ TEST(BinaryLowIRRefinement, RawCmpxchgDoesNotGrantNativeProof) {
       std::string::npos)
       << Independence.Proof.Diagnostic;
 }
+
+#include "KernelInterruptRefinementTests.inc"
 
 } // namespace

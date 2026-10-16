@@ -90,6 +90,7 @@ target_include_directories(NeverDPipelineOutcomeTests PRIVATE
 # Keep their optional input separate from the mandatory portable pipeline owner.
 add_neverd_unittest(NeverDNativeFinallyInputTests
   NativeFinallyInputTests.cpp
+  NativeFinallyReentryInputTests.cpp
   LINK_COMPONENTS Pipeline
 )
 
@@ -116,12 +117,30 @@ target_include_directories(NeverDSourceDialectTests PRIVATE
 target_compile_definitions(NeverDSourceDialectTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 
+# SessionImpl calls these private owners even when a query has no local types.
+# Compile the real implementations into the white-box test, keeping the shared
+# SDK's C++ implementation details outside its public ABI.
 add_neverd_unittest(NeverDSessionLLVMTests
   SessionLLVMTests.cpp
-  LINK_COMPONENTS Pipeline
+  "${CMAKE_SOURCE_DIR}/lib/sdk/capi/LocalTypesDebugContext.cpp"
+  "${CMAKE_SOURCE_DIR}/lib/sdk/capi/NeverDCAPILocalTypes.cpp"
+  "${CMAKE_SOURCE_DIR}/lib/sdk/capi/SessionSidecar.cpp"
+  LINK_COMPONENTS Pipeline Types
   LINK_LIBS neverd-plugin-runtime-test-support
 )
 target_include_directories(NeverDSessionLLVMTests PRIVATE
+  "${CMAKE_SOURCE_DIR}/lib/sdk/capi")
+target_compile_definitions(NeverDSessionLLVMTests PRIVATE NEVERD_EXPORTS)
+
+# The focused local types context tests also stay private; the public Session
+# tests continue to call the shared engine through its exported SDK boundary.
+add_neverd_unittest(NeverDLocalTypesDebugContextTests
+  LocalTypesDebugContextTests.cpp
+  "${CMAKE_SOURCE_DIR}/lib/sdk/capi/LocalTypesDebugContext.cpp"
+  "${CMAKE_SOURCE_DIR}/lib/ir/NdTypes.cpp"
+  LINK_COMPONENTS Types Loader
+)
+target_include_directories(NeverDLocalTypesDebugContextTests PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi")
 
 if(TARGET neverd_shared)

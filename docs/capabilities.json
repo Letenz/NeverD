@@ -52,6 +52,7 @@
           "neverd_func_find_by_name",
           "neverd_func_name",
           "neverd_func_size",
+          "neverd_func_type_json",
           "neverd_function_chunks_json",
           "neverd_functions_json",
           "neverd_functions_load",
@@ -79,10 +80,13 @@
           "neverd_lift_to_obj",
           "neverd_load_options_save",
           "neverd_local_type_json",
+          "neverd_local_type_member_json",
           "neverd_local_types_declare",
+          "neverd_local_types_fit_json",
           "neverd_local_types_forget",
           "neverd_local_types_json",
           "neverd_local_types_source",
+          "neverd_map_reference_json",
           "neverd_name_check",
           "neverd_operand_format_set",
           "neverd_operand_formats_json",
@@ -158,6 +162,7 @@
           "neverd_session_base_addr",
           "neverd_session_bitness",
           "neverd_session_create",
+          "neverd_session_debug_info_json",
           "neverd_session_debug_info_kind",
           "neverd_session_debug_info_path",
           "neverd_session_destroy",
@@ -170,11 +175,14 @@
           "neverd_session_hunt_json",
           "neverd_session_import_count",
           "neverd_session_input_sha256",
+          "neverd_session_inspect_map_json",
           "neverd_session_inspect_pdb_json",
           "neverd_session_is_64bit",
           "neverd_session_is_loaded",
           "neverd_session_load",
           "neverd_session_load_diagnostics_json",
+          "neverd_session_load_dwarf",
+          "neverd_session_load_map",
           "neverd_session_load_options_json",
           "neverd_session_load_pdb",
           "neverd_session_load_pdb_ex",
@@ -184,10 +192,13 @@
           "neverd_session_segment_count",
           "neverd_session_set_arm_function_mode",
           "neverd_session_set_debug_info_enabled",
+          "neverd_session_set_dwarf_path",
           "neverd_session_set_dwarf_search",
           "neverd_session_set_load_options",
           "neverd_session_set_load_progress",
           "neverd_session_set_map_path",
+          "neverd_session_set_map_path_ex",
+          "neverd_session_set_map_search",
           "neverd_session_set_pdb_path",
           "neverd_session_set_pdb_path_ex",
           "neverd_session_set_pdb_search",
@@ -228,6 +239,7 @@
           "neverd_type_declarations_load",
           "neverd_type_declarations_save",
           "neverd_types_convert",
+          "neverd_types_languages_json",
           "neverd_unwind_frame_json",
           "neverd_version",
           "neverd_version_number",
@@ -363,6 +375,7 @@
           "neverd annotate --add",
           "neverd annotate --arm-function-mode",
           "neverd annotate --download-symbols",
+          "neverd annotate --dwarf",
           "neverd annotate --json",
           "neverd annotate --list",
           "neverd annotate --load-base",
@@ -371,8 +384,11 @@
           "neverd annotate --load-size",
           "neverd annotate --loader",
           "neverd annotate --map",
+          "neverd annotate --map-unchecked",
           "neverd annotate --no-debug",
           "neverd annotate --no-dwarf",
+          "neverd annotate --no-map",
+          "neverd annotate --no-pdb",
           "neverd annotate --no-symtab",
           "neverd annotate --pdb",
           "neverd annotate --pdb-unverified",
@@ -386,6 +402,7 @@
           "neverd audit --arm-function-mode",
           "neverd audit --auto",
           "neverd audit --download-symbols",
+          "neverd audit --dwarf",
           "neverd audit --json",
           "neverd audit --load-base",
           "neverd audit --load-entry",
@@ -393,6 +410,7 @@
           "neverd audit --load-size",
           "neverd audit --loader",
           "neverd audit --map",
+          "neverd audit --map-unchecked",
           "neverd audit --max-call-depth",
           "neverd audit --max-loop",
           "neverd audit --max-paths",
@@ -400,6 +418,8 @@
           "neverd audit --max-summary-iterations",
           "neverd audit --no-debug",
           "neverd audit --no-dwarf",
+          "neverd audit --no-map",
+          "neverd audit --no-pdb",
           "neverd audit --no-symtab",
           "neverd audit --o",
           "neverd audit --pdb",
@@ -417,6 +437,7 @@
           "neverd bookmarks --add",
           "neverd bookmarks --arm-function-mode",
           "neverd bookmarks --download-symbols",
+          "neverd bookmarks --dwarf",
           "neverd bookmarks --json",
           "neverd bookmarks --list",
           "neverd bookmarks --load-base",
@@ -425,9 +446,12 @@
           "neverd bookmarks --load-size",
           "neverd bookmarks --loader",
           "neverd bookmarks --map",
+          "neverd bookmarks --map-unchecked",
           "neverd bookmarks --name",
           "neverd bookmarks --no-debug",
           "neverd bookmarks --no-dwarf",
+          "neverd bookmarks --no-map",
+          "neverd bookmarks --no-pdb",
           "neverd bookmarks --no-symtab",
           "neverd bookmarks --pdb",
           "neverd bookmarks --pdb-unverified",
@@ -440,6 +464,7 @@
           "neverd callgraph --arm-function-mode",
           "neverd callgraph --dot",
           "neverd callgraph --download-symbols",
+          "neverd callgraph --dwarf",
           "neverd callgraph --json",
           "neverd callgraph --load-base",
           "neverd callgraph --load-entry",
@@ -447,8 +472,11 @@
           "neverd callgraph --load-size",
           "neverd callgraph --loader",
           "neverd callgraph --map",
+          "neverd callgraph --map-unchecked",
           "neverd callgraph --no-debug",
           "neverd callgraph --no-dwarf",
+          "neverd callgraph --no-map",
+          "neverd callgraph --no-pdb",
           "neverd callgraph --no-symtab",
           "neverd callgraph --pdb",
           "neverd callgraph --pdb-unverified",
@@ -461,6 +489,7 @@
           "neverd cfg --arm-function-mode",
           "neverd cfg --dot",
           "neverd cfg --download-symbols",
+          "neverd cfg --dwarf",
           "neverd cfg --evm-hardfork",
           "neverd cfg --evm-relaxed",
           "neverd cfg --func",
@@ -471,9 +500,12 @@
           "neverd cfg --load-size",
           "neverd cfg --loader",
           "neverd cfg --map",
+          "neverd cfg --map-unchecked",
           "neverd cfg --no-debug",
           "neverd cfg --no-dwarf",
+          "neverd cfg --no-map",
           "neverd cfg --no-opt",
+          "neverd cfg --no-pdb",
           "neverd cfg --no-symtab",
           "neverd cfg --pdb",
           "neverd cfg --pdb-unverified",
@@ -485,6 +517,7 @@
           "neverd dashboard",
           "neverd dashboard --arm-function-mode",
           "neverd dashboard --download-symbols",
+          "neverd dashboard --dwarf",
           "neverd dashboard --json",
           "neverd dashboard --load-base",
           "neverd dashboard --load-entry",
@@ -492,8 +525,11 @@
           "neverd dashboard --load-size",
           "neverd dashboard --loader",
           "neverd dashboard --map",
+          "neverd dashboard --map-unchecked",
           "neverd dashboard --no-debug",
           "neverd dashboard --no-dwarf",
+          "neverd dashboard --no-map",
+          "neverd dashboard --no-pdb",
           "neverd dashboard --no-symtab",
           "neverd dashboard --pdb",
           "neverd dashboard --pdb-unverified",
@@ -505,6 +541,7 @@
           "neverd decompile --arm-function-mode",
           "neverd decompile --auto",
           "neverd decompile --download-symbols",
+          "neverd decompile --dwarf",
           "neverd decompile --evm-hardfork",
           "neverd decompile --evm-relaxed",
           "neverd decompile --func",
@@ -521,10 +558,13 @@
           "neverd decompile --load-size",
           "neverd decompile --loader",
           "neverd decompile --map",
+          "neverd decompile --map-unchecked",
           "neverd decompile --max-func",
           "neverd decompile --no-debug",
           "neverd decompile --no-dwarf",
+          "neverd decompile --no-map",
           "neverd decompile --no-opt",
+          "neverd decompile --no-pdb",
           "neverd decompile --no-symtab",
           "neverd decompile --o",
           "neverd decompile --pdb",
@@ -552,6 +592,7 @@
           "neverd disasm --annotate",
           "neverd disasm --arm-function-mode",
           "neverd disasm --download-symbols",
+          "neverd disasm --dwarf",
           "neverd disasm --evm-hardfork",
           "neverd disasm --evm-relaxed",
           "neverd disasm --func",
@@ -562,8 +603,11 @@
           "neverd disasm --load-size",
           "neverd disasm --loader",
           "neverd disasm --map",
+          "neverd disasm --map-unchecked",
           "neverd disasm --no-debug",
           "neverd disasm --no-dwarf",
+          "neverd disasm --no-map",
+          "neverd disasm --no-pdb",
           "neverd disasm --no-symtab",
           "neverd disasm --pdb",
           "neverd disasm --pdb-unverified",
@@ -574,6 +618,7 @@
           "neverd entrypoints",
           "neverd entrypoints --arm-function-mode",
           "neverd entrypoints --download-symbols",
+          "neverd entrypoints --dwarf",
           "neverd entrypoints --json",
           "neverd entrypoints --load-base",
           "neverd entrypoints --load-entry",
@@ -581,8 +626,11 @@
           "neverd entrypoints --load-size",
           "neverd entrypoints --loader",
           "neverd entrypoints --map",
+          "neverd entrypoints --map-unchecked",
           "neverd entrypoints --no-debug",
           "neverd entrypoints --no-dwarf",
+          "neverd entrypoints --no-map",
+          "neverd entrypoints --no-pdb",
           "neverd entrypoints --no-symtab",
           "neverd entrypoints --pdb",
           "neverd entrypoints --pdb-unverified",
@@ -593,6 +641,7 @@
           "neverd export",
           "neverd export --arm-function-mode",
           "neverd export --download-symbols",
+          "neverd export --dwarf",
           "neverd export --format",
           "neverd export --func",
           "neverd export --llvm",
@@ -602,8 +651,11 @@
           "neverd export --load-size",
           "neverd export --loader",
           "neverd export --map",
+          "neverd export --map-unchecked",
           "neverd export --no-debug",
           "neverd export --no-dwarf",
+          "neverd export --no-map",
+          "neverd export --no-pdb",
           "neverd export --no-symtab",
           "neverd export --o",
           "neverd export --pdb",
@@ -615,6 +667,7 @@
           "neverd exports",
           "neverd exports --arm-function-mode",
           "neverd exports --download-symbols",
+          "neverd exports --dwarf",
           "neverd exports --json",
           "neverd exports --load-base",
           "neverd exports --load-entry",
@@ -622,8 +675,11 @@
           "neverd exports --load-size",
           "neverd exports --loader",
           "neverd exports --map",
+          "neverd exports --map-unchecked",
           "neverd exports --no-debug",
           "neverd exports --no-dwarf",
+          "neverd exports --no-map",
+          "neverd exports --no-pdb",
           "neverd exports --no-symtab",
           "neverd exports --pdb",
           "neverd exports --pdb-unverified",
@@ -635,6 +691,7 @@
           "neverd funcs --arm-function-mode",
           "neverd funcs --auto",
           "neverd funcs --download-symbols",
+          "neverd funcs --dwarf",
           "neverd funcs --json",
           "neverd funcs --load-base",
           "neverd funcs --load-entry",
@@ -642,8 +699,11 @@
           "neverd funcs --load-size",
           "neverd funcs --loader",
           "neverd funcs --map",
+          "neverd funcs --map-unchecked",
           "neverd funcs --no-debug",
           "neverd funcs --no-dwarf",
+          "neverd funcs --no-map",
+          "neverd funcs --no-pdb",
           "neverd funcs --no-symtab",
           "neverd funcs --pdb",
           "neverd funcs --pdb-unverified",
@@ -654,10 +714,14 @@
           "neverd funcs --symbol-path",
           "neverd funcs --v",
           "neverd function-edits",
+          "neverd function-edits --apply",
           "neverd function-edits --arm-function-mode",
+          "neverd function-edits --check",
           "neverd function-edits --create",
+          "neverd function-edits --declaration",
           "neverd function-edits --delete",
           "neverd function-edits --download-symbols",
+          "neverd function-edits --dwarf",
           "neverd function-edits --edit",
           "neverd function-edits --json",
           "neverd function-edits --list",
@@ -667,13 +731,17 @@
           "neverd function-edits --load-size",
           "neverd function-edits --loader",
           "neverd function-edits --map",
+          "neverd function-edits --map-unchecked",
           "neverd function-edits --no-debug",
           "neverd function-edits --no-dwarf",
+          "neverd function-edits --no-map",
+          "neverd function-edits --no-pdb",
           "neverd function-edits --no-symtab",
           "neverd function-edits --pdb",
           "neverd function-edits --pdb-unverified",
           "neverd function-edits --platform",
           "neverd function-edits --processor",
+          "neverd function-edits --retype",
           "neverd function-edits --set",
           "neverd function-edits --show",
           "neverd function-edits --symbol-path",
@@ -681,6 +749,7 @@
           "neverd headers",
           "neverd headers --arm-function-mode",
           "neverd headers --download-symbols",
+          "neverd headers --dwarf",
           "neverd headers --json",
           "neverd headers --load-base",
           "neverd headers --load-entry",
@@ -688,8 +757,11 @@
           "neverd headers --load-size",
           "neverd headers --loader",
           "neverd headers --map",
+          "neverd headers --map-unchecked",
           "neverd headers --no-debug",
           "neverd headers --no-dwarf",
+          "neverd headers --no-map",
+          "neverd headers --no-pdb",
           "neverd headers --no-symtab",
           "neverd headers --pdb",
           "neverd headers --pdb-unverified",
@@ -701,6 +773,7 @@
           "neverd hex --addr",
           "neverd hex --arm-function-mode",
           "neverd hex --download-symbols",
+          "neverd hex --dwarf",
           "neverd hex --json",
           "neverd hex --load-base",
           "neverd hex --load-entry",
@@ -708,8 +781,11 @@
           "neverd hex --load-size",
           "neverd hex --loader",
           "neverd hex --map",
+          "neverd hex --map-unchecked",
           "neverd hex --no-debug",
           "neverd hex --no-dwarf",
+          "neverd hex --no-map",
+          "neverd hex --no-pdb",
           "neverd hex --no-symtab",
           "neverd hex --pdb",
           "neverd hex --pdb-unverified",
@@ -723,6 +799,7 @@
           "neverd hunt --arm-function-mode",
           "neverd hunt --auto",
           "neverd hunt --download-symbols",
+          "neverd hunt --dwarf",
           "neverd hunt --json",
           "neverd hunt --load-base",
           "neverd hunt --load-entry",
@@ -730,6 +807,7 @@
           "neverd hunt --load-size",
           "neverd hunt --loader",
           "neverd hunt --map",
+          "neverd hunt --map-unchecked",
           "neverd hunt --max-call-depth",
           "neverd hunt --max-loop",
           "neverd hunt --max-paths",
@@ -737,6 +815,8 @@
           "neverd hunt --max-summary-iterations",
           "neverd hunt --no-debug",
           "neverd hunt --no-dwarf",
+          "neverd hunt --no-map",
+          "neverd hunt --no-pdb",
           "neverd hunt --no-symtab",
           "neverd hunt --o",
           "neverd hunt --pdb",
@@ -755,6 +835,7 @@
           "neverd imports",
           "neverd imports --arm-function-mode",
           "neverd imports --download-symbols",
+          "neverd imports --dwarf",
           "neverd imports --json",
           "neverd imports --load-base",
           "neverd imports --load-entry",
@@ -762,8 +843,11 @@
           "neverd imports --load-size",
           "neverd imports --loader",
           "neverd imports --map",
+          "neverd imports --map-unchecked",
           "neverd imports --no-debug",
           "neverd imports --no-dwarf",
+          "neverd imports --no-map",
+          "neverd imports --no-pdb",
           "neverd imports --no-symtab",
           "neverd imports --pdb",
           "neverd imports --pdb-unverified",
@@ -774,6 +858,7 @@
           "neverd info",
           "neverd info --arm-function-mode",
           "neverd info --download-symbols",
+          "neverd info --dwarf",
           "neverd info --json",
           "neverd info --load-base",
           "neverd info --load-entry",
@@ -781,8 +866,11 @@
           "neverd info --load-size",
           "neverd info --loader",
           "neverd info --map",
+          "neverd info --map-unchecked",
           "neverd info --no-debug",
           "neverd info --no-dwarf",
+          "neverd info --no-map",
+          "neverd info --no-pdb",
           "neverd info --no-symtab",
           "neverd info --pdb",
           "neverd info --pdb-unverified",
@@ -795,6 +883,7 @@
           "neverd items --clear",
           "neverd items --data",
           "neverd items --download-symbols",
+          "neverd items --dwarf",
           "neverd items --encoding",
           "neverd items --json",
           "neverd items --load-base",
@@ -803,8 +892,11 @@
           "neverd items --load-size",
           "neverd items --loader",
           "neverd items --map",
+          "neverd items --map-unchecked",
           "neverd items --no-debug",
           "neverd items --no-dwarf",
+          "neverd items --no-map",
+          "neverd items --no-pdb",
           "neverd items --no-symtab",
           "neverd items --pdb",
           "neverd items --pdb-unverified",
@@ -821,6 +913,7 @@
           "neverd lift --dump-high",
           "neverd lift --dump-low",
           "neverd lift --dump-med",
+          "neverd lift --dwarf",
           "neverd lift --evm-hardfork",
           "neverd lift --evm-relaxed",
           "neverd lift --hello",
@@ -830,10 +923,13 @@
           "neverd lift --load-size",
           "neverd lift --loader",
           "neverd lift --map",
+          "neverd lift --map-unchecked",
           "neverd lift --max-func",
           "neverd lift --no-debug",
           "neverd lift --no-dwarf",
+          "neverd lift --no-map",
           "neverd lift --no-opt",
+          "neverd lift --no-pdb",
           "neverd lift --no-symtab",
           "neverd lift --o",
           "neverd lift --pdb",
@@ -854,7 +950,9 @@
           "neverd operands --arm-function-mode",
           "neverd operands --base",
           "neverd operands --clear",
+          "neverd operands --delta",
           "neverd operands --download-symbols",
+          "neverd operands --dwarf",
           "neverd operands --invert",
           "neverd operands --json",
           "neverd operands --load-base",
@@ -863,15 +961,19 @@
           "neverd operands --load-size",
           "neverd operands --loader",
           "neverd operands --map",
+          "neverd operands --map-unchecked",
           "neverd operands --negate",
           "neverd operands --no-debug",
           "neverd operands --no-dwarf",
+          "neverd operands --no-map",
+          "neverd operands --no-pdb",
           "neverd operands --no-symtab",
           "neverd operands --operand",
           "neverd operands --pdb",
           "neverd operands --pdb-unverified",
           "neverd operands --platform",
           "neverd operands --processor",
+          "neverd operands --struct",
           "neverd operands --symbol-path",
           "neverd operands --v",
           "neverd optimize-ir --exhaustive",
@@ -907,6 +1009,7 @@
           "neverd patch --const-enc",
           "neverd patch --const-pool",
           "neverd patch --download-symbols",
+          "neverd patch --dwarf",
           "neverd patch --entry",
           "neverd patch --flatten",
           "neverd patch --from-c",
@@ -926,12 +1029,15 @@
           "neverd patch --load-size",
           "neverd patch --loader",
           "neverd patch --map",
+          "neverd patch --map-unchecked",
           "neverd patch --max-func",
           "neverd patch --mba",
           "neverd patch --mode",
           "neverd patch --no-debug",
           "neverd patch --no-dwarf",
+          "neverd patch --no-map",
           "neverd patch --no-opt",
+          "neverd patch --no-pdb",
           "neverd patch --no-symtab",
           "neverd patch --nop",
           "neverd patch --o",
@@ -955,6 +1061,7 @@
           "neverd relocs",
           "neverd relocs --arm-function-mode",
           "neverd relocs --download-symbols",
+          "neverd relocs --dwarf",
           "neverd relocs --json",
           "neverd relocs --load-base",
           "neverd relocs --load-entry",
@@ -962,8 +1069,11 @@
           "neverd relocs --load-size",
           "neverd relocs --loader",
           "neverd relocs --map",
+          "neverd relocs --map-unchecked",
           "neverd relocs --no-debug",
           "neverd relocs --no-dwarf",
+          "neverd relocs --no-map",
+          "neverd relocs --no-pdb",
           "neverd relocs --no-symtab",
           "neverd relocs --pdb",
           "neverd relocs --pdb-unverified",
@@ -976,6 +1086,7 @@
           "neverd rename --arm-function-mode",
           "neverd rename --clear",
           "neverd rename --download-symbols",
+          "neverd rename --dwarf",
           "neverd rename --func",
           "neverd rename --json",
           "neverd rename --list",
@@ -985,8 +1096,11 @@
           "neverd rename --load-size",
           "neverd rename --loader",
           "neverd rename --map",
+          "neverd rename --map-unchecked",
           "neverd rename --no-debug",
           "neverd rename --no-dwarf",
+          "neverd rename --no-map",
+          "neverd rename --no-pdb",
           "neverd rename --no-symtab",
           "neverd rename --pdb",
           "neverd rename --pdb-unverified",
@@ -999,6 +1113,7 @@
           "neverd search --arm-function-mode",
           "neverd search --case-sensitive",
           "neverd search --download-symbols",
+          "neverd search --dwarf",
           "neverd search --hex",
           "neverd search --json",
           "neverd search --load-base",
@@ -1007,9 +1122,12 @@
           "neverd search --load-size",
           "neverd search --loader",
           "neverd search --map",
+          "neverd search --map-unchecked",
           "neverd search --max-results",
           "neverd search --no-debug",
           "neverd search --no-dwarf",
+          "neverd search --no-map",
+          "neverd search --no-pdb",
           "neverd search --no-symtab",
           "neverd search --pdb",
           "neverd search --pdb-unverified",
@@ -1021,6 +1139,7 @@
           "neverd sections",
           "neverd sections --arm-function-mode",
           "neverd sections --download-symbols",
+          "neverd sections --dwarf",
           "neverd sections --json",
           "neverd sections --load-base",
           "neverd sections --load-entry",
@@ -1028,8 +1147,11 @@
           "neverd sections --load-size",
           "neverd sections --loader",
           "neverd sections --map",
+          "neverd sections --map-unchecked",
           "neverd sections --no-debug",
           "neverd sections --no-dwarf",
+          "neverd sections --no-map",
+          "neverd sections --no-pdb",
           "neverd sections --no-symtab",
           "neverd sections --pdb",
           "neverd sections --pdb-unverified",
@@ -1040,6 +1162,7 @@
           "neverd segments",
           "neverd segments --arm-function-mode",
           "neverd segments --download-symbols",
+          "neverd segments --dwarf",
           "neverd segments --json",
           "neverd segments --load-base",
           "neverd segments --load-entry",
@@ -1047,8 +1170,11 @@
           "neverd segments --load-size",
           "neverd segments --loader",
           "neverd segments --map",
+          "neverd segments --map-unchecked",
           "neverd segments --no-debug",
           "neverd segments --no-dwarf",
+          "neverd segments --no-map",
+          "neverd segments --no-pdb",
           "neverd segments --no-symtab",
           "neverd segments --pdb",
           "neverd segments --pdb-unverified",
@@ -1060,6 +1186,7 @@
           "neverd sigs --arm-function-mode",
           "neverd sigs --auto",
           "neverd sigs --download-symbols",
+          "neverd sigs --dwarf",
           "neverd sigs --json",
           "neverd sigs --load-base",
           "neverd sigs --load-entry",
@@ -1067,8 +1194,11 @@
           "neverd sigs --load-size",
           "neverd sigs --loader",
           "neverd sigs --map",
+          "neverd sigs --map-unchecked",
           "neverd sigs --no-debug",
           "neverd sigs --no-dwarf",
+          "neverd sigs --no-map",
+          "neverd sigs --no-pdb",
           "neverd sigs --no-symtab",
           "neverd sigs --pdb",
           "neverd sigs --pdb-unverified",
@@ -1103,6 +1233,7 @@
           "neverd strings --arm-function-mode",
           "neverd strings --code-page",
           "neverd strings --download-symbols",
+          "neverd strings --dwarf",
           "neverd strings --encodings",
           "neverd strings --filter",
           "neverd strings --json",
@@ -1112,9 +1243,12 @@
           "neverd strings --load-size",
           "neverd strings --loader",
           "neverd strings --map",
+          "neverd strings --map-unchecked",
           "neverd strings --min-len",
           "neverd strings --no-debug",
           "neverd strings --no-dwarf",
+          "neverd strings --no-map",
+          "neverd strings --no-pdb",
           "neverd strings --no-symtab",
           "neverd strings --pdb",
           "neverd strings --pdb-unverified",
@@ -1126,6 +1260,7 @@
           "neverd switches",
           "neverd switches --arm-function-mode",
           "neverd switches --download-symbols",
+          "neverd switches --dwarf",
           "neverd switches --json",
           "neverd switches --load-base",
           "neverd switches --load-entry",
@@ -1133,8 +1268,11 @@
           "neverd switches --load-size",
           "neverd switches --loader",
           "neverd switches --map",
+          "neverd switches --map-unchecked",
           "neverd switches --no-debug",
           "neverd switches --no-dwarf",
+          "neverd switches --no-map",
+          "neverd switches --no-pdb",
           "neverd switches --no-symtab",
           "neverd switches --pdb",
           "neverd switches --pdb-unverified",
@@ -1144,6 +1282,7 @@
           "neverd switches --v",
           "neverd sym-explore --arm-function-mode",
           "neverd sym-explore --download-symbols",
+          "neverd sym-explore --dwarf",
           "neverd sym-explore --expressions",
           "neverd sym-explore --func",
           "neverd sym-explore --load-base",
@@ -1152,11 +1291,14 @@
           "neverd sym-explore --load-size",
           "neverd sym-explore --loader",
           "neverd sym-explore --map",
+          "neverd sym-explore --map-unchecked",
           "neverd sym-explore --max-block-visits",
           "neverd sym-explore --max-paths",
           "neverd sym-explore --max-steps",
           "neverd sym-explore --no-debug",
           "neverd sym-explore --no-dwarf",
+          "neverd sym-explore --no-map",
+          "neverd sym-explore --no-pdb",
           "neverd sym-explore --no-symtab",
           "neverd sym-explore --pdb",
           "neverd sym-explore --pdb-unverified",
@@ -1167,6 +1309,7 @@
           "neverd symbols",
           "neverd symbols --arm-function-mode",
           "neverd symbols --download-symbols",
+          "neverd symbols --dwarf",
           "neverd symbols --json",
           "neverd symbols --load-base",
           "neverd symbols --load-entry",
@@ -1174,8 +1317,11 @@
           "neverd symbols --load-size",
           "neverd symbols --loader",
           "neverd symbols --map",
+          "neverd symbols --map-unchecked",
           "neverd symbols --no-debug",
           "neverd symbols --no-dwarf",
+          "neverd symbols --no-map",
+          "neverd symbols --no-pdb",
           "neverd symbols --no-symtab",
           "neverd symbols --pdb",
           "neverd symbols --pdb-unverified",
@@ -1188,20 +1334,29 @@
           "neverd translate-object --generation",
           "neverd translate-object --o",
           "neverd types",
+          "neverd types --access",
           "neverd types --all",
           "neverd types --alone",
           "neverd types --asserts",
+          "neverd types --at",
           "neverd types --data-model",
           "neverd types --decimal-offsets",
+          "neverd types --declare",
           "neverd types --download-symbols",
           "neverd types --filter",
+          "neverd types --fit",
+          "neverd types --func",
           "neverd types --json",
           "neverd types --keep-going",
           "neverd types --lang",
           "neverd types --layout",
+          "neverd types --limit",
+          "neverd types --match",
+          "neverd types --member",
           "neverd types --no-offsets",
           "neverd types --o",
           "neverd types --origin",
+          "neverd types --param",
           "neverd types --pdb",
           "neverd types --pdb-unverified",
           "neverd types --prototypes",
@@ -1212,6 +1367,7 @@
           "neverd xrefs --addr",
           "neverd xrefs --arm-function-mode",
           "neverd xrefs --download-symbols",
+          "neverd xrefs --dwarf",
           "neverd xrefs --json",
           "neverd xrefs --load-base",
           "neverd xrefs --load-entry",
@@ -1219,8 +1375,11 @@
           "neverd xrefs --load-size",
           "neverd xrefs --loader",
           "neverd xrefs --map",
+          "neverd xrefs --map-unchecked",
           "neverd xrefs --no-debug",
           "neverd xrefs --no-dwarf",
+          "neverd xrefs --no-map",
+          "neverd xrefs --no-pdb",
           "neverd xrefs --no-symtab",
           "neverd xrefs --pdb",
           "neverd xrefs --pdb-unverified",
@@ -1263,6 +1422,7 @@
           "neverd_entrypoints_json",
           "neverd_exports_json",
           "neverd_func_attributes_json",
+          "neverd_func_type_json",
           "neverd_function_chunks_json",
           "neverd_functions_json",
           "neverd_headers_json",
@@ -1272,7 +1432,10 @@
           "neverd_ir_view_ex_json",
           "neverd_items_json",
           "neverd_local_type_json",
+          "neverd_local_type_member_json",
+          "neverd_local_types_fit_json",
           "neverd_local_types_json",
+          "neverd_map_reference_json",
           "neverd_operand_formats_json",
           "neverd_pdb_reference_json",
           "neverd_plugins_list_json",
@@ -1282,7 +1445,9 @@
           "neverd_sections_json",
           "neverd_segments_json",
           "neverd_session_audit_json",
+          "neverd_session_debug_info_json",
           "neverd_session_hunt_json",
+          "neverd_session_inspect_map_json",
           "neverd_session_inspect_pdb_json",
           "neverd_session_load_diagnostics_json",
           "neverd_session_load_options_json",
@@ -1296,6 +1461,7 @@
           "neverd_symbol_table_reference_json",
           "neverd_symbols_json",
           "neverd_type_declarations_json",
+          "neverd_types_languages_json",
           "neverd_unwind_frame_json",
           "neverd_xrefs_from_json",
           "neverd_xrefs_to_json"
@@ -13973,8 +14139,8 @@
       "limitations": [
         "Explicit macos-macho64-v1, ios-macho64-v1 and ios-simulator-macho64-v1 execute bounded thin freestanding Mach-O processes. macOS and Simulator admit baseline x64/ARM64; devices require ARM64. Platform metadata is validated independently of the host backend.",
         "Original segments, zero fill, pagezero reservation and maximum protection feed one private address space. LC_MAIN receives argc/argv/envp/apple and a bounded return gate; LC_UNIXTHREAD accepts only a complete PC-only native state. ARM64 OS pages are 16 KiB over 4 KiB CPU mappings; x64 pages are 4 KiB.",
-        "Darwin BSD carry and positive errno, secondary result registers, byte output, exit, deterministic identity and private anonymous data mmap/mprotect/munmap are modeled. Raw write lengths above INT_MAX return EINVAL before descriptor, pointer and output-budget checks, with an original native macOS oracle. Private regular-file mappings and explicit bounded file catalogues are modeled. Executable anonymous/JIT/shared/fixed mappings, Mach IPC, indirect calls, threads, signals and host filesystem/network services remain unsupported.",
-        "External libraries, fixups, initialization/TLS, encrypted payloads, arm64e/PAC and unmodeled image contracts fail explicitly. No dyld linking, Objective-C/Swift runtime, Foundation/UIKit, AMFI, full application compatibility or native iOS-host HVF support is claimed.",
+        "Darwin BSD carry and positive errno, secondary result registers, byte output, exit, deterministic identity and private anonymous data mmap/mprotect/munmap are modeled. Raw write lengths above INT_MAX return EINVAL before descriptor, pointer and output-budget checks, with an original native macOS oracle. Private regular-file mappings and explicit bounded file catalogues are modeled. Executable anonymous/JIT/shared/fixed mappings, Mach IPC, indirect syscalls, threads, signals and host filesystem/network services remain unsupported.",
+        "Libraries, symbols and fixups outside the finite libSystem contract, initialization/TLS, encrypted payloads, arm64e/PAC and unmodeled image contracts fail explicitly. No arbitrary dyld loading, Objective-C/Swift runtime, Foundation/UIKit, AMFI, full application compatibility or native iOS-host HVF support is claimed.",
         "The complete regular input file, including unmapped metadata and trailing bytes, must fit memory_limit before parsing or copying. Reads use a bounded private snapshot; embedded-NUL paths, short reads and file-size changes are rejected. Host filesystem I/O has no hard wall-clock guarantee.",
         "Each available matching native backend is tested separately. Cross-ISA software execution and compilation cannot establish Intel HVF, Linux KVM or Windows WHP runtime coverage.",
         "Fixed initial symbolic_links with raw target_hex share bounded guest namei, readlink/readlinkat and own metadata/snapshot admission.32 expansions and terminator-inclusive1024-byte paths are enforced. Without per-link mutable grants, mutable directory names cannot contain protected initial link names; separate mutable domains may contain targets created, moved, deleted or replaced at runtime. Existing grants and metadata policy apply; resolved FDs/CWD/mapping leases retain object ownership. Raw symlink57/symlinkat474 create bounded process-local links in admitted mutable parents with target-first import, empty-target readlink/follow boundaries and shared budgets. Without creation_policy.namespace_policy, created-link complete metadata stays unknown and link/directory creation does not consume regular-file inodes. With the strict explicit namespace policy, regular files/links/directories share one successful-creation inode allocator and permanent exhaustion. New links use umask, actual-parent Device/GID and effective UID with exact raw-target size and declared allocation; created-directory counts/sizes/blocks and namespace timestamps follow the declared virtual contract. Object-owned complete stat64 metadata survives held FDs/CWD, mixed SWAP, ancestor moves, removal and name reuse; refusals consume no inode. Without per-directory mutation_policy, initial-parent stat still invalidates; fixed snapshots always invalidate. Explicit per-directory enumeration_policy admits live getdirentries64 views with observed/created nonzero inodes, actual parents, unsigned-byte name order, ordinal cookies and declared constant d_seekoff. Initial directories retain own declarations; mkdir inherits the actual-parent policy. Dup shares cursor/version; committed changes and direct directory moves require zero rewind, while refusals/no-ops and ancestor moves preserve the relevant cursors. Version saturation refuses explicitly. Held removed empty directories emit zero records across name reuse. Missing identity stops before output; when full stat is invalidated, only inode is reused. The existing encoder, bounds, EOF suffix and ordered copies are shared. Snapshot/policy conflicts and strict three-field lossless JSON are rejected, and each policy reference has a fixed path/NUL cost. Omission retains legacy refusal. APFS generations remain unsupported. Strict per-initial-directory mutation_policy declares directory_entry_size and mutation_time with own complete nonzero-inode metadata, a fixed path/NUL reference charge and no namespace grant. The first committed change copies the observed record without allocation. Child-name changes project nlink as two plus all linked immediate names, size as nlink times entry size and mtime/ctime as the declared time. Direct moves/SWAP/removal change only ctime; refusals, same-object no-ops and ancestor moves preserve the relevant records. Blocks and all other observed fields stay object-owned across held FD/dup/CWD/removal/name reuse. New mkdir objects use the separate creation policy and do not inherit initial stat policies. Immutable snapshots still invalidate; stat and live enumeration declarations are independent. Omitting the stat policy retains unknown mutated initial metadata. Native observations do not infer general APFS allocation or timestamp rules. Resolved object ownership is preserved. Rmdir/replacement detect link children; moving/SWAP subtrees containing protected initial links remain explicit unsupported. Runtime link descendants participate in ordinary/EXCL directory moves and directory/directory or directory/file SWAP. All directory/file/link paths and keys are preflighted and all three maps extracted before publication. Current link name/NUL charges are replaced once; raw target charges persist, with no SWAP replacement credit. Actual parent objects, relative rebinding, held descriptions/cursors/CWD/orphan nodes/mapping leases are retained. No additional entry, FD or inode is consumed. Unlink/unlinkat remove runtime-created links under actual-parent authority; dynamic name/NUL/target costs remain while descriptions retain them and refund once at actual final release. Bare NOFOLLOW_ANY retains a final link; required intermediate/trailing expansion returns ELOOP. Protected initial links remain immutable; target descriptors, CWD and mappings retain their objects. Ordinary/EXCL leaf rename admits runtime link/missing, link/link, link/file and file/link pairs under both actual-parent grants in one established mount. Relative raw targets rebind at the new parent; replaced links retain description-owned name/target costs until final release, while regular-file descriptor/mapping leases retain their bytes. Rename consumes no additional entry/FD/file inode. Leaf link/link, link/file and file/link SWAP is admitted with actual-parent mutation/SWAP authority in one established mount. Both nodes stay linked; both name/NUL charges are reserved without replacement credit, preserving raw targets, relative rebinding, nlink, descriptions, cursors, CWD and mapping leases. Same-name SWAP succeeds; missing targets give ENOENT, intermediate NOFOLLOW_ANY gives ELOOP, SWAP|EXCL gives EINVAL before path input. Same-object EXCL remains unsupported; ordinary admitted directory/link pairs retain ENOTDIR/EISDIR and EXCL existence errors. Initial symbolic_links[].mutable grants admit ordinary unique initial links with separately mutable actual parents; known flags/special mode/alias/link-count/device contradictions refuse. Each grant fixes one path/NUL reference and consumes no created entry/inode. Initial raw-target/name/reference costs remain reserved after unlink/replacement; rekey owns a separate dynamic name and refunds only dynamically owned name/created-target costs. Only created links count as dynamic entries. Existing parent/mount/SWAP/lookup transactions admit granted initial leaves and subtree descendants. Strict optional initial-link mutation_policy has exactly mutation_time with complete nonzero-inode metadata and the grant; first direct move/SWAP copies scalar observations without allocation and changes only ctime. All other stat fields stay observed; failures/no-ops and ancestor moves retain the record. Without policy, complete moved-link stat is unknown while enumeration inode and known device contradictions remain authoritative. Initial policies follow objects; reused names/new symlinks never inherit old metadata or policies. Actual directory/link root SWAP is admitted in both orders, including nonempty trees, under existing object grants and actual-parent mutation/SWAP authority in one established mount. Direct root links join the same three-map preflight/extraction/publication as directory descendants. Both canonical paths and all linked/held descendants are checked atomically; only dynamic name costs are replaced, with no fixed-input/content/target/lease credit or new entry/FD/inode. Actual-object parents decide membership across reused names and retained orphans. Raw targets rebind relatively; FD/dup/CWD/referents/mappings retain their objects. Direct roots apply their own existing ctime policies, while ancestor descendants retain full records. Unknown full stat and known enumeration identities remain independent. Both directory/descendant-link cycle orders return EINVAL; self-referent-link creation by successful exchange remains allowed and later follow returns ELOOP. General APFS alias-cache semantics and ACL enforcement remain unsupported. Native ARM64 macOS observations do not establish physical iOS acceptance.",
@@ -14015,7 +14181,11 @@
         "A separate creation flag now binds a new directory to its actual parent’s declared filesystem snapshot, if present. Open descriptors retain that binding through moves and deletion. Complete Apple runtimes, frameworks and physical iOS verification remain unfinished. DarwinFiles owns admission and the successful mkdir publication boundary. The appended FileSystemObservations.CreatedDirectoryObjects defaultsfalse and requires complete CreationPolicy.Namespace when enabled. Before publishing a complete new DirectoryNode, it binds Node->Parent->FileSystem only through this independent flag. An unbound parent leaves a null pointer and does not prevent otherwise valid creation. No path prefix, filesystem_id/device/inode match, mount enumeration or stat observation supplies a missing snapshot.\n\nDarwinFileSystems.cpp remains the single LP642168-byte serializer and query owner. The shared strict object-provider header admits created_directory_objects for Mode, Ownership, Timestamp and FileSystem; each purpose keeps its entry parser. Initial Objects and created regular/directory flags remain independent. The actual binding survives moves/exchanges, dup and held rmdir; reused names create separate objects. Namespace/stat invalidation never clears or repairs the binding. Path queries retain effective ancestor SEARCH, while descriptor queries borrow no target stat, credentials or access flags. No C function, dispatch, authorization, dependency pin or scheduling change. Set darwin_files.filesystem_observations.created_directory_objects to the strict Boolean true to opt in. The provider still requires objects (an empty array is valid); entries retain all sixteen snapshot fields and the existing shared2168-byte/path charge. CreationPolicy must include namespace_policy, with the existing explicit mutable parent, complete parent identity and umask prerequisites. False or omission preserves the default closed new-directory domain.\n\nEach successful complete mkdir uses its actual parent’s bound snapshot if present. A zero snapshot is known; absence remains unknown and statfs64/fstatfs64 refuse a missing provider before output preflight. A regular child of a bound created directory needs the independent created_regular_objects flag; another new directory needs the directory flag. Initial children and symbolic vnodes receive no implicit grant. Filesystem owner remains independent of stat UID/GID, including after chown. Mode, timestamp, namespace, quota and mount identity authority are not inferred.\n\nQueries preserve every declared2168-byte payload and zero padding, descriptor state and unrelated full stat bytes. An existing descriptor retains its actual snapshot through parent/child moves, exchange, invalidated stat and held deletion. A replacement binds its own actual parent. Counters stay fixed declared observations; no advancing live mount is claimed. Original probes use the previously pinned XNU statfs64/fstatfs64 declarations and native SDK LP64 layout; no implementation was copied. Initial focused private and strict JSON checks passed125 identities before route addition. Final cases cover both page sizes/routes, full2200 guarded literal records, independent flags, zero versus unbound parents, initial/symbolic exclusion, actual parent binding after moves/exchanges, child moves, held rmdir/name reuse, failed/exhausted-inode creation, descriptor flags, full stat preservation, group changes and permanent metadata invalidation without path SEARCH repair. Five software process/C/CLI/Python profiles and three matching ARM64 HVF profiles pass. C API successes repeat in reused sessions; CLI reports are compared completely.\n\nOwned nonroot ARM64 O0/O1/O2 probes passed102 observations with complete2168-byte records and guards, primary/secondary/carry, high carriers, error order, CWD, child kinds, moves and held deletion/name reuse. Common native main56/D passes with33 authored calls; virtual-only35 calls emit4400 independent literal guarded bytes plus D. Native comparisons exclude only five dynamic uint64 counters; no native service trace or universal capacity is claimed.\n\nThe complete Darwin owner reconciles3565 identities: 2461 passed, 1104 hardware-unavailable, zero failures; all276 mandatory matching ARM64 identities actually pass in four disjoint serial bounded shards. This is not an unsharded timing-stability claim. Shared public/Linux/services/budget/safety owners pass1858 C++ cases. All20 products rebuilt; inventories77 common native and92 mandatory per matching platform verified. Original fixture/discovery failures stay immutable: explicit creation/swap/empty-provider prerequisites and a regular-only stat helper were corrected, without changing production semantics or the33/35-call sequence. Native5s, compiler120s, component1200s/parallel2, guest5000000us/quantum1024, public30s and original method bounds remain unchanged. Apple runtimes/frameworks, Intel native and physical iOS remain unfinished.",
         "Explicit filesystem snapshots now support symbolic vnode descriptors, including dangling and cyclic targets. Path queries still follow the target. Created symbolic links have an independent opt-in parent binding. Complete Apple runtimes/frameworks and physical iOS verification remain unfinished. DarwinFiles retains one declaration admission, namespace publication owner and actual-object lifetime. Initial filesystem Objects may independently name any declared regular, directory or symbolic vnode; only the existing path+2168 snapshot reference charge applies, without following a symbolic target or demanding target/stat metadata. LinkNode stores its own immutable snapshot pointer. Initial bindings use exact object membership. Successful complete symlink creation captures its actual parent snapshot only when FileSystemObservations.CreatedSymbolicLinkObjects is true. Unknown parents stay null and do not prevent valid creation.\n\nThe default-false public C++ option and FileSystemCreatedSymbolicLinkObjects wire field created_symbolic_link_objects are independent of regular/directory creation flags and require complete CreationPolicy.Namespace. The generic creation admission has one Namespace prerequisite shared by directory and symbolic flags. The shared strict provider header accepts the new exact Boolean only for FileSystem; other purposes reject it even when false. Existing required objects, per-purpose parsers and budgets remain authoritative.\n\nDarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains the sole2168-byte serializer. fstatfs64 on O_SYMLINK selects LinkNode.FileSystem; path statfs64 retains FollowFinal and effective ancestor SEARCH. A link and its followed target can carry different snapshots, even with equal declared IDs. Opaque streams remain kind-unsupported. Snapshot pointers survive dup, rename, moved/exchanged parents and held unlink; replacement names bind new objects. Querying does not repair invalid stat or confer I/O, mode/ownership/time/namespace/quota or mount identity authority. C functions, constructor, dispatch, dependency pins and scheduling are unchanged. Declare an initial link snapshot with the existing filesystem_observations.objects {path,snapshot} entry. All sixteen snapshot fields remain required; zero/empty values are explicit. The link may have a dangling, cyclic or opaque byte target and no stat observation. A descriptor opened with O_SYMLINK queries the link's own declaration. A normal path query follows its target and queries the resulting object; it does not borrow the link declaration. Missing/empty environments and absent per-object snapshots remain distinct unsupported completions before output preflight.\n\nFor new links, set filesystem_observations.created_symbolic_link_objects to Boolean true and supply complete creation_policy.namespace_policy. Successful symlink creation uses the actual parent's already-bound snapshot if present, independently of regular/directory flags. Initial children and equal filesystem_id/device/inode values grant nothing. An unbound parent permits creation but leaves the new link query unknown. Incomplete/failed/existing-name creation publishes no new binding. Name reuse never recovers an old initial observation.\n\nDescriptor lookup narrows FD before kind/environment/provider/output checks. Valid symbolic snapshots need no target stat, credentials or access flags. Whole2168-byte records, padding and guards retain the existing copyout contract: unmapped output returns EFAULT14; partial output is unsupported before effects. Other pointer/FD/path errors preserve ordering. Raw native references use the cached pinned XNU fstatfs64 file_vnode/mount-stat implementation and native SDK O_SYMLINK/LP64 declarations. No implementation was copied; dynamic native counters and real mount identity are not literal virtual facts. Full framework execution remains incomplete. Initial private/strict JSON checks passed166 identities before route addition. Final coverage uses both4KiB/16KiB pages and both path/FD routes: full2200-byte literal guarded snapshots, link-versus-target declarations with identical IDs, unknown/empty/zero snapshots, dangling/cyclic/nonUTF8 targets, complete namespace prerequisites and all8 independent creation-flag combinations, no target metadata/stat/credential dependence, permanent invalidation, dup/flags/target bytes, moves/exchanged parents, held unlink/replacement, failed creation/inode exhaustion and exact reference budgets/partial copyout.\n\nOwned nonroot ARM64 O0/O1/O2 native probes passed114 observations, full2168 payloads/guards, raw primary/secondary/carry, high carriers, readonly/dup, target errors, parent moves, held deletion/name reuse and unchanged stat/flags/cursor. The common initial32 and created33 authored services pass main57/Y natively; virtual35 emits6600 independent literal bytes plus Y, separating link owner17 from target/replacement owner4294967294. Native comparisons mask only five dynamic uint64 counters and capture no native service trace. Five software process/C API/CLI/Python profiles and three matching ARM64 HVF profiles pass fresh executions; C API successes reuse sessions and CLI reports compare completely.\n\nComplete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailable, zero remaining failures; all279 required matching ARM64 identities actually pass in four disjoint serial bounded shards plus1 fresh isolated replay of the original resource-usage HVF guest-time-limit failure. The initial full round and all failures remain retained. Identical source/products and unchanged limits qualify the composite only; no clean full-round or unsharded timing-stability claim. Shared public/Linux/services/budget/safety owners pass1866 C++ cases. All20 products rebuilt; common native79/mandatory93 per matching platform independently asserted. Earlier compile enum typo, mutable-parent fixture omissions and failed repair matching/controller syntax attempts remain immutable; no production semantics were weakened to pass them. Native5s/compiler120s/component1200s parallel2/guest5000000us quantum1024/public30s and original method bounds are unchanged. Intel native, physical iOS and complete Apple runtimes/frameworks remain unqualified.",
         "Explicit ordinary symbolic ownership supports fchown on O_SYMLINK and fchownat NOFOLLOW0x20 through the actual LinkNode grant; chown and default fchownat follow the independently granted target. Initial exact objects need complete ordinary flags0/no-special-mode metadata, nlink1 and no known alias. Independent default-false CreatedSymbolicLinkObjects / ownership_mutations.created_symbolic_link_objects requires complete CreationPolicy.Namespace and binds Mutation.Time only on successful new symlink creation. Namespace, filesystem snapshots and regular/directory flags supply no ownership grant; mode/timestamp symbolic grants remain inadmissible. Effective ordinary authorization and FD versus ancestor SEARCH error order remain shared. Active IDs commit requested fields and fixed ctime atomically; both inactive IDs still require a provider and preserve whole stat. Link GID changes neither parent identity nor target. Dup/independent descriptions, runtime symbolic linkat471 flags0 aliases, direct/parent moves, exchange and held unlink retain object grants; replacements bind new inodes. Metadata invalidation is permanent. Original owned ARM64 O0/O1/O2 probes retain318 observations, and six compact common native runs pass under native5s/compiler120s. Authored common workloads use59/60 calls, literal variants67/68 calls and1281 output bytes from eight full guarded stat records; no native service trace or fixed native ctime is asserted. Fresh positive and early/late omitted-grant process/C/CLI/Python routes cover five software profiles and three matching required ARM64 HVF identities. Current common catalogue81 and mandatory inventory94 methods/platform require282 ARM64 executions. Native Intel, physical iOS, nonowner/special-security native effects, full dyld/Mach IPC and Apple frameworks remain unqualified or unfinished.",
-        "lchown364 selects the final ordinary regular, directory or symbolic object through the existing independent ownership provider. Intermediate links and ancestor SEARCH keep their existing owner. Active low32 IDs commit requested fields and fixed ctime; both inactive UINT32_MAX IDs still require authority and preserve all stat bytes. No new provider or JSON field is inferred. Created symbolic grants, runtime aliases, moves, held unlink/name reuse and permanent metadata invalidation remain object-bound. Original ARM64 O0/O1/O2 preparation retains489 observations including258 lchown actions. The shared SDK-free common workload asserts59 services; its virtual variant asserts67 services and1281 independently authored guarded output bytes. Five software process/C/CLI/Python profiles and three matching required ARM64 HVF identities cover this route. The common native catalogue is82 and mandatory native inventory95 per platform requires285 matching ARM64 executions. Native Intel, physical iOS and full Apple runtimes/frameworks remain unqualified or incomplete."
+        "lchown364 selects the final ordinary regular, directory or symbolic object through the existing independent ownership provider. Intermediate links and ancestor SEARCH keep their existing owner. Active low32 IDs commit requested fields and fixed ctime; both inactive UINT32_MAX IDs still require authority and preserve all stat bytes. No new provider or JSON field is inferred. Created symbolic grants, runtime aliases, moves, held unlink/name reuse and permanent metadata invalidation remain object-bound. Original ARM64 O0/O1/O2 preparation retains489 observations including258 lchown actions. The shared SDK-free common workload asserts59 services; its virtual variant asserts67 services and1281 independently authored guarded output bytes. Five software process/C/CLI/Python profiles and three matching required ARM64 HVF identities cover this route. At lchown qualification, the common native catalogue was82 and mandatory native inventory95 per platform required285 matching ARM64 executions. Native Intel, physical iOS and full Apple runtimes/frameworks remain unqualified or incomplete.",
+        "Ordinary C imports from strong /usr/lib/libSystem.B.dylib dependencies with compatibility requirement <=1.0 bind Mach-O _read/_write/_close/_getpid/__exit/___error/_open/_lseek/_pread/_pwrite/_dup/_dup2/_mmap/_mprotect/_munmap. LC_MAIN and MH_TWOLEVEL require ordinary positive ordinals, complete original undefined-symbol closure and aligned non-executable file slots. Classic pointer rebase/non-lazy bind, independently complete lazy pointer programs and generic chained PTR_64/PTR_64_OFFSET are validated before publication at admitted image addresses. Weak/threaded/multi-start/authenticated binding, other relocation sources, unknown providers/symbols/addends and initialization/TLS callbacks fail explicitly. SG_READ_ONLY makes current protection R after fixups while preserving the declared maximum; O0/O1/O2 real native permission controls establish restoring RW under a declared RW maximum. Imported-only authenticated gates are RX/max RX and the fresh four-byte main-thread errno is RW/max RW; both remain resident. Wrappers reuse typed kernel effects, return all-one failure with errno, preserve errno on success and retain exact provider/name/arity/full-width carrier evidence in optional schema1 darwin.native_calls. Nonreturning/incomplete results are null; raw-only reports remain compatible. Preparation and execution share the original absolute deadline, event account and charged metadata/model memory. Typed preparation expiry yields Timeout with no guest work while format/map/backend errors retain their types; backend construction is not a hard wall-clock promise. Native O0/O1/O2 controls and the same authored object through system/classic/chained linking use real libSystem. Five software process/C/CLI/Python combinations and three matching ARM64 HVF profiles execute the new route. Current common native catalogue82 and mandatory100/platform require300 matching ARM64 executions. Runtime lazy resolution, dlopen/dlsym, arbitrary dylibs, dyld shared cache, constructors, threads, stdio/malloc and Apple frameworks remain incomplete; Intel HVF and physical iOS remain unqualified. Lazy programs resolve before entry: explicit destination/ordinary ordinal/symbol, pointer type, zero addend, one DO_BIND immediately followed by DONE, no inherited state. Exactly one local executable original rebase plus one lazy bind may normalize at a slot; all raw records and strings remain charged, and every other collision refuses. A strong zero-addend ordinary classic dyld_stub_binder import is admitted only alongside actual lazy bindings and routes to an explicit refusal before C ABI decoding, errno changes or native-call evidence. Six ordinary C functions observe eager stable slots and preserve errno/terminal exit across five software and three matching ARM64 HVF profiles. The native control requests eager binding and compares output/status; no general dyld resolver/private state or default policy across OS versions is claimed.",
+        "Ordinary open/lseek/pread/pwrite/dup/dup2 reuse the existing file authority and cursor owner. open records two arguments, or three for low32 O_CREAT; ARM64 reads only the four defined bytes of the promoted int at entry SP, while x64 uses the third GP argument. Original carrier evidence remains separate from zero/default or uint16 mode_t kernel arguments. Failed argument reads precede native-call, errno and file effects; existing return-frame failure records remain distinct. Native O0/O1/O2 controls check shared/independent offsets, positioned IO, dup2 self/replacement/failed-source preservation, offsets above 4GiB, mode and binary bytes. The ordinary C workload exits73, emits460044, and retains40 named calls plus the main-return event. Thread cancellation and compatibility path shims remain unsupported.",
+        "Ordinary mmap/mprotect/munmap share DarwinMemory effects. C int protection, flags and FD narrow to 32 bits while full carriers remain observable. mmap rejects zero length or a missing MAP_PRIVATE/MAP_SHARED with MAP_FAILED/EINVAL before kernel effects, then supplies MAP_UNIX03. The raw BSD path retains its semantics. Independent C controls cover anonymous zeroing, rights transitions, error order, mapping lifetime after close, private writes and EOF tails. General shared/fixed/executable mappings and allocators remain unsupported.",
+        "Explicit darwin.modules admits at most 32 exact case-sensitive install names and original input paths for a same-ISA/platform strong acyclic startup MH_DYLIB graph. LC_ID_DYLIB identity and compatibility are checked on every edge; reachable nodes share full-file, resident, metadata, deadline and 65536-record budgets. Ordinary ordinals select actual regular/thread-local exports, including identical names in different providers. No host search or @ expansion occurs. Exact 24-byte TLV descriptors require supported bootstrap fixups, zero input keys, bounded offsets and <=16-byte alignment. TLS storage is physically mapped and charged during preparation; first access copies live relocated contiguous template bytes, preserving prior BSS/gap changes. Every call validates descriptor identity and return frame, preserves non-result GP/vector state and errno, and reports one __tlv_get_addr event. mmap/munmap/mprotect cannot borrow or alter TLS reservations. The original shared-dependency fixture covers rebased data, equal export spellings, initialized/zero-only TLS, cross-image identity, pre-access mutation and fresh process state across five portable profiles and matching ARM64 HVF. Native O0/O1/O2 classic/chained controls compare exit83/stdout440054. Ordinary strong dylib addends use checked signed arithmetic and retain one-byte membership in the selected provider's original mapped segment spans, including global and TLS-template pointer initializers. The +8/-4 alias and volatile TLS-pointer fixture checks shared data and fresh process state with native O0/O1/O2 classic/chained controls returning 78. Nonzero libSystem gate, imported TLV descriptor and classic lazy addends remain unsupported. Weak/reexport/resolver exports, cycles, callbacks, dlopen/dlsym, threads and complete Apple frameworks remain unsupported; native Intel and physical iOS remain unqualified."
       ],
       "tests": [
         {
@@ -21063,6 +21233,689 @@
             "darwin",
             "linux",
             "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.ClassicAndChainedRetainExactOriginalFixupFacts",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.RejectsIncompleteMalformedAndAmbiguousClassicBindings",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.FixupStorageAndTargetsRequireExactMappedAuthority",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.RejectsUnsupportedAndMalformedChainedRecords",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.OffsetRebasesAndUnsignedPointerAddendsKeepTheirFullBits",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.PreparationDeadlineAndMetadataLimitsCannotPublishPartialFacts",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.ProcessAdmissionRequiresTheProviderNamespaceAndExactSymbols",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinMemoryTests.cpp",
+          "filter": "*/DarwinMemoryTest.ImportedGateAndErrnoReservationsKeepTheirLiveStorage/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.LibSystemImportsPreserveErrnoAndRawKernelAuthority/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/ProcessReportTests.cpp",
+          "filter": "ProcessReport.DarwinNamedCallsRetainProviderArityFullBitsAndNullResults",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProcessPublicTests",
+          "source": "unittests/emulation/ProcessPublicTests.cpp",
+          "filter": "*/DarwinLibSystemPublic.ImportedCallsKeepErrnoAndReportsAcrossCAndCLI/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.ChainedOrdinaryOrdinalsKeepBitsBelowTheSpecialRange",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.IndependentLazyProgramsNormalizeOnlyTheirExactRebaseSlots",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.LazyProgramsCannotInheritFieldsOrChangeStateAfterBinding",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.LazyProgramsRefuseMalformedAndUnsupportedFields",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.LazyNormalizationCannotHideAnyOtherDestinationCollision",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.LazyRawRecordLimitsSurviveNormalization",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.LazyMetadataAndDeadlinesCannotPublishPartialNormalization",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.BinderAdmissionRequiresStrongOrdinaryBindingAndActualLazyCalls",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.BinderRefusalPrecedesCFrameDecodingAndPreservesErrno",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.ExecutingTheAdmittedBinderGateFailsWithoutACallRecord",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.ClassicLazyImportsResolveBeforeCallsAndKeepSlotsStable/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProcessPublicTests",
+          "source": "unittests/emulation/ProcessPublicTests.cpp",
+          "filter": "*/DarwinLibSystemPublic.ClassicLazyCallsKeepSlotsErrnoAndReportsAcrossCAndCLI/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinNativeTests.cpp",
+          "filter": "DarwinNative.ClassicLazyImportsMatchEagerNativeSlotObservations",
+          "platforms": [
+            "darwin"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLibSystemTests.cpp",
+          "filter": "*/DarwinLibSystemTest.OpenSeparatesModeCarrierFromKernelModeAndMetadata/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLibSystemTests.cpp",
+          "filter": "*/DarwinLibSystemTest.OpenWithoutCreateDoesNotReadOptionalStorage/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLibSystemTests.cpp",
+          "filter": "*/DarwinLibSystemTest.OptionalModeTransportFailureCannotPublishEffects/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLibSystemTests.cpp",
+          "filter": "*/DarwinLibSystemTest.MissingStackBytesKeepTheirDistinctCallBoundary/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.LibSystemFileCallsShareCursorsAndDecodeOptionalMode/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProcessPublicTests",
+          "source": "unittests/emulation/ProcessPublicTests.cpp",
+          "filter": "*/DarwinLibSystemPublic.FileCallsKeepOptionalModeAndOffsetsAcrossCAndCLI/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinNativeTests.cpp",
+          "filter": "DarwinNative.LibSystemFileCallsMatchNativeContentsOffsetsAndMode",
+          "platforms": [
+            "darwin"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLibSystemTests.cpp",
+          "filter": "*/DarwinLibSystemTest.MemoryArgumentsRetainCarriersAndNormalizeCIntegers/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLibSystemTests.cpp",
+          "filter": "*/DarwinLibSystemTest.MemoryPreflightReturnsErrnoBeforeKernelEffects/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLibSystemTests.cpp",
+          "filter": "*/DarwinLibSystemTest.MemoryCallsShareKernelMappingsAndReservations/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLibSystemTests.cpp",
+          "filter": "*/DarwinLibSystemTest.MemoryArgumentFaultPrecedesEvenEarlyCError/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.LibSystemMemoryCallsPreserveMappingsAndCErrorOrder/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProcessPublicTests",
+          "source": "unittests/emulation/ProcessPublicTests.cpp",
+          "filter": "*/DarwinLibSystemPublic.MemoryCallsKeepCChecksAndMappingLifetimeAcrossCAndCLI/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinNativeTests.cpp",
+          "filter": "DarwinNative.LibSystemMemoryCallsMatchNativeMappingsAndCErrorOrder",
+          "platforms": [
+            "darwin"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylib.SharedDependencyConsumesItsCompleteInputOnlyOnce",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylib.ResidentBudgetIncludesAllImagesTLSAndProviderReservations",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylib.CatalogueRejectsMissingDuplicateReservedAndWrongProfile",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylib.EveryReferenceChecksIdentityVersionISAAndPlatform",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylib.SelfDependencyAndExpiredPreparationNeverStartGuestCode",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylib.InvalidTLSLayoutsFailBeforeAnyExecution",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinImageTests.cpp",
+          "filter": "DarwinImage.RawExecutablesCannotClaimDylibIdentity",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinImageTests.cpp",
+          "filter": "DarwinImage.UnusedProviderAddressesRemainAvailableToRawImages",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.ExportTriesRetainTerminalPrefixesAndMappedAddresses",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLinkingTests.cpp",
+          "filter": "DarwinLinking.ThreadLocalExportMustNameAnAdmittedDescriptor",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLibSystemTests.cpp",
+          "filter": "*/DarwinLibSystemTest.TLVPreservesRegistersAndCopiesLiveTemplatesOnce/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinLibSystemTests.cpp",
+          "filter": "*/DarwinLibSystemTest.TLVRejectsTamperingAndInvalidFramesBeforeCopying/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinMemoryTests.cpp",
+          "filter": "*/DarwinMemoryTest.MappedTLSReservationCannotBeBorrowedOrReprotected/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.StartupDylibsShareDataAndKeepThreadLocalInstances/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProcessPublicTests",
+          "source": "unittests/emulation/ProcessPublicTests.cpp",
+          "filter": "*/DarwinLibSystemPublic.StartupDylibsAndTLSKeepIdentityAcrossCAndCLI/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinNativeTests.cpp",
+          "filter": "DarwinNative.StartupDylibsAndTLSMatchOriginalNativeImages",
+          "platforms": [
+            "darwin"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylibAddends.OriginalDataAndTLSTemplatePointersShareProviderStorage",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylibAddends.ExtremeSignedAddendsFailBeforeExecution",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylibAddends.MainImageRuntimeGatesAndProviderPaddingAreNotProviderTargets",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylibAddends.PointerValuesRequireOneByteMembershipWithoutAnAccessWidth",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylib.OrdinaryAddendsKeepProviderChoiceWithRepeatedExportSpellings",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinDylibTests.cpp",
+          "filter": "DarwinDylib.NonzeroTLVDescriptorAndLibSystemAddendsRemainExplicitlyRefused",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.StartupDylibAddendsPreserveDataAndTLSAliasing/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProcessPublicTests",
+          "source": "unittests/emulation/ProcessPublicTests.cpp",
+          "filter": "*/DarwinLibSystemPublic.DylibAddendsAndTLSPointersKeepIdentityAcrossCAndCLI/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinNativeTests.cpp",
+          "filter": "DarwinNative.StartupDylibAddendsAndTLSTemplatesMatchOriginalImages",
+          "platforms": [
+            "darwin"
           ]
         }
       ],

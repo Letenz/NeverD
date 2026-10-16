@@ -41,8 +41,12 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateFinallyCall.cpp
   X86/RegistrationStateSEHCall.cpp
   X86/RegistrationStateSEHExit.cpp
+  X86/RegistrationStateSEHEpilogue.cpp
+  X86/RegistrationStateSEHParentExit.cpp
+  X86/RegistrationStateSEHParentOwnership.cpp
   X86/RegistrationStateSEHException.cpp
   X86/RegistrationStateLocalUnwind.cpp
+  X86/RegistrationStateLocalUnwindReceipt.cpp
   X86/RegistrationStateTryLevel.cpp
   X86/RegistrationUnwindFrame.cpp
   X86/RegistrationJumpContinuation.cpp
@@ -59,13 +63,16 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateResult.cpp
   X86/RegistrationStateSearch.cpp
   X86/RegistrationStateThrow.cpp
+  X86/RegistrationStateBranch.cpp
   X86/RegistrationStateTransfer.cpp
   X86/RegistrationStateFilter.cpp
   X86/RegistrationStateUnwind.cpp
+  X86/RegistrationCallbackGraph.cpp
   X86/RegistrationFinallyFrame.cpp
   X86/RegistrationNestedFinallyFrame.cpp
   X86/RegistrationFilterFrame.cpp
   X86/RegistrationFrame.cpp
+  X86/RegistrationFrameScalar.cpp
   X86/RegistrationFrameMemory.cpp
   X86/RegistrationFrameCallback.cpp
   X86/RegistrationFrameSEHException.cpp
@@ -92,6 +99,8 @@ add_neverd_component_library(NeverDIRLow
   GuardedZeroSelect.cpp
   IndirectTailFrame.cpp
   X86/RegistrationCalleeABI.cpp
+  X86/RegistrationLocalUnwind.cpp
+  X86/RegistrationLocalUnwindCall.cpp
   X86/RegistrationCallbackImage.cpp
   X86/RegistrationCFG.cpp
   X86/RegistrationCleanupABI.cpp
@@ -118,6 +127,8 @@ add_neverd_component_library(NeverDIRLow
   X86/RegistrationCalleeIndex.cpp
   X86/RegistrationCalleeStack.cpp
   X86/RegistrationSEHControl.cpp
+  X86/RegistrationSEHCallNext.cpp
+  X86/RegistrationSEHParentEpilogue.cpp
   X86/RegistrationCallerABI.cpp
   X86/RegistrationEntryABI.cpp
   NdOpEmulator.cpp

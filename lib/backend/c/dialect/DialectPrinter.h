@@ -130,6 +130,17 @@ protected:
   }
   unsigned depth() const { return Depth; }
 
+  //===--- The program's types ---===//
+
+  /// The hops by which the language reaches the member \p E names, a `.`
+  /// or `->` access, when its record is one of the program's types
+  /// (SourceDialectOptions::LocalTypes); empty, after refusing, for a member
+  /// they reach no other way, such as a bit-field.
+  std::optional<std::vector<SourceDialectLocalTypes::Hop>>
+  localMember(const Expr *E) const;
+  /// Whether the program's types define \p Ty, a record, in the language.
+  bool localRecord(const CType *Ty) const;
+
   //===--- Comments ---===//
 
   /// A C comment as the dialect writes it.

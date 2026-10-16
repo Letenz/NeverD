@@ -855,6 +855,46 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>Показать типы программы с их размещением и исходным кодом</translation>
     </message>
+    <message>
+        <source>D&amp;WARF file...</source>
+        <translation>Файл D&amp;WARF...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>Загрузить отладочную информацию из отдельного файла DWARF, копии с символами или .dSYM</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>Файл &amp;MAP...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>Загрузить имена из MAP-файла компоновщика</translation>
+    </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>Смещение в с&amp;труктуре...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>Показать операнд как поле локального типа; типы упорядочены по тому, насколько им соответствуют обращения кода</translation>
+    </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>Пре&amp;вратить в struct *...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>Задать текущей функции или параметру под курсором тип C, проверяемый по мере ввода</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>Сделать параметр под курсором указателем на локальный тип; типы упорядочены по тому, насколько им соответствуют обращения через него</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>Задать тип(&amp;Y)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2284,6 +2324,74 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Local Types</source>
         <translation>Локальные типы</translation>
     </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>Не удалось преобразовать параметр: %1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>Поставьте курсор в функцию, чтобы задать её тип</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>Поставьте курсор на параметр функции, чтобы преобразовать его</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>Выделить &amp;всё</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>Перейти к дизассемблированному коду</translation>
+    </message>
+    <message>
+        <source>Synchronize with disassembly</source>
+        <translation>Синхронизировать с дизассемблированным кодом</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>В&amp;осьмеричное</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>Поставьте курсор на число в псевдокоде, чтобы изменить его систему счисления</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 нельзя записать в этой системе счисления с тем же типом</translation>
+    </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>Не удалось определить, есть ли у %1 MAP-файл: %2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>Загрузить файл DWARF</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>Загрузить файл MAP</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>Файлы MAP (*.map);;Все файлы (*)</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>Загрузить MAP-файл другой сборки</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+Всё равно загрузить его имена? Имена по неверным адресам вводят анализ в заблуждение.</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>Файлы DWARF (*.debug *.dSYM);;Все файлы (*)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2350,6 +2458,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     показать инструкции, ссылающиеся на строки</translation>
+    </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          показать локальные типы или указанный тип</translation>
     </message>
 </context>
 <context>
@@ -2596,6 +2708,30 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>DWARF loaded: %1</source>
         <translation>DWARF загружен: %1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>Файл открыт без MAP-файла рядом с входным файлом, по вашему выбору</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>MAP загружен без проверки: %1 (добавлено имён: %2, из другой сборки)</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>MAP загружен: %1 (добавлено имён: %2)</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>MAP не загружен: %1 не соответствует загруженному образу</translation>
+    </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>%n операнд показан как поле %1</numerusform>
+            <numerusform>%n операнда показаны как поля %1</numerusform>
+            <numerusform>%n операндов показаны как поля %1</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -3405,10 +3541,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Имена Windows (ULONG)</translation>
     </message>
     <message>
-        <source>IDA names (unsigned int)</source>
-        <translation>Имена IDA (unsigned int)</translation>
-    </message>
-    <message>
         <source>C keywords (unsigned long)</source>
         <translation>Ключевые слова C (unsigned long)</translation>
     </message>
@@ -3419,6 +3551,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Exact widths (u32)</source>
         <translation>Точная ширина (u32)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>Точная ширина (uint32)</translation>
     </message>
     <message>
         <source>Filter types by name</source>
@@ -3503,10 +3639,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Offset</source>
         <translation>Смещение</translation>
-    </message>
-    <message>
-        <source>Bytes</source>
-        <translation>Байты</translation>
     </message>
     <message>
         <source>Type</source>
@@ -3768,6 +3900,34 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
             <numerusform>%n объявлено</numerusform>
         </translation>
     </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>Выберите тип, чтобы увидеть его размещение и исходный код</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>Нет локального типа с именем %1</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>Точная ширина (c_uint32)</translation>
+    </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>Модуль JavaScript (*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>Типы JavaScript (number, bigint)</translation>
+    </message>
+    <message>
+        <source>Lua (*.lua)</source>
+        <translation>Lua (*.lua)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::DeclareTypesDialog</name>
@@ -3790,6 +3950,307 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>Строка %1, столбец %2: %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>MAP-файл %1, имён: %2. Его метка времени сборки совпадает с меткой входного файла.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>MAP-файл %1, имён: %2. Его секции расположены там же, где во входном файле.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>MAP-файл %1, имён: %2. В нём нет данных для сверки с входным файлом.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>MAP-файл %1, имён: %2. В нём записана метка времени сборки %3, а у входного файла — %4: он относится к другой сборке.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>MAP-файл %1, имён: %2. Он размещает %3 по адресу %4 (байт: %5), а во входном файле — по адресу %6 (байт: %7): он относится к другой сборке.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>MAP-файл %1, имён: %2. Функций вне кода входного файла: %3 из %4 — он относится к другой сборке.</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>Найден файл MAP</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>Всё равно загрузить файл MAP?</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>Загрузить файл MAP?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>Точно на поля попадают смещения: %1 из %n</numerusform>
+            <numerusform>Точно на поля попадают смещения: %1 из %n</numerusform>
+            <numerusform>Точно на поля попадают смещения: %1 из %n</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>%1 из %n типа</numerusform>
+            <numerusform>%1 из %n типов</numerusform>
+            <numerusform>%1 из %n типов</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n байт</numerusform>
+            <numerusform>%n байта</numerusform>
+            <numerusform>%n байт</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>%n тип</numerusform>
+            <numerusform>%n типа</numerusform>
+            <numerusform>%n типов</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>Доступ</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>Также показать как поле ещё %n инструкцию, обращающуюся через %1</numerusform>
+            <numerusform>Также показать как поля ещё %n инструкции, обращающиеся через %1</numerusform>
+            <numerusform>Также показать как поля ещё %n инструкций, обращающихся через %1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Применить</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>По адресу %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Байты</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>Поле</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>Ни одно поле не содержит этот байт</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>Подходящих типов нет.</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>Смещение</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>Чтение того, что код делает через указатель операнда…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>Поиск типов: имя, typedef, Тип.поле или .поле</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>Смещение в структуре</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>Число %1 как смещение в структуре или объединении.</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>Операнд сохраняет своё число.</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>В программе нет структур и объединений. Объявите их в окне «Локальные типы» (Shift+F1).</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>Регистр указывает на %1 байт внутрь %2, на %3: обращения перед ним читают более ранние поля записи, как это отменяет CONTAINING_RECORD.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Тип</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>Типы упорядочены по тому, как %n обращение функции через %1 попадает на их поля.</numerusform>
+            <numerusform>Типы упорядочены по тому, как %n обращения функции через %1 попадают на их поля.</numerusform>
+            <numerusform>Типы упорядочены по тому, как %n обращений функции через %1 попадают на их поля.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>адрес</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>заголовок</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>вне типа</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>заполнение</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>чтение</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>указатель</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>пользователь</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>запись</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>&amp;Имя:</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>Указатель на %1, запись из %n байта</numerusform>
+            <numerusform>Указатель на %1, запись из %n байт</numerusform>
+            <numerusform>Указатель на %1, запись из %n байт</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>Преобразовать в struct *</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>Чтение того, что код делает через параметр…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>Имя параметра, которое сохраняет объявление</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>Типы упорядочены по тому, как %n обращение функции через %1, куда передаётся %2, попадает на их поля.</numerusform>
+            <numerusform>Типы упорядочены по тому, как %n обращения функции через %1, куда передаётся %2, попадают на их поля.</numerusform>
+            <numerusform>Типы упорядочены по тому, как %n обращений функции через %1, куда передаётся %2, попадают на их поля.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>регистр</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1, %n байт</numerusform>
+            <numerusform>%1, %n байта</numerusform>
+            <numerusform>%1, %n байт</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1, параметр %2 функции %3, передаётся в %4.</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1, параметр %2 функции %3.</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Применить</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>Передаётся в</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>В столбце %1: %2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>Вернуть объявление функции её отладочной информации и анализу</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Имя</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>Чтение объявления…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>Читается: %n параметр</numerusform>
+            <numerusform>Читается: %n параметра</numerusform>
+            <numerusform>Читается: %n параметров</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>Задать тип %1</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>Объявление %1 в том виде, в каком его печатает декомпилятор; читается по локальным типам по мере ввода.</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>Объявление, которое вы дали %1; читается по локальным типам по мере ввода.</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>Объявление функции не читается, поэтому её параметры нельзя типизировать по одному. Задайте вместо этого тип функции.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Тип</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>Использовать тип &amp;анализа</translation>
     </message>
 </context>
 </TS>

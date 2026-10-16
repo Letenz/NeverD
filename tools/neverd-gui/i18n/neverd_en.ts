@@ -855,6 +855,46 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>Show the program's types with their layouts and source</translation>
     </message>
+    <message>
+        <source>D&amp;WARF file...</source>
+        <translation>D&amp;WARF file...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>Load debug information from a separate DWARF file, unstripped copy or .dSYM</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>&amp;MAP file...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>Load names from a linker MAP file</translation>
+    </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>S&amp;tructure offset...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</translation>
+    </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>Con&amp;vert to struct *...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>Give the current function, or the parameter under the cursor, a C type, checked as you type</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>Set t&amp;ype...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2278,6 +2318,74 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Local Types</source>
         <translation>Local Types</translation>
     </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>Cannot convert the parameter: %1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>Put the cursor in a function to set its type</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>Put the cursor on a parameter of the function to convert it</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>Select &amp;all</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>Jump to disassembly</translation>
+    </message>
+    <message>
+        <source>Synchronize with disassembly</source>
+        <translation>Synchronize with disassembly</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>Octa&amp;l</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>Put the cursor on a number of the pseudocode to change its base</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 has no spelling in that base with the same type</translation>
+    </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>Could not tell whether %1 has a MAP file: %2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>Load DWARF file</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>Load MAP file</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>MAP files (*.map);;All files (*)</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>Load a MAP file of another build</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>DWARF files (*.debug *.dSYM);;All files (*)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2344,6 +2452,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     list the instructions that refer to strings</translation>
+    </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          show the local types, or the type named</translation>
     </message>
 </context>
 <context>
@@ -2590,6 +2702,29 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>DWARF loaded: %1</source>
         <translation>DWARF loaded: %1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>Opened without the MAP file beside the input, as chosen</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>MAP loaded unchecked: %1 (%2 names added, of another build)</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>MAP loaded: %1 (%2 names added)</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>MAP not loaded: %1 does not fit the image as loaded</translation>
+    </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>Showed %n operands as members of %1</numerusform>
+            <numerusform>Showed %n operands as members of %1</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -3399,10 +3534,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Windows names (ULONG)</translation>
     </message>
     <message>
-        <source>IDA names (unsigned int)</source>
-        <translation>IDA names (unsigned int)</translation>
-    </message>
-    <message>
         <source>C keywords (unsigned long)</source>
         <translation>C keywords (unsigned long)</translation>
     </message>
@@ -3413,6 +3544,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Exact widths (u32)</source>
         <translation>Exact widths (u32)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>Exact widths (uint32)</translation>
     </message>
     <message>
         <source>Filter types by name</source>
@@ -3497,10 +3632,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Offset</source>
         <translation>Offset</translation>
-    </message>
-    <message>
-        <source>Bytes</source>
-        <translation>Bytes</translation>
     </message>
     <message>
         <source>Type</source>
@@ -3754,6 +3885,34 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
             <numerusform>%n declared</numerusform>
         </translation>
     </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>Select a type to see its layout and source</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>No local type is named %1</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>Exact widths (c_uint32)</translation>
+    </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>JavaScript module (*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>JavaScript types (number, bigint)</translation>
+    </message>
+    <message>
+        <source>Lua (*.lua)</source>
+        <translation>Lua (*.lua)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::DeclareTypesDialog</name>
@@ -3776,6 +3935,297 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>Line %1, column %2: %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>%1 MAP, %2 names. Its build stamp matches the input file.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>%1 MAP, %2 names. Its sections are where the input file has them.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>%1 MAP, %2 names. It records nothing to check against the input file.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>MAP file found</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>Load the MAP file anyway?</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>Load the MAP file?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>%1 of %n offsets land exactly on members</numerusform>
+            <numerusform>%1 of %n offsets land exactly on members</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>%1 of %n types</numerusform>
+            <numerusform>%1 of %n types</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n bytes</numerusform>
+            <numerusform>%n bytes</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>%n types</numerusform>
+            <numerusform>%n types</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>Access</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>Also show the %n other instructions that go through %1 as members</numerusform>
+            <numerusform>Also show the %n other instructions that go through %1 as members</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Apply</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>At %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Bytes</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>Member</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>No member holds this byte</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>No type matches.</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>Offset</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>Reading what the code does through the operand&apos;s pointer…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>Search types: a name, a typedef, Type.member or .member</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>Structure offset</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>The number %1 as an offset into a structure or union.</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>The operand keeps its number.</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>The program has no structures or unions. Declare them in Local types (Shift+F1).</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Type</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</numerusform>
+            <numerusform>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>address</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>header</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>outside the type</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>padding</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>read</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>the pointer</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>user</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>write</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>&amp;Name:</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>A pointer to %1, a record of %n bytes</numerusform>
+            <numerusform>A pointer to %1, a record of %n bytes</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>Convert to struct *</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>Reading what the code does through the parameter…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>The parameter&apos;s name, which the declaration keeps</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</numerusform>
+            <numerusform>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>the register</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1, %n bytes</numerusform>
+            <numerusform>%1, %n bytes</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1, parameter %2 of %3, arrives in %4.</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1, parameter %2 of %3.</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Apply</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>Arrives in</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>At column %1: %2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>Hand the function&apos;s declaration back to its debug information and analysis</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Name</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>Reading the declaration…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>Reads: %n parameters</numerusform>
+            <numerusform>Reads: %n parameters</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>Set the type of %1</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>The declaration of %1 as the decompiler prints it, read against the local types as you type.</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>The declaration you gave %1, read against the local types as you type.</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Type</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>Use the &amp;analysis&apos; type</translation>
     </message>
 </context>
 </TS>

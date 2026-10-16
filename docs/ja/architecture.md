@@ -8,6 +8,18 @@
 本番コードの境界を説明します。対象は意図的に NeverD 所有のコードだけに限定し、
 LLVM、Capstone、Unicorn の各サブモジュールは独自の内部アーキテクチャを持ちます。
 
+## MXCSR 復元の厳密な検証
+
+`X64MXCSRMask` は明示的な有効マスク（`0xffbf` または `0xffff`）で、生の MXCSR ロードとスカラー状態の読み書きを有効にします。x64 アダプターが合法な初期状態と遷移を所有し、コアが処理量を計上して予約ビットがゼロである証明を要求します。無障害フラグだけでは証明になりません。元の組み込み操作は保持されます。メモリへの MXCSR ストア、ソース変換、ネイティブ/LLVM 証明には別の契約が必要です。
+
+## 実行時メモリの復元
+
+`X64SegmentedWrites` は、明示的な非フォールト機械状態のもとで、64 ビットオフセットを使う通常の 1/2/4/8 バイト FS/GS 書き込みを独立に許可します。`arch/x86_64` が設定検証、操作の許可、記号的基底の初期化を担当します。コアは完全な線形アドレスと通常のエイリアス無効化を使います。任意の固定基底はフレーム、他のセグメント、有効な戻りスロットと重なり得ます。この機能は raw 復元の証跡に含まれます。認証済み基底入力のないソースおよびネイティブ証明インターフェースは引き続き拒否します。
+
+## 具体的な入口メモリシード
+
+`SymExecConcreteShadow` は実行前にアドレス順の RAM バイトを受け取ります。具体状態だけを初期化し、記号側の入口メモリは自由入力のままです。C++ の `InitialMemory` は `MaxMemorySeedBytes`（既定 1 MiB、ゼロはバイトを許可しない）で制限され、空、重複、ラップする範囲を拒否します。メモリを使うレポートはバージョン 2 で `InitialMemory` と候補の `MemorySeed` を保持します。投影はシードで覆われた epoch-zero のレジスタまたは絶対メモリ入力に限り、クエリ評価、新規リプレイ、重複排除に両方のバイトを使います。未提供バイト、記号基底、近似効果は引き続き拒否します。ストアは具体メモリを通常どおり更新します。停止中の `ProcessView::read` はコミット済み RAM を読めますが、アクセス前フックは完全なスナップショットではありません。観測は所有権、寿命、不変性、非重複を証明しません。候補が確認するのは対象分岐と先行決定だけです。C/JSON、Python、CLI のバージョン 1 はレジスタ専用です。
+
 ## ソースとオブジェクト置換の境界
 
 `SourcePatchCompiler` はコンパイラの識別と成果物の選択を担当します。`validateSourcePatchTarget` はソースと外部 IR に共通の対象判定であり、対象トリプルだけでは対応を証明できません。`bindSourcePatch` は IR 入口を確認し、`PatchObject` はネイティブセクション、再配置、FDE 範囲の根拠を管理します。`publishSourcePatch` は候補の作成、検証、排他的公開を担当します。`COFFSourceImage` は PE x86/x64/ARM32/ARM64 の新領域とアンワインド表を担当し、リフト後の書き換えは元の EH の独立した根拠を必要とします。[ソースパッチ](source-patching.md)を参照してください。
@@ -1717,6 +1729,18 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymState` が 2^64 を法とする相対座標を使うのは、シンボリックな基底が 64 ビットの領域だけです。相対座標のゼロをまたぐ読み取りは、折り返さない二つの範囲に分割し、各入力の由来を一つの範囲内に保ちます。書き込みは値全体を保存します。絶対メモリ、レジスタ、一時記憶域の範囲オーバーフローは引き続き拒否します。この索引規則は実アドレスの有効性、非エイリアス性、フレーム分離を前提として与えません。通常の領域間無効化と STORE ごとの保存証明は変わらず、Unicorn、KVM、WHP が同じ解析規則を共有します。
 
+### 有界 libSystem インポート
+
+`MachOProgramLinking` は元の classic/generic64 形式、完全な未定義シンボル閉包、準備予算を所有します。Darwin process は提供元/シンボル許可、ポインタ公開、fixup 後の読み取り専用化、libSystem 入口と errno を管理します。`DarwinLibSystemCalls.def` の名前と引数数は `DarwinServices` の型付き効果に結び付き、raw trap を捏造しません。予約と最大保護は `DarwinMemory`、共有期限は `ExecutionBudget`、任意の `darwin.native_calls` 出力は `ProcessReport` が所有し、ホストのライブラリはロードしません。
+
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
+### Darwin dylib インポートのオフセット
+
+通常の強い dylib インポートは、グローバルポインターと TLS テンプレートで符号付きバイト加算値を扱います。`DarwinImage` がエクスポート先アドレス、ライブラリの配置差分、加算値を一度だけ合成し、オーバーフローと選択した提供元の元セグメント内であることを検査します。ポインター値からアクセス幅は推測しません。libSystem 入口、インポートした TLV 記述子、遅延バインドの加算値はゼロに限ります。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### 逐次 raw 実行での比較交換
 
 `SymExec` は受け入れられた raw `ATOMIC_CMPXCHG` の値の意味論を所有します。出力を書き戻す前にアドレス、期待値、更新値、旧値を取得し、`ite(Old == Expected, Desired, Old)` を一度だけコミットします。`SymState` はその書き込みのバイト効果、エイリアスの無効化、保存予算を担当します。`InterpreterSpecialization` は受け入れと由来を管理します。Old には書き込み前のメモリ由来を使い、条件付き書き込みには Old、期待値、更新値の由来を保守的に統合し、重なり得るアフィンスピルの事実を破棄します。比較が失敗しても、書き込み範囲全体と保護された戻りセルの分離証明が必要です。残余には元の原子操作、メモリ順序、発生回数を保持し、拒否時には部分的な残余 CFG を公開しません。
@@ -1738,6 +1762,46 @@ KernelModelObjects が共通オブジェクト表でハンドルとポインタ�
 
 KernelFileSystem は FILE_OBJECT ごとに provider token を保持します。非公開の共有処理は許可済みノードとマッピング済みアクセスを受け取り、共有競合を双方向に検査します。メタデータのみのアクセスは競合に含みません。CLEANUP は共有制限を解除して token を保持し、CLOSE はクリーンアップ済み token を削除します。参照が残るオブジェクトも 1024 個の上限に含みます。厳密な対応検証で token とファイルオブジェクトの所有者を照合します。 `KernelModelFileCreate` が CREATE と取消を生成し、コールバック前にハンドル容量を予約します。`DriverSession` は非同期処理と入れ子の CLOSE で呼出元を保持します。共通オブジェクト所有者がハンドルを公開し、名前検索は実際のディレクトリを保持します。シナリオの終了意図は独立し、スナップショットとアンロードが token を双方向検証します。
 
+`KernelModelFileRequests` が IoQueryFileInformation の借用バッファーと ZwQueryInformationFile の専用バッファーの継続、結果公開、解放を所有します。KernelMode ハンドル参照はオブジェクト所有者を再利用します。ネイティブ SystemBuffer は物理メモリー所有者に登録し、通常の要求解放からクエリ所有者へ委ねます。`KernelFileSystem::queryInformation` のみが保持オープントークンから宣言メタデータを符号化します。終端経路は実際の IRP クラスと長さを使い、アダプターやレポートはメタデータを再構築しません。
+
+`KernelModelIO` は `FILE_OBJECT.CurrentByteOffset` を変更せずに転送の所有権を解放します。要求オフセットと完了バイト数はファイルシステムによる位置更新の代わりにはなりません。同期ファイルのネイティブ Position クエリは保持されたフィールドを読みます。
+
 ### 生環境のアーキテクチャ所有権
 
 `RecoveryArchitecture` はビルドホストとは独立に `SpecializationOptions::Architecture` からネイティブ契約を選択します。既存の既定値は x64 で、アダプターのない対象は明示的に拒否します。`arch/x86_64` がネイティブオプションの符号化、主イメージの範囲規則、外部出口の照合コストと物理出口の証跡を所有し、core が共通予算、ポリシー符号化、グラフと証拠の完全性を所有します。x64 のダイジェストのバイト列は維持し、宣言の検証前に期待するアーキテクチャと保存された識別を確認します。`RawArchitectureReceiptCompatibility` は変更前のダイジェストを固定し、不一致テストは x64 の証拠を ARM64 として扱うことを拒否します。ARM64 のネイティブ復元は未実装です。
+
+`KernelModelFileRequests` は同期バッファー方式の `ZwReadFile` / `ZwWriteFile` も所有します。生成側がハンドルのスコープ、オフセットとキー、書き込み入力のコピーを保持します。共通完了処理は通知可能な元の呼び出し元で読み取り結果と IOSB を公開し、所有するパケットとバッファーを一度だけ解放します。内容とファイル位置の変更はストレージドライバーが担当します。
+
+`KernelModelFileRequests` はバッファを持たない `ZwFlushBuffersFile` の生成も所有します。権限マスク検査と即時公開・解放は遅延完了の読み書き・照会パケットとは異なり、元の呼び出し元への通知と一度だけの解放を共通の所有者で扱います。
+
+`KernelModelFileRequests` はネイティブ制御のバッファ取得と公開を所有します。ファイル保持、呼び出し元の継続とパケット解放を共有し、生成側の遅延完了規則でデバイス制御と FSCTL を区別します。共通の完了検証器が出力の上限を確認します。
+
+`KernelModelRuntime` がカーネル CRT の分類、インプレース変換、チェック付き文字列書き込みを所有します。`KernelCStringAPIs.def` は各呼び出し面にエクスポート識別、引数数、IRQL 条件を供給します。単位アクセスはゲストの権限と寿命検証を再利用し、レポートやアダプターはコピー／エラー意味論を再実装しません。
+
+`KernelMemoryCalls` が検査付きメモリコピーの受付を所有し、既存の move/fill とプール寿命・ユーザーメモリ検証を使う。`KernelModelRuntime` が `RtlImageNtHeader` の生署名検査を所有する。この検査は実行に必要なローダー検証を置き換えず、アダプターも意味論を複製しない。
+
+`OptimizationGuards` は LLVM の `optnone` 検査を補完します。保護対象の関数を定義するモジュールでは、CFG やコールバック引数を変更する可能性のある任意のモジュール・呼び出しグラフ最適化を省略します。必須アダプターと通常の関数最適化は実行されます。登録チェーンのソース投影は、ネイティブ再構築が照合するまでプロローグ保存のメモリー記録を保持します。
+
+`COFFRegistrationEH4Wrapper` が保持する EH4 転送を証明します。`COFFRegistrationScalarLeaf` は有界な前向き CFG、レジスターとフラグの初期化、私有 MXCSR 領域、実行時イメージデータを検査します。呼び出し元フレームの読み取り、アドレス流出、未知の呼び出し、命令重複、不完全な戻りを拒否します。LLVM 出力と独立 COFF 検証は同じローダー証明を使い、元のコードと動的読み取りを保持します。
+
+`KernelModelRuntime` は Unicode ハッシュ、NLS に依存しない共通大文字化、1980 年起点の秒への変換を所有します。`KernelRuntimeCalls` は既存のページプールで文字列を割り当てます。文字列・時刻 API 表がエクスポート、引数数、APC_LEVEL 制約を統一し、フィールドへのアクセス順序は実装側が管理します。
+
+`uppercaseCharacter` は引数幅を縮めてから判定し、既存の `uppercaseUnicodeUnit` に委譲します。CRT と計数文字列 API 表は別の ABI 識別子で同じ映射を使い、アダプターやホストのロケールに別の意味を持たせません。
+
+`KernelModelRuntime` がデバッグ引数の幅と共通のプレフィックス・バッファー公開規則を所有します。通常の可変引数は既存の呼び出し ABI リーダーを使い、明示的な x64 `va_list` アダプターは 8 バイト間隔で要求されたゲストスカラーを検査します。ディスパッチャーとアダプターは書式解析を重複しません。
+
+スレッドクエリの別名は既存のスレッド／プロセスと実行コンテキストの所有者を再利用し、プロセス接続中も一貫します。`RtlPcToFileHeader` はシステムモジュール照会と同じ `LoadedModules` を使います。`ImageRAM` のマッピング範囲はモジュール識別子の代わりになりません。ホスト状態は参照しません。
+
+`KernelMDLCalls` は旧マッピング入口を既存の六引数マッパーに正規化します。キャッシュ属性、物理ページの同一性、権限と寿命は `KernelPhysicalMemory` と MDL レコードが管理します。完全に解放したカーネルイメージの別名だけが環境依存を残さず、ユーザービューは依存を保持します。
+
+`KernelModelFileRequests` の `queryFileDevice` がファイル識別、ヘッダー、マウント状態、トポロジーを共通検証します。基底クエリはファイル所有のデバイスを返し、関連クエリはファイル拡張経路も検証して接続スタックの最上位を選択します。いずれも返却オブジェクトを借用します。
+
+`KernelModelFileCreate` は既存の `FileOperation` 内でデバイスポインター取得を管理します。名前解決、CREATE パケット、最終解放は通常のファイルオープンと共有します。オブジェクト管理が内部ハンドルからファイル参照を取得し、`queryFileDevice` が関連デバイスを返し、既存のハンドルクローズ継続が CLEANUP を実行します。継続完了後に元のスレッドのクリティカル領域を解放します。公開出力の重なりは内部の参照先を変更しません。
+
+`KernelModelIO` がプロセスプローブのラッパーと私有アタッチの寿命を管理し、共通のプロセスビュー切り替えと通常の MDL プローブを再利用します。私有アタッチはゲスト APC 領域を捏造せず、公開 API のゼロトークンでは解除できません。許可条件と入れ子は既存の所有者が管理します。復元成功後にのみプローブ例外をゲストへ渡し、復元エラーはモデル失敗として残します。
+
+`KernelObjectAPIs.def` が固定コールバックバージョンクエリの識別、引数数、値、IRQL 上限を一元管理します。コールバックレジストリやホスト OS への照会は追加しません。
+
+`KernelPhysicalMemory::resolveAddress` は現在の `MemoryView` を保持中の正確な割り当て範囲と既存のページ識別子に照合し、別名も扱います。`KernelModel` は読み取り権限、プロセス環境、常駐状態を別途検証します。照会は識別子の割り当てやページ固定を行わず、マッピングが残るページの余白で解放済みバイトを復活させません。
+
+`KernelModel::queryPrimaryVirtualAddress` は既存の有効な非ページ `PoolAllocation` 記録と `KernelPhysicalMemory::describe` から主 VA を導き、順方向照会で検証します。逆引き別名レジストリ、物理識別子、ページ固定を追加しません。一般的なバッキングアドレスだけでは主マッピングを証明できません。

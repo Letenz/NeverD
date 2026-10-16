@@ -1057,6 +1057,245 @@ int64_t frame_record(int64_t arg0) {
   }
 }
 
+TEST(SourceDialect, ATypedefOfARecordsOwnTagDeclaresTheRecord) {
+  // Rust and Go name a record and its type alike, so `typedef struct X X`
+  // is the record: defined where the text defines it, opaque where it only
+  // declares it, and never an alias of itself.
+  constexpr const char *Source = R"C(#include <stdint.h>
+typedef struct _OPAQUE _OPAQUE;
+typedef struct _PAIR _PAIR;
+struct _PAIR { int32_t Low; int32_t High; };
+int32_t low(_PAIR *Pair, _OPAQUE *Handle) { return Pair->Low; }
+)C";
+  for (SourceDialect Dialect : {SourceDialect::Go, SourceDialect::Rust}) {
+    const bool Go = Dialect == SourceDialect::Go;
+    const auto View = spell(Source, Dialect);
+    ASSERT_TRUE(View.Unread.empty()) << View.Text;
+    EXPECT_EQ(View.Text.find("_PAIR = _PAIR"), std::string::npos) << View.Text;
+    EXPECT_EQ(View.Text.find("_OPAQUE = _OPAQUE"), std::string::npos);
+    const std::string Pair = Go ? "type _PAIR struct {" : "struct _PAIR {";
+    const auto Defined = View.Text.find(Pair);
+    ASSERT_NE(Defined, std::string::npos) << View.Text;
+    EXPECT_EQ(View.Text.find(Pair, Defined + 1), std::string::npos);
+    EXPECT_NE(View.Text.find(Go ? "type _OPAQUE struct{}"
+                                : "struct _OPAQUE {\n    _opaque: [u8; 0],\n}"),
+              std::string::npos)
+        << View.Text;
+  }
+}
+
+TEST(SourceDialect, ReadsTheDefinitionsOfTheProgramsTypes) {
+  // A unit holds the program's records as its local types define them:
+  // unions, anonymous members, bit-fields, enumerations, packing and
+  // alignment, with checks of their sizes and offsets.
+  constexpr const char *Source = R"C(#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#if !defined(__cplusplus) && !defined(static_assert)
+#define static_assert _Static_assert
+#endif
+
+#ifndef NEVERD_TYPE__KIND
+#define NEVERD_TYPE__KIND
+enum _KIND
+{
+    Negative = -1,
+    Zero = 0,
+    Positive = 1,
+};
+static_assert(sizeof(enum _KIND) == 4, "_KIND");
+#endif
+
+#ifndef NEVERD_TYPE__DPC
+#define NEVERD_TYPE__DPC
+struct _DPC
+{
+    union
+    {
+        uint32_t TargetInfoAsUlong;
+        struct
+        {
+            uint8_t Type;
+            uint8_t Importance;
+            volatile uint16_t Number;
+        };
+    };
+    uint32_t Ready : 1;
+    uint32_t : 3;
+    uint32_t Spare : 28;
+    enum _KIND Kind;
+    void *Context;
+};
+static_assert(offsetof(struct _DPC, Number) == 0x2, "_DPC.Number");
+#endif
+
+#pragma pack(push, 1)
+struct _PACKED
+{
+    uint8_t Tag;
+    uint32_t Value;
+};
+#pragma pack(pop)
+static_assert(sizeof(struct _PACKED) == 0x5, "_PACKED");
+
+struct DECLSPEC_ALIGN(16) _ALIGNED
+{
+    uint64_t Low;
+    uint64_t High;
+};
+
+int32_t kind(struct _DPC *Dpc, struct _PACKED *Packed) {
+    Packed->Value = 7;
+    return Dpc->Kind == Positive;
+}
+uint32_t target(struct _DPC *Dpc) {
+    return Dpc->TargetInfoAsUlong;
+}
+uint32_t ready(struct _DPC *Dpc) {
+    return Dpc->Ready;
+}
+)C";
+  // C reads it all back as written; C++ reads it whole, as C++ too.
+  const auto C = spell(Source, SourceDialect::C);
+  ASSERT_TRUE(C.Unread.empty()) << C.Text;
+  EXPECT_EQ(tokens(C.Text), tokens(Source));
+  const auto Cpp = spell(Source, SourceDialect::Cpp);
+  ASSERT_TRUE(Cpp.Unread.empty()) << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("static_assert(offsetof(struct _DPC, Number) == "
+                          "0x2, \"_DPC.Number\");"),
+            std::string::npos)
+      << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("return Dpc->TargetInfoAsUlong;"), std::string::npos);
+  EXPECT_NE(Cpp.Text.find("return Dpc->Ready;"), std::string::npos);
+  // Rust and Go spell what their structures lay out as C does, and show
+  // the rest as C, saying why.
+  const auto has = [](const SourceDialectText &View, llvm::StringRef Reason) {
+    return llvm::is_contained(View.Unread, Reason.str());
+  };
+  for (SourceDialect Dialect : {SourceDialect::Rust, SourceDialect::Go}) {
+    const bool Go = Dialect == SourceDialect::Go;
+    const auto View = spell(Source, Dialect);
+    EXPECT_TRUE(has(View, "an anonymous structure or union")) << View.Text;
+    EXPECT_TRUE(has(View, "a member of an anonymous structure or union"));
+    EXPECT_TRUE(has(View, "a bit-field"));
+    EXPECT_NE(View.Text.find(Go ? "const Positive int32 = 1"
+                                : "const Positive: i32 = 1;"),
+              std::string::npos)
+        << View.Text;
+    EXPECT_NE(View.Text.find(Go ? "func kind(" : "unsafe fn kind("),
+              std::string::npos);
+    if (Go) {
+      EXPECT_TRUE(has(View, "a packed record"));
+      EXPECT_TRUE(has(View, "an aligned record"));
+    } else {
+      EXPECT_NE(View.Text.find("#[repr(C, packed(1))]\nstruct _PACKED {"),
+                std::string::npos);
+      EXPECT_NE(View.Text.find("#[repr(C, align(16))]\nstruct _ALIGNED {"),
+                std::string::npos);
+    }
+  }
+}
+
+TEST(SourceDialect, TheProgramsTypesSpellTheirRecordsAndTheirMembers) {
+  // Given the program's types as Rust or Go defines them, the view holds
+  // that text for the C that defines them, and reaches each member as the
+  // text names it: through the fields that hold anonymous records, and in
+  // Go through the methods that read a union's members and what Go cannot
+  // align.
+  constexpr const char *Source = R"C(#include <stdint.h>
+typedef struct _DPC _DPC;
+
+// 2 types, from the program's local types.
+#ifndef NEVERD_TYPE__DPC
+#define NEVERD_TYPE__DPC
+struct _DPC
+{
+    union
+    {
+        uint32_t TargetInfoAsUlong;
+        struct
+        {
+            uint8_t Type;
+            uint8_t Importance;
+            uint16_t Number;
+        };
+    };
+    uint32_t Ready : 1;
+    uint32_t Spare : 31;
+    void *Context;
+};
+#endif
+
+#pragma pack(push, 1)
+struct _PACKED
+{
+    uint8_t Tag;
+    uint32_t Value;
+};
+#pragma pack(pop)
+
+uint32_t target(_DPC *Dpc, struct _PACKED *Packed) {
+    Dpc->Number = 2;
+    Packed->Value = Dpc->TargetInfoAsUlong;
+    return (uint32_t)Dpc->Type;
+}
+uint32_t ready(_DPC *Dpc) {
+    return Dpc->Ready;
+}
+)C";
+  const llvm::StringRef C(Source);
+  const size_t Begin = C.find("// 2 types");
+  const size_t End = C.find("#pragma pack(pop)") + strlen("#pragma pack(pop)");
+  using Hop = SourceDialectLocalTypes::Hop;
+  for (SourceDialect Dialect : {SourceDialect::Rust, SourceDialect::Go}) {
+    const bool Go = Dialect == SourceDialect::Go;
+    SourceDialectLocalTypes Local;
+    Local.CBegin = Begin;
+    Local.CEnd = End;
+    Local.Text = Go ? "// The program's types, in Go.\n"
+                    : "// The program's types, in Rust.\n";
+    Local.Members["_DPC"]["TargetInfoAsUlong"] = {{"Anonymous", false},
+                                                  {"TargetInfoAsUlong", Go}};
+    Local.Members["_DPC"]["Type"] = {
+        {"Anonymous", false}, {"Anonymous", Go}, {"Type", false}};
+    Local.Members["_DPC"]["Number"] = {
+        {"Anonymous", false}, {"Anonymous", Go}, {"Number", false}};
+    Local.Members["_DPC"]["Context"] = {Hop{"Context", false}};
+    Local.Members["_PACKED"]["Tag"] = {Hop{"Tag", false}};
+    Local.Members["_PACKED"]["Value"] = {Hop{"Value", Go}};
+    SourceDialectOptions Opts;
+    Opts.Dialect = Dialect;
+    Opts.LocalTypes = Local;
+    const SourceDialectText View = spellInDialect(Source, Opts);
+    // The definitions are the given text, and nothing of them shows as C.
+    EXPECT_NE(View.Text.find(Local.Text), std::string::npos) << View.Text;
+    EXPECT_EQ(View.Text.find("struct _DPC"), std::string::npos);
+    EXPECT_EQ(View.Text.find("TYPE__DPC"), std::string::npos);
+    if (Go) {
+      EXPECT_NE(View.Text.find("Dpc.Anonymous.Anonymous().Number = 2"),
+                std::string::npos)
+          << View.Text;
+      EXPECT_NE(View.Text.find("*Packed.Value() = "
+                               "*Dpc.Anonymous.TargetInfoAsUlong()"),
+                std::string::npos);
+    } else {
+      EXPECT_NE(View.Text.find("(*Dpc).Anonymous.Anonymous.Number = 2;"),
+                std::string::npos)
+          << View.Text;
+      EXPECT_NE(View.Text.find("(*Packed).Value = "
+                               "(*Dpc).Anonymous.TargetInfoAsUlong;"),
+                std::string::npos);
+    }
+    // A bit-field reads through methods no path names: shown as C.
+    EXPECT_TRUE(llvm::is_contained(
+        View.Unread,
+        "a bit-field, which the program's types read through methods"))
+        << View.Text;
+    EXPECT_EQ(View.Unread.size(), 1u);
+  }
+}
+
 TEST(SourceDialect, RustViewComputesWhatCComputes) {
   std::string Rustc;
   if (const char *FromEnv = std::getenv("NEVERD_TEST_RUSTC"))

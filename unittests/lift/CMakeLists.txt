@@ -1,8 +1,10 @@
 add_neverd_unittest(NeverDSEHRuntimeMemoryTests
+  core/LowScalarConstantTests.cpp
   eh/SEHRuntimeMemoryTests.cpp
   eh/SEHImageFormatTests.cpp
   eh/X64CRTFrameTests.cpp
   eh/RegistrationSEHControlTests.cpp
+  eh/RegistrationSEHEpilogueTests.cpp
   eh/RegistrationConditionalFrameTests.cpp
   eh/RegistrationJumpRuntimeTests.cpp
   eh/RegistrationJumpCaptureTests.cpp
@@ -22,6 +24,10 @@ add_neverd_unittest(NeverDRegistrationCalleeStackTests
 
 add_neverd_unittest(NeverDHighCParamUsageTests
   core/HighCParamUsageTests.cpp
+  LINK_COMPONENTS BackendC)
+
+add_neverd_unittest(NeverDHighCSupervisorCallTests
+  core/HighCSupervisorCallTests.cpp
   LINK_COMPONENTS BackendC)
 
 add_neverd_unittest(NeverDFPParameterMaskTests
@@ -326,6 +332,7 @@ add_neverd_unittest(NeverDLiftTests
   core/MedCallingConvTests.cpp
   core/FPParameterMaskTests.cpp
   core/MedDceImplicitSpTests.cpp
+  core/MedCallLeftoversTests.cpp
   core/MedVariadicTests.cpp
   eh/COFFExceptionTests.cpp
   eh/COFFExceptionARM32UnwindTests.cpp
@@ -1408,11 +1415,16 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationSEHExceptionTests.cpp
   eh/RegistrationJumpStateTests.cpp
   eh/RegistrationMultiStateJumpTests.cpp
+  eh/RegistrationReplacementJumpTests.cpp
   eh/RegistrationPrivateCallStateTests.cpp
   eh/RegistrationBoundCallStateTests.cpp
   eh/RegistrationJumpTestUtils.cpp
   eh/RegistrationFilterStateTests.cpp
+  eh/RegistrationFilterTestUtils.cpp
+  eh/RegistrationCallbackLoopTests.cpp
+  eh/RegistrationFilterJumpTests.cpp
   eh/RegistrationSEHTryLevelTests.cpp
+  eh/RegistrationLocalUnwindTests.cpp
   eh/RegistrationScalarCallStateTests.cpp
   eh/RegistrationRuntimeMemberStateTests.cpp
   eh/RegistrationMemberArgumentStateTests.cpp
@@ -1428,6 +1440,7 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationRealignedTestUtils.cpp
   eh/RegistrationCallbackStateTests.cpp
   eh/RegistrationFrameMemoryTests.cpp
+  eh/RegistrationFrameScalarTests.cpp
   eh/RegistrationIncomingAliasTests.cpp
 
   LINK_COMPONENTS
@@ -1435,6 +1448,8 @@ add_neverd_unittest(NeverDRegistrationStateTests
 )
 
 add_neverd_unittest(NeverDRegistrationEHTests
+  eh/RegistrationEH4WrapperTests.cpp
+  eh/RegistrationPrologueSavesTests.cpp
   eh/RegistrationTryLevelTests.cpp
   eh/RegistrationSEHPrivateCallTests.cpp
 
@@ -1495,7 +1510,13 @@ add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
 
 add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
+  eh/RegistrationLocalUnwindBridgeTests.cpp
+  eh/RegistrationLocalUnwindNativeTests.cpp
   eh/RegistrationSEHReturnTests.cpp
+  eh/RegistrationSEHParentExitTests.cpp
+  eh/RegistrationSEHRegisterInputTests.cpp
+  eh/RegistrationSEHParentExitIRMutations.cpp
+  eh/RegistrationSEHRegisterIRMutations.cpp
   eh/RegistrationSEHCallbackTests.cpp
   eh/RegistrationSEHStateStoreTests.cpp
   eh/RegistrationSEHExceptionNativeTests.cpp
@@ -1503,7 +1524,9 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationSEHJumpStateNativeTests.cpp
   eh/RegistrationSEHJumpCaptureNativeTests.cpp
   eh/RegistrationSEHJumpABITests.cpp
+  eh/RegistrationCookieABITests.cpp
   eh/RegistrationCopyEdgeTests.cpp
+  eh/RegistrationRecoveredCopyTests.cpp
   eh/RegistrationSEHBoundNativeTests.cpp
   eh/RegistrationSEHRuntimeNativeTests.cpp
   eh/RegistrationSEHBoundSourceTests.cpp
@@ -1513,9 +1536,11 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationSEHFinallyResultTests.cpp
   eh/RegistrationSEHStateNativeTests.cpp
   eh/RegistrationSEHStateDispatchTests.cpp
+  eh/RegistrationSEHCopyIRMutations.cpp
   eh/RegistrationSEHFinallyIRMutations.cpp
   eh/RegistrationSEHPersonalityTests.cpp
   eh/RegistrationSEHFrameProofTests.cpp
+  eh/RegistrationSEHScalarSpillTests.cpp
   eh/RegistrationSEHNullAccessTests.cpp
   eh/RegistrationCxxContinuationTestUtils.cpp
   eh/RegistrationCallTests.cpp
@@ -1534,6 +1559,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationFrameStoresTests.cpp
   eh/RegistrationFrameBitsTests.cpp
   eh/RegistrationPHICopyTests.cpp
+  eh/RegistrationSEHPHICopyTests.cpp
   eh/RegistrationStackCopyTests.cpp
   eh/COFFTrampolineRegionTests.cpp
   eh/RegistrationReliftTests.cpp
@@ -1596,6 +1622,7 @@ target_include_directories(NeverDMedLLVMDeadSlotsTests PRIVATE
 
 add_neverd_unittest(NeverDRegistrationCallResultTests
   eh/RegistrationCallResultTests.cpp
+  eh/RegistrationSEHLocalUnwindTests.cpp
   eh/RegistrationSEHRuntimeReturnTests.cpp
   eh/RegistrationLLVMCallResultTests.cpp
   LINK_COMPONENTS IRMed BackendLLVM
@@ -1918,6 +1945,10 @@ add_neverd_unittest(NeverDMedStackAlignmentTests
 )
 add_neverd_unittest(NeverDMedPrologueSavesTests
   core/MedPrologueSavesTests.cpp
+  LINK_COMPONENTS IRMed
+)
+add_neverd_unittest(NeverDMedPointerAccessesTests
+  core/MedPointerAccessesTests.cpp
   LINK_COMPONENTS IRMed
 )
 target_compile_definitions(NeverDMBASourceTests PRIVATE
@@ -3289,6 +3320,28 @@ if(LLD_LINK_EXEC)
     DEPENDS ${coff_seh_guard_obj}
     COMMENT "Linking guarded x64 SEH fixture")
   list(APPEND TEST_OBJECTS ${coff_seh_guard_obj} ${coff_seh_guard_exe})
+
+  set(mingw_startup_seh_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_mingw_startup_seh.s")
+  set(mingw_startup_seh_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_mingw_startup_seh.obj")
+  set(mingw_startup_seh_exe
+      "${CMAKE_CURRENT_BINARY_DIR}/test_mingw_startup_seh.exe")
+  add_custom_command(
+    OUTPUT ${mingw_startup_seh_obj}
+    COMMAND ${CLANG_EXEC} -target x86_64-pc-windows-msvc -c
+            ${mingw_startup_seh_src} -o ${mingw_startup_seh_obj}
+    DEPENDS ${mingw_startup_seh_src}
+    COMMENT "Compiling MinGW-style x64 SEH startup fixture")
+  add_custom_command(
+    OUTPUT ${mingw_startup_seh_exe}
+    COMMAND ${LLD_LINK_EXEC} /entry:mingw_entry /subsystem:console
+            /nodefaultlib /export:mingw_entry /export:startup_filter
+            /export:__C_specific_handler ${mingw_startup_seh_obj}
+            /out:${mingw_startup_seh_exe}
+    DEPENDS ${mingw_startup_seh_obj}
+    COMMENT "Linking MinGW-style x64 SEH startup fixture")
+  list(APPEND TEST_OBJECTS ${mingw_startup_seh_obj} ${mingw_startup_seh_exe})
 
   set(coff_cxx_fh3_src
       "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_patch_coff_cxx_fh3.s")

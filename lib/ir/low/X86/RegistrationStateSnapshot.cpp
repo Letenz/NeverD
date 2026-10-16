@@ -44,6 +44,8 @@ static hash_code hash_value(const FrameState &Frame) {
                       Frame.CallbackEntry, Frame.SEHFilterEntry);
 }
 
+size_t FrameState::snapshotHash() const { return hash_value(*this); }
+
 static hash_code hash_value(const SEHActivation &Activation) {
   return hash_combine(Activation.Entry, Activation.SearchFilter,
                       Activation.OrdinaryCall,
@@ -79,12 +81,13 @@ size_t Domain::snapshotHash() const {
   hash_code Catches = llvm::hash_value(CxxCatchStacks.size());
   for (const auto &Stack : CxxCatchStacks)
     Catches = hash_combine(Catches, hash_combine_range(Stack));
-  return hash_combine(
-      Activation, hash_combine_range(Levels), Frame, RuntimeObject,
-      hash_combine_range(InitializedFrameBytes), Reached, Unknown, Parent,
-      Callback, OtherCallback, Catches, Uninstalled, Installed, CanDispatch,
-      OrdinaryCallStack, StackRestore, hash_combine_range(JumpCaptures),
-      hash_combine_range(SEHCallers), JumpBindingsIntact);
+  return hash_combine(Activation, hash_combine_range(Levels), Frame,
+                      RuntimeObject, hash_combine_range(InitializedFrameBytes),
+                      Reached, Unknown, Parent, Callback, OtherCallback,
+                      Catches, Uninstalled, Installed, AbandonedSEHGuard,
+                      CanDispatch, OrdinaryCallStack, StackRestore,
+                      hash_combine_range(JumpCaptures),
+                      hash_combine_range(SEHCallers), JumpBindingsIntact);
 }
 
 } // namespace neverd::registration_state

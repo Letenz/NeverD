@@ -13,14 +13,17 @@
 #include "LoadFileDialog.h"
 #include "LocalTypesView.h"
 #include "MainWindow.h"
+#include "MapPromptDialog.h"
 #include "OutputWindow.h"
 #include "PdbPromptDialog.h"
 #include "ProjectDatabase.h"
 #include "QuickStartDialog.h"
 #include "Session.h"
+#include "SetTypeDialog.h"
 #include "SettingsKeys.h"
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
+#include "TypePickerDialog.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
@@ -29,6 +32,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
+#include <QCompleter>
 #include <QDateTime>
 #include <QDialogButtonBox>
 #include <QDragEnterEvent>
@@ -40,6 +44,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetricsF>
+#include <QHeaderView>
 #include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QJsonArray>
@@ -60,6 +65,7 @@
 #include <QSizeGrip>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTest>
@@ -161,6 +167,23 @@ QPushButton *buttonNamed(QWidget *window, const QString &text) {
 }
 /// Accepts every "Load a new file" dialog with its defaults while it lives,
 /// as pressing Enter does.
+/// Shows \p code's context menu at its cursor and hands it to \p use, which
+/// may trigger one of its entries; the menu then closes.
+void withCodeMenu(CodeText *code, const std::function<void(QMenu *)> &use) {
+  QTimer probe;
+  QObject::connect(&probe, &QTimer::timeout, &probe, [&] {
+    auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+    if (!menu)
+      return;
+    probe.stop();
+    use(menu);
+    menu->close();
+  });
+  probe.start(5);
+  emit code->contextMenuRequested(
+      code->viewport()->mapToGlobal(QPoint(40, 40)));
+}
+
 class LoadDialogAcceptor {
 public:
   LoadDialogAcceptor() {
@@ -967,7 +990,6 @@ private slots:
     auto *code = view->text();
     QTRY_VERIFY(!code->loading() && code->lineCount() > 2);
     code->setPreludeFolded(false);
-    const auto initialAssembly = assembly->currentAddress();
     if (native) {
       code->setCursorLine(0);
       QVERIFY(code->findText(QStringLiteral("return ("), true));
@@ -989,17 +1011,34 @@ private slots:
       QTRY_VERIFY(decoded);
     } else
       QCOMPARE(target, std::optional<Address>(function + 2));
-    // Clicks and arrow keys select source rows without moving assembly.
+    // Clicks and arrow keys move the source cursor and take the assembly
+    // cursor to the row's instruction, leaving the focus and the jump
+    // history where they are.
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    const bool back = assembly->canGoBack();
+    const bool forward = assembly->canGoForward();
     if (!native) {
+      code->setCursorLine(0);
+      assembly->navigate(function, false);
+      QTRY_COMPARE(assembly->currentAddress(),
+                   std::optional<Address>(function));
       const int height = int(
           std::ceil(QFontMetricsF(Theme::instance().codeFont()).lineSpacing()));
       QTest::mouseClick(code->viewport(), Qt::LeftButton, {},
                         QPoint(100, 2 * height + height / 2));
       QCOMPARE(code->currentAddress(), target);
+      QTRY_COMPARE(assembly->currentAddress(), target);
     }
+    assembly->navigate(function, false);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
     QTest::keyClick(code, Qt::Key_Right);
-    QTest::qWait(250);
-    QCOMPARE(assembly->currentAddress(), initialAssembly);
+    QTRY_COMPARE(assembly->currentAddress(), target);
+    QVERIFY(code->hasFocus());
+    QCOMPARE(assembly->canGoBack(), back);
+    QCOMPARE(assembly->canGoForward(), forward);
     // Assembly navigation leaves this unpinned source on its own function.
     assembly->navigate(other);
     QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(other));
@@ -1040,6 +1079,457 @@ private slots:
     QTRY_VERIFY(code->hasFocus());
     QTest::keyClick(code, Qt::Key_Tab);
     QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
+  }
+
+  void contextMenusOfferTabWithItsKey() {
+    // Tab's switch to the other pane is in both context menus with its key:
+    // a code window's as Jump to disassembly beside the synchronization
+    // switch, the disassembly's as Jump to pseudocode.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    const Address function = Base + 0x140;
+    assembly->navigate(function);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 3);
+    code->setPreludeFolded(false);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    code->setCursorLine(3);
+    assembly->navigate(function, false);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
+    QString shown;
+    bool jumpOffered = true;
+    withCodeMenu(code, [&](QMenu *menu) {
+      auto *cross =
+          menu->findChild<QAction *>(QStringLiteral("codeJumpDisassembly"));
+      QVERIFY(cross);
+      shown = cross->text();
+      // The disassembly's own wording would point back at this window.
+      jumpOffered =
+          menu->actions().contains(bench.action(ActionId::JumpPseudocode));
+      cross->trigger();
+    });
+    QCOMPARE(shown, QStringLiteral("Jump to disassembly\tTab"));
+    QVERIFY(!jumpOffered);
+    QTRY_VERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(function + 6));
+
+    QStringList texts;
+    QTimer probe;
+    connect(&probe, &QTimer::timeout, this, [&] {
+      auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+      if (!menu)
+        return;
+      probe.stop();
+      for (const QAction *action : menu->actions())
+        texts << action->text();
+      menu->close();
+    });
+    probe.start(5);
+    emit assembly->contextMenuRequested(assembly->mapToGlobal(QPoint(40, 40)));
+    QVERIFY(texts.contains(bench.action(ActionId::JumpPseudocode)->text()));
+    QCOMPARE(bench.action(ActionId::JumpPseudocode)->shortcut(),
+             QKeySequence(Qt::Key_Tab));
+  }
+
+  void assemblyAndCodeCursorsFollowEachOther() {
+    // A move in the disassembly takes a code window showing the same
+    // function to the instruction's row and leaves the focus there; a code
+    // window showing another function stays. "Synchronize with disassembly"
+    // in the code's context menu lets both browse apart.
+    QTemporaryDir directory;
+    Workbench bench;
+    const auto restore = qScopeGuard(
+        [] { QSettings().remove(QStringLiteral("code/synchronize")); });
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    const Address function = Base + 0x140;
+    assembly->navigate(function);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 3);
+    code->setPreludeFolded(false);
+    code->setCursorLine(1);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    assembly->focusContent();
+    QTRY_VERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
+    assembly->navigate(function + 6, false);
+    QTRY_COMPARE(code->cursorLine(), 3);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(function + 6));
+    QVERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
+    assembly->navigate(function + 2, false);
+    QTRY_COMPARE(code->cursorLine(), 2);
+    // An instruction no row maps leaves the cursor where it is.
+    assembly->navigate(function + 9, false);
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(function + 9));
+    QTest::qWait(100);
+    QCOMPARE(code->cursorLine(), 2);
+    // Another function is not decompiled on the way.
+    assembly->navigate(Base + 0x180, false);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x180));
+    QTest::qWait(200);
+    QCOMPARE(code->function(), std::optional<Address>(function));
+    QCOMPARE(code->cursorLine(), 2);
+
+    // Apart, the code's rows move neither the disassembly nor the other way.
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    withCodeMenu(code, [](QMenu *menu) {
+      auto *synchronize =
+          menu->findChild<QAction *>(QStringLiteral("codeSynchronize"));
+      QVERIFY(synchronize && synchronize->isChecked());
+      synchronize->trigger();
+    });
+    QVERIFY(
+        !QSettings().value(QStringLiteral("code/synchronize"), true).toBool());
+    code->setCursorLine(3);
+    QTest::qWait(200);
+    QCOMPARE(assembly->currentFunction(), std::optional<Address>(Base + 0x180));
+    assembly->navigate(function, false);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
+    assembly->focusContent();
+    QTRY_VERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
+    assembly->navigate(function + 2, false);
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(function + 2));
+    QTest::qWait(100);
+    QCOMPARE(code->cursorLine(), 3);
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    withCodeMenu(code, [](QMenu *menu) {
+      auto *synchronize =
+          menu->findChild<QAction *>(QStringLiteral("codeSynchronize"));
+      QVERIFY(synchronize && !synchronize->isChecked());
+      synchronize->trigger();
+    });
+    code->setCursorLine(2);
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(function + 2));
+    code->setCursorLine(3);
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(function + 6));
+  }
+
+  void pseudocodeNumbersTakeTheBaseTheUserPicks() {
+    // Hex-Rays' bases for a pseudocode number: H toggles between
+    // hexadecimal and decimal, the context menu offers each base with what
+    // the number would read in it, # gives the number back to the
+    // decompiler, a base that would change its type is refused, and each
+    // change is a step of the history.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address function = Base + 0x140;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 3);
+    code->setPreludeFolded(false);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    // A comment's digits are no number.
+    code->setCursorLine(1);
+    QVERIFY(code->findText(QStringLiteral("8 */"), true));
+    QVERIFY(!code->numberTarget());
+    code->setCursorLine(1);
+    QVERIFY(code->findText(QStringLiteral("24"), true));
+    const auto target = code->numberTarget();
+    QVERIFY(target.has_value());
+    QCOMPARE(target->line, 2);
+    QCOMPARE(target->index, 0);
+    QCOMPARE(target->literal.Text, std::string("24"));
+    QCOMPARE(target->chosen, neverd::LiteralRadix::Number);
+
+    QVERIFY(bench.action(ActionId::EditOperandDecimal)->isEnabled());
+    QVERIFY(!bench.action(ActionId::EditOperandOffset)->isEnabled());
+    bench.action(ActionId::EditOperandDecimal)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(QStringLiteral("v0 + 0x18; /* 8 */")),
+        OpenTimeoutMs);
+    QStringList offered;
+    withCodeMenu(code, [&](QMenu *menu) {
+      for (const QAction *action : menu->actions())
+        if (action->objectName().startsWith(QStringLiteral("codeNumber_")))
+          offered << action->text();
+      auto *hex = menu->findChild<QAction *>(QStringLiteral("codeNumber_hex"));
+      QVERIFY(hex && hex->isChecked());
+      auto *octal =
+          menu->findChild<QAction *>(QStringLiteral("codeNumber_octal"));
+      QVERIFY(octal && octal->isEnabled());
+      octal->trigger();
+    });
+    QCOMPARE(offered, (QStringList{QStringLiteral("&Number\t24"),
+                                   QStringLiteral("&Hexadecimal\t0x18"),
+                                   QStringLiteral("&Decimal\t24"),
+                                   QStringLiteral("Octa&l\t030"),
+                                   QStringLiteral("&Binary\t0b11000"),
+                                   QStringLiteral("&Character\t'\\030'")}));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(QStringLiteral("v0 + 030; /* 8 */")),
+        OpenTimeoutMs);
+    bench.action(ActionId::EditOperandNumber)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(QStringLiteral("v0 + 24; /* 8 */")),
+        OpenTimeoutMs);
+    QTRY_VERIFY(bench.session.canUndo());
+    bench.session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(QStringLiteral("v0 + 030; /* 8 */")),
+        OpenTimeoutMs);
+
+    // An unsigned int has no character constant; in decimal it keeps its
+    // type with a suffix.
+    code->setCursorLine(2);
+    QVERIFY(code->findText(QStringLiteral("0xFFFFFFFF"), true));
+    bench.action(ActionId::EditOperandChar)->trigger();
+    QTest::qWait(200);
+    QVERIFY(code->allText().contains(QStringLiteral("v1 & 0xFFFFFFFF;")));
+    bench.action(ActionId::EditOperandDecimal)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(QStringLiteral("v1 & 4294967295U;")),
+        OpenTimeoutMs);
+    QVERIFY(code->allText().contains(QStringLiteral("v0 + 030; /* 8 */")));
+  }
+
+  void codeTextSelectsLikeAnEditor() {
+    // Ctrl+A selects the whole function, a drag held below the text scrolls
+    // and extends the selection past the first screen, and a right click
+    // inside the selection keeps it for Copy, as in an editor.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers-paged.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address function = Base + 0x140;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    // Ctrl+A while pages still arrive selects the whole function once the
+    // last one is in, its folded prelude included.
+    bool pressed = false;
+    QObject context;
+    connect(code->verticalScrollBar(), &QScrollBar::rangeChanged, &context,
+            [&] {
+              if (pressed || !code->loading() || code->lineCount() == 0)
+                return;
+              pressed = true;
+              QTest::keyClick(code, Qt::Key_A, Qt::ControlModifier);
+            });
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 600,
+                             OpenTimeoutMs);
+    QVERIFY(pressed);
+    QCOMPARE(code->selectedText(), code->allText());
+    code->setPreludeFolded(false);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+
+    QTest::keyClick(code, Qt::Key_A, Qt::ControlModifier);
+    QCOMPARE(code->selectedText(), code->allText());
+    bench.action(ActionId::EditCopy)->trigger();
+    QCOMPARE(clipboardText(), code->allText());
+
+    code->setCursorLine(0);
+    QCOMPARE(code->verticalScrollBar()->value(), 0);
+    const int height = int(
+        std::ceil(QFontMetricsF(Theme::instance().codeFont()).lineSpacing()));
+    QTest::mousePress(code->viewport(), Qt::LeftButton, {},
+                      QPoint(60, 2 * height + height / 2));
+    const QPoint below(60, code->viewport()->height() + 3 * height);
+    QTest::mouseMove(code->viewport(), below);
+    QTRY_VERIFY(code->verticalScrollBar()->value() > 100);
+    QTest::mouseRelease(code->viewport(), Qt::LeftButton, {}, below);
+    const int last = code->cursorLine();
+    QVERIFY(last > 100);
+    const QString selected = code->selectedText();
+    QCOMPARE(int(selected.count(QLatin1Char('\n'))), last - 2);
+
+    // A right click inside the selection keeps it, and the menu's Copy,
+    // beside Select all, copies it.
+    QApplication::clipboard()->clear();
+    const QPoint inside(60, code->viewport()->height() / 2);
+    QTest::mousePress(code->viewport(), Qt::RightButton, {}, inside);
+    QTest::mouseRelease(code->viewport(), Qt::RightButton, {}, inside);
+    QCOMPARE(code->selectedText(), selected);
+    auto *copy = bench.action(ActionId::EditCopy);
+    bool clicked = false;
+    QTimer clicker;
+    connect(&clicker, &QTimer::timeout, this, [&] {
+      auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+      if (!menu)
+        return;
+      clicker.stop();
+      clicked = menu->actions().contains(copy) &&
+                menu->findChild<QAction *>(QStringLiteral("codeSelectAll"));
+      if (clicked)
+        QTest::mouseClick(menu, Qt::LeftButton, {},
+                          menu->actionGeometry(copy).center());
+      if (menu->isVisible())
+        menu->close();
+    });
+    clicker.start(5);
+    QContextMenuEvent request(QContextMenuEvent::Mouse, inside,
+                              code->viewport()->mapToGlobal(inside));
+    QApplication::sendEvent(code->viewport(), &request);
+    QVERIFY(clicked);
+    QCOMPARE(clipboardText(), selected);
+    QCOMPARE(code->selectedText(), selected);
+  }
+
+  void gotoLabelsGoToTheirBlock() {
+    // A double-click on a goto's label takes the code to the label and the
+    // disassembly to the block the label names, Back returning to the goto.
+    // The label's row maps to that block, not to the statement around it
+    // the engine's rows give it, so the cursor on it takes the disassembly
+    // there too.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-labels.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address function = Base + 0x140;
+    const Address block = function + 0xA;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 6);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    const QString label =
+        QStringLiteral("L_") + QString::number(block, 16).toUpper();
+    code->setCursorLine(0);
+    QVERIFY(code->findText(QStringLiteral("goto ") + label, true));
+    const int gotoRow = code->cursorLine();
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function + 2));
+
+    // The double-click acts on the token the cursor is on.
+    code->setCursorLine(gotoRow - 1);
+    QVERIFY(code->findText(label, true));
+    QCOMPARE(code->cursorLine(), gotoRow);
+    QCOMPARE(code->currentToken(), label);
+    QSignalSpy names(code, &CodeText::nameActivated);
+    const QPointF point(code->viewport()->width() / 2.0, 1);
+    QMouseEvent click(QEvent::MouseButtonDblClick, point,
+                      code->viewport()->mapToGlobal(point), Qt::LeftButton,
+                      Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(code->viewport(), &click);
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(block));
+    QCOMPARE(names.size(), 0);
+    QVERIFY(code->cursorLine() > gotoRow);
+    const int labelRow = code->cursorLine();
+    QCOMPARE(code->currentToken(), label);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(block));
+    QVERIFY(code->hasFocus());
+    QCOMPARE(code->function(), std::optional<Address>(function));
+
+    bench.action(ActionId::JumpBack)->trigger();
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function + 2));
+    QTRY_COMPARE(code->cursorLine(), gotoRow);
+    bench.action(ActionId::JumpForward)->trigger();
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(block));
+    QTRY_COMPARE(code->cursorLine(), labelRow);
+
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    code->setCursorLine(gotoRow);
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function + 2));
+    code->setCursorLine(labelRow);
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(block));
+    // A note on the label stays the line's, where the code shows it, not
+    // the block instruction's comment.
+    const auto note = code->commentTarget();
+    QVERIFY(note);
+    QVERIFY(!note->contains(QStringLiteral("mapped_address")));
+  }
+
+  void codeEditKeepsThePlaceInALongFunction() {
+    // An edit loads the function's pages again. The first page used to
+    // clamp the cursor and the view, which then stayed near its end: the
+    // cursor on a number of the third page jumped away from it.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers-paged.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address function = Base + 0x140;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 600,
+                             OpenTimeoutMs);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    code->setCursorLine(0);
+    QVERIFY(code->findText(QStringLiteral("24"), true));
+    const int line = code->cursorLine();
+    const int top = code->verticalScrollBar()->value();
+    QVERIFY(line > 512);
+    QVERIFY(top > 256);
+    bench.action(ActionId::EditOperandDecimal)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(QStringLiteral("return v0 + 0x18;")),
+        OpenTimeoutMs);
+    QCOMPARE(code->cursorLine(), line);
+    QCOMPARE(code->verticalScrollBar()->value(), top);
+    const auto target = code->numberTarget();
+    QVERIFY(target.has_value());
+    QCOMPARE(target->shown, neverd::LiteralRadix::Hex);
   }
 
   void graphJumpDuringFunctionLoadKeepsLatestAddress() {
@@ -3301,6 +3791,222 @@ private slots:
             QLatin1String("dwarf"));
   }
 
+  /// Write \p text as the MAP beside the fixture \p fixture in \p directory.
+  static bool writeMapBeside(const QTemporaryDir &directory,
+                             const QString &fixture, const QByteArray &text) {
+    QFile map(directory.filePath(QFileInfo(fixture).completeBaseName() +
+                                 QStringLiteral(".map")));
+    return map.open(QIODevice::WriteOnly) && map.write(text) == text.size();
+  }
+
+  void mapQuestionAtStartupGreetsAlone_data() {
+    QTest::addColumn<QByteArray>("map");
+    QTest::addColumn<bool>("accept");
+    QTest::addColumn<QString>("kind");
+    QTest::addColumn<QString>("mode");
+    QTest::newRow("same build, yes") << QByteArray("same build") << true
+                                     << QStringLiteral("map") << QString();
+    QTest::newRow("same build, no")
+        << QByteArray("same build") << false << QStringLiteral("none")
+        << QStringLiteral("none");
+    QTest::newRow("other build, yes")
+        << QByteArray("other build") << true << QStringLiteral("map")
+        << QStringLiteral("unchecked");
+  }
+
+  void mapQuestionAtStartupGreetsAlone() {
+    // An image no PDB or DWARF describes asks before it loads the MAP beside
+    // it, in a window of its own that says which linker wrote the MAP and
+    // whether it is of the input's build; one of another build defaults to
+    // No, and Yes still loads it, as the user chose.
+    QFETCH(QByteArray, map);
+    QFETCH(bool, accept);
+    QFETCH(QString, kind);
+    QFETCH(QString, mode);
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("map.bin"));
+    QVERIFY(writeMapBeside(directory, QStringLiteral("map.bin"), map));
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    bool answered = false, alone = false, cautious = false;
+    QString description;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      auto *dialog =
+          qobject_cast<MapPromptDialog *>(QApplication::activeModalWidget());
+      if (!dialog || answered)
+        return;
+      answered = true;
+      alone = dialog->isVisible() && !dialog->parentWidget() &&
+              !bench.window->isVisible();
+      if (auto *label =
+              dialog->findChild<QLabel *>(QStringLiteral("description")))
+        description = label->text();
+      if (auto *no = dialog->findChild<QPushButton *>(QStringLiteral("no")))
+        cautious = no->isDefault();
+      if (auto *button = dialog->findChild<QPushButton *>(
+              accept ? QStringLiteral("yes") : QStringLiteral("no")))
+        button->click();
+    });
+    answer.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(answered, OpenTimeoutMs);
+    QVERIFY(alone);
+    QCOMPARE(cautious, map == "other build");
+    QVERIFY2(description.startsWith(QLatin1String("link.exe MAP, 3 names.")),
+             qPrintable(description));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.window->isVisible());
+    const auto metadata = bench.session.metadata();
+    QCOMPARE(metadata.value("debug_info").toObject().value("kind").toString(),
+             kind);
+    QCOMPARE(metadata.value("map").toObject().value("mode").toString(), mode);
+  }
+
+  void unattendedRunsAskNoMapQuestion() {
+    // A capture or benchmark reads the MAP that discovery finds.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("map.bin"));
+    QVERIFY(writeMapBeside(directory, QStringLiteral("map.bin"), "same build"));
+    Workbench bench;
+    bench.window->setAsksForDebugInfo(false);
+    bool asked = false;
+    QTimer watch;
+    connect(&watch, &QTimer::timeout, this, [&] {
+      if (qobject_cast<MapPromptDialog *>(QApplication::activeModalWidget())) {
+        asked = true;
+        QApplication::activeModalWidget()->close();
+      }
+    });
+    watch.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!asked);
+    QCOMPARE(bench.session.metadata()
+                 .value("debug_info")
+                 .toObject()
+                 .value("kind")
+                 .toString(),
+             QStringLiteral("map"));
+  }
+
+  void anAcceptedPdbLeavesTheMapUnasked() {
+    // A PDB outranks the MAP beside the PE: once the user takes the PDB,
+    // the MAP is not asked about, and the open reads no MAP before the PDB.
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("symbols-local.bin"));
+    QFile pdb(directory.filePath(QStringLiteral("fixture.pdb")));
+    QVERIFY(pdb.open(QIODevice::WriteOnly));
+    pdb.write("matching fixture PDB");
+    pdb.close();
+    QVERIFY(writeMapBeside(directory, QStringLiteral("symbols-local.bin"),
+                           "same build"));
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    bool answeredPdb = false, askedMap = false;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      auto *modal = QApplication::activeModalWidget();
+      if (auto *dialog = qobject_cast<PdbPromptDialog *>(modal)) {
+        answeredPdb = true;
+        if (auto *yes = dialog->findChild<QPushButton *>(QStringLiteral("yes")))
+          yes->click();
+      } else if (qobject_cast<MapPromptDialog *>(modal)) {
+        askedMap = true;
+        modal->close();
+      }
+    });
+    answer.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(answeredPdb);
+    QVERIFY(!askedMap);
+    const auto debug = bench.session.metadata().value("debug_info").toObject();
+    QCOMPARE(debug.value("kind").toString(), QStringLiteral("pdb"));
+    QVERIFY(debug.value("files").toArray().isEmpty());
+  }
+
+  void declinedMapStaysDeclinedInTheProject() {
+    // The project keeps the answer, as it keeps the DWARF one: reopening it
+    // asks nothing and reads no MAP.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("map.bin"));
+    QVERIFY(writeMapBeside(directory, QStringLiteral("map.bin"), "same build"));
+    const auto database = ProjectDatabase::pathFor(path);
+    {
+      Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+      QTimer answer;
+      connect(&answer, &QTimer::timeout, this, [&] {
+        if (auto *dialog = qobject_cast<MapPromptDialog *>(
+                QApplication::activeModalWidget()))
+          if (auto *no = dialog->findChild<QPushButton *>(QStringLiteral("no")))
+            no->click();
+      });
+      answer.start(5);
+      bench.window->openFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      answer.stop();
+      bench.session.setComment(Base + 0x140, QStringLiteral("declined"));
+      QTRY_VERIFY(bench.session.dirty());
+      QSignalSpy saved(&bench.session, &Session::databaseSaved);
+      bench.session.save();
+      QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
+      QVERIFY(saved.first().first().toBool());
+    }
+    Workbench bench;
+    bool asked = false;
+    QTimer watch;
+    connect(&watch, &QTimer::timeout, this, [&] {
+      if (auto *dialog = qobject_cast<MapPromptDialog *>(
+              QApplication::activeModalWidget())) {
+        asked = true;
+        dialog->close();
+      }
+    });
+    watch.start(5);
+    bench.window->openFile(database);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!asked);
+    const auto metadata = bench.session.metadata();
+    QCOMPARE(metadata.value("map").toObject().value("mode").toString(),
+             QStringLiteral("none"));
+    QVERIFY(metadata.value("debug_info").toObject().value("kind").toString() !=
+            QLatin1String("map"));
+  }
+
+  void loadFileOffersTheDebugFilesTheImageCanHave() {
+    // File, Load file offers a PDB for a PE, DWARF for an ELF or Mach-O
+    // image, and a MAP for any image; a chosen MAP loads beside the image's
+    // other debug information.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("map.bin"));
+    QFile map(directory.filePath(QStringLiteral("chosen.map")));
+    QVERIFY(map.open(QIODevice::WriteOnly));
+    map.write("same build");
+    map.close();
+    Workbench bench;
+    bench.window->setAsksForDebugInfo(false);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *loadMap = bench.action(ActionId::FileLoadMap);
+    auto *loadDwarf = bench.action(ActionId::FileLoadDwarf);
+    QVERIFY(loadMap && loadDwarf);
+    QTRY_VERIFY(loadMap->isEnabled());
+    QCOMPARE(loadDwarf->isEnabled(),
+             bench.session.format() == QLatin1String("ELF") ||
+                 bench.session.format() == QLatin1String("Mach-O"));
+    QSignalSpy changed(&bench.session, &Session::functionsChanged);
+    bench.session.loadMap({{"path", map.fileName()}, {"mode", "checked"}});
+    QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 1, OpenTimeoutMs);
+    const auto metadata = bench.session.metadata();
+    QCOMPARE(metadata.value("map").toObject().value("mode").toString(),
+             QStringLiteral("checked"));
+    const auto files =
+        metadata.value("debug_info").toObject().value("files").toArray();
+    QCOMPARE(files.size(), 1);
+    QCOMPARE(files.first().toObject().value("kind").toString(),
+             QStringLiteral("map"));
+  }
+
   void symbolQuestionAtStartupGreetsAlone_data() {
     QTest::addColumn<bool>("accept");
     QTest::newRow("yes") << true;
@@ -3874,6 +4580,11 @@ private slots:
 
   void localTypesLayOutAndRenderTheProgramsTypes() {
     QTemporaryDir directory;
+    // A choice kept before exact widths became the default starts over.
+    QSettings().setValue(QStringLiteral("localTypes/spelling"),
+                         QStringLiteral("ida"));
+    QSettings().setValue(QStringLiteral("localTypes/luaSpelling"),
+                         QStringLiteral("windows"));
     Workbench bench;
     bench.window->openFile(
         writeFixture(directory, QStringLiteral("local-types.bin")));
@@ -3894,30 +4605,47 @@ private slots:
     // The filter has the focus, as IDA's quick filter does.
     QTRY_VERIFY(filter->hasFocus());
 
+    // The list leaves the ordinal and the member count out until asked.
+    auto *listHeader = list->header();
+    QVERIFY(listHeader->isSectionHidden(0));
+    QVERIFY(!listHeader->isSectionHidden(1));
+    QVERIFY(listHeader->isSectionHidden(4));
+
     // A record shows its members, the padding between and the union it
-    // holds, the union's bitfield at its bit.
+    // holds, the union's bitfield at its bit: where each lies first, as a
+    // memory map reads, the tree in the member's column.
     types->showType(QStringLiteral("_DEVICE"));
     QTRY_COMPARE(types->currentType(), QStringLiteral("_DEVICE"));
     QTRY_COMPARE(layout->topLevelItemCount(), 4);
-    QCOMPARE(layout->topLevelItem(0)->text(0), QStringLiteral("Type"));
-    QCOMPARE(layout->topLevelItem(1)->text(0), QStringLiteral("(padding)"));
-    QCOMPARE(layout->topLevelItem(1)->text(2), QStringLiteral("0x6"));
-    QCOMPARE(layout->topLevelItem(3)->text(0), QStringLiteral("union"));
-    QCOMPARE(layout->topLevelItem(3)->child(1)->text(1),
+    QCOMPARE(layout->headerItem()->text(0), QStringLiteral("Offset"));
+    QCOMPARE(layout->headerItem()->text(2), QStringLiteral("Member"));
+    QCOMPARE(layout->treePosition(), 2);
+    QCOMPARE(layout->columnCount(), 4);
+    QCOMPARE(layout->topLevelItem(0)->text(2), QStringLiteral("Type"));
+    QCOMPARE(layout->topLevelItem(1)->text(2), QStringLiteral("(padding)"));
+    QCOMPARE(layout->topLevelItem(1)->text(1), QStringLiteral("0x6"));
+    QCOMPARE(layout->topLevelItem(3)->text(2), QStringLiteral("union"));
+    QCOMPARE(layout->topLevelItem(3)->child(1)->text(0),
              QStringLiteral("0x18.0"));
-    QCOMPARE(layout->topLevelItem(3)->child(1)->text(2), QStringLiteral(":1"));
+    QCOMPARE(layout->topLevelItem(3)->child(1)->text(1), QStringLiteral(":1"));
+    // What only source takes is not on the layout's options.
+    auto *dependencies = types->findChild<QCheckBox *>();
+    QVERIFY(dependencies);
+    for (auto *box : types->findChildren<QCheckBox *>())
+      if (box->text() != QLatin1String("Hex offsets"))
+        QVERIFY2(box->isHidden(), qPrintable(box->text()));
 
     // A member's type opens on a double click; Back returns.
     auto *links = layout->topLevelItem(2);
-    QCOMPARE(links->text(0), QStringLiteral("Links"));
+    QCOMPARE(links->text(2), QStringLiteral("Links"));
     emit layout->itemDoubleClicked(links, 0);
     QTRY_COMPARE(types->currentType(), QStringLiteral("_LIST_ENTRY"));
     QTest::keyClick(layout, Qt::Key_Escape);
     QTRY_COMPARE(types->currentType(), QStringLiteral("_DEVICE"));
 
     // The source in the language of its tab, with the options asked: C/C++
-    // shows C, and each language chooses among its own spellings, Rust's
-    // apart from C's; Go has one.
+    // shows C, and each language chooses among its own spellings, apart
+    // from the others'.
     auto *spelling =
         types->findChild<QComboBox *>(QStringLiteral("localTypesSpelling"));
     QVERIFY(spelling);
@@ -3927,39 +4655,356 @@ private slots:
         ids.append(spelling->itemData(index).toString());
       return ids;
     };
+    // Exact widths come first, every language's default.
+    const QStringList twoSpellings{QStringLiteral("portable"),
+                                   QStringLiteral("windows")};
     types->setPage(2);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language rust spelling portable")));
     QVERIFY(!spelling->isHidden());
-    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
-                                     QStringLiteral("portable")}));
-    spelling->setCurrentIndex(0);
+    QCOMPARE(choices(), twoSpellings);
+    spelling->setCurrentIndex(1);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language rust spelling windows")));
     types->setPage(3);
     QTRY_VERIFY(source->toPlainText().startsWith(
-        QStringLiteral("// language go spelling default")));
-    QVERIFY(spelling->isHidden());
+        QStringLiteral("// language go spelling portable")));
+    QVERIFY(!spelling->isHidden());
+    QCOMPARE(choices(), twoSpellings);
+    QCOMPARE(spelling->itemText(0), QStringLiteral("Exact widths (uint32)"));
+    spelling->setCurrentIndex(1);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language go spelling windows")));
+    // Python renders through ctypes, with its own two spellings.
+    types->setPage(4);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language python spelling portable")));
+    QVERIFY(!spelling->isHidden());
+    QCOMPARE(choices(), twoSpellings);
+    QCOMPARE(spelling->itemText(0), QStringLiteral("Exact widths (c_uint32)"));
+    // JavaScript whose JSDoc TypeScript checks, as one tab.
+    const auto *tabBar =
+        types->findChild<QTabBar *>(QStringLiteral("localTypesTabs"));
+    QVERIFY(tabBar);
+    QCOMPARE(tabBar->tabText(5), QStringLiteral("JS/TS"));
+    types->setPage(5);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language javascript spelling portable")));
+    QCOMPARE(choices(), twoSpellings);
+    QCOMPARE(spelling->itemText(0),
+             QStringLiteral("JavaScript types (number, bigint)"));
+    // Lua, whose spelling names the C types its comments give.
+    QCOMPARE(tabBar->tabText(6), QStringLiteral("Lua"));
+    types->setPage(6);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language lua spelling portable")));
+    QCOMPARE(choices(), twoSpellings);
     types->setPage(1);
     QTRY_VERIFY(source->toPlainText().startsWith(
-        QStringLiteral("// language c spelling windows")));
+        QStringLiteral("// language c spelling portable")));
     QVERIFY(source->toPlainText().contains(QStringLiteral("struct _DEVICE")));
     QVERIFY(!spelling->isHidden());
-    QCOMPARE(
-        choices(),
-        (QStringList{QStringLiteral("windows"), QStringLiteral("ida"),
-                     QStringLiteral("keywords"), QStringLiteral("portable")}));
-    QCOMPARE(spelling->currentData().toString(), QStringLiteral("windows"));
+    for (auto *box : types->findChildren<QCheckBox *>())
+      QVERIFY2(!box->isHidden(), qPrintable(box->text()));
+    QCOMPARE(choices(),
+             (QStringList{QStringLiteral("portable"), QStringLiteral("windows"),
+                          QStringLiteral("keywords")}));
+    QCOMPARE(spelling->currentData().toString(), QStringLiteral("portable"));
     QCOMPARE(QSettings().value(QStringLiteral("localTypes/view")).toString(),
              QStringLiteral("c"));
+    QCOMPARE(QSettings()
+                 .value(QStringLiteral("localTypes/spellings/rust"))
+                 .toString(),
+             QStringLiteral("windows"));
     QCOMPARE(
-        QSettings().value(QStringLiteral("localTypes/rustSpelling")).toString(),
+        QSettings().value(QStringLiteral("localTypes/spellings/go")).toString(),
         QStringLiteral("windows"));
+    QVERIFY(!QSettings().contains(QStringLiteral("localTypes/spelling")));
+    QVERIFY(!QSettings().contains(QStringLiteral("localTypes/luaSpelling")));
+
+    // The command line shows a type by name, and says when none has it.
+    auto *output = bench.window->findChild<OutputWindow *>();
+    QVERIFY(output);
+    output->run(QStringLiteral("t _LIST_ENTRY"));
+    QTRY_COMPARE(types->currentType(), QStringLiteral("_LIST_ENTRY"));
+    output->run(QStringLiteral("types _NO_SUCH_TYPE"));
+    QTRY_VERIFY(types->findChild<QLabel *>(QStringLiteral("localTypesSummary"))
+                    ->text()
+                    .contains(QStringLiteral("_NO_SUCH_TYPE")));
 
     // The filter keeps the types whose name holds its text.
     filter->setText(QStringLiteral("list"));
     QTRY_COMPARE(list->model()->rowCount(), 1);
     types->setPage(0);
+  }
+
+  void structureOffsetsRankTypesByTheCodesAccesses() {
+    // T on `mov rax, [rcx+8]` lists the local types by how function_7's
+    // accesses through rcx land on their members, the one that holds them
+    // all first and previewed as the operand becomes; Apply shows the
+    // operand, and every other access through rcx, as members of it in one
+    // step of the history.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-types.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.session.showsStructOffsets());
+    auto *disassembly = bench.window->findChild<DisassemblyView *>();
+    QVERIFY(disassembly);
+    const Address read = Base + 0x70;
+    const auto lineAt = [&](Address at) {
+      disassembly->navigate(at);
+      return disassembly->listing()->currentLineText();
+    };
+    disassembly->navigate(read);
+    disassembly->focusContent();
+    QTRY_COMPARE(disassembly->currentItem(), std::optional<Address>(read));
+    QTRY_VERIFY(disassembly->listing()->currentLineText().contains(
+        QLatin1String("[rcx+8]")));
+    QTRY_VERIFY(bench.action(ActionId::EditOperandStruct)->isEnabled());
+
+    QStringList listed;
+    QString expression, every, summary;
+    auto *picker = new QTimer(&bench.session);
+    connect(picker, &QTimer::timeout, picker, [&, picker] {
+      auto *dialog =
+          qobject_cast<TypePickerDialog *>(QApplication::activeModalWidget());
+      if (!dialog || !dialog->isActiveWindow())
+        return;
+      auto *list =
+          dialog->findChild<QListWidget *>(QStringLiteral("typePickerList"));
+      auto *search =
+          dialog->findChild<QLineEdit *>(QStringLiteral("typePickerSearch"));
+      if (!list || !search || list->count() < 2 || !search->hasFocus())
+        return;
+      picker->stop();
+      picker->deleteLater();
+      for (int row = 0; row < list->count(); ++row)
+        listed << list->item(row)->text();
+      expression =
+          dialog->findChild<QLabel *>(QStringLiteral("typePickerExpression"))
+              ->text();
+      summary = dialog->findChild<QLabel *>(QStringLiteral("typePickerSummary"))
+                    ->text();
+      auto *box =
+          dialog->findChild<QCheckBox *>(QStringLiteral("typePickerEvery"));
+      every = box->isVisibleTo(dialog) ? box->text() : QString();
+      box->setChecked(true);
+      QTest::keyClick(search, Qt::Key_Return);
+    });
+    picker->start(10);
+    bench.action(ActionId::EditOperandStruct)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        listed,
+        (QStringList{QStringLiteral("_DEVICE"), QStringLiteral("_LIST_ENTRY")}),
+        OpenTimeoutMs);
+    QCOMPARE(expression, QStringLiteral("[rcx+_DEVICE.Links.Flink]"));
+    QCOMPARE(every, QStringLiteral("Also show the 2 other instructions that "
+                                   "go through rcx as members"));
+    QCOMPARE(summary, QStringLiteral("2 types"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        lineAt(read).contains(QLatin1String("[rcx+_DEVICE.Links.Flink]")),
+        OpenTimeoutMs);
+    QTRY_VERIFY(lineAt(read + 1).contains(QLatin1String("[rcx+_DEVICE.Type]")));
+    QTRY_VERIFY(
+        lineAt(read + 2).contains(QLatin1String("[rcx+_DEVICE.Links.Blink]")));
+    // The number of `add rcx, 18h` stays: no access went through it.
+    QTRY_VERIFY(lineAt(read + 3).contains(QLatin1String("rcx, 18h")));
+
+    // One undo takes the three back.
+    bench.session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        lineAt(read + 2).contains(QLatin1String("[rcx+10h]")), OpenTimeoutMs);
+    QTRY_VERIFY(lineAt(read).contains(QLatin1String("[rcx+8]")));
+    QVERIFY2(bench.session.lastError().isEmpty(),
+             qPrintable(bench.session.lastError()));
+  }
+
+  void pseudocodeParametersTakeTypesByConvertAndY() {
+    // In function_7's pseudocode, Convert to struct * on arg0 ranks the local
+    // types by the reads through rcx and makes it a _DEVICE * under the name
+    // the user gives, whose members the code then reads; Y on arg1 completes
+    // a type's name, refuses one the program lacks and states one that
+    // reads; Y on the function shows its declaration and hands it back to
+    // analysis.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-types.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.session.convertsParameters());
+    const Address function = Base + 0x70;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
+                                 code->allText().contains("void* arg0"),
+                             OpenTimeoutMs);
+    const auto onParameter = [&](const QString &name, int position) {
+      code->setCursorLine(0);
+      if (!code->findText(name, true))
+        return false;
+      code->setFocus();
+      const auto target = code->renameTarget();
+      return target && target->value("parameter").toInt(-1) == position;
+    };
+    QTRY_VERIFY(onParameter(QStringLiteral("arg0"), 0));
+    // The commands follow the view the focus moves to, at once: T is the
+    // disassembly's, Convert to struct * the pseudocode's.
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    bench.window->disassembly()->focusContent();
+    QVERIFY(bench.action(ActionId::EditOperandStruct)->isEnabled());
+    QVERIFY(!bench.action(ActionId::EditConvertToStruct)->isEnabled());
+    code->setFocus();
+    QVERIFY(bench.action(ActionId::EditConvertToStruct)->isEnabled());
+    QVERIFY(!bench.action(ActionId::EditOperandStruct)->isEnabled());
+
+    QStringList listed;
+    QString member;
+    auto *picker = new QTimer(&bench.session);
+    connect(picker, &QTimer::timeout, picker, [&, picker] {
+      auto *dialog =
+          qobject_cast<TypePickerDialog *>(QApplication::activeModalWidget());
+      if (!dialog || !dialog->isActiveWindow())
+        return;
+      auto *list =
+          dialog->findChild<QListWidget *>(QStringLiteral("typePickerList"));
+      auto *search =
+          dialog->findChild<QLineEdit *>(QStringLiteral("typePickerSearch"));
+      auto *name =
+          dialog->findChild<QLineEdit *>(QStringLiteral("typePickerName"));
+      if (!list || !search || !name || list->count() < 2 || !search->hasFocus())
+        return;
+      picker->stop();
+      picker->deleteLater();
+      for (int row = 0; row < list->count(); ++row)
+        listed << list->item(row)->text();
+      name->setText(QStringLiteral("Device"));
+      member = dialog->findChild<QLabel *>(QStringLiteral("typePickerMember"))
+                   ->text();
+      QTest::keyClick(search, Qt::Key_Return);
+    });
+    picker->start(10);
+    bench.action(ActionId::EditConvertToStruct)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        listed,
+        (QStringList{QStringLiteral("_DEVICE"), QStringLiteral("_LIST_ENTRY")}),
+        OpenTimeoutMs);
+    QCOMPARE(member, QStringLiteral("_DEVICE *Device"));
+    QTRY_VERIFY_WITH_TIMEOUT(code->allText().contains("_DEVICE *Device") &&
+                                 code->allText().contains("Device->Type"),
+                             OpenTimeoutMs);
+
+    // Y on arg1: its type, a name completed, one refused, one stated.
+    QTRY_VERIFY(onParameter(QStringLiteral("arg1"), 1));
+    QTRY_VERIFY(bench.action(ActionId::EditSetType)->isEnabled());
+    QString subject, completed, refused;
+    int stage = 0;
+    auto *typer = new QTimer(&bench.session);
+    connect(typer, &QTimer::timeout, typer, [&, typer] {
+      auto *dialog =
+          qobject_cast<SetTypeDialog *>(QApplication::activeModalWidget());
+      // The completion list is a window of its own while it shows.
+      if (!dialog || (stage != 1 && !dialog->isActiveWindow()))
+        return;
+      auto *field =
+          dialog->findChild<QLineEdit *>(QStringLiteral("setTypeField"));
+      auto *status =
+          dialog->findChild<QLabel *>(QStringLiteral("setTypeStatus"));
+      auto *apply =
+          dialog->findChild<QPushButton *>(QStringLiteral("setTypeApply"));
+      if (!field || !status || !apply || !field->isEnabled())
+        return;
+      if (stage == 0) {
+        if (field->text() != QLatin1String("int64_t") || !apply->isEnabled())
+          return;
+        subject = dialog->findChild<QLabel *>(QStringLiteral("setTypeSubject"))
+                      ->text();
+        field->selectAll();
+        QTest::keyClicks(field, QStringLiteral("_LIS"));
+        stage = 1;
+      } else if (stage == 1) {
+        auto *completer = dialog->findChild<QCompleter *>();
+        auto *popup = completer ? completer->popup() : nullptr;
+        if (!popup || !popup->isVisible() || !popup->model()->rowCount())
+          return;
+        completed = popup->model()->index(0, 0).data().toString();
+        popup->setCurrentIndex(popup->model()->index(0, 0));
+        QTest::keyClick(popup, Qt::Key_Return);
+        stage = 2;
+      } else if (stage == 2) {
+        if (field->text() != QLatin1String("_LIST_ENTRY"))
+          return;
+        QTest::keyClicks(field, QStringLiteral(" *NOPE"));
+        stage = 3;
+      } else if (stage == 3) {
+        if (!status->text().startsWith(QStringLiteral("✗")))
+          return;
+        refused = status->text();
+        QVERIFY(!apply->isEnabled());
+        field->selectAll();
+        QTest::keyClicks(field, QStringLiteral("_LIST_ENTRY *"));
+        stage = 4;
+      } else if (stage == 4) {
+        if (!apply->isEnabled() ||
+            !status->text().contains(QLatin1String("_LIST_ENTRY *arg1")))
+          return;
+        typer->stop();
+        typer->deleteLater();
+        QTest::keyClick(field, Qt::Key_Return);
+      }
+    });
+    typer->start(10);
+    bench.action(ActionId::EditSetType)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(code->allText().contains("_LIST_ENTRY *arg1"),
+                             OpenTimeoutMs);
+    QCOMPARE(subject, QStringLiteral(
+                          "arg1, parameter 2 of function_7, arrives in rdx."));
+    QCOMPARE(completed, QStringLiteral("_LIST_ENTRY"));
+    QVERIFY2(refused.contains(QLatin1String("'NOPE' names no type")),
+             qPrintable(refused));
+
+    // Y on the function: the declaration the user gave it, which goes back
+    // to analysis.
+    code->setCursorLine(0);
+    QVERIFY(code->findText(QStringLiteral("function_7"), true));
+    code->setFocus();
+    QString declaration;
+    auto *resetter = new QTimer(&bench.session);
+    connect(resetter, &QTimer::timeout, resetter, [&, resetter] {
+      auto *dialog =
+          qobject_cast<SetTypeDialog *>(QApplication::activeModalWidget());
+      if (!dialog || !dialog->isActiveWindow())
+        return;
+      auto *field =
+          dialog->findChild<QLineEdit *>(QStringLiteral("setTypeField"));
+      auto *reset =
+          dialog->findChild<QPushButton *>(QStringLiteral("setTypeReset"));
+      if (!field || !reset || !field->isEnabled() || !reset->isVisible())
+        return;
+      resetter->stop();
+      resetter->deleteLater();
+      declaration = field->text();
+      reset->click();
+    });
+    resetter->start(10);
+    bench.action(ActionId::EditSetType)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(code->allText().contains("void* arg0"),
+                             OpenTimeoutMs);
+    QCOMPARE(declaration, QStringLiteral("int64_t function_7(_DEVICE *Device, "
+                                         "_LIST_ENTRY *arg1)"));
+    // One undo states the declaration again.
+    bench.session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(code->allText().contains("_LIST_ENTRY *arg1"),
+                             OpenTimeoutMs);
+    QVERIFY2(bench.session.lastError().isEmpty(),
+             qPrintable(bench.session.lastError()));
   }
 
   void localTypesAreDeclaredEditedAndDeletedByIdasKeys() {
@@ -3983,6 +5028,7 @@ private slots:
     // standing; a problem stays in it at its place, and a declaration that
     // reads adds its type and shows it.
     QStringList titles, languages;
+    QString chosen;
     bool problemShown = false, problemAtItsPlace = false;
     int answers = 0;
     QTimer editor;
@@ -3994,10 +5040,12 @@ private slots:
       if (auto *language = dialog ? dialog->findChild<QComboBox *>(
                                         QStringLiteral("declareLanguage"))
                                   : nullptr;
-          language && languages.isEmpty())
+          language && languages.isEmpty()) {
+        chosen = language->currentData().toString();
         for (int index = 0; index < language->count(); ++index)
           languages.append(language->itemText(index) + QLatin1Char('=') +
                            language->itemData(index).toString());
+      }
       auto *declare =
           dialog ? dialog->findChild<QPushButton *>(QStringLiteral("declare"))
                  : nullptr;
@@ -4036,10 +5084,13 @@ private slots:
               qobject_cast<QDialog *>(QApplication::activeModalWidget()))
         dialog->reject();
     });
+    // From a tab that renders only, as Python's, the editor declares C.
+    types->setPage(4);
     list->setFocus();
     QTest::keyClick(list, Qt::Key_Insert);
     QVERIFY(problemShown);
     QVERIFY(problemAtItsPlace);
+    QCOMPARE(chosen, QStringLiteral("c"));
     // C/C++ declares C, the language the window shows it in.
     QCOMPARE(languages, (QStringList{QStringLiteral("C/C++=c"),
                                      QStringLiteral("Rust=rust"),
@@ -4412,20 +5463,23 @@ private slots:
     QCOMPARE(pseudocode->text()->function(),
              std::optional<Address>(Base + 0x140));
 
-    // IR rows select independently; Tab moves the disassembly cursor.
+    // An IR row the user selects takes the disassembly cursor along; Tab
+    // moves the focus there too.
     bench.action(ActionId::ViewLowIR)->trigger();
     CodeView *ir = nullptr;
     QTRY_VERIFY((ir = bench.codeView(QStringLiteral("low"))) != nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(ir->text()->lineCount() > 3, OpenTimeoutMs);
-    ir->text()->setCursorLine(3);
-    QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x140));
     bench.window->activateWindow();
     QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
     ir->text()->setFocus();
     QTRY_VERIFY(ir->text()->hasFocus());
-    bench.action(ActionId::JumpPseudocode)->trigger();
+    ir->text()->setCursorLine(3);
     QTRY_COMPARE(disassembly->currentItem(),
                  std::optional<Address>(Base + 0x143));
+    QVERIFY(ir->text()->hasFocus());
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    QTRY_VERIFY(disassembly->isAncestorOf(QApplication::focusWidget()));
+    QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x143));
 
     // Copy takes the lines selected in the window holding the focus, also in
     // an IR window switched to pseudocode, which is not the pseudocode

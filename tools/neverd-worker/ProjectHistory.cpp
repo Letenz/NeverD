@@ -77,6 +77,13 @@ void validateRow(std::string_view table, const Json &row) {
       throw Error("history_invalid", "Function color is invalid");             \
     edits = true;                                                              \
   }
+// The engine reads a declaration against the local types when it loads it.
+#define NEVERD_FUNCTION_TYPE(Member, Key)                                      \
+  if (row.contains(Key)) {                                                     \
+    if (stringField(row, Key, {}, 4096).empty())                               \
+      throw Error("history_invalid", "Function declaration is empty");         \
+    edits = true;                                                              \
+  }
 #include "neverd/sdk/FunctionAttributes.def"
     if (!edits)
       throw Error("history_invalid", "Function edit is empty");
@@ -102,6 +109,11 @@ void validateRow(std::string_view table, const Json &row) {
       for (const char *flag : {"negate", "invert"})
         if (operand.contains(flag) && !operand.at(flag).is_boolean())
           throw Error("history_invalid", "Operand format flag is invalid");
+      // A structure offset's type and delta.
+      if (operand.contains("type"))
+        (void)stringField(operand, "type", {}, 512);
+      if (operand.contains("delta") && !operand.at("delta").is_number_integer())
+        throw Error("history_invalid", "Operand structure delta is invalid");
     }
   }
 }

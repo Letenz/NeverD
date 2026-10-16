@@ -10451,3 +10451,138 @@ TEST(HighControlFlowSemantics, JumpTailCopyKeepsTheOuterLabelOwner) {
   for (uint64_t Input : {0U, 1U, 7U})
     EXPECT_EQ(execute(F, Input, true), Input ? 7U : 5U);
 }
+
+TEST(HighControlFlowDAG, SharedReadMultiplicityDoesNotExpandAsATree) {
+  MedVar V;
+  V.Kind = MedVar::Temp;
+  V.Id = 7;
+  V.Size = 8;
+  ExprPtr Read = HighExpr::makeVar(V);
+  ExprPtr Shared = Read;
+  for (unsigned I = 0; I != 33; ++I)
+    Shared = HighExpr::makeBinop(NdOp::INT_ADD, Shared, Shared);
+  HighStmt Assignment;
+  Assignment.Kind = StmtKind::Assign;
+  Assignment.Addr = 0x1000;
+  Assignment.Dst = HighExpr::makeVar(V);
+  Assignment.Val = HighExpr::makeConst(1, 8);
+  HighStmt RetZero;
+  RetZero.Kind = StmtKind::Return;
+  RetZero.Addr = 0x1002;
+  RetZero.Val = HighExpr::makeConst(0, 8);
+  HighStmt Conditional;
+  Conditional.Kind = StmtKind::If;
+  Conditional.Addr = 0x1001;
+  Conditional.Cond = Read;
+  Conditional.Body = {RetZero};
+  HighStmt RetShared;
+  RetShared.Kind = StmtKind::Return;
+  RetShared.Addr = 0x1003;
+  RetShared.Val = Shared;
+  std::vector<HighStmt> Body{Assignment, Conditional, RetShared};
+  reduceSingleUseGotos(Body, false);
+  ASSERT_FALSE(Body.empty());
+  EXPECT_EQ(Body.front().Kind, StmtKind::Assign);
+  ASSERT_TRUE(Body.front().Dst);
+  EXPECT_EQ(Body.front().Dst->Var, V);
+}
+
+namespace {
+ExprPtr sharedConstant(unsigned Layers) {
+  ExprPtr Value = HighExpr::makeConst(0, 8);
+  for (unsigned I = 0; I != Layers; ++I)
+    Value = HighExpr::makeBinop(NdOp::INT_ADD, Value, Value);
+  return Value;
+}
+std::vector<HighStmt> conditionalBody(ExprPtr Value, ExprPtr Condition) {
+  MedVar V;
+  V.Kind = MedVar::Temp;
+  V.Id = 17;
+  V.Size = 8;
+  HighStmt Assign;
+  Assign.Kind = StmtKind::Assign;
+  Assign.Addr = 0x1000;
+  Assign.Dst = HighExpr::makeVar(V);
+  Assign.Val = std::move(Value);
+  HighStmt Zero;
+  Zero.Kind = StmtKind::Return;
+  Zero.Addr = 0x1002;
+  Zero.Val = HighExpr::makeConst(0, 8);
+  HighStmt If;
+  If.Kind = StmtKind::If;
+  If.Addr = 0x1001;
+  If.Cond = std::move(Condition);
+  If.Body = {Zero};
+  HighStmt One;
+  One.Kind = StmtKind::Return;
+  One.Addr = 0x1003;
+  One.Val = HighExpr::makeConst(1, 8);
+  return {Assign, If, One};
+}
+ExprPtr readVariable() {
+  MedVar V;
+  V.Kind = MedVar::Temp;
+  V.Id = 17;
+  V.Size = 8;
+  return HighExpr::makeVar(V);
+}
+bool containsVariable(const std::vector<HighStmt> &Body) {
+  std::set<const HighExpr *> Seen;
+  bool Found = false;
+  auto Visit = [&](auto &&Self, const ExprPtr &E) -> void {
+    if (!E || !Seen.insert(E.get()).second)
+      return;
+    Found |= E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Temp &&
+             E->Var.Id == 17;
+    E->forEachChildExpr([&](const ExprPtr &Child) { Self(Self, Child); });
+  };
+  walkStmts(Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) { Visit(Visit, E); });
+  });
+  return Found;
+}
+} // namespace
+TEST(HighControlFlowDAG, SubstitutionFindsReadAfterLargeUnrelatedDag) {
+  auto Condition =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, sharedConstant(33), readVariable());
+  auto Body = conditionalBody(HighExpr::makeConst(1, 8), Condition);
+  EXPECT_TRUE(reduceSingleUseGotos(Body, false));
+  ASSERT_FALSE(Body.empty());
+  EXPECT_NE(Body.front().Kind, StmtKind::Assign);
+  EXPECT_FALSE(containsVariable(Body));
+}
+TEST(HighControlFlowDAG, SharedPureRightHandSideKeepsDepthLimit) {
+  for (unsigned Layers : {31u, 33u}) {
+    SCOPED_TRACE(Layers);
+    auto Body = conditionalBody(sharedConstant(Layers), readVariable());
+    reduceSingleUseGotos(Body, false);
+    ASSERT_FALSE(Body.empty());
+    EXPECT_EQ(Body.front().Kind == StmtKind::Assign, Layers == 33);
+    EXPECT_EQ(containsVariable(Body), Layers == 33);
+  }
+}
+TEST(HighControlFlowDAG,
+     SharedPureNodeAtDifferentDepthsCannotBorrowShallowProof) {
+  auto Shared = sharedConstant(29);
+  auto Deep =
+      HighExpr::makeBinop(NdOp::INT_ADD, Shared, HighExpr::makeConst(0, 8));
+  for (unsigned I = 0; I != 3; ++I)
+    Deep = HighExpr::makeBinop(NdOp::INT_ADD, Deep, HighExpr::makeConst(0, 8));
+  auto Root = HighExpr::makeBinop(NdOp::INT_ADD, Shared, Deep);
+  auto Body = conditionalBody(Root, readVariable());
+  reduceSingleUseGotos(Body, false);
+  ASSERT_FALSE(Body.empty());
+  EXPECT_EQ(Body.front().Kind, StmtKind::Assign);
+  EXPECT_TRUE(containsVariable(Body));
+}
+
+TEST(HighControlFlowDAG, SharedPurePrefixCannotHideAnEffectfulSibling) {
+  auto Call = HighExpr::makeCall("effect", 0x2000, {});
+  auto Value = HighExpr::makeBinop(NdOp::INT_ADD, sharedConstant(30), Call);
+  auto Body = conditionalBody(Value, readVariable());
+  reduceSingleUseGotos(Body, false);
+  ASSERT_FALSE(Body.empty());
+  EXPECT_EQ(Body.front().Kind, StmtKind::Assign);
+  EXPECT_EQ(Body.front().Val, Value);
+  EXPECT_TRUE(containsVariable(Body));
+}

@@ -67,6 +67,12 @@ TEST(DriverKernelAPIIRQL, UnicodeCopyInitAndComparisonHaveDifferentCeilings) {
   expectLimit("RtlInitUnicodeString", 2);
   expectLimit("RtlCompareUnicodeString", 0);
   expectLimit("RtlEqualUnicodeString", 0);
+  expectLimit("RtlHashUnicodeString", 1);
+  expectLimit("RtlUpcaseUnicodeString", 1);
+  expectLimit("RtlTimeToSecondsSince1980", 1);
+  expectLimit("RtlUpcaseUnicodeChar", 1);
+  expectLimit("toupper", 1);
+  expectLimit("towupper", 1);
 }
 
 TEST(DriverKernelAPIIRQL, DeviceCreationDeletionAndSymbolicLinksDiffer) {
@@ -76,6 +82,10 @@ TEST(DriverKernelAPIIRQL, DeviceCreationDeletionAndSymbolicLinksDiffer) {
   expectLimit("IoDeleteSymbolicLink", 0);
   expectLimit("MmGetSystemRoutineAddress", 0);
   expectLimit("RtlGetVersion", 0);
+  expectLimit("IoThreadToProcess", 2);
+  expectLimit("ExGetPreviousMode", 2);
+  expectLimit("PsGetCurrentThreadPreviousMode", 2);
+  expectLimit("RtlPcToFileHeader", 15);
 }
 
 TEST(DriverKernelAPIIRQL,
@@ -96,6 +106,7 @@ TEST(DriverKernelAPIIRQL, NonpagedPoolMdlAndWorkOperationsPermitDispatch) {
                                        "MmIsAddressValid",
                                        "MmBuildMdlForNonPagedPool",
                                        "MmMapLockedPagesSpecifyCache",
+                                       "MmMapLockedPages",
                                        "MmGetSystemAddressForMdlSafe",
                                        "MmUnmapLockedPages",
                                        "IofCompleteRequest",
@@ -128,13 +139,21 @@ TEST(DriverKernelAPIIRQL, DebugOutputStopsBelowClockAndIpiLevels) {
 
 TEST(DriverKernelAPIIRQL,
      ResidentByteOperationsAndIrpHelpersPermitAnyX64Level) {
-  const llvm::StringLiteral Names[] = {
-      "memcpy",           "memmove",
-      "memset",           "memcmp",
-      "RtlCopyMemory",    "RtlMoveMemory",
-      "RtlFillMemory",    "RtlCompareMemory",
-      "RtlZeroMemory",    "IoGetCurrentIrpStackLocation",
-      "IoMarkIrpPending", "KeGetCurrentIrql"};
+  const llvm::StringLiteral Names[] = {"memcpy",
+                                       "memmove",
+                                       "memcpy_s",
+                                       "memmove_s",
+                                       "RtlImageNtHeader",
+                                       "memset",
+                                       "memcmp",
+                                       "RtlCopyMemory",
+                                       "RtlMoveMemory",
+                                       "RtlFillMemory",
+                                       "RtlCompareMemory",
+                                       "RtlZeroMemory",
+                                       "IoGetCurrentIrpStackLocation",
+                                       "IoMarkIrpPending",
+                                       "KeGetCurrentIrql"};
   for (auto Name : Names)
     expectLimit(Name, 15);
 }
@@ -154,7 +173,7 @@ TEST(DriverKernelAPIIRQL, UnknownAndInexactSpellingsHaveNoGuessedPolicy) {
   const llvm::StringLiteral Names[] = {
       "",           "ZwNotModeled",           "ZwOpenKeyEx",    "zwopenkey",
       "ZwOpenKey ", "ntoskrnl.exe!ZwOpenKey", "IoCallDriverEx", "DbgPrintEx2",
-      "memcpy_s"};
+      "memcpy__s"};
   for (auto Name : Names) {
     auto Maximum = maximumKernelIRQL(Name);
     if (Maximum) {

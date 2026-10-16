@@ -13,9 +13,11 @@
 #ifndef NEVERD_SDK_CAPI_SESSION_IMPL_H
 #define NEVERD_SDK_CAPI_SESSION_IMPL_H
 
+#include "../../pipeline/PipelineCallAbiDetail.h"
 #include "../plugin/PluginManager.h"
 #include "ImageStrings.h"
 #include "LoadOptions.h"
+#include "LocalTypesDebugContext.h"
 
 #include "neverd/DataAccessWidths.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -43,6 +45,7 @@
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
@@ -106,6 +109,12 @@ struct Session {
   std::unique_ptr<DebugContext> Dbg;
   DebugInfoKind DbgKind = DebugInfoKind::None;
   std::filesystem::path DbgPath;
+  /// Every file the debug information was read from, Dbg's first.
+  std::vector<DebugInfoFile> DbgFiles;
+  /// Whether neverd_session_load() read the image from FilePath, so a debug
+  /// file loaded later can read it again the same way
+  /// (reloadDebugInformation).
+  bool ReadFromFile = false;
   /// The program's local types, read from its debug information when first
   /// asked for (NeverDCAPILocalTypes.cpp).  A new image or PDB drops them.
   std::unique_ptr<types::TypeLibrary> LocalTypes;
@@ -141,7 +150,61 @@ struct Session {
     LocalTypesSource.clear();
     DeclarationProblems.clear();
     LocalTypeHeaders.clear();
+    dropLocalTypesDebug();
   }
+
+  /// The debug context the decompiler reads: the program's own completed
+  /// from its local types (LocalTypesDebugContext), when it has any, and
+  /// the declarations the user gave its functions, with or without debug
+  /// information.  Built at the first decompilation; the pipeline it fed
+  /// goes with it.
+  std::unique_ptr<LocalTypesDebugContext> LocalTypesDbg;
+  bool LocalTypesChecked = false;
+  DebugContext *decompileDebug();
+  /// The debug context of an image without debug information, which the
+  /// user's declarations complete.
+  NullDebugContext NoDebugInfo;
+  /// The C declarations the user gave functions, by entry
+  /// (FunctionAttributes::Type).
+  std::map<va_t, std::string> functionDeclarations() const {
+    std::map<va_t, std::string> Declarations;
+    for (const auto &[Entry, Attributes] : FunctionAttributeEdits)
+      if (Attributes.Type)
+        Declarations.emplace(Entry, *Attributes.Type);
+    return Declarations;
+  }
+  /// Whether \p Text declares a function the decompiler can bind, as
+  /// FunctionAttributes::Type: it reads against the local types as one
+  /// function's declaration, is not variadic, every type it names has a
+  /// decompiler type, and its calling convention is one NeverD places the
+  /// image's parameters by.  False, with \p Error, otherwise.
+  bool checkFunctionDeclaration(const std::string &Text, std::string &Error);
+  /// After the user's declarations change: the decompiler reads them anew,
+  /// and only what it made of them goes.  Analysis never reads them.
+  void declarationsChanged() {
+    dropLocalTypesDebug();
+    clearPipelineResult();
+  }
+  /// The program's local types, read when first asked for; null with the
+  /// session's error when its PDB's types cannot be read.
+  types::TypeLibrary *readLocalTypes();
+  /// After a declaration changes \p Changed in \p Library, or adds
+  /// prototypes, drops what read them: the analysis, where prototypes read
+  /// them, or the text that printed them.  Whether the decompilation
+  /// changes.
+  bool typesChanged(const types::TypeLibrary &Library,
+                    llvm::ArrayRef<std::string> Changed, bool Prototypes);
+  void dropLocalTypesDebug() {
+    // The text it printed stays, and with it what that read.
+    if (LocalTypesDbg)
+      for (const auto &Name : LocalTypesDbg->readTypes())
+        ShownTypes.insert(Name.getKey());
+    LocalTypesDbg.reset();
+    LocalTypesChecked = false;
+  }
+  /// The library's types the text kept in FunctionSources read through
+  /// contexts since dropped: a change to one changes that text.
+  llvm::StringSet<> ShownTypes;
 
   std::unique_ptr<llvm::LLVMContext> LLVMCtx;
   PipelineResult PipeResult;
@@ -440,7 +503,12 @@ struct Session {
     std::optional<bool> Library;
     std::optional<bool> Static;
     std::optional<uint32_t> Color;
-    bool empty() const { return !NoReturn && !Library && !Static && !Color; }
+    /// The C declaration the user gave the function, which the decompiler
+    /// prints and binds its parameters by (FunctionAttributes.def).
+    std::optional<std::string> Type;
+    bool empty() const {
+      return !NoReturn && !Library && !Static && !Color && !Type;
+    }
     bool operator==(const FunctionAttributes &) const = default;
   };
   std::map<va_t, FunctionAttributes> FunctionAttributeEdits;
@@ -475,10 +543,13 @@ struct Session {
   std::map<va_t, DataItem> DataItems;
   /// How the user shows an instruction operand's number
   /// (neverd_operand_format_set): a base of OperandFormats.def, with its sign
-  /// changed or its bits inverted.
+  /// changed or its bits inverted, or for a structure offset the local type
+  /// and how many bytes into it the register points.
   struct OperandFormat {
     std::string Base;
     bool Negate = false, Invert = false;
+    std::string Type;
+    int64_t Delta = 0;
     bool operator==(const OperandFormat &) const = default;
   };
   /// The user's operand formats by instruction address and operand index.
@@ -663,6 +734,10 @@ struct Session {
 
   void clearPipeline() {
     clearPipelineResult();
+    // The local types' context refers to the debug context a load replaces
+    // after this.
+    dropLocalTypesDebug();
+    ShownTypes.clear();
     AnalysisCache.reset();
     AccessWidths.reset();
     AccessWidthsFunctions.clear();
@@ -706,14 +781,14 @@ struct Session {
       // Debug names already reached Img.Symbols at load time; handing the
       // context to the pipeline also carries source locations, declared sizes,
       // and parameter names into the IR.
-      PipeResult = ThePipeline.run(Img, *LLVMCtx, Opts, Dbg.get());
+      PipeResult = ThePipeline.run(Img, *LLVMCtx, Opts, decompileDebug());
       PipelineFeatureGeneration = SigDB.featureGeneration();
       PipeRan = true;
     }
     if (NeedHighIR && PipeResult.Success && PipeResult.HighIRDeferred) {
       PipelineOptions Opts;
       applyAnalysisOptions(Opts);
-      Pipeline().resumeHighIR(Img, Opts, PipeResult, Dbg.get());
+      Pipeline().resumeHighIR(Img, Opts, PipeResult, decompileDebug());
     }
     if (!PipeResult.Success)
       setError(PipeResult.Error.empty() ? "pipeline failed" : PipeResult.Error);
@@ -794,20 +869,28 @@ struct Session {
     // recomputes each function's call information, so once per pipeline is
     // enough for such modules.
     if (!BodyMask || !NativeMedFuncs) {
-      auto Prepared = PipeResult.MedFuncs;
       std::map<va_t, std::string> FuncNames;
-      for (const auto &MF : Prepared)
+      for (const auto &MF : PipeResult.MedFuncs)
         if (!MF.Name.empty())
           FuncNames[MF.Entry] = MF.Name;
-      for (auto &MF : Prepared)
-        recoverCallAbi(MF, Img.Arch, FuncNames, &Img);
-      NativeMedFuncs = std::move(Prepared);
+      // Recover the calls as the module pipeline does, with its evidence:
+      // every callee's arity, the signatures of callees this pipeline did
+      // not keep, and what each function-pointer variable starts at.
+      PipelineResult Recovery;
+      Recovery.MedFuncs = PipeResult.MedFuncs;
+      Recovery.CallMayWriteGPRs = PipeResult.CallMayWriteGPRs;
+      Recovery.CallEntryReadGPRs = PipeResult.CallEntryReadGPRs;
+      Recovery.CallEntryStackArgs = PipeResult.CallEntryStackArgs;
+      Recovery.CallArgumentSources = PipeResult.CallArgumentSources;
+      Recovery.OmittedCallees = PipeResult.OmittedCallees;
+      recoverModuleCallAbi(Img, Recovery, FuncNames);
+      NativeMedFuncs = std::move(Recovery.MedFuncs);
     }
     std::vector<std::pair<va_t, std::string>> ImportMap;
     for (const auto &[Addr, Name] : Img.getImportAddressNames())
       ImportMap.emplace_back(Addr, Name);
     MedLLVMEmitter Emitter;
-    Emitter.setDebugContext(Dbg.get());
+    Emitter.setDebugContext(decompileDebug());
     // Native source views need surviving instruction observations even when
     // this function contains no recognized library operation.
     Sources = std::make_shared<LLVMSourceMap>();
@@ -963,7 +1046,10 @@ struct PipelineRunner {
   PipelineResult Result;
 
   bool load(const char *InputPath, std::string &Err, const Session *Policy);
-  bool run(PipelineOptions Opts, std::string &Err);
+  /// Runs the pipeline over the image with \p Debug, else the image's own
+  /// debug information.
+  bool run(PipelineOptions Opts, std::string &Err,
+           DebugContext *Debug = nullptr);
 };
 
 /// Writes \p Values to the sidecar \p Path through a temporary file, so a
@@ -971,6 +1057,22 @@ struct PipelineRunner {
 /// naming \p Kind.
 bool saveSidecar(Session *S, const std::filesystem::path &Path,
                  llvm::json::Value Values, llvm::StringRef Kind);
+
+/// Read the session's input again as it was loaded and publish \p Request's
+/// debug information into it, in the order the names rank, so a file loaded
+/// after the image ranks as it would had the load named it: a PDB's or
+/// DWARF's names replace a MAP's, and a MAP's fill only what they leave.
+/// The session then takes the image, keeping the user's names, comments and
+/// edits, and \p Request becomes its next load's.  \p Unchanged, when given,
+/// is asked once the files are read and before the session takes them; it
+/// sets the error when it answers false.  Returns 1, or 0 with the session's
+/// error and the session as it was.
+int reloadDebugInformation(Session &S, DebugInfoRequest Request,
+                           llvm::function_ref<bool()> Unchanged = {});
+
+/// The files \p S read its debug information from, as
+/// neverd_session_debug_info_json() lists them.
+llvm::json::Array debugInfoFilesJson(const Session &S);
 
 } // namespace sdk
 } // namespace neverd

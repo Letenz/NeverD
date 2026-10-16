@@ -76,6 +76,8 @@ struct Specifiers {
   unsigned AddressSpace = 0;
   std::optional<uint64_t> AlignAs;
   llvm::SmallVector<llvm::StringRef, 1> Attributes;
+  /// The enumerators an enumeration the specifiers define declares.
+  std::vector<Decl *> Enumerators;
 };
 
 /// What a declarator adds to the type its specifiers name.
@@ -132,6 +134,8 @@ public:
         Item.Begin = tok().Offset;
         Item.End = tok().Offset + tok().Text.size();
         Item.Text = tok().Text;
+        if (!packDirective(Item.Text))
+          Pending = "a #pragma pack this reader does not read";
         ++Pos;
         Item.Trailing = takeSameLineComments();
         Items.push_back(std::move(Item));
@@ -142,7 +146,11 @@ public:
       Error.clear();
       Nesting = 0;
       AllowUnnamed = false;
-      TopLevel Item = parseExternalDeclaration();
+      // A declaration under a packing this reader does not follow is not
+      // read: its layout would not be C's.
+      if (!Pending.empty())
+        fail(Pending);
+      TopLevel Item = Error.empty() ? parseExternalDeclaration() : TopLevel();
       if (!Error.empty()) {
         // Keep the declaration as written and read on after it.
         Pos = Start;
@@ -298,6 +306,7 @@ private:
         .Cases(
             {"const", "volatile", "restrict", "__restrict", "struct", "union"},
             true)
+        .Case("enum", true)
         .Cases({"__attribute__", "_Atomic", "_Complex"}, true)
         .Default(TypedefNames.contains(Tok.Text));
   }
@@ -431,19 +440,52 @@ private:
         BitInt = static_cast<unsigned>(Width);
         continue;
       } else if (W == "struct" || W == "union") {
-        if (W == "union")
-          return fail("unions are not read");
+        const bool Union = W == "union";
         ++Pos;
-        if (tok().Kind != TokenKind::Identifier)
-          return fail("expected a record name");
-        const std::string Spelling = ("struct " + tok().Text).str();
+        // DECLSPEC_ALIGN(N), as the Windows headers align a record.
+        uint64_t Alignment = 0;
+        if (isIdent("DECLSPEC_ALIGN")) {
+          ++Pos;
+          if (!expect("(") || tok().Kind != TokenKind::Number ||
+              tok().Text.getAsInteger(0, Alignment) || !Alignment)
+            return fail("DECLSPEC_ALIGN needs an alignment");
+          ++Pos;
+          if (!expect(")"))
+            return false;
+        }
+        if (tok().Kind != TokenKind::Identifier) {
+          // A structure or union without a tag, as a record's member.
+          if (!AnonymousRecords || !isPunct("{"))
+            return fail("expected a record name");
+          Named = T.Types.anonymousRecord(Union);
+          if (!parseRecordBody(Named->Spelling, Union, Alignment))
+            return false;
+          continue;
+        }
+        const std::string Spelling =
+            ((Union ? "union " : "struct ") + tok().Text).str();
         ++Pos;
         Named = T.Types.record(Spelling);
-        if (isPunct("{") && !parseRecordBody(Spelling))
+        if (isPunct("{") && !parseRecordBody(Spelling, Union, Alignment))
           return false;
         continue;
+      } else if (W == "enum") {
+        ++Pos;
+        if (tok().Kind != TokenKind::Identifier)
+          return fail("expected an enumeration name");
+        Named = T.Types.enumeration(tok().Text);
+        ++Pos;
+        if (isPunct("{")) {
+          if (!EnumerationsDefined)
+            return fail("an enumeration defined within another declaration");
+          if (!parseEnumerators(Named, S.Enumerators))
+            return false;
+        }
+        continue;
       } else if (!AnyTypeKeyword() && TypedefNames.contains(W) &&
-                 !(isPunct(":", 1))) {
+                 // A name before `:` is a label, but in a record an
+                 // unnamed bit-field's type.
+                 (!isPunct(":", 1) || AnonymousRecords)) {
         Named = typedefType(W);
         if (!Named)
           return fail("unknown type '" + W + "'");
@@ -514,28 +556,78 @@ private:
     return Result;
   }
 
-  /// `{ T field_0; ... }` after `struct Name`.
-  bool parseRecordBody(llvm::StringRef Spelling) {
+  /// `{ A = 1, B, ... }` after `enum Name`.
+  bool parseEnumerators(const CType *Enumeration, std::vector<Decl *> &Out) {
+    ++Pos;
+    while (!accept("}")) {
+      if (tok().Kind != TokenKind::Identifier)
+        return fail("expected an enumerator");
+      Decl *D = T.newDecl(DeclKind::Enumerator, offset());
+      D->Name = tok().Text;
+      D->Ty = Enumeration;
+      ++Pos;
+      if (accept("=") && !(D->Init = parseConditional()))
+        return false;
+      D->End = lastEnd();
+      Out.push_back(D);
+      if (!accept(",") && !isPunct("}"))
+        return fail("expected ',' or '}'");
+    }
+    return true;
+  }
+
+  /// `{ T field_0; ... }` after `struct Name` or `union Name`: members,
+  /// bit-fields and anonymous structures and unions.
+  bool parseRecordBody(llvm::StringRef Spelling, bool Union,
+                       uint64_t Alignment) {
     RecordDef *Record = T.Types.recordDef(Spelling);
     if (Record->Complete)
       return fail("record defined twice");
+    Record->Union = Union;
+    Record->Alignment = Alignment;
+    Record->Pack = Pack;
     ++Pos;
     while (!accept("}")) {
       if (atEnd())
         return fail("unterminated record");
       takeCommentsBefore(Pos);
       Specifiers S;
-      if (!parseSpecifiers(S))
+      const bool Outer = AnonymousRecords;
+      AnonymousRecords = true;
+      const bool Read = parseSpecifiers(S);
+      AnonymousRecords = Outer;
+      if (!Read)
         return false;
-      do {
-        Declarator D;
-        if (!parseDeclarator(D, /*Abstract=*/false))
-          return false;
-        if (D.Name.empty())
+      // An anonymous structure or union, whose members are the record's.
+      if (accept(";")) {
+        if (!S.Base->isRecord() || !S.Base->Record->Anonymous)
           return fail("expected a field name");
-        if (isPunct(":"))
-          return fail("bit-fields are not read");
-        Record->Fields.push_back({D.Name.str(), D.Apply(S.Base)});
+        Record->Fields.push_back({"", S.Base, std::nullopt});
+        continue;
+      }
+      do {
+        RecordField Field;
+        Field.Type = S.Base;
+        // An unnamed bit-field pads, or with width 0 ends its unit.
+        if (!isPunct(":")) {
+          Declarator D;
+          if (!parseDeclarator(D, /*Abstract=*/false))
+            return false;
+          if (D.Name.empty())
+            return fail("expected a field name");
+          Field.Name = D.Name.str();
+          Field.Type = D.Apply(S.Base);
+        }
+        if (accept(":")) {
+          uint64_t Width = 0;
+          if (tok().Kind != TokenKind::Number ||
+              tok().Text.getAsInteger(0, Width) || Width > 128 ||
+              !Field.Type->isInteger())
+            return fail("a bit-field needs an integer type and a width");
+          ++Pos;
+          Field.BitWidth = static_cast<unsigned>(Width);
+        }
+        Record->Fields.push_back(std::move(Field));
       } while (accept(","));
       if (!expect(";"))
         return false;
@@ -805,13 +897,18 @@ private:
   /// labels, attributes and initializers, through `;`.
   bool parseDeclarators(const Specifiers &S, std::vector<Decl *> &Out) {
     if (accept(";")) {
-      // `struct Name { ... };`
-      Decl *Record = T.newDecl(DeclKind::Record, S.Begin);
+      // `struct Name { ... };`, or `enum Name { ... };`.
+      Decl *Record = T.newDecl(S.Enumerators.empty() ? DeclKind::Record
+                                                     : DeclKind::Enumeration,
+                               S.Begin);
       Record->Ty = S.Base;
+      Record->Fields = S.Enumerators;
       Record->End = lastEnd();
       Out.push_back(Record);
       return true;
     }
+    if (!S.Enumerators.empty())
+      return fail("an enumeration defined within another declaration");
     do {
       Declarator D;
       if (!parseDeclarator(D, /*Abstract=*/false))
@@ -874,11 +971,53 @@ private:
     return List;
   }
 
+  /// Follows `#pragma pack(push, N)`, `(pop)`, `(N)` and `()`, which the
+  /// records after it are defined under; false for another `#pragma pack`.
+  bool packDirective(llvm::StringRef Line) {
+    llvm::StringRef Rest = Line.drop_front().ltrim();
+    if (!Rest.consume_front("pragma"))
+      return true;
+    Rest = Rest.ltrim();
+    if (!Rest.consume_front("pack"))
+      return true;
+    Rest = Rest.trim();
+    if (!Rest.consume_front("(") || !Rest.consume_back(")"))
+      return false;
+    llvm::SmallVector<llvm::StringRef, 2> Args;
+    Rest.split(Args, ',');
+    for (llvm::StringRef &Arg : Args)
+      Arg = Arg.trim();
+    unsigned Value = 0;
+    if (Args.size() == 1 && Args[0].empty()) {
+      Pack = 0;
+      return true;
+    }
+    if (Args.size() == 1 && Args[0] == "pop") {
+      if (PackStack.empty())
+        return false;
+      Pack = PackStack.back();
+      PackStack.pop_back();
+      return true;
+    }
+    if (Args.size() == 1 && !Args[0].getAsInteger(10, Value)) {
+      Pack = Value;
+      return true;
+    }
+    if (Args.size() == 2 && Args[0] == "push" &&
+        !Args[1].getAsInteger(10, Value)) {
+      PackStack.push_back(Pack);
+      Pack = Value;
+      return true;
+    }
+    return false;
+  }
+
   TopLevel parseExternalDeclaration() {
     TopLevel Item;
     Item.Begin = offset();
-    if (isIdent("_Static_assert")) {
+    if (isIdent("_Static_assert") || isIdent("static_assert")) {
       Item.TheKind = TopLevel::Kind::StaticAssert;
+      Item.Text = tok().Text;
       ++Pos;
       if (!expect("("))
         return Item;
@@ -893,7 +1032,10 @@ private:
       return Item;
     }
     Specifiers S;
-    if (!parseSpecifiers(S))
+    EnumerationsDefined = true;
+    const bool Read = parseSpecifiers(S);
+    EnumerationsDefined = false;
+    if (!Read)
       return Item;
     if (isPunct(";")) {
       parseDeclarators(S, Item.Decls);
@@ -1519,7 +1661,8 @@ private:
   Expr *parseNamePrimary() {
     const size_t Begin = offset();
     const llvm::StringRef W = tok().Text;
-    if (W == "__builtin_bit_cast" || W == "__builtin_offsetof") {
+    if (W == "__builtin_bit_cast" || W == "__builtin_offsetof" ||
+        W == "offsetof") {
       const bool BitCast = W == "__builtin_bit_cast";
       ++Pos;
       Expr *E =
@@ -1578,6 +1721,19 @@ private:
   size_t Pos = 0;
   unsigned Nesting = 0;
   bool AllowUnnamed = false;
+  /// Whether specifiers may declare a structure or union without a tag, as
+  /// a record's member does.
+  bool AnonymousRecords = false;
+  /// Whether specifiers may define an enumeration: a file-scope
+  /// declaration's may.
+  bool EnumerationsDefined = false;
+  /// The `#pragma pack` the next record is defined under, and the packs
+  /// `push` saved.
+  unsigned Pack = 0;
+  std::vector<unsigned> PackStack;
+  /// Why every declaration after a directive this reader does not follow is
+  /// not read.
+  std::string Pending;
   std::string Error;
   llvm::StringSet<> TypedefNames;
   llvm::StringMap<const CType *> Typedefs;

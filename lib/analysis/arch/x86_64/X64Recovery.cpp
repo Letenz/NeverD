@@ -7,8 +7,10 @@
 
 #include "../../../lift/X86/X86CetEncoding.h"
 #include "NativeStackControl.h"
+#include "X64MachineFlags.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/symbolic/SymState.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Errc.h"
@@ -18,6 +20,48 @@
 #include <set>
 
 namespace neverd::analysis::x64 {
+llvm::Error validateRuntimeMemoryOptions(const SpecializationOptions &Options) {
+  if ((Options.X64SegmentedReads || Options.X64SegmentedWrites) &&
+      (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution))
+    return llvm::createStringError(
+        llvm::errc::invalid_argument,
+        "segmented memory requires explicit nonfaulting machine state");
+  return llvm::Error::success();
+}
+
+bool supportsRuntimeMemoryOperation(const LowOp &Op,
+                                    const SpecializationOptions &Options) {
+  if ((Op.MemoryAddressSpace != NdMemoryAddressSpace::X86FS &&
+       Op.MemoryAddressSpace != NdMemoryAddressSpace::X86GS) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None)
+    return false;
+  const auto Memory = lowMemoryOperands(Op);
+  if (!Memory.Complete)
+    return false;
+  if (Op.Opcode == NdOp::LOAD)
+    return Options.X64SegmentedReads &&
+           (Op.NumInputs != 2 || Op.Inputs[0].isConst());
+  if (Op.Opcode != NdOp::STORE || !Options.X64SegmentedWrites ||
+      Memory.Address->Size != 8 ||
+      (Op.NumInputs == 3 && !Op.Inputs[0].isConst()))
+    return false;
+  return Memory.AccessSize == 1 || Memory.AccessSize == 2 ||
+         Memory.AccessSize == 4 || Memory.AccessSize == 8;
+}
+
+void seedRuntimeMemoryState(symbolic::SymContext &Ctx,
+                            symbolic::SymState &State,
+                            const SpecializationOptions &Options) {
+  if (!Options.X64SegmentedReads && !Options.X64SegmentedWrites)
+    return;
+  // Projection forgets base correlations across nodes, enlarging the input
+  // domain. Distinct variables do not assert distinct linear addresses.
+  State.setX64MemoryAddressSpaceBase(NdMemoryAddressSpace::X86FS,
+                                     Ctx.mkFreshVar(64, "fs_base"));
+  State.setX64MemoryAddressSpaceBase(NdMemoryAddressSpace::X86GS,
+                                     Ctx.mkFreshVar(64, "gs_base"));
+}
+
 llvm::Expected<RawEnvironmentPreparation>
 validateRawEnvironmentDeclarations(const SpecializationOptions &Options) {
   if (Options.Architecture != Arch::X64)
@@ -158,11 +202,13 @@ validateRawEnvironmentDeclarations(const SpecializationOptions &Options) {
 }
 
 /// The x64 lifter uses these exact shapes to read and restore the system
-/// portion of RFLAGS. The residual keeps both intrinsics. During analysis a
+/// portion of RFLAGS. The residual keeps each intrinsic. During analysis a
 /// PUSHFQ snapshot is an unconstrained runtime value: this overapproximates
 /// every architectural flag image without inventing a constant or an alias
-/// fact. POPFQ has no modelled scalar output; later snapshots are fresh again.
-bool runtimeFlagsIntrinsic(const LowOp &Op) {
+/// fact. Writes have no modelled scalar output; later snapshots are fresh
+/// again. CLI/STI additionally require the shared supervisor-profile admission.
+bool runtimeFlagsIntrinsic(
+    const LowOp &Op, std::optional<InterpreterMachineStateProfile> Profile) {
   if (Op.NumInputs == 0 || !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2)
     return false;
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
@@ -170,7 +216,7 @@ bool runtimeFlagsIntrinsic(const LowOp &Op) {
     return Op.NumInputs == 1 && Op.Output.isTemp() && Op.Output.Size == 8;
   if (Id == Intrinsic::Popf)
     return Op.NumInputs == 2 && Op.Output.Size == 0 && Op.Inputs[1].Size == 8;
-  return false;
+  return Profile && detail::x64InterruptFlagValue(Op, *Profile).has_value();
 }
 
 // Intel SDM Vol.2B, RDTSC: the low/high words go to EAX/EDX and both

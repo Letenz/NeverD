@@ -193,6 +193,13 @@ struct SpecializationOptions {
   /// Only the raw residual API supports this environment contract. V1 source
   /// wrapping and native proof APIs do not have authenticated base inputs.
   bool X64SegmentedReads = false;
+  /// Retain ordinary scalar FS/GS stores with a 64-bit offset and fixed,
+  /// arbitrary long-mode bases. Requires explicit nonfaulting machine state.
+  /// Full linear addresses may alias any memory, including live return cells;
+  /// offset provenance grants no frame or separation fact. This raw-residual
+  /// contract is independent of X64SegmentedReads. Source and native proof
+  /// interfaces without authenticated base inputs refuse it.
+  bool X64SegmentedWrites = false;
   /// Retain CR8 reads/writes with a symbolic four-bit task-priority state.
   /// Requires explicit nonfaulting machine state and KernelX64NoFaultV1.
   /// Every retained memory access must be ordinary memory without device side
@@ -201,6 +208,13 @@ struct SpecializationOptions {
   /// This raw-residual contract supplies no scheduling, native proof or source
   /// ABI. Possible reserved-bit writes are refused rather than truncated.
   bool X64CR8State = false;
+  /// Raw-only MXCSR loads and scalar state reads/writes under explicit
+  /// nonfaulting machine state. The caller declares the CPU's writable mask:
+  /// 0xffbf without DAZ, or 0xffff with DAZ. Entry state is arbitrary within
+  /// that mask, never a default control word. Every load/write must prove its
+  /// reserved bits clear. Memory stores and other floating-point operations
+  /// remain unsupported; source and native proofs lack this state contract.
+  std::optional<uint32_t> X64MXCSRMask;
   /// Raw-only environment domain: these exact ordinary named PE imports have
   /// stable loader bindings, and their callees neither return nor reenter this
   /// residual graph via unwind, callbacks, context restoration or other means.

@@ -7,6 +7,7 @@
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/BinaryFormat/ELF.h"
 
@@ -128,5 +129,35 @@ collectExternalFunctionPointers(const BinaryImage &Image) {
   for (va_t Slot : Conflicts)
     Pointers.erase(Slot);
   return Pointers;
+}
+
+std::map<va_t, PointerVariableCallee>
+collectPointerVariableCallees(const BinaryImage &Image) {
+  std::map<va_t, PointerVariableCallee> Callees;
+  // readPtr reads the image's pointer width.
+  const unsigned Width = Image.getPointerSize();
+  if (Width == 0 || Width != getPointerSize(Image.is64Bit()))
+    return Callees;
+  // Import storage names its import already.
+  const ImportStorageSlotCollection Imports = Image.collectImportStorageSlots();
+  auto IsImportStorage = [&](va_t Slot) {
+    return Imports.Slots.count(Slot) || Imports.Conflicts.count(Slot);
+  };
+  for (auto &[Slot, Name] : collectExternalFunctionPointers(Image))
+    if (!IsImportStorage(Slot))
+      Callees[Slot].ImportName = std::move(Name);
+  for (const uint64_t Slot : Image.CodePtrRelocSlots) {
+    if (Callees.count(Slot) || IsImportStorage(Slot) ||
+        Image.DataPtrRelocSlots.count(Slot))
+      continue;
+    const uint8_t *Bytes = Image.readVA(Slot, Width);
+    if (!Bytes)
+      continue;
+    const uint64_t Target = normalizeCodeAddress(
+        readPtr(Bytes, Image.is64Bit()), Image.Arch, Image.Mode);
+    if (Image.isCodeAddress(Target))
+      Callees[Slot].LocalEntry = Target;
+  }
+  return Callees;
 }
 } // namespace neverd

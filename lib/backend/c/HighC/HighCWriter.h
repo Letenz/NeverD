@@ -121,6 +121,10 @@ public:
   /// (HighCSourceNames.cpp).
   void recordSourceNames(const std::vector<HighFunc> &Funcs);
   void writeSourceRecordDeclarations(const std::vector<HighFunc> &Funcs);
+  /// Asks the program's local types for the definitions of the records the
+  /// unit names (CEmitterOptions::RecordDefinitions), and keeps the names
+  /// they declare from the unit's own.
+  void prepareRecordDefinitions(const std::vector<HighFunc> &Funcs);
   TypeRef declaredFunctionReturnType(const HighFunc &Func) const;
   void prepareFunctionReturns(std::vector<HighFunc> &Funcs) const;
   void prepareFunctionIdentifiers(const std::vector<HighFunc> &Funcs);
@@ -240,8 +244,19 @@ public:
                       const std::set<std::string> &ParamNames);
   void collectNamedFrameSlots(const HighFunc &Func);
   void invalidateJoinPhiFrameAliases(const HighFunc &Func);
+  /// How many parameters \p Func's definition prints: its HighIR ones
+  /// (emittedParamIndices), then the declared ones its code never reads
+  /// (unreadDeclaredParams).
   size_t emittedParamCount(const HighFunc &Func) const;
   std::vector<size_t> emittedParamIndices(const HighFunc &Func) const;
+  /// The parameters of \p Func's placed signature, by their indices in it,
+  /// that come after every one a HighIR parameter binds and that its code
+  /// never reads, such as a system call stub's stack arguments its
+  /// dispatcher takes: the definition prints them after its HighIR ones, as
+  /// its callers pass them.  Only integers and pointers after integers and
+  /// pointers, which take the next slots in every convention; none where a
+  /// HighIR parameter the signature does not name is printed.
+  std::vector<size_t> unreadDeclaredParams(const HighFunc &Func) const;
 
   //--- Statement rendering (HighCStmtWriter.cpp) ---
   void writeStmt(const HighStmt &Stmt, int Indent);
@@ -370,9 +385,12 @@ public:
   /// with, which its prototype and every use of the parameter share.
   TypeRef emittedParamType(const HighFunc &Func, size_t Index) const;
   /// The type of the parameter \p Func's definition prints at \p Position,
-  /// counted among the parameters it prints (emittedParamIndices), as a
+  /// counted among the parameters it prints (emittedParamCount), as a
   /// prototype and a call's arguments count them, or null past the last.
   TypeRef emittedParamTypeAt(const HighFunc &Func, size_t Position) const;
+  /// The type \p Func's definition prints the declared parameter \p Index
+  /// of its signature with, which its code never reads.
+  TypeRef unreadDeclaredParamType(const HighFunc &Func, size_t Index) const;
   /// What a parameter holds of its function's debug signature, matched by
   /// where the convention passes each (SourceParameterPlacement), never by
   /// position: System V passes `f(double x, int n)` with n in the first
@@ -414,6 +432,9 @@ public:
                     bool EnterNestedAtZero = true) const;
   std::optional<std::string> typedMemberAddress(const HighExpr &Addr) const;
   TypeRef typedMemberType(const HighExpr &Addr, uint16_t AccessSize = 0) const;
+  /// Whether \p Addr is a member of a record the unit defines from the
+  /// program's local types (RecordDefinitions).
+  bool memberOfDefinedRecord(const HighExpr &Addr) const;
   /// Frame displacement that is a unique interior field of a named record
   /// slot (`record.p` at wrapper+8). Exact slot addresses stay unnamed here.
   std::optional<std::string>
@@ -482,6 +503,14 @@ public:
   /// Widening views and untyped add/sub/mul stay wrapped.
   bool isSameWidthUnsigned(const HighExpr &E, uint16_t Width) const;
   std::optional<FunctionSym> debugCallee(const HighExpr &E) const;
+  /// Whether the debug information declares \p E's callee: it types its
+  /// return or parameters, or names it where the unit includes no header
+  /// that declares it.  A public symbol's name alone yields to the header's
+  /// prototype of a C library routine the unit includes.
+  bool debugDeclaresCallee(const HighExpr &E) const;
+  /// Whether the unit includes the standard header that declares the C
+  /// library routine \p Name (libc::headerFor).
+  bool includesHeaderOf(llvm::StringRef Name) const;
   TypeRef expectedDebugCallArgType(const FunctionSym &FS, size_t Index) const;
   TypeRef displayCallArgType(const HighExpr &Call, size_t Index) const;
   /// Display-only printed arity from TPI/PDB or \ref msvcCallee.
@@ -775,6 +804,8 @@ public:
   }
   bool isOwnFunctionName(llvm::StringRef Name,
                          const std::vector<HighFunc> &Funcs);
+  /// The headers writeIncludes included.
+  std::set<std::string> IncludedHeaders;
   /// Views remain valid for this writer because its BinaryImage is immutable
   /// for the duration of one emission.
   std::optional<std::unordered_set<std::string_view>> ImageFunctionNames;
@@ -782,6 +813,8 @@ public:
   std::map<std::string, const HighFunc *> DefinedFunctionsByIdentifier;
   std::map<va_t, const HighFunc *> DefinedFunctionsByAddress;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
+  /// The local types' definitions of the records the unit names.
+  CRecordDefinitions RecordDefinitions;
   std::map<const HighFunc *, std::string> FunctionIdentifiers;
   /// The C name each defined function's symbol spells, for its comment.
   std::map<const HighFunc *, std::string> FunctionSymbolNames;
@@ -981,21 +1014,86 @@ public:
   /// Slot identity retained for value forwarding and catch-object recovery
   /// after their memory representation switches to stack_storage.
   std::map<int64_t, NamedFrameSlot> FrameStorageSlots;
-  /// Frame storage prints as one record laid out like its bytes. A member is
-  /// an integer every access at its displacement reads or writes alike, at
-  /// an aligned offset, clear of other accesses: `stack_storage.var_mA0`.
+  /// Frame storage prints as one record laid out like its bytes, and every
+  /// frame access or address with a certified displacement names a member:
+  /// - the widest accesses at a displacement, when they cover every access
+  ///   overlapping them at an offset aligned to their width, make a scalar
+  ///   member: `stack_storage.var_mA0`;
+  /// - the other accesses inside it are views of its bytes:
+  ///   `*(uint32_t *)&stack_storage.var_mA0`,
+  ///   `*(int8_t *)((uint8_t *)&stack_storage.var_mA0 + 2)`;
+  /// - accesses that straddle each other, and frame addresses the function
+  ///   takes outside any member, make a byte array that runs to the next
+  ///   member: `(uintptr_t)&stack_storage.var_m218`.
+  /// A same-width read of the other signedness converts the member. A
+  /// debug object of another type keeps its bytes raw, as in LLVM C.
   struct FrameRecordMember {
     std::string Name;
+    /// The scalar type, or null for a byte array.
     TypeRef Type;
+    uint64_t Size = 0;
   };
   std::map<int64_t, FrameRecordMember> FrameRecordMembers;
   /// What each slot was named before frame storage replaced it.
   std::map<int64_t, std::string> FrameSlotNamesBeforeStorage;
   void collectFrameRecordMembers(const HighFunc &Func, uint64_t FrameBaseOffset,
                                  uint64_t StorageSize);
-  /// The member an integer access of type \p Ty at \p Addr names.
+  /// A type a member holds or a view reads: a float, a double, or an integer
+  /// of a C scalar's width.
+  bool frameRecordScalar(const TypeRef &T) const;
+  bool frameRecordInteger(const TypeRef &T) const;
+  bool frameRecordWideInteger(const TypeRef &T) const;
+  /// The member holding the bytes [\p Disp, \p Disp + \p Size), and its
+  /// displacement.
+  const std::pair<const int64_t, FrameRecordMember> *
+  frameRecordMemberHolding(int64_t Disp, uint64_t Size) const;
+  /// The lvalue an access of type \p Ty at \p Disp writes or reads: the
+  /// member itself or a view of its bytes.
+  std::optional<std::string> frameRecordLvalue(int64_t Disp,
+                                               const TypeRef &Ty) const;
+  /// The value a load of type \p Ty at \p Disp reads, converted when it
+  /// reads a whole member that differs only in signedness.
+  std::optional<std::string> frameRecordRvalue(int64_t Disp,
+                                               const TypeRef &Ty) const;
+  /// The address of \p Disp as an operand of a pointer cast, named by the
+  /// member holding it: `&stack_storage.var_mA0`, else `(frame_base - 160)`.
+  std::string frameRecordPointer(int64_t Disp) const;
+  /// The address of \p Disp as an integer: `(uintptr_t)&stack_storage.var_mA0`,
+  /// else `(frame_base - 160)`.
+  std::string frameRecordAddress(int64_t Disp) const;
+  /// The lvalue a slot of type \p Ty at \p Disp names once the storage
+  /// replaces it, or a region of \p RegionBytes bytes there.
+  std::string frameStorageView(int64_t Disp, const TypeRef &Ty,
+                               int64_t RegionBytes) const;
+  /// The displacement a variable the storage replaces reads, with its type.
+  std::optional<std::pair<int64_t, TypeRef>>
+  projectedSlotRead(const HighExpr &E) const;
+  /// The address \p E computes, of \p Disp, as frameRecordAddress prints it.
+  std::string frameAddressText(const HighExpr &E, int64_t Disp);
+  /// Writes the store of \p Value, of type \p Ty, at \p Addr as the frame
+  /// record's member or bytes there, if a member holds them.
+  bool writeFrameRecordStore(const HighExpr &Addr, const TypeRef &Ty,
+                             const HighExpr &Value, int Indent,
+                             llvm::function_ref<std::string()> ValueText);
+  /// The type a member holds an access of type \p Ty as: a scalar's own, or
+  /// for a pointer of the host's width, the unsigned integer its bits are.
+  TypeRef frameRecordCarrier(const TypeRef &Ty) const;
+  /// \p Value, of type \p Ty, as the member's carrier holds it.
+  std::string frameRecordStored(const TypeRef &Ty, std::string Value) const;
+  /// The value a load of type \p Ty at \p Disp reads from the record.
+  std::optional<std::string> frameRecordRead(int64_t Disp,
+                                             const TypeRef &Ty) const;
+  /// The pointer to the \p Size bytes at \p Addr, when a member holds them.
+  std::optional<std::string> frameRecordBytes(const HighExpr &Addr,
+                                              uint64_t Size) const;
+  /// The lvalue an access of type \p Ty at \p Addr names: what a store or
+  /// an in-place update writes.
   std::optional<std::string> frameRecordMember(const HighExpr &Addr,
                                                const TypeRef &Ty) const;
+  /// The value a load of type \p Ty at \p Addr reads, converted when the
+  /// member it reads whole differs only in signedness.
+  std::optional<std::string> frameRecordMemberValue(const HighExpr &Addr,
+                                                    const TypeRef &Ty) const;
   std::map<std::string, int64_t> FrameAliases;
   /// Bounds nested alignment-to-base certification as well as flat offsets.
   mutable unsigned FrameDisplacementDepth = 0;

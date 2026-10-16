@@ -25,8 +25,113 @@
 #include "llvm/Support/JSON.h"
 
 namespace neverd::emulation {
+TEST(ProcessReport, IoctlTraceHasStrictBoundsAndExplicitCaptureStatus) {
+  const char *Good = R"({"linux_files":{"files":[],"ioctl_trace":{
+    "event_limit":8,"byte_limit":256,"requests":[{"request":"4294967295",
+    "memory":[{"offset":1,"size":8,"pointer_offset":0}]}]}}})";
+  auto O = processOptionsFromJSON(Good);
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->LinuxFiles && O->LinuxFiles->IoctlTrace);
+  const auto &T = *O->LinuxFiles->IoctlTrace;
+  EXPECT_EQ(T.EventLimit, 8u);
+  EXPECT_EQ(T.ByteLimit, 256u);
+  ASSERT_EQ(T.Requests.at(UINT32_MAX).size(), 1u);
+  EXPECT_EQ(T.Requests.at(UINT32_MAX)[0].PointerOffset, 0u);
+  for (
+      const char *Bad :
+      {"null", "true", "{}",
+       R"({"event_limit":0,"byte_limit":1,"requests":[]})",
+       R"({"event_limit":4097,"byte_limit":1,"requests":[]})",
+       R"({"event_limit":1,"byte_limit":1048577,"requests":[]})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[],"extra":0})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[{"request":4294967296,"memory":[]}]})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[{"request":0,"memory":[]},{"request":0,"memory":[]}]})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[{"request":0,"memory":[{"offset":0,"size":0}]}]})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[{"request":0,"memory":[{"offset":0,"size":4097}]}]})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[{"request":0,"memory":[{"offset":"18446744073709551615","size":2}]}]})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[{"request":0,"memory":[{"offset":0,"size":1,"pointer_offset":null}]}]})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[{"request":0,"memory":[{"offset":0,"size":1,"pointer_offset":"18446744073709551615"}]}]})"}) {
+    auto R = processOptionsFromJSON(
+        std::string(R"({"linux_files":{"files":[],"ioctl_trace":)") + Bad +
+        "}}");
+    EXPECT_FALSE(bool(R)) << Bad;
+    llvm::consumeError(R.takeError());
+  }
+  ProcessResult R{ProcessProfile::LinuxELF64,
+                  GuestArchitecture::X64,
+                  ExecutionBackendKind::Unicorn,
+                  {}};
+  auto Off = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  EXPECT_FALSE(Off.getAsObject()->get("ioctl_trace"));
+  R.IoctlTraceEnabled = true;
+  R.IoctlTraceTruncated = true;
+  ProcessIoctlEvent E;
+  E.PC = 0x1234;
+  E.Request = UINT32_MAX;
+  E.Result = uint64_t(-13);
+  E.ReturnAddress = 0x1238;
+  E.Memory.push_back({0x2000, 2, {0, 0xff}, {}, "complete", "byte_limit"});
+  R.IoctlTrace.push_back(E);
+  auto V = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  const auto *J =
+      V.getAsObject()->getArray("ioctl_trace")->front().getAsObject();
+  EXPECT_EQ(J->getString("result"), "fffffffffffffff3");
+  EXPECT_EQ(J->getString("return_address"), "1238");
+  EXPECT_EQ(
+      J->getArray("memory")->front().getAsObject()->getString("before_hex"),
+      "00ff");
+  EXPECT_EQ(V.getAsObject()->getBoolean("ioctl_trace_truncated"), true);
+}
 namespace {
 namespace field = process_report;
+TEST(ProcessReport, DarwinNamedCallsRetainProviderArityFullBitsAndNullResults) {
+  for (auto Profile : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                       ProcessProfile::IOSSimulatorMachO64}) {
+    ProcessResult R{Profile, GuestArchitecture::AArch64,
+                    ExecutionBackendKind::Unicorn, "explicit test"};
+    const auto Original = processResultJSON(R);
+    auto Raw = llvm::json::parse(Original);
+    ASSERT_TRUE(bool(Raw));
+    ASSERT_TRUE(Raw->getAsObject());
+    EXPECT_FALSE(Raw->getAsObject()->get("darwin"));
+    NativeCallEvent Call;
+    Call.PC = 0x7fffffbf0008ULL;
+    Call.Module = "/usr/lib/libSystem.B.dylib";
+    Call.Name = "_write";
+    Call.ArgumentCount = 3;
+    Call.Arguments = {0x1234567800000001ULL, UINT64_MAX, 0x8000000000000001ULL};
+    R.NativeCalls.push_back(Call);
+    R.NativeCalls.push_back(Call);
+    R.NativeCalls[0].Result = UINT64_MAX;
+    auto Parsed = llvm::json::parse(processResultJSON(R));
+    ASSERT_TRUE(bool(Parsed));
+    auto *Root = Parsed->getAsObject();
+    ASSERT_NE(Root, nullptr);
+    EXPECT_EQ(Root->getInteger("schema_version"), 1);
+    auto *Darwin = Root->getObject("darwin");
+    ASSERT_NE(Darwin, nullptr);
+    auto *Calls = Darwin->getArray("native_calls");
+    ASSERT_NE(Calls, nullptr);
+    ASSERT_EQ(Calls->size(), 2u);
+    auto *First = (*Calls)[0].getAsObject();
+    ASSERT_NE(First, nullptr);
+    EXPECT_EQ(First->getString("module"), "/usr/lib/libSystem.B.dylib");
+    EXPECT_EQ(First->getString("name"), "_write");
+    EXPECT_EQ(First->getString("pc"), "7fffffbf0008");
+    EXPECT_EQ(First->getString("result"), "ffffffffffffffff");
+    auto *Arguments = First->getArray("arguments");
+    ASSERT_NE(Arguments, nullptr);
+    ASSERT_EQ(Arguments->size(), 3u);
+    EXPECT_EQ((*Arguments)[0].getAsString(), "1234567800000001");
+    EXPECT_EQ((*Arguments)[1].getAsString(), "ffffffffffffffff");
+    EXPECT_EQ((*Arguments)[2].getAsString(), "8000000000000001");
+    EXPECT_EQ((*Calls)[1].getAsObject()->get("result")->kind(),
+              llvm::json::Value::Null);
+    EXPECT_TRUE(Root->getArray("services")->empty());
+    R.NativeCalls.clear();
+    EXPECT_EQ(processResultJSON(R), Original);
+  }
+}
 #define NEVERD_PROCESS_TEST_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "ProcessReportCases.def"
 #undef NEVERD_PROCESS_TEST_TEXT
@@ -4019,6 +4124,37 @@ TEST(ProcessReport, StatefulDevicesValidateProducerAndContextBoundaries) {
   ASSERT_TRUE(bool(ValidCommands)) << llvm::toString(ValidCommands.takeError());
   EXPECT_TRUE(ValidCommands->LinuxFiles->Devices.at("/fixture/control")
                   .KGSL->SynchronousA3xx);
+  auto Objects = Input();
+  (*Objects.getObject("kgsl_contexts"))["memory_objects"] = true;
+  auto ValidObjects = Parse(std::move(Objects));
+  ASSERT_TRUE(bool(ValidObjects)) << llvm::toString(ValidObjects.takeError());
+  EXPECT_TRUE(ValidObjects->LinuxFiles->Devices.at("/fixture/control")
+                  .KGSL->MemoryObjects);
+  for (auto Value : {llvm::json::Value(1), llvm::json::Value("true"),
+                     llvm::json::Value(nullptr)}) {
+    auto Invalid = Input();
+    (*Invalid.getObject("kgsl_contexts"))["memory_objects"] = std::move(Value);
+    auto Parsed = Parse(std::move(Invalid));
+    EXPECT_FALSE(bool(Parsed));
+    if (!Parsed)
+      llvm::consumeError(Parsed.takeError());
+  }
+  for (uint32_t Request : {0xc0300945u, 0xc0300947u, 0x40200946u, 0x40080921u,
+                           0xc0300934u, 0xc0080935u, 0xc0480936u}) {
+    auto O = *ValidObjects;
+    O.LinuxFiles->Devices.at("/fixture/control")
+        .Ioctls.push_back({Request, 0, {}, {}});
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
+              std::string::npos);
+  }
+  auto O = *ValidObjects;
+  O.LinuxFiles->Devices.at("/fixture/control").AccessMode = 0;
+  auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, O);
+  ASSERT_FALSE(bool(R));
+  EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
+            std::string::npos);
 }
 
 llvm::json::Value fileMetadata() {

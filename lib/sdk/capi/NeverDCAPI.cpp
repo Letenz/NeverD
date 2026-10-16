@@ -208,16 +208,16 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
     Err = Found.Error;
     return false;
   }
-  if (Found) {
-    applyDebugSymbols(Img, *Found.Context);
+  applyDebugInfo(Img, Found);
+  if (Found)
     Dbg = std::move(Found.Context);
-  }
   return true;
 }
 
-bool PipelineRunner::run(PipelineOptions Opts, std::string &Err) {
+bool PipelineRunner::run(PipelineOptions Opts, std::string &Err,
+                         DebugContext *Debug) {
   Pipeline ThePipeline;
-  Result = ThePipeline.run(Img, LLVMCtx, Opts, Dbg.get());
+  Result = ThePipeline.run(Img, LLVMCtx, Opts, Debug ? Debug : Dbg.get());
   if (!Result.Success) {
     Err = Result.Error.empty() ? "pipeline failed" : Result.Error;
     return false;
@@ -256,8 +256,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
     S.setError(Found.Error);
     return 0;
   }
-  if (Found)
-    applyDebugSymbols(Image, *Found.Context);
+  applyDebugInfo(Image, Found);
   S.LoadProgressCb.report("ready", 1, 1, "");
 
   // Decoder::init retains its existing state on failure, so it is the final
@@ -279,6 +278,9 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.Dbg = std::move(Found.Context);
   S.DbgKind = Found.Kind;
   S.DbgPath = std::move(Found.Path);
+  S.DbgFiles = std::move(Found.Files);
+  // neverd_session_load() says so once the load is its own.
+  S.ReadFromFile = false;
   S.dropLocalTypes();
   S.Loaded = true;
   S.LastPatch = {};
@@ -579,8 +581,10 @@ int neverd_session_load(neverd_session_t Sess, const char *Path) {
   const int Result =
       finishSessionLoad(Sess, *S, std::move(*ImgOrErr), std::move(P),
                         std::move(SanitizeSourcePath));
-  if (Result)
+  if (Result) {
     S->LoadedChoice = LoadOpts.Choice;
+    S->ReadFromFile = true;
+  }
   Trace.finish(Result != 0);
   return Result;
 }
@@ -726,7 +730,9 @@ int neverd_session_load_pdb_ex(neverd_session_t Sess, const char *Path,
     S->setError("UseWithoutIdentity must be 0 or 1");
     return 0;
   }
-  DebugInfoRequest Request;
+  // The PDB joins what the image was loaded with, and outranks its MAP.
+  DebugInfoRequest Request = S->DbgRequest;
+  Request.Enabled = true;
   Request.PDBPath = std::filesystem::u8path(Path);
   Request.AllowMissingPDBIdentity = UseWithoutIdentity == 1;
   std::error_code EC;
@@ -740,49 +746,16 @@ int neverd_session_load_pdb_ex(neverd_session_t Sess, const char *Path,
     S->setError("Cannot read the selected PDB: " + EC.message());
     return 0;
   }
-  auto Found = loadDebugInfo(S->FilePath, S->Img, Request, S->LoadProgressCb);
-  if (!Found || !Found.Error.empty()) {
-    S->setError(Found.Error.empty()
-                    ? "No usable debug symbols in the selected PDB"
-                    : Found.Error);
-    return 0;
-  }
-  BinaryImage Image = S->Img;
-  llvm::erase_if(
-      Image.ExactDataObjects, [](const ExactDataObjectExtent &Object) {
-        return Object.Evidence == ExactDataObjectEvidence::AuthenticatedDebug;
-      });
-  Image.DataInCode.clear();
-  applyDebugSymbols(Image, *Found.Context);
-  const auto CurrentSize = std::filesystem::file_size(Request.PDBPath, EC);
-  const auto CurrentTime =
-      std::filesystem::last_write_time(Request.PDBPath, EC);
-  if (EC || CurrentSize != PdbSize || CurrentTime != PdbTime) {
+  const std::filesystem::path Selected = Request.PDBPath;
+  return reloadDebugInformation(*S, std::move(Request), [&] {
+    std::error_code EC;
+    const auto CurrentSize = std::filesystem::file_size(Selected, EC);
+    const auto CurrentTime = std::filesystem::last_write_time(Selected, EC);
+    if (!EC && CurrentSize == PdbSize && CurrentTime == PdbTime)
+      return true;
     S->setError("The selected PDB changed while loading; select it again");
-    return 0;
-  }
-  if (!S->Dec.init(Image)) {
-    S->setError("Failed to initialize the decoder for the PDB image");
-    return 0;
-  }
-  // Retire analysis while its old image and debug owners still exist.
-  S->clearPipeline();
-  S->Img = std::move(Image);
-  S->applyUserNoReturn();
-  S->Dbg = std::move(Found.Context);
-  S->DbgKind = Found.Kind;
-  S->DbgPath = std::move(Found.Path);
-  S->DbgRequest = std::move(Request);
-  S->dropLocalTypes();
-  S->DiscoveredFunctions.reset();
-  S->ImageStrings.reset();
-  S->resetFunctionsFromImage();
-  return 1;
-}
-
-void neverd_session_set_map_path(neverd_session_t Sess, const char *Path) {
-  if (auto *S = toSession(Sess))
-    S->DbgRequest.MapPath = Path ? std::filesystem::u8path(Path) : "";
+    return false;
+  });
 }
 
 void neverd_session_set_debug_info_enabled(neverd_session_t Sess, int Enabled) {

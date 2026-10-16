@@ -88,6 +88,8 @@ NEVERD_WDK_FIXTURE("WDM_FILE_HANDLES", "driver_file_handles.c", "WDM", "0",
                    "public_api")
 NEVERD_WDK_FIXTURE("WDM_FILE_QUERIES", "driver_file_queries.c", "WDM", "0",
                    "public_api")
+NEVERD_WDK_FIXTURE("WDM_FILE_TRANSFERS", "driver_file_transfers.c", "WDM", "0",
+                   "public_api")
 NEVERD_WDK_FIXTURE("WDM_FILESYSTEM", "driver_filesystem_provider.c", "WDM", "0",
                    "public_api")
 NEVERD_WDK_FIXTURE("WDM_INT64_STRINGS", "driver_int64_strings.c", "WDM", "0",
@@ -121,3 +123,6 @@ NEVERD_WDK_FIXTURE("WDM_USER_MAPPING", "driver_wdm_user_mapping.c", "WDM", "0",
                    "async")
 NEVERD_WDK_FIXTURE("WDM_MULTIPLE_WAIT", "driver_wdm_multiple_wait.c", "WDM",
                    "0", "")
+
+NEVERD_WDK_FIXTURE("WDM_CRT_STRINGS", "driver_crt_strings.c", "WDM", "0",
+                   "public_api")

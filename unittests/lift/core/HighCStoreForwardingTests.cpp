@@ -585,16 +585,16 @@ TEST(HighCStoreForwarding,
   const auto Body = emitBody(Func, Arch::X64, /*Portable=*/true);
   // Escaped frame addresses use the common backing storage so the store and
   // returned pointer retain the same memory identity. The slot, read and
-  // written alike, is a member of that storage.
+  // written alike, is a member of that storage, and the returned pointer
+  // points to the member.
   EXPECT_NE(Body.find("} stack_storage;"), std::string::npos) << Body;
-  EXPECT_NE(
-      Body.find("frame_base = (uintptr_t)((uint8_t *)&stack_storage + 24);"),
-      std::string::npos)
-      << Body;
   EXPECT_NE(Body.find("stack_storage.var_m8 = arg0;"), std::string::npos)
       << Body;
-  EXPECT_NE(Body.find("return (int32_t *)(frame_base - 8);"), std::string::npos)
+  EXPECT_NE(Body.find("return (int32_t *)&stack_storage.var_m8;"),
+            std::string::npos)
       << Body;
+  // The member names every access, so nothing reads the storage's base.
+  EXPECT_EQ(Body.find("frame_base"), std::string::npos) << Body;
 }
 
 TEST(HighCStoreForwarding, NamedPointerFrameSlotKeepsExplicitPointerBits) {
@@ -740,7 +740,7 @@ TEST(HighCStoreForwarding,
     Remaining = Rest;
   }
   ASSERT_NE(Assignment, std::string::npos) << Body;
-  EXPECT_LT(Body.find("42"), Assignment) << Body;
+  EXPECT_LT(Body.find("0x2A"), Assignment) << Body;
 }
 
 TEST(HighCStoreForwarding, ReinterpretsEachIntegerLoadAfterStoreTruncation) {
@@ -854,7 +854,7 @@ TEST(HighCStoreForwarding, EquivalentFrameAddressesKeepStoresForPartialReads) {
       EXPECT_EQ(countPointerDerefLoads(Body) + countOccurrences(Body, "var_"),
                 0u)
           << Body;
-      EXPECT_EQ(countOccurrences(Body, "42"), 2u) << Body;
+      EXPECT_EQ(countOccurrences(Body, "0x2A"), 2u) << Body;
     }
   }
 }
@@ -1032,7 +1032,8 @@ TEST(HighCStoreForwarding, ByteStorageDoesNotPrintReplacedSlotNames) {
             Body[End] == '_'))
       ++End;
     const std::string Name = Body.substr(From, End - From);
-    EXPECT_NE(Body.find(" " + Name + ";"), std::string::npos)
+    EXPECT_TRUE(Body.find(" " + Name + ";") != std::string::npos ||
+                Body.find(" " + Name + "[") != std::string::npos)
         << Name << " is not declared\n"
         << Body;
     From = End;

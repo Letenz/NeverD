@@ -361,6 +361,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   RegistrationChainIR.clear();
   RegistrationIncomingIR.clear();
   RegistrationMemoryIR.clear();
+  SEHRegisterSlots.clear();
   ParamArgs.clear();
   ParamRegoffMap.clear();
   DynVlaBases.clear();
@@ -983,11 +984,15 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     // Group: (PredId, TargetBlockId) → list of (PhiOutput, PhiArg)
     using EdgeKey = std::pair<int, int>;
     std::map<EdgeKey, std::vector<std::pair<MedVar, MedVar>>> EdgePhis;
-    auto IsExceptionalEdge = [&](int PredId, int TargetId) {
+    // A guarded block that falls through into the block its scope resumes at
+    // (MinGW's startup code) reaches that block both ways; its ordinary edge
+    // keeps the copies.
+    auto IsOnlyExceptionalEdge = [&](int PredId, int TargetId) {
       for (const MedBlock &Pred : Func.Blocks) {
         if (Pred.Id != PredId)
           continue;
-        return std::any_of(Pred.ExceptionalSuccs.begin(),
+        return !llvm::is_contained(Pred.Succs, TargetId) &&
+               std::any_of(Pred.ExceptionalSuccs.begin(),
                            Pred.ExceptionalSuccs.end(),
                            [&](const ExceptionalEdge &Edge) {
                              return Edge.BlockId == TargetId;
@@ -1001,7 +1006,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
           // A throwing call never reaches its ordinary block terminator.
           // These copies are emitted immediately before the call when it is
           // converted to an invoke by emitNativeItaniumEH().
-          if (IsExceptionalEdge(PredId, Blk.Id))
+          if (IsOnlyExceptionalEdge(PredId, Blk.Id))
             continue;
           EdgePhis[{PredId, Blk.Id}].emplace_back(Phi.Output, Var);
         }
@@ -1094,7 +1099,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   // Registration-chain and table-driven WinEH have separate source contracts.
   // Install their runtime edges before promoting the callback SSA slots.
   const bool NativeRegistration =
-      emitNativeX86RegistrationSEH(Func, *LLVMFunc, BBMap) ||
+      emitNativeX86RegistrationSEH(Func, *LLVMFunc, BBMap, PHICopyEdges) ||
       emitNativeX86RegistrationCxx(Func, *LLVMFunc, BBMap, PHICopyEdges);
   if (!NativeRegistration && !emitNativeSEH(Func, *LLVMFunc, BBMap) &&
       !emitNativeCxxEH(Func, *LLVMFunc, BBMap))

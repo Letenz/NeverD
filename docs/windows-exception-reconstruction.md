@@ -198,6 +198,28 @@ complete body, entry kinds and physical near returns are checked. Ordinary
 callers, shared filter/handler entries and other uses of that result still
 require an observation proof; a `void` import declaration alone is insufficient.
 
+Checked fixed-frame SEH3/EH4 finally callbacks may restore SavedESP and branch
+directly to an already owned parent continuation. Native lowering uses a private
+SjLj context to restore the generated stack and FS:[0], preserves current logical
+registers and callback frame writes, and enters the exact source scope boundary.
+The installer independently checks context aliases, capture, transfer and dispatch;
+source buffers cannot replace this context. A runtime exit can abandon the CRT's
+temporary unwind guard: before another call or potentially faulting operation, the
+source must reconnect its live registration or remove it on return. Unproved
+chain repair and destinations outside the checked parent CFG remain rejected.
+
+A continuation may be reached only by the finally branch when every decoded
+path through its acyclic tail joins already owned parent code without crossing a
+filter or finally entry. This physical ownership proof grants no runtime-handler
+memory privilege; the SavedESP transfer and reaching state remain independently
+checked. An unanchored return or cycle cannot establish parent ownership.
+
+Ordinary finally calls explicitly exchange EAX/ECX/EDX/EBX/ESI/EDI through
+private parent-frame slots, including values returned by a physical near return.
+The runtime entry keeps its own register contract; it never borrows a previous
+ordinary call's inputs. A scope used only by an authenticated ordinary finally
+call is retained even when no source try level activates it.
+
 Deep scope chains retain the same proof budget. The solver batches equal
 source-frame contributions to exceptional roots and tracks unwind ancestry
 without copying each whole path. Runtime coverage includes a 259-row nested
@@ -339,19 +361,46 @@ registers. A still-live capture remains available to later checked transfers.
 Selection and capture resumption remain separate proof outcomes, including
 mixed searches. Selected-filter writes also supply independent cleanup roots.
 A selected handler's cleanup can supersede that selection with a new jump to
-its same live capture and a proved equal constant value (zero normalizes to one).
-This restores the capture's unwind bound and retires all suspended finally
+the same or another live capture in its parent frame, with a new scalar value
+(zero normalizes to one). Each destination and value stays paired with its own
+frame effects throughout local unwind. Resumption uses that destination's saved
+registers, ESP and unwind bound, with the new value in EAX. It retires all suspended finally
 invocations, including nested ordinary calls. Out-of-line callbacks retain their
 scope ownership and authenticated physical CALL/RET boundaries. Their unreachable
 tails remain callback code without acquiring a fabricated reaching state.
 LLVM and installation share the same MedIR invocation and callback ownership
 queries; a nonreturning nested call requires both a checked jump exit and no
-ordinary return. Different captures or values, unknown value equality, recurrent
-selection, and escaping searches still require separate complete transfer proofs.
+ordinary return. A replaced jump records the exact callback call site and target
+capture, without inventing resumption of the abandoned capture. MedIR requires
+every replacement path to close through an acyclic graph of checked transfers;
+source analysis checks both buffers throughout all remaining cleanups. Modified
+or expired buffers, unclosed cycles, escaping frame values, recurrent selection
+and escaping searches refuse reconstruction.
+A search filter called by `RaiseException` inside a suspended finally may also
+jump to the same or another live capture. The shared search interpreter keeps
+these exits separate from signed filter dispositions. Only returning branches
+restore the suspended callback stack; a jump retires the filter and every
+suspended finally invocation, including nested ordinary calls. A filter may
+continue execution or select a handler on one branch and jump on another,
+preserving each branch's frame, continuation and scalar value. The source callback occurrence independently
+proves the destination and buffer lifetime before native reconstruction.
 Scopes without any proved activation remain unsupported.
-Mapped PE data,
-including zero-fill storage, retains its runtime values and access permissions;
+Checked reads from mapped PE data retain their runtime bits as scalar jump
+values, including negative values. They keep possible alias provenance: a
+subsequent dereference or a value mixed with a frame address needs its own proof.
+Mapped PE data, including zero-fill storage, retains its runtime values and access permissions;
 overlapping mappings, import writes and escaping frame pointers refuse.
+
+Finite loops in finally callbacks and search filters retain a distinct complete
+frame for each execution step, including register counters, parent cells and
+callback-private storage. A repeated CFG block is permitted only when the
+bounded execution-state graph still closes; recurrent complete states, unknown
+termination and exhausted proof budgets refuse reconstruction. Proven constant
+branches use the same decision as the parent state solver. Outlined PHI copy
+blocks retain their exact source edge and callback owner. Installation follows
+each recovered scalar slot to the parent's exact escape index and checks every
+alias for private, non-atomic scalar access; source-frame accesses and escaping
+addresses cannot acquire copy-block authority.
 
 Ordinary calls from one finally callback to another retain the same physical
 parent frame and give each invocation its own private stack. The source near
@@ -754,7 +803,11 @@ frame before initializing the exceptional root. Normalized fixed unwind
 allocations must match decoded prologue instructions and converted SP effects;
 all ordinary paths into the protected scope must retain that SP. Independent
 entries, prologue backedges, dynamic SP changes, frame-register or chained
-unwind contracts, and incomplete evidence are rejected explicitly. Conversion
+unwind contracts, and incomplete evidence are rejected explicitly. The x87
+context handle is the only function temporary the proof admits: only the
+X87Context intrinsics touch it, as their context operand, and every root the
+dispatcher enters begins the context before reading it. MinGW-w64's startup
+code carries x87 state through its `__try` this way. Conversion
 failure reaches the pipeline caller without aborting its process or publishing
 a partial function. HighC and LLVM-derived C consume the same explicit SP
 adjustment; the C renderer does not apply another frame-size correction.
@@ -972,3 +1025,9 @@ same change:
 Do not broaden an allow-list solely because a new record can be decoded. The
 acceptance criterion is preservation of runtime exception behavior in the
 final linked image.
+
+Genuine MSVC x86 `/Od` and `/O2` `nonlocal_finally_return` reconstruction is exercised with `/GS-` and `/GS`, optimized and unoptimized source LLVM, both patch modes and two forced bases. An outer SEH observer checks normal and exceptional returns, stack guards and chain restoration. The GS path retains the original exception-code normalization wrapper after proving its scalar helper cannot observe the caller frame.
+
+The `/O2` direct parent return requires an authenticated adjacent physical call, saved ESP restoration, original chain removal and complete parent epilogue. LowIR proves these source effects, MedIR binds the surviving operations, and the COFF installer independently replays the contract. Unused synthetic register transport cannot add physical parent parameters; observed values remain dependencies. The checked MSVC nonlocal `goto` shape uses the full-unwind contract below.
+
+Checked `_local_unwind2` and `_local_unwind4` calls retain their exact source occurrence, authenticated import slot, actual parent-frame argument, unsigned bound and returning state pairs. EH4 also requires the proved cookie address and initialized frame cookies. Changed import storage, guarded calls or mismatched source identity withdraw the proof. MedIR recovers exactly two or three stack words without promoting incidental registers to arguments. Native replacement supports complete unwinds to EH3 `-1` or EH4 `-2` after independently binding the physical parent bridge, SavedESP restoration and source operations. Genuine MSVC `nonlocal_finally_goto` is exercised at `/Od` and `/O2`, with `/GS-` and `/GS`, raw and optimized LLVM, both patch modes and two forced bases. Partial bounds and resumption inside active enclosing scopes still require additional native contracts.

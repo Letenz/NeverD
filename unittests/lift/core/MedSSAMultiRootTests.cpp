@@ -11,6 +11,7 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/SEHFrameProof.h"
@@ -1176,9 +1177,9 @@ TEST(MedSEHEstablisherFrame, HighCPreservesTheCertifiedHandlerSlot) {
   EXPECT_NE(Source.find("var_m64 = 1;"), std::string::npos) << Source;
   // The handler adds 20 to the certified slot, as an update or folded into
   // the return that reads it.
-  EXPECT_TRUE(Source.substr(Handler).find("var_m64 += 20;") !=
-                  std::string::npos ||
-              Source.substr(Handler).find("var_m64 + 20") != std::string::npos)
+  EXPECT_TRUE(
+      Source.substr(Handler).find("var_m64 += 20;") != std::string::npos ||
+      Source.substr(Handler).find("var_m64 + 0x14") != std::string::npos)
       << Source;
   // The handler returns the slot, directly, through a copy of it, or with
   // the update folded in.
@@ -1315,6 +1316,95 @@ TEST(MedSEHEstablisherFrame, RejectsADynamicSPWriteInAProtectedBlock) {
                                                              Img.Entry + 0x1a};
   EXPECT_THROW(LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
                LowToMedConversionError);
+}
+
+// The fixed frame whose handler starts with fninit. The CFG builder carries
+// the x87 state in one function temporary, the context handle, which every
+// root begins: the entry and the handler the dispatcher resumes.
+BinaryImage makeX87HandlerSEHFrameImage() {
+  BinaryImage Img = makeFixedSEHFrameImage();
+  // Handler: fninit; eax=[rsp+36]; eax+=20; [rsp+36]=eax; jmp join.
+  const uint8_t Handler[] = {0xdb, 0xe3, 0x8b, 0x44, 0x24, 0x24, 0x83, 0xc0,
+                             20,   0x89, 0x44, 0x24, 0x24, 0xeb, 1};
+  std::copy(std::begin(Handler), std::end(Handler),
+            Img.Segments.front().Data.begin() + 0x20);
+  return Img;
+}
+
+// Decoded with the image's own conventions, as the pipeline decodes it: x64
+// PE code owns the x87 context.
+LowFunc decodeX87HandlerSEHFrame(const BinaryImage &Img) {
+  Decoder Dec;
+  EXPECT_TRUE(Dec.init(Img));
+  return CFGBuilder().build(Img, Dec, Img.Entry, "x87_seh_frame");
+}
+
+LowBlock &blockAt(LowFunc &Low, va_t Start) {
+  const auto Block =
+      std::find_if(Low.Blocks.begin(), Low.Blocks.end(),
+                   [&](const LowBlock &B) { return B.StartAddr == Start; });
+  EXPECT_NE(Block, Low.Blocks.end());
+  return *Block;
+}
+
+std::string frameProofError(const LowFunc &Low, va_t Handler) {
+  size_t Work = limits::kMaxSEHEstablisherFrameWork;
+  auto Proof = proveLowSEHEstablisherFrame(
+      Low, Handler, getTargetRegInfo(Arch::X64), /*OrdinaryEntry=*/false, Work);
+  return Proof ? std::string() : llvm::toString(Proof.takeError());
+}
+
+TEST(MedSEHEstablisherFrame, TheX87ContextHandleIsNotAFrameValue) {
+  // MinGW's startup code: x87 state travels through its __try.
+  auto Img = makeX87HandlerSEHFrameImage();
+  auto Low = decodeX87HandlerSEHFrame(Img);
+  ASSERT_EQ(Low.FunctionTemporaries.size(), 1u);
+  EXPECT_EQ(frameProofError(Low, Img.Entry + 0x20), "");
+  MedFunc Med;
+  ASSERT_NO_THROW(
+      Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF));
+  EXPECT_TRUE(verifyMedFunc(Med, "seh-x87-context"));
+}
+
+TEST(MedSEHEstablisherFrame, TheHandlerBeginsTheX87ContextBeforeUsingIt) {
+  // No ordinary path brings the handle to the handler the dispatcher resumes.
+  auto Img = makeX87HandlerSEHFrameImage();
+  auto Low = decodeX87HandlerSEHFrame(Img);
+  ASSERT_EQ(Low.FunctionTemporaries.size(), 1u);
+  LowBlock &Handler = blockAt(Low, Img.Entry + 0x20);
+  ASSERT_FALSE(Handler.Ops.empty());
+  const LowOp &Begin = Handler.Ops.front();
+  ASSERT_EQ(x87ContextHandleOperand(Begin), &Begin.Output);
+  Handler.Ops.erase(Handler.Ops.begin());
+  ASSERT_FALSE(Handler.InstructionBoundaries.empty());
+  --Handler.InstructionBoundaries.front().OpCount;
+  for (size_t I = 1; I < Handler.InstructionBoundaries.size(); ++I)
+    --Handler.InstructionBoundaries[I].FirstOp;
+  EXPECT_NE(frameProofError(Low, Img.Entry + 0x20)
+                .find("handler reads a function temporary before binding it"),
+            std::string::npos);
+}
+
+TEST(MedSEHEstablisherFrame, OnlyTheX87ContextHandleIsAdmitted) {
+  // A copy makes the handle an ordinary value the proof does not follow.
+  auto Img = makeX87HandlerSEHFrameImage();
+  auto Low = decodeX87HandlerSEHFrame(Img);
+  ASSERT_EQ(Low.FunctionTemporaries.size(), 1u);
+  LowBlock &Entry = Low.Blocks.front();
+  ASSERT_FALSE(Entry.Ops.empty());
+  ASSERT_FALSE(Entry.InstructionBoundaries.empty());
+  LowOp Copy;
+  Copy.Opcode = NdOp::COPY;
+  Copy.Addr = Entry.Ops.front().Addr;
+  Copy.Output = NdVar::reg(x86reg::RAX, 8);
+  Copy.addInput(NdVar::tmp(Low.FunctionTemporaries.front().Offset, 8));
+  Entry.Ops.insert(Entry.Ops.begin() + 1, Copy);
+  ++Entry.InstructionBoundaries.front().OpCount;
+  for (size_t I = 1; I < Entry.InstructionBoundaries.size(); ++I)
+    ++Entry.InstructionBoundaries[I].FirstOp;
+  EXPECT_NE(frameProofError(Low, Img.Entry + 0x20)
+                .find("function temporary other than the x87 context handle"),
+            std::string::npos);
 }
 
 TEST(MedSEHHandlerEntry, EAXHoldsTheExceptionCode) {
@@ -1705,6 +1795,78 @@ TEST(MedSEHHandlerEntry, HandlerSharedWithTheNormalPathMergesBothValues) {
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
 }
 
+// MinGW's startup scope ends at a nop the guarded code falls through, and
+// resumes at the next nop, which prints nothing: no statement carries the
+// handler's address, and the guarded block reaches the handler block both as
+// its successor and as its scope's target. The normal path returns 7.
+static BinaryImage makeNopResumeSharedHandlerImage() {
+  auto Img = makeSharedHandlerImage();
+  const uint8_t Code[] = {0xb8, 7,    0, 0, 0, // mov eax, 7
+                          0x88, 0x11,          // mov [rcx], dl
+                          0x90,                // nop
+                          0x90,                // nop
+                          0xc3};               // ret
+  std::copy(std::begin(Code), std::end(Code),
+            Img.Segments.front().Data.begin());
+  Img.Symbols.front() = Symbol::makeFunc(Img.Entry, sizeof(Code));
+  ExceptionFunction &EH = Img.ExceptionMetadata.Functions.front();
+  EH.CodeRange = {Img.Entry, Img.Entry + sizeof(Code)};
+  EH.SEH->Scopes.front().GuardedRange = {Img.Entry + 5, Img.Entry + 8};
+  EH.SEH->Scopes.front().HandlerVA = Img.Entry + 8;
+  Img.ExceptionMetadata.rebuildIndex();
+  return Img;
+}
+
+TEST(MedSEHHandlerEntry, AHandlerResumingAtANopEndsTheArmThere) {
+  // The arm runs on to the return after the __try instead of jumping to a
+  // label that does not exist.
+  auto Img = makeNopResumeSharedHandlerImage();
+  auto Low = decodeFixedSEHFrame(Img);
+  auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(verifyMedFunc(Med, "seh-shared-handler-nop"));
+  auto High = MedToHighConverter().convert(Med, Arch::X64);
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({High}, Stream, Options));
+  Stream.flush();
+  const size_t Handler = Source.find("__except");
+  ASSERT_NE(Handler, std::string::npos) << Source;
+  EXPECT_NE(Source.substr(Handler).find("exception_code;"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+}
+
+TEST(MedSEHHandlerEntry, LLVMKeepsTheNormalPathValueOfAHandlerItFallsInto) {
+  // The edge into the handler block is both ordinary and exceptional; its
+  // ordinary copy into the merged RAX must survive, or the function returns
+  // what that PHI's storage started with.
+  auto Img = makeNopResumeSharedHandlerImage();
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.LiftMode = true;
+  // The emitter's own IR: this image has no native SEH lowering, which the
+  // optimizer's exception-rewrite contract requires.
+  Opts.NoOpt = true;
+  Opts.OnlyFunctionEntries.insert(Img.Entry);
+  llvm::LLVMContext Context;
+  auto Result = Pipeline().run(Img, Context, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_NE(Result.LlvmModule, nullptr);
+  std::vector<uint64_t> Returned;
+  for (llvm::Function &Fn : *Result.LlvmModule)
+    for (llvm::BasicBlock &Block : Fn)
+      if (auto *Ret = llvm::dyn_cast<llvm::ReturnInst>(Block.getTerminator()))
+        if (auto *Value = llvm::dyn_cast_or_null<llvm::ConstantInt>(
+                Ret->getReturnValue()))
+          Returned.push_back(Value->getZExtValue());
+  std::string IR;
+  llvm::raw_string_ostream Stream(IR);
+  Result.LlvmModule->print(Stream, nullptr);
+  EXPECT_EQ(Returned, std::vector<uint64_t>{7}) << IR;
+}
+
 TEST(MedSEHHandlerEntry, HighCCapturesTheExceptionCodeInTheExceptArm) {
   auto Img = makeSEHHandlerRegisterImage();
   auto Low = decodeFixedSEHFrame(Img);
@@ -1868,12 +2030,16 @@ TEST(MedSEHEstablisherFrame, PublicNestedSEHUsesOneSlotInMedAndHighC) {
   ASSERT_NE(MainHigh, Result.HighFuncs.end());
   ASSERT_TRUE(HighCEmitter().emit({*MainHigh}, Stream, COptions));
   Stream.flush();
+  // The handler reaches the -100 slot as the frame record's member, never
+  // through another frame displacement.
   const size_t Handler = Source.find("__except");
   ASSERT_NE(Handler, std::string::npos) << Source;
-  EXPECT_NE(Source.substr(Handler).find("frame_base - 100"), std::string::npos)
+  EXPECT_NE(Source.substr(Handler).find("stack_storage.var_m64"),
+            std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("frame_base - 236"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("frame_base - 272"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("frame_base"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("var_mEC"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("var_m110"), std::string::npos) << Source;
 #endif
 }
 

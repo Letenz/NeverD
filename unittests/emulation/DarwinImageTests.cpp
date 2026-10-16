@@ -124,6 +124,30 @@ TEST(DarwinImage, IntelLibraryCapabilityBitDoesNotChangeTheGuestISA) {
   I.u32(8, CPU_SUBTYPE_X86_64_H);
   rejects(I);
 }
+TEST(DarwinImage, RawExecutablesCannotClaimDylibIdentity) {
+  for (bool X64 : {false, true}) {
+    Image I(X64);
+    const auto ID = I.command(LC_ID_DYLIB, 40);
+    I.u32(ID + 8, 24);
+    std::copy_n("example.dylib", 14, I.Bytes.data() + ID + 24);
+    rejects(I);
+  }
+}
+TEST(DarwinImage, UnusedProviderAddressesRemainAvailableToRawImages) {
+  for (bool X64 : {false, true}) {
+    Image I(X64);
+    const uint64_t Base = darwin_model::value::LibSystemGate;
+    I.u64(I.Text + 24, Base);
+    I.u64(I.Thread + 16 + (X64 ? 128 : 256), Base + 4096);
+    TemporaryImage File(I);
+    auto R =
+        darwin_model::loadImage(File.path(), darwin_model::macOSProfile(), {});
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Plan.Entry, Base + 4096);
+    EXPECT_TRUE(R->Imports.empty());
+    EXPECT_TRUE(R->Memory.Reserved.empty());
+  }
+}
 TEST(DarwinImage,
      DynamicDependenciesAndThreadLocalSectionsRequireAnExplicitModel) {
   Image Dynamic;

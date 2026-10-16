@@ -127,6 +127,11 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
     }
     MergeFlag(Dest.Uninstalled, Source.Uninstalled);
     MergeFlag(Dest.Installed, Source.Installed);
+    // This bit only proves native CRT-guard lifetime. Once that proof fails,
+    // another guard-only change cannot recover it or refine language state.
+    // Do not revisit an otherwise stable logical frame for that change.
+    if (Result.SEHParentChainComplete)
+      MergeFlag(Dest.AbandonedSEHGuard, Source.AbandonedSEHGuard);
     MergeFlag(Dest.CanDispatch, Source.CanDispatch);
   }
   if (Changed && charge(1 + 2 * std::bit_width(Work.size() + 1)))
@@ -269,12 +274,20 @@ void RegistrationStateSolver::seedEntries() {
   // them with zero and then expose the invented value.
   for (auto &Register : Initial.Frame.Registers)
     Register.MayBeFrame = true;
-  if (Conditional) {
+  const bool ParentEpilogue =
+      SEHControls && !KnownCxx && !Chain.RealignedFrame &&
+      std::any_of(SEHControls->begin(), SEHControls->end(), [](const auto &C) {
+        return C.Control ==
+               RegistrationSEHControlContract::Kind::ParentEpilogue;
+      });
+  if (Conditional || ParentEpilogue) {
     for (unsigned Index = 0; Index != Initial.Frame.Registers.size(); ++Index)
       Initial.Frame.Registers[Index].SavedRegister = uint8_t(Index + 1);
     FrameValue PC;
     PC.MayBeFrame = PC.ReturnPC = true;
     Initial.Frame.Cells[4] = PC;
+  }
+  if (Conditional) {
     for (const auto &[Offset, Value] : Conditional->Arguments)
       Initial.Frame.store(Offset, 4, Value);
     for (const auto &[Offset, Value] : Conditional->ObjectCells)

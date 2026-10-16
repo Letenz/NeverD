@@ -85,6 +85,9 @@ struct Domain {
   std::set<CatchStack> CxxCatchStacks;
   bool Uninstalled = false;
   bool Installed = false;
+  /// A runtime finally left its CRT guard without returning through the CRT.
+  /// The parent must reconnect its own node or remove the chain before calls.
+  bool AbandonedSEHGuard = false;
   bool CanDispatch = false;
   std::optional<int32_t> OrdinaryCallStack;
   struct ParentStackRestore {
@@ -149,12 +152,33 @@ using SEHFilterOutcomes = std::map<uint32_t, SEHFrameOutcomes>;
 /// filter-written state which controls the following local unwind.
 using SEHHandlerOutcomes = std::map<uint32_t, SEHFrameOutcomes>;
 
+/// A replacement jump can change EAX without changing its captured buffer.
+/// Pair each value with the frame effects which actually resume with it.
+using SEHJumpFrameOutcomes = std::map<FrameValue, SEHFrameOutcomes>;
+
+struct SEHUnwindJumpValue {
+  int32_t BufferOffset;
+  FrameValue Value;
+  RegistrationSEHJumpReplacement Source;
+  auto operator<=>(const SEHUnwindJumpValue &) const = default;
+};
+
 // A repeated jump retires the pending handler and every suspended callback.
 // Its frames must not be projected through an ordinary callback return.
 struct SEHUnwindJump {
+  const std::map<int32_t, SEHJumpCapture> &Captures;
+  std::map<SEHUnwindJumpValue, SEHFrameOutcomes> Resumed;
+};
+
+/// Each destination keeps its own saved registers, stack and unwind bound.
+/// Only paths restoring Capture contribute its state projection or levels.
+struct SEHJumpUnwind {
   const SEHJumpCapture &Capture;
   const FrameValue &Value;
-  SEHFrameOutcomes Resumed;
+  const std::map<int32_t, SEHJumpCapture> &Captures;
+  std::map<int32_t, SEHJumpFrameOutcomes> Resumed;
+  std::set<RegistrationSEHJumpState> StateRestores;
+  std::set<RegistrationSEHJumpReplacement> Replacements;
 };
 
 struct BlockFacts {
@@ -195,10 +219,14 @@ public:
 private:
   bool initialize();
   bool initializeOrder();
+  bool extendSEHParentOwnership();
   bool validateRealignedLayout();
   bool realignedMemoryIsDisjoint(const FrameValue &Address,
                                  uint16_t Width) const;
   bool registrationInstallationReady(const FrameState &Frame) const;
+  bool validateSEHParentChainUse(const Domain &State, const LowOp &Op,
+                                 const FrameTransfer &Transfer) const;
+  bool canReconnectSEHParentChain(const Domain &State) const;
   bool callbackCanReturn(const Domain &State) const;
   bool callbackReturnInstruction(size_t I, const LowOp &Op) const;
   std::optional<int32_t> parentStackOffset(const Domain &State) const;
@@ -237,6 +265,7 @@ private:
   std::optional<FrameValue> transferLocalUnwind(size_t I, Domain &After,
                                                 const LowOp &Op,
                                                 BlockFacts &Facts);
+  void recordLocalUnwind(const Domain &State, RegistrationSEHLocalUnwind Call);
   bool transferOrdinaryFinally(size_t I, Domain &After, const LowOp &Op,
                                BlockFacts &Facts,
                                std::optional<FrameValue> &ReturnedSP);
@@ -246,8 +275,13 @@ private:
   bool validateSEHCallContinuation(size_t I, const LowOp &Op,
                                    va_t CallerEntry = 0);
   bool validateSEHInvocationBlock(size_t I);
+  std::optional<va_t> knownSuccessor(const LowBlock &Block,
+                                     const FrameTransfer &Transfer) const;
   bool transferSEHExit(size_t I, Domain &After, const LowOp &Op,
                        BlockFacts &Facts);
+  bool transferSEHParentFallthrough(size_t I, Domain &After, const LowOp &Op,
+                                    BlockFacts &Facts);
+  bool proveSEHParentEpilogue(size_t I, const FrameState &Frame);
   bool returnNestedFinally(Domain &After, const LowOp &Op, BlockFacts &Facts,
                            RegistrationSEHInvocationExit Exit);
   void recordSEHStackRestore(const LowOp &Op, Domain &After,
@@ -259,13 +293,11 @@ private:
                              const std::set<int32_t> &Levels, bool Unknown,
                              std::set<int32_t> &WrittenLevels);
   bool mergeSEHFrameOutcome(SEHFrameOutcomes &Outcomes, FrameState State);
-  bool runSEHUnwind(FrameState Frame, int32_t Level, uint32_t Bound,
-                    SEHFrameOutcomes &Outcomes,
-                    std::vector<RegistrationObjectExtent> &Writes,
-                    const SEHJumpCapture *Jump = nullptr,
-                    const FrameValue *JumpValue = nullptr,
-                    std::set<RegistrationSEHJumpState> *StateRestores = nullptr,
-                    SEHHandlerOutcomes *Selected = nullptr);
+  bool runSEHUnwind(
+      FrameState Frame, int32_t Level, uint32_t Bound,
+      SEHFrameOutcomes &Outcomes, std::vector<RegistrationObjectExtent> &Writes,
+      SEHJumpUnwind *Jump = nullptr, SEHHandlerOutcomes *Selected = nullptr,
+      std::set<std::pair<int32_t, int32_t>> *Transitions = nullptr);
   bool runLocalFinally(va_t Target, FrameState &Parent,
                        bool OrdinaryInvocation = false,
                        std::vector<RegistrationObjectExtent> *Writes = nullptr,
@@ -291,7 +323,8 @@ private:
   bool runSEHFilterSearch(const FrameState &Parent,
                           std::vector<RegistrationObjectExtent> *Writes,
                           SEHFrameOutcomes &Outcomes, bool RequireResume,
-                          SEHHandlerOutcomes *Selected = nullptr);
+                          SEHHandlerOutcomes *Selected = nullptr,
+                          SEHUnwindJump *Jump = nullptr);
   bool mergeSEHJumpContinuation(const Domain &Source,
                                 const SEHJumpCapture &Saved,
                                 const FrameValue &Value,
@@ -407,6 +440,9 @@ private:
   std::set<int32_t> AllLevels;
   std::set<va_t> FinallyTargets;
   std::set<va_t> SEHParentEntries;
+  /// Physically anchored tails become parent code only after a checked
+  /// SavedESP transfer. They grant no runtime-handler entry memory privilege.
+  std::set<va_t> SEHParentContinuations;
   std::vector<std::map<SEHFlowKey, ActivationState>> States;
   struct SEHDispatchMemo {
     Domain Source;
@@ -430,7 +466,10 @@ private:
 
   std::map<va_t, uint32_t> CalleeIndices;
   std::map<std::pair<va_t, bool>, uint32_t> StackPops;
-  std::set<std::pair<va_t, bool>> LocalUnwindTargets;
+  std::map<std::pair<va_t, bool>, RegistrationLocalUnwindContract>
+      LocalUnwindTargets;
+  std::set<va_t> LocalUnwindImportSlots;
+  std::map<std::pair<va_t, int>, RegistrationSEHLocalUnwind> LocalUnwindCalls;
   bool FailedLocalUnwind = false;
   std::map<va_t, RegistrationSEHControlContract> SEHControlIndex;
   using SEHExitKey = std::tuple<va_t, va_t, va_t, int>;

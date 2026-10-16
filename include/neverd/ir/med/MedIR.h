@@ -414,6 +414,11 @@ struct MedCallInfo {
   /// slot as padding (`mov [rsp], r11d` passes an int in an eight-byte slot).
   /// Empty when a value's place is not known.
   std::vector<int64_t> StackArgumentOffsets;
+  /// The position where call-ABI recovery ended an indirect call's register
+  /// arguments because the register there only holds the call's target
+  /// (`ldr r0, [r0, #24]; blx r0`); no other layer extends them past it.
+  /// -1 when recovery ended them elsewhere.
+  int TargetRegisterArgIdx = -1;
   uint16_t StackArgumentSlotBytes = 0;
 };
 
@@ -523,9 +528,9 @@ struct MedFunc {
   int64_t VariadicOverflowBase = 0;
 
   /// The position of the first integer argument register a variadic
-  /// function's register save area spills (AAPCS64): the registers before it
-  /// carry its named parameters, the rest only what each caller passes.  -1
-  /// where unknown.
+  /// function's register save area spills (AAPCS64, AAPCS32): the registers
+  /// before it carry its named parameters, the rest only what each caller
+  /// passes.  -1 where unknown.
   int VariadicFirstRegister = -1;
 
   /// The position of the first vector argument register a variadic

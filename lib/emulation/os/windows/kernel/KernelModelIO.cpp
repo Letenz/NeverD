@@ -93,8 +93,8 @@ bool KernelModel::hasProcessAttachment(uint64_t Execution) const {
                      });
 }
 
-llvm::Error KernelModel::stackAttachProcess(uint64_t Process,
-                                            uint64_t ApcState) {
+llvm::Error KernelModel::stackAttachProcess(uint64_t Process, uint64_t ApcState,
+                                            bool Private) {
   if (!Scheduler.active() ||
       (Scheduler.active()->Kind != KernelScheduler::CallbackKind::WorkItem &&
        Scheduler.active()->Kind !=
@@ -115,32 +115,36 @@ llvm::Error KernelModel::stackAttachProcess(uint64_t Process,
         return Entry.second.ProcessID == ProcessID && !Entry.second.Completed;
       }))
     return ioError("process attachment requires a live requesting IRP");
-  if (!ApcState || (ApcState & 7) || ApcState < profile::UserProbeLimit)
-    return ioError("process attachment requires aligned kernel APC storage");
-  const bool CurrentStack =
-      ApcState >= CurrentExecution &&
-      ApcState - CurrentExecution <= profile::CallbackStackSize &&
-      KAPCStateSize <=
-          profile::CallbackStackSize - (ApcState - CurrentExecution);
-  const bool NonPagedPool = std::any_of(
-      Allocations.begin(), Allocations.end(), [&](const auto &Entry) {
-        return Entry.second.NonPaged && ApcState >= Entry.first &&
-               ApcState - Entry.first <= Entry.second.Size &&
-               KAPCStateSize <= Entry.second.Size - (ApcState - Entry.first);
-      });
-  if (!CurrentStack && !NonPagedPool)
-    return ioError("APC storage must be on the current thread stack or in "
-                   "nonpaged pool");
-  for (const auto &Attachment : ProcessAttachments)
-    if (Attachment.ApcState == ApcState)
-      return ioError("APC storage is already owned by an attachment");
-  if (auto E = validateGuestAccess(ApcState, KAPCStateSize, true))
-    return E;
-  auto Writable = Memory.canAccess(ApcState, KAPCStateSize, Read | Write);
-  if (!Writable)
-    return Writable.takeError();
-  if (!*Writable)
-    return ioError("process attachment requires writable APC storage");
+  if (!Private) {
+    if (!ApcState || (ApcState & 7) || ApcState < profile::UserProbeLimit)
+      return ioError("process attachment requires aligned kernel APC storage");
+    const bool CurrentStack =
+        ApcState >= CurrentExecution &&
+        ApcState - CurrentExecution <= profile::CallbackStackSize &&
+        KAPCStateSize <=
+            profile::CallbackStackSize - (ApcState - CurrentExecution);
+    const bool NonPagedPool = std::any_of(
+        Allocations.begin(), Allocations.end(), [&](const auto &Entry) {
+          return Entry.second.NonPaged && ApcState >= Entry.first &&
+                 ApcState - Entry.first <= Entry.second.Size &&
+                 KAPCStateSize <= Entry.second.Size - (ApcState - Entry.first);
+        });
+    if (!CurrentStack && !NonPagedPool)
+      return ioError("APC storage must be on the current thread stack or in "
+                     "nonpaged pool");
+    for (const auto &Attachment : ProcessAttachments)
+      if (Attachment.ApcState == ApcState)
+        return ioError("APC storage is already owned by an attachment");
+    if (auto E = validateGuestAccess(ApcState, KAPCStateSize, true))
+      return E;
+    auto Writable = Memory.canAccess(ApcState, KAPCStateSize, Read | Write);
+    if (!Writable)
+      return Writable.takeError();
+    if (!*Writable)
+      return ioError("process attachment requires writable APC storage");
+  } else if (ApcState) {
+    return ioError("private process attachment has no guest APC storage");
+  }
   const bool PreviousUserContext = UserRequestContext;
   const uint32_t PreviousProcessID =
       PreviousUserContext ? CurrentUserProcessID : 4;
@@ -151,23 +155,26 @@ llvm::Error KernelModel::stackAttachProcess(uint64_t Process,
     return PreviousProcess.takeError();
   if (auto E = setUserRequestContext(true, ProcessID))
     return E;
-  std::array<uint8_t, KAPCStateSize> Saved{};
-  if (auto E = Memory.write(ApcState, Saved))
-    return E;
-  if (auto E = Memory.writeInteger(ApcState + KAPCStateProcessOffset,
-                                   *PreviousProcess, 8))
-    return E;
-  ProcessAttachments.push_back(
-      {CurrentExecution, ApcState, PreviousProcessID, PreviousUserContext});
+  if (!Private) {
+    std::array<uint8_t, KAPCStateSize> Saved{};
+    if (auto E = Memory.write(ApcState, Saved))
+      return E;
+    if (auto E = Memory.writeInteger(ApcState + KAPCStateProcessOffset,
+                                     *PreviousProcess, 8))
+      return E;
+  }
+  ProcessAttachments.push_back({CurrentExecution, ApcState, PreviousProcessID,
+                                PreviousUserContext, Private});
   return llvm::Error::success();
 }
 
-llvm::Error KernelModel::unstackDetachProcess(uint64_t ApcState) {
+llvm::Error KernelModel::unstackDetachProcess(uint64_t ApcState, bool Private) {
   auto It = std::find_if(ProcessAttachments.rbegin(), ProcessAttachments.rend(),
                          [&](const auto &Attachment) {
                            return Attachment.Execution == CurrentExecution;
                          });
-  if (It == ProcessAttachments.rend() || It->ApcState != ApcState)
+  if (It == ProcessAttachments.rend() || It->ApcState != ApcState ||
+      It->Private != Private)
     return ioError("process detach requires the current thread's most recent "
                    "APC state");
   const auto Attachment = *It;
@@ -176,6 +183,31 @@ llvm::Error KernelModel::unstackDetachProcess(uint64_t ApcState) {
     return E;
   ProcessAttachments.erase(std::next(It).base());
   return llvm::Error::success();
+}
+
+llvm::Error KernelModel::probeAndLockProcessPages(uint64_t MDL,
+                                                  uint64_t Process,
+                                                  uint8_t Mode,
+                                                  uint32_t Operation) {
+  auto Current = currentProcess();
+  if (!Current)
+    return Current.takeError();
+  // This wrapper narrows LOCK_OPERATION and treats every non-read value as
+  // write access before calling the ordinary probe; it is not a direct alias.
+  const uint32_t Access = Operation != windows::IoReadAccess
+                              ? windows::IoWriteAccess
+                              : windows::IoReadAccess;
+  if (Process == *Current)
+    return probeAndLockPages(MDL, Mode, Access);
+  // Keep the shared attachment owner's worker/live-process admission. This
+  // private APC state has no fabricated guest stack or pool projection.
+  if (auto E = stackAttachProcess(Process, 0, true))
+    return E;
+  auto Probed = probeAndLockPages(MDL, Mode, Access);
+  // The target's termination handler detaches on exceptions as well. Preserve
+  // the guest exception when restoration succeeds; never swallow a detach
+  // error.
+  return llvm::joinErrors(std::move(Probed), unstackDetachProcess(0, true));
 }
 
 KernelModel::ActiveRequest *KernelModel::requestForIRP(uint64_t IRP) {
@@ -962,7 +994,8 @@ KernelModel::requestReleaseRanges(uint64_t IRP) const {
   std::vector<std::pair<uint64_t, uint64_t>> Retiring;
   // CREATE and IoCancelFileOpen borrow a producer-owned packet. Their wrappers
   // dispose it after lower dispatch and every completion continuation return.
-  if (!Request->FileOperation)
+  const bool NativeRequest = nativeFileRequest(Request->FileRequestID);
+  if (!Request->FileOperation && !NativeRequest)
     Retiring.emplace_back(IRP, IRPSize + Request->StackCount * StackSize);
   const auto NativeUsb = FrameworkUsbIdleRequests.find(IRP);
   if (NativeUsb != FrameworkUsbIdleRequests.end()) {
@@ -982,9 +1015,9 @@ KernelModel::requestReleaseRanges(uint64_t IRP) const {
     Retiring.emplace_back(Request->TranslatedResources,
                           Request->ResourceListSize);
   }
-  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer)
+  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer && !NativeRequest)
     Retiring.emplace_back(Request->SystemBuffer, Request->BufferSize);
-  if (Request->UserBuffer && !Request->Neither)
+  if (Request->UserBuffer && !Request->Neither && !NativeRequest)
     Retiring.emplace_back(Request->UserBuffer, Request->Direct
                                                    ? Request->TransferSize
                                                    : Request->OutputSize);
@@ -1044,6 +1077,7 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
   auto &Observation = Result.Requests[Request->ResultIndex];
   const bool HasIOCTLOutput =
       Request->Kind == DriverRequestKind::DeviceControl && Request->OutputSize;
+  const bool NativeRequest = nativeFileRequest(Request->FileRequestID);
   auto Pending = dispatchPending(*Request, Request->StackCount - 1);
   if (!Pending)
     return Pending.takeError();
@@ -1070,8 +1104,8 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
   Observation.IOStatus = static_cast<uint32_t>(*Status);
   Observation.Information = *Information;
   Request->PendingMarked = *Pending;
-  if (Request->FileQueryOperation)
-    if (auto E = publishFileQueryCompletion(IRP))
+  if (Request->FileRequestID)
+    if (auto E = publishFileRequestCompletion(IRP))
       return E;
   if (Request->FileOperation)
     if (auto E = publishFileOperationCompletion(IRP))
@@ -1085,7 +1119,7 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
       return E;
   }
   if ((HasIOCTLOutput || Request->Kind == DriverRequestKind::Read) &&
-      !ntError(*Status) && *Information) {
+      !Request->FileRequestID && !ntError(*Status) && *Information) {
     if (Request->Neither) {
       if (!RevokedUserAllocations.contains(Request->UserBuffer)) {
         Observation.Output.resize(*Information);
@@ -1111,10 +1145,10 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
     return E;
   if (auto E = finishRequestLifecycle(*Request, uint32_t(*Status)))
     return E;
-  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer)
+  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer && !NativeRequest)
     if (auto E = Physical.retire(Request->SystemBuffer))
       return E;
-  if (Request->UserBuffer && !Request->Neither)
+  if (Request->UserBuffer && !Request->Neither && !NativeRequest)
     if (auto E = Physical.retire(Request->UserBuffer))
       return E;
   // Ordinary request completion consumes the IRP. File operation producers
@@ -1124,7 +1158,7 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
     Observation.UsbIdle->CompletedAt100ns = Scheduler.now100ns();
   Request->Completed = true;
   Request->CancelDeadline.reset();
-  if (!Request->FileOperation)
+  if (!Request->FileOperation && !NativeRequest)
     FreedRanges.emplace(IRP, IRPSize + Request->StackCount * StackSize);
   if (const auto Native = FrameworkUsbIdleRequests.find(IRP);
       Native != FrameworkUsbIdleRequests.end())
@@ -1134,14 +1168,16 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
     FreedRanges.emplace(Request->TranslatedResources,
                         Request->ResourceListSize);
   }
-  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer)
+  if (Request->SystemBuffer && !Request->BorrowedSystemBuffer && !NativeRequest)
     FreedRanges.emplace(Request->SystemBuffer, Request->BufferSize);
-  if (Request->UserBuffer && !Request->Neither)
+  if (Request->UserBuffer && !Request->Neither && !NativeRequest)
     FreedRanges.emplace(Request->UserBuffer, Request->Direct
                                                  ? Request->TransferSize
                                                  : Request->OutputSize);
   if (Request->SecurityContext && !Request->FileOperation)
     FreedRanges.emplace(Request->SecurityContext, SecurityContextSize);
+  if (NativeRequest)
+    return releaseNativeFileRequestPacket(IRP);
   return llvm::Error::success();
 }
 
@@ -1171,9 +1207,9 @@ llvm::Error KernelModel::recordDispatchReturn(uint64_t IRP,
   if (DispatchStatus != StatusPending) {
     if (!Request->Completed)
       return ioError("dispatch returned without completing its IRP");
-    // The file-query helper returns a nonpending dispatch status independently
+    // File API producers return a nonpending dispatch status independently
     // from its IOSB. Ordinary scenario producers retain their stricter check.
-    if (!Request->Forwarded && !Request->FileQueryOperation &&
+    if (!Request->Forwarded && !Request->FileRequestID &&
         Observation.IOStatus != DispatchStatus)
       return ioError("synchronous dispatch status does not match completed "
                      "IoStatus.Status");
@@ -1289,7 +1325,7 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
   auto &File = FileIt->second;
   const uint64_t Device = File.Device;
   const uint32_t CompletionStatus = *Observation.IOStatus;
-  if (!Request->FileQueryOperation && !Request->FileOperation)
+  if (!Request->FileRequestID && !Request->FileOperation)
     if (auto E = Memory.writeInteger(File.Address + FileFinalStatusOffset,
                                      CompletionStatus, 4))
       return E;
@@ -1356,15 +1392,9 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
       FreedRanges.emplace(File.NameStorage, File.NameStorageSize);
     ReferencedObjects.erase(File.Address);
     FileObjects.erase(FileIt);
-  } else if ((Request->Kind == DriverRequestKind::Read ||
-              Request->Kind == DriverRequestKind::Write) &&
-             !ntError(CompletionStatus) && !File.Asynchronous) {
-    if (auto E =
-            Memory.writeInteger(File.Address + FileCurrentByteOffset,
-                                Request->ByteOffset + Observation.Information,
-                                profile::PointerSize))
-      return E;
   }
+  // A transfer offset is an input to dispatch. Completion does not seek the
+  // file; a storage operation must own any change to CurrentByteOffset.
   if (auto E = updateDeviceReferences(Device))
     return E;
   auto Route = std::move(Request->DeviceRoute);
@@ -1394,7 +1424,7 @@ llvm::Expected<KernelModel::Invocation> KernelModel::beginUnload() {
                 File.State != FileState::Cleaned);
       });
   if (!Requests.empty() || ScenarioOrOpeningFile || !DriverIRPs.empty() ||
-      !FileInformationQueries.empty() || PendingFileQueryContinuation ||
+      !FileRequests.empty() || PendingFileRequestContinuation ||
       !FileOperations.empty() || PendingFileOperation)
     return ioError(
         "unload requires all requests completed and the file closed");
@@ -1442,8 +1472,8 @@ llvm::Error KernelModel::finishUnload() {
       });
   if (!OnlyDeclaredVolumes || !SymbolicLinks.empty() || !Allocations.empty() ||
       !FileObjects.empty() || FileSystem.openCount() || !Requests.empty() ||
-      !DriverIRPs.empty() || !FileInformationQueries.empty() ||
-      PendingFileQueryContinuation || !FileOperations.empty() ||
+      !DriverIRPs.empty() || !FileRequests.empty() ||
+      PendingFileRequestContinuation || !FileOperations.empty() ||
       PendingFileOperation || !MDLs.empty() || !WorkItems.empty() ||
       !IRPCalls.empty() || PendingWdmCall || Scheduler.hasPending() ||
       !PoFxDeviceObjects.empty() || !BlockingPoFx.empty())
@@ -1496,11 +1526,14 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
       return E;
   }
   for (const auto &[IRP, Record] : Requests) {
-    if (Record.Completed)
+    if (Record.Completed && !Record.FileOperation &&
+        !nativeFileRequest(Record.FileRequestID))
       continue;
     const auto *Request = &Record;
     if (auto E = Check(Request->IRP, IRPSize, [&](uint64_t Offset) {
-          if (IsWrite && Request->Completed && Request->FileOperation)
+          if (IsWrite && Request->Completed &&
+              (Request->FileOperation ||
+               nativeFileRequest(Request->FileRequestID)))
             return false;
           if (IsWrite)
             return (Offset >= IRPMdlOffset &&
@@ -1518,7 +1551,7 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
             return initialized(Request->IOStatusWritten,
                                Request->IOStatusInitialization,
                                Offset - IRPStatusOffset);
-          return ((Request->FileQueryOperation || Request->FileOperation) &&
+          return ((Request->FileRequestID || Request->FileOperation) &&
                   ((Offset >= IRPAllocationFlagsOffset &&
                     Offset < IRPUserEventOffset + profile::PointerSize) ||
                    (Offset >= IRPThreadOffset &&
@@ -1557,7 +1590,7 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
         return E;
     // Raw user pointers are outside this kernel-only profile. Buffered requests
     // use SystemBuffer; direct requests access the locked system mapping.
-    if (!Request->Neither)
+    if (!Request->Neither && !nativeFileRequest(Request->FileRequestID))
       if (auto E = Check(Request->UserBuffer,
                          Request->Direct ? Request->TransferSize
                                          : Request->OutputSize,

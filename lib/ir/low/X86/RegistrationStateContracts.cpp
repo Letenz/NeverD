@@ -18,13 +18,23 @@ bool RegistrationStateSolver::initializeContracts() {
   if (LocalUnwinds) {
     if (LocalUnwinds->size() > 256)
       return false;
-    for (const auto &Call : *LocalUnwinds)
+    for (const auto &Call : *LocalUnwinds) {
       if (!charge(1) || !Call.Target || Call.Target > UINT32_MAX ||
-          !LocalUnwindTargets.emplace(Call.Target, Call.Indirect).second) {
+          (Call.Protocol != RegistrationLocalUnwindContract::Kind::EH3 &&
+           Call.Protocol != RegistrationLocalUnwindContract::Kind::EH4) ||
+          Call.ImportSlot > UINT32_MAX - 3 ||
+          (Call.Indirect && Call.ImportSlot &&
+           Call.Target != Call.ImportSlot) ||
+          !LocalUnwindTargets
+               .emplace(std::make_pair(Call.Target, Call.Indirect), Call)
+               .second) {
         Result.Diagnostics.push_back(
             "registration local-unwind contract is invalid");
         return false;
       }
+      if (Call.ImportSlot)
+        LocalUnwindImportSlots.insert(Call.ImportSlot);
+    }
   }
   if (Stacks) {
     if (Stacks->size() > 256)

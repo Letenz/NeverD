@@ -22,6 +22,7 @@
 #include <QMenu>
 #include <QPainter>
 #include <QRegularExpression>
+#include <QScopedValueRollback>
 #include <QScrollBar>
 #include <QSet>
 #include <QTextLine>
@@ -37,6 +38,33 @@ namespace {
 constexpr int PageLines = 256;
 constexpr int Margin = 6;
 constexpr int WheelLines = 3;
+
+/// The goto label \p line defines and the block address it names: HighC
+/// labels a goto's block `L_` and the address in hexadecimal
+/// (HighCStmtWriter), defined as `L_140001010:` or, in Rust, as a loop's
+/// `'L_140001010: loop`.
+std::optional<std::pair<QStringView, Address>>
+labelDefinition(QStringView line) {
+  line = line.trimmed();
+  if (line.startsWith(u'\''))
+    line = line.mid(1);
+  if (!line.startsWith(u"L_"))
+    return std::nullopt;
+  qsizetype end = 2;
+  while (end < line.size() && ((line[end] >= u'0' && line[end] <= u'9') ||
+                               (line[end] >= u'A' && line[end] <= u'F')))
+    ++end;
+  if (end == 2 || end >= line.size() || line[end] != u':' ||
+      line.mid(end).startsWith(u"::"))
+    return std::nullopt;
+  bool valid = false;
+  const Address address = line.mid(2, end - 2).toULongLong(&valid, 16);
+  if (!valid)
+    return std::nullopt;
+  return std::pair{line.left(end), address};
+}
+/// How often a drag beyond an edge scrolls the text.
+constexpr int DragScrollMs = 40;
 /// The fold over the lines before a definition: C's includes and
 /// declarations, or the declarations of what LLVM IR refers to.
 constexpr char PreludeRegion[] = "prelude";
@@ -377,6 +405,30 @@ CodeText::CodeText(Session &session, QWidget *parent)
       interrupted_ = true;
   });
   connect(&session_, &Session::unloaded, this, &CodeText::clear);
+  // A drag held beyond an edge scrolls toward it, the faster the farther
+  // out, and the selection follows, as in an editor.
+  dragScroll_.setInterval(DragScrollMs);
+  connect(&dragScroll_, &QTimer::timeout, this, [this] {
+    const QRect area = viewport()->rect();
+    const auto speed = [](int distance, qreal unit) {
+      return std::clamp(1 + int(distance / std::max<qreal>(1, unit)), 1, 20);
+    };
+    auto *rows = verticalScrollBar();
+    if (dragPoint_.y() < 0)
+      rows->setValue(rows->value() - speed(-dragPoint_.y(), lineHeight_));
+    else if (dragPoint_.y() >= area.height())
+      rows->setValue(rows->value() +
+                     speed(dragPoint_.y() - area.height(), lineHeight_));
+    auto *columns = horizontalScrollBar();
+    if (dragPoint_.x() < 0)
+      columns->setValue(columns->value() -
+                        int(speed(-dragPoint_.x(), charWidth_) * charWidth_));
+    else if (dragPoint_.x() >= area.width())
+      columns->setValue(
+          columns->value() +
+          int(speed(dragPoint_.x() - area.width(), charWidth_) * charWidth_));
+    dragTo(dragPoint_);
+  });
 }
 
 void CodeText::updateMetrics() {
@@ -428,6 +480,7 @@ void CodeText::cancel() {
 
 void CodeText::clear() {
   cancel();
+  placeAfterLoad_.reset();
   source_.clear();
   sourceBytes_ = renderedChars_ = renderedRows_ = widestLine_ = 0;
   interrupted_ = false;
@@ -472,6 +525,18 @@ void CodeText::load(Address function, const QString &representation,
   const bool same = function_ == function && representation_ == representation;
   const auto nextOptions =
       options.value_or(same ? sourceOptions_ : QJsonObject());
+  // A reload of complete text keeps its place; one a newer reload cuts short
+  // keeps the place the first one saved.
+  if (!same) {
+    placeAfterLoad_.reset();
+    selectAllAfterLoad_ = false;
+  } else if (!placeAfterLoad_ && !loading_ && !interrupted_ &&
+             cursorLine_ < lines_.size())
+    placeAfterLoad_ =
+        SourcePlace{lines_[cursorLine_].sourceLine, cursorColumn_,
+                    lines_[std::clamp(verticalScrollBar()->value(), 0,
+                                      int(lines_.size()) - 1)]
+                        .sourceLine};
   cancel();
   function_ = function;
   representation_ = representation;
@@ -550,6 +615,21 @@ void CodeText::request(int offset, quint64 serial) {
         // projection requires rebuilding earlier lines.
         rebuildLines(!library_.anyFolded());
         emit foldingChanged();
+        if (const auto place = std::exchange(placeAfterLoad_, {});
+            place && !lines_.isEmpty()) {
+          // The first shown line at or after a source line.
+          const auto shown = [this](int source) {
+            for (int i = 0; i < lines_.size(); ++i)
+              if (lines_[i].sourceLine >= source)
+                return i;
+            return int(lines_.size()) - 1;
+          };
+          cursorLine_ = shown(place->cursorLine);
+          cursorColumn_ =
+              std::clamp(place->cursorColumn, 0,
+                         int(lines_[cursorLine_].styled.text.size()));
+          verticalScrollBar()->setValue(shown(place->topLine));
+        }
         const auto mapping = payload.value("mapping_status").toString();
         status_ = session_.metadata().value("analyzed").toBool()
                       ? QString()
@@ -574,6 +654,8 @@ void CodeText::request(int offset, quint64 serial) {
         viewport()->update();
         if (const auto address = std::exchange(pendingAddress_, {}))
           selectAddress(*address);
+        if (selectAllAfterLoad_)
+          selectAll();
         emit statusChanged();
       },
       [this, serial](const QString &, const QString &message) {
@@ -581,6 +663,8 @@ void CodeText::request(int offset, quint64 serial) {
           return;
         loading_ = false;
         pendingAddress_.reset();
+        placeAfterLoad_.reset();
+        selectAllAfterLoad_ = false;
         if (!lines_.isEmpty() && sourceOptions_ != renderedOptions_) {
           sourceOptions_ = renderedOptions_;
           status_ = tr("Transformation failed: %1").arg(message);
@@ -807,12 +891,20 @@ void CodeText::rebuildLines(bool append) {
     renderedChars_ = renderedRows_ = widestLine_ = 0;
   }
   int start = renderedChars_;
+  const bool addressLabels = labelsNameAddresses();
   while (start < display.size()) {
     int end = int(display.indexOf(QLatin1Char('\n'), start));
     if (end < 0)
       end = int(display.size());
     Line line;
     line.styled.text = display.mid(start, end - start);
+    // A label's row is the block it labels, though the rows the engine maps
+    // may give it the instruction of a statement around it.
+    if (addressLabels)
+      if (const auto label = labelDefinition(line.styled.text)) {
+        line.label = true;
+        line.addresses = {label->second};
+      }
     widestLine_ = std::max(widestLine_, int(line.styled.text.size()));
     highlightLine(line, inComment_);
     lines_.append(std::move(line));
@@ -822,7 +914,7 @@ void CodeText::rebuildLines(bool append) {
   for (int i = renderedRows_; i < rows.size(); ++i) {
     const auto row = rows[i].toMap();
     const int index = row.value(QStringLiteral("line"), -1).toInt();
-    if (index < 0 || index >= lines_.size())
+    if (index < 0 || index >= lines_.size() || lines_[index].label)
       continue;
     for (const auto &address : row.value(QStringLiteral("addresses")).toList())
       if (const auto parsed = parseAddress(address.toString()))
@@ -972,6 +1064,18 @@ void CodeText::setFolded(bool folded) {
 }
 
 bool CodeText::event(QEvent *event) {
+  // The text keeps Ctrl+A for itself, as IDA's text panes do, whatever a
+  // window-wide command takes the key for.
+  if (event->type() == QEvent::ShortcutOverride &&
+      static_cast<QKeyEvent *>(event)->matches(QKeySequence::SelectAll)) {
+    event->accept();
+    return true;
+  }
+  // A window switch or popup during a drag takes the release with it.
+  if (event->type() == QEvent::FocusOut || event->type() == QEvent::Hide) {
+    dragScroll_.stop();
+    selecting_ = false;
+  }
   if (event->type() == QEvent::ToolTip) {
     auto *help = static_cast<QHelpEvent *>(event);
     const QPoint local = viewport()->mapFrom(this, help->pos());
@@ -1315,6 +1419,7 @@ void CodeText::paintEvent(QPaintEvent *) {
 }
 
 void CodeText::moveCursor(int line, int column, bool extend) {
+  selectAllAfterLoad_ = false;
   pendingAddress_.reset();
   selectedAddress_.reset();
   if (lines_.isEmpty())
@@ -1331,8 +1436,13 @@ void CodeText::moveCursor(int line, int column, bool extend) {
     bar->setValue(cursorLine_);
   else if (cursorLine_ >= bar->value() + visibleLines())
     bar->setValue(cursorLine_ - visibleLines() + 1);
-  if (const auto address = currentAddress())
-    emit locationChanged(*address);
+  // A move of the code's own leaves the rows the disassembly marked, and
+  // takes the disassembly along.
+  if (!following_) {
+    marked_.clear();
+    if (const auto address = currentAddress())
+      emit locationChanged(*address);
+  }
   viewport()->update();
 }
 
@@ -1368,18 +1478,40 @@ void CodeText::selectAddress(Address address) {
     }
     break;
   }
-  marked_.clear();
+  QVector<int> rows;
   for (int i = 0; i < lines_.size(); ++i)
     if (lines_[i].addresses.contains(address))
-      marked_.append(i);
-  if (!marked_.isEmpty()) {
-    moveCursor(marked_.front(), 0, false);
+      rows.append(i);
+  if (!rows.isEmpty()) {
+    // The disassembly stays on the instruction the user selected there,
+    // though the row's first mapping may be another one.
+    const QScopedValueRollback<bool> following(following_, true);
+    moveCursor(rows.front(), 0, false);
     // Preserve an assembly address that is one of several on this row, so
     // a Tab round trip returns to the instruction the user selected.
     selectedAddress_ = address;
   }
+  marked_ = rows;
   viewport()->update();
   emit addressSelected(address, !marked_.isEmpty());
+}
+
+void CodeText::revealAddress(Address address) {
+  if (loading_ || lines_.isEmpty())
+    return;
+  QVector<int> rows;
+  for (int i = 0; i < lines_.size(); ++i)
+    if (lines_[i].addresses.contains(address))
+      rows.append(i);
+  // A row already under the cursor keeps it where the user put it.
+  if (!rows.isEmpty() && !rows.contains(cursorLine_)) {
+    const QScopedValueRollback<bool> following(following_, true);
+    moveCursor(rows.front(), 0, false);
+  }
+  if (!rows.isEmpty())
+    selectedAddress_ = address;
+  marked_ = rows;
+  viewport()->update();
 }
 
 QString CodeText::currentToken() const {
@@ -1514,10 +1646,89 @@ std::optional<QJsonObject> CodeText::commentTarget() const {
                        {"anchor", row.value("code_anchor").toString()},
                        {"text", row.value("code_comment").toString()}};
     // A note saved before the engine could map this row retains its source
-    // identity; adding an address mapping must not hide subsequent edits.
-    if (!row.value("code_comment_is_source").toBool())
+    // identity; adding an address mapping must not hide subsequent edits. A
+    // label's row maps to its block only for navigation: the worker shows an
+    // instruction's comment on the rows the engine maps, so a note on the
+    // label stays the line's.
+    if (!row.value("code_comment_is_source").toBool() &&
+        !lines_[cursorLine_].label)
       if (const auto at = currentAddress())
         target["mapped_address"] = hexAddress(*at);
+    return target;
+  }
+  return std::nullopt;
+}
+
+std::optional<CodeText::NumberTarget> CodeText::numberTarget() const {
+  // The worker edits the source views it decorates.
+  if (!function_ || loading_ || lines_.isEmpty() || !editMetadata_ ||
+      !CodeView::isSource(representation_) || cursorLine_ >= lines_.size())
+    return std::nullopt;
+  const auto display = displayPosition(cursorLine_, cursorColumn_);
+  if (!library_.regionAt(display).isEmpty())
+    return std::nullopt;
+  const int position =
+      library_.canFold() ? library_.originalPosition(display) : display;
+  const int start =
+      position > 0
+          ? int(source_.lastIndexOf(QLatin1Char('\n'), position - 1)) + 1
+          : 0;
+  const int line = int(QStringView(source_).left(start).count(u'\n'));
+  QVariantMap row;
+  for (const auto &value : sourceRows_)
+    if (auto candidate = value.toMap();
+        candidate.value("line").toInt() == line &&
+        candidate.contains("code_anchor")) {
+      row = std::move(candidate);
+      break;
+    }
+  if (row.isEmpty())
+    return std::nullopt;
+  NumberTarget target;
+  target.line = line;
+  target.anchor = row.value("code_anchor").toString();
+  const QString language = this->language();
+  target.syntax = language == QLatin1String("rust") ? LiteralSyntax::Rust
+                  : language == QLatin1String("go") ? LiteralSyntax::Go
+                                                    : LiteralSyntax::C;
+  // A block comment carries over lines; the lines before say whether this
+  // one starts in one.
+  bool inComment = false;
+  for (int at = 0; at < start;) {
+    const int end = int(source_.indexOf(QLatin1Char('\n'), at));
+    if (end < 0 || end >= start)
+      break;
+    (void)integerLiterals(source_.mid(at, end - at).toStdString(),
+                          target.syntax, inComment);
+    at = end + 1;
+  }
+  bool anchorInComment = inComment;
+  int end = int(source_.indexOf(QLatin1Char('\n'), start));
+  if (end < 0)
+    end = int(source_.size());
+  const auto shown = integerLiterals(
+      source_.mid(start, end - start).toStdString(), target.syntax, inComment);
+  // The engine's own spelling, which the worker spells the other bases from;
+  // the shown line counts the same literals.
+  const auto written = integerLiterals(target.anchor.toStdString(),
+                                       target.syntax, anchorInComment);
+  // The literal under the cursor, or the one it just passed.
+  const auto column =
+      std::size_t(source_.mid(start, position - start).toUtf8().size());
+  for (std::size_t i = 0; i < shown.size() && i < written.size(); ++i) {
+    if (column < shown[i].Begin || column > shown[i].End ||
+        (column == shown[i].End && i + 1 < shown.size() &&
+         shown[i + 1].Begin == column))
+      continue;
+    target.index = int(i);
+    target.literal = written[i];
+    target.shown = shown[i].Radix;
+    const auto radix = row.value("code_number_radixes")
+                           .toMap()
+                           .value(QString::number(i))
+                           .toString();
+    target.chosen =
+        literalRadixNamed(radix.toStdString()).value_or(LiteralRadix::Number);
     return target;
   }
   return std::nullopt;
@@ -1642,6 +1853,10 @@ void CodeText::keyPressEvent(QKeyEvent *event) {
     QApplication::clipboard()->setText(selectedText());
     return;
   }
+  if (event->matches(QKeySequence::SelectAll)) {
+    selectAll();
+    return;
+  }
   const auto foldModifiers = Qt::ControlModifier | Qt::ShiftModifier;
   if ((event->modifiers() & foldModifiers) == foldModifiers) {
     if (event->key() == Qt::Key_BracketLeft ||
@@ -1682,9 +1897,38 @@ void CodeText::keyPressEvent(QKeyEvent *event) {
   QAbstractScrollArea::keyPressEvent(event);
 }
 
+void CodeText::selectAll() {
+  selectAllAfterLoad_ = loading_;
+  if (lines_.isEmpty())
+    return;
+  pendingAddress_.reset();
+  selectedAddress_.reset();
+  anchor_ = std::pair{0, 0};
+  cursorLine_ = int(lines_.size()) - 1;
+  cursorColumn_ = int(lines_.back().styled.text.size());
+  viewport()->update();
+}
+
+void CodeText::dragTo(const QPoint &position) {
+  if (lines_.isEmpty())
+    return;
+  selectAllAfterLoad_ = false;
+  pendingAddress_.reset();
+  selectedAddress_.reset();
+  const QRect area = viewport()->rect();
+  const int y = std::clamp(position.y(), 0, std::max(0, area.height() - 1));
+  const int line = std::clamp(lineAt(y), 0, int(lines_.size()) - 1);
+  if (!anchor_)
+    anchor_ = std::pair{cursorLine_, cursorColumn_};
+  cursorLine_ = line;
+  cursorColumn_ = columnAt(line, position.x());
+  viewport()->update();
+}
+
 void CodeText::mousePressEvent(QMouseEvent *event) {
   setFocus(Qt::MouseFocusReason);
   selecting_ = false;
+  dragScroll_.stop();
   if (event->button() != Qt::LeftButton && event->button() != Qt::RightButton)
     return;
   if (event->button() == Qt::LeftButton) {
@@ -1703,11 +1947,17 @@ void CodeText::mousePressEvent(QMouseEvent *event) {
   if (line < 0)
     return;
   const int column = columnAt(line, int(event->position().x()));
-  if (event->button() == Qt::RightButton && anchor_ && line == cursorLine_)
-    return;
+  // A right click inside the selection keeps it for the menu's Copy.
+  if (event->button() == Qt::RightButton && anchor_) {
+    const auto at = std::pair{line, column};
+    const auto cursor = std::pair{cursorLine_, cursorColumn_};
+    if (std::min(*anchor_, cursor) <= at && at <= std::max(*anchor_, cursor))
+      return;
+  }
   moveCursor(line, column, event->modifiers() & Qt::ShiftModifier);
   if (event->button() == Qt::LeftButton) {
     selecting_ = true;
+    dragPoint_ = event->position().toPoint();
     const auto name = sourceNameAt(line, column);
     highlight_ = name ? name->first : tokenAt(line, column);
   }
@@ -1719,19 +1969,17 @@ void CodeText::mouseMoveEvent(QMouseEvent *event) {
   updateMouseCursor(event->position().toPoint());
   if (!selecting_ || !(event->buttons() & Qt::LeftButton) || lines_.isEmpty())
     return;
-  pendingAddress_.reset();
-  selectedAddress_.reset();
-  const int line =
-      std::clamp(lineAt(int(event->position().y())), 0, int(lines_.size()) - 1);
-  if (!anchor_)
-    anchor_ = std::pair{cursorLine_, cursorColumn_};
-  cursorLine_ = line;
-  cursorColumn_ = columnAt(line, int(event->position().x()));
-  viewport()->update();
+  dragPoint_ = event->position().toPoint();
+  dragTo(dragPoint_);
+  if (viewport()->rect().contains(dragPoint_))
+    dragScroll_.stop();
+  else if (!dragScroll_.isActive())
+    dragScroll_.start();
 }
 
 void CodeText::mouseReleaseEvent(QMouseEvent *event) {
   selecting_ = false;
+  dragScroll_.stop();
   updateMouseCursor(event->position().toPoint());
   if (anchor_ && *anchor_ == std::pair{cursorLine_, cursorColumn_})
     anchor_.reset();
@@ -1752,6 +2000,13 @@ void CodeText::mouseDoubleClickEvent(QMouseEvent *event) {
     return;
   }
   const QString token = currentToken();
+  // A goto label is a place in this function: the code goes to the label,
+  // the disassembly to the block it labels.
+  if (const auto label = addressLabel(token)) {
+    emit labelActivated(label->first);
+    goToLabel(token, label->second, label->first);
+    return;
+  }
   // A type or macro this code declares opens at its declaration; the
   // language's own words name nothing in the binary.
   const auto &words = vocabularyOf(dialectOf(representation_, pageLanguage_));
@@ -1994,6 +2249,47 @@ std::optional<QString> CodeText::linkedSymbol(const QString &name) const {
   return std::nullopt;
 }
 
+bool CodeText::labelsNameAddresses() const {
+  // LLVM C numbers its labels instead.
+  return representation_ == QLatin1String("source") ||
+         representation_ == QLatin1String("c");
+}
+
+std::optional<std::pair<Address, int>>
+CodeText::addressLabel(const QString &name) const {
+  if (!labelsNameAddresses() || !name.startsWith(QLatin1String("L_")))
+    return std::nullopt;
+  int line = 0;
+  for (qsizetype start = 0; start < source_.size(); ++line) {
+    qsizetype end = source_.indexOf(QLatin1Char('\n'), start);
+    if (end < 0)
+      end = source_.size();
+    if (const auto label =
+            labelDefinition(QStringView(source_).mid(start, end - start));
+        label && label->first == name)
+      return std::pair{label->second, line};
+    start = end + 1;
+  }
+  return std::nullopt;
+}
+
+void CodeText::goToLabel(const QString &name, int sourceLine, Address address) {
+  if (library_.unfoldSourceLine(sourceLine)) {
+    rebuildLines();
+    emit foldingChanged();
+  }
+  const int line =
+      library_.canFold() ? library_.displayLine(sourceLine) : sourceLine;
+  if (line < 0 || line >= lines_.size())
+    return;
+  highlight_ = name;
+  // The disassembly already shows the block.
+  const QScopedValueRollback<bool> following(following_, true);
+  moveCursor(line, std::max(0, int(lines_[line].styled.text.indexOf(name))),
+             false);
+  selectedAddress_ = address;
+}
+
 bool CodeText::goToDeclaration(const QString &name) {
   const auto source = declarationLine(name);
   if (!source || loading_)
@@ -2020,6 +2316,9 @@ void CodeText::wheelEvent(QWheelEvent *event) {
   const int steps = event->angleDelta().y() / 120;
   verticalScrollBar()->setValue(verticalScrollBar()->value() -
                                 steps * WheelLines);
+  // The selection a drag makes follows the text the wheel scrolls.
+  if (selecting_ && (event->buttons() & Qt::LeftButton))
+    dragTo(dragPoint_);
 }
 
 void CodeText::contextMenuEvent(QContextMenuEvent *event) {

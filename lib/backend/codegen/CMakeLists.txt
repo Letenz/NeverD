@@ -19,6 +19,7 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFRegistrationSEHCall.cpp
   COFF/COFFRegistrationSEHException.cpp
   COFF/COFFRegistrationSEHFinally.cpp
+  COFF/COFFRegistrationSEHRegisters.cpp
   COFF/COFFRegistrationSEHState.cpp
   COFF/COFFRegistrationSEHStateDispatch.cpp
   COFF/COFFRegistrationSEHNullAccess.cpp
@@ -27,6 +28,11 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFRegistrationSEHBoundCall.cpp
   COFF/COFFRegistrationSEHJumpArguments.cpp
   COFF/COFFRegistrationSEHJumpRuntime.cpp
+  COFF/COFFRegistrationSEHLocalUnwindBridge.cpp
+  COFF/COFFRegistrationSEHLocalUnwind.cpp
+  COFF/COFFRegistrationSEHLocalUnwindContext.cpp
+  COFF/COFFRegistrationSEHParentExit.cpp
+  COFF/COFFRegistrationSEHParentExitSource.cpp
   COFF/COFFRegistrationFrameStores.cpp
   COFF/COFFRegistrationFrameTaint.cpp
   COFF/COFFRegistrationFrameBits.cpp
@@ -39,6 +45,7 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFRegistrationCxxIR.cpp
   COFF/COFFRegistrationCxxEdges.cpp
   COFF/COFFRegistrationCopyEdges.cpp
+  COFF/COFFRegistrationCopySlots.cpp
   COFF/COFFRegistrationCxxCall.cpp
   COFF/COFFRegistrationCxxCatch.cpp
   COFF/COFFRegistrationCxxContinuation.cpp

@@ -15,9 +15,13 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/ir/med/X86RegistrationSEHParentExit.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
 #include <map>
@@ -26,8 +30,17 @@
 
 namespace neverd {
 
+namespace {
+// DCE indexes only nonnegative definition ids. Reserve negative ids instead
+// of DenseMap's default INT_MAX pair, which is a valid id/version here.
+struct DCEValueKeyInfo : llvm::DenseMapInfo<std::pair<int, int>> {
+  static constexpr std::pair<int, int> getEmptyKey() { return {-1, -1}; }
+  static constexpr std::pair<int, int> getTombstoneKey() { return {-2, -2}; }
+};
+} // namespace
+
 void LowToMedConverter::runDce(MedFunc &Func) {
-  std::set<std::pair<int, int>> LiveDefs;
+  llvm::DenseSet<std::pair<int, int>, DCEValueKeyInfo> LiveDefs;
 
   // Distinct variable ids that name each register offset (its aliases).
   std::map<uint64_t, std::set<int>> RegOffVars;
@@ -64,6 +77,13 @@ void LowToMedConverter::runDce(MedFunc &Func) {
   };
 
   const auto &TRI = getTargetRegInfo(TargetArch);
+
+  // A nonlocal finally exit consumes the restored parent SP through the
+  // runtime, even when no ordinary SSA use survives. Keep the exact source
+  // definition and its dependencies for the later native contract check.
+  if (const auto Exits = getRegistrationSEHParentExits(Func))
+    for (const auto &[Id, Exit] : *Exits)
+      MarkLive(Exit.Restore->Output);
 
   // Seed: return value registers in blocks containing RETURN
   for (auto &Blk : Func.Blocks) {
@@ -327,20 +347,24 @@ void LowToMedConverter::runDce(MedFunc &Func) {
   // pointer belongs to this frame, even when nothing reads the stack pointer
   // again because the epilogue restores it from the frame pointer.  The
   // emitter lowers such a write to an alloca, so keep it and its size live.
-  std::map<std::pair<int, int>, const MedOp *> ValueDefs;
-  std::map<std::pair<int, int>, const PhiNode *> ValuePhis;
+  llvm::DenseMap<std::pair<int, int>, const MedOp *, DCEValueKeyInfo> ValueDefs;
+  llvm::DenseMap<std::pair<int, int>, const PhiNode *, DCEValueKeyInfo>
+      ValuePhis;
   for (const MedBlock &Blk : Func.Blocks) {
     for (const PhiNode &Phi : Blk.Phis)
       if (Phi.Output.Id >= 0)
-        ValuePhis.emplace(std::make_pair(Phi.Output.Id, Phi.Output.SSAVer),
-                          &Phi);
+        ValuePhis.try_emplace(std::make_pair(Phi.Output.Id, Phi.Output.SSAVer),
+                              &Phi);
     for (const MedOp &Op : Blk.Ops)
       if (Op.Output.Id >= 0 && !(Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
                                  Op.Inputs[0].Id == Op.Output.Id &&
                                  Op.Inputs[0].SSAVer == Op.Output.SSAVer))
-        ValueDefs.emplace(std::make_pair(Op.Output.Id, Op.Output.SSAVer), &Op);
+        ValueDefs.try_emplace(std::make_pair(Op.Output.Id, Op.Output.SSAVer),
+                              &Op);
   }
   auto defOf = [&](const MedVar &V) -> const MedOp * {
+    if (V.Id < 0)
+      return nullptr;
     const auto It = ValueDefs.find({V.Id, V.SSAVer});
     return It == ValueDefs.end() ? nullptr : It->second;
   };
@@ -458,8 +482,12 @@ void LowToMedConverter::runDce(MedFunc &Func) {
            Op.MemoryOrdering != NdMemoryOrdering::None ||
            Op.MemoryAddressSpace != NdMemoryAddressSpace::Default;
   };
-  std::map<std::pair<int, int>, std::vector<MedOp *>> OpDefs;
-  std::map<std::pair<int, int>, std::vector<PhiNode *>> PhiDefs;
+  llvm::DenseMap<std::pair<int, int>, llvm::SmallVector<MedOp *, 1>,
+                 DCEValueKeyInfo>
+      OpDefs;
+  llvm::DenseMap<std::pair<int, int>, llvm::SmallVector<PhiNode *, 1>,
+                 DCEValueKeyInfo>
+      PhiDefs;
   for (auto &Blk : Func.Blocks) {
     for (auto &Phi : Blk.Phis)
       if (Phi.Output.Id >= 0)

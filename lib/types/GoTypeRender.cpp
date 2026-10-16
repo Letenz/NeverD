@@ -11,7 +11,9 @@
 // storage of its size with an accessor for each alternative, a run of
 // bitfields is its storage unit with a getter and a setter for each, and a
 // flexible array, which would pad a Go structure, is an accessor.  Function
-// pointers are uintptr, as in golang.org/x/sys/windows.
+// pointers are uintptr, as in golang.org/x/sys/windows.  Builtins are exact
+// widths (uint32), or Windows' names (ULONG), which a file declares as
+// aliases of them.
 //
 //===----------------------------------------------------------------------===//
 
@@ -20,6 +22,8 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <set>
 
 namespace neverd::types::render {
 namespace {
@@ -46,11 +50,21 @@ struct Field {
 class GoWriter {
 public:
   GoWriter(const TypeLibrary &Library, const RenderOptions &Options)
-      : Library(Library), Options(Options), Names(Library, Language::Go),
+      : Library(Library), Options(Options), Spelling(spellingOf(Options)),
+        Names(Library, Language::Go),
         Wide(pointerBytes(Library.dataModel()) == 8),
         Receiver(Library.find("s") ? "s_" : "s") {}
 
-  void definition(const LocalType &Type, std::string &Out);
+  /// \p Type's definition; with \p Paths, how code reaches each member a
+  /// record names in C.
+  void definition(const LocalType &Type, std::string &Out,
+                  std::map<std::string, MemberPath> *Paths = nullptr);
+  /// \p Type, a record, as an opaque type, as the text only points to it.
+  void opaque(const LocalType &Type, std::string &Out) const;
+  /// The builtins rendered so far by their Windows names.
+  const std::set<Builtin> &aliased() const { return Aliased; }
+  /// \p Type as an exact width, as Go spells it.
+  std::string exact(Builtin Type) const;
 
 private:
   std::string type(const TypeExpr &Type) const;
@@ -92,7 +106,9 @@ private:
 
   const TypeLibrary &Library;
   const RenderOptions &Options;
+  const BuiltinSpelling Spelling;
   const NameSpelling Names;
+  mutable std::set<Builtin> Aliased;
   const bool Wide;
   /// What methods call their receiver: s, unless a type is named so.
   const std::string Receiver;
@@ -101,7 +117,29 @@ private:
   uint64_t Base = 0;
   /// The outer record's name.
   std::string Parent;
+  /// Records that code reaches \p Place's member through \p Hop, a field
+  /// or a method that returns a pointer to it, or the anonymous record it
+  /// holds.
+  void reach(const Slot &Place, MemberPath::Hop Hop);
+  /// Where definition() records the members' paths, the hops from the
+  /// outer record to the one being written, and what holds each anonymous
+  /// record written so far, by its type's name.
+  std::map<std::string, MemberPath> *Paths = nullptr;
+  std::vector<MemberPath::Hop> Prefix;
+  std::map<std::string, MemberPath::Hop> Holders;
 };
+
+void GoWriter::reach(const Slot &Place, MemberPath::Hop Hop) {
+  if (!Paths || !Place.Field)
+    return;
+  if (Place.Field->isAnonymous()) {
+    Holders[Place.NestedType] = std::move(Hop);
+    return;
+  }
+  MemberPath &Path = (*Paths)[Place.Field->Name];
+  Path.Hops = Prefix;
+  Path.Hops.push_back(std::move(Hop));
+}
 
 uint32_t GoWriter::scalarAlign(uint64_t Bytes) const {
   if (Bytes >= 8)
@@ -112,6 +150,14 @@ uint32_t GoWriter::scalarAlign(uint64_t Bytes) const {
 }
 
 std::string GoWriter::builtin(Builtin Type) const {
+  if (Spelling == BuiltinSpelling::Windows && windowsTypedef(Type)) {
+    Aliased.insert(Type);
+    return builtinInfo(Type).Windows;
+  }
+  return exact(Type);
+}
+
+std::string GoWriter::exact(Builtin Type) const {
   const BuiltinInfo &Info = builtinInfo(Type);
   const unsigned Bytes = builtinBytes(Type, Library.dataModel());
   switch (Info.Class) {
@@ -173,7 +219,7 @@ uint32_t GoWriter::recordAlign(const RecordDef &Record, uint32_t Pack) const {
 uint32_t GoWriter::goAlign(const TypeExpr &Type, uint32_t Pack) const {
   switch (Type.Kind) {
   case TypeExprKind::Builtin:
-    if (builtin(Type.TheBuiltin).front() == '[')
+    if (exact(Type.TheBuiltin).front() == '[')
       return 1;
     return scalarAlign(builtinBytes(Type.TheBuiltin, Library.dataModel()));
   case TypeExprKind::Pointer:
@@ -306,7 +352,15 @@ void GoWriter::bitAccessors(const std::string &Type, const Slot &Place,
   for (const Member *Bit : Place.Bits) {
     const BitAccess Access = bitAccess(Library, *Bit);
     const std::string Bits = std::to_string(Access.UnitBits);
-    const std::string Value = (Access.Signed ? "int" : "uint") + Bits;
+    std::string Value = (Access.Signed ? "int" : "uint") + Bits;
+    // A builtin of the unit's size keeps its own name: ULONG, not UINT.
+    if (Bit->Type && Bit->Type->Kind == TypeExprKind::Builtin &&
+        builtinBytes(Bit->Type->TheBuiltin, Library.dataModel()) * 8 ==
+            Access.UnitBits &&
+        builtinInfo(Bit->Type->TheBuiltin).Signed == Access.Signed &&
+        builtinInfo(Bit->Type->TheBuiltin).Class != BuiltinClass::Float &&
+        builtinInfo(Bit->Type->TheBuiltin).Class != BuiltinClass::Bool)
+      Value = builtin(Bit->Type->TheBuiltin);
     std::string Read;
     if (Access.Signed) {
       // Up to the top, then back down: C extends a signed field's sign.
@@ -383,6 +437,7 @@ void GoWriter::unionStorage(const RecordPlan &Plan, std::string &Out) {
     Methods += "\nfunc (" + Receiver + " *" + Plan.Name + ") " + Place.Name +
                "() *" + Type + " {\n\treturn (*" + Type + ")(unsafe.Pointer(" +
                Receiver + "))\n}\n";
+    reach(Place, {Place.Name, /*Accessor=*/true});
   }
   Out += "type " + Plan.Name + " struct {\n";
   Out += withComment("\t" + Raw + " [" + std::to_string(Count) + "]" + Unit,
@@ -453,6 +508,10 @@ void GoWriter::structure(const RecordPlan &Plan, std::string &Out) {
     End = Place.Byte + Written.Size;
     Align = std::max(Align, Written.Align);
     Offsets.push_back({Written.Name, Place.Byte});
+    if (Place.TheKind == Slot::Kind::Field)
+      reach(Place, Written.Bytes.empty()
+                       ? MemberPath::Hop{Written.Name, /*Accessor=*/false}
+                       : MemberPath::Hop{Place.Name, /*Accessor=*/true});
     if (!Written.Bytes.empty()) {
       Methods += "\n// " + Place.Name + " reads the " + Written.Bytes +
                  " Go cannot align at " + comment(Base + Place.Byte) + ".\n";
@@ -513,7 +572,18 @@ void GoWriter::record(const RecordPlan &Plan, bool Outer, std::string &Out) {
         At = Place.Byte;
     Base = Saved + At;
     Out += '\n';
+    // Its members are reached through what holds it.
+    std::map<std::string, MemberPath> *Outer = Paths;
+    const auto Holder = Holders.find(Nested.Name);
+    const bool Held = Paths && Holder != Holders.end();
+    if (Held)
+      Prefix.push_back(Holder->second);
+    else
+      Paths = nullptr;
     record(Nested, /*Outer=*/false, Out);
+    if (Held)
+      Prefix.pop_back();
+    Paths = Outer;
   }
   Base = Saved;
 }
@@ -544,7 +614,16 @@ void GoWriter::enumeration(const std::string &Name, const EnumDef &Enum,
   Out += ")\n";
 }
 
-void GoWriter::definition(const LocalType &Type, std::string &Out) {
+void GoWriter::opaque(const LocalType &Type, std::string &Out) const {
+  Out += "// " + Type.Name + ": only pointed to here.\n";
+  Out += "type " + Names.type(Type.Name) + " struct{}\n";
+}
+
+void GoWriter::definition(const LocalType &Type, std::string &Out,
+                          std::map<std::string, MemberPath> *Members) {
+  Paths = Members;
+  Prefix.clear();
+  Holders.clear();
   const std::string Name = Names.type(Type.Name);
   switch (Type.Kind) {
   case TypeKind::Struct:
@@ -588,20 +667,59 @@ std::string renderGo(const TypeLibrary &Library, const LocalType &Type,
   return Out;
 }
 
+EmbeddedSource renderGoEmbedded(const TypeLibrary &Library,
+                                llvm::ArrayRef<const LocalType *> Defined,
+                                llvm::ArrayRef<const LocalType *> Declared,
+                                const RenderOptions &Options) {
+  GoWriter Writer(Library, Options);
+  EmbeddedSource Result;
+  std::string Body;
+  for (const LocalType *Type : Declared) {
+    Body += '\n';
+    Writer.opaque(*Type, Body);
+  }
+  for (const LocalType *Type : Defined) {
+    Body += '\n';
+    std::map<std::string, MemberPath> Paths;
+    Writer.definition(*Type, Body, &Paths);
+    if (Type->Kind == TypeKind::Struct || Type->Kind == TypeKind::Union)
+      Result.Members[Type->Name] = std::move(Paths);
+  }
+  Result.Text = "// " + std::to_string(Defined.size()) +
+                " types, from the program's local types.\n";
+  if (!Writer.aliased().empty()) {
+    Result.Text += "\n// The Windows headers' names of builtin types.\n";
+    for (Builtin Type : Writer.aliased())
+      Result.Text += "type " + std::string(builtinInfo(Type).Windows) + " = " +
+                     Writer.exact(Type) + "\n";
+  }
+  Result.Text += Body;
+  return Result;
+}
+
 std::string renderGoFile(const TypeLibrary &Library,
                          llvm::ArrayRef<const LocalType *> Roots,
                          const RenderOptions &Options) {
   const std::vector<const LocalType *> Types =
       neededTypes(Library, Roots, /*ThroughPointers=*/true);
+  GoWriter Writer(Library, Options);
+  std::string Body;
+  for (const LocalType *Type : Types) {
+    Body += '\n';
+    Writer.definition(*Type, Body);
+  }
   std::string Out = "// " + std::to_string(Types.size()) +
                     " types, rendered by NeverD.\n\npackage types\n\n"
                     "import \"unsafe\"\n\nvar _ unsafe.Pointer\n";
-  GoWriter Writer(Library, Options);
-  for (const LocalType *Type : Types) {
-    Out += '\n';
-    Writer.definition(*Type, Out);
+  // The Windows names the types use, as the headers declare them, at the
+  // program's widths.
+  if (!Writer.aliased().empty()) {
+    Out += "\n// The Windows headers' names of builtin types.\n";
+    for (Builtin Type : Writer.aliased())
+      Out += "type " + std::string(builtinInfo(Type).Windows) + " = " +
+             Writer.exact(Type) + "\n";
   }
-  return Out;
+  return Out + Body;
 }
 
 } // namespace neverd::types::render

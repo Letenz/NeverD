@@ -17,11 +17,13 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedIR.h"
 
 #include <functional>
 #include <map>
+#include <optional>
 #include <set>
 #include <tuple>
 
@@ -493,6 +495,11 @@ private:
   std::vector<SourceABIParameter> SourceParameters;
   VarKeySet CallOutputs;
   VarKeySet PhiOutputVars;
+  /// First clobber for each full nonconstant SSA identity. Rebuilt for each
+  /// conversion; its pointers borrow the current immutable MedFunc only.
+  std::map<std::tuple<MedVar::VarKind, int, int>, const MedCallClobber *>
+      CallClobberIndex;
+  const MedCallClobber *findCallClobber(const MedVar &V) const;
   /// Per-function indexes for the Win64 callee-save parameter mapping in
   /// medvarToExpr: register COPYs whose source is an entry parameter (in
   /// block/op order, with that parameter's index), and every (Id, SSAVer)
@@ -517,6 +524,10 @@ private:
   /// function).
   std::set<int64_t> LoadedEntrySlots;
   const MedFunc *LoadedEntrySlotsFor = nullptr;
+  /// What earlier calls left in CurMed's registers, which no call passes on
+  /// (cached per function).
+  std::optional<ValuesLeftByCalls> LeftByCalls;
+  const MedFunc *LeftByCallsFor = nullptr;
   /// Definition index and complete frame-coordinate proofs for one immutable
   /// conversion. A second conversion of the same MedFunc starts fresh.
   std::shared_ptr<detail::HighEntryStackOffsets> EntryStackOffsets;

@@ -368,6 +368,11 @@ enum class Intrinsic : uint16_t {
   X87ContextMMXWrite,
   X87ContextMMXEnter,
 
+  /// Compiler-private register exchange for a checked, shared-frame x86 SEH
+  /// finally invocation. These are introduced by MedIR, never by decoding.
+  X86SEHRegisterRead,
+  X86SEHRegisterWrite,
+
   _Count = 16000
 };
 

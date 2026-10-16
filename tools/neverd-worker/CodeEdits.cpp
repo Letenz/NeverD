@@ -1,14 +1,53 @@
 #include "CodeEdits.h"
 
+#include "neverd/support/IntegerLiterals.h"
+
 #include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <regex>
 #include <set>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 
 namespace neverd::worker {
 namespace {
+// A line or literal index as an object key: its decimal digits.
+bool indexKey(const std::string &key, std::size_t digits) {
+  return !key.empty() && key.size() <= digits &&
+         std::all_of(key.begin(), key.end(),
+                     [](unsigned char c) { return std::isdigit(c); });
+}
+// The literal grammar the view's text reads in.
+LiteralSyntax literalSyntax(const Json &view,
+                            const std::string &representation) {
+  const auto dialect = view.value("dialect", representation);
+  if (dialect == "rust")
+    return LiteralSyntax::Rust;
+  if (dialect == "go")
+    return LiteralSyntax::Go;
+  return LiteralSyntax::C;
+}
+// Whether each line of \p text that \p wanted lists starts inside a block
+// comment, which integerLiterals carries from line to line.
+std::unordered_map<std::size_t, bool>
+commentStates(std::string_view text, LiteralSyntax syntax,
+              std::set<std::size_t> wanted) {
+  std::unordered_map<std::size_t, bool> states;
+  bool inComment = false;
+  std::size_t start = 0;
+  for (std::size_t line = 0; !wanted.empty(); ++line) {
+    if (wanted.erase(line))
+      states.emplace(line, inComment);
+    const auto end = text.find('\n', start);
+    if (end == std::string_view::npos)
+      break;
+    (void)integerLiterals(text.substr(start, end - start), syntax, inComment);
+    start = end + 1;
+  }
+  return states;
+}
 bool identifier(const std::string &name) {
   if (name.empty() || name.size() > 256 ||
       !(std::isalpha(static_cast<unsigned char>(name[0])) || name[0] == '_'))
@@ -30,6 +69,35 @@ bool source(const std::string &name) {
   return name == "c" || name == "llvmc" || name == "source" || name == "cpp" ||
          name == "rust" || name == "go";
 }
+// Prefix maxima answer exact interval predicates even for unsorted,
+// overlapping or empty input spans. Never merge neighbouring spans.
+class SourceSpanIndex {
+  std::vector<std::pair<std::size_t, std::size_t>> spans_;
+
+public:
+  template <class Iterator>
+  SourceSpanIndex(Iterator begin, Iterator end) : spans_(begin, end) {
+    std::sort(spans_.begin(), spans_.end());
+    std::size_t maximum = 0;
+    for (auto &span : spans_) {
+      maximum = std::max(maximum, span.second);
+      span.second = maximum;
+    }
+  }
+  bool overlaps(std::size_t begin, std::size_t end) const {
+    const auto after = std::lower_bound(
+        spans_.begin(), spans_.end(), end,
+        [](const auto &span, std::size_t end) { return span.first < end; });
+    return after != spans_.begin() && std::prev(after)->second > begin;
+  }
+  bool contains(std::size_t begin, std::size_t end) const {
+    const auto after = std::upper_bound(
+        spans_.begin(), spans_.end(), begin,
+        [](std::size_t begin, const auto &span) { return begin < span.first; });
+    return after != spans_.begin() && std::prev(after)->second >= end;
+  }
+};
+
 struct Token {
   std::size_t begin, end;
   std::string text;
@@ -53,11 +121,12 @@ std::vector<Token> tokens(const std::string &text) {
     }
     // C++ raw strings can contain quotes and identifier-looking text.
     auto raw = i;
-    for (const std::string prefix : {"u8", "u", "U", "L"})
-      if (text.compare(i, prefix.size() + 2, prefix + "R\"") == 0) {
-        raw += prefix.size();
-        break;
-      }
+    if (text[i] == 'u' || text[i] == 'U' || text[i] == 'L')
+      for (const std::string_view prefix : {"u8R\"", "uR\"", "UR\"", "LR\""})
+        if (text.compare(i, prefix.size(), prefix) == 0) {
+          raw += prefix.size() - 2;
+          break;
+        }
     if (text.compare(raw, 2, "R\"") == 0) {
       const auto open = text.find('(', raw + 2);
       if (open != std::string::npos && open - raw <= 18) {
@@ -197,6 +266,8 @@ void CodeEdits::validateRow(const Json &row) {
     const auto names = view.value("names", Json::object());
     if (!names.empty())
       (void)parseAddress(stringField(view, "identity"));
+    if (view.contains("shape"))
+      (void)parseAddress(stringField(view, "shape", {}, 32));
     const auto comments = view.value("comments", Json::object());
     if (!names.is_object() || !comments.is_object() || names.size() > 2048 ||
         comments.size() > 2048)
@@ -209,13 +280,30 @@ void CodeEdits::validateRow(const Json &row) {
         throw Error("invalid_request",
                     "Local names must be distinct identifiers");
     for (const auto &[line, note] : comments.items()) {
-      if (line.empty() || line.size() > 10 ||
-          !std::all_of(line.begin(), line.end(),
-                       [](unsigned char c) { return std::isdigit(c); }) ||
-          !note.is_object())
+      if (!indexKey(line, 10) || !note.is_object())
         throw Error("invalid_request", "Invalid code-comment anchor");
       (void)stringField(note, "anchor", {}, 65536);
       (void)stringField(note, "text", {}, 65536);
+    }
+    // The bases the user picked for the integer literals of a line, by their
+    // index on it, while the line reads as its anchor.
+    const auto numbers = view.value("numbers", Json::object());
+    if (!numbers.is_object() || numbers.size() > 2048)
+      throw Error("invalid_request", "Code-edit entries exceed their budget");
+    for (const auto &[line, entry] : numbers.items()) {
+      if (!indexKey(line, 10) || !entry.is_object())
+        throw Error("invalid_request", "Invalid number-format anchor");
+      (void)stringField(entry, "anchor", {}, 65536);
+      const auto radixes = entry.value("radixes", Json::object());
+      if (!radixes.is_object() || radixes.empty() || radixes.size() > 256)
+        throw Error("invalid_request", "Invalid number formats");
+      for (const auto &[index, radix] : radixes.items()) {
+        const auto base = radix.is_string()
+                              ? literalRadixNamed(radix.get<std::string>())
+                              : std::nullopt;
+        if (!indexKey(index, 4) || !base || *base == LiteralRadix::Number)
+          throw Error("invalid_request", "Invalid number format");
+      }
     }
   }
 }
@@ -234,9 +322,17 @@ Json CodeEdits::change(Json row, const Json &request) {
   if (kind == "name") {
     const auto identity = stringField(request, "identity", {}, 32);
     (void)parseAddress(identity);
-    if (view.value("identity", std::string()) != identity)
+    // The names stay while the text is the same code's: the same locals
+    // in the same order (decorate's code_shape).
+    const auto shape = request.value("shape", std::string());
+    if (view.value("identity", std::string()) != identity &&
+        (shape.empty() || view.value("shape", std::string()) != shape))
       view["names"] = Json::object();
     view["identity"] = identity;
+    if (!shape.empty())
+      view["shape"] = shape;
+    else
+      view.erase("shape");
     const auto original = stringField(request, "original", {}, 256);
     const auto name = stringField(request, "name", {}, 256);
     if (!identifier(original) ||
@@ -256,6 +352,29 @@ Json CodeEdits::change(Json row, const Json &request) {
       view["comments"][key] = {
           {"anchor", stringField(request, "anchor", {}, 65536)},
           {"text", text}};
+  } else if (kind == "number") {
+    const auto key = std::to_string(sizeField(request, "line", 0, 1000000));
+    const auto index = std::to_string(sizeField(request, "index", 0, 4095));
+    const auto anchor = stringField(request, "anchor", {}, 65536);
+    const auto radix = literalRadixNamed(stringField(request, "radix", {}, 16));
+    if (!radix)
+      throw Error("invalid_request", "Unknown number base");
+    if (!view.contains("numbers"))
+      view["numbers"] = Json::object();
+    auto &numbers = view["numbers"];
+    // A line that reads differently now starts without bases.
+    if (!numbers.contains(key) ||
+        numbers[key].value("anchor", std::string()) != anchor)
+      numbers[key] = {{"anchor", anchor}, {"radixes", Json::object()}};
+    auto &radixes = numbers[key]["radixes"];
+    if (*radix == LiteralRadix::Number)
+      radixes.erase(index);
+    else
+      radixes[index] = std::string(literalRadixName(*radix));
+    if (radixes.empty())
+      numbers.erase(key);
+    if (numbers.empty())
+      view.erase("numbers");
   } else
     throw Error("invalid_request", "Unknown code edit kind");
   validateRow(row);
@@ -297,6 +416,34 @@ void CodeEdits::validateChange(const Json &view, const Json &request) {
         return;
     throw Error("stale_target",
                 "The selected line no longer belongs to this source view");
+  } else if (request.value("kind", std::string()) == "number") {
+    const auto line = sizeField(request, "line", 0, 1000000);
+    const auto index = sizeField(request, "index", 0, 4095);
+    const auto anchor = stringField(request, "anchor", {}, 65536);
+    const auto radix = literalRadixNamed(stringField(request, "radix", {}, 16));
+    if (!radix)
+      throw Error("invalid_request", "Unknown number base");
+    if (std::none_of(view.at("rows").begin(), view.at("rows").end(),
+                     [&](const Json &row) {
+                       return row.value("line", std::size_t{0}) == line &&
+                              row.value("code_anchor", std::string()) == anchor;
+                     }))
+      throw Error("stale_target",
+                  "The selected line no longer belongs to this source view");
+    // The anchor is the line as the engine wrote it; the shown text before
+    // it says whether it starts in a comment, which decoration never changes.
+    const auto syntax =
+        literalSyntax(view, stringField(request, "representation", {}, 16));
+    bool inComment = commentStates(
+        view.at("text").get_ref<const std::string &>(), syntax, {line})[line];
+    const auto literals = integerLiterals(anchor, syntax, inComment);
+    if (index >= literals.size())
+      throw Error("stale_target",
+                  "The selected number no longer belongs to this source view");
+    if (*radix != LiteralRadix::Number &&
+        !spellIntegerLiteral(literals[index], *radix, syntax))
+      throw Error("invalid_request",
+                  "This number has no spelling in that base with its type");
   }
 }
 
@@ -323,13 +470,11 @@ void CodeEdits::spellIdentifierSymbols(Json &view) {
   for (const auto &name : names)
     spelled.emplace_back(name.value("begin_byte", std::size_t{0}),
                          name.value("end_byte", std::size_t{0}));
+  const SourceSpanIndex covered(spelled.begin(), spelled.end());
   const auto &text = view["text"].get_ref<const std::string &>();
   for (const auto &token : tokens(text)) {
     const auto found = named.find(token.text);
-    if (found == named.end() ||
-        std::any_of(spelled.begin(), spelled.end(), [&](const auto &span) {
-          return token.begin < span.second && token.end > span.first;
-        }))
+    if (found == named.end() || covered.overlaps(token.begin, token.end))
       continue;
     const Json &name = *found->second;
     names.push_back({{"begin_byte", token.begin},
@@ -490,11 +635,51 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
     if ((typed || binding) && ts[i].text != "mut")
       ++declarations[ts[i].text];
   }
+  // The function's parameters by position, as its definition declares
+  // them, and what its locals are: their names in the order the code
+  // declares them, and how many parameters it takes.  A type change, its
+  // own or a callee's, rewrites the text but keeps them.
+  std::unordered_map<std::string, std::size_t> parameters;
+  std::string shape;
+  if (definition) {
+    int depth = 0;
+    std::size_t position = 0;
+    std::optional<std::string> named;
+    auto at = *definition + 1;
+    for (; at < bodyEnd; ++at) {
+      const auto &text = ts[at].text;
+      if (text == "(" && ++depth == 1)
+        continue;
+      if (text == ")" && --depth == 0)
+        break;
+      if (depth == 1 && text == ",") {
+        if (named)
+          parameters.emplace(*named, position);
+        named.reset();
+        ++position;
+      } else if (depth == 1 && identifier(text) && declarations.contains(text))
+        named = text;
+    }
+    if (named)
+      parameters.emplace(*named, position);
+    std::set<std::string> seen;
+    for (auto i = at; i + 1 < bodyEnd; ++i)
+      if (identifier(ts[i].text) && declarations.contains(ts[i].text) &&
+          !parameters.contains(ts[i].text) && !member(ts, i) &&
+          seen.insert(ts[i].text).second)
+        shape += ts[i].text + ",";
+    shape = sourceIdentity(shape + "|" + std::to_string(parameters.size()));
+  }
+  if (!shape.empty())
+    view["code_shape"] = shape;
   Json edits = Json::object();
   if (!row.is_null())
     edits = row.at("views").value(representation, Json::object());
-  const bool stale = !edits.value("names", Json::object()).empty() &&
-                     edits.value("identity", std::string()) != identity;
+  // Names given in another text of the same code still name its locals.
+  const bool stale =
+      !edits.value("names", Json::object()).empty() &&
+      edits.value("identity", std::string()) != identity &&
+      (shape.empty() || edits.value("shape", std::string()) != shape);
   const auto aliases =
       stale ? Json::object() : edits.value("names", Json::object());
   view["code_edits_stale"] = stale;
@@ -526,7 +711,7 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
   };
   std::vector<Replacement> replacements;
   Json names = Json::array();
-  std::vector<std::pair<std::size_t, std::size_t>> spelled;
+  std::set<std::pair<std::size_t, std::size_t>> spelled;
   for (const auto &name : view.value("source_names", Json::array())) {
     const auto begin = name.value("begin_byte", std::size_t{0});
     const auto end = name.value("end_byte", std::size_t{0});
@@ -540,24 +725,23 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
                                       name.value("identifier", std::string())));
     if (!at)
       continue;
-    if (std::any_of(spelled.begin(), spelled.end(), [&](const auto &span) {
-          return begin < span.second && end > span.first;
-        }))
+    const auto following = spelled.lower_bound({begin, 0});
+    if ((following != spelled.end() && following->first < end) ||
+        (following != spelled.begin() && std::prev(following)->second > begin))
       throw Error("invalid_engine_result", "Overlapping source name spans");
     names.push_back({{"begin_byte", begin},
                      {"end_byte", end},
                      {"kind", "address"},
                      {"address", hexAddress(*at)},
                      {"original", original.substr(begin, end - begin)}});
-    spelled.emplace_back(begin, end);
+    spelled.emplace(begin, end);
     if (const auto shown = shownName(*at, original.substr(begin, end - begin)))
       replacements.push_back({begin, end, *shown});
   }
+  const SourceSpanIndex covered(spelled.begin(), spelled.end());
   for (std::size_t i = 0; i < ts.size(); ++i) {
     const auto &token = ts[i];
-    if (std::any_of(spelled.begin(), spelled.end(), [&](const auto &span) {
-          return token.begin >= span.first && token.end <= span.second;
-        }))
+    if (covered.contains(token.begin, token.end))
       continue;
     if (!identifier(token.text) || member(ts, i))
       continue;
@@ -573,6 +757,9 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
     } else if (i >= body && i < bodyEnd && declarations[token.text] == 1) {
       name["kind"] = "local";
       name["identity"] = identity;
+      if (const auto parameter = parameters.find(token.text);
+          parameter != parameters.end())
+        name["parameter"] = parameter->second;
       if (aliases.contains(token.text))
         display = aliases.at(token.text).get<std::string>();
     } else if (globals.contains(token.text)) {
@@ -603,6 +790,16 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
   for (std::size_t i = 0; i + 1 < original.size(); ++i)
     if (original[i] == '\n')
       starts.push_back(i + 1);
+  // The bases the user picked for numbers, on lines that still read as their
+  // anchors.
+  const auto numbers = edits.value("numbers", Json::object());
+  const auto syntax = literalSyntax(view, representation);
+  std::set<std::size_t> formatted;
+  for (const auto &[line, entry] : numbers.items())
+    formatted.insert(std::stoull(line));
+  const auto startsInComment = formatted.empty()
+                                   ? std::unordered_map<std::size_t, bool>()
+                                   : commentStates(original, syntax, formatted);
   for (auto &mapping : view["rows"]) {
     const auto line = mapping.value("line", std::size_t{0});
     if (line >= starts.size())
@@ -612,6 +809,27 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
       end = original.size();
     const auto anchor = original.substr(starts[line], end - starts[line]);
     mapping["code_anchor"] = anchor;
+    if (const auto entry = numbers.find(std::to_string(line));
+        entry != numbers.end() &&
+        entry->value("anchor", std::string()) == anchor) {
+      const auto state = startsInComment.find(line);
+      bool inComment = state != startsInComment.end() && state->second;
+      const auto literals = integerLiterals(anchor, syntax, inComment);
+      const auto &radixes = entry->at("radixes");
+      for (const auto &[index, radix] : radixes.items()) {
+        const auto at = std::stoull(index);
+        const auto base = literalRadixNamed(radix.get<std::string>());
+        if (at >= literals.size() || !base)
+          continue;
+        const auto &literal = literals[at];
+        if (const auto spelled = spellIntegerLiteral(literal, *base, syntax);
+            spelled && *spelled != literal.Text)
+          replacements.push_back({starts[line] + literal.Begin,
+                                  starts[line] + literal.End, *spelled});
+      }
+      // The GUI shows which base each number of the line was given.
+      mapping["code_number_radixes"] = radixes;
+    }
     std::string comment;
     if (const auto note = notes.find(std::to_string(line));
         note != notes.end() && note->value("anchor", std::string()) == anchor)

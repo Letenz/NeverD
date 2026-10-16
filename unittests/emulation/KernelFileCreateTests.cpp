@@ -192,6 +192,48 @@ TEST_F(KernelFileCreate, IndependentBodiesShareNodesAndCloseWithoutScenario) {
   ok(Model->snapshot());
 }
 
+TEST_F(KernelFileCreate, QueriesDeclaredMetadataThroughBothProducerContracts) {
+  for (bool Native : {false, true}) {
+    const auto Handle = open();
+    const auto File = *Result.Requests.back().FileObject;
+    const auto OpenID = Result.Requests.back().FileOpenOperation;
+    const uint64_t Buffer = Scratch + 0x800, IOSB = Scratch + 0x900;
+    for (auto [Class, Size] : {std::pair{4u, 40u},
+                               {5u, 24u},
+                               {6u, 8u},
+                               {9u, 14u},
+                               {34u, 56u},
+                               {35u, 8u}}) {
+      SCOPED_TRACE(::testing::Message() << Native << ' ' << Class);
+      ok(Memory->write(Buffer, std::vector<uint8_t>(64, 0xa5)));
+      if (Native)
+        call("ZwQueryInformationFile", {Handle, IOSB, Buffer, 64, Class});
+      else
+        call("IoQueryFileInformation", {File, Class, 64, Buffer, IOSB});
+      auto Pending = Model->takeFileAPIContinuation();
+      ASSERT_TRUE(Pending);
+      EXPECT_EQ(finish(*Pending), 0u);
+      EXPECT_EQ(read(Native ? IOSB + 8 : IOSB, Native ? 8 : 4), Size);
+      EXPECT_EQ(Result.Requests.back().FileOpenOperation, OpenID);
+      EXPECT_EQ(Result.Requests.back().FileSystemFileID, 1u);
+      EXPECT_EQ(Result.Requests.back().Output.size(), Size);
+      EXPECT_EQ(read(Buffer + Size, 1), 0xa5u);
+      if (Class == 4 || Class == 34)
+        EXPECT_EQ(read(Buffer + (Class == 4 ? 32 : 48), 4), 0x80u);
+      if (Class == 5)
+        EXPECT_EQ(read(Buffer + 16, 4), 1u);
+      if (Class == 6)
+        EXPECT_EQ(read(Buffer), 1u);
+      if (Class == 9) {
+        EXPECT_EQ(read(Buffer, 4), 10u);
+        EXPECT_EQ(read(Buffer + 4, 2), uint64_t('\\'));
+      }
+    }
+    EXPECT_EQ(call("ZwClose", {Handle}), 0u);
+    ok(Model->snapshot());
+  }
+}
+
 TEST_F(KernelFileCreate, CleanupReleasesSharingBeforeLastPointerClose) {
   const auto Handle = open("\\Device\\OpenVolume\\Data", 0x100081, 0);
   const auto File = *Result.Requests.front().FileObject;
@@ -266,6 +308,12 @@ TEST_F(KernelFileCreate, FilterSeesOriginalPacketAndCannotForgeSuccess) {
   rejects(Model->call("IofCompleteRequest", {IRP, 0}), "terminal provider");
   EXPECT_EQ(forward(IRP), 0u);
   ok(Model->validateGuestAccess(IRP + IRPStatusOffset, 4, false));
+  rejects(Model->validateGuestAccess(IRP + IRPStatusOffset, 4, true),
+          "read-only");
+  rejects(Model->validateGuestAccess(IRP + IRPFlagsOffset, 4, true),
+          "read-only");
+  ok(Model->validateGuestAccess(Security + 0x10, 4, false));
+  rejects(Model->validateGuestAccess(Security + 0x10, 4, true), "read-only");
   EXPECT_EQ(read(IRP + IRPStatusOffset, 4), 0u);
   EXPECT_EQ(read(IRP + IRPInformationOffset), 1u);
   EXPECT_EQ(call("KeReadStateEvent", {File + FileEventOffset}), 0u);
@@ -631,6 +679,247 @@ TEST_F(KernelFileCreate,
   ok(Model->validateGuestAccess(File, 1, false));
   EXPECT_EQ(Scenario(DriverRequestKind::Close), File);
   rejects(Model->validateGuestAccess(File, 1, false), "freed");
+}
+class KernelDevicePointer : public KernelFileCreate {
+protected:
+  KernelModel::FileAPIContinuation pointer(uint64_t FileOutput = HandleOut,
+                                           uint64_t DeviceOutput = StatusOut,
+                                           uint64_t Access = 0x100081) {
+    EXPECT_EQ(call("IoGetDeviceObjectPointer",
+                   {Scratch + 0x80, Access, FileOutput, DeviceOutput}),
+              0u);
+    auto Pending = Model->takeFileAPIContinuation();
+    EXPECT_TRUE(Pending);
+    return Pending.value_or(KernelModel::FileAPIContinuation{});
+  }
+};
+
+TEST_F(KernelDevicePointer, RetainsOnlyTheFileUntilItsFinalReferenceRelease) {
+  name("\\device\\openvolume\\data");
+  call("KeEnterCriticalRegion", {});
+  const auto Operation = pointer();
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 1u);
+  EXPECT_EQ(finish(Operation), 0u);
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 1u);
+  call("KeLeaveCriticalRegion", {});
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 0u);
+  const auto File = read(HandleOut);
+  EXPECT_EQ(read(StatusOut), Volume);
+  EXPECT_EQ(read(File + FileFlagsOffset, 4) & FileSynchronousIO, 0u);
+  EXPECT_TRUE(read(File + FileFlagsOffset, 4) & FileCleanupComplete);
+  EXPECT_EQ(read(Volume + DeviceReferenceCount, 4), 1u);
+  ASSERT_EQ(Result.Requests.size(), 2u);
+  EXPECT_EQ(Result.Requests[0].Kind, DriverRequestKind::Create);
+  EXPECT_EQ(Result.Requests[1].Kind, DriverRequestKind::Cleanup);
+  EXPECT_EQ(call("IoGetRelatedDeviceObject", {File}), Volume);
+  // CLEANUP has released the wrapper's sharing grant, even while its pointer
+  // reference retains the file body and the device.
+  const auto Other = open("\\Device\\OpenVolume\\Data", 0x100002, 0);
+  EXPECT_EQ(call("ZwClose", {Other}), 0u);
+  call("ObfDereferenceObject", {File});
+  EXPECT_EQ(Result.Requests.back().Kind, DriverRequestKind::Close);
+  EXPECT_EQ(read(Volume + DeviceReferenceCount, 4), 0u);
+  rejects(Model->validateGuestAccess(File, 1, false), "freed");
+  ok(Model->snapshot());
+}
+
+TEST_F(KernelDevicePointer, AliasedOutputsKeepThePrivateReferencedObject) {
+  for (unsigned Offset : {0, 4, 8}) {
+    SCOPED_TRACE(Offset);
+    name("\\Device\\OpenVolume\\Data");
+    ok(Memory->write(HandleOut, std::vector<uint8_t>(24, 0xa5)));
+    EXPECT_EQ(finish(pointer(HandleOut, HandleOut + Offset)), 0u);
+    const auto File = *Result.Requests[Result.Requests.size() - 2].FileObject;
+    std::array<uint8_t, 24> Expected;
+    Expected.fill(0xa5);
+    for (unsigned I = 0; I != 8; ++I)
+      Expected[I] = uint8_t(File >> (I * 8));
+    for (unsigned I = 0; I != 8; ++I)
+      Expected[Offset + I] = uint8_t(Volume >> (I * 8));
+    std::array<uint8_t, 24> Observed;
+    ok(Memory->read(HandleOut, Observed));
+    EXPECT_EQ(Observed, Expected);
+    call("ObfDereferenceObject", {File});
+    EXPECT_EQ(call("KeAreApcsDisabled", {}), 0u);
+  }
+  ok(Model->snapshot());
+}
+
+TEST_F(KernelDevicePointer, FailedOpensLeaveOutputsAndApcDepthUntouched) {
+  name("\\Device\\MissingVolume\\Data");
+  // No output access is required on the failed namespace path.
+  EXPECT_EQ(call("IoGetDeviceObjectPointer", {Scratch + 0x80, 0, 0, 0}),
+            StatusObjectPathNotFound);
+  EXPECT_FALSE(Model->takeFileAPIContinuation());
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 0u);
+  for (auto [Path, Status] : {std::pair{"\\Missing", StatusObjectNameNotFound},
+                              {"\\Folder", StatusFileIsADirectory}}) {
+    name(std::string("\\Device\\OpenVolume") + Path);
+    write(HandleOut, 0x1122334455667788);
+    write(StatusOut, 0x8877665544332211);
+    EXPECT_EQ(finish(pointer()), Status);
+    EXPECT_EQ(read(HandleOut), 0x1122334455667788u);
+    EXPECT_EQ(read(StatusOut), 0x8877665544332211u);
+    EXPECT_EQ(call("KeAreApcsDisabled", {}), 0u);
+    rejects(Model->validateGuestAccess(*Result.Requests.back().FileObject, 1,
+                                       false),
+            "freed");
+  }
+  ok(Model->snapshot());
+}
+
+TEST_F(KernelDevicePointer, PendingCreateAndCleanupRestoreTheOriginalCaller) {
+  attach();
+  ok(Model->setUserRequestContext(true, 0x2000));
+  name("\\Device\\OpenVolume\\Data");
+  write(HandleOut, 0xdeadbeef);
+  const auto Operation = pointer(HandleOut, StatusOut, 0x100100081);
+  const auto Create = guest();
+  const auto IRP = Create.Arguments[1];
+  const auto File = read(IRP + IRPOriginalFileOffset);
+  const auto Stack = read(IRP + IRPStackPointerOffset);
+  EXPECT_EQ(read(Stack + StackInputLengthOffset, 4), 0x1000040u);
+  EXPECT_EQ(read(Stack + StackCreateShareOffset, 2), 3u);
+  EXPECT_EQ(read(read(Stack + StackParametersOffset) + 0x10, 4), 0x100081u);
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 1u);
+  EXPECT_EQ(call("KeAreAllApcsDisabled", {}), 0u);
+  write(Stack + StackControlOffset, StackPendingReturned, 1);
+  take(Model->finishGuestCall(Create.Token, StatusPending));
+  auto Wait = Model->takeWait();
+  ASSERT_TRUE(Wait);
+  EXPECT_FALSE(take(Model->pollWait(*Wait)));
+  Model->enterExecution(profile::CallbackStackBase);
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 0u);
+  EXPECT_EQ(forward(IRP), 0u);
+  EXPECT_EQ(take(Model->pollWait(*Wait)), std::optional<uint32_t>{0});
+  rejects(Model->resumeFileAPI(Operation), "original caller");
+  EXPECT_EQ(read(HandleOut), 0xdeadbeefu);
+  Model->enterExecution(profile::StackBase);
+  EXPECT_FALSE(take(Model->resumeFileAPI(Operation)));
+  // Publication precedes private-handle CLEANUP and survives its wait.
+  EXPECT_EQ(read(HandleOut), File);
+  EXPECT_EQ(read(StatusOut), Filter);
+  const auto Cleanup = guest();
+  const auto CleanupIRP = Cleanup.Arguments[1];
+  EXPECT_EQ(read(read(CleanupIRP + IRPStackPointerOffset), 1), 18u);
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 1u);
+  write(read(CleanupIRP + IRPStackPointerOffset) + StackControlOffset,
+        StackPendingReturned, 1);
+  take(Model->finishGuestCall(Cleanup.Token, StatusPending));
+  Wait = Model->takeWait();
+  ASSERT_TRUE(Wait);
+  EXPECT_FALSE(take(Model->pollWait(*Wait)));
+  Model->enterExecution(profile::CallbackStackBase);
+  EXPECT_EQ(forward(CleanupIRP), 0u);
+  EXPECT_EQ(take(Model->pollWait(*Wait)), std::optional<uint32_t>{0});
+  rejects(Model->resumeFileAPI(Operation), "original caller");
+  Model->enterExecution(profile::StackBase);
+  rejects(Model->resumeFileAPI(Operation), "private-handle close");
+  EXPECT_EQ(take(Model->resumeFileHandleClose(Wait->Object)),
+            std::optional<uint64_t>{0});
+  EXPECT_EQ(finish(Operation), 0u);
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 0u);
+  EXPECT_EQ(Result.Requests.front().RequestorProcessID, 0x2000u);
+  // The private kernel handle belongs to the system table; final CLOSE still
+  // records the releasing caller, independently of that handle table.
+  EXPECT_EQ(Result.Requests.back().RequestorProcessID, SystemProcessID);
+  call("ObfDereferenceObject", {File});
+  const auto Close = guest();
+  EXPECT_EQ(forward(Close.Arguments[1]), 0u);
+  take(Model->finishGuestCall(Close.Token, 0));
+  EXPECT_EQ(Result.Requests.back().RequestorProcessID, 0x2000u);
+  rejects(Model->validateGuestAccess(File, 1, false), "freed");
+  ok(Model->snapshot());
+}
+
+TEST_F(KernelDevicePointer, WarningIsAnOpenFailureWithoutPointerPublication) {
+  attach();
+  name("\\Device\\OpenVolume\\Data");
+  write(HandleOut, 0x1122334455667788);
+  write(StatusOut, 0x8877665544332211);
+  const auto Operation = pointer();
+  const auto Create = guest();
+  const auto IRP = Create.Arguments[1];
+  write(IRP + IRPStatusOffset, 0x80000005, 4);
+  write(IRP + IRPInformationOffset, 2);
+  call("IofCompleteRequest", {IRP, 0});
+  take(Model->finishGuestCall(Create.Token, 0x80000005));
+  EXPECT_EQ(finish(Operation), 0x80000005u);
+  EXPECT_EQ(read(HandleOut), 0x1122334455667788u);
+  EXPECT_EQ(read(StatusOut), 0x8877665544332211u);
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 0u);
+  EXPECT_EQ(Result.Requests.size(), 1u);
+}
+
+TEST_F(KernelDevicePointer,
+       SuccessfulReferenceReplacesInformationalOpenStatus) {
+  attach();
+  name("\\Device\\OpenVolume\\Data");
+  const auto Operation = pointer();
+  const auto Create = guest();
+  const auto IRP = Create.Arguments[1];
+  EXPECT_EQ(forward(IRP, Entry + 0x20), 0u);
+  const auto Completion = guest();
+  write(IRP + IRPStatusOffset, 0x40000001, 4);
+  take(Model->finishGuestCall(Completion.Token, 0));
+  take(Model->finishGuestCall(Create.Token, 0x40000001));
+  EXPECT_FALSE(take(Model->resumeFileAPI(Operation)));
+  const auto Cleanup = guest();
+  EXPECT_EQ(forward(Cleanup.Arguments[1]), 0u);
+  take(Model->finishGuestCall(Cleanup.Token, 0));
+  EXPECT_EQ(finish(Operation), 0u);
+  EXPECT_EQ(Result.Requests.front().IOStatus, 0x40000001u);
+  EXPECT_EQ(read(StatusOut), Filter);
+}
+
+TEST_F(KernelDevicePointer, DeviceOutputFaultPreservesTheEarlierFileStore) {
+  name("\\Device\\OpenVolume\\Data");
+  const auto ReadOnly = Scratch + 0x20000;
+  ok(Memory->map(ReadOnly, 0x1000, Read));
+  write(HandleOut, 0xdeadbeef);
+  const auto Operation = pointer(HandleOut, ReadOnly);
+  rejects(Model->resumeFileAPI(Operation), "writable");
+  EXPECT_EQ(read(HandleOut), Result.Requests.front().FileObject);
+  EXPECT_NE(read(HandleOut), 0xdeadbeefu);
+  EXPECT_EQ(read(ReadOnly), 0u);
+  EXPECT_EQ(Result.Requests.size(), 1u);
+  // This terminal model error does not claim a completed wrapper or cleanup.
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 1u);
+}
+
+TEST_F(KernelDevicePointer, AdmissionFailuresBalanceTheWrappersCriticalRegion) {
+  name("\\Device\\OpenVolume\\Data");
+  call("KeEnterGuardedRegion", {});
+  rejects(Model->call("IoGetDeviceObjectPointer",
+                      {Scratch + 0x80, 0, HandleOut, StatusOut}),
+          "special kernel APCs");
+  call("KeLeaveGuardedRegion", {});
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 0u);
+  call("KfRaiseIrql", {1});
+  rejects(Model->call("IoGetDeviceObjectPointer",
+                      {Scratch + 0x80, 0, HandleOut, StatusOut}),
+          "PASSIVE_LEVEL");
+  call("KeLowerIrql", {0});
+  name("\\Device\\OpenVolume");
+  rejects(Model->call("IoGetDeviceObjectPointer",
+                      {Scratch + 0x80, 0, HandleOut, StatusOut}),
+          "volume opens");
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 0u);
+  EXPECT_TRUE(Result.Requests.empty());
+  EXPECT_FALSE(Model->takeFileAPIContinuation());
+}
+
+TEST_F(KernelDevicePointer, EntryReferenceMustBeReleasedBeforeUnloadCompletes) {
+  name("\\Device\\OpenVolume\\Data");
+  EXPECT_EQ(finish(pointer()), 0u);
+  const auto File = read(HandleOut);
+  write(Model->driverObject() + DriverUnloadOffset, Entry);
+  ok(Model->finishEntry());
+  take(Model->beginUnload());
+  rejects(Model->finishUnload(), "live object references");
+  call("ObfDereferenceObject", {File});
+  ok(Model->finishUnload());
+  EXPECT_TRUE(Result.UnloadCompleted);
 }
 } // namespace
 } // namespace neverd::emulation
