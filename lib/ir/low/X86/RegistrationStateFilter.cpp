@@ -21,6 +21,7 @@ bool RegistrationStateSolver::applySEHContinueFilters(size_t I, Domain &State,
     return false;
 
   SEHFrameOutcomes Continued;
+  SEHHandlerOutcomes Selected;
   for (int32_t Level : State.Levels) {
     if (!validLevel(Level) ||
         !charge(State.Frame.cellCount() +
@@ -30,13 +31,26 @@ bool RegistrationStateSolver::applySEHContinueFilters(size_t I, Domain &State,
     Frame.store(*Chain.TryLevelOffset, 4,
                 FrameValue::constant(uint32_t(Level)));
     if (!runSEHFilterSearch(Frame, nullptr, Continued,
-                            /*RequireResume=*/false))
+                            /*RequireResume=*/false, &Selected))
       return false;
   }
 
+  // A selected filter can activate a new cleanup before handler entry. Seed
+  // its exceptional roots with that actual frame even though the suspended
+  // invocation never continues. Handler entry itself has a separate owner.
+  for (const auto &[Scope, Frames] : Selected)
+    for (const auto &[Level, Frame] : Frames) {
+      if (!charge(State.snapshotWork() + Frame.cellCount() + 10))
+        return false;
+      Domain Search = State;
+      Search.Levels = {Level};
+      Search.Frame = Frame;
+      dispatchBlock(I, Search, Facts);
+    }
+
   // If every filter selects a handler, ordinary fallthrough is unreachable.
   // Keeping its existing overapproximation cannot supply a returning frame;
-  // nonlocal-unwind proofs independently require a closed resumption.
+  // nonlocal-unwind proofs independently close each selected handler path.
   if (Continued.empty())
     return true;
 

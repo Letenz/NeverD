@@ -82,7 +82,12 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-shared-parent-call": (46, 2),
               "shared-parent-throwing-call": (47, 2),
               "longjmp-private-parent-call": (48, 2),
-              "longjmp-private-parent-graph": (49, 2)})
+              "longjmp-private-parent-graph": (49, 2),
+              "longjmp-handler-selected": (53, 23),
+              "longjmp-handler-cleanup": (54, 236),
+              "longjmp-handler-captured-cursor": (55, 234),
+              "longjmp-handler-nested-finally": (56, 23),
+              "longjmp-handler-mixed-resumption": (57, 23)})
 EH4_JUMP_CASES = ("longjmp-finally", "longjmp-zero", "longjmp-filter",
                   "longjmp-parameter", "longjmp-callback",
                   "longjmp-unwind-callback", "longjmp-callback-zero",
@@ -92,7 +97,10 @@ EH4_JUMP_CASES = ("longjmp-finally", "longjmp-zero", "longjmp-filter",
                   "longjmp-scalar-callee", "longjmp-filter-correlated-state",
                   "longjmp-filter-shared-state", "longjmp-filter-captured-cursor",
                   "longjmp-filter-negative-disposition", "longjmp-filter-skipped-scope",
-                  "longjmp-filter-two-resume-mappings", "longjmp-filter-callback-activation")
+                  "longjmp-filter-two-resume-mappings", "longjmp-filter-callback-activation",
+                  "longjmp-handler-selected", "longjmp-handler-cleanup",
+                  "longjmp-handler-captured-cursor", "longjmp-handler-nested-finally",
+                  "longjmp-handler-mixed-resumption")
 CASES.update({prefix + name: CASES[name]
               for prefix in ("eh4-", "eh4-gs-") for name in EH4_JUMP_CASES})
 CASES.update({prefix + name: (number, 23)
@@ -312,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
         sources = (["registration_multistate_jump.s"] +
                    (["registration_eh4_runtime.c"] if eh4 else []) if case == 52
-                   else ["registration_filter_state_eh4.s" if 36 <= case <= 42 else
+                   else ["registration_filter_state_eh4.s" if 36 <= case <= 42 or 53 <= case <= 57 else
                          "registration_jump_eh4.s" if jump else "registration_seh4.s",
                     "registration_eh4_runtime.c"] if eh4
                    else ["registration_shared_calls.s" if case == 47 else

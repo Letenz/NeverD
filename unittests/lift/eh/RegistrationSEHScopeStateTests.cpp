@@ -8,18 +8,21 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedIR.h"
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 
+#include <algorithm>
+
 using namespace neverd;
 
 namespace {
 
 TEST(RegistrationSEHDynamicScope, ProvesUnreachedSourceAddressExpressions) {
-  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 28; ++Mutation) {
     SCOPED_TRACE(Mutation);
     MedFunc Source;
     Source.Entry = 0x1000;
@@ -113,6 +116,63 @@ TEST(RegistrationSEHDynamicScope, ProvesUnreachedSourceAddressExpressions) {
       Widen.Inputs[0] = Add.Output;
       break;
     }
+    if (Mutation >= 10) {
+      MedBlock Other = Entry;
+      Other.Id = 2;
+      Other.StartAddr = 0x1060;
+      Other.EndAddr = 0x1070;
+      Other.Ops.front().Addr = 0x1060;
+      Other.Ops.front().Output = Variable(5, 4);
+      States.Blocks.push_back({2, {0x1060, 0x1070}, {}});
+      if (Mutation != 13 && (Mutation < 21 || Mutation > 25))
+        States.FrameValues.push_back({0x1060, 0, Mutation == 12 ? 4 : 0});
+      if (Mutation >= 21 && Mutation <= 25) {
+        auto &Root = Other.Ops.front();
+        Root.OriginSeq = Mutation == 22 ? 0 : -1;
+        Root.RegistrationRoot =
+            MedOp::RegistrationRootKind::EstablishedFramePointer;
+        Root.RegistrationStackOffset = Mutation == 23 ? 1 : 0;
+        Root.Output.Kind = MedVar::Reg;
+        Root.Output.TheArch = Arch::X86;
+        Root.Output.RegOff = getTargetRegInfo(Arch::X86).FramePointer;
+        if (Mutation == 24) {
+          Root.RegistrationRoot =
+              MedOp::RegistrationRootKind::CallbackStackPointer;
+          Root.Output.RegOff = getTargetRegInfo(Arch::X86).StackPointer;
+        }
+        Root.Inputs[0] = Root.Output;
+        Root.Inputs[0].SSAVer = 0;
+        if (Mutation == 25)
+          Root.Inputs[0].Size = 2;
+      }
+      Source.Blocks.push_back(Other);
+      PhiNode Phi;
+      Phi.Output = Variable(4, Mutation == 20 ? 8 : 4);
+      Phi.Args = {{0, Base.Output}, {2, Other.Ops.front().Output}};
+      if (Mutation == 11)
+        std::reverse(Phi.Args.begin(), Phi.Args.end());
+      if (Mutation == 14)
+        Phi.Args.back().second = MedVar::makeConst(0, 4);
+      if (Mutation == 15)
+        Phi.Args.back().second.Size = 2;
+      if (Mutation == 17)
+        Phi.Args.back().second = Phi.Output;
+      if (Mutation == 18)
+        Phi.Args.clear();
+      if (Mutation == 26)
+        Phi.ExceptionalEntry = MedVar::makeConst(0, 4);
+      if (Mutation == 27)
+        Phi.ExceptionalEntry = Base.Output;
+      Dead.Phis.push_back(Phi);
+      if (Mutation == 16)
+        Dead.Phis.push_back(Phi);
+      Add.Inputs[0] = Phi.Output;
+      if (Mutation == 19) {
+        auto Duplicate = Base;
+        Duplicate.Output = Phi.Output;
+        Source.Blocks.front().Ops.push_back(Duplicate);
+      }
+    }
     Dead.Ops = {Add, Widen, Store};
     Source.Blocks.push_back(Dead);
 
@@ -142,7 +202,11 @@ TEST(RegistrationSEHDynamicScope, ProvesUnreachedSourceAddressExpressions) {
                                                         {Parent}, {});
     ASSERT_TRUE(bool(Bound)) << llvm::toString(Bound.takeError());
     ASSERT_TRUE(Bound->Enabled);
-    EXPECT_EQ(Bound->Writes.count(Write), Mutation < 4 ? 1u : 0u);
+    EXPECT_EQ(Bound->Writes.count(Write),
+              Mutation < 4 || Mutation == 10 || Mutation == 11 ||
+                      Mutation == 21 || Mutation == 27
+                  ? 1u
+                  : 0u);
     // Static address binding grants no runtime state-transition receipt.
     EXPECT_TRUE(Bound->CallbackWrites.empty());
     EXPECT_TRUE(States.SEHStateStores.empty());

@@ -162,6 +162,75 @@ TEST(RegistrationSEHJumpABI, SourceProtocolOwnsStackOrderAndExactArity) {
   }
 }
 
+TEST(RegistrationSEHJumpABI, SelectedHandlersDoNotInventCaptureResumption) {
+  for (bool AlsoResume : {false, true})
+    for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+      SCOPED_TRACE(AlsoResume);
+      SCOPED_TRACE(Mutation);
+      JumpCallFixture F;
+      auto &States = *F.Function.RegistrationStates;
+      auto &Resume = States.SEHJumpResumptions.front();
+      auto &Scope = F.Function.ExceptionMetadata->Registration->Scopes.front();
+      Resume.SelectedScopes = {0};
+      Resume.ResumedLevels =
+          AlsoResume ? std::vector<int32_t>{-1} : std::vector<int32_t>{};
+      Resume.StateRestores =
+          AlsoResume ? std::vector<RegistrationSEHJumpState>{{0, -1, 0}}
+                     : std::vector<RegistrationSEHJumpState>{};
+      MedBlock Handler;
+      Handler.Id = 2;
+      Handler.StartAddr = Scope.HandlerVA;
+      Handler.EndAddr = Scope.HandlerVA + 1;
+      F.Function.Blocks.push_back(std::move(Handler));
+      States.Blocks.push_back(
+          {2, {Scope.HandlerVA, Scope.HandlerVA + 1}, {-1}});
+      auto &State = States.Blocks.back();
+      State.Reached = true;
+      switch (Mutation) {
+      case 1:
+        Resume.SelectedScopes = {1};
+        break;
+      case 2:
+        Resume.SelectedScopes = {0, 0};
+        break;
+      case 3:
+        Resume.SelectedScopes = {1, 0};
+        break;
+      case 4:
+        Scope.IsFinally = true;
+        break;
+      case 5:
+        Scope.FilterVA = 0;
+        break;
+      case 6:
+        Scope.HandlerVA += 1;
+        break;
+      case 7:
+        State.Reached = false;
+        break;
+      case 8:
+        State.Unknown = true;
+        break;
+      case 9:
+        State.CallbackOnly = true;
+        break;
+      case 10:
+        State.Levels = {0};
+        break;
+      case 11:
+        Resume.StateRestores = {{0, 0, 0}};
+        break;
+      }
+      const auto Calls = getX86RegistrationSEHJumpCalls(F.Function);
+      ASSERT_EQ(bool(Calls), Mutation == 0);
+      if (Calls) {
+        ASSERT_EQ(Calls->size(), 2u);
+        EXPECT_EQ(Calls->at(0x1010).ResumeLevel, AlsoResume ? -1 : 0);
+        EXPECT_TRUE(Calls->at(0x1010).ResumeStateMap.empty());
+      }
+    }
+}
+
 TEST(RegistrationSEHJumpABI, RuntimeArityDoesNotInventMissingStackArguments) {
   JumpCallFixture F;
   for (auto &Block : F.Function.Blocks)

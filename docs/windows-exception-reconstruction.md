@@ -311,8 +311,8 @@ writes back to the suspended finally, preserves its private stack, and rejects
 unproved changes to registration administration or a live jump buffer. Filter
 dispositions stay paired with their frame effects and written TryLevels through
 shared return blocks. Zero continues along the runtime's captured search
-cursor; any negative 32-bit result continues execution. Every explored path
-must resume the suspended invocation before it can supply returning effects.
+cursor; any negative 32-bit result continues execution. Only paths which resume
+the suspended invocation supply returning effects.
 EH4 searches require intact EH and optional GS cookies before entering a filter
 and after it returns. Their outside state is -2; cookie slots, encoded scope
 storage and the image cookie remain outside the filter's writable objects.
@@ -327,12 +327,19 @@ Native scope numbering must also preserve source index order: the CRT compares
 current and saved states numerically, including unrelated sibling scopes. LLVM
 orders authenticated source rows before assigning invoke/asynchronous states;
 installation rejects any reordered table for a function with a jump capture.
-Scopes activated only by a continuing filter receive independent filter and
+Scopes activated only by a filter receive independent filter and
 handler entry proofs from the returned frame, even when ordinary parent flow
 never entered them. The ordinary state solver shares the same bounded filter
 interpreter with nonlocal unwind and carries its parent-frame effects forward.
-Handler selection supplies no ordinary returning frame; it still prevents a
-closed nonlocal resumption proof.
+A positive filter result selects its captured scope. Local unwind reloads the
+filter-written state, executes remaining cleanups up to that scope, then enters
+its handler at the enclosing level. These paths abandon the suspended finally
+and current jump resumption; they supply neither a normal return nor restored
+registers. A still-live capture remains available to later checked transfers.
+Selection and capture resumption remain separate proof outcomes, including
+mixed searches. Selected-filter writes also supply independent cleanup roots.
+Recurrent selection, an escaping search, and a new jump during the selected
+handler's cleanup still require separate complete transfer proofs.
 Scopes without any proved activation remain unsupported.
 Mapped PE data,
 including zero-fill storage, retains its runtime values and access permissions;

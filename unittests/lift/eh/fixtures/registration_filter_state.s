@@ -41,6 +41,9 @@ _registration_entry:
   mov [ebp-104],ebx
   mov ebx,6
   mov dword ptr [ebp-100],0
+#if REGISTRATION_CASE == 56
+  mov dword ptr [ebp-4],3
+#endif
 #if REGISTRATION_EH4_FILTER
   .byte 0x68
   .long ___security_cookie
@@ -86,11 +89,14 @@ _registration_entry:
   call __longjmpex
   ud2
 .Lresumed:
+#if REGISTRATION_CASE >= 53 && REGISTRATION_CASE <= 56
+  jmp .Lbad
+#else
   cmp ebx,6
   jne .Lbad
   cmp eax,42
   jne .Lbad
-#if REGISTRATION_CASE == 37
+#if REGISTRATION_CASE == 37 || REGISTRATION_CASE == 57
   cmp dword ptr [ebp-4],0
 #elif REGISTRATION_CASE == 38
   cmp dword ptr [ebp-4],FILTER_SENTINEL
@@ -117,6 +123,7 @@ _registration_entry:
   call _registration_no_raise
   mov eax,7
   jmp .Lfinish
+#endif
 .Lbad:
   mov dword ptr [ebp-4],FILTER_SENTINEL
   mov eax,91
@@ -126,6 +133,25 @@ _registration_entry:
   imul eax,eax,10
   add eax,3
   mov [ebp-100],eax
+#if REGISTRATION_CASE == 57
+  mov eax,[_registration_iteration]
+  test eax,1
+  jz .Lmixed_continue
+  mov eax,1
+  jmp .Lmixed_return
+.Lmixed_continue:
+  mov eax,-1
+.Lmixed_return:
+#elif REGISTRATION_CASE == 53 || REGISTRATION_CASE == 54 || REGISTRATION_CASE == 56
+#if REGISTRATION_CASE == 54
+  // The search cursor stays at scope 1 while its state write adds cleanup 3.
+  mov dword ptr [ebp-4],3
+#endif
+  mov eax,1
+#elif REGISTRATION_CASE == 55
+  mov dword ptr [ebp-4],FILTER_SENTINEL
+  mov eax,0
+#else
   mov eax,[_registration_iteration]
   test eax,1
   jz .Ldirect_continue
@@ -158,13 +184,16 @@ _registration_entry:
   mov eax,-1
 #endif
 .Lfilter_return:
+#endif
   ret
 .Louter_filter:
   mov eax,[ebp-100]
   imul eax,eax,10
   add eax,4
   mov [ebp-100],eax
-#if REGISTRATION_CASE == 39
+#if REGISTRATION_CASE == 55
+  mov eax,2
+#elif REGISTRATION_CASE == 39
   mov eax,0x80000000
 #else
   mov eax,-1
@@ -175,17 +204,33 @@ _registration_entry:
   imul eax,eax,10
   add eax,2
   mov [ebp-100],eax
+#if REGISTRATION_CASE == 56
+  call .Lselected_nested
+  jmp .Lafter_nested
+.Lselected_nested:
+#endif
   push 0
   push 0
   push 0
   push 0xe0420042
   call dword ptr [__imp__RaiseException@16]
+#if REGISTRATION_CASE == 56
+  mov eax,0
+  ret
+.Lafter_nested:
+#endif
   mov eax,[ebp-100]
   imul eax,eax,10
   add eax,5
   mov [ebp-100],eax
   ret
 .Louter_handler:
+#if REGISTRATION_CASE == 55
+  mov esp,[ebp-24]
+  cmp dword ptr [ebp-4],FILTER_SENTINEL
+  jne .Lbad
+  jmp .Lselected
+#endif
   mov dword ptr [ebp-4],FILTER_SENTINEL
   mov eax,96
   jmp .Lfinish
@@ -206,8 +251,23 @@ _registration_entry:
   jmp .Lfinish
 #endif
 .Lhandler:
+#if REGISTRATION_CASE == 53 || REGISTRATION_CASE == 54 || REGISTRATION_CASE == 56 || REGISTRATION_CASE == 57
+  mov esp,[ebp-24]
+  cmp dword ptr [ebp-4],0
+  jne .Lbad
+  jmp .Lselected
+#endif
   mov dword ptr [ebp-4],FILTER_SENTINEL
   mov eax,97
+#if REGISTRATION_CASE >= 53 && REGISTRATION_CASE <= 57
+  jmp .Lfinish
+.Lselected:
+  mov eax,[ebp-100]
+  mov [_registration_trace],eax
+  mov dword ptr [ebp-4],FILTER_SENTINEL
+  call _registration_no_raise
+  mov eax,7
+#endif
 .Lfinish:
 #if REGISTRATION_EXPECT_GS
   mov ecx,[ebp-32]
@@ -222,6 +282,14 @@ _registration_entry:
   ret
 #if REGISTRATION_EH4_FILTER
 #include "registration_eh4_personality.inc"
+#endif
+#if REGISTRATION_CASE == 54
+.Lselected_cleanup:
+  mov eax,[ebp-100]
+  imul eax,eax,10
+  add eax,6
+  mov [ebp-100],eax
+  ret
 #endif
 .safeseh FILTER_PERSONALITY
 .section .rdata,"dr"
@@ -243,6 +311,11 @@ _registration_entry:
 #else
   .long 0,.Lfilter,.Lhandler
   .long 1,0,.Lfinally
+#endif
+#if REGISTRATION_CASE == 54
+  .long 1,0,.Lselected_cleanup
+#elif REGISTRATION_CASE == 56
+  .long 1,0,.Lselected_nested
 #endif
   .long 0,0,0
 .globl __load_config_used

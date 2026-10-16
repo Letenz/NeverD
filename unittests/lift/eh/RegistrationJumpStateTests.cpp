@@ -327,7 +327,7 @@ TEST(RegistrationJumpState, AsyncFilterWritesRevokeAParentResumption) {
   }
 }
 
-TEST(RegistrationJumpState, FinallyRaiseUsesContinuingFilterFrameEffects) {
+TEST(RegistrationJumpState, FinallyRaiseUsesClosedFilterFrameEffects) {
   for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto F = makeJumpFrame(0);
@@ -486,13 +486,20 @@ TEST(RegistrationJumpState, FinallyRaiseUsesContinuingFilterFrameEffects) {
     RegistrationStateSolver Solver(F, 0, 0, nullptr, nullptr, nullptr, nullptr,
                                    nullptr, nullptr, nullptr, &Runtime);
     const auto Result = Solver.run();
-    const bool Accepted = Mutation == 0 || Mutation == 10 || Mutation >= 13;
+    const bool Accepted =
+        Mutation == 0 || Mutation == 6 || Mutation == 10 || Mutation >= 13;
     if (Accepted && !Result.Complete)
       for (const auto &Diagnostic : Result.Diagnostics)
         ADD_FAILURE() << Diagnostic;
     EXPECT_EQ(Result.Complete, Accepted);
     EXPECT_EQ(Result.SEHJumpResumptionsComplete, Accepted);
     EXPECT_EQ(Result.SEHJumpResumptions.size(), Accepted ? 1u : 0u);
+    if (Mutation == 6 && !Result.SEHJumpResumptions.empty()) {
+      const auto &Resume = Result.SEHJumpResumptions.front();
+      EXPECT_EQ(Resume.SelectedScopes, (std::vector<uint32_t>{0}));
+      EXPECT_TRUE(Resume.ResumedLevels.empty());
+      EXPECT_TRUE(Resume.StateRestores.empty());
+    }
   }
 }
 

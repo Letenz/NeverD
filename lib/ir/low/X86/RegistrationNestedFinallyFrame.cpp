@@ -16,7 +16,7 @@ namespace neverd::registration_state {
 bool RegistrationStateSolver::runSEHNestedFinallyFrame(
     size_t I, const LowOp &Op, FrameState &State, int32_t ParentStackOffset,
     std::vector<RegistrationObjectExtent> *Writes, unsigned Depth,
-    SEHFrameOutcomes &Outcomes) {
+    SEHFrameOutcomes &Outcomes, SEHHandlerOutcomes *Selected) {
   const auto SP =
       State.Registers[x86reg::RSP / x86reg::GeneralRegStride].CallbackAddress;
   if (Depth >= 16 || !State.CallbackEntry || State.SEHFilterEntry || !SP ||
@@ -29,12 +29,12 @@ bool RegistrationStateSolver::runSEHNestedFinallyFrame(
 
   FrameState Returned = State;
   SEHFrameOutcomes InnerOutcomes;
-  // This call must return through its own checked near RET. A nested nonlocal
-  // transfer cannot be substituted for an ordinary continuation. Each nested
-  // invocation shares the global work budget and has a bounded call depth.
+  // Ordinary continuation requires this invocation's checked near RET.
+  // Selection instead retires every suspended invocation. Each nested call
+  // shares the global work budget and has a bounded call depth.
   if (!runSEHCallbackFrame(Op.Inputs[0].Offset, Returned, true, Writes, nullptr,
                            nullptr, nullptr, Depth + 1, ParentStackOffset,
-                           &InnerOutcomes))
+                           &InnerOutcomes, Selected))
     return false;
   for (auto &[Level, Outcome] : InnerOutcomes) {
     Outcome.leaveCallback();
