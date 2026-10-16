@@ -1106,6 +1106,7 @@ private:
   llvm::Expected<uint64_t> resolveRoutine(uint64_t Address);
   llvm::Expected<uint64_t> querySystemInformation(llvm::ArrayRef<uint64_t> Args,
                                                   bool Trusted);
+  llvm::Expected<uint64_t> pcToFileHeader(uint64_t PC, uint64_t Output);
   std::vector<KernelLoadedModule> LoadedModules;
   // Only loader-owned mapped spans, excluding image holes. Physical backing is
   // registered lazily when a permitted image range is first locked.

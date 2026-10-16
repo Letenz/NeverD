@@ -1914,3 +1914,5 @@ KernelFileSystem conserve un provider token par FILE_OBJECT. L’opération priv
 `uppercaseCharacter` réduit les arguments avant leur admission et délègue à `uppercaseUnicodeUnit`. Les tables CRT et Unicode partagent cette décision avec des identités ABI distinctes ; aucun adaptateur ni paramètre régional hôte ne fournit une seconde correspondance.
 
 `KernelModelRuntime` possède les largeurs scalaires et la règle commune de publication du préfixe et du tampon. Les appels variadiques ordinaires utilisent le lecteur ABI existant ; l’adaptateur x64 `va_list` vérifie chaque scalaire invité demandé avec un pas de huit octets. Ni le répartiteur ni l’adaptateur ne dupliquent l’analyse du format.
+
+Les alias réutilisent les propriétaires existants des threads/processus et des contextes, même pendant un attachement. `RtlPcToFileHeader` utilise `LoadedModules`, comme les requêtes de modules système ; les régions mappées de `ImageRAM` ne remplacent pas l’identité des modules. Aucun état de l’hôte n’est consulté.

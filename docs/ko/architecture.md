@@ -1752,3 +1752,5 @@ KernelFileSystem은 FILE_OBJECT마다 provider token 하나를 유지합니다. 
 `uppercaseCharacter`는 스칼라 인수를 좁힌 후 허용 여부를 확인하고 기존 `uppercaseUnicodeUnit`에 위임합니다. CRT와 계수형 문자열 API 표는 별도 ABI 식별자로 같은 매핑을 사용하며 어댑터나 호스트 로캘이 다른 의미를 제공하지 않습니다.
 
 `KernelModelRuntime`이 디버그 인수 너비와 공통 접두사 및 버퍼 게시 규칙을 소유합니다. 일반 가변 인수는 기존 호출 ABI 리더를 쓰고 명시적 x64 `va_list` 어댑터는 8바이트 간격으로 요청된 게스트 스칼라를 검사합니다. 디스패처와 어댑터는 형식 파싱을 복제하지 않습니다.
+
+스레드 조회 별칭은 기존 스레드/프로세스 및 실행 컨텍스트 소유자를 재사용하며 프로세스 연결 중에도 일관됩니다. `RtlPcToFileHeader`는 시스템 모듈 조회와 같은 `LoadedModules`를 사용합니다. `ImageRAM`의 매핑 범위는 모듈 ID를 대체하지 않습니다. 호스트 상태를 참조하지 않습니다.

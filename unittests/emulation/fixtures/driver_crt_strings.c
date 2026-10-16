@@ -19,6 +19,9 @@ typedef unsigned long long U64;
 #include <string.h>
 // The pinned WDK lacks this declaration; use its PE type for the kernel ABI.
 NTSYSAPI PIMAGE_NT_HEADERS NTAPI RtlImageNtHeader(PVOID Base);
+// These exported query ABIs are absent from the pinned WDK declarations.
+NTSYSAPI PVOID NTAPI RtlPcToFileHeader(PVOID PC, PVOID *ImageBase);
+NTKERNELAPI KPROCESSOR_MODE NTAPI PsGetCurrentThreadPreviousMode(VOID);
 typedef PDEVICE_OBJECT DEVICE;
 typedef PDRIVER_OBJECT DRIVER;
 typedef PUNICODE_STRING REGISTRY;
@@ -50,6 +53,12 @@ __declspec(dllimport) U32 vDbgPrintExWithPrefix(const char *, U32, U32,
 __declspec(dllimport) int memcpy_s(void *, U64, const void *, U64);
 __declspec(dllimport) int memmove_s(void *, U64, const void *, U64);
 __declspec(dllimport) void *RtlImageNtHeader(void *);
+__declspec(dllimport) void *RtlPcToFileHeader(void *, void **);
+__declspec(dllimport) char PsGetCurrentThreadPreviousMode(void);
+__declspec(dllimport) char ExGetPreviousMode(void);
+__declspec(dllimport) void *IoThreadToProcess(void *);
+__declspec(dllimport) void *PsGetCurrentThread(void);
+__declspec(dllimport) void *PsGetCurrentProcess(void);
 __declspec(dllimport) int isdigit(int);
 __declspec(dllimport) char *_strupr(char *);
 __declspec(dllimport) U16 *_wcslwr(U16 *);
@@ -121,6 +130,15 @@ static __typeof__(&RtlUpcaseUnicodeChar) DynamicUnicodeUpper;
 static __typeof__(&vDbgPrintExWithPrefix) volatile Print =
     vDbgPrintExWithPrefix;
 static __typeof__(&vDbgPrintExWithPrefix) DynamicPrint;
+static __typeof__(&IoThreadToProcess) volatile ThreadProcess =
+    IoThreadToProcess;
+static __typeof__(&PsGetCurrentThreadPreviousMode) volatile PreviousMode =
+    PsGetCurrentThreadPreviousMode;
+static __typeof__(&RtlPcToFileHeader) volatile PcImage = RtlPcToFileHeader;
+static __typeof__(&IoThreadToProcess) DynamicThreadProcess;
+static __typeof__(&PsGetCurrentThreadPreviousMode) DynamicPreviousMode;
+static __typeof__(&RtlPcToFileHeader) DynamicPcImage;
+static void *ImageBase;
 static DEVICE Device;
 static void *Work;
 static volatile U32 WorkerDone, WorkerFailed;
@@ -190,6 +208,16 @@ static NTSTATUS countedProbe(void) {
 
 static NTSTATUS probe(void) {
   for (U32 Dynamic = 0; Dynamic < 2; ++Dynamic) {
+    CHECK((Dynamic ? DynamicThreadProcess : ThreadProcess)(
+              PsGetCurrentThread()) == PsGetCurrentProcess());
+    char Mode = (Dynamic ? DynamicPreviousMode : PreviousMode)();
+    CHECK(!Mode && Mode == ExGetPreviousMode());
+    void *Found = (void *)~0ULL;
+    CHECK((Dynamic ? DynamicPcImage : PcImage)((void *)probe, &Found) ==
+          ImageBase);
+    CHECK(Found == ImageBase);
+    CHECK(!(Dynamic ? DynamicPcImage : PcImage)((void *)1, &Found));
+    CHECK(!Found);
     CHECK(!print(Dynamic, "crt:", "%hhd|%I64x|%.*s", 384, 0x1122334455667788ULL,
                  3, "abcd"));
     // Keep the long prefix in image data so formatting, not a fill loop,
@@ -289,6 +317,7 @@ static void unload(DRIVER Driver) {
 static void (*volatile Unload)(DRIVER) = unload;
 
 NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
+  ImageBase = *(void **)((U8 *)Driver + 0x18);
   TEXT Name;
 #define RESOLVE(Variable, Text)                                                \
   RtlInitUnicodeString(&Name, (const U16 *)L##Text);                           \
@@ -304,6 +333,9 @@ NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
   RESOLVE(DynamicUnitUpper, "towupper");
   RESOLVE(DynamicUnicodeUpper, "RtlUpcaseUnicodeChar");
   RESOLVE(DynamicPrint, "vDbgPrintExWithPrefix");
+  RESOLVE(DynamicThreadProcess, "IoThreadToProcess");
+  RESOLVE(DynamicPreviousMode, "PsGetCurrentThreadPreviousMode");
+  RESOLVE(DynamicPcImage, "RtlPcToFileHeader");
   RESOLVE(DynamicDigit, "isdigit");
   RESOLVE(DynamicNarrowUpper, "_strupr");
   RESOLVE(DynamicWideLower, "_wcslwr");

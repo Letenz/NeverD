@@ -1908,3 +1908,5 @@ KernelFileSystem hält je FILE_OBJECT ein provider token. Die private Freigabeop
 `uppercaseCharacter` kürzt skalare Argumente vor der Zulassung und delegiert an `uppercaseUnicodeUnit`. CRT- und Unicode-API-Tabellen teilen die Entscheidung unter eigenen ABI-Identitäten; weder Adapter noch Host-Locale liefern eine zweite Zuordnung.
 
 `KernelModelRuntime` besitzt Skalarbreiten und die gemeinsame Veröffentlichung von Präfix und Puffer. Gewöhnliche variadische Aufrufe nutzen den vorhandenen ABI-Leser; der explizite x64-`va_list`-Adapter prüft jeden angeforderten Gastskalar bei acht Byte Schrittweite. Dispatcher und Adapter duplizieren keine Formatanalyse.
+
+Die Aliase nutzen bestehende Besitzer von Threads/Prozessen und Ausführungskontexten, auch während Prozessanheftung. `RtlPcToFileHeader` verwendet wie Systemmodulabfragen `LoadedModules`; abgebildete Regionen aus `ImageRAM` ersetzen keine Modulidentität. Hostzustand wird nicht abgefragt.

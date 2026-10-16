@@ -99,6 +99,7 @@ EXPORTS
   PsLookupProcessByProcessId
   PsLookupThreadByThreadId
   PsGetThreadProcess
+  IoThreadToProcess
   PsIsThreadTerminating
   PsCreateSystemThread
   PsTerminateSystemThread
@@ -130,6 +131,7 @@ EXPORTS
   RtlUnicodeStringToInteger
   PsGetCurrentProcessId
   ExGetPreviousMode
+  PsGetCurrentThreadPreviousMode
   PsGetProcessId
   PsGetCurrentProcess
   PsGetCurrentThread
@@ -281,3 +283,4 @@ ExSetResourceOwnerPointerEx
   memcpy_s
   memmove_s
   RtlImageNtHeader
+  RtlPcToFileHeader

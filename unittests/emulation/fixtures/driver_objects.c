@@ -22,6 +22,7 @@ __declspec(dllimport) U64 PsGetCurrentThreadId(void);
 __declspec(dllimport) U64 PsGetProcessId(void *);
 __declspec(dllimport) U64 PsGetThreadId(void *);
 __declspec(dllimport) void *PsGetThreadProcess(void *);
+__declspec(dllimport) void *IoThreadToProcess(void *);
 __declspec(dllimport) U8 PsIsThreadTerminating(void *);
 __declspec(dllimport) NTSTATUS PsLookupProcessByProcessId(U64, void **);
 __declspec(dllimport) NTSTATUS PsLookupThreadByThreadId(U64, void **);
@@ -59,7 +60,8 @@ static void worker(void *Context) {
   KeWaitForSingleObject(&Ready, 0, 0, 0, 0);
   void *Self = PsGetCurrentThread(), *Lookup = 0;
   if (Self != Threads[Index] || PsGetCurrentThreadId() != IDs[Index].Thread ||
-      PsGetThreadProcess(Self) != Process || PsIsThreadTerminating(Self) ||
+      PsGetThreadProcess(Self) != Process ||
+      IoThreadToProcess(Self) != Process || PsIsThreadTerminating(Self) ||
       PsLookupThreadByThreadId(IDs[Index].Thread, &Lookup) || Lookup != Self)
     Failure = 1;
   if (Lookup)
@@ -123,6 +125,7 @@ NTSTATUS DriverEntry(void *Driver, void *Registry) {
     CHECK(Lookup == Threads[I]);
     CHECK(!ZwClose(Copies[I]));
     CHECK(PsGetThreadProcess(Lookup) == Process);
+    CHECK(IoThreadToProcess(Lookup) == Process);
     ObfDereferenceObject(Lookup);
     CHECK((U32)PsLookupThreadByThreadId(IDs[I].Thread, &Lookup) == 0xc000000b);
   }
