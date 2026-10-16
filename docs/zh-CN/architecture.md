@@ -1787,3 +1787,5 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 线程查询别名复用既有线程／进程和执行上下文所有者，进程附加期间也保持一致。`RtlPcToFileHeader` 与系统模块查询共用 `LoadedModules`；`ImageRAM` 表示映射区间，不能代替模块身份。实现不读取宿主进程、线程或模块状态。
 
 `KernelMDLCalls` 将旧映射入口归一到现有六参数映射器。缓存属性、物理页身份、权限与生命周期仍由 `KernelPhysicalMemory` 和 MDL 记录负责。完整释放的内核映像别名不增加环境依赖；用户视图保留该依赖。
+
+`KernelModelFileRequests` 的 `queryFileDevice` 统一校验文件身份、头部、挂载状态和拓扑。基础查询返回文件所拥有的设备，关联查询另行校验文件扩展路由并选择附加栈顶层；两者均借用返回对象。

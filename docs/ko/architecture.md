@@ -1756,3 +1756,5 @@ KernelFileSystem은 FILE_OBJECT마다 provider token 하나를 유지합니다. 
 스레드 조회 별칭은 기존 스레드/프로세스 및 실행 컨텍스트 소유자를 재사용하며 프로세스 연결 중에도 일관됩니다. `RtlPcToFileHeader`는 시스템 모듈 조회와 같은 `LoadedModules`를 사용합니다. `ImageRAM`의 매핑 범위는 모듈 ID를 대체하지 않습니다. 호스트 상태를 참조하지 않습니다.
 
 `KernelMDLCalls`는 레거시 매핑 진입점을 기존 여섯 인수 매퍼로 정규화합니다. 캐시 속성, 물리 페이지 식별, 권한과 수명은 `KernelPhysicalMemory`와 MDL 레코드가 관리합니다. 완전히 해제한 커널 이미지 별칭만 환경 의존성을 남기지 않으며 사용자 뷰는 의존성을 유지합니다.
+
+`KernelModelFileRequests`의 `queryFileDevice`가 파일 식별, 헤더, 마운트 상태와 토폴로지를 공통 검증합니다. 기본 쿼리는 파일이 소유한 장치를 반환하고 관련 쿼리는 파일 확장 경로를 추가 검증하여 연결 스택의 최상위를 선택합니다. 두 결과 모두 빌린 객체입니다.

@@ -1910,3 +1910,5 @@ KernelFileSystem mantiene un provider token por FILE_OBJECT. La operación priva
 Los alias reutilizan los propietarios de hilos/procesos y contextos, incluso durante la vinculación de procesos. `RtlPcToFileHeader` usa `LoadedModules`, igual que las consultas de módulos del sistema; las regiones de `ImageRAM` no sustituyen la identidad del módulo. No se consulta estado del host.
 
 `KernelMDLCalls` normaliza la entrada antigua al mapeador existente de seis argumentos. `KernelPhysicalMemory` y los registros MDL siguen gestionando caché, identidad física, permisos y duración. Solo los alias de imagen del núcleo liberados por completo no dejan dependencia del entorno; las vistas de usuario la conservan.
+
+`queryFileDevice` en `KernelModelFileRequests` centraliza la identidad del archivo, la cabecera, el montaje y la topología. La consulta base devuelve el dispositivo del archivo; la consulta relacionada valida además las rutas de extensión y elige el extremo superior conectado. Ambas devuelven objetos prestados.
