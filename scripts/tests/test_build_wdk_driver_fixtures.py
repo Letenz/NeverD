@@ -330,6 +330,7 @@ class WDKDriverFixtureTests(unittest.TestCase):
             "DriverNamespaceTests.cpp", "DriverRegistryObjectTests.cpp",
             "DriverDeviceQueryTests.cpp", "DriverFileObjectTests.cpp",
             "DriverProcessorTests.cpp", "DriverIntegerFormattingTests.cpp",
+            "DriverRuntimeStringTests.cpp",
             "DriverFileSystemExecutionTests.cpp",
         ):
             cases = re.findall(r"TEST_P\((\w+),\s*(\w+)\)",

@@ -1761,3 +1761,5 @@ KernelFileSystem は FILE_OBJECT ごとに provider token を保持します。�
 `KernelModelFileRequests` はバッファを持たない `ZwFlushBuffersFile` の生成も所有します。権限マスク検査と即時公開・解放は遅延完了の読み書き・照会パケットとは異なり、元の呼び出し元への通知と一度だけの解放を共通の所有者で扱います。
 
 `KernelModelFileRequests` はネイティブ制御のバッファ取得と公開を所有します。ファイル保持、呼び出し元の継続とパケット解放を共有し、生成側の遅延完了規則でデバイス制御と FSCTL を区別します。共通の完了検証器が出力の上限を確認します。
+
+`KernelModelRuntime` がカーネル CRT の分類、インプレース変換、チェック付き文字列書き込みを所有します。`KernelCStringAPIs.def` は各呼び出し面にエクスポート識別、引数数、IRQL 条件を供給します。単位アクセスはゲストの権限と寿命検証を再利用し、レポートやアダプターはコピー／エラー意味論を再実装しません。

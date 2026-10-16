@@ -1738,3 +1738,5 @@ KernelFileSystem은 FILE_OBJECT마다 provider token 하나를 유지합니다. 
 `KernelModelFileRequests`는 버퍼 없는 `ZwFlushBuffersFile` 생성도 소유합니다. 권한 마스크 확인과 즉시 게시·해제 규칙은 지연 완료하는 네이티브 읽기/쓰기/조회와 다르며, 원래 호출자 알림과 단일 해제 소유자를 공유합니다.
 
 `KernelModelFileRequests`가 네이티브 제어 버퍼 캡처와 게시를 소유합니다. 파일 유지, 호출자 연속 실행과 패킷 해제를 공유하며 생산자의 지연 완료 규칙으로 장치 제어와 FSCTL을 구분합니다. 공통 완료 검증기가 출력 한계를 확인합니다.
+
+`KernelModelRuntime`이 커널 CRT 분류, 제자리 변환과 검사된 문자열 쓰기를 소유합니다. `KernelCStringAPIs.def`는 모든 호출 경로에 내보내기 식별자, 인수 개수와 IRQL 조건을 제공합니다. 단위 접근은 게스트 권한과 수명 검증을 재사용하며 보고서/어댑터가 복사 및 오류 의미를 중복 구현하지 않습니다.

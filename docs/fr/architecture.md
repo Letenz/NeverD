@@ -1900,3 +1900,5 @@ KernelFileSystem conserve un provider token par FILE_OBJECT. L’opération priv
 `KernelModelFileRequests` possède aussi la production sans tampon de `ZwFlushBuffersFile`. Le contrôle du masque d’accès et la publication/libération immédiate diffèrent des paquets natifs de lecture, écriture et interrogation différés ; la notification de l’appelant initial et la libération unique restent partagées.
 
 `KernelModelFileRequests` possède la capture et la publication des tampons de contrôle natifs. Conservation du fichier, continuation de l’appelant et libération du paquet sont partagées ; le report propre au producteur distingue le contrôle de périphérique de FSCTL. Le validateur commun de complétion borne la sortie.
+
+`KernelModelRuntime` possède la classification CRT, les conversions en place et les écritures de chaînes vérifiées. `KernelCStringAPIs.def` fournit identité exportée, nombre d’arguments et admission IRQL à toutes les voies d’appel. Les accès unitaires réutilisent permissions et durée de vie invitées ; rapports et adaptateurs ne réimplémentent pas les copies ou erreurs.

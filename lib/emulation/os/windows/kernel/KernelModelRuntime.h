@@ -86,6 +86,21 @@ llvm::Expected<uint64_t> cStringLength(const KernelModel &Model,
                                        GuestMemory &Memory,
                                        llvm::ArrayRef<uint64_t> A,
                                        unsigned UnitWidth);
+/// Return the pinned kernel ctype digit mask, with int/byte carrier narrowing.
+uint64_t cIsDigit(uint32_t Value);
+/// In-place ASCII case conversion. Other byte/UTF-16 units are unchanged;
+/// only converted units are written, with preceding stores retained on faults.
+llvm::Expected<uint64_t> cStringChangeCase(const KernelModel &Model,
+                                           GuestMemory &Memory,
+                                           uint64_t Address, unsigned UnitWidth,
+                                           bool Lower);
+/// Checked copies / wide append with capacity in units, optional count and
+/// SIZE_MAX truncation. Preserve sequential stores and kernel errno results.
+llvm::Expected<uint64_t> cStringCheckedWrite(const KernelModel &Model,
+                                             GuestMemory &Memory,
+                                             llvm::ArrayRef<uint64_t> A,
+                                             unsigned UnitWidth, bool Append);
+
 /// strcpy/wcscpy, or strcat/wcscat when Append is true. A third argument
 /// selects the counted form. Copy pads to the count; append always terminates.
 /// Overlap and invalid storage are rejected before publishing any output.
