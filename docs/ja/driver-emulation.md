@@ -359,7 +359,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `GetScatterGatherList`, `PutScatterGatherList` | DISPATCH_LEVEL の表メソッド。実際のインライン／資源待ちコールバック、固定 MDL ビュー、明示的解放 |
 | `AllocateAdapterChannel`, `MapTransfer`, `FlushAdapterBuffers`, `FreeMapRegisters` | 変換付きバスマスターチャネルのコールバック、共有レジスター上限、連続 MDL 断片、全体フラッシュ、正確な保持レジスター解放 |
 | `KeFlushIoBuffers` | 有効なロック済み／非ページ MDL のコヒーレント CPU キャッシュフラッシュ。DMA マッピングは解放しない |
-| `MmMapLockedPagesSpecifyCache`、`MmGetSystemAddressForMdlSafe`、`MmUnmapLockedPages` | ユーザー／システムマッピングは物理ページのキャッシュ属性と各権限を維持。非ページプール MDL は安全なヘルパーで元のシステムマッピングを再利用 |
+| `MmMapLockedPages`、`MmMapLockedPagesSpecifyCache`、`MmGetSystemAddressForMdlSafe`、`MmUnmapLockedPages` | ユーザー／システムマッピングは物理ページのキャッシュ属性と各権限を維持。非ページプール MDL は安全なヘルパーで元のシステムマッピングを再利用 |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | 独立または IRP に関連付けた非ページプール／ユーザー MDL、変更可能なチェーンリンク、独立したロックとシステム別名。クォータは未対応 |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | 明示的なセッションレジストリ、ハンドルごとの権限と寿命、クエリバッファーサイズと変更。ホストレジストリは使用しない |
 | `ZwEnumerateValueKey` | 作成順で Basic、Full、Partial 値情報を列挙。置換は索引を維持し、削除は索引を詰め、再作成は末尾に追加。`KEY_QUERY_VALUE` が必要で、範囲外は `STATUS_NO_MORE_ENTRIES`。値照会と直列化を共有し、x64 Full データは8バイト境界、空データのオフセットは `0xffffffff`。パディングと不完全な UTF-16 単位は保持 |
@@ -767,3 +767,5 @@ ASCII 名、名前空間リンク、RootDirectory として保持したディレ
 `vDbgPrintExWithPrefix` は `DbgPrint` / `DbgPrintEx` と有限フォーマッター、全フィルター有効の観測モデル、DIRQL 上限を共有します。ゲスト x64 `va_list` は 8 バイト単位で進み、実際のスカラー幅だけを読みます。`hh` は固定カーネルの 16 ビット short 規則です。プレフィックスのバッファーは 128/256/384/512 バイトで、成功時は最初の NUL まで、最終オーバーフロー時は改行で終わる 511 バイトを公開します。公開前に本文全体（上限 512 バイト）を検査するため、切り詰めても無効・未対応の末尾は許可されません。ASCII プレフィックスは 1 MiB 以内で終端まで走査します。Unicode 変換には PASSIVE_LEVEL が必要です。ホストのフィルター、デバッグコールバック、通信は未モデル化です。
 
 `IoThreadToProcess` は保持されたスレッドの作成元プロセス識別子を共有します。`PsGetCurrentThreadPreviousMode` は `ExGetPreviousMode` と状態および DISPATCH_LEVEL 上限を共有し、従来の広すぎる制限を修正します。`RtlPcToFileHeader` は固定モジュール一覧を全幅アドレスで検索し、PC を読み出さずに 8 バイトを書きます。不一致ならゼロです。この限定非ページクエリは常駐出力で全有効 IRQL を許可します。一覧の欠如は明示的な失敗で、動的アンワインド表と retpoline 範囲は対象外です。
+
+`MmMapLockedPages` は既存のマッパーを使い、キャッシュ済みページ、HIGH 優先度、資源不足時の bugcheck を指定します。カーネルマッピングは DISPATCH_LEVEL まで、プロセス所有のユーザービューは APC_LEVEL まで許可し、後者の資源不足は既存の例外になります。bugcheck 指定のカーネル資源不足は明示的なモデルエラーで停止し、成功として NULL を返しません。実際の bugcheck 処理は未対応です。

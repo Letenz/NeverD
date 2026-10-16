@@ -678,6 +678,17 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     JoinsSeen.clear();
     return PhiOutputVars.count(varKey(LiveIn)) && !SetInFunction(LiveIn);
   };
+  // Nor does what earlier calls left in the register on every path
+  // (ValuesLeftByCalls), though the register carries a parameter on entry.
+  auto LeftByCall = [&](const MedVar &LiveIn) {
+    if (!CurMed)
+      return false;
+    if (LeftByCallsFor != CurMed) {
+      LeftByCalls.emplace(*CurMed);
+      LeftByCallsFor = CurMed;
+    }
+    return LeftByCalls->contains(LiveIn);
+  };
   auto tryPredSetupArg = [&](int K) -> bool {
     MedVar LiveIn;
     if (!reachingRegAtBlockEntry(CurBlock, ParamRegs[K], LiveIn))
@@ -804,10 +815,11 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     // value reaching the call (`fprintf(stderr, fmt)` after a join; a
     // `jmp rax` alone in its block in register_tm_clones).  Where an import
     // takes every argument on the stack (i386), none is in a register.
-    if (const unsigned Fixed =
-            Convention && Convention->RegparmOnlyForInternalCalls
-                ? 0
-                : importFixedArgCount(CallIdx, Ops, ResolvedSlot))
+    const unsigned Fixed =
+        Convention && Convention->RegparmOnlyForInternalCalls
+            ? 0
+            : importFixedArgCount(CallIdx, Ops, ResolvedSlot);
+    if (Fixed)
       FillLast =
           std::max(FillLast, std::min(static_cast<int>(Fixed),
                                       static_cast<int>(ParamRegs.size())) -
@@ -819,8 +831,10 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       MedVar LiveIn;
       if (!reachingRegAtBlockEntry(CurBlock, ParamRegs[K], LiveIn))
         continue;
-      // The arguments end before such a join.
-      if (EntryJoin(LiveIn)) {
+      // The arguments end before such a join, and past the fixed ones an
+      // import reads, before what earlier calls left.
+      if (EntryJoin(LiveIn) ||
+          (K >= static_cast<int>(Fixed) && LeftByCall(LiveIn))) {
         std::fill(Found.begin() + K, Found.end(), nullptr);
         break;
       }
@@ -1044,9 +1058,15 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   auto ReachingRegArg = [&](int Index) -> ExprPtr {
     if (Index < 0 || Index >= static_cast<int>(ParamRegs.size()))
       return nullptr;
+    // What earlier calls left there passes no value where the callee is not
+    // known to read the register: the slot still takes its place, as zero.
+    // A register it reads keeps its unknown value.
     MedVar LiveIn;
-    if (reachingRegAtBlockEntry(CurBlock, ParamRegs[Index], LiveIn))
-      return medvarToExpr(LiveIn);
+    if (reachingRegAtBlockEntry(CurBlock, ParamRegs[Index], LiveIn)) {
+      const bool Read =
+          CallIdx < Ops.size() && Ops[CallIdx].CalleeRegisterArgs > Index;
+      return !Read && LeftByCall(LiveIn) ? nullptr : medvarToExpr(LiveIn);
+    }
     // A register this function never writes, at its only call, still holds
     // its incoming value: a recovered parameter is passed straight through.
     if (auto Param = untouchedParamRegister(ParamRegs[Index]))

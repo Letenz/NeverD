@@ -3899,6 +3899,29 @@ which must pass nothing in either backend (not the slot's address as a virtual
 call's object), and a call whose outgoing stores leave a gap below a
 `push {r4, r6, r7, lr}`, whose HighC must not pass the saved link register.
 
+`UndescribedCalleesKeepEveryCallsArguments` builds an x86-64 and an i386
+function that calls an import nothing describes with one argument, then
+with three; its LLVM C must keep each call's arguments.
+
+`VariadicCallsPassOnlyWhatTheirCallerSets` builds, for x86-64, i386, ARM and
+AArch64, a library whose functions call a variadic routine (a `vprintf`
+wrapper with one named parameter) and an undescribed variadic import after a
+join of two calls, and call the routine with every argument register set (a
+tail call on the register ABIs, after an alignment `push` on i386). HighC and
+LLVM C must pass exactly the format and the arguments each caller sets: no
+trap on a register earlier calls left behind, and no incoming stack slot taken
+for the routine's open arity. `MedCallLeftovers.JoinsOfCallClobbersOnly`
+checks which clobbers and joins `ValuesLeftByCalls` names, loops and exception
+entries included.
+
+`ELFARM32ModeTest.MixedImagePairsItsPLTWithTheImports` links a mixed
+ARM/Thumb shared library and requires the PLT entry a Thumb `bl puts` reaches
+to be paired with `puts`. `LinkerThunkToAnImportStandsForTheImport` links a
+stripped Thumb library whose tail call to `puts` goes through lld's thunk: the
+thunk and the PLT entry must both stand for `puts`, and the decompiled caller
+must call `puts` with its string. `LinkerThunk.*` checks each long-branch
+form's target, state and size, and that a direct jump is never a long branch.
+
 `LLVMCValues.ImageStringsInACodeSegmentFollowTheirSection` requires a string
 in `.rodata` inside an R+X segment to print, its bytes in `.text` not to, and
 the segment rule without section headers.
@@ -7560,3 +7583,5 @@ Scalar uppercase regressions exhaust ASCII and the NLS-independent wide range wi
 Debug regressions compare repeated-short rules across all three wrappers, scalar loads at guest boundaries, growing prefix attempts, embedded NUL publication, freed/paged inputs and IRQL. The original and genuine WDK CRT fixtures exercise static and dynamic prefix calls in entry, worker and unload, on both scheduling modes, contracts and load bases. Unavailable backends remain explicit skips.
 
 Context-query tests cover retained and stale threads, requestor/worker/attached contexts, module boundaries and holes, exact output width, lifetime, rights and IRQL. Original and genuine WDK CRT fixtures exercise static/dynamic KernelMode queries; the file-query fixtures also check UserMode callers. Both WDK families include normal/CFG images. Two omitted query declarations use local ABIs with genuine kit types. Unavailable backends remain skips.
+
+Legacy MDL mapping checks cover static and dynamic genuine WDK calls, an attached worker, original image aliases, mode narrowing, IRQL, process switching, stale descriptors, duplicate system mappings and injected alias-budget exhaustion. Kernel shortage retains the MDL and reports unsupported bugcheck processing; user shortage remains catchable. Original wrapper probes verify argument forwarding and return width, not the injected mapper.

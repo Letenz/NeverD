@@ -86,6 +86,7 @@ add_neverd_component_library(NeverDLoader
   Go/GoPclntab.cpp
   Go/GoRuntimeEH.cpp
   Go/GoStackMaps.cpp
+  LinkerThunk.cpp
   Loader.cpp
   ObjectExterns.cpp
   PointerRelocation.cpp
