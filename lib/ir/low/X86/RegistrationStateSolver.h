@@ -310,7 +310,8 @@ private:
   bool runSEHFilterSearch(const FrameState &Parent,
                           std::vector<RegistrationObjectExtent> *Writes,
                           SEHFrameOutcomes &Outcomes, bool RequireResume,
-                          SEHHandlerOutcomes *Selected = nullptr);
+                          SEHHandlerOutcomes *Selected = nullptr,
+                          SEHUnwindJump *Jump = nullptr);
   bool mergeSEHJumpContinuation(const Domain &Source,
                                 const SEHJumpCapture &Saved,
                                 const FrameValue &Value,
