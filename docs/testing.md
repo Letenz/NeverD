@@ -6381,6 +6381,14 @@ checks all five platform/ISA combinations through the public API and CLI.
 The required HVF gate includes the Darwin target. See
 [Darwin process environments](darwin-emulation.md).
 
+The repeated `ImmediateSelectPreservesBitmapsCopiesAndProviderPremises` and
+`SymbolicFileSystemsKeepOwnSnapshotAndFollowedTargetSeparate` semantic batches
+allow 20 seconds per guest run. Their complete CTest cases allow 120 and 240
+seconds respectively, covering four select runs or nine filesystem runs.
+The complete service and memory assertions still apply to every repetition.
+Native cancellation checks retain their short deadlines; production limits,
+instruction credit and event credit are unchanged.
+
 ## macOS HVF backend
 
 Hypervisor.framework supplies the `hvf` native transport. `auto` selects it for
