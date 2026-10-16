@@ -9,6 +9,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
+#include "neverd/ir/med/X86RegistrationSEHLocalUnwind.h"
 #include "neverd/ir/med/X86RegistrationSEHRegisters.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -24,6 +25,7 @@ void discardUnusedSEHCallInputs(MedFunc &Function) {
   const auto Owners = registrationSEHCallbackOwners(Function);
   if (!Owners || Owners->empty())
     return;
+  const auto LocalUnwinds = getX86RegistrationSEHLocalUnwinds(Function);
   using ValueKey = std::tuple<MedVar::VarKind, int, int>;
   using RegisterKey = std::pair<va_t, uint64_t>;
   const auto Key = [](const MedVar &Value) {
@@ -60,7 +62,12 @@ void discardUnusedSEHCallInputs(MedFunc &Function) {
         // A call or another intrinsic can consume physical registers through
         // an implicit ABI which has not yet been recovered. Keep all inputs
         // of such a callback, even if no explicit SSA use names the register.
-        if (Owner != Owners->end() &&
+        bool CheckedLocal = false;
+        if (LocalUnwinds)
+          if (const auto Local = LocalUnwinds->find(Op.Addr);
+              Local != LocalUnwinds->end())
+            CheckedLocal = Local->second.Operation == &Op;
+        if (!CheckedLocal && Owner != Owners->end() &&
             (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
              Op.Opcode == NdOp::INTRINSIC))
           OpaqueCallbacks.insert(Owner->second.first);

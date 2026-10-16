@@ -1923,6 +1923,8 @@ Die Aliase nutzen bestehende Besitzer von Threads/Prozessen und Ausführungskont
 
 `queryFileDevice` in `KernelModelFileRequests` prüft gemeinsam Dateiidentität, Header, Einhängestatus und Topologie. Die Basisabfrage liefert das zur Datei gehörende Gerät; die zugehörige Abfrage prüft zusätzlich das Routing über Dateierweiterungen und wählt das oberste angehängte Gerät. Beide Ergebnisse sind geliehen.
 
+`KernelModelFileCreate` verwaltet die Gerätezeigeröffnung im bestehenden `FileOperation`. Namensauflösung, CREATE-Pakete und endgültige Freigabe teilen den Besitzer gewöhnlicher Dateiöffnungen. Der Objektmanager erwirbt die Dateireferenz über das interne Handle, `queryFileDevice` liefert das zugehörige Gerät und die vorhandene Handle-Schließfortsetzung führt CLEANUP aus. Erst danach verlässt der ursprüngliche Thread seinen kritischen Bereich. Überlappende öffentliche Ausgaben ändern das intern referenzierte Objekt nicht.
+
 ## Darwin dylib Importoffsets
 
 Gewöhnliche starke dylib-Importe unterstützen vorzeichenbehaftete Byte-Addenden für globale Zeiger und TLS-Vorlagen. `DarwinImage` kombiniert Exportadresse, Bibliotheksverschiebung und Addend genau einmal, prüft Überlauf und hält das Ergebnis in den ursprünglichen Segmenten des gewählten Anbieters. Die Zeigerprüfung setzt keine Zugriffsbreite voraus. libSystem-Einsprünge, importierte TLV-Deskriptoren und Lazy-Bindungen verlangen weiterhin den Addenden null.

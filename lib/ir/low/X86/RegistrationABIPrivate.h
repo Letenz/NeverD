@@ -18,6 +18,7 @@
 
 namespace neverd {
 class Decoder;
+struct Import;
 struct LowInstructionBoundary;
 } // namespace neverd
 
@@ -74,6 +75,7 @@ std::optional<uint16_t> parentPopBytes(const LowFunc &Function,
 
 std::optional<uint32_t>
 checkedRegistrationImportStackPop(const BinaryImage &Image, va_t Target);
+const Import *checkedImportSlot(const BinaryImage &Image, va_t Target);
 bool callerPCIsNotReadBack(const ImageFrameEffects &Effects);
 bool hasConditionalCallFrame(const BinaryImage &Image, const LowOp &Op,
                              const registration_state::FrameState &State,

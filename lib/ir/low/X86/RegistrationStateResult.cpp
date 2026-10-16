@@ -15,9 +15,11 @@
 namespace neverd::registration_state {
 
 RegistrationStateAnalysis RegistrationStateSolver::finish() {
-  if (FailedLocalUnwind)
+  if (FailedLocalUnwind) {
+    Result.SEHLocalUnwindsComplete = false;
     Result.Diagnostics.push_back(
         "local-unwind frame arguments or finally effects are not proven");
+  }
   if (Exhausted) {
     Result.Diagnostics.push_back(
         "registration-state propagation budget exhausted");
@@ -151,6 +153,12 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
   if (Result.SEHBoundCallsComplete && charge(BoundCalls.size()))
     for (const auto &[Identity, Call] : BoundCalls)
       Result.SEHBoundCalls.push_back(Call);
+  Result.SEHLocalUnwindsComplete &=
+      Result.Complete && Result.CallbackStatesComplete &&
+      Result.RegistrationLifetimeComplete && !Exhausted;
+  if (Result.SEHLocalUnwindsComplete && charge(LocalUnwindCalls.size()))
+    for (const auto &[Identity, Call] : LocalUnwindCalls)
+      Result.SEHLocalUnwinds.push_back(Call);
   Result.SEHJumpResumptionsComplete &=
       Result.Complete && Result.CallbackStatesComplete;
   if (Result.SEHJumpResumptionsComplete)

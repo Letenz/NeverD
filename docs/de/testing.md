@@ -2154,6 +2154,8 @@ Die alten MDL-Aufrufe werden mit echten statischen und dynamischen WDK-Aufrufen,
 
 `KernelFileQueries.BaseDevice*` prüft die Basis unter zwei Filtern, unveränderte Referenzen, ignorierte Erweiterungszeiger, Erstellungs-/Bereinigungs-/Schließzustände, beschädigte Datensätze und IRQL. Eigene und echte WDK-Fixtures in Normal-/CFG-Varianten führen statische und dynamische Abfragen in der bestehenden Matrix aus Backends, Relokation, Planung und Aufruferlebensdauer aus.
 
+`KernelDevicePointer.*` prüft Referenzen, Ausgabeüberlappung, fehlgeschlagene und informative Öffnungen, Thread-/APC-Wiederherstellung nach wartendem CREATE/CLEANUP, Argumentbreiten, Freigabe, Schreibreihenfolge bei Ausgabefehlern, Zulassung und Entladen. Original- und WDK-Fixture ergänzen sofortige Ausführung, CREATE/CLEANUP durch Worker sowie bis zum Entladen gehaltene Zeiger und dynamische Auflösung. `KernelFileSystemExecution.*OpensExistingFiles` prüft beide Ablaufmodelle, Verträge und Ladebasen; nicht verfügbare Backends werden ausdrücklich übersprungen.
+
 ## Darwin dylib Importoffsets
 
 `StartupDylibAddendsPreserveDataAndTLSAliasing` prüft +8/-4, Änderungen des TLS-Zeigers und frischen Prozesszustand. C, CLI und echtes Python prüfen alle Profile. Das Pflichtinventar umfasst 101 Methoden je Profil und 303 passende ARM64-Fälle; der gemeinsame native Katalog bleibt 82. Nicht verfügbare Hardware zählt nicht als native Ausführung.

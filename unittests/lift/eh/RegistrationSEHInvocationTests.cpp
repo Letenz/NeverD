@@ -164,6 +164,56 @@ LowFunc invocationFrame(unsigned Mutation, bool Returning) {
 
 } // namespace
 
+TEST(RegistrationState, LocalUnwindKeepsOrdinaryAndRuntimeFinallyEvidence) {
+  for (bool Reverse : {false, true}) {
+    SCOPED_TRACE(Reverse);
+    auto F = invocationFrame(0, false);
+    // The inner finally can run during exception dispatch before its parent
+    // retires the scope for the ordinary CALL. Both paths share one receipt.
+    F.Blocks.resize(12);
+    F.Blocks[4].Succs = {11};
+    auto &Active = F.Blocks[11];
+    Active.Id = 11;
+    Active.StartAddr = 0x1090;
+    Active.EndAddr = 0x1097;
+    Active.Succs = {1};
+    addSlotStore(Active, 1);
+    Active.InstructionBoundaries = {{0x1090, 7, 0, Active.Ops.size()}};
+    F.ExceptionMetadata->Registration->TryLevelStores.push_back(
+        {0x1090, 0x1097, 1});
+    auto &Exit = F.Blocks[3];
+    emitOp(Exit, Exit.StartAddr, NdOp::INT_ADD, NdVar::tmp(30, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-16), 4)});
+    emitOp(Exit, Exit.StartAddr, NdOp::LOAD, NdVar::tmp(31, 4),
+           {NdVar::tmp(30, 4)});
+    emitOp(Exit, Exit.StartAddr, NdOp::STORE, {},
+           {NdVar::cst(0, 4), NdVar::tmp(31, 4)}, NdMemoryAddressSpace::X86FS);
+    Exit.InstructionBoundaries.front().OpCount = Exit.Ops.size();
+    if (Reverse)
+      std::reverse(F.Blocks.begin(), F.Blocks.end());
+    const std::vector<RegistrationSEHControlContract> Controls{
+        {RegistrationSEHControlContract::Kind::NearCall, 0x1100, 0x1105,
+         0x1800},
+        {RegistrationSEHControlContract::Kind::NearReturn, 0x1850, 0x1851,
+         InvalidVA}};
+    const std::vector<RegistrationLocalUnwindContract> Unwinds{{0x2200, false}};
+    const auto States = analyzeRegistrationStates(F, 0, 0, nullptr, nullptr,
+                                                  nullptr, &Unwinds, &Controls);
+    ASSERT_TRUE(States.Complete);
+    ASSERT_TRUE(States.CallbackStatesComplete);
+    ASSERT_TRUE(States.RegistrationLifetimeComplete);
+    ASSERT_TRUE(States.HasSEHLocalUnwinds);
+    ASSERT_TRUE(States.SEHLocalUnwindsComplete);
+    ASSERT_EQ(States.SEHLocalUnwinds.size(), 1u);
+    const auto &Call = States.SEHLocalUnwinds.front();
+    EXPECT_EQ(Call.Address, 0x1809u);
+    EXPECT_EQ(Call.EntryVA, 0x1800u);
+    EXPECT_EQ(Call.StackOffset, -64);
+    EXPECT_EQ(Call.Bound, UINT32_MAX);
+    EXPECT_FALSE(Call.Transitions.empty());
+  }
+}
+
 TEST(RegistrationState, FinallyInvocationsResumeOnlyTheirCheckedParent) {
   for (bool Returning : {false, true})
     for (unsigned Mutation = 0; Mutation != 13; ++Mutation) {

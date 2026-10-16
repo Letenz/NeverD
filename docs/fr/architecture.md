@@ -1929,6 +1929,8 @@ Les alias réutilisent les propriétaires existants des threads/processus et des
 
 `queryFileDevice` dans `KernelModelFileRequests` centralise la validation de l’identité du fichier, de son en-tête, du montage et de la topologie. La requête de base renvoie le périphérique possédé par le fichier ; la requête associée vérifie aussi le routage par extension et choisit le sommet attaché. Les deux résultats sont empruntés.
 
+`KernelModelFileCreate` gère cette ouverture dans le `FileOperation` existant. Résolution des noms, paquets CREATE et libération finale partagent le propriétaire des ouvertures ordinaires. Le gestionnaire d’objets acquiert la référence via le handle interne, `queryFileDevice` fournit le périphérique associé et la continuation de fermeture existante exécute CLEANUP. La région critique du thread initial est libérée seulement après cette continuation. Des sorties superposées ne remplacent pas l’objet référencé interne.
+
 ## Décalages des imports dylib Darwin
 
 Les imports ordinaires forts de dylib admettent des ajouts signés en octets pour les pointeurs globaux et les modèles TLS. `DarwinImage` combine une seule fois adresse exportée, déplacement de la bibliothèque et ajout, vérifie les débordements et exige une adresse dans les segments originaux du fournisseur choisi. La validation du pointeur ne suppose aucune largeur d’accès. Les entrées libSystem, descripteurs TLV importés et liaisons différées exigent un ajout nul.

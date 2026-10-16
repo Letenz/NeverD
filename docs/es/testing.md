@@ -2139,6 +2139,8 @@ Las comprobaciones MDL antiguas cubren llamadas WDK reales estáticas y dinámic
 
 `KernelFileQueries.BaseDevice*` comprueba la base bajo dos filtros, referencias sin cambios, punteros de extensión ignorados, estados de creación/limpieza/cierre, registros dañados e IRQL. Las fixtures originales y WDK reales normales/CFG ejecutan consultas estáticas y dinámicas en la matriz existente de motores, reubicación, planificación y vida del llamante.
 
+`KernelDevicePointer.*` comprueba referencias, salidas solapadas, aperturas fallidas e informativas, restauración del hilo/APC tras CREATE/CLEANUP pendientes, anchuras, uso compartido, orden de escrituras ante fallos, admisión y descarga. Las fixtures original y WDK añaden modos inmediato, CREATE/CLEANUP completados por worker y referencia retenida hasta la descarga, con búsqueda dinámica. `KernelFileSystemExecution.*OpensExistingFiles` cubre ambos planificadores, contratos y bases; los transportes no disponibles se omiten explícitamente.
+
 ## Desplazamientos de importaciones dylib de Darwin
 
 `StartupDylibAddendsPreserveDataAndTLSAliasing` comprueba +8/-4, cambios del puntero TLS y estado nuevo por proceso. C, CLI y Python real cubren todos los perfiles. El inventario obligatorio pasa a 101 métodos por perfil y 303 casos ARM64 coincidentes; el catálogo nativo común sigue en 82. La ausencia de hardware no cuenta como ejecución nativa.

@@ -1984,6 +1984,8 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 
 `KernelFileQueries.BaseDevice*` 檢查基礎裝置與兩層篩選裝置的差異、參照不變、忽略擴充指標、建立／清理／關閉階段、損壞記錄及 IRQL。原創與真實 WDK 一般／CFG 檔案查詢夾具在既有後端、重定位、排程及呼叫端生命週期矩陣中執行靜態與動態基礎查詢。
 
+`KernelDevicePointer.*` 檢查參考保留、輸出重疊、失敗與資訊狀態開啟、暫止 CREATE/CLEANUP 後的呼叫端與 APC 還原、參數寬度、共用、輸出錯誤寫入順序、准入及卸載。原始及真正 WDK 檔案系統範例新增立即完成、工作項目完成 CREATE、工作項目完成 CLEANUP 和保留指標至卸載模式，包含動態查找。`KernelFileSystemExecution.*OpensExistingFiles` 涵蓋兩種排程模式、執行契約與載入基址；不可用傳輸仍明確略過。
+
 ## Darwin dylib 匯入偏移
 
 `StartupDylibAddendsPreserveDataAndTLSAliasing` 驗證 +8/-4、TLS 指標修改與新程序重設，C、CLI 和實際 Python 整合涵蓋各組態。必要清單為每組態101種方法、303個相符 ARM64 身分，共用原生目錄保持82項；無法使用的硬體不計為原生執行。

@@ -2028,6 +2028,8 @@ CRT 회귀는 모든 바이트/UTF-16 단위, 인수 폭, 변경이 없는 읽�
 
 `KernelFileQueries.BaseDevice*`는 기본 장치와 두 필터 계층, 참조 유지, 확장 포인터 무시, 생성／정리／닫기 상태, 손상된 기록 및 IRQL을 검사합니다. 자체 및 실제 WDK 일반／CFG 파일 쿼리 픽스처는 기존 백엔드, 재배치, 스케줄링과 호출자 수명 조합에서 정적／동적 기본 쿼리를 실행합니다.
 
+`KernelDevicePointer.*`는 참조 유지, 출력 겹침, 실패/정보 상태 열기, 대기 CREATE/CLEANUP 후 호출자와 APC 복원, 인수 폭, 공유, 출력 오류의 쓰기 순서, 진입 조건과 언로드를 검사합니다. 원본 및 실제 WDK 파일 시스템 픽스처에 즉시 완료, 작업 항목 CREATE/CLEANUP 완료, 언로드까지 참조 유지와 동적 조회를 추가합니다. `KernelFileSystemExecution.*OpensExistingFiles`는 두 스케줄링 방식, 계약과 로드 주소를 검사하며 사용할 수 없는 전송은 명시적으로 건너뜁니다.
+
 ## Darwin dylib 가져오기 오프셋
 
 `StartupDylibAddendsPreserveDataAndTLSAliasing`은 +8/-4, TLS 포인터 변경, 새 프로세스의 초기 상태를 확인합니다. C, CLI, 실제 Python 통합이 모든 프로필을 검사합니다. 필수 목록은 프로필별101개 메서드와 일치하는 ARM64 사례303개이며 공통 네이티브 목록은82개입니다. 사용할 수 없는 하드웨어는 네이티브 실행으로 계산하지 않습니다.

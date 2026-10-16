@@ -1918,6 +1918,8 @@ Gli alias riusano i proprietari di thread/processi e contesti anche durante il c
 
 `queryFileDevice` in `KernelModelFileRequests` verifica in comune identità del file, intestazione, montaggio e topologia. La query base restituisce il dispositivo del file; quella correlata verifica anche i percorsi di estensione e sceglie il vertice collegato. Entrambi i risultati sono presi in prestito.
 
+`KernelModelFileCreate` gestisce questa apertura nel `FileOperation` esistente. Risoluzione dei nomi, pacchetti CREATE e rilascio finale condividono il proprietario delle normali aperture. Il gestore oggetti acquisisce il riferimento tramite l’handle interno, `queryFileDevice` fornisce il dispositivo associato e la continuazione di chiusura esistente esegue CLEANUP. Solo dopo si lascia la regione critica del thread originale. Output pubblici sovrapposti non sostituiscono l’oggetto referenziato interno.
+
 ## Offset delle importazioni dylib Darwin
 
 Le importazioni ordinarie forti da dylib ammettono addendi in byte con segno per puntatori globali e modelli TLS. `DarwinImage` combina una sola volta indirizzo esportato, rilocazione della libreria e addendo, controlla gli overflow e limita il risultato ai segmenti originali del fornitore scelto. Il valore del puntatore non implica una larghezza di accesso. Ingressi libSystem, descrittori TLV importati e collegamenti lazy richiedono addendo zero.

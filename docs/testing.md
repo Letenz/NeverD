@@ -7780,3 +7780,5 @@ integration exercises the same report through the public C SDK.
 `NeverDHighCSupervisorCallTests` verifies that an unmodeled live ARM/AArch64
 SVC result returns a recoverable emission error. Unused results retain the
 side-effecting statement without acquiring a Linux syscall contract.
+
+`KernelDevicePointer.*` checks retained references, overlapping outputs, failed and informational opens, caller/APC restoration across pending CREATE and CLEANUP, argument widths, sharing, output-fault store order, admission and unload. The original and genuine WDK filesystem fixture adds immediate, worker-completed CREATE, worker-completed CLEANUP and unload-held pointer modes, including dynamic lookup. `KernelFileSystemExecution.*OpensExistingFiles` runs both scheduling modes, contracts and image bases; unavailable transports remain explicit skips.

@@ -1921,6 +1921,8 @@ Los alias reutilizan los propietarios de hilos/procesos y contextos, incluso dur
 
 `queryFileDevice` en `KernelModelFileRequests` centraliza la identidad del archivo, la cabecera, el montaje y la topología. La consulta base devuelve el dispositivo del archivo; la consulta relacionada valida además las rutas de extensión y elige el extremo superior conectado. Ambas devuelven objetos prestados.
 
+`KernelModelFileCreate` administra esta apertura dentro del `FileOperation` existente. La resolución de nombres, los paquetes CREATE y la liberación final comparten el propietario de las aperturas ordinarias. El gestor de objetos obtiene la referencia mediante el handle interno, `queryFileDevice` aporta el dispositivo relacionado y la continuación de cierre existente ejecuta CLEANUP. Solo después se libera la región crítica del hilo original. El solapamiento de salidas públicas no sustituye el objeto referenciado interno.
+
 ## Desplazamientos de importaciones dylib de Darwin
 
 Las importaciones ordinarias fuertes de dylib admiten sumandos de bytes con signo para punteros globales y plantillas TLS. `DarwinImage` combina una sola vez la dirección exportada, el desplazamiento de la biblioteca y el sumando; comprueba desbordamientos y exige pertenencia a los segmentos originales del proveedor elegido. El valor del puntero no implica un ancho de acceso. Las entradas libSystem, los descriptores TLV importados y el enlace diferido conservan sumando cero.

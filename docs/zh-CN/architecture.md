@@ -1798,6 +1798,8 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 
 `KernelModelFileRequests` 的 `queryFileDevice` 统一校验文件身份、头部、挂载状态和拓扑。基础查询返回文件所拥有的设备，关联查询另行校验文件扩展路由并选择附加栈顶层；两者均借用返回对象。
 
+`KernelModelFileCreate` 在现有 `FileOperation` 中管理设备指针打开。名称解析、CREATE 数据包和最终释放复用普通文件打开的状态管理。对象管理器通过内部句柄取得文件引用，`queryFileDevice` 提供关联设备，现有句柄关闭续接执行 CLEANUP。续接完成后才退出原调用线程的临界区。公共输出重叠不会替换内部保留的文件对象。
+
 ## Darwin dylib 导入偏移
 
 普通强 dylib 导入支持带符号的字节偏移，可初始化全局指针与 TLS 模板指针。`DarwinImage` 统一计算导出地址、库的加载偏移及导入加数，检查溢出并限定在所选提供库的原始段范围内；指针值检查不推测访问宽度。libSystem 入口、导入的 TLV 描述符和延迟绑定仍要求零加数。
