@@ -1200,6 +1200,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   CurMed = &Med;
   ParamCopyIndexFunc = nullptr;
   LoadedEntrySlotsFor = nullptr;
+  LeftByCallsFor = nullptr;
   EntryOffsetDefsFor = nullptr;
   DynamicStackFor = nullptr;
   EntryStackOffsets.reset();

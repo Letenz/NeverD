@@ -20,6 +20,7 @@
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/IndirectCallSlot.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedReturnArguments.h"
 #include "neverd/ir/med/X86RegistrationCall.h"
 #include "neverd/ir/med/X86RegistrationSEHCall.h"
@@ -500,6 +501,8 @@ void recoverCallAbi(
   // only names the incoming value.
   std::set<std::tuple<int, int, int>> DefinedValues;
   bool DefinedValuesBuilt = false;
+  // What earlier calls left in each register, once a call asks.
+  std::optional<ValuesLeftByCalls> LeftByCalls;
   auto isDefinedValue = [&](const MedVar &V) {
     if (!DefinedValuesBuilt) {
       for (const auto &B : Func.Blocks) {
@@ -1179,6 +1182,11 @@ void recoverCallAbi(
       // truncates any surplus to the callee arity) fill the remaining
       // consecutive register slots from the value reaching the call across the
       // CFG.
+      // The incoming registers earlier calls made parameters: one this call
+      // promotes for an argument it then drops is no parameter.
+      std::set<uint64_t> PromotedBefore;
+      for (const auto &Promoted : PromoteParams)
+        PromotedBefore.insert(Promoted.first);
       bool Arg0FromInBlock = FoundMask[0];
       if ((!CI.IsIndirect || UseExternalArity || UseVariableArity) &&
           IntRegArgsApply)
@@ -1907,10 +1915,18 @@ void recoverCallAbi(
           if (Param.RegOff != kNoParamReg)
             ++CallerStackBase;
       }
+      // A variadic routine of the image keeps its arity open for the
+      // overflow its callers pass (callRecoveryTotalArity), which says
+      // nothing of what a tail jump to it passes on untouched.
+      bool OpenVariadicArity = false;
+      if (!CI.IsIndirect && !UseExternalArity && CalleeIsVariadic)
+        if (const auto VIt = CalleeIsVariadic->find(CI.TargetAddr);
+            VIt != CalleeIsVariadic->end())
+          OpenVariadicArity = VIt->second;
       if (IsTailJump &&
           (!CI.IsIndirect || ImportStackArgs || UseExternalArity ||
            UseVariableArity) &&
-          CalleeArgs > CalleeStackBase) {
+          !OpenVariadicArity && CalleeArgs > CalleeStackBase) {
         for (int K = CalleeStackBase; K < CalleeArgs && K < MaxArgs; ++K) {
           if (FoundMask[K])
             continue;
@@ -2232,6 +2248,8 @@ void recoverCallAbi(
         }
       }
       std::vector<MedVar> IntPart, StackPart;
+      // The register slot each of IntPart's arguments was found in.
+      std::vector<int> IntPartSlots;
       // Each stack argument's offset from the first stack argument: the
       // slot the stack scan found it in.
       const int StackArgBase = StackAfterUsedRegisters ? FirstStackSlot
@@ -2277,8 +2295,10 @@ void recoverCallAbi(
         // with no integer register argument); assemble it after the FP
         // arguments.  A gap lane belongs to whichever range its index falls in.
         if (K < NumIntRegArgs && (Gap || !FromStackScan[K])) {
-          if (K < IntCap)
+          if (K < IntCap) {
             IntPart.push_back(A);
+            IntPartSlots.push_back(K);
+          }
         } else {
           StackPart.push_back(A);
           StackPartOffsets.push_back(static_cast<int64_t>(K - StackArgBase) *
@@ -2297,6 +2317,49 @@ void recoverCallAbi(
           int Span = Found[K].Size / TRI.PointerSize;
           if (Span > 1)
             K += Span - 1;
+        }
+      }
+      // A register that holds, on every path to the call, only what earlier
+      // calls left in it was set for no argument of this one.  Past the
+      // register arguments the callee is known to take -- the named ones of
+      // a variadic callee, whose save area spills the rest
+      // (callRegisterArity), or none where nothing says what it takes -- the
+      // first such register ends the call's register arguments; where stack
+      // arguments follow, which keep their places, each such register passes
+      // zero.  Passed on, it would be an unknown value, which HighC traps on
+      // before the call where the program passed what the callee never reads.
+      // Below that the callee reads the register, and its unknown value stays.
+      if (IntRegArgsApply && !CheckedStackCall && !RegistrationObjectCall) {
+        int Known = 0;
+        if (!CI.IsIndirect || UseExternalArity || UseVariableArity)
+          Known = std::max(CalleeRegArgs, 0);
+        if (CI.IsIndirect)
+          Known = std::max<int>(Known, Op.CalleeRegisterArgs);
+        for (size_t I = 0; I < IntPart.size(); ++I) {
+          if (IntPartSlots[I] < Known)
+            continue;
+          if (!LeftByCalls)
+            LeftByCalls.emplace(Func);
+          if (!LeftByCalls->contains(IntPart[I]))
+            continue;
+          // An indirect call has no callee to say its stack slots are
+          // arguments, and where integer arguments fill every register
+          // before the stack, a register no one set below them shows they
+          // are not (an -O0 spill near the call).
+          const bool NoStackArguments =
+              StackPart.empty() || (CI.IsIndirect && !PositionalSlots);
+          if (NoStackArguments) {
+            for (size_t J = I; J < IntPart.size(); ++J)
+              if (IntPart[J].Kind == MedVar::Param &&
+                  !PromotedBefore.count(IntPart[J].RegOff))
+                PromoteParams.erase(IntPart[J].RegOff);
+            IntPart.resize(I);
+            StackPart.clear();
+            StackPartOffsets.clear();
+            break;
+          }
+          IntPart[I] =
+              MedVar::makeConst(0, static_cast<uint16_t>(TRI.PointerSize));
         }
       }
       // A variadic callee that takes its vector argument registers as
@@ -2479,6 +2542,16 @@ void recoverCallAbi(
 
       if (!CI.IsIndirect && DarwinVarArgBase >= 0)
         CI.VarArgFixedCount = DarwinVarArgBase;
+      // A variadic routine of the image whose save area says how many named
+      // register parameters it has takes the rest variadically, which a
+      // declaration of it where it is not emitted keeps: one made from a
+      // call's own arguments would cut another call's.  Every register of a
+      // routine that takes its vector ones (System V) is a parameter.
+      else if (!CI.IsIndirect && OpenVariadicArity && CalleeRegArgs > 0 &&
+               CalleeRegArgs < NumIntParamRegs &&
+               !(VectorArgumentCallees &&
+                 VectorArgumentCallees->count(CI.TargetAddr)))
+        CI.VarArgFixedCount = CalleeRegArgs;
       Func.CallInfos.push_back(std::move(CI));
       if (!CallLaneOps.empty())
         Pending.push_back(

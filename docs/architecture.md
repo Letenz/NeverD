@@ -2365,6 +2365,33 @@ that passes a two-load target's object finds none in a register that holds the
 target. HighIR's stack scan takes no prologue save for an indirect call either
 (`isIncomingRegisterSave`, shared with recovery).
 
+A caller-saved register holds, after a call, only what that call left in it,
+so no compiler passes that value on as an argument. `ValuesLeftByCalls`
+(`MedCallLeftovers.h`) names such values: each call's clobber of a register it
+may change whole, and each join of nothing else, loops of joins included.
+Clobbers that keep a preserved low half do not count, nor do clobbers the
+struct-return recovery still holds as possible result fields, nor joins the
+exception dispatcher enters with another value. Past the register arguments
+the callee is known to take, the first such register ends a call's register
+arguments, or passes zero where stack arguments follow and need their places.
+An indirect call has no callee to vouch for its stack slots. Where integer
+arguments fill every register before the stack, an unset register below
+those slots shows they are no arguments (an -O0 spill near the call), so they
+end with it.
+That count is the named parameters of a variadic callee and zero for a callee
+nothing describes. Below it the callee reads the register, and the unknown
+value stays. The named count of an AAPCS64 or AAPCS32 variadic routine comes
+from its register save area, which spills the argument registers from the
+first unnamed one to the last (`MedFunc::VariadicFirstRegister`). Recovery
+applies the rule to `MedCallInfo::Args`, and HighIR's hole filling and
+positional fill use the same predicate, since x86-64 HighC builds its call
+arguments with its own scan. Because a variadic routine of the image keeps its
+arity open for its callers' overflow, that arity gives a tail jump to it no
+incoming stack slots to pass on. A call to such a routine records its named
+count (`MedCallInfo::VarArgFixedCount`), so an LLVM declaration of a routine
+the module does not emit stays variadic. A declaration made from one call's
+arguments would cut another call's.
+
 `PipelineWideIntReturnEvidence` checks the high-word carrier on every return
 before the shared pipeline widens an x86/ARM32 function to a register-pair
 result. Caller liveness only proposes candidates. Independent entries, unknown

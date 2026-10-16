@@ -50,5 +50,15 @@ bool hasAAPCS32VariadicPrologue(VariadicScan &S) {
   return Marked;
 }
 
+/// The integer argument register the AAPCS32 save area starts at: the
+/// prologue spills each argument register from the first unnamed one through
+/// r3, r3 just below the entry stack pointer, so va_arg walks on into the
+/// incoming stack arguments.  The registers before it carry named
+/// parameters.
+std::optional<int> aapcs32FirstVariadicRegister(VariadicScan &S) {
+  return firstSavedArgumentRegister(S,
+                                    -static_cast<int64_t>(S.TRI.PointerSize));
+}
+
 } // namespace med_variadic_detail
 } // namespace neverd

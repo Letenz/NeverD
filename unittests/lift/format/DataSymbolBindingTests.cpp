@@ -26,6 +26,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -178,6 +179,52 @@ protected:
         "}\n"
         "void set_hooks(int (*f)(int, int)) { local_hook = f; }\n"
         "void set_self(int (*f)(int, int, int, void *)) { self_hook = f; }\n",
+        {Stub.string()});
+  }
+
+  // Variadic calls made after a join of two calls, which leave their scratch
+  // registers behind: to a routine of the library whose save area starts
+  // past its named parameter, to an import nothing describes, and as a tail
+  // call that sets every argument register.
+  fs::path variadicLibrary(llvm::StringRef Target) {
+    const auto Stub =
+        sharedLibrary(Target, "vstub",
+                      "int puts(const char *s) { return s != 0; }\n"
+                      "int vprintf(const char *f, __builtin_va_list ap) {\n"
+                      "  (void)ap;\n"
+                      "  return f != 0;\n"
+                      "}\n"
+                      "int hook(const char *s) { return s == 0; }\n"
+                      "int ext_note(const char *f, ...) { return f != 0; }\n");
+    return sharedLibrary(
+        Target, "variadic",
+        "int puts(const char *);\n"
+        "int vprintf(const char *, __builtin_va_list);\n"
+        "int hook(const char *);\n"
+        "int ext_note(const char *, ...);\n"
+        "__attribute__((noinline, visibility(\"hidden\")))\n"
+        "int note(const char *fmt, ...) {\n"
+        "  __builtin_va_list ap;\n"
+        "  __builtin_va_start(ap, fmt);\n"
+        "  int n = vprintf(fmt, ap);\n"
+        "  __builtin_va_end(ap);\n"
+        "  return n;\n"
+        "}\n"
+        "__attribute__((noinline)) int fmt_only(int c, const char *s) {\n"
+        "  if (c) puts(s); else hook(s);\n"
+        "  return note(\"plain\\n\");\n"
+        "}\n"
+        "__attribute__((noinline)) int fmt_one(int c, const char *s) {\n"
+        "  if (c) puts(s); else hook(s);\n"
+        "  return note(\"%d\\n\", c);\n"
+        "}\n"
+        "__attribute__((noinline)) int fmt_import(int c, const char *s) {\n"
+        "  if (c) puts(s); else hook(s);\n"
+        "  return ext_note(\"plain\\n\");\n"
+        "}\n"
+        "__attribute__((noinline)) int fwd3(int c) {\n"
+        "  return note(\"%d %d %d\\n\", c, c + 1, c + 2);\n"
+        "}\n",
         {Stub.string()});
   }
 
@@ -577,6 +624,43 @@ TEST_F(DataSymbolBindingTest, UndescribedCalleesKeepEveryCallsArguments) {
     ASSERT_FALSE(Body.empty()) << C;
     EXPECT_EQ(callArgumentCounts(Body, "ext_note"), (std::vector<int>{1, 3}))
         << Body;
+  }
+}
+
+// A variadic call passes what its caller sets, past its callee's named
+// parameters: never a register that only holds what earlier calls left in it
+// (which HighC would trap on before the call), nor, in a tail call, the
+// caller's own incoming stack, for which a variadic routine's open arity
+// says nothing.
+TEST_F(DataSymbolBindingTest, VariadicCallsPassOnlyWhatTheirCallerSets) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "requires cross-target Clang and ld.lld";
+  const std::tuple<const char *, const char *, int> Calls[] = {
+      {"fmt_only", "note", 1},
+      {"fmt_one", "note", 2},
+      {"fmt_import", "ext_note", 1},
+      {"fwd3", "note", 4}};
+  for (const char *Target :
+       {"x86_64-linux-gnu", "armv7-linux-gnueabi", "aarch64-linux-gnu"}) {
+    SCOPED_TRACE(Target);
+    auto Loaded = loadBinary(variadicLibrary(Target));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(LLVM);
+      const auto C =
+          source(*Loaded, LLVM, {"fmt_only", "fmt_one", "fmt_import", "fwd3"});
+      for (const auto &[Caller, Callee, Count] : Calls) {
+        SCOPED_TRACE(Caller);
+        const std::string Body = functionBody(C, Caller);
+        ASSERT_FALSE(Body.empty()) << C;
+        // Structuring may copy the tail call into each branch.
+        const std::vector<int> Counts = callArgumentCounts(Body, Callee);
+        EXPECT_FALSE(Counts.empty()) << Body;
+        for (int Passed : Counts)
+          EXPECT_EQ(Passed, Count) << Body;
+        EXPECT_EQ(Body.find("__builtin_trap"), std::string::npos) << Body;
+      }
+    }
   }
 }
 
