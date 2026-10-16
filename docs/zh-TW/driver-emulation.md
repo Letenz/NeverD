@@ -771,3 +771,5 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 `MmMapLockedPages` 共用現有映射器，固定使用快取頁面、HIGH 優先級及耗盡時 bugcheck 旗標。核心映射允許 DISPATCH_LEVEL；程序所屬的使用者檢視要求不高於 APC_LEVEL，耗盡時保留既有資源例外。帶 bugcheck 旗標的核心映射耗盡會明確停止為模型錯誤，不能作為成功呼叫傳回 NULL；實際 bugcheck 處理仍未建模。
 
 [`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject) 借用存活檔案的基礎裝置，不遍歷附加堆疊、不增加參照，也不讀取檔案擴充。本設定要求未掛載的自有路由及 IRQL <= DISPATCH_LEVEL；掛載 VPB 或錯誤的物件／拓撲狀態明確停止。微軟將此介面保留供系統使用，此 IRQL 上限屬於模型策略，並非公布的 Windows 契約。
+
+[`IoGetDeviceObjectPointer`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-iogetdeviceobjectpointer) 在 PASSIVE_LEVEL 且特殊核心 APC 啟用時開啟已宣告的現有檔案。採用不區分大小寫的名稱、內部核心控制代碼、讀寫共用及非同步非目錄開啟。傳回的檔案參考保留裝置，呼叫端以 `ObfDereferenceObject` 釋放。先寫檔案輸出，再寫裝置輸出，重疊指標亦遵循此順序。CREATE 和內部控制代碼 CLEANUP 可暫止，原呼叫執行緒保持臨界區直到兩者完成。裸裝置或磁碟區開啟、已掛載 VPB、檔案延伸路由及未知提供者仍不支援。

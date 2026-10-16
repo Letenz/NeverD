@@ -464,6 +464,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
     return queryFileDevice(A[0], FileDeviceQuery::Related);
   case KernelAPIKind::IoGetBaseFileSystemDeviceObject:
     return queryFileDevice(A[0], FileDeviceQuery::Base);
+  case KernelAPIKind::IoGetDeviceObjectPointer:
+    return getDeviceObjectPointer(A, Context);
   case KernelAPIKind::IoQueryFileInformation:
     return beginFileAPIRequest(A, DriverRequestKind::QueryInformation, false,
                                Context);
@@ -487,9 +489,9 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
                                Context);
   case KernelAPIKind::ZwCreateFile:
   case KernelAPIKind::IoCreateFile:
-    return createFile(A, false, Context);
+    return createFile(A, FileOpenKind::Create, Context);
   case KernelAPIKind::ZwOpenFile:
-    return createFile(A, true, Context);
+    return createFile(A, FileOpenKind::Open, Context);
   case KernelAPIKind::IoCancelFileOpen:
     return cancelFileOpen(A, Context);
   case KernelAPIKind::IoGetAttachedDeviceReference:

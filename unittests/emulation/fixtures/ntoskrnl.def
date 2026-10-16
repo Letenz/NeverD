@@ -121,6 +121,7 @@ EXPORTS
   ZwFsControlFile
   IoGetRelatedDeviceObject
   IoGetBaseFileSystemDeviceObject
+  IoGetDeviceObjectPointer
   KeStackAttachProcess
   KeUnstackDetachProcess
   RtlInitAnsiString
