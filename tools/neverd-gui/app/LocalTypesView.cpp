@@ -85,12 +85,11 @@ struct SourceLanguage {
   const char *filter;
   const char *suffix;
 };
+// C/C++ shows C, which C++ compiles too.
 constexpr SourceLanguage Languages[] = {
-    {"c", "C",
-     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "C header (*.h)"), "h"},
-    {"cpp", "C++",
-     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "C++ header (*.hpp)"),
-     "hpp"},
+    {"c", "C/C++",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "C/C++ header (*.h)"),
+     "h"},
     {"rust", "Rust",
      QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Rust (*.rs)"), "rs"},
     {"go", "Go", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Go (*.go)"),
@@ -113,7 +112,10 @@ constexpr Spelling Spellings[] = {
                                    "Exact widths (uint32_t)")},
 };
 
-constexpr char LanguageSetting[] = "localTypes/page";
+// The tab shown, by its language's id; empty for the layout.  It replaces
+// "localTypes/page", the tab's index when C and C++ had a tab each.
+constexpr char ViewSetting[] = "localTypes/view";
+constexpr char OldPageSetting[] = "localTypes/page";
 constexpr char SpellingSetting[] = "localTypes/spelling";
 constexpr char HexSetting[] = "localTypes/hexOffsets";
 constexpr char DependenciesSetting[] = "localTypes/dependencies";
@@ -377,8 +379,19 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   splitter->setSizes({260, 640});
 
   const QSettings settings;
-  tabs_->setCurrentIndex(std::clamp(settings.value(LanguageSetting, 0).toInt(),
-                                    0, tabs_->count() - 1));
+  QString view = settings.value(ViewSetting).toString();
+  if (!settings.contains(ViewSetting)) {
+    // Layout, C, C++, Rust, Go: C++ shows as C now.
+    static const char *const OldPages[] = {"", "c", "c", "rust", "go"};
+    const int old = settings.value(OldPageSetting, 0).toInt();
+    view = QString::fromLatin1(
+        OldPages[std::clamp(old, 0, int(std::size(OldPages)) - 1)]);
+  }
+  int shown = 0;
+  for (size_t I = 0; I < std::size(Languages); ++I)
+    if (view == QLatin1String(Languages[I].id))
+      shown = int(I) + 1;
+  tabs_->setCurrentIndex(shown);
   pages_->setCurrentIndex(tabs_->currentIndex() ? 1 : 0);
   const int spellingIndex = spelling_->findData(
       settings.value(SpellingSetting, QStringLiteral("windows")).toString());
@@ -406,7 +419,7 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   connect(list_->selectionModel(), &QItemSelectionModel::currentRowChanged,
           this, &LocalTypesView::selectionChanged);
   connect(tabs_, &QTabBar::currentChanged, this, [this](int index) {
-    QSettings().setValue(LanguageSetting, index);
+    QSettings().setValue(ViewSetting, index ? language() : QString());
     pages_->setCurrentIndex(index ? 1 : 0);
     highlighter_->setLanguage(language());
     if (index)
@@ -475,6 +488,8 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
     source_->setFont(Theme::instance().codeFont());
     highlighter_->rehighlight();
   });
+  // The options the restored tab shows, before any type is read.
+  updateActions();
   reload();
 }
 
@@ -956,9 +971,9 @@ void LocalTypesView::updateActions() {
   copy_->setEnabled(!current_.isEmpty());
   export_->setEnabled(model_->rowCount() > 0);
   const bool source = tabs_->currentIndex() > 0;
-  const bool cLike =
-      language() == QLatin1String("c") || language() == QLatin1String("cpp");
-  spelling_->setEnabled(!source || cLike);
+  // Builtins have spellings to choose only in the layout and in C/C++;
+  // Rust and Go spell them as their own types (u32, uint32).
+  spelling_->setVisible(!source || language() == QLatin1String("c"));
   dependencies_->setEnabled(source);
   asserts_->setEnabled(source);
 }

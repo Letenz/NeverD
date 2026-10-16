@@ -313,7 +313,8 @@ Rendered source must also compile with each record's size and offsets checked.
 `scripts/check_type_renders.py` runs `neverd types --all --asserts` and
 compiles the result:
 - C and C++ in all four builtin spellings with clang for the MSVC target, and
-  the portable spelling for the GNU target too;
+  the portable spelling for the GNU target too; the C header, which the
+  workbench shows as C/C++, compiles as C++ as well;
 - Rust with rustc (64-bit layouts only);
 - Go with `go vet` for Windows.
 

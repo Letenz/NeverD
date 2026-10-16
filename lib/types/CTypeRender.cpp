@@ -8,7 +8,8 @@
 // in place, bitfields as bitfields, and #pragma pack where the record was
 // packed.  A member the language would place below its recorded offset gets
 // an explicit filler before it; padding the compiler adds by itself is a
-// comment.
+// comment.  C's header compiles as C++ too: its checks are static_assert,
+// and the character types it declares are C++'s keywords there.
 //
 //===----------------------------------------------------------------------===//
 
@@ -87,6 +88,8 @@ public:
   const std::set<Builtin> &builtins() const { return UsedBuiltins; }
   /// Whether a record rendered so far declares its alignment.
   bool alignsRecords() const { return AlignsRecords; }
+  /// Whether a type rendered so far is followed by checks.
+  bool asserts() const { return Asserted; }
 
 private:
   void record(const LocalType &Type, std::string &Out);
@@ -119,6 +122,7 @@ private:
   unsigned Fillers = 0;
   mutable std::set<Builtin> UsedBuiltins;
   bool AlignsRecords = false;
+  bool Asserted = false;
 };
 
 std::string CWriter::builtin(Builtin Type) const {
@@ -508,7 +512,9 @@ void CWriter::hoisted(
 }
 
 void CWriter::asserts(const LocalType &Type, std::string &Out) {
-  const char *Assert = Cpp ? "static_assert" : "_Static_assert";
+  // C11's <assert.h> names _Static_assert so; the prelude does without it.
+  const char *Assert = "static_assert";
+  Asserted = true;
   const std::string Name = tagged(Type);
   if (Type.Kind == TypeKind::Enum) {
     Out += std::string(Assert) + "(sizeof(" + Name + ") == " +
@@ -561,6 +567,23 @@ void CWriter::forwardDeclaration(const LocalType &Type,
     Out += "union " + Names.type(Type.Name) + ";\n";
 }
 
+/// Whether \p Type is a character type C++ has a keyword for, which C's
+/// <uchar.h> declares instead.
+bool cppCharacter(Builtin Type) {
+  return Type == Builtin::Char8 || Type == Builtin::Char16 ||
+         Type == Builtin::Char32;
+}
+
+/// C's typedef of such a character type, which C++ keeps its keyword for:
+/// char8_t from C++20, the others from C++11.
+std::string characterTypedef(Builtin Type, const std::string &Portable) {
+  return std::string(Type == Builtin::Char8 ? "#if !defined(__cplusplus) || "
+                                              "!defined(__cpp_char8_t)\n"
+                                            : "#ifndef __cplusplus\n") +
+         "typedef " + Portable + " " + builtinInfo(Type).Keywords +
+         ";\n#endif\n";
+}
+
 /// Typedefs for the builtins whose name is no keyword: HRESULT, which the
 /// Windows headers guard as _HRESULT_DEFINED, and in C the character types
 /// <uchar.h> would declare.
@@ -572,9 +595,8 @@ std::string namedBuiltins(const CWriter &Writer, const TypeLibrary &Library,
     if (Type == Builtin::HResult)
       Out += "\n#ifndef _HRESULT_DEFINED\n#define _HRESULT_DEFINED\ntypedef " +
              Portable + " HRESULT;\n#endif\n";
-    else if (!Cpp && (Type == Builtin::Char8 || Type == Builtin::Char16 ||
-                      Type == Builtin::Char32))
-      Out += "typedef " + Portable + " " + builtinInfo(Type).Keywords + ";\n";
+    else if (!Cpp && cppCharacter(Type))
+      Out += characterTypedef(Type, Portable);
   }
   return Out;
 }
@@ -592,6 +614,14 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
     Out += "\n#ifndef DECLSPEC_ALIGN\n#if defined(_MSC_VER)\n#define "
            "DECLSPEC_ALIGN(x) __declspec(align(x))\n#else\n#define "
            "DECLSPEC_ALIGN(x) __attribute__((aligned(x)))\n#endif\n#endif\n";
+  // C++'s static_assert, which C11 spells _Static_assert: <assert.h> would
+  // name it, but freestanding C, as a driver's, need not have the header.
+  const bool LongChecked = Options.Spelling == BuiltinSpelling::Keywords &&
+                           (Writer.builtins().count(Builtin::Long) ||
+                            Writer.builtins().count(Builtin::ULong));
+  if (!Cpp && (Writer.asserts() || LongChecked))
+    Out += "\n#if !defined(__cplusplus) && !defined(static_assert)\n#define "
+           "static_assert _Static_assert\n#endif\n";
   switch (Options.Spelling) {
   case BuiltinSpelling::Windows: {
     // The Windows headers declare these; elsewhere they take exact widths.
@@ -607,6 +637,8 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
         continue;
       if (Type == Builtin::Void)
         Out += "#define VOID void\n";
+      else if (cppCharacter(Type))
+        Out += characterTypedef(Type, Portable);
       else
         Out += "typedef " + Portable + " " + Info.Windows + ";\n";
     }
@@ -619,11 +651,9 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
     Out += namedBuiltins(Writer, Library, Cpp);
     break;
   case BuiltinSpelling::Keywords:
-    if (Writer.builtins().count(Builtin::Long) ||
-        Writer.builtins().count(Builtin::ULong))
+    if (LongChecked)
       Out +=
-          std::string(Cpp ? "\nstatic_assert" : "\n_Static_assert") +
-          "(sizeof(long) == " +
+          "\nstatic_assert(sizeof(long) == " +
           std::to_string(builtinBytes(Builtin::Long, Library.dataModel())) +
           ", \"these types need a " +
           std::to_string(builtinBytes(Builtin::Long, Library.dataModel()) * 8) +
