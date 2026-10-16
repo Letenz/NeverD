@@ -1803,3 +1803,5 @@ KernelFileSystem は FILE_OBJECT ごとに provider token を保持します。�
 `KernelObjectAPIs.def` が固定コールバックバージョンクエリの識別、引数数、値、IRQL 上限を一元管理します。コールバックレジストリやホスト OS への照会は追加しません。
 
 `KernelPhysicalMemory::resolveAddress` は現在の `MemoryView` を保持中の正確な割り当て範囲と既存のページ識別子に照合し、別名も扱います。`KernelModel` は読み取り権限、プロセス環境、常駐状態を別途検証します。照会は識別子の割り当てやページ固定を行わず、マッピングが残るページの余白で解放済みバイトを復活させません。
+
+`KernelModel::queryPrimaryVirtualAddress` は既存の有効な非ページ `PoolAllocation` 記録と `KernelPhysicalMemory::describe` から主 VA を導き、順方向照会で検証します。逆引き別名レジストリ、物理識別子、ページ固定を追加しません。一般的なバッキングアドレスだけでは主マッピングを証明できません。

@@ -1765,6 +1765,8 @@ private:
   llvm::Expected<uint64_t> allocate(uint64_t Size, uint64_t Alignment = 16);
   llvm::Expected<uint64_t> isResidentKernelAddress(uint64_t Address) const;
   llvm::Expected<uint64_t> queryPhysicalAddress(uint64_t Address) const;
+  llvm::Expected<uint64_t>
+  queryPrimaryVirtualAddress(uint64_t PhysicalAddress) const;
   llvm::Expected<uint64_t> allocatePhysicalBuffer(uint64_t AllocationSize,
                                                   uint64_t Alignment,
                                                   uint64_t DataOffset,

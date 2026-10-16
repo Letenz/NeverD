@@ -1936,3 +1936,5 @@ Die Aliase nutzen bestehende Besitzer von Threads/Prozessen und Ausführungskont
 `KernelObjectAPIs.def` verwaltet Identität, Argumentzahl, Wert und IRQL-Grenze der festen Versionsabfrage. Es entsteht weder eine Callbackregistrierung noch eine Abfrage des Hostbetriebssystems.
 
 `KernelPhysicalMemory::resolveAddress` ordnet die aktuelle `MemoryView` den exakten erhaltenen Allokationsbereichen und bestehenden Seitenidentitäten zu, einschließlich Aliasen. `KernelModel` prüft Lesbarkeit, Prozesskontext und Residenz getrennt. Eine Abfrage erzeugt weder Identitäten noch Seitensperren; weiterhin abgebildete Füllbereiche beleben freigegebene Bytes nicht wieder.
+
+`KernelModel::queryPrimaryVirtualAddress` leitet die primäre VA aus bestehenden aktiven nicht auslagerbaren `PoolAllocation`-Einträgen und `KernelPhysicalMemory::describe` ab und prüft sie über die Vorwärtsabfrage. Es entstehen weder ein inverses Aliasregister noch physische Identitäten oder Seitensperren; allgemeine Speicheradressen belegen keine primäre Abbildung.

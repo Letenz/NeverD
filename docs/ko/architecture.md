@@ -1780,3 +1780,5 @@ KernelFileSystem은 FILE_OBJECT마다 provider token 하나를 유지합니다. 
 `KernelObjectAPIs.def`가 고정 콜백 버전 조회의 식별, 인수 개수, 값 및 IRQL 상한을 관리합니다. 콜백 레지스트리나 호스트 운영체제 조회는 추가하지 않습니다.
 
 `KernelPhysicalMemory::resolveAddress`는 현재 `MemoryView`를 보존된 정확한 할당 범위와 기존 페이지 식별자에 대조하며 별칭도 처리합니다. `KernelModel`은 읽기 권한, 프로세스 컨텍스트 및 상주 상태를 별도로 검사합니다. 조회는 식별자나 페이지 잠금을 생성하지 않으며, 매핑이 남은 페이지의 패딩으로 해제된 바이트를 되살리지 않습니다.
+
+`KernelModel::queryPrimaryVirtualAddress`는 기존 활성 비페이징 `PoolAllocation` 기록과 `KernelPhysicalMemory::describe`에서 기본 VA를 구한 뒤 정방향 조회로 검증합니다. 역방향 별칭 등록부, 물리 식별자 또는 페이지 잠금을 추가하지 않습니다. 일반 저장소 주소만으로 기본 매핑을 입증할 수 없습니다.

@@ -1942,3 +1942,5 @@ Les alias réutilisent les propriétaires existants des threads/processus et des
 `KernelObjectAPIs.def` possède identité, arité, valeur et plafond IRQL de cette requête fixe. Aucun registre de callbacks ni appel au système hôte n’est ajouté.
 
 `KernelPhysicalMemory::resolveAddress` associe le `MemoryView` courant aux tranches exactes des allocations conservées et aux identités de pages existantes, y compris les alias. `KernelModel` valide séparément lecture, processus et résidence. La requête ne crée ni identité ni verrou de page ; le remplissage encore mappé ne réactive pas les octets libérés.
+
+`KernelModel::queryPrimaryVirtualAddress` déduit la VA principale des enregistrements non paginés actifs `PoolAllocation` et de `KernelPhysicalMemory::describe`, puis la valide par la requête directe. Il n’ajoute ni registre inverse d’alias, ni identité physique, ni verrou de page ; une adresse de stockage générique ne prouve pas un mapping principal.

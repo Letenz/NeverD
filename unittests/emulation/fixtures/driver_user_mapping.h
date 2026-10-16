@@ -26,6 +26,7 @@ enum DriverUserMappingAction {
   UserMappingKernelPoolLock = 0x22213f,
   UserMappingProcessLock = 0x222143,
   UserMappingPhysicalAddress = 0x222147,
+  UserMappingPrimaryAddress = 0x22214b,
   UserMappingReportSize = 4,
   UserMappingByteOffset = 17,
   UserMappingFirstByte = 0x43,

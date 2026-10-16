@@ -160,6 +160,7 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
       Kind != KernelAPIKind::MmMapLockedPages &&
       Kind != KernelAPIKind::MmGetSystemAddressForMdlSafe &&
       Kind != KernelAPIKind::MmGetPhysicalAddress &&
+      Kind != KernelAPIKind::MmGetVirtualForPhysical &&
       Kind != KernelAPIKind::MmUnmapLockedPages &&
       Kind != KernelAPIKind::RtlCopyMemory &&
       Kind != KernelAPIKind::RtlMoveMemory)
@@ -362,6 +363,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
     return isResidentKernelAddress(A[0]);
   case KernelAPIKind::MmGetPhysicalAddress:
     return queryPhysicalAddress(A[0]);
+  case KernelAPIKind::MmGetVirtualForPhysical:
+    return queryPrimaryVirtualAddress(A[0]);
   case KernelAPIKind::KeRegisterBugCheckReasonCallback:
     return registerBugCheckCallback(A[0], A[1], uint32_t(A[2]), A[3]);
   case KernelAPIKind::KeDeregisterBugCheckReasonCallback:

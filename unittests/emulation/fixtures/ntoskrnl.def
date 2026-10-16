@@ -84,6 +84,7 @@ EXPORTS
   MmGetSystemRoutineAddress
   MmIsAddressValid
   MmGetPhysicalAddress
+  MmGetVirtualForPhysical
   KeRegisterBugCheckReasonCallback
   KeDeregisterBugCheckReasonCallback
   RtlCopyUnicodeString

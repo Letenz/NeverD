@@ -7431,3 +7431,5 @@ capture failures cannot replace the original service outcome.
 `KernelObjectAPIs.def` owns the fixed callback-version query’s identity, arity, value and IRQL ceiling. No callback registry or host operating-system query is introduced.
 
 `KernelPhysicalMemory::resolveAddress` matches the current `MemoryView` to exact retained allocation slices and existing page identities, including aliases. `KernelModel` separately admits readable mappings, process context and residency. A query neither allocates an identity nor pins a page; surviving mapped page padding cannot revive retired bytes.
+
+`KernelModel::queryPrimaryVirtualAddress` derives the primary VA from existing live nonpaged `PoolAllocation` records and `KernelPhysicalMemory::describe`, then authenticates it through the forward query. It adds no reverse-alias registry, physical identity or pin; generic backing addresses do not establish a primary mapping.

@@ -1731,3 +1731,5 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 `KernelObjectAPIs.def` 統一負責固定回呼版本查詢的識別、參數數量、值與 IRQL 上限，不引入回呼登錄表或主機作業系統查詢。
 
 `KernelPhysicalMemory::resolveAddress` 將目前 `MemoryView` 與保留的精確配置切片和既有頁面身分匹配，包括別名。`KernelModel` 分別檢查映射可讀性、行程環境及駐留狀態。查詢不配置新身分或鎖定頁面；仍映射的頁面填補不能恢復已釋放位元組的生命週期。
+
+`KernelModel::queryPrimaryVirtualAddress` 依據既有存活的非分頁 `PoolAllocation` 記錄及 `KernelPhysicalMemory::describe` 推導主要虛擬位址，再透過正向查詢驗證。不新增反向別名登錄、實體身分或頁面鎖定；通用後備位址不能證明主要映射。
