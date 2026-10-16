@@ -7,5 +7,13 @@
 NEVERD_ANDROID_TEST_EXECUTION(
     "OptimizationAndPacking", "AndroidFinalizers",
     "FiniteRegistryRejectsBeforeSuccessAndCanBeReused", 120, 1)
+// Eight workloads, each retaining its existing 30-second guest wall budget.
+NEVERD_ANDROID_TEST_EXECUTION(
+    "Compiled", "AndroidDevices",
+    "GPUObjectsShareMemoryAndRetireOnlyTheirFinalOwner", 300, 1)
+// Fifteen independent malformed-program cases with complete RAM comparisons.
+NEVERD_ANDROID_TEST_EXECUTION(
+    "Compiled", "AndroidDevices",
+    "RejectedIndirectGPUProgramsPreserveAllFetchedRAM", 300, 1)
 NEVERD_ANDROID_TEST_EXECUTION_DIAGNOSTIC(
-    "Android test execution inventory has no valid capacity rule")
+    "Android test execution inventory has no valid execution rule")

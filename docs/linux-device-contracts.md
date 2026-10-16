@@ -384,3 +384,50 @@ The LP64 legacy layouts use the same revision's
 [UAPI](https://android.googlesource.com/kernel/msm/+/2db776e4f994f895799dd7cb47397db6bfe1e616/include/uapi/linux/msm_kgsl.h),
 with the page-alignment floor defined by its
 [shared-memory allocator](https://android.googlesource.com/kernel/msm/+/2db776e4f994f895799dd7cb47397db6bfe1e616/drivers/gpu/msm/kgsl_sharedmem.c).
+
+## Optional ioctl memory evidence
+
+`linux_files.ioctl_trace` observes the shared raw/Bionic ioctl boundary. It
+records narrowed FD/request, argument, PC, thread, raw Linux result bits and,
+for Android wrappers, the guest return address (a tail call retains its
+caller's return address). It neither interprets an unknown ioctl nor supplies
+a reply. A null result is an unfinished/refused boundary, not success.
+
+```json
+"ioctl_trace": {
+  "event_limit": 1024,
+  "byte_limit": 65536,
+  "requests": [{
+    "request": 2701131777,
+    "memory": [
+      {"offset": 0, "size": 24},
+      {"pointer_offset": 8, "offset": 0, "size": 16}
+    ]
+  }]
+}
+```
+
+Each range is an explicit observation extent. `pointer_offset` reads one
+little-endian LP64 pointer at argument+offset at entry; both snapshots read
+the resulting address plus `offset`, even if the service changes the pointer
+cell. Sizes are not inferred from ioctl number bits, pointer values or guest
+allocation extents. GPU virtual addresses are not CPU pointers. This is not
+a recursive Binder parcel decoder or a GPU/shader program extractor.
+
+The optional top-level `ioctl_trace` report includes `memory` rows with
+`address`, `size`, `before_hex`, `after_hex`, `before_status`, and `after_status`.
+Only `complete` means the entire declared range was captured. `unreadable`,
+`address_overflow`, `backend_error`, `byte_limit`, and
+`unresolved_entry_address` distinguish absent evidence from an empty payload.
+Unknown request numbers still have a metadata row with an empty range list.
+No trace fields are emitted when the option is absent.
+
+Limits are 4096 events, 1 MiB attempted read bytes (including pointer cells and
+both phases), 64 unique requests, 16 ranges per request and 4096 bytes per
+range. Whole ranges are retained or omitted; no zero padding or partial-read
+success is reported. `ioctl_trace_truncated` marks event/byte exhaustion.
+Capture failure/exhaustion does not change guest results, device transaction
+consumption, writes or virtual time. Only ordinary guest RAM is observed;
+these snapshots do not authorize host/device reads or provide general memory
+provenance. Bounded observations are evidence for the executed input, not an
+all-path proof.

@@ -7271,3 +7271,13 @@ Thread query aliases reuse the existing thread/process and execution-context own
 `KernelMDLCalls` normalizes the legacy mapping entry into the existing six-argument mapper. `KernelPhysicalMemory` and MDL records continue to own cache attributes, page identity, permissions and lifetime. Only fully released kernel image aliases remain recoverable without an environment dependency; user views retain that dependency.
 
 `queryFileDevice` in `KernelModelFileRequests` owns common file identity, header, mount and topology checks. Base queries return the owned file device; related queries additionally validate file-extension routing and select the attached top. Both borrow their result.
+
+
+### Linux ioctl observation ownership
+
+`LinuxIoctlTrace` surrounds the existing `LinuxFiles::deviceIoctl` decision at
+one shared raw/native service boundary. It owns bounded diagnostic reads and
+entry-resolved addresses, never device replies or a second ABI decoder.
+`LinuxServices` supplies the current task; Android supplies its native return
+address. `ProcessReport` serializes the optional stream. Trace limits and
+capture failures cannot replace the original service outcome.

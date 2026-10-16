@@ -26,6 +26,7 @@ BionicResult Bionic::kernelCall(std::optional<linux_model::ServiceKind> Kind,
     return value(UINT64_MAX);
   }
   ProcessServiceEvent Event{Call.PC, IsSyscall ? A[0] : 0, {}, std::nullopt};
+  Event.ReturnAddress = Call.ReturnAddress;
   // AArch64 Bionic syscall(number, ...) shifts x1..x6 into the six
   // kernel argument registers. The shared Linux table owns the number.
   std::copy_n(A.begin() + (IsSyscall ? 1 : 0), Event.Arguments.size(),

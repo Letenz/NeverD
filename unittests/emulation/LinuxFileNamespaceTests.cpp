@@ -73,6 +73,52 @@ protected:
   }
 };
 
+TEST_P(LinuxFileNamespace, IoctlTraceKeepsEntryPointerAndRefusedCallBytes) {
+  auto &D = Options.LinuxFiles->Devices["/dev/example"];
+  D.AccessMode = 2;
+  // The output overwrites the pointer cell. Observations still read the
+  // originally selected destination, not a new address from output bytes.
+  D.Ioctls = {{0x12345678,
+               0,
+               {},
+               {{0, {}, {}, std::vector<uint8_t>(8, 0)},
+                {0, 0, {0xa5, 0x5a}, {0x12, 0x34}}}}};
+  auto &T = Options.LinuxFiles->IoctlTrace.emplace();
+  T.Requests[0x12345678] = {{0, 8, {}}, {0, 2, 0}};
+  llvm::cantFail(linux_model::validateFileOptions(*Options.LinuxFiles));
+  Kernel = std::make_unique<linux_model::LinuxServices>(
+      cpu(), Layout, Base + 8192, Options, Report);
+  const auto FD = open("/dev/example", 2);
+  llvm::cantFail(cpu().writeInteger(Base + 256, Base + 512, 8));
+  llvm::cantFail(cpu().write(Base + 512, {0xa5, 0x5a}));
+  ProcessServiceEvent E{0x1234,
+                        GetParam() == GuestArchitecture::X64 ? 16u : 29u,
+                        {FD | (uint64_t(7) << 32),
+                         0x12345678 | (uint64_t(9) << 32), Base + 256, 0, 0, 0},
+                        {}};
+  ASSERT_EQ(llvm::cantFail(Kernel->handle(E)), 0u);
+  ASSERT_EQ(Report.IoctlTrace.size(), 1u);
+  const auto &C = Report.IoctlTrace[0];
+  EXPECT_EQ(C.PC, 0x1234u);
+  EXPECT_EQ(C.FD, FD);
+  EXPECT_EQ(C.Request, 0x12345678u);
+  EXPECT_FALSE(C.ReturnAddress);
+  ASSERT_EQ(C.Memory.size(), 2u);
+  EXPECT_EQ(C.Memory[1].Address, Base + 512);
+  EXPECT_EQ(C.Memory[1].Before, (std::vector<uint8_t>{0xa5, 0x5a}));
+  EXPECT_EQ(C.Memory[1].After, (std::vector<uint8_t>{0x12, 0x34}));
+  EXPECT_EQ(C.Memory[0].After, std::vector<uint8_t>(8, 0));
+  // A repeated transaction is unsupported, not turned into a trace success.
+  const auto Before = bytes(Base, 8192);
+  EXPECT_FALSE(llvm::cantFail(Kernel->handle(E)));
+  EXPECT_EQ(Report.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(bytes(Base, 8192), Before);
+  ASSERT_EQ(Report.IoctlTrace.size(), 2u);
+  EXPECT_FALSE(Report.IoctlTrace[1].Result);
+  EXPECT_EQ(Report.IoctlTrace[1].Memory[0].Before,
+            Report.IoctlTrace[1].Memory[0].After);
+}
+
 TEST_P(LinuxFileNamespace,
        DirentLayoutPaddingAndSeekCookiesAreIndependentOfHostABI) {
   auto FD = open("/empty");

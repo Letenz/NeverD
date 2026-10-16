@@ -7587,3 +7587,19 @@ Context-query tests cover retained and stale threads, requestor/worker/attached 
 Legacy MDL mapping checks cover static and dynamic genuine WDK calls, an attached worker, original image aliases, mode narrowing, IRQL, process switching, stale descriptors, duplicate system mappings and injected alias-budget exhaustion. Kernel shortage retains the MDL and reports unsupported bugcheck processing; user shortage remains catchable. Original wrapper probes verify argument forwarding and return width, not the injected mapper.
 
 `KernelFileQueries.BaseDevice*` checks base versus two attached filters, unchanged references, ignored extension pointers, create/cleanup/close admission, corrupt records and IRQL. Original and genuine WDK normal/CFG file-query fixtures execute static and dynamic base queries across the existing backend, relocation, scheduling and caller-lifetime matrix.
+
+
+## Ioctl memory evidence
+
+`AndroidDevices.IoctlTrace*` checks raw/named/variadic/dynamic routes against
+unchanged guest instruction/event counts, pointer payload bytes and errno
+outcomes. It also checks unreadability, address overflow and trace exhaustion.
+`LinuxFileNamespace.IoctlTraceKeepsEntryPointerAndRefusedCallBytes` covers both
+LP64 architectures, a pointer overwritten by the ioctl and an unsupported
+retry with complete RAM equality. `ProcessReport.IoctlTrace*` checks strict
+JSON admission and lossless evidence serialization. The Python device
+integration exercises the same report through the public C SDK.
+
+`NeverDHighCSupervisorCallTests` verifies that an unmodeled live ARM/AArch64
+SVC result returns a recoverable emission error. Unused results retain the
+side-effecting statement without acquiring a Linux syscall contract.

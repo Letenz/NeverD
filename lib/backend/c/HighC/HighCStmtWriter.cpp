@@ -34,6 +34,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <stdexcept>
 
 namespace neverd {
 
@@ -601,7 +602,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       // result needs an explicit output model, rather than an invented value.
       if (!CurrentFunc ||
           (Stmt.Dst->Kind != ExprKind::Var && Stmt.Dst->Kind != ExprKind::Phi))
-        llvm::report_fatal_error("HighC cannot render an SVC result");
+        throw std::invalid_argument("HighC cannot render an SVC result");
       bool ResultUsed = false;
       const MedVar Result = Stmt.Dst->Var;
       std::function<void(const HighExpr &)> FindUse = [&](const HighExpr &E) {
@@ -623,7 +624,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         });
       });
       if (ResultUsed)
-        llvm::report_fatal_error("HighC cannot render a live SVC result");
+        throw std::invalid_argument("HighC cannot render a live SVC result");
       emitIndent(Indent);
       OS << statementCallText(*Stmt.Val) << ";\n";
       break;
