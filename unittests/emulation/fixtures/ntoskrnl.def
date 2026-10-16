@@ -113,6 +113,9 @@ EXPORTS
   ZwReadFile
   ZwWriteFile
   ZwSetInformationFile
+  ZwFlushBuffersFile
+  ZwDeviceIoControlFile
+  ZwFsControlFile
   IoGetRelatedDeviceObject
   KeStackAttachProcess
   KeUnstackDetachProcess

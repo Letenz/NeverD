@@ -751,3 +751,7 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 `ZwReadFile` / `ZwWriteFile` 支持缓冲设备栈上的已打开同步 WDM 文件，要求 PASSIVE_LEVEL、中断和特殊内核 APC 启用，Event、APC 例程和上下文均为 NULL。KernelMode 保留句柄作用域而不检查授权掩码；仅追加写句柄仍使用偏移 −1。NULL 或 −2 偏移使用保存的位置，其余负偏移无效，写入 −1 除外。长度和键按 ULONG 捕获。写入先复制输入再派发；读取完成先复制字节，再写 Information 和四字节 Status。立即错误保留调用方 IOSB，挂起错误会发布 IOSB。挂起调用等待完成并保留原调用方；零长度仍派发。共享完成不推进文件位置，单次传输上限为 1 MiB。异步文件、直接/neither I/O、缓存 Fast I/O、完成端口、框架所有的路由和声明式提供者的数据 I/O 仍未支持。报告来源为 `ZwReadFile` / `ZwWriteFile`。
 
 `ZwSetInformationFile` 通过同一文件所有者实现同步 FilePositionInformation (14)。它捕获八字节输入，要求 Length >= 8、位置为非负有符号 64 位数；设备扇区大小非零时检查非缓存对齐。它先更新保存的位置，再写四字节 Status 和八字节 Information=0，保留 IOSB 填充及输出故障前已执行的写入。不创建 IRP，也不重置文件事件。句柄作用域、调用方资格和同文件串行规则沿用文件 API 契约。其他类及异步位置设置仍未支持。位置查询及后续 NULL/−2 读写偏移观察此状态。
+
+`ZwFlushBuffersFile` 支持打开的同步 WDM 文件句柄。即使处于 KernelMode，也要求 FILE_WRITE_DATA 或 FILE_APPEND_DATA；文件的命名管道标志将要求收窄为 FILE_WRITE_DATA。无缓冲区请求使用主功能 9、次功能 0，不设置延迟完成标志。符合条件的立即完成会在分发返回前发布 IOSB 并释放数据包；工作线程、受限 APC 或提高 IRQL 时的完成等待原调用者恢复到可通知状态。Information 保留完整 64 位，不复制输出，文件位置保持不变。异步文件、声明式提供方刷新和框架路径仍不支持。报告类型为 `flush_buffers`，来源为 `ZwFlushBuffersFile`；场景不能自行创建这种内核生成的请求。
+
+`ZwDeviceIoControlFile` 和 `ZwFsControlFile` 接受已打开的同步 WDM 句柄、METHOD_BUFFERED 及空 Event/APC 参数。共用所有者截取 ULONG 长度和控制码、复制输入、清零其余输出分配，并以请求的输出长度限制非零输出；零输出请求保留完整位宽 Information，不复制数据。设备控制在满足通知条件时立即完成，FSCTL 的立即完成包保留到服务尾部。两者保留原调用者通知、IOSB 填充字节和文件位置。KernelMode 跳过授权掩码检查，但传播读写栈标志。上限为 1 MiB。异步、direct/neither、设备 Fast I/O、IOCP、内部缓冲绕过、提供方／框架路径及控制码 0x94264/0x98268/0x9042c/0x90020 仍不支持；非零长度的空输入被拒绝。报告来源使用 API 名称；`fsctl` 只能由内核生成。

@@ -464,6 +464,15 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
     return beginFileAPIRequest(A, DriverRequestKind::Write, true, Context);
   case KernelAPIKind::ZwSetInformationFile:
     return setFileInformation(A, Context);
+  case KernelAPIKind::ZwFlushBuffersFile:
+    return beginFileAPIRequest(A, DriverRequestKind::FlushBuffers, true,
+                               Context);
+  case KernelAPIKind::ZwDeviceIoControlFile:
+    return beginFileAPIRequest(A, DriverRequestKind::DeviceControl, true,
+                               Context);
+  case KernelAPIKind::ZwFsControlFile:
+    return beginFileAPIRequest(A, DriverRequestKind::FileSystemControl, true,
+                               Context);
   case KernelAPIKind::ZwCreateFile:
   case KernelAPIKind::IoCreateFile:
     return createFile(A, false, Context);

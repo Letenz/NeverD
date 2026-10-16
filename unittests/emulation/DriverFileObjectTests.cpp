@@ -519,15 +519,49 @@ void exerciseFileTransfers(const std::filesystem::path &Image,
       ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
       ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
       ASSERT_TRUE(Result->UnloadCompleted) << Result->Diagnostic;
-      ASSERT_EQ(Result->Requests.size(), Options.Requests.size() + 7)
+      ASSERT_EQ(Result->Requests.size(), Options.Requests.size() + 17)
           << driverResultJSON(*Result);
       const uint32_t Status = Mode == 'W' ? 0x80000005u
                               : Mode == 'E' || Mode == 'R' || Mode == 'M'
                                   ? 0xc0000001u
                                   : 0u;
-      unsigned Index = 0;
+      unsigned Index = 0, Flushes = 0, Controls = 0;
       for (const auto &Request : Result->Requests) {
         EXPECT_TRUE(Request.Completed);
+        if (Request.Origin == DriverRequestOrigin::FileHandleDeviceControl ||
+            Request.Origin == DriverRequestOrigin::FileHandleSystemControl) {
+          const bool FS = Controls >= 4;
+          const unsigned Shape = Controls % 4;
+          EXPECT_EQ(Request.Kind, FS ? DriverRequestKind::FileSystemControl
+                                     : DriverRequestKind::DeviceControl);
+          EXPECT_EQ(Request.Origin,
+                    FS ? DriverRequestOrigin::FileHandleSystemControl
+                       : DriverRequestOrigin::FileHandleDeviceControl);
+          EXPECT_EQ(Request.ControlCode, 0x22e000u + 4 * Shape);
+          EXPECT_EQ(Request.IOStatus, Status);
+          EXPECT_EQ(Request.Information, Shape < 2 ? 7u : 0x100000007ull);
+          EXPECT_EQ(Request.Output,
+                    Shape < 2 && Status >> 30 != 3
+                        ? std::vector<uint8_t>(
+                              {0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26})
+                        : std::vector<uint8_t>{});
+          EXPECT_FALSE(Request.FileInformationClass);
+          EXPECT_EQ(Request.File, 0x1000u);
+          EXPECT_EQ(Request.RequestorProcessID, 0x2000u);
+          ++Controls;
+          continue;
+        }
+        if (Request.Kind == DriverRequestKind::FlushBuffers) {
+          EXPECT_EQ(Request.Origin, DriverRequestOrigin::FileHandleFlush);
+          EXPECT_EQ(Request.IOStatus, Status);
+          EXPECT_EQ(Request.Information, 0x100000007ull);
+          EXPECT_TRUE(Request.Output.empty());
+          EXPECT_FALSE(Request.FileInformationClass);
+          EXPECT_EQ(Request.File, 0x1000u);
+          EXPECT_EQ(Request.RequestorProcessID, 0x2000u);
+          ++Flushes;
+          continue;
+        }
         if (Request.Kind != DriverRequestKind::Read &&
             Request.Kind != DriverRequestKind::Write) {
           EXPECT_EQ(Request.IOStatus, 0u);
@@ -554,15 +588,21 @@ void exerciseFileTransfers(const std::filesystem::path &Image,
         ++Index;
       }
       EXPECT_EQ(Index, 6u);
+      EXPECT_EQ(Flushes, 2u);
+      EXPECT_EQ(Controls, 8u);
       EXPECT_TRUE(Result->Devices.empty());
-      for (const char *Name : {"ZwReadFile", "ZwWriteFile"}) {
+      for (auto [Name, Expected] : {std::pair{"ZwReadFile", 3u},
+                                    {"ZwWriteFile", 3u},
+                                    {"ZwFlushBuffersFile", 2u},
+                                    {"ZwDeviceIoControlFile", 4u},
+                                    {"ZwFsControlFile", 4u}}) {
         unsigned Calls = 0;
         for (const auto &Call : Result->Calls)
           if (Call.Name == Name) {
             EXPECT_EQ(Call.Result, Mode == 'M' ? 0 : Status);
             ++Calls;
           }
-        EXPECT_EQ(Calls, 3u);
+        EXPECT_EQ(Calls, Expected);
       }
     }
 }

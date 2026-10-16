@@ -36,10 +36,15 @@ def run(executable):
         assert [row["name"] for row in listing["types"]] == ["_DEVICE"]
         assert listing["types"][0]["size"] == 0x58
 
-        device = ok(owner, "local_type", {"name": "_DEVICE", "spelling": "ida"})
+        # Exact widths unless asked.
+        device = ok(owner, "local_type", {"name": "_DEVICE"})
         links = next(member for member in device["members"] if member["name"] == "Links")
         assert links["offset"] == 8 and links["refers"] == "_LIST_ENTRY"
-        assert device["members"][0]["type"] == "unsigned __int16"
+        assert device["members"][0]["type"] == "uint16_t", device["members"][0]
+        keywords = ok(owner, "local_type", {"name": "_DEVICE", "spelling": "keywords"})
+        assert keywords["members"][0]["type"] == "unsigned short", keywords["members"][0]
+        refused = owner.call("local_type", {"name": "_DEVICE", "spelling": "ida"})
+        assert refused["status"] != "ok", refused
 
         rust = ok(owner, "local_types_source", {"language": "rust", "types": ["_PACKED"],
                                                 "dependencies": False})

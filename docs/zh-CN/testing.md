@@ -1966,3 +1966,7 @@ KernelFileObjectTests 与 KernelObjectTests 覆盖带类型的指针打开、类
 `longjmp-finally-{register,frame,private}-loop` 与对应的 `longjmp-filter-*` 增加 18 个 EH3/EH4/EH4+GS 场景。三次迭代写入可观察的轨迹，区分寄存器、父帧槽及回调私有栈计数器；完整配置在两个基址执行 4,320 个原始与生成映像。`RegistrationCallbackLoop` 覆盖终止、重现状态、未知计数器、错误分支、缓冲区破坏、栈平衡及预算耗尽。`RegistrationSEHPHICopy` 和 `RegistrationRecoveredCopy` 验证源边、回调归属、父帧恢复及所有标量槽别名；错误索引、地址逃逸、原子或错宽访问、可观察的未定义值必须拒绝安装。
 
 `KernelFileTransfers` 覆盖数据包字段、偏移哨兵、仅追加句柄、零长度、输出别名、立即与挂起状态、工作线程通知和发布前拒绝。`OriginalBufferedNativeFileTransfers` 与 `GenuineWdkBufferedNativeFileTransfers` 跨后端、执行契约、装载地址和调度执行导入及动态查找调用。配置 `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` / `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` 使用真实普通/CFG 映像；不可用后端明确跳过。
+
+`KernelFileTransfers` 验证刷新权限、各设备传输模式下的无缓冲区数据包、完整位宽 Information、分发返回前的发布与释放、工作线程／受限 APC 通知及异步／并发拒绝。已有原创和真实 WDK 文件传输夹具还执行导入及动态查找的刷新调用，包含用户 IOSB 和九种完成情形。
+
+`KernelFileTransfers` 检查控制包字段、ULONG 截断、零长度指针、只读输入复制、IOSB 别名、独立输入／输出边界、延迟完成和原调用线程通知。已有原创及真实 WDK 传输夹具通过导入和动态查找调用两个控制 API，覆盖四种缓冲区形态和九种完成模式。

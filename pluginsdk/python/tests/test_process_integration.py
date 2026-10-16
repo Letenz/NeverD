@@ -71,7 +71,7 @@ class ProcessIntegrationTests(unittest.TestCase):
             with self.subTest(entry=entry):
                 options = {"backend": "unicorn", "android": {
                     "entry_symbol": entry, "initialize": False,
-                    "thread_limit": 3}, "linux_files": {"files": [], "devices": [
+                    "thread_limit": 5}, "linux_files": {"files": [], "devices": [
                         {"path": "/dev/binder", "access_mode": 2, "open_errno": 0,
                          "ioctls": [], "binder": True}]}}
                 result = session.emulate_process(str(Path(fixtures) / "binder-O2-relr.so"),

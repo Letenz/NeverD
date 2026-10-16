@@ -1991,3 +1991,7 @@ KernelFileObjectTests와 KernelObjectTests는 형식 검사, 형식 불일치 �
 `KernelFileCreateTests.cpp`는 패킷 유지, 공유 실패, 비동기 상대 루트 유지, 명시적 취소, 실패／별칭 출력 및 언로드를 검증합니다. `DriverFileSystemExecutionTests.cpp`는 양쪽 계약과 기준 주소, 사용 가능한 백엔드에서 원본 및 실제 WDK 일반／CFG 드라이버를 협력형과 명령 시계 스케줄링으로 실행합니다. C API／CLI／Python도 동일한 식별자를 유지합니다. 사용할 수 없는 백엔드는 건너뛰며 이벤트와 APC 탐침 경계는 전체 커널을 입증하지 않습니다.
 
 `KernelFileTransfers`는 패킷 필드, 특수 오프셋, 추가 전용 핸들, 길이 0, 출력 별칭, 즉시·보류 상태, 작업자 알림, 공개 전 거부를 검사합니다. `OriginalBufferedNativeFileTransfers` / `GenuineWdkBufferedNativeFileTransfers`는 백엔드, 계약, 적재 주소, 스케줄링별로 가져오기 및 동적 해석 호출을 실행합니다. 실제 WDK 일반/CFG 이미지에는 `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` / `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE`를 설정합니다. 사용할 수 없는 백엔드는 명시적으로 건너뜁니다.
+
+`KernelFileTransfers`는 플러시 권한, 모든 장치 전송 방식의 버퍼 없는 패킷, 64비트 Information, 디스패치 반환 전 게시·해제, 작업자/보호 영역 알림 및 비동기/동시 요청 거부를 검증합니다. 기존 자체 및 실제 WDK 전송 픽스처도 사용자 IOSB와 아홉 완료 조건에서 가져오기 및 동적 조회 플러시 호출을 실행합니다.
+
+`KernelFileTransfers`는 제어 패킷, ULONG 잘림, 길이 0 포인터, 읽기 전용 입력 복사, IOSB 별칭, 독립 입출력 한계, 지연 완료와 원래 스레드 알림을 검증합니다. 기존 원본 및 실제 WDK 전송 픽스처는 두 API의 가져오기와 동적 조회를 네 가지 버퍼 형태와 아홉 완료 모드로 실행합니다.

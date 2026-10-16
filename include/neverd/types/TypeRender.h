@@ -60,8 +60,12 @@ std::optional<BuiltinSpelling> spellingNamed(llvm::StringRef Id);
 bool spellsBuiltins(Language Lang, BuiltinSpelling Spelling);
 /// How \p Lang names builtins unless asked.
 BuiltinSpelling defaultSpelling(Language Lang);
-/// The spellings \p Lang takes, by their ids: "windows or portable".
+/// The spellings \p Lang takes, its default first (TypeLanguages.def).
+std::vector<BuiltinSpelling> spellingsOf(Language Lang);
+/// The spellings \p Lang takes, by their ids: "portable or windows".
 std::string spellingsText(Language Lang);
+/// Every spelling, by its id: "portable, windows or keywords".
+std::string spellingsText();
 
 struct RenderOptions {
   Language Lang = Language::C;

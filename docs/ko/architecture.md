@@ -1730,3 +1730,7 @@ KernelFileSystem은 FILE_OBJECT마다 provider token 하나를 유지합니다. 
 `RecoveryArchitecture`는 빌드 호스트와 무관하게 `SpecializationOptions::Architecture`에서 네이티브 계약을 선택합니다. 기존 기본값은 x64이며 어댑터가 없는 대상은 명시적으로 거부합니다. `arch/x86_64`는 네이티브 옵션 인코딩, 기본 이미지 범위 규칙, 외부 종료 일치 비용과 물리적 종료 증빙을 소유합니다. core는 공통 예산, 정책 인코딩, 그래프와 증거의 무결성을 소유합니다. x64 다이제스트의 바이트 인코딩은 유지하며 선언 검증 전에 예상 및 저장된 아키텍처를 확인합니다. `RawArchitectureReceiptCompatibility`는 변경 전 다이제스트를 고정하고 불일치 테스트는 x64 증거를 ARM64로 바꾸어 표시하는 것을 거부합니다. ARM64 네이티브 복구는 아직 구현하지 않습니다.
 
 `KernelModelFileRequests`는 동기 버퍼 방식의 `ZwReadFile` / `ZwWriteFile`도 소유합니다. 생성자는 핸들 범위, 오프셋과 키, 쓰기 입력 복사본을 보존합니다. 공통 완료 경로는 알림 가능한 원래 호출자에서 읽기 바이트와 IOSB를 공개하고 소유 패킷과 버퍼를 한 번씩 해제합니다. 내용과 파일 위치 변경은 저장 장치 드라이버가 담당합니다.
+
+`KernelModelFileRequests`는 버퍼 없는 `ZwFlushBuffersFile` 생성도 소유합니다. 권한 마스크 확인과 즉시 게시·해제 규칙은 지연 완료하는 네이티브 읽기/쓰기/조회와 다르며, 원래 호출자 알림과 단일 해제 소유자를 공유합니다.
+
+`KernelModelFileRequests`가 네이티브 제어 버퍼 캡처와 게시를 소유합니다. 파일 유지, 호출자 연속 실행과 패킷 해제를 공유하며 생산자의 지연 완료 규칙으로 장치 제어와 FSCTL을 구분합니다. 공통 완료 검증기가 출력 한계를 확인합니다.

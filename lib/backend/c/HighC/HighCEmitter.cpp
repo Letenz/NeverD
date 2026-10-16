@@ -60,6 +60,38 @@ namespace neverd {
 
 namespace {
 
+/// Whether one pair of parentheses encloses all of \p Text.
+bool enclosed(llvm::StringRef Text) {
+  bool Enclosed = Text.size() >= 2 && Text.front() == '(';
+  int Depth = 0;
+  for (size_t I = 0; Enclosed && I < Text.size(); ++I) {
+    const char C = Text[I];
+    if (C == '"' || C == '\'') {
+      // A literal's parentheses are no grouping.
+      for (++I; I < Text.size() && Text[I] != C; ++I)
+        if (Text[I] == '\\')
+          ++I;
+      continue;
+    }
+    Depth += C == '(' ? 1 : C == ')' ? -1 : 0;
+    if (Depth == 0 && I + 1 < Text.size())
+      Enclosed = false;
+  }
+  return Enclosed && Depth == 0;
+}
+
+/// `(uintptr_t)` applied to \p Address, keeping one pair of parentheses when
+/// a pair already encloses all of it: `(uintptr_t)(frame_base - 80)`. An
+/// address that is such a conversion already stays as it is:
+/// `(uintptr_t)&stack_storage.var_m50`.
+std::string uintptrOf(llvm::StringRef Address) {
+  if (c_memory::integerConversion(Address))
+    return Address.str();
+  if (enclosed(Address))
+    return "(uintptr_t)" + Address.str();
+  return "(uintptr_t)(" + Address.str() + ")";
+}
+
 /// How many pointer words, and how many nonzero bytes, a long image
 /// initializer gives each line.
 constexpr uint64_t ImageWordsPerLine = 8;
@@ -231,7 +263,7 @@ std::string memoryPointerCast(llvm::StringRef Type, llvm::StringRef Address,
     return Address.str();
   if (Address.contains("(uintptr_t)"))
     return "(" + Qualified + " *)(" + Address.str() + ")";
-  return "(" + Qualified + " *)(uintptr_t)(" + Address.str() + ")";
+  return "(" + Qualified + " *)" + uintptrOf(Address);
 }
 
 } // anonymous namespace
@@ -864,8 +896,8 @@ std::string HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
     llvm::report_fatal_error("HighC memory load type was not collected");
   if (Ordering != NdMemoryOrdering::None)
     validateAtomicLoadOrdering(Ordering);
-  return memoryHelperName("load", Type, Ordering, AddressSpace) +
-         "((uintptr_t)(" + Addr.str() + "))";
+  return memoryHelperName("load", Type, Ordering, AddressSpace) + "(" +
+         uintptrOf(Addr) + ")";
 }
 
 std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
@@ -894,8 +926,8 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
       AddressSpace == NdMemoryAddressSpace::Default && Bytes) {
     const auto Address = memoryTemporary("uintptr_t", "memory_address");
     const auto Stored = memoryTemporary(Type, "memory_value");
-    return "(" + Address + " = (uintptr_t)(" + Addr.str() + "), " + Stored +
-           " = " + Value + ", " +
+    return "(" + Address + " = " + uintptrOf(Addr) + ", " + Stored + " = " +
+           Value + ", " +
            c_memory::storeCopy(Address, Stored,
                                *Bytes ? std::to_string(*Bytes)
                                       : "sizeof(" + Stored + ")") +
@@ -906,8 +938,8 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
     llvm::report_fatal_error("HighC memory store type was not collected");
   if (Ordering != NdMemoryOrdering::None)
     validateAtomicStoreOrdering(Ordering);
-  return memoryHelperName("store", Type, Ordering, AddressSpace) +
-         "((uintptr_t)(" + Addr.str() + "), " + Value + ")";
+  return memoryHelperName("store", Type, Ordering, AddressSpace) + "(" +
+         uintptrOf(Addr) + ", " + Value + ")";
 }
 
 std::optional<unsigned>
@@ -961,7 +993,7 @@ void HighCWriter::writeMemoryStore(const TypeRef &Ty, llvm::StringRef Addr,
   emitIndent(Indent);
   OS << "{\n";
   emitIndent(Indent + 1);
-  OS << "uintptr_t " << Address << " = (uintptr_t)(" << Addr << ");\n";
+  OS << "uintptr_t " << Address << " = " << uintptrOf(Addr) << ";\n";
   emitIndent(Indent + 1);
   OS << Type << " " << Value << " = ";
   if (Ty && Ty->Kind == NdTypeKind::Ptr)
