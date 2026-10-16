@@ -10,6 +10,10 @@ NeverD 테스트는 표현 모양이 예상과 같은지, 바이너리 fixture�
 
 `PipelineOutcome.ResolvedCalls*`는 레지스터 그룹, call/invoke 식별, 스택 바이트 결합·분할, 좁은 값의 자기 슬롯 배치, 누락 바이트 거부를 검사합니다. `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue`는 기록된 오프셋을 검사합니다. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument`는 x64, ARM32, AArch64의 ELF, PE, Mach-O를 다룹니다. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths`는 세 형식에서 변경된 길이, 쓰기 가능·범위 초과 데이터, 같은 이름의 로컬 함수, 잘못된 원본 레지스터, 대체 진입점 및 재배치 가능 이미지를 거부합니다. 호스트 C 차등 테스트는 참조 C를 별도 번역 단위에서 O0로, 생성 C를 O2로 컴파일하여 호스트 최적화기의 순환식 오컴파일이 기준값을 오염시키지 않도록 합니다. AArch64 FMA 검사는 x86 호스트에서만 `-mfma`를 요청합니다.
 
+## 구체적 진입 메모리 시드
+
+`NeverDSymbolicTests`, `NeverDConcolicTests`, `NeverDConcolicIntegrationTests`를 실행합니다. `LowIRConcolicMemory.*`와 기호 계층 테스트는 두 바이트 순서, 별칭 저장, 독립 뱅크, 누락/잘못된 범위, 초기화와 늦은 시드, 예산 경계, epoch, 모델 폭, 메모리 후보 재실행과 중복 제거를 검증합니다. 기존 네이티브 형식/아키텍처 행렬도 회귀 검사합니다.
+
 ## 테스트 빌드 구성
 
 `BUILD_TESTING`을 활성화하지 않으면 테스트가 비활성화됩니다. 전체 스위트에는 보통

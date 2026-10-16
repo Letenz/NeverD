@@ -5217,9 +5217,9 @@ cutoff was reached.
 ## Verified LowIR concolic branch flips
 
 `NeverDConcolic` follows one native LowIR trace from explicit entry-register
-byte ranges. Its concrete shadow is a second `SymExec`, so concrete and
+and optional entry-memory byte ranges. Its concrete shadow is a second `SymExec`, so concrete and
 symbolic execution share the same operation and bit-width semantics. Missing
-register bytes, unsupported operations, opaque effects, unsummarized calls,
+register or memory bytes, unsupported operations, opaque effects, unsummarized calls,
 and unresolved memory effects stop the exact trace; none is filled with an
 invented zero.
 
@@ -5227,7 +5227,7 @@ Each non-constant control decision has a stable occurrence identity containing
 its machine address, sequence, block, LowIR operation index, loop invocation,
 and kind. For a conditional decision, the engine asks the bounded bit-vector
 solver for the exact earlier constraint prefix plus the opposite polarity. A
-SAT model is projected only from epoch-zero register-input origins that are
+SAT model is projected only from epoch-zero register or absolute-memory input origins that are
 fully covered by the caller's baseline seed. The candidate is published only
 after the query evaluates true under the projected bytes and a fresh execution
 reaches the same earlier decisions and target occurrence with the target
@@ -5239,8 +5239,32 @@ The result is deliberately one trace, never path coverage: public reports use
 projection, replay, and candidate-budget failures retain typed statuses and do
 not publish an unverified seed. JSON image identity hashes `BinaryImage::Raw`,
 the exact snapshot parsed by the loader, rather than reopening the source path.
-The initial public slice is register-seeded and intraprocedural on x86-64 and
-AArch64 PE, ELF, and Mach-O images.
+The version 1 C/JSON interface remains register-seeded and intraprocedural on
+x86-64 and AArch64 PE, ELF, and Mach-O images.
+
+### Concrete entry-memory seeds
+
+The C++ `LowIRConcolicOptions::InitialMemory` API accepts owned RAM snapshots
+in increasing address order within each range, independently of target byte
+order. `MaxMemorySeedBytes` bounds their total size before copying or tracing;
+the default is 1 MiB and zero accepts no bytes. Empty, overlapping and wrapping
+ranges are rejected. The concrete shadow receives the snapshot while the
+primary symbolic state retains free entry-memory origins. Stores update the
+snapshot normally; missing bytes are never supplied implicitly.
+
+Reports requesting memory use version 2 and retain `InitialMemory` plus each
+candidate's `MemorySeed`. Projection, query evaluation, fresh replay and
+deduplication include both register and memory bytes. Symbolic-base loads
+without an absolute entry-input origin still refuse projection. A candidate
+certifies the selected decision occurrence and its earlier decision prefix;
+it does not certify the whole replay suffix, path coverage or equivalence.
+
+Emulation can supply snapshot bytes through `ProcessView::read` while the
+process is stopped. This reads committed RAM through the shared backend
+interface; pre-access write hooks alone are not a committed-memory snapshot.
+Concrete bytes establish no allocation ownership, lifetime, immutable data or
+disjointness. These remain separate proof obligations or explicit environment
+contracts. Symbolic execution depends on neither an emulator nor a loader.
 
 ## Component map
 

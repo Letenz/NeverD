@@ -4,6 +4,22 @@
 
 # Testing NeverD
 
+## Concrete entry-memory concolic replay
+
+Build `NeverDSymbolicTests`, `NeverDConcolicTests` and
+`NeverDConcolicIntegrationTests`. `SymExecConcreteShadow.*`,
+`SymExplore.ConcreteMemoryDoesNotConstrainSymbolicEntryBytes` and
+`LowIRConcolicMemory.*` cover address-order snapshots in both byte orders,
+overlapping stores, independent register/memory banks, missing bytes, invalid
+ranges, reset and late seeding, exact/short/zero snapshot budgets, epoch and
+model-width rejection, projected-memory replay and candidate identity. The
+format matrix retains register-only replay on x86-64 and AArch64 PE/ELF/Mach-O.
+
+These checks exercise the C++ memory-seed extension. The version 1 C/JSON,
+Python and CLI interfaces remain register-only and keep their own contract
+tests. Concrete trace success does not establish region disjointness or whole
+function equivalence.
+
 NeverD's tests cover three different questions: whether a representation has
 the expected shape, whether a full pipeline route works for a binary fixture,
 and whether generated code preserves behavior. Choose the smallest suite that

@@ -10,6 +10,10 @@
 
 تفحص `PipelineOutcome.ResolvedCalls*` مجموعات السجلات وهوية call/invoke وجمع بايتات المكدس وتقسيمها ووضع القيم الضيقة في خاناتها ورفض البايتات الناقصة. وتفحص `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` الإزاحات المسجلة. تغطي `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` معماريات x64 وARM32 وAArch64 بصيغ ELF وPE وMach-O. تفحص `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` الصيغ الثلاث وترفض الأطوال المعدلة والنطاقات القابلة للكتابة أو المتجاوزة وحدود المصدر، والدوال المحلية ذات الاسم نفسه، وسجلات المصدر الخاطئة، والمداخل البديلة، والصور القابلة لإعادة التموضع. تُجمّع اختبارات C التفاضلية المرجع بشكل مستقل مع O0 والكود المولد مع O2، كي لا يفسد خطأ محسّن المضيف في حساب تكراري النتيجة المرجعية. يطلب فحص FMA على AArch64 الخيار `-mfma` على مضيفات x86 فقط.
 
+## بذور ذاكرة الدخول الملموسة
+
+شغّل `NeverDSymbolicTests` و`NeverDConcolicTests` و`NeverDConcolicIntegrationTests`. تغطي `LowIRConcolicMemory.*` واختبارات الطبقة الرمزية ترتيبي البايتات، والكتابات المتداخلة، والبنوك المستقلة، والنطاقات المفقودة وغير الصالحة، وإعادة الضبط والبذور المتأخرة، وحدود الميزانية، والحقب، وعرض النموذج، وإعادة تنفيذ المرشحين وإزالة التكرار. تستمر مصفوفة الصيغ والمعماريات الأصلية.
+
 ## تهيئة بناء الاختبار
 
 تكون الاختبارات معطلة ما لم يُفعّل `BUILD_TESTING`. يمثل Release الخيار العادي

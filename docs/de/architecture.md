@@ -9,6 +9,10 @@ müssen, um NeverD sicher zu ändern. Er behandelt bewusst nur NeverD-eigenen
 Code; die LLVM-, Capstone- und Unicorn-Submodule behalten ihre interne
 Architektur.
 
+## Konkrete Eingangsspeicher-Seeds
+
+`SymExecConcreteShadow` erhält vor der Ausführung RAM-Bytes in Adressreihenfolge; der symbolische Eingangsspeicher bleibt frei. Die C++-Option `InitialMemory` unterliegt `MaxMemorySeedBytes` (Standard 1 MiB; null erlaubt keine Bytes). Leere, überlappende und überlaufende Bereiche werden abgelehnt. Speicherberichte verwenden Version 2 mit `InitialMemory` und `MemorySeed` je Kandidat. Die Projektion akzeptiert nur abgedeckte Register- oder absolute Speichereingaben der Epoche null. Abfrageprüfung, erneute Ausführung und Deduplizierung berücksichtigen beide Bytebestände. Fehlende Bytes, symbolische Basisadressen und angenäherte Effekte bleiben ausgeschlossen; Stores aktualisieren den konkreten Speicher normal. `ProcessView::read` liest im angehaltenen Zustand bestätigten RAM; Hooks vor einem Zugriff ersetzen keinen vollständigen Snapshot. Beobachtungen beweisen weder Besitz, Lebensdauer, Unveränderlichkeit noch Disjunktheit. Ein Kandidat bestätigt nur die Zielentscheidung und ihren vorherigen Entscheidungspfad. C/JSON, Python und CLI bleiben in Version 1 registerbasiert.
+
 ## Grenze für Quellcode- und Objektersetzung
 
 `SourcePatchCompiler` verwaltet Compileridentität und Artefaktauswahl. `validateSourcePatchTarget` ist die gemeinsame Zielzulassung für Quellcode und geliefertes IR; das Tripel allein beweist keinen Support. `bindSourcePatch` bestätigt IR-Einstiege; `PatchObject` verwaltet native Abschnitte, Relokationen und FDE-Bereichsnachweise. `publishSourcePatch` bereitet die genaue Transaktion vor, prüft und veröffentlicht sie exklusiv. `COFFSourceImage` verwaltet neuen PE-x64-Speicher und Unwind-Tabellen; geliftete Umschreibungen behalten ihre getrennten ursprünglichen EH-Nachweise. Siehe [Quellcodepatches](source-patching.md).

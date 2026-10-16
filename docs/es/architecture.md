@@ -9,6 +9,10 @@ para modificar NeverD con seguridad. Cubre deliberadamente solo el código
 propio de NeverD; los submódulos LLVM, Capstone y Unicorn mantienen su propia
 arquitectura interna.
 
+## Semillas concretas de memoria de entrada
+
+`SymExecConcreteShadow` recibe bytes de RAM en orden de dirección antes de ejecutar; la memoria simbólica de entrada sigue libre. La opción C++ `InitialMemory` está limitada por `MaxMemorySeedBytes` (1 MiB por defecto; cero no admite bytes). Se rechazan rangos vacíos, solapados o con desbordamiento. Los informes con memoria usan la versión 2 y conservan `InitialMemory` y `MemorySeed` por candidato. La proyección acepta solo entradas de registro o memoria absoluta de época cero cubiertas por la semilla. La consulta, la nueva ejecución y la deduplicación incluyen ambos conjuntos de bytes. Se siguen rechazando bytes ausentes, bases simbólicas y efectos aproximados; las escrituras actualizan la memoria concreta normalmente. `ProcessView::read` permite leer RAM confirmada con el proceso detenido; los eventos previos al acceso no son una captura completa. La observación no prueba propiedad, duración, inmutabilidad ni separación. El candidato verifica solo la decisión elegida y las anteriores. C/JSON, Python y CLI siguen usando registros en la versión 1.
+
 ## Límite de sustitución de fuentes y objetos
 
 `SourcePatchCompiler` gestiona la identidad del compilador y el artefacto. `validateSourcePatchTarget` admite los destinos tanto de fuentes como de IR externo; el triplete por sí solo no demuestra soporte. `bindSourcePatch` autentica entradas IR; `PatchObject` gestiona secciones nativas, reubicaciones y evidencias de rangos FDE. `publishSourcePatch` prepara, verifica y publica la transacción exacta. `COFFSourceImage` gestiona el nuevo almacenamiento y las tablas de desenrollado PE x86/x64/ARM32/ARM64; las reescrituras elevadas conservan evidencias EH originales separadas. Consulte [los parches de fuentes](source-patching.md).
