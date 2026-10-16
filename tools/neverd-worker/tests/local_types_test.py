@@ -47,10 +47,14 @@ def run(executable):
 
         # Declared types join the program's, and the project keeps them.
         assert "local_types_declare" in owner.hello["capabilities"]
-        declared = ok(owner, "local_types_declare", {
+        reply = owner.call("local_types_declare", {
             "language": "rust",
             "source": "#[repr(C)] pub struct OWNER { pub Device: *mut _DEVICE, pub Count: u32 }"})
+        assert reply["status"] == "ok", reply
+        declared = reply["payload"]
         assert declared["types"] == ["OWNER"] and declared["problems"] == [], declared
+        # A type no prototype names leaves the decompilation and the views.
+        assert declared["decompilation"] is False, declared
         assert ok(owner, "local_type", {"name": "OWNER"})["size"] == 16
         problem = ok(owner, "local_types_declare", {"language": "c", "source": "struct B {\n  NOPE x;\n};"})
         assert problem["problems"][0]["line"] == 2 and problem["problems"][0]["column"] == 3, problem
@@ -63,6 +67,13 @@ def run(executable):
         assert rows[1] == {"forget": ["_PACKED"]}
         bad = owner.call("local_types_forget", {"names": "_PACKED"})
         assert bad["status"] == "error" and bad["error"]["code"] == "invalid_request", bad
+        # A prototype takes the decompilation, and every view reads anew.
+        prototype = owner.call("local_types_declare", {
+            "language": "c", "source": "long Probe(struct _DEVICE *Device);"})
+        assert prototype["status"] == "ok", prototype
+        assert prototype["payload"]["prototypes"] == ["Probe"], prototype
+        assert prototype["payload"]["decompilation"] is True, prototype
+        assert prototype["revision"] != reply["revision"], (prototype, reply)
 
         # The analysis replica reads the project's types as they were left,
         # and declares none.

@@ -811,7 +811,7 @@ Semantic references are the pinned Android 9
 and JNI invocation contracts linked above. No host Java runtime is invoked.
 
 
-## Explicit integral DEX methods
+## Explicit DEX methods and object state
 
 With JNI enabled, `android.dex_images` accepts an array of complete hex-encoded
 DEX images. This is an explicit classpath for this workload; the model never
@@ -822,18 +822,39 @@ checksums, metadata, instruction boundaries and code flow before native guest
 constructors run. Duplicate definitions and platform class replacements fail.
 The reader's existing annotation and format restrictions also apply.
 
-`FindClass` and `GetStaticMethodID` bind the supplied class and exact descriptor.
+`FindClass`, method lookup and field lookup bind the supplied class and exact descriptor.
 Ordinary, V and A calls share the same JNI descriptor/argument owner as the
 intrinsics. Method identities belong to this VM and survive local frame or
-thread teardown. The initial execution contract supports integral static
-methods on direct Object subclasses without fields, interfaces or class
-initializers. Supported bodies include integer/wide constants and moves,
+thread teardown. The execution contract supports static/instance methods,
+constructors and nonvolatile integral/reference fields on direct Object subclasses
+without interfaces. Supported bodies include integer/wide constants and moves,
 32/64-bit arithmetic and shifts, narrowing/sign extension, signed comparisons,
 branches, packed/sparse switches, loops, recursion and static calls to supplied
 methods. Integral arguments/results include boolean, byte, char, short, int and
 long. All arithmetic uses Java wrapping and masked shift distances; minimum
 integer divided by -1 wraps, and division by zero raises a pending
 ArithmeticException for JNI to observe and clear.
+
+Each workload retains its own class state across JNI calls, local-reference
+deletion, detach/reattach and sequential calls from different guest threads.
+DEX encoded field values (or zero defaults) are installed before `<clinit>`.
+FindClass, static method lookup, static invocation and static field instructions
+initialize the declaring class once. Recursive initialization on the executing
+thread can observe prepared or partially written values; it does not rerun the
+initializer. `sget`/`sput` integral variants check the declared field width;
+stores narrow byte/char/short values, and final stores are restricted to the
+declaring initializer. Cross-class nonpublic members remain unsupported.
+
+A modeled Java exception escaping `<clinit>` produces a pending
+ExceptionInInitializerError; subsequent use of that erroneous class produces
+NoClassDefFoundError. Nested initialization Errors propagate. Effects already
+performed by Java code remain observable. An unsupported instruction, invalid
+execution or exhausted resource budget terminates the workload rather than
+being converted into a Java exception or silently restarting initialization.
+These modeled throwables retain type identity, not a complete ART cause/stack
+trace object graph. Initialization follows the synchronous subset of
+[Java class initialization](https://docs.oracle.com/javase/specs/jls/se25/html/jls-12.html#jls-12.4.2)
+and [JNI initialization triggers](https://docs.oracle.com/en/java/javase/25/docs/specs/jni/functions.html#findclass).
 
 Every DEX instruction consumes the existing native workload instruction budget
 and deadline. Calls do not reset either budget. Recursion is bounded to 64
@@ -845,10 +866,37 @@ DEX bodies execute synchronously inside their JNI call; this contract does not
 preempt Java threads or equate bytecode steps with physical CPU/GPU timing.
 Native scheduling and explicitly configured virtual clocks retain their owners.
 
-This is a bounded interpreter, not complete ART. Object/array instructions,
-float/double bodies, exception handlers, synchronization, field/class
-initialization, inherited dispatch and external/native Java calls remain
-unsupported. An unsupported operation never supplies a guessed Java result.
+DEX and JNI share a bounded heap, object identities, field values and array
+storage. `new-instance`, direct constructors, direct/private and exact-owner
+virtual calls, `iget`/`iput` and reference static fields execute supplied bodies.
+The empty Object constructor is the only platform constructor admitted by DEX.
+Uninitialized objects can be moved but cannot be read, returned or escape to
+another method/field before construction completes; constructor chaining and
+self-escape remain outside the profile. JNI `AllocObject` explicitly creates
+zeroed storage without running the constructor; `NewObject` ordinary/V/A runs it.
+
+Reference registers remain distinct from integers (only literal zero can also
+serve as null). `new-array`, `filled-new-array`, `fill-array-data`, array length,
+all integral/reference `aget`/`aput` variants, casts, instance tests and reference
+equality share the same type rules. Arrays may contain supplied instances or
+other arrays; primitive arrays are not coerced across component types. Null,
+bounds, negative DEX lengths, array-store and cast failures produce their Java
+exceptions. JNI negative-length allocation retains its existing fatal contract.
+JNI array borrows still copy back only under their requested release mode.
+
+JNI GetFieldID/GetStaticFieldID and integral/reference accessor families resolve
+opaque, workload-owned IDs against supplied declarations. They validate the
+receiver, storage kind and accessor type; field lookup initializes the class.
+JNI changes are visible to DEX and vice versa, including after detaching a native
+thread. Final-field mutation through JNI is deliberately rejected. Object storage
+is retained until workload teardown with finite byte/object limits; reaching a
+model limit stops explicitly, without claiming that a real Java VM would throw
+OutOfMemoryError. There is no garbage-collection or ART layout claim.
+
+This is a bounded interpreter, not complete ART. Float/double execution,
+encoded reference constants, string literals/library calls from DEX, exception
+handlers, synchronization, volatile fields, inherited dispatch and external/native
+Java calls remain unsupported. An unsupported operation never supplies a guessed Java result.
 Binder system-service implementations and GPU shaders are independent inputs
 and are not supplied by admitting DEX.
 
@@ -857,4 +905,11 @@ The instruction contract follows the Android
 and [DEX format](https://source.android.com/docs/core/runtime/dex-format).
 `test_android_dex_runtime.py` compiles original Java fixtures with javac and D8,
 then compares the JVM's class-file results with JNI calls into those DEX bodies.
+`test_android_dex_state.py` compares every value and exception type in repeated
+calls, reversed cyclic initialization, retained state after failure, reattachment
+and sequential guest-thread execution against independently run Java class files.
+`test_android_dex_objects.py` compares JVM values with constructors, instance
+calls, typed field access, reference identity, primitive/object/nested arrays,
+copy-back, global references across reattachment and recoverable Java exceptions.
+It also tests invalid field IDs/accessor types, final writes and heap limits.
 The JVM and D8 prepare/check fixtures only; NeverD execution uses neither.

@@ -95,7 +95,11 @@ stream's member list, or whose members cannot sit where they say
 (`layoutProblem`).
 
 `renderType` and `renderTypes` spell types as C, C++, Rust or Go
-(`TypeLanguages.def`), each member marked with its offset. Every language
+(`TypeLanguages.def`), each member marked with its offset. Builtins take
+the spellings each language has (`BuiltinSpellings.def`): C and C++ name
+them as Windows, IDA or the compiler does, or by exact widths; Rust and Go
+by exact widths or by Windows' names, which a module or file declares as
+aliases as wdk-sys does. Every language
 reproduces the library's layout exactly. An explicit filler moves a member
 that the language's own rules would place earlier. Rust and Go read what they
 cannot express through accessors whose arithmetic follows C, signed bitfields
@@ -103,7 +107,10 @@ included: unions in Go, bitfields, members Go cannot align, and flexible
 arrays. Names a language cannot spell, such as `std::pair<int,int>` or an
 enumerator two enumerations share, take one identifier per language
 (`renamedNames`). With asserts, the output checks every size and offset when
-it compiles.
+it compiles. C's header compiles as C++ too, which the workbench shows it as:
+its checks are `static_assert`, and the character types C declares are left
+to C++'s keywords. Member names stay C's, so one C++ reserves, such as
+`class`, still needs the C++ rendering.
 
 `parseTypes` reads C, C++, Rust and Go declarations back into the library
 (`TypeParse.h`), and `layOutRecord` lays each record out under MSVC or
@@ -138,6 +145,29 @@ after the program's PDB and before the user's declarations:
 `neverd_types_convert` and `neverd types --data-model` read and render
 declarations without a program, which is how the generator builds the
 library.
+
+The decompiler reads the local types' prototypes through
+`PrototypeDebugContext` (`lib/sdk/capi`). It wraps the program's debug
+context, and completes the functions the debug information names but leaves
+untyped from the prototype of their name, as the kernel's public symbols
+are completed from `<ntifs.h>`. A function the debug information types
+keeps its own type, and a variadic prototype is not used, because its calls
+pass more than it declares. The prototype's types convert to the
+decompiler's types:
+- records become named records that C passes and returns by value, with
+  their members' names for display;
+- typedefs become what they name, and enumerations their underlying
+  integers;
+- pointers to functions become pointers to C signatures of scalars and
+  opaque pointers.
+
+Win64 placement then binds each parameter by its location, and the
+signature prints with the prototype's names. A declaration changes what the
+decompiler read only when it adds a prototype or changes a type a prototype
+names, through typedefs, pointers, arrays and members
+(`prototypeTypeNames`). Only such a declaration clears the pipeline, which
+the C API reports as `"decompilation": true`, and the worker then refreshes
+its views as after loading signatures.
 
 ## System boundary
 
@@ -6686,8 +6716,9 @@ labels on unmap. JSON supplies explicit identity/provider declarations only.
 See [live proc](linux-live-proc.md) for the supported fields and boundaries.
 
 `AndroidJNI` owns an opt-in workload VM, thread attachments and immutable JNI
-function tables. Object identity, references, frames and pending exceptions
-remain in that owner; string/array helpers implement value and copy-back
+function tables. JNI handle identities, references, frames and pending exceptions
+remain in that owner; the shared Dalvik heap retains object identity/storage,
+and string/array helpers implement value and copy-back
 semantics. Guest storage uses the existing allocator and address-space authority.
 `LinuxBinder` owns LP64 control/looper state within each device open description,
 shared by descriptor aliases and raw/Bionic calls. JSON adapters supply no
@@ -6716,22 +6747,44 @@ Java source emission. The shared module depends on LLVM Support and zlib, not
 CLI/session state or CPU transports. The existing pinned zlib fallback has one
 CMake owner. This does not add a second instruction decoder.
 
-`dalvik::Program` owns immutable explicit class declarations and integral static
-method execution over decoded instructions. Frames own typed 32-bit register
+`dalvik::Program` owns immutable explicit class declarations; `dalvik::Runtime`
+owns a workload's static fields, initialization states and execution
+over those decoded instructions. Frames own typed 32-bit register
 words and overlapping-wide invalidation; arithmetic has one unsigned-bit
 implementation of Java integer semantics. Calls share one owner-provided
 instruction/deadline callback and bounded frame storage. Missing semantics
 produce a typed stop, with method identity and code-unit PC.
 
-`AndroidDex` admits API-28 DEX bytes before native execution and binds Program's
+`AndroidDex` admits API-28 DEX bytes before native execution and binds Runtime's
 budget and exceptions to the existing Bionic workload VM. `AndroidJNIMethods`
 keeps opaque method IDs, call-form/type checks and argument transport; it never
 interprets instructions or stores caller-provided successful results. JSON only
 accepts strict explicit hex images. There is no host JVM, implicit classpath,
-network or phone dependency. The initial supported class contract excludes
-stateful initialization, fields, hierarchy dispatch, objects and handlers.
+network or phone dependency. JNI owns a single Runtime for the workload, separate
+from disposable local references and thread attachments. Initialization and
+static field instructions have one semantic owner in Runtime, including recursive
+initialization, persistent erroneous classes and terminal non-Java stops.
+Program's convenience execute creates a fresh Runtime; repeated calls must use
+the workload instance. Execution is synchronous, without Java preemption or a
+concurrent Java memory-model claim. The supported class contract excludes floating/volatile fields, hierarchy
+and interface dispatch, synchronization and exception handlers.
+
+`dalvik::Heap` is the single retained Java object/array owner for JNI and DEX.
+Its bounded identities are separate from native reference handles and guest
+addresses. JNI borrows, object arrays and DEX array instructions all refer to the
+same storage; no import/export copy of the heap occurs at a method boundary.
+Runtime owns instance/static field semantics and construction. JNI field/method
+adapters only bind typed IDs, convert references and apply the common execution
+budget/stop mapping. Weak object-array edges and integer field identities avoid
+host ownership cycles while the heap retains objects until workload teardown.
+Java reference assignability, including array covariance, has one shared owner.
+Uninitialized construction and unsupported constructor escape fail explicitly.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
 
 KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing operation accepts an already admitted node and mapped access, checks both directions, and excludes metadata-only opens from sharing conflicts. CLEANUP releases sharing without retiring the token; CLOSE removes the cleaned token. Cleaned retained bodies still count toward the 1024-open bound. Exact binding validation compares tokens with the file-object owner. `KernelModelFileCreate` owns CREATE and cancellation producers and reserves handle capacity before callbacks. `DriverSession` retains the original caller through pending work and nested CLOSE. The common object owner publishes the handle; namespace lookup retains a real directory body, and the terminal provider reads the admitted packet. Scenario close intent remains separate. Bidirectional token checks run on snapshot and unload.
+
+### Raw environment architecture ownership
+
+`RecoveryArchitecture` selects the native contract from `SpecializationOptions::Architecture`, independently of the build host. The existing default is x64; a target without an adapter refuses explicitly. `arch/x86_64` owns native option encoding, primary-image range rules, external-exit matching costs and physical-exit receipts. Core owns generic budgets, policy encoding and graph/evidence integrity. The x64 option and receipt digests retain their existing byte encoding; both expected and stored architecture identities are checked before validating the declaration. `RawArchitectureReceiptCompatibility` fixes pre-refactor digest values, and architecture-mismatch controls forbid relabeling x64 evidence as ARM64. This boundary does not implement ARM64 native recovery.

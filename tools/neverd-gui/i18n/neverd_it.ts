@@ -3383,12 +3383,8 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
 <context>
     <name>neverd::gui::LocalTypesView</name>
     <message>
-        <source>C header (*.h)</source>
-        <translation>Header C (*.h)</translation>
-    </message>
-    <message>
-        <source>C++ header (*.hpp)</source>
-        <translation>Header C++ (*.hpp)</translation>
+        <source>C/C++ header (*.h)</source>
+        <translation>Header C/C++ (*.h)</translation>
     </message>
     <message>
         <source>Rust (*.rs)</source>
@@ -3413,6 +3409,14 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
     <message>
         <source>Exact widths (uint32_t)</source>
         <translation>Larghezze esatte (uint32_t)</translation>
+    </message>
+    <message>
+        <source>Exact widths (u32)</source>
+        <translation>Larghezze esatte (u32)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>Larghezze esatte (uint32)</translation>
     </message>
     <message>
         <source>Filter types by name</source>
@@ -3467,8 +3471,8 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
         <translation>Esporta tutti i tipi…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>Come C e C++ chiamano i tipi predefiniti</translation>
+        <source>How the source names builtin types</source>
+        <translation>Come il sorgente chiama i tipi predefiniti</translation>
     </message>
     <message>
         <source>Hex offsets</source>

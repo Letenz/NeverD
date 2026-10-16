@@ -44,6 +44,8 @@
 #include <QTreeView>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <algorithm>
+#include <span>
 #include <utility>
 
 namespace neverd::gui {
@@ -85,19 +87,18 @@ struct SourceLanguage {
   const char *filter;
   const char *suffix;
 };
+// C/C++ shows C, which C++ compiles too.
 constexpr SourceLanguage Languages[] = {
-    {"c", "C",
-     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "C header (*.h)"), "h"},
-    {"cpp", "C++",
-     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "C++ header (*.hpp)"),
-     "hpp"},
+    {"c", "C/C++",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "C/C++ header (*.h)"),
+     "h"},
     {"rust", "Rust",
      QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Rust (*.rs)"), "rs"},
     {"go", "Go", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Go (*.go)"),
      "go"},
 };
 
-/// How C and C++ spell builtins (the engine's spellings).
+/// How C and C++, and the layout, spell builtins (the engine's spellings).
 struct Spelling {
   const char *id;
   const char *title;
@@ -112,9 +113,47 @@ constexpr Spelling Spellings[] = {
     {"portable", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
                                    "Exact widths (uint32_t)")},
 };
+/// How Rust and Go do: Windows' names, which they declare as aliases as
+/// wdk-sys does, or exact widths.
+constexpr Spelling RustSpellings[] = {
+    {"windows",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
+    {"portable",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Exact widths (u32)")},
+};
+constexpr Spelling GoSpellings[] = {
+    {"windows",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
+    {"portable",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Exact widths (uint32)")},
+};
 
-constexpr char LanguageSetting[] = "localTypes/page";
-constexpr char SpellingSetting[] = "localTypes/spelling";
+/// The spellings each language chooses from, where the choice is kept and
+/// what it is until chosen.  C's serves the layout too.
+struct SpellingChoice {
+  const char *language;
+  std::span<const Spelling> spellings;
+  const char *setting;
+  const char *initial;
+};
+const SpellingChoice SpellingChoices[] = {
+    {"c", Spellings, "localTypes/spelling", "windows"},
+    {"rust", RustSpellings, "localTypes/rustSpelling", "portable"},
+    {"go", GoSpellings, "localTypes/goSpelling", "portable"},
+};
+
+/// The choice \p language makes: C++'s and the layout's are C's.
+const SpellingChoice &spellingChoice(const QString &language) {
+  for (const SpellingChoice &choice : SpellingChoices)
+    if (language == QLatin1String(choice.language))
+      return choice;
+  return SpellingChoices[0];
+}
+
+// The tab shown, by its language's id; empty for the layout.  It replaces
+// "localTypes/page", the tab's index when C and C++ had a tab each.
+constexpr char ViewSetting[] = "localTypes/view";
+constexpr char OldPageSetting[] = "localTypes/page";
 constexpr char HexSetting[] = "localTypes/hexOffsets";
 constexpr char DependenciesSetting[] = "localTypes/dependencies";
 constexpr char AssertsSetting[] = "localTypes/asserts";
@@ -330,9 +369,14 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   optionLayout->setContentsMargins(0, 0, 0, 0);
   spelling_ = new QComboBox(optionRow);
   spelling_->setObjectName(QStringLiteral("localTypesSpelling"));
-  spelling_->setToolTip(tr("How C and C++ name builtin types"));
-  for (const auto &entry : Spellings)
-    spelling_->addItem(tr(entry.title), QString::fromLatin1(entry.id));
+  spelling_->setToolTip(tr("How the source names builtin types"));
+  // As wide as the widest choice of any language, so that switching tabs
+  // neither moves the row nor cuts a choice short.
+  for (const SpellingChoice &choice : SpellingChoices)
+    for (const auto &entry : choice.spellings)
+      spelling_->addItem(tr(entry.title));
+  spelling_->setMinimumWidth(spelling_->sizeHint().width());
+  spelling_->clear();
   hex_ = new QCheckBox(tr("Hex offsets"), optionRow);
   dependencies_ = new QCheckBox(tr("With dependencies"), optionRow);
   dependencies_->setToolTip(
@@ -377,12 +421,35 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   splitter->setSizes({260, 640});
 
   const QSettings settings;
-  tabs_->setCurrentIndex(std::clamp(settings.value(LanguageSetting, 0).toInt(),
-                                    0, tabs_->count() - 1));
+  QString view = settings.value(ViewSetting).toString();
+  if (!settings.contains(ViewSetting)) {
+    // Layout, C, C++, Rust, Go: C++ shows as C now.
+    static const char *const OldPages[] = {"", "c", "c", "rust", "go"};
+    const int old = settings.value(OldPageSetting, 0).toInt();
+    view = QString::fromLatin1(
+        OldPages[std::clamp(old, 0, int(std::size(OldPages)) - 1)]);
+  }
+  int shown = 0;
+  for (size_t I = 0; I < std::size(Languages); ++I)
+    if (view == QLatin1String(Languages[I].id))
+      shown = int(I) + 1;
+  tabs_->setCurrentIndex(shown);
   pages_->setCurrentIndex(tabs_->currentIndex() ? 1 : 0);
-  const int spellingIndex = spelling_->findData(
-      settings.value(SpellingSetting, QStringLiteral("windows")).toString());
-  spelling_->setCurrentIndex(std::max(spellingIndex, 0));
+  for (const SpellingChoice &choice : SpellingChoices) {
+    // A choice the language does not offer, as a setting of another build
+    // may hold, is the initial one.
+    QString chosen = settings
+                         .value(QString::fromLatin1(choice.setting),
+                                QString::fromLatin1(choice.initial))
+                         .toString();
+    if (std::none_of(choice.spellings.begin(), choice.spellings.end(),
+                     [&](const Spelling &entry) {
+                       return chosen == QLatin1String(entry.id);
+                     }))
+      chosen = QString::fromLatin1(choice.initial);
+    spellings_.insert(QString::fromLatin1(choice.language), chosen);
+  }
+  showSpellings();
   hex_->setChecked(settings.value(HexSetting, true).toBool());
   dependencies_->setChecked(
       settings.value(DependenciesSetting, false).toBool());
@@ -406,16 +473,23 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   connect(list_->selectionModel(), &QItemSelectionModel::currentRowChanged,
           this, &LocalTypesView::selectionChanged);
   connect(tabs_, &QTabBar::currentChanged, this, [this](int index) {
-    QSettings().setValue(LanguageSetting, index);
+    QSettings().setValue(ViewSetting, index ? language() : QString());
     pages_->setCurrentIndex(index ? 1 : 0);
     highlighter_->setLanguage(language());
+    showSpellings();
     if (index)
       requestSource();
     updateActions();
   });
   connect(spelling_, &QComboBox::currentIndexChanged, this, [this] {
-    QSettings().setValue(SpellingSetting, spelling());
-    requestLayout();
+    // The layout spells builtins as C does.
+    const SpellingChoice &choice =
+        spellingChoice(tabs_->currentIndex() ? language() : QString());
+    const QString chosen = spelling_->currentData().toString();
+    spellings_.insert(QString::fromLatin1(choice.language), chosen);
+    QSettings().setValue(QString::fromLatin1(choice.setting), chosen);
+    if (QLatin1String(choice.language) == QLatin1String("c"))
+      requestLayout();
     requestSource();
   });
   connect(hex_, &QCheckBox::toggled, this, [this](bool on) {
@@ -475,6 +549,8 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
     source_->setFont(Theme::instance().codeFont());
     highlighter_->rehighlight();
   });
+  // The options the restored tab shows, before any type is read.
+  updateActions();
   reload();
 }
 
@@ -496,8 +572,23 @@ QString LocalTypesView::language() const {
              : QStringLiteral("c");
 }
 
-QString LocalTypesView::spelling() const {
-  return spelling_->currentData().toString();
+QString LocalTypesView::spelling(const QString &language) const {
+  return spellings_.value(
+      QString::fromLatin1(spellingChoice(language).language));
+}
+
+void LocalTypesView::showSpellings() {
+  const SpellingChoice &choice =
+      spellingChoice(tabs_->currentIndex() ? language() : QString());
+  const QSignalBlocker blocker(spelling_);
+  spelling_->clear();
+  for (const auto &entry : choice.spellings)
+    spelling_->addItem(tr(entry.title), QString::fromLatin1(entry.id));
+  const QString key = QString::fromLatin1(choice.language);
+  spelling_->setCurrentIndex(
+      std::max(spelling_->findData(spellings_.value(key)), 0));
+  // A choice no longer offered falls back to the first.
+  spellings_.insert(key, spelling_->currentData().toString());
 }
 
 QString LocalTypesView::offsetText(qint64 offset, qint64 bit) const {
@@ -714,7 +805,7 @@ void LocalTypesView::requestLayout() {
   const quint64 serial = ++layoutSerial_;
   session_.read(
       QStringLiteral("local_type"),
-      {{"name", current_}, {"spelling", spelling()}}, this,
+      {{"name", current_}, {"spelling", spelling(QStringLiteral("c"))}}, this,
       [this, serial](const QJsonObject &payload) {
         if (serial == layoutSerial_)
           laidOut(payload);
@@ -729,12 +820,13 @@ void LocalTypesView::requestSource() {
   if (current_.isEmpty() || tabs_->currentIndex() == 0)
     return;
   const quint64 serial = ++sourceSerial_;
-  const QJsonObject options{{"language", language()},
-                            {"spelling", spelling()},
-                            {"hexOffsets", hex_->isChecked()},
-                            {"asserts", asserts_->isChecked()},
-                            {"dependencies", dependencies_->isChecked()},
-                            {"types", QJsonArray{current_}}};
+  QJsonObject options{{"language", language()},
+                      {"hexOffsets", hex_->isChecked()},
+                      {"asserts", asserts_->isChecked()},
+                      {"dependencies", dependencies_->isChecked()},
+                      {"types", QJsonArray{current_}}};
+  if (const QString chosen = spelling(language()); !chosen.isEmpty())
+    options.insert("spelling", chosen);
   session_.read(
       QStringLiteral("local_types_source"), options, this,
       [this, serial](const QJsonObject &payload) {
@@ -924,9 +1016,11 @@ void LocalTypesView::exportTypes(const QStringList &names) {
   if (path.isEmpty())
     return;
   QJsonObject options{{"language", QString::fromLatin1(target.id)},
-                      {"spelling", spelling()},
                       {"hexOffsets", hex_->isChecked()},
                       {"asserts", asserts_->isChecked()}};
+  if (const QString chosen = spelling(QString::fromLatin1(target.id));
+      !chosen.isEmpty())
+    options.insert("spelling", chosen);
   if (!names.isEmpty()) {
     options.insert("types", QJsonArray::fromStringList(names));
     options.insert("dependencies", true);
@@ -956,9 +1050,6 @@ void LocalTypesView::updateActions() {
   copy_->setEnabled(!current_.isEmpty());
   export_->setEnabled(model_->rowCount() > 0);
   const bool source = tabs_->currentIndex() > 0;
-  const bool cLike =
-      language() == QLatin1String("c") || language() == QLatin1String("cpp");
-  spelling_->setEnabled(!source || cLike);
   dependencies_->setEnabled(source);
   asserts_->setEnabled(source);
 }
@@ -993,15 +1084,15 @@ void LocalTypesView::run(TypesCommand command) {
     // The type as the language shown declares it, alone and unchecked: its
     // checks would refuse the change they were made before.
     const QString name = current_, lang = language();
+    QJsonObject options{{"language", lang},
+                        {"hexOffsets", hex_->isChecked()},
+                        {"asserts", false},
+                        {"dependencies", false},
+                        {"types", QJsonArray{name}}};
+    if (const QString chosen = spelling(lang); !chosen.isEmpty())
+      options.insert("spelling", chosen);
     session_.read(
-        QStringLiteral("local_types_source"),
-        {{"language", lang},
-         {"spelling", spelling()},
-         {"hexOffsets", hex_->isChecked()},
-         {"asserts", false},
-         {"dependencies", false},
-         {"types", QJsonArray{name}}},
-        this,
+        QStringLiteral("local_types_source"), options, this,
         [this, name, lang](const QJsonObject &payload) {
           // The editor's declaration is a command, which waits for this
           // read's answer to finish: the editor opens after it.

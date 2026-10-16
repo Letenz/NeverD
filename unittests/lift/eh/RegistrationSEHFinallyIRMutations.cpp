@@ -45,7 +45,7 @@ void checkSEHFinallyEdits(const llvm::Function &Parent,
                 {Function.getName().str(), Address->getZExtValue()});
         }
   for (const auto &Site : Sites)
-    for (unsigned Mutation = 0; Mutation != 16; ++Mutation) {
+    for (unsigned Mutation = 0; Mutation != 17; ++Mutation) {
       SCOPED_TRACE(Site.Function);
       SCOPED_TRACE(Site.Address);
       SCOPED_TRACE(Mutation);
@@ -135,9 +135,12 @@ void checkSEHFinallyEdits(const llvm::Function &Parent,
           Call->addFnAttr(llvm::Attribute::WillReturn);
         break;
       case 14:
-        if (Call->doesNotReturn())
-          continue;
-        Call->addFnAttr(llvm::Attribute::NoReturn);
+        if (Call->doesNotReturn()) {
+          if (Caller == Function)
+            continue;
+          Call->removeFnAttr(llvm::Attribute::NoReturn);
+        } else
+          Call->addFnAttr(llvm::Attribute::NoReturn);
         break;
       case 15: {
         if (Caller == Function)
@@ -153,6 +156,17 @@ void checkSEHFinallyEdits(const llvm::Function &Parent,
                 Module.get(), llvm::Intrinsic::localaddress));
         Call->setArgOperand(1, Frame);
         Call->moveBefore(Destination->getIterator());
+        break;
+      }
+      case 16: {
+        if (!Call->doesNotReturn() || Caller == Function)
+          continue;
+        auto *Callee = Call->getCalledFunction();
+        ASSERT_TRUE(Callee && Callee->getReturnType()->isVoidTy());
+        auto *Terminator = Callee->back().getTerminator();
+        ASSERT_TRUE(llvm::isa<llvm::UnreachableInst>(Terminator));
+        llvm::ReturnInst::Create(Module->getContext(), nullptr, Terminator);
+        Terminator->eraseFromParent();
         break;
       }
       }

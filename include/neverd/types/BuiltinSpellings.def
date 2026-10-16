@@ -1,0 +1,36 @@
+//===- BuiltinSpellings.def - How local types name builtins -----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The ways rendered source names builtin types, and the languages that take
+/// each.  A language takes the spelling TypeLanguages.def gives it unless
+/// another is asked.
+///
+/// NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go)
+///   Id    How APIs, the CLI and settings name the spelling.
+///   C     Whether C and C++ take it.
+///   Rust  Whether Rust takes it.
+///   Go    Whether Go takes it.
+///
+/// Windows   ULONG and UCHAR, as the Windows headers name them; Rust and
+///           Go declare them as aliases of exact widths, as wdk-sys does
+///           (pub type ULONG = u32, type ULONG = uint32).
+/// IDA       unsigned int and unsigned __int8, as IDA's local types do.
+/// Keywords  unsigned long, as the compiler recorded it.
+/// Portable  Exact widths: uint32_t in C, u32 in Rust, uint32 in Go.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_BUILTIN_SPELLING
+#define NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go)
+#endif
+
+NEVERD_BUILTIN_SPELLING(Windows, "windows", true, true, true)
+NEVERD_BUILTIN_SPELLING(IDA, "ida", true, false, false)
+NEVERD_BUILTIN_SPELLING(Keywords, "keywords", true, false, false)
+NEVERD_BUILTIN_SPELLING(Portable, "portable", true, true, true)
+
+#undef NEVERD_BUILTIN_SPELLING

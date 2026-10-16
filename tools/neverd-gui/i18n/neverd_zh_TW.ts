@@ -3377,12 +3377,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
 <context>
     <name>neverd::gui::LocalTypesView</name>
     <message>
-        <source>C header (*.h)</source>
-        <translation>C 標頭檔 (*.h)</translation>
-    </message>
-    <message>
-        <source>C++ header (*.hpp)</source>
-        <translation>C++ 標頭檔 (*.hpp)</translation>
+        <source>C/C++ header (*.h)</source>
+        <translation>C/C++ 標頭檔 (*.h)</translation>
     </message>
     <message>
         <source>Rust (*.rs)</source>
@@ -3407,6 +3403,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Exact widths (uint32_t)</source>
         <translation>精確寬度（uint32_t）</translation>
+    </message>
+    <message>
+        <source>Exact widths (u32)</source>
+        <translation>精確寬度（u32）</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>精確寬度（uint32）</translation>
     </message>
     <message>
         <source>Filter types by name</source>
@@ -3461,8 +3465,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>匯出所有型別…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>C 與 C++ 對內建型別的命名方式</translation>
+        <source>How the source names builtin types</source>
+        <translation>原始碼對內建型別的命名方式</translation>
     </message>
     <message>
         <source>Hex offsets</source>

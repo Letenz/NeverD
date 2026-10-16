@@ -158,9 +158,13 @@ TEST_F(TypeRenderFixture, AHeaderDefinesWhatATypeHoldsFirst) {
   }
   EXPECT_FALSE(contains(Text, "_THREAD_LIKE"));
   EXPECT_TRUE(contains(Text, "typedef uint32_t ULONG;"));
-  EXPECT_TRUE(contains(Text,
-                       "_Static_assert(offsetof(struct _DEVICE, Pool) == 0x50, "
-                       "\"_DEVICE.Pool\");"));
+  // The header compiles as C++ too: C names its check as C++ does.
+  EXPECT_TRUE(contains(Text, "#if !defined(__cplusplus) && "
+                             "!defined(static_assert)\n#define static_assert "
+                             "_Static_assert\n#endif\n"));
+  EXPECT_TRUE(
+      contains(Text, "\nstatic_assert(offsetof(struct _DEVICE, Pool) == 0x50, "
+                     "\"_DEVICE.Pool\");"));
 }
 
 TEST_F(TypeRenderFixture, CppNamesTypesBare) {
@@ -190,6 +194,58 @@ TEST_F(TypeRenderFixture, RustNamesAnonymousRecordsAsWindowsRsDoes) {
   EXPECT_TRUE(contains(Text, "    pub _bitfield: u32,"));
   EXPECT_TRUE(contains(Text, "    pub const fn ReadyTransition(&self) -> u32 "
                              "{\n        (self._bitfield >> 1) & 0x1\n    }"));
+}
+
+TEST_F(TypeRenderFixture, RustTakesWindowsNamesAsAliases) {
+  // Exact widths unless asked, as windows-rs spells them.
+  EXPECT_TRUE(contains(render("_THREAD_LIKE", in(Language::Rust)),
+                       "    pub MiscFlags: i32,"));
+  RenderOptions Options = in(Language::Rust);
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Text = header("_THREAD_LIKE", Options);
+  // The names the types use, declared as wdk-sys declares them, at the
+  // program's widths.
+  EXPECT_TRUE(contains(Text, "\n/// The Windows headers' names of builtin "
+                             "types.\npub type UCHAR = u8;\npub type LONG = "
+                             "i32;\npub type ULONG = u32;\npub type "
+                             "ULONGLONG = u64;\n"))
+      << Text;
+  EXPECT_TRUE(contains(Text, "    pub Header: ULONGLONG,"));
+  EXPECT_TRUE(contains(Text, "    pub MiscFlags: LONG,"));
+  EXPECT_TRUE(contains(Text, "    pub Tail: [UCHAR; 3],"));
+  // A bitfield reads as its own type; its storage stays a width.
+  EXPECT_TRUE(contains(Text, "    pub _bitfield: u32,"));
+  EXPECT_TRUE(
+      contains(Text, "    pub const fn ReadyTransition(&self) -> ULONG {"));
+  // A spelling Rust does not take renders as its default.
+  Options.Spelling = BuiltinSpelling::IDA;
+  EXPECT_TRUE(
+      contains(header("_THREAD_LIKE", Options), "    pub MiscFlags: i32,"));
+  EXPECT_EQ(spellingOf(Options), BuiltinSpelling::Portable);
+  EXPECT_EQ(spellingsText(Language::Rust), "windows or portable");
+  EXPECT_EQ(spellingsText(Language::Go), "windows or portable");
+  EXPECT_EQ(spellingsText(Language::C), "windows, ida, keywords or portable");
+}
+
+TEST_F(TypeRenderFixture, GoTakesWindowsNamesAsAliases) {
+  // Exact widths unless asked, as golang.org/x/sys/windows spells them.
+  EXPECT_TRUE(
+      contains(render("_THREAD_LIKE", in(Language::Go)), "\tHeader uint64"));
+  RenderOptions Options = in(Language::Go);
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Text = header("_THREAD_LIKE", Options);
+  EXPECT_TRUE(contains(Text, "\n// The Windows headers' names of builtin "
+                             "types.\ntype UCHAR = uint8\ntype LONG = "
+                             "int32\ntype ULONG = uint32\ntype ULONGLONG = "
+                             "uint64\n"))
+      << Text;
+  EXPECT_TRUE(contains(Text, "\tHeader ULONGLONG"));
+  EXPECT_TRUE(contains(Text, "\tTail [3]UCHAR"));
+  EXPECT_TRUE(contains(Text, ") MiscFlags() *LONG {"));
+  // A bitfield reads as its own type; its storage stays a width.
+  EXPECT_TRUE(contains(Text, "\t_bitfield uint32"));
+  EXPECT_TRUE(contains(Text, ") ReadyTransition() ULONG {"));
+  EXPECT_TRUE(contains(Text, ") SetReadyTransition(value ULONG) {"));
 }
 
 TEST_F(TypeRenderFixture, RustAndGoKeepPacking) {
@@ -274,6 +330,30 @@ TEST(TypeRender, GoReadsAFlexibleArrayThroughAnAccessor) {
       renderType(Library, *Library.find("_LIST"), in(Language::Go));
   EXPECT_FALSE(contains(Text, "\tItems [0]uint16"));
   EXPECT_TRUE(contains(Text, "func (s *_LIST) Items(n int) []uint16 {"));
+}
+
+TEST(TypeRender, CCharacterTypesLeaveCppItsKeywords) {
+  // C declares the character types C++ has keywords for, so that its header
+  // compiles as either; char8_t is a keyword from C++20.
+  TypeLibrary Library;
+  Library.define(structure("_TEXT", 4,
+                           {member("Narrow", makeBuiltin(Builtin::Char8), 0),
+                            member("Wide", makeBuiltin(Builtin::Char16), 2)}));
+  for (BuiltinSpelling Spelling :
+       {BuiltinSpelling::Windows, BuiltinSpelling::Keywords}) {
+    RenderOptions Options = in(Language::C);
+    Options.Spelling = Spelling;
+    const std::string Text = renderTypes(Library, {}, Options);
+    EXPECT_TRUE(contains(Text, "#if !defined(__cplusplus) || "
+                               "!defined(__cpp_char8_t)\ntypedef uint8_t "
+                               "char8_t;\n#endif\n"))
+        << Text;
+    EXPECT_TRUE(contains(Text, "#ifndef __cplusplus\ntypedef uint16_t "
+                               "char16_t;\n#endif\n"))
+        << Text;
+  }
+  EXPECT_FALSE(contains(renderTypes(Library, {}, in(Language::Cpp)),
+                        "typedef uint16_t char16_t;"));
 }
 
 TEST(TypeRender, NamesStepAroundKeywords) {

@@ -298,6 +298,19 @@ With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
 ntoskrnl.exe and its PDB,
 `SessionCAPITest.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
 and checks that the headers join its PDB without conflicts.
+`SessionCAPITest.KernelFunctionsDecompileWithTheirPrototypes` decompiles
+`NtCreateFile`, `IoAllocateIrp`, `PsCreateSystemThread` and
+`IofCompleteRequest` and checks the signatures the headers give them.
+`PrototypeDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
+the conversion and which functions take a prototype without a program.
+`scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
+decompiles with the prototypes an IDA dump shows; it decompiles each
+function by address and resolves IDA's typedefs through the shipped headers:
+
+```sh
+python3 scripts/compare_prototypes_with_ida.py --neverd build/bin/neverd \
+  --binary ntoskrnl.exe --pdb ntkrnlmp.pdb --ida prototypes.json
+```
 
 Declared types are covered at each layer:
 - `SessionCAPITest.DeclaredTypesJoinThePDBsAndStayWithTheProject`: declaring,
@@ -313,9 +326,11 @@ Rendered source must also compile with each record's size and offsets checked.
 `scripts/check_type_renders.py` runs `neverd types --all --asserts` and
 compiles the result:
 - C and C++ in all four builtin spellings with clang for the MSVC target, and
-  the portable spelling for the GNU target too;
-- Rust with rustc (64-bit layouts only);
-- Go with `go vet` for Windows.
+  the portable spelling for the GNU target too; the C header, which the
+  workbench shows as C/C++, compiles as C++ as well;
+- Rust with rustc in both of its spellings, exact widths and Windows' names
+  as aliases (64-bit layouts only);
+- Go with `go vet` for Windows, in both spellings too.
 
 A missing toolchain is reported and skipped. Without `--binary` it checks the
 fixture:
@@ -4248,7 +4263,7 @@ bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
 stack-only facts cannot preserve a capture, deallocated buffers refuse and a
 frame-preserving call supplies no scalar result authority.
 
-The EH4 jump matrix repeats thirty-five capture/resumption scenarios with and
+The EH4 jump matrix repeats thirty-seven capture/resumption scenarios with and
 without GS cookies: parent and callback jumps, zero values, filter search, incoming
 parameters, retired scopes, private leaf/graph calls with a live buffer, and
 registered EH3/EH4 helpers borrowing the parent buffer and a scalar object, and
@@ -4273,7 +4288,7 @@ four calls, unwind the same finally, check the restored state and nonvolatile
 register, then raise another exception. The native mutation tests alter the saved
 state slot, read address, volatile accesses, placement, use closure and captured
 projection key while retaining verifier-clean IR. The full source profile now
-contains 144 scenarios; older compiler profiles keep their original membership.
+contains 150 scenarios; older compiler profiles keep their original membership.
 
 The EH4/GS `longjmp-callee`, `longjmp-returning-callee` and
 `longjmp-scalar-callee` variants retain the source helper's registration while
@@ -4324,7 +4339,7 @@ pairs. Native installation mutations change the reload address, volatility,
 atomicity, alignment, selector, projection keys/results, uses and placement
 before the capture. They also remove a projection or compare another value.
 
-`registration_filter_state.s` supplies twelve runtime cases. Five handler-selection
+`registration_filter_state.s` supplies fourteen runtime cases. Five handler-selection
 cases (`longjmp-handler-selected`, `longjmp-handler-cleanup`,
 `longjmp-handler-captured-cursor`, `longjmp-handler-nested-finally` and
 `longjmp-handler-mixed-resumption`) check handler entry state, cleanup/filter
@@ -4332,7 +4347,15 @@ order, actual caller PC, return value and restored FS chain. Handler-only cases
 require the captured continuation to remain unreachable; the mixed case alternates
 selection and continuation, checking distinct traces and restored registers.
 Nested selection abandons both suspended callback invocations. They run with
-EH3, EH4 and EH4+GS. The other seven cases are:
+EH3, EH4 and EH4+GS. Two additional cases, `longjmp-handler-cleanup-jump` and
+`longjmp-handler-nested-cleanup-jump`, supersede selection from a direct or nested
+cleanup. They require traces 236/2367, capture value 42, restored EBX and state 0;
+the selected handler and suspended callback tails must not execute. The six
+protocol variants also cover out-of-line EH4 callbacks. Source mutations reject
+changed buffers/values, incomplete CALLs and parent continuations outside their
+range. MedIR checks exact nested invocation identity and independent ownership
+of unreached callback tails; installation rejects removed noreturn attributes
+and newly inserted normal returns. The other seven cases are:
 `longjmp-filter-correlated-state`, `longjmp-filter-shared-state`,
 `longjmp-filter-captured-cursor`, `longjmp-filter-negative-disposition`,
 `longjmp-filter-skipped-scope`, `longjmp-filter-two-resume-mappings` and
@@ -7127,7 +7150,8 @@ Android service or shader coverage.
 
 `NeverDDalvikTests` checks the decoded executor's uninitialized/torn registers,
 overlapping wide moves, division exceptions/overflow, budget/stack stops,
-result-use rules and refusal of class initialization/handlers/unknown opcodes.
+result-use rules, per-workload static state, initialization failures, terminal
+resource stops, field widths/final stores and refusal of handlers/unknown opcodes.
 `NeverDMobileTests` must also run when changing the shared DEX reader or models;
 mobile recovery and JNI execution share those owners.
 
@@ -7150,6 +7174,29 @@ objects/handlers, corrupt/duplicate DEX and JNI-disabled admission. Logs and
 request/report files stay in the explicit output directory. Missing JDK/D8 or
 CPU transports are unavailable evidence, not a passing substitute. The runtime
 itself does not launch these preparation tools or use a device.
+
+Run `scripts/test_android_dex_state.py` with the same arguments for persistent
+class state. The original Java oracle emits every sequential return value and
+exception identity; the native fixture records the same sequence through JNI.
+Cases include encoded/default values, all integral field widths, dynamic final
+initialization, both orders of cyclic initialization, ordinary division failure
+without rollback, failed initializer effects without retry, nested initializer
+errors and subsequent NoClassDefFoundError. Each sequence runs with retained JNI
+attachment, repeated detach/reattach, and alternating joined guest threads.
+Volatile fields and unsupported or looping initializers retain explicit
+failure boundaries. These are supplied synthetic programs, not evidence for
+unavailable application DEX, Binder services or shaders.
+
+Run `scripts/test_android_dex_objects.py` with the same arguments for supplied
+objects and arrays. Its independent JVM oracle covers every integral JNI field
+width, object/static aliases, native-to-DEX and DEX-to-native mutation, constructor
+and method call forms, nested arrays, primitive payloads, global references and
+field IDs across reattachment, and five recoverable Java exception classes.
+Separate negative calls check accessor mismatch, final writes, bad receivers,
+forged field IDs and model heap limits. Decoded-model unit cases independently
+check forged register references, constructor ordering/aliasing, array payload
+bounds, component types, cyclic field storage and terminal resource stops.
+
 
 Processor regressions cover output boundaries, NULL, nested restores, invalid IRQL and import identity. Original `driver_processors.c` exercises entry, worker and DPC contexts across backends, contracts, bases and scheduling. Optional `NEVERD_WDM_PROCESSORS_FIXTURE` and `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` verify genuine WDK inline calls and dynamic exports with normal/active CFG images; missing transports remain explicit skips.
 

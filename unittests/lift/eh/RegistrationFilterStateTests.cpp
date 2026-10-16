@@ -12,6 +12,8 @@
 
 #include "neverd/lift/X86Regs.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <utility>
 
 using namespace neverd;
@@ -196,7 +198,7 @@ LowFunc filterFrame(Variant V, unsigned Protocol = 0) {
   Finally.InstructionBoundaries.push_back({Arguments + 16, 6, Call, 1});
   Finally.InstructionBoundaries.back().Control = LowInstructionControl::Call;
   Finally.InstructionBoundaries.back().ControlFlags =
-      LowInstructionControlFlag::Call;
+      LowInstructionControlFlag::Call | LowInstructionControlFlag::Indirect;
   if (V == Variant::IncompleteCallInstruction) {
     emitOp(Finally, Arguments + 16, NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
            {NdVar::cst(0, 4)});
@@ -251,8 +253,8 @@ LowFunc filterFrame(Variant V, unsigned Protocol = 0) {
   return F;
 }
 
-RegistrationStateAnalysis analyze(LowFunc F, Variant V,
-                                  va_t CookieVA = 0x4000) {
+RegistrationStateAnalysis analyze(LowFunc F, Variant V, va_t CookieVA = 0x4000,
+                                  bool UnwindJump = false) {
   const bool EH4 =
       F.ExceptionMetadata->Personality == ExceptionPersonality::ExceptHandler4;
   SEHJumpRuntime Runtime;
@@ -281,13 +283,22 @@ RegistrationStateAnalysis analyze(LowFunc F, Variant V,
           Frame.Registers[Registers[I] / x86reg::GeneralRegStride];
     return Capture;
   };
-  Runtime.Resume = [](const LowOp &Op, size_t &) { return Op.Addr == 0x115b; };
+  Runtime.Resume = [](const LowOp &Op, size_t &) {
+    return Op.Addr == 0x115b || Op.Addr == 0x1a0b;
+  };
   Runtime.Raise = [](const LowOp &Op, const FrameState &, size_t &) {
     return Op.Addr == 0x1850 || Op.Addr == 0x1857;
   };
-  RegistrationStateSolver Solver(F, EH4 ? CookieVA : 0, 0, nullptr, nullptr,
-                                 nullptr, nullptr, nullptr, nullptr, nullptr,
-                                 &Runtime);
+  std::vector<RegistrationSEHControlContract> Controls;
+  if (UnwindJump)
+    for (const auto &Block : F.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::RETURN)
+          Controls.push_back({RegistrationSEHControlContract::Kind::NearReturn,
+                              Op.Addr, Block.EndAddr, 0});
+  RegistrationStateSolver Solver(
+      F, EH4 ? CookieVA : 0, 0, nullptr, nullptr, nullptr, nullptr,
+      UnwindJump ? &Controls : nullptr, nullptr, nullptr, &Runtime);
   return Solver.run();
 }
 
@@ -509,4 +520,64 @@ TEST(RegistrationFilterState,
     EXPECT_FALSE(Result.SEHJumpResumptionsComplete);
     EXPECT_TRUE(Result.SEHJumpResumptions.empty());
   }
+}
+
+TEST(RegistrationFilterState, CleanupJumpRetiresThePendingHandler) {
+  for (unsigned Protocol = 0; Protocol != 3; ++Protocol)
+    for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+      SCOPED_TRACE(Protocol);
+      SCOPED_TRACE(Mutation);
+      auto F = filterFrame(Variant::HandlerCleanup, Protocol);
+      if (Mutation == 7)
+        F.ExceptionMetadata->CodeRange.End = 0x1a00;
+      if (Mutation == 8)
+        F.ExceptionMetadata->CodeRange.End = 0x115b;
+      auto Cleanup = F.Blocks[4];
+      Cleanup.Id = F.Blocks.back().Id;
+      const va_t Delta = 0x1a00 - Cleanup.StartAddr;
+      Cleanup.StartAddr += Delta;
+      Cleanup.EndAddr += Delta;
+      Cleanup.Succs.clear();
+      for (auto &Op : Cleanup.Ops)
+        Op.Addr += Delta;
+      for (auto &Boundary : Cleanup.InstructionBoundaries)
+        Boundary.Address += Delta;
+      if (Mutation == 1 || Mutation == 2)
+        Cleanup.Ops[4].Inputs[1] = NdVar::cst(Mutation, 4);
+      if (Mutation == 3)
+        Cleanup.Ops[1].Inputs[1] = NdVar::cst(uint32_t(-140), 4);
+      if (Mutation == 4) {
+        Cleanup.Ops[4].Inputs[0] = NdVar::reg(x86reg::RBP, 4);
+      } else if (Mutation == 5) {
+        emitOp(Cleanup, 0x1a0b, NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
+               {NdVar::cst(0, 4)});
+        ++Cleanup.InstructionBoundaries.back().OpCount;
+      } else if (Mutation == 6) {
+        Cleanup.InstructionBoundaries.back().ControlFlags =
+            LowInstructionControlFlag::Call;
+      }
+      for (unsigned I = 0; I != Cleanup.Ops.size(); ++I)
+        Cleanup.Ops[I].Seq = I;
+      F.Blocks.back() = std::move(Cleanup);
+      const auto Result =
+          analyze(std::move(F), Variant::HandlerCleanup, 0x4000, true);
+      if (Mutation >= 2 && Mutation != 7) {
+        EXPECT_FALSE(Result.Complete);
+        EXPECT_FALSE(Result.SEHJumpResumptionsComplete);
+        continue;
+      }
+      for (const auto &Diagnostic : Result.Diagnostics)
+        ADD_FAILURE() << Diagnostic;
+      ASSERT_TRUE(Result.Complete);
+      ASSERT_TRUE(Result.SEHJumpResumptionsComplete);
+      const auto Outer =
+          llvm::find_if(Result.SEHJumpResumptions, [](const auto &Resume) {
+            return Resume.Address == 0x115b;
+          });
+      ASSERT_NE(Outer, Result.SEHJumpResumptions.end());
+      EXPECT_TRUE(Outer->SelectedScopes.empty());
+      EXPECT_EQ(Outer->ResumedLevels, (std::vector<int32_t>{0}));
+      EXPECT_EQ(Outer->StateRestores,
+                (std::vector<RegistrationSEHJumpState>{{1, 0, 0}}));
+    }
 }

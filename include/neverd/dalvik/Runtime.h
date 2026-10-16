@@ -4,13 +4,14 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Integral static method execution; decoding remains owned by parseDex.
+/// Bounded method and object execution; decoding remains owned by parseDex.
 //===----------------------------------------------------------------------===//
 #pragma once
 
-#include "neverd/dalvik/Model.h"
+#include "neverd/dalvik/Heap.h"
 
 #include <functional>
+#include <memory>
 #include <span>
 
 namespace neverd::mobile::dalvik {
@@ -21,7 +22,8 @@ enum class ExecutionStop {
   Invalid,
   InstructionLimit,
   Timeout,
-  StackLimit
+  StackLimit,
+  HeapLimit
 };
 struct ExecutionResult {
   ExecutionStop stop = ExecutionStop::Returned;
@@ -39,17 +41,50 @@ public:
   Program(const Program &) = delete;
   Program &operator=(const Program &) = delete;
   bool containsClass(std::string_view descriptor) const;
+  const Class *findClass(std::string_view descriptor) const;
+  bool knownReference(std::string_view descriptor) const;
+  const Field *findField(const FieldRef &reference, bool is_static) const;
+  const Method *findMethod(const MethodRef &reference, bool is_static) const;
+  const Field *findStaticField(const FieldRef &reference) const;
   std::optional<std::string>
   unsupportedClass(std::string_view descriptor) const;
   const Method *findStatic(const MethodRef &reference) const;
-  // No class initializer, field storage, object/FP values or runtime library
-  // calls are inferred. Diagnose these boundaries before method execution.
+  // Supplied integral/reference code with a direct Object parent. Floating
+  // values, arbitrary hierarchy dispatch and library bodies are not inferred.
   std::optional<std::string> unsupported(const Method &method) const;
+  // One-shot convenience. Use Runtime to retain class state across calls.
   ExecutionResult execute(const Method &method, std::span<const uint64_t> args,
                           const AdmitInstruction &admit,
                           uint64_t stack_bytes) const;
 
 private:
   ClassMap classes;
+};
+
+// One workload's mutable class and object state over an immutable Program,
+// which must outlive it. Execution is synchronous and single-owner; no Java
+// scheduling or monitor/memory-model equivalence is implied. A non-Java stop
+// poisons the runtime: partially executed code cannot be retried as a fresh
+// invocation.
+class Runtime {
+public:
+  explicit Runtime(const Program &program, std::shared_ptr<Heap> heap = {});
+  ~Runtime();
+  Runtime(const Runtime &) = delete;
+  Runtime &operator=(const Runtime &) = delete;
+  ExecutionResult allocate(std::string_view descriptor, bool initialized,
+                           const AdmitInstruction &admit, uint64_t stack_bytes);
+  ExecutionResult field(const Field &field, uint64_t receiver,
+                        std::optional<uint64_t> write,
+                        const AdmitInstruction &admit, uint64_t stack_bytes);
+  ExecutionResult initialize(std::string_view descriptor,
+                             const AdmitInstruction &admit,
+                             uint64_t stack_bytes);
+  ExecutionResult execute(const Method &method, std::span<const uint64_t> args,
+                          const AdmitInstruction &admit, uint64_t stack_bytes);
+
+private:
+  struct State;
+  std::unique_ptr<State> state;
 };
 } // namespace neverd::mobile::dalvik

@@ -232,3 +232,5 @@ Toute nouvelle forme native doit ajouter dans le même changement :
 
 La capacité de décoder un record ne suffit jamais à élargir l’allow-list. Le
 critère est la préservation du comportement d’exception dans l’image liée finale.
+
+Le cleanup du handler sélectionné peut effectuer un nouveau saut vers la même capture valide avec une valeur constante prouvée égale (zéro devient un). Ce saut annule le handler et les appels finally suspendus, puis rétablit la borne de déroulement de la capture. Les callbacks hors du corps principal et leurs fins inaccessibles conservent leur appartenance vérifiée. Une autre capture, une autre valeur ou une égalité inconnue exige une preuve distincte.

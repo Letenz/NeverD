@@ -160,8 +160,15 @@ private:
   BionicResult jniStrings(unsigned Slot, const NativeCallEvent &Call);
   BionicResult jniArrays(unsigned Slot, const NativeCallEvent &Call);
   BionicResult jniMethods(unsigned Slot, const NativeCallEvent &Call);
-  BionicResult executeDex(const mobile::dalvik::Method &Method,
-                          llvm::ArrayRef<uint64_t> Arguments);
+  BionicResult jniFields(unsigned Slot, const NativeCallEvent &Call);
+  BionicResult
+  runDex(const std::function<mobile::dalvik::ExecutionResult(
+             const mobile::dalvik::AdmitInstruction &, uint64_t)> &Body);
+  BionicResult allocateDex(llvm::StringRef Class, bool Initialized);
+  // Null Method requests class initialization without a method invocation.
+  BionicResult executeDex(const mobile::dalvik::Method *Method,
+                          llvm::ArrayRef<uint64_t> Arguments,
+                          llvm::StringRef Class = {});
   llvm::Error jniIdentity(uint64_t Address, uint64_t Expected);
   llvm::Expected<JNIState::Thread *> jniThread(uint64_t Environment);
   llvm::Expected<std::shared_ptr<JNIObject>> jniObject(uint64_t Reference);

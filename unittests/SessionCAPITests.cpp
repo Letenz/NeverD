@@ -11,9 +11,11 @@
 #include "SessionTestAccess.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/sdk/NeverDCAPI.h"
 #include "neverd/support/ProjectWriteLock.h"
+#include "neverd/types/TypeParse.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/AsmParser/Parser.h"
@@ -3546,12 +3548,34 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
       Session, R"({"types":["_DEVICE"],"asserts":true})"));
   EXPECT_NE(Header.find("struct _LIST_ENTRY\n{"), std::string::npos);
   EXPECT_NE(Header.find("struct _DEVICE\n{"), std::string::npos);
-  EXPECT_NE(Header.find("_Static_assert(sizeof(struct _DEVICE) == 0x58"),
+  EXPECT_NE(Header.find("static_assert(sizeof(struct _DEVICE) == 0x58"),
             std::string::npos);
   const std::string Rust = takeString(neverd_local_types_source(
       Session,
       R"({"language":"rust","types":["_PACKED"],"dependencies":false})"));
   EXPECT_NE(Rust.find("#[repr(C, packed(1))]"), std::string::npos);
+  EXPECT_NE(Rust.find("pub Value: u32,"), std::string::npos);
+  // Rust names builtins as Windows does when asked, with the aliases.
+  const std::string RustWindows = takeString(neverd_local_types_source(
+      Session,
+      R"({"language":"rust","spelling":"windows","types":["_PACKED"]})"));
+  EXPECT_NE(RustWindows.find("pub type ULONG = u32;\n"), std::string::npos);
+  EXPECT_NE(RustWindows.find("pub Value: ULONG,"), std::string::npos);
+  // A spelling the language does not take fails, saying which it takes.
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"rust","spelling":"ida"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "rust names builtins as windows or portable, not ida");
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"go","spelling":"keywords"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "go names builtins as windows or portable, not keywords");
+  const std::string GoWindows = takeString(neverd_local_types_source(
+      Session,
+      R"({"language":"go","spelling":"windows","types":["_PACKED"]})"));
+  EXPECT_NE(GoWindows.find("type ULONG = uint32\n"), std::string::npos);
 
   EXPECT_EQ(neverd_local_type_json(Session, "_NO_SUCH_TYPE", nullptr), nullptr);
   EXPECT_NE(takeString(neverd_last_error(Session)).find("_NO_SUCH_TYPE"),
@@ -3676,6 +3700,27 @@ TEST_F(SessionCAPITest, DeclaredTypesJoinThePDBsAndStayWithTheProject) {
   // The others need no PDB: a pointer to a structure C has not seen is C.
   EXPECT_EQ(size("OWNER"), 16);
   EXPECT_EQ(size("_PACKED"), 16);
+
+  // Prototypes reach the decompiler with the types they name, through
+  // pointers too: declaring one takes the decompilation, as does a change
+  // to a type it names; another type leaves it.
+  const auto decompilation = [&](const char *Raw) {
+    return parse(Raw).getBoolean("decompilation");
+  };
+  EXPECT_EQ(decompilation(neverd_local_types_declare(
+                Session, "struct LONELY { int x; };", nullptr)),
+            false);
+  EXPECT_EQ(decompilation(neverd_local_types_declare(
+                Session, "long Probe(struct OWNER *Owner);", nullptr)),
+            true);
+  EXPECT_EQ(decompilation(neverd_local_types_declare(
+                Session, "struct OWNER { void *Thread; long Count, Spare; };",
+                nullptr)),
+            true);
+  EXPECT_EQ(decompilation(neverd_local_types_forget(Session, R"(["LONELY"])")),
+            false);
+  EXPECT_EQ(decompilation(neverd_local_types_forget(Session, R"(["OWNER"])")),
+            true);
 }
 
 TEST_F(SessionCAPITest, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
@@ -3720,6 +3765,150 @@ TEST_F(SessionCAPITest, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
       takeString(neverd_local_type_json(Session, "_MINE", nullptr)));
   ASSERT_TRUE(static_cast<bool>(Mine));
   EXPECT_EQ(Mine->getAsObject()->getInteger("size"), 32);
+}
+
+namespace {
+
+/// Debug information that names functions and types none, as a PDB of
+/// public symbols does.
+class NamesOnlyDebugContext final : public neverd::DebugContext {
+public:
+  std::map<neverd::va_t, neverd::FunctionSym> Functions;
+  std::optional<neverd::FunctionSym>
+  resolveFunction(neverd::va_t Addr) const override {
+    for (const auto &[Entry, Function] : Functions)
+      if (Function.contains(Addr) || Entry == Addr)
+        return Function;
+    return std::nullopt;
+  }
+  std::optional<neverd::VariableSym> resolveVariable(neverd::va_t,
+                                                     int64_t) const override {
+    return std::nullopt;
+  }
+  std::optional<neverd::TypeSym> resolveType(uint64_t) const override {
+    return std::nullopt;
+  }
+  std::optional<neverd::SourceLoc> sourceLocation(neverd::va_t) const override {
+    return std::nullopt;
+  }
+  std::vector<neverd::FunctionSym> allFunctions() const override { return {}; }
+  bool hasInfo() const override { return true; }
+};
+
+} // namespace
+
+TEST(PrototypeDebugContext, TypesTheFunctionsDebugInformationLeavesUntyped) {
+  using namespace neverd;
+  auto Library = std::make_shared<types::TypeLibrary>();
+  ASSERT_TRUE(types::parseCTypes(R"(
+    typedef LONG NTSTATUS;
+    typedef struct _PAIR { ULONG Low; union { LONG High; ULONG Top; }; } PAIR,
+        *PPAIR;
+    typedef VOID (NTAPI *PCALLBACK)(PPAIR Pair, ULONG Flags);
+    NTSTATUS NTAPI Pair(PPAIR Out, ULONG Flags, PCALLBACK Done);
+    PPAIR NTAPI NextPair(PPAIR Current);
+    ULONG __cdecl Print(const char *Format, ...);
+  )",
+                                 *Library)
+                  .ok());
+  NamesOnlyDebugContext Names;
+  const auto name = [&](va_t Addr, const char *Name) {
+    FunctionSym Function;
+    Function.Name = Name;
+    Function.Addr = Addr;
+    Function.Size = 0x10;
+    Names.Functions[Addr] = Function;
+  };
+  name(0x1000, "Pair");
+  name(0x2000, "NextPair");
+  name(0x3000, "Print");
+  name(0x4000, "Unknown");
+  FunctionSym Typed;
+  Typed.Name = "Pair";
+  Typed.Addr = 0x5000;
+  Typed.Size = 0x10;
+  Typed.ReturnType = NdType::makeInt(8, false);
+  Names.Functions[0x5000] = Typed;
+  sdk::PrototypeDebugContext Context(Names, Library);
+
+  std::optional<FunctionSym> Pair = Context.resolveFunction(0x1000);
+  ASSERT_TRUE(Pair.has_value());
+  ASSERT_NE(Pair->ReturnType, nullptr);
+  EXPECT_EQ(Pair->ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Pair->ReturnType->Size, 4u);
+  EXPECT_TRUE(Pair->ReturnType->IsSigned);
+  ASSERT_EQ(Pair->Params.size(), 3u);
+  EXPECT_EQ(Pair->Params[0].first, "Out");
+  // The record pointed to has its name and its members' names, those of
+  // the union in place among them; it is C's.
+  const TypeRef &Record = Pair->Params[0].second->Pointee;
+  EXPECT_EQ(Record->SourceName, "_PAIR");
+  EXPECT_EQ(Record->Size, 8u);
+  EXPECT_EQ(Record->Passing, NdRecordPassing::ByValue);
+  EXPECT_EQ(Record->FieldDisplayNames,
+            (std::vector<std::string>{"Low", "High", "Top"}));
+  EXPECT_EQ(Record->FieldDisplayOffsets, (std::vector<uint16_t>{0, 4, 4}));
+  // A callback is a pointer to a function of opaque pointers and scalars.
+  const TypeRef &Done = Pair->Params[2].second;
+  ASSERT_EQ(Done->Kind, NdTypeKind::Ptr);
+  ASSERT_EQ(Done->Pointee->Kind, NdTypeKind::Func);
+  ASSERT_EQ(Done->Pointee->ParamTypes.size(), 2u);
+  EXPECT_EQ(Done->Pointee->ParamTypes[0]->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Done->Pointee->ParamTypes[0]->Pointee->Kind, NdTypeKind::Void);
+
+  // A record returned by a C declaration's pointer is no hidden result.
+  std::optional<FunctionSym> Next = Context.resolveFunction(0x2000);
+  ASSERT_TRUE(Next.has_value());
+  EXPECT_FALSE(
+      isMsvcIndirectReturn(Next->ReturnType, Arch::X64, BinaryFormat::COFF));
+  // A variadic prototype's calls pass more than it declares; a name
+  // without one, an interior address and a typed declaration stay.
+  EXPECT_TRUE(Context.resolveFunction(0x3000)->Params.empty());
+  EXPECT_TRUE(Context.resolveFunction(0x4000)->Params.empty());
+  EXPECT_TRUE(Context.resolveFunction(0x1008)->Params.empty());
+  EXPECT_TRUE(Context.resolveFunction(0x5000)->Params.empty());
+  EXPECT_EQ(Context.resolveFunction(0x5000)->ReturnType->Size, 8u);
+}
+
+TEST_F(SessionCAPITest, KernelFunctionsDecompileWithTheirPrototypes) {
+  const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
+  const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");
+  if (!Kernel || !PDB)
+    GTEST_SKIP() << "set NEVERD_TYPES_NTOSKRNL and NEVERD_TYPES_NTKRNLMP to "
+                    "ntoskrnl.exe and ntkrnlmp.pdb";
+  neverd_session_set_pdb_path(Session, PDB);
+  ASSERT_EQ(neverd_session_load(Session, Kernel), 1)
+      << takeString(neverd_last_error(Session));
+  const auto signature = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    if (Index < 0)
+      return std::string();
+    const std::string Source = takeString(
+        neverd_decompile(Session, neverd_func_entry(Session, Index)));
+    for (llvm::StringRef Line : llvm::split(Source, '\n'))
+      if (Line.contains(std::string(Name) + "(") && Line.ends_with("{"))
+        return Line.str();
+    return std::string();
+  };
+  // The WDK's parameter names and records, where the PDB has only names.
+  const std::string Create = signature("NtCreateFile");
+  EXPECT_NE(Create.find("(void** FileHandle, uint32_t DesiredAccess, "
+                        "_OBJECT_ATTRIBUTES* ObjectAttributes, "
+                        "_IO_STATUS_BLOCK* IoStatusBlock"),
+            std::string::npos)
+      << Create;
+  EXPECT_NE(Create.find("uint32_t EaLength)"), std::string::npos) << Create;
+  // A pointer a C declaration returns comes back in RAX.
+  const std::string Irp = signature("IoAllocateIrp");
+  EXPECT_NE(Irp.find("_IRP* IoAllocateIrp(char StackSize, uint8_t "
+                     "ChargeQuota)"),
+            std::string::npos)
+      << Irp;
+  EXPECT_NE(
+      signature("PsCreateSystemThread").find("void (*StartRoutine)(void*)"),
+      std::string::npos);
+  EXPECT_EQ(signature("IofCompleteRequest").rfind("void ", 0), 0u);
 }
 
 TEST_F(SessionCAPITest, PDBReferenceNamesTheCopyALoadFinds) {

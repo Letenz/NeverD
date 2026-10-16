@@ -6,6 +6,8 @@
 
 #include "neverd/types/LocalTypes.h"
 
+#include "llvm/ADT/StringExtras.h"
+
 #include <algorithm>
 #include <cassert>
 #include <iterator>
@@ -43,6 +45,24 @@ unsigned builtinBytes(Builtin Type, DataModel Model) {
 
 unsigned pointerBytes(DataModel Model) {
   return Model == DataModel::ILP32 ? 4 : 8;
+}
+
+bool windowsTypedef(Builtin Type) {
+  const BuiltinInfo &Info = builtinInfo(Type);
+  const llvm::StringRef Name = Info.Windows;
+  return Info.Class != BuiltinClass::Void && !Name.empty() &&
+         llvm::all_of(Name, [](char C) {
+           return llvm::isUpper(C) || llvm::isDigit(C) || C == '_';
+         });
+}
+
+std::optional<Builtin> windowsTypedefNamed(llvm::StringRef Name) {
+  for (size_t I = 0; I < std::size(Builtins); ++I) {
+    const Builtin Type = static_cast<Builtin>(I);
+    if (windowsTypedef(Type) && Name == builtinInfo(Type).Windows)
+      return Type;
+  }
+  return std::nullopt;
 }
 
 TypeExprRef makeBuiltin(Builtin Type) {

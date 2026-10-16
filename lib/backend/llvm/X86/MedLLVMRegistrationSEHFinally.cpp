@@ -49,12 +49,20 @@ void emitSEHNestedFinallyCalls(
     assert(Frame && "the outlined finally must retain its parent frame");
     auto *Call = llvm::cast<llvm::CallInst>(
         InstructionMaps[Plan.CallerIndex].at(Plan.Original));
-    assert(Call->getFunction() == Caller && Call->use_empty() &&
+    assert(Call->getFunction() == Caller &&
+           (Plan.NoReturn || Call->use_empty()) &&
            "outlining must preserve the preflighted invocation and result");
     llvm::IRBuilder<> Builder(Call);
     auto *Replacement = Builder.CreateCall(
         Callee, {Builder.getInt8(0), const_cast<llvm::Value *>(Frame)});
     Replacement->copyMetadata(*Call);
+    if (Plan.NoReturn) {
+      // The checked invocation never reaches its source result copies. Keep
+      // their block boundaries for independent replay, as for parent calls.
+      Replacement->setDoesNotReturn();
+      if (!Call->getType()->isVoidTy())
+        Call->replaceAllUsesWith(llvm::PoisonValue::get(Call->getType()));
+    }
     const auto Word = [&](uint64_t Value) {
       return llvm::ConstantAsMetadata::get(Builder.getInt64(Value));
     };

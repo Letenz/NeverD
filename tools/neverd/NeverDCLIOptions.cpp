@@ -934,9 +934,11 @@ cl::opt<std::string>
                   cl::init("c"), cl::value_desc("language"), cl::sub(TypesCmd));
 cl::opt<std::string> TypesSpelling(
     "spelling",
-    cl::desc("Spell C and C++ builtins as windows (ULONG), ida (unsigned "
-             "int), keywords (unsigned long) or portable (uint32_t)"),
-    cl::init("windows"), cl::value_desc("style"), cl::sub(TypesCmd));
+    cl::desc("Spell builtins as windows (ULONG), ida (unsigned int), "
+             "keywords (unsigned long) or portable (uint32_t) in C and C++, "
+             "windows by default; as windows (aliases, as wdk-sys declares "
+             "them) or portable (u32, uint32: the default) in Rust and Go"),
+    cl::init(""), cl::value_desc("style"), cl::sub(TypesCmd));
 cl::opt<bool> TypesAsserts("asserts",
                            cl::desc("Follow each record with checks of its "
                                     "size and offsets the compiler verifies"),

@@ -6,7 +6,8 @@
 #ifndef NEVERD_ANALYSIS_ARCH_X86_64_X64RECOVERY_H
 #define NEVERD_ANALYSIS_ARCH_X86_64_X64RECOVERY_H
 
-#include "neverd/analysis/InterpreterSpecialization.h"
+#include "../../core/RecoveryArchitecture.h"
+
 #include "neverd/lift/X86Regs.h"
 
 #include <array>
@@ -18,10 +19,10 @@ inline constexpr uint64_t ModelledFlags[] = {x86reg::CF, x86reg::PF, x86reg::AF,
                                              x86reg::ZF, x86reg::SF, x86reg::DF,
                                              x86reg::OF};
 
-struct RawEnvironmentPreparation {
-  uint64_t Bytes = 0;
-  uint64_t Records = 0;
-};
+const RecoveryArchitecture &recoveryArchitecture();
+std::string externalExitDigest(const SpecializationExternalExit &Exit);
+llvm::Error validateExternalExits(const SpecializationResult &Result,
+                                  const SpecializationOptions &Options);
 
 /// Versioned conservative preparation reservation, validated before payload
 /// inspection/copy/hash. Includes all options and mixed terminal declarations.

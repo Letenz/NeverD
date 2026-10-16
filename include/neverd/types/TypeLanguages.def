@@ -8,25 +8,26 @@
 /// The languages local types render in, and the words each reserves, which
 /// a member name must step around.
 ///
-/// NEVERD_TYPE_LANGUAGE(Name, Id, Display)
+/// NEVERD_TYPE_LANGUAGE(Name, Id, Display, Spelling)
 ///   Id       How APIs, the CLI and settings name the language.
 ///   Display  How the workbench shows it.
+///   Spelling How it names builtins unless asked (BuiltinSpellings.def).
 /// NEVERD_TYPE_KEYWORD(Language, Word)
 ///   A word Language reserves.  C++ reserves C's words too.
 ///
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_TYPE_LANGUAGE
-#define NEVERD_TYPE_LANGUAGE(Name, Id, Display)
+#define NEVERD_TYPE_LANGUAGE(Name, Id, Display, Spelling)
 #endif
 #ifndef NEVERD_TYPE_KEYWORD
 #define NEVERD_TYPE_KEYWORD(Language, Word)
 #endif
 
-NEVERD_TYPE_LANGUAGE(C, "c", "C")
-NEVERD_TYPE_LANGUAGE(Cpp, "cpp", "C++")
-NEVERD_TYPE_LANGUAGE(Rust, "rust", "Rust")
-NEVERD_TYPE_LANGUAGE(Go, "go", "Go")
+NEVERD_TYPE_LANGUAGE(C, "c", "C", Windows)
+NEVERD_TYPE_LANGUAGE(Cpp, "cpp", "C++", Windows)
+NEVERD_TYPE_LANGUAGE(Rust, "rust", "Rust", Portable)
+NEVERD_TYPE_LANGUAGE(Go, "go", "Go", Portable)
 
 NEVERD_TYPE_KEYWORD(C, "auto")
 NEVERD_TYPE_KEYWORD(C, "break")
