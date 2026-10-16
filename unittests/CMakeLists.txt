@@ -90,6 +90,7 @@ target_include_directories(NeverDPipelineOutcomeTests PRIVATE
 # Keep their optional input separate from the mandatory portable pipeline owner.
 add_neverd_unittest(NeverDNativeFinallyInputTests
   NativeFinallyInputTests.cpp
+  NativeFinallyReentryInputTests.cpp
   LINK_COMPONENTS Pipeline
 )
 

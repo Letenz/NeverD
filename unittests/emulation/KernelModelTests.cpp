@@ -151,6 +151,135 @@ protected:
   }
 };
 
+TEST_F(DriverKernelModel, StackQueryRequiresLiveActivation) {
+  constexpr uint64_t Base = Scratch + 0x8000, Size = 0x2000;
+  EXPECT_FALSE(failure("IoGetInitialStack", {}).empty());
+  EXPECT_FALSE(failure("IoGetStackLimits", {Scratch, Scratch + 8}).empty());
+  Model->enterExecution(Base);
+  EXPECT_FALSE(failure("IoGetInitialStack", {}).empty());
+  success(Model->activateStack(Base, Size));
+  EXPECT_EQ(invoke("IoGetInitialStack", {}), Base + Size);
+  invoke("IoGetStackLimits", {Scratch + 1, Scratch + 17});
+  EXPECT_EQ(integer(Scratch + 1), Base);
+  EXPECT_EQ(integer(Scratch + 17), Base + Size);
+  EXPECT_FALSE(failure("IoGetInitialStack", {0}).empty());
+  EXPECT_FALSE(failure("IoGetStackLimits", {Scratch}).empty());
+  EXPECT_FALSE(failure("IoGetStackLimits", {Scratch, Scratch + 8, 0}).empty());
+  success(Model->retireStack(Base, Size));
+  EXPECT_FALSE(failure("IoGetInitialStack", {}).empty());
+  EXPECT_FALSE(failure("IoGetStackLimits", {Scratch, Scratch + 8}).empty());
+}
+
+TEST_F(DriverKernelModel, StackQueryTracksNestedStackAndRestoration) {
+  constexpr uint64_t Parent = Scratch + 0x8000, Child = Scratch + 0xc000;
+  success(Model->activateStack(Parent, 0x2000));
+  success(Model->activateStack(Child, 0x1000));
+  Model->enterExecution(Parent, 0x1234);
+  const auto Saved = Model->captureExecutionContext();
+  success(Model->inheritExecutionContext(Child, Parent));
+  Model->enterExecution(Child, 0x1234);
+  EXPECT_EQ(invoke("IoGetInitialStack", {}), Child + 0x1000);
+  invoke("IoGetStackLimits", {Scratch, Scratch + 8});
+  EXPECT_EQ(integer(Scratch), Child);
+  EXPECT_EQ(integer(Scratch + 8), Child + 0x1000);
+  success(Model->restoreExecutionContext(Saved));
+  EXPECT_EQ(invoke("IoGetInitialStack", {}), Parent + 0x2000);
+  invoke("IoGetStackLimits", {Scratch + 8, Scratch});
+  EXPECT_EQ(integer(Scratch + 8), Parent);
+  EXPECT_EQ(integer(Scratch), Parent + 0x2000);
+  success(Model->retireStack(Child, 0x1000));
+  EXPECT_EQ(invoke("IoGetInitialStack", {}), Parent + 0x2000);
+  success(Model->validateExecutionReturn(Parent, 0));
+  success(Model->retireStack(Parent, 0x2000));
+}
+
+TEST_F(DriverKernelModel, StackQueryUsesFullWidthBoundsAtAdmittedIRQL) {
+  constexpr uint64_t Base = 0x100008000ULL, Size = 0x2000;
+  success(Memory->map(Base, Size, Read | Write));
+  success(Model->activateStack(Base, Size));
+  Model->enterExecution(Base);
+  for (uint8_t Level : {0, 1, 2, 15}) {
+    EXPECT_EQ(invoke("KfRaiseIrql", {Level}), 0u);
+    invoke("IoGetStackLimits", {Scratch, Scratch + 8});
+    EXPECT_EQ(integer(Scratch), Base);
+    EXPECT_EQ(integer(Scratch + 8), Base + Size);
+    if (Level <= 1)
+      EXPECT_EQ(invoke("IoGetInitialStack", {}), Base + Size);
+    else
+      EXPECT_NE(failure("IoGetInitialStack", {}).find("IRQL"),
+                std::string::npos);
+    invoke("KeLowerIrql", {0});
+  }
+  success(Model->validateExecutionReturn(Base, 0));
+  success(Model->retireStack(Base, Size));
+}
+
+TEST_F(DriverKernelModel, StackQueryWritesHighBeforeInaccessibleLow) {
+  constexpr uint64_t Base = Scratch + 0x8000;
+  success(Model->activateStack(Base, 0x2000));
+  Model->enterExecution(Base);
+  success(Memory->writeInteger(Scratch + 1, 0x1122334455667788ULL, 8));
+  success(Memory->protect(Scratch, profile::PageSize, Read));
+  EXPECT_FALSE(
+      failure("IoGetStackLimits", {Scratch + 1, Scratch + 0x2001}).empty());
+  EXPECT_EQ(integer(Scratch + 0x2001), Base + 0x2000);
+  EXPECT_EQ(integer(Scratch + 1), 0x1122334455667788ULL);
+}
+
+TEST_F(DriverKernelModel, StackQueryRejectsInaccessibleHighBeforeLowWrite) {
+  constexpr uint64_t Base = Scratch + 0x8000;
+  success(Model->activateStack(Base, 0x2000));
+  Model->enterExecution(Base);
+  success(Memory->writeInteger(Scratch + 1, 0x1122334455667788ULL, 8));
+  success(Memory->protect(Scratch + 0x2000, profile::PageSize, Read));
+  EXPECT_FALSE(
+      failure("IoGetStackLimits", {Scratch + 1, Scratch + 0x2001}).empty());
+  EXPECT_EQ(integer(Scratch + 1), 0x1122334455667788ULL);
+}
+
+TEST_F(DriverKernelModel, StackQueryRejectsOverlappingOutputs) {
+  success(Model->activateStack(Scratch + 0x8000, 0x2000));
+  Model->enterExecution(Scratch + 0x8000);
+  success(Memory->writeInteger(Scratch, 0x1122334455667788ULL, 8));
+  success(Memory->writeInteger(Scratch + 8, 0x8899aabbccddeeffULL, 8));
+  for (unsigned Offset : {0, 1, 4, 7}) {
+    EXPECT_FALSE(
+        failure("IoGetStackLimits", {Scratch, Scratch + Offset}).empty());
+    EXPECT_FALSE(
+        failure("IoGetStackLimits", {Scratch + Offset, Scratch}).empty());
+  }
+  EXPECT_FALSE(failure("IoGetStackLimits", {UINT64_MAX, Scratch}).empty());
+  EXPECT_EQ(integer(Scratch), 0x1122334455667788ULL);
+  EXPECT_EQ(integer(Scratch + 8), 0x8899aabbccddeeffULL);
+  EXPECT_FALSE(Memory->fault());
+}
+
+TEST_F(DriverKernelModel, StackQueryActivationPreservesExactLifetimeExtent) {
+  constexpr uint64_t Base = Scratch + 0x8000, Size = 0x2000;
+  success(Model->activateStack(Base, Size));
+  success(Model->activateStack(Base, Size));
+  Model->enterExecution(Base);
+  auto Refused = [&](llvm::Error E) {
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+  };
+  Refused(Model->activateStack(Base, Size + 1));
+  Refused(Model->activateStack(Base + 0x1000, Size));
+  Refused(Model->activateStack(0, Size));
+  Refused(Model->activateStack(UINT64_MAX - 0x100, Size));
+  Refused(Model->activateStack(Scratch, 0));
+  Refused(Model->retireStack(Base, Size + 1));
+  EXPECT_EQ(invoke("IoGetInitialStack", {}), Base + Size);
+  success(Model->retireStack(Base, Size));
+  Refused(Model->activateStack(Base, Size + 1));
+  EXPECT_FALSE(failure("IoGetInitialStack", {}).empty());
+  success(Model->activateStack(Base, Size));
+  EXPECT_FALSE(failure("IoGetInitialStack", {}).empty());
+  Model->enterExecution(Base);
+  EXPECT_EQ(invoke("IoGetInitialStack", {}), Base + Size);
+  success(Model->retireStack(Base, Size));
+}
+
 TEST_F(DriverKernelModel,
        ExceptionUserAuthorityStaysBoundToThreadProcessAndLifetime) {
   constexpr uint32_t Process = DriverRequest::DefaultRequestorProcessID;

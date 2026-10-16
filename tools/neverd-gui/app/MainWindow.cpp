@@ -722,6 +722,15 @@ CodeView *MainWindow::codeView(const QString &representation) {
           });
   connect(view->text(), &CodeText::nameActivated, this,
           [this, view](const QString &name) { activateCodeName(view, name); });
+  // A goto label's block shows in the disassembly, whose history keeps the
+  // goto's place for Back, while the code goes to the label.
+  connect(view->text(), &CodeText::labelActivated, this,
+          [this, view](Address address) {
+            ++codeNavigationSerial_;
+            if (const auto function = view->text()->function())
+              navigateCodeFunction(view, address, *function,
+                                   view->text()->currentAddress());
+          });
   // Data shows in the disassembly, as an import's name does.
   connect(view->text(), &CodeText::objectActivated, this,
           [this](Address address) { jump(address); });
@@ -1073,6 +1082,10 @@ void MainWindow::navigateHistory(bool forward) {
           const auto function = disassembly_->listing()->currentFunction();
           if (function && view->text()->function() != function)
             view->showFunction(*function);
+          // Within the function the code goes back to the row it left, such
+          // as the goto whose label it went to.
+          else if (const auto address = disassembly_->currentAddress())
+            view->text()->revealAddress(*address);
           view->text()->setFocus();
         },
         Qt::SingleShotConnection);

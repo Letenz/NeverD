@@ -647,6 +647,8 @@ llvm::Error KernelModel::canReleaseRange(uint64_t Base, uint64_t Size,
                                          uint64_t RetiringLookaside) const {
   if (Size > UINT64_MAX - Base)
     return schedulingError("overflowing object storage range");
+  if (auto E = canReleaseMDLStorage(Base, Size))
+    return E;
   if (auto E = canReleaseUserViewsForBacking(Base, Size))
     return E;
   if (Size)
@@ -713,6 +715,7 @@ llvm::Error KernelModel::prepareReleaseRanges(
       return E;
     if (auto E = RemoveLocks.forgetRange(Base, Size))
       return E;
+    retireMDLStorage(Base, Size);
   }
   return llvm::Error::success();
 }
@@ -734,7 +737,61 @@ llvm::Error KernelModel::validateDispatcherStorage(uint64_t Address,
   return llvm::Error::success();
 }
 
+llvm::Expected<std::pair<uint64_t, uint64_t>>
+KernelModel::currentStackBounds() const {
+  const auto Stack = ExecutionStacks.find(CurrentExecution);
+  const auto Thread = ExecutionThreadKeys.find(CurrentExecution);
+  if (!CurrentExecution || !CurrentThreadKey ||
+      Stack == ExecutionStacks.end() || Thread == ExecutionThreadKeys.end() ||
+      Thread->second != CurrentThreadKey)
+    return schedulingError("stack query requires a live activated execution "
+                           "stack and its current thread");
+  return std::pair{Stack->first, Stack->first + Stack->second};
+}
+
+llvm::Expected<uint64_t> KernelModel::queryInitialStack() const {
+  auto Bounds = currentStackBounds();
+  if (!Bounds)
+    return Bounds.takeError();
+  // The session reserves no separate kernel stack-control block. Its declared
+  // initial base is the upper bound, independently of the current guest RSP.
+  return Bounds->second;
+}
+
+llvm::Expected<uint64_t> KernelModel::queryStackLimits(uint64_t Low,
+                                                       uint64_t High) {
+  auto Bounds = currentStackBounds();
+  if (!Bounds)
+    return Bounds.takeError();
+  if (Low > UINT64_MAX - profile::PointerSize ||
+      High > UINT64_MAX - profile::PointerSize ||
+      (Low < High + profile::PointerSize && High < Low + profile::PointerSize))
+    return schedulingError("stack limits require disjoint, nonoverflowing "
+                           "output cells");
+  // The original ordinary/DPC stack paths publish High before Low. Preserve
+  // the first write if the second output is inaccessible; unaligned cells
+  // retain the x64 contract. Overlap can trigger an original fast-fail and is
+  // outside this bounded output domain.
+  for (const auto &[Address, Value] :
+       {std::pair{High, Bounds->second}, std::pair{Low, Bounds->first}}) {
+    if (auto E = validateGuestAccess(Address, profile::PointerSize, true))
+      return E;
+    if (auto E = Memory.writeInteger(Address, Value, profile::PointerSize))
+      return E;
+  }
+  return 0;
+}
+
 llvm::Error KernelModel::activateStack(uint64_t Base, uint64_t Size) {
+  if (!Base || !Size || Size > UINT64_MAX - Base)
+    return schedulingError("execution stack requires a nonempty, "
+                           "nonoverflowing extent");
+  for (const auto &[Other, Length] : ExecutionStacks) {
+    if (Other == Base && Length == Size)
+      continue;
+    if (Base < Other + Length && Other < Base + Size)
+      return schedulingError("execution stack overlaps another live extent");
+  }
   auto Old = FreedRanges.find(Base);
   if (Old != FreedRanges.end()) {
     if (Old->second != Size)
@@ -742,10 +799,14 @@ llvm::Error KernelModel::activateStack(uint64_t Base, uint64_t Size) {
           "reused thread stack changed its allocation extent");
     FreedRanges.erase(Old);
   }
+  ExecutionStacks.emplace(Base, Size);
   return llvm::Error::success();
 }
 
 llvm::Error KernelModel::retireStack(uint64_t Base, uint64_t Size) {
+  if (auto It = ExecutionStacks.find(Base);
+      It != ExecutionStacks.end() && It->second != Size)
+    return schedulingError("execution stack retirement changed its extent");
   if (auto E = prepareReleaseRange(Base, Size))
     return E;
   // Detached callbacks use their private stack as the thread key. Retire that
@@ -758,6 +819,7 @@ llvm::Error KernelModel::retireStack(uint64_t Base, uint64_t Size) {
   }
   ExecutionThreadKeys.erase(Base);
   InheritedExecutionContexts.erase(Base);
+  ExecutionStacks.erase(Base);
   FreedRanges.emplace(Base, Size);
   return llvm::Error::success();
 }

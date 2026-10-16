@@ -673,7 +673,7 @@ TEST_F(X86_64_Intrinsics, LlvmC_RdtscReturnCollapsed) {
   auto pos = content.find("test_rdtsc_return");
   ASSERT_NE(pos, std::string::npos);
   auto fn_body = content.substr(pos, content.find("\n}\n", pos) - pos + 3);
-  EXPECT_TRUE(fn_body.find("<< 32") == std::string::npos)
+  EXPECT_TRUE(fn_body.find("<< 0x20") == std::string::npos)
       << "LLVM C: rdtsc hi/lo reconstruction should be collapsed:\n"
       << fn_body;
 }

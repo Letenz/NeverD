@@ -628,6 +628,12 @@ private:
   GuestCallToken CurrentGuestCall;
   uint64_t CurrentThreadKey = 0;
   std::map<uint64_t, uint64_t> ExecutionThreadKeys;
+  // DriverSession activates the actual extent before entering an execution.
+  // Nested stacks have independent bounds even when they share a thread key.
+  std::map<uint64_t, uint64_t> ExecutionStacks;
+  llvm::Expected<std::pair<uint64_t, uint64_t>> currentStackBounds() const;
+  llvm::Expected<uint64_t> queryInitialStack() const;
+  llvm::Expected<uint64_t> queryStackLimits(uint64_t Low, uint64_t High);
   struct ExecutionProcessContext {
     uint32_t ProcessID, CreatingProcessID;
     uint8_t PreviousMode;
@@ -1658,6 +1664,10 @@ private:
   llvm::Error initializeRequestPacket(ActiveRequest &Record,
                                       const DriverRequest &Input);
   struct LockedMdl {
+    // Descriptor storage is independent of the described pages and their lock.
+    enum class StorageKind { PrivateArena, NonPagedPool, ExecutionStack };
+    StorageKind Storage = StorageKind::PrivateArena;
+    uint64_t StorageOwner = 0;
     enum class Ownership {
       Request,
       RequestSystemBuffer,
@@ -1682,6 +1692,13 @@ private:
     uint64_t AllocationSize = 0;
     uint64_t UserAddress = 0;
     uint32_t ByteCount = 0;
+    struct AdvanceRange {
+      uint64_t OriginalAddress, BackingAddress, MappingBase;
+      uint32_t ByteCount, DroppedPages;
+    };
+    // Advancing the data window does not retire the original pin or alias.
+    std::optional<AdvanceRange> Advance;
+    uint64_t systemMappingBase() const;
     uint64_t Pool = 0;
     uint64_t Pin = 0;
     bool Writable = false;
@@ -1694,6 +1711,13 @@ private:
   std::map<uint64_t, LockedMdl> MDLs;
   llvm::Error initializeMDLPhysicalPages(const LockedMdl &State);
   llvm::Expected<uint64_t> allocateMDL(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t> createMDL(uint64_t Record, uint64_t Address,
+                                     uint64_t Size);
+  llvm::Error initializeMDLRecord(uint64_t Record, uint64_t Address,
+                                  uint32_t Size, uint64_t Extent,
+                                  uint16_t Flags);
+  llvm::Error canReleaseMDLStorage(uint64_t Base, uint64_t Size) const;
+  void retireMDLStorage(uint64_t Base, uint64_t Size);
   llvm::Expected<uint64_t>
   allocatePagesForMDL(llvm::ArrayRef<uint64_t> Arguments, bool Extended);
   llvm::Error freePagesFromMDL(uint64_t MDL);
@@ -1709,6 +1733,8 @@ private:
   llvm::Error probeAndLockPages(uint64_t MDL, uint32_t Mode,
                                 uint32_t Operation);
   llvm::Error unlockPages(uint64_t MDL);
+  llvm::Expected<uint64_t> advanceMDL(uint64_t MDL, uint32_t Bytes);
+  llvm::Error restoreAdvancedMDL(LockedMdl &State);
   llvm::Expected<uint64_t> protectMDLSystemAddress(uint64_t MDL,
                                                    uint32_t Protection);
   llvm::Error freeMDL(uint64_t MDL);
@@ -1764,6 +1790,9 @@ private:
                                bool DispatcherStorage = false) const;
   llvm::Expected<uint64_t> allocate(uint64_t Size, uint64_t Alignment = 16);
   llvm::Expected<uint64_t> isResidentKernelAddress(uint64_t Address) const;
+  llvm::Expected<uint64_t> queryPhysicalAddress(uint64_t Address) const;
+  llvm::Expected<uint64_t>
+  queryPrimaryVirtualAddress(uint64_t PhysicalAddress) const;
   llvm::Expected<uint64_t> allocatePhysicalBuffer(uint64_t AllocationSize,
                                                   uint64_t Alignment,
                                                   uint64_t DataOffset,

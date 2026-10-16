@@ -319,6 +319,13 @@ public:
   void decideTryExits(const std::vector<HighStmt> &Stmts,
                       const std::vector<va_t> &Continuation,
                       std::set<std::pair<va_t, va_t>> &Kept);
+  /// Where the try \p Stmt, whose clause bodies are all empty, splits at a
+  /// jump into its protected body: it prints as consecutive tries.
+  std::optional<size_t> sehTrySplitPoint(const HighStmt &Stmt) const;
+  /// Find the empty __except arms of \p Func that resume where their try
+  /// falls through (FallthroughExceptArms); every other one jumps to its
+  /// handler, whose label it registers.
+  void decideExceptArms(const HighFunc &Func);
   /// Labels where the try Stmts[Index] falls through that print right after
   /// it: no statement printed earlier, the try included, starts them.
   std::vector<va_t> tryLeaveTargets(const std::vector<HighStmt> &Stmts,
@@ -862,6 +869,9 @@ public:
   std::map<va_t, unsigned> GotoTargetUses;
   /// (address, target) of try-body gotos left out as fall-through exits.
   std::set<std::pair<va_t, va_t>> FallthroughTryExits;
+  /// Tries whose empty __except arm resumes where the try falls through, so
+  /// the arm prints no jump to its handler.
+  std::set<const HighStmt *> FallthroughExceptArms;
   /// While the protected body of a __try prints: the labels where that try
   /// falls through.  A goto there leaves the body as `__leave` does.
   std::vector<va_t> LeaveTargets;

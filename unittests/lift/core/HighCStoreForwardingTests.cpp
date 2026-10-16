@@ -740,7 +740,7 @@ TEST(HighCStoreForwarding,
     Remaining = Rest;
   }
   ASSERT_NE(Assignment, std::string::npos) << Body;
-  EXPECT_LT(Body.find("42"), Assignment) << Body;
+  EXPECT_LT(Body.find("0x2A"), Assignment) << Body;
 }
 
 TEST(HighCStoreForwarding, ReinterpretsEachIntegerLoadAfterStoreTruncation) {
@@ -854,7 +854,7 @@ TEST(HighCStoreForwarding, EquivalentFrameAddressesKeepStoresForPartialReads) {
       EXPECT_EQ(countPointerDerefLoads(Body) + countOccurrences(Body, "var_"),
                 0u)
           << Body;
-      EXPECT_EQ(countOccurrences(Body, "42"), 2u) << Body;
+      EXPECT_EQ(countOccurrences(Body, "0x2A"), 2u) << Body;
     }
   }
 }

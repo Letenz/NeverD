@@ -271,7 +271,7 @@ TEST(SysVCallContract, PassThroughThisAndUndefinedReturnPathsStayFaithful) {
   EXPECT_EQ(SaveBody.find("is_doc()"), std::string::npos) << SaveBody;
   EXPECT_NE(SaveBody.find("is_doc("), std::string::npos) << SaveBody;
   // The virtual call takes the object the dominating block loaded into RDI.
-  EXPECT_EQ(IsDocBody.find("+ 88)))()"), std::string::npos) << IsDocBody;
+  EXPECT_EQ(IsDocBody.find("+ 0x58)))()"), std::string::npos) << IsDocBody;
   compileAndRun(Source + R"(
 static uint64_t document_type(void *self) { return self ? 9 : 0; }
 static uint64_t element_type(void *self) { return self ? 1 : 0; }
@@ -555,7 +555,7 @@ TEST(SysVCallContract, PushedStackArgumentsReachTheCalleeThatReadsThem) {
   const std::string Source = liftEntries(Img, {Ten, Caller});
   const std::string Body = body(Source, "caller");
   ASSERT_FALSE(Body.empty()) << Source;
-  EXPECT_NE(Body.find("ten(arg0, 10, 20, 30, 40, 50, arg0, 2, 3, 4)"),
+  EXPECT_NE(Body.find("ten(arg0, 10, 0x14, 0x1E, 0x28, 0x32, arg0, 2, 3, 4)"),
             std::string::npos)
       << Body;
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
@@ -1056,7 +1056,7 @@ TEST(SysVCallContract, ARegisterTheCalleeLeavesAloneIsNoReturnedField) {
   const std::string Source = liftEntries(Img, {Add, Inc});
   const std::string Body = body(Source, "add");
   ASSERT_FALSE(Body.empty()) << Source;
-  EXPECT_EQ(Body.find(">> 32"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find(">> 0x20"), std::string::npos) << Body;
   compileAndRun(Source + R"(
 int main(void) {
   return (uint32_t)add(5, 7) == 13 && (uint32_t)add(-3, 40) == 38 ? 0 : 1;

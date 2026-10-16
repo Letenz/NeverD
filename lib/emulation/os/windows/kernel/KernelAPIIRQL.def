@@ -143,6 +143,12 @@ NEVERD_KERNEL_IRQL_API(RtlEqualUnicodeString, Passive)
 NEVERD_KERNEL_IRQL_API(MmGetSystemRoutineAddress, Passive)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-mmisaddressvalid
 NEVERD_KERNEL_IRQL_API(MmIsAddressValid, Dispatch)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-mmgetphysicaladdress
+// The query separately requires a live resident mapping with known ownership.
+NEVERD_KERNEL_IRQL_API(MmGetPhysicalAddress, Any)
+// Fixed nonpaged PFN query: this profile admits only live nonpaged-pool
+// primary mappings; private backing and arbitrary reverse aliases refuse.
+NEVERD_KERNEL_IRQL_API(MmGetVirtualForPhysical, Any)
 // The base WDK query requires PASSIVE_LEVEL and returns caller-owned pool.
 NEVERD_KERNEL_IRQL_API(MmGetPhysicalMemoryRanges, Passive)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-keregisterbugcheckreasoncallback
@@ -207,6 +213,9 @@ NEVERD_KERNEL_IRQL_API(IoFreeIrp, Dispatch)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdmsec/nf-wdmsec-wdmlibrtlinitunicodestringex
 NEVERD_KERNEL_IRQL_API(IoGetDmaAdapter, Passive)
 NEVERD_KERNEL_IRQL_API(IoAllocateMdl, Dispatch)
+// The obsolete wrapper uses resident caller storage or nonpaged pool.
+NEVERD_KERNEL_IRQL_API(MmCreateMdl, Dispatch)
+NEVERD_KERNEL_IRQL_API(MmAdvanceMdl, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoBuildPartialMdl, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoFreeMdl, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmBuildMdlForNonPagedPool, Dispatch)

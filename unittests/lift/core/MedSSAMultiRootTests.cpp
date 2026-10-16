@@ -1177,9 +1177,9 @@ TEST(MedSEHEstablisherFrame, HighCPreservesTheCertifiedHandlerSlot) {
   EXPECT_NE(Source.find("var_m64 = 1;"), std::string::npos) << Source;
   // The handler adds 20 to the certified slot, as an update or folded into
   // the return that reads it.
-  EXPECT_TRUE(Source.substr(Handler).find("var_m64 += 20;") !=
-                  std::string::npos ||
-              Source.substr(Handler).find("var_m64 + 20") != std::string::npos)
+  EXPECT_TRUE(
+      Source.substr(Handler).find("var_m64 += 20;") != std::string::npos ||
+      Source.substr(Handler).find("var_m64 + 0x14") != std::string::npos)
       << Source;
   // The handler returns the slot, directly, through a copy of it, or with
   // the update folded in.

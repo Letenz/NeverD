@@ -284,6 +284,9 @@ the reload after an edit puts the cursor and the view back on a third-page row;
 `codeTextSelectsLikeAnEditor` presses Ctrl+A while pages still arrive and
 after the load, drags beyond the bottom edge until the view scrolls past the
 first page, and right-clicks inside the selection to keep it for Copy;
+`gotoLabelsGoToTheirBlock` double-clicks a goto's label and checks the code
+cursor, the disassembly, Back, and that the label's row maps to its block
+rather than to the statement the engine's rows give it;
 `NeverDWorkerCodeEdits` checks the literal scan
 and type-keeping spellings of `neverd/support/IntegerLiterals.h` for C, Rust
 and Go. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks
@@ -2212,6 +2215,20 @@ when their full-width pointer, displacement, load width and memory history
 agree. Borrowed RBP fields, negative displacements and both signed and unsigned
 index extensions are covered; changed bases/offsets, partial reloads, stores,
 calls and memory barriers must not recover a table from the earlier guard.
+
+`JTE_AArch64.GCCCompactSignedEntriesMayPrecedeTheAnchor` assembles GCC's
+compact switch (`test_jumptable_gcc_compact_a64.s`): the entry loaded back into
+the index register, the table base register reused for the anchor, and signed
+byte and halfword entries (`sxtb #2`, `sxth #2`) with a case before the anchor.
+It requires the exact targets and the lifted switch cases, and no table for a
+halfword entry the dispatch truncates to its low byte.
+`JTE_AArch64.GCCCompactGuardBoundsTheStorageItReads` is libgcc's
+`size_of_encoded_value`: a guard bounds the index below bytes that follow the
+table in its data owner, and one case calls `abort`. It requires the five
+guarded targets. These functions have their own object: a case that calls a
+function with the computed target still in X0 passes a pointer of unknown
+origin, which makes module arbitration treat every writable table in the same
+object as possibly modified.
 
 `ModuleJumpTableBudget.*` uses a real ELF table inventory to separate the
 400000-operation input boundary from scan, retained-source, queue and cumulative
@@ -4472,6 +4489,20 @@ becoming one), finally's
 private-frame write, a subsequent exception, and FS:[0] restoration on four
 successive invocations. Original and generated caller PCs are distinguished,
 and each generated image is executed at preferred and forced-rebased addresses.
+
+`RegistrationFrameScalar` checks that exact PE32 frame differences and equality
+preserve their results under relocation, including integer wraparound. Distinct
+frame roots, partial stores, ambiguous joins and ordered comparisons retain
+their conservative provenance. `LowScalarConstant` compares constant multiply
+and shift facts with concrete LowIR execution at 1/2/4/8-byte widths, including
+overflow, zero shifts and saturating counts. Unknown operands and malformed
+widths supply no fact. The native MSVC input owner also checks chain
+observations in `nonlocal_finally_reenter` across `/Od`/`/O2`, `/GS-`/`/GS` and
+raw/optimized projection. The focused Windows EH job runs the complete native
+input owner with its verified MSVC images. Its exact source state does not discharge the separate
+CRT guard retirement obligation; native reconstruction remains rejected while
+that proof is incomplete.
+
 The parameter case reads the real caller argument in both the resumed parent
 and its filter, including the caller-frame slot introduced during outlining.
 The callback cases resume from ordinary finally calls and runtime unwind
@@ -7089,6 +7120,18 @@ arm that resumes at a `nop` without a jump, and
 `X86_64_PipelineE2E.DecompileC_MinGWStartupSEHWithX87Callee` decompiles
 MinGW-w64-shaped startup code (`test_mingw_startup_seh.s`) whose guarded callee
 resets the x87 state.
+`COFFExceptionIR.HighCEmptyExceptArmResumingAfterItsTryPrintsNoJump` prints
+MSVC's nested -O0 levels with empty arms, and
+`HighCLeftOutTryTailKeepsTheLabelAJumpLandsOn` keeps the label that switch
+cases leave a try body for. `HighCSEHFilterIsNamedAsTheFunctionListNamesIt`
+names a filter by its function symbol over a `.text` section symbol, and by
+an export. `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
+`unittests/loader/fixtures/mingw_sections.exe` (its Makefile rebuilds it with
+MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its
+`.file` record is dropped, and a static function's own record names it.
+`HighControlFlowSemantics.SlotCallGoesThroughThePointerItHolds` calls through
+MinGW's `__imp_X` variables, which hold the image's own code, relocated or in
+a fixed image, rather than naming an import by their spelling.
 Malformed unwind/prologue and converted-SP checks run with source projection
 enabled too. `WindowsEHModesCorpus.DecompileMatrixFailsClosedWithAuditableExceptionMetadata`
 runs the original eleven-case matrix, including the complete x64 xcpt4 image.
@@ -7742,8 +7785,8 @@ checks actual reservation charging and mapping/protection refusal.
 original three-module C workload for all five profiles with classic and chained
 fixups. It checks shared dependencies, duplicate export spellings, relocated data,
 zero-only and initialized TLS, live template mutation and fresh repeated runs.
-The mandatory native inventory now has 100 methods per matching profile, or
-300 matching ARM64 identities; the separate common native catalogue remains 82.
+The mandatory native inventory now has 101 methods per matching profile, or
+303 matching ARM64 identities; the separate common native catalogue remains 82.
 Unavailable transports remain explicit skips. `DarwinNative.StartupDylibsAndTLSMatchOriginalNativeImages`
 compares a system-linked executable and its original libraries with real macOS
 execution. Independent O0/O1/O2 classic/chained controls complement that test.
@@ -7755,6 +7798,27 @@ same explicit catalogue and reports through C and CLI. With
 Run these alongside DarwinImage, linking, memory, existing libSystem calls,
 raw startup and shared process/API regressions before publishing. Guest deadlines
 and event limits are unchanged; native Intel and physical iOS need other hosts.
+
+### Imported Darwin data and TLS pointer offsets
+
+`DarwinAddendFixtures.cmake` builds the original SDK-free C/assembler alias
+workload for all five platform/ISA cells with classic/chained fixups. The +8
+array reference, -4 tail reference and initialized volatile TLS pointer share
+provider storage; the TLS pointer remains changed at exit to check fresh state.
+`DarwinDylibAddends.*` checks original format facts, signed extremes, main-image
+and runtime targets, declared-span versus page padding, and one-byte pointer
+membership. `DarwinDylib.OrdinaryAddendsKeepProviderChoiceWithRepeatedExportSpellings`
+checks ordinal ownership; `NonzeroTLVDescriptorAndLibSystemAddendsRemainExplicitlyRefused`
+retains the exact-entry boundaries.
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` is required on each matching
+native profile. `DarwinNative.StartupDylibAddendsAndTLSTemplatesMatchOriginalImages`
+compares both system-linked formats with original macOS execution; independent
+O0/O1/O2 controls complement it. `DylibAddendsAndTLSPointersKeepIdentityAcrossCAndCLI`
+and the genuine Python `test_darwin_dylib_addends_initialize_data_and_tls_pointers`
+repeat all five profiles. Unavailable hardware remains a skip, with no native
+Intel or physical iOS claim. Common native cases remain 82; required methods
+are 101 per profile, or 303 matching ARM64 identities.
 
 ### Imported Darwin memory calls
 
@@ -7800,3 +7864,15 @@ side-effecting statement without acquiring a Linux syscall contract.
 `KernelDevicePointer.*` checks retained references, overlapping outputs, failed and informational opens, caller/APC restoration across pending CREATE and CLEANUP, argument widths, sharing, output-fault store order, admission and unload. The original and genuine WDK filesystem fixture adds immediate, worker-completed CREATE, worker-completed CLEANUP and unload-held pointer modes, including dynamic lookup. `KernelFileSystemExecution.*OpensExistingFiles` runs both scheduling modes, contracts and image bases; unavailable transports remain explicit skips.
 
 `KernelMDLUserMapping.ProcessProbe*` checks carrier widths, operation normalization, IRQL, live-process admission, thread identity during probing, nested restoration, retry after faults and attachment/restoration shortages. The genuine WDK user-mapping fixture executes static and dynamic calls, a real exception handler after detachment, same-process calls while attached, shared physical pages and complete lock release. Original wrapper/termination-funclet probes establish control flow across explicitly injected helper boundaries, not whole-kernel behavior.
+
+`KernelObjects.FilterVersion*` checks exact arity, caller-independent results and the pageable IRQL boundary. Original and genuine WDK CRT fixtures call the query through static imports and dynamic lookup in entry, worker and unload, with entry at APC_LEVEL. Original two-instruction probes verify the full return carrier and lack of data-memory effects without injected helpers.
+
+`KernelPhysicalRAM.AddressQueries*` and `KernelMDLUserMapping.PhysicalQuery*` cover aliases, address-space identity, VA reuse, exact bounds, full-width PFNs, IRQL, page locks and revoked mappings. The genuine WDK user-mapping fixture compares static/dynamic `MmGetPhysicalAddress` calls with MDL PFNs across read-only user views, DPC-level system views and rebinding while an earlier locked alias survives.
+
+`KernelMDLUserMapping.PrimaryQuery*` covers exact allocation bytes, adjacent owners on one page, full-width addresses, IRQL, retirement, aliases, replaced mappings, read protection and unsupported primary projections. The genuine WDK fixture exercises static and dynamic `MmGetVirtualForPhysical`, including a DPC-level system view and rebinding a user VA while an earlier locked alias survives.
+
+`DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*` checks activation, retirement, nested context restoration, full-width bounds, IRQL, process attachment, output overlap and high-before-low fault ordering. The original/genuine WDK CRT fixture calls both stack queries statically and dynamically in entry, worker and unload, checks a local variable against the returned bounds, and queries limits again at DISPATCH_LEVEL.
+
+`KernelMDLChain.CreateMdl*` and `KernelMDLUserMapping.CreateMdl*` cover full-width guards, untouched bytes, zero/wrapping metadata, pool and stack lifetime, locks, aliases, failed release, partial reuse, IRP refusal and IRQL. The genuine WDK user-mapping fixture exercises static/dynamic creation, owned pool, interior caller pool and caller stack records, physical identity and complete unload. Original probes distinguish wrapper writes, pool flag translation and injected allocator/free boundaries.
+
+`KernelMDLChain.AdvanceMdl*` and `KernelMDLUserMapping.AdvanceMdl*` check repeated page crossings, PFN tails, exact-end refusal, narrow arguments, stable mapping extents, failed teardown, permissions, storage ownership, process context and unsupported dependencies. The genuine WDK user-mapping fixture uses static/dynamic advance, explicit unmap and automatic unlock. Original-code probes separately cover the entire advance routine, restoration helper and unmap wrapper with explicit mapping-kind/PTE-release injection; they do not execute the operating system page database.

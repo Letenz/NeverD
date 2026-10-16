@@ -334,7 +334,10 @@ the image states (`BinaryImage::statedFunctionNameAt`, as
 producer stated, a PDB's function names among them; else the debug
 information's; else the name signatures recognized the function's bytes by
 (`SignatureDB::buildNameMap`). A name analysis or the user gave otherwise
-says nothing of what the function is. Where a linker folded identical
+says nothing of what the function is. A linked COFF image's section symbols,
+which GNU ld keeps at each object's first function or variable
+(`Symbol::IsSection`), name nothing there or in `findSymbolAt`; they only
+bound what each object contributed. Where a linker folded identical
 functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's
 prototype only where every other name's that has one takes and returns
@@ -1892,6 +1895,21 @@ queries retain their existing conditional-root policy.
 Numerical coordinate membership supplies neither input known bits nor negative
 dependency/origin authority. Other architecture/format admission remains with
 its existing proof owners.
+
+The AArch64 compact table (`tryAArch64CompactTable`) traces the shifted entry
+back to its byte or halfword load through copies, zero and sign extensions and
+low-byte views, and reads each entry as that chain leaves it: the entry itself,
+or its zero or sign extension, as GCC's `add xd, xa, wo, sxtb #2` makes it. A
+view narrower than the entry, or a zero extension of a sign extension, rejects
+the table. The table base is folded where the entry is loaded, because GCC
+reuses the base register for the anchor before the branch.
+A compact table carries no relocations, so its readable capacity is the rest
+of its data owner. That capacity bounds storage only for a selector no guard
+bounds. Once a precise guard authenticates the index domain, the capacity is
+cut to the guard bound: the owner's later bytes are adjacent data the dispatch
+cannot select. Decoding them would charge the fixed point for slots no runtime
+coordinate reaches and leave the guarded domain looking like a partial subset,
+which a case that calls a function cannot close.
 Guard identity can name a contained architectural register lane at its exact
 full-register writer. The shared reaching-value resolver names that complete
 definition and retains the lane's offset and width, so a comparison of AL or
@@ -7239,6 +7257,13 @@ fixups and complete undefined-symbol closure. `DarwinImage` resolves the explici
 catalogue into one bounded acyclic graph, checks every dependency edge and
 assigns disjoint placements. Its graph-wide input, metadata, record and resident
 ledgers charge shared nodes once and retain one preparation deadline.
+`MachOProgramLinking` retains the signed addend fact. `DarwinImage` alone
+combines the selected provider export, slide and ordinary import addend,
+rejecting arithmetic overflow/underflow and nonzero targets outside that
+provider's original mapped segments. It checks pointer-value membership without
+inferring a pointee width. These prepared values also relocate TLS template
+pointers before `DarwinTLS` copies their live bytes. Imported TLV descriptors,
+libSystem gates and classic lazy programs require zero addends.
 `DarwinTLSPreparation` admits exact descriptors and contiguous template storage,
 publishes keys and physically maps charged TLS reservations before execution.
 `DarwinTLS` alone owns main-thread instantiation and the authenticated TLV return:
@@ -7430,3 +7455,15 @@ capture failures cannot replace the original service outcome.
 `KernelModelFileCreate` owns device-pointer opens within the existing `FileOperation`. Namespace resolution, CREATE packets and final release share the ordinary file-open owner. The object manager acquires the file reference through the private handle; `queryFileDevice` supplies the related device, and the existing handle-close continuation performs CLEANUP. The original caller releases its critical region only after that continuation completes. Public output overlap cannot replace the private referenced object.
 
 `KernelModelIO` owns the process-probe wrapper and private attachment lifetime. It reuses the shared process-view switch and ordinary MDL probe; private attachments have no fabricated guest APC storage and cannot be detached with a public zero token. The ordinary attachment owner retains admission and nesting. A probe exception reaches the guest only after successful restoration; restoration errors remain model failures.
+
+`KernelObjectAPIs.def` owns the fixed callback-version query’s identity, arity, value and IRQL ceiling. No callback registry or host operating-system query is introduced.
+
+`KernelPhysicalMemory::resolveAddress` matches the current `MemoryView` to exact retained allocation slices and existing page identities, including aliases. `KernelModel` separately admits readable mappings, process context and residency. A query neither allocates an identity nor pins a page; surviving mapped page padding cannot revive retired bytes.
+
+`KernelModel::queryPrimaryVirtualAddress` derives the primary VA from existing live nonpaged `PoolAllocation` records and `KernelPhysicalMemory::describe`, then authenticates it through the forward query. It adds no reverse-alias registry, physical identity or pin; generic backing addresses do not establish a primary mapping.
+
+`activateStack` and `retireStack` own `ExecutionStacks`; queries bind that extent to the current `ExecutionThreadKeys` identity. Exact reactivation preserves the extent, while overlapping live stacks and mismatched retirement fail before mutation. Nested executions keep separate bounds even when sharing a thread. These environment queries remain opaque to native unpack reconstruction.
+
+`LockedMdl::StorageKind` separates descriptor storage from page provenance. Pool allocation and live execution-stack owners supply exact storage; shared release preflight checks all ranges before descriptor records retire. Pool free checks write permission before changing state. Partial construction and unlock retain the descriptor owner. Kernel memory borrowing refuses intersections with live MDL metadata. MmCreateMdl retains the default opaque unpack boundary.
+
+`LockedMdl::AdvanceRange` retains the original locked byte range and system mapping base independently of the current data window. Alias allocation, access validation, borrowing and retirement use that owner. The same MDL owner rotates and restores PFNs; page ownership and descriptor storage are unchanged. Existing pins stay live until cleanup, matching the inspected fixed-version producer and restoration consumer. No immediate physical unpin is inferred from generic API prose. MmAdvanceMdl remains opaque to unpack reconstruction.

@@ -1663,6 +1663,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
 
+### Darwin dylib 匯入偏移
+
+一般強 dylib 匯入支援帶符號的位元組偏移，可初始化全域指標與 TLS 範本指標。`DarwinImage` 統一計算匯出位址、程式庫載入偏移及匯入加數，檢查溢位並限定在所選提供程式庫的原始區段內；指標值檢查不推測存取寬度。libSystem 入口、匯入的 TLV 描述元和延遲繫結仍要求零加數。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### 循序執行範圍內的原始比較交換
 
 `SymExec` 負責獲准的原始 `ATOMIC_CMPXCHG` 的值語義：發佈輸出前擷取位址、預期值、目標值及舊值，再一次提交 `ite(Old == Expected, Desired, Old)`。`SymState` 負責該次寫入的位元組效果、別名失效及保存預算。`InterpreterSpecialization` 負責接納與來源：Old 使用寫入前的記憶體來源；條件寫入保守合併 Old、預期值與目標值的來源，並撤銷可能重疊的仿射溢出儲存事實。即使比較失敗，也須證明完整寫入範圍與受保護返回單元分離。殘餘程式保留原子操作、記憶體順序及發生次數；拒絕時不發佈部分殘餘 CFG。
@@ -1721,3 +1727,15 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 `KernelModelFileCreate` 在現有 `FileOperation` 中管理裝置指標開啟。名稱解析、CREATE 封包和最終釋放共用一般檔案開啟的狀態管理。物件管理員透過內部控制代碼取得檔案參考，`queryFileDevice` 提供關聯裝置，現有關閉續接執行 CLEANUP。續接完成後才離開原呼叫執行緒的臨界區。公開輸出重疊不會替換內部保留的檔案物件。
 
 `KernelModelIO` 負責處理程序鎖頁包裝及私有附加生命週期，重用共用處理程序檢視切換和一般 MDL 探測。私有附加不偽造客體 APC 儲存，也不能以公開介面的零權杖解除；准入和巢狀關係仍由原附加擁有者管理。只有還原成功後才向客體傳遞探測例外；還原錯誤仍為模型失敗。
+
+`KernelObjectAPIs.def` 統一負責固定回呼版本查詢的識別、參數數量、值與 IRQL 上限，不引入回呼登錄表或主機作業系統查詢。
+
+`KernelPhysicalMemory::resolveAddress` 將目前 `MemoryView` 與保留的精確配置切片和既有頁面身分匹配，包括別名。`KernelModel` 分別檢查映射可讀性、行程環境及駐留狀態。查詢不配置新身分或鎖定頁面；仍映射的頁面填補不能恢復已釋放位元組的生命週期。
+
+`KernelModel::queryPrimaryVirtualAddress` 依據既有存活的非分頁 `PoolAllocation` 記錄及 `KernelPhysicalMemory::describe` 推導主要虛擬位址，再透過正向查詢驗證。不新增反向別名登錄、實體身分或頁面鎖定；通用後備位址不能證明主要映射。
+
+`activateStack` 和 `retireStack` 管理 `ExecutionStacks`；查詢將範圍繫結至目前的 `ExecutionThreadKeys` 身分。再次啟用須保留精確範圍，存活堆疊重疊或回收範圍不符會在修改前拒絕。共用執行緒的巢狀執行仍保有獨立邊界。這些環境查詢在原生解殼重建中仍是不透明相依項。
+
+`LockedMdl::StorageKind` 分開描述符儲存與頁面來源。集區和存活執行堆疊提供精確範圍；共用釋放預檢先核對全部範圍，再移除記錄。集區釋放先檢查寫入權限。部分 MDL 建構及解鎖保留儲存擁有者；記憶體借用拒絕與活動 MDL 中繼資料重疊。MmCreateMdl 保留不透明解殼邊界。
+
+`LockedMdl::AdvanceRange` 分別保留原始鎖定範圍與映射基底，供別名配置、存取、借用及釋放使用。MDL 層集中旋轉及恢復 PFN，不改變頁面或描述符儲存擁有者。固定版本的原始鎖保留至清理，不推論立即解鎖。MmAdvanceMdl 維持不透明解殼邊界。

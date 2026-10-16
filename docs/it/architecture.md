@@ -1863,6 +1863,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
 
+### Offset delle importazioni dylib Darwin
+
+Le importazioni ordinarie forti da dylib ammettono addendi in byte con segno per puntatori globali e modelli TLS. `DarwinImage` combina una sola volta indirizzo esportato, rilocazione della libreria e addendo, controlla gli overflow e limita il risultato ai segmenti originali del fornitore scelto. Il valore del puntatore non implica una larghezza di accesso. Ingressi libSystem, descrittori TLV importati e collegamenti lazy richiedono addendo zero.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### Confronto e scambio nel modello raw sequenziale
 
 `SymExec` possiede la semantica dei valori di `ATOMIC_CMPXCHG` raw ammesso: acquisisce indirizzo, valore atteso, desiderato e precedente prima di pubblicare l’output, poi scrive una sola volta `ite(Old == Expected, Desired, Old)`. `SymState` gestisce gli effetti sui byte, l’invalidazione degli alias e il budget di conservazione di tale scrittura. `InterpreterSpecialization` gestisce ammissione e provenienza: Old usa la provenienza della memoria prima della scrittura; la scrittura condizionale combina conservativamente le provenienze di Old, atteso e desiderato e invalida i fatti sugli spill affini che potrebbero sovrapporsi. Anche un confronto fallito richiede di separare l’intero intervallo di scrittura dalle celle di ritorno protette. Operazione atomica, ordinamento e occorrenze restano nel residuo; un rifiuto non pubblica un CFG residuo parziale.
@@ -1921,3 +1927,15 @@ Gli alias riusano i proprietari di thread/processi e contesti anche durante il c
 `KernelModelFileCreate` gestisce questa apertura nel `FileOperation` esistente. Risoluzione dei nomi, pacchetti CREATE e rilascio finale condividono il proprietario delle normali aperture. Il gestore oggetti acquisisce il riferimento tramite l’handle interno, `queryFileDevice` fornisce il dispositivo associato e la continuazione di chiusura esistente esegue CLEANUP. Solo dopo si lascia la regione critica del thread originale. Output pubblici sovrapposti non sostituiscono l’oggetto referenziato interno.
 
 `KernelModelIO` gestisce il wrapper di controllo e la durata del collegamento privato, riusando cambio di vista condiviso e controllo MDL ordinario. Non inventa memoria APC guest e non consente il distacco tramite token pubblico zero. Ammissione e annidamento rimangono al proprietario esistente. L’eccezione raggiunge il guest soltanto dopo il ripristino riuscito; gli errori di ripristino restano errori del modello.
+
+`KernelObjectAPIs.def` gestisce identità, arità, valore e limite IRQL della query fissa. Non introduce un registro di callback né interrogazioni al sistema operativo host.
+
+`KernelPhysicalMemory::resolveAddress` associa il `MemoryView` corrente agli intervalli esatti delle allocazioni conservate e alle identità di pagina esistenti, inclusi gli alias. `KernelModel` verifica separatamente leggibilità, processo e residenza. La query non crea identità né blocca pagine; il riempimento ancora mappato non riattiva byte liberati.
+
+`KernelModel::queryPrimaryVirtualAddress` ricava la VA primaria dai record non paginati attivi `PoolAllocation` e da `KernelPhysicalMemory::describe`, poi la verifica con la query diretta. Non aggiunge registri inversi di alias, identità fisiche o blocchi di pagine; gli indirizzi generici di memoria non dimostrano una mappatura primaria.
+
+`activateStack` e `retireStack` gestiscono `ExecutionStacks`; le query legano l’intervallo all’identità corrente `ExecutionThreadKeys`. La riattivazione mantiene l’estensione esatta; sovrapposizioni attive e dimensioni di rilascio diverse falliscono prima delle modifiche. Esecuzioni annidate dello stesso thread mantengono limiti distinti. Queste query restano opache per la ricostruzione nativa dopo l’unpacking.
+
+`LockedMdl::StorageKind` separa memoria del descrittore e provenienza delle pagine. Pool e stack attivo possiedono intervalli esatti. La verifica comune controlla tutti gli intervalli prima di rimuovere record; il pool verifica prima i permessi di scrittura. Costruzione parziale e sblocco conservano il proprietario. I prestiti di memoria rifiutano sovrapposizioni ai metadati MDL attivi. MmCreateMdl mantiene il limite opaco della ricostruzione.
+
+`LockedMdl::AdvanceRange` conserva intervallo bloccato originale e base della mappatura separati dalla finestra dati per assegnare alias, controllare accessi, prestiti e rilascio. Il proprietario MDL centralizza rotazione e ripristino PFN senza cambiare i proprietari delle pagine o del descrittore. Il blocco originale resta fino alla pulizia nella versione esaminata. MmAdvanceMdl rimane opaco alla ricostruzione dopo spacchettamento.

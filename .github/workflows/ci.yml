@@ -2417,7 +2417,6 @@ jobs:
           NEVERD_NONLOCAL_FINALLY_INPUTS: build-windows-eh/nonlocal-finally
         run: |
           build-windows-eh/bin/NeverDNativeFinallyInputTests \
-            --gtest_filter=PipelineOutcome.NativeFinallyInputsRetainSourceLLVM \
             --gtest_output=xml:build-windows-eh/evidence/nonlocal-finally-source.xml
       - name: Reconstruct and execute native MSVC finally returns and jumps
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}

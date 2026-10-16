@@ -357,7 +357,11 @@ TEST_F(IndirectTailFrame, ExclusiveReleaseCallsItsVirtualSlotInEveryRoute) {
     const std::string Source((std::istreambuf_iterator<char>(Input)), {});
     EXPECT_EQ(Source.find("unresolved indirect branch"), std::string::npos)
         << Source;
-    EXPECT_NE(Source.find("(*(void **)((uintptr_t)(*(void **)(arg0)) + 32)))("),
+    // HighC writes the slot offset in hexadecimal; LLVM C's address
+    // arithmetic still spells offsets in decimal.
+    const std::string Slot = Route ? "32" : "0x20";
+    EXPECT_NE(Source.find("(*(void **)((uintptr_t)(*(void **)(arg0)) + " +
+                          Slot + ")))("),
               std::string::npos)
         << Source;
     if (Route)

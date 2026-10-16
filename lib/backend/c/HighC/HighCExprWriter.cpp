@@ -30,6 +30,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/IntegerLiterals.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
@@ -272,7 +273,11 @@ std::string HighCWriter::constStr(uint64_t Val, TypeRef Type) {
   }
   if (Val == 0)
     return "0";
-  if (Val <= limits::kDecimalConstThreshold)
+  // A number reads as the disassembly shows it, in hexadecimal, unless its
+  // decimal digits are its natural reading (naturalLiteralRadix). Either
+  // spelling of a value an int holds is an int.
+  if (Val <= uint64_t(std::numeric_limits<int32_t>::max()) &&
+      naturalLiteralRadix(Val) == LiteralRadix::Decimal)
     return std::to_string(Val);
   // A constant of a type wider than eight bytes is its value zero-extended:
   // a negative literal would convert to that type sign-extended.
@@ -6040,7 +6045,14 @@ HighCWriter::ImageSymbolName HighCWriter::imageSymbolName(va_t Addr) const {
       Named.Raw = symbolScheme(CName) != SymbolScheme::None
                       ? CName.str()
                       : stripLeadingUnderscores(Sym->Name).str();
-      Named.Readable = symbolComment(CName, Named.Raw);
+      // An object named as an import slot (`__imp_X`) is that slot, a
+      // variable such as MinGW's, and not the function `X` a call through
+      // it reaches, which symbolComment() reads it as.
+      Named.Readable = stripImportSymbolPrefix(CName) != CName &&
+                               symbolScheme(CName) == SymbolScheme::None &&
+                               isPlainSymbolText(CName)
+                           ? CName.str()
+                           : symbolComment(CName, Named.Raw);
       Named.Symbol = Sym->Name;
     }
   }

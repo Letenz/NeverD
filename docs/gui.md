@@ -72,8 +72,14 @@ default for code views and text fields.
 
 Double-clicking a function name in a code view follows it in that same window,
 keeping its C or LLVM C representation even when the window is locked. Back and
-forward navigation also stays in the active code window. Imports and global
+forward navigation also stays in the active code window, and within a function
+takes its cursor to the row of the place it returns to. Imports and global
 objects continue to open at their addresses in the disassembly or hex view.
+Double-clicking a goto's label (`goto L_14024FAB5;`) moves the cursor to the
+label and the disassembly to the block it labels, as IDA's labels do; Back
+returns to the goto. Pseudocode and C name a label after its block's address,
+so the label's row maps to that block: clicking it, or Tab, goes there too.
+LLVM C numbers its labels, which name no address.
 
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
@@ -190,6 +196,13 @@ all its source pages before selecting the row. An unmapped source row falls
 back to its function entry with a message; an unmapped instruction reports that
 no source row is available and keeps the existing source cursor. Closing or
 hiding a pane stops its requests; showing it again resumes its own function.
+
+Pseudocode writes a number in hexadecimal, as the disassembly shows it, unless
+its decimal digits are its natural reading: a value up to 10 or a round decimal
+number such as 100, 999 or 5000 (Ghidra's choice). Negative numbers read in
+decimal, and a C literal keeps the type the decompiler gave it. The CLI's C
+output follows the same rule; C through LLVM also keeps decimal where a
+hexadecimal literal would need a suffix to keep its type.
 
 Right-click a number in pseudocode for its bases, each showing what the number
 would read in it: the decompiler's own choice (**Number**, `#`),
@@ -773,7 +786,10 @@ table?* — before the PDB and DWARF questions. IDA asks no such question; it
 follows the PDB and DWARF ones. The dialog shows the table — `.symtab` for ELF
 and SBF, the COFF symbol table of a PE, or `LC_SYMTAB` for the symbols a
 Mach-O image does not export — with its first function names, global ones
-first, and its tooltip lists them. **Yes** loads it. **No**, Escape or closing
+first, and its tooltip lists them. A MinGW PE's table also holds a symbol for
+each section an object contributed, at that object's first function or
+variable, and each object's `.file` record; like IDA and `nm`, NeverD takes no
+name from them. **Yes** loads it. **No**, Escape or closing
 the dialog opens the image as if it had been stripped: its functions take
 `sub_` names and their extents come from the code, while the names dynamic
 linking needs — imports, exports and `.dynsym` — still load. The project keeps

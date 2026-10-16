@@ -72,6 +72,7 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationNestedFinallyFrame.cpp
   X86/RegistrationFilterFrame.cpp
   X86/RegistrationFrame.cpp
+  X86/RegistrationFrameScalar.cpp
   X86/RegistrationFrameMemory.cpp
   X86/RegistrationFrameCallback.cpp
   X86/RegistrationFrameSEHException.cpp

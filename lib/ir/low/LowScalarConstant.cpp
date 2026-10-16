@@ -8,6 +8,10 @@
 
 #include "neverd/ir/low/LowScalarConstant.h"
 
+#include "llvm/ADT/APInt.h"
+
+#include <algorithm>
+
 namespace neverd {
 
 std::optional<uint64_t> lowScalarConstantResult(
@@ -57,10 +61,31 @@ std::optional<uint64_t> lowScalarConstantResult(
                    : L <= R;
     }
   } else if (Op.NumInputs == 2 &&
+             (Op.Opcode == NdOp::INT_LEFT || Op.Opcode == NdOp::INT_RIGHT ||
+              Op.Opcode == NdOp::INT_ASHR) &&
+             Op.Inputs[0].Size == Op.Output.Size &&
+             Op.Inputs[1].Size == Op.Output.Size) {
+    const auto Left = ValueOf(Op.Inputs[0]);
+    const auto Right = ValueOf(Op.Inputs[1]);
+    if (Left && Right) {
+      const unsigned Bits = Op.Output.Size * 8;
+      const llvm::APInt Value(Bits, *Left);
+      const unsigned Count =
+          unsigned(std::min<uint64_t>(*Right & Mask(Op.Output.Size), Bits));
+      // ISA count masking belongs to the lifter. LowIR shifts saturate at
+      // their declared width; never perform an out-of-range host shift.
+      Result = (Op.Opcode == NdOp::INT_LEFT ? Value.shl(Count)
+                : Op.Opcode == NdOp::INT_RIGHT
+                    ? Value.lshr(Count)
+                    : Value.ashr(std::min(Count, Bits - 1)))
+                   .getZExtValue();
+    }
+  } else if (Op.NumInputs == 2 &&
              (Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB ||
-              Op.Opcode == NdOp::INT_XOR || Op.Opcode == NdOp::INT_AND ||
-              Op.Opcode == NdOp::INT_OR || Op.Opcode == NdOp::BOOL_AND ||
-              Op.Opcode == NdOp::BOOL_OR || Op.Opcode == NdOp::BOOL_XOR) &&
+              Op.Opcode == NdOp::INT_MULT || Op.Opcode == NdOp::INT_XOR ||
+              Op.Opcode == NdOp::INT_AND || Op.Opcode == NdOp::INT_OR ||
+              Op.Opcode == NdOp::BOOL_AND || Op.Opcode == NdOp::BOOL_OR ||
+              Op.Opcode == NdOp::BOOL_XOR) &&
              Op.Inputs[0].Size == Op.Output.Size &&
              Op.Inputs[1].Size == Op.Output.Size) {
     if (Op.Opcode == NdOp::INT_XOR && Op.Inputs[0] == Op.Inputs[1] &&
@@ -80,11 +105,12 @@ std::optional<uint64_t> lowScalarConstantResult(
                    : Op.Opcode == NdOp::BOOL_OR ? L || R
                                                 : L != R;
         } else
-          Result = Op.Opcode == NdOp::INT_ADD   ? *Left + *Right
-                   : Op.Opcode == NdOp::INT_SUB ? *Left - *Right
-                   : Op.Opcode == NdOp::INT_AND ? *Left & *Right
-                   : Op.Opcode == NdOp::INT_OR  ? *Left | *Right
-                                                : *Left ^ *Right;
+          Result = Op.Opcode == NdOp::INT_ADD    ? *Left + *Right
+                   : Op.Opcode == NdOp::INT_SUB  ? *Left - *Right
+                   : Op.Opcode == NdOp::INT_MULT ? *Left * *Right
+                   : Op.Opcode == NdOp::INT_AND  ? *Left & *Right
+                   : Op.Opcode == NdOp::INT_OR   ? *Left | *Right
+                                                 : *Left ^ *Right;
       }
     }
   }

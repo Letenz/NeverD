@@ -1743,6 +1743,12 @@ i386/ELF 联合有限域证明在全部消费者对受限所有者图重放索�
 
 `MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
 
+### Darwin dylib 导入偏移
+
+普通强 dylib 导入支持带符号的字节偏移，可初始化全局指针与 TLS 模板指针。`DarwinImage` 统一计算导出地址、库的加载偏移及导入加数，检查溢出并限定在所选提供库的原始段范围内；指针值检查不推测访问宽度。libSystem 入口、导入的 TLV 描述符和延迟绑定仍要求零加数。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### 顺序执行域内的原始比较交换
 
 `SymExec` 负责获准的原始 `ATOMIC_CMPXCHG` 的值语义：发布输出前捕获地址、期望值、目标值和旧值，再一次性提交 `ite(Old == Expected, Desired, Old)`。`SymState` 负责该次写入的字节效果、别名失效和保存预算。`InterpreterSpecialization` 负责准入与来源：Old 使用写入前的内存来源；条件写入保守合并 Old、期望值与目标值的来源，并撤销可能重叠的仿射溢出存储事实。即使比较失败，也须证明完整写入范围与受保护返回单元分离。残余程序保留原子操作、内存序及发生次数；拒绝时不发布部分残余 CFG。
@@ -1801,3 +1807,15 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 `KernelModelFileCreate` 在现有 `FileOperation` 中管理设备指针打开。名称解析、CREATE 数据包和最终释放复用普通文件打开的状态管理。对象管理器通过内部句柄取得文件引用，`queryFileDevice` 提供关联设备，现有句柄关闭续接执行 CLEANUP。续接完成后才退出原调用线程的临界区。公共输出重叠不会替换内部保留的文件对象。
 
 `KernelModelIO` 负责进程锁页包装及私有附加生命周期，复用共享进程视图切换和普通 MDL 探测。私有附加不伪造来宾 APC 存储，也不能用公开接口的零令牌解除；准入和嵌套仍由原附加所有者管理。只有恢复成功后才向来宾传递探测异常；恢复错误仍作为模型失败。
+
+`KernelObjectAPIs.def` 统一负责固定回调版本查询的标识、参数数量、值与 IRQL 上限，不引入回调注册表或宿主操作系统查询。
+
+`KernelPhysicalMemory::resolveAddress` 将当前 `MemoryView` 与保留的精确分配切片和既有页身份匹配，包括别名。`KernelModel` 单独检查映射可读性、进程上下文及驻留状态。查询不分配新身份或锁页；仍映射的页填充不能恢复已释放字节的生命周期。
+
+`KernelModel::queryPrimaryVirtualAddress` 依据既有存活的非分页 `PoolAllocation` 记录和 `KernelPhysicalMemory::describe` 推导主虚拟地址，再通过正向查询验证。不新增反向别名登记、物理身份或页锁；通用后备地址不能证明主映射。
+
+`activateStack` 和 `retireStack` 管理 `ExecutionStacks`；查询将该范围绑定到当前 `ExecutionThreadKeys` 身份。再次激活必须保留精确范围，存活栈重叠或回收范围不符在修改前拒绝。共享线程的嵌套执行仍有独立边界。这些环境查询在原生脱壳重建中仍属于不透明依赖。
+
+`LockedMdl::StorageKind` 将描述符存储与页来源分开。池分配和存活执行栈提供精确范围，共用释放预检先核对全部范围，再移除描述符记录。池释放在修改状态前检查写权限。部分 MDL 构建和解锁保留描述符所有者；内核内存借用拒绝与存活 MDL 元数据相交。MmCreateMdl 保留默认不透明脱壳边界。
+
+`LockedMdl::AdvanceRange` 独立保留原始锁定字节范围和系统映射基址，数据窗口可继续推进。别名分配、访问验证、借用与释放都使用该所有者；同一 MDL 层负责 PFN 旋转及恢复，页和描述符存储所有权不变。根据固定版本的生产端及清理端，原页锁保留到清理，不从通用文档推断立即解锁。MmAdvanceMdl 对脱壳重建保持不透明。
