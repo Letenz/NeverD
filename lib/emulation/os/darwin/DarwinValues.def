@@ -941,6 +941,8 @@ NEVERD_DARWIN_DIAGNOSTIC(LibSystemImport,
                          "unsupported Darwin libSystem import: ")
 NEVERD_DARWIN_DIAGNOSTIC(LibSystemFrame,
                          "invalid Darwin libSystem return frame")
+NEVERD_DARWIN_DIAGNOSTIC(
+    LibSystemResolver, "Darwin lazy binding resolver execution is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(PreparationDeadline,
                          "Darwin process preparation deadline exhausted")
 NEVERD_DARWIN_DIAGNOSTIC(

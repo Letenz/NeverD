@@ -35,13 +35,22 @@ struct ProfileSpec {
 };
 ProfileSpec macOSProfile();
 ProfileSpec iOSProfile(bool Simulator);
+enum class LibSystemGateKind {
+#define NEVERD_DARWIN_LIBSYSTEM_CALL(Name, Symbol, Count, Kernel) Name,
+#include "DarwinLibSystemCalls.def"
+#undef NEVERD_DARWIN_LIBSYSTEM_CALL
+  StubBinder
+};
+struct PreparedFixup {
+  uint64_t Address, Value;
+};
 struct ProcessImage {
   GuestArchitecture Architecture;
   MemoryLayout Memory;
   bool MainEntry;
   ImageMappingPlan Plan;
-  std::vector<MachOProgramFixup> Fixups;
-  std::map<uint64_t, unsigned> Imports;
+  std::vector<PreparedFixup> Fixups;
+  std::map<uint64_t, LibSystemGateKind> Imports;
   uint64_t MetadataBytes = 0;
 };
 struct InitialStack {

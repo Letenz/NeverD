@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 00509a4718fb83deef9b9430e71183313790e9707bed10468cdbd18f5c715de3 -->
+<!-- i18n-source: 109c1b21917c9ee77d9379f545ca8484d3beea860e25c9fc0e964f56d8558e86 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -1797,7 +1797,7 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 ## Begrenzte libSystem-Imports
 
-Ein Thin-Programm der Basis-ISA kann genau eine starke Abhängigkeit `/usr/lib/libSystem.B.dylib` binden. Erforderlich sind `LC_MAIN`, `MH_TWOLEVEL`, ein gewöhnliches Bibliotheksordinal und eine Kompatibilitätsanforderung bis 1.0. Der Leser prüft klassische Zeigerströme oder generic64-Ketten vollständig, einschließlich undefinierter Symbole, genauer Slots und lokaler Rebases. Andere Abhängigkeiten, weak/lazy/threaded Bindungen, nicht unterstützte Relocations, Initialisierung, TLS und authentifizierte Zeiger werden vor Ausführung abgewiesen.
+Ein Thin-Programm der Basis-ISA kann genau eine starke Abhängigkeit `/usr/lib/libSystem.B.dylib` binden. Erforderlich sind `LC_MAIN`, `MH_TWOLEVEL`, ein gewöhnliches Bibliotheksordinal und eine Kompatibilitätsanforderung bis 1.0. Der Leser prüft klassische Zeigerströme oder generic64-Ketten vollständig, einschließlich undefinierter Symbole, genauer Slots und lokaler Rebases. Andere Abhängigkeiten, weak/threaded Bindungen, nicht unterstützte Relocations, Initialisierung, TLS und authentifizierte Zeiger werden vor Ausführung abgewiesen.
 
 Nur Imports erhalten authentifizierte Funktionszugänge und einen frischen Hauptthread-errno-Wert. Wrapper teilen die Darwin-Kerneleffekte: Fehler liefern `-1` und errno; Erfolg erhält errno. C `_exit` heißt in Mach-O `__exit`; C `exit` mit dem Linknamen `_exit` bleibt ununterstützt. Gewöhnliche Funktionen prüfen den Rückkehrrahmen; terminale Aufrufe benötigen kein Rückkehrziel. Berichte erhalten Anbieter, Linknamen, Argumentzahl und sämtliche Bits. Unvollständige oder nicht zurückkehrende Ergebnisse sind null; bestehende Raw-Berichte bleiben kompatibel.
 
@@ -1805,13 +1805,15 @@ Nur Imports erhalten authentifizierte Funktionszugänge und einen frischen Haupt
 
 Dasselbe unabhängig erstellte Objekt läuft nach system/classic/chained-Linken gegen echtes libSystem. Process/C/CLI/Python prüfen fünf Plattform/ISA-Kombinationen sowie drei passende ARM64-HVF-Profile. Beliebige Dylibs, dlopen/dlsym, Shared Cache, Konstruktoren, Threads, Apple-Frameworks, Intel HVF und physische iOS-Abnahme bleiben offen.
 
+Classic-lazy-Zeiger werden vor dem Einstieg aufgelöst. Jedes Programm nennt Ziel, gewöhnliche Ordinalzahl und Symbol ohne geerbten Zustand: Zeigertyp, Addend null, ein DO_BIND unmittelbar vor DONE. Nur ein Rebase auf lokale ausführbare Bytes und ein Lazy-Bind desselben Slots werden zusammengeführt; beide zählen zum Budget. dyld_stub_binder verlangt eine starke gewöhnliche Classic-Bindung ohne Addend und tatsächliche Lazy-Aufrufe. Seine Ausführung scheitert vor C-Frame- und Argumentzugriff, errno-Änderung und Aufrufprotokoll. Laufzeitresolver und privater dyld-Zustand fehlen weiterhin. Native Kontrolle und Gast prüfen stabile Zeiger, Ausgabe und Status der sechs Funktionen.
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
-fixups: classic non-lazy pointer bind/rebase; DYLD_CHAINED_PTR_64 / PTR_64_OFFSET
-unsupported: weak/lazy/threaded streams; authenticated/multi-start chains; other relocations
+fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
+unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
 errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
 SG_READ_ONLY: current R after fixup; original declared maximum is retained
 gates: RX/max RX; errno: RW/max RW; both resident model reservations
@@ -1820,6 +1822,7 @@ preparation timeout: typed Timeout, zero guest work; original format/backend err
 report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
 call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
 basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 native common catalogue: 82; required methods/platform: 96; matching ARM64 identities: 288
 ```

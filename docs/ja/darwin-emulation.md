@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 00509a4718fb83deef9b9430e71183313790e9707bed10468cdbd18f5c715de3 -->
+<!-- i18n-source: 109c1b21917c9ee77d9379f545ca8484d3beea860e25c9fc0e964f56d8558e86 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -1799,7 +1799,7 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 ## 有界 libSystem インポート
 
-ベースライン ISA の thin 実行形式は、強い依存 `/usr/lib/libSystem.B.dylib` 一つを結合できます。`LC_MAIN`、`MH_TWOLEVEL`、通常のライブラリ ordinal、1.0 以下の互換バージョン要求が必要です。元の classic ポインタ列または generic64 チェーン、未定義シンボル、正確なスロットとローカル rebase を完全に検証します。未知の依存、weak/lazy/threaded 結合、未対応 relocation、初期化、TLS、認証ポインタは実行前に失敗します。
+ベースライン ISA の thin 実行形式は、強い依存 `/usr/lib/libSystem.B.dylib` 一つを結合できます。`LC_MAIN`、`MH_TWOLEVEL`、通常のライブラリ ordinal、1.0 以下の互換バージョン要求が必要です。元の classic ポインタ列または generic64 チェーン、未定義シンボル、正確なスロットとローカル rebase を完全に検証します。未知の依存、weak/threaded 結合、未対応 relocation、初期化、TLS、認証ポインタは実行前に失敗します。
 
 インポートがある場合だけ認証済み入口と新しい主スレッド errno を配置します。ラッパーは Darwin カーネル効果を共有し、エラーを `-1` と errno に変換し、成功時は errno を保持します。C `_exit` は Mach-O `__exit`、C `exit` は未対応の `_exit` です。通常呼び出しは戻りフレームを検証し、終了専用呼び出しは戻り先を必要としません。レポートは提供元、正確な名前、引数数、全ビットを保持し、未完了または非復帰の結果は null です。従来の raw レポートは互換です。
 
@@ -1807,13 +1807,15 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 同一の独立作成オブジェクトを system/classic/chained でリンクし、実際の libSystem で実行します。五つのプラットフォーム/ISA を process/C/CLI/Python、三つの対応 ARM64 HVF profile で確認します。任意 dylib、dlopen/dlsym、shared cache、コンストラクター、スレッド、Apple フレームワーク、Intel HVF と実機 iOS の完全対応は未完了です。
 
+classic lazy ポインタは実行開始前に解決する。各プログラムは格納先、通常の ordinal、シンボルを独立して指定し、ポインタ型、ゼロ addend、一回の DO_BIND と直後の DONE のみを認める。状態を継承せず、ローカル実行可能バイトを指す一つの rebase と同じスロットの lazy bind のみ統合し、両レコードを予算に計上する。dyld_stub_binder は実際の lazy 呼び出しに伴う強い通常 classic bind、ゼロ addend に限る。その実行は C フレーム・引数の読取り、errno 更新、呼び出し記録より前に失敗する。実行時 resolver や dyld 内部状態は実装しない。六関数のネイティブ対照とゲストはポインタの安定性、出力、終了状態を確認する。
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
-fixups: classic non-lazy pointer bind/rebase; DYLD_CHAINED_PTR_64 / PTR_64_OFFSET
-unsupported: weak/lazy/threaded streams; authenticated/multi-start chains; other relocations
+fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
+unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
 errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
 SG_READ_ONLY: current R after fixup; original declared maximum is retained
 gates: RX/max RX; errno: RW/max RW; both resident model reservations
@@ -1822,6 +1824,7 @@ preparation timeout: typed Timeout, zero guest work; original format/backend err
 report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
 call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
 basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 native common catalogue: 82; required methods/platform: 96; matching ARM64 identities: 288
 ```

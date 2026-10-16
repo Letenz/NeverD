@@ -1723,6 +1723,8 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 يملك `MachOProgramLinking` حقائق classic/generic64 الأصلية الصارمة وإغلاق الرموز الكامل وحدود الإعداد. تدير عملية Darwin قبول المزوّد والرمز ونشر المؤشرات والحماية بعد fixups ومداخل libSystem وerrno. يربط `DarwinLibSystemCalls.def` الأسماء وأعداد المعاملات بتأثيرات `DarwinServices` دون اختراع traps خام. يملك `DarwinMemory` الحجوزات والحماية القصوى و`ExecutionBudget` الموعد المشترك، ويُسلسل `ProcessReport` وحده `darwin.native_calls` الاختياري. لا تُحمّل مكتبات المضيف.
 
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
 ### المقارنة والتبديل في نموذج raw التسلسلي
 
 يمتلك `SymExec` دلالات قيم `ATOMIC_CMPXCHG` المقبولة في نطاق raw: يلتقط العنوان والقيم المتوقعة والمطلوبة والقديمة قبل نشر الخرج، ثم يكتب `ite(Old == Expected, Desired, Old)` مرة واحدة. يتولى `SymState` آثار البايتات وإبطال معلومات التداخل وميزانية الحفظ لهذه الكتابة. ويتولى `InterpreterSpecialization` القبول والمنشأ: يأخذ Old منشأ الذاكرة قبل الكتابة، وتجمع الكتابة الشرطية بصورة محافظة مناشئ Old والقيمتين المتوقعة والمطلوبة، وتبطل حقائق المؤشرات الأفينية المحفوظة التي قد تتداخل. حتى عند فشل المقارنة، يجب إثبات فصل نطاق الكتابة الكامل عن خلايا العودة المحمية. تبقى العملية الذرية وترتيب الذاكرة ومرات حدوثها في البرنامج المتبقي؛ ولا ينشر الرفض CFG متبقيًا جزئيًا.

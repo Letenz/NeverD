@@ -9,6 +9,7 @@
 #include "neverd/loader/BinaryImageFlags.h"
 #include "neverd/loader/MachO/MachOExecutionImage.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/BinaryFormat/MachO.h"
 
 namespace neverd::emulation::darwin_model {
@@ -76,23 +77,37 @@ llvm::Expected<ProcessImage> loadImage(const std::filesystem::path &Path,
           D.CompatibilityVersion > LibSystemCompatibilityVersion)
         return failure(diagnostic::LibSystemProvider);
     Result.MetadataBytes = Facts->MetadataBytes;
+    const bool HasLazyBindings = llvm::any_of(Facts->Fixups, [](const auto &F) {
+      return F.Origin == MachOProgramFixupOrigin::ClassicLazyBind;
+    });
+    if (Facts->Fixups.size() >
+        (Available - Result.MetadataBytes) / sizeof(PreparedFixup))
+      return failure(diagnostic::ProcessLimits);
+    Result.MetadataBytes += Facts->Fixups.size() * sizeof(PreparedFixup);
+    Result.Fixups.reserve(Facts->Fixups.size());
     for (const auto &F : Facts->Fixups) {
-      if (!F.Bind)
+      if (!F.Bind) {
+        Result.Fixups.push_back({F.Address, F.Target});
         continue;
+      }
       auto Binding = libSystemImport(F.Symbol);
-      if (!Binding || F.WeakImport || F.Addend)
+      if (!Binding || F.WeakImport || F.Addend ||
+          (*Binding == LibSystemGateKind::StubBinder &&
+           (!HasLazyBindings ||
+            F.Origin != MachOProgramFixupOrigin::ClassicBind)))
         return llvm::createStringError(
             llvm::inconvertibleErrorCode(),
             llvm::Twine(diagnostic::LibSystemImport) + F.Symbol);
-      const auto Address = LibSystemGate + *Binding * LibSystemGateStride;
+      const auto Address =
+          LibSystemGate + unsigned(*Binding) * LibSystemGateStride;
       if (!Result.Imports.contains(Address)) {
         if (128 > Available - Result.MetadataBytes)
           return failure(diagnostic::ProcessLimits);
         Result.MetadataBytes += 128;
         Result.Imports.emplace(Address, *Binding);
       }
+      Result.Fixups.push_back({F.Address, Address});
     }
-    Result.Fixups = std::move(Facts->Fixups);
     if (!Result.Imports.empty()) {
       ModelBytes = 2 * Page;
       Result.Memory.Reserved = {{LibSystemGate, Page, 5},

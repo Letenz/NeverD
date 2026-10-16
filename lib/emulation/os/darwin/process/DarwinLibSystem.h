@@ -17,13 +17,13 @@ struct LibSystemBinding {
   unsigned Arguments;
   std::optional<ServiceKind> Kernel;
 };
-std::optional<unsigned> libSystemImport(llvm::StringRef Symbol);
-const LibSystemBinding &libSystemBinding(unsigned Index);
+std::optional<LibSystemGateKind> libSystemImport(llvm::StringRef Symbol);
+const LibSystemBinding &libSystemBinding(LibSystemGateKind Kind);
 llvm::Error prepareLibSystem(AddressSpace &Space, const ProcessImage &Image);
 llvm::Expected<bool>
 invokeLibSystem(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
                 DarwinEntropy &Entropy, const ProcessImage &Image,
-                unsigned Binding, const ServiceRequest &Request,
+                LibSystemGateKind Binding, const ServiceRequest &Request,
                 const ProcessOptions &Options, ProcessResult &Result);
 } // namespace neverd::emulation::darwin_model
 #endif

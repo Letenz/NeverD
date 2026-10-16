@@ -1721,6 +1721,8 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `MachOProgramLinking` は元の classic/generic64 形式、完全な未定義シンボル閉包、準備予算を所有します。Darwin process は提供元/シンボル許可、ポインタ公開、fixup 後の読み取り専用化、libSystem 入口と errno を管理します。`DarwinLibSystemCalls.def` の名前と引数数は `DarwinServices` の型付き効果に結び付き、raw trap を捏造しません。予約と最大保護は `DarwinMemory`、共有期限は `ExecutionBudget`、任意の `darwin.native_calls` 出力は `ProcessReport` が所有し、ホストのライブラリはロードしません。
 
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
 ### 逐次 raw 実行での比較交換
 
 `SymExec` は受け入れられた raw `ATOMIC_CMPXCHG` の値の意味論を所有します。出力を書き戻す前にアドレス、期待値、更新値、旧値を取得し、`ite(Old == Expected, Desired, Old)` を一度だけコミットします。`SymState` はその書き込みのバイト効果、エイリアスの無効化、保存予算を担当します。`InterpreterSpecialization` は受け入れと由来を管理します。Old には書き込み前のメモリ由来を使い、条件付き書き込みには Old、期待値、更新値の由来を保守的に統合し、重なり得るアフィンスピルの事実を破棄します。比較が失敗しても、書き込み範囲全体と保護された戻りセルの分離証明が必要です。残余には元の原子操作、メモリ順序、発生回数を保持し、拒否時には部分的な残余 CFG を公開しません。
