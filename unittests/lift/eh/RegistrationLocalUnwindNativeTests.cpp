@@ -375,6 +375,133 @@ TEST(RegistrationLocalUnwindNative, SavedParentStackRequiresExactBoundedSSA) {
   }
 }
 
+TEST(RegistrationLocalUnwindNative,
+     SavedStackReadsBindTheExactLoadAndCallback) {
+  for (unsigned Mutation = 0; Mutation != 27; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Source = localUnwindSource(false, false);
+    auto &Ops = Source.Blocks[1].Ops;
+    if (Mutation == 1 || Mutation == 2) {
+      auto Copy = Ops[1];
+      Copy.Opcode = NdOp::COPY;
+      Copy.Addr = 0x1809;
+      Copy.Inputs[0] = Ops[1].Output;
+      ++Copy.Output.Id;
+      Ops.insert(Ops.begin() + 2, Copy);
+      if (Mutation == 2)
+        Ops[2].Inputs[0] = Ops[2].Output;
+    }
+    llvm::LLVMContext Context;
+    llvm::Module Module("saved-stack", Context);
+    auto *Parent = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false),
+        llvm::GlobalValue::ExternalLinkage, "parent", Module);
+    auto *Block = llvm::BasicBlock::Create(Context, "callback", Parent);
+    llvm::IRBuilder<> B(Block);
+    auto *Slot = B.CreateAlloca(B.getInt32Ty());
+    auto *Load =
+        B.CreateLoad(Mutation == 19 ? B.getInt64Ty() : B.getInt32Ty(), Slot);
+    Load->setVolatile(true);
+    B.CreateRetVoid();
+    X86RegistrationCallbackRequest Request;
+    Request.Entry = Block;
+    Request.Blocks = {Block};
+    uint64_t EntrySP = 96;
+    switch (Mutation) {
+    case 3:
+      Ops[1].Dead = true;
+      break;
+    case 4:
+      Ops[1].NumInputs = 0;
+      break;
+    case 5:
+      Ops[1].Output.Size = 8;
+      break;
+    case 6:
+      Ops[1].MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    case 7:
+      Ops[1].MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 8:
+      ++Ops[1].OriginSeq;
+      break;
+    case 9: {
+      auto Duplicate = Ops[1];
+      ++Duplicate.Addr;
+      Ops.push_back(Duplicate);
+      break;
+    }
+    case 10:
+      Source.Blocks[1].Phis.emplace_back();
+      Source.Blocks[1].Phis.back().Output = Ops[1].Output;
+      break;
+    case 11:
+      Source.CallClobbers.emplace_back();
+      Source.CallClobbers.back().Value = Ops[1].Output;
+      break;
+    case 12:
+      Ops[0].IntrinsicOutputs.push_back(Ops[1].Output);
+      break;
+    case 13:
+      Source.RegistrationStates->FrameValues.clear();
+      break;
+    case 14:
+      Source.RegistrationStates->FrameValues.front().EstablishedFrameOffset =
+          -60;
+      break;
+    case 15:
+      Source.RegistrationStates->FrameValues.push_back(
+          Source.RegistrationStates->FrameValues.front());
+      break;
+    case 16:
+      Load->setVolatile(false);
+      break;
+    case 17:
+      Load->setAtomic(llvm::AtomicOrdering::Acquire);
+      break;
+    case 18:
+      Request.Blocks.clear();
+      break;
+    case 20:
+      Source.SkippedSSA = true;
+      break;
+    case 21:
+      Source.RegistrationStates->Complete = false;
+      break;
+    case 22:
+      EntrySP = 3;
+      break;
+    case 23:
+      EntrySP = uint64_t(UINT32_MAX) + 1;
+      break;
+    }
+    x86_registration::SEHParentExitPlan Exits;
+    auto &Exit = Exits.Sources[1];
+    Exit.EntryVA = 0x1800;
+    Exit.StackOffset = -64;
+    Exit.Restore = &Ops[Mutation == 1 || Mutation == 2 ? 2 : 1];
+    x86_registration::SEHLocalUnwindPlan Plan;
+    auto &Call = Plan.Calls[nullptr];
+    Call.Source.Source = &Source.RegistrationStates->SEHLocalUnwinds.front();
+    Call.Callback = Mutation == 25 ? 1 : 0;
+    if (Mutation == 26)
+      Call.Source.Source = nullptr;
+    std::map<std::pair<va_t, int>, llvm::Instruction *> Memory{
+        {{0x1808, 1}, Load}};
+    if (Mutation == 24)
+      Memory.clear();
+    const bool Valid = Mutation <= 1 || Mutation == 16;
+    EXPECT_EQ(x86_registration::bindSEHLocalUnwindFrameReads(
+                  Plan, Source, EntrySP, Exits, {Request}, Memory),
+              Valid);
+    if (Valid) {
+      ASSERT_EQ(Plan.FrameReads.size(), 1u);
+      EXPECT_EQ(Plan.FrameReads.at(Load).Offset, -64);
+    }
+  }
+}
+
 TEST(RegistrationLocalUnwindNative, RejectsAlteredInvocationAndParentCapture) {
   for (bool EH4 : {false, true})
     for (bool Indirect : {false, true})

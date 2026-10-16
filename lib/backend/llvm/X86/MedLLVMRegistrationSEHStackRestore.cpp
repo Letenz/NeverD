@@ -25,7 +25,8 @@ bool bindSEHLocalUnwindFrameReads(
     llvm::ArrayRef<X86RegistrationCallbackRequest> Requests,
     const std::map<std::pair<va_t, int>, llvm::Instruction *> &Memory) {
   if (Source.SkippedSSA || !Source.RegistrationStates ||
-      !Source.RegistrationStates->Complete || EntrySP > UINT32_MAX)
+      !Source.RegistrationStates->Complete || EntrySP < 4 ||
+      EntrySP > UINT32_MAX)
     return false;
   using Key = std::tuple<MedVar::VarKind, int, int>;
   const auto Identity = [](const MedVar &Value) {
@@ -62,7 +63,9 @@ bool bindSEHLocalUnwindFrameReads(
       return false;
     Define(Clobber.Value, nullptr);
   }
-  for (const auto &[Call, Bound] : Plan.Calls)
+  for (const auto &[Call, Bound] : Plan.Calls) {
+    if (!Bound.Source.Source || Bound.Callback >= Requests.size())
+      return false;
     for (const auto &[Block, Exit] : ParentExits.Sources) {
       if (++Work > limits::kMaxRegistrationEHStateWork)
         return false;
@@ -105,8 +108,11 @@ bool bindSEHLocalUnwindFrameReads(
       auto *Load = Found != Memory.end()
                        ? llvm::dyn_cast<llvm::LoadInst>(Found->second)
                        : nullptr;
+      // Native lowering marks checked source memory volatile when outlining
+      // commits. Preflight runs before that mutation and accepts the original
+      // ordinary load; atomic accesses still require a different contract.
       if (Receipts != 1 || !Load || !Load->getType()->isIntegerTy(32) ||
-          !Load->isVolatile() || Load->isAtomic() ||
+          Load->isAtomic() ||
           !llvm::is_contained(Requests[Bound.Callback].Blocks,
                               Load->getParent()))
         return false;
@@ -117,6 +123,7 @@ bool bindSEHLocalUnwindFrameReads(
                      It->second.Offset != Exit.StackOffset))
         return false;
     }
+  }
   return true;
 }
 
