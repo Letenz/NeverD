@@ -185,9 +185,38 @@ builtin spellings each language takes and which it takes unless asked;
 `neverd types --json` names the one its source took, in every mode, so that
 an agent reads one object.
 
-The decompiler reads the local types' prototypes through
-`PrototypeDebugContext` (`lib/sdk/capi`). It wraps the program's debug
-context, and completes the functions the debug information names but leaves
+The decompiler reads the local types through `LocalTypesDebugContext`
+(`lib/sdk/capi`), which wraps the program's debug context whenever the
+program has local types. The local types are the authority on the program's
+records:
+- A record the debug information names, but gives no members yet, takes the
+  library's when the library defines a record of its name and size
+  (`completeType`). The decompiler names its member accesses by these, so a
+  member the user renames reads by its new name. Members the debug
+  information gave stay, and so do its records' ABI facts.
+- A decompiled unit, HighC's or LLVM-C's, holds the definitions of the
+  records it names (`CEmitterOptions::RecordDefinitions`), and of what they
+  hold by value, after its includes. `renderEmbeddedC` renders them in exact
+  widths, with their checks, each under a guard of its own so that units
+  concatenate. A record whose members the unit, or the debug information
+  anywhere in the session, names otherwise than the library does stays
+  declared only: its definition would disagree with the code.
+- HighC asks for the records and enumerations its types reach before it
+  writes, and the typedefs and enumerators the definitions declare reserve
+  their names from the unit's own. LLVM-C asks after it writes for every
+  name its text spells: a record's or an enumeration's, or an enumerator of
+  an enumeration the decompiler displays, which stands for it. It declares a
+  typedef of each tag it spells, an enumeration's after its definition, and
+  leaves the definitions out where one of their names is one of the unit's
+  functions or objects.
+- A store to a pointer member of such a record casts the stored value to
+  the member's type (`__typeof__`), which C converts an address of another
+  type, or an integer, to only by a cast. LLVM-C computes with integers: a
+  parameter or a result that the debug information or a prototype types as
+  a pointer is declared as that pointer, and converts where the code
+  computes with it, as does a pointer member it reads.
+
+It also completes the functions the debug information names but leaves
 untyped from the prototype of their name, as the kernel's public symbols
 are completed from `<ntifs.h>`. A function the debug information types
 keeps its own type, and a variadic prototype is not used, because its calls
@@ -201,12 +230,23 @@ decompiler's types:
   opaque pointers.
 
 Win64 placement then binds each parameter by its location, and the
-signature prints with the prototype's names. A declaration changes what the
-decompiler read only when it adds a prototype or changes a type a prototype
-names, through typedefs, pointers, arrays and members
-(`prototypeTypeNames`). Only such a declaration clears the pipeline, which
-the C API reports as `"decompilation": true`, and the worker then refreshes
-its views as after loading signatures.
+signature prints with the prototype's names. A declaration changes the
+analysis only when it adds a prototype or changes a type a prototype names,
+through typedefs, pointers, arrays and members (`prototypeTypeNames`); such
+a declaration clears the pipeline. One that changes a record whose members
+the decompiler printed, or a type a unit held (`readTypes`, kept in the
+session as `ShownTypes` across contexts), drops only the kept text. The C
+API reports either as `"decompilation": true`, and the worker then
+refreshes its views as after loading signatures. Every declaration drops
+the context, which reads a copy of the library, and the context takes back
+the members it gave.
+
+A unit's member access names a member only where the access reads it
+(`NdType::displayFieldIndexAt`): a field of the access's width, a scalar's
+over a record's of the same width, which no scalar access reads whole, and
+a record in place only when the access reads all of it. A byte at the start
+of a header whose union's alternatives disagree names no member and stays a
+raw access.
 
 ## System boundary
 
@@ -278,6 +318,13 @@ and both ends of its name spans are monotone. Pages seek directly through those
 arrays when they are ordered; other producer orders and nested spans keep their
 original filtering order. Oversized documents remain readable without being
 retained.
+
+Completed documents also own encoded pages, with at most 64 pages per document
+and 8 MiB of page storage inside the same 32 MiB allowance. Encoded pages retire
+with their document and never keep an evicted document alive. Document retention
+takes priority over page retention. The protocol accepts only typed JSON
+serialization for a retained payload and constructs a fresh response envelope
+for each request, including its current revision and cancellation state.
 
 `SourceViewOptions` owns request-local native source policy. Ordinary HighIR
 conversion skips symbolic expression simplification. An explicit source request
@@ -3571,6 +3618,13 @@ serial rewriting. Solver budgets, effect barriers and rewrite proofs are
 identical in both paths.
 
 MedIR owns bounded invariant-constant propagation across same-width SSA copies and complete PHIs, including loops. Every incoming value must converge to the same bits, width, provenance and address owner. Unknown definitions, unseeded cycles, incomplete edges and conflicting constants prevent substitution; budget exhaustion leaves the function unchanged. The analysis substitutes operands without removing calls, loads, stores or their effects. Both HighIR and LLVM consume the same result.
+
+The constant worklist indexes complete nonconstant SSA identities. Node
+addresses become stable only after all definitions have been collected;
+ordered visitation and the existing work charges remain unchanged. HighIR's
+call-clobber index is local to each converter invocation and retains the first
+record for each full SSA identity, including its variable kind. Reusing a
+converter rebuilds that index before following any preserved-prefix chain.
 
 | User route | Representation path | Exit |
 |------------|---------------------|------|
@@ -6939,10 +6993,36 @@ This is neither a second decoder nor an ART/JVM class-loader implementation.
 
 KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing operation accepts an already admitted node and mapped access, checks both directions, and excludes metadata-only opens from sharing conflicts. CLEANUP releases sharing without retiring the token; CLOSE removes the cleaned token. Cleaned retained bodies still count toward the 1024-open bound. Exact binding validation compares tokens with the file-object owner. `KernelModelFileCreate` owns CREATE and cancellation producers and reserves handle capacity before callbacks. `DriverSession` retains the original caller through pending work and nested CLOSE. The common object owner publishes the handle; namespace lookup retains a real directory body, and the terminal provider reads the admitted packet. Scenario close intent remains separate. Bidirectional token checks run on snapshot and unload.
 
-`KernelModelFileQueries` owns both borrowed IoQueryFileInformation and buffered ZwQueryInformationFile continuations, caller publication and packet disposal. KernelMode handle references reuse the object owner. Native SystemBuffer allocations register with the physical-memory owner; ordinary request retirement leaves them to the query owner. `KernelFileSystem::queryInformation` alone encodes declared metadata from retained open tokens. The terminal route consumes the actual admitted IRP class and length; adapters and reports do not reconstruct metadata.
+`KernelModelFileRequests` owns both borrowed IoQueryFileInformation and buffered ZwQueryInformationFile continuations, caller publication and packet disposal. KernelMode handle references reuse the object owner. Native SystemBuffer allocations register with the physical-memory owner; ordinary request retirement leaves them to the query owner. `KernelFileSystem::queryInformation` alone encodes declared metadata from retained open tokens. The terminal route consumes the actual admitted IRP class and length; adapters and reports do not reconstruct metadata.
 
 `KernelModelIO` retires transfer ownership without changing `FILE_OBJECT.CurrentByteOffset`. A request offset and completion byte count cannot substitute for a filesystem position update; synchronous native Position queries read the retained field.
 
 ### Raw environment architecture ownership
 
 `RecoveryArchitecture` selects the native contract from `SpecializationOptions::Architecture`, independently of the build host. The existing default is x64; a target without an adapter refuses explicitly. `arch/x86_64` owns native option encoding, primary-image range rules, external-exit matching costs and physical-exit receipts. Core owns generic budgets, policy encoding and graph/evidence integrity. The x64 option and receipt digests retain their existing byte encoding; both expected and stored architecture identities are checked before validating the declaration. `RawArchitectureReceiptCompatibility` fixes pre-refactor digest values, and architecture-mismatch controls forbid relabeling x64 evidence as ARM64. This boundary does not implement ARM64 native recovery.
+
+`KernelModelFileRequests` also owns synchronous buffered `ZwReadFile` and `ZwWriteFile`. Handle scope, offset/key capture and copied write input belong to the producer. Shared completion publishes read bytes and IOSB in the eligible original caller, then disposes each owned packet and buffer once. Storage drivers own content and file-position changes.
+
+### Darwin imported file calls
+
+DarwinLibSystemCalls.def adds exact open/lseek/pread/pwrite/dup/dup2 identities.
+DarwinLibSystem owns the sole argument reader, returning separate original
+carriers and kernel arguments. open has two fixed arguments; only low-32-bit
+O_CREAT reads its promoted int, from four defined bytes at entry SP on ARM64
+or the third GP argument on x64. The report retains that carrier and dynamic
+arity; the kernel receives an explicit zero or 16-bit mode_t. Missing argument
+bytes and transport errors precede call/errno/file publication. The existing
+return-frame and post-service transport contracts remain unchanged.
+DarwinFiles continues to own all file authority, effects and descriptor cursors;
+no loader, public transport, generic IntegerABI or report schema gains a second
+semantic owner. Native controls and direct boundary checks separate defined
+stack bytes, full carriers, kernel narrowing and final metadata.
+
+### Ordinary libSystem memory calls
+
+DarwinLibSystem prepares C mmap/mprotect/munmap carriers without changing the
+raw BSD entry. Its argument reader narrows C int protection/flags/descriptors,
+records mmap's early zero-length or missing-sharing-type EINVAL, and adds
+MAP_UNIX03 only to the separate kernel arguments. The common completion path
+owns errno and return-frame publication. DarwinMemory remains the sole owner
+of mappings, current/maximum rights, reserved pages and retained file leases.

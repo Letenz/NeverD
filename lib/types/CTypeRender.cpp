@@ -90,6 +90,7 @@ public:
   bool alignsRecords() const { return AlignsRecords; }
   /// Whether a type rendered so far is followed by checks.
   bool asserts() const { return Asserted; }
+  const NameSpelling &names() const { return Names; }
 
 private:
   void record(const LocalType &Type, std::string &Out);
@@ -700,45 +701,47 @@ bool isIdentifier(llvm::StringRef Name) {
                       [](char C) { return llvm::isAlnum(C) || C == '_'; });
 }
 
-std::string renderCHeader(const TypeLibrary &Library,
-                          llvm::ArrayRef<const LocalType *> Roots,
-                          const RenderOptions &Options) {
-  // What the roots hold by value is defined; what they only point to is
-  // declared, except enumerations and typedefs, which C cannot declare.
-  const std::vector<const LocalType *> All =
-      neededTypes(Library, Roots, /*ThroughPointers=*/true);
+namespace {
+
+/// The types a rendering of \p Roots defines: the roots, what they hold by
+/// value, and the typedefs and enumerations any of these names, which C
+/// cannot declare; what they only point to is declared.
+llvm::StringSet<> definedFor(const TypeLibrary &Library,
+                             llvm::ArrayRef<const LocalType *> Roots) {
   llvm::StringSet<> Defined;
-  if (Roots.empty()) {
-    for (const LocalType *Type : All)
-      Defined.insert(Type->Name);
-  } else {
-    std::vector<const LocalType *> Work(Roots.begin(), Roots.end());
-    for (size_t I = 0; I < Work.size(); ++I) {
-      if (!Defined.insert(Work[I]->Name).second)
+  std::vector<const LocalType *> Work(Roots.begin(), Roots.end());
+  for (size_t I = 0; I < Work.size(); ++I) {
+    if (!Defined.insert(Work[I]->Name).second)
+      continue;
+    std::vector<std::string> Names;
+    mentionedTypes(*Work[I], Names);
+    std::vector<std::string> ByValue;
+    valueDependencies(*Work[I], ByValue);
+    const llvm::StringSet<> Value(llvm::from_range, ByValue);
+    for (const std::string &Name : Names) {
+      const LocalType *Found = Library.find(Name);
+      if (!Found)
         continue;
-      std::vector<std::string> Names;
-      mentionedTypes(*Work[I], Names);
-      std::vector<std::string> ByValue;
-      valueDependencies(*Work[I], ByValue);
-      const llvm::StringSet<> Value(llvm::from_range, ByValue);
-      for (const std::string &Name : Names) {
-        const LocalType *Found = Library.find(Name);
-        if (!Found)
-          continue;
-        const bool Record =
-            Found->Kind == TypeKind::Struct || Found->Kind == TypeKind::Union;
-        if (!Record || Value.contains(Name))
-          Work.push_back(Found);
-      }
+      const bool Record =
+          Found->Kind == TypeKind::Struct || Found->Kind == TypeKind::Union;
+      if (!Record || Value.contains(Name))
+        Work.push_back(Found);
     }
   }
+  return Defined;
+}
 
-  CWriter Writer(Library, Options);
-  std::string Declarations, Enums, Body;
-  for (const LocalType *Type : All)
-    Writer.forwardDeclaration(*Type, Declarations);
-  // Enumerations first, then each type after what it holds by value.
+/// The definitions of \p All that \p Defined holds, enumerations into
+/// \p Enums and the rest into \p Body, each after what it holds by value
+/// and the typedefs and enumerations it names; \p Guarded wraps each in a
+/// guard of its own.  The types defined, in order.
+std::vector<const LocalType *>
+writeDefinitions(CWriter &Writer, const TypeLibrary &Library,
+                 llvm::ArrayRef<const LocalType *> All,
+                 const llvm::StringSet<> &Defined, bool Guarded,
+                 std::string &Enums, std::string &Body) {
   llvm::StringSet<> Done;
+  std::vector<const LocalType *> Order;
   std::function<void(const LocalType &)> Emit = [&](const LocalType &Type) {
     if (!Defined.contains(Type.Name) || !Done.insert(Type.Name).second)
       return;
@@ -757,14 +760,111 @@ std::string renderCHeader(const TypeLibrary &Library,
       if (const LocalType *Found = Library.find(Name))
         Emit(*Found);
     std::string &Into = Type.Kind == TypeKind::Enum ? Enums : Body;
+    const std::string Guard = "NEVERD_TYPE_" + Writer.names().type(Type.Name);
+    if (Guarded)
+      Into += "#ifndef " + Guard + "\n#define " + Guard + "\n";
     Writer.definition(Type, Into);
+    if (Guarded)
+      Into += "#endif\n";
     Into += '\n';
+    Order.push_back(&Type);
   };
   for (const LocalType *Type : All)
     if (Type->Kind == TypeKind::Enum)
       Emit(*Type);
   for (const LocalType *Type : All)
     Emit(*Type);
+  return Order;
+}
+
+} // namespace
+
+EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
+                          llvm::ArrayRef<const LocalType *> Roots,
+                          const RenderOptions &Options) {
+  EmbeddedC Result;
+  if (Roots.empty())
+    return Result;
+  const llvm::StringSet<> Defined = definedFor(Library, Roots);
+  std::vector<const LocalType *> All;
+  for (const LocalType *Type : neededTypes(Library, Roots,
+                                           /*ThroughPointers=*/false))
+    All.push_back(Type);
+  // The typedefs and enumerations the closure names through pointers too.
+  for (const LocalType *Type : Library.types())
+    if (Defined.contains(Type->Name) && !llvm::is_contained(All, Type))
+      All.push_back(Type);
+  CWriter Writer(Library, Options);
+  std::string Enums, Body;
+  const std::vector<const LocalType *> Order = writeDefinitions(
+      Writer, Library, All, Defined, /*Guarded=*/true, Enums, Body);
+  // The records the definitions only point to, declared.
+  std::string Declarations;
+  llvm::StringSet<> Declared;
+  const NameSpelling &Names = Writer.names();
+  for (const LocalType *Type : Order) {
+    std::vector<std::string> Named;
+    mentionedTypes(*Type, Named);
+    for (const std::string &Name : Named)
+      if (const LocalType *Found = Library.find(Name);
+          Found && !Defined.contains(Name) &&
+          (Found->Kind == TypeKind::Struct || Found->Kind == TypeKind::Union) &&
+          Declared.insert(Name).second) {
+        Writer.forwardDeclaration(*Found, Declarations);
+        Result.Declared.emplace_back(Names.type(Name),
+                                     Found->Kind == TypeKind::Union);
+      }
+  }
+  for (const LocalType *Type : Order) {
+    Result.Types.push_back(Type->Name);
+    switch (Type->Kind) {
+    case TypeKind::Struct:
+    case TypeKind::Union:
+      Result.Records.emplace_back(Names.type(Type->Name),
+                                  Type->Kind == TypeKind::Union);
+      break;
+    case TypeKind::Enum:
+      if (Type->Enum)
+        for (size_t I = 0; I < Type->Enum->Values.size(); ++I)
+          Result.Identifiers.push_back(Names.enumerator(*Type->Enum, I));
+      break;
+    case TypeKind::Typedef:
+    case TypeKind::Function:
+      Result.Identifiers.push_back(Names.type(Type->Name));
+      break;
+    }
+  }
+  Result.Text = "// " + std::to_string(Order.size()) +
+                " types, from the program's local types.\n";
+  Result.Text += prelude(Writer, Library, Options);
+  if (!Declarations.empty())
+    Result.Text += "\n" + Declarations;
+  Result.Text += "\n" + Enums + Body;
+  return Result;
+}
+
+std::string renderCHeader(const TypeLibrary &Library,
+                          llvm::ArrayRef<const LocalType *> Roots,
+                          const RenderOptions &Options) {
+  // What the roots hold by value is defined; what they only point to is
+  // declared, except enumerations and typedefs, which C cannot declare.
+  const std::vector<const LocalType *> All =
+      neededTypes(Library, Roots, /*ThroughPointers=*/true);
+  llvm::StringSet<> Defined;
+  if (Roots.empty()) {
+    for (const LocalType *Type : All)
+      Defined.insert(Type->Name);
+  } else {
+    Defined = definedFor(Library, Roots);
+  }
+
+  CWriter Writer(Library, Options);
+  std::string Declarations, Enums, Body;
+  for (const LocalType *Type : All)
+    Writer.forwardDeclaration(*Type, Declarations);
+  // Enumerations first, then each type after what it holds by value.
+  const std::vector<const LocalType *> Done = writeDefinitions(
+      Writer, Library, All, Defined, /*Guarded=*/false, Enums, Body);
 
   // The functions the library knows the prototypes of, by name.
   std::string Prototypes;

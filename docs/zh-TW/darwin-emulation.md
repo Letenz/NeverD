@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 39a521d14dfb31f7e045451a8039cdc180e2e6fabd816f96a0c746ddfa3d19f1 -->
+<!-- i18n-source: 5edfb602025b5842453dbc5914dad53572f14fdc63e424ca65e66d45415e59c3 -->
 
 [← 文件索引](README.md)
 
@@ -1809,10 +1809,16 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 classic lazy 指標在進入客體前預先解析。每個程式必須自行指定目的槽、普通函式庫 ordinal 與符號，僅允許指標型別、零 addend，以及一條緊接 DONE 的 DO_BIND，不繼承前一程式狀態。只有同槽的一次本地可執行 rebase 與一次 lazy bind 可合併，兩筆原始記錄都計入預算。dyld_stub_binder 僅可作為伴隨實際 lazy 呼叫的強、零 addend 普通 classic bind；執行其閘道會在讀取 C 框架或參數、修改 errno 或記錄呼叫之前失敗。這支援穩定的預解析指標，不實作執行期 resolver 或 dyld 私有狀態。六函式原生與客體樣本比較槽位穩定性、輸出與結束狀態。
 
+`open`、`lseek`、`pread`、`pwrite`、`dup` 和 `dup2` 共用既有檔案目錄、變更及描述符游標。`open` 通常記錄兩個參數，低 32 位 flags 含 O_CREAT 時記錄三個。ARM64 的可選提升 int 只讀取入口 SP 的四個有效位元組，不讀取填補；x64 使用第三個通用暫存器參數。報告保留原始載體，獨立的核心參數把 mode 截斷至 16 位。沒有 O_CREAT 時 mode 為零且不讀取可選儲存；x64 必需的返回位址仍正常驗證。參數讀取失敗先於呼叫記錄、errno 和檔案副作用。此契約依據 [Apple ARM64 ABI](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms) 和 [XNU open 包裝函式](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c)。O0/O1/O2 原生對照涵蓋共用偏移、定位 I/O、dup2 失敗、超過 4 GiB 的偏移、mode 截斷與二進位內容。執行緒取消與相容路徑轉換仍不支援。
+
+`mmap`、`mprotect` 和 `munmap` 沿用既有記憶體映射、權限、常駐保留區與檔案引用。C 包裝層將保護位、旗標及描述符縮為 32 位元，報告仍保留原始參數。`mmap` 在長度為零或缺少 MAP_PRIVATE/MAP_SHARED 時先回傳 MAP_FAILED 並設定 EINVAL，再為可進入核心的呼叫加入 MAP_UNIX03；原始 BSD 語義不變。依據為 [XNU UNIX03 包裝層](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/libsyscall/wrappers/unix03/mmap.c)。原創 C 對照涵蓋匿名頁清零、權限切換、錯誤順序、關閉描述符後的映射壽命、私有寫入及 EOF 尾頁。本次不擴充共享、固定、可執行映射或配置器行為。
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
+C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
@@ -1822,11 +1828,14 @@ gates: RX/max RX; errno: RW/max RW; both resident model reservations
 budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
 preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
 report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
-call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
+call carriers: hex; full GP bits or defined ARM64 int vararg bytes; exact arity; null result if incomplete/nonreturning
+open: 2 args or 3 with O_CREAT; ARM64 mode int at SP, x64 third GP; kernel mode_t 16 bits
 basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
 classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
-native common catalogue: 82; required methods/platform: 97; matching ARM64 identities: 291
+file calls: main status 73; stdout_hex 460044; named calls 40; events 41
+memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
+native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
 ```
 
 ```json

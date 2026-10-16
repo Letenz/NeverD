@@ -109,6 +109,20 @@ int main() {
             std::count(text.begin(), text.end(), '\n') ==
                 std::count(source.begin(), source.end(), '\n'),
         "An inline annotation changed the line mapping");
+  for (const std::string prefix : {"R", "u8R", "uR", "UR", "LR"}) {
+    const auto literal = prefix + "\"tag(\" value callee \" )tag\"";
+    auto rawView = page("int target(int value) { const char *str = " + literal +
+                        "; return value; }\n");
+    decorate(rawView);
+    auto rawRename = rename;
+    rawRename["identity"] = target(rawView, "value").at("identity");
+    const auto rawRow = CodeEdits::change(nullptr, rawRename);
+    decorate(rawView, rawRow, imageNames);
+    const auto rawText = rawView.at("text").get<std::string>();
+    check(rawText.find(literal) != std::string::npos &&
+              rawText.find("return input_value") != std::string::npos,
+          "A prefixed raw string was mistaken for editable identifiers");
+  }
   for (const auto &name : edited.at("code_names")) {
     const auto begin = name.at("begin_byte").get<std::size_t>();
     const auto end = name.at("end_byte").get<std::size_t>();

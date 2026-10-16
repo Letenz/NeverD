@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 39a521d14dfb31f7e045451a8039cdc180e2e6fabd816f96a0c746ddfa3d19f1 -->
+<!-- i18n-source: 5edfb602025b5842453dbc5914dad53572f14fdc63e424ca65e66d45415e59c3 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -1807,10 +1807,16 @@ Dasselbe unabhängig erstellte Objekt läuft nach system/classic/chained-Linken 
 
 Classic-lazy-Zeiger werden vor dem Einstieg aufgelöst. Jedes Programm nennt Ziel, gewöhnliche Ordinalzahl und Symbol ohne geerbten Zustand: Zeigertyp, Addend null, ein DO_BIND unmittelbar vor DONE. Nur ein Rebase auf lokale ausführbare Bytes und ein Lazy-Bind desselben Slots werden zusammengeführt; beide zählen zum Budget. dyld_stub_binder verlangt eine starke gewöhnliche Classic-Bindung ohne Addend und tatsächliche Lazy-Aufrufe. Seine Ausführung scheitert vor C-Frame- und Argumentzugriff, errno-Änderung und Aufrufprotokoll. Laufzeitresolver und privater dyld-Zustand fehlen weiterhin. Native Kontrolle und Gast prüfen stabile Zeiger, Ausgabe und Status der sechs Funktionen.
 
+`open`, `lseek`, `pread`, `pwrite`, `dup` und `dup2` nutzen den vorhandenen Dateikatalog, Änderungen und Deskriptorpositionen. `open` protokolliert zwei Argumente, bei O_CREAT in den unteren 32 Flag-Bits drei. ARM64 liest den optionalen promovierten int aus genau vier gültigen Bytes am Eintritts-SP, ohne Padding; x64 nutzt das dritte GP-Argument. Das Protokoll erhält den ursprünglichen Träger, das getrennte Kernelargument begrenzt mode auf 16 Bit. Ohne O_CREAT ist mode null und optionaler Speicher wird nicht gelesen; die x64-Rücksprungadresse wird weiterhin geprüft. Lesefehler gehen Protokoll, errno und Dateiänderungen voraus. Grundlage: [Apple ARM64 ABI](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms), [XNU open](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c). Native O0/O1/O2-Kontrollen prüfen gemeinsame Positionen, positionierte E/A, dup2-Fehler, Positionen über 4 GiB, mode und Binärdaten. Thread-Abbruch und Kompatibilitätspfade bleiben ausgeschlossen.
+
+`mmap`, `mprotect` und `munmap` verwenden die vorhandenen Abbildungen, Schutzrechte, residenten Reservierungen und Dateireferenzen. Der C-Wrapper begrenzt Schutzwerte, Flags und Deskriptoren auf 32 Bit; Berichte behalten die ursprünglichen Werte. `mmap` liefert bei Länge null oder fehlendem MAP_PRIVATE/MAP_SHARED bereits vor Kerneleffekten MAP_FAILED mit EINVAL und ergänzt bei zugelassenen Aufrufen MAP_UNIX03. Rohe BSD-Aufrufe bleiben unverändert. Gemäß dem [UNIX03-Wrapper von XNU](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/libsyscall/wrappers/unix03/mmap.c) prüfen eigene C-Programme Nullinitialisierung, Schutzwechsel, Fehlerreihenfolge, Lebensdauer nach dem Schließen, private Schreibzugriffe und die letzte EOF-Seite. Gemeinsame, feste oder ausführbare Abbildungen und Allokatoren bleiben außerhalb dieses Schritts.
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
+C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
@@ -1820,11 +1826,14 @@ gates: RX/max RX; errno: RW/max RW; both resident model reservations
 budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
 preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
 report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
-call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
+call carriers: hex; full GP bits or defined ARM64 int vararg bytes; exact arity; null result if incomplete/nonreturning
+open: 2 args or 3 with O_CREAT; ARM64 mode int at SP, x64 third GP; kernel mode_t 16 bits
 basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
 classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
-native common catalogue: 82; required methods/platform: 97; matching ARM64 identities: 291
+file calls: main status 73; stdout_hex 460044; named calls 40; events 41
+memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
+native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
 ```
 
 ```json

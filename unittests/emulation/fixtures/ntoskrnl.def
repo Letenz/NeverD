@@ -110,6 +110,9 @@ EXPORTS
   IoGetCurrentProcess
   IoQueryFileInformation
   ZwQueryInformationFile
+  ZwReadFile
+  ZwWriteFile
+  ZwSetInformationFile
   IoGetRelatedDeviceObject
   KeStackAttachProcess
   KeUnstackDetachProcess

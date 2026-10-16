@@ -19,6 +19,14 @@ struct LibSystemBinding {
 };
 std::optional<LibSystemGateKind> libSystemImport(llvm::StringRef Symbol);
 const LibSystemBinding &libSystemBinding(LibSystemGateKind Kind);
+struct LibSystemArguments {
+  std::array<uint64_t, 6> Carriers{}, Kernel{};
+  unsigned Count = 0;
+  std::optional<uint32_t> Error;
+};
+llvm::Expected<LibSystemArguments>
+readLibSystemArguments(ExecutionBackend &CPU, const IntegerABI &ABI,
+                       uint64_t SP, LibSystemGateKind Kind);
 llvm::Error prepareLibSystem(AddressSpace &Space, const ProcessImage &Image);
 llvm::Expected<bool>
 invokeLibSystem(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,

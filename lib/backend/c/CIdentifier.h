@@ -693,6 +693,11 @@ public:
     return Candidate;
   }
 
+  /// Whether a name holds \p Identifier.
+  bool holds(llvm::StringRef Identifier) const {
+    return Used.count(Identifier.str()) != 0;
+  }
+
 private:
   std::map<std::string, unsigned> Used;
 };

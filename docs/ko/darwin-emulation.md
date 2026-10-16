@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 39a521d14dfb31f7e045451a8039cdc180e2e6fabd816f96a0c746ddfa3d19f1 -->
+<!-- i18n-source: 5edfb602025b5842453dbc5914dad53572f14fdc63e424ca65e66d45415e59c3 -->
 
 [← 문서 목록](README.md)
 
@@ -1809,10 +1809,16 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 classic lazy 포인터는 게스트 진입 전에 해석한다. 각 프로그램은 목적지, 일반 ordinal, 심볼을 독립적으로 지정하며 포인터 형식, 0 addend, DO_BIND 하나와 바로 뒤의 DONE만 허용한다. 이전 상태를 상속하지 않으며 로컬 실행 가능 바이트의 rebase 하나와 같은 슬롯의 lazy bind 하나만 병합한다. 두 원본 레코드 모두 예산에 계산한다. dyld_stub_binder는 실제 lazy 호출에 동반되는 강한 일반 classic bind와 0 addend로만 허용하며, 실행 시 C 프레임·인수 읽기, errno 변경, 호출 기록 전에 실패한다. 런타임 resolver나 dyld 내부 상태는 구현하지 않는다. 여섯 함수의 네이티브 대조군과 게스트가 포인터 안정성, 출력 및 종료 상태를 확인한다.
 
+`open`, `lseek`, `pread`, `pwrite`, `dup`, `dup2`는 기존 파일 목록, 변경 권한 및 서술자 커서를 공유합니다. `open`은 기본적으로 인수 두 개를 기록하며 flags의 하위 32비트에 O_CREAT가 있으면 세 개를 기록합니다. ARM64의 선택적 승격 int는 진입 SP의 유효한 4바이트만 읽고 패딩은 읽지 않습니다. x64는 세 번째 범용 레지스터 인수를 사용합니다. 보고서는 원래 값을 보존하고 별도 커널 mode만 16비트로 줄입니다. O_CREAT가 없으면 mode는 0이며 선택적 저장소를 읽지 않습니다. x64 반환 주소 검증은 유지됩니다. 인수 읽기 실패는 호출 기록, errno 및 파일 변경보다 먼저 발생합니다. [Apple ARM64 ABI](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms)와 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c)을 따릅니다. O0/O1/O2 네이티브 대조는 공유 오프셋, 위치 지정 I/O, dup2 실패, 4 GiB 초과 위치, mode 및 이진 내용을 검증합니다. 스레드 취소와 호환 경로 변환은 지원하지 않습니다.
+
+`mmap`, `mprotect`, `munmap`은 기존 매핑, 접근 권한, 상주 예약 영역과 파일 참조를 사용합니다. C 래퍼는 보호 값·플래그·기술자를 32비트로 줄이고 보고서는 원래 인자를 유지합니다. `mmap`은 길이가 0이거나 MAP_PRIVATE/MAP_SHARED가 없으면 커널 효과 전에 MAP_FAILED와 EINVAL을 반환하며, 허용된 호출에는 MAP_UNIX03을 추가합니다. 원시 BSD 의미는 유지됩니다. [XNU UNIX03 래퍼](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/libsyscall/wrappers/unix03/mmap.c)를 참고한 독립 C 대조는 익명 페이지 초기화, 권한 변경, 오류 순서, 기술자를 닫은 뒤 매핑 수명, 비공유 쓰기와 EOF 끝 페이지를 확인합니다. 공유·고정·실행 가능 매핑과 할당기 동작은 이번 범위 밖입니다.
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
+C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
@@ -1822,11 +1828,14 @@ gates: RX/max RX; errno: RW/max RW; both resident model reservations
 budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
 preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
 report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
-call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
+call carriers: hex; full GP bits or defined ARM64 int vararg bytes; exact arity; null result if incomplete/nonreturning
+open: 2 args or 3 with O_CREAT; ARM64 mode int at SP, x64 third GP; kernel mode_t 16 bits
 basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
 classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
-native common catalogue: 82; required methods/platform: 97; matching ARM64 identities: 291
+file calls: main status 73; stdout_hex 460044; named calls 40; events 41
+memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
+native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
 ```
 
 ```json

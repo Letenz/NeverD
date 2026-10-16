@@ -30,15 +30,15 @@ KernelModel::takeFileAPIContinuation() {
   if (PendingFileOperation)
     return FileAPIContinuation{
         false, *std::exchange(PendingFileOperation, std::nullopt)};
-  if (auto Query = takeFileQueryContinuation())
+  if (auto Query = takeFileRequestContinuation())
     return FileAPIContinuation{true, *Query};
   return std::nullopt;
 }
 
 llvm::Expected<std::optional<uint64_t>>
 KernelModel::resumeFileAPI(FileAPIContinuation Continuation) {
-  return Continuation.Query ? resumeFileInformationQuery(Continuation.ID)
-                            : resumeFileOperation(Continuation.ID);
+  return Continuation.Request ? resumeFileRequest(Continuation.ID)
+                              : resumeFileOperation(Continuation.ID);
 }
 
 llvm::Expected<uint64_t>
@@ -48,7 +48,7 @@ KernelModel::createFile(llvm::ArrayRef<uint64_t> A, bool OpenOnly,
   if (!Process || Process->RestrictedAttachment ||
       CurrentIRQL != scheduler::PassiveLevel)
     return createError("requires a known PASSIVE_LEVEL caller");
-  if (auto E = validateFileQueryInterrupts(Context))
+  if (auto E = validateFileAPIInterrupts(Context))
     return E;
   auto Disabled = allApcsDisabled();
   if (!Disabled)
@@ -56,7 +56,7 @@ KernelModel::createFile(llvm::ArrayRef<uint64_t> A, bool OpenOnly,
   if (*Disabled)
     return createError("requires enabled special kernel APCs");
   if (Unloading || Unloaded || PendingWdmCall || PendingWait ||
-      PendingFileOperation || PendingFileQueryContinuation ||
+      PendingFileOperation || PendingFileRequestContinuation ||
       NextFileOperation == UINT64_MAX || NextIRPCall == UINT64_MAX)
     return createError(
         "cannot replace an outstanding operation or open during unload");
@@ -553,7 +553,7 @@ KernelModel::cancelFileOpen(llvm::ArrayRef<uint64_t> A,
       (Found->second.State != FileState::Opening &&
        !Found->second.OpenCancelled))
     return createError("cancel-open requires an unpublished provider CREATE");
-  if (auto E = validateFileQueryInterrupts(Context))
+  if (auto E = validateFileAPIInterrupts(Context))
     return E;
   auto Disabled = allApcsDisabled();
   if (!Disabled)
@@ -561,7 +561,7 @@ KernelModel::cancelFileOpen(llvm::ArrayRef<uint64_t> A,
   if (*Disabled)
     return createError("cancel-open requires enabled special kernel APCs");
   if (PendingWdmCall || PendingWait || PendingFileOperation ||
-      PendingFileQueryContinuation || NextFileOperation == UINT64_MAX ||
+      PendingFileRequestContinuation || NextFileOperation == UINT64_MAX ||
       NextIRPCall == UINT64_MAX)
     return createError("cancel-open cannot replace a pending operation");
   auto &File = Found->second;
