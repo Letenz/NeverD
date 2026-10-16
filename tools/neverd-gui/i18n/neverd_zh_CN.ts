@@ -3409,6 +3409,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>精确宽度（u32）</translation>
     </message>
     <message>
+        <source>Exact widths (uint32)</source>
+        <translation>精确宽度（uint32）</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>按名称筛选类型</translation>
     </message>

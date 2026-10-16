@@ -223,8 +223,29 @@ TEST_F(TypeRenderFixture, RustTakesWindowsNamesAsAliases) {
       contains(header("_THREAD_LIKE", Options), "    pub MiscFlags: i32,"));
   EXPECT_EQ(spellingOf(Options), BuiltinSpelling::Portable);
   EXPECT_EQ(spellingsText(Language::Rust), "windows or portable");
-  EXPECT_EQ(spellingsText(Language::Go), "portable");
+  EXPECT_EQ(spellingsText(Language::Go), "windows or portable");
   EXPECT_EQ(spellingsText(Language::C), "windows, ida, keywords or portable");
+}
+
+TEST_F(TypeRenderFixture, GoTakesWindowsNamesAsAliases) {
+  // Exact widths unless asked, as golang.org/x/sys/windows spells them.
+  EXPECT_TRUE(
+      contains(render("_THREAD_LIKE", in(Language::Go)), "\tHeader uint64"));
+  RenderOptions Options = in(Language::Go);
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Text = header("_THREAD_LIKE", Options);
+  EXPECT_TRUE(contains(Text, "\n// The Windows headers' names of builtin "
+                             "types.\ntype UCHAR = uint8\ntype LONG = "
+                             "int32\ntype ULONG = uint32\ntype ULONGLONG = "
+                             "uint64\n"))
+      << Text;
+  EXPECT_TRUE(contains(Text, "\tHeader ULONGLONG"));
+  EXPECT_TRUE(contains(Text, "\tTail [3]UCHAR"));
+  EXPECT_TRUE(contains(Text, ") MiscFlags() *LONG {"));
+  // A bitfield reads as its own type; its storage stays a width.
+  EXPECT_TRUE(contains(Text, "\t_bitfield uint32"));
+  EXPECT_TRUE(contains(Text, ") ReadyTransition() ULONG {"));
+  EXPECT_TRUE(contains(Text, ") SetReadyTransition(value ULONG) {"));
 }
 
 TEST_F(TypeRenderFixture, RustAndGoKeepPacking) {

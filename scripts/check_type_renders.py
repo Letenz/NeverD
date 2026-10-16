@@ -3,7 +3,7 @@
 
 `neverd types --all --asserts` renders every local type with compile-time
 checks of each size and offset.  This script renders them in C and C++ with
-every builtin spelling, in Rust with both of its own and in Go, and compiles
+every builtin spelling, in Rust and Go with both of their own, and compiles
 each with clang, rustc and go, so that a layout NeverD gets wrong, or source
 that does not compile, fails.  The C header, which the workbench shows as
 C/C++, compiles as C++ as well.  Without --binary it checks the fixture PDB
@@ -26,8 +26,9 @@ import tempfile
 REPOSITORY = Path(__file__).resolve().parents[1]
 FIXTURES = REPOSITORY / "unittests" / "types" / "fixtures"
 SPELLINGS = ("windows", "ida", "keywords", "portable")
-# Rust names builtins as Windows does, through aliases, or by exact widths.
-RUST_SPELLINGS = ("windows", "portable")
+# Rust and Go name builtins as Windows does, through aliases, or by exact
+# widths.
+RUST_SPELLINGS = GO_SPELLINGS = ("windows", "portable")
 
 # Windows' own typedefs of the builtins it names, as <ntdef.h> declares them:
 # prototypes of the compiler's intrinsics only match its declarations with
@@ -181,16 +182,18 @@ class Checker:
         if not go:
             self.skip("Go", "go not found")
             return
-        module = self.work / "go"
-        module.mkdir()
-        source = self.render("go/types.go", "--lang", "go")
-        (module / "go.mod").write_text("module types\n\ngo 1.22\n",
-                                       encoding="utf-8")
         environment = dict(os.environ, GOOS="windows",
                            GOARCH=TARGETS[model][2], GOFLAGS="-mod=mod")
-        result = run([go, "vet", "./..."], cwd=module, env=environment)
-        self.report(f"go {TARGETS[model][2]}", diagnostics(result))
-        del source
+        for spelling in GO_SPELLINGS:
+            module = self.work / f"go-{spelling}"
+            module.mkdir()
+            self.render(f"go-{spelling}/types.go", "--lang", "go",
+                        "--spelling", spelling)
+            (module / "go.mod").write_text("module types\n\ngo 1.22\n",
+                                           encoding="utf-8")
+            result = run([go, "vet", "./..."], cwd=module, env=environment)
+            self.report(f"go {spelling} {TARGETS[model][2]}",
+                        diagnostics(result))
 
 
 def main():

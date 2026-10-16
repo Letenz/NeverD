@@ -3916,8 +3916,8 @@ private slots:
     QTRY_COMPARE(types->currentType(), QStringLiteral("_DEVICE"));
 
     // The source in the language of its tab, with the options asked: C/C++
-    // shows C, and each language chooses among its own spellings, Rust's
-    // apart from C's; Go has one.
+    // shows C, and each language chooses among its own spellings, apart
+    // from the others'.
     auto *spelling =
         types->findChild<QComboBox *>(QStringLiteral("localTypesSpelling"));
     QVERIFY(spelling);
@@ -3938,8 +3938,14 @@ private slots:
         QStringLiteral("// language rust spelling windows")));
     types->setPage(3);
     QTRY_VERIFY(source->toPlainText().startsWith(
-        QStringLiteral("// language go spelling default")));
-    QVERIFY(spelling->isHidden());
+        QStringLiteral("// language go spelling portable")));
+    QVERIFY(!spelling->isHidden());
+    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
+                                     QStringLiteral("portable")}));
+    QCOMPARE(spelling->itemText(1), QStringLiteral("Exact widths (uint32)"));
+    spelling->setCurrentIndex(0);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language go spelling windows")));
     types->setPage(1);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language c spelling windows")));
@@ -3954,6 +3960,9 @@ private slots:
              QStringLiteral("c"));
     QCOMPARE(
         QSettings().value(QStringLiteral("localTypes/rustSpelling")).toString(),
+        QStringLiteral("windows"));
+    QCOMPARE(
+        QSettings().value(QStringLiteral("localTypes/goSpelling")).toString(),
         QStringLiteral("windows"));
 
     // The filter keeps the types whose name holds its text.

@@ -3415,6 +3415,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Anchos exactos (u32)</translation>
     </message>
     <message>
+        <source>Exact widths (uint32)</source>
+        <translation>Anchos exactos (uint32)</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>Filtrar tipos por nombre</translation>
     </message>

@@ -3415,6 +3415,10 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
         <translation>Larghezze esatte (u32)</translation>
     </message>
     <message>
+        <source>Exact widths (uint32)</source>
+        <translation>Larghezze esatte (uint32)</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>Filtra i tipi per nome</translation>
     </message>
