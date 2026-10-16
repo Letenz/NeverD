@@ -20,6 +20,7 @@ typedef IO_STATUS_BLOCK STATUS_BLOCK;
 typedef LARGE_INTEGER OFFSET;
 typedef UNICODE_STRING NAME;
 _Static_assert(IRP_MJ_LOCK_CONTROL == 0x11, "lock control major");
+_Static_assert(IRP_MJ_FLUSH_BUFFERS == 9, "flush major");
 _Static_assert(FIELD_OFFSET(IRP, UserIosb) == 0x48, "x64 IOSB");
 _Static_assert(FIELD_OFFSET(IRP, UserBuffer) == 0x70, "x64 user buffer");
 _Static_assert(FIELD_OFFSET(IRP, Tail.Overlay.Thread) == 0x98,
@@ -79,6 +80,7 @@ __declspec(dllimport) NTSTATUS ZwWriteFile(void *, void *, void *, void *,
                                            OFFSET *, U32 *);
 __declspec(dllimport) NTSTATUS ZwSetInformationFile(void *, STATUS_BLOCK *,
                                                     void *, U32, U32);
+__declspec(dllimport) NTSTATUS ZwFlushBuffersFile(void *, STATUS_BLOCK *);
 __declspec(dllimport) NTSTATUS ZwQueryInformationFile(void *, STATUS_BLOCK *,
                                                       void *, U32, U32);
 __declspec(dllimport) NTSTATUS ObOpenObjectByPointer(void *, U32, void *, U32,
@@ -90,7 +92,9 @@ typedef NTSTATUS (*TRANSFER)(void *, void *, void *, void *, STATUS_BLOCK *,
                              void *, U32, OFFSET *, U32 *);
 
 typedef NTSTATUS (*SET_INFORMATION)(void *, STATUS_BLOCK *, void *, U32, U32);
+typedef NTSTATUS (*FLUSH_FILE)(void *, STATUS_BLOCK *);
 #define POSITION 0x123456789ull
+#define FLUSH_INFORMATION 0x100000007ull
 
 #define CHECK(C)                                                               \
   do {                                                                         \
@@ -103,10 +107,11 @@ static void *File, *CallerThread, *Work;
 static PACKET Pending;
 static U8 *Buffer;
 static STATUS_BLOCK *IOSB;
-static U32 Creates, Transfers, Closes, Failed, Index;
+static U32 Creates, Transfers, Flushes, Closes, Failed, Index, PendingFlush;
 static U16 Mode;
 static TRANSFER ReadDynamic, WriteDynamic;
 static SET_INFORMATION SetDynamic;
+static FLUSH_FILE FlushDynamic;
 
 static U32 completionStatus(void) {
   return Mode == 'W'                                 ? 0x80000005u
@@ -125,9 +130,56 @@ static void worker(DEVICE Owner, void *Context) {
     Failed = 1;
   IoFreeWorkItem(Work);
   complete(Pending, Failed ? 0xc006ffff : completionStatus(),
-           Index == 2 || Index == 3 ? 0 : 7);
+           PendingFlush               ? FLUSH_INFORMATION
+           : Index == 2 || Index == 3 ? 0
+                                      : 7);
+}
+static NTSTATUS flush(PACKET Irp) {
+  U8 *Stack = *(U8 **)((U8 *)Irp + 0xb8);
+  CHECK(Stack[0] == 9 && Stack[1] == 0);
+  CHECK(*(void **)(Stack + 0x30) == File);
+  CHECK(*(void **)((U8 *)Irp + 0xc0) == File);
+  CHECK(*(void **)((U8 *)Irp + 0x98) == CallerThread);
+  CHECK(*(void **)((U8 *)Irp + 0x48) == IOSB);
+  CHECK(*(U32 *)((U8 *)Irp + 0x10) == 0x60000);
+  CHECK(*((U8 *)Irp + 0x47) == 2 && *((U8 *)Irp + 0x40) == 0);
+  CHECK(!*(void **)((U8 *)Irp + 0x18) && !*(void **)((U8 *)Irp + 0x70));
+  CHECK(!*(void **)((U8 *)Irp + 0x50));
+  CHECK(KeAreApcsDisabled() && !KeAreAllApcsDisabled());
+  ++Flushes;
+  PendingFlush = 1;
+  if (Mode == 'P' || Mode == 'W' || Mode == 'R' || Mode == 'U') {
+    Pending = Irp;
+    Work = IoAllocateWorkItem(Device);
+    CHECK(Work);
+    Stack[3] |= 1;
+    IoQueueWorkItem(Work, worker, 1, File);
+    return 0x103;
+  }
+  U8 Old = 0;
+  if (Mode == 'G')
+    KeEnterGuardedRegion();
+  if (Mode == 'L') {
+#ifdef NEVERD_WDK_FIXTURE
+    KeRaiseIrql(DISPATCH_LEVEL, &Old);
+#else
+    Old = KfRaiseIrql(2);
+#endif
+  }
+  complete(Irp, completionStatus(), FLUSH_INFORMATION);
+  if (Mode == 'G' || Mode == 'L')
+    CHECK(IOSB->Information == 0xa5a5a5a5a5a5a5a5ull);
+  if (Mode == 'G')
+    KeLeaveGuardedRegion();
+  if (Mode == 'L')
+    KeLowerIrql(Old);
+  // Nondeferred completion has consumed Irp. Only caller storage remains.
+  CHECK(IOSB->Information == (Mode == 'E' || Mode == 'M' ? 0xa5a5a5a5a5a5a5a5ull
+                                                         : FLUSH_INFORMATION));
+  return Mode == 'M' ? 0 : (NTSTATUS)completionStatus();
 }
 static NTSTATUS transfer(PACKET Irp) {
+  PendingFlush = 0;
   U8 *Stack = *(U8 **)((U8 *)Irp + 0xb8);
   const U8 Write = Stack[0] == 4;
   const U32 Length = Index == 2 || Index == 3 ? 0 : 16;
@@ -211,6 +263,27 @@ static NTSTATUS handle(PACKET Irp) {
     Position = 0;
     CHECK(!ZwQueryInformationFile(Handle, &PositionStatus, &Position, 8, 14));
     CHECK(Position == POSITION && PositionStatus.Information == 8);
+    void *FlushHandle = 0;
+    CHECK(!ObOpenObjectByPointer(File, 0x200, 0, 2, 0, 0, &FlushHandle));
+    for (U32 I = 0; I < 2; ++I) {
+      STATUS_BLOCK FlushStatus;
+      IOSB = Mode == 'U' ? (STATUS_BLOCK *)(*(U8 **)((U8 *)Irp + 0x70) + 32)
+                         : &FlushStatus;
+      IOSB->Pointer = (void *)0xa5a5a5a5a5a5a5a5ull;
+      IOSB->Information = 0xa5a5a5a5a5a5a5a5ull;
+      U32 Returned = I ? (U32)FlushDynamic(FlushHandle, IOSB)
+                       : (U32)ZwFlushBuffersFile(FlushHandle, IOSB);
+      CHECK(Returned == (Mode == 'M' ? 0 : completionStatus()));
+      const U8 Published = Mode != 'E' && Mode != 'M';
+      CHECK((U32)IOSB->Status ==
+            (Published ? completionStatus() : 0xa5a5a5a5u));
+      CHECK(IOSB->Information ==
+            (Published ? FLUSH_INFORMATION : 0xa5a5a5a5a5a5a5a5ull));
+      CHECK(*((U32 *)IOSB + 1) == 0xa5a5a5a5u);
+      CHECK(*(U64 *)((U8 *)File + 0x68) == POSITION);
+      CHECK(!KeAreApcsDisabled() && !KeAreAllApcsDisabled());
+    }
+    CHECK(!ZwClose(FlushHandle));
     for (Index = 0; Index < 6; ++Index) {
       const U8 Write = Index & 1;
       const U32 Length = Index == 2 || Index == 3 ? 0 : 16;
@@ -269,12 +342,14 @@ static NTSTATUS dispatch(DEVICE Owner, PACKET Irp) {
   U8 *Stack = *(U8 **)((U8 *)Irp + 0xb8);
   if (Stack[0] == 3 || Stack[0] == 4)
     return transfer(Irp);
+  if (Stack[0] == 9)
+    return flush(Irp);
   return complete(Irp, (U32)handle(Irp), 0);
 }
 static NTSTATUS (*volatile Dispatch)(DEVICE, PACKET) = dispatch;
 static void unload(DRIVER Driver) {
   (void)Driver;
-  if (Creates == 2 && Transfers == 6 && Closes == 2 && !Failed)
+  if (Creates == 2 && Transfers == 6 && Flushes == 2 && Closes == 2 && !Failed)
     IoDeleteDevice(Device);
 }
 static void (*volatile Unload)(DRIVER) = unload;
@@ -285,6 +360,8 @@ NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
                             'e', 'F', 'i', 'l', 'e', 0};
   static U16 SetName[] = {'Z', 'w', 'S', 'e', 't', 'I', 'n', 'f', 'o', 'r', 'm',
                           'a', 't', 'i', 'o', 'n', 'F', 'i', 'l', 'e', 0};
+  static U16 FlushName[] = {'Z', 'w', 'F', 'l', 'u', 's', 'h', 'B', 'u', 'f',
+                            'f', 'e', 'r', 's', 'F', 'i', 'l', 'e', 0};
   NAME Name = {sizeof(ReadName) - 2, sizeof(ReadName), ReadName};
   ReadDynamic = (TRANSFER)MmGetSystemRoutineAddress(&Name);
   Name.Length = sizeof(WriteName) - 2;
@@ -295,11 +372,15 @@ NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
   Name.MaximumLength = sizeof(SetName);
   Name.Buffer = SetName;
   SetDynamic = (SET_INFORMATION)MmGetSystemRoutineAddress(&Name);
-  CHECK(ReadDynamic && WriteDynamic && SetDynamic);
+  Name.Length = sizeof(FlushName) - 2;
+  Name.MaximumLength = sizeof(FlushName);
+  Name.Buffer = FlushName;
+  FlushDynamic = (FLUSH_FILE)MmGetSystemRoutineAddress(&Name);
+  CHECK(ReadDynamic && WriteDynamic && SetDynamic && FlushDynamic);
   CHECK(!IoCreateDevice(Driver, 0, 0, 0x22, 0, 0, &Device));
   *(U32 *)((U8 *)Device + 0x30) |= 4;
   *(void (**)(DRIVER))((U8 *)Driver + 0x68) = Unload;
-  const U32 Majors[] = {0, 2, 3, 4, 0x11, 14, 18};
+  const U32 Majors[] = {0, 2, 3, 4, 9, 0x11, 14, 18};
   for (U32 I = 0; I < sizeof(Majors) / sizeof(Majors[0]); ++I)
     *(NTSTATUS(**)(DEVICE, PACKET))((U8 *)Driver + 0x70 + 8 * Majors[I]) =
         Dispatch;

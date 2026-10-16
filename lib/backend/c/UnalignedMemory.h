@@ -186,18 +186,42 @@ inline std::string unparenthesized(llvm::StringRef Text) {
                               : Text.str();
 }
 
+/// Whether \p Text is one conversion of an address to an integer, which a
+/// cast applies to as it is: `(uintptr_t)p`, `(uintptr_t)&frame.var_m50`,
+/// `(uintptr_t)((uint8_t *)&frame.var_m50 + 8)`.
+inline bool integerConversion(llvm::StringRef Text) {
+  if (!Text.consume_front("(uintptr_t)") || Text.empty())
+    return false;
+  if (Text.front() == '(')
+    return castOperand(Text) == Text;
+  Text.consume_front("&");
+  return !Text.empty() &&
+         (llvm::isAlpha(Text.front()) || Text.front() == '_') &&
+         llvm::all_of(Text, [](char C) {
+           return llvm::isAlnum(C) || C == '_' || C == '.' || C == '[' ||
+                  C == ']';
+         });
+}
+
+/// \p Address as the integer operand of a pointer cast.
+inline std::string integerOperand(llvm::StringRef Address) {
+  if (integerConversion(Address))
+    return Address.str();
+  return "(uintptr_t)(" + Address.str() + ")";
+}
+
 // The caller supplies a fresh, exact-type value carrier. In particular, a
 // source local whose address escapes cannot be the destination of a load:
 // memcpy forbids overlapping source and destination objects.
 inline std::string loadCopy(llvm::StringRef Value, llvm::StringRef Address,
                             llvm::StringRef Size) {
-  return "__builtin_memcpy(&" + Value.str() + ", (const void *)(uintptr_t)(" +
-         Address.str() + "), " + Size.str() + ")";
+  return "__builtin_memcpy(&" + Value.str() + ", (const void *)" +
+         integerOperand(Address) + ", " + Size.str() + ")";
 }
 
 inline std::string storeCopy(llvm::StringRef Address, llvm::StringRef Value,
                              llvm::StringRef Size) {
-  return "__builtin_memcpy((void *)(uintptr_t)(" + Address.str() + "), &" +
+  return "__builtin_memcpy((void *)" + integerOperand(Address) + ", &" +
          Value.str() + ", " + Size.str() + ")";
 }
 

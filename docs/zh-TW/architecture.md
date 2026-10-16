@@ -1681,3 +1681,5 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 `RecoveryArchitecture` 根據 `SpecializationOptions::Architecture` 選擇原生契約，與編譯主機無關。現有預設值為 x64；沒有轉接器的架構明確拒絕。`arch/x86_64` 負責原生選項編碼、主映像範圍規則、外部退出比對成本及實體退出回執。core 負責通用預算、策略編碼及圖與證據的完整性。x64 選項與回執摘要保留原有位元組編碼；驗證宣告前檢查預期與儲存的架構識別。`RawArchitectureReceiptCompatibility` 固定重構前的摘要值，架構不符測試禁止把 x64 證據改標為 ARM64。此邊界尚未實作 ARM64 原生恢復。
 
 `KernelModelFileRequests` 也統一擁有同步緩衝 `ZwReadFile` / `ZwWriteFile`。產生端負責控制代碼範圍、偏移與鍵擷取及寫入資料副本。共用完成路徑只在原呼叫端符合通知條件時發布讀取位元組與 IOSB，並各釋放一次自有封包和緩衝區。儲存驅動程式負責內容與檔案位置變更。
+
+`KernelModelFileRequests` 也擁有無緩衝區的 `ZwFlushBuffersFile` 產生路徑。其權限遮罩檢查及立即發布／釋放規則與延遲完成的原生讀寫／查詢封包不同；各路徑共用原呼叫者通知及單次釋放的擁有者。

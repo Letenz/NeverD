@@ -3429,7 +3429,10 @@ TEST(COFFExceptionIR, ObjectOfATryBodyIsACleanupScopeInsideTheTry) {
   const size_t Dtor = Source.find("probe_dtor(", Cleanup);
   ASSERT_LT(Dtor, Rethrow) << Source;
   // The destructor's `this` is the object the constructor built.
-  EXPECT_NE(Source.substr(Dtor, Rethrow - Dtor).find("frame_base - 40"),
+  EXPECT_NE(Source.substr(Dtor, Rethrow - Dtor).find("&stack_storage.var_m28"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("probe_ctor((probe*)&stack_storage.var_m28)"),
             std::string::npos)
       << Source;
   EXPECT_LT(Source.find("probe_ctor("), InnerTry) << Source;

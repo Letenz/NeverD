@@ -1868,12 +1868,16 @@ TEST(MedSEHEstablisherFrame, PublicNestedSEHUsesOneSlotInMedAndHighC) {
   ASSERT_NE(MainHigh, Result.HighFuncs.end());
   ASSERT_TRUE(HighCEmitter().emit({*MainHigh}, Stream, COptions));
   Stream.flush();
+  // The handler reaches the -100 slot as the frame record's member, never
+  // through another frame displacement.
   const size_t Handler = Source.find("__except");
   ASSERT_NE(Handler, std::string::npos) << Source;
-  EXPECT_NE(Source.substr(Handler).find("frame_base - 100"), std::string::npos)
+  EXPECT_NE(Source.substr(Handler).find("stack_storage.var_m64"),
+            std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("frame_base - 236"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("frame_base - 272"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("frame_base"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("var_mEC"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("var_m110"), std::string::npos) << Source;
 #endif
 }
 
