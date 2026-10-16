@@ -2978,7 +2978,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         representation == "llvmc" || spelled) {
       if (auto named =
               namedViewPage(address, representation, offset, limit, options))
-        return *named;
+        return std::move(*named);
       if (!options.empty())
         throw Error("unavailable",
                     error().empty() ? "Source transformation failed" : error());
