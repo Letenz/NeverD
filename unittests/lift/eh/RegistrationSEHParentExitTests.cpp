@@ -226,7 +226,7 @@ TEST(RegistrationSEHParentExit, UnusedTransportDoesNotAddAParentParameter) {
     }
     discardUnusedSEHCallInputs(Function);
     EXPECT_EQ(Caller.Ops.front().Inputs[5].Kind == MedVar::Unspecified,
-              Mutation == 0);
+              Mutation == 0 || Mutation == 6);
   }
 }
 

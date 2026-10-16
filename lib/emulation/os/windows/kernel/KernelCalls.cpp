@@ -155,6 +155,7 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
       Kind != KernelAPIKind::ProbeForRead &&
       Kind != KernelAPIKind::ProbeForWrite &&
       Kind != KernelAPIKind::MmProbeAndLockPages &&
+      Kind != KernelAPIKind::MmProbeAndLockProcessPages &&
       Kind != KernelAPIKind::MmMapLockedPagesSpecifyCache &&
       Kind != KernelAPIKind::MmMapLockedPages &&
       Kind != KernelAPIKind::MmGetSystemAddressForMdlSafe &&
@@ -426,6 +427,12 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
       return E;
     return 0;
   }
+  case KernelAPIKind::MmProbeAndLockProcessPages: {
+    if (auto E =
+            probeAndLockProcessPages(A[0], A[1], uint8_t(A[2]), uint32_t(A[3])))
+      return E;
+    return 0;
+  }
   case KernelAPIKind::MmUnlockPages: {
     if (auto E = unlockPages(A[0]))
       return E;
@@ -464,6 +471,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
     return queryFileDevice(A[0], FileDeviceQuery::Related);
   case KernelAPIKind::IoGetBaseFileSystemDeviceObject:
     return queryFileDevice(A[0], FileDeviceQuery::Base);
+  case KernelAPIKind::IoGetDeviceObjectPointer:
+    return getDeviceObjectPointer(A, Context);
   case KernelAPIKind::IoQueryFileInformation:
     return beginFileAPIRequest(A, DriverRequestKind::QueryInformation, false,
                                Context);
@@ -487,9 +496,9 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
                                Context);
   case KernelAPIKind::ZwCreateFile:
   case KernelAPIKind::IoCreateFile:
-    return createFile(A, false, Context);
+    return createFile(A, FileOpenKind::Create, Context);
   case KernelAPIKind::ZwOpenFile:
-    return createFile(A, true, Context);
+    return createFile(A, FileOpenKind::Open, Context);
   case KernelAPIKind::IoCancelFileOpen:
     return cancelFileOpen(A, Context);
   case KernelAPIKind::IoGetAttachedDeviceReference:

@@ -12,6 +12,7 @@
 #include "COFFRegistrationSEHDynamicScope.h"
 #include "COFFRegistrationSEHException.h"
 #include "COFFRegistrationSEHJump.h"
+#include "COFFRegistrationSEHLocalUnwind.h"
 #include "COFFRegistrationSEHParentExit.h"
 
 #include "neverd/Common.h"
@@ -57,7 +58,8 @@ llvm::Error validateFramePrivacy(
     const RegistrationSEHExceptionContract *SEH,
     const RegistrationSEHJumpContract *Jumps,
     const RegistrationSEHScopeState *Scopes,
-    const RegistrationSEHParentExitContract *ParentExits) {
+    const RegistrationSEHParentExitContract *ParentExits,
+    const RegistrationSEHLocalUnwindContract *LocalUnwinds) {
   const llvm::Instruction *CurrentInstruction = nullptr;
   auto Reject = [&](llvm::StringRef Detail = {}) {
     std::string Message = "coff registration patch: synthetic frame has an "
@@ -694,6 +696,8 @@ llvm::Error validateFramePrivacy(
             continue;
           }
           if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I)) {
+            if (LocalUnwinds && LocalUnwinds->Calls.count(Call))
+              continue;
             if (Jumps && Jumps->Calls.count(Call))
               continue;
             if (ParentExits && ParentExits->Calls.count(Call))

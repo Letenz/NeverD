@@ -214,9 +214,10 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
   return true;
 }
 
-bool PipelineRunner::run(PipelineOptions Opts, std::string &Err) {
+bool PipelineRunner::run(PipelineOptions Opts, std::string &Err,
+                         DebugContext *Debug) {
   Pipeline ThePipeline;
-  Result = ThePipeline.run(Img, LLVMCtx, Opts, Dbg.get());
+  Result = ThePipeline.run(Img, LLVMCtx, Opts, Debug ? Debug : Dbg.get());
   if (!Result.Success) {
     Err = Result.Error.empty() ? "pipeline failed" : Result.Error;
     return false;

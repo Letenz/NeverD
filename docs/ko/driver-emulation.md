@@ -766,3 +766,7 @@ ASCII 이름, 네임스페이스 링크, RootDirectory로 유지되는 디렉터
 `MmMapLockedPages`는 기존 매퍼에 캐시된 페이지, HIGH 우선순위와 자원 부족 시 bugcheck 플래그를 전달합니다. 커널 매핑은 DISPATCH_LEVEL까지, 프로세스 소유 사용자 뷰는 APC_LEVEL까지 허용하며 후자의 자원 부족은 기존 예외를 발생시킵니다. bugcheck 플래그가 있는 커널 자원 부족은 명시적 모델 오류로 중단하며 성공한 호출처럼 NULL을 반환하지 않습니다. 실제 bugcheck 처리는 지원하지 않습니다.
 
 [`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject)는 살아 있는 파일의 기본 장치를 빌리며 연결 스택 탐색, 참조 증가, 파일 확장 조회를 하지 않습니다. 이 프로필은 소유된 비마운트 경로와 IRQL <= DISPATCH_LEVEL로 제한되며 마운트된 VPB나 잘못된 소유권／토폴로지는 명시적으로 중단합니다. Microsoft가 시스템용으로 예약한 함수이므로 이 IRQL 상한은 공개 Windows 계약이 아닌 모델 정책입니다.
+
+[`IoGetDeviceObjectPointer`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-iogetdeviceobjectpointer)는 특수 커널 APC가 활성화된 PASSIVE_LEVEL에서 선언된 기존 파일을 엽니다. 대소문자를 구분하지 않는 이름, 내부 커널 핸들, 읽기/쓰기 공유와 비동기 비디렉터리 열기를 사용합니다. 반환된 파일 참조는 장치를 유지하며 호출자가 `ObfDereferenceObject`로 해제합니다. 출력이 겹쳐도 파일 다음 장치 순으로 씁니다. CREATE와 내부 핸들 CLEANUP은 대기할 수 있으며 원래 스레드는 둘 다 끝날 때까지 임계 영역을 유지합니다. 파일 경로 없는 장치/볼륨 열기, 마운트된 VPB, 파일 확장 경로와 알 수 없는 공급자는 지원하지 않습니다.
+
+`MmProbeAndLockProcessPages`는 IRQL <= APC_LEVEL에서 기존 MDL 검사를 사용합니다. 모드는 하위 8비트, 작업은 하위 32비트를 사용하며 0은 읽기, 나머지는 쓰기입니다. 같은 프로세스 호출은 연결이 필요 없습니다. 다른 프로세스 호출은 기존 작업 항목/시스템 스레드 제한을 유지하며 살아 있는 요청을 가진 알려진 사용자 프로세스가 필요합니다. 내부 연결은 성공 또는 검사 예외 후 원래 프로세스를 복원하고 스레드 식별과 이전 모드를 유지합니다. 복원 실패는 명시적으로 중단됩니다. 전경에서 다른 프로세스로 연결하거나 임의의 프로세스 개체를 사용하는 것은 지원하지 않습니다. WDK는 이 루틴을 시스템용으로 예약합니다.

@@ -21,7 +21,8 @@ namespace neverd::registration_state {
 bool RegistrationStateSolver::runSEHUnwind(
     FrameState Frame, int32_t Level, uint32_t Bound, SEHFrameOutcomes &Outcomes,
     std::vector<RegistrationObjectExtent> &Writes, SEHJumpUnwind *Jump,
-    SEHHandlerOutcomes *Selected) {
+    SEHHandlerOutcomes *Selected,
+    std::set<std::pair<int32_t, int32_t>> *Transitions) {
   if (KnownCxx || !Chain.TryLevelOffset || !validLevel(Level) ||
       (Jump && Bound != uint32_t(Jump->Capture.Level)) ||
       (EH4 && (!CompleteCookies || !cookiesReady(Frame))))
@@ -117,6 +118,11 @@ bool RegistrationStateSolver::runSEHUnwind(
       }
       if (!mergeSEHFrameOutcome(Outcomes, std::move(Current.Frame)))
         return false;
+      if (Transitions) {
+        if (!charge(1 + 2 * std::bit_width(Transitions->size() + 1)))
+          return false;
+        Transitions->emplace(Level, Walk);
+      }
       continue;
     }
     if (Walk < 0 || size_t(Walk) >= Chain.Scopes.size())

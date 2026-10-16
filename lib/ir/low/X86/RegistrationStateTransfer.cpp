@@ -430,7 +430,12 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     bool CheckedCall = false;
     const bool JumpCapture = transferJumpCapture(I, After, Op, Facts, CallSP);
     const bool JumpResume = transferJumpResume(I, After, Op, Facts);
-    if (!JumpCapture && !JumpResume &&
+    const auto LocalSP = !JumpCapture && !JumpResume
+                             ? transferLocalUnwind(I, After, Op, Facts)
+                             : std::nullopt;
+    if (LocalSP)
+      CallSP = *LocalSP;
+    if (!JumpCapture && !JumpResume && !LocalSP &&
         !transferOrdinaryFinally(I, After, Op, Facts, CallSP))
       if (auto Call = transferCall(I, After, Op, Facts)) {
         CheckedCall = true;
@@ -440,8 +445,6 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
         if (NoReturnAtExit)
           NoReturnEnd = Call->EndAddress;
       }
-    if (auto SP = transferLocalUnwind(I, After, Op, Facts))
-      CallSP = *SP;
     if (!CallSP)
       CallSP = transferControlFP(Before, After, Op, Facts, CallException);
     if (!CallSP && JumpRuntime && JumpRuntime->Raise &&
