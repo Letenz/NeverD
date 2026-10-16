@@ -30,6 +30,7 @@
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
 
+#include "llvm/BinaryFormat/ELF.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
@@ -10119,13 +10120,19 @@ TEST_F(JTE_AArch64, NonNominalReachingPageStillEscapesTheWritableTable) {
     EXPECT_TRUE(It->UnsafeIndirectBranchAddresses.count(JT.InsnAddr));
 }
 
+// A W0 guard must not bound the unmodified X0 table index, so the dispatch
+// stays the explicit failure of an unresolved indirect branch: no switch over
+// the table's entries, and no tail call through an address computed within
+// the function (IndirectTailFrame).
 TEST_F(JTE_AArch64, CompactIndexRejectsWGuardForUnmodifiedXValue) {
   auto R = liftToLLVMIRUnopt(widthMismatchA64Obj());
-  EXPECT_NE(R.exitCode, 0)
-      << "A W0 guard must not bound the unmodified X0 table index:\n"
-      << R.out;
-  EXPECT_NE(R.err.find("refusing stale-address fallback"), std::string::npos)
-      << R.err;
+  ASSERT_EQ(R.exitCode, 0) << R.err;
+  const std::string Body =
+      llvmFunctionBody(R.out, "a64_compact_w_guard_x_index");
+  ASSERT_FALSE(Body.empty()) << R.out;
+  EXPECT_EQ(Body.find("switch"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("ret i64 499"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("@llvm.trap"), std::string::npos) << Body;
 }
 
 static fs::path worldClassA64Obj() {
@@ -10830,6 +10837,95 @@ TEST_F(JTE_ARM32, UnrelocatedLiteralPrintsAsTheFunction) {
   const std::string Outside = Body("arm_local_outside");
   ASSERT_FALSE(Outside.empty()) << C;
   EXPECT_EQ(Outside.find("arm_local_target"), std::string::npos) << Outside;
+}
+
+// The static linker resolves a PC-relative literal against the linked image's
+// fixed layout, so PC plus the literal names one data address.  It does even
+// where the PC of `ldr r0, [pc, r0]` lands on the literal word itself, as in
+// a getter whose literal follows its `bx lr`.
+TEST_F(JTE_ARM32, LinkedLiteralAddsToTheDataItNames) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "requires cross-target Clang and ld.lld";
+  const auto Source = tmpFile("linked_literal.c");
+  const auto Object = tmpFile("linked_literal.o");
+  const auto Library = tmpFile("linked_literal.so");
+  std::ofstream(Source) << "static int counter = 5;\n"
+                           "int get(void) { return counter; }\n"
+                           "void set(int v) { counter = v; }\n";
+  const auto Compile = exec(
+      NEVERD_TEST_CLANG, {"--target=armv7-linux-gnueabi", "-marm", "-fPIC",
+                          "-O2", "-c", Source.string(), "-o", Object.string()});
+  ASSERT_TRUE(Compile.ok()) << Compile.err;
+  const auto Link =
+      exec("ld.lld", {"-shared", Object.string(), "-o", Library.string()});
+  ASSERT_TRUE(Link.ok()) << Link.err;
+  auto ImageOrErr = neverd::loadBinary(Library);
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Get = Image.findSymbol("get");
+  const neverd::Symbol *Counter = Image.findSymbol("counter");
+  ASSERT_NE(Get, nullptr);
+  ASSERT_NE(Counter, nullptr);
+  auto LinkedLiterals = [&](neverd::LowFunc *LowOut) {
+    neverd::Decoder Decoder;
+    EXPECT_TRUE(Decoder.init(neverd::Arch::ARM));
+    neverd::CFGBuilder Builder;
+    neverd::LowFunc Low = Builder.build(Image, Decoder, Get->Addr, "get");
+    std::vector<neverd::RelocatedInstructionAddressOccurrence> Found;
+    for (const auto &Occurrence : Low.RelocatedInstructionAddressOccurrences)
+      if (Occurrence.Authority ==
+          neverd::RelocatedInstructionAddressProofKind::ARMLinkedLiteral)
+        Found.push_back(Occurrence);
+    if (LowOut)
+      *LowOut = std::move(Low);
+    return Found;
+  };
+
+  neverd::LowFunc Low;
+  const auto Found = LinkedLiterals(&Low);
+  ASSERT_EQ(Found.size(), 1u);
+  const neverd::RelocatedInstructionAddressOccurrence &Literal = Found.front();
+  EXPECT_FALSE(Literal.OutputMayDepend);
+  EXPECT_EQ(Literal.TargetVA, Counter->Addr);
+  EXPECT_EQ(Literal.Provenance, neverd::ConstantAddressProvenance::DataAddress);
+  EXPECT_EQ(Literal.LiteralVA, Literal.InstructionAddr + 8)
+      << "the second load's PC is the literal's own address";
+
+  // MedIR loads from the exact address: the proven sum feeds the load
+  // directly once propagation folds it.
+  neverd::LowToMedConverter Converter;
+  Converter.setBinaryImage(&Image);
+  const neverd::MedFunc Med =
+      Converter.convert(Low, neverd::Arch::ARM, neverd::BinaryFormat::ELF);
+  const neverd::MedOp *Load = nullptr;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == neverd::NdOp::LOAD && Op.NumInputs >= 1 &&
+          Op.Inputs[0].isConst() && Op.Inputs[0].ConstVal == Counter->Addr)
+        Load = &Op;
+  ASSERT_NE(Load, nullptr);
+  EXPECT_EQ(Load->Inputs[0].Provenance,
+            neverd::ConstantAddressProvenance::DataAddress);
+  EXPECT_EQ(Load->Inputs[0].AddressOwnerVA, Literal.TargetOwnerVA);
+
+  // The lifted getter loads the variable, not an address computed from where
+  // the copied code sat.
+  const auto LLVM = liftToLLVMIRUnopt(Library);
+  ASSERT_EQ(LLVM.exitCode, 0) << LLVM.err;
+  const std::string Getter = llvmFunctionBody(LLVM.out, "get");
+  ASSERT_FALSE(Getter.empty()) << LLVM.out;
+  EXPECT_EQ(Getter.find("getelementptr"), std::string::npos) << Getter;
+  EXPECT_NE(Getter.find("@__nd_data_" + llvm::utohexstr(Counter->Addr)),
+            std::string::npos)
+      << Getter;
+
+  // A relocation on the literal word withdraws the proof.
+  neverd::RelocationEntry Relocation;
+  Relocation.Address = Literal.LiteralVA;
+  Relocation.Type = llvm::ELF::R_ARM_RELATIVE;
+  Image.Relocations.push_back(Relocation);
+  EXPECT_TRUE(LinkedLiterals(nullptr).empty());
 }
 
 static fs::path worldClassARMObj() {

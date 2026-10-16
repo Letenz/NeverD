@@ -27,6 +27,7 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/DataSymbolBinding.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/loader/SymbolDecoration.h"
@@ -3120,11 +3121,11 @@ struct ImportPrototypeArguments {
 /// which only a convention that summarizes stack arguments (\p
 /// StackArguments) counts; elsewhere such a routine is not listed.  Without
 /// \p RegisterArguments an import takes every argument on the stack.
-ImportPrototypeArguments
-importPrototypeArguments(const BinaryImage &Img,
-                         const std::vector<LowFunc> &Funcs,
-                         const std::map<va_t, LocalRegisterEffect> &Effects,
-                         bool StackArguments, bool RegisterArguments = true) {
+ImportPrototypeArguments importPrototypeArguments(
+    const BinaryImage &Img, const std::vector<LowFunc> &Funcs,
+    const std::map<va_t, LocalRegisterEffect> &Effects, bool StackArguments,
+    bool RegisterArguments = true,
+    const std::map<va_t, PointerVariableCallee> *PointerCallees = nullptr) {
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const llvm::ArrayRef<uint64_t> Registers =
       RegisterArguments
@@ -3207,7 +3208,13 @@ importPrototypeArguments(const BinaryImage &Img,
   auto Classify = [&](va_t Addr) {
     if (!Seen.insert(Addr).second)
       return;
-    const std::string Name = importCalleeName(Img, Addr);
+    std::string Name = importCalleeName(Img, Addr);
+    // A function-pointer variable another module's routine starts at takes
+    // that routine's arguments, keyed by the variable's address.
+    if (Name.empty() && PointerCallees)
+      if (const auto Callee = PointerCallees->find(Addr);
+          Callee != PointerCallees->end())
+        Name = Callee->second.ImportName;
     if (Name.empty())
       return;
     if (const uint16_t Bytes = RoutineFloatReturn(Name))
@@ -3265,9 +3272,13 @@ importPrototypeArguments(const BinaryImage &Img,
   for (const auto &[Entry, Effect] : Effects) {
     Classify(Entry);
     for (const RegisterBlock &Block : Effect.Blocks)
-      for (const RegisterStep &Step : Block.Steps)
+      for (const RegisterStep &Step : Block.Steps) {
         if (Step.ImportCallee != InvalidVA)
           Classify(Step.ImportCallee);
+        // A callee lifted only for its summary calls through a variable too.
+        if (Step.ArgumentsFrom != InvalidVA)
+          Classify(Step.ArgumentsFrom);
+      }
   }
   return Result;
 }
@@ -3283,6 +3294,15 @@ void computeCallRegisterEffects(
     const ExecutableCodeOwnerIndex *CodeOwnerIndex,
     const std::shared_ptr<X87CallGraphCache> &X87Graphs,
     PipelineResult &Result) {
+  // A call through a function-pointer variable passes the arguments of the
+  // routine the variable starts at: another module's, whose prototype is kept
+  // under the variable's address, or this image's, by its entry.
+  const std::map<va_t, PointerVariableCallee> PointerCallees =
+      collectPointerVariableCallees(Img);
+  Result.CallArgumentSources.clear();
+  for (const auto &[Slot, Callee] : PointerCallees)
+    Result.CallArgumentSources.emplace(
+        Slot, Callee.ImportName.empty() ? Callee.LocalEntry : Slot);
   if (Img.Arch != Arch::X64) {
     // Where an import takes every argument on the stack (i386: regparm is
     // for internal calls only), there are no register summaries, but a
@@ -3295,7 +3315,7 @@ void computeCallRegisterEffects(
       Result.CallEntryStackArgs =
           importPrototypeArguments(Img, Result.LowFuncs, {},
                                    /*StackArguments=*/true,
-                                   /*RegisterArguments=*/false)
+                                   /*RegisterArguments=*/false, &PointerCallees)
               .StackArgs;
     return;
   }
@@ -3324,7 +3344,8 @@ void computeCallRegisterEffects(
   for (const LowFunc &LF : Result.LowFuncs) {
     CollectFormattedCalls(LF.Blocks, /*Converted=*/true);
     Effects[LF.Entry] =
-        localRegisterEffect(Img, LF, &NoReturnTargets, &FixedCallReads);
+        localRegisterEffect(Img, LF, &NoReturnTargets, &FixedCallReads,
+                            &Result.CallArgumentSources);
     if (forwardsToGuardDispatch(Img, LF.Blocks))
       GuardForwarders.insert(LF.Entry);
     Depth[LF.Entry] = 0;
@@ -3343,6 +3364,12 @@ void computeCallRegisterEffects(
       std::set<va_t> Callees = Effects[Caller].Callees;
       Callees.insert(Effects[Caller].NoReturnCallees.begin(),
                      Effects[Caller].NoReturnCallees.end());
+      // A call through a function-pointer variable reads the arguments of
+      // the routine of this image the variable starts at.
+      for (const RegisterBlock &Block : Effects[Caller].Blocks)
+        for (const RegisterStep &Step : Block.Steps)
+          if (Step.ArgumentsFrom != InvalidVA)
+            Callees.insert(Step.ArgumentsFrom);
       for (va_t Callee : Callees) {
         if (Depth.count(Callee) ||
             CalleeDepth > limits::kMaxCallEffectCalleeDepth ||
@@ -3413,7 +3440,8 @@ void computeCallRegisterEffects(
                             : CallRegisterBodyView(Bodies[I]);
         CollectFormattedCalls(Body.Blocks, /*Converted=*/false);
         Effects[Callee] =
-            localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads);
+            localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads,
+                                &Result.CallArgumentSources);
         if (forwardsToGuardDispatch(Img, Body.Blocks))
           GuardForwarders.insert(Callee);
         Work.push_back(Callee);
@@ -3477,7 +3505,8 @@ void computeCallRegisterEffects(
           callArgumentConvention(Img.Arch, Img.abiFormat());
       Convention && Convention->ImportArgumentsFromPrototype) {
     ImportPrototypeArguments Prototyped = importPrototypeArguments(
-        Img, Result.LowFuncs, Effects, Convention->StackArgumentSummary);
+        Img, Result.LowFuncs, Effects, Convention->StackArgumentSummary,
+        /*RegisterArguments=*/true, &PointerCallees);
     for (auto &[Addr, Widths] : Prototyped.Reads)
       if (!DispatchThunks.count(Addr))
         FixedEntryReads.try_emplace(Addr, Widths);

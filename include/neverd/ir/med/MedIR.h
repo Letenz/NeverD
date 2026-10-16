@@ -414,6 +414,11 @@ struct MedCallInfo {
   /// slot as padding (`mov [rsp], r11d` passes an int in an eight-byte slot).
   /// Empty when a value's place is not known.
   std::vector<int64_t> StackArgumentOffsets;
+  /// The position where call-ABI recovery ended an indirect call's register
+  /// arguments because the register there only holds the call's target
+  /// (`ldr r0, [r0, #24]; blx r0`); no other layer extends them past it.
+  /// -1 when recovery ended them elsewhere.
+  int TargetRegisterArgIdx = -1;
   uint16_t StackArgumentSlotBytes = 0;
 };
 

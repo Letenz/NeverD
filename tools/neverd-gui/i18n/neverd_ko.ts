@@ -2339,6 +2339,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     문자열을 참조하는 명령어 나열</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          로컬 형식 또는 지정한 형식 표시</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3497,10 +3501,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>오프셋</translation>
     </message>
     <message>
-        <source>Bytes</source>
-        <translation>바이트</translation>
-    </message>
-    <message>
         <source>Type</source>
         <translation>형식</translation>
     </message>
@@ -3743,6 +3743,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>
             <numerusform>직접 선언 %n개</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>형식을 선택하면 레이아웃과 소스를 볼 수 있습니다</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>이름이 %1인 로컬 형식이 없습니다</translation>
     </message>
 </context>
 <context>

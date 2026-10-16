@@ -46,6 +46,27 @@ json::Object withSpelling(json::Object Options) {
   return Options;
 }
 
+/// The spelling the source --lang renders takes: the one asked, or the
+/// language's own, as the engine says it.
+std::string spellingTaken() {
+  if (!TypesSpelling.empty())
+    return TypesSpelling;
+  const char *Raw = neverd_types_languages_json();
+  auto Parsed = json::parse(Raw ? Raw : "");
+  neverd_free_string(Raw);
+  if (!Parsed) {
+    consumeError(Parsed.takeError());
+    return {};
+  }
+  if (const json::Object *Root = Parsed->getAsObject())
+    if (const json::Array *Languages = Root->getArray("languages"))
+      for (const json::Value &Value : *Languages)
+        if (const json::Object *Language = Value.getAsObject();
+            Language && Language->getString("id") == TypesLanguage.getValue())
+          return Language->getString("spelling").value_or("").str();
+  return {};
+}
+
 std::string text(const json::Value &Value) {
   std::string Out;
   raw_string_ostream(Out) << Value;
@@ -259,8 +280,9 @@ int render(neverd_session_t Sess, raw_ostream &Out) {
     return 1;
   }
   if (JsonOutput)
-    Out << json::Value(
-               json::Object{{"language", TypesLanguage}, {"source", Source}})
+    Out << json::Value(json::Object{{"language", TypesLanguage},
+                                    {"spelling", spellingTaken()},
+                                    {"source", Source}})
         << "\n";
   else
     Out << Source;
@@ -423,12 +445,15 @@ int runTypesConvert() {
     WithColor::error() << "types: " << *Error << "\n";
     return 1;
   }
-  // Problems by file and place; kept-going ones are warnings.
+  // Problems by file and place; kept-going ones are warnings.  JSON says
+  // them in its object instead.
   bool Problems = false;
   if (const json::Array *List = Reply.getArray("problems"))
     for (const json::Value &Value : *List)
       if (const json::Object *Problem = Value.getAsObject()) {
         Problems = true;
+        if (JsonOutput)
+          continue;
         const size_t Index =
             size_t(Problem->getInteger("declaration").value_or(0));
         (TypesKeepGoing ? WithColor::warning() : WithColor::error())
@@ -437,7 +462,7 @@ int runTypesConvert() {
             << Problem->getInteger("column").value_or(0) << ": "
             << Problem->getString("message").value_or("") << "\n";
       }
-  if (Problems && !TypesKeepGoing)
+  if (Problems && !TypesKeepGoing && !JsonOutput)
     return 1;
   std::unique_ptr<raw_fd_ostream> File;
   if (!OutputFile.empty()) {
@@ -450,6 +475,26 @@ int runTypesConvert() {
     }
   }
   raw_ostream &Out = File ? *File : outs();
+  // One object for a program to read: what read, the problems, and the
+  // source in the language and spelling it took.
+  if (JsonOutput) {
+    json::Object Answer = Reply;
+    // A problem names its file, as the text says it.
+    if (json::Array *List = Answer.getArray("problems"))
+      for (json::Value &Value : *List)
+        if (json::Object *Problem = Value.getAsObject()) {
+          const size_t Index =
+              size_t(Problem->getInteger("declaration").value_or(0));
+          if (Index < TypesDeclare.size())
+            (*Problem)["file"] = TypesDeclare[Index];
+        }
+    if (Renders) {
+      Answer["language"] = TypesLanguage.getValue();
+      Answer["spelling"] = spellingTaken();
+    }
+    Out << json::Value(std::move(Answer)) << "\n";
+    return Problems && !TypesKeepGoing ? 1 : 0;
+  }
   if (Renders) {
     Out << Reply.getString("source").value_or("");
     return 0;

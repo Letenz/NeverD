@@ -201,6 +201,17 @@ struct ExceptionFunction {
            DelphiScopes.has_value() || Go.has_value() || GSCookie.has_value();
   }
 
+  /// True when this record only says how to unwind the frame: it is fully
+  /// parsed and names no personality routine, handler data or language table,
+  /// so no handler or cleanup of this function runs during an unwind.
+  bool describesUnwindOnly() const {
+    return ParseStatus == ExceptionParseStatus::Complete &&
+           !hasLanguageTable() && !Rust && !ObjC &&
+           Personality == ExceptionPersonality::None && PersonalityVA == 0 &&
+           PersonalityName.empty() && HandlerDataVA == 0 &&
+           (!Dwarf || Dwarf->LSDAVA == 0);
+  }
+
   bool canRegenerateLanguageMetadata() const {
     // Native regeneration is currently a Windows-table capability.  Every
     // other model is decoded and structured but must not authorize a rewrite

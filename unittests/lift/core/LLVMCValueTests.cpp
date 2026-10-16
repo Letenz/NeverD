@@ -2603,6 +2603,43 @@ TEST(LLVMCValues, PreservedIndirectVariadicCallNeedsFixedParameter) {
 
 } // namespace
 
+// A linker that maps read-only data with the code (the single R+X segment of
+// an Android image) leaves its strings data: the section, not the segment,
+// decides, and without section headers the segment still does.
+TEST(LLVMCValues, ImageStringsInACodeSegmentFollowTheirSection) {
+  neverd::BinaryImage Image;
+  Image.Arch = neverd::Arch::X64;
+  Image.Bits = neverd::Bitness::Bits64;
+  neverd::Segment Segment;
+  Segment.VA = 0x1000;
+  Segment.Size = Segment.FileSz = 64;
+  Segment.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Segment.Data.resize(64);
+  for (unsigned I = 0; I < 5; ++I) {
+    Segment.Data[8 + I] = "hello"[I];
+    Segment.Data[40 + I] = "hello"[I];
+  }
+  Image.Segments.push_back(std::move(Segment));
+  EXPECT_FALSE(neverd::imageStringLiteral(&Image, 0x1028));
+
+  neverd::Section Text;
+  Text.Name = ".text";
+  Text.VA = 0x1000;
+  Text.Size = 32;
+  Text.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  neverd::Section Rodata;
+  Rodata.Name = ".rodata";
+  Rodata.VA = 0x1020;
+  Rodata.Size = 32;
+  Rodata.Flags = neverd::SegmentFlags::Readable;
+  Image.Sections = {Text, Rodata};
+  EXPECT_EQ(neverd::imageStringLiteral(&Image, 0x1028),
+            std::optional<std::string>("\"hello\""));
+  EXPECT_FALSE(neverd::imageStringLiteral(&Image, 0x1008));
+}
+
 TEST(LLVMCValues, ImageStringsRejectOverlappingRelocationStorage) {
   for (bool Wide : {false, true}) {
     neverd::BinaryImage Image;
