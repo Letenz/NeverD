@@ -862,10 +862,10 @@ The current requested stage has three explicit checks:
   normal event order, syscall numbers, escaped/relative/dirfd paths and owned
   worker PID attribution. Telemetry loss under backpressure is checked without
   interpreting the event channel as enforcement.
-- [ ] Reconstruct the two recorded layouts inside each native runner, require
+- [x] Reconstruct the two recorded layouts inside each native runner, require
   the four sealed candidate hashes and full graph readback, then compare real
   Bash tool calls under nested bubblewrap/seccomp with fresh fixture state.
-- [ ] Seal native evidence and a new runtime acceptance addendum, update the
+- [x] Seal native evidence and a new runtime acceptance addendum, update the
   reviewable CI PR and progress checkpoint. Preserve prior candidate packages.
 
 At 172ce01955da4aaaaacadf5e1b91a6a21c4fd0e0, run 38924570199 passes all
@@ -883,3 +883,52 @@ Every original row must match the independent NeverD inventory, both resulting
 layouts must match the sealed local candidate, and readback must match every
 selected source/asset before execution. This is build preparation, not yet a
 Bash acceptance claim. The full recovery objective remains incomplete.
+
+
+## Native complete Bash call chains accepted
+
+At 8eaf8f24cddb153eb976dc0829dd8e254e780025, cached-dependency run
+38929412491 and independently dispatched source-rebuild run 38929951550
+both pass native x64 and ARM64. Each run compares seven real Bash cases
+against the original and both layouts: 28 pairs per complete run, 42 client
+invocations. All four native client builds reproduce the sealed candidate
+hashes, and independent graph readback checks all 2,589 records each. The
+source run rebuilds public ripgrep/PCRE2 to the same helper hashes, so the
+acceptance workflow also works after its earlier artifact expires.
+
+At 99963b3b378cc29742cd52e8353b2adec086f413, run 38931733660 additionally
+checks the inner network namespace and a real reachability differential.
+An authored outer workload reaches its owned HTTP fixture; the Bash workload
+has a different network namespace and receives ECONNREFUSED to the same port.
+The policy workload also proves read/write denial against fixtures accessible
+outside the Bash sandbox, Unix-socket rejection, fresh PID/user/mount
+namespaces, no effective capabilities, NO_NEW_PRIVS and descriptor closure.
+All seven cases and 28 pairs pass again. Protocol frames, all API request
+bodies, stderr and exact workspace bytes are independently compared using
+the existing identity/time normalizer unchanged.
+
+The native build preparation exposed several bounded environment mistakes:
+a shell-script dependency was passed to ldd, temporary ELF staging exceeded
+128 MiB, a different build path changed the retained authored bootstrap
+comment, and the new root initially missed compatibility DSOs and the public
+search helper's mode/libgcc dependency. The controls now check the exact
+DT_NEEDED set and the helper version before normal client entry. The eight
+failed attempts are retained separately and do not count as accepted runs.
+
+Independent qualification initially wrote local Python bytecode into decoded
+artifact folders. Those generated caches were quarantined, all decoded bytes
+were checked against the unchanged original ZIPs, and qualification was rerun
+with bytecode writes disabled. Evidence admission now uses exact ZIP members.
+A broad unsealed staging ignore also omitted nested manifest/README files;
+the candidate manifests detected the incomplete copy, and an exact inventory
+copy restored it before sealing. Original sealed candidates remain unchanged.
+The new package rebuild wrapper also avoids creating local bytecode caches.
+
+seccomp-supervision-correspondence-v1 retains 56 bounded helper pairs in 911
+verified files. seccomp-real-bash-correspondence-v1 retains the three complete
+Bash runs, source rebuild, network differential and eight failed preparations
+in 7,555 verified files. New runtime-sandbox-linux-{x64,arm64}-v2 packages
+combine unchanged checked clients with these acceptance records and their
+existing editable rebuild projects. The overall recovery goal remains open:
+original engine dispatch/revision, wider platforms/features, native internals
+and stronger source/type correspondence still require work.
