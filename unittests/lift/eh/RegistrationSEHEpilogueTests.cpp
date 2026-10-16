@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Check parent epilogue bytes, frame replay and retained MedIR exit evidence.
 
 #include "../../../lib/ir/low/X86/RegistrationSEHControl.h"
 #include "gtest/gtest.h"

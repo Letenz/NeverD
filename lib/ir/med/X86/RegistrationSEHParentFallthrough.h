@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Bind a proven parent fallthrough to its surviving source chain removal.
 
 #ifndef NEVERD_IR_MED_X86_REGISTRATIONSEHPARENTFALLTHROUGH_H
 #define NEVERD_IR_MED_X86_REGISTRATIONSEHPARENTFALLTHROUGH_H

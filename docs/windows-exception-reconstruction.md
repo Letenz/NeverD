@@ -1022,4 +1022,6 @@ Do not broaden an allow-list solely because a new record can be decoded. The
 acceptance criterion is preservation of runtime exception behavior in the
 final linked image.
 
-Genuine MSVC x86 `/Od` `nonlocal_finally_return` reconstruction is exercised with `/GS-` and `/GS`, optimized and unoptimized source LLVM, both patch modes and two forced bases. An outer SEH observer checks normal and exceptional returns, stack guards and chain restoration. The GS path retains the original exception-code normalization wrapper after proving its scalar helper cannot observe the caller frame. The `/O2` direct-parent-return shape remains unsupported.
+Genuine MSVC x86 `/Od` and `/O2` `nonlocal_finally_return` reconstruction is exercised with `/GS-` and `/GS`, optimized and unoptimized source LLVM, both patch modes and two forced bases. An outer SEH observer checks normal and exceptional returns, stack guards and chain restoration. The GS path retains the original exception-code normalization wrapper after proving its scalar helper cannot observe the caller frame.
+
+The `/O2` direct parent return requires an authenticated adjacent physical call, saved ESP restoration, original chain removal and complete parent epilogue. LowIR proves these source effects, MedIR binds the surviving operations, and the COFF installer independently replays the contract. Unused synthetic register transport cannot add physical parent parameters; observed values remain dependencies. The genuine MSVC nonlocal `goto` shape still requires further native support.

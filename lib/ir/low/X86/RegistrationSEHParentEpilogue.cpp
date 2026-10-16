@@ -3,6 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Authenticate the complete physical epilogue before a finally can return
+/// directly through its parent frame.
 
 #include "RegistrationSEHControl.h"
 
