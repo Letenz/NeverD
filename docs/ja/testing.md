@@ -2003,3 +2003,5 @@ KernelFileObjectTests と KernelObjectTests は型付きオープン、型不一
 `KernelFileTransfers` はパケット、オフセット特殊値、追記専用ハンドル、長さゼロ、出力エイリアス、即時・保留状態、ワーカー通知、公開前の拒否を検証します。`OriginalBufferedNativeFileTransfers` / `GenuineWdkBufferedNativeFileTransfers` はバックエンド、契約、ロード位置、スケジューリングを変えてインポートと動的解決を実行します。実 WDK の通常/CFG イメージには `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` / `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` を設定します。利用不能なバックエンドは明示的にスキップします。
 
 `KernelFileTransfers` はフラッシュ権限、全デバイス転送方式でのバッファなしパケット、64 ビット Information、ディスパッチ復帰前の公開・解放、ワーカー／ガード領域の通知、非同期／同時呼び出し拒否を検証します。既存の独自・実 WDK 転送フィクスチャも、ユーザー IOSB と九つの完了条件でインポート・動的検索のフラッシュを実行します。
+
+`KernelFileTransfers` は制御パケット、ULONG 切り詰め、ゼロ長ポインター、読み取り専用入力のコピー、IOSB 別名、入出力別の上限、遅延完了と元スレッドへの通知を検証します。既存の独自・実 WDK 転送フィクスチャは両 API のインポートと動的検索を四つのバッファ形態、九つの完了モードで実行します。

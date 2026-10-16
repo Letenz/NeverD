@@ -1894,3 +1894,5 @@ KernelFileSystem conserve un provider token par FILE_OBJECT. L’opération priv
 `KernelModelFileRequests` possède aussi les transferts synchrones tamponnés `ZwReadFile` / `ZwWriteFile`. Le producteur capture la portée du handle, le déplacement, la clé et les données écrites. La terminaison commune publie les octets lus et l’IOSB dans l’appelant d’origine admissible, puis libère une seule fois chaque paquet et tampon possédé. Le pilote de stockage possède les modifications du contenu et de la position.
 
 `KernelModelFileRequests` possède aussi la production sans tampon de `ZwFlushBuffersFile`. Le contrôle du masque d’accès et la publication/libération immédiate diffèrent des paquets natifs de lecture, écriture et interrogation différés ; la notification de l’appelant initial et la libération unique restent partagées.
+
+`KernelModelFileRequests` possède la capture et la publication des tampons de contrôle natifs. Conservation du fichier, continuation de l’appelant et libération du paquet sont partagées ; le report propre au producteur distingue le contrôle de périphérique de FSCTL. Le validateur commun de complétion borne la sortie.

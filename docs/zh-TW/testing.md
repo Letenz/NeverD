@@ -1949,3 +1949,5 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 `KernelFileTransfers` 涵蓋封包欄位、偏移哨兵、僅附加控制代碼、零長度、輸出別名、立即與擱置狀態、工作執行緒通知及發布前拒絕。`OriginalBufferedNativeFileTransfers` 與 `GenuineWdkBufferedNativeFileTransfers` 跨後端、執行契約、載入位址及排程執行匯入與動態查找呼叫。設定 `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` / `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` 使用真正的一般/CFG 映像；不可用後端明確跳過。
 
 `KernelFileTransfers` 驗證刷新權限、各裝置傳輸模式的無緩衝區封包、完整位寬 Information、分派返回前的發布與釋放、工作執行緒／受限 APC 通知及非同步／並行拒絕。既有原創與真正 WDK 檔案傳輸夾具亦執行匯入及動態查找的刷新呼叫，包含使用者 IOSB 與九種完成情形。
+
+`KernelFileTransfers` 檢查控制封包欄位、ULONG 截斷、零長度指標、唯讀輸入複製、IOSB 別名、獨立輸入／輸出界限、延遲完成與原呼叫執行緒通知。既有原創及真正 WDK 傳輸夾具透過匯入與動態查找呼叫兩個控制 API，涵蓋四種緩衝區形態和九種完成模式。

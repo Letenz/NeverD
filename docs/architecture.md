@@ -6981,6 +6981,8 @@ KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing
 
 `KernelModelFileRequests` also owns bufferless `ZwFlushBuffersFile` production. Its granted-mask check and immediate publication/disposal differ from deferred native read/write/query packets; all reuse the original-caller notification and single-release owner.
 
+`KernelModelFileRequests` owns native device/filesystem control buffer capture and publication. Both use the same file hold, caller continuation and packet release; producer-specific deferral distinguishes device control from FSCTL. Control output limits are checked by the shared completion validator.
+
 ### Darwin imported file calls
 
 DarwinLibSystemCalls.def adds exact open/lseek/pread/pwrite/dup/dup2 identities.

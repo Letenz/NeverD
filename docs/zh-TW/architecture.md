@@ -1683,3 +1683,5 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 `KernelModelFileRequests` 也統一擁有同步緩衝 `ZwReadFile` / `ZwWriteFile`。產生端負責控制代碼範圍、偏移與鍵擷取及寫入資料副本。共用完成路徑只在原呼叫端符合通知條件時發布讀取位元組與 IOSB，並各釋放一次自有封包和緩衝區。儲存驅動程式負責內容與檔案位置變更。
 
 `KernelModelFileRequests` 也擁有無緩衝區的 `ZwFlushBuffersFile` 產生路徑。其權限遮罩檢查及立即發布／釋放規則與延遲完成的原生讀寫／查詢封包不同；各路徑共用原呼叫者通知及單次釋放的擁有者。
+
+`KernelModelFileRequests` 負責原生裝置／檔案系統控制的緩衝區擷取與發布。兩者共用檔案保留、呼叫者接續與封包釋放，以產生者的延遲完成規則區分裝置控制和 FSCTL。共用完成驗證器檢查控制輸出界限。

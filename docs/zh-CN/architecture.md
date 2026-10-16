@@ -1763,3 +1763,5 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 `KernelModelFileRequests` 也统一拥有同步缓冲 `ZwReadFile` / `ZwWriteFile`。生产者负责句柄作用域、偏移和键捕获，以及写入数据的副本。共享完成路径只在原调用方满足通知条件时发布读取字节和 IOSB，并各释放一次自有数据包与缓冲区。存储驱动负责内容和文件位置变更。
 
 `KernelModelFileRequests` 同时拥有无缓冲区的 `ZwFlushBuffersFile` 生产路径。其授权掩码检查和立即发布／释放规则与延迟完成的原生读写／查询包不同；各路径共用原调用者通知和唯一释放所有者。
+
+`KernelModelFileRequests` 负责原生设备／文件系统控制的缓冲区捕获和发布。两者共用文件保留、调用者续接及数据包释放，以生产者的延迟完成规则区分设备控制与 FSCTL。共用完成验证器检查控制输出边界。

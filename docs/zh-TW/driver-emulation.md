@@ -753,3 +753,5 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 `ZwSetInformationFile` 透過同一檔案擁有者實作同步 FilePositionInformation (14)。它擷取八位元組輸入，要求 Length >= 8、位置為非負帶正負號 64 位元值；裝置磁區大小非零時檢查非快取對齊。它先更新儲存的位置，再寫四位元組 Status 與八位元組 Information=0，保留 IOSB 填補及輸出失敗前已執行的寫入。不建立 IRP，也不重設檔案事件。控制代碼範圍、呼叫端資格及同檔案序列規則沿用檔案 API 契約。其他類別與非同步位置設定仍不支援。位置查詢及後續 NULL/−2 讀寫偏移觀察此狀態。
 
 `ZwFlushBuffersFile` 支援已開啟的同步 WDM 檔案控制代碼。即使在 KernelMode，也要求 FILE_WRITE_DATA 或 FILE_APPEND_DATA；檔案的具名管道旗標會將要求縮為 FILE_WRITE_DATA。無緩衝區請求使用主功能 9、次功能 0，不設定延遲完成旗標。符合條件的立即完成會在分派返回前發布 IOSB 並釋放封包；工作執行緒、受限 APC 或提高 IRQL 時的完成等待原呼叫者恢復可通知狀態。Information 保留完整 64 位元，不複製輸出，檔案位置保持不變。非同步檔案、宣告式提供者刷新與框架路徑仍不支援。報告種類為 `flush_buffers`，來源為 `ZwFlushBuffersFile`；情境不能建立這種由核心產生的請求。
+
+`ZwDeviceIoControlFile` 與 `ZwFsControlFile` 接受已開啟的同步 WDM 控制代碼、METHOD_BUFFERED 及空 Event/APC 參數。共用擁有者截取 ULONG 長度與控制碼、複製輸入、清零其餘輸出配置，並以要求的輸出長度限制非零輸出；零輸出請求保留完整位寬 Information，不複製資料。裝置控制在可通知時立即完成，FSCTL 的立即完成封包保留至服務尾端。兩者保留原呼叫者通知、IOSB 填補位元組與檔案位置。KernelMode 略過權限遮罩檢查，但傳遞讀寫堆疊旗標。上限為 1 MiB。非同步、direct/neither、裝置 Fast I/O、IOCP、內部緩衝繞過、提供者／框架路徑及控制碼 0x94264/0x98268/0x9042c/0x90020 尚未支援；非零長度的空輸入會被拒絕。報告來源使用 API 名稱；`fsctl` 僅能由核心產生。
