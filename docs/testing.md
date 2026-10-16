@@ -112,6 +112,12 @@ policy, signature matching and feature changes between selections. Run these
 with `NeverDPipelineOutcomeTests` and `NeverDSessionCAPITests`; the no-return,
 x87 and jump-table suites cover their shared proof consumers.
 
+`MedDCE.KeepsLivePhiCyclesAndDropsDeadCyclesInEitherBlockOrder` checks register
+DCE liveness through cyclic PHIs, dead-cycle removal and sparse identifiers on
+x86, x64, ARM32 and AArch64. The module jump-table and Windows continuation
+tests cover arbitration after body rebuilds; unchanged bodies may reuse the
+same run-local decision, including its budget refusal.
+
 `SessionCAPITest.DataAccessWidths*` compares retained navigation facts with
 fresh native decoding, preserves renamed source, and checks changed function
 addresses, extents and inventories. It also covers edits, policy/signature
