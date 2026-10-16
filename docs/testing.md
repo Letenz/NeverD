@@ -6687,6 +6687,14 @@ getpriority encoding. Run the `LinuxPriority.*` and
 complete Linux process, Android native and process public suites for shared
 kernel/JSON changes. Absent optional native transports remain explicit skips.
 
+`AndroidThread.NiceState*` executes independent O0/O2 pthread callers with all
+three relocation encodings. A gated child observes the parent's nice value at
+creation despite a later parent change; its own grandchild inherits the child's
+updated value. Raw traps and Bionic `syscall` check independent changes, denied
+priority increases, and ESRCH after child exit. Missing parent observations stay
+unmodeled. `LinuxPriority` unit tests also check rollback, identity collisions,
+unknown versus exited tasks and lifetime-capacity refusal without mutation.
+
 `LinuxKernelAvailability.*` validates explicit absence inputs and profile
 admission. `Backends/LinuxKernelProcess.*` uses independent x64/AArch64 O0/O2
 raw callers to verify ENOSYS before argument validation and continued refusal

@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 #include "os/linux/android/AndroidThreads.h"
 
@@ -168,6 +169,55 @@ TEST_P(AndroidThread, EntryReturnAndDetachedCompletionAreSeparateBoundaries) {
     EXPECT_TRUE(R.NativeThreads[1].Finished);
     EXPECT_TRUE(R.NativeThreads[1].Retired);
     EXPECT_EQ(word(R, 2), 1001u);
+  }
+}
+TEST_P(AndroidThread, NiceStateInheritsAtCreationAndEndsWithTheChildTask) {
+  Options.LinuxPriority.emplace().Tasks = {{1000, -4}};
+  for (auto Backend : {ExecutionBackendKind::Unicorn, ExecutionBackendKind::KVM,
+                       ExecutionBackendKind::WHP, ExecutionBackendKind::HVF}) {
+    SCOPED_TRACE(unsigned(Backend));
+    ExecutionConfiguration Configuration;
+    Configuration.Backend = Backend;
+    Configuration.Architecture = GuestArchitecture::AArch64;
+    Configuration.Contract = ExecutionContract::CheckedUserAArch64;
+    auto Probe = probeExecutionBackend(Configuration);
+    ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+    if (Probe->Availability != BackendAvailability::Available) {
+      ASSERT_FALSE(requireHvf(Backend, GuestArchitecture::AArch64))
+          << Probe->Reason;
+      RecordProperty("unavailable_transport_" +
+                         std::to_string(unsigned(Backend)),
+                     Probe->Reason);
+      continue;
+    }
+    Options.Backend = Backend;
+    auto R = run("threads_priority");
+    returned(R, 0);
+    ASSERT_EQ(R.NativeThreads.size(), 3u);
+    const uint64_t Parent[] = {
+        0,  17,         0, 15, 1000, 0, 0, uint64_t(0) - 3, uint64_t(0) - 3,
+        15, UINT64_MAX, 3};
+    const uint64_t Child[] = {1001, 17, 0, 11, UINT64_MAX,     13,
+                              11,   0,  0, 11, uint64_t(0) - 3};
+    const uint64_t Grandchild[] = {1002, 11, 0, 8};
+    for (unsigned I = 0; I < std::size(Parent); ++I)
+      EXPECT_EQ(word(R, I), Parent[I]) << I;
+    for (unsigned I = 0; I < std::size(Child); ++I)
+      EXPECT_EQ(word(R, 32 + I), Child[I]) << I;
+    for (unsigned I = 0; I < std::size(Grandchild); ++I)
+      EXPECT_EQ(word(R, 64 + I), Grandchild[I]) << I;
+  }
+}
+TEST_P(AndroidThread, NiceStateWithoutParentInputsRemainsUnmodeled) {
+  for (bool Present : {false, true}) {
+    if (Present)
+      Options.LinuxPriority.emplace();
+    auto R = run("threads_priority", 1);
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    ASSERT_EQ(R.NativeThreads.size(), 2u);
+    ASSERT_FALSE(R.Services.empty());
+    EXPECT_EQ(R.Services.back().Number, 141u);
+    EXPECT_FALSE(R.Services.back().Result);
   }
 }
 TEST_P(AndroidThread, ThreadAndProcessExitKeepDifferentOwnership) {
@@ -527,8 +577,11 @@ TEST(AndroidThreadMemory, CapacityRefusalKeepsInputsAndGenericMappingFailures) {
                          {}};
     auto Calls = IntegerABI::get(IntegerCallingConvention::AAPCS64);
     ASSERT_TRUE(bool(Calls)) << llvm::toString(Calls.takeError());
-    linux_model::LinuxClock Clock(Options.LinuxTime);
-    android_model::GuestThreads Threads(CPU, *Calls, Options, Result, Clock);
+    const linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, Page};
+    linux_model::LinuxServices Kernel(CPU, Layout, Buffer + 2 * Page, Options,
+                                      Result);
+    android_model::GuestThreads Threads(CPU, *Calls, Options, Result,
+                                        Kernel.clock(), Kernel.priority());
     ASSERT_EQ(llvm::toString(Threads.initialize(Buffer + Page)), "");
 
     std::vector<std::shared_ptr<MemoryRegion>> Owners;
@@ -559,9 +612,6 @@ TEST(AndroidThreadMemory, CapacityRefusalKeepsInputsAndGenericMappingFailures) {
     const uint64_t Mapped = Space.mappedBytes(),
                    Allocated = RAM->allocatedBytes(),
                    Generation = Space.mappingGeneration();
-    const linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, Page};
-    linux_model::LinuxServices Kernel(CPU, Layout, Buffer + 2 * Page, Options,
-                                      Result);
     auto Budget = ExecutionBudget::create(Options.Limits);
     ASSERT_TRUE(bool(Budget)) << llvm::toString(Budget.takeError());
     const android_model::LinkedImage Linked{};
