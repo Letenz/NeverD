@@ -349,3 +349,31 @@ coverage, and investigate the independent Bun revision and opaque native
 components. Keep erased information unknown unless evidence recovers it.
 Issues 714–718 retain their completed bounded scope; they do not close this
 larger goal. Preserve prior completion receipts as superseded history.
+
+The macOS ARM64 development path now accepts actual source edits. The explicit
+`neverd-web-source-recovery` development driver reuses the embedded parser and
+readable-source owner; five focused source-recovery tests and authored driver
+controls pass. A private workspace has all 2,364 original-path readable source
+files. Its selector validates module ownership, immutable original hashes,
+bounded syntax and runtime dependencies, with 19 positive/refusal controls.
+The packaged parser runs with Homebrew reads denied using its bundled ICU.
+
+A clean build from the self-contained development directory preserves the
+qualified `90868bc9...` client hash when sources are unchanged. Actual edits
+select edited source, while untouched views retain original byte layout.
+Changing one CLI display literal in a separate workspace changes the rebuilt
+program's observed output; the delivered source remains unchanged. An optional
+all-readable build also passes three startup, seven configuration and 22
+behavior comparisons. Configuration observations used the same 18-second
+initialization limit for original and rebuilt clients; two earlier 8-second
+timeouts remain recorded. New original behavior observations resolve an
+old/new date-literal difference without broadening normalization. Startup
+performance equivalence is not claimed.
+
+This closes the macOS ARM64 editable-workspace gap, not the overall goal.
+The other seven editable workspaces remain to be qualified. Across all eight
+distributions there are 16,676 distinct source-format/hash pairs, so module
+indices or superficially similar source cannot substitute for target-specific
+evidence. An upstream package matching captured dependency version metadata
+has been retained for later type/structure matching, without yet attributing
+its types to recovered client code.

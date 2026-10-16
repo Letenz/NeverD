@@ -23,6 +23,19 @@ nor runs input, restores erased names or types, or proves behavioral
 equivalence. Errors and failed source checks return a nonzero status. This
 manual tool has no production dependency and uses no external parser.
 
+For independent graph readback without source rewriting, explicitly build
+`neverd-web-bun-inventory`, then run:
+
+```console
+build-web-dev/bin/neverd-web-bun-inventory /absolute/rebuilt-client /absolute/new-inventory
+```
+
+This captures the file and uses the shared Bun extractor and text decoder to
+record module identities, storage and decoded-source hashes, loader metadata,
+cache ranges and startup metadata. It does not compile or execute the input,
+or claim producer identity or behavioral equivalence. Names have a cumulative
+16 MiB export budget, and the destination must be fresh.
+
 ## Captured corpus
 
 These inert inputs were authored for NeverD. The `*.graph.bin` files are exact

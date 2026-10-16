@@ -83,6 +83,9 @@ target_compile_definitions(NeverDWebSourceMapTests PRIVATE
   NEVERD_WEB_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   # Explicit development driver: export only; never invoke a compiler/runtime.
+  add_executable(neverd-web-bun-inventory EXCLUDE_FROM_ALL fixtures/bun/Inventory.cpp)
+  target_include_directories(neverd-web-bun-inventory PRIVATE "${CMAKE_SOURCE_DIR}/lib/web")
+  target_link_libraries(neverd-web-bun-inventory PRIVATE NeverDWeb)
   add_executable(neverd-web-source-recovery EXCLUDE_FROM_ALL fixtures/bun/SourceRecovery.cpp)
   target_include_directories(neverd-web-source-recovery PRIVATE "${CMAKE_SOURCE_DIR}/lib/web")
   target_link_libraries(neverd-web-source-recovery PRIVATE NeverDWeb)
