@@ -4460,6 +4460,20 @@ becoming one), finally's
 private-frame write, a subsequent exception, and FS:[0] restoration on four
 successive invocations. Original and generated caller PCs are distinguished,
 and each generated image is executed at preferred and forced-rebased addresses.
+
+`RegistrationFrameScalar` checks that exact PE32 frame differences and equality
+preserve their results under relocation, including integer wraparound. Distinct
+frame roots, partial stores, ambiguous joins and ordered comparisons retain
+their conservative provenance. `LowScalarConstant` compares constant multiply
+and shift facts with concrete LowIR execution at 1/2/4/8-byte widths, including
+overflow, zero shifts and saturating counts. Unknown operands and malformed
+widths supply no fact. The native MSVC input owner also checks chain
+observations in `nonlocal_finally_reenter` across `/Od`/`/O2`, `/GS-`/`/GS` and
+raw/optimized projection. The focused Windows EH job runs the complete native
+input owner with its verified MSVC images. Its exact source state does not discharge the separate
+CRT guard retirement obligation; native reconstruction remains rejected while
+that proof is incomplete.
+
 The parameter case reads the real caller argument in both the resumed parent
 and its filter, including the caller-frame slot introduced during outlining.
 The callback cases resume from ordinary finally calls and runtime unwind
