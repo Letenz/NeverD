@@ -355,6 +355,12 @@ int main(int argc, char **argv) {
             + expression
             + ";}\n"
         )
+        if system == "Windows":
+            code = code.replace(
+                'extern "C" int saved(int), dependency_throw(int);',
+                'extern "C" int saved(int);\n'
+                'extern "C" __declspec(dllimport) int dependency_throw(int);',
+            )
         library = providers["new"]["path"]
         if system == "Darwin":
             library = "@rpath/" + library
@@ -590,6 +596,16 @@ def qualify(args: argparse.Namespace) -> None:
                 if variant.startswith("dependency-")
                 else COMBINED
             )
+            if system == "Windows":
+                # Native COFF objects name IAT storage explicitly. A direct
+                # external symbol cannot stand in for a loader-owned slot.
+                code = code.replace(
+                    "extern int dependency_fn(int);",
+                    "__declspec(dllimport) int dependency_fn(int);",
+                ).replace(
+                    "extern int dependency_data;",
+                    "__declspec(dllimport) extern int dependency_data;",
+                )
             (root / (variant + "-source.c")).write_text(code)
             receipt = session.patch_source(
                 code,
