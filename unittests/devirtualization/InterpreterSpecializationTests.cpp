@@ -2753,6 +2753,9 @@ struct WideByteOracle {
           }
           break;
         }
+        case NdOp::SELECT:
+          write(O.Output, read(O.Inputs[number(O.Inputs[0]) ? 1 : 2]));
+          break;
         case NdOp::BRANCH:
         case NdOp::COND_BR:
         case NdOp::INDIR_BR: {
@@ -2832,22 +2835,7 @@ TEST(InterpreterSpecialization, WideTransportPreservesEveryByte) {
   }
 }
 
-TEST(InterpreterSpecialization, WideImmutableLoadRemainsRuntime) {
-  Provider P;
-  const auto Vector = reg(x86reg::XMM0, 16);
-  for (unsigned I = 0; I < 16; ++I)
-    P.Image[0x4000 + I] = uint8_t(7 + 31 * I);
-  P.add(0x100, {op(NdOp::LOAD, Vector, {constant(0x4000)}),
-                op(NdOp::STORE, {}, {constant(0x5000), Vector}), ret()});
-  const auto R = specializeInterpreter(P, {0x100}, wideOptions());
-  ASSERT_TRUE(R.complete()) << R.Diagnostic;
-  EXPECT_EQ(count(R.Residual, NdOp::LOAD), 1u);
-  WideByteOracle Oracle(llvm::endianness::little);
-  Oracle.Memory = P.Image;
-  ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
-  for (unsigned I = 0; I < 16; ++I)
-    EXPECT_EQ(Oracle.Memory[0x5000 + I], P.Image[0x4000 + I]);
-}
+#include "WideImmutableReadTests.inc"
 
 TEST(InterpreterSpecialization, WideMemoryAcceptsConstantSpaceToken) {
   const auto A = reg(x86reg::XMM0, 16), B = reg(x86reg::XMM1, 16);
