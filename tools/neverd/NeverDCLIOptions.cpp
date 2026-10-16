@@ -940,7 +940,7 @@ cl::opt<std::string> TypesSpelling(
     cl::desc("Spell builtins as portable, exact widths (uint32_t, u32, "
              "uint32, ctypes.c_uint32, number), every language's default; as "
              "windows (ULONG; in Rust, Go, Python, JavaScript and Lua aliases "
-             "of exact widths, as wdk-sys declares them); or in C and C++ as "
+             "of exact widths, as wdk-sys declares them), or in C and C++ as "
              "keywords (unsigned long)"),
     cl::init(""), cl::value_desc("style"), cl::sub(TypesCmd));
 cl::opt<bool> TypesAsserts(
