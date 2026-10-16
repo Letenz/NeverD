@@ -45,6 +45,11 @@ struct CRecordDefinitions {
   std::vector<std::string> Identifiers;
   /// The enumerations Text defines, by their tags' names.
   std::vector<std::string> Enumerations;
+  /// The local types Text defines, and the records it only declares, by
+  /// their names in the library, which another language's spelling of the
+  /// unit defines as its own.
+  std::vector<std::string> Types;
+  std::vector<std::string> DeclaredTypes;
 };
 
 struct CEmitterOptions {

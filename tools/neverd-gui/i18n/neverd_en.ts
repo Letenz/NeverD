@@ -2331,6 +2331,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Put the cursor on a parameter of the function to convert it</translation>
     </message>
     <message>
+        <source>Synchronize with disassembly</source>
+        <translation>Synchronize with disassembly</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>Octa&amp;l</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>Put the cursor on a number of the pseudocode to change its base</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 has no spelling in that base with the same type</translation>
+    </message>
+    <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
         <translation>Could not tell whether %1 has a MAP file: %2</translation>
     </message>

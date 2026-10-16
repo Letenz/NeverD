@@ -467,6 +467,8 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
         Type && Type->Kind == types::TypeKind::Enum)
       Result.Enumerations.push_back(Name);
   }
+  Result.Types = Embedded.Types;
+  Result.DeclaredTypes = Embedded.DeclaredTypes;
   return Result;
 }
 

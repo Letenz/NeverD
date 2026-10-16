@@ -5106,6 +5106,68 @@ llvm::json::Object takeView(const char *Text) {
   return Object ? std::move(*Object) : llvm::json::Object{};
 }
 
+TEST_F(SessionCAPITest, RustAndGoPseudocodeDefineTheProgramsTypesAsTheyDo) {
+  // A program that reads as Rust and as Go, whose PDB types a function's
+  // parameter as a record of anonymous members: each view defines the
+  // record as Local Types renders it in its language, and reaches the
+  // member through what holds its anonymous union.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "rust_types.exe", std::ios::binary);
+  const std::string Exe = write(
+      "rust_types.exe", std::string(std::istreambuf_iterator<char>(Input), {}));
+  neverd_session_set_pdb_path(Session,
+                              (Fixtures / "rust_types.pdb").string().c_str());
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Index = neverd_func_find_by_name(
+      Session, "_RNvCs8vGhbR5OvgK_13rust_eh_probe4main");
+  ASSERT_GE(Index, 0);
+  const auto Entry = neverd_func_entry(Session, Index);
+  const auto view = [&](const char *Stage, llvm::json::Object &First) {
+    std::string Text;
+    size_t Offset = 0;
+    for (int Pages = 0; Pages < 64; ++Pages) {
+      auto Page =
+          takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 2048));
+      if (!Offset)
+        First = Page;
+      if (!Page.getString("text"))
+        break;
+      Text += Page.getString("text")->str();
+      const auto Next = Page.getInteger("next_offset");
+      if (Page.getBoolean("complete").value_or(false) || !Next)
+        break;
+      Offset = static_cast<size_t>(*Next);
+    }
+    return Text;
+  };
+  const auto unread = [](const llvm::json::Object &Page) {
+    const llvm::json::Array *Reasons = Page.getArray("unread");
+    return Reasons ? Reasons->size() : size_t(0);
+  };
+  llvm::json::Object Page;
+  const std::string Rust = view("rust", Page);
+  EXPECT_NE(Rust.find("pub struct _DPC {\n    pub Anonymous: _DPC_0,"),
+            std::string::npos)
+      << Rust;
+  EXPECT_NE(Rust.find("pub union _DPC_0 {"), std::string::npos);
+  EXPECT_NE(Rust.find("(*Dpc).Anonymous.TargetInfoAsUlong"), std::string::npos);
+  EXPECT_EQ(Rust.find("NEVERD_TYPE__DPC"), std::string::npos);
+  EXPECT_EQ(unread(Page), 0u);
+  // Go reads the union's members through its methods.
+  const std::string Go = view("go", Page);
+  EXPECT_NE(Go.find("func (s *_DPC_0) TargetInfoAsUlong() *uint32 {"),
+            std::string::npos)
+      << Go;
+  EXPECT_NE(Go.find("*Dpc.Anonymous.TargetInfoAsUlong()"), std::string::npos);
+  EXPECT_EQ(Go.find("NEVERD_TYPE__DPC"), std::string::npos);
+  EXPECT_EQ(unread(Page), 0u);
+  // C keeps the definitions as C defines them.
+  const std::string C = view("c", Page);
+  EXPECT_NE(C.find("#ifndef NEVERD_TYPE__DPC"), std::string::npos) << C;
+  EXPECT_NE(C.find("Dpc->TargetInfoAsUlong"), std::string::npos);
+}
 TEST_F(SessionCAPITest,
        NativeIRViewPagesPreserveTextAndExactInstructionAnchors) {
   for (bool AArch64 : {false, true}) {
@@ -5552,7 +5614,8 @@ neverd_va_t seedAnalysisCacheSymbols(neverd_session_t Session) {
   return Entry;
 }
 
-TEST_F(SessionCAPITest, LLVMViewsDeferOnlyHighIRAndPreserveLaterSource) {
+TEST_F(SessionCAPITest,
+       NativeAnalysisViewsDeferOnlyHighIRAndPreserveLaterSource) {
   for (bool Floating : {false, true}) {
     SCOPED_TRACE(Floating);
     const auto Path = write(Floating ? "deferred-floating.elf" : "deferred.elf",
@@ -5562,13 +5625,24 @@ TEST_F(SessionCAPITest, LLVMViewsDeferOnlyHighIRAndPreserveLaterSource) {
     auto &State = *neverd::sdk::toSession(Session);
     neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
     ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
+    const auto analysisViews = [&] {
+      return std::array{
+          takeString(neverd_ir_low(Session, Entry)),
+          takeString(neverd_ir_med(Session, Entry)),
+          takeString(neverd_cfg_json(Session, Entry)),
+          takeString(neverd_ir_view_json(Session, Entry, "low", 0, 2048)),
+          takeString(neverd_ir_view_json(Session, Entry, "med", 0, 2048))};
+    };
+    const auto AnalysisViews = analysisViews();
+    for (const auto &Text : AnalysisViews)
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
     const auto Source = takeString(neverd_decompile(Session, Entry));
     const auto LLVM = takeString(neverd_decompile_llvm(Session, Entry));
     const auto IR = takeString(neverd_ir_llvm(Session, Entry));
     ASSERT_FALSE(Source.empty()) << takeString(neverd_last_error(Session));
     ASSERT_FALSE(LLVM.empty()) << takeString(neverd_last_error(Session));
     ASSERT_FALSE(IR.empty()) << takeString(neverd_last_error(Session));
-    for (const char *View : {"llvm", "llvmc"}) {
+    for (const char *View : {"low", "med", "llvm", "llvmc"}) {
       SCOPED_TRACE(View);
       neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
       ASSERT_EQ(neverd_prepare_function_view(Session, Entry, View), 1);
@@ -5578,6 +5652,7 @@ TEST_F(SessionCAPITest, LLVMViewsDeferOnlyHighIRAndPreserveLaterSource) {
       ASSERT_NE(Low, nullptr);
       const auto Facts =
           neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache);
+      EXPECT_EQ(analysisViews(), AnalysisViews);
       EXPECT_EQ(takeString(neverd_ir_llvm(Session, Entry)), IR);
       EXPECT_EQ(takeString(neverd_decompile_llvm(Session, Entry)), LLVM);
       EXPECT_TRUE(State.PipeResult.HighIRDeferred);
@@ -5588,6 +5663,7 @@ TEST_F(SessionCAPITest, LLVMViewsDeferOnlyHighIRAndPreserveLaterSource) {
       EXPECT_EQ(State.findLowFunc(Entry), Low);
       EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
                 Facts);
+      EXPECT_EQ(analysisViews(), AnalysisViews);
       EXPECT_EQ(takeString(neverd_ir_llvm(Session, Entry)), IR);
       EXPECT_EQ(takeString(neverd_decompile_llvm(Session, Entry)), LLVM);
       ASSERT_EQ(neverd_prepare_function_view(Session, Entry + 0x10, View), 1);
@@ -5595,6 +5671,18 @@ TEST_F(SessionCAPITest, LLVMViewsDeferOnlyHighIRAndPreserveLaterSource) {
       EXPECT_EQ(State.findLowFunc(Entry), nullptr);
       EXPECT_NE(State.findLowFunc(Entry + 0x10), nullptr);
     }
+    // The CFG API can be the first analysis request without explicit view
+    // preparation, and a later HighIR view must still finish the projection.
+    neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
+    EXPECT_EQ(takeString(neverd_cfg_json(Session, Entry)), AnalysisViews[2]);
+    EXPECT_TRUE(State.PipeResult.HighIRDeferred);
+    EXPECT_TRUE(State.PipeResult.HighFuncs.empty());
+    const auto *Low = State.findLowFunc(Entry);
+    ASSERT_FALSE(takeString(neverd_ir_high(Session, Entry)).empty());
+    EXPECT_FALSE(State.PipeResult.HighIRDeferred);
+    EXPECT_FALSE(State.PipeResult.HighFuncs.empty());
+    EXPECT_EQ(State.findLowFunc(Entry), Low);
+    EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
   }
 }
 

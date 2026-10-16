@@ -72,9 +72,10 @@ prebuilt-LLVM guidance.
 restoration of ordinary output, reuse of prepared IR, navigation invalidation
 and strict option validation. `SourceLLVMProfiles*` checks separate source and
 module cache identities. `NativeLLVMInspection*` preserves inspection branches
-across source profiles and both view orders. `LLVMViewsDeferOnlyHighIR*`
-checks integer and floating call results, unchanged LLVM/source output and
-resumption without relifting; `FunctionViewRejectsUnknown*` preserves the
+across source profiles and both view orders. `NativeAnalysisViewsDeferOnlyHighIR*`
+checks integer and floating call results, unchanged LowIR/MedIR/CFG/LLVM/source
+output and IR page anchors, and resumption without relifting after analysis
+views; `FunctionViewRejectsUnknown*` preserves the
 prepared function on invalid view names. `LLVMViewShowsTheFunctionInAModuleOfItsOwn`
 builds a glibc PIE: `_start`'s LLVM IR must assemble and verify alone, declare
 the GOT's mirror before the definition under a comment saying what it stands
@@ -255,10 +256,18 @@ single-line paging without spreading return addresses across the function.
 `SessionCAPITest.CSourcePagesRetainCanonicalReturnAnchors` and the real worker's
 native mapping test verify x64 and AArch64 high-VA source rows through small
 pages, including return instruction addresses distinct from the function entry.
-The controller's `tabFromCodeUsesSelectedInstruction` verifies independent
-click/arrow navigation and both Tab directions; its optional native rows use the
+The controller's `tabFromCodeUsesSelectedInstruction` verifies that clicks and
+arrow keys take the assembly cursor along without focus or history changes, and
+both Tab directions; its optional native rows use the
 same PE/PDB and environment variables described below. Unmapped declarations
-exercise the explicit entry fallback. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks
+exercise the explicit entry fallback. `assemblyAndCodeCursorsFollowEachOther`
+moves the assembly within the shown function, to an unmapped instruction and
+into another function that must not decompile, then turns synchronization off
+and on from the context menu. `pseudocodeNumbersTakeTheBaseTheUserPicks` covers
+H's toggle, the context menu's bases and their previews, `#`, undo, and a
+refused character constant; `NeverDWorkerCodeEdits` checks the literal scan
+and type-keeping spellings of `neverd/support/IntegerLiterals.h` for C, Rust
+and Go. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks
 listing jumps, rows beyond the first page, folded operations, secondary address
 round trips, cross-function navigation and missing instruction mappings.
 `graphRefreshKeepsLatestRequestedAddress` exercises navigation and keyboard/mouse
@@ -309,7 +318,14 @@ NEVERD_SOURCE_DIALECT=go \
 custom template arguments, ATL names, and the C exception projection's native
 calls and handlers. `ReadsTheDefinitionsOfTheProgramsTypes` reads a unit's
 local types definitions back in C as written, whole in C++, and in Rust and
-Go as far as their structures lay them out, saying why for the rest. Decompiled
+Go as far as their structures lay them out, saying why for the rest.
+`TheProgramsTypesSpellTheirRecordsAndTheirMembers` gives Rust and Go the
+program's types and checks the paths their code reaches members by;
+`TypeRender.EmbeddedSourceSaysHowCodeReachesEachMember` checks those paths
+as the renderers write them. `SessionCAPITest.RustAndGoPseudocodeDefineTheProgramsTypesAsTheyDo`
+reads `unittests/types/fixtures/rust_types.exe`, which reads as Rust and as
+Go, through both views; its Rust and Go views compile with rustc and
+`go vet`. Decompiled
 kernel units read back the same way: `NEVERD_SOURCE_DIALECT_CORPUS` on the
 units `scripts/check_decompiled_types.py --keep` writes. `NeverDSessionCAPITests` checks detected defaults, explicit
 language pages and emission caches; `NeverDGuiController` checks the C++ title,
@@ -6686,6 +6702,14 @@ getpriority encoding. Run the `LinuxPriority.*` and
 `Backends/LinuxPriorityProcess.*` cases in `NeverDLinuxProcessTests`, then the
 complete Linux process, Android native and process public suites for shared
 kernel/JSON changes. Absent optional native transports remain explicit skips.
+
+`AndroidThread.NiceState*` executes independent O0/O2 pthread callers with all
+three relocation encodings. A gated child observes the parent's nice value at
+creation despite a later parent change; its own grandchild inherits the child's
+updated value. Raw traps and Bionic `syscall` check independent changes, denied
+priority increases, and ESRCH after child exit. Missing parent observations stay
+unmodeled. `LinuxPriority` unit tests also check rollback, identity collisions,
+unknown versus exited tasks and lifetime-capacity refusal without mutation.
 
 `LinuxKernelAvailability.*` validates explicit absence inputs and profile
 admission. `Backends/LinuxKernelProcess.*` uses independent x64/AArch64 O0/O2

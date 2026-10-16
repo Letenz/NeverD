@@ -43,6 +43,7 @@ public:
     return Files.descriptorStatus(FD, Result);
   }
   LinuxClock &clock() { return Clock; }
+  LinuxPriority &priority() { return Priority; }
   /// Run while the physical owner is stopped, after idle scheduling and before
   /// guest execution or another service observes device memory.
   llvm::Error synchronizeDevices() {

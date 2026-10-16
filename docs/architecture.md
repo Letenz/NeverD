@@ -444,10 +444,11 @@ slots promoted to SSA only. It preserves the lifted control flow without the
 LLVMC optimization pipeline; the module cache distinguishes these inspection
 modules from optimized source modules. Native CFG, ABI and exception recovery
 still precede emission. EVM and SBF keep their own LLVM emission paths.
-Native LLVM view preparation postpones HighIR construction after the shared
-source MedIR call/return recovery. A later HighC request resumes only that
-projection through the ordinary HighIR completion boundary; it does not relift
-instructions or mutate the MedIR retained by LLVM emission.
+Native LowIR, MedIR, CFG and LLVM views postpone HighIR construction after the
+shared source MedIR call/return recovery. A later HighIR or HighC request resumes
+only that projection through the ordinary HighIR completion boundary; it does
+not relift instructions or mutate the MedIR retained by LLVM emission. Opening
+the worker's native CFG therefore does not build discarded pseudocode.
 
 The LLVM IR view of a function (`neverd_ir_llvm`, and the `llvm` pages of
 `neverd_ir_view_json`) is that function moved into a module of its own, as
@@ -519,7 +520,11 @@ escaped call-site comments without changing targets, arguments, types or
 effects. `SymValueIdentities` follows only complete fresh resolver values via
 the shared symbolic state, including nullable results; this provenance is not
 a loader import, immutable address, or rewriting certificate.
-Source and assembly cursors browse independently. Graph refreshes retain the
+A source cursor the user moves takes the assembly cursor to its row's
+primary address without recording a jump; an assembly move the user makes
+selects the mapped rows of a source pane already showing that function and
+never starts a decompile. Selections made to follow the other pane do not echo
+back. Graph refreshes retain the
 latest requested or selected instruction even while no layout is available.
 A new navigation cancels the preceding function-lookup callback so a late reply
 cannot replace the newer destination.
@@ -544,13 +549,22 @@ unions, anonymous structures and unions, bit-fields, enumerations,
 `#pragma pack` and `DECLSPEC_ALIGN`, and their `static_assert` and `offsetof`
 checks. A member access reaches a field through anonymous members as C
 counts it. C and C++ keep the definitions as written, and C++ reads the code
-that uses them. Rust and Go spell a record whose fields their own structures
-lay out as C does, Rust's under its packing and alignment, and an
-enumeration as int constants. They show a union, an anonymous member, a
-bit-field or a volatile member as C with its reason, and Go a packed or
-aligned record too, as they do the code that reaches such a member. In Rust
-and Go, a typedef of a record by its own tag is the record: defined where
-the text defines it, opaque where the text only declares it.
+that uses them. A Rust or Go page takes the definitions as Local Types
+renders them in its language (`renderEmbeddedSource`): the types the unit
+defines, the records it only points to as opaque types, and no module
+header, in place of the C bytes the source map records
+(`CSourceMap::LocalTypes`). The code reaches a member as that rendering
+names it: through the fields that hold its anonymous records, and in Go
+through the methods that read a union's members and the members Go cannot
+align, which return pointers. A bit-field, which the renderings read
+through methods, stays C with its reason. Without the program's types, as
+the corpus reads a unit's text alone, Rust and Go spell a record whose
+fields their own structures lay out as C does, Rust's under its packing
+and alignment, and an enumeration as int constants, and show a union, an
+anonymous member, a bit-field or a volatile member as C with its reason,
+Go a packed or aligned record too. In Rust and Go, a typedef of a record by
+its own tag is the record: defined where the text defines it, opaque where
+the text only declares it.
 Explicit C keeps native throw calls and separate handler entries with unwind
 metadata in comments; C++ keeps structured exception syntax. Their caches are
 separate. The C exception view depends on the image's original runtime and
@@ -4219,6 +4233,14 @@ native-call versus raw-service event identity. `AndroidThreadWaits` owns wake
 readiness and completion; `GuestThreads` advances to the earliest deadline only
 when no thread is runnable. All clock reads share `LinuxClock`; no timestamp or
 successful sleep is synthesized in the Bionic dispatcher.
+
+`LinuxPriority` owns the optional initial nice observations and subsequent
+per-task changes. `GuestThreads` borrows this owner to inherit the creating
+thread's current value only after CPU/stack preparation, with rollback if handle
+publication fails. Unknown parent values stay unknown. Finished child tasks lose
+their kernel priority identity even while their joinable userspace handle remains;
+the entry/leader retains the same zombie lifetime as its proc record. Nice state
+does not change the cooperative scheduler's round-robin execution policy.
 
 Android's `AndroidSymbols.def` owns Bionic symbol spellings and handler bindings;
 `AndroidDiagnostics.def` owns native-model diagnostics. The entry point validates

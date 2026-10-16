@@ -1,5 +1,7 @@
 #include "CodeEdits.h"
 
+#include "neverd/support/IntegerLiterals.h"
+
 #include <algorithm>
 #include <cctype>
 #include <iterator>
@@ -11,6 +13,41 @@
 
 namespace neverd::worker {
 namespace {
+// A line or literal index as an object key: its decimal digits.
+bool indexKey(const std::string &key, std::size_t digits) {
+  return !key.empty() && key.size() <= digits &&
+         std::all_of(key.begin(), key.end(),
+                     [](unsigned char c) { return std::isdigit(c); });
+}
+// The literal grammar the view's text reads in.
+LiteralSyntax literalSyntax(const Json &view,
+                            const std::string &representation) {
+  const auto dialect = view.value("dialect", representation);
+  if (dialect == "rust")
+    return LiteralSyntax::Rust;
+  if (dialect == "go")
+    return LiteralSyntax::Go;
+  return LiteralSyntax::C;
+}
+// Whether each line of \p text that \p wanted lists starts inside a block
+// comment, which integerLiterals carries from line to line.
+std::unordered_map<std::size_t, bool>
+commentStates(std::string_view text, LiteralSyntax syntax,
+              std::set<std::size_t> wanted) {
+  std::unordered_map<std::size_t, bool> states;
+  bool inComment = false;
+  std::size_t start = 0;
+  for (std::size_t line = 0; !wanted.empty(); ++line) {
+    if (wanted.erase(line))
+      states.emplace(line, inComment);
+    const auto end = text.find('\n', start);
+    if (end == std::string_view::npos)
+      break;
+    (void)integerLiterals(text.substr(start, end - start), syntax, inComment);
+    start = end + 1;
+  }
+  return states;
+}
 bool identifier(const std::string &name) {
   if (name.empty() || name.size() > 256 ||
       !(std::isalpha(static_cast<unsigned char>(name[0])) || name[0] == '_'))
@@ -243,13 +280,30 @@ void CodeEdits::validateRow(const Json &row) {
         throw Error("invalid_request",
                     "Local names must be distinct identifiers");
     for (const auto &[line, note] : comments.items()) {
-      if (line.empty() || line.size() > 10 ||
-          !std::all_of(line.begin(), line.end(),
-                       [](unsigned char c) { return std::isdigit(c); }) ||
-          !note.is_object())
+      if (!indexKey(line, 10) || !note.is_object())
         throw Error("invalid_request", "Invalid code-comment anchor");
       (void)stringField(note, "anchor", {}, 65536);
       (void)stringField(note, "text", {}, 65536);
+    }
+    // The bases the user picked for the integer literals of a line, by their
+    // index on it, while the line reads as its anchor.
+    const auto numbers = view.value("numbers", Json::object());
+    if (!numbers.is_object() || numbers.size() > 2048)
+      throw Error("invalid_request", "Code-edit entries exceed their budget");
+    for (const auto &[line, entry] : numbers.items()) {
+      if (!indexKey(line, 10) || !entry.is_object())
+        throw Error("invalid_request", "Invalid number-format anchor");
+      (void)stringField(entry, "anchor", {}, 65536);
+      const auto radixes = entry.value("radixes", Json::object());
+      if (!radixes.is_object() || radixes.empty() || radixes.size() > 256)
+        throw Error("invalid_request", "Invalid number formats");
+      for (const auto &[index, radix] : radixes.items()) {
+        const auto base = radix.is_string()
+                              ? literalRadixNamed(radix.get<std::string>())
+                              : std::nullopt;
+        if (!indexKey(index, 4) || !base || *base == LiteralRadix::Number)
+          throw Error("invalid_request", "Invalid number format");
+      }
     }
   }
 }
@@ -298,6 +352,29 @@ Json CodeEdits::change(Json row, const Json &request) {
       view["comments"][key] = {
           {"anchor", stringField(request, "anchor", {}, 65536)},
           {"text", text}};
+  } else if (kind == "number") {
+    const auto key = std::to_string(sizeField(request, "line", 0, 1000000));
+    const auto index = std::to_string(sizeField(request, "index", 0, 4095));
+    const auto anchor = stringField(request, "anchor", {}, 65536);
+    const auto radix = literalRadixNamed(stringField(request, "radix", {}, 16));
+    if (!radix)
+      throw Error("invalid_request", "Unknown number base");
+    if (!view.contains("numbers"))
+      view["numbers"] = Json::object();
+    auto &numbers = view["numbers"];
+    // A line that reads differently now starts without bases.
+    if (!numbers.contains(key) ||
+        numbers[key].value("anchor", std::string()) != anchor)
+      numbers[key] = {{"anchor", anchor}, {"radixes", Json::object()}};
+    auto &radixes = numbers[key]["radixes"];
+    if (*radix == LiteralRadix::Number)
+      radixes.erase(index);
+    else
+      radixes[index] = std::string(literalRadixName(*radix));
+    if (radixes.empty())
+      numbers.erase(key);
+    if (numbers.empty())
+      view.erase("numbers");
   } else
     throw Error("invalid_request", "Unknown code edit kind");
   validateRow(row);
@@ -339,6 +416,34 @@ void CodeEdits::validateChange(const Json &view, const Json &request) {
         return;
     throw Error("stale_target",
                 "The selected line no longer belongs to this source view");
+  } else if (request.value("kind", std::string()) == "number") {
+    const auto line = sizeField(request, "line", 0, 1000000);
+    const auto index = sizeField(request, "index", 0, 4095);
+    const auto anchor = stringField(request, "anchor", {}, 65536);
+    const auto radix = literalRadixNamed(stringField(request, "radix", {}, 16));
+    if (!radix)
+      throw Error("invalid_request", "Unknown number base");
+    if (std::none_of(view.at("rows").begin(), view.at("rows").end(),
+                     [&](const Json &row) {
+                       return row.value("line", std::size_t{0}) == line &&
+                              row.value("code_anchor", std::string()) == anchor;
+                     }))
+      throw Error("stale_target",
+                  "The selected line no longer belongs to this source view");
+    // The anchor is the line as the engine wrote it; the shown text before
+    // it says whether it starts in a comment, which decoration never changes.
+    const auto syntax =
+        literalSyntax(view, stringField(request, "representation", {}, 16));
+    bool inComment = commentStates(
+        view.at("text").get_ref<const std::string &>(), syntax, {line})[line];
+    const auto literals = integerLiterals(anchor, syntax, inComment);
+    if (index >= literals.size())
+      throw Error("stale_target",
+                  "The selected number no longer belongs to this source view");
+    if (*radix != LiteralRadix::Number &&
+        !spellIntegerLiteral(literals[index], *radix, syntax))
+      throw Error("invalid_request",
+                  "This number has no spelling in that base with its type");
   }
 }
 
@@ -685,6 +790,16 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
   for (std::size_t i = 0; i + 1 < original.size(); ++i)
     if (original[i] == '\n')
       starts.push_back(i + 1);
+  // The bases the user picked for numbers, on lines that still read as their
+  // anchors.
+  const auto numbers = edits.value("numbers", Json::object());
+  const auto syntax = literalSyntax(view, representation);
+  std::set<std::size_t> formatted;
+  for (const auto &[line, entry] : numbers.items())
+    formatted.insert(std::stoull(line));
+  const auto startsInComment = formatted.empty()
+                                   ? std::unordered_map<std::size_t, bool>()
+                                   : commentStates(original, syntax, formatted);
   for (auto &mapping : view["rows"]) {
     const auto line = mapping.value("line", std::size_t{0});
     if (line >= starts.size())
@@ -694,6 +809,27 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
       end = original.size();
     const auto anchor = original.substr(starts[line], end - starts[line]);
     mapping["code_anchor"] = anchor;
+    if (const auto entry = numbers.find(std::to_string(line));
+        entry != numbers.end() &&
+        entry->value("anchor", std::string()) == anchor) {
+      const auto state = startsInComment.find(line);
+      bool inComment = state != startsInComment.end() && state->second;
+      const auto literals = integerLiterals(anchor, syntax, inComment);
+      const auto &radixes = entry->at("radixes");
+      for (const auto &[index, radix] : radixes.items()) {
+        const auto at = std::stoull(index);
+        const auto base = literalRadixNamed(radix.get<std::string>());
+        if (at >= literals.size() || !base)
+          continue;
+        const auto &literal = literals[at];
+        if (const auto spelled = spellIntegerLiteral(literal, *base, syntax);
+            spelled && *spelled != literal.Text)
+          replacements.push_back({starts[line] + literal.Begin,
+                                  starts[line] + literal.End, *spelled});
+      }
+      // The GUI shows which base each number of the line was given.
+      mapping["code_number_radixes"] = radixes;
+    }
     std::string comment;
     if (const auto note = notes.find(std::to_string(line));
         note != notes.end() && note->value("anchor", std::string()) == anchor)

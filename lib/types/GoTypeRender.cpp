@@ -55,7 +55,12 @@ public:
         Wide(pointerBytes(Library.dataModel()) == 8),
         Receiver(Library.find("s") ? "s_" : "s") {}
 
-  void definition(const LocalType &Type, std::string &Out);
+  /// \p Type's definition; with \p Paths, how code reaches each member a
+  /// record names in C.
+  void definition(const LocalType &Type, std::string &Out,
+                  std::map<std::string, MemberPath> *Paths = nullptr);
+  /// \p Type, a record, as an opaque type, as the text only points to it.
+  void opaque(const LocalType &Type, std::string &Out) const;
   /// The builtins rendered so far by their Windows names.
   const std::set<Builtin> &aliased() const { return Aliased; }
   /// \p Type as an exact width, as Go spells it.
@@ -112,7 +117,29 @@ private:
   uint64_t Base = 0;
   /// The outer record's name.
   std::string Parent;
+  /// Records that code reaches \p Place's member through \p Hop, a field
+  /// or a method that returns a pointer to it, or the anonymous record it
+  /// holds.
+  void reach(const Slot &Place, MemberPath::Hop Hop);
+  /// Where definition() records the members' paths, the hops from the
+  /// outer record to the one being written, and what holds each anonymous
+  /// record written so far, by its type's name.
+  std::map<std::string, MemberPath> *Paths = nullptr;
+  std::vector<MemberPath::Hop> Prefix;
+  std::map<std::string, MemberPath::Hop> Holders;
 };
+
+void GoWriter::reach(const Slot &Place, MemberPath::Hop Hop) {
+  if (!Paths || !Place.Field)
+    return;
+  if (Place.Field->isAnonymous()) {
+    Holders[Place.NestedType] = std::move(Hop);
+    return;
+  }
+  MemberPath &Path = (*Paths)[Place.Field->Name];
+  Path.Hops = Prefix;
+  Path.Hops.push_back(std::move(Hop));
+}
 
 uint32_t GoWriter::scalarAlign(uint64_t Bytes) const {
   if (Bytes >= 8)
@@ -410,6 +437,7 @@ void GoWriter::unionStorage(const RecordPlan &Plan, std::string &Out) {
     Methods += "\nfunc (" + Receiver + " *" + Plan.Name + ") " + Place.Name +
                "() *" + Type + " {\n\treturn (*" + Type + ")(unsafe.Pointer(" +
                Receiver + "))\n}\n";
+    reach(Place, {Place.Name, /*Accessor=*/true});
   }
   Out += "type " + Plan.Name + " struct {\n";
   Out += withComment("\t" + Raw + " [" + std::to_string(Count) + "]" + Unit,
@@ -480,6 +508,10 @@ void GoWriter::structure(const RecordPlan &Plan, std::string &Out) {
     End = Place.Byte + Written.Size;
     Align = std::max(Align, Written.Align);
     Offsets.push_back({Written.Name, Place.Byte});
+    if (Place.TheKind == Slot::Kind::Field)
+      reach(Place, Written.Bytes.empty()
+                       ? MemberPath::Hop{Written.Name, /*Accessor=*/false}
+                       : MemberPath::Hop{Place.Name, /*Accessor=*/true});
     if (!Written.Bytes.empty()) {
       Methods += "\n// " + Place.Name + " reads the " + Written.Bytes +
                  " Go cannot align at " + comment(Base + Place.Byte) + ".\n";
@@ -540,7 +572,18 @@ void GoWriter::record(const RecordPlan &Plan, bool Outer, std::string &Out) {
         At = Place.Byte;
     Base = Saved + At;
     Out += '\n';
+    // Its members are reached through what holds it.
+    std::map<std::string, MemberPath> *Outer = Paths;
+    const auto Holder = Holders.find(Nested.Name);
+    const bool Held = Paths && Holder != Holders.end();
+    if (Held)
+      Prefix.push_back(Holder->second);
+    else
+      Paths = nullptr;
     record(Nested, /*Outer=*/false, Out);
+    if (Held)
+      Prefix.pop_back();
+    Paths = Outer;
   }
   Base = Saved;
 }
@@ -571,7 +614,16 @@ void GoWriter::enumeration(const std::string &Name, const EnumDef &Enum,
   Out += ")\n";
 }
 
-void GoWriter::definition(const LocalType &Type, std::string &Out) {
+void GoWriter::opaque(const LocalType &Type, std::string &Out) const {
+  Out += "// " + Type.Name + ": only pointed to here.\n";
+  Out += "type " + Names.type(Type.Name) + " struct{}\n";
+}
+
+void GoWriter::definition(const LocalType &Type, std::string &Out,
+                          std::map<std::string, MemberPath> *Members) {
+  Paths = Members;
+  Prefix.clear();
+  Holders.clear();
   const std::string Name = Names.type(Type.Name);
   switch (Type.Kind) {
   case TypeKind::Struct:
@@ -613,6 +665,36 @@ std::string renderGo(const TypeLibrary &Library, const LocalType &Type,
   std::string Out;
   Writer.definition(Type, Out);
   return Out;
+}
+
+EmbeddedSource renderGoEmbedded(const TypeLibrary &Library,
+                                llvm::ArrayRef<const LocalType *> Defined,
+                                llvm::ArrayRef<const LocalType *> Declared,
+                                const RenderOptions &Options) {
+  GoWriter Writer(Library, Options);
+  EmbeddedSource Result;
+  std::string Body;
+  for (const LocalType *Type : Declared) {
+    Body += '\n';
+    Writer.opaque(*Type, Body);
+  }
+  for (const LocalType *Type : Defined) {
+    Body += '\n';
+    std::map<std::string, MemberPath> Paths;
+    Writer.definition(*Type, Body, &Paths);
+    if (Type->Kind == TypeKind::Struct || Type->Kind == TypeKind::Union)
+      Result.Members[Type->Name] = std::move(Paths);
+  }
+  Result.Text = "// " + std::to_string(Defined.size()) +
+                " types, from the program's local types.\n";
+  if (!Writer.aliased().empty()) {
+    Result.Text += "\n// The Windows headers' names of builtin types.\n";
+    for (Builtin Type : Writer.aliased())
+      Result.Text += "type " + std::string(builtinInfo(Type).Windows) + " = " +
+                     Writer.exact(Type) + "\n";
+  }
+  Result.Text += Body;
+  return Result;
 }
 
 std::string renderGoFile(const TypeLibrary &Library,

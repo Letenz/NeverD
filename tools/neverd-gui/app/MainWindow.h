@@ -6,6 +6,8 @@
 #include "ChooserView.h"
 #include "Session.h"
 
+#include "neverd/support/IntegerLiterals.h"
+
 #include <QHash>
 #include <QJsonArray>
 #include <QPointer>
@@ -141,6 +143,8 @@ private:
                             std::optional<Address> from);
   void navigateHistory(bool forward);
   void synchronize(Address address, QObject *source);
+  /// The pseudocode and IR windows that are showing.
+  QVector<CodeView *> visibleCodeViews() const;
   void updateActions();
   void updateStatusBar();
   void updateTitle();
@@ -191,6 +195,12 @@ private:
   /// Hex-Rays' Convert to struct *: the parameter under the pseudocode
   /// cursor made a pointer to the local type its accesses fit.
   void convertToStruct();
+  /// Show the number under \p code's cursor in \p radix; without one, H's
+  /// toggle between hexadecimal and decimal, as in Hex-Rays.
+  void formatCodeNumber(CodeView *code, std::optional<LiteralRadix> radix);
+  /// The bases of the number under \p code's cursor, each with what it
+  /// would read, at the top of its context menu.
+  void addNumberActions(QMenu &menu, CodeView *code);
   /// The Functions window's context menu for the row at \p position.
   void functionsMenu(const QPoint &position);
   void comment();
@@ -289,6 +299,8 @@ private:
   bool searchDown_ = true;
   quint64 codeNavigationSerial_ = 0;
   bool codeHistoryNavigation_ = false;
+  /// Code windows and the disassembly follow each other's cursor.
+  bool synchronizeCode_ = true;
   bool hexActive_ = false;
   bool quitting_ = false;
   bool layoutInitialized_ = false;

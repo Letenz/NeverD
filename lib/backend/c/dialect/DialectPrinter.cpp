@@ -37,8 +37,29 @@ SourceDialectText DialectPrinter::run() {
 
   header();
   size_t PreviousEnd = 0;
+  bool LocalWritten = false;
   for (size_t I = 0; I < T.Items.size(); ++I) {
     const TopLevel &Item = T.Items[I];
+    // The program's types, as the language defines them, stand for the C
+    // that defines them.
+    if (const auto &Local = Opts.LocalTypes;
+        Local && Item.Begin >= Local->CBegin && Item.End <= Local->CEnd) {
+      if (!LocalWritten) {
+        LocalWritten = true;
+        endLine();
+        const size_t Begin = mark();
+        llvm::SmallVector<llvm::StringRef, 64> Lines;
+        llvm::StringRef(Local->Text).rtrim('\n').split(Lines, '\n');
+        for (llvm::StringRef L : Lines) {
+          Buffer += L.str();
+          AtLineStart = false;
+          endLine();
+        }
+        piece(Local->CBegin, Local->CEnd, Begin);
+      }
+      PreviousEnd = Item.End;
+      continue;
+    }
     if (I && T.Source.slice(PreviousEnd, Item.Begin).count('\n') >= 2)
       endLine();
     const TopLevel *Next = nullptr;
@@ -162,6 +183,42 @@ void DialectPrinter::directive(const TopLevel &Item) {
   if (Item.Text.starts_with("#include"))
     return;
   line((lineComment() + " " + Item.Text).str());
+}
+
+std::optional<std::vector<SourceDialectLocalTypes::Hop>>
+DialectPrinter::localMember(const Expr *E) const {
+  if (!Opts.LocalTypes || E->Ops.empty() || !E->Ops.front()->Ty)
+    return std::nullopt;
+  const CType *Base = E->Ops.front()->Ty;
+  if (E->Postfix) {
+    if (!Base->isPointer() || !Base->Inner)
+      return std::nullopt;
+    Base = Base->Inner;
+  }
+  if (!Base->isRecord() || !localRecord(Base))
+    return std::nullopt;
+  llvm::StringRef Tag = Base->Record->Spelling;
+  Tag.consume_front("struct ") || Tag.consume_front("union ");
+  const auto Members = Opts.LocalTypes->Members.find(Tag.str());
+  if (Members != Opts.LocalTypes->Members.end())
+    if (const auto Path = Members->second.find(E->Text.str());
+        Path != Members->second.end() && !Path->second.empty())
+      return Path->second;
+  unsupported(E->Field && E->Field->BitWidth
+                  ? "a bit-field, which the program's types read through "
+                    "methods"
+                  : "a member the program's types do not reach as a field");
+  return std::vector<SourceDialectLocalTypes::Hop>();
+}
+
+bool DialectPrinter::localRecord(const CType *Ty) const {
+  if (!Opts.LocalTypes || !Ty->isRecord() || Ty->Record->Anonymous)
+    return false;
+  llvm::StringRef Tag = Ty->Record->Spelling;
+  if (!Tag.consume_front("struct ") && !Tag.consume_front("union "))
+    return false;
+  return Opts.LocalTypes->Members.contains(Tag.str()) ||
+         Opts.LocalTypes->Opaque.contains(Tag.str());
 }
 
 void DialectPrinter::unread(llvm::StringRef Text, llvm::StringRef Reason) {

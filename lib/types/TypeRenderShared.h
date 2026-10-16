@@ -230,11 +230,19 @@ std::string renderRust(const TypeLibrary &Library, const LocalType &Type,
 std::string renderRustModule(const TypeLibrary &Library,
                              llvm::ArrayRef<const LocalType *> Types,
                              const RenderOptions &Options);
+EmbeddedSource renderRustEmbedded(const TypeLibrary &Library,
+                                  llvm::ArrayRef<const LocalType *> Defined,
+                                  llvm::ArrayRef<const LocalType *> Declared,
+                                  const RenderOptions &Options);
 std::string renderGo(const TypeLibrary &Library, const LocalType &Type,
                      const RenderOptions &Options);
 std::string renderGoFile(const TypeLibrary &Library,
                          llvm::ArrayRef<const LocalType *> Types,
                          const RenderOptions &Options);
+EmbeddedSource renderGoEmbedded(const TypeLibrary &Library,
+                                llvm::ArrayRef<const LocalType *> Defined,
+                                llvm::ArrayRef<const LocalType *> Declared,
+                                const RenderOptions &Options);
 std::string renderPython(const TypeLibrary &Library, const LocalType &Type,
                          const RenderOptions &Options);
 std::string renderPythonModule(const TypeLibrary &Library,

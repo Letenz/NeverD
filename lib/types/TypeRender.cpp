@@ -711,6 +711,25 @@ std::string renderTypes(const TypeLibrary &Library,
   return std::string();
 }
 
+EmbeddedSource renderEmbeddedSource(const TypeLibrary &Library,
+                                    llvm::ArrayRef<const LocalType *> Defined,
+                                    llvm::ArrayRef<const LocalType *> Declared,
+                                    const RenderOptions &Options) {
+  switch (Options.Lang) {
+  case Language::Rust:
+    return render::renderRustEmbedded(Library, Defined, Declared, Options);
+  case Language::Go:
+    return render::renderGoEmbedded(Library, Defined, Declared, Options);
+  case Language::C:
+  case Language::Cpp:
+  case Language::Python:
+  case Language::JavaScript:
+  case Language::Lua:
+    break;
+  }
+  return EmbeddedSource();
+}
+
 std::vector<std::string> valueDependencyNames(const LocalType &Type) {
   std::vector<std::string> Names;
   render::valueDependencies(Type, Names);
