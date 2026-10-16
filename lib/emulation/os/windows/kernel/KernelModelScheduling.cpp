@@ -647,6 +647,8 @@ llvm::Error KernelModel::canReleaseRange(uint64_t Base, uint64_t Size,
                                          uint64_t RetiringLookaside) const {
   if (Size > UINT64_MAX - Base)
     return schedulingError("overflowing object storage range");
+  if (auto E = canReleaseMDLStorage(Base, Size))
+    return E;
   if (auto E = canReleaseUserViewsForBacking(Base, Size))
     return E;
   if (Size)
@@ -713,6 +715,7 @@ llvm::Error KernelModel::prepareReleaseRanges(
       return E;
     if (auto E = RemoveLocks.forgetRange(Base, Size))
       return E;
+    retireMDLStorage(Base, Size);
   }
   return llvm::Error::success();
 }

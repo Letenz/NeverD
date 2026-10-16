@@ -415,6 +415,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
     return getDMAAdapter(A);
   case KernelAPIKind::IoAllocateMdl:
     return allocateMDL(A);
+  case KernelAPIKind::MmCreateMdl:
+    return createMDL(A[0], A[1], A[2]);
   case KernelAPIKind::IoBuildPartialMdl: {
     if (auto E = buildPartialMDL(A[0], A[1], A[2], uint32_t(A[3])))
       return E;

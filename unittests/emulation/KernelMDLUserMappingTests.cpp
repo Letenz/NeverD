@@ -257,6 +257,22 @@ protected:
   }
 };
 
+TEST_F(KernelMDLUserMapping, CreateMdlStorageOutlivesAllUserMappings) {
+  const auto IRP = begin();
+  const auto Pool = pool();
+  const auto MDL = call("MmCreateMdl", {0, Pool, profile::PageSize});
+  call("MmBuildMdlForNonPagedPool", {MDL});
+  const auto View = map(MDL);
+  rejected(Model->call("IoFreeMdl", {MDL}));
+  rejected(Model->call("ExFreePool", {MDL}));
+  put(View + 17, 0x65, 1);
+  EXPECT_EQ(get(Pool + 17, 1), 0x65u);
+  call("MmUnmapLockedPages", {View, MDL});
+  call("IoFreeMdl", {MDL});
+  call("ExFreePool", {Pool});
+  complete(IRP);
+}
+
 TEST_F(KernelMDLUserMapping, StackQueryRetainsBoundsAcrossProcessAttachment) {
   const auto IRP = begin();
   const auto Process = call("IoGetRequestorProcess", {IRP});

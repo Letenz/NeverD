@@ -2020,3 +2020,5 @@ KernelFileObjectTests 与 KernelObjectTests 覆盖带类型的指针打开、类
 `KernelMDLUserMapping.PrimaryQuery*` 覆盖精确分配字节、同页相邻所有者、完整位宽地址、IRQL、释放、别名、映射替换、读保护及不支持的主映射投影。真实 WDK 夹具执行静态和动态 `MmGetVirtualForPhysical`，包括 DPC 级系统视图，以及旧锁页别名仍存活时的用户虚拟地址重绑定。
 
 `DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*` 覆盖激活、回收、嵌套上下文恢复、完整位宽边界、IRQL、进程附加、输出重叠及先 High 后 Low 的故障写入顺序。原创及真实 WDK CRT 夹具在入口、工作线程和卸载阶段静态及动态调用两项栈查询，检查局部变量位于返回范围内，并在 DISPATCH_LEVEL 再次查询边界。
+
+`KernelMDLChain.CreateMdl*` 和 `KernelMDLUserMapping.CreateMdl*` 覆盖完整位宽检查、未改动字节、零长度／回绕元数据、池及栈生命周期、锁、别名、释放失败、部分复用、IRP 拒绝与 IRQL。真实 WDK 用户映射夹具静态及动态创建独立池、调用者池内部和栈描述符，检查物理身份及完整卸载。原始探针区分包装字段写入、池标志转换与注入的分配／释放边界。
