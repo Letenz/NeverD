@@ -6367,8 +6367,9 @@ The required HVF gate includes the Darwin target. See
 
 The repeated `ImmediateSelectPreservesBitmapsCopiesAndProviderPremises` and
 `SymbolicFileSystemsKeepOwnSnapshotAndFollowedTargetSeparate` semantic batches
-allow 20 seconds per guest run and 120 seconds per complete CTest case. The
-complete service and memory assertions still apply to every repetition.
+allow 20 seconds per guest run. Their complete CTest cases allow 120 and 240
+seconds respectively, covering four select runs or nine filesystem runs.
+The complete service and memory assertions still apply to every repetition.
 Native cancellation checks retain their short deadlines; production limits,
 instruction credit and event credit are unchanged.
 
