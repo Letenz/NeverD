@@ -2331,8 +2331,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
 Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die Irre.</translation>
     </message>
     <message>
-        <source>DWARF files (*.debug);;All files (*)</source>
-        <translation>DWARF-Dateien (*.debug);;Alle Dateien (*)</translation>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>DWARF-Dateien (*.debug *.dSYM);;Alle Dateien (*)</translation>
     </message>
 </context>
 <context>

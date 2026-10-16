@@ -1902,7 +1902,7 @@ void MainWindow::loadDwarf() {
   const auto path = QFileDialog::getOpenFileName(
       this, tr("Load DWARF file"),
       QFileInfo(session_.projectPath()).absolutePath(),
-      tr("DWARF files (*.debug);;All files (*)"));
+      tr("DWARF files (*.debug *.dSYM);;All files (*)"));
   if (path.isEmpty() || !session_.loaded() || session_.epoch() != epoch)
     return;
   session_.loadDwarf({{"path", path}});

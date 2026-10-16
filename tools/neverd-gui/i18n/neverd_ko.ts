@@ -2325,8 +2325,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
 그래도 이름을 불러오시겠습니까? 잘못된 주소의 이름은 분석을 오도합니다.</translation>
     </message>
     <message>
-        <source>DWARF files (*.debug);;All files (*)</source>
-        <translation>DWARF 파일 (*.debug);;모든 파일 (*)</translation>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>DWARF 파일 (*.debug *.dSYM);;모든 파일 (*)</translation>
     </message>
 </context>
 <context>

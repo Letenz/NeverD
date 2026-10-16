@@ -2325,8 +2325,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
 是否仍然載入其中的名稱？位於錯誤位址的名稱會誤導分析。</translation>
     </message>
     <message>
-        <source>DWARF files (*.debug);;All files (*)</source>
-        <translation>DWARF 檔案 (*.debug);;所有檔案 (*)</translation>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>DWARF 檔案 (*.debug *.dSYM);;所有檔案 (*)</translation>
     </message>
 </context>
 <context>

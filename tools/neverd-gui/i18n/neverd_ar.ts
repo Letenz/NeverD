@@ -2355,8 +2355,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
 هل تريد تحميل أسمائه رغم ذلك؟ الأسماء الموضوعة عند عناوين خاطئة تضلل التحليل.</translation>
     </message>
     <message>
-        <source>DWARF files (*.debug);;All files (*)</source>
-        <translation>ملفات DWARF (*.debug);;جميع الملفات (*)</translation>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>ملفات DWARF (*.debug *.dSYM);;جميع الملفات (*)</translation>
     </message>
 </context>
 <context>
