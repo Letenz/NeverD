@@ -1172,7 +1172,8 @@ void recoverCallAbi(
             continue;
           auto V =
               findReachingArgReg(Func, TRI, TheArch, Blk.Id, K, IntegerLayout,
-                                 /*AllowUnknownLiveIn=*/false, nullptr);
+                                 /*AllowUnknownLiveIn=*/false, nullptr, nullptr,
+                                 static_cast<int>(OI), Fmt);
           if (!V)
             continue;
           Found[K] = *V;
@@ -1257,9 +1258,19 @@ void recoverCallAbi(
                                    (MaxRegArg >= 0 && K <= MaxRegArg);
           bool FromLiveIn = false;
           auto V = findReachingArgReg(Func, TRI, TheArch, Blk.Id, K,
-                                      IntegerLayout, AllowLiveIn, &FromLiveIn);
+                                      IntegerLayout, AllowLiveIn, &FromLiveIn,
+                                      nullptr, static_cast<int>(OI), Fmt);
           if (!V)
             break;
+          // What only earlier calls left in the register is an argument only
+          // where the callee is known to read it, and an import reached
+          // through its slot takes only proven incoming values.
+          if (!AllowLiveIn || IsIndirectImport || VariableCallee) {
+            if (!LeftByCalls)
+              LeftByCalls.emplace(Func);
+            if (LeftByCalls->contains(*V))
+              break;
+          }
           if ((IsIndirectImport || VariableCallee) &&
               (FromLiveIn || V->Kind == MedVar::Param) &&
               !incomingArgumentReachesCall(Ctx, K))
@@ -1376,7 +1387,8 @@ void recoverCallAbi(
             continue;
           auto V =
               findReachingArgReg(Func, TRI, TheArch, Blk.Id, K, IntegerLayout,
-                                 /*AllowUnknownLiveIn=*/false, nullptr);
+                                 /*AllowUnknownLiveIn=*/false, nullptr, nullptr,
+                                 static_cast<int>(OI), Fmt);
           if (!V)
             continue;
           Found[K] = *V;
@@ -2432,11 +2444,17 @@ void recoverCallAbi(
           if (!LeftByCalls->contains(IntPart[I]))
             continue;
           // An indirect call has no callee to say its stack slots are
-          // arguments, and where integer arguments fill every register
-          // before the stack, a register no one set below them shows they
-          // are not (an -O0 spill near the call).
+          // arguments, nor has a variadic one for those past its named
+          // parameters.  Where integer arguments fill every register before
+          // the stack, a register no one set below them shows they are not
+          // (an -O0 spill near the call).  Apple's arm64 passes variadic
+          // arguments on the stack alone.
+          const bool OpenStackArguments =
+              CI.IsIndirect ||
+              (OpenVariadicArity &&
+               !(Convention && Convention->VariadicArgumentsOnStack));
           const bool NoStackArguments =
-              StackPart.empty() || (CI.IsIndirect && !PositionalSlots);
+              StackPart.empty() || (OpenStackArguments && !PositionalSlots);
           if (NoStackArguments) {
             for (size_t J = I; J < IntPart.size(); ++J)
               if (IntPart[J].Kind == MedVar::Param &&

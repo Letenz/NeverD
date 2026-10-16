@@ -11,6 +11,7 @@
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -226,6 +227,65 @@ protected:
         "  return note(\"%d %d %d\\n\", c, c + 1, c + 2);\n"
         "}\n",
         {Stub.string()});
+  }
+
+  // A routine that reads four argument registers, and callers that declare
+  // it with one, so a call sets only the first: after another call, after a
+  // join of two calls, and in a destructor that runs on both a normal and an
+  // exceptional path.  The routine has a unit of its own, where the callers'
+  // compiler cannot see that it reads the others and set them.
+  fs::path leftoverLibrary(llvm::StringRef Target) {
+    const std::string Prefix = Target.str() + "-leftover";
+    const auto Callee = tmpFile(Prefix + "-reads4.c");
+    const auto Callers = tmpFile(Prefix + "-callers.cpp");
+    const auto CalleeObject = tmpFile(Prefix + "-reads4.o");
+    const auto CallersObject = tmpFile(Prefix + "-callers.o");
+    const auto Library = tmpFile(Prefix + ".so");
+    std::ofstream(Callee) << "volatile long Sink;\n"
+                             "__attribute__((visibility(\"hidden\")))\n"
+                             "long reads4(long a, long b, long c, long d) {\n"
+                             "  Sink = a + b + c + d;\n"
+                             "  return Sink;\n"
+                             "}\n";
+    std::ofstream(Callers)
+        << "extern \"C\" {\n"
+           "__attribute__((visibility(\"hidden\"))) long reads4(long);\n"
+           "void step(int);\n"
+           "void other(int);\n"
+           "void thrower(int);\n"
+           "__attribute__((noinline)) long after_call(long v) {\n"
+           "  step(1);\n"
+           "  return reads4(v) + 1;\n"
+           "}\n"
+           "__attribute__((noinline)) long after_branch(int c, long v) {\n"
+           "  if (c)\n"
+           "    step(1);\n"
+           "  else\n"
+           "    other(2);\n"
+           "  return reads4(v) + 1;\n"
+           "}\n"
+           "}\n"
+           "struct Guard {\n"
+           "  long V;\n"
+           "  ~Guard() { reads4(V); }\n"
+           "};\n"
+           "extern \"C\" __attribute__((noinline)) long guarded(long v) {\n"
+           "  Guard G{v};\n"
+           "  thrower(1);\n"
+           "  return 0;\n"
+           "}\n";
+    for (const auto &[Source, Object] :
+         {std::pair{Callee, CalleeObject}, std::pair{Callers, CallersObject}}) {
+      auto Compile =
+          exec(NEVERD_TEST_CLANG,
+               {"--target=" + Target.str(), "-fPIC", "-O1", "-fexceptions",
+                "-c", Source.string(), "-o", Object.string()});
+      EXPECT_TRUE(Compile.ok()) << Compile.err;
+    }
+    auto Link = exec("ld.lld", {"-shared", CallersObject.string(),
+                                CalleeObject.string(), "-o", Library.string()});
+    EXPECT_TRUE(Link.ok()) << Link.err;
+    return Library;
   }
 
   /// The shared library \p Name assembled from \p Assembly for \p Target.
@@ -659,6 +719,135 @@ TEST_F(DataSymbolBindingTest, VariadicCallsPassOnlyWhatTheirCallerSets) {
         for (int Passed : Counts)
           EXPECT_EQ(Passed, Count) << Body;
         EXPECT_EQ(Body.find("__builtin_trap"), std::string::npos) << Body;
+      }
+    }
+  }
+}
+
+// A variadic callee says nothing of the stack slots past its named
+// parameters.  Where a register below them holds only what an earlier call
+// left, they hold no argument either, but what -O0 code spilled there
+// before the call (`str x0, [sp]`).
+TEST_F(DataSymbolBindingTest, VariadicCallsTakeNoSpillAboveAnUnsetRegister) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "requires cross-target Clang and ld.lld";
+  auto Loaded = loadBinary(assembledLibrary("aarch64-linux-gnu", "vspill",
+                                            R"(.text
+.globl note
+.hidden note
+.type note,%function
+note:
+  sub sp, sp, #288
+  stp x29, x30, [sp, #256]
+  str x28, [sp, #272]
+  add x29, sp, #256
+  mov x8, #-56
+  mov x9, sp
+  sub x10, x29, #120
+  movk x8, #65408, lsl #32
+  add x9, x9, #128
+  stp x1, x2, [x29, #-120]
+  stp x9, x8, [x29, #-16]
+  add x8, x10, #56
+  add x9, x29, #32
+  stp x9, x8, [x29, #-32]
+  sub x1, x29, #64
+  stp x3, x4, [x29, #-104]
+  stp q0, q1, [sp]
+  ldur q0, [x29, #-32]
+  ldur q1, [x29, #-16]
+  stp x5, x6, [x29, #-88]
+  stur x7, [x29, #-72]
+  stp q2, q3, [sp, #32]
+  stp q4, q5, [sp, #64]
+  stp q6, q7, [sp, #96]
+  stp q0, q1, [x29, #-64]
+  bl vreport
+  ldp x29, x30, [sp, #256]
+  ldr x28, [sp, #272]
+  add sp, sp, #288
+  ret
+.size note, .-note
+.globl open_or_note
+.type open_or_note,%function
+open_or_note:
+  sub sp, sp, #0x40
+  stp x29, x30, [sp, #48]
+  add x29, sp, #0x30
+  adrp x9, fmt
+  add x9, x9, :lo12:fmt
+  stur x0, [x29, #-8]
+  ldur x0, [x29, #-8]
+  str x9, [sp, #24]
+  bl openit
+  stur x0, [x29, #-16]
+  ldur x8, [x29, #-16]
+  cbnz x8, 1f
+  mov w0, #-1
+  ldur x1, [x29, #-8]
+  str x1, [sp, #8]
+  bl errstr
+  ldr x1, [sp, #24]
+  str x0, [sp]
+  mov x0, x1
+  ldr x1, [sp, #8]
+  ldr x2, [sp]
+  bl note
+1:
+  ldur x0, [x29, #-16]
+  ldp x29, x30, [sp, #48]
+  add sp, sp, #0x40
+  ret
+.size open_or_note, .-open_or_note
+.section .rodata
+fmt:
+  .asciz "Can't open '%s': %s"
+)"));
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    const auto C = source(*Loaded, LLVM, {"note", "open_or_note"});
+    const std::string Note = functionBody(C, "note");
+    ASSERT_FALSE(Note.empty()) << C;
+    // LLVM C spells the variadic tail `...`, which names no parameter.
+    EXPECT_LE(
+        llvm::count_if(parameterNames(Note),
+                       [](const std::string &Name) { return !Name.empty(); }),
+        8)
+        << Note;
+    const std::string Caller = functionBody(C, "open_or_note");
+    ASSERT_FALSE(Caller.empty()) << C;
+    const std::vector<int> Counts = callArgumentCounts(Caller, "note");
+    EXPECT_FALSE(Counts.empty()) << Caller;
+    for (int Passed : Counts)
+      EXPECT_LE(Passed, 8) << Caller;
+  }
+}
+
+// A call passes no register an earlier call may have changed as its caller's
+// incoming value, though its callee reads it: the register holds what that
+// call left, and the caller takes no parameter for it.  An exception landing
+// pad, which the unwinder enters with the caller-saved registers
+// unspecified, holds none of them either.
+TEST_F(DataSymbolBindingTest, CallsTakeNoIncomingRegisterAnEarlierCallChanged) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "requires cross-target Clang and ld.lld";
+  const std::pair<const char *, size_t> Callers[] = {
+      {"after_call", 1}, {"after_branch", 2}, {"guarded", 1}};
+  for (const char *Target : {"x86_64-linux-gnu", "i386-linux-gnu",
+                             "armv7-linux-gnueabi", "aarch64-linux-gnu"}) {
+    SCOPED_TRACE(Target);
+    auto Loaded = loadBinary(leftoverLibrary(Target));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(LLVM);
+      const auto C =
+          source(*Loaded, LLVM, {"after_call", "after_branch", "guarded"});
+      for (const auto &[Caller, Params] : Callers) {
+        SCOPED_TRACE(Caller);
+        const std::string Body = functionBody(C, Caller);
+        ASSERT_FALSE(Body.empty()) << C;
+        EXPECT_EQ(parameterNames(Body).size(), Params) << Body;
       }
     }
   }
