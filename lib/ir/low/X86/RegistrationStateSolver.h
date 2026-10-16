@@ -465,7 +465,8 @@ private:
 
   std::map<va_t, uint32_t> CalleeIndices;
   std::map<std::pair<va_t, bool>, uint32_t> StackPops;
-  std::set<std::pair<va_t, bool>> LocalUnwindTargets;
+  std::map<std::pair<va_t, bool>, RegistrationLocalUnwindContract::Kind>
+      LocalUnwindTargets;
   bool FailedLocalUnwind = false;
   std::map<va_t, RegistrationSEHControlContract> SEHControlIndex;
   using SEHExitKey = std::tuple<va_t, va_t, va_t, int>;

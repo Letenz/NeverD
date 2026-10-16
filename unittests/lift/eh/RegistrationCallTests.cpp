@@ -306,65 +306,70 @@ TEST(RegistrationCallABI, StackImportContractRequiresTheExactRuntimeProvider) {
 }
 
 TEST(RegistrationCallABI, LocalUnwindIdentityRequiresCurrentProviderAndVeneer) {
-  for (bool Indirect : {false, true}) {
-    for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
-      SCOPED_TRACE(Indirect);
-      SCOPED_TRACE(Mutation);
-      ThrowImage F;
-      F.Image.Imports[0].Name = "_local_unwind2";
-      ASSERT_TRUE(F.Image.recordImportStorageSlot(
-          ThrowImage::IATVA, "_local_unwind2", 0,
-          ImportStorageEvidence::PointerTable));
-      auto &Text = F.Image.Segments[0];
-      Text.FileSz = Text.Size;
-      Section Code;
-      Code.Name = ".text";
-      Code.VA = Text.VA;
-      Code.Size = Code.FileSz = Text.Size;
-      Code.Flags = Text.Flags;
-      F.Image.Sections = {Code};
-      if (Mutation == 1)
-        F.Image.Imports[0].Module = "custom.dll";
-      if (Mutation == 2)
-        F.Image.Imports[0].Name = "_local_unwind4";
-      if (Mutation == 3) {
-        F.Image.Imports.push_back(F.Image.Imports[0]);
-        F.Image.Imports.back().Module = "custom.dll";
-      }
-      if (Mutation == 4)
-        F.Image.ConflictingImportStorageSlots.insert(ThrowImage::IATVA);
-      if (Mutation == 5)
-        Text.Data[0x81] = 0x15; // a call is not a transparent jump veneer
-      if (Mutation == 6)
-        Text.Flags = Text.Flags | SegmentFlags::Writable;
-      if (Mutation == 7)
-        F.Image.Arch = Arch::X64;
-      if (Mutation == 8)
-        F.Image.Format = BinaryFormat::ELF;
-      if (Mutation == 9)
-        F.Image.Imports[0].Module = "MSVCRT.dll";
-      if (Mutation == 10)
-        F.Image.Bits = Bitness::Bits64;
-      if (Mutation == 11)
-        F.Image.Arch = Arch::ARM;
-      if (Mutation == 12)
-        F.Image.Arch = Arch::AArch64;
-      if (Mutation == 13)
-        F.Image.Format = BinaryFormat::MachO;
-      const va_t Target = Indirect ? ThrowImage::IATVA : ThrowImage::ImportVA;
-      const auto Contract =
-          getCheckedX86LocalUnwindContract(F.Image, Target, Indirect);
-      EXPECT_EQ(Contract.has_value(),
-                Mutation == 0 || Mutation == 9 ||
-                    (Indirect && (Mutation == 5 || Mutation == 6)));
-      EXPECT_FALSE(
-          getCheckedX86LocalUnwindContract(F.Image, Target + 1, Indirect));
-      if (Contract) {
-        EXPECT_EQ(Contract->Target, Target);
-        EXPECT_EQ(Contract->Indirect, Indirect);
+  for (bool EH4 : {false, true})
+    for (bool Indirect : {false, true}) {
+      for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+        SCOPED_TRACE(Indirect);
+        SCOPED_TRACE(EH4);
+        SCOPED_TRACE(Mutation);
+        ThrowImage F;
+        const char *Name = EH4 ? "_local_unwind4" : "_local_unwind2";
+        F.Image.Imports[0].Name = Name;
+        ASSERT_TRUE(F.Image.recordImportStorageSlot(
+            ThrowImage::IATVA, Name, 0, ImportStorageEvidence::PointerTable));
+        auto &Text = F.Image.Segments[0];
+        Text.FileSz = Text.Size;
+        Section Code;
+        Code.Name = ".text";
+        Code.VA = Text.VA;
+        Code.Size = Code.FileSz = Text.Size;
+        Code.Flags = Text.Flags;
+        F.Image.Sections = {Code};
+        if (Mutation == 1)
+          F.Image.Imports[0].Module = "custom.dll";
+        if (Mutation == 2)
+          F.Image.Imports[0].Name = "_local_unwind5";
+        if (Mutation == 3) {
+          F.Image.Imports.push_back(F.Image.Imports[0]);
+          F.Image.Imports.back().Module = "custom.dll";
+        }
+        if (Mutation == 4)
+          F.Image.ConflictingImportStorageSlots.insert(ThrowImage::IATVA);
+        if (Mutation == 5)
+          Text.Data[0x81] = 0x15; // a call is not a transparent jump veneer
+        if (Mutation == 6)
+          Text.Flags = Text.Flags | SegmentFlags::Writable;
+        if (Mutation == 7)
+          F.Image.Arch = Arch::X64;
+        if (Mutation == 8)
+          F.Image.Format = BinaryFormat::ELF;
+        if (Mutation == 9)
+          F.Image.Imports[0].Module = "MSVCRT.dll";
+        if (Mutation == 10)
+          F.Image.Bits = Bitness::Bits64;
+        if (Mutation == 11)
+          F.Image.Arch = Arch::ARM;
+        if (Mutation == 12)
+          F.Image.Arch = Arch::AArch64;
+        if (Mutation == 13)
+          F.Image.Format = BinaryFormat::MachO;
+        const va_t Target = Indirect ? ThrowImage::IATVA : ThrowImage::ImportVA;
+        const auto Contract =
+            getCheckedX86LocalUnwindContract(F.Image, Target, Indirect);
+        EXPECT_EQ(Contract.has_value(),
+                  Mutation == 0 || Mutation == 9 ||
+                      (Indirect && (Mutation == 5 || Mutation == 6)));
+        EXPECT_FALSE(
+            getCheckedX86LocalUnwindContract(F.Image, Target + 1, Indirect));
+        if (Contract) {
+          EXPECT_EQ(Contract->Target, Target);
+          EXPECT_EQ(Contract->Indirect, Indirect);
+          EXPECT_EQ(Contract->Protocol,
+                    EH4 ? RegistrationLocalUnwindContract::Kind::EH4
+                        : RegistrationLocalUnwindContract::Kind::EH3);
+        }
       }
     }
-  }
 }
 
 TEST(RegistrationCallABI, TerminationOnlyStackProofDoesNotGrantAnObjectBorrow) {

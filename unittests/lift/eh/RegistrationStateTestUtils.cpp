@@ -166,6 +166,60 @@ LowFunc makeBranchingFrame() {
   return F;
 }
 
+LowFunc makeCookieFrame(bool GS) {
+  auto F = makeBranchingFrame();
+  auto &EH = *F.ExceptionMetadata;
+  EH.Personality = ExceptionPersonality::ExceptHandler4;
+  EH.Encoding = ExceptionEncoding::X86ScopeTableEH4;
+  auto &Chain = *EH.Registration;
+  Chain.SeededTryLevel = -2;
+  Chain.ScopeTableVA = 0x3000;
+  Chain.EHCookieOffset = -28;
+  Chain.GSCookieOffset = GS ? -36 : -2;
+  Chain.GSCookieXOROffset = GS ? 4 : 0;
+  Chain.HasSecurityCookies = GS;
+  Chain.Scopes.front().EnclosingLevel = -2;
+  Chain.TryLevelStores.back().Level = -2;
+  F.Blocks[2].Ops.back().Inputs[1] = NdVar::cst(uint32_t(-2), 4);
+  auto &Entry = F.Blocks.front();
+  auto Install = Entry.Ops.back();
+  Entry.Ops.pop_back();
+  emitOp(Entry, 0x1000, NdOp::COPY, NdVar::tmp(20, 4),
+         {NdVar::reg(x86reg::RSP, 4)});
+  emitOp(Entry, 0x1000, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
+         {NdVar::reg(x86reg::RSP, 4), NdVar::cst(24, 4)});
+  emitOp(Entry, 0x1000, NdOp::LOAD, NdVar::tmp(21, 4), {NdVar::cst(0x4000, 4)});
+  emitOp(Entry, 0x1000, NdOp::INT_XOR, NdVar::tmp(22, 4),
+         {NdVar::tmp(21, 4), NdVar::cst(0x3000, 4)});
+  auto Store = [&](int32_t Slot, NdVar Value) {
+    emitOp(Entry, 0x1000, NdOp::INT_ADD, NdVar::tmp(24, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(Slot), 4)});
+    emitOp(Entry, 0x1000, NdOp::STORE, {}, {NdVar::tmp(24, 4), Value});
+  };
+  Store(-8, NdVar::tmp(22, 4));
+  emitOp(Entry, 0x1000, NdOp::INT_XOR, NdVar::tmp(23, 4),
+         {NdVar::tmp(21, 4), NdVar::reg(x86reg::RBP, 4)});
+  Store(-28, NdVar::tmp(23, 4));
+  if (GS) {
+    emitOp(Entry, 0x1000, NdOp::INT_ADD, NdVar::tmp(25, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(4, 4)});
+    emitOp(Entry, 0x1000, NdOp::INT_XOR, NdVar::tmp(26, 4),
+           {NdVar::tmp(21, 4), NdVar::tmp(25, 4)});
+    Store(-36, NdVar::tmp(26, 4));
+  }
+  Install.Seq = Entry.Ops.size();
+  Install.Inputs[1] = NdVar::tmp(20, 4);
+  Entry.Ops.push_back(Install);
+  auto &Exit = F.Blocks.back();
+  emitOp(Exit, Exit.StartAddr, NdOp::INT_ADD, NdVar::tmp(30, 4),
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-16), 4)});
+  emitOp(Exit, Exit.StartAddr, NdOp::LOAD, NdVar::tmp(31, 4),
+         {NdVar::tmp(30, 4)});
+  emitOp(Exit, Exit.StartAddr, NdOp::STORE, {},
+         {NdVar::cst(0, 4), NdVar::tmp(31, 4)}, NdMemoryAddressSpace::X86FS);
+  return F;
+}
+
 LowFunc makeCxxCatchContinuation(bool IncludeResume) {
   auto F = makeBranchingFrame();
   auto &EH = *F.ExceptionMetadata;

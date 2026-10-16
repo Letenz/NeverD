@@ -97,6 +97,7 @@ add_neverd_component_library(NeverDIRLow
   GuardedZeroSelect.cpp
   IndirectTailFrame.cpp
   X86/RegistrationCalleeABI.cpp
+  X86/RegistrationLocalUnwind.cpp
   X86/RegistrationCallbackImage.cpp
   X86/RegistrationCFG.cpp
   X86/RegistrationCleanupABI.cpp

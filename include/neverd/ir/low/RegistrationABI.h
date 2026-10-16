@@ -42,7 +42,7 @@ std::optional<uint32_t>
 getCheckedX86CalleeStackPop(const BinaryImage &Image, va_t Target,
                             size_t *CumulativeWork = nullptr);
 
-/// Authenticate the exact PE32 _local_unwind2 import or immutable IAT veneer.
+/// Authenticate a PE32 _local_unwind2/4 import or immutable IAT veneer.
 /// This identifies its runtime protocol, not its caller's frame or callbacks.
 std::optional<RegistrationLocalUnwindContract>
 getCheckedX86LocalUnwindContract(const BinaryImage &Image, va_t Target,

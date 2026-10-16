@@ -54,8 +54,10 @@ struct RegistrationCalleeStackContract {
 /// Runtime identity alone grants no frame effect. The state solver must bind
 /// the actual arguments and prove every invoked finally before using it.
 struct RegistrationLocalUnwindContract {
+  enum class Kind : uint8_t { EH3, EH4 };
   va_t Target = InvalidVA;
   bool Indirect = false;
+  Kind Protocol = Kind::EH3;
 };
 
 /// Source-byte evidence for the physical near CALL/RET protocol used by an

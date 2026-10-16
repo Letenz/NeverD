@@ -20,7 +20,12 @@ bool RegistrationStateSolver::initializeContracts() {
       return false;
     for (const auto &Call : *LocalUnwinds)
       if (!charge(1) || !Call.Target || Call.Target > UINT32_MAX ||
-          !LocalUnwindTargets.emplace(Call.Target, Call.Indirect).second) {
+          (Call.Protocol != RegistrationLocalUnwindContract::Kind::EH3 &&
+           Call.Protocol != RegistrationLocalUnwindContract::Kind::EH4) ||
+          !LocalUnwindTargets
+               .emplace(std::make_pair(Call.Target, Call.Indirect),
+                        Call.Protocol)
+               .second) {
         Result.Diagnostics.push_back(
             "registration local-unwind contract is invalid");
         return false;
