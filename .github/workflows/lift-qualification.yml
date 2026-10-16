@@ -115,7 +115,8 @@ jobs:
           output = Path('build-lift-qualification/evidence')
           for owner, pattern, minimum, label in (
               ('NeverDSourcePatchMatrixTests', 'AllTargets/*', 154, 'source-targets'),
-              ('NeverDSessionCAPITests', 'SessionCAPITest.*', 116, 'native-session'),
+              # External Windows kernel inputs have a separate suite.
+              ('NeverDSessionCAPITests', 'SessionCAPITest.*', 128, 'native-session'),
           ):
               binary = 'build-lift-qualification/bin/' + owner
               listed = subprocess.check_output([

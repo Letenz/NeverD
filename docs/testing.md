@@ -296,11 +296,15 @@ python3 scripts/check_type_renders.py --neverd build/bin/neverd \
 
 With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
 ntoskrnl.exe and its PDB,
-`SessionCAPITest.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
+`SessionCAPIKernelInputs.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
 and checks that the headers join its PDB without conflicts.
-`SessionCAPITest.KernelFunctionsDecompileWithTheirPrototypes` decompiles
+`SessionCAPIKernelInputs.KernelFunctionsDecompileWithTheirPrototypes` decompiles
 `NtCreateFile`, `IoAllocateIrp`, `PsCreateSystemThread` and
 `IofCompleteRequest` and checks the signatures the headers give them.
+Run these external-input checks with `--gtest_filter=SessionCAPIKernelInputs.*`.
+Without the two inputs they remain explicit skips. The Linux Lift qualification
+requires every `SessionCAPITest.*` case to execute and pass using repository
+fixtures; it does not claim Windows kernel-input coverage.
 `PrototypeDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
 the conversion and which functions take a prototype without a program.
 `scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
