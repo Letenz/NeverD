@@ -1261,6 +1261,47 @@ private slots:
     QVERIFY(code->allText().contains(QStringLiteral("v0 + 030; /* 8 */")));
   }
 
+  void codeEditKeepsThePlaceInALongFunction() {
+    // An edit loads the function's pages again. The first page used to
+    // clamp the cursor and the view, which then stayed near its end: the
+    // cursor on a number of the third page jumped away from it.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers-paged.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address function = Base + 0x140;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 600,
+                             OpenTimeoutMs);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    code->setCursorLine(0);
+    QVERIFY(code->findText(QStringLiteral("24"), true));
+    const int line = code->cursorLine();
+    const int top = code->verticalScrollBar()->value();
+    QVERIFY(line > 512);
+    QVERIFY(top > 256);
+    bench.action(ActionId::EditOperandDecimal)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(QStringLiteral("return v0 + 0x18;")),
+        OpenTimeoutMs);
+    QCOMPARE(code->cursorLine(), line);
+    QCOMPARE(code->verticalScrollBar()->value(), top);
+    const auto target = code->numberTarget();
+    QVERIFY(target.has_value());
+    QCOMPARE(target->shown, neverd::LiteralRadix::Hex);
+  }
+
   void graphJumpDuringFunctionLoadKeepsLatestAddress() {
     QTemporaryDir directory;
     Workbench bench;

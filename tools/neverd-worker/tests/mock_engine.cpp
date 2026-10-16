@@ -1957,6 +1957,7 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
       session(s)->path.ends_with("code-edits-cpp.bin") ||
       session(s)->path.ends_with("code-edits-mapped.bin") ||
       session(s)->path.ends_with("code-numbers.bin") ||
+      session(s)->path.ends_with("code-numbers-paged.bin") ||
       session(s)->path.ends_with("code-folding.bin") ||
       session(s)->path.ends_with("code-folding-cpp.bin") ||
       session(s)->path.ends_with("local-references.bin") ||
@@ -1983,6 +1984,14 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
              "  int32_t v1 = v0 + 24; /* 8 */\n"
              "  return v1 & 0xFFFFFFFF;\n"
              "}\n";
+    // A number on the third page, after statements without digits.
+    if (session(s)->path.ends_with("code-numbers-paged.bin")) {
+      full = "#include <stdint.h>\n"
+             "int32_t function_20(int32_t v0) {\n";
+      for (int i = 0; i < 600; ++i)
+        full += "  v0 += v0;\n";
+      full += "  return v0 + 24;\n}\n";
+    }
     if (codeFolding)
       full = "#include <stdint.h>\n"
              "int32_t function_20(int32_t v0) {\n"
