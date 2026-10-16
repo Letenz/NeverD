@@ -13,13 +13,16 @@
 
 namespace neverd::registration_state {
 
-std::optional<va_t> RegistrationStateSolver::sehCallContinuation(va_t Call) {
-  if (!charge(1))
+std::optional<va_t>
+RegistrationStateSolver::sehCallContinuation(va_t Call, va_t CallerEntry) {
+  if (!charge(1) || (CallerEntry && !FinallyTargets.count(CallerEntry)))
     return std::nullopt;
   const auto Source = SEHControlIndex.find(Call);
   if (Source == SEHControlIndex.end() ||
       Source->second.Control != RegistrationSEHControlContract::Kind::NearCall)
     return std::nullopt;
+  // A nested invocation resumes on its authenticated caller's private stack.
+  // Out-of-line finally bodies need not lie inside the primary code span.
   va_t Next = Source->second.EndAddress;
   std::set<va_t> Seen;
   while (!Entries.count(Next)) {
@@ -31,19 +34,21 @@ std::optional<va_t> RegistrationStateSolver::sehCallContinuation(va_t Call) {
             RegistrationSEHControlContract::Kind::NearJump ||
         (Jump->second.EndAddress - Next != 2 &&
          Jump->second.EndAddress - Next != 5) ||
-        !EH.CodeRange.contains(Next))
+        (!CallerEntry && !EH.CodeRange.contains(Next)))
       return std::nullopt;
     Next = Jump->second.Target;
   }
-  return EH.CodeRange.contains(Next) ? std::optional<va_t>{Next} : std::nullopt;
+  return CallerEntry || EH.CodeRange.contains(Next) ? std::optional<va_t>{Next}
+                                                    : std::nullopt;
 }
 
 bool RegistrationStateSolver::validateSEHCallContinuation(size_t I,
-                                                          const LowOp &Op) {
+                                                          const LowOp &Op,
+                                                          va_t CallerEntry) {
   const auto &Block = Function.Blocks[I];
   const auto Boundary = Boundaries.find(Op.Addr);
   const auto Control = SEHControlIndex.find(Op.Addr);
-  const auto Resume = sehCallContinuation(Op.Addr);
+  const auto Resume = sehCallContinuation(Op.Addr, CallerEntry);
   if (!SEHControls || !Function.hasCompleteLiftCoverage() ||
       Op.Opcode != NdOp::CALL || Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
       Op.Inputs[0].Size != 4 || Op.Seq < 0 ||

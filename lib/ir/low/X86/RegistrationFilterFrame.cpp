@@ -57,7 +57,7 @@ bool RegistrationStateSolver::runSEHFilterSearch(
     SEHFilterOutcomes Returned;
     if (!Scope.FilterVA ||
         !runSEHCallbackFrame(Scope.FilterVA, Current.Frame, false, Writes,
-                             nullptr, nullptr, &Returned))
+                             nullptr, &Returned))
       return false;
     for (auto &[Disposition, Frames] : Returned)
       for (auto &[State, Frame] : Frames) {

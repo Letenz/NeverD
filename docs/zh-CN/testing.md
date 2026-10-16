@@ -1883,7 +1883,7 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 `longjmp-retired-inner-scope` 验证非局部恢复不会重新激活已经退出的作用域。
 `longjmp-nested-finally-call` 从普通 finally 调用中执行可返回的内层 finally，随后恢复父函数；
 `longjmp-nested-finally-unwind` 通过 CRT unwind 进入外层 finally。两者区分内外层写入，
-并在恢复后再次抛出异常。每个普通 finally 调用接受 16 类安装器变异，检查源归属、目标、
+并在恢复后再次抛出异常。每个普通 finally 调用接受 17 类安装器变异，检查源归属、目标、
 父帧、abnormal 标志、ABI 及属性。clone 回归覆盖两次调用共享未观察的返回值槽，以及
 volatile 读取造成的原子拒绝。
 普通入口与运行时展开的源测试共同覆盖直接调用、折叠尾跳转及 CALL 后隐藏副作用。
@@ -1956,3 +1956,5 @@ KernelFileObjectTests 与 KernelObjectTests 覆盖带类型的指针打开、类
 `DriverFileSystemTests.cpp` / `KernelFileSystemTests.cpp` / `DriverFileSystemExecutionTests.cpp` / `DriverScenarioPublic` / `test_driver_filesystem_integration.py`: 可选 `filesystem` 在 DriverEntry 前声明会话内卷。省略表示可用性未知，`[]` 表示无提供方；每个卷显式包含根目录。现有声明节点可通过真实 CREATE 请求打开，入口为 `ZwOpenFile` 以及 `ZwCreateFile`、`IoCreateFile` 的 FILE_OPEN 形式。名称查找、来宾筛选器、共享、句柄和指针生命周期复用统一所有者，不读取宿主文件。新建、覆盖、删除、元数据查询、数据 I/O、枚举及文件系统控制仍未实现。 `NEVERD_WDM_FILESYSTEM_FIXTURE`, `NEVERD_WDM_FILESYSTEM_CFG_FIXTURE`, `NEVERD_TEST_DRIVER_FILESYSTEM_FIXTURE`, `NEVERD_TEST_LIBNEVERD`. `UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery`: `configuration.filesystem` 保存输入；顶层 `filesystem` 来自独立状态所有者，增加 `device_object` 和节点 `end_of_file`，执行或投影校验停止后仍保留。通用 `devices` 只包含来宾设备。会话卷可在卸载后保留，但来宾对象、引用、句柄、挂接和 IRP 必须释放。任何声明，包括 `[]`，都保留未重建依赖并阻止可执行 UNPACK 恢复。旧 Unicorn 模式可能在停止前提交已拒绝的设备写入；诊断保留投影失败，文件状态仍可观察。
 
 `KernelFileCreateTests.cpp` 覆盖生产者返回前保留数据包、共享失败、异步期间保留相对根目录、显式取消、失败／别名输出与卸载清理。`DriverFileSystemExecutionTests.cpp` 在两种契约、基址及可用后端上执行原创和真实 WDK 普通／CFG 调用方，包含协作式和指令时钟调度。C API／CLI／Python 保留相同文件身份。不可用后端仍计为跳过。原始内核探针区分 CREATE／取消数据包保留与普通 IRP 释放；事件和 APC 替换边界不证明完整文件系统或内核。
+
+`longjmp-handler-cleanup-jump` 与 `longjmp-handler-nested-cleanup-jump` 在所选 handler 的直接或嵌套 cleanup 中取消选择并重新跳转。EH3、EH4、EH4+GS 六组变体在两个基址对比原始与九种生成映像，检查轨迹 236/2367、值 42、恢复的 EBX 与状态 0。源、MedIR 和安装器变异拒绝错误缓冲区或值、伪造调用身份、错误回调归属、缺失 noreturn 及新增普通返回。完整源配置含 150 个场景，旧编译器配置保持原成员。

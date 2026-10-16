@@ -26,6 +26,7 @@ struct SEHNestedFinallyCall {
   va_t Target;
   size_t CallerIndex;
   size_t CalleeIndex;
+  bool NoReturn;
   std::vector<llvm::Instruction *> DiscardedResults;
 };
 

@@ -217,7 +217,7 @@ TEST(RegistrationState, FinallyInvocationsResumeOnlyTheirCheckedParent) {
 }
 
 TEST(RegistrationState, NestedFinallyKeepsEachInvocationReturnSlot) {
-  for (unsigned Mutation = 0; Mutation != 17; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 19; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto F = invocationFrame(0, true);
     auto &Outer = F.Blocks[6];
@@ -319,9 +319,14 @@ TEST(RegistrationState, NestedFinallyKeepsEachInvocationReturnSlot) {
       addFinallyTailJump(Outer, Return, Controls, Mutation - 7);
     if (Mutation == 16)
       addFinallyCallTrailingEffect(Outer);
+    if (Mutation == 17)
+      F.ExceptionMetadata->CodeRange.End = 0x1700;
+    if (Mutation == 18)
+      F.ExceptionMetadata->CodeRange.End = 0x1105;
     const auto A = analyzeRegistrationStates(F, 0, 0, nullptr, nullptr, nullptr,
                                              nullptr, &Controls);
-    const bool Valid = Mutation == 0 || Mutation == 6 || Mutation == 7;
+    const bool Valid =
+        Mutation == 0 || Mutation == 6 || Mutation == 7 || Mutation == 17;
     EXPECT_EQ(A.Complete, Valid);
     if (Valid) {
       EXPECT_FALSE(A.HasBoundSEHCallees);
