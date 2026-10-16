@@ -88,6 +88,10 @@ llvm::Expected<uint64_t> cStringLength(const KernelModel &Model,
                                        unsigned UnitWidth);
 /// Return the pinned kernel ctype digit mask, with int/byte carrier narrowing.
 uint64_t cIsDigit(uint32_t Value);
+/// Locate the raw PE signature through the pinned kernel's DOS-offset checks.
+/// This does not validate the optional header, sections or image loadability.
+llvm::Expected<uint64_t> imageNtHeader(const KernelModel &Model,
+                                       GuestMemory &Memory, uint64_t Base);
 /// In-place ASCII case conversion. Other byte/UTF-16 units are unchanged;
 /// only converted units are written, with preceding stores retained on faults.
 llvm::Expected<uint64_t> cStringChangeCase(const KernelModel &Model,

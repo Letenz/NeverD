@@ -14,7 +14,10 @@ typedef unsigned long long U64;
 #ifdef NEVERD_WDK_FIXTURE
 #include <ctype.h>
 #include <ntddk.h>
+#include <ntimage.h>
 #include <string.h>
+// The pinned WDK lacks this declaration; use its PE type for the kernel ABI.
+NTSYSAPI PIMAGE_NT_HEADERS NTAPI RtlImageNtHeader(PVOID Base);
 typedef PDEVICE_OBJECT DEVICE;
 typedef PDRIVER_OBJECT DRIVER;
 typedef PUNICODE_STRING REGISTRY;
@@ -28,6 +31,9 @@ typedef struct {
   U16 Length, MaximumLength;
   U16 *Buffer;
 } TEXT, *REGISTRY;
+__declspec(dllimport) int memcpy_s(void *, U64, const void *, U64);
+__declspec(dllimport) int memmove_s(void *, U64, const void *, U64);
+__declspec(dllimport) void *RtlImageNtHeader(void *);
 __declspec(dllimport) int isdigit(int);
 __declspec(dllimport) char *_strupr(char *);
 __declspec(dllimport) U16 *_wcslwr(U16 *);
@@ -73,6 +79,14 @@ static __typeof__(&strcpy_s) DynamicCopy;
 static __typeof__(&strncpy_s) DynamicCountedCopy;
 static __typeof__(&wcscat_s) DynamicAppend;
 static __typeof__(&wcsncpy_s) DynamicWideCopy;
+// The WDK links memcpy_s from ntoskrnl.lib; dynamic lookup still calls the
+// kernel export. The original declarations exercise its direct import.
+static __typeof__(&memcpy_s) volatile CheckedMemoryCopy = memcpy_s;
+static __typeof__(&memmove_s) volatile CheckedMemoryMove = memmove_s;
+static __typeof__(&RtlImageNtHeader) volatile ImageHeader = RtlImageNtHeader;
+static __typeof__(&memcpy_s) DynamicMemoryCopy;
+static __typeof__(&memmove_s) DynamicMemoryMove;
+static __typeof__(&RtlImageNtHeader) DynamicImageHeader;
 static DEVICE Device;
 static void *Work;
 static volatile U32 WorkerDone, WorkerFailed;
@@ -82,6 +96,35 @@ static NTSTATUS probe(void) {
     int (*Classify)(int) = Dynamic ? DynamicDigit : Digit;
     CHECK(Classify('0') == 4 && Classify('9') == 4 && !Classify('/') &&
           !Classify(':') && Classify(0x130) == 4 && !Classify(-1));
+    char MemoryBytes[] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'};
+    CHECK(!(Dynamic ? DynamicMemoryCopy : CheckedMemoryCopy)(MemoryBytes + 2, 4,
+                                                             MemoryBytes, 4));
+    CHECK(MemoryBytes[0] == 'A' && MemoryBytes[1] == 'B' &&
+          MemoryBytes[2] == 'A' && MemoryBytes[3] == 'B' &&
+          MemoryBytes[4] == 'C' && MemoryBytes[5] == 'D' &&
+          MemoryBytes[6] == 'G' && MemoryBytes[7] == 'H');
+    CHECK((Dynamic ? DynamicMemoryMove : CheckedMemoryMove)(MemoryBytes, 2, 0,
+                                                            3) == 22);
+    CHECK(MemoryBytes[0] == 'A' && MemoryBytes[1] == 'B');
+    CHECK((Dynamic ? DynamicMemoryCopy : CheckedMemoryCopy)(MemoryBytes, 2, 0,
+                                                            3) == 22);
+    CHECK(!MemoryBytes[0] && !MemoryBytes[1] && MemoryBytes[2] == 'A');
+    CHECK(!(Dynamic ? DynamicMemoryMove : CheckedMemoryMove)(
+        MemoryBytes, ~0ULL, MemoryBytes + 2, 3));
+    CHECK(MemoryBytes[0] == 'A' && MemoryBytes[1] == 'B' &&
+          MemoryBytes[2] == 'C');
+    CHECK(!(Dynamic ? DynamicMemoryCopy : CheckedMemoryCopy)(0, ~0ULL, 0, 0));
+    CHECK(!(Dynamic ? DynamicMemoryMove : CheckedMemoryMove)(0, ~0ULL, 0, 0));
+    U32 Header[64];
+    for (U32 I = 0; I < 64; ++I)
+      Header[I] = 0xffffffffu;
+    Header[0] = 0x5a4d;
+    Header[15] = 0x80;
+    Header[32] = 0x4550;
+    CHECK((void *)(Dynamic ? DynamicImageHeader : ImageHeader)(Header) ==
+          (void *)&Header[32]);
+    Header[0] = 0;
+    CHECK(!(Dynamic ? DynamicImageHeader : ImageHeader)(Header));
     char Narrow[] = {'a', 'Z', (char)0xe9, 0};
     U16 Wide[] = {'A', 'z', 0x00c4, 0xff41, 0xd800, 0};
     CHECK((Dynamic ? DynamicNarrowUpper : NarrowUpper)(Narrow) == Narrow);
@@ -137,6 +180,9 @@ NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
   RtlInitUnicodeString(&Name, (const U16 *)L##Text);                           \
   Variable = (__typeof__(Variable))MmGetSystemRoutineAddress(&Name);           \
   CHECK(Variable)
+  RESOLVE(DynamicMemoryCopy, "memcpy_s");
+  RESOLVE(DynamicMemoryMove, "memmove_s");
+  RESOLVE(DynamicImageHeader, "RtlImageNtHeader");
   RESOLVE(DynamicDigit, "isdigit");
   RESOLVE(DynamicNarrowUpper, "_strupr");
   RESOLVE(DynamicWideLower, "_wcslwr");

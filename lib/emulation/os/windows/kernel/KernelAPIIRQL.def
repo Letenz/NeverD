@@ -298,6 +298,9 @@ NEVERD_KERNEL_IRQL_API(DbgPrintEx, Device)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlcomparememory
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlzeromemory
 NEVERD_KERNEL_IRQL_API(RtlCopyUnicodeString, Any)
+NEVERD_KERNEL_IRQL_API(memcpy_s, Any)
+NEVERD_KERNEL_IRQL_API(memmove_s, Any)
+NEVERD_KERNEL_IRQL_API(RtlImageNtHeader, Any)
 NEVERD_KERNEL_IRQL_API(memcpy, Any)
 NEVERD_KERNEL_IRQL_API(memmove, Any)
 NEVERD_KERNEL_IRQL_API(memset, Any)

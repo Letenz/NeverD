@@ -552,6 +552,12 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
     return debugMessage(A, 2, ReadArgument);
   case KernelAPIKind::KeGetCurrentIrql:
     return CurrentIRQL;
+  case KernelAPIKind::memcpy_s:
+    return checkedMemoryCopy(A, true);
+  case KernelAPIKind::memmove_s:
+    return checkedMemoryCopy(A, false);
+  case KernelAPIKind::RtlImageNtHeader:
+    return runtime::imageNtHeader(*this, Memory, A[0]);
   case KernelAPIKind::memcpy:
   case KernelAPIKind::memmove:
   case KernelAPIKind::memset:

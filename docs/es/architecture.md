@@ -1894,3 +1894,5 @@ KernelFileSystem mantiene un provider token por FILE_OBJECT. La operación priva
 `KernelModelFileRequests` controla la captura y publicación de búferes de control nativo. Comparten retención del archivo, continuación del llamador y liberación del paquete; el aplazamiento del productor distingue control de dispositivo y FSCTL. El validador común de finalización comprueba los límites de salida.
 
 `KernelModelRuntime` es responsable de clasificación CRT, conversión en el búfer y escritura comprobada de cadenas. `KernelCStringAPIs.def` aporta identidad exportada, número de argumentos y admisión IRQL a todas las rutas. Los accesos por unidad reutilizan permisos y vida útil del invitado; informes y adaptadores no duplican la semántica de copia o errores.
+
+`KernelMemoryCalls` controla la admisión de copias comprobadas y reutiliza move/fill y las verificaciones de vida del pool y memoria de usuario. `KernelModelRuntime` controla la prueba de firma bruta `RtlImageNtHeader`. Esta prueba no sustituye la validación del cargador necesaria para ejecutar imágenes; los adaptadores no duplican su semántica.

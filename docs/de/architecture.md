@@ -1896,3 +1896,5 @@ KernelFileSystem hält je FILE_OBJECT ein provider token. Die private Freigabeop
 `KernelModelFileRequests` besitzt Puffererfassung und Veröffentlichung nativer Steueraufrufe. Dateihaltung, Aufruferfortsetzung und Paketfreigabe sind gemeinsam; die erzeugerspezifische Verzögerung unterscheidet Gerätesteuerung und FSCTL. Die gemeinsame Abschlussprüfung begrenzt die Ausgabe.
 
 `KernelModelRuntime` besitzt CRT-Klassifizierung, Umwandlung im Puffer und geprüfte String-Schreibvorgänge. `KernelCStringAPIs.def` liefert Exportidentität, Argumentzahl und IRQL-Zulassung für alle Aufrufwege. Einheitenzugriffe verwenden die vorhandenen Gastrechte und Lebensdauerprüfungen; Berichte und Adapter duplizieren keine Kopier- oder Fehlersemantik.
+
+`KernelMemoryCalls` besitzt die Zulassung geprüfter Speicherkopien und verwendet vorhandene move/fill-Operationen sowie Pool-Lebensdauer- und Benutzerspeicherprüfungen. `KernelModelRuntime` besitzt die rohe Signaturprüfung `RtlImageNtHeader`. Sie ersetzt keine zum Ausführen nötige Loaderprüfung; Adapter duplizieren diese Semantik nicht.

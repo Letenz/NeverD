@@ -21,7 +21,7 @@ class KernelCRTStringExecution
     : public testing::TestWithParam<
           std::tuple<ExecutionBackendKind, ExecutionContract, bool>> {
 protected:
-  void run(const std::filesystem::path &Image) {
+  void run(const std::filesystem::path &Image, bool SDKLinkedCopy = false) {
     const auto [Backend, Contract, Rebase] = GetParam();
     auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
     if (!Probe) {
@@ -63,9 +63,12 @@ protected:
                                    {"strcpy_s", 6u},
                                    {"strncpy_s", 18u},
                                    {"wcscat_s", 12u},
-                                   {"wcsncpy_s", 12u}})
+                                   {"wcsncpy_s", 12u},
+                                   {"memcpy_s", SDKLinkedCopy ? 9u : 18u},
+                                   {"memmove_s", 18u},
+                                   {"RtlImageNtHeader", 12u}})
           EXPECT_EQ(Calls[Name], Count) << Name;
-        EXPECT_EQ(Calls["MmGetSystemRoutineAddress"], 8u);
+        EXPECT_EQ(Calls["MmGetSystemRoutineAddress"], 11u);
       }
   }
 };
@@ -80,10 +83,12 @@ TEST_P(KernelCRTStringExecution, GenuineWdkCallsPreserveCheckedWrites) {
     !defined(NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE)
   GTEST_SKIP() << "genuine WDK CRT fixtures were not supplied";
 #else
-  run(NEVERD_WDM_CRT_STRINGS_FIXTURE);
+  // The pinned WDK's ntoskrnl.lib provides memcpy_s as linked guest code;
+  // only dynamically resolved copies cross its kernel export gateway.
+  run(NEVERD_WDM_CRT_STRINGS_FIXTURE, true);
   if (HasFatalFailure() || IsSkipped())
     return;
-  run(NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE);
+  run(NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE, true);
 #endif
 }
 
