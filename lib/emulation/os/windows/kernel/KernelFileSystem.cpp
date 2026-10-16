@@ -13,6 +13,7 @@
 #include "neverd/emulation/DriverProfile.h"
 
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Endian.h"
 
 #include <algorithm>
 #include <map>
@@ -66,6 +67,84 @@ uint32_t sharingDemand(uint32_t Access) {
          (Access & 0x10000 ? 4u : 0u);
 }
 } // namespace
+
+llvm::Expected<KernelFileSystem::QueryResult>
+KernelFileSystem::queryInformation(uint64_t Token, uint32_t Class,
+                                   uint32_t Length) const {
+  const auto *Node = nodeForOpen(Token);
+  if (!Node)
+    return invalid("metadata query requires a retained provider open");
+  uint32_t Size = 0;
+  switch (Class) {
+  case 4:
+    Size = 40;
+    break; // FILE_BASIC_INFORMATION
+  case 5:
+    Size = 24;
+    break; // FILE_STANDARD_INFORMATION
+  case 6:
+    Size = 8;
+    break; // FILE_INTERNAL_INFORMATION
+  case 9:
+    Size = 8;
+    break; // FILE_NAME_INFORMATION minimum
+  case 34:
+    Size = 56;
+    break; // FILE_NETWORK_OPEN_INFORMATION
+  case 35:
+    Size = 8;
+    break; // FILE_ATTRIBUTE_TAG_INFORMATION
+  default:
+    return invalid("metadata information class is not implemented");
+  }
+  if (Length < Size)
+    return QueryResult{windows::StatusInfoLengthMismatch, {}};
+  QueryResult Result;
+  if (Class == 9) {
+    // MS-FSA FileNameInformation: the fixed minimum includes one WCHAR and
+    // ULONG alignment; overflow returns complete UTF-16 units and full length.
+    // https://learn.microsoft.com/openspecs/windows_protocols/ms-fsa/a64d92b8-038b-470b-ad53-dd2218516507
+    const uint32_t NameBytes = uint32_t(Node->Path.size() * 2);
+    const uint32_t Copied = std::min(NameBytes, (Length - 4) & ~1u);
+    Result.Bytes.resize(4 + Copied);
+    llvm::support::endian::write32le(Result.Bytes.data(), NameBytes);
+    for (uint32_t I = 0; I != Copied / 2; ++I)
+      Result.Bytes[4 + I * 2] = uint8_t(Node->Path[I]);
+    if (Copied != NameBytes)
+      Result.Status = windows::StatusBufferOverflow;
+    return Result;
+  }
+  Result.Bytes.resize(Size);
+  auto Put32 = [&](uint32_t Offset, uint32_t Value) {
+    llvm::support::endian::write32le(Result.Bytes.data() + Offset, Value);
+  };
+  auto Put64 = [&](uint32_t Offset, uint64_t Value) {
+    llvm::support::endian::write64le(Result.Bytes.data() + Offset, Value);
+  };
+  const uint32_t Attributes = *Node->Attributes ? *Node->Attributes : 0x80u;
+  if (Class == 4 || Class == 34) {
+    Put64(0, *Node->CreationTime100ns);
+    Put64(8, *Node->LastAccessTime100ns);
+    Put64(16, *Node->LastWriteTime100ns);
+    Put64(24, *Node->ChangeTime100ns);
+    Put32(Class == 4 ? 32 : 48, Attributes);
+  }
+  if (Class == 5 || Class == 34) {
+    const uint32_t Offset = Class == 5 ? 0 : 32;
+    Put64(Offset, *Node->AllocationSize);
+    Put64(Offset + 8, Node->Data ? Node->Data->size() : 0);
+  }
+  if (Class == 5) {
+    // The admitted namespace has one link per node and no deletion yet.
+    Put32(16, 1);
+    Result.Bytes[21] = Node->Kind == DriverFileNodeKind::Directory;
+  } else if (Class == 6) {
+    Put64(0, *Node->FileID);
+  } else if (Class == 35) {
+    Put32(0, Attributes); // Reparse attributes are rejected at admission.
+  }
+  return Result;
+}
 
 llvm::Error validateDriverFileSystem(
     const std::optional<std::vector<DriverFileSystemVolume>> &Volumes) {

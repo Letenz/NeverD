@@ -3586,6 +3586,18 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
             "python names builtins as windows or portable, not ida");
+  // JavaScript reads through a DataView, its accessors checked within
+  // their record.
+  const std::string Script = takeString(neverd_local_types_source(
+      Session,
+      R"({"language":"javascript","types":["_PACKED"],"asserts":true})"));
+  EXPECT_NE(Script.find("export class _PACKED {"), std::string::npos) << Script;
+  EXPECT_NE(Script.find("check(_PACKED, (r) => {"), std::string::npos);
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"javascript","spelling":"keywords"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "javascript names builtins as windows or portable, not keywords");
   // Prototypes render in C and C++; asked of another language, they fail.
   EXPECT_EQ(neverd_local_types_source(
                 Session, R"({"language":"rust","prototypes":true})"),
@@ -3610,13 +3622,19 @@ TEST(SessionCAPILocalTypes, LanguagesSayHowEachNamesBuiltins) {
       Parsed->getAsObject()->getArray("languages");
   ASSERT_NE(Languages, nullptr);
   std::map<std::string, std::pair<std::string, std::string>> Taken;
+  // Which languages read back, and which render prototypes.
+  std::string Reads, Prototypes;
   for (const llvm::json::Value &Value : *Languages) {
     const llvm::json::Object &Language = *Value.getAsObject();
     std::string Spellings;
     for (const llvm::json::Value &Id : *Language.getArray("spellings"))
       Spellings += (Spellings.empty() ? "" : " ") + Id.getAsString()->str();
-    Taken[Language.getString("id")->str()] = {
-        Language.getString("spelling")->str(), Spellings};
+    const std::string Id = Language.getString("id")->str();
+    Taken[Id] = {Language.getString("spelling")->str(), Spellings};
+    if (Language.getBoolean("reads").value_or(false))
+      Reads += (Reads.empty() ? "" : " ") + Id;
+    if (Language.getBoolean("prototypes").value_or(false))
+      Prototypes += (Prototypes.empty() ? "" : " ") + Id;
   }
   using Choice = std::pair<std::string, std::string>;
   EXPECT_EQ(Taken["c"], Choice("windows", "windows ida keywords portable"));
@@ -3624,6 +3642,9 @@ TEST(SessionCAPILocalTypes, LanguagesSayHowEachNamesBuiltins) {
   EXPECT_EQ(Taken["rust"], Choice("portable", "windows portable"));
   EXPECT_EQ(Taken["go"], Choice("portable", "windows portable"));
   EXPECT_EQ(Taken["python"], Choice("portable", "windows portable"));
+  EXPECT_EQ(Taken["javascript"], Choice("portable", "windows portable"));
+  EXPECT_EQ(Reads, "c cpp rust go");
+  EXPECT_EQ(Prototypes, "c cpp");
 }
 
 TEST_F(SessionCAPITest, DeclaredTypesJoinThePDBsAndStayWithTheProject) {

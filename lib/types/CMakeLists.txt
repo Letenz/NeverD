@@ -21,6 +21,7 @@ add_neverd_component_library(NeverDTypes
   GoTypeParser.cpp
   GoTypeRender.cpp
   HeaderLibrary.cpp
+  JavaScriptTypeRender.cpp
   LocalTypes.cpp
   PDBTypeImport.cpp
   PythonTypeRender.cpp

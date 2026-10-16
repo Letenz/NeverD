@@ -3830,6 +3830,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Exact widths (c_uint32)</source>
         <translation>عروض دقيقة ‎(c_uint32)</translation>
     </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>وحدة JavaScript ‎(*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>أنواع JavaScript ‎(number, bigint)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::DeclareTypesDialog</name>

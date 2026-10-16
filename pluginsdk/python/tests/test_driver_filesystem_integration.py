@@ -91,7 +91,7 @@ class DriverFileSystemIntegrationTests(unittest.TestCase):
             self.assertIn("filesystem", self.host.owned_string("neverd_last_error", self.session))
 
     def test_driver_opens_have_independent_report_identity(self) -> None:
-        for mode in ("C", "P", "X", "U", "R"):
+        for mode in ("C", "P", "X", "U", "R", "Q"):
             for rebase in (False, True):
                 with self.subTest(mode=mode, rebase=rebase):
                     scenario = dict(service_name="FileOpen" + mode, unload=True,
@@ -114,6 +114,32 @@ class DriverFileSystemIntegrationTests(unittest.TestCase):
                         key = request["file_open_operation"]
                         self.assertEqual(identities.setdefault(key, identity), identity)
                     self.assertEqual(result["filesystem"][0]["nodes"][1]["data"], "007f80ff")
+                    if mode == "Q":
+                        metadata = [
+                            (4, "010000000000000002000000000000000300000000000000"
+                                "04000000000000002000000000000000"),
+                            (5, "001000000000000004000000000000000100000000000000"),
+                            (6, "ffffffffffffffff"),
+                            (9, "0a0000005c004400610074006100"),
+                            (34, "010000000000000002000000000000000300000000000000"
+                                 "040000000000000000100000000000000400000000000000"
+                                 "2000000000000000"),
+                            (35, "2000000000000000"),
+                        ]
+                        queries = [r for r in result["requests"]
+                                   if r["kind"] == "query_information"]
+                        expected = [(c, 0, b) for c, b in metadata] * 2
+                        expected += [(5, 0xc0000004, ""), (9, 0x80000005, "0a0000005c004400"),
+                                     (16, 0, "20000000"), (17, 0, "ff010000")]
+                        self.assertEqual(len(queries), len(expected))
+                        for index, (query, (information_class, status, data)) in enumerate(
+                                zip(queries, expected)):
+                            self.assertEqual(query["origin"], "IoQueryFileInformation" if index < 6
+                                             else "ZwQueryInformationFile")
+                            self.assertEqual(query["file_information_class"], information_class)
+                            self.assertEqual(query["io_status"], status)
+                            self.assertEqual(query["information"], len(data) // 2)
+                            self.assertEqual(query["output_hex"], data)
 
 
 if __name__ == "__main__":

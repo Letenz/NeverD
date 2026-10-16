@@ -1744,6 +1744,10 @@ KernelModelObjects が共通オブジェクト表でハンドルとポインタ�
 
 KernelFileSystem は FILE_OBJECT ごとに provider token を保持します。非公開の共有処理は許可済みノードとマッピング済みアクセスを受け取り、共有競合を双方向に検査します。メタデータのみのアクセスは競合に含みません。CLEANUP は共有制限を解除して token を保持し、CLOSE はクリーンアップ済み token を削除します。参照が残るオブジェクトも 1024 個の上限に含みます。厳密な対応検証で token とファイルオブジェクトの所有者を照合します。 `KernelModelFileCreate` が CREATE と取消を生成し、コールバック前にハンドル容量を予約します。`DriverSession` は非同期処理と入れ子の CLOSE で呼出元を保持します。共通オブジェクト所有者がハンドルを公開し、名前検索は実際のディレクトリを保持します。シナリオの終了意図は独立し、スナップショットとアンロードが token を双方向検証します。
 
+`KernelModelFileQueries` が IoQueryFileInformation の借用バッファーと ZwQueryInformationFile の専用バッファーの継続、結果公開、解放を所有します。KernelMode ハンドル参照はオブジェクト所有者を再利用します。ネイティブ SystemBuffer は物理メモリー所有者に登録し、通常の要求解放からクエリ所有者へ委ねます。`KernelFileSystem::queryInformation` のみが保持オープントークンから宣言メタデータを符号化します。終端経路は実際の IRP クラスと長さを使い、アダプターやレポートはメタデータを再構築しません。
+
+`KernelModelIO` は `FILE_OBJECT.CurrentByteOffset` を変更せずに転送の所有権を解放します。要求オフセットと完了バイト数はファイルシステムによる位置更新の代わりにはなりません。同期ファイルのネイティブ Position クエリは保持されたフィールドを読みます。
+
 ### 生環境のアーキテクチャ所有権
 
 `RecoveryArchitecture` はビルドホストとは独立に `SpecializationOptions::Architecture` からネイティブ契約を選択します。既存の既定値は x64 で、アダプターのない対象は明示的に拒否します。`arch/x86_64` がネイティブオプションの符号化、主イメージの範囲規則、外部出口の照合コストと物理出口の証跡を所有し、core が共通予算、ポリシー符号化、グラフと証拠の完全性を所有します。x64 のダイジェストのバイト列は維持し、宣言の検証前に期待するアーキテクチャと保存された識別を確認します。`RawArchitectureReceiptCompatibility` は変更前のダイジェストを固定し、不一致テストは x64 の証拠を ARM64 として扱うことを拒否します。ARM64 のネイティブ復元は未実装です。
