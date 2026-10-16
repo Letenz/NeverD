@@ -235,4 +235,4 @@ IP-to-state map を検証します。parser 変更時は共通モデルを使う
 decode できるだけで allow-list を広げてはいけません。最終 linked image で runtime exception
 behavior が保存されることが受理条件です。
 
-選択された handler の cleanup は、同じ有効な capture に新しいスカラー値で再度ジャンプできます（0 は 1 に正規化）。unwind 中は各値とそのフレームへの効果を組として保持し、再開時の EAX に反映します。handler と中断中の入れ子 finally 呼び出しを取り消し、capture の unwind 境界を復元します。関数本体の範囲外の callback と到達不能な末尾も、検証済みの所属を保持します。別の capture やフレームアドレスの流出には独立した証明が必要です。
+選択された handler の cleanup は、親フレーム内の同じ capture または別の有効な capture に新しいスカラー値でジャンプできます（0 は 1 に正規化）。各宛先と値をフレーム効果と組にし、実際の宛先の保存レジスタ、ESP、unwind 境界を復元します。中断中の入れ子 finally 呼び出しも終了します。MedIR は置換を正確な callback 呼び出し位置と capture に結び付け、非循環の転送グラフですべての経路の完結を要求します。残りの cleanup 全体で両バッファの有効性を検証し、重複書き込み、失効したバッファ、未証明の循環、フレームアドレスの流出を拒否します。

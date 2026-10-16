@@ -9,10 +9,11 @@
 #define FILTER_PERSONALITY __except_handler3
 #define FILTER_UNWIND __seh_longjmp_unwind
 #endif
-#define FILTER_REPEATED_JUMP (REGISTRATION_CASE >= 58 && REGISTRATION_CASE <= 65)
+#define FILTER_REPEATED_JUMP (REGISTRATION_CASE >= 58 && REGISTRATION_CASE <= 67)
 #define FILTER_NESTED_JUMP (FILTER_REPEATED_JUMP && (REGISTRATION_CASE & 1))
+#define FILTER_OTHER_CAPTURE (REGISTRATION_CASE == 66 || REGISTRATION_CASE == 67)
 #define FILTER_DYNAMIC_VALUE (REGISTRATION_CASE == 64 || REGISTRATION_CASE == 65)
-#if REGISTRATION_CASE == 60 || REGISTRATION_CASE == 61
+#if REGISTRATION_CASE == 60 || REGISTRATION_CASE == 61 || FILTER_OTHER_CAPTURE
 #define FILTER_JUMP_VALUE 43
 #define FILTER_RESUME_VALUE 43
 #elif REGISTRATION_CASE == 62 || REGISTRATION_CASE == 63
@@ -38,7 +39,11 @@ _registration_entry:
 #if !REGISTRATION_EH4_FILTER
   mov fs:[0],esp
 #endif
+#if FILTER_OTHER_CAPTURE
+  sub esp,176
+#else
   sub esp,96
+#endif
 #if REGISTRATION_EH4_FILTER
   mov eax,[___security_cookie]
   xor dword ptr [ebp-8],eax
@@ -90,6 +95,35 @@ _registration_entry:
 #endif
   test eax,eax
   jnz .Lresumed
+#if FILTER_OTHER_CAPTURE
+  // The second capture owns another stack, saved EBX and unwind bound.
+  // Its cleanup abandons it and restores the first capture instead.
+  sub esp,16
+  mov ebx,8
+  mov dword ptr [ebp-4],1
+#if REGISTRATION_EH4_FILTER
+  .byte 0x68
+  .long ___security_cookie
+#endif
+  push 1
+  .byte 0x68
+  .long FILTER_UNWIND
+#if REGISTRATION_EH4_FILTER
+  push 3
+#else
+  push 2
+#endif
+  lea eax,[ebp-176]
+  push eax
+  call __setjmp3
+#if REGISTRATION_EH4_FILTER
+  add esp,20
+#else
+  add esp,16
+#endif
+  test eax,eax
+  jnz .Lbad
+#endif
   mov ebx,9
 #if FILTER_NESTED_JUMP
   mov dword ptr [ebp-4],4
@@ -100,7 +134,11 @@ _registration_entry:
   mov dword ptr [ebp-4],2
 #endif
   push 42
+#if FILTER_OTHER_CAPTURE
+  lea eax,[ebp-176]
+#else
   lea eax,[ebp-96]
+#endif
   push eax
   call __longjmpex
   ud2

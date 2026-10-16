@@ -339,16 +339,21 @@ registers. A still-live capture remains available to later checked transfers.
 Selection and capture resumption remain separate proof outcomes, including
 mixed searches. Selected-filter writes also supply independent cleanup roots.
 A selected handler's cleanup can supersede that selection with a new jump to
-its same live capture and a new scalar value (zero normalizes to one). Each
-value stays paired with its own frame effects throughout local unwind, then
-becomes the resumed EAX value. This restores the capture's unwind bound and retires all suspended finally
+the same or another live capture in its parent frame, with a new scalar value
+(zero normalizes to one). Each destination and value stays paired with its own
+frame effects throughout local unwind. Resumption uses that destination's saved
+registers, ESP and unwind bound, with the new value in EAX. It retires all suspended finally
 invocations, including nested ordinary calls. Out-of-line callbacks retain their
 scope ownership and authenticated physical CALL/RET boundaries. Their unreachable
 tails remain callback code without acquiring a fabricated reaching state.
 LLVM and installation share the same MedIR invocation and callback ownership
 queries; a nonreturning nested call requires both a checked jump exit and no
-ordinary return. Different captures, escaping frame values, recurrent selection,
-and escaping searches still require separate complete transfer proofs.
+ordinary return. A replaced jump records the exact callback call site and target
+capture, without inventing resumption of the abandoned capture. MedIR requires
+every replacement path to close through an acyclic graph of checked transfers;
+source analysis checks both buffers throughout all remaining cleanups. Modified
+or expired buffers, unclosed cycles, escaping frame values, recurrent selection
+and escaping searches refuse reconstruction.
 Scopes without any proved activation remain unsupported.
 Checked reads from mapped PE data retain their runtime bits as scalar jump
 values, including negative values. They keep possible alias provenance: a
