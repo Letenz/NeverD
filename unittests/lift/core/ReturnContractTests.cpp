@@ -13,11 +13,14 @@
 #include "../../../lib/pipeline/PipelineReturnModelingDetail.h"
 #include "gtest/gtest.h"
 
+#include "neverd/debug/DebugContext.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include <map>
+#include <string>
 #include <vector>
 
 using namespace neverd;
@@ -102,14 +105,53 @@ MedOp callTo(va_t Target, int Version) {
       {MedVar::makeConst(Target, 8, ConstantAddressProvenance::CodeAddress)});
 }
 
+/// Debug information that declares what some functions return, by their
+/// entries, and the prototypes of some routines, by their names.
+class DeclaringDebugContext final : public DebugContext {
+public:
+  std::map<va_t, TypeRef> Returns;
+  std::map<std::string, TypeRef> Prototypes;
+  std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+    const auto Return = Returns.find(Addr);
+    if (Return == Returns.end())
+      return std::nullopt;
+    FunctionSym Function;
+    Function.Addr = Addr;
+    Function.ReturnType = Return->second;
+    return Function;
+  }
+  std::optional<FunctionSym>
+  resolvePrototype(llvm::StringRef Name) const override {
+    const auto Return = Prototypes.find(Name.str());
+    if (Return == Prototypes.end())
+      return std::nullopt;
+    FunctionSym Function;
+    Function.Name = Name.str();
+    Function.ReturnType = Return->second;
+    return Function;
+  }
+  std::optional<VariableSym> resolveVariable(va_t, int64_t) const override {
+    return std::nullopt;
+  }
+  std::optional<TypeSym> resolveType(uint64_t) const override {
+    return std::nullopt;
+  }
+  std::optional<SourceLoc> sourceLocation(va_t) const override {
+    return std::nullopt;
+  }
+  std::vector<FunctionSym> allFunctions() const override { return {}; }
+  bool hasInfo() const override { return true; }
+};
+
 std::vector<bool> settle(std::vector<MedFunc> Funcs,
-                         BinaryFormat Format = BinaryFormat::ELF) {
+                         BinaryFormat Format = BinaryFormat::ELF,
+                         const DebugContext *Dbg = nullptr) {
   BinaryImage Image;
   Image.Arch = Arch::X64;
   Image.Format = Format;
   PipelineResult Result;
   Result.MedFuncs = std::move(Funcs);
-  settleReturnContracts(Image, Result);
+  settleReturnContracts(Image, Result, Dbg);
   std::vector<bool> NoValue;
   for (const MedFunc &Func : Result.MedFuncs)
     NoValue.push_back(Func.ReturnsNoValue);
@@ -226,6 +268,47 @@ TEST(ReturnContracts, AStubOfAVoidImportReturnsNoValue) {
               operation(NdOp::INDIR_CALL, rax(1), {temporary(4)}),
               returning(rax(1))})})};
   settleReturnContracts(Image, Result);
+  EXPECT_TRUE(Result.MedFuncs.front().ReturnsNoValue);
+}
+
+TEST(ReturnContracts, ACallToAFunctionDeclaredVoidElsewhereHandsBackNoValue) {
+  // A function decompiled alone tail-calls one the debug information, or
+  // the prototype of its name, declares void: the C writers print a call
+  // that returns nothing, and so the caller returns nothing either.
+  const MedFunc Caller = function(
+      CallerEntry, {block({callTo(CalleeEntry, 1), returning(rax(1))})});
+  DeclaringDebugContext Debug;
+  EXPECT_EQ(settle({Caller}, BinaryFormat::COFF, &Debug),
+            std::vector<bool>{false});
+  Debug.Returns[CalleeEntry] = NdType::makeVoid();
+  EXPECT_EQ(settle({Caller}, BinaryFormat::COFF, &Debug),
+            std::vector<bool>{true});
+  // One declared to return a value hands it back.
+  Debug.Returns[CalleeEntry] = NdType::makeInt(4);
+  EXPECT_EQ(settle({Caller}, BinaryFormat::COFF, &Debug),
+            std::vector<bool>{false});
+}
+
+TEST(ReturnContracts, AStubOfAnImportDeclaredVoidReturnsNoValue) {
+  // The kernel's headers declare ExFreePool void; the libc tables know it
+  // not.
+  constexpr va_t Slot = 0x4018;
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Format = BinaryFormat::COFF;
+  Import Free;
+  Free.Name = "ExFreePool";
+  Free.IATAddr = Slot;
+  Image.Imports.push_back(Free);
+  DeclaringDebugContext Debug;
+  Debug.Prototypes["ExFreePool"] = NdType::makeVoid();
+  PipelineResult Result;
+  Result.MedFuncs = {function(
+      CallerEntry,
+      {block({operation(NdOp::LOAD, temporary(4), {MedVar::makeConst(Slot, 8)}),
+              operation(NdOp::INDIR_CALL, rax(1), {temporary(4)}),
+              returning(rax(1))})})};
+  settleReturnContracts(Image, Result, &Debug);
   EXPECT_TRUE(Result.MedFuncs.front().ReturnsNoValue);
 }
 

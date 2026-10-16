@@ -119,6 +119,121 @@ TEST(LocalTypesDebugContext, TypesTheFunctionsDebugInformationLeavesUntyped) {
   EXPECT_EQ(Context.resolveFunction(0x5000)->ReturnType->Size, 8u);
 }
 
+TEST(LocalTypesDebugContext, TypesTheFunctionsByTheNamesTheyAreShownUnder) {
+  using namespace neverd;
+  auto Library = std::make_shared<types::TypeLibrary>();
+  ASSERT_TRUE(types::parseCTypes(R"(
+    typedef struct _THREAD *PTHREAD;
+    typedef struct _PROCESS *PPROCESS;
+    PPROCESS NTAPI ThreadToProcess(PTHREAD Thread);
+    ULONG NTAPI Exported(ULONG Value);
+    ULONG NTAPI Stated(ULONG Value, ULONG Shift);
+    ULONG NTAPI Analyzed(ULONG Value);
+    ULONG NTAPI Folded(ULONG Value, void *Context);
+    ULONG NTAPI Debugged(ULONG Value);
+    ULONG NTAPI Fewer(ULONG Value);
+    ULONG NTAPI More(ULONG Value, ULONG Extra);
+    LONG NTAPI Signed(PTHREAD Thread);
+    ULONG NTAPI Unsigned(PPROCESS Process);
+  )",
+                                 *Library)
+                  .ok());
+  BinaryImage Image;
+  // A linker that folds identical functions exports one entry under each
+  // of their names: the first names the function shown there.
+  Image.Exports = {{"ThreadToProcess", 1, 0x1000}, {"Unprototyped", 2, 0x2000},
+                   {"Folded", 3, 0x2000},          {"Exported", 4, 0x6000},
+                   {"Fewer", 5, 0x7000},           {"More", 6, 0x7000},
+                   {"Signed", 7, 0x8000},          {"Unsigned", 8, 0x8000}};
+  const auto symbol = [&](const char *Name, va_t Addr, NameOrigin Origin) {
+    Symbol Sym;
+    Sym.Name = Name;
+    Sym.Addr = Addr;
+    Sym.IsFunc = true;
+    Sym.Origin = Origin;
+    Image.Symbols.push_back(Sym);
+  };
+  symbol("Stated", 0x3000, NameOrigin::Stated);
+  symbol("Analyzed", 0x4000, NameOrigin::Analysis);
+  NamesOnlyDebugContext Names;
+  const auto name = [&](va_t Addr, const char *Name) {
+    FunctionSym Function;
+    Function.Name = Name;
+    Function.Addr = Addr;
+    Function.Size = 0x10;
+    Names.Functions[Addr] = Function;
+  };
+  name(0x5000, "Debugged");
+  name(0x6000, "Debugged");
+  sdk::LocalTypesDebugContext Context(Names, Library, {}, &Image);
+
+  // An export the debug information does not name takes its prototype,
+  // with what declares it.
+  std::optional<FunctionSym> Owner = Context.resolveFunction(0x1000);
+  ASSERT_TRUE(Owner.has_value());
+  EXPECT_EQ(Owner->Addr, 0x1000u);
+  ASSERT_EQ(Owner->Params.size(), 1u);
+  EXPECT_EQ(Owner->Params[0].first, "Thread");
+  ASSERT_NE(Owner->ReturnType, nullptr);
+  EXPECT_EQ(Owner->ReturnType->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Owner->PrototypeLibrary, "local-types");
+  EXPECT_EQ(Owner->PrototypeDeclaration,
+            "PPROCESS ThreadToProcess(PTHREAD Thread)");
+  // The function folded with another is shown under its first name, which
+  // has no prototype: the other name's would describe another function.
+  EXPECT_FALSE(Context.resolveFunction(0x2000).has_value());
+  // A symbol the program states names a function as an export does; one
+  // that analysis made up does not.
+  ASSERT_TRUE(Context.resolveFunction(0x3000).has_value());
+  EXPECT_EQ(Context.resolveFunction(0x3000)->Params.size(), 2u);
+  EXPECT_FALSE(Context.resolveFunction(0x4000).has_value());
+  // Where the image states no name, the debug information's name does; the
+  // image's comes first, as the function is shown under it.
+  std::optional<FunctionSym> Debugged = Context.resolveFunction(0x5000);
+  ASSERT_TRUE(Debugged.has_value());
+  EXPECT_EQ(Debugged->Name, "Debugged");
+  EXPECT_EQ(Debugged->Size, 0x10u);
+  EXPECT_EQ(Debugged->Params.size(), 1u);
+  std::optional<FunctionSym> Exported = Context.resolveFunction(0x6000);
+  ASSERT_TRUE(Exported.has_value());
+  // A builtin, where no header names it, in exact widths.
+  EXPECT_EQ(Exported->PrototypeDeclaration,
+            "uint32_t Exported(uint32_t Value)");
+  // An address inside a function names no function of its own.
+  EXPECT_TRUE(Context.resolveFunction(0x5008)->Params.empty());
+  // Folded functions whose prototypes take different parameters: which the
+  // code reads is unknown, and so it takes neither.
+  EXPECT_FALSE(Context.resolveFunction(0x7000).has_value());
+  // Ones that pass and return alike, whatever they point at or sign: the
+  // shown name's.
+  std::optional<FunctionSym> Signed = Context.resolveFunction(0x8000);
+  ASSERT_TRUE(Signed.has_value());
+  ASSERT_EQ(Signed->Params.size(), 1u);
+  EXPECT_EQ(Signed->Params[0].first, "Thread");
+  EXPECT_TRUE(Signed->ReturnType->IsSigned);
+}
+
+TEST(LocalTypesDebugContext, NamesTheHeaderLibraryAPrototypeComesFrom) {
+  using namespace neverd;
+  const types::TypeLibrary *Kernel =
+      types::headerLibrary(types::HeaderLibrary::WindowsKernelX64);
+  ASSERT_NE(Kernel, nullptr);
+  auto Library = std::make_shared<types::TypeLibrary>(Kernel->dataModel());
+  types::mergeHeaderTypes(*Library, *Kernel);
+  BinaryImage Image;
+  Image.Exports = {{"IoThreadToProcess", 1, 0x1000}};
+  NamesOnlyDebugContext Names;
+  sdk::LocalTypesDebugContext Context(Names, Library, {}, &Image,
+                                      {types::HeaderLibrary::WindowsKernelX64});
+  std::optional<FunctionSym> Owner = Context.resolveFunction(0x1000);
+  ASSERT_TRUE(Owner.has_value());
+  EXPECT_EQ(Owner->PrototypeLibrary, "windows-kernel-x64");
+  EXPECT_EQ(Owner->PrototypeDeclaration,
+            "PEPROCESS IoThreadToProcess(PETHREAD Thread)");
+  ASSERT_EQ(Owner->Params.size(), 1u);
+  EXPECT_EQ(Owner->Params[0].first, "Thread");
+}
+
 TEST(LocalTypesDebugContext, GivesTheDebugInformationsRecordsTheirMembers) {
   using namespace neverd;
   auto Library = std::make_shared<types::TypeLibrary>();

@@ -169,10 +169,16 @@ extended-attribute name/target errors, with the same descriptor table used by
 Selecting GKI together with an absent `pidfd_open` observation is rejected.
 An optional `linux_kernel.tasks` array supplies a closed, fixed catalogue of
 additional live tasks as `{ "id": 2000, "group_leader": true }` entries.
-An omitted array leaves foreign target lookup unsupported; an empty array knows
-only the running group leader. A PID outside a declared catalogue returns ESRCH.
-Entries and priority observations must be consistent, and the fixed catalogue
-cannot be combined with cooperative Android guest threads.
+An omitted array leaves foreign target lookup unsupported; an empty array
+observes no foreign tasks. A PID outside both the declared catalogue and the
+local task owner returns ESRCH.
+Entries and priority observations must be consistent. With cooperative Android
+threads the fixed catalogue describes foreign tasks; it must not occupy any
+identity reserved for child creation. Live local children come from the shared
+thread owner and are rejected as nonleaders according to the selected GKI.
+Exited children are absent from an explicit closed catalogue. Thread-bound
+pidfds for local cooperative threads remain unsupported, including their exit
+readiness; static foreign observations do not establish that lifetime.
 Android API levels do not select a kernel. See the
 [released GKI contracts](android-gki-kernels.md) for all eight source pins,
 descriptor behavior, tests and the remaining kernel coverage.

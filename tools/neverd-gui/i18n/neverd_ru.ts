@@ -2337,6 +2337,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Поставьте курсор на параметр функции, чтобы преобразовать его</translation>
     </message>
     <message>
+        <source>Select &amp;all</source>
+        <translation>Выделить &amp;всё</translation>
+    </message>
+    <message>
         <source>Jump to disassembly</source>
         <translation>Перейти к дизассемблированному коду</translation>
     </message>

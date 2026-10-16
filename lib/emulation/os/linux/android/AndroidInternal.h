@@ -187,7 +187,7 @@ private:
   llvm::Error access(uint64_t Address, uint64_t Size, unsigned Permissions);
   llvm::Expected<uint8_t> byte(uint64_t Address);
   llvm::Expected<std::string> string(uint64_t Address);
-  llvm::Expected<uint64_t> allocate(uint64_t Size);
+  llvm::Expected<uint64_t> allocate(uint64_t Size, uint8_t FillByte = 0);
   llvm::Error release(uint64_t Address);
   llvm::Error setErrno(uint32_t Value);
   BionicResult linkerError(llvm::StringRef Message, uint64_t ReturnValue = 0);

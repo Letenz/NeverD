@@ -58,6 +58,11 @@ struct AndroidNativeOptions {
   bool Initialize = true;
   /// Retain this many admitted instruction PCs. Zero disables tracing.
   uint64_t TraceLimit = 0;
+  /// Concrete analysis choice for bytes returned by malloc and the new tail
+  /// of realloc. Zero preserves the default. This is not a claim about an
+  /// Android allocator or proof that reading uninitialized bytes is valid.
+  /// calloc and model-owned allocations remain zeroed; padding is excluded.
+  uint8_t MallocFillByte = 0;
   /// One preserves the single-thread contract. Values 2..256 opt into bounded
   /// cooperative guest threads. Counts all created identities, including the
   /// entry thread; retired identities are never reused within a workload.

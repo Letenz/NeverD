@@ -803,7 +803,11 @@ frame before initializing the exceptional root. Normalized fixed unwind
 allocations must match decoded prologue instructions and converted SP effects;
 all ordinary paths into the protected scope must retain that SP. Independent
 entries, prologue backedges, dynamic SP changes, frame-register or chained
-unwind contracts, and incomplete evidence are rejected explicitly. Conversion
+unwind contracts, and incomplete evidence are rejected explicitly. The x87
+context handle is the only function temporary the proof admits: only the
+X87Context intrinsics touch it, as their context operand, and every root the
+dispatcher enters begins the context before reading it. MinGW-w64's startup
+code carries x87 state through its `__try` this way. Conversion
 failure reaches the pipeline caller without aborting its process or publishing
 a partial function. HighC and LLVM-derived C consume the same explicit SP
 adjustment; the C renderer does not apply another frame-size correction.
