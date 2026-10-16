@@ -10,7 +10,8 @@
 /// shows types in.  Highlighting is presentation only.
 ///
 /// NEVERD_TYPE_SOURCE_KEYWORD(Language, Word): a keyword of the language
-///   (c, cpp, rust, go, python or javascript); C++ colors C's words too.
+///   (c, cpp, rust, go, python, javascript or lua); C++ colors C's words
+///   too.
 /// NEVERD_TYPE_SOURCE_BUILTIN(Language, Word): a builtin type name.
 ///
 //===----------------------------------------------------------------------===//
@@ -97,6 +98,27 @@ NEVERD_TYPE_SOURCE_KEYWORD("javascript", "true")
 NEVERD_TYPE_SOURCE_KEYWORD("javascript", "false")
 NEVERD_TYPE_SOURCE_KEYWORD("javascript", "void")
 NEVERD_TYPE_SOURCE_KEYWORD("javascript", "import")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "local")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "function")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "end")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "return")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "do")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "if")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "then")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "else")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "elseif")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "for")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "in")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "while")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "repeat")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "until")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "not")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "and")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "or")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "nil")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "true")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "false")
+NEVERD_TYPE_SOURCE_KEYWORD("lua", "break")
 
 NEVERD_TYPE_SOURCE_BUILTIN("c", "void")
 NEVERD_TYPE_SOURCE_BUILTIN("c", "char")
@@ -199,6 +221,16 @@ NEVERD_TYPE_SOURCE_BUILTIN("javascript", "Uint8Array")
 NEVERD_TYPE_SOURCE_BUILTIN("javascript", "number")
 NEVERD_TYPE_SOURCE_BUILTIN("javascript", "bigint")
 NEVERD_TYPE_SOURCE_BUILTIN("javascript", "boolean")
+
+NEVERD_TYPE_SOURCE_BUILTIN("lua", "string")
+NEVERD_TYPE_SOURCE_BUILTIN("lua", "math")
+NEVERD_TYPE_SOURCE_BUILTIN("lua", "setmetatable")
+NEVERD_TYPE_SOURCE_BUILTIN("lua", "ipairs")
+NEVERD_TYPE_SOURCE_BUILTIN("lua", "error")
+NEVERD_TYPE_SOURCE_BUILTIN("lua", "tostring")
+NEVERD_TYPE_SOURCE_BUILTIN("lua", "record")
+NEVERD_TYPE_SOURCE_BUILTIN("lua", "get")
+NEVERD_TYPE_SOURCE_BUILTIN("lua", "put")
 
 #undef NEVERD_TYPE_SOURCE_KEYWORD
 #undef NEVERD_TYPE_SOURCE_BUILTIN

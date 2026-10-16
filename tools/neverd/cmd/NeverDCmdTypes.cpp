@@ -8,9 +8,9 @@
 /// `neverd types`: the program's local types as the workbench's Local Types
 /// window shows them.  Without --type it lists them; --type lays a type out
 /// (--layout) or renders it, with what it needs, as C, C++, Rust, Go,
-/// Python or JavaScript; --all renders every type as one unit that compiles.
-/// Without a binary, --data-model converts the --declare files from one
-/// language to another.
+/// Python, JavaScript or Lua; --all renders every type as one unit that
+/// compiles.  Without a binary, --data-model converts the --declare files
+/// from one language to another.
 ///
 //===----------------------------------------------------------------------===//
 

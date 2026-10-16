@@ -22,10 +22,13 @@ public:
     keywords_.clear();
     builtins_.clear();
     // Python comments with #, which C and Rust start a directive or an
-    // attribute with, and JavaScript a private field.
+    // attribute with, and JavaScript a private field; Lua with --.
     const bool python = language == QLatin1String("python");
-    commentMarker_ = python ? QStringLiteral("#") : QStringLiteral("//");
-    directives_ = !python && language != QLatin1String("javascript");
+    const bool lua = language == QLatin1String("lua");
+    commentMarker_ = python ? QStringLiteral("#")
+                     : lua  ? QStringLiteral("--")
+                            : QStringLiteral("//");
+    directives_ = !python && !lua && language != QLatin1String("javascript");
     blockComments_ = language == QLatin1String("javascript");
     const QString family =
         language == QLatin1String("cpp") ? QStringLiteral("c") : language;

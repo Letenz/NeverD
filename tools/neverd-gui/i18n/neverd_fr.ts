@@ -3782,6 +3782,10 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
         <source>JavaScript types (number, bigint)</source>
         <translation>Types JavaScript (number, bigint)</translation>
     </message>
+    <message>
+        <source>Lua (*.lua)</source>
+        <translation>Lua (*.lua)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::DeclareTypesDialog</name>

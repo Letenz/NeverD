@@ -75,18 +75,18 @@ NEVERD_API const char *neverd_local_type_json(neverd_session_t Sess,
                                               const char *OptionsJson);
 
 /// Local types as source.  OptionsJson may be NULL or
-/// {"language":"c"|"cpp"|"rust"|"go"|"python"|"javascript",
+/// {"language":"c"|"cpp"|"rust"|"go"|"python"|"javascript"|"lua",
 /// "spelling":"windows"|"ida"|"keywords"|"portable","offsets":bool,
 /// "hexOffsets":bool,"asserts":bool,"types":[name,...],"dependencies":bool}.
 /// Without "types", every type renders as one unit that compiles; with
 /// them, those types do, and with "dependencies" (the default) every type
 /// they need, else each alone for reading.  "asserts" adds checks of every
 /// size and offset that the compiler verifies, that Python's ctypes do as
-/// the module runs, or, in JavaScript, that every accessor stays within its
-/// record.  "spelling" names builtins: C and C++ take each, and windows
-/// unless asked; Rust, Go, Python and JavaScript take windows, aliases of
-/// exact widths as wdk-sys declares them (pub type ULONG = u32), or
-/// portable (u32, uint32, ctypes.c_uint32, number), their default.  NULL
+/// the module runs, or, in JavaScript and Lua, that every accessor stays
+/// within its record.  "spelling" names builtins: C and C++ take each, and
+/// windows unless asked; Rust, Go, Python, JavaScript and Lua take windows,
+/// aliases of exact widths as wdk-sys declares them (pub type ULONG = u32),
+/// or portable (u32, uint32, ctypes.c_uint32, number), their default.  NULL
 /// with neverd_last_error() for an unknown type, a spelling the language
 /// does not take or other malformed options.
 NEVERD_API const char *neverd_local_types_source(neverd_session_t Sess,

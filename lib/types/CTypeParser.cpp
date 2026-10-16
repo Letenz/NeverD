@@ -1943,6 +1943,7 @@ ParseResult parseTypes(llvm::StringRef Source, TypeLibrary &Library,
     return parseGoTypes(Source, Library, Options);
   case Language::Python:
   case Language::JavaScript:
+  case Language::Lua:
     break;
   }
   // The language renders, but reads in none of its forms.

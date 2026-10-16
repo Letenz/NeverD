@@ -3985,6 +3985,13 @@ private slots:
                                      QStringLiteral("portable")}));
     QCOMPARE(spelling->itemText(1),
              QStringLiteral("JavaScript types (number, bigint)"));
+    // Lua, whose spelling names the C types its comments give.
+    QCOMPARE(tabBar->tabText(6), QStringLiteral("Lua"));
+    types->setPage(6);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language lua spelling portable")));
+    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
+                                     QStringLiteral("portable")}));
     types->setPage(1);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language c spelling windows")));
