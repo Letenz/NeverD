@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Preserve exact scalar results while rejecting ambiguous frame provenance.
 
 #include "../../../lib/ir/low/X86/RegistrationFrame.h"
 #include "gtest/gtest.h"

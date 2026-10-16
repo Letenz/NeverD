@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Check source chain observations without granting native guard retirement.
 
 #include "gtest/gtest.h"
 

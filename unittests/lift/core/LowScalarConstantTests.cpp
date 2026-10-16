@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Compare bounded scalar facts with concrete fixed-width execution.
 
 #include "gtest/gtest.h"
 
