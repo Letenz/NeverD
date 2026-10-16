@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 39a521d14dfb31f7e045451a8039cdc180e2e6fabd816f96a0c746ddfa3d19f1 -->
+<!-- i18n-source: 9087505960d4cc4b5cf6a7c11547f25f65721975e0679c47f898ae3f18a0fcf8 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -1807,10 +1807,13 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 تُحل مؤشرات classic lazy قبل الدخول. يحدد كل برنامج وجهته وordinal العادي ورمزه دون وراثة الحالة، مع نوع مؤشر وaddend صفري وتعليمة DO_BIND واحدة تتبعها DONE مباشرة. يُدمج فقط rebase واحد إلى بايتات محلية قابلة للتنفيذ مع lazy bind للخانة نفسها، ويُحتسب السجلان في الميزانية. يتطلب dyld_stub_binder ربط classic عاديًا قويًا بلا addend واستدعاءات lazy فعلية. يفشل تنفيذه قبل قراءة إطار C والمعاملات أو تعديل errno أو تسجيل الاستدعاء. لا يُنفذ محلل وقت التشغيل أو حالة dyld الخاصة. يتحقق المرجع الأصلي والضيف من ثبات المؤشرات والمخرجات وحالة الدوال الست.
 
+تستخدم `open` و`lseek` و`pread` و`pwrite` و`dup` و`dup2` قائمة الملفات وقواعد التعديل ومواضع الواصفات الحالية. يسجل `open` وسيطين، أو ثلاثة إذا تضمنت أقل 32 بت من flags القيمة O_CREAT. يقرأ ARM64 وسيط int الاختياري بعد الترقية من أربعة بايتات محددة عند SP الدخول دون الحشو، ويستخدم x64 وسيط السجل العام الثالث. يحتفظ التقرير بالقيمة الأصلية، بينما يختزل وسيط النواة المنفصل mode إلى 16 بت. دون O_CREAT يكون mode صفراً ولا تُقرأ الذاكرة الاختيارية؛ يبقى التحقق من عنوان العودة في x64 مطلوباً. يسبق فشل قراءة الوسيط سجل الاستدعاء وerrno وتأثيرات الملفات. المراجع: [ABI ARM64 من Apple](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms)، [open في XNU](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c). تغطي المقارنات الأصلية O0/O1/O2 المواضع المشتركة والإدخال والإخراج الموضعي وفشل dup2 والإزاحات فوق 4 GiB وmode والبايتات الثنائية. إلغاء الخيوط وتحويلات مسارات التوافق خارج النموذج.
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
@@ -1820,11 +1823,13 @@ gates: RX/max RX; errno: RW/max RW; both resident model reservations
 budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
 preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
 report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
-call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
+call carriers: hex; full GP bits or defined ARM64 int vararg bytes; exact arity; null result if incomplete/nonreturning
+open: 2 args or 3 with O_CREAT; ARM64 mode int at SP, x64 third GP; kernel mode_t 16 bits
 basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
 classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
-native common catalogue: 82; required methods/platform: 97; matching ARM64 identities: 291
+file calls: main status 73; stdout_hex 460044; named calls 40; events 41
+native common catalogue: 82; required methods/platform: 98; matching ARM64 identities: 294
 ```
 
 ```json

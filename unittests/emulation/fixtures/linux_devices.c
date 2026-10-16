@@ -618,9 +618,9 @@ U64 devices_gpu_objects(U64 Route, U64 Commands) {
   CHECK(a.mmap_size, 12288);
   CHECK(a.va_length, 0x7788);
   CHECK(a.metadata, (U64)-1);
-  CHECK(a.flags, 0);
+  CHECK(a.flags, 0x000c0000);
   CHECK(b.size, 4096);
-  CHECK(b.flags, 0x01000000);
+  CHECK(b.flags, 0x010c0000);
   U64 readonly_cpu = raw6(Map, 0, 4096, 3, 1, 3, (U64)b.id * 4096);
   if (readonly_cpu > (U64)-4096)
     return __LINE__;
@@ -631,7 +631,7 @@ U64 devices_gpu_objects(U64 Route, U64 Commands) {
     return __LINE__;
   struct GPUObjectInfo q = {0, 0, 0, 0, 0, a.id, 0x1234};
   CHECK(invoke(Route, 5, ObjectInfo, (U64)&q), 0);
-  CHECK(q.flags, 0);
+  CHECK(q.flags, 0x000c0000);
   CHECK(q.size, 8192);
   CHECK(q.va_length, 12288);
   CHECK(q.user, 0);
@@ -705,7 +705,7 @@ U64 devices_gpu_objects(U64 Route, U64 Commands) {
   CHECK(invoke(0, 3, ObjectFree, (U64)&f), -22);
   q.id = b.id;
   CHECK(invoke(Route, 3, ObjectInfo, (U64)&q), 0);
-  CHECK(q.flags, 0x01000000);
+  CHECK(q.flags, 0x010c0000);
   CHECK(invoke(Route, 3, 0x40080921, (U64)&q.gpu), 0);
   CHECK(invoke(0, 3, ObjectInfo, (U64)&q), -22);
   a.size = 4096;
@@ -728,6 +728,193 @@ U64 devices_gpu_objects(U64 Route, U64 Commands) {
   return 0;
 }
 
+// Independent LP64 callers for the published GPUMEM_ID ABI.
+enum {
+  MemoryAllocID = 0xc0300934,
+  MemoryFreeID = 0xc0080935,
+  MemoryInfo = 0xc0480936
+};
+struct GPUMemoryAllocID {
+  U32 id, flags;
+  U64 size, mmap_size, gpu, padding[2];
+};
+struct GPUMemoryInfo {
+  U64 gpu;
+  U32 id, flags;
+  U64 size, mmap_size, user, padding[4];
+};
+struct GPUMemoryFreeID {
+  U32 id, padding;
+};
+_Static_assert(sizeof(struct GPUMemoryAllocID) == 48, "LP64 ID allocation");
+_Static_assert(sizeof(struct GPUMemoryInfo) == 72, "LP64 memory query");
+_Static_assert(sizeof(struct GPUMemoryFreeID) == 8, "LP64 ID release");
+
+U64 devices_gpu_legacy(U64 Route, U64 Commands) {
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 4);
+  CHECK(invoke(0, 3, MemoryInfo, 0), -14);
+  CHECK(invoke(0, 3, MemoryAllocID, (U64)-1), -14);
+  struct GPUMemoryAllocID a = {0, 0x00ff0000, 5001, 0, 0, {0x1234, 0x5678}};
+  CHECK(invoke(Route, 3, MemoryAllocID, (U64)&a), 0);
+  CHECK(a.size, 8192);
+  CHECK(a.mmap_size, 12288);
+  CHECK(a.flags, 25 << 16);
+  CHECK(a.padding[0], 0x1234);
+  CHECK(a.padding[1], 0x5678);
+  CHECK(a.gpu & 0x1ffffff, 0);
+  if (!a.id || !a.gpu)
+    return __LINE__;
+  // Alignment must be applied again after an earlier allocation or collision.
+  struct GPUMemoryAllocID b = {0, 25 << 16, 4096, 0, 0, {0, 0}};
+  CHECK(invoke(Route, 4, MemoryAllocID, (U64)&b), 0);
+  CHECK(b.gpu & 0x1ffffff, 0);
+  if (b.gpu <= a.gpu || b.id == a.id)
+    return __LINE__;
+  struct GPUObjectInfo modern = {0, 0, 0, 0, 0, a.id, 0xabc};
+  CHECK(invoke(Route, 4, ObjectInfo, (U64)&modern), 0);
+  CHECK(modern.gpu, a.gpu);
+  CHECK(modern.flags, 0x100190000UL); // Old allocator forces 32-bit GPU VA.
+  CHECK(modern.padding, 0xabc);
+  struct GPUMemoryInfo q = {1, a.id, 0, 0, 0, 0, {11, 22, 33, 44}};
+  CHECK(invoke(Route, 4, MemoryInfo, (U64)&q), 0); // ID takes precedence.
+  CHECK(q.gpu, a.gpu);
+  CHECK(q.flags, a.flags);
+  CHECK(q.size, 8192);
+  CHECK(q.mmap_size, 12288);
+  CHECK(q.user, 0);
+  CHECK(q.padding[0], 11);
+  CHECK(q.padding[1], 22);
+  CHECK(q.padding[2], 33);
+  CHECK(q.padding[3], 44);
+  q.id = 0;
+  q.gpu = a.gpu + 8191;
+  CHECK(invoke(Route, 3, MemoryInfo, (U64)&q), 0);
+  CHECK(q.gpu, a.gpu);
+  CHECK(q.id, a.id);
+  q.id = 0xffffffff;
+  CHECK(invoke(0, 3, MemoryInfo, (U64)&q), -22); // No address fallback.
+  CHECK(q.id, 0xffffffff);
+#ifdef __ANDROID__
+  if (Route) {
+    *__errno() = 0;
+    CHECK(invoke(Route, 3, MemoryInfo, (U64)&q), -1);
+    CHECK(*__errno(), 22);
+  }
+#endif
+  q.id = 0;
+  q.gpu = a.gpu + 8192;
+  CHECK(invoke(0, 3, MemoryInfo, (U64)&q), -22); // Guard isn't object data.
+  CHECK(q.gpu, a.gpu + 8192);
+  q.gpu = 0;
+  CHECK(invoke(0, 3, MemoryInfo, (U64)&q), -22);
+  U64 cpu = raw6(Map, 0, 8192, 3, 1, 4, (U64)a.id * 4096);
+  if (cpu > (U64)-4096)
+    return __LINE__;
+  volatile U32 *p = (volatile U32 *)cpu;
+  CHECK(p[0], 0);
+  CHECK(p[2047], 0);
+  p[0] = 0xdeadbeef;
+  p[2047] = 0x11223344;
+  if (Commands) {
+    // Allocate the IB with the new ABI; execute against an old-ABI allocation.
+    struct GPUObjectAlloc code = {4096, 0x101100000UL, 0, 0, 0, 0, 0};
+    CHECK(invoke(Route, 3, ObjectAlloc, (U64)&code), 0);
+    CHECK(code.flags, 0x101100000UL);
+    struct GPUMemoryInfo cq = {0, code.id, 0, 0, 0, 0, {0, 0, 0, 0}};
+    CHECK(invoke(Route, 3, MemoryInfo, (U64)&cq), 0);
+    CHECK(cq.flags, 0x01100000);
+    CHECK(cq.gpu & 65535, 0);
+    U64 ccpu = raw6(Map, 0, 4096, 3, 1, 3, cq.gpu);
+    if (ccpu > (U64)-4096)
+      return __LINE__;
+    volatile U32 *c = (volatile U32 *)ccpu;
+    c[0] = 0xc0013d00;
+    c[1] = (U32)a.gpu + 8188;
+    c[2] = 0x76543210;
+    U32 context[2] = {0x12, 0};
+    CHECK(invoke(Route, 3, CreateContext, (U64)context), 0);
+    struct GPUSubmit submit = {context[1], cq.gpu, 3, 0xdeadbeef, 0};
+    CHECK(invoke(Route, 3, 0xc0200910, (U64)&submit), 0);
+    CHECK(submit.timestamp, 1);
+    CHECK(p[2047], 0x76543210);
+    CHECK(p[0], 0xdeadbeef);
+    CHECK(raw(Unmap, ccpu, 4096, 0), 0);
+    struct GPUMemoryFreeID cf = {code.id, 0x87654321};
+    CHECK(invoke(Route, 4, MemoryFreeID, (U64)&cf), 0);
+    CHECK(cf.padding, 0x87654321);
+    CHECK(invoke(Route, 3, DestroyContext, (U64)&context[1]), 0);
+  }
+  struct GPUMemoryFreeID f = {a.id, 0x88776655};
+  CHECK(invoke(Route, 3, MemoryFreeID, (U64)&f), 0);
+  CHECK(f.padding, 0x88776655);
+  CHECK(invoke(0, 4, MemoryFreeID, (U64)&f), -16);
+  q.id = a.id;
+  CHECK(invoke(Route, 4, MemoryInfo, (U64)&q), 0);
+  CHECK(q.user, cpu);
+  CHECK(invoke(Route, 4, ObjectInfo, (U64)&modern), 0);
+  CHECK(modern.user, cpu);
+  CHECK(raw(Unmap, cpu, 8192, 0), 0);
+  CHECK(invoke(0, 4, MemoryInfo, (U64)&q), -22);
+  CHECK(invoke(0, 4, ObjectInfo, (U64)&modern), -22);
+  CHECK(invoke(0, 4, MemoryFreeID, (U64)&f), -22);
+  struct GPUObjectFree bf = {0, 0, b.id, 0, 0, 0};
+  CHECK(invoke(Route, 4, ObjectFree, (U64)&bf), 0);
+  a.size = 1;
+  a.flags = 1 << 16;
+  CHECK(invoke(Route, 3, MemoryAllocID, (U64)&a), 0);
+  CHECK(a.flags, 12 << 16);
+  CHECK(a.size, 4096);
+  f.id = a.id;
+  CHECK(invoke(Route, 3, MemoryFreeID, (U64)&f), 0);
+  a.size = 0;
+  CHECK(invoke(0, 3, MemoryAllocID, (U64)&a), -22);
+  a.size = 0x100000000UL;
+  CHECK(invoke(0, 3, MemoryAllocID, (U64)&a), -22);
+  CHECK(raw(Close, 3, 0, 0), 0);
+  CHECK(raw(Close, 4, 0, 0), 0);
+  return 0;
+}
+
+U64 devices_gpu_legacy_rejected(U64 Mode, U64 Buffer) {
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  if (Mode < 2) {
+    struct GPUMemoryAllocID *a =
+        (struct GPUMemoryAllocID *)(Buffer + (Mode ? 4064 : 0));
+    *a = (struct GPUMemoryAllocID){0xdeadbeef, Mode ? 0 : 8, 4096,
+                                   0xabcdef,   0x11223344,   {0x1234, 0x5678}};
+    if (Mode)
+      CHECK(raw(Protect, Buffer + 4096, 4096, 1), 0);
+    return invoke(0, 3, MemoryAllocID, (U64)a);
+  }
+  struct GPUMemoryAllocID a = {0, 0, 4096, 0, 0, {0, 0}};
+  CHECK(invoke(0, 3, MemoryAllocID, (U64)&a), 0);
+  CHECK(raw6(Map, 0x23000000, 4096, 3, 1, 3, a.gpu), 0x23000000);
+  *(volatile U32 *)0x23000000 = 0x76543210;
+  if (Mode == 4) {
+    U64 cpu = raw6(Map, 0, 4096, 3, 0x22, (U64)-1, 0);
+    if (cpu > (U64)-4096)
+      return __LINE__;
+    struct GPUMap imported = {-1, 0, 4096, 0, cpu, 2, 0};
+    CHECK(invoke(0, 3, 0xc0300915, (U64)&imported), 0);
+    struct GPUMemoryInfo *q = (struct GPUMemoryInfo *)Buffer;
+    q->gpu = imported.gpu;
+    q->id = 0;
+    return invoke(0, 3, MemoryInfo, (U64)q);
+  }
+  if (Mode == 2) {
+    struct GPUMemoryInfo *q = (struct GPUMemoryInfo *)(Buffer + 4056);
+    q->gpu = a.gpu + 1;
+    q->id = a.id;
+    CHECK(raw(Protect, Buffer + 4096, 4096, 1), 0);
+    return invoke(0, 3, MemoryInfo, (U64)q);
+  }
+  struct GPUMemoryFreeID *f = (struct GPUMemoryFreeID *)(Buffer + 4092);
+  f->id = a.id;
+  CHECK(raw(Protect, Buffer + 4096, 4096, 1), 0);
+  return invoke(0, 3, MemoryFreeID, (U64)f);
+}
+
 // A stopped unsupported operation must preserve both its record and RAM.
 U64 devices_gpu_objects_rejected(U64 Mode, U64 Buffer) {
   CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
@@ -735,7 +922,7 @@ U64 devices_gpu_objects_rejected(U64 Mode, U64 Buffer) {
   *a = (struct GPUObjectAlloc){8192, 0, 0, 0xabcdef, 0xdeadbeef, 0, 0};
   if (Mode == 0 || Mode == 1 || Mode == 2) {
     if (Mode == 0)
-      a->flags = 0x100000000UL;
+      a->flags = 8; // SECURE has no ordinary RAM semantics.
     if (Mode == 1)
       a->metadata_length = 1;
     if (Mode == 2)
@@ -818,24 +1005,26 @@ U64 devices_open_error(void) {
 }
 #else
 void process_main(U64 *Stack) {
+  // Source-line failures must not become success after exit's 8-bit truncation.
   if (Stack[0] > 1) {
     char Mode = ((const char *)Stack[2])[0];
     if (Mode == 'd' || Mode == 'u' || Mode == 'k' || Mode == 'b' ||
-        Mode == 'g' || Mode == 'o') {
+        Mode == 'g' || Mode == 'o' || Mode == 'l') {
       U64 Status = Mode == 'd'   ? devices_duplicates(0)
                    : Mode == 'u' ? devices_updates()
                    : Mode == 'k' ? devices_contexts(0)
                    : Mode == 'g' ? devices_gpu_commands(0)
                    : Mode == 'o' ? devices_gpu_objects(0, 1)
+                   : Mode == 'l' ? devices_gpu_legacy(0, 1)
                                  : devices_busy_poll();
-      raw(Exit, Status, 0, 0);
+      raw(Exit, Status ? 1 : 0, 0, 0);
       __builtin_trap();
     }
   }
   U64 Status = devices_sequence(0);
   if (!Status)
     Status = devices_mapping(0);
-  raw(Exit, Status, 0, 0);
+  raw(Exit, Status ? 1 : 0, 0, 0);
   __builtin_trap();
 }
 #endif

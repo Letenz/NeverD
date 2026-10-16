@@ -64,9 +64,11 @@ std::uint32_t frameSize(const unsigned char *header) {
   return size;
 }
 
-std::string frame(const Json &message) {
-  const std::string body =
-      message.dump(-1, ' ', false, Json::error_handler_t::replace);
+EncodedJson::EncodedJson(const Json &value)
+    : text_(value.dump(-1, ' ', false, Json::error_handler_t::replace)) {}
+
+namespace {
+std::string frameBody(const std::string &body) {
   if (body.size() > MaxFrameBytes)
     throw Error("budget_exceeded",
                 "Response exceeds the 8 MiB transport budget");
@@ -76,5 +78,31 @@ std::string frame(const Json &message) {
     result[i] = static_cast<char>(size >> (24 - 8 * i));
   result += body;
   return result;
+}
+} // namespace
+
+std::string frame(const Json &message) {
+  return frameBody(
+      message.dump(-1, ' ', false, Json::error_handler_t::replace));
+}
+
+std::string frame(const Json &message, const EncodedJson &payload) {
+  if (!message.is_object())
+    throw Error("invalid_request", "A response envelope must be an object");
+  Json envelope = message;
+  envelope.erase("payload");
+  std::string body =
+      envelope.dump(-1, ' ', false, Json::error_handler_t::replace);
+  body.pop_back();
+  if (!envelope.empty())
+    body += ',';
+  body += "\"payload\":";
+  if (body.size() >= MaxFrameBytes ||
+      payload.text().size() >= MaxFrameBytes - body.size())
+    throw Error("budget_exceeded",
+                "Response exceeds the 8 MiB transport budget");
+  body += payload.text();
+  body += '}';
+  return frameBody(body);
 }
 } // namespace neverd::worker

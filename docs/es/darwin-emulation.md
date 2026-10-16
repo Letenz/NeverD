@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 39a521d14dfb31f7e045451a8039cdc180e2e6fabd816f96a0c746ddfa3d19f1 -->
+<!-- i18n-source: 9087505960d4cc4b5cf6a7c11547f25f65721975e0679c47f898ae3f18a0fcf8 -->
 
 [← Índice de documentación](README.md)
 
@@ -1807,10 +1807,13 @@ El mismo objeto independiente se enlaza con system/classic/chained y ejecuta con
 
 Los punteros classic lazy se resuelven antes de entrar. Cada programa declara destino, ordinal ordinario y símbolo sin heredar estado: tipo puntero, addend cero y un DO_BIND inmediatamente seguido de DONE. Solo se fusionan un rebase a bytes ejecutables locales y un lazy bind de la misma ranura; ambos consumen presupuesto. dyld_stub_binder exige un bind classic ordinario fuerte, sin addend, y llamadas lazy reales. Su ejecución falla antes de leer el marco C o argumentos, modificar errno y registrar llamadas. No se implementan el resolver en ejecución ni el estado privado de dyld. El control nativo y el invitado verifican punteros estables, salida y estado para las seis funciones.
 
+`open`, `lseek`, `pread`, `pwrite`, `dup` y `dup2` comparten el catálogo, las mutaciones y los cursores existentes. `open` registra dos argumentos, o tres si los 32 bits bajos de flags incluyen O_CREAT. ARM64 lee el int promovido opcional en los cuatro bytes definidos de SP, sin relleno; x64 usa el tercer argumento de registro general. El informe conserva el portador y el argumento del núcleo reduce mode a 16 bits. Sin O_CREAT, mode es cero y no se lee almacenamiento opcional; se sigue validando el retorno x64. Los fallos de lectura preceden a registros, errno y efectos de archivo. Referencias: [ABI ARM64 de Apple](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms), [open de XNU](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c). Las pruebas nativas O0/O1/O2 cubren cursores compartidos, E/S posicional, errores de dup2, posiciones superiores a 4 GiB, mode y bytes binarios. Cancelación de hilos y rutas de compatibilidad quedan fuera.
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
@@ -1820,11 +1823,13 @@ gates: RX/max RX; errno: RW/max RW; both resident model reservations
 budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
 preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
 report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
-call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
+call carriers: hex; full GP bits or defined ARM64 int vararg bytes; exact arity; null result if incomplete/nonreturning
+open: 2 args or 3 with O_CREAT; ARM64 mode int at SP, x64 third GP; kernel mode_t 16 bits
 basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
 classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
-native common catalogue: 82; required methods/platform: 97; matching ARM64 identities: 291
+file calls: main status 73; stdout_hex 460044; named calls 40; events 41
+native common catalogue: 82; required methods/platform: 98; matching ARM64 identities: 294
 ```
 
 ```json

@@ -183,8 +183,13 @@ A-to-B-to-A navigation, including a subsequent graph or IR request. It checks
 edits, undo, replica restore, project replacement, representation separation and
 both document-count and retained-byte eviction. Page checks preserve repeated
 references, overlapping names, nested spans and unsorted producer order, including
-empty pages after the end of the text. Timing-independent cache tests
-complement `source_revisit_bench.py`, which measures complete real source pages.
+empty pages after the end of the text. Unordered metadata uses cached numeric
+bounds owned by the same immutable document; their vector capacities count
+toward its retained-byte limit. Encoded-page count and byte pressure must not
+rerender a retained document. `NeverDWorkerProtocol` checks fresh envelopes,
+escaped and invalid UTF-8 payloads, and the exact encoded-frame byte limit.
+Timing-independent cache tests complement
+`source_revisit_bench.py`, which measures complete real source pages.
 
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
@@ -302,11 +307,15 @@ python3 scripts/check_type_renders.py --neverd build/bin/neverd \
 
 With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
 ntoskrnl.exe and its PDB,
-`SessionCAPITest.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
+`SessionCAPIKernelInputs.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
 and checks that the headers join its PDB without conflicts.
-`SessionCAPITest.KernelFunctionsDecompileWithTheirPrototypes` decompiles
+`SessionCAPIKernelInputs.KernelFunctionsDecompileWithTheirPrototypes` decompiles
 `NtCreateFile`, `IoAllocateIrp`, `PsCreateSystemThread` and
 `IofCompleteRequest` and checks the signatures the headers give them.
+Run these external-input checks with `--gtest_filter=SessionCAPIKernelInputs.*`.
+Without the two inputs they remain explicit skips. The Linux Lift qualification
+requires every `SessionCAPITest.*` case to execute and pass using repository
+fixtures; it does not claim Windows kernel input coverage.
 `LocalTypesDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
 the conversion and which functions take a prototype without a program.
 `scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
@@ -377,7 +386,7 @@ the members the context gives, the definitions a unit holds and what a
 dropped context takes back. `SessionCAPITest.FunctionsHoldTheRecordsTheirPDBTypes`
 covers the same through a session on the fixture, a renamed member reaching
 the pseudocode among them, in every build;
-`SessionCAPITest.KernelFunctionsHoldTheRecordsTheyName` (with the kernel's
+`SessionCAPIKernelInputs.KernelFunctionsHoldTheRecordsTheyName` (with the kernel's
 environment variables) covers `KeInitializeDpc` and the kernel's unions.
 
 ## Scalar x86 floating-point state
@@ -7373,6 +7382,18 @@ The raw `GPUObjectStorage` case and Android object lifecycle/address-range cases
 have a 30-second per-execution wall budget for word-by-word O0 page checks on
 contended hosts; their guest instruction and event budgets are unchanged.
 Existing device cases retain their deadlines.
+`LegacyGPU*` adds old/new allocation, query and release mixing, normalized
+alignment and FORCE_32BIT flags, address collision recovery, ID-before-address
+lookup, interior data versus guard queries, complete reserved fields and pending
+frees. Its mixed PM4 case allocates the command buffer through GPUOBJ and writes
+into GPUMEM_ID storage. Cross-page records with a read-only trailing page must
+preserve the complete input and live RAM; imported objects without a modeled
+kernel ID stop explicitly. Raw errno and Bionic errno adapters are checked by
+independent callers. Run these cases alongside the existing GPUObject tests;
+the same public C API/CLI/Python case now includes both allocation interfaces.
+The kernel-owner test also observes allocation capacity, ID/address reuse and
+unmap-after-refused-free state, so unchanged output bytes alone cannot hide a
+partially committed allocation or pending free.
 These fixtures do not supply an Android system-service implementation or shader.
 
 `KernelFileTransfers` covers packet fields, offset sentinels, append-only handles, zero lengths, aliased outputs, immediate and pending statuses, worker notification and refusal before publication. `OriginalBufferedNativeFileTransfers` and `GenuineWdkBufferedNativeFileTransfers` execute imported and dynamically resolved calls across backends, contracts, load bases and scheduling. Configure `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` and `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` for genuine normal/CFG images; unavailable backends remain explicit skips.
