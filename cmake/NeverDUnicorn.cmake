@@ -29,6 +29,12 @@ function(neverd_require_unicorn)
   add_subdirectory("${CMAKE_SOURCE_DIR}/third_party/unicorn"
                    "${CMAKE_BINARY_DIR}/third_party/unicorn"
                    EXCLUDE_FROM_ALL)
+  # Keep Unicorn's private CRC helper separate from static zlib on COFF.
+  # Its definition and ARM callers must agree without changing consumer headers.
+  foreach(_neverd_crc_target unicorn-common arm-softmmu aarch64-softmmu)
+    target_compile_definitions(${_neverd_crc_target} PRIVATE
+      crc32=neverd_unicorn_crc32)
+  endforeach()
   if(WIN32)
     # Unicorn's public platform header includes windows.h.
     target_compile_definitions(unicorn INTERFACE NOMINMAX)
