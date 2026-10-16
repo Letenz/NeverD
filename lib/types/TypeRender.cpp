@@ -21,11 +21,25 @@ namespace {
 struct LanguageName {
   Language Lang;
   const char *Id;
+  BuiltinSpelling Spelling;
 };
 
 constexpr LanguageName Languages[] = {
-#define NEVERD_TYPE_LANGUAGE(Name, Id, Display) {Language::Name, Id},
+#define NEVERD_TYPE_LANGUAGE(Name, Id, Display, Spelling)                      \
+  {Language::Name, Id, BuiltinSpelling::Spelling},
 #include "neverd/types/TypeLanguages.def"
+};
+
+struct SpellingName {
+  BuiltinSpelling Spelling;
+  const char *Id;
+  bool C, Rust, Go;
+};
+
+constexpr SpellingName Spellings[] = {
+#define NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go)                         \
+  {BuiltinSpelling::Name, Id, C, Rust, Go},
+#include "neverd/types/BuiltinSpellings.def"
 };
 
 struct Keyword {
@@ -50,6 +64,63 @@ bool reserved(Language Lang, llvm::StringRef Name) {
 }
 
 } // namespace
+
+llvm::StringRef spellingId(BuiltinSpelling Spelling) {
+  for (const SpellingName &Entry : Spellings)
+    if (Entry.Spelling == Spelling)
+      return Entry.Id;
+  return "";
+}
+
+std::optional<BuiltinSpelling> spellingNamed(llvm::StringRef Id) {
+  for (const SpellingName &Entry : Spellings)
+    if (Id == Entry.Id)
+      return Entry.Spelling;
+  return std::nullopt;
+}
+
+bool spellsBuiltins(Language Lang, BuiltinSpelling Spelling) {
+  for (const SpellingName &Entry : Spellings)
+    if (Entry.Spelling == Spelling) {
+      switch (Lang) {
+      case Language::C:
+      case Language::Cpp:
+        return Entry.C;
+      case Language::Rust:
+        return Entry.Rust;
+      case Language::Go:
+        return Entry.Go;
+      }
+    }
+  return false;
+}
+
+BuiltinSpelling defaultSpelling(Language Lang) {
+  for (const LanguageName &Entry : Languages)
+    if (Entry.Lang == Lang)
+      return Entry.Spelling;
+  return BuiltinSpelling::Portable;
+}
+
+std::string spellingsText(Language Lang) {
+  std::vector<llvm::StringRef> Ids;
+  for (const SpellingName &Entry : Spellings)
+    if (spellsBuiltins(Lang, Entry.Spelling))
+      Ids.push_back(Entry.Id);
+  std::string Text;
+  for (size_t I = 0; I < Ids.size(); ++I) {
+    if (I)
+      Text += I + 1 == Ids.size() ? " or " : ", ";
+    Text += Ids[I].str();
+  }
+  return Text;
+}
+
+BuiltinSpelling spellingOf(const RenderOptions &Options) {
+  return Options.Spelling && spellsBuiltins(Options.Lang, *Options.Spelling)
+             ? *Options.Spelling
+             : defaultSpelling(Options.Lang);
+}
 
 llvm::StringRef languageId(Language Lang) {
   for (const LanguageName &Entry : Languages)

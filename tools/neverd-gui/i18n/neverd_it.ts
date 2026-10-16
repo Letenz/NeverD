@@ -3411,6 +3411,10 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
         <translation>Larghezze esatte (uint32_t)</translation>
     </message>
     <message>
+        <source>Exact widths (u32)</source>
+        <translation>Larghezze esatte (u32)</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>Filtra i tipi per nome</translation>
     </message>
@@ -3463,8 +3467,8 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
         <translation>Esporta tutti i tipi…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>Come C e C++ chiamano i tipi predefiniti</translation>
+        <source>How the source names builtin types</source>
+        <translation>Come il sorgente chiama i tipi predefiniti</translation>
     </message>
     <message>
         <source>Hex offsets</source>

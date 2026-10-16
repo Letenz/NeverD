@@ -128,7 +128,7 @@ private:
 std::string CWriter::builtin(Builtin Type) const {
   UsedBuiltins.insert(Type);
   const BuiltinInfo &Info = builtinInfo(Type);
-  switch (Options.Spelling) {
+  switch (spellingOf(Options)) {
   case BuiltinSpelling::Windows:
     return Info.Windows;
   case BuiltinSpelling::IDA:
@@ -616,13 +616,13 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
            "DECLSPEC_ALIGN(x) __attribute__((aligned(x)))\n#endif\n#endif\n";
   // C++'s static_assert, which C11 spells _Static_assert: <assert.h> would
   // name it, but freestanding C, as a driver's, need not have the header.
-  const bool LongChecked = Options.Spelling == BuiltinSpelling::Keywords &&
+  const bool LongChecked = spellingOf(Options) == BuiltinSpelling::Keywords &&
                            (Writer.builtins().count(Builtin::Long) ||
                             Writer.builtins().count(Builtin::ULong));
   if (!Cpp && (Writer.asserts() || LongChecked))
     Out += "\n#if !defined(__cplusplus) && !defined(static_assert)\n#define "
            "static_assert _Static_assert\n#endif\n";
-  switch (Options.Spelling) {
+  switch (spellingOf(Options)) {
   case BuiltinSpelling::Windows: {
     // The Windows headers declare these; elsewhere they take exact widths.
     Out += "\n#if !defined(_WINDEF_) && !defined(_NTDEF_)\n";

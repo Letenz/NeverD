@@ -8,7 +8,9 @@
 // unions, anonymous records as types of their own named <Parent>_0 and
 // fields named Anonymous, a run of bitfields as one _bitfield storage field
 // with an accessor for each, enumerations as an integer type and constants,
-// and nullable function pointers as Option<unsafe extern fn>.
+// and nullable function pointers as Option<unsafe extern fn>.  Builtins are
+// exact widths (u32), or Windows' names (ULONG), which a module declares as
+// aliases of them, as wdk-sys does.
 //
 //===----------------------------------------------------------------------===//
 
@@ -17,6 +19,8 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <set>
 
 namespace neverd::types::render {
 namespace {
@@ -32,9 +36,14 @@ std::string hex(uint64_t Value) {
 class RustWriter {
 public:
   RustWriter(const TypeLibrary &Library, const RenderOptions &Options)
-      : Library(Library), Options(Options), Names(Library, Language::Rust) {}
+      : Library(Library), Options(Options), Spelling(spellingOf(Options)),
+        Names(Library, Language::Rust) {}
 
   void definition(const LocalType &Type, std::string &Out);
+  /// The builtins rendered so far by their Windows names.
+  const std::set<Builtin> &aliased() const { return Aliased; }
+  /// \p Type as an exact width, as Rust spells it.
+  std::string exact(Builtin Type, bool Pointee) const;
 
 private:
   std::string type(const TypeExpr &Type, bool Pointee = false) const;
@@ -54,7 +63,9 @@ private:
 
   const TypeLibrary &Library;
   const RenderOptions &Options;
+  const BuiltinSpelling Spelling;
   const NameSpelling Names;
+  mutable std::set<Builtin> Aliased;
   unsigned Digits = 1;
   /// The outer record's offset of the record being written, in bytes.
   uint64_t Base = 0;
@@ -69,6 +80,14 @@ std::string RustWriter::integer(uint64_t Bytes, bool Signed) const {
 }
 
 std::string RustWriter::builtin(Builtin Type, bool Pointee) const {
+  if (Spelling == BuiltinSpelling::Windows && windowsTypedef(Type)) {
+    Aliased.insert(Type);
+    return builtinInfo(Type).Windows;
+  }
+  return exact(Type, Pointee);
+}
+
+std::string RustWriter::exact(Builtin Type, bool Pointee) const {
   const BuiltinInfo &Info = builtinInfo(Type);
   const unsigned Bytes = builtinBytes(Type, Library.dataModel());
   switch (Info.Class) {
@@ -267,7 +286,15 @@ void RustWriter::accessors(const RecordPlan &Plan, std::string &Out) const {
       const BitAccess Access = bitAccess(Library, *Bit);
       const std::string Bits = std::to_string(Access.UnitBits);
       const std::string Unsigned = "u" + Bits;
-      const std::string Value = (Access.Signed ? "i" : "u") + Bits;
+      std::string Value = (Access.Signed ? "i" : "u") + Bits;
+      // A builtin of the unit's size keeps its own name: ULONG, not UINT.
+      if (Bit->Type->Kind == TypeExprKind::Builtin &&
+          builtinBytes(Bit->Type->TheBuiltin, Library.dataModel()) * 8 ==
+              Access.UnitBits &&
+          builtinInfo(Bit->Type->TheBuiltin).Signed == Access.Signed &&
+          builtinInfo(Bit->Type->TheBuiltin).Class != BuiltinClass::Float &&
+          builtinInfo(Bit->Type->TheBuiltin).Class != BuiltinClass::Bool)
+        Value = builtin(Bit->Type->TheBuiltin, /*Pointee=*/false);
       const std::string Field = "self." + Place.Name;
       std::string Read;
       if (Access.Signed) {
@@ -406,17 +433,26 @@ std::string renderRustModule(const TypeLibrary &Library,
                              const RenderOptions &Options) {
   const std::vector<const LocalType *> Types =
       neededTypes(Library, Roots, /*ThroughPointers=*/true);
+  RustWriter Writer(Library, Options);
+  std::string Body;
+  for (const LocalType *Type : Types) {
+    Body += '\n';
+    Writer.definition(*Type, Body);
+  }
   std::string Out = "// " + std::to_string(Types.size()) +
                     " types, rendered by NeverD.\n"
                     "#![allow(non_camel_case_types, non_snake_case, "
                     "non_upper_case_globals, dead_code)]\n\n"
                     "use core::ffi::c_void;\n";
-  RustWriter Writer(Library, Options);
-  for (const LocalType *Type : Types) {
-    Out += '\n';
-    Writer.definition(*Type, Out);
+  // The Windows names the types use, as the headers declare them, at the
+  // program's widths.
+  if (!Writer.aliased().empty()) {
+    Out += "\n/// The Windows headers' names of builtin types.\n";
+    for (Builtin Type : Writer.aliased())
+      Out += "pub type " + std::string(builtinInfo(Type).Windows) + " = " +
+             Writer.exact(Type, /*Pointee=*/false) + ";\n";
   }
-  return Out;
+  return Out + Body;
 }
 
 } // namespace neverd::types::render

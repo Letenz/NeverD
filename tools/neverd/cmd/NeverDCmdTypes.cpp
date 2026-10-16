@@ -33,8 +33,17 @@ bool knownLanguage(StringRef Id) {
   return Id == "c" || Id == "cpp" || Id == "rust" || Id == "go";
 }
 
+/// A spelling --spelling may name; empty takes the language's own.
 bool knownSpelling(StringRef Id) {
-  return Id == "windows" || Id == "ida" || Id == "keywords" || Id == "portable";
+  return Id.empty() || Id == "windows" || Id == "ida" || Id == "keywords" ||
+         Id == "portable";
+}
+
+/// \p Options with the spelling --spelling asks, if it asks one.
+json::Object withSpelling(json::Object Options) {
+  if (!TypesSpelling.empty())
+    Options["spelling"] = TypesSpelling.getValue();
+  return Options;
 }
 
 std::string text(const json::Value &Value) {
@@ -188,7 +197,7 @@ void layoutRows(const json::Array &Members, unsigned Depth, raw_ostream &Out) {
 }
 
 int layout(neverd_session_t Sess, raw_ostream &Out) {
-  const std::string Options = text(json::Object{{"spelling", TypesSpelling}});
+  const std::string Options = text(withSpelling(json::Object{}));
   json::Array All;
   for (const std::string &Name : TypeNames) {
     std::optional<json::Value> Type =
@@ -230,12 +239,12 @@ int layout(neverd_session_t Sess, raw_ostream &Out) {
 }
 
 int render(neverd_session_t Sess, raw_ostream &Out) {
-  json::Object Options{{"language", TypesLanguage},
-                       {"spelling", TypesSpelling},
-                       {"offsets", !TypesNoOffsets},
-                       {"hexOffsets", !TypesDecimalOffsets},
-                       {"asserts", static_cast<bool>(TypesAsserts)},
-                       {"prototypes", static_cast<bool>(TypesPrototypes)}};
+  json::Object Options = withSpelling(
+      json::Object{{"language", TypesLanguage},
+                   {"offsets", !TypesNoOffsets},
+                   {"hexOffsets", !TypesDecimalOffsets},
+                   {"asserts", static_cast<bool>(TypesAsserts)},
+                   {"prototypes", static_cast<bool>(TypesPrototypes)}});
   if (!TypesAll) {
     json::Array Names;
     for (const std::string &Name : TypeNames)
@@ -389,13 +398,13 @@ int runTypesConvert() {
     json::Array Names;
     for (const std::string &Name : TypeNames)
       Names.push_back(Name);
-    json::Object Render{{"language", TypesLanguage.getValue()},
-                        {"spelling", TypesSpelling.getValue()},
-                        {"offsets", !TypesNoOffsets},
-                        {"hexOffsets", !TypesDecimalOffsets},
-                        {"asserts", TypesAsserts.getValue()},
-                        {"prototypes", TypesPrototypes.getValue()},
-                        {"dependencies", !TypesAlone}};
+    json::Object Render =
+        withSpelling(json::Object{{"language", TypesLanguage.getValue()},
+                                  {"offsets", !TypesNoOffsets},
+                                  {"hexOffsets", !TypesDecimalOffsets},
+                                  {"asserts", TypesAsserts.getValue()},
+                                  {"prototypes", TypesPrototypes.getValue()},
+                                  {"dependencies", !TypesAlone}});
     if (!Names.empty())
       Render["types"] = std::move(Names);
     Request["render"] = std::move(Render);

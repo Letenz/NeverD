@@ -3552,6 +3552,26 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
       Session,
       R"({"language":"rust","types":["_PACKED"],"dependencies":false})"));
   EXPECT_NE(Rust.find("#[repr(C, packed(1))]"), std::string::npos);
+  EXPECT_NE(Rust.find("pub Value: u32,"), std::string::npos);
+  // Rust names builtins as Windows does when asked, with the aliases.
+  const std::string RustWindows = takeString(neverd_local_types_source(
+      Session,
+      R"({"language":"rust","spelling":"windows","types":["_PACKED"]})"));
+  EXPECT_NE(RustWindows.find("pub type ULONG = u32;\n"), std::string::npos);
+  EXPECT_NE(RustWindows.find("pub Value: ULONG,"), std::string::npos);
+  // A spelling the language does not take fails, saying which it takes.
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"rust","spelling":"ida"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "rust names builtins as windows or portable, not ida");
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"go","spelling":"windows"})"),
+            nullptr);
+  EXPECT_FALSE(
+      takeString(neverd_local_types_source(
+                     Session, R"({"language":"go","spelling":"portable"})"))
+          .empty());
 
   EXPECT_EQ(neverd_local_type_json(Session, "_NO_SUCH_TYPE", nullptr), nullptr);
   EXPECT_NE(takeString(neverd_last_error(Session)).find("_NO_SUCH_TYPE"),

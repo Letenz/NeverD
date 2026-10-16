@@ -3916,25 +3916,45 @@ private slots:
     QTRY_COMPARE(types->currentType(), QStringLiteral("_DEVICE"));
 
     // The source in the language of its tab, with the options asked: C/C++
-    // shows C, and builtins have spellings to choose only there.
+    // shows C, and each language chooses among its own spellings, Rust's
+    // apart from C's; Go has one.
     auto *spelling =
         types->findChild<QComboBox *>(QStringLiteral("localTypesSpelling"));
     QVERIFY(spelling);
+    const auto choices = [spelling] {
+      QStringList ids;
+      for (int index = 0; index < spelling->count(); ++index)
+        ids.append(spelling->itemData(index).toString());
+      return ids;
+    };
     types->setPage(2);
     QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language rust spelling portable")));
+    QVERIFY(!spelling->isHidden());
+    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
+                                     QStringLiteral("portable")}));
+    spelling->setCurrentIndex(0);
+    QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language rust spelling windows")));
-    QVERIFY(spelling->isHidden());
     types->setPage(3);
     QTRY_VERIFY(source->toPlainText().startsWith(
-        QStringLiteral("// language go spelling windows")));
+        QStringLiteral("// language go spelling default")));
     QVERIFY(spelling->isHidden());
     types->setPage(1);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language c spelling windows")));
     QVERIFY(source->toPlainText().contains(QStringLiteral("struct _DEVICE")));
     QVERIFY(!spelling->isHidden());
+    QCOMPARE(
+        choices(),
+        (QStringList{QStringLiteral("windows"), QStringLiteral("ida"),
+                     QStringLiteral("keywords"), QStringLiteral("portable")}));
+    QCOMPARE(spelling->currentData().toString(), QStringLiteral("windows"));
     QCOMPARE(QSettings().value(QStringLiteral("localTypes/view")).toString(),
              QStringLiteral("c"));
+    QCOMPARE(
+        QSettings().value(QStringLiteral("localTypes/rustSpelling")).toString(),
+        QStringLiteral("windows"));
 
     // The filter keeps the types whose name holds its text.
     filter->setText(QStringLiteral("list"));
