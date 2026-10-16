@@ -11,6 +11,7 @@
 #include "HexView.h"
 #include "ListingView.h"
 #include "LoadFileDialog.h"
+#include "LocalTypesView.h"
 #include "MainWindow.h"
 #include "OutputWindow.h"
 #include "PdbPromptDialog.h"
@@ -66,6 +67,7 @@
 #include <QToolButton>
 #include <QTranslator>
 #include <QTreeView>
+#include <QTreeWidget>
 #include <QUrl>
 #include <cmath>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
@@ -3870,6 +3872,181 @@ private slots:
     QVERIFY2(input.width() >= 420, qPrintable(QString::number(input.width())));
   }
 
+  void localTypesLayOutAndRenderTheProgramsTypes() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-types.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.action(ActionId::ViewLocalTypes)->trigger();
+    auto *types = bench.window->findChild<LocalTypesView *>();
+    QVERIFY(types);
+    auto *list =
+        types->findChild<QTreeView *>(QStringLiteral("localTypesList"));
+    auto *layout =
+        types->findChild<QTreeWidget *>(QStringLiteral("localTypesLayout"));
+    auto *source =
+        types->findChild<QPlainTextEdit *>(QStringLiteral("localTypesSource"));
+    auto *filter =
+        types->findChild<QLineEdit *>(QStringLiteral("localTypesFilter"));
+    QVERIFY(list && layout && source && filter);
+    QTRY_COMPARE(list->model()->rowCount(), 3);
+    // The filter has the focus, as IDA's quick filter does.
+    QTRY_VERIFY(filter->hasFocus());
+
+    // A record shows its members, the padding between and the union it
+    // holds, the union's bitfield at its bit.
+    types->showType(QStringLiteral("_DEVICE"));
+    QTRY_COMPARE(types->currentType(), QStringLiteral("_DEVICE"));
+    QTRY_COMPARE(layout->topLevelItemCount(), 4);
+    QCOMPARE(layout->topLevelItem(0)->text(0), QStringLiteral("Type"));
+    QCOMPARE(layout->topLevelItem(1)->text(0), QStringLiteral("(padding)"));
+    QCOMPARE(layout->topLevelItem(1)->text(2), QStringLiteral("0x6"));
+    QCOMPARE(layout->topLevelItem(3)->text(0), QStringLiteral("union"));
+    QCOMPARE(layout->topLevelItem(3)->child(1)->text(1),
+             QStringLiteral("0x18.0"));
+    QCOMPARE(layout->topLevelItem(3)->child(1)->text(2), QStringLiteral(":1"));
+
+    // A member's type opens on a double click; Back returns.
+    auto *links = layout->topLevelItem(2);
+    QCOMPARE(links->text(0), QStringLiteral("Links"));
+    emit layout->itemDoubleClicked(links, 0);
+    QTRY_COMPARE(types->currentType(), QStringLiteral("_LIST_ENTRY"));
+    QTest::keyClick(layout, Qt::Key_Escape);
+    QTRY_COMPARE(types->currentType(), QStringLiteral("_DEVICE"));
+
+    // The source in the language of its tab, with the options asked.
+    types->setPage(3);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language rust spelling windows")));
+    types->setPage(1);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language c spelling windows")));
+    QVERIFY(source->toPlainText().contains(QStringLiteral("struct _DEVICE")));
+
+    // The filter keeps the types whose name holds its text.
+    filter->setText(QStringLiteral("list"));
+    QTRY_COMPARE(list->model()->rowCount(), 1);
+    types->setPage(0);
+  }
+
+  void localTypesAreDeclaredEditedAndDeletedByIdasKeys() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-types.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.session.declaresLocalTypes());
+    bench.action(ActionId::ViewLocalTypes)->trigger();
+    auto *types = bench.window->findChild<LocalTypesView *>();
+    QVERIFY(types);
+    auto *list =
+        types->findChild<QTreeView *>(QStringLiteral("localTypesList"));
+    QVERIFY(list);
+    QTRY_COMPARE(list->model()->rowCount(), 3);
+    types->showType(QStringLiteral("_DEVICE"));
+    QTRY_COMPARE(types->currentType(), QStringLiteral("_DEVICE"));
+
+    // Ins opens the editor over the list, the main window's keys notwith-
+    // standing; a problem stays in it at its place, and a declaration that
+    // reads adds its type and shows it.
+    QStringList titles;
+    bool problemShown = false, problemAtItsPlace = false;
+    int answers = 0;
+    QTimer editor;
+    connect(&editor, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *text = dialog ? dialog->findChild<QPlainTextEdit *>(
+                                QStringLiteral("declareEditor"))
+                          : nullptr;
+      auto *declare =
+          dialog ? dialog->findChild<QPushButton *>(QStringLiteral("declare"))
+                 : nullptr;
+      auto *problems = dialog ? dialog->findChild<QListWidget *>(
+                                    QStringLiteral("declareProblems"))
+                              : nullptr;
+      if (!text || !declare || !problems || !declare->isEnabled())
+        return;
+      if (titles.size() == answers)
+        titles.append(dialog->windowTitle());
+      if (answers == 0 && !problems->isVisible()) {
+        text->setPlainText(QStringLiteral("struct BAD {\n  NOPE x;\n};"));
+        QTest::mouseClick(declare, Qt::LeftButton);
+        return;
+      }
+      if (answers == 0) {
+        problemShown = problems->count() == 1;
+        problemAtItsPlace = text->textCursor().blockNumber() == 1 &&
+                            text->textCursor().positionInBlock() == 2;
+        text->setPlainText(QStringLiteral("struct OWNER { void *Next; };"));
+        // Ctrl+Return declares from the editor.
+        ++answers;
+        QTest::keyClick(text, Qt::Key_Return, Qt::ControlModifier);
+        return;
+      }
+      if (answers == 1 &&
+          text->toPlainText().contains(QStringLiteral("struct OWNER"))) {
+        // Edit: the type shown, declared in the language shown.
+        ++answers;
+        QTest::mouseClick(declare, Qt::LeftButton);
+      }
+    });
+    editor.start(10);
+    QTimer::singleShot(OpenTimeoutMs, &bench.session, [] {
+      if (auto *dialog =
+              qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+        dialog->reject();
+    });
+    list->setFocus();
+    QTest::keyClick(list, Qt::Key_Insert);
+    QVERIFY(problemShown);
+    QVERIFY(problemAtItsPlace);
+    QTRY_COMPARE(list->model()->rowCount(), 4);
+    QTRY_COMPARE(types->currentType(), QStringLiteral("OWNER"));
+
+    // The list shows one origin when asked.
+    auto *origin =
+        types->findChild<QComboBox *>(QStringLiteral("localTypesOrigin"));
+    QVERIFY(origin);
+    origin->setCurrentIndex(origin->findData(QStringLiteral("user")));
+    QTRY_COMPARE(list->model()->rowCount(), 1);
+    origin->setCurrentIndex(origin->findData(QStringLiteral("pdb")));
+    QTRY_COMPARE(list->model()->rowCount(), 3);
+    // A type of another origin opens all of them again.
+    types->showType(QStringLiteral("OWNER"));
+    QTRY_COMPARE(types->currentType(), QStringLiteral("OWNER"));
+    QCOMPARE(origin->currentIndex(), 0);
+    QTRY_COMPARE(list->model()->rowCount(), 4);
+
+    // Ctrl+E edits it, though the main window jumps to an entry point by
+    // the same key.
+    list->setFocus();
+    QTest::keyClick(list, Qt::Key_E, Qt::ControlModifier);
+    QTRY_COMPARE(answers, 2);
+    editor.stop();
+    QCOMPARE(titles.value(0), QStringLiteral("Add types"));
+    QCOMPARE(titles.value(1), QStringLiteral("Edit OWNER"));
+    QTRY_COMPARE(types->currentType(), QStringLiteral("OWNER"));
+
+    // Del deletes the selected type once asked.
+    QTimer confirm;
+    connect(&confirm, &QTimer::timeout, this, [&] {
+      if (auto *box =
+              qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+        confirm.stop();
+        QTest::mouseClick(box->button(QMessageBox::Yes), Qt::LeftButton);
+      }
+    });
+    confirm.start(10);
+    list->setFocus();
+    QTest::keyClick(list, Qt::Key_Delete);
+    QTRY_COMPARE(list->model()->rowCount(), 3);
+    auto *summary =
+        types->findChild<QLabel *>(QStringLiteral("localTypesSummary"));
+    QVERIFY(summary);
+    QTRY_VERIFY(summary->text().contains(QStringLiteral("Deleted OWNER")));
+  }
+
   void viewsNarrowPastTheirRows() {
     // A status line or a row of buttons is cut at its view's edge.  Kept
     // whole, the disassembly's status line held its dock over 500 pixels
@@ -3884,15 +4061,17 @@ private slots:
                  std::optional<Address>(Base + 0x140));
     bench.action(ActionId::ViewPseudocode)->trigger();
     bench.action(ActionId::ViewExtensions)->trigger();
+    bench.action(ActionId::ViewLocalTypes)->trigger();
     auto *code = bench.codeView(QStringLiteral("source"));
     auto *extensions = bench.window->findChild<ExtensionsView *>();
-    QVERIFY(code && extensions && bench.functions());
+    auto *types = bench.window->findChild<LocalTypesView *>();
+    QVERIFY(code && extensions && types && bench.functions());
     // Every button shows, as the fold button does for library code.
     for (auto *button : code->findChildren<QToolButton *>())
       button->show();
     const QString wide(400, QLatin1Char('x'));
     const QList<QWidget *> views{bench.window->disassembly(), code,
-                                 bench.functions(), extensions};
+                                 bench.functions(), extensions, types};
     for (auto *view : views) {
       for (auto *label : view->findChildren<QLabel *>())
         label->setText(wide);

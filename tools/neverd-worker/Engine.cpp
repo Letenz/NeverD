@@ -68,6 +68,48 @@ Json signatureStamp(const fs::path &path) {
   return files;
 }
 
+// A completed document never mutates. Monotone bounds let later pages seek
+// directly to their rows/names without allocating a second navigation index.
+// Both ends must be ordered: nested spans can have ordered starts alone.
+bool orderedViewItems(const Json &view, const char *field, const char *beginKey,
+                      const char *endKey) {
+  const auto items = view.find(field);
+  if (items == view.end() || !items->is_array())
+    return false;
+  std::size_t previousBegin = 0, previousEnd = 0;
+  for (const auto &item : *items) {
+    const auto begin = item.value(beginKey, std::size_t{0});
+    const auto end = item.value(endKey, std::size_t{0});
+    if (begin < previousBegin || end < previousEnd)
+      return false;
+    previousBegin = begin;
+    previousEnd = end;
+  }
+  return true;
+}
+
+// Point rows use an inclusive lower bound; byte spans use an exclusive end.
+Json viewItemsOnPage(const Json &items, bool ordered, const char *beginKey,
+                     const char *endKey, bool points, std::size_t begin,
+                     std::size_t end) {
+  auto first = items.begin();
+  if (ordered)
+    first = std::partition_point(first, items.end(), [&](const auto &item) {
+      const auto last = item.value(endKey, std::size_t{0});
+      return points ? last < begin : last <= begin;
+    });
+  Json selected = Json::array();
+  for (auto it = first; it != items.end(); ++it) {
+    const auto start = it->value(beginKey, std::size_t{0});
+    if (ordered && start >= end)
+      break;
+    const auto last = points ? start : it->value(endKey, std::size_t{0});
+    if (start < end && (points ? last >= begin : last > begin))
+      selected.push_back(*it);
+  }
+  return selected;
+}
+
 using IRViewFunction = const char *(*)(neverd_session_t, neverd_va_t,
                                        const char *, std::size_t, std::size_t);
 using StringEncodingsFunction = const char *(*)();
@@ -175,6 +217,16 @@ const LoadOptionsFunctions &loadOptions() {
 constexpr std::string_view LoadOptionsSuffix = ".neverd-load.json";
 /// The PDB a PE names and where it is, before or after the PE is open.
 using PdbReferenceFunction = const char *(*)(const char *, const char *);
+// Additive C ABI capability: the program's local types.
+using LocalTypesFunction = const char *(*)(neverd_session_t, const char *);
+// neverd_local_types_forget: the session and a JSON list of names.
+using LocalTypeNamesFunction = const char *(*)(neverd_session_t, const char *);
+// The most source one declaration reads.
+constexpr std::size_t MaxDeclarationBytes = 4u << 20;
+// The user's type declarations beside the input, as the engine reads them.
+constexpr std::string_view TypeDeclarationsSuffix = ".neverd-types.json";
+using LocalTypeFunction = const char *(*)(neverd_session_t, const char *,
+                                          const char *);
 /// Whether the next load searches for the PDB a PE names.
 using PdbSearchFunction = void (*)(neverd_session_t, int);
 /// The DWARF of an ELF or Mach-O image and where it is, before or after the
@@ -554,6 +606,18 @@ bool Engine::loadsPdbFiles() {
   return engineSymbol<Inspect>("neverd_session_inspect_pdb_json") &&
          engineSymbol<Load>("neverd_session_load_pdb");
 }
+bool Engine::listsLocalTypes() {
+  return engineSymbol<LocalTypesFunction>("neverd_local_types_json") &&
+         engineSymbol<LocalTypeFunction>("neverd_local_type_json") &&
+         engineSymbol<LocalTypesFunction>("neverd_local_types_source");
+}
+bool Engine::declaresLocalTypes() {
+  return listsLocalTypes() &&
+         engineSymbol<LocalTypeFunction>("neverd_local_types_declare") &&
+         engineSymbol<LocalTypeNamesFunction>("neverd_local_types_forget") &&
+         engineSymbol<SessionJsonFunction>("neverd_type_declarations_json") &&
+         engineSymbol<SessionLoadFunction>("neverd_type_declarations_load");
+}
 bool Engine::findsPdbFiles() {
   return engineSymbol<PdbReferenceFunction>("neverd_pdb_reference_json") &&
          engineSymbol<PdbSearchFunction>("neverd_session_set_pdb_search");
@@ -875,6 +939,13 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
     for (std::size_t i = 0; i < text.size(); ++i)
       if (text[i] == '\n' && i + 1 < text.size())
         document->lines.push_back(i + 1);
+    document->orderedRows = orderedViewItems(full, "rows", "line", "line");
+    document->orderedReferences =
+        orderedViewItems(full, "references", "line", "line");
+    document->orderedSourceNames =
+        orderedViewItems(full, "source_names", "begin_byte", "end_byte");
+    document->orderedCodeNames =
+        orderedViewItems(full, "code_names", "begin_byte", "end_byte");
     document->value = std::move(full);
     document->key = key;
     // If resolving source names changed the listing while decorating this
@@ -930,36 +1001,24 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
           value.is_array()))
       page[field] = value;
   page["text"] = text.substr(startByte, endByte - startByte);
-  Json rows = Json::array();
-  for (const auto &row : namedView_.at("rows")) {
-    const auto line = row.value("line", std::size_t{0});
-    if (line >= start && line < end)
-      rows.push_back(row);
-  }
-  page["rows"] = std::move(rows);
+  page["rows"] = viewItemsOnPage(namedView_.at("rows"), document->orderedRows,
+                                 "line", "line", true, start, end);
   if (const auto references = namedView_.find("references");
       references != namedView_.end() && references->is_array()) {
-    Json onPage = Json::array();
-    for (const auto &reference : *references) {
-      const auto line = reference.value("line", std::size_t{0});
-      if (line >= start && line < end)
-        onPage.push_back(reference);
-    }
-    page["references"] = std::move(onPage);
+    page["references"] =
+        viewItemsOnPage(*references, document->orderedReferences, "line",
+                        "line", true, start, end);
   }
   const std::size_t base = namedView_.value("byte_offset", std::size_t{0});
   for (const char *field : {"source_names", "code_names"}) {
     if (!namedView_.contains(field) || !namedView_[field].is_array())
       continue;
-    const auto &names = namedView_[field];
-    Json onPage = Json::array();
-    for (const auto &name : names) {
-      const auto begin = name.value("begin_byte", std::size_t{0});
-      const auto nameEnd = name.value("end_byte", std::size_t{0});
-      if (nameEnd > base + startByte && begin < base + endByte)
-        onPage.push_back(name);
-    }
-    page[field] = std::move(onPage);
+    const bool ordered = std::string_view(field) == "source_names"
+                             ? document->orderedSourceNames
+                             : document->orderedCodeNames;
+    page[field] =
+        viewItemsOnPage(namedView_[field], ordered, "begin_byte", "end_byte",
+                        false, base + startByte, base + endByte);
   }
   page["offset"] = start;
   page["byte_offset"] = base + startByte;
@@ -2043,6 +2102,110 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     result["comment"] = ownedString(neverd_annotation_get(session_, address));
     result["import"] = listing().isImport(address);
     return result;
+  }
+  if (operation == "local_types_declare" || operation == "local_types_forget") {
+    requireWriter();
+    if (!declaresLocalTypes())
+      throw Error("unsupported", "This engine cannot declare local types");
+    static const auto declare =
+        engineSymbol<LocalTypeFunction>("neverd_local_types_declare");
+    static const auto forget =
+        engineSymbol<LocalTypeNamesFunction>("neverd_local_types_forget");
+    static const auto rows =
+        engineSymbol<SessionJsonFunction>("neverd_type_declarations_json");
+    static const auto load =
+        engineSymbol<SessionLoadFunction>("neverd_type_declarations_load");
+    std::string reply;
+    if (operation == "local_types_declare") {
+      const auto source = stringField(p, "source", {}, MaxDeclarationBytes);
+      const Json options{{"language", stringField(p, "language", "c", 16)}};
+      reply = ownedString(
+          declare(session_, source.c_str(), options.dump().c_str()));
+    } else {
+      const auto names = p.value("names", Json());
+      if (!names.is_array() || names.empty() || names.size() > 4096)
+        throw Error("invalid_request", "Name the types to remove in a list");
+      reply = ownedString(forget(session_, names.dump().c_str()));
+    }
+    if (reply.empty())
+      throw Error("local_types_failed", error());
+    Json result;
+    try {
+      result = Json::parse(reply);
+    } catch (const Json::exception &) {
+      throw Error("engine_error", "Engine returned malformed JSON");
+    }
+    // The project keeps what the user declared at once, as a rename, under
+    // the writer lock this session holds; the sidecar unchanged, so are the
+    // types.
+    if (result.value("problems", Json::array()).empty()) {
+      try {
+        fs::path sidecar =
+            utf8Path(ownedString(neverd_session_file_path(session_)));
+        sidecar += std::string(TypeDeclarationsSuffix);
+        atomicWrite(sidecar, backendJson(rows(session_)));
+      } catch (...) {
+        (void)load(session_);
+        throw;
+      }
+    }
+    return result;
+  }
+  if (operation == "local_types" || operation == "local_type" ||
+      operation == "local_types_source") {
+    if (!listsLocalTypes())
+      throw Error("unsupported", "This engine has no local types");
+    // Type names and sizes are no addresses: the reply stays as it is.
+    const auto localTypesJson = [this](const std::string &reply) {
+      if (reply.empty())
+        throw Error("local_types_failed", error());
+      try {
+        return Json::parse(reply);
+      } catch (const Json::exception &) {
+        throw Error("engine_error", "Engine returned malformed JSON");
+      }
+    };
+    // The options the C API reads, as the request states them.
+    Json options = Json::object();
+    for (const char *key : {"filter", "language", "spelling", "origin"})
+      if (p.contains(key))
+        options[key] = stringField(p, key, {}, 4096);
+    for (const char *key :
+         {"offsets", "hexOffsets", "asserts", "dependencies", "prototypes"})
+      if (p.contains(key)) {
+        if (!p.at(key).is_boolean())
+          throw Error("invalid_request",
+                      std::string(key) + " must be true or false");
+        options[key] = p.at(key);
+      }
+    if (p.contains("types")) {
+      if (!p.at("types").is_array())
+        throw Error("invalid_request", "types must be an array of names");
+      for (const auto &name : p.at("types"))
+        if (!name.is_string())
+          throw Error("invalid_request", "types must be an array of names");
+      options["types"] = p.at("types");
+    }
+    const std::string text = options.dump();
+    if (operation == "local_types") {
+      const auto list =
+          engineSymbol<LocalTypesFunction>("neverd_local_types_json");
+      return localTypesJson(ownedString(list(session_, text.c_str())));
+    }
+    if (operation == "local_type") {
+      const auto one =
+          engineSymbol<LocalTypeFunction>("neverd_local_type_json");
+      const auto name = stringField(p, "name", {}, 4096);
+      return localTypesJson(
+          ownedString(one(session_, name.c_str(), text.c_str())));
+    }
+    const auto source =
+        engineSymbol<LocalTypesFunction>("neverd_local_types_source");
+    const auto reply = ownedString(source(session_, text.c_str()));
+    if (reply.empty())
+      throw Error("local_types_failed", error());
+    return Json{{"language", options.value("language", "c")},
+                {"source", reply}};
   }
   if (operation == "strings")
     return listing().strings(p);

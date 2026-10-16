@@ -178,6 +178,8 @@ class WorkbenchUnitTests : public QObject {
   Q_OBJECT
 private slots:
   void initTestCase() {
+    // As the workbench starts.
+    WindowFrame::prepareNativeWindows();
     // Docking chrome is fixed before the first dock exists.
     configureDocking();
   }
@@ -1244,6 +1246,42 @@ private slots:
       box.show();
       QVERIFY(QTest::qWaitForWindowExposed(&box));
       QVERIFY2(box.width() >= 420, qPrintable(text));
+    }
+  }
+
+  void earlyDialogWindowsLeaveTheWorkbenchWhole() {
+    // A file dialog is polished while it is built, and its frame then takes
+    // its native window before it first shows (WindowFrame::attach).  Qt
+    // gave every child of the dialog's parent a native window as well: the
+    // workbench's title bar, toolbars, docks and status bar became Wayland
+    // subsurfaces that GNOME stopped updating once Load file > FLIRT
+    // signature file was cancelled.  Over a view inside the workbench, as
+    // Extensions' Import manifest opens one, this climbed through every
+    // widget around the view.
+    QMainWindow workbench;
+    workbench.setMenuBar(new QMenuBar);
+    workbench.menuBar()->addMenu(QStringLiteral("&File"));
+    workbench.addToolBar(QStringLiteral("File"))
+        ->addAction(QStringLiteral("Open"));
+    auto *central = new QWidget;
+    auto *layout = new QVBoxLayout(central);
+    layout->addWidget(new QLabel(QStringLiteral("Status")));
+    auto *view = new QPlainTextEdit;
+    layout->addWidget(view);
+    workbench.setCentralWidget(central);
+    workbench.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&workbench));
+    for (QWidget *parent :
+         {static_cast<QWidget *>(&workbench), static_cast<QWidget *>(view)}) {
+      QDialog dialog(parent);
+      QVERIFY(!dialog.windowHandle());
+      dialog.winId();
+      QVERIFY(dialog.windowHandle());
+      const auto widgets = workbench.findChildren<QWidget *>();
+      QVERIFY(widgets.size() >= 5);
+      for (const QWidget *widget : widgets)
+        if (!widget->isWindow())
+          QVERIFY2(!widget->internalWinId(), widget->metaObject()->className());
     }
   }
 

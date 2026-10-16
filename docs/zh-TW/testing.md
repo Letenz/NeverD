@@ -1218,9 +1218,11 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 `windows-alignment-oracle.yml` 透過 `check_windows_alignment.py` 和 `WindowsAlignmentCases.def` 收集 72 項原創 x64 Windows 例外觀測：九種對齊 SSE 形式分別涵蓋七種未對齊位址/權限情境，以及一個已對齊但頁面無法存取的對照。它保留例外代碼、參數、故障 PC、儲存的上下文、原始輸出及原始碼/二進位雜湊，並驗證輸入與 RAM 未改變。這些觀測僅建立 OS 行為依據，不代表 KVM/WHP 執行驗收，也不新增 SEH 支援。
 
-在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 48 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
+在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 58 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks = 5615`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 131 個負載產生 262 項 WHP 結果：27 個內建映像、64 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5085 CPU + 262 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 92 driver API checks = 5740`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+
+真實 WDK 清單也建置 `driver_device_queries.c`、`driver_file_objects.c` 和 `driver_file_handles.c` 的一般及 CFG 版本。`DriverDeviceQueryTests.cpp` 與 `DriverFileObjectTests.cpp` 共用可攜呼叫端的斷言，在兩種契約、基址與排程策略下檢查保留參考後的刪除、失敗 CREATE、行程身分、最後控制代碼 CLEANUP 與延後 CLOSE。三組均為原生必測項；清單驗證獨立探索含 `NEVERD_WDK_FIXTURE` 的原始碼，避免漏建 WDK 版本。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1742,6 +1744,10 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`NormalizationFeasibilityCachesExactTranslatedTheorems` · `NormalizationFeasibilityRejectsIncompleteAndUnrelatedProofs` · `NormalizationFeasibilityRetainsStorageAndWorkLimits`.
+
+`MachineExitRetReadsAliasedBytesBeforePhysicalPop` · `MachineExitCallCapturesTargetBeforeAliasingPush` · `MachineExitJumpRetainsDynamicAndOriginalDirectTargets` · `MachineExitKeepsInternalCallsAndReturnProofs` · `MachineExitRequiresExactDomainBytesAndTransferKind` · `MachineExitIntegrityBudgetsAndOrdinaryConsumers` · `MachineExitProvesLiveInternalReturnCells`.
+
 `ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
 
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` 檢查快取歷史不再重複計費、新增寬常數仍需計費、工作或節點額度不足仍拒絕，以及可讀性快取副本保持獨立。
@@ -1925,4 +1931,15 @@ Linux 原生驗收也執行完整的 `HighSwiftEmitter` 測試集，涵蓋暫存
 
 `KernelDeviceStackTests.cpp` 檢查目前鄰居、借用與持有結果、輸入或鄰居的刪除狀態、最後參考退役、無效或損壞輸入，以及在增加參考前拒絕過高 IRQL。原創 `fixtures/driver_device_queries.c` 透過 `DriverDeviceQueryTests.cpp` 在可用後端、兩種契約及兩個載入位址上執行，涵蓋協作排程和 17 條指令搶占排程。測試驗證 detach/delete 後的儲存保留，並以刻意洩漏的參考驗證卸載拒絕；原生驗收要求四種契約/位址組合。
 
-KernelFileObjectTests 涵蓋 CREATE 期間參考、型別不符、編號重用、暫止 CLOSE、裝置刪除、建立失敗及高 IRQL 最後釋放拒絕。原創 driver_file_objects.c 與 DriverFileObjectTests 在可用後端、兩種執行契約與基址、協作式及 17 指令排程下驗證同步與暫止關閉、建立失敗及刻意洩漏。巢狀關閉檢查實際執行緒、行程與 PreviousMode。原生驗收要求全部四種契約及基址組合；檔案控制代碼與檔案系統操作仍需另外涵蓋。
+KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別不符時清零輸出、通用權限、行程及全域計數、回呼內重開拒絕、錯誤路徑重試、請求行程結束、重複清理與暫止關閉。KernelPnpRequestTests 驗證延後 CLEANUP 的下層回應；KernelFrameworkFileTests 驗證回呼行程與 LOCK_CONTROL 路由。原創 driver_file_objects.c 保留指標生命週期測試。driver_file_handles.c 以協作式及 17 指令排程測試同步／暫止 CLEANUP、CLOSE、系統工作執行緒釋放、編號重用與刻意洩漏。真實 WDK 夾具 driver_kmdf_file_handles.c 驗證系統行程清理、恢復呼叫端關閉及無清理回呼；設定 NEVERD_KMDF_FILE_HANDLES_FIXTURE 與選用 NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE。DriverFileObjectTests 使用可用後端、兩種契約與基址。缺少 WDK 產物或後端會明確略過。檔案系統操作仍需另行涵蓋。 情境發起的 KMDF CLEANUP/CLOSE 保留呼叫行程、執行緒及 PreviousMode；測試 F 模式在另一檔案的 CLEANUP 中關閉保留控制代碼，並檢查返回後的內容恢復。
+
+`KernelFileQueryTests.cpp` 檢查封包欄位、借用記憶體、立即與暫止狀態發布、無效輸出、工作執行緒通知、檔案保留及最終 CLOSE。`DriverFileObjectTests.cpp` 在不同契約、後端、基址及協作式/指令時鐘排程下執行原創 `driver_file_queries.c`。可選的 `NEVERD_WDM_FILE_QUERIES_FIXTURE` 與 `NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE` 使用真正的 WDK 標頭與匯入程式庫，並涵蓋啟用 CFG 的映像。缺少後端或外部用例時明確略過；這些測試不代表已實作檔案系統提供者或通用 APC 交付。
+
+處理器回歸涵蓋輸出邊界、NULL、巢狀還原、無效 IRQL 和匯入身分。原創 `driver_processors.c` 在不同後端、契約、基址及排程下執行入口、工作執行緒和 DPC。可選 `NEVERD_WDM_PROCESSORS_FIXTURE` 與 `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` 以真正的 WDK 普通/CFG 映像驗證內聯呼叫和動態匯出；不可用後端明確略過。
+
+整數格式化回歸涵蓋完整位元寬度、所有支援的進位、容量邊界、無效進位的處理順序、輸出別名與終止字元故障。原創 `driver_int64_strings.c` 在入口、工作項及卸載時檢查匯入與動態查找，並驗證提高 IRQL 後的拒絕行為。選用的 `NEVERD_WDM_INT64_STRINGS_FIXTURE` 與 `NEVERD_WDM_INT64_STRINGS_CFG_FIXTURE` 涵蓋真正 WDK 一般/CFG 驅動及可用後端、執行契約、載入基址與排程模式。
+
+
+`DriverFileSystemTests.cpp` / `KernelFileSystemTests.cpp` / `DriverFileSystemExecutionTests.cpp` / `DriverScenarioPublic` / `test_driver_filesystem_integration.py`: 選用的 `filesystem` 在 DriverEntry 前宣告工作階段磁碟區。省略表示可用性未知，`[]` 表示無提供者；每個磁碟區明確包含根目錄。現有節點可經真實 CREATE 請求開啟，入口為 `ZwOpenFile` 及 `ZwCreateFile`、`IoCreateFile` 的 FILE_OPEN 形式。名稱查找、來賓篩選器、共用、控制代碼與指標生命週期使用共同擁有者，不讀取主機檔案。新增、覆寫、刪除、中繼資料查詢、資料 I/O、列舉與檔案系統控制仍未實作。 `NEVERD_WDM_FILESYSTEM_FIXTURE`, `NEVERD_WDM_FILESYSTEM_CFG_FIXTURE`, `NEVERD_TEST_DRIVER_FILESYSTEM_FIXTURE`, `NEVERD_TEST_LIBNEVERD`. `UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery`: `configuration.filesystem` 保存輸入；頂層 `filesystem` 來自獨立狀態擁有者，增加 `device_object` 與節點 `end_of_file`，執行或投影驗證停止後仍保留。通用 `devices` 僅包含來賓裝置。工作階段磁碟區可在卸載後保留，但來賓物件、參考、控制代碼、附加與 IRP 必須釋放。任何宣告，包括 `[]`，均保留未重建相依性並阻止可執行 UNPACK 復原。舊版 Unicorn 可能在停止前提交遭拒寫入；診斷仍保留投影錯誤。
+
+`KernelFileCreateTests.cpp` 涵蓋生產者返回前保留封包、共用失敗、非同步期間保留相對根目錄、明確取消、失敗／別名輸出與卸載清理。`DriverFileSystemExecutionTests.cpp` 在兩種契約、基址與可用後端執行原創及真實 WDK 普通／CFG 呼叫者，包含協作與指令時鐘排程。C API／CLI／Python 保留相同檔案身分。不可用後端仍為跳過，事件及 APC 探針邊界不代表完整核心。

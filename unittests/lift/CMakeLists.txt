@@ -1136,9 +1136,11 @@ target_include_directories(NeverDLiftTests PRIVATE
 )
 
 add_neverd_unittest(NeverDJumpTableTests
+  core/GuardExpressionTests.cpp
   core/AffineFrameStateTests.cpp
   core/ResolverGraphCacheTests.cpp
   core/ResolverDefinitionCacheTests.cpp
+  core/ResolverPendingWalksTests.cpp
   core/ResolverLaneViewTests.cpp
   core/JumpTableCountLaneTests.cpp
   core/IndirectTailFrameTests.cpp
@@ -1405,6 +1407,9 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationSEHInvocationTests.cpp
   eh/RegistrationSEHExceptionTests.cpp
   eh/RegistrationJumpStateTests.cpp
+  eh/RegistrationMultiStateJumpTests.cpp
+  eh/RegistrationPrivateCallStateTests.cpp
+  eh/RegistrationBoundCallStateTests.cpp
   eh/RegistrationJumpTestUtils.cpp
   eh/RegistrationFilterStateTests.cpp
   eh/RegistrationSEHTryLevelTests.cpp
@@ -1431,6 +1436,7 @@ add_neverd_unittest(NeverDRegistrationStateTests
 
 add_neverd_unittest(NeverDRegistrationEHTests
   eh/RegistrationTryLevelTests.cpp
+  eh/RegistrationSEHPrivateCallTests.cpp
 
   LINK_COMPONENTS
   IRLow
@@ -1494,11 +1500,15 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationSEHExceptionNativeTests.cpp
   eh/RegistrationSEHJumpNativeTests.cpp
   eh/RegistrationSEHJumpStateNativeTests.cpp
+  eh/RegistrationSEHJumpCaptureNativeTests.cpp
   eh/RegistrationSEHJumpABITests.cpp
+  eh/RegistrationCopyEdgeTests.cpp
   eh/RegistrationSEHBoundNativeTests.cpp
   eh/RegistrationSEHRuntimeNativeTests.cpp
   eh/RegistrationSEHBoundSourceTests.cpp
+  eh/RegistrationSEHBoundCookieTests.cpp
   eh/RegistrationSEHDynamicScopeTests.cpp
+  eh/RegistrationSEHScopeStateTests.cpp
   eh/RegistrationSEHFinallyResultTests.cpp
   eh/RegistrationSEHStateNativeTests.cpp
   eh/RegistrationSEHStateDispatchTests.cpp

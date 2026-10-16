@@ -95,9 +95,8 @@ void CFGBuilder::splitBlocks() {
         !Rec.IsNoReturnCall && !Rec.IsInstructionGuard &&
         Rec.Mode == InstructionMode::Default &&
         Rec.TargetMode == LowInstructionTargetMode::Preserve &&
-        ((EH->Encoding == ExceptionEncoding::X86ScopeTableEH3 &&
-          registration_state::isEH3JumpRuntimeInstruction(*CurrentImg, Addr,
-                                                          Rec.Size, Rec.Ops)) ||
+        (registration_state::isSEHJumpRuntimeInstruction(*CurrentImg, Addr,
+                                                         Rec.Size, Rec.Ops) ||
          registration_state::isSEHFinallyCallInstruction(
              *CurrentImg, *EH->Registration, Addr, Rec.Size, Rec.Ops)))
       BlockStarts.insert(Addr + Rec.Size);

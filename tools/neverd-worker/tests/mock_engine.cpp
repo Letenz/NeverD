@@ -4,6 +4,7 @@
 #include "Protocol.h"
 
 #include "neverd/sdk/NeverDCAPIDisasm.h"
+#include "neverd/sdk/NeverDCAPILocalTypes.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
 #include "neverd/sdk/NeverDCAPIQuery.h"
 #include "neverd/sdk/NeverDCAPISession.h"
@@ -88,6 +89,9 @@ struct MockSession {
   std::map<std::uint64_t, Json> items;
   /// The user's operand formats by address and operand index.
   std::map<std::uint64_t, std::map<int, Json>> operandFormats;
+  /// The local types the user declared, and the fixture's they removed.
+  std::vector<std::string> declaredTypes;
+  std::set<std::string> forgottenTypes;
   std::vector<std::uint64_t> functions = listedFunctions({});
   neverd_load_progress_fn progress = nullptr;
   void *progressUser = nullptr;
@@ -109,7 +113,9 @@ struct MockSession {
     return path.ends_with("source-cache.bin") ||
            path.ends_with("source-cache-budget.bin") ||
            path.ends_with("source-cache-prepare-fail.bin") ||
-           sourceCacheVMFixture();
+           path.ends_with("source-cache-ordered.bin") ||
+           path.ends_with("source-cache-unordered.bin") ||
+           path.ends_with("source-cache-nested.bin") || sourceCacheVMFixture();
   }
 };
 MockSession *session(neverd_session_t s) {
@@ -544,6 +550,11 @@ const char *neverd_func_name(neverd_session_t s, int index) {
     return copy("_ZN3BarC1Ev");
   if (it != session(s)->names.end())
     return copy(it->second);
+  if (address == Base &&
+      (session(s)->path.ends_with("source-cache-ordered.bin") ||
+       session(s)->path.ends_with("source-cache-unordered.bin") ||
+       session(s)->path.ends_with("source-cache-nested.bin")))
+    return copy("sub_" + hexAddress(address).substr(2));
   const bool named =
       session(s)->symbolTable ||
       !symbolTableFixture(std::filesystem::u8path(session(s)->path));
@@ -789,6 +800,260 @@ const char *neverd_code_refs_json(neverd_session_t s, neverd_va_t firstEntry,
            {"function_count", 600}}
           .dump());
 }
+namespace {
+/// local-types.bin has three local types: _LIST_ENTRY, _DEVICE, which holds
+/// one, and the enumeration _POOL_KIND.  Every other input has none.
+bool localTypesFixture(neverd_session_t s) {
+  return session(s)->path.ends_with("local-types.bin");
+}
+
+/// A type the user declared: eight bytes holding one pointer.
+Json declaredLocalType(const std::string &name, int ordinal) {
+  return {{"ordinal", ordinal},
+          {"name", name},
+          {"kind", "struct"},
+          {"origin", "user"},
+          {"defined", true},
+          {"size", 8},
+          {"alignment", 8},
+          {"pack", 0},
+          {"declaredAlignment", 0},
+          {"members",
+           {{{"kind", "field"},
+             {"name", "Next"},
+             {"offset", 0},
+             {"bitOffset", 0},
+             {"size", 8},
+             {"type", "VOID *"}}}}};
+}
+
+Json fixtureLocalType(const std::string &name) {
+  const auto field = [](const char *member, int offset, int size,
+                        const char *type, const char *refers = nullptr) {
+    Json entry{{"kind", "field"},         {"name", member}, {"offset", offset},
+               {"bitOffset", offset * 8}, {"size", size},   {"type", type}};
+    if (refers)
+      entry["refers"] = refers;
+    return entry;
+  };
+  if (name == "_LIST_ENTRY")
+    return {{"ordinal", 1},
+            {"name", name},
+            {"kind", "struct"},
+            {"origin", "pdb"},
+            {"defined", true},
+            {"size", 16},
+            {"alignment", 8},
+            {"pack", 0},
+            {"declaredAlignment", 0},
+            {"members",
+             {field("Flink", 0, 8, "struct _LIST_ENTRY *", "_LIST_ENTRY"),
+              field("Blink", 8, 8, "struct _LIST_ENTRY *", "_LIST_ENTRY")}}};
+  if (name == "_DEVICE")
+    return {{"ordinal", 2},
+            {"name", name},
+            {"kind", "struct"},
+            {"origin", "pdb"},
+            {"defined", true},
+            {"size", 32},
+            {"alignment", 8},
+            {"pack", 0},
+            {"declaredAlignment", 0},
+            {"members",
+             {field("Type", 0, 2, "USHORT"),
+              {{"kind", "padding"},
+               {"name", ""},
+               {"offset", 2},
+               {"bitOffset", 16},
+               {"size", 6}},
+              field("Links", 8, 16, "struct _LIST_ENTRY", "_LIST_ENTRY"),
+              {{"kind", "union"},
+               {"name", ""},
+               {"offset", 24},
+               {"bitOffset", 192},
+               {"size", 8},
+               {"members",
+                {field("Value", 24, 8, "ULONGLONG"),
+                 {{"kind", "bitfield"},
+                  {"name", "Locked"},
+                  {"offset", 24},
+                  {"bitOffset", 192},
+                  {"size", 8},
+                  {"bitWidth", 1},
+                  {"storageOffset", 24},
+                  {"type", "ULONGLONG"}}}}}}}};
+  if (name == "_POOL_KIND")
+    return {{"ordinal", 3},
+            {"name", name},
+            {"kind", "enum"},
+            {"origin", "pdb"},
+            {"size", 4},
+            {"underlying", "INT"},
+            {"flags", false},
+            {"values",
+             {{{"name", "NonPaged"}, {"value", 0}},
+              {{"name", "Paged"}, {"value", 1}}}}};
+  return nullptr;
+}
+} // namespace
+
+const char *neverd_local_types_json(neverd_session_t s, const char *options) {
+  session(s)->error.clear();
+  const Json parsed =
+      options ? Json::parse(options, nullptr, false) : Json::object();
+  Json types = Json::array();
+  if (localTypesFixture(s))
+    for (const char *name : {"_LIST_ENTRY", "_DEVICE", "_POOL_KIND"}) {
+      if (session(s)->forgottenTypes.count(name))
+        continue;
+      const Json type = fixtureLocalType(name);
+      Json row{{"ordinal", type["ordinal"]},
+               {"name", name},
+               {"kind", type["kind"]},
+               {"size", type["size"]},
+               {"origin", "pdb"}};
+      row["members"] = type.contains("members") ? type["members"].size()
+                                                : type["values"].size();
+      types.push_back(row);
+    }
+  int ordinal = 4;
+  for (const auto &name : session(s)->declaredTypes)
+    types.push_back({{"ordinal", ordinal++},
+                     {"name", name},
+                     {"kind", "struct"},
+                     {"size", 8},
+                     {"members", 1},
+                     {"origin", "user"}});
+  (void)parsed;
+  return copy(Json{
+      {"source", localTypesFixture(s) ? "pdb" : "none"},
+      {"dataModel", "LLP64"},
+      {"stats",
+       {{"structs", 2},
+        {"unions", 0},
+        {"enums", 1},
+        {"declaredOnly", 0},
+        {"nestingMismatches", Json::array()}}},
+      {"types",
+       types}}.dump());
+}
+
+const char *neverd_local_type_json(neverd_session_t s, const char *name,
+                                   const char *) {
+  session(s)->error.clear();
+  const auto &declared = session(s)->declaredTypes;
+  const auto found =
+      name ? std::find(declared.begin(), declared.end(), name) : declared.end();
+  Json type =
+      localTypesFixture(s) && name && !session(s)->forgottenTypes.count(name)
+          ? fixtureLocalType(name)
+          : Json();
+  if (found != declared.end())
+    type = declaredLocalType(*found, 4 + int(found - declared.begin()));
+  if (type.is_null()) {
+    session(s)->error =
+        std::string("no local type named ") + (name ? name : "");
+    return nullptr;
+  }
+  return copy(type.dump());
+}
+
+/// Declares the structure the source names after `struct `; a source that
+/// says NOPE has a problem at its place instead.
+const char *neverd_local_types_declare(neverd_session_t s, const char *source,
+                                       const char *options) {
+  session(s)->error.clear();
+  const Json parsed =
+      options ? Json::parse(options, nullptr, false) : Json::object();
+  const std::string text = source ? source : "";
+  Json problems = Json::array(), types = Json::array();
+  if (const auto at = text.find("NOPE"); at != std::string::npos) {
+    const auto line = std::count(text.begin(), text.begin() + at, '\n') + 1;
+    const auto start = text.rfind('\n', at);
+    const auto column = at - (start == std::string::npos ? 0 : start + 1) + 1;
+    problems.push_back({{"line", line},
+                        {"column", column},
+                        {"message", "'NOPE' names no type"}});
+  } else if (const auto at = text.find("struct "); at != std::string::npos) {
+    std::string name;
+    for (auto i = at + 7;
+         i < text.size() &&
+         (std::isalnum(static_cast<unsigned char>(text[i])) || text[i] == '_');
+         ++i)
+      name += text[i];
+    if (std::find(session(s)->declaredTypes.begin(),
+                  session(s)->declaredTypes.end(),
+                  name) == session(s)->declaredTypes.end())
+      session(s)->declaredTypes.push_back(name);
+    session(s)->forgottenTypes.erase(name);
+    types.push_back(name);
+  }
+  (void)parsed;
+  return copy(Json{
+      {"types", types}, {"prototypes", Json::array()}, {"problems", problems}}
+                  .dump());
+}
+
+const char *neverd_local_types_forget(neverd_session_t s, const char *names) {
+  session(s)->error.clear();
+  const Json parsed = Json::parse(names ? names : "", nullptr, false);
+  if (!parsed.is_array()) {
+    session(s)->error = "name the types to remove in a list";
+    return nullptr;
+  }
+  for (const auto &name : parsed) {
+    auto &declared = session(s)->declaredTypes;
+    const auto found =
+        std::find(declared.begin(), declared.end(), name.get<std::string>());
+    if (found != declared.end())
+      declared.erase(found);
+    else
+      session(s)->forgottenTypes.insert(name.get<std::string>());
+  }
+  return copy(Json{{"removed", parsed}, {"usedBy", Json::array()}}.dump());
+}
+
+const char *neverd_type_declarations_json(neverd_session_t s) {
+  session(s)->error.clear();
+  Json rows = Json::array();
+  for (const auto &name : session(s)->declaredTypes)
+    rows.push_back({{"language", "c"}, {"source", "struct " + name + " {};"}});
+  return copy(rows.dump());
+}
+
+int neverd_type_declarations_load(neverd_session_t s) {
+  session(s)->error.clear();
+  return 0;
+}
+
+/// The source names its language, spelling and options, and declares each
+/// type it renders, so tests can see what was asked.
+const char *neverd_local_types_source(neverd_session_t s, const char *options) {
+  session(s)->error.clear();
+  const Json parsed =
+      options ? Json::parse(options, nullptr, false) : Json::object();
+  std::string text =
+      "// language " + parsed.value("language", "c") + " spelling " +
+      parsed.value("spelling", "windows") +
+      (parsed.value("asserts", false) ? " asserts" : "") +
+      (parsed.value("dependencies", true) ? " dependencies" : "") + "\n";
+  Json names = parsed.value("types", Json::array());
+  if (names.empty())
+    names = {"_LIST_ENTRY", "_DEVICE", "_POOL_KIND"};
+  const auto &declared = session(s)->declaredTypes;
+  for (const auto &name : names) {
+    if (fixtureLocalType(name.get<std::string>()).is_null() &&
+        std::find(declared.begin(), declared.end(), name.get<std::string>()) ==
+            declared.end()) {
+      session(s)->error = "no local type named " + name.get<std::string>();
+      return nullptr;
+    }
+    text += "struct " + name.get<std::string>() +
+            "\n{\n    struct _LIST_ENTRY Links; // 0x08\n};\n";
+  }
+  return copy(text);
+}
+
 const char *neverd_string_refs_json(neverd_session_t s, const char *options,
                                     neverd_va_t firstEntry, int maxFunctions) {
   session(s)->error.clear();
@@ -1271,6 +1536,31 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
            {"addresses",
             i == 2 ? Json::array({hexAddress(address + 2)}) : Json::array()}});
     }
+    Json names = Json::array(), references = Json::array();
+    if (state.path.ends_with("source-cache-ordered.bin") ||
+        state.path.ends_with("source-cache-unordered.bin") ||
+        state.path.ends_with("source-cache-nested.bin")) {
+      const auto bytesBefore = [&](std::size_t index) {
+        std::size_t bytes = 0;
+        for (std::size_t i = 0; i < index; ++i)
+          bytes += line(i).size();
+        return bytes;
+      };
+      for (std::size_t i = 0; i < total; ++i) {
+        names.push_back({{"begin_byte", bytesBefore(i)},
+                         {"end_byte", bytesBefore(std::min(i + 2, total))},
+                         {"identifier", "span_" + std::to_string(i)}});
+        references.push_back({{"line", i}, {"marker", i * 2}});
+        references.push_back({{"line", i}, {"marker", i * 2 + 1}});
+      }
+      if (state.path.ends_with("source-cache-nested.bin"))
+        names[0]["end_byte"] = bytesBefore(total);
+      if (state.path.ends_with("source-cache-unordered.bin")) {
+        std::reverse(rows.begin(), rows.end());
+        std::reverse(names.begin(), names.end());
+        std::reverse(references.begin(), references.end());
+      }
+    }
     return copy(Json{{"schema_version", 1},
                      {"address", hexAddress(address)},
                      {"representation", representation},
@@ -1283,7 +1573,9 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                      {"complete", end == total},
                      {"next_offset", end == total ? Json(nullptr) : Json(end)},
                      {"library_regions", Json::array()},
-                     {"source_names", Json::array()},
+                     {"source_names", names},
+                     {"code_names", names},
+                     {"references", references},
                      {"fixture_prepares", state.sourcePrepares},
                      {"fixture_prepared_view", state.preparedView},
                      {"fixture_pages", state.sourcePages},

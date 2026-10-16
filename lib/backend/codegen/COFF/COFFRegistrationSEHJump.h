@@ -28,6 +28,8 @@ llvm::Error validateSEHJumpState(const X86RegistrationSEHJumpCall &Expected,
                                  const llvm::CallBase &Call,
                                  const llvm::StoreInst &State,
                                  const RegistrationFrame &Frame,
+                                 const llvm::AllocaInst *CapturedState,
+                                 std::set<const llvm::Instruction *> &Saves,
                                  std::set<const llvm::Instruction *> &Restores);
 
 /// Rebind source calls, private buffers, register snapshots and state restores
@@ -51,8 +53,9 @@ llvm::Error validateSEHJumpBufferUses(
     const std::set<const llvm::CallBase *> &Calls,
     const std::map<CallbackKey, const llvm::Function *> &Callbacks);
 
-llvm::Error validateSEHJumpUnwindBridge(const llvm::Function &Parent,
-                                        va_t SourceUnwind);
+llvm::Error
+validateSEHJumpUnwindBridge(const llvm::Function &Parent,
+                            const RegistrationSEHJumpCapture &Source);
 
 llvm::Expected<std::set<const llvm::CallBase *>> bindSEHBoundCalls(
     const MedFunc &Source, const llvm::Function &Parent,

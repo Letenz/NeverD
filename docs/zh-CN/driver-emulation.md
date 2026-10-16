@@ -454,7 +454,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 可选根字段 `"load_address": "0x190000000"` 请求更改加载基址；省略该字段或指定 `"0x0"` 时使用首选地址。映像必须满足重定位要求。原有的初始化命令或 C API 不会隐式执行任何请求场景。
 
-根对象仅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`kernel_va_shadow_query`, `debugger_state`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry_system_time_100ns`, `registry` 和 `pnp_devices`。普通文件请求接受 `kind`、可选且互斥的 `device` 或 `device_id`，以及可选的 `file`。IOCTL 必须提供 `code`，并接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。偏移默认为零，接受整数或十六进制字符串，且必须位于有符号 64 位整数的非负范围内。生命周期请求拒绝传输字段。未知或重复字段会被拒绝。`code` 接受无符号 32 位 JSON 整数或 `0x` 十六进制字符串。`input` 是长度为偶数且不带前缀或空格的十六进制字节字符串；省略表示空输入。`output_size` 为无符号 JSON 整数，省略表示零。不接受小数以及浮点数写法。
+根对象仅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`kernel_va_shadow_query`, `debugger_state`、`load_address`、`requests`、`unload`、`filesystem`, `kernel_exports`、`registry_system_time_100ns`, `registry` 和 `pnp_devices`。普通文件请求接受 `kind`、可选且互斥的 `device` 或 `device_id`，以及可选的 `file`。IOCTL 必须提供 `code`，并接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。偏移默认为零，接受整数或十六进制字符串，且必须位于有符号 64 位整数的非负范围内。生命周期请求拒绝传输字段。未知或重复字段会被拒绝。`code` 接受无符号 32 位 JSON 整数或 `0x` 十六进制字符串。`input` 是长度为偶数且不带前缀或空格的十六进制字节字符串；省略表示空输入。`output_size` 为无符号 JSON 整数，省略表示零。不接受小数以及浮点数写法。
 
 仅 READ／WRITE／IOCTL 请求接受可选字段 `cancel_after_100ns`，它必须是 0 到 `INT64_MAX`（9223372036854775807）之间的 JSON 整数。该值相对于请求提交时刻，以虚拟 100 ns 为单位，并非墙钟时间。对 KMDF，零表示框架路由后、来宾 I/O 回调前触发取消；若路由已直接完成请求，则完成优先。对 WDM，零在派发返回后生效。正数延迟仅在没有就绪回调或执行帧时，随时间推进至定时器、等待或取消期限而触发。挂起的 WDM IRP 会在持有取消自旋锁的 `DISPATCH_LEVEL` 调用已注册的取消例程；例程必须使用 `Irp->CancelIrql` 释放锁后再完成请求。通用队列与 PnP 取消仍不支持。每个请求报告都包含 `cancel_requested_at_100ns`，值为取消实际发生时的绝对虚拟时间；若未发生取消，包括完成先发生的情况，则为 null。请求取消本身不会完成 IRP，也不规定最终状态。
 `IoSetCancelRoutine`、`IoAcquireCancelSpinLock`、`IoReleaseCancelSpinLock` 和 `IoCancelIrp` 共用同一 IRP 状态与取消自旋锁；`IoCancelIrp` 同步调用已注册例程，并返回是否实际调用。
@@ -684,4 +684,58 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 
 `RtlCaptureContext` 在 checked-x64 Unicorn/KVM/WHP 上共用导入和动态调用实现，要求 IRQL <= DISPATCH_LEVEL。目标为 16 字节对齐、完整可读写的 1232 字节内核记录；仅写 `[48,72)`、`[120,262)`、`[280,284)`、`[416,672)`，其余字节（包括 x87 数据、指针和 MXCSR mask）保持不变。ContextFlags 为 `0x10000f`，调用者 RSP=入口 RSP+8，RIP 取实际返回槽；入口 RSP-8 写入 8 字节标志暂存值，RAX 返回零扩展 EFLAGS，算术标志按 ADD(入口 RSP-8,8) 更新。DS/ES/FS/GS 使用 checked 逻辑 SS 选择子，不代表宿主或原始后端选择子。完整记录、返回槽和暂存槽必须通过普通内核 RAM、有效对象、权限和唯一物理映射检查；记录不得与返回/暂存范围重叠，入口 RSP 模 16 必须为 8。采集或准入失败不改变 CPU/RAM，legacy 明确拒绝。这是有界模型，不代表所有 Windows 实现；即使捕获字节被覆盖，仍保留未重建环境依赖，不授予 UNPACK 还原或符号前提。
 
-文件对象按地址保持唯一身份，并使用共享的指针引用管理，包括 CREATE 期间取得的引用。旧对象仍被保留时，可以复用场景文件编号。CLEANUP 关闭场景句柄；CLOSE 释放剩余的场景保留。若驱动仍持有指针，CLOSE 结果的 IRP 为零且未完成，直到最后一次释放在 PASSIVE_LEVEL 派送实际回调。挂起的 CLOSE 会暂停释放它的线程。CREATE 失败时，带引用的对象保留存储但清除设备关联，不发送 CLOSE。每个关联的文件对象在最终销毁前保留设备，并计入 DEVICE_OBJECT.ReferenceCount。嵌套回调继承调用方的线程、进程和 PreviousMode。文件句柄创建及复制、文件系统名称查询和声明式文件系统提供方仍未实现。
+文件对象按地址保持唯一身份，由场景句柄、附加句柄和调用方指针共同引用。ObOpenObjectByPointer 支持已创建的 FILE_OBJECT、内核访问和可选 OBJ_KERNEL_HANDLE，并把通用文件权限映射为具体权限。关闭某进程的最后一个句柄时，若其他进程仍有句柄，则发送 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL；关闭全局最后一个句柄才发送 CLEANUP。延迟的场景 CLEANUP 保留声明的下层响应。即使场景编号已复用，CLOSE 仍等待最后一个句柄、指针和正在执行的关闭续调。内核句柄属于系统进程：CLEANUP 临时使用该有效进程，但保留调用线程、创建进程及 PreviousMode；CLOSE 恢复实际释放方的进程。挂起回调暂停释放方。在提供方成功打开之前失败的 CREATE，只保留带引用的存储并清除设备关联；显式取消的提供方打开仍保留设备，直到 CLOSE。每个关联对象只计入一次 DEVICE_OBJECT.ReferenceCount。WDM 与 KMDF 共用这些生命周期；普通 KMDF 设备以 STATUS_INVALID_DEVICE_REQUEST 完成 LOCK_CONTROL。关闭回调内重新打开、存在未完成文件 I/O 时关闭、KMDF 筛选驱动的 LOCK_CONTROL 转发、文件系统名称查询和提供方数据／控制 I/O 仍未支持。
+
+## 文件信息查询 IRP
+
+`IoQueryFileInformation` 向现有已建模 WDM 文件的设备栈发送真实的 `IRP_MJ_QUERY_INFORMATION`，信息由来宾驱动提供，不虚构文件系统元数据。调用方须具有已知进程和线程，处于 PASSIVE_LEVEL，并启用中断及特殊内核 APC。同一文件的重叠 I/O、已挂载 VPB、文件扩展路由、框架拥有的被查询文件，以及异步查询最后引用所需的延迟删除均明确不支持。`IoGetRelatedDeviceObject` 在 IRQL <= DISPATCH_LEVEL 返回已验证的未挂载设备栈顶层。
+
+查询在完成期间借用调用方缓冲区。非挂起调用返回分发状态，挂起调用返回完成状态；立即以错误状态完成时不发布私有 IOSB，返回长度为零。工作线程完成的通知在原调用方恢复时交付。同步查询保持文件存活至最终 CLOSE 结束，之后只写入四字节 ReturnedLength，保留相邻字节并支持与输出缓冲区别名重叠。报告使用 kind `query_information`、origin `IoQueryFileInformation` 和 `file_information_class`；场景输入不能伪造这种请求。类 75 转为类 71 并设置栈标志 1；其他类编号传给来宾驱动，不宣称提供方已实现各类元数据。
+
+同步查询在最终 CLOSE 结束前保持临界区域，随后恢复调用方原有的 APC 状态。待交付通知在符合条件的内核 API 返回边界及所属线程恢复来宾指令前可见，包括退出守护区域和恢复 IRQL。报告字节在原进程中采集，完成查询的工作线程不会读取其用户缓冲区。分配失败会重置同步文件事件，但不修改 ReturnedLength。
+
+## 处理器身份与 DPC 级别提升
+
+单处理器配置在所有已建模 IRQL 上实现 `KeGetCurrentProcessorNumberEx`，返回处理器索引零，并可选地精确写入四字节：组零、处理器零、保留字节零。输出检查保留相邻内存并拒绝非法存储。`KeRaiseIrqlToDpcLevel` 接受 IRQL 0、1、2，返回原级别，并与 `KfRaiseIrql`、`KeLowerIrql` 共用执行上下文的嵌套栈。导入和动态查找共用这些契约。真实 x64 WDK 内联封装调用 `KfRaiseIrql(2)`；独立导出入口也可通过动态查找调用。
+
+`RtlInt64ToUnicodeString` 在 PASSIVE_LEVEL 格式化完整的无符号 64 位值，支持 2、8、10、16 进制，0 表示十进制。已有 `RtlIntegerToUnicodeString` 保留 ULONG 截断。两者先写入 `Length`，再报告 `STATUS_BUFFER_OVERFLOW`，必须为终止符留出空间，并保留未使用的字节。写入数字后会重新读取 `Buffer` 再写终止符，包括输出与记录重叠的情况；终止符写入失败时，已写入的数字仍保留。
+
+
+## 声明式文件系统清单
+
+可选 `filesystem` 在 DriverEntry 前声明会话内卷。省略表示可用性未知，`[]` 表示无提供方；每个卷显式包含根目录。现有声明节点可通过真实 CREATE 请求打开，入口为 `ZwOpenFile` 以及 `ZwCreateFile`、`IoCreateFile` 的 FILE_OPEN 形式。名称查找、来宾筛选器、共享、句柄和指针生命周期复用统一所有者，不读取宿主文件。新建、覆盖、删除、元数据查询、数据 I/O、枚举及文件系统控制仍未实现。
+
+名称和路径限可打印 ASCII，按大小写折叠判断身份；父目录须显式声明，64 位文件 ID 在各卷内唯一。不接受别名、流、链接、重解析点和 Unicode 路径。每个节点必须给出类型、属性、分配大小及四个非负有符号 64 位时间戳，包括零。文件必须提供精确十六进制 `data`，空文件用空字符串；EOF 为字节数。目录不含 data 且分配为零。扇区为 512–4096 的二次幂，文件分配按扇区对齐且覆盖 EOF；对齐掩码为小于扇区大小的 2^n−1。`full_access` 仅排除 ACL 拒绝；允许只读、隐藏、系统、目录、存档及单独使用的 NORMAL 属性。
+
+`DriverFileSystemLimits.def`: 8 volumes / 512 nodes / 1024 path bytes / 64 KiB names / 64 KiB per file / 512 KiB content / 64 MiB allocation / 4 MiB filesystem report contribution. JSON input: 2 MiB.
+
+```json
+{
+  "filesystem": [
+    {
+      "device_name": "\\Device\\DeclaredVolume",
+      "access_policy": "full_access",
+      "sector_size": 4096,
+      "alignment_mask": 511,
+      "nodes": [
+        {
+          "path": "\\",
+          "kind": "directory",
+          "file_id": 0,
+          "attributes": 16,
+          "allocation_size": 0,
+          "creation_time_100ns": 0,
+          "last_access_time_100ns": 0,
+          "last_write_time_100ns": 0,
+          "change_time_100ns": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+`configuration.filesystem` 保存输入；顶层 `filesystem` 来自独立状态所有者，增加 `device_object` 和节点 `end_of_file`，执行或投影校验停止后仍保留。通用 `devices` 只包含来宾设备。会话卷可在卸载后保留，但来宾对象、引用、句柄、挂接和 IRP 必须释放。任何声明，包括 `[]`，都保留未重建依赖并阻止可执行 UNPACK 恢复。旧 Unicorn 模式可能在停止前提交已拒绝的设备写入；诊断保留投影失败，文件状态仍可观察。
+
+
+边界内支持 ASCII 名称、命名空间链接和作为 RootDirectory 保留的目录句柄。根目录后缀 `\` 与无后缀的卷打开不同，后者未实现。支持目录／非目录和同步非警报选项。`IoCancelFileOpen` 对尚未发布的底层成功打开显式发送 CLEANUP，最终引用释放发送 CLOSE；上层改成失败而未取消会被拒绝。DriverEntry 可保留句柄到 DriverUnload。异步完成和嵌套清理分别保留完成状态、分派返回及 API 返回。报告使用 `file_object`、`file_open_operation`、`filesystem_device`、`filesystem_file_id`，驱动创建请求的 `file` 为 null。EA、设备提示、二进制 ID、重解析、oplock、事务、ACL 求值、替换文件名存储及框架文件系统分派仍未支持。

@@ -154,6 +154,13 @@ their dispatcher when a third function queues, external graph snapshots survive
 interleaved requests, and opening another project retires both replicas.
 Cancelling view reads must preserve a queued project snapshot needed by a
 retained external analysis request.
+`NeverDWorkerAllocator` checks the embedded Linux allocator across the worker's
+C++ runtime, the shared SDK and libc, including reallocation, over-aligned
+objects and cross-thread release. Configure `NEVERD_WORKER_MIMALLOC=OFF` for
+the platform allocator; ASan/TSan/MSan configurations require that setting so
+their allocation interceptors remain authoritative. Real worker and workbench
+integration checks run with the actual linked worker, without `LD_PRELOAD`.
+
 `NeverDWorkerAnalysisSnapshot` verifies read-only replica state,
 unchanged owner files, staged comments, signature replay and stale-input
 rejection. Database restore coverage keeps pseudocode closed until requested.
@@ -168,7 +175,9 @@ that read-only replicas load these edits without changing durable owner files.
 `NeverDWorkerSourceCache` counts actual preparation and source-page calls across
 A-to-B-to-A navigation, including a subsequent graph or IR request. It checks
 edits, undo, replica restore, project replacement, representation separation and
-both document-count and retained-byte eviction. Timing-independent cache tests
+both document-count and retained-byte eviction. Page checks preserve repeated
+references, overlapping names, nested spans and unsorted producer order, including
+empty pages after the end of the text. Timing-independent cache tests
 complement `source_revisit_bench.py`, which measures complete real source pages.
 
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
@@ -257,6 +266,65 @@ For load benchmarks use Release, the same binary and warm-cache repetitions
 with `NEVERD_THREADS=1` and a fixed parallel count. Measure session loading
 separately from decompilation. Report algorithmic and parallel gains separately;
 thread count alone does not establish faster loading on every input.
+
+## Local types
+
+`NeverDTypesTests` covers the local type library: builtin sizes per data
+model, how anonymous unions and structures are rebuilt from MSVC's flat member
+lists (each nesting must flatten back exactly), the PDB import against
+`unittests/types/fixtures/local_types.pdb`, layout JSON, and the C, C++, Rust
+and Go renderers. The fixture's source says how to rebuild the
+`local_types.exe` and `local_types.pdb` pair with clang-cl and lld-link.
+`NeverDSessionCAPITests` reads the same fixture through the C API.
+
+To check the whole Windows kernel, point `NEVERD_TYPES_NTKRNLMP` at a copy of
+`ntkrnlmp.pdb`. `PDBTypeImportKernel.RebuildsTheKernelTypes` then imports it,
+and every nesting must hold. `TypeParseKernel.ReadsBackEveryKernelTypeAsRendered`
+renders every kernel type as C, Rust and Go and reads it back; each record
+must keep its size and every member's bit offset and width, and every
+rendered size and offset check must hold.
+
+`HeaderLibrary.*` reads the embedded Windows kernel library and checks how a
+header library joins a program's types. After running
+`scripts/generate_windows_kernel_types.py`, check the library in every
+language:
+
+```sh
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/WindowsKernelX64.h --data-model LLP64
+```
+
+With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
+ntoskrnl.exe and its PDB,
+`SessionCAPITest.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
+and checks that the headers join its PDB without conflicts.
+
+Declared types are covered at each layer:
+- `SessionCAPITest.DeclaredTypesJoinThePDBsAndStayWithTheProject`: declaring,
+  replacing a PDB type in place, problems with their place, removal, and the
+  declarations coming back with the next load, a PDB-less load reporting the
+  one that no longer reads;
+- `NeverDWorkerLocalTypes`: the worker's commands, the sidecar and the
+  analysis replica;
+- `WorkbenchTests::localTypesAreDeclaredEditedAndDeletedByIdasKeys`: the
+  editor under IDA's Ins, Ctrl+E and Del.
+
+Rendered source must also compile with each record's size and offsets checked.
+`scripts/check_type_renders.py` runs `neverd types --all --asserts` and
+compiles the result:
+- C and C++ in all four builtin spellings with clang for the MSVC target, and
+  the portable spelling for the GNU target too;
+- Rust with rustc (64-bit layouts only);
+- Go with `go vet` for Windows.
+
+A missing toolchain is reported and skipped. Without `--binary` it checks the
+fixture:
+
+```sh
+python3 scripts/check_type_renders.py --neverd build/bin/neverd
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --binary /path/to/ntoskrnl.exe --pdb /path/to/ntkrnlmp.pdb
+```
 
 ## Scalar x86 floating-point state
 
@@ -1742,6 +1810,16 @@ private-frame variants cover x86, x64, ARM and AArch64 across ELF, COFF and
 Mach-O. Reachable values cannot disappear from feasible masks or certify a false
 upper bound; real arithmetic updates cannot become transparent backedges. Warm
 and cold queries must agree at evidence-budget and resolver-depth boundaries.
+`ResolverPendingWalks.*` compares recursive dependency lifetimes against an
+independent set-of-activation-IDs model, including sparse ancestors, completed
+memo hits, reused depths and the fixed bitset's word and capacity boundaries.
+Unrelated returns must preserve an exact snapshot; retiring any actual
+dependency must invalidate it, including beyond the exact tracking capacity.
+`ResolverPredicateDemand.*` places a deep operand behind conditions that the
+current query cannot use. The independent constant candidate must still be
+proved across four architectures and exact COPY/NOT transports. Needed
+conditions, guarded/partial definitions and cross-block producers retain their
+depth refusals; policy switches and evidence budgets agree cold and warm.
 `ResolverQueryScope.*` compares scoped and ordinary queries at every small-fixture
 budget boundary, including completion flags and masks. It covers owned temporary
 overrides, equal-sized edge changes, roots, different builders, nested leases,
@@ -1804,6 +1882,14 @@ ELF, COFF and Mach-O. Its ELF source
 roundtrips execute HighC and both LLVMC modes at O0/O2 against an independent
 selection oracle. Small joined domains reuse the finite-coordinate proof;
 unchecked paths and sparse or incomplete domains cannot grant a dense table.
+
+`GuardExpression.*` independently enumerates every byte offset and boundary
+for signed/unsigned comparisons in both operand orders and affine directions.
+Wide nested affine expressions and Boolean combinations retain wrap, sign and
+hole boundaries; periodic masks, shifts and width changes require full replay.
+The native guard suites above still cover CFG/lane identity, sparse tables,
+all-domain proof rejection and exhausted evidence. Replay partitions retain the
+original whole-window evidence charge and the final solver proof.
 
 `ResolverValueQueryCache.MalformedScalarRecordsCannotPublishProofs` verifies
 missing ADD/SELECT inputs, input-array overflow, zero widths and a memory-space
@@ -4093,9 +4179,9 @@ displacements and rejection of extra instructions or indexed addresses.
 The native receipt tests require
 `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, supplied by the pinned r5
 packages. Older r4 builds retain analysis and refusal coverage but cannot run
-these compiler-protocol tests. The focused Wine job and native Windows source
-replay use the complete `all` profile with the published compiler; an LLVM
-workflow artifact override is no longer needed for these 64 source scenarios.
+these compiler-protocol tests. The explicit `r5` source replay profile covers
+these 64 scenarios. The complete `all` profile additionally requires the
+dynamic-call capability described below.
 
 `registration_state_dispatch.s` adds `longjmp-state-byte-high-bits`: the same
 filter byte store produces complete states 0 and 256. Four alternating invocations
@@ -4135,18 +4221,118 @@ snapshot-index budget regressions.
 Companion tests preserve distinct source snapshots, converging sibling paths,
 recurrent-path rejection and observable finally writes.
 
+`longjmp-shared-parent-call` reaches one nonlocal call through two active levels
+of the 259-row table. `shared-parent-throwing-call` raises from one ordinary
+helper call and must select different handlers on alternating invocations.
+Each fixture checks 20 original/generated executions, both patch modes,
+optimization settings and rebasing. They require
+`LLVM_NEVERD_X86_REGISTRATION_SEH_DYNAMIC_CALLS`. Source-IR mutations remove or
+alter call-site markers, noinline and notail, or move authority to a callee,
+scope intrinsic or function. `RegistrationSEHDynamicScope` checks that PHIs
+retain original predecessor/value pairs across scope selection.
+Deleted or duplicated source-call receipts and changed operation identities
+also fail both the generic exception counters and PE32 source replay. LLVM
+regressions check live setjmp state, SEH3/EH4 emission, unmarked calls and rejection
+of hoisting a later state reset before an inherited call. A separate register
+liveness regression checks a value observed only after handler entry, including
+a nonreturning call and optimized IR. The runtime handler-selection fixture
+reproduced a stale frame address in EDI before this compiler fix.
+
+`longjmp-private-parent-call` and `longjmp-private-parent-graph` place a private
+leaf or a two-level helper before the shared nonlocal jump. The live capture,
+one helper effect, finally count, restored state, registers and FS chain must
+agree in all 20 original/generated executions per fixture.
+`RegistrationSEHPrivateCall` rejects caller-frame access, object borrowing,
+callee cleanup, code/table/import writes, recursive calls, changed instruction
+bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
+stack-only facts cannot preserve a capture, deallocated buffers refuse and a
+frame-preserving call supplies no scalar result authority.
+
+The EH4 jump matrix repeats thirty-five capture/resumption scenarios with and
+without GS cookies: parent and callback jumps, zero values, filter search, incoming
+parameters, retired scopes, private leaf/graph calls with a live buffer, and
+registered EH3/EH4 helpers borrowing the parent buffer and a scalar object, and
+correlated filter searches while a finally invocation is suspended.
+The helper cases require exactly one observed helper effect after resumption.
+`RegistrationSEHPrivateCall.EH4CalleeGraphsPreserveTheImageCookie` rejects
+transitive cookie/header writes, partial cookie overlap and invalid cookie
+addresses. Each case compares the original and nine generated
+variants at two bases under the authenticated native CRT. The source and MedIR
+mutation tests reject wrong unwind protocols, cookie addresses, argument extents
+and cookie overlap; callback scratch tests retain rejection of cookie/table writes
+and unknown addresses. The EH4 corpus regression separately requires a CFG block
+boundary at each physical `_setjmp3` return PC. Older replay profiles retain their
+historical case sets and exclude these new EH4 jump cases.
+
+`RegistrationMultiStateJump` checks a shared capture reached with two source
+states, including identical later active states, changed buffers, invalid stores,
+clobbered capture bytes and reversed block order. `RegistrationSEHJumpABI` checks
+that the captured bound disambiguates identical visible unwind states.
+`longjmp-multistate-capture` and its EH4/GS variants alternate the two bounds on
+four calls, unwind the same finally, check the restored state and nonvolatile
+register, then raise another exception. The native mutation tests alter the saved
+state slot, read address, volatile accesses, placement, use closure and captured
+projection key while retaining verifier-clean IR. The full source profile now
+contains 144 scenarios; older compiler profiles keep their original membership.
+
+The EH4/GS `longjmp-callee`, `longjmp-returning-callee` and
+`longjmp-scalar-callee` variants retain the source helper's registration while
+mapping its caller's generated buffer and object. `RegistrationBoundCallState`
+checks full/partial cookie overlap, registration storage, unused object-address
+arguments and allocation bounds. Runtime source mutations retarget the actual
+object-address instruction into both cookie slots; source replay and installation
+must reject them. The MedIR binder also rejects missing cookie proof or invalid
+cookie addresses before lowering the preserved call.
+
+The corresponding `longjmp-eh4-callee`, `longjmp-eh4-returning-callee` and
+`longjmp-eh4-scalar-callee` variants use a separately registered EH4 helper.
+Their `-mixed-gs` variants invert only the helper's GS configuration, covering
+all four caller/helper cookie combinations without sharing their local proofs.
+`RegistrationSEHBoundCookieTests` mutates its actual cookie load width, global
+address, access direction, frame XOR, encoded scope pointer, and full/partial
+cookie stores. It also changes the live GS check parameter and requires source
+replay and native installation to reject it. A changed check in the fixture's
+unreachable except body remains harmless for that proved invocation; the live
+ordinary-return check retains its independent obligation.
+
+`RegistrationCopyEdge` checks unavailable handler-register PHIs through cyclic
+private register/snapshot transports. Frozen poison is permitted only when its
+entire bounded use graph has no observer. Return values, call arguments, global
+stores, address escapes, arithmetic, atomic accesses, over-wide slots and budget
+exhaustion refuse; C++ copy edges keep their stricter nonvolatile slot rule.
+`RegistrationSEHDynamicScope.ProvesUnreachedSourceAddressExpressions` checks
+all-arm frame-coordinate PHIs in source blocks without execution receipts.
+Reordered equivalent arms and checked runtime handler roots pass. Exceptional
+arms also require the same coordinate; malformed runtime definitions refuse.
+Differing coordinates, missing provenance,
+numeric addresses, narrow/wide aliases, duplicate definitions and cycles grant
+no logical-state write authority.
+
 `RegistrationFilterState.*` checks paired dispositions and states at shared
 returns, captured search cursors, arbitrary negative dispositions, continuation
-inside a finally block and reordered edges. Selected handlers, unknown results,
-escaping searches, bad stacks, cycles and incomplete instruction boundaries
-refuse. Skipping one or several filter scopes records the last callback state
+inside a finally block and reordered edges for EH3, EH4 and EH4+GS. Missing or
+wrong image cookie inputs, full/partial EH and GS slot writes refuse EH4
+resumption; a disjoint scalar write remains valid. Selected handlers abandon
+only their own suspended paths, including a filter-activated cleanup. Unknown
+results, escaping searches, bad stacks, recurrent selection and incomplete
+instruction boundaries refuse. MedIR rejects unordered/duplicate selected scope
+indices, finally rows, missing handlers, unknown roots and incorrect entry
+states. Skipping one or several filter scopes records the last callback state
 and its final runtime state separately. `RegistrationSEHJumpABI` checks complete
 state projections and rejects missing, invalid, unordered or contradictory
 pairs. Native installation mutations change the reload address, volatility,
 atomicity, alignment, selector, projection keys/results, uses and placement
 before the capture. They also remove a projection or compare another value.
 
-`registration_filter_state.s` supplies seven runtime cases:
+`registration_filter_state.s` supplies twelve runtime cases. Five handler-selection
+cases (`longjmp-handler-selected`, `longjmp-handler-cleanup`,
+`longjmp-handler-captured-cursor`, `longjmp-handler-nested-finally` and
+`longjmp-handler-mixed-resumption`) check handler entry state, cleanup/filter
+order, actual caller PC, return value and restored FS chain. Handler-only cases
+require the captured continuation to remain unreachable; the mixed case alternates
+selection and continuation, checking distinct traces and restored registers.
+Nested selection abandons both suspended callback invocations. They run with
+EH3, EH4 and EH4+GS. The other seven cases are:
 `longjmp-filter-correlated-state`, `longjmp-filter-shared-state`,
 `longjmp-filter-captured-cursor`, `longjmp-filter-negative-disposition`,
 `longjmp-filter-skipped-scope`, `longjmp-filter-two-resume-mappings` and
@@ -4163,14 +4349,17 @@ permutation whose bytes, fixups and enclosing graph are otherwise valid.
 `longjmp-filter-callback-activation` omits the ordinary activation of scope 2;
 its distinct filter and handler acquire their entry proofs only from the
 continued callback state. Unit controls require both roots and reject complete
-proof publication when any filter path selects a handler instead of resuming.
+proof publication when a filter path has an unknown disposition.
 The genuine `CorpusFuncLoadX86FilterThunksPrintTheirValue` regression retains
 structured filters when an ordinary finally's raise selects a handler: that
 path must not be treated as a failed nonlocal resumption.
 Each execution alternates both filter paths across four invocations, checks the
 resumed TryLevel and nonvolatile register, and requires the exact cleanup trace
 and restored registration chain. The source reconstruction and independent
-replay scripts include these cases in the current compiler profile.
+replay scripts include these cases and their EH4/GS variants in the current
+compiler profile. EH4 variants use the native CRT's cookie-aware unwind routine,
+eleven initialized buffer words and the -2 frame sentinel. All seven variants
+retain the exact trace, correlated filter state and restored nonvolatile value.
 
 `registration_state.s` adds six EH3 runtime cases:
 
@@ -5451,9 +5640,11 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 `windows-alignment-oracle.yml` uses `check_windows_alignment.py` and `WindowsAlignmentCases.def` to collect 72 original x64 Windows exception observations: nine aligned SSE forms across seven misaligned address/permission cases and an aligned inaccessible-page control. It retains exception codes, parameters, fault PCs, saved contexts, raw output and source/binary hashes, and verifies unchanged inputs and RAM. These observations establish OS behavior only; they neither certify KVM/WHP execution nor add SEH support.
 
-With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
+With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 58 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks = 5615`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 262 WHP outcomes from all 131 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 64 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 262 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 92 driver API checks = 5740`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+
+The genuine WDK inventory also builds `driver_device_queries.c`, `driver_file_objects.c` and `driver_file_handles.c` in normal and CFG forms. `DriverDeviceQueryTests.cpp` and `DriverFileObjectTests.cpp` reuse the portable callers’ assertions for retained deletion, failed CREATE, process identity, last-handle CLEANUP and deferred CLOSE across both contracts, bases and scheduling policies. All three families have mandatory native gates; inventory validation independently discovers sources with `NEVERD_WDK_FIXTURE` so a dual-mode source cannot silently lose its WDK build.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 
@@ -6709,6 +6900,10 @@ The earlier 204-observation translation-profile receipt is historical. Current f
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`NormalizationFeasibilityCachesExactTranslatedTheorems` · `NormalizationFeasibilityRejectsIncompleteAndUnrelatedProofs` · `NormalizationFeasibilityRetainsStorageAndWorkLimits`.
+
+`MachineExitRetReadsAliasedBytesBeforePhysicalPop` · `MachineExitCallCapturesTargetBeforeAliasingPush` · `MachineExitJumpRetainsDynamicAndOriginalDirectTargets` · `MachineExitKeepsInternalCallsAndReturnProofs` · `MachineExitRequiresExactDomainBytesAndTransferKind` · `MachineExitIntegrityBudgetsAndOrdinaryConsumers` · `MachineExitProvesLiveInternalReturnCells`.
+
 `ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
 
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` checks that cached history is not charged again, appended wide constants still cost admission, short work and node budgets still refuse, and copied readability caches remain independent.
@@ -6909,7 +7104,7 @@ native transports remain skips, not execution evidence.
 
 `KernelDeviceStackTests.cpp` checks current neighbors, borrowed versus retained results, deletion of either query input or neighbor, last-reference retirement, invalid/corrupted inputs and IRQL rejection before retention. Original `fixtures/driver_device_queries.c` runs through `DriverDeviceQueryTests.cpp` on available backends, both contracts and image bases, with cooperative and 17-instruction scheduling. It verifies held storage after detach/delete and rejects unload with a deliberately leaked reference; all four native contract/base outcomes are required.
 
-KernelFileObjectTests checks references during CREATE, type mismatch, reused identifiers, pending CLOSE, deletion, failed CREATE and rejection of elevated final release. Original driver_file_objects.c and DriverFileObjectTests execute synchronous/pending close, failed creation and deliberate leaks on available backends, both contracts and bases, with cooperative and 17-instruction scheduling. The nested close checks the actual thread, process and PreviousMode. Native acceptance requires all four contract/base outcomes. File handles and filesystem operations need separate coverage.
+KernelFileObjectTests and KernelObjectTests cover typed pointer opens, output clearing on type mismatch, generic access, process/global handle counts, callback reopening rejection, failed-route retry, requestor exit, repeated cleanup and pending final close. KernelPnpRequestTests preserves a delayed CLEANUP provider response; KernelFrameworkFileTests checks callback process ownership and LOCK_CONTROL admission. Original driver_file_objects.c keeps its pointer-lifetime coverage. Original driver_file_handles.c checks synchronous/pending CLEANUP and CLOSE, system-worker release, identifier reuse and deliberate leaks with cooperative and 17-instruction scheduling. Genuine WDK driver_kmdf_file_handles.c checks system-process cleanup, restored caller close and callback-free cleanup; configure NEVERD_KMDF_FILE_HANDLES_FIXTURE and optional NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE. DriverFileObjectTests runs available backends, both contracts and bases. Missing WDK artifacts or backends skip visibly. Filesystem operations require separate coverage. Scenario-originated KMDF CLEANUP/CLOSE retain the calling process, thread and PreviousMode; the F fixture mode closes a retained handle from another file’s CLEANUP and checks restoration afterward.
 
 ### Android method, transaction and command execution
 
@@ -6925,3 +7120,42 @@ then the four owning labels. Process-public C API/CLI and Python integration
 exercise the same paths; transport unavailability is a skip, never evidence of
 execution. These authored workloads do not establish arbitrary application,
 Android service or shader coverage.
+
+`KernelFileQueryTests.cpp` checks query packet fields, borrowed memory, immediate versus pending status publication, invalid outputs, worker notification, retained files and final CLOSE. `DriverFileObjectTests.cpp` executes the original `driver_file_queries.c` across contracts, backends, load bases and cooperative/instruction-clock scheduling. Optional `NEVERD_WDM_FILE_QUERIES_FIXTURE` and `NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE` add genuine WDK headers/import libraries and active CFG. Missing backends or external fixtures remain explicit skips; these tests do not implement a filesystem provider or general APC delivery.
+
+## Supplied DEX method execution
+
+`NeverDDalvikTests` checks the decoded executor's uninitialized/torn registers,
+overlapping wide moves, division exceptions/overflow, budget/stack stops,
+result-use rules and refusal of class initialization/handlers/unknown opcodes.
+`NeverDMobileTests` must also run when changing the shared DEX reader or models;
+mobile recovery and JNI execution share those owners.
+
+For an independent Java compiler/runtime oracle, prepare the JNI fixtures and
+`neverd-process-probe`, then run:
+
+```sh
+python3 scripts/test_android_dex_runtime.py --build build-release \
+  --jdk /path/to/jdk --d8 /path/to/build-tools/lib/d8.jar \
+  --backend unicorn --output /path/to/new-dex-run
+```
+
+Repeat with `--backend hvf` on supported macOS hosts. The original Java is
+compiled to class files for the JVM oracle and to DEX for NeverD. Cases cover
+overflow, negative/oversized shifts, signed division/remainder, narrow returns,
+wide arguments, branches, packed/sparse switches, loops, recursion and
+cross-class calls, through ordinary/V/A JNI forms. Negative workloads cover
+division exceptions, loops exhausting the shared native budget, recursion,
+objects/handlers, corrupt/duplicate DEX and JNI-disabled admission. Logs and
+request/report files stay in the explicit output directory. Missing JDK/D8 or
+CPU transports are unavailable evidence, not a passing substitute. The runtime
+itself does not launch these preparation tools or use a device.
+
+Processor regressions cover output boundaries, NULL, nested restores, invalid IRQL and import identity. Original `driver_processors.c` exercises entry, worker and DPC contexts across backends, contracts, bases and scheduling. Optional `NEVERD_WDM_PROCESSORS_FIXTURE` and `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` verify genuine WDK inline calls and dynamic exports with normal/active CFG images; missing transports remain explicit skips.
+
+Integer formatting regressions verify full-width values, all admitted radices, exact capacity, invalid-base ordering, output aliases and terminator faults. Original `driver_int64_strings.c` checks imports and dynamic lookup in entry, worker and unload, plus elevated-IRQL rejection. Optional `NEVERD_WDM_INT64_STRINGS_FIXTURE` and `NEVERD_WDM_INT64_STRINGS_CFG_FIXTURE` cover genuine WDK normal/CFG images across available backends, contracts, bases and scheduling.
+
+
+`DriverFileSystemTests.cpp` and `KernelFileSystemTests.cpp` cover admission limits, required zero values, exact owner snapshots, pre-entry multi-volume identity, simultaneous PnP devices, route rejection before IRP adoption, protected projection and unload leak detection. `DriverFileSystemExecutionTests.cpp` runs original and genuine WDK normal/CFG fixtures across available backends, contracts, bases and scheduling; configure `NEVERD_WDM_FILESYSTEM_FIXTURE` and `NEVERD_WDM_FILESYSTEM_CFG_FIXTURE`. `DriverScenarioPublic` and `test_driver_filesystem_integration.py` check C API/CLI/Python state on success and stop. The Python test uses `NEVERD_TEST_DRIVER_FILESYSTEM_FIXTURE` and `NEVERD_TEST_LIBNEVERD`. `UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery` checks unused empty declarations. Unavailable backends remain explicit skips.
+
+`KernelFileCreateTests.cpp` covers packets retained until producer return, sharing failures, relative roots held across pending work, explicit cancellation, failure/aliased publication and DriverUnload teardown. `DriverFileSystemExecutionTests.cpp` executes original and genuine WDK normal/CFG callers across both contracts, bases and available backends, with cooperative and instruction-clock scheduling. C API/CLI/Python preserve the same file identities. Unavailable backends remain skips. Original kernel completion probes distinguish retained CREATE/cancel packets from ordinary consumed IRPs; their event and APC boundaries do not establish a complete filesystem or kernel.

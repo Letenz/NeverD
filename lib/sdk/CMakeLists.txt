@@ -22,6 +22,7 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPIGraph.cpp
     capi/NeverDCAPIHexDump.cpp
     capi/NeverDCAPIInfo.cpp
+    capi/NeverDCAPILocalTypes.cpp
     capi/NeverDCAPIOptimize.cpp
     capi/NeverDCAPIPatch.cpp
     capi/NeverDCAPISourcePatch.cpp
@@ -110,6 +111,7 @@ target_link_libraries(neverd_shared PRIVATE
     NeverDTranslate
     NeverDSigs
     NeverDSBF
+    NeverDTypes
     NeverDUnpack
     ${CMAKE_DL_LIBS}
     ${NEVERD_COMMON_LIBS})
@@ -188,6 +190,7 @@ set(NEVERD_SDK_HEADERS
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIDevirtualize.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIEmulation.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIQuery.h
+    ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPILocalTypes.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPISymbolic.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPISafety.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIPatch.h

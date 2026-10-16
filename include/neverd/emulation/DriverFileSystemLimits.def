@@ -1,0 +1,18 @@
+//===- DriverFileSystemLimits.def - Declared filesystem bounds ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Native state bounds and an independent filesystem report allowance.
+
+NEVERD_DRIVER_FILESYSTEM_LIMIT(MaxFileSystemVolumes, 8)
+NEVERD_DRIVER_FILESYSTEM_LIMIT(MaxFileSystemNodes, 512)
+// Includes cleaned opens retained by FILE_OBJECT references until CLOSE.
+NEVERD_DRIVER_FILESYSTEM_LIMIT(MaxFileSystemOpens, 1024)
+NEVERD_DRIVER_FILESYSTEM_LIMIT(MaxFileSystemPathBytes, 1024)
+NEVERD_DRIVER_FILESYSTEM_LIMIT(MaxFileSystemNameBytes, 64 * 1024)
+NEVERD_DRIVER_FILESYSTEM_LIMIT(MaxFileSystemFileBytes, 64 * 1024)
+NEVERD_DRIVER_FILESYSTEM_LIMIT(MaxFileSystemContentBytes, 512 * 1024)
+NEVERD_DRIVER_FILESYSTEM_LIMIT(MaxFileSystemAllocationBytes, 64 * 1024 * 1024)
+NEVERD_DRIVER_FILESYSTEM_LIMIT(MaxFileSystemReportBytes, 4 * 1024 * 1024)

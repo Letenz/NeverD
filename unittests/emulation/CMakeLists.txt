@@ -552,6 +552,10 @@ set(NEVERD_KMDF_CONTROL_FIXTURE "" CACHE FILEPATH
   "Optional original KMDF control-device fixture linked with genuine WDK libraries")
 set(NEVERD_KMDF_CONTROL_CFG_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK KMDF control-device fixture linked with active CFG")
+set(NEVERD_KMDF_FILE_HANDLES_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK KMDF shared-file-handle fixture")
+set(NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK KMDF shared-file-handle fixture with active CFG")
 set(NEVERD_KMDF_PNP_FIXTURE "" CACHE FILEPATH
   "Optional original KMDF PnP fixture linked with genuine WDK libraries")
 set(NEVERD_KMDF_PNP_CFG_FIXTURE "" CACHE FILEPATH
@@ -685,7 +689,7 @@ foreach(_driver_name success failure unknown fault loop devices readonly privile
 endforeach()
 # The loader fixture deliberately retains relocations and a compiler-inserted
 # stack protector. The WDM fixture covers the complete synchronous lifecycle.
-foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_registry_values driver_registry_keys driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority driver_loader_view driver_bugcheck driver_version_query driver_physical_ranges driver_va_shadow_query driver_strings driver_identity driver_time_fields driver_interlocked driver_slist driver_cstrings driver_cstring_writes driver_lookaside driver_fast_mutex driver_eresource driver_objects driver_device_queries driver_file_objects driver_registry_objects driver_namespace driver_data driver_qspinlock driver_rundown)
+foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_registry_values driver_registry_keys driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority driver_loader_view driver_bugcheck driver_version_query driver_physical_ranges driver_va_shadow_query driver_strings driver_identity driver_time_fields driver_interlocked driver_slist driver_cstrings driver_cstring_writes driver_lookaside driver_fast_mutex driver_eresource driver_objects driver_device_queries driver_file_handles driver_file_objects driver_file_queries driver_processors driver_int64_strings driver_filesystem_provider driver_registry_objects driver_namespace driver_data driver_qspinlock driver_rundown)
   set(_driver_object "${_driver_fixture_dir}/${_driver_name}.obj")
   set(_driver_image "${_driver_fixture_dir}/${_driver_name}.sys")
   if(_driver_name STREQUAL "loader")
@@ -817,10 +821,12 @@ add_custom_target(NeverDDriverFixtures DEPENDS ${_driver_outputs})
 set(_driver_kmdf_definitions)
 set(_driver_has_kmdf_fixture FALSE)
 set(_driver_has_kmdf_control_fixture FALSE)
+set(_driver_has_kmdf_file_handles_fixture FALSE)
 set(_driver_has_kmdf_pnp_fixture FALSE)
 set(_driver_has_kmdf_lock_fixture FALSE)
 foreach(_driver_kmdf_variable NEVERD_KMDF_FIXTURE NEVERD_KMDF_CFG_FIXTURE
     NEVERD_KMDF_CONTROL_FIXTURE NEVERD_KMDF_CONTROL_CFG_FIXTURE
+    NEVERD_KMDF_FILE_HANDLES_FIXTURE NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE
     NEVERD_KMDF_PNP_FIXTURE NEVERD_KMDF_PNP_CFG_FIXTURE
     NEVERD_KMDF_LOCK_FIXTURE NEVERD_KMDF_LOCK_CFG_FIXTURE)
   if(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_CFG_FIXTURE"
@@ -836,6 +842,11 @@ foreach(_driver_kmdf_variable NEVERD_KMDF_FIXTURE NEVERD_KMDF_CFG_FIXTURE
   if(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_PNP_CFG_FIXTURE"
       AND NOT _driver_has_kmdf_pnp_fixture)
     message(STATUS "Driver KMDF PnP CFG tests skipped: NEVERD_KMDF_PNP_FIXTURE is unavailable")
+    continue()
+  endif()
+  if(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE"
+      AND NOT _driver_has_kmdf_file_handles_fixture)
+    message(STATUS "Driver KMDF file-handle CFG tests skipped: NEVERD_KMDF_FILE_HANDLES_FIXTURE is unavailable")
     continue()
   endif()
   if(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_LOCK_CFG_FIXTURE"
@@ -854,6 +865,8 @@ foreach(_driver_kmdf_variable NEVERD_KMDF_FIXTURE NEVERD_KMDF_CFG_FIXTURE
       set(_driver_has_kmdf_fixture TRUE)
     elseif(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_CONTROL_FIXTURE")
       set(_driver_has_kmdf_control_fixture TRUE)
+    elseif(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_FILE_HANDLES_FIXTURE")
+      set(_driver_has_kmdf_file_handles_fixture TRUE)
     elseif(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_PNP_FIXTURE")
       set(_driver_has_kmdf_pnp_fixture TRUE)
     elseif(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_LOCK_FIXTURE")
@@ -1339,6 +1352,86 @@ foreach(_driver_user_mapping_variable NEVERD_WDM_USER_MAPPING_FIXTURE
   endif()
 endforeach()
 
+set(NEVERD_WDM_DEVICE_QUERIES_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK device-query fixture")
+set(NEVERD_WDM_DEVICE_QUERIES_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK device-query fixture with active CFG")
+set(NEVERD_WDM_FILE_OBJECTS_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK retained file-object fixture")
+set(NEVERD_WDM_FILE_OBJECTS_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK retained file-object fixture with active CFG")
+set(NEVERD_WDM_FILE_HANDLES_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK shared file-handle fixture")
+set(NEVERD_WDM_FILE_HANDLES_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK shared file-handle fixture with active CFG")
+set(_driver_wdm_file_lifetime_definitions)
+foreach(_lifetime_fixture NEVERD_WDM_DEVICE_QUERIES_FIXTURE
+    NEVERD_WDM_DEVICE_QUERIES_CFG_FIXTURE NEVERD_WDM_FILE_OBJECTS_FIXTURE
+    NEVERD_WDM_FILE_OBJECTS_CFG_FIXTURE NEVERD_WDM_FILE_HANDLES_FIXTURE
+    NEVERD_WDM_FILE_HANDLES_CFG_FIXTURE)
+  if(EXISTS "${${_lifetime_fixture}}" AND NOT IS_DIRECTORY "${${_lifetime_fixture}}")
+    get_filename_component(_lifetime_path "${${_lifetime_fixture}}" ABSOLUTE)
+    list(APPEND _driver_wdm_file_lifetime_definitions
+      "${_lifetime_fixture}=\"${_lifetime_path}\"")
+  endif()
+endforeach()
+
+set(NEVERD_WDM_FILE_QUERIES_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK file-information query fixture")
+set(NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK file-information query fixture with active CFG")
+set(_driver_wdm_file_queries_definitions)
+foreach(_query_fixture NEVERD_WDM_FILE_QUERIES_FIXTURE
+    NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE)
+  if(EXISTS "${${_query_fixture}}" AND NOT IS_DIRECTORY "${${_query_fixture}}")
+    get_filename_component(_query_path "${${_query_fixture}}" ABSOLUTE)
+    list(APPEND _driver_wdm_file_queries_definitions
+      "${_query_fixture}=\"${_query_path}\"")
+  endif()
+endforeach()
+
+set(NEVERD_WDM_PROCESSORS_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK processor and IRQL fixture")
+set(NEVERD_WDM_PROCESSORS_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK processor and IRQL fixture with active CFG")
+set(_driver_wdm_processors_definitions)
+foreach(_processor_fixture NEVERD_WDM_PROCESSORS_FIXTURE
+    NEVERD_WDM_PROCESSORS_CFG_FIXTURE)
+  if(EXISTS "${${_processor_fixture}}" AND NOT IS_DIRECTORY "${${_processor_fixture}}")
+    get_filename_component(_processor_path "${${_processor_fixture}}" ABSOLUTE)
+    list(APPEND _driver_wdm_processors_definitions
+      "${_processor_fixture}=\"${_processor_path}\"")
+  endif()
+endforeach()
+
+set(NEVERD_WDM_INT64_STRINGS_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK integer formatting fixture")
+set(NEVERD_WDM_INT64_STRINGS_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK integer formatting fixture with active CFG")
+set(_driver_wdm_int64_strings_definitions)
+foreach(_integer_fixture NEVERD_WDM_INT64_STRINGS_FIXTURE
+    NEVERD_WDM_INT64_STRINGS_CFG_FIXTURE)
+  if(EXISTS "${${_integer_fixture}}" AND NOT IS_DIRECTORY "${${_integer_fixture}}")
+    get_filename_component(_integer_path "${${_integer_fixture}}" ABSOLUTE)
+    list(APPEND _driver_wdm_int64_strings_definitions
+      "${_integer_fixture}=\"${_integer_path}\"")
+  endif()
+endforeach()
+
+set(NEVERD_WDM_FILESYSTEM_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK declared filesystem fixture")
+set(NEVERD_WDM_FILESYSTEM_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK declared filesystem fixture with active CFG")
+set(_driver_wdm_filesystem_definitions)
+foreach(_filesystem_fixture NEVERD_WDM_FILESYSTEM_FIXTURE
+    NEVERD_WDM_FILESYSTEM_CFG_FIXTURE)
+  if(EXISTS "${${_filesystem_fixture}}" AND NOT IS_DIRECTORY "${${_filesystem_fixture}}")
+    get_filename_component(_filesystem_path "${${_filesystem_fixture}}" ABSOLUTE)
+    list(APPEND _driver_wdm_filesystem_definitions
+      "${_filesystem_fixture}=\"${_filesystem_path}\"")
+  endif()
+endforeach()
+
 set(_driver_execution_fixture_definitions
   NEVERD_DRIVER_FIXTURES="${_driver_fixture_dir}"
   NEVERD_DRIVER_SCENARIOS="${CMAKE_SOURCE_DIR}/docs/examples"
@@ -1346,6 +1439,11 @@ set(_driver_execution_fixture_definitions
   ${_driver_kmdf_definitions}
   ${_driver_wdm_stack_definitions}
   ${_driver_wdm_owned_irp_definitions}
+  ${_driver_wdm_file_lifetime_definitions}
+  ${_driver_wdm_file_queries_definitions}
+  ${_driver_wdm_processors_definitions}
+  ${_driver_wdm_int64_strings_definitions}
+  ${_driver_wdm_filesystem_definitions}
   ${_driver_wdm_wait_wake_definitions}
   ${_driver_wdm_multiple_wait_definitions}
   ${_driver_wdm_usb_idle_definitions}
@@ -1368,6 +1466,9 @@ add_neverd_unittest(NeverDNativeDriverTests
   DriverRegistryObjectTests.cpp
   DriverDeviceQueryTests.cpp
   DriverFileObjectTests.cpp
+  DriverProcessorTests.cpp
+  DriverIntegerFormattingTests.cpp
+  DriverFileSystemExecutionTests.cpp
   DriverNamespaceTests.cpp
   DriverDataExportTests.cpp
   NO_PRETTY_VALUES
@@ -1400,6 +1501,9 @@ add_dependencies(NeverDNativeDriverTests NeverDDriverFixtures)
 add_neverd_unittest(NeverDKernelSnapshotTests
   NO_PRETTY_VALUES
   KernelSnapshotTests.cpp
+  DriverFileSystemTests.cpp
+  KernelFileSystemTests.cpp
+  KernelFileCreateTests.cpp
   KernelUnpackStateTests.cpp
   KernelLoaderViewTests.cpp
   KernelResidentQueryTests.cpp
@@ -1488,6 +1592,7 @@ add_neverd_unittest(NeverDDriverEmulationTests
   KernelModelTests.cpp
   KernelObjectTests.cpp
   KernelFileObjectTests.cpp
+  KernelFileQueryTests.cpp
   KernelNamespaceTests.cpp
   KernelDataExportTests.cpp
   KernelLookasideTests.cpp
@@ -1595,6 +1700,10 @@ if(TARGET neverd_shared AND TARGET neverd)
     ${_driver_kmdf_definitions}
     ${_driver_wdm_stack_definitions}
   ${_driver_wdm_owned_irp_definitions}
+  ${_driver_wdm_file_queries_definitions}
+  ${_driver_wdm_processors_definitions}
+  ${_driver_wdm_int64_strings_definitions}
+  ${_driver_wdm_filesystem_definitions}
   ${_driver_wdm_wait_wake_definitions}
   ${_driver_wdm_multiple_wait_definitions}
   ${_driver_wdm_usb_idle_definitions}

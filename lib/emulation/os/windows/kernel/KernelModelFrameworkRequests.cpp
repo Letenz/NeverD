@@ -61,6 +61,24 @@ llvm::Error KernelModel::validateRequestCompletion(uint64_t IRP,
         "completion requires the active IRP and cannot occur twice");
   if (DriverIRPs.contains(IRP))
     return validateDriverIRPCompletion(IRP, Status, Information);
+  if (const auto File = FileObjects.find(Request->FileAddress);
+      File != FileObjects.end() &&
+      File->second.Source == OpenFile::Origin::DriverCreate) {
+    if (Request->Kind == DriverRequestKind::Create) {
+      const bool Success = !(Status & profile::NTStatusFailureMask);
+      if (Success &&
+          (!File->second.ProviderOpen || File->second.OpenCancelled ||
+           !Request->FileSystemReceived))
+        return frameworkRequestError(
+            "successful CREATE requires its terminal provider open");
+      if (!Success && File->second.ProviderOpen && !File->second.OpenCancelled)
+        return frameworkRequestError(
+            "failed provider CREATE requires IoCancelFileOpen");
+    } else if (!Request->FileSystemReceived) {
+      return frameworkRequestError(
+          "file lifecycle completion requires terminal provider receipt");
+    }
+  }
   // An accepted AdapterControl may still need this exact captured packet as
   // input. Check before a terminal unwind consumes stack slots; beginning the
   // callback releases that input hold and permits completion from its body.
@@ -87,7 +105,14 @@ llvm::Error KernelModel::validateRequestCompletion(uint64_t IRP,
   if (HasTransferCount && Information > Request->TransferSize)
     return frameworkRequestError(
         "IoStatus.Information exceeds the requested transfer buffer");
+  if (Request->Kind == DriverRequestKind::QueryInformation &&
+      (Status >> profile::NTStatusSeverityShift) !=
+          profile::NTStatusErrorSeverity &&
+      Information > Request->TransferSize)
+    return frameworkRequestError(
+        "query Information exceeds the borrowed output buffer");
   if ((Request->Kind == DriverRequestKind::Cleanup ||
+       Request->Kind == DriverRequestKind::UnlockAll ||
        Request->Kind == DriverRequestKind::Close) &&
       Information)
     return frameworkRequestError(
@@ -132,7 +157,8 @@ void KernelModel::configureFrameworkRequestHost() {
                 Request->Kind == DriverRequestKind::DeviceControl
             ? Request->UserBuffer
             : 0,
-        Request->FileAddress};
+        Request->FileAddress,
+        Request->CallbackProcessID};
   };
   Host.Buffer = [this](uint64_t IRP, bool Output) -> llvm::Expected<uint64_t> {
     const auto *Request = requestForIRP(IRP);
@@ -240,7 +266,7 @@ void KernelModel::configureFrameworkRequestHost() {
     if (!Request || Request->Completed ||
         Request->DeviceRoute.size() != DirectPnpRouteSize ||
         !FrameworkDevices.count(Request->DeviceRoute.front()) ||
-        !isProviderDevice(Request->DeviceRoute.back()) ||
+        !isPnpProviderDevice(Request->DeviceRoute.back()) ||
         Request->PnpDevice != Request->DeviceRoute.back())
       return frameworkRequestError(
           "framework file forwarding requires a direct live PDO target");

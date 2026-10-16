@@ -534,7 +534,7 @@ de base ; son absence ou `"0x0"` utilise l’adresse préférée. L’image doit
 satisfaire les exigences de relocalisation. La commande d’initialisation et
 l’API C d’origine n’impliquent aucun scénario.
 
-Seuls `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `debugger_state`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry_system_time_100ns`, `registry` et `pnp_devices` sont acceptés
+Seuls `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `debugger_state`, `load_address`, `requests`, `unload`, `filesystem`, `kernel_exports`, `registry_system_time_100ns`, `registry` et `pnp_devices` sont acceptés
 à la racine. Les requêtes ordinaires de fichier acceptent `kind`, ainsi que `device` ou `device_id` (exclusifs) et `file`, facultatifs. Les IOCTL exigent `code` et acceptent `input`,
 `output_size` et `direct_input`. Un `read` accepte `output_size` et `byte_offset` ;
 un `write` accepte `input` et `byte_offset`. Les offsets valent zéro par défaut,
@@ -947,4 +947,58 @@ Le champ facultatif `kernel_va_shadow_query` déclare le résultat de la classe 
 
 `RtlCaptureContext` partage ses appels importés/dynamiques entre Unicorn/KVM/WHP checked-x64, à IRQL <= DISPATCH_LEVEL. Le record noyau de 1232 octets doit être aligné sur 16 et entièrement accessible en lecture/écriture. Seuls `[48,72)`, `[120,262)`, `[280,284)` et `[416,672)` changent ; les autres octets, données/pointeurs x87 et MXCSR mask restent intacts. ContextFlags=`0x10000f`, RSP appelant=RSP entrée+8, RIP vient du vrai retour. Le scratch de 8 octets à RSP entrée-8 reçoit les flags ; RAX reçoit EFLAGS étendu par zéro et les flags arithmétiques suivent ADD(RSP entrée-8,8). DS/ES/FS/GS utilisent le SS logique checked, sans valeur hôte ou transport brut. Record, retour et scratch exigent RAM noyau ordinaire, objets vivants, permissions et correspondance physique unique ; le record ne peut chevaucher les deux slots, et RSP entrée modulo 16 vaut 8. Échec de collecte/admission : CPU/RAM inchangés ; legacy est refusé. Ce modèle borné ne couvre pas toutes les implémentations Windows ; sa dépendance environnementale persiste après écrasement et ne permet ni reconstruction UNPACK ni prémisses symboliques.
 
-Les objets fichier gardent une identité par adresse et des références de pointeur communes, y compris pendant CREATE. Un numéro de scénario peut être réutilisé alors que l’ancien corps reste retenu. CLEANUP ferme le handle du scénario ; CLOSE libère sa dernière rétention. Si le pilote conserve des pointeurs, le résultat CLOSE garde un IRP nul sans achèvement jusqu’au dispatch réel à PASSIVE_LEVEL lors de la dernière libération. Un CLOSE en attente suspend le thread libérateur. Un CREATE échoué conserve le corps référencé sans association au périphérique ni CLOSE. Chaque corps associé retient le périphérique et compte dans DEVICE_OBJECT.ReferenceCount jusqu’à sa destruction. Les callbacks imbriqués héritent du thread, du processus et de PreviousMode de l’appelant. La création et la duplication de handles fichier, les requêtes de nom et un système de fichiers déclaré restent non pris en charge.
+Les corps fichier ont une identité par adresse partagée par les handles du scénario, les handles supplémentaires et les pointeurs. ObOpenObjectByPointer accepte un FILE_OBJECT déjà créé en mode noyau, avec OBJ_KERNEL_HANDLE facultatif et conversion des droits génériques. Le dernier handle d’un processus produit IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL si d’autres processus gardent des handles ; le dernier global produit CLEANUP. Le CLEANUP différé conserve la réponse déclarée du fournisseur. CLOSE attend les derniers handles, pointeurs et continuations, même après réutilisation du numéro. Pour un handle noyau, CLEANUP adopte temporairement le processus système en conservant thread, processus créateur et PreviousMode ; CLOSE retrouve le processus libérateur. Les callbacks en attente suspendent celui-ci. Un CREATE échoué avant l’ouverture par le fournisseur ne garde que le stockage référencé sans périphérique ; une ouverture explicitement annulée garde son périphérique jusqu’à CLOSE. Chaque corps associé compte une fois dans DEVICE_OBJECT.ReferenceCount. WDM et KMDF partagent ces durées de vie ; un périphérique KMDF ordinaire termine LOCK_CONTROL avec STATUS_INVALID_DEVICE_REQUEST. Réouverture dans un callback de fermeture, fermeture avec I/O en cours, transfert LOCK_CONTROL par filtre KMDF, noms et I/O de données/contrôle du fournisseur restent non pris en charge.
+
+## IRP de requête d’informations de fichier
+
+`IoQueryFileInformation` envoie un véritable `IRP_MJ_QUERY_INFORMATION` à la pile d’un fichier WDM déjà modélisé. Le pilote invité fournit les données ; aucune métadonnée de système de fichiers n’est inventée. Il faut un processus/thread connu à PASSIVE_LEVEL, avec interruptions et APC noyau spéciaux activés. Les E/S simultanées sur le même fichier, les VPB montés, le routage par extension, les fichiers du framework et la suppression différée de la dernière référence d’une requête asynchrone restent refusés. `IoGetRelatedDeviceObject` renvoie le sommet validé de la pile non montée à IRQL <= DISPATCH_LEVEL.
+
+Le tampon est emprunté jusqu’à la fin. Le retour immédiat utilise le statut de dispatch ; le retour après attente utilise celui de complétion. Une erreur immédiate ne publie pas l’IOSB privé et renvoie une longueur nulle. Une notification provenant d’un worker est livrée à la reprise de l’appelant initial. Une requête synchrone garde le fichier jusqu’au CLOSE final, puis écrit exactement quatre octets dans ReturnedLength, en préservant les octets voisins et les alias. Le rapport emploie kind `query_information`, origin `IoQueryFileInformation` et `file_information_class` ; les scénarios ne peuvent pas créer ce type. La classe 75 devient 71 avec le drapeau de pile 1 ; les autres numéros sont transmis au pilote sans promettre leur sémantique fournisseur.
+
+Les requêtes synchrones gardent une région critique jusqu’au CLOSE final, puis restaurent l’état APC précédent. Les notifications en attente deviennent visibles aux retours admissibles des API noyau et avant la reprise des instructions du thread propriétaire, y compris à la sortie d’une région protégée et au rétablissement de l’IRQL. Les octets du rapport sont lus dans le processus initial ; le worker de complétion ne lit pas son tampon utilisateur. Un échec d’allocation réinitialise l’événement du fichier synchrone sans modifier ReturnedLength.
+
+## Identité du processeur et élévation au niveau DPC
+
+Le profil monoprocesseur propose `KeGetCurrentProcessorNumberEx` à tout IRQL modélisé : index zéro et sortie facultative de quatre octets, groupe zéro, processeur zéro et octet réservé nul. Les sorties invalides sont refusées et les octets voisins conservés. `KeRaiseIrqlToDpcLevel` accepte IRQL 0, 1 ou 2, renvoie le niveau précédent et partage la pile d’imbrication par exécution avec `KfRaiseIrql` et `KeLowerIrql`. Imports et recherche dynamique partagent ces contrats. Le wrapper inline du WDK x64 appelle `KfRaiseIrql(2)` ; l’export distinct reste accessible dynamiquement.
+
+`RtlInt64ToUnicodeString` formate à PASSIVE_LEVEL la valeur entière non signée sur 64 bits. Les bases 2, 8, 10 et 16 sont admises ; zéro choisit la base décimale. `RtlIntegerToUnicodeString` conserve sa troncature ULONG. Les deux fonctions écrivent `Length` avant `STATUS_BUFFER_OVERFLOW`, exigent la place du terminateur et préservent les octets inutilisés. Après les chiffres, elles relisent `Buffer` pour écrire le terminateur, même si la sortie recouvre le descripteur. Un défaut ultérieur du terminateur conserve les chiffres déjà écrits.
+
+
+## Inventaire de systèmes de fichiers déclaré
+
+Le champ facultatif `filesystem` déclare les volumes de session avant DriverEntry. Son omission laisse la disponibilité inconnue ; `[]` indique zéro fournisseur. Chaque volume déclare sa racine. `ZwOpenFile` et les formes FILE_OPEN de `ZwCreateFile` et `IoCreateFile` ouvrent les nœuds existants par de véritables requêtes CREATE. Noms, filtres invités, partage, handles et références utilisent les propriétaires communs, sans consulter les fichiers hôtes. Création, remplacement, suppression, métadonnées, I/O de données, énumération et contrôles restent non pris en charge.
+
+Noms et chemins sont en ASCII imprimable, sans distinction de casse, avec parents explicites et ID 64 bits uniques par volume. Alias, flux, liens, points de réanalyse et Unicode sont exclus. Type, attributs, allocation et quatre horodatages signed64 non négatifs sont obligatoires, même à zéro. Un fichier exige les octets hexadécimaux exacts `data` ; EOF est leur nombre. Un répertoire omet data et alloue zéro. Secteurs : puissances de deux de 512 à 4096 ; allocation alignée couvrant EOF ; masque 2^n−1 inférieur au secteur. `full_access` exclut seulement les refus ACL.
+
+`DriverFileSystemLimits.def`: 8 volumes / 512 nodes / 1024 path bytes / 64 KiB names / 64 KiB per file / 512 KiB content / 64 MiB allocation / 4 MiB filesystem report contribution. JSON input: 2 MiB.
+
+```json
+{
+  "filesystem": [
+    {
+      "device_name": "\\Device\\DeclaredVolume",
+      "access_policy": "full_access",
+      "sector_size": 4096,
+      "alignment_mask": 511,
+      "nodes": [
+        {
+          "path": "\\",
+          "kind": "directory",
+          "file_id": 0,
+          "attributes": 16,
+          "allocation_size": 0,
+          "creation_time_100ns": 0,
+          "last_access_time_100ns": 0,
+          "last_write_time_100ns": 0,
+          "change_time_100ns": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+`configuration.filesystem` conserve l’entrée ; `filesystem` publie l’état indépendant avec `device_object` et `end_of_file`, même après arrêt ou erreur de projection. `devices` contient seulement les périphériques invités. Les volumes de session peuvent subsister après déchargement, mais références, handles, attachements et IRP invités doivent disparaître. Toute déclaration, même `[]`, empêche la restauration exécutable UNPACK. Unicorn historique peut appliquer une écriture refusée avant l’arrêt ; le diagnostic conserve l’erreur de projection.
+
+
+Le périmètre accepte les noms ASCII, les liens et un handle de répertoire retenu comme RootDirectory. Le suffixe racine `\` diffère d’une ouverture de volume sans suffixe, non prise en charge. Les options répertoire/non-répertoire et synchrone non alertable sont admises. `IoCancelFileOpen` envoie explicitement CLEANUP après un succès inférieur non publié ; la dernière référence déclenche CLOSE. Un échec supérieur sans annulation est refusé. DriverUnload peut fermer un handle conservé par DriverEntry. Les retours de complétion, dispatch et API restent distincts. Le rapport expose `file_object`, `file_open_operation`, `filesystem_device`, `filesystem_file_id` et `file: null`. EA, hints, identifiants binaires, reparses, oplocks, transactions, ACL, remplacement du stockage de nom et dispatch de framework restent hors périmètre.

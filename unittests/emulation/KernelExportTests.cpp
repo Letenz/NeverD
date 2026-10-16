@@ -201,6 +201,39 @@ TEST(KernelExports, CanonicalImportProvidersShareOneExplicitPolicy) {
     EXPECT_FALSE(KernelExportRegistry::canonicalImportModule(Module));
 }
 
+TEST(KernelExports, ProcessorImportsAndDynamicLookupShareExactArity) {
+  KernelExportRegistry Registry;
+  ASSERT_EQ(llvm::toString(Registry.initialize({})), "");
+  for (const auto &[Name, Arity] :
+       {std::pair{"KeGetCurrentProcessorNumberEx", 1u},
+        std::pair{"KeRaiseIrqlToDpcLevel", 0u}}) {
+    const auto Dynamic = requireValue(Registry.resolve(Name));
+    ASSERT_NE(Dynamic, 0u);
+    EXPECT_EQ(requireValue(Registry.bindImport({0x1000, "ntoskrnl.exe", Name})),
+              Dynamic);
+    const auto *Entry = Registry.lookup(Dynamic);
+    ASSERT_NE(Entry, nullptr);
+    EXPECT_EQ(Entry->Module, "ntoskrnl.exe");
+    EXPECT_EQ(KernelModel::argumentCount(*Entry), Arity);
+    EXPECT_EQ(KernelModel::argumentCount(Name), Arity);
+  }
+}
+
+TEST(KernelExports, Int64FormatterImportAndLookupShareThreeArguments) {
+  KernelExportRegistry Registry;
+  ASSERT_EQ(llvm::toString(Registry.initialize({})), "");
+  const auto Dynamic =
+      requireValue(Registry.resolve("RtlInt64ToUnicodeString"));
+  ASSERT_NE(Dynamic, 0u);
+  EXPECT_EQ(requireValue(Registry.bindImport(
+                {0x1000, "ntoskrnl.exe", "RtlInt64ToUnicodeString"})),
+            Dynamic);
+  const auto *Entry = Registry.lookup(Dynamic);
+  ASSERT_NE(Entry, nullptr);
+  EXPECT_EQ(KernelModel::argumentCount(*Entry), 3u);
+  EXPECT_EQ(KernelModel::argumentCount("RtlInt64ToUnicodeString"), 3u);
+}
+
 TEST(KernelExports, HALStaticAndDynamicLookupRetainProviderIdentity) {
   KernelExportRegistry Registry;
   ASSERT_EQ(llvm::toString(Registry.initialize({})), "");

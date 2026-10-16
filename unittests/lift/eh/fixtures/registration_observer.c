@@ -20,8 +20,12 @@ unsigned registration_parameter_after;
 #endif
 static unsigned observed_caller;
 unsigned registration_trace;
-#if REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 45
+#if (REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 49) ||                    \
+    (REGISTRATION_CASE == 52 || REGISTRATION_CASE == 57)
 unsigned registration_iteration;
+#endif
+#if REGISTRATION_CASE >= 48 && REGISTRATION_CASE <= 51
+unsigned registration_helper_visits;
 #endif
 #if REGISTRATION_CASE == 1 || REGISTRATION_CASE == 2
 #define EXPECTED_TRACE 123
@@ -39,10 +43,16 @@ unsigned registration_iteration;
     REGISTRATION_CASE == 30 || REGISTRATION_CASE == 31 ||                      \
     REGISTRATION_CASE == 34 || REGISTRATION_CASE == 35
 #define EXPECTED_TRACE 243
-#elif REGISTRATION_CASE >= 43 && REGISTRATION_CASE <= 45
+#elif REGISTRATION_CASE >= 43 && REGISTRATION_CASE <= 49
 #define EXPECTED_TRACE ((iterations & 1) + 1)
 #elif REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 42
 #define EXPECTED_TRACE 2345
+#elif REGISTRATION_CASE == 57
+#define EXPECTED_TRACE ((iterations & 1) ? 23u : 235u)
+#elif REGISTRATION_CASE == 54
+#define EXPECTED_TRACE 236u
+#elif REGISTRATION_CASE == 55
+#define EXPECTED_TRACE 234u
 #elif REGISTRATION_CASE == 9 || REGISTRATION_CASE == 10 ||                     \
     REGISTRATION_CASE == 12 || REGISTRATION_CASE >= 13
 #define EXPECTED_TRACE 23u
@@ -63,6 +73,9 @@ void registration_raise(void) {
 
 void registration_no_raise(void) {
   observed_caller = (unsigned)_ReturnAddress();
+#if REGISTRATION_CASE == 48 || REGISTRATION_CASE == 50
+  ++registration_helper_visits;
+#endif
 }
 
 void mainCRTStartup(void) {
@@ -71,8 +84,12 @@ void mainCRTStartup(void) {
   int value = 0, chain_ok = 1;
   for (; iterations != 4; ++iterations) {
     registration_trace = 0;
-#if REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 45
+#if (REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 49) ||                    \
+    (REGISTRATION_CASE == 52 || REGISTRATION_CASE == 57)
     registration_iteration = iterations;
+#endif
+#if REGISTRATION_CASE >= 48 && REGISTRATION_CASE <= 51
+    registration_helper_visits = 0;
 #endif
 #if REGISTRATION_CASE == 6
     registration_parameter_after = 0;

@@ -884,10 +884,11 @@ llvm::Expected<uint64_t> prefixUnicodeString(const KernelModel &Model,
 
 llvm::Expected<uint64_t> integerToUnicodeString(const KernelModel &Model,
                                                 GuestMemory &Memory,
-                                                llvm::ArrayRef<uint64_t> A) {
-  // RtlIntegerToChar (RVA 0x6f7000) formats the unsigned value with uppercase
-  // digits and no padding before rejecting any record access.
-  uint32_t Value = static_cast<uint32_t>(A[0]);
+                                                llvm::ArrayRef<uint64_t> A,
+                                                bool WideValue) {
+  // RtlIntegerToChar (RVA 0x6f7000) and RtlLargeIntegerToChar (0x6f6a70)
+  // format unsigned uppercase digits before accessing the output record.
+  uint64_t Value = WideValue ? A[0] : uint32_t(A[0]);
   uint32_t Base = static_cast<uint32_t>(A[1]);
   if (!Base)
     Base = 10;
@@ -908,7 +909,7 @@ llvm::Expected<uint64_t> integerToUnicodeString(const KernelModel &Model,
     return StatusInvalidParameter;
   }
   static constexpr char Digits[] = "0123456789ABCDEF";
-  char Reversed[32];
+  char Reversed[64];
   unsigned Count = 0;
   do {
     uint32_t Digit;
@@ -928,9 +929,6 @@ llvm::Expected<uint64_t> integerToUnicodeString(const KernelModel &Model,
   auto Maximum = Memory.readInteger(A[2] + UnicodeMaximumOffset, 2);
   if (!Maximum)
     return Maximum.takeError();
-  auto Buffer = Memory.readInteger(A[2] + UnicodeBufferOffset, 8);
-  if (!Buffer)
-    return Buffer.takeError();
   // RtlAnsiStringToUnicodeString (RVA 0x6f6840) stores Length before checking
   // that MaximumLength also holds the terminator.
   const uint64_t Length = Count * 2;
@@ -940,12 +938,26 @@ llvm::Expected<uint64_t> integerToUnicodeString(const KernelModel &Model,
     return E;
   if (Length + 2 > *Maximum)
     return StatusBufferOverflow;
-  std::vector<uint8_t> Bytes(Length + 2, 0);
+  auto Buffer = Memory.readInteger(A[2] + UnicodeBufferOffset, 8);
+  if (!Buffer)
+    return Buffer.takeError();
+  std::vector<uint8_t> Bytes(Length, 0);
   for (unsigned I = 0; I < Count; ++I)
     Bytes[I * 2] = static_cast<uint8_t>(Reversed[Count - 1 - I]);
   if (auto E = Model.validateGuestAccess(*Buffer, Bytes.size(), true))
     return E;
   if (auto E = Memory.write(*Buffer, Bytes))
+    return E;
+  // The target conversion publishes digits before reloading Buffer for the
+  // terminator. A caller buffer may overlap its own UNICODE_STRING record.
+  Buffer = Memory.readInteger(A[2] + UnicodeBufferOffset, 8);
+  if (!Buffer)
+    return Buffer.takeError();
+  if (*Buffer > UINT64_MAX - Length)
+    return runtimeError("integer string terminator address overflows");
+  if (auto E = Model.validateGuestAccess(*Buffer + Length, 2, true))
+    return E;
+  if (auto E = Memory.writeInteger(*Buffer + Length, 0, 2))
     return E;
   return StatusSuccess;
 }

@@ -78,7 +78,45 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-filter-callback-activation": (42, 2345),
               "longjmp-state-byte-high-bits": (43, 2),
               "longjmp-finally-incidental-result": (44, 2),
-              "longjmp-deep-scope-chain": (45, 2)})
+              "longjmp-deep-scope-chain": (45, 2),
+              "longjmp-shared-parent-call": (46, 2),
+              "shared-parent-throwing-call": (47, 2),
+              "longjmp-private-parent-call": (48, 2),
+              "longjmp-private-parent-graph": (49, 2),
+              "longjmp-handler-selected": (53, 23),
+              "longjmp-handler-cleanup": (54, 236),
+              "longjmp-handler-captured-cursor": (55, 234),
+              "longjmp-handler-nested-finally": (56, 23),
+              "longjmp-handler-mixed-resumption": (57, 23)})
+EH4_JUMP_CASES = ("longjmp-finally", "longjmp-zero", "longjmp-filter",
+                  "longjmp-parameter", "longjmp-callback",
+                  "longjmp-unwind-callback", "longjmp-callback-zero",
+                  "longjmp-search-filter", "longjmp-search-filter-zero",
+                  "longjmp-retired-scope", "longjmp-retired-inner-scope",
+                  "longjmp-callee", "longjmp-returning-callee",
+                  "longjmp-scalar-callee", "longjmp-filter-correlated-state",
+                  "longjmp-filter-shared-state", "longjmp-filter-captured-cursor",
+                  "longjmp-filter-negative-disposition", "longjmp-filter-skipped-scope",
+                  "longjmp-filter-two-resume-mappings", "longjmp-filter-callback-activation",
+                  "longjmp-handler-selected", "longjmp-handler-cleanup",
+                  "longjmp-handler-captured-cursor", "longjmp-handler-nested-finally",
+                  "longjmp-handler-mixed-resumption")
+CASES.update({prefix + name: CASES[name]
+              for prefix in ("eh4-", "eh4-gs-") for name in EH4_JUMP_CASES})
+CASES.update({prefix + name: (number, 23)
+              for prefix in ("eh4-", "eh4-gs-")
+              for number, name in ((50, "longjmp-private-parent-call"),
+                                   (51, "longjmp-private-parent-graph"))})
+CASES.update({prefix + "longjmp-multistate-capture": (52, 23)
+              for prefix in ("", "eh4-", "eh4-gs-")})
+CASES.update({prefix + name: (number, 23)
+              for prefix in ("eh4-", "eh4-gs-")
+              for number, name in ((20, "longjmp-eh4-callee"),
+                                   (21, "longjmp-eh4-returning-callee"),
+                                   (22, "longjmp-eh4-scalar-callee"))})
+CASES.update({name + "-mixed-gs": value for name, value in tuple(CASES.items())
+              if "-eh4-" in name})
+
 
 
 class PE32:
@@ -234,7 +272,8 @@ def main(argv: list[str] | None = None) -> int:
     case, expected_trace = CASES[args.case]
     eh4 = args.case.startswith("eh4-")
     gs = args.case.startswith("eh4-gs-")
-    jump = args.case.startswith("longjmp-")
+    helper_gs = gs != args.case.endswith("-mixed-gs")
+    jump = "longjmp-" in args.case
     report = {"schema": 2, "evidence": f"reconstructed-source-registration-{'seh4' if eh4 else 'seh3'}",
               "case": args.case, "expected_trace": expected_trace,
               "passed": False, "steps": [], "observations": []}
@@ -253,9 +292,12 @@ def main(argv: list[str] | None = None) -> int:
             prefix.mkdir(parents=True, exist_ok=True)
             environment.update(WINEPREFIX=str(prefix), WINEDEBUG="-all")
         commands = []
-        runtime_exports = ("_except_handler3\n" +
-                           ("_except_handler4_common\n" if eh4 else "") +
-                           ("_setjmp3\n_longjmpex\n_seh_longjmp_unwind\n" if jump else ""))
+        runtime_exports = "_except_handler3\n"
+        if eh4:
+            runtime_exports += "_except_handler4_common\n"
+        if jump:
+            runtime_exports += "_setjmp3\n_longjmpex\n"
+            runtime_exports += "_seh_longjmp_unwind4\n" if eh4 else "_seh_longjmp_unwind\n"
         definitions = [("kernel32", KERNEL32)]
         if args.runtime_root:
             runtime, report["seh_runtime"] = load_runtime(args.runtime_root.resolve())
@@ -266,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
                                 ("vcruntime", "LIBRARY vcruntime140.dll\nEXPORTS\n" +
                                  runtime_exports)))
         else:
-            if args.case == "longjmp-retired-inner-scope" and launcher:
+            if case == 19 and launcher:
                 raise ValueError("retired inner scopes require --runtime-root: Wine's builtin CRT uses a different unwind bound")
             definitions.append(("msvcrt", MSVCRT.replace("_except_handler3\n", "") +
                                 runtime_exports))
@@ -276,20 +318,29 @@ def main(argv: list[str] | None = None) -> int:
             (output / f"{name}.def").write_text(definition, encoding="utf-8")
             commands.append([linker, "/lib", f"/def:{output / (name + '.def')}",
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
-        sources = (["registration_seh4.s", "registration_eh4_runtime.c"] if eh4
-                   else ["registration_deep_scopes.s" if case == 45 else
+        sources = (["registration_multistate_jump.s"] +
+                   (["registration_eh4_runtime.c"] if eh4 else []) if case == 52
+                   else ["registration_filter_state_eh4.s" if 36 <= case <= 42 or 53 <= case <= 57 else
+                         "registration_jump_eh4.s" if jump else "registration_seh4.s",
+                    "registration_eh4_runtime.c"] if eh4
+                   else ["registration_shared_calls.s" if case == 47 else
+                         "registration_deep_scopes.s" if case in (45, 46, 48, 49) else
                          "registration_state_dispatch.s" if case in (43, 44) else
                          "registration_filter_state.s" if case >= 36 else
                          "registration_state.s" if case >= 30 else
                          "registration_jump.s" if jump else "registration_seh3.s"])
         sources.append("registration_observer.c")
-        if args.case in ("longjmp-callee", "longjmp-returning-callee",
-                         "longjmp-scalar-callee"):
-            sources.append("registration_jump_callee.s")
+        if case in (49, 51):
+            sources.append("registration_private_graph.s")
+        if case in (20, 21, 22):
+            sources.append("registration_jump_callee_eh4.s" if "-eh4-" in args.case
+                           else "registration_jump_callee.s")
         for source in sources:
             commands.append([compiler, "--target=i686-pc-windows-msvc", "-O0",
                              f"-DREGISTRATION_CASE={case}",
                              "-DREGISTRATION_FORWARD_ONLY=1", f"-DREGISTRATION_EXPECT_GS={int(gs)}",
+                             f"-DREGISTRATION_HELPER_GS={int(helper_gs)}",
+                             *([f"-DREGISTRATION_MULTISTATE_EH4={int(eh4)}"] if case == 52 else []),
                              *( ["-x", "assembler-with-cpp"] if source.endswith(".s") else []),
                              "-fno-stack-protector", "-c", str(FIXTURES / source),
                              "-o", str(output / (source + ".obj"))])

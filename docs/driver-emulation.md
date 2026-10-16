@@ -718,7 +718,7 @@ omission or `"0x0"` uses the preferred address. Relocation requirements must be
 satisfied by the image. No scenario is implied by the original initialization
 command or C API.
 
-Only `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `debugger_state`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry_system_time_100ns`, `registry`, and `pnp_devices` are accepted at
+Only `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `debugger_state`, `load_address`, `requests`, `unload`, `filesystem`, `kernel_exports`, `registry_system_time_100ns`, `registry`, and `pnp_devices` are accepted at
 the root. Ordinary file requests accept `kind`, optional `device` or `device_id` (mutually exclusive), and optional `file`.
 IOCTLs require `code` and accept `input`, `output_size`, and `direct_input`.
 A `read` accepts `output_size` and `byte_offset`; a `write` accepts `input` and
@@ -1319,4 +1319,58 @@ At PASSIVE_LEVEL, lengths below 4 return `STATUS_INFO_LENGTH_MISMATCH` without a
 
 `RtlCaptureContext` uses one shared imported/dynamic implementation on checked-x64 Unicorn/KVM/WHP at IRQL <= DISPATCH_LEVEL. It requires a 16-byte aligned, readable/writable 1232-byte kernel record. It writes only `[48,72)`, `[120,262)`, `[280,284)` and `[416,672)`; other bytes, including x87 payload/pointers and the MXCSR mask, remain untouched. ContextFlags is `0x10000f`. Caller RSP is entry RSP+8 and RIP comes from the actual return word. The 8-byte flags scratch at entry RSP-8 is written, RAX receives zero-extended saved EFLAGS, and arithmetic flags follow ADD(entry RSP-8,8). DS/ES/FS/GS use the checked logical SS selector; these are not host selector values or raw transport claims. Complete record, return and scratch admission checks live ordinary kernel RAM, permissions and unique physical backing; the record cannot overlap the return/scratch extent. Entry RSP must be 8 modulo 16. Collection or admission failure leaves CPU and RAM unchanged; legacy execution fails explicitly. This bounded model does not identify every Windows implementation. Captures retain an unreconstructed environment dependency even after overwritten bytes, and do not authorize UNPACK reconstruction or symbolic premises.
 
-File objects use one address-based identity and the shared pointer-reference owner, including references acquired during CREATE. Scenario file numbers can be reused while an older body is retained. CLEANUP closes the scenario handle; CLOSE releases its remaining scenario hold. If driver pointers remain, the CLOSE result has IRP zero and no completion until the final release dispatches the actual callback at PASSIVE_LEVEL. Pending CLOSE suspends the releasing thread. Failed CREATE retains a referenced body with no device association and sends no CLOSE. Each associated file body retains its device and contributes to DEVICE_OBJECT.ReferenceCount until final retirement. Nested callbacks inherit the caller’s thread, process and PreviousMode. File handle creation/cloning, filesystem name queries and a declared filesystem provider remain unsupported.
+File bodies have one address-based identity shared by scenario handles, additional handles and caller pointers. ObOpenObjectByPointer accepts an already-created FILE_OBJECT with kernel access and optional OBJ_KERNEL_HANDLE; generic file access is mapped to concrete rights. Closing a process’s last handle emits IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL while other processes retain handles; the global last handle emits CLEANUP. Deferred scenario CLEANUP retains its declared provider response. CLOSE waits for the final handle, pointer and active close continuation, even after scenario-number reuse. Kernel handles belong to the system process: CLEANUP temporarily uses that effective process while preserving the calling thread, creating process and PreviousMode; CLOSE restores the actual releasing process. Pending callbacks suspend the releasing caller. A CREATE that fails before provider commitment retains only referenced storage without a device association; an explicitly cancelled provider open retains its device until CLOSE. Each associated body contributes once to DEVICE_OBJECT.ReferenceCount. WDM and KMDF share these lifetimes; ordinary KMDF devices complete LOCK_CONTROL with STATUS_INVALID_DEVICE_REQUEST. Reopening during a close callback, closing with outstanding file I/O, KMDF filter LOCK_CONTROL forwarding, filesystem name queries and provider data/control I/O remain unsupported.
+
+## File-information query IRPs
+
+`IoQueryFileInformation` sends a real `IRP_MJ_QUERY_INFORMATION` to an existing modeled WDM file's device stack. The guest driver supplies the information; no filesystem metadata is invented. The caller must have a known process/thread at PASSIVE_LEVEL with interrupts and special kernel APCs enabled. Same-file overlapping I/O, mounted VPBs, file-extension routing, framework-owned queried files and final asynchronous-query reference deletion remain explicitly unsupported. `IoGetRelatedDeviceObject` returns the validated attached top for the supported unmounted route at IRQL <= DISPATCH_LEVEL.
+
+The query borrows the caller's buffer through completion. A nonpending call returns dispatch status; a pending call returns completion status. Immediate error completion leaves the private IOSB unreported, producing returned length zero. Worker completion notification is delivered when the original caller resumes. Synchronous queries retain the file through any final CLOSE; the four-byte ReturnedLength write follows CLOSE and preserves surrounding bytes, including output aliases. Reports use kind `query_information`, origin `IoQueryFileInformation` and `file_information_class`; this kind cannot be injected through scenario input. Class 75 is sent as class 71 with stack flag 1. Other class numbers are passed to the guest driver without claiming class-specific provider behavior.
+
+Synchronous queries retain a critical region through final CLOSE and restore the caller’s previous APC state. Pending notifications become visible at eligible kernel API returns and before the owning thread resumes guest instructions, including guarded-region exit and IRQL restoration. Report bytes are captured in the original process, so a completing worker never reads its user buffer. An allocation failure resets the synchronous file event while leaving ReturnedLength unchanged.
+
+## Processor identity and DPC-level raise
+
+The single-processor profile implements `KeGetCurrentProcessorNumberEx` at any modeled IRQL. It returns processor index zero and optionally writes exactly four bytes: group zero, processor zero and a zero reserved byte. Output admission preserves surrounding memory and rejects invalid storage. `KeRaiseIrqlToDpcLevel` accepts IRQL 0, 1 or 2, returns the previous level and uses the same execution-owned nesting stack as `KfRaiseIrql` and `KeLowerIrql`. Imports and dynamic lookup share these contracts. The genuine x64 WDK inline wrapper calls `KfRaiseIrql(2)`; the separately exported entry is also available through dynamic lookup.
+
+`RtlInt64ToUnicodeString` formats the full unsigned 64-bit value at PASSIVE_LEVEL. Radices 2, 8, 10 and 16 are supported; zero selects decimal. The existing `RtlIntegerToUnicodeString` retains its ULONG truncation. Both publish `Length` before reporting `STATUS_BUFFER_OVERFLOW`, require space for the terminator and preserve unused bytes. After writing digits they reload `Buffer` for the terminator, including overlapping output records; a later terminator fault retains already written digits.
+
+
+## Declared filesystem inventory
+
+Optional `filesystem` declares session-local volumes before DriverEntry. Omission leaves availability unknown; `[]` declares no providers. Every volume explicitly includes its root. Existing declared nodes can now be opened through real CREATE requests using `ZwOpenFile` or the FILE_OPEN forms of `ZwCreateFile` and `IoCreateFile`. Namespace lookup, guest filters, sharing, handles and pointer lifetimes use the common owners. Host files are never consulted. Creation, overwrite, deletion, metadata queries, data I/O, enumeration and filesystem controls remain unsupported.
+
+Names and paths use printable ASCII and case-folded identity, with explicit directory parents and unique 64-bit file IDs per volume. No aliases, streams, links, reparse points or Unicode paths are admitted. Every node requires kind, attributes, allocation and four nonnegative signed-64 timestamps, even when zero. Files require exact hexadecimal `data`, including an empty string; EOF is its byte count. Directories omit data and require zero allocation. Sector size is a power of two from 512 to 4096; allocation covers EOF and is sector-aligned. The alignment mask is 2^n−1 below the sector size. `full_access` excludes ACL denials only. Allowed attributes are readonly, hidden, system, directory, archive and NORMAL (alone).
+
+`DriverFileSystemLimits.def`: 8 volumes / 512 nodes / 1024 path bytes / 64 KiB names / 64 KiB per file / 512 KiB content / 64 MiB allocation / 4 MiB filesystem report contribution. JSON input: 2 MiB.
+
+```json
+{
+  "filesystem": [
+    {
+      "device_name": "\\Device\\DeclaredVolume",
+      "access_policy": "full_access",
+      "sector_size": 4096,
+      "alignment_mask": 511,
+      "nodes": [
+        {
+          "path": "\\",
+          "kind": "directory",
+          "file_id": 0,
+          "attributes": 16,
+          "allocation_size": 0,
+          "creation_time_100ns": 0,
+          "last_access_time_100ns": 0,
+          "last_write_time_100ns": 0,
+          "change_time_100ns": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+`configuration.filesystem` retains input. The top-level `filesystem` reports independent owner state, adding `device_object` and node `end_of_file`; owner state survives execution or projection-validation stops. Generic `devices` contains guest devices only. Session volumes may survive unload, but guest objects, references, handles, attachments and IRPs must drain. Any declaration, including `[]`, retains an unreconstructed dependency and prevents executable UNPACK recovery. Legacy Unicorn can commit a rejected device write before stopping; the diagnostic retains projection failure, while owner state remains observable.
+
+
+The bounded path accepts ASCII names, namespace links and a retained directory handle as RootDirectory. A root suffix `\` is distinct from an unsupported volume open with no suffix. Directory/non-directory and synchronous nonalert options are supported. `IoCancelFileOpen` explicitly sends CLEANUP for an unpublished successful lower open; final reference release sends CLOSE. An upper failure without cancellation is rejected. DriverEntry may retain a handle for DriverUnload. Completion, dispatch return and API return remain distinct across pending work and nested teardown. Requests report `file_object`, `file_open_operation`, `filesystem_device` and `filesystem_file_id`; driver-created requests have `file: null`. EAs, device hints, binary IDs, reparses, oplocks, transactions, ACL evaluation, replacement filename storage and framework filesystem dispatch remain unsupported.

@@ -93,7 +93,10 @@ parseNativeEHProvenance(const llvm::CallInst &Anchor) {
           static_cast<unsigned>(
               windows_eh_md::NativeProvenanceRole::RegistrationChainAccess) &&
       *Role != static_cast<unsigned>(
-                   windows_eh_md::NativeProvenanceRole::RegistrationCallback))
+                   windows_eh_md::NativeProvenanceRole::RegistrationCallback) &&
+      *Role !=
+          static_cast<unsigned>(
+              windows_eh_md::NativeProvenanceRole::RegistrationDynamicCall))
     return std::nullopt;
 
   return NativeEHProvenance{

@@ -80,7 +80,8 @@ void KernelModel::configureFrameworkDeviceHost() {
                                      bool Exclusive,
                                      bool Filter) -> DeviceResult {
     auto *Configured = pnpDeviceForPDO(PDO);
-    if (!Configured || !Configured->AddDeviceActive || !isProviderDevice(PDO))
+    if (!Configured || !Configured->AddDeviceActive ||
+        !isPnpProviderDevice(PDO))
       return frameworkDeviceError(
           "PnP framework creation requires the active physical device");
     uint32_t PowerFlags = windows::DevicePowerPageable;
@@ -428,7 +429,7 @@ std::optional<KernelGuestCall> KernelModel::takeIndependentGuestCall() {
       return KernelGuestCall{Call->ExecutionToken.value_or(GuestCallToken{
                                  GuestCallOwner::Framework, Call->Token}),
                              Call->PC, std::move(Call->Arguments),
-                             Call->SynchronizationObject};
+                             Call->SynchronizationObject, Call->ProcessID};
   return std::nullopt;
 }
 

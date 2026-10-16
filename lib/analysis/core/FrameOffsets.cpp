@@ -251,10 +251,21 @@ static FrameOffset proveFrameOffsetImpl(
     if (!Cached && Normalization && Normalization->MaxWork)
       if (const auto Normalized = normalizeFrameExpression(
               Ctx, Value, MaxSymbolicNodes, *Normalization)) {
-        // Algebra proves the offset independently of Predicate. It provides
-        // no satisfiability witness and must not cache a nonempty domain.
-        if (const auto Offset = frameRelativeOffset(Ctx, *Normalized, Root))
+        // Algebra alone supplies no feasibility witness. An already completed
+        // empty projection under the same predicate supplies the missing
+        // evidence, without another solver query or a new memory premise.
+        if (const auto Offset = frameRelativeOffset(Ctx, *Normalized, Root)) {
+          if (Cache)
+            if (auto Feasible = Cache->lookup(Ctx, Predicate, {}, 1);
+                Feasible && Feasible->Status == FiniteValueStatus::Complete) {
+              for (auto &Tuple : Feasible->Tuples)
+                Tuple = {*Offset};
+              RememberDomain(*Feasible);
+              if (Feasible->Tuples.empty())
+                return {FrameOffsetStatus::Infeasible};
+            }
           return {FrameOffsetStatus::Exact, *Offset};
+        }
         // An exact derivation may still need the ordinary predicate-dependent
         // proof. Retry once with a fresh encoding and the original limits and
         // cumulative query count. Do not normalize again or reset WorkUsed.

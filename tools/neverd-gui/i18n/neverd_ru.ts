@@ -847,6 +847,14 @@
         <source>Change the name of the current function and what it is</source>
         <translation>Изменить имя текущей функции и её свойства</translation>
     </message>
+    <message>
+        <source>Local t&amp;ypes</source>
+        <translation>Локаль&amp;ные типы</translation>
+    </message>
+    <message>
+        <source>Show the program's types with their layouts and source</source>
+        <translation>Показать типы программы с их размещением и исходным кодом</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2272,6 +2280,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Could not tell whether %1 has a symbol table: %2</source>
         <translation>Не удалось определить, есть ли в %1 таблица символов: %2</translation>
     </message>
+    <message>
+        <source>Local Types</source>
+        <translation>Локальные типы</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3372,6 +3384,412 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Discard unsaved analyst assertions and continue?</source>
         <translation>Отбросить несохранённые утверждения аналитика и продолжить?</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LocalTypesView</name>
+    <message>
+        <source>C header (*.h)</source>
+        <translation>Заголовок C (*.h)</translation>
+    </message>
+    <message>
+        <source>C++ header (*.hpp)</source>
+        <translation>Заголовок C++ (*.hpp)</translation>
+    </message>
+    <message>
+        <source>Rust (*.rs)</source>
+        <translation>Rust (*.rs)</translation>
+    </message>
+    <message>
+        <source>Go (*.go)</source>
+        <translation>Go (*.go)</translation>
+    </message>
+    <message>
+        <source>Windows names (ULONG)</source>
+        <translation>Имена Windows (ULONG)</translation>
+    </message>
+    <message>
+        <source>IDA names (unsigned int)</source>
+        <translation>Имена IDA (unsigned int)</translation>
+    </message>
+    <message>
+        <source>C keywords (unsigned long)</source>
+        <translation>Ключевые слова C (unsigned long)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32_t)</source>
+        <translation>Точная ширина (uint32_t)</translation>
+    </message>
+    <message>
+        <source>Filter types by name</source>
+        <translation>Фильтр типов по имени</translation>
+    </message>
+    <message>
+        <source>#</source>
+        <translation>#</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Имя</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>Вид</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>Размер</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>Поля</translation>
+    </message>
+    <message>
+        <source>Back to the type shown before (Esc)</source>
+        <translation>Вернуться к ранее показанному типу (Esc)</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>Размещение</translation>
+    </message>
+    <message>
+        <source>Copy the layout or the source</source>
+        <translation>Копировать размещение или исходный код</translation>
+    </message>
+    <message>
+        <source>Export types as source</source>
+        <translation>Экспортировать типы как исходный код</translation>
+    </message>
+    <message>
+        <source>Export this type…</source>
+        <translation>Экспортировать этот тип…</translation>
+    </message>
+    <message>
+        <source>Export selected types…</source>
+        <translation>Экспортировать выбранные типы…</translation>
+    </message>
+    <message>
+        <source>Export all types…</source>
+        <translation>Экспортировать все типы…</translation>
+    </message>
+    <message>
+        <source>How C and C++ name builtin types</source>
+        <translation>Как C и C++ называют встроенные типы</translation>
+    </message>
+    <message>
+        <source>Hex offsets</source>
+        <translation>Шестнадцатеричные смещения</translation>
+    </message>
+    <message>
+        <source>With dependencies</source>
+        <translation>С зависимостями</translation>
+    </message>
+    <message>
+        <source>Also declare every type this one needs, so the source compiles</source>
+        <translation>Также объявить все типы, которые нужны этому, чтобы исходный код компилировался</translation>
+    </message>
+    <message>
+        <source>Layout checks</source>
+        <translation>Проверки размещения</translation>
+    </message>
+    <message>
+        <source>Follow each type with checks of its size and offsets that the compiler verifies</source>
+        <translation>Добавлять после каждого типа проверки размера и смещений, которые выполняет компилятор</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>Поле</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>Смещение</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Байты</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Тип</translation>
+    </message>
+    <message>
+        <source>This engine has no local types.</source>
+        <translation>У этого движка нет локальных типов.</translation>
+    </message>
+    <message>
+        <source>Reading the program's types…</source>
+        <translation>Чтение типов программы…</translation>
+    </message>
+    <message>
+        <source>Cannot read the types: %1</source>
+        <translation>Не удаётся прочитать типы: %1</translation>
+    </message>
+    <message>
+        <source>The PDB defines no types.</source>
+        <translation>PDB не определяет типов.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB with types.</source>
+        <translation>Нет локальных типов: у программы нет PDB с типами.</translation>
+    </message>
+    <message>
+        <source>Types that do not lay out as the PDB lists them: %1</source>
+        <translation>Типов, размещение которых не совпадает с PDB: %1</translation>
+    </message>
+    <message>
+        <source>Cannot lay the type out: %1</source>
+        <translation>Не удаётся разместить тип: %1</translation>
+    </message>
+    <message>
+        <source>// Cannot render the type: %1</source>
+        <translation>// Не удаётся сформировать исходный код типа: %1</translation>
+    </message>
+    <message>
+        <source>structure</source>
+        <translation>структура</translation>
+    </message>
+    <message>
+        <source>union</source>
+        <translation>объединение</translation>
+    </message>
+    <message>
+        <source>enumeration</source>
+        <translation>перечисление</translation>
+    </message>
+    <message>
+        <source>typedef</source>
+        <translation>псевдоним типа</translation>
+    </message>
+    <message>
+        <source>function type</source>
+        <translation>тип функции</translation>
+    </message>
+    <message>
+        <source>%1 (%2) bytes</source>
+        <translation>байт: %1 (%2)</translation>
+    </message>
+    <message>
+        <source>aligned to %1</source>
+        <translation>выравнивание: %1</translation>
+    </message>
+    <message>
+        <source>packed to %1</source>
+        <translation>упаковка: %1</translation>
+    </message>
+    <message>
+        <source>declared only</source>
+        <translation>только объявлен</translation>
+    </message>
+    <message>
+        <source>Enumerator</source>
+        <translation>Элемент</translation>
+    </message>
+    <message>
+        <source>Value</source>
+        <translation>Значение</translation>
+    </message>
+    <message>
+        <source>(padding)</source>
+        <translation>(заполнение)</translation>
+    </message>
+    <message>
+        <source>Double-click to open %1</source>
+        <translation>Дважды щёлкните, чтобы открыть %1</translation>
+    </message>
+    <message>
+        <source>Export local types</source>
+        <translation>Экспорт локальных типов</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>Не удаётся записать %1</translation>
+    </message>
+    <message>
+        <source>Exported to %1</source>
+        <translation>Экспортировано в %1</translation>
+    </message>
+    <message>
+        <source>Cannot export the types: %1</source>
+        <translation>Не удаётся экспортировать типы: %1</translation>
+    </message>
+    <message>
+        <source>Add types from a declaration</source>
+        <translation>Добавить типы из объявления</translation>
+    </message>
+    <message>
+        <source>Edit the type's declaration</source>
+        <translation>Изменить объявление типа</translation>
+    </message>
+    <message>
+        <source>Delete the selected types</source>
+        <translation>Удалить выбранные типы</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Добавить типы…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Изменить тип…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Удалить типы…</translation>
+    </message>
+    <message>
+        <source>A declaration of yours no longer reads: %1</source>
+        <translation>Одно из ваших объявлений больше не читается: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations of yours no longer read: %1</source>
+        <translation>
+            <numerusform>%n ваше объявление больше не читается: %1</numerusform>
+            <numerusform>%n ваших объявления больше не читаются: %1</numerusform>
+            <numerusform>%n ваших объявлений больше не читаются: %1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add types</source>
+        <translation>Добавление типов</translation>
+    </message>
+    <message>
+        <source>Cannot read the type: %1</source>
+        <translation>Не удаётся прочитать тип: %1</translation>
+    </message>
+    <message>
+        <source>Edit %1</source>
+        <translation>Изменение %1</translation>
+    </message>
+    <message>
+        <source>Declared %1</source>
+        <translation>Объявлен %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>Declared %n types</source>
+        <translation>
+            <numerusform>Объявлен %n тип</numerusform>
+            <numerusform>Объявлено %n типа</numerusform>
+            <numerusform>Объявлено %n типов</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete the type %1?</source>
+        <translation>Удалить тип %1?</translation>
+    </message>
+    <message numerus="yes">
+        <source>Delete %n types?</source>
+        <translation>
+            <numerusform>Удалить %n тип?</numerusform>
+            <numerusform>Удалить %n типа?</numerusform>
+            <numerusform>Удалить %n типов?</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete types</source>
+        <translation>Удаление типов</translation>
+    </message>
+    <message>
+        <source>Deleted %1</source>
+        <translation>Удалён %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n types</source>
+        <translation>
+            <numerusform>Удалён %n тип</numerusform>
+            <numerusform>Удалено %n типа</numerusform>
+            <numerusform>Удалено %n типов</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(%1 still names it)</source>
+        <translation>(%1 всё ещё ссылается на него)</translation>
+    </message>
+    <message numerus="yes">
+        <source>(%n types still name it)</source>
+        <translation>
+            <numerusform>(%n тип всё ещё ссылается на него)</numerusform>
+            <numerusform>(%n типа всё ещё ссылаются на него)</numerusform>
+            <numerusform>(%n типов всё ещё ссылаются на него)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Cannot delete the types: %1</source>
+        <translation>Не удаётся удалить типы: %1</translation>
+    </message>
+    <message>
+        <source>The window closed</source>
+        <translation>Окно закрыто</translation>
+    </message>
+    <message>
+        <source>All types</source>
+        <translation>Все типы</translation>
+    </message>
+    <message>
+        <source>From the PDB</source>
+        <translation>Из PDB</translation>
+    </message>
+    <message>
+        <source>From system headers</source>
+        <translation>Из системных заголовков</translation>
+    </message>
+    <message>
+        <source>Declared</source>
+        <translation>Объявленные</translation>
+    </message>
+    <message>
+        <source>Show the types of one origin</source>
+        <translation>Показывать типы одного источника</translation>
+    </message>
+    <message>
+        <source>Types: %1</source>
+        <translation>Типов: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from the PDB</source>
+        <translation>
+            <numerusform>%n из PDB</numerusform>
+            <numerusform>%n из PDB</numerusform>
+            <numerusform>%n из PDB</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from system headers</source>
+        <translation>
+            <numerusform>%n из системных заголовков</numerusform>
+            <numerusform>%n из системных заголовков</numerusform>
+            <numerusform>%n из системных заголовков</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declared</source>
+        <translation>
+            <numerusform>%n объявлен</numerusform>
+            <numerusform>%n объявлено</numerusform>
+            <numerusform>%n объявлено</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DeclareTypesDialog</name>
+    <message>
+        <source>Declare types</source>
+        <translation>Объявление типов</translation>
+    </message>
+    <message>
+        <source>Declare structures, unions, enumerations and typedefs. A type named as one of the program's replaces it.</source>
+        <translation>Объявите структуры, объединения, перечисления и typedef. Тип с именем типа программы заменяет его.</translation>
+    </message>
+    <message>
+        <source>Declare</source>
+        <translation>Объявить</translation>
+    </message>
+    <message>
+        <source>Read the declarations (Ctrl+Enter)</source>
+        <translation>Прочитать объявления (Ctrl+Enter)</translation>
+    </message>
+    <message>
+        <source>Line %1, column %2: %3</source>
+        <translation>Строка %1, столбец %2: %3</translation>
     </message>
 </context>
 </TS>

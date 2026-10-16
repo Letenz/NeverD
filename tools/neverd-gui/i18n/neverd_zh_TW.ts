@@ -847,6 +847,14 @@
         <source>Change the name of the current function and what it is</source>
         <translation>變更目前函式的名稱及其屬性</translation>
     </message>
+    <message>
+        <source>Local t&amp;ypes</source>
+        <translation>本機型別(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>Show the program's types with their layouts and source</source>
+        <translation>顯示程式的型別及其記憶體配置與原始碼</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2260,6 +2268,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Could not tell whether %1 has a symbol table: %2</source>
         <translation>無法判斷 %1 是否包含符號表：%2</translation>
     </message>
+    <message>
+        <source>Local Types</source>
+        <translation>本機型別</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3360,6 +3372,396 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Discard unsaved analyst assertions and continue?</source>
         <translation>是否捨棄未儲存的分析師判定並繼續？</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LocalTypesView</name>
+    <message>
+        <source>C header (*.h)</source>
+        <translation>C 標頭檔 (*.h)</translation>
+    </message>
+    <message>
+        <source>C++ header (*.hpp)</source>
+        <translation>C++ 標頭檔 (*.hpp)</translation>
+    </message>
+    <message>
+        <source>Rust (*.rs)</source>
+        <translation>Rust (*.rs)</translation>
+    </message>
+    <message>
+        <source>Go (*.go)</source>
+        <translation>Go (*.go)</translation>
+    </message>
+    <message>
+        <source>Windows names (ULONG)</source>
+        <translation>Windows 名稱（ULONG）</translation>
+    </message>
+    <message>
+        <source>IDA names (unsigned int)</source>
+        <translation>IDA 名稱（unsigned int）</translation>
+    </message>
+    <message>
+        <source>C keywords (unsigned long)</source>
+        <translation>C 關鍵字（unsigned long）</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32_t)</source>
+        <translation>精確寬度（uint32_t）</translation>
+    </message>
+    <message>
+        <source>Filter types by name</source>
+        <translation>依名稱篩選型別</translation>
+    </message>
+    <message>
+        <source>#</source>
+        <translation>#</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名稱</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>種類</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>大小</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>成員</translation>
+    </message>
+    <message>
+        <source>Back to the type shown before (Esc)</source>
+        <translation>返回先前顯示的型別（Esc）</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>配置</translation>
+    </message>
+    <message>
+        <source>Copy the layout or the source</source>
+        <translation>複製配置或原始碼</translation>
+    </message>
+    <message>
+        <source>Export types as source</source>
+        <translation>將型別匯出為原始碼</translation>
+    </message>
+    <message>
+        <source>Export this type…</source>
+        <translation>匯出此型別…</translation>
+    </message>
+    <message>
+        <source>Export selected types…</source>
+        <translation>匯出所選型別…</translation>
+    </message>
+    <message>
+        <source>Export all types…</source>
+        <translation>匯出所有型別…</translation>
+    </message>
+    <message>
+        <source>How C and C++ name builtin types</source>
+        <translation>C 與 C++ 對內建型別的命名方式</translation>
+    </message>
+    <message>
+        <source>Hex offsets</source>
+        <translation>十六進位位移</translation>
+    </message>
+    <message>
+        <source>With dependencies</source>
+        <translation>包含相依型別</translation>
+    </message>
+    <message>
+        <source>Also declare every type this one needs, so the source compiles</source>
+        <translation>同時宣告此型別需要的所有型別，讓原始碼可以編譯</translation>
+    </message>
+    <message>
+        <source>Layout checks</source>
+        <translation>配置檢查</translation>
+    </message>
+    <message>
+        <source>Follow each type with checks of its size and offsets that the compiler verifies</source>
+        <translation>在每個型別後附上由編譯器驗證的大小與位移檢查</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>成員</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>位移</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>位元組</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>型別</translation>
+    </message>
+    <message>
+        <source>This engine has no local types.</source>
+        <translation>此分析引擎不提供本機型別。</translation>
+    </message>
+    <message>
+        <source>Reading the program's types…</source>
+        <translation>正在讀取程式的型別…</translation>
+    </message>
+    <message>
+        <source>Cannot read the types: %1</source>
+        <translation>無法讀取型別：%1</translation>
+    </message>
+    <message>
+        <source>The PDB defines no types.</source>
+        <translation>此 PDB 未定義任何型別。</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB with types.</source>
+        <translation>沒有本機型別：此程式沒有含型別的 PDB。</translation>
+    </message>
+    <message>
+        <source>Types that do not lay out as the PDB lists them: %1</source>
+        <translation>配置與 PDB 所列不一致的型別：%1</translation>
+    </message>
+    <message>
+        <source>Cannot lay the type out: %1</source>
+        <translation>無法計算該型別的配置：%1</translation>
+    </message>
+    <message>
+        <source>// Cannot render the type: %1</source>
+        <translation>// 無法產生該型別的原始碼：%1</translation>
+    </message>
+    <message>
+        <source>structure</source>
+        <translation>結構</translation>
+    </message>
+    <message>
+        <source>union</source>
+        <translation>聯合</translation>
+    </message>
+    <message>
+        <source>enumeration</source>
+        <translation>列舉</translation>
+    </message>
+    <message>
+        <source>typedef</source>
+        <translation>型別別名</translation>
+    </message>
+    <message>
+        <source>function type</source>
+        <translation>函式型別</translation>
+    </message>
+    <message>
+        <source>%1 (%2) bytes</source>
+        <translation>%1（%2）位元組</translation>
+    </message>
+    <message>
+        <source>aligned to %1</source>
+        <translation>以 %1 對齊</translation>
+    </message>
+    <message>
+        <source>packed to %1</source>
+        <translation>以 %1 緊縮</translation>
+    </message>
+    <message>
+        <source>declared only</source>
+        <translation>僅宣告</translation>
+    </message>
+    <message>
+        <source>Enumerator</source>
+        <translation>列舉值</translation>
+    </message>
+    <message>
+        <source>Value</source>
+        <translation>值</translation>
+    </message>
+    <message>
+        <source>(padding)</source>
+        <translation>（填補）</translation>
+    </message>
+    <message>
+        <source>Double-click to open %1</source>
+        <translation>按兩下以開啟 %1</translation>
+    </message>
+    <message>
+        <source>Export local types</source>
+        <translation>匯出本機型別</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>無法寫入 %1</translation>
+    </message>
+    <message>
+        <source>Exported to %1</source>
+        <translation>已匯出至 %1</translation>
+    </message>
+    <message>
+        <source>Cannot export the types: %1</source>
+        <translation>無法匯出型別：%1</translation>
+    </message>
+    <message>
+        <source>Add types from a declaration</source>
+        <translation>從宣告新增型別</translation>
+    </message>
+    <message>
+        <source>Edit the type's declaration</source>
+        <translation>編輯該型別的宣告</translation>
+    </message>
+    <message>
+        <source>Delete the selected types</source>
+        <translation>刪除所選型別</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>新增型別…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>編輯型別…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>刪除型別…</translation>
+    </message>
+    <message>
+        <source>A declaration of yours no longer reads: %1</source>
+        <translation>你的一則宣告已無法讀取：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations of yours no longer read: %1</source>
+        <translation>
+            <numerusform>你的 %n 則宣告已無法讀取：%1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add types</source>
+        <translation>新增型別</translation>
+    </message>
+    <message>
+        <source>Cannot read the type: %1</source>
+        <translation>無法讀取型別：%1</translation>
+    </message>
+    <message>
+        <source>Edit %1</source>
+        <translation>編輯 %1</translation>
+    </message>
+    <message>
+        <source>Declared %1</source>
+        <translation>已宣告 %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>Declared %n types</source>
+        <translation>
+            <numerusform>已宣告 %n 個型別</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete the type %1?</source>
+        <translation>刪除型別 %1？</translation>
+    </message>
+    <message numerus="yes">
+        <source>Delete %n types?</source>
+        <translation>
+            <numerusform>刪除 %n 個型別？</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete types</source>
+        <translation>刪除型別</translation>
+    </message>
+    <message>
+        <source>Deleted %1</source>
+        <translation>已刪除 %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n types</source>
+        <translation>
+            <numerusform>已刪除 %n 個型別</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(%1 still names it)</source>
+        <translation>（%1 仍參照它）</translation>
+    </message>
+    <message numerus="yes">
+        <source>(%n types still name it)</source>
+        <translation>
+            <numerusform>（仍有 %n 個型別參照它）</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Cannot delete the types: %1</source>
+        <translation>無法刪除型別：%1</translation>
+    </message>
+    <message>
+        <source>The window closed</source>
+        <translation>視窗已關閉</translation>
+    </message>
+    <message>
+        <source>All types</source>
+        <translation>全部型別</translation>
+    </message>
+    <message>
+        <source>From the PDB</source>
+        <translation>來自 PDB</translation>
+    </message>
+    <message>
+        <source>From system headers</source>
+        <translation>來自系統標頭檔</translation>
+    </message>
+    <message>
+        <source>Declared</source>
+        <translation>自行宣告的</translation>
+    </message>
+    <message>
+        <source>Show the types of one origin</source>
+        <translation>只顯示某一來源的型別</translation>
+    </message>
+    <message>
+        <source>Types: %1</source>
+        <translation>型別：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from the PDB</source>
+        <translation>
+            <numerusform>%n 個來自 PDB</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from system headers</source>
+        <translation>
+            <numerusform>%n 個來自系統標頭檔</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declared</source>
+        <translation>
+            <numerusform>%n 個自行宣告</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DeclareTypesDialog</name>
+    <message>
+        <source>Declare types</source>
+        <translation>宣告型別</translation>
+    </message>
+    <message>
+        <source>Declare structures, unions, enumerations and typedefs. A type named as one of the program's replaces it.</source>
+        <translation>宣告結構、聯集、列舉與 typedef。與程式中既有型別同名的型別會取代它。</translation>
+    </message>
+    <message>
+        <source>Declare</source>
+        <translation>宣告</translation>
+    </message>
+    <message>
+        <source>Read the declarations (Ctrl+Enter)</source>
+        <translation>讀取這些宣告（Ctrl+Enter）</translation>
+    </message>
+    <message>
+        <source>Line %1, column %2: %3</source>
+        <translation>第 %1 列，第 %2 欄：%3</translation>
     </message>
 </context>
 </TS>

@@ -17,6 +17,18 @@ The unchanged [MIT notice](LICENSES/nlohmann-json/LICENSE.MIT) is staged
 beside both executables and installed under `share/neverd/licenses`.
 No external JSON executable or language runtime is invoked.
 
+## mimalloc
+
+The 64-bit Linux worker embeds the unchanged mimalloc 3.5.3 allocator from
+[Microsoft Research](https://github.com/microsoft/mimalloc/tree/v3.5.3), under
+its [MIT license](LICENSES/mimalloc/LICENSE). The source archive is pinned by
+SHA-256 `3b4a15153a59905995f7070296ed604bb5ccc00cabb8b93446931aff77224d47`.
+Its notice is staged beside the worker and installed under
+`share/neverd/licenses/mimalloc`. The allocator is embedded in the executable;
+the SDK continues to use its host's allocator. `NEVERD_WORKER_MIMALLOC=OFF`
+selects the platform allocator. Allocation-sanitizer builds use that setting.
+The build preserves the existing minimum CPU instruction set.
+
 ## Ada URL parser
 
 Offline import-map analysis embeds the unchanged C++ Ada 4.0.0 URL parser at
@@ -211,6 +223,26 @@ the BSD 3-Clause License; both are preserved in
 [LICENSES/WHATWG-Encoding.txt](LICENSES/WHATWG-Encoding.txt).
 `lib/support/TextCodec.cpp` implements the standard's decoders for these
 encodings. Generated on 2026-10-06.
+
+## Windows kernel type library
+
+`lib/types/headers/WindowsKernelX64.h` holds the types and prototypes that
+`<ntifs.h>`, `<ntddk.h>` and `<wdm.h>` declare for x64 drivers of Windows 10
+2004, as `scripts/generate_windows_kernel_types.py` renders them from the
+headers of mingw-w64 13.0.0 (the Ubuntu package mingw-w64-common
+13.0.0-2ubuntu1). The DDK and PSDK headers it reads come from ReactOS
+(contributors include Amine Khaldi and Timo Kreuzer) and state that they are
+not copyrighted and offered for use in the public domain; `ddk/csq.h`
+(Copyright 2004 Vizzini) states the same. The few mingw-w64 runtime headers
+it reads (`basetsd.h`, `guiddef.h`, `ktmtypes.h`, `basetyps.h`,
+`evntprov.h`, `pshpack*.h`, `poppack.h`) are Copyright 2009-2016 the
+mingw-w64 project under the Zope Public License 2.1. The notices and the
+license are preserved in
+[LICENSES/mingw-w64-headers.txt](LICENSES/mingw-w64-headers.txt). The
+generated file is changed from the headers -- NeverD reads their
+declarations and renders them again -- and says so with its date. The C
+runtime's and the compiler's own headers, some under the GPL or the LGPL,
+are left out. Generated on 2026-10-15.
 
 ## FPREM anti-emulation regression
 

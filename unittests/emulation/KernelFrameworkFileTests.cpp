@@ -171,6 +171,37 @@ TEST_F(DriverKernelFrameworkFile,
 }
 
 TEST_F(DriverKernelFrameworkFile,
+       FileCallbacksCarryOnlyDeclaredProcessOverride) {
+  configure();
+  const auto Create = route(CreateIRP, framework::RequestMajorCreate);
+  take(invoke(api::WdfRequestComplete, {Globals, Create.Arguments[1], 0}));
+  Views.emplace(CleanupIRP, KernelFramework::RequestView{
+                                CleanupIRP, 0, framework::RequestMajorCleanup,
+                                0, 0, 0, false, 0, 0, WdmFile, 4});
+  take(Model.routeRequest(WdmDevice, CleanupIRP));
+  auto Cleanup = callback();
+  EXPECT_EQ(Cleanup.ProcessID, std::optional<uint32_t>{4});
+  finish(Cleanup);
+  route(CloseIRP, framework::RequestMajorClose);
+  auto Close = callback();
+  EXPECT_FALSE(Close.ProcessID);
+  finish(Close);
+}
+
+TEST_F(DriverKernelFrameworkFile, LockControlDoesNotReachTheDefaultQueue) {
+  configure(framework::FileObjectCannotUseFsContexts, false,
+            framework::QueueDispatchSequential);
+  const auto Create = route(CreateIRP, framework::RequestMajorCreate);
+  take(invoke(api::WdfRequestComplete, {Globals, Create.Arguments[1], 0}));
+  const auto Unlock = route(FirstControlIRP, framework::RequestMajorUnlockAll);
+  EXPECT_EQ(Unlock.PC, 0u);
+  EXPECT_EQ(Unlock.Status, framework::ControlInvalidDeviceRequest);
+  EXPECT_EQ(Completions.at(FirstControlIRP),
+            framework::ControlInvalidDeviceRequest);
+  EXPECT_FALSE(Model.hasPendingGuestCall());
+}
+
+TEST_F(DriverKernelFrameworkFile,
        FileNameAndFlagsReadTheAuthoritativeWdmFileObject) {
   configure();
   constexpr llvm::StringLiteral Name = "\\sample";

@@ -201,6 +201,70 @@ TEST_F(KernelRuntime, ActiveProcessorMaskMatchesTheSingleProcessorSchedule) {
   EXPECT_FALSE(failure("KeQueryActiveProcessors", {0}).empty());
 }
 
+TEST_F(KernelRuntime, ProcessorNumberWritesFourBytesAtEverySupportedIRQL) {
+  Model->enterExecution(0x100);
+  for (uint8_t IRQL : {0, 1, 2, 15}) {
+    const auto Previous = invoke("KfRaiseIrql", {IRQL});
+    for (uint64_t Offset : {0u, 1u, 4u}) {
+      check(Memory->writeInteger(Scratch, UINT64_MAX, 8));
+      check(Memory->writeInteger(Scratch + 8, UINT64_MAX, 8));
+      EXPECT_EQ(invoke("KeGetCurrentProcessorNumberEx", {Scratch + Offset}),
+                0u);
+      for (unsigned I = 0; I < 16; ++I)
+        EXPECT_EQ(integer(Scratch + I, 1),
+                  I >= Offset && I < Offset + 4 ? 0u : 0xffu);
+    }
+    EXPECT_EQ(invoke("KeGetCurrentProcessorNumberEx", {0}), 0u);
+    EXPECT_EQ(invoke("KeGetCurrentIrql", {}), IRQL);
+    invoke("KeLowerIrql", {Previous});
+  }
+  EXPECT_FALSE(failure("KeGetCurrentProcessorNumberEx", {}).empty());
+}
+
+TEST_F(KernelRuntime, ProcessorNumberRejectsInvalidOutputBeforeAnyWrite) {
+  check(Memory->writeInteger(Scratch + 0xfffc, 0xaabbccdd, 4));
+  EXPECT_FALSE(
+      failure("KeGetCurrentProcessorNumberEx", {Scratch + 0xfffe}).empty());
+  EXPECT_EQ(integer(Scratch + 0xfffc, 4), 0xaabbccddu);
+  check(Memory->protect(Scratch, 0x1000, Read));
+  EXPECT_FALSE(failure("KeGetCurrentProcessorNumberEx", {Scratch}).empty());
+  EXPECT_FALSE(
+      failure("KeGetCurrentProcessorNumberEx", {UINT64_MAX - 1}).empty());
+  EXPECT_FALSE(failure("KeGetCurrentProcessorNumberEx", {Model->driverObject()})
+                   .empty());
+  const auto Pool = invoke("ExAllocatePoolWithTag", {0, 16, Tag});
+  invoke("ExFreePoolWithTag", {Pool, Tag});
+  EXPECT_NE(failure("KeGetCurrentProcessorNumberEx", {Pool}).find("freed"),
+            std::string::npos);
+}
+
+TEST_F(KernelRuntime, DpcLevelRaiseUsesTheSharedExecutionRestoreStack) {
+  EXPECT_NE(failure("KeRaiseIrqlToDpcLevel", {}).find("execution"),
+            std::string::npos);
+  Model->enterExecution(0x100);
+  for (uint8_t Starting : {0, 1, 2}) {
+    const auto Original = invoke("KfRaiseIrql", {Starting});
+    EXPECT_EQ(invoke("KeRaiseIrqlToDpcLevel", {}), Starting);
+    EXPECT_EQ(invoke("KeGetCurrentIrql", {}), 2u);
+    EXPECT_EQ(invoke("KeRaiseIrqlToDpcLevel", {}), 2u);
+    invoke("KeLowerIrql", {2});
+    invoke("KeLowerIrql", {Starting});
+    invoke("KeLowerIrql", {Original});
+    EXPECT_EQ(invoke("KeGetCurrentIrql", {}), 0u);
+  }
+  const auto Previous = invoke("KfRaiseIrql", {3});
+  EXPECT_FALSE(failure("KeRaiseIrqlToDpcLevel", {}).empty());
+  EXPECT_EQ(invoke("KeGetCurrentIrql", {}), 3u);
+  invoke("KeLowerIrql", {Previous});
+  EXPECT_FALSE(failure("KeRaiseIrqlToDpcLevel", {2}).empty());
+  invoke("KeRaiseIrqlToDpcLevel", {});
+  Model->enterExecution(0x200);
+  EXPECT_FALSE(failure("KeLowerIrql", {0}).empty());
+  Model->enterExecution(0x100);
+  invoke("KeLowerIrql", {0});
+  check(Model->validateExecutionReturn(0x100, 0));
+}
+
 TEST_F(KernelRuntime, SystemAffinityFollowsLogicalThreadsAndNestedCalls) {
   EXPECT_NE(failure("KeSetSystemAffinityThread", {1}).find("thread"),
             std::string::npos);
@@ -688,6 +752,100 @@ TEST_F(KernelRuntime,
   counted(Record, Buffer, u"xy", 10);
   EXPECT_EQ(invoke("RtlIntegerToUnicodeString", {1234, 10, Record}), 0u);
   EXPECT_EQ(units(Buffer, 5), std::u16string(u"1234\0", 5));
+}
+
+TEST_F(KernelRuntime, Int64FormattingPreservesTheFullUnsignedValue) {
+  for (uint64_t Offset : {0u, 1u}) {
+    const uint64_t Record = Scratch + Offset;
+    const uint64_t Buffer = Scratch + 0x200 + Offset;
+    auto Format = [&](uint64_t Value, uint64_t Base) {
+      counted(Record, Buffer, u"", 134);
+      EXPECT_EQ(invoke("RtlInt64ToUnicodeString", {Value, Base, Record}), 0u);
+      const uint64_t Length = integer(Record, 2);
+      EXPECT_EQ(integer(Record + 2, 2), 134u);
+      EXPECT_EQ(integer(Record + 8), Buffer);
+      EXPECT_EQ(integer(Buffer + Length, 2), 0u);
+      EXPECT_EQ(integer(Buffer + Length + 2, 2), uint64_t(u'!'));
+      return units(Buffer, Length / 2);
+    };
+    EXPECT_EQ(Format(0, 0), u"0");
+    EXPECT_EQ(Format(0x100000000ULL, 10), u"4294967296");
+    EXPECT_EQ(Format(UINT64_MAX, 0), u"18446744073709551615");
+    EXPECT_EQ(Format(UINT64_MAX, 10), u"18446744073709551615");
+    EXPECT_EQ(Format(UINT64_MAX, 2), std::u16string(64, u'1'));
+    EXPECT_EQ(Format(UINT64_MAX, 8), u"1777777777777777777777");
+    EXPECT_EQ(Format(UINT64_MAX, 16), u"FFFFFFFFFFFFFFFF");
+    EXPECT_EQ(Format(0x123456789abcdef0ULL, 0x100000010ULL),
+              u"123456789ABCDEF0");
+    EXPECT_EQ(Format(0x8000000000000000ULL, 10), u"9223372036854775808");
+  }
+}
+
+TEST_F(KernelRuntime, Int64FormattingPublishesLengthBeforeOverflowOnly) {
+  for (uint16_t Capacity : {0, 1, 127, 128, 129, 130, 131}) {
+    counted(Scratch, Scratch + 0x200, u"xy", 134);
+    check(Memory->writeInteger(Scratch + 2, Capacity, 2));
+    EXPECT_EQ(invoke("RtlInt64ToUnicodeString", {UINT64_MAX, 2, Scratch}),
+              Capacity < 130 ? 0x80000005u : 0u);
+    EXPECT_EQ(integer(Scratch, 2), 128u);
+    EXPECT_EQ(integer(Scratch + 2, 2), Capacity);
+    EXPECT_EQ(integer(Scratch + 8), Scratch + 0x200);
+    if (Capacity < 130)
+      EXPECT_EQ(units(Scratch + 0x200, 67), u"xy" + std::u16string(65, u'!'));
+    else {
+      EXPECT_EQ(units(Scratch + 0x200, 64), std::u16string(64, u'1'));
+      EXPECT_EQ(integer(Scratch + 0x280, 2), 0u);
+      EXPECT_EQ(integer(Scratch + 0x282, 2), uint64_t(u'!'));
+    }
+  }
+  counted(Scratch, Scratch + 0x200, u"xy", 134);
+  EXPECT_EQ(invoke("RtlInt64ToUnicodeString", {UINT64_MAX, 3, Scratch}),
+            0xc000000du);
+  EXPECT_EQ(integer(Scratch, 2), 4u);
+  EXPECT_EQ(units(Scratch + 0x200, 2), u"xy");
+  EXPECT_EQ(invoke("RtlInt64ToUnicodeString", {UINT64_MAX, 3, 0}), 0xc000000du);
+}
+
+TEST_F(KernelRuntime, IntegerFormattersReloadAliasedTerminatorPointers) {
+  // Original target exports reload Buffer after writing the digits. Formatting
+  // zero over the pointer changes its low word to 0x0030 before termination.
+  for (const char *Name :
+       {"RtlIntegerToUnicodeString", "RtlInt64ToUnicodeString"}) {
+    const uint64_t Record = Scratch + 0x1000;
+    check(Memory->writeInteger(Scratch + 0x32, 0xffff, 2));
+    check(Memory->writeInteger(Record, 0x7777, 2));
+    check(Memory->writeInteger(Record + 2, 32, 2));
+    check(Memory->writeInteger(Record + 8, Record + 8, 8));
+    EXPECT_EQ(invoke(Name, {0, 10, Record}), 0u);
+    EXPECT_EQ(integer(Record, 2), 2u);
+    EXPECT_EQ(integer(Record + 8), Scratch + 0x30);
+    EXPECT_EQ(integer(Scratch + 0x32, 2), 0u);
+    EXPECT_EQ(integer(Record + 10, 2), 0x6000u);
+  }
+}
+
+TEST_F(KernelRuntime, Int64FormattingReportsInvalidStorageAndIRQL) {
+  EXPECT_FALSE(failure("RtlInt64ToUnicodeString", {1, 10, 0}).empty());
+  EXPECT_FALSE(failure("RtlInt64ToUnicodeString", {1, 10}).empty());
+  counted(Scratch, Scratch + 0x200, u"xy", 134);
+  Model->enterExecution(0x100);
+  const auto Previous = invoke("KfRaiseIrql", {1});
+  EXPECT_NE(failure("RtlInt64ToUnicodeString", {1, 10, Scratch})
+                .find("PASSIVE_LEVEL"),
+            std::string::npos);
+  EXPECT_EQ(integer(Scratch, 2), 4u);
+  invoke("KeLowerIrql", {Previous});
+  check(Memory->protect(Scratch, 0x1000, Read));
+  EXPECT_FALSE(failure("RtlInt64ToUnicodeString", {1, 10, Scratch}).empty());
+  EXPECT_EQ(integer(Scratch, 2), 4u);
+}
+
+TEST_F(KernelRuntime, Int64FormattingKeepsDigitsWhenTheTerminatorFaults) {
+  counted(Scratch, Scratch + 0xfffc, u"", 4);
+  check(Memory->writeInteger(Scratch + 2, 6, 2));
+  EXPECT_FALSE(failure("RtlInt64ToUnicodeString", {12, 10, Scratch}).empty());
+  EXPECT_EQ(integer(Scratch, 2), 4u);
+  EXPECT_EQ(units(Scratch + 0xfffc, 2), u"12");
 }
 
 TEST_F(KernelRuntime, IntegerParsingFollowsTheDocumentedExamples) {

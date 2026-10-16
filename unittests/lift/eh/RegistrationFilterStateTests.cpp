@@ -32,6 +32,9 @@ enum class Variant {
   TwoResumeMappings,
   SkipFilterAfterCallback,
   SelectedHandler,
+  HandlerOnly,
+  HandlerCleanup,
+  RecurrentSelection,
   UnknownDisposition,
   EscapingSearch,
   OuterHandler,
@@ -62,7 +65,7 @@ void addStateStore(LowBlock &Block, va_t Address, int32_t Level,
   Chain.TryLevelStores.push_back({Address, Address + 7, Level});
 }
 
-LowFunc filterFrame(Variant V) {
+LowFunc filterFrame(Variant V, unsigned Protocol = 0) {
   auto F = makeJumpFrame();
   F.Blocks.resize(V == Variant::StoresAroundRaise ? 18 : 16);
   auto &Chain = *F.ExceptionMetadata->Registration;
@@ -112,16 +115,21 @@ LowFunc filterFrame(Variant V) {
     Arm.Succs = {int(14 + I)};
     const int32_t Level = V == Variant::TwoResumeMappings        ? (I ? 3 : 2)
                           : V == Variant::SameState              ? 0
+                          : V == Variant::HandlerCleanup         ? 3
+                          : V == Variant::RecurrentSelection     ? 2
                           : V == Variant::CapturedCursor || !I   ? -1
                           : V == Variant::SkipFilterBeforeResume ? 1
                           : V == Variant::SkipTwoFiltersBeforeResume ? 3
                                                                      : 0;
     addStateStore(Arm, Arm.StartAddr, Level, Chain);
-    const uint32_t Disposition = !I && V == Variant::NegativeDisposition
-                                     ? 0x80000000u
-                                 : !I || V == Variant::BothContinue ? UINT32_MAX
-                                 : V == Variant::SelectedHandler    ? 1
-                                                                    : 0;
+    const uint32_t Disposition =
+        V == Variant::HandlerOnly || V == Variant::HandlerCleanup ||
+                V == Variant::RecurrentSelection
+            ? 1
+        : !I && V == Variant::NegativeDisposition ? 0x80000000u
+        : !I || V == Variant::BothContinue        ? UINT32_MAX
+        : V == Variant::SelectedHandler           ? 1
+                                                  : 0;
     auto &DispositionBlock = F.Blocks[14 + I];
     DispositionBlock.Id = 14 + I;
     DispositionBlock.StartAddr = Arm.EndAddr;
@@ -218,28 +226,54 @@ LowFunc filterFrame(Variant V) {
                   Chain);
     F.Blocks.push_back(std::move(InitialState));
   }
+  if (V == Variant::HandlerCleanup) {
+    LowBlock Cleanup;
+    Cleanup.Id = F.Blocks.size();
+    Cleanup.StartAddr = 0x1a00;
+    addReturn(Cleanup, 0x1a00);
+    F.Blocks.push_back(std::move(Cleanup));
+    Chain.Scopes.push_back({1, 0, 0x1a00, true});
+  }
+  if (Protocol) {
+    initializeEH4JumpFrame(F, Protocol == 2);
+    for (auto &Store : Chain.TryLevelStores)
+      if (Store.Level == -1) {
+        Store.Level = -2;
+        for (auto &Block : F.Blocks)
+          for (auto &Op : Block.Ops)
+            if (Op.Addr == Store.StoreVA && Op.Opcode == NdOp::STORE)
+              Op.Inputs[1] = NdVar::cst(uint32_t(-2), 4);
+      }
+  }
   for (auto &Block : F.Blocks)
     for (unsigned I = 0; I != Block.Ops.size(); ++I)
       Block.Ops[I].Seq = I;
   return F;
 }
 
-RegistrationStateAnalysis analyze(LowFunc F, Variant V) {
-  EH3JumpRuntime Runtime;
+RegistrationStateAnalysis analyze(LowFunc F, Variant V,
+                                  va_t CookieVA = 0x4000) {
+  const bool EH4 =
+      F.ExceptionMetadata->Personality == ExceptionPersonality::ExceptHandler4;
+  SEHJumpRuntime Runtime;
   Runtime.ImportSlots.insert(0x4100);
-  Runtime.Capture = [V](const LowOp &Op, const FrameState &Frame, bool,
-                        size_t &) -> std::optional<EH3JumpCapture> {
+  Runtime.Capture = [V, EH4](const LowOp &Op, const FrameState &Frame, bool,
+                             size_t &) -> std::optional<SEHJumpCapture> {
     if (Op.Addr != 0x1100)
       return std::nullopt;
-    EH3JumpCapture Capture;
+    SEHJumpCapture Capture;
     Capture.Call = Op.Addr;
     Capture.ReturnPC = 0x1105;
     Capture.BufferOffset = -144;
     Capture.StackOffset = -192;
     Capture.UnwindTarget = 0x3300;
-    Capture.Level = V == Variant::SkipFilterAfterCallback ? -1
+    Capture.Level = V == Variant::SkipFilterAfterCallback ? (EH4 ? -2 : -1)
                     : V == Variant::TwoResumeMappings     ? 1
                                                           : 0;
+    if (EH4) {
+      Capture.Protocol = RegistrationSEHJumpCapture::Kind::EH4;
+      Capture.SecurityCookieVA = 0x4000;
+    }
     constexpr uint64_t Registers[] = {x86reg::RBP, x86reg::RBX, x86reg::RDI,
                                       x86reg::RSI};
     for (unsigned I = 0; I != 4; ++I)
@@ -251,13 +285,14 @@ RegistrationStateAnalysis analyze(LowFunc F, Variant V) {
   Runtime.Raise = [](const LowOp &Op, const FrameState &, size_t &) {
     return Op.Addr == 0x1850 || Op.Addr == 0x1857;
   };
-  RegistrationStateSolver Solver(F, 0, 0, nullptr, nullptr, nullptr, nullptr,
-                                 nullptr, nullptr, nullptr, &Runtime);
+  RegistrationStateSolver Solver(F, EH4 ? CookieVA : 0, 0, nullptr, nullptr,
+                                 nullptr, nullptr, nullptr, nullptr, nullptr,
+                                 &Runtime);
   return Solver.run();
 }
 
-RegistrationStateAnalysis analyze(Variant V) {
-  return analyze(filterFrame(V), V);
+RegistrationStateAnalysis analyze(Variant V, unsigned Protocol = 0) {
+  return analyze(filterFrame(V, Protocol), V);
 }
 
 LowFunc callbackActivatedFrame() {
@@ -304,9 +339,9 @@ TEST(RegistrationFilterState, CallbackActivatedScopeHasIndependentRoots) {
   EXPECT_EQ(Handler.Levels, (std::vector<int32_t>{1}));
 }
 
-TEST(RegistrationFilterState, FailedSearchCannotPublishCompleteRootProofs) {
+TEST(RegistrationFilterState, UnknownSearchCannotPublishCompleteRootProofs) {
   auto F = callbackActivatedFrame();
-  F.Blocks[15].Ops.front().Inputs[0] = NdVar::cst(1, 4);
+  F.Blocks[15].Ops.front().Inputs[0] = NdVar::reg(x86reg::RCX, 4);
   const auto Result = analyze(std::move(F), Variant::TwoResumeMappings);
   EXPECT_FALSE(Result.Complete);
   ASSERT_GE(Result.Blocks.size(), 2u);
@@ -318,42 +353,46 @@ TEST(RegistrationFilterState, FailedSearchCannotPublishCompleteRootProofs) {
 
 TEST(RegistrationFilterState,
      PreservesDispositionAndWrittenStateAtSharedReturn) {
-  for (auto V :
-       {Variant::Correlated, Variant::SameState, Variant::BothContinue,
-        Variant::CapturedCursor, Variant::StoresAroundRaise,
-        Variant::ReversedEdges, Variant::NegativeDisposition,
-        Variant::SkipFilterBeforeResume, Variant::SkipTwoFiltersBeforeResume,
-        Variant::TwoResumeMappings}) {
-    SCOPED_TRACE(unsigned(V));
-    const auto Result = analyze(V);
-    for (const auto &Diagnostic : Result.Diagnostics)
-      ADD_FAILURE() << Diagnostic;
-    EXPECT_TRUE(Result.Complete);
-    EXPECT_TRUE(Result.SEHStateStoresComplete);
-    EXPECT_TRUE(Result.SEHJumpResumptionsComplete);
-    EXPECT_EQ(Result.SEHJumpResumptions.size(), 1u);
-    if (!Result.SEHJumpResumptions.empty()) {
-      const auto &Resume = Result.SEHJumpResumptions.front();
-      const std::vector<int32_t> Expected =
-          V == Variant::SameState || V == Variant::StoresAroundRaise
-              ? std::vector<int32_t>{0}
-          : V == Variant::TwoResumeMappings ? std::vector<int32_t>{0, 1}
-          : V == Variant::CapturedCursor    ? std::vector<int32_t>{-1}
-                                            : std::vector<int32_t>{-1, 0};
-      EXPECT_EQ(Resume.ResumedLevels, Expected);
-      std::vector<RegistrationSEHJumpState> Restores;
-      for (int32_t Level : Expected) {
-        const int32_t Frame =
-            Level == 0 && V == Variant::SkipFilterBeforeResume       ? 1
-            : Level == 0 && V == Variant::SkipTwoFiltersBeforeResume ? 3
-                                                                     : Level;
-        Restores.push_back({Frame, Level});
+  for (unsigned Protocol = 0; Protocol != 3; ++Protocol)
+    for (auto V :
+         {Variant::Correlated, Variant::SameState, Variant::BothContinue,
+          Variant::CapturedCursor, Variant::StoresAroundRaise,
+          Variant::ReversedEdges, Variant::NegativeDisposition,
+          Variant::SkipFilterBeforeResume, Variant::SkipTwoFiltersBeforeResume,
+          Variant::TwoResumeMappings}) {
+      SCOPED_TRACE(unsigned(V));
+      SCOPED_TRACE(Protocol);
+      const auto Result = analyze(V, Protocol);
+      for (const auto &Diagnostic : Result.Diagnostics)
+        ADD_FAILURE() << Diagnostic;
+      EXPECT_TRUE(Result.Complete);
+      EXPECT_TRUE(Result.SEHStateStoresComplete);
+      EXPECT_TRUE(Result.SEHJumpResumptionsComplete);
+      EXPECT_EQ(Result.SEHJumpResumptions.size(), 1u);
+      if (!Result.SEHJumpResumptions.empty()) {
+        const auto &Resume = Result.SEHJumpResumptions.front();
+        const int32_t Outside = Protocol ? -2 : -1;
+        const std::vector<int32_t> Expected =
+            V == Variant::SameState || V == Variant::StoresAroundRaise
+                ? std::vector<int32_t>{0}
+            : V == Variant::TwoResumeMappings ? std::vector<int32_t>{0, 1}
+            : V == Variant::CapturedCursor ? std::vector<int32_t>{Outside}
+                                           : std::vector<int32_t>{Outside, 0};
+        EXPECT_EQ(Resume.ResumedLevels, Expected);
+        std::vector<RegistrationSEHJumpState> Restores;
+        for (int32_t Level : Expected) {
+          const int32_t Frame =
+              Level == 0 && V == Variant::SkipFilterBeforeResume       ? 1
+              : Level == 0 && V == Variant::SkipTwoFiltersBeforeResume ? 3
+                                                                       : Level;
+          Restores.push_back(
+              {Frame, Level, V == Variant::TwoResumeMappings ? 1 : 0});
+        }
+        if (V == Variant::TwoResumeMappings)
+          Restores = {{2, 1, 1}, {3, 0, 1}};
+        EXPECT_EQ(Resume.StateRestores, Restores);
       }
-      if (V == Variant::TwoResumeMappings)
-        Restores = {{2, 1}, {3, 0}};
-      EXPECT_EQ(Resume.StateRestores, Restores);
     }
-  }
 }
 
 TEST(RegistrationFilterState, SkippingAnotherScopeCannotReuseTheCallbackState) {
@@ -366,16 +405,107 @@ TEST(RegistrationFilterState, SkippingAnotherScopeCannotReuseTheCallbackState) {
             (std::vector<RegistrationSEHJumpState>{{-1, -1}, {0, -1}}));
 }
 
+TEST(RegistrationFilterState, EveryFilterPathMustCloseTheInvocation) {
+  for (unsigned Protocol = 0; Protocol != 3; ++Protocol)
+    for (auto V :
+         {Variant::RecurrentSelection, Variant::UnknownDisposition,
+          Variant::EscapingSearch, Variant::BrokenStack, Variant::RecurrentArm,
+          Variant::WrongStoreWidth, Variant::IncompleteCallInstruction}) {
+      SCOPED_TRACE(unsigned(V));
+      SCOPED_TRACE(Protocol);
+      const auto Result = analyze(V, Protocol);
+      EXPECT_FALSE(Result.Complete);
+      EXPECT_FALSE(Result.SEHJumpResumptionsComplete);
+      EXPECT_TRUE(Result.SEHJumpResumptions.empty());
+    }
+}
+
+TEST(RegistrationFilterState, EH4SearchKeepsBothCookiesIndependentOfState) {
+  for (unsigned Protocol : {1u, 2u}) {
+    SCOPED_TRACE(Protocol);
+    for (va_t Cookie : {va_t(0), va_t(0x4004)}) {
+      const auto Result = analyze(filterFrame(Variant::Correlated, Protocol),
+                                  Variant::Correlated, Cookie);
+      EXPECT_FALSE(Result.SecurityCookiesComplete);
+      EXPECT_FALSE(Result.SEHJumpResumptionsComplete);
+    }
+    for (int32_t Offset : {-40, -28, -29, -32, -33}) {
+      SCOPED_TRACE(Offset);
+      auto F = filterFrame(Variant::Correlated, Protocol);
+      LowBlock Store;
+      Store.Id = F.Blocks.size();
+      Store.StartAddr = 0x1a00;
+      Store.EndAddr = 0x1a07;
+      Store.Succs = {7};
+      emitOp(Store, 0x1a00, NdOp::INT_ADD, NdVar::tmp(0, 4),
+             {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(Offset), 4)});
+      emitOp(Store, 0x1a00, NdOp::STORE, {},
+             {NdVar::tmp(0, 4), NdVar::cst(0, 4)});
+      Store.InstructionBoundaries = {{0x1a00, 7, 0, 2}};
+      F.ExceptionMetadata->Registration->Scopes[1].FilterVA = 0x1a00;
+      F.Blocks.push_back(std::move(Store));
+      const auto Result = analyze(std::move(F), Variant::Correlated);
+      const bool Valid = Offset == -40 || (Protocol == 1 && Offset <= -32);
+      EXPECT_EQ(Result.Complete, Valid);
+      EXPECT_EQ(Result.SEHJumpResumptionsComplete, Valid);
+      EXPECT_EQ(Result.SEHJumpResumptions.empty(), !Valid);
+    }
+  }
+}
+
+TEST(RegistrationFilterState, HandlerSelectionAbandonsOnlyItsSuspendedPath) {
+  for (unsigned Protocol = 0; Protocol != 3; ++Protocol)
+    for (auto V : {Variant::SelectedHandler, Variant::OuterHandler,
+                   Variant::HandlerOnly, Variant::HandlerCleanup}) {
+      SCOPED_TRACE(Protocol);
+      SCOPED_TRACE(unsigned(V));
+      const auto Result = analyze(V, Protocol);
+      for (const auto &Diagnostic : Result.Diagnostics)
+        ADD_FAILURE() << Diagnostic;
+      ASSERT_TRUE(Result.Complete);
+      ASSERT_TRUE(Result.SEHJumpResumptionsComplete);
+      ASSERT_EQ(Result.SEHJumpResumptions.size(), 1u);
+      const auto &Resume = Result.SEHJumpResumptions.front();
+      EXPECT_EQ(Resume.SelectedScopes,
+                (std::vector<uint32_t>{V == Variant::OuterHandler ? 0u : 1u}));
+      const bool HandlerOnly =
+          V == Variant::HandlerOnly || V == Variant::HandlerCleanup;
+      const int32_t Outside = Protocol ? -2 : -1;
+      EXPECT_EQ(Resume.ResumedLevels, HandlerOnly
+                                          ? std::vector<int32_t>{}
+                                          : std::vector<int32_t>{Outside});
+      const std::vector<RegistrationSEHJumpState> Restored =
+          HandlerOnly
+              ? std::vector<RegistrationSEHJumpState>{}
+              : std::vector<RegistrationSEHJumpState>{{Outside, Outside, 0}};
+      EXPECT_EQ(Resume.StateRestores, Restored);
+      if (V == Variant::HandlerCleanup) {
+        const auto &Cleanup = Result.Blocks[Result.Blocks.size() - 1];
+        EXPECT_TRUE(Cleanup.Reached);
+        EXPECT_TRUE(Cleanup.CallbackOnly);
+      }
+    }
+}
+
 TEST(RegistrationFilterState,
-     EveryFilterPathMustRestoreAndResumeTheInvocation) {
-  for (auto V :
-       {Variant::SelectedHandler, Variant::UnknownDisposition,
-        Variant::EscapingSearch, Variant::OuterHandler, Variant::BrokenStack,
-        Variant::RecurrentArm, Variant::WrongStoreWidth,
-        Variant::IncompleteCallInstruction}) {
-    SCOPED_TRACE(unsigned(V));
-    const auto Result = analyze(V);
-    EXPECT_FALSE(Result.Complete);
+     SelectedHandlerRequiresACompleteRaiseInstruction) {
+  for (unsigned Protocol = 0; Protocol != 3; ++Protocol) {
+    SCOPED_TRACE(Protocol);
+    auto F = filterFrame(Variant::HandlerOnly, Protocol);
+    auto &Block = F.Blocks[9];
+    const auto At = Block.Ops.end() - 1;
+    LowOp Extra;
+    Extra.Addr = 0x1850;
+    Extra.Opcode = NdOp::COPY;
+    Extra.Output = NdVar::reg(x86reg::RAX, 4);
+    Extra.NumInputs = 1;
+    Extra.Inputs[0] = NdVar::cst(0, 4);
+    Block.Ops.insert(At, Extra);
+    ++Block.InstructionBoundaries[1].OpCount;
+    ++Block.InstructionBoundaries[2].FirstOp;
+    for (unsigned I = 0; I != Block.Ops.size(); ++I)
+      Block.Ops[I].Seq = I;
+    const auto Result = analyze(std::move(F), Variant::HandlerOnly);
     EXPECT_FALSE(Result.SEHJumpResumptionsComplete);
     EXPECT_TRUE(Result.SEHJumpResumptions.empty());
   }

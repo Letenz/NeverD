@@ -191,10 +191,11 @@ struct RegistrationSEHInvocationExit {
   bool operator==(const RegistrationSEHInvocationExit &) const = default;
 };
 
-/// Exact source invocation of the EH3 capture protocol. Native reconstruction
-/// must replace its physical register/PC contents and CRT state arguments;
-/// copying the original jump buffer is not a continuation contract.
+/// Exact source invocation of the EH3/EH4 capture protocol. Native
+/// reconstruction must replace its physical register/PC contents and CRT state
+/// arguments; copying the original jump buffer is not a continuation contract.
 struct RegistrationSEHJumpCapture {
+  enum class Kind : uint8_t { EH3, EH4 };
   static constexpr uint16_t BufferBytes = 64;
   va_t Address = InvalidVA;
   va_t EndAddress = InvalidVA;
@@ -203,7 +204,12 @@ struct RegistrationSEHJumpCapture {
   va_t UnwindVA = InvalidVA;
   int32_t BufferOffset = 0;
   int32_t StackOffset = 0;
-  int32_t Level = -1;
+  /// Sorted unique source states independently proved at this occurrence.
+  std::vector<int32_t> Levels{-1};
+  Kind Protocol = Kind::EH3;
+  /// EH4's third unwind argument names the image's load-config cookie.
+  /// It is an address, never the runtime value or an invented replacement.
+  va_t SecurityCookieVA = 0;
   bool operator==(const RegistrationSEHJumpCapture &) const = default;
 };
 
@@ -212,12 +218,15 @@ struct RegistrationSEHJumpCapture {
 struct RegistrationSEHJumpState {
   int32_t FrameLevel = -1;
   int32_t ResumeLevel = -1;
+  /// The unwind bound saved by this invocation of the source capture.
+  int32_t CaptureLevel = -1;
   auto operator<=>(const RegistrationSEHJumpState &) const = default;
 };
 
-/// A live EH3 buffer supplies one physical capture PC and restored ESP. The
-/// source invocation is retired by the authenticated nonlocal runtime call;
-/// this is distinct from an ordinary CALL return or a target-wide noreturn.
+/// A live SEH buffer supplies one physical capture PC and restored ESP. The
+/// source invocation is retired by the authenticated nonlocal runtime call.
+/// Unwind may either restore the capture or select an exception handler;
+/// neither path is an ordinary CALL return or a target-wide noreturn.
 struct RegistrationSEHJumpResume {
   va_t Address = InvalidVA;
   int OpSeq = -1;
@@ -238,9 +247,14 @@ struct RegistrationSEHJumpResume {
   /// Actual source states after local unwind. A capture inside a retired
   /// scope does not reactivate that scope when the continuation resumes.
   std::vector<int32_t> ResumedLevels;
-  /// Sorted unique pairs from every completed unwind path. Native resumption
-  /// requires a single final state for each observable logical frame state.
+  /// Sorted unique observations from every completed unwind path. Native
+  /// resumption requires a single final state for each captured bound and
+  /// observable logical frame state.
   std::vector<RegistrationSEHJumpState> StateRestores;
+  /// Sorted unique source scopes selected by an exception raised during
+  /// unwind. These paths enter their handlers and abandon this capture;
+  /// they never contribute a restored register or state projection.
+  std::vector<uint32_t> SelectedScopes;
   bool operator==(const RegistrationSEHJumpResume &) const = default;
 };
 
@@ -304,9 +318,9 @@ struct RegistrationStateAnalysis {
   bool HasBoundSEHCallees = false;
   bool SEHBoundCallsComplete = true;
   std::vector<RegistrationSEHBoundCall> SEHBoundCalls;
-  /// Original EH3 captures retain their physical buffer and invocation. Native
+  /// Original SEH captures retain their physical buffer and invocation. Native
   /// reconstruction requires a separate replacement-buffer contract.
-  bool HasEH3JumpCaptures = false;
+  bool HasSEHJumpCaptures = false;
   bool SEHJumpCapturesComplete = true;
   std::vector<RegistrationSEHJumpCapture> SEHJumpCaptures;
   bool SEHJumpResumptionsComplete = true;

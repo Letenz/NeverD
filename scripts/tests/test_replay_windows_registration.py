@@ -9,7 +9,33 @@ class RegistrationSourceReplayTests(unittest.TestCase):
         current, r4, legacy = (source_cases(p) for p in ("all", "r4", "seh3-eh4"))
         self.assertEqual(len(r4), 48)
         self.assertEqual(len(legacy), 39)
-        self.assertEqual(set(current) - set(r4), {
+        r5 = source_cases("r5")
+        self.assertEqual(len(r5), 64)
+        eh4_jumps = {name for name in current
+                     if name.startswith("eh4-") and "longjmp-" in name}
+        self.assertEqual(len(current), 144)
+        self.assertEqual(len(eh4_jumps), 70)
+        for prefix in ("eh4-", "eh4-gs-"):
+            for case in ("longjmp-filter-correlated-state", "longjmp-filter-shared-state",
+                         "longjmp-filter-captured-cursor", "longjmp-filter-negative-disposition",
+                         "longjmp-filter-skipped-scope", "longjmp-filter-two-resume-mappings",
+                         "longjmp-filter-callback-activation"):
+                self.assertEqual(current[prefix + case], current[case])
+            for case in ("longjmp-callee", "longjmp-returning-callee",
+                         "longjmp-scalar-callee"):
+                self.assertEqual(current[prefix + case], current[case])
+            for kind in ("callee", "returning-callee", "scalar-callee"):
+                self.assertEqual(current[prefix + "longjmp-eh4-" + kind],
+                                 current["longjmp-" + kind])
+                self.assertEqual(current[prefix + "longjmp-eh4-" + kind + "-mixed-gs"],
+                                 current["longjmp-" + kind])
+        self.assertEqual(set(current) - set(r5) - eh4_jumps, {
+            "longjmp-shared-parent-call", "shared-parent-throwing-call",
+            "longjmp-private-parent-call", "longjmp-private-parent-graph",
+            "longjmp-multistate-capture", "longjmp-handler-selected",
+        "longjmp-handler-cleanup", "longjmp-handler-captured-cursor",
+        "longjmp-handler-nested-finally", "longjmp-handler-mixed-resumption"})
+        self.assertEqual(set(current) - set(r4) - eh4_jumps, {
             "longjmp-state-activate-call", "longjmp-state-activate-unwind",
             "longjmp-state-retire", "longjmp-state-sentinel",
             "longjmp-state-byte", "longjmp-state-word",
@@ -19,7 +45,12 @@ class RegistrationSourceReplayTests(unittest.TestCase):
             "longjmp-filter-skipped-scope",
             "longjmp-filter-two-resume-mappings",
             "longjmp-filter-callback-activation", "longjmp-state-byte-high-bits",
-            "longjmp-finally-incidental-result", "longjmp-deep-scope-chain"})
+            "longjmp-finally-incidental-result", "longjmp-deep-scope-chain",
+            "longjmp-shared-parent-call", "shared-parent-throwing-call",
+            "longjmp-private-parent-call", "longjmp-private-parent-graph",
+            "longjmp-multistate-capture", "longjmp-handler-selected",
+        "longjmp-handler-cleanup", "longjmp-handler-captured-cursor",
+        "longjmp-handler-nested-finally", "longjmp-handler-mixed-resumption"})
         self.assertTrue(all(name.startswith("eh4-gs-") for name in set(r4) - set(legacy)))
         with self.assertRaises(ValueError):
             source_cases("unknown")

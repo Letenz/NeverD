@@ -58,8 +58,10 @@ bool singleComponent(llvm::StringRef Name, llvm::StringRef Prefix) {
          !Name.drop_front(Prefix.size()).contains('\\');
 }
 
-llvm::Error validateObjectNameText(llvm::StringRef Name) {
-  if (Name.size() > profile::MaxDeviceNameSize)
+llvm::Error
+validateObjectNameText(llvm::StringRef Name,
+                       size_t MaxCharacters = profile::MaxDeviceNameSize) {
+  if (Name.size() > MaxCharacters)
     return modelError("object name exceeds the bounded namespace size");
   for (unsigned char C : Name)
     if (C < ' ' || C > '~')
@@ -151,6 +153,8 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
                                     const DriverOptions &Options) {
   if (DriverObject)
     return modelError("kernel model cannot be initialized twice");
+  if (auto E = validateDriverFileSystem(Options.FileSystem))
+    return E;
   if (Options.LoaderView) {
     if (auto E = kernel_loader_view::validate(*Options.LoaderView))
       return E;
@@ -336,7 +340,9 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   DispatchInitialization = std::move(*Watch);
   if (auto E = initializeObjectNamespace())
     return E;
-  return initializeDataExports(Options);
+  if (auto E = initializeDataExports(Options))
+    return E;
+  return initializeFileSystem(Options);
 }
 
 llvm::Expected<std::shared_ptr<RAMInitializationWatch>>
@@ -388,7 +394,8 @@ llvm::Error KernelModel::finishEntry() {
   return llvm::Error::success();
 }
 
-llvm::Expected<std::string> KernelModel::readObjectName(uint64_t Address) {
+llvm::Expected<std::string> KernelModel::readObjectName(uint64_t Address,
+                                                        size_t MaxCharacters) {
   if (auto E = runtime::checkBufferRange(Address, 16))
     return E;
   if (auto E = validateGuestAccess(Address, 16, false))
@@ -402,8 +409,7 @@ llvm::Expected<std::string> KernelModel::readObjectName(uint64_t Address) {
   auto Buffer = Memory.readInteger(Address + 8, 8);
   if (!Buffer)
     return Buffer.takeError();
-  if ((*Length & 1) || *Length > *Maximum ||
-      *Length > profile::MaxDeviceNameSize * 2)
+  if ((*Length & 1) || *Length > *Maximum || *Length > MaxCharacters * 2)
     return modelError("invalid or oversized object-name UNICODE_STRING");
   if (auto E = runtime::checkBufferRange(*Buffer, *Length))
     return E;
@@ -420,7 +426,7 @@ llvm::Expected<std::string> KernelModel::readObjectName(uint64_t Address) {
                         "Unicode namespace case folding is unsupported");
     Name.push_back(static_cast<char>(Bytes[I]));
   }
-  if (auto E = validateObjectNameText(Name))
+  if (auto E = validateObjectNameText(Name, MaxCharacters))
     return E;
   return Name;
 }
@@ -482,9 +488,7 @@ KernelModel::createDeviceObjectForOwner(llvm::StringRef Name,
                                         DeviceOwnerKind OwnerKind) {
   if (auto E = validateDeviceTopology())
     return E;
-  if (!Owner ||
-      (OwnerKind == DeviceOwnerKind::Guest && Owner != DriverObject) ||
-      (OwnerKind == DeviceOwnerKind::Provider && Owner != PnpProviderDriver))
+  if (!Owner || Owner != deviceOwnerDriver(OwnerKind))
     return modelError("device creation requires a registered driver owner");
   if (Characteristics & ~uint32_t(SecureOpen))
     return modelError(
@@ -526,9 +530,10 @@ KernelModel::createDeviceObjectForOwner(llvm::StringRef Name,
             {DeviceDriverOffset, Owner, 8},
             {DeviceNext, *Previous, 8},
             {DeviceFlagsOffset,
-             OwnerKind == DeviceOwnerKind::Provider
-                 ? DeviceBusEnumerated
-                 : DeviceInitializing | (Exclusive ? DeviceExclusive : 0),
+             OwnerKind == DeviceOwnerKind::PnpProvider ? DeviceBusEnumerated
+             : OwnerKind == DeviceOwnerKind::Guest
+                 ? DeviceInitializing | (Exclusive ? DeviceExclusive : 0)
+                 : 0,
              4},
             {DeviceCharacteristicsOffset, Characteristics, 4},
             {DeviceExtensionOffset, Extension, 8},
@@ -595,7 +600,7 @@ llvm::Error KernelModel::deleteDevice(uint64_t Address) {
   if (Device == Devices.end() || Device->second.DeletePending)
     return modelError("IoDeleteDevice received an unknown or deleted device");
   if (Device->second.OwnerKind != DeviceOwnerKind::Guest)
-    return modelError("IoDeleteDevice cannot delete a provider-owned PDO");
+    return modelError("IoDeleteDevice cannot delete a provider-owned device");
   if (auto E = validateDeviceTopology())
     return E;
   if (auto E = canReleaseRemoveLockStorage(Address, Device->second.Size))
@@ -668,6 +673,22 @@ llvm::Error KernelModel::snapshot() {
   if (auto E = snapshotUserBuffers())
     return E;
   Result.Registry = Registry.snapshot();
+  // Owner state remains observable even if a guest object projection is
+  // corrupt.
+  auto Volumes = FileSystem.snapshot();
+  if (!Volumes)
+    return Volumes.takeError();
+  if (FileSystem.volumeCount() !=
+      size_t(
+          std::count_if(Devices.begin(), Devices.end(), [](const auto &Entry) {
+            return Entry.second.OwnerKind ==
+                   DeviceOwnerKind::FileSystemProvider;
+          })))
+    return modelError(
+        "filesystem volume device inventory differs from its owner");
+  Result.FileSystem = std::move(*Volumes);
+  if (auto E = validateFileSystemOpenBindings())
+    return E;
   if (!DriverObject)
     return modelError("cannot snapshot an uninitialized kernel model");
   // A terminal CPU fault still permits pure reads of committed RAM. Keep the
@@ -840,7 +861,7 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
     for (const auto &[Lock, State] : QueuedSpinLocks)
       if (Address < Lock + 8 && Lock < End)
         return modelError("guest write to a held executive spin lock");
-  if (auto E = validateIOAccess(Address, Size, IsWrite))
+  if (auto E = validateIOAccess(Address, Size, IsWrite, !IncludeDispatcher))
     return E;
   if (auto E = validateMDLAccess(Address, Size, IsWrite))
     return E;
@@ -888,18 +909,19 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
                    Offset < DriverAddDeviceOffset + profile::PointerSize;
           }))
     return E;
-  if (auto E = CheckObject(
-          PnpProviderDriver, DriverObjectSize, [&](uint64_t Offset) {
-            return !IsWrite &&
-                   (Offset < 4 ||
-                    (Offset >= DriverDeviceHead &&
-                     Offset < DriverDeviceHead + profile::PointerSize));
-          }))
-    return E;
+  for (uint64_t ProviderDriver : {PnpProviderDriver, FileSystemProviderDriver})
+    if (auto E =
+            CheckObject(ProviderDriver, DriverObjectSize, [&](uint64_t Offset) {
+              return !IsWrite &&
+                     (Offset < 4 ||
+                      (Offset >= DriverDeviceHead &&
+                       Offset < DriverDeviceHead + profile::PointerSize));
+            }))
+      return E;
   for (const auto &[Object, Device] : Devices) {
     if (auto E = CheckObject(Object, DeviceObjectSize, [&](uint64_t Offset) {
           if (IsWrite) {
-            if (Device.OwnerKind == DeviceOwnerKind::Provider)
+            if (Device.OwnerKind != DeviceOwnerKind::Guest)
               return false;
             return (Offset >= DeviceNext && Offset < DeviceAttachedOffset) ||
                    (Offset >= DeviceCurrentIRP &&
@@ -934,7 +956,7 @@ KernelModel::executionProcessContext() const {
     auto Context = It->second.Process;
     if (Context && Attached) {
       Context->ProcessID = CurrentUserProcessID;
-      Context->Attached = true;
+      Context->RestrictedAttachment = true;
     }
     return Context;
   }
@@ -959,19 +981,39 @@ KernelModel::executionProcessContext() const {
   return std::nullopt;
 }
 
-llvm::Error KernelModel::inheritExecutionContext(uint64_t Child,
-                                                 uint64_t Parent) {
+llvm::Error
+KernelModel::inheritExecutionContext(uint64_t Child, uint64_t Parent,
+                                     std::optional<uint32_t> ProcessID) {
   if (!Child || Child == Parent || Parent != CurrentExecution ||
       ExecutionThreadKeys.contains(Child) ||
       InheritedExecutionContexts.contains(Child))
     return modelError("nested context inheritance requires a fresh "
                       "child of the active execution");
+  auto Context = executionProcessContext();
+  if (ProcessID && (!Context || !*ProcessID))
+    return modelError("internal process attachment requires a known caller");
+  const bool Switch = ProcessID && *ProcessID != Context->ProcessID;
+  if (Switch) {
+    Context->ProcessID = *ProcessID;
+  }
   InheritedExecutionContexts.emplace(
-      Child,
-      InheritedExecutionContext{CurrentThreadKey, CurrentUserProcessID,
-                                canCatchUserAccess(profile::UserArenaBase, 1),
-                                executionProcessContext()});
+      Child, InheritedExecutionContext{
+                 CurrentThreadKey, Switch ? *ProcessID : CurrentUserProcessID,
+                 Switch ? *ProcessID != SystemProcessID
+                        : canCatchUserAccess(profile::UserArenaBase, 1),
+                 Context});
   return llvm::Error::success();
+}
+
+llvm::Error KernelModel::activateInheritedProcess() {
+  const auto Inherited = InheritedExecutionContexts.find(CurrentExecution);
+  if (Inherited == InheritedExecutionContexts.end() ||
+      Inherited->second.ThreadKey != CurrentThreadKey ||
+      !Inherited->second.Process || hasProcessAttachment(CurrentExecution))
+    return llvm::Error::success();
+  const auto &Context = Inherited->second;
+  return setUserRequestContext(Context.Process->ProcessID != SystemProcessID,
+                               Context.Process->ProcessID);
 }
 
 bool KernelModel::canCatchUserAccess(uint64_t Address, uint64_t Size) const {

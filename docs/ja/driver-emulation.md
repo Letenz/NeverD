@@ -454,7 +454,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 省略可能なルートフィールド `"load_address": "0x190000000"` はベースアドレスの変更を要求します。省略または `"0x0"` なら優先アドレスを使用します。イメージは再配置の要件を満たす必要があります。元の初期化コマンドや C API が暗黙にシナリオを実行することはありません。
 
-ルートで受け付けるフィールドは `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`kernel_va_shadow_query`, `debugger_state`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry_system_time_100ns`, `registry`、`pnp_devices` だけです。通常のファイル要求は `kind`、任意の `device` または `device_id`（併用不可）、任意の `file` を受け付けます。IOCTL は `code` が必須で、`input`、`output_size`、`direct_input` を受け付けます。`read` は `output_size` と `byte_offset`、`write` は `input` と `byte_offset` を受け付けます。オフセットのデフォルトはゼロで、整数または 16 進文字列を使えますが、非負の符号付き 64 ビット値に収まる必要があります。ライフサイクルのリクエストは転送フィールドを拒否します。未知のフィールドや重複フィールドは拒否します。`code` は符号なし 32 ビット JSON 整数または `0x` で始まる 16 進文字列を受け付けます。`input` は、プレフィックスや空白を含まない、長さが偶数の 16 進バイト文字列です。省略すると空の入力になります。`output_size` は符号なし JSON 整数で、省略時はゼロです。小数や浮動小数点形式の表記は拒否します。
+ルートで受け付けるフィールドは `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`kernel_va_shadow_query`, `debugger_state`、`load_address`、`requests`、`unload`、`filesystem`, `kernel_exports`、`registry_system_time_100ns`, `registry`、`pnp_devices` だけです。通常のファイル要求は `kind`、任意の `device` または `device_id`（併用不可）、任意の `file` を受け付けます。IOCTL は `code` が必須で、`input`、`output_size`、`direct_input` を受け付けます。`read` は `output_size` と `byte_offset`、`write` は `input` と `byte_offset` を受け付けます。オフセットのデフォルトはゼロで、整数または 16 進文字列を使えますが、非負の符号付き 64 ビット値に収まる必要があります。ライフサイクルのリクエストは転送フィールドを拒否します。未知のフィールドや重複フィールドは拒否します。`code` は符号なし 32 ビット JSON 整数または `0x` で始まる 16 進文字列を受け付けます。`input` は、プレフィックスや空白を含まない、長さが偶数の 16 進バイト文字列です。省略すると空の入力になります。`output_size` は符号なし JSON 整数で、省略時はゼロです。小数や浮動小数点形式の表記は拒否します。
 
 READ／WRITE／IOCTL 要求だけが省略可能な `cancel_after_100ns` を受け付けます。値は 0 から `INT64_MAX`（9223372036854775807）までの JSON 整数です。要求の提出時点を基準に、実時間ではなく仮想時間の 100 ns 単位でキャンセルを予約します。KMDF ではゼロをフレームワークのルーティング後、ゲスト I/O コールバックの前に適用します。ルーティングが既に要求を完了していれば、完了が優先されます。WDM ではディスパッチの復帰後にゼロを適用します。正の遅延では、実行可能なコールバックやフレームがないときだけ、タイマー、待機、キャンセルの期限へ時間を進めます。保留中の WDM IRP は、登録されたキャンセルルーチンをキャンセルスピンロック保持下の `DISPATCH_LEVEL` で呼び出します。完了前に `Irp->CancelIrql` を使ってロックを解放する必要があります。一般のキューや PnP のキャンセルは未対応です。各要求レポートの `cancel_requested_at_100ns` は、キャンセルが実際に発生した絶対仮想時刻、または発生しなかった場合の null です。先に完了した場合も null のままです。キャンセル要求だけでは IRP は完了せず、最終ステータスも決まりません。
 `IoSetCancelRoutine`、`IoAcquireCancelSpinLock`、`IoReleaseCancelSpinLock`、`IoCancelIrp` は同じ IRP 状態とキャンセルスピンロックを使います。`IoCancelIrp` は登録済みルーチンを同期的に呼び出し、呼び出したかどうかを返します。
@@ -684,4 +684,58 @@ PASSIVE_LEVEL で長さが 4 未満なら結果に触れず `STATUS_INFO_LENGTH_
 
 `RtlCaptureContext` は checked-x64 Unicorn/KVM/WHP で共通の静的/動的実装を使い、IRQL <= DISPATCH_LEVEL を要求します。16 バイト境界の読み書き可能な 1232 バイトのカーネル記録に、`[48,72)`、`[120,262)`、`[280,284)`、`[416,672)` だけを書きます。他のバイト、x87 データ/ポインタ、MXCSR mask は保持します。ContextFlags=`0x10000f`、呼び出し元 RSP=入口 RSP+8、RIP は実際の戻りスロットです。入口 RSP-8 に 8 バイトのフラグを書き、RAX はゼロ拡張 EFLAGS、算術フラグは ADD(入口 RSP-8,8) に従います。DS/ES/FS/GS は checked 論理 SS であり、ホストや生の転送値ではありません。記録全体、戻り/一時領域は通常のカーネル RAM、寿命、権限、一意の物理マッピングを検証し、記録との重複を拒否します。入口 RSP は 16 を法として 8。取得/検証失敗は CPU/RAM を変更せず、legacy を拒否します。全 Windows 実装を意味せず、上書き後も環境依存を保持し、UNPACK 復元や記号的前提を許可しません。
 
-ファイルオブジェクトはアドレスごとに一意で、CREATE 中に取得する参照も共通のポインター参照管理に従います。古い本体を保持したままシナリオ番号を再利用できます。CLEANUP はシナリオのハンドルを閉じ、CLOSE は残りの保持を解放します。ドライバーの参照が残る場合、最後の解放が PASSIVE_LEVEL で実際のコールバックを送るまで、CLOSE 結果の IRP はゼロで未完了です。保留された CLOSE は解放側のスレッドを待機させます。CREATE が失敗した本体は参照が残る間保持されますが、デバイスとの関連は消え、CLOSE は送られません。関連する本体は最終破棄までデバイスを保持し、DEVICE_OBJECT.ReferenceCount に数えられます。入れ子のコールバックは呼び出し元のスレッド、プロセス、PreviousMode を継承します。ファイルハンドルの作成・複製、ファイル名照会、宣言型ファイルシステムは未対応です。
+ファイル本体はアドレスごとに一意で、シナリオハンドル、追加ハンドル、呼び出し元のポインターが共有します。ObOpenObjectByPointer は作成済み FILE_OBJECT のカーネルアクセスと任意の OBJ_KERNEL_HANDLE を扱い、汎用権限を具体的な権限に変換します。プロセスの最後のハンドルを閉じても別プロセスにハンドルが残る場合は IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL、全体の最後なら CLEANUP を送ります。遅延 CLEANUP は宣言された下位応答を保持します。番号を再利用しても CLOSE は最後のハンドル、ポインター、終了継続を待ちます。カーネルハンドルの CLEANUP はシステムプロセスへ一時的に移り、スレッド、作成プロセス、PreviousMode を維持します。CLOSE は解放元のプロセスへ戻ります。保留中は解放元を待機させます。提供元のオープン成立前に CREATE が失敗した場合は、参照された本体だけを残しデバイス関連を除きます。明示的に取り消したオープンは CLOSE までデバイスを保持します。各関連本体は DEVICE_OBJECT.ReferenceCount に一度だけ数えられます。WDM と KMDF は寿命を共有し、通常の KMDF デバイスは LOCK_CONTROL を STATUS_INVALID_DEVICE_REQUEST で完了します。終了コールバック中の再オープン、未完了 I/O がある場合の終了、KMDF フィルターの LOCK_CONTROL 転送、名前照会、提供元のデータ／制御 I/O は未対応です。
+
+## ファイル情報クエリ IRP
+
+`IoQueryFileInformation` は既存のモデル化された WDM ファイルのデバイススタックに実際の `IRP_MJ_QUERY_INFORMATION` を送信します。情報はゲストドライバーが提供し、ファイルシステムのメタデータは生成しません。既知のプロセスとスレッド、PASSIVE_LEVEL、有効な割り込みと特殊カーネル APC が必要です。同じファイルの重複 I/O、マウント済み VPB、ファイル拡張ルーティング、フレームワーク所有ファイル、非同期クエリの最終参照に伴う遅延削除は明示的に未対応です。`IoGetRelatedDeviceObject` は IRQL <= DISPATCH_LEVEL で検証済みの未マウントスタックの最上位を返します。
+
+バッファは完了まで呼び出し元から借用します。非保留時はディスパッチ状態、保留時は完了状態を返します。即時エラー完了では私有 IOSB が公開されず、返却長はゼロです。ワーカーの完了通知は元の呼び出し元の再開時に渡します。同期クエリは最終 CLOSE までファイルを保持し、その後 ReturnedLength の四バイトだけを書き込みます。隣接バイトと出力とのエイリアスを保持します。レポートは kind `query_information`、origin `IoQueryFileInformation`、`file_information_class` を使い、この kind はシナリオ入力では指定できません。クラス 75 はクラス 71 とスタックフラグ 1 に変換し、他の番号はゲストへ渡します。クラス別のプロバイダー動作を実装したことにはなりません。
+
+同期クエリは最終 CLOSE までクリティカル領域を保持し、呼び出し元の以前の APC 状態を復元します。保留通知は、ガード領域からの退出や IRQL 復元を含む適格なカーネル API の復帰時、および所有スレッドのゲスト命令再開前に可視になります。レポートのバイト列は元のプロセスで取得するため、完了ワーカーはユーザーバッファを読みません。割り当て失敗時は同期ファイルイベントをリセットし、ReturnedLength は変更しません。
+
+## プロセッサ識別と DPC レベルへの昇格
+
+単一プロセッサ設定の `KeGetCurrentProcessorNumberEx` は全モデル IRQL でインデックスゼロを返し、任意の出力にグループゼロ、プロセッサゼロ、予約バイトゼロの四バイトだけを書きます。無効な出力を拒否し、周囲を保持します。`KeRaiseIrqlToDpcLevel` は IRQL 0、1、2 を受け付け、元のレベルを返し、`KfRaiseIrql` と `KeLowerIrql` と実行所有の入れ子状態を共有します。インポートと動的検索は同じ契約です。実際の x64 WDK インライン関数は `KfRaiseIrql(2)` を呼び、独立したエクスポートも動的に取得できます。
+
+`RtlInt64ToUnicodeString` は PASSIVE_LEVEL で符号なし 64 ビット値全体を文字列化します。基数は 2、8、10、16 で、0 は十進数です。既存の `RtlIntegerToUnicodeString` は ULONG への切り詰めを維持します。両者は `STATUS_BUFFER_OVERFLOW` を返す前に `Length` を設定し、終端文字の領域を要求し、未使用バイトを保持します。数字を書いた後に `Buffer` を読み直して終端文字を書き込むため、出力とレコードが重なる場合も同じ順序になります。終端書き込みの障害でも既存の数字は残ります。
+
+
+## 宣言されたファイルシステム一覧
+
+任意の `filesystem` は DriverEntry 前にセッションのボリュームを宣言します。省略は可用性不明、`[]` は提供元なしで、各ボリュームには明示的なルートが必要です。既存ノードは `ZwOpenFile` と `ZwCreateFile`、`IoCreateFile` の FILE_OPEN で実際の CREATE 要求を通じて開けます。名前検索、ゲストフィルター、共有、ハンドルと参照の寿命は共通の所有者を使い、ホストファイルを読みません。新規作成、上書き、削除、メタデータ照会、データ I/O、列挙、制御は未対応です。
+
+名前とパスは表示可能 ASCII で、大文字小文字を区別しない識別、明示的な親ディレクトリ、ボリュームごとに一意の 64 ビット ID を使います。別名、ストリーム、リンク、再解析点、Unicode は未対応です。種類、属性、割当量、4 個の非負 signed64 時刻はゼロでも必須です。ファイルの `data` は空文字列を含む正確な16進バイト列で EOF を決めます。ディレクトリには data がなく割当量はゼロです。セクターは 512–4096 の2の累乗、割当量はセクター整列で EOF 以上、マスクはセクター未満の 2^n−1 です。`full_access` は ACL 拒否だけを除外します。
+
+`DriverFileSystemLimits.def`: 8 volumes / 512 nodes / 1024 path bytes / 64 KiB names / 64 KiB per file / 512 KiB content / 64 MiB allocation / 4 MiB filesystem report contribution. JSON input: 2 MiB.
+
+```json
+{
+  "filesystem": [
+    {
+      "device_name": "\\Device\\DeclaredVolume",
+      "access_policy": "full_access",
+      "sector_size": 4096,
+      "alignment_mask": 511,
+      "nodes": [
+        {
+          "path": "\\",
+          "kind": "directory",
+          "file_id": 0,
+          "attributes": 16,
+          "allocation_size": 0,
+          "creation_time_100ns": 0,
+          "last_access_time_100ns": 0,
+          "last_write_time_100ns": 0,
+          "change_time_100ns": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+`configuration.filesystem` は入力、上位 `filesystem` は独立した状態で、`device_object` と各ノードの `end_of_file` を追加します。実行や投影検証の停止後も状態を保持します。`devices` はゲストのみです。アンロード時にセッションボリュームは残せますが、ゲストの参照、ハンドル、接続、IRP は解放が必要です。`[]` を含む宣言は未再構築依存性を保持し、実行可能 UNPACK 復元を禁止します。旧 Unicorn は拒否書き込みを停止前に反映する場合があり、投影エラーを診断に残します。
+
+
+ASCII 名、名前空間リンク、RootDirectory として保持したディレクトリハンドルに対応します。ルート接尾辞 `\` は、未対応の接尾辞なしボリュームオープンと区別します。ディレクトリ／非ディレクトリ、同期非アラートの指定を扱います。`IoCancelFileOpen` は未公開の下位成功オープンへ CLEANUP を送り、最後の参照解放が CLOSE を送ります。取消なしの上位失敗は拒否します。DriverEntry のハンドルは DriverUnload で閉じられます。非同期処理と入れ子の解放でも完了、ディスパッチ、API の戻り値を保持します。報告は `file_object`、`file_open_operation`、`filesystem_device`、`filesystem_file_id` を使い、ドライバー作成要求の `file` は null です。EA、デバイスヒント、バイナリ ID、再解析、oplock、トランザクション、ACL、ファイル名ストレージの交換、フレームワーク経路は未対応です。

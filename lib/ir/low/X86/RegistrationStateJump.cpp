@@ -1,10 +1,10 @@
-//===- RegistrationStateJump.cpp - Invocation-bound EH3 jump transfers ----===//
+//===- RegistrationStateJump.cpp - Invocation-bound SEH jump transfers ----===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Propagates captured EH3 state through checked nonlocal resumptions.
+/// Propagates captured SEH state through checked nonlocal resumptions.
 
 #include "RegistrationStateSolver.h"
 
@@ -51,7 +51,7 @@ void RegistrationStateSolver::invalidateJumpCaptures(Domain &State,
   std::erase_if(State.JumpCaptures, [&](const auto &Item) {
     const int64_t Begin = Item.first;
     const bool Overlaps =
-        int64_t(*Address.Offset) < Begin + EH3JumpCapture::BufferBytes &&
+        int64_t(*Address.Offset) < Begin + SEHJumpCapture::BufferBytes &&
         Begin < int64_t(*Address.Offset) + Width;
     if (Overlaps && State.Callback)
       ModifiedCallbackCaptures.insert(Item.second.Call);
@@ -62,14 +62,23 @@ void RegistrationStateSolver::invalidateJumpCaptures(Domain &State,
 bool RegistrationStateSolver::transferJumpCapture(
     size_t I, Domain &After, const LowOp &Op, const BlockFacts &Facts,
     std::optional<FrameValue> &CallSP) {
-  if (!JumpRuntime || !JumpRuntime->Capture || KnownCxx || EH4 ||
-      After.Unknown || Facts.Invalid || !After.Parent || After.Callback ||
+  if (!JumpRuntime || !JumpRuntime->Capture || KnownCxx || After.Unknown ||
+      Facts.Invalid || !After.Parent || After.Callback ||
       !After.JumpBindingsIntact || !After.Installed || After.Uninstalled ||
       !Function.hasCompleteLiftCoverage() || Op.Opcode != NdOp::CALL ||
       Op.NumInputs != 1 || !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4)
     return false;
   const auto Capture = JumpRuntime->Capture(Op, After.Frame, true, WorkUsed);
   if (!Capture)
+    return false;
+  if (Capture->Protocol != (EH4 ? RegistrationSEHJumpCapture::Kind::EH4
+                                : RegistrationSEHJumpCapture::Kind::EH3) ||
+      (EH4 && (!CompleteCookies || !cookiesReady(After.Frame) ||
+               Capture->SecurityCookieVA != SecurityCookieVA)) ||
+      (!EH4 && Capture->SecurityCookieVA) ||
+      !frameObjectIsDisjointFromAdministration(Capture->BufferOffset,
+                                               int64_t(Capture->BufferOffset) +
+                                                   SEHJumpCapture::BufferBytes))
     return false;
   const auto Entry = Entries.find(Capture->ReturnPC);
   const auto &Block = Function.Blocks[I];
@@ -85,18 +94,29 @@ bool RegistrationStateSolver::transferJumpCapture(
                                            Capture->UnwindTarget,
                                            Capture->BufferOffset,
                                            Capture->StackOffset,
-                                           Capture->Level};
+                                           {Capture->Level},
+                                           Capture->Protocol,
+                                           Capture->SecurityCookieVA};
   const auto [Found, New] =
       JumpCaptureOccurrences.emplace(std::make_pair(Op.Addr, Op.Seq), Receipt);
-  if (!New && Found->second != Receipt) {
-    Result.SEHJumpCapturesComplete = false;
-    return false;
+  if (!New) {
+    auto Previous = Found->second;
+    Previous.Levels = Receipt.Levels;
+    if (Previous != Receipt || !charge(Found->second.Levels.size() + 1)) {
+      Result.SEHJumpCapturesComplete = false;
+      return false;
+    }
+    auto &Levels = Found->second.Levels;
+    const auto At =
+        std::lower_bound(Levels.begin(), Levels.end(), Capture->Level);
+    if (At == Levels.end() || *At != Capture->Level)
+      Levels.insert(At, Capture->Level);
   }
   invalidateJumpCaptures(After, FrameValue::frame(Capture->BufferOffset),
-                         EH3JumpCapture::BufferBytes);
-  storeEH3JumpCapture(After.Frame, *Capture);
+                         SEHJumpCapture::BufferBytes);
+  storeSEHJumpCapture(After.Frame, *Capture);
   After.JumpCaptures.emplace(Capture->BufferOffset, *Capture);
-  Result.HasEH3JumpCaptures = true;
+  Result.HasSEHJumpCaptures = true;
   CallSP = FrameValue::frame(Capture->StackOffset);
   return true;
 }
@@ -113,7 +133,8 @@ bool RegistrationStateSolver::transferJumpResume(size_t I, Domain &After,
     Result.SEHJumpResumptionsComplete = false;
     return true;
   };
-  if (KnownCxx || EH4 || After.Unknown || Facts.Invalid ||
+  if (KnownCxx || After.Unknown || Facts.Invalid ||
+      (EH4 && (!CompleteCookies || !cookiesReady(After.Frame))) ||
       !After.JumpBindingsIntact || Function.Entry != EH.CodeRange.Begin ||
       !EH.CodeRange.contains(Op.Addr) || Op.Addr > UINT32_MAX - 5 ||
       Op.Addr + 5 > EH.CodeRange.End || !After.Installed || After.Uninstalled ||
@@ -148,7 +169,7 @@ bool RegistrationStateSolver::transferJumpResume(size_t I, Domain &After,
   if (Capture == After.JumpCaptures.end() || Buffer.ReturnPC ||
       Buffer.CallbackAddress || Buffer.EntryOffset || Buffer.SEHException ||
       Value.MayBeFrame || !ParentSP || *ParentSP > Capture->first ||
-      !hasEH3JumpCapture(After.Frame, Capture->second) ||
+      !hasSEHJumpCapture(After.Frame, Capture->second) ||
       !Entries.count(Capture->second.ReturnPC) ||
       (After.Callback && (!SEHControls || !validateSEHInvocationBlock(I))) ||
       !charge(After.Frame.cellCount() + After.JumpCaptures.size() * 14 + 10))
@@ -160,7 +181,7 @@ bool RegistrationStateSolver::transferJumpResume(size_t I, Domain &After,
 bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
                                                 BlockFacts &Facts,
                                                 const LowOp &Op,
-                                                const EH3JumpCapture &Saved,
+                                                const SEHJumpCapture &Saved,
                                                 const FrameValue &Value,
                                                 va_t CalleeVA, va_t ResumeVA) {
   const auto Refuse = [&] {
@@ -170,55 +191,18 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
     return true;
   };
   SEHFrameOutcomes Outcomes;
+  SEHHandlerOutcomes Selected;
   std::vector<RegistrationObjectExtent> Writes;
   std::set<RegistrationSEHJumpState> StateRestores;
   for (int32_t Level : After.Levels)
     if (!runSEHUnwind(After.Frame, Level, uint32_t(Saved.Level), Outcomes,
-                      Writes, &Saved, &Value, &StateRestores))
+                      Writes, &Saved, &Value, &StateRestores, &Selected))
       return Refuse();
   for (const auto &Write : Writes)
     if (Write.Begin <
-            int64_t(Saved.BufferOffset) + EH3JumpCapture::BufferBytes &&
+            int64_t(Saved.BufferOffset) + SEHJumpCapture::BufferBytes &&
         Saved.BufferOffset < Write.End)
       return Refuse();
-  std::optional<FrameState> Joined;
-  std::set<int32_t> Stopped;
-  for (auto &[Level, Frame] : Outcomes) {
-    Stopped.insert(Level);
-    if (!Joined)
-      Joined = std::move(Frame);
-    else if (!charge(Joined->cellCount() + Frame.cellCount() + 10))
-      return Refuse();
-    else
-      Joined->merge(Frame);
-  }
-  if (!Joined)
-    return Refuse();
-  Domain Resume = After;
-  Resume.Frame = std::move(*Joined);
-  Resume.Frame.leaveCallback();
-  Resume.Levels = std::move(Stopped);
-  Resume.Activation = {};
-  Resume.Parent = true;
-  Resume.Callback = Resume.OtherCallback = false;
-  Resume.CanDispatch = true;
-  Resume.OrdinaryCallStack.reset();
-  Resume.StackRestore.reset();
-  Resume.SEHCallers.clear();
-  constexpr uint64_t Registers[] = {x86reg::RBP, x86reg::RBX, x86reg::RDI,
-                                    x86reg::RSI};
-  for (unsigned R = 0; R != std::size(Registers); ++R)
-    Resume.Frame.Registers[Registers[R] / x86reg::GeneralRegStride] =
-        Saved.Nonvolatile[R];
-  Resume.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
-      FrameValue::frame(Saved.StackOffset);
-  Resume.Frame.Registers[x86reg::RAX / x86reg::GeneralRegStride] =
-      Value.Constant == 0 ? FrameValue::constant(1) : Value;
-  for (uint64_t R : {x86reg::RCX, x86reg::RDX})
-    Resume.Frame.Registers[R / x86reg::GeneralRegStride] = {
-        {}, {}, false, true, true};
-  Resume.Frame.OtherRegisterBytes.clear();
-  Resume.Frame.OtherRegistersMayBeFrame = true;
   RegistrationSEHJumpResume Receipt{Op.Addr,
                                     Op.Seq,
                                     Saved.Call,
@@ -237,7 +221,10 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
       SP.CallbackAddress && SP.CallbackAddress->Entry == Receipt.EntryVA &&
       SP.CallbackAddress->Offset <= -8)
     Receipt.ValueOffset = SP.CallbackAddress->Offset + 4;
-  Receipt.ResumedLevels.assign(Resume.Levels.begin(), Resume.Levels.end());
+  for (const auto &[Level, Frame] : Outcomes)
+    Receipt.ResumedLevels.push_back(Level);
+  for (const auto &[Scope, Frames] : Selected)
+    Receipt.SelectedScopes.push_back(Scope);
   Receipt.StateRestores.assign(StateRestores.begin(), StateRestores.end());
   const SEHExitKey Identity{Receipt.EntryVA, Receipt.OrdinaryCall, Op.Addr,
                             Op.Seq};
@@ -246,12 +233,15 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
     auto Previous = It->second;
     Previous.ResumedLevels = Receipt.ResumedLevels;
     Previous.StateRestores = Receipt.StateRestores;
+    Previous.SelectedScopes = Receipt.SelectedScopes;
     if (Previous != Receipt)
       return Refuse();
     auto &Restores = It->second.StateRestores;
     auto &Levels = It->second.ResumedLevels;
+    auto &Scopes = It->second.SelectedScopes;
     if (!charge(Levels.size() + Receipt.ResumedLevels.size() + Restores.size() +
-                Receipt.StateRestores.size()))
+                Receipt.StateRestores.size() + Scopes.size() +
+                Receipt.SelectedScopes.size()))
       return Refuse();
     Restores.insert(Restores.end(), Receipt.StateRestores.begin(),
                     Receipt.StateRestores.end());
@@ -262,8 +252,24 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
                   Receipt.ResumedLevels.end());
     llvm::sort(Levels);
     Levels.erase(std::unique(Levels.begin(), Levels.end()), Levels.end());
+    Scopes.insert(Scopes.end(), Receipt.SelectedScopes.begin(),
+                  Receipt.SelectedScopes.end());
+    llvm::sort(Scopes);
+    Scopes.erase(std::unique(Scopes.begin(), Scopes.end()), Scopes.end());
   }
-  merge(Entries.at(Saved.ReturnPC), Resume);
+  if (!Outcomes.empty() &&
+      !mergeSEHJumpContinuation(After, Saved, Value, std::move(Outcomes)))
+    return Refuse();
+  for (auto &[Scope, Frames] : Selected)
+    for (auto &[Level, Frame] : Frames) {
+      if (!charge(After.snapshotWork() + Frame.cellCount() + 10))
+        return Refuse();
+      Domain Handler = After;
+      Handler.Frame = std::move(Frame);
+      dispatch(Chain.Scopes[Scope].HandlerVA, {Level}, Handler, false);
+    }
+  if (Exhausted)
+    return Refuse();
   Facts.InvocationAtExit = true;
   return true;
 }

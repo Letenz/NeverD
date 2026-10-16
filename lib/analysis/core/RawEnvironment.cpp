@@ -88,12 +88,18 @@ bool validDigest(llvm::StringRef Text) {
 }
 
 std::string optionsDigest(const SpecializationOptions &O) {
-  Digest H("neverd-raw-environment-options-v1");
+  Digest H("neverd-raw-environment-options-v2");
   H.number(O.ExplicitMachineState);
   H.number(O.NormalNonfaultingExecution);
   H.number(O.X64CetDisabled);
   H.number(O.X64SegmentedReads);
   H.number(O.X64CR8State);
+  H.number(O.X64MachineExits.size());
+  for (const auto &E : O.X64MachineExits) {
+    H.number(E.Version);
+    H.number(E.Address);
+    H.number(static_cast<unsigned>(E.Kind));
+  }
   H.number(O.X64TerminalImports.size());
   for (const auto &B : O.X64TerminalImports) {
     H.number(B.Version);
@@ -208,6 +214,13 @@ llvm::Error validatePrimaryExtent(const SpecializationRawEnvironment &D) {
     if (B.Slot < D.PrimaryImageBegin || B.Slot >= D.PrimaryImageEnd ||
         8 > D.PrimaryImageEnd - B.Slot)
       return invalid("stable import slot is outside the primary image extent");
+  for (const auto &E : D.Declaration.X64MachineExits)
+    if (!(E.Address >= D.PrimaryImageBegin && E.Address < D.PrimaryImageEnd) &&
+        !llvm::any_of(D.Declaration.X64CodeRegions, [&](const auto &R) {
+          return E.Address >= R.Address &&
+                 E.Address - R.Address < R.Bytes.size();
+        }))
+      return invalid("machine exit is outside the declared code domain");
   return llvm::Error::success();
 }
 
@@ -255,7 +268,8 @@ llvm::Error preflightResult(const SpecializationResult &R,
   if (!IndexWork(R.Origins.size()) || !IndexWork(R.ExternalExits.size()))
     return Exhausted();
   const uint64_t Exits = R.ExternalExits.size();
-  const uint64_t Terminals = Expected.X64TerminalImports.size();
+  const uint64_t Terminals =
+      Expected.X64TerminalImports.size() + Expected.X64MachineExits.size();
   const uint64_t OriginLookups = std::bit_width(uint64_t(R.Origins.size())) + 1;
   if (Exits > Records / OriginLookups ||
       !AddRecords(Exits * OriginLookups, 8) ||

@@ -15,7 +15,9 @@ namespace neverd::registration_state {
 void RegistrationStateSolver::recordSEHRuntimeCall(
     const Domain &State, const LowOp &Op, RegistrationSEHBoundCall::Kind Kind,
     std::optional<int32_t> Output) {
-  if (Conditional || KnownCxx || EH4 || State.Unknown || !State.Installed ||
+  if (Conditional || KnownCxx || State.Unknown || !State.Installed ||
+      (EH4 && (!CompleteCookies ||
+               Kind != RegistrationSEHBoundCall::Kind::RaiseException)) ||
       State.Uninstalled)
     return;
   const auto &SP =

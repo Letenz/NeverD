@@ -9,6 +9,7 @@
 #include "COFFRegistrationCxxIRProof.h"
 #include "COFFRegistrationFrameProof.h"
 #include "COFFRegistrationIRProof.h"
+#include "COFFRegistrationSEHCall.h"
 #include "COFFRegistrationSEHDynamicScope.h"
 #include "COFFRegistrationSEHException.h"
 #include "COFFRegistrationSEHFinally.h"
@@ -255,6 +256,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
   };
   std::map<uint32_t, BlockTarget> BlockEntries, BlockExits;
   std::set<const llvm::InvokeInst *> Invokes;
+  std::set<const llvm::CallBase *> AnchoredDynamicCalls;
   std::set<const llvm::CallBase *> ScopeBoundaries;
   auto ScopeWrites = Jumps->StateRestores;
   std::set<const llvm::CallBase *> AbnormalFinallyIR;
@@ -284,6 +286,12 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       auto P = coff_native_eh::parseNativeEHProvenance(*Call);
       if (!P || P->Model != Model || P->FunctionVA != Source.CodeRange.Begin)
         return rejectIR("parent registration anchor is malformed");
+      if (P->Role == Role::RegistrationDynamicCall) {
+        const auto *Protected = coff_registration::dynamicSEHCall(*Call);
+        if (!Protected || !AnchoredDynamicCalls.insert(Protected).second)
+          return rejectIR("dynamic SEH call lost its exact source receipt");
+        continue;
+      }
       if (P->Role == Role::RegistrationChainAccess) {
         auto Found =
             llvm::find_if(States.ChainAccesses, [&](const auto &Access) {
@@ -525,6 +533,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       return rejectIR("scope enclosing state or handler target changed");
   }
   size_t ActiveRanges = 0, ActiveBlocks = 0;
+  std::set<const llvm::CallBase *> DynamicCalls;
   std::map<int, const llvm::BasicBlock *> SourceEntries, SourceExits;
   std::map<va_t, uint32_t> ExpectedProtected;
   for (const auto &State : States.Blocks) {
@@ -563,7 +572,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       }
       if (auto Error = coff_registration::validateDynamicSEHScope(
               State, *Frame, SourceSegments->at(State.BlockId),
-              *Begin->second.Anchor, *End->second.Anchor, Cases))
+              *Begin->second.Anchor, *End->second.Anchor, Cases, DynamicCalls))
         return Error;
       ActiveRanges += Cases.size();
       SourceEntries.emplace(State.BlockId, Begin->second.Anchor->getParent());
@@ -749,6 +758,12 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       return rejectIR(
           "native normal control flow bypasses a source registration boundary");
   }
+  if (AnchoredDynamicCalls != DynamicCalls)
+    return rejectIR(
+        "dynamic SEH call receipts do not match their scope bodies");
+  if (auto Error = coff_registration::validateDynamicSEHCallMarkers(
+          NativeFunctions, DynamicCalls))
+    return Error;
   for (const auto *NativeFunction : NativeFunctions)
     for (const auto &Block : *NativeFunction)
       for (const auto &I : Block) {

@@ -49,6 +49,9 @@ bool readable(const QString &operation) {
                                         "dwarf_reference",
                                         "symbol_table_reference",
                                         "function_attributes",
+                                        "local_types",
+                                        "local_type",
+                                        "local_types_source",
                                         "search"};
   return cacheable(operation) || operations.contains(operation);
 }
@@ -73,7 +76,9 @@ bool command(const QString &operation) {
                                         "history_reset",
                                         "string_options",
                                         "contribution_register",
-                                        "contribution_unregister"};
+                                        "contribution_unregister",
+                                        "local_types_declare",
+                                        "local_types_forget"};
   return operations.contains(operation);
 }
 

@@ -86,6 +86,8 @@ KernelModel::findObjectHandle(uint64_t Handle) const {
   const auto Found = ObjectHandles.find(Handle);
   if (Found == ObjectHandles.end())
     return nullptr;
+  if (Found->second.ScenarioOwned)
+    return nullptr;
   const auto Context = executionProcessContext();
   const uint32_t ProcessID = Context ? Context->ProcessID : 0;
   if (!(Found->second.Attributes & ObjectKernelHandle) &&
@@ -96,6 +98,8 @@ KernelModel::findObjectHandle(uint64_t Handle) const {
 
 std::optional<uint32_t> KernelModel::objectAccessMask(ObjectKind Kind) {
   switch (Kind) {
+  case ObjectKind::File:
+    return FileAllAccess;
   case ObjectKind::Key:
     return KeyAllAccess;
   case ObjectKind::Thread:
@@ -117,21 +121,29 @@ llvm::Expected<uint32_t> KernelModel::mapObjectAccess(ObjectKind Kind,
   if (!Valid)
     return namespaceError("unsupported object handle class");
   if (Kind == ObjectKind::Directory || Kind == ObjectKind::SymbolicLink ||
-      Kind == ObjectKind::Key) {
-    // WDK rights and the target kernel's generic mappings. These types are not
-    // waitable; SYNCHRONIZE and MAXIMUM_ALLOWED are not guessed grants.
+      Kind == ObjectKind::Key || Kind == ObjectKind::File) {
+    // WDK rights and the target kernel's generic mappings. The per-type valid
+    // mask controls SYNCHRONIZE; MAXIMUM_ALLOWED is not a guessed grant.
     const bool Directory = Kind == ObjectKind::Directory;
     const bool Key = Kind == ObjectKind::Key;
-    const uint32_t ReadExecute = 0x20000 | (Key ? 0x19 : Directory ? 3 : 1);
-    const uint32_t Write = 0x20000 | (Key ? 6 : Directory ? 12 : 0);
+    const bool File = Kind == ObjectKind::File;
+    const uint32_t Read = File ? 0x120089
+                               : 0x20000 | (Key         ? 0x19
+                                            : Directory ? 3
+                                                        : 1);
+    const uint32_t Execute = File ? 0x1200a0 : Read;
+    const uint32_t Write = File ? 0x120116
+                                : 0x20000 | (Key         ? 6
+                                             : Directory ? 12
+                                                         : 0);
     const uint32_t Generic = Access & 0xf0000000;
     Access &= ~0xf0000000;
     if (Generic & 0x80000000)
-      Access |= ReadExecute;
+      Access |= Read;
     if (Generic & 0x40000000)
       Access |= Write;
     if (Generic & 0x20000000)
-      Access |= ReadExecute;
+      Access |= Execute;
     if (Generic & 0x10000000)
       Access |= *Valid;
   }
@@ -142,7 +154,10 @@ llvm::Expected<uint32_t> KernelModel::mapObjectAccess(ObjectKind Kind,
 
 llvm::Expected<KernelModel::ObjectLookup>
 KernelModel::lookupNamedObject(llvm::StringRef Name, uint64_t Root,
-                               uint32_t Attributes, bool OpenLink) {
+                               uint32_t Attributes, bool OpenLink,
+                               bool ParseDevice, unsigned LinkDepth) {
+  if (LinkDepth >= 16)
+    return namespaceError("symbolic-link traversal exceeds its bounded depth");
   std::string Path = Name.str();
   const bool Fold = Attributes & ObjectCaseInsensitive;
   if (Root) {
@@ -167,10 +182,11 @@ KernelModel::lookupNamedObject(llvm::StringRef Name, uint64_t Root,
   if (llvm::StringRef(Path).equals_insensitive("\\Registry") ||
       llvm::StringRef(Path).starts_with_insensitive("\\Registry\\"))
     return namespaceError("registry name parsing requires a registry open API");
-  if (Path.size() > profile::MaxDeviceNameSize)
+  if (Path.size() >
+      profile::MaxDeviceNameSize + (ParseDevice ? MaxFileSystemPathBytes : 0))
     return namespaceError("object path exceeds the bounded namespace size");
-  if (Path.size() > 1 &&
-      (Path.back() == '\\' || llvm::StringRef(Path).contains("\\\\")))
+  if (Path.size() > 1 && ((!ParseDevice && Path.back() == '\\') ||
+                          llvm::StringRef(Path).contains("\\\\")))
     return ObjectLookup{StatusObjectNameInvalid};
   auto Find = [&](llvm::StringRef Candidate) -> uint64_t {
     for (const auto &[Object, State] : ReferencedObjects) {
@@ -195,10 +211,19 @@ KernelModel::lookupNamedObject(llvm::StringRef Name, uint64_t Root,
     if (!Object)
       return ObjectLookup{Last ? StatusObjectNameNotFound
                                : StatusObjectPathNotFound};
+    if (ParseDevice && ReferencedObjects.at(Object).Kind == ObjectKind::Device)
+      return ObjectLookup{StatusSuccess, Object, Last ? "" : Path.substr(End)};
+    if (ParseDevice)
+      if (const auto Link = SymbolicLinks.find(Object);
+          Link != SymbolicLinks.end() && (!Last || !OpenLink))
+        return lookupNamedObject(Link->second.Target +
+                                     (Last ? "" : Path.substr(End)),
+                                 0, Attributes, false, true, LinkDepth + 1);
     if (Last) {
       if (const auto Link = SymbolicLinks.find(Object);
           Link != SymbolicLinks.end() && !OpenLink)
-        return lookupNamedObject(Link->second.Target, 0, Attributes, false);
+        return lookupNamedObject(Link->second.Target, 0, Attributes, false,
+                                 ParseDevice, LinkDepth + 1);
       return ObjectLookup{StatusSuccess, Object};
     }
     if (ReferencedObjects.at(Object).Kind != ObjectKind::Directory)

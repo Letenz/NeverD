@@ -54,12 +54,14 @@ struct JumpCallFixture {
     EH.Personality = ExceptionPersonality::ExceptHandler3;
     EH.CodeRange = {0x1000, 0x1025};
     EH.Registration.emplace();
+    EH.Registration->SeededTryLevel = -1;
+    EH.Registration->Scopes = {{-1, 0x4000, 0x4100, false}};
     auto &States = Function.RegistrationStates.emplace();
     States.Complete = States.CallbackStatesComplete = true;
     States.RegistrationLifetimeComplete = true;
-    States.HasEH3JumpCaptures = true;
+    States.HasSEHJumpCaptures = true;
     States.SEHJumpCaptures.push_back(
-        {0x1010, 0x1015, 10, 0x2000, 0x3000, -96, -128, 0});
+        {0x1010, 0x1015, 10, 0x2000, 0x3000, -96, -128, {0}});
     RegistrationSEHJumpResume Resume;
     Resume.Address = 0x1020;
     Resume.OpSeq = 20;
@@ -160,6 +162,75 @@ TEST(RegistrationSEHJumpABI, SourceProtocolOwnsStackOrderAndExactArity) {
   }
 }
 
+TEST(RegistrationSEHJumpABI, SelectedHandlersDoNotInventCaptureResumption) {
+  for (bool AlsoResume : {false, true})
+    for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+      SCOPED_TRACE(AlsoResume);
+      SCOPED_TRACE(Mutation);
+      JumpCallFixture F;
+      auto &States = *F.Function.RegistrationStates;
+      auto &Resume = States.SEHJumpResumptions.front();
+      auto &Scope = F.Function.ExceptionMetadata->Registration->Scopes.front();
+      Resume.SelectedScopes = {0};
+      Resume.ResumedLevels =
+          AlsoResume ? std::vector<int32_t>{-1} : std::vector<int32_t>{};
+      Resume.StateRestores =
+          AlsoResume ? std::vector<RegistrationSEHJumpState>{{0, -1, 0}}
+                     : std::vector<RegistrationSEHJumpState>{};
+      MedBlock Handler;
+      Handler.Id = 2;
+      Handler.StartAddr = Scope.HandlerVA;
+      Handler.EndAddr = Scope.HandlerVA + 1;
+      F.Function.Blocks.push_back(std::move(Handler));
+      States.Blocks.push_back(
+          {2, {Scope.HandlerVA, Scope.HandlerVA + 1}, {-1}});
+      auto &State = States.Blocks.back();
+      State.Reached = true;
+      switch (Mutation) {
+      case 1:
+        Resume.SelectedScopes = {1};
+        break;
+      case 2:
+        Resume.SelectedScopes = {0, 0};
+        break;
+      case 3:
+        Resume.SelectedScopes = {1, 0};
+        break;
+      case 4:
+        Scope.IsFinally = true;
+        break;
+      case 5:
+        Scope.FilterVA = 0;
+        break;
+      case 6:
+        Scope.HandlerVA += 1;
+        break;
+      case 7:
+        State.Reached = false;
+        break;
+      case 8:
+        State.Unknown = true;
+        break;
+      case 9:
+        State.CallbackOnly = true;
+        break;
+      case 10:
+        State.Levels = {0};
+        break;
+      case 11:
+        Resume.StateRestores = {{0, 0, 0}};
+        break;
+      }
+      const auto Calls = getX86RegistrationSEHJumpCalls(F.Function);
+      ASSERT_EQ(bool(Calls), Mutation == 0);
+      if (Calls) {
+        ASSERT_EQ(Calls->size(), 2u);
+        EXPECT_EQ(Calls->at(0x1010).ResumeLevel, AlsoResume ? -1 : 0);
+        EXPECT_TRUE(Calls->at(0x1010).ResumeStateMap.empty());
+      }
+    }
+}
+
 TEST(RegistrationSEHJumpABI, RuntimeArityDoesNotInventMissingStackArguments) {
   JumpCallFixture F;
   for (auto &Block : F.Function.Blocks)
@@ -251,7 +322,7 @@ TEST(RegistrationSEHJumpABI,
     Chain.Scopes = {{-1, 0x4000, 0x4100, false}};
     auto &Resume = F.Function.RegistrationStates->SEHJumpResumptions.front();
     Resume.ResumedLevels = {-1, 0};
-    Resume.StateRestores = {{-1, -1}, {0, 0}};
+    Resume.StateRestores = {{-1, -1, 0}, {0, 0, 0}};
     switch (Mutation) {
     case 1:
       Resume.StateRestores.clear();
@@ -302,13 +373,13 @@ TEST(RegistrationSEHJumpABI, ProjectsSkippedScopesAndRejectsAmbiguousMappings) {
                     {-1, 0x4400, 0x4500, false}};
     auto &Resume = F.Function.RegistrationStates->SEHJumpResumptions.front();
     Resume.ResumedLevels = {-1, 0};
-    Resume.StateRestores = {{-1, -1}, {1, 0}, {2, -1}};
+    Resume.StateRestores = {{-1, -1, 0}, {1, 0, 0}, {2, -1, 0}};
     switch (Mutation) {
     case 1:
-      Resume.StateRestores.push_back({2, 0});
+      Resume.StateRestores.push_back({2, 0, 0});
       break;
     case 2:
-      Resume.StateRestores.push_back({2, -1});
+      Resume.StateRestores.push_back({2, -1, 0});
       break;
     case 3:
       std::reverse(Resume.StateRestores.begin(), Resume.StateRestores.end());
@@ -326,7 +397,7 @@ TEST(RegistrationSEHJumpABI, ProjectsSkippedScopesAndRejectsAmbiguousMappings) {
       Resume.StateRestores.back().ResumeLevel = 3;
       break;
     case 8:
-      Resume.StateRestores = {{1, 0}};
+      Resume.StateRestores = {{1, 0, 0}};
       break;
     case 9:
       Resume.ResumedLevels = {0};
@@ -341,7 +412,84 @@ TEST(RegistrationSEHJumpABI, ProjectsSkippedScopesAndRejectsAmbiguousMappings) {
     for (const auto &[Address, Call] : *Calls) {
       EXPECT_FALSE(Call.ResumeLevel);
       EXPECT_EQ(Call.ResumeStateMap,
-                (std::map<int32_t, int32_t>{{1, 0}, {2, -1}}));
+                (std::map<std::pair<int32_t, int32_t>, int32_t>{{{0, 1}, 0},
+                                                                {{0, 2}, -1}}));
+    }
+  }
+}
+
+TEST(RegistrationSEHJumpABI, EH4RequiresTheCookieProtocolAndDisjointStorage) {
+  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    JumpCallFixture F;
+    auto &EH = *F.Function.ExceptionMetadata;
+    EH.Personality = ExceptionPersonality::ExceptHandler4;
+    EH.Encoding = ExceptionEncoding::X86ScopeTableEH4;
+    EH.Registration->RegistrationOffset = -16;
+    EH.Registration->TryLevelOffset = -4;
+    EH.Registration->EHCookieOffset = -28;
+    EH.Registration->GSCookieOffset = -32;
+    auto &States = *F.Function.RegistrationStates;
+    States.SecurityCookiesComplete = true;
+    States.SecurityCookieVA = 0x405000;
+    auto &Capture = States.SEHJumpCaptures.front();
+    Capture.Protocol = RegistrationSEHJumpCapture::Kind::EH4;
+    Capture.SecurityCookieVA = States.SecurityCookieVA;
+    if (Mutation == 1)
+      Capture.Protocol = RegistrationSEHJumpCapture::Kind::EH3;
+    if (Mutation == 2)
+      Capture.SecurityCookieVA += 4;
+    if (Mutation == 3)
+      States.SecurityCookiesComplete = false;
+    if (Mutation == 4)
+      States.SecurityCookieVA = Capture.SecurityCookieVA = 0;
+    if (Mutation == 5)
+      EH.Registration->EHCookieOffset = -36;
+    if (Mutation == 6)
+      EH.Registration->GSCookieOffset = -36;
+    if (Mutation == 7)
+      Capture.StackOffset = Capture.BufferOffset - 16;
+    if (Mutation == 8)
+      EH.Personality = ExceptionPersonality::ExceptHandler3;
+    EXPECT_EQ(bool(getX86RegistrationSEHJumpCalls(F.Function)), Mutation == 0);
+  }
+}
+
+TEST(RegistrationSEHJumpABI, CapturedBoundsDisambiguateTheSameVisibleState) {
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    JumpCallFixture F;
+    auto &States = *F.Function.RegistrationStates;
+    auto &Capture = States.SEHJumpCaptures.front();
+    auto &Resume = States.SEHJumpResumptions.front();
+    Capture.Levels = States.Blocks.front().Levels = {-1, 0};
+    Resume.ResumedLevels = {-1, 0};
+    Resume.StateRestores = {{0, -1, -1}, {0, 0, 0}};
+    if (Mutation == 1)
+      Capture.Levels.clear();
+    if (Mutation == 2)
+      Capture.Levels = {0, -1};
+    if (Mutation == 3)
+      Capture.Levels.push_back(0);
+    if (Mutation == 4)
+      States.Blocks.front().Levels = {0};
+    if (Mutation == 5)
+      Resume.StateRestores.front().CaptureLevel = -2;
+    if (Mutation == 6)
+      Resume.StateRestores.back().CaptureLevel = -1;
+    if (Mutation == 7)
+      Resume.StateRestores.clear();
+    const auto Calls = getX86RegistrationSEHJumpCalls(F.Function);
+    if (Mutation) {
+      EXPECT_FALSE(Calls);
+      continue;
+    }
+    ASSERT_TRUE(Calls);
+    for (const auto &[Address, Call] : *Calls) {
+      EXPECT_FALSE(Call.ResumeLevel);
+      EXPECT_EQ(
+          Call.ResumeStateMap,
+          (std::map<std::pair<int32_t, int32_t>, int32_t>{{{-1, 0}, -1}}));
     }
   }
 }

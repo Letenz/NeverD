@@ -86,9 +86,16 @@ llvm::Expected<uint64_t> KernelModel::dereferenceObject(uint64_t Object) {
   auto Found = ReferencedObjects.find(Object);
   if (Found == ReferencedObjects.end() || !Found->second.Pointers)
     return objectError("ObfDereferenceObject requires a referenced object");
-  if (const auto File = FileObjects.find(Object); File != FileObjects.end() &&
-                                                  File->second.DeferredClose &&
-                                                  Found->second.Pointers == 1) {
+  if (const auto File = FileObjects.find(Object);
+      File != FileObjects.end() && File->second.Asynchronous &&
+      File->second.InternalIOHolds && !Found->second.Handles &&
+      Found->second.Pointers == 1)
+    return objectError("asynchronous final query release requires deferred "
+                       "file deletion");
+  if (const auto File = FileObjects.find(Object);
+      File != FileObjects.end() && owesFileClose(File->second) &&
+      !File->second.HandleCloseHolds && !File->second.InternalIOHolds &&
+      !Found->second.Handles && Found->second.Pointers == 1) {
     if (CurrentIRQL != scheduler::PassiveLevel)
       return objectError("final file reference release requires PASSIVE_LEVEL");
     if (!executionProcessContext())
@@ -166,10 +173,39 @@ KernelModel::openObjectByPointer(llvm::ArrayRef<uint64_t> A) {
   if (Mode != windows::KernelMode && Mode != windows::UserMode)
     return objectError("invalid object open access mode");
   if ((!A[4] && Mode == windows::UserMode) ||
-      !matchesObjectType(Object->second.Kind, A[4]))
+      !matchesObjectType(Object->second.Kind, A[4])) {
+    if (!A[6])
+      return windows::StatusInvalidParameter;
+    if (auto E = validateObjectOutput(A[6], 8))
+      return E;
+    // The target clears PHANDLE before its typed pointer-reference check.
+    if (auto E = Memory.writeInteger(A[6], 0, 8))
+      return E;
     return windows::StatusObjectTypeMismatch;
+  }
   if (!objectAccessMask(Object->second.Kind))
     return objectError("unsupported object handle class");
+  if (Object->second.Kind == ObjectKind::File) {
+    const auto File = FileObjects.find(A[0]);
+    if (File == FileObjects.end() || (File->second.State != FileState::Open &&
+                                      File->second.State != FileState::Cleaned))
+      return objectError(
+          "file pointer open requires an initial successful handle");
+    if (File->second.HandleCloseHolds ||
+        std::any_of(Requests.begin(), Requests.end(), [&](const auto &Entry) {
+          const auto &Request = Entry.second;
+          return Request.FileAddress == A[0] &&
+                 (Request.Kind == DriverRequestKind::Cleanup ||
+                  Request.Kind == DriverRequestKind::UnlockAll);
+        }))
+      return objectError(
+          "file pointer open during a handle-close callback is unsupported");
+    auto Flags = Memory.readInteger(A[0] + windows::FileFlagsOffset, 4);
+    if (!Flags)
+      return Flags.takeError();
+    if (!(*Flags & windows::FileHandleCreated))
+      return objectError("file pointer open requires FO_HANDLE_CREATED");
+  }
   // ACLs, access-state records and inheritance need a declared security
   // environment. Refuse those requests without granting invented authority.
   if (Mode != windows::KernelMode || A[2] ||
@@ -202,9 +238,19 @@ KernelModel::openObjectByPointer(llvm::ArrayRef<uint64_t> A) {
 
 void KernelModel::retainObjectHandle(uint64_t Object, uint32_t Access,
                                      uint32_t Attributes, uint32_t ProcessID) {
-  ObjectHandles.emplace(NextObjectHandle,
-                        ObjectHandle{Object, Access, Attributes, ProcessID});
+  const uint64_t Handle = NextObjectHandle;
   NextObjectHandle += profile::SystemThreadHandleStride;
+  retainReservedObjectHandle(Handle, Object, Access, Attributes, ProcessID);
+}
+
+void KernelModel::retainReservedObjectHandle(uint64_t Handle, uint64_t Object,
+                                             uint32_t Access,
+                                             uint32_t Attributes,
+                                             uint32_t ProcessID) {
+  if (Attributes & windows::ObjectKernelHandle)
+    ProcessID = windows::SystemProcessID;
+  ObjectHandles.emplace(Handle,
+                        ObjectHandle{Object, Access, Attributes, ProcessID});
   ++ReferencedObjects.at(Object).Handles;
 }
 
@@ -218,6 +264,11 @@ llvm::Expected<uint64_t> KernelModel::closeHandle(uint64_t Handle) {
   auto Reference = ReferencedObjects.find(Object);
   if (Reference == ReferencedObjects.end() || !Reference->second.Handles)
     return objectError("object handle lost its reference");
+  if (Reference->second.Kind == ObjectKind::File) {
+    if (auto E = closeFileHandle(Handle))
+      return E;
+    return windows::StatusSuccess;
+  }
   --Reference->second.Handles;
   ObjectHandles.erase(Found);
   retireObjectIfUnreferenced(Object);

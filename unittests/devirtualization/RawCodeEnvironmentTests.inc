@@ -61,6 +61,7 @@ struct RawByteOracle {
   using Key = std::pair<VnodeSpace, uint64_t>;
   std::map<Key, uint8_t> Registers;
   std::map<va_t, uint8_t> Memory;
+  std::optional<uint64_t> NextPC;
   bool Valid = true;
   std::string Diagnostic;
 
@@ -192,6 +193,9 @@ struct RawByteOracle {
           break;
         }
         case NdOp::RETURN:
+          return Valid;
+        case NdOp::INDIR_BR:
+          NextPC = read(Op.Inputs[0]);
           return Valid;
         default:
           return false;
@@ -1285,3 +1289,5 @@ TEST_F(PEFixedImageTest, RawCodeCmpxchgReceiptBindsOrdering) {
   auto ValidCopy = validateSpecializationRawEnvironment(Copy, O);
   EXPECT_FALSE(bool(ValidCopy)) << llvm::toString(std::move(ValidCopy));
 }
+
+#include "MachineExitEnvironmentTests.inc"

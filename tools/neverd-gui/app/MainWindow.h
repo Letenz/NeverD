@@ -30,6 +30,7 @@ class PackageReviewDialog;
 class CodeView;
 class DisassemblyView;
 class ExtensionsView;
+class LocalTypesView;
 class GraphOverview;
 class HexView;
 class NavigationBand;
@@ -242,6 +243,7 @@ private:
   bool asksForDebugInfo_ = true;
   GraphOverview *overview_ = nullptr;
   ExtensionsView *extensions_ = nullptr;
+  LocalTypesView *localTypes_ = nullptr;
   ChooserView *functions_ = nullptr;
   QHash<QString, Dock *> docks_;
   QHash<int, ChooserView *> choosers_;

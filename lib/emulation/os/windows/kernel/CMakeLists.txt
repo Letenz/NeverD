@@ -48,6 +48,9 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelFrameworkRequests.cpp
   KernelModelExports.cpp
   KernelModel.cpp
+  KernelFileSystem.cpp
+  KernelModelFileCreate.cpp
+  KernelModelFileSystem.cpp
   KernelLoaderView.cpp
   KernelVersionQuery.cpp
   KernelVaShadowQuery.cpp
@@ -66,6 +69,7 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelBugCheck.cpp
   KernelModelIO.cpp
   KernelModelFileObjects.cpp
+  KernelModelFileQueries.cpp
   KernelModelObjects.cpp
   KernelModelNamespace.cpp
   KernelModelDataExports.cpp

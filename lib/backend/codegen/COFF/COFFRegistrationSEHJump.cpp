@@ -34,6 +34,7 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
   struct CaptureIR {
     const llvm::AllocaInst *Buffer = nullptr;
     const llvm::StoreInst *State = nullptr;
+    const llvm::AllocaInst *CapturedState = nullptr;
     std::set<const llvm::AllocaInst *> Saved;
   };
   std::map<va_t, CaptureIR> Captures;
@@ -99,6 +100,12 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
                 return rejectIR(
                     "native jump buffer changed its runtime extent");
               Capture.Buffer = Slot;
+            } else if (*Kind == unsigned(SEHJumpRole::CapturedState)) {
+              if (Capture.CapturedState ||
+                  !Slot->getAllocatedType()->isIntegerTy(32) ||
+                  Slot->getAlign() != llvm::Align(4))
+                return rejectIR("native capture changed its saved state slot");
+              Capture.CapturedState = Slot;
             } else if (*Kind != unsigned(SEHJumpRole::RegisterSnapshot) ||
                        !Capture.Saved.insert(Slot).second)
               return rejectIR("native register snapshot has an unknown role");
@@ -172,7 +179,7 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
   for (const auto &[Address, Capture] : Captures) {
     const auto *Call = Calls.at(Address);
     const auto &Receipt = *Expected->at(Address).Capture;
-    if (auto Error = validateSEHJumpUnwindBridge(Parent, Receipt.UnwindVA))
+    if (auto Error = validateSEHJumpUnwindBridge(Parent, Receipt))
       return Error;
     if (!Capture.Buffer || !Capture.State)
       return rejectIR(
@@ -234,8 +241,9 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
     }
     if (SeenRegisters != Registers)
       return rejectIR("native jump omits a logical register snapshot");
-    if (auto Error = validateSEHJumpState(Expected->at(Address), *Call,
-                                          *Capture.State, Frame, Restores))
+    if (auto Error =
+            validateSEHJumpState(Expected->at(Address), *Call, *Capture.State,
+                                 Frame, Capture.CapturedState, Saves, Restores))
       return Error;
     Result.StateRestores.insert(Capture.State);
     const llvm::Instruction *Before = Call->getPrevNode();

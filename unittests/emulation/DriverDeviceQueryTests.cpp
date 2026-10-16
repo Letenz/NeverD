@@ -22,8 +22,9 @@ class KernelDeviceQueryExecution
     : public testing::TestWithParam<
           std::tuple<ExecutionBackendKind, ExecutionContract, bool>> {};
 
-TEST_P(KernelDeviceQueryExecution, OriginalDriverRetainsQueriedDeletedDevices) {
-  const auto [Backend, Contract, Rebase] = GetParam();
+void exerciseDeviceQueries(const std::filesystem::path &Image,
+                           ExecutionBackendKind Backend,
+                           ExecutionContract Contract, bool Rebase) {
   auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
   if (!Probe) {
     auto E = Probe.takeError();
@@ -45,10 +46,7 @@ TEST_P(KernelDeviceQueryExecution, OriginalDriverRetainsQueriedDeletedDevices) {
         Options.Scheduling = DriverScheduling{17, 10};
       if (Rebase)
         Options.LoadAddress = 0x1c0000000;
-      auto Result =
-          emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
-                            "driver_device_queries.sys",
-                        Options);
+      auto Result = emulateDriver(Image, Options);
       ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
       EXPECT_EQ(Result->NTStatus, 0u) << Result->Diagnostic;
       EXPECT_EQ(Result->Stop, Leak ? DriverStopReason::ModelError
@@ -68,6 +66,28 @@ TEST_P(KernelDeviceQueryExecution, OriginalDriverRetainsQueriedDeletedDevices) {
         EXPECT_GT(Calls[Name], 0u) << Name;
     }
   }
+}
+
+TEST_P(KernelDeviceQueryExecution, OriginalDriverRetainsQueriedDeletedDevices) {
+  const auto [Backend, Contract, Rebase] = GetParam();
+  exerciseDeviceQueries(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                            "driver_device_queries.sys",
+                        Backend, Contract, Rebase);
+}
+
+TEST_P(KernelDeviceQueryExecution, GenuineWdkRetainsQueriedDeletedDevices) {
+#if !defined(NEVERD_WDM_DEVICE_QUERIES_FIXTURE) ||                             \
+    !defined(NEVERD_WDM_DEVICE_QUERIES_CFG_FIXTURE)
+  GTEST_SKIP() << "genuine WDK device-query fixtures were not supplied";
+#else
+  const auto [Backend, Contract, Rebase] = GetParam();
+  exerciseDeviceQueries(NEVERD_WDM_DEVICE_QUERIES_FIXTURE, Backend, Contract,
+                        Rebase);
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  exerciseDeviceQueries(NEVERD_WDM_DEVICE_QUERIES_CFG_FIXTURE, Backend,
+                        Contract, Rebase);
+#endif
 }
 
 std::string deviceQueryParameterName(

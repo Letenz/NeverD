@@ -65,13 +65,19 @@ NEVERD_KERNEL_RUNTIME_STRING_API(RtlPrefixUnicodeString, 3, Passive,
                                  runtime::prefixUnicodeString(*this, Memory, A))
 
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlintegertounicodestring
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlint64tounicodestring
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlunicodestringtointeger
 // RVA 0x6f6280 (integer->string, via RtlIntegerToChar 0x6f7000) and 0x6638e0
 // (string->integer). Both reject invalid radices; the formatter needs room for
 // the null terminator, and the parser skips leading whitespace and a sign.
 NEVERD_KERNEL_RUNTIME_STRING_API(RtlIntegerToUnicodeString, 3, Passive,
                                  runtime::integerToUnicodeString(*this, Memory,
-                                                                 A))
+                                                                 A, false))
+// RVA 0x6f6790 preserves all 64 value bits through RtlLargeIntegerToChar and
+// shares the same counted-string output conversion.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlInt64ToUnicodeString, 3, Passive,
+                                 runtime::integerToUnicodeString(*this, Memory,
+                                                                 A, true))
 NEVERD_KERNEL_RUNTIME_STRING_API(RtlUnicodeStringToInteger, 3, Passive,
                                  runtime::unicodeStringToInteger(*this, Memory,
                                                                  A))

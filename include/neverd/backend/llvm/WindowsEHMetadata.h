@@ -47,6 +47,7 @@ enum class NativeProvenanceRole : unsigned {
   RangeExitTarget = 7,
   RegistrationChainAccess = 8,
   RegistrationCallback = 9,
+  RegistrationDynamicCall = 10,
 };
 
 inline constexpr llvm::StringLiteral

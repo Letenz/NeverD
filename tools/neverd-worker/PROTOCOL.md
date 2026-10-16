@@ -123,6 +123,31 @@ without the PDB it names and is saved with the project like a selection. With a
 one that loads. `pdb_reference` is listed in `capabilities` when the engine has
 it.
 
+`local_types {filter?,origin?,language?}`, `local_type {name,spelling?}`
+and `local_types_source {language?,spelling?,offsets?,hexOffsets?,asserts?,
+types?,dependencies?,prototypes?}` read the open program's local types
+through the SDK's `neverd_local_types_json`, `neverd_local_type_json` and
+`neverd_local_types_source`: the list with import statistics, counts by
+origin and the header libraries joined (`headers`), one type laid out member
+by member, and `{language,source}`, the types rendered as C, C++, Rust or Go.
+The engine reads them from the program's PDB the first time it is asked, and
+joins the system headers NeverD ships for the image, such as the Windows
+kernel's. A name the program has no type for, or the PDB's types failing to read,
+is a `local_types_failed` error. The three are listed in `capabilities` when
+the engine has them.
+
+`local_types_declare {source,language?}` and `local_types_forget {names}` are
+writer commands: the first reads C, C++, Rust or Go declarations into the
+program's local types through `neverd_local_types_declare` and returns
+`{types,prototypes,problems}`, each problem with its `line` and `column`, and
+nothing changed when there is one; the second removes the named types through
+`neverd_local_types_forget` and returns `{removed,usedBy}`. Each change is
+kept at once in `<input>.neverd-types.json`, which the engine reads again with
+the binary, so an analysis replica and the next session see the same types;
+when the sidecar cannot be written the change is undone and the command fails
+with `save_failed`. Neither joins undo history. Both are listed in
+`capabilities` when the engine has them.
+
 `dwarf_reference {path}` needs no open binary either: it returns the SDK's
 `neverd_dwarf_reference_json`, `{dwarf:null}` or `{dwarf:{path,location}}` --
 the file that holds an ELF or Mach-O image's DWARF, with location `input` (the

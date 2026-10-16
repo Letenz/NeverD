@@ -24,6 +24,7 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateConditional.cpp
   X86/RegistrationConditionalNative.cpp
   X86/RegistrationStateBoundCall.cpp
+  X86/RegistrationStatePrivateCall.cpp
   X86/RegistrationStateCallArguments.cpp
   X86/RegistrationStateInitializer.cpp
   X86/RegistrationStateCxx.cpp
@@ -44,6 +45,7 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateLocalUnwind.cpp
   X86/RegistrationStateTryLevel.cpp
   X86/RegistrationUnwindFrame.cpp
+  X86/RegistrationJumpContinuation.cpp
   X86/RegistrationStateJump.cpp
   X86/RegistrationStateBorrowedJump.cpp
   X86/RegistrationStateNestedFinally.cpp
@@ -106,9 +108,12 @@ add_neverd_component_library(NeverDIRLow
   X86/RegistrationCalleeFrame.cpp
   X86/RegistrationConditionalCall.cpp
   X86/RegistrationConditionalCallee.cpp
+  X86/RegistrationSEHPrivateCall.cpp
+  X86/RegistrationSourceCall.cpp
   X86/RegistrationJumpRuntime.cpp
   X86/RegistrationCRTFrame.cpp
   X86/RegistrationJumpCapture.cpp
+  X86/RegistrationJumpEH4.cpp
   X86/RegistrationCalleeIndex.cpp
   X86/RegistrationCalleeStack.cpp
   X86/RegistrationSEHControl.cpp

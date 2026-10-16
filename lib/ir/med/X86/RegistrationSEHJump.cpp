@@ -28,16 +28,20 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
   if (!Bound)
     return std::nullopt;
   if (!States.SEHJumpCapturesComplete || !States.SEHJumpResumptionsComplete ||
-      States.HasEH3JumpCaptures != !States.SEHJumpCaptures.empty())
+      States.HasSEHJumpCaptures != !States.SEHJumpCaptures.empty())
     return std::nullopt;
   std::map<va_t, X86RegistrationSEHJumpCall> Result;
   if (States.SEHJumpCaptures.empty() && States.SEHJumpResumptions.empty())
     return Result;
   if (!States.Complete || !States.CallbackStatesComplete ||
       !States.RegistrationLifetimeComplete || !Function.ExceptionMetadata ||
-      !Function.ExceptionMetadata->Registration ||
-      Function.ExceptionMetadata->Personality !=
-          ExceptionPersonality::ExceptHandler3)
+      !Function.ExceptionMetadata->Registration)
+    return std::nullopt;
+  const auto &EH = *Function.ExceptionMetadata;
+  const auto &Chain = *EH.Registration;
+  const bool EH4 = EH.Personality == ExceptionPersonality::ExceptHandler4;
+  if ((!EH4 && EH.Personality != ExceptionPersonality::ExceptHandler3) ||
+      (EH4 && (!States.SecurityCookiesComplete || !States.SecurityCookieVA)))
     return std::nullopt;
   std::map<va_t, const MedBlock *> Blocks;
   std::map<int, const MedBlock *> BlocksById;
@@ -77,18 +81,41 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
       return nullptr;
     return &It->second;
   };
+  const auto ValidState = [&](int32_t State) {
+    return Chain.SeededTryLevel &&
+           (State == *Chain.SeededTryLevel ||
+            (State >= 0 && size_t(State) < Chain.Scopes.size()));
+  };
   for (const auto &Capture : States.SEHJumpCaptures) {
     auto *Call = Bind(Capture.Address, Capture.OpSeq);
+    Work += Capture.Levels.size();
     if (++Work > limits::kMaxRegistrationEHStateWork || !Call ||
         Call->Operation->Inputs[0].ConstVal != Capture.TargetVA ||
         Capture.Address > UINT32_MAX - 5 ||
         Capture.Address + 5 != Capture.EndAddress ||
         Capture.UnwindVA == InvalidVA || !Capture.UnwindVA ||
         int64_t(Capture.BufferOffset) + Capture.BufferBytes > -24 ||
-        int64_t(Capture.StackOffset) + 16 > Capture.BufferOffset ||
+        int64_t(Capture.StackOffset) + (EH4 ? 20 : 16) > Capture.BufferOffset ||
+        Capture.Protocol != (EH4 ? RegistrationSEHJumpCapture::Kind::EH4
+                                 : RegistrationSEHJumpCapture::Kind::EH3) ||
+        Capture.SecurityCookieVA != (EH4 ? States.SecurityCookieVA : 0) ||
+        Capture.Levels.empty() || !llvm::is_sorted(Capture.Levels) ||
+        std::adjacent_find(Capture.Levels.begin(), Capture.Levels.end()) !=
+            Capture.Levels.end() ||
+        !llvm::all_of(Capture.Levels, ValidState) ||
         !Blocks.count(Capture.EndAddress) ||
         !Captures.emplace(Capture.Address, &Capture).second)
       return std::nullopt;
+    if (EH4) {
+      auto OverlapsCookie = [&](int32_t Offset) {
+        return int64_t(Capture.BufferOffset) + Capture.BufferBytes > Offset &&
+               int64_t(Offset) + 4 > Capture.BufferOffset;
+      };
+      if (Chain.RegistrationOffset != -16 || Chain.TryLevelOffset != -4 ||
+          Chain.EHCookieOffset >= -2 || OverlapsCookie(Chain.EHCookieOffset) ||
+          (Chain.GSCookieOffset != -2 && OverlapsCookie(Chain.GSCookieOffset)))
+        return std::nullopt;
+    }
     const auto *Block = BlocksById.at(Call->Block);
     const auto State = BlockStates.find(Call->Block);
     if (Block->Succs.size() != 1 ||
@@ -96,29 +123,22 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
         Block->EndAddr != Capture.EndAddress ||
         Call->Operation->DoesNotReturn || State == BlockStates.end() ||
         State->second->Unknown || State->second->CallbackOnly ||
-        State->second->Levels.size() != 1 ||
-        State->second->Levels.front() != Capture.Level)
+        State->second->Levels != Capture.Levels)
       return std::nullopt;
     Call->Capture = &Capture;
   }
   struct Resumption {
     std::set<int32_t> Levels;
-    std::map<int32_t, int32_t> Projection;
+    std::map<std::pair<int32_t, int32_t>, int32_t> Projection;
     bool Complete = true;
   };
   std::map<va_t, Resumption> ResumeLevels;
-  const auto &Chain = *Function.ExceptionMetadata->Registration;
-  const auto ValidState = [&](int32_t State) {
-    return Chain.SeededTryLevel &&
-           (State == *Chain.SeededTryLevel ||
-            (State >= 0 && size_t(State) < Chain.Scopes.size()));
-  };
   for (const auto &Resume : States.SEHJumpResumptions) {
     auto *Call = Bind(Resume.Address, Resume.OpSeq);
     const auto Capture = Captures.find(Resume.CaptureCall);
     if (++Work > limits::kMaxRegistrationEHStateWork || !Call ||
         Capture == Captures.end() || (Call->Capture && !Call->Resume) ||
-        Resume.ResumedLevels.empty() ||
+        (Resume.ResumedLevels.empty() && Resume.SelectedScopes.empty()) ||
         Resume.TargetVA != Capture->second->EndAddress ||
         Resume.BufferOffset != Capture->second->BufferOffset ||
         Resume.StackOffset != Capture->second->StackOffset)
@@ -136,8 +156,13 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
         return std::nullopt;
     } else if (!Resume.ValueOffset || !Call->Operation->DoesNotReturn)
       return std::nullopt;
-    Work += Resume.ResumedLevels.size() + Resume.StateRestores.size();
+    Work += Resume.ResumedLevels.size() + Resume.StateRestores.size() +
+            Resume.SelectedScopes.size();
     if (Work > limits::kMaxRegistrationEHStateWork ||
+        !llvm::is_sorted(Resume.SelectedScopes) ||
+        std::adjacent_find(Resume.SelectedScopes.begin(),
+                           Resume.SelectedScopes.end()) !=
+            Resume.SelectedScopes.end() ||
         !llvm::is_sorted(Resume.ResumedLevels) ||
         std::adjacent_find(Resume.ResumedLevels.begin(),
                            Resume.ResumedLevels.end()) !=
@@ -147,16 +172,37 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
                            Resume.StateRestores.end()) !=
             Resume.StateRestores.end())
       return std::nullopt;
+    for (uint32_t ScopeIndex : Resume.SelectedScopes) {
+      if (ScopeIndex >= Chain.Scopes.size())
+        return std::nullopt;
+      const auto &Scope = Chain.Scopes[ScopeIndex];
+      const auto Handler = Blocks.find(Scope.HandlerVA);
+      if (Scope.IsFinally || !Scope.FilterVA || Handler == Blocks.end())
+        return std::nullopt;
+      const auto State = BlockStates.find(Handler->second->Id);
+      if (State != BlockStates.end())
+        Work += State->second->Levels.size();
+      if (Work > limits::kMaxRegistrationEHStateWork ||
+          State == BlockStates.end() || !State->second->Reached ||
+          State->second->Unknown || State->second->CallbackOnly ||
+          !llvm::is_contained(State->second->Levels, Scope.EnclosingLevel))
+        return std::nullopt;
+    }
     auto &Plan = ResumeLevels[Resume.CaptureCall];
     Plan.Levels.insert(Resume.ResumedLevels.begin(),
                        Resume.ResumedLevels.end());
-    Plan.Complete &= !Resume.StateRestores.empty();
+    Plan.Complete &=
+        Resume.ResumedLevels.empty() || !Resume.StateRestores.empty();
     std::set<int32_t> Restored;
     for (const auto &State : Resume.StateRestores) {
-      if (!ValidState(State.FrameLevel) || !ValidState(State.ResumeLevel))
+      if (!ValidState(State.FrameLevel) || !ValidState(State.ResumeLevel) ||
+          !std::binary_search(Capture->second->Levels.begin(),
+                              Capture->second->Levels.end(),
+                              State.CaptureLevel))
         return std::nullopt;
-      const auto [It, New] =
-          Plan.Projection.emplace(State.FrameLevel, State.ResumeLevel);
+      const auto [It, New] = Plan.Projection.emplace(
+          std::make_pair(State.CaptureLevel, State.FrameLevel),
+          State.ResumeLevel);
       if (!New && It->second != State.ResumeLevel)
         return std::nullopt;
       Restored.insert(State.ResumeLevel);
@@ -203,11 +249,13 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
       auto Previous = *Call->Resume;
       if (Previous.OrdinaryCall == Resume.OrdinaryCall &&
           (Previous.ResumedLevels != Resume.ResumedLevels ||
-           Previous.StateRestores != Resume.StateRestores))
+           Previous.StateRestores != Resume.StateRestores ||
+           Previous.SelectedScopes != Resume.SelectedScopes))
         return std::nullopt;
       Previous.OrdinaryCall = Resume.OrdinaryCall;
       Previous.ResumedLevels = Resume.ResumedLevels;
       Previous.StateRestores = Resume.StateRestores;
+      Previous.SelectedScopes = Resume.SelectedScopes;
       if (Previous != Resume)
         return std::nullopt;
       continue;
@@ -218,8 +266,11 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
   std::erase_if(Result, [](const auto &Item) { return !Item.second.Capture; });
   for (auto &[Address, Call] : Result) {
     const auto Level = ResumeLevels.find(Call.Capture->Address);
-    if (Level == ResumeLevels.end()) {
-      Call.ResumeLevel = Call.Capture->Level;
+    if (Level == ResumeLevels.end() || Level->second.Levels.empty()) {
+      if (Call.Capture->Levels.size() == 1)
+        Call.ResumeLevel = Call.Capture->Levels.front();
+      else
+        Call.ResumeLevel.reset();
     } else if (Level->second.Levels.size() == 1) {
       Call.ResumeLevel = *Level->second.Levels.begin();
     } else {
@@ -227,7 +278,7 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
         return std::nullopt;
       Call.ResumeLevel.reset();
       for (const auto &[Frame, Resumed] : Level->second.Projection)
-        if (Frame != Resumed)
+        if (Frame.second != Resumed)
           Call.ResumeStateMap.emplace(Frame, Resumed);
     }
   }

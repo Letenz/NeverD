@@ -38,7 +38,9 @@ RegistrationStateSolver::cookieSlot(int32_t Displacement) const {
 
 bool RegistrationStateSolver::cookiesReady(const FrameState &Frame) const {
   const auto SP =
-      Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride].Offset;
+      Frame.CallbackEntry
+          ? Frame.load(*Chain.RegistrationOffset - 8, 4).Offset
+          : Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride].Offset;
   auto Matches = [&](std::optional<int32_t> Slot, int32_t XOROffset) {
     if (!Slot || !SP || *Slot < *SP)
       return false;
@@ -57,6 +59,31 @@ bool RegistrationStateSolver::cookiesReady(const FrameState &Frame) const {
          Matches(EHCookieSlot, Chain.EHCookieXOROffset) &&
          (Chain.GSCookieOffset == -2 ||
           Matches(GSCookieSlot, Chain.GSCookieXOROffset));
+}
+
+bool RegistrationStateSolver::hasCompleteCookieChecks() {
+  size_t Checked = 0;
+  for (const auto &Identity : CookieCheckOccurrences) {
+    if (!charge(1))
+      return false;
+    if (CookieChecks.count(Identity)) {
+      ++Checked;
+      continue;
+    }
+    // A preserved helper is proved for these invocation inputs. Its unchanged
+    // unreachable code supplies no cookie observation on this call. A parent
+    // being reconstructed still needs a receipt for every source occurrence.
+    if (!Conditional || !Conditional->Complete)
+      return false;
+    const auto Boundary = Boundaries.find(Identity.first);
+    if (Boundary == Boundaries.end())
+      return false;
+    const auto Block = Index.find(Boundary->second.first);
+    if (Block == Index.end() || Block->second >= Result.Blocks.size() ||
+        Result.Blocks[Block->second].Reached)
+      return false;
+  }
+  return Checked == CookieChecks.size();
 }
 
 } // namespace neverd::registration_state

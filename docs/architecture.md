@@ -72,6 +72,73 @@ the file through the strict PDB loader.
 or before the PDB they chose loads. Epoch and request guards retire downloads on
 document changes, and network errors do not change the image.
 
+## Local types boundary
+
+`lib/types` (NeverDTypes) owns a program's named types as a reader sees and
+edits them. `TypeLibrary` holds structures, unions, enumerations, typedefs and
+function types under ordinals that survive replacement. Anonymous unions and
+structures stay in place, member offsets are bits from the record that holds
+them, and builtin sizes follow the data model (`BuiltinTypes.def`).
+Importers fill the library; renderers and frontends only read it.
+
+`importPDBTypes` reads every named record and enumeration of a PDB's TPI
+stream. MSVC flattens anonymous members into their parent, so
+`nestFlatMembers` rebuilds the nesting from offsets, bitfield storage units
+and alignment:
+- members that begin together are a union's alternatives;
+- a member in a union's tail padding belongs to the union;
+- a member that reaches back over earlier ones takes them into its union.
+
+The import infers `#pragma pack` from member offsets and the record size
+before nesting. It reports a record whose nesting does not flatten back to the
+stream's member list, or whose members cannot sit where they say
+(`layoutProblem`).
+
+`renderType` and `renderTypes` spell types as C, C++, Rust or Go
+(`TypeLanguages.def`), each member marked with its offset. Every language
+reproduces the library's layout exactly. An explicit filler moves a member
+that the language's own rules would place earlier. Rust and Go read what they
+cannot express through accessors whose arithmetic follows C, signed bitfields
+included: unions in Go, bitfields, members Go cannot align, and flexible
+arrays. Names a language cannot spell, such as `std::pair<int,int>` or an
+enumerator two enumerations share, take one identifier per language
+(`renamedNames`). With asserts, the output checks every size and offset when
+it compiles.
+
+`parseTypes` reads C, C++, Rust and Go declarations back into the library
+(`TypeParse.h`), and `layOutRecord` lays each record out under MSVC or
+Itanium rules (`TypeLayout.h`):
+- C and C++ take every builtin spelling the renderers write, `#pragma pack`,
+  alignment specifiers and static assertions, which are checked;
+- Rust and Go take what their renderers write: records named `<Parent>_<n>`
+  that the parent holds go back in place, a `_bitfield` comment lists its
+  bitfields, and Go's unions, unaligned members and flexible arrays come
+  back from their accessor methods.
+
+A source reads whole or not at all. The C API keeps the user's declarations
+in order and reads them again over the program's types whenever those are
+read anew, as after loading another PDB. A declaration that no longer reads
+is left out and reported (`declarationProblems`), never silently dropped.
+The worker writes the declarations to `<input>.neverd-types.json` at once;
+they do not join undo history.
+
+Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
+the system's types and prototypes that its debug information lacks: the
+Windows kernel's PDB names records, but no typedefs and no prototypes.
+`scripts/generate_windows_kernel_types.py` renders what `<ntifs.h>` declares,
+from mingw-w64's DDK headers, into `lib/types/headers/WindowsKernelX64.h`.
+The build embeds the file, and `headerLibrary` reads it once. The C API joins
+a library to an image the table names (an x64 PE of the native subsystem)
+after the program's PDB and before the user's declarations:
+- a header type joins only where the program has no type of its name;
+- a typedef names the program's type, as C binds it;
+- a header record laid out with a type the program sizes otherwise is left
+  out and reported (`conflicts`).
+
+`neverd_types_convert` and `neverd types --data-model` read and render
+declarations without a program, which is how the generator builds the
+library.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and
@@ -89,6 +156,11 @@ Cancelling its final subscriber retires the process, since a synchronous C API
 analysis call cannot be interrupted safely. Replica revisions and analysis
 discovery never advance the writable project's state. All workers use the
 same public C API; this split does not duplicate engine semantics.
+The 64-bit Linux worker embeds a pinned mimalloc allocator in its executable.
+Its C++ code and loaded SDK use that one process heap, including cross-thread
+releases. No allocator replacement is exported by the SDK itself. Other hosts,
+allocation-sanitizer builds and `NEVERD_WORKER_MIMALLOC=OFF` use the platform
+allocator. The build keeps the worker's existing CPU instruction requirements.
 Function preparation uses `neverd_prepare_function_view`, which shares the
 source route's ARM mode, exception-handler discovery and analysis-scope checks
 without emitting C. Source, IR and CFG views consume that prepared pipeline.
@@ -127,7 +199,11 @@ document. A hit can answer before preparing the mutable single-function Session;
 it never marks that Session as
 holding the cached function. Graph and IR preparation keeps its own state.
 Documents own text, rows and edit anchors, and project or presentation changes
-invalidate them. Oversized documents remain readable without being retained.
+invalidate them. After decoration, a document checks whether its row numbers
+and both ends of its name spans are monotone. Pages seek directly through those
+arrays when they are ordered; other producer orders and nested spans keep their
+original filtering order. Oversized documents remain readable without being
+retained.
 
 `SourceViewOptions` owns request-local native source policy. Ordinary HighIR
 conversion skips symbolic expression simplification. An explicit source request
@@ -399,6 +475,28 @@ MedIR also owns the checked nonlocal-jump and bound-callee bindings. ABI
 recovery uses their exact stack-only capture/resume contracts; an incidental
 register value cannot shift the jump-buffer argument. LLVM emission and COFF
 source replay consume those same bindings.
+`MedLLVMRegistrationSEHDynamicScope` owns parent blocks with several proved
+incoming states. It keeps PHIs on the original predecessor edges and selects
+one scope around a single source body. With LLVM's dynamic-call capability,
+ordinary calls explicitly inherit the live physical state and remain noinline
+and notail. LLVM's x86 state analysis cannot use a later resetting call to infer
+the initial state before an inherited call. `COFFRegistrationSEHDynamicScope`
+independently checks selector storage, complete scope choices, source boundaries
+and every call marker; a marker on a function or outside the checked body grants
+no installation permission. Source-call identity, argument binding and frame
+privacy keep their existing owners.
+`RegistrationSourceCall` authenticates the owned PE32 E8 occurrence shared by
+jump-runtime and private-callee proofs. `RegistrationSEHPrivateCall` reuses the
+bounded private object graph with no object borrow or stack arguments to retain
+live parent captures across ordinary calls. Code, scope-table and import-write
+checks remain mandatory. The state transfer drops cells below call SP and keeps
+volatile results unknown; it grants no bound-helper or native argument ABI.
+Native admission independently replays the caller closure and caller-PC readback.
+`COFFRegistrationSEHCall` binds each dynamic call to its adjacent source receipt.
+The generic exception counter and PE32 replay share this check; the counted call
+set must equal the calls inside authenticated dynamic scope bodies.
+LLVM also models the x86 runtime's register clobber at SEH handler entry, so
+values used only after an exception cannot remain in callee-saved registers.
 With `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, LLVM maps each callback
 write's source semantic token to its physical parent registration and generated
 state. MC receipts bind parent/callback ownership, frame layout, write identity,
@@ -583,16 +681,36 @@ moving ESP alone does not provide one. All activations share the original
 cumulative work budget.
 The suspended-finally interpreter partitions filter returns by disposition and
 written TryLevel, including joins at a shared return block. Search keeps the
-cursor captured before each filter call. Continued exceptions resume every
+cursor captured before each filter call under the same EH3/EH4 protocol.
+EH4 search requires the checked
+image cookie and intact EH/GS slots both before the filter and at its returned
+frame; the shared scope graph supplies its -2 outside sentinel. Cookie and
+scope storage retain their separate write exclusions. Continued exceptions resume each
 resulting frame at the next instruction; instruction-local temporaries cannot
 cross an internal split. Ordinary callback propagation uses these same checked
 filter effects after a returning `RaiseException`, including changed parent
 cells. Each returned state supplies its own exceptional roots before the
 frames join, so a filter can establish the proof for a scope absent from
 ordinary parent flow. A failed search cannot publish a complete root proof.
-Handler-selected paths contribute no ordinary returning frame. Ordinary
-propagation can retain a conditional return from an external search, while
-nonlocal unwind still requires every path to resume inside its proved search.
+Handler selection keeps the captured scope separate from the written state.
+The iterative unwind owner finishes its local cleanup under that scope's bound,
+then publishes handler entry at the enclosing level. Its cycle key includes the
+bound and selected scope; nested selections share the original work budget.
+`RegistrationJumpContinuation` restores capture registers only for normal unwind
+outcomes. Selected paths use the canonical exceptional-entry owner, discarding
+suspended callback stacks and registers. LowIR records selected scopes separately
+from resumed states; MedIR checks their handler roots without inventing a
+resumption projection. COFF admission repeats the source analysis independently.
+Ordinary propagation can retain a conditional return from an external search;
+nonlocal unwind requires every path to close inside the proved registration.
+The COFF copy-edge owner accepts frozen poison only through a complete,
+unobserved private scalar transport graph. This includes cycles kept live by
+jump snapshots, but excludes return values, calls, escaping addresses and source
+memory. Other copy shapes retain their existing checks and work budget.
+Static addresses in unreached source blocks may join equivalent frame values
+through PHIs. Every ordinary and exceptional arm must have the same proved
+coordinate, including checked runtime frame definitions at handler entry. This
+address proof grants no execution or state-transition receipt.
 Unwind records the logical state left at entry or by
 the last completed callback together with the final runtime state. Remaining
 filter-only unwind steps may make those values differ. MedIR binds a variable
@@ -601,6 +719,26 @@ every contributing path. LLVM reads the logical cell once after a returning
 capture and maps that original value to the final state. The independent COFF
 consumer checks the exact volatile read, projection keys/results, zero-return
 selector and contiguous restoration.
+For multi-state captures, `SEHFlowKey` partitions current states and saved buffer
+bounds while preserving existing frame joins within each partition. Publication
+unions only compatible source occurrences. MedIR maps the captured bound together
+with the last visible frame state to the final runtime state. LLVM saves the
+logical bound in a private volatile slot before the one physical capture; COFF
+replays its exact source-cell address, two uses, ordering and contiguous save and
+restore placement. The saved bound supplies no buffer initialization or callee
+privacy authority. All partitions and projections share the existing work budget.
+For preserved EH3/EH4 helpers, the conditional callee proof returns object effects in
+the caller's coordinates. The parent state owner checks allocation and excludes
+its registration and cookie cells from all effects and object-address arguments.
+EH4 callers additionally prove live cookie initialization before invoking this
+path; the MedIR call binder requires the complete cookie receipt before lowering.
+EH4 helpers use the same authenticated image cookie inputs and state owner as
+their callers. Conditional memory admits only the exact four-byte cookie read;
+the transfer owner checks each live GS call's ECX value. A borrowed resumption
+requires the helper's own outside-state sentinel and intact cookies. For an
+unchanged preserved helper, cookie-call coverage follows the proved invocation's
+reachable blocks. Unreachable calls grant no effects; a reconstructed parent
+still requires coverage of every source cookie-call occurrence.
 Registration no-return annotations and ordinary-edge removal bind the same
 current call occurrence, target, instruction extent and operation range. A
 conditional or malformed instruction cannot reuse that receipt. A separate
@@ -1486,15 +1624,24 @@ queries solve only new dependencies.
 
 Register and memory value reconstruction share a stack of active walks. A
 concrete merge that skipped a transparent backedge is still provisional: later
-loop definitions may add values. Every memo result records a conservative range
-of the active walks it depends on, including dependencies inherited through memo
-hits. Retiring a dependency invalidates that snapshot; closing the state's own
+loop definitions may add values. `ResolverPendingWalks` records the exact active
+dependencies through depth 255 in fixed storage, including dependencies
+inherited through memo hits. Greater caller-specified depths use a conservative
+interval there. Unrelated intermediate returns do not expire an exact snapshot.
+Retiring a dependency invalidates that snapshot; closing the state's own
 backedges removes only its own activation. Unique activation identities prevent
 a later walk at the same depth from reviving stale entries. Concrete results
 with no pending dependency retain their ordinary batch lifetime. Context-free
 transparent cycles retain the existing shared generation guard; memory-context
 resets also invalidate those entries in the value memo. Neither cache bypasses
 incomplete-proof rejection.
+
+Edge refinement shares one predicate policy with its local shape inspection.
+An exact, unguarded byte producer can establish that the current query cannot
+use a condition, avoiding reconstruction of its operands. Exact COPY and NOT
+transports preserve that classification. Needed predicates, guarded or partial
+definitions, and producers outside the local block retain the complete walk.
+All inspected definitions consume the ordinary evidence allowance.
 
 HighIR's call-argument projection uses the same checked affine equation core
 for entry-stack offsets in an immutable MedIR function. Each SSA definition is
@@ -4474,7 +4621,7 @@ explicitly unsupported. Resource operations retain a recovery dependency.
 
 `KernelModelWaits` owns single/multiple wait registration, thread references, deadlines and opaque caller `KWAIT_BLOCK` lifetimes. `KernelDispatcher` validates the complete set before committing signal/count/mutex changes; `KernelScheduler` consumes selected synchronization-timer signals as one preflighted batch. `WaitRegistrations` retains this authoritative record. Each deferred wait has a never-reused identity and immutable captured state; polling a completed or altered wait fails before acquiring signals or releasing references.
 
-`KernelModelDeviceStack` keeps each device's driver owner, allocation, attachment neighbors, delete-pending state and internal references in one record. The guest `NextDevice` inventory and the host-owned attachment graph have different meanings. Namespace resolution retains the named lower device for `FILE_OBJECT` and reports, selects the current top for initial dispatch and READ/WRITE buffer flags, and captures a retained route. Detach/delete cannot expire devices still owned by a request or callback; the public `ReferenceCount` remains an open-handle count.
+`KernelModelDeviceStack` keeps each device's driver owner, allocation, attachment neighbors, delete-pending state and internal references in one record. The guest `NextDevice` inventory and the host-owned attachment graph have different meanings. Namespace resolution retains the named lower device for `FILE_OBJECT` and reports, selects the current top for initial dispatch and READ/WRITE buffer flags, and captures a retained route. Detach/delete cannot expire devices still owned by a request or callback; the public `ReferenceCount` counts associated file bodies.
 
 Attachment queries use the same topology and object-reference owner; returned pointer references retain allocation independently of driver-list membership and open-handle counts.
 
@@ -5180,6 +5327,7 @@ libraries supplied by the CMake helper.
 | `lib/sdk` | Public C ABI, session lifecycle, queries, persistence, plugins, lift/decompile/patch/audit/hunt entry points | Aggregates the engine components into `libneverd` |
 | `lib/pass` | LLVM IR obfuscation passes and MIR pass runner | IR |
 | `lib/debug` | DWARF, PDB, and linker-map debug contexts | IR |
+| `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust and Go | LLVM DebugInfo PDB |
 | `lib/sigs` | Signature parsing, databases, and matching | Loader |
 | `lib/libc` | Known libc names and call-model support | Standalone component |
 | `lib/symbolic` | Width-exact symbolic execution, bounded path exploration, stable control-decision histories, and the exact concrete shadow | LowIR |
@@ -6215,8 +6363,8 @@ near-return encodings. The interpreter follows actual arguments, every ordinary 
 private stack allocation and parent-frame writes, including changes to nominally
 preserved registers. This establishes state flow without granting a callable
 native ABI. Nonlocal restoration, calls inside a finally and jump-buffer
-resumption still require a separate invocation-exit contract; the PE32 xcpt4
-case remains incomplete.
+resumption use the separate invocation-exit and capture contracts described
+below. The PE32 xcpt4 state regression checks their combined source proof.
 
 `RegistrationSEHControl` authenticates the actual PE32 near CALL and RET bytes.
 When LowIR has folded the return continuation, it retains the complete immutable
@@ -6240,8 +6388,9 @@ to their exact callback, CALL and continuation block. Outlining replaces these
 with the callback's C return ABI; source-segment validation requires an actual
 return at that generated exit. Nonlocal parent jumps and jump-buffer resumptions
 still require their own CFG/SSA projection and native replacement receipts.
-The PE32 xcpt4 issue remains open, including jump-buffer and incoming-object
-effects.
+The PE32 xcpt4 source regression covers jump-buffer and incoming-object effects
+under the default work budget; this alone does not establish native rebuilding
+for every protocol in that executable.
 
 `RegistrationFrameEffects` owns the integer-frame effect of the exact void
 `X87Wait` intrinsic. WAIT retains its x87 side effect and possible exception
@@ -6266,7 +6415,7 @@ prove the replacement runtime objects. This supplies the exception-field part
 of the PE32 helper analysis; incoming object arguments and their caller bounds
 still require separate proof.
 
-`RegistrationConditionalCallee` specializes an original EH3 helper from the
+`RegistrationConditionalCallee` specializes an original EH3/EH4 helper from the
 caller's actual stack cells. It authenticates the physical CALL, complete
 immutable callee instructions and ordinary near returns. Incoming scalar words
 and four-byte caller objects occupy separate coordinates; object bounds exclude
@@ -6286,13 +6435,15 @@ returns that identity and its scalar value to the caller's unwind owner.
 These are source-analysis facts; native lowering rejects them until a replacement
 call and buffer plan is proved.
 
-`RegistrationJumpRuntime` authenticates the exact PE32 capture, resume and EH3
-unwind import bindings and immutable FF25 veneers. `RegistrationJumpCapture`
-checks a current source CALL, complete buffer separation, the installed canonical
-frame and the explicit two-argument unwind protocol. It retains actual captured
-nonvolatile values, including unknown pointer provenance. `RegistrationJumpBuffer`
-owns the ten initialized DWORDs; the six unused unwind-data words retain their
-original contents. `RegistrationStateJump` retains captures across checked
+`RegistrationJumpRuntime` authenticates the exact PE32 capture, resume and
+EH3/EH4 unwind import bindings and immutable FF25 veneers. `RegistrationJumpCapture`
+checks a current source CALL, complete buffer separation and the installed canonical
+frame. `RegistrationJumpEH4` binds the three-argument EH4 protocol to the encoded
+scope pointer and image cookie address; EH3 requires two unwind arguments. The
+state owner additionally proves cookie initialization, lifetime and disjoint slots.
+Captures retain actual nonvolatile values, including unknown pointer provenance.
+`RegistrationJumpBuffer` owns ten initialized DWORDs for EH3 and eleven for EH4;
+the remaining unwind-data words retain their original contents. `RegistrationStateJump` retains captures across checked
 transfers, withdraws them on overlapping writes, released storage or unknown
 calls, and rejects an altered runtime import slot. An authenticated resume walks
 the current unwind levels, preserves checked finally writes, restores captured
@@ -6364,9 +6515,13 @@ Interpreter specialization retains full-width guest addresses. At publication, i
 
 `X64CodeRegions` and `X64ImportBindings` add an explicit raw environment to binary specialization. The complete fixed PE owns its full image extent; supplemental immutable code must be disjoint and uses the existing strict decoder, symbolic executor and solver with physical CALL/RET semantics. Writable external data remains unknown. The caller supplies all machine, stack and stable-binding preconditions. An owned receipt binds the original options, image identity, exact graph and evidence to the entry requirement, including unused declarations. Preparation shares one allowance with the primary image; result validation uses independent expected limits. Integrity does not prove a live environment or grant source/native certification.
 
+`X64MachineExits` declares exact CALL, unconditional JMP and canonical near RET boundaries for a raw machine region. `NativeStackControl` strictly relifts the original bytes and retains the complete transfer: CALL captures its target before pushing the original fallthrough address; RET loads the actual stack word before advancing RSP by eight plus any unsigned cleanup. The final target remains a value, including for direct transfers. This domain requires explicit nonfaulting CET-disabled x64 state and excludes the ordinary restored-return-slot and terminal-import contracts. Unknown stores retain their alias effects; every unlisted transfer still needs exhaustive internal analysis. The existing bounded raw requirement and receipt bind the declarations, graph and physical exit spans. Complete describes the declared region only. Callee effects, reentry, continuation composition, whole-function recovery and source/native certificates remain separate obligations; ordinary consumers reject this domain even when its declarations are unused.
+
 `ProveStoreReturnSlotSeparation` also proves preservation of individual live native return cells across ordinary non-frame stores with 64-bit addresses. Each complete eight-byte cell must be disjoint under the current path. Only existing bytes in the accepted range union survive; gaps, unproved cells and other banks keep normal alias invalidation. Proof and preservation share the existing budgets and add no stack-ownership assumption.
 
-`MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. This supplies no reachability or memory-ownership fact and never populates the finite-domain cache. Each attempt charges one unit per uncached readability-prefix node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization. Completed enumeration or proved excess cardinality can populate the original query cache through the exact expression equality, retaining its constant-bias translation. Algebraic offsets alone and incomplete retries cannot populate finite domains.
+`MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. Alone, this supplies no reachability or memory-ownership fact and cannot populate the finite-domain cache. Each attempt charges one unit per uncached readability-prefix node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization. Completed enumeration or proved excess cardinality can populate the original query cache through the exact expression equality, retaining its constant-bias translation. Algebraic offsets alone and incomplete retries cannot populate finite domains.
+
+If the same cache already holds a completed empty-projection proof for the identical predicate at limit one, `FrameOffsets` can combine it with the exact algebraic offset and cache the original query, preserving modular bias translation. Feasible predicates yield a singleton; proved infeasibility stays empty. Missing, incomplete or unrelated proofs cannot enable this reuse. No additional solver query or memory premise is introduced.
 
 For constant-only projections, `InterpreterSpecialization` reuses a completed empty-projection proof under the identical predicate and tuple limit, then reconstructs the literal tuple. Constants do not establish reachability. Observers still validate every original address and extent, including cache hits; rejected observations and incomplete enumeration never supply a completed proof.
 
@@ -6538,8 +6693,9 @@ semantics. Guest storage uses the existing allocator and address-space authority
 shared by descriptor aliases and raw/Bionic calls. JSON adapters supply no
 alternate semantics or service responses. JNI object limits and Binder stream
 admission fail explicitly rather than borrowing a host VM or driver.
-`AndroidJNIMethods` owns the finite intrinsic method catalogue, descriptor binding
-and execution; all JNI call forms reuse it and Bionic's GP argument reader.
+`AndroidJNIMethods` owns JNI method identities and descriptor/argument binding;
+all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
+The finite intrinsic catalogue remains in that owner.
 `LinuxBinderTransactions` routes object-free messages between guest-owned opens;
 LinuxMemory owns their read-only arenas and every service body remains guest code.
 `LinuxGPUCommands` owns explicitly selected PM4 admission and execution, using
@@ -6549,4 +6705,33 @@ adapters declare these contracts and never infer methods, services or commands.
 
 `KernelModelNamespace.cpp` resolves names through the shared reference and handle owner. Device names remain owned by device records; immutable driver/directory/link names belong to object records. Links retain captured target bytes and separate permanent/named state. Handle close removes temporary names before pointer-reference retirement. Device I/O holds control driver-list removal independently of object storage references. No transport owns a second namespace or reference count.
 
-KernelModel keeps scenario identifiers separate from address-keyed file bodies. KernelModelObjects owns caller pointer counts; KernelModelFileObjects owns deferred CLOSE dispatch and waits. KernelModelIO retires bodies only after packet completion and dispatch/continuation return. Device and PnP holds inspect bodies, including bodies with no scenario identifier. DriverSession inherits the actual parent context for synchronous nested callbacks; independent scheduled callbacks keep their own context.
+KernelModelObjects owns file handle and pointer counts in the common object table. KernelModelFileObjects selects per-process unlock versus global cleanup, prepares the request before consuming a handle, and owns deferred CLOSE and caller waits. KernelModelIO retains scenario payloads and retires bodies only after packet completion and dispatch/continuation return. KernelFramework carries an optional effective-process override only for internal file lifecycle callbacks. DriverSession preserves the invoking thread and creating-process identity, activates the inherited address space, and restores the source context before final release. Independent scheduled callbacks retain their own context. Device and PnP holds inspect bodies rather than scenario identifiers.
+
+## Shared Dalvik decode and bounded execution
+
+`NeverDDalvik` owns the decoded declarations, DEX reader, signatures and input
+budget formerly confined to the mobile CLI. Mobile source recovery includes
+compatibility headers and consumes that same core; it owns Smali parsing and
+Java source emission. The shared module depends on LLVM Support and zlib, not
+CLI/session state or CPU transports. The existing pinned zlib fallback has one
+CMake owner. This does not add a second instruction decoder.
+
+`dalvik::Program` owns immutable explicit class declarations and integral static
+method execution over decoded instructions. Frames own typed 32-bit register
+words and overlapping-wide invalidation; arithmetic has one unsigned-bit
+implementation of Java integer semantics. Calls share one owner-provided
+instruction/deadline callback and bounded frame storage. Missing semantics
+produce a typed stop, with method identity and code-unit PC.
+
+`AndroidDex` admits API-28 DEX bytes before native execution and binds Program's
+budget and exceptions to the existing Bionic workload VM. `AndroidJNIMethods`
+keeps opaque method IDs, call-form/type checks and argument transport; it never
+interprets instructions or stores caller-provided successful results. JSON only
+accepts strict explicit hex images. There is no host JVM, implicit classpath,
+network or phone dependency. The initial supported class contract excludes
+stateful initialization, fields, hierarchy dispatch, objects and handlers.
+
+
+`KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
+
+KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing operation accepts an already admitted node and mapped access, checks both directions, and excludes metadata-only opens from sharing conflicts. CLEANUP releases sharing without retiring the token; CLOSE removes the cleaned token. Cleaned retained bodies still count toward the 1024-open bound. Exact binding validation compares tokens with the file-object owner. `KernelModelFileCreate` owns CREATE and cancellation producers and reserves handle capacity before callbacks. `DriverSession` retains the original caller through pending work and nested CLOSE. The common object owner publishes the handle; namespace lookup retains a real directory body, and the terminal provider reads the admitted packet. Scenario close intent remains separate. Bidirectional token checks run on snapshot and unload.

@@ -1272,9 +1272,11 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `windows-alignment-oracle.yml` は `check_windows_alignment.py` と `WindowsAlignmentCases.def` を使い、独自の x64 Windows 例外を 72 件観測します。九つの aligned SSE 形式を、七つの非整列アドレス／アクセス権のケースと、整列済みだがアクセス不能なページの対照で実行します。例外コード、引数、障害 PC、保存コンテキスト、生の出力、ソースとバイナリのハッシュを保持し、入力と RAM が不変であることを確認します。これは OS の動作の観測であり、KVM/WHP の実行認証や SEH 対応の追加ではありません。
 
-`native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
+`native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 58 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks = 5615`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 131 ワークロードから 262 件の WHP 結果を要求します。内訳は組み込み 27、WDK 64 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5085 CPU + 262 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 92 driver API checks = 5740`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+
+実際の WDK インベントリは `driver_device_queries.c`、`driver_file_objects.c`、`driver_file_handles.c` の通常版と CFG 版もビルドします。`DriverDeviceQueryTests.cpp` と `DriverFileObjectTests.cpp` は可搬版と同じ検証で、両契約、基址、スケジュール方式の参照保持、失敗 CREATE、プロセス識別、最終ハンドル CLEANUP、遅延 CLOSE を確認します。3 系統はネイティブ必須項目であり、インベントリ検証は `NEVERD_WDK_FIXTURE` を持つソースを独立に探索し、WDK ビルドの欠落を検出します。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1796,6 +1798,10 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`NormalizationFeasibilityCachesExactTranslatedTheorems` · `NormalizationFeasibilityRejectsIncompleteAndUnrelatedProofs` · `NormalizationFeasibilityRetainsStorageAndWorkLimits`.
+
+`MachineExitRetReadsAliasedBytesBeforePhysicalPop` · `MachineExitCallCapturesTargetBeforeAliasingPush` · `MachineExitJumpRetainsDynamicAndOriginalDirectTargets` · `MachineExitKeepsInternalCallsAndReturnProofs` · `MachineExitRequiresExactDomainBytesAndTransferKind` · `MachineExitIntegrityBudgetsAndOrdinaryConsumers` · `MachineExitProvesLiveInternalReturnCells`.
+
 `ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
 
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` は、キャッシュ済み履歴への再課金を防ぎ、追加した幅広定数の課金、作業量・ノード上限不足での拒否、可読性キャッシュのコピー独立性を検証します。
@@ -1979,4 +1985,15 @@ Linux ネイティブ検証では `HighSwiftEmitter` 全体も実行し、レジ
 
 `KernelDeviceStackTests.cpp` は現在の隣接関係、借用と保持、入力または隣接デバイスの削除、最後の参照の解放、不正・破損入力、参照追加前の IRQL 拒否を検証します。独自の `fixtures/driver_device_queries.c` を `DriverDeviceQueryTests.cpp` で実行し、利用可能なバックエンド、両契約、両ロードアドレス、協調および 17 命令のプリエンプティブ実行を網羅します。detach/delete 後の領域保持と意図的な参照リークによるアンロード拒否を確認し、ネイティブ受け入れには 4 種の契約/アドレス結果が必要です。
 
-KernelFileObjectTests は CREATE 中の参照、型不一致、番号再利用、保留 CLOSE、削除、CREATE 失敗、高 IRQL の最終解放拒否を確認します。独自の driver_file_objects.c と DriverFileObjectTests は利用可能なバックエンド、両契約、両基底、協調実行と 17 命令スケジューリングで同期・保留 CLOSE、作成失敗、意図的なリークを検証します。入れ子の CLOSE は実際のスレッド、プロセス、PreviousMode を確認します。ネイティブ検証では契約と基底の四組を必須とし、ハンドルとファイルシステムは別途検証が必要です。
+KernelFileObjectTests と KernelObjectTests は型付きオープン、型不一致時の出力ゼロ化、汎用権限、各プロセスと全体の計数、コールバック内再オープン拒否、経路エラー後の再試行、要求元終了、再クリーンアップ、保留 CLOSE を確認します。KernelPnpRequestTests は遅延 CLEANUP の下位応答、KernelFrameworkFileTests は実効プロセスと LOCK_CONTROL を確認します。driver_file_objects.c の参照寿命テストも維持します。独自の driver_file_handles.c は協調実行と 17 命令スケジュールで同期／保留 CLEANUP と CLOSE、ワーカーからの解放、番号再利用、意図的リークを検証します。真正 WDK の driver_kmdf_file_handles.c はシステムプロセスでの清掃、元のプロセスでの終了、清掃コールバックなしの経路を確認します。NEVERD_KMDF_FILE_HANDLES_FIXTURE と任意の NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE を設定します。DriverFileObjectTests は利用可能なバックエンド、両契約、両基底を使い、不足した WDK やバックエンドを明示的にスキップします。ファイルシステムは別途検証が必要です。 シナリオ由来の KMDF CLEANUP/CLOSE は呼び出し元のプロセス、スレッド、PreviousMode を保持します。F モードは別ファイルの CLEANUP 内で保持ハンドルを閉じ、復帰時のコンテキストを確認します。
+
+`KernelFileQueryTests.cpp` はパケット、借用メモリ、即時/保留状態、無効な出力、ワーカー通知、ファイル保持、最終 CLOSE を検証します。`DriverFileObjectTests.cpp` は独自の `driver_file_queries.c` を契約、バックエンド、基址、協調/命令時計スケジューリング別に実行します。任意の `NEVERD_WDM_FILE_QUERIES_FIXTURE` と `NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE` は実際の WDK ヘッダーとインポートライブラリ、CFG 有効イメージを追加します。利用できないバックエンドや外部フィクスチャは明示的にスキップします。ファイルシステムプロバイダーや汎用 APC 配信の実装を示すものではありません。
+
+プロセッサの回帰は出力境界、NULL、入れ子の復元、不正 IRQL、インポート識別を検証します。独自の `driver_processors.c` は各バックエンド、契約、基址、スケジューリングで入口、ワーカー、DPC を実行します。任意の `NEVERD_WDM_PROCESSORS_FIXTURE` と `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` は実際の WDK 通常/CFG イメージのインライン呼び出しと動的エクスポートを検証し、利用不能なバックエンドは明示的にスキップします。
+
+整数変換の回帰テストは全ビット幅、対応基数、容量境界、不正基数の処理順序、出力の別名、終端書き込み障害を検証します。独自の `driver_int64_strings.c` は入口、ワーク項目、アンロードでインポートと動的検索を確認し、IRQL 上昇時の拒否も検証します。任意の `NEVERD_WDM_INT64_STRINGS_FIXTURE` と `NEVERD_WDM_INT64_STRINGS_CFG_FIXTURE` は実際の WDK 通常/CFG ドライバーを利用可能なバックエンド、契約、ロード基底、スケジュールで検証します。
+
+
+`DriverFileSystemTests.cpp` / `KernelFileSystemTests.cpp` / `DriverFileSystemExecutionTests.cpp` / `DriverScenarioPublic` / `test_driver_filesystem_integration.py`: 任意の `filesystem` は DriverEntry 前にセッションのボリュームを宣言します。省略は可用性不明、`[]` は提供元なしで、各ボリュームには明示的なルートが必要です。既存ノードは `ZwOpenFile` と `ZwCreateFile`、`IoCreateFile` の FILE_OPEN で実際の CREATE 要求を通じて開けます。名前検索、ゲストフィルター、共有、ハンドルと参照の寿命は共通の所有者を使い、ホストファイルを読みません。新規作成、上書き、削除、メタデータ照会、データ I/O、列挙、制御は未対応です。 `NEVERD_WDM_FILESYSTEM_FIXTURE`, `NEVERD_WDM_FILESYSTEM_CFG_FIXTURE`, `NEVERD_TEST_DRIVER_FILESYSTEM_FIXTURE`, `NEVERD_TEST_LIBNEVERD`. `UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery`: `configuration.filesystem` は入力、上位 `filesystem` は独立した状態で、`device_object` と各ノードの `end_of_file` を追加します。実行や投影検証の停止後も状態を保持します。`devices` はゲストのみです。アンロード時にセッションボリュームは残せますが、ゲストの参照、ハンドル、接続、IRP は解放が必要です。`[]` を含む宣言は未再構築依存性を保持し、実行可能 UNPACK 復元を禁止します。旧 Unicorn は拒否書き込みを停止前に反映する場合があり、投影エラーを診断に残します。
+
+`KernelFileCreateTests.cpp` はパケット保持、共有失敗、非同期の相対ルート保持、明示的取消、失敗／出力エイリアス、アンロードを検証します。`DriverFileSystemExecutionTests.cpp` は両契約、両基址、利用可能バックエンドで独自および実際の WDK 通常／CFG ドライバーを協調・命令時計スケジュールで実行します。C API／CLI／Python も同じ識別を保持します。利用不可はスキップであり、イベントや APC のプローブ境界は完全なカーネルを証明しません。

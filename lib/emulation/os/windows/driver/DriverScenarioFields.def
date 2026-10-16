@@ -22,6 +22,7 @@ NEVERD_DRIVER_SCENARIO_ROOT_FIELD(PhysicalMemoryInventory,
 NEVERD_DRIVER_SCENARIO_ROOT_FIELD(KernelExports, "kernel_exports")
 NEVERD_DRIVER_SCENARIO_ROOT_FIELD(DebuggerState, "debugger_state")
 NEVERD_DRIVER_SCENARIO_ROOT_FIELD(Registry, "registry")
+NEVERD_DRIVER_SCENARIO_ROOT_FIELD(FileSystem, "filesystem")
 NEVERD_DRIVER_SCENARIO_ROOT_FIELD(RegistrySystemTime100ns,
                                   "registry_system_time_100ns")
 NEVERD_DRIVER_SCENARIO_ROOT_FIELD(Requests, "requests")

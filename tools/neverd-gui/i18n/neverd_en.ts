@@ -847,6 +847,14 @@
         <source>Change the name of the current function and what it is</source>
         <translation>Change the name of the current function and what it is</translation>
     </message>
+    <message>
+        <source>Local t&amp;ypes</source>
+        <translation>Local t&amp;ypes</translation>
+    </message>
+    <message>
+        <source>Show the program's types with their layouts and source</source>
+        <translation>Show the program's types with their layouts and source</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2266,6 +2274,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Could not tell whether %1 has a symbol table: %2</source>
         <translation>Could not tell whether %1 has a symbol table: %2</translation>
     </message>
+    <message>
+        <source>Local Types</source>
+        <translation>Local Types</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3366,6 +3378,404 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Discard unsaved analyst assertions and continue?</source>
         <translation>Discard unsaved analyst assertions and continue?</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LocalTypesView</name>
+    <message>
+        <source>C header (*.h)</source>
+        <translation>C header (*.h)</translation>
+    </message>
+    <message>
+        <source>C++ header (*.hpp)</source>
+        <translation>C++ header (*.hpp)</translation>
+    </message>
+    <message>
+        <source>Rust (*.rs)</source>
+        <translation>Rust (*.rs)</translation>
+    </message>
+    <message>
+        <source>Go (*.go)</source>
+        <translation>Go (*.go)</translation>
+    </message>
+    <message>
+        <source>Windows names (ULONG)</source>
+        <translation>Windows names (ULONG)</translation>
+    </message>
+    <message>
+        <source>IDA names (unsigned int)</source>
+        <translation>IDA names (unsigned int)</translation>
+    </message>
+    <message>
+        <source>C keywords (unsigned long)</source>
+        <translation>C keywords (unsigned long)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32_t)</source>
+        <translation>Exact widths (uint32_t)</translation>
+    </message>
+    <message>
+        <source>Filter types by name</source>
+        <translation>Filter types by name</translation>
+    </message>
+    <message>
+        <source>#</source>
+        <translation>#</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Name</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>Kind</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>Size</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>Members</translation>
+    </message>
+    <message>
+        <source>Back to the type shown before (Esc)</source>
+        <translation>Back to the type shown before (Esc)</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>Layout</translation>
+    </message>
+    <message>
+        <source>Copy the layout or the source</source>
+        <translation>Copy the layout or the source</translation>
+    </message>
+    <message>
+        <source>Export types as source</source>
+        <translation>Export types as source</translation>
+    </message>
+    <message>
+        <source>Export this type…</source>
+        <translation>Export this type…</translation>
+    </message>
+    <message>
+        <source>Export selected types…</source>
+        <translation>Export selected types…</translation>
+    </message>
+    <message>
+        <source>Export all types…</source>
+        <translation>Export all types…</translation>
+    </message>
+    <message>
+        <source>How C and C++ name builtin types</source>
+        <translation>How C and C++ name builtin types</translation>
+    </message>
+    <message>
+        <source>Hex offsets</source>
+        <translation>Hex offsets</translation>
+    </message>
+    <message>
+        <source>With dependencies</source>
+        <translation>With dependencies</translation>
+    </message>
+    <message>
+        <source>Also declare every type this one needs, so the source compiles</source>
+        <translation>Also declare every type this one needs, so the source compiles</translation>
+    </message>
+    <message>
+        <source>Layout checks</source>
+        <translation>Layout checks</translation>
+    </message>
+    <message>
+        <source>Follow each type with checks of its size and offsets that the compiler verifies</source>
+        <translation>Follow each type with checks of its size and offsets that the compiler verifies</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>Member</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>Offset</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Bytes</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Type</translation>
+    </message>
+    <message>
+        <source>This engine has no local types.</source>
+        <translation>This engine has no local types.</translation>
+    </message>
+    <message>
+        <source>Reading the program's types…</source>
+        <translation>Reading the program's types…</translation>
+    </message>
+    <message>
+        <source>Cannot read the types: %1</source>
+        <translation>Cannot read the types: %1</translation>
+    </message>
+    <message>
+        <source>The PDB defines no types.</source>
+        <translation>The PDB defines no types.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB with types.</source>
+        <translation>No local types: this program has no PDB with types.</translation>
+    </message>
+    <message>
+        <source>Types that do not lay out as the PDB lists them: %1</source>
+        <translation>Types that do not lay out as the PDB lists them: %1</translation>
+    </message>
+    <message>
+        <source>Cannot lay the type out: %1</source>
+        <translation>Cannot lay the type out: %1</translation>
+    </message>
+    <message>
+        <source>// Cannot render the type: %1</source>
+        <translation>// Cannot render the type: %1</translation>
+    </message>
+    <message>
+        <source>structure</source>
+        <translation>structure</translation>
+    </message>
+    <message>
+        <source>union</source>
+        <translation>union</translation>
+    </message>
+    <message>
+        <source>enumeration</source>
+        <translation>enumeration</translation>
+    </message>
+    <message>
+        <source>typedef</source>
+        <translation>typedef</translation>
+    </message>
+    <message>
+        <source>function type</source>
+        <translation>function type</translation>
+    </message>
+    <message>
+        <source>%1 (%2) bytes</source>
+        <translation>%1 (%2) bytes</translation>
+    </message>
+    <message>
+        <source>aligned to %1</source>
+        <translation>aligned to %1</translation>
+    </message>
+    <message>
+        <source>packed to %1</source>
+        <translation>packed to %1</translation>
+    </message>
+    <message>
+        <source>declared only</source>
+        <translation>declared only</translation>
+    </message>
+    <message>
+        <source>Enumerator</source>
+        <translation>Enumerator</translation>
+    </message>
+    <message>
+        <source>Value</source>
+        <translation>Value</translation>
+    </message>
+    <message>
+        <source>(padding)</source>
+        <translation>(padding)</translation>
+    </message>
+    <message>
+        <source>Double-click to open %1</source>
+        <translation>Double-click to open %1</translation>
+    </message>
+    <message>
+        <source>Export local types</source>
+        <translation>Export local types</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>Cannot write %1</translation>
+    </message>
+    <message>
+        <source>Exported to %1</source>
+        <translation>Exported to %1</translation>
+    </message>
+    <message>
+        <source>Cannot export the types: %1</source>
+        <translation>Cannot export the types: %1</translation>
+    </message>
+    <message>
+        <source>Add types from a declaration</source>
+        <translation>Add types from a declaration</translation>
+    </message>
+    <message>
+        <source>Edit the type's declaration</source>
+        <translation>Edit the type's declaration</translation>
+    </message>
+    <message>
+        <source>Delete the selected types</source>
+        <translation>Delete the selected types</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Add types…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Edit type…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Delete types…</translation>
+    </message>
+    <message>
+        <source>A declaration of yours no longer reads: %1</source>
+        <translation>A declaration of yours no longer reads: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations of yours no longer read: %1</source>
+        <translation>
+            <numerusform>%n declarations of yours no longer read: %1</numerusform>
+            <numerusform>%n declarations of yours no longer read: %1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add types</source>
+        <translation>Add types</translation>
+    </message>
+    <message>
+        <source>Cannot read the type: %1</source>
+        <translation>Cannot read the type: %1</translation>
+    </message>
+    <message>
+        <source>Edit %1</source>
+        <translation>Edit %1</translation>
+    </message>
+    <message>
+        <source>Declared %1</source>
+        <translation>Declared %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>Declared %n types</source>
+        <translation>
+            <numerusform>Declared %n types</numerusform>
+            <numerusform>Declared %n types</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete the type %1?</source>
+        <translation>Delete the type %1?</translation>
+    </message>
+    <message numerus="yes">
+        <source>Delete %n types?</source>
+        <translation>
+            <numerusform>Delete %n types?</numerusform>
+            <numerusform>Delete %n types?</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete types</source>
+        <translation>Delete types</translation>
+    </message>
+    <message>
+        <source>Deleted %1</source>
+        <translation>Deleted %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n types</source>
+        <translation>
+            <numerusform>Deleted %n types</numerusform>
+            <numerusform>Deleted %n types</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(%1 still names it)</source>
+        <translation>(%1 still names it)</translation>
+    </message>
+    <message numerus="yes">
+        <source>(%n types still name it)</source>
+        <translation>
+            <numerusform>(%n types still name it)</numerusform>
+            <numerusform>(%n types still name it)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Cannot delete the types: %1</source>
+        <translation>Cannot delete the types: %1</translation>
+    </message>
+    <message>
+        <source>The window closed</source>
+        <translation>The window closed</translation>
+    </message>
+    <message>
+        <source>All types</source>
+        <translation>All types</translation>
+    </message>
+    <message>
+        <source>From the PDB</source>
+        <translation>From the PDB</translation>
+    </message>
+    <message>
+        <source>From system headers</source>
+        <translation>From system headers</translation>
+    </message>
+    <message>
+        <source>Declared</source>
+        <translation>Declared</translation>
+    </message>
+    <message>
+        <source>Show the types of one origin</source>
+        <translation>Show the types of one origin</translation>
+    </message>
+    <message>
+        <source>Types: %1</source>
+        <translation>Types: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from the PDB</source>
+        <translation>
+            <numerusform>%n from the PDB</numerusform>
+            <numerusform>%n from the PDB</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from system headers</source>
+        <translation>
+            <numerusform>%n from system headers</numerusform>
+            <numerusform>%n from system headers</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declared</source>
+        <translation>
+            <numerusform>%n declared</numerusform>
+            <numerusform>%n declared</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DeclareTypesDialog</name>
+    <message>
+        <source>Declare types</source>
+        <translation>Declare types</translation>
+    </message>
+    <message>
+        <source>Declare structures, unions, enumerations and typedefs. A type named as one of the program's replaces it.</source>
+        <translation>Declare structures, unions, enumerations and typedefs. A type named as one of the program's replaces it.</translation>
+    </message>
+    <message>
+        <source>Declare</source>
+        <translation>Declare</translation>
+    </message>
+    <message>
+        <source>Read the declarations (Ctrl+Enter)</source>
+        <translation>Read the declarations (Ctrl+Enter)</translation>
+    </message>
+    <message>
+        <source>Line %1, column %2: %3</source>
+        <translation>Line %1, column %2: %3</translation>
     </message>
 </context>
 </TS>

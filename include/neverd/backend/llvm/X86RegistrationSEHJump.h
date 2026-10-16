@@ -28,12 +28,29 @@ namespace x86_registration {
 inline constexpr llvm::StringLiteral SEHJumpUnwindName("_seh_longjmp_unwind");
 inline constexpr llvm::StringLiteral
     SEHSourceJumpUnwindName("__nd_source_seh_longjmp_unwind");
+inline constexpr llvm::StringLiteral SEH4JumpUnwindName("_seh_longjmp_unwind4");
+inline constexpr llvm::StringLiteral
+    SEH4SourceJumpUnwindName("__nd_source_seh_longjmp_unwind4");
+
+inline llvm::StringRef
+getSEHJumpUnwindName(RegistrationSEHJumpCapture::Kind Protocol) {
+  return Protocol == RegistrationSEHJumpCapture::Kind::EH4 ? SEH4JumpUnwindName
+                                                           : SEHJumpUnwindName;
+}
+
+inline llvm::StringRef
+getSEHSourceJumpUnwindName(RegistrationSEHJumpCapture::Kind Protocol) {
+  return Protocol == RegistrationSEHJumpCapture::Kind::EH4
+             ? SEH4SourceJumpUnwindName
+             : SEHSourceJumpUnwindName;
+}
 
 enum class SEHJumpRole : unsigned {
   Buffer = 0,
   RegisterSnapshot = 1,
   StateRestore = 2,
   ResumeValue = 3,
+  CapturedState = 4,
 };
 } // namespace x86_registration
 

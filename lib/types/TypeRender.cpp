@@ -1,0 +1,566 @@
+//===- TypeRender.cpp - Local types as C, C++, Rust and Go ----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#include "neverd/types/TypeRender.h"
+
+#include "TypeRenderShared.h"
+
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSet.h"
+#include "llvm/Support/Format.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include <algorithm>
+
+namespace neverd::types {
+namespace {
+
+struct LanguageName {
+  Language Lang;
+  const char *Id;
+};
+
+constexpr LanguageName Languages[] = {
+#define NEVERD_TYPE_LANGUAGE(Name, Id, Display) {Language::Name, Id},
+#include "neverd/types/TypeLanguages.def"
+};
+
+struct Keyword {
+  Language Lang;
+  const char *Word;
+};
+
+constexpr Keyword Keywords[] = {
+#define NEVERD_TYPE_KEYWORD(Lang, Word) {Language::Lang, Word},
+#include "neverd/types/TypeLanguages.def"
+};
+
+bool reserved(Language Lang, llvm::StringRef Name) {
+  for (const Keyword &Entry : Keywords) {
+    // C++ reserves C's words as well as its own.
+    const bool Applies = Entry.Lang == Lang ||
+                         (Lang == Language::Cpp && Entry.Lang == Language::C);
+    if (Applies && Name == Entry.Word)
+      return true;
+  }
+  return false;
+}
+
+} // namespace
+
+llvm::StringRef languageId(Language Lang) {
+  for (const LanguageName &Entry : Languages)
+    if (Entry.Lang == Lang)
+      return Entry.Id;
+  return "";
+}
+
+std::optional<Language> languageNamed(llvm::StringRef Id) {
+  for (const LanguageName &Entry : Languages)
+    if (Id.equals_insensitive(Entry.Id))
+      return Entry.Lang;
+  return std::nullopt;
+}
+
+namespace render {
+
+unsigned offsetDigits(uint64_t Size) {
+  unsigned Digits = 1;
+  for (uint64_t Value = Size; Value >= 16; Value >>= 4)
+    ++Digits;
+  return Digits;
+}
+
+std::string offsetText(uint64_t Byte, const RenderOptions &Options,
+                       unsigned Digits) {
+  std::string Text;
+  llvm::raw_string_ostream Out(Text);
+  if (Options.HexOffsets)
+    Out << "0x" << llvm::format_hex_no_prefix(Byte, Digits, /*Upper=*/true);
+  else
+    Out << '+' << Byte;
+  return Text;
+}
+
+std::string bitText(uint64_t BitInUnit, uint32_t Width) {
+  if (Width == 1)
+    return "bit " + std::to_string(BitInUnit);
+  return "bits " + std::to_string(BitInUnit) + ".." +
+         std::to_string(BitInUnit + Width - 1);
+}
+
+std::string escapedName(Language Lang, llvm::StringRef Name) {
+  if (!reserved(Lang, Name))
+    return Name.str();
+  // A raw identifier keeps a Rust name as it was, except for the few that
+  // cannot be raw.
+  if (Lang == Language::Rust && Name != "self" && Name != "Self" &&
+      Name != "crate" && Name != "super")
+    return "r#" + Name.str();
+  return Name.str() + "_";
+}
+
+/// Names Go declares in the universe scope, and the package local types
+/// import, which a type of the same name would hide.
+constexpr const char *GoPredeclared[] = {
+    "any",    "append",     "bool",    "byte",      "cap",        "clear",
+    "close",  "comparable", "complex", "complex64", "complex128", "copy",
+    "delete", "error",      "false",   "float32",   "float64",    "imag",
+    "int",    "int8",       "int16",   "int32",     "int64",      "iota",
+    "len",    "make",       "max",     "min",       "new",        "nil",
+    "panic",  "print",      "println", "real",      "recover",    "rune",
+    "string", "true",       "uint",    "uint8",     "uint16",     "uint32",
+    "uint64", "uintptr",    "unsafe",
+};
+
+/// Rust's primitive types, which a type of the same name would hide.
+constexpr const char *RustPrimitives[] = {
+    "bool",  "char", "f32", "f64", "i8",  "i16", "i32",  "i64",   "i128",
+    "isize", "str",  "u8",  "u16", "u32", "u64", "u128", "usize",
+};
+
+NameSpelling::NameSpelling(const TypeLibrary &Library, Language Lang)
+    : Lang(Lang) {
+  const std::vector<const LocalType *> All = Library.types();
+  llvm::StringSet<> Taken;
+  for (const LocalType *Type : All) {
+    std::string Spelled = identifier(Type->Name, /*TypeName=*/true);
+    if (!Taken.insert(Spelled).second) {
+      unsigned Number = 2;
+      while (!Taken.insert(Spelled + "_" + std::to_string(Number)).second)
+        ++Number;
+      Spelled += "_" + std::to_string(Number);
+    }
+    if (Spelled != Type->Name)
+      Renamed.push_back({Type->Name, Spelled});
+    Types[Type->Name] = std::move(Spelled);
+  }
+  for (const LocalType *Type : All) {
+    if (Type->Enum)
+      enumeration(*Type->Enum, type(Type->Name), Taken);
+    if (Type->Record)
+      inlineEnums(*Type->Record, type(Type->Name), Taken);
+  }
+}
+
+std::string NameSpelling::identifier(llvm::StringRef Name,
+                                     bool TypeName) const {
+  std::string Text;
+  for (char C : Name)
+    Text += llvm::isAlnum(C) || C == '_' ? C : '_';
+  if (Text.empty() || llvm::isDigit(Text.front()))
+    Text.insert(Text.begin(), '_');
+  if (TypeName && Lang == Language::Go)
+    for (const char *Word : GoPredeclared)
+      if (Text == Word)
+        return Text + "_";
+  if (TypeName && Lang == Language::Rust)
+    for (const char *Word : RustPrimitives)
+      if (Text == Word)
+        return Text + "_";
+  return escapedName(Lang, Text);
+}
+
+void NameSpelling::enumeration(const EnumDef &Enum, llvm::StringRef Owner,
+                               llvm::StringSet<> &Taken) {
+  std::vector<std::string> &Spelled = Enumerators[&Enum];
+  for (const Enumerator &Value : Enum.Values) {
+    std::string Name = identifier(Value.Name, /*TypeName=*/true);
+    if (!Taken.insert(Name).second) {
+      Name = Owner.str() + "_" + Name;
+      while (!Taken.insert(Name).second)
+        Name += "_";
+    }
+    if (Name != Value.Name)
+      Renamed.push_back({Owner.str() + "::" + Value.Name, Name});
+    Spelled.push_back(std::move(Name));
+  }
+}
+
+void NameSpelling::inlineEnums(const RecordDef &Record, llvm::StringRef Owner,
+                               llvm::StringSet<> &Taken) {
+  for (const Member &Field : Record.Members) {
+    if (!Field.Type)
+      continue;
+    std::vector<uint64_t> Bounds;
+    const TypeExpr &Element = arrayElement(*Field.Type, Bounds);
+    if (Element.Kind == TypeExprKind::Enum && Element.Enum)
+      enumeration(*Element.Enum, Owner, Taken);
+    else if (Element.Kind == TypeExprKind::Record && Element.Record)
+      inlineEnums(*Element.Record, Owner, Taken);
+  }
+}
+
+std::string NameSpelling::type(llvm::StringRef Name) const {
+  auto Found = Types.find(Name);
+  // A name the library lacks, such as a declared-only reference.
+  return Found != Types.end() ? Found->second
+                              : identifier(Name, /*TypeName=*/true);
+}
+
+std::string NameSpelling::enumerator(const EnumDef &Enum, size_t Index) const {
+  auto Found = Enumerators.find(&Enum);
+  if (Found != Enumerators.end() && Index < Found->second.size())
+    return Found->second[Index];
+  return Index < Enum.Values.size()
+             ? identifier(Enum.Values[Index].Name, /*TypeName=*/true)
+             : std::string("_");
+}
+
+std::string NameSpelling::member(llvm::StringRef Name) const {
+  return Name.empty() ? std::string() : identifier(Name, /*TypeName=*/false);
+}
+
+std::string withComment(std::string Code, llvm::StringRef Comment,
+                        const RenderOptions &Options) {
+  if (Comment.empty())
+    return Code;
+  const size_t Column =
+      std::max<size_t>(Options.CommentColumn, Code.size() + 1);
+  Code.append(Column - Code.size(), ' ');
+  Code += "// ";
+  Code += Comment;
+  return Code;
+}
+
+uint64_t alignTo(uint64_t Value, uint64_t Alignment) {
+  if (Alignment <= 1)
+    return Value;
+  return (Value + Alignment - 1) / Alignment * Alignment;
+}
+
+SequentialLayout::Step SequentialLayout::place(uint64_t Byte, uint64_t Size,
+                                               uint32_t Alignment) {
+  if (Pack && Alignment > Pack)
+    Alignment = Pack;
+  Step Result;
+  const uint64_t Natural = alignTo(End, Alignment);
+  if (Byte > Natural)
+    Result.Filler = Byte - End;
+  else if (Byte == Natural)
+    Result.Padding = Natural - End;
+  End = std::max(End, Byte + Size);
+  return Result;
+}
+
+SequentialLayout::Step SequentialLayout::finish(uint64_t Size,
+                                                uint32_t Alignment) const {
+  if (Pack && Alignment > Pack)
+    Alignment = Pack;
+  Step Result;
+  const uint64_t Natural = alignTo(End, Alignment);
+  if (Size > Natural)
+    Result.Filler = Size - End;
+  else if (Size > End)
+    Result.Padding = Size - End;
+  return Result;
+}
+
+namespace {
+
+void recordValueDependencies(const RecordDef &Record,
+                             std::vector<std::string> &Names) {
+  for (const Member &Field : Record.Members)
+    if (Field.Type)
+      valueDependencies(*Field.Type, Names);
+}
+
+void recordMentions(const RecordDef &Record, std::vector<std::string> &Names) {
+  for (const Member &Field : Record.Members)
+    if (Field.Type)
+      mentionedTypes(*Field.Type, Names);
+}
+
+void functionMentions(const FunctionDef &Function,
+                      std::vector<std::string> &Names) {
+  if (Function.Return)
+    mentionedTypes(*Function.Return, Names);
+  for (const Parameter &Param : Function.Params)
+    if (Param.Type)
+      mentionedTypes(*Param.Type, Names);
+}
+
+} // namespace
+
+void valueDependencies(const TypeExpr &Type, std::vector<std::string> &Names) {
+  switch (Type.Kind) {
+  case TypeExprKind::Named:
+    Names.push_back(Type.Name);
+    return;
+  case TypeExprKind::Array:
+    if (Type.Element)
+      valueDependencies(*Type.Element, Names);
+    return;
+  case TypeExprKind::Record:
+    if (Type.Record)
+      recordValueDependencies(*Type.Record, Names);
+    return;
+  default:
+    return;
+  }
+}
+
+void valueDependencies(const LocalType &Type, std::vector<std::string> &Names) {
+  if (Type.Record)
+    recordValueDependencies(*Type.Record, Names);
+  if (Type.Target)
+    valueDependencies(*Type.Target, Names);
+}
+
+void mentionedTypes(const TypeExpr &Type, std::vector<std::string> &Names) {
+  switch (Type.Kind) {
+  case TypeExprKind::Named:
+    Names.push_back(Type.Name);
+    return;
+  case TypeExprKind::Pointer:
+  case TypeExprKind::Array:
+    if (Type.Element)
+      mentionedTypes(*Type.Element, Names);
+    return;
+  case TypeExprKind::Record:
+    if (Type.Record)
+      recordMentions(*Type.Record, Names);
+    return;
+  case TypeExprKind::Function:
+    if (Type.Function)
+      functionMentions(*Type.Function, Names);
+    return;
+  default:
+    return;
+  }
+}
+
+void mentionedTypes(const LocalType &Type, std::vector<std::string> &Names) {
+  if (Type.Record)
+    recordMentions(*Type.Record, Names);
+  if (Type.Target)
+    mentionedTypes(*Type.Target, Names);
+  if (Type.Function)
+    functionMentions(*Type.Function, Names);
+}
+
+std::vector<const LocalType *>
+neededTypes(const TypeLibrary &Library, llvm::ArrayRef<const LocalType *> Roots,
+            bool ThroughPointers) {
+  if (Roots.empty())
+    return Library.types();
+  llvm::StringSet<> Seen;
+  std::vector<const LocalType *> Work(Roots.begin(), Roots.end());
+  for (const LocalType *Root : Roots)
+    Seen.insert(Root->Name);
+  for (size_t I = 0; I < Work.size(); ++I) {
+    std::vector<std::string> Names;
+    if (ThroughPointers)
+      mentionedTypes(*Work[I], Names);
+    else
+      valueDependencies(*Work[I], Names);
+    for (const std::string &Name : Names)
+      if (Seen.insert(Name).second)
+        if (const LocalType *Found = Library.find(Name))
+          Work.push_back(Found);
+  }
+  std::sort(Work.begin(), Work.end(),
+            [](const LocalType *A, const LocalType *B) {
+              return A->Ordinal < B->Ordinal;
+            });
+  return Work;
+}
+
+BitStorage bitStorage(const TypeLibrary &Library, const TypeExpr &Type) {
+  switch (Type.Kind) {
+  case TypeExprKind::Builtin: {
+    const BuiltinInfo &Info = builtinInfo(Type.TheBuiltin);
+    return {builtinBytes(Type.TheBuiltin, Library.dataModel()),
+            Info.Signed && Info.Class != BuiltinClass::Bool};
+  }
+  case TypeExprKind::Enum:
+    if (Type.Enum)
+      return bitStorage(Library, *makeBuiltin(Type.Enum->Underlying));
+    break;
+  case TypeExprKind::Named:
+    if (const LocalType *Named = Library.find(Type.Name)) {
+      if (Named->Enum)
+        return bitStorage(Library, *makeBuiltin(Named->Enum->Underlying));
+      if (Named->Target)
+        return bitStorage(Library, *Named->Target);
+    }
+    break;
+  default:
+    break;
+  }
+  return {static_cast<unsigned>(Library.sizeOf(Type).value_or(4)), false};
+}
+
+BitAccess bitAccess(const TypeLibrary &Library, const Member &Field) {
+  const BitStorage Storage = bitStorage(Library, *Field.Type);
+  BitAccess Access;
+  Access.UnitBits = Storage.Bytes * 8;
+  Access.Shift = Field.BitOffset - Field.StorageBitOffset;
+  Access.Width = Field.BitWidth;
+  Access.Signed = Storage.Signed;
+  const uint64_t Mask =
+      Field.BitWidth >= 64 ? ~uint64_t(0) : (uint64_t(1) << Field.BitWidth) - 1;
+  llvm::raw_string_ostream(Access.Mask)
+      << llvm::format_hex(Mask, 0, /*Upper=*/true);
+  if (Access.Mask.size() > 1)
+    Access.Mask[1] = 'x';
+  return Access;
+}
+
+const TypeExpr &arrayElement(const TypeExpr &Type,
+                             std::vector<uint64_t> &Bounds) {
+  const TypeExpr *Element = &Type;
+  while (Element->Kind == TypeExprKind::Array && Element->Element) {
+    Bounds.push_back(Element->Count.value_or(0));
+    Element = Element->Element.get();
+  }
+  return *Element;
+}
+
+RecordPlan planRecord(const TypeLibrary &Library, const RecordDef &Record,
+                      std::string Name, uint32_t Pack,
+                      const NameSpelling &Names) {
+  RecordPlan Plan;
+  Plan.Name = std::move(Name);
+  Plan.Record = &Record;
+  Plan.Pack = Pack;
+  unsigned Anonymous = 0, Runs = 0;
+  for (const Member &Field : Record.Members)
+    if (Field.isAnonymous())
+      ++Anonymous;
+  for (size_t I = 0; I < Record.Members.size(); ++I)
+    if (Record.Members[I].isBitfield() &&
+        (I == 0 || !Record.Members[I - 1].isBitfield() ||
+         Record.Members[I - 1].StorageBitOffset !=
+             Record.Members[I].StorageBitOffset))
+      ++Runs;
+
+  SequentialLayout Layout(Pack);
+  unsigned AnonymousSeen = 0, InlineSeen = 0, RunsSeen = 0;
+  const auto place = [&](Slot Next, uint64_t Size, uint32_t Align) {
+    if (!Record.Union) {
+      const uint64_t At = Layout.end();
+      const SequentialLayout::Step Step = Layout.place(Next.Byte, Size, Align);
+      if (Step.Filler) {
+        Slot Filler;
+        Filler.TheKind = Slot::Kind::Filler;
+        Filler.Byte = At;
+        Filler.Size = Step.Filler;
+        Filler.Name = "_filler" + std::to_string(Plan.Slots.size());
+        Plan.Slots.push_back(std::move(Filler));
+      }
+      Next.PaddingBefore = Step.Padding;
+    }
+    Plan.Slots.push_back(std::move(Next));
+  };
+  for (size_t I = 0; I < Record.Members.size(); ++I) {
+    const Member &Field = Record.Members[I];
+    if (!Field.Type)
+      continue;
+    if (Field.isBitfield()) {
+      Slot Run;
+      Run.TheKind = Slot::Kind::Bitfields;
+      Run.Storage = Field.Type;
+      Run.Byte = Field.StorageBitOffset / 8;
+      while (I < Record.Members.size() && Record.Members[I].isBitfield() &&
+             Record.Members[I].StorageBitOffset == Field.StorageBitOffset)
+        Run.Bits.push_back(&Record.Members[I++]);
+      --I;
+      ++RunsSeen;
+      Run.Name =
+          Runs == 1 ? "_bitfield" : "_bitfield" + std::to_string(RunsSeen);
+      place(std::move(Run), Library.sizeOf(*Field.Type).value_or(0),
+            Library.alignOf(*Field.Type));
+      continue;
+    }
+    Slot Place;
+    Place.Field = &Field;
+    Place.Byte = Field.BitOffset / 8;
+    Place.Name = Names.member(Field.Name);
+    const TypeExpr &Element = arrayElement(*Field.Type, Place.Bounds);
+    if (Element.Kind == TypeExprKind::Record && Element.Record) {
+      Place.NestedType = Plan.Name + "_" + std::to_string(InlineSeen++);
+      if (Field.Name.empty()) {
+        ++AnonymousSeen;
+        Place.Name = Anonymous == 1
+                         ? "Anonymous"
+                         : "Anonymous" + std::to_string(AnonymousSeen);
+      }
+      const RecordDef &Inner = *Element.Record;
+      Plan.Nested.push_back(planRecord(Library, Inner, Place.NestedType,
+                                       Inner.Pack ? Inner.Pack : Pack, Names));
+    } else if (Element.Kind == TypeExprKind::Enum && Element.Enum) {
+      Place.NestedType = Plan.Name + "_" + std::to_string(InlineSeen++);
+      Plan.Enums.push_back({Place.NestedType, Element.Enum.get()});
+    } else {
+      Place.Bounds.clear();
+    }
+    place(std::move(Place), Library.sizeOf(*Field.Type).value_or(0),
+          Library.alignOf(*Field.Type));
+  }
+  if (!Record.Union) {
+    const uint64_t End = Layout.end();
+    const SequentialLayout::Step Step =
+        Layout.finish(Record.Size, Library.alignOf(Record));
+    Plan.TailFiller = Step.Filler ? Record.Size - End : 0;
+    Plan.TailPadding = Step.Padding;
+  }
+  return Plan;
+}
+
+} // namespace render
+
+std::string renderType(const TypeLibrary &Library, const LocalType &Type,
+                       const RenderOptions &Options) {
+  switch (Options.Lang) {
+  case Language::C:
+  case Language::Cpp:
+    return render::renderC(Library, Type, Options);
+  case Language::Rust:
+    return render::renderRust(Library, Type, Options);
+  case Language::Go:
+    return render::renderGo(Library, Type, Options);
+  }
+  return std::string();
+}
+
+std::vector<std::pair<std::string, std::string>>
+renamedNames(const TypeLibrary &Library, Language Lang) {
+  return render::NameSpelling(Library, Lang).renamed();
+}
+
+std::string renderTypes(const TypeLibrary &Library,
+                        llvm::ArrayRef<const LocalType *> Types,
+                        const RenderOptions &Options) {
+  switch (Options.Lang) {
+  case Language::C:
+  case Language::Cpp:
+    return render::renderCHeader(Library, Types, Options);
+  case Language::Rust:
+    return render::renderRustModule(Library, Types, Options);
+  case Language::Go:
+    return render::renderGoFile(Library, Types, Options);
+  }
+  return std::string();
+}
+
+std::vector<std::string> valueDependencyNames(const LocalType &Type) {
+  std::vector<std::string> Names;
+  render::valueDependencies(Type, Names);
+  llvm::sort(Names);
+  Names.erase(std::unique(Names.begin(), Names.end()), Names.end());
+  return Names;
+}
+
+std::vector<std::string> mentionedTypeNames(const LocalType &Type) {
+  std::vector<std::string> Names;
+  render::mentionedTypes(Type, Names);
+  llvm::sort(Names);
+  Names.erase(std::unique(Names.begin(), Names.end()), Names.end());
+  return Names;
+}
+
+} // namespace neverd::types

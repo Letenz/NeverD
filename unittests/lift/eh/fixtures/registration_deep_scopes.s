@@ -1,7 +1,8 @@
 // A 259-row nested scope chain traverses 254 search-only scopes during
 // nonlocal unwind. Alternating invocations still observe one or two finally
 // calls, exact resumed registers/state and the restored registration chain.
-// Distinct source call sites keep this depth test independent of call cloning.
+// Case 45 uses distinct source call sites. Case 46 shares one nonlocal call.
+// Cases 48/49 first call a private leaf/graph with a live captured buffer.
 .intel_syntax noprefix
 .text
 .globl _registration_entry
@@ -37,20 +38,33 @@ _registration_entry:
   test eax,1
   jnz .Lhigh
   mov dword ptr [ebp-4],2
+#if REGISTRATION_CASE == 45
   push 42
   lea eax,[ebp-96]
   push eax
   call __longjmpex
   ud2
+#else
+  jmp .Ljump
+#endif
 .Lhigh:
   mov dword ptr [ebp-4],258
 .Ljump:
+#if REGISTRATION_CASE == 48
+  call _registration_no_raise
+#elif REGISTRATION_CASE == 49
+  call _registration_private_graph
+#endif
   push 42
   lea eax,[ebp-96]
   push eax
   call __longjmpex
   ud2
 .Lresumed:
+#if REGISTRATION_CASE == 48 || REGISTRATION_CASE == 49
+  cmp dword ptr [_registration_helper_visits],1
+  jne .Lbad
+#endif
   cmp ebx,6
   jne .Lbad
   cmp eax,42
