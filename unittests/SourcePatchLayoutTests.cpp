@@ -437,6 +437,46 @@ TEST(SourcePatchLayout, MachOHeaderGrowthKeepsCodeAtOriginalVA) {
   ASSERT_TRUE(bool(Records)) << llvm::toString(Records.takeError());
   ASSERT_FALSE(Records->Index.empty());
   EXPECT_EQ(TextVA + Records->Index.front().FunctionOffset, 0x100000800ULL);
+
+  // Variable-length LINKEDIT records must retain native pointer alignment in
+  // either command order, even when the preceding rewritten payload is odd.
+  for (bool ExportsFirst : {false, true}) {
+    using namespace llvm::MachO;
+    auto Image = headerMachO();
+    auto *Header = reinterpret_cast<mach_header_64 *>(Image.data());
+    linkedit_data_command *Starts = nullptr;
+    forEachMachOLoadCommand(Image.data(), Image.size(),
+                            [&](const uint8_t *C, uint32_t ID, uint32_t, bool) {
+                              if (ID == LC_FUNCTION_STARTS)
+                                Starts =
+                                    reinterpret_cast<linkedit_data_command *>(
+                                        Image.data() + (C - Image.data()));
+                            });
+    ASSERT_NE(Starts, nullptr);
+    auto *Exports = reinterpret_cast<linkedit_data_command *>(
+        Image.data() + sizeof(*Header) + Header->sizeofcmds);
+    *Exports = {LC_DYLD_EXPORTS_TRIE, sizeof(*Exports), 0x2200, 11};
+    const uint8_t Trie[] = {0, 1, '_', 'f', 0, 6, 3, 0, 0x80, 0x10, 0};
+    std::copy(std::begin(Trie), std::end(Trie), Image.begin() + 0x2200);
+    Header->sizeofcmds += sizeof(*Exports);
+    ++Header->ncmds;
+    if (ExportsFirst)
+      std::swap(*Starts, *Exports);
+    std::fill(Image.begin() + sizeof(*Header) + Header->sizeofcmds,
+              Image.begin() + 0x800, 0x5a);
+    auto G = reserveMachOHeaderStorage(Image, Arch::X64, 512);
+    ASSERT_TRUE(bool(G)) << llvm::toString(G.takeError());
+    ASSERT_TRUE(*G);
+    forEachMachOLoadCommand(
+        Image.data(), Image.size(),
+        [&](const uint8_t *C, uint32_t ID, uint32_t, bool) {
+          if (ID == LC_FUNCTION_STARTS || ID == LC_DYLD_EXPORTS_TRIE) {
+            const auto *L = reinterpret_cast<const linkedit_data_command *>(C);
+            EXPECT_EQ(L->dataoff % 8, 0u) << ID;
+            EXPECT_GT(L->datasize, 0u);
+          }
+        });
+  }
 }
 TEST(SourcePatchLayout,
      MachORefusesHeaderRelativeArithmeticWithoutChangingInput) {

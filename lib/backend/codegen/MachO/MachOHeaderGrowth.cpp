@@ -376,11 +376,14 @@ llvm::Expected<bool> reserveMachOHeaderStorage(Bytes &Binary, Arch A,
       Off += Shift;
   };
   auto Append = [&](llvm::ArrayRef<uint8_t> Data) -> uint32_t {
-    if (Data.size() > UINT32_MAX - B.size()) {
+    // dyld requires pointer-aligned LINKEDIT payloads in 64-bit images.
+    // Re-encoded ULEB records do not necessarily end on that boundary.
+    const auto Off = llvm::alignTo(B.size(), 8);
+    if (Off > UINT32_MAX || Data.size() > UINT32_MAX - Off) {
       Bad = true;
       return 0;
     }
-    const auto Off = B.size();
+    B.resize(Off, 0);
     B.insert(B.end(), Data.begin(), Data.end());
     return Off;
   };
