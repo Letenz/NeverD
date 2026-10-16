@@ -203,6 +203,14 @@ Antes de capturar todos los indicadores, cada indicador aritmético o de direcci
 
 Los temporales de LowIR solo viven dentro de una instrucción nativa levantada. Cada byte leído debe haberse definido antes en esa misma instrucción; reutilizar una posición de una instrucción anterior o cancelar algebraicamente un valor indefinido no demuestra que el código fuente sea válido. Las constantes de entrada solo pueden vincular registros físicos.
 
+<!-- i18n-section: supervisor-interrupt-control -->
+
+## Control del indicador de interrupciones en modo supervisor
+
+La recuperación de LowIR sin procesar y las pruebas de relación nativa admiten las formas canónicas x64 de `CLI`/`STI` solo con el perfil explícito `KernelX64NoFaultV1`. El componente compartido de indicadores x64 borra o activa IF y conserva todos los demás indicadores, registros de propósito general y bytes de memoria. La recuperación conserva la operación intrínseca original; las pruebas registran su transición y comparan siempre los indicadores de sistema finales, incluso sin observaciones de registros ordinarios.
+
+Este perfil fija CPL0/IOPL0 y excluye eventos asíncronos, entrega de eventos de depuración y transiciones de privilegio. Por ello no observa la inhibición temporal de interrupciones de STI. La ausencia de perfil o un perfil de usuario rechazan estas instrucciones; la ABI de código fuente existente sigue limitada a su perfil de usuario. Este soporte no proporciona un modelo de entrega de interrupciones ni de transición de privilegio.
+
 <!-- i18n-section: raw-cmpxchg -->
 
 ## Comparación e intercambio en el modelo raw secuencial
@@ -367,3 +375,9 @@ La búsqueda de alineación transmite `MaxCuts` al motor común de inferencia. T
 Con `ExplicitMachineState` y `NormalNonfaultingExecution`, un `LOAD` admitido de 16 bytes solo usa la imagen inmutable si cada dirección posible tiene una prueba completa de 16 bytes. La ejecución simbólica conserva los 128 bits. El residuo materializa partes escalares en orden de almacenamiento y captura la dirección que pueda solaparse antes de escribir cualquier byte de destino. Ambos órdenes de bytes comparten esta regla; cada operación emitida consume el presupuesto existente.
 
 Un dominio incompleto o un intervalo inmutable no disponible conserva toda la lectura en ejecución, sin pruebas parciales. Una longitud incorrecta devuelta por el proveedor provoca el rechazo. La memoria modificable y las observaciones de ejecución no otorgan autoridad de inmutabilidad. Los comprobantes brutos vinculan todos los bytes, incluida la mitad superior. La envoltura de código fuente y las pruebas nativas independientes mantienen sus requisitos de anchura y entorno.
+
+<!-- i18n-section: unrooted-native-stack -->
+
+## Transferencias internas después de cambiar la pila
+
+Las regiones de máquina explícitas sin procesar pueden seguir instrucciones near CALL y RET internas aunque el puntero de pila actual ya no pueda expresarse respecto al de entrada. El adaptador de arquitectura conserva la captura del destino, el apilado, la lectura de la dirección de retorno y el desapilado reales. Cada retorno interno sigue exigiendo demostrar el conjunto finito completo de destinos a partir de la palabra real de la pila. Solo las celdas de retorno demostradas relativas a la entrada pasan a la proyección y al inventario de conservación del marco; perder otra relación de pila en un límite del grafo aún puede causar un rechazo. La recuperación de funciones ordinarias mantiene los requisitos de restauración del marco. El resultado corresponde a una región sin procesar; la composición de toda la función y la equivalencia del código fuente o nativo requieren pruebas separadas.

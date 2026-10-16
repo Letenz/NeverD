@@ -3797,7 +3797,11 @@ TEST_F(SessionCAPITest, DeclaredTypesJoinThePDBsAndStayWithTheProject) {
             true);
 }
 
-TEST_F(SessionCAPITest, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
+// These checks require developer-supplied Windows kernel and PDB inputs.
+// Keep the self-contained SessionCAPITest qualification independent of them.
+class SessionCAPIKernelInputs : public SessionCAPITest {};
+
+TEST_F(SessionCAPIKernelInputs, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
   // ntoskrnl.exe and its PDB, as a developer points to them.
   const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
   const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");
@@ -3841,7 +3845,7 @@ TEST_F(SessionCAPITest, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
   EXPECT_EQ(Mine->getAsObject()->getInteger("size"), 32);
 }
 
-TEST_F(SessionCAPITest, KernelFunctionsDecompileWithTheirPrototypes) {
+TEST_F(SessionCAPIKernelInputs, KernelFunctionsDecompileWithTheirPrototypes) {
   const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
   const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");
   if (!Kernel || !PDB)
@@ -3880,6 +3884,113 @@ TEST_F(SessionCAPITest, KernelFunctionsDecompileWithTheirPrototypes) {
       signature("PsCreateSystemThread").find("void (*StartRoutine)(void*)"),
       std::string::npos);
   EXPECT_EQ(signature("IofCompleteRequest").rfind("void ", 0), 0u);
+}
+
+TEST_F(SessionCAPITest, FunctionsHoldTheRecordsTheirPDBTypes) {
+  // A function its PDB types reads its records' members as the local types
+  // name them, and its unit defines those records.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "local_types.exe", std::ios::binary);
+  const std::string Exe =
+      write("local_types.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  neverd_session_set_pdb_path(Session,
+                              (Fixtures / "local_types.pdb").string().c_str());
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto decompile = [&] {
+    const int Index = neverd_func_find_by_name(Session, "use");
+    EXPECT_GE(Index, 0);
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  const std::string Use = decompile();
+  const size_t Includes = Use.find("#include <stdint.h>");
+  const size_t Device = Use.find("struct _DEVICE\n{");
+  ASSERT_NE(Device, std::string::npos) << Use;
+  EXPECT_LT(Includes, Device);
+  // What the record holds by value is defined too, a union as one.
+  EXPECT_NE(Use.find("union _LARGE_INTEGER\n{"), std::string::npos);
+  EXPECT_NE(Use.find("Device->Size"), std::string::npos) << Use;
+  EXPECT_NE(Use.find("Packed->Count"), std::string::npos);
+  // The library's members name the four bytes of a flag union in place,
+  // which the PDB's leave unnamed.
+  EXPECT_NE(Use.find("Thread->MiscFlags"), std::string::npos);
+
+  // A member the user renames reads by its new name.
+  const std::string Renamed = takeString(neverd_local_types_declare(
+      Session,
+      "#pragma pack(push, 1)\n"
+      "struct _PACKED { UCHAR Tag; ULONG Value; USHORT Items; };\n"
+      "#pragma pack(pop)\n",
+      R"({"language":"c"})"));
+  EXPECT_NE(Renamed.find("\"decompilation\":true"), std::string::npos)
+      << Renamed << takeString(neverd_last_error(Session));
+  const std::string After = decompile();
+  EXPECT_NE(After.find("Packed->Items"), std::string::npos) << After;
+  EXPECT_EQ(After.find("Packed->Count"), std::string::npos);
+}
+
+TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
+  const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
+  const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");
+  if (!Kernel || !PDB)
+    GTEST_SKIP() << "set NEVERD_TYPES_NTOSKRNL and NEVERD_TYPES_NTKRNLMP to "
+                    "ntoskrnl.exe and ntkrnlmp.pdb";
+  neverd_session_set_pdb_path(Session, PDB);
+  ASSERT_EQ(neverd_session_load(Session, Kernel), 1)
+      << takeString(neverd_last_error(Session));
+  const auto decompile = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  // The unit defines the record whose members it reads, as the local
+  // types do, after its includes, and what that holds by value.
+  const std::string Dpc = decompile("KeInitializeDpc");
+  const size_t Includes = Dpc.find("#include <stdint.h>");
+  const size_t Record = Dpc.find("struct _KDPC\n{");
+  ASSERT_NE(Record, std::string::npos) << Dpc;
+  EXPECT_LT(Includes, Record);
+  EXPECT_NE(Dpc.find("struct _SINGLE_LIST_ENTRY\n{"), std::string::npos);
+  EXPECT_NE(Dpc.find("static_assert(sizeof(struct _KDPC) == 0x40"),
+            std::string::npos);
+  // A store to a pointer member takes the member's type.
+  EXPECT_NE(
+      Dpc.find("Dpc->DeferredRoutine = (__typeof__(Dpc->DeferredRoutine))"),
+      std::string::npos)
+      << Dpc;
+  EXPECT_NE(Dpc.find("Dpc->DpcData = 0;"), std::string::npos);
+  // A scalar read of a union in place reads its scalar.
+  EXPECT_NE(decompile("PsGetProcessCreateTimeQuadPart")
+                .find("return Process->CreateTime.QuadPart;"),
+            std::string::npos);
+
+  // A member the user renames reads by its new name, in the definition and
+  // in the code alike.
+  const std::string Renamed = takeString(neverd_local_types_declare(
+      Session,
+      R"(struct _SINGLE_LIST_ENTRY { struct _SINGLE_LIST_ENTRY *Next; };
+         struct _KDPC {
+           union { ULONG TargetInfoAsUlong;
+                   struct { UCHAR Type; UCHAR Importance;
+                            volatile USHORT Number; }; };
+           struct _SINGLE_LIST_ENTRY DpcListEntry;
+           ULONGLONG ProcessorHistory;
+           VOID (*Routine)(struct _KDPC *, VOID *, VOID *, VOID *);
+           VOID *DeferredContext; VOID *SystemArgument1;
+           VOID *SystemArgument2; VOID *DpcData; };)",
+      R"({"language":"c"})"));
+  EXPECT_NE(Renamed.find("\"decompilation\":true"), std::string::npos)
+      << Renamed << takeString(neverd_last_error(Session));
+  const std::string After = decompile("KeInitializeDpc");
+  EXPECT_NE(After.find("Dpc->Routine = "), std::string::npos) << After;
+  EXPECT_NE(After.find("(*Routine)(struct _KDPC *"), std::string::npos);
+  EXPECT_EQ(After.find("DeferredRoutine = "), std::string::npos);
 }
 
 TEST_F(SessionCAPITest, PDBReferenceNamesTheCopyALoadFinds) {

@@ -17,7 +17,7 @@
 #include "../plugin/PluginManager.h"
 #include "ImageStrings.h"
 #include "LoadOptions.h"
-#include "PrototypeDebugContext.h"
+#include "LocalTypesDebugContext.h"
 
 #include "neverd/DataAccessWidths.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -143,20 +143,32 @@ struct Session {
     LocalTypesSource.clear();
     DeclarationProblems.clear();
     LocalTypeHeaders.clear();
-    dropPrototypes();
+    dropLocalTypesDebug();
   }
 
-  /// The debug context the decompiler reads: the program's own, its
-  /// functions that it names but leaves untyped completed from the local
-  /// types' prototypes (PrototypeDebugContext), when those have any.  Built
+  /// The debug context the decompiler reads: the program's own completed
+  /// from its local types (LocalTypesDebugContext), when it has any.  Built
   /// at the first decompilation; the pipeline it fed goes with it.
-  std::unique_ptr<PrototypeDebugContext> PrototypeDbg;
-  bool PrototypesChecked = false;
+  std::unique_ptr<LocalTypesDebugContext> LocalTypesDbg;
+  bool LocalTypesChecked = false;
   DebugContext *decompileDebug();
-  void dropPrototypes() {
-    PrototypeDbg.reset();
-    PrototypesChecked = false;
+  /// After a declaration changes \p Changed in \p Library, or adds
+  /// prototypes, drops what read them: the analysis, where prototypes read
+  /// them, or the text that printed them.  Whether the decompilation
+  /// changes.
+  bool typesChanged(const types::TypeLibrary &Library,
+                    llvm::ArrayRef<std::string> Changed, bool Prototypes);
+  void dropLocalTypesDebug() {
+    // The text it printed stays, and with it what that read.
+    if (LocalTypesDbg)
+      for (const auto &Name : LocalTypesDbg->readTypes())
+        ShownTypes.insert(Name.getKey());
+    LocalTypesDbg.reset();
+    LocalTypesChecked = false;
   }
+  /// The library's types the text kept in FunctionSources read through
+  /// contexts since dropped: a change to one changes that text.
+  llvm::StringSet<> ShownTypes;
 
   std::unique_ptr<llvm::LLVMContext> LLVMCtx;
   PipelineResult PipeResult;
@@ -678,9 +690,10 @@ struct Session {
 
   void clearPipeline() {
     clearPipelineResult();
-    // The prototypes' context refers to the debug context a load replaces
+    // The local types' context refers to the debug context a load replaces
     // after this.
-    dropPrototypes();
+    dropLocalTypesDebug();
+    ShownTypes.clear();
     AnalysisCache.reset();
     AccessWidths.reset();
     AccessWidthsFunctions.clear();

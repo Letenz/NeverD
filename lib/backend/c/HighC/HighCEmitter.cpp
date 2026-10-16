@@ -1670,6 +1670,9 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   if (Has512BitInteger)
     OS << "typedef unsigned _BitInt(512) uint512_t;\n"
           "typedef _BitInt(512) int512_t;\n\n";
+  // The program's records the unit names, as its local types define them.
+  if (!RecordDefinitions.Text.empty())
+    OS << RecordDefinitions.Text << "\n";
 }
 
 void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
@@ -3431,6 +3434,7 @@ void HighCWriter::writeX64WindowsSyscallHelper() {
 }
 
 void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
+  prepareRecordDefinitions(Funcs);
   prepareFunctionIdentifiers(Funcs);
   collectImageObjects(Funcs);
   collectMemoryTypes(Funcs);

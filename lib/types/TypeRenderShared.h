@@ -222,6 +222,9 @@ std::string renderC(const TypeLibrary &Library, const LocalType &Type,
 std::string renderCHeader(const TypeLibrary &Library,
                           llvm::ArrayRef<const LocalType *> Types,
                           const RenderOptions &Options);
+EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
+                          llvm::ArrayRef<const LocalType *> Roots,
+                          const RenderOptions &Options);
 std::string renderRust(const TypeLibrary &Library, const LocalType &Type,
                        const RenderOptions &Options);
 std::string renderRustModule(const TypeLibrary &Library,

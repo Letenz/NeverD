@@ -33,7 +33,7 @@ struct BinderWork {
 };
 struct GPUAllocation {
   MemoryView Bytes;
-  bool ReadOnly;
+  uint64_t Flags;
   uint32_t ID = 0; // Zero identifies a legacy user-address import.
   uint64_t UserAddress = 0;
   bool PendingFree = false;

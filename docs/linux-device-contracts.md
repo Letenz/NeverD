@@ -303,13 +303,17 @@ and [PM4 encoding](https://android.googlesource.com/kernel/msm/+/a65478df351382d
 ### Owned GPU memory objects
 
 `"memory_objects":true` in `kgsl_contexts` separately opts into LP64
-GPUOBJ_ALLOC/INFO/FREE and SHAREDMEM_FREE. It requires an O_RDWR device;
+GPUOBJ_ALLOC/INFO/FREE, GPUMEM_ALLOC_ID/GET_INFO/FREE_ID and SHAREDMEM_FREE.
+It requires an O_RDWR device;
 `synchronous_a3xx` is needed only to execute PM4. Static ioctl observations
 cannot shadow these requests. Unknown/non-Boolean settings are rejected.
 
 Objects own zero-initialized physical RAM in NeverD, charged to the workload
-memory budget. Zero/GPUREADONLY allocation flags and zero metadata length are
-admitted. Nonzero sizes through eight 4 KiB pages are rounded up; a GPU-only
+memory budget. GPUREADONLY, FORCE_32BIT, alignment hints and zero metadata
+length are admitted. The 4 KiB page profile normalizes the alignment exponent
+to 12–25 and returns the effective flags. Addresses honor that alignment even
+when skipping explicit device mappings. Nonzero sizes through eight 4 KiB
+pages are rounded up; a GPU-only
 4 KiB guard contributes to the returned footprint. IDs and GPU addresses are
 process-scoped across independent opens and descriptor aliases; allocation
 choices are deterministic model policy, not captured hardware addresses.
@@ -317,6 +321,20 @@ At most 64 objects/imports share the address space. Query returns live size,
 flags, GPU address, footprint and current CPU mapping address, preserving the
 caller's padding. Unknown IDs return EINVAL; unsupported flags, metadata or
 resource limits stop explicitly.
+
+The legacy LP64 requests use 48-byte allocation, 72-byte query and 8-byte
+release records (`0xc0300934`, `0xc0480936`, `0xc0080935`). They address the
+same objects as GPUOBJ, including mappings and pending frees. Legacy allocation
+implicitly sets FORCE_32BIT; its 32-bit flags field omits that upper bit, while
+GPUOBJ_INFO reports it. All modeled addresses currently fit below 4 GiB.
+GPUMEM_GET_INFO prioritizes a nonzero ID, otherwise accepts an address within
+the object's data and returns the base. It does not search by address after an
+invalid ID, or admit the guard as data. Reserved fields survive copyout,
+including FREE_ID's padding. Complete writable output is required before any
+state mutation; unsupported copyout stops without partial effects. Querying a
+legacy user-address import through GET_INFO stops explicitly because its
+kernel allocation ID is not modeled. Other legacy structure layouts are not
+inferred from matching request numbers.
 
 MAP_SHARED accepts one complete data mapping by `id * 4096` or GPU base,
 with PROT_NONE, PROT_READ or PROT_READ|PROT_WRITE. CPU and admitted PM4 writes
@@ -338,3 +356,7 @@ remain unsupported. The resource model is not a physical GPU/cache model.
 The independently written implementation uses the pinned
 [GPU object UAPI](https://android.googlesource.com/kernel/msm/+/25423157b70a8f2250860e72e63b29e28872220c/include/uapi/linux/msm_kgsl.h)
 and [allocation, query and VMA lifetime owner](https://android.googlesource.com/kernel/msm/+/2db776e4f994f895799dd7cb47397db6bfe1e616/drivers/gpu/msm/kgsl.c).
+The LP64 legacy layouts use the same revision's
+[UAPI](https://android.googlesource.com/kernel/msm/+/2db776e4f994f895799dd7cb47397db6bfe1e616/include/uapi/linux/msm_kgsl.h),
+with the page-alignment floor defined by its
+[shared-memory allocator](https://android.googlesource.com/kernel/msm/+/2db776e4f994f895799dd7cb47397db6bfe1e616/drivers/gpu/msm/kgsl_sharedmem.c).

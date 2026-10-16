@@ -652,6 +652,14 @@ std::string renderType(const TypeLibrary &Library, const LocalType &Type,
   return std::string();
 }
 
+EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
+                          llvm::ArrayRef<const LocalType *> Roots,
+                          const RenderOptions &Options) {
+  RenderOptions C = Options;
+  C.Lang = Language::C;
+  return render::renderEmbeddedC(Library, Roots, C);
+}
+
 std::vector<std::pair<std::string, std::string>>
 renamedNames(const TypeLibrary &Library, Language Lang) {
   return render::NameSpelling(Library, Lang).renamed();

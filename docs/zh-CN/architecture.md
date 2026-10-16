@@ -1752,10 +1752,12 @@ KernelModelObjects 在共用对象表中管理文件句柄和指针计数。Kern
 
 KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共享操作接收已获准的节点及已映射权限，双向检查共享冲突；仅访问元数据的打开不参与冲突。CLEANUP 释放共享限制但保留 token，CLOSE 删除已清理的 token。仍被引用的已清理对象也计入 1024 个打开的上限。严格绑定校验将 token 与文件对象 owner 对照。 `KernelModelFileCreate` 拥有 CREATE 和取消生产者，在回调前保留句柄容量。`DriverSession` 在异步操作与嵌套 CLOSE 中保留原调用者。统一对象所有者发布句柄；名称查找保留真实目录对象，终端提供方读取已准入数据包。场景关闭意图独立保留，快照与卸载执行双向 token 校验。
 
-`KernelModelFileQueries` 统一拥有借用缓冲的 IoQueryFileInformation 与独立缓冲的 ZwQueryInformationFile 续调、调用方结果发布和数据包回收。KernelMode 句柄引用复用对象所有者。原生 SystemBuffer 向物理内存所有者登记，普通请求回收把它留给查询所有者处理。只有 `KernelFileSystem::queryInformation` 根据保留的打开 token 编码声明元数据；终端路径读取实际获准 IRP 的类与长度，适配层和报告层不重建元数据。
+`KernelModelFileRequests` 统一拥有借用缓冲的 IoQueryFileInformation 与独立缓冲的 ZwQueryInformationFile 续调、调用方结果发布和数据包回收。KernelMode 句柄引用复用对象所有者。原生 SystemBuffer 向物理内存所有者登记，普通请求回收把它留给查询所有者处理。只有 `KernelFileSystem::queryInformation` 根据保留的打开 token 编码声明元数据；终端路径读取实际获准 IRP 的类与长度，适配层和报告层不重建元数据。
 
 `KernelModelIO` 回收传输所有权时不修改 `FILE_OBJECT.CurrentByteOffset`。请求偏移与完成字节数不能替代文件系统的位置更新；同步原生 Position 查询读取保留的字段。
 
 ### 原始环境的架构归属
 
 `RecoveryArchitecture` 根据 `SpecializationOptions::Architecture` 选择原生契约，与编译主机无关。现有默认值为 x64；没有适配器的架构明确拒绝。`arch/x86_64` 负责原生选项编码、主映像范围规则、外部退出匹配成本和物理退出回执。core 负责通用预算、策略编码及图与证据的完整性。x64 选项和回执摘要保留原有字节编码；验证声明前检查预期与存储的架构标识。`RawArchitectureReceiptCompatibility` 固定重构前的摘要值，架构不匹配测试禁止把 x64 证据改标为 ARM64。这一边界尚未实现 ARM64 原生恢复。
+
+`KernelModelFileRequests` 也统一拥有同步缓冲 `ZwReadFile` / `ZwWriteFile`。生产者负责句柄作用域、偏移和键捕获，以及写入数据的副本。共享完成路径只在原调用方满足通知条件时发布读取字节和 IOSB，并各释放一次自有数据包与缓冲区。存储驱动负责内容和文件位置变更。

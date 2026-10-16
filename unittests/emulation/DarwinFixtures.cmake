@@ -5,6 +5,16 @@ if(NOT NEVERD_TEST_CLANG_EXECUTABLE OR NOT NEVERD_PROCESS_LD64)
 endif()
 set(_darwin_fixture_dir "${CMAKE_CURRENT_BINARY_DIR}/darwin-fixtures")
 file(MAKE_DIRECTORY "${_darwin_fixture_dir}")
+# LLD can retain an unused dyld_stub_binder import with chained fixups. Only
+# the classic lazy fixture exports it; each image must have a binding closure.
+foreach(_darwin_link_kind classic chained)
+  set(_darwin_files_binder "")
+  if(_darwin_link_kind STREQUAL "classic")
+    set(_darwin_files_binder ", dyld_stub_binder")
+  endif()
+  configure_file(fixtures/darwin_libsystem_files.tbd.in
+    "${_darwin_fixture_dir}/libsystem-files-${_darwin_link_kind}.tbd" @ONLY)
+endforeach()
 set(_darwin_outputs)
 foreach(_darwin_profile macos ios ios-simulator)
   foreach(_darwin_arch x86_64 arm64)
@@ -76,6 +86,34 @@ foreach(_darwin_profile macos ios ios-simulator)
       DEPENDS fixtures/darwin_libsystem_lazy.c fixtures/darwin_libsystem_lazy.tbd
       VERBATIM)
     list(APPEND _darwin_outputs "${_darwin_lazy_output}")
+    set(_darwin_files_object "${_darwin_output}-libsystem-files.o")
+    add_custom_command(OUTPUT "${_darwin_files_object}"
+      COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" "--target=${_darwin_target}"
+        -std=c11 -ffreestanding -fno-builtin -fno-stack-protector
+        -nostdinc -isysroot "${_darwin_fixture_dir}"
+        -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
+        -fno-asynchronous-unwind-tables -O1 -c
+        "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/darwin_libsystem_files.c"
+        -o "${_darwin_files_object}"
+      DEPENDS fixtures/darwin_libsystem_files.c VERBATIM)
+    foreach(_darwin_link_kind classic chained)
+      if(_darwin_link_kind STREQUAL "classic")
+        set(_darwin_fixup_flag -no_fixup_chains)
+      else()
+        set(_darwin_fixup_flag -fixup_chains)
+      endif()
+      set(_darwin_files_output "${_darwin_output}-libsystem-files-${_darwin_link_kind}")
+      add_custom_command(OUTPUT "${_darwin_files_output}"
+        COMMAND "${NEVERD_PROCESS_LD64}" -arch "${_darwin_arch}"
+          -platform_version "${_darwin_profile}" 14.0 14.0 -e _main
+          "${_darwin_fixup_flag}" "${_darwin_files_object}"
+          "${_darwin_fixture_dir}/libsystem-files-${_darwin_link_kind}.tbd"
+          -o "${_darwin_files_output}"
+        DEPENDS "${_darwin_files_object}"
+          "${_darwin_fixture_dir}/libsystem-files-${_darwin_link_kind}.tbd"
+        VERBATIM)
+      list(APPEND _darwin_outputs "${_darwin_files_output}")
+    endforeach()
   endforeach()
 endforeach()
 add_custom_target(NeverDDarwinFixtures DEPENDS ${_darwin_outputs})
@@ -125,6 +163,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND NOT CMAKE_CROSSCOMPILING)
   add_dependencies(NeverDDarwinProcessTests NeverDDarwinLazyNativeOracle)
   target_compile_definitions(NeverDDarwinProcessTests PRIVATE
     NEVERD_DARWIN_LAZY_NATIVE_ORACLE="${_darwin_lazy_native}")
+  set(_darwin_files_native "${_darwin_fixture_dir}/macos-libsystem-files-native")
+  add_custom_command(OUTPUT "${_darwin_files_native}"
+    COMMAND xcrun clang -arch "${_darwin_native_arch}" -Wl,-no_fixup_chains
+      "${_darwin_fixture_dir}/macos-${_darwin_native_arch}-libsystem-files.o"
+      -o "${_darwin_files_native}"
+    DEPENDS "${_darwin_fixture_dir}/macos-${_darwin_native_arch}-libsystem-files.o"
+    VERBATIM)
+  add_custom_target(NeverDDarwinFilesNativeOracle DEPENDS "${_darwin_files_native}")
+  add_dependencies(NeverDDarwinProcessTests NeverDDarwinFilesNativeOracle)
+  target_compile_definitions(NeverDDarwinProcessTests PRIVATE
+    NEVERD_DARWIN_FILES_NATIVE_ORACLE="${_darwin_files_native}")
 endif()
 if(TARGET NeverDProcessPublicTests)
   add_dependencies(NeverDProcessPublicTests NeverDDarwinFixtures)

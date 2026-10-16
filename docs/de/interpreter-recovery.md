@@ -206,6 +206,14 @@ Vor einem vollständigen Flags-Schnappschuss muss jedes modellierte arithmetisch
 
 LowIR-Temporärwerte gelten nur innerhalb einer gehobenen nativen Anweisung. Jedes gelesene Byte muss zuvor in derselben Anweisung definiert worden sein; ein wiederverwendeter Offset aus einer früheren Anweisung oder ein algebraisch aufgehobener undefinierter Wert ist kein Beleg für gültigen Quellcode. Eintrittskonstanten dürfen nur physische Register binden.
 
+<!-- i18n-section: supervisor-interrupt-control -->
+
+## Interrupt-Flag im Supervisor-Modus
+
+Die rohe LowIR-Wiederherstellung und native Relationsbeweise erlauben kanonische x64-Formen von `CLI`/`STI` nur mit dem expliziten Profil `KernelX64NoFaultV1`. Die gemeinsame x64-Flag-Semantik löscht beziehungsweise setzt IF und erhält alle anderen Flags, allgemeinen Register und Speicherbytes. Die Wiederherstellung behält das ursprüngliche Intrinsic bei; Beweise erfassen seinen Flag-Übergang und vergleichen stets die abschließenden Systemflags, auch ohne Beobachtungen gewöhnlicher Register.
+
+Das Profil legt CPL0/IOPL0 fest und schließt asynchrone Ereignisse, die Zustellung von Debug-Ereignissen und Privilegwechsel aus. Die vorübergehende Interrupt-Sperre von STI wird daher nicht beobachtet. Ein fehlendes Profil oder ein Benutzerprofil weist diese Befehle zurück; die bestehende Quellcode-ABI bleibt auf ihr Benutzerprofil beschränkt. Diese Unterstützung liefert kein Modell für Interrupt-Zustellung oder Privilegwechsel.
+
 <!-- i18n-section: raw-cmpxchg -->
 
 ## Vergleich und Austausch im sequenziellen Raw-Modell
@@ -370,3 +378,9 @@ Die Ausrichtungssuche übergibt `MaxCuts` an die gemeinsame Inferenz. Nach Einga
 Unter `ExplicitMachineState` und `NormalNonfaultingExecution` darf ein zugelassener 16-Byte-`LOAD` unveränderliche Abbilddaten nur verwenden, wenn jede mögliche Adresse einen vollständigen 16-Byte-Nachweis besitzt. Die symbolische Ausführung erhält alle 128 Bits. Der Restcode materialisiert skalare Teile in Speicherreihenfolge und erfasst eine möglicherweise überlappende Adresse vor dem ersten Schreiben des Ziels. Beide Byteordnungen teilen diese Regel; jede erzeugte Operation verbraucht das bestehende Operationsbudget.
 
 Ein unvollständiger Adressbereich oder fehlender unveränderlicher Abschnitt erhält den ganzen Laufzeitzugriff ohne Teilnachweise. Eine ungültige Byteanzahl des Providers führt zur Ablehnung. Schreibbarer Speicher und Laufzeitbeobachtungen erhalten keine Unveränderlichkeitsbefugnis. Rohe Belege binden sämtliche Nachweisbytes einschließlich der oberen Hälfte. Quellcodekapselung und unabhängige native Beweise behalten ihre bisherigen Breiten- und Umgebungsanforderungen.
+
+<!-- i18n-section: unrooted-native-stack -->
+
+## Interne Übergänge nach einem Stackwechsel
+
+Explizite rohe Maschinenregionen können interne near CALL- und RET-Anweisungen verfolgen, wenn sich der aktuelle Stackzeiger nicht mehr relativ zum Eintrittswert ausdrücken lässt. Der Architekturadapter erhält die tatsächliche Zielerfassung, das Push, das Lesen des Rücksprungworts und das Pop. Jeder interne Rücksprung benötigt weiterhin einen vollständigen Beweis der endlichen Zielmenge aus dem tatsächlichen Stackwort. Nur nachweislich eintrittsrelative Rücksprungzellen gelangen in die Frame-Projektion und das Erhaltungsinventar; der Verlust anderer Stackbeziehungen an einer Graphgrenze kann weiterhin zur Ablehnung führen. Für gewöhnliche Funktionen gelten die Anforderungen zur Frame-Wiederherstellung weiter. Das Ergebnis beschreibt eine rohe Region; die Zusammensetzung der gesamten Funktion sowie die Quellcode- oder native Äquivalenz müssen separat bewiesen werden.

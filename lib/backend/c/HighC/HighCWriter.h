@@ -121,6 +121,10 @@ public:
   /// (HighCSourceNames.cpp).
   void recordSourceNames(const std::vector<HighFunc> &Funcs);
   void writeSourceRecordDeclarations(const std::vector<HighFunc> &Funcs);
+  /// Asks the program's local types for the definitions of the records the
+  /// unit names (CEmitterOptions::RecordDefinitions), and keeps the names
+  /// they declare from the unit's own.
+  void prepareRecordDefinitions(const std::vector<HighFunc> &Funcs);
   TypeRef declaredFunctionReturnType(const HighFunc &Func) const;
   void prepareFunctionReturns(std::vector<HighFunc> &Funcs) const;
   void prepareFunctionIdentifiers(const std::vector<HighFunc> &Funcs);
@@ -414,6 +418,9 @@ public:
                     bool EnterNestedAtZero = true) const;
   std::optional<std::string> typedMemberAddress(const HighExpr &Addr) const;
   TypeRef typedMemberType(const HighExpr &Addr, uint16_t AccessSize = 0) const;
+  /// Whether \p Addr is a member of a record the unit defines from the
+  /// program's local types (RecordDefinitions).
+  bool memberOfDefinedRecord(const HighExpr &Addr) const;
   /// Frame displacement that is a unique interior field of a named record
   /// slot (`record.p` at wrapper+8). Exact slot addresses stay unnamed here.
   std::optional<std::string>
@@ -782,6 +789,8 @@ public:
   std::map<std::string, const HighFunc *> DefinedFunctionsByIdentifier;
   std::map<va_t, const HighFunc *> DefinedFunctionsByAddress;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
+  /// The local types' definitions of the records the unit names.
+  CRecordDefinitions RecordDefinitions;
   std::map<const HighFunc *, std::string> FunctionIdentifiers;
   /// The C name each defined function's symbol spells, for its comment.
   std::map<const HighFunc *, std::string> FunctionSymbolNames;

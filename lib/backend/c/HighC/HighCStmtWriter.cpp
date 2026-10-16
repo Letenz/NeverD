@@ -272,6 +272,12 @@ void writeCxxCatchType(llvm::raw_ostream &OS, const HighEHClause &Clause) {
     OS << " &";
 }
 
+/// Whether \p E is the integer constant zero, which C converts to the null
+/// pointer of any type.
+bool isZeroConstant(const HighExpr &E) {
+  return E.Kind == ExprKind::Const && E.ConstVal == 0;
+}
+
 } // namespace
 
 void HighCWriter::emitIndent(int Indent) { emitCIndent(OS, Indent); }
@@ -999,6 +1005,25 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                                  Stmt.StoreVal->Op == NdOp::INT_SEXT);
             Value = "(" + typeToC(MemberType) + ")(" +
                     (Signed ? "intptr_t" : "uintptr_t") + ")(" + Value + ")";
+          } else if (!Overlayed && MemberType && StoredType &&
+                     MemberType->Kind != NdTypeKind::Float &&
+                     StoredType->Kind != NdTypeKind::Float &&
+                     (MemberType->Kind == NdTypeKind::Ptr ||
+                      StoredType->Kind == NdTypeKind::Ptr) &&
+                     !isZeroConstant(*Stmt.StoreVal) &&
+                     memberOfDefinedRecord(*Stmt.StoreAddr)) {
+            // A member the unit's definitions declare takes their type,
+            // which C converts the stored bytes' type to only by a cast:
+            // an address to a pointer of another type, or an integer.  An
+            // address the code holds as an integer is cast as the address.
+            if (MemberType->Kind == NdTypeKind::Ptr)
+              if (const HighExpr *Address =
+                      peelIntegerViewOps(Stmt.StoreVal.get());
+                  Address && Address != Stmt.StoreVal.get() && Address->Type &&
+                  Address->Type->Kind == NdTypeKind::Ptr &&
+                  Address->Type->Size == MemberType->Size)
+                Value = exprStr(*Address);
+            Value = "(__typeof__(" + *Member + "))(" + Value + ")";
           }
           OS << Value;
         }

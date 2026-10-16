@@ -224,6 +224,15 @@ def run(executable):
         ok(bounded, "open", {"path": str(big), "analysis": False})
         large = source(bounded, limit=1)
         reused(source(bounded, limit=1), large)
+        # Retiring encoded pages must leave the owning document usable. Small
+        # overlapping pages exercise count pressure; larger ones exercise byte
+        # pressure without asking the backend to render the document again.
+        for width in (32, 512):
+            original_page = source(bounded, offset=100, limit=width)
+            for offset in range(101, 171):
+                source(bounded, offset=offset, limit=width)
+            assert source(bounded, offset=100, limit=width) == original_page
+            reused(source(bounded, limit=1), large)
         for entry in entries[1:4]:
             source(bounded, entry, limit=1)
         rebuilt = source(bounded, limit=1)
