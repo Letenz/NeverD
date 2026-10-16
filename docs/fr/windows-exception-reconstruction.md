@@ -250,6 +250,13 @@ susceptible de lever une exception, la source doit reconnecter son registration
 vivant, ou le retirer au retour. Une réparation non prouvée ou une destination
 extérieure au CFG parent vérifié entraîne un refus.
 
+Une continuation peut être accessible uniquement depuis le saut du finally si
+tous les chemins décodés de sa partie finale acyclique rejoignent du code parent
+déjà attribué, sans traverser une entrée de filter ou de finally. Cette preuve
+physique n’accorde aucun droit mémoire de handler d’exécution ; le transfert
+SavedESP et les états entrants restent vérifiés séparément. Un retour sans point
+de rattachement au parent ou un cycle ne peut établir cette appartenance.
+
 
 Les appels ordinaires à finally échangent explicitement EAX/ECX/EDX/EBX/ESI/EDI
 par des emplacements privés du cadre parent, y compris les valeurs du retour

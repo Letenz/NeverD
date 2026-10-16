@@ -243,6 +243,13 @@ Quellcode seine aktive Registrierung erneut verknüpfen oder sie bei der Rückke
 entfernen. Unbewiesene Kettenreparaturen und Ziele außerhalb des geprüften
 Eltern-CFG werden abgelehnt.
 
+Eine Fortsetzung darf ausschließlich vom finally-Sprung erreichbar sein, wenn
+jeder dekodierte Pfad ihres azyklischen Endstücks in bereits zugeordneten
+Elterncode mündet, ohne einen filter- oder finally-Einstieg zu durchqueren.
+Dieser physische Nachweis verleiht keine Speicherrechte eines Runtime-Handlers;
+SavedESP-Transfer und erreichende Zustände werden unabhängig geprüft. Eine
+unverankerte Rückkehr oder ein Zyklus begründet keine Elternzuordnung.
+
 
 Gewöhnliche finally-Aufrufe übertragen EAX/ECX/EDX/EBX/ESI/EDI explizit über
 private Speicherplätze im Elternframe, einschließlich der Werte beim physischen

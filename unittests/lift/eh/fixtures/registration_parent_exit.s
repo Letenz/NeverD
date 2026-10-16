@@ -58,7 +58,7 @@ _registration_entry:
 #else
   mov dword ptr [ebp-4],1
 #endif
-#if REGISTRATION_CASE == 83 || REGISTRATION_CASE == 86
+#if REGISTRATION_CASE == 83 || REGISTRATION_CASE == 86 || REGISTRATION_CASE == 90
   call _registration_raise
 #else
   call _registration_no_raise
@@ -69,7 +69,13 @@ _registration_entry:
   test dword ptr [_registration_iteration],1
   jnz .Lparent_alternative
 #endif
+#if REGISTRATION_CASE == 89 || REGISTRATION_CASE == 90
+  // The resumed parent tail has no ordinary predecessor. Its checked paths
+  // still end at the shared parent epilogue.
+  jmp .Lfinish
+#else
   jmp .Lparent_resume
+#endif
 .Lfinally:
   mov dword ptr [ebp-36],2
 #if REGISTRATION_CASE == 88

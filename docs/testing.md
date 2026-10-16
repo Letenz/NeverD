@@ -6977,9 +6977,15 @@ public section/inplace installation and rebased images. Their independent
 source replay also rejects replacing the generated finally return with
 `unreachable`.
 
-The seven `finally-parent-*` reconstruction cases and their EH4/EH4+GS variants
+The nine `finally-parent-*` reconstruction cases and their EH4/EH4+GS variants
 cover ordinary and runtime SavedESP branches, multiple parent destinations,
 mixed near-return/nonlocal exits and another exception after resumption.
+The parent-only ordinary and unwind cases resume code with no ordinary incoming
+edge before joining an established parent epilogue. Their original and rebased
+executions must pass independently. `FinallyOnlyParentTailsRequireEveryPathToAnAnchor`
+checks single-block, chained and conditional tails in both block orders, with
+cycles, missing/duplicate edges, foreign callbacks, decoded-target mismatches,
+mode changes, guards and unanchored returns rejected.
 They also check the current EBX/ESI/EDI values written by the finally and restore
 the original caller's nonvolatile registers before returning. The register-input
 case computes from the ordinary caller's values while retaining a scope that
@@ -6997,7 +7003,7 @@ checks 36 verifier-clean changes to capture, private storage, aliases, FS:[0],
 selectors, source destinations and retained callback ABI. Callback-to-parent
 PHI copies require the exact authenticated edge, including recovered scalar
 slots shared by multiple destinations. The complete source replay profile
-includes all 237 reconstruction cases and requires 4,740 runtime observations.
+includes all 243 reconstruction cases and requires 4,860 runtime observations.
 `RegistrationSEHRegisterIRMutations` checks 30 edits to register slots, aliases,
 source order, runtime-entry selection and constant outputs.
 `RegistrationCookieABI` checks ECX-only recovery despite incidental EDX/XMM/stack

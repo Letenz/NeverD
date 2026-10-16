@@ -242,6 +242,13 @@ provocar una excepción, el código original debe reconectar su registration act
 o retirarlo al retornar. Se rechazan reparaciones no probadas y destinos fuera
 del CFG padre verificado.
 
+Una continuación puede alcanzarse únicamente desde el salto del finally si
+todos los caminos decodificados de su tramo final acíclico confluyen en código
+padre ya atribuido, sin atravesar una entrada de filter o finally. Esta prueba
+física no concede permisos de memoria del handler del runtime; la transferencia
+SavedESP y los estados de entrada se verifican por separado. Un retorno sin
+conexión al padre o un ciclo no puede establecer esa pertenencia.
+
 
 Las llamadas ordinarias a finally intercambian EAX/ECX/EDX/EBX/ESI/EDI mediante
 posiciones privadas del marco padre, incluidos los valores del retorno cercano

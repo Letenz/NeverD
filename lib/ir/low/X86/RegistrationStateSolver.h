@@ -219,6 +219,7 @@ public:
 private:
   bool initialize();
   bool initializeOrder();
+  bool extendSEHParentOwnership();
   bool validateRealignedLayout();
   bool realignedMemoryIsDisjoint(const FrameValue &Address,
                                  uint16_t Width) const;
@@ -435,6 +436,9 @@ private:
   std::set<int32_t> AllLevels;
   std::set<va_t> FinallyTargets;
   std::set<va_t> SEHParentEntries;
+  /// Physically anchored tails become parent code only after a checked
+  /// SavedESP transfer. They grant no runtime-handler entry memory privilege.
+  std::set<va_t> SEHParentContinuations;
   std::vector<std::map<SEHFlowKey, ActivationState>> States;
   struct SEHDispatchMemo {
     Domain Source;

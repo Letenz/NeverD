@@ -120,6 +120,8 @@ PARENT_EXIT_CASES = {
     "finally-parent-reenter-unwind": (86, 234),
     "finally-parent-reenter-normal": (87, 234),
     "finally-parent-register-input": (88, 23),
+    "finally-parent-only": (89, 23),
+    "finally-parent-only-unwind": (90, 23),
 }
 CASES.update({prefix + name: value for prefix in ("", "eh4-", "eh4-gs-")
               for name, value in PARENT_EXIT_CASES.items()})
@@ -374,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
             (output / f"{name}.def").write_text(definition, encoding="utf-8")
             commands.append([linker, "/lib", f"/def:{output / (name + '.def')}",
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
-        if 82 <= case <= 88:
+        if case in {value[0] for value in PARENT_EXIT_CASES.values()}:
             sources = ["registration_parent_exit.s"]
             if eh4:
                 sources.append("registration_eh4_runtime.c")

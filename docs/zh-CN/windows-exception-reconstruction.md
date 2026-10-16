@@ -141,6 +141,11 @@ callback 通过 escaped frame 恢复源 EBP/ESP 和 exception pointer。只有�
 节点：在再次调用或执行可能产生异常的操作前，源代码必须重新连接其存活的 registration，
 或在返回时移除它。无法证明异常链恢复、或目标不属于已检查父函数 CFG 时，仍拒绝重建。
 
+续接点也可以仅由 finally 跳转到达：其无环尾部的每条解码路径都必须汇入已确认的
+父函数代码，且不能穿过 filter 或 finally 入口。这一物理归属证明不会授予运行时
+handler 的内存访问权限；SavedESP 转移和到达状态仍须独立验证。没有父函数锚点的
+返回或循环不能凭此规则取得父函数归属。
+
 普通 finally 调用通过私有父帧槽显式传递 EAX/ECX/EDX/EBX/ESI/EDI，
 并接收物理近返回时的当前值。运行时入口保持自己的寄存器契约，不借用前一次普通
 调用的输入。即使没有源 try level 激活某个 scope，只要它由经过证明的普通 finally

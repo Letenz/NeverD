@@ -208,6 +208,12 @@ temporary unwind guard: before another call or potentially faulting operation, t
 source must reconnect its live registration or remove it on return. Unproved
 chain repair and destinations outside the checked parent CFG remain rejected.
 
+A continuation may be reached only by the finally branch when every decoded
+path through its acyclic tail joins already owned parent code without crossing a
+filter or finally entry. This physical ownership proof grants no runtime-handler
+memory privilege; the SavedESP transfer and reaching state remain independently
+checked. An unanchored return or cycle cannot establish parent ownership.
+
 Ordinary finally calls explicitly exchange EAX/ECX/EDX/EBX/ESI/EDI through
 private parent-frame slots, including values returned by a physical near return.
 The runtime entry keeps its own register contract; it never borrows a previous
