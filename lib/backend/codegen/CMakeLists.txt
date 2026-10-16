@@ -27,6 +27,9 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFRegistrationSEHBoundCall.cpp
   COFF/COFFRegistrationSEHJumpArguments.cpp
   COFF/COFFRegistrationSEHJumpRuntime.cpp
+  COFF/COFFRegistrationSEHLocalUnwindBridge.cpp
+  COFF/COFFRegistrationSEHLocalUnwind.cpp
+  COFF/COFFRegistrationSEHLocalUnwindContext.cpp
   COFF/COFFRegistrationSEHParentExit.cpp
   COFF/COFFRegistrationSEHParentExitSource.cpp
   COFF/COFFRegistrationFrameStores.cpp

@@ -1508,8 +1508,11 @@ add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
 
 add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
+  eh/RegistrationLocalUnwindBridgeTests.cpp
+  eh/RegistrationLocalUnwindNativeTests.cpp
   eh/RegistrationSEHReturnTests.cpp
   eh/RegistrationSEHParentExitTests.cpp
+  eh/RegistrationSEHRegisterInputTests.cpp
   eh/RegistrationSEHParentExitIRMutations.cpp
   eh/RegistrationSEHRegisterIRMutations.cpp
   eh/RegistrationSEHCallbackTests.cpp
@@ -1535,6 +1538,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationSEHFinallyIRMutations.cpp
   eh/RegistrationSEHPersonalityTests.cpp
   eh/RegistrationSEHFrameProofTests.cpp
+  eh/RegistrationSEHScalarSpillTests.cpp
   eh/RegistrationSEHNullAccessTests.cpp
   eh/RegistrationCxxContinuationTestUtils.cpp
   eh/RegistrationCallTests.cpp
