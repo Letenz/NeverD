@@ -2980,12 +2980,12 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
     menu.addSeparator();
     // Hex-Rays' Synchronize with: the code and the disassembly follow each
     // other's cursor, or browse apart with Tab to cross over.
-    auto *synchronize = menu.addAction(icon(QStringLiteral("sync")),
-                                       tr("Synchronize with disassembly"));
-    synchronize->setObjectName(QStringLiteral("codeSynchronize"));
-    synchronize->setCheckable(true);
-    synchronize->setChecked(synchronizeCode_);
-    connect(synchronize, &QAction::toggled, this, [this](bool enabled) {
+    auto *follow = menu.addAction(icon(QStringLiteral("sync")),
+                                  tr("Synchronize with disassembly"));
+    follow->setObjectName(QStringLiteral("codeSynchronize"));
+    follow->setCheckable(true);
+    follow->setChecked(synchronizeCode_);
+    connect(follow, &QAction::toggled, this, [this](bool enabled) {
       synchronizeCode_ = enabled;
       QSettings().setValue(SynchronizeCodeKey, enabled);
     });
