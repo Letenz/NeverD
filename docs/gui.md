@@ -740,17 +740,6 @@ it with `--no-map`, names one with `--map`, which a PDB or DWARF still
 outranks unless `--no-pdb` or `--no-dwarf` declines it, and takes one of
 another build with `--map-unchecked`.
 
-**File → Load file** loads a debug file into the open image: **PDB file...**
-for a PE, **DWARF file...** for an ELF or Mach-O image — a split `.debug` file,
-an unstripped copy or a `.dSYM` (the DWARF file inside it), whose machine and
-any build ID or UUID must be the image's — and **MAP file...** for any image
-but an EVM or SBF program. A MAP of another build asks before it loads. The
-image is read again with every debug file it has, in rank order, so a PDB or
-DWARF loaded after a MAP replaces the MAP's names, and a MAP loaded after them
-fills only what they leave unnamed. The project keeps the files chosen, and
-reopening it loads them again; one that no longer loads leaves the project open
-without it, with a warning. The command line names a DWARF file with `--dwarf`.
-
 Anyone can write names into a symbol table, to mislead whoever reads the
 program. Opening an image with a static symbol table, the table `strip`
 removes, therefore first asks **Symbol table found** — *Load the symbol
@@ -768,6 +757,17 @@ DWARF and PDB names have their own questions, and `main` is still named when
 the analysis finds it from the start-up code. Object files, whose relocations
 need their symbols, are not asked. The command line reads the image without
 its symbol table with `--no-symtab`.
+
+**File → Load file** loads a debug file into the open image: **PDB file...**
+for a PE, **DWARF file...** for an ELF or Mach-O image — a split `.debug` file,
+an unstripped copy or a `.dSYM` (the DWARF file inside it), whose machine and
+any build ID or UUID must be the image's — and **MAP file...** for any image
+but an EVM or SBF program. A MAP of another build asks before it loads. The
+image is read again with every debug file it has, in rank order, so a PDB or
+DWARF loaded after a MAP replaces the MAP's names, and a MAP loaded after them
+fills only what they leave unnamed. The project keeps the files chosen, and
+reopening it loads them again; one that no longer loads leaves the project open
+without it, with a warning. The command line names a DWARF file with `--dwarf`.
 
 **File → Load file → PDB file...** selects a PDB anywhere on disk for the
 currently loaded PE. A matching CodeView identity applies its debug symbols and
