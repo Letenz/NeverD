@@ -4658,7 +4658,8 @@ TEST_P(DarwinLibSystemPublic,
         {"instruction_quantum", 1024},
         {"timeout_microseconds", 5000000},
         {"arguments", std::move(Args)},
-        {"darwin_files", llvm::json::Object{{"stdin_hex", ""}}}});
+        {"darwin_files", llvm::json::Object{{"files", llvm::json::Array{}},
+                                            {"stdin_hex", ""}}}});
     for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
       auto Text = takeString(neverd_emulate_process_json(
           Session, Path.c_str(), Profile, Options.c_str()));
