@@ -561,7 +561,7 @@ TEST(RegistrationFilterState, CleanupJumpRetiresThePendingHandler) {
       F.Blocks.back() = std::move(Cleanup);
       const auto Result =
           analyze(std::move(F), Variant::HandlerCleanup, 0x4000, true);
-      if (Mutation >= 2 && Mutation != 7) {
+      if (Mutation >= 3 && Mutation != 7) {
         EXPECT_FALSE(Result.Complete);
         EXPECT_FALSE(Result.SEHJumpResumptionsComplete);
         continue;

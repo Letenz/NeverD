@@ -149,12 +149,15 @@ using SEHFilterOutcomes = std::map<uint32_t, SEHFrameOutcomes>;
 /// filter-written state which controls the following local unwind.
 using SEHHandlerOutcomes = std::map<uint32_t, SEHFrameOutcomes>;
 
+/// A replacement jump can change EAX without changing its captured buffer.
+/// Pair each value with the frame effects which actually resume with it.
+using SEHJumpFrameOutcomes = std::map<FrameValue, SEHFrameOutcomes>;
+
 // A repeated jump retires the pending handler and every suspended callback.
 // Its frames must not be projected through an ordinary callback return.
 struct SEHUnwindJump {
   const SEHJumpCapture &Capture;
-  const FrameValue &Value;
-  SEHFrameOutcomes Resumed;
+  SEHJumpFrameOutcomes Resumed;
 };
 
 struct BlockFacts {
@@ -265,7 +268,8 @@ private:
                     const SEHJumpCapture *Jump = nullptr,
                     const FrameValue *JumpValue = nullptr,
                     std::set<RegistrationSEHJumpState> *StateRestores = nullptr,
-                    SEHHandlerOutcomes *Selected = nullptr);
+                    SEHHandlerOutcomes *Selected = nullptr,
+                    SEHJumpFrameOutcomes *Resumed = nullptr);
   bool runLocalFinally(va_t Target, FrameState &Parent,
                        bool OrdinaryInvocation = false,
                        std::vector<RegistrationObjectExtent> *Writes = nullptr,

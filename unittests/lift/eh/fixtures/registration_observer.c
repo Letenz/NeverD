@@ -49,9 +49,11 @@ unsigned registration_helper_visits;
 #define EXPECTED_TRACE 2345
 #elif REGISTRATION_CASE == 57
 #define EXPECTED_TRACE ((iterations & 1) ? 23u : 235u)
-#elif REGISTRATION_CASE == 54 || REGISTRATION_CASE == 58
+#elif REGISTRATION_CASE == 54 || REGISTRATION_CASE == 58 ||                    \
+    REGISTRATION_CASE == 60 || REGISTRATION_CASE == 62
 #define EXPECTED_TRACE 236u
-#elif REGISTRATION_CASE == 59
+#elif REGISTRATION_CASE == 59 || REGISTRATION_CASE == 61 ||                    \
+    REGISTRATION_CASE == 63
 #define EXPECTED_TRACE 2367u
 #elif REGISTRATION_CASE == 55
 #define EXPECTED_TRACE 234u

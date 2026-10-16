@@ -4273,7 +4273,7 @@ four calls, unwind the same finally, check the restored state and nonvolatile
 register, then raise another exception. The native mutation tests alter the saved
 state slot, read address, volatile accesses, placement, use closure and captured
 projection key while retaining verifier-clean IR. The full source profile now
-contains 150 scenarios; older compiler profiles keep their original membership.
+contains 162 scenarios; older compiler profiles keep their original membership.
 
 The EH4/GS `longjmp-callee`, `longjmp-returning-callee` and
 `longjmp-scalar-callee` variants retain the source helper's registration while
@@ -4324,7 +4324,7 @@ pairs. Native installation mutations change the reload address, volatility,
 atomicity, alignment, selector, projection keys/results, uses and placement
 before the capture. They also remove a projection or compare another value.
 
-`registration_filter_state.s` supplies fourteen runtime cases. Five handler-selection
+`registration_filter_state.s` supplies eighteen runtime cases. Five handler-selection
 cases (`longjmp-handler-selected`, `longjmp-handler-cleanup`,
 `longjmp-handler-captured-cursor`, `longjmp-handler-nested-finally` and
 `longjmp-handler-mixed-resumption`) check handler entry state, cleanup/filter
@@ -4337,8 +4337,12 @@ EH3, EH4 and EH4+GS. Two additional cases, `longjmp-handler-cleanup-jump` and
 cleanup. They require traces 236/2367, capture value 42, restored EBX and state 0;
 the selected handler and suspended callback tails must not execute. The six
 protocol variants also cover out-of-line EH4 callbacks. Source mutations reject
-changed buffers/values, incomplete CALLs and parent continuations outside their
-range. MedIR checks exact nested invocation identity and independent ownership
+changed buffers, escaping frame values, incomplete CALLs and parent continuations
+outside their range. Four more cases, `longjmp-handler-cleanup-value`,
+`longjmp-handler-nested-cleanup-value`, `longjmp-handler-cleanup-zero` and
+`longjmp-handler-nested-cleanup-zero`, replace the pending value 42 with 43 or
+zero. All twelve protocol variants check the actual resumed EAX (43 or 1),
+cleanup order, restored registers and registration state. MedIR checks exact nested invocation identity and independent ownership
 of unreached callback tails; installation rejects removed noreturn attributes
 and newly inserted normal returns. The other seven cases are:
 `longjmp-filter-correlated-state`, `longjmp-filter-shared-state`,

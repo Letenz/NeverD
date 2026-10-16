@@ -202,12 +202,14 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
     return true;
   };
   SEHFrameOutcomes Outcomes;
+  SEHJumpFrameOutcomes Resumed;
   SEHHandlerOutcomes Selected;
   std::vector<RegistrationObjectExtent> Writes;
   std::set<RegistrationSEHJumpState> StateRestores;
   for (int32_t Level : After.Levels)
     if (!runSEHUnwind(After.Frame, Level, uint32_t(Saved.Level), Outcomes,
-                      Writes, &Saved, &Value, &StateRestores, &Selected))
+                      Writes, &Saved, &Value, &StateRestores, &Selected,
+                      &Resumed))
       return Refuse();
   for (const auto &Write : Writes)
     if (Write.Begin <
@@ -268,9 +270,9 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
     llvm::sort(Scopes);
     Scopes.erase(std::unique(Scopes.begin(), Scopes.end()), Scopes.end());
   }
-  if (!Outcomes.empty() &&
-      !mergeSEHJumpContinuation(After, Saved, Value, std::move(Outcomes)))
-    return Refuse();
+  for (auto &[ResumeValue, Frames] : Resumed)
+    if (!mergeSEHJumpContinuation(After, Saved, ResumeValue, std::move(Frames)))
+      return Refuse();
   for (auto &[Scope, Frames] : Selected)
     for (auto &[Level, Frame] : Frames) {
       if (!charge(After.snapshotWork() + Frame.cellCount() + 10))

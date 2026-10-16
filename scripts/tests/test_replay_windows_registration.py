@@ -13,8 +13,8 @@ class RegistrationSourceReplayTests(unittest.TestCase):
         self.assertEqual(len(r5), 64)
         eh4_jumps = {name for name in current
                      if name.startswith("eh4-") and "longjmp-" in name}
-        self.assertEqual(len(current), 150)
-        self.assertEqual(len(eh4_jumps), 74)
+        self.assertEqual(len(current), 162)
+        self.assertEqual(len(eh4_jumps), 82)
         for prefix in ("eh4-", "eh4-gs-"):
             for case in ("longjmp-filter-correlated-state", "longjmp-filter-shared-state",
                          "longjmp-filter-captured-cursor", "longjmp-filter-negative-disposition",
@@ -35,7 +35,9 @@ class RegistrationSourceReplayTests(unittest.TestCase):
             "longjmp-multistate-capture", "longjmp-handler-selected",
         "longjmp-handler-cleanup", "longjmp-handler-captured-cursor",
         "longjmp-handler-nested-finally", "longjmp-handler-mixed-resumption",
-        "longjmp-handler-cleanup-jump", "longjmp-handler-nested-cleanup-jump"})
+        "longjmp-handler-cleanup-jump", "longjmp-handler-nested-cleanup-jump",
+        "longjmp-handler-cleanup-value", "longjmp-handler-nested-cleanup-value",
+        "longjmp-handler-cleanup-zero", "longjmp-handler-nested-cleanup-zero"})
         self.assertEqual(set(current) - set(r4) - eh4_jumps, {
             "longjmp-state-activate-call", "longjmp-state-activate-unwind",
             "longjmp-state-retire", "longjmp-state-sentinel",
@@ -52,7 +54,9 @@ class RegistrationSourceReplayTests(unittest.TestCase):
             "longjmp-multistate-capture", "longjmp-handler-selected",
         "longjmp-handler-cleanup", "longjmp-handler-captured-cursor",
         "longjmp-handler-nested-finally", "longjmp-handler-mixed-resumption",
-        "longjmp-handler-cleanup-jump", "longjmp-handler-nested-cleanup-jump"})
+        "longjmp-handler-cleanup-jump", "longjmp-handler-nested-cleanup-jump",
+        "longjmp-handler-cleanup-value", "longjmp-handler-nested-cleanup-value",
+        "longjmp-handler-cleanup-zero", "longjmp-handler-nested-cleanup-zero"})
         self.assertTrue(all(name.startswith("eh4-gs-") for name in set(r4) - set(legacy)))
         with self.assertRaises(ValueError):
             source_cases("unknown")
