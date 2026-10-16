@@ -125,6 +125,13 @@ TEST(RegistrationSEHEpilogue,
       ASSERT_TRUE(Exits);
       ASSERT_EQ(Exits->size(), 1u);
       EXPECT_EQ(Exits->begin()->second.Invocations.size(), 2u);
+      for (const auto &Block : Med.Blocks)
+        for (const auto &Op : Block.Ops)
+          if (Op.Opcode == NdOp::CALL &&
+              Op.Addr == State.SEHInvocationExits[1].CallVA) {
+            EXPECT_TRUE(Op.DoesNotReturn);
+            EXPECT_TRUE(Block.Succs.empty());
+          }
     }
 }
 
