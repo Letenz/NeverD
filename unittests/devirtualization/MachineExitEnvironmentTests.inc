@@ -424,3 +424,4 @@ TEST_F(PEFixedImageTest, MachineExitIntegrityBudgetsAndOrdinaryConsumers) {
 }
 
 #include "RecoveryArchitectureTests.inc"
+#include "UnrootedStackEnvironmentTests.inc"
