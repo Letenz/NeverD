@@ -3521,10 +3521,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>ローカル型はありません：このプログラムには型を含む PDB がありません。</translation>
     </message>
     <message>
-        <source>Types: %1 · PDB · %2</source>
-        <translation>型：%1 · PDB · %2</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>PDB の一覧どおりに配置できない型：%1</translation>
     </message>
@@ -3701,6 +3697,48 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The window closed</source>
         <translation>ウィンドウが閉じられました</translation>
+    </message>
+    <message>
+        <source>All types</source>
+        <translation>すべての型</translation>
+    </message>
+    <message>
+        <source>From the PDB</source>
+        <translation>PDB から</translation>
+    </message>
+    <message>
+        <source>From system headers</source>
+        <translation>システムヘッダーから</translation>
+    </message>
+    <message>
+        <source>Declared</source>
+        <translation>宣言したもの</translation>
+    </message>
+    <message>
+        <source>Show the types of one origin</source>
+        <translation>一つの出所の型だけを表示</translation>
+    </message>
+    <message>
+        <source>Types: %1</source>
+        <translation>型：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from the PDB</source>
+        <translation>
+            <numerusform>PDB から %n 個</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from system headers</source>
+        <translation>
+            <numerusform>システムヘッダーから %n 個</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declared</source>
+        <translation>
+            <numerusform>宣言 %n 個</numerusform>
+        </translation>
     </message>
 </context>
 <context>

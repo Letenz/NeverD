@@ -40,6 +40,7 @@ void checkSEHBoundSourceEdits(const llvm::Function &Parent,
   ASSERT_NE(Helper, InvalidVA);
   const auto *EH = Image.ExceptionMetadata.findFunction(Helper);
   ASSERT_TRUE(EH);
+  checkSEHBoundCookieEdits(Parent, Source, *EH, Image);
   std::array<uint8_t, 8> Padding;
   Padding.fill(0x90);
   uint8_t *Window = nullptr;

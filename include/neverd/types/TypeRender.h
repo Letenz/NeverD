@@ -64,6 +64,9 @@ struct RenderOptions {
   bool Asserts = false;
   /// The column offset comments start at.
   unsigned CommentColumn = 64;
+  /// When every type renders, the library's function prototypes after them,
+  /// in C and C++.
+  bool Prototypes = false;
 };
 
 /// \p Type's declaration, alone.
@@ -85,6 +88,10 @@ renamedNames(const TypeLibrary &Library, Language Lang);
 /// The names of the types \p Type mentions: its members', target's and
 /// parameters' types, through pointers, arrays and records in place.
 std::vector<std::string> mentionedTypeNames(const LocalType &Type);
+
+/// The names of the types \p Type holds by value, whose layouts its own
+/// depends on: through arrays and records in place, not pointers.
+std::vector<std::string> valueDependencyNames(const LocalType &Type);
 
 } // namespace neverd::types
 

@@ -1,0 +1,153 @@
+//===- HeaderLibrary.cpp - Type libraries of system headers ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#include "neverd/types/HeaderLibrary.h"
+
+#include "neverd/types/TypeLayout.h"
+#include "neverd/types/TypeParse.h"
+#include "neverd/types/TypeRender.h"
+
+#include "llvm/ADT/StringSet.h"
+
+#include <array>
+#include <mutex>
+#include <optional>
+
+namespace neverd::types {
+namespace {
+
+/// lib/types/headers/WindowsKernelX64.h, as the build embeds it.
+constexpr unsigned char WindowsKernelX64Source[] = {
+#include "WindowsKernelX64.inc"
+};
+
+constexpr size_t LibraryCount = 0
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Format, Arch, Subsystem) +1
+#include "neverd/types/HeaderLibraries.def"
+    ;
+
+DataModel modelOf(HeaderLibrary Library) {
+  switch (Library) {
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Format, Arch, Subsystem)  \
+  case HeaderLibrary::Id:                                                      \
+    return DataModel::Model;
+#include "neverd/types/HeaderLibraries.def"
+  }
+  return DataModel::LLP64;
+}
+
+/// A library read once, with what reading it met.
+struct Read {
+  std::once_flag Once;
+  std::optional<TypeLibrary> Types;
+  std::string Error;
+};
+
+std::array<Read, LibraryCount> &reads() {
+  static std::array<Read, LibraryCount> All;
+  return All;
+}
+
+/// The size \p Library gives the type named \p Name, as a member holds it.
+std::optional<uint64_t> sizeOfNamed(const TypeLibrary &Library,
+                                    llvm::StringRef Name) {
+  const LocalType *Type = Library.find(Name);
+  return Type ? Library.sizeOf(*makeNamed(Name.str(), Type->Kind))
+              : std::nullopt;
+}
+
+} // namespace
+
+llvm::StringRef headerLibraryName(HeaderLibrary Library) {
+  switch (Library) {
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Format, Arch, Subsystem)  \
+  case HeaderLibrary::Id:                                                      \
+    return Name;
+#include "neverd/types/HeaderLibraries.def"
+  }
+  return "";
+}
+
+llvm::StringRef headerLibrarySource(HeaderLibrary Library) {
+  switch (Library) {
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Format, Arch, Subsystem)  \
+  case HeaderLibrary::Id:                                                      \
+    return llvm::StringRef(reinterpret_cast<const char *>(File##Source),       \
+                           sizeof(File##Source));
+#include "neverd/types/HeaderLibraries.def"
+  }
+  return "";
+}
+
+const TypeLibrary *headerLibrary(HeaderLibrary Library, std::string *Error) {
+  Read &Entry = reads()[size_t(Library)];
+  std::call_once(Entry.Once, [&] {
+    TypeLibrary Types(modelOf(Library));
+    ParseOptions Options;
+    Options.Rules = defaultRules(Types.dataModel());
+    Options.Origin = TypeOrigin::Header;
+    const ParseResult Result =
+        parseCTypes(headerLibrarySource(Library), Types, Options);
+    if (!Result.ok()) {
+      const SourceProblem &First = Result.Problems.front();
+      Entry.Error = headerLibraryName(Library).str() + ":" +
+                    std::to_string(First.Line) + ":" +
+                    std::to_string(First.Column) + ": " + First.Message;
+      return;
+    }
+    Entry.Types = std::move(Types);
+  });
+  if (!Entry.Types && Error)
+    *Error = Entry.Error;
+  return Entry.Types ? &*Entry.Types : nullptr;
+}
+
+HeaderMerge mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers) {
+  HeaderMerge Merge;
+  std::vector<std::string> Added;
+  for (const LocalType *Type : Headers.types()) {
+    if (Library.find(Type->Name))
+      continue;
+    LocalType Copy = *Type;
+    Copy.Origin = TypeOrigin::Header;
+    Library.define(std::move(Copy));
+    Added.push_back(Type->Name);
+  }
+  // A header record was laid out with the headers' types it holds by value;
+  // one that holds a type the program sizes otherwise goes, as does any type
+  // that names one gone.  A typedef has no layout of its own: it names the
+  // program's type, as C binds it.
+  llvm::StringSet<> Gone;
+  for (bool Changed = true; Changed;) {
+    Changed = false;
+    for (const std::string &Name : Added) {
+      if (Gone.contains(Name))
+        continue;
+      const LocalType *Type = Library.find(Name);
+      const bool LaidOut = Type->Record && Type->Record->Defined;
+      for (const std::string &Held : valueDependencyNames(*Type))
+        if (Gone.contains(Held) ||
+            (LaidOut &&
+             sizeOfNamed(Library, Held) != sizeOfNamed(Headers, Held))) {
+          Gone.insert(Name);
+          Merge.Conflicts.push_back(Name);
+          Changed = true;
+          break;
+        }
+    }
+  }
+  for (const std::string &Name : Merge.Conflicts)
+    Library.remove(Name);
+  Merge.Types = Added.size() - Merge.Conflicts.size();
+  for (const auto &Entry : Headers.prototypes())
+    if (!Library.findPrototype(Entry.first())) {
+      Library.definePrototype(Entry.first().str(), Entry.second);
+      ++Merge.Prototypes;
+    }
+  return Merge;
+}
+
+} // namespace neverd::types

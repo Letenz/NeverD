@@ -88,6 +88,7 @@ private:
   // Null until the constructor makes them: the event filter sees events of
   // the first ones before the last exist.
   QLineEdit *filter_ = nullptr;
+  QComboBox *origin_ = nullptr;
   QLabel *summary_ = nullptr;
   QStandardItemModel *model_ = nullptr;
   QSortFilterProxyModel *proxy_ = nullptr;
@@ -105,6 +106,8 @@ private:
   QToolButton *add_ = nullptr, *edit_ = nullptr, *delete_ = nullptr;
   QString current_;
   QJsonObject type_;
+  /// The list the worker gave last, which the origin shown filters.
+  QJsonObject lastList_;
   QStringList history_;
   QSet<QString> names_;
   /// Serials of the last list, layout and source requests; older replies

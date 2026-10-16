@@ -13,12 +13,22 @@ class RegistrationSourceReplayTests(unittest.TestCase):
         self.assertEqual(len(r5), 64)
         eh4_jumps = {name for name in current
                      if name.startswith("eh4-") and "longjmp-" in name}
-        self.assertEqual(len(current), 103)
-        self.assertEqual(len(eh4_jumps), 34)
+        self.assertEqual(len(current), 129)
+        self.assertEqual(len(eh4_jumps), 60)
         for prefix in ("eh4-", "eh4-gs-"):
+            for case in ("longjmp-filter-correlated-state", "longjmp-filter-shared-state",
+                         "longjmp-filter-captured-cursor", "longjmp-filter-negative-disposition",
+                         "longjmp-filter-skipped-scope", "longjmp-filter-two-resume-mappings",
+                         "longjmp-filter-callback-activation"):
+                self.assertEqual(current[prefix + case], current[case])
             for case in ("longjmp-callee", "longjmp-returning-callee",
                          "longjmp-scalar-callee"):
                 self.assertEqual(current[prefix + case], current[case])
+            for kind in ("callee", "returning-callee", "scalar-callee"):
+                self.assertEqual(current[prefix + "longjmp-eh4-" + kind],
+                                 current["longjmp-" + kind])
+                self.assertEqual(current[prefix + "longjmp-eh4-" + kind + "-mixed-gs"],
+                                 current["longjmp-" + kind])
         self.assertEqual(set(current) - set(r5) - eh4_jumps, {
             "longjmp-shared-parent-call", "shared-parent-throwing-call",
             "longjmp-private-parent-call", "longjmp-private-parent-graph",

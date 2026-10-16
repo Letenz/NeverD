@@ -3551,10 +3551,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>لا توجد أنواع محلية: لا يملك هذا البرنامج ملف PDB فيه أنواع.</translation>
     </message>
     <message>
-        <source>Types: %1 · PDB · %2</source>
-        <translation>الأنواع: %1 · PDB · %2</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>أنواع لا يطابق تخطيطها ما يسرده PDB: %1</translation>
     </message>
@@ -3756,6 +3752,63 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The window closed</source>
         <translation>أُغلقت النافذة</translation>
+    </message>
+    <message>
+        <source>All types</source>
+        <translation>جميع الأنواع</translation>
+    </message>
+    <message>
+        <source>From the PDB</source>
+        <translation>من PDB</translation>
+    </message>
+    <message>
+        <source>From system headers</source>
+        <translation>من ترويسات النظام</translation>
+    </message>
+    <message>
+        <source>Declared</source>
+        <translation>المصرَّح بها</translation>
+    </message>
+    <message>
+        <source>Show the types of one origin</source>
+        <translation>عرض أنواع مصدر واحد</translation>
+    </message>
+    <message>
+        <source>Types: %1</source>
+        <translation>الأنواع: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from the PDB</source>
+        <translation>
+            <numerusform>%n من PDB</numerusform>
+            <numerusform>%n من PDB</numerusform>
+            <numerusform>%n من PDB</numerusform>
+            <numerusform>%n من PDB</numerusform>
+            <numerusform>%n من PDB</numerusform>
+            <numerusform>%n من PDB</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from system headers</source>
+        <translation>
+            <numerusform>%n من ترويسات النظام</numerusform>
+            <numerusform>%n من ترويسات النظام</numerusform>
+            <numerusform>%n من ترويسات النظام</numerusform>
+            <numerusform>%n من ترويسات النظام</numerusform>
+            <numerusform>%n من ترويسات النظام</numerusform>
+            <numerusform>%n من ترويسات النظام</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declared</source>
+        <translation>
+            <numerusform>%n مصرَّح بها</numerusform>
+            <numerusform>%n مصرَّح بها</numerusform>
+            <numerusform>%n مصرَّح بها</numerusform>
+            <numerusform>%n مصرَّح بها</numerusform>
+            <numerusform>%n مصرَّح بها</numerusform>
+            <numerusform>%n مصرَّح بها</numerusform>
+        </translation>
     </message>
 </context>
 <context>

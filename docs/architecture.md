@@ -122,6 +122,23 @@ is left out and reported (`declarationProblems`), never silently dropped.
 The worker writes the declarations to `<input>.neverd-types.json` at once;
 they do not join undo history.
 
+Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
+the system's types and prototypes that its debug information lacks: the
+Windows kernel's PDB names records, but no typedefs and no prototypes.
+`scripts/generate_windows_kernel_types.py` renders what `<ntifs.h>` declares,
+from mingw-w64's DDK headers, into `lib/types/headers/WindowsKernelX64.h`.
+The build embeds the file, and `headerLibrary` reads it once. The C API joins
+a library to an image the table names (an x64 PE of the native subsystem)
+after the program's PDB and before the user's declarations:
+- a header type joins only where the program has no type of its name;
+- a typedef names the program's type, as C binds it;
+- a header record laid out with a type the program sizes otherwise is left
+  out and reported (`conflicts`).
+
+`neverd_types_convert` and `neverd types --data-model` read and render
+declarations without a program, which is how the generator builds the
+library.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and
@@ -139,6 +156,11 @@ Cancelling its final subscriber retires the process, since a synchronous C API
 analysis call cannot be interrupted safely. Replica revisions and analysis
 discovery never advance the writable project's state. All workers use the
 same public C API; this split does not duplicate engine semantics.
+The 64-bit Linux worker embeds a pinned mimalloc allocator in its executable.
+Its C++ code and loaded SDK use that one process heap, including cross-thread
+releases. No allocator replacement is exported by the SDK itself. Other hosts,
+allocation-sanitizer builds and `NEVERD_WORKER_MIMALLOC=OFF` use the platform
+allocator. The build keeps the worker's existing CPU instruction requirements.
 Function preparation uses `neverd_prepare_function_view`, which shares the
 source route's ARM mode, exception-handler discovery and analysis-scope checks
 without emitting C. Source, IR and CFG views consume that prepared pipeline.
@@ -659,7 +681,11 @@ moving ESP alone does not provide one. All activations share the original
 cumulative work budget.
 The suspended-finally interpreter partitions filter returns by disposition and
 written TryLevel, including joins at a shared return block. Search keeps the
-cursor captured before each filter call. Continued exceptions resume every
+cursor captured before each filter call under the same EH3/EH4 protocol.
+EH4 search requires the checked
+image cookie and intact EH/GS slots both before the filter and at its returned
+frame; the shared scope graph supplies its -2 outside sentinel. Cookie and
+scope storage retain their separate write exclusions. Continued exceptions resume each
 resulting frame at the next instruction; instruction-local temporaries cannot
 cross an internal split. Ordinary callback propagation uses these same checked
 filter effects after a returning `RaiseException`, including changed parent
@@ -685,11 +711,18 @@ logical bound in a private volatile slot before the one physical capture; COFF
 replays its exact source-cell address, two uses, ordering and contiguous save and
 restore placement. The saved bound supplies no buffer initialization or callee
 privacy authority. All partitions and projections share the existing work budget.
-For preserved EH3 helpers, the conditional callee proof returns object effects in
+For preserved EH3/EH4 helpers, the conditional callee proof returns object effects in
 the caller's coordinates. The parent state owner checks allocation and excludes
 its registration and cookie cells from all effects and object-address arguments.
 EH4 callers additionally prove live cookie initialization before invoking this
 path; the MedIR call binder requires the complete cookie receipt before lowering.
+EH4 helpers use the same authenticated image cookie inputs and state owner as
+their callers. Conditional memory admits only the exact four-byte cookie read;
+the transfer owner checks each live GS call's ECX value. A borrowed resumption
+requires the helper's own outside-state sentinel and intact cookies. For an
+unchanged preserved helper, cookie-call coverage follows the proved invocation's
+reachable blocks. Unreachable calls grant no effects; a reconstructed parent
+still requires coverage of every source cookie-call occurrence.
 Registration no-return annotations and ordinary-edge removal bind the same
 current call occurrence, target, instruction extent and operation range. A
 conditional or malformed instruction cannot reuse that receipt. A separate
@@ -6314,8 +6347,8 @@ near-return encodings. The interpreter follows actual arguments, every ordinary 
 private stack allocation and parent-frame writes, including changes to nominally
 preserved registers. This establishes state flow without granting a callable
 native ABI. Nonlocal restoration, calls inside a finally and jump-buffer
-resumption still require a separate invocation-exit contract; the PE32 xcpt4
-case remains incomplete.
+resumption use the separate invocation-exit and capture contracts described
+below. The PE32 xcpt4 state regression checks their combined source proof.
 
 `RegistrationSEHControl` authenticates the actual PE32 near CALL and RET bytes.
 When LowIR has folded the return continuation, it retains the complete immutable
@@ -6339,8 +6372,9 @@ to their exact callback, CALL and continuation block. Outlining replaces these
 with the callback's C return ABI; source-segment validation requires an actual
 return at that generated exit. Nonlocal parent jumps and jump-buffer resumptions
 still require their own CFG/SSA projection and native replacement receipts.
-The PE32 xcpt4 issue remains open, including jump-buffer and incoming-object
-effects.
+The PE32 xcpt4 source regression covers jump-buffer and incoming-object effects
+under the default work budget; this alone does not establish native rebuilding
+for every protocol in that executable.
 
 `RegistrationFrameEffects` owns the integer-frame effect of the exact void
 `X87Wait` intrinsic. WAIT retains its x87 side effect and possible exception
@@ -6365,7 +6399,7 @@ prove the replacement runtime objects. This supplies the exception-field part
 of the PE32 helper analysis; incoming object arguments and their caller bounds
 still require separate proof.
 
-`RegistrationConditionalCallee` specializes an original EH3 helper from the
+`RegistrationConditionalCallee` specializes an original EH3/EH4 helper from the
 caller's actual stack cells. It authenticates the physical CALL, complete
 immutable callee instructions and ordinary near returns. Incoming scalar words
 and four-byte caller objects occupy separate coordinates; object bounds exclude

@@ -203,6 +203,7 @@ private:
                         const RegistrationCalleeFrameContract &Callee,
                         std::vector<RegistrationObjectExtent> &Reads);
   void initializeCookies();
+  bool hasCompleteCookieChecks();
   void collectOccurrences();
   void seedEntries();
   struct CallTransfer {

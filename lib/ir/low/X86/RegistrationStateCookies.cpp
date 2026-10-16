@@ -61,4 +61,29 @@ bool RegistrationStateSolver::cookiesReady(const FrameState &Frame) const {
           Matches(GSCookieSlot, Chain.GSCookieXOROffset));
 }
 
+bool RegistrationStateSolver::hasCompleteCookieChecks() {
+  size_t Checked = 0;
+  for (const auto &Identity : CookieCheckOccurrences) {
+    if (!charge(1))
+      return false;
+    if (CookieChecks.count(Identity)) {
+      ++Checked;
+      continue;
+    }
+    // A preserved helper is proved for these invocation inputs. Its unchanged
+    // unreachable code supplies no cookie observation on this call. A parent
+    // being reconstructed still needs a receipt for every source occurrence.
+    if (!Conditional || !Conditional->Complete)
+      return false;
+    const auto Boundary = Boundaries.find(Identity.first);
+    if (Boundary == Boundaries.end())
+      return false;
+    const auto Block = Index.find(Boundary->second.first);
+    if (Block == Index.end() || Block->second >= Result.Blocks.size() ||
+        Result.Blocks[Block->second].Reached)
+      return false;
+  }
+  return Checked == CookieChecks.size();
+}
+
 } // namespace neverd::registration_state

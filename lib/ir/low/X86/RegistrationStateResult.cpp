@@ -236,8 +236,7 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
   Result.SecurityCookiesComplete =
       CompleteCookies && Result.Complete && Result.CallbackStatesComplete &&
       Result.RegistrationLifetimeComplete && Result.ChainOperationsComplete &&
-      CookieChecks.size() == CookieCheckOccurrences.size() &&
-      (!ReadsGSCookie || !CookieChecks.empty());
+      hasCompleteCookieChecks() && (!ReadsGSCookie || !CookieChecks.empty());
   if (Result.SecurityCookiesComplete) {
     Result.SecurityCookieVA = SecurityCookieVA;
     Result.CookieCheckVA = CookieCheckVA;

@@ -274,6 +274,11 @@ buffer helper protocols still require their own proofs.
 
 Preserved EH3 helpers can borrow a generated EH3 or EH4 parent buffer and resume
 it across their own registration frame, including EH4 parents with GS cookies.
+EH4 helpers support the same borrowed-buffer and ordinary-return paths for EH4
+parents, including all four caller/helper GS configurations. Their own encoded scope pointer, cookie
+initialization and live GS check arguments must be proved independently. The
+helper retains its source registration and uses its own -2 outside state while
+the opaque parent capture retains the parent's unwind protocol.
 The caller proves its live cookie state before the call and excludes registration
 and cookie storage from every borrowed read, write and object-address argument,
 including partial overlaps. Each exact caller occurrence binds the helper's
@@ -298,7 +303,7 @@ reads. It rejects altered imports, values, attributes and reordered reads.
 Closed ordinary and callback instruction graphs exclude trailing helper code
 from inferred registration ranges, even without alignment padding.
 
-EH3 finally callbacks also retain checked `RaiseException` invocations and
+EH3/EH4 finally callbacks also retain checked `RaiseException` invocations and
 read their arguments from their own outlined stack. A nonlocal unwind may
 continue through such a raise when the active filter search proves a
 continue-execution disposition. The same frame interpreter propagates filter
@@ -308,6 +313,9 @@ dispositions stay paired with their frame effects and written TryLevels through
 shared return blocks. Zero continues along the runtime's captured search
 cursor; any negative 32-bit result continues execution. Every explored path
 must resume the suspended invocation before it can supply returning effects.
+EH4 searches require intact EH and optional GS cookies before entering a filter
+and after it returns. Their outside state is -2; cookie slots, encoded scope
+storage and the image cookie remain outside the filter's writable objects.
 When a nonlocal resumption has several possible states, the proof pairs each
 logical state left at entry or by the last completed callback with its final
 runtime state. This includes subsequent filter-only unwind steps. A complete,

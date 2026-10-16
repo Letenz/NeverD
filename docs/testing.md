@@ -154,6 +154,13 @@ their dispatcher when a third function queues, external graph snapshots survive
 interleaved requests, and opening another project retires both replicas.
 Cancelling view reads must preserve a queued project snapshot needed by a
 retained external analysis request.
+`NeverDWorkerAllocator` checks the embedded Linux allocator across the worker's
+C++ runtime, the shared SDK and libc, including reallocation, over-aligned
+objects and cross-thread release. Configure `NEVERD_WORKER_MIMALLOC=OFF` for
+the platform allocator; ASan/TSan/MSan configurations require that setting so
+their allocation interceptors remain authoritative. Real worker and workbench
+integration checks run with the actual linked worker, without `LD_PRELOAD`.
+
 `NeverDWorkerAnalysisSnapshot` verifies read-only replica state,
 unchanged owner files, staged comments, signature replay and stale-input
 rejection. Database restore coverage keeps pseudocode closed until requested.
@@ -276,6 +283,21 @@ and every nesting must hold. `TypeParseKernel.ReadsBackEveryKernelTypeAsRendered
 renders every kernel type as C, Rust and Go and reads it back; each record
 must keep its size and every member's bit offset and width, and every
 rendered size and offset check must hold.
+
+`HeaderLibrary.*` reads the embedded Windows kernel library and checks how a
+header library joins a program's types. After running
+`scripts/generate_windows_kernel_types.py`, check the library in every
+language:
+
+```sh
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/WindowsKernelX64.h --data-model LLP64
+```
+
+With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
+ntoskrnl.exe and its PDB,
+`SessionCAPITest.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
+and checks that the headers join its PDB without conflicts.
 
 Declared types are covered at each layer:
 - `SessionCAPITest.DeclaredTypesJoinThePDBsAndStayWithTheProject`: declaring,
@@ -1860,6 +1882,14 @@ ELF, COFF and Mach-O. Its ELF source
 roundtrips execute HighC and both LLVMC modes at O0/O2 against an independent
 selection oracle. Small joined domains reuse the finite-coordinate proof;
 unchecked paths and sparse or incomplete domains cannot grant a dense table.
+
+`GuardExpression.*` independently enumerates every byte offset and boundary
+for signed/unsigned comparisons in both operand orders and affine directions.
+Wide nested affine expressions and Boolean combinations retain wrap, sign and
+hole boundaries; periodic masks, shifts and width changes require full replay.
+The native guard suites above still cover CFG/lane identity, sparse tables,
+all-domain proof rejection and exhausted evidence. Replay partitions retain the
+original whole-window evidence charge and the final solver proof.
 
 `ResolverValueQueryCache.MalformedScalarRecordsCannotPublishProofs` verifies
 missing ADD/SELECT inputs, input-array overflow, zero widths and a memory-space
@@ -4218,10 +4248,11 @@ bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
 stack-only facts cannot preserve a capture, deallocated buffers refuse and a
 frame-preserving call supplies no scalar result authority.
 
-The EH4 jump matrix repeats seventeen capture/resumption scenarios with and without
+The EH4 jump matrix repeats thirty capture/resumption scenarios with and without
 GS cookies: parent and callback jumps, zero values, filter search, incoming
 parameters, retired scopes, private leaf/graph calls with a live buffer, and
-registered EH3 helpers borrowing the parent buffer and a scalar object.
+registered EH3/EH4 helpers borrowing the parent buffer and a scalar object, and
+correlated filter searches while a finally invocation is suspended.
 The helper cases require exactly one observed helper effect after resumption.
 `RegistrationSEHPrivateCall.EH4CalleeGraphsPreserveTheImageCookie` rejects
 transitive cookie/header writes, partial cookie overlap and invalid cookie
@@ -4242,7 +4273,7 @@ four calls, unwind the same finally, check the restored state and nonvolatile
 register, then raise another exception. The native mutation tests alter the saved
 state slot, read address, volatile accesses, placement, use closure and captured
 projection key while retaining verifier-clean IR. The full source profile now
-contains 103 scenarios; older compiler profiles keep their original membership.
+contains 129 scenarios; older compiler profiles keep their original membership.
 
 The EH4/GS `longjmp-callee`, `longjmp-returning-callee` and
 `longjmp-scalar-callee` variants retain the source helper's registration while
@@ -4253,10 +4284,23 @@ object-address instruction into both cookie slots; source replay and installatio
 must reject them. The MedIR binder also rejects missing cookie proof or invalid
 cookie addresses before lowering the preserved call.
 
+The corresponding `longjmp-eh4-callee`, `longjmp-eh4-returning-callee` and
+`longjmp-eh4-scalar-callee` variants use a separately registered EH4 helper.
+Their `-mixed-gs` variants invert only the helper's GS configuration, covering
+all four caller/helper cookie combinations without sharing their local proofs.
+`RegistrationSEHBoundCookieTests` mutates its actual cookie load width, global
+address, access direction, frame XOR, encoded scope pointer, and full/partial
+cookie stores. It also changes the live GS check parameter and requires source
+replay and native installation to reject it. A changed check in the fixture's
+unreachable except body remains harmless for that proved invocation; the live
+ordinary-return check retains its independent obligation.
+
 
 `RegistrationFilterState.*` checks paired dispositions and states at shared
 returns, captured search cursors, arbitrary negative dispositions, continuation
-inside a finally block and reordered edges. Selected handlers, unknown results,
+inside a finally block and reordered edges for EH3, EH4 and EH4+GS. Missing or
+wrong image cookie inputs, full/partial EH and GS slot writes refuse EH4
+resumption; a disjoint scalar write remains valid. Selected handlers, unknown results,
 escaping searches, bad stacks, cycles and incomplete instruction boundaries
 refuse. Skipping one or several filter scopes records the last callback state
 and its final runtime state separately. `RegistrationSEHJumpABI` checks complete
@@ -4289,7 +4333,10 @@ path must not be treated as a failed nonlocal resumption.
 Each execution alternates both filter paths across four invocations, checks the
 resumed TryLevel and nonvolatile register, and requires the exact cleanup trace
 and restored registration chain. The source reconstruction and independent
-replay scripts include these cases in the current compiler profile.
+replay scripts include these cases and their EH4/GS variants in the current
+compiler profile. EH4 variants use the native CRT's cookie-aware unwind routine,
+eleven initialized buffer words and the -2 frame sentinel. All seven variants
+retain the exact trace, correlated filter state and restored nonvolatile value.
 
 `registration_state.s` adds six EH3 runtime cases:
 

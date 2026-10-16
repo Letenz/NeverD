@@ -81,7 +81,7 @@ enum class TypeOrigin : uint8_t {
 
 /// How a function takes its arguments (CallingConventions.def).
 enum class CallingConvention : uint8_t {
-#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA) Name,
+#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide) Name,
 #include "neverd/types/CallingConventions.def"
 };
 
@@ -200,6 +200,9 @@ struct FunctionDef {
   TypeExprRef Return;
   std::vector<Parameter> Params;
   bool Variadic = false;
+  /// A prototype of a function that never returns (_Noreturn,
+  /// __declspec(noreturn), __attribute__((noreturn))).
+  bool NoReturn = false;
 };
 
 /// A named type of the library.
@@ -254,6 +257,10 @@ public:
   uint32_t alignOf(const TypeExpr &Type) const;
   /// The alignment of a record's members together.
   uint32_t alignOf(const RecordDef &Record) const;
+  /// The alignment \p Type is declared with, itself or through a member
+  /// (__declspec(align), alignas): Microsoft's compiler lowers it for no
+  /// #pragma pack.  Zero for none.
+  uint32_t requiredAlignOf(const TypeExpr &Type) const;
 
   /// The prototype of the function named \p Name, as a header declares it,
   /// with its parameters' names; replaces one of that name.

@@ -1136,6 +1136,7 @@ target_include_directories(NeverDLiftTests PRIVATE
 )
 
 add_neverd_unittest(NeverDJumpTableTests
+  core/GuardExpressionTests.cpp
   core/AffineFrameStateTests.cpp
   core/ResolverGraphCacheTests.cpp
   core/ResolverDefinitionCacheTests.cpp
@@ -1504,6 +1505,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationSEHBoundNativeTests.cpp
   eh/RegistrationSEHRuntimeNativeTests.cpp
   eh/RegistrationSEHBoundSourceTests.cpp
+  eh/RegistrationSEHBoundCookieTests.cpp
   eh/RegistrationSEHDynamicScopeTests.cpp
   eh/RegistrationSEHScopeStateTests.cpp
   eh/RegistrationSEHFinallyResultTests.cpp
