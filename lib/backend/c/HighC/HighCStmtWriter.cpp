@@ -749,12 +749,21 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           }
         }
       }
-      std::string Value =
-          storedValueText(*Stmt.Val, Stmt.Dst->Type, Stmt.Dst->MemoryOrdering);
-      if (Stmt.Dst->Type && Stmt.Val->Type &&
-          Stmt.Dst->Type->Kind == NdTypeKind::Int &&
-          Stmt.Val->Type->Kind == NdTypeKind::Ptr)
-        Value = "(" + typeToC(Stmt.Dst->Type) + ")(uintptr_t)(" + Value + ")";
+      auto ValueText = [&] {
+        std::string Value = storedValueText(*Stmt.Val, Stmt.Dst->Type,
+                                            Stmt.Dst->MemoryOrdering);
+        if (Stmt.Dst->Type && Stmt.Val->Type &&
+            Stmt.Dst->Type->Kind == NdTypeKind::Int &&
+            Stmt.Val->Type->Kind == NdTypeKind::Ptr)
+          Value = "(" + typeToC(Stmt.Dst->Type) + ")(uintptr_t)(" + Value + ")";
+        return Value;
+      };
+      if (Stmt.Dst->MemoryOrdering == NdMemoryOrdering::None &&
+          Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          writeFrameRecordStore(*Stmt.Dst->Operands[0], Stmt.Dst->Type,
+                                *Stmt.Val, Indent, ValueText))
+        break;
+      std::string Value = ValueText();
       bool ExactImageBytes = false;
       if (Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default)
         if (auto VA = constAddress(*Stmt.Dst->Operands[0]))
@@ -1059,18 +1068,15 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       }
     }
     if (Stmt.MemoryOrdering == NdMemoryOrdering::None &&
-        Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
-      if (auto Member =
-              frameRecordMember(*Stmt.StoreAddr, Stmt.StoreVal->Type)) {
-        emitIndent(Indent);
-        OS << *Member << " = "
-           << (isUnknownCallOperand(Stmt.StoreVal.get())
-                   ? "0"
-                   : storedValueText(*Stmt.StoreVal, Stmt.StoreVal->Type,
-                                     Stmt.MemoryOrdering))
-           << ";\n";
-        break;
-      }
+        Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        writeFrameRecordStore(
+            *Stmt.StoreAddr, Stmt.StoreVal->Type, *Stmt.StoreVal, Indent, [&] {
+              return isUnknownCallOperand(Stmt.StoreVal.get())
+                         ? std::string("0")
+                         : storedValueText(*Stmt.StoreVal, Stmt.StoreVal->Type,
+                                           Stmt.MemoryOrdering);
+            }))
+      break;
     bool ExactImageBytes = false;
     if (Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
       if (auto VA = constAddress(*Stmt.StoreAddr))
@@ -2920,6 +2926,31 @@ bool HighCWriter::isInplaceAddStore(const HighStmt &S, int64_t &Delta) const {
       return false;
   const HighExpr *Base = asIncrementBase(*S.StoreVal, Delta);
   return Base && incrementBaseMatchesAddr(*Base, *S.StoreAddr);
+}
+
+bool HighCWriter::writeFrameRecordStore(
+    const HighExpr &Addr, const TypeRef &Ty, const HighExpr &Value, int Indent,
+    llvm::function_ref<std::string()> ValueText) {
+  if (auto Member = frameRecordMember(Addr, Ty)) {
+    emitIndent(Indent);
+    OS << *Member << " = " << frameRecordStored(Ty, ValueText()) << ";\n";
+    return true;
+  }
+  // A 16-byte integer at bytes a member holds, which no scalar of that width
+  // may name at their alignment: one copy of its bytes from a fresh carrier
+  // of its exact width, as writeMemoryStore makes.
+  if (!Ty || Ty->Kind != NdTypeKind::Int || Ty->Size != 16)
+    return false;
+  const auto Bytes = frameRecordBytes(Addr, Ty->Size);
+  if (!Bytes)
+    return false;
+  emitIndent(Indent);
+  if (Value.Kind == ExprKind::Const && Value.ConstVal == 0)
+    OS << "__builtin_memset(" << *Bytes << ", 0, 16);\n";
+  else
+    OS << "__builtin_memcpy(" << *Bytes << ", &(" << memoryTypeName(Ty) << "){"
+       << ValueText() << "}, 16);\n";
+  return true;
 }
 
 std::string HighCWriter::formatInplaceAdd(const TypeRef &Ty,

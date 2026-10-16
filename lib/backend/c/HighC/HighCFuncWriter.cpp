@@ -5757,35 +5757,30 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   };
   WalkFrameUses(Func.Body, false);
   FrameStorageActive = NeedsFrameStorage;
-  // Rebuilt storage has the host's pointer width. A target-width integer
-  // temporary would truncate its address when 32-bit source is recompiled
-  // on a 64-bit host. Keep certified aliases on that same byte backing.
-  if (NeedsFrameStorage && getTargetRegInfo(Opts.TheArch).PointerSize == 4)
+  // A certified frame address prints as the storage member it names at each
+  // use, rather than through the variable the machine kept it in:
+  // - a frame pointer joined across a try's normal and exceptional edges is
+  //   one address, which the C assignment on only one of them would not be;
+  // - rebuilt storage has the host's pointer width, which a target-width
+  //   integer temporary would truncate when 32-bit source is recompiled on a
+  //   64-bit host.
+  if (NeedsFrameStorage)
     ProjectFrameAliasesIntoStorage = true;
-  if (NeedsFrameStorage || !Analysis.StoreFwd.empty()) {
-    // Integer store-to-load forwarding and named C locals are exclusive.
-    // Mixing them leaves later loads on `frame_base` after the seed `arg0`
-    // store has already been deleted.
-    // Member text and copy aliases chosen before this point can name a slot
-    // that byte storage now replaces. Rewrite each such name as a typed view
-    // of the same storage bytes.
+  // Text chosen before the storage replaces the slots, rewritten once the
+  // storage's members are known.
+  struct StorageViewSlot {
+    int64_t Disp;
+    TypeRef Type;
+    int64_t RegionBytes;
+  };
+  std::map<std::string, StorageViewSlot> StorageViewSlots;
+  auto RewriteStorageViews = [&] {
+    if (StorageViewSlots.empty())
+      return;
     std::map<std::string, std::string> StorageViews;
-    for (const auto &[Disp, Slot] : FrameSlots) {
-      if (Slot.Name.empty())
-        continue;
-      const std::string Address =
-          "(uintptr_t)(" + frameStorageAddress(Disp) + ")";
-      if (Slot.RegionBytes)
-        StorageViews[Slot.Name] = "(*(uint8_t (*)[" +
-                                  std::to_string(Slot.RegionBytes) + "])" +
-                                  Address + ")";
-      else
-        StorageViews[Slot.Name] =
-            "(*(" +
-            declarationToC(
-                Slot.Type ? cDisplayType(Slot.Type) : NdType::makeInt(1), "*") +
-            ")" + Address + ")";
-    }
+    for (const auto &[Name, Slot] : StorageViewSlots)
+      StorageViews[Name] =
+          frameStorageView(Slot.Disp, Slot.Type, Slot.RegionBytes);
     auto RewriteSlotNames = [&](std::string &Text) {
       const auto IsIdent = [](char C) {
         return std::isalnum(static_cast<unsigned char>(C)) || C == '_';
@@ -5810,12 +5805,26 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       }
       Text = std::move(Out);
     };
-    if (!StorageViews.empty()) {
-      for (auto &[Name, Text] : FieldForward)
-        RewriteSlotNames(Text);
-      for (auto &[Name, Source] : CopyForward)
-        RewriteSlotNames(Source);
-    }
+    for (auto &[Name, Text] : FieldForward)
+      RewriteSlotNames(Text);
+    for (auto &[Name, Source] : CopyForward)
+      RewriteSlotNames(Source);
+    StorageViewSlots.clear();
+  };
+  if (NeedsFrameStorage || !Analysis.StoreFwd.empty()) {
+    // Integer store-to-load forwarding and named C locals are exclusive.
+    // Mixing them leaves later loads on `frame_base` after the seed `arg0`
+    // store has already been deleted.
+    // Member text and copy aliases chosen before this point can name a slot
+    // that byte storage now replaces. Rewrite each such name as a typed view
+    // of the same storage bytes, once the storage's members are known.
+    for (const auto &[Disp, Slot] : FrameSlots)
+      if (!Slot.Name.empty())
+        StorageViewSlots[Slot.Name] = {
+            Disp, Slot.Type ? cDisplayType(Slot.Type) : NdType::makeInt(1),
+            Slot.RegionBytes};
+    if (!NeedsFrameStorage)
+      RewriteStorageViews();
     if (ProjectFrameAliasesIntoStorage)
       FrameStorageSlots = FrameSlots;
     for (const auto &[Disp, Slot] : FrameSlots)
@@ -6024,6 +6033,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       ParamNames.insert(Name);
   if (Func.FrameSize > 0 || Func.FrameHeadroom > 0)
     ParamNames.insert("frame_base");
+  // The storage's base, declared once the body shows it reads it: every
+  // access a member names reaches the storage through the member.
+  std::string FrameBaseDeclaration;
   if (NeedsFrameStorage && (Func.FrameSize > 0 || Func.FrameHeadroom > 0)) {
     uint64_t LowerSize = checkedStackAlign(
         Func.FrameSize > 0 ? static_cast<uint64_t>(Func.FrameSize) : 0);
@@ -6038,9 +6050,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     if (FrameRecordMembers.empty()) {
       OS << "_Alignas(" << kSyntheticStackAlignment << ") uint8_t "
          << kFrameStorageName << "[" << StorageSize << "];\n";
-      emitIndent(1);
-      OS << "const uintptr_t frame_base = (uintptr_t)(" << kFrameStorageName
-         << " + " << FrameBaseOffset << ");\n";
+      FrameBaseDeclaration = "const uintptr_t frame_base = (uintptr_t)(" +
+                             kFrameStorageName.str() + " + " +
+                             std::to_string(FrameBaseOffset) + ")";
     } else {
       // The members at their byte offsets, the gaps named by offset as IDA
       // names a structure's gaps. The tag is the function's own: the C++,
@@ -6060,15 +6072,19 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
             static_cast<uint64_t>(static_cast<int64_t>(FrameBaseOffset) + Disp);
         Gap(Offset);
         emitIndent(2);
-        OS << declarationToC(Member.Type, Member.Name) << ";\n";
-        At = Offset + Member.Type->Size;
+        if (Member.Type)
+          OS << declarationToC(Member.Type, Member.Name) << ";\n";
+        else
+          OS << "uint8_t " << Member.Name << "[" << Member.Size << "];\n";
+        At = Offset + Member.Size;
       }
       Gap(StorageSize);
       emitIndent(1);
       OS << "} " << kFrameStorageName << ";\n";
-      emitIndent(1);
-      OS << "const uintptr_t frame_base = (uintptr_t)((uint8_t *)&"
-         << kFrameStorageName << " + " << FrameBaseOffset << ");\n";
+      FrameBaseDeclaration =
+          "const uintptr_t frame_base = (uintptr_t)((uint8_t *)&" +
+          kFrameStorageName.str() + " + " + std::to_string(FrameBaseOffset) +
+          ")";
     }
     // The rebuilt storage has the host's pointer width, which a 64-bit
     // target's source is compiled with: frame arithmetic is uint64_t already.
@@ -6077,6 +6093,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       DeclaredCTypes.emplace("frame_base",
                              NdType::makeInt(PointerBytes, /*Signed=*/false));
   }
+  RewriteStorageViews();
   std::set<std::string> PrintedAddrSlots;
   std::set<std::string> PrintedSlotStores;
   std::set<std::string> PrintedSlotLoads;
@@ -6438,7 +6455,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     Out.redirect(Saved);
   }
   std::unordered_set<std::string_view> BodyIdents;
-  if (!DeferredDecls.empty() || !MemoryTemporaries.empty()) {
+  if (!DeferredDecls.empty() || !MemoryTemporaries.empty() ||
+      !FrameBaseDeclaration.empty()) {
     auto IsIdent = [](char C) {
       return std::isalnum(static_cast<unsigned char>(C)) || C == '_';
     };
@@ -6453,6 +6471,10 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       BodyIdents.insert(std::string_view(Body).substr(Pos, End - Pos));
       Pos = End;
     }
+  }
+  if (!FrameBaseDeclaration.empty() && BodyIdents.count("frame_base")) {
+    emitIndent(1);
+    OS << FrameBaseDeclaration << ";\n";
   }
   for (const auto &[Name, Decl] : DeferredDecls) {
     if (ParamNames.count(Name) || !BodyIdents.count(Name))
