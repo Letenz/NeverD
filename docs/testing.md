@@ -347,6 +347,18 @@ structure offsets and their undo included, and the GUI controller test
 `structureOffsetsRankTypesByTheCodesAccesses` drives T through the picker on
 the mock engine.
 
+`NdTypeDisplayPaths.ArrayMembersNameTheirElements` names an array member's
+elements as a record names its members: the element an access of its width
+reads, the element an address inside the array points at, members of record
+elements, and arrays of arrays. Half an element, a wider read of characters
+and two arrays overlaying each other stay raw, and a record alternative keeps
+its bytes from an array overlaying it.
+`HighCPointerAddresses.ArrayMembersPrintTheirElements` prints `Apc->Reserved[1]`
+for a store 40 bytes into a declared record like the kernel's `_KAPC`, an
+untyped pointer stored to a record pointer member without a cast, and an
+integer stored to one with its conversion. LLVM-C names no elements: its
+lookups pass `ArrayElements` false.
+
 `TypeParse.ReadsOneFunctionsDeclarationAgainstTheLibrary` reads a function's
 declaration against the library without changing it, and refuses one that
 names a type the library lacks, defines one, or declares more than one
