@@ -253,3 +253,5 @@ L’ingresso del runtime mantiene il proprio contratto dei registri e non riutil
 gli ingressi di una precedente chiamata ordinaria. Uno scope referenziato solo da
 una chiamata ordinaria a finally autenticata viene conservato anche se nessun
 try level del codice sorgente lo attiva.
+
+La ricostruzione di `nonlocal_finally_return` da MSVC x86 `/Od /GS-` viene eseguita con LLVM sorgente ottimizzato e non, in entrambe le modalità di patch. Un osservatore SEH esterno verifica ritorni normali ed eccezionali, stack e ripristino della catena su due basi forzate. Sono esclusi da questa copertura il ritorno diretto al padre di `/O2` e i wrapper GS.

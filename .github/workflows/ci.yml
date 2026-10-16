@@ -2419,6 +2419,17 @@ jobs:
           build-windows-eh/bin/NeverDNativeFinallyInputTests \
             --gtest_filter=PipelineOutcome.NativeFinallyInputsRetainSourceLLVM \
             --gtest_output=xml:build-windows-eh/evidence/nonlocal-finally-source.xml
+      - name: Reconstruct and execute the native MSVC finally return
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        run: |
+          python -m unittest scripts.tests.test_windows_finally_image -v
+          python scripts/check_windows_finally_rewrite.py \
+            --inputs build-windows-eh/nonlocal-finally \
+            --runtime-libs build-windows-eh/cxx-source-inputs/runtime-libs \
+            --test-binary build-windows-eh/bin/NeverDNativeFinallyInputTests \
+            --patch-binary build-windows-eh/bin/neverd \
+            --output build-windows-eh/evidence/native-finally-return \
+            --wine-prefix "$RUNNER_TEMP/neverd-wine32"
       - name: Execute generated x86 callback frames with real exceptions
         run: |
           python scripts/check_windows_registration_frame.py \

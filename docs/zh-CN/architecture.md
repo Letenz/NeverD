@@ -1763,3 +1763,5 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 `KernelModelFileRequests` 也统一拥有同步缓冲 `ZwReadFile` / `ZwWriteFile`。生产者负责句柄作用域、偏移和键捕获，以及写入数据的副本。共享完成路径只在原调用方满足通知条件时发布读取字节和 IOSB，并各释放一次自有数据包与缓冲区。存储驱动负责内容和文件位置变更。
 
 `KernelModelFileRequests` 同时拥有无缓冲区的 `ZwFlushBuffersFile` 生产路径。其授权掩码检查和立即发布／释放规则与延迟完成的原生读写／查询包不同；各路径共用原调用者通知和唯一释放所有者。
+
+`OptimizationGuards` 补充 LLVM 的 `optnone` 检查：模块中有受保护函数时，跳过可能改写其 CFG 或把回调实参替换成 poison 的可选模块及调用图优化。必需的适配器和普通函数优化继续运行。注册链源码投影保留序言保存操作的内存记录，供原生重建绑定。

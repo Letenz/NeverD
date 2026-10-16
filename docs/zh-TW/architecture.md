@@ -1683,3 +1683,5 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 `KernelModelFileRequests` 也統一擁有同步緩衝 `ZwReadFile` / `ZwWriteFile`。產生端負責控制代碼範圍、偏移與鍵擷取及寫入資料副本。共用完成路徑只在原呼叫端符合通知條件時發布讀取位元組與 IOSB，並各釋放一次自有封包和緩衝區。儲存驅動程式負責內容與檔案位置變更。
 
 `KernelModelFileRequests` 也擁有無緩衝區的 `ZwFlushBuffersFile` 產生路徑。其權限遮罩檢查及立即發布／釋放規則與延遲完成的原生讀寫／查詢封包不同；各路徑共用原呼叫者通知及單次釋放的擁有者。
+
+`OptimizationGuards` 補充 LLVM 的 `optnone` 檢查：模組內有受保護函式時，略過可能改寫其 CFG 或將回呼引數替換為 poison 的選用模組與呼叫圖最佳化。必要適配器與一般函式最佳化仍執行。註冊鏈來源投影保留序言儲存的記憶體記錄，供原生重建綁定。
