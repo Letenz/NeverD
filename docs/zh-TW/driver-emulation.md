@@ -696,6 +696,8 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 
 `ZwQueryInformationFile` 透過共同查詢擁有者解析具行程範圍的檔案控制代碼，另行配置清零的 SystemBuffer，借用呼叫端輸出。本機類別為 Access (8)、同步 Position (14)、Mode (16)、Alignment (17)、IsRemoteDevice (51)；Mode 與 Alignment 仍建立自有 IRP。轉送類別為 4/5/6/7/9/14/21/22/28/34/35/59/71/75，非同步 Position 轉送，75 改為 71 並設堆疊旗標 1。KernelMode 參考保留控制代碼範圍，但不檢查已授權存取遮罩；報告來源為 `ZwQueryInformationFile`。
 
+來賓裝置的 READ/WRITE 完成會保留已儲存的 `FILE_OBJECT.CurrentByteOffset`，包括同步傳輸和零位元組傳輸。請求中的明確 `byte_offset` 本身不會改變檔案位置；位置變化需要已實作的檔案系統或檔案定位操作。
+
 立即完成保留原生封包直到派送返回。非錯誤完成先複製輸出，再寫 Information 及四位元組 Status；立即錯誤保留呼叫端 IOSB。暫止完成通知原先可交付的執行緒；非同步暫止呼叫返回時複製完整私有 16 位元組 IOSB，其他寫入保留填補位元組。共用實體記憶體擁有者控制回收。原生 Fast I/O、未列類別、零長度緩衝呼叫和過短 Mode/Alignment 緩衝均明確拒絕，並非通用 NtQueryInformationFile 或 APC 支援。
 
 宣告式提供者透過保留的開啟 token 回答 Basic (4)、Standard (5)、Internal (6)、Name (9)、NetworkOpen (34)、AttributeTag (35)，保留時間戳、配置大小、EOF、屬性及完整 64 位元檔案 ID。名稱為准入 ASCII 路徑的磁碟區相對 UTF-16 編碼。固定結構過短回傳 STATUS_INFO_LENGTH_MISMATCH；名稱至少需八位元組，截斷時只傳回完整 UTF-16 單元、STATUS_BUFFER_OVERFLOW 與完整名稱長度。兩個 API 共用編碼器及實際客體篩選器路徑，其他提供者類別仍未支援。

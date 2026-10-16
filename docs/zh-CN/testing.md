@@ -1950,6 +1950,8 @@ KernelFileObjectTests 与 KernelObjectTests 覆盖带类型的指针打开、类
 
 `KernelFileQueryTests.cpp` 覆盖借用和原生独立缓冲数据包、立即／挂起发布、IOSB 别名和填充、工作线程完成、存储存活、本地类、句柄作用域、IRQL/APC 和拒绝边界。`KernelFileCreateTests.cpp` 与 `DriverFileSystemTests.cpp` 验证六类声明元数据、精确长度、名称截断和打开身份。原创 driver_file_queries.c 与 driver_filesystem_provider.c 跨可用后端、契约、基址和协作／17 指令调度运行；真实普通／CFG 镜像使用 NEVERD_WDM_FILE_QUERIES_FIXTURE、NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE、NEVERD_WDM_FILESYSTEM_FIXTURE、NEVERD_WDM_FILESYSTEM_CFG_FIXTURE。C API/CLI/Python 检查来源、完整输出和已处理的失败状态。原始内核有界探针验证 156 项生产者与 18 项完成场景，分配器、分发和通知边界均显式标注，不证明完整文件系统或通用 APC。缺少硬件或外部镜像仍为显式跳过。
 
+`KernelIRPStack.ReadWriteCompletionPreservesStoredFilePosition` 以独立的 64 位位置检查同步／异步文件、立即／挂起完成、成功／警告／错误及零／非零长度。真实普通／CFG `driver_wdm_stack.c` 夹具在 READ、WRITE 和清理之间再次读取位置。
+
 处理器回归覆盖输出边界、NULL、嵌套恢复、非法 IRQL 和导入身份。原创 `driver_processors.c` 在不同后端、契约、基址及调度下执行入口、工作线程和 DPC。可选 `NEVERD_WDM_PROCESSORS_FIXTURE` 与 `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` 使用真实 WDK 普通/CFG 映像验证内联调用和动态导出；不可用的执行后端明确跳过。
 
 整数格式化回归覆盖完整位宽、所有支持的进制、容量边界、非法进制的处理顺序、输出别名和终止符故障。原创 `driver_int64_strings.c` 在入口、工作项和卸载中检查导入及动态查找，并验证提高 IRQL 后的拒绝行为。可选 `NEVERD_WDM_INT64_STRINGS_FIXTURE` 与 `NEVERD_WDM_INT64_STRINGS_CFG_FIXTURE` 覆盖真实 WDK 普通/CFG 驱动及可用后端、执行契约、加载基址和调度模式。

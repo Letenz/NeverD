@@ -1872,6 +1872,8 @@ KernelFileSystem conserva un provider token per FILE_OBJECT. L’operazione priv
 
 `KernelModelFileQueries` possiede continuazioni, pubblicazione e rilascio di IoQueryFileInformation con buffer prestato e ZwQueryInformationFile con buffer proprio. Gli handle KernelMode riusano il proprietario degli oggetti. SystemBuffer si registra nel proprietario della memoria fisica; il rilascio ordinario lo lascia al proprietario della query. Solo `KernelFileSystem::queryInformation` codifica i metadati dichiarati dai token conservati. Il terminale legge classe e lunghezza dell’IRP effettivo; adattatori e report non ricostruiscono metadati.
 
+`KernelModelIO` rilascia la proprietà del trasferimento senza cambiare `FILE_OBJECT.CurrentByteOffset`. Offset richiesto e byte completati non sostituiscono un aggiornamento della posizione da parte del file system; le query Position native per file sincroni leggono il campo conservato.
+
 ### Responsabilità architetturale dell’ambiente grezzo
 
 `RecoveryArchitecture` seleziona il contratto nativo da `SpecializationOptions::Architecture`, indipendentemente dall’host di compilazione. Il valore predefinito resta x64; un target senza adattatore viene rifiutato esplicitamente. `arch/x86_64` gestisce codifica delle opzioni native, intervalli dell’immagine primaria, costi di confronto delle uscite e ricevute delle uscite fisiche. Il core gestisce budget comuni, codifica delle politiche e integrità di grafo e prove. La codifica dei digest x64 resta invariata; le architetture attesa e memorizzata vengono controllate prima della dichiarazione. `RawArchitectureReceiptCompatibility` fissa i digest precedenti e i test di discordanza impediscono di rinominare prove x64 come ARM64. Il recupero nativo ARM64 non è ancora implementato.
