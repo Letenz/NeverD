@@ -376,7 +376,7 @@ TEST(RegistrationCallABI, LocalUnwindIdentityRequiresCurrentProviderAndVeneer) {
 TEST(RegistrationCallABI, LocalUnwindBindsThePhysicalCallOccurrence) {
   for (bool EH4 : {false, true})
     for (bool Indirect : {false, true})
-      for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+      for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
         SCOPED_TRACE(EH4);
         SCOPED_TRACE(Indirect);
         SCOPED_TRACE(Mutation);
@@ -420,7 +420,9 @@ TEST(RegistrationCallABI, LocalUnwindBindsThePhysicalCallOccurrence) {
         auto &Boundary = Block.InstructionBoundaries.front();
         Boundary.Control = LowInstructionControl::Call;
         Boundary.ControlFlags = LowInstructionControlFlag::Call;
-        if (!Indirect)
+        if (Indirect)
+          Boundary.ControlFlags |= LowInstructionControlFlag::Indirect;
+        else
           Boundary.Immediate = Target;
         RegistrationSEHLocalUnwind Receipt;
         Receipt.Address = F.CallVA;
@@ -453,6 +455,11 @@ TEST(RegistrationCallABI, LocalUnwindBindsThePhysicalCallOccurrence) {
           Block.InstructionBoundaries.clear();
         if (Mutation == 12)
           F.Image.ConflictingImportStorageSlots.insert(ThrowImage::IATVA);
+        if (Mutation == 14) {
+          Boundary.ControlFlags = LowInstructionControlFlag::Call;
+          if (!Indirect)
+            Boundary.ControlFlags |= LowInstructionControlFlag::Indirect;
+        }
         size_t Work = Mutation == 13 ? limits::kMaxRegistrationEHStateWork : 0;
         EXPECT_EQ(hasCheckedX86LocalUnwindCall(
                       F.Image, Function, Block.Ops.front(), Receipt, Work),
