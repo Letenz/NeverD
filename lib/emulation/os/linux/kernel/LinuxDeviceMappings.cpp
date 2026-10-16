@@ -251,8 +251,11 @@ LinuxMemory::mapDevice(const ProcessServiceEvent &Event,
       Backing = &Mapping;
       break;
     }
-  if (!Backing)
+  if (!Backing) {
+    if (Device->KGSL && Device->KGSL->MemoryObjects && Owner && Owner->GPU)
+      return mapGPUObject(Event, std::move(Owner), Result);
     return Unsupported();
+  }
   if (Device->AccessMode == 1 || (Protection & ~ProtRead))
     return std::optional<uint64_t>(uint64_t(0) - AccessDenied);
   auto Address = placement(Hint, *Size);

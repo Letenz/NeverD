@@ -2827,20 +2827,25 @@ TEST_F(ProcessPublic, AndroidGPUCommandsMatchSDKAndCLI) {
                      .getAsObject();
   (*Device->getArray("read_only_mappings"))[0].getAsObject()->operator[](
       "bytes_hex") = std::string(8192, '0');
-  for (unsigned Route = 0; Route != 4; ++Route) {
-    SCOPED_TRACE(Route);
-    (*Request.getAsObject()->getObject("android"))["arguments"] =
-        llvm::json::Array{Route};
-    const auto Options = jsonText(*Request.getAsObject());
-    const auto Text = takeString(neverd_emulate_process_json(
-        Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
-    ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
-    auto Report = llvm::cantFail(llvm::json::parse(Text));
-    ASSERT_EQ(Report.getAsObject()->getString(field::Stop), "returned") << Text;
-    EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
-    EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
-              process_cli::Success);
-    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+  (*Device->getObject("kgsl_contexts"))["memory_objects"] = true;
+  for (const char *Entry : {"devices_gpu_commands", "devices_gpu_objects"}) {
+    (*Request.getAsObject()->getObject("android"))["entry_symbol"] = Entry;
+    for (unsigned Route = 0; Route != 4; ++Route) {
+      SCOPED_TRACE(Route);
+      (*Request.getAsObject()->getObject("android"))["arguments"] =
+          llvm::json::Array{Route, 1};
+      const auto Options = jsonText(*Request.getAsObject());
+      const auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::cantFail(llvm::json::parse(Text));
+      ASSERT_EQ(Report.getAsObject()->getString(field::Stop), "returned")
+          << Text;
+      EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
+      EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+                process_cli::Success);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+    }
   }
 #endif
 }

@@ -141,6 +141,103 @@ TEST_P(AndroidDevices, GPUCommandsWritePinnedRAMAndRetireOwnedTimestamps) {
     EXPECT_EQ(R.ReturnValue, 0u);
   }
 }
+TEST_P(AndroidDevices, GPUObjectsShareMemoryAndRetireOnlyTheirFinalOwner) {
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.KGSL->MemoryObjects = true;
+  for (bool Commands : {false, true}) {
+    D.KGSL->SynchronousA3xx = Commands;
+    Options.LinuxFiles->Devices.at("/fixture/control") = D;
+    for (uint64_t Route = 0; Route != 4; ++Route) {
+      SCOPED_TRACE(testing::Message() << Route << ':' << Commands);
+      auto R = run("devices_gpu_objects", {Route, Commands});
+      ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+      ASSERT_EQ(R.ReturnValue, 0u);
+    }
+  }
+}
+
+TEST_P(AndroidDevices, GPUObjectAddressesExcludeLegacyDeviceRanges) {
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.ReadOnlyMappings.push_back(
+      {0x10000000, std::vector<uint8_t>(4096, 0xc7), {}});
+  D.KGSL->MemoryObjects = true;
+  D.KGSL->SynchronousA3xx = true;
+  Options.LinuxFiles->Devices.at("/fixture/control") = D;
+  auto R = run("devices_gpu_objects", {0, 1});
+  ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+}
+
+TEST_P(AndroidDevices, GPUObjectWritesRequireFullProgramAdmission) {
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.KGSL->MemoryObjects = true;
+  D.KGSL->SynchronousA3xx = true;
+  Options.LinuxFiles->Devices.at("/fixture/control") = D;
+  for (uint64_t Mode : {0u, 1u}) {
+    Options.Android->Memory = {{Buffer, 4096, {}, false}};
+    Options.Android->ReadMemory = {{0x23000000, 4096, false},
+                                   {Buffer + 20, 4},
+                                   {0x22000000 + 40, 12, false}};
+    auto R = run("devices_gpu_object_write_rejected", {Mode, Buffer});
+    ASSERT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    ASSERT_EQ(R.MemorySnapshots.size(), 3u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, std::vector<uint8_t>(4096));
+    EXPECT_EQ(R.MemorySnapshots[1].Bytes,
+              (std::vector<uint8_t>{0xef, 0xbe, 0xad, 0xde}));
+    EXPECT_EQ(
+        R.MemorySnapshots[2].Bytes,
+        (std::vector<uint8_t>{0, 0, 0, 0, 0xa5, 0xa5, 0xa5, 0xa5, 0, 0, 0, 0}));
+    EXPECT_FALSE(R.Services.back().Result);
+  }
+}
+
+TEST_P(AndroidDevices, GPUObjectRefusalsPreserveRecordsAndMappings) {
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.KGSL->MemoryObjects = true;
+  Options.LinuxFiles->Devices.at("/fixture/control") = D;
+  for (uint64_t Mode = 0; Mode != 8; ++Mode) {
+    SCOPED_TRACE(Mode);
+    Options.Android->Memory = {
+        {Buffer, 4096, std::vector<uint8_t>(4096, 0xa5), false}};
+    Options.Android->ReadMemory = {{Buffer, 4096}};
+    if (Mode >= 3 && Mode <= 5)
+      Options.Android->ReadMemory.push_back({0x22000000, 8192, false});
+    auto R = run("devices_gpu_objects_rejected", {Mode, Buffer});
+    ASSERT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    ASSERT_FALSE(R.Services.back().Result);
+    ASSERT_EQ(R.MemorySnapshots.size(), Mode >= 3 && Mode <= 5 ? 2u : 1u);
+    auto Expected = std::vector<uint8_t>(4096, 0xa5);
+    std::fill_n(Expected.begin(), 48, 0);
+    auto Put64 = [&](unsigned At, uint64_t Value) {
+      llvm::support::endian::write64le(Expected.data() + At, Value);
+    };
+    auto Put32 = [&](unsigned At, uint32_t Value) {
+      llvm::support::endian::write32le(Expected.data() + At, Value);
+    };
+    Put64(0, 8192);
+    Put64(8, Mode == 0 ? 0x100000000ULL : 0);
+    Put64(24, Mode < 3 ? 0xabcdef : 12288);
+    Put32(32, Mode < 3 ? 0xdeadbeef : 2);
+    Put32(36, Mode == 1 ? 1 : 0);
+    if (Mode == 5) {
+      std::fill_n(Expected.begin() + 64, 32, 0);
+      Put64(64, 1);
+      Put32(80, 2);
+      Put32(84, 1);
+    }
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+    if (R.MemorySnapshots.size() == 2) {
+      auto Memory = std::vector<uint8_t>(8192, 0);
+      llvm::support::endian::write32le(Memory.data(), 0x76543210);
+      EXPECT_EQ(R.MemorySnapshots[1].Bytes, Memory);
+    }
+  }
+}
+
 TEST_P(AndroidDevices, RejectedGPUProgramsCannotPublishEarlierWrites) {
   auto D = contextDeviceTestInput();
   D.ReadOnlyMappings[0].Updates.clear();

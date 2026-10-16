@@ -4019,6 +4019,37 @@ TEST(ProcessReport, StatefulDevicesValidateProducerAndContextBoundaries) {
   ASSERT_TRUE(bool(ValidCommands)) << llvm::toString(ValidCommands.takeError());
   EXPECT_TRUE(ValidCommands->LinuxFiles->Devices.at("/fixture/control")
                   .KGSL->SynchronousA3xx);
+  auto Objects = Input();
+  (*Objects.getObject("kgsl_contexts"))["memory_objects"] = true;
+  auto ValidObjects = Parse(std::move(Objects));
+  ASSERT_TRUE(bool(ValidObjects)) << llvm::toString(ValidObjects.takeError());
+  EXPECT_TRUE(ValidObjects->LinuxFiles->Devices.at("/fixture/control")
+                  .KGSL->MemoryObjects);
+  for (auto Value : {llvm::json::Value(1), llvm::json::Value("true"),
+                     llvm::json::Value(nullptr)}) {
+    auto Invalid = Input();
+    (*Invalid.getObject("kgsl_contexts"))["memory_objects"] = std::move(Value);
+    auto Parsed = Parse(std::move(Invalid));
+    EXPECT_FALSE(bool(Parsed));
+    if (!Parsed)
+      llvm::consumeError(Parsed.takeError());
+  }
+  for (uint32_t Request :
+       {0xc0300945u, 0xc0300947u, 0x40200946u, 0x40080921u}) {
+    auto O = *ValidObjects;
+    O.LinuxFiles->Devices.at("/fixture/control")
+        .Ioctls.push_back({Request, 0, {}, {}});
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
+              std::string::npos);
+  }
+  auto O = *ValidObjects;
+  O.LinuxFiles->Devices.at("/fixture/control").AccessMode = 0;
+  auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, O);
+  ASSERT_FALSE(bool(R));
+  EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
+            std::string::npos);
 }
 
 llvm::json::Value fileMetadata() {

@@ -315,6 +315,38 @@ TEST_P(LinuxProc, DeviceBackingSurvivesCloseAndTracksPartialUnmap) {
   EXPECT_NE(Remaining.find("/dev/example\n"), std::string::npos);
 }
 
+TEST_P(LinuxProc, GPUObjectMapsRetainTheirDeviceIdentityUntilUnmap) {
+  auto &D = Options.LinuxFiles->Devices["/dev/example"];
+  D.AccessMode = 2;
+  D.ReadOnlyMappings.push_back({4096, std::vector<uint8_t>(4096), {}});
+  D.KGSL = LinuxKGSLContexts{4096, 3, false, true};
+  reset();
+  auto FD = open("/dev/example", 2);
+  const uint64_t Record = Base + 64;
+  llvm::cantFail(cpu().write(Record, std::vector<uint8_t>(48)));
+  llvm::cantFail(cpu().writeInteger(Record, 8192, 8));
+  ASSERT_EQ(call(ServiceKind::Ioctl, FD, 0xc0300945, Record), 0u);
+  ASSERT_EQ(llvm::cantFail(cpu().readInteger(Record + 32, 4)), 2u);
+  ASSERT_EQ(call(ServiceKind::Mmap, 0x30000000, 8192, 3, 1, FD, 8192),
+            0x30000000u);
+  auto Maps = open("/proc/self/maps");
+  auto Text = read(Maps);
+  EXPECT_NE(Text.find("30000000-30002000 rw-s 00002000"), std::string::npos);
+  EXPECT_NE(Text.find("/dev/example\n"), std::string::npos);
+  ASSERT_EQ(call(ServiceKind::Close, FD), 0u);
+  ASSERT_EQ(call(ServiceKind::Mprotect, 0x30000000, 8192, 0), 0u);
+  ASSERT_EQ(call(ServiceKind::Lseek, Maps, 0), 0u);
+  Text = read(Maps);
+  EXPECT_NE(Text.find("30000000-30002000 ---s 00002000"), std::string::npos);
+  ASSERT_EQ(call(ServiceKind::Munmap, 0x30000000, 8192), 0u);
+  ASSERT_EQ(call(ServiceKind::Mmap, 0x30000000, 8192, 3, 0x22, uint64_t(-1)),
+            0x30000000u);
+  ASSERT_EQ(call(ServiceKind::Lseek, Maps, 0), 0u);
+  Text = read(Maps);
+  EXPECT_NE(Text.find("30000000-30002000 rw-p 00000000"), std::string::npos);
+  EXPECT_EQ(Text.find("/dev/example"), std::string::npos);
+}
+
 TEST_P(LinuxProc, HeapGrowthAndShrinkChangeMapsAndVirtualSizeTogether) {
   ASSERT_EQ(call(ServiceKind::Brk, Base + 8193), Base + 8193);
   auto FD = open("/proc/self/maps");

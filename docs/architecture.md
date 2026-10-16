@@ -6791,7 +6791,12 @@ JNI retains opaque identities and argument/reference transport only.
 `LinuxBinderTransactions` routes object-free messages between guest-owned opens;
 LinuxMemory owns their read-only arenas and every service body remains guest code.
 `LinuxGPUCommands` owns explicitly selected PM4 admission and execution, using
-MemoryView physical pins and the existing KGSL context/memstore owner. JSON
+MemoryView physical pins and the existing KGSL context/memstore owner.
+`LinuxGPUObjects` allocates retained RAM through `AddressSpace::allocateBacking`
+without publishing CPU mappings. The process GPU allocation table owns IDs,
+addresses and pending-free state; LinuxMemory owns the exact CPU VMAs and
+retains their device opens. Object mappings and PM4 reuse the same physical
+bytes. JSON
 adapters declare these contracts and never infer methods, services or commands.
 
 
