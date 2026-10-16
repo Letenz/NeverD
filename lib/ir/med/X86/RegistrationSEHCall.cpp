@@ -9,7 +9,6 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/X86RegistrationSEHCall.h"
-#include "neverd/ir/med/X86RegistrationSEHParentExit.h"
 
 #include <set>
 #include <tuple>
@@ -41,8 +40,8 @@ getRegistrationSEHReturns(const MedFunc &Function) {
   RegistrationSEHReturns Result;
   if (Exits.empty())
     return Result;
-  if (!getRegistrationSEHParentExits(Function))
-    return std::nullopt;
+  // Near-return ABI recovery is independent of native parent-jump projection.
+  // Each parent exit is checked separately by its own binding and native gate.
   std::set<va_t> Entries;
   for (const auto &Scope : Function.ExceptionMetadata->Registration->Scopes)
     if (Scope.IsFinally)

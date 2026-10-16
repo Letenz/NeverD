@@ -44,6 +44,8 @@ std::optional<SEHParentExitPlan> prepareSEHParentExits(
     const std::map<llvm::BasicBlock *, std::pair<int, int>> &CopyEdges) {
   auto Sources = getRegistrationSEHParentExits(Source);
   if (!Sources ||
+      (!Sources->empty() &&
+       !Source.RegistrationStates->SEHParentChainComplete) ||
       !hasCheckedRegistrationPHICopyEdges(OriginalBlocks, CopyEdges))
     return std::nullopt;
   SEHParentExitPlan Plan;

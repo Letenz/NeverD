@@ -32,9 +32,8 @@ getRegistrationSEHParentExits(const MedFunc &Function) {
         return Exit.Exit == RegistrationSEHInvocationExit::Kind::ParentJump;
       }))
     return Result;
-  if (!States.Complete || !States.SEHParentChainComplete ||
-      !States.CallbackStatesComplete || !States.RegistrationLifetimeComplete ||
-      !Function.ExceptionMetadata)
+  if (!States.Complete || !States.CallbackStatesComplete ||
+      !States.RegistrationLifetimeComplete || !Function.ExceptionMetadata)
     return std::nullopt;
   const auto &EH = *Function.ExceptionMetadata;
   if (!EH.Registration || EH.Cxx ||

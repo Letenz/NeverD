@@ -16,8 +16,9 @@ llvm::Error
 bindSEHParentExitSources(RegistrationSEHParentExitContract &Contract,
                          const MedFunc &Source) {
   const auto Exits = getRegistrationSEHParentExits(Source);
-  if (!Exits || !Contract.Targets.empty() ||
-      Exits->size() != Contract.Transfers.size())
+  if (!Exits ||
+      (!Exits->empty() && !Source.RegistrationStates->SEHParentChainComplete) ||
+      !Contract.Targets.empty() || Exits->size() != Contract.Transfers.size())
     return rejectIR("parent transfers have no complete source exit set");
   for (const auto &[Id, Exit] : *Exits) {
     const auto Found = Contract.Transfers.find(Id);

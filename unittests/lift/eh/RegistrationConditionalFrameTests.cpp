@@ -14,6 +14,8 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/X86RegistrationSEHCall.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 
@@ -21,8 +23,11 @@ using namespace neverd;
 
 #ifdef NEVERD_BINARY_CORPUS_ROOT
 namespace {
-auto loadXCPT4() {
-  return COFFLoader().load(
+auto loadXCPT4(bool Selected = false) {
+  COFFLoader Loader;
+  if (Selected)
+    Loader.restrictFunctions({0x401580});
+  return Loader.load(
       std::string(NEVERD_BINARY_CORPUS_ROOT) +
       "/corpus/windows-eh/msvc/vs2019/x86/native/no-gs/o0/windows-seh-tests/"
       "xcpt4-msvc-x86-native-no-gs-o0.exe");
@@ -53,6 +58,34 @@ TEST(RegistrationConditionalFrame,
   EXPECT_FALSE(States.SEHInvocationExits.empty());
   EXPECT_FALSE(States.SEHJumpResumptions.empty());
   EXPECT_LE(Work, limits::kMaxRegistrationEHStateWork);
+}
+
+TEST(RegistrationConditionalFrame,
+     XCPT4SelectedFunctionRetainsItsScalarFilterRange) {
+  auto Image = loadXCPT4(true);
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  size_t Work = 0;
+  RegistrationCallCalleeIndex Index(*Image, &Work);
+  CFGBuilder Builder;
+  Builder.setRegistrationCalleeIndex(&Index);
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(*Image));
+  const auto Function = Builder.build(*Image, Dec, 0x401580, "main");
+  ASSERT_TRUE(Function.RegistrationStates);
+  const auto &States = *Function.RegistrationStates;
+  for (const auto &Diagnostic : States.Diagnostics)
+    ADD_FAILURE() << Diagnostic;
+  ASSERT_TRUE(States.Complete);
+  const auto Ranges =
+      registrationRangesWhere(States, [](int32_t Level) { return Level == 1; });
+  ASSERT_TRUE(Ranges);
+  ASSERT_EQ(Ranges->size(), 1u);
+  EXPECT_LE(Work, limits::kMaxRegistrationEHStateWork);
+  const auto Med =
+      LowToMedConverter().convert(Function, Arch::X86, BinaryFormat::COFF);
+  EXPECT_FALSE(Med.SkippedSSA);
+  EXPECT_TRUE(getRegistrationSEHReturns(Med))
+      << "native parent chain: " << States.SEHParentChainComplete;
 }
 
 TEST(RegistrationConditionalFrame, XCPT4HelperChecksItsBoundIncomingCounter) {

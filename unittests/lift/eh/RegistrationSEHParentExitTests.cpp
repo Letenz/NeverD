@@ -6,6 +6,7 @@
 /// \file
 /// Tests source parent-exit identity, chain lifetime and failed projection.
 
+#include "../../../lib/backend/codegen/COFF/COFFRegistrationSEHParentExit.h"
 #include "../../../lib/backend/llvm/X86/MedLLVMRegistrationSEHParentExit.h"
 #include "gtest/gtest.h"
 
@@ -252,7 +253,7 @@ TEST(RegistrationSEHParentExit, RejectsChangedSourceAndInvocationEvidence) {
       Function.SkippedSSA = true;
       break;
     case 36:
-      States.SEHParentChainComplete = false;
+      States.Blocks[1].Reached = false;
       break;
     }
     EXPECT_FALSE(getRegistrationSEHParentExits(Function));
@@ -377,7 +378,42 @@ TEST(RegistrationSEHParentExit, InputPE32RejectsAnAbandonedUnwindGuard) {
   LowToMedConverter Converter;
   Converter.setBinaryImage(&*Image);
   auto Med = Converter.convert(Low, Arch::X86, BinaryFormat::COFF);
-  EXPECT_FALSE(getRegistrationSEHParentExits(Med));
+  ASSERT_TRUE(getRegistrationSEHParentExits(Med));
+  EXPECT_FALSE(x86_registration::prepareSEHParentExits(Med, {}, {}));
+}
+
+TEST(RegistrationSEHParentExit, NativeChainGatePreservesAnalysisOwnership) {
+  auto Source = parentExit(false);
+  llvm::LLVMContext Context;
+  llvm::Module Module("parent-chain", Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false),
+      llvm::GlobalValue::ExternalLinkage, "parent", Module);
+  auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  auto *Finally = llvm::BasicBlock::Create(Context, "finally", Function);
+  auto *Resume = llvm::BasicBlock::Create(Context, "resume", Function);
+  llvm::IRBuilder<> Builder(Entry);
+  Builder.CreateBr(Finally);
+  Builder.SetInsertPoint(Finally);
+  Builder.CreateBr(Resume);
+  Builder.SetInsertPoint(Resume);
+  Builder.CreateRetVoid();
+  const std::map<int, llvm::BasicBlock *> Blocks{
+      {0, Entry}, {1, Finally}, {2, Resume}};
+  ASSERT_TRUE(x86_registration::prepareSEHParentExits(Source, Blocks, {}));
+  Source.RegistrationStates->SEHParentChainComplete = false;
+  ASSERT_TRUE(getRegistrationSEHParentExits(Source));
+  EXPECT_TRUE(getRegistrationSEHReturns(Source));
+  EXPECT_TRUE(registrationSEHCallbackOwners(Source));
+  EXPECT_FALSE(x86_registration::prepareSEHParentExits(Source, Blocks, {}));
+  const auto &Exit = Source.RegistrationStates->SEHInvocationExits.front();
+  coff_registration::RegistrationSEHParentExitContract Contract;
+  Contract.Transfers.emplace(
+      1, coff_registration::RegistrationSEHParentExitContract::Transfer{
+             Finally, Exit.EntryVA, Exit.Address});
+  auto Error = coff_registration::bindSEHParentExitSources(Contract, Source);
+  ASSERT_TRUE(bool(Error));
+  llvm::consumeError(std::move(Error));
 }
 
 TEST(RegistrationSEHParentExit, FailedOutliningRestoresTheOriginalModule) {

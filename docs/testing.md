@@ -6940,6 +6940,10 @@ source order, runtime-entry selection and constant outputs.
 `RegistrationCookieABI` checks ECX-only recovery despite incidental EDX/XMM/stack
 values and conflicting inferred signatures, cross-block cookie PHIs, and 18
 invalid source occurrences that must not acquire the cookie-call protocol.
+`RegistrationConditionalFrame.XCPT4SelectedFunctionRetainsItsScalarFilterRange`
+checks that focused loading preserves the LowIR protected range and MedIR finally
+returns even when the native parent-chain gate fails. The parent-exit tests require
+both native preparation and independent COFF binding to reject that unsafe chain.
 
 `RAMReservationTests.cpp` checks public write witnesses across identical-value and ABA stores, retained slices, address reuse, sibling mappings, rollback, cancellation, fault-prefix commits and opaque execution. `UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` checks owned loader facts at preferred, downward and kernel load addresses: restored bytes do not restore invalidated provenance. `DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` distinguishes active CFG pointer replacement from dormant fallback retention.
 

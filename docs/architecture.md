@@ -572,6 +572,8 @@ removing preflighted unused return transports without reopening the proof.
 guard. Reconnecting the same live registration preserves its current try level
 and jump-buffer bindings. `SEHParentChainComplete` separately gates native parent
 resumption without invalidating otherwise complete logical source-state analysis.
+LLVM preparation and the independent COFF source check enforce that native gate;
+shared MedIR bindings retain the source exits for ABI recovery and decompilation.
 MedIR's `RegistrationSEHParentExit` binds the exact
 SavedESP restore and parent branch; callback ownership stops at this boundary.
 `MedLLVMRegistrationSEHParentExit` projects a private SjLj context transactionally,
@@ -585,6 +587,8 @@ for checked ordinary finally calls. These intrinsics keep inputs and outputs in
 the ordinary def-use and partial-register passes. `MedLLVMRegistrationSEHRegisters`
 owns their private parent-frame slots and the separate runtime entry values;
 `COFFRegistrationSEHRegisters` authenticates storage and source execution order.
+These invocation slots are separate from the logical register snapshots of
+source setjmp calls and must not be restored by source longjmp resumptions.
 The shared scope-retention owner also includes rows used solely by authenticated
 ordinary calls, without making their source try levels active.
 `abi/MedABIPassI386.cpp` binds an authenticated EH4 cookie check to its current
