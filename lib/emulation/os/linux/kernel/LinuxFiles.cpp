@@ -88,7 +88,7 @@ LinuxFiles::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Getdents64:
     return directoryEntries(A0, A1, A2, Result);
   case ServiceKind::Ioctl:
-    return deviceIoctl(A0, A1, A2, Result);
+    return tracedIoctl(Event, Result);
   case ServiceKind::Write:
   case ServiceKind::WriteV:
     return writeDescriptor(Kind, A0, A1, A2, Result);

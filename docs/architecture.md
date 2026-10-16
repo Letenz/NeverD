@@ -7072,3 +7072,13 @@ records mmap's early zero-length or missing-sharing-type EINVAL, and adds
 MAP_UNIX03 only to the separate kernel arguments. The common completion path
 owns errno and return-frame publication. DarwinMemory remains the sole owner
 of mappings, current/maximum rights, reserved pages and retained file leases.
+
+
+### Linux ioctl observation ownership
+
+`LinuxIoctlTrace` surrounds the existing `LinuxFiles::deviceIoctl` decision at
+one shared raw/native service boundary. It owns bounded diagnostic reads and
+entry-resolved addresses, never device replies or a second ABI decoder.
+`LinuxServices` supplies the current task; Android supplies its native return
+address. `ProcessReport` serializes the optional stream. Trace limits and
+capture failures cannot replace the original service outcome.

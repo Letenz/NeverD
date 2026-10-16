@@ -7458,3 +7458,15 @@ ARM64 HVF identities are mandatory. Public C/CLI and real Python tests repeat
 the same workload. `DarwinNative.LibSystemMemoryCallsMatchNativeMappingsAndCErrorOrder`
 compares the system-linked object with original native file bytes, anonymous
 zeroing, protection transitions, private mapping lifetime and EOF tails.
+
+
+## Ioctl memory evidence
+
+`AndroidDevices.IoctlTrace*` checks raw/named/variadic/dynamic routes against
+unchanged guest instruction/event counts, pointer payload bytes and errno
+outcomes. It also checks unreadability, address overflow and trace exhaustion.
+`LinuxFileNamespace.IoctlTraceKeepsEntryPointerAndRefusedCallBytes` covers both
+LP64 architectures, a pointer overwritten by the ioctl and an unsupported
+retry with complete RAM equality. `ProcessReport.IoctlTrace*` checks strict
+JSON admission and lossless evidence serialization. The Python device
+integration exercises the same report through the public C SDK.

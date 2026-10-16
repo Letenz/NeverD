@@ -25,7 +25,10 @@ public:
         Memory(*CPU.addressSpace(), Layout, InitialBreak, Options),
         Clock(Options.LinuxTime),
         Files(CPU, Layout, Options.LinuxFiles, &Memory, &Clock),
-        Signals(Options.LinuxSignals), Priority(Options.LinuxPriority) {}
+        Signals(Options.LinuxSignals), Priority(Options.LinuxPriority) {
+    Result.IoctlTraceEnabled =
+        Options.LinuxFiles && Options.LinuxFiles->IoctlTrace;
+  }
 
   llvm::Expected<std::optional<uint64_t>>
   handle(const ProcessServiceEvent &Event, ThreadContext *Thread = nullptr);

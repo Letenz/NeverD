@@ -81,6 +81,21 @@ struct ProcessServiceEvent {
   /// when the selected OS uses a different error convention.
   std::optional<bool> Error;
   std::optional<uint64_t> ThreadID;
+  /// Present when a native wrapper supplies its actual guest return address.
+  std::optional<uint64_t> ReturnAddress;
+};
+
+struct ProcessIoctlMemory {
+  std::optional<uint64_t> Address;
+  uint64_t Size = 0;
+  std::vector<uint8_t> Before, After;
+  std::string BeforeStatus, AfterStatus;
+};
+struct ProcessIoctlEvent {
+  uint64_t PC = 0, Argument = 0;
+  uint32_t FD = 0, Request = 0, ThreadID = 0;
+  std::optional<uint64_t> ReturnAddress, Result;
+  std::vector<ProcessIoctlMemory> Memory;
 };
 
 struct ProcessResult {
@@ -95,6 +110,10 @@ struct ProcessResult {
   /// Exact captured bytes, including NUL and non-UTF8 output.
   std::string StandardOutput, StandardError;
   std::vector<ProcessServiceEvent> Services;
+  /// Optional independent observation stream. Result bits use Linux's raw
+  /// errno convention even when a Bionic wrapper subsequently returns -1.
+  std::vector<ProcessIoctlEvent> IoctlTrace;
+  bool IoctlTraceEnabled = false, IoctlTraceTruncated = false;
   std::optional<ExecutionExit> LastCPUExit;
   std::optional<uint64_t> ReturnValue;
   bool InitializersEnabled = false, TraceTruncated = false;

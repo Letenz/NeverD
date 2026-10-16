@@ -135,6 +135,9 @@ private:
   std::set<uint32_t> CloseOnExec;
   std::function<std::vector<ProcTask>()> TaskProvider;
   uint32_t CurrentTask = ThreadID;
+  uint64_t IoctlTraceBytes = 0;
+  llvm::Expected<std::optional<uint64_t>>
+  tracedIoctl(const ProcessServiceEvent &Event, ProcessResult &Result);
   std::vector<std::weak_ptr<LinuxDeviceState>> DeviceDescriptions;
   std::map<std::string, MutableFile> MutableFiles;
   std::map<std::string, uint64_t> Inodes;
