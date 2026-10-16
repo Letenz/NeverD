@@ -10119,13 +10119,19 @@ TEST_F(JTE_AArch64, NonNominalReachingPageStillEscapesTheWritableTable) {
     EXPECT_TRUE(It->UnsafeIndirectBranchAddresses.count(JT.InsnAddr));
 }
 
+// A W0 guard must not bound the unmodified X0 table index, so the dispatch
+// stays the explicit failure of an unresolved indirect branch: no switch over
+// the table's entries, and no tail call through an address computed within
+// the function (IndirectTailFrame).
 TEST_F(JTE_AArch64, CompactIndexRejectsWGuardForUnmodifiedXValue) {
   auto R = liftToLLVMIRUnopt(widthMismatchA64Obj());
-  EXPECT_NE(R.exitCode, 0)
-      << "A W0 guard must not bound the unmodified X0 table index:\n"
-      << R.out;
-  EXPECT_NE(R.err.find("refusing stale-address fallback"), std::string::npos)
-      << R.err;
+  ASSERT_EQ(R.exitCode, 0) << R.err;
+  const std::string Body =
+      llvmFunctionBody(R.out, "a64_compact_w_guard_x_index");
+  ASSERT_FALSE(Body.empty()) << R.out;
+  EXPECT_EQ(Body.find("switch"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("ret i64 499"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("@llvm.trap"), std::string::npos) << Body;
 }
 
 static fs::path worldClassA64Obj() {

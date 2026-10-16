@@ -712,12 +712,7 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
           Call == Insns.end() ? InvalidVA : Call->first + Call->second.Size;
       const auto *Own = Img.ExceptionMetadata.findFunction(Func.Entry);
       Valid &= Own && Own->CodeRange.contains(Continuation) &&
-               Own->ParseStatus == ExceptionParseStatus::Complete &&
-               !Own->hasLanguageTable() && !Own->Rust && !Own->ObjC &&
-               Own->Personality == ExceptionPersonality::None &&
-               Own->PersonalityVA == 0 && Own->PersonalityName.empty() &&
-               Own->HandlerDataVA == 0 &&
-               (!Own->Dwarf || Own->Dwarf->LSDAVA == 0);
+               Own->describesUnwindOnly();
       std::optional<size_t> Caller;
       for (size_t B = 0; B < N; ++B) {
         if (Func.Blocks[B].StartAddr <= *Sites.begin() &&

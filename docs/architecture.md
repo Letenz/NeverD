@@ -1771,11 +1771,20 @@ carry these identities; all reaching predecessors and backedges must converge.
 Independent roots start unknown. Partial or overlapping writes invalidate whole
 restoration words; unknown memory writes and exposed frame storage invalidate
 spill evidence. Unsupported effects, incomplete graphs and exhausted work
-retain the original indirect branch. Call preservation comes from `TargetRegInfo`'s
-format-selected ranges. This condition supplies no callee identity or source
-ABI. Successful classification emits an explicit `INDIR_CALL + RETURN` pair;
-HighIR cannot infer another tail call from a successorless `INDIR_BR`. An
-unresolved transfer without a usable switch remains an explicit failure path.
+retain the original indirect branch. A frame description that only unwinds
+the frame (`ExceptionFunction::describesUnwindOnly`: no personality routine,
+handler data, LSDA or language table, as for the FDE every function of an
+ordinary shared library has) runs no handler, so it does not prevent the
+classification; one that names a handler does. A branch whose target derives
+from an address of the function's own code (an `adr` of a switch's case
+labels, which the jump-table resolver left unresolved) is a computed jump
+within the function and keeps its indirect branch; the function's own entry is
+no such address, since a branch there recurses. Call preservation comes from
+`TargetRegInfo`'s format-selected ranges. This condition supplies no callee
+identity or source ABI. Successful classification emits an explicit
+`INDIR_CALL + RETURN` pair; HighIR cannot infer another tail call from a
+successorless `INDIR_BR`. An unresolved transfer without a usable switch
+remains an explicit failure path.
 
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in

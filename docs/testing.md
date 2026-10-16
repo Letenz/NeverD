@@ -3738,6 +3738,15 @@ first. Its LLVM C must not trap and must compile for all four targets. On an
 x64 host the program runs and must call the initial function, then the one
 stored over it.
 
+`IndirectTailFrame.UnwindOnlyFrameDescriptionKeepsTheTailCall` assembles AArch64
+functions with plain CFI into a shared library: a restored frame's `br x0`
+becomes `INDIR_CALL + RETURN` under its FDE, and a live frame keeps its
+indirect branch, as does a computed jump into the function's own code
+(`adr x1, 1f; add x0, x1, w0, sxtw #2; br x0`), while a tail call through the
+function's own reloaded address stays one. `ExceptionFunctionUnwindOnly`
+checks that an LSDA, a personality routine, handler data or a partial parse
+each count as a handler.
+
 `LocalUnwindTargetRequiresExclusiveSameFrameUses` includes decoded x64 calls
 whose SP save and load occupy different blocks, stale producer changes, opaque
 calls, partial writes, foreign address uses and invalid module/runtime facts.
