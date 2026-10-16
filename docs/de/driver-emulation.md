@@ -530,7 +530,7 @@ Basisverschiebung an; ohne dieses Feld oder mit `"0x0"` gilt die bevorzugte
 Adresse. Das Image muss die Relokationsanforderungen erfüllen. Der ursprüngliche
 Initialisierungsbefehl und die C-API implizieren kein Szenario.
 
-An der Wurzel sind nur `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `debugger_state`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry_system_time_100ns`, `registry` und `pnp_devices`
+An der Wurzel sind nur `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `debugger_state`, `load_address`, `requests`, `unload`, `filesystem`, `kernel_exports`, `registry_system_time_100ns`, `registry` und `pnp_devices`
 erlaubt. Gewöhnliche Dateianforderungen akzeptieren `kind`, optional `device` oder `device_id` (gegenseitig exklusiv) und optional `file`. IOCTLs benötigen `code` und akzeptieren `input`, `output_size` und
 `direct_input`. Ein `read` akzeptiert `output_size` und `byte_offset`; ein
 `write` akzeptiert `input` und `byte_offset`. Offsets sind standardmäßig null,

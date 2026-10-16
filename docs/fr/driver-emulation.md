@@ -534,7 +534,7 @@ de base ; son absence ou `"0x0"` utilise l’adresse préférée. L’image doit
 satisfaire les exigences de relocalisation. La commande d’initialisation et
 l’API C d’origine n’impliquent aucun scénario.
 
-Seuls `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `debugger_state`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry_system_time_100ns`, `registry` et `pnp_devices` sont acceptés
+Seuls `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `debugger_state`, `load_address`, `requests`, `unload`, `filesystem`, `kernel_exports`, `registry_system_time_100ns`, `registry` et `pnp_devices` sont acceptés
 à la racine. Les requêtes ordinaires de fichier acceptent `kind`, ainsi que `device` ou `device_id` (exclusifs) et `file`, facultatifs. Les IOCTL exigent `code` et acceptent `input`,
 `output_size` et `direct_input`. Un `read` accepte `output_size` et `byte_offset` ;
 un `write` accepte `input` et `byte_offset`. Les offsets valent zéro par défaut,

@@ -535,7 +535,7 @@ i requisiti di rilocazione. Il comando di inizializzazione e l’API C originali
 non implicano alcuno scenario.
 
 Alla radice sono accettati solo `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `debugger_state`, `load_address`, `requests`, `unload`,
-`kernel_exports`, `registry_system_time_100ns`, `registry` e `pnp_devices`. Le normali richieste di file accettano `kind`, `device` o `device_id` facoltativi (esclusivi) e un `file` facoltativo. Gli IOCTL richiedono `code` e accettano `input`,
+`filesystem`, `kernel_exports`, `registry_system_time_100ns`, `registry` e `pnp_devices`. Le normali richieste di file accettano `kind`, `device` o `device_id` facoltativi (esclusivi) e un `file` facoltativo. Gli IOCTL richiedono `code` e accettano `input`,
 `output_size` e `direct_input`. Un `read` accetta `output_size` e `byte_offset`;
 un `write` accetta `input` e `byte_offset`. Gli offset sono zero per impostazione
 predefinita, accettano interi o stringhe esadecimali e devono rientrare in un

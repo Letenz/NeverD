@@ -718,7 +718,7 @@ omission or `"0x0"` uses the preferred address. Relocation requirements must be
 satisfied by the image. No scenario is implied by the original initialization
 command or C API.
 
-Only `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `debugger_state`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry_system_time_100ns`, `registry`, and `pnp_devices` are accepted at
+Only `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `debugger_state`, `load_address`, `requests`, `unload`, `filesystem`, `kernel_exports`, `registry_system_time_100ns`, `registry`, and `pnp_devices` are accepted at
 the root. Ordinary file requests accept `kind`, optional `device` or `device_id` (mutually exclusive), and optional `file`.
 IOCTLs require `code` and accept `input`, `output_size`, and `direct_input`.
 A `read` accepts `output_size` and `byte_offset`; a `write` accepts `input` and
