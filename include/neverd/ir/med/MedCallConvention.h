@@ -23,6 +23,7 @@
 #define NEVERD_IR_MED_MEDCALLCONVENTION_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedIR.h"
 
@@ -155,6 +156,14 @@ std::optional<CallingConv> callingConventionOf(Arch A, BinaryFormat F);
 /// has no entry for it.  An entry for that exact format wins over one for
 /// every format of the architecture.
 const CallArgumentConvention *callArgumentConvention(Arch A, BinaryFormat F);
+
+/// Whether \p V, stored to the stack, is a prologue's save of a register's
+/// incoming value: a callee-saved register's, or the return address the link
+/// register holds (`push {r11, lr}`, `stp x29, x30`).  It passes no argument.
+inline bool isIncomingRegisterSave(const TargetRegInfo &TRI, const MedVar &V) {
+  return V.Kind == MedVar::Reg && V.SSAVer == 0 &&
+         (TRI.isCalleeSaveReg(V.RegOff) || TRI.isLinkRegister(V.RegOff));
+}
 
 } // namespace neverd
 

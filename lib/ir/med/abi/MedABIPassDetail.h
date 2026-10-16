@@ -24,8 +24,12 @@
 #define NEVERD_IR_MED_MEDABIPASSDETAIL_H
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 
 #include <cstdint>
@@ -77,12 +81,22 @@ struct AbiCallContext {
   llvm::function_ref<std::optional<int64_t>(const MedVar &)> CallStackOffset;
 };
 
-/// Whether \p V, stored to the stack, is a prologue's save of a register's
-/// incoming value: a callee-saved register's, or the return address the link
-/// register holds (`push {r11, lr}`, `stp x29, x30`).  It passes no argument.
-inline bool isIncomingRegisterSave(const TargetRegInfo &TRI, const MedVar &V) {
-  return V.Kind == MedVar::Reg && V.SSAVer == 0 &&
-         (TRI.isCalleeSaveReg(V.RegOff) || TRI.isLinkRegister(V.RegOff));
+/// The incoming value of a scratch register that carries no argument is
+/// undefined where the convention says so: storing it, as an alignment
+/// `push rax` does, passes nothing (HighIR's CallArgCollection applies the same
+/// rule).
+inline bool isUndefinedIncomingScratch(const TargetRegInfo &TRI, Arch TheArch,
+                                       const CallArgumentConvention *Convention,
+                                       llvm::ArrayRef<uint64_t> ArgRegs,
+                                       const MedVar &V) {
+  if (!Convention || !Convention->UndefinedIncomingScratchRegisters ||
+      V.Kind != MedVar::Reg || V.SSAVer != 0 || TRI.isStackPointer(V.RegOff) ||
+      TRI.isCalleeSaveReg(V.RegOff) || TRI.isLinkRegister(V.RegOff))
+    return false;
+  const std::optional<unsigned> Family = gprFamilyOf(TheArch, V.RegOff);
+  return Family && llvm::none_of(ArgRegs, [&](uint64_t Reg) {
+           return gprFamilyOf(TheArch, Reg) == Family;
+         });
 }
 
 /// Outgoing scalar stores that agree along every predecessor path

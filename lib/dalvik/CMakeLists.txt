@@ -2,6 +2,8 @@ include(${CMAKE_SOURCE_DIR}/cmake/NeverDZlib.cmake)
 add_neverd_component_library(NeverDDalvik
   Budget.cpp
   Dex.cpp
+  Heap.cpp
+  Library.cpp
   Model.cpp
   Runtime.cpp
   Signature.cpp

@@ -3,14 +3,14 @@
 
 `neverd types --all --asserts` renders every local type with compile-time
 checks of each size and offset.  This script renders them in C and C++ with
-every builtin spelling, in Rust and in Go, and compiles each with clang,
-rustc and go, so that a layout NeverD gets wrong, or source that does not
-compile, fails.  The C header, which the workbench shows as C/C++, compiles
-as C++ as well.  Without --binary it checks the fixture PDB the unit tests
-use; with --declare it checks the types C, C++, Rust or Go files declare,
-laid out for --data-model, such as a type library NeverD ships, and the
-prototypes they declare too.  A toolchain that is missing is reported and
-skipped.
+every builtin spelling, in Rust, Go and Python with both of their own, and
+compiles each with clang, rustc and go, or runs it with python3, so that a
+layout NeverD gets wrong, or source that does not compile, fails.  The C header, which the workbench shows as
+C/C++, compiles as C++ as well.  Without --binary it checks the fixture PDB
+the unit tests use; with --declare it checks the types C, C++, Rust or Go
+files declare, laid out for --data-model, such as a type library NeverD
+ships, and the prototypes they declare too.  A toolchain that is missing is
+reported and skipped.
 """
 from __future__ import annotations
 
@@ -26,6 +26,9 @@ import tempfile
 REPOSITORY = Path(__file__).resolve().parents[1]
 FIXTURES = REPOSITORY / "unittests" / "types" / "fixtures"
 SPELLINGS = ("windows", "ida", "keywords", "portable")
+# Rust and Go name builtins as Windows does, through aliases, or by exact
+# widths.
+RUST_SPELLINGS = GO_SPELLINGS = PYTHON_SPELLINGS = ("windows", "portable")
 
 # Windows' own typedefs of the builtins it names, as <ntdef.h> declares them:
 # prototypes of the compiler's intrinsics only match its declarations with
@@ -165,27 +168,48 @@ class Checker:
         if model == "ILP32":
             self.skip("Rust", "32-bit layouts need a 32-bit Rust target")
             return
-        source = self.render("types.rs", "--lang", "rust")
-        result = run([rustc, "--crate-type=lib", "--edition=2021",
-                      "--emit=metadata", "-o", str(self.work / "types.rmeta"),
-                      str(source)])
-        self.report("rust", diagnostics(result))
+        for spelling in RUST_SPELLINGS:
+            source = self.render(f"types-{spelling}.rs", "--lang", "rust",
+                                 "--spelling", spelling)
+            result = run([rustc, "--crate-type=lib", "--edition=2021",
+                          "--emit=metadata", "-o",
+                          str(self.work / f"types-{spelling}.rmeta"),
+                          str(source)])
+            self.report(f"rust {spelling}", diagnostics(result))
 
     def go(self, model):
         go = shutil.which("go")
         if not go:
             self.skip("Go", "go not found")
             return
-        module = self.work / "go"
-        module.mkdir()
-        source = self.render("go/types.go", "--lang", "go")
-        (module / "go.mod").write_text("module types\n\ngo 1.22\n",
-                                       encoding="utf-8")
         environment = dict(os.environ, GOOS="windows",
                            GOARCH=TARGETS[model][2], GOFLAGS="-mod=mod")
-        result = run([go, "vet", "./..."], cwd=module, env=environment)
-        self.report(f"go {TARGETS[model][2]}", diagnostics(result))
-        del source
+        for spelling in GO_SPELLINGS:
+            module = self.work / f"go-{spelling}"
+            module.mkdir()
+            self.render(f"go-{spelling}/types.go", "--lang", "go",
+                        "--spelling", spelling)
+            (module / "go.mod").write_text("module types\n\ngo 1.22\n",
+                                           encoding="utf-8")
+            result = run([go, "vet", "./..."], cwd=module, env=environment)
+            self.report(f"go {spelling} {TARGETS[model][2]}",
+                        diagnostics(result))
+
+
+    def python(self, model):
+        """Python's ctypes check each size and offset as the module runs."""
+        python = shutil.which("python3")
+        if not python:
+            self.skip("Python", "python3 not found")
+            return
+        if model == "ILP32":
+            self.skip("Python", "32-bit layouts need a 32-bit Python")
+            return
+        for spelling in PYTHON_SPELLINGS:
+            source = self.render(f"types-{spelling}.py", "--lang", "python",
+                                 "--spelling", spelling)
+            result = run([python, "-I", "-W", "error", str(source)])
+            self.report(f"python {spelling}", diagnostics(result))
 
 
 def main():
@@ -239,6 +263,7 @@ def main():
             checker.prototypes(model)
         checker.rust(model)
         checker.go(model)
+        checker.python(model)
     if checker.failures:
         sys.exit(f"{checker.failures} check(s) failed")
     print("every check passed" +

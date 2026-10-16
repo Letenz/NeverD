@@ -11,7 +11,9 @@
 // storage of its size with an accessor for each alternative, a run of
 // bitfields is its storage unit with a getter and a setter for each, and a
 // flexible array, which would pad a Go structure, is an accessor.  Function
-// pointers are uintptr, as in golang.org/x/sys/windows.
+// pointers are uintptr, as in golang.org/x/sys/windows.  Builtins are exact
+// widths (uint32), or Windows' names (ULONG), which a file declares as
+// aliases of them.
 //
 //===----------------------------------------------------------------------===//
 
@@ -20,6 +22,8 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <set>
 
 namespace neverd::types::render {
 namespace {
@@ -46,11 +50,16 @@ struct Field {
 class GoWriter {
 public:
   GoWriter(const TypeLibrary &Library, const RenderOptions &Options)
-      : Library(Library), Options(Options), Names(Library, Language::Go),
+      : Library(Library), Options(Options), Spelling(spellingOf(Options)),
+        Names(Library, Language::Go),
         Wide(pointerBytes(Library.dataModel()) == 8),
         Receiver(Library.find("s") ? "s_" : "s") {}
 
   void definition(const LocalType &Type, std::string &Out);
+  /// The builtins rendered so far by their Windows names.
+  const std::set<Builtin> &aliased() const { return Aliased; }
+  /// \p Type as an exact width, as Go spells it.
+  std::string exact(Builtin Type) const;
 
 private:
   std::string type(const TypeExpr &Type) const;
@@ -92,7 +101,9 @@ private:
 
   const TypeLibrary &Library;
   const RenderOptions &Options;
+  const BuiltinSpelling Spelling;
   const NameSpelling Names;
+  mutable std::set<Builtin> Aliased;
   const bool Wide;
   /// What methods call their receiver: s, unless a type is named so.
   const std::string Receiver;
@@ -112,6 +123,14 @@ uint32_t GoWriter::scalarAlign(uint64_t Bytes) const {
 }
 
 std::string GoWriter::builtin(Builtin Type) const {
+  if (Spelling == BuiltinSpelling::Windows && windowsTypedef(Type)) {
+    Aliased.insert(Type);
+    return builtinInfo(Type).Windows;
+  }
+  return exact(Type);
+}
+
+std::string GoWriter::exact(Builtin Type) const {
   const BuiltinInfo &Info = builtinInfo(Type);
   const unsigned Bytes = builtinBytes(Type, Library.dataModel());
   switch (Info.Class) {
@@ -173,7 +192,7 @@ uint32_t GoWriter::recordAlign(const RecordDef &Record, uint32_t Pack) const {
 uint32_t GoWriter::goAlign(const TypeExpr &Type, uint32_t Pack) const {
   switch (Type.Kind) {
   case TypeExprKind::Builtin:
-    if (builtin(Type.TheBuiltin).front() == '[')
+    if (exact(Type.TheBuiltin).front() == '[')
       return 1;
     return scalarAlign(builtinBytes(Type.TheBuiltin, Library.dataModel()));
   case TypeExprKind::Pointer:
@@ -306,7 +325,15 @@ void GoWriter::bitAccessors(const std::string &Type, const Slot &Place,
   for (const Member *Bit : Place.Bits) {
     const BitAccess Access = bitAccess(Library, *Bit);
     const std::string Bits = std::to_string(Access.UnitBits);
-    const std::string Value = (Access.Signed ? "int" : "uint") + Bits;
+    std::string Value = (Access.Signed ? "int" : "uint") + Bits;
+    // A builtin of the unit's size keeps its own name: ULONG, not UINT.
+    if (Bit->Type && Bit->Type->Kind == TypeExprKind::Builtin &&
+        builtinBytes(Bit->Type->TheBuiltin, Library.dataModel()) * 8 ==
+            Access.UnitBits &&
+        builtinInfo(Bit->Type->TheBuiltin).Signed == Access.Signed &&
+        builtinInfo(Bit->Type->TheBuiltin).Class != BuiltinClass::Float &&
+        builtinInfo(Bit->Type->TheBuiltin).Class != BuiltinClass::Bool)
+      Value = builtin(Bit->Type->TheBuiltin);
     std::string Read;
     if (Access.Signed) {
       // Up to the top, then back down: C extends a signed field's sign.
@@ -593,15 +620,24 @@ std::string renderGoFile(const TypeLibrary &Library,
                          const RenderOptions &Options) {
   const std::vector<const LocalType *> Types =
       neededTypes(Library, Roots, /*ThroughPointers=*/true);
+  GoWriter Writer(Library, Options);
+  std::string Body;
+  for (const LocalType *Type : Types) {
+    Body += '\n';
+    Writer.definition(*Type, Body);
+  }
   std::string Out = "// " + std::to_string(Types.size()) +
                     " types, rendered by NeverD.\n\npackage types\n\n"
                     "import \"unsafe\"\n\nvar _ unsafe.Pointer\n";
-  GoWriter Writer(Library, Options);
-  for (const LocalType *Type : Types) {
-    Out += '\n';
-    Writer.definition(*Type, Out);
+  // The Windows names the types use, as the headers declare them, at the
+  // program's widths.
+  if (!Writer.aliased().empty()) {
+    Out += "\n// The Windows headers' names of builtin types.\n";
+    for (Builtin Type : Writer.aliased())
+      Out += "type " + std::string(builtinInfo(Type).Windows) + " = " +
+             Writer.exact(Type) + "\n";
   }
-  return Out;
+  return Out + Body;
 }
 
 } // namespace neverd::types::render

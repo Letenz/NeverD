@@ -2339,6 +2339,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     문자열을 참조하는 명령어 나열</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          로컬 형식 또는 지정한 형식 표시</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3405,6 +3409,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>정확한 너비(uint32_t)</translation>
     </message>
     <message>
+        <source>Exact widths (u32)</source>
+        <translation>정확한 너비(u32)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>정확한 너비(uint32)</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>이름으로 형식 필터링</translation>
     </message>
@@ -3457,8 +3469,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>모든 형식 내보내기…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>C 및 C++에서 기본 제공 형식의 이름</translation>
+        <source>How the source names builtin types</source>
+        <translation>소스에서 기본 제공 형식의 이름</translation>
     </message>
     <message>
         <source>Hex offsets</source>
@@ -3487,10 +3499,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Offset</source>
         <translation>오프셋</translation>
-    </message>
-    <message>
-        <source>Bytes</source>
-        <translation>바이트</translation>
     </message>
     <message>
         <source>Type</source>
@@ -3735,6 +3743,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>
             <numerusform>직접 선언 %n개</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>형식을 선택하면 레이아웃과 소스를 볼 수 있습니다</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>이름이 %1인 로컬 형식이 없습니다</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>정확한 너비(c_uint32)</translation>
     </message>
 </context>
 <context>

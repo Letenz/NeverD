@@ -1,6 +1,7 @@
 #include "LocalTypesView.h"
 
 #include "DeclareTypesDialog.h"
+#include "FlowLayout.h"
 #include "Icons.h"
 #include "ItemViewActivation.h"
 #include "Session.h"
@@ -44,6 +45,8 @@
 #include <QTreeView>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <algorithm>
+#include <span>
 #include <utility>
 
 namespace neverd::gui {
@@ -59,44 +62,52 @@ enum ListColumn {
   MembersColumn,
   ListColumns
 };
-// The member first, where the tree indents what a record holds.
+// Where a member lies first, as a memory map reads; the tree indents what a
+// record holds in the member's own column.
 enum LayoutColumn {
-  MemberColumn,
   OffsetColumn,
   SizeOfColumn,
-  BarColumn,
+  MemberColumn,
   TypeColumn,
   LayoutColumns
 };
-/// How wide the bar of where a member lies is drawn.
-constexpr int BarWidth = 96;
 constexpr int SortRole = Qt::UserRole;
 constexpr int NameRole = Qt::UserRole + 1;
-constexpr int BarStartRole = Qt::UserRole + 2;
-constexpr int BarBitsRole = Qt::UserRole + 3;
-constexpr int BarKindRole = Qt::UserRole + 4;
-constexpr int RefersRole = Qt::UserRole + 5;
-enum BarKind { FieldBar, RecordBar, PaddingBar };
+constexpr int RefersRole = Qt::UserRole + 2;
 
-/// The languages a type renders in, in tab order after the layout.
+/// The languages a type renders in, in tab order after the layout, and
+/// whether their declarations read back as the engine's parseTypes reads.
 struct SourceLanguage {
   const char *id;
   const char *title;
   const char *filter;
   const char *suffix;
+  bool reads;
 };
 // C/C++ shows C, which C++ compiles too.
 constexpr SourceLanguage Languages[] = {
     {"c", "C/C++",
      QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "C/C++ header (*.h)"),
-     "h"},
+     "h", true},
     {"rust", "Rust",
-     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Rust (*.rs)"), "rs"},
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Rust (*.rs)"), "rs",
+     true},
     {"go", "Go", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Go (*.go)"),
-     "go"},
+     "go", true},
+    {"python", "Python",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Python (*.py)"), "py",
+     false},
 };
+/// The language types shown in \p language are declared in: that one, or C
+/// where it renders only.
+QString declaredIn(const QString &language) {
+  for (const SourceLanguage &entry : Languages)
+    if (language == QLatin1String(entry.id) && entry.reads)
+      return language;
+  return QStringLiteral("c");
+}
 
-/// How C and C++ spell builtins (the engine's spellings).
+/// How C and C++, and the layout, spell builtins (the engine's spellings).
 struct Spelling {
   const char *id;
   const char *title;
@@ -111,16 +122,60 @@ constexpr Spelling Spellings[] = {
     {"portable", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
                                    "Exact widths (uint32_t)")},
 };
+/// How Rust and Go do: Windows' names, which they declare as aliases as
+/// wdk-sys does, or exact widths.
+constexpr Spelling RustSpellings[] = {
+    {"windows",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
+    {"portable",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Exact widths (u32)")},
+};
+constexpr Spelling GoSpellings[] = {
+    {"windows",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
+    {"portable",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Exact widths (uint32)")},
+};
+constexpr Spelling PythonSpellings[] = {
+    {"windows",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
+    {"portable", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
+                                   "Exact widths (c_uint32)")},
+};
+
+/// The spellings each language chooses from, where the choice is kept and
+/// what it is until chosen.  C's serves the layout too.
+struct SpellingChoice {
+  const char *language;
+  std::span<const Spelling> spellings;
+  const char *setting;
+  const char *initial;
+};
+const SpellingChoice SpellingChoices[] = {
+    {"c", Spellings, "localTypes/spelling", "windows"},
+    {"rust", RustSpellings, "localTypes/rustSpelling", "portable"},
+    {"go", GoSpellings, "localTypes/goSpelling", "portable"},
+    {"python", PythonSpellings, "localTypes/pythonSpelling", "portable"},
+};
+
+/// The choice \p language makes: C++'s and the layout's are C's.
+const SpellingChoice &spellingChoice(const QString &language) {
+  for (const SpellingChoice &choice : SpellingChoices)
+    if (language == QLatin1String(choice.language))
+      return choice;
+  return SpellingChoices[0];
+}
 
 // The tab shown, by its language's id; empty for the layout.  It replaces
 // "localTypes/page", the tab's index when C and C++ had a tab each.
 constexpr char ViewSetting[] = "localTypes/view";
 constexpr char OldPageSetting[] = "localTypes/page";
-constexpr char SpellingSetting[] = "localTypes/spelling";
 constexpr char HexSetting[] = "localTypes/hexOffsets";
 constexpr char DependenciesSetting[] = "localTypes/dependencies";
 constexpr char AssertsSetting[] = "localTypes/asserts";
 constexpr char OriginSetting[] = "localTypes/origin";
+constexpr char SplitterSetting[] = "localTypes/splitter";
+constexpr char ListHeaderSetting[] = "localTypes/listHeader";
 
 /// Where the types the list shows come from: every origin, or one the
 /// worker names.
@@ -144,59 +199,6 @@ QString hex(qint64 value) {
       .replace(QLatin1String("0X"), QLatin1String("0x"));
 }
 
-/// Draws where a member lies in its type: a track as wide as the type, and
-/// the member's bits on it.
-class MemberBarDelegate final : public QStyledItemDelegate {
-public:
-  using QStyledItemDelegate::QStyledItemDelegate;
-  void setTotalBits(qint64 bits) { total_ = bits; }
-
-  void paint(QPainter *painter, const QStyleOptionViewItem &option,
-             const QModelIndex &index) const override {
-    QStyledItemDelegate::paint(painter, option, index);
-    if (total_ <= 0 || !index.data(BarBitsRole).isValid())
-      return;
-    const auto &theme = Theme::instance();
-    const QRect track = option.rect.adjusted(4, option.rect.height() / 3, -4,
-                                             -option.rect.height() / 3);
-    if (track.width() <= 0 || track.height() <= 0)
-      return;
-    painter->save();
-    painter->setRenderHint(QPainter::Antialiasing);
-    painter->setPen(Qt::NoPen);
-    QColor background = theme.color(ColorRole::PrefixUnmapped);
-    background.setAlpha(70);
-    painter->setBrush(background);
-    painter->drawRoundedRect(track, 2, 2);
-    const qint64 start = index.data(BarStartRole).toLongLong();
-    const qint64 bits = index.data(BarBitsRole).toLongLong();
-    const double left = track.width() * double(start) / double(total_);
-    const double width =
-        std::max(2.0, track.width() * double(bits) / double(total_));
-    QColor fill;
-    switch (index.data(BarKindRole).toInt()) {
-    case RecordBar:
-      fill = theme.color(ColorRole::NavLibraryFunction);
-      break;
-    case PaddingBar:
-      fill = theme.color(ColorRole::PrefixUnmapped);
-      break;
-    default:
-      fill = theme.color(ColorRole::ArrowMarker);
-      break;
-    }
-    painter->setBrush(fill);
-    painter->drawRoundedRect(QRectF(track.left() + left, track.top(),
-                                    std::min(width, track.width() - left),
-                                    track.height()),
-                             2, 2);
-    painter->restore();
-  }
-
-private:
-  qint64 total_ = 0;
-};
-
 } // namespace
 
 LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
@@ -206,26 +208,28 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   auto *splitter = new QSplitter(this);
   layout->addWidget(splitter);
 
-  // The list.
+  // The list: the filter as wide as it, and below it what narrows the list
+  // and changes it.
   auto *left = new QWidget(splitter);
   left->setMinimumWidth(MinimumPaneWidth);
   auto *leftLayout = new QVBoxLayout(left);
   leftLayout->setContentsMargins(4, 4, 4, 4);
-  auto *filterRow = new QWidget(left);
-  auto *filterLayout = new QHBoxLayout(filterRow);
-  filterLayout->setContentsMargins(0, 0, 0, 0);
-  filter_ = new QLineEdit(filterRow);
+  filter_ = new QLineEdit(left);
   filter_->setObjectName(QStringLiteral("localTypesFilter"));
   filter_->setPlaceholderText(tr("Filter types by name"));
   filter_->setClearButtonEnabled(true);
   filter_->installEventFilter(this);
-  filterLayout->addWidget(filter_, 1);
+  leftLayout->addWidget(filter_);
+  auto *filterRow = new QWidget(left);
+  auto *filterLayout = new QHBoxLayout(filterRow);
+  filterLayout->setContentsMargins(0, 0, 0, 0);
   origin_ = new QComboBox(filterRow);
   origin_->setObjectName(QStringLiteral("localTypesOrigin"));
   origin_->setToolTip(tr("Show the types of one origin"));
   for (const auto &entry : Origins)
     origin_->addItem(tr(entry.title), QString::fromLatin1(entry.id));
   filterLayout->addWidget(origin_);
+  filterLayout->addStretch(1);
   const auto commandButton = [&](TypesCommand command, const char *iconName,
                                  const QString &text) {
     auto *button = new QToolButton(filterRow);
@@ -268,12 +272,38 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   list_->setAllColumnsShowFocus(true);
   list_->header()->setStretchLastSection(false);
   list_->header()->setSectionResizeMode(NameColumn, QHeaderView::Stretch);
+  // The ordinal and the member count stay out of the way unless asked for,
+  // leaving the names room; the header's menu shows and hides every column
+  // but the name.
+  list_->header()->setSectionHidden(OrdinalColumn, true);
+  list_->header()->setSectionHidden(MembersColumn, true);
+  list_->header()->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(list_->header(), &QWidget::customContextMenuRequested, this,
+          [this](const QPoint &at) {
+            QMenu menu(this);
+            for (int column = 0; column < ListColumns; ++column) {
+              if (column == NameColumn)
+                continue;
+              auto *action = menu.addAction(
+                  model_->headerData(column, Qt::Horizontal).toString());
+              action->setCheckable(true);
+              action->setChecked(!list_->header()->isSectionHidden(column));
+              connect(action, &QAction::toggled, this, [this, column](bool on) {
+                list_->header()->setSectionHidden(column, !on);
+                QSettings().setValue(ListHeaderSetting,
+                                     list_->header()->saveState());
+              });
+            }
+            menu.exec(list_->header()->viewport()->mapToGlobal(at));
+          });
   list_->installEventFilter(this);
   list_->setContextMenuPolicy(Qt::CustomContextMenu);
   activateOnReturn(*list_);
   leftLayout->addWidget(list_, 1);
   summary_ = new QLabel(left);
   summary_->setObjectName(QStringLiteral("localTypesSummary"));
+  // Every count shows, on more lines when the list is narrow.
+  summary_->setWordWrap(true);
   leftLayout->addWidget(summary_);
 
   // The type.
@@ -327,14 +357,21 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   makeRowShrinkable(*tabRow);
   rightLayout->addWidget(tabRow);
 
+  // The options wrap to another row where the pane is too narrow for them,
+  // rather than one running over the next.
   auto *optionRow = new QWidget(right);
-  auto *optionLayout = new QHBoxLayout(optionRow);
-  optionLayout->setContentsMargins(0, 0, 0, 0);
+  optionRow->setObjectName(QStringLiteral("localTypesOptions"));
+  auto *optionLayout = new FlowLayout(optionRow);
   spelling_ = new QComboBox(optionRow);
   spelling_->setObjectName(QStringLiteral("localTypesSpelling"));
-  spelling_->setToolTip(tr("How C and C++ name builtin types"));
-  for (const auto &entry : Spellings)
-    spelling_->addItem(tr(entry.title), QString::fromLatin1(entry.id));
+  spelling_->setToolTip(tr("How the source names builtin types"));
+  // As wide as the widest choice of any language, so that switching tabs
+  // neither moves the row nor cuts a choice short.
+  for (const SpellingChoice &choice : SpellingChoices)
+    for (const auto &entry : choice.spellings)
+      spelling_->addItem(tr(entry.title));
+  spelling_->setMinimumWidth(spelling_->sizeHint().width());
+  spelling_->clear();
   hex_ = new QCheckBox(tr("Hex offsets"), optionRow);
   dependencies_ = new QCheckBox(tr("With dependencies"), optionRow);
   dependencies_->setToolTip(
@@ -346,7 +383,6 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   optionLayout->addWidget(hex_);
   optionLayout->addWidget(dependencies_);
   optionLayout->addWidget(asserts_);
-  optionLayout->addStretch(1);
   makeRowShrinkable(*optionRow);
   rightLayout->addWidget(optionRow);
 
@@ -355,14 +391,12 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   layout_->setObjectName(QStringLiteral("localTypesLayout"));
   layout_->setColumnCount(LayoutColumns);
   layout_->setHeaderLabels(
-      {tr("Member"), tr("Offset"), tr("Size"), tr("Bytes"), tr("Type")});
+      {tr("Offset"), tr("Size"), tr("Member"), tr("Type")});
+  layout_->setTreePosition(MemberColumn);
   layout_->setUniformRowHeights(true);
   layout_->setAllColumnsShowFocus(true);
   layout_->setFont(Theme::instance().codeFont());
   layout_->header()->setStretchLastSection(true);
-  layout_->header()->setSectionResizeMode(BarColumn, QHeaderView::Fixed);
-  layout_->header()->resizeSection(BarColumn, BarWidth);
-  layout_->setItemDelegateForColumn(BarColumn, new MemberBarDelegate(layout_));
   layout_->installEventFilter(this);
   source_ = new QPlainTextEdit(pages_);
   source_->setObjectName(QStringLiteral("localTypesSource"));
@@ -376,9 +410,17 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   pages_->addWidget(source_);
   rightLayout->addWidget(pages_, 1);
   splitter->setStretchFactor(1, 1);
-  splitter->setSizes({260, 640});
+  splitter->setSizes({340, 560});
 
   const QSettings settings;
+  // The panes and the list's columns as the user left them.
+  splitter->restoreState(settings.value(SplitterSetting).toByteArray());
+  connect(splitter, &QSplitter::splitterMoved, this, [splitter] {
+    QSettings().setValue(SplitterSetting, splitter->saveState());
+  });
+  list_->header()->restoreState(
+      settings.value(ListHeaderSetting).toByteArray());
+  list_->header()->setSectionHidden(NameColumn, false);
   QString view = settings.value(ViewSetting).toString();
   if (!settings.contains(ViewSetting)) {
     // Layout, C, C++, Rust, Go: C++ shows as C now.
@@ -393,9 +435,21 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
       shown = int(I) + 1;
   tabs_->setCurrentIndex(shown);
   pages_->setCurrentIndex(tabs_->currentIndex() ? 1 : 0);
-  const int spellingIndex = spelling_->findData(
-      settings.value(SpellingSetting, QStringLiteral("windows")).toString());
-  spelling_->setCurrentIndex(std::max(spellingIndex, 0));
+  for (const SpellingChoice &choice : SpellingChoices) {
+    // A choice the language does not offer, as a setting of another build
+    // may hold, is the initial one.
+    QString chosen = settings
+                         .value(QString::fromLatin1(choice.setting),
+                                QString::fromLatin1(choice.initial))
+                         .toString();
+    if (std::none_of(choice.spellings.begin(), choice.spellings.end(),
+                     [&](const Spelling &entry) {
+                       return chosen == QLatin1String(entry.id);
+                     }))
+      chosen = QString::fromLatin1(choice.initial);
+    spellings_.insert(QString::fromLatin1(choice.language), chosen);
+  }
+  showSpellings();
   hex_->setChecked(settings.value(HexSetting, true).toBool());
   dependencies_->setChecked(
       settings.value(DependenciesSetting, false).toBool());
@@ -422,13 +476,22 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
     QSettings().setValue(ViewSetting, index ? language() : QString());
     pages_->setCurrentIndex(index ? 1 : 0);
     highlighter_->setLanguage(language());
+    showSpellings();
     if (index)
       requestSource();
+    else
+      fitLayoutColumns();
     updateActions();
   });
   connect(spelling_, &QComboBox::currentIndexChanged, this, [this] {
-    QSettings().setValue(SpellingSetting, spelling());
-    requestLayout();
+    // The layout spells builtins as C does.
+    const SpellingChoice &choice =
+        spellingChoice(tabs_->currentIndex() ? language() : QString());
+    const QString chosen = spelling_->currentData().toString();
+    spellings_.insert(QString::fromLatin1(choice.language), chosen);
+    QSettings().setValue(QString::fromLatin1(choice.setting), chosen);
+    if (QLatin1String(choice.language) == QLatin1String("c"))
+      requestLayout();
     requestSource();
   });
   connect(hex_, &QCheckBox::toggled, this, [this](bool on) {
@@ -511,8 +574,23 @@ QString LocalTypesView::language() const {
              : QStringLiteral("c");
 }
 
-QString LocalTypesView::spelling() const {
-  return spelling_->currentData().toString();
+QString LocalTypesView::spelling(const QString &language) const {
+  return spellings_.value(
+      QString::fromLatin1(spellingChoice(language).language));
+}
+
+void LocalTypesView::showSpellings() {
+  const SpellingChoice &choice =
+      spellingChoice(tabs_->currentIndex() ? language() : QString());
+  const QSignalBlocker blocker(spelling_);
+  spelling_->clear();
+  for (const auto &entry : choice.spellings)
+    spelling_->addItem(tr(entry.title), QString::fromLatin1(entry.id));
+  const QString key = QString::fromLatin1(choice.language);
+  spelling_->setCurrentIndex(
+      std::max(spelling_->findData(spellings_.value(key)), 0));
+  // A choice no longer offered falls back to the first.
+  spellings_.insert(key, spelling_->currentData().toString());
 }
 
 QString LocalTypesView::offsetText(qint64 offset, qint64 bit) const {
@@ -666,6 +744,11 @@ void LocalTypesView::listed(const QJsonObject &payload) {
     open(keep, false);
   else if (proxy_->rowCount() > 0)
     list_->setCurrentIndex(proxy_->index(0, NameColumn));
+  else {
+    // No type to show: what would show one.
+    laidOut({});
+    source_->clear();
+  }
   updateActions();
 }
 
@@ -688,7 +771,18 @@ void LocalTypesView::selectionChanged() {
   updateActions();
 }
 
-void LocalTypesView::showType(const QString &name) { open(name, true); }
+void LocalTypesView::showType(const QString &name) {
+  if (names_.contains(name)) {
+    open(name, true);
+    return;
+  }
+  // A type the list has not read yet shows once it has.
+  if (lastList_.isEmpty()) {
+    showNext_ = name;
+    return;
+  }
+  summary_->setText(tr("No local type is named %1").arg(name));
+}
 
 void LocalTypesView::open(const QString &name, bool remember) {
   auto rows = model_->match(model_->index(0, NameColumn), NameRole, name, 1,
@@ -729,7 +823,7 @@ void LocalTypesView::requestLayout() {
   const quint64 serial = ++layoutSerial_;
   session_.read(
       QStringLiteral("local_type"),
-      {{"name", current_}, {"spelling", spelling()}}, this,
+      {{"name", current_}, {"spelling", spelling(QStringLiteral("c"))}}, this,
       [this, serial](const QJsonObject &payload) {
         if (serial == layoutSerial_)
           laidOut(payload);
@@ -744,12 +838,13 @@ void LocalTypesView::requestSource() {
   if (current_.isEmpty() || tabs_->currentIndex() == 0)
     return;
   const quint64 serial = ++sourceSerial_;
-  const QJsonObject options{{"language", language()},
-                            {"spelling", spelling()},
-                            {"hexOffsets", hex_->isChecked()},
-                            {"asserts", asserts_->isChecked()},
-                            {"dependencies", dependencies_->isChecked()},
-                            {"types", QJsonArray{current_}}};
+  QJsonObject options{{"language", language()},
+                      {"hexOffsets", hex_->isChecked()},
+                      {"asserts", asserts_->isChecked()},
+                      {"dependencies", dependencies_->isChecked()},
+                      {"types", QJsonArray{current_}}};
+  if (const QString chosen = spelling(language()); !chosen.isEmpty())
+    options.insert("spelling", chosen);
   session_.read(
       QStringLiteral("local_types_source"), options, this,
       [this, serial](const QJsonObject &payload) {
@@ -769,8 +864,15 @@ void LocalTypesView::requestSource() {
 void LocalTypesView::laidOut(const QJsonObject &type) {
   type_ = type;
   layout_->clear();
-  if (type.isEmpty())
+  if (type.isEmpty()) {
+    // Where a type would be, what shows one.
+    heading_->setText(
+        QStringLiteral("<span style=\"color:%1\">%2</span>")
+            .arg(Theme::instance().color(ColorRole::PrefixUnmapped).name(),
+                 tr("Select a type to see its layout and source")
+                     .toHtmlEscaped()));
     return;
+  }
   const QString kind = type.value("kind").toString();
   static const QHash<QString, const char *> kinds{
       {"struct", QT_TR_NOOP("structure")},
@@ -794,17 +896,19 @@ void LocalTypesView::laidOut(const QJsonObject &type) {
     heading += QStringLiteral(" · ") + tr("declared only");
   heading_->setText(heading);
 
-  // An enumeration lists values where a record lists offsets.
-  if (type.contains("values"))
+  // An enumeration lists values where a record lists offsets, and a
+  // typedef or function type the one type it names.
+  const bool record = type.contains("members");
+  const bool enumeration = type.contains("values");
+  if (enumeration)
     layout_->setHeaderLabels(
-        {tr("Enumerator"), tr("Value"), QString(), QString(), tr("Type")});
+        {tr("Value"), QString(), tr("Enumerator"), tr("Type")});
   else
     layout_->setHeaderLabels(
-        {tr("Member"), tr("Offset"), tr("Size"), tr("Bytes"), tr("Type")});
-  auto *bars = static_cast<MemberBarDelegate *>(
-      layout_->itemDelegateForColumn(BarColumn));
-  bars->setTotalBits(type.value("size").toInteger() * 8);
-  if (type.contains("members")) {
+        {tr("Offset"), tr("Size"), tr("Member"), tr("Type")});
+  layout_->setColumnHidden(OffsetColumn, !record && !enumeration);
+  layout_->setColumnHidden(SizeOfColumn, !record);
+  if (record) {
     addMembers(nullptr, type.value("members").toArray());
   } else if (type.contains("values")) {
     for (const QJsonValue &value : type.value("values").toArray()) {
@@ -829,9 +933,16 @@ void LocalTypesView::laidOut(const QJsonObject &type) {
       item->setData(0, RefersRole, refers);
   }
   layout_->expandAll();
+  fitLayoutColumns();
+}
+
+void LocalTypesView::fitLayoutColumns() {
   for (int column : {OffsetColumn, SizeOfColumn, MemberColumn})
     layout_->resizeColumnToContents(column);
-  // Long nested names may not push the types out of sight.
+  // Long nested names may not push the types out of sight, measured where
+  // the layout shows: hidden behind a source tab, it has no width to share.
+  if (!layout_->isVisible())
+    return;
   const int widest = layout_->viewport()->width() * 2 / 5;
   if (layout_->columnWidth(MemberColumn) > widest && widest > 0)
     layout_->setColumnWidth(MemberColumn, widest);
@@ -854,21 +965,15 @@ void LocalTypesView::addMembers(QTreeWidgetItem *parent,
       item->setText(OffsetColumn, offsetText(storage, bit));
       // A bitfield's width as C declares it.
       item->setText(SizeOfColumn, QStringLiteral(":%1").arg(width));
-      item->setData(BarColumn, BarStartRole,
-                    member.value("bitOffset").toInteger());
-      item->setData(BarColumn, BarBitsRole, width);
     } else {
       item->setText(OffsetColumn, offsetText(offset));
       item->setText(SizeOfColumn, offsetText(size));
-      item->setData(BarColumn, BarStartRole, offset * 8);
-      item->setData(BarColumn, BarBitsRole, size * 8);
     }
     item->setTextAlignment(OffsetColumn, Qt::AlignRight | Qt::AlignVCenter);
     item->setTextAlignment(SizeOfColumn, Qt::AlignRight | Qt::AlignVCenter);
     const QString name = member.value("name").toString();
     if (kind == QLatin1String("padding")) {
       item->setText(MemberColumn, tr("(padding)"));
-      item->setData(BarColumn, BarKindRole, PaddingBar);
       for (int column = 0; column < LayoutColumns; ++column)
         item->setForeground(column, theme.color(ColorRole::PrefixUnmapped));
       continue;
@@ -884,13 +989,11 @@ void LocalTypesView::addMembers(QTreeWidgetItem *parent,
         item->setText(TypeColumn, member.value("type").toString());
         item->setForeground(TypeColumn, theme.color(ColorRole::ListingKeyword));
       }
-      item->setData(BarColumn, BarKindRole, RecordBar);
       addMembers(item, member.value("members").toArray());
       continue;
     }
     item->setText(MemberColumn, name);
     item->setText(TypeColumn, member.value("type").toString());
-    item->setData(BarColumn, BarKindRole, FieldBar);
     if (const QString refers = member.value("refers").toString();
         !refers.isEmpty() && names_.contains(refers)) {
       item->setData(0, RefersRole, refers);
@@ -939,9 +1042,11 @@ void LocalTypesView::exportTypes(const QStringList &names) {
   if (path.isEmpty())
     return;
   QJsonObject options{{"language", QString::fromLatin1(target.id)},
-                      {"spelling", spelling()},
                       {"hexOffsets", hex_->isChecked()},
                       {"asserts", asserts_->isChecked()}};
+  if (const QString chosen = spelling(QString::fromLatin1(target.id));
+      !chosen.isEmpty())
+    options.insert("spelling", chosen);
   if (!names.isEmpty()) {
     options.insert("types", QJsonArray::fromStringList(names));
     options.insert("dependencies", true);
@@ -970,12 +1075,11 @@ void LocalTypesView::updateActions() {
   back_->setEnabled(!history_.isEmpty());
   copy_->setEnabled(!current_.isEmpty());
   export_->setEnabled(model_->rowCount() > 0);
+  // What only source takes is not there on the layout, rather than there
+  // and greyed out.
   const bool source = tabs_->currentIndex() > 0;
-  // Builtins have spellings to choose only in the layout and in C/C++;
-  // Rust and Go spell them as their own types (u32, uint32).
-  spelling_->setVisible(!source || language() == QLatin1String("c"));
-  dependencies_->setEnabled(source);
-  asserts_->setEnabled(source);
+  dependencies_->setVisible(source);
+  asserts_->setVisible(source);
 }
 
 QKeySequence LocalTypesView::commandKey(TypesCommand command) {
@@ -1000,23 +1104,24 @@ void LocalTypesView::run(TypesCommand command) {
     return;
   switch (command) {
   case TypesCommand::Add:
-    openEditor(language(), QString(), tr("Add types"));
+    openEditor(declaredIn(language()), QString(), tr("Add types"));
     return;
   case TypesCommand::Edit: {
     if (current_.isEmpty())
       return;
-    // The type as the language shown declares it, alone and unchecked: its
-    // checks would refuse the change they were made before.
-    const QString name = current_, lang = language();
+    // The type as the language shown declares it, or C where that language
+    // renders only: alone and unchecked, since its checks would refuse the
+    // change they were made before.
+    const QString name = current_, lang = declaredIn(language());
+    QJsonObject options{{"language", lang},
+                        {"hexOffsets", hex_->isChecked()},
+                        {"asserts", false},
+                        {"dependencies", false},
+                        {"types", QJsonArray{name}}};
+    if (const QString chosen = spelling(lang); !chosen.isEmpty())
+      options.insert("spelling", chosen);
     session_.read(
-        QStringLiteral("local_types_source"),
-        {{"language", lang},
-         {"spelling", spelling()},
-         {"hexOffsets", hex_->isChecked()},
-         {"asserts", false},
-         {"dependencies", false},
-         {"types", QJsonArray{name}}},
-        this,
+        QStringLiteral("local_types_source"), options, this,
         [this, name, lang](const QJsonObject &payload) {
           // The editor's declaration is a command, which waits for this
           // read's answer to finish: the editor opens after it.

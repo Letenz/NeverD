@@ -9,6 +9,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 
+#include <algorithm>
 #include <bit>
 #include <deque>
 #include <map>
@@ -22,6 +23,10 @@ struct FrameWord {
   // Keep derived-frame taint when arithmetic or a join loses the exact offset.
   // Losing an exact address must not make a later escape appear harmless.
   bool MayBeStack = false;
+  // Derived from an address of this function's own code (`adr x1, label` of a
+  // switch's case table): a branch there is a computed jump within the
+  // function, not a tail call.
+  bool MayBeLocalCode = false;
   bool operator==(const FrameWord &) const = default;
 };
 
@@ -37,6 +42,22 @@ class TailFrameGuard {
   const TargetRegInfo &TRI = getTargetRegInfo(Arch::AArch64);
   const std::vector<TargetRegisterRange> Preserved;
   size_t Remaining;
+  /// The function's own code: the span from its lowest block to the end of
+  /// its highest, and the range its frame description covers.  A switch's
+  /// case code that only its unresolved table reaches lies there, though no
+  /// block holds it.  The entry itself is a call target: a branch there
+  /// recurses (`volatile f self = f; return self(...)`).
+  va_t CodeBegin = InvalidVA;
+  va_t CodeEnd = 0;
+  ExceptionAddressRange Described;
+  va_t Entry = InvalidVA;
+
+  bool localCode(uint64_t Address) const {
+    return Address != Entry &&
+           ((Address >= CodeBegin && Address < CodeEnd) ||
+            (Described.isValid() && Address >= Described.Begin &&
+             Address < Described.End));
+  }
 
   bool charge(size_t Work) {
     if (Work > Remaining)
@@ -76,8 +97,10 @@ class TailFrameGuard {
       return false;
     for (const auto &[Key, Fact] : State.Values)
       if (Key.first == Value.Space && Key.second < Value.Offset + Value.Size &&
-          Value.Offset < Key.second + 8)
+          Value.Offset < Key.second + 8) {
         Word.MayBeStack |= Fact.MayBeStack;
+        Word.MayBeLocalCode |= Fact.MayBeLocalCode;
+      }
     return true;
   }
 
@@ -96,15 +119,17 @@ class TailFrameGuard {
       }
       // A partial write loses the whole identity, including an SP/LR alias.
       // Conservatively retain any frame taint in the remaining bytes.
-      if (Output.Size != 8)
+      if (Output.Size != 8) {
         Word.MayBeStack |= Fact.MayBeStack;
+        Word.MayBeLocalCode |= Fact.MayBeLocalCode;
+      }
       if (Output.Size != 8 || Output.Offset != Key.second)
         State.Escaped |= Fact.MayBeStack;
       It = State.Values.erase(It);
     }
     if (Output.Size != 8)
       Word.K = FrameWord::Unknown;
-    if (Word.K != FrameWord::Unknown || Word.MayBeStack)
+    if (Word.K != FrameWord::Unknown || Word.MayBeStack || Word.MayBeLocalCode)
       State.Values[{Output.Space, Output.Offset}] = Word;
     return true;
   }
@@ -134,7 +159,10 @@ class TailFrameGuard {
       for (unsigned I = 0; I < Op.NumInputs; ++I) {
         if (!read(State, Op.Inputs[I], Inputs[I]))
           return false;
+        if (Op.Inputs[I].isConst() && localCode(Op.Inputs[I].Offset))
+          Inputs[I].MayBeLocalCode = true;
         Result.MayBeStack |= Inputs[I].MayBeStack;
+        Result.MayBeLocalCode |= Inputs[I].MayBeLocalCode;
       }
 
       if (Op.Opcode == NdOp::INDIR_BR) {
@@ -143,7 +171,7 @@ class TailFrameGuard {
         if (Candidates && Op.NumInputs == 1 && Op.Inputs[0].Size == 8 &&
             SP.K == FrameWord::Stack && SP.Offset == 0 &&
             LR.K == FrameWord::Link && !Inputs[0].MayBeStack &&
-            Inputs[0].K != FrameWord::Link)
+            !Inputs[0].MayBeLocalCode && Inputs[0].K != FrameWord::Link)
           Candidates->insert(Op.Addr);
       }
 
@@ -176,7 +204,7 @@ class TailFrameGuard {
               Step = -Step;
             const int64_t Offset = Inputs[Base].Offset + Step;
             if (bounded(Offset))
-              Result = {FrameWord::Stack, Offset, true};
+              Result = {FrameWord::Stack, Offset, true, Result.MayBeLocalCode};
           }
         }
         break;
@@ -215,7 +243,8 @@ class TailFrameGuard {
               return Overlap;
             });
             if (Memory.AccessSize == 8 &&
-                (Value.K != FrameWord::Unknown || Value.MayBeStack))
+                (Value.K != FrameWord::Unknown || Value.MayBeStack ||
+                 Value.MayBeLocalCode))
               State.Spills[Address.Offset] = Value;
           }
         } else if (Exact && Memory.AccessSize == 8) {
@@ -277,23 +306,27 @@ class TailFrameGuard {
       return false;
     const auto Merge = [](FrameWord A, FrameWord B) {
       const bool May = A.MayBeStack || B.MayBeStack;
+      const bool LocalCode = A.MayBeLocalCode || B.MayBeLocalCode;
       if (A.K != B.K || A.Offset != B.Offset)
         A = {};
       A.MayBeStack = May;
+      A.MayBeLocalCode = LocalCode;
       return A;
     };
     for (auto It = Into.begin(); It != Into.end();) {
       const auto Found = Other.find(It->first);
       It->second =
           Merge(It->second, Found == Other.end() ? FrameWord{} : Found->second);
-      if (It->second.K == FrameWord::Unknown && !It->second.MayBeStack)
+      if (It->second.K == FrameWord::Unknown && !It->second.MayBeStack &&
+          !It->second.MayBeLocalCode)
         It = Into.erase(It);
       else
         ++It;
     }
     for (const auto &[KeyValue, Word] : Other)
-      if (!Into.count(KeyValue) && Word.MayBeStack)
-        Into[KeyValue] = {FrameWord::Unknown, 0, true};
+      if (!Into.count(KeyValue) && (Word.MayBeStack || Word.MayBeLocalCode))
+        Into[KeyValue] = {FrameWord::Unknown, 0, Word.MayBeStack,
+                          Word.MayBeLocalCode};
     return true;
   }
 
@@ -303,12 +336,28 @@ public:
         Remaining(std::min(MaxWork, limits::kMaxIndirectTailFrameWork)) {}
 
   std::set<va_t> run(const LowFunc &Function) {
+    // A frame description that only unwinds the frame (a plain FDE, which
+    // every function of an ordinary shared library has) runs no handler, so
+    // a branch out of the frame leaves nothing behind; the blocks below still
+    // refuse exceptional edges.
     if (Function.Blocks.empty() || !Function.FunctionTemporaries.empty() ||
-        !Function.hasCompleteLiftCoverage() || Function.ExceptionMetadata)
+        !Function.hasCompleteLiftCoverage() ||
+        (Function.ExceptionMetadata &&
+         !Function.ExceptionMetadata->describesUnwindOnly()))
       return {};
     const size_t Count = Function.Blocks.size();
     if (!charge(Count))
       return {};
+    CodeBegin = InvalidVA;
+    CodeEnd = 0;
+    for (const LowBlock &Block : Function.Blocks) {
+      CodeBegin = std::min(CodeBegin, Block.StartAddr);
+      CodeEnd = std::max(CodeEnd, Block.EndAddr);
+    }
+    Described = Function.ExceptionMetadata
+                    ? Function.ExceptionMetadata->CodeRange
+                    : ExceptionAddressRange{};
+    Entry = Function.Entry;
     std::vector<std::optional<FrameState>> Seeds(Count), In(Count), Out(Count);
     int Entry = -1;
     std::set<va_t> Starts;

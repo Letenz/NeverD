@@ -13,6 +13,8 @@
 namespace neverd::emulation::android_model {
 llvm::Error Bionic::initializeDex() {
   const auto &Native = *Options.Android;
+  JNI.Heap = std::make_shared<mobile::dalvik::Heap>(Options.MemoryLimit / 2,
+                                                    jni_abi::ObjectLimit);
   if (Native.DexImages.empty())
     return llvm::Error::success();
   if (!Native.JNI || Native.DexImages.size() > 16)
@@ -54,27 +56,47 @@ llvm::Error Bionic::initializeDex() {
                      std::make_move_iterator(Part.end()));
     }
     JNI.Dex = std::make_shared<mobile::dalvik::Program>(std::move(Classes));
+    JNI.DexRuntime =
+        std::make_shared<mobile::dalvik::Runtime>(*JNI.Dex, JNI.Heap);
   } catch (const mobile::Error &E) {
     return failure(llvm::Twine("invalid supplied DEX: ") + E.what());
   }
   return llvm::Error::success();
 }
-BionicResult Bionic::executeDex(const mobile::dalvik::Method &Method,
-                                llvm::ArrayRef<uint64_t> Arguments) {
+BionicResult Bionic::executeDex(const mobile::dalvik::Method *Method,
+                                llvm::ArrayRef<uint64_t> Arguments,
+                                llvm::StringRef Class) {
+  return runDex([&](const auto &Admit, uint64_t Stack) {
+    return Method
+               ? JNI.DexRuntime->execute(*Method,
+                                         {Arguments.data(), Arguments.size()},
+                                         Admit, Stack)
+               : JNI.DexRuntime->initialize(Class.str(), Admit, Stack);
+  });
+}
+BionicResult Bionic::allocateDex(llvm::StringRef Class, bool Initialized) {
+  return runDex([&](const auto &Admit, uint64_t Stack) {
+    return JNI.DexRuntime->allocate(Class.str(), Initialized, Admit, Stack);
+  });
+}
+BionicResult
+Bionic::runDex(const std::function<mobile::dalvik::ExecutionResult(
+                   const mobile::dalvik::AdmitInstruction &, uint64_t)> &Body) {
   using mobile::dalvik::ExecutionStop;
-  auto Executed = JNI.Dex->execute(
-      Method, {Arguments.data(), Arguments.size()},
-      [&] {
-        if (!Budget.remainingMicroseconds())
-          return ExecutionStop::Timeout;
-        return Budget.consumeInstructions() ? ExecutionStop::Returned
-                                            : ExecutionStop::InstructionLimit;
-      },
-      std::min<uint64_t>(Options.StackSize, Options.MemoryLimit / 256));
+  auto Admit = [&] {
+    if (!Budget.remainingMicroseconds())
+      return ExecutionStop::Timeout;
+    return Budget.consumeInstructions() ? ExecutionStop::Returned
+                                        : ExecutionStop::InstructionLimit;
+  };
+  auto Executed = Body(
+      Admit, std::min<uint64_t>(Options.StackSize, Options.MemoryLimit / 256));
   if (Executed.stop == ExecutionStop::Returned)
     return value(Executed.value);
   if (Executed.stop == ExecutionStop::Thrown) {
-    if (auto E = jniException(Executed.exception))
+    if (Executed.throwable)
+      JNI.Threads.at(threadID()).Exception = JNI.Heap->get(Executed.throwable);
+    else if (auto E = jniException(Executed.exception))
       return std::move(E);
     return value(0);
   }

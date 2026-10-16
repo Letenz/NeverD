@@ -5,6 +5,7 @@
 #include "DialogReturnKey.h"
 #include "Docking.h"
 #include "Expression.h"
+#include "FlowLayout.h"
 #include "Icons.h"
 #include "ItemViewActivation.h"
 #include "LoadFileDialog.h"
@@ -182,6 +183,54 @@ private slots:
     WindowFrame::prepareNativeWindows();
     // Docking chrome is fixed before the first dock exists.
     configureDocking();
+  }
+
+  void flowLayoutWrapsRatherThanOverlaps() {
+    // A combo box that keeps its width and the checkboxes after it, as the
+    // Local Types options are: narrow, they wrap to rows of their own, each
+    // at its own size and none over another; wide, they share one row.
+    QWidget row;
+    auto *flow = new FlowLayout(&row);
+    auto *combo = new QComboBox(&row);
+    combo->addItem(QStringLiteral("C keywords (unsigned long)"));
+    combo->setMinimumWidth(combo->sizeHint().width());
+    flow->addWidget(combo);
+    QList<QWidget *> widgets{combo};
+    for (const char *text :
+         {"Hex offsets", "With dependencies", "Layout checks"})
+      widgets.append(new QCheckBox(QString::fromLatin1(text), &row));
+    for (QWidget *widget : widgets.mid(1))
+      flow->addWidget(widget);
+    const auto layOut = [&](int width) {
+      row.resize(width, flow->heightForWidth(width));
+      flow->setGeometry(QRect(0, 0, width, flow->heightForWidth(width)));
+    };
+    const int narrow = combo->sizeHint().width() + 20;
+    layOut(narrow);
+    for (int first = 0; first < widgets.size(); ++first) {
+      const QRect at = widgets[first]->geometry();
+      QCOMPARE(at.size(), widgets[first]->sizeHint());
+      for (int second = first + 1; second < widgets.size(); ++second)
+        QVERIFY2(!at.intersects(widgets[second]->geometry()),
+                 qPrintable(widgets[first]->objectName()));
+    }
+    QVERIFY(widgets[1]->geometry().top() > combo->geometry().top());
+    const int wrapped = flow->heightForWidth(narrow);
+    int wide = 0;
+    for (QWidget *widget : widgets)
+      wide += widget->sizeHint().width() + 20;
+    layOut(wide);
+    for (QWidget *widget : widgets)
+      QCOMPARE(widget->geometry().center().y(), combo->geometry().center().y());
+    QVERIFY(flow->heightForWidth(wide) < wrapped);
+    // A hidden widget takes no place: the one after it moves over by its
+    // width.
+    const int before = widgets[3]->geometry().left();
+    widgets[2]->hide();
+    layOut(wide);
+    QCOMPARE(widgets[3]->geometry().left(),
+             before - widgets[2]->sizeHint().width() -
+                 (before - widgets[2]->geometry().right() - 1));
   }
 
   void addressSpellings() {

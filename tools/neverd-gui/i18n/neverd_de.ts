@@ -2345,6 +2345,10 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [Text]     Befehle auflisten, die auf Zeichenketten verweisen</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [Name]          lokale Typen oder den genannten Typ anzeigen</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3411,6 +3415,14 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <translation>Exakte Breiten (uint32_t)</translation>
     </message>
     <message>
+        <source>Exact widths (u32)</source>
+        <translation>Exakte Breiten (u32)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>Exakte Breiten (uint32)</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>Typen nach Namen filtern</translation>
     </message>
@@ -3463,8 +3475,8 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <translation>Alle Typen exportieren…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>Wie C und C++ eingebaute Typen benennen</translation>
+        <source>How the source names builtin types</source>
+        <translation>Wie der Quelltext eingebaute Typen benennt</translation>
     </message>
     <message>
         <source>Hex offsets</source>
@@ -3493,10 +3505,6 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <message>
         <source>Offset</source>
         <translation>Offset</translation>
-    </message>
-    <message>
-        <source>Bytes</source>
-        <translation>Bytes</translation>
     </message>
     <message>
         <source>Type</source>
@@ -3749,6 +3757,22 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
             <numerusform>%n deklariert</numerusform>
             <numerusform>%n deklariert</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>Wählen Sie einen Typ, um sein Layout und seinen Quelltext zu sehen</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>Kein lokaler Typ heißt %1</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>Exakte Breiten (c_uint32)</translation>
     </message>
 </context>
 <context>

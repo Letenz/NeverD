@@ -130,6 +130,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setCalleePopMap(&CalleePop);
     Local.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
     Local.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
+    Local.setCallArgumentSources(&Result.CallArgumentSources);
     Local.setCallEntryStackArgs(&Result.CallEntryStackArgs);
     Local.setCallDispatchThunks(&Result.CallDispatchThunks);
     Local.setCallVariadicFrom(&Result.CallVariadicFrom);

@@ -496,6 +496,7 @@ StackValue stackValueOf(const StackState &S, const NdVar &V) {
 void summarizeIncomingStackReads(const BinaryImage &Img, CallRegisterBodyView F,
                                  const std::map<int, size_t> &IndexOfId,
                                  const std::set<va_t> &BlockStarts,
+                                 const std::map<va_t, va_t> *ArgumentSources,
                                  LocalRegisterEffect &Effect) {
   if (Img.Arch != Arch::X64) {
     Effect.UnknownStackReads = true;
@@ -736,10 +737,16 @@ void summarizeIncomingStackReads(const BinaryImage &Img, CallRegisterBodyView F,
           (Op.Opcode == NdOp::INDIR_CALL
                ? !importCalleeName(Img, Op.Inputs[0].Offset).empty()
                : Img.findImportAt(Op.Inputs[0].Offset) != nullptr);
+      const std::optional<va_t> ArgumentsFrom =
+          ImportTarget ? std::nullopt
+                       : pointerVariableArgumentsFrom(ArgumentSources, F.Blocks,
+                                                      Block, I, Op);
       if (DirectTarget && EntryStack &&
           (ImportTarget ||
            (Op.Opcode != NdOp::INDIR_CALL && Op.Opcode != NdOp::INDIR_BR)))
         Effect.StackTailCallees.insert(Op.Inputs[0].Offset);
+      else if (EntryStack && ArgumentsFrom)
+        Effect.StackTailCallees.insert(*ArgumentsFrom);
       else
         Unknown = true;
     }
@@ -859,15 +866,17 @@ bool callPreservesRegisterBytes(Arch A, uint32_t Preserved, uint64_t RegOff,
 LocalRegisterEffect
 localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
                     const libc::NoReturnTargetIndex *NoReturnTargets,
-                    const std::map<va_t, GPRReadWidths> *FixedCallReads) {
+                    const std::map<va_t, GPRReadWidths> *FixedCallReads,
+                    const std::map<va_t, va_t> *ArgumentSources) {
   return localRegisterEffect(Img, CallRegisterBodyView(F), NoReturnTargets,
-                             FixedCallReads);
+                             FixedCallReads, ArgumentSources);
 }
 
 LocalRegisterEffect
 localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
                     const libc::NoReturnTargetIndex *NoReturnTargets,
-                    const std::map<va_t, GPRReadWidths> *FixedCallReads) {
+                    const std::map<va_t, GPRReadWidths> *FixedCallReads,
+                    const std::map<va_t, va_t> *ArgumentSources) {
   LocalRegisterEffect Effect;
   if (!F.Complete || F.UnsafeIndirectBranches || F.Blocks.empty()) {
     Effect.Unknown = true;
@@ -1047,6 +1056,10 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
         (TailCall ? Step.UnknownTailCall : Step.UnknownCall) = true;
         if (DirectTarget && !importCalleeName(Img, Op.Inputs[0].Offset).empty())
           Step.ImportCallee = Op.Inputs[0].Offset;
+        else if (const std::optional<va_t> Source =
+                     pointerVariableArgumentsFrom(ArgumentSources, F.Blocks,
+                                                  Block, I, Op))
+          Step.ArgumentsFrom = *Source;
         break;
       case NdOp::INDIR_BR:
         // A resolved jump table has successors; an indirect tail jump leaves
@@ -1096,12 +1109,14 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
       default:
         break;
       }
-      Effect.UnknownEntryReads |=
-          Step.UnknownTailCall && Step.ImportCallee == InvalidVA;
+      Effect.UnknownEntryReads |= Step.UnknownTailCall &&
+                                  Step.ImportCallee == InvalidVA &&
+                                  Step.ArgumentsFrom == InvalidVA;
       Out.Steps.push_back(Step);
     }
   }
-  summarizeIncomingStackReads(Img, F, IndexOfId, BlockStarts, Effect);
+  summarizeIncomingStackReads(Img, F, IndexOfId, BlockStarts, ArgumentSources,
+                              Effect);
   return Effect;
 }
 
@@ -1122,9 +1137,14 @@ GPRReadWidths entryLiveWidths(const LocalRegisterEffect &F,
   auto Transfer = [&](const RegisterBlock &Block, GPRReadWidths Live) {
     for (auto It = Block.Steps.rbegin(); It != Block.Steps.rend(); ++It) {
       const RegisterStep &Step = *It;
-      // An import with a prototype reads exactly its parameters.
-      const auto ImportReads = Step.ImportCallee != InvalidVA
-                                   ? EntryReads.find(Step.ImportCallee)
+      // An import with a prototype reads exactly its parameters, and a call
+      // through a function-pointer variable reads those of the routine the
+      // variable starts at.
+      const va_t ReadsFrom = Step.ImportCallee != InvalidVA
+                                 ? Step.ImportCallee
+                                 : Step.ArgumentsFrom;
+      const auto ImportReads = ReadsFrom != InvalidVA
+                                   ? EntryReads.find(ReadsFrom)
                                    : EntryReads.end();
       if (Step.Exits)
         Live.fill(0);
@@ -1244,8 +1264,12 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
   auto TailCallsUnknownImport = [&](const LocalRegisterEffect &Effect) {
     return llvm::any_of(Effect.Blocks, [&](const RegisterBlock &Block) {
       return llvm::any_of(Block.Steps, [&](const RegisterStep &Step) {
-        return Step.UnknownTailCall && Step.ImportCallee != InvalidVA &&
-               !FixedEntryReads.count(Step.ImportCallee);
+        return Step.UnknownTailCall &&
+               ((Step.ImportCallee != InvalidVA &&
+                 !FixedEntryReads.count(Step.ImportCallee)) ||
+                (Step.ArgumentsFrom != InvalidVA &&
+                 !FixedEntryReads.count(Step.ArgumentsFrom) &&
+                 !Funcs.count(Step.ArgumentsFrom)));
       });
     });
   };
@@ -1262,6 +1286,11 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
       const bool ForwardsToUnknown =
           llvm::any_of(Effect.Blocks, [&](const RegisterBlock &Block) {
             return llvm::any_of(Block.Steps, [&](const RegisterStep &Step) {
+              // A tail call through a function-pointer variable forwards to
+              // the routine the variable starts at.
+              if (Step.UnknownTailCall && Step.ArgumentsFrom != InvalidVA &&
+                  !FixedEntryReads.count(Step.ArgumentsFrom))
+                return UnknownReads.count(Step.ArgumentsFrom) != 0;
               return Step.TailCallee && !FixedEntryReads.count(Step.Callee) &&
                      (!Funcs.count(Step.Callee) ||
                       UnknownReads.count(Step.Callee));

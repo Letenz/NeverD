@@ -712,12 +712,7 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
           Call == Insns.end() ? InvalidVA : Call->first + Call->second.Size;
       const auto *Own = Img.ExceptionMetadata.findFunction(Func.Entry);
       Valid &= Own && Own->CodeRange.contains(Continuation) &&
-               Own->ParseStatus == ExceptionParseStatus::Complete &&
-               !Own->hasLanguageTable() && !Own->Rust && !Own->ObjC &&
-               Own->Personality == ExceptionPersonality::None &&
-               Own->PersonalityVA == 0 && Own->PersonalityName.empty() &&
-               Own->HandlerDataVA == 0 &&
-               (!Own->Dwarf || Own->Dwarf->LSDAVA == 0);
+               Own->describesUnwindOnly();
       std::optional<size_t> Caller;
       for (size_t B = 0; B < N; ++B) {
         if (Func.Blocks[B].StartAddr <= *Sites.begin() &&
@@ -3748,6 +3743,10 @@ void CFGBuilder::completeExactARMRelativeLiteralAddresses(
     /// No relocation writes the literal: its target is known only at the ADD
     /// that adds the PC, and must lie in that ADD's own section.
     bool RelocationFree = false;
+    /// A relocation-free literal of a linked image, whose sections keep the
+    /// distances the static linker resolved it against: the target may lie in
+    /// any section, which then owns it.
+    bool Linked = false;
   };
   std::vector<LiteralDefinition> Literals;
 
@@ -3807,6 +3806,21 @@ void CFGBuilder::completeExactARMRelativeLiteralAddresses(
                  readLE<uint32_t>(Bytes),
                  {Op.Output, Op.Addr, Op.Seq, /*DefinedAtPoint=*/true},
                  /*RelocationFree=*/true});
+          } else if (Applied == Img.ARMRelativeLiteralFields.end() && Slot &&
+                     SlotSegment && SlotSegment->isReadable() &&
+                     !SlotSegment->isWritable() && Bytes &&
+                     Op.Output.Size == 4 && !Img.IsRelocatable &&
+                     !Img.hasRelocationProvenanceAt(*Slot)) {
+            // The static linker resolved this literal, and no relocation
+            // moves the word.
+            Literals.push_back(
+                {*Slot,
+                 InvalidVA,
+                 InvalidVA,
+                 readLE<uint32_t>(Bytes),
+                 {Op.Output, Op.Addr, Op.Seq, /*DefinedAtPoint=*/true},
+                 /*RelocationFree=*/true,
+                 /*Linked=*/true});
           }
         }
       }
@@ -3887,8 +3901,9 @@ void CFGBuilder::completeExactARMRelativeLiteralAddresses(
                 continue;
               TargetKey Key{Literal.TargetVA, Literal.TargetOwnerVA};
               if (Literal.RelocationFree) {
-                Key = {static_cast<uint32_t>(PC + Literal.Encoded),
-                       AnchorOwner};
+                const va_t Target = static_cast<uint32_t>(PC + Literal.Encoded);
+                Key = {Target, Literal.Linked ? Img.layoutAddressOwner(Target)
+                                              : AnchorOwner};
                 if (!Img.relocatedTargetBelongsToOwner(Key.first, Key.second))
                   continue;
               } else if (static_cast<uint32_t>(PC + Literal.Encoded) !=
@@ -3958,7 +3973,10 @@ void CFGBuilder::completeExactARMRelativeLiteralAddresses(
         RelocatedInstructionAddressOccurrence Occurrence;
         if (Source->RelocationFree) {
           Occurrence.Authority =
-              RelocatedInstructionAddressProofKind::ARMRelocationFreeLiteral;
+              Source->Linked
+                  ? RelocatedInstructionAddressProofKind::ARMLinkedLiteral
+                  : RelocatedInstructionAddressProofKind::
+                        ARMRelocationFreeLiteral;
           Occurrence.LiteralVA = Source->SlotVA;
           Occurrence.SeedInstructionAddr = Source->Occurrence.Addr;
           Occurrence.SeedOpSeq = Source->Occurrence.Seq;

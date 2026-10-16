@@ -298,6 +298,19 @@ With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
 ntoskrnl.exe and its PDB,
 `SessionCAPITest.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
 and checks that the headers join its PDB without conflicts.
+`SessionCAPITest.KernelFunctionsDecompileWithTheirPrototypes` decompiles
+`NtCreateFile`, `IoAllocateIrp`, `PsCreateSystemThread` and
+`IofCompleteRequest` and checks the signatures the headers give them.
+`PrototypeDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
+the conversion and which functions take a prototype without a program.
+`scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
+decompiles with the prototypes an IDA dump shows; it decompiles each
+function by address and resolves IDA's typedefs through the shipped headers:
+
+```sh
+python3 scripts/compare_prototypes_with_ida.py --neverd build/bin/neverd \
+  --binary ntoskrnl.exe --pdb ntkrnlmp.pdb --ida prototypes.json
+```
 
 Declared types are covered at each layer:
 - `SessionCAPITest.DeclaredTypesJoinThePDBsAndStayWithTheProject`: declaring,
@@ -315,8 +328,11 @@ compiles the result:
 - C and C++ in all four builtin spellings with clang for the MSVC target, and
   the portable spelling for the GNU target too; the C header, which the
   workbench shows as C/C++, compiles as C++ as well;
-- Rust with rustc (64-bit layouts only);
-- Go with `go vet` for Windows.
+- Rust with rustc in both of its spellings, exact widths and Windows' names
+  as aliases (64-bit layouts only);
+- Go with `go vet` for Windows, in both spellings too;
+- Python by running the module with `python3 -I -W error`, in both spellings,
+  where ctypes checks each size and offset (64-bit layouts only).
 
 A missing toolchain is reported and skipped. Without `--binary` it checks the
 fixture:
@@ -3737,6 +3753,42 @@ first. Its LLVM C must not trap and must compile for all four targets. On an
 x64 host the program runs and must call the initial function, then the one
 stored over it.
 
+`CallsThroughPointerVariablesPassTheirArguments` builds, for each architecture,
+a library whose pointer variables start at prototyped routines (`exit`, `puts`,
+`strcmp`, which a stub library defines), at a static function and at a routine
+nothing describes, and checks HighC and LLVM C. Each caller takes as many
+parameters as the routine its variable starts at and passes them on in order,
+in tail and ordinary calls alike, and the undescribed call passes no invented
+zero or return address. `call_self` passes its variable as the fourth argument
+of a routine that takes four, though the same register holds the call target.
+`PointerVariableCallsRunWithTheirArguments` runs the x64 LLVM C against libc:
+each call reaches its routine with its arguments, a stored function replaces
+the initial one, and the call through `exit` ends the program with the code it
+passed. `IndirectCallsPassNoTargetOrSavedRegisters` assembles ARM calls whose
+first argument register holds only the target, loaded through a table slot,
+which must pass nothing in either backend (not the slot's address as a virtual
+call's object), and a call whose outgoing stores leave a gap below a
+`push {r4, r6, r7, lr}`, whose HighC must not pass the saved link register.
+
+`LLVMCValues.ImageStringsInACodeSegmentFollowTheirSection` requires a string
+in `.rodata` inside an R+X segment to print, its bytes in `.text` not to, and
+the segment rule without section headers.
+
+`LinkedLiteralAddsToTheDataItNames` links an ARM getter whose
+`ldr r0, [pc, r0]` reads its literal right after `bx lr`. It requires the
+`ARMLinkedLiteral` certificate for the static variable at the ADD output,
+LowToMed's exact constant in its place, and a lifted getter that loads the
+variable itself. A relocation on the literal word withdraws the certificate.
+
+`IndirectTailFrame.UnwindOnlyFrameDescriptionKeepsTheTailCall` assembles AArch64
+functions with plain CFI into a shared library: a restored frame's `br x0`
+becomes `INDIR_CALL + RETURN` under its FDE, and a live frame keeps its
+indirect branch, as does a computed jump into the function's own code
+(`adr x1, 1f; add x0, x1, w0, sxtw #2; br x0`), while a tail call through the
+function's own reloaded address stays one. `ExceptionFunctionUnwindOnly`
+checks that an LSDA, a personality routine, handler data or a partial parse
+each count as a handler.
+
 `LocalUnwindTargetRequiresExclusiveSameFrameUses` includes decoded x64 calls
 whose SP save and load occupy different blocks, stale producer changes, opaque
 calls, partial writes, foreign address uses and invalid module/runtime facts.
@@ -7136,7 +7188,9 @@ Android service or shader coverage.
 
 `NeverDDalvikTests` checks the decoded executor's uninitialized/torn registers,
 overlapping wide moves, division exceptions/overflow, budget/stack stops,
-result-use rules and refusal of class initialization/handlers/unknown opcodes.
+result-use rules, per-workload static state, initialization failures, terminal
+resource stops, field widths/final stores, handler/throwable identity and refusal
+of malformed handlers or unknown opcodes.
 `NeverDMobileTests` must also run when changing the shared DEX reader or models;
 mobile recovery and JNI execution share those owners.
 
@@ -7155,10 +7209,46 @@ overflow, negative/oversized shifts, signed division/remainder, narrow returns,
 wide arguments, branches, packed/sparse switches, loops, recursion and
 cross-class calls, through ordinary/V/A JNI forms. Negative workloads cover
 division exceptions, loops exhausting the shared native budget, recursion,
-objects/handlers, corrupt/duplicate DEX and JNI-disabled admission. Logs and
+unknown Object methods, corrupt/duplicate DEX and JNI-disabled admission.
+The formerly unsupported arithmetic handler now has a positive result oracle. Logs and
 request/report files stay in the explicit output directory. Missing JDK/D8 or
 CPU transports are unavailable evidence, not a passing substitute. The runtime
 itself does not launch these preparation tools or use a device.
+
+Run `scripts/test_android_dex_state.py` with the same arguments for persistent
+class state. The original Java oracle emits every sequential return value and
+exception identity; the native fixture records the same sequence through JNI.
+Cases include encoded/default values, all integral field widths, dynamic final
+initialization, both orders of cyclic initialization, ordinary division failure
+without rollback, failed initializer effects without retry, nested initializer
+errors and subsequent NoClassDefFoundError. Each sequence runs with retained JNI
+attachment, repeated detach/reattach, and alternating joined guest threads.
+Volatile fields and unsupported or looping initializers retain explicit
+failure boundaries. These are supplied synthetic programs, not evidence for
+unavailable application DEX, Binder services or shaders.
+
+Run `scripts/test_android_dex_objects.py` with the same arguments for supplied
+objects and arrays. Its independent JVM oracle covers every integral JNI field
+width, object/static aliases, native-to-DEX and DEX-to-native mutation, constructor
+and method call forms, nested arrays, primitive payloads, global references and
+field IDs across reattachment, and five recoverable Java exception classes.
+Separate negative calls check accessor mismatch, final writes, bad receivers,
+forged field IDs and model heap limits. Decoded-model unit cases independently
+check forged register references, constructor ordering/aliasing, array payload
+bounds, component types, cyclic field storage and terminal resource stops.
+
+Run `scripts/test_android_dex_language.py` with the same JDK/D8/backend flags
+for strings, library execution, handlers and inheritance. Original class files
+run on the JVM; D8 supplies the distinct instruction stream executed by NeverD.
+Cases compare exact UTF-16 units and hashes, literal/intern identities, message
+identity, ordered catch/rethrow/finally side effects and repeated unwinding.
+JNI bridge cases compare complete output arrays for virtual/interface/nonvirtual
+calls, inherited fields, class identity, Throwable round trips and references
+after reattachment. Unknown library and synchronized calls inside catch-all
+regions must stop rather than return a guessed success. The separate sequence
+oracle resets its explicit side-effect input between calls for adapter reuse;
+its preparation is not itself a NeverD execution claim.
+
 
 Processor regressions cover output boundaries, NULL, nested restores, invalid IRQL and import identity. Original `driver_processors.c` exercises entry, worker and DPC contexts across backends, contracts, bases and scheduling. Optional `NEVERD_WDM_PROCESSORS_FIXTURE` and `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` verify genuine WDK inline calls and dynamic exports with normal/active CFG images; missing transports remain explicit skips.
 
