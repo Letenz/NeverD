@@ -759,3 +759,7 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 核心 CRT 新增 `isdigit`、`_strupr`、`_wcslwr`、`_wcsupr`、`strcpy_s`、`strncpy_s`、`wcscat_s` 和 `wcsncpy_s`。數字分類按 int／位元組截斷後回傳遮罩 4，另行處理 EOF。原地大小寫轉換僅修改 ASCII，其餘位元組與 UTF-16 單元保持不變，不使用 NLS 字元表。受檢寫入保留逐單元儲存、核心錯誤碼 22／34／80、錯誤時首單元清零，以及完整 size_t 的 `_TRUNCATE`；後續存取錯誤不撤銷先前寫入。零計數、空指標、部分輸出與別名依固定核心版本的實際行為處理，不代表可攜 C 的重疊保證。1 MiB 上限只限制實際掃描／寫入，不存取未用容量；分頁儲存仍受 IRQL 限制。
 
 核心 `memcpy_s` 與 `memmove_s` 支援有界、可存取緩衝區及完整 size_t 計數。零計數不存取指標；成功時均依移動語義處理重疊。無效參數傳回 22 或 34，僅 `memcpy_s` 在錯誤時清零指定目標容量。兩者沿用既有 1 MiB 操作上限、生命週期及 IRQL 檢查；此有效區間設定不重現最佳化複製故障時的部分 SIMD 寫入。`RtlImageNtHeader` 檢查 MZ、無符號 DOS 位移與 PE 簽章，並保留固定 x64 核心的使用者位址邊界；不驗證選用標頭、區段或映像可載入性。無效簽章傳回 NULL，無效記憶體明確停止執行。
+
+`RtlHashUnicodeString`、`RtlUpcaseUnicodeString` 與 `RtlTimeToSecondsSince1980` 支援不高於 APC_LEVEL 的呼叫。雜湊演算法 0/1 使用 x65599，先清零輸出再讀取 Length，忽略 MaximumLength；區分大小寫時接受所有 UTF-16 單元。大寫轉換與忽略大小寫的雜湊支援小於 U+00C0 的單元，其餘明確要求尚未建模的 NLS 表。轉換保留循序重疊寫入，逐單元重讀 Buffer，結束後重讀 Length，不附加終止符。配置使用共用分頁 `Strg` 集區並由 `RtlFreeUnicodeString` 釋放；零長度配置仍不支援。奇數 Length 僅處理完整單元。時間轉換將 100 ns 刻度截斷為秒，扣除 1980 紀元，僅在 ULONG 範圍內寫入四位元組；越界時保留輸出及別名。
+
+`toupper`、`towupper` 與 `RtlUpcaseUnicodeChar` 共用 APC_LEVEL 限制及計數字串的大寫映射。核心 `toupper` 使用輸入低位元組，只接受 ASCII；擴充位元組（包括 EOF 的位元組值）需要尚未建模的字碼頁。寬字元輸入截為 16 位元，接受小於 U+00C0 的單元，其餘明確要求 NLS。這些純量介面與原位 CRT 轉換使用不同的核心輔助函式，不可混同映射規則。

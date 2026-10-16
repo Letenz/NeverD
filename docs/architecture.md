@@ -7140,3 +7140,7 @@ records mmap's early zero-length or missing-sharing-type EINVAL, and adds
 MAP_UNIX03 only to the separate kernel arguments. The common completion path
 owns errno and return-frame publication. DarwinMemory remains the sole owner
 of mappings, current/maximum rights, reserved pages and retained file leases.
+
+`KernelModelRuntime` owns Unicode hashing, the shared NLS-independent uppercase decision and conversion to 1980 epoch seconds. `KernelRuntimeCalls` owns uppercase allocation through the existing paged-string pool. The string/time API tables supply export identity, argument counts and APC_LEVEL admission; field access order remains inside these owners.
+
+`uppercaseCharacter` narrows scalar carriers before admission and delegates to the existing `uppercaseUnicodeUnit` owner. The CRT and counted-string API tables expose the same decision with independent ABI identities; no adapter or host locale supplies a second mapping.

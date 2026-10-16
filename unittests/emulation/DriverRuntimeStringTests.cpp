@@ -66,9 +66,15 @@ protected:
                                    {"wcsncpy_s", 12u},
                                    {"memcpy_s", SDKLinkedCopy ? 9u : 18u},
                                    {"memmove_s", 18u},
-                                   {"RtlImageNtHeader", 12u}})
+                                   {"RtlImageNtHeader", 12u},
+                                   {"RtlHashUnicodeString", 18u},
+                                   {"RtlUpcaseUnicodeString", 18u},
+                                   {"RtlTimeToSecondsSince1980", 24u},
+                                   {"RtlFreeUnicodeString", 6u}})
           EXPECT_EQ(Calls[Name], Count) << Name;
-        EXPECT_EQ(Calls["MmGetSystemRoutineAddress"], 11u);
+        for (const char *Name : {"toupper", "towupper", "RtlUpcaseUnicodeChar"})
+          EXPECT_EQ(Calls[Name], 12u) << Name;
+        EXPECT_EQ(Calls["MmGetSystemRoutineAddress"], 17u);
       }
   }
 };
