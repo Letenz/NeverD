@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 124a88c959c13d8407e343d17f7964de3af1071a89f0c6430eaab22959ce3ebc -->
+<!-- i18n-source: 00509a4718fb83deef9b9430e71183313790e9707bed10468cdbd18f5c715de3 -->
 
 [← 문서 목록](README.md)
 
@@ -29,11 +29,11 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 세그먼트는 현재/최대 권한과 0 채움을 유지합니다. `__PAGEZERO`는 큰 물리 메모리 할당 없이 주소를 예약합니다. 파일/VM 범위, OS 페이지 정렬, 반올림한 겹침, 헤더 소유권, 실행 가능한 진입점과 예산을 검사합니다. 헤더 세그먼트는 읽기 및 실행 가능해야 하며 보호 페이지와 전용 복귀 게이트는 예약됩니다. 마지막 파일 페이지는 페이지 경계 또는 EOF까지 원본 바이트를 유지하고 후속 완전한 VM 페이지는 0으로 채웁니다. 근거는 [XNU 로더](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/mach_loader.c)입니다.
 
-`LC_MAIN`은 `argc`, `argv`, `envp`, apple 벡터를 정수 인수 네 개로 받고 반환값의 하위 8비트를 종료 상태로 사용합니다. `/usr/lib/dyld`는 가져오기가 없는 이 진입 전달에서만 허용하며 호스트 dyld는 실행하지 않습니다. 0이 아닌 `stacksize`는 거부합니다. 예산은 호출자의 명시적 `stack_size`가 결정합니다.
+`LC_MAIN`은 `argc`, `argv`, `envp`, apple 벡터를 정수 인수 네 개로 받고 반환값의 하위 8비트를 종료 상태로 사용합니다. `/usr/lib/dyld`는 아래의 유한 가져오기 계약을 충족하는 `LC_MAIN` 진입에서 허용하며 호스트 dyld는 실행하지 않습니다. 0이 아닌 `stacksize`는 거부합니다. 예산은 호출자의 명시적 `stack_size`가 결정합니다.
 
 `LC_UNIXTHREAD`는 PC만 설정된 완전한 네이티브 64비트 일반 레지스터 레코드 하나를 요구합니다. 초기 스택에는 argc, 종료된 argv/envp, `executable_path=<input filename>`을 포함하는 종료된 apple 벡터가 있습니다. 사용자 SP/플래그, 다른 레지스터, 추가 flavor, 충돌하는 진입점은 거부합니다. 호스트 환경이나 Linux 보조 벡터를 상속하지 않습니다. [dyld 구조](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md)를 참고하세요.
 
-외부 dylib, 가져오기, rebases/chained fixups, 생성자/소멸자, TLS 섹션, arm64e/PAC, 미지원 CPU 하위 유형, 암호화 및 모델링하지 않은 로드 명령은 실행 전에 실패합니다. fixup 없는 PIE는 선호 주소를 사용하며 ASLR이 아닙니다. 서명 blob은 메타데이터이며 AMFI나 entitlement 정책을 구현하지 않습니다.
+아래의 유한 libSystem 계약 밖 dylib 및 가져오기, 생성자/소멸자, TLS 섹션, arm64e/PAC, 미지원 CPU 하위 유형, 암호화 및 모델링하지 않은 로드 명령은 실행 전에 실패합니다. 지원하는 PIE는 선호 주소를 사용하며 ASLR이 아닙니다. 서명 blob은 메타데이터이며 AMFI나 entitlement 정책을 구현하지 않습니다.
 
 ## Darwin 서비스
 
@@ -1795,4 +1795,37 @@ lchown364 / final symbolic vnode / existing ownership_mutations grants
 lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / main58 stdoutW / virtual1281 guarded bytes
 native preparation489 observations including258 lchown / ARM64 O0 O1 O2
 common native82 / mandatory95 per matching platform / ARM64 required285
+```
+
+## 유한 libSystem 가져오기
+
+기본 ISA의 thin 실행 파일은 강한 `/usr/lib/libSystem.B.dylib` 의존성 하나를 바인딩할 수 있습니다. `LC_MAIN`, `MH_TWOLEVEL`, 일반 라이브러리 ordinal 및 1.0 이하 호환 버전 요구가 필요합니다. 원본 classic 포인터 스트림 또는 generic64 체인, 미정의 심볼, 정확한 슬롯과 로컬 rebase를 완전히 검증합니다. 다른 의존성, weak/lazy/threaded 바인딩, 미지원 relocation, 초기화, TLS 및 인증 포인터는 실행 전에 거부합니다.
+
+가져오기가 있을 때만 인증된 진입점과 매 실행의 새 주 스레드 errno를 만듭니다. 래퍼는 Darwin 커널 효과를 공유하며 실패를 `-1`과 errno로 변환하고 성공 시 errno를 보존합니다. C `_exit`는 Mach-O `__exit`이고 C `exit`의 `_exit`는 미지원입니다. 일반 함수는 반환 프레임을 검사하며 종료 함수는 반환 주소가 필요 없습니다. 보고서는 공급자, 링크 이름, 인수 개수와 전체 비트를 유지하고 미완료/비복귀 결과는 null입니다. 기존 raw 보고서는 호환됩니다.
+
+`SG_READ_ONLY`는 fixup 뒤 현재 보호만 읽기 전용으로 바꾸고 선언된 최대 보호는 유지합니다. O0/O1/O2 원본 관측에서 최대 RW이면 `mprotect`로 쓰기를 복원할 수 있었습니다. 진입점과 errno 예약 페이지의 해제/보호 변경은 거부합니다. 준비와 실행은 기한, 이벤트 계정 및 기존 메모리 예산을 공유합니다.
+
+동일한 독립 작성 객체를 system/classic/chained로 링크하여 실제 libSystem에서 실행합니다. 다섯 플랫폼/ISA의 process/C/CLI/Python과 세 ARM64 HVF profile을 확인합니다. 임의 dylib, dlopen/dlsym, shared cache, 생성자, 스레드, Apple 프레임워크, Intel HVF 및 실제 iOS 검증은 미완료입니다。
+
+```text
+provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
+C -> Mach-O: read -> _read; write -> _write; close -> _close
+C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
+fixups: classic non-lazy pointer bind/rebase; DYLD_CHAINED_PTR_64 / PTR_64_OFFSET
+unsupported: weak/lazy/threaded streams; authenticated/multi-start chains; other relocations
+errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
+SG_READ_ONLY: current R after fixup; original declared maximum is retained
+gates: RX/max RX; errno: RW/max RW; both resident model reservations
+budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
+preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
+report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
+call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
+basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+_exit: status 35; stdout_hex 58; named calls 2; events 2
+native common catalogue: 82; required methods/platform: 96; matching ARM64 identities: 288
+```
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
 ```

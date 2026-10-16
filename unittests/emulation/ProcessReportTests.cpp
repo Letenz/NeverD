@@ -27,6 +27,54 @@
 namespace neverd::emulation {
 namespace {
 namespace field = process_report;
+TEST(ProcessReport, DarwinNamedCallsRetainProviderArityFullBitsAndNullResults) {
+  for (auto Profile : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                       ProcessProfile::IOSSimulatorMachO64}) {
+    ProcessResult R{Profile, GuestArchitecture::AArch64,
+                    ExecutionBackendKind::Unicorn, "explicit test"};
+    const auto Original = processResultJSON(R);
+    auto Raw = llvm::json::parse(Original);
+    ASSERT_TRUE(bool(Raw));
+    ASSERT_TRUE(Raw->getAsObject());
+    EXPECT_FALSE(Raw->getAsObject()->get("darwin"));
+    NativeCallEvent Call;
+    Call.PC = 0x7fffffbf0008ULL;
+    Call.Module = "/usr/lib/libSystem.B.dylib";
+    Call.Name = "_write";
+    Call.ArgumentCount = 3;
+    Call.Arguments = {0x1234567800000001ULL, UINT64_MAX, 0x8000000000000001ULL};
+    R.NativeCalls.push_back(Call);
+    R.NativeCalls.push_back(Call);
+    R.NativeCalls[0].Result = UINT64_MAX;
+    auto Parsed = llvm::json::parse(processResultJSON(R));
+    ASSERT_TRUE(bool(Parsed));
+    auto *Root = Parsed->getAsObject();
+    ASSERT_NE(Root, nullptr);
+    EXPECT_EQ(Root->getInteger("schema_version"), 1);
+    auto *Darwin = Root->getObject("darwin");
+    ASSERT_NE(Darwin, nullptr);
+    auto *Calls = Darwin->getArray("native_calls");
+    ASSERT_NE(Calls, nullptr);
+    ASSERT_EQ(Calls->size(), 2u);
+    auto *First = (*Calls)[0].getAsObject();
+    ASSERT_NE(First, nullptr);
+    EXPECT_EQ(First->getString("module"), "/usr/lib/libSystem.B.dylib");
+    EXPECT_EQ(First->getString("name"), "_write");
+    EXPECT_EQ(First->getString("pc"), "7fffffbf0008");
+    EXPECT_EQ(First->getString("result"), "ffffffffffffffff");
+    auto *Arguments = First->getArray("arguments");
+    ASSERT_NE(Arguments, nullptr);
+    ASSERT_EQ(Arguments->size(), 3u);
+    EXPECT_EQ((*Arguments)[0].getAsString(), "1234567800000001");
+    EXPECT_EQ((*Arguments)[1].getAsString(), "ffffffffffffffff");
+    EXPECT_EQ((*Arguments)[2].getAsString(), "8000000000000001");
+    EXPECT_EQ((*Calls)[1].getAsObject()->get("result")->kind(),
+              llvm::json::Value::Null);
+    EXPECT_TRUE(Root->getArray("services")->empty());
+    R.NativeCalls.clear();
+    EXPECT_EQ(processResultJSON(R), Original);
+  }
+}
 #define NEVERD_PROCESS_TEST_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "ProcessReportCases.def"
 #undef NEVERD_PROCESS_TEST_TEXT

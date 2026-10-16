@@ -6765,6 +6765,10 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymState` uses modulo-2^64 relative coordinates only for regions with a 64-bit symbolic base. A read crossing relative zero splits into two nonwrapping spans, keeping each input origin within one span; a store writes the complete value. Absolute-memory, register and temporary bank range overflow still refuses. This indexing rule supplies no actual-address validity, nonalias or frame-separation premise; ordinary cross-region invalidation and per-STORE preservation proofs remain unchanged. Unicorn, KVM and WHP share this analysis rule.
 
+### Bounded libSystem imports
+
+`MachOProgramLinking` owns strict original-byte classic and generic64 chain facts, complete undefined-symbol closure and preparation bounds. The Darwin process owns provider/symbol admission, pointer publication, read-only-after-fixup protection, authenticated libSystem gates and main-thread errno. `DarwinLibSystemCalls.def` binds exact Mach-O names, arities and typed kernel effects; wrappers reuse `DarwinServices` without inventing raw traps. `DarwinMemory` owns resident model reservations and the original maximum protections. Preparation and execution share `ExecutionBudget`; `ProcessReport` alone serializes optional `darwin.native_calls`. No host dyld or library code is loaded.
+
 ### Sequential raw compare-and-exchange
 
 `SymExec` owns the value semantics of admitted raw `ATOMIC_CMPXCHG`: capture address, expected, desired and old value before publishing the output, then commit `ite(Old == Expected, Desired, Old)` once. `SymState` owns that write's byte effects, alias invalidation and preservation budget. `InterpreterSpecialization` owns admission and provenance: Old uses the pre-write memory origin; conditional writes conservatively combine Old, expected and desired origins and invalidate possibly overlapping affine spills. Even a failed comparison requires the complete write footprint to be separated from protected return cells. The original atomic operation, ordering and occurrence remain in the residual; refusal publishes no partial residual CFG.

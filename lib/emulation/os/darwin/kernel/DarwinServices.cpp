@@ -241,6 +241,15 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
 } // namespace
 
 llvm::Expected<std::optional<ServiceResult>>
+handleService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
+              DarwinFiles &Files, DarwinEntropy &Entropy,
+              const ProcessServiceEvent &Event, const ProcessOptions &Options,
+              ProcessResult &Result) {
+  return dispatchService(Kind, CPU, Memory, Files, Entropy, Event, Options,
+                         Result);
+}
+
+llvm::Expected<std::optional<ServiceResult>>
 handleService(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
               DarwinEntropy &Entropy, const ProcessServiceEvent &Event,
               const ProcessOptions &Options, ProcessResult &Result) {

@@ -1717,6 +1717,10 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymState` が 2^64 を法とする相対座標を使うのは、シンボリックな基底が 64 ビットの領域だけです。相対座標のゼロをまたぐ読み取りは、折り返さない二つの範囲に分割し、各入力の由来を一つの範囲内に保ちます。書き込みは値全体を保存します。絶対メモリ、レジスタ、一時記憶域の範囲オーバーフローは引き続き拒否します。この索引規則は実アドレスの有効性、非エイリアス性、フレーム分離を前提として与えません。通常の領域間無効化と STORE ごとの保存証明は変わらず、Unicorn、KVM、WHP が同じ解析規則を共有します。
 
+### 有界 libSystem インポート
+
+`MachOProgramLinking` は元の classic/generic64 形式、完全な未定義シンボル閉包、準備予算を所有します。Darwin process は提供元/シンボル許可、ポインタ公開、fixup 後の読み取り専用化、libSystem 入口と errno を管理します。`DarwinLibSystemCalls.def` の名前と引数数は `DarwinServices` の型付き効果に結び付き、raw trap を捏造しません。予約と最大保護は `DarwinMemory`、共有期限は `ExecutionBudget`、任意の `darwin.native_calls` 出力は `ProcessReport` が所有し、ホストのライブラリはロードしません。
+
 ### 逐次 raw 実行での比較交換
 
 `SymExec` は受け入れられた raw `ATOMIC_CMPXCHG` の値の意味論を所有します。出力を書き戻す前にアドレス、期待値、更新値、旧値を取得し、`ite(Old == Expected, Desired, Old)` を一度だけコミットします。`SymState` はその書き込みのバイト効果、エイリアスの無効化、保存予算を担当します。`InterpreterSpecialization` は受け入れと由来を管理します。Old には書き込み前のメモリ由来を使い、条件付き書き込みには Old、期待値、更新値の由来を保守的に統合し、重なり得るアフィンスピルの事実を破棄します。比較が失敗しても、書き込み範囲全体と保護された戻りセルの分離証明が必要です。残余には元の原子操作、メモリ順序、発生回数を保持し、拒否時には部分的な残余 CFG を公開しません。
