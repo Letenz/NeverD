@@ -216,6 +216,9 @@ colliding or shadowed names. The controller edits source, C and LLVM C with a
 pinned view and a different hidden assembly location, then checks undo/redo,
 save/restart and instruction-mapped comments. Snapshot coverage also verifies
 that read-only replicas load these edits without changing durable owner files.
+Source-name checks preserve unordered spans, distinguish partial overlap from
+complete token containment, keep adjacent spans separate, reject duplicate or
+overlapping accepted ranges, and remap every name after repeated renames.
 
 `NeverDWorkerSourceCache` counts actual preparation and source-page calls across
 A-to-B-to-A navigation, including a subsequent graph or IR request. It checks
