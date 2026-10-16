@@ -86,6 +86,7 @@ TEST(PipelineOutcome, NativeFinallyInputsRetainSourceLLVM) {
                   << llvm::toString(Identity.takeError());
               if (Function.isDeclaration() || *Identity != Export->Addr)
                 continue;
+              EXPECT_EQ(Function.arg_size(), 1u);
               auto Error =
                   validateCOFFRegistrationIR(Function, *Source, *Image);
               ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
