@@ -69,7 +69,7 @@ getRegistrationSEHReturns(const MedFunc &Function) {
   }
   std::set<std::tuple<va_t, va_t, va_t, int>> Seen;
   for (const auto &Exit : Exits) {
-    if (Exit.Exit == RegistrationSEHInvocationExit::Kind::ParentJump)
+    if (Exit.isParentExit())
       continue;
     const auto Call = Calls.find(Exit.CallVA);
     const auto Return = Returns.find({Exit.Address, Exit.OpSeq});

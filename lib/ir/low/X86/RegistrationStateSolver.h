@@ -278,6 +278,9 @@ private:
                                      const FrameTransfer &Transfer) const;
   bool transferSEHExit(size_t I, Domain &After, const LowOp &Op,
                        BlockFacts &Facts);
+  bool transferSEHParentFallthrough(size_t I, Domain &After, const LowOp &Op,
+                                    BlockFacts &Facts);
+  bool proveSEHParentEpilogue(size_t I, const FrameState &Frame);
   bool returnNestedFinally(Domain &After, const LowOp &Op, BlockFacts &Facts,
                            RegistrationSEHInvocationExit Exit);
   void recordSEHStackRestore(const LowOp &Op, Domain &After,

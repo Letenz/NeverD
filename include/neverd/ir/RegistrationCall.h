@@ -65,7 +65,10 @@ struct RegistrationSEHControlContract {
   enum class Kind : uint8_t {
     NearCall,
     NearReturn,
-    NearJump
+    NearJump,
+    /// Complete immutable parent epilogue, including its final near return.
+    /// Target names that return; frame restoration needs a separate proof.
+    ParentEpilogue
   } Control = Kind::NearCall;
   va_t Address = InvalidVA;
   va_t EndAddress = InvalidVA;

@@ -28,6 +28,7 @@ struct RegistrationSEHParentExitContract {
   std::set<const llvm::Instruction *> Setup;
   std::set<const llvm::Instruction *> ChainReads;
   std::set<const llvm::Instruction *> ChainWrites;
+  std::set<std::pair<va_t, int>> SourceChainRemovals;
   std::set<const llvm::CallBase *> Calls;
 };
 

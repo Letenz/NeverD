@@ -15,6 +15,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/ir/med/X86RegistrationSEHParentExit.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -76,6 +77,13 @@ void LowToMedConverter::runDce(MedFunc &Func) {
   };
 
   const auto &TRI = getTargetRegInfo(TargetArch);
+
+  // A nonlocal finally exit consumes the restored parent SP through the
+  // runtime, even when no ordinary SSA use survives. Keep the exact source
+  // definition and its dependencies for the later native contract check.
+  if (const auto Exits = getRegistrationSEHParentExits(Func))
+    for (const auto &[Id, Exit] : *Exits)
+      MarkLive(Exit.Restore->Output);
 
   // Seed: return value registers in blocks containing RETURN
   for (auto &Blk : Func.Blocks) {
