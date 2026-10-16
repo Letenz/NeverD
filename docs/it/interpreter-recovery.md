@@ -356,3 +356,11 @@ La riesecuzione dei prefissi di ingresso visita i rami in attesa prima di espand
 
 
 La ricerca di allineamento passa `MaxCuts` al motore comune di inferenza. Dopo la convalida dell’ingresso e la selezione di un insieme che copre tutti i cicli, gli insiemi troppo grandi vengono rifiutati prima dell’esplorazione simbolica dell’ingresso o dell’allargamento. Il limite per piano non riduce `MaxCutpointAttempts` né i tentativi validi con un singolo taglio. Il lavoro di selezione delle famiglie filtrate resta conteggiato. L’inferenza autonoma e nativa mantiene i propri limiti; ogni relazione accettata richiede ancora il verificatore completo invariato.
+
+<!-- i18n-section: immutable-wide-reads -->
+
+## Letture immutabili larghe complete
+
+Con `ExplicitMachineState` e `NormalNonfaultingExecution`, un `LOAD` ammesso di 16 byte usa l’immagine immutabile solo se ogni indirizzo possibile ha una prova completa di 16 byte. L’esecuzione simbolica conserva tutti i 128 bit. Il residuo materializza parti scalari nell’ordine di memorizzazione e cattura l’indirizzo potenzialmente sovrapposto prima di scrivere qualunque byte di destinazione. Entrambi gli ordini dei byte condividono la regola; ogni operazione emessa consuma il budget esistente.
+
+Un dominio incompleto o un intervallo immutabile non disponibile mantiene l’intera lettura a runtime senza prove parziali. Una lunghezza errata restituita dal provider causa il rifiuto. Memoria scrivibile e osservazioni runtime non conferiscono autorità di immutabilità. Le ricevute grezze vincolano tutti i byte della prova, compresa la metà superiore. Wrapping sorgente e prove native indipendenti mantengono i requisiti esistenti di larghezza e ambiente.

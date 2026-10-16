@@ -362,3 +362,11 @@ Wiederholungen des Eintrittspräfixes besuchen wartende Zweige, bevor eine früh
 
 
 Die Ausrichtungssuche übergibt `MaxCuts` an die gemeinsame Inferenz. Nach Eingabeprüfung und Auswahl einer vollständigen Rückkopplungsschnittmenge wird eine zu große Menge vor symbolischer Eintrittsexploration oder Erweiterung abgelehnt. Diese Grenze je Plan reduziert weder `MaxCutpointAttempts` noch zulässige Versuche mit einem einzelnen Schnitt. Auswahlaufwand gefilterter Familien bleibt angerechnet. Eigenständige und native Inferenz behalten ihre Grenzen; jede akzeptierte Relation benötigt weiterhin den unveränderten vollständigen Prüfer.
+
+<!-- i18n-section: immutable-wide-reads -->
+
+## Vollständige unveränderliche breite Lesezugriffe
+
+Unter `ExplicitMachineState` und `NormalNonfaultingExecution` darf ein zugelassener 16-Byte-`LOAD` unveränderliche Abbilddaten nur verwenden, wenn jede mögliche Adresse einen vollständigen 16-Byte-Nachweis besitzt. Die symbolische Ausführung erhält alle 128 Bits. Der Restcode materialisiert skalare Teile in Speicherreihenfolge und erfasst eine möglicherweise überlappende Adresse vor dem ersten Schreiben des Ziels. Beide Byteordnungen teilen diese Regel; jede erzeugte Operation verbraucht das bestehende Operationsbudget.
+
+Ein unvollständiger Adressbereich oder fehlender unveränderlicher Abschnitt erhält den ganzen Laufzeitzugriff ohne Teilnachweise. Eine ungültige Byteanzahl des Providers führt zur Ablehnung. Schreibbarer Speicher und Laufzeitbeobachtungen erhalten keine Unveränderlichkeitsbefugnis. Rohe Belege binden sämtliche Nachweisbytes einschließlich der oberen Hälfte. Quellcodekapselung und unabhängige native Beweise behalten ihre bisherigen Breiten- und Umgebungsanforderungen.
