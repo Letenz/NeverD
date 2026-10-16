@@ -3126,7 +3126,9 @@ struct ImportPrototypeArguments {
 /// passes its import's parameters.  Only a routine with a fixed prototype is
 /// listed: one of the image format's own runtime (LibCPrototype, such as the
 /// Windows C runtime's `_initterm`), else one the arity tables give
-/// (LibCNames.h), by the exact name where the import entry is the C name.
+/// (LibCNames.h), by the exact name where the import entry is the C name,
+/// else one the program's types declare (\p Dbg's resolvePrototype), as the
+/// Windows kernel's headers declare the routines a driver imports.
 /// Each integer register argument is read pointer-wide.  A floating argument
 /// is listed only under System V, which passes it in the next vector
 /// register at its width, and only when every argument has a register.
@@ -3137,7 +3139,7 @@ struct ImportPrototypeArguments {
 ImportPrototypeArguments importPrototypeArguments(
     const BinaryImage &Img, const std::vector<LowFunc> &Funcs,
     const std::map<va_t, LocalRegisterEffect> &Effects, bool StackArguments,
-    bool RegisterArguments = true,
+    const DebugContext *Dbg, bool RegisterArguments = true,
     const std::map<va_t, PointerVariableCallee> *PointerCallees = nullptr) {
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const llvm::ArrayRef<uint64_t> Registers =
@@ -3162,6 +3164,43 @@ ImportPrototypeArguments importPrototypeArguments(
     int Integers = 0;
     std::vector<uint8_t> Floats;
     std::vector<uint8_t> Order;
+  };
+  // The prototype the program's types declare for a routine of another
+  // module.  A positional convention passes a record by value in an integer
+  // register or by its address there; another convention's rules for one
+  // are not read here.
+  auto Declared = [&](const std::string &Name) -> std::optional<FunctionSym> {
+    if (!Dbg)
+      return std::nullopt;
+    return Dbg->resolvePrototype(
+        importNamesAreCNames(Img.Format)
+            ? llvm::StringRef(Name)
+            : cNameOfSymbol(Name, Img.Format, Img.Arch));
+  };
+  auto DeclaredArguments =
+      [&](const std::string &Name) -> std::optional<Arguments> {
+    const std::optional<FunctionSym> Function = Declared(Name);
+    if (!Function)
+      return std::nullopt;
+    const bool Positional = Convention && Convention->PositionalArgumentSlots;
+    Arguments Result;
+    for (const auto &[ParamName, Type] : Function->Params) {
+      (void)ParamName;
+      if (!Type)
+        return std::nullopt;
+      if (Type->Kind == NdTypeKind::Float &&
+          (Type->Size == sizeof(float) || Type->Size == sizeof(double))) {
+        Result.Floats.push_back(static_cast<uint8_t>(Type->Size));
+        Result.Order.push_back(Result.Floats.back());
+        continue;
+      }
+      if (Type->Kind != NdTypeKind::Int && Type->Kind != NdTypeKind::Ptr &&
+          (Type->Kind != NdTypeKind::Struct || !Positional))
+        return std::nullopt;
+      ++Result.Integers;
+      Result.Order.push_back(0);
+    }
+    return Result;
   };
   // A runtime's own prototype names its routine exactly, where stripping
   // leading underscores for the arity tables could reach another runtime's.
@@ -3193,7 +3232,7 @@ ImportPrototypeArguments importPrototypeArguments(
                            ? libc::libcArity(Name)
                            : libc::libcArityForSymbol(Name);
     if (!Arity || Arity->IntArgs < 0)
-      return std::nullopt;
+      return DeclaredArguments(Name);
     Arguments Result;
     Result.Integers = Arity->IntArgs;
     Result.Floats.assign(Arity->FpArgs,
@@ -3214,7 +3253,15 @@ ImportPrototypeArguments importPrototypeArguments(
     const auto Arity = importNamesAreCNames(Img.Format)
                            ? libc::libcArity(Name)
                            : libc::libcArityForSymbol(Name);
-    return Arity ? libc::floatReturnBytes(*Arity) : 0;
+    if (Arity)
+      return libc::floatReturnBytes(*Arity);
+    if (const std::optional<FunctionSym> Function = Declared(Name);
+        Function && Function->ReturnType &&
+        Function->ReturnType->Kind == NdTypeKind::Float &&
+        (Function->ReturnType->Size == sizeof(float) ||
+         Function->ReturnType->Size == sizeof(double)))
+      return Function->ReturnType->Size;
+    return 0;
   };
   ImportPrototypeArguments Result;
   std::set<va_t> Seen;
@@ -3299,6 +3346,8 @@ ImportPrototypeArguments importPrototypeArguments(
 /// Summarize which GPRs each direct callee may write (CallRegisterEffects.h).
 /// Callees outside Result.LowFuncs are lifted here with the same CFG settings,
 /// up to the Limits.h depth and count; beyond those they stay unsummarized.
+/// An import reads the arguments its prototype declares, which \p Dbg gives
+/// where the libc tables know none of its name.
 void computeCallRegisterEffects(
     const BinaryImage &Img, const std::set<va_t> &FuncEntries,
     const libc::NoReturnTargetIndex &NoReturnTargets,
@@ -3306,7 +3355,7 @@ void computeCallRegisterEffects(
     const detail::AbsoluteRelocationRootIndex &AbsoluteRelocationRoots,
     const ExecutableCodeOwnerIndex *CodeOwnerIndex,
     const std::shared_ptr<X87CallGraphCache> &X87Graphs,
-    PipelineResult &Result) {
+    const DebugContext *Dbg, PipelineResult &Result) {
   // A call through a function-pointer variable passes the arguments of the
   // routine the variable starts at: another module's, whose prototype is kept
   // under the variable's address, or this image's, by its entry.
@@ -3327,7 +3376,7 @@ void computeCallRegisterEffects(
         Convention->RegparmOnlyForInternalCalls)
       Result.CallEntryStackArgs =
           importPrototypeArguments(Img, Result.LowFuncs, {},
-                                   /*StackArguments=*/true,
+                                   /*StackArguments=*/true, Dbg,
                                    /*RegisterArguments=*/false, &PointerCallees)
               .StackArgs;
     return;
@@ -3518,7 +3567,7 @@ void computeCallRegisterEffects(
           callArgumentConvention(Img.Arch, Img.abiFormat());
       Convention && Convention->ImportArgumentsFromPrototype) {
     ImportPrototypeArguments Prototyped = importPrototypeArguments(
-        Img, Result.LowFuncs, Effects, Convention->StackArgumentSummary,
+        Img, Result.LowFuncs, Effects, Convention->StackArgumentSummary, Dbg,
         /*RegisterArguments=*/true, &PointerCallees);
     for (auto &[Addr, Widths] : Prototyped.Reads)
       if (!DispatchThunks.count(Addr))
@@ -4093,7 +4142,7 @@ void Pipeline::buildLowIR(
 
   computeCallRegisterEffects(Img, FuncEntries, NoReturnTargets, NoReturnCallees,
                              AbsoluteRelocationRoots, CodeOwnerIndex, X87Graphs,
-                             Result);
+                             Dbg, Result);
 }
 
 } // namespace neverd

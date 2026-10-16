@@ -325,14 +325,28 @@ the image states (`BinaryImage::statedFunctionNameAt`, as
 producer stated, a PDB's function names among them; else the debug
 information's. A name analysis or the user gave says nothing of what the
 function is. Where a linker folded identical functions, one entry carries
-several names, and only the shown name's own prototype applies: another
-name's describes another function, as `ExFreePool`'s one parameter is not
-`ExFreePoolWithTag`'s two. A function the debug information types keeps its
-own type, and a variadic prototype is not used, because its calls pass more
-than it declares. The signature records the library that declares the
-prototype and the declaration as it reads there, which HighC prints above
-the function (`neverd.prototype`). The prototype's types convert to the
-decompiler's types:
+the names of each (`statedFunctionNamesAt`), and it takes the shown name's
+prototype only where every other name's that has one takes and returns
+alike (`passesAlike`): as many parameters, each of the same class and size,
+and the same return. `ExFreePool`'s one parameter is not `ExFreePoolWithTag`'s
+two, nor does `KeClearEvent` return `KeResetEvent`'s `LONG`, so which one the
+code follows is unknown, and such an entry keeps the signature its code
+gives. Another name's prototype is never borrowed. A function the debug
+information types keeps its own type, and a variadic prototype is not used,
+because its calls pass more than it declares. The signature records the
+library that declares the prototype and the declaration as it reads there,
+which HighC prints above the function (`neverd.prototype`).
+
+A call through an import's slot or stub reaches a routine another module
+exports, which takes the prototype of the import's name: `resolveFunction`
+gives it at the slot or stub to the C backends, which declare and call it
+so, and `resolvePrototype` gives it by name to the call analysis, which
+passes exactly its parameters where the libc tables know none of the name
+(`importPrototypeArguments`), and to the return contracts. A callee the
+pipeline does not decompile returns what its declaration says, as the C
+writers read it, so that a caller returning what a `void` routine left in
+RAX returns nothing too. The prototype's types convert to the decompiler's
+types:
 - records become named records that C passes and returns by value, with
   their members' names for display;
 - typedefs become what they name, and enumerations their underlying

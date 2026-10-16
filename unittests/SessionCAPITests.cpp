@@ -4319,6 +4319,51 @@ TEST_F(SessionCAPITest, KnownRoutinesTakeTheirPrototypesByTheirNames) {
   // function.
   EXPECT_EQ(decompile("AnUnknownRoutine").find("neverd.prototype"),
             std::string::npos);
+  // KeClearEvent returns nothing and KeResetEvent the event's state: folded,
+  // which one a caller follows is unknown, and the code keeps its value.
+  const std::string Clear = decompile("KeClearEvent");
+  EXPECT_EQ(Clear.find("neverd.prototype"), std::string::npos) << Clear;
+  EXPECT_EQ(Clear.find("void KeClearEvent("), std::string::npos) << Clear;
+}
+
+TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
+  // A driver without debug information that calls routines the kernel
+  // exports, which NeverD's kernel headers declare.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "kernel_imports.sys", std::ios::binary);
+  const std::string Driver =
+      write("kernel_imports.sys",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Driver.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_GE(neverd_session_discover_functions(Session), 0)
+      << takeString(neverd_last_error(Session));
+  // Owner only jumps to IoThreadToProcess, which takes one parameter, and
+  // so passes the one it was given on.
+  const std::string Owner = takeString(neverd_decompile(Session, 0x180001000));
+  EXPECT_NE(Owner.find("Owner(int64_t arg0) {"), std::string::npos) << Owner;
+  EXPECT_NE(Owner.find("IoThreadToProcess((_ETHREAD*)(uintptr_t)arg0)"),
+            std::string::npos)
+      << Owner;
+  // The calls take what the prototypes declare and return what they
+  // return; the registers the allocation clobbered pass nothing on.
+  const int Index = neverd_func_find_by_name(Session, "Probe");
+  ASSERT_GE(Index, 0);
+  const std::string Probe =
+      takeString(neverd_decompile(Session, neverd_func_entry(Session, Index)));
+  EXPECT_NE(Probe.find("extern _EPROCESS* IoThreadToProcess(_ETHREAD* "
+                       "Thread);"),
+            std::string::npos)
+      << Probe;
+  EXPECT_NE(Probe.find("extern void ExFreePoolWithTag(void* P, uint32_t "
+                       "Tag);"),
+            std::string::npos)
+      << Probe;
+  EXPECT_NE(Probe.find(" = IoThreadToProcess((_ETHREAD*)(uintptr_t)arg0);"),
+            std::string::npos)
+      << Probe;
+  EXPECT_EQ(Probe.find("unknown"), std::string::npos) << Probe;
 }
 
 TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {

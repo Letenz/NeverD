@@ -131,16 +131,20 @@ TEST(LocalTypesDebugContext, TypesTheFunctionsByTheNamesTheyAreShownUnder) {
     ULONG NTAPI Analyzed(ULONG Value);
     ULONG NTAPI Folded(ULONG Value, void *Context);
     ULONG NTAPI Debugged(ULONG Value);
+    ULONG NTAPI Fewer(ULONG Value);
+    ULONG NTAPI More(ULONG Value, ULONG Extra);
+    LONG NTAPI Signed(PTHREAD Thread);
+    ULONG NTAPI Unsigned(PPROCESS Process);
   )",
                                  *Library)
                   .ok());
   BinaryImage Image;
   // A linker that folds identical functions exports one entry under each
   // of their names: the first names the function shown there.
-  Image.Exports = {{"ThreadToProcess", 1, 0x1000},
-                   {"Unprototyped", 2, 0x2000},
-                   {"Folded", 3, 0x2000},
-                   {"Exported", 4, 0x6000}};
+  Image.Exports = {{"ThreadToProcess", 1, 0x1000}, {"Unprototyped", 2, 0x2000},
+                   {"Folded", 3, 0x2000},          {"Exported", 4, 0x6000},
+                   {"Fewer", 5, 0x7000},           {"More", 6, 0x7000},
+                   {"Signed", 7, 0x8000},          {"Unsigned", 8, 0x8000}};
   const auto symbol = [&](const char *Name, va_t Addr, NameOrigin Origin) {
     Symbol Sym;
     Sym.Name = Name;
@@ -197,6 +201,16 @@ TEST(LocalTypesDebugContext, TypesTheFunctionsByTheNamesTheyAreShownUnder) {
             "uint32_t Exported(uint32_t Value)");
   // An address inside a function names no function of its own.
   EXPECT_TRUE(Context.resolveFunction(0x5008)->Params.empty());
+  // Folded functions whose prototypes take different parameters: which the
+  // code reads is unknown, and so it takes neither.
+  EXPECT_FALSE(Context.resolveFunction(0x7000).has_value());
+  // Ones that pass and return alike, whatever they point at or sign: the
+  // shown name's.
+  std::optional<FunctionSym> Signed = Context.resolveFunction(0x8000);
+  ASSERT_TRUE(Signed.has_value());
+  ASSERT_EQ(Signed->Params.size(), 1u);
+  EXPECT_EQ(Signed->Params[0].first, "Thread");
+  EXPECT_TRUE(Signed->ReturnType->IsSigned);
 }
 
 TEST(LocalTypesDebugContext, NamesTheHeaderLibraryAPrototypeComesFrom) {

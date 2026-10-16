@@ -7,6 +7,7 @@
 #include "LocalTypesDebugContext.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
@@ -270,6 +271,31 @@ std::optional<FunctionSym> signatureOf(const types::TypeLibrary &Library,
   return Declared;
 }
 
+namespace {
+
+/// How a value of \p Type passes: void, a float, a record or an integer or
+/// pointer, with its size.
+std::pair<NdTypeKind, uint16_t> passing(const TypeRef &Type) {
+  if (!Type || Type->Kind == NdTypeKind::Void)
+    return {NdTypeKind::Void, 0};
+  if (Type->Kind == NdTypeKind::Float ||
+      (Type->Kind == NdTypeKind::Struct && !Type->IsEnum))
+    return {Type->Kind, Type->Size};
+  return {NdTypeKind::Int, Type->Size};
+}
+
+} // namespace
+
+bool passesAlike(const FunctionSym &A, const FunctionSym &B) {
+  if (A.Params.size() != B.Params.size() ||
+      passing(A.ReturnType) != passing(B.ReturnType))
+    return false;
+  for (size_t I = 0; I < A.Params.size(); ++I)
+    if (passing(A.Params[I].second) != passing(B.Params[I].second))
+      return false;
+  return true;
+}
+
 llvm::StringSet<> prototypeTypeNames(const types::TypeLibrary &Library) {
   std::vector<std::string> Work;
   for (const auto &Entry : Library.prototypes()) {
@@ -491,7 +517,7 @@ std::optional<types::HeaderLibrary> LocalTypesDebugContext::prototypeHeader(
 }
 
 std::optional<FunctionSym>
-LocalTypesDebugContext::prototype(llvm::StringRef Name) const {
+LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
   std::lock_guard<std::mutex> Guard(Mutex);
   if (auto Known = Signatures.find(Name); Known != Signatures.end())
     return Known->second;
@@ -517,13 +543,24 @@ LocalTypesDebugContext::prototype(llvm::StringRef Name) const {
   return Signature;
 }
 
-std::string LocalTypesDebugContext::statedName(va_t Entry) const {
+std::vector<std::string> LocalTypesDebugContext::statedNames(va_t Entry) const {
   if (!Image)
     return {};
   std::lock_guard<std::mutex> Guard(Mutex);
   auto [Known, Added] = StatedNames.try_emplace(Entry);
   if (Added)
-    Known->second = Image->statedFunctionNameAt(Entry).str();
+    for (const llvm::StringRef Name : Image->statedFunctionNamesAt(Entry))
+      Known->second.push_back(Name.str());
+  return Known->second;
+}
+
+std::string LocalTypesDebugContext::importName(va_t Addr) const {
+  if (!Image)
+    return {};
+  std::lock_guard<std::mutex> Guard(Mutex);
+  auto [Known, Added] = ImportNames.try_emplace(Addr);
+  if (Added)
+    Known->second = importCalleeName(*Image, Addr);
   return Known->second;
 }
 
@@ -564,14 +601,28 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
     return Function;
   // The prototype of the name the function is displayed under: the export
   // or symbol the image states, else the debug information's name.  Where a
-  // linker folded identical functions, the other names at the entry name
-  // other functions, whose prototypes need not agree with this one's.
-  std::string Name = statedName(Addr);
+  // linker folded identical functions, the entry's other names name other
+  // functions, whose prototypes must pass and return alike for the code to
+  // follow the shown one.
+  const std::vector<std::string> Names = statedNames(Addr);
+  std::string Name = Names.empty() ? std::string() : Names.front();
   if (Name.empty() && AtEntry)
     Name = Function->Name;
-  if (Name.empty())
-    return Function;
-  std::optional<FunctionSym> Known = prototype(Name);
+  std::optional<FunctionSym> Known =
+      Name.empty() ? std::nullopt : resolvePrototype(Name);
+  if (Known)
+    for (size_t I = 1; I < Names.size(); ++I)
+      if (const std::optional<FunctionSym> Other = resolvePrototype(Names[I]);
+          Other && !passesAlike(*Known, *Other))
+        return Function;
+  // A call through an import's slot or stub reaches the routine another
+  // module exports under the import's name, which the call names it by.
+  if (!Known && !AtEntry)
+    if (const std::string Imported = importName(Addr); !Imported.empty())
+      if ((Known = resolvePrototype(Imported))) {
+        Known->Addr = Addr;
+        return Known;
+      }
   if (!Known)
     return Function;
   FunctionSym Typed = AtEntry ? *Function : FunctionSym();

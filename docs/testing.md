@@ -412,9 +412,19 @@ function the linker folded with it, nor one analysis gave.
 library and the declaration the signature records.
 `SessionCAPITest.KnownRoutinesTakeTheirPrototypesByTheirNames` loads
 `unittests/types/fixtures/known_routines.sys`, a driver without debug
-information whose exports have the names of kernel routines, two pairs of
-them folded, and checks the signatures and the `neverd.prototype` comment
-HighC prints.
+information whose exports have the names of kernel routines, three pairs of
+them folded, one pair returning differently, and checks the signatures and
+the `neverd.prototype` comment HighC prints.
+`SessionCAPITest.KernelImportsPassWhatTheirPrototypesTake` loads
+`kernel_imports.sys`, a driver calling kernel imports, and checks that a call
+passes what the prototype takes, a tail call forwarding it, and that the unit
+declares the imports as the headers do.
+`HeaderLibrary.DeclaresTheKernelRoutinesTheCallAnalysisFixes` checks that the
+kernel's headers and `WindowsKernelRoutines.inc` agree on the bytes each
+parameter of a routine both know takes, and
+`ReturnContracts.ACallToAFunctionDeclaredVoidElsewhereHandsBackNoValue` and
+`AStubOfAnImportDeclaredVoidReturnsNoValue` cover the return contracts that
+read declarations.
 Build and run `NeverDSessionLLVMTests` as well: its private Session queries
 link the actual local-type/debug implementations and shared atomic sidecar
 helper into the test executable. It must not acquire a libneverd dependency.
