@@ -337,7 +337,8 @@ int neverd_prepare_function_view(neverd_session_t Sess, neverd_va_t FuncEntry,
     return 0;
   }
   return prepareFunction(Sess, FuncEntry,
-                         /*NeedHighIR=*/Stage != "llvm" && Stage != "llvmc");
+                         /*NeedHighIR=*/Stage != "low" && Stage != "med" &&
+                             Stage != "llvm" && Stage != "llvmc");
 }
 
 static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
@@ -859,7 +860,7 @@ const char *neverd_ir_low(neverd_session_t Sess, neverd_va_t FuncEntry) {
   auto *S = toSession(Sess);
   S->clearError();
 
-  if (!S->ensurePipeline())
+  if (!S->ensurePipeline(/*NeedHighIR=*/false))
     return dupStr(std::string());
 
   if (S->PipeResult.EVM)
@@ -885,7 +886,7 @@ const char *neverd_ir_med(neverd_session_t Sess, neverd_va_t FuncEntry) {
   auto *S = toSession(Sess);
   S->clearError();
 
-  if (!S->ensurePipeline())
+  if (!S->ensurePipeline(/*NeedHighIR=*/false))
     return dupStr(std::string());
 
   if (S->PipeResult.EVM)
@@ -1188,7 +1189,7 @@ const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
       Result["mapping_status"] = "unsupported_representation";
       return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
     }
-    if (!S->ensurePipeline())
+    if (!S->ensurePipeline(/*NeedHighIR=*/false))
       return nullptr;
     if (S->PipeResult.EVM || S->PipeResult.SBF) {
       Result["mapping_status"] = "unsupported_architecture";
