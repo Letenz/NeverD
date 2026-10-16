@@ -1782,3 +1782,5 @@ KernelFileSystem은 FILE_OBJECT마다 provider token 하나를 유지합니다. 
 `KernelPhysicalMemory::resolveAddress`는 현재 `MemoryView`를 보존된 정확한 할당 범위와 기존 페이지 식별자에 대조하며 별칭도 처리합니다. `KernelModel`은 읽기 권한, 프로세스 컨텍스트 및 상주 상태를 별도로 검사합니다. 조회는 식별자나 페이지 잠금을 생성하지 않으며, 매핑이 남은 페이지의 패딩으로 해제된 바이트를 되살리지 않습니다.
 
 `KernelModel::queryPrimaryVirtualAddress`는 기존 활성 비페이징 `PoolAllocation` 기록과 `KernelPhysicalMemory::describe`에서 기본 VA를 구한 뒤 정방향 조회로 검증합니다. 역방향 별칭 등록부, 물리 식별자 또는 페이지 잠금을 추가하지 않습니다. 일반 저장소 주소만으로 기본 매핑을 입증할 수 없습니다.
+
+`activateStack`과 `retireStack`이 `ExecutionStacks`를 소유하며 조회는 범위를 현재 `ExecutionThreadKeys`에 연결합니다. 재활성화에는 정확히 같은 범위가 필요하며 활성 스택 중복이나 해제 크기 불일치는 변경 전에 거부합니다. 같은 스레드의 중첩 실행도 독립 경계를 유지합니다. 이 환경 조회는 네이티브 언패킹 재구성에서 불투명한 의존성으로 남습니다.

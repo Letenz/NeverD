@@ -2043,3 +2043,5 @@ CRT 회귀는 모든 바이트/UTF-16 단위, 인수 폭, 변경이 없는 읽�
 `KernelPhysicalRAM.AddressQueries*`와 `KernelMDLUserMapping.PhysicalQuery*`는 별칭, 주소 공간 식별, VA 재사용, 경계, 전체 폭 PFN, IRQL, 페이지 잠금 및 해제된 매핑을 검사합니다. 실제 WDK 사용자 매핑 픽스처는 정적·동적 `MmGetPhysicalAddress`를 MDL PFN과 비교하며, 읽기 전용 사용자 뷰, DPC 수준 시스템 뷰 및 이전 고정 별칭이 남은 재매핑을 실행합니다.
 
 `KernelMDLUserMapping.PrimaryQuery*`는 정확한 할당 바이트, 같은 페이지의 인접 소유자, 전체 폭 주소, IRQL, 해제, 별칭, 매핑 교체, 읽기 보호 및 지원되지 않는 기본 매핑을 검사합니다. 실제 WDK 픽스처는 정적·동적 `MmGetVirtualForPhysical`, DPC 수준 시스템 뷰, 이전 고정 별칭이 남아 있는 사용자 VA 재매핑을 실행합니다.
+
+`DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*`는 활성화, 해제, 중첩 컨텍스트 복원, 전체 폭 경계, IRQL, 프로세스 연결, 출력 중복 및 High→Low 오류 쓰기 순서를 검사합니다. 자체 및 실제 WDK CRT 픽스처는 진입점, 작업자, 언로드에서 두 API를 정적·동적으로 호출하고 지역 변수 범위와 DISPATCH_LEVEL의 경계를 확인합니다.

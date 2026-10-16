@@ -161,6 +161,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
       Kind != KernelAPIKind::MmGetSystemAddressForMdlSafe &&
       Kind != KernelAPIKind::MmGetPhysicalAddress &&
       Kind != KernelAPIKind::MmGetVirtualForPhysical &&
+      Kind != KernelAPIKind::IoGetInitialStack &&
+      Kind != KernelAPIKind::IoGetStackLimits &&
       Kind != KernelAPIKind::MmUnmapLockedPages &&
       Kind != KernelAPIKind::RtlCopyMemory &&
       Kind != KernelAPIKind::RtlMoveMemory)

@@ -60,6 +60,8 @@ __declspec(dllimport) void *IoThreadToProcess(void *);
 __declspec(dllimport) void *PsGetCurrentThread(void);
 __declspec(dllimport) void *PsGetCurrentProcess(void);
 __declspec(dllimport) U16 ObGetFilterVersion(void);
+__declspec(dllimport) void *IoGetInitialStack(void);
+__declspec(dllimport) void IoGetStackLimits(U64 *, U64 *);
 __declspec(dllimport) int isdigit(int);
 __declspec(dllimport) char *_strupr(char *);
 __declspec(dllimport) U16 *_wcslwr(U16 *);
@@ -142,6 +144,11 @@ static __typeof__(&RtlPcToFileHeader) DynamicPcImage;
 static __typeof__(&ObGetFilterVersion) volatile FilterVersion =
     ObGetFilterVersion;
 static __typeof__(&ObGetFilterVersion) DynamicFilterVersion;
+static __typeof__(&IoGetInitialStack) volatile InitialStack = IoGetInitialStack;
+static __typeof__(&IoGetStackLimits) volatile StackLimits = IoGetStackLimits;
+static __typeof__(&IoGetInitialStack) DynamicInitialStack;
+static __typeof__(&IoGetStackLimits) DynamicStackLimits;
+static U64 EntryStackTop;
 static void *ImageBase;
 static DEVICE Device;
 static void *Work;
@@ -308,15 +315,43 @@ static NTSTATUS probe(void) {
   return 0;
 }
 
+static NTSTATUS stackProbe(U32 Phase) {
+  for (U32 Dynamic = 0; Dynamic < 2; ++Dynamic) {
+    U64 Low = 0, High = 0;
+    (Dynamic ? DynamicStackLimits : StackLimits)(&Low, &High);
+    const U64 Initial = (U64)(Dynamic ? DynamicInitialStack : InitialStack)();
+    CHECK(Low <= (U64)&Low && (U64)&Low < High);
+    CHECK(Initial > (U64)&Low && Initial <= High);
+    if (!Phase) {
+      if (EntryStackTop)
+        CHECK(High == EntryStackTop);
+      EntryStackTop = High;
+    } else
+      CHECK(Phase == 1 ? High != EntryStackTop : High == EntryStackTop);
+    const U64 SavedLow = Low, SavedHigh = High;
+    U8 Old;
+#ifdef NEVERD_WDK_FIXTURE
+    KeRaiseIrql(DISPATCH_LEVEL, &Old);
+#else
+    Old = KfRaiseIrql(2);
+#endif
+    (Dynamic ? DynamicStackLimits : StackLimits)(&Low, &High);
+    KeLowerIrql(Old);
+    CHECK(Low == SavedLow && High == SavedHigh);
+  }
+  return 0;
+}
+
 static void worker(DEVICE Owner, void *Context) {
-  WorkerFailed =
-      Owner != Device || Context != Device || probe() || countedProbe();
+  WorkerFailed = Owner != Device || Context != Device || probe() ||
+                 countedProbe() || stackProbe(1);
   IoFreeWorkItem(Work);
   WorkerDone = 1;
 }
 static void unload(DRIVER Driver) {
   (void)Driver;
-  if (WorkerDone && !WorkerFailed && !probe() && !countedProbe())
+  if (WorkerDone && !WorkerFailed && !probe() && !countedProbe() &&
+      !stackProbe(2))
     IoDeleteDevice(Device);
 }
 static void (*volatile Unload)(DRIVER) = unload;
@@ -342,6 +377,8 @@ NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
   RESOLVE(DynamicPreviousMode, "PsGetCurrentThreadPreviousMode");
   RESOLVE(DynamicPcImage, "RtlPcToFileHeader");
   RESOLVE(DynamicFilterVersion, "ObGetFilterVersion");
+  RESOLVE(DynamicInitialStack, "IoGetInitialStack");
+  RESOLVE(DynamicStackLimits, "IoGetStackLimits");
   RESOLVE(DynamicDigit, "isdigit");
   RESOLVE(DynamicNarrowUpper, "_strupr");
   RESOLVE(DynamicWideLower, "_wcslwr");
@@ -358,6 +395,7 @@ NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
   Old = KfRaiseIrql(1);
 #endif
   CHECK(!countedProbe());
+  CHECK(!stackProbe(0));
   KeLowerIrql(Old);
   const U8 Elevated =
       Registry->Length && Registry->Buffer[Registry->Length / 2 - 1] == 'H';

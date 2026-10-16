@@ -1805,3 +1805,5 @@ KernelFileSystem は FILE_OBJECT ごとに provider token を保持します。�
 `KernelPhysicalMemory::resolveAddress` は現在の `MemoryView` を保持中の正確な割り当て範囲と既存のページ識別子に照合し、別名も扱います。`KernelModel` は読み取り権限、プロセス環境、常駐状態を別途検証します。照会は識別子の割り当てやページ固定を行わず、マッピングが残るページの余白で解放済みバイトを復活させません。
 
 `KernelModel::queryPrimaryVirtualAddress` は既存の有効な非ページ `PoolAllocation` 記録と `KernelPhysicalMemory::describe` から主 VA を導き、順方向照会で検証します。逆引き別名レジストリ、物理識別子、ページ固定を追加しません。一般的なバッキングアドレスだけでは主マッピングを証明できません。
+
+`activateStack` と `retireStack` が `ExecutionStacks` を所有し、照会は範囲を現在の `ExecutionThreadKeys` に結び付けます。再有効化は同じ範囲を必要とし、有効範囲の重複や解放サイズの不一致は変更前に拒否します。同じスレッドの入れ子実行も別々の境界を持ちます。これらの環境照会はネイティブ再構築で不透明な依存として残ります。
