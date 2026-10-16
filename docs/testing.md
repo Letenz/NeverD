@@ -7034,6 +7034,16 @@ boundary, including absent, duplicated, changed and unsafe target sets.
 `SourceRequiresExplicitIndependentEntry` rejects disconnected protected paths
 without a published source entry and accepts the same graph once that entry
 can receive explicit unknown values.
+`TheX87ContextHandleIsNotAFrameValue` proves the frame of a handler that starts
+with `fninit`, whose x87 context handle the CFG builder begins at each root.
+`TheHandlerBeginsTheX87ContextBeforeUsingIt` and
+`OnlyTheX87ContextHandleIsAdmitted` refuse a handler that reads the handle
+before beginning it and a handle copied into an ordinary register.
+`MedSEHHandlerEntry.AHandlerResumingAtANopEndsTheArmThere` ends an `__except`
+arm that resumes at a `nop` without a jump, and
+`X86_64_PipelineE2E.DecompileC_MinGWStartupSEHWithX87Callee` decompiles
+MinGW-w64-shaped startup code (`test_mingw_startup_seh.s`) whose guarded callee
+resets the x87 state.
 Malformed unwind/prologue and converted-SP checks run with source projection
 enabled too. `WindowsEHModesCorpus.DecompileMatrixFailsClosedWithAuditableExceptionMetadata`
 runs the original eleven-case matrix, including the complete x64 xcpt4 image.

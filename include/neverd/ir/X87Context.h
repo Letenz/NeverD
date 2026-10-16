@@ -260,5 +260,20 @@ inline bool x87ContextLowShapeIsValid(const LowOp &Op, Arch A) {
   return Op.Output.Size == Bytes &&
          (!Bytes || Op.Output.isReg() || Op.Output.isTemp());
 }
+
+/// The context handle of a well-formed X87Context intrinsic: the value
+/// X87ContextBegin writes, and the context operand every other one reads.
+/// Null for any other operation.
+inline const NdVar *x87ContextHandleOperand(const LowOp &Op) {
+  if (Op.Opcode != NdOp::INTRINSIC || !Op.NumInputs ||
+      !Op.Inputs[0].isConst() ||
+      !isX87ContextIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset)) ||
+      !x87ContextLowShapeIsValid(Op, Arch::Unknown))
+    return nullptr;
+  return static_cast<Intrinsic>(Op.Inputs[0].Offset) ==
+                 Intrinsic::X87ContextBegin
+             ? &Op.Output
+             : &Op.Inputs[1];
+}
 } // namespace neverd
 #endif
