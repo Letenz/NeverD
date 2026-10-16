@@ -16,6 +16,8 @@ typedef unsigned int U32;
 typedef unsigned long long U64;
 #ifdef NEVERD_WDK_FIXTURE
 #include <ntifs.h>
+// Exported byte-result ABI omitted by the pinned WDK headers.
+NTKERNELAPI KPROCESSOR_MODE NTAPI PsGetCurrentThreadPreviousMode(VOID);
 typedef PDEVICE_OBJECT DEVICE;
 typedef PDRIVER_OBJECT DRIVER;
 typedef PIRP PACKET;
@@ -61,6 +63,9 @@ __declspec(dllimport) void IoFreeWorkItem(void *);
 __declspec(dllimport) void *PsGetCurrentProcessId(void);
 __declspec(dllimport) void *PsGetCurrentThread(void);
 __declspec(dllimport) U8 ExGetPreviousMode(void);
+__declspec(dllimport) char PsGetCurrentThreadPreviousMode(void);
+__declspec(dllimport) void *IoThreadToProcess(void *);
+__declspec(dllimport) void *PsGetCurrentProcess(void);
 __declspec(dllimport) U8 KeAreApcsDisabled(void);
 __declspec(dllimport) U8 KeAreAllApcsDisabled(void);
 __declspec(dllimport) void KeEnterGuardedRegion(void);
@@ -138,6 +143,8 @@ static NTSTATUS dispatchQuery(PACKET Irp) {
   CHECK(PsGetCurrentThread() == CallerThread);
   CHECK(KeAreApcsDisabled() == !Async && !KeAreAllApcsDisabled());
   CHECK((U64)PsGetCurrentProcessId() == 0x2000 && ExGetPreviousMode() == 1);
+  CHECK(PsGetCurrentThreadPreviousMode() == 1);
+  CHECK(IoThreadToProcess(CallerThread) == PsGetCurrentProcess());
   CHECK(*(U32 *)((U8 *)Irp + 0x10) ==
         ((Async ? 0x14u : 0x10u) | (Native ? 0x860u : 0u)));
   CHECK(*((U8 *)Irp + 0x47) == (Async ? 0 : 2));
@@ -282,6 +289,8 @@ static NTSTATUS handle(DEVICE Owner, PACKET Irp) {
       CHECK(PsGetCurrentThread() == CallerThread);
       CHECK(!KeAreApcsDisabled() && !KeAreAllApcsDisabled());
       CHECK((U64)PsGetCurrentProcessId() == 0x2000 && ExGetPreviousMode() == 1);
+      CHECK(PsGetCurrentThreadPreviousMode() == 1);
+      CHECK(IoThreadToProcess(CallerThread) == PsGetCurrentProcess());
       CHECK(!Failed);
       Buffer[0] = 0x7f;
       CHECK(Buffer[0] == 0x7f);

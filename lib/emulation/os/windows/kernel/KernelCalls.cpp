@@ -144,8 +144,11 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
       Kind != KernelAPIKind::PsGetCurrentProcessId &&
       Kind != KernelAPIKind::PsGetProcessId &&
       Kind != KernelAPIKind::PsGetThreadProcess &&
+      Kind != KernelAPIKind::IoThreadToProcess &&
       Kind != KernelAPIKind::IoGetRequestorProcessId &&
       Kind != KernelAPIKind::ExGetPreviousMode &&
+      Kind != KernelAPIKind::PsGetCurrentThreadPreviousMode &&
+      Kind != KernelAPIKind::RtlPcToFileHeader &&
       Kind != KernelAPIKind::KeGetCurrentIrql &&
       Kind != KernelAPIKind::KeGetCurrentProcessorNumberEx &&
       Kind != KernelAPIKind::ProbeForRead &&
@@ -179,7 +182,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   case KernelAPIKind::ProbeForWrite:
     return probeUserBuffer(A[0], A[1], uint32_t(A[2]),
                            Kind == KernelAPIKind::ProbeForWrite);
-  case KernelAPIKind::ExGetPreviousMode: {
+  case KernelAPIKind::ExGetPreviousMode:
+  case KernelAPIKind::PsGetCurrentThreadPreviousMode: {
     auto Context = executionProcessContext();
     return uint64_t(Context ? Context->PreviousMode : KernelMode);
   }
@@ -189,6 +193,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
         A, Kind == KernelAPIKind::ZwQuerySystemInformation);
   case KernelAPIKind::RtlGetVersion:
     return queryVersion(A[0]);
+  case KernelAPIKind::RtlPcToFileHeader:
+    return pcToFileHeader(A[0], A[1]);
   case KernelAPIKind::RtlCaptureContext:
     return captureCallerContext(A[0], Context);
   case KernelAPIKind::PsGetCurrentProcessId:

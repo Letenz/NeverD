@@ -890,6 +890,9 @@ TEST_F(KernelMDLUserMapping,
   ASSERT_TRUE(Scheduled);
   Model->enterExecution(profile::CallbackStackBase);
   const auto SystemProcess = call("IoGetCurrentProcess", {});
+  const auto WorkerThread = call("PsGetCurrentThread", {});
+  EXPECT_EQ(call("IoThreadToProcess", {WorkerThread}), SystemProcess);
+  EXPECT_EQ(call("PsGetCurrentThreadPreviousMode", {}), 0u);
   Budget->Exhausted = true;
   auto Attached = Model->call("KeStackAttachProcess", {Process, ApcState});
   ASSERT_FALSE(bool(Attached));
@@ -906,10 +909,15 @@ TEST_F(KernelMDLUserMapping,
   Budget->Exhausted = false;
   call("KeStackAttachProcess", {Process, ApcState});
   EXPECT_EQ(call("IoGetCurrentProcess", {}), Process);
+  EXPECT_EQ(call("IoThreadToProcess", {WorkerThread}), SystemProcess);
+  EXPECT_EQ(call("PsGetCurrentThreadPreviousMode", {}), 0u);
+  EXPECT_EQ(call("ExGetPreviousMode", {}), 0u);
   EXPECT_TRUE(allowed(Address, Read | Write));
   call("MmUnmapLockedPages", {Address, MDL});
   call("KeUnstackDetachProcess", {ApcState});
   EXPECT_EQ(call("IoGetCurrentProcess", {}), SystemProcess);
+  EXPECT_EQ(call("IoThreadToProcess", {WorkerThread}), SystemProcess);
+  EXPECT_EQ(call("PsGetCurrentThreadPreviousMode", {}), 0u);
   success(Model->finishScheduled(Scheduled->ID));
   call("IoFreeWorkItem", {Work});
   call("IoFreeMdl", {MDL});

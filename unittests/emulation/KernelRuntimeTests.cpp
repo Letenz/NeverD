@@ -210,6 +210,14 @@ TEST_F(KernelRuntime, ActiveProcessorMaskMatchesTheSingleProcessorSchedule) {
   EXPECT_FALSE(failure("KeQueryActiveProcessors", {0}).empty());
 }
 
+TEST_F(KernelRuntime, PcLookupRequiresAnOwnedModuleInventory) {
+  check(Memory->writeInteger(Scratch, UINT64_MAX, 8));
+  EXPECT_NE(
+      failure("RtlPcToFileHeader", {0x180001000, Scratch}).find("inventory"),
+      std::string::npos);
+  EXPECT_EQ(integer(Scratch), UINT64_MAX);
+}
+
 TEST_F(KernelRuntime, ProcessorNumberWritesFourBytesAtEverySupportedIRQL) {
   Model->enterExecution(0x100);
   for (uint8_t IRQL : {0, 1, 2, 15}) {

@@ -1906,3 +1906,5 @@ KernelFileSystem mantiene un provider token por FILE_OBJECT. La operación priva
 `uppercaseCharacter` reduce los argumentos antes de admitirlos y delega en `uppercaseUnicodeUnit`. Las tablas CRT y Unicode comparten la decisión con identidades ABI distintas; ningún adaptador ni configuración regional del host aporta otra conversión.
 
 `KernelModelRuntime` posee los anchos escalares y la publicación común de prefijo y búfer. Las llamadas variádicas normales usan el lector ABI existente; el adaptador explícito x64 `va_list` valida cada escalar invitado solicitado con pasos de ocho bytes. El despachador y el adaptador no duplican el análisis del formato.
+
+Los alias reutilizan los propietarios de hilos/procesos y contextos, incluso durante la vinculación de procesos. `RtlPcToFileHeader` usa `LoadedModules`, igual que las consultas de módulos del sistema; las regiones de `ImageRAM` no sustituyen la identidad del módulo. No se consulta estado del host.

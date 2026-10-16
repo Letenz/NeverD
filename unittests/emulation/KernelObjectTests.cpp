@@ -273,10 +273,125 @@ TEST_F(KernelObjects, RetainedForegroundThreadDoesNotChangeRequestorIdentity) {
   const auto New = call("PsGetCurrentThread", {});
   EXPECT_NE(New, Old);
   EXPECT_EQ(call("PsGetThreadProcess", {Old}), Process);
+  EXPECT_EQ(call("IoThreadToProcess", {Old}), Process);
   EXPECT_EQ(call("PsGetProcessId", {call("PsGetThreadProcess", {New})}),
             0x3000u);
   call("ObfDereferenceObject", {Old});
   EXPECT_NE(denied(Old).find("freed"), std::string::npos);
+  EXPECT_FALSE(fail("IoThreadToProcess", {Old}).empty());
+}
+
+TEST_F(KernelObjects, ThreadQueriesShareCreatingProcessAndPreviousMode) {
+  const auto System = call("PsGetCurrentProcess", {});
+  const auto SystemThread = call("PsGetCurrentThread", {});
+  EXPECT_EQ(call("IoThreadToProcess", {SystemThread}), System);
+  EXPECT_EQ(call("PsGetCurrentThreadPreviousMode", {}), 0u);
+  ok(Model->setUserRequestContext(true, 0x2000));
+  const auto Thread = call("PsGetCurrentThread", {});
+  const auto Process = call("PsGetCurrentProcess", {});
+  call("ObfReferenceObject", {Thread});
+  EXPECT_NE(Process, System);
+  EXPECT_EQ(call("IoThreadToProcess", {Thread}), Process);
+  EXPECT_EQ(call("PsGetCurrentThreadPreviousMode", {}), 1u);
+  EXPECT_EQ(call("PsGetCurrentThreadPreviousMode", {}),
+            call("ExGetPreviousMode", {}));
+  ok(Model->setUserRequestContext(false));
+  EXPECT_EQ(call("PsGetCurrentThreadPreviousMode", {}), 0u);
+  EXPECT_NE(call("PsGetCurrentThread", {}), Thread);
+  EXPECT_EQ(call("IoThreadToProcess", {Thread}), Process);
+  call("ObfDereferenceObject", {Thread});
+  EXPECT_FALSE(fail("IoThreadToProcess", {Thread}).empty());
+}
+
+TEST_F(KernelObjects, ThreadQueriesCheckArityIdentityAndDispatchAdmission) {
+  const auto Thread = call("PsGetCurrentThread", {});
+  const auto Process = call("PsGetCurrentProcess", {});
+  EXPECT_FALSE(fail("IoThreadToProcess", {}).empty());
+  EXPECT_FALSE(fail("IoThreadToProcess", {Process}).empty());
+  EXPECT_FALSE(fail("IoThreadToProcess", {Scratch}).empty());
+  EXPECT_FALSE(fail("PsGetCurrentThreadPreviousMode", {0}).empty());
+  call("KfRaiseIrql", {2});
+  EXPECT_EQ(call("IoThreadToProcess", {Thread}), Process);
+  EXPECT_EQ(call("PsGetCurrentThreadPreviousMode", {}), 0u);
+  EXPECT_EQ(call("ExGetPreviousMode", {}), 0u);
+  call("KfRaiseIrql", {3});
+  EXPECT_NE(fail("IoThreadToProcess", {Thread}).find("IRQL"),
+            std::string::npos);
+  for (const char *Name :
+       {"ExGetPreviousMode", "PsGetCurrentThreadPreviousMode"})
+    EXPECT_NE(fail(Name, {}).find("IRQL"), std::string::npos);
+}
+
+TEST_F(KernelObjects, PcLookupUsesCompleteModuleExtentsWithoutReadingPc) {
+  const uint64_t Output = Scratch + 0x10000 - 8;
+  for (const char *Name : {"ntoskrnl.exe", "hal.dll"}) {
+    auto Base = KernelExportRegistry::moduleBase(Name);
+    ASSERT_TRUE(Base);
+    // The independently published PE header must agree with module queries.
+    const auto PE = *Base + read(*Base + 0x3c, 4);
+    const uint64_t Size = read(PE + 0x50, 4);
+    ASSERT_GT(Size, 0u);
+    ASSERT_LT(Size, profile::KernelModuleStride);
+    const uint64_t PCs[] = {*Base, *Base + 1, *Base + Size / 2,
+                            *Base + Size - 1};
+    for (auto PC : PCs) {
+      write(Output, UINT64_MAX);
+      EXPECT_EQ(call("RtlPcToFileHeader", {PC, Output}), *Base);
+      EXPECT_EQ(read(Output), *Base);
+    }
+    EXPECT_EQ(call("RtlPcToFileHeader", {*Base + Size, Output}), 0u);
+    EXPECT_EQ(read(Output), 0u);
+  }
+  // A reserved provider address is not a loaded module without its imports.
+  const auto Unloaded = KernelExportRegistry::moduleBase("WDFLDR.SYS");
+  ASSERT_TRUE(Unloaded);
+  EXPECT_FALSE(take(Memory->canAccess(*Unloaded, 1, Read)));
+  EXPECT_EQ(call("RtlPcToFileHeader", {*Unloaded, Output}), 0u);
+  EXPECT_EQ(read(Output), 0u);
+  constexpr uint64_t Image = 0x180000000;
+  EXPECT_FALSE(take(Memory->canAccess(Image, 1, Read)));
+  for (uint64_t PC : {Image, Image + 1, Image + 0x1000, Image + 0x2fff}) {
+    EXPECT_EQ(call("RtlPcToFileHeader", {PC, Output}), Image);
+    EXPECT_EQ(read(Output), Image);
+  }
+  for (uint64_t PC : {uint64_t(0), uint64_t(1), Image - 1, Image + 0x3000,
+                      uint64_t(UINT64_MAX)}) {
+    write(Output, UINT64_MAX);
+    EXPECT_EQ(call("RtlPcToFileHeader", {PC, Output}), 0u);
+    EXPECT_EQ(read(Output), 0u);
+  }
+  // The PC is not dereferenced even when it names the output itself.
+  write(Output, Image);
+  EXPECT_EQ(call("RtlPcToFileHeader", {Output, Output}), 0u);
+  EXPECT_EQ(read(Output), 0u);
+}
+
+TEST_F(KernelObjects, PcLookupChecksOutputLifetimeRightsAndResidency) {
+  constexpr uint64_t Image = 0x180000000;
+  const auto Freed = call("ExAllocatePool2", {0x40, 8, 0x71756572});
+  call("ExFreePool", {Freed});
+  EXPECT_NE(fail("RtlPcToFileHeader", {Image, Freed}).find("freed"),
+            std::string::npos);
+  const auto Paged = call("ExAllocatePool2", {0x100, 8, 0x71756572});
+  write(Paged, UINT64_MAX);
+  call("KfRaiseIrql", {15});
+  EXPECT_EQ(call("RtlPcToFileHeader", {Image, Scratch}), Image);
+  EXPECT_NE(fail("RtlPcToFileHeader", {Image, Paged}).find("paged"),
+            std::string::npos);
+  EXPECT_EQ(read(Paged), UINT64_MAX);
+  call("KeLowerIrql", {0});
+  call("ExFreePool", {Paged});
+  write(Scratch, UINT64_MAX);
+  ok(Memory->protect(Scratch, 4096, Read));
+  EXPECT_FALSE(fail("RtlPcToFileHeader", {Image, Scratch}).empty());
+  EXPECT_EQ(read(Scratch), UINT64_MAX);
+}
+
+TEST_F(KernelObjects, PcLookupRequiresACompleteEightByteOutput) {
+  const uint64_t Output = Scratch + 0x10000 - 4;
+  write(Output, 0xa5a5a5a5, 4);
+  EXPECT_FALSE(fail("RtlPcToFileHeader", {0, Output}).empty());
+  EXPECT_EQ(read(Output, 4), 0xa5a5a5a5u);
 }
 
 TEST_F(KernelObjects, ReferencesBlockUnloadUntilReleased) {

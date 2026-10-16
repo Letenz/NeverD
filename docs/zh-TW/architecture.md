@@ -1703,3 +1703,5 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 `uppercaseCharacter` 先縮窄純量參數，再檢查准入並委託既有 `uppercaseUnicodeUnit`。CRT 與計數字串 API 表以各自 ABI 身分共用映射，介接層與宿主地區設定不提供另一套語意。
 
 `KernelModelRuntime` 統一擁有偵錯參數純量寬度及前綴和緩衝發布規則。一般變參呼叫使用既有呼叫 ABI 讀取器；明確的 x64 `va_list` 配接器以八位元組步長檢查每個實際請求的客體純量。分派器及配接器不重複解析格式。
+
+執行緒查詢別名共用既有執行緒／行程及執行上下文所有者，行程附加期間亦然。`RtlPcToFileHeader` 與系統模組查詢共用 `LoadedModules`；`ImageRAM` 表示映射區間，不能代替模組身分。實作不讀取主機行程、執行緒或模組狀態。
