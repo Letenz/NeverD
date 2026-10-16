@@ -2800,6 +2800,15 @@ For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X87Context.h` o
 
 ## IR representations and routes
 
+`IntrinsicValueEffects` defines positive, shape-validated contracts for operations
+whose effects are entirely explicit values. `LowIntrinsicEffects` additionally
+validates LowIR operands and memory annotations. Jump-table consumer analysis and
+module address-use collection share this classification: pure operations are
+neither escapes nor ABI call barriers, but their results retain input provenance.
+Unlisted, memory-reading and malformed intrinsics retain conservative effects,
+including address operands held in temporaries rather than ABI registers. This
+contract is stronger than eligibility for dead-code elimination.
+
 COFF loading records validated DWARF FDE extents before heuristic function
 discovery. Those extents also bound named symbols with no size. Debug sections
 do not supply pointer-table or relocation-scan roots, including debug ranges
