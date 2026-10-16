@@ -12,6 +12,10 @@ request ad alto rischio.
 
 `PipelineOutcome.ResolvedCalls*` verifica gruppi di registri, identità call/invoke, unione e divisione dei byte dello stack, valori stretti nei propri slot e rifiuto di byte mancanti. `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` verifica gli offset registrati. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` copre x64, ARM32 e AArch64 in ELF, PE e Mach-O. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` copre i tre formati e rifiuta lunghezze sovrascritte, intervalli scrivibili o eccessivi, funzioni locali omonime, registri sorgente errati, ingressi alternativi e immagini rilocabili. I test differenziali C compilano il riferimento separatamente a O0 e il C generato a O2, evitando che un errore dell’ottimizzatore host su una ricorrenza alteri il riferimento. Il controllo FMA AArch64 richiede `-mfma` soltanto sugli host x86.
 
+## Test di recupero delle scritture segmentate
+
+`InterpreterSpecialization.SegmentedWrite*` verifica risultati indipendenti della memoria a byte, tutte le larghezze scalari, riporto degli indirizzi, alias dello stack, origini di puntatori sovrascritte, invalidazione tra nodi e budget esatti o insufficienti. `SegmentedWritesAndReadsShareLinearMemory` copre basi uguali e diverse. `PEFixedImageTest.RawSegmented*` verifica byte nativi, rifiuto degli alias di ritorno e variazioni delle attestazioni. I valori di compatibilità esistenti restano invariati. Compilare i test di specializzazione, immagini PE fisse, stato macchina e raffinamento nativo/LLVM; i rifiuti includono capacità di scrittura inutilizzate.
+
 ## Seed concreti della memoria iniziale
 
 Eseguire `NeverDSymbolicTests`, `NeverDConcolicTests` e `NeverDConcolicIntegrationTests`. `LowIRConcolicMemory.*` e i test simbolici coprono entrambi gli ordini dei byte, scritture con alias, banchi separati, intervalli mancanti/non validi, reset e seed tardivi, limiti di budget, epoche, larghezze del modello, riesecuzione e deduplicazione. Rimane la matrice nativa di formati e architetture.

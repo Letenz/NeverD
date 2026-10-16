@@ -326,7 +326,8 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       Trace.finish(false);
       return Result;
     }
-    if (Opts.InterpreterSpecialization->X64SegmentedReads) {
+    if (Opts.InterpreterSpecialization->X64SegmentedReads ||
+        Opts.InterpreterSpecialization->X64SegmentedWrites) {
       Result.Error = "machine-state recovery requires a versioned FS/GS "
                      "base source interface";
       Trace.finish(false);

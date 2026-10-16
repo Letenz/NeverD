@@ -504,11 +504,9 @@ validateBinaryImage(const BinaryImage &Image,
         "machine execution profile requires explicit machine-state recovery";
     return Result;
   }
-  if (Options.X64SegmentedReads &&
-      (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution)) {
+  if (auto Error = x64::validateRuntimeMemoryOptions(Options)) {
     SpecializationResult Result;
-    Result.Diagnostic =
-        "segmented reads require explicit nonfaulting machine state";
+    Result.Diagnostic = llvm::toString(std::move(Error));
     return Result;
   }
   if (!hasUsableExceptionCoverage(Image)) {
@@ -622,6 +620,10 @@ binaryExecutionDigest(const BinaryImage &Image,
   Number(Options.NormalNonfaultingExecution);
   Number(Options.X64CetDisabled);
   Number(Options.X64SegmentedReads);
+  if (Options.X64SegmentedWrites) {
+    Hash.update("x64-segmented-writes-v1");
+    Number(Options.X64SegmentedWrites);
+  }
   Number(Options.X64CR8State);
   Number(Options.X64TerminalImports.size());
   for (const auto &Binding : Options.X64TerminalImports) {
@@ -739,7 +741,7 @@ prepareBinaryRelation(const BinaryImage &Image,
   if (!Options.X64TerminalImports.empty())
     return Fail(Status::Unsupported,
                 "native proof does not support terminal import domains");
-  if (Options.X64SegmentedReads)
+  if (Options.X64SegmentedReads || Options.X64SegmentedWrites)
     return Fail(Status::Unsupported,
                 "native proof requires authenticated FS/GS base inputs");
   if (Options.X64CR8State)
