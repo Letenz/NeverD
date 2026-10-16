@@ -4504,6 +4504,10 @@ the pending service or quantum and charges all threads to one budget.
 Linux's optional `ThreadContext` is the sole identity and thread-exit input
 for named, variadic and raw services; an absent context retains the existing
 single-thread Linux contract. Bionic process state is never copied on a switch.
+`AndroidAllocation` owns the optional `malloc_fill_byte` input: only explicit
+`malloc` and `realloc` requests use it, before preserving a reallocated prefix.
+`calloc` and internal allocations retain zero initialization. No CPU backend
+selects a fill value or treats it as evidence about a real allocator.
 Once ownership comes from active guest callback frames. Bionic writes the
 completion state before the scheduler wakes waiting threads; the scheduler
 rechecks guest memory before completing each original import. Unknown owners,

@@ -4,6 +4,11 @@
 
 # Testing NeverD
 
+`AndroidAllocation.*` checks explicit heap-fill inputs with cross-page copies,
+`calloc` zeros, `realloc` growth/shrinkage, failed allocation ownership and
+zero-size identities at O0/O2 across Android relocation formats and available
+Unicorn/HVF backends. `AndroidAllocationOptions.*` rejects non-byte inputs.
+
 ## MXCSR recovery checks
 
 `InterpreterSpecialization.MXCSR*` covers arbitrary entry state, exact memory values, reserved bits, DAZ, aliases, malformed forms, node projection and exact/short budgets. `PEFixedImageTest.RawMXCSR*` checks legacy/VEX native bytes and mask-bound receipts. The machine-state and native/LLVM refinement owners verify that unused capabilities cannot expand their interfaces.
