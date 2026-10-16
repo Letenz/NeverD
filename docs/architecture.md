@@ -252,6 +252,13 @@ arrays when they are ordered; other producer orders and nested spans keep their
 original filtering order. Oversized documents remain readable without being
 retained.
 
+Completed documents also own encoded pages, with at most 64 pages per document
+and 8 MiB of page storage inside the same 32 MiB allowance. Encoded pages retire
+with their document and never keep an evicted document alive. Document retention
+takes priority over page retention. The protocol accepts only typed JSON
+serialization for a retained payload and constructs a fresh response envelope
+for each request, including its current revision and cancellation state.
+
 `SourceViewOptions` owns request-local native source policy. Ordinary HighIR
 conversion skips symbolic expression simplification. An explicit source request
 may rebuild HighIR from already prepared LowIR/MedIR and library recognitions,

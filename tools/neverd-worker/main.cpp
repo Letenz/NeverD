@@ -50,10 +50,10 @@ public:
     ::close(descriptor_);
 #endif
   }
-  bool send(const Json &message) {
+  bool send(const Json &message, const EncodedJson *payload = nullptr) {
     std::string encoded;
     try {
-      encoded = frame(message);
+      encoded = payload ? frame(message, *payload) : frame(message);
     } catch (const Error &) {
       Json failure = message;
       failure["status"] = "budget_exceeded";
@@ -313,6 +313,7 @@ void executeLoop(State &state, Transport &transport) {
         return webRequest ? web.projectId() : engine.projectId();
       };
       Json result;
+      Engine::EncodedPayload encodedPayload;
       try {
         if (value.contains("expected_revision") &&
             value["expected_revision"] != revision())
@@ -333,13 +334,16 @@ void executeLoop(State &state, Transport &transport) {
                                    {"detail", Detail ? Detail : ""}}));
         });
         const auto input = value.value("payload", Json::object());
-        auto payload =
-            webRequest ? web.execute(op, input) : engine.execute(op, input);
-        result =
-            response(value, revision(), project(), "ok", std::move(payload));
+        auto reply = webRequest ? Engine::Reply{web.execute(op, input), {}}
+                                : engine.executeResponse(op, input);
+        encodedPayload = std::move(reply.encoded);
+        result = response(value, revision(), project(), "ok",
+                          std::move(reply.value));
       } catch (const Error &error) {
+        encodedPayload.reset();
         result = failure(value, revision(), project(), error);
       } catch (const std::exception &error) {
+        encodedPayload.reset();
         result = failure(value, revision(), project(),
                          Error("engine_error", webRequest ? "Web adapter failed"
                                                           : error.what()));
@@ -365,7 +369,7 @@ void executeLoop(State &state, Transport &transport) {
         state.pending.erase(value["request_id"].get<std::string>());
         state.active.reset();
       }
-      if (!transport.send(result))
+      if (!transport.send(result, encodedPayload.get()))
         break;
     }
   } catch (const std::exception &error) {

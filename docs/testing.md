@@ -185,7 +185,10 @@ both document-count and retained-byte eviction. Page checks preserve repeated
 references, overlapping names, nested spans and unsorted producer order, including
 empty pages after the end of the text. Unordered metadata uses cached numeric
 bounds owned by the same immutable document; their vector capacities count
-toward its retained-byte limit. Timing-independent cache tests complement
+toward its retained-byte limit. Encoded-page count and byte pressure must not
+rerender a retained document. `NeverDWorkerProtocol` checks fresh envelopes,
+escaped and invalid UTF-8 payloads, and the exact encoded-frame byte limit.
+Timing-independent cache tests complement
 `source_revisit_bench.py`, which measures complete real source pages.
 
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
