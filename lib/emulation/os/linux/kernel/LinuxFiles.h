@@ -62,7 +62,7 @@ public:
   std::optional<uint64_t>
   openProcessDescriptor(uint32_t PID, uint32_t Flags,
                         const LinuxKernelOptions &Kernel,
-                        ProcessResult &Result);
+                        ProcessResult &Result, bool DynamicThreads = false);
   llvm::Expected<std::optional<uint64_t>>
   poll(const ProcessServiceEvent &Event,
        const std::optional<LinuxKernelOptions> &Kernel, ProcessResult &Result);

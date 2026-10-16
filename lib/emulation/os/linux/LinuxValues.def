@@ -235,6 +235,8 @@ NEVERD_LINUX_DIAGNOSTIC(KernelOptions,
                         "invalid Linux kernel availability input")
 NEVERD_LINUX_DIAGNOSTIC(PidFDTargetMissing,
                         "pidfd_open target process is not modeled")
+NEVERD_LINUX_DIAGNOSTIC(PidFDThreadLifetime,
+                        "pidfd_open guest-thread descriptor lifetime is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(PriorityOptions, "invalid Linux priority input")
 NEVERD_LINUX_DIAGNOSTIC(
     PriorityInputsMissing,

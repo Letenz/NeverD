@@ -77,9 +77,13 @@ llvm::Error validateKernelOptions(const LinuxKernelOptions &Options) {
 llvm::Error validateKernelTaskInputs(const ProcessOptions &Options) {
   if (!Options.LinuxKernel || !Options.LinuxKernel->Tasks)
     return llvm::Error::success();
-  // A fixed observation cannot describe later guest thread creation or exit.
+  // Static foreign observations must not occupy identities the guest thread
+  // owner can publish later. The running group leader remains authoritative.
   if (Options.Android && Options.Android->ThreadLimit > 1)
-    return failure(KernelOptions);
+    for (const auto &[ID, Task] : *Options.LinuxKernel->Tasks)
+      if (ID > ThreadID &&
+          uint64_t(ID) - ThreadID < Options.Android->ThreadLimit)
+        return failure(KernelOptions);
   if (Options.LinuxPriority)
     for (const auto &[ID, Nice] : Options.LinuxPriority->Tasks)
       if (ID != ProcessID && !Options.LinuxKernel->Tasks->contains(ID))

@@ -4504,6 +4504,10 @@ the pending service or quantum and charges all threads to one budget.
 Linux's optional `ThreadContext` is the sole identity and thread-exit input
 for named, variadic and raw services; an absent context retains the existing
 single-thread Linux contract. Bionic process state is never copied on a switch.
+Fixed foreign task observations cannot occupy the identity range reserved for
+Android children. `LinuxPIDFD` reads local task membership from the same live
+provider as `/proc`; the fixed catalogue does not freeze child existence.
+Local thread-bound pidfds remain unsupported until exit readiness is modeled.
 `AndroidAllocation` owns the optional `malloc_fill_byte` input: only explicit
 `malloc` and `realloc` requests use it, before preserving a reallocated prefix.
 `calloc` and internal allocations retain zero initialization. No CPU backend

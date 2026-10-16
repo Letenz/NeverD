@@ -4,6 +4,11 @@
 
 # Testing NeverD
 
+`AndroidThread.ForeignTasks*` checks foreign pidfds and CPU-clock observations
+while children live and after they exit, raw and Bionic errno results, identity
+reservation conflicts, invalid flags and refusal of unsupported local thread
+pidfd lifetimes. `LinuxPIDFD.*` retains the fixed-catalogue kernel matrix.
+
 `AndroidAllocation.*` checks explicit heap-fill inputs with cross-page copies,
 `calloc` zeros, `realloc` growth/shrinkage, failed allocation ownership and
 zero-size identities at O0/O2 across Android relocation formats and available
