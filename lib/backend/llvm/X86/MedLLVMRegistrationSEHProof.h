@@ -40,6 +40,37 @@ struct SEHFrameValues {
     return !V.isConst() && Values.count({V.Kind, V.Id, V.SSAVer});
   }
 };
+
+struct SEHFrameOffsets {
+  struct Offset {
+    int32_t Bytes;
+    uint16_t Width;
+  };
+  std::map<SEHFrameValues::Key, Offset> Values;
+  std::map<SEHFrameValues::Key, uint16_t> UniqueDefinitions;
+
+  std::optional<int32_t> get(const MedVar &Value) const {
+    const auto Found = Values.find({Value.Kind, Value.Id, Value.SSAVer});
+    if (Found == Values.end() || Found->second.Width != Value.Size)
+      return std::nullopt;
+    return Found->second.Bytes;
+  }
+};
+
+/// Checked frame coordinates and unique definitions in the current SSA graph.
+std::optional<SEHFrameOffsets> getSEHFrameOffsets(const MedFunc &Source);
+
+/// Carry authenticated runtime scalars through exact block-local frame spills.
+/// Unknown stores, calls and partial overwrites discard the memory fact.
+bool extendSEHScalarSpills(const MedFunc &Source,
+                           const SEHFrameOffsets &Offsets,
+                           std::set<SEHFrameValues::Key> &Scalars,
+                           size_t &Work);
+
+/// Rebind exact LowIR frame offsets to unique current SSA definitions. This
+/// only discharges source preflight; COFF still proves the emitted addresses.
+std::optional<std::set<const MedOp *>>
+getSEHFrameStores(const MedFunc &Source, uint64_t EntrySP, uint64_t FrameBytes);
 std::optional<SEHFrameValues> getPrivateSEHFrameValues(
     const MedFunc &Func, const RegistrationStateAnalysis &States,
     llvm::function_ref<bool(const MedOp &)> IsPrivateStore);

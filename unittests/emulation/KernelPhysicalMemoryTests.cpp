@@ -52,6 +52,75 @@ protected:
 };
 
 TEST_F(KernelPhysicalRAM,
+       AddressQueriesResolveExactAliasBytesWithoutNewOwners) {
+  ASSERT_EQ(llvm::toString(Model->registerRegion(FirstOwner, Base + 16, 32)),
+            "");
+  ASSERT_EQ(llvm::toString(CPU->mapAlias(Alias, Base, Page, Read)), "");
+  const auto Query = take(Model->resolveAddress(Alias + 17));
+  EXPECT_EQ(Query.Physical, take(Model->physicalAddress(Base + 17)));
+  EXPECT_GT(Query.Physical, UINT32_MAX);
+  EXPECT_EQ(Query.Owners, (std::vector<uint64_t>{FirstOwner}));
+  rejects(Model->resolveAddress(Alias + 15));
+  rejects(Model->resolveAddress(Alias + 48));
+  ASSERT_EQ(llvm::toString(CPU->protect(Alias, Page, 0)), "");
+  // Physical identity itself neither consumes bytes nor grants CPU access.
+  EXPECT_EQ(take(Model->resolveAddress(Alias + 17)).Physical, Query.Physical);
+  EXPECT_FALSE(take(CPU->canAccess(Alias + 17, 1, Read)));
+  EXPECT_FALSE(Model->hasPinnedPages(Alias, 1));
+  ASSERT_EQ(llvm::toString(Model->registerRegion(SecondOwner, Alias + 16, 32)),
+            "");
+  EXPECT_EQ(take(Model->resolveAddress(Alias + 17)).Owners,
+            (std::vector<uint64_t>{FirstOwner, SecondOwner}));
+  ASSERT_EQ(llvm::toString(Model->retire(FirstOwner)), "");
+  EXPECT_EQ(take(Model->resolveAddress(Alias + 17)).Owners,
+            (std::vector<uint64_t>{SecondOwner}));
+  ASSERT_EQ(llvm::toString(Model->retire(SecondOwner)), "");
+  rejects(Model->resolveAddress(Alias + 17));
+  EXPECT_FALSE(CPU->fault());
+}
+
+TEST_F(KernelPhysicalRAM, AddressQueriesFollowRebindingAndRetainedAliases) {
+  ASSERT_EQ(llvm::toString(Model->registerRegion(FirstOwner, Base, Page)), "");
+  ASSERT_EQ(llvm::toString(CPU->mapAlias(Alias, Base, Page, Read)), "");
+  const auto Original = take(Model->resolveAddress(Base + 17)).Physical;
+  ASSERT_EQ(llvm::toString(CPU->addressSpace()->unmap(Base, Page)), "");
+  ASSERT_EQ(llvm::toString(CPU->map(Base, Page, Read | Write)), "");
+  rejects(Model->resolveAddress(Base + 17));
+  ASSERT_EQ(llvm::toString(Model->registerRegion(SecondOwner, Base, Page)), "");
+  const auto Replacement = take(Model->resolveAddress(Base + 17)).Physical;
+  EXPECT_NE(Original, Replacement);
+  EXPECT_EQ(take(Model->resolveAddress(Alias + 17)).Physical, Original);
+  ASSERT_EQ(llvm::toString(CPU->unmapAlias(Alias, Page)), "");
+  rejects(Model->resolveAddress(Alias + 17));
+  ASSERT_EQ(llvm::toString(CPU->mapAlias(Alias, Base, Page, Read)), "");
+  EXPECT_EQ(take(Model->resolveAddress(Alias + 17)).Physical, Replacement);
+}
+
+TEST_F(KernelPhysicalRAM, AddressQueriesUseTheActiveSpaceAndSharedAllocation) {
+  auto Original = CPU->addressSpace();
+  auto View = take(Original->pinBacking(Base, Page));
+  ASSERT_EQ(llvm::toString(Model->registerRegion(FirstOwner, Base + 16, 32)),
+            "");
+  const auto Physical = take(Model->resolveAddress(Base + 17)).Physical;
+  auto Other =
+      take(AddressSpace::create(Original->physicalMemory(), MemoryLimit));
+  ASSERT_EQ(llvm::toString(Other->mapRegion(Alias, View.slices().front().Region,
+                                            View.slices().front().Offset, Page,
+                                            Read)),
+            "");
+  ASSERT_EQ(llvm::toString(Other->map(Base, Page, Read)), "");
+  ASSERT_EQ(llvm::toString(CPU->bindAddressSpace(Other)), "");
+  rejects(Model->resolveAddress(Base + 17));
+  EXPECT_EQ(take(Model->resolveAddress(Alias + 17)).Physical, Physical);
+  EXPECT_EQ(take(Model->resolveAddress(Alias + 17)).Owners,
+            (std::vector<uint64_t>{FirstOwner}));
+  ASSERT_EQ(llvm::toString(Original->unmap(Base, Page)), "");
+  EXPECT_EQ(take(Model->resolveAddress(Alias + 17)).Physical, Physical);
+  ASSERT_EQ(llvm::toString(Model->retire(FirstOwner)), "");
+  rejects(Model->resolveAddress(Alias + 17));
+}
+
+TEST_F(KernelPhysicalRAM,
        AllocatedPagesRespectRangesAndReleasePhysicalCapacity) {
   const uint64_t Low = physical::PhysicalBase + 8 * Page;
   auto Plan = take(Model->planAllocatedPages(Low, Low + Page - 1, 2 * Page, 2));

@@ -53,6 +53,7 @@ public:
   SEHParentExitProjection &operator=(const SEHParentExitProjection &) = delete;
 
   const std::map<int, llvm::CallInst *> &calls() const { return Calls; }
+  llvm::AllocaInst *chain() const { return Chain; }
   void rollback();
   void commit();
   void emitCapture(const std::map<int, llvm::BasicBlock *> &OriginalBlocks);

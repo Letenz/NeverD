@@ -40,6 +40,14 @@ __declspec(dllexport) long KeResetEvent(void *Event) {
   return Previous;
 }
 
+// Its prototype's priority increment and wait flag are never read.
+__declspec(dllexport) long KeSetEvent(void *Event, long Increment,
+                                      unsigned char Wait) {
+  long Previous = *(volatile long *)((char *)Event + 4);
+  *(volatile long *)((char *)Event + 4) = 1;
+  return Previous;
+}
+
 long DriverEntry(void *Driver, void *Path) {
   (void)Driver;
   (void)Path;

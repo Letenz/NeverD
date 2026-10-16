@@ -1637,7 +1637,7 @@ void MedToHighConverter::resolveCalleeNames(
     ExportsByAddr.try_emplace(Exp.Addr, Exp.Name);
   std::map<va_t, const Symbol *> SymbolsByAddr;
   for (const Symbol &Sym : Image->Symbols) {
-    if (Sym.Name.empty())
+    if (Sym.Name.empty() || Sym.IsSection)
       continue;
     auto [It, Inserted] = SymbolsByAddr.try_emplace(Sym.Addr, &Sym);
     if (!Inserted && BinaryImage::functionNameRank(Sym) >

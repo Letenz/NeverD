@@ -155,9 +155,14 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
       Kind != KernelAPIKind::ProbeForRead &&
       Kind != KernelAPIKind::ProbeForWrite &&
       Kind != KernelAPIKind::MmProbeAndLockPages &&
+      Kind != KernelAPIKind::MmProbeAndLockProcessPages &&
       Kind != KernelAPIKind::MmMapLockedPagesSpecifyCache &&
       Kind != KernelAPIKind::MmMapLockedPages &&
       Kind != KernelAPIKind::MmGetSystemAddressForMdlSafe &&
+      Kind != KernelAPIKind::MmGetPhysicalAddress &&
+      Kind != KernelAPIKind::MmGetVirtualForPhysical &&
+      Kind != KernelAPIKind::IoGetInitialStack &&
+      Kind != KernelAPIKind::IoGetStackLimits &&
       Kind != KernelAPIKind::MmUnmapLockedPages &&
       Kind != KernelAPIKind::RtlCopyMemory &&
       Kind != KernelAPIKind::RtlMoveMemory)
@@ -358,6 +363,10 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
     return queryPhysicalMemoryRanges();
   case KernelAPIKind::MmIsAddressValid:
     return isResidentKernelAddress(A[0]);
+  case KernelAPIKind::MmGetPhysicalAddress:
+    return queryPhysicalAddress(A[0]);
+  case KernelAPIKind::MmGetVirtualForPhysical:
+    return queryPrimaryVirtualAddress(A[0]);
   case KernelAPIKind::KeRegisterBugCheckReasonCallback:
     return registerBugCheckCallback(A[0], A[1], uint32_t(A[2]), A[3]);
   case KernelAPIKind::KeDeregisterBugCheckReasonCallback:
@@ -423,6 +432,12 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   }
   case KernelAPIKind::MmProbeAndLockPages: {
     if (auto E = probeAndLockPages(A[0], uint8_t(A[1]), uint32_t(A[2])))
+      return E;
+    return 0;
+  }
+  case KernelAPIKind::MmProbeAndLockProcessPages: {
+    if (auto E =
+            probeAndLockProcessPages(A[0], A[1], uint8_t(A[2]), uint32_t(A[3])))
       return E;
     return 0;
   }

@@ -223,6 +223,7 @@ TEST(LLVMCScalarLoopRecovery, NewlyExposedModularStopsComposeWithLoopRecovery) {
     EXPECT_EQ(Source.find("while (1)"), std::string::npos) << Source;
     EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
     EXPECT_EQ(Source.find("127"), std::string::npos) << Source;
+    EXPECT_EQ(Source.find("0x7F"), std::string::npos) << Source;
     checkArithmetic(*Module, Source, "uint" + std::to_string(Width) + "_t");
   }
 }
@@ -348,7 +349,7 @@ exit:
   ASSERT_TRUE(Module);
   const auto Source = emit(*Module);
   EXPECT_EQ(Source.find("uint64_t"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("& 15"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("& 0xF"), std::string::npos) << Source;
   EXPECT_NE(Source.find("for ("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
   checkArithmetic(*Module, Source);

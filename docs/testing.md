@@ -284,6 +284,9 @@ the reload after an edit puts the cursor and the view back on a third-page row;
 `codeTextSelectsLikeAnEditor` presses Ctrl+A while pages still arrive and
 after the load, drags beyond the bottom edge until the view scrolls past the
 first page, and right-clicks inside the selection to keep it for Copy;
+`gotoLabelsGoToTheirBlock` double-clicks a goto's label and checks the code
+cursor, the disassembly, Back, and that the label's row maps to its block
+rather than to the statement the engine's rows give it;
 `NeverDWorkerCodeEdits` checks the literal scan
 and type-keeping spellings of `neverd/support/IntegerLiterals.h` for C, Rust
 and Go. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks
@@ -459,7 +462,13 @@ kernel's headers and `WindowsKernelRoutines.inc` agree on the bytes each
 parameter of a routine both know takes, and
 `ReturnContracts.ACallToAFunctionDeclaredVoidElsewhereHandsBackNoValue` and
 `AStubOfAnImportDeclaredVoidReturnsNoValue` cover the return contracts that
-read declarations.
+read declarations. `known_routines.sys` also checks that `KeSetEvent` prints
+the parameters its prototype declares and its code never reads, and that
+`neverd_decompile_all` takes the prototypes; the kernel inputs check
+`ZwCreateKey`'s seven parameters and that `FsRtlAllocatePool` stops at the
+`ExRaiseStatus` the kernel exports without its PDB.
+`IsNoReturnTarget.ExportsAndDeclaredPrototypesNameNoReturnRoutines` covers
+exports and `_Noreturn` prototypes in the no-return index.
 Build and run `NeverDSessionLLVMTests` as well: its private Session queries
 link the actual local-type/debug implementations and shared atomic sidecar
 helper into the test executable. It must not acquire a libneverd dependency.
@@ -4465,6 +4474,20 @@ becoming one), finally's
 private-frame write, a subsequent exception, and FS:[0] restoration on four
 successive invocations. Original and generated caller PCs are distinguished,
 and each generated image is executed at preferred and forced-rebased addresses.
+
+`RegistrationFrameScalar` checks that exact PE32 frame differences and equality
+preserve their results under relocation, including integer wraparound. Distinct
+frame roots, partial stores, ambiguous joins and ordered comparisons retain
+their conservative provenance. `LowScalarConstant` compares constant multiply
+and shift facts with concrete LowIR execution at 1/2/4/8-byte widths, including
+overflow, zero shifts and saturating counts. Unknown operands and malformed
+widths supply no fact. The native MSVC input owner also checks chain
+observations in `nonlocal_finally_reenter` across `/Od`/`/O2`, `/GS-`/`/GS` and
+raw/optimized projection. The focused Windows EH job runs the complete native
+input owner with its verified MSVC images. Its exact source state does not discharge the separate
+CRT guard retirement obligation; native reconstruction remains rejected while
+that proof is incomplete.
+
 The parameter case reads the real caller argument in both the resumed parent
 and its filter, including the caller-frame slot introduced during outlining.
 The callback cases resume from ordinary finally calls and runtime unwind
@@ -6992,7 +7015,7 @@ range must retain separate owners; a damaged prefix supplies no new entry.
 
 `SafeSEHReference.*` checks immutable SafeSEH membership, malformed or ambiguous storage, relocations, foreign architectures/formats and declaration order across shards. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` uses `NEVERD_NONLOCAL_FINALLY_INPUTS` to test 32 LLVM combinations of the native MSVC x86/x64 O0/O2 and GS fixtures with source optimization enabled and disabled. It verifies LLVM and resolved call signatures while requiring unsupported x86 native EH reconstruction to remain rejected. The focused Windows EH job downloads the native fixture artifact and runs this matrix; without the input directory the test is explicitly skipped.
 
-`RegistrationPrologueSaves.*` and `PipelineOptNone.*` cover retained source memory, protected callback arguments/selectors and continued optimization of ordinary code. The native MSVC matrix positively checks the x86 `/Od` (`/GS-`, `/GS`) `nonlocal_finally_return` export, including independent COFF validation. `check_windows_finally_rewrite.py` compares raw/optimized IR through both patch modes at two forced bases: 24 observer executions, 1536 calls, chain/stack guards and a negative control. Its header-only EXE-to-DLL adapter requires a TLS-free input and retains original code; an outer SEH observer supplies exception search. Other MSVC profiles remain analysis/refusal coverage.
+`RegistrationPrologueSaves.*` and `PipelineOptNone.*` cover retained source memory, protected callback arguments/selectors and continued optimization of ordinary code. The native MSVC matrix checks the x86 `/Od` and `/O2` (`/GS-`, `/GS`) `nonlocal_finally_return` and `nonlocal_finally_goto` exports, including independent COFF validation. `check_windows_finally_rewrite.py --form return` and `--form goto` compare raw/optimized IR through both patch modes at two forced bases, with chain/stack guards and a negative control. The header-only EXE-to-DLL adapter requires a TLS-free input and retains original code; an outer SEH observer supplies exception search. This does not establish support for partial local-unwind bounds or reentry inside active enclosing scopes.
 
 `RegistrationEH4Wrapper.*` covers both bases, mutable/immutable runtime data, MXCSR branches, every-path definitions, caller-frame isolation, overlapping instructions/storage and exact PE relocations. The two MSVC profiles each include an independent negative control.
 
@@ -7082,6 +7105,18 @@ arm that resumes at a `nop` without a jump, and
 `X86_64_PipelineE2E.DecompileC_MinGWStartupSEHWithX87Callee` decompiles
 MinGW-w64-shaped startup code (`test_mingw_startup_seh.s`) whose guarded callee
 resets the x87 state.
+`COFFExceptionIR.HighCEmptyExceptArmResumingAfterItsTryPrintsNoJump` prints
+MSVC's nested -O0 levels with empty arms, and
+`HighCLeftOutTryTailKeepsTheLabelAJumpLandsOn` keeps the label that switch
+cases leave a try body for. `HighCSEHFilterIsNamedAsTheFunctionListNamesIt`
+names a filter by its function symbol over a `.text` section symbol, and by
+an export. `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
+`unittests/loader/fixtures/mingw_sections.exe` (its Makefile rebuilds it with
+MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its
+`.file` record is dropped, and a static function's own record names it.
+`HighControlFlowSemantics.SlotCallGoesThroughThePointerItHolds` calls through
+MinGW's `__imp_X` variables, which hold the image's own code, relocated or in
+a fixed image, rather than naming an import by their spelling.
 Malformed unwind/prologue and converted-SP checks run with source projection
 enabled too. `WindowsEHModesCorpus.DecompileMatrixFailsClosedWithAuditableExceptionMetadata`
 runs the original eleven-case matrix, including the complete x64 xcpt4 image.
@@ -7735,8 +7770,8 @@ checks actual reservation charging and mapping/protection refusal.
 original three-module C workload for all five profiles with classic and chained
 fixups. It checks shared dependencies, duplicate export spellings, relocated data,
 zero-only and initialized TLS, live template mutation and fresh repeated runs.
-The mandatory native inventory now has 100 methods per matching profile, or
-300 matching ARM64 identities; the separate common native catalogue remains 82.
+The mandatory native inventory now has 101 methods per matching profile, or
+303 matching ARM64 identities; the separate common native catalogue remains 82.
 Unavailable transports remain explicit skips. `DarwinNative.StartupDylibsAndTLSMatchOriginalNativeImages`
 compares a system-linked executable and its original libraries with real macOS
 execution. Independent O0/O1/O2 classic/chained controls complement that test.
@@ -7748,6 +7783,27 @@ same explicit catalogue and reports through C and CLI. With
 Run these alongside DarwinImage, linking, memory, existing libSystem calls,
 raw startup and shared process/API regressions before publishing. Guest deadlines
 and event limits are unchanged; native Intel and physical iOS need other hosts.
+
+### Imported Darwin data and TLS pointer offsets
+
+`DarwinAddendFixtures.cmake` builds the original SDK-free C/assembler alias
+workload for all five platform/ISA cells with classic/chained fixups. The +8
+array reference, -4 tail reference and initialized volatile TLS pointer share
+provider storage; the TLS pointer remains changed at exit to check fresh state.
+`DarwinDylibAddends.*` checks original format facts, signed extremes, main-image
+and runtime targets, declared-span versus page padding, and one-byte pointer
+membership. `DarwinDylib.OrdinaryAddendsKeepProviderChoiceWithRepeatedExportSpellings`
+checks ordinal ownership; `NonzeroTLVDescriptorAndLibSystemAddendsRemainExplicitlyRefused`
+retains the exact-entry boundaries.
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` is required on each matching
+native profile. `DarwinNative.StartupDylibAddendsAndTLSTemplatesMatchOriginalImages`
+compares both system-linked formats with original macOS execution; independent
+O0/O1/O2 controls complement it. `DylibAddendsAndTLSPointersKeepIdentityAcrossCAndCLI`
+and the genuine Python `test_darwin_dylib_addends_initialize_data_and_tls_pointers`
+repeat all five profiles. Unavailable hardware remains a skip, with no native
+Intel or physical iOS claim. Common native cases remain 82; required methods
+are 101 per profile, or 303 matching ARM64 identities.
 
 ### Imported Darwin memory calls
 
@@ -7788,4 +7844,16 @@ integration exercises the same report through the public C SDK.
 SVC result returns a recoverable emission error. Unused results retain the
 side-effecting statement without acquiring a Linux syscall contract.
 
+`RegistrationSEHScalarSpill.*` checks exact block-local runtime DWORD spills and rejects changed widths, overlapping stores, unknown effects, duplicate definitions and exhausted proof budgets. `RegistrationLocalUnwindNative.SavedStackReadsBindTheExactLoadAndCallback` separates ordinary source preflight from committed volatile reads. `check_windows_finally_rewrite.py --form goto` checks all four MSVC profiles through raw/optimized LLVM and both patch modes at two bases; the external observer verifies four execution paths, chain restoration, stack guards and a changed-finally negative control.
+
 `KernelDevicePointer.*` checks retained references, overlapping outputs, failed and informational opens, caller/APC restoration across pending CREATE and CLEANUP, argument widths, sharing, output-fault store order, admission and unload. The original and genuine WDK filesystem fixture adds immediate, worker-completed CREATE, worker-completed CLEANUP and unload-held pointer modes, including dynamic lookup. `KernelFileSystemExecution.*OpensExistingFiles` runs both scheduling modes, contracts and image bases; unavailable transports remain explicit skips.
+
+`KernelMDLUserMapping.ProcessProbe*` checks carrier widths, operation normalization, IRQL, live-process admission, thread identity during probing, nested restoration, retry after faults and attachment/restoration shortages. The genuine WDK user-mapping fixture executes static and dynamic calls, a real exception handler after detachment, same-process calls while attached, shared physical pages and complete lock release. Original wrapper/termination-funclet probes establish control flow across explicitly injected helper boundaries, not whole-kernel behavior.
+
+`KernelObjects.FilterVersion*` checks exact arity, caller-independent results and the pageable IRQL boundary. Original and genuine WDK CRT fixtures call the query through static imports and dynamic lookup in entry, worker and unload, with entry at APC_LEVEL. Original two-instruction probes verify the full return carrier and lack of data-memory effects without injected helpers.
+
+`KernelPhysicalRAM.AddressQueries*` and `KernelMDLUserMapping.PhysicalQuery*` cover aliases, address-space identity, VA reuse, exact bounds, full-width PFNs, IRQL, page locks and revoked mappings. The genuine WDK user-mapping fixture compares static/dynamic `MmGetPhysicalAddress` calls with MDL PFNs across read-only user views, DPC-level system views and rebinding while an earlier locked alias survives.
+
+`KernelMDLUserMapping.PrimaryQuery*` covers exact allocation bytes, adjacent owners on one page, full-width addresses, IRQL, retirement, aliases, replaced mappings, read protection and unsupported primary projections. The genuine WDK fixture exercises static and dynamic `MmGetVirtualForPhysical`, including a DPC-level system view and rebinding a user VA while an earlier locked alias survives.
+
+`DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*` checks activation, retirement, nested context restoration, full-width bounds, IRQL, process attachment, output overlap and high-before-low fault ordering. The original/genuine WDK CRT fixture calls both stack queries statically and dynamically in entry, worker and unload, checks a local variable against the returned bounds, and queries limits again at DISPATCH_LEVEL.

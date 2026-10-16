@@ -1874,6 +1874,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
 
+### Décalages des imports dylib Darwin
+
+Les imports ordinaires forts de dylib admettent des ajouts signés en octets pour les pointeurs globaux et les modèles TLS. `DarwinImage` combine une seule fois adresse exportée, déplacement de la bibliothèque et ajout, vérifie les débordements et exige une adresse dans les segments originaux du fournisseur choisi. La validation du pointeur ne suppose aucune largeur d’accès. Les entrées libSystem, descripteurs TLV importés et liaisons différées exigent un ajout nul.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### Comparaison et échange dans le modèle raw séquentiel
 
 `SymExec` possède la sémantique des valeurs de `ATOMIC_CMPXCHG` raw admis : il capture l’adresse, les valeurs attendue, souhaitée et ancienne avant de publier la sortie, puis écrit une seule fois `ite(Old == Expected, Desired, Old)`. `SymState` gère les effets par octet, l’invalidation des alias et le budget de préservation de cette écriture. `InterpreterSpecialization` gère l’admission et la provenance : Old garde la provenance mémoire antérieure ; l’écriture conditionnelle réunit prudemment les provenances de Old, de la valeur attendue et de la valeur souhaitée, et invalide les faits de spills affines susceptibles de se chevaucher. Même un échec de comparaison exige de séparer toute l’étendue d’écriture des cellules de retour protégées. L’opération atomique, l’ordre et les occurrences restent dans le résidu ; un refus ne publie aucun CFG résiduel partiel.
@@ -1930,3 +1936,13 @@ Les alias réutilisent les propriétaires existants des threads/processus et des
 `queryFileDevice` dans `KernelModelFileRequests` centralise la validation de l’identité du fichier, de son en-tête, du montage et de la topologie. La requête de base renvoie le périphérique possédé par le fichier ; la requête associée vérifie aussi le routage par extension et choisit le sommet attaché. Les deux résultats sont empruntés.
 
 `KernelModelFileCreate` gère cette ouverture dans le `FileOperation` existant. Résolution des noms, paquets CREATE et libération finale partagent le propriétaire des ouvertures ordinaires. Le gestionnaire d’objets acquiert la référence via le handle interne, `queryFileDevice` fournit le périphérique associé et la continuation de fermeture existante exécute CLEANUP. La région critique du thread initial est libérée seulement après cette continuation. Des sorties superposées ne remplacent pas l’objet référencé interne.
+
+`KernelModelIO` possède le wrapper de sonde de processus et la durée de vie de l’attachement privé. Il réutilise le changement de vue partagé et la sonde MDL ordinaire. Aucun stockage APC invité fictif n’est créé et un jeton public nul ne peut détacher cet état. Le propriétaire existant conserve admission et imbrication. L’exception atteint l’invité seulement après restauration réussie ; les erreurs de restauration restent des échecs du modèle.
+
+`KernelObjectAPIs.def` possède identité, arité, valeur et plafond IRQL de cette requête fixe. Aucun registre de callbacks ni appel au système hôte n’est ajouté.
+
+`KernelPhysicalMemory::resolveAddress` associe le `MemoryView` courant aux tranches exactes des allocations conservées et aux identités de pages existantes, y compris les alias. `KernelModel` valide séparément lecture, processus et résidence. La requête ne crée ni identité ni verrou de page ; le remplissage encore mappé ne réactive pas les octets libérés.
+
+`KernelModel::queryPrimaryVirtualAddress` déduit la VA principale des enregistrements non paginés actifs `PoolAllocation` et de `KernelPhysicalMemory::describe`, puis la valide par la requête directe. Il n’ajoute ni registre inverse d’alias, ni identité physique, ni verrou de page ; une adresse de stockage générique ne prouve pas un mapping principal.
+
+`activateStack` et `retireStack` possèdent `ExecutionStacks` ; les requêtes lient ses limites à l’identité courante `ExecutionThreadKeys`. Une réactivation garde l’étendue exacte ; chevauchement actif et taille de retrait différente sont refusés avant mutation. Les exécutions imbriquées d’un même thread gardent des limites distinctes. Ces requêtes restent opaques pour la reconstruction native après dépaquetage.

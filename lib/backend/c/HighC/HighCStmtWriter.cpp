@@ -1422,33 +1422,13 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     // runs on normal exit too, but an out-of-line one prints an empty body
     // (its normal-exit call is already explicit code), so each piece runs
     // nothing extra.
-    if (Stmt.EHIsReducible && Stmt.Body.size() >= 2 &&
-        !Stmt.EHClauses.empty() &&
-        std::all_of(Stmt.EHClauses.begin(), Stmt.EHClauses.end(),
-                    [](const HighEHClause &Clause) {
-                      return Clause.Kind == HighEHClauseKind::SEHExcept ||
-                             Clause.Kind == HighEHClauseKind::SEHFinally;
-                    }) &&
-        std::all_of(Stmt.EHClauseBodies.begin(), Stmt.EHClauseBodies.end(),
-                    [](const auto &Body) { return Body.empty(); })) {
-      std::map<va_t, unsigned> Inner;
-      walkStmts(Stmt.Body, [&](const HighStmt &Child) {
-        if (Child.Kind == StmtKind::Goto)
-          ++Inner[Child.GotoTarget];
-      });
-      for (size_t K = 1; K < Stmt.Body.size(); ++K) {
-        const va_t Addr = Stmt.Body[K].Addr;
-        auto Uses = GotoTargetUses.find(Addr);
-        if (Addr == 0 || Addr == InvalidVA || Uses == GotoTargetUses.end() ||
-            Uses->second <= Inner[Addr])
-          continue;
-        std::vector<HighStmt> Split(2, Stmt);
-        Split[0].Body.assign(Stmt.Body.begin(), Stmt.Body.begin() + K);
-        Split[1].Body.assign(Stmt.Body.begin() + K, Stmt.Body.end());
-        Split[1].Addr = Addr;
-        writeStmts(Split, Indent);
-        return;
-      }
+    if (const std::optional<size_t> K = sehTrySplitPoint(Stmt)) {
+      std::vector<HighStmt> Split(2, Stmt);
+      Split[0].Body.assign(Stmt.Body.begin(), Stmt.Body.begin() + *K);
+      Split[1].Body.assign(Stmt.Body.begin() + *K, Stmt.Body.end());
+      Split[1].Addr = Stmt.Body[*K].Addr;
+      writeStmts(Split, Indent);
+      return;
     }
     if (!Stmt.EHIsReducible || Stmt.EHClauses.size() != 1 ||
         Stmt.EHClauseBodies.size() != 1) {
@@ -1485,20 +1465,23 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       } else if (Clause.FilterValue) {
         OS << sehFilterValueText(*Clause.FilterValue);
       } else {
+        // The filter is named as the function list and a call to it name
+        // it: its definition here, else the image's name for the function
+        // there (an export, then its best symbol rather than a section's
+        // own), else debug information.
         std::string FilterName;
         if (auto It = DefinedFunctionsByAddress.find(Clause.FilterOrActionVA);
             It != DefinedFunctionsByAddress.end() && It->second)
           FilterName = functionIdentifier(*It->second);
-        else if (Dbg) {
+        if (FilterName.empty() && Opts.Image) {
+          const std::string Listed =
+              Opts.Image->getFunctionNameAt(Clause.FilterOrActionVA);
+          if (!llvm::StringRef(Listed).starts_with(kAutoFuncPrefix))
+            FilterName = functionIdentifier(Listed);
+        }
+        if (FilterName.empty() && Dbg) {
           if (auto Sym = Dbg->resolveFunction(Clause.FilterOrActionVA);
               Sym && !Sym->Name.empty())
-            FilterName = functionIdentifier(Sym->Name);
-        }
-        if (FilterName.empty() && Opts.Image) {
-          if (const Symbol *Sym =
-                  Opts.Image->findSymbolAt(Clause.FilterOrActionVA);
-              Sym && !Sym->Name.empty() &&
-              llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0)
             FilterName = functionIdentifier(Sym->Name);
         }
         if (FilterName.empty() && Clause.FilterOrActionVA)
@@ -1517,14 +1500,19 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         writeTryBody(Stmt.EHClauseBodies.front(), Indent + 1);
         InEHClauseBody = SavedHandler;
       }
-      if (Stmt.EHClauseBodies.front().empty()) {
-        emitIndent(Indent + 1);
-        if (CurrentFunc && CurrentFunc->ExceptionMetadata &&
-            CurrentFunc->ExceptionMetadata->ownsCode(Clause.HandlerVA))
-          OS << "goto L_" << llvm::utohexstr(Clause.HandlerVA) << ";\n";
-        else
+      // An arm whose handler is where the try falls through ends there, and
+      // so does a copy of one: its handler has no label of its own.
+      if (Stmt.EHClauseBodies.front().empty() &&
+          !FallthroughExceptArms.count(&Stmt)) {
+        if (!CurrentFunc || !CurrentFunc->ExceptionMetadata ||
+            !CurrentFunc->ExceptionMetadata->ownsCode(Clause.HandlerVA)) {
+          emitIndent(Indent + 1);
           OS << "/* handler @ 0x" << llvm::utohexstr(Clause.HandlerVA)
              << " */\n";
+        } else if (GotoTargets.count(Clause.HandlerVA)) {
+          emitIndent(Indent + 1);
+          OS << "goto L_" << llvm::utohexstr(Clause.HandlerVA) << ";\n";
+        }
       }
     }
     emitIndent(Indent);
@@ -2336,12 +2324,36 @@ void HighCWriter::writeTryBodyUnisolated(const std::vector<HighStmt> &Stmts,
                                          int Indent) {
   // Jumping out of __try is legal, so only a goto that lands where the try
   // falls through anyway is left out.
-  writeStmts(
-      Stmts, Indent,
-      printedTryBodyEnd(
-          [this](const HighStmt &Stmt) { return stmtHiddenFromC(Stmt); },
-          [this](const HighStmt &Exit) { return isFallthroughTryExit(Exit); },
-          Stmts));
+  const size_t End = printedTryBodyEnd(
+      [this](const HighStmt &Stmt) { return stmtHiddenFromC(Stmt); },
+      [this](const HighStmt &Exit) { return isFallthroughTryExit(Exit); },
+      Stmts);
+  writeStmts(Stmts, Indent, End);
+  // What is left out still carries the labels printed gotos land on, such as
+  // an empty anchor where a switch's cases leave: control there runs off the
+  // end of the body.
+  std::function<void(const HighStmt &)> Label = [&](const HighStmt &S) {
+    if (S.Addr && S.Addr != InvalidVA && GotoTargets.count(S.Addr) &&
+        EmittedLabels.insert(S.Addr).second) {
+      OS << "L_" << llvm::utohexstr(S.Addr) << ":";
+      if (LandingPadLabels.count(S.Addr))
+        OS << " /* landing pad: the unwinder enters here */";
+      OS << "\n";
+      emitIndent(Indent);
+      OS << ";\n";
+    }
+    for (const auto *List : {&S.Body, &S.ElseBody, &S.DefaultBody})
+      for (const HighStmt &Child : *List)
+        Label(Child);
+    for (const auto &Case : S.Cases)
+      for (const HighStmt &Child : Case.Body)
+        Label(Child);
+    for (const auto &ClauseBody : S.EHClauseBodies)
+      for (const HighStmt &Child : ClauseBody)
+        Label(Child);
+  };
+  for (size_t I = End; I < Stmts.size(); ++I)
+    Label(Stmts[I]);
 }
 
 bool HighCWriter::isLabelAddress(va_t Addr) const {
@@ -2401,6 +2413,74 @@ HighCWriter::tryLeaveTargets(const std::vector<HighStmt> &Stmts,
     return Earlier.count(Addr) || EmittedLabels.count(Addr);
   });
   return Targets;
+}
+
+std::optional<size_t>
+HighCWriter::sehTrySplitPoint(const HighStmt &Stmt) const {
+  if (!Stmt.EHIsReducible || Stmt.Body.size() < 2 || Stmt.EHClauses.empty() ||
+      !std::all_of(Stmt.EHClauses.begin(), Stmt.EHClauses.end(),
+                   [](const HighEHClause &Clause) {
+                     return Clause.Kind == HighEHClauseKind::SEHExcept ||
+                            Clause.Kind == HighEHClauseKind::SEHFinally;
+                   }) ||
+      !std::all_of(Stmt.EHClauseBodies.begin(), Stmt.EHClauseBodies.end(),
+                   [](const auto &Body) { return Body.empty(); }))
+    return std::nullopt;
+  std::map<va_t, unsigned> Inner;
+  walkStmts(Stmt.Body, [&](const HighStmt &Child) {
+    if (Child.Kind == StmtKind::Goto)
+      ++Inner[Child.GotoTarget];
+  });
+  for (size_t K = 1; K < Stmt.Body.size(); ++K) {
+    const va_t Addr = Stmt.Body[K].Addr;
+    auto Uses = GotoTargetUses.find(Addr);
+    if (Addr == 0 || Addr == InvalidVA || Uses == GotoTargetUses.end() ||
+        Uses->second <= Inner[Addr])
+      continue;
+    return K;
+  }
+  return std::nullopt;
+}
+
+void HighCWriter::decideExceptArms(const HighFunc &Func) {
+  FallthroughExceptArms.clear();
+  if (!Func.ExceptionMetadata)
+    return;
+  const ExceptionFunction &EH = *Func.ExceptionMetadata;
+  // As decideTryExits walks: what each statement falls through to, past the
+  // end of its list to what follows that list.
+  std::function<void(const std::vector<HighStmt> &, const std::vector<va_t> &)>
+      Walk = [&](const std::vector<HighStmt> &Stmts,
+                 const std::vector<va_t> &Continuation) {
+        for (size_t I = 0; I < Stmts.size(); ++I) {
+          const HighStmt &S = Stmts[I];
+          const std::vector<va_t> Next =
+              fallthroughAddresses(Stmts, I, Continuation);
+          if (hasFallthroughExceptClause(S) &&
+              S.EHClauseBodies.front().empty() &&
+              EH.ownsCode(S.EHClauses.front().HandlerVA)) {
+            // A try printed in pieces falls into its next piece first.
+            const va_t Handler = S.EHClauses.front().HandlerVA;
+            if (!sehTrySplitPoint(S) && llvm::is_contained(Next, Handler))
+              FallthroughExceptArms.insert(&S);
+            else
+              GotoTargets.insert(Handler);
+          }
+          std::vector<va_t> BodyEnd = Next;
+          if (S.Kind == StmtKind::DoWhile || S.Kind == StmtKind::For)
+            BodyEnd.clear();
+          else if (S.Kind == StmtKind::While)
+            BodyEnd.assign(S.LoopHeaderAddr ? 1 : 0, S.LoopHeaderAddr);
+          Walk(S.Body, BodyEnd);
+          Walk(S.ElseBody, Next);
+          for (const auto &Case : S.Cases)
+            Walk(Case.Body, Next);
+          Walk(S.DefaultBody, Next);
+          for (const auto &ClauseBody : S.EHClauseBodies)
+            Walk(ClauseBody, Next);
+        }
+      };
+  Walk(Func.Body, {});
 }
 
 void HighCWriter::decideTryExits(const std::vector<HighStmt> &Stmts,

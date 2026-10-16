@@ -39,6 +39,39 @@ def observation(values, status=0):
 
 
 class FinallyImageTests(unittest.TestCase):
+    def test_goto_requires_all_paths_guards_and_negative_control(self):
+        values = (123457, 12357, 13567, 1357, 0, 1, 1, 1, 128, 0x18000000)
+        self.assertEqual(image.observe(observation(values), values[-1], form="goto"), values)
+        for index in range(len(values)):
+            changed = list(values)
+            changed[index] += 1
+            with self.subTest(index=index), self.assertRaises(ValueError):
+                image.observe(observation(changed), values[-1], form="goto")
+        control = (128457, 12857, 18567, 1857, 0, 1, 1, 0, 128, values[-1])
+        self.assertEqual(image.observe(observation(control, 1), values[-1], True, "goto"), control)
+        for form, negative, result in (("goto", False, observation(control, 1)),
+                                       ("goto", True, observation(values)),
+                                       ("return", False, observation(values)),
+                                       ("reenter", False, observation(values)),
+                                       ("goto", False, observation(values, 1))):
+            with self.subTest(form=form, negative=negative), self.assertRaises(ValueError):
+                image.observe(result, values[-1], negative, form)
+
+    def test_goto_keeps_its_selected_export_identity(self):
+        source = executable()
+        export = b"nonlocal_finally_goto"
+        source[0x660:0x680] = (export + b"\0").ljust(32, b"\0")
+        adapted = image.as_library(source, export)
+        self.assertEqual(image.PE32(adapted).entry(export), 0x1000)
+        with self.assertRaises(ValueError):
+            image.as_library(source)
+        product = bytearray(source)
+        product[0x400] = 0xe9
+        struct.pack_into("<i", product, 0x401, 0x3000 - 0x1005)
+        self.assertEqual(image.generated_entry(source, product, export), 0x3000)
+        with self.assertRaises(ValueError):
+            image.generated_entry(source, product)
+
     def test_library_adapter_changes_only_documented_loader_fields(self):
         source = executable()
         adapted = image.as_library(source)

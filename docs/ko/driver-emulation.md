@@ -768,3 +768,13 @@ ASCII 이름, 네임스페이스 링크, RootDirectory로 유지되는 디렉터
 [`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject)는 살아 있는 파일의 기본 장치를 빌리며 연결 스택 탐색, 참조 증가, 파일 확장 조회를 하지 않습니다. 이 프로필은 소유된 비마운트 경로와 IRQL <= DISPATCH_LEVEL로 제한되며 마운트된 VPB나 잘못된 소유권／토폴로지는 명시적으로 중단합니다. Microsoft가 시스템용으로 예약한 함수이므로 이 IRQL 상한은 공개 Windows 계약이 아닌 모델 정책입니다.
 
 [`IoGetDeviceObjectPointer`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-iogetdeviceobjectpointer)는 특수 커널 APC가 활성화된 PASSIVE_LEVEL에서 선언된 기존 파일을 엽니다. 대소문자를 구분하지 않는 이름, 내부 커널 핸들, 읽기/쓰기 공유와 비동기 비디렉터리 열기를 사용합니다. 반환된 파일 참조는 장치를 유지하며 호출자가 `ObfDereferenceObject`로 해제합니다. 출력이 겹쳐도 파일 다음 장치 순으로 씁니다. CREATE와 내부 핸들 CLEANUP은 대기할 수 있으며 원래 스레드는 둘 다 끝날 때까지 임계 영역을 유지합니다. 파일 경로 없는 장치/볼륨 열기, 마운트된 VPB, 파일 확장 경로와 알 수 없는 공급자는 지원하지 않습니다.
+
+`MmProbeAndLockProcessPages`는 IRQL <= APC_LEVEL에서 기존 MDL 검사를 사용합니다. 모드는 하위 8비트, 작업은 하위 32비트를 사용하며 0은 읽기, 나머지는 쓰기입니다. 같은 프로세스 호출은 연결이 필요 없습니다. 다른 프로세스 호출은 기존 작업 항목/시스템 스레드 제한을 유지하며 살아 있는 요청을 가진 알려진 사용자 프로세스가 필요합니다. 내부 연결은 성공 또는 검사 예외 후 원래 프로세스를 복원하고 스레드 식별과 이전 모드를 유지합니다. 복원 실패는 명시적으로 중단됩니다. 전경에서 다른 프로세스로 연결하거나 임의의 프로세스 개체를 사용하는 것은 지원하지 않습니다. WDK는 이 루틴을 시스템용으로 예약합니다.
+
+`ObGetFilterVersion`은 인수나 개체 참조 없이 고정 프로필의 개체 콜백 등록 ABI 버전 `0x100`을 반환합니다. 이 페이징 가능한 조회는 IRQL <= APC_LEVEL로 제한됩니다. 버전 조회만 제공하며 콜백 등록과 전달은 지원하지 않습니다.
+
+`MmGetPhysicalAddress`는 현재 매핑에서 읽을 수 있는 활성 비페이징 풀, 독립 물리 페이지 및 고정 RAM을 조회합니다. 사용자 뷰에는 기존 프로세스 및 IRQL 제한이 적용됩니다. 기존 전체 폭 물리 식별자와 바이트 오프셋을 반환하며, 알 수 없는 상주 상태, 패딩, 해제된 뷰와 바이트는 명시적으로 거부합니다. DMA 주소는 제공하지 않습니다.
+
+`MmGetVirtualForPhysical`은 활성 비페이징 풀 할당의 정확한 바이트에 대해서만 할당자가 소유한 기본 주소를 반환합니다. 현재 기본 매핑은 읽을 수 있어야 하며 조회한 물리 식별자와 일치해야 합니다. 별칭 재매핑은 소유자를 바꾸지 않습니다. 이 프로필은 페이징 풀, 독립 물리 페이지 및 내부 저장소의 기본 매핑을 선언하지 않으므로 명시적으로 거부합니다. 제한된 비페이징 조회는 모든 IRQL에서 허용됩니다.
+
+`IoGetInitialStack`(APC_LEVEL 이하)과 `IoGetStackLimits`(모든 IRQL)는 현재 활성 세션 스택을 조회합니다. 이 프로필의 초기 기준 주소는 상한입니다. 전경, 작업자 및 중첩 실행 스택은 일시 중단과 프로세스 연결 중에도 각 범위를 유지합니다. High 다음 Low를 쓰며 후속 접근 실패 전의 쓰기를 유지합니다. 겹치는 출력, 알 수 없거나 해제된 스택, 모델링되지 않은 스택 확장은 명시적으로 거부합니다.

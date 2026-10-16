@@ -71,6 +71,7 @@ EXPORTS
   MmMapLockedPages
   MmUnmapLockedPages
   MmProbeAndLockPages
+  MmProbeAndLockProcessPages
   MmUnlockPages
   IoAllocateMdl
   IoFreeMdl
@@ -82,6 +83,8 @@ EXPORTS
   vDbgPrintExWithPrefix
   MmGetSystemRoutineAddress
   MmIsAddressValid
+  MmGetPhysicalAddress
+  MmGetVirtualForPhysical
   KeRegisterBugCheckReasonCallback
   KeDeregisterBugCheckReasonCallback
   RtlCopyUnicodeString
@@ -97,6 +100,7 @@ EXPORTS
   ObReferenceObjectByPointer
   ObOpenObjectByPointer
   ObGetObjectType
+  ObGetFilterVersion
   PsLookupProcessByProcessId
   PsLookupThreadByThreadId
   PsGetThreadProcess
@@ -122,6 +126,8 @@ EXPORTS
   IoGetRelatedDeviceObject
   IoGetBaseFileSystemDeviceObject
   IoGetDeviceObjectPointer
+  IoGetInitialStack
+  IoGetStackLimits
   KeStackAttachProcess
   KeUnstackDetachProcess
   RtlInitAnsiString

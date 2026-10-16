@@ -42,6 +42,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 
 namespace neverd::sdk {
 
@@ -78,12 +79,15 @@ public:
   /// functions at those addresses, which read against \p Types.  \p Image,
   /// which outlives this too, states the names of its functions, if given;
   /// \p Headers are the header libraries joined to \p Types, which a
-  /// prototype names as its source.
-  LocalTypesDebugContext(const DebugContext &Inner,
-                         std::shared_ptr<const types::TypeLibrary> Types,
-                         std::map<va_t, std::string> Declarations = {},
-                         const BinaryImage *Image = nullptr,
-                         std::vector<types::HeaderLibrary> Headers = {});
+  /// prototype names as its source.  \p Recognized names the functions
+  /// signatures recognized by their bytes, which nothing else names.
+  LocalTypesDebugContext(
+      const DebugContext &Inner,
+      std::shared_ptr<const types::TypeLibrary> Types,
+      std::map<va_t, std::string> Declarations = {},
+      const BinaryImage *Image = nullptr,
+      std::vector<types::HeaderLibrary> Headers = {},
+      std::unordered_map<uint64_t, std::string> Recognized = {});
   /// Takes back the members it gave the debug information's records, so
   /// that the context made after a change to the library gives them anew.
   /// The records are the debug information's, which the session's calls,
@@ -93,9 +97,9 @@ public:
   /// The inner function, its return type and parameters those of the
   /// user's declaration at its entry, else, where the inner context gives
   /// neither, the library's prototype of the name the function at the entry
-  /// is displayed under: the one the image states, else the inner one.  At
-  /// an import's slot or stub, the prototype of the routine imported, under
-  /// its name.
+  /// is displayed under: the one the image states, else the inner one, else
+  /// the one signatures recognized it by.  At an import's slot or stub, the
+  /// prototype of the routine imported, under its name.
   std::optional<FunctionSym> resolveFunction(va_t Addr) const override;
 
   std::optional<std::string> functionName(va_t Addr) const override {
@@ -223,6 +227,7 @@ private:
   std::map<va_t, std::string> Declarations;
   const BinaryImage *Image;
   std::vector<types::HeaderLibrary> Headers;
+  std::unordered_map<uint64_t, std::string> Recognized;
   mutable std::mutex Mutex;
   mutable llvm::StringMap<std::optional<FunctionSym>> Signatures;
   mutable std::map<va_t, std::vector<std::string>> StatedNames;

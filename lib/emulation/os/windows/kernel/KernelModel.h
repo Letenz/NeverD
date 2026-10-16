@@ -628,6 +628,12 @@ private:
   GuestCallToken CurrentGuestCall;
   uint64_t CurrentThreadKey = 0;
   std::map<uint64_t, uint64_t> ExecutionThreadKeys;
+  // DriverSession activates the actual extent before entering an execution.
+  // Nested stacks have independent bounds even when they share a thread key.
+  std::map<uint64_t, uint64_t> ExecutionStacks;
+  llvm::Expected<std::pair<uint64_t, uint64_t>> currentStackBounds() const;
+  llvm::Expected<uint64_t> queryInitialStack() const;
+  llvm::Expected<uint64_t> queryStackLimits(uint64_t Low, uint64_t High);
   struct ExecutionProcessContext {
     uint32_t ProcessID, CreatingProcessID;
     uint8_t PreviousMode;
@@ -684,6 +690,7 @@ private:
     uint64_t ApcState;
     uint32_t PreviousProcessID;
     bool PreviousUserContext;
+    bool Private = false;
   };
   std::vector<ProcessAttachment> ProcessAttachments;
   bool hasProcessAttachment(uint64_t Execution) const;
@@ -865,8 +872,11 @@ private:
   llvm::Expected<uint64_t> processObject(uint32_t ProcessID);
   llvm::Expected<uint64_t> requestorProcess(uint64_t IRP);
   llvm::Expected<uint64_t> currentProcess();
-  llvm::Error stackAttachProcess(uint64_t Process, uint64_t ApcState);
-  llvm::Error unstackDetachProcess(uint64_t ApcState);
+  llvm::Error stackAttachProcess(uint64_t Process, uint64_t ApcState,
+                                 bool Private = false);
+  llvm::Error unstackDetachProcess(uint64_t ApcState, bool Private = false);
+  llvm::Error probeAndLockProcessPages(uint64_t MDL, uint64_t Process,
+                                       uint8_t Mode, uint32_t Operation);
   llvm::Expected<uint64_t> allocateUserBuffer(uint32_t Size,
                                               llvm::ArrayRef<uint8_t> Initial,
                                               DriverUserPageAccess Access,
@@ -1760,6 +1770,9 @@ private:
                                bool DispatcherStorage = false) const;
   llvm::Expected<uint64_t> allocate(uint64_t Size, uint64_t Alignment = 16);
   llvm::Expected<uint64_t> isResidentKernelAddress(uint64_t Address) const;
+  llvm::Expected<uint64_t> queryPhysicalAddress(uint64_t Address) const;
+  llvm::Expected<uint64_t>
+  queryPrimaryVirtualAddress(uint64_t PhysicalAddress) const;
   llvm::Expected<uint64_t> allocatePhysicalBuffer(uint64_t AllocationSize,
                                                   uint64_t Alignment,
                                                   uint64_t DataOffset,

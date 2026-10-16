@@ -38,6 +38,8 @@ public:
     int sourceLine = 0;
     QString block;
     bool blockFolded = false;
+    /// The line defines a goto label, mapped to the block it labels.
+    bool label = false;
   };
 
   CodeText(Session &session, QWidget *parent = nullptr);
@@ -128,6 +130,10 @@ public:
   std::optional<int> declarationLine(const QString &name) const;
   /// Show the declaration of \p name, expanding the fold that holds it.
   bool goToDeclaration(const QString &name);
+  /// The block address the goto label \p name stands for, with the source
+  /// line that defines it, when the shown code defines that label.
+  std::optional<std::pair<Address, int>>
+  addressLabel(const QString &name) const;
   /// The image address the global name at a line and column of LLVM IR
   /// stands for there, as the engine resolved it: a function's entry, or the
   /// byte a constant offset from an image mirror reaches.
@@ -176,6 +182,9 @@ signals:
   void nameActivated(const QString &name);
   /// A global the code declares at an image address was double-clicked.
   void objectActivated(neverd::gui::Address address);
+  /// A goto label was double-clicked: \p address is the block it labels,
+  /// where the disassembly goes while the code goes to the label.
+  void labelActivated(neverd::gui::Address address);
   void statusChanged();
   void foldingChanged();
   void contextMenuRequested(const QPoint &globalPosition);
@@ -209,6 +218,11 @@ private:
   /// for, or else to what the binary names so; any other name goes to the
   /// line that defines it.
   void activateLLVMToken();
+  /// Whether goto labels name their blocks' addresses, as HighC writes them.
+  bool labelsNameAddresses() const;
+  /// Show the definition of the label \p name at \p sourceLine, expanding
+  /// the fold that holds it, without moving the disassembly.
+  void goToLabel(const QString &name, int sourceLine, Address address);
   /// Display lines from the source, folded where the user asked.
   void rebuildLines(bool append = false);
   /// Position in the displayed text of a line and column.

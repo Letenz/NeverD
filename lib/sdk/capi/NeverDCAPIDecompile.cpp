@@ -1502,6 +1502,39 @@ static std::vector<FuncInfo> runFunctions(const PipelineRunner &R) {
   return Functions;
 }
 
+/// The local types of the session's input, over \p R's own image and debug
+/// information, when the session holds the file \p InputPath names, as the
+/// command line loads it first: the prototypes of the routines the program
+/// names and calls, the user's declarations and the records units define.
+/// Null where the session holds another file or has nothing to add.
+static std::unique_ptr<LocalTypesDebugContext>
+localTypesOf(Session *S, const char *InputPath, PipelineRunner &R,
+             const DebugContext &NoDebugInformation) {
+  if (!S || !S->Loaded || S->FilePath.empty())
+    return nullptr;
+  std::error_code Error;
+  if (!std::filesystem::equivalent(S->FilePath,
+                                   std::filesystem::u8path(InputPath), Error))
+    return nullptr;
+  std::map<va_t, std::string> Declarations = S->functionDeclarations();
+  // Types that do not read, as a PDB's may not, leave the output as the
+  // program's debug information alone makes it, the session's error kept.
+  const std::string LastError = S->LastError;
+  const types::TypeLibrary *Library = S->readLocalTypes();
+  S->LastError = LastError;
+  if (!Library ||
+      (!R.Dbg && Declarations.empty() && Library->prototypes().empty()))
+    return nullptr;
+  std::vector<types::HeaderLibrary> Headers;
+  for (const Session::JoinedHeaders &Joined : S->LocalTypeHeaders)
+    if (Joined.Error.empty())
+      Headers.push_back(Joined.Library);
+  return std::make_unique<LocalTypesDebugContext>(
+      R.Dbg ? *R.Dbg : NoDebugInformation,
+      std::make_shared<types::TypeLibrary>(*Library), std::move(Declarations),
+      &R.Img, std::move(Headers), S->SigDB.buildNameMap());
+}
+
 static const char *decompileAllImpl(neverd_session_t Sess,
                                     const char *InputPath, int UseLlvmRoute,
                                     neverd_output_language_t Language,
@@ -1514,6 +1547,13 @@ static const char *decompileAllImpl(neverd_session_t Sess,
       S->setError(Err);
     return nullptr;
   }
+  const NullDebugContext NoDebugInformation;
+  const std::unique_ptr<LocalTypesDebugContext> LocalTypes =
+      localTypesOf(S, InputPath, R, NoDebugInformation);
+  DebugContext *Debug = LocalTypes ? LocalTypes.get() : R.Dbg.get();
+  const auto RecordDefinitions = [&](const std::vector<TypeRef> &Records) {
+    return LocalTypes->definitions(Records);
+  };
 
   PipelineOptions Opts;
   Opts.NoOpt = NoOpt != 0;
@@ -1540,7 +1580,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
       }
     }
   }
-  if (!R.run(Opts, Err)) {
+  if (!R.run(Opts, Err, Debug)) {
     if (S)
       S->setError(Err);
     return nullptr;
@@ -1667,9 +1707,11 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     COpts.Format = R.Img.abiFormat();
     COpts.UserNames = S ? &S->Renames : nullptr;
     COpts.AccessWidths = AccessWidths ? &*AccessWidths : nullptr;
+    if (LocalTypes)
+      COpts.RecordDefinitions = RecordDefinitions;
     try {
       LLVMCEmitter Emitter;
-      Emitter.emit(*R.Result.LlvmModule, OS, COpts, R.Dbg.get(), &R.Img);
+      Emitter.emit(*R.Result.LlvmModule, OS, COpts, Debug, &R.Img);
     } catch (const std::exception &Error) {
       if (S)
         S->setError(emissionFailure(Error));
@@ -1686,9 +1728,11 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     COpts.StructuredExceptionSyntax = Dialect.has_value();
     if (Dialect)
       COpts.SourceNames = &Names;
+    if (LocalTypes)
+      COpts.RecordDefinitions = RecordDefinitions;
     try {
       HighCEmitter Emitter;
-      Emitter.emit(R.Result.HighFuncs, OS, COpts, R.Dbg.get());
+      Emitter.emit(R.Result.HighFuncs, OS, COpts, Debug);
     } catch (const std::exception &Error) {
       if (S)
         S->setError(emissionFailure(Error));

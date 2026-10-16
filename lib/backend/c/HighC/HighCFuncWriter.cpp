@@ -407,6 +407,7 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
     if (Stmt.Kind == StmtKind::Goto)
       ++GotoTargetUses[Stmt.GotoTarget];
   });
+  decideExceptArms(Func);
   // Handler labels first: a try body keeps a trailing goto that owns one.
   walkStmts(Func.Body, [&](const HighStmt &Stmt) {
     for (const HighEHClause &Clause : Stmt.EHClauses) {
@@ -429,12 +430,14 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
       if (Clause.Kind == HighEHClauseKind::SEHExcept &&
           Reachable(Clause.HandlerVA)) {
         // An attached `__except` body is already printed in-place.  A label
-        // is only required when HighC still has to `goto` the handler.
+        // is only required when HighC still has to `goto` the handler, which
+        // an arm resuming where its try falls through does not.
         const size_t Index = &Clause - Stmt.EHClauses.data();
         if (Index < Stmt.EHClauseBodies.size() &&
             !Stmt.EHClauseBodies[Index].empty())
           continue;
-        GotoTargets.insert(Clause.HandlerVA);
+        if (!FallthroughExceptArms.count(&Stmt))
+          GotoTargets.insert(Clause.HandlerVA);
       }
       // An Itanium landing pad is a block of this function, so the clause
       // comment can point at a real label instead of a bare address.
@@ -3186,6 +3189,10 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     return Hit;
   };
   std::map<const HighStmt *, Site> Sites;
+  // The sites in program order, as the walk meets them. Candidates and the
+  // per-name site lists follow it: a fold changes what later candidates see,
+  // so their order cannot be where the statements were allocated.
+  std::vector<const HighStmt *> SiteOrder;
   std::map<uint64_t, std::vector<const HighStmt *>> Linear;
   std::map<uint64_t, uint64_t> JoinAfterTry;
   std::map<uint64_t, uint64_t> RegionParent;
@@ -3246,6 +3253,7 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       Info.Cleanup = Cleanup;
       Info.Handler = Handler;
       Sites[&S] = Info;
+      SiteOrder.push_back(&S);
       Seq.push_back(&S);
       if (valueForwardSplitsRegion(S.Kind)) {
         const uint64_t BodyRegion = NextRegion++;
@@ -3421,7 +3429,8 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
   };
   std::vector<Candidate> Candidates;
   std::set<const HighStmt *> CandidateStmts;
-  for (const auto &[Stmt, Info] : Sites) {
+  for (const HighStmt *Stmt : SiteOrder) {
+    const Site &Info = Sites.at(Stmt);
     (void)Info;
     if (Analysis.DeadStmts.count(Stmt) || stmtHiddenFromC(*Stmt))
       continue;
@@ -3545,7 +3554,8 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
           if (Op)
             CountReads(*Op, Into);
       };
-  for (const auto &[Stmt, Info] : Sites) {
+  for (const HighStmt *Stmt : SiteOrder) {
+    const Site &Info = Sites.at(Stmt);
     (void)Info;
     SiteNames &Names = NamesAt[Stmt];
     const bool Assign = Stmt->Kind == StmtKind::Assign && Stmt->Dst;
@@ -4745,12 +4755,65 @@ TypeRef HighCWriter::emittedParamType(const HighFunc &Func,
 TypeRef HighCWriter::emittedParamTypeAt(const HighFunc &Func,
                                         size_t Position) const {
   const std::vector<size_t> Indices = emittedParamIndices(Func);
-  return Position < Indices.size() ? emittedParamType(Func, Indices[Position])
-                                   : nullptr;
+  if (Position < Indices.size())
+    return emittedParamType(Func, Indices[Position]);
+  const std::vector<size_t> Unread = unreadDeclaredParams(Func);
+  return Position - Indices.size() < Unread.size()
+             ? unreadDeclaredParamType(Func, Unread[Position - Indices.size()])
+             : nullptr;
 }
 
 size_t HighCWriter::emittedParamCount(const HighFunc &Func) const {
-  return emittedParamIndices(Func).size();
+  return emittedParamIndices(Func).size() + unreadDeclaredParams(Func).size();
+}
+
+std::vector<size_t>
+HighCWriter::unreadDeclaredParams(const HighFunc &Func) const {
+  const auto DebugFn = debugFunction(Dbg, Func.Entry);
+  if (!DebugFn || Func.SourceTypeHint || DebugFn->Params.empty() ||
+      ParamIndicesInProgress.count(&Func))
+    return {};
+  bindParams(Func);
+  if (!ParamsPlaced)
+    return {};
+  const uint16_t Word = pointerBytes(Opts.TheArch);
+  auto Integer = [&](const TypeRef &Type) {
+    return Type && Type->Size && Type->Size <= Word &&
+           (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr ||
+            (Type->Kind == NdTypeKind::Struct && Type->IsEnum));
+  };
+  int Last = -1;
+  for (const size_t PI : emittedParamIndices(Func)) {
+    const DebugParamBinding &B = ParamBindings[PI];
+    if (B.Result)
+      continue;
+    if (B.Index < 0 || !Integer(Func.Params[PI].Type))
+      return {};
+    Last = std::max(Last, B.Index);
+  }
+  std::vector<size_t> Unread;
+  for (size_t Index = static_cast<size_t>(Last + 1);
+       Index < DebugFn->Params.size(); ++Index) {
+    if (!Integer(DebugFn->Params[Index].second))
+      return {};
+    Unread.push_back(Index);
+  }
+  return Unread;
+}
+
+TypeRef HighCWriter::unreadDeclaredParamType(const HighFunc &Func,
+                                             size_t Index) const {
+  const auto DebugFn = debugFunction(Dbg, Func.Entry);
+  if (!DebugFn || Index >= DebugFn->Params.size())
+    return nullptr;
+  const TypeRef &Declared = DebugFn->Params[Index].second;
+  if (Declared)
+    Dbg->completeType(Declared);
+  if (TypeRef Display = cDisplayType(Declared);
+      Display && hasCValueLayout(Display))
+    return Display;
+  return NdType::makeInt(Declared ? Declared->Size : pointerBytes(Opts.TheArch),
+                         Declared && Declared->IsSigned);
 }
 
 std::vector<size_t>
@@ -6004,6 +6067,12 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       if (Indirect && MemberSret && !HighIRIncludesSret)
         emitParam(IndirectReturnPtr, IndirectReturnName);
     }
+    // The declared parameters the code never reads, which its callers pass.
+    for (const size_t Index : unreadDeclaredParams(Func)) {
+      const std::string &Name = DebugFn->Params[Index].first;
+      emitParam(unreadDeclaredParamType(Func, Index),
+                Name.empty() ? "unread" + std::to_string(Index) : Name);
+    }
     if (Emitted == 0)
       Declarator += "void";
     OS << declarationToC(ReturnType, Declarator + ")") << " {\n";
@@ -6443,6 +6512,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   // Frame projection can hide an ordinary-edge PHI copy after a try. Settle
   // clause exits against the statements that will actually be printed, while
   // retaining all previously required labels as conservative entry evidence.
+  decideExceptArms(Func);
   FallthroughTryExits.clear();
   {
     std::set<std::pair<va_t, va_t>> Kept;

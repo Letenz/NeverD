@@ -1433,7 +1433,7 @@ TEST(HighCIntegerWidths, WindowsX64SyscallUsesTheServiceConvention) {
   EXPECT_NE(Source.find("register uint64_t r10 __asm__(\"r10\") = arg1;"),
             std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("neverd_x64_windows_syscall(85, 1, 2, 3, 4)"),
+  EXPECT_NE(Source.find("neverd_x64_windows_syscall(0x55, 1, 2, 3, 4)"),
             std::string::npos)
       << Source;
   const auto Windows = compileForTarget(Source, "x86_64-pc-windows-msvc");
@@ -1479,10 +1479,10 @@ TEST(HighCIntegerWidths, LinuxX64ExitOmitsUnusedUnknownRegisterInputs) {
   const std::string Source = emitFunctions({MakeCall(60, "call_exit"),
                                             MakeCall(231, "call_exit_group"),
                                             MakeCall(39, "call_getpid")});
-  EXPECT_NE(Source.find("neverd_x64_syscall(60, 0, 0, 0, 0)"),
+  EXPECT_NE(Source.find("neverd_x64_syscall(0x3C, 0, 0, 0, 0)"),
             std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("neverd_x64_syscall(231, 0, 0, 0, 0)"),
+  EXPECT_NE(Source.find("neverd_x64_syscall(0xE7, 0, 0, 0, 0)"),
             std::string::npos)
       << Source;
   const size_t Getpid = Source.find("call_getpid(");

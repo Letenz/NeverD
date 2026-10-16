@@ -25,6 +25,7 @@
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/StringLiteralSymbols.h"
+#include "neverd/support/IntegerLiterals.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -67,8 +68,20 @@ std::string integerConstantText(const llvm::APInt &Bits) {
   // The positive magnitude of INT64_MIN is not a signed decimal C literal.
   if (Bits.getBitWidth() == 64 && Bits.isMinSignedValue())
     return "(-9223372036854775807LL - 1)";
-  return Bits.isNegative() ? std::to_string(Bits.getSExtValue())
-                           : std::to_string(Bits.getZExtValue());
+  if (Bits.isNegative())
+    return std::to_string(Bits.getSExtValue());
+  // A number reads in its natural base, as HighC writes it, where the
+  // hexadecimal literal has the decimal one's type without a suffix: the
+  // literal parsers here read no suffix.
+  IntegerLiteral Literal;
+  Literal.Value = Bits.getZExtValue();
+  Literal.Text = std::to_string(Literal.Value);
+  if (naturalLiteralRadix(Literal.Value) == LiteralRadix::Hex)
+    if (auto Hex =
+            spellIntegerLiteral(Literal, LiteralRadix::Hex, LiteralSyntax::C);
+        Hex && Hex->find_first_of("uUlL") == std::string::npos)
+      return *Hex;
+  return Literal.Text;
 }
 
 // Fold only literal integer DAGs. Do not borrow display-time load values or

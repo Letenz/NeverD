@@ -1843,6 +1843,12 @@ python3 scripts/run_lift_qualification.py \
 
 ネイティブ検証ジョブは、x64 PLT/AArch64 指定子のスコープ修正を含む、固定された LLVM フォークをソースからビルドします。r4 の事前ビルドパッケージだけでは、Clang IR の例外経路の能力検証は完了しません。
 
+## Darwin dylib インポートのオフセット
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` は +8/-4、TLS ポインターの変更、新しいプロセスでの初期化を検証します。C、CLI、実際の Python 統合が全プロファイルを対象とします。必須一覧は各プロファイル101メソッド、対応する ARM64 が303件で、共通ネイティブ一覧は82件です。利用できないハードウェアはネイティブ実行に数えません。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ## Ordinary Darwin whole-file lock coverage
 
 `DarwinAdvisoryLockOptions` and `DarwinAdvisoryLockTest` check complete unique initial objects, shared byte budgets, both page sizes, low carriers, action priority, readonly EX, reentry, failed upgrades, downgrade, missing versus empty providers, FD/kind ordering, duplicate/fcntl/dup2 lifetime, descriptor reuse, hardlinks, rename, held zero-name unlink and creation refusal. Real VM mappings and retained Contents cannot keep a closed description’s lock; mode/ownership/data/xattr changes keep independent authority and metadata validity. A contended blocking request stops before model mutation. Strict C/CLI/Python and the original SDK-free77-record workload cover five software and three matching HVF profiles, including empty-provider boundaries. Native-common64 and mandatory79 per platform require all237 matching ARM64 native identities to execute successfully. The720 original ARM64 O0/O1/O2 literal observations comprise522 action and198 namespace/descriptor/VM-lifetime controls. Intel native, physical iOS, external peers and wait lifecycle remain separate unverified coverage. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.
@@ -2039,3 +2045,13 @@ CRT 回帰は全バイト／UTF-16 単位、引数幅、変更不要な読み取
 `KernelFileQueries.BaseDevice*` は基底と二段フィルターの区別、参照数維持、拡張ポインターの無視、作成・クリーンアップ・クローズ状態、破損レコードと IRQL を検査します。独自および実 WDK 通常／CFG フィクスチャは既存のバックエンド、再配置、スケジューリング、呼び出し元寿命の組合せで静的・動的クエリを実行します。
 
 `KernelDevicePointer.*` は参照保持、出力の重なり、失敗と情報ステータス、保留 CREATE/CLEANUP 後の呼び出し側と APC の復元、引数幅、共有、出力障害時の書き込み順、受付条件、アンロードを検証します。元のフィクスチャと実 WDK 版には即時完了、ワーカーでの CREATE/CLEANUP 完了、アンロードまでの参照保持、動的検索を追加します。`KernelFileSystemExecution.*OpensExistingFiles` は両スケジュール方式、契約、ロード基址を検証し、利用できない実行基盤は明示的にスキップします。
+
+`KernelMDLUserMapping.ProcessProbe*` は引数幅、操作の正規化、IRQL、生存プロセスの許可条件、プローブ中のスレッド識別、入れ子の復元、例外後の再試行、アタッチ/復元のメモリ不足を検査します。実際の WDK フィクスチャは静的/動的呼び出し、解除後の実例外ハンドラー、アタッチ中の同一プロセス呼び出し、共有物理ページ、完全なロック解放を実行します。元のラッパーと終了ハンドラーのプローブは、明示的に注入した補助呼び出し境界間の制御フローのみを証明し、カーネル全体の動作を証明しません。
+
+`KernelObjects.FilterVersion*` は正確な引数数、呼び出し元に依存しない結果、ページ可能コードの IRQL 境界を検査します。独自および実際の WDK CRT フィクスチャはエントリ、ワーカー、アンロードで静的/動的呼び出しを行い、エントリでは APC_LEVEL も検査します。元の 2 命令のプローブは補助関数を注入せず、戻りレジスタ全体とデータメモリ副作用の不在を検証します。
+
+`KernelPhysicalRAM.AddressQueries*` と `KernelMDLUserMapping.PhysicalQuery*` は別名、アドレス空間、VA 再利用、境界、全幅 PFN、IRQL、ページ固定、解除済みマッピングを検証します。実際の WDK ユーザーマッピング用フィクスチャは静的・動的な `MmGetPhysicalAddress` を MDL PFN と比較し、読み取り専用ユーザービュー、DPC レベルのシステムビュー、以前の固定別名が残る再マッピングを実行します。
+
+`KernelMDLUserMapping.PrimaryQuery*` は正確な割り当て範囲、同一ページ上の隣接所有者、全幅アドレス、IRQL、解放、別名、マッピング置換、読み取り保護、未対応の主マッピングを検証します。実際の WDK フィクスチャは静的・動的な `MmGetVirtualForPhysical`、DPC レベルのシステムビュー、以前の固定別名が残るユーザー VA の再マッピングを実行します。
+
+`DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*` は有効化、解放、入れ子環境の復元、全幅境界、IRQL、プロセス接続、出力重複、High→Low の障害時書き込み順序を検証します。独自版と実際の WDK CRT フィクスチャは入口・ワーカー・アンロードで両 API を静的・動的に呼び、ローカル変数の範囲と DISPATCH_LEVEL での境界を確認します。

@@ -327,8 +327,13 @@ of the name each is shown under, as the kernel's exports are typed from
 the image states (`BinaryImage::statedFunctionNameAt`, as
 `getFunctionNameAt` chooses it): the export at the entry, else a symbol a
 producer stated, a PDB's function names among them; else the debug
-information's. A name analysis or the user gave says nothing of what the
-function is. Where a linker folded identical functions, one entry carries
+information's; else the name signatures recognized the function's bytes by
+(`SignatureDB::buildNameMap`). A name analysis or the user gave otherwise
+says nothing of what the function is. A linked COFF image's section symbols,
+which GNU ld keeps at each object's first function or variable
+(`Symbol::IsSection`), name nothing there or in `findSymbolAt`; they only
+bound what each object contributed. Where a linker folded identical
+functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's
 prototype only where every other name's that has one takes and returns
 alike (`passesAlike`): as many parameters, each of the same class and size,
@@ -339,7 +344,13 @@ gives. Another name's prototype is never borrowed. A function the debug
 information types keeps its own type, and a variadic prototype is not used,
 because its calls pass more than it declares. The signature records the
 library that declares the prototype and the declaration as it reads there,
-which HighC prints above the function (`neverd.prototype`).
+which HighC prints above the function (`neverd.prototype`). HighC's
+definition prints, after the parameters the code reads, the declared ones
+after them that it never reads, such as a system call stub's stack arguments
+its dispatcher takes (`unreadDeclaredParams`): integers and pointers after
+integers and pointers, which take the next slots in every convention. A call
+in the same unit passes them, or zero where the call site determined none,
+as the callee never reads it.
 
 A call through an import's slot or stub reaches a routine another module
 exports, which takes the prototype of the import's name: `resolveFunction`
@@ -349,7 +360,13 @@ passes exactly its parameters where the libc tables know none of the name
 (`importPrototypeArguments`), and to the return contracts. A callee the
 pipeline does not decompile returns what its declaration says, as the C
 writers read it, so that a caller returning what a `void` routine left in
-RAX returns nothing too. The prototype's types convert to the decompiler's
+RAX returns nothing too. A routine never returns where its name says so, as
+the tables (`isNoReturnFunction`) or a `_Noreturn` prototype
+(`resolvePrototype`) do: an import, a symbol, or an export the image's own
+code calls (`NoReturnTargetIndex`). A whole program's output
+(`neverd_decompile_all`) reads the session's local types over its own image
+and debug information when the session holds the same file, as the command
+line loads it first. The prototype's types convert to the decompiler's
 types:
 - records become named records that C passes and returns by value, with
   their members' names for display;
@@ -7230,6 +7247,13 @@ fixups and complete undefined-symbol closure. `DarwinImage` resolves the explici
 catalogue into one bounded acyclic graph, checks every dependency edge and
 assigns disjoint placements. Its graph-wide input, metadata, record and resident
 ledgers charge shared nodes once and retain one preparation deadline.
+`MachOProgramLinking` retains the signed addend fact. `DarwinImage` alone
+combines the selected provider export, slide and ordinary import addend,
+rejecting arithmetic overflow/underflow and nonzero targets outside that
+provider's original mapped segments. It checks pointer-value membership without
+inferring a pointee width. These prepared values also relocate TLS template
+pointers before `DarwinTLS` copies their live bytes. Imported TLV descriptors,
+libSystem gates and classic lazy programs require zero addends.
 `DarwinTLSPreparation` admits exact descriptors and contiguous template storage,
 publishes keys and physically maps charged TLS reservations before execution.
 `DarwinTLS` alone owns main-thread instantiation and the authenticated TLV return:
@@ -7419,3 +7443,13 @@ address. `ProcessReport` serializes the optional stream. Trace limits and
 capture failures cannot replace the original service outcome.
 
 `KernelModelFileCreate` owns device-pointer opens within the existing `FileOperation`. Namespace resolution, CREATE packets and final release share the ordinary file-open owner. The object manager acquires the file reference through the private handle; `queryFileDevice` supplies the related device, and the existing handle-close continuation performs CLEANUP. The original caller releases its critical region only after that continuation completes. Public output overlap cannot replace the private referenced object.
+
+`KernelModelIO` owns the process-probe wrapper and private attachment lifetime. It reuses the shared process-view switch and ordinary MDL probe; private attachments have no fabricated guest APC storage and cannot be detached with a public zero token. The ordinary attachment owner retains admission and nesting. A probe exception reaches the guest only after successful restoration; restoration errors remain model failures.
+
+`KernelObjectAPIs.def` owns the fixed callback-version query’s identity, arity, value and IRQL ceiling. No callback registry or host operating-system query is introduced.
+
+`KernelPhysicalMemory::resolveAddress` matches the current `MemoryView` to exact retained allocation slices and existing page identities, including aliases. `KernelModel` separately admits readable mappings, process context and residency. A query neither allocates an identity nor pins a page; surviving mapped page padding cannot revive retired bytes.
+
+`KernelModel::queryPrimaryVirtualAddress` derives the primary VA from existing live nonpaged `PoolAllocation` records and `KernelPhysicalMemory::describe`, then authenticates it through the forward query. It adds no reverse-alias registry, physical identity or pin; generic backing addresses do not establish a primary mapping.
+
+`activateStack` and `retireStack` own `ExecutionStacks`; queries bind that extent to the current `ExecutionThreadKeys` identity. Exact reactivation preserves the extent, while overlapping live stacks and mismatched retirement fail before mutation. Nested executions keep separate bounds even when sharing a thread. These environment queries remain opaque to native unpack reconstruction.

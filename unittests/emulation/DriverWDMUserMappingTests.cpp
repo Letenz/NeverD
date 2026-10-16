@@ -87,6 +87,46 @@ TEST(DriverWDMUserMapping,
       }
 }
 
+TEST(DriverWDMUserMapping, PhysicalQueriesFollowCurrentAliasesAndRetainedPins) {
+  for (const auto *Image : images())
+    for (uint64_t LoadAddress : {0x180000000ULL, 0x190000000ULL}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(LoadAddress);
+      auto Result = emulateDriver(
+          Image, options(UserMappingPhysicalAddress, LoadAddress));
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      expectLifecycle(*Result, {3, 3, 3, 3});
+      const auto Calls = [&](llvm::StringRef Name) {
+        return std::count_if(
+            Result->Calls.begin(), Result->Calls.end(),
+            [&](const auto &Call) { return Call.Name == Name; });
+      };
+      EXPECT_EQ(Calls("MmGetPhysicalAddress"), 6);
+      EXPECT_EQ(Calls("MmGetSystemRoutineAddress"), 1);
+    }
+}
+
+TEST(DriverWDMUserMapping,
+     PrimaryQueriesReturnAllocatorViewsAcrossAliasRebinding) {
+  for (const auto *Image : images())
+    for (uint64_t LoadAddress : {0x180000000ULL, 0x190000000ULL}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(LoadAddress);
+      auto Result =
+          emulateDriver(Image, options(UserMappingPrimaryAddress, LoadAddress));
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      expectLifecycle(*Result, {7, 7, 7, 7});
+      const auto Calls = [&](llvm::StringRef Name) {
+        return std::count_if(
+            Result->Calls.begin(), Result->Calls.end(),
+            [&](const auto &Call) { return Call.Name == Name; });
+      };
+      EXPECT_EQ(Calls("MmGetPhysicalAddress"), 6);
+      EXPECT_EQ(Calls("MmGetSystemRoutineAddress"), 2);
+      EXPECT_EQ(Calls("MmGetVirtualForPhysical"), 4);
+    }
+}
+
 TEST(DriverWDMUserMapping, KernelPoolProbeKeepsPagedMemoryResidentAtDispatch) {
   for (const auto *Image : images())
     for (uint64_t LoadAddress : {0x180000000ULL, 0x190000000ULL}) {
@@ -171,6 +211,30 @@ TEST(DriverWDMUserMapping, ProcessExitRevokesViewsButWorkerKeepsLockedReport) {
       ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
       expectLifecycle(*Result, {UserMappingWorkerByte, 1, 0, 0}, true);
       EXPECT_EQ(Result->Requests[1].DispatchStatus, windows::StatusPending);
+    }
+}
+
+TEST(DriverWDMUserMapping, ProcessProbeRestoresContextBeforeTheGuestHandler) {
+  for (const auto *Image : images())
+    for (uint64_t LoadAddress : {0x180000000ULL, 0x190000000ULL}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(LoadAddress);
+      auto Result =
+          emulateDriver(Image, options(UserMappingProcessLock, LoadAddress));
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      expectLifecycle(*Result,
+                      {3, UserMappingFirstByte, UserMappingSecondByte, 15});
+      EXPECT_EQ(Result->Requests[1].DispatchStatus, windows::StatusPending);
+      const auto Calls = [&](llvm::StringRef Name) {
+        return std::count_if(
+            Result->Calls.begin(), Result->Calls.end(),
+            [&](const auto &Call) { return Call.Name == Name; });
+      };
+      EXPECT_EQ(Calls("MmProbeAndLockProcessPages"), 4);
+      EXPECT_EQ(Calls("MmGetSystemRoutineAddress"), 1);
+      EXPECT_EQ(Calls("KeStackAttachProcess"), 1);
+      EXPECT_EQ(Calls("KeUnstackDetachProcess"), 1);
+      EXPECT_EQ(Calls("MmUnlockPages"), 4);
     }
 }
 

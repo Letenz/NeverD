@@ -1833,6 +1833,12 @@ python3 scripts/run_lift_qualification.py \
 
 네이티브 검증 작업은 x64 PLT/AArch64 지정자 범위 수정을 포함하는 고정 LLVM 포크를 소스에서 빌드합니다. r4 사전 빌드 패키지만으로는 Clang IR 예외 경로의 기능 검증을 완료할 수 없습니다.
 
+## Darwin dylib 가져오기 오프셋
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing`은 +8/-4, TLS 포인터 변경, 새 프로세스의 초기 상태를 확인합니다. C, CLI, 실제 Python 통합이 모든 프로필을 검사합니다. 필수 목록은 프로필별101개 메서드와 일치하는 ARM64 사례303개이며 공통 네이티브 목록은82개입니다. 사용할 수 없는 하드웨어는 네이티브 실행으로 계산하지 않습니다.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ## Ordinary Darwin whole-file lock coverage
 
 `DarwinAdvisoryLockOptions` and `DarwinAdvisoryLockTest` check complete unique initial objects, shared byte budgets, both page sizes, low carriers, action priority, readonly EX, reentry, failed upgrades, downgrade, missing versus empty providers, FD/kind ordering, duplicate/fcntl/dup2 lifetime, descriptor reuse, hardlinks, rename, held zero-name unlink and creation refusal. Real VM mappings and retained Contents cannot keep a closed description’s lock; mode/ownership/data/xattr changes keep independent authority and metadata validity. A contended blocking request stops before model mutation. Strict C/CLI/Python and the original SDK-free77-record workload cover five software and three matching HVF profiles, including empty-provider boundaries. Native-common64 and mandatory79 per platform require all237 matching ARM64 native identities to execute successfully. The720 original ARM64 O0/O1/O2 literal observations comprise522 action and198 namespace/descriptor/VM-lifetime controls. Intel native, physical iOS, external peers and wait lifecycle remain separate unverified coverage. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.
@@ -2029,3 +2035,13 @@ CRT 회귀는 모든 바이트/UTF-16 단위, 인수 폭, 변경이 없는 읽�
 `KernelFileQueries.BaseDevice*`는 기본 장치와 두 필터 계층, 참조 유지, 확장 포인터 무시, 생성／정리／닫기 상태, 손상된 기록 및 IRQL을 검사합니다. 자체 및 실제 WDK 일반／CFG 파일 쿼리 픽스처는 기존 백엔드, 재배치, 스케줄링과 호출자 수명 조합에서 정적／동적 기본 쿼리를 실행합니다.
 
 `KernelDevicePointer.*`는 참조 유지, 출력 겹침, 실패/정보 상태 열기, 대기 CREATE/CLEANUP 후 호출자와 APC 복원, 인수 폭, 공유, 출력 오류의 쓰기 순서, 진입 조건과 언로드를 검사합니다. 원본 및 실제 WDK 파일 시스템 픽스처에 즉시 완료, 작업 항목 CREATE/CLEANUP 완료, 언로드까지 참조 유지와 동적 조회를 추가합니다. `KernelFileSystemExecution.*OpensExistingFiles`는 두 스케줄링 방식, 계약과 로드 주소를 검사하며 사용할 수 없는 전송은 명시적으로 건너뜁니다.
+
+`KernelMDLUserMapping.ProcessProbe*`는 인수 너비, 작업 정규화, IRQL, 살아 있는 프로세스 허용 조건, 검사 중 스레드 식별, 중첩 복원, 예외 후 재시도, 연결/복원 메모리 부족을 검사합니다. 실제 WDK 사용자 매핑 픽스처는 정적/동적 호출, 해제 후 실제 예외 처리기, 연결 상태의 같은 프로세스 호출, 공유 물리 페이지 및 완전한 잠금 해제를 실행합니다. 원본 래퍼와 종료 처리기 검사는 명시적으로 주입한 보조 호출 경계 사이의 제어 흐름만 입증하며 전체 커널 동작을 입증하지 않습니다.
+
+`KernelObjects.FilterVersion*`는 정확한 인수 개수, 호출자와 무관한 결과 및 페이징 IRQL 경계를 검사합니다. 자체 및 실제 WDK CRT 픽스처는 진입점, 작업 스레드, 언로드에서 정적/동적 호출을 수행하며 진입점의 APC_LEVEL도 검사합니다. 원본 두 명령어 검사는 보조 함수를 주입하지 않고 전체 반환 레지스터와 데이터 메모리 부작용 없음을 확인합니다.
+
+`KernelPhysicalRAM.AddressQueries*`와 `KernelMDLUserMapping.PhysicalQuery*`는 별칭, 주소 공간 식별, VA 재사용, 경계, 전체 폭 PFN, IRQL, 페이지 잠금 및 해제된 매핑을 검사합니다. 실제 WDK 사용자 매핑 픽스처는 정적·동적 `MmGetPhysicalAddress`를 MDL PFN과 비교하며, 읽기 전용 사용자 뷰, DPC 수준 시스템 뷰 및 이전 고정 별칭이 남은 재매핑을 실행합니다.
+
+`KernelMDLUserMapping.PrimaryQuery*`는 정확한 할당 바이트, 같은 페이지의 인접 소유자, 전체 폭 주소, IRQL, 해제, 별칭, 매핑 교체, 읽기 보호 및 지원되지 않는 기본 매핑을 검사합니다. 실제 WDK 픽스처는 정적·동적 `MmGetVirtualForPhysical`, DPC 수준 시스템 뷰, 이전 고정 별칭이 남아 있는 사용자 VA 재매핑을 실행합니다.
+
+`DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*`는 활성화, 해제, 중첩 컨텍스트 복원, 전체 폭 경계, IRQL, 프로세스 연결, 출력 중복 및 High→Low 오류 쓰기 순서를 검사합니다. 자체 및 실제 WDK CRT 픽스처는 진입점, 작업자, 언로드에서 두 API를 정적·동적으로 호출하고 지역 변수 범위와 DISPATCH_LEVEL의 경계를 확인합니다.

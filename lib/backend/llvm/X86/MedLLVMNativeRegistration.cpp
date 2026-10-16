@@ -10,6 +10,7 @@
 #include "MedLLVMRegistrationSEHDynamicScope.h"
 #include "MedLLVMRegistrationSEHFinally.h"
 #include "MedLLVMRegistrationSEHJump.h"
+#include "MedLLVMRegistrationSEHLocalUnwind.h"
 #include "MedLLVMRegistrationSEHParentExit.h"
 #include "MedLLVMRegistrationSEHProof.h"
 #include "MedLLVMRegistrationSEHRegisters.h"
@@ -324,10 +325,14 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
 
   const auto CallbackStores =
       x86_registration::getCheckedSEHCallbackStores(Requests);
-  if (!CallbackStores)
+  const auto FrameStores = x86_registration::getSEHFrameStores(
+      Func, FrameEntrySPOffset, FrameBytes->getFixedValue());
+  if (!CallbackStores || !FrameStores)
     return false;
   auto FrameValues = x86_registration::getPrivateSEHFrameValues(
       Func, States, [&](const MedOp &Op) {
+        if (FrameStores->count(&Op))
+          return true;
         const auto Emitted = RegistrationMemoryIR.find({Op.Addr, Op.OriginSeq});
         if (Emitted != RegistrationMemoryIR.end())
           if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(Emitted->second);
@@ -359,6 +364,11 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   auto JumpPlan = x86_registration::prepareSEHJumps(
       Func, Parent, *FrameAlloca, FrameEntrySPOffset, CallSiteAddrs);
   if (!JumpPlan)
+    return false;
+  const auto LocalUnwinds = x86_registration::prepareSEHLocalUnwinds(
+      Func, Parent, *FrameAlloca, FrameEntrySPOffset, *ParentExits,
+      CallbackIndices, Requests, CallSiteAddrs, RegistrationMemoryIR);
+  if (!LocalUnwinds)
     return false;
   for (const auto &[Call, Source] : JumpPlan->Calls)
     if (Source.Resume && Source.Resume->EntryVA) {
@@ -637,6 +647,11 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
                         {med_llvm_eh::mdUInt(*Ctx, EH.CodeRange.Begin, 64),
                          med_llvm_eh::mdUInt(*Ctx, FrameEntrySPOffset, 64)}));
   ParentProjection.emitCapture(OriginalBlockMap);
+  if (!LocalUnwinds->Calls.empty())
+    x86_registration::emitSEHLocalUnwinds(
+        *LocalUnwinds, Parent, *FrameAlloca, FrameEntrySPOffset,
+        *ParentProjection.chain(), EH.CodeRange.Begin, *Outlined,
+        CallbackInstructions);
   auto *None = llvm::ConstantTokenNone::get(*Ctx);
   auto *I8 = llvm::Type::getInt8Ty(*Ctx);
   auto *I32 = llvm::Type::getInt32Ty(*Ctx);

@@ -827,6 +827,13 @@ stores. A bounded pure filter may supply its return expression using the proven
 parent-frame coordinate; its original native statements remain available.
 Owned filter, handler and continuation entries keep their labels and bodies
 after ordinary branches or returns, even without an explicit machine `goto`.
+An empty `__except` arm whose handler is where its try falls through, as in
+MSVC's nested levels at -O0, ends there; any other one jumps to its handler.
+A try body's end that prints nothing keeps the labels jumps land on. A filter
+call is named as the function list names the filter: an export, then the
+function's symbol rather than a section's. A shared handler resumes after its
+try at the first statement its code still has: MinGW's startup scope resumes
+at a `nop`.
 The renderer does not invent a catch-all clause for an unstructured region.
 Isolated EH3/EH4 table entries retain their checked parent EBP when state
 propagation exhausts its budget. This proves a frame coordinate for analysis,
@@ -1028,6 +1035,6 @@ final linked image.
 
 Genuine MSVC x86 `/Od` and `/O2` `nonlocal_finally_return` reconstruction is exercised with `/GS-` and `/GS`, optimized and unoptimized source LLVM, both patch modes and two forced bases. An outer SEH observer checks normal and exceptional returns, stack guards and chain restoration. The GS path retains the original exception-code normalization wrapper after proving its scalar helper cannot observe the caller frame.
 
-The `/O2` direct parent return requires an authenticated adjacent physical call, saved ESP restoration, original chain removal and complete parent epilogue. LowIR proves these source effects, MedIR binds the surviving operations, and the COFF installer independently replays the contract. Unused synthetic register transport cannot add physical parent parameters; observed values remain dependencies. The genuine MSVC nonlocal `goto` shape still requires further native support.
+The `/O2` direct parent return requires an authenticated adjacent physical call, saved ESP restoration, original chain removal and complete parent epilogue. LowIR proves these source effects, MedIR binds the surviving operations, and the COFF installer independently replays the contract. Unused synthetic register transport cannot add physical parent parameters; observed values remain dependencies. The checked MSVC nonlocal `goto` shape uses the full-unwind contract below.
 
-Checked `_local_unwind2` and `_local_unwind4` calls retain their exact source occurrence, authenticated import slot, actual parent-frame argument, unsigned bound and returning state pairs. EH4 also requires the proved cookie address and initialized frame cookies. Changed import storage, guarded calls or mismatched source identity withdraw the proof. MedIR recovers exactly two or three stack words without promoting incidental registers to arguments. These source-state and ABI facts do not yet authorize native local-unwind replacement.
+Checked `_local_unwind2` and `_local_unwind4` calls retain their exact source occurrence, authenticated import slot, actual parent-frame argument, unsigned bound and returning state pairs. EH4 also requires the proved cookie address and initialized frame cookies. Changed import storage, guarded calls or mismatched source identity withdraw the proof. MedIR recovers exactly two or three stack words without promoting incidental registers to arguments. Native replacement supports complete unwinds to EH3 `-1` or EH4 `-2` after independently binding the physical parent bridge, SavedESP restoration and source operations. Genuine MSVC `nonlocal_finally_goto` is exercised at `/Od` and `/O2`, with `/GS-` and `/GS`, raw and optimized LLVM, both patch modes and two forced bases. Partial bounds and resumption inside active enclosing scopes still require additional native contracts.

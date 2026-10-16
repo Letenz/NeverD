@@ -135,6 +135,7 @@ TEST(LocalTypesDebugContext, TypesTheFunctionsByTheNamesTheyAreShownUnder) {
     ULONG NTAPI More(ULONG Value, ULONG Extra);
     LONG NTAPI Signed(PTHREAD Thread);
     ULONG NTAPI Unsigned(PPROCESS Process);
+    ULONG NTAPI Recognized(ULONG Value, ULONG Other);
   )",
                                  *Library)
                   .ok());
@@ -165,7 +166,10 @@ TEST(LocalTypesDebugContext, TypesTheFunctionsByTheNamesTheyAreShownUnder) {
   };
   name(0x5000, "Debugged");
   name(0x6000, "Debugged");
-  sdk::LocalTypesDebugContext Context(Names, Library, {}, &Image);
+  // Signatures recognize what nothing else names; a stated name comes first.
+  sdk::LocalTypesDebugContext Context(
+      Names, Library, {}, &Image, {},
+      {{0x9000, "Recognized"}, {0x1000, "Recognized"}});
 
   // An export the debug information does not name takes its prototype,
   // with what declares it.
@@ -211,6 +215,9 @@ TEST(LocalTypesDebugContext, TypesTheFunctionsByTheNamesTheyAreShownUnder) {
   ASSERT_EQ(Signed->Params.size(), 1u);
   EXPECT_EQ(Signed->Params[0].first, "Thread");
   EXPECT_TRUE(Signed->ReturnType->IsSigned);
+  std::optional<FunctionSym> Recognized = Context.resolveFunction(0x9000);
+  ASSERT_TRUE(Recognized.has_value());
+  EXPECT_EQ(Recognized->Params.size(), 2u);
 }
 
 TEST(LocalTypesDebugContext, NamesTheHeaderLibraryAPrototypeComesFrom) {

@@ -1,4 +1,5 @@
 add_neverd_unittest(NeverDSEHRuntimeMemoryTests
+  core/LowScalarConstantTests.cpp
   eh/SEHRuntimeMemoryTests.cpp
   eh/SEHImageFormatTests.cpp
   eh/X64CRTFrameTests.cpp
@@ -1439,6 +1440,7 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationRealignedTestUtils.cpp
   eh/RegistrationCallbackStateTests.cpp
   eh/RegistrationFrameMemoryTests.cpp
+  eh/RegistrationFrameScalarTests.cpp
   eh/RegistrationIncomingAliasTests.cpp
 
   LINK_COMPONENTS
@@ -1508,8 +1510,11 @@ add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
 
 add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
+  eh/RegistrationLocalUnwindBridgeTests.cpp
+  eh/RegistrationLocalUnwindNativeTests.cpp
   eh/RegistrationSEHReturnTests.cpp
   eh/RegistrationSEHParentExitTests.cpp
+  eh/RegistrationSEHRegisterInputTests.cpp
   eh/RegistrationSEHParentExitIRMutations.cpp
   eh/RegistrationSEHRegisterIRMutations.cpp
   eh/RegistrationSEHCallbackTests.cpp
@@ -1535,6 +1540,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationSEHFinallyIRMutations.cpp
   eh/RegistrationSEHPersonalityTests.cpp
   eh/RegistrationSEHFrameProofTests.cpp
+  eh/RegistrationSEHScalarSpillTests.cpp
   eh/RegistrationSEHNullAccessTests.cpp
   eh/RegistrationCxxContinuationTestUtils.cpp
   eh/RegistrationCallTests.cpp

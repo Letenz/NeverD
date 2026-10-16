@@ -773,3 +773,13 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 [`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject) 借用存活文件的基础设备，不遍历附加栈、不增加引用，也不读取文件扩展。本配置要求未挂载的自有路由及 IRQL <= DISPATCH_LEVEL；挂载 VPB 或错误的对象／拓扑状态明确停止。微软将此接口保留供系统使用，该 IRQL 上限属于模型策略，并非公布的 Windows 契约。
 
 [`IoGetDeviceObjectPointer`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-iogetdeviceobjectpointer) 在 PASSIVE_LEVEL 且特殊内核 APC 启用时打开已声明的现有文件。采用不区分大小写的名称、内部内核句柄、读写共享及异步非目录打开。返回的文件引用保留设备，调用方通过 `ObfDereferenceObject` 释放。先写文件输出，再写设备输出，重叠指针也遵守此顺序。CREATE 和内部句柄 CLEANUP 可挂起，原调用线程的临界区保持到两者完成。裸设备或卷打开、已挂载 VPB、文件扩展路由及未知提供方仍不支持。
+
+`MmProbeAndLockProcessPages` 在 IRQL <= APC_LEVEL 时复用现有 MDL 探测。模式取低字节；操作取低 32 位，零表示读，其余值均表示写。同进程调用无需附加；跨进程调用沿用工作项/系统线程限制，目标必须是已知、存活且仍有请求的用户进程。私有附加在成功或探测异常后恢复原进程，保留线程身份和先前模式。恢复失败会明确停止。前台跨进程附加及任意进程对象仍不支持。WDK 将此例程保留给系统使用。
+
+`ObGetFilterVersion` 返回固定配置的对象回调注册 ABI 版本 `0x100`，不接收参数，也不持有对象引用。该可分页查询在此配置中仅允许 IRQL <= APC_LEVEL。它只查询版本；回调注册与投递仍不支持。
+
+`MmGetPhysicalAddress` 通过当前映射查询可读且存活的非分页池、独立物理页和已锁定 RAM。用户视图保留既有进程及 IRQL 限制。返回值采用既有完整位宽物理身份与字节偏移；未知驻留状态、填充、撤销视图及已释放字节均明确拒绝。此接口不提供 DMA 地址。
+
+`MmGetVirtualForPhysical` 仅对存活的非分页池分配中的精确字节返回分配器持有的主地址。当前主映射必须可读，且与查询的物理身份一致。别名重新绑定不会改变该所有者。本配置未声明分页池、独立物理页及私有后备存储的主映射，因此明确拒绝这些情况。有界非分页查询允许在任意 IRQL 执行。
+
+`IoGetInitialStack`（最高 APC_LEVEL）和 `IoGetStackLimits`（任意 IRQL）查询当前存活的会话栈。本配置将初始栈基址声明为上界。前台、工作线程和嵌套执行栈在挂起及进程附加期间保留各自范围。边界查询先写 High 再写 Low，保留后续访问失败前已完成的写入；重叠输出、未知或已回收栈及未建模栈扩展均明确拒绝。

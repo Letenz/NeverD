@@ -244,8 +244,19 @@ public:
                       const std::set<std::string> &ParamNames);
   void collectNamedFrameSlots(const HighFunc &Func);
   void invalidateJoinPhiFrameAliases(const HighFunc &Func);
+  /// How many parameters \p Func's definition prints: its HighIR ones
+  /// (emittedParamIndices), then the declared ones its code never reads
+  /// (unreadDeclaredParams).
   size_t emittedParamCount(const HighFunc &Func) const;
   std::vector<size_t> emittedParamIndices(const HighFunc &Func) const;
+  /// The parameters of \p Func's placed signature, by their indices in it,
+  /// that come after every one a HighIR parameter binds and that its code
+  /// never reads, such as a system call stub's stack arguments its
+  /// dispatcher takes: the definition prints them after its HighIR ones, as
+  /// its callers pass them.  Only integers and pointers after integers and
+  /// pointers, which take the next slots in every convention; none where a
+  /// HighIR parameter the signature does not name is printed.
+  std::vector<size_t> unreadDeclaredParams(const HighFunc &Func) const;
 
   //--- Statement rendering (HighCStmtWriter.cpp) ---
   void writeStmt(const HighStmt &Stmt, int Indent);
@@ -308,6 +319,13 @@ public:
   void decideTryExits(const std::vector<HighStmt> &Stmts,
                       const std::vector<va_t> &Continuation,
                       std::set<std::pair<va_t, va_t>> &Kept);
+  /// Where the try \p Stmt, whose clause bodies are all empty, splits at a
+  /// jump into its protected body: it prints as consecutive tries.
+  std::optional<size_t> sehTrySplitPoint(const HighStmt &Stmt) const;
+  /// Find the empty __except arms of \p Func that resume where their try
+  /// falls through (FallthroughExceptArms); every other one jumps to its
+  /// handler, whose label it registers.
+  void decideExceptArms(const HighFunc &Func);
   /// Labels where the try Stmts[Index] falls through that print right after
   /// it: no statement printed earlier, the try included, starts them.
   std::vector<va_t> tryLeaveTargets(const std::vector<HighStmt> &Stmts,
@@ -374,9 +392,12 @@ public:
   /// with, which its prototype and every use of the parameter share.
   TypeRef emittedParamType(const HighFunc &Func, size_t Index) const;
   /// The type of the parameter \p Func's definition prints at \p Position,
-  /// counted among the parameters it prints (emittedParamIndices), as a
+  /// counted among the parameters it prints (emittedParamCount), as a
   /// prototype and a call's arguments count them, or null past the last.
   TypeRef emittedParamTypeAt(const HighFunc &Func, size_t Position) const;
+  /// The type \p Func's definition prints the declared parameter \p Index
+  /// of its signature with, which its code never reads.
+  TypeRef unreadDeclaredParamType(const HighFunc &Func, size_t Index) const;
   /// What a parameter holds of its function's debug signature, matched by
   /// where the convention passes each (SourceParameterPlacement), never by
   /// position: System V passes `f(double x, int n)` with n in the first
@@ -489,6 +510,14 @@ public:
   /// Widening views and untyped add/sub/mul stay wrapped.
   bool isSameWidthUnsigned(const HighExpr &E, uint16_t Width) const;
   std::optional<FunctionSym> debugCallee(const HighExpr &E) const;
+  /// Whether the debug information declares \p E's callee: it types its
+  /// return or parameters, or names it where the unit includes no header
+  /// that declares it.  A public symbol's name alone yields to the header's
+  /// prototype of a C library routine the unit includes.
+  bool debugDeclaresCallee(const HighExpr &E) const;
+  /// Whether the unit includes the standard header that declares the C
+  /// library routine \p Name (libc::headerFor).
+  bool includesHeaderOf(llvm::StringRef Name) const;
   TypeRef expectedDebugCallArgType(const FunctionSym &FS, size_t Index) const;
   TypeRef displayCallArgType(const HighExpr &Call, size_t Index) const;
   /// Display-only printed arity from TPI/PDB or \ref msvcCallee.
@@ -782,6 +811,8 @@ public:
   }
   bool isOwnFunctionName(llvm::StringRef Name,
                          const std::vector<HighFunc> &Funcs);
+  /// The headers writeIncludes included.
+  std::set<std::string> IncludedHeaders;
   /// Views remain valid for this writer because its BinaryImage is immutable
   /// for the duration of one emission.
   std::optional<std::unordered_set<std::string_view>> ImageFunctionNames;
@@ -820,6 +851,9 @@ public:
   std::map<va_t, unsigned> GotoTargetUses;
   /// (address, target) of try-body gotos left out as fall-through exits.
   std::set<std::pair<va_t, va_t>> FallthroughTryExits;
+  /// Tries whose empty __except arm resumes where the try falls through, so
+  /// the arm prints no jump to its handler.
+  std::set<const HighStmt *> FallthroughExceptArms;
   /// While the protected body of a __try prints: the labels where that try
   /// falls through.  A goto there leaves the body as `__leave` does.
   std::vector<va_t> LeaveTargets;
