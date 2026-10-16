@@ -3738,6 +3738,12 @@ first. Its LLVM C must not trap and must compile for all four targets. On an
 x64 host the program runs and must call the initial function, then the one
 stored over it.
 
+`LinkedLiteralAddsToTheDataItNames` links an ARM getter whose
+`ldr r0, [pc, r0]` reads its literal right after `bx lr`. It requires the
+`ARMLinkedLiteral` certificate for the static variable at the ADD output,
+LowToMed's exact constant in its place, and a lifted getter that loads the
+variable itself. A relocation on the literal word withdraws the certificate.
+
 `IndirectTailFrame.UnwindOnlyFrameDescriptionKeepsTheTailCall` assembles AArch64
 functions with plain CFI into a shared library: a restored frame's `br x0`
 becomes `INDIR_CALL + RETURN` under its FDE, and a live frame keeps its

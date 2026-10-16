@@ -1923,6 +1923,20 @@ fixed-width read from a `$d` island inside executable storage. Both HighIR and
 LLVM emission require the whole read to stay in the island and reject writable
 or relocated bytes.
 
+The CFG builder proves an ARM `PC + literal` sum at the exact ADD output that
+forms it (`add rD, pc, rT`, or the address of `ldr rD, [pc, rT]`), on every
+path that reaches it, for three kinds of literal: an applied `R_ARM_REL32`
+field, an object's literal that no relocation writes, and a linked image's
+literal that no relocation writes (`ARMLinkedLiteral`). A linked image keeps
+its sections at the distances the static linker resolved such a literal
+against, so the sum is one image address, owned by the section (or the
+segment, without section headers) that holds it. LowToMed replaces the proven
+ADD with that exact address. This matters where the PC of the consuming
+instruction lands on the literal word itself, as in a getter whose literal
+follows its `bx lr`: the PC then equals a literal-pool address, and treating it
+as a reference to that word made the rebuilt access depend on where the copied
+code sat.
+
 After ARM call-arity recovery, MedIR propagates a proven pointer parameter
 through direct calls only when the argument is the exact incoming parameter;
 computed register versions do not inherit that role. HighC uses the same
