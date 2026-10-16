@@ -1663,6 +1663,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
 
+### Darwin dylib 匯入偏移
+
+一般強 dylib 匯入支援帶符號的位元組偏移，可初始化全域指標與 TLS 範本指標。`DarwinImage` 統一計算匯出位址、程式庫載入偏移及匯入加數，檢查溢位並限定在所選提供程式庫的原始區段內；指標值檢查不推測存取寬度。libSystem 入口、匯入的 TLV 描述元和延遲繫結仍要求零加數。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### 循序執行範圍內的原始比較交換
 
 `SymExec` 負責獲准的原始 `ATOMIC_CMPXCHG` 的值語義：發佈輸出前擷取位址、預期值、目標值及舊值，再一次提交 `ite(Old == Expected, Desired, Old)`。`SymState` 負責該次寫入的位元組效果、別名失效及保存預算。`InterpreterSpecialization` 負責接納與來源：Old 使用寫入前的記憶體來源；條件寫入保守合併 Old、預期值與目標值的來源，並撤銷可能重疊的仿射溢出儲存事實。即使比較失敗，也須證明完整寫入範圍與受保護返回單元分離。殘餘程式保留原子操作、記憶體順序及發生次數；拒絕時不發佈部分殘餘 CFG。
@@ -1719,9 +1725,3 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 `KernelModelFileRequests` 的 `queryFileDevice` 統一驗證檔案身分、標頭、掛載狀態和拓撲。基礎查詢傳回檔案所擁有的裝置，關聯查詢另行驗證檔案擴充路由並選取附加堆疊頂層；兩者均借用傳回物件。
 
 `KernelModelFileCreate` 在現有 `FileOperation` 中管理裝置指標開啟。名稱解析、CREATE 封包和最終釋放共用一般檔案開啟的狀態管理。物件管理員透過內部控制代碼取得檔案參考，`queryFileDevice` 提供關聯裝置，現有關閉續接執行 CLEANUP。續接完成後才離開原呼叫執行緒的臨界區。公開輸出重疊不會替換內部保留的檔案物件。
-
-## Darwin dylib 匯入偏移
-
-一般強 dylib 匯入支援帶符號的位元組偏移，可初始化全域指標與 TLS 範本指標。`DarwinImage` 統一計算匯出位址、程式庫載入偏移及匯入加數，檢查溢位並限定在所選提供程式庫的原始區段內；指標值檢查不推測存取寬度。libSystem 入口、匯入的 TLV 描述元和延遲繫結仍要求零加數。
-
-[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)

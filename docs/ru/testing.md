@@ -1911,6 +1911,12 @@ python3 scripts/run_lift_qualification.py \
 
 Задача нативной проверки собирает закреплённую ревизию форка LLVM из исходников с исправлением области действия спецификаторов x64 PLT/AArch64. Один готовый пакет r4 не подтверждает работоспособность пути исключений Clang IR.
 
+## Смещения импортов dylib Darwin
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` проверяет +8/-4, изменение указателя TLS и новое состояние процесса. C, CLI и настоящая интеграция Python охватывают все профили. Обязательный список содержит 101 метод на профиль и 303 соответствующих случая ARM64; общий нативный каталог сохраняет 82 случая. Недоступное оборудование не считается нативным выполнением.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ## Ordinary Darwin whole-file lock coverage
 
 `DarwinAdvisoryLockOptions` and `DarwinAdvisoryLockTest` check complete unique initial objects, shared byte budgets, both page sizes, low carriers, action priority, readonly EX, reentry, failed upgrades, downgrade, missing versus empty providers, FD/kind ordering, duplicate/fcntl/dup2 lifetime, descriptor reuse, hardlinks, rename, held zero-name unlink and creation refusal. Real VM mappings and retained Contents cannot keep a closed description’s lock; mode/ownership/data/xattr changes keep independent authority and metadata validity. A contended blocking request stops before model mutation. Strict C/CLI/Python and the original SDK-free77-record workload cover five software and three matching HVF profiles, including empty-provider boundaries. Native-common64 and mandatory79 per platform require all237 matching ARM64 native identities to execute successfully. The720 original ARM64 O0/O1/O2 literal observations comprise522 action and198 namespace/descriptor/VM-lifetime controls. Intel native, physical iOS, external peers and wait lifecycle remain separate unverified coverage. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.
@@ -2107,9 +2113,3 @@ KernelFileObjectTests и KernelObjectTests проверяют типы, обну
 `KernelFileQueries.BaseDevice*` проверяет базу под двумя фильтрами, неизменность ссылок, игнорирование указателей расширений, состояния создания/очистки/закрытия, повреждённые записи и IRQL. Авторские и настоящие WDK-фикстуры в обычном/CFG вариантах выполняют статические и динамические запросы в существующей матрице движков, перемещения, планирования и времени жизни вызывающего потока.
 
 `KernelDevicePointer.*` проверяет ссылки, перекрытие выходов, ошибки и информационные статусы открытия, восстановление потока/APC после ожидающих CREATE/CLEANUP, разрядность, совместный доступ, порядок записей при ошибке, допуск и выгрузку. Исходный и настоящий WDK-образцы добавляют немедленный режим, завершение CREATE/CLEANUP рабочим потоком и удержание ссылки до выгрузки, включая динамический поиск. `KernelFileSystemExecution.*OpensExistingFiles` охватывает оба планировщика, контракта и базовых адреса; недоступные средства исполнения явно пропускаются.
-
-## Смещения импортов dylib Darwin
-
-`StartupDylibAddendsPreserveDataAndTLSAliasing` проверяет +8/-4, изменение указателя TLS и новое состояние процесса. C, CLI и настоящая интеграция Python охватывают все профили. Обязательный список содержит 101 метод на профиль и 303 соответствующих случая ARM64; общий нативный каталог сохраняет 82 случая. Недоступное оборудование не считается нативным выполнением.
-
-[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)

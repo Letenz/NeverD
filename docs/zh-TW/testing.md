@@ -1789,6 +1789,12 @@ python3 scripts/run_lift_qualification.py \
 
 原生驗證工作從原始碼建置固定版本的 LLVM 分支，包含 x64 PLT/AArch64 說明符作用域修正。僅使用 r4 預編譯套件不能完成 Clang IR 例外路徑的能力驗證。
 
+## Darwin dylib 匯入偏移
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` 驗證 +8/-4、TLS 指標修改與新程序重設，C、CLI 和實際 Python 整合涵蓋各組態。必要清單為每組態101種方法、303個相符 ARM64 身分，共用原生目錄保持82項；無法使用的硬體不計為原生執行。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ## Ordinary Darwin whole-file lock coverage
 
 `DarwinAdvisoryLockOptions` and `DarwinAdvisoryLockTest` check complete unique initial objects, shared byte budgets, both page sizes, low carriers, action priority, readonly EX, reentry, failed upgrades, downgrade, missing versus empty providers, FD/kind ordering, duplicate/fcntl/dup2 lifetime, descriptor reuse, hardlinks, rename, held zero-name unlink and creation refusal. Real VM mappings and retained Contents cannot keep a closed description’s lock; mode/ownership/data/xattr changes keep independent authority and metadata validity. A contended blocking request stops before model mutation. Strict C/CLI/Python and the original SDK-free77-record workload cover five software and three matching HVF profiles, including empty-provider boundaries. Native-common64 and mandatory79 per platform require all237 matching ARM64 native identities to execute successfully. The720 original ARM64 O0/O1/O2 literal observations comprise522 action and198 namespace/descriptor/VM-lifetime controls. Intel native, physical iOS, external peers and wait lifecycle remain separate unverified coverage. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.
@@ -1985,9 +1991,3 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 `KernelFileQueries.BaseDevice*` 檢查基礎裝置與兩層篩選裝置的差異、參照不變、忽略擴充指標、建立／清理／關閉階段、損壞記錄及 IRQL。原創與真實 WDK 一般／CFG 檔案查詢夾具在既有後端、重定位、排程及呼叫端生命週期矩陣中執行靜態與動態基礎查詢。
 
 `KernelDevicePointer.*` 檢查參考保留、輸出重疊、失敗與資訊狀態開啟、暫止 CREATE/CLEANUP 後的呼叫端與 APC 還原、參數寬度、共用、輸出錯誤寫入順序、准入及卸載。原始及真正 WDK 檔案系統範例新增立即完成、工作項目完成 CREATE、工作項目完成 CLEANUP 和保留指標至卸載模式，包含動態查找。`KernelFileSystemExecution.*OpensExistingFiles` 涵蓋兩種排程模式、執行契約與載入基址；不可用傳輸仍明確略過。
-
-## Darwin dylib 匯入偏移
-
-`StartupDylibAddendsPreserveDataAndTLSAliasing` 驗證 +8/-4、TLS 指標修改與新程序重設，C、CLI 和實際 Python 整合涵蓋各組態。必要清單為每組態101種方法、303個相符 ARM64 身分，共用原生目錄保持82項；無法使用的硬體不計為原生執行。
-
-[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)

@@ -1868,6 +1868,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
 
+### Darwin dylib Importoffsets
+
+Gewöhnliche starke dylib-Importe unterstützen vorzeichenbehaftete Byte-Addenden für globale Zeiger und TLS-Vorlagen. `DarwinImage` kombiniert Exportadresse, Bibliotheksverschiebung und Addend genau einmal, prüft Überlauf und hält das Ergebnis in den ursprünglichen Segmenten des gewählten Anbieters. Die Zeigerprüfung setzt keine Zugriffsbreite voraus. libSystem-Einsprünge, importierte TLV-Deskriptoren und Lazy-Bindungen verlangen weiterhin den Addenden null.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### Vergleich und Austausch im sequenziellen Raw-Modell
 
 `SymExec` besitzt die Wertsemantik des zugelassenen Raw-`ATOMIC_CMPXCHG`: Adresse, Erwartungswert, neuer Wert und alter Wert werden vor der Ausgabe erfasst; danach wird `ite(Old == Expected, Desired, Old)` genau einmal geschrieben. `SymState` verantwortet Bytewirkungen, Alias-Invalidierung und Erhaltungsbudget dieses Schreibens. `InterpreterSpecialization` prüft Zulässigkeit und Herkunft: Old übernimmt die Speicherherkunft vor dem Schreiben; der bedingte Schreibwert vereinigt konservativ die Herkunft von Old, Erwartungswert und neuem Wert und verwirft möglicherweise überlappende affine Spill-Fakten. Auch bei fehlgeschlagenem Vergleich muss der gesamte Schreibbereich von geschützten Rückkehrzellen getrennt sein. Atomare Operation, Speicherordnung und Vorkommen bleiben im Residuum erhalten; bei Ablehnung wird kein partieller residualer CFG veröffentlicht.
@@ -1924,9 +1930,3 @@ Die Aliase nutzen bestehende Besitzer von Threads/Prozessen und Ausführungskont
 `queryFileDevice` in `KernelModelFileRequests` prüft gemeinsam Dateiidentität, Header, Einhängestatus und Topologie. Die Basisabfrage liefert das zur Datei gehörende Gerät; die zugehörige Abfrage prüft zusätzlich das Routing über Dateierweiterungen und wählt das oberste angehängte Gerät. Beide Ergebnisse sind geliehen.
 
 `KernelModelFileCreate` verwaltet die Gerätezeigeröffnung im bestehenden `FileOperation`. Namensauflösung, CREATE-Pakete und endgültige Freigabe teilen den Besitzer gewöhnlicher Dateiöffnungen. Der Objektmanager erwirbt die Dateireferenz über das interne Handle, `queryFileDevice` liefert das zugehörige Gerät und die vorhandene Handle-Schließfortsetzung führt CLEANUP aus. Erst danach verlässt der ursprüngliche Thread seinen kritischen Bereich. Überlappende öffentliche Ausgaben ändern das intern referenzierte Objekt nicht.
-
-## Darwin dylib Importoffsets
-
-Gewöhnliche starke dylib-Importe unterstützen vorzeichenbehaftete Byte-Addenden für globale Zeiger und TLS-Vorlagen. `DarwinImage` kombiniert Exportadresse, Bibliotheksverschiebung und Addend genau einmal, prüft Überlauf und hält das Ergebnis in den ursprünglichen Segmenten des gewählten Anbieters. Die Zeigerprüfung setzt keine Zugriffsbreite voraus. libSystem-Einsprünge, importierte TLV-Deskriptoren und Lazy-Bindungen verlangen weiterhin den Addenden null.
-
-[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)

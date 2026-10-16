@@ -1939,6 +1939,12 @@ Il job Linux x64 nativo richiede anche tre verifiche C++ con eccezioni: IR Clang
 
 Il processo di verifica nativa compila dai sorgenti la revisione fissata del fork LLVM, includendo la correzione di ambito degli specificatori x64 PLT/AArch64. Il solo pacchetto precompilato r4 non qualifica il percorso delle eccezioni Clang IR.
 
+## Offset delle importazioni dylib Darwin
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` controlla +8/-4, modifiche del puntatore TLS e nuovo stato per processo. C, CLI e Python reale coprono i profili. L’inventario obbligatorio diventa 101 metodi per profilo e 303 casi ARM64 corrispondenti; il catalogo nativo comune resta 82. Hardware non disponibile non equivale a esecuzione nativa.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ## Ordinary Darwin whole-file lock coverage
 
 `DarwinAdvisoryLockOptions` and `DarwinAdvisoryLockTest` check complete unique initial objects, shared byte budgets, both page sizes, low carriers, action priority, readonly EX, reentry, failed upgrades, downgrade, missing versus empty providers, FD/kind ordering, duplicate/fcntl/dup2 lifetime, descriptor reuse, hardlinks, rename, held zero-name unlink and creation refusal. Real VM mappings and retained Contents cannot keep a closed description’s lock; mode/ownership/data/xattr changes keep independent authority and metadata validity. A contended blocking request stops before model mutation. Strict C/CLI/Python and the original SDK-free77-record workload cover five software and three matching HVF profiles, including empty-provider boundaries. Native-common64 and mandatory79 per platform require all237 matching ARM64 native identities to execute successfully. The720 original ARM64 O0/O1/O2 literal observations comprise522 action and198 namespace/descriptor/VM-lifetime controls. Intel native, physical iOS, external peers and wait lifecycle remain separate unverified coverage. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.
@@ -2135,9 +2141,3 @@ I controlli MDL precedenti coprono chiamate WDK reali statiche e dinamiche, work
 `KernelFileQueries.BaseDevice*` verifica la base sotto due filtri, riferimenti invariati, puntatori di estensione ignorati, stati di creazione/pulizia/chiusura, record corrotti e IRQL. Le fixture originali e WDK reali normali/CFG eseguono query statiche e dinamiche nella matrice esistente di backend, rilocazione, pianificazione e durata dei chiamanti.
 
 `KernelDevicePointer.*` verifica riferimenti, output sovrapposti, aperture fallite e informative, ripristino del chiamante/APC dopo CREATE/CLEANUP in attesa, larghezze, condivisione, ordine delle scritture con errori, ammissione e scaricamento. Le fixture originale e WDK aggiungono modalità immediata, CREATE/CLEANUP completati da worker e riferimento conservato fino allo scaricamento, con ricerca dinamica. `KernelFileSystemExecution.*OpensExistingFiles` copre entrambi gli scheduler, contratti e basi; i trasporti non disponibili sono saltati esplicitamente.
-
-## Offset delle importazioni dylib Darwin
-
-`StartupDylibAddendsPreserveDataAndTLSAliasing` controlla +8/-4, modifiche del puntatore TLS e nuovo stato per processo. C, CLI e Python reale coprono i profili. L’inventario obbligatorio diventa 101 metodi per profilo e 303 casi ARM64 corrispondenti; il catalogo nativo comune resta 82. Hardware non disponibile non equivale a esecuzione nativa.
-
-[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
