@@ -14,6 +14,7 @@
 
 #include <filesystem>
 #include <map>
+#include <string_view>
 #include <tuple>
 
 namespace neverd::emulation {
@@ -24,10 +25,11 @@ class KernelFileObjectExecution
 
 void exerciseFileQueries(const std::filesystem::path &Image,
                          ExecutionBackendKind Backend,
-                         ExecutionContract Contract, bool Rebase) {
+                         ExecutionContract Contract, bool Rebase,
+                         bool Native = false) {
   for (char Mode : {'S', 'P', 'W', 'E', 'M', 'C', 'G', 'L', 'B', 'U'})
     for (bool Async : {false, true}) {
-      if (Async && Mode == 'C')
+      if ((Async || Native) && Mode == 'C')
         continue; // Last asynchronous query references require deferred delete.
       for (bool Scheduled : {false, true}) {
         SCOPED_TRACE(::testing::Message()
@@ -36,7 +38,8 @@ void exerciseFileQueries(const std::filesystem::path &Image,
         Options.Backend = Backend;
         Options.Contract = Contract;
         Options.Unload = true;
-        Options.ServiceName = std::string("FileQueries") + Mode;
+        Options.ServiceName =
+            std::string("FileQueries") + (Native ? "N" : "") + Mode;
         if (Scheduled)
           Options.Scheduling = DriverScheduling{17, 10};
         if (Rebase)
@@ -46,6 +49,10 @@ void exerciseFileQueries(const std::filesystem::path &Image,
                {DriverRequestKind::Create, DriverRequestKind::DeviceControl,
                 DriverRequestKind::Cleanup, DriverRequestKind::Close}) {
             if (PID == 0x1000 && Kind == DriverRequestKind::DeviceControl)
+              continue;
+            if (Native && PID == 0x1000 &&
+                (Kind == DriverRequestKind::Cleanup ||
+                 Kind == DriverRequestKind::Close))
               continue;
             DriverRequest Input;
             Input.Kind = Kind;
@@ -59,39 +66,62 @@ void exerciseFileQueries(const std::filesystem::path &Image,
               Input.AsynchronousFile = Async;
             Options.Requests.push_back(std::move(Input));
           }
+        if (Native)
+          for (auto Kind :
+               {DriverRequestKind::Cleanup, DriverRequestKind::Close}) {
+            DriverRequest Input;
+            Input.Kind = Kind;
+            Input.File = Input.RequestorProcessID = 0x1000;
+            Options.Requests.push_back(std::move(Input));
+          }
         auto Result = emulateDriver(Image, Options);
         ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
         ASSERT_EQ(Result->Stop, DriverStopReason::Returned)
             << Result->Diagnostic;
         ASSERT_TRUE(Result->UnloadCompleted) << Result->Diagnostic;
-        ASSERT_EQ(Result->Requests.size(), Options.Requests.size() + 3);
+        ASSERT_EQ(Result->Requests.size(), Options.Requests.size() + 3 + Native)
+            << driverResultJSON(*Result);
         const uint32_t Status = Mode == 'W' ? 0x80000005
                                 : Mode == 'E' || Mode == 'M' || Mode == 'C'
                                     ? 0xc0000001
                                     : 0;
-        unsigned Queries = 0;
+        unsigned Queries = 0, HandleCloses = 0;
         for (const auto &Request : Result->Requests) {
           EXPECT_TRUE(Request.Completed);
           const bool Query =
               Request.Kind == DriverRequestKind::QueryInformation;
-          EXPECT_EQ(Request.IOStatus, Query ? Status : 0);
+          EXPECT_EQ(Request.IOStatus,
+                    Query                                          ? Status
+                    : Request.Kind == DriverRequestKind::UnlockAll ? 0xc0000010u
+                                                                   : 0u);
+          if (Request.Origin == DriverRequestOrigin::FileHandleClose) {
+            EXPECT_EQ(Request.Kind, DriverRequestKind::UnlockAll);
+            EXPECT_EQ(Request.File, 0x1000u);
+            EXPECT_EQ(Request.RequestorProcessID, 4u);
+            ++HandleCloses;
+          }
           if (!Query)
             continue;
-          EXPECT_EQ(Request.Origin, DriverRequestOrigin::FileInformationQuery);
+          EXPECT_EQ(Request.Origin,
+                    Native ? DriverRequestOrigin::FileHandleQuery
+                           : DriverRequestOrigin::FileInformationQuery);
           EXPECT_EQ(Request.RequestorProcessID, 0x2000u);
           EXPECT_EQ(Request.File, 0x1000u);
-          EXPECT_EQ(Request.FileInformationClass, Queries == 1   ? 75u
-                                                  : Queries == 2 ? 14u
-                                                                 : 4u);
+          EXPECT_EQ(Request.FileInformationClass, Queries == 1 ? 75u
+                                                  : Queries == 2
+                                                      ? (Native ? 6u : 14u)
+                                                      : 4u);
           EXPECT_EQ(Request.Information, 7u);
           EXPECT_EQ(Request.Output.size(), Status >> 30 == 3 ? 0u : 7u);
           ++Queries;
         }
         EXPECT_EQ(Queries, 3u);
+        EXPECT_EQ(HandleCloses, unsigned(Native));
         EXPECT_TRUE(Result->Devices.empty());
         unsigned Returned = 0;
         for (const auto &Call : Result->Calls)
-          if (Call.Name == "IoQueryFileInformation") {
+          if (Call.Name ==
+              (Native ? "ZwQueryInformationFile" : "IoQueryFileInformation")) {
             EXPECT_EQ(Call.Result, Mode == 'M' ? 0 : Status);
             ++Returned;
           }
@@ -140,6 +170,50 @@ TEST_P(KernelFileObjectExecution, GenuineWdkQueriesBorrowedFileInformation) {
   exerciseFileQueries(NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE, Backend, Contract,
                       Rebase);
 #endif
+#endif
+}
+
+TEST_P(KernelFileObjectExecution,
+       OriginalDriverQueriesBufferedFileInformation) {
+  const auto [Backend, Contract, Rebase] = GetParam();
+  auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(E));
+    if (Unavailable)
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  exerciseFileQueries(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                          "driver_file_queries.sys",
+                      Backend, Contract, Rebase, true);
+}
+
+TEST_P(KernelFileObjectExecution, GenuineWdkQueriesBufferedFileInformation) {
+#if !defined(NEVERD_WDM_FILE_QUERIES_FIXTURE) ||                               \
+    !defined(NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE)
+  GTEST_SKIP()
+      << "genuine WDK file-query normal and CFG fixtures were not supplied";
+#else
+  const auto [Backend, Contract, Rebase] = GetParam();
+  auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(E));
+    if (Unavailable)
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  exerciseFileQueries(NEVERD_WDM_FILE_QUERIES_FIXTURE, Backend, Contract,
+                      Rebase, true);
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  exerciseFileQueries(NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE, Backend, Contract,
+                      Rebase, true);
 #endif
 }
 
@@ -407,6 +481,143 @@ TEST_P(KernelFileObjectExecution, GenuineKmdfRestoresFileHandleCaller) {
       }
     }
   }
+#endif
+}
+
+void exerciseFileTransfers(const std::filesystem::path &Image,
+                           ExecutionBackendKind Backend,
+                           ExecutionContract Contract, bool Rebase) {
+  for (char Mode : {'S', 'P', 'W', 'E', 'R', 'M', 'G', 'L', 'U'})
+    for (bool Scheduled : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << Mode << ' ' << Scheduled);
+      DriverOptions Options;
+      Options.Backend = Backend;
+      Options.Contract = Contract;
+      Options.Unload = true;
+      Options.ServiceName = std::string("FileTransfers") + Mode;
+      if (Scheduled)
+        Options.Scheduling = DriverScheduling{17, 10};
+      if (Rebase)
+        Options.LoadAddress = 0x1c0000000;
+      for (auto [Kind, PID] :
+           {std::pair{DriverRequestKind::Create, 0x1000u},
+            std::pair{DriverRequestKind::Create, 0x2000u},
+            std::pair{DriverRequestKind::DeviceControl, 0x2000u},
+            std::pair{DriverRequestKind::Cleanup, 0x2000u},
+            std::pair{DriverRequestKind::Close, 0x2000u},
+            std::pair{DriverRequestKind::Cleanup, 0x1000u},
+            std::pair{DriverRequestKind::Close, 0x1000u}}) {
+        DriverRequest Input;
+        Input.Kind = Kind;
+        Input.File = Input.RequestorProcessID = PID;
+        if (Mode == 'U' && Kind == DriverRequestKind::DeviceControl) {
+          Input.ControlCode = 3;
+          Input.OutputSize = 64;
+        }
+        Options.Requests.push_back(std::move(Input));
+      }
+      auto Result = emulateDriver(Image, Options);
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+      ASSERT_TRUE(Result->UnloadCompleted) << Result->Diagnostic;
+      ASSERT_EQ(Result->Requests.size(), Options.Requests.size() + 9)
+          << driverResultJSON(*Result);
+      const uint32_t Status = Mode == 'W' ? 0x80000005u
+                              : Mode == 'E' || Mode == 'R' || Mode == 'M'
+                                  ? 0xc0000001u
+                                  : 0u;
+      unsigned Index = 0, Flushes = 0;
+      for (const auto &Request : Result->Requests) {
+        EXPECT_TRUE(Request.Completed);
+        if (Request.Kind == DriverRequestKind::FlushBuffers) {
+          EXPECT_EQ(Request.Origin, DriverRequestOrigin::FileHandleFlush);
+          EXPECT_EQ(Request.IOStatus, Status);
+          EXPECT_EQ(Request.Information, 0x100000007ull);
+          EXPECT_TRUE(Request.Output.empty());
+          EXPECT_FALSE(Request.FileInformationClass);
+          EXPECT_EQ(Request.File, 0x1000u);
+          EXPECT_EQ(Request.RequestorProcessID, 0x2000u);
+          ++Flushes;
+          continue;
+        }
+        if (Request.Kind != DriverRequestKind::Read &&
+            Request.Kind != DriverRequestKind::Write) {
+          EXPECT_EQ(Request.IOStatus, 0u);
+          continue;
+        }
+        const bool Write = Index & 1;
+        const uint64_t Count = Index == 2 || Index == 3 ? 0 : 7;
+        EXPECT_EQ(Request.Origin, Write ? DriverRequestOrigin::FileHandleWrite
+                                        : DriverRequestOrigin::FileHandleRead);
+        EXPECT_EQ(Request.IOStatus, Status);
+        EXPECT_EQ(Request.Information, Count);
+        EXPECT_EQ(Request.Output,
+                  !Write && Count && Status >> 30 != 3
+                      ? std::vector<uint8_t>(
+                            {0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26})
+                      : std::vector<uint8_t>{});
+        EXPECT_EQ(Request.ByteOffset, Index < 2 ? 0x100000025ull + Index
+                                      : Index == 3 || Index == 5
+                                          ? UINT64_MAX
+                                          : 0x123456789ull);
+        EXPECT_EQ(Request.File, 0x1000u);
+        EXPECT_EQ(Request.RequestorProcessID, 0x2000u);
+        EXPECT_FALSE(Request.FileInformationClass);
+        ++Index;
+      }
+      EXPECT_EQ(Index, 6u);
+      EXPECT_EQ(Flushes, 2u);
+      EXPECT_TRUE(Result->Devices.empty());
+      for (const char *Name :
+           {"ZwReadFile", "ZwWriteFile", "ZwFlushBuffersFile"}) {
+        unsigned Calls = 0;
+        for (const auto &Call : Result->Calls)
+          if (Call.Name == Name) {
+            EXPECT_EQ(Call.Result, Mode == 'M' ? 0 : Status);
+            ++Calls;
+          }
+        EXPECT_EQ(Calls,
+                  std::string_view(Name) == "ZwFlushBuffersFile" ? 2u : 3u);
+      }
+    }
+}
+
+TEST_P(KernelFileObjectExecution, OriginalBufferedNativeFileTransfers) {
+  const auto [Backend, Contract, Rebase] = GetParam();
+  auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(E));
+    if (Unavailable)
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  exerciseFileTransfers(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                            "driver_file_transfers.sys",
+                        Backend, Contract, Rebase);
+}
+
+TEST_P(KernelFileObjectExecution, GenuineWdkBufferedNativeFileTransfers) {
+#if !defined(NEVERD_WDM_FILE_TRANSFERS_FIXTURE) ||                             \
+    !defined(NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE)
+  GTEST_SKIP() << "genuine WDK file-transfer fixtures are unavailable";
+#else
+  const auto [Backend, Contract, Rebase] = GetParam();
+  auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(E));
+    if (Unavailable)
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  for (const auto *Image : {NEVERD_WDM_FILE_TRANSFERS_FIXTURE,
+                            NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE})
+    exerciseFileTransfers(Image, Backend, Contract, Rebase);
 #endif
 }
 

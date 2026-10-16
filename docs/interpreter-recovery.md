@@ -322,6 +322,14 @@ Before a full flag snapshot, every modelled arithmetic or direction flag must ha
 
 LowIR temporaries are local to one lifted native instruction. Every byte read must have been defined earlier in that instruction; a reused offset from a prior instruction or an algebraically cancelled undefined value is not source evidence. Entry constants may bind physical registers only.
 
+<!-- i18n-section: supervisor-interrupt-control -->
+
+## Supervisor interrupt control
+
+Raw LowIR recovery and native relation proofs admit canonical x64 `CLI`/`STI` only with the explicit `KernelX64NoFaultV1` profile. The shared x64 flags owner clears/sets IF while preserving every other flag, general-purpose register and memory byte. Recovery retains the original intrinsic; proofs record its flag transition and always compare final system flags, even without ordinary register observations.
+
+This profile fixes CPL0/IOPL0 and excludes asynchronous events, debug delivery and privilege transitions. It therefore does not observe STI's temporary interrupt inhibition. A missing or user profile refuses these instructions; the existing source ABI remains restricted to its user profile. This support supplies no interrupt-delivery or privilege-transition model.
+
 <!-- i18n-section: raw-cmpxchg -->
 
 ## Sequential raw compare-and-exchange
@@ -591,3 +599,17 @@ Entry-prefix replays visit queued branches before extending an earlier loop agai
 
 
 Alignment forwards `MaxCuts` to the shared inference owner. After input validation and complete feedback-cut selection, an oversized set fails before symbolic entry exploration or widening. This per-plan cap does not reduce `MaxCutpointAttempts` or legal single-cut retries. Filtered families retain their charged selection work. Standalone and native inference keep their existing limits; every accepted relation still requires the unchanged complete checker.
+
+<!-- i18n-section: immutable-wide-reads -->
+
+## Complete immutable wide reads
+
+Under `ExplicitMachineState` and `NormalNonfaultingExecution`, an admitted 16-byte `LOAD` can use immutable image evidence only when every feasible address has a complete 16-byte witness. Symbolic execution retains all 128 bits. Residual materialization uses scalar parts in storage order and captures an overlapping address before writing any destination byte. Both byte orders share this rule. Every emitted operation consumes the existing operation budget.
+
+An incomplete address domain or unavailable immutable span retains the whole runtime read without partial witnesses. A provider returning a malformed byte extent refuses the result. Writable memory and runtime observations do not acquire immutable authority. Raw receipts bind all witness bytes, including the upper half. Source wrapping and independent native proofs keep their existing width and environment requirements.
+
+<!-- i18n-section: unrooted-native-stack -->
+
+## Internal transfers after changing the stack
+
+Explicit raw machine regions can follow internal near CALL and RET instructions when the current stack pointer is no longer an entry-relative value. The architecture adapter retains the physical target capture, push, return-word read and pop. Every internal return still requires an exhaustive finite target proof from the actual stack word. Only proved entry-relative return cells enter the frame projection and preservation inventory; losing an unrelated stack relation at a graph boundary can still cause recovery to refuse. Ordinary function recovery retains its restored-frame requirements. This capability supplies a raw region result; whole-function composition and source or native equivalence remain separate obligations.

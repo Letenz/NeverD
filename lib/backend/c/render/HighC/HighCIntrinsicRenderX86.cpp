@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../../UnalignedMemory.h"
 #include "../X86FPStateHelpers.h"
 
 #include "neverd/Limits.h"
@@ -465,12 +466,12 @@ renderSegmentedString(Arch TheArch, const HighExpr &Call,
 
   std::string Result = "do {\n";
   if (IsMovs || IsLods || IsCmps || IsOuts)
-    Result += "    uintptr_t neverd_si = (uintptr_t)(" +
-              ExprFn(*Call.Operands[0]) + ");\n";
+    Result += "    uintptr_t neverd_si = " +
+              c_memory::integerOperand(ExprFn(*Call.Operands[0])) + ";\n";
   if (IsMovs || IsStos || IsCmps || IsScas || IsIns) {
     const size_t DiIndex = (IsMovs || IsCmps) ? 1 : 0;
-    Result += "    uintptr_t neverd_di = (uintptr_t)(" +
-              ExprFn(*Call.Operands[DiIndex]) + ");\n";
+    Result += "    uintptr_t neverd_di = " +
+              c_memory::integerOperand(ExprFn(*Call.Operands[DiIndex])) + ";\n";
   }
   size_t CountIndex = 1;
   if (IsMovs || IsCmps) {

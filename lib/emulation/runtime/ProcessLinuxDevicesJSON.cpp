@@ -164,10 +164,14 @@ linuxDeviceOptionsFromJSON(const llvm::json::Object &Value,
     auto Limit = number<uint32_t>(*KGSL, field::DeviceContextLimit);
     const bool HasCommands = KGSL->get(field::DeviceSynchronousA3xx);
     auto Commands = KGSL->getBoolean(field::DeviceSynchronousA3xx);
-    if (KGSL->size() != 2 + unsigned(HasCommands) || !Offset || !Limit ||
-        (HasCommands && !Commands))
+    const bool HasObjects = KGSL->get(field::DeviceMemoryObjects);
+    auto Objects = KGSL->getBoolean(field::DeviceMemoryObjects);
+    if (KGSL->size() != 2 + unsigned(HasCommands) + unsigned(HasObjects) ||
+        !Offset || !Limit || (HasCommands && !Commands) ||
+        (HasObjects && !Objects))
       return invalid();
-    Out.KGSL = LinuxKGSLContexts{*Offset, *Limit, Commands.value_or(false)};
+    Out.KGSL = LinuxKGSLContexts{*Offset, *Limit, Commands.value_or(false),
+                                 Objects.value_or(false)};
   }
   return Out;
 }

@@ -22,6 +22,7 @@
 #include "neverd/ir/low/GuardedZeroSelect.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/InternalNoReturn.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
@@ -1442,7 +1443,9 @@ bool collectLowAddressUses(
               !addUse(Op, ModuleAddressUse::Kind::PointerEscape, StoredValue))
             return false;
         } else if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
-                   Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::RETURN) {
+                   (Op.Opcode == NdOp::INTRINSIC &&
+                    !lowIntrinsicHasOnlyValueEffects(Op)) ||
+                   Op.Opcode == NdOp::RETURN) {
           if (Op.Opcode == NdOp::RETURN) {
             ModuleAddressFacts Returned;
             std::vector<ModuleAddressFacts> EscapedFrameAddresses;
@@ -1622,6 +1625,13 @@ bool collectLowAddressUses(
               }
               return true;
             };
+            // Unlike CALL, an intrinsic carries its data operands explicitly.
+            // A memory/opaque intrinsic may observe an address in a temporary
+            // even when no ABI argument register contains that address.
+            if (Op.Opcode == NdOp::INTRINSIC)
+              for (uint8_t I = 1; I < Op.NumInputs; ++I)
+                if (!mergeCallArgument(factsFor(Op.Inputs[I])))
+                  return false;
             for (const auto &[Key, Facts] : State) {
               if (std::get<0>(Key) != VnodeSpace::REG ||
                   TRI.regToArgIdx(std::get<1>(Key),
@@ -1874,12 +1884,15 @@ bool collectLowAddressUses(
             break;
           case NdOp::CALL:
           case NdOp::INDIR_CALL:
-          case NdOp::INTRINSIC:
           case NdOp::RETURN:
             // Reading an address from memory does not preserve the address of
             // the memory field in the result; observable effects were recorded
             // above and do not forward operand provenance into their outputs.
             break;
+          case NdOp::INTRINSIC:
+            if (!lowIntrinsicHasOnlyValueEffects(Op))
+              break;
+            [[fallthrough]];
           default:
             // A pure, unmodelled value transform is not itself an externally
             // observable pointer escape.  Carry authenticated object roots
@@ -3702,7 +3715,21 @@ void Pipeline::buildLowIR(
     StableCxxContinuationExitAnalysisCompleteByFunction.clear();
     HasStableCxxContinuationExitSnapshot = false;
   };
+  // Continuation discovery need not change any body. The same immutable
+  // AllLow then has the same module arbitration, including budget refusals.
+  // Keep one result within this run; every body replacement below retires it
+  // before parallel builders can change its inputs. Image publication occurs
+  // only after both fixed points finish.
+  std::optional<ModuleJumpTableArbitration> CachedArbitration;
+  auto arbitrationForCurrentBodies =
+      [&]() -> const ModuleJumpTableArbitration & {
+    if (!CachedArbitration)
+      CachedArbitration = collectModuleJumpTableArbitration(
+          Img, AllLow, Opts.JumpTableEvidenceBudgetForTesting);
+    return *CachedArbitration;
+  };
   auto rebuildFunctions = [&](const std::vector<bool> &Rebuild) {
+    CachedArbitration.reset();
     parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
       Decoder LocalDec;
       if (!LocalDec.init(Img))
@@ -3744,8 +3771,7 @@ void Pipeline::buildLowIR(
   bool PreserveAllRelocationSlots = false;
   const size_t MaxArbitrationPasses = limits::kMaxJumpTableEvidenceWork + 1;
   for (size_t Pass = 0; Pass < MaxArbitrationPasses; ++Pass) {
-    ModuleJumpTableArbitration Discovered = collectModuleJumpTableArbitration(
-        Img, AllLow, Opts.JumpTableEvidenceBudgetForTesting);
+    ModuleJumpTableArbitration Discovered = arbitrationForCurrentBodies();
     if (!Discovered.AnalysisComplete) {
       ProtectedRelocationSlots.insert(
           Discovered.ProtectedRelocationSlots.begin(),
@@ -3922,8 +3948,7 @@ void Pipeline::buildLowIR(
       ContinuationAndArbitrationStable = true;
       break;
     }
-    ModuleJumpTableArbitration Discovered = collectModuleJumpTableArbitration(
-        Img, AllLow, Opts.JumpTableEvidenceBudgetForTesting);
+    ModuleJumpTableArbitration Discovered = arbitrationForCurrentBodies();
     if (!Discovered.AnalysisComplete) {
       clearStableCxxContinuationExitSnapshot();
       clearContinuationRoots();

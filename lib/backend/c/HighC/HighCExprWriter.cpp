@@ -321,44 +321,142 @@ bool isPlainInteger(const TypeRef &T) {
          (T->Size == 1 || T->Size == 2 || T->Size == 4 || T->Size == 8);
 }
 
+/// A float or a double, which a member of its own type holds unconverted.
+bool isPlainFloat(const TypeRef &T) {
+  return T && T->Kind == NdTypeKind::Float && (T->Size == 4 || T->Size == 8);
+}
+
+/// A read of frame storage without the parentheses that enclose it where no
+/// unary or postfix operator applies to it: a member, a view of one, or a
+/// conversion of one.
+std::string bareFrameRead(std::string Text, int ParentPrec) {
+  constexpr int UnaryOperand = 99;
+  return ParentPrec < UnaryOperand ? c_memory::unparenthesized(Text) : Text;
+}
+
 } // anonymous namespace
+
+std::optional<std::pair<int64_t, TypeRef>>
+HighCWriter::projectedSlotRead(const HighExpr &E) const {
+  // The variables the Var printer reads from the storage, under the same
+  // conditions it checks first.
+  if (!ProjectFrameAliasesIntoStorage ||
+      (E.Kind != ExprKind::Var && E.Kind != ExprKind::Phi))
+    return std::nullopt;
+  const std::string RawName = varName(E.Var);
+  const std::string Name = copyForwardName(RawName);
+  if (ReachingCatchFields.count(Name) || ReachingCatchPtrs.count(Name) ||
+      isRegistrationEstablisherFrame(E.Var) || FrameAliases.count(RawName) ||
+      (CurrentFunc &&
+       isSyntheticEntryStackPointer(E.Var, *CurrentFunc, Opts.TheArch)) ||
+      E.Var.Kind == MedVar::Param || isEmittedParamName(Name) ||
+      isCxxCatchObjectName(Name))
+    return std::nullopt;
+  for (const auto &[Disp, Slot] : FrameStorageSlots)
+    if (Slot.Name == Name)
+      return std::pair{Disp, Slot.Type ? Slot.Type : E.Type};
+  return std::nullopt;
+}
 
 void HighCWriter::collectFrameRecordMembers(const HighFunc &Func,
                                             uint64_t FrameBaseOffset,
                                             uint64_t StorageSize) {
   FrameRecordMembers.clear();
-  // Every access at a displacement: its type, and whether it is a plain
-  // integer read or write a member could print.
+  const bool Wide = getTargetRegInfo(Opts.TheArch).PointerSize == 8;
+  auto ScalarWidth = [&](uint64_t Size) {
+    return Size == 1 || Size == 2 || Size == 4 || Size == 8 ||
+           (Wide && Size == 16);
+  };
+  // Every access at a displacement, and every displacement whose address
+  // the function takes.
   struct Access {
     TypeRef Type;
+    uint64_t Size = 1;
+    /// An access of a type a member can hold.
+    bool Scalar = false;
+    /// A scalar access, unordered and of the default address space, that a
+    /// member or a view of one prints.
     bool Plain = false;
+    bool Read = false;
   };
   std::map<int64_t, std::vector<Access>> Accesses;
-  auto Note = [&](const HighExpr &Address, const TypeRef &Type,
-                  NdMemoryOrdering Ordering, NdMemoryAddressSpace Space) {
-    if (const auto Disp = certifiedFrameStorageDisplacement(Address))
-      Accesses[*Disp].push_back(
-          {Type, isPlainInteger(Type) && Ordering == NdMemoryOrdering::None &&
-                     Space == NdMemoryAddressSpace::Default});
+  std::set<int64_t> Addresses;
+  auto NoteAccess = [&](int64_t Disp, const TypeRef &Type, bool Plain,
+                        bool Read) {
+    const uint64_t Size = Type && Type->Size ? Type->Size : 1;
+    const TypeRef Carrier = frameRecordCarrier(Type);
+    Accesses[Disp].push_back({Carrier ? Carrier : Type, Size,
+                              Carrier != nullptr, Plain && Carrier, Read});
   };
-  std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
-    if (E.Kind == ExprKind::Load && !E.Operands.empty() && E.Operands[0])
-      Note(*E.Operands[0], E.Type, E.MemoryOrdering, E.MemoryAddressSpace);
+  std::function<void(const HighExpr &)> Value;
+  auto Address = [&](const HighExpr &Addr, const TypeRef &Type,
+                     NdMemoryOrdering Ordering, NdMemoryAddressSpace Space,
+                     bool Read) {
+    if (Space == NdMemoryAddressSpace::Default)
+      if (const auto Disp = certifiedFrameStorageDisplacement(Addr)) {
+        NoteAccess(*Disp, Type, Ordering == NdMemoryOrdering::None, Read);
+        return;
+      }
+    Value(Addr);
+  };
+  Value = [&](const HighExpr &E) {
+    if (E.Kind == ExprKind::Load && !E.Operands.empty() && E.Operands[0]) {
+      Address(*E.Operands[0], E.Type, E.MemoryOrdering, E.MemoryAddressSpace,
+              /*Read=*/true);
+      return;
+    }
+    if (const auto Read = projectedSlotRead(E)) {
+      NoteAccess(Read->first, Read->second, true, /*Read=*/true);
+      return;
+    }
+    // The address a frame alias holds prints at each use (exprStr).
+    if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
+        ProjectFrameAliasesIntoStorage)
+      if (const auto Alias = FrameAliases.find(varName(E.Var));
+          Alias != FrameAliases.end()) {
+        Addresses.insert(Alias->second);
+        return;
+      }
+    if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi ||
+        E.Kind == ExprKind::BinOp)
+      if (const auto Disp = certifiedFrameStorageDisplacement(E)) {
+        Addresses.insert(*Disp);
+        return;
+      }
     E.forEachChildExpr([&](const ExprPtr &Child) {
       if (Child)
-        Visit(*Child);
+        Value(*Child);
     });
   };
   walkStmts(Func.Body, [&](const HighStmt &S) {
+    // A frame alias's own assignments print nothing: each use prints the
+    // address it holds. Every other statement counts, a dead one too, whose
+    // value can print where it is forwarded.
+    if (S.Kind == StmtKind::Assign && S.Dst &&
+        (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi) &&
+        ProjectFrameAliasesIntoStorage &&
+        FrameAliases.count(varName(S.Dst->Var)) &&
+        !AmbiguousFrameAliases.count(varName(S.Dst->Var)))
+      return;
     if (S.Kind == StmtKind::Store && S.StoreAddr && S.StoreVal)
-      Note(*S.StoreAddr, S.StoreVal->Type, S.MemoryOrdering,
-           S.MemoryAddressSpace);
-    if (S.Dst)
-      Visit(*S.Dst);
-    forEachRhsExpr(S, [&](const ExprPtr &E) {
-      if (E)
-        Visit(*E);
-    });
+      Address(*S.StoreAddr, S.StoreVal->Type, S.MemoryOrdering,
+              S.MemoryAddressSpace, /*Read=*/false);
+    else if (S.StoreAddr)
+      Value(*S.StoreAddr);
+    // An assignment to memory writes its destination.
+    if (S.Dst && S.Dst->Kind == ExprKind::Load && !S.Dst->Operands.empty() &&
+        S.Dst->Operands[0])
+      Address(*S.Dst->Operands[0], S.Dst->Type, S.Dst->MemoryOrdering,
+              S.Dst->MemoryAddressSpace, /*Read=*/false);
+    else if (S.Dst)
+      Value(*S.Dst);
+    for (const ExprPtr *E :
+         {&S.Val, &S.Cond, &S.RetVal, &S.StoreVal, &S.CallExpr, &S.SwitchExpr})
+      if (*E)
+        Value(**E);
+    for (const HighEHClause &Clause : S.EHClauses)
+      if (Clause.FilterValue)
+        Value(*Clause.FilterValue);
   });
   // A debug object of another type keeps its bytes raw, as in LLVM C: its
   // layout comes from the reader's headers, not from one integer member.
@@ -376,35 +474,16 @@ void HighCWriter::collectFrameRecordMembers(const HighFunc &Func,
             {Start, Start + std::max<int64_t>(DebugTy->Size, 1)});
       DebugTypes[Start] = std::move(DebugTy);
     }
-  std::set<std::string> Names;
-  for (const auto &[Disp, List] : Accesses) {
-    const TypeRef &Type = List.front().Type;
-    if (!llvm::all_of(List, [&](const Access &A) {
-          return A.Plain && A.Type->Size == Type->Size &&
-                 A.Type->IsSigned == Type->IsSigned;
-        }))
-      continue;
-    const int64_t At = static_cast<int64_t>(FrameBaseOffset) + Disp;
-    if (At < 0 || static_cast<uint64_t>(At) + Type->Size > StorageSize ||
-        At % Type->Size)
-      continue;
-    if (const auto Debug = DebugTypes.find(Disp);
-        Debug != DebugTypes.end() && Debug->second->Size != Type->Size)
-      continue;
-    const int64_t End = Disp + static_cast<int64_t>(Type->Size);
-    if (llvm::any_of(RawObjects, [&](const auto &Object) {
-          return Object.first < End && Disp < Object.second;
-        }))
-      continue;
-    const bool Clear = llvm::none_of(Accesses, [&](const auto &Other) {
-      return Other.first != Disp &&
-             llvm::any_of(Other.second, [&](const Access &A) {
-               const int64_t Size = A.Type && A.Type->Size ? A.Type->Size : 1;
-               return Other.first < End && Disp < Other.first + Size;
-             });
+  auto Raw = [&](int64_t Begin, int64_t End) {
+    return llvm::any_of(RawObjects, [&](const auto &Object) {
+      return Object.first < End && Begin < Object.second;
     });
-    if (!Clear)
-      continue;
+  };
+  // The storage spans [Low, High) in displacements.
+  const int64_t Low = -static_cast<int64_t>(FrameBaseOffset);
+  const int64_t High = Low + static_cast<int64_t>(StorageSize);
+  std::set<std::string> Names;
+  auto Claim = [&](int64_t Disp, TypeRef Type, uint64_t Size) {
     std::string Name;
     if (const auto Slot = FrameSlotNamesBeforeStorage.find(Disp);
         Slot != FrameSlotNamesBeforeStorage.end())
@@ -418,24 +497,270 @@ void HighCWriter::collectFrameRecordMembers(const HighFunc &Func,
       Name = (Disp < 0 ? "var_m" : "var_") + llvm::utohexstr(Magnitude);
     }
     if (!Names.insert(Name).second)
+      return;
+    FrameRecordMembers[Disp] = {Name, std::move(Type), Size};
+  };
+  // Members from the accesses, in address order. A scalar member holds the
+  // widest accesses where they start and cover the others, which view its
+  // bytes; accesses that straddle each other share one byte array.
+  for (auto It = Accesses.begin(); It != Accesses.end();) {
+    const int64_t Disp = It->first;
+    int64_t End = Disp;
+    auto Next = It;
+    for (; Next != Accesses.end() && Next->first < std::max(End, Disp + 1);
+         ++Next)
+      for (const Access &A : Next->second)
+        End = std::max(End, Next->first + static_cast<int64_t>(A.Size));
+    const std::vector<Access> &AtStart = It->second;
+    It = Next;
+    if (Disp < Low || End > High || Raw(Disp, End))
       continue;
-    FrameRecordMembers[Disp] = {Name, Type};
+    TypeRef Type;
+    const uint64_t Size = static_cast<uint64_t>(End - Disp);
+    std::vector<const Access *> Widest;
+    for (const Access &A : AtStart)
+      if (A.Size == Size)
+        Widest.push_back(&A);
+    const bool Aligned =
+        ScalarWidth(Size) && (static_cast<int64_t>(FrameBaseOffset) + Disp) %
+                                     static_cast<int64_t>(Size) ==
+                                 0;
+    if (!Widest.empty() && Aligned &&
+        llvm::all_of(Widest, [](const Access *A) { return A->Scalar; })) {
+      // Of the kind the widest plain accesses agree on. A write converts its
+      // value to the member's type as C does, and a read of the other
+      // signedness converts the member, so the reads choose the signedness.
+      // An ordered access keeps its own path to the bytes an integer names.
+      std::vector<TypeRef> Plain, PlainReads;
+      for (const Access *A : Widest)
+        if (A->Plain) {
+          Plain.push_back(A->Type);
+          if (A->Read)
+            PlainReads.push_back(A->Type);
+        }
+      const std::vector<TypeRef> &Choosing =
+          PlainReads.empty() ? Plain : PlainReads;
+      Type = Choosing.empty() ? NdType::makeInt(Size, /*S=*/false)
+                              : Choosing.front();
+      const bool OneKind = llvm::all_of(
+          Plain, [&](const TypeRef &T) { return T->Kind == Type->Kind; });
+      if (!OneKind || !llvm::all_of(Choosing, [&](const TypeRef &T) {
+            return T->IsSigned == Type->IsSigned;
+          }))
+        Type = NdType::makeInt(Size,
+                               /*S=*/OneKind && Type->Kind == NdTypeKind::Int &&
+                                   llvm::all_of(Choosing, [](const TypeRef &T) {
+                                     return T->IsSigned;
+                                   }));
+    }
+    if (const auto Debug = DebugTypes.find(Disp);
+        Debug != DebugTypes.end() && (!Type || Debug->second->Size != Size))
+      continue;
+    Claim(Disp, std::move(Type), Size);
   }
+  // A frame address the function takes outside every member names a byte
+  // array that runs to the next member, access or address.
+  std::set<int64_t> Bounds;
+  for (const auto &Entry : Accesses)
+    Bounds.insert(Entry.first);
+  for (int64_t Disp : Addresses)
+    Bounds.insert(Disp);
+  for (const auto &Entry : FrameRecordMembers)
+    Bounds.insert(Entry.first);
+  for (int64_t Disp : Addresses) {
+    if (Disp == 0 || Disp < Low || Disp >= High ||
+        frameRecordMemberHolding(Disp, 1) || Raw(Disp, Disp + 1) ||
+        DebugTypes.count(Disp))
+      continue;
+    const auto Following = Bounds.upper_bound(Disp);
+    const int64_t End = Following == Bounds.end() ? High : *Following;
+    if (End <= Disp || Raw(Disp, End))
+      continue;
+    Claim(Disp, nullptr, static_cast<uint64_t>(End - Disp));
+  }
+}
+
+const std::pair<const int64_t, HighCWriter::FrameRecordMember> *
+HighCWriter::frameRecordMemberHolding(int64_t Disp, uint64_t Size) const {
+  auto It = FrameRecordMembers.upper_bound(Disp);
+  if (It == FrameRecordMembers.begin())
+    return nullptr;
+  --It;
+  if (Disp + static_cast<int64_t>(std::max<uint64_t>(Size, 1)) >
+      It->first + static_cast<int64_t>(It->second.Size))
+    return nullptr;
+  return &*It;
+}
+
+bool HighCWriter::frameRecordScalar(const TypeRef &T) const {
+  return isPlainInteger(T) || isPlainFloat(T) || frameRecordWideInteger(T);
+}
+
+bool HighCWriter::frameRecordWideInteger(const TypeRef &T) const {
+  // A 16-byte integer is a C scalar on the 64-bit targets that have one.
+  return T && T->Kind == NdTypeKind::Int && !T->IsEnum && T->Size == 16 &&
+         getTargetRegInfo(Opts.TheArch).PointerSize == 8;
+}
+
+bool HighCWriter::frameRecordInteger(const TypeRef &T) const {
+  return isPlainInteger(T) || frameRecordWideInteger(T);
+}
+
+std::optional<std::string>
+HighCWriter::frameRecordLvalue(int64_t Disp, const TypeRef &Ty) const {
+  if (!frameRecordScalar(Ty))
+    return std::nullopt;
+  const auto *Held = frameRecordMemberHolding(Disp, Ty->Size);
+  if (!Held)
+    return std::nullopt;
+  const FrameRecordMember &Member = Held->second;
+  // The member itself where its type holds the value unconverted.
+  if (Held->first == Disp && Member.Type && Member.Size == Ty->Size &&
+      ((frameRecordInteger(Member.Type) && frameRecordInteger(Ty)) ||
+       (isPlainFloat(Member.Type) && isPlainFloat(Ty))))
+    return kFrameStorageName.str() + "." + Member.Name;
+  // Otherwise a view of its bytes, spelled as every other scalar access is:
+  // the same bytes at the same address on either byte order.
+  if (!UnalignedTypesWritten)
+    return std::nullopt;
+  const std::string Alias =
+      c_memory::alias(memoryTypeName(Ty), Opts.ScalarPointers);
+  if (Alias.empty())
+    return std::nullopt;
+  return "*(" + Alias + " *)" + frameRecordPointer(Disp);
+}
+
+std::string HighCWriter::frameRecordPointer(int64_t Disp) const {
+  const auto *Held = frameRecordMemberHolding(Disp, 1);
+  if (!Held)
+    return frameStorageAddress(Disp);
+  const std::string Name = kFrameStorageName.str() + "." + Held->second.Name;
+  const int64_t Offset = Disp - Held->first;
+  if (!Offset)
+    return "&" + Name;
+  if (!Held->second.Type)
+    return "&" + Name + "[" + std::to_string(Offset) + "]";
+  return "((uint8_t *)&" + Name + " + " + std::to_string(Offset) + ")";
+}
+
+std::string HighCWriter::frameRecordAddress(int64_t Disp) const {
+  const std::string Pointer = frameRecordPointer(Disp);
+  if (!llvm::StringRef(Pointer).starts_with("&") &&
+      !llvm::StringRef(Pointer).starts_with("((uint8_t *)&"))
+    return Pointer;
+  return "(uintptr_t)" + Pointer;
+}
+
+std::string HighCWriter::frameStorageView(int64_t Disp, const TypeRef &Ty,
+                                          int64_t RegionBytes) const {
+  // A byte region the member is exactly.
+  if (RegionBytes > 0) {
+    if (const auto Member = FrameRecordMembers.find(Disp);
+        Member != FrameRecordMembers.end() && !Member->second.Type &&
+        Member->second.Size == static_cast<uint64_t>(RegionBytes))
+      return kFrameStorageName.str() + "." + Member->second.Name;
+    return "(*(uint8_t (*)[" + std::to_string(RegionBytes) + "])" +
+           frameRecordPointer(Disp) + ")";
+  }
+  // A scalar the member holds with its own type, or a view of the bytes of
+  // that type. A member of the other signedness is no lvalue of this one.
+  if (auto Text = frameRecordLvalue(Disp, Ty)) {
+    if (llvm::StringRef(*Text).starts_with("*("))
+      return "(" + *Text + ")";
+    if (frameRecordMemberHolding(Disp, Ty->Size)->second.Type->IsSigned ==
+        Ty->IsSigned)
+      return *Text;
+  }
+  return "(*(" + declarationToC(Ty, "*") + ")" + frameRecordPointer(Disp) + ")";
+}
+
+std::string HighCWriter::frameAddressText(const HighExpr &E, int64_t Disp) {
+  // The rebuilt storage has the host's pointer width, which a 64-bit
+  // target's source is compiled with: a frame address is a uint64_t already.
+  std::string Text = frameRecordAddress(Disp);
+  if (getTargetRegInfo(Opts.TheArch).PointerSize == sizeof(uint64_t))
+    return typedText(E, std::move(Text), sizeof(uint64_t), /*Signed=*/false);
+  return Text;
+}
+
+std::optional<std::string> HighCWriter::frameRecordBytes(const HighExpr &Addr,
+                                                         uint64_t Size) const {
+  if (FrameRecordMembers.empty())
+    return std::nullopt;
+  const auto Disp = certifiedFrameStorageDisplacement(Addr);
+  if (!Disp || !frameRecordMemberHolding(*Disp, Size))
+    return std::nullopt;
+  return frameRecordPointer(*Disp);
+}
+
+TypeRef HighCWriter::frameRecordCarrier(const TypeRef &Ty) const {
+  if (frameRecordScalar(Ty))
+    return Ty;
+  // A pointer of the host's width is the bits of an unsigned integer of that
+  // width, which a 64-bit target's pointers have.
+  if (Ty && Ty->Kind == NdTypeKind::Ptr && Ty->Size == sizeof(uint64_t) &&
+      getTargetRegInfo(Opts.TheArch).PointerSize == sizeof(uint64_t))
+    return NdType::makeInt(sizeof(uint64_t), /*S=*/false);
+  return nullptr;
+}
+
+std::string HighCWriter::frameRecordStored(const TypeRef &Ty,
+                                           std::string Value) const {
+  if (!Ty || Ty->Kind != NdTypeKind::Ptr || c_memory::integerConversion(Value))
+    return Value;
+  return "(uintptr_t)" + c_memory::castOperand(Value);
+}
+
+std::optional<std::string>
+HighCWriter::frameRecordRead(int64_t Disp, const TypeRef &Ty) const {
+  const TypeRef Carrier = frameRecordCarrier(Ty);
+  if (!Carrier)
+    return std::nullopt;
+  auto Text = frameRecordRvalue(Disp, Carrier);
+  if (!Text || Carrier == Ty)
+    return Text;
+  // The pointer the member's bits are.
+  const bool Postfix = llvm::all_of(
+      *Text, [](char C) { return llvm::isAlnum(C) || C == '_' || C == '.'; });
+  return "(" + typeToC(Ty) + ")" +
+         (Postfix ? *Text : c_memory::castOperand(*Text));
 }
 
 std::optional<std::string>
 HighCWriter::frameRecordMember(const HighExpr &Addr, const TypeRef &Ty) const {
-  if (FrameRecordMembers.empty() || !isPlainInteger(Ty))
+  if (FrameRecordMembers.empty())
+    return std::nullopt;
+  const auto Disp = certifiedFrameStorageDisplacement(Addr);
+  const TypeRef Carrier = frameRecordCarrier(Ty);
+  if (!Disp || !Carrier)
+    return std::nullopt;
+  return frameRecordLvalue(*Disp, Carrier);
+}
+
+std::optional<std::string>
+HighCWriter::frameRecordMemberValue(const HighExpr &Addr,
+                                    const TypeRef &Ty) const {
+  if (FrameRecordMembers.empty())
     return std::nullopt;
   const auto Disp = certifiedFrameStorageDisplacement(Addr);
   if (!Disp)
     return std::nullopt;
-  const auto Member = FrameRecordMembers.find(*Disp);
-  if (Member == FrameRecordMembers.end() ||
-      Member->second.Type->Size != Ty->Size ||
-      Member->second.Type->IsSigned != Ty->IsSigned)
+  return frameRecordRead(*Disp, Ty);
+}
+
+std::optional<std::string>
+HighCWriter::frameRecordRvalue(int64_t Disp, const TypeRef &Ty) const {
+  auto Text = frameRecordLvalue(Disp, Ty);
+  if (!Text)
     return std::nullopt;
-  return kFrameStorageName.str() + "." + Member->second.Name;
+  // A view reads as a parenthesized access does, `(*(uint32_t *)p)`.
+  if (llvm::StringRef(*Text).starts_with("*("))
+    return "(" + *Text + ")";
+  // A read of the whole member converts it to the signedness the read has.
+  const TypeRef &Type = frameRecordMemberHolding(Disp, Ty->Size)->second.Type;
+  if (frameRecordInteger(Type) && Type->IsSigned != Ty->IsSigned)
+    return "((" + typeToC(Ty) + ")" + *Text + ")";
+  return Text;
 }
 
 bool printsIntegerArithmetic(const HighExpr &E) {
@@ -2088,7 +2413,7 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
                                  bool ProjectImageBacking) {
   if (ProjectImageBacking && ProjectFrameAliasesIntoStorage)
     if (const auto Disp = certifiedFrameStorageDisplacement(E))
-      return frameStorageAddress(*Disp);
+      return frameRecordAddress(*Disp);
   if (E.Kind == ExprKind::Const)
     if (auto Anchored = anchoredOwnerAddress(E))
       return *Anchored;
@@ -2815,8 +3140,7 @@ std::string HighCWriter::typedArgumentText(const HighExpr &E,
     if (auto Slot = namedFrameSlot(*Inner))
       return "&" + *Slot;
     if (const auto Disp = certifiedFrameStorageDisplacement(*Inner))
-      return "(" + typeToC(Expected) + ")(uintptr_t)(" +
-             frameStorageAddress(*Disp) + ")";
+      return "(" + typeToC(Expected) + ")" + frameRecordPointer(*Disp);
     // An integer, such as a variable C declares as one or the integer
     // expression it forwards, converts to the pointer the parameter takes;
     // a pointer passes as it is.
@@ -4553,14 +4877,14 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         Reach != ReachingCatchPtrs.end())
       return Reach->second;
     if (InEHClauseBody && isCatchFuncletParentFrame(E.Var))
-      return frameStorageAddress(
-          CurrentFunc->FrameSize > 0 ? -CurrentFunc->FrameSize : 0);
+      return frameAddressText(
+          E, CurrentFunc->FrameSize > 0 ? -CurrentFunc->FrameSize : 0);
     // The registration handler's EBP already has an establisher identity in
     // frameDisplacement. Keep that identity when named slots are replaced by
     // byte storage; an independent SSA root does not make it an unknown input.
     if (FrameStorageActive && isRegistrationEstablisherFrame(E.Var))
       if (const auto Disp = frameDisplacement(E))
-        return frameStorageAddress(*Disp);
+        return frameAddressText(E, *Disp);
     if (ProjectFrameAliasesIntoStorage) {
       if (CurrentFunc &&
           isSyntheticEntryStackPointer(E.Var, *CurrentFunc, Opts.TheArch))
@@ -4570,13 +4894,16 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       // addresses the single byte backing store, rather than reading that
       // potentially skipped C assignment.
       if (auto Alias = FrameAliases.find(RawName); Alias != FrameAliases.end())
-        return frameStorageAddress(Alias->second);
+        return frameAddressText(E, Alias->second);
       for (const auto &[Disp, Slot] : FrameStorageSlots)
         if (Slot.Name == Name && E.Var.Kind != MedVar::Param &&
-            !isEmittedParamName(Name) && !isCxxCatchObjectName(Name))
-          return bareLoad(memoryLoadExpr(Slot.Type ? Slot.Type : E.Type,
-                                         frameStorageAddress(Disp)),
+            !isEmittedParamName(Name) && !isCxxCatchObjectName(Name)) {
+          const TypeRef &Type = Slot.Type ? Slot.Type : E.Type;
+          if (auto Member = frameRecordRead(Disp, Type))
+            return bareFrameRead(*Member, ParentPrec);
+          return bareLoad(memoryLoadExpr(Type, frameRecordAddress(Disp)),
                           ParentPrec);
+        }
     }
     const HighExpr *Forwarded = nullptr;
     if (auto Printed = printedForwardedVar(Name, ParentPrec, &Forwarded);
@@ -4702,7 +5029,7 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
   case ExprKind::BinOp:
     if (ProjectFrameAliasesIntoStorage)
       if (const auto Disp = certifiedFrameStorageDisplacement(E))
-        return frameStorageAddress(*Disp);
+        return frameAddressText(E, *Disp);
     if (auto Slot = namedFrameSlot(E))
       return IntegerViewOperands.count(&E)
                  ? PointerInteger("(uintptr_t)&" + *Slot)
@@ -4766,8 +5093,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return "(" + typeToC(E.Type) + ")(" + *Fwd + ")";
       if (auto Slot = namedSlotLoadDisplay(E))
         return *Slot;
-      if (auto Member = frameRecordMember(*E.Operands[0], E.Type))
-        return Access(*Member);
+      if (auto Member = frameRecordMemberValue(*E.Operands[0], E.Type))
+        return Access(bareFrameRead(*Member, ParentPrec));
       // A data import's slot holds the import's address, which the read
       // takes: `(int64_t)__imp__commode`.
       if (const auto Slot =
@@ -4834,7 +5161,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       if (auto Slot = namedFrameSlot(*E.Operands[0]))
         return *Slot + " = " + Val;
       if (auto Member = frameRecordMember(*E.Operands[0], E.Operands[1]->Type))
-        return *Member + " = " + Val;
+        return *Member + " = " +
+               frameRecordStored(E.Operands[1]->Type, std::move(Val));
     }
     return memoryStoreExpr(E.Operands[1]->Type, Addr, Val, E.MemoryOrdering,
                            E.MemoryAddressSpace);
@@ -4991,6 +5319,11 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     if (Operand.Kind == ExprKind::Load && !Operand.Operands.empty()) {
       if (auto Slot = namedFrameSlot(*Operand.Operands[0]))
         return "&" + *Slot;
+      if (Operand.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+        if (auto Bytes = frameRecordBytes(
+                *Operand.Operands[0],
+                Operand.Type && Operand.Type->Size ? Operand.Type->Size : 1))
+          return "(" + typeToC(Operand.Type) + " *)" + *Bytes;
       if (auto VA = constAddress(*Operand.Operands[0]))
         if (auto Name = imageObjectName(*VA))
           return "&" + *Name;

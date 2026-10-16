@@ -50,7 +50,7 @@ public:
   }
   static bool lower(MedLLVMEmitter &E, const MedFunc &Source, llvm::Function &F,
                     const std::map<int, llvm::BasicBlock *> &Blocks) {
-    return E.emitNativeX86RegistrationSEH(Source, F, Blocks);
+    return E.emitNativeX86RegistrationSEH(Source, F, Blocks, {});
   }
 };
 } // namespace neverd

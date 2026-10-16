@@ -36,10 +36,15 @@ def run(executable):
         assert [row["name"] for row in listing["types"]] == ["_DEVICE"]
         assert listing["types"][0]["size"] == 0x58
 
-        device = ok(owner, "local_type", {"name": "_DEVICE", "spelling": "ida"})
+        # Exact widths unless asked.
+        device = ok(owner, "local_type", {"name": "_DEVICE"})
         links = next(member for member in device["members"] if member["name"] == "Links")
         assert links["offset"] == 8 and links["refers"] == "_LIST_ENTRY"
-        assert device["members"][0]["type"] == "unsigned __int16"
+        assert device["members"][0]["type"] == "uint16_t", device["members"][0]
+        keywords = ok(owner, "local_type", {"name": "_DEVICE", "spelling": "keywords"})
+        assert keywords["members"][0]["type"] == "unsigned short", keywords["members"][0]
+        refused = owner.call("local_type", {"name": "_DEVICE", "spelling": "ida"})
+        assert refused["status"] != "ok", refused
 
         rust = ok(owner, "local_types_source", {"language": "rust", "types": ["_PACKED"],
                                                 "dependencies": False})
@@ -51,6 +56,19 @@ def run(executable):
         assert "class _PACKED(ctypes.Structure):" in python["source"], python
         assert '    _layout_ = "ms"\n' in python["source"], python
         unread = ok(owner, "local_types_declare", {"language": "python", "source": "X = 1"})
+        assert unread["types"] == [] and "do not read" in unread["problems"][0]["message"], unread
+        # JavaScript reads through a DataView, and declares nothing.
+        script = ok(owner, "local_types_source", {"language": "javascript", "types": ["_PACKED"],
+                                                  "dependencies": False})
+        assert script["language"] == "javascript", script
+        assert "export class _PACKED {" in script["source"], script
+        unread = ok(owner, "local_types_declare", {"language": "javascript", "source": "export {}"})
+        assert unread["types"] == [] and "do not read" in unread["problems"][0]["message"], unread
+        # Lua reads through string.unpack, and declares nothing.
+        lua = ok(owner, "local_types_source", {"language": "lua", "types": ["_PACKED"],
+                                               "dependencies": False})
+        assert lua["language"] == "lua" and 'record("_PACKED", 0x7)' in lua["source"], lua
+        unread = ok(owner, "local_types_declare", {"language": "lua", "source": "return {}"})
         assert unread["types"] == [] and "do not read" in unread["problems"][0]["message"], unread
         # Prototypes render in C and C++ only, and fail elsewhere.
         refused = owner.call("local_types_source", {"language": "python", "prototypes": True})

@@ -3397,10 +3397,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Windows の名前（ULONG）</translation>
     </message>
     <message>
-        <source>IDA names (unsigned int)</source>
-        <translation>IDA の名前（unsigned int）</translation>
-    </message>
-    <message>
         <source>C keywords (unsigned long)</source>
         <translation>C のキーワード（unsigned long）</translation>
     </message>
@@ -3759,6 +3755,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Exact widths (c_uint32)</source>
         <translation>正確な幅（c_uint32）</translation>
+    </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>JavaScript モジュール (*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>JavaScript の型（number、bigint）</translation>
+    </message>
+    <message>
+        <source>Lua (*.lua)</source>
+        <translation>Lua (*.lua)</translation>
     </message>
 </context>
 <context>

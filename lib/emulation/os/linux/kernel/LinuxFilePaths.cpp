@@ -274,7 +274,8 @@ llvm::Expected<std::optional<uint64_t>> LinuxFiles::open(uint64_t Address,
     auto Description =
         std::make_shared<LinuxDeviceState>(LinuxDeviceState{&Device});
     Description->OpenFlags = Flags;
-    if (Device.KGSL && Device.KGSL->SynchronousA3xx) {
+    if (Device.KGSL &&
+        (Device.KGSL->SynchronousA3xx || Device.KGSL->MemoryObjects)) {
       for (const auto &Weak : DeviceDescriptions)
         if (auto Open = Weak.lock())
           if (Open->Options == &Device)

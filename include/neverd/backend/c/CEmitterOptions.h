@@ -14,7 +14,9 @@
 
 #include "neverd/Common.h"
 
+#include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -24,6 +26,26 @@ struct BinaryImage;
 struct CSourceMap;
 struct CSourceName;
 class DataAccessWidths;
+struct NdType;
+
+/// What a unit holds of the program's own definitions of the records it
+/// names, from its local types.
+struct CRecordDefinitions {
+  /// C that defines the records and what they hold by value, which goes
+  /// after the unit's includes.
+  std::string Text;
+  /// The records Text defines, by the names the unit spells them by, and
+  /// whether each is a union.
+  std::map<std::string, bool> Records;
+  /// Every record Text names or the unit asked for, defined or not, and
+  /// whether each is a union, which the unit's own declarations of it say.
+  std::map<std::string, bool> Tags;
+  /// The ordinary identifiers Text declares, which the unit's own names
+  /// step around.
+  std::vector<std::string> Identifiers;
+  /// The enumerations Text defines, by their tags' names.
+  std::vector<std::string> Enumerations;
+};
 
 struct CEmitterOptions {
   bool EmitIncludes = true;
@@ -31,7 +53,8 @@ struct CEmitterOptions {
   /// Wrap record declarations in stable preprocessor guards so independently
   /// emitted translation units can be concatenated. A consumer that parses one
   /// complete unit and performs its own cross-unit deduplication can disable
-  /// the guards without changing the declarations themselves.
+  /// the guards without changing the declarations themselves.  The local
+  /// types' definitions (RecordDefinitions) keep their guards regardless.
   bool EmitRecordGuards = true;
   bool UseDebugNames = true;
   /// Structured pseudocode may use C++ exception syntax. A plain C view
@@ -82,6 +105,14 @@ struct CEmitterOptions {
   /// Receives the names the text spells (CSourceMap::Names) without the
   /// marked render a source map needs.
   std::vector<CSourceName> *SourceNames = nullptr;
+  /// Given the named records a unit's types reach, through pointers and
+  /// arrays, the definitions the program's local types give them.  A record
+  /// left out, as one the local types do not define or define otherwise
+  /// than the debug information the unit reads its members by, stays
+  /// declared only.
+  std::function<CRecordDefinitions(
+      const std::vector<std::shared_ptr<NdType>> &)>
+      RecordDefinitions;
 };
 
 } // namespace neverd

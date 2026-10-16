@@ -3403,10 +3403,6 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <translation>Windows-Namen (ULONG)</translation>
     </message>
     <message>
-        <source>IDA names (unsigned int)</source>
-        <translation>IDA-Namen (unsigned int)</translation>
-    </message>
-    <message>
         <source>C keywords (unsigned long)</source>
         <translation>C-Schlüsselwörter (unsigned long)</translation>
     </message>
@@ -3773,6 +3769,18 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <message>
         <source>Exact widths (c_uint32)</source>
         <translation>Exakte Breiten (c_uint32)</translation>
+    </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>JavaScript-Modul (*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>JavaScript-Typen (number, bigint)</translation>
+    </message>
+    <message>
+        <source>Lua (*.lua)</source>
+        <translation>Lua (*.lua)</translation>
     </message>
 </context>
 <context>

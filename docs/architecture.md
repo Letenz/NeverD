@@ -94,12 +94,17 @@ before nesting. It reports a record whose nesting does not flatten back to the
 stream's member list, or whose members cannot sit where they say
 (`layoutProblem`).
 
-`renderType` and `renderTypes` spell types as C, C++, Rust, Go or Python
-(`TypeLanguages.def`), each member marked with its offset. Builtins take
-the spellings each language has (`BuiltinSpellings.def`): C and C++ name
-them as Windows, IDA or the compiler does, or by exact widths; Rust, Go and
-Python by exact widths or by Windows' names, which a module or file
-declares as aliases as wdk-sys does. Every language
+`renderType` and `renderTypes` spell types as C, C++, Rust, Go, Python,
+JavaScript or Lua (`TypeLanguages.def`), each member marked with its
+offset. Builtins take the spellings each language has (`TypeLanguages.def`
+lists them, `BuiltinSpellings.def` names them), and every language names
+them by exact widths unless asked: `uint32_t`, `u32`, `uint32`,
+`ctypes.c_uint32`, a JavaScript `number`. Each also takes Windows' names,
+which Rust, Go, Python, JavaScript and Lua declare as aliases as wdk-sys
+does (Lua's comments only, its values being its integers either way), and C
+and C++ the compiler's keywords too. IDA's own spelling, Microsoft's sized
+integers, reads in as C but does not render, being neither portable nor
+what the program's headers say. Every language
 reproduces the library's layout exactly. An explicit filler moves a member
 that the language's own rules would place earlier. Rust and Go read what they
 cannot express through accessors whose arithmetic follows C, signed bitfields
@@ -120,6 +125,31 @@ A module declares its classes first, binds each typedef after those it
 names (an array's after the layout of what it holds, since ctypes sizes an
 array type once), and lays each record out after what it holds by value.
 Python renders only; its declarations do not read back.
+
+JavaScript and Lua read a record as a view over its bytes, which
+`ViewPlan` plans for both: an accessor per member at the offset the library
+records, made on the bytes, the offset the record begins at and their byte
+order (little-endian unless the caller says). An anonymous record's members
+are the parent's, as C reaches them; a named member of a record defined in
+place reads through a class of its own. Array elements read through methods
+that take their index, bitfields through accessors whose arithmetic follows
+C. With asserts, a module reads and writes back every accessor in bytes of
+its record's size, which fails past their end. Each language only spells
+the plan:
+- JavaScript reads through a `DataView` class per record. Integers of up to
+  four bytes are numbers and wider ones bigints, as `DataView` reads them; a
+  pointer is its address. Bitfields take 32-bit arithmetic for units of up
+  to four bytes and bigints for eight. JSDoc types every accessor, so the
+  one module is the workbench's JS/TS: TypeScript checks it with `checkJs`.
+- Lua 5.3 and later read through `string.unpack` and `string.pack`, a
+  record type per record whose views share a bytes object. Values are Lua's
+  64-bit integers, an unsigned one of eight bytes past 2^63 wrapping as they
+  do, and bytes no integer holds, such as a 16-byte integer's, are the
+  string they are. LuaJIT, which lacks both, is not a target.
+
+Python, JavaScript and Lua render only, and no language but C and C++
+renders prototypes (`rendersPrototypes`, `readsDeclarations`; the C API's
+language list says both).
 
 `parseTypes` reads C, C++, Rust and Go declarations back into the library
 (`TypeParse.h`), and `layOutRecord` lays each record out under MSVC or
@@ -158,9 +188,38 @@ builtin spellings each language takes and which it takes unless asked;
 `neverd types --json` names the one its source took, in every mode, so that
 an agent reads one object.
 
-The decompiler reads the local types' prototypes through
-`PrototypeDebugContext` (`lib/sdk/capi`). It wraps the program's debug
-context, and completes the functions the debug information names but leaves
+The decompiler reads the local types through `LocalTypesDebugContext`
+(`lib/sdk/capi`), which wraps the program's debug context whenever the
+program has local types. The local types are the authority on the program's
+records:
+- A record the debug information names, but gives no members yet, takes the
+  library's when the library defines a record of its name and size
+  (`completeType`). The decompiler names its member accesses by these, so a
+  member the user renames reads by its new name. Members the debug
+  information gave stay, and so do its records' ABI facts.
+- A decompiled unit, HighC's or LLVM-C's, holds the definitions of the
+  records it names (`CEmitterOptions::RecordDefinitions`), and of what they
+  hold by value, after its includes. `renderEmbeddedC` renders them in exact
+  widths, with their checks, each under a guard of its own so that units
+  concatenate. A record whose members the unit, or the debug information
+  anywhere in the session, names otherwise than the library does stays
+  declared only: its definition would disagree with the code.
+- HighC asks for the records and enumerations its types reach before it
+  writes, and the typedefs and enumerators the definitions declare reserve
+  their names from the unit's own. LLVM-C asks after it writes for every
+  name its text spells: a record's or an enumeration's, or an enumerator of
+  an enumeration the decompiler displays, which stands for it. It declares a
+  typedef of each tag it spells, an enumeration's after its definition, and
+  leaves the definitions out where one of their names is one of the unit's
+  functions or objects.
+- A store to a pointer member of such a record casts the stored value to
+  the member's type (`__typeof__`), which C converts an address of another
+  type, or an integer, to only by a cast. LLVM-C computes with integers: a
+  parameter or a result that the debug information or a prototype types as
+  a pointer is declared as that pointer, and converts where the code
+  computes with it, as does a pointer member it reads.
+
+It also completes the functions the debug information names but leaves
 untyped from the prototype of their name, as the kernel's public symbols
 are completed from `<ntifs.h>`. A function the debug information types
 keeps its own type, and a variadic prototype is not used, because its calls
@@ -174,12 +233,23 @@ decompiler's types:
   opaque pointers.
 
 Win64 placement then binds each parameter by its location, and the
-signature prints with the prototype's names. A declaration changes what the
-decompiler read only when it adds a prototype or changes a type a prototype
-names, through typedefs, pointers, arrays and members
-(`prototypeTypeNames`). Only such a declaration clears the pipeline, which
-the C API reports as `"decompilation": true`, and the worker then refreshes
-its views as after loading signatures.
+signature prints with the prototype's names. A declaration changes the
+analysis only when it adds a prototype or changes a type a prototype names,
+through typedefs, pointers, arrays and members (`prototypeTypeNames`); such
+a declaration clears the pipeline. One that changes a record whose members
+the decompiler printed, or a type a unit held (`readTypes`, kept in the
+session as `ShownTypes` across contexts), drops only the kept text. The C
+API reports either as `"decompilation": true`, and the worker then
+refreshes its views as after loading signatures. Every declaration drops
+the context, which reads a copy of the library, and the context takes back
+the members it gave.
+
+A unit's member access names a member only where the access reads it
+(`NdType::displayFieldIndexAt`): a field of the access's width, a scalar's
+over a record's of the same width, which no scalar access reads whole, and
+a record in place only when the access reads all of it. A byte at the start
+of a header whose union's alternatives disagree names no member and stays a
+raw access.
 
 ## System boundary
 
@@ -225,6 +295,11 @@ the cache while its image/debug owners are alive. Feature generations are
 checked even after navigation cleared the preceding pipeline result. COFF
 handler discovery conservatively retires facts before expanding metadata.
 Other architectures and whole-image analyses retain run-local ownership.
+Within one LowIR build, module jump-table arbitration is reused while its
+function bodies remain unchanged. Any body rebuild retires that result before
+parallel builders run. Continuation discovery still runs normally, and image
+publication follows both fixed points; budget refusals and proof requirements
+remain the same.
 Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
 before input or policy mutation; image pointers alone do not establish validity.
 
@@ -246,6 +321,13 @@ and both ends of its name spans are monotone. Pages seek directly through those
 arrays when they are ordered; other producer orders and nested spans keep their
 original filtering order. Oversized documents remain readable without being
 retained.
+
+Completed documents also own encoded pages, with at most 64 pages per document
+and 8 MiB of page storage inside the same 32 MiB allowance. Encoded pages retire
+with their document and never keep an evicted document alive. Document retention
+takes priority over page retention. The protocol accepts only typed JSON
+serialization for a retained payload and constructs a fresh response envelope
+for each request, including its current revision and cancellation state.
 
 `SourceViewOptions` owns request-local native source policy. Ordinary HighIR
 conversion skips symbolic expression simplification. An explicit source request
@@ -2029,19 +2111,43 @@ Neither view gives the frame a slot holding that address, so the read would
 otherwise print as an unassigned local or a zero.
 
 When HighC must keep a frame whole, it declares the frame bytes as
-`stack_storage` with `frame_base` pointing into them. The storage prints as one
-record laid out exactly like those bytes, as the LLVM C route prints `frame0`.
-A displacement becomes a member when every access the writer can place there
-is a plain integer read or write of one width and signedness, at an aligned
-offset inside the storage, clear of every other access. The member keeps the
-slot's name from before the storage replaced it, else `var_mXX`, and prints as
-`stack_storage.var_m10`. Gaps are named `gapXX` by offset. A debug object of
-another type (a record, an array, a pointer or an enumeration) keeps its bytes
-raw, and a debug integer must have the access width. Every other access stays
-a raw access through `frame_base` to the same object, so a member and the bytes
-around it always alias. The record's tag is `frame_<entry>`: the C++, Go and
-Rust views parse the HighC text into one namespace of record tags, and the Go
-and Rust views print the record's type where the frame is declared.
+`stack_storage`, one record laid out exactly like those bytes, as the LLVM C
+route prints `frame0`. Every frame access and address the writer can certify
+names a member of it:
+
+- A scalar member holds the widest accesses at a displacement when they cover
+  every access overlapping them, at an offset aligned to their width. It has
+  the type the widest plain accesses agree on, else an integer of their width,
+  and the reads choose its signedness. On a 64-bit target a pointer of that
+  width is the bits of an unsigned integer member, and a 16-byte integer is a
+  member too.
+- An access narrower than its member, or of another kind, is a view of the
+  member's bytes, spelled as any other scalar access:
+  `*(uint32_t *)&stack_storage.var_m10`, or `*(_DWORD *)...` in the alias
+  spelling. A read of the member's width and the other signedness converts it.
+- Accesses that straddle each other share one byte array,
+  `uint8_t var_m30[10]`, which their views index.
+- A frame address taken outside every member names a byte array that runs to
+  the next member, access or address.
+
+Addresses print as the member holding them: `(uintptr_t)&stack_storage.var_m48`,
+`(CStringT*)&stack_storage.var_m48` for a pointer parameter, or
+`&stack_storage.var_m48[8]` inside an array. Frame aliases print the address
+they hold at each use, so a frame pointer joined across a try's normal and
+exceptional edges is one address and never a variable. A 16-byte integer that
+no member may hold at its alignment is one copy of its bytes:
+`__builtin_memset(&stack_storage.var_m50, 0, 16)`, or a `__builtin_memcpy` from
+a fresh carrier of its exact width. A member keeps the slot's name from before
+the storage replaced it, else `var_mXX` (`var_XX` above the entry stack
+pointer). Gaps are named `gapXX` by offset. A debug object of another type (a
+record, an array, a pointer or an enumeration) keeps its bytes raw, and a debug
+integer must have the access width. `frame_base`, the entry stack pointer's
+address in the storage, is declared only when the body reads it: for such raw
+bytes and for displacements outside the storage. Every access reaches the same
+object, so a member and the bytes around it always alias. The record's tag is
+`frame_<entry>`: the C++, Go and Rust views parse the HighC text into one
+namespace of record tags, and the Go and Rust views print the record's type
+where the frame is declared.
 
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
@@ -2860,6 +2966,15 @@ For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X87Context.h` o
 
 ## IR representations and routes
 
+`IntrinsicValueEffects` defines positive, shape-validated contracts for operations
+whose effects are entirely explicit values. `LowIntrinsicEffects` additionally
+validates LowIR operands and memory annotations. Jump-table consumer analysis and
+module address-use collection share this classification: pure operations are
+neither escapes nor ABI call barriers, but their results retain input provenance.
+Unlisted, memory-reading and malformed intrinsics retain conservative effects,
+including address operands held in temporaries rather than ABI registers. This
+contract is stronger than eligibility for dead-code elimination.
+
 COFF loading records validated DWARF FDE extents before heuristic function
 discovery. Those extents also bound named symbols with no size. Debug sections
 do not supply pointer-table or relocation-scan roots, including debug ranges
@@ -3590,6 +3705,13 @@ serial rewriting. Solver budgets, effect barriers and rewrite proofs are
 identical in both paths.
 
 MedIR owns bounded invariant-constant propagation across same-width SSA copies and complete PHIs, including loops. Every incoming value must converge to the same bits, width, provenance and address owner. Unknown definitions, unseeded cycles, incomplete edges and conflicting constants prevent substitution; budget exhaustion leaves the function unchanged. The analysis substitutes operands without removing calls, loads, stores or their effects. Both HighIR and LLVM consume the same result.
+
+The constant worklist indexes complete nonconstant SSA identities. Node
+addresses become stable only after all definitions have been collected;
+ordered visitation and the existing work charges remain unchanged. HighIR's
+call-clobber index is local to each converter invocation and retains the first
+record for each full SSA identity, including its variable kind. Reusing a
+converter rebuilds that index before following any preserved-prefix chain.
 
 | User route | Representation path | Exit |
 |------------|---------------------|------|
@@ -5481,7 +5603,7 @@ libraries supplied by the CMake helper.
 | `lib/sdk` | Public C ABI, session lifecycle, queries, persistence, plugins, lift/decompile/patch/audit/hunt entry points | Aggregates the engine components into `libneverd` |
 | `lib/pass` | LLVM IR obfuscation passes and MIR pass runner | IR |
 | `lib/debug` | DWARF, PDB, and linker-map debug contexts | IR |
-| `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust, Go and Python | LLVM DebugInfo PDB |
+| `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust, Go, Python, JavaScript and Lua | LLVM DebugInfo PDB |
 | `lib/sigs` | Signature parsing, databases, and matching | Loader |
 | `lib/libc` | Known libc names and call-model support | Standalone component |
 | `lib/symbolic` | Width-exact symbolic execution, bounded path exploration, stable control-decision histories, and the exact concrete shadow | LowIR |
@@ -6816,6 +6938,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymState` uses modulo-2^64 relative coordinates only for regions with a 64-bit symbolic base. A read crossing relative zero splits into two nonwrapping spans, keeping each input origin within one span; a store writes the complete value. Absolute-memory, register and temporary bank range overflow still refuses. This indexing rule supplies no actual-address validity, nonalias or frame-separation premise; ordinary cross-region invalidation and per-STORE preservation proofs remain unchanged. Unicorn, KVM and WHP share this analysis rule.
 
+### Bounded libSystem imports
+
+`MachOProgramLinking` owns strict original-byte classic and generic64 chain facts, complete undefined-symbol closure and preparation bounds. The Darwin process owns provider/symbol admission, pointer publication, read-only-after-fixup protection, authenticated libSystem gates and main-thread errno. `DarwinLibSystemCalls.def` binds exact Mach-O names, arities and typed kernel effects; wrappers reuse `DarwinServices` without inventing raw traps. `DarwinMemory` owns resident model reservations and the original maximum protections. Preparation and execution share `ExecutionBudget`; `ProcessReport` alone serializes optional `darwin.native_calls`. No host dyld or library code is loaded.
+
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
 ### Sequential raw compare-and-exchange
 
 `SymExec` owns the value semantics of admitted raw `ATOMIC_CMPXCHG`: capture address, expected, desired and old value before publishing the output, then commit `ite(Old == Expected, Desired, Old)` once. `SymState` owns that write's byte effects, alias invalidation and preservation budget. `InterpreterSpecialization` owns admission and provenance: Old uses the pre-write memory origin; conditional writes conservatively combine Old, expected and desired origins and invalidate possibly overlapping affine spills. Even a failed comparison requires the complete write footprint to be separated from protected return cells. The original atomic operation, ordering and occurrence remain in the residual; refusal publishes no partial residual CFG.
@@ -6850,8 +6978,15 @@ The finite intrinsic catalogue and value semantics live in `dalvik::Library`;
 JNI retains opaque identities and argument/reference transport only.
 `LinuxBinderTransactions` routes object-free messages between guest-owned opens;
 LinuxMemory owns their read-only arenas and every service body remains guest code.
+It preserves admitted libbinder request/status flags at this shared transport
+boundary. No frontend interprets a status payload or invents a service result.
 `LinuxGPUCommands` owns explicitly selected PM4 admission and execution, using
-MemoryView physical pins and the existing KGSL context/memstore owner. JSON
+MemoryView physical pins and the existing KGSL context/memstore owner.
+`LinuxGPUObjects` allocates retained RAM through `AddressSpace::allocateBacking`
+without publishing CPU mappings. The process GPU allocation table owns IDs,
+addresses and pending-free state; LinuxMemory owns the exact CPU VMAs and
+retains their device opens. Object mappings and PM4 reuse the same physical
+bytes. JSON
 adapters declare these contracts and never infer methods, services or commands.
 
 
@@ -6923,6 +7058,38 @@ This is neither a second decoder nor an ART/JVM class-loader implementation.
 
 KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing operation accepts an already admitted node and mapped access, checks both directions, and excludes metadata-only opens from sharing conflicts. CLEANUP releases sharing without retiring the token; CLOSE removes the cleaned token. Cleaned retained bodies still count toward the 1024-open bound. Exact binding validation compares tokens with the file-object owner. `KernelModelFileCreate` owns CREATE and cancellation producers and reserves handle capacity before callbacks. `DriverSession` retains the original caller through pending work and nested CLOSE. The common object owner publishes the handle; namespace lookup retains a real directory body, and the terminal provider reads the admitted packet. Scenario close intent remains separate. Bidirectional token checks run on snapshot and unload.
 
+`KernelModelFileRequests` owns both borrowed IoQueryFileInformation and buffered ZwQueryInformationFile continuations, caller publication and packet disposal. KernelMode handle references reuse the object owner. Native SystemBuffer allocations register with the physical-memory owner; ordinary request retirement leaves them to the query owner. `KernelFileSystem::queryInformation` alone encodes declared metadata from retained open tokens. The terminal route consumes the actual admitted IRP class and length; adapters and reports do not reconstruct metadata.
+
+`KernelModelIO` retires transfer ownership without changing `FILE_OBJECT.CurrentByteOffset`. A request offset and completion byte count cannot substitute for a filesystem position update; synchronous native Position queries read the retained field.
+
 ### Raw environment architecture ownership
 
 `RecoveryArchitecture` selects the native contract from `SpecializationOptions::Architecture`, independently of the build host. The existing default is x64; a target without an adapter refuses explicitly. `arch/x86_64` owns native option encoding, primary-image range rules, external-exit matching costs and physical-exit receipts. Core owns generic budgets, policy encoding and graph/evidence integrity. The x64 option and receipt digests retain their existing byte encoding; both expected and stored architecture identities are checked before validating the declaration. `RawArchitectureReceiptCompatibility` fixes pre-refactor digest values, and architecture-mismatch controls forbid relabeling x64 evidence as ARM64. This boundary does not implement ARM64 native recovery.
+
+`KernelModelFileRequests` also owns synchronous buffered `ZwReadFile` and `ZwWriteFile`. Handle scope, offset/key capture and copied write input belong to the producer. Shared completion publishes read bytes and IOSB in the eligible original caller, then disposes each owned packet and buffer once. Storage drivers own content and file-position changes.
+
+`KernelModelFileRequests` also owns bufferless `ZwFlushBuffersFile` production. Its granted-mask check and immediate publication/disposal differ from deferred native read/write/query packets; all reuse the original-caller notification and single-release owner.
+
+### Darwin imported file calls
+
+DarwinLibSystemCalls.def adds exact open/lseek/pread/pwrite/dup/dup2 identities.
+DarwinLibSystem owns the sole argument reader, returning separate original
+carriers and kernel arguments. open has two fixed arguments; only low-32-bit
+O_CREAT reads its promoted int, from four defined bytes at entry SP on ARM64
+or the third GP argument on x64. The report retains that carrier and dynamic
+arity; the kernel receives an explicit zero or 16-bit mode_t. Missing argument
+bytes and transport errors precede call/errno/file publication. The existing
+return-frame and post-service transport contracts remain unchanged.
+DarwinFiles continues to own all file authority, effects and descriptor cursors;
+no loader, public transport, generic IntegerABI or report schema gains a second
+semantic owner. Native controls and direct boundary checks separate defined
+stack bytes, full carriers, kernel narrowing and final metadata.
+
+### Ordinary libSystem memory calls
+
+DarwinLibSystem prepares C mmap/mprotect/munmap carriers without changing the
+raw BSD entry. Its argument reader narrows C int protection/flags/descriptors,
+records mmap's early zero-length or missing-sharing-type EINVAL, and adds
+MAP_UNIX03 only to the separate kernel arguments. The common completion path
+owns errno and return-frame publication. DarwinMemory remains the sole owner
+of mappings, current/maximum rights, reserved pages and retained file leases.

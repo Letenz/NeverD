@@ -3427,10 +3427,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>أسماء Windows ‎(ULONG)</translation>
     </message>
     <message>
-        <source>IDA names (unsigned int)</source>
-        <translation>أسماء IDA ‎(unsigned int)</translation>
-    </message>
-    <message>
         <source>C keywords (unsigned long)</source>
         <translation>كلمات C المحجوزة ‎(unsigned long)</translation>
     </message>
@@ -3829,6 +3825,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Exact widths (c_uint32)</source>
         <translation>عروض دقيقة ‎(c_uint32)</translation>
+    </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>وحدة JavaScript ‎(*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>أنواع JavaScript ‎(number, bigint)</translation>
+    </message>
+    <message>
+        <source>Lua (*.lua)</source>
+        <translation>Lua ‎(*.lua)</translation>
     </message>
 </context>
 <context>

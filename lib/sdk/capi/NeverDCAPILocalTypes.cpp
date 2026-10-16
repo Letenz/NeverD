@@ -258,7 +258,7 @@ bool readSpelling(const llvm::json::Object &Options,
   std::optional<types::BuiltinSpelling> Found =
       Name ? types::spellingNamed(*Name) : std::nullopt;
   if (!Found) {
-    Error = "\"spelling\" must be windows, ida, keywords or portable";
+    Error = "\"spelling\" must be " + types::spellingsText();
     return false;
   }
   Spelling = *Found;
@@ -367,24 +367,52 @@ std::string renderSource(const types::TypeLibrary &Library,
 
 } // namespace
 
+bool Session::typesChanged(const types::TypeLibrary &Library,
+                           llvm::ArrayRef<std::string> Changed,
+                           bool Prototypes) {
+  // Prototypes reach the analysis with the types they name: a change to
+  // either takes the analysis that read them.
+  const llvm::StringSet<> Prototyped = prototypeTypeNames(Library);
+  Prototypes |= llvm::any_of(Changed, [&](const std::string &Name) {
+    return Prototyped.contains(Name);
+  });
+  if (Prototypes) {
+    clearPipeline();
+    return true;
+  }
+  // The context reads a copy of the library: the next one reads it as it
+  // is now, and gives the members it gave anew.  The records whose members
+  // the decompiler printed, or a unit held, take only the text that read
+  // them.
+  dropLocalTypesDebug();
+  const bool Shows = llvm::any_of(Changed, [&](const std::string &Name) {
+    return ShownTypes.contains(Name);
+  });
+  if (Shows) {
+    FunctionSources.clear();
+    ShownTypes.clear();
+  }
+  return Shows;
+}
+
 DebugContext *Session::decompileDebug() {
   if (!Dbg)
     return nullptr;
-  if (PrototypeDbg)
-    return PrototypeDbg.get();
-  if (PrototypesChecked)
+  if (LocalTypesDbg)
+    return LocalTypesDbg.get();
+  if (LocalTypesChecked)
     return Dbg.get();
-  PrototypesChecked = true;
+  LocalTypesChecked = true;
   // Reading the types may fail, as a PDB's may; the decompilation goes on
   // with the program's debug information alone, its error untouched.
   const std::string Error = LastError;
   const types::TypeLibrary *Library = localTypes(*this);
   LastError = Error;
-  if (!Library || Library->prototypes().empty())
+  if (!Library)
     return Dbg.get();
-  PrototypeDbg = std::make_unique<PrototypeDebugContext>(
+  LocalTypesDbg = std::make_unique<LocalTypesDebugContext>(
       *Dbg, std::make_shared<types::TypeLibrary>(*Library));
-  return PrototypeDbg.get();
+  return LocalTypesDbg.get();
 }
 
 extern "C" {
@@ -603,20 +631,11 @@ const char *neverd_local_types_declare(neverd_session_t Sess,
     return nullptr;
   Declaration.Source = Source ? Source : "";
   const types::ParseResult Result = apply(Declaration, *Library);
-  // Prototypes reach the decompiler with the types they name: a change to
-  // either takes the analysis that read them, and no other change does.
   bool Decompilation = false;
   if (Result.ok()) {
     S->TypeDeclarations.push_back(std::move(Declaration));
-    Decompilation = !Result.Prototypes.empty();
-    if (!Decompilation && !Result.Types.empty()) {
-      const llvm::StringSet<> Read = prototypeTypeNames(*Library);
-      Decompilation = llvm::any_of(Result.Types, [&](const std::string &Name) {
-        return Read.contains(Name);
-      });
-    }
-    if (Decompilation)
-      S->clearPipeline();
+    Decompilation =
+        S->typesChanged(*Library, Result.Types, !Result.Prototypes.empty());
   }
   llvm::json::Array Types, Prototypes, Problems;
   for (const std::string &Name : Result.Types)
@@ -688,14 +707,9 @@ const char *neverd_local_types_forget(neverd_session_t Sess,
     Names.push_back(jsonSafeText(Name));
   // A type the prototypes name, which they still do, read as the decompiler
   // read it.
-  const llvm::StringSet<> Read = prototypeTypeNames(*Library);
-  const bool Decompilation =
-      llvm::any_of(Declaration.Forget, [&](const std::string &Name) {
-        return Read.contains(Name);
-      });
+  const bool Decompilation = S->typesChanged(*Library, Declaration.Forget,
+                                             /*Prototypes=*/false);
   S->TypeDeclarations.push_back(std::move(Declaration));
-  if (Decompilation)
-    S->clearPipeline();
   return dupStr(jsonToString(
       llvm::json::Value(llvm::json::Object{{"removed", std::move(Names)},
                                            {"usedBy", std::move(UsedBy)},
@@ -706,15 +720,15 @@ const char *neverd_types_languages_json(void) {
   llvm::json::Array Languages;
   const auto add = [&](types::Language Lang, llvm::StringRef Display) {
     llvm::json::Array Spellings;
-#define NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go, Python)                 \
-  if (types::spellsBuiltins(Lang, types::BuiltinSpelling::Name))               \
-    Spellings.push_back(Id);
-#include "neverd/types/BuiltinSpellings.def"
+    for (types::BuiltinSpelling Spelling : types::spellingsOf(Lang))
+      Spellings.push_back(types::spellingId(Spelling));
     Languages.push_back(llvm::json::Object{
         {"id", types::languageId(Lang)},
         {"display", Display},
         {"spelling", types::spellingId(types::defaultSpelling(Lang))},
-        {"spellings", std::move(Spellings)}});
+        {"spellings", std::move(Spellings)},
+        {"reads", types::readsDeclarations(Lang)},
+        {"prototypes", types::rendersPrototypes(Lang)}});
   };
 #define NEVERD_TYPE_LANGUAGE(Name, Id, Display, Spelling)                      \
   add(types::Language::Name, Display);
@@ -865,7 +879,7 @@ int neverd_type_declarations_load(neverd_session_t Sess) {
   S->TypeDeclarations = std::move(Declarations);
   // A decompilation that read the prototypes read the declarations these
   // replace.
-  const bool ReadPrototypes = S->PrototypesChecked;
+  const bool ReadPrototypes = S->LocalTypesChecked;
   S->dropLocalTypes();
   if (ReadPrototypes)
     S->clearPipeline();

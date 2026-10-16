@@ -61,7 +61,7 @@ Guard pages and the private main-return gate remain reserved.
 `LC_MAIN` receives `argc`, `argv`, `envp` and the apple vector as four integer
 arguments under the platform's scalar entry convention. A return produces the
 low eight-bit process exit status. The bounded startup model accepts the
-standard `/usr/lib/dyld` command only for import-free `LC_MAIN`; it implements
+standard `/usr/lib/dyld` command for `LC_MAIN` within the finite import contract below; it implements
 that entry handoff without loading or running host dyld. Nonzero `stacksize`
 requests are rejected, since the caller's explicit `stack_size` owns the budget.
 
@@ -73,10 +73,10 @@ extra flavors and conflicting entries are rejected. No host environment or
 auxiliary Linux vector is inherited. Startup follows the distinction described
 in Apple's [dyld architecture](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-External dylibs, imports, rebases/chained fixups, constructors/destructors,
+Dylibs and imports outside the finite libSystem contract, constructors/destructors,
 thread-local sections, arm64e/PAC and other nonbaseline CPU subtypes,
-encrypted payloads and unmodeled load commands fail before execution. PIE
-images without fixups use their preferred addresses; this is deterministic
+encrypted payloads and unmodeled load commands fail before execution. Supported PIE
+images use their preferred addresses; this is deterministic
 placement, not ASLR. Code-signing blobs are metadata, not an implementation
 of AMFI or entitlement policy.
 
@@ -2688,4 +2688,49 @@ lchown364 / final symbolic vnode / existing ownership_mutations grants
 lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / main58 stdoutW / virtual1281 guarded bytes
 native preparation489 observations including258 lchown / ARM64 O0 O1 O2
 common native82 / mandatory95 per matching platform / ARM64 required285
+```
+
+## Bounded libSystem imports
+
+Thin baseline executables may bind a single strong `/usr/lib/libSystem.B.dylib` dependency under the finite contract below. Imports require `LC_MAIN`, `MH_TWOLEVEL` and an ordinary provider ordinal; the declared compatibility requirement must not exceed 1.0. The loader validates original classic pointer streams or generic64 chains, including all undefined symbols, exact slots, local rebase targets and bounded metadata. Unsupported dependencies, symbols, weak/threaded binding, section/external/local relocations, initializers, TLS and authenticated pointers fail before execution.
+
+The process maps authenticated scalar call gates and one fresh main-thread errno word only when imports are present. Named wrappers share the raw Darwin kernel effects; they convert errors to `-1` and errno, while successful calls preserve errno. C `_exit` is Mach-O `__exit`; C `exit` (Mach-O `_exit`) remains unsupported. Ordinary functions require a valid return frame; a terminal `_exit` needs no usable return address. Calls retain provider, exact linkage name, declared argument count and complete carrier bits. Incomplete or nonreturning calls have a null result. Raw-only reports remain unchanged.
+
+`SG_READ_ONLY` makes current segment protection read-only after fixups while preserving its declared maximum protection. Native O0/O1/O2 observations confirm that a declared read/write maximum permits restoring write access with `mprotect`. Gate and errno pages are separate resident model reservations and cannot be unmapped or reprotected by the guest. Preparation and execution retain one deadline and event account; decoded metadata and model pages consume the existing memory budget.
+
+Independent native controls cover O0/O1/O2. The same authored object runs through the system linker, classic linking and chained linking against real libSystem. Portable process/C/CLI/Python checks cover all five platform/ISA combinations; matching ARM64 HVF checks cover macOS, iOS-device and Simulator profiles. This finite single-thread contract does not complete dlopen/dlsym, arbitrary dylib loading, dyld shared cache, constructors, threads, Objective-C/Swift frameworks, Intel HVF or physical iOS qualification.
+
+Classic lazy pointer programs are resolved eagerly before entry. Each program must explicitly name its destination, ordinary provider ordinal and symbol; only pointer type and zero addend are admitted, with one DO_BIND immediately followed by DONE and no inherited state. One exact original rebase to local executable bytes plus one lazy bind may share a slot; both raw records consume the budget, and all other collisions fail. `dyld_stub_binder` is admitted only as a strong, zero-addend ordinary classic bind alongside actual lazy calls. Entering its refusal gate fails before C frame/argument decoding, errno changes or a native-call record. This supports ordinary call stubs with stable prepared pointers, without implementing the runtime lazy resolver or dyld private state. The six-function C fixture observes all slots before calls and after repeated calls; a native control requests eager binding and compares output/status with guest execution.
+
+`open`, `lseek`, `pread`, `pwrite`, `dup` and `dup2` share the existing file catalogue, mutations and descriptor cursors. `open` records two arguments, or three when low-32-bit flags include O_CREAT. Its optional promoted int occupies four defined bytes at entry SP on ARM64 (padding is not read); x64 uses the third GP argument. The report preserves that carrier while a separate kernel argument narrows mode to 16 bits. With no O_CREAT, mode is zero and optional storage is not read; the required x64 return address is still validated. Argument-read failures precede call records, errno and file effects. This follows [Apple's ARM64 ABI](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms) and the [XNU open wrapper](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c). Native O0/O1/O2 controls cover shared offsets, positioned IO, dup2 failures, offsets above 4 GiB, mode narrowing and binary bytes. Thread cancellation and compatibility path shims remain outside this model.
+
+`mmap`, `mprotect` and `munmap` reuse the existing memory mappings, protections, resident reservations and file leases. The C wrapper narrows protection, flag and descriptor arguments to 32 bits while reports retain their original carriers. `mmap` returns MAP_FAILED with EINVAL for zero length or absent MAP_PRIVATE/MAP_SHARED before kernel effects, then supplies MAP_UNIX03 for admitted calls; raw BSD semantics stay unchanged. This follows the [XNU UNIX03 wrapper](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/libsyscall/wrappers/unix03/mmap.c). Original C controls cover zero-filled anonymous pages, protection changes, error order, closed-descriptor mapping lifetime, private writes and partial EOF pages. Shared/fixed/executable mappings and allocator behavior remain outside this increment.
+
+```text
+provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
+C -> Mach-O: read -> _read; write -> _write; close -> _close
+C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
+C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
+entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
+fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
+unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
+errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
+SG_READ_ONLY: current R after fixup; original declared maximum is retained
+gates: RX/max RX; errno: RW/max RW; both resident model reservations
+budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
+preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
+report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
+call carriers: hex; full GP bits or defined ARM64 int vararg bytes; exact arity; null result if incomplete/nonreturning
+open: 2 args or 3 with O_CREAT; ARM64 mode int at SP, x64 third GP; kernel mode_t 16 bits
+basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
+_exit: status 35; stdout_hex 58; named calls 2; events 2
+file calls: main status 73; stdout_hex 460044; named calls 40; events 41
+memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
+native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
+```
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
 ```

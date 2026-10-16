@@ -495,6 +495,11 @@ private:
   std::vector<SourceABIParameter> SourceParameters;
   VarKeySet CallOutputs;
   VarKeySet PhiOutputVars;
+  /// First clobber for each full nonconstant SSA identity. Rebuilt for each
+  /// conversion; its pointers borrow the current immutable MedFunc only.
+  std::map<std::tuple<MedVar::VarKind, int, int>, const MedCallClobber *>
+      CallClobberIndex;
+  const MedCallClobber *findCallClobber(const MedVar &V) const;
   /// Per-function indexes for the Win64 callee-save parameter mapping in
   /// medvarToExpr: register COPYs whose source is an entry parameter (in
   /// block/op order, with that parameter's index), and every (Id, SSAVer)

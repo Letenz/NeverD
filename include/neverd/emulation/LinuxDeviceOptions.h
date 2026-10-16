@@ -56,9 +56,14 @@ struct LinuxKGSLContexts {
   uint64_t MemstoreOffset = 0;
   uint32_t ContextLimit = 0;
   /// Explicit deterministic A3xx PM4 subset. Legacy IB submissions drain
-  /// synchronously; only CP_NOP and one-word CP_MEM_WRITE are executable.
+  /// synchronously; CP_NOP, one-word CP_MEM_WRITE and one indirect IB level
+  /// (PFE/PFD) are executable within a shared 4096-word fetch budget.
   /// Not a shader engine or a hardware scheduling/timing model.
   bool SynchronousA3xx = false;
+  /// Coherent, bounded GPUOBJ and legacy GPUMEM_ID RAM objects with shared
+  /// identity and whole-object mappings. No shader, cache maintenance, secure
+  /// or asynchronous allocation.
+  bool MemoryObjects = false;
 };
 
 struct LinuxDeviceOptions {

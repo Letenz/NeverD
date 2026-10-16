@@ -1717,6 +1717,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymState` が 2^64 を法とする相対座標を使うのは、シンボリックな基底が 64 ビットの領域だけです。相対座標のゼロをまたぐ読み取りは、折り返さない二つの範囲に分割し、各入力の由来を一つの範囲内に保ちます。書き込みは値全体を保存します。絶対メモリ、レジスタ、一時記憶域の範囲オーバーフローは引き続き拒否します。この索引規則は実アドレスの有効性、非エイリアス性、フレーム分離を前提として与えません。通常の領域間無効化と STORE ごとの保存証明は変わらず、Unicorn、KVM、WHP が同じ解析規則を共有します。
 
+### 有界 libSystem インポート
+
+`MachOProgramLinking` は元の classic/generic64 形式、完全な未定義シンボル閉包、準備予算を所有します。Darwin process は提供元/シンボル許可、ポインタ公開、fixup 後の読み取り専用化、libSystem 入口と errno を管理します。`DarwinLibSystemCalls.def` の名前と引数数は `DarwinServices` の型付き効果に結び付き、raw trap を捏造しません。予約と最大保護は `DarwinMemory`、共有期限は `ExecutionBudget`、任意の `darwin.native_calls` 出力は `ProcessReport` が所有し、ホストのライブラリはロードしません。
+
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
 ### 逐次 raw 実行での比較交換
 
 `SymExec` は受け入れられた raw `ATOMIC_CMPXCHG` の値の意味論を所有します。出力を書き戻す前にアドレス、期待値、更新値、旧値を取得し、`ite(Old == Expected, Desired, Old)` を一度だけコミットします。`SymState` はその書き込みのバイト効果、エイリアスの無効化、保存予算を担当します。`InterpreterSpecialization` は受け入れと由来を管理します。Old には書き込み前のメモリ由来を使い、条件付き書き込みには Old、期待値、更新値の由来を保守的に統合し、重なり得るアフィンスピルの事実を破棄します。比較が失敗しても、書き込み範囲全体と保護された戻りセルの分離証明が必要です。残余には元の原子操作、メモリ順序、発生回数を保持し、拒否時には部分的な残余 CFG を公開しません。
@@ -1738,6 +1744,14 @@ KernelModelObjects が共通オブジェクト表でハンドルとポインタ�
 
 KernelFileSystem は FILE_OBJECT ごとに provider token を保持します。非公開の共有処理は許可済みノードとマッピング済みアクセスを受け取り、共有競合を双方向に検査します。メタデータのみのアクセスは競合に含みません。CLEANUP は共有制限を解除して token を保持し、CLOSE はクリーンアップ済み token を削除します。参照が残るオブジェクトも 1024 個の上限に含みます。厳密な対応検証で token とファイルオブジェクトの所有者を照合します。 `KernelModelFileCreate` が CREATE と取消を生成し、コールバック前にハンドル容量を予約します。`DriverSession` は非同期処理と入れ子の CLOSE で呼出元を保持します。共通オブジェクト所有者がハンドルを公開し、名前検索は実際のディレクトリを保持します。シナリオの終了意図は独立し、スナップショットとアンロードが token を双方向検証します。
 
+`KernelModelFileRequests` が IoQueryFileInformation の借用バッファーと ZwQueryInformationFile の専用バッファーの継続、結果公開、解放を所有します。KernelMode ハンドル参照はオブジェクト所有者を再利用します。ネイティブ SystemBuffer は物理メモリー所有者に登録し、通常の要求解放からクエリ所有者へ委ねます。`KernelFileSystem::queryInformation` のみが保持オープントークンから宣言メタデータを符号化します。終端経路は実際の IRP クラスと長さを使い、アダプターやレポートはメタデータを再構築しません。
+
+`KernelModelIO` は `FILE_OBJECT.CurrentByteOffset` を変更せずに転送の所有権を解放します。要求オフセットと完了バイト数はファイルシステムによる位置更新の代わりにはなりません。同期ファイルのネイティブ Position クエリは保持されたフィールドを読みます。
+
 ### 生環境のアーキテクチャ所有権
 
 `RecoveryArchitecture` はビルドホストとは独立に `SpecializationOptions::Architecture` からネイティブ契約を選択します。既存の既定値は x64 で、アダプターのない対象は明示的に拒否します。`arch/x86_64` がネイティブオプションの符号化、主イメージの範囲規則、外部出口の照合コストと物理出口の証跡を所有し、core が共通予算、ポリシー符号化、グラフと証拠の完全性を所有します。x64 のダイジェストのバイト列は維持し、宣言の検証前に期待するアーキテクチャと保存された識別を確認します。`RawArchitectureReceiptCompatibility` は変更前のダイジェストを固定し、不一致テストは x64 の証拠を ARM64 として扱うことを拒否します。ARM64 のネイティブ復元は未実装です。
+
+`KernelModelFileRequests` は同期バッファー方式の `ZwReadFile` / `ZwWriteFile` も所有します。生成側がハンドルのスコープ、オフセットとキー、書き込み入力のコピーを保持します。共通完了処理は通知可能な元の呼び出し元で読み取り結果と IOSB を公開し、所有するパケットとバッファーを一度だけ解放します。内容とファイル位置の変更はストレージドライバーが担当します。
+
+`KernelModelFileRequests` はバッファを持たない `ZwFlushBuffersFile` の生成も所有します。権限マスク検査と即時公開・解放は遅延完了の読み書き・照会パケットとは異なり、元の呼び出し元への通知と一度だけの解放を共通の所有者で扱います。

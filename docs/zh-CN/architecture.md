@@ -1725,6 +1725,12 @@ i386/ELF 联合有限域证明在全部消费者对受限所有者图重放索�
 
 `SymState` 仅对基址为 64 位的符号区域使用模 2^64 的相对坐标。跨过相对零点的读取拆成两个不回绕的区间，使每项输入来源都留在一个区间内；写入保留完整值。绝对内存、寄存器和临时存储区的范围溢出仍被拒绝。这一索引规则不提供实际地址有效性、不别名或栈帧分离前提；普通的跨区域失效和逐 STORE 保存证明保持不变。Unicorn、KVM 和 WHP 共用此分析规则。
 
+### 有界 libSystem 导入
+
+`MachOProgramLinking` 负责原始字节的严格 classic/generic64 链事实、完整未定义符号闭合及准备预算。Darwin 进程负责库和符号准入、指针发布、fixup 后只读保护、经过认证的 libSystem 入口与主线程 errno。`DarwinLibSystemCalls.def` 绑定精确链接名、参数数量及类型化内核行为，复用 `DarwinServices` 而不伪造原始 trap。`DarwinMemory` 统一负责驻留模型保留页和原始最大权限。准备与执行共用 `ExecutionBudget`，可选 `darwin.native_calls` 仅由 `ProcessReport` 序列化；不加载宿主 dyld 或库代码。
+
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
 ### 顺序执行域内的原始比较交换
 
 `SymExec` 负责获准的原始 `ATOMIC_CMPXCHG` 的值语义：发布输出前捕获地址、期望值、目标值和旧值，再一次性提交 `ite(Old == Expected, Desired, Old)`。`SymState` 负责该次写入的字节效果、别名失效和保存预算。`InterpreterSpecialization` 负责准入与来源：Old 使用写入前的内存来源；条件写入保守合并 Old、期望值与目标值的来源，并撤销可能重叠的仿射溢出存储事实。即使比较失败，也须证明完整写入范围与受保护返回单元分离。残余程序保留原子操作、内存序及发生次数；拒绝时不发布部分残余 CFG。
@@ -1746,6 +1752,14 @@ KernelModelObjects 在共用对象表中管理文件句柄和指针计数。Kern
 
 KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共享操作接收已获准的节点及已映射权限，双向检查共享冲突；仅访问元数据的打开不参与冲突。CLEANUP 释放共享限制但保留 token，CLOSE 删除已清理的 token。仍被引用的已清理对象也计入 1024 个打开的上限。严格绑定校验将 token 与文件对象 owner 对照。 `KernelModelFileCreate` 拥有 CREATE 和取消生产者，在回调前保留句柄容量。`DriverSession` 在异步操作与嵌套 CLOSE 中保留原调用者。统一对象所有者发布句柄；名称查找保留真实目录对象，终端提供方读取已准入数据包。场景关闭意图独立保留，快照与卸载执行双向 token 校验。
 
+`KernelModelFileRequests` 统一拥有借用缓冲的 IoQueryFileInformation 与独立缓冲的 ZwQueryInformationFile 续调、调用方结果发布和数据包回收。KernelMode 句柄引用复用对象所有者。原生 SystemBuffer 向物理内存所有者登记，普通请求回收把它留给查询所有者处理。只有 `KernelFileSystem::queryInformation` 根据保留的打开 token 编码声明元数据；终端路径读取实际获准 IRP 的类与长度，适配层和报告层不重建元数据。
+
+`KernelModelIO` 回收传输所有权时不修改 `FILE_OBJECT.CurrentByteOffset`。请求偏移与完成字节数不能替代文件系统的位置更新；同步原生 Position 查询读取保留的字段。
+
 ### 原始环境的架构归属
 
 `RecoveryArchitecture` 根据 `SpecializationOptions::Architecture` 选择原生契约，与编译主机无关。现有默认值为 x64；没有适配器的架构明确拒绝。`arch/x86_64` 负责原生选项编码、主映像范围规则、外部退出匹配成本和物理退出回执。core 负责通用预算、策略编码及图与证据的完整性。x64 选项和回执摘要保留原有字节编码；验证声明前检查预期与存储的架构标识。`RawArchitectureReceiptCompatibility` 固定重构前的摘要值，架构不匹配测试禁止把 x64 证据改标为 ARM64。这一边界尚未实现 ARM64 原生恢复。
+
+`KernelModelFileRequests` 也统一拥有同步缓冲 `ZwReadFile` / `ZwWriteFile`。生产者负责句柄作用域、偏移和键捕获，以及写入数据的副本。共享完成路径只在原调用方满足通知条件时发布读取字节和 IOSB，并各释放一次自有数据包与缓冲区。存储驱动负责内容和文件位置变更。
+
+`KernelModelFileRequests` 同时拥有无缓冲区的 `ZwFlushBuffersFile` 生产路径。其授权掩码检查和立即发布／释放规则与延迟完成的原生读写／查询包不同；各路径共用原调用者通知和唯一释放所有者。

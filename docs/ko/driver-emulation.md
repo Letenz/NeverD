@@ -679,15 +679,23 @@ PASSIVE_LEVEL에서 길이가 4 미만이면 결과에 접근하지 않고 `STAT
 
 `RtlCaptureContext`는 checked-x64 Unicorn/KVM/WHP의 가져오기/동적 호출에 같은 구현을 사용하며 IRQL <= DISPATCH_LEVEL을 요구합니다. 16바이트 정렬된 읽기/쓰기 가능한 1232바이트 커널 레코드의 `[48,72)`, `[120,262)`, `[280,284)`, `[416,672)`만 씁니다. 나머지와 x87 데이터/포인터, MXCSR mask는 보존합니다. ContextFlags=`0x10000f`, 호출자 RSP=진입 RSP+8, RIP는 실제 반환 슬롯입니다. 진입 RSP-8에 8바이트 플래그를 쓰고 RAX는 0 확장 EFLAGS, 산술 플래그는 ADD(진입 RSP-8,8) 결과입니다. DS/ES/FS/GS는 checked 논리 SS이며 호스트나 원시 전송 값이 아닙니다. 전체 레코드와 반환/임시 슬롯은 일반 커널 RAM, 객체 수명, 권한, 유일한 물리 매핑을 검사하며 겹침을 거부합니다. 진입 RSP의 16 나머지는 8입니다. 수집/검사 실패는 CPU/RAM을 바꾸지 않고 legacy는 거부합니다. 모든 Windows 구현을 뜻하지 않으며 덮어쓴 뒤에도 환경 의존성을 유지하여 UNPACK 복원이나 기호 전제를 허가하지 않습니다.
 
-파일 본체의 주소별 신원은 시나리오 핸들, 추가 핸들, 호출자 포인터가 공유합니다. ObOpenObjectByPointer는 생성된 FILE_OBJECT의 커널 접근과 선택적 OBJ_KERNEL_HANDLE을 지원하며 일반 권한을 구체적 권한으로 변환합니다. 프로세스의 마지막 핸들을 닫을 때 다른 프로세스에 핸들이 남으면 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL을, 전체 마지막이면 CLEANUP을 보냅니다. 지연된 CLEANUP은 선언된 하위 응답을 보존합니다. 번호를 재사용해도 CLOSE는 마지막 핸들, 포인터, 종료 후속 호출을 기다립니다. 커널 핸들의 CLEANUP은 유효 프로세스를 잠시 시스템으로 바꾸면서 스레드, 생성 프로세스, PreviousMode를 유지하며 CLOSE는 실제 해제 프로세스로 돌아옵니다. 대기 중인 콜백은 해제자를 중지시킵니다. 공급자의 열기가 성립하기 전에 CREATE가 실패하면 참조된 저장소만 남기고 장치 연결을 없앱니다. 명시적으로 취소된 열기는 CLOSE까지 장치를 유지합니다. 연결된 본체는 DEVICE_OBJECT.ReferenceCount에 한 번만 포함됩니다. WDM과 KMDF가 수명을 공유하며 일반 KMDF 장치는 LOCK_CONTROL을 STATUS_INVALID_DEVICE_REQUEST로 완료합니다. 종료 콜백 중 재열기, 미완료 파일 I/O 중 닫기, KMDF 필터의 LOCK_CONTROL 전달, 이름 조회 및 공급자의 데이터／제어 I/O는 미지원입니다.
+파일 본체의 주소별 신원은 시나리오 핸들, 추가 핸들, 호출자 포인터가 공유합니다. ObOpenObjectByPointer는 생성된 FILE_OBJECT의 커널 접근과 선택적 OBJ_KERNEL_HANDLE을 지원하며 일반 권한을 구체적 권한으로 변환합니다. 프로세스의 마지막 핸들을 닫을 때 다른 프로세스에 핸들이 남으면 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL을, 전체 마지막이면 CLEANUP을 보냅니다. 지연된 CLEANUP은 선언된 하위 응답을 보존합니다. 번호를 재사용해도 CLOSE는 마지막 핸들, 포인터, 종료 후속 호출을 기다립니다. 커널 핸들의 CLEANUP은 유효 프로세스를 잠시 시스템으로 바꾸면서 스레드, 생성 프로세스, PreviousMode를 유지하며 CLOSE는 실제 해제 프로세스로 돌아옵니다. 대기 중인 콜백은 해제자를 중지시킵니다. 공급자의 열기가 성립하기 전에 CREATE가 실패하면 참조된 저장소만 남기고 장치 연결을 없앱니다. 명시적으로 취소된 열기는 CLOSE까지 장치를 유지합니다. 연결된 본체는 DEVICE_OBJECT.ReferenceCount에 한 번만 포함됩니다. WDM과 KMDF가 수명을 공유하며 일반 KMDF 장치는 LOCK_CONTROL을 STATUS_INVALID_DEVICE_REQUEST로 완료합니다. 종료 콜백 중 재열기, 미완료 파일 I/O 중 닫기, KMDF 필터의 LOCK_CONTROL 전달, 공급자의 데이터／제어 I/O는 미지원입니다.
 
 ## 파일 정보 조회 IRP
 
-`IoQueryFileInformation`은 기존에 모델링된 WDM 파일의 장치 스택으로 실제 `IRP_MJ_QUERY_INFORMATION`을 보냅니다. 정보는 게스트 드라이버가 제공하며 파일 시스템 메타데이터를 만들어 내지 않습니다. 알려진 프로세스/스레드, PASSIVE_LEVEL, 활성화된 인터럽트와 특수 커널 APC가 필요합니다. 같은 파일의 중첩 I/O, 마운트된 VPB, 파일 확장 라우팅, 프레임워크 소유 파일, 비동기 조회의 마지막 참조에 필요한 지연 삭제는 명시적으로 지원하지 않습니다. `IoGetRelatedDeviceObject`는 IRQL <= DISPATCH_LEVEL에서 검증된 비마운트 스택의 최상위 장치를 반환합니다.
+`IoQueryFileInformation`은 기존에 모델링된 WDM 파일의 장치 스택으로 실제 `IRP_MJ_QUERY_INFORMATION`을 보냅니다. 정보는 게스트 드라이버 또는 명시적으로 선언된 파일 시스템 공급자가 제공합니다. 알려진 프로세스/스레드, PASSIVE_LEVEL, 활성화된 인터럽트와 특수 커널 APC가 필요합니다. 같은 파일의 중첩 I/O, 마운트된 VPB, 파일 확장 라우팅, 프레임워크 소유 파일, 비동기 조회의 마지막 참조에 필요한 지연 삭제는 명시적으로 지원하지 않습니다. `IoGetRelatedDeviceObject`는 IRQL <= DISPATCH_LEVEL에서 검증된 비마운트 스택의 최상위 장치를 반환합니다.
 
 조회는 완료까지 호출자의 버퍼를 빌립니다. 즉시 반환은 디스패치 상태, 보류 후 반환은 완료 상태를 사용합니다. 즉시 오류 완료는 비공개 IOSB를 게시하지 않아 반환 길이가 0입니다. 작업자 완료 알림은 원래 호출자가 재개될 때 전달합니다. 동기 조회는 최종 CLOSE까지 파일을 유지한 뒤 ReturnedLength 네 바이트만 씁니다. 인접 바이트와 출력 버퍼 별칭을 보존합니다. 보고서는 kind `query_information`, origin `IoQueryFileInformation`, `file_information_class`를 사용하며 시나리오 입력은 이 종류를 생성할 수 없습니다. 클래스 75는 71과 스택 플래그 1로 바꾸고 나머지는 게스트에 전달합니다. 클래스별 제공자 동작이 구현되었다는 의미는 아닙니다.
 
 동기 조회는 최종 CLOSE까지 임계 영역을 유지한 뒤 호출자의 이전 APC 상태를 복원합니다. 보류 알림은 보호 영역 종료와 IRQL 복원을 포함한 적격 커널 API 반환 시점 및 소유 스레드의 게스트 명령 재개 전에 보입니다. 보고서 바이트는 원래 프로세스에서 수집하므로 완료 작업자가 사용자 버퍼를 읽지 않습니다. 할당 실패는 동기 파일 이벤트를 초기화하고 ReturnedLength는 그대로 둡니다.
+
+`ZwQueryInformationFile`은 공통 조회 소유자로 프로세스 범위 파일 핸들을 확인하고 별도의 0으로 초기화한 SystemBuffer를 할당하며 호출자 출력을 빌립니다. 로컬 클래스는 Access (8), 동기 Position (14), Mode (16), Alignment (17), IsRemoteDevice (51)입니다. Mode와 Alignment도 자체 IRP를 만듭니다. 전달 클래스는 4/5/6/7/9/14/21/22/28/34/35/59/71/75이며 비동기 Position은 전달하고 75는 71과 스택 플래그 1로 바꿉니다. KernelMode 참조는 핸들 범위를 유지하고 부여된 접근 마스크를 검사하지 않습니다. 보고서 origin은 `ZwQueryInformationFile`입니다.
+
+게스트 장치의 READ/WRITE 완료는 동기 전송과 0바이트 전송에서도 저장된 `FILE_OBJECT.CurrentByteOffset`을 유지합니다. 요청의 명시적 `byte_offset` 자체는 파일 위치를 바꾸지 않습니다. 위치 변경에는 구현된 파일 시스템 처리나 파일 위치 설정 작업이 필요합니다.
+
+즉시 완료는 디스패치 복귀까지 패킷을 유지합니다. 오류가 아닌 완료는 출력을 복사한 뒤 Information과 4바이트 Status를 쓰고, 즉시 오류는 호출자 IOSB를 보존합니다. 보류 완료는 원래 전달 가능한 스레드에 알립니다. 비동기 보류 호출은 복귀할 때 사설 IOSB 16바이트 전체를 복사하고 다른 쓰기는 패딩을 보존합니다. 공통 물리 메모리 소유자가 해제를 관리합니다. 네이티브 Fast I/O, 미등재 클래스, 길이 0 버퍼, 짧은 Mode/Alignment 버퍼는 거부하며 범용 NtQueryInformationFile 또는 APC 지원을 뜻하지 않습니다.
+
+선언 공급자는 유지된 열기 토큰으로 Basic (4), Standard (5), Internal (6), Name (9), NetworkOpen (34), AttributeTag (35)를 반환하며 선언된 시각, 할당, EOF, 속성과 64비트 ID를 보존합니다. 이름은 허용된 ASCII 경로의 볼륨 상대 UTF-16입니다. 짧은 고정 구조 버퍼는 STATUS_INFO_LENGTH_MISMATCH를 반환합니다. 이름은 최소 8바이트가 필요하며 잘리면 완전한 UTF-16 단위, STATUS_BUFFER_OVERFLOW 및 전체 이름 길이를 반환합니다. 두 API는 인코더와 실제 게스트 필터 경로를 공유하며 다른 공급자 클래스는 지원하지 않습니다.
 
 ## 프로세서 식별과 DPC 수준 상승
 
@@ -698,7 +706,7 @@ PASSIVE_LEVEL에서 길이가 4 미만이면 결과에 접근하지 않고 `STAT
 
 ## 선언된 파일 시스템 목록
 
-선택적 `filesystem`은 DriverEntry 전에 세션 볼륨을 선언합니다. 생략은 가용성 미상, `[]`는 공급자 없음을 뜻하며 각 볼륨은 루트를 명시해야 합니다. 기존 노드는 `ZwOpenFile` 및 `ZwCreateFile`, `IoCreateFile`의 FILE_OPEN을 통해 실제 CREATE 요청으로 열 수 있습니다. 이름 조회, 게스트 필터, 공유, 핸들과 포인터 수명은 공통 소유자를 사용하며 호스트 파일을 읽지 않습니다. 생성, 덮어쓰기, 삭제, 메타데이터 조회, 데이터 I/O, 열거 및 제어는 아직 지원하지 않습니다.
+선택적 `filesystem`은 DriverEntry 전에 세션 볼륨을 선언합니다. 생략은 가용성 미상, `[]`는 공급자 없음을 뜻하며 각 볼륨은 루트를 명시해야 합니다. 기존 노드는 `ZwOpenFile` 및 `ZwCreateFile`, `IoCreateFile`의 FILE_OPEN을 통해 실제 CREATE 요청으로 열 수 있습니다. 이름 조회, 게스트 필터, 공유, 핸들과 포인터 수명은 공통 소유자를 사용하며 호스트 파일을 읽지 않습니다. 생성, 덮어쓰기, 삭제, 데이터 I/O, 열거 및 제어는 아직 지원하지 않습니다.
 
 이름과 경로는 출력 가능한 ASCII이며 대소문자를 무시하고 부모 디렉터리를 명시해야 합니다. 64비트 파일 ID는 볼륨 내에서 고유합니다. 별칭, 스트림, 링크, 재분석 지점, Unicode는 지원하지 않습니다. 종류, 속성, 할당 크기와 네 개의 음이 아닌 signed64 타임스탬프는 0도 명시해야 합니다. 파일은 빈 문자열을 포함한 정확한 16진수 `data`가 필요하며 EOF는 바이트 수입니다. 디렉터리는 data 없이 할당 크기 0입니다. 섹터는 512–4096의 2의 거듭제곱이고 할당은 섹터 정렬 및 EOF 이상, 마스크는 섹터보다 작은 2^n−1입니다. `full_access`는 ACL 거부만 제외합니다.
 
@@ -734,3 +742,9 @@ PASSIVE_LEVEL에서 길이가 4 미만이면 결과에 접근하지 않고 `STAT
 
 
 ASCII 이름, 네임스페이스 링크, RootDirectory로 유지되는 디렉터리 핸들을 지원합니다. 루트 접미사 `\`와 지원하지 않는 접미사 없는 볼륨 열기는 구분됩니다. 디렉터리／비디렉터리 및 비경고 동기 옵션을 지원합니다. `IoCancelFileOpen`은 아직 게시되지 않은 하위 성공 열기에 CLEANUP을 보내며 마지막 참조 해제가 CLOSE를 보냅니다. 취소 없는 상위 실패는 거부합니다. DriverEntry 핸들은 DriverUnload에서 닫을 수 있습니다. 비동기 작업과 중첩 해제에서도 완료, 디스패치, API 반환값을 유지합니다. 보고서는 `file_object`, `file_open_operation`, `filesystem_device`, `filesystem_file_id`를 사용하며 드라이버 생성 요청의 `file`은 null입니다. EA, 장치 힌트, 바이너리 ID, 재분석, oplock, 트랜잭션, ACL, 파일명 저장소 교체 및 프레임워크 경로는 미지원입니다.
+
+`ZwReadFile` / `ZwWriteFile`은 버퍼 방식 장치 스택의 열린 동기 WDM 파일을 지원합니다. PASSIVE_LEVEL, 활성 인터럽트와 특수 커널 APC, NULL Event·APC 루틴·컨텍스트가 필요합니다. KernelMode는 핸들 범위를 유지하며 권한 마스크를 검사하지 않지만 추가 전용 쓰기는 오프셋 −1을 사용합니다. NULL 또는 −2는 저장된 위치이며 다른 음수는 쓰기의 −1을 제외하고 무효입니다. 길이와 키는 ULONG입니다. 쓰기 입력은 디스패치 전에 복사하며 읽기 완료는 바이트, Information, 4바이트 Status 순서로 공개합니다. 즉시 오류는 호출자의 IOSB를 보존하고 보류 오류는 공개합니다. 보류 호출은 원래 호출자를 유지하며 완료를 기다리고 길이 0도 디스패치합니다. 공통 완료는 파일 위치를 변경하지 않습니다. 한도는 1 MiB입니다. 비동기 파일, direct/neither I/O, 캐시 Fast I/O, 완료 포트, 프레임워크 경로, 선언 제공자의 데이터 I/O는 미지원입니다. 보고서 출처는 `ZwReadFile` / `ZwWriteFile`입니다.
+
+`ZwSetInformationFile`은 같은 파일 소유자에서 동기 FilePositionInformation (14)을 구현합니다. 입력 8바이트를 캡처하며 Length >= 8과 음이 아닌 부호 있는 64비트 위치를 요구합니다. 장치 섹터 크기가 0이 아니면 비캐시 정렬도 검사합니다. 저장 위치를 먼저 바꾼 뒤 4바이트 Status와 8바이트 Information=0을 쓰며 IOSB 패딩과 출력 오류 전의 쓰기를 보존합니다. IRP를 만들거나 파일 이벤트를 재설정하지 않습니다. 핸들 범위, 호출자 자격, 같은 파일의 직렬화는 파일 API 계약을 따릅니다. 다른 클래스와 비동기 위치 설정은 미지원입니다. 위치 조회 및 이후 NULL/−2 읽기·쓰기 오프셋은 이 상태를 사용합니다.
+
+`ZwFlushBuffersFile`은 열린 동기 WDM 파일 핸들을 지원합니다. KernelMode에서도 FILE_WRITE_DATA 또는 FILE_APPEND_DATA 권한을 확인하며, 파일의 명명된 파이프 플래그가 있으면 FILE_WRITE_DATA가 필요합니다. 버퍼 없는 요청은 major 9/minor 0을 사용하며 지연 완료 플래그를 설정하지 않습니다. 조건을 충족한 즉시 완료는 디스패치 반환 전에 IOSB를 게시하고 패킷을 해제합니다. 작업자, 보호 영역 또는 상승한 IRQL에서 완료하면 원래 호출자의 알림 가능 시점까지 기다립니다. Information은 64비트를 유지하며 출력 복사와 파일 위치 변경은 없습니다. 비동기 파일, 선언형 제공자 플러시와 프레임워크 경로는 지원하지 않습니다. 보고 종류는 `flush_buffers`, 출처는 `ZwFlushBuffersFile`이며 시나리오는 이 커널 생성 요청을 만들 수 없습니다.

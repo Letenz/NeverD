@@ -289,14 +289,19 @@ public:
   }
 };
 
-const MedCallClobber *findCallClobber(const MedFunc &Func, const MedVar &V) {
-  auto It = std::find_if(
-      Func.CallClobbers.begin(), Func.CallClobbers.end(),
-      [&](const MedCallClobber &Clobber) { return Clobber.Value == V; });
-  return It == Func.CallClobbers.end() ? nullptr : &*It;
-}
-
 } // anonymous namespace
+
+const MedCallClobber *
+MedToHighConverter::findCallClobber(const MedVar &V) const {
+  if (!V.isConst()) {
+    const auto It = CallClobberIndex.find({V.Kind, V.Id, V.SSAVer});
+    return It == CallClobberIndex.end() ? nullptr : It->second;
+  }
+  auto It = std::find_if(
+      CurMed->CallClobbers.begin(), CurMed->CallClobbers.end(),
+      [&](const MedCallClobber &Clobber) { return Clobber.Value == V; });
+  return It == CurMed->CallClobbers.end() ? nullptr : &*It;
+}
 
 void fillUnstructuredGotoSkeleton(HighFunc &Func, const MedFunc &Med) {
   Func.Body.clear();
@@ -566,7 +571,7 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   }
 
   if (CurMed) {
-    if (const MedCallClobber *Clobber = findCallClobber(*CurMed, V)) {
+    if (const MedCallClobber *Clobber = findCallClobber(V)) {
       // Do not remap a caller-saved clobber onto this function's parameters.
       // After GSHandlerCheckCommon, r8 is flags scratch, not ContextRecord;
       // call arguments are recovered from COPYs / homes in collectCallArgs.
@@ -592,7 +597,7 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
           return HighExpr::makeUndef(V.Size);
         Known = std::min(Known, Clobber->PreservedPrefixSize);
         Input = Before;
-        Clobber = findCallClobber(*CurMed, Input);
+        Clobber = findCallClobber(Input);
       } while (Clobber);
       auto Low = sourceBitSlice(medvarToExpr(Input), 0, Known);
       // Calls do not zero the unpreserved suffix. Retain unknown bytes so a
@@ -1198,6 +1203,12 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   auto TStart = std::chrono::steady_clock::now();
   TargetArch = TheArch;
   CurMed = &Med;
+  CallClobberIndex.clear();
+  for (const auto &Clobber : Med.CallClobbers) {
+    const auto &V = Clobber.Value;
+    if (!V.isConst())
+      CallClobberIndex.try_emplace({V.Kind, V.Id, V.SSAVer}, &Clobber);
+  }
   ParamCopyIndexFunc = nullptr;
   LoadedEntrySlotsFor = nullptr;
   LeftByCallsFor = nullptr;

@@ -731,6 +731,8 @@ bool hasAuditedLegacyIntegerForm(const cs_insn *Insn, Arch TargetArch) {
   case X86_INS_CQO:
   case X86_INS_CLC:
   case X86_INS_STC:
+  case X86_INS_CLI:
+  case X86_INS_STI:
   case X86_INS_CMC:
   case X86_INS_CLD:
   case X86_INS_STD:

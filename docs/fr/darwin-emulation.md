@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 124a88c959c13d8407e343d17f7964de3af1071a89f0c6430eaab22959ce3ebc -->
+<!-- i18n-source: 5edfb602025b5842453dbc5914dad53572f14fdc63e424ca65e66d45415e59c3 -->
 
 [← Index de la documentation](README.md)
 
@@ -29,11 +29,11 @@ Le fichier complet, métadonnées et octets de fin inclus, doit respecter `memor
 
 Les segments conservent permissions courantes/maximales et zones à zéro. `__PAGEZERO` réserve des adresses sans allouer son étendue. Les plages fichier/VM, alignements OS, chevauchements arrondis, propriétaire de l’en-tête, entrée exécutable et budget sont vérifiés. Le segment d’en-tête doit être lisible et exécutable ; pages de garde et porte de retour privée restent réservées. La dernière page de fichier garde les octets jusqu’à la limite de page ou EOF ; les pages VM complètes suivantes sont mises à zéro, selon le [chargeur XNU](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/mach_loader.c).
 
-`LC_MAIN` reçoit `argc`, `argv`, `envp` et le vecteur apple comme quatre arguments entiers ; le retour fournit les huit bits bas du statut de sortie. `/usr/lib/dyld` est accepté seulement pour ce transfert d’entrée sans imports : le dyld hôte n’est pas exécuté. Un `stacksize` non nul est refusé ; `stack_size` fourni par l’appelant fixe le budget.
+`LC_MAIN` reçoit `argc`, `argv`, `envp` et le vecteur apple comme quatre arguments entiers ; le retour fournit les huit bits bas du statut de sortie. `/usr/lib/dyld` est accepté pour `LC_MAIN` dans le contrat d’imports fini ci-dessous : le dyld hôte n’est pas exécuté. Un `stacksize` non nul est refusé ; `stack_size` fourni par l’appelant fixe le budget.
 
 `LC_UNIXTHREAD` exige un seul enregistrement complet de registres généraux 64 bits natifs, avec uniquement PC renseigné. La pile contient argc, argv/envp terminés et un vecteur apple terminé avec `executable_path=<input filename>`. SP/flags personnalisés, autres registres, saveurs supplémentaires ou entrées conflictuelles sont refusés. Aucun environnement hôte ni vecteur auxiliaire Linux n’est hérité. Voir l’[architecture dyld](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-Dylibs externes, imports, rebases/chained fixups, constructeurs/destructeurs, sections TLS, arm64e/PAC, sous-types non pris en charge, chiffrement et commandes non modélisées sont refusés avant exécution. Les PIE sans fixups utilisent leurs adresses préférées, sans ASLR. Les blobs de signature sont des métadonnées, sans modèle AMFI ni politique d’entitlements.
+Dylibs et imports hors du contrat libSystem fini ci-dessous, constructeurs/destructeurs, sections TLS, arm64e/PAC, sous-types non pris en charge, chiffrement et commandes non modélisées sont refusés avant exécution. Les PIE pris en charge utilisent leurs adresses préférées, sans ASLR. Les blobs de signature sont des métadonnées, sans modèle AMFI ni politique d’entitlements.
 
 ## Services Darwin
 
@@ -1793,4 +1793,49 @@ lchown364 / final symbolic vnode / existing ownership_mutations grants
 lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / main58 stdoutW / virtual1281 guarded bytes
 native preparation489 observations including258 lchown / ARM64 O0 O1 O2
 common native82 / mandatory95 per matching platform / ARM64 required285
+```
+
+## Imports libSystem bornés
+
+Un exécutable thin de base peut lier une seule dépendance forte `/usr/lib/libSystem.B.dylib`. Il faut `LC_MAIN`, `MH_TWOLEVEL`, un ordinal ordinaire et une exigence de compatibilité au plus 1.0. Le lecteur valide intégralement les flux de pointeurs classic ou les chaînes generic64, les symboles indéfinis, les slots exacts et les rebases locaux. Les autres dépendances, liaisons weak/threaded, relocations non prises en charge, initialisations, TLS et pointeurs authentifiés sont refusés avant exécution.
+
+Les imports seuls allouent les entrées authentifiées et un errno de thread principal neuf. Les wrappers partagent les effets du noyau Darwin : erreur vers `-1` et errno, succès conservant errno. C `_exit` correspond à Mach-O `__exit` ; C `exit`, nommé `_exit`, reste indisponible. Les appels ordinaires valident le retour ; un appel terminal n’en a pas besoin. Le rapport conserve fournisseur, nom exact, nombre d’arguments et tous leurs bits ; le résultat incomplet ou sans retour est null. Les rapports raw existants restent compatibles.
+
+`SG_READ_ONLY` rend la protection courante seule en lecture après fixups, en conservant le maximum déclaré. Les observations natives O0/O1/O2 confirment que `mprotect` peut rétablir l’écriture si le maximum est RW. Les pages réservées des entrées et errno refusent unmap/reprotect invité. Préparation et exécution partagent échéance, événements et budget mémoire existant.
+
+Le même objet indépendant est lié par system/classic/chained et exécuté contre le vrai libSystem. Process/C/CLI/Python couvrent cinq couples plateforme/ISA et les trois profils ARM64 HVF compatibles exécutent les contrôles. Dylibs arbitraires, dlopen/dlsym, shared cache, constructeurs, threads, frameworks Apple, Intel HVF et qualification iOS physique restent inachevés.
+
+Les pointeurs classic lazy sont résolus avant l’entrée. Chaque programme déclare destination, ordinal ordinaire et symbole sans état hérité : type pointeur, addend nul, un DO_BIND immédiatement suivi de DONE. Seuls un rebase vers des octets exécutables locaux et un lazy bind du même emplacement sont fusionnés ; les deux consomment le budget. dyld_stub_binder exige un bind classic ordinaire fort, sans addend, et des appels lazy réels. Son exécution échoue avant la lecture du cadre C ou des arguments, la modification d’errno et l’enregistrement d’appel. Le resolver dynamique et l’état privé de dyld restent absents. Le contrôle natif et l’invité vérifient les pointeurs stables, la sortie et le statut des six fonctions.
+
+`open`, `lseek`, `pread`, `pwrite`, `dup` et `dup2` partagent le catalogue, les mutations et les curseurs existants. `open` consigne deux arguments, ou trois si les 32 bits bas des flags contiennent O_CREAT. Sur ARM64, l'int promu optionnel occupe quatre octets définis à SP ; le remplissage n'est pas lu. Sur x64, il vient du troisième registre argument. Le rapport conserve ce porteur, tandis que l'argument noyau mode est réduit à 16 bits. Sans O_CREAT, mode vaut zéro et aucun stockage optionnel n'est lu ; l'adresse de retour x64 reste vérifiée. Un échec de lecture précède les traces, errno et les effets fichier. Références : [ABI ARM64 Apple](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms), [open XNU](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c). Les contrôles natifs O0/O1/O2 couvrent offsets partagés, E/S positionnelles, échecs dup2, offsets au-delà de 4 GiB, mode et octets binaires. Annulation de threads et adaptation des chemins restent hors modèle.
+
+`mmap`, `mprotect` et `munmap` réutilisent les mappings, protections, réservations résidentes et références de fichiers existants. Le wrapper C réduit protections, indicateurs et descripteurs à 32 bits, tout en conservant les valeurs originales dans les rapports. `mmap` renvoie MAP_FAILED avec EINVAL pour une longueur nulle ou sans MAP_PRIVATE/MAP_SHARED avant tout effet noyau, puis ajoute MAP_UNIX03 aux appels admis ; les appels BSD bruts restent inchangés. Selon le [wrapper UNIX03 de XNU](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/libsyscall/wrappers/unix03/mmap.c), des contrôles C originaux couvrent les pages anonymes initialisées à zéro, les protections, l’ordre des erreurs, la durée de vie après fermeture, les écritures privées et la dernière page EOF. Les mappings partagés, fixes ou exécutables et l’allocateur restent hors de cette étape.
+
+```text
+provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
+C -> Mach-O: read -> _read; write -> _write; close -> _close
+C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
+C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
+entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
+fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
+unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
+errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
+SG_READ_ONLY: current R after fixup; original declared maximum is retained
+gates: RX/max RX; errno: RW/max RW; both resident model reservations
+budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
+preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
+report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
+call carriers: hex; full GP bits or defined ARM64 int vararg bytes; exact arity; null result if incomplete/nonreturning
+open: 2 args or 3 with O_CREAT; ARM64 mode int at SP, x64 third GP; kernel mode_t 16 bits
+basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
+_exit: status 35; stdout_hex 58; named calls 2; events 2
+file calls: main status 73; stdout_hex 460044; named calls 40; events 41
+memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
+native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
+```
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
 ```

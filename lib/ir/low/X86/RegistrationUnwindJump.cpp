@@ -21,19 +21,20 @@ bool RegistrationStateSolver::recordSEHUnwindJump(size_t I, const LowOp &Op,
   if (!JumpRuntime || !JumpRuntime->Resume ||
       !JumpRuntime->Resume(Op, WorkUsed) || !validateSEHInvocationBlock(I) ||
       !SP || SP->Entry != Callback || SP->Offset > -8 ||
-      !State.callbackMemoryIsPrivate(*SP, 8, true) ||
-      State.loadCallback(SP->Offset, 4).Offset != Jump.Capture.BufferOffset ||
-      !hasSEHJumpCapture(State, Jump.Capture))
+      !State.callbackMemoryIsPrivate(*SP, 8, true))
+    return false;
+  const auto Buffer = State.loadCallback(SP->Offset, 4).Offset;
+  const auto Capture =
+      Buffer ? Jump.Captures.find(*Buffer) : Jump.Captures.end();
+  if (Capture == Jump.Captures.end() ||
+      !hasSEHJumpCapture(State, Capture->second))
     return false;
   const auto Value = State.loadCallback(SP->Offset + 4, 4);
-  const auto Normalize = [](const FrameValue &V) {
-    return V.Constant == 0 ? FrameValue::constant(1) : V;
-  };
-  // A different capture or value requires its own continuation recipe.
-  if (!Value.Constant || !Jump.Value.Constant || Value.MayBeFrame ||
-      Jump.Value.MayBeFrame || Normalize(Value) != Normalize(Jump.Value))
+  if (!Value.isFrameIndependentScalar())
     return false;
-  return mergeSEHFrameOutcome(Jump.Resumed, State);
+  const SEHUnwindJumpValue Transfer{
+      *Buffer, Value, {Op.Addr, Op.Seq, Callback, Capture->second.Call}};
+  return mergeSEHFrameOutcome(Jump.Resumed[Transfer], State);
 }
 
 } // namespace neverd::registration_state

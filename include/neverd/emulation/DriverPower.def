@@ -38,6 +38,10 @@ NEVERD_DRIVER_REQUEST_ORIGIN(FileInformationQuery, "IoQueryFileInformation")
 NEVERD_DRIVER_REQUEST_ORIGIN(FileCreate, "file_create")
 NEVERD_DRIVER_REQUEST_ORIGIN(FileCancelOpen, "IoCancelFileOpen")
 NEVERD_DRIVER_REQUEST_ORIGIN(FileFinalClose, "file_final_close")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleQuery, "ZwQueryInformationFile")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleRead, "ZwReadFile")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleWrite, "ZwWriteFile")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleFlush, "ZwFlushBuffersFile")
 #endif
 
 #ifdef NEVERD_DRIVER_POWER_DEVICE_STATE

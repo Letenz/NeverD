@@ -80,6 +80,8 @@ TEST_P(AndroidBinder, MissingPeersAndTransactionsDoNotSucceed) {
   }
 }
 TEST_P(AndroidBinder, GuestServicesExecuteSynchronousTransactionsAndReplies) {
+  Options.Android->ThreadLimit =
+      5; // Four successive service thread identities.
   auto R = run("binder_service_transactions");
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);

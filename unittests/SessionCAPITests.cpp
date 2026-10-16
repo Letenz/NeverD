@@ -11,11 +11,9 @@
 #include "SessionTestAccess.h"
 #include "gtest/gtest.h"
 
-#include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/sdk/NeverDCAPI.h"
 #include "neverd/support/ProjectWriteLock.h"
-#include "neverd/types/TypeParse.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/AsmParser/Parser.h"
@@ -3563,15 +3561,21 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
   EXPECT_NE(RustWindows.find("pub Value: ULONG,"), std::string::npos);
   // A spelling the language does not take fails, saying which it takes.
   EXPECT_EQ(neverd_local_types_source(
-                Session, R"({"language":"rust","spelling":"ida"})"),
+                Session, R"({"language":"rust","spelling":"keywords"})"),
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
-            "rust names builtins as windows or portable, not ida");
+            "rust names builtins as portable or windows, not keywords");
   EXPECT_EQ(neverd_local_types_source(
                 Session, R"({"language":"go","spelling":"keywords"})"),
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
-            "go names builtins as windows or portable, not keywords");
+            "go names builtins as portable or windows, not keywords");
+  // IDA's spelling, Microsoft's sized integers, does not render.
+  EXPECT_EQ(neverd_local_types_source(Session,
+                                      R"({"language":"c","spelling":"ida"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "\"spelling\" must be portable, windows or keywords");
   const std::string GoWindows = takeString(neverd_local_types_source(
       Session,
       R"({"language":"go","spelling":"windows","types":["_PACKED"]})"));
@@ -3584,10 +3588,33 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
   EXPECT_NE(Python.find("assert ctypes.sizeof(_PACKED) == 0x7"),
             std::string::npos);
   EXPECT_EQ(neverd_local_types_source(
-                Session, R"({"language":"python","spelling":"ida"})"),
+                Session, R"({"language":"python","spelling":"keywords"})"),
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
-            "python names builtins as windows or portable, not ida");
+            "python names builtins as portable or windows, not keywords");
+  // JavaScript reads through a DataView, its accessors checked within
+  // their record.
+  const std::string Script = takeString(neverd_local_types_source(
+      Session,
+      R"({"language":"javascript","types":["_PACKED"],"asserts":true})"));
+  EXPECT_NE(Script.find("export class _PACKED {"), std::string::npos) << Script;
+  EXPECT_NE(Script.find("check(_PACKED, (r) => {"), std::string::npos);
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"javascript","spelling":"keywords"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "javascript names builtins as portable or windows, not keywords");
+  // Lua reads through string.unpack, its accessors checked as it runs.
+  const std::string Lua = takeString(neverd_local_types_source(
+      Session, R"({"language":"lua","types":["_PACKED"],"asserts":true})"));
+  EXPECT_NE(Lua.find("local T = record(\"_PACKED\", 0x7)"), std::string::npos)
+      << Lua;
+  EXPECT_NE(Lua.find("check(M._PACKED, function(r)"), std::string::npos);
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"lua","spelling":"keywords"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "lua names builtins as portable or windows, not keywords");
   // Prototypes render in C and C++; asked of another language, they fail.
   EXPECT_EQ(neverd_local_types_source(
                 Session, R"({"language":"rust","prototypes":true})"),
@@ -3612,20 +3639,31 @@ TEST(SessionCAPILocalTypes, LanguagesSayHowEachNamesBuiltins) {
       Parsed->getAsObject()->getArray("languages");
   ASSERT_NE(Languages, nullptr);
   std::map<std::string, std::pair<std::string, std::string>> Taken;
+  // Which languages read back, and which render prototypes.
+  std::string Reads, Prototypes;
   for (const llvm::json::Value &Value : *Languages) {
     const llvm::json::Object &Language = *Value.getAsObject();
     std::string Spellings;
     for (const llvm::json::Value &Id : *Language.getArray("spellings"))
       Spellings += (Spellings.empty() ? "" : " ") + Id.getAsString()->str();
-    Taken[Language.getString("id")->str()] = {
-        Language.getString("spelling")->str(), Spellings};
+    const std::string Id = Language.getString("id")->str();
+    Taken[Id] = {Language.getString("spelling")->str(), Spellings};
+    if (Language.getBoolean("reads").value_or(false))
+      Reads += (Reads.empty() ? "" : " ") + Id;
+    if (Language.getBoolean("prototypes").value_or(false))
+      Prototypes += (Prototypes.empty() ? "" : " ") + Id;
   }
+  // Every language spells exact widths unless asked, and lists them first.
   using Choice = std::pair<std::string, std::string>;
-  EXPECT_EQ(Taken["c"], Choice("windows", "windows ida keywords portable"));
-  EXPECT_EQ(Taken["cpp"], Choice("windows", "windows ida keywords portable"));
-  EXPECT_EQ(Taken["rust"], Choice("portable", "windows portable"));
-  EXPECT_EQ(Taken["go"], Choice("portable", "windows portable"));
-  EXPECT_EQ(Taken["python"], Choice("portable", "windows portable"));
+  EXPECT_EQ(Taken["c"], Choice("portable", "portable windows keywords"));
+  EXPECT_EQ(Taken["cpp"], Choice("portable", "portable windows keywords"));
+  EXPECT_EQ(Taken["rust"], Choice("portable", "portable windows"));
+  EXPECT_EQ(Taken["go"], Choice("portable", "portable windows"));
+  EXPECT_EQ(Taken["python"], Choice("portable", "portable windows"));
+  EXPECT_EQ(Taken["javascript"], Choice("portable", "portable windows"));
+  EXPECT_EQ(Taken["lua"], Choice("portable", "portable windows"));
+  EXPECT_EQ(Reads, "c cpp rust go");
+  EXPECT_EQ(Prototypes, "c cpp");
 }
 
 TEST_F(SessionCAPITest, DeclaredTypesJoinThePDBsAndStayWithTheProject) {
@@ -3766,7 +3804,11 @@ TEST_F(SessionCAPITest, DeclaredTypesJoinThePDBsAndStayWithTheProject) {
             true);
 }
 
-TEST_F(SessionCAPITest, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
+// These checks require developer-supplied Windows kernel and PDB inputs.
+// Keep the self-contained SessionCAPITest qualification independent of them.
+class SessionCAPIKernelInputs : public SessionCAPITest {};
+
+TEST_F(SessionCAPIKernelInputs, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
   // ntoskrnl.exe and its PDB, as a developer points to them.
   const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
   const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");
@@ -3810,110 +3852,7 @@ TEST_F(SessionCAPITest, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
   EXPECT_EQ(Mine->getAsObject()->getInteger("size"), 32);
 }
 
-namespace {
-
-/// Debug information that names functions and types none, as a PDB of
-/// public symbols does.
-class NamesOnlyDebugContext final : public neverd::DebugContext {
-public:
-  std::map<neverd::va_t, neverd::FunctionSym> Functions;
-  std::optional<neverd::FunctionSym>
-  resolveFunction(neverd::va_t Addr) const override {
-    for (const auto &[Entry, Function] : Functions)
-      if (Function.contains(Addr) || Entry == Addr)
-        return Function;
-    return std::nullopt;
-  }
-  std::optional<neverd::VariableSym> resolveVariable(neverd::va_t,
-                                                     int64_t) const override {
-    return std::nullopt;
-  }
-  std::optional<neverd::TypeSym> resolveType(uint64_t) const override {
-    return std::nullopt;
-  }
-  std::optional<neverd::SourceLoc> sourceLocation(neverd::va_t) const override {
-    return std::nullopt;
-  }
-  std::vector<neverd::FunctionSym> allFunctions() const override { return {}; }
-  bool hasInfo() const override { return true; }
-};
-
-} // namespace
-
-TEST(PrototypeDebugContext, TypesTheFunctionsDebugInformationLeavesUntyped) {
-  using namespace neverd;
-  auto Library = std::make_shared<types::TypeLibrary>();
-  ASSERT_TRUE(types::parseCTypes(R"(
-    typedef LONG NTSTATUS;
-    typedef struct _PAIR { ULONG Low; union { LONG High; ULONG Top; }; } PAIR,
-        *PPAIR;
-    typedef VOID (NTAPI *PCALLBACK)(PPAIR Pair, ULONG Flags);
-    NTSTATUS NTAPI Pair(PPAIR Out, ULONG Flags, PCALLBACK Done);
-    PPAIR NTAPI NextPair(PPAIR Current);
-    ULONG __cdecl Print(const char *Format, ...);
-  )",
-                                 *Library)
-                  .ok());
-  NamesOnlyDebugContext Names;
-  const auto name = [&](va_t Addr, const char *Name) {
-    FunctionSym Function;
-    Function.Name = Name;
-    Function.Addr = Addr;
-    Function.Size = 0x10;
-    Names.Functions[Addr] = Function;
-  };
-  name(0x1000, "Pair");
-  name(0x2000, "NextPair");
-  name(0x3000, "Print");
-  name(0x4000, "Unknown");
-  FunctionSym Typed;
-  Typed.Name = "Pair";
-  Typed.Addr = 0x5000;
-  Typed.Size = 0x10;
-  Typed.ReturnType = NdType::makeInt(8, false);
-  Names.Functions[0x5000] = Typed;
-  sdk::PrototypeDebugContext Context(Names, Library);
-
-  std::optional<FunctionSym> Pair = Context.resolveFunction(0x1000);
-  ASSERT_TRUE(Pair.has_value());
-  ASSERT_NE(Pair->ReturnType, nullptr);
-  EXPECT_EQ(Pair->ReturnType->Kind, NdTypeKind::Int);
-  EXPECT_EQ(Pair->ReturnType->Size, 4u);
-  EXPECT_TRUE(Pair->ReturnType->IsSigned);
-  ASSERT_EQ(Pair->Params.size(), 3u);
-  EXPECT_EQ(Pair->Params[0].first, "Out");
-  // The record pointed to has its name and its members' names, those of
-  // the union in place among them; it is C's.
-  const TypeRef &Record = Pair->Params[0].second->Pointee;
-  EXPECT_EQ(Record->SourceName, "_PAIR");
-  EXPECT_EQ(Record->Size, 8u);
-  EXPECT_EQ(Record->Passing, NdRecordPassing::ByValue);
-  EXPECT_EQ(Record->FieldDisplayNames,
-            (std::vector<std::string>{"Low", "High", "Top"}));
-  EXPECT_EQ(Record->FieldDisplayOffsets, (std::vector<uint16_t>{0, 4, 4}));
-  // A callback is a pointer to a function of opaque pointers and scalars.
-  const TypeRef &Done = Pair->Params[2].second;
-  ASSERT_EQ(Done->Kind, NdTypeKind::Ptr);
-  ASSERT_EQ(Done->Pointee->Kind, NdTypeKind::Func);
-  ASSERT_EQ(Done->Pointee->ParamTypes.size(), 2u);
-  EXPECT_EQ(Done->Pointee->ParamTypes[0]->Kind, NdTypeKind::Ptr);
-  EXPECT_EQ(Done->Pointee->ParamTypes[0]->Pointee->Kind, NdTypeKind::Void);
-
-  // A record returned by a C declaration's pointer is no hidden result.
-  std::optional<FunctionSym> Next = Context.resolveFunction(0x2000);
-  ASSERT_TRUE(Next.has_value());
-  EXPECT_FALSE(
-      isMsvcIndirectReturn(Next->ReturnType, Arch::X64, BinaryFormat::COFF));
-  // A variadic prototype's calls pass more than it declares; a name
-  // without one, an interior address and a typed declaration stay.
-  EXPECT_TRUE(Context.resolveFunction(0x3000)->Params.empty());
-  EXPECT_TRUE(Context.resolveFunction(0x4000)->Params.empty());
-  EXPECT_TRUE(Context.resolveFunction(0x1008)->Params.empty());
-  EXPECT_TRUE(Context.resolveFunction(0x5000)->Params.empty());
-  EXPECT_EQ(Context.resolveFunction(0x5000)->ReturnType->Size, 8u);
-}
-
-TEST_F(SessionCAPITest, KernelFunctionsDecompileWithTheirPrototypes) {
+TEST_F(SessionCAPIKernelInputs, KernelFunctionsDecompileWithTheirPrototypes) {
   const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
   const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");
   if (!Kernel || !PDB)
@@ -3952,6 +3891,168 @@ TEST_F(SessionCAPITest, KernelFunctionsDecompileWithTheirPrototypes) {
       signature("PsCreateSystemThread").find("void (*StartRoutine)(void*)"),
       std::string::npos);
   EXPECT_EQ(signature("IofCompleteRequest").rfind("void ", 0), 0u);
+}
+
+TEST_F(SessionCAPITest, FunctionsHoldTheRecordsTheirPDBTypes) {
+  // A function its PDB types reads its records' members as the local types
+  // name them, and its unit defines those records.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "local_types.exe", std::ios::binary);
+  const std::string Exe =
+      write("local_types.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  neverd_session_set_pdb_path(Session,
+                              (Fixtures / "local_types.pdb").string().c_str());
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto decompile = [&] {
+    const int Index = neverd_func_find_by_name(Session, "use");
+    EXPECT_GE(Index, 0);
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  const std::string Use = decompile();
+  const size_t Includes = Use.find("#include <stdint.h>");
+  const size_t Device = Use.find("struct _DEVICE\n{");
+  ASSERT_NE(Device, std::string::npos) << Use;
+  EXPECT_LT(Includes, Device);
+  // What the record holds by value is defined too, a union as one.
+  EXPECT_NE(Use.find("union _LARGE_INTEGER\n{"), std::string::npos);
+  EXPECT_NE(Use.find("Device->Size"), std::string::npos) << Use;
+  EXPECT_NE(Use.find("Packed->Count"), std::string::npos);
+  // The library's members name the four bytes of a flag union in place,
+  // which the PDB's leave unnamed.
+  EXPECT_NE(Use.find("Thread->MiscFlags"), std::string::npos);
+  // LLVM-C defines them too, and declares the typedefs its signature
+  // spells, the enumeration's after its definition.
+  const auto llvm = [&] {
+    const int Index = neverd_func_find_by_name(Session, "use");
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile_llvm(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  const std::string Llvm = llvm();
+  const size_t Typedef = Llvm.find("typedef struct _DEVICE _DEVICE;");
+  ASSERT_NE(Typedef, std::string::npos) << Llvm;
+  EXPECT_LT(Typedef, Llvm.find("struct _DEVICE\n{"));
+  const size_t Kind = Llvm.find("enum _SIGNED_KIND\n{");
+  ASSERT_NE(Kind, std::string::npos);
+  EXPECT_LT(Kind, Llvm.find("typedef enum _SIGNED_KIND _SIGNED_KIND;"));
+  EXPECT_NE(Llvm.find("_PACKED* Packed, _USES_FORWARD* Forward, "
+                      "_SIGNED_KIND Kind) {"),
+            std::string::npos);
+  // It names the members of each record a parameter points to.
+  EXPECT_NE(Llvm.find("Device->Size"), std::string::npos);
+  EXPECT_NE(Llvm.find("Thread->MiscFlags"), std::string::npos);
+  EXPECT_NE(Llvm.find("Packed->Count"), std::string::npos);
+
+  // A member the user renames reads by its new name.
+  const std::string Renamed = takeString(neverd_local_types_declare(
+      Session,
+      "#pragma pack(push, 1)\n"
+      "struct _PACKED { UCHAR Tag; ULONG Value; USHORT Items; };\n"
+      "#pragma pack(pop)\n",
+      R"({"language":"c"})"));
+  EXPECT_NE(Renamed.find("\"decompilation\":true"), std::string::npos)
+      << Renamed << takeString(neverd_last_error(Session));
+  const std::string After = decompile();
+  EXPECT_NE(After.find("Packed->Items"), std::string::npos) << After;
+  EXPECT_EQ(After.find("Packed->Count"), std::string::npos);
+  const std::string LlvmAfter = llvm();
+  EXPECT_NE(LlvmAfter.find("Packed->Items"), std::string::npos) << LlvmAfter;
+  EXPECT_NE(LlvmAfter.find("uint16_t Items;"), std::string::npos);
+}
+
+TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
+  const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
+  const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");
+  if (!Kernel || !PDB)
+    GTEST_SKIP() << "set NEVERD_TYPES_NTOSKRNL and NEVERD_TYPES_NTKRNLMP to "
+                    "ntoskrnl.exe and ntkrnlmp.pdb";
+  neverd_session_set_pdb_path(Session, PDB);
+  ASSERT_EQ(neverd_session_load(Session, Kernel), 1)
+      << takeString(neverd_last_error(Session));
+  const auto decompile = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  // The unit defines the record whose members it reads, as the local
+  // types do, after its includes, and what that holds by value.
+  const std::string Dpc = decompile("KeInitializeDpc");
+  const size_t Includes = Dpc.find("#include <stdint.h>");
+  const size_t Record = Dpc.find("struct _KDPC\n{");
+  ASSERT_NE(Record, std::string::npos) << Dpc;
+  EXPECT_LT(Includes, Record);
+  EXPECT_NE(Dpc.find("struct _SINGLE_LIST_ENTRY\n{"), std::string::npos);
+  EXPECT_NE(Dpc.find("static_assert(sizeof(struct _KDPC) == 0x40"),
+            std::string::npos);
+  // A store to a pointer member takes the member's type; a parameter the
+  // prototype types as a pointer stores as its address.
+  EXPECT_NE(Dpc.find("Dpc->DeferredRoutine = "
+                     "(__typeof__(Dpc->DeferredRoutine))(DeferredRoutine);"),
+            std::string::npos)
+      << Dpc;
+  EXPECT_NE(Dpc.find("Dpc->DpcData = 0;"), std::string::npos);
+  // A scalar read of a union in place reads its scalar.
+  EXPECT_NE(decompile("PsGetProcessCreateTimeQuadPart")
+                .find("return Process->CreateTime.QuadPart;"),
+            std::string::npos);
+  // LLVM-C signs as HighC does, with the prototype's pointers, and stores
+  // and returns them as their members' and its result's types.
+  const auto llvm = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile_llvm(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  const std::string Signature =
+      "void KeInitializeDpc(_KDPC* Dpc, void (*DeferredRoutine)(void*, void*, "
+      "void*, void*), void* DeferredContext) {";
+  EXPECT_NE(Dpc.find(Signature), std::string::npos);
+  const std::string LlvmDpc = llvm("KeInitializeDpc");
+  EXPECT_NE(LlvmDpc.find(Signature), std::string::npos) << LlvmDpc;
+  const size_t LlvmRecord = LlvmDpc.find("struct _KDPC\n{");
+  ASSERT_NE(LlvmRecord, std::string::npos);
+  EXPECT_LT(LlvmDpc.find("#include <stdint.h>"), LlvmRecord);
+  EXPECT_NE(
+      LlvmDpc.find("Dpc->DeferredRoutine = "
+                   "(__typeof__(Dpc->DeferredRoutine))(DeferredRoutine);"),
+      std::string::npos);
+  EXPECT_NE(llvm("PsGetProcessId")
+                .find("void* PsGetProcessId(_EPROCESS* Process) {\n    "
+                      "return (void*)Process->UniqueProcessId;"),
+            std::string::npos);
+
+  // A member the user renames reads by its new name, in the definition and
+  // in the code alike.
+  const std::string Renamed = takeString(neverd_local_types_declare(
+      Session,
+      R"(struct _SINGLE_LIST_ENTRY { struct _SINGLE_LIST_ENTRY *Next; };
+         struct _KDPC {
+           union { ULONG TargetInfoAsUlong;
+                   struct { UCHAR Type; UCHAR Importance;
+                            volatile USHORT Number; }; };
+           struct _SINGLE_LIST_ENTRY DpcListEntry;
+           ULONGLONG ProcessorHistory;
+           VOID (*Routine)(struct _KDPC *, VOID *, VOID *, VOID *);
+           VOID *DeferredContext; VOID *SystemArgument1;
+           VOID *SystemArgument2; VOID *DpcData; };)",
+      R"({"language":"c"})"));
+  EXPECT_NE(Renamed.find("\"decompilation\":true"), std::string::npos)
+      << Renamed << takeString(neverd_last_error(Session));
+  const std::string After = decompile("KeInitializeDpc");
+  EXPECT_NE(After.find("Dpc->Routine = "), std::string::npos) << After;
+  EXPECT_NE(After.find("(*Routine)(struct _KDPC *"), std::string::npos);
+  EXPECT_EQ(After.find("DeferredRoutine = "), std::string::npos);
+  const std::string LlvmAfter = llvm("KeInitializeDpc");
+  EXPECT_NE(LlvmAfter.find("Dpc->Routine = "), std::string::npos) << LlvmAfter;
+  EXPECT_NE(LlvmAfter.find("(*Routine)(struct _KDPC *"), std::string::npos);
 }
 
 TEST_F(SessionCAPITest, PDBReferenceNamesTheCopyALoadFinds) {

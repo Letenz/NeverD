@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "DarwinLibSystemFileTestData.h"
+#include "DarwinLibSystemMemoryTestData.h"
 #include "gtest/gtest.h"
 #include "os/darwin/kernel/DarwinFiles.h"
 #include "os/darwin/kernel/DarwinMemory.h"
@@ -1265,6 +1267,196 @@ TEST(DarwinNative,
   EXPECT_TRUE((*Err)->getBuffer().empty());
   EXPECT_FALSE(std::filesystem::exists(Input));
   EXPECT_FALSE(std::filesystem::exists(Input + ".moved"));
+  Passed = !HasFailure();
+#endif
+}
+
+TEST(DarwinNative, ClassicLazyImportsMatchEagerNativeSlotObservations) {
+#ifndef NEVERD_DARWIN_LAZY_NATIVE_ORACLE
+  GTEST_SKIP() << "native Darwin reference requires a macOS build host";
+#else
+  llvm::SmallString<128> Temporary;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-native-lazy", Temporary));
+  const std::filesystem::path Root(Temporary.str().str());
+  bool Passed = false;
+  auto Cleanup = llvm::scope_exit([&] {
+    if (Passed)
+      std::filesystem::remove_all(Root);
+  });
+  const std::string Program = NEVERD_DARWIN_LAZY_NATIVE_ORACLE;
+  const auto Input = (Root / "stdin").string();
+  std::ofstream(Input).close();
+  // Ask the native loader for the same preparation-time resolution policy.
+  // The default loader policy on other macOS releases is not inferred here.
+  const llvm::StringRef Environment[] = {"DYLD_BIND_AT_LAUNCH=1"};
+  for (bool Terminal : {false, true}) {
+    const auto Output =
+        (Root / (Terminal ? "exit.stdout" : "normal.stdout")).string();
+    const auto Error =
+        (Root / (Terminal ? "exit.stderr" : "normal.stderr")).string();
+    const std::optional<llvm::StringRef> Redirects[] = {Input, Output, Error};
+    std::vector<llvm::StringRef> Arguments{Program};
+    if (Terminal)
+      Arguments.push_back("exit");
+    std::string LaunchError;
+    bool ExecutionFailed = false;
+    const auto Status = llvm::sys::ExecuteAndWait(
+        Program, Arguments, llvm::ArrayRef(Environment), Redirects, 5, 0,
+        &LaunchError, &ExecutionFailed);
+    ASSERT_FALSE(ExecutionFailed) << LaunchError;
+    auto Out = llvm::MemoryBuffer::getFile(Output),
+         Err = llvm::MemoryBuffer::getFile(Error);
+    ASSERT_TRUE(bool(Out));
+    ASSERT_TRUE(bool(Err));
+    ASSERT_EQ(Status, Terminal ? 35 : 83)
+        << LaunchError << (*Err)->getBuffer().str();
+    EXPECT_EQ((*Out)->getBuffer(),
+              Terminal ? llvm::StringRef("X") : llvm::StringRef("A\0ZS", 4));
+    EXPECT_TRUE((*Err)->getBuffer().empty());
+    ProcessOptions Options;
+    Options.Backend = ExecutionBackendKind::Unicorn;
+    Options.InstructionQuantum = 1024;
+    Options.Arguments = {"lazy"};
+    Options.DarwinFiles.emplace();
+    Options.DarwinFiles->StandardInput.emplace();
+    if (Terminal)
+      Options.Arguments.push_back("exit");
+    auto Guest = emulateProcess(Program, ProcessProfile::MacOSMachO64, Options);
+    ASSERT_TRUE(bool(Guest)) << llvm::toString(Guest.takeError());
+    EXPECT_EQ(Guest->Stop, ProcessStopReason::Exited) << Guest->Diagnostic;
+    EXPECT_EQ(Guest->ExitStatus, Status);
+    EXPECT_EQ(Guest->StandardOutput, (*Out)->getBuffer());
+    EXPECT_TRUE(Guest->StandardError.empty());
+    EXPECT_TRUE(Guest->Services.empty());
+    EXPECT_EQ(Guest->NativeCalls.size(), Terminal ? 2u : 13u);
+  }
+  Passed = !HasFailure();
+#endif
+}
+
+TEST(DarwinNative, LibSystemFileCallsMatchNativeContentsOffsetsAndMode) {
+#ifndef NEVERD_DARWIN_FILES_NATIVE_ORACLE
+  GTEST_SKIP() << "native Darwin reference requires a macOS build host";
+#else
+  llvm::SmallString<128> Temporary;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-libsystem-files",
+                                                    Temporary));
+  const std::filesystem::path Root(Temporary.str().str());
+  bool Passed = false;
+  auto Cleanup = llvm::scope_exit([&] {
+    if (Passed)
+      std::filesystem::remove_all(Root);
+  });
+  const std::string Program = NEVERD_DARWIN_FILES_NATIVE_ORACLE;
+  const auto Input = (Root / "data").string();
+  const auto Created = (Root / "created").string();
+  const auto Missing = (Root / "missing").string();
+  const auto Output = (Root / "stdout").string();
+  const auto Error = (Root / "stderr").string();
+  std::ofstream(Input, std::ios::binary) << "0123456789";
+  const llvm::StringRef Arguments[] = {Program, Input, Created, Missing};
+  const std::optional<llvm::StringRef> Redirects[] = {llvm::StringRef(), Output,
+                                                      Error};
+  const auto OldMask = ::umask(0027);
+  auto RestoreMask = llvm::scope_exit([&] { ::umask(OldMask); });
+  std::string LaunchError;
+  bool ExecutionFailed = false;
+  const auto Status =
+      llvm::sys::ExecuteAndWait(Program, Arguments, std::nullopt, Redirects, 5,
+                                0, &LaunchError, &ExecutionFailed);
+  ASSERT_FALSE(ExecutionFailed) << LaunchError;
+  auto Out = llvm::MemoryBuffer::getFile(Output);
+  auto Err = llvm::MemoryBuffer::getFile(Error);
+  ASSERT_TRUE(bool(Out));
+  ASSERT_TRUE(bool(Err));
+  ASSERT_EQ(Status, 73) << (*Err)->getBuffer().str();
+  EXPECT_EQ((*Out)->getBuffer(), llvm::StringRef("F\0D", 3));
+  EXPECT_TRUE((*Err)->getBuffer().empty());
+  auto OriginalBytes = llvm::MemoryBuffer::getFile(Input);
+  auto CreatedBytes = llvm::MemoryBuffer::getFile(Created);
+  ASSERT_TRUE(bool(OriginalBytes));
+  ASSERT_TRUE(bool(CreatedBytes));
+  EXPECT_EQ((*OriginalBytes)->getBuffer(), llvm::StringRef("012345X\0Y9", 10));
+  EXPECT_EQ((*CreatedBytes)->getBuffer(), llvm::StringRef("N\0W", 3));
+  struct stat Metadata{};
+  ASSERT_EQ(::stat(Created.c_str(), &Metadata), 0);
+  EXPECT_EQ(Metadata.st_mode & 07777, 0640);
+  EXPECT_FALSE(std::filesystem::exists(Missing));
+  ProcessOptions Options;
+  Options.Backend = ExecutionBackendKind::Unicorn;
+  Options.InstructionQuantum = 1024;
+  Options.Arguments = {"files", "/data", "/created", "/missing"};
+  Options.DarwinFiles = darwin_test::libSystemFileOptions();
+  auto Guest = emulateProcess(Program, ProcessProfile::MacOSMachO64, Options);
+  ASSERT_TRUE(bool(Guest)) << llvm::toString(Guest.takeError());
+  EXPECT_EQ(Guest->Stop, ProcessStopReason::Exited) << Guest->Diagnostic;
+  EXPECT_EQ(Guest->ExitStatus, Status);
+  EXPECT_EQ(Guest->StandardOutput, (*Out)->getBuffer());
+  EXPECT_TRUE(Guest->StandardError.empty());
+  EXPECT_TRUE(Guest->Services.empty());
+  EXPECT_EQ(Guest->NativeCalls.size(), 40u);
+  Passed = !HasFailure();
+#endif
+}
+
+TEST(DarwinNative, LibSystemMemoryCallsMatchNativeMappingsAndCErrorOrder) {
+#ifndef NEVERD_DARWIN_MEMORY_NATIVE_ORACLE
+  GTEST_SKIP() << "native Darwin reference requires a macOS build host";
+#else
+  llvm::SmallString<128> Temporary;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-libsystem-memory",
+                                                    Temporary));
+  const std::filesystem::path Root(Temporary.str().str());
+  bool Passed = false;
+  auto Cleanup = llvm::scope_exit([&] {
+    if (Passed)
+      std::filesystem::remove_all(Root);
+  });
+  const std::string Program = NEVERD_DARWIN_MEMORY_NATIVE_ORACLE;
+  const auto Input = (Root / "data").string();
+  const auto Output = (Root / "stdout").string();
+  const auto Error = (Root / "stderr").string();
+  const auto Page = uint64_t(::getpagesize());
+  const auto PageText = std::to_string(Page);
+  const auto Inputs = darwin_test::libSystemMemoryOptions(Page);
+  const auto &Bytes = Inputs.Files.at("/data");
+  std::ofstream(Input, std::ios::binary)
+      .write(reinterpret_cast<const char *>(Bytes.data()), Bytes.size());
+  const llvm::StringRef Arguments[] = {Program, PageText, Input};
+  const std::optional<llvm::StringRef> Redirects[] = {llvm::StringRef(), Output,
+                                                      Error};
+  std::string LaunchError;
+  bool ExecutionFailed = false;
+  const auto Status =
+      llvm::sys::ExecuteAndWait(Program, Arguments, std::nullopt, Redirects, 5,
+                                0, &LaunchError, &ExecutionFailed);
+  ASSERT_FALSE(ExecutionFailed) << LaunchError;
+  auto Out = llvm::MemoryBuffer::getFile(Output);
+  auto Err = llvm::MemoryBuffer::getFile(Error);
+  ASSERT_TRUE(bool(Out));
+  ASSERT_TRUE(bool(Err));
+  ASSERT_EQ(Status, 79) << (*Err)->getBuffer().str();
+  EXPECT_EQ((*Out)->getBuffer(), llvm::StringRef("M\0P", 3));
+  EXPECT_TRUE((*Err)->getBuffer().empty());
+  auto OriginalBytes = llvm::MemoryBuffer::getFile(Input);
+  ASSERT_TRUE(bool(OriginalBytes));
+  EXPECT_EQ((*OriginalBytes)->getBuffer(),
+            llvm::StringRef(reinterpret_cast<const char *>(Bytes.data()),
+                            Bytes.size()));
+  ProcessOptions Options;
+  Options.Backend = ExecutionBackendKind::Unicorn;
+  Options.InstructionQuantum = 1024;
+  Options.Arguments = {"memory", PageText, "/data"};
+  Options.DarwinFiles = Inputs;
+  auto Guest = emulateProcess(Program, ProcessProfile::MacOSMachO64, Options);
+  ASSERT_TRUE(bool(Guest)) << llvm::toString(Guest.takeError());
+  EXPECT_EQ(Guest->Stop, ProcessStopReason::Exited) << Guest->Diagnostic;
+  EXPECT_EQ(Guest->ExitStatus, Status);
+  EXPECT_EQ(Guest->StandardOutput, (*Out)->getBuffer());
+  EXPECT_TRUE(Guest->StandardError.empty());
+  EXPECT_TRUE(Guest->Services.empty());
+  EXPECT_EQ(Guest->NativeCalls.size(), 18u);
   Passed = !HasFailure();
 #endif
 }

@@ -102,41 +102,43 @@ TEST_F(TypeRenderFixture, CShowsEveryOffsetAndBit) {
             R"(// _THREAD_LIKE: 0x18 (24) bytes
 struct _THREAD_LIKE
 {
-    ULONGLONG Header;                                           // 0x00
+    uint64_t Header;                                            // 0x00
     union                                                       // 0x08
     {
         struct                                                  // 0x08
         {
-            ULONG AutoBoostActive : 1;                          // 0x08 bit 0
-            ULONG ReadyTransition : 1;                          // 0x08 bit 1
-            ULONG MiscSpare : 30;                               // 0x08 bits 2..31
+            uint32_t AutoBoostActive : 1;                       // 0x08 bit 0
+            uint32_t ReadyTransition : 1;                       // 0x08 bit 1
+            uint32_t MiscSpare : 30;                            // 0x08 bits 2..31
         };
-        LONG MiscFlags;                                         // 0x08
+        int32_t MiscFlags;                                      // 0x08
     };
     union                                                       // 0x0C
     {
         struct                                                  // 0x0C
         {
-            ULONG ThreadFlagsSpare : 2;                         // 0x0C bits 0..1
-            ULONG AutoAlignment : 1;                            // 0x0C bit 2
-            ULONG DisableBoost : 1;                             // 0x0C bit 3
-            ULONG ThreadReserved : 28;                          // 0x0C bits 4..31
+            uint32_t ThreadFlagsSpare : 2;                      // 0x0C bits 0..1
+            uint32_t AutoAlignment : 1;                         // 0x0C bit 2
+            uint32_t DisableBoost : 1;                          // 0x0C bit 3
+            uint32_t ThreadReserved : 28;                       // 0x0C bits 4..31
         };
-        LONG ThreadFlags;                                       // 0x0C
+        int32_t ThreadFlags;                                    // 0x0C
     };
-    UCHAR Tail[3];                                              // 0x10
+    uint8_t Tail[3];                                            // 0x10
     // 0x13: 5 bytes of padding
 };
 )");
 }
 
 TEST_F(TypeRenderFixture, CSpellsBuiltinsAsAsked) {
+  // Exact widths unless asked.
   RenderOptions Options = in(Language::C);
-  Options.Spelling = BuiltinSpelling::IDA;
-  EXPECT_TRUE(contains(render("_THREAD_LIKE", Options),
-                       "unsigned int AutoBoostActive : 1;"));
-  Options.Spelling = BuiltinSpelling::Portable;
   EXPECT_TRUE(contains(render("_THREAD_LIKE", Options), "uint64_t Header;"));
+  EXPECT_TRUE(contains(render("_THREAD_LIKE", Options),
+                       "uint32_t AutoBoostActive : 1;"));
+  Options.Spelling = BuiltinSpelling::Windows;
+  EXPECT_TRUE(
+      contains(render("_THREAD_LIKE", Options), "ULONG AutoBoostActive : 1;"));
   Options.Spelling = BuiltinSpelling::Keywords;
   EXPECT_TRUE(
       contains(render("_THREAD_LIKE", Options), "unsigned long long Header;"));
@@ -158,7 +160,11 @@ TEST_F(TypeRenderFixture, AHeaderDefinesWhatATypeHoldsFirst) {
     EXPECT_LT(At, Device) << Held;
   }
   EXPECT_FALSE(contains(Text, "_THREAD_LIKE"));
-  EXPECT_TRUE(contains(Text, "typedef uint32_t ULONG;"));
+  // Exact widths need no declaring; Windows' names do, where the Windows
+  // headers are not.
+  EXPECT_FALSE(contains(Text, "typedef uint32_t ULONG;"));
+  Options.Spelling = BuiltinSpelling::Windows;
+  EXPECT_TRUE(contains(header("_DEVICE", Options), "typedef uint32_t ULONG;"));
   // The header compiles as C++ too: C names its check as C++ does.
   EXPECT_TRUE(contains(Text, "#if !defined(__cplusplus) && "
                              "!defined(static_assert)\n#define static_assert "
@@ -180,7 +186,7 @@ TEST_F(TypeRenderFixture, CppNamesTypesBare) {
 TEST_F(TypeRenderFixture, CKeepsPacking) {
   const std::string Text = render("_PACKED", in(Language::C));
   EXPECT_TRUE(contains(Text, "#pragma pack(push, 1)\nstruct _PACKED\n"));
-  EXPECT_TRUE(contains(Text, "    ULONG Value;"));
+  EXPECT_TRUE(contains(Text, "    uint32_t Value;"));
   EXPECT_TRUE(contains(Text, "};\n#pragma pack(pop)\n"));
 }
 
@@ -219,13 +225,19 @@ TEST_F(TypeRenderFixture, RustTakesWindowsNamesAsAliases) {
   EXPECT_TRUE(
       contains(Text, "    pub const fn ReadyTransition(&self) -> ULONG {"));
   // A spelling Rust does not take renders as its default.
-  Options.Spelling = BuiltinSpelling::IDA;
+  Options.Spelling = BuiltinSpelling::Keywords;
   EXPECT_TRUE(
       contains(header("_THREAD_LIKE", Options), "    pub MiscFlags: i32,"));
   EXPECT_EQ(spellingOf(Options), BuiltinSpelling::Portable);
-  EXPECT_EQ(spellingsText(Language::Rust), "windows or portable");
-  EXPECT_EQ(spellingsText(Language::Go), "windows or portable");
-  EXPECT_EQ(spellingsText(Language::C), "windows, ida, keywords or portable");
+  // Each language lists its default, exact widths, first.
+  EXPECT_EQ(spellingsText(Language::Rust), "portable or windows");
+  EXPECT_EQ(spellingsText(Language::Go), "portable or windows");
+  EXPECT_EQ(spellingsText(Language::C), "portable, windows or keywords");
+  for (Language Lang :
+       {Language::C, Language::Cpp, Language::Rust, Language::Go,
+        Language::Python, Language::JavaScript, Language::Lua})
+    EXPECT_EQ(defaultSpelling(Lang), BuiltinSpelling::Portable);
+  EXPECT_FALSE(spellingNamed("ida"));
 }
 
 TEST_F(TypeRenderFixture, GoTakesWindowsNamesAsAliases) {
@@ -330,6 +342,198 @@ TEST(TypeRender, PythonBindsTypedefsAndLaysOutInOrder) {
   EXPECT_TRUE(contains(Text, "(\"Next\", ctypes.POINTER(NODE)),"));
 }
 
+TEST_F(TypeRenderFixture, JavaScriptReadsRecordsThroughDataView) {
+  RenderOptions Options = in(Language::JavaScript);
+  Options.Asserts = true;
+  const std::string Thread = header("_THREAD_LIKE", Options);
+  // TypeScript checks the module by its JSDoc.
+  EXPECT_TRUE(Thread.starts_with("// @ts-check\n")) << Thread;
+  EXPECT_TRUE(contains(Thread, "export class _THREAD_LIKE {\n"));
+  EXPECT_TRUE(contains(Thread, "  static size = 0x18;\n"));
+  // The caller gives the bytes, where the record begins and their order.
+  EXPECT_TRUE(contains(
+      Thread, "  constructor(view, offset = 0, littleEndian = true) {"));
+  // An anonymous record's members are the record's own, as C reaches them;
+  // a bitfield reads its unit in 32-bit arithmetic.
+  EXPECT_TRUE(contains(Thread, "  get ReadyTransition() { return "
+                               "(this.#view.getUint32(this.#offset + 0x08, "
+                               "this.#little) >>> 1) & 0x1; }\n"));
+  EXPECT_TRUE(contains(Thread, "(unit & 0xFFFFFFFD) | ((value << 1) & 0x2)"));
+  EXPECT_FALSE(contains(Thread, "class _THREAD_LIKE_0"));
+  // An array's elements by index, which the module checks.
+  EXPECT_TRUE(contains(Thread, "  Tail(i) { return this.#view.getUint8("
+                               "this.#offset + 0x10 + 1 * index(i, 3)); }\n"));
+  EXPECT_TRUE(contains(Thread, "function index(i, count) {"));
+  // Each accessor read and written back within a buffer of the record's
+  // size, which throws past its end.
+  EXPECT_TRUE(contains(Thread, "check(_THREAD_LIKE, (r) => {\n"
+                               "  r.Header = r.Header;\n"));
+  EXPECT_TRUE(contains(Thread, "  r.setTail(2, r.Tail(2));\n"));
+
+  const std::string Device = header("_DEVICE", Options);
+  // A record held in place is a view of its bytes; an eight-byte value,
+  // a pointer's address among them, is a bigint.
+  EXPECT_TRUE(contains(Device, "  get Links() { return new _LIST_ENTRY("
+                               "this.#view, this.#offset + 0x08, "
+                               "this.#little); }\n"));
+  EXPECT_TRUE(contains(Device, "[0x08, _LIST_ENTRY.size]"));
+  EXPECT_TRUE(contains(Device, "  MajorFunction(i) { return "
+                               "this.#view.getBigUint64(this.#offset + 0x18 + "
+                               "8 * index(i, 4), this.#little); }\n"));
+  // An enumeration is a frozen object, its field the underlying integer.
+  EXPECT_TRUE(contains(Device, "export const _POOL_KIND = Object.freeze({\n"));
+  EXPECT_TRUE(contains(Device, "  MustSucceed: -2147483648,\n"));
+  EXPECT_TRUE(contains(Device, "/** @typedef {number} _POOL_KIND */\n"));
+  EXPECT_TRUE(contains(Device, "/** 0x50 enum _POOL_KIND Pool @returns "
+                               "{_POOL_KIND} */\n  get Pool() { return "
+                               "this.#view.getInt32("));
+
+  // A bitfield of an eight-byte unit reads as a bigint.
+  EXPECT_TRUE(contains(header("_PUSH_LOCK", in(Language::JavaScript)),
+                       "  get Shared() { return BigInt.asUintN(60, "
+                       "this.#view.getBigUint64(this.#offset + 0x0, "
+                       "this.#little) >> 4n); }\n"));
+
+  // Windows' names are typedefs of the JavaScript types.
+  Options = in(Language::JavaScript);
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Windows = header("_PACKED", Options);
+  EXPECT_TRUE(contains(Windows, "/** @typedef {number} ULONG */\n")) << Windows;
+  EXPECT_TRUE(contains(Windows, "@returns {ULONG} */"));
+}
+
+TEST(TypeRender, JavaScriptExtendsSignsAndNamesWhatItDeclares) {
+  TypeLibrary Library;
+  ASSERT_TRUE(parseCTypes(R"(
+    typedef struct _NODE NODE, *PNODE;
+    struct _NODE { PNODE Next; int Low : 3; int High : 29; };
+    struct DataView { int constructor; __int128 Wide; };
+  )",
+                          Library)
+                  .ok());
+  const std::string Text = renderTypes(Library, {}, in(Language::JavaScript));
+  // A signed field's top bit is the 32nd and back.
+  EXPECT_TRUE(contains(Text, "  get Low() { return (this.#view.getUint32("
+                             "this.#offset + 0x08, this.#little) << 29) >> "
+                             "29; }\n"))
+      << Text;
+  EXPECT_TRUE(contains(Text, "  get High() { return (this.#view.getUint32("
+                             "this.#offset + 0x08, this.#little) << 0) >> "
+                             "3; }\n"));
+  // A typedef of a record names its class; one of a pointer, its address.
+  EXPECT_TRUE(contains(Text, "/** @typedef {_NODE} NODE */\n"));
+  EXPECT_TRUE(contains(Text, "export const NODE = _NODE;\n"));
+  EXPECT_TRUE(contains(Text, "/** @typedef {bigint} PNODE The address of "));
+  EXPECT_TRUE(contains(Text, "@returns {PNODE} */\n  get Next() {"));
+  // What the module itself names, and a class's own words, step aside.
+  EXPECT_TRUE(contains(Text, "export class DataView_ {"));
+  EXPECT_TRUE(contains(Text, "  get constructor_() {"));
+  // Sixteen bytes read as one bigint from two halves.
+  EXPECT_TRUE(contains(Text, "  get Wide() { return this.#wide("));
+  EXPECT_TRUE(contains(Text, "  #wide(at, signed) {"));
+}
+
+TEST_F(TypeRenderFixture, LuaReadsRecordsThroughStringUnpack) {
+  RenderOptions Options = in(Language::Lua);
+  Options.Asserts = true;
+  const std::string Thread = header("_THREAD_LIKE", Options);
+  // A module of record types, each in a block of its own.
+  EXPECT_TRUE(Thread.starts_with("-- ")) << Thread;
+  EXPECT_TRUE(contains(Thread, "local M = {}\n"));
+  EXPECT_TRUE(contains(Thread, "do\n  local T = record(\"_THREAD_LIKE\", "
+                               "0x18)\n  M._THREAD_LIKE = T\n"));
+  EXPECT_TRUE(Thread.ends_with("return M\n"));
+  // An anonymous record's members are the record's own; a bitfield masks
+  // its unit, which string.pack takes whole.
+  EXPECT_TRUE(contains(Thread, "  function T.get.ReadyTransition(r) return "
+                               "(get(r, 0x08, \"I4\") >> 1) & 0x1 end\n"));
+  EXPECT_TRUE(contains(Thread, "put(r, 0x08, \"I4\", (get(r, 0x08, \"I4\") & "
+                               "0xFFFFFFFD) | ((value << 1) & 0x2))"));
+  // An array's elements by index, through methods.
+  EXPECT_TRUE(contains(Thread, "  function T.methods.Tail(r, i) return "
+                               "get(r, 0x10 + 1 * index(i, 3), \"B\") end\n"));
+  EXPECT_TRUE(contains(Thread, "  function T.methods.setTail(r, i, value)"));
+  // Each accessor read and written back within bytes of the record's size.
+  EXPECT_TRUE(contains(Thread, "check(M._THREAD_LIKE, function(r)\n"
+                               "  r.Header = r.Header\n"));
+  EXPECT_TRUE(contains(Thread, "  r:setTail(2, r:Tail(2))\n"));
+
+  const std::string Device = header("_DEVICE", Options);
+  // A record held in place is a view of the same bytes; a pointer reads
+  // as its address.
+  EXPECT_TRUE(contains(Device, "  function T.get.Links(r) return "
+                               "M._LIST_ENTRY.view(r[BYTES], r[AT] + 0x08, "
+                               "r[ORDER] == \">\") end\n"));
+  EXPECT_TRUE(contains(Device, "{ 0x08, M._LIST_ENTRY.size }"));
+  EXPECT_TRUE(contains(Device, "-- 0x38 struct _DEVICE *Next: address\n"));
+  EXPECT_TRUE(contains(Device, "M._POOL_KIND = {\n"));
+  EXPECT_TRUE(contains(Device, "  MustSucceed = -2147483648,\n"));
+  EXPECT_TRUE(contains(Device, "  function T.get.Pool(r) return get(r, "
+                               "0x50, \"i4\") end\n"));
+
+  // A signed bitfield extends its top bit; an eight-byte unit is one of
+  // Lua's integers.
+  EXPECT_TRUE(contains(header("_PUSH_LOCK", in(Language::Lua)),
+                       "  function T.get.Shared(r) return (get(r, 0x0, "
+                       "\"I8\") >> 4) & 0xFFFFFFFFFFFFFFF end\n"));
+}
+
+TEST(TypeRender, LuaExtendsSignsAndNamesWhatItDeclares) {
+  TypeLibrary Library;
+  ASSERT_TRUE(parseCTypes(R"(
+    typedef struct _NODE NODE, *PNODE;
+    struct _NODE { PNODE Next; int Low : 3; int end; __int128 Wide; };
+  )",
+                          Library)
+                  .ok());
+  const std::string Text = renderTypes(Library, {}, in(Language::Lua));
+  EXPECT_TRUE(contains(Text, "  function T.get.Low(r) local v = get(r, "
+                             "0x08, \"I4\") & 0x7; return (v ~ 0x4) - 0x4 "
+                             "end\n"))
+      << Text;
+  // A typedef of a record names its type; one of a pointer, an address.
+  EXPECT_TRUE(contains(Text, "M.NODE = M._NODE\n"));
+  EXPECT_TRUE(contains(Text, "-- PNODE is struct _NODE *, which reads as an "
+                             "address.\n"));
+  // Lua's words step aside; sixteen bytes read as the string they are.
+  EXPECT_TRUE(contains(Text, "  function T.get.end_(r)"));
+  EXPECT_TRUE(contains(Text, "  function T.get.Wide(r) return raw(r, 0x10, "
+                             "16) end\n"));
+}
+
+TEST_F(TypeRenderFixture, EmbeddedCDefinesWhatAUnitNames) {
+  // A decompiled unit holds the records it names, what they hold by value,
+  // and declarations of what they only point to, each under a guard.
+  const LocalType *Device = Library->find("_DEVICE");
+  const LocalType *Uses = Library->find("_USES_FORWARD");
+  ASSERT_TRUE(Device && Uses);
+  RenderOptions Options = in(Language::C);
+  Options.Spelling = BuiltinSpelling::Portable;
+  Options.Asserts = true;
+  const LocalType *Roots[] = {Device, Uses};
+  const EmbeddedC Embedded = renderEmbeddedC(*Library, Roots, Options);
+  const std::string &Text = Embedded.Text;
+  EXPECT_FALSE(contains(Text, "#pragma once")) << Text;
+  EXPECT_TRUE(contains(Text, "#ifndef NEVERD_TYPE__DEVICE\n"
+                             "#define NEVERD_TYPE__DEVICE\n"));
+  EXPECT_TRUE(contains(Text, "struct _DEVICE\n{\n"));
+  EXPECT_TRUE(contains(Text, "static_assert(sizeof(struct _DEVICE) == 0x58"));
+  // By value: defined before the record that holds them.
+  EXPECT_LT(Text.find("union _LARGE_INTEGER\n{"),
+            Text.find("struct _DEVICE\n{"));
+  EXPECT_TRUE(contains(Text, "enum _POOL_KIND"));
+  // Only pointed to: declared.
+  EXPECT_TRUE(contains(Text, "struct _FORWARD_ONLY;\n"));
+  EXPECT_FALSE(contains(Text, "struct _FORWARD_ONLY\n{"));
+  EXPECT_TRUE(llvm::is_contained(
+      Embedded.Records, std::pair<std::string, bool>("_DEVICE", false)));
+  EXPECT_TRUE(llvm::is_contained(
+      Embedded.Records, std::pair<std::string, bool>("_LARGE_INTEGER", true)));
+  EXPECT_TRUE(llvm::is_contained(Embedded.Identifiers, "MustSucceed"));
+  EXPECT_TRUE(llvm::is_contained(Embedded.Types, "_PUSH_LOCK"));
+  EXPECT_FALSE(llvm::is_contained(Embedded.Types, "_FORWARD_ONLY"));
+}
+
 TEST_F(TypeRenderFixture, RustAndGoKeepPacking) {
   EXPECT_TRUE(
       contains(render("_PACKED", in(Language::Rust)), "#[repr(C, packed(1))]"));
@@ -381,9 +585,9 @@ TEST(TypeRender, UnnamedBitsAndClosedRunsStay) {
                             bitfield("B", Builtin::ULong, 4, 0, 4)}));
   const std::string Text =
       renderType(Library, *Library.find("_BITS"), in(Language::C));
-  EXPECT_TRUE(contains(Text, "    ULONG : 4;"));
-  EXPECT_TRUE(contains(Text, "    ULONG A : 4;"));
-  EXPECT_TRUE(contains(Text, "    ULONG : 0;\n    ULONG B : 4;"));
+  EXPECT_TRUE(contains(Text, "    uint32_t : 4;"));
+  EXPECT_TRUE(contains(Text, "    uint32_t A : 4;"));
+  EXPECT_TRUE(contains(Text, "    uint32_t : 0;\n    uint32_t B : 4;"));
 }
 
 TEST(TypeRender, AMemberPastItsPlaceTakesAFiller) {
@@ -395,7 +599,7 @@ TEST(TypeRender, AMemberPastItsPlaceTakesAFiller) {
                  member("Wide", makeBuiltin(Builtin::ULongLong), 0x10)}));
   const LocalType &Aligned = *Library.find("_ALIGNED");
   EXPECT_TRUE(contains(renderType(Library, Aligned, in(Language::C)),
-                       "UCHAR __filler0[12];"));
+                       "uint8_t __filler0[12];"));
   EXPECT_TRUE(contains(renderType(Library, Aligned, in(Language::Rust)),
                        "pub _filler1: [u8; 12],"));
   EXPECT_TRUE(
@@ -445,10 +649,10 @@ TEST(TypeRender, NamesStepAroundKeywords) {
                             member("class", makeBuiltin(Builtin::ULong), 4)}));
   const LocalType &Words = *Library.find("_WORDS");
   const std::string C = renderType(Library, Words, in(Language::C));
-  EXPECT_TRUE(contains(C, "ULONG type;"));
-  EXPECT_TRUE(contains(C, "ULONG class;"));
-  EXPECT_TRUE(
-      contains(renderType(Library, Words, in(Language::Cpp)), "ULONG class_;"));
+  EXPECT_TRUE(contains(C, "uint32_t type;"));
+  EXPECT_TRUE(contains(C, "uint32_t class;"));
+  EXPECT_TRUE(contains(renderType(Library, Words, in(Language::Cpp)),
+                       "uint32_t class_;"));
   EXPECT_TRUE(contains(renderType(Library, Words, in(Language::Rust)),
                        "pub r#type: u32,"));
   EXPECT_TRUE(

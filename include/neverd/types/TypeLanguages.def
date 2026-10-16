@@ -5,13 +5,16 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// The languages local types render in, and the words each reserves, which
-/// a member name must step around.
+/// The languages local types render in, the spellings of builtins each
+/// takes, and the words each reserves, which a name must step around.
 ///
 /// NEVERD_TYPE_LANGUAGE(Name, Id, Display, Spelling)
 ///   Id       How APIs, the CLI and settings name the language.
 ///   Display  How the workbench shows it.
 ///   Spelling How it names builtins unless asked (BuiltinSpellings.def).
+/// NEVERD_TYPE_SPELLING(Language, Spelling)
+///   A spelling Language names builtins in when asked, its default
+///   first.
 /// NEVERD_TYPE_KEYWORD(Language, Word)
 ///   A word Language reserves.  C++ reserves C's words too.
 ///
@@ -20,15 +23,37 @@
 #ifndef NEVERD_TYPE_LANGUAGE
 #define NEVERD_TYPE_LANGUAGE(Name, Id, Display, Spelling)
 #endif
+#ifndef NEVERD_TYPE_SPELLING
+#define NEVERD_TYPE_SPELLING(Language, Spelling)
+#endif
 #ifndef NEVERD_TYPE_KEYWORD
 #define NEVERD_TYPE_KEYWORD(Language, Word)
 #endif
 
-NEVERD_TYPE_LANGUAGE(C, "c", "C", Windows)
-NEVERD_TYPE_LANGUAGE(Cpp, "cpp", "C++", Windows)
+NEVERD_TYPE_LANGUAGE(C, "c", "C", Portable)
+NEVERD_TYPE_LANGUAGE(Cpp, "cpp", "C++", Portable)
 NEVERD_TYPE_LANGUAGE(Rust, "rust", "Rust", Portable)
 NEVERD_TYPE_LANGUAGE(Go, "go", "Go", Portable)
 NEVERD_TYPE_LANGUAGE(Python, "python", "Python", Portable)
+NEVERD_TYPE_LANGUAGE(JavaScript, "javascript", "JavaScript", Portable)
+NEVERD_TYPE_LANGUAGE(Lua, "lua", "Lua", Portable)
+
+NEVERD_TYPE_SPELLING(C, Portable)
+NEVERD_TYPE_SPELLING(C, Windows)
+NEVERD_TYPE_SPELLING(C, Keywords)
+NEVERD_TYPE_SPELLING(Cpp, Portable)
+NEVERD_TYPE_SPELLING(Cpp, Windows)
+NEVERD_TYPE_SPELLING(Cpp, Keywords)
+NEVERD_TYPE_SPELLING(Rust, Portable)
+NEVERD_TYPE_SPELLING(Rust, Windows)
+NEVERD_TYPE_SPELLING(Go, Portable)
+NEVERD_TYPE_SPELLING(Go, Windows)
+NEVERD_TYPE_SPELLING(Python, Portable)
+NEVERD_TYPE_SPELLING(Python, Windows)
+NEVERD_TYPE_SPELLING(JavaScript, Portable)
+NEVERD_TYPE_SPELLING(JavaScript, Windows)
+NEVERD_TYPE_SPELLING(Lua, Portable)
+NEVERD_TYPE_SPELLING(Lua, Windows)
 
 NEVERD_TYPE_KEYWORD(C, "auto")
 NEVERD_TYPE_KEYWORD(C, "break")
@@ -241,5 +266,78 @@ NEVERD_TYPE_KEYWORD(Python, "while")
 NEVERD_TYPE_KEYWORD(Python, "with")
 NEVERD_TYPE_KEYWORD(Python, "yield")
 
+NEVERD_TYPE_KEYWORD(JavaScript, "arguments")
+NEVERD_TYPE_KEYWORD(JavaScript, "await")
+NEVERD_TYPE_KEYWORD(JavaScript, "break")
+NEVERD_TYPE_KEYWORD(JavaScript, "case")
+NEVERD_TYPE_KEYWORD(JavaScript, "catch")
+NEVERD_TYPE_KEYWORD(JavaScript, "class")
+NEVERD_TYPE_KEYWORD(JavaScript, "const")
+NEVERD_TYPE_KEYWORD(JavaScript, "continue")
+NEVERD_TYPE_KEYWORD(JavaScript, "debugger")
+NEVERD_TYPE_KEYWORD(JavaScript, "default")
+NEVERD_TYPE_KEYWORD(JavaScript, "delete")
+NEVERD_TYPE_KEYWORD(JavaScript, "do")
+NEVERD_TYPE_KEYWORD(JavaScript, "else")
+NEVERD_TYPE_KEYWORD(JavaScript, "enum")
+NEVERD_TYPE_KEYWORD(JavaScript, "eval")
+NEVERD_TYPE_KEYWORD(JavaScript, "export")
+NEVERD_TYPE_KEYWORD(JavaScript, "extends")
+NEVERD_TYPE_KEYWORD(JavaScript, "false")
+NEVERD_TYPE_KEYWORD(JavaScript, "finally")
+NEVERD_TYPE_KEYWORD(JavaScript, "for")
+NEVERD_TYPE_KEYWORD(JavaScript, "function")
+NEVERD_TYPE_KEYWORD(JavaScript, "if")
+NEVERD_TYPE_KEYWORD(JavaScript, "implements")
+NEVERD_TYPE_KEYWORD(JavaScript, "import")
+NEVERD_TYPE_KEYWORD(JavaScript, "in")
+NEVERD_TYPE_KEYWORD(JavaScript, "instanceof")
+NEVERD_TYPE_KEYWORD(JavaScript, "interface")
+NEVERD_TYPE_KEYWORD(JavaScript, "let")
+NEVERD_TYPE_KEYWORD(JavaScript, "new")
+NEVERD_TYPE_KEYWORD(JavaScript, "null")
+NEVERD_TYPE_KEYWORD(JavaScript, "package")
+NEVERD_TYPE_KEYWORD(JavaScript, "private")
+NEVERD_TYPE_KEYWORD(JavaScript, "protected")
+NEVERD_TYPE_KEYWORD(JavaScript, "public")
+NEVERD_TYPE_KEYWORD(JavaScript, "return")
+NEVERD_TYPE_KEYWORD(JavaScript, "static")
+NEVERD_TYPE_KEYWORD(JavaScript, "super")
+NEVERD_TYPE_KEYWORD(JavaScript, "switch")
+NEVERD_TYPE_KEYWORD(JavaScript, "this")
+NEVERD_TYPE_KEYWORD(JavaScript, "throw")
+NEVERD_TYPE_KEYWORD(JavaScript, "true")
+NEVERD_TYPE_KEYWORD(JavaScript, "try")
+NEVERD_TYPE_KEYWORD(JavaScript, "typeof")
+NEVERD_TYPE_KEYWORD(JavaScript, "var")
+NEVERD_TYPE_KEYWORD(JavaScript, "void")
+NEVERD_TYPE_KEYWORD(JavaScript, "while")
+NEVERD_TYPE_KEYWORD(JavaScript, "with")
+NEVERD_TYPE_KEYWORD(JavaScript, "yield")
+
+NEVERD_TYPE_KEYWORD(Lua, "and")
+NEVERD_TYPE_KEYWORD(Lua, "break")
+NEVERD_TYPE_KEYWORD(Lua, "do")
+NEVERD_TYPE_KEYWORD(Lua, "else")
+NEVERD_TYPE_KEYWORD(Lua, "elseif")
+NEVERD_TYPE_KEYWORD(Lua, "end")
+NEVERD_TYPE_KEYWORD(Lua, "false")
+NEVERD_TYPE_KEYWORD(Lua, "for")
+NEVERD_TYPE_KEYWORD(Lua, "function")
+NEVERD_TYPE_KEYWORD(Lua, "goto")
+NEVERD_TYPE_KEYWORD(Lua, "if")
+NEVERD_TYPE_KEYWORD(Lua, "in")
+NEVERD_TYPE_KEYWORD(Lua, "local")
+NEVERD_TYPE_KEYWORD(Lua, "nil")
+NEVERD_TYPE_KEYWORD(Lua, "not")
+NEVERD_TYPE_KEYWORD(Lua, "or")
+NEVERD_TYPE_KEYWORD(Lua, "repeat")
+NEVERD_TYPE_KEYWORD(Lua, "return")
+NEVERD_TYPE_KEYWORD(Lua, "then")
+NEVERD_TYPE_KEYWORD(Lua, "true")
+NEVERD_TYPE_KEYWORD(Lua, "until")
+NEVERD_TYPE_KEYWORD(Lua, "while")
+
 #undef NEVERD_TYPE_LANGUAGE
+#undef NEVERD_TYPE_SPELLING
 #undef NEVERD_TYPE_KEYWORD

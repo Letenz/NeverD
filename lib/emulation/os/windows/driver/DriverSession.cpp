@@ -953,7 +953,7 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       return CPU.setReg(X64Register::FLAGS, Flags);
     };
     const KernelContextCapture ResumeContext{ReadResumeContext, SetResumeFlags};
-    if (auto E = Kernel.deliverFileQueryCompletions(&ResumeContext))
+    if (auto E = Kernel.deliverFileRequestCompletions(&ResumeContext))
       return E;
     auto SaveBoundary = [&](uint64_t PC) -> llvm::Error {
       auto Context = CPU.saveContext();

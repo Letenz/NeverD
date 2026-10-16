@@ -1694,6 +1694,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymState`는 기호 기준 주소가 64비트인 영역에만 모듈로 2^64 상대 좌표를 사용합니다. 상대 좌표 0을 가로지르는 읽기는 순환하지 않는 두 구간으로 나누어 각 입력의 출처를 한 구간 안에 유지하며, 쓰기는 전체 값을 저장합니다. 절대 메모리, 레지스터, 임시 저장소의 범위 오버플로는 계속 거부합니다. 이 인덱싱 규칙은 실제 주소의 유효성, 비별칭성 또는 프레임 분리를 전제로 제공하지 않습니다. 일반적인 영역 간 무효화와 STORE별 보존 증명은 그대로이며 Unicorn, KVM, WHP가 이 분석 규칙을 공유합니다.
 
+### 유한 libSystem 가져오기
+
+`MachOProgramLinking`은 원본 classic/generic64 사실, 완전한 미정의 심볼 폐쇄 및 준비 예산을 소유합니다. Darwin process는 공급자/심볼 허용, 포인터 게시, fixup 후 읽기 보호, libSystem 진입과 errno를 관리합니다. `DarwinLibSystemCalls.def`의 정확한 이름과 인수 개수는 `DarwinServices`의 타입 효과를 재사용하며 raw trap을 만들지 않습니다. 예약과 최대 보호는 `DarwinMemory`, 공통 기한은 `ExecutionBudget`, 선택적 `darwin.native_calls` 출력은 `ProcessReport`가 소유하고 호스트 라이브러리를 로드하지 않습니다.
+
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
 ### 순차 raw 실행의 비교 교환
 
 `SymExec`는 허용된 raw `ATOMIC_CMPXCHG`의 값 의미론을 담당합니다. 출력을 게시하기 전에 주소, 기대값, 새 값, 이전 값을 확보하고 `ite(Old == Expected, Desired, Old)`를 한 번 커밋합니다. `SymState`는 해당 쓰기의 바이트 효과, 별칭 무효화와 보존 예산을 담당합니다. `InterpreterSpecialization`은 허용과 출처를 관리합니다. Old에는 쓰기 전 메모리 출처를 사용하고, 조건부 쓰기는 Old·기대값·새 값의 출처를 보수적으로 합치며 겹칠 수 있는 아핀 스필 사실을 무효화합니다. 비교가 실패해도 전체 쓰기 범위와 보호된 반환 셀의 분리를 증명해야 합니다. 잔여 코드에는 원래 원자 연산, 메모리 순서와 발생 횟수를 유지하며, 거부 시 부분 잔여 CFG를 게시하지 않습니다.
@@ -1715,6 +1721,14 @@ KernelModelObjects는 공통 객체 표에서 파일 핸들과 포인터 수를 
 
 KernelFileSystem은 FILE_OBJECT마다 provider token 하나를 유지합니다. 비공개 공유 연산은 허용된 노드와 매핑된 접근 권한을 받아 양방향 공유 충돌을 검사하며, 메타데이터 전용 접근은 충돌에서 제외합니다. CLEANUP은 공유 제한을 해제하고 token을 유지하며 CLOSE는 정리된 token을 제거합니다. 참조가 남은 정리된 객체도 1024개 제한에 포함됩니다. 엄격한 바인딩 검증은 token을 파일 객체 소유자와 대조합니다. `KernelModelFileCreate`는 CREATE와 취소를 생성하고 콜백 전에 핸들 용량을 예약합니다. `DriverSession`은 비동기 작업과 중첩 CLOSE에서 원래 호출자를 유지합니다. 공통 객체 소유자가 핸들을 게시하고 이름 조회는 실제 디렉터리를 유지합니다. 시나리오 닫기 의도는 별도이며 스냅샷과 언로드가 token을 양방향 검증합니다.
 
+`KernelModelFileRequests`는 IoQueryFileInformation의 빌린 버퍼와 ZwQueryInformationFile의 독립 버퍼에 대한 연속 실행, 결과 공개 및 패킷 해제를 소유합니다. KernelMode 핸들 참조는 객체 소유자를 사용합니다. 네이티브 SystemBuffer는 물리 메모리 소유자에 등록하며 일반 요청 해제는 이를 조회 소유자에게 맡깁니다. `KernelFileSystem::queryInformation`만 유지된 열기 토큰으로 선언 메타데이터를 인코딩합니다. 종단 경로는 실제 IRP 클래스와 길이를 사용하고 어댑터와 보고서는 메타데이터를 재구성하지 않습니다.
+
+`KernelModelIO`는 `FILE_OBJECT.CurrentByteOffset`을 바꾸지 않고 전송 소유권을 해제합니다. 요청 오프셋과 완료 바이트 수는 파일 시스템의 위치 갱신을 대신할 수 없으며, 동기 파일의 네이티브 Position 조회는 유지된 필드를 읽습니다.
+
 ### 원시 환경의 아키텍처 소유권
 
 `RecoveryArchitecture`는 빌드 호스트와 무관하게 `SpecializationOptions::Architecture`에서 네이티브 계약을 선택합니다. 기존 기본값은 x64이며 어댑터가 없는 대상은 명시적으로 거부합니다. `arch/x86_64`는 네이티브 옵션 인코딩, 기본 이미지 범위 규칙, 외부 종료 일치 비용과 물리적 종료 증빙을 소유합니다. core는 공통 예산, 정책 인코딩, 그래프와 증거의 무결성을 소유합니다. x64 다이제스트의 바이트 인코딩은 유지하며 선언 검증 전에 예상 및 저장된 아키텍처를 확인합니다. `RawArchitectureReceiptCompatibility`는 변경 전 다이제스트를 고정하고 불일치 테스트는 x64 증거를 ARM64로 바꾸어 표시하는 것을 거부합니다. ARM64 네이티브 복구는 아직 구현하지 않습니다.
+
+`KernelModelFileRequests`는 동기 버퍼 방식의 `ZwReadFile` / `ZwWriteFile`도 소유합니다. 생성자는 핸들 범위, 오프셋과 키, 쓰기 입력 복사본을 보존합니다. 공통 완료 경로는 알림 가능한 원래 호출자에서 읽기 바이트와 IOSB를 공개하고 소유 패킷과 버퍼를 한 번씩 해제합니다. 내용과 파일 위치 변경은 저장 장치 드라이버가 담당합니다.
+
+`KernelModelFileRequests`는 버퍼 없는 `ZwFlushBuffersFile` 생성도 소유합니다. 권한 마스크 확인과 즉시 게시·해제 규칙은 지연 완료하는 네이티브 읽기/쓰기/조회와 다르며, 원래 호출자 알림과 단일 해제 소유자를 공유합니다.

@@ -203,6 +203,14 @@ Prima di acquisire l’intera immagine dei flag, ogni flag aritmetico o di direz
 
 I temporanei LowIR sono locali a una sola istruzione nativa sollevata. Ogni byte letto deve essere stato definito prima nella stessa istruzione; il riuso di un offset da un’istruzione precedente o l’annullamento algebrico di un valore indefinito non dimostrano la validità del sorgente. Le costanti d’ingresso possono vincolare solo registri fisici.
 
+<!-- i18n-section: supervisor-interrupt-control -->
+
+## Controllo del flag di interrupt in modalità supervisore
+
+Il recupero LowIR grezzo e le prove di relazione nativa ammettono le forme canoniche x64 di `CLI`/`STI` solo con il profilo esplicito `KernelX64NoFaultV1`. Il componente condiviso dei flag x64 azzera o imposta IF preservando tutti gli altri flag, registri generali e byte di memoria. Il recupero mantiene l’operazione intrinseca originale; le prove registrano la transizione e confrontano sempre i flag di sistema finali, anche senza osservazioni dei registri ordinari.
+
+Il profilo fissa CPL0/IOPL0 ed esclude eventi asincroni, consegna di eventi di debug e transizioni di privilegio. Non osserva quindi l’inibizione temporanea degli interrupt di STI. Un profilo assente o utente rifiuta queste istruzioni; l’ABI sorgente esistente resta limitata al proprio profilo utente. Questo supporto non fornisce un modello di consegna degli interrupt o di transizione di privilegio.
+
 <!-- i18n-section: raw-cmpxchg -->
 
 ## Confronto e scambio nel modello raw sequenziale
@@ -356,3 +364,17 @@ La riesecuzione dei prefissi di ingresso visita i rami in attesa prima di espand
 
 
 La ricerca di allineamento passa `MaxCuts` al motore comune di inferenza. Dopo la convalida dell’ingresso e la selezione di un insieme che copre tutti i cicli, gli insiemi troppo grandi vengono rifiutati prima dell’esplorazione simbolica dell’ingresso o dell’allargamento. Il limite per piano non riduce `MaxCutpointAttempts` né i tentativi validi con un singolo taglio. Il lavoro di selezione delle famiglie filtrate resta conteggiato. L’inferenza autonoma e nativa mantiene i propri limiti; ogni relazione accettata richiede ancora il verificatore completo invariato.
+
+<!-- i18n-section: immutable-wide-reads -->
+
+## Letture immutabili larghe complete
+
+Con `ExplicitMachineState` e `NormalNonfaultingExecution`, un `LOAD` ammesso di 16 byte usa l’immagine immutabile solo se ogni indirizzo possibile ha una prova completa di 16 byte. L’esecuzione simbolica conserva tutti i 128 bit. Il residuo materializza parti scalari nell’ordine di memorizzazione e cattura l’indirizzo potenzialmente sovrapposto prima di scrivere qualunque byte di destinazione. Entrambi gli ordini dei byte condividono la regola; ogni operazione emessa consuma il budget esistente.
+
+Un dominio incompleto o un intervallo immutabile non disponibile mantiene l’intera lettura a runtime senza prove parziali. Una lunghezza errata restituita dal provider causa il rifiuto. Memoria scrivibile e osservazioni runtime non conferiscono autorità di immutabilità. Le ricevute grezze vincolano tutti i byte della prova, compresa la metà superiore. Wrapping sorgente e prove native indipendenti mantengono i requisiti esistenti di larghezza e ambiente.
+
+<!-- i18n-section: unrooted-native-stack -->
+
+## Trasferimenti interni dopo il cambio dello stack
+
+Le regioni macchina grezze esplicite possono seguire istruzioni near CALL e RET interne anche quando il puntatore dello stack corrente non è più esprimibile rispetto a quello di ingresso. L’adattatore dell’architettura mantiene la cattura effettiva della destinazione, il push, la lettura della parola di ritorno e il pop. Ogni ritorno interno richiede ancora una prova esaustiva dell’insieme finito di destinazioni dalla parola effettiva sullo stack. Solo le celle di ritorno dimostrate relative all’ingresso entrano nella proiezione e nell’inventario di conservazione del frame; perdere altre relazioni sullo stack a un confine del grafo può ancora causare un rifiuto. Il recupero delle funzioni ordinarie mantiene i requisiti di ripristino del frame. Il risultato descrive una regione grezza; la composizione dell’intera funzione e l’equivalenza del sorgente o del codice nativo richiedono prove separate.

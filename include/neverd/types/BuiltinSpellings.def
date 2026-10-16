@@ -5,35 +5,28 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// The ways rendered source names builtin types, and the languages that take
-/// each.  A language takes the spelling TypeLanguages.def gives it unless
-/// another is asked.
+/// The ways rendered source names builtin types.  TypeLanguages.def says
+/// which each language takes, and which it takes unless another is asked.
 ///
-/// NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go, Python)
-///   Id      How APIs, the CLI and settings name the spelling.
-///   C       Whether C and C++ take it.
-///   Rust    Whether Rust takes it.
-///   Go      Whether Go takes it.
-///   Python  Whether Python's ctypes take it.
+/// NEVERD_BUILTIN_SPELLING(Name, Id)
+///   Id  How APIs, the CLI and settings name the spelling.
 ///
-/// Windows   ULONG and UCHAR, as the Windows headers name them; Rust, Go
-///           and Python declare them as aliases of exact widths, as wdk-sys
-///           does (pub type ULONG = u32, type ULONG = uint32,
-///           ULONG = ctypes.c_uint32).
-/// IDA       unsigned int and unsigned __int8, as IDA's local types do.
-/// Keywords  unsigned long, as the compiler recorded it.
 /// Portable  Exact widths: uint32_t in C, u32 in Rust, uint32 in Go,
-///           ctypes.c_uint32 in Python.
+///           ctypes.c_uint32 in Python; JavaScript's number or bigint.
+/// Windows   ULONG and UCHAR, as the Windows headers name them; Rust, Go,
+///           Python and JavaScript declare them as aliases of exact widths,
+///           as wdk-sys does (pub type ULONG = u32, type ULONG = uint32,
+///           ULONG = ctypes.c_uint32, @typedef {number} ULONG).
+/// Keywords  unsigned long, as the compiler recorded it.
 ///
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_BUILTIN_SPELLING
-#define NEVERD_BUILTIN_SPELLING(Name, Id, C, Rust, Go, Python)
+#define NEVERD_BUILTIN_SPELLING(Name, Id)
 #endif
 
-NEVERD_BUILTIN_SPELLING(Windows, "windows", true, true, true, true)
-NEVERD_BUILTIN_SPELLING(IDA, "ida", true, false, false, false)
-NEVERD_BUILTIN_SPELLING(Keywords, "keywords", true, false, false, false)
-NEVERD_BUILTIN_SPELLING(Portable, "portable", true, true, true, true)
+NEVERD_BUILTIN_SPELLING(Portable, "portable")
+NEVERD_BUILTIN_SPELLING(Windows, "windows")
+NEVERD_BUILTIN_SPELLING(Keywords, "keywords")
 
 #undef NEVERD_BUILTIN_SPELLING
