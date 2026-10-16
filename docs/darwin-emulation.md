@@ -2723,7 +2723,7 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
+native common catalogue: 82; required methods/platform: 101; matching ARM64 identities: 303
 ```
 
 ```json
@@ -2743,6 +2743,21 @@ remain distinct. The executable retains its preferred base; dylibs receive
 disjoint deterministic placements. Code/data exports and local rebases slide
 once. Export tries admit regular and thread-local symbols with bounded,
 unambiguous nodes. A thread-local export must name an admitted descriptor.
+
+Strong ordinary dylib imports may carry signed byte addends. `DarwinImage`
+computes the selected export address plus its provider slide and addend with
+checked address arithmetic. Nonzero offsets must remain in the selected
+provider's original mapped segment spans, including either code or data.
+Pointer values need one-byte membership; later accesses retain their normal
+width and permissions. Other images, runtime reservations and mapping-page
+padding outside those spans are refused. The same relocation initializes
+ordinary global pointers and TLS-template pointers before the live first copy.
+
+The original alias fixture reaches the third `int` array element through
+byte addends `+8` from its base and `-4` from a separately exported tail symbol.
+It changes provider data through a TLS pointer and leaves TLS pointer state
+changed before a fresh process. Native
+O0/O1/O2 classic/chained controls return 78 with empty output.
 
 The sum of complete reachable files, including unmapped tails, must fit
 `memory_limit`. Mapped images, stack, model pages, TLS storage and decoded
@@ -2776,7 +2791,8 @@ TLS, live template changes, nested libSystem calls and fresh repeated runs.
 Independent native O0/O1/O2 classic/chained controls retain status 83 and
 binary stdout `440054`; portable C/CLI/Python checks cover all five profiles.
 
-Weak/reexport/resolver exports, nonzero imported addends, constructors,
+Nonzero libSystem gate, imported TLV descriptor and classic lazy addends,
+weak/reexport/resolver exports, constructors,
 destructors, TLS initialization callbacks, runtime dlopen/dlsym, threads and
 complete Apple frameworks remain unsupported. Native Intel and physical iOS
 execution remain unqualified.
@@ -2793,7 +2809,8 @@ exports: regular / thread-local; ordinary dependency ordinal; rebased actual pro
 TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live contiguous first copy
 resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
 lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
-unsupported: cycles; weak/reexports/resolvers; imported addends; callbacks; dlopen/dlsym; threads
+addends: checked signed ordinary provider offsets; data/TLS initializers; original provider spans only
+unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; callbacks; dlopen/dlsym; threads
 workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
-native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
+native common catalogue: 82; required methods/platform: 101; matching ARM64 identities: 303
 ```

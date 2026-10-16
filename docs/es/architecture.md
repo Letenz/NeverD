@@ -1866,6 +1866,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
 
+### Desplazamientos de importaciones dylib de Darwin
+
+Las importaciones ordinarias fuertes de dylib admiten sumandos de bytes con signo para punteros globales y plantillas TLS. `DarwinImage` combina una sola vez la dirección exportada, el desplazamiento de la biblioteca y el sumando; comprueba desbordamientos y exige pertenencia a los segmentos originales del proveedor elegido. El valor del puntero no implica un ancho de acceso. Las entradas libSystem, los descriptores TLV importados y el enlace diferido conservan sumando cero.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### Comparación e intercambio en el modelo raw secuencial
 
 `SymExec` es responsable de la semántica de valores de `ATOMIC_CMPXCHG` raw admitido: captura dirección, valor esperado, deseado y anterior antes de publicar la salida, y después escribe una sola vez `ite(Old == Expected, Desired, Old)`. `SymState` controla los efectos por byte, la invalidación de alias y el presupuesto de conservación de esa escritura. `InterpreterSpecialization` controla la admisión y la procedencia: Old usa la procedencia de memoria previa; la escritura condicional combina conservadoramente la de Old, el esperado y el deseado, e invalida hechos de spills afines que puedan solaparse. Incluso un fallo de comparación exige separar todo el intervalo de escritura de las celdas de retorno protegidas. La operación atómica, el orden y sus ocurrencias permanecen en el residual; un rechazo no publica un CFG residual parcial.
@@ -1920,3 +1926,7 @@ Los alias reutilizan los propietarios de hilos/procesos y contextos, incluso dur
 `KernelMDLCalls` normaliza la entrada antigua al mapeador existente de seis argumentos. `KernelPhysicalMemory` y los registros MDL siguen gestionando caché, identidad física, permisos y duración. Solo los alias de imagen del núcleo liberados por completo no dejan dependencia del entorno; las vistas de usuario la conservan.
 
 `queryFileDevice` en `KernelModelFileRequests` centraliza la identidad del archivo, la cabecera, el montaje y la topología. La consulta base devuelve el dispositivo del archivo; la consulta relacionada valida además las rutas de extensión y elige el extremo superior conectado. Ambas devuelven objetos prestados.
+
+`KernelModelFileCreate` administra esta apertura dentro del `FileOperation` existente. La resolución de nombres, los paquetes CREATE y la liberación final comparten el propietario de las aperturas ordinarias. El gestor de objetos obtiene la referencia mediante el handle interno, `queryFileDevice` aporta el dispositivo relacionado y la continuación de cierre existente ejecuta CLEANUP. Solo después se libera la región crítica del hilo original. El solapamiento de salidas públicas no sustituye el objeto referenciado interno.
+
+`KernelModelIO` controla el envoltorio de comprobación y la vida de la asociación privada. Reutiliza el cambio de vista compartido y la comprobación MDL habitual. No inventa almacenamiento APC invitado ni permite desasociar con un token público cero. El propietario existente mantiene admisión y anidamiento. La excepción llega al invitado solo tras restaurar correctamente; los errores de restauración siguen siendo fallos del modelo.

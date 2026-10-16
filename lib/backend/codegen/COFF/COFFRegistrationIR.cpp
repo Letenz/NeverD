@@ -15,6 +15,7 @@
 #include "COFFRegistrationSEHException.h"
 #include "COFFRegistrationSEHFinally.h"
 #include "COFFRegistrationSEHJump.h"
+#include "COFFRegistrationSEHLocalUnwind.h"
 #include "COFFRegistrationSEHParentExit.h"
 #include "COFFRegistrationSEHRegisters.h"
 #include "COFFRegistrationSEHState.h"
@@ -217,8 +218,12 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       callbacks(Function, Source, &ExpectedRoots, &ExceptionBridges);
   if (!CallbackMap)
     return CallbackMap.takeError();
+  auto LocalUnwinds = coff_registration::bindSEHLocalUnwinds(
+      ReplayMed, Function, *Frame, *CallbackMap);
+  if (!LocalUnwinds)
+    return LocalUnwinds.takeError();
   auto ParentExits = coff_registration::bindSEHParentExitContext(
-      Function, Source.CodeRange.Begin, *CallbackMap);
+      Function, Source.CodeRange.Begin, *CallbackMap, LocalUnwinds->ChainLoads);
   if (!ParentExits)
     return ParentExits.takeError();
   if (auto Error =
@@ -271,6 +276,8 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
   std::set<const llvm::CallBase *> AnchoredDynamicCalls;
   std::set<const llvm::CallBase *> ScopeBoundaries;
   auto ScopeWrites = Jumps->StateRestores;
+  ScopeWrites.insert(LocalUnwinds->StateRestores.begin(),
+                     LocalUnwinds->StateRestores.end());
   std::set<const llvm::CallBase *> AbnormalFinallyIR;
   std::map<va_t, uint32_t> Protected;
   auto Chain = ParentExits->SourceChainRemovals;
@@ -531,7 +538,8 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
           Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
           IncomingAccesses, SourceCallerPCWrites, ChainProtocolReads,
           States.SecurityCookieVA, ImmutableImageRanges, nullptr,
-          &*ExceptionFields, &*Jumps, &*ScopeState, &*ParentExits))
+          &*ExceptionFields, &*Jumps, &*ScopeState, &*ParentExits,
+          &*LocalUnwinds))
     return Error;
   auto NormalFinallyIR = coff_registration::bindSEHFinallyCalls(
       ReplayMed, Function, *CallbackMap, *SourceSegments, NativeFunctions);
@@ -841,7 +849,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
         if (!Call)
           continue;
         const auto *Callee = Call->getCalledFunction();
-        if (Jumps->Calls.count(Call))
+        if (Jumps->Calls.count(Call) || LocalUnwinds->Calls.count(Call))
           continue;
         if (Callee && Callee->isIntrinsic())
           continue;

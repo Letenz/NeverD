@@ -1958,6 +1958,7 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
       session(s)->path.ends_with("code-edits-mapped.bin") ||
       session(s)->path.ends_with("code-numbers.bin") ||
       session(s)->path.ends_with("code-numbers-paged.bin") ||
+      session(s)->path.ends_with("code-labels.bin") ||
       session(s)->path.ends_with("code-folding.bin") ||
       session(s)->path.ends_with("code-folding-cpp.bin") ||
       session(s)->path.ends_with("local-references.bin") ||
@@ -1991,6 +1992,22 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
       for (int i = 0; i < 600; ++i)
         full += "  v0 += v0;\n";
       full += "  return v0 + 24;\n}\n";
+    }
+    // A goto to a label HighC names after its block, entry + 10. The engine
+    // may map the label's row to a statement around it: entry + 6 here.
+    const bool labels = session(s)->path.ends_with("code-labels.bin");
+    if (labels) {
+      char label[32];
+      std::snprintf(label, sizeof label, "L_%llX",
+                    static_cast<unsigned long long>(address + 0xA));
+      full = std::string("#include <stdint.h>\n"
+                         "int32_t function_20(int32_t v0) {\n"
+                         "  if (v0)\n"
+                         "    goto ") +
+             label + ";\n  v0 = 1;\n" + label +
+             ":\n"
+             "  return v0;\n"
+             "}\n";
     }
     if (codeFolding)
       full = "#include <stdint.h>\n"
@@ -2039,6 +2056,7 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
     Json rows = Json::array();
     for (auto i = first; i < end; ++i) {
       const bool mapped =
+          (labels && i >= 3 && i <= 6) ||
           (session(s)->path.ends_with("code-edits-mapped.bin") && i == 2) ||
           (numbers && (i == 2 || i == 3)) || (codeFolding && i == 5) ||
           (paged && i == 550);
@@ -2048,11 +2066,15 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
            {"kind", "source"},
            {"mapping_status", mapped ? "mapped" : "unmapped"},
            {"addresses",
-            mapped ? (paged    ? Json::array({hexAddress(address + 8),
-                                              hexAddress(address + 9)})
-                      : i == 3 ? Json::array({hexAddress(address + 6)})
-                               : Json::array({hexAddress(address + 2)}))
-                   : Json::array()}});
+            !mapped  ? Json::array()
+            : labels ? Json::array({hexAddress(address + (i == 3   ? 2
+                                                          : i == 4 ? 4
+                                                          : i == 5 ? 6
+                                                                   : 0xC))})
+            : paged  ? Json::array(
+                           {hexAddress(address + 8), hexAddress(address + 9)})
+            : i == 3 ? Json::array({hexAddress(address + 6)})
+                     : Json::array({hexAddress(address + 2)})}});
     }
     const auto beginByte = first < starts.size() ? starts[first] : full.size();
     const auto endByte = end < starts.size() ? starts[end] : full.size();

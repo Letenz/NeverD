@@ -1072,6 +1072,12 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     KnownTarget = Runtime;
     Target = nullptr;
   }
+  if (auto *Runtime =
+          prepareX86RegistrationLocalUnwindCall(Op, Builder, Args)) {
+    Callee = Runtime;
+    KnownTarget = Runtime;
+    Target = nullptr;
+  }
   std::vector<int> ArgumentIndices;
   for (unsigned I = 0; I < Args.size(); ++I)
     ArgumentIndices.push_back(I);

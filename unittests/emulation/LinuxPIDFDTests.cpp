@@ -263,6 +263,7 @@ TEST(LinuxPIDFD, ClosedTaskCatalogueInputsRejectAmbiguityBeforeLoading) {
   EXPECT_EQ(llvm::toString(Bad.takeError()), KernelOptions);
   O.LinuxPriority.reset();
   O.Android.emplace().ThreadLimit = 2;
+  K.Tasks->emplace(1001, LinuxKernelTask{true});
   Bad = emulateProcess("missing.elf", ProcessProfile::AndroidNativeAArch64, O);
   ASSERT_FALSE(bool(Bad));
   EXPECT_EQ(llvm::toString(Bad.takeError()), KernelOptions);

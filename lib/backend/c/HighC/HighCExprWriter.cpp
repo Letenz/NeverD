@@ -1396,8 +1396,18 @@ const HighFunc *HighCWriter::calledDefinition(const HighExpr &E) const {
 std::vector<size_t> HighCWriter::printedCallOperands(const HighExpr &E) const {
   const HighFunc *Defined = calledDefinition(E);
   if (!Defined || Defined->SourceTypeHint ||
-      E.Operands.size() != Defined->Params.size() ||
       ParamIndicesInProgress.count(Defined))
+    return {};
+  // A call passes the declared parameters the definition prints after its
+  // HighIR ones (unreadDeclaredParams) in the slots that follow theirs.
+  const size_t Unread = unreadDeclaredParams(*Defined).size();
+  if (Unread && E.Operands.size() == Defined->Params.size() + Unread) {
+    std::vector<size_t> Indices = emittedParamIndices(*Defined);
+    for (size_t K = 0; K < Unread; ++K)
+      Indices.push_back(Defined->Params.size() + K);
+    return Indices;
+  }
+  if (E.Operands.size() != Defined->Params.size())
     return {};
   return emittedParamIndices(*Defined);
 }
@@ -1781,8 +1791,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     }
     // A variadic callee saves an argument register the call never set, and
     // va_arg reads no more arguments than a caller passes: no defined run
-    // observes it, and it passes as zero.
-    if (Defined && Defined->IsVariadic && isUnknownCallOperand(Op)) {
+    // observes it, and it passes as zero.  So does a declared parameter the
+    // callee's code never reads (unreadDeclaredParams).
+    if (Defined && isUnknownCallOperand(Op) &&
+        (Defined->IsVariadic || I >= emittedParamIndices(*Defined).size())) {
       Missing = HighExpr::makeConst(
           0, Op->Type && Op->Type->Size ? Op->Type->Size : 8);
       Op = Missing.get();
@@ -2039,16 +2051,38 @@ va_t HighCWriter::functionAddressKey(const HighExpr &Const) const {
              : Const.ConstVal;
 }
 
+bool HighCWriter::debugDeclaresCallee(const HighExpr &E) const {
+  const std::optional<FunctionSym> Callee = debugCallee(E);
+  const auto Extern = DebugExternSigs.find(callIdentifier(E));
+  if (!Callee && Extern == DebugExternSigs.end())
+    return false;
+  const auto Typed = [](const FunctionSym &Function) {
+    return Function.ReturnType || !Function.Params.empty();
+  };
+  if ((Callee && Typed(*Callee)) ||
+      (Extern != DebugExternSigs.end() && Typed(Extern->second)))
+    return true;
+  llvm::StringRef Symbol = E.CallTarget;
+  if (!libc::isKnownFunction(Symbol.str()) && Symbol.starts_with("_"))
+    Symbol = Symbol.drop_front();
+  return !libc::isKnownFunction(Symbol.str()) || !includesHeaderOf(Symbol);
+}
+
+bool HighCWriter::includesHeaderOf(llvm::StringRef Name) const {
+  const char *Header = libc::headerFor(Name);
+  return Header && IncludedHeaders.count(Header);
+}
+
 const libc::LibCPrototype *
 HighCWriter::calleePrototype(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None ||
       E.IsIndirectCall || E.CallTarget.empty() || calledDefinition(E) ||
-      debugCallee(E))
+      debugDeclaresCallee(E))
     return nullptr;
   const std::string Name = callIdentifier(E);
   if (SourceNativeSignatures.count(Name) ||
       ConflictingSourceNativeSignatures.count(Name) ||
-      DebugExternSigs.count(Name) || msvcCallee(Name, Opts.Format))
+      msvcCallee(Name, Opts.Format))
     return nullptr;
   return prototypeForSymbol(resolvedCallTarget(E));
 }
@@ -2056,12 +2090,12 @@ HighCWriter::calleePrototype(const HighExpr &E) const {
 llvm::StringRef HighCWriter::headerDeclaredCallee(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None ||
       E.IsIndirectCall || E.CallTarget.empty() || calledDefinition(E) ||
-      debugCallee(E))
+      debugDeclaresCallee(E))
     return {};
   const std::string Name = callIdentifier(E);
   if (SourceNativeSignatures.count(Name) ||
       ConflictingSourceNativeSignatures.count(Name) ||
-      DebugExternSigs.count(Name) || msvcCallee(Name, Opts.Format))
+      msvcCallee(Name, Opts.Format))
     return {};
   llvm::StringRef Symbol = E.CallTarget;
   if (!libc::isKnownFunction(Symbol.str()) && Symbol.starts_with("_") &&

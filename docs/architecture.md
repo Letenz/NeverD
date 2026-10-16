@@ -327,8 +327,10 @@ of the name each is shown under, as the kernel's exports are typed from
 the image states (`BinaryImage::statedFunctionNameAt`, as
 `getFunctionNameAt` chooses it): the export at the entry, else a symbol a
 producer stated, a PDB's function names among them; else the debug
-information's. A name analysis or the user gave says nothing of what the
-function is. Where a linker folded identical functions, one entry carries
+information's; else the name signatures recognized the function's bytes by
+(`SignatureDB::buildNameMap`). A name analysis or the user gave otherwise
+says nothing of what the function is. Where a linker folded identical
+functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's
 prototype only where every other name's that has one takes and returns
 alike (`passesAlike`): as many parameters, each of the same class and size,
@@ -339,7 +341,13 @@ gives. Another name's prototype is never borrowed. A function the debug
 information types keeps its own type, and a variadic prototype is not used,
 because its calls pass more than it declares. The signature records the
 library that declares the prototype and the declaration as it reads there,
-which HighC prints above the function (`neverd.prototype`).
+which HighC prints above the function (`neverd.prototype`). HighC's
+definition prints, after the parameters the code reads, the declared ones
+after them that it never reads, such as a system call stub's stack arguments
+its dispatcher takes (`unreadDeclaredParams`): integers and pointers after
+integers and pointers, which take the next slots in every convention. A call
+in the same unit passes them, or zero where the call site determined none,
+as the callee never reads it.
 
 A call through an import's slot or stub reaches a routine another module
 exports, which takes the prototype of the import's name: `resolveFunction`
@@ -349,7 +357,13 @@ passes exactly its parameters where the libc tables know none of the name
 (`importPrototypeArguments`), and to the return contracts. A callee the
 pipeline does not decompile returns what its declaration says, as the C
 writers read it, so that a caller returning what a `void` routine left in
-RAX returns nothing too. The prototype's types convert to the decompiler's
+RAX returns nothing too. A routine never returns where its name says so, as
+the tables (`isNoReturnFunction`) or a `_Noreturn` prototype
+(`resolvePrototype`) do: an import, a symbol, or an export the image's own
+code calls (`NoReturnTargetIndex`). A whole program's output
+(`neverd_decompile_all`) reads the session's local types over its own image
+and debug information when the session holds the same file, as the command
+line loads it first. The prototype's types convert to the decompiler's
 types:
 - records become named records that C passes and returns by value, with
   their members' names for display;
@@ -2087,19 +2101,33 @@ incoming SP and link-word restoration under the existing native call ABI.
 Whole-word copies, bounded pointer-width stack arithmetic and exact spills
 carry these identities; all reaching predecessors and backedges must converge.
 Independent roots start unknown. Partial or overlapping writes invalidate whole
-restoration words; unknown memory writes and exposed frame storage invalidate
-spill evidence. Atomic read-modify-writes and exclusive loads and stores, whose
+restoration words. A store the spills do not track exactly keeps the spills of
+the frame the function has allocated only when its address is not derived from
+the stack pointer and no frame address has escaped: under the native ABI
+nothing outside the function can name that frame. Through a frame-derived
+address, or after an escape, it invalidates all spill evidence. A frame address
+escapes when it is stored through an untracked address, stored outside the
+allocated frame or where no spill records it, or passed to a call; a load
+through a frame address that no exact spill answers carries the taint of every
+spilled word. Atomic read-modify-writes and exclusive loads and stores, whose
 operands `lowMemoryOperands` and `lowIntrinsicMemoryOperands` decode, write only
-their output and the memory at their address: a store among them is an unknown
-memory write, since its ordering and an exclusive store's possible failure keep
-that memory out of the spill facts, and the value one returns is untracked.
-Value-only intrinsics are ordinary values. Other intrinsics, unsupported
-effects, incomplete graphs and exhausted work retain the original indirect
-branch. A frame description that only unwinds
-the frame (`ExceptionFunction::describesUnwindOnly`: no personality routine,
-handler data, LSDA or language table, as for the FDE every function of an
-ordinary shared library has) runs no handler, so it does not prevent the
-classification; one that names a handler does. A branch whose target derives
+their output and the memory at their address: a store among them is an
+untracked store, since its ordering and an exclusive store's possible failure
+keep that memory out of the spill facts, and the value one returns is
+untracked. Value-only intrinsics are ordinary values, a read of state no
+analysis tracks (`intrinsicWritesOnlyItsOutput`: `mrs`, FPSR and FPCR reads)
+writes only its output, and an unconditional trap ends its path. Other
+intrinsics, unsupported effects, incomplete graphs and exhausted work retain
+the original indirect branch. A frame description that only unwinds the frame
+(`ExceptionFunction::describesUnwindOnly`: no personality routine, handler
+data, LSDA or language table, as for the FDE every function of an ordinary
+shared library has) runs no handler, so it does not prevent the
+classification. A complete address-form Itanium table read by the C or C++
+personality allows a branch whose covering call site names no landing pad
+(`exceptionForwardsUnwindAt`): an exception there goes on to the caller either
+way. An address the table leaves out terminates under the C++ personality, as
+a `noexcept` destructor's empty table makes it, and keeps its branch, as does
+any other handler. A branch whose target derives
 from an address of the function's own code (an `adr` of a switch's case
 labels, which the jump-table resolver left unresolved) is a computed jump
 within the function and keeps its indirect branch; the function's own entry is
@@ -4550,6 +4578,14 @@ the pending service or quantum and charges all threads to one budget.
 Linux's optional `ThreadContext` is the sole identity and thread-exit input
 for named, variadic and raw services; an absent context retains the existing
 single-thread Linux contract. Bionic process state is never copied on a switch.
+Fixed foreign task observations cannot occupy the identity range reserved for
+Android children. `LinuxPIDFD` reads local task membership from the same live
+provider as `/proc`; the fixed catalogue does not freeze child existence.
+Local thread-bound pidfds remain unsupported until exit readiness is modeled.
+`AndroidAllocation` owns the optional `malloc_fill_byte` input: only explicit
+`malloc` and `realloc` requests use it, before preserving a reallocated prefix.
+`calloc` and internal allocations retain zero initialization. No CPU backend
+selects a fill value or treats it as evidence about a real allocator.
 Once ownership comes from active guest callback frames. Bionic writes the
 completion state before the scheduler wakes waiting threads; the scheduler
 rechecks guest memory before completing each original import. Unknown owners,
@@ -7193,6 +7229,13 @@ fixups and complete undefined-symbol closure. `DarwinImage` resolves the explici
 catalogue into one bounded acyclic graph, checks every dependency edge and
 assigns disjoint placements. Its graph-wide input, metadata, record and resident
 ledgers charge shared nodes once and retain one preparation deadline.
+`MachOProgramLinking` retains the signed addend fact. `DarwinImage` alone
+combines the selected provider export, slide and ordinary import addend,
+rejecting arithmetic overflow/underflow and nonzero targets outside that
+provider's original mapped segments. It checks pointer-value membership without
+inferring a pointee width. These prepared values also relocate TLS template
+pointers before `DarwinTLS` copies their live bytes. Imported TLV descriptors,
+libSystem gates and classic lazy programs require zero addends.
 `DarwinTLSPreparation` admits exact descriptors and contiguous template storage,
 publishes keys and physically maps charged TLS reservations before execution.
 `DarwinTLS` alone owns main-thread instantiation and the authenticated TLV return:
@@ -7380,3 +7423,7 @@ entry-resolved addresses, never device replies or a second ABI decoder.
 `LinuxServices` supplies the current task; Android supplies its native return
 address. `ProcessReport` serializes the optional stream. Trace limits and
 capture failures cannot replace the original service outcome.
+
+`KernelModelFileCreate` owns device-pointer opens within the existing `FileOperation`. Namespace resolution, CREATE packets and final release share the ordinary file-open owner. The object manager acquires the file reference through the private handle; `queryFileDevice` supplies the related device, and the existing handle-close continuation performs CLEANUP. The original caller releases its critical region only after that continuation completes. Public output overlap cannot replace the private referenced object.
+
+`KernelModelIO` owns the process-probe wrapper and private attachment lifetime. It reuses the shared process-view switch and ordinary MDL probe; private attachments have no fabricated guest APC storage and cannot be detached with a public zero token. The ordinary attachment owner retains admission and nesting. A probe exception reaches the guest only after successful restoration; restoration errors remain model failures.

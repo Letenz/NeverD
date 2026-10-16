@@ -9,6 +9,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
+#include "neverd/loader/ExceptionForwarding.h"
 
 #include <algorithm>
 #include <bit>
@@ -52,6 +53,9 @@ class TailFrameGuard {
   va_t CodeEnd = 0;
   ExceptionAddressRange Described;
   va_t Entry = InvalidVA;
+  /// The function's frame description; a branch out of the frame must leave
+  /// an unwind from it nothing of the frame to run.
+  const ExceptionFunction *Unwind = nullptr;
 
   bool localCode(uint64_t Address) const {
     return Address != Entry &&
@@ -135,16 +139,45 @@ class TailFrameGuard {
     return true;
   }
 
-  /// A store whose target the frame does not track exactly may hit any spill:
-  /// forget them all, and let every stack-derived word it drops or writes
-  /// escape.
-  bool clobberSpills(FrameState &State, const FrameWord &Value) {
+  /// Whether \p Size bytes at \p Offset lie in the frame this function has
+  /// allocated: below its entry stack pointer and at or above the current one.
+  static bool allocatedFrame(const FrameWord &SP, int64_t Offset,
+                             uint64_t Size) {
+    return SP.K == FrameWord::Stack && Offset >= SP.Offset &&
+           Offset + static_cast<int64_t>(Size) <= 0;
+  }
+
+  /// A store whose target the spills do not track exactly.  Through an
+  /// address derived from the frame, or once a frame address has escaped, it
+  /// may hit any spill: all are forgotten.  Any other address cannot reach the
+  /// frame this function allocated, which nothing outside it can name under
+  /// the native ABI, so only those spills survive.  Every stack-derived word
+  /// it drops or writes escapes.
+  bool storeUntracked(FrameState &State, const FrameWord &Address,
+                      const FrameWord &Value) {
     if (!charge(State.Spills.size()))
       return false;
-    for (const auto &[Offset, Spill] : State.Spills)
-      State.Escaped |= Spill.MayBeStack;
-    State.Spills.clear();
+    const auto SP = lookup(State, NdVar::reg(TRI.StackPointer, 8));
+    const bool Foreign = !Address.MayBeStack && !State.Escaped;
+    std::erase_if(State.Spills, [&](const auto &Item) {
+      if (Foreign && allocatedFrame(SP, Item.first, 8))
+        return false;
+      State.Escaped |= Item.second.MayBeStack;
+      return true;
+    });
     State.Escaped |= Value.MayBeStack;
+    return true;
+  }
+
+  /// The taint of a value loaded through a frame address that no exact spill
+  /// answers: it may be any spilled word.
+  bool spilledTaint(const FrameState &State, FrameWord &Result) {
+    if (!charge(State.Spills.size()))
+      return false;
+    for (const auto &[Offset, Spill] : State.Spills) {
+      Result.MayBeStack |= Spill.MayBeStack;
+      Result.MayBeLocalCode |= Spill.MayBeLocalCode;
+    }
     return true;
   }
 
@@ -185,7 +218,8 @@ class TailFrameGuard {
         if (Candidates && Op.NumInputs == 1 && Op.Inputs[0].Size == 8 &&
             SP.K == FrameWord::Stack && SP.Offset == 0 &&
             LR.K == FrameWord::Link && !Inputs[0].MayBeStack &&
-            !Inputs[0].MayBeLocalCode && Inputs[0].K != FrameWord::Link)
+            !Inputs[0].MayBeLocalCode && Inputs[0].K != FrameWord::Link &&
+            (!Unwind || exceptionForwardsUnwindAt(*Unwind, Op.Addr)))
           Candidates->insert(Op.Addr);
       }
 
@@ -240,7 +274,7 @@ class TailFrameGuard {
         Result = {};
         if (Op.Opcode == NdOp::STORE) {
           if (!Exact) {
-            if (!clobberSpills(State, Value))
+            if (!storeUntracked(State, Address, Value))
               return false;
           } else {
             if (!charge(State.Spills.size()))
@@ -254,15 +288,29 @@ class TailFrameGuard {
                 State.Escaped |= Item.second.MayBeStack;
               return Overlap;
             });
-            if (Memory.AccessSize == 8 &&
-                (Value.K != FrameWord::Unknown || Value.MayBeStack ||
-                 Value.MayBeLocalCode))
+            const bool Recorded = Memory.AccessSize == 8 &&
+                                  (Value.K != FrameWord::Unknown ||
+                                   Value.MayBeStack || Value.MayBeLocalCode);
+            if (Recorded)
               State.Spills[Address.Offset] = Value;
+            // A frame address no spill records, or stored outside the frame
+            // this function allocated, can reach code that writes through it.
+            const auto SP = lookup(State, NdVar::reg(TRI.StackPointer, 8));
+            if (!Recorded ||
+                !allocatedFrame(SP, Address.Offset, Memory.AccessSize))
+              State.Escaped |= Value.MayBeStack;
           }
-        } else if (Exact && Memory.AccessSize == 8) {
-          const auto Found = State.Spills.find(Address.Offset);
-          if (Found != State.Spills.end())
-            Result = Found->second;
+        } else {
+          bool Answered = false;
+          if (Exact && Memory.AccessSize == 8) {
+            const auto Found = State.Spills.find(Address.Offset);
+            if (Found != State.Spills.end()) {
+              Result = Found->second;
+              Answered = true;
+            }
+          }
+          if (!Answered && Address.MayBeStack && !spilledTaint(State, Result))
+            return false;
         }
         break;
       }
@@ -300,22 +348,34 @@ class TailFrameGuard {
       case NdOp::ATOMIC_ADD:
       case NdOp::ATOMIC_CMPXCHG:
       case NdOp::INTRINSIC: {
-        if (lowIntrinsicHasOnlyValueEffects(Op))
+        // A value-only intrinsic is an ordinary value, and a trap ends its
+        // path, so nothing after it is reached.
+        if (lowIntrinsicHasOnlyValueEffects(Op) ||
+            lowIntrinsicIsUnconditionalTrap(Op))
           break;
+        // A read of state no analysis tracks writes only its output.
+        if (lowIntrinsicWritesOnlyItsOutput(Op)) {
+          Result = {};
+          break;
+        }
         // An atomic or exclusive access writes only its output and the memory
         // at its address.  Its ordering, and an exclusive store's possible
         // failure, keep that memory out of the spill facts, and the value it
-        // returns is untracked.  No implicit memory/register effect contract
-        // is invented for any other intrinsic.
+        // returns is untracked, though through a frame address it may be any
+        // spilled word.  No implicit memory/register effect contract is
+        // invented for any other intrinsic.
         const auto Memory = Op.Opcode == NdOp::INTRINSIC
                                 ? lowIntrinsicMemoryOperands(Op)
                                 : lowMemoryOperands(Op);
-        FrameWord Value;
+        FrameWord Address, Value;
         if (!Memory.Complete || !Memory.Address ||
-            (Memory.StoredValue && (!read(State, *Memory.StoredValue, Value) ||
-                                    !clobberSpills(State, Value))))
+            !read(State, *Memory.Address, Address))
           return false;
         Result = {};
+        if ((Address.MayBeStack && !spilledTaint(State, Result)) ||
+            (Memory.StoredValue && (!read(State, *Memory.StoredValue, Value) ||
+                                    !storeUntracked(State, Address, Value))))
+          return false;
         break;
       }
       default:
@@ -366,12 +426,15 @@ public:
   std::set<va_t> run(const LowFunc &Function) {
     // A frame description that only unwinds the frame (a plain FDE, which
     // every function of an ordinary shared library has) runs no handler, so
-    // a branch out of the frame leaves nothing behind; the blocks below still
-    // refuse exceptional edges.
+    // a branch out of the frame leaves nothing behind.  A C or C++ table may
+    // still let an unwind from one branch pass through; each candidate is
+    // checked against it, and the blocks below still refuse exceptional
+    // edges.
+    Unwind =
+        Function.ExceptionMetadata ? &*Function.ExceptionMetadata : nullptr;
     if (Function.Blocks.empty() || !Function.FunctionTemporaries.empty() ||
         !Function.hasCompleteLiftCoverage() ||
-        (Function.ExceptionMetadata &&
-         !Function.ExceptionMetadata->describesUnwindOnly()))
+        (Unwind && !Unwind->describesUnwindOnly() && !Unwind->Itanium))
       return {};
     const size_t Count = Function.Blocks.size();
     if (!charge(Count))

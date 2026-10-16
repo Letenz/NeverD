@@ -1743,6 +1743,12 @@ i386/ELF 联合有限域证明在全部消费者对受限所有者图重放索�
 
 `MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
 
+### Darwin dylib 导入偏移
+
+普通强 dylib 导入支持带符号的字节偏移，可初始化全局指针与 TLS 模板指针。`DarwinImage` 统一计算导出地址、库的加载偏移及导入加数，检查溢出并限定在所选提供库的原始段范围内；指针值检查不推测访问宽度。libSystem 入口、导入的 TLV 描述符和延迟绑定仍要求零加数。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### 顺序执行域内的原始比较交换
 
 `SymExec` 负责获准的原始 `ATOMIC_CMPXCHG` 的值语义：发布输出前捕获地址、期望值、目标值和旧值，再一次性提交 `ite(Old == Expected, Desired, Old)`。`SymState` 负责该次写入的字节效果、别名失效和保存预算。`InterpreterSpecialization` 负责准入与来源：Old 使用写入前的内存来源；条件写入保守合并 Old、期望值与目标值的来源，并撤销可能重叠的仿射溢出存储事实。即使比较失败，也须证明完整写入范围与受保护返回单元分离。残余程序保留原子操作、内存序及发生次数；拒绝时不发布部分残余 CFG。
@@ -1797,3 +1803,7 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 `KernelMDLCalls` 将旧映射入口归一到现有六参数映射器。缓存属性、物理页身份、权限与生命周期仍由 `KernelPhysicalMemory` 和 MDL 记录负责。完整释放的内核映像别名不增加环境依赖；用户视图保留该依赖。
 
 `KernelModelFileRequests` 的 `queryFileDevice` 统一校验文件身份、头部、挂载状态和拓扑。基础查询返回文件所拥有的设备，关联查询另行校验文件扩展路由并选择附加栈顶层；两者均借用返回对象。
+
+`KernelModelFileCreate` 在现有 `FileOperation` 中管理设备指针打开。名称解析、CREATE 数据包和最终释放复用普通文件打开的状态管理。对象管理器通过内部句柄取得文件引用，`queryFileDevice` 提供关联设备，现有句柄关闭续接执行 CLEANUP。续接完成后才退出原调用线程的临界区。公共输出重叠不会替换内部保留的文件对象。
+
+`KernelModelIO` 负责进程锁页包装及私有附加生命周期，复用共享进程视图切换和普通 MDL 探测。私有附加不伪造来宾 APC 存储，也不能用公开接口的零令牌解除；准入和嵌套仍由原附加所有者管理。只有恢复成功后才向来宾传递探测异常；恢复错误仍作为模型失败。

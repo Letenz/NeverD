@@ -55,7 +55,8 @@ bool isHead(const llvm::Value *Value) {
 
 llvm::Expected<RegistrationSEHParentExitContract> bindSEHParentExitContext(
     const llvm::Function &Parent, va_t Owner,
-    const std::map<CallbackKey, const llvm::Function *> &Callbacks) {
+    const std::map<CallbackKey, const llvm::Function *> &Callbacks,
+    const std::set<const llvm::LoadInst *> &LocalUnwindChainLoads) {
   RegistrationSEHParentExitContract Result;
   std::map<const llvm::Function *, CallbackKey> CallbackOwners;
   std::vector<const llvm::Function *> CallbackFunctions;
@@ -108,7 +109,7 @@ llvm::Expected<RegistrationSEHParentExitContract> bindSEHParentExitContext(
           }
         }
       }
-  if (!Capture && Transfers.empty() &&
+  if (!Capture && Transfers.empty() && LocalUnwindChainLoads.empty() &&
       llvm::none_of(Slots, [](const auto *Slot) { return Slot != nullptr; }))
     return Result;
   if (!Capture || Transfers.empty() ||
@@ -259,6 +260,15 @@ llvm::Expected<RegistrationSEHParentExitContract> bindSEHParentExitContext(
   // The native stack, chain head and destination are compiler-only state.
   // A valid transfer does not authorize another observer or writer of any
   // alias, including a recovery from a function outside this callback set.
+  for (const auto *Load : LocalUnwindChainLoads) {
+    if (++Work > limits::kMaxRegistrationEHStateWork || !Load ||
+        !CallbackOwners.count(Load->getFunction()) ||
+        !CallbackOwners.at(Load->getFunction()).second ||
+        !IsAlias(Load->getPointerOperand(), 1) ||
+        !isLoad(Load, Load->getPointerOperand()))
+      return rejectIR("local unwind borrowed another parent chain capture");
+    Uses[1].insert(Load);
+  }
   for (unsigned Role = 0; Role != Slots.size(); ++Role)
     for (const auto *Alias : Storage.aliases(Slots[Role]))
       for (const auto *User : Alias->users()) {

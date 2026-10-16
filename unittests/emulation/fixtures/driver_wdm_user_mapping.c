@@ -18,6 +18,7 @@ typedef struct UserMappingWork {
   PMDL ReportMdl;
   PUCHAR Pool;
   PUCHAR Report;
+  PUCHAR UserReport;
   PUCHAR UserView;
   ULONG Action;
 } UserMappingWork;
@@ -47,6 +48,101 @@ static VOID ReleasePool(PMDL Mdl, PVOID Pool) {
   ExFreePoolWithTag(Pool, UserMappingPoolTag);
 }
 
+static NTSTATUS CheckProcessLocks(UserMappingWork *Work) {
+  UNICODE_STRING Name;
+  RtlInitUnicodeString(&Name, L"MmProbeAndLockProcessPages");
+  VOID(NTAPI * ProbeProcess)(PMDL, PEPROCESS, KPROCESSOR_MODE, LOCK_OPERATION) =
+      (VOID(NTAPI *)(PMDL, PEPROCESS, KPROCESSOR_MODE,
+                     LOCK_OPERATION))MmGetSystemRoutineAddress(&Name);
+  if (!ProbeProcess)
+    return STATUS_PROCEDURE_NOT_FOUND;
+  PEPROCESS OriginalProcess = IoGetCurrentProcess();
+  PETHREAD Thread = PsGetCurrentThread();
+  PMDL Probe = IoAllocateMdl(Work->UserView + UserMappingByteOffset, 1, FALSE,
+                             FALSE, NULL);
+  if (!Probe)
+    return STATUS_INSUFFICIENT_RESOURCES;
+  BOOLEAN Locked = FALSE;
+  NTSTATUS Status = STATUS_SUCCESS;
+  __try {
+    __try {
+      // Every nonzero operation is normalized to write access. This view is
+      // read-only, so the wrapper must detach before our handler observes it.
+      MmProbeAndLockProcessPages(Probe, Work->Process, UserMode,
+                                 (LOCK_OPERATION)3);
+      Locked = TRUE;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+      if (GetExceptionCode() == STATUS_ACCESS_VIOLATION)
+        Work->Report[0] |= 1;
+      if (IoGetCurrentProcess() == OriginalProcess &&
+          PsGetCurrentThread() == Thread && ExGetPreviousMode() == KernelMode)
+        Work->Report[0] |= 2;
+    }
+    if (Locked || Work->Report[0] != 3)
+      ExRaiseStatus(STATUS_INVALID_DEVICE_STATE);
+    ProbeProcess(Probe, Work->Process, UserMode, IoReadAccess);
+    Locked = TRUE;
+    PUCHAR System = MmGetSystemAddressForMdlSafe(Probe, NormalPagePriority);
+    Work->Report[1] = System[0];
+    if (MmGetMdlPfnArray(Probe)[0] == MmGetMdlPfnArray(Work->PoolMdl)[0])
+      Work->Report[3] |= 1;
+    if (IoGetCurrentProcess() == OriginalProcess &&
+        IoThreadToProcess(Thread) == OriginalProcess &&
+        ExGetPreviousMode() == KernelMode)
+      Work->Report[3] |= 2;
+    MmUnlockPages(Probe);
+    Locked = FALSE;
+
+    KAPC_STATE Attachment;
+    KeStackAttachProcess(Work->Process, &Attachment);
+    __try {
+      MmProbeAndLockProcessPages(Probe, Work->Process, UserMode, IoReadAccess);
+      Locked = TRUE;
+      MmUnmapLockedPages(Work->UserView, Work->PoolMdl);
+      Work->UserView = NULL;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+      Status = GetExceptionCode();
+    }
+    KeUnstackDetachProcess(&Attachment);
+    if (!NT_SUCCESS(Status))
+      ExRaiseStatus(Status);
+    System = MmGetSystemAddressForMdlSafe(Probe, NormalPagePriority);
+    if (System[0] == UserMappingFirstByte &&
+        IoGetCurrentProcess() == OriginalProcess)
+      Work->Report[3] |= 4;
+    MmUnlockPages(Probe);
+    Locked = FALSE;
+    IoFreeMdl(Probe);
+    Probe = IoAllocateMdl(Work->UserReport, UserMappingReportSize, FALSE, FALSE,
+                          NULL);
+    if (!Probe)
+      ExRaiseStatus(STATUS_INSUFFICIENT_RESOURCES);
+    ProbeProcess(Probe, Work->Process, UserMode, (LOCK_OPERATION)3);
+    Locked = TRUE;
+    System = MmGetSystemAddressForMdlSafe(Probe, NormalPagePriority);
+    System[2] = UserMappingSecondByte;
+    if (IoGetCurrentProcess() == OriginalProcess &&
+        PsGetCurrentThread() == Thread &&
+        IoThreadToProcess(Thread) == OriginalProcess &&
+        ExGetPreviousMode() == KernelMode)
+      Work->Report[3] |= 8;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    Status = GetExceptionCode();
+  }
+  if (Locked)
+    MmUnlockPages(Probe);
+  if (Probe)
+    IoFreeMdl(Probe);
+  if (Work->UserView) {
+    KAPC_STATE Attachment;
+    KeStackAttachProcess(Work->Process, &Attachment);
+    MmUnmapLockedPages(Work->UserView, Work->PoolMdl);
+    KeUnstackDetachProcess(&Attachment);
+    Work->UserView = NULL;
+  }
+  return Status;
+}
+
 static VOID MappingWorker(PDEVICE_OBJECT Object, PVOID Context) {
   UserMappingWork *Work = Context;
   PIRP Irp = Work->Irp;
@@ -55,6 +151,8 @@ static VOID MappingWorker(PDEVICE_OBJECT Object, PVOID Context) {
     Status = STATUS_INVALID_DEVICE_STATE;
   else if (Work->Action == UserMappingWrongProcessUnmap)
     MmUnmapLockedPages(Work->UserView, Work->PoolMdl);
+  else if (Work->Action == UserMappingProcessLock)
+    Status = CheckProcessLocks(Work);
   else if (Work->Action == UserMappingAttachedWorker) {
     KAPC_STATE Attachment;
     KeStackAttachProcess(Work->Process, &Attachment);
@@ -619,6 +717,7 @@ static NTSTATUS Dispatch(PDEVICE_OBJECT Object, PIRP Irp) {
     if (NT_SUCCESS(Status))
       return Complete(Irp, Status);
   } else if (Action == UserMappingAttachedWorker ||
+             Action == UserMappingProcessLock ||
              Action == UserMappingProcessExit ||
              Action == UserMappingWrongProcessUnmap) {
     PMDL ReportMdl =
@@ -641,10 +740,14 @@ static NTSTATUS Dispatch(PDEVICE_OBJECT Object, PIRP Irp) {
     Pending.Pool = Pool;
     Pending.Report =
         MmGetSystemAddressForMdlSafe(ReportMdl, NormalPagePriority);
+    Pending.UserReport = (PUCHAR)Report;
     Pending.Action = Action;
+    Pool[UserMappingByteOffset] = UserMappingFirstByte;
     if (Action != UserMappingAttachedWorker)
       Pending.UserView = MmMapLockedPagesSpecifyCache(
-          Mdl, UserMode, MmCached, NULL, FALSE, NormalPagePriority);
+          Mdl, UserMode, MmCached, NULL, FALSE,
+          NormalPagePriority |
+              (Action == UserMappingProcessLock ? MdlMappingNoWrite : 0));
     IoMarkIrpPending(Irp);
     IoQueueWorkItem(Work, MappingWorker, DelayedWorkQueue, &Pending);
     return STATUS_PENDING;

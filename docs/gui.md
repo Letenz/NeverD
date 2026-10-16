@@ -72,8 +72,14 @@ default for code views and text fields.
 
 Double-clicking a function name in a code view follows it in that same window,
 keeping its C or LLVM C representation even when the window is locked. Back and
-forward navigation also stays in the active code window. Imports and global
+forward navigation also stays in the active code window, and within a function
+takes its cursor to the row of the place it returns to. Imports and global
 objects continue to open at their addresses in the disassembly or hex view.
+Double-clicking a goto's label (`goto L_14024FAB5;`) moves the cursor to the
+label and the disassembly to the block it labels, as IDA's labels do; Back
+returns to the goto. Pseudocode and C name a label after its block's address,
+so the label's row maps to that block: clicking it, or Tab, goes there too.
+LLVM C numbers its labels, which name no address.
 
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped

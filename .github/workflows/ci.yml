@@ -2419,19 +2419,21 @@ jobs:
           build-windows-eh/bin/NeverDNativeFinallyInputTests \
             --gtest_filter=PipelineOutcome.NativeFinallyInputsRetainSourceLLVM \
             --gtest_output=xml:build-windows-eh/evidence/nonlocal-finally-source.xml
-      - name: Reconstruct and execute the native MSVC finally return
+      - name: Reconstruct and execute native MSVC finally returns and jumps
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         run: |
           python -m unittest scripts.tests.test_windows_finally_image -v
           for profile in Od-no-gs Od-gs O2-no-gs O2-gs; do
-            python scripts/check_windows_finally_rewrite.py \
-              --inputs build-windows-eh/nonlocal-finally \
-              --runtime-libs build-windows-eh/cxx-source-inputs/runtime-libs \
-              --test-binary build-windows-eh/bin/NeverDNativeFinallyInputTests \
-              --patch-binary build-windows-eh/bin/neverd \
-              --profile "$profile" \
-              --output "build-windows-eh/evidence/native-finally-return-$profile" \
-              --wine-prefix "$RUNNER_TEMP/neverd-wine32"
+            for form in return goto; do
+              python scripts/check_windows_finally_rewrite.py \
+                --inputs build-windows-eh/nonlocal-finally \
+                --runtime-libs build-windows-eh/cxx-source-inputs/runtime-libs \
+                --test-binary build-windows-eh/bin/NeverDNativeFinallyInputTests \
+                --patch-binary build-windows-eh/bin/neverd \
+                --profile "$profile" --form "$form" \
+                --output "build-windows-eh/evidence/native-finally-$form-$profile" \
+                --wine-prefix "$RUNNER_TEMP/neverd-wine32"
+            done
           done
       - name: Execute generated x86 callback frames with real exceptions
         run: |

@@ -4755,12 +4755,65 @@ TypeRef HighCWriter::emittedParamType(const HighFunc &Func,
 TypeRef HighCWriter::emittedParamTypeAt(const HighFunc &Func,
                                         size_t Position) const {
   const std::vector<size_t> Indices = emittedParamIndices(Func);
-  return Position < Indices.size() ? emittedParamType(Func, Indices[Position])
-                                   : nullptr;
+  if (Position < Indices.size())
+    return emittedParamType(Func, Indices[Position]);
+  const std::vector<size_t> Unread = unreadDeclaredParams(Func);
+  return Position - Indices.size() < Unread.size()
+             ? unreadDeclaredParamType(Func, Unread[Position - Indices.size()])
+             : nullptr;
 }
 
 size_t HighCWriter::emittedParamCount(const HighFunc &Func) const {
-  return emittedParamIndices(Func).size();
+  return emittedParamIndices(Func).size() + unreadDeclaredParams(Func).size();
+}
+
+std::vector<size_t>
+HighCWriter::unreadDeclaredParams(const HighFunc &Func) const {
+  const auto DebugFn = debugFunction(Dbg, Func.Entry);
+  if (!DebugFn || Func.SourceTypeHint || DebugFn->Params.empty() ||
+      ParamIndicesInProgress.count(&Func))
+    return {};
+  bindParams(Func);
+  if (!ParamsPlaced)
+    return {};
+  const uint16_t Word = pointerBytes(Opts.TheArch);
+  auto Integer = [&](const TypeRef &Type) {
+    return Type && Type->Size && Type->Size <= Word &&
+           (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr ||
+            (Type->Kind == NdTypeKind::Struct && Type->IsEnum));
+  };
+  int Last = -1;
+  for (const size_t PI : emittedParamIndices(Func)) {
+    const DebugParamBinding &B = ParamBindings[PI];
+    if (B.Result)
+      continue;
+    if (B.Index < 0 || !Integer(Func.Params[PI].Type))
+      return {};
+    Last = std::max(Last, B.Index);
+  }
+  std::vector<size_t> Unread;
+  for (size_t Index = static_cast<size_t>(Last + 1);
+       Index < DebugFn->Params.size(); ++Index) {
+    if (!Integer(DebugFn->Params[Index].second))
+      return {};
+    Unread.push_back(Index);
+  }
+  return Unread;
+}
+
+TypeRef HighCWriter::unreadDeclaredParamType(const HighFunc &Func,
+                                             size_t Index) const {
+  const auto DebugFn = debugFunction(Dbg, Func.Entry);
+  if (!DebugFn || Index >= DebugFn->Params.size())
+    return nullptr;
+  const TypeRef &Declared = DebugFn->Params[Index].second;
+  if (Declared)
+    Dbg->completeType(Declared);
+  if (TypeRef Display = cDisplayType(Declared);
+      Display && hasCValueLayout(Display))
+    return Display;
+  return NdType::makeInt(Declared ? Declared->Size : pointerBytes(Opts.TheArch),
+                         Declared && Declared->IsSigned);
 }
 
 std::vector<size_t>
@@ -6013,6 +6066,12 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       }
       if (Indirect && MemberSret && !HighIRIncludesSret)
         emitParam(IndirectReturnPtr, IndirectReturnName);
+    }
+    // The declared parameters the code never reads, which its callers pass.
+    for (const size_t Index : unreadDeclaredParams(Func)) {
+      const std::string &Name = DebugFn->Params[Index].first;
+      emitParam(unreadDeclaredParamType(Func, Index),
+                Name.empty() ? "unread" + std::to_string(Index) : Name);
     }
     if (Emitted == 0)
       Declarator += "void";

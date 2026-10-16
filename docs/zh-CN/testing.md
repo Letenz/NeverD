@@ -1767,6 +1767,12 @@ python3 scripts/run_lift_qualification.py \
 
 原生验证任务从源码构建固定版本的 LLVM 分支，包含 x64 PLT/AArch64 说明符作用域修正。仅使用 r4 预编译包不能完成 Clang IR 异常路径的能力验证。
 
+## Darwin dylib 导入偏移
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` 验证 +8/-4、TLS 指针修改与新进程重置，C、CLI 和真实 Python 集成覆盖各配置。必需清单为每配置101种方法、303个匹配 ARM64 身份，共用原生目录保持82项；不可用硬件不计为原生执行。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ## Ordinary Darwin whole-file lock coverage
 
 `DarwinAdvisoryLockOptions` and `DarwinAdvisoryLockTest` check complete unique initial objects, shared byte budgets, both page sizes, low carriers, action priority, readonly EX, reentry, failed upgrades, downgrade, missing versus empty providers, FD/kind ordering, duplicate/fcntl/dup2 lifetime, descriptor reuse, hardlinks, rename, held zero-name unlink and creation refusal. Real VM mappings and retained Contents cannot keep a closed description’s lock; mode/ownership/data/xattr changes keep independent authority and metadata validity. A contended blocking request stops before model mutation. Strict C/CLI/Python and the original SDK-free77-record workload cover five software and three matching HVF profiles, including empty-provider boundaries. Native-common64 and mandatory79 per platform require all237 matching ARM64 native identities to execute successfully. The720 original ARM64 O0/O1/O2 literal observations comprise522 action and198 namespace/descriptor/VM-lifetime controls. Intel native, physical iOS, external peers and wait lifecycle remain separate unverified coverage. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.
@@ -2002,3 +2008,7 @@ KernelFileObjectTests 与 KernelObjectTests 覆盖带类型的指针打开、类
 旧式 MDL 映射验证包括真实 WDK 静态和动态调用、附加进程的工作线程、原创映像别名、模式收窄、IRQL、进程切换、过期描述符、重复内核映射及注入的别名预算耗尽。内核耗尽保留 MDL 并报告未建模的 bugcheck；用户耗尽仍可捕获。原始包装器探针只验证参数转发与返回宽度，不验证注入的映射器。
 
 `KernelFileQueries.BaseDevice*` 检查基础设备与两层过滤设备的区别、引用不变、忽略扩展指针、创建／清理／关闭阶段、损坏记录和 IRQL。原创及真实 WDK 普通／CFG 文件查询夹具在既有后端、重定位、调度和调用方生命周期矩阵中执行静态及动态基础查询。
+
+`KernelDevicePointer.*` 检查引用保留、输出重叠、失败及信息状态打开、挂起 CREATE/CLEANUP 后的调用方与 APC 恢复、参数宽度、共享、输出故障写入顺序、准入和卸载。原始及真实 WDK 文件系统样例增加立即完成、工作项完成 CREATE、工作项完成 CLEANUP 和保留指针到卸载四种模式，包含动态查找。`KernelFileSystemExecution.*OpensExistingFiles` 覆盖两种调度模式、执行契约和装载基址；不可用传输仍明确跳过。
+
+`KernelMDLUserMapping.ProcessProbe*` 检查参数位宽、操作归一化、IRQL、存活进程准入、探测期间线程身份、嵌套恢复、异常后重试及附加/恢复内存不足。真实 WDK 用户映射样例执行静态和动态调用，验证解除附加后的真实异常处理器、附加状态下的同进程调用、共享物理页和完整锁页释放。原始包装及终止处理函数探针只证明显式注入辅助调用边界间的控制流，不代表整个内核行为。

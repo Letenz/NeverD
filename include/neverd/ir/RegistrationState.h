@@ -343,6 +343,9 @@ struct RegistrationStateAnalysis {
   bool HasBoundSEHCallees = false;
   bool SEHBoundCallsComplete = true;
   std::vector<RegistrationSEHBoundCall> SEHBoundCalls;
+  bool HasSEHLocalUnwinds = false;
+  bool SEHLocalUnwindsComplete = true;
+  std::vector<RegistrationSEHLocalUnwind> SEHLocalUnwinds;
   /// Original SEH captures retain their physical buffer and invocation. Native
   /// reconstruction requires a separate replacement-buffer contract.
   bool HasSEHJumpCaptures = false;

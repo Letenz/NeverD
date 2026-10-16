@@ -1737,6 +1737,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
 
+### إزاحات استيراد Darwin dylib
+
+تدعم واردات dylib العادية القوية إزاحات بايت موقعة لمؤشرات البيانات العامة وقوالب TLS. يجمع `DarwinImage` عنوان التصدير وإزاحة تحميل المكتبة والإضافة مرة واحدة، ويتحقق من الفيض ومن بقاء العنوان داخل مقاطع المكتبة المختارة الأصلية. تُفحص قيمة المؤشر دون افتراض عرض الوصول. تبقى إزاحات مداخل libSystem وواصفات TLV المستوردة والربط الكسول صفراً.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### المقارنة والتبديل في نموذج raw التسلسلي
 
 يمتلك `SymExec` دلالات قيم `ATOMIC_CMPXCHG` المقبولة في نطاق raw: يلتقط العنوان والقيم المتوقعة والمطلوبة والقديمة قبل نشر الخرج، ثم يكتب `ite(Old == Expected, Desired, Old)` مرة واحدة. يتولى `SymState` آثار البايتات وإبطال معلومات التداخل وميزانية الحفظ لهذه الكتابة. ويتولى `InterpreterSpecialization` القبول والمنشأ: يأخذ Old منشأ الذاكرة قبل الكتابة، وتجمع الكتابة الشرطية بصورة محافظة مناشئ Old والقيمتين المتوقعة والمطلوبة، وتبطل حقائق المؤشرات الأفينية المحفوظة التي قد تتداخل. حتى عند فشل المقارنة، يجب إثبات فصل نطاق الكتابة الكامل عن خلايا العودة المحمية. تبقى العملية الذرية وترتيب الذاكرة ومرات حدوثها في البرنامج المتبقي؛ ولا ينشر الرفض CFG متبقيًا جزئيًا.
@@ -1791,3 +1797,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 يوحّد `KernelMDLCalls` المدخل القديم مع آلية الربط الحالية ذات الوسائط الستة. تظل خصائص التخزين المؤقت وهوية الصفحات والصلاحيات والعمر مسؤولية `KernelPhysicalMemory` وسجلات MDL. لا تترك الأسماء البديلة لصورة النواة اعتمادًا بيئيًا بعد تحريرها الكامل، بينما تحتفظ عروض المستخدم بهذا الاعتماد.
 
 توحّد `queryFileDevice` في `KernelModelFileRequests` التحقق من هوية الملف والترويسة وحالة التركيب والطوبولوجيا. يعيد الاستعلام الأساسي جهاز الملف، ويتحقق الاستعلام المرتبط أيضًا من توجيه امتدادات الملف ويختار أعلى جهاز ملحق. كلا الناتجين مستعاران.
+
+تدير `KernelModelFileCreate` هذا الفتح داخل `FileOperation` القائمة. تشترك آليات حل الأسماء وحزم CREATE والتحرير النهائي مع مالك فتح الملفات المعتاد. يحصل مدير الكائنات على مرجع الملف عبر المقبض الداخلي، وتقدم `queryFileDevice` الجهاز المرتبط، وينفذ استمرار إغلاق المقبض الحالي CLEANUP. يغادر الخيط الأصلي المنطقة الحرجة بعد اكتمال ذلك فقط. لا يغير تداخل المخرجات العامة الكائن المرجعي الداخلي.
+
+تملك `KernelModelIO` غلاف فحص العملية وعمر الإرفاق الخاص، وتعيد استخدام تبديل عرض العملية المشترك وفحص MDL المعتاد. لا يخترع الإرفاق الخاص مساحة APC للضيف، ولا يمكن فصله برمز عام قيمته صفر. تبقى شروط القبول والتداخل لدى المالك القائم. يصل استثناء الفحص إلى الضيف بعد نجاح الاستعادة فقط؛ وتظل أخطاء الاستعادة إخفاقات للنموذج.
