@@ -270,7 +270,11 @@ into another function that must not decompile, then turns synchronization off
 and on from the context menu. `pseudocodeNumbersTakeTheBaseTheUserPicks` covers
 H's toggle, the context menu's bases and their previews, `#`, undo, and a
 refused character constant; `codeEditKeepsThePlaceInALongFunction` checks that
-the reload after an edit puts the cursor and the view back on a third-page row; `NeverDWorkerCodeEdits` checks the literal scan
+the reload after an edit puts the cursor and the view back on a third-page row;
+`codeTextSelectsLikeAnEditor` presses Ctrl+A while pages still arrive and
+after the load, drags beyond the bottom edge until the view scrolls past the
+first page, and right-clicks inside the selection to keep it for Copy;
+`NeverDWorkerCodeEdits` checks the literal scan
 and type-keeping spellings of `neverd/support/IntegerLiterals.h` for C, Rust
 and Go. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks
 listing jumps, rows beyond the first page, folded operations, secondary address
