@@ -68,6 +68,7 @@ EXPORTS
   IoCancelFileOpen
   IofCallDriver
   MmMapLockedPagesSpecifyCache
+  MmMapLockedPages
   MmUnmapLockedPages
   MmProbeAndLockPages
   MmUnlockPages
@@ -119,6 +120,7 @@ EXPORTS
   ZwDeviceIoControlFile
   ZwFsControlFile
   IoGetRelatedDeviceObject
+  IoGetBaseFileSystemDeviceObject
   KeStackAttachProcess
   KeUnstackDetachProcess
   RtlInitAnsiString

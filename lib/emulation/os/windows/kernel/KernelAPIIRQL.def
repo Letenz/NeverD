@@ -217,6 +217,8 @@ NEVERD_KERNEL_IRQL_API(MmAllocatePagesForMdlEx, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmFreePagesFromMdl, Dispatch)
 NEVERD_KERNEL_IRQL_API(KeFlushIoBuffers, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmMapLockedPagesSpecifyCache, Dispatch)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-mmmaplockedpages
+NEVERD_KERNEL_IRQL_API(MmMapLockedPages, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmGetSystemAddressForMdlSafe, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmUnmapLockedPages, Dispatch)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-mmprotectmdlsystemaddress
@@ -259,6 +261,8 @@ NEVERD_KERNEL_IRQL_API(IoDetachDevice, Passive)
 NEVERD_KERNEL_IRQL_API(IoGetAttachedDevice, Dispatch)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-iogetrelateddeviceobject
 NEVERD_KERNEL_IRQL_API(IoGetRelatedDeviceObject, Dispatch)
+// The reserved base-file query uses this profile's device-query ceiling.
+NEVERD_KERNEL_IRQL_API(IoGetBaseFileSystemDeviceObject, Dispatch)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ioqueryfileinformation
 // Reserved helper: the supported target-kernel query path can block.
 NEVERD_KERNEL_IRQL_API(IoQueryFileInformation, Passive)

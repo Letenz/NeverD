@@ -17,6 +17,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../HighExprUseCounts.h"
 #include "HighCFSimplifyDetail.h"
 
 #include "neverd/Limits.h"
@@ -26,6 +27,8 @@
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -3947,49 +3950,118 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
       };
   CountStarts(Body);
 
-  // Reads of each variable anywhere in the function (assignment targets are
-  // writes, not reads). An indirect call reads its target like an operand.
-  std::unordered_map<VarKey, unsigned, VarKeyHash> Reads;
-  std::function<void(const ExprPtr &)> CountReads = [&](const ExprPtr &E) {
+  // Small expression trees need no visited table. A shared or deep expression
+  // switches the complete count to a DAG walk; only zero, one and many reads
+  // are distinguished by the single-use rule below.
+  constexpr size_t MaxTreeVisits = 4096;
+  constexpr unsigned MaxTreeDepth = 128;
+  VarKeyMap<int> Reads;
+  auto CountFast = [&](auto &&Self, const ExprPtr &E, size_t &Remaining,
+                       unsigned Depth) -> bool {
     if (!E)
-      return;
-    if (E->Kind == ExprKind::Var)
-      ++Reads[varKey(E->Var)];
-    E->forEachChildExpr(CountReads);
-  };
-  walkStmts(Body, [&](const HighStmt &S) {
-    forEachExpr(S, [&](const ExprPtr &E) {
-      if (&E == &S.Dst && S.Kind == StmtKind::Assign && E &&
-          E->Kind == ExprKind::Var)
-        return;
-      CountReads(E);
-    });
-  });
-  // Replace the single read of \p Key in \p E with \p Value.
-  std::function<bool(ExprPtr &, const VarKey &, const ExprPtr &)> Substitute =
-      [&](ExprPtr &E, const VarKey &Key, const ExprPtr &Value) {
-        if (!E)
-          return false;
-        if (E->Kind == ExprKind::Var && varKey(E->Var) == Key) {
-          E = Value;
-          return true;
-        }
-        for (ExprPtr &Op : E->Operands)
-          if (Substitute(Op, Key, Value))
-            return true;
-        return Substitute(E->IndirectTarget, Key, Value);
-      };
-  // A load or pure value with no call inside it.
-  std::function<bool(const HighExpr &, unsigned)> Foldable =
-      [&](const HighExpr &E, unsigned Depth) -> bool {
-    // An atomic is still evaluated exactly once, at the same point.
-    if (Depth > 32 || E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
-        E.Kind == ExprKind::Phi || E.Kind == ExprKind::Undef)
+      return true;
+    if (!Remaining || Depth > MaxTreeDepth)
       return false;
-    for (const ExprPtr &Op : E.Operands)
-      if (!Op || !Foldable(*Op, Depth + 1))
+    --Remaining;
+    if (E->Kind == ExprKind::Var) {
+      auto &Count = Reads[varKey(E->Var)];
+      Count = std::min(2, Count + 1);
+    }
+    bool Complete = true;
+    E->forEachChildExpr([&](const ExprPtr &Child) {
+      if (Complete)
+        Complete = Self(Self, Child, Remaining, Depth + 1);
+    });
+    return Complete;
+  };
+  auto VisitReadRoots = [&](auto &&Visit) {
+    walkStmts(Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        if (&E == &S.Dst && S.Kind == StmtKind::Assign && E &&
+            E->Kind == ExprKind::Var)
+          return;
+        Visit(E);
+      });
+    });
+  };
+  bool Complex = false;
+  VisitReadRoots([&](const ExprPtr &E) {
+    if (!Complex) {
+      size_t Remaining = MaxTreeVisits;
+      Complex = !CountFast(CountFast, E, Remaining, 0);
+    }
+  });
+  if (Complex) {
+    Reads.clear();
+    std::unordered_map<const HighExpr *, uint8_t> Visits;
+    VisitReadRoots(
+        [&](const ExprPtr &E) { countExprVarUsesUpToTwo(E, Reads, Visits); });
+  }
+  // The global count has already proved that the read is unique. Search each
+  // shared node once, retaining the original operand-before-target order.
+  auto Substitute = [&](ExprPtr &E, const VarKey &Key, const ExprPtr &Value) {
+    llvm::SmallVector<ExprPtr *, 16> Work{&E};
+    llvm::SmallPtrSet<const HighExpr *, 16> Seen;
+    while (!Work.empty()) {
+      ExprPtr &Current = *Work.pop_back_val();
+      if (!Current)
+        continue;
+      if (Current->Kind == ExprKind::Var && varKey(Current->Var) == Key) {
+        Current = Value;
+        return true;
+      }
+      if ((Current->Operands.empty() && !Current->IndirectTarget) ||
+          !Seen.insert(Current.get()).second)
+        continue;
+      if (Current->IndirectTarget)
+        Work.push_back(&Current->IndirectTarget);
+      for (auto It = Current->Operands.rbegin(); It != Current->Operands.rend();
+           ++It)
+        if (*It)
+          Work.push_back(&*It);
+    }
+    return false;
+  };
+  // Preserve the original depth and effect checks. Large shared expressions
+  // use exact node/depth memoization instead of expanding every path.
+  auto Foldable = [&](const HighExpr &Root, unsigned RootDepth) {
+    size_t Remaining = MaxTreeVisits;
+    bool Exhausted = false;
+    auto Fast = [&](auto &&Self, const HighExpr &E, unsigned Depth) -> bool {
+      if (Depth > 32 || E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
+          E.Kind == ExprKind::Phi || E.Kind == ExprKind::Undef)
         return false;
-    return true;
+      if (!Remaining) {
+        Exhausted = true;
+        return false;
+      }
+      --Remaining;
+      for (const ExprPtr &Op : E.Operands)
+        if (!Op || !Self(Self, *Op, Depth + 1))
+          return false;
+      return true;
+    };
+    const bool Result = Fast(Fast, Root, RootDepth);
+    if (!Exhausted)
+      return Result;
+    std::map<std::pair<const HighExpr *, unsigned>, bool> Memo;
+    auto Shared = [&](auto &&Self, const HighExpr &E, unsigned Depth) -> bool {
+      if (Depth > 32 || E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
+          E.Kind == ExprKind::Phi || E.Kind == ExprKind::Undef)
+        return false;
+      const auto Key = std::pair{&E, Depth};
+      if (auto It = Memo.find(Key); It != Memo.end())
+        return It->second;
+      bool Result = true;
+      for (const ExprPtr &Op : E.Operands)
+        if (!Op || !Self(Self, *Op, Depth + 1)) {
+          Result = false;
+          break;
+        }
+      Memo.emplace(Key, Result);
+      return Result;
+    };
+    return Shared(Shared, Root, RootDepth);
   };
 
   // Remove the trailing goto of \p L.  A goto that itself carries an entered
@@ -4235,27 +4307,43 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
       // exactly the same point when folded into it.
       if (I + 1 < L.size() && L[I].Kind == StmtKind::Assign &&
           !L[I].IsPhiCopy && L[I].Dst && L[I].Dst->Kind == ExprKind::Var &&
-          L[I].Val && Foldable(*L[I].Val, 0) && !labelStart(L, I) &&
-          !labelStart(L, I + 1) &&
+          L[I].Val && !labelStart(L, I) && !labelStart(L, I + 1) &&
           (L[I + 1].Kind == StmtKind::If ||
            L[I + 1].Kind == StmtKind::IfElse) &&
           L[I + 1].Cond) {
         const VarKey Key = varKey(L[I].Dst->Var);
         auto ReadIt = Reads.find(Key);
-        unsigned CondReads = 0;
-        std::function<void(const ExprPtr &)> CountKey = [&](const ExprPtr &E) {
-          if (!E)
-            return;
-          if (E->Kind == ExprKind::Var && varKey(E->Var) == Key)
-            ++CondReads;
-          E->forEachChildExpr(CountKey);
-        };
-        CountKey(L[I + 1].Cond);
-        if (ReadIt != Reads.end() && ReadIt->second == 1 && CondReads == 1 &&
-            Substitute(L[I + 1].Cond, Key, L[I].Val)) {
-          ReadIt->second = 0;
-          L.erase(L.begin() + I);
-          Changed = true;
+        if (ReadIt != Reads.end() && ReadIt->second == 1 &&
+            Foldable(*L[I].Val, 0)) {
+          unsigned CondReads = 0;
+          size_t Remaining = MaxTreeVisits;
+          auto CountKey = [&](auto &&Self, const ExprPtr &E,
+                              unsigned Depth) -> bool {
+            if (!E)
+              return true;
+            if (!Remaining || Depth > MaxTreeDepth)
+              return false;
+            --Remaining;
+            if (E->Kind == ExprKind::Var && varKey(E->Var) == Key)
+              CondReads = std::min(2u, CondReads + 1);
+            bool Complete = true;
+            E->forEachChildExpr([&](const ExprPtr &Child) {
+              if (Complete)
+                Complete = Self(Self, Child, Depth + 1);
+            });
+            return Complete;
+          };
+          if (!CountKey(CountKey, L[I + 1].Cond, 0)) {
+            VarKeyMap<int> Counts;
+            std::unordered_map<const HighExpr *, uint8_t> Visits;
+            countExprVarUsesUpToTwo(L[I + 1].Cond, Counts, Visits);
+            CondReads = Counts[Key];
+          }
+          if (CondReads == 1 && Substitute(L[I + 1].Cond, Key, L[I].Val)) {
+            ReadIt->second = 0;
+            L.erase(L.begin() + I);
+            Changed = true;
+          }
         }
       }
       // T3: merge a run of conditional jumps to one target.

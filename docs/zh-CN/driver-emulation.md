@@ -359,7 +359,7 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `GetScatterGatherList`, `PutScatterGatherList` | DISPATCH_LEVEL 下的适配器表方法；真实内嵌或资源排队回调、固定 MDL 视图和显式映射释放 |
 | `AllocateAdapterChannel`, `MapTransfer`, `FlushAdapterBuffers`, `FreeMapRegisters` | 经过地址转换的总线主设备通道回调、共享寄存器额度、连续 MDL 片段、整体刷新及确切保留寄存器释放 |
 | `KeFlushIoBuffers` | 针对有效已锁定／非分页 MDL 的一致性 CPU 缓存刷新，不释放 DMA 映射 |
-| `MmMapLockedPagesSpecifyCache`、`MmGetSystemAddressForMdlSafe`、`MmUnmapLockedPages` | 用户／系统映射继承物理页缓存属性及各自权限；非分页池 MDL 通过安全辅助函数复用原系统映射 |
+| `MmMapLockedPages`、`MmMapLockedPagesSpecifyCache`、`MmGetSystemAddressForMdlSafe`、`MmUnmapLockedPages` | 用户／系统映射继承物理页缓存属性及各自权限；非分页池 MDL 通过安全辅助函数复用原系统映射 |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | 独立或 IRP 关联的非分页池／用户描述符；可修改链指针，锁页与系统别名独立；不支持配额 |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | 显式配置的会话注册表、逐句柄权限与生命周期、查询缓冲区大小及修改；不访问宿主注册表 |
 | `ZwEnumerateValueKey` | 按创建顺序枚举 Basic、Full、Partial 值信息；替换保留索引，删除压缩索引，重建追加到末尾。需要 `KEY_QUERY_VALUE`，越界返回 `STATUS_NO_MORE_ENTRIES`。与值查询共用序列化：x64 Full 数据按 8 字节对齐，空数据偏移为 `0xffffffff`，填充和不完整 UTF-16 单元保持原值 |
@@ -767,3 +767,7 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 `vDbgPrintExWithPrefix` 与 `DbgPrint` / `DbgPrintEx` 共用有限格式化器、全部过滤器启用的观察模型及 DIRQL 上限。客户机 x64 `va_list` 按八字节槽前进，但仅读取实际标量宽度；重复的 `hh` 按固定内核的 16 位 short 规则处理。前缀依次使用 128/256/384/512 字节缓冲；成功时截于首个 NUL，最终溢出时发布以换行结尾的 511 字节。模型在发布前检查完整的有界正文（512 字节），截断不能放行无效或不支持的尾部。ASCII 前缀在 1 MiB 上限内扫描至终止符。Unicode 转换仍要求 PASSIVE_LEVEL；宿主过滤器、调试回调和调试器传输尚未建模。
 
 `IoThreadToProcess` 复用保留线程的创建进程身份。`PsGetCurrentThreadPreviousMode` 与 `ExGetPreviousMode` 共用状态和 DISPATCH_LEVEL 上限，原先过宽的准入已修正。`RtlPcToFileHeader` 按完整位宽查询固定模块清单，写入八字节结果，未命中写零，不读取 PC 所指内存。有界非分页查询允许所有有效 IRQL，但输出必须驻留；缺少清单明确失败，动态展开表和 retpoline 范围仍不在模型内。
+
+`MmMapLockedPages` 复用现有映射器，固定使用缓存页面、HIGH 优先级及耗尽时 bugcheck 标志。内核映射允许 DISPATCH_LEVEL；进程所属的用户视图要求不高于 APC_LEVEL，耗尽时保留已有资源异常。带 bugcheck 标志的内核映射耗尽会明确停止为模型错误，不能作为成功调用返回 NULL；实际 bugcheck 处理仍未建模。
+
+[`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject) 借用存活文件的基础设备，不遍历附加栈、不增加引用，也不读取文件扩展。本配置要求未挂载的自有路由及 IRQL <= DISPATCH_LEVEL；挂载 VPB 或错误的对象／拓扑状态明确停止。微软将此接口保留供系统使用，该 IRQL 上限属于模型策略，并非公布的 Windows 契约。

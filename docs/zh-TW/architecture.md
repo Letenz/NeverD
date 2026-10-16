@@ -1705,3 +1705,7 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 `KernelModelRuntime` 統一擁有偵錯參數純量寬度及前綴和緩衝發布規則。一般變參呼叫使用既有呼叫 ABI 讀取器；明確的 x64 `va_list` 配接器以八位元組步長檢查每個實際請求的客體純量。分派器及配接器不重複解析格式。
 
 執行緒查詢別名共用既有執行緒／行程及執行上下文所有者，行程附加期間亦然。`RtlPcToFileHeader` 與系統模組查詢共用 `LoadedModules`；`ImageRAM` 表示映射區間，不能代替模組身分。實作不讀取主機行程、執行緒或模組狀態。
+
+`KernelMDLCalls` 將舊映射入口正規化至現有六參數映射器。快取屬性、實體頁面身分、權限與生命週期仍由 `KernelPhysicalMemory` 和 MDL 記錄負責。完整釋放的核心映像別名不增加環境相依性；使用者檢視保留該相依性。
+
+`KernelModelFileRequests` 的 `queryFileDevice` 統一驗證檔案身分、標頭、掛載狀態和拓撲。基礎查詢傳回檔案所擁有的裝置，關聯查詢另行驗證檔案擴充路由並選取附加堆疊頂層；兩者均借用傳回物件。

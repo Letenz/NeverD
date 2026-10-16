@@ -4370,7 +4370,16 @@ private slots:
       return target && target->value("parameter").toInt(-1) == position;
     };
     QTRY_VERIFY(onParameter(QStringLiteral("arg0"), 0));
-    QTRY_VERIFY(bench.action(ActionId::EditConvertToStruct)->isEnabled());
+    // The commands follow the view the focus moves to, at once: T is the
+    // disassembly's, Convert to struct * the pseudocode's.
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    bench.window->disassembly()->focusContent();
+    QVERIFY(bench.action(ActionId::EditOperandStruct)->isEnabled());
+    QVERIFY(!bench.action(ActionId::EditConvertToStruct)->isEnabled());
+    code->setFocus();
+    QVERIFY(bench.action(ActionId::EditConvertToStruct)->isEnabled());
+    QVERIFY(!bench.action(ActionId::EditOperandStruct)->isEnabled());
 
     QStringList listed;
     QString member;

@@ -1328,7 +1328,9 @@ private:
   std::map<uint64_t, FileRequest> FileRequests;
   uint64_t NextFileRequest = 1;
   std::optional<uint64_t> PendingFileRequestContinuation;
-  llvm::Expected<uint64_t> relatedFileDevice(uint64_t File) const;
+  enum class FileDeviceQuery { Base, Related };
+  llvm::Expected<uint64_t> queryFileDevice(uint64_t File,
+                                           FileDeviceQuery Query) const;
   llvm::Expected<uint64_t>
   beginFileAPIRequest(llvm::ArrayRef<uint64_t> A, DriverRequestKind Kind,
                       bool Native, const KernelContextCapture *Context);

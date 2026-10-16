@@ -654,6 +654,9 @@ void MainWindow::buildDocks() {
                   lastCodeView_.clear();
                 if (it.key() != QLatin1String(OutputDock))
                   hexActive_ = it.key() == QLatin1String(HexDock);
+                // What the commands act on follows the view: a pseudocode
+                // window converts a parameter, the disassembly an operand.
+                updateActions();
                 return;
               }
           });
@@ -2886,6 +2889,8 @@ void MainWindow::runCommand(const QString &command, const QString &argument) {
 }
 
 void MainWindow::contextMenu(const QPoint &globalPosition) {
+  // The click moved the cursor: the commands act where it is now.
+  updateActions();
   QMenu menu(this);
   for (const auto id : {ActionId::JumpOperand, ActionId::JumpXrefOperand,
                         ActionId::JumpXrefsTo, ActionId::JumpXrefsFrom})
