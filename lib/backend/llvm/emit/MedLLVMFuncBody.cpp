@@ -1094,7 +1094,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   // Registration-chain and table-driven WinEH have separate source contracts.
   // Install their runtime edges before promoting the callback SSA slots.
   const bool NativeRegistration =
-      emitNativeX86RegistrationSEH(Func, *LLVMFunc, BBMap) ||
+      emitNativeX86RegistrationSEH(Func, *LLVMFunc, BBMap, PHICopyEdges) ||
       emitNativeX86RegistrationCxx(Func, *LLVMFunc, BBMap, PHICopyEdges);
   if (!NativeRegistration && !emitNativeSEH(Func, *LLVMFunc, BBMap) &&
       !emitNativeCxxEH(Func, *LLVMFunc, BBMap))

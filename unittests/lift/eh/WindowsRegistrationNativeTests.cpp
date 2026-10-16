@@ -7,6 +7,7 @@
 #include "../../../lib/backend/codegen/COFF/COFFSourceCallSymbols.h"
 #include "RegistrationCxxContinuationTestUtils.h"
 #include "RegistrationNativeEmitterTestPeer.h"
+#include "RegistrationSEHCopyIRMutations.h"
 #include "RegistrationSEHDynamicScopeTestUtils.h"
 #include "RegistrationSEHExceptionNativeTestUtils.h"
 #include "RegistrationSEHFinallyIRMutations.h"
@@ -1864,6 +1865,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
                RegistrationSEHBoundCall::Kind::PreservedHelper;
       }))
     registration_test::checkSEHRuntimeEdits(*Parent, EH, Image);
+  registration_test::checkSEHCopyEdits(*Parent, EH, Image);
   registration_test::checkSEHFinallyEdits(*Parent, EH, Image);
   registration_test::checkSEHNullReadEdits(*Parent, Med, EH, Image);
   registration_test::checkDynamicSEHCallEdits(*Parent, EH, Image);

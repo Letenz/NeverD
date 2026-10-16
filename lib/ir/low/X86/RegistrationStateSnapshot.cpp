@@ -44,6 +44,8 @@ static hash_code hash_value(const FrameState &Frame) {
                       Frame.CallbackEntry, Frame.SEHFilterEntry);
 }
 
+size_t FrameState::snapshotHash() const { return hash_value(*this); }
+
 static hash_code hash_value(const SEHActivation &Activation) {
   return hash_combine(Activation.Entry, Activation.SearchFilter,
                       Activation.OrdinaryCall,

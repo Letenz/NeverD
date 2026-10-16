@@ -369,6 +369,17 @@ subsequent dereference or a value mixed with a frame address needs its own proof
 Mapped PE data, including zero-fill storage, retains its runtime values and access permissions;
 overlapping mappings, import writes and escaping frame pointers refuse.
 
+Finite loops in finally callbacks and search filters retain a distinct complete
+frame for each execution step, including register counters, parent cells and
+callback-private storage. A repeated CFG block is permitted only when the
+bounded execution-state graph still closes; recurrent complete states, unknown
+termination and exhausted proof budgets refuse reconstruction. Proven constant
+branches use the same decision as the parent state solver. Outlined PHI copy
+blocks retain their exact source edge and callback owner. Installation follows
+each recovered scalar slot to the parent's exact escape index and checks every
+alias for private, non-atomic scalar access; source-frame accesses and escaping
+addresses cannot acquire copy-block authority.
+
 Ordinary calls from one finally callback to another retain the same physical
 parent frame and give each invocation its own private stack. The source near
 return proves the exact continuation and suspended caller stack; native calls

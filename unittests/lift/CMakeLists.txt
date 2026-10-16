@@ -1414,6 +1414,7 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationJumpTestUtils.cpp
   eh/RegistrationFilterStateTests.cpp
   eh/RegistrationFilterTestUtils.cpp
+  eh/RegistrationCallbackLoopTests.cpp
   eh/RegistrationFilterJumpTests.cpp
   eh/RegistrationSEHTryLevelTests.cpp
   eh/RegistrationScalarCallStateTests.cpp
@@ -1507,6 +1508,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationSEHJumpCaptureNativeTests.cpp
   eh/RegistrationSEHJumpABITests.cpp
   eh/RegistrationCopyEdgeTests.cpp
+  eh/RegistrationRecoveredCopyTests.cpp
   eh/RegistrationSEHBoundNativeTests.cpp
   eh/RegistrationSEHRuntimeNativeTests.cpp
   eh/RegistrationSEHBoundSourceTests.cpp
@@ -1516,6 +1518,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationSEHFinallyResultTests.cpp
   eh/RegistrationSEHStateNativeTests.cpp
   eh/RegistrationSEHStateDispatchTests.cpp
+  eh/RegistrationSEHCopyIRMutations.cpp
   eh/RegistrationSEHFinallyIRMutations.cpp
   eh/RegistrationSEHPersonalityTests.cpp
   eh/RegistrationSEHFrameProofTests.cpp
@@ -1537,6 +1540,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationFrameStoresTests.cpp
   eh/RegistrationFrameBitsTests.cpp
   eh/RegistrationPHICopyTests.cpp
+  eh/RegistrationSEHPHICopyTests.cpp
   eh/RegistrationStackCopyTests.cpp
   eh/COFFTrampolineRegionTests.cpp
   eh/RegistrationReliftTests.cpp
