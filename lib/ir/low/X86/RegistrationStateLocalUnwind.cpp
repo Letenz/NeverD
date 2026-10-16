@@ -19,6 +19,7 @@ std::optional<FrameValue> RegistrationStateSolver::transferLocalUnwind(
       {Op.Inputs[0].Offset, Op.Opcode == NdOp::INDIR_CALL});
   if (Runtime == LocalUnwindTargets.end())
     return std::nullopt;
+  Result.HasSEHLocalUnwinds = true;
   auto Refuse = [&]() -> std::optional<FrameValue> {
     FailedLocalUnwind = Facts.Invalid = After.Unknown = true;
     After.Levels.clear();
@@ -28,7 +29,7 @@ std::optional<FrameValue> RegistrationStateSolver::transferLocalUnwind(
   const auto Boundary = Boundaries.find(Op.Addr);
   const auto SP = After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
   const bool HasCookie =
-      Runtime->second == RegistrationLocalUnwindContract::Kind::EH4;
+      Runtime->second.Protocol == RegistrationLocalUnwindContract::Kind::EH4;
   const int32_t FrameArgument = HasCookie ? 4 : 0;
   if (!Function.hasCompleteLiftCoverage() || KnownCxx || HasCookie != EH4 ||
       EH.Encoding != (EH4 ? ExceptionEncoding::X86ScopeTableEH4
@@ -36,13 +37,17 @@ std::optional<FrameValue> RegistrationStateSolver::transferLocalUnwind(
       Chain.RealignedFrame || Chain.RegistrationOffset != -16 ||
       Chain.TryLevelOffset != -4 || Chain.SeededTryLevel != (EH4 ? -2 : -1) ||
       !After.Installed || After.Uninstalled || After.Unknown || Facts.Invalid ||
-      !SP.Offset || *SP.Offset > INT32_MAX - FrameArgument - 4 || Op.Seq < 0 ||
+      !After.JumpBindingsIntact || !SP.Offset ||
+      *SP.Offset > INT32_MAX - FrameArgument - 4 || Op.Seq < 0 ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
       Op.MemoryOrdering != NdMemoryOrdering::None ||
       Boundary == Boundaries.end() || Boundary->second.first != Block.Id ||
       Boundary->second.second.Control != LowInstructionControl::Call ||
       hasLowInstructionControlFlag(Boundary->second.second.ControlFlags,
                                    LowInstructionControlFlag::Conditional) ||
+      hasLowInstructionControlFlag(
+          Boundary->second.second.ControlFlags,
+          LowInstructionControlFlag::InstructionGuard) ||
       Boundary->second.second.Address + Boundary->second.second.Size !=
           Block.EndAddr ||
       After.Frame.load(*SP.Offset + FrameArgument, 4).Offset !=
@@ -67,9 +72,20 @@ std::optional<FrameValue> RegistrationStateSolver::transferLocalUnwind(
     return Refuse();
   SEHFrameOutcomes Outcomes;
   std::vector<RegistrationObjectExtent> Writes;
+  std::set<std::pair<int32_t, int32_t>> Transitions;
   for (int32_t From : After.Levels)
-    if (!runSEHUnwind(After.Frame, From, *Bound, Outcomes, Writes))
+    if (!runSEHUnwind(After.Frame, From, *Bound, Outcomes, Writes, nullptr,
+                      nullptr, &Transitions))
       return Refuse();
+  RegistrationSEHLocalUnwind Call;
+  Call.Address = Op.Addr;
+  Call.EndAddress = Insn.Address + Insn.Size;
+  Call.OpSeq = Op.Seq;
+  Call.Runtime = Runtime->second;
+  Call.StackOffset = *SP.Offset;
+  Call.Bound = *Bound;
+  Call.Transitions.assign(Transitions.begin(), Transitions.end());
+  recordLocalUnwind(After, std::move(Call));
   for (const auto &Write : Writes)
     invalidateJumpCaptures(After, FrameValue::frame(Write.Begin),
                            uint16_t(Write.End - Write.Begin));

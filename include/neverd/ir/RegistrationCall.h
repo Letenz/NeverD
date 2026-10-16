@@ -11,6 +11,7 @@
 #include "neverd/loader/ExceptionCommon.h"
 
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace neverd {
@@ -58,6 +59,26 @@ struct RegistrationLocalUnwindContract {
   va_t Target = InvalidVA;
   bool Indirect = false;
   Kind Protocol = Kind::EH3;
+  /// Authenticated import storage; zero supplies no native binding authority.
+  va_t ImportSlot = 0;
+  bool operator==(const RegistrationLocalUnwindContract &) const = default;
+};
+
+/// One local unwind's actual arguments and complete returning state relation.
+/// StackOffset uses the established source EBP, including a callback which has
+/// restored SavedESP. EntryVA distinguishes that callback from the parent.
+/// Native reconstruction must replace the source registration argument with
+/// the compiler-owned frame and preserve the CRT's unwind guard protocol.
+struct RegistrationSEHLocalUnwind {
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  int OpSeq = -1;
+  RegistrationLocalUnwindContract Runtime;
+  int32_t StackOffset = 0;
+  va_t EntryVA = 0;
+  uint32_t Bound = 0;
+  std::vector<std::pair<int32_t, int32_t>> Transitions;
+  bool operator==(const RegistrationSEHLocalUnwind &) const = default;
 };
 
 /// Source-byte evidence for the physical near CALL/RET protocol used by an

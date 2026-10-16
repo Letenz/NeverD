@@ -48,6 +48,13 @@ std::optional<RegistrationLocalUnwindContract>
 getCheckedX86LocalUnwindContract(const BinaryImage &Image, va_t Target,
                                  bool Indirect);
 
+/// Recheck one local-unwind receipt against its current physical CALL and
+/// import binding. Argument and callback effects remain the state owner's.
+bool hasCheckedX86LocalUnwindCall(const BinaryImage &Image,
+                                  const LowFunc &Function, const LowOp &Op,
+                                  const RegistrationSEHLocalUnwind &Call,
+                                  size_t &Work);
+
 /// A leaf's two separate address domains: its private invocation frame and
 /// the bounded object borrowed through entry ECX. Object offsets are relative
 /// to that object, never invented image addresses or private stack offsets.

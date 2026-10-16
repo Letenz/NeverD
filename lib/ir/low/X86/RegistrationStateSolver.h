@@ -265,6 +265,7 @@ private:
   std::optional<FrameValue> transferLocalUnwind(size_t I, Domain &After,
                                                 const LowOp &Op,
                                                 BlockFacts &Facts);
+  void recordLocalUnwind(const Domain &State, RegistrationSEHLocalUnwind Call);
   bool transferOrdinaryFinally(size_t I, Domain &After, const LowOp &Op,
                                BlockFacts &Facts,
                                std::optional<FrameValue> &ReturnedSP);
@@ -292,11 +293,11 @@ private:
                              const std::set<int32_t> &Levels, bool Unknown,
                              std::set<int32_t> &WrittenLevels);
   bool mergeSEHFrameOutcome(SEHFrameOutcomes &Outcomes, FrameState State);
-  bool runSEHUnwind(FrameState Frame, int32_t Level, uint32_t Bound,
-                    SEHFrameOutcomes &Outcomes,
-                    std::vector<RegistrationObjectExtent> &Writes,
-                    SEHJumpUnwind *Jump = nullptr,
-                    SEHHandlerOutcomes *Selected = nullptr);
+  bool runSEHUnwind(
+      FrameState Frame, int32_t Level, uint32_t Bound,
+      SEHFrameOutcomes &Outcomes, std::vector<RegistrationObjectExtent> &Writes,
+      SEHJumpUnwind *Jump = nullptr, SEHHandlerOutcomes *Selected = nullptr,
+      std::set<std::pair<int32_t, int32_t>> *Transitions = nullptr);
   bool runLocalFinally(va_t Target, FrameState &Parent,
                        bool OrdinaryInvocation = false,
                        std::vector<RegistrationObjectExtent> *Writes = nullptr,
@@ -465,8 +466,10 @@ private:
 
   std::map<va_t, uint32_t> CalleeIndices;
   std::map<std::pair<va_t, bool>, uint32_t> StackPops;
-  std::map<std::pair<va_t, bool>, RegistrationLocalUnwindContract::Kind>
+  std::map<std::pair<va_t, bool>, RegistrationLocalUnwindContract>
       LocalUnwindTargets;
+  std::set<va_t> LocalUnwindImportSlots;
+  std::map<std::pair<va_t, int>, RegistrationSEHLocalUnwind> LocalUnwindCalls;
   bool FailedLocalUnwind = false;
   std::map<va_t, RegistrationSEHControlContract> SEHControlIndex;
   using SEHExitKey = std::tuple<va_t, va_t, va_t, int>;

@@ -44,7 +44,7 @@ getCheckedX86LocalUnwindContract(const BinaryImage &Image, va_t Target,
   using Kind = RegistrationLocalUnwindContract::Kind;
   return RegistrationLocalUnwindContract{
       Target, Indirect,
-      Import->Name == "_local_unwind4" ? Kind::EH4 : Kind::EH3};
+      Import->Name == "_local_unwind4" ? Kind::EH4 : Kind::EH3, Slot};
 }
 
 std::optional<std::vector<RegistrationLocalUnwindContract>>

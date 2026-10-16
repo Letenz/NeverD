@@ -46,6 +46,7 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateSEHParentOwnership.cpp
   X86/RegistrationStateSEHException.cpp
   X86/RegistrationStateLocalUnwind.cpp
+  X86/RegistrationStateLocalUnwindReceipt.cpp
   X86/RegistrationStateTryLevel.cpp
   X86/RegistrationUnwindFrame.cpp
   X86/RegistrationJumpContinuation.cpp
@@ -98,6 +99,7 @@ add_neverd_component_library(NeverDIRLow
   IndirectTailFrame.cpp
   X86/RegistrationCalleeABI.cpp
   X86/RegistrationLocalUnwind.cpp
+  X86/RegistrationLocalUnwindCall.cpp
   X86/RegistrationCallbackImage.cpp
   X86/RegistrationCFG.cpp
   X86/RegistrationCleanupABI.cpp

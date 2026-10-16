@@ -25,6 +25,7 @@
 #include "neverd/ir/med/X86RegistrationCall.h"
 #include "neverd/ir/med/X86RegistrationSEHCall.h"
 #include "neverd/ir/med/X86RegistrationSEHJump.h"
+#include "neverd/ir/med/X86RegistrationSEHLocalUnwind.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/object/SectionNames.h"
@@ -455,14 +456,24 @@ void recoverCallAbi(
                                : std::nullopt;
   // Result normalization can erase unrelated operations during recovery.
   // Retain stable source identities, not pointers into an operation vector.
-  std::map<std::tuple<int, va_t, int, va_t>, unsigned> SEHJumpABIs;
+  std::map<std::tuple<int, va_t, int, va_t>, unsigned> SEHStackABIs;
   if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
     if (const auto Calls = getX86RegistrationSEHJumpCalls(Func))
       for (const auto &[Address, Call] : *Calls)
-        SEHJumpABIs.emplace(std::make_tuple(Call.Block, Address,
-                                            Call.Operation->OriginSeq,
-                                            Call.Operation->Inputs[0].ConstVal),
-                            Call.stackArgumentWords());
+        SEHStackABIs.emplace(
+            std::make_tuple(Call.Block, Address, Call.Operation->OriginSeq,
+                            Call.Operation->Inputs[0].ConstVal),
+            Call.stackArgumentWords());
+  if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
+    if (const auto Calls = getX86RegistrationSEHLocalUnwinds(Func))
+      for (const auto &[Address, Call] : *Calls)
+        SEHStackABIs.emplace(
+            std::make_tuple(Call.Block, Address, Call.Operation->OriginSeq,
+                            Call.Operation->Inputs[0].ConstVal),
+            Call.Source->Runtime.Protocol ==
+                    RegistrationLocalUnwindContract::Kind::EH4
+                ? 3u
+                : 2u);
   const auto FPParamRegs = TRI.floatingParamRegs(Fmt);
   const CallArgumentConvention *Convention =
       callArgumentConvention(TheArch, Fmt);
@@ -683,9 +694,9 @@ void recoverCallAbi(
         Func.CallInfos.push_back(std::move(CI));
         continue;
       }
-      const auto SEHJumpABI =
-          SEHJumpABIs.find({Blk.Id, Op.Addr, Op.OriginSeq, CI.TargetAddr});
-      const bool SEHJump = SEHJumpABI != SEHJumpABIs.end();
+      const auto SEHStackABI =
+          SEHStackABIs.find({Blk.Id, Op.Addr, Op.OriginSeq, CI.TargetAddr});
+      const bool SEHStackCall = SEHStackABI != SEHStackABIs.end();
       // In a relocatable object EVERY direct call's target operand is a
       // placeholder (0 / the next-instruction-relative encoding); the real
       // callee is named by the branch relocation, and the per-VA callee
@@ -740,8 +751,8 @@ void recoverCallAbi(
 
       // An external placeholder collision, indirect call or import keeps its
       // existing output here (promoteFloatCallResult).
-      if (!SEHJump && !CI.IsIndirect && !IsRelocExtern && !IsDirectImport &&
-          CalleeFPReturnSize)
+      if (!SEHStackCall && !CI.IsIndirect && !IsRelocExtern &&
+          !IsDirectImport && CalleeFPReturnSize)
         if (auto SizeIt = CalleeFPReturnSize->find(CI.TargetAddr);
             SizeIt != CalleeFPReturnSize->end())
           promoteFloatCallResult(Func, Blk, OI, SizeIt->second, TheArch);
@@ -813,7 +824,7 @@ void recoverCallAbi(
       // also lets a compiler-generated helper pass an incoming exception
       // object straight through without an explicit register write.
       const bool UseExternalArity =
-          !SEHJump && ExternalArity.has_value() &&
+          !SEHStackCall && ExternalArity.has_value() &&
           (IsDirectImport || IsRelocExtern || CalleeRegArgs < 0);
       if (UseExternalArity) {
         // Where only internal functions take regparm register arguments, an
@@ -847,12 +858,12 @@ void recoverCallAbi(
                                     ? registrationCallABI(Func, Blk, Op)
                                     : std::nullopt;
       const bool RuntimeThrow = Registration && Registration->RuntimeThrow;
-      // The checked capture/resume protocol also owns its exact stack-only
-      // arity. Incidental GPR/FP values cannot precede the buffer argument.
-      const bool CheckedStackCall = RuntimeThrow || SEHJump;
+      // Checked capture, resume and local-unwind protocols own their exact
+      // stack-only arities. Incidental registers cannot become arguments.
+      const bool CheckedStackCall = RuntimeThrow || SEHStackCall;
       if (CheckedStackCall) {
         CalleeRegArgs = 0;
-        CalleeArgs = SEHJump ? SEHJumpABI->second : 2;
+        CalleeArgs = SEHStackCall ? SEHStackABI->second : 2;
       }
       // Checked ordinary members and constructors own exactly one ECX
       // receiver plus their proved scalar stack words. Other live registers
