@@ -1833,6 +1833,12 @@ python3 scripts/run_lift_qualification.py \
 
 네이티브 검증 작업은 x64 PLT/AArch64 지정자 범위 수정을 포함하는 고정 LLVM 포크를 소스에서 빌드합니다. r4 사전 빌드 패키지만으로는 Clang IR 예외 경로의 기능 검증을 완료할 수 없습니다.
 
+## Darwin dylib 가져오기 오프셋
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing`은 +8/-4, TLS 포인터 변경, 새 프로세스의 초기 상태를 확인합니다. C, CLI, 실제 Python 통합이 모든 프로필을 검사합니다. 필수 목록은 프로필별101개 메서드와 일치하는 ARM64 사례303개이며 공통 네이티브 목록은82개입니다. 사용할 수 없는 하드웨어는 네이티브 실행으로 계산하지 않습니다.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ## Ordinary Darwin whole-file lock coverage
 
 `DarwinAdvisoryLockOptions` and `DarwinAdvisoryLockTest` check complete unique initial objects, shared byte budgets, both page sizes, low carriers, action priority, readonly EX, reentry, failed upgrades, downgrade, missing versus empty providers, FD/kind ordering, duplicate/fcntl/dup2 lifetime, descriptor reuse, hardlinks, rename, held zero-name unlink and creation refusal. Real VM mappings and retained Contents cannot keep a closed description’s lock; mode/ownership/data/xattr changes keep independent authority and metadata validity. A contended blocking request stops before model mutation. Strict C/CLI/Python and the original SDK-free77-record workload cover five software and three matching HVF profiles, including empty-provider boundaries. Native-common64 and mandatory79 per platform require all237 matching ARM64 native identities to execute successfully. The720 original ARM64 O0/O1/O2 literal observations comprise522 action and198 namespace/descriptor/VM-lifetime controls. Intel native, physical iOS, external peers and wait lifecycle remain separate unverified coverage. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.

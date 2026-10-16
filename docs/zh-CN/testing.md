@@ -1767,6 +1767,12 @@ python3 scripts/run_lift_qualification.py \
 
 原生验证任务从源码构建固定版本的 LLVM 分支，包含 x64 PLT/AArch64 说明符作用域修正。仅使用 r4 预编译包不能完成 Clang IR 异常路径的能力验证。
 
+## Darwin dylib 导入偏移
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` 验证 +8/-4、TLS 指针修改与新进程重置，C、CLI 和真实 Python 集成覆盖各配置。必需清单为每配置101种方法、303个匹配 ARM64 身份，共用原生目录保持82项；不可用硬件不计为原生执行。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ## Ordinary Darwin whole-file lock coverage
 
 `DarwinAdvisoryLockOptions` and `DarwinAdvisoryLockTest` check complete unique initial objects, shared byte budgets, both page sizes, low carriers, action priority, readonly EX, reentry, failed upgrades, downgrade, missing versus empty providers, FD/kind ordering, duplicate/fcntl/dup2 lifetime, descriptor reuse, hardlinks, rename, held zero-name unlink and creation refusal. Real VM mappings and retained Contents cannot keep a closed description’s lock; mode/ownership/data/xattr changes keep independent authority and metadata validity. A contended blocking request stops before model mutation. Strict C/CLI/Python and the original SDK-free77-record workload cover five software and three matching HVF profiles, including empty-provider boundaries. Native-common64 and mandatory79 per platform require all237 matching ARM64 native identities to execute successfully. The720 original ARM64 O0/O1/O2 literal observations comprise522 action and198 namespace/descriptor/VM-lifetime controls. Intel native, physical iOS, external peers and wait lifecycle remain separate unverified coverage. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.

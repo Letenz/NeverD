@@ -1866,6 +1866,12 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
 
+### Desplazamientos de importaciones dylib de Darwin
+
+Las importaciones ordinarias fuertes de dylib admiten sumandos de bytes con signo para punteros globales y plantillas TLS. `DarwinImage` combina una sola vez la dirección exportada, el desplazamiento de la biblioteca y el sumando; comprueba desbordamientos y exige pertenencia a los segmentos originales del proveedor elegido. El valor del puntero no implica un ancho de acceso. Las entradas libSystem, los descriptores TLV importados y el enlace diferido conservan sumando cero.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ### Comparación e intercambio en el modelo raw secuencial
 
 `SymExec` es responsable de la semántica de valores de `ATOMIC_CMPXCHG` raw admitido: captura dirección, valor esperado, deseado y anterior antes de publicar la salida, y después escribe una sola vez `ite(Old == Expected, Desired, Old)`. `SymState` controla los efectos por byte, la invalidación de alias y el presupuesto de conservación de esa escritura. `InterpreterSpecialization` controla la admisión y la procedencia: Old usa la procedencia de memoria previa; la escritura condicional combina conservadoramente la de Old, el esperado y el deseado, e invalida hechos de spills afines que puedan solaparse. Incluso un fallo de comparación exige separar todo el intervalo de escritura de las celdas de retorno protegidas. La operación atómica, el orden y sus ocurrencias permanecen en el residual; un rechazo no publica un CFG residual parcial.

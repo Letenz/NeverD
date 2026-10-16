@@ -1958,6 +1958,12 @@ Le job Linux x64 natif exige aussi trois vérifications de remplacement C++ avec
 
 Le travail de qualification natif compile depuis les sources la révision épinglée du fork LLVM, avec la correction de portée des spécificateurs x64 PLT/AArch64. Le paquet précompilé r4 seul ne qualifie pas le chemin des exceptions Clang IR.
 
+## Décalages des imports dylib Darwin
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` vérifie +8/-4, la modification du pointeur TLS et un nouvel état par processus. C, CLI et Python réel couvrent les profils. L’inventaire obligatoire contient 101 méthodes par profil et 303 cas ARM64 correspondants ; le catalogue natif commun reste 82. Le matériel indisponible ne vaut pas exécution native.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
+
 ## Ordinary Darwin whole-file lock coverage
 
 `DarwinAdvisoryLockOptions` and `DarwinAdvisoryLockTest` check complete unique initial objects, shared byte budgets, both page sizes, low carriers, action priority, readonly EX, reentry, failed upgrades, downgrade, missing versus empty providers, FD/kind ordering, duplicate/fcntl/dup2 lifetime, descriptor reuse, hardlinks, rename, held zero-name unlink and creation refusal. Real VM mappings and retained Contents cannot keep a closed description’s lock; mode/ownership/data/xattr changes keep independent authority and metadata validity. A contended blocking request stops before model mutation. Strict C/CLI/Python and the original SDK-free77-record workload cover five software and three matching HVF profiles, including empty-provider boundaries. Native-common64 and mandatory79 per platform require all237 matching ARM64 native identities to execute successfully. The720 original ARM64 O0/O1/O2 literal observations comprise522 action and198 namespace/descriptor/VM-lifetime controls. Intel native, physical iOS, external peers and wait lifecycle remain separate unverified coverage. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.

@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 6d44f96afae7f68162fb5f61324f22a7893d7ea9bb0e2df38768afc67bf2c060 -->
+<!-- i18n-source: 2dececbb333d44745a37cffde5543a187cfe8daacdeb237691dae825824997c8 -->
 
 [← Index de la documentation](README.md)
 
@@ -1833,7 +1833,7 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
+native common catalogue: 82; required methods/platform: 101; matching ARM64 identities: 303
 ```
 
 ```json
@@ -1858,7 +1858,14 @@ exports: regular / thread-local; ordinary dependency ordinal; rebased actual pro
 TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live contiguous first copy
 resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
 lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
-unsupported: cycles; weak/reexports/resolvers; imported addends; callbacks; dlopen/dlsym; threads
+addends: checked signed ordinary provider offsets; data/TLS initializers; original provider spans only
+unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; callbacks; dlopen/dlsym; threads
 workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
-native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
+native common catalogue: 82; required methods/platform: 101; matching ARM64 identities: 303
 ```
+
+## Décalages des imports dylib Darwin
+
+Les imports ordinaires forts de dylib admettent des ajouts signés en octets pour les pointeurs globaux et les modèles TLS. `DarwinImage` combine une seule fois adresse exportée, déplacement de la bibliothèque et ajout, vérifie les débordements et exige une adresse dans les segments originaux du fournisseur choisi. La validation du pointeur ne suppose aucune largeur d’accès. Les entrées libSystem, descripteurs TLV importés et liaisons différées exigent un ajout nul.
+
+Les contrôles natifs originaux O0/O1/O2 classic/chained renvoient 78 sans sortie. C, CLI et Python couvrent les cinq profils ; Intel natif et iOS physique restent non validés.
