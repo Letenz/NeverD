@@ -863,6 +863,22 @@
         <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
         <translation>オペランドをローカル型のメンバーとして表示します。型はコードのアクセスとの一致度で並べ替えられます</translation>
     </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>struct * に変換(&amp;V)...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>現在の関数、またはカーソル位置のパラメーターに C の型を付けます。入力中に検証されます</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>カーソル位置のパラメーターをローカル型へのポインターにします。型はそのアクセスとの一致度で並べ替えられます</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>型を設定(&amp;Y)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2279,6 +2295,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Local Types</source>
         <translation>ローカル型</translation>
+    </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>パラメーターを変換できません: %1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>型を設定するには関数内にカーソルを置いてください</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>変換するには関数のパラメーターにカーソルを置いてください</translation>
     </message>
 </context>
 <context>
@@ -3939,6 +3967,109 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>write</source>
         <translation>書き込み</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>名前(&amp;N):</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>%1 へのポインター（%n バイトの構造）</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>struct * に変換</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>コードがパラメーター経由で行う処理を読み込んでいます…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>宣言に残るパラメーター名</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>%2 が渡される %1 経由の関数のアクセス %n 件が、メンバーにどう当たるかで型を並べ替えています。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>レジスター</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1、%n バイト</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1 は %3 のパラメーター %2 で、%4 で渡されます。</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1 は %3 のパラメーター %2 です。</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>適用</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>渡し先</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>%1 列目: %2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>関数の宣言をデバッグ情報と解析の結果に戻します</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名前</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>宣言を読み込んでいます…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>読み込み OK: パラメーター %n 個</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>%1 の型を設定</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>デコンパイラーが出力する %1 の宣言です。入力中にローカル型に照らして読み込まれます。</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>%1 に指定した宣言です。入力中にローカル型に照らして読み込まれます。</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>関数の宣言を読み込めないため、パラメーターを個別に型付けできません。代わりに関数の型を設定してください。</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>型</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>解析の型を使用(&amp;A)</translation>
     </message>
 </context>
 </TS>

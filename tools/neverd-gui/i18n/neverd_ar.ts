@@ -863,6 +863,22 @@
         <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
         <translation>عرض المعامل كعضو في نوع محلي، مع ترتيب الأنواع حسب مدى توافق وصول الشيفرة معها</translation>
     </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>تحويل إلى struct *(&amp;V)...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>إعطاء الدالة الحالية، أو المعامل تحت المؤشر، نوعًا بلغة C يُتحقق منه أثناء الكتابة</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>جعل المعامل تحت المؤشر مؤشرًا إلى نوع محلي، مع ترتيب الأنواع حسب توافق الوصول عبره معها</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>تعيين النوع(&amp;Y)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2309,6 +2325,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Local Types</source>
         <translation>الأنواع المحلية</translation>
+    </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>تعذر تحويل المعامل: %1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>ضع المؤشر داخل دالة لتعيين نوعها</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>ضع المؤشر على معامل للدالة لتحويله</translation>
     </message>
 </context>
 <context>
@@ -4044,6 +4072,129 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>write</source>
         <translation>كتابة</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>الاسم(&amp;N):</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>مؤشر إلى %1، سجل من %n بايت</numerusform>
+            <numerusform>مؤشر إلى %1، سجل من %n بايت</numerusform>
+            <numerusform>مؤشر إلى %1، سجل من %n بايت</numerusform>
+            <numerusform>مؤشر إلى %1، سجل من %n بايتات</numerusform>
+            <numerusform>مؤشر إلى %1، سجل من %n بايتًا</numerusform>
+            <numerusform>مؤشر إلى %1، سجل من %n بايت</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>تحويل إلى struct *</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>جارٍ قراءة ما تفعله الشيفرة عبر المعامل…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>اسم المعامل، الذي يحتفظ به التصريح</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>الأنواع مرتبة حسب وقوع %n وصول للدالة عبر %1، حيث يصل %2، على أعضائها.</numerusform>
+            <numerusform>الأنواع مرتبة حسب وقوع %n وصول للدالة عبر %1، حيث يصل %2، على أعضائها.</numerusform>
+            <numerusform>الأنواع مرتبة حسب وقوع %n وصول للدالة عبر %1، حيث يصل %2، على أعضائها.</numerusform>
+            <numerusform>الأنواع مرتبة حسب وقوع %n وصول للدالة عبر %1، حيث يصل %2، على أعضائها.</numerusform>
+            <numerusform>الأنواع مرتبة حسب وقوع %n وصول للدالة عبر %1، حيث يصل %2، على أعضائها.</numerusform>
+            <numerusform>الأنواع مرتبة حسب وقوع %n وصول للدالة عبر %1، حيث يصل %2، على أعضائها.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>السجل</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1، %n بايت</numerusform>
+            <numerusform>%1، %n بايت</numerusform>
+            <numerusform>%1، %n بايت</numerusform>
+            <numerusform>%1، %n بايتات</numerusform>
+            <numerusform>%1، %n بايتًا</numerusform>
+            <numerusform>%1، %n بايت</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1، المعامل %2 من %3، يصل في %4.</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1، المعامل %2 من %3.</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>تطبيق</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>يصل في</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>عند العمود %1: %2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>إعادة تصريح الدالة إلى معلومات التصحيح والتحليل</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>الاسم</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>جارٍ قراءة التصريح…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>يُقرأ: %n معامل</numerusform>
+            <numerusform>يُقرأ: %n معامل</numerusform>
+            <numerusform>يُقرأ: %n معامل</numerusform>
+            <numerusform>يُقرأ: %n معاملات</numerusform>
+            <numerusform>يُقرأ: %n معاملًا</numerusform>
+            <numerusform>يُقرأ: %n معامل</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>تعيين نوع %1</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>تصريح %1 كما يطبعه مفكك الترجمة، يُقرأ مقابل الأنواع المحلية أثناء الكتابة.</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>التصريح الذي أعطيته لـ %1، يُقرأ مقابل الأنواع المحلية أثناء الكتابة.</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>تصريح الدالة لا يُقرأ، لذا لا يمكن تعيين أنواع معاملاتها واحدًا تلو الآخر. عيّن نوع الدالة بدلًا من ذلك.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>النوع</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>استخدام نوع التحليل(&amp;A)</translation>
     </message>
 </context>
 </TS>

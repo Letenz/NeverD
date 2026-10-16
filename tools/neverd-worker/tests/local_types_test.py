@@ -192,6 +192,59 @@ def run(executable):
         shown = ok(owner, "listing", {"address": use, "before": 0, "after": 40})["lines"]
         assert not any("_THREAD_LIKE" in line["text"] for line in shown), shown
 
+        # Y and Convert to struct * in the pseudocode: use's declaration,
+        # where its parameters arrive, and the records the accesses through
+        # its first one rank.
+        assert "function_type" in owner.hello["capabilities"]
+        declared = ok(owner, "function_type", {"address": use})
+        # The signature prints _PACKED, which the project forgot above: its
+        # declaration reads once the types hold it again.
+        assert "'_PACKED' names no type" in declared["problems"][0]["message"], declared
+        ok(owner, "local_types_declare", {"language": "c", "source": (
+            "#pragma pack(push, 1)\nstruct _PACKED { unsigned char Tag; "
+            "unsigned long Value; unsigned short Count; };\n#pragma pack(pop)")})
+        declared = ok(owner, "function_type", {"address": use})
+        assert declared["stated"] is False and "parameters" in declared, declared
+        assert [p["location"] for p in declared["parameters"]][:2] == ["rcx", "rdx"], declared
+        fitted = ok(owner, "local_types_fit", {"function": use, "parameter": 0, "limit": 2})
+        assert fitted["target"]["base"] == "rcx", fitted
+        assert fitted["candidates"][0]["name"] == "_DEVICE", fitted
+
+        def decompiled():
+            return ok(owner, "decompile", {"address": use, "representation": "c"})
+
+        page = decompiled()
+        locals_ = {n["original"]: n for n in page["code_names"] if n.get("kind") == "local"}
+        assert locals_["Device"]["parameter"] == 0 and locals_["Thread"]["parameter"] == 1, locals_
+        # The declaration Convert to struct * proposes, stated in one step.
+        proposal = ok(owner, "function_type", {"address": use, "parameter": 0,
+                                               "type": "_THREAD_LIKE *Device"})
+        ok(owner, "function_edit", {"address": use, "attributes": {"type": proposal["declaration"]}})
+        history = ok(owner, "history", {"offset": 0, "limit": 64})
+        latest = next(item for item in history["items"] if item["index"] == history["cursor"] - 1)
+        assert latest["kind"] == "function" and latest["after"]["type"] == proposal["declaration"], latest
+        page = decompiled()
+        assert "_THREAD_LIKE* Device" in page["text"] and "->Size" not in page["text"], page["text"]
+        # A local keeps its name while the code keeps its locals, as when a
+        # declaration renames a parameter.
+        local = next(n for n in page["code_names"]
+                     if n.get("kind") == "local" and "parameter" not in n)
+        ok(owner, "code_edit", {"address": use, "representation": "c", "kind": "name",
+                                "original": local["original"], "name": "size_bits",
+                                "identity": local["identity"]})
+        assert "size_bits" in decompiled()["text"]
+        renamed = ok(owner, "function_type", {"address": use, "parameter": 4, "type": "int Mode"})
+        ok(owner, "function_edit", {"address": use, "attributes": {"type": renamed["declaration"]}})
+        page = decompiled()
+        assert "Mode" in page["text"] and "size_bits" in page["text"], page["text"]
+        assert page["code_edits_stale"] is False, page
+        refused = owner.call("function_edit", {"address": use, "attributes": {"type": "int use(NOPE *x)"}})
+        assert refused["status"] == "error", refused
+        # Undo takes the declarations and the name back one step at a time.
+        for _ in range(3):
+            ok(owner, "undo")
+        assert "Device->Size" in decompiled()["text"]
+
         missing = owner.call("local_type", {"name": "_NO_SUCH_TYPE"})
         assert missing["status"] == "error" and missing["error"]["code"] == "local_types_failed", missing
         malformed = owner.call("local_types_source", {"asserts": "yes"})

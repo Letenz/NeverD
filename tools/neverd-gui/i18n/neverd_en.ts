@@ -863,6 +863,22 @@
         <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
         <translation>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</translation>
     </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>Con&amp;vert to struct *...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>Give the current function, or the parameter under the cursor, a C type, checked as you type</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>Set t&amp;ype...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2285,6 +2301,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Local Types</source>
         <translation>Local Types</translation>
+    </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>Cannot convert the parameter: %1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>Put the cursor in a function to set its type</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>Put the cursor on a parameter of the function to convert it</translation>
     </message>
 </context>
 <context>
@@ -3960,6 +3988,113 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>write</source>
         <translation>write</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>&amp;Name:</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>A pointer to %1, a record of %n bytes</numerusform>
+            <numerusform>A pointer to %1, a record of %n bytes</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>Convert to struct *</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>Reading what the code does through the parameter…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>The parameter&apos;s name, which the declaration keeps</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</numerusform>
+            <numerusform>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>the register</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1, %n bytes</numerusform>
+            <numerusform>%1, %n bytes</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1, parameter %2 of %3, arrives in %4.</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1, parameter %2 of %3.</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Apply</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>Arrives in</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>At column %1: %2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>Hand the function&apos;s declaration back to its debug information and analysis</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Name</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>Reading the declaration…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>Reads: %n parameters</numerusform>
+            <numerusform>Reads: %n parameters</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>Set the type of %1</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>The declaration of %1 as the decompiler prints it, read against the local types as you type.</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>The declaration you gave %1, read against the local types as you type.</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Type</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>Use the &amp;analysis&apos; type</translation>
     </message>
 </context>
 </TS>

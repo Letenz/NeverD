@@ -238,6 +238,8 @@ Json hello() {
   if (Engine::statesFunctionAttributes())
     for (const char *operation : {"function_attributes", "function_edit"})
       result["capabilities"].push_back(operation);
+  if (Engine::typesFunctions())
+    result["capabilities"].push_back("function_type");
   if (Engine::keepsDataItems())
     result["capabilities"].push_back("item_define");
   if (Engine::keepsOperandFormats())

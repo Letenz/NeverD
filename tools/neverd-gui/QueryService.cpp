@@ -49,6 +49,7 @@ bool readable(const QString &operation) {
                                         "dwarf_reference",
                                         "symbol_table_reference",
                                         "function_attributes",
+                                        "function_type",
                                         "local_types",
                                         "local_type",
                                         "local_types_source",

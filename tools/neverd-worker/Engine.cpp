@@ -640,6 +640,12 @@ bool Engine::listsLocalTypes() {
          engineSymbol<LocalTypeFunction>("neverd_local_type_json") &&
          engineSymbol<LocalTypesFunction>("neverd_local_types_source");
 }
+bool Engine::typesFunctions() {
+  using Declaration =
+      const char *(*)(neverd_session_t, neverd_va_t, const char *);
+  return statesFunctionAttributes() &&
+         engineSymbol<Declaration>("neverd_func_type_json");
+}
 bool Engine::fitsLocalTypes() {
   using Member = const char *(*)(neverd_session_t, const char *, long long,
                                  unsigned long long, const char *);
@@ -2314,6 +2320,15 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     // pointer's, whose accesses the engine reads in the function; a number
     // is an offset by itself.
     std::optional<std::size_t> operand;
+    if (p.contains("address") && p.contains("parameter"))
+      throw Error("invalid_request",
+                  "A fit follows an instruction's pointer or a parameter, "
+                  "not both");
+    if (p.contains("parameter")) {
+      request["function"] =
+          hexAddress(parseAddress(stringField(p, "function", {}, 32)));
+      request["target"] = {{"parameter", sizeField(p, "parameter", 0, 255)}};
+    }
     if (p.contains("address")) {
       const auto address = parseAddress(stringField(p, "address"));
       std::optional<std::int64_t> number;
@@ -2518,13 +2533,18 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     const auto address = parseAddress(stringField(p, "address"));
     auto &store = history();
     const auto before = codeEditRow(address);
-    const auto after = CodeEdits::change(before, p);
     const auto document = namedView(address, stringField(p, "representation"),
                                     p.value("source_options", Json::object()));
     if (!document)
       throw Error("unsupported",
                   "The engine does not expose editable source targets");
     CodeEdits::validateChange(document->value, p);
+    // The names keep while the code keeps its locals (code_shape).
+    Json request = p;
+    if (const auto shape = document->value.find("code_shape");
+        shape != document->value.end() && shape->is_string())
+      request["shape"] = *shape;
+    const auto after = CodeEdits::change(before, request);
     if (before == after)
       return {{"saved", false}, {"address", hexAddress(address)}};
     const auto checkpoint = store;
@@ -2592,10 +2612,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       operation != "annotation_set" && operation != "rename" &&
       operation != "function_create" && operation != "function_delete" &&
       operation != "function_edit" && operation != "function_attributes" &&
-      operation != "item_define" && operation != "operand_format" &&
-      operation != "decompile" && operation != "cfg" &&
-      operation != "cfg_summary" && operation != "cfg_viewport" &&
-      operation != "xrefs")
+      operation != "function_type" && operation != "item_define" &&
+      operation != "operand_format" && operation != "decompile" &&
+      operation != "cfg" && operation != "cfg_summary" &&
+      operation != "cfg_viewport" && operation != "xrefs")
     throw Error("unsupported", "Unknown worker operation: " + operation);
   const auto address = parseAddress(stringField(p, "address"));
   if (operation == "disasm") {
@@ -2770,6 +2790,31 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (!row)
       throw Error("invalid_request", error());
     return backendJson(row);
+  }
+  if (operation == "function_type") {
+    if (!typesFunctions())
+      throw Error("unsupported", "This engine keeps no function declarations");
+    // The declaration the user edits, one checked before it is stated, or
+    // the one a parameter's new type makes.
+    Json options = Json::object();
+    if (p.contains("declaration"))
+      options["declaration"] = stringField(p, "declaration", {}, 4096);
+    if (p.contains("parameter")) {
+      options["parameter"] = sizeField(p, "parameter", 0, 255);
+      options["type"] = stringField(p, "type", {}, 4096);
+    }
+    using Declaration =
+        const char *(*)(neverd_session_t, neverd_va_t, const char *);
+    const auto declaration = engineSymbol<Declaration>("neverd_func_type_json");
+    const auto reply = ownedString(declaration(
+        session_, address, options.empty() ? nullptr : options.dump().c_str()));
+    if (reply.empty())
+      throw Error("invalid_request", error());
+    try {
+      return Json::parse(reply);
+    } catch (const Json::exception &) {
+      throw Error("engine_error", "Engine returned malformed JSON");
+    }
   }
   if (operation == "function_create" || operation == "function_delete" ||
       operation == "function_edit") {

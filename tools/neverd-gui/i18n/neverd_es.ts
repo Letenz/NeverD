@@ -863,6 +863,22 @@
         <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
         <translation>Muestra el operando como miembro de un tipo local, con los tipos ordenados según cómo encajan en ellos los accesos del código</translation>
     </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>Con&amp;vertir en struct *...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>Da a la función actual, o al parámetro bajo el cursor, un tipo de C que se comprueba mientras escribe</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>Convierte el parámetro bajo el cursor en un puntero a un tipo local, con los tipos ordenados según cómo encajan en ellos sus accesos</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>Definir tipo(&amp;Y)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2285,6 +2301,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Local Types</source>
         <translation>Tipos locales</translation>
+    </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>No se puede convertir el parámetro: %1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>Coloque el cursor en una función para definir su tipo</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>Coloque el cursor sobre un parámetro de la función para convertirlo</translation>
     </message>
 </context>
 <context>
@@ -3960,6 +3988,113 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>write</source>
         <translation>escritura</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>&amp;Nombre:</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>Un puntero a %1, un registro de %n byte</numerusform>
+            <numerusform>Un puntero a %1, un registro de %n bytes</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>Convertir en struct *</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>Leyendo lo que hace el código a través del parámetro…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>El nombre del parámetro, que conserva la declaración</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>Tipos ordenados según cómo cae en sus miembros el %n acceso de la función a través de %1, donde llega %2.</numerusform>
+            <numerusform>Tipos ordenados según cómo caen en sus miembros los %n accesos de la función a través de %1, donde llega %2.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>el registro</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1, %n byte</numerusform>
+            <numerusform>%1, %n bytes</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1, parámetro %2 de %3, llega en %4.</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1, parámetro %2 de %3.</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Aplicar</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>Llega en</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>En la columna %1: %2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>Devuelve la declaración de la función a su información de depuración y al análisis</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Nombre</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>Leyendo la declaración…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>Válida: %n parámetro</numerusform>
+            <numerusform>Válida: %n parámetros</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>Definir el tipo de %1</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>La declaración de %1 tal como la imprime el descompilador, leída frente a los tipos locales mientras escribe.</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>La declaración que dio a %1, leída frente a los tipos locales mientras escribe.</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>La declaración de la función no se puede leer, así que sus parámetros no se pueden tipar uno a uno. Defina en su lugar el tipo de la función.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Tipo</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>Usar el tipo del &amp;análisis</translation>
     </message>
 </context>
 </TS>

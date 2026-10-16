@@ -27,6 +27,7 @@
 #include "Resolve.h"
 #include "SecondaryTextDelegate.h"
 #include "Session.h"
+#include "SetTypeDialog.h"
 #include "SettingsKeys.h"
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
@@ -1194,6 +1195,8 @@ void MainWindow::connectActions() {
       if (const auto address = currentAddress())
         session_.defineItem(*address, action);
     });
+  on(ActionId::EditSetType, [this] { setType(); });
+  on(ActionId::EditConvertToStruct, [this] { convertToStruct(); });
   on(ActionId::JumpBack, [this] { navigateHistory(false); });
   on(ActionId::JumpForward, [this] { navigateHistory(true); });
   on(ActionId::JumpNextFunction, [this] { stepFunction(true); });
@@ -1482,8 +1485,20 @@ void MainWindow::updateActions() {
         ActionId::EditOperandChar, ActionId::EditOperandOffset,
         ActionId::EditOperandNegate, ActionId::EditOperandInvert})
     actions_.action(id)->setEnabled(operandFormats);
+  // A structure offset is the disassembly's; a pseudocode window's
+  // parameters take a type instead.
   actions_.action(ActionId::EditOperandStruct)
-      ->setEnabled(operandFormats && session_.showsStructOffsets());
+      ->setEnabled(operandFormats && session_.showsStructOffsets() &&
+                   !focusedCodeView());
+  const bool declarations =
+      location && !session_.readOnly() && session_.typesFunctions();
+  CodeView *code = focusedCodeView();
+  actions_.action(ActionId::EditSetType)
+      ->setEnabled(declarations && (code ? code->text()->function().has_value()
+                                         : currentFunction().has_value()));
+  actions_.action(ActionId::EditConvertToStruct)
+      ->setEnabled(declarations && session_.convertsParameters() && code &&
+                   code->text()->function().has_value());
   actions_.action(ActionId::EditComment)
       ->setEnabled(location && !session_.readOnly());
   actions_.action(ActionId::EditRepeatableComment)
@@ -2755,8 +2770,18 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   if (auto *edit = actions_.action(ActionId::EditFunction); edit->isEnabled())
     menu.addAction(edit);
   menu.addSeparator();
-  for (const auto id :
-       {ActionId::EditRename, ActionId::EditComment, ActionId::EditBookmark})
+  menu.addAction(actions_.action(ActionId::EditRename));
+  // Hex-Rays offers a variable's type, and a parameter's pointer to a
+  // record, after its rename.
+  if (auto *type = actions_.action(ActionId::EditSetType); type->isEnabled())
+    menu.addAction(type);
+  if (auto *convert = actions_.action(ActionId::EditConvertToStruct);
+      convert->isEnabled()) {
+    const auto target = focusedCodeView()->text()->renameTarget();
+    if (target && target->contains(QStringLiteral("parameter")))
+      menu.addAction(convert);
+  }
+  for (const auto id : {ActionId::EditComment, ActionId::EditBookmark})
     menu.addAction(actions_.action(id));
   // IDA offers the operand's structure offset after its rename.
   if (auto *structure = actions_.action(ActionId::EditOperandStruct);
@@ -2848,11 +2873,98 @@ void MainWindow::chooseStructOffset() {
     query.insert(QStringLiteral("operand"), *operand);
   // The edit goes to the session the dialog was opened for.
   const auto epoch = session_.epoch();
-  TypePickerDialog dialog(session_, query, this);
+  TypePickerDialog dialog(session_, query, {}, this);
   if (dialog.exec() != QDialog::Accepted || session_.epoch() != epoch)
     return;
   session_.formatOperandStruct(*address, dialog.operand(), dialog.typeName(),
                                dialog.delta(), dialog.others(), epoch);
+}
+
+void MainWindow::setType() {
+  if (session_.readOnly() || !session_.typesFunctions())
+    return;
+  // The parameter under a pseudocode cursor, else the function the cursor
+  // is in, as Y types a variable or the function in IDA.
+  const QPointer<CodeView> view = focusedCodeView();
+  std::optional<Address> function;
+  std::optional<int> parameter;
+  QString name;
+  if (view) {
+    function = view->text()->function();
+    if (const auto target = view->text()->renameTarget();
+        target && target->contains(QStringLiteral("parameter"))) {
+      parameter = target->value(QStringLiteral("parameter")).toInt();
+      name = target->value(QStringLiteral("name")).toString();
+    }
+  } else {
+    function = currentFunction();
+  }
+  if (!function) {
+    output_->append(tr("Put the cursor in a function to set its type"), 1);
+    return;
+  }
+  if (name.isEmpty())
+    name = displayAddress(*function);
+  const auto epoch = session_.epoch();
+  SetTypeDialog dialog(session_, *function, parameter, name, this);
+  const bool accepted = dialog.exec() == QDialog::Accepted;
+  if (view) {
+    view->window()->activateWindow();
+    view->text()->setFocus();
+  }
+  if (!accepted || session_.epoch() != epoch)
+    return;
+  session_.editFunction(
+      *function,
+      {{"type", dialog.resets() ? QJsonValue(QJsonValue::Null)
+                                : QJsonValue(dialog.declaration())}},
+      epoch);
+}
+
+void MainWindow::convertToStruct() {
+  CodeView *code = focusedCodeView();
+  if (!code || session_.readOnly() || !session_.convertsParameters())
+    return;
+  const QPointer<CodeView> view = code;
+  const auto function = code->text()->function();
+  const auto target = code->text()->renameTarget();
+  if (!function || !target || !target->contains(QStringLiteral("parameter"))) {
+    output_->append(
+        tr("Put the cursor on a parameter of the function to convert it"), 1);
+    return;
+  }
+  const int parameter = target->value(QStringLiteral("parameter")).toInt();
+  const QString name = target->value(QStringLiteral("name")).toString();
+  const auto epoch = session_.epoch();
+  TypePickerDialog dialog(
+      session_, {{"function", hexAddress(*function)}, {"parameter", parameter}},
+      name, this);
+  const bool accepted = dialog.exec() == QDialog::Accepted;
+  if (view) {
+    view->window()->activateWindow();
+    view->text()->setFocus();
+  }
+  if (!accepted || session_.epoch() != epoch)
+    return;
+  // The type names the parameter too when the user gave it another name.
+  QString type = dialog.typeName() + QStringLiteral(" *");
+  if (dialog.parameterName() != name)
+    type += dialog.parameterName();
+  session_.read(
+      QStringLiteral("function_type"),
+      {{"address", hexAddress(*function)},
+       {"parameter", parameter},
+       {"type", type}},
+      this,
+      [this, function = *function, epoch](const QJsonObject &reply) {
+        if (session_.epoch() == epoch)
+          session_.editFunction(
+              function, {{"type", reply.value(QStringLiteral("declaration"))}},
+              epoch);
+      },
+      [this](const QString &, const QString &message) {
+        output_->append(tr("Cannot convert the parameter: %1").arg(message), 2);
+      });
 }
 
 void MainWindow::editFunction(Address entry) {
