@@ -164,17 +164,55 @@ with `save_failed`. Neither joins undo history. Both are listed in
 `dwarf_reference {path}` needs no open binary either: it returns the SDK's
 `neverd_dwarf_reference_json`, `{dwarf:null}` or `{dwarf:{path,location}}` --
 the file that holds an ELF or Mach-O image's DWARF, with location `input` (the
-image's own sections), `dsym` (a .dSYM bundle beside a Mach-O image) or
-`beside` (a split .debug file beside the image, matched by name alone), the
-first in the order the open reads them. A PE, an image without DWARF and an
-SBF program answer null. The GUI asks before an `open`, as IDA asks "Load DWARF
-debug information?", and passes a declined answer as `dwarf:{mode:"none"}`,
-the only `dwarf` value there is: the open reads no DWARF, though other debug
-information still loads, and the answer is saved with the project and kept by
-read-only replicas. `open` and `metadata` return it as `dwarf`, null when the
-DWARF was read, and what the load read as `debug_info:{enabled,kind,path}`,
-kind `dwarf`, `pdb`, `map` or `none`. `dwarf_reference` is listed in `capabilities` when the engine
-has `neverd_dwarf_reference_json` and `neverd_session_set_dwarf_search`.
+image's own sections), `dsym` (a .dSYM bundle beside a Mach-O image),
+`build-id` (the file a debug directory keeps under the image's build ID),
+`debuglink` (the file the image's .gnu_debuglink names, of the CRC it records)
+or `beside` (a split .debug file beside the image, matched by name), the first
+in the order the open reads them, which is GDB's. A PE, an image without DWARF
+and an SBF program answer null. The GUI asks before an `open`, as IDA asks
+"Load DWARF debug information?", and passes a declined answer as
+`dwarf:{mode:"none"}`: the open reads no DWARF, though other debug information
+still loads, and the answer is saved with the project and kept by read-only
+replicas. `open` and `metadata` return it as `dwarf`, null when the DWARF was
+read, and what the load read as `debug_info:{enabled,kind,path,files}`, kind
+`dwarf`, `pdb`, `map` or `none`, and `files` every file read, the PDB or DWARF
+first: `[{kind,path,names,dialect?,match?,functions?}]`. `dwarf_reference` is
+listed in `capabilities` when the engine has `neverd_dwarf_reference_json` and
+`neverd_session_set_dwarf_search`.
+
+`dwarf_load {path,stamp?}` reads the DWARF of the open ELF or Mach-O image from
+a file the user chose -- a split .debug file, an unstripped copy or a .dSYM
+bundle -- through `neverd_session_load_dwarf`, in place of the DWARF it has. Its
+machine must be the image's, and a build ID or UUID both record must agree.
+The engine reads the image again, so the DWARF's names replace a MAP's. A
+successful load changes the revision and returns `{path,stamp,loaded,
+function_count,debug_info}`; the GUI saves `{path,stamp}` as the project's
+`dwarf`, which `open` loads again once the image is, leaving the file open
+without it and with a warning when it no longer loads. `dwarf_load` is listed
+in `capabilities` when the engine has it.
+
+`map_reference {path}` needs no open binary: it returns the SDK's
+`neverd_map_reference_json`, `{map:null}` or `{map:{path,dialect,functions,
+data,outside,match,reason?,stamp?,section?,names}}` -- the linker MAP beside
+the input (`<stem>.map` or `<name>.map`), its linker format, its names and how
+it holds against the image: `verified` (it records the image's build stamp),
+`consistent` (its sections are where the image has them), `unverified` or
+`mismatch`, with `reason` `stamp`, `section` or `outside`. The open reads the
+MAP only when no PDB or DWARF describes the image, and never one that
+mismatches it, so the GUI asks only then, after the PDB and DWARF questions,
+and passes a declined answer as `map:{mode:"none"}`, or a mismatched MAP the
+user still wants as `map:{path,mode:"unchecked",stamp}`. `map_inspect {path}`
+reads a MAP the user chose against the open image, the same object with its
+`stamp`, and `map_load {path,mode,stamp?}` loads it through
+`neverd_session_load_map`: `checked` refuses a mismatched MAP with
+`map_mismatch`, `unchecked` records the user's confirmation. Its names fill
+only what a PDB or DWARF leaves unnamed, and replace an earlier MAP's. A
+successful load changes the revision and returns the inspection with
+`{mode,loaded,function_count,debug_info}`; the GUI saves `{path,mode,stamp}`
+as the project's `map`, which `open` loads again after its PDB. With a `pdb`
+selection, a `dwarf` file or a `map` value the open reads no MAP itself.
+`map_reference`, `map_inspect` and `map_load` are listed in `capabilities`
+when the engine has them.
 
 `symbol_table_reference {path}` needs no open binary either: it returns the
 SDK's `neverd_symbol_table_reference_json`, `{symbols:null}` or

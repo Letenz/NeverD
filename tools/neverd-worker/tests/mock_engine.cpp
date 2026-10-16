@@ -78,6 +78,10 @@ struct MockSession {
   bool dwarfSearch = true;
   /// Whether a load reads the static symbol table of symtab.bin.
   bool symbolTable = true;
+  /// Whether a load reads the MAP beside the MAP fixtures, and the MAP and
+  /// DWARF files loaded into the image by choice.
+  bool mapSearch = true;
+  std::string mapLoaded, dwarfLoaded;
   int imageFunctions = ImageFunctions;
   /// Image functions the fixture does not list.
   std::set<std::uint64_t> absentFunctions;
@@ -192,6 +196,38 @@ bool symbolTableFixture(const std::filesystem::path &input) {
   return input.filename() == "symtab.bin";
 }
 
+/// The MAP beside an input, <stem>.map, which a test writes when it wants
+/// one.
+std::filesystem::path fixtureMap(const std::filesystem::path &input) {
+  auto map = input;
+  map.replace_extension(".map");
+  return map;
+}
+bool mapFixture(const std::filesystem::path &input) {
+  return std::filesystem::is_regular_file(fixtureMap(input));
+}
+/// What the mock says of a MAP: one whose text says "other build" describes
+/// another build.
+Json mapFacts(const std::filesystem::path &map) {
+  std::ifstream input(map, std::ios::binary);
+  const std::string text((std::istreambuf_iterator<char>(input)), {});
+  const bool other = text.find("other build") != std::string::npos;
+  const auto shown = std::filesystem::absolute(map).u8string();
+  Json facts{
+      {"path", std::string(shown.begin(), shown.end())},
+      {"dialect", "msvc"},
+      {"functions", 2},
+      {"data", 1},
+      {"outside", 0},
+      {"match", other ? "mismatch" : "verified"},
+      {"names", {"map_function_0", "map_function_1"}},
+      {"stamp",
+       {{"map", other ? "5f5a6b7c" : "5f5a6b80"}, {"image", "5f5a6b80"}}}};
+  if (other)
+    facts["reason"] = "stamp";
+  return facts;
+}
+
 bool matchingFixturePdb(const std::filesystem::path &path) {
   std::ifstream input(path, std::ios::binary);
   const std::string bytes((std::istreambuf_iterator<char>(input)), {});
@@ -286,6 +322,56 @@ const char *neverd_symbol_table_reference_json(const char *path) {
 
 void neverd_session_set_symbol_table(neverd_session_t s, int enabled) {
   session(s)->symbolTable = enabled != 0;
+}
+
+const char *neverd_map_reference_json(const char *path) {
+  const auto input = std::filesystem::u8path(path);
+  if (!std::filesystem::is_regular_file(input))
+    return copy(
+        Json{{"map", nullptr}, {"error", std::string("cannot read ") + path}}
+            .dump());
+  if (!mapFixture(input))
+    return copy(Json{{"map", nullptr}}.dump());
+  return copy(Json{{"map", mapFacts(fixtureMap(input))}}.dump());
+}
+
+void neverd_session_set_map_search(neverd_session_t s, int enabled) {
+  session(s)->mapSearch = enabled != 0;
+}
+
+const char *neverd_session_inspect_map_json(neverd_session_t s,
+                                            const char *path) {
+  const auto map = std::filesystem::u8path(path);
+  if (!std::filesystem::is_regular_file(map) ||
+      std::filesystem::file_size(map) == 0) {
+    session(s)->error = "No function names in the selected MAP file";
+    return nullptr;
+  }
+  return copy(mapFacts(map).dump());
+}
+
+int neverd_session_load_map(neverd_session_t s, const char *path,
+                            int unchecked) {
+  const auto map = std::filesystem::u8path(path);
+  if (!std::filesystem::is_regular_file(map)) {
+    session(s)->error = std::string("MAP file not found: ") + path;
+    return 0;
+  }
+  if (mapFacts(map).value("match", "") == "mismatch" && unchecked != 1) {
+    session(s)->error = std::string(path) + " describes another build";
+    return 0;
+  }
+  session(s)->mapLoaded = path;
+  return 1;
+}
+
+int neverd_session_load_dwarf(neverd_session_t s, const char *path) {
+  if (!std::filesystem::exists(std::filesystem::u8path(path))) {
+    session(s)->error = std::string("DWARF file not found: ") + path;
+    return 0;
+  }
+  session(s)->dwarfLoaded = path;
+  return 1;
 }
 
 int neverd_session_load(neverd_session_t s, const char *path) {
@@ -474,6 +560,39 @@ const char *neverd_headers_json(neverd_session_t s) {
                             {"kind", read ? "dwarf" : "none"},
                             {"path", read ? session(s)->path : ""}};
   }
+  // The MAP beside an input loads when nothing declined it and it is of the
+  // input's build, or by choice, as does a DWARF file.
+  const auto input = std::filesystem::u8path(session(s)->path);
+  std::string map = session(s)->mapLoaded;
+  if (map.empty() && mapFixture(input) && session(s)->debugInfo &&
+      session(s)->mapSearch &&
+      mapFacts(fixtureMap(input)).value("match", "") != "mismatch") {
+    const auto beside = fixtureMap(input).u8string();
+    map.assign(beside.begin(), beside.end());
+  }
+  Json files = Json::array();
+  if (!session(s)->dwarfLoaded.empty())
+    files.push_back(
+        {{"kind", "dwarf"}, {"path", session(s)->dwarfLoaded}, {"names", 2}});
+  if (!map.empty())
+    files.push_back({{"kind", "map"},
+                     {"path", map},
+                     {"names", 2},
+                     {"dialect", "msvc"},
+                     {"match", "verified"},
+                     {"functions", 2}});
+  // A PDB the fixture loaded comes first, as its names outrank a MAP's.
+  if (files.empty() && !mapFixture(input))
+    return copy(result.dump());
+  auto &debug = result["debug_info"];
+  if (!debug.is_object())
+    debug = {
+        {"enabled", session(s)->debugInfo}, {"kind", "none"}, {"path", ""}};
+  if (debug.value("kind", "none") == "none" && !files.empty()) {
+    debug["kind"] = files.front().at("kind");
+    debug["path"] = files.front().at("path");
+  }
+  debug["files"] = files;
   return copy(result.dump());
 }
 

@@ -72,6 +72,43 @@ the file through the strict PDB loader.
 or before the PDB they chose loads. Epoch and request guards retire downloads on
 document changes, and network errors do not change the image.
 
+## Debug information files
+
+`debug/DebugInfoDiscovery` owns which debug files an image is read with and how
+their names rank: a PDB or DWARF, which also carries types and lines, before a
+linker MAP, which names addresses and nothing more. The PDB or DWARF is the
+session's debug context; a MAP the caller names is a names-only supplement
+published after it (`applyDebugInfo`), so it fills only the addresses the PDB or
+DWARF leaves unnamed. The MAP beside an image is read only when no PDB or DWARF
+describes it. `debug/MapFile` reads a MAP in its linker's dialect against the
+image's layout, read from its headers: link.exe's segment:offset publics are
+placed through the image's section numbering, which also reads IDA's and
+Borland's MAPs without an Rva+Base column, and names made up from an address
+(`MapAutomaticNames.def`) are left out. It also holds the MAP against the image
+(`MapMatches.def`): link.exe and lld-link record the build stamp, the other
+dialects the output sections' addresses and sizes, and most functions outside
+the image's code mean another layout. Discovery passes over a MAP that
+mismatches; a named one fails the load unless the request takes it unchecked.
+
+DWARF companions are found in GDB's order (`DWARFLocation.def`): the image's own
+sections, a `.dSYM` beside a Mach-O image, the file a debug directory keeps under
+an ELF image's build ID, the file its `.gnu_debuglink` names with the CRC it
+records, then a `.debug` file named after it. `debug/DebugFileIdentity` reads
+the identities they share; a companion of another build ID is passed over, and
+a DWARF file the user names must be of the image's machine and build. A
+companion stays `UnauthenticatedCompanion` trust: its names and lines load, its
+object extents do not. `debug/CompressedSections` expands SHF_COMPRESSED
+sections before the DWARF reader sees them, since the LLVM NeverD links may
+lack the decompressors.
+
+A debug file loaded into an open session (`neverd_session_load_pdb_ex`,
+`neverd_session_load_dwarf`, `neverd_session_load_map`) reads the image again
+with the options it was loaded with and publishes the session's whole request
+in rank order (`reloadDebugInformation`), so the result is the one a load that
+named the file gives: a PDB loaded after a MAP replaces the MAP's names. User
+names, comments and edits are kept, and the session is left as it was when the
+input changed or a file fails to load.
+
 ## Local types boundary
 
 `lib/types` (NeverDTypes) owns a program's named types as a reader sees and
@@ -198,6 +235,26 @@ It matches names as an editor's quick open does, a record's typedefs and
 `Type.member` paths included.  The evidence comes from MedIR
 (`MedPointerAccesses`): every load and store whose address is an SSA value
 plus a constant, through copies, and every such address the code passes on.
+
+A function's type, as IDA's Y sets it, is the user's C declaration of it,
+kept by its address among the function's attributes ("type",
+`FunctionAttributes.def`). `parseFunctionDeclaration` reads it against the
+library without changing it: one function, of the library's types only. The
+C API refuses a declaration that does not read, a variadic one, and one
+whose calling convention NeverD does not place the image's parameters by.
+`LocalTypesDebugContext` is the one layer that applies it: its
+`resolveFunction` gives the declared return and parameters ahead of the debug
+information's and the prototypes the library knows by name, and wraps a
+`NullDebugContext` for an image without debug information. The C backends
+then bind each declared parameter to the register or stack slot its
+convention passes it in (`placeSourceParameters`), as they bind a PDB's, and
+a function's callers see it. Analysis never reads a declaration, so a change
+drops only what the decompiler made (`Session::declarationsChanged`).
+`neverd_func_type_json` reports the declaration the user edits: theirs, else
+the signature the decompiler prints, which reads as C. It also gives the one
+Convert to struct * makes, with one parameter's type replaced, and the
+register or slot each parameter arrives in; `neverd_local_types_fit_json`
+ranks the records by what the code does through that register.
 `neverd_local_types_fit_json` joins the two for an instruction's memory
 operand, and `neverd_local_type_member_json` names one landing.  A
 structure offset is an operand format (`OperandFormats.def`) that names a

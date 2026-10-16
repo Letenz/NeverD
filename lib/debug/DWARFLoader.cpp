@@ -11,6 +11,7 @@
 
 #include "neverd/debug/DWARFLoader.h"
 
+#include "neverd/debug/CompressedSections.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/support/FilePath.h"
 
@@ -294,6 +295,9 @@ using dwarf_loader_detail::StrictAttributeLookup;
 struct DWARFDebugContext::Impl {
   std::unique_ptr<llvm::MemoryBuffer> BinaryBuf;
   std::unique_ptr<llvm::MemoryBuffer> DSYMBuf;
+  /// The object's bytes with its compressed sections expanded, which the
+  /// DWARF reader reads in its place (CompressedSections.h).
+  std::vector<uint8_t> ExpandedBytes;
   std::unique_ptr<llvm::DWARFContext> DwarfCtx;
 
   std::map<va_t, FunctionSym> FuncMap;
@@ -362,25 +366,26 @@ struct DWARFDebugContext::Impl {
 
 DWARFDebugContext::~DWARFDebugContext() = default;
 
-std::filesystem::path findDSYMFile(const std::filesystem::path &BinaryPath) {
+std::filesystem::path dSYMBundleFile(const std::filesystem::path &Bundle) {
   // A directory that cannot be read holds no bundle: the queries that ask
   // before a load must not throw.
-  const auto firstFile = [](const std::filesystem::path &DwarfDir) {
-    std::error_code EC;
-    for (std::filesystem::directory_iterator It(DwarfDir, EC), End;
-         !EC && It != End; It.increment(EC))
-      if (std::error_code FileEC; It->is_regular_file(FileEC))
-        return It->path();
-    return std::filesystem::path();
-  };
   std::error_code EC;
+  const auto DwarfDir = Bundle / "Contents" / "Resources" / "DWARF";
+  if (!std::filesystem::exists(DwarfDir, EC))
+    return {};
+  for (std::filesystem::directory_iterator It(DwarfDir, EC), End;
+       !EC && It != End; It.increment(EC))
+    if (std::error_code FileEC; It->is_regular_file(FileEC))
+      return It->path();
+  return {};
+}
 
+std::filesystem::path findDSYMFile(const std::filesystem::path &BinaryPath) {
+  std::error_code EC;
   auto Bundle = BinaryPath;
   Bundle += ".dSYM";
-  const auto BundleDwarf = Bundle / "Contents" / "Resources" / "DWARF";
-  if (std::filesystem::exists(BundleDwarf, EC))
-    if (auto File = firstFile(BundleDwarf); !File.empty())
-      return File;
+  if (auto File = dSYMBundleFile(Bundle); !File.empty())
+    return File;
 
   auto Parent = BinaryPath.parent_path();
   if (Parent.empty())
@@ -392,11 +397,8 @@ std::filesystem::path findDSYMFile(const std::filesystem::path &BinaryPath) {
     if (It->path().extension() != ".dSYM" || !It->is_directory(EntryEC) ||
         It->path().stem() != Stem)
       continue;
-    const auto Inner = It->path() / "Contents" / "Resources" / "DWARF";
-    std::error_code InnerEC;
-    if (std::filesystem::exists(Inner, InnerEC))
-      if (auto File = firstFile(Inner); !File.empty())
-        return File;
+    if (auto File = dSYMBundleFile(It->path()); !File.empty())
+      return File;
   }
   return {};
 }
@@ -446,14 +448,36 @@ static std::unique_ptr<llvm::object::ObjectFile> getObjectFromBuffer(
   return Fallback;
 }
 
+/// \p Obj, or the copy of it whose compressed sections \p Expanded keeps
+/// expanded, for a DWARF reader without decompressors.
+static std::unique_ptr<llvm::object::ObjectFile>
+withExpandedSections(std::unique_ptr<llvm::object::ObjectFile> Obj,
+                     std::vector<uint8_t> &Expanded) {
+  auto Bytes = expandCompressedSections(Obj->getData());
+  if (!Bytes)
+    return Obj;
+  Expanded = std::move(*Bytes);
+  auto Plain = llvm::object::ObjectFile::createObjectFile(llvm::MemoryBufferRef(
+      llvm::toStringRef(llvm::ArrayRef<uint8_t>(Expanded)),
+      Obj->getFileName()));
+  if (!Plain) {
+    llvm::consumeError(Plain.takeError());
+    Expanded.clear();
+    return Obj;
+  }
+  return std::move(*Plain);
+}
+
 bool hasDWARFUnits(const std::filesystem::path &Path) {
   auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Path), /*IsText=*/false,
                                             /*RequiresNullTerminator=*/false);
   if (!Buffer)
     return false;
-  const auto Object = getObjectFromBuffer(**Buffer);
+  auto Object = getObjectFromBuffer(**Buffer);
   if (!Object)
     return false;
+  std::vector<uint8_t> Expanded;
+  Object = withExpandedSections(std::move(Object), Expanded);
   const auto Context = llvm::DWARFContext::create(*Object);
   return Context && Context->getNumCompileUnits() > 0;
 }
@@ -524,7 +548,8 @@ dwarfFramePointerRegister(llvm::Triple::ArchType Arch) {
 std::unique_ptr<DWARFDebugContext>
 DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
                         BinaryFormat Format, DWARFLoadTrust Trust,
-                        std::span<const uint8_t> ExpectedImageBytes) {
+                        std::span<const uint8_t> ExpectedImageBytes,
+                        std::optional<llvm::Triple::ArchType> RequiredArch) {
   auto Ctx = std::unique_ptr<DWARFDebugContext>(new DWARFDebugContext());
   Ctx->PImpl = std::make_unique<Impl>();
 
@@ -536,7 +561,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   }
   Ctx->PImpl->BinaryBuf = std::move(*BufOr);
 
-  auto Obj = getObjectFromBuffer(*Ctx->PImpl->BinaryBuf, std::nullopt,
+  auto Obj = getObjectFromBuffer(*Ctx->PImpl->BinaryBuf, RequiredArch,
                                  ExpectedImageBytes);
   if (!Obj) {
     llvm::WithColor::warning()
@@ -551,6 +576,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   Ctx->PImpl->MachineArch = MainArch;
   Ctx->PImpl->DwarfFramePointerReg = dwarfFramePointerRegister(MainArch);
 
+  Obj = withExpandedSections(std::move(Obj), Ctx->PImpl->ExpandedBytes);
   Ctx->PImpl->DwarfCtx = llvm::DWARFContext::create(*Obj);
   if (!Ctx->PImpl->DwarfCtx) {
     llvm::WithColor::warning() << "debug: cannot create DWARFContext for "

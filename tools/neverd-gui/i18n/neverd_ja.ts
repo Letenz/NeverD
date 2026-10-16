@@ -856,6 +856,22 @@
         <translation>プログラムの型をレイアウトとソースとともに表示</translation>
     </message>
     <message>
+        <source>D&amp;WARF file...</source>
+        <translation>DWARF ファイル(&amp;W)...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>別の DWARF ファイル、ストリップしていないコピー、または .dSYM からデバッグ情報を読み込みます</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>MAP ファイル(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>リンカーの MAP ファイルから名前を読み込みます</translation>
+    </message>
+    <message>
         <source>S&amp;tructure offset...</source>
         <translation>構造体オフセット(&amp;T)...</translation>
     </message>
@@ -2280,6 +2296,38 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Local Types</source>
         <translation>ローカル型</translation>
     </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>%1 に MAP ファイルがあるかどうか判別できませんでした：%2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>DWARF ファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>MAP ファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>MAP ファイル (*.map);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>別のビルドの MAP ファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+それでも名前を読み込みますか？誤ったアドレスの名前は解析を誤らせます。</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>DWARF ファイル (*.debug *.dSYM);;すべてのファイル (*)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2596,6 +2644,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>DWARF loaded: %1</source>
         <translation>DWARF を読み込みました：%1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>選択どおり、入力ファイルの横にある MAP ファイルを読み込まずに開きました</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>MAP を照合せずに読み込みました：%1（追加した名前 %2 個、別のビルドのもの）</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>MAP を読み込みました：%1（追加した名前 %2 個）</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>MAP を読み込みませんでした：%1 は読み込んだイメージと一致しません</translation>
     </message>
     <message numerus="yes">
         <source>Showed %n operands as members of %1</source>
@@ -3804,6 +3868,49 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>%1 行 %2 列：%3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>%1 の MAP、名前 %2 個。ビルドのタイムスタンプが入力ファイルと一致します。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>%1 の MAP、名前 %2 個。セクションの位置が入力ファイルと一致します。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>%1 の MAP、名前 %2 個。入力ファイルと照合できる情報は記録されていません。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>%1 の MAP、名前 %2 個。記録されたビルドのタイムスタンプは %3 ですが、入力ファイルは %4 です：別のビルドのものです。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>%1 の MAP、名前 %2 個。%3 を %4（%5 バイト）に配置していますが、入力ファイルでは %6（%7 バイト）にあります：別のビルドのものです。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>%1 の MAP、名前 %2 個。関数 %4 個のうち %3 個が入力ファイルのコードの外にあります：別のビルドのものです。</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>MAP ファイルが見つかりました</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>それでも MAP ファイルを読み込みますか？</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>MAP ファイルを読み込みますか？</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>（%1）</translation>
     </message>
 </context>
 <context>

@@ -18,6 +18,7 @@
 #include "ListingView.h"
 #include "LoadFileDialog.h"
 #include "LocalTypesView.h"
+#include "MapPromptDialog.h"
 #include "MicrosoftSymbols.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
@@ -1096,6 +1097,8 @@ void MainWindow::connectActions() {
   });
   on(ActionId::FileReload, [this] { reloadInput(); });
   on(ActionId::FileLoadPdb, [this] { loadPdb(); });
+  on(ActionId::FileLoadDwarf, [this] { loadDwarf(); });
+  on(ActionId::FileLoadMap, [this] { loadMap(); });
   on(ActionId::FileLoadSignatures, [this] {
     const auto path = QFileDialog::getOpenFileName(
         this, tr("Load signature pack"), {},
@@ -1444,13 +1447,31 @@ void MainWindow::updateActions() {
       ->setEnabled(loaded && disassembly_->canGoForward());
   actions_.action(ActionId::EditUndo)->setEnabled(loaded && session_.canUndo());
   actions_.action(ActionId::EditRedo)->setEnabled(loaded && session_.canRedo());
+  // A debug file the user chose is kept with the project.
   actions_.action(ActionId::FileSave)
       ->setEnabled(loaded && (session_.dirty() ||
-                              session_.metadata().value("pdb").isObject()));
+                              session_.metadata().value("pdb").isObject() ||
+                              session_.metadata().value("dwarf").isObject() ||
+                              session_.metadata().value("map").isObject()));
+  // A PE has a PDB, an ELF or Mach-O image DWARF, and any image a MAP but
+  // the EVM and SBF programs, which describe themselves.
+  const QString format = session_.format();
+  const bool selfDescribed =
+      format == QLatin1String("EVM") ||
+      session_.architecture().compare(QLatin1String("sbf"),
+                                      Qt::CaseInsensitive) == 0;
+  const bool loadsDebugFile = loaded && !session_.opening();
   actions_.action(ActionId::FileLoadPdb)
-      ->setEnabled(loaded && !session_.opening() &&
-                   session_.format() == QLatin1String("PE") &&
+      ->setEnabled(loadsDebugFile && format == QLatin1String("PE") &&
                    session_.loadsPdbFiles());
+  actions_.action(ActionId::FileLoadDwarf)
+      ->setEnabled(loadsDebugFile && !selfDescribed &&
+                   (format == QLatin1String("ELF") ||
+                    format == QLatin1String("Mach-O")) &&
+                   session_.loadsDwarfFiles());
+  actions_.action(ActionId::FileLoadMap)
+      ->setEnabled(loadsDebugFile && !selfDescribed &&
+                   session_.loadsMapFiles());
   actions_.action(ActionId::EditRename)
       ->setEnabled(location && !session_.readOnly());
   // A function starts where none starts yet; the one the cursor is in can
@@ -1649,7 +1670,11 @@ void MainWindow::openAskingForDebugFiles(const QString &path,
           dialog.exec();
           auto chosen = options;
           chosen.pdb = dialog.choice();
-          openNow(path, chosen);
+          // A PDB outranks a MAP: the MAP is asked about only without one.
+          if (chosen.pdb.contains(QStringLiteral("path")))
+            openNow(path, chosen);
+          else
+            openAskingForMap(path, chosen);
         });
       },
       [this, path, options](const QString &, const QString &message) {
@@ -1661,7 +1686,7 @@ void MainWindow::openAskingForDebugFiles(const QString &path,
 
 void MainWindow::openAskingForDwarf(const QString &path, LoadOptions options) {
   if (!options.dwarf.isEmpty() || !session_.findsDwarf()) {
-    openNow(path, options);
+    openAskingForMap(path, options);
     return;
   }
   session_.read(
@@ -1669,7 +1694,7 @@ void MainWindow::openAskingForDwarf(const QString &path, LoadOptions options) {
       [this, path, options](const QJsonObject &payload) {
         const auto reference = payload.value("dwarf").toObject();
         if (reference.isEmpty()) {
-          openNow(path, options);
+          openAskingForMap(path, options);
           return;
         }
         // A modal must run after the query delivery barrier is released.
@@ -1679,15 +1704,60 @@ void MainWindow::openAskingForDwarf(const QString &path, LoadOptions options) {
           DwarfPromptDialog dialog(reference, isVisible() ? this : nullptr);
           dialog.setAttribute(Qt::WA_QuitOnClose, false);
           auto chosen = options;
-          if (dialog.exec() != QDialog::Accepted)
-            chosen.dwarf = {{"mode", "none"}};
-          openNow(path, chosen);
+          // DWARF outranks a MAP: the MAP is asked about only without it.
+          if (dialog.exec() == QDialog::Accepted) {
+            openNow(path, chosen);
+            return;
+          }
+          chosen.dwarf = {{"mode", "none"}};
+          openAskingForMap(path, chosen);
         });
       },
       [this, path, options](const QString &, const QString &message) {
         output_->append(
             tr("Could not tell whether %1 has DWARF: %2").arg(path, message),
             1);
+        openNow(path, options);
+      });
+}
+
+void MainWindow::openAskingForMap(const QString &path, LoadOptions options) {
+  // The questions before this one found no PDB or DWARF, or the user
+  // declined it: only then does the open read the MAP beside the input.
+  if (!options.map.isEmpty() || !session_.findsMapFiles()) {
+    openNow(path, options);
+    return;
+  }
+  session_.read(
+      QStringLiteral("map_reference"), {{"path", path}}, this,
+      [this, path, options](const QJsonObject &payload) {
+        const auto reference = payload.value("map").toObject();
+        if (reference.isEmpty()) {
+          openNow(path, options);
+          return;
+        }
+        // A modal must run after the query delivery barrier is released.
+        QTimer::singleShot(0, this, [this, path, options, reference] {
+          // It greets alone before the workbench shows, as the others do;
+          // No, Escape and closing it load the input without the MAP.
+          MapPromptDialog dialog(reference, isVisible() ? this : nullptr);
+          dialog.setAttribute(Qt::WA_QuitOnClose, false);
+          auto chosen = options;
+          if (dialog.exec() != QDialog::Accepted)
+            chosen.map = {{"mode", "none"}};
+          // The open passes over a MAP of another build unless it is named.
+          else if (MapPromptDialog::mismatched(reference))
+            chosen.map = {{"path", reference.value("path")},
+                          {"mode", "unchecked"}};
+          else
+            chosen.acceptedMap = reference.value("path").toString();
+          openNow(path, chosen);
+        });
+      },
+      [this, path, options](const QString &, const QString &message) {
+        output_->append(tr("Could not tell whether %1 has a MAP file: %2")
+                            .arg(path, message),
+                        1);
         openNow(path, options);
       });
 }
@@ -1823,6 +1893,60 @@ void MainWindow::loadPdb() {
           session_.loadPdb(selection);
         });
       });
+}
+
+void MainWindow::loadDwarf() {
+  if (!session_.loaded() || !session_.loadsDwarfFiles())
+    return;
+  const auto epoch = session_.epoch();
+  const auto path = QFileDialog::getOpenFileName(
+      this, tr("Load DWARF file"),
+      QFileInfo(session_.projectPath()).absolutePath(),
+      tr("DWARF files (*.debug *.dSYM);;All files (*)"));
+  if (path.isEmpty() || !session_.loaded() || session_.epoch() != epoch)
+    return;
+  session_.loadDwarf({{"path", path}});
+}
+
+void MainWindow::loadMap() {
+  if (!session_.loaded() || !session_.loadsMapFiles())
+    return;
+  const auto epoch = session_.epoch();
+  const auto path = QFileDialog::getOpenFileName(
+      this, tr("Load MAP file"),
+      QFileInfo(session_.projectPath()).absolutePath(),
+      tr("MAP files (*.map);;All files (*)"));
+  if (path.isEmpty() || !session_.loaded() || session_.epoch() != epoch)
+    return;
+  session_.read(QStringLiteral("map_inspect"), {{"path", path}}, this,
+                [this, epoch](const QJsonObject &facts) {
+                  // A modal must run after the query delivery barrier is
+                  // released.
+                  QTimer::singleShot(0, this, [this, epoch, facts] {
+                    confirmMap(facts, epoch);
+                  });
+                });
+}
+
+void MainWindow::confirmMap(const QJsonObject &facts, quint64 epoch) {
+  if (!session_.loaded() || session_.epoch() != epoch)
+    return;
+  QString mode = QStringLiteral("checked");
+  if (MapPromptDialog::mismatched(facts)) {
+    const auto answer = QMessageBox::warning(
+        this, tr("Load a MAP file of another build"),
+        tr("%1\n\nLoad its names anyway? Names at the wrong addresses "
+           "mislead the analysis.")
+            .arg(MapPromptDialog::description(facts)),
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes || !session_.loaded() ||
+        session_.epoch() != epoch)
+      return;
+    mode = QStringLiteral("unchecked");
+  }
+  session_.loadMap({{"path", facts.value("path")},
+                    {"mode", mode},
+                    {"stamp", facts.value("stamp")}});
 }
 
 void MainWindow::applyIndicator() {

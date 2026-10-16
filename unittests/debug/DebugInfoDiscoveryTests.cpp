@@ -14,23 +14,29 @@
 #include "gtest/gtest.h"
 
 #include "neverd/Common.h"
+#include "neverd/debug/CompressedSections.h"
 #include "neverd/debug/DWARFLoader.h"
 #include "neverd/debug/DebugInfoDiscovery.h"
+#include "neverd/debug/MapFile.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Loader.h"
 #include "neverd/loader/PointerRelocation.h"
+#include "neverd/support/BinaryLoading.h"
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Object/ELFTypes.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -1740,6 +1746,463 @@ TEST(DebugInfoDiscovery, ImagesThatDescribeThemselvesReadNoDebugInfo) {
   EXPECT_TRUE(searchesDebugInfo(Arch::AArch64));
   EXPECT_FALSE(searchesDebugInfo(Arch::EVM));
   EXPECT_FALSE(searchesDebugInfo(Arch::SBF));
+}
+
+//===----------------------------------------------------------------------===//
+// Linker MAPs held against their images, and the rank of their names
+//===----------------------------------------------------------------------===//
+
+/// The layout of a safety fixture image, as a MAP is held against it.
+MapImageLayout fixtureLayout(llvm::StringRef Name) {
+  auto Buffer = llvm::MemoryBuffer::getFile(safetyFixture(Name).string());
+  if (!Buffer) {
+    ADD_FAILURE() << "cannot read " << Name.str();
+    return {};
+  }
+  auto Layout = readMapImageLayout((*Buffer)->getMemBufferRef());
+  if (!Layout) {
+    ADD_FAILURE() << llvm::toString(Layout.takeError());
+    return {};
+  }
+  return std::move(*Layout);
+}
+
+std::string fixtureText(llvm::StringRef Name) {
+  std::ifstream Input(safetyFixture(Name), std::ios::binary);
+  return std::string(std::istreambuf_iterator<char>(Input), {});
+}
+
+std::vector<uint8_t> fixtureBytes(const std::filesystem::path &Path) {
+  std::ifstream Input(Path, std::ios::binary);
+  return std::vector<uint8_t>(std::istreambuf_iterator<char>(Input), {});
+}
+
+/// The separate-debug-file fixtures beside this test.
+std::filesystem::path companionFixture(llvm::StringRef Name) {
+  return std::filesystem::path(__FILE__).parent_path() / "fixtures" /
+         Name.str();
+}
+
+/// Sets an environment variable for the life of the object.
+class ScopedEnvironment {
+public:
+  ScopedEnvironment(const char *Name, const std::string &Value) : Name(Name) {
+    if (const char *Old = std::getenv(Name))
+      Previous = Old;
+    set(Value.c_str());
+  }
+  ~ScopedEnvironment() { set(Previous ? Previous->c_str() : nullptr); }
+
+private:
+  void set(const char *Value) {
+#ifdef _WIN32
+    _putenv_s(Name, Value ? Value : "");
+#else
+    if (Value)
+      ::setenv(Name, Value, 1);
+    else
+      ::unsetenv(Name);
+#endif
+  }
+
+  const char *Name;
+  std::optional<std::string> Previous;
+};
+
+TEST(MapFileTest, LinkerMapsHoldAgainstTheImagesTheyWereWrittenFor) {
+  const std::pair<llvm::StringRef, llvm::StringRef> Pairs[] = {
+      {"safety_cases_elf_x64", "safety_cases_elf_x64.map"},
+      {"safety_cases_elf_arm64", "safety_cases_elf_arm64.map"},
+      {"safety_cases_macho_x64", "safety_cases_macho_x64.map"},
+      {"safety_cases_macho_arm64", "safety_cases_macho_arm64.map"},
+      {"safety_cases_pe_x64.exe", "safety_cases_pe_x64.exe.map"},
+      {"safety_cases_pe_arm64.exe", "safety_cases_pe_arm64.exe.map"}};
+  for (const auto &[Image, Map] : Pairs) {
+    SCOPED_TRACE(Map.str());
+    const MapRead Read = readMapFile(safetyFixture(Map), fixtureLayout(Image));
+    ASSERT_TRUE(Read.Context);
+    EXPECT_EQ(Read.Check.Match, MapMatch::Consistent);
+    EXPECT_EQ(Read.Check.Reason, MapMismatch::None);
+    EXPECT_GT(Read.Check.Functions, 0u);
+    EXPECT_EQ(Read.Check.Outside, 0u);
+  }
+}
+
+TEST(MapFileTest, AMapThatPlacesASectionElsewhereDescribesAnotherBuild) {
+  ScratchDir Dir;
+  std::string Text = fixtureText("safety_cases_elf_x64.map");
+  // The same link with .text one byte longer.
+  const std::string Row = "1a70             1a70      351    16 .text";
+  const size_t At = Text.find(Row);
+  ASSERT_NE(At, std::string::npos);
+  Text.replace(At, Row.size(), "1a70             1a70      352    16 .text");
+  const MapRead Read = readMapFile(Dir.write("other.map", Text),
+                                   fixtureLayout("safety_cases_elf_x64"));
+  ASSERT_TRUE(Read.Context);
+  EXPECT_EQ(Read.Check.Match, MapMatch::Mismatch);
+  EXPECT_EQ(Read.Check.Reason, MapMismatch::Section);
+  EXPECT_EQ(Read.Check.MapPlaced.Name, ".text");
+  EXPECT_EQ(Read.Check.MapPlaced.Size, 0x352u);
+  EXPECT_EQ(Read.Check.ImagePlaced.Size, 0x351u);
+  EXPECT_EQ(describeMapMismatch(Read.Check),
+            "it places .text at 0x1A70 (0x352 bytes), the image has .text at "
+            "0x1A70 (0x351 bytes)");
+}
+
+// GNU ld lists a PE section at the size it takes in the file, rounded up to
+// the file alignment, where lld lists its virtual size.
+TEST(MapFileTest, AGNUMapSizesAPESectionAsTheFileHoldsIt) {
+  MapImageLayout Layout;
+  Layout.Format = BinaryFormat::COFF;
+  Layout.Base = 0x140000000;
+  Layout.Sections.push_back(
+      {{}, ".text", 0x140001000, 0x1890, /*FileSize=*/0x1a00, true});
+  Layout.Sections.push_back(
+      {{}, ".bss", 0x140007000, 0x180, /*FileSize=*/0, false});
+  const auto map = [](llvm::StringRef TextSize) {
+    return "Linker script and memory map\n\n"
+           ".text           0x0000000140001000     " +
+           TextSize.str() +
+           "\n"
+           " .text          0x0000000140001480       0xc0 demo.o\n"
+           "                0x0000000140001480                main\n"
+           ".bss            0x0000000140007000      0x180\n";
+  };
+  ScratchDir Dir;
+  for (llvm::StringRef Size : {"0x1a00", "0x1890"}) {
+    SCOPED_TRACE(Size.str());
+    const MapRead Read = readMapFile(Dir.write("demo.map", map(Size)), Layout);
+    ASSERT_TRUE(Read.Context);
+    EXPECT_EQ(Read.Facts.Dialect, MapDialect::GNU);
+    EXPECT_EQ(Read.Check.Match, MapMatch::Consistent);
+  }
+  const MapRead Other =
+      readMapFile(Dir.write("other.map", map("0x1c00")), Layout);
+  EXPECT_EQ(Other.Check.Match, MapMatch::Mismatch);
+  EXPECT_EQ(Other.Check.Reason, MapMismatch::Section);
+}
+
+TEST(MapFileTest, ALinkExeMapIsVerifiedByTheBuildStampItRecords) {
+  const auto map = [](llvm::StringRef Stamp) {
+    return " safety_cases_pe_x64\n\n Timestamp is " + Stamp.str() +
+           " (Thu Oct 16 00:00:00 2026)\n\n"
+           " Preferred load address is 0000000140000000\n\n"
+           " Start         Length     Name                   Class\n"
+           " 0001:00000000 000003d6H .text                   CODE\n\n"
+           "  Address         Publics by Value              Rva+Base"
+           "       Lib:Object\n\n"
+           " 0001:00000250       main                       0000000140001250 "
+           "f   safety_cases_pe_x64.obj\n";
+  };
+  ScratchDir Dir;
+  const MapImageLayout Layout = fixtureLayout("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(Layout.Stamp);
+  EXPECT_EQ(*Layout.Stamp, 0xb2a0cc38u);
+
+  const MapRead Same =
+      readMapFile(Dir.write("same.map", map("b2a0cc38")), Layout);
+  ASSERT_TRUE(Same.Context);
+  EXPECT_EQ(Same.Check.Match, MapMatch::Verified);
+  ASSERT_TRUE(Same.Facts.Stamp);
+  EXPECT_EQ(Same.Context->allFunctions().front().Addr, 0x140001250u);
+
+  const MapRead Other =
+      readMapFile(Dir.write("other.map", map("b2a0cc39")), Layout);
+  EXPECT_EQ(Other.Check.Match, MapMatch::Mismatch);
+  EXPECT_EQ(Other.Check.Reason, MapMismatch::Stamp);
+  EXPECT_EQ(Other.Check.MapStamp, 0xb2a0cc39u);
+  EXPECT_EQ(Other.Check.ImageStamp, 0xb2a0cc38u);
+  EXPECT_EQ(describeMapMismatch(Other.Check),
+            "it records the build stamp b2a0cc39, the image b2a0cc38");
+}
+
+// IDA's "Create MAP file" writes segment:offset publics without link.exe's
+// Rva+Base column, numbers a PE's segments as the PE numbers its sections
+// and states the address itself for an ELF image, and lists the names it made
+// up from addresses beside the program's.
+TEST(MapFileTest, IDAMapsPlaceTheirNamesWhereTheImageHasThem) {
+  ScratchDir Dir;
+  const MapRead PE = readMapFile(
+      Dir.write("pe.map",
+                " Start         Length     Name                   Class\n"
+                " 0002:0000000000000000 000000000000003D6H .text"
+                "                  CODE\n"
+                " 0003:0000000000000000 000000000000002C0H .rdata"
+                "                 DATA\n\n"
+                "  Address         Publics by Value\n\n"
+                " 00000001:0000000000000000       sub_140001000\n"
+                " 00000001:0000000000000034       algn_140001034\n"
+                " 00000001:0000000000000250       start\n"
+                " 00000001:00000000000002B0       interproc_budget_entry\n"
+                " 00000002:0000000000000000       VarName\n\n"
+                "Program entry point at 0001:0000000000000250\n"),
+      fixtureLayout("safety_cases_pe_x64.exe"));
+  ASSERT_TRUE(PE.Context);
+  const std::vector<FunctionSym> Functions = PE.Context->allFunctions();
+  ASSERT_EQ(Functions.size(), 2u);
+  EXPECT_EQ(Functions[0].Name, "start");
+  EXPECT_EQ(Functions[0].Addr, 0x140001250u);
+  EXPECT_EQ(Functions[1].Name, "interproc_budget_entry");
+  EXPECT_EQ(Functions[1].Addr, 0x1400012b0u);
+  const std::vector<DataObjectSym> Data = PE.Context->allDataObjects();
+  ASSERT_EQ(Data.size(), 1u);
+  EXPECT_EQ(Data[0].Name, "VarName");
+  EXPECT_EQ(Data[0].Addr, 0x140002000u);
+  EXPECT_EQ(PE.Check.Outside, 0u);
+
+  const MapRead ELF = readMapFile(
+      Dir.write("elf.map",
+                " Start         Length     Name                   Class\n"
+                " 0008:0000000000000000 00000000000000351H .text"
+                "                  CODE\n\n"
+                "  Address         Publics by Value\n\n"
+                " 00000008:0000000000001A70       tainted_stack_overflow\n"
+                " 00000008:0000000000001CE0       main\n"),
+      fixtureLayout("safety_cases_elf_x64"));
+  ASSERT_TRUE(ELF.Context);
+  const std::vector<FunctionSym> ELFFunctions = ELF.Context->allFunctions();
+  ASSERT_EQ(ELFFunctions.size(), 2u);
+  EXPECT_EQ(ELFFunctions[0].Addr, 0x1a70u);
+  EXPECT_EQ(ELFFunctions[1].Name, "main");
+  EXPECT_EQ(ELFFunctions[1].Addr, 0x1ce0u);
+}
+
+/// A PE with its PDB, and a MAP named \p MapName beside it that calls main
+/// otherwise, in \p Dir.
+std::filesystem::path layOutPEWithPDBAndMap(ScratchDir &Dir,
+                                            llvm::StringRef MapName) {
+  const auto Image =
+      Dir.writeBytes("safety_cases_pe_x64.exe",
+                     fixtureBytes(safetyFixture("safety_cases_pe_x64.exe")));
+  Dir.writeBytes("safety_cases_pe_x64.pdb",
+                 fixtureBytes(safetyFixture("safety_cases_pe_x64.pdb")));
+  std::string Map = fixtureText("safety_cases_pe_x64.exe.map");
+  const std::string Main = "                 main";
+  const size_t At = Map.find(Main);
+  EXPECT_NE(At, std::string::npos);
+  if (At != std::string::npos)
+    Map.replace(At, Main.size(), "                 map_says_main");
+  Dir.write(MapName, Map);
+  return Image;
+}
+
+TEST(LoadDebugInfoTest, TheMapBesideAnImageItsPDBDescribesStaysUnread) {
+  ScratchDir Dir;
+  const auto Path = layOutPEWithPDBAndMap(Dir, "safety_cases_pe_x64.exe.map");
+  auto Img = loadBinary(Path);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+
+  DebugInfoResult Found = loadDebugInfo(Path, *Img);
+  ASSERT_TRUE(static_cast<bool>(Found)) << Found.Error;
+  EXPECT_EQ(Found.Kind, DebugInfoKind::PDB);
+  EXPECT_EQ(Found.Supplement, nullptr);
+  ASSERT_EQ(Found.Files.size(), 1u);
+
+  // Declined, the PDB leaves the MAP to name the image; declined too, the
+  // MAP leaves it unnamed.
+  DebugInfoRequest NoPDB;
+  NoPDB.SearchPDB = false;
+  const DebugInfoResult MapOnly = loadDebugInfo(Path, *Img, NoPDB);
+  EXPECT_EQ(MapOnly.Kind, DebugInfoKind::Map);
+  ASSERT_EQ(MapOnly.Files.size(), 1u);
+  EXPECT_EQ(MapOnly.Files[0].Dialect, MapDialect::LLDCOFF);
+  EXPECT_EQ(MapOnly.Files[0].Check.Match, MapMatch::Consistent);
+  NoPDB.SearchMap = false;
+  EXPECT_FALSE(loadDebugInfo(Path, *Img, NoPDB));
+}
+
+TEST(LoadDebugInfoTest, ANamedMapFillsOnlyWhatThePDBLeavesUnnamed) {
+  ScratchDir Dir;
+  const auto Path = layOutPEWithPDBAndMap(Dir, "named.map");
+  auto Img = loadBinary(Path);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+
+  DebugInfoRequest Req;
+  Req.MapPath = Dir.path("named.map");
+  DebugInfoResult Found = loadDebugInfo(Path, *Img, Req);
+  ASSERT_TRUE(static_cast<bool>(Found)) << Found.Error;
+  EXPECT_EQ(Found.Kind, DebugInfoKind::PDB);
+  ASSERT_NE(Found.Supplement, nullptr);
+  ASSERT_EQ(Found.Files.size(), 2u);
+  EXPECT_EQ(Found.Files[0].Kind, DebugInfoKind::PDB);
+  EXPECT_EQ(Found.Files[1].Kind, DebugInfoKind::Map);
+
+  applyDebugInfo(*Img, Found);
+  const Symbol *Main = findFunc(*Img, 0x140001250);
+  ASSERT_NE(Main, nullptr);
+  EXPECT_EQ(Main->Name, "main");
+  EXPECT_GT(Found.Files[0].Applied, 0u);
+}
+
+TEST(LoadDebugInfoTest, AMapOfAnotherBuildIsPassedOverOrRefused) {
+  ScratchDir Dir;
+  const auto Image =
+      Dir.writeBytes("safety_cases_elf_x64",
+                     fixtureBytes(safetyFixture("safety_cases_elf_x64")));
+  std::string Text = fixtureText("safety_cases_elf_x64.map");
+  const std::string Row = "1a70             1a70      351    16 .text";
+  const size_t At = Text.find(Row);
+  ASSERT_NE(At, std::string::npos);
+  Text.replace(At, Row.size(), "1a70             1a70      352    16 .text");
+  Dir.write("safety_cases_elf_x64.map", Text);
+  auto Img = loadBinary(Image);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+
+  // Beside the binary it is passed over.
+  DebugInfoRequest NoDWARF;
+  NoDWARF.SearchDWARF = false;
+  const DebugInfoResult Beside = loadDebugInfo(Image, *Img, NoDWARF);
+  EXPECT_FALSE(Beside);
+  EXPECT_TRUE(Beside.Error.empty());
+
+  // Named, it is refused, unless the request takes it unchecked.
+  DebugInfoRequest Named = NoDWARF;
+  Named.MapPath = Dir.path("safety_cases_elf_x64.map");
+  const DebugInfoResult Refused = loadDebugInfo(Image, *Img, Named);
+  EXPECT_FALSE(Refused);
+  EXPECT_NE(Refused.Error.find("describes another build: it places .text"),
+            std::string::npos)
+      << Refused.Error;
+  Named.UncheckedMap = true;
+  const DebugInfoResult Taken = loadDebugInfo(Image, *Img, Named);
+  ASSERT_TRUE(static_cast<bool>(Taken)) << Taken.Error;
+  EXPECT_EQ(Taken.Kind, DebugInfoKind::Map);
+  EXPECT_EQ(Taken.Files[0].Check.Match, MapMatch::Mismatch);
+}
+
+//===----------------------------------------------------------------------===//
+// Separate DWARF files, as GDB finds them and as a user names them
+//===----------------------------------------------------------------------===//
+
+TEST(DebugInfoDiscovery, FindsTheCompanionADebugDirectoryKeepsByBuildID) {
+  ScratchDir Dir;
+  const auto Image = Dir.writeBytes(
+      "companion.so", fixtureBytes(companionFixture("companion.so")));
+  const auto Store = Dir.path("debug");
+  const auto Kept = Store / ".build-id" / "76" /
+                    "8168543f774654eb07639c4447a657c2bc40ae.debug";
+  std::filesystem::create_directories(Kept.parent_path());
+  std::filesystem::copy_file(companionFixture("companion.so.debug"), Kept);
+  ScopedEnvironment Directories("NEVERD_DEBUG_FILE_DIRECTORY", Store.string());
+
+  const auto Found = findDWARF(Image, BinaryFormat::ELF);
+  ASSERT_TRUE(Found);
+  EXPECT_EQ(Found->Location, DWARFLocation::BuildID);
+  EXPECT_EQ(Found->Path, Kept);
+  EXPECT_STREQ(dwarfLocationName(Found->Location), "build-id");
+
+  auto Img = loadBinary(Image);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  const DebugInfoResult Read = loadDebugInfo(Image, *Img);
+  ASSERT_TRUE(static_cast<bool>(Read)) << Read.Error;
+  EXPECT_EQ(Read.Kind, DebugInfoKind::DWARF);
+  EXPECT_EQ(Read.Path, Kept);
+  EXPECT_FALSE(Read.Context->hasAuthenticatedObjectExtents());
+}
+
+TEST(DebugInfoDiscovery, FindsTheCompanionTheDebugLinkNamesByItsCRC) {
+  ScratchDir Dir;
+  ScopedEnvironment Directories("NEVERD_DEBUG_FILE_DIRECTORY",
+                                Dir.path("none").string());
+  const auto Image = Dir.writeBytes(
+      "image.so", fixtureBytes(companionFixture("companion-nobuildid.so")));
+  // The link names companion.debug, not a name the image's own suggests.
+  const auto Linked = Dir.writeBytes(
+      "companion.debug", fixtureBytes(companionFixture("companion.debug")));
+  const auto Found = findDWARF(Image, BinaryFormat::ELF);
+  ASSERT_TRUE(Found);
+  EXPECT_EQ(Found->Location, DWARFLocation::DebugLink);
+  EXPECT_EQ(Found->Path, Linked);
+
+  // A file of that name with other contents is another build's.
+  std::vector<uint8_t> Other =
+      fixtureBytes(companionFixture("companion.debug"));
+  Other.back() ^= 0xff;
+  Dir.writeBytes("companion.debug", Other);
+  EXPECT_FALSE(findDWARF(Image, BinaryFormat::ELF));
+}
+
+// Distribution debug packages ship their DWARF compressed; the reader sees
+// the sections expanded whether or not the LLVM it uses has a decompressor.
+TEST(LoadDebugInfoTest, CompressedDWARFSectionsReadExpanded) {
+  ScratchDir Dir;
+  ScopedEnvironment Directories("NEVERD_DEBUG_FILE_DIRECTORY",
+                                Dir.path("none").string());
+  const std::vector<uint8_t> Compressed =
+      fixtureBytes(companionFixture("companion-zlib.debug"));
+  const auto Expanded = expandCompressedSections(llvm::toStringRef(Compressed));
+  ASSERT_TRUE(Expanded);
+  EXPECT_GT(Expanded->size(), Compressed.size());
+  const std::vector<uint8_t> Plain =
+      fixtureBytes(companionFixture("companion.so.debug"));
+  EXPECT_FALSE(expandCompressedSections(llvm::toStringRef(Plain)));
+  EXPECT_TRUE(hasDWARFUnits(companionFixture("companion-zlib.debug")));
+
+  const auto Image = Dir.writeBytes(
+      "image.so", fixtureBytes(companionFixture("companion.so")));
+  auto Img = loadBinary(Image);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  DebugInfoRequest Req;
+  Req.DWARFPath = companionFixture("companion-zlib.debug");
+  const DebugInfoResult Read = loadDebugInfo(Image, *Img, Req);
+  ASSERT_TRUE(static_cast<bool>(Read)) << Read.Error;
+  const std::vector<FunctionSym> Functions = Read.Context->allFunctions();
+  EXPECT_TRUE(
+      std::any_of(Functions.begin(), Functions.end(), [](const FunctionSym &F) {
+        return F.Name == "also_named_by_dwarf";
+      }));
+}
+
+TEST(LoadDebugInfoTest, ANamedDWARFFileMustBeOfTheImagesBuildAndMachine) {
+  ScratchDir Dir;
+  ScopedEnvironment Directories("NEVERD_DEBUG_FILE_DIRECTORY",
+                                Dir.path("none").string());
+  const auto Image = Dir.writeBytes(
+      "image.so", fixtureBytes(companionFixture("companion.so")));
+  auto Img = loadBinary(Image);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  // Stripped and alone, the image has no DWARF to find.
+  EXPECT_FALSE(loadDebugInfo(Image, *Img));
+
+  DebugInfoRequest Req;
+  Req.DWARFPath = companionFixture("companion.so.debug");
+  const DebugInfoResult Read = loadDebugInfo(Image, *Img, Req);
+  ASSERT_TRUE(static_cast<bool>(Read)) << Read.Error;
+  EXPECT_EQ(Read.Kind, DebugInfoKind::DWARF);
+  const std::vector<FunctionSym> Functions = Read.Context->allFunctions();
+  EXPECT_TRUE(
+      std::any_of(Functions.begin(), Functions.end(), [](const FunctionSym &F) {
+        return F.Name == "named_by_dwarf";
+      }));
+
+  // Another build's: the companion's build ID with one byte changed.
+  std::vector<uint8_t> Other =
+      fixtureBytes(companionFixture("companion.so.debug"));
+  const std::array<uint8_t, 4> BuildIDStart = {0x76, 0x81, 0x68, 0x54};
+  auto At = std::search(Other.begin(), Other.end(), BuildIDStart.begin(),
+                        BuildIDStart.end());
+  ASSERT_NE(At, Other.end());
+  *At ^= 0xff;
+  Req.DWARFPath = Dir.writeBytes("other.debug", Other);
+  const DebugInfoResult OtherBuild = loadDebugInfo(Image, *Img, Req);
+  EXPECT_FALSE(OtherBuild);
+  EXPECT_NE(OtherBuild.Error.find("another build"), std::string::npos)
+      << OtherBuild.Error;
+
+  // Another machine's.
+  Req.DWARFPath = safetyFixture("safety_cases_elf_arm64");
+  const DebugInfoResult OtherMachine = loadDebugInfo(Image, *Img, Req);
+  EXPECT_FALSE(OtherMachine);
+  EXPECT_NE(OtherMachine.Error.find("describes no x86_64 image"),
+            std::string::npos)
+      << OtherMachine.Error;
+
+  // And a PE has no DWARF to name.
+  Req.DWARFPath = companionFixture("companion.so.debug");
+  BinaryImage PE = makePEImage();
+  const DebugInfoResult NotELF = loadDebugInfo(Dir.path("probe.exe"), PE, Req);
+  EXPECT_FALSE(NotELF);
+  EXPECT_FALSE(NotELF.Error.empty());
 }
 
 } // anonymous namespace

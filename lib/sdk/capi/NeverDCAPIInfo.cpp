@@ -822,7 +822,8 @@ const char *neverd_headers_json(neverd_session_t Sess) {
   Root["debug_info"] =
       llvm::json::Object{{"enabled", S->DbgRequest.Enabled},
                          {"kind", debugInfoKindName(S->DbgKind)},
-                         {"path", pathToUTF8(S->DbgPath)}};
+                         {"path", pathToUTF8(S->DbgPath)},
+                         {"files", debugInfoFilesJson(*S)}};
   if (!DI.UUID.empty())
     Dyn["uuid"] = DI.UUID;
   if (!DI.MinOSVersion.empty())
