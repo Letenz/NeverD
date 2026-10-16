@@ -495,8 +495,12 @@ Linux ARM64 is 146,590,504 bytes, SHA-256
 `167d6fa4c8b3a275b905029c64a1c7c40ba119f5d01b3a161c37b24830de82e7`.
 The first macOS x64 version launch took 56.848 seconds under the qualified
 Rosetta profile. This timing is retained rather than treated as performance
-equivalence. The two musl layouts have completed builds, full module readback
-and startup checks; their fresh behavior comparisons are in progress.
+equivalence. Both musl layouts now also pass complete module readback, three
+startup checks and fresh seven configuration plus 22 behavior comparisons.
+The x64 musl binary is 140,716,272 bytes, SHA-256
+`4615552b770636e03b8d7eba274550a477460536b463e975bbfbafca17be9682`;
+ARM64 musl is 139,005,872 bytes, SHA-256
+`71215ae8eea93f6247bb1456784c49ef6e8dcfbe2b3cd26813e47b2900eb1b6b`.
 
 Both Windows all-readable cross-builds have also passed full 2,586-row
 readback. The personal Actions workflow now builds the existing source
@@ -507,7 +511,60 @@ and formats all 2,343 captured JavaScript modules. Native readable inventories
 and two independent builds must match the local pinned results before four
 startup and 29 offline comparisons. Windows ARM64 uses x64 emulation for the
 analysis tool, while the client runtime and builds remain native ARM64.
-This new workflow is not yet accepted; its passing previous baseline/editable
-run remains a separate milestone. Captured source and client executables are
-not uploaded; a separate artifact contains only the public formatter, licenses,
-owner-test result and runtime dependencies.
+All three jobs now pass in
+[run 38852211205](https://github.com/gmh5225/test_mac_intel/actions/runs/38852211205)
+at `0a49b20fcae098b7059d05b5a3d08269f682cb14`. The x64 readable binary is
+151,655,936 bytes, SHA-256
+`38da720c1a9d654236923b3c2fe8b6db828c2da22aec8ba35742606cc00645d1`;
+ARM64 is 138,483,712 bytes, SHA-256
+`8123783eeec8529b64465ddfba82f999d41f302385ed442e7b2dbe704bc752ca`.
+Every original/readable source hash from the native formatter matches the
+sealed local workspace. The complete baseline and editable probes pass again.
+Captured source and client executables are not uploaded; a separate artifact
+contains only the public formatter, licenses, owner-test result and runtime
+dependencies. Native diagnostics and exact CI source are retained locally.
+
+The early macOS ARM64 package combined readable runtime evidence with an
+independent inventory of the edited probe. A new dedicated inventory now
+checks the actual readable binary (`47e5d2aa...`) against all 2,609 selected
+module rows, including 2,364 initial readable source hashes and every retained
+asset. The existing successful runtime observations bind to that same binary
+hash and are reused. A first finalizer attempt assumed a newer smoke-receipt
+schema; it failed after the module comparison and remains recorded. Explicit
+legacy-schema validation completes the receipt without changing the package.
+
+All eight distributions now have bounded all-readable layout acceptance:
+complete source/asset readback, 26 startup pairs and 232 configuration/behavior
+pairs, separately from the earlier preserved-source layout results. Source
+text, positions, performance, live services and universal equivalence remain
+outside what these tests establish.
+
+## Additional Read/Edit feature coverage
+
+Fourteen authored Read/Edit cases now pass against the original and both the
+preserved-source and readable-source rebuilds on Linux x64 and ARM64: 56
+additional differential pairs across two architectures and two layouts. These
+check UTF-8 line windows, missing files, directories, exact and global edits,
+ambiguous matches, CRLF, combining characters and supplementary characters,
+absent old strings, and the interaction of model selection and Read permission
+with unread or ranged-read editing. Full protocol frames and API request
+bodies retain the existing normalization rules; workspace contents have exact
+byte oracles. No recovered implementation was changed to make a test pass.
+
+A sequential-tool fixture is compiled and separately qualified with ten
+authored controls on each architecture before captured clients run. Two
+initial x64 expectations contradicted original behavior and are preserved as
+failed tests. Source inspection and focused controls establish that the
+tested newer model can edit an unread file when the relevant read permission
+predicate permits it, while an older-model guard and explicit Read denial
+reject the corresponding cases. An explicit offset/limit Read does not set
+the token-cap truncation marker, so it does not imply the same edit refusal.
+That truncation branch itself is not claimed as tested.
+
+The final x64 evidence selects thirteen unchanged passing cases and one
+focused rerun, retaining per-case provenance to the original failed runs.
+ARM64 runs the corrected fourteen-case matrix in full for all three binaries.
+Each ARM64 invocation shares only its pinned read-only executable across
+cases; HOME, work, temporary state and network namespaces remain fresh.
+Other platforms and tools such as Bash, Grep and Glob still require this
+expanded coverage. The full recovery goal remains active.
