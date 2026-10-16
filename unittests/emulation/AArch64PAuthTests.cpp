@@ -133,6 +133,32 @@ TEST_P(AArch64PAuth, CompatibilityPreservesZeroAndHighReturnAddressBits) {
     }
   }
 }
+TEST_P(AArch64PAuth, XPACLRIPreservesUnsignedLow48BitReturnAddresses) {
+  // Independently assembled XPACLRI (HINT #7). Stripping a PAC has no effect
+  // on these addresses under the checked machine's 48-bit translation regime.
+  for (uint64_t Value : {uint64_t(0), uint64_t(1), uint64_t(0x401234),
+                         uint64_t(0x800000000000), uint64_t(0xffffffffffff)}) {
+    SCOPED_TRACE(Value);
+    llvm::cantFail(CPU->setReg(AArch64Register::X30, Value));
+    ASSERT_NO_FATAL_FAILURE(check(0xd50320ff, true));
+  }
+}
+TEST_P(AArch64PAuth,
+       XPACLRIRejectsReturnAddressesOutsideTheFixedPointContract) {
+  // SCTLR authentication enables do not disable XPACLRI. A transport with
+  // PAuth can change these bits while a baseline CPU treats HINT #7 as a NOP.
+  for (uint64_t Value :
+       {uint64_t(1) << 48, uint64_t(1) << 55, uint64_t(1) << 63,
+        uint64_t(0x81800000abcdef00), UINT64_MAX}) {
+    SCOPED_TRACE(Value);
+    if (!CPU) {
+      ASSERT_NO_FATAL_FAILURE(initialize());
+      ASSERT_TRUE(CPU);
+    }
+    llvm::cantFail(CPU->setReg(AArch64Register::X30, Value));
+    ASSERT_NO_FATAL_FAILURE(check(0xd50320ff, false));
+  }
+}
 TEST_P(AArch64PAuth, NonHintAuthenticationAndControlAccessRemainUnsupported) {
   // pacia x0,x1; autia x0,x1; xpaci x0; retaa; braa x0,x1;
   // msr sctlr_el1,x0; mrs x0,apiakeylo_el1.
