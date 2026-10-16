@@ -742,6 +742,178 @@ bool declaresLocal(const std::string &Source, const std::string &Name) {
                                               Name + "(\\[[0-9]+\\])?;"));
 }
 
+TEST(NdTypeDisplayPaths, ArrayMembersNameTheirElements) {
+  // An array member holds its elements as a record holds its members: an
+  // access of an element's width, or an address inside the array, names
+  // the element; one an element does not hold whole names nothing.
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Pair = NdType::makeNamedRecord("PAIR", 8);
+  Pair->FieldDisplayNames = {"a", "b"};
+  Pair->FieldDisplayOffsets = {0, 4};
+  Pair->FieldDisplayTypes = {NdType::makeInt(4), NdType::makeInt(4)};
+  auto Row = NdType::makeArray(NdType::makeInt(2), 2, 4);
+  auto Record = NdType::makeNamedRecord("APC_LIKE", 80);
+  Record->FieldDisplayNames = {"Type",  "Thread", "Reserved",
+                               "Items", "Grid",   "Name"};
+  Record->FieldDisplayOffsets = {0, 8, 16, 40, 56, 64};
+  Record->FieldDisplayTypes = {NdType::makeInt(1),
+                               Pointer,
+                               NdType::makeArray(Pointer, 3, 24),
+                               NdType::makeArray(Pair, 2, 16),
+                               NdType::makeArray(Row, 2, 8),
+                               NdType::makeArray(NdType::makeInt(1), 16, 16)};
+  const auto path = [&](uint64_t Offset, uint16_t Bytes) {
+    return Record->displayFieldPathAt(Offset, Bytes).value_or("(none)");
+  };
+  EXPECT_EQ(path(16, 8), "Reserved[0]");
+  EXPECT_EQ(path(24, 8), "Reserved[1]");
+  EXPECT_EQ(path(32, 8), "Reserved[2]");
+  // The array at its start is the array; an address inside it an element.
+  EXPECT_EQ(path(16, 0), "Reserved");
+  EXPECT_EQ(path(24, 0), "Reserved[1]");
+  // Half a pointer is no element.
+  EXPECT_EQ(path(20, 4), "(none)");
+  EXPECT_EQ(Record->displayFieldTypeAt(24, 8), Pointer);
+  EXPECT_EQ(Record->displayFieldTypeAt(20, 4), nullptr);
+  // Records in an array take their members' paths.
+  EXPECT_EQ(path(52, 4), "Items[1].b");
+  EXPECT_EQ(path(48, 4), "Items[1].a");
+  EXPECT_EQ(path(48, 8), "Items[1]");
+  // Without a width a record element's start is its first member, as a
+  // record member's is, unless the caller takes the element's address.
+  EXPECT_EQ(path(48, 0), "Items[1].a");
+  EXPECT_EQ(Record->displayFieldPathAt(48, 0, /*EnterNestedAtZero=*/false),
+            "Items[1]");
+  // A writer that names no elements keeps the array one member.
+  EXPECT_EQ(Record->displayFieldPathAt(24, 8, true, /*ArrayElements=*/false),
+            std::nullopt);
+  EXPECT_EQ(Record->displayFieldTypeAt(24, 8, /*ArrayElements=*/false),
+            nullptr);
+  EXPECT_EQ(Record->displayFieldTypeAt(52, 4)->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Record->displayFieldTypeAt(48, 8), Pair);
+  // An array of arrays indexes each.
+  EXPECT_EQ(path(62, 2), "Grid[1][1]");
+  EXPECT_EQ(path(58, 2), "Grid[0][1]");
+  EXPECT_EQ(path(60, 4), "Grid[1]");
+  // A wider read of characters invents no element.
+  EXPECT_EQ(path(68, 1), "Name[4]");
+  EXPECT_EQ(path(68, 4), "(none)");
+  // Past the record, nothing.
+  EXPECT_EQ(path(80, 1), "(none)");
+
+  // Two arrays at one offset, as a union's alternatives are, stay raw.
+  auto Union = NdType::makeNamedRecord("OVERLAY", 8);
+  Union->FieldDisplayNames = {"Words", "Halves"};
+  Union->FieldDisplayOffsets = {0, 0};
+  Union->FieldDisplayTypes = {NdType::makeArray(NdType::makeInt(4), 2, 8),
+                              NdType::makeArray(NdType::makeInt(2), 4, 8)};
+  EXPECT_EQ(Union->displayFieldPathAt(4, 4), std::nullopt);
+}
+
+TEST(HighCPointerAddresses, ArrayMembersPrintTheirElements) {
+  // The kernel's _KAPC holds `VOID *Reserved[3]`.  Declared, the routines
+  // stored 32 and 40 bytes into it are its elements, as IDA prints them;
+  // an untyped pointer stored to a record pointer member needs no cast in
+  // C, while an integer stored to one keeps its conversion.
+  auto Thread = NdType::makeNamedRecord("THREAD_LIKE", 16);
+  auto Record = NdType::makeNamedRecord("APC_LIKE", 64);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  Record->FieldDisplayNames = {"Type", "Thread", "Reserved", "NormalContext"};
+  Record->FieldDisplayOffsets = {0, 8, 32, 56};
+  Record->FieldDisplayTypes = {NdType::makeInt(1), NdType::makePtr(Thread),
+                               NdType::makeArray(Pointer, 3, 24), Pointer};
+  class ApcDbg : public NullDebugContext {
+  public:
+    explicit ApcDbg(TypeRef Record) : Record(std::move(Record)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x401000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "init_apc";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeVoid();
+      FS.Params = {{"Apc", NdType::makePtr(Record)},
+                   {"Owner", NdType::makePtr(NdType::makeVoid())},
+                   {"Routine", NdType::makeInt(8)}};
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Record;
+  } Dbg(Record);
+
+  const auto Word = NdType::makeInt(8, false);
+  HighFunc Init;
+  Init.Name = "init_apc";
+  Init.Entry = 0x401000;
+  Init.ReturnType = NdType::makeVoid();
+  Init.Params = {{"arg0", Word}, {"arg1", Word}, {"arg2", Word}};
+  const auto store = [&](uint64_t Offset, ExprPtr Value) {
+    HighStmt Write;
+    Write.Kind = StmtKind::Store;
+    Write.StoreAddr =
+        Offset ? HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Word),
+                                     HighExpr::makeConst(Offset, 8))
+               : parameter(0, Word);
+    Write.StoreVal = std::move(Value);
+    Init.Body.push_back(std::move(Write));
+  };
+  store(0, HighExpr::makeConst(18, 1));
+  store(32, parameter(2, Word));
+  store(40, parameter(2, Word));
+  store(8, parameter(1, Pointer));
+  store(56, parameter(2, Word));
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  // A unit holds the definitions of its records with its includes.
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text = R"c(
+struct APC_LIKE {
+  int8_t Type;
+  uint8_t Pad0[7];
+  struct THREAD_LIKE *Thread;
+  uint8_t Pad1[16];
+  void *Reserved[3];
+  void *NormalContext;
+};
+)c";
+    Definitions.Records = {{"APC_LIKE", false}};
+    Definitions.Tags = {{"APC_LIKE", false}, {"THREAD_LIKE", false}};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Init}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("Apc->Type = 18;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("Apc->Reserved[0] = "), std::string::npos) << Source;
+  EXPECT_NE(Source.find("Apc->Reserved[1] = "), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("+ 40"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("Apc->Thread = Owner;"), std::string::npos) << Source;
+  EXPECT_NE(
+      Source.find("Apc->NormalContext = (__typeof__(Apc->NormalContext))"),
+      std::string::npos)
+      << Source;
+  // Each element is the bytes the machine stored to.
+  compileAndRunCallOrdering(Source + R"c(
+int main(void) {
+  struct APC_LIKE apc = {0};
+  int owner = 0;
+  init_apc(&apc, &owner, 0x1234);
+  if (apc.Type != 18 || apc.Thread != (struct THREAD_LIKE *)&owner)
+    return 1;
+  if ((uintptr_t)apc.Reserved[0] != 0x1234 ||
+      (uintptr_t)apc.Reserved[1] != 0x1234 || apc.Reserved[2])
+    return 2;
+  return (uintptr_t)apc.NormalContext == 0x1234 ? 0 : 3;
+}
+)c");
+}
+
 TEST(HighCPointerAddresses, DebugTypedParametersOffsetInBytes) {
   // The machine passes `out` in a register; the debug information declares
   // `int32_t *out`.  Its uses, its definition and its prototype all take the

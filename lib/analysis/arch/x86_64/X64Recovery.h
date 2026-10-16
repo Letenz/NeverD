@@ -20,6 +20,23 @@ inline constexpr uint64_t ModelledFlags[] = {x86reg::CF, x86reg::PF, x86reg::AF,
                                              x86reg::OF};
 
 const RecoveryArchitecture &recoveryArchitecture();
+llvm::Error validateRuntimeMemoryOptions(const SpecializationOptions &Options);
+bool supportsRuntimeMemoryOperation(const LowOp &Op,
+                                    const SpecializationOptions &Options);
+void seedRuntimeMemoryState(symbolic::SymContext &Ctx,
+                            symbolic::SymState &State,
+                            const SpecializationOptions &Options);
+llvm::Error validateRuntimeControlOptions(const SpecializationOptions &Options);
+bool supportsRuntimeControlOperation(const LowOp &Op,
+                                     const SpecializationOptions &Options);
+RuntimeControlState
+seedRuntimeControlState(symbolic::SymContext &Ctx,
+                        const SpecializationOptions &Options);
+std::optional<RuntimeControlTransition>
+lowerRuntimeControlOperation(const LowOp &Op, symbolic::SymState &State,
+                             const RuntimeControlState &Controls,
+                             const SpecializationOptions &Options,
+                             llvm::function_ref<NdVar(uint16_t)> Temporary);
 std::string externalExitDigest(const SpecializationExternalExit &Exit);
 llvm::Error validateExternalExits(const SpecializationResult &Result,
                                   const SpecializationOptions &Options);

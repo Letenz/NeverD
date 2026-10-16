@@ -7,6 +7,7 @@
 #include "LocalTypesDebugContext.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
@@ -270,6 +271,31 @@ std::optional<FunctionSym> signatureOf(const types::TypeLibrary &Library,
   return Declared;
 }
 
+namespace {
+
+/// How a value of \p Type passes: void, a float, a record or an integer or
+/// pointer, with its size.
+std::pair<NdTypeKind, uint16_t> passing(const TypeRef &Type) {
+  if (!Type || Type->Kind == NdTypeKind::Void)
+    return {NdTypeKind::Void, 0};
+  if (Type->Kind == NdTypeKind::Float ||
+      (Type->Kind == NdTypeKind::Struct && !Type->IsEnum))
+    return {Type->Kind, Type->Size};
+  return {NdTypeKind::Int, Type->Size};
+}
+
+} // namespace
+
+bool passesAlike(const FunctionSym &A, const FunctionSym &B) {
+  if (A.Params.size() != B.Params.size() ||
+      passing(A.ReturnType) != passing(B.ReturnType))
+    return false;
+  for (size_t I = 0; I < A.Params.size(); ++I)
+    if (passing(A.Params[I].second) != passing(B.Params[I].second))
+      return false;
+  return true;
+}
+
 llvm::StringSet<> prototypeTypeNames(const types::TypeLibrary &Library) {
   std::vector<std::string> Work;
   for (const auto &Entry : Library.prototypes()) {
@@ -296,9 +322,11 @@ llvm::StringSet<> prototypeTypeNames(const types::TypeLibrary &Library) {
 
 LocalTypesDebugContext::LocalTypesDebugContext(
     const DebugContext &Inner, std::shared_ptr<const types::TypeLibrary> Types,
-    std::map<va_t, std::string> Declarations)
+    std::map<va_t, std::string> Declarations, const BinaryImage *Image,
+    std::vector<types::HeaderLibrary> Headers)
     : Inner(Inner), Types(std::move(Types)),
-      Declarations(std::move(Declarations)) {}
+      Declarations(std::move(Declarations)), Image(Image),
+      Headers(std::move(Headers)) {}
 
 LocalTypesDebugContext::~LocalTypesDebugContext() {
   std::lock_guard<std::mutex> Guard(Mutex);
@@ -467,6 +495,8 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
         Type && Type->Kind == types::TypeKind::Enum)
       Result.Enumerations.push_back(Name);
   }
+  Result.Types = Embedded.Types;
+  Result.DeclaredTypes = Embedded.DeclaredTypes;
   return Result;
 }
 
@@ -478,15 +508,62 @@ llvm::StringSet<> LocalTypesDebugContext::readTypes() const {
   return Names;
 }
 
+std::optional<types::HeaderLibrary> LocalTypesDebugContext::prototypeHeader(
+    llvm::StringRef Name, const types::FunctionDef *Function) const {
+  // Joining a header library shares its prototypes.
+  for (const types::HeaderLibrary Library : Headers)
+    if (const types::TypeLibrary *Header = types::headerLibrary(Library))
+      if (Header->findPrototype(Name) == Function)
+        return Library;
+  return std::nullopt;
+}
+
 std::optional<FunctionSym>
-LocalTypesDebugContext::prototype(llvm::StringRef Name) const {
+LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
   std::lock_guard<std::mutex> Guard(Mutex);
   if (auto Known = Signatures.find(Name); Known != Signatures.end())
     return Known->second;
   std::optional<FunctionSym> &Signature = Signatures[Name];
-  if (const types::FunctionDef *Function = Types->findPrototype(Name))
-    Signature = signatureOf(*Types, *Function, Name);
+  const auto Function = Types->prototypes().find(Name);
+  if (Function == Types->prototypes().end() || !Function->second)
+    return Signature;
+  Signature = signatureOf(*Types, *Function->second, Name);
+  if (!Signature)
+    return Signature;
+  const std::optional<types::HeaderLibrary> Header =
+      prototypeHeader(Name, Function->second.get());
+  Signature->PrototypeLibrary =
+      Header ? types::headerLibraryName(*Header).str() : "local-types";
+  types::RenderOptions Options;
+  Options.Lang = types::Language::C;
+  if (Header)
+    Options.Spelling = types::headerLibrarySpelling(*Header);
+  Signature->PrototypeDeclaration =
+      (Function->second->NoReturn ? "_Noreturn " : "") +
+      types::spellType(*Types, *types::makeFunction(Function->second),
+                       Name.str(), Options);
   return Signature;
+}
+
+std::vector<std::string> LocalTypesDebugContext::statedNames(va_t Entry) const {
+  if (!Image)
+    return {};
+  std::lock_guard<std::mutex> Guard(Mutex);
+  auto [Known, Added] = StatedNames.try_emplace(Entry);
+  if (Added)
+    for (const llvm::StringRef Name : Image->statedFunctionNamesAt(Entry))
+      Known->second.push_back(Name.str());
+  return Known->second;
+}
+
+std::string LocalTypesDebugContext::importName(va_t Addr) const {
+  if (!Image)
+    return {};
+  std::lock_guard<std::mutex> Guard(Mutex);
+  auto [Known, Added] = ImportNames.try_emplace(Addr);
+  if (Added)
+    Known->second = importCalleeName(*Image, Addr);
+  return Known->second;
 }
 
 std::optional<FunctionSym> LocalTypesDebugContext::declared(va_t Entry) const {
@@ -508,11 +585,11 @@ std::optional<FunctionSym> LocalTypesDebugContext::declared(va_t Entry) const {
 std::optional<FunctionSym>
 LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   std::optional<FunctionSym> Function = Inner.resolveFunction(Addr);
+  const bool AtEntry = Function && Function->Addr == Addr;
   // The user's declaration states the function's parameters and return,
   // whatever the debug information says; its name and extent stay.
   if (std::optional<FunctionSym> User = declared(Addr)) {
-    FunctionSym Declared =
-        Function && Function->Addr == Addr ? *Function : FunctionSym();
+    FunctionSym Declared = AtEntry ? *Function : FunctionSym();
     Declared.Addr = Addr;
     Declared.ReturnType = std::move(User->ReturnType);
     Declared.Params = std::move(User->Params);
@@ -521,16 +598,45 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
     Declared.PlatformConvention = true;
     return Declared;
   }
-  // Only a function the debug information names at its entry and leaves
-  // untyped: a declaration of the program's own describes its build.
-  if (!Function || Function->Addr != Addr || Function->Name.empty() ||
-      Function->ReturnType || !Function->Params.empty())
+  // A declaration of the program's own describes its build.
+  if (AtEntry && (Function->ReturnType || !Function->Params.empty()))
     return Function;
-  if (std::optional<FunctionSym> Declared = prototype(Function->Name)) {
-    Function->ReturnType = std::move(Declared->ReturnType);
-    Function->Params = std::move(Declared->Params);
-  }
-  return Function;
+  // The prototype of the name the function is displayed under: the export
+  // or symbol the image states, else the debug information's name.  Where a
+  // linker folded identical functions, the entry's other names name other
+  // functions, whose prototypes must pass and return alike for the code to
+  // follow the shown one.
+  const std::vector<std::string> Names = statedNames(Addr);
+  std::string Name = Names.empty() ? std::string() : Names.front();
+  if (Name.empty() && AtEntry)
+    Name = Function->Name;
+  std::optional<FunctionSym> Known =
+      Name.empty() ? std::nullopt : resolvePrototype(Name);
+  if (Known)
+    for (size_t I = 1; I < Names.size(); ++I)
+      if (const std::optional<FunctionSym> Other = resolvePrototype(Names[I]);
+          Other && !passesAlike(*Known, *Other))
+        return Function;
+  // A call through an import's slot or stub reaches the routine another
+  // module exports under the import's name, which the call names it by.
+  if (!Known && !AtEntry)
+    if (const std::string Imported = importName(Addr); !Imported.empty())
+      if ((Known = resolvePrototype(Imported))) {
+        Known->Addr = Addr;
+        return Known;
+      }
+  if (!Known)
+    return Function;
+  FunctionSym Typed = AtEntry ? *Function : FunctionSym();
+  Typed.Addr = Addr;
+  Typed.ReturnType = std::move(Known->ReturnType);
+  Typed.Params = std::move(Known->Params);
+  if (Known->CallConv != DebugCallConv::Unknown)
+    Typed.CallConv = Known->CallConv;
+  Typed.PlatformConvention = true;
+  Typed.PrototypeLibrary = std::move(Known->PrototypeLibrary);
+  Typed.PrototypeDeclaration = std::move(Known->PrototypeDeclaration);
+  return Typed;
 }
 
 } // namespace neverd::sdk

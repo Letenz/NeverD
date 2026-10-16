@@ -29,11 +29,26 @@ TEST(InterpreterLLVMRefinement, SegmentedContractRequiresAuthenticatedBases) {
   Program P({0xb8, 7, 0, 0, 0, 0xc3});
   const auto R = P.recover();
   ASSERT_TRUE(R.complete());
-  P.Options.X64SegmentedReads = true;
+  for (bool Write : {false, true}) {
+    P.Options.X64SegmentedReads = !Write;
+    P.Options.X64SegmentedWrites = Write;
+    const auto Proof = P.check(R.Residual, constantResult());
+    rejected(Proof, Stage::Native);
+    EXPECT_EQ(Proof.Native.Proof.Status, Status::Unsupported);
+    EXPECT_NE(Proof.Diagnostic.find("FS/GS base inputs"), std::string::npos);
+    EXPECT_FALSE(Proof.Native.Certificate);
+  }
+}
+
+TEST(InterpreterLLVMRefinement, MXCSRContractRequiresAuthenticatedState) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete());
+  P.Options.X64MXCSRMask = 0xffbf;
   const auto Proof = P.check(R.Residual, constantResult());
   rejected(Proof, Stage::Native);
   EXPECT_EQ(Proof.Native.Proof.Status, Status::Unsupported);
-  EXPECT_NE(Proof.Diagnostic.find("FS/GS base inputs"), std::string::npos);
+  EXPECT_NE(Proof.Diagnostic.find("MXCSR state"), std::string::npos);
   EXPECT_FALSE(Proof.Native.Certificate);
 }
 

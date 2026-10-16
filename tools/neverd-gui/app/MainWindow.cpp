@@ -101,6 +101,8 @@ constexpr char LayoutFileName[] = "desktop.json";
 /// The level of a session message that reports an error.
 constexpr int ErrorMessageLevel = 2;
 constexpr char OpcodeBytesKey[] = "listing/opcodeBytes";
+// Whether the code windows and the disassembly follow each other's cursor.
+constexpr char SynchronizeCodeKey[] = "code/synchronize";
 constexpr char AnalysisIndicatorKey[] = "analysis/indicator";
 constexpr char BinaryProcessorKey[] = "load/binaryProcessor";
 // String search defaults and bounds (the worker's string_options).
@@ -240,6 +242,7 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
     : KDDockWidgets::QtWidgets::MainWindow(QStringLiteral("NeverDMainWindow")),
       session_(session), mcp_(mcp), broker_(broker), actions_(this) {
   instance_ = this;
+  synchronizeCode_ = QSettings().value(SynchronizeCodeKey, true).toBool();
   frame_ = WindowFrame::attach(*this);
   setWindowIcon(icon(QStringLiteral("app")));
   setCenterWidgetMargins(dockAreaMargins());
@@ -654,6 +657,9 @@ void MainWindow::buildDocks() {
                   lastCodeView_.clear();
                 if (it.key() != QLatin1String(OutputDock))
                   hexActive_ = it.key() == QLatin1String(HexDock);
+                // What the commands act on follows the view: a pseudocode
+                // window converts a parameter, the disassembly an operand.
+                updateActions();
                 return;
               }
           });
@@ -705,6 +711,14 @@ CodeView *MainWindow::codeView(const QString &representation) {
               output_->append(
                   tr("This instruction has no source-line address mapping."),
                   1);
+          });
+  // A click or key that moves the code's cursor takes the disassembly to the
+  // row's instruction, as Hex-Rays' synchronized views do, leaving the focus
+  // and the jump history alone; Tab also moves the focus there.
+  connect(view->text(), &CodeText::locationChanged, this,
+          [this, view](Address address) {
+            if (synchronizeCode_ && view->text()->hasFocus())
+              disassembly_->navigate(address, false);
           });
   connect(view->text(), &CodeText::nameActivated, this,
           [this, view](const QString &name) { activateCodeName(view, name); });
@@ -1076,7 +1090,25 @@ void MainWindow::synchronize(Address address, QObject *source) {
     hex_->setCurrent(address, 1);
   const auto function = currentFunction();
   session_.publishSelection(address, function, QStringLiteral("disassembly"));
+  // The user's own move in the disassembly takes the code windows showing
+  // its function to the instruction's rows. One showing another function
+  // stays: following it would decompile on every step.
+  if (synchronizeCode_ && function &&
+      disassembly_->isAncestorOf(QApplication::focusWidget()))
+    for (auto *view : visibleCodeViews())
+      if (view->text()->function() == function)
+        view->text()->revealAddress(address);
   updateActions();
+}
+
+QVector<CodeView *> MainWindow::visibleCodeViews() const {
+  QVector<CodeView *> views;
+  for (const char *id : {PseudocodeDock, RepresentationDock})
+    if (auto *dock = docks_.value(QLatin1String(id)))
+      if (auto *view = qobject_cast<CodeView *>(dock->widget());
+          view && view->isVisible())
+        views.append(view);
+  return views;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1167,9 +1199,16 @@ void MainWindow::connectActions() {
   });
   // An operand's number shows in the base the user picks, with its sign or
   // bits changed: the number under the cursor, else the line's last number.
+  // A pseudocode number takes the bases, H toggling between hexadecimal and
+  // decimal as Hex-Rays' H does.
   const auto formatOperand = [this](const QString &action) {
-    if (focusedCodeView())
+    if (auto *code = focusedCodeView()) {
+      if (action == QLatin1String("decimal"))
+        formatCodeNumber(code, std::nullopt);
+      else if (const auto radix = literalRadixNamed(action.toStdString()))
+        formatCodeNumber(code, *radix);
       return;
+    }
     if (const auto address = currentAddress())
       session_.formatOperand(*address, disassembly_->currentOperand(), action);
   };
@@ -1500,20 +1539,26 @@ void MainWindow::updateActions() {
       ->setEnabled(dataItems && !focusedCodeView());
   const bool operandFormats =
       location && !session_.readOnly() && session_.keepsOperandFormats();
+  CodeView *code = focusedCodeView();
+  // A pseudocode window's numbers take the bases; offsets, signs and
+  // complements are the disassembly's.
+  const bool codeNumbers = code && loaded && !session_.readOnly() &&
+                           CodeView::isSource(code->representation()) &&
+                           code->text()->function().has_value();
+  for (const auto id : {ActionId::EditOperandNumber, ActionId::EditOperandHex,
+                        ActionId::EditOperandDecimal,
+                        ActionId::EditOperandBinary, ActionId::EditOperandChar})
+    actions_.action(id)->setEnabled(code ? codeNumbers : operandFormats);
   for (const auto id :
-       {ActionId::EditOperandNumber, ActionId::EditOperandHex,
-        ActionId::EditOperandDecimal, ActionId::EditOperandBinary,
-        ActionId::EditOperandChar, ActionId::EditOperandOffset,
-        ActionId::EditOperandNegate, ActionId::EditOperandInvert})
-    actions_.action(id)->setEnabled(operandFormats);
+       {ActionId::EditOperandOffset, ActionId::EditOperandNegate,
+        ActionId::EditOperandInvert})
+    actions_.action(id)->setEnabled(operandFormats && !code);
   // A structure offset is the disassembly's; a pseudocode window's
   // parameters take a type instead.
   actions_.action(ActionId::EditOperandStruct)
-      ->setEnabled(operandFormats && session_.showsStructOffsets() &&
-                   !focusedCodeView());
+      ->setEnabled(operandFormats && session_.showsStructOffsets() && !code);
   const bool declarations =
       location && !session_.readOnly() && session_.typesFunctions();
-  CodeView *code = focusedCodeView();
   actions_.action(ActionId::EditSetType)
       ->setEnabled(declarations && (code ? code->text()->function().has_value()
                                          : currentFunction().has_value()));
@@ -2886,7 +2931,11 @@ void MainWindow::runCommand(const QString &command, const QString &argument) {
 }
 
 void MainWindow::contextMenu(const QPoint &globalPosition) {
+  // The click moved the cursor: the commands act where it is now.
+  updateActions();
   QMenu menu(this);
+  if (auto *code = focusedCodeView())
+    addNumberActions(menu, code);
   for (const auto id : {ActionId::JumpOperand, ActionId::JumpXrefOperand,
                         ActionId::JumpXrefsTo, ActionId::JumpXrefsFrom})
     menu.addAction(actions_.action(id));
@@ -2918,17 +2967,49 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
     if (auto *action = actions_.action(id); action->isEnabled())
       menu.addAction(action);
   menu.addSeparator();
-  for (const auto id : {ActionId::ViewToggleGraph, ActionId::ViewPseudocode,
-                        ActionId::ViewMedIR})
+  menu.addAction(actions_.action(ActionId::ViewToggleGraph));
+  // Tab, the switch to the other pane's row, with its key; a code window
+  // names it by where it goes.
+  if (!focusedCodeView())
+    menu.addAction(actions_.action(ActionId::JumpPseudocode));
+  for (const auto id : {ActionId::ViewPseudocode, ActionId::ViewMedIR})
     menu.addAction(actions_.action(id));
   menu.addSeparator();
   menu.addAction(actions_.action(ActionId::EditCopy));
   menu.addAction(actions_.action(ActionId::EditCopyAddress));
+  // A code window selects its whole text for Copy, as an editor does.
+  if (auto *code = focusedCodeView()) {
+    auto *all = menu.addAction(icon(QStringLiteral("select_all")),
+                               tr("Select &all") + QLatin1Char('\t') +
+                                   QKeySequence(QKeySequence::SelectAll)
+                                       .toString(QKeySequence::NativeText));
+    all->setObjectName(QStringLiteral("codeSelectAll"));
+    connect(all, &QAction::triggered, code->text(), &CodeText::selectAll);
+  }
   // A code window's folds: the declarations before the function and the
   // recognized library operations.
   if (auto *code = focusedCodeView()) {
     CodeText *text = code->text();
     menu.addSeparator();
+    // Tab goes to the row's instruction and takes the focus there.
+    auto *jump = actions_.action(ActionId::JumpPseudocode);
+    auto *cross =
+        menu.addAction(icon(QStringLiteral("jump_disassembly")),
+                       tr("Jump to disassembly") + QLatin1Char('\t') +
+                           jump->shortcut().toString(QKeySequence::NativeText));
+    cross->setObjectName(QStringLiteral("codeJumpDisassembly"));
+    connect(cross, &QAction::triggered, jump, &QAction::trigger);
+    // Hex-Rays' Synchronize with: the code and the disassembly follow each
+    // other's cursor, or browse apart with Tab to cross over.
+    auto *follow = menu.addAction(icon(QStringLiteral("sync")),
+                                  tr("Synchronize with disassembly"));
+    follow->setObjectName(QStringLiteral("codeSynchronize"));
+    follow->setCheckable(true);
+    follow->setChecked(synchronizeCode_);
+    connect(follow, &QAction::toggled, this, [this](bool enabled) {
+      synchronizeCode_ = enabled;
+      QSettings().setValue(SynchronizeCodeKey, enabled);
+    });
     code->addSourceActions(menu);
     if (text->hasPrelude()) {
       const bool folded = text->preludeFolded();
@@ -3089,6 +3170,93 @@ void MainWindow::convertToStruct() {
       [this](const QString &, const QString &message) {
         output_->append(tr("Cannot convert the parameter: %1").arg(message), 2);
       });
+}
+
+void MainWindow::formatCodeNumber(CodeView *code,
+                                  std::optional<LiteralRadix> radix) {
+  if (session_.readOnly())
+    return;
+  const auto function = code->text()->function();
+  const auto target = code->text()->numberTarget();
+  if (!function || !target) {
+    output_->append(tr("Put the cursor on a number of the pseudocode to "
+                       "change its base"),
+                    1);
+    return;
+  }
+  const auto base =
+      radix.value_or(target->shown == LiteralRadix::Hex ? LiteralRadix::Decimal
+                                                        : LiteralRadix::Hex);
+  // A base whose spelling would change the literal's C type, or a character
+  // constant of something else than ASCII characters, says so instead.
+  if (base != LiteralRadix::Number &&
+      !spellIntegerLiteral(target->literal, base, target->syntax)) {
+    output_->append(tr("%1 has no spelling in that base with the same type")
+                        .arg(QString::fromStdString(target->literal.Text)),
+                    1);
+    return;
+  }
+  const auto name = literalRadixName(base);
+  session_.editCode(
+      {{"address", hexAddress(*function)},
+       {"representation", code->representation()},
+       {"source_options", code->text()->sourceOptions()},
+       {"kind", "number"},
+       {"line", target->line},
+       {"anchor", target->anchor},
+       {"index", target->index},
+       {"radix", QString::fromLatin1(name.data(), qsizetype(name.size()))}},
+      session_.epoch());
+}
+
+void MainWindow::addNumberActions(QMenu &menu, CodeView *code) {
+  const auto target = code->text()->numberTarget();
+  if (!target || session_.readOnly())
+    return;
+  // Each base shows what the number would read in it, the decompiler's own
+  // choice first; the one the user gave it is checked.
+  auto *group = new QActionGroup(&menu);
+  const QPointer<CodeView> view = code;
+  const auto add = [&](LiteralRadix radix, const QIcon &image,
+                       const QString &title) {
+    const auto spelled =
+        radix == LiteralRadix::Number
+            ? std::optional(target->literal.Text)
+            : spellIntegerLiteral(target->literal, radix, target->syntax);
+    auto *action =
+        menu.addAction(image, spelled ? title + QLatin1Char('\t') +
+                                            QString::fromStdString(*spelled)
+                                      : title);
+    action->setObjectName(QStringLiteral("codeNumber_") +
+                          QString::fromLatin1(literalRadixName(radix).data()));
+    action->setCheckable(true);
+    action->setChecked(target->chosen == radix);
+    action->setEnabled(spelled.has_value());
+    group->addAction(action);
+    connect(action, &QAction::triggered, this, [this, view, radix] {
+      if (view)
+        formatCodeNumber(view, radix);
+    });
+  };
+  const auto like = [this](ActionId id) {
+    auto *action = actions_.action(id);
+    return std::pair{action->icon(), action->text()};
+  };
+  for (const auto &[radix, id] :
+       {std::pair{LiteralRadix::Number, ActionId::EditOperandNumber},
+        std::pair{LiteralRadix::Hex, ActionId::EditOperandHex},
+        std::pair{LiteralRadix::Decimal, ActionId::EditOperandDecimal}}) {
+    const auto [image, title] = like(id);
+    add(radix, image, title);
+  }
+  add(LiteralRadix::Octal, icon(QStringLiteral("operand_octal")), tr("Octa&l"));
+  for (const auto &[radix, id] :
+       {std::pair{LiteralRadix::Binary, ActionId::EditOperandBinary},
+        std::pair{LiteralRadix::Char, ActionId::EditOperandChar}}) {
+    const auto [image, title] = like(id);
+    add(radix, image, title);
+  }
+  menu.addSeparator();
 }
 
 void MainWindow::editFunction(Address entry) {

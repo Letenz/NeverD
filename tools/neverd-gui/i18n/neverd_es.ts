@@ -2331,6 +2331,30 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Coloque el cursor sobre un parámetro de la función para convertirlo</translation>
     </message>
     <message>
+        <source>Select &amp;all</source>
+        <translation>Seleccionar &amp;todo</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>Saltar al desensamblado</translation>
+    </message>
+    <message>
+        <source>Synchronize with disassembly</source>
+        <translation>Sincronizar con el desensamblado</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>Octa&amp;l</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>Coloque el cursor sobre un número del pseudocódigo para cambiar su base</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 no se puede escribir en esa base con el mismo tipo</translation>
+    </message>
+    <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
         <translation>No se pudo determinar si %1 tiene un archivo MAP: %2</translation>
     </message>

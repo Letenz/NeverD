@@ -784,5 +784,49 @@ TEST(DarwinLinking,
     llvm::consumeError(std::move(BackendError));
   }
 }
+TEST(DarwinLinking, ExportTriesRetainTerminalPrefixesAndMappedAddresses) {
+  LinkingImage I(false);
+  const uint8_t Trie[] = {0, 1,   '_', 'x', 0, 6, 3,    0,    0x80, 0x20,
+                          1, 'y', 0,   14,  3, 0, 0x81, 0x20, 0};
+  std::copy(std::begin(Trie), std::end(Trie), I.Bytes.begin() + 33500);
+  I.u32(I.Fixups + 40, 33500);
+  I.u32(I.Fixups + 44, sizeof(Trie));
+  auto R = linking(I);
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+  ASSERT_EQ(R->Exports.size(), 2u);
+  EXPECT_EQ(R->Exports[0].Name, "_x");
+  EXPECT_EQ(R->Exports[1].Name, "_xy");
+  EXPECT_EQ(R->Exports[0].Address, I.Base + 4096);
+  EXPECT_EQ(R->Exports[1].Address, I.Base + 4097);
+  for (const auto &Bad : std::vector<std::vector<uint8_t>>{
+           {0, 1, 'x', 0, 0},
+           {5, 0, 0},
+           {0, 1, 'x', 0, 5, 4, 8, 0x80, 0x20, 0, 0},
+           {0, 1, 'x', 0, 5, 4, 0, 0x80, 0x80, 0x02, 0},
+           {0, 2, 'x', 0, 8, 'x', 0, 8, 3, 0, 0x80, 0x20, 0}}) {
+    auto Copy = I;
+    std::fill_n(Copy.Bytes.begin() + 33500, sizeof(Trie), 0);
+    std::copy(Bad.begin(), Bad.end(), Copy.Bytes.begin() + 33500);
+    Copy.u32(Copy.Fixups + 44, Bad.size());
+    auto Rejected = linking(Copy);
+    EXPECT_FALSE(bool(Rejected));
+    llvm::consumeError(Rejected.takeError());
+  }
+}
+TEST(DarwinLinking, ThreadLocalExportMustNameAnAdmittedDescriptor) {
+  LinkingImage I(false);
+  const uint8_t Trie[] = {0, 1, '_', 'x', 0, 6, 3, 1, 0x80, 0x20, 0};
+  std::copy(std::begin(Trie), std::end(Trie), I.Bytes.begin() + 33500);
+  I.u32(I.Fixups + 40, 33500);
+  I.u32(I.Fixups + 44, sizeof(Trie));
+  auto Facts = linking(I);
+  ASSERT_TRUE(bool(Facts)) << llvm::toString(Facts.takeError());
+  darwin_test::TemporaryImage File(I);
+  auto R =
+      darwin_model::loadImage(File.path(), darwin_model::macOSProfile(), {});
+  ASSERT_FALSE(bool(R));
+  EXPECT_NE(llvm::toString(R.takeError()).find("not a descriptor"),
+            std::string::npos);
+}
 } // namespace
 } // namespace neverd::emulation

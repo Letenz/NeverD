@@ -2637,31 +2637,55 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
 }
 
 std::optional<FunctionSym>
+LLVMCWriter::debugFunction(const llvm::Function &Callee) const {
+  if (!Dbg)
+    return std::nullopt;
+  if (auto VAOr = rewrite_source::getOriginalVA(Callee)) {
+    if (*VAOr && **VAOr)
+      if (auto FS = Dbg->resolveFunction(static_cast<va_t>(**VAOr)))
+        return FS;
+  }
+  if (auto Slot = parseNdCodePtrSymbol(Callee.getName()))
+    if (auto FS = Dbg->resolveFunction(*Slot))
+      return FS;
+  llvm::StringRef Hex = Callee.getName();
+  if (Hex.consume_front(kAutoFuncPrefix) ||
+      Hex.consume_front(kAutoFuncPrefixEVM)) {
+    uint64_t Addr = 0;
+    if (!Hex.empty() && !Hex.getAsInteger(16, Addr) && Addr)
+      if (auto FS = Dbg->resolveFunction(static_cast<va_t>(Addr)))
+        return FS;
+  }
+  return std::nullopt;
+}
+
+std::optional<FunctionSym>
 LLVMCWriter::debugCallee(const llvm::CallBase &Call) const {
   if (!Dbg)
     return std::nullopt;
-  if (const auto *Callee = Call.getCalledFunction()) {
-    if (auto VAOr = rewrite_source::getOriginalVA(*Callee)) {
-      if (*VAOr && **VAOr)
-        if (auto FS = Dbg->resolveFunction(static_cast<va_t>(**VAOr)))
-          return FS;
-    }
-    if (auto Slot = parseNdCodePtrSymbol(Callee->getName()))
-      if (auto FS = Dbg->resolveFunction(*Slot))
-        return FS;
-    llvm::StringRef Hex = Callee->getName();
-    if (Hex.consume_front(kAutoFuncPrefix) ||
-        Hex.consume_front(kAutoFuncPrefixEVM)) {
-      uint64_t Addr = 0;
-      if (!Hex.empty() && !Hex.getAsInteger(16, Addr) && Addr)
-        if (auto FS = Dbg->resolveFunction(static_cast<va_t>(Addr)))
-          return FS;
-    }
-  }
+  if (const auto *Callee = Call.getCalledFunction())
+    if (auto FS = debugFunction(*Callee))
+      return FS;
   if (auto Slot = imageDataVA(Call.getCalledOperand()))
     if (auto FS = Dbg->resolveFunction(*Slot))
       return FS;
   return std::nullopt;
+}
+
+std::optional<unsigned>
+LLVMCWriter::prototypedParamCount(const llvm::Function &Callee) const {
+  // printedCallArgLimit's prototype case: parameters, and a result returned
+  // through a hidden pointer counted unless a member's `this` precedes it.
+  const std::optional<FunctionSym> FS = debugFunction(Callee);
+  if (!FS || FS->Params.empty() || Callee.isVarArg())
+    return std::nullopt;
+  const bool Indirect =
+      isMsvcIndirectReturn(FS->ReturnType, Opts.TheArch, Opts.Format);
+  if (Indirect && FS->Params.front().first == "this")
+    return std::nullopt;
+  const size_t Limit = FS->Params.size() + (Indirect ? 1 : 0);
+  return static_cast<unsigned>(
+      std::min<size_t>(Limit, Callee.getFunctionType()->getNumParams()));
 }
 
 bool LLVMCWriter::looksLikeHiddenSretOperand(const llvm::Value *Arg) const {

@@ -10,6 +10,7 @@
 #include "X64MachineFlags.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/symbolic/SymState.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Errc.h"
@@ -19,6 +20,48 @@
 #include <set>
 
 namespace neverd::analysis::x64 {
+llvm::Error validateRuntimeMemoryOptions(const SpecializationOptions &Options) {
+  if ((Options.X64SegmentedReads || Options.X64SegmentedWrites) &&
+      (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution))
+    return llvm::createStringError(
+        llvm::errc::invalid_argument,
+        "segmented memory requires explicit nonfaulting machine state");
+  return llvm::Error::success();
+}
+
+bool supportsRuntimeMemoryOperation(const LowOp &Op,
+                                    const SpecializationOptions &Options) {
+  if ((Op.MemoryAddressSpace != NdMemoryAddressSpace::X86FS &&
+       Op.MemoryAddressSpace != NdMemoryAddressSpace::X86GS) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None)
+    return false;
+  const auto Memory = lowMemoryOperands(Op);
+  if (!Memory.Complete)
+    return false;
+  if (Op.Opcode == NdOp::LOAD)
+    return Options.X64SegmentedReads &&
+           (Op.NumInputs != 2 || Op.Inputs[0].isConst());
+  if (Op.Opcode != NdOp::STORE || !Options.X64SegmentedWrites ||
+      Memory.Address->Size != 8 ||
+      (Op.NumInputs == 3 && !Op.Inputs[0].isConst()))
+    return false;
+  return Memory.AccessSize == 1 || Memory.AccessSize == 2 ||
+         Memory.AccessSize == 4 || Memory.AccessSize == 8;
+}
+
+void seedRuntimeMemoryState(symbolic::SymContext &Ctx,
+                            symbolic::SymState &State,
+                            const SpecializationOptions &Options) {
+  if (!Options.X64SegmentedReads && !Options.X64SegmentedWrites)
+    return;
+  // Projection forgets base correlations across nodes, enlarging the input
+  // domain. Distinct variables do not assert distinct linear addresses.
+  State.setX64MemoryAddressSpaceBase(NdMemoryAddressSpace::X86FS,
+                                     Ctx.mkFreshVar(64, "fs_base"));
+  State.setX64MemoryAddressSpaceBase(NdMemoryAddressSpace::X86GS,
+                                     Ctx.mkFreshVar(64, "gs_base"));
+}
+
 llvm::Expected<RawEnvironmentPreparation>
 validateRawEnvironmentDeclarations(const SpecializationOptions &Options) {
   if (Options.Architecture != Arch::X64)

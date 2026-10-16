@@ -3891,6 +3891,32 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsDecompileWithTheirPrototypes) {
       signature("PsCreateSystemThread").find("void (*StartRoutine)(void*)"),
       std::string::npos);
   EXPECT_EQ(signature("IofCompleteRequest").rfind("void ", 0), 0u);
+  // The linker folded PsGetThreadProcess into this, so that the PDB names
+  // neither; the export it is shown under names it.
+  EXPECT_NE(signature("IoThreadToProcess")
+                .find("_EPROCESS* IoThreadToProcess(_ETHREAD* Thread)"),
+            std::string::npos);
+  // Exported under another name than the PDB's RtlAreNamesEqual.
+  EXPECT_NE(signature("FsRtlAreNamesEqual").find("Name1, "), std::string::npos);
+}
+
+TEST_F(SessionCAPIKernelInputs, KernelExportsTakeTheirPrototypesWithoutThePDB) {
+  const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
+  if (!Kernel)
+    GTEST_SKIP() << "set NEVERD_TYPES_NTOSKRNL to ntoskrnl.exe";
+  neverd_session_set_debug_info_enabled(Session, 0);
+  ASSERT_EQ(neverd_session_load(Session, Kernel), 1)
+      << takeString(neverd_last_error(Session));
+  const int Index = neverd_func_find_by_name(Session, "NtCreateFile");
+  ASSERT_GE(Index, 0);
+  const std::string Source =
+      takeString(neverd_decompile(Session, neverd_func_entry(Session, Index)));
+  EXPECT_NE(Source.find("/* neverd.prototype: windows-kernel-x64: NTSTATUS "
+                        "NtCreateFile(PHANDLE FileHandle, "),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("ULONG EaLength) */"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("uint32_t EaLength) {"), std::string::npos) << Source;
 }
 
 TEST_F(SessionCAPITest, FunctionsHoldTheRecordsTheirPDBTypes) {
@@ -4255,6 +4281,89 @@ TEST_F(SessionCAPITest, FunctionDeclarationsNeedNoDebugInformation) {
   const std::string Text = takeString(neverd_decompile(Session, Use));
   EXPECT_NE(Text.find("Device->Size"), std::string::npos) << Text;
   EXPECT_EQ(takeString(neverd_decompile(Session, *Other)), OtherBefore);
+}
+
+TEST_F(SessionCAPITest, KnownRoutinesTakeTheirPrototypesByTheirNames) {
+  // A driver without debug information whose exports are named as the
+  // Windows kernel's routines, which NeverD's kernel headers declare.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "known_routines.sys", std::ios::binary);
+  const std::string Driver =
+      write("known_routines.sys",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Driver.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_GE(neverd_session_discover_functions(Session), 0)
+      << takeString(neverd_last_error(Session));
+  const auto decompile = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  // The routine exported twice, as a linker that folds identical functions
+  // exports it, is shown under its first name, and takes that prototype.
+  const std::string Owner = decompile("IoThreadToProcess");
+  EXPECT_NE(Owner.find("/* neverd.prototype: windows-kernel-x64: PEPROCESS "
+                       "IoThreadToProcess(PETHREAD Thread) */"),
+            std::string::npos)
+      << Owner;
+  EXPECT_NE(Owner.find(" Thread) {"), std::string::npos) << Owner;
+  const std::string Allocate = decompile("ExAllocatePoolWithTag");
+  for (const char *Name : {"PoolType", "NumberOfBytes", "Tag"})
+    EXPECT_NE(Allocate.find(Name), std::string::npos) << Name << Allocate;
+  // One shown under a name the headers do not declare keeps the signature
+  // its code gives: the prototype of its other name describes another
+  // function.
+  EXPECT_EQ(decompile("AnUnknownRoutine").find("neverd.prototype"),
+            std::string::npos);
+  // KeClearEvent returns nothing and KeResetEvent the event's state: folded,
+  // which one a caller follows is unknown, and the code keeps its value.
+  const std::string Clear = decompile("KeClearEvent");
+  EXPECT_EQ(Clear.find("neverd.prototype"), std::string::npos) << Clear;
+  EXPECT_EQ(Clear.find("void KeClearEvent("), std::string::npos) << Clear;
+}
+
+TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
+  // A driver without debug information that calls routines the kernel
+  // exports, which NeverD's kernel headers declare.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "kernel_imports.sys", std::ios::binary);
+  const std::string Driver =
+      write("kernel_imports.sys",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Driver.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_GE(neverd_session_discover_functions(Session), 0)
+      << takeString(neverd_last_error(Session));
+  // Owner only jumps to IoThreadToProcess, which takes one parameter, and
+  // so passes the one it was given on.
+  const std::string Owner = takeString(neverd_decompile(Session, 0x180001000));
+  EXPECT_NE(Owner.find("Owner(int64_t arg0) {"), std::string::npos) << Owner;
+  EXPECT_NE(Owner.find("IoThreadToProcess((_ETHREAD*)(uintptr_t)arg0)"),
+            std::string::npos)
+      << Owner;
+  // The calls take what the prototypes declare and return what they
+  // return; the registers the allocation clobbered pass nothing on.
+  const int Index = neverd_func_find_by_name(Session, "Probe");
+  ASSERT_GE(Index, 0);
+  const std::string Probe =
+      takeString(neverd_decompile(Session, neverd_func_entry(Session, Index)));
+  EXPECT_NE(Probe.find("extern _EPROCESS* IoThreadToProcess(_ETHREAD* "
+                       "Thread);"),
+            std::string::npos)
+      << Probe;
+  EXPECT_NE(Probe.find("extern void ExFreePoolWithTag(void* P, uint32_t "
+                       "Tag);"),
+            std::string::npos)
+      << Probe;
+  EXPECT_NE(Probe.find(" = IoThreadToProcess((_ETHREAD*)(uintptr_t)arg0);"),
+            std::string::npos)
+      << Probe;
+  EXPECT_EQ(Probe.find("unknown"), std::string::npos) << Probe;
 }
 
 TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
@@ -5106,6 +5215,68 @@ llvm::json::Object takeView(const char *Text) {
   return Object ? std::move(*Object) : llvm::json::Object{};
 }
 
+TEST_F(SessionCAPITest, RustAndGoPseudocodeDefineTheProgramsTypesAsTheyDo) {
+  // A program that reads as Rust and as Go, whose PDB types a function's
+  // parameter as a record of anonymous members: each view defines the
+  // record as Local Types renders it in its language, and reaches the
+  // member through what holds its anonymous union.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "rust_types.exe", std::ios::binary);
+  const std::string Exe = write(
+      "rust_types.exe", std::string(std::istreambuf_iterator<char>(Input), {}));
+  neverd_session_set_pdb_path(Session,
+                              (Fixtures / "rust_types.pdb").string().c_str());
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Index = neverd_func_find_by_name(
+      Session, "_RNvCs8vGhbR5OvgK_13rust_eh_probe4main");
+  ASSERT_GE(Index, 0);
+  const auto Entry = neverd_func_entry(Session, Index);
+  const auto view = [&](const char *Stage, llvm::json::Object &First) {
+    std::string Text;
+    size_t Offset = 0;
+    for (int Pages = 0; Pages < 64; ++Pages) {
+      auto Page =
+          takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 2048));
+      if (!Offset)
+        First = Page;
+      if (!Page.getString("text"))
+        break;
+      Text += Page.getString("text")->str();
+      const auto Next = Page.getInteger("next_offset");
+      if (Page.getBoolean("complete").value_or(false) || !Next)
+        break;
+      Offset = static_cast<size_t>(*Next);
+    }
+    return Text;
+  };
+  const auto unread = [](const llvm::json::Object &Page) {
+    const llvm::json::Array *Reasons = Page.getArray("unread");
+    return Reasons ? Reasons->size() : size_t(0);
+  };
+  llvm::json::Object Page;
+  const std::string Rust = view("rust", Page);
+  EXPECT_NE(Rust.find("pub struct _DPC {\n    pub Anonymous: _DPC_0,"),
+            std::string::npos)
+      << Rust;
+  EXPECT_NE(Rust.find("pub union _DPC_0 {"), std::string::npos);
+  EXPECT_NE(Rust.find("(*Dpc).Anonymous.TargetInfoAsUlong"), std::string::npos);
+  EXPECT_EQ(Rust.find("NEVERD_TYPE__DPC"), std::string::npos);
+  EXPECT_EQ(unread(Page), 0u);
+  // Go reads the union's members through its methods.
+  const std::string Go = view("go", Page);
+  EXPECT_NE(Go.find("func (s *_DPC_0) TargetInfoAsUlong() *uint32 {"),
+            std::string::npos)
+      << Go;
+  EXPECT_NE(Go.find("*Dpc.Anonymous.TargetInfoAsUlong()"), std::string::npos);
+  EXPECT_EQ(Go.find("NEVERD_TYPE__DPC"), std::string::npos);
+  EXPECT_EQ(unread(Page), 0u);
+  // C keeps the definitions as C defines them.
+  const std::string C = view("c", Page);
+  EXPECT_NE(C.find("#ifndef NEVERD_TYPE__DPC"), std::string::npos) << C;
+  EXPECT_NE(C.find("Dpc->TargetInfoAsUlong"), std::string::npos);
+}
 TEST_F(SessionCAPITest,
        NativeIRViewPagesPreserveTextAndExactInstructionAnchors) {
   for (bool AArch64 : {false, true}) {
@@ -5552,7 +5723,8 @@ neverd_va_t seedAnalysisCacheSymbols(neverd_session_t Session) {
   return Entry;
 }
 
-TEST_F(SessionCAPITest, LLVMViewsDeferOnlyHighIRAndPreserveLaterSource) {
+TEST_F(SessionCAPITest,
+       NativeAnalysisViewsDeferOnlyHighIRAndPreserveLaterSource) {
   for (bool Floating : {false, true}) {
     SCOPED_TRACE(Floating);
     const auto Path = write(Floating ? "deferred-floating.elf" : "deferred.elf",
@@ -5562,13 +5734,24 @@ TEST_F(SessionCAPITest, LLVMViewsDeferOnlyHighIRAndPreserveLaterSource) {
     auto &State = *neverd::sdk::toSession(Session);
     neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
     ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
+    const auto analysisViews = [&] {
+      return std::array{
+          takeString(neverd_ir_low(Session, Entry)),
+          takeString(neverd_ir_med(Session, Entry)),
+          takeString(neverd_cfg_json(Session, Entry)),
+          takeString(neverd_ir_view_json(Session, Entry, "low", 0, 2048)),
+          takeString(neverd_ir_view_json(Session, Entry, "med", 0, 2048))};
+    };
+    const auto AnalysisViews = analysisViews();
+    for (const auto &Text : AnalysisViews)
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
     const auto Source = takeString(neverd_decompile(Session, Entry));
     const auto LLVM = takeString(neverd_decompile_llvm(Session, Entry));
     const auto IR = takeString(neverd_ir_llvm(Session, Entry));
     ASSERT_FALSE(Source.empty()) << takeString(neverd_last_error(Session));
     ASSERT_FALSE(LLVM.empty()) << takeString(neverd_last_error(Session));
     ASSERT_FALSE(IR.empty()) << takeString(neverd_last_error(Session));
-    for (const char *View : {"llvm", "llvmc"}) {
+    for (const char *View : {"low", "med", "llvm", "llvmc"}) {
       SCOPED_TRACE(View);
       neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
       ASSERT_EQ(neverd_prepare_function_view(Session, Entry, View), 1);
@@ -5578,6 +5761,7 @@ TEST_F(SessionCAPITest, LLVMViewsDeferOnlyHighIRAndPreserveLaterSource) {
       ASSERT_NE(Low, nullptr);
       const auto Facts =
           neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache);
+      EXPECT_EQ(analysisViews(), AnalysisViews);
       EXPECT_EQ(takeString(neverd_ir_llvm(Session, Entry)), IR);
       EXPECT_EQ(takeString(neverd_decompile_llvm(Session, Entry)), LLVM);
       EXPECT_TRUE(State.PipeResult.HighIRDeferred);
@@ -5588,6 +5772,7 @@ TEST_F(SessionCAPITest, LLVMViewsDeferOnlyHighIRAndPreserveLaterSource) {
       EXPECT_EQ(State.findLowFunc(Entry), Low);
       EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
                 Facts);
+      EXPECT_EQ(analysisViews(), AnalysisViews);
       EXPECT_EQ(takeString(neverd_ir_llvm(Session, Entry)), IR);
       EXPECT_EQ(takeString(neverd_decompile_llvm(Session, Entry)), LLVM);
       ASSERT_EQ(neverd_prepare_function_view(Session, Entry + 0x10, View), 1);
@@ -5595,6 +5780,18 @@ TEST_F(SessionCAPITest, LLVMViewsDeferOnlyHighIRAndPreserveLaterSource) {
       EXPECT_EQ(State.findLowFunc(Entry), nullptr);
       EXPECT_NE(State.findLowFunc(Entry + 0x10), nullptr);
     }
+    // The CFG API can be the first analysis request without explicit view
+    // preparation, and a later HighIR view must still finish the projection.
+    neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
+    EXPECT_EQ(takeString(neverd_cfg_json(Session, Entry)), AnalysisViews[2]);
+    EXPECT_TRUE(State.PipeResult.HighIRDeferred);
+    EXPECT_TRUE(State.PipeResult.HighFuncs.empty());
+    const auto *Low = State.findLowFunc(Entry);
+    ASSERT_FALSE(takeString(neverd_ir_high(Session, Entry)).empty());
+    EXPECT_FALSE(State.PipeResult.HighIRDeferred);
+    EXPECT_FALSE(State.PipeResult.HighFuncs.empty());
+    EXPECT_EQ(State.findLowFunc(Entry), Low);
+    EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
   }
 }
 

@@ -1638,6 +1638,42 @@ struct BinaryImage {
     return (kAutoFuncPrefix + llvm::utohexstr(Addr)).str();
   }
 
+  /// The name the program itself states for the function at \p Addr, as
+  /// getFunctionNameAt chooses it: the export there, else the symbol of the
+  /// highest functionNameRank where a producer stated it.  Empty where only
+  /// analysis or the user names the function, which says nothing of what
+  /// the function is.
+  llvm::StringRef statedFunctionNameAt(va_t Addr) const {
+    if (const Export *Exp = findExportAt(Addr); Exp && !Exp->Name.empty())
+      return Exp->Name;
+    if (const Symbol *Best = functionNameSymbolAt(Addr);
+        Best && Best->Origin == NameOrigin::Stated)
+      return Best->Name;
+    return {};
+  }
+
+  /// Every name the program states for the function at \p Addr, the one it
+  /// is shown under (statedFunctionNameAt) first: a linker that folds
+  /// identical functions exports one entry under each of their names.
+  std::vector<llvm::StringRef> statedFunctionNamesAt(va_t Addr) const {
+    std::vector<llvm::StringRef> Names;
+    const llvm::StringRef Shown = statedFunctionNameAt(Addr);
+    if (Shown.empty())
+      return Names;
+    Names.push_back(Shown);
+    const auto add = [&](llvm::StringRef Name) {
+      if (!Name.empty() && !llvm::is_contained(Names, Name))
+        Names.push_back(Name);
+    };
+    for (const Export &Exp : Exports)
+      if (Exp.Addr == Addr)
+        add(Exp.Name);
+    for (const Symbol &Sym : Symbols)
+      if (Sym.Addr == Addr && Sym.IsFunc && Sym.Origin == NameOrigin::Stated)
+        add(Sym.Name);
+    return Names;
+  }
+
   /// The name the function at \p Addr is listed and called under when its
   /// symbol names it \p Name: the name itself, or the number
   /// numberSharedFunctionNames() gave it where functions at lower addresses

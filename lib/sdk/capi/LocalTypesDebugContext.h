@@ -9,8 +9,14 @@
 /// the authority on its records:
 /// - the signatures it lacks: a PDB of public symbols names NtCreateFile but
 ///   gives it no type, where the Windows kernel's headers declare its
-///   prototype.  Only a function the debug information names and leaves
-///   untyped takes one; a typed declaration of the program's own stays;
+///   prototype.  A function takes the prototype of the name it is displayed
+///   under, which the program states (its export, else its symbol) or else
+///   the debug information gives, with or without debug information; a
+///   typed declaration of the program's own stays.  Where a linker folded
+///   identical functions, one entry has the names of each, and takes the
+///   shown name's prototype only if every other name's that has one passes
+///   and returns alike: ExFreePool's one parameter is not ExFreePoolWithTag's
+///   two, so which the code reads is unknown;
 /// - the members of its records, which the decompiler names its accesses
 ///   by, so that a member the user renames reads by its new name;
 /// - the C that defines those records, which a decompiled unit holds;
@@ -24,6 +30,8 @@
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/debug/DebugContext.h"
+#include "neverd/loader/BinaryImage.h"
+#include "neverd/types/HeaderLibrary.h"
 #include "neverd/types/LocalTypes.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -51,6 +59,11 @@ std::optional<FunctionSym> signatureOf(const types::TypeLibrary &Library,
                                        const types::FunctionDef &Function,
                                        llvm::StringRef Name);
 
+/// Whether \p A and \p B take and return alike: as many parameters, each
+/// of the same class and size, and returns of the same class and size, as
+/// the folded functions one entry names must for its code to follow either.
+bool passesAlike(const FunctionSym &A, const FunctionSym &B);
+
 /// The names of the types the decompiler reads with \p Library's
 /// prototypes: those their parameters and returns name, and those these
 /// name in turn, through typedefs, pointers, arrays and members, whether
@@ -62,10 +75,15 @@ class LocalTypesDebugContext final : public DebugContext {
 public:
   /// \p Inner outlives this; \p Types holds the prototypes and the types
   /// they name.  \p Declarations are the C declarations the user gave the
-  /// functions at those addresses, which read against \p Types.
+  /// functions at those addresses, which read against \p Types.  \p Image,
+  /// which outlives this too, states the names of its functions, if given;
+  /// \p Headers are the header libraries joined to \p Types, which a
+  /// prototype names as its source.
   LocalTypesDebugContext(const DebugContext &Inner,
                          std::shared_ptr<const types::TypeLibrary> Types,
-                         std::map<va_t, std::string> Declarations = {});
+                         std::map<va_t, std::string> Declarations = {},
+                         const BinaryImage *Image = nullptr,
+                         std::vector<types::HeaderLibrary> Headers = {});
   /// Takes back the members it gave the debug information's records, so
   /// that the context made after a change to the library gives them anew.
   /// The records are the debug information's, which the session's calls,
@@ -73,8 +91,11 @@ public:
   ~LocalTypesDebugContext() override;
 
   /// The inner function, its return type and parameters those of the
-  /// user's declaration at its entry, else the library's prototype of its
-  /// name where the inner context gives neither.
+  /// user's declaration at its entry, else, where the inner context gives
+  /// neither, the library's prototype of the name the function at the entry
+  /// is displayed under: the one the image states, else the inner one.  At
+  /// an import's slot or stub, the prototype of the routine imported, under
+  /// its name.
   std::optional<FunctionSym> resolveFunction(va_t Addr) const override;
 
   std::optional<std::string> functionName(va_t Addr) const override {
@@ -151,10 +172,11 @@ public:
   }
 
   /// The signature the library gives \p Name: its return type and named
-  /// parameters.  None for a name without a prototype, a variadic one,
-  /// whose calls pass more than it declares, or one with a type the
-  /// decompiler cannot describe.
-  std::optional<FunctionSym> prototype(llvm::StringRef Name) const;
+  /// parameters, the library that declares it and the declaration.  None
+  /// for a name without a prototype, a variadic one, whose calls pass more
+  /// than it declares, or one with a type the decompiler cannot describe.
+  std::optional<FunctionSym>
+  resolvePrototype(llvm::StringRef Name) const override;
 
   /// The signature of the user's declaration of the function at \p Entry.
   /// None where the user declared none, or one that no longer reads against
@@ -170,6 +192,9 @@ public:
   /// stands for that enumeration.  What the debug information gave types of
   /// the name, members or enumerators, must agree with the library too.
   CRecordDefinitions definitions(const std::vector<TypeRef> &Records) const;
+  /// The copy of the library this context reads, which its definitions
+  /// render.
+  const types::TypeLibrary &library() const { return *Types; }
 
   /// The library's types the decompiler has read through this context: the
   /// records whose members it gave and the types units held.  A change to
@@ -181,12 +206,27 @@ private:
   /// that is unknown.
   const types::LocalType *definedRecord(llvm::StringRef Name,
                                         uint16_t Size) const;
+  /// The names the image states for the function at \p Entry, the one it
+  /// is shown under first (BinaryImage::statedFunctionNamesAt).
+  std::vector<std::string> statedNames(va_t Entry) const;
+  /// The name of the import a call to \p Addr reaches through its slot or
+  /// stub (importCalleeName); empty for none.
+  std::string importName(va_t Addr) const;
+  /// The header library the prototype \p Function of \p Name comes from;
+  /// none for one of the local types the user declared.
+  std::optional<types::HeaderLibrary>
+  prototypeHeader(llvm::StringRef Name,
+                  const types::FunctionDef *Function) const;
 
   const DebugContext &Inner;
   std::shared_ptr<const types::TypeLibrary> Types;
   std::map<va_t, std::string> Declarations;
+  const BinaryImage *Image;
+  std::vector<types::HeaderLibrary> Headers;
   mutable std::mutex Mutex;
   mutable llvm::StringMap<std::optional<FunctionSym>> Signatures;
+  mutable std::map<va_t, std::vector<std::string>> StatedNames;
+  mutable std::map<va_t, std::string> ImportNames;
   mutable std::map<va_t, std::optional<FunctionSym>> DeclaredSignatures;
   /// The debug information's records it gave members to.
   mutable std::vector<TypeRef> Completed;

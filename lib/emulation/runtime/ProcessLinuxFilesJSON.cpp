@@ -22,6 +22,50 @@ llvm::Error invalid(llvm::StringRef Name) {
                                  field::LinuxFilesOptions + Name);
 }
 
+llvm::Expected<LinuxIoctlTraceOptions>
+ioctlTrace(const llvm::json::Value &Value) {
+  const auto *O = Value.getAsObject();
+  const auto *Rows = O ? O->getArray(field::IoctlTraceRequests) : nullptr;
+  auto Events = O ? O->getInteger(field::IoctlTraceEventLimit) : std::nullopt;
+  auto Bytes = O ? O->getInteger(field::IoctlTraceByteLimit) : std::nullopt;
+  if (!O || O->size() != 3 || !Rows || Rows->size() > 64 || !Events ||
+      *Events <= 0 || *Events > 4096 || !Bytes || *Bytes <= 0 ||
+      *Bytes > 1048576)
+    return invalid(field::IoctlTrace);
+  LinuxIoctlTraceOptions Out;
+  Out.EventLimit = *Events;
+  Out.ByteLimit = *Bytes;
+  for (const auto &Row : *Rows) {
+    const auto *R = Row.getAsObject();
+    const auto *N = R ? R->get(field::DeviceRequest) : nullptr;
+    auto Request = N ? process_json::integer<uint32_t>(*N) : std::nullopt;
+    const auto *Ranges = R ? R->getArray(field::Memory) : nullptr;
+    if (!R || R->size() != 2 || !Request || !Ranges || Ranges->size() > 16 ||
+        Out.Requests.contains(*Request))
+      return invalid(field::IoctlTraceRequests);
+    auto &Destination = Out.Requests[*Request];
+    for (const auto &Range : *Ranges) {
+      const auto *M = Range.getAsObject();
+      const auto *P = M ? M->get(field::DevicePointerOffset) : nullptr;
+      const auto *Offset = M ? M->get(field::DeviceOffset) : nullptr;
+      const auto *Size = M ? M->get(field::Size) : nullptr;
+      auto A = Offset ? process_json::integer<uint64_t>(*Offset) : std::nullopt;
+      auto S = Size ? process_json::integer<uint64_t>(*Size) : std::nullopt;
+      auto Pointer = P ? process_json::integer<uint64_t>(*P) : std::nullopt;
+      if (!M || M->size() != 2 + unsigned(P != nullptr) || !A || !S ||
+          (P && !Pointer))
+        return invalid(field::IoctlTrace);
+      Destination.push_back({*A, *S, Pointer});
+    }
+  }
+  // The file validator also serves the direct C++ entry point.
+  LinuxFileOptions Check;
+  Check.IoctlTrace = Out;
+  if (auto E = linux_model::validateFileOptions(Check))
+    return std::move(E);
+  return Out;
+}
+
 llvm::Expected<LinuxFileMetadata> metadata(const llvm::json::Value &Value) {
   const auto *Object = Value.getAsObject();
   if (!Object || Object->size() != 12)
@@ -94,6 +138,13 @@ linuxFileOptionsFromJSON(const llvm::json::Value &Value) {
   };
   for (const auto &[Key, V] : *Object) {
     llvm::StringRef Name = Key;
+    if (Name == field::IoctlTrace) {
+      auto Trace = ioctlTrace(V);
+      if (!Trace)
+        return Trace.takeError();
+      Out.IoctlTrace = std::move(*Trace);
+      continue;
+    }
     if (Name == field::DynamicProc) {
       const auto *P = V.getAsObject();
       auto Comm = P ? P->getString(field::Name) : std::nullopt;

@@ -2325,6 +2325,30 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>변환하려면 함수의 매개변수에 커서를 두세요</translation>
     </message>
     <message>
+        <source>Select &amp;all</source>
+        <translation>모두 선택(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>디스어셈블리로 이동</translation>
+    </message>
+    <message>
+        <source>Synchronize with disassembly</source>
+        <translation>디스어셈블리와 동기화</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>8진수(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>진법을 바꾸려면 의사 코드의 숫자에 커서를 두세요</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1은(는) 해당 진법에서 같은 형식으로 표기할 수 없습니다</translation>
+    </message>
+    <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
         <translation>%1에 MAP 파일이 있는지 확인할 수 없습니다: %2</translation>
     </message>

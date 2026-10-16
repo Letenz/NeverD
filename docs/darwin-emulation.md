@@ -37,8 +37,8 @@ Nonreturning or unsupported requests have no result value: JSON uses
 
 `MachOExecutionImage` uses LLVM's Mach-O parser and the shared loader entry
 reader. It preserves original file bytes without analysis relocation patches.
-Only thin little-endian `MH_EXECUTE` images with one unambiguous platform and
-entry are admitted. Universal images require an explicitly extracted slice;
+Main inputs must be thin little-endian `MH_EXECUTE` images with one unambiguous
+platform and entry; explicit MH_DYLIB dependencies follow the contract below. Universal images require an explicitly extracted slice;
 the execution loader does not choose one from the host.
 
 The complete input file, including unmapped metadata and trailing bytes, must
@@ -73,12 +73,7 @@ extra flavors and conflicting entries are rejected. No host environment or
 auxiliary Linux vector is inherited. Startup follows the distinction described
 in Apple's [dyld architecture](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-Dylibs and imports outside the finite libSystem contract, constructors/destructors,
-thread-local sections, arm64e/PAC and other nonbaseline CPU subtypes,
-encrypted payloads and unmodeled load commands fail before execution. Supported PIE
-images use their preferred addresses; this is deterministic
-placement, not ASLR. Code-signing blobs are metadata, not an implementation
-of AMFI or entitlement policy.
+The finite contracts below admit libSystem, explicit startup dylibs and ordinary C main-thread TLS. Constructors/destructors, TLS callbacks, arm64e/PAC, unsupported CPU subtypes, encrypted payloads and unmodeled load commands fail before execution. Main executables retain their preferred addresses and dylibs receive disjoint deterministic placements. Code-signing blobs are metadata, without AMFI or entitlement policy.
 
 ## Darwin services
 
@@ -2692,7 +2687,7 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 ## Bounded libSystem imports
 
-Thin baseline executables may bind a single strong `/usr/lib/libSystem.B.dylib` dependency under the finite contract below. Imports require `LC_MAIN`, `MH_TWOLEVEL` and an ordinary provider ordinal; the declared compatibility requirement must not exceed 1.0. The loader validates original classic pointer streams or generic64 chains, including all undefined symbols, exact slots, local rebase targets and bounded metadata. Unsupported dependencies, symbols, weak/threaded binding, section/external/local relocations, initializers, TLS and authenticated pointers fail before execution.
+Thin baseline executables and the explicit startup dylibs below may bind strong `/usr/lib/libSystem.B.dylib` dependencies under the finite contract. The main executable requires `LC_MAIN`; images use `MH_TWOLEVEL` and ordinary provider ordinals, with a libSystem compatibility requirement no greater than 1.0. Original classic/generic64 fixups, complete undefined-symbol closure, exact slots and local rebase targets are validated. Unknown symbols, weak/threaded binding, other relocation sources, initialization callbacks and authenticated pointers still fail explicitly.
 
 The process maps authenticated scalar call gates and one fresh main-thread errno word only when imports are present. Named wrappers share the raw Darwin kernel effects; they convert errors to `-1` and errno, while successful calls preserve errno. C `_exit` is Mach-O `__exit`; C `exit` (Mach-O `_exit`) remains unsupported. Ordinary functions require a valid return frame; a terminal `_exit` needs no usable return address. Calls retain provider, exact linkage name, declared argument count and complete carrier bits. Incomplete or nonreturning calls have a null result. Raw-only reports remain unchanged.
 
@@ -2712,7 +2707,7 @@ C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
 C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
-entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
+entry: LC_MAIN main + MH_TWOLEVEL images; ordinary positive ordinals; main preferred base
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
 errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
@@ -2728,9 +2723,77 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
+native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
 ```
 
 ```json
 {"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
+```
+
+## Explicit startup dylibs and main-thread TLS
+
+Optional `darwin.modules` maps exact, case-sensitive install names to original
+Mach-O input paths (at most 32 entries). Only reachable dependencies are read.
+Prefixes such as `@loader_path` are literal names, with no host search or path
+expansion. Each strong `LC_LOAD_DYLIB` edge requires an MH_DYLIB with the same
+baseline ISA/platform, an exact LC_ID_DYLIB identity and a sufficient current
+version. Ordinary positive ordinals select the actual provider; shared
+dependencies load once and identically spelled exports in different libraries
+remain distinct. The executable retains its preferred base; dylibs receive
+disjoint deterministic placements. Code/data exports and local rebases slide
+once. Export tries admit regular and thread-local symbols with bounded,
+unambiguous nodes. A thread-local export must name an admitted descriptor.
+
+The sum of complete reachable files, including unmapped tails, must fit
+`memory_limit`. Mapped images, stack, model pages, TLS storage and decoded
+metadata share the separate resident limit with that same value. All graph
+expansion shares a 65,536-record limit and the original preparation deadline.
+Cycles, missing identities/versions, duplicate catalogue names and attempts to
+override libSystem fail explicitly. Unused catalogue files are not opened.
+Complete undefined-symbol closure remains required, including infrastructure
+symbols; an unused undefined binder is not silently accepted.
+
+Ordinary C initialized and zero-initialized TLS supports alignment up to
+16 bytes. Preparation maps and charges a separate block for each image and
+process, checks nonoverlapping template sections and exact 24-byte descriptors,
+then publishes validated keys and thunk fixups. On first access,
+`DarwinTLS` copies the relocated live contiguous template, preserving prior
+guest changes to BSS and gaps. Subsequent accesses retain writes and pointer
+identity. There is no repacking or extra zeroing at first access.
+Descriptor thunk/key/offset and the return frame are checked on every call.
+Runtime TLS pages cannot be borrowed by mmap or changed by munmap/mprotect.
+
+The authenticated resolver follows the
+[Apple TLV helper ABI](https://github.com/apple-oss-distributions/dyld/blob/dyld-1125.5/libdyld/threadLocalHelpers.s):
+x64 receives the descriptor in RDI and returns its address in RAX; ARM64 uses
+X0 for both. GP/vector state other than result and return PC/SP is preserved
+by this model; native ARM64 does not promise X16/X17 preservation.
+The named event is `__tlv_get_addr`, with one descriptor argument and the
+resolved address; it consumes the existing event budget and leaves errno alone.
+No raw BSD syscall is invented. The original C fixture covers shared
+dependencies, equal export spellings, cross-library TLS identity, zero-only
+TLS, live template changes, nested libSystem calls and fresh repeated runs.
+Independent native O0/O1/O2 classic/chained controls retain status 83 and
+binary stdout `440054`; portable C/CLI/Python checks cover all five profiles.
+
+Weak/reexport/resolver exports, nonzero imported addends, constructors,
+destructors, TLS initialization callbacks, runtime dlopen/dlsym, threads and
+complete Apple frameworks remain unsupported. Native Intel and physical iOS
+execution remain unqualified.
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"darwin":{"modules":[{"name":"@loader_path/libneverd-base.dylib","path":"/inputs/libneverd-base.dylib"},{"name":"@loader_path/libneverd-leaf.dylib","path":"/inputs/libneverd-leaf.dylib"}]}}
+```
+
+```text
+graph: strong acyclic startup; exact install name; same ISA/platform; MH_DYLIB + LC_ID_DYLIB
+catalogue: max 32; only reachable inputs; no host lookup or @ path expansion
+budget: aggregate full files; aggregate resident mappings/TLS/metadata; 65536 records
+exports: regular / thread-local; ordinary dependency ordinal; rebased actual provider
+TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live contiguous first copy
+resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
+lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
+unsupported: cycles; weak/reexports/resolvers; imported addends; callbacks; dlopen/dlsym; threads
+workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
+native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
 ```

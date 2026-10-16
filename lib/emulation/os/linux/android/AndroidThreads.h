@@ -31,9 +31,10 @@ public:
   enum class WaitSource { NativeCall, KernelService };
   GuestThreads(ExecutionBackend &CPU, const IntegerABI &Calls,
                const ProcessOptions &Options, ProcessResult &Result,
-               linux_model::LinuxClock &Clock)
-      : CPU(CPU), Calls(Calls), Options(Options), Result(Result), Clock(Clock) {
-  }
+               linux_model::LinuxClock &Clock,
+               linux_model::LinuxPriority &PriorityState)
+      : CPU(CPU), Calls(Calls), Options(Options), Result(Result), Clock(Clock),
+        PriorityState(PriorityState) {}
   llvm::Error initialize(uint64_t StackBase);
   llvm::Error validateTLS();
   bool enabled() const { return Options.Android->ThreadLimit > 1; }
@@ -101,6 +102,7 @@ private:
   const ProcessOptions &Options;
   ProcessResult &Result;
   linux_model::LinuxClock &Clock;
+  linux_model::LinuxPriority &PriorityState;
   std::deque<Thread> Threads;
   size_t Current = 0;
   uint32_t LastExitStatus = 0;

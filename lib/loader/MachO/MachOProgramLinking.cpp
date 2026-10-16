@@ -447,6 +447,7 @@ public:
     return llvm::Error::success();
   }
   llvm::Error chains(llvm::ArrayRef<uint8_t> Data);
+  llvm::Error exports(llvm::ArrayRef<uint8_t> Data);
   llvm::Error read();
 };
 
@@ -588,6 +589,88 @@ llvm::Error Reader::chains(llvm::ArrayRef<uint8_t> Data) {
   return llvm::Error::success();
 }
 
+llvm::Error Reader::exports(llvm::ArrayRef<uint8_t> Data) {
+  struct Pending {
+    uint64_t Offset;
+    std::string Name;
+  };
+  std::vector<Pending> Work{{0, {}}};
+  std::map<uint64_t, uint64_t> Nodes;
+  std::set<std::string> Names;
+  while (!Work.empty()) {
+    if (auto E = charge(128))
+      return E;
+    auto Node = std::move(Work.back());
+    Work.pop_back();
+    if (Nodes.size() >= RecordLimit || Node.Offset >= Data.size() ||
+        Nodes.contains(Node.Offset))
+      return failure("invalid, repeated or excessive export trie node");
+    const auto *P = Data.data() + Node.Offset, *End = Data.end();
+    auto Size = uleb(P, End);
+    if (!Size)
+      return Size.takeError();
+    if (*Size > uint64_t(End - P))
+      return failure("export terminal escapes the trie");
+    const auto *TerminalEnd = P + *Size;
+    if (*Size) {
+      auto Flags = uleb(P, TerminalEnd);
+      if (!Flags)
+        return Flags.takeError();
+      if (*Flags != EXPORT_SYMBOL_FLAGS_KIND_REGULAR &&
+          *Flags != EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL)
+        return failure("unsupported export kind, weak export or resolver");
+      auto Offset = uleb(P, TerminalEnd);
+      if (!Offset)
+        return Offset.takeError();
+      if (P != TerminalEnd || Node.Name.empty() ||
+          *Offset > UINT64_MAX - HeaderAddress)
+        return failure("invalid export terminal");
+      const uint64_t Address = HeaderAddress + *Offset;
+      const bool Mapped = llvm::any_of(Segments, [&](const auto &S) {
+        return S.initprot && Address >= S.vmaddr &&
+               Address - S.vmaddr < S.vmsize;
+      });
+      if (!Mapped || !Names.insert(Node.Name).second)
+        return failure("unmapped or duplicate exported symbol");
+      if (auto E = charge(2 * Node.Name.size() +
+                          2 * sizeof(MachOProgramExport) + 128))
+        return E;
+      Out.Exports.push_back({Node.Name, Address,
+                             *Flags == EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL});
+    }
+    P = TerminalEnd;
+    if (P == End)
+      return failure("export node has no child count");
+    const unsigned Count = *P++;
+    std::set<uint8_t> Prefixes;
+    for (unsigned I = 0; I < Count; ++I) {
+      auto Edge = string(llvm::ArrayRef(P, End), 0);
+      if (!Edge)
+        return Edge.takeError();
+      if (!Prefixes.insert(uint8_t(Edge->front())).second ||
+          Node.Name.size() > 4096 || Edge->size() > 4096 - Node.Name.size())
+        return failure("ambiguous or excessive export name");
+      P += Edge->size() + 1;
+      auto Offset = uleb(P, End);
+      if (!Offset)
+        return Offset.takeError();
+      if (Work.size() >= RecordLimit || *Offset >= Data.size())
+        return failure("invalid or excessive export child");
+      if (auto E = charge(2 * (Node.Name.size() + Edge->size()) + 128))
+        return E;
+      Work.push_back({*Offset, Node.Name + *Edge});
+    }
+    const uint64_t NodeEnd = P - Data.data();
+    auto Next = Nodes.lower_bound(Node.Offset);
+    if ((Next != Nodes.end() && Next->first < NodeEnd) ||
+        (Next != Nodes.begin() && std::prev(Next)->second > Node.Offset))
+      return failure("overlapping export trie nodes");
+    Nodes.emplace(Node.Offset, NodeEnd);
+    ++Out.Records;
+  }
+  return llvm::Error::success();
+}
+
 llvm::Error Reader::read() {
   if (auto E = check())
     return E;
@@ -602,7 +685,7 @@ llvm::Error Reader::read() {
   if (!Obj.is64Bit() || !Obj.isLittleEndian())
     return failure("requires thin little-endian Mach-O64");
   std::optional<dyld_info_command> Classic;
-  std::optional<linkedit_data_command> Chained;
+  std::optional<linkedit_data_command> Chained, Exports;
   std::optional<symtab_command> Symbols;
   std::optional<dysymtab_command> Dynamic;
   unsigned HeaderSegments = 0;
@@ -627,6 +710,7 @@ llvm::Error Reader::read() {
           return failure("section relocations are unsupported");
       break;
     }
+    case LC_ID_DYLIB:
     case LC_LOAD_DYLIB:
     case LC_LOAD_WEAK_DYLIB:
     case LC_REEXPORT_DYLIB:
@@ -641,6 +725,14 @@ llvm::Error Reader::read() {
                  D.dylib.name);
       if (!Name)
         return Name.takeError();
+      if (LC.C.cmd == LC_ID_DYLIB) {
+        if (Out.Identity)
+          return failure("duplicate dylib identity");
+        Out.Identity = MachOProgramDependency{LC.C.cmd, std::move(*Name),
+                                              D.dylib.current_version,
+                                              D.dylib.compatibility_version};
+        break;
+      }
       if (Out.Dependencies.size() >= RecordLimit)
         return failure("too many dependencies");
       if (auto E = charge(2 * sizeof(MachOProgramDependency)))
@@ -660,6 +752,11 @@ llvm::Error Reader::read() {
       if (Chained)
         return failure("duplicate chained fixup command");
       Chained = Obj.getLinkeditDataLoadCommand(LC);
+      break;
+    case LC_DYLD_EXPORTS_TRIE:
+      if (Exports)
+        return failure("duplicate export trie command");
+      Exports = Obj.getLinkeditDataLoadCommand(LC);
       break;
     case LC_SYMTAB:
       if (Symbols)
@@ -761,8 +858,25 @@ llvm::Error Reader::read() {
     if (auto E = chains(*Data))
       return E;
   }
+  if (Exports && Classic && Classic->export_size)
+    return failure("multiple export trie sources");
+  const uint64_t ExportSize = Exports   ? Exports->datasize
+                              : Classic ? Classic->export_size
+                                        : 0;
+  const uint64_t ExportOffset = Exports   ? Exports->dataoff
+                                : Classic ? Classic->export_off
+                                          : 0;
+  if (ExportSize) {
+    auto Data = bytes(ExportOffset, ExportSize);
+    if (!Data)
+      return Data.takeError();
+    if (auto E = exports(*Data))
+      return E;
+  }
   if (Undefined != Bound)
     return failure("undefined symbols do not have a complete binding closure");
+  Out.Records += RawFixups + Segments.size() + Out.Dependencies.size() +
+                 (Symbols ? Symbols->nsyms : 0);
   return check();
 }
 } // namespace

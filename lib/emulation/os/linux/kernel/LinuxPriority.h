@@ -8,14 +8,25 @@
 
 #include "LinuxKernel.h"
 
+#include <set>
+
 namespace neverd::emulation::linux_model {
 llvm::Error validatePriorityOptions(const LinuxPriorityOptions &Options);
 
 class LinuxPriority {
 public:
   explicit LinuxPriority(const std::optional<LinuxPriorityOptions> &Options)
-      : Options(Options),
-        Tasks(Options ? Options->Tasks : std::map<uint32_t, int32_t>{}) {}
+      : Options(Options) {
+    if (Options)
+      for (const auto &[ID, Nice] : Options->Tasks)
+        Tasks.emplace(ID, Nice);
+  }
+
+  /// Copy the parent's current nice value before publishing a new thread.
+  /// Unknown parent state stays unknown. A failed publication must cancel it.
+  llvm::Error inherit(uint64_t Parent, uint64_t Child);
+  void cancel(uint64_t Child) { Tasks.erase(Child); }
+  void exit(uint64_t Child);
 
   std::optional<uint64_t> handle(ServiceKind Kind,
                                  const ProcessServiceEvent &Event,
@@ -23,7 +34,8 @@ public:
 
 private:
   const std::optional<LinuxPriorityOptions> &Options;
-  std::map<uint32_t, int32_t> Tasks;
+  std::map<uint64_t, std::optional<int32_t>> Tasks;
+  std::set<uint64_t> Exited;
   std::optional<uint64_t> unsupported(ProcessResult &Result,
                                       llvm::StringRef Text);
 };

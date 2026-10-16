@@ -237,6 +237,7 @@ add_neverd_unittest(NeverDDarwinProcessTests
   DarwinProcessTests.cpp
   DarwinImageTests.cpp
   DarwinLinkingTests.cpp
+  DarwinDylibTests.cpp
   DarwinLibSystemTests.cpp
   DarwinMemoryTests.cpp
   DarwinFileTests.cpp
@@ -267,6 +268,8 @@ if(MSVC)
   target_compile_options(NeverDDarwinProcessTests PRIVATE /bigobj)
 endif()
 include(DarwinFixtures.cmake)
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/DarwinTestExecution.cmake")
 add_neverd_unittest(NeverDAndroidNativeTests
   AndroidNativeTests.cpp
   AndroidMemoryTests.cpp
@@ -284,6 +287,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidSleepTests.cpp
   AndroidSignalTests.cpp
   AndroidSnapshotTests.cpp
+  AndroidAllocationTests.cpp
   AndroidResidencyTests.cpp
   AndroidFileTests.cpp
   AndroidDeviceTests.cpp

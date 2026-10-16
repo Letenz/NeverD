@@ -118,9 +118,15 @@ BionicResult GuestThreads::create(const NativeCallEvent &Call) {
           llvm::joinErrors(std::move(Prepared), CPU.restoreContext(**Parent)))
     return std::move(E);
   // Publish only after all input, memory and CPU preparation succeeds.
+  const uint64_t ChildID = Child.Kernel.ID;
+  if (auto E = PriorityState.inherit(id(), ChildID))
+    return std::move(E);
+  auto CancelPriority =
+      llvm::scope_exit([&] { PriorityState.cancel(ChildID); });
   if (auto E = put64(A[0], Handle))
     return std::move(E);
   Threads.push_back(std::move(Child));
+  CancelPriority.release();
   Rollback.release();
   return value(0);
 }

@@ -2325,6 +2325,30 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>請將游標放在函式的參數上以轉換它</translation>
     </message>
     <message>
+        <source>Select &amp;all</source>
+        <translation>全選(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>跳至反組譯</translation>
+    </message>
+    <message>
+        <source>Synchronize with disassembly</source>
+        <translation>與反組譯同步</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>八進位(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>請將游標放在虛擬碼的數字上以變更其進位</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 在該進位下無法保持相同型別</translation>
+    </message>
+    <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
         <translation>無法判斷 %1 是否有 MAP 檔案：%2</translation>
     </message>

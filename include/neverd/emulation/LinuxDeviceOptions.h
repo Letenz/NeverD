@@ -11,10 +11,23 @@
 #define NEVERD_EMULATION_LINUXDEVICEOPTIONS_H
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <vector>
 
 namespace neverd::emulation {
+/// Observation ranges, not a device ABI or a supplied response. A pointer is
+/// resolved once at entry; both snapshots observe that same guest address.
+struct LinuxIoctlTraceMemory {
+  uint64_t Offset = 0, Size = 0;
+  std::optional<uint64_t> PointerOffset;
+};
+struct LinuxIoctlTraceOptions {
+  uint32_t EventLimit = 4096;
+  uint64_t ByteLimit = 1048576;
+  std::map<uint32_t, std::vector<LinuxIoctlTraceMemory>> Requests;
+};
+
 struct LinuxDeviceMemory {
   /// Relative to ioctl's argument, or to the little-endian guest pointer
   /// read at argument + PointerOffset when that offset is present.

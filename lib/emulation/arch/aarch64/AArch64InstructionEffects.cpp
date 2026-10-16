@@ -16,6 +16,10 @@ namespace neverd::emulation {
 namespace {
 static_assert((aarch64::SCTLR & aarch64::PAuthEnableMask) == 0,
               "checked PAuth hints require authentication disabled");
+static_assert((aarch64::TCR & 0x3f) == 16 &&
+                  ((aarch64::TCR >> 16) & 0x3f) == 16 &&
+                  aarch64::UserMax == 0x0000ffffffffffffULL,
+              "checked XPACLRI requires 48-bit translation ranges");
 bool disabledPAuthHint(uint32_t Word) {
   switch (Word) {
 #define NEVERD_AARCH64_PAUTH_HINT(Name, Encoding) case Encoding:
@@ -168,6 +172,15 @@ getAArch64InstructionEffects(const cs_insn &I,
   // They still execute through Machine::step and consume an ordinary attempt.
   if (disabledPAuthHint(Word))
     return std::vector<AArch64MemoryAccess>();
+  // XPACLRI (HINT #7) strips PAC bits even with authentication disabled.
+  // Low 48-bit addresses are fixed points in this translation regime, so
+  // PAuth stripping and a baseline transport's legacy HINT agree. Execute
+  // the original word; signed/tagged pointers require a separate contract.
+  if (Word == 0xd50320ff) {
+    if (State.reg(AArch64Register::X30) > aarch64::UserMax)
+      return llvm::make_error<UnsupportedExecutionError>();
+    return std::vector<AArch64MemoryAccess>();
+  }
   // AArch64PageTables never sets GP. Execute the original landing-pad word,
   // including on a transport that implements FEAT_BTI; do not replace bytes
   // or infer guarded-page enforcement from the decoder's optional feature.

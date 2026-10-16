@@ -1053,6 +1053,7 @@ void MedToHighConverter::attachSEHHandlerEntryCopies(HighFunc &Func,
   // Shared handlers merge their runtime inputs with ordinary predecessors.
   // Source-only unknown SP inputs stay unknown instead of becoming variables.
   std::map<va_t, std::vector<HighStmt>> Copies;
+  std::map<va_t, const MedBlock *> Handlers;
   for (const MedBlock &Block : Med.Blocks)
     for (const PhiNode &Phi : Block.Phis) {
       if (!Phi.ExceptionalEntry)
@@ -1067,9 +1068,36 @@ void MedToHighConverter::attachSEHHandlerEntryCopies(HighFunc &Func,
       }
       Copy.Val = std::move(Code);
       Copies[Block.StartAddr].push_back(std::move(Copy));
+      Handlers.emplace(Block.StartAddr, &Block);
     }
   if (Copies.empty())
     return;
+  // The copies then resume the handler block's code at the first statement
+  // it still has. Instructions that print nothing, such as the `nop` MinGW's
+  // startup code resumes at before its epilogue, leave no statement at the
+  // block's own address, so a jump there would name a label nothing carries.
+  std::set<va_t> StmtAddrs;
+  walkStmts(static_cast<const std::vector<HighStmt> &>(Func.Body),
+            [&](const HighStmt &S) {
+              if (S.Addr != 0 && S.Addr != InvalidVA)
+                StmtAddrs.insert(S.Addr);
+            });
+  std::map<int, const MedBlock *> BlockById;
+  for (const MedBlock &Block : Med.Blocks)
+    BlockById.emplace(Block.Id, &Block);
+  auto ResumeAddress = [&](const MedBlock &Handler) {
+    const MedBlock *Block = &Handler;
+    for (size_t Step = 0; Block && Step < Med.Blocks.size(); ++Step) {
+      const auto It = StmtAddrs.lower_bound(Block->StartAddr);
+      if (It != StmtAddrs.end() && *It < Block->EndAddr)
+        return *It;
+      if (Block->Succs.size() != 1)
+        break;
+      const auto Next = BlockById.find(Block->Succs.front());
+      Block = Next == BlockById.end() ? nullptr : Next->second;
+    }
+    return Handler.StartAddr;
+  };
   walkStmts(Func.Body, [&](HighStmt &S) {
     if (S.Kind != StmtKind::SEHTry)
       return;
@@ -1086,7 +1114,7 @@ void MedToHighConverter::attachSEHHandlerEntryCopies(HighFunc &Func,
       if (Arm.size() == It->second.size()) {
         HighStmt Jump;
         Jump.Kind = StmtKind::Goto;
-        Jump.GotoTarget = S.EHClauses[C].HandlerVA;
+        Jump.GotoTarget = ResumeAddress(*Handlers.at(It->first));
         Arm.push_back(std::move(Jump));
       }
     }

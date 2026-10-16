@@ -11,6 +11,7 @@
 #include "../kernel/DarwinMemory.h"
 #include "../kernel/DarwinSystem.h"
 #include "DarwinLibSystem.h"
+#include "DarwinTLS.h"
 
 #include "neverd/emulation/ExecutionSession.h"
 
@@ -184,6 +185,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     return Session.takeError();
   auto &CPU = (*Session)->cpu();
   DarwinMemory Memory(**Space, Image->Memory, Options);
+  DarwinTLS TLS(*Image);
   DarwinFiles Files(CPU, Options.DarwinFiles, Options.OutputLimit,
                     credentialID(ServiceKind::GetEUID, Options.DarwinSystem),
                     Options.DarwinSystem ? Options.DarwinSystem->Credentials
@@ -246,8 +248,10 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
                               : ServiceRequestKind::AArch64SVC) &&
         (X64 || Request->Immediate == LibSystemSVC)) {
       auto Returned =
-          invokeLibSystem(CPU, Memory, Files, Entropy, *Image, Import->second,
-                          *Request, Options, Result);
+          Import->second == LibSystemGateKind::TLVBootstrap
+              ? TLS.invoke(CPU, *Resources, *Request, Result)
+              : invokeLibSystem(CPU, Memory, Files, Entropy, *Image,
+                                Import->second, *Request, Options, Result);
       if (!Returned) {
         RuntimeFailure(Returned.takeError());
         break;

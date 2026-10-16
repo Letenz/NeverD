@@ -2355,6 +2355,30 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>ضع المؤشر على معامل للدالة لتحويله</translation>
     </message>
     <message>
+        <source>Select &amp;all</source>
+        <translation>تحديد الكل(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>الانتقال إلى التفكيك</translation>
+    </message>
+    <message>
+        <source>Synchronize with disassembly</source>
+        <translation>المزامنة مع التفكيك</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>ثماني(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>ضع المؤشر على رقم في الشيفرة الزائفة لتغيير أساسه</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>لا يمكن كتابة %1 بهذا الأساس مع النوع نفسه</translation>
+    </message>
+    <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
         <translation>تعذّر تحديد ما إذا كان لـ %1 ملف MAP: %2</translation>
     </message>

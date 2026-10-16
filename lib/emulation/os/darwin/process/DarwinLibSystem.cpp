@@ -23,6 +23,8 @@ constexpr LibSystemBinding Bindings[] = {
 static_assert(unsigned(LibSystemGateKind::StubBinder) == std::size(Bindings));
 } // namespace
 std::optional<LibSystemGateKind> libSystemImport(llvm::StringRef Symbol) {
+  if (Symbol == "__tlv_bootstrap")
+    return LibSystemGateKind::TLVBootstrap;
   if (Symbol == "dyld_stub_binder")
     return LibSystemGateKind::StubBinder;
   for (unsigned I = 0; I < std::size(Bindings); ++I)
@@ -106,7 +108,8 @@ invokeLibSystem(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
                 DarwinEntropy &Entropy, const ProcessImage &Image,
                 LibSystemGateKind Binding, const ServiceRequest &Request,
                 const ProcessOptions &Options, ProcessResult &Result) {
-  if (Binding == LibSystemGateKind::StubBinder)
+  if (Binding == LibSystemGateKind::StubBinder ||
+      Binding == LibSystemGateKind::TLVBootstrap)
     return failure(diagnostic::LibSystemResolver);
   const auto &Definition = libSystemBinding(Binding);
   const bool X64 = Image.Architecture == GuestArchitecture::X64;

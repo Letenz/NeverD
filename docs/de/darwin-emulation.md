@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 5edfb602025b5842453dbc5914dad53572f14fdc63e424ca65e66d45415e59c3 -->
+<!-- i18n-source: 6d44f96afae7f68162fb5f61324f22a7893d7ea9bb0e2df38768afc67bf2c060 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -33,7 +33,7 @@ Segmente behalten aktuelle/maximale Rechte und Nullfüllung. `__PAGEZERO` reserv
 
 `LC_UNIXTHREAD` verlangt genau einen vollständigen nativen 64-Bit-Allgemeinregistersatz, in dem nur PC belegt ist. Der Startstack enthält argc, terminierte argv/envp und einen terminierten apple-Vektor mit `executable_path=<input filename>`. Eigene SP/Flags, andere Register, zusätzliche Flavors und widersprüchliche Eintritte sind unzulässig. Hostumgebung und Linux-Hilfsvektor werden nicht übernommen. Grundlage: [dyld-Architektur](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-Dylibs und Imports außerhalb des folgenden endlichen libSystem-Vertrags, Konstruktoren/Destruktoren, TLS-Sektionen, arm64e/PAC, andere nicht unterstützte CPU-Untertypen, Verschlüsselung und nicht modellierte Ladebefehle scheitern vor Ausführung. Unterstützte PIE verwendet bevorzugte Adressen, kein ASLR. Signaturblobs sind Metadaten und implementieren weder AMFI noch Entitlement-Regeln.
+Der folgende begrenzte Vertrag unterstützt libSystem, explizite Start-dylibs und gewöhnliches C-TLS des Hauptthreads. Konstruktoren/Destruktoren, TLS-Rückrufe, arm64e/PAC, nicht unterstützte CPU-Untertypen, Verschlüsselung und nicht modellierte Befehle scheitern weiterhin vor Ausführung. Das Hauptprogramm behält seine bevorzugte Adresse; dylibs erhalten getrennte deterministische Adressen. Signaturmetadaten implementieren weder AMFI noch Entitlements.
 
 ## Darwin-Dienste
 
@@ -1797,7 +1797,7 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 ## Begrenzte libSystem-Imports
 
-Ein Thin-Programm der Basis-ISA kann genau eine starke Abhängigkeit `/usr/lib/libSystem.B.dylib` binden. Erforderlich sind `LC_MAIN`, `MH_TWOLEVEL`, ein gewöhnliches Bibliotheksordinal und eine Kompatibilitätsanforderung bis 1.0. Der Leser prüft klassische Zeigerströme oder generic64-Ketten vollständig, einschließlich undefinierter Symbole, genauer Slots und lokaler Rebases. Andere Abhängigkeiten, weak/threaded Bindungen, nicht unterstützte Relocations, Initialisierung, TLS und authentifizierte Zeiger werden vor Ausführung abgewiesen.
+Thin-Programme der Basis-ISA und die unten beschriebenen expliziten Start-dylibs können `/usr/lib/libSystem.B.dylib` stark binden. Erforderlich sind `LC_MAIN` als Haupteinstieg, `MH_TWOLEVEL`, gewöhnliche Ordinale und eine libSystem-Kompatibilitätsanforderung bis 1.0. Originale classic/generic64-Fixups und die vollständige Bindung undefinierter Symbole werden geprüft. Unbekannte Symbole, weak/threaded-Bindungen, andere Relocations, Initialisierungsrückrufe und authentifizierte Zeiger bleiben abgewiesen.
 
 Nur Imports erhalten authentifizierte Funktionszugänge und einen frischen Hauptthread-errno-Wert. Wrapper teilen die Darwin-Kerneleffekte: Fehler liefern `-1` und errno; Erfolg erhält errno. C `_exit` heißt in Mach-O `__exit`; C `exit` mit dem Linknamen `_exit` bleibt ununterstützt. Gewöhnliche Funktionen prüfen den Rückkehrrahmen; terminale Aufrufe benötigen kein Rückkehrziel. Berichte erhalten Anbieter, Linknamen, Argumentzahl und sämtliche Bits. Unvollständige oder nicht zurückkehrende Ergebnisse sind null; bestehende Raw-Berichte bleiben kompatibel.
 
@@ -1817,7 +1817,7 @@ C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
 C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
-entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
+entry: LC_MAIN main + MH_TWOLEVEL images; ordinary positive ordinals; main preferred base
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
 errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
@@ -1833,9 +1833,32 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
+native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
 ```
 
 ```json
 {"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
+```
+
+## Explizite Start-dylibs und TLS des Hauptthreads
+
+`darwin.modules` ordnet bis zu 32 exakten, groß-/kleinschreibungsabhängigen Installationsnamen originale Mach-O-Pfade zu. Nur erreichbare Abhängigkeiten werden gelesen; `@loader_path` wird wörtlich verglichen, ohne Host-Bibliothekssuche. ISA, Plattform, Identität und Version jeder MH_DYLIB werden geprüft; gewöhnliche Ordinale wählen den tatsächlichen Anbieter. Gleichnamige Exporte und gemeinsame Abhängigkeiten behalten ihre Identität. Vollständige Eingaben und residente Daten teilen jeweils ein Budget.
+
+Initialisiertes und nullinitialisiertes C-TLS unterstützt bis zu 16 Byte Ausrichtung. Der Speicher jedes Moduls wird bei der Vorbereitung gemappt und berechnet. Der erste Zugriff kopiert die zusammenhängende, bereits relocierte Live-Vorlage samt vorherigen BSS-/Lückenänderungen. Deskriptoren und Rückkehrrahmen werden geprüft; TLS-Seiten lassen sich weder wiederverwenden noch entmappen oder umschützen. Originale native O0/O1/O2-classic/chained-Kontrollen vergleichen fünf C/CLI/Python-Profile. Zyklen, schwache/Reexports, Rückrufe, dlopen/dlsym, Threads und vollständige Frameworks bleiben unimplementiert; natives Intel und physisches iOS sind unqualifiziert.
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"darwin":{"modules":[{"name":"@loader_path/libneverd-base.dylib","path":"/inputs/libneverd-base.dylib"},{"name":"@loader_path/libneverd-leaf.dylib","path":"/inputs/libneverd-leaf.dylib"}]}}
+```
+
+```text
+graph: strong acyclic startup; exact install name; same ISA/platform; MH_DYLIB + LC_ID_DYLIB
+catalogue: max 32; only reachable inputs; no host lookup or @ path expansion
+budget: aggregate full files; aggregate resident mappings/TLS/metadata; 65536 records
+exports: regular / thread-local; ordinary dependency ordinal; rebased actual provider
+TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live contiguous first copy
+resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
+lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
+unsupported: cycles; weak/reexports/resolvers; imported addends; callbacks; dlopen/dlsym; threads
+workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
+native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
 ```

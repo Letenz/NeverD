@@ -235,6 +235,8 @@ NEVERD_LINUX_DIAGNOSTIC(KernelOptions,
                         "invalid Linux kernel availability input")
 NEVERD_LINUX_DIAGNOSTIC(PidFDTargetMissing,
                         "pidfd_open target process is not modeled")
+NEVERD_LINUX_DIAGNOSTIC(PidFDThreadLifetime,
+                        "pidfd_open guest-thread descriptor lifetime is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(PriorityOptions, "invalid Linux priority input")
 NEVERD_LINUX_DIAGNOSTIC(
     PriorityInputsMissing,
@@ -243,6 +245,10 @@ NEVERD_LINUX_DIAGNOSTIC(PrioritySelection,
                         "Linux group and user priority selection is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(PriorityTaskMissing,
                         "unmodeled Linux task priority: {0}")
+NEVERD_LINUX_DIAGNOSTIC(PriorityThreadConflict,
+                        "Linux priority task conflicts with new thread: {0}")
+NEVERD_LINUX_DIAGNOSTIC(PriorityThreadLimit,
+                        "Linux priority task lifetime limit reached")
 NEVERD_LINUX_DIAGNOSTIC(SignalOptions, "invalid Linux signal disposition input")
 NEVERD_LINUX_DIAGNOSTIC(SignalInputMissing,
                         "signal actions require explicit linux_signals input")
