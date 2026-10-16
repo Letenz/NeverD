@@ -19,8 +19,12 @@ void RegistrationStateSolver::recordLocalUnwind(
     return;
   if (State.Parent && !State.Callback) {
     Call.EntryVA = 0;
-  } else if (!State.Parent && State.Callback && !State.OtherCallback &&
-             !State.Activation.SearchFilter && State.Activation.Entry) {
+  } else if (!State.Parent && State.Callback &&
+             !State.Activation.SearchFilter && State.Activation.Entry &&
+             State.Activation.Entry == State.Frame.CallbackEntry &&
+             FinallyTargets.count(*State.Activation.Entry)) {
+    // OtherCallback distinguishes SEH entries from C++ catch invocations.
+    // Both an ordinary CALL and CRT dispatch own this same finally body.
     Call.EntryVA = *State.Activation.Entry;
   } else {
     Result.SEHLocalUnwindsComplete = false;
