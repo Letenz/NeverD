@@ -121,6 +121,12 @@ NEVERD_API const char *neverd_local_types_forget(neverd_session_t Sess,
 /// malformed.  Free with neverd_free_string.
 NEVERD_API const char *neverd_types_convert(const char *RequestJson);
 
+/// The languages local types render and read in, and how each names
+/// builtins: {"languages":[{"id","display","spelling","spellings":[id,...]},
+/// ...]}, "spelling" the one a language takes unless asked.  Needs no
+/// program.  Free with neverd_free_string.
+NEVERD_API const char *neverd_types_languages_json(void);
+
 /// The user's declarations in the order made:
 /// [{"language","source"} | {"forget":[name,...]}, ...].
 NEVERD_API const char *neverd_type_declarations_json(neverd_session_t Sess);

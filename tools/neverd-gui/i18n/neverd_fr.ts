@@ -2345,6 +2345,10 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [texte]    lister les instructions qui font référence à des chaînes</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [nom]           afficher les types locaux, ou le type nommé</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3503,10 +3507,6 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
         <translation>Décalage</translation>
     </message>
     <message>
-        <source>Bytes</source>
-        <translation>Octets</translation>
-    </message>
-    <message>
         <source>Type</source>
         <translation>Type</translation>
     </message>
@@ -3757,6 +3757,14 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
             <numerusform>%n déclaré</numerusform>
             <numerusform>%n déclarés</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>Sélectionnez un type pour voir sa disposition et sa source</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>Aucun type local ne se nomme %1</translation>
     </message>
 </context>
 <context>

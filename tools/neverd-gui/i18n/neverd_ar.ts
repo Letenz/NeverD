@@ -2369,6 +2369,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     سرد التعليمات التي تشير إلى سلاسل نصية</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          عرض الأنواع المحلية، أو النوع المسمى</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3527,10 +3531,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>الإزاحة</translation>
     </message>
     <message>
-        <source>Bytes</source>
-        <translation>البايتات</translation>
-    </message>
-    <message>
         <source>Type</source>
         <translation>النوع</translation>
     </message>
@@ -3813,6 +3813,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
             <numerusform>%n مصرَّح بها</numerusform>
             <numerusform>%n مصرَّح بها</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>اختر نوعًا لعرض تخطيطه ومصدره</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>لا يوجد نوع محلي باسم %1</translation>
     </message>
 </context>
 <context>
