@@ -2829,7 +2829,8 @@ TEST_F(ProcessPublic, AndroidGPUCommandsMatchSDKAndCLI) {
   (*Device->getArray("read_only_mappings"))[0].getAsObject()->operator[](
       "bytes_hex") = std::string(8192, '0');
   (*Device->getObject("kgsl_contexts"))["memory_objects"] = true;
-  for (const char *Entry : {"devices_gpu_commands", "devices_gpu_objects"}) {
+  for (const char *Entry :
+       {"devices_gpu_commands", "devices_gpu_objects", "devices_gpu_legacy"}) {
     (*Request.getAsObject()->getObject("android"))["entry_symbol"] = Entry;
     for (unsigned Route = 0; Route != 4; ++Route) {
       SCOPED_TRACE(Route);

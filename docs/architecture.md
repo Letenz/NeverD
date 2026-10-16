@@ -185,9 +185,28 @@ builtin spellings each language takes and which it takes unless asked;
 `neverd types --json` names the one its source took, in every mode, so that
 an agent reads one object.
 
-The decompiler reads the local types' prototypes through
-`PrototypeDebugContext` (`lib/sdk/capi`). It wraps the program's debug
-context, and completes the functions the debug information names but leaves
+The decompiler reads the local types through `LocalTypesDebugContext`
+(`lib/sdk/capi`), which wraps the program's debug context whenever the
+program has local types. The local types are the authority on the program's
+records:
+- A record the debug information names, but gives no members yet, takes the
+  library's when the library defines a record of its name and size
+  (`completeType`). The decompiler names its member accesses by these, so a
+  member the user renames reads by its new name. Members the debug
+  information gave stay, and so do its records' ABI facts.
+- A decompiled HighC unit holds the definitions of the records its types
+  reach (`CEmitterOptions::RecordDefinitions`), and of what they hold by
+  value, after its includes. `renderEmbeddedC` renders them in exact widths,
+  with their checks, each under a guard of its own so that units
+  concatenate. A record whose members the unit names otherwise than the
+  library does stays declared only: its definition would disagree with the
+  code. The typedefs and enumerators the definitions declare reserve their
+  names from the unit's own.
+- A store to a pointer member of such a record casts the stored value to
+  the member's type (`__typeof__`), which C converts an address of another
+  type, or an integer, to only by a cast.
+
+It also completes the functions the debug information names but leaves
 untyped from the prototype of their name, as the kernel's public symbols
 are completed from `<ntifs.h>`. A function the debug information types
 keeps its own type, and a variadic prototype is not used, because its calls
@@ -201,12 +220,23 @@ decompiler's types:
   opaque pointers.
 
 Win64 placement then binds each parameter by its location, and the
-signature prints with the prototype's names. A declaration changes what the
-decompiler read only when it adds a prototype or changes a type a prototype
-names, through typedefs, pointers, arrays and members
-(`prototypeTypeNames`). Only such a declaration clears the pipeline, which
-the C API reports as `"decompilation": true`, and the worker then refreshes
-its views as after loading signatures.
+signature prints with the prototype's names. A declaration changes the
+analysis only when it adds a prototype or changes a type a prototype names,
+through typedefs, pointers, arrays and members (`prototypeTypeNames`); such
+a declaration clears the pipeline. One that changes a record whose members
+the decompiler printed, or a type a unit held (`readTypes`, kept in the
+session as `ShownTypes` across contexts), drops only the kept text. The C
+API reports either as `"decompilation": true`, and the worker then
+refreshes its views as after loading signatures. Every declaration drops
+the context, which reads a copy of the library, and the context takes back
+the members it gave.
+
+A unit's member access names a member only where the access reads it
+(`NdType::displayFieldIndexAt`): a field of the access's width, a scalar's
+over a record's of the same width, which no scalar access reads whole, and
+a record in place only when the access reads all of it. A byte at the start
+of a header whose union's alternatives disagree names no member and stays a
+raw access.
 
 ## System boundary
 

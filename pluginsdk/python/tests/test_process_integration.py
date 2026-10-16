@@ -374,6 +374,11 @@ class ProcessIntegrationTests(unittest.TestCase):
                                          "android-aarch64-api28-v1", json.dumps(options))
         self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
         self.assertEqual(result["return_value"], "0")
+        options["android"].update(entry_symbol="devices_gpu_legacy", arguments=[0, 1])
+        result = session.emulate_process(str(Path(fixtures) / "devices-O2-relr.so"),
+                                         "android-aarch64-api28-v1", json.dumps(options))
+        self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+        self.assertEqual(result["return_value"], "0")
         del device["kgsl_contexts"]["memory_objects"]
         del device["kgsl_contexts"]["synchronous_a3xx"]
 

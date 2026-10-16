@@ -116,7 +116,7 @@ jobs:
           for owner, pattern, minimum, label in (
               ('NeverDSourcePatchMatrixTests', 'AllTargets/*', 154, 'source-targets'),
               # External Windows kernel inputs have a separate suite.
-              ('NeverDSessionCAPITests', 'SessionCAPITest.*', 128, 'native-session'),
+              ('NeverDSessionCAPITests', 'SessionCAPITest.*', 129, 'native-session'),
           ):
               binary = 'build-lift-qualification/bin/' + owner
               listed = subprocess.check_output([

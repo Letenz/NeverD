@@ -429,9 +429,16 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     SourceMap->HighSources = &S->PipeResult.HighSources;
     Opts.SourceMap = SourceMap;
   }
+  DebugContext *Debug = S->decompileDebug();
+  // The program's records, as its local types define them.
+  if (const LocalTypesDebugContext *Local = S->LocalTypesDbg.get();
+      Local && Debug == Local)
+    Opts.RecordDefinitions = [Local](const std::vector<TypeRef> &Records) {
+      return Local->definitions(Records);
+    };
   try {
     HighCEmitter Emitter;
-    Emitter.emit(Single, OS, Opts, S->decompileDebug());
+    Emitter.emit(Single, OS, Opts, Debug);
   } catch (const std::exception &Error) {
     S->setError(emissionFailure(Error));
     return dupStr(std::string());

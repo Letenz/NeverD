@@ -82,6 +82,30 @@ struct RenderOptions {
   bool Prototypes = false;
 };
 
+/// C that another unit holds, as a decompiled function's does: the
+/// definitions of the records it names and of what they hold by value, the
+/// typedefs and enumerations these name, and declarations of the records
+/// they only point to.  Each type sits under a guard of its own, so that
+/// units holding the same types concatenate.
+struct EmbeddedC {
+  std::string Text;
+  /// The records Text defines, by their C names, and whether each is a
+  /// union.
+  std::vector<std::pair<std::string, bool>> Records;
+  /// The records Text only declares, which it points to, likewise.
+  std::vector<std::pair<std::string, bool>> Declared;
+  /// The ordinary identifiers Text declares, the names of typedefs and of
+  /// enumerators, which the unit's own names step around.
+  std::vector<std::string> Identifiers;
+  /// The library's types Text holds, by their names.
+  std::vector<std::string> Types;
+};
+/// \p Roots, records, as another unit holds them, in C: \p Options gives
+/// the spelling, offsets and checks.
+EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
+                          llvm::ArrayRef<const LocalType *> Roots,
+                          const RenderOptions &Options);
+
 /// Whether \p Lang renders function prototypes: C and C++ do.
 bool rendersPrototypes(Language Lang);
 /// Whether \p Lang's declarations read back (TypeParse.h): C, C++, Rust

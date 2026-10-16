@@ -310,8 +310,8 @@ and checks that the headers join its PDB without conflicts.
 Run these external-input checks with `--gtest_filter=SessionCAPIKernelInputs.*`.
 Without the two inputs they remain explicit skips. The Linux Lift qualification
 requires every `SessionCAPITest.*` case to execute and pass using repository
-fixtures; it does not claim Windows kernel-input coverage.
-`PrototypeDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
+fixtures; it does not claim Windows kernel input coverage.
+`LocalTypesDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
 the conversion and which functions take a prototype without a program.
 `scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
 decompiles with the prototypes an IDA dump shows; it decompiles each
@@ -359,6 +359,30 @@ python3 scripts/check_type_renders.py --neverd build/bin/neverd
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --binary /path/to/ntoskrnl.exe --pdb /path/to/ntkrnlmp.pdb
 ```
+
+Decompiled units must compile with the records they name.
+`scripts/check_decompiled_types.py` decompiles kernel functions in HighC and
+compiles each unit for the Windows target with clang and mingw-w64's
+headers, as errors for int-to-pointer and incompatible pointer conversions:
+a unit that reads members of a record it leaves incomplete, or stores a
+value C does not convert to the member's type, fails:
+
+```sh
+python3 scripts/check_decompiled_types.py --neverd build/bin/neverd \
+  --binary ntoskrnl.exe --pdb ntkrnlmp.pdb
+```
+
+Without the kernel, the fixture checks a function its PDB types:
+`--binary unittests/types/fixtures/local_types.exe --pdb
+unittests/types/fixtures/local_types.pdb --func use`.
+
+`LocalTypesDebugContext.GivesTheDebugInformationsRecordsTheirMembers` covers
+the members the context gives, the definitions a unit holds and what a
+dropped context takes back. `SessionCAPITest.FunctionsHoldTheRecordsTheirPDBTypes`
+covers the same through a session on the fixture, a renamed member reaching
+the pseudocode among them, in every build;
+`SessionCAPIKernelInputs.KernelFunctionsHoldTheRecordsTheyName` (with the kernel's
+environment variables) covers `KeInitializeDpc` and the kernel's unions.
 
 ## Scalar x86 floating-point state
 
@@ -7353,4 +7377,16 @@ The raw `GPUObjectStorage` case and Android object lifecycle/address-range cases
 have a 30-second per-execution wall budget for word-by-word O0 page checks on
 contended hosts; their guest instruction and event budgets are unchanged.
 Existing device cases retain their deadlines.
+`LegacyGPU*` adds old/new allocation, query and release mixing, normalized
+alignment and FORCE_32BIT flags, address collision recovery, ID-before-address
+lookup, interior data versus guard queries, complete reserved fields and pending
+frees. Its mixed PM4 case allocates the command buffer through GPUOBJ and writes
+into GPUMEM_ID storage. Cross-page records with a read-only trailing page must
+preserve the complete input and live RAM; imported objects without a modeled
+kernel ID stop explicitly. Raw errno and Bionic errno adapters are checked by
+independent callers. Run these cases alongside the existing GPUObject tests;
+the same public C API/CLI/Python case now includes both allocation interfaces.
+The kernel-owner test also observes allocation capacity, ID/address reuse and
+unmap-after-refused-free state, so unchanged output bytes alone cannot hide a
+partially committed allocation or pending free.
 These fixtures do not supply an Android system-service implementation or shader.
