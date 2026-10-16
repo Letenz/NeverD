@@ -1,10 +1,10 @@
-//===- KernelModelFileQueries.cpp - Caller-owned file query continuations -===//
+//===- KernelModelFileRequests.cpp - Caller-owned file IRP continuations -===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Produce borrowed or buffered query IRPs and resume the original API caller
+/// Produce borrowed queries and buffered native IRPs, resuming the API caller
 /// after dispatch, completion and any final FILE_OBJECT close have returned.
 
 #include "KernelContextCapture.h"
@@ -22,11 +22,21 @@ namespace {
 using namespace windows;
 constexpr uint64_t QueryStatusSize = 16;
 constexpr uint64_t QueryStorageSize = QueryStatusSize + dispatcher::EventSize;
-constexpr unsigned QueryMajor = 5;
 
-llvm::Error queryError(const llvm::Twine &Text) {
+uint32_t requestMajor(DriverRequestKind Kind) {
+  switch (Kind) {
+#define NEVERD_DRIVER_REQUEST_KIND(Name, Spelling, Major)                      \
+  case DriverRequestKind::Name:                                                \
+    return Major;
+#include "neverd/emulation/DriverRequestKinds.def"
+#undef NEVERD_DRIVER_REQUEST_KIND
+  }
+  return profile::MajorFunctionCount;
+}
+
+llvm::Error fileRequestError(const llvm::Twine &Text) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                 "file information query: " + Text);
+                                 "file API request: " + Text);
 }
 } // namespace
 
@@ -34,14 +44,14 @@ llvm::Expected<uint64_t> KernelModel::relatedFileDevice(uint64_t Object) const {
   const auto Found = FileObjects.find(Object);
   if (Found == FileObjects.end() || Found->second.State == FileState::Failed ||
       Found->second.State == FileState::Closing)
-    return queryError("related device requires a live file object");
+    return fileRequestError("related device requires a live file object");
   const auto &File = Found->second;
   auto Type = Memory.readInteger(Object, 2);
   auto Size = Memory.readInteger(Object + 2, 2);
   if (!Type || !Size)
     return llvm::joinErrors(Type.takeError(), Size.takeError());
   if (*Type != FileType || *Size != FileSize)
-    return queryError("FILE_OBJECT header differs from its owner");
+    return fileRequestError("FILE_OBJECT header differs from its owner");
   auto Device = Memory.readInteger(Object + FileDeviceOffset, 8);
   auto VPB = Memory.readInteger(Object + FileVPBOffset, 8);
   auto Extension = Memory.readInteger(Object + FileExtensionOffset, 8);
@@ -50,40 +60,131 @@ llvm::Expected<uint64_t> KernelModel::relatedFileDevice(uint64_t Object) const {
         Device.takeError(),
         llvm::joinErrors(VPB.takeError(), Extension.takeError()));
   if (*Device != File.Device || !Devices.contains(*Device))
-    return queryError("FILE_OBJECT lost its authoritative device identity");
+    return fileRequestError(
+        "FILE_OBJECT lost its authoritative device identity");
   auto DeviceVPB = Memory.readInteger(*Device + DeviceVPBOffset, 8);
   if (!DeviceVPB)
     return DeviceVPB.takeError();
   if (*VPB || *DeviceVPB || *Extension)
-    return queryError("mounted VPB and file-extension routing are unsupported");
+    return fileRequestError(
+        "mounted VPB and file-extension routing are unsupported");
   if (auto E = validateDeviceTopology())
     return E;
   return topAttachedDevice(*Device);
 }
 
-std::optional<uint64_t> KernelModel::takeFileQueryContinuation() {
-  return std::exchange(PendingFileQueryContinuation, std::nullopt);
+std::optional<uint64_t> KernelModel::takeFileRequestContinuation() {
+  return std::exchange(PendingFileRequestContinuation, std::nullopt);
 }
 
 llvm::Expected<uint64_t>
-KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A, bool Native,
-                                  const KernelContextCapture *Context) {
+KernelModel::setFileInformation(llvm::ArrayRef<uint64_t> A,
+                                const KernelContextCapture *Context) {
   const auto Process = executionProcessContext();
   if (!Process || Process->RestrictedAttachment ||
       CurrentIRQL != scheduler::PassiveLevel)
-    return queryError("requires a known PASSIVE_LEVEL caller");
-  if (auto E = validateFileQueryInterrupts(Context))
+    return fileRequestError("requires a known PASSIVE_LEVEL caller");
+  if (auto E = validateFileAPIInterrupts(Context))
     return E;
   auto Disabled = allApcsDisabled();
   if (!Disabled)
     return Disabled.takeError();
   if (*Disabled)
-    return queryError("requires enabled special kernel APCs");
+    return fileRequestError("requires enabled special kernel APCs");
   if (Unloading || Unloaded || PendingWdmCall || PendingWait ||
-      PendingFileQueryContinuation || PendingFileOperation ||
-      NextFileInformationQuery == UINT64_MAX || NextIRPCall == UINT64_MAX)
-    return queryError("cannot replace an outstanding continuation");
-  const uint64_t StatusOutput = Native ? A[1] : 0;
+      PendingFileRequestContinuation || PendingFileOperation)
+    return fileRequestError("cannot replace an outstanding continuation");
+  if (uint32_t(A[4]) != 14)
+    return fileRequestError("native set-information class is not implemented");
+  const auto *Handle = findObjectHandle(A[0]);
+  if (!Handle)
+    return StatusInvalidHandle;
+  const auto Object = ReferencedObjects.find(Handle->Object);
+  if (Object == ReferencedObjects.end())
+    return fileRequestError("handle lost its live object");
+  if (Object->second.Kind != ObjectKind::File)
+    return StatusObjectTypeMismatch;
+  const auto Found = FileObjects.find(Handle->Object);
+  if (Found == FileObjects.end() || (Found->second.State != FileState::Open &&
+                                     Found->second.State != FileState::Cleaned))
+    return fileRequestError("position setting requires an opened file object");
+  const auto &File = Found->second;
+  auto Flags = Memory.readInteger(File.Address + FileFlagsOffset, 4);
+  if (!Flags)
+    return Flags.takeError();
+  if (bool(*Flags & FileSynchronousIO) == File.Asynchronous)
+    return fileRequestError(
+        "FILE_OBJECT synchronous mode differs from its owner");
+  if (File.Asynchronous)
+    return fileRequestError("asynchronous position setting is not implemented");
+  if (std::any_of(Requests.begin(), Requests.end(), [&](const auto &Entry) {
+        return Entry.second.FileAddress == File.Address;
+      }))
+    return fileRequestError(
+        "same-file I/O must finalize before position setting");
+  if (auto E = snapshot())
+    return E;
+  auto Top = relatedFileDevice(File.Address);
+  if (!Top)
+    return Top.takeError();
+  if (uint32_t(A[3]) < 8)
+    return StatusInfoLengthMismatch;
+  if (auto E = validateGuestAccess(A[2], 8, false))
+    return E;
+  auto Position = Memory.readInteger(A[2], 8);
+  auto Sector = Memory.readInteger(*Top + DeviceSectorSizeOffset, 2);
+  if (!Position || !Sector)
+    return llvm::joinErrors(Position.takeError(), Sector.takeError());
+  if (*Position > INT64_MAX ||
+      ((*Flags & 8) && *Sector && (*Position & (*Sector - 1))))
+    return StatusInvalidParameter;
+  // The synchronous class-14 path takes the file lock without resetting its
+  // event or allocating an IRP. Capture input before aliased IOSB stores. The
+  // cursor changes first; a later output fault preserves preceding effects.
+  if (auto E = Memory.writeInteger(File.Address + FileCurrentByteOffset,
+                                   *Position, 8))
+    return E;
+  if (auto E = validateObjectOutput(A[1], 4))
+    return E;
+  if (auto E = Memory.writeInteger(A[1], StatusSuccess, 4))
+    return E;
+  if (auto E = validateObjectOutput(A[1] + 8, 8))
+    return E;
+  if (auto E = Memory.writeInteger(A[1] + 8, 0, 8))
+    return E;
+  return StatusSuccess;
+}
+
+llvm::Expected<uint64_t>
+KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
+                                 DriverRequestKind Kind, bool Native,
+                                 const KernelContextCapture *Context) {
+  const bool Query = Kind == DriverRequestKind::QueryInformation;
+  const bool Flush = Kind == DriverRequestKind::FlushBuffers;
+  const bool Transfer =
+      Kind == DriverRequestKind::Read || Kind == DriverRequestKind::Write;
+  const bool Write = Kind == DriverRequestKind::Write;
+  const auto Process = executionProcessContext();
+  if (!Process || Process->RestrictedAttachment ||
+      CurrentIRQL != scheduler::PassiveLevel)
+    return fileRequestError("requires a known PASSIVE_LEVEL caller");
+  if (auto E = validateFileAPIInterrupts(Context))
+    return E;
+  auto Disabled = allApcsDisabled();
+  if (!Disabled)
+    return Disabled.takeError();
+  if (*Disabled)
+    return fileRequestError("requires enabled special kernel APCs");
+  if (Unloading || Unloaded || PendingWdmCall || PendingWait ||
+      PendingFileRequestContinuation || PendingFileOperation ||
+      NextFileRequest == UINT64_MAX || NextIRPCall == UINT64_MAX)
+    return fileRequestError("cannot replace an outstanding continuation");
+  if (Transfer && (A[1] || A[2] || A[3]))
+    return fileRequestError(
+        "native transfers with events or APCs are unsupported");
+  const uint64_t OffsetPointer = Transfer ? A[7] : 0;
+  const uint64_t KeyPointer = Transfer ? A[8] : 0;
+  const uint64_t StatusOutput = Native ? A[Transfer ? 4 : 1] : 0;
   uint32_t GrantedAccess = 0;
   std::array<uint64_t, 5> Normalized;
   if (Native) {
@@ -92,34 +193,96 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A, bool Native,
       return StatusInvalidHandle;
     const auto Object = ReferencedObjects.find(Handle->Object);
     if (Object == ReferencedObjects.end())
-      return queryError("handle lost its live object");
+      return fileRequestError("handle lost its live object");
     if (Object->second.Kind != ObjectKind::File)
       return StatusObjectTypeMismatch;
     // Zw selects KernelMode for object referencing. The handle's process scope
     // still applies, but its granted mask is not a kernel-mode access check.
     GrantedAccess = Handle->GrantedAccess;
-    Normalized = {Handle->Object, uint32_t(A[4]), uint32_t(A[3]), A[2], 0};
+    Normalized = Flush ? std::array<uint64_t, 5>{Handle->Object, 0, 0, 0, 0}
+                 : Transfer
+                     ? std::array<uint64_t, 5>{Handle->Object, 0,
+                                               uint32_t(A[6]), A[5], 0}
+                     : std::array<uint64_t, 5>{Handle->Object, uint32_t(A[4]),
+                                               uint32_t(A[3]), A[2], 0};
     A = Normalized;
   }
   const auto Found = FileObjects.find(A[0]);
   if (Found == FileObjects.end() || (Found->second.State != FileState::Open &&
                                      Found->second.State != FileState::Cleaned))
-    return queryError("requires an opened file object");
+    return fileRequestError("requires an opened file object");
   auto &File = Found->second;
   const uint32_t Class = uint32_t(A[1]), Length = uint32_t(A[2]);
   auto Flags = Memory.readInteger(A[0] + FileFlagsOffset, 4);
   if (!Flags)
     return Flags.takeError();
   if (bool(*Flags & FileSynchronousIO) == File.Asynchronous)
-    return queryError("FILE_OBJECT synchronous mode differs from its owner");
+    return fileRequestError(
+        "FILE_OBJECT synchronous mode differs from its owner");
+  if (Flush) {
+    // Unlike the read/write producers, flush checks this granted mask even
+    // for a KernelMode handle reference. Named pipes require FILE_WRITE_DATA.
+    const uint32_t Required = (*Flags & 0x80) ? 2u : 6u;
+    if (!(GrantedAccess & Required))
+      return StatusAccessDenied;
+    if (File.Asynchronous || File.State != FileState::Open)
+      return fileRequestError("native flush requires an open synchronous file");
+  }
+  uint64_t ByteOffset = 0;
+  uint32_t Key = 0;
+  if (Transfer) {
+    if (File.Asynchronous || File.State != FileState::Open)
+      return fileRequestError(
+          "native transfers require an open synchronous file");
+    auto Cached =
+        Memory.readInteger(File.Address + FilePrivateCacheMapOffset, 8);
+    auto Completion =
+        Memory.readInteger(File.Address + FileCompletionContextOffset, 8);
+    if (!Cached || !Completion)
+      return llvm::joinErrors(Cached.takeError(), Completion.takeError());
+    if (*Cached || *Completion)
+      return fileRequestError(
+          "cached Fast I/O and completion ports are unsupported");
+    if (OffsetPointer)
+      if (auto E = validateGuestAccess(OffsetPointer, 8, false))
+        return E;
+    auto Offset = Memory.readInteger(
+        OffsetPointer ? OffsetPointer : File.Address + FileCurrentByteOffset,
+        8);
+    if (!Offset)
+      return Offset.takeError();
+    ByteOffset = *Offset;
+    if (ByteOffset == uint64_t(-2)) {
+      auto Position =
+          Memory.readInteger(File.Address + FileCurrentByteOffset, 8);
+      if (!Position)
+        return Position.takeError();
+      ByteOffset = *Position;
+    }
+    // KernelMode skips a granted-mask access check. Append-only handles still
+    // select FILE_WRITE_TO_END_OF_FILE in the original write producer.
+    if (Write && (GrantedAccess & 6) == 4)
+      ByteOffset = UINT64_MAX;
+    if (ByteOffset > INT64_MAX && !(Write && ByteOffset == UINT64_MAX))
+      return StatusInvalidParameter;
+    if (KeyPointer) {
+      if (auto E = validateGuestAccess(KeyPointer, 4, false))
+        return E;
+      auto Value = Memory.readInteger(KeyPointer, 4);
+      if (!Value)
+        return Value.takeError();
+      Key = uint32_t(*Value);
+    }
+  }
   // Access and remote-device observations do not take the file lock. The
   // synchronous position fast path does, even though it never creates an IRP.
-  if ((!Native || (Class != 8 && Class != 51)) &&
+  if ((Transfer || !Native || (Class != 8 && Class != 51)) &&
       std::any_of(Requests.begin(), Requests.end(), [&](const auto &Entry) {
         return Entry.second.FileAddress == A[0];
       }))
-    return queryError("same-file I/O must finalize before a query");
-  if (Native &&
+    return fileRequestError(
+        "same-file I/O must finalize before a file API request");
+  if (Query && Native &&
       (Class == 8 || Class == 51 || (Class == 14 && !File.Asynchronous))) {
     const unsigned Width = Class == 51 ? 1 : Class == 14 ? 8 : 4;
     if (Length < Width)
@@ -151,7 +314,7 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A, bool Native,
       return E;
     return StatusSuccess;
   }
-  if (Native) {
+  if (Query && Native) {
     switch (Class) {
     case 4:
     case 5:
@@ -171,17 +334,19 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A, bool Native,
     case 75:
       break;
     default:
-      return queryError("native information class is not implemented");
+      return fileRequestError("native information class is not implemented");
     }
     if (!Length || ((Class == 16 || Class == 17) && Length < 4))
-      return queryError("native buffered query requires a valid class buffer");
+      return fileRequestError(
+          "native buffered query requires a valid class buffer");
   }
   if (File.InternalIOHolds == UINT32_MAX)
-    return queryError("file I/O hold capacity exhausted");
+    return fileRequestError("file I/O hold capacity exhausted");
   if (Length > profile::KernelArenaSize)
-    return queryError("buffer exceeds the 1 MiB model operation limit");
+    return fileRequestError("buffer exceeds the 1 MiB model operation limit");
   if (Length)
-    if (auto E = validateObjectOutput(A[3], Length))
+    if (auto E = Write ? validateGuestAccess(A[3], Length, false)
+                       : validateObjectOutput(A[3], Length))
       return E;
   if (auto E = validateObjectOutput(Native ? StatusOutput : A[4],
                                     Native ? QueryStatusSize : 4))
@@ -194,35 +359,45 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A, bool Native,
   auto Route = deviceStack(*Top);
   if (!Route)
     return Route.takeError();
-  if (auto E = validateFileSystemRoute(*Route, File.Address,
-                                       DriverRequestKind::QueryInformation))
+  if (auto E = validateFileSystemRoute(*Route, File.Address, Kind))
     return E;
+  if (Transfer) {
+    auto DeviceFlags = Memory.readInteger(*Top + DeviceFlagsOffset, 4);
+    if (!DeviceFlags)
+      return DeviceFlags.takeError();
+    if (!(*DeviceFlags & DeviceBufferedIO))
+      return fileRequestError("native transfers require buffered device I/O");
+  }
   auto Count = Memory.readInteger(*Top + DeviceStackCountOffset, 1);
   if (!Count)
     return Count.takeError();
   if (!*Count || *Count > MaxIRPStackCount || *Count < Route->size())
-    return queryError("device requires a positive bounded IRP stack count");
+    return fileRequestError(
+        "device requires a positive bounded IRP stack count");
   if (File.PnpDevice) {
     if (*Top == File.PnpDevice)
-      return queryError("provider PDO has no guest query dispatch");
+      return fileRequestError("provider PDO has no guest file dispatch");
     if (auto E = Lifecycle.validateIoSubmission(File.PnpDevice))
       return E;
   }
   const bool Provider = FileSystem.ownsDevice(*Top);
-  const bool LocalNative = Native && (Class == 16 || Class == 17);
-  if (Native && !Provider && !File.Asynchronous && (Class == 4 || Class == 5)) {
+  const bool LocalNative = Query && Native && (Class == 16 || Class == 17);
+  if (Query && Native && !Provider && !File.Asynchronous &&
+      (Class == 4 || Class == 5)) {
     auto FastIO = Memory.readInteger(
         Devices.at(*Top).OwnerDriver + DriverFastIOOffset, 8);
     if (!FastIO)
       return FastIO.takeError();
     if (*FastIO)
-      return queryError("native Fast I/O queries are not implemented");
+      return fileRequestError("native Fast I/O queries are not implemented");
   }
-  const uint64_t Callback = Provider ? 0 : Result.MajorFunctions[QueryMajor];
+  const unsigned Major = requestMajor(Kind);
+  const uint64_t Callback = Provider ? 0 : Result.MajorFunctions[Major];
   if (!Provider && !LocalNative && !Callback &&
       anyInitialized(DispatchBytesWritten, DispatchInitialization,
-                     QueryMajor * profile::PointerSize, profile::PointerSize))
-    return queryError("driver explicitly registered a null query callback");
+                     Major * profile::PointerSize, profile::PointerSize))
+    return fileRequestError(
+        "driver explicitly registered a null file dispatch callback");
   auto Thread = currentThreadObject();
   if (!Thread)
     return Thread.takeError();
@@ -260,16 +435,22 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A, bool Native,
   if (!Storage)
     return Storage.takeError();
   uint64_t Buffer = A[3];
-  if (Native) {
+  if (Native && Length) {
     auto Owned = allocatePhysicalBuffer(Length, PoolAlignment, 0, Length);
     if (!Owned)
       return Owned.takeError();
     Buffer = *Owned;
-    if (auto E = Memory.write(Buffer, std::vector<uint8_t>(Length)))
+    std::vector<uint8_t> Bytes(Length);
+    if (Write)
+      if (auto E = Memory.read(A[3], Bytes))
+        return E;
+    if (auto E = Memory.write(Buffer, Bytes))
       return E;
+  } else if (Native) {
+    Buffer = 0;
   }
-  const uint64_t ID = NextFileInformationQuery++;
-  FileInformationQuery Operation;
+  const uint64_t ID = NextFileRequest++;
+  FileRequest Operation;
   Operation.File = A[0];
   Operation.IRP = *Packet;
   Operation.ReturnedLength = A[4];
@@ -279,23 +460,29 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A, bool Native,
   Operation.CallerExecution = CurrentExecution;
   Operation.CallerThread = CurrentThreadKey;
   Operation.CallerProcess = Process->ProcessID;
-  FileInformationQueries.emplace(ID, Operation);
+  FileRequests.emplace(ID, Operation);
   ++File.InternalIOHolds;
   DriverRequestResult Observation;
-  Observation.Kind = DriverRequestKind::QueryInformation;
-  Observation.Origin = Native ? DriverRequestOrigin::FileHandleQuery
-                              : DriverRequestOrigin::FileInformationQuery;
+  Observation.Kind = Kind;
+  Observation.Origin = Flush ? DriverRequestOrigin::FileHandleFlush
+                       : Transfer
+                           ? (Write ? DriverRequestOrigin::FileHandleWrite
+                                    : DriverRequestOrigin::FileHandleRead)
+                       : Native ? DriverRequestOrigin::FileHandleQuery
+                                : DriverRequestOrigin::FileInformationQuery;
   Observation.Device = Devices.at(File.Device).Name;
   Observation.File = File.ScenarioID;
   Observation.RequestorProcessID = Process->ProcessID;
-  Observation.FileInformationClass = Class;
+  if (Query)
+    Observation.FileInformationClass = Class;
+  Observation.ByteOffset = ByteOffset;
   Observation.IRP = *Packet;
   associateFileRequest(Observation, File);
   if (const auto *Owner = pnpDeviceForPDO(File.PnpDevice))
     Observation.DeviceID = Result.PnpDevices[Owner->ResultIndex].ID;
   const size_t Index = Result.Requests.size();
   Result.Requests.push_back(std::move(Observation));
-  ActiveRequest Record{DriverRequestKind::QueryInformation, Index};
+  ActiveRequest Record{Kind, Index};
   Record.IRP = *Packet;
   Record.Device = File.Device;
   Record.FileAddress = File.Address;
@@ -308,10 +495,13 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A, bool Native,
   Record.UnwoundPending.resize(*Count);
   Record.SystemBuffer = Buffer;
   Record.BorrowedSystemBuffer = !Native;
-  Record.UserBuffer = Native ? A[3] : 0;
-  Record.FileQueryOperation = ID;
+  Record.UserBuffer = Native && !Write && Length ? A[3] : 0;
+  Record.FileRequestID = ID;
   Record.BufferSize = Length;
-  Record.OutputSize = Record.TransferSize = Length;
+  Record.ByteOffset = ByteOffset;
+  Record.OutputSize = Write ? 0 : Length;
+  Record.InputSize = Write ? Length : 0;
+  Record.TransferSize = Length;
   Record.AsynchronousFile = File.Asynchronous;
   Record.ProcessID = Process->ProcessID;
   Record.CallbackProcessID = Process->ProcessID;
@@ -335,24 +525,36 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A, bool Native,
     uint64_t Address, Value;
     unsigned Width;
   };
-  for (const Field &F : std::array<Field, 15>{
-           {{*Packet + IRPFlagsOffset,
-             (File.Asynchronous ? 0x14u : 0x10u) | (Native ? 0x860u : 0u), 4},
+  // The bounded profile uses normal I/O priority. The service tail encodes
+  // that hint after producer allocation and before invoking the driver.
+  const uint32_t PacketFlags =
+      Flush ? 0x60000u
+      : Transfer
+          ? 0x60000u | (Write ? 0xa00u : 0x900u) |
+                (Write ? (Length ? 0x30u : 0x10u) : (Length ? 0x70u : 0x50u)) |
+                ((*Flags & 8) ? 1u : 0u)
+          : (File.Asynchronous ? 0x14u : 0x10u) | (Native ? 0x860u : 0u);
+  for (const Field &F : std::array<Field, 16>{
+           {{*Packet + IRPFlagsOffset, PacketFlags, 4},
             {*Packet + IRPAllocationFlagsOffset, File.Asynchronous ? 0u : 2u,
              1},
             {*Packet + IRPSystemBufferOffset, Buffer, 8},
-            {*Packet + IRPUserBufferOffset, Native ? A[3] : 0, 8},
+            {*Packet + IRPUserBufferOffset, Request.UserBuffer, 8},
             {*Packet + IRPRequestorModeOffset, KernelMode, 1},
             {*Packet + IRPOriginalFileOffset, File.Address, 8},
             {*Packet + IRPThreadOffset, *Thread, 8},
             {*Packet + IRPUserIosbOffset,
              Native && !File.Asynchronous ? StatusOutput : *Storage, 8},
             {*Packet + IRPUserEventOffset, Event, 8},
-            {Request.Stack, QueryMajor, 1},
-            {Request.Stack + StackFlagsOffset, Class == 75 ? 1u : 0u, 1},
+            {Request.Stack, Major, 1},
+            {Request.Stack + StackFlagsOffset,
+             Transfer ? (Write && (*Flags & 0x10) ? 4u : 0u)
+                      : (Class == 75 ? 1u : 0u),
+             1},
             {Request.Stack + StackQueryLengthOffset, Length, 4},
-            {Request.Stack + StackQueryClassOffset, Class == 75 ? 71 : Class,
-             4},
+            {Request.Stack + StackQueryClassOffset,
+             Transfer ? Key : (Class == 75 ? 71 : Class), 4},
+            {Request.Stack + StackReadWriteByteOffset, ByteOffset, 8},
             {Request.Stack + StackDeviceOffset, *Top, 8},
             {Request.Stack + StackFileOffset, File.Address, 8}}})
     if (auto E = Memory.writeInteger(F.Address, F.Value, F.Width))
@@ -367,15 +569,15 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A, bool Native,
     if (!Routed)
       return Routed.takeError();
     if (*Routed)
-      return queryError("framework query dispatch is unsupported");
+      return fileRequestError("framework file API dispatch is unsupported");
   }
   if (!File.Asynchronous) {
     auto Entered = enterApcRegion(ApcRegionKind::Critical);
     if (!Entered)
       return Entered.takeError();
-    FileInformationQueries.at(ID).CriticalRegion = true;
+    FileRequests.at(ID).CriticalRegion = true;
   }
-  if (Native && (Class == 16 || Class == 17)) {
+  if (LocalNative) {
     auto Value =
         Class == 17
             ? Memory.readInteger(*Top + DeviceAlignmentOffset, 4)
@@ -405,8 +607,8 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A, bool Native,
       return E;
   } else if (Callback) {
     const uint64_t Token = NextIRPCall++;
-    IRPCall Continuation{IRPCallKind::FileInformationQuery, *Packet, 0, true};
-    Continuation.FileQueryOperation = ID;
+    IRPCall Continuation{IRPCallKind::FileRequest, *Packet, 0, true};
+    Continuation.FileRequestID = ID;
     IRPCalls.emplace(Token, std::move(Continuation));
     PendingWdmCall = KernelGuestCall{{GuestCallOwner::WDM, Token},
                                      Callback,
@@ -423,12 +625,12 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A, bool Native,
     if (auto E = recordDispatchReturn(*Packet, InvalidDeviceRequest))
       return E;
   }
-  PendingFileQueryContinuation = ID;
+  PendingFileRequestContinuation = ID;
   return 0; // The session must retain the caller until resume publishes it.
 }
 
 llvm::Error
-KernelModel::validateFileQueryInterrupts(const KernelContextCapture *Context) {
+KernelModel::validateFileAPIInterrupts(const KernelContextCapture *Context) {
   if (!Context)
     return llvm::Error::success(); // Direct model calls use the default
                                    // context.
@@ -438,19 +640,22 @@ KernelModel::validateFileQueryInterrupts(const KernelContextCapture *Context) {
   const auto Flags = llvm::support::endian::read32le(Captured->Bytes.data() +
                                                      seh::ContextEFlagsOffset);
   if (!(Flags & 0x200))
-    return queryError("interrupt-disabled query execution is unsupported");
+    return fileRequestError(
+        "interrupt-disabled file API execution is unsupported");
   return llvm::Error::success();
 }
 
-llvm::Error KernelModel::publishFileQueryCompletion(uint64_t IRP) {
+llvm::Error KernelModel::publishFileRequestCompletion(uint64_t IRP) {
   auto &Request = Requests.at(IRP);
-  auto &Query = FileInformationQueries.at(Request.FileQueryOperation);
+  auto &Query = FileRequests.at(Request.FileRequestID);
   if (Query.CompletionPublished)
     return llvm::Error::success();
-  // IRP_DEFER_IO_COMPLETION leaves an immediate native query intact until the
-  // producing wrapper regains control. Pending packets notify the requestor
-  // through the same eligible-thread boundary as borrowed queries.
-  if (Query.Native && !Request.PendingMarked && !Request.DispatchReturned)
+  // IRP_DEFER_IO_COMPLETION retains immediate native read/write/query packets
+  // until the producer regains control. Flush does not set that flag: eligible
+  // completion publishes and disposes before dispatch returns. Queued packets
+  // still notify through the original caller boundary.
+  if (Query.Native && Request.Kind != DriverRequestKind::FlushBuffers &&
+      !Request.PendingMarked && !Request.DispatchReturned)
     return llvm::Error::success();
   // IopfCompleteRequest queues requestor APC delivery when a worker or an
   // elevated/guarded caller completes the packet. Eligible API and execution
@@ -474,7 +679,9 @@ llvm::Error KernelModel::publishFileQueryCompletion(uint64_t IRP) {
   // are overwritten by the final API continuation.
   if ((Status >> profile::NTStatusSeverityShift) !=
           profile::NTStatusErrorSeverity &&
-      Observation.Information) {
+      Observation.Information &&
+      (Request.Kind == DriverRequestKind::Read ||
+       Request.Kind == DriverRequestKind::QueryInformation)) {
     if (auto E = validateGuestAccess(Request.SystemBuffer,
                                      Observation.Information, false))
       return E;
@@ -528,36 +735,41 @@ llvm::Error KernelModel::publishFileQueryCompletion(uint64_t IRP) {
   }
   Query.CompletionPublished = true;
   if (Query.Native && Request.Completed)
-    return releaseNativeFileQueryPacket(IRP);
+    return releaseNativeFileRequestPacket(IRP);
   return llvm::Error::success();
 }
 
-bool KernelModel::nativeFileQuery(uint64_t ID) const {
-  return ID && FileInformationQueries.at(ID).Native;
+bool KernelModel::nativeFileRequest(uint64_t ID) const {
+  return ID && FileRequests.at(ID).Native;
 }
 
-llvm::Error KernelModel::releaseNativeFileQueryPacket(uint64_t IRP) {
+llvm::Error KernelModel::releaseNativeFileRequestPacket(uint64_t IRP) {
   const auto &Request = Requests.at(IRP);
-  auto &Query = FileInformationQueries.at(Request.FileQueryOperation);
+  auto &Query = FileRequests.at(Request.FileRequestID);
   if (!Query.Native || Query.PacketReleased || !Query.CompletionPublished)
     return llvm::Error::success();
   if (!Request.Completed)
-    return queryError("native disposal requires completed stack unwinding");
+    return fileRequestError(
+        "native disposal requires completed stack unwinding");
   const uint64_t PacketSize = IRPSize + Request.StackCount * StackSize;
-  if (auto E = prepareReleaseRanges(
-          {{Request.SystemBuffer, Request.BufferSize}, {IRP, PacketSize}}))
+  std::vector<std::pair<uint64_t, uint64_t>> Ranges{{IRP, PacketSize}};
+  if (Request.SystemBuffer)
+    Ranges.emplace_back(Request.SystemBuffer, Request.BufferSize);
+  if (auto E = prepareReleaseRanges(Ranges))
     return E;
-  if (auto E = Physical.retire(Request.SystemBuffer))
-    return E;
-  FreedRanges.emplace(Request.SystemBuffer, Request.BufferSize);
+  if (Request.SystemBuffer) {
+    if (auto E = Physical.retire(Request.SystemBuffer))
+      return E;
+    FreedRanges.emplace(Request.SystemBuffer, Request.BufferSize);
+  }
   FreedRanges.emplace(IRP, PacketSize);
   Query.PacketReleased = true;
   return llvm::Error::success();
 }
 
-llvm::Error
-KernelModel::deliverFileQueryCompletions(const KernelContextCapture *Context) {
-  for (const auto &[ID, Query] : FileInformationQueries) {
+llvm::Error KernelModel::deliverFileRequestCompletions(
+    const KernelContextCapture *Context) {
+  for (const auto &[ID, Query] : FileRequests) {
     (void)ID;
     if (Query.CompletionPublished || Query.Released ||
         Query.CallerThread != CurrentThreadKey)
@@ -574,31 +786,31 @@ KernelModel::deliverFileQueryCompletions(const KernelContextCapture *Context) {
             0x200))
         return llvm::Error::success();
     }
-    if (auto E = publishFileQueryCompletion(Query.IRP))
+    if (auto E = publishFileRequestCompletion(Query.IRP))
       return E;
   }
   return llvm::Error::success();
 }
 
-llvm::Expected<bool> KernelModel::fileInformationQueryReady(uint64_t ID) const {
-  const auto Found = FileInformationQueries.find(ID);
-  if (Found == FileInformationQueries.end() || Found->second.Released)
-    return queryError("wait lost its active query operation");
+llvm::Expected<bool> KernelModel::fileRequestReady(uint64_t ID) const {
+  const auto Found = FileRequests.find(ID);
+  if (Found == FileRequests.end() || Found->second.Released)
+    return fileRequestError("wait lost its active file request");
   const auto *Request = requestForIRP(Found->second.IRP);
   if (!Request)
-    return queryError("operation lost its query IRP");
+    return fileRequestError("operation lost its file IRP");
   return Request->Completed && Request->DispatchReturned &&
          std::none_of(IRPCalls.begin(), IRPCalls.end(), [&](const auto &Entry) {
            return Entry.second.IRP == Found->second.IRP;
          });
 }
 
-llvm::Error KernelModel::waitForFileInformationQuery(uint64_t ID) {
+llvm::Error KernelModel::waitForFileRequest(uint64_t ID) {
   if (PendingWait)
-    return queryError("cannot replace an existing wait");
-  const auto &Query = FileInformationQueries.at(ID);
+    return fileRequestError("cannot replace an existing wait");
+  const auto &Query = FileRequests.at(ID);
   Wait Pending;
-  Pending.Type = Wait::Kind::FileInformationQuery;
+  Pending.Type = Wait::Kind::FileRequest;
   Pending.Object = ID;
   Pending.Execution = Query.CallerExecution;
   Pending.Thread = Query.CallerThread;
@@ -608,46 +820,46 @@ llvm::Error KernelModel::waitForFileInformationQuery(uint64_t ID) {
 }
 
 llvm::Expected<std::optional<uint64_t>>
-KernelModel::finishFileInformationDispatch(uint64_t Token,
-                                           uint64_t ReturnValue) {
+KernelModel::finishFileRequestDispatch(uint64_t Token, uint64_t ReturnValue) {
   const auto Call = IRPCalls.at(Token);
   if (auto E = recordDispatchReturn(Call.IRP, uint32_t(ReturnValue)))
     return E;
   IRPCalls.erase(Token);
-  auto Ready = fileInformationQueryReady(Call.FileQueryOperation);
+  auto Ready = fileRequestReady(Call.FileRequestID);
   if (!Ready)
     return Ready.takeError();
   if (!*Ready)
-    if (auto E = waitForFileInformationQuery(Call.FileQueryOperation))
+    if (auto E = waitForFileRequest(Call.FileRequestID))
       return E;
   return std::optional<uint64_t>{0}; // Never publish from the dispatch frame.
 }
 
 llvm::Expected<std::optional<uint64_t>>
-KernelModel::resumeFileInformationQuery(uint64_t ID) {
-  const auto Found = FileInformationQueries.find(ID);
-  if (Found == FileInformationQueries.end())
-    return queryError("continuation lost its operation");
+KernelModel::resumeFileRequest(uint64_t ID) {
+  const auto Found = FileRequests.find(ID);
+  if (Found == FileRequests.end())
+    return fileRequestError("continuation lost its operation");
   auto &Query = Found->second;
   const auto Process = executionProcessContext();
   if (CurrentExecution != Query.CallerExecution ||
       CurrentThreadKey != Query.CallerThread || !Process ||
       Process->ProcessID != Query.CallerProcess ||
       CurrentIRQL != scheduler::PassiveLevel || PendingWdmCall || PendingWait)
-    return queryError("continuation requires the original caller context");
+    return fileRequestError(
+        "continuation requires the original caller context");
   if (!Query.Released) {
-    auto Ready = fileInformationQueryReady(ID);
+    auto Ready = fileRequestReady(ID);
     if (!Ready)
       return Ready.takeError();
     if (!*Ready) {
-      if (auto E = waitForFileInformationQuery(ID))
+      if (auto E = waitForFileRequest(ID))
         return E;
       return std::optional<uint64_t>{};
     }
-    if (auto E = publishFileQueryCompletion(Query.IRP))
+    if (auto E = publishFileRequestCompletion(Query.IRP))
       return E;
     if (!Query.CompletionPublished)
-      return queryError("caller cannot deliver its query completion APC");
+      return fileRequestError("caller cannot deliver its file completion APC");
     const auto &Observation =
         Result.Requests[Requests.at(Query.IRP).ResultIndex];
     Query.Status = *Observation.DispatchStatus == StatusPending
@@ -700,7 +912,7 @@ KernelModel::resumeFileInformationQuery(uint64_t ID) {
       return E;
   }
   const uint64_t Status = Query.Status;
-  FileInformationQueries.erase(Found);
+  FileRequests.erase(Found);
   return std::optional<uint64_t>{Status};
 }
 } // namespace neverd::emulation

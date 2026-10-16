@@ -116,7 +116,7 @@ protected:
               uint64_t Buffer = Scratch + 0x100,
               uint64_t Returned = Scratch + 0x200) {
     call("IoQueryFileInformation", {File, Class, Length, Buffer, Returned});
-    const auto ID = Model->takeFileQueryContinuation();
+    const auto ID = Model->takeFileRequestContinuation();
     const auto Call = Model->takeGuestCall();
     EXPECT_TRUE(ID);
     EXPECT_TRUE(Call);
@@ -184,7 +184,7 @@ TEST_F(KernelFileQueries, PacketAndPublicationMatchTargetQueryAndCompletion) {
           rejects(Model->validateGuestAccess(Q.IRP, 1, false), "freed");
           take(Model->finishGuestCall(Q.Call.Token, Outcome.Dispatch));
           EXPECT_FALSE(Model->takeWait());
-          EXPECT_EQ(take(Model->resumeFileInformationQuery(Q.ID)),
+          EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)),
                     std::optional<uint64_t>{Outcome.Dispatch == StatusPending
                                                 ? Outcome.Complete
                                                 : Outcome.Dispatch});
@@ -228,7 +228,7 @@ TEST_F(KernelFileQueries, NativeQueryOwnsBufferAndDefersImmediatePublication) {
           ok(Memory->write(StatusOut, std::vector<uint8_t>(16, 0xa5)));
           call("ZwQueryInformationFile",
                {Handle, StatusOut, Buffer, 64, Class});
-          auto ID = Model->takeFileQueryContinuation();
+          auto ID = Model->takeFileRequestContinuation();
           auto Call = Model->takeGuestCall();
           ASSERT_TRUE(ID);
           ASSERT_TRUE(Call);
@@ -262,7 +262,7 @@ TEST_F(KernelFileQueries, NativeQueryOwnsBufferAndDefersImmediatePublication) {
           }
           take(Model->finishGuestCall(Call->Token, Outcome.Dispatch));
           ASSERT_FALSE(HasFailure());
-          EXPECT_EQ(take(Model->resumeFileInformationQuery(*ID)),
+          EXPECT_EQ(take(Model->resumeFileRequest(*ID)),
                     std::optional<uint64_t>{Pending ? Outcome.Complete
                                                     : Outcome.Dispatch});
           ASSERT_FALSE(HasFailure());
@@ -320,7 +320,7 @@ TEST_F(KernelFileQueries, NativeLocalClassesUseHandleScopeAndExactOutputs) {
               0u);
     EXPECT_EQ(read(Scratch + 0x400, Size), Value);
     EXPECT_EQ(read(Scratch + 0x508), Size);
-    EXPECT_FALSE(Model->takeFileQueryContinuation());
+    EXPECT_FALSE(Model->takeFileRequestContinuation());
   }
   EXPECT_EQ(Result.Requests.size(), Before);
   ok(Model->setUserRequestContext(true, 0x1234));
@@ -343,7 +343,7 @@ TEST_F(KernelFileQueries,
   write(Scratch + 0x508, 0xa5a5a5a5a5a5a5a5ull);
   call("ZwQueryInformationFile",
        {Handle, Scratch + 0x500, Scratch + 0x400, 64, 5});
-  auto ID = Model->takeFileQueryContinuation();
+  auto ID = Model->takeFileRequestContinuation();
   auto Call = Model->takeGuestCall();
   ASSERT_TRUE(ID);
   ASSERT_TRUE(Call);
@@ -361,7 +361,7 @@ TEST_F(KernelFileQueries,
   ok(Model->validateGuestAccess(System, 1, false));
   EXPECT_EQ(take(Model->pollWait(*Wait)), std::optional<uint32_t>{0});
   Model->enterExecution(profile::StackBase);
-  EXPECT_EQ(take(Model->resumeFileInformationQuery(*ID)),
+  EXPECT_EQ(take(Model->resumeFileRequest(*ID)),
             std::optional<uint64_t>{0xc0000001});
   EXPECT_EQ(read(Scratch + 0x500), 0xc0000001u);
   EXPECT_EQ(read(Scratch + 0x508), 0x100000007ull);
@@ -386,7 +386,7 @@ TEST_F(KernelFileQueries,
                     {Handle, Scratch + 0x500, Scratch + 0x400, 64, Class});
     ASSERT_FALSE(bool(Result));
     rejects(Result.takeError(), Reason);
-    EXPECT_FALSE(Model->takeFileQueryContinuation());
+    EXPECT_FALSE(Model->takeFileRequestContinuation());
     EXPECT_FALSE(Model->takeGuestCall());
   };
   Check(18, "not implemented"); // FILE_ALL_INFORMATION has producer fields.
@@ -395,15 +395,14 @@ TEST_F(KernelFileQueries,
   Check(4, "Fast I/O");
   ok(Memory->writeInteger(Model->driverObject() + DriverFastIOOffset, 0, 8));
   write(Model->driverObject() + DriverDispatchOffset + 5 * 8, 0);
-  Check(5, "null query callback");
+  Check(5, "null file dispatch callback");
   for (uint32_t Class : {16u, 17u}) {
     call("ZwQueryInformationFile",
          {Handle, Scratch + 0x500, Scratch + 0x400, 4, Class});
-    auto ID = Model->takeFileQueryContinuation();
+    auto ID = Model->takeFileRequestContinuation();
     ASSERT_TRUE(ID);
     EXPECT_FALSE(Model->takeGuestCall());
-    EXPECT_EQ(take(Model->resumeFileInformationQuery(*ID)),
-              std::optional<uint64_t>{0});
+    EXPECT_EQ(take(Model->resumeFileRequest(*ID)), std::optional<uint64_t>{0});
     EXPECT_EQ(read(Scratch + 0x508), 4u);
   }
   write(Model->driverObject() + DriverDispatchOffset + 5 * 8, Entry);
@@ -447,11 +446,11 @@ TEST_F(KernelFileQueries,
   EXPECT_EQ(read(IOSB + 8), 0u);
   EXPECT_EQ(read(File + FileFinalStatusOffset, 4), FinalStatus);
   EXPECT_EQ(take(Model->pollWait(*Wait)), std::optional<uint32_t>{0});
-  auto Wrong = Model->resumeFileInformationQuery(Q.ID);
+  auto Wrong = Model->resumeFileRequest(Q.ID);
   ASSERT_FALSE(bool(Wrong));
   rejects(Wrong.takeError(), "original caller");
   Model->enterExecution(profile::StackBase);
-  EXPECT_FALSE(take(Model->resumeFileInformationQuery(Q.ID)));
+  EXPECT_FALSE(take(Model->resumeFileRequest(Q.ID)));
   const auto Close = Model->takeGuestCall();
   ASSERT_TRUE(Close);
   EXPECT_EQ(Close->ProcessID, 0x2000u);
@@ -465,7 +464,7 @@ TEST_F(KernelFileQueries,
   EXPECT_FALSE(take(Model->pollWait(*CloseWait)));
   complete(IRP);
   EXPECT_EQ(take(Model->pollWait(*CloseWait)), std::optional<uint32_t>{0});
-  EXPECT_EQ(take(Model->resumeFileInformationQuery(Q.ID)),
+  EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)),
             std::optional<uint64_t>{0xc0000001u});
   EXPECT_EQ(read(Scratch + 0x200, 4), 7u);
   rejects(Model->validateGuestAccess(File, 1, false), "freed");
@@ -482,8 +481,7 @@ TEST_F(KernelFileQueries,
   rejects(Released.takeError(), "deferred file deletion");
   complete(Q.IRP);
   take(Model->finishGuestCall(Q.Call.Token, 0));
-  EXPECT_EQ(take(Model->resumeFileInformationQuery(Q.ID)),
-            std::optional<uint64_t>{0});
+  EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)), std::optional<uint64_t>{0});
   call("ObfDereferenceObject", {File});
   const auto Close = Model->takeGuestCall();
   ASSERT_TRUE(Close);
@@ -522,7 +520,7 @@ TEST_F(KernelFileQueries,
       EXPECT_EQ(read(IOSB + 8), 7u);
       EXPECT_EQ(call("KeReadStateEvent", {Event}), 1u);
       take(Model->finishGuestCall(Q.Call.Token, 0));
-      EXPECT_EQ(take(Model->resumeFileInformationQuery(Q.ID)),
+      EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)),
                 std::optional<uint64_t>{0});
       EXPECT_EQ(call("KeAreApcsDisabled", {}), 1u);
       call("KeLeaveCriticalRegion", {});
@@ -537,7 +535,7 @@ TEST_F(KernelFileQueries,
   const auto Q = query(File);
   complete(Q.IRP);
   take(Model->finishGuestCall(Q.Call.Token, 0));
-  take(Model->resumeFileInformationQuery(Q.ID));
+  take(Model->resumeFileRequest(Q.ID));
   EXPECT_EQ(call("KeReadStateEvent", {File + FileEventOffset}), 1u);
   for (uint64_t Size : {4096u, 16u})
     while (call("ExAllocatePoolWithTag", {0, Size, 0x51554552})) {
@@ -550,7 +548,7 @@ TEST_F(KernelFileQueries,
   EXPECT_EQ(read(Scratch + 0x200), 0xaabbccdddeadbeefull);
   EXPECT_EQ(call("KeReadStateEvent", {File + FileEventOffset}), 0u);
   EXPECT_EQ(Result.Requests.size(), Count);
-  EXPECT_FALSE(Model->takeFileQueryContinuation());
+  EXPECT_FALSE(Model->takeFileRequestContinuation());
   EXPECT_FALSE(Model->takeGuestCall());
   EXPECT_EQ(call("KeAreApcsDisabled", {}), 1u);
   call("KeLeaveCriticalRegion", {});
@@ -570,7 +568,7 @@ TEST_F(KernelFileQueries, EntryRequiresPassiveLevelAndSpecialApcs) {
   ASSERT_FALSE(bool(Raised));
   rejects(Raised.takeError(), "PASSIVE_LEVEL");
   call("KeLowerIrql", {0});
-  EXPECT_FALSE(Model->takeFileQueryContinuation());
+  EXPECT_FALSE(Model->takeFileRequestContinuation());
   EXPECT_FALSE(Model->takeGuestCall());
   close();
 }
@@ -582,8 +580,7 @@ TEST_F(KernelFileQueries, CompletionOnlyReadsTheBorrowedReportBuffer) {
   ok(Memory->protect(Scratch + 0x1000, 0x1000, Read));
   complete(Q.IRP, 0, 8);
   take(Model->finishGuestCall(Q.Call.Token, 0));
-  EXPECT_EQ(take(Model->resumeFileInformationQuery(Q.ID)),
-            std::optional<uint64_t>{0});
+  EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)), std::optional<uint64_t>{0});
   EXPECT_EQ(read(Scratch + 0x200, 4), 8u);
   EXPECT_EQ(
       Result.Requests.back().Output,
@@ -605,7 +602,7 @@ TEST_F(KernelFileQueries,
   take(Model->finishGuestCall(Q.Call.Token, StatusPending));
   ASSERT_TRUE(Model->takeWait());
   complete(Q.IRP, 0xc0000004, 0x1234567800000030ull);
-  EXPECT_EQ(take(Model->resumeFileInformationQuery(Q.ID)),
+  EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)),
             std::optional<uint64_t>{0xc0000004});
   EXPECT_EQ(read(Scratch + 0x200, 4), 0x30u);
   close();
@@ -619,12 +616,11 @@ TEST_F(KernelFileQueries, RevalidatesReturnedLengthAfterPendingCompletion) {
   ASSERT_TRUE(Model->takeWait());
   complete(Q.IRP);
   ok(Memory->protect(Scratch + 0xf000, 0x1000, Read));
-  auto Resume = Model->resumeFileInformationQuery(Q.ID);
+  auto Resume = Model->resumeFileRequest(Q.ID);
   ASSERT_FALSE(bool(Resume));
   rejects(Resume.takeError(), "writable");
   ok(Memory->protect(Scratch + 0xf000, 0x1000, Read | Write));
-  EXPECT_EQ(take(Model->resumeFileInformationQuery(Q.ID)),
-            std::optional<uint64_t>{0});
+  EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)), std::optional<uint64_t>{0});
   close();
 }
 
@@ -637,7 +633,7 @@ TEST_F(KernelFileQueries, RejectsInvalidOutputsIdentityModeAndSameFileOverlap) {
     auto Rejected = Model->call("IoQueryFileInformation", Args);
     ASSERT_FALSE(bool(Rejected));
     llvm::consumeError(Rejected.takeError());
-    EXPECT_FALSE(Model->takeFileQueryContinuation());
+    EXPECT_FALSE(Model->takeFileRequestContinuation());
     EXPECT_FALSE(Model->takeGuestCall());
   }
   const auto Flags = read(File + FileFlagsOffset, 4);
@@ -679,6 +675,582 @@ TEST_F(KernelFileQueries,
   close();
   call("IoDetachDevice", {Device});
   call("IoDeleteDevice", {Upper});
+}
+
+class KernelFileTransfers : public KernelFileQueries {
+protected:
+  void SetUp() override {
+    KernelFileQueries::SetUp();
+    write(Device + DeviceFlagsOffset, DeviceBufferedIO, 4);
+    for (unsigned Major : {3, 4, 9})
+      write(Model->driverObject() + DriverDispatchOffset + Major * 8, Entry);
+  }
+  uint64_t handle(uint64_t File, uint32_t Access = 0) {
+    EXPECT_EQ(
+        call("ObOpenObjectByPointer", {File, ObjectKernelHandle, 0, Access, 0,
+                                       KernelMode, Scratch + 0x300}),
+        0u);
+    return read(Scratch + 0x300);
+  }
+  Query transfer(bool Write, uint64_t Handle, uint64_t Length = 16,
+                 uint64_t Buffer = Scratch + 0x400,
+                 uint64_t IOSB = Scratch + 0x500,
+                 uint64_t Offset = Scratch + 0x600,
+                 uint64_t Key = Scratch + 0x610) {
+    call(Write ? "ZwWriteFile" : "ZwReadFile",
+         {Handle, 0, 0, 0, IOSB, Buffer, Length, Offset, Key});
+    auto ID = Model->takeFileRequestContinuation();
+    auto Call = Model->takeGuestCall();
+    EXPECT_TRUE(ID);
+    EXPECT_TRUE(Call);
+    if (!ID || !Call)
+      return {};
+    ok(Model->beginGuestCall(Call->Token));
+    return {*ID, Call->Arguments[1], *Call};
+  }
+  Query flush(uint64_t Handle, uint64_t IOSB = Scratch + 0x500) {
+    call("ZwFlushBuffersFile", {Handle, IOSB});
+    auto ID = Model->takeFileRequestContinuation();
+    auto Call = Model->takeGuestCall();
+    EXPECT_TRUE(ID);
+    EXPECT_TRUE(Call);
+    if (!ID || !Call)
+      return {};
+    ok(Model->beginGuestCall(Call->Token));
+    return {*ID, Call->Arguments[1], *Call};
+  }
+};
+
+TEST_F(KernelFileTransfers, BufferedPacketsAndCallerPublicationMatchTarget) {
+  for (bool Write : {false, true})
+    for (unsigned Length : {0, 16})
+      for (bool Pending : {false, true})
+        for (uint32_t Status : {0u, 0x80000005u, 0xc0000001u})
+          for (bool Alias : {false, true}) {
+            SCOPED_TRACE(::testing::Message()
+                         << Write << ' ' << Length << ' ' << Pending << ' '
+                         << Status << ' ' << Alias);
+            const auto File = open(), Handle = handle(File);
+            constexpr uint64_t Buffer = Scratch + 0x400, Position = 0x123456789;
+            const uint64_t IOSB = Alias ? Buffer + 4 : Scratch + 0x500;
+            ok(Memory->write(Buffer, std::vector<uint8_t>(64, 0xa5)));
+            ok(Memory->write(IOSB, std::vector<uint8_t>(16, 0xa5)));
+            ok(Memory->writeInteger(File + FileCurrentByteOffset, Position, 8));
+            write(Scratch + 0x600, 0x100000005);
+            write(Scratch + 0x610, 0x89abcdef, 4);
+            const auto Q =
+                transfer(Write, Handle, 0x100000000ull + Length, Buffer, IOSB);
+            ASSERT_NE(Q.IRP, 0u);
+            const auto Stack = read(Q.IRP + IRPStackPointerOffset);
+            const auto System = read(Q.IRP + IRPSystemBufferOffset);
+            EXPECT_EQ(read(Q.IRP + IRPFlagsOffset, 4),
+                      0x60000u | (Write ? (Length ? 0xa30u : 0xa10u)
+                                        : (Length ? 0x970u : 0x950u)));
+            EXPECT_EQ(read(Q.IRP + IRPAllocationFlagsOffset, 1), 2u);
+            EXPECT_EQ(read(Q.IRP + IRPUserIosbOffset), IOSB);
+            EXPECT_EQ(read(Q.IRP + IRPUserEventOffset), 0u);
+            EXPECT_EQ(read(Q.IRP + IRPUserBufferOffset),
+                      !Write && Length ? Buffer : 0u);
+            EXPECT_EQ(read(Q.IRP + IRPOriginalFileOffset), File);
+            EXPECT_EQ(read(Stack, 1), Write ? 4u : 3u);
+            EXPECT_EQ(read(Stack + 8, 4), Length);
+            EXPECT_EQ(read(Stack + 16, 4), 0x89abcdefu);
+            EXPECT_EQ(read(Stack + 24), 0x100000005u);
+            EXPECT_EQ(call("KeAreApcsDisabled", {}), 1u);
+            EXPECT_EQ(call("KeAreAllApcsDisabled", {}), 0u);
+            const uint64_t Count = Length ? 7 : 0;
+            std::vector<uint8_t> Bytes{1, 2, 3, 4, 5, 6, 7};
+            if (Length) {
+              EXPECT_NE(System, Buffer);
+              if (Write)
+                EXPECT_EQ(read(System), 0xa5a5a5a5a5a5a5a5ull);
+              ok(Memory->write(System, Bytes));
+            } else {
+              EXPECT_EQ(System, 0u);
+            }
+            if (Pending)
+              write(Stack + StackControlOffset, 1, 1);
+            complete(Q.IRP, Status, Count);
+            if (!Pending) {
+              EXPECT_EQ(read(IOSB), 0xa5a5a5a5a5a5a5a5ull);
+              EXPECT_EQ(read(Buffer), 0xa5a5a5a5a5a5a5a5ull);
+              ok(Model->validateGuestAccess(Q.IRP + IRPFlagsOffset, 4, false));
+            }
+            take(Model->finishGuestCall(Q.Call.Token,
+                                        Pending ? StatusPending : Status));
+            EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)),
+                      std::optional<uint64_t>{Status});
+            std::vector<uint8_t> Expected(64, 0xa5);
+            if (!Write && Length && !ntError(Status))
+              std::copy(Bytes.begin(), Bytes.end(), Expected.begin());
+            std::array<uint8_t, 16> ExpectedStatus;
+            ExpectedStatus.fill(0xa5);
+            if (!ntError(Status) || Pending) {
+              llvm::support::endian::write32le(ExpectedStatus.data(), Status);
+              llvm::support::endian::write64le(ExpectedStatus.data() + 8,
+                                               Count);
+            }
+            if (Alias)
+              std::copy(ExpectedStatus.begin(), ExpectedStatus.end(),
+                        Expected.begin() + 4);
+            std::vector<uint8_t> Observed(64);
+            std::array<uint8_t, 16> ObservedStatus;
+            ok(Memory->read(Buffer, Observed));
+            ok(Memory->read(IOSB, ObservedStatus));
+            EXPECT_EQ(Observed, Expected);
+            EXPECT_EQ(ObservedStatus, ExpectedStatus);
+            EXPECT_EQ(read(File + FileCurrentByteOffset), Position);
+            EXPECT_EQ(Result.Requests.back().Origin,
+                      Write ? DriverRequestOrigin::FileHandleWrite
+                            : DriverRequestOrigin::FileHandleRead);
+            EXPECT_EQ(Result.Requests.back().ByteOffset, 0x100000005u);
+            EXPECT_FALSE(Result.Requests.back().FileInformationClass);
+            EXPECT_EQ(Result.Requests.back().Output,
+                      !Write && Length && !ntError(Status)
+                          ? Bytes
+                          : std::vector<uint8_t>{});
+            rejects(Model->validateGuestAccess(Q.IRP, 1, false), "freed");
+            if (System)
+              rejects(Model->validateGuestAccess(System, 1, false), "freed");
+            ok(Model->validateGuestAccess(Buffer, 64, true));
+            EXPECT_EQ(call("KeAreApcsDisabled", {}), 0u);
+            call("ZwClose", {Handle});
+            close();
+            ASSERT_FALSE(HasFailure());
+          }
+}
+
+TEST_F(KernelFileTransfers, OffsetCaptureAndAppendOnlyHandlesMatchProducer) {
+  for (bool Write : {false, true})
+    for (uint32_t Access : {0, 2, 4, 6})
+      for (std::optional<uint64_t> Offset :
+           {std::optional<uint64_t>{}, std::optional<uint64_t>{0},
+            std::optional<uint64_t>{0x100000005},
+            std::optional<uint64_t>{UINT64_MAX},
+            std::optional<uint64_t>{uint64_t(-2)},
+            std::optional<uint64_t>{uint64_t(-3)}}) {
+        const auto File = open(), Handle = handle(File, Access);
+        constexpr uint64_t Position = 0x123456789;
+        ok(Memory->writeInteger(File + FileCurrentByteOffset, Position, 8));
+        const auto Address = Offset ? Scratch + 0x600 : 0;
+        if (Offset)
+          write(Address, *Offset);
+        const uint64_t Expected = Write && Access == 4 ? UINT64_MAX
+                                  : !Offset || *Offset == uint64_t(-2)
+                                      ? Position
+                                      : *Offset;
+        if (Expected > INT64_MAX && !(Write && Expected == UINT64_MAX)) {
+          EXPECT_EQ(call(Write ? "ZwWriteFile" : "ZwReadFile",
+                         {Handle, 0, 0, 0, Scratch + 0x500, 0, 0, Address, 0}),
+                    StatusInvalidParameter);
+          EXPECT_FALSE(Model->takeGuestCall());
+          EXPECT_FALSE(Model->takeFileRequestContinuation());
+        } else {
+          const auto Q =
+              transfer(Write, Handle, 0, 0, Scratch + 0x500, Address, 0);
+          ASSERT_NE(Q.IRP, 0u);
+          EXPECT_EQ(read(read(Q.IRP + IRPStackPointerOffset) + 24), Expected);
+          complete(Q.IRP);
+          take(Model->finishGuestCall(Q.Call.Token, 0));
+          EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)),
+                    std::optional<uint64_t>{0});
+        }
+        call("ZwClose", {Handle});
+        close();
+        ASSERT_FALSE(HasFailure());
+      }
+}
+
+TEST_F(KernelFileTransfers, WriteCapturesReadOnlyInputAndPreservesItsBytes) {
+  const auto File = open(), Handle = handle(File);
+  constexpr uint64_t Source = Scratch + 0xe000, Bytes = 0x1122334455667788;
+  write(Source, Bytes);
+  ok(Memory->protect(Source, 0x1000, Read));
+  const auto Flags = read(File + FileFlagsOffset, 4);
+  ok(Memory->writeInteger(File + FileFlagsOffset, Flags | 0x18, 4));
+  write(Scratch + 0x600, 5); // KernelMode does not add a user-mode probe.
+  const auto Q =
+      transfer(true, Handle, 8, Source, Scratch + 0x500, Scratch + 0x600, 0);
+  ASSERT_NE(Q.IRP, 0u);
+  const auto System = read(Q.IRP + IRPSystemBufferOffset);
+  EXPECT_EQ(read(System), Bytes);
+  EXPECT_EQ(read(Q.IRP + IRPUserBufferOffset), 0u);
+  EXPECT_EQ(read(Q.IRP + IRPFlagsOffset, 4), 0x60a31u);
+  EXPECT_EQ(read(read(Q.IRP + IRPStackPointerOffset) + StackFlagsOffset, 1),
+            4u);
+  write(System, 0);
+  complete(Q.IRP, 0, 8);
+  take(Model->finishGuestCall(Q.Call.Token, 0));
+  EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)), std::optional<uint64_t>{0});
+  EXPECT_EQ(read(Source), Bytes);
+  EXPECT_TRUE(Result.Requests.back().Output.empty());
+  ok(Memory->protect(Source, 0x1000, Read | Write));
+  ok(Memory->writeInteger(File + FileFlagsOffset, Flags, 4));
+  call("ZwClose", {Handle});
+  close();
+}
+
+TEST_F(KernelFileTransfers,
+       InvalidOffsetReadFaultStopsBeforePacketPublication) {
+  const auto File = open(), Handle = handle(File);
+  const auto Before = Result.Requests.size();
+  auto Fault =
+      Model->call("ZwReadFile", {Handle, 0, 0, 0, Scratch + 0x500,
+                                 Scratch + 0x400, 16, Scratch + 0xffff, 0});
+  ASSERT_FALSE(bool(Fault));
+  llvm::consumeError(Fault.takeError());
+  EXPECT_TRUE(Memory->hasMemoryFault());
+  EXPECT_EQ(Result.Requests.size(), Before);
+  EXPECT_FALSE(Model->takeFileRequestContinuation());
+  EXPECT_FALSE(Model->takeGuestCall());
+  // A faulted CPU is terminal. Do not simulate more guest calls on it.
+}
+
+TEST_F(KernelFileTransfers, WorkerCompletionRetainsCallerOutputUntilDelivery) {
+  const auto File = open(), Handle = handle(File);
+  ok(Model->setUserRequestContext(true, 0x2000));
+  write(Scratch + 0x400, 0xa5a5a5a5a5a5a5a5ull);
+  write(Scratch + 0x500, 0xa5a5a5a5a5a5a5a5ull);
+  const auto Q = transfer(false, Handle);
+  ASSERT_NE(Q.IRP, 0u);
+  const auto System = read(Q.IRP + IRPSystemBufferOffset);
+  write(System, 0x1122334455667788);
+  write(read(Q.IRP + IRPStackPointerOffset) + StackControlOffset, 1, 1);
+  take(Model->finishGuestCall(Q.Call.Token, StatusPending));
+  const auto Wait = Model->takeWait();
+  ASSERT_TRUE(Wait);
+  Model->enterExecution(profile::CallbackStackBase);
+  complete(Q.IRP, 0, 8);
+  EXPECT_EQ(read(Scratch + 0x400), 0xa5a5a5a5a5a5a5a5ull);
+  EXPECT_EQ(read(Scratch + 0x500), 0xa5a5a5a5a5a5a5a5ull);
+  ok(Model->validateGuestAccess(System, 8, false));
+  EXPECT_TRUE(Result.Requests.back().Output.empty());
+  auto Wrong = Model->resumeFileRequest(Q.ID);
+  ASSERT_FALSE(bool(Wrong));
+  rejects(Wrong.takeError(), "original caller");
+  Model->enterExecution(profile::StackBase);
+  call("KeEnterGuardedRegion", {});
+  ok(Model->deliverFileRequestCompletions());
+  EXPECT_EQ(read(Scratch + 0x400), 0xa5a5a5a5a5a5a5a5ull);
+  call("KeLeaveGuardedRegion", {});
+  EXPECT_EQ(read(Scratch + 0x400), 0x1122334455667788u);
+  EXPECT_EQ(read(Scratch + 0x500, 4), 0u);
+  EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)), std::optional<uint64_t>{0});
+  call("ZwClose", {Handle});
+  close();
+}
+
+TEST_F(KernelFileTransfers, UnsupportedShapesFailBeforePacketPublication) {
+  const auto File = open(), Handle = handle(File);
+  const auto Freed = call("ExAllocatePoolWithTag", {0, 32, 0x11223344});
+  call("ExFreePoolWithTag", {Freed, 0x11223344});
+  const std::array<uint64_t, 9> Base{Handle,          0,  0, 0, Scratch + 0x500,
+                                     Scratch + 0x400, 16, 0, 0};
+  for (const char *Name : {"ZwReadFile", "ZwWriteFile"}) {
+    const auto Before = Result.Requests.size();
+    for (unsigned Index : {1, 2, 3, 4, 5, 6, 7, 8}) {
+      auto A = Base;
+      A[Index] = Index == 6 ? profile::KernelArenaSize + 1 : Freed;
+      auto Rejected = Model->call(Name, A);
+      ASSERT_FALSE(bool(Rejected));
+      llvm::consumeError(Rejected.takeError());
+      EXPECT_EQ(Result.Requests.size(), Before);
+      EXPECT_FALSE(Model->takeGuestCall());
+      EXPECT_FALSE(Model->takeFileRequestContinuation());
+    }
+    for (uint64_t Flags : {uint64_t{0}, DeviceDirectIO}) {
+      write(Device + DeviceFlagsOffset, Flags, 4);
+      auto Rejected = Model->call(Name, Base);
+      ASSERT_FALSE(bool(Rejected));
+      rejects(Rejected.takeError(), "buffered");
+    }
+    write(Device + DeviceFlagsOffset, DeviceBufferedIO, 4);
+    auto A = Base;
+    A[0] = 0xdeadbeef;
+    EXPECT_EQ(take(Model->call(Name, A)), StatusInvalidHandle);
+    auto IO = begin(DriverRequestKind::DeviceControl);
+    auto Rejected = Model->call(Name, Base);
+    ASSERT_FALSE(bool(Rejected));
+    rejects(Rejected.takeError(), "same-file");
+    finish(IO.IRP);
+  }
+  call("ZwClose", {Handle});
+  close();
+  const auto Async = open(true), AsyncHandle = handle(Async);
+  for (const char *Name : {"ZwReadFile", "ZwWriteFile"}) {
+    auto A = Base;
+    A[0] = AsyncHandle;
+    auto Rejected = Model->call(Name, A);
+    ASSERT_FALSE(bool(Rejected));
+    rejects(Rejected.takeError(), "synchronous file");
+  }
+  call("ZwClose", {AsyncHandle});
+  close();
+}
+
+TEST_F(KernelFileTransfers, PositionFastPathMatchesLengthAlignmentAndAliases) {
+  const auto File = open(), Handle = handle(File);
+  const auto Before = Result.Requests.size();
+  const auto Flags = read(File + FileFlagsOffset, 4);
+  for (bool NoCache : {false, true})
+    for (uint64_t Sector : std::array<uint64_t, 3>{0, 512, 4096})
+      for (uint64_t Length : std::array<uint64_t, 5>{0, 7, 8, 16, 0x100000008})
+        for (uint64_t Position :
+             std::array<uint64_t, 5>{0, 1, 512, UINT64_MAX, INT64_MAX})
+          for (bool Alias : {false, true}) {
+            SCOPED_TRACE(::testing::Message()
+                         << NoCache << ' ' << Sector << ' ' << Length << ' '
+                         << Position << ' ' << Alias);
+            constexpr uint64_t IOSB = Scratch + 0x500, Old = 0x1122334455;
+            const uint64_t Input = Alias ? IOSB : Scratch + 0x600;
+            ok(Memory->writeInteger(File + FileFlagsOffset,
+                                    Flags | (NoCache ? 8 : 0), 4));
+            ok(Memory->writeInteger(Device + DeviceSectorSizeOffset, Sector,
+                                    2));
+            ok(Memory->writeInteger(File + FileCurrentByteOffset, Old, 8));
+            ok(Memory->write(IOSB, std::vector<uint8_t>(16, 0xa5)));
+            write(Input, Position);
+            std::array<uint8_t, 16> Expected, Observed;
+            ok(Memory->read(IOSB, Expected));
+            const uint32_t Status =
+                uint32_t(Length) < 8 ? StatusInfoLengthMismatch
+                : Position > INT64_MAX ||
+                        (NoCache && Sector && (Position & (Sector - 1)))
+                    ? StatusInvalidParameter
+                    : 0;
+            EXPECT_EQ(call("ZwSetInformationFile",
+                           {Handle, IOSB, Input, Length, 0x10000000e}),
+                      Status);
+            if (!Status) {
+              llvm::support::endian::write32le(Expected.data(), 0);
+              llvm::support::endian::write64le(Expected.data() + 8, 0);
+            }
+            ok(Memory->read(IOSB, Observed));
+            EXPECT_EQ(Observed, Expected);
+            EXPECT_EQ(read(File + FileCurrentByteOffset),
+                      Status ? Old : Position);
+            EXPECT_EQ(Result.Requests.size(), Before);
+            EXPECT_FALSE(Model->takeGuestCall());
+            EXPECT_FALSE(Model->takeFileRequestContinuation());
+            EXPECT_EQ(call("KeAreApcsDisabled", {}), 0u);
+            ASSERT_FALSE(HasFailure());
+          }
+  ok(Memory->writeInteger(File + FileFlagsOffset, Flags, 4));
+  call("ZwClose", {Handle});
+  close();
+}
+
+TEST_F(KernelFileTransfers, PositionStorePrecedesIOSBFaultAndFeedsReadOffset) {
+  const auto File = open(), Handle = handle(File);
+  write(Scratch + 0x600, 0x123456789);
+  write(Scratch + 0xfff8, 0xa5a5a5a5a5a5a5a5ull);
+  auto Fault = Model->call("ZwSetInformationFile",
+                           {Handle, Scratch + 0xfff8, Scratch + 0x600, 8, 14});
+  ASSERT_FALSE(bool(Fault));
+  llvm::consumeError(Fault.takeError());
+  EXPECT_EQ(read(File + FileCurrentByteOffset), 0x123456789u);
+  EXPECT_EQ(read(Scratch + 0xfff8), 0xa5a5a5a500000000ull);
+  EXPECT_EQ(call("ZwQueryInformationFile",
+                 {Handle, Scratch + 0x500, Scratch + 0x400, 8, 14}),
+            0u);
+  EXPECT_EQ(read(Scratch + 0x400), 0x123456789u);
+  auto Q = transfer(false, Handle, 0, 0, Scratch + 0x500, 0, 0);
+  ASSERT_NE(Q.IRP, 0u);
+  EXPECT_EQ(
+      read(read(Q.IRP + IRPStackPointerOffset) + StackReadWriteByteOffset),
+      0x123456789u);
+  complete(Q.IRP);
+  take(Model->finishGuestCall(Q.Call.Token, 0));
+  EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)), std::optional<uint64_t>{0});
+  EXPECT_EQ(read(File + FileCurrentByteOffset), 0x123456789u);
+  call("ZwClose", {Handle});
+  close();
+}
+
+TEST_F(KernelFileTransfers,
+       PositionRequiresValidHandleAndSerialSynchronousFile) {
+  const auto File = open(), Handle = handle(File);
+  const auto Other = handle(call("PsGetCurrentProcess", {}));
+  const std::array<uint64_t, 5> Base{Handle, Scratch + 0x500, Scratch + 0x600,
+                                     8, 14};
+  for (auto [Value, Status] :
+       {std::pair{uint64_t{0xdeadbeef}, uint64_t{StatusInvalidHandle}},
+        std::pair{Other, uint64_t{StatusObjectTypeMismatch}}}) {
+    auto A = Base;
+    A[0] = Value;
+    EXPECT_EQ(take(Model->call("ZwSetInformationFile", A)), Status);
+  }
+  auto A = Base;
+  A[4] = 4;
+  auto Class = Model->call("ZwSetInformationFile", A);
+  ASSERT_FALSE(bool(Class));
+  rejects(Class.takeError(), "class is not implemented");
+  auto IO = begin(DriverRequestKind::DeviceControl);
+  auto Overlap = Model->call("ZwSetInformationFile", Base);
+  ASSERT_FALSE(bool(Overlap));
+  rejects(Overlap.takeError(), "same-file");
+  finish(IO.IRP);
+  call("KeEnterGuardedRegion", {});
+  auto Disabled = Model->call("ZwSetInformationFile", Base);
+  ASSERT_FALSE(bool(Disabled));
+  rejects(Disabled.takeError(), "special kernel APCs");
+  call("KeLeaveGuardedRegion", {});
+  call("ZwClose", {Other});
+  call("ZwClose", {Handle});
+  close();
+  const auto Async = open(true), AsyncHandle = handle(Async);
+  A = Base;
+  A[0] = AsyncHandle;
+  auto Unsupported = Model->call("ZwSetInformationFile", A);
+  ASSERT_FALSE(bool(Unsupported));
+  rejects(Unsupported.takeError(), "asynchronous position");
+  call("ZwClose", {AsyncHandle});
+  close();
+}
+
+TEST_F(KernelFileTransfers, FlushChecksGrantedMaskInKernelMode) {
+  for (bool Pipe : {false, true})
+    for (uint32_t Access : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 0x100000u}) {
+      SCOPED_TRACE(::testing::Message() << Pipe << ' ' << Access);
+      const auto File = open(), Handle = handle(File, Access);
+      const auto Flags = read(File + FileFlagsOffset, 4);
+      ok(Memory->writeInteger(File + FileFlagsOffset, Flags | (Pipe ? 0x80 : 0),
+                              4));
+      const auto Before = Result.Requests.size();
+      if (!(Access & (Pipe ? 2 : 6))) {
+        EXPECT_EQ(call("ZwFlushBuffersFile", {Handle, Scratch + 0x500}),
+                  StatusAccessDenied);
+        EXPECT_EQ(Result.Requests.size(), Before);
+        EXPECT_FALSE(Model->takeGuestCall());
+        EXPECT_FALSE(Model->takeFileRequestContinuation());
+      } else {
+        const auto Q = flush(Handle);
+        ASSERT_NE(Q.IRP, 0u);
+        complete(Q.IRP);
+        take(Model->finishGuestCall(Q.Call.Token, 0));
+        EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)),
+                  std::optional<uint64_t>{0});
+      }
+      ok(Memory->writeInteger(File + FileFlagsOffset, Flags, 4));
+      call("ZwClose", {Handle});
+      close();
+      ASSERT_FALSE(HasFailure());
+    }
+}
+
+TEST_F(KernelFileTransfers, FlushPublishesAndDisposesBeforeDispatchReturns) {
+  for (uint64_t DeviceFlags : {uint64_t{0}, DeviceBufferedIO, DeviceDirectIO})
+    for (bool Pending : {false, true})
+      for (uint32_t Status : {0u, 0x80000005u, 0xc0000001u}) {
+        SCOPED_TRACE(::testing::Message()
+                     << DeviceFlags << ' ' << Pending << ' ' << Status);
+        const auto File = open(), Handle = handle(File, 2);
+        constexpr uint64_t IOSB = Scratch + 0x500, Information = 0x100000007;
+        const auto FileFlags = read(File + FileFlagsOffset, 4);
+        write(Device + DeviceFlagsOffset, DeviceFlags, 4);
+        ok(Memory->writeInteger(File + FileFlagsOffset, FileFlags | 0x18, 4));
+        ok(Memory->writeInteger(File + FileCurrentByteOffset, 0x123456789, 8));
+        ok(Memory->write(IOSB, std::vector<uint8_t>(16, 0xa5)));
+        const auto Q = flush(Handle);
+        ASSERT_NE(Q.IRP, 0u);
+        const auto Stack = read(Q.IRP + IRPStackPointerOffset);
+        EXPECT_EQ(read(Stack, 1), 9u);
+        EXPECT_EQ(read(Stack + StackMinorOffset, 1), 0u);
+        EXPECT_EQ(read(Stack + StackFileOffset), File);
+        EXPECT_EQ(read(Q.IRP + IRPFlagsOffset, 4), 0x60000u);
+        EXPECT_EQ(read(Q.IRP + IRPAllocationFlagsOffset, 1), 2u);
+        EXPECT_EQ(read(Q.IRP + IRPSystemBufferOffset), 0u);
+        EXPECT_EQ(read(Q.IRP + IRPUserBufferOffset), 0u);
+        EXPECT_EQ(read(Q.IRP + IRPUserEventOffset), 0u);
+        EXPECT_EQ(read(Q.IRP + IRPUserIosbOffset), IOSB);
+        if (Pending)
+          write(Stack + StackControlOffset, 1, 1);
+        complete(Q.IRP, Status, Information);
+        // The target consumes this nondeferred packet inside completion.
+        rejects(Model->validateGuestAccess(Q.IRP, 1, false), "freed");
+        const bool Published = !ntError(Status) || Pending;
+        EXPECT_EQ(read(IOSB, 4), Published ? Status : 0xa5a5a5a5u);
+        EXPECT_EQ(read(IOSB + 4, 4), 0xa5a5a5a5u);
+        EXPECT_EQ(read(IOSB + 8),
+                  Published ? Information : 0xa5a5a5a5a5a5a5a5ull);
+        // A nonpending dispatch result remains independent of its IOSB.
+        take(Model->finishGuestCall(Q.Call.Token, Pending ? StatusPending : 0));
+        EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)),
+                  std::optional<uint64_t>{Pending ? Status : 0});
+        const auto &ResultRequest = Result.Requests.back();
+        EXPECT_EQ(ResultRequest.Kind, DriverRequestKind::FlushBuffers);
+        EXPECT_EQ(ResultRequest.Origin, DriverRequestOrigin::FileHandleFlush);
+        EXPECT_EQ(ResultRequest.Information, Information);
+        EXPECT_TRUE(ResultRequest.Output.empty());
+        EXPECT_FALSE(ResultRequest.FileInformationClass);
+        EXPECT_EQ(read(File + FileCurrentByteOffset), 0x123456789u);
+        ok(Memory->writeInteger(File + FileFlagsOffset, FileFlags, 4));
+        call("ZwClose", {Handle});
+        close();
+        ASSERT_FALSE(HasFailure());
+      }
+}
+
+TEST_F(KernelFileTransfers, FlushWaitsForEligibleCallerNotification) {
+  for (bool Worker : {false, true}) {
+    const auto File = open(), Handle = handle(File, 2);
+    constexpr uint64_t IOSB = Scratch + 0x500, Information = 0x100000007;
+    ok(Memory->write(IOSB, std::vector<uint8_t>(16, 0xa5)));
+    const auto Q = flush(Handle);
+    ASSERT_NE(Q.IRP, 0u);
+    if (Worker) {
+      write(read(Q.IRP + IRPStackPointerOffset) + StackControlOffset, 1, 1);
+      take(Model->finishGuestCall(Q.Call.Token, StatusPending));
+      ASSERT_TRUE(Model->takeWait());
+      Model->enterExecution(profile::CallbackStackBase);
+    } else {
+      call("KeEnterGuardedRegion", {});
+    }
+    complete(Q.IRP, 0, Information);
+    EXPECT_EQ(read(IOSB), 0xa5a5a5a5a5a5a5a5ull);
+    ok(Model->validateGuestAccess(Q.IRP + IRPFlagsOffset, 4, false));
+    auto Immutable =
+        Model->validateGuestAccess(Q.IRP + IRPStatusOffset, 4, true);
+    ASSERT_TRUE(bool(Immutable));
+    llvm::consumeError(std::move(Immutable));
+    if (Worker) {
+      Model->enterExecution(profile::StackBase);
+      ok(Model->deliverFileRequestCompletions());
+    } else {
+      call("KeLeaveGuardedRegion", {});
+    }
+    EXPECT_EQ(read(IOSB, 4), 0u);
+    EXPECT_EQ(read(IOSB + 8), Information);
+    rejects(Model->validateGuestAccess(Q.IRP, 1, false), "freed");
+    if (!Worker)
+      take(Model->finishGuestCall(Q.Call.Token, 0));
+    EXPECT_EQ(take(Model->resumeFileRequest(Q.ID)), std::optional<uint64_t>{0});
+    call("ZwClose", {Handle});
+    close();
+    ASSERT_FALSE(HasFailure());
+  }
+}
+
+TEST_F(KernelFileTransfers, FlushRejectsAsyncAndConcurrentRequests) {
+  const auto File = open(), Handle = handle(File, 2);
+  auto IO = begin(DriverRequestKind::DeviceControl);
+  const auto Before = Result.Requests.size();
+  auto Busy = Model->call("ZwFlushBuffersFile", {Handle, Scratch + 0x500});
+  ASSERT_FALSE(bool(Busy));
+  rejects(Busy.takeError(), "same-file");
+  EXPECT_EQ(Result.Requests.size(), Before);
+  finish(IO.IRP);
+  call("ZwClose", {Handle});
+  close();
+  const auto AsyncFile = open(true), AsyncHandle = handle(AsyncFile, 2);
+  auto Async =
+      Model->call("ZwFlushBuffersFile", {AsyncHandle, Scratch + 0x500});
+  ASSERT_FALSE(bool(Async));
+  rejects(Async.takeError(), "synchronous file");
+  EXPECT_FALSE(Model->takeFileRequestContinuation());
+  EXPECT_FALSE(Model->takeGuestCall());
+  call("ZwClose", {AsyncHandle});
+  close();
 }
 } // namespace
 } // namespace neverd::emulation

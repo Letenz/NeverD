@@ -33,4 +33,18 @@ std::uint64_t parseAddress(std::string_view text);
 void validateRequest(const Json &request);
 std::uint32_t frameSize(const unsigned char *header);
 std::string frame(const Json &message);
+/// Owned JSON produced by the same serializer as ordinary frames. Keeping its
+/// constructor typed prevents an unescaped string from entering a response.
+class EncodedJson {
+public:
+  explicit EncodedJson(const Json &value);
+  const std::string &text() const { return text_; }
+  std::size_t storageBytes() const {
+    return sizeof(*this) + text_.capacity() + 1;
+  }
+
+private:
+  std::string text_;
+};
+std::string frame(const Json &message, const EncodedJson &payload);
 } // namespace neverd::worker

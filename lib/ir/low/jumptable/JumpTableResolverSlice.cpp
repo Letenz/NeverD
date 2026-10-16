@@ -59,6 +59,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -505,11 +506,25 @@ static ResolverFlowGraph buildResolverFlowGraph(
   };
   auto failIncomplete = [&]() { return ResolverFlowGraph{}; };
   ResolverFlowGraph Graph;
+  // Snapshots normally arrive in address order. Walk block starts once per
+  // grouping pass, with an ordinary lookup if an input moves backwards. Keep
+  // the original lookup charges so refusal boundaries remain unchanged.
+  auto UpperStart = BlockStarts.begin();
+  va_t LastAddress = 0;
+  auto blockStartAfter = [&](va_t Address) {
+    if (Address < LastAddress)
+      UpperStart = BlockStarts.upper_bound(Address);
+    else
+      while (UpperStart != BlockStarts.end() && *UpperStart <= Address)
+        ++UpperStart;
+    LastAddress = Address;
+    return UpperStart;
+  };
   std::pmr::map<va_t, size_t> GroupCounts{Graph.IndexStorage.get()};
   for (const ResolverInsnSnapshot &Insn : Insns) {
     if (!consumeWork() || !consumeLookup(BlockStarts.size()))
       return failIncomplete();
-    auto BI = BlockStarts.upper_bound(Insn.Addr);
+    auto BI = blockStartAfter(Insn.Addr);
     if (BI == BlockStarts.begin())
       continue;
     --BI;
@@ -539,10 +554,12 @@ static ResolverFlowGraph buildResolverFlowGraph(
         Grouped.end(), Start, std::vector<const ResolverInsnSnapshot *>{});
     Group->second.reserve(Count);
   }
+  UpperStart = BlockStarts.begin();
+  LastAddress = 0;
   for (const ResolverInsnSnapshot &Insn : Insns) {
     if (!consumeWork() || !consumeLookup(BlockStarts.size()))
       return failIncomplete();
-    auto BI = BlockStarts.upper_bound(Insn.Addr);
+    auto BI = blockStartAfter(Insn.Addr);
     if (BI == BlockStarts.begin())
       continue;
     --BI;
@@ -2964,6 +2981,9 @@ struct CFGBuilder::ResolverGraphCache {
 
   static bool sameInsn(const ResolverInsnSnapshot &A,
                        const ResolverInsnSnapshot &B) {
+    // Identical object bytes prove equality for these scalar records. Padding
+    // differences are inconclusive: retain the complete field comparison.
+    static_assert(std::is_trivially_copyable_v<LowOp>);
     return A.Addr == B.Addr && A.Size == B.Size && A.IsBranch == B.IsBranch &&
            A.IsCond == B.IsCond && A.IsCall == B.IsCall && A.IsRet == B.IsRet &&
            A.IsIndirect == B.IsIndirect &&
@@ -2974,7 +2994,10 @@ struct CFGBuilder::ResolverGraphCache {
            A.BranchTarget == B.BranchTarget &&
            A.JumpTableTargets == B.JumpTableTargets &&
            A.Ops.size() == B.Ops.size() &&
-           std::equal(A.Ops.begin(), A.Ops.end(), B.Ops.begin(), sameOp);
+           (A.Ops.empty() ||
+            std::memcmp(A.Ops.data(), B.Ops.data(),
+                        A.Ops.size() * sizeof(LowOp)) == 0 ||
+            std::equal(A.Ops.begin(), A.Ops.end(), B.Ops.begin(), sameOp));
   }
 
   // Cap retained input payloads at 8 MiB, and cap graph vertices separately.

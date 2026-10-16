@@ -112,10 +112,10 @@ public:
        llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument =
            nullptr,
        const KernelContextCapture *Context = nullptr);
-  /// Deliver completed query notifications at an eligible caller boundary.
-  /// File retirement and API results remain owned by the query continuation.
+  /// Deliver completed file notifications at an eligible caller boundary.
+  /// File retirement and API results remain owned by the file continuation.
   llvm::Error
-  deliverFileQueryCompletions(const KernelContextCapture *Context = nullptr);
+  deliverFileRequestCompletions(const KernelContextCapture *Context = nullptr);
   llvm::Error snapshot();
   struct Invocation {
     uint64_t PC = 0;
@@ -216,7 +216,7 @@ public:
       FrameworkCallbackLock,
       FileClose,
       FileHandleClose,
-      FileInformationQuery,
+      FileRequest,
       FileOperation
     };
     Kind Type = Kind::Dispatcher;
@@ -235,11 +235,10 @@ public:
   std::optional<Wait> takeWait();
   llvm::Expected<std::optional<uint32_t>> pollWait(const Wait &Pending);
   llvm::Expected<std::optional<uint64_t>> resumeFileHandleClose(uint64_t ID);
-  std::optional<uint64_t> takeFileQueryContinuation();
-  llvm::Expected<std::optional<uint64_t>>
-  resumeFileInformationQuery(uint64_t ID);
+  std::optional<uint64_t> takeFileRequestContinuation();
+  llvm::Expected<std::optional<uint64_t>> resumeFileRequest(uint64_t ID);
   struct FileAPIContinuation {
-    bool Query = false;
+    bool Request = false;
     uint64_t ID = 0;
   };
   std::optional<FileAPIContinuation> takeFileAPIContinuation();
@@ -1309,7 +1308,7 @@ private:
   llvm::Error waitForFileHandleClose(uint64_t ID);
   llvm::Expected<std::optional<uint64_t>>
   finishFileHandleDispatch(uint64_t Token, uint64_t ReturnValue);
-  struct FileInformationQuery {
+  struct FileRequest {
     uint64_t File = 0, IRP = 0, ReturnedLength = 0, Storage = 0;
     uint64_t StatusOutput = 0;
     std::array<uint8_t, 16> StatusBytes{};
@@ -1321,21 +1320,24 @@ private:
     bool CriticalRegion = false;
     bool Native = false, PacketReleased = false, CopyStatusBlock = false;
   };
-  std::map<uint64_t, FileInformationQuery> FileInformationQueries;
-  uint64_t NextFileInformationQuery = 1;
-  std::optional<uint64_t> PendingFileQueryContinuation;
+  std::map<uint64_t, FileRequest> FileRequests;
+  uint64_t NextFileRequest = 1;
+  std::optional<uint64_t> PendingFileRequestContinuation;
   llvm::Expected<uint64_t> relatedFileDevice(uint64_t File) const;
   llvm::Expected<uint64_t>
-  queryFileInformation(llvm::ArrayRef<uint64_t> A, bool Native,
-                       const KernelContextCapture *Context);
-  bool nativeFileQuery(uint64_t ID) const;
-  llvm::Error releaseNativeFileQueryPacket(uint64_t IRP);
-  llvm::Error validateFileQueryInterrupts(const KernelContextCapture *Context);
-  llvm::Error publishFileQueryCompletion(uint64_t IRP);
-  llvm::Expected<bool> fileInformationQueryReady(uint64_t ID) const;
-  llvm::Error waitForFileInformationQuery(uint64_t ID);
+  beginFileAPIRequest(llvm::ArrayRef<uint64_t> A, DriverRequestKind Kind,
+                      bool Native, const KernelContextCapture *Context);
+  llvm::Expected<uint64_t>
+  setFileInformation(llvm::ArrayRef<uint64_t> A,
+                     const KernelContextCapture *Context);
+  bool nativeFileRequest(uint64_t ID) const;
+  llvm::Error releaseNativeFileRequestPacket(uint64_t IRP);
+  llvm::Error validateFileAPIInterrupts(const KernelContextCapture *Context);
+  llvm::Error publishFileRequestCompletion(uint64_t IRP);
+  llvm::Expected<bool> fileRequestReady(uint64_t ID) const;
+  llvm::Error waitForFileRequest(uint64_t ID);
   llvm::Expected<std::optional<uint64_t>>
-  finishFileInformationDispatch(uint64_t Token, uint64_t ReturnValue);
+  finishFileRequestDispatch(uint64_t Token, uint64_t ReturnValue);
   struct FileOperation {
     bool CancelOpen = false;
     uint64_t File = 0, IRP = 0, Root = 0;
@@ -1452,7 +1454,7 @@ private:
     uint64_t SystemBuffer = 0;
     /// Internal query producers borrow caller storage through completion.
     bool BorrowedSystemBuffer = false;
-    uint64_t FileQueryOperation = 0;
+    uint64_t FileRequestID = 0;
     uint64_t FileOperation = 0;
     bool FileSystemReceived = false;
     uint64_t UserBuffer = 0;
@@ -1502,7 +1504,7 @@ private:
     Cancel,
     FileClose,
     FileHandleClose,
-    FileInformationQuery,
+    FileRequest,
     FileOperation
   };
   struct IRPCall {
@@ -1514,7 +1516,7 @@ private:
     std::optional<uint64_t> ProviderReceiptIRP;
     std::optional<uint32_t> FrameworkDispatchStatus;
     uint64_t FileHandleOperation = 0;
-    uint64_t FileQueryOperation = 0;
+    uint64_t FileRequestID = 0;
     uint64_t FileOperation = 0;
   };
   struct ProviderReceipt {

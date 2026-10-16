@@ -183,8 +183,13 @@ A-to-B-to-A navigation, including a subsequent graph or IR request. It checks
 edits, undo, replica restore, project replacement, representation separation and
 both document-count and retained-byte eviction. Page checks preserve repeated
 references, overlapping names, nested spans and unsorted producer order, including
-empty pages after the end of the text. Timing-independent cache tests
-complement `source_revisit_bench.py`, which measures complete real source pages.
+empty pages after the end of the text. Unordered metadata uses cached numeric
+bounds owned by the same immutable document; their vector capacities count
+toward its retained-byte limit. Encoded-page count and byte pressure must not
+rerender a retained document. `NeverDWorkerProtocol` checks fresh envelopes,
+escaped and invalid UTF-8 payloads, and the exact encoded-frame byte limit.
+Timing-independent cache tests complement
+`source_revisit_bench.py`, which measures complete real source pages.
 
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
@@ -302,12 +307,16 @@ python3 scripts/check_type_renders.py --neverd build/bin/neverd \
 
 With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
 ntoskrnl.exe and its PDB,
-`SessionCAPITest.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
+`SessionCAPIKernelInputs.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
 and checks that the headers join its PDB without conflicts.
-`SessionCAPITest.KernelFunctionsDecompileWithTheirPrototypes` decompiles
+`SessionCAPIKernelInputs.KernelFunctionsDecompileWithTheirPrototypes` decompiles
 `NtCreateFile`, `IoAllocateIrp`, `PsCreateSystemThread` and
 `IofCompleteRequest` and checks the signatures the headers give them.
-`PrototypeDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
+Run these external-input checks with `--gtest_filter=SessionCAPIKernelInputs.*`.
+Without the two inputs they remain explicit skips. The Linux Lift qualification
+requires every `SessionCAPITest.*` case to execute and pass using repository
+fixtures; it does not claim Windows kernel input coverage.
+`LocalTypesDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
 the conversion and which functions take a prototype without a program.
 `scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
 decompiles with the prototypes an IDA dump shows; it decompiles each
@@ -355,6 +364,32 @@ python3 scripts/check_type_renders.py --neverd build/bin/neverd
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --binary /path/to/ntoskrnl.exe --pdb /path/to/ntkrnlmp.pdb
 ```
+
+Decompiled units must compile with the records they name.
+`scripts/check_decompiled_types.py` decompiles kernel functions in HighC and
+LLVM-C (`--route` picks one) and compiles each unit for the Windows target
+with clang and mingw-w64's headers, as errors for int-to-pointer and
+incompatible pointer conversions: a unit that reads members of a record it
+leaves incomplete, or passes a value C does not convert to the type of the
+member or parameter it reaches, fails:
+
+```sh
+python3 scripts/check_decompiled_types.py --neverd build/bin/neverd \
+  --binary ntoskrnl.exe --pdb ntkrnlmp.pdb
+```
+
+Without the kernel, the fixture checks a function its PDB types:
+`--binary unittests/types/fixtures/local_types.exe --pdb
+unittests/types/fixtures/local_types.pdb --func use`.
+
+`LocalTypesDebugContext.GivesTheDebugInformationsRecordsTheirMembers` covers
+the members the context gives, the definitions a unit holds and what a
+dropped context takes back. `SessionCAPITest.FunctionsHoldTheRecordsTheirPDBTypes`
+covers the same through a session on the fixture in both routes, a renamed
+member reaching the pseudocode among them, in every build;
+`SessionCAPIKernelInputs.KernelFunctionsHoldTheRecordsTheyName` (with the
+kernel's environment variables) covers `KeInitializeDpc`, the kernel's
+unions and LLVM-C's typed signatures.
 
 ## Scalar x86 floating-point state
 
@@ -3892,6 +3927,12 @@ mutable/truncated storage, independent roots and budget refusal. Pointer tests
 cover nested recurrences, shared expression DAGs, role-neutral address leaves
 and independently materialized SELECT arms. Both suites retain ambiguous
 relocatable comparisons and distinguish adjacent objects' one-past addresses.
+`MedConstantPropagation` also checks full SSA identities at maximum integer
+IDs/versions and atomic budget refusal on reverse-ordered width chains.
+`HighCSourceCalls.ReusedConverterRebuildsClobberIdentityAndOrder` checks first
+record precedence and clearing/restoring clobbers between conversions of the
+same function, against a fresh converter. The worker code-edit checks cover
+every C++ raw-string prefix while renaming surrounding identifiers.
 C value tests compile and execute
 relocated address arithmetic and freeze projections at O0/O2; vector and FP
 helper tests cover indirect calls and emitted Windows analysis bodies.
@@ -5773,7 +5814,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 58 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 262 WHP outcomes from all 131 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 64 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 262 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 100 driver API checks = 5748`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 266 WHP outcomes from all 133 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 66 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 266 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 108 driver API checks = 5760`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM66 native guest execution remains unverified.
 
 The genuine WDK inventory also builds `driver_device_queries.c`, `driver_file_objects.c` and `driver_file_handles.c` in normal and CFG forms. `DriverDeviceQueryTests.cpp` and `DriverFileObjectTests.cpp` reuse the portable callers’ assertions for retained deletion, failed CREATE, process identity, last-handle CLEANUP and deferred CLOSE across both contracts, bases and scheduling policies. All three families have mandatory native gates; inventory validation independently discovers sources with `NEVERD_WDK_FIXTURE` so a dual-mode source cannot silently lose its WDK build.
 
@@ -7376,4 +7417,31 @@ The raw `GPUObjectStorage` case and Android object lifecycle/address-range cases
 have a 30-second per-execution wall budget for word-by-word O0 page checks on
 contended hosts; their guest instruction and event budgets are unchanged.
 Existing device cases retain their deadlines.
+`LegacyGPU*` adds old/new allocation, query and release mixing, normalized
+alignment and FORCE_32BIT flags, address collision recovery, ID-before-address
+lookup, interior data versus guard queries, complete reserved fields and pending
+frees. Its mixed PM4 case allocates the command buffer through GPUOBJ and writes
+into GPUMEM_ID storage. Cross-page records with a read-only trailing page must
+preserve the complete input and live RAM; imported objects without a modeled
+kernel ID stop explicitly. Raw errno and Bionic errno adapters are checked by
+independent callers. Run these cases alongside the existing GPUObject tests;
+the same public C API/CLI/Python case now includes both allocation interfaces.
+The kernel-owner test also observes allocation capacity, ID/address reuse and
+unmap-after-refused-free state, so unchanged output bytes alone cannot hide a
+partially committed allocation or pending free.
 These fixtures do not supply an Android system-service implementation or shader.
+
+`KernelFileTransfers` covers packet fields, offset sentinels, append-only handles, zero lengths, aliased outputs, immediate and pending statuses, worker notification and refusal before publication. `OriginalBufferedNativeFileTransfers` and `GenuineWdkBufferedNativeFileTransfers` execute imported and dynamically resolved calls across backends, contracts, load bases and scheduling. Configure `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` and `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` for genuine normal/CFG images; unavailable backends remain explicit skips.
+
+`KernelFileTransfers` checks native flush access masks, bufferless packets on every device transfer mode, full-width Information, publication and disposal before dispatch returns, worker/guarded notification and rejected async/concurrent calls. The existing original and genuine WDK file-transfer fixtures also execute imported and dynamically resolved flushes, including a user IOSB and the nine completion modes.
+
+### Imported Darwin memory calls
+
+`DarwinLibSystemTest.Memory*` checks C argument widths, original carriers, early
+errno, transport failure before effects and resident gate reservations on both
+ISAs. `DarwinProcess.LibSystemMemoryCallsPreserveMappingsAndCErrorOrder` runs
+ordinary C through classic/chained bindings on all five profiles; matching
+ARM64 HVF identities are mandatory. Public C/CLI and real Python tests repeat
+the same workload. `DarwinNative.LibSystemMemoryCallsMatchNativeMappingsAndCErrorOrder`
+compares the system-linked object with original native file bytes, anonymous
+zeroing, protection transitions, private mapping lifetime and EOF tails.

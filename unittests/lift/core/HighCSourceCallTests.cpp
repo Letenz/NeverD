@@ -302,6 +302,39 @@ TEST(HighCSourceCalls, BrokenPreservedPrefixChainsRemainUnknown) {
   }
 }
 
+TEST(HighCSourceCalls, ReusedConverterRebuildsClobberIdentityAndOrder) {
+  auto Med = savedFloatingRecord(3);
+  const auto Original = Med.CallClobbers;
+  const std::map<va_t, std::string> Names{{0x2000, "observe_call"}};
+  MedToHighConverter Converter;
+  Converter.setFuncNames(&Names);
+  for (unsigned Round = 0; Round < 4; ++Round) {
+    SCOPED_TRACE(Round);
+    if (Round == 1) {
+      // Duplicate identities keep the first record's conservative answer.
+      auto Broken = Original;
+      for (auto &Clobber : Broken) {
+        Clobber.PreservedInput = {};
+        Clobber.PreservedPrefixSize = 0;
+      }
+      Med.CallClobbers.insert(Med.CallClobbers.begin(), Broken.begin(),
+                              Broken.end());
+    } else if (Round == 2) {
+      Med.CallClobbers.clear();
+    } else if (Round == 3) {
+      Med.CallClobbers = Original;
+    }
+    const auto Source =
+        emit({Converter.convert(Med, Arch::AArch64)}, true, Arch::AArch64);
+    EXPECT_EQ(Source,
+              emit({lowerSavedFloatingRecord(Med)}, true, Arch::AArch64));
+    if (Round == 0 || Round == 3)
+      EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+    if (Round == 1)
+      EXPECT_NE(Source.find("unknown value"), std::string::npos) << Source;
+  }
+}
+
 TEST(HighCSourceCalls, DynamicTypeAndTypeNamePreserveCanonicalInputsAndPair) {
 #if defined(__aarch64__) || defined(__arm64__)
   const auto Architecture = Arch::AArch64;

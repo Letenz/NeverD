@@ -994,3 +994,28 @@ NEVERD_NATIVE_DRIVER_KVM_REQUIRED_TEST(
     "Kvm")
 
 #endif
+
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalBufferedNativeFileTransfers/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalBufferedNativeFileTransfers/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalBufferedNativeFileTransfers/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalBufferedNativeFileTransfers/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkBufferedNativeFileTransfers/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkBufferedNativeFileTransfers/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkBufferedNativeFileTransfers/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkBufferedNativeFileTransfers/{backend}CheckedRebased")

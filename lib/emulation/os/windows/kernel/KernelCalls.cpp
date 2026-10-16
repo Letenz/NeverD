@@ -49,7 +49,7 @@ llvm::Expected<uint64_t> KernelModel::call(
   auto Value = dispatchKernelCall(Name, A, ReadArgument, Context);
   if (!Value)
     return Value;
-  if (auto E = deliverFileQueryCompletions(Context))
+  if (auto E = deliverFileRequestCompletions(Context))
     return E;
   return Value;
 }
@@ -453,9 +453,20 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   case KernelAPIKind::IoGetRelatedDeviceObject:
     return relatedFileDevice(A[0]);
   case KernelAPIKind::IoQueryFileInformation:
-    return queryFileInformation(A, false, Context);
+    return beginFileAPIRequest(A, DriverRequestKind::QueryInformation, false,
+                               Context);
   case KernelAPIKind::ZwQueryInformationFile:
-    return queryFileInformation(A, true, Context);
+    return beginFileAPIRequest(A, DriverRequestKind::QueryInformation, true,
+                               Context);
+  case KernelAPIKind::ZwReadFile:
+    return beginFileAPIRequest(A, DriverRequestKind::Read, true, Context);
+  case KernelAPIKind::ZwWriteFile:
+    return beginFileAPIRequest(A, DriverRequestKind::Write, true, Context);
+  case KernelAPIKind::ZwSetInformationFile:
+    return setFileInformation(A, Context);
+  case KernelAPIKind::ZwFlushBuffersFile:
+    return beginFileAPIRequest(A, DriverRequestKind::FlushBuffers, true,
+                               Context);
   case KernelAPIKind::ZwCreateFile:
   case KernelAPIKind::IoCreateFile:
     return createFile(A, false, Context);
@@ -491,8 +502,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
   case KernelAPIKind::IofCompleteRequest:
   case KernelAPIKind::IoCompleteRequest: {
     const auto *Request = requestForIRP(A[0]);
-    if (Request && Request->FileQueryOperation)
-      if (auto E = validateFileQueryInterrupts(Context))
+    if (Request && Request->FileRequestID)
+      if (auto E = validateFileAPIInterrupts(Context))
         return E;
     return completeDriverRequest(A);
   }

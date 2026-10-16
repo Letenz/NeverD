@@ -4082,8 +4082,8 @@ TEST(ProcessReport, StatefulDevicesValidateProducerAndContextBoundaries) {
     if (!Parsed)
       llvm::consumeError(Parsed.takeError());
   }
-  for (uint32_t Request :
-       {0xc0300945u, 0xc0300947u, 0x40200946u, 0x40080921u}) {
+  for (uint32_t Request : {0xc0300945u, 0xc0300947u, 0x40200946u, 0x40080921u,
+                           0xc0300934u, 0xc0080935u, 0xc0480936u}) {
     auto O = *ValidObjects;
     O.LinuxFiles->Devices.at("/fixture/control")
         .Ioctls.push_back({Request, 0, {}, {}});

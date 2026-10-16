@@ -3441,4 +3441,6 @@ TEST(BinaryLowIRRefinement, RawCmpxchgDoesNotGrantNativeProof) {
       << Independence.Proof.Diagnostic;
 }
 
+#include "KernelInterruptRefinementTests.inc"
+
 } // namespace
