@@ -1291,3 +1291,4 @@ TEST_F(PEFixedImageTest, RawCodeCmpxchgReceiptBindsOrdering) {
 }
 
 #include "MachineExitEnvironmentTests.inc"
+#include "WideImmutableImageTests.inc"

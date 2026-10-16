@@ -298,6 +298,19 @@ With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
 ntoskrnl.exe and its PDB,
 `SessionCAPITest.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
 and checks that the headers join its PDB without conflicts.
+`SessionCAPITest.KernelFunctionsDecompileWithTheirPrototypes` decompiles
+`NtCreateFile`, `IoAllocateIrp`, `PsCreateSystemThread` and
+`IofCompleteRequest` and checks the signatures the headers give them.
+`PrototypeDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
+the conversion and which functions take a prototype without a program.
+`scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
+decompiles with the prototypes an IDA dump shows; it decompiles each
+function by address and resolves IDA's typedefs through the shipped headers:
+
+```sh
+python3 scripts/compare_prototypes_with_ida.py --neverd build/bin/neverd \
+  --binary ntoskrnl.exe --pdb ntkrnlmp.pdb --ida prototypes.json
+```
 
 Declared types are covered at each layer:
 - `SessionCAPITest.DeclaredTypesJoinThePDBsAndStayWithTheProject`: declaring,
@@ -315,8 +328,15 @@ compiles the result:
 - C and C++ in all four builtin spellings with clang for the MSVC target, and
   the portable spelling for the GNU target too; the C header, which the
   workbench shows as C/C++, compiles as C++ as well;
-- Rust with rustc (64-bit layouts only);
-- Go with `go vet` for Windows.
+- Rust with rustc in both of its spellings, exact widths and Windows' names
+  as aliases (64-bit layouts only);
+- Go with `go vet` for Windows, in both spellings too;
+- Python by running the module with `python3 -I -W error`, in both spellings,
+  where ctypes checks each size and offset (64-bit layouts only);
+- JavaScript by running the module with `node`, in both spellings, whose
+  checks read and write back every accessor within its record, and by
+  `tsc --noEmit --allowJs --checkJs --strict`, which checks its JSDoc as
+  TypeScript (`--tsc` names the compiler; without one it is skipped).
 
 A missing toolchain is reported and skipped. Without `--binary` it checks the
 fixture:
@@ -1805,6 +1825,11 @@ and remaining budgets at every small-fixture budget boundary. Equal-size
 instruction, edge, root and ownership changes must replace the graph; rolled
 back and temporary override payloads cannot leave borrowed pointers behind.
 Resource failure and value-analysis incompleteness remain distinct.
+`ResolverLoadAddress.*` checks that one opaque load retains its identity when
+its unused address exceeds the proof depth. Across four architectures and
+three formats, stores, calls, ordered reads and incompatible widths prevent
+load reuse. Compatible reloads and ARM ELF literals still require complete
+address reconstruction; warm queries retain the same result and budget.
 `ResolverPendingCycles.*` checks nested loops whose late definitions must reach
 every batched query, in both query orders and in isolated queries. Register and
 private-frame variants cover x86, x64, ARM and AArch64 across ELF, COFF and
@@ -1979,6 +2004,13 @@ same-field independent contexts with no memory consumer, missing PC-relative
 sources, repeated long blocks, final recording and cross-function exhaustion.
 Every exhaustion must protect the nonempty request set. Existing cross-target
 jump-table and returned-code tests exercise the shared collector's semantics.
+
+`ModuleIntrinsicEffects` validates scalar value-only shapes across x87, BMI2,
+ARM and AArch64. `ModuleJumpTableBudget` also checks a pure instruction after a
+real call with clobbered input lanes, unused address inputs, later result/input
+escapes, explicit temporary address operands of memory intrinsics and malformed
+contracts. These tests retain real loader-backed relocation occurrences and
+must protect table slots whenever an observable use remains.
 
 `ModuleAdjacentTable.*` uses real ELF32/ELF64 adjacent absolute tables in both
 function orders. It checks final x87 returns, independent roots, an unsplit
@@ -3736,6 +3768,42 @@ straight from memory (`call [rip+disp]`) and loads this one into a register
 first. Its LLVM C must not trap and must compile for all four targets. On an
 x64 host the program runs and must call the initial function, then the one
 stored over it.
+
+`CallsThroughPointerVariablesPassTheirArguments` builds, for each architecture,
+a library whose pointer variables start at prototyped routines (`exit`, `puts`,
+`strcmp`, which a stub library defines), at a static function and at a routine
+nothing describes, and checks HighC and LLVM C. Each caller takes as many
+parameters as the routine its variable starts at and passes them on in order,
+in tail and ordinary calls alike, and the undescribed call passes no invented
+zero or return address. `call_self` passes its variable as the fourth argument
+of a routine that takes four, though the same register holds the call target.
+`PointerVariableCallsRunWithTheirArguments` runs the x64 LLVM C against libc:
+each call reaches its routine with its arguments, a stored function replaces
+the initial one, and the call through `exit` ends the program with the code it
+passed. `IndirectCallsPassNoTargetOrSavedRegisters` assembles ARM calls whose
+first argument register holds only the target, loaded through a table slot,
+which must pass nothing in either backend (not the slot's address as a virtual
+call's object), and a call whose outgoing stores leave a gap below a
+`push {r4, r6, r7, lr}`, whose HighC must not pass the saved link register.
+
+`LLVMCValues.ImageStringsInACodeSegmentFollowTheirSection` requires a string
+in `.rodata` inside an R+X segment to print, its bytes in `.text` not to, and
+the segment rule without section headers.
+
+`LinkedLiteralAddsToTheDataItNames` links an ARM getter whose
+`ldr r0, [pc, r0]` reads its literal right after `bx lr`. It requires the
+`ARMLinkedLiteral` certificate for the static variable at the ADD output,
+LowToMed's exact constant in its place, and a lifted getter that loads the
+variable itself. A relocation on the literal word withdraws the certificate.
+
+`IndirectTailFrame.UnwindOnlyFrameDescriptionKeepsTheTailCall` assembles AArch64
+functions with plain CFI into a shared library: a restored frame's `br x0`
+becomes `INDIR_CALL + RETURN` under its FDE, and a live frame keeps its
+indirect branch, as does a computed jump into the function's own code
+(`adr x1, 1f; add x0, x1, w0, sxtw #2; br x0`), while a tail call through the
+function's own reloaded address stays one. `ExceptionFunctionUnwindOnly`
+checks that an LSDA, a personality routine, handler data or a partial parse
+each count as a handler.
 
 `LocalUnwindTargetRequiresExclusiveSameFrameUses` includes decoded x64 calls
 whose SP save and load occupy different blocks, stale producer changes, opaque
@@ -5670,7 +5738,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 58 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 262 WHP outcomes from all 131 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 64 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 262 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 92 driver API checks = 5740`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 262 WHP outcomes from all 131 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 64 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 262 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 100 driver API checks = 5748`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 The genuine WDK inventory also builds `driver_device_queries.c`, `driver_file_objects.c` and `driver_file_handles.c` in normal and CFG forms. `DriverDeviceQueryTests.cpp` and `DriverFileObjectTests.cpp` reuse the portable callers’ assertions for retained deletion, failed CREATE, process identity, last-handle CLEANUP and deferred CLOSE across both contracts, bases and scheduling policies. All three families have mandatory native gates; inventory validation independently discovers sources with `NEVERD_WDK_FIXTURE` so a dual-mode source cannot silently lose its WDK build.
 
@@ -7149,13 +7217,17 @@ exercise the same paths; transport unavailability is a skip, never evidence of
 execution. These authored workloads do not establish arbitrary application,
 Android service or shader coverage.
 
-`KernelFileQueryTests.cpp` checks query packet fields, borrowed memory, immediate versus pending status publication, invalid outputs, worker notification, retained files and final CLOSE. `DriverFileObjectTests.cpp` executes the original `driver_file_queries.c` across contracts, backends, load bases and cooperative/instruction-clock scheduling. Optional `NEVERD_WDM_FILE_QUERIES_FIXTURE` and `NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE` add genuine WDK headers/import libraries and active CFG. Missing backends or external fixtures remain explicit skips; these tests do not implement a filesystem provider or general APC delivery.
+`KernelFileQueryTests.cpp` covers borrowed and native buffered packets, immediate/pending publication, IOSB aliases and padding, worker completion, retained storage, local classes, handle scope, IRQL/APC admission and unsupported routes. `KernelFileCreateTests.cpp` and `DriverFileSystemTests.cpp` cover six declared metadata classes, exact sizes, bounded names and retained open identity. Original `driver_file_queries.c` and `driver_filesystem_provider.c` run across available backends, contracts, bases and cooperative/17-instruction scheduling; genuine normal/CFG images use `NEVERD_WDM_FILE_QUERIES_FIXTURE`, `NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE`, `NEVERD_WDM_FILESYSTEM_FIXTURE` and `NEVERD_WDM_FILESYSTEM_CFG_FIXTURE`. C API/CLI/Python check origins, full output bytes and handled failure statuses. Bounded original-kernel probes cover 156 producer cases and 18 completion cases with explicit allocator, dispatcher and notification boundaries; they do not certify a complete filesystem or general APC runtime. Missing hardware and external fixtures remain explicit skips.
+
+`KernelIRPStack.ReadWriteCompletionPreservesStoredFilePosition` checks synchronous/asynchronous files, immediate/pending completion, success/warning/error statuses and zero/nonzero lengths against an independent 64-bit position. The genuine normal/CFG `driver_wdm_stack.c` fixture reads the position again across READ, WRITE and cleanup.
 
 ## Supplied DEX method execution
 
 `NeverDDalvikTests` checks the decoded executor's uninitialized/torn registers,
 overlapping wide moves, division exceptions/overflow, budget/stack stops,
-result-use rules and refusal of class initialization/handlers/unknown opcodes.
+result-use rules, per-workload static state, initialization failures, terminal
+resource stops, field widths/final stores, handler/throwable identity and refusal
+of malformed handlers or unknown opcodes.
 `NeverDMobileTests` must also run when changing the shared DEX reader or models;
 mobile recovery and JNI execution share those owners.
 
@@ -7174,10 +7246,46 @@ overflow, negative/oversized shifts, signed division/remainder, narrow returns,
 wide arguments, branches, packed/sparse switches, loops, recursion and
 cross-class calls, through ordinary/V/A JNI forms. Negative workloads cover
 division exceptions, loops exhausting the shared native budget, recursion,
-objects/handlers, corrupt/duplicate DEX and JNI-disabled admission. Logs and
+unknown Object methods, corrupt/duplicate DEX and JNI-disabled admission.
+The formerly unsupported arithmetic handler now has a positive result oracle. Logs and
 request/report files stay in the explicit output directory. Missing JDK/D8 or
 CPU transports are unavailable evidence, not a passing substitute. The runtime
 itself does not launch these preparation tools or use a device.
+
+Run `scripts/test_android_dex_state.py` with the same arguments for persistent
+class state. The original Java oracle emits every sequential return value and
+exception identity; the native fixture records the same sequence through JNI.
+Cases include encoded/default values, all integral field widths, dynamic final
+initialization, both orders of cyclic initialization, ordinary division failure
+without rollback, failed initializer effects without retry, nested initializer
+errors and subsequent NoClassDefFoundError. Each sequence runs with retained JNI
+attachment, repeated detach/reattach, and alternating joined guest threads.
+Volatile fields and unsupported or looping initializers retain explicit
+failure boundaries. These are supplied synthetic programs, not evidence for
+unavailable application DEX, Binder services or shaders.
+
+Run `scripts/test_android_dex_objects.py` with the same arguments for supplied
+objects and arrays. Its independent JVM oracle covers every integral JNI field
+width, object/static aliases, native-to-DEX and DEX-to-native mutation, constructor
+and method call forms, nested arrays, primitive payloads, global references and
+field IDs across reattachment, and five recoverable Java exception classes.
+Separate negative calls check accessor mismatch, final writes, bad receivers,
+forged field IDs and model heap limits. Decoded-model unit cases independently
+check forged register references, constructor ordering/aliasing, array payload
+bounds, component types, cyclic field storage and terminal resource stops.
+
+Run `scripts/test_android_dex_language.py` with the same JDK/D8/backend flags
+for strings, library execution, handlers and inheritance. Original class files
+run on the JVM; D8 supplies the distinct instruction stream executed by NeverD.
+Cases compare exact UTF-16 units and hashes, literal/intern identities, message
+identity, ordered catch/rethrow/finally side effects and repeated unwinding.
+JNI bridge cases compare complete output arrays for virtual/interface/nonvirtual
+calls, inherited fields, class identity, Throwable round trips and references
+after reattachment. Unknown library and synchronized calls inside catch-all
+regions must stop rather than return a guessed success. The separate sequence
+oracle resets its explicit side-effect input between calls for adapter reuse;
+its preparation is not itself a NeverD execution claim.
+
 
 Processor regressions cover output boundaries, NULL, nested restores, invalid IRQL and import identity. Original `driver_processors.c` exercises entry, worker and DPC contexts across backends, contracts, bases and scheduling. Optional `NEVERD_WDM_PROCESSORS_FIXTURE` and `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` verify genuine WDK inline calls and dynamic exports with normal/active CFG images; missing transports remain explicit skips.
 

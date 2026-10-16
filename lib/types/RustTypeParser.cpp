@@ -9,8 +9,10 @@
 // write FFI types: an anonymous record is a type named <Parent>_<n> that a
 // field of its parent holds, a run of bitfields is a _bitfield field whose
 // doc comment says where each field is, and an integer alias with constants
-// of its type is an enumeration.  Everything is read before any record is
-// laid out, since Rust names types before it defines them.
+// of its type is an enumeration.  The Windows headers' names of builtins,
+// such as ULONG, are those builtins, as wdk-sys's aliases declare them.
+// Everything is read before any record is laid out, since Rust names types
+// before it defines them.
 //
 //===----------------------------------------------------------------------===//
 
@@ -834,6 +836,8 @@ private:
   uint32_t pointerSize() const { return pointerBytes(Library.dataModel()); }
 
   std::optional<Builtin> primitive(llvm::StringRef Name) const {
+    if (std::optional<Builtin> Windows = windowsTypedefNamed(Name))
+      return Windows;
     const bool Wide = pointerSize() == 8;
     return llvm::StringSwitch<std::optional<Builtin>>(Name)
         .Case("u8", Builtin::UChar)
@@ -1124,9 +1128,40 @@ private:
       Names.push_back(Name);
   }
 
+  /// Whether \p A and \p B hold the same values: their size, sign and
+  /// whether they are floating.
+  bool sameValues(Builtin A, Builtin B) const {
+    const BuiltinInfo &First = builtinInfo(A), &Second = builtinInfo(B);
+    return builtinBytes(A, Library.dataModel()) ==
+               builtinBytes(B, Library.dataModel()) &&
+           First.Signed == Second.Signed &&
+           (First.Class == BuiltinClass::Float) ==
+               (Second.Class == BuiltinClass::Float);
+  }
+
   void build() {
     for (size_t I = 0; I < Records.size(); ++I)
       RecordIndex[Records[I].Name] = I;
+    // An alias of a Windows name, as a module in Windows' names declares
+    // ULONG, leaves the builtin it names: one of another width or sign
+    // would change every type that uses it.
+    llvm::erase_if(Aliases, [&](const std::pair<std::string, RTypeRef> &Alias) {
+      const std::optional<Builtin> Windows = windowsTypedefNamed(Alias.first);
+      if (!Windows)
+        return false;
+      const RType &Target = *Alias.second;
+      const std::optional<Builtin> Named =
+          Target.K == RType::Path ? primitive(Target.Name) : std::nullopt;
+      if (!Named || !sameValues(*Named, *Windows)) {
+        const auto [Line, Column] = AliasPlaces.lookup(Alias.first);
+        fail(Line, Column,
+             "'" + Alias.first + "' is the builtin of " +
+                 std::to_string(builtinBytes(*Windows, Library.dataModel())) +
+                 " bytes that Windows names so; an alias cannot make it "
+                 "another");
+      }
+      return true;
+    });
     for (const auto &[Name, Type] : Aliases) {
       AliasNames.insert(Name);
       if (Type->K == RType::Function)

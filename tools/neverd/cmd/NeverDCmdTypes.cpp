@@ -7,9 +7,10 @@
 /// \file
 /// `neverd types`: the program's local types as the workbench's Local Types
 /// window shows them.  Without --type it lists them; --type lays a type out
-/// (--layout) or renders it, with what it needs, as C, C++, Rust or Go;
-/// --all renders every type as one unit that compiles.  Without a binary,
-/// --data-model converts the --declare files from one language to another.
+/// (--layout) or renders it, with what it needs, as C, C++, Rust, Go,
+/// Python or JavaScript; --all renders every type as one unit that compiles.
+/// Without a binary, --data-model converts the --declare files from one
+/// language to another.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -29,12 +30,68 @@ using namespace llvm;
 namespace neverd::cli {
 namespace {
 
-bool knownLanguage(StringRef Id) {
-  return Id == "c" || Id == "cpp" || Id == "rust" || Id == "go";
+/// The languages the engine renders, as --lang names them.
+std::vector<std::string> languageIds() {
+  std::vector<std::string> Ids;
+  const char *Raw = neverd_types_languages_json();
+  auto Parsed = json::parse(Raw ? Raw : "");
+  neverd_free_string(Raw);
+  if (!Parsed) {
+    consumeError(Parsed.takeError());
+    return Ids;
+  }
+  if (const json::Object *Root = Parsed->getAsObject())
+    if (const json::Array *Languages = Root->getArray("languages"))
+      for (const json::Value &Value : *Languages)
+        if (const json::Object *Language = Value.getAsObject())
+          if (std::optional<StringRef> Id = Language->getString("id"))
+            Ids.push_back(Id->str());
+  return Ids;
 }
 
+/// \p Ids as a message lists them: "c, cpp or rust".
+std::string listed(ArrayRef<std::string> Ids) {
+  std::string Text;
+  for (size_t I = 0; I < Ids.size(); ++I) {
+    if (I)
+      Text += I + 1 == Ids.size() ? " or " : ", ";
+    Text += Ids[I];
+  }
+  return Text;
+}
+
+/// A spelling --spelling may name; empty takes the language's own.
 bool knownSpelling(StringRef Id) {
-  return Id == "windows" || Id == "ida" || Id == "keywords" || Id == "portable";
+  return Id.empty() || Id == "windows" || Id == "ida" || Id == "keywords" ||
+         Id == "portable";
+}
+
+/// \p Options with the spelling --spelling asks, if it asks one.
+json::Object withSpelling(json::Object Options) {
+  if (!TypesSpelling.empty())
+    Options["spelling"] = TypesSpelling.getValue();
+  return Options;
+}
+
+/// The spelling the source --lang renders takes: the one asked, or the
+/// language's own, as the engine says it.
+std::string spellingTaken() {
+  if (!TypesSpelling.empty())
+    return TypesSpelling;
+  const char *Raw = neverd_types_languages_json();
+  auto Parsed = json::parse(Raw ? Raw : "");
+  neverd_free_string(Raw);
+  if (!Parsed) {
+    consumeError(Parsed.takeError());
+    return {};
+  }
+  if (const json::Object *Root = Parsed->getAsObject())
+    if (const json::Array *Languages = Root->getArray("languages"))
+      for (const json::Value &Value : *Languages)
+        if (const json::Object *Language = Value.getAsObject();
+            Language && Language->getString("id") == TypesLanguage.getValue())
+          return Language->getString("spelling").value_or("").str();
+  return {};
 }
 
 std::string text(const json::Value &Value) {
@@ -188,7 +245,7 @@ void layoutRows(const json::Array &Members, unsigned Depth, raw_ostream &Out) {
 }
 
 int layout(neverd_session_t Sess, raw_ostream &Out) {
-  const std::string Options = text(json::Object{{"spelling", TypesSpelling}});
+  const std::string Options = text(withSpelling(json::Object{}));
   json::Array All;
   for (const std::string &Name : TypeNames) {
     std::optional<json::Value> Type =
@@ -230,12 +287,12 @@ int layout(neverd_session_t Sess, raw_ostream &Out) {
 }
 
 int render(neverd_session_t Sess, raw_ostream &Out) {
-  json::Object Options{{"language", TypesLanguage},
-                       {"spelling", TypesSpelling},
-                       {"offsets", !TypesNoOffsets},
-                       {"hexOffsets", !TypesDecimalOffsets},
-                       {"asserts", static_cast<bool>(TypesAsserts)},
-                       {"prototypes", static_cast<bool>(TypesPrototypes)}};
+  json::Object Options = withSpelling(
+      json::Object{{"language", TypesLanguage},
+                   {"offsets", !TypesNoOffsets},
+                   {"hexOffsets", !TypesDecimalOffsets},
+                   {"asserts", static_cast<bool>(TypesAsserts)},
+                   {"prototypes", static_cast<bool>(TypesPrototypes)}});
   if (!TypesAll) {
     json::Array Names;
     for (const std::string &Name : TypeNames)
@@ -250,8 +307,9 @@ int render(neverd_session_t Sess, raw_ostream &Out) {
     return 1;
   }
   if (JsonOutput)
-    Out << json::Value(
-               json::Object{{"language", TypesLanguage}, {"source", Source}})
+    Out << json::Value(json::Object{{"language", TypesLanguage},
+                                    {"spelling", spellingTaken()},
+                                    {"source", Source}})
         << "\n";
   else
     Out << Source;
@@ -317,8 +375,9 @@ bool declare(neverd_session_t Sess) {
 /// The checks of options both ways of running share; false with an error
 /// printed.
 bool optionsValid() {
-  if (!knownLanguage(TypesLanguage)) {
-    WithColor::error() << "--lang must be c, cpp, rust or go\n";
+  if (const std::vector<std::string> Languages = languageIds();
+      !is_contained(Languages, TypesLanguage.getValue())) {
+    WithColor::error() << "--lang must be " << listed(Languages) << "\n";
     return false;
   }
   if (!knownSpelling(TypesSpelling)) {
@@ -389,13 +448,13 @@ int runTypesConvert() {
     json::Array Names;
     for (const std::string &Name : TypeNames)
       Names.push_back(Name);
-    json::Object Render{{"language", TypesLanguage.getValue()},
-                        {"spelling", TypesSpelling.getValue()},
-                        {"offsets", !TypesNoOffsets},
-                        {"hexOffsets", !TypesDecimalOffsets},
-                        {"asserts", TypesAsserts.getValue()},
-                        {"prototypes", TypesPrototypes.getValue()},
-                        {"dependencies", !TypesAlone}};
+    json::Object Render =
+        withSpelling(json::Object{{"language", TypesLanguage.getValue()},
+                                  {"offsets", !TypesNoOffsets},
+                                  {"hexOffsets", !TypesDecimalOffsets},
+                                  {"asserts", TypesAsserts.getValue()},
+                                  {"prototypes", TypesPrototypes.getValue()},
+                                  {"dependencies", !TypesAlone}});
     if (!Names.empty())
       Render["types"] = std::move(Names);
     Request["render"] = std::move(Render);
@@ -414,12 +473,15 @@ int runTypesConvert() {
     WithColor::error() << "types: " << *Error << "\n";
     return 1;
   }
-  // Problems by file and place; kept-going ones are warnings.
+  // Problems by file and place; kept-going ones are warnings.  JSON says
+  // them in its object instead.
   bool Problems = false;
   if (const json::Array *List = Reply.getArray("problems"))
     for (const json::Value &Value : *List)
       if (const json::Object *Problem = Value.getAsObject()) {
         Problems = true;
+        if (JsonOutput)
+          continue;
         const size_t Index =
             size_t(Problem->getInteger("declaration").value_or(0));
         (TypesKeepGoing ? WithColor::warning() : WithColor::error())
@@ -428,7 +490,7 @@ int runTypesConvert() {
             << Problem->getInteger("column").value_or(0) << ": "
             << Problem->getString("message").value_or("") << "\n";
       }
-  if (Problems && !TypesKeepGoing)
+  if (Problems && !TypesKeepGoing && !JsonOutput)
     return 1;
   std::unique_ptr<raw_fd_ostream> File;
   if (!OutputFile.empty()) {
@@ -441,6 +503,26 @@ int runTypesConvert() {
     }
   }
   raw_ostream &Out = File ? *File : outs();
+  // One object for a program to read: what read, the problems, and the
+  // source in the language and spelling it took.
+  if (JsonOutput) {
+    json::Object Answer = Reply;
+    // A problem names its file, as the text says it.
+    if (json::Array *List = Answer.getArray("problems"))
+      for (json::Value &Value : *List)
+        if (json::Object *Problem = Value.getAsObject()) {
+          const size_t Index =
+              size_t(Problem->getInteger("declaration").value_or(0));
+          if (Index < TypesDeclare.size())
+            (*Problem)["file"] = TypesDeclare[Index];
+        }
+    if (Renders) {
+      Answer["language"] = TypesLanguage.getValue();
+      Answer["spelling"] = spellingTaken();
+    }
+    Out << json::Value(std::move(Answer)) << "\n";
+    return Problems && !TypesKeepGoing ? 1 : 0;
+  }
   if (Renders) {
     Out << Reply.getString("source").value_or("");
     return 0;

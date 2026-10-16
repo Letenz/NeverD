@@ -109,6 +109,7 @@ EXPORTS
   KeLeaveGuardedRegion
   IoGetCurrentProcess
   IoQueryFileInformation
+  ZwQueryInformationFile
   IoGetRelatedDeviceObject
   KeStackAttachProcess
   KeUnstackDetachProcess

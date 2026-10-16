@@ -119,6 +119,17 @@ add_neverd_unittest(NeverDSessionLLVMTests
 target_include_directories(NeverDSessionLLVMTests PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi")
 
+# Private prototype completion stays in one executable; the public Session
+# tests continue to call the shared engine through its exported SDK boundary.
+add_neverd_unittest(NeverDPrototypeDebugContextTests
+  PrototypeDebugContextTests.cpp
+  "${CMAKE_SOURCE_DIR}/lib/sdk/capi/PrototypeDebugContext.cpp"
+  "${CMAKE_SOURCE_DIR}/lib/ir/NdTypes.cpp"
+  LINK_COMPONENTS Types
+)
+target_include_directories(NeverDPrototypeDebugContextTests PRIVATE
+  "${CMAKE_SOURCE_DIR}/lib/sdk/capi")
+
 if(TARGET neverd_shared)
   add_neverd_unittest(NeverDSourcePatchDynCodeTests
     SourcePatchDynCodeTests.cpp

@@ -63,7 +63,7 @@ protected:
     }
     Probe->CPU.reset();
     for (bool Scheduled : {false, true})
-      for (char Mode : {'C', 'P', 'X', 'U', 'R'}) {
+      for (char Mode : {'C', 'P', 'X', 'U', 'R', 'Q'}) {
         SCOPED_TRACE(::testing::Message()
                      << Image << ' ' << Scheduled << ' ' << Mode);
         DriverOptions Options;

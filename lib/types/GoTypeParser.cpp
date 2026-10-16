@@ -12,7 +12,8 @@
 // Name_ whose method Name returns a pointer to it holds that type; a method
 // returning unsafe.Slice past the end is a flexible array.  A type's comment
 // says the #pragma pack it was laid out under.  Records named
-// <Parent>_<n> that their parent holds are in place, as in Rust.
+// <Parent>_<n> that their parent holds are in place, as in Rust.  The
+// Windows headers' names of builtins, such as ULONG, are those builtins.
 //
 //===----------------------------------------------------------------------===//
 
@@ -651,6 +652,8 @@ private:
   uint32_t pointerSize() const { return pointerBytes(Library.dataModel()); }
 
   std::optional<Builtin> primitive(llvm::StringRef Name) const {
+    if (std::optional<Builtin> Windows = windowsTypedefNamed(Name))
+      return Windows;
     const bool Wide = pointerSize() == 8;
     return llvm::StringSwitch<std::optional<Builtin>>(Name)
         .Cases({"uint8", "byte"}, Builtin::UChar)
@@ -1014,9 +1017,38 @@ private:
       Names.push_back(Name);
   }
 
+  /// Whether \p A and \p B hold the same values: their size, sign and
+  /// whether they are floating.
+  bool sameValues(Builtin A, Builtin B) const {
+    const BuiltinInfo &First = builtinInfo(A), &Second = builtinInfo(B);
+    return builtinBytes(A, Library.dataModel()) ==
+               builtinBytes(B, Library.dataModel()) &&
+           First.Signed == Second.Signed &&
+           (First.Class == BuiltinClass::Float) ==
+               (Second.Class == BuiltinClass::Float);
+  }
+
   void build() {
     for (size_t I = 0; I < Structs.size(); ++I)
       StructIndex[Structs[I].Name] = I;
+    // A type of a Windows name, as a file in Windows' names declares ULONG,
+    // leaves the builtin it names, alias or not: one of another width or
+    // sign would change every type that uses it.
+    llvm::erase_if(Aliases, [&](const auto &Declared) {
+      const auto &[Name, Type, Alias, Line, Column] = Declared;
+      const std::optional<Builtin> Windows = windowsTypedefNamed(Name);
+      if (!Windows)
+        return false;
+      const std::optional<Builtin> Named =
+          Type->K == GType::Name ? primitive(Type->Text) : std::nullopt;
+      if (!Named || !sameValues(*Named, *Windows))
+        fail(Line, Column,
+             "'" + Name + "' is the builtin of " +
+                 std::to_string(builtinBytes(*Windows, Library.dataModel())) +
+                 " bytes that Windows names so; a type cannot make it "
+                 "another");
+      return true;
+    });
     // A struct of raw storage read whole through its methods is a union.
     for (const GStruct &Struct : Structs) {
       if (Struct.Fields.size() != 1 ||

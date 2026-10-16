@@ -5,6 +5,7 @@
 #include "DialogReturnKey.h"
 #include "Docking.h"
 #include "Expression.h"
+#include "FlowLayout.h"
 #include "Icons.h"
 #include "ItemViewActivation.h"
 #include "LoadFileDialog.h"
@@ -13,6 +14,7 @@
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
 #include "TitleBar.h"
+#include "TypeSourceHighlighter.h"
 #include "WindowFrame.h"
 #include "WindowFramePlatform.h"
 
@@ -54,6 +56,9 @@
 #include <QTabBar>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTextBlock>
+#include <QTextDocument>
+#include <QTextLayout>
 #include <QToolBar>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -182,6 +187,94 @@ private slots:
     WindowFrame::prepareNativeWindows();
     // Docking chrome is fixed before the first dock exists.
     configureDocking();
+  }
+
+  void typeSourceColorsJavaScriptsComments() {
+    // JSDoc spans lines and sits before code; a private field is no
+    // directive; the offsets a comment gives stand out from its words.
+    QTextDocument document;
+    document.setPlainText(QStringLiteral(
+        "/**\n"
+        " * 0x18 int32_t Tail\n"
+        " */\n"
+        "export class _X {\n"
+        "  #view;\n"
+        "  /** @returns {number} */ get Tail() { return 0x18; } // 0x18\n"));
+    TypeSourceHighlighter highlighter(&document);
+    highlighter.setLanguage(QStringLiteral("javascript"));
+    const Theme &theme = Theme::instance();
+    // The color the highlighter gives the character at \p column of line
+    // \p line, or none.
+    const auto colorAt = [&](int line, int column) {
+      const QTextBlock block = document.findBlockByNumber(line);
+      for (const QTextLayout::FormatRange &range : block.layout()->formats())
+        if (column >= range.start && column < range.start + range.length)
+          return range.format.foreground().color();
+      return QColor();
+    };
+    const QColor comment = theme.color(ColorRole::ListingComment);
+    const QColor number = theme.color(ColorRole::ListingNumber);
+    const QColor keyword = theme.color(ColorRole::ListingKeyword);
+    QCOMPARE(colorAt(0, 0), comment);
+    QCOMPARE(colorAt(1, 1), comment);
+    QCOMPARE(colorAt(1, 3), number);
+    QCOMPARE(colorAt(2, 1), comment);
+    QCOMPARE(colorAt(3, 0), keyword);
+    QVERIFY(colorAt(4, 2) != theme.color(ColorRole::ListingDirective));
+    const QString last = document.findBlockByNumber(5).text();
+    QCOMPARE(colorAt(5, int(last.indexOf(QLatin1String("@returns")))), comment);
+    QCOMPARE(colorAt(5, int(last.indexOf(QLatin1String("get")))), keyword);
+    QCOMPARE(colorAt(5, int(last.indexOf(QLatin1String("return 0x18")) + 7)),
+             number);
+    QCOMPARE(colorAt(5, int(last.lastIndexOf(QLatin1String("//")))), comment);
+  }
+
+  void flowLayoutWrapsRatherThanOverlaps() {
+    // A combo box that keeps its width and the checkboxes after it, as the
+    // Local Types options are: narrow, they wrap to rows of their own, each
+    // at its own size and none over another; wide, they share one row.
+    QWidget row;
+    auto *flow = new FlowLayout(&row);
+    auto *combo = new QComboBox(&row);
+    combo->addItem(QStringLiteral("C keywords (unsigned long)"));
+    combo->setMinimumWidth(combo->sizeHint().width());
+    flow->addWidget(combo);
+    QList<QWidget *> widgets{combo};
+    for (const char *text :
+         {"Hex offsets", "With dependencies", "Layout checks"})
+      widgets.append(new QCheckBox(QString::fromLatin1(text), &row));
+    for (QWidget *widget : widgets.mid(1))
+      flow->addWidget(widget);
+    const auto layOut = [&](int width) {
+      row.resize(width, flow->heightForWidth(width));
+      flow->setGeometry(QRect(0, 0, width, flow->heightForWidth(width)));
+    };
+    const int narrow = combo->sizeHint().width() + 20;
+    layOut(narrow);
+    for (int first = 0; first < widgets.size(); ++first) {
+      const QRect at = widgets[first]->geometry();
+      QCOMPARE(at.size(), widgets[first]->sizeHint());
+      for (int second = first + 1; second < widgets.size(); ++second)
+        QVERIFY2(!at.intersects(widgets[second]->geometry()),
+                 qPrintable(widgets[first]->objectName()));
+    }
+    QVERIFY(widgets[1]->geometry().top() > combo->geometry().top());
+    const int wrapped = flow->heightForWidth(narrow);
+    int wide = 0;
+    for (QWidget *widget : widgets)
+      wide += widget->sizeHint().width() + 20;
+    layOut(wide);
+    for (QWidget *widget : widgets)
+      QCOMPARE(widget->geometry().center().y(), combo->geometry().center().y());
+    QVERIFY(flow->heightForWidth(wide) < wrapped);
+    // A hidden widget takes no place: the one after it moves over by its
+    // width.
+    const int before = widgets[3]->geometry().left();
+    widgets[2]->hide();
+    layOut(wide);
+    QCOMPARE(widgets[3]->geometry().left(),
+             before - widgets[2]->sizeHint().width() -
+                 (before - widgets[2]->geometry().right() - 1));
   }
 
   void addressSpellings() {

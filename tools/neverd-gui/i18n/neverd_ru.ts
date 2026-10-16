@@ -2351,6 +2351,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     показать инструкции, ссылающиеся на строки</translation>
     </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          показать локальные типы или указанный тип</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::QuickStartDialog</name>
@@ -3417,6 +3421,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Точная ширина (uint32_t)</translation>
     </message>
     <message>
+        <source>Exact widths (u32)</source>
+        <translation>Точная ширина (u32)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>Точная ширина (uint32)</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>Фильтр типов по имени</translation>
     </message>
@@ -3469,8 +3481,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Экспортировать все типы…</translation>
     </message>
     <message>
-        <source>How C and C++ name builtin types</source>
-        <translation>Как C и C++ называют встроенные типы</translation>
+        <source>How the source names builtin types</source>
+        <translation>Как исходный код называет встроенные типы</translation>
     </message>
     <message>
         <source>Hex offsets</source>
@@ -3499,10 +3511,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Offset</source>
         <translation>Смещение</translation>
-    </message>
-    <message>
-        <source>Bytes</source>
-        <translation>Байты</translation>
     </message>
     <message>
         <source>Type</source>
@@ -3763,6 +3771,30 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
             <numerusform>%n объявлено</numerusform>
             <numerusform>%n объявлено</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>Выберите тип, чтобы увидеть его размещение и исходный код</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>Нет локального типа с именем %1</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>Точная ширина (c_uint32)</translation>
+    </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>Модуль JavaScript (*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>Типы JavaScript (number, bigint)</translation>
     </message>
 </context>
 <context>

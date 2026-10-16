@@ -34,9 +34,6 @@ BionicResult Bionic::jniArrays(unsigned Slot, const NativeCallEvent &Call) {
         return Class.takeError();
       if (!*Class || (*Class)->Type != JNIObject::Class)
         return failure("JNI object array requires a class reference");
-      if ((*Class)->ClassName != "java/lang/Object" &&
-          (*Class)->ClassName != "java/lang/String")
-        return unsupportedImport(Call);
       auto Value = jniObject(A[3]);
       if (!Value)
         return Value.takeError();
@@ -46,7 +43,9 @@ BionicResult Bionic::jniArrays(unsigned Slot, const NativeCallEvent &Call) {
                                                            : Initial->ClassName,
                          (*Class)->ClassName))
         return failure("JNI abort: incompatible object-array initializer");
-      ClassName = "[L" + (*Class)->ClassName + ";";
+      ClassName = (*Class)->ClassName.starts_with("[")
+                      ? "[" + (*Class)->ClassName
+                      : "[L" + (*Class)->ClassName + ";";
     } else {
       ClassName = std::string("[") + Kinds[Slot - 175];
     }
@@ -89,8 +88,9 @@ BionicResult Bionic::jniArrays(unsigned Slot, const NativeCallEvent &Call) {
     auto Item = jniObject(A[3]);
     if (!Item)
       return Item.takeError();
-    if (*Item && (*Object)->ClassName == "[Ljava/lang/String;" &&
-        (*Item)->Type != JNIObject::String)
+    if (*Item && !mobile::dalvik::referenceAssignable(
+                     mobile::dalvik::objectDescriptor(**Item),
+                     std::string_view((*Object)->ClassName).substr(1)))
       return Throw("java/lang/ArrayStoreException");
     (*Object)->Elements[Index] = *Item;
     return value(0);

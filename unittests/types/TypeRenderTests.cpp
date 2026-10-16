@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/types/PDBTypeImport.h"
+#include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
 #include <gtest/gtest.h>
@@ -194,6 +195,230 @@ TEST_F(TypeRenderFixture, RustNamesAnonymousRecordsAsWindowsRsDoes) {
   EXPECT_TRUE(contains(Text, "    pub _bitfield: u32,"));
   EXPECT_TRUE(contains(Text, "    pub const fn ReadyTransition(&self) -> u32 "
                              "{\n        (self._bitfield >> 1) & 0x1\n    }"));
+}
+
+TEST_F(TypeRenderFixture, RustTakesWindowsNamesAsAliases) {
+  // Exact widths unless asked, as windows-rs spells them.
+  EXPECT_TRUE(contains(render("_THREAD_LIKE", in(Language::Rust)),
+                       "    pub MiscFlags: i32,"));
+  RenderOptions Options = in(Language::Rust);
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Text = header("_THREAD_LIKE", Options);
+  // The names the types use, declared as wdk-sys declares them, at the
+  // program's widths.
+  EXPECT_TRUE(contains(Text, "\n/// The Windows headers' names of builtin "
+                             "types.\npub type UCHAR = u8;\npub type LONG = "
+                             "i32;\npub type ULONG = u32;\npub type "
+                             "ULONGLONG = u64;\n"))
+      << Text;
+  EXPECT_TRUE(contains(Text, "    pub Header: ULONGLONG,"));
+  EXPECT_TRUE(contains(Text, "    pub MiscFlags: LONG,"));
+  EXPECT_TRUE(contains(Text, "    pub Tail: [UCHAR; 3],"));
+  // A bitfield reads as its own type; its storage stays a width.
+  EXPECT_TRUE(contains(Text, "    pub _bitfield: u32,"));
+  EXPECT_TRUE(
+      contains(Text, "    pub const fn ReadyTransition(&self) -> ULONG {"));
+  // A spelling Rust does not take renders as its default.
+  Options.Spelling = BuiltinSpelling::IDA;
+  EXPECT_TRUE(
+      contains(header("_THREAD_LIKE", Options), "    pub MiscFlags: i32,"));
+  EXPECT_EQ(spellingOf(Options), BuiltinSpelling::Portable);
+  EXPECT_EQ(spellingsText(Language::Rust), "windows or portable");
+  EXPECT_EQ(spellingsText(Language::Go), "windows or portable");
+  EXPECT_EQ(spellingsText(Language::C), "windows, ida, keywords or portable");
+}
+
+TEST_F(TypeRenderFixture, GoTakesWindowsNamesAsAliases) {
+  // Exact widths unless asked, as golang.org/x/sys/windows spells them.
+  EXPECT_TRUE(
+      contains(render("_THREAD_LIKE", in(Language::Go)), "\tHeader uint64"));
+  RenderOptions Options = in(Language::Go);
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Text = header("_THREAD_LIKE", Options);
+  EXPECT_TRUE(contains(Text, "\n// The Windows headers' names of builtin "
+                             "types.\ntype UCHAR = uint8\ntype LONG = "
+                             "int32\ntype ULONG = uint32\ntype ULONGLONG = "
+                             "uint64\n"))
+      << Text;
+  EXPECT_TRUE(contains(Text, "\tHeader ULONGLONG"));
+  EXPECT_TRUE(contains(Text, "\tTail [3]UCHAR"));
+  EXPECT_TRUE(contains(Text, ") MiscFlags() *LONG {"));
+  // A bitfield reads as its own type; its storage stays a width.
+  EXPECT_TRUE(contains(Text, "\t_bitfield uint32"));
+  EXPECT_TRUE(contains(Text, ") ReadyTransition() ULONG {"));
+  EXPECT_TRUE(contains(Text, ") SetReadyTransition(value ULONG) {"));
+}
+
+TEST_F(TypeRenderFixture, PythonDeclaresRecordsAsCtypesDoes) {
+  RenderOptions Options = in(Language::Python);
+  Options.Asserts = true;
+  const std::string Text = header("_THREAD_LIKE", Options);
+  // Declared first and laid out after, so that a pointer may name a record
+  // laid out later.
+  EXPECT_TRUE(contains(Text, "class _THREAD_LIKE(ctypes.Structure):\n    "
+                             "\"\"\"_THREAD_LIKE: 0x18 (24) bytes.\"\"\"\n"))
+      << Text;
+  EXPECT_LT(Text.find("class _THREAD_LIKE("),
+            Text.find("_THREAD_LIKE._fields_ = ["));
+  // Records in place are classes of their own, which _anonymous_ promotes.
+  EXPECT_TRUE(contains(Text, "class _THREAD_LIKE_0(ctypes.Union):"));
+  EXPECT_TRUE(contains(
+      Text, "_THREAD_LIKE._anonymous_ = (\"Anonymous1\", \"Anonymous2\")\n"));
+  // A run of bitfields is storage read through properties, each run's
+  // storage named apart from the others the record promotes.
+  EXPECT_TRUE(contains(Text, "(\"_bitfield\", ctypes.c_uint32),"));
+  EXPECT_TRUE(contains(Text, "(\"_bitfield1\", ctypes.c_uint32),"));
+  EXPECT_TRUE(
+      contains(Text, "    @property\n    def ReadyTransition(self) -> int:\n"));
+  EXPECT_TRUE(contains(Text, "        return (self._bitfield >> 1) & 0x1\n"));
+  EXPECT_TRUE(contains(Text, "        return (self._bitfield1 >> 2) & 0x1\n"));
+  EXPECT_TRUE(contains(
+      Text, "assert ctypes.sizeof(_THREAD_LIKE) == 0x18, \"_THREAD_LIKE\"\n"));
+  EXPECT_TRUE(contains(Text, "assert _THREAD_LIKE.Tail.offset == 0x10, "
+                             "\"_THREAD_LIKE.Tail\"\n"));
+
+  // A pack lays out as MSVC does, which Python 3.14 asks for by name.
+  EXPECT_TRUE(contains(header("_PACKED", in(Language::Python)),
+                       "_PACKED._pack_ = 1\n_PACKED._layout_ = \"ms\"\n"
+                       "_PACKED._fields_ = [\n"));
+  // Alone, a record's layout is in its class.
+  EXPECT_TRUE(
+      contains(render("_PACKED", in(Language::Python)),
+               "class _PACKED(ctypes.Structure):\n    \"\"\"_PACKED: "
+               "0x7 (7) bytes, packed to 1.\"\"\"\n\n    _pack_ = 1\n"));
+
+  // An enumeration is an IntEnum, its field the underlying integer; a
+  // function's address is ctypes.c_void_p, its C type in the comment.
+  const std::string Device = header("_DEVICE", in(Language::Python));
+  EXPECT_TRUE(contains(Device, "class _POOL_KIND(enum.IntEnum):"));
+  EXPECT_TRUE(contains(Device, "(\"Pool\", ctypes.c_int32),"));
+  EXPECT_TRUE(contains(Device, "enum _POOL_KIND\n"));
+  EXPECT_TRUE(contains(Device, "(\"MajorFunction\", ctypes.c_void_p * 4),"));
+  EXPECT_TRUE(contains(Device, "(*[4])(struct _DEVICE *, "));
+
+  // Windows' names are aliases of exact widths at the top.
+  Options = in(Language::Python);
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Windows = header("_PACKED", Options);
+  EXPECT_TRUE(contains(Windows, "UCHAR = ctypes.c_uint8\n")) << Windows;
+  EXPECT_TRUE(contains(Windows, "(\"Value\", ULONG),"));
+}
+
+TEST(TypeRender, PythonBindsTypedefsAndLaysOutInOrder) {
+  // A typedef is bound before a layout names it; one of an array after the
+  // layout of what it holds, since ctypes sizes an array type once.
+  TypeLibrary Library;
+  ASSERT_TRUE(parseCTypes(R"(
+    typedef struct _NODE NODE;
+    struct _NODE { NODE *Next; unsigned long Value; };
+    typedef struct _PAIR { unsigned char A; unsigned long B; } PAIR;
+    typedef PAIR PAIRS[2];
+    struct _HOLDER { PAIRS Items; NODE Head; };
+  )",
+                          Library)
+                  .ok());
+  const std::string Text = renderTypes(Library, {}, in(Language::Python));
+  const auto at = [&](llvm::StringRef Part) {
+    const size_t Found = Text.find(Part.str());
+    EXPECT_NE(Found, std::string::npos) << Part.str() << "\n" << Text;
+    return Found;
+  };
+  EXPECT_LT(at("NODE = _NODE\n"), at("_NODE._fields_ = ["));
+  EXPECT_LT(at("_PAIR._fields_ = ["), at("PAIRS = PAIR * 2\n"));
+  EXPECT_LT(at("PAIRS = PAIR * 2\n"), at("_HOLDER._fields_ = ["));
+  EXPECT_LT(at("_NODE._fields_ = ["), at("_HOLDER._fields_ = ["));
+  EXPECT_TRUE(contains(Text, "(\"Next\", ctypes.POINTER(NODE)),"));
+}
+
+TEST_F(TypeRenderFixture, JavaScriptReadsRecordsThroughDataView) {
+  RenderOptions Options = in(Language::JavaScript);
+  Options.Asserts = true;
+  const std::string Thread = header("_THREAD_LIKE", Options);
+  // TypeScript checks the module by its JSDoc.
+  EXPECT_TRUE(Thread.starts_with("// @ts-check\n")) << Thread;
+  EXPECT_TRUE(contains(Thread, "export class _THREAD_LIKE {\n"));
+  EXPECT_TRUE(contains(Thread, "  static size = 0x18;\n"));
+  // The caller gives the bytes, where the record begins and their order.
+  EXPECT_TRUE(contains(
+      Thread, "  constructor(view, offset = 0, littleEndian = true) {"));
+  // An anonymous record's members are the record's own, as C reaches them;
+  // a bitfield reads its unit in 32-bit arithmetic.
+  EXPECT_TRUE(contains(Thread, "  get ReadyTransition() { return "
+                               "(this.#view.getUint32(this.#offset + 0x08, "
+                               "this.#little) >>> 1) & 0x1; }\n"));
+  EXPECT_TRUE(contains(Thread, "(unit & 0xFFFFFFFD) | ((value << 1) & 0x2)"));
+  EXPECT_FALSE(contains(Thread, "class _THREAD_LIKE_0"));
+  // An array's elements by index, which the module checks.
+  EXPECT_TRUE(contains(Thread, "  Tail(i) { return this.#view.getUint8("
+                               "this.#offset + 0x10 + 1 * index(i, 3)); }\n"));
+  EXPECT_TRUE(contains(Thread, "function index(i, count) {"));
+  // Each accessor read and written back within a buffer of the record's
+  // size, which throws past its end.
+  EXPECT_TRUE(contains(Thread, "check(_THREAD_LIKE, (r) => {\n"
+                               "  r.Header = r.Header;\n"));
+  EXPECT_TRUE(contains(Thread, "  r.setTail(2, r.Tail(2));\n"));
+
+  const std::string Device = header("_DEVICE", Options);
+  // A record held in place is a view of its bytes; an eight-byte value,
+  // a pointer's address among them, is a bigint.
+  EXPECT_TRUE(contains(Device, "  get Links() { return new _LIST_ENTRY("
+                               "this.#view, this.#offset + 0x08, "
+                               "this.#little); }\n"));
+  EXPECT_TRUE(contains(Device, "[0x08, _LIST_ENTRY.size]"));
+  EXPECT_TRUE(contains(Device, "  MajorFunction(i) { return "
+                               "this.#view.getBigUint64(this.#offset + 0x18 + "
+                               "8 * index(i, 4), this.#little); }\n"));
+  // An enumeration is a frozen object, its field the underlying integer.
+  EXPECT_TRUE(contains(Device, "export const _POOL_KIND = Object.freeze({\n"));
+  EXPECT_TRUE(contains(Device, "  MustSucceed: -2147483648,\n"));
+  EXPECT_TRUE(contains(Device, "/** @typedef {number} _POOL_KIND */\n"));
+  EXPECT_TRUE(contains(Device, "/** 0x50 enum _POOL_KIND Pool @returns "
+                               "{_POOL_KIND} */\n  get Pool() { return "
+                               "this.#view.getInt32("));
+
+  // A bitfield of an eight-byte unit reads as a bigint.
+  EXPECT_TRUE(contains(header("_PUSH_LOCK", in(Language::JavaScript)),
+                       "  get Shared() { return BigInt.asUintN(60, "
+                       "this.#view.getBigUint64(this.#offset + 0x0, "
+                       "this.#little) >> 4n); }\n"));
+
+  // Windows' names are typedefs of the JavaScript types.
+  Options = in(Language::JavaScript);
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Windows = header("_PACKED", Options);
+  EXPECT_TRUE(contains(Windows, "/** @typedef {number} ULONG */\n")) << Windows;
+  EXPECT_TRUE(contains(Windows, "@returns {ULONG} */"));
+}
+
+TEST(TypeRender, JavaScriptExtendsSignsAndNamesWhatItDeclares) {
+  TypeLibrary Library;
+  ASSERT_TRUE(parseCTypes(R"(
+    typedef struct _NODE NODE, *PNODE;
+    struct _NODE { PNODE Next; int Low : 3; int High : 29; };
+    struct DataView { int constructor; __int128 Wide; };
+  )",
+                          Library)
+                  .ok());
+  const std::string Text = renderTypes(Library, {}, in(Language::JavaScript));
+  // A signed field's top bit is the 32nd and back.
+  EXPECT_TRUE(contains(Text, "  get Low() { return (this.#view.getUint32("
+                             "this.#offset + 0x08, this.#little) << 29) >> "
+                             "29; }\n"))
+      << Text;
+  EXPECT_TRUE(contains(Text, "  get High() { return (this.#view.getUint32("
+                             "this.#offset + 0x08, this.#little) << 0) >> "
+                             "3; }\n"));
+  // A typedef of a record names its class; one of a pointer, its address.
+  EXPECT_TRUE(contains(Text, "/** @typedef {_NODE} NODE */\n"));
+  EXPECT_TRUE(contains(Text, "export const NODE = _NODE;\n"));
+  EXPECT_TRUE(contains(Text, "/** @typedef {bigint} PNODE The address of "));
+  EXPECT_TRUE(contains(Text, "@returns {PNODE} */\n  get Next() {"));
+  // What the module itself names, and a class's own words, step aside.
+  EXPECT_TRUE(contains(Text, "export class DataView_ {"));
+  EXPECT_TRUE(contains(Text, "  get constructor_() {"));
+  // Sixteen bytes read as one bigint from two halves.
+  EXPECT_TRUE(contains(Text, "  get Wide() { return this.#wide("));
+  EXPECT_TRUE(contains(Text, "  #wide(at, signed) {"));
 }
 
 TEST_F(TypeRenderFixture, RustAndGoKeepPacking) {

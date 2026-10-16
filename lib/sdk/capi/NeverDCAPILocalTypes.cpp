@@ -246,28 +246,17 @@ std::optional<llvm::json::Object> options(Session &S, const char *Json) {
   return std::nullopt;
 }
 
-std::optional<types::BuiltinSpelling> spellingNamed(llvm::StringRef Name) {
-  if (Name == "windows")
-    return types::BuiltinSpelling::Windows;
-  if (Name == "ida")
-    return types::BuiltinSpelling::IDA;
-  if (Name == "keywords")
-    return types::BuiltinSpelling::Keywords;
-  if (Name == "portable")
-    return types::BuiltinSpelling::Portable;
-  return std::nullopt;
-}
-
-/// Reads "spelling" into \p Spelling; false with the session's error when it
-/// names no spelling.
+/// Reads "spelling" into \p Spelling, which stays unset without it; false
+/// with \p Error when it names no spelling.
 bool readSpelling(const llvm::json::Object &Options,
-                  types::BuiltinSpelling &Spelling, std::string &Error) {
+                  std::optional<types::BuiltinSpelling> &Spelling,
+                  std::string &Error) {
   const llvm::json::Value *Value = Options.get("spelling");
   if (!Value)
     return true;
   std::optional<llvm::StringRef> Name = Value->getAsString();
   std::optional<types::BuiltinSpelling> Found =
-      Name ? spellingNamed(*Name) : std::nullopt;
+      Name ? types::spellingNamed(*Name) : std::nullopt;
   if (!Found) {
     Error = "\"spelling\" must be windows, ida, keywords or portable";
     return false;
@@ -300,17 +289,36 @@ bool readRender(const llvm::json::Object &Options, types::RenderOptions &Render,
     std::optional<types::Language> Lang =
         Id ? types::languageNamed(*Id) : std::nullopt;
     if (!Lang) {
-      Error = "\"language\" must be c, cpp, rust or go";
+      Error = "\"language\" must be " + types::languagesText();
       return false;
     }
     Render.Lang = *Lang;
   }
-  return readSpelling(Options, Render.Spelling, Error) &&
-         readFlag(Options, "offsets", Render.Offsets, Error) &&
-         readFlag(Options, "hexOffsets", Render.HexOffsets, Error) &&
-         readFlag(Options, "asserts", Render.Asserts, Error) &&
-         readFlag(Options, "prototypes", Render.Prototypes, Error) &&
-         readFlag(Options, "dependencies", Dependencies, Error);
+  if (!readSpelling(Options, Render.Spelling, Error))
+    return false;
+  // Each language names builtins its own ways; none asked takes its default.
+  if (Render.Spelling &&
+      !types::spellsBuiltins(Render.Lang, *Render.Spelling)) {
+    Error = (types::languageId(Render.Lang) + " names builtins as " +
+             types::spellingsText(Render.Lang) + ", not " +
+             types::spellingId(*Render.Spelling))
+                .str();
+    return false;
+  }
+  if (!readFlag(Options, "offsets", Render.Offsets, Error) ||
+      !readFlag(Options, "hexOffsets", Render.HexOffsets, Error) ||
+      !readFlag(Options, "asserts", Render.Asserts, Error) ||
+      !readFlag(Options, "prototypes", Render.Prototypes, Error) ||
+      !readFlag(Options, "dependencies", Dependencies, Error))
+    return false;
+  // Prototypes asked of a language that renders none fail, not vanish.
+  if (Render.Prototypes && !types::rendersPrototypes(Render.Lang)) {
+    Error = ("\"prototypes\" render in c and cpp, not " +
+             types::languageId(Render.Lang))
+                .str();
+    return false;
+  }
+  return true;
 }
 
 /// The types \p Options' "types" names in \p Library, in order; false with
@@ -359,6 +367,26 @@ std::string renderSource(const types::TypeLibrary &Library,
 
 } // namespace
 
+DebugContext *Session::decompileDebug() {
+  if (!Dbg)
+    return nullptr;
+  if (PrototypeDbg)
+    return PrototypeDbg.get();
+  if (PrototypesChecked)
+    return Dbg.get();
+  PrototypesChecked = true;
+  // Reading the types may fail, as a PDB's may; the decompilation goes on
+  // with the program's debug information alone, its error untouched.
+  const std::string Error = LastError;
+  const types::TypeLibrary *Library = localTypes(*this);
+  LastError = Error;
+  if (!Library || Library->prototypes().empty())
+    return Dbg.get();
+  PrototypeDbg = std::make_unique<PrototypeDebugContext>(
+      *Dbg, std::make_shared<types::TypeLibrary>(*Library));
+  return PrototypeDbg.get();
+}
+
 extern "C" {
 
 const char *neverd_local_types_json(neverd_session_t Sess,
@@ -397,7 +425,7 @@ const char *neverd_local_types_json(neverd_session_t Sess,
     std::optional<llvm::StringRef> Id = Value->getAsString();
     Lang = Id ? types::languageNamed(*Id) : std::nullopt;
     if (!Lang) {
-      S->setError("\"language\" must be c, cpp, rust or go");
+      S->setError("\"language\" must be " + types::languagesText());
       return nullptr;
     }
   }
@@ -494,7 +522,8 @@ const char *neverd_local_type_json(neverd_session_t Sess, const char *Name,
   std::optional<llvm::json::Object> Options = options(*S, OptionsJson);
   if (!Options)
     return nullptr;
-  types::BuiltinSpelling Spelling = types::BuiltinSpelling::Windows;
+  // A member's type as C spells it.
+  std::optional<types::BuiltinSpelling> Spelling;
   std::string Error;
   if (!readSpelling(*Options, Spelling, Error)) {
     S->setError(Error);
@@ -508,8 +537,9 @@ const char *neverd_local_type_json(neverd_session_t Sess, const char *Name,
     S->setError(std::string("no local type named ") + jsonSafeText(Name));
     return nullptr;
   }
-  return dupStr(jsonToString(
-      llvm::json::Value(types::typeJSON(*Library, *Type, Spelling))));
+  return dupStr(jsonToString(llvm::json::Value(types::typeJSON(
+      *Library, *Type,
+      Spelling.value_or(types::defaultSpelling(types::Language::C))))));
 }
 
 const char *neverd_local_types_source(neverd_session_t Sess,
@@ -573,8 +603,21 @@ const char *neverd_local_types_declare(neverd_session_t Sess,
     return nullptr;
   Declaration.Source = Source ? Source : "";
   const types::ParseResult Result = apply(Declaration, *Library);
-  if (Result.ok())
+  // Prototypes reach the decompiler with the types they name: a change to
+  // either takes the analysis that read them, and no other change does.
+  bool Decompilation = false;
+  if (Result.ok()) {
     S->TypeDeclarations.push_back(std::move(Declaration));
+    Decompilation = !Result.Prototypes.empty();
+    if (!Decompilation && !Result.Types.empty()) {
+      const llvm::StringSet<> Read = prototypeTypeNames(*Library);
+      Decompilation = llvm::any_of(Result.Types, [&](const std::string &Name) {
+        return Read.contains(Name);
+      });
+    }
+    if (Decompilation)
+      S->clearPipeline();
+  }
   llvm::json::Array Types, Prototypes, Problems;
   for (const std::string &Name : Result.Types)
     Types.push_back(jsonSafeText(Name));
@@ -588,7 +631,8 @@ const char *neverd_local_types_declare(neverd_session_t Sess,
   return dupStr(jsonToString(llvm::json::Value(
       llvm::json::Object{{"types", std::move(Types)},
                          {"prototypes", std::move(Prototypes)},
-                         {"problems", std::move(Problems)}})));
+                         {"problems", std::move(Problems)},
+                         {"decompilation", Decompilation}})));
 }
 
 const char *neverd_local_types_forget(neverd_session_t Sess,
@@ -642,9 +686,43 @@ const char *neverd_local_types_forget(neverd_session_t Sess,
   llvm::json::Array Names;
   for (const std::string &Name : Declaration.Forget)
     Names.push_back(jsonSafeText(Name));
+  // A type the prototypes name, which they still do, read as the decompiler
+  // read it.
+  const llvm::StringSet<> Read = prototypeTypeNames(*Library);
+  const bool Decompilation =
+      llvm::any_of(Declaration.Forget, [&](const std::string &Name) {
+        return Read.contains(Name);
+      });
   S->TypeDeclarations.push_back(std::move(Declaration));
-  return dupStr(jsonToString(llvm::json::Value(llvm::json::Object{
-      {"removed", std::move(Names)}, {"usedBy", std::move(UsedBy)}})));
+  if (Decompilation)
+    S->clearPipeline();
+  return dupStr(jsonToString(
+      llvm::json::Value(llvm::json::Object{{"removed", std::move(Names)},
+                                           {"usedBy", std::move(UsedBy)},
+                                           {"decompilation", Decompilation}})));
+}
+
+const char *neverd_types_languages_json(void) {
+  llvm::json::Array Languages;
+  const auto add = [&](types::Language Lang, llvm::StringRef Display) {
+    llvm::json::Array Spellings;
+#define NEVERD_BUILTIN_SPELLING(Name, Id)                                      \
+  if (types::spellsBuiltins(Lang, types::BuiltinSpelling::Name))               \
+    Spellings.push_back(Id);
+#include "neverd/types/BuiltinSpellings.def"
+    Languages.push_back(llvm::json::Object{
+        {"id", types::languageId(Lang)},
+        {"display", Display},
+        {"spelling", types::spellingId(types::defaultSpelling(Lang))},
+        {"spellings", std::move(Spellings)},
+        {"reads", types::readsDeclarations(Lang)},
+        {"prototypes", types::rendersPrototypes(Lang)}});
+  };
+#define NEVERD_TYPE_LANGUAGE(Name, Id, Display, Spelling)                      \
+  add(types::Language::Name, Display);
+#include "neverd/types/TypeLanguages.def"
+  return dupStr(jsonToString(llvm::json::Value(
+      llvm::json::Object{{"languages", std::move(Languages)}})));
 }
 
 const char *neverd_types_convert(const char *RequestJson) {
@@ -787,7 +865,12 @@ int neverd_type_declarations_load(neverd_session_t Sess) {
     Declarations = std::move(*Read);
   }
   S->TypeDeclarations = std::move(Declarations);
+  // A decompilation that read the prototypes read the declarations these
+  // replace.
+  const bool ReadPrototypes = S->PrototypesChecked;
   S->dropLocalTypes();
+  if (ReadPrototypes)
+    S->clearPipeline();
   return 0;
 }
 

@@ -945,6 +945,19 @@ struct BinaryImage {
     return false;
   }
 
+  /// The owner of an address the image computes from its own fixed layout,
+  /// as relocatedTargetBelongsToOwner checks it: the mapped section that
+  /// holds \p Addr, or a readable section-less segment.  A gap in a segment
+  /// that otherwise has section metadata has no owner.
+  va_t layoutAddressOwner(va_t Addr) const {
+    if (const Section *Sec = getSectionFor(Addr))
+      return Sec->VA;
+    const Segment *Seg = getSegmentFor(Addr);
+    if (!Seg || !Seg->isReadable() || segmentHasReadableSectionMetadata(*Seg))
+      return InvalidVA;
+    return Seg->VA;
+  }
+
   /// True when this relocatable ELF object's complete relocation write
   /// footprint is known and no relocation writes a byte of [VA, VA + Width):
   /// those bytes hold the assembler's final value.

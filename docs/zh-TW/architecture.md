@@ -1645,6 +1645,10 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymState` 僅對基底位址為 64 位元的符號區域使用模 2^64 的相對座標。跨越相對零點的讀取分成兩個不回繞的區間，使每項輸入來源都位於單一區間內；寫入保留完整值。絕對記憶體、暫存器與暫存儲存區的範圍溢位仍被拒絕。此索引規則不提供實際位址有效性、不別名或堆疊框架分離前提；一般的跨區域失效與逐 STORE 保存證明保持不變。Unicorn、KVM 與 WHP 共用此分析規則。
 
+### 有界 libSystem 匯入
+
+`MachOProgramLinking` 擁有嚴格原始 classic/generic64 事實、完整未定義符號閉合與準備預算。Darwin 進程管理庫/符號准入、指標發布、fixup 後唯讀、libSystem 入口與 errno。`DarwinLibSystemCalls.def` 將精確名稱和參數數量繫結到 `DarwinServices` 核心效果，不捏造原始 trap。`DarwinMemory` 管理保留頁與原始最大權限；`ExecutionBudget` 共用期限，`ProcessReport` 輸出可選 `darwin.native_calls`，不載入宿主庫。
+
 ### 循序執行範圍內的原始比較交換
 
 `SymExec` 負責獲准的原始 `ATOMIC_CMPXCHG` 的值語義：發佈輸出前擷取位址、預期值、目標值及舊值，再一次提交 `ite(Old == Expected, Desired, Old)`。`SymState` 負責該次寫入的位元組效果、別名失效及保存預算。`InterpreterSpecialization` 負責接納與來源：Old 使用寫入前的記憶體來源；條件寫入保守合併 Old、預期值與目標值的來源，並撤銷可能重疊的仿射溢出儲存事實。即使比較失敗，也須證明完整寫入範圍與受保護返回單元分離。殘餘程式保留原子操作、記憶體順序及發生次數；拒絕時不發佈部分殘餘 CFG。
@@ -1665,6 +1669,10 @@ KernelModelObjects 在共用物件表管理檔案控制代碼與指標計數。K
 `KernelFileSystem` / `KernelModel` / `DriverFileSystemJSON` / `DeviceOwnerKind` / `isPnpProviderDevice`: `configuration.filesystem` 保存輸入；頂層 `filesystem` 來自獨立狀態擁有者，增加 `device_object` 與節點 `end_of_file`，執行或投影驗證停止後仍保留。通用 `devices` 僅包含來賓裝置。工作階段磁碟區可在卸載後保留，但來賓物件、參考、控制代碼、附加與 IRP 必須釋放。任何宣告，包括 `[]`，均保留未重建相依性並阻止可執行 UNPACK 復原。舊版 Unicorn 可能在停止前提交遭拒寫入；診斷仍保留投影錯誤。
 
 KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共享操作接收已獲准的節點及已映射權限，雙向檢查共享衝突；僅存取中繼資料的開啟不參與衝突。CLEANUP 釋放共享限制但保留 token，CLOSE 刪除已清理的 token。仍被參照的已清理物件也計入 1024 個開啟的上限。嚴格綁定驗證將 token 與檔案物件 owner 對照。 `KernelModelFileCreate` 擁有 CREATE 與取消生產者，在回呼前保留控制代碼容量。`DriverSession` 在非同步操作與巢狀 CLOSE 中保留原呼叫者。共同物件擁有者發布控制代碼；名稱查找保留真實目錄物件，終端提供者讀取已准入封包。場景關閉意圖獨立保留，快照與卸載執行雙向 token 驗證。
+
+`KernelModelFileQueries` 共同擁有借用緩衝的 IoQueryFileInformation 與獨立緩衝的 ZwQueryInformationFile 續調、呼叫端發布及封包回收。KernelMode 控制代碼參考重用物件擁有者。原生 SystemBuffer 向實體記憶體擁有者登記，一般要求回收留待查詢擁有者處理。僅 `KernelFileSystem::queryInformation` 依保留的開啟 token 編碼宣告中繼資料；終端路徑使用實際 IRP 類別與長度，介接和報告層不重建資料。
+
+`KernelModelIO` 回收傳輸所有權時不修改 `FILE_OBJECT.CurrentByteOffset`。請求偏移與完成位元組數不能替代檔案系統的位置更新；同步原生 Position 查詢讀取保留的欄位。
 
 ### 原始環境的架構歸屬
 

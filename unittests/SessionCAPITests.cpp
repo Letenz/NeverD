@@ -3552,6 +3552,58 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
       Session,
       R"({"language":"rust","types":["_PACKED"],"dependencies":false})"));
   EXPECT_NE(Rust.find("#[repr(C, packed(1))]"), std::string::npos);
+  EXPECT_NE(Rust.find("pub Value: u32,"), std::string::npos);
+  // Rust names builtins as Windows does when asked, with the aliases.
+  const std::string RustWindows = takeString(neverd_local_types_source(
+      Session,
+      R"({"language":"rust","spelling":"windows","types":["_PACKED"]})"));
+  EXPECT_NE(RustWindows.find("pub type ULONG = u32;\n"), std::string::npos);
+  EXPECT_NE(RustWindows.find("pub Value: ULONG,"), std::string::npos);
+  // A spelling the language does not take fails, saying which it takes.
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"rust","spelling":"ida"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "rust names builtins as windows or portable, not ida");
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"go","spelling":"keywords"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "go names builtins as windows or portable, not keywords");
+  const std::string GoWindows = takeString(neverd_local_types_source(
+      Session,
+      R"({"language":"go","spelling":"windows","types":["_PACKED"]})"));
+  EXPECT_NE(GoWindows.find("type ULONG = uint32\n"), std::string::npos);
+  // Python is ctypes, its checks run as the module does.
+  const std::string Python = takeString(neverd_local_types_source(
+      Session, R"({"language":"python","types":["_PACKED"],"asserts":true})"));
+  EXPECT_NE(Python.find("class _PACKED(ctypes.Structure):"), std::string::npos)
+      << Python;
+  EXPECT_NE(Python.find("assert ctypes.sizeof(_PACKED) == 0x7"),
+            std::string::npos);
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"python","spelling":"ida"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "python names builtins as windows or portable, not ida");
+  // JavaScript reads through a DataView, its accessors checked within
+  // their record.
+  const std::string Script = takeString(neverd_local_types_source(
+      Session,
+      R"({"language":"javascript","types":["_PACKED"],"asserts":true})"));
+  EXPECT_NE(Script.find("export class _PACKED {"), std::string::npos) << Script;
+  EXPECT_NE(Script.find("check(_PACKED, (r) => {"), std::string::npos);
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"javascript","spelling":"keywords"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "javascript names builtins as windows or portable, not keywords");
+  // Prototypes render in C and C++; asked of another language, they fail.
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"rust","prototypes":true})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "\"prototypes\" render in c and cpp, not rust");
 
   EXPECT_EQ(neverd_local_type_json(Session, "_NO_SUCH_TYPE", nullptr), nullptr);
   EXPECT_NE(takeString(neverd_last_error(Session)).find("_NO_SUCH_TYPE"),
@@ -3559,6 +3611,40 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
   EXPECT_EQ(neverd_local_types_source(Session, R"({"language":"pascal"})"),
             nullptr);
   EXPECT_EQ(neverd_local_types_json(Session, "[1]"), nullptr);
+}
+
+TEST(SessionCAPILocalTypes, LanguagesSayHowEachNamesBuiltins) {
+  // Without a program, what each language takes, for a frontend's choices
+  // and an agent's.
+  auto Parsed = llvm::json::parse(takeString(neverd_types_languages_json()));
+  ASSERT_TRUE(static_cast<bool>(Parsed));
+  const llvm::json::Array *Languages =
+      Parsed->getAsObject()->getArray("languages");
+  ASSERT_NE(Languages, nullptr);
+  std::map<std::string, std::pair<std::string, std::string>> Taken;
+  // Which languages read back, and which render prototypes.
+  std::string Reads, Prototypes;
+  for (const llvm::json::Value &Value : *Languages) {
+    const llvm::json::Object &Language = *Value.getAsObject();
+    std::string Spellings;
+    for (const llvm::json::Value &Id : *Language.getArray("spellings"))
+      Spellings += (Spellings.empty() ? "" : " ") + Id.getAsString()->str();
+    const std::string Id = Language.getString("id")->str();
+    Taken[Id] = {Language.getString("spelling")->str(), Spellings};
+    if (Language.getBoolean("reads").value_or(false))
+      Reads += (Reads.empty() ? "" : " ") + Id;
+    if (Language.getBoolean("prototypes").value_or(false))
+      Prototypes += (Prototypes.empty() ? "" : " ") + Id;
+  }
+  using Choice = std::pair<std::string, std::string>;
+  EXPECT_EQ(Taken["c"], Choice("windows", "windows ida keywords portable"));
+  EXPECT_EQ(Taken["cpp"], Choice("windows", "windows ida keywords portable"));
+  EXPECT_EQ(Taken["rust"], Choice("portable", "windows portable"));
+  EXPECT_EQ(Taken["go"], Choice("portable", "windows portable"));
+  EXPECT_EQ(Taken["python"], Choice("portable", "windows portable"));
+  EXPECT_EQ(Taken["javascript"], Choice("portable", "windows portable"));
+  EXPECT_EQ(Reads, "c cpp rust go");
+  EXPECT_EQ(Prototypes, "c cpp");
 }
 
 TEST_F(SessionCAPITest, DeclaredTypesJoinThePDBsAndStayWithTheProject) {
@@ -3676,6 +3762,27 @@ TEST_F(SessionCAPITest, DeclaredTypesJoinThePDBsAndStayWithTheProject) {
   // The others need no PDB: a pointer to a structure C has not seen is C.
   EXPECT_EQ(size("OWNER"), 16);
   EXPECT_EQ(size("_PACKED"), 16);
+
+  // Prototypes reach the decompiler with the types they name, through
+  // pointers too: declaring one takes the decompilation, as does a change
+  // to a type it names; another type leaves it.
+  const auto decompilation = [&](const char *Raw) {
+    return parse(Raw).getBoolean("decompilation");
+  };
+  EXPECT_EQ(decompilation(neverd_local_types_declare(
+                Session, "struct LONELY { int x; };", nullptr)),
+            false);
+  EXPECT_EQ(decompilation(neverd_local_types_declare(
+                Session, "long Probe(struct OWNER *Owner);", nullptr)),
+            true);
+  EXPECT_EQ(decompilation(neverd_local_types_declare(
+                Session, "struct OWNER { void *Thread; long Count, Spare; };",
+                nullptr)),
+            true);
+  EXPECT_EQ(decompilation(neverd_local_types_forget(Session, R"(["LONELY"])")),
+            false);
+  EXPECT_EQ(decompilation(neverd_local_types_forget(Session, R"(["OWNER"])")),
+            true);
 }
 
 TEST_F(SessionCAPITest, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
@@ -3720,6 +3827,47 @@ TEST_F(SessionCAPITest, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
       takeString(neverd_local_type_json(Session, "_MINE", nullptr)));
   ASSERT_TRUE(static_cast<bool>(Mine));
   EXPECT_EQ(Mine->getAsObject()->getInteger("size"), 32);
+}
+
+TEST_F(SessionCAPITest, KernelFunctionsDecompileWithTheirPrototypes) {
+  const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
+  const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");
+  if (!Kernel || !PDB)
+    GTEST_SKIP() << "set NEVERD_TYPES_NTOSKRNL and NEVERD_TYPES_NTKRNLMP to "
+                    "ntoskrnl.exe and ntkrnlmp.pdb";
+  neverd_session_set_pdb_path(Session, PDB);
+  ASSERT_EQ(neverd_session_load(Session, Kernel), 1)
+      << takeString(neverd_last_error(Session));
+  const auto signature = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    if (Index < 0)
+      return std::string();
+    const std::string Source = takeString(
+        neverd_decompile(Session, neverd_func_entry(Session, Index)));
+    for (llvm::StringRef Line : llvm::split(Source, '\n'))
+      if (Line.contains(std::string(Name) + "(") && Line.ends_with("{"))
+        return Line.str();
+    return std::string();
+  };
+  // The WDK's parameter names and records, where the PDB has only names.
+  const std::string Create = signature("NtCreateFile");
+  EXPECT_NE(Create.find("(void** FileHandle, uint32_t DesiredAccess, "
+                        "_OBJECT_ATTRIBUTES* ObjectAttributes, "
+                        "_IO_STATUS_BLOCK* IoStatusBlock"),
+            std::string::npos)
+      << Create;
+  EXPECT_NE(Create.find("uint32_t EaLength)"), std::string::npos) << Create;
+  // A pointer a C declaration returns comes back in RAX.
+  const std::string Irp = signature("IoAllocateIrp");
+  EXPECT_NE(Irp.find("_IRP* IoAllocateIrp(char StackSize, uint8_t "
+                     "ChargeQuota)"),
+            std::string::npos)
+      << Irp;
+  EXPECT_NE(
+      signature("PsCreateSystemThread").find("void (*StartRoutine)(void*)"),
+      std::string::npos);
+  EXPECT_EQ(signature("IofCompleteRequest").rfind("void ", 0), 0u);
 }
 
 TEST_F(SessionCAPITest, PDBReferenceNamesTheCopyALoadFinds) {
