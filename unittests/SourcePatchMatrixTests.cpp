@@ -212,6 +212,7 @@ protected:
   virtual void prepareOriginalLayout() {}
   virtual bool dynamicOriginal() const { return false; }
   virtual bool keepDwarfUnwind() const { return false; }
+  virtual bool requireChainedFixups() const { return false; }
   std::string originalSource() {
     const std::string Export =
         GetParam().Format == BinaryFormat::COFF ? "__declspec(dllexport) " : "";
@@ -287,14 +288,26 @@ protected:
                        "/debug:dwarf"}),
                   0);
       } else {
-        ASSERT_EQ(run({Linker, "-arch",
-                       P.Architecture == Arch::X64 ? "x86_64" : "arm64",
-                       "-platform_version", "macos", "14.0", "14.0", "-e",
-                       "_target", "-headerpad", "0x800", "-no_adhoc_codesign",
-                       keepDwarfUnwind() ? "-keep_dwarf_unwind"
-                                         : "-no_keep_dwarf_unwind",
-                       Object.string(), "-o", Original.string()}),
-                  0);
+        std::vector<std::string> LinkCommand{
+            Linker,
+            "-arch",
+            P.Architecture == Arch::X64 ? "x86_64" : "arm64",
+            "-platform_version",
+            "macos",
+            "14.0",
+            "14.0",
+            "-e",
+            "_target",
+            "-headerpad",
+            "0x800",
+            "-no_adhoc_codesign",
+            keepDwarfUnwind() ? "-keep_dwarf_unwind" : "-no_keep_dwarf_unwind",
+            Object.string(),
+            "-o",
+            Original.string()};
+        if (requireChainedFixups())
+          LinkCommand.push_back("-fixup_chains");
+        ASSERT_EQ(run(LinkCommand), 0);
       }
     }
     prepareOriginalLayout();
@@ -1013,6 +1026,9 @@ INSTANTIATE_TEST_SUITE_P(LinuxImports, SourcePatchELFDependencyMatrix,
 
 class SourcePatchMachODependencyMatrix : public SourcePatchMatrix {
 protected:
+  // The 64-bit tampering cases exercise chained records. Do not depend on the
+  // linker's version-specific default selecting them over classic dyld binds.
+  bool requireChainedFixups() const override { return true; }
   void prepareOriginalLayout() override {
     if (GetParam().Architecture != Arch::X86 &&
         GetParam().Architecture != Arch::ARM)
