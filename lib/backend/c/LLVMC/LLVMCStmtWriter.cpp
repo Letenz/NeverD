@@ -1991,9 +1991,37 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
                 inplaceIntegerUpdate(*SI, Member->Text, SI->getValueOperand());
             !Up.empty())
           OS << Up << ";\n";
-        else
-          OS << Member->Text << " = "
-             << integerCallStoredText(SI->getValueOperand()) << ";\n";
+        else {
+          // A pointer parameter stored whole is the address it holds.
+          const auto *Param =
+              llvm::dyn_cast<llvm::Argument>(SI->getValueOperand());
+          const auto ParamName = Param && PointerParams.count(Param)
+                                     ? ValNames.find(Param)
+                                     : ValNames.end();
+          std::string Value =
+              ParamName != ValNames.end()
+                  ? ParamName->second
+                  : integerCallStoredText(SI->getValueOperand());
+          // A member the unit's definitions declare takes their type, which
+          // C converts an integer or another pointer to only by a cast.
+          const llvm::Type *Stored = SI->getValueOperand()->getType();
+          if (Opts.RecordDefinitions && Member->Type &&
+              !llvm::isa<llvm::ConstantPointerNull>(SI->getValueOperand()) &&
+              !(llvm::isa<llvm::ConstantInt>(SI->getValueOperand()) &&
+                llvm::cast<llvm::ConstantInt>(SI->getValueOperand())
+                    ->isZero()) &&
+              ((Member->Type->Kind == NdTypeKind::Ptr &&
+                (Stored->isIntegerTy() || Stored->isPointerTy())) ||
+               (Member->Type->Kind == NdTypeKind::Int &&
+                Stored->isPointerTy())))
+            Value =
+                "(__typeof__(" + Member->Text + "))(" +
+                (Stored->isPointerTy() && Member->Type->Kind == NdTypeKind::Int
+                     ? "(uintptr_t)"
+                     : "") +
+                Value + ")";
+          OS << Member->Text << " = " << Value << ";\n";
+        }
         return;
       }
       const llvm::Value *Stored = SI->getValueOperand();
@@ -6787,6 +6815,26 @@ void LLVMCWriter::writeReturn(llvm::ReturnInst &Ret, int Indent) {
           RV->getType()->isIntegerTy() &&
           FnRetTy->getIntegerBitWidth() < RV->getType()->getIntegerBitWidth())
         RetExpr = "(" + typeToCLLVM(FnRetTy) + ")" + RetExpr;
+      // A pointer the signature returns, which the code holds as an
+      // integer: a pointer member or parameter returned whole is the
+      // address it holds.
+      if (!PointerReturnType.empty() && RV->getType()->isIntegerTy()) {
+        std::optional<std::string> Address;
+        if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(RV))
+          if (auto Acc = typedRecordAccess(LI->getPointerOperand(),
+                                           llvmAccessSize(LI->getType()));
+              Acc && Acc->Type && Acc->Type->Kind == NdTypeKind::Ptr)
+            Address = SourceRecorder
+                          ? SourceRecorder->expression(*LI, Acc->Text)
+                          : Acc->Text;
+        if (const auto *Param = llvm::dyn_cast<llvm::Argument>(RV);
+            Param && PointerParams.count(Param))
+          if (auto Name = ValNames.find(Param); Name != ValNames.end())
+            Address = Name->second;
+        RetExpr =
+            Address ? "(" + PointerReturnType + ")" + *Address
+                    : "(" + PointerReturnType + ")(uintptr_t)(" + RetExpr + ")";
+      }
       OS << "return " << RetExpr << ";\n";
     }
   } else {

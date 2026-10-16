@@ -3918,6 +3918,28 @@ TEST_F(SessionCAPITest, FunctionsHoldTheRecordsTheirPDBTypes) {
   // The library's members name the four bytes of a flag union in place,
   // which the PDB's leave unnamed.
   EXPECT_NE(Use.find("Thread->MiscFlags"), std::string::npos);
+  // LLVM-C defines them too, and declares the typedefs its signature
+  // spells, the enumeration's after its definition.
+  const auto llvm = [&] {
+    const int Index = neverd_func_find_by_name(Session, "use");
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile_llvm(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  const std::string Llvm = llvm();
+  const size_t Typedef = Llvm.find("typedef struct _DEVICE _DEVICE;");
+  ASSERT_NE(Typedef, std::string::npos) << Llvm;
+  EXPECT_LT(Typedef, Llvm.find("struct _DEVICE\n{"));
+  const size_t Kind = Llvm.find("enum _SIGNED_KIND\n{");
+  ASSERT_NE(Kind, std::string::npos);
+  EXPECT_LT(Kind, Llvm.find("typedef enum _SIGNED_KIND _SIGNED_KIND;"));
+  EXPECT_NE(Llvm.find("_PACKED* Packed, _USES_FORWARD* Forward, "
+                      "_SIGNED_KIND Kind) {"),
+            std::string::npos);
+  // It names the members of each record a parameter points to.
+  EXPECT_NE(Llvm.find("Device->Size"), std::string::npos);
+  EXPECT_NE(Llvm.find("Thread->MiscFlags"), std::string::npos);
+  EXPECT_NE(Llvm.find("Packed->Count"), std::string::npos);
 
   // A member the user renames reads by its new name.
   const std::string Renamed = takeString(neverd_local_types_declare(
@@ -3931,6 +3953,9 @@ TEST_F(SessionCAPITest, FunctionsHoldTheRecordsTheirPDBTypes) {
   const std::string After = decompile();
   EXPECT_NE(After.find("Packed->Items"), std::string::npos) << After;
   EXPECT_EQ(After.find("Packed->Count"), std::string::npos);
+  const std::string LlvmAfter = llvm();
+  EXPECT_NE(LlvmAfter.find("Packed->Items"), std::string::npos) << LlvmAfter;
+  EXPECT_NE(LlvmAfter.find("uint16_t Items;"), std::string::npos);
 }
 
 TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
@@ -3959,15 +3984,42 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
   EXPECT_NE(Dpc.find("struct _SINGLE_LIST_ENTRY\n{"), std::string::npos);
   EXPECT_NE(Dpc.find("static_assert(sizeof(struct _KDPC) == 0x40"),
             std::string::npos);
-  // A store to a pointer member takes the member's type.
-  EXPECT_NE(
-      Dpc.find("Dpc->DeferredRoutine = (__typeof__(Dpc->DeferredRoutine))"),
-      std::string::npos)
+  // A store to a pointer member takes the member's type; a parameter the
+  // prototype types as a pointer stores as its address.
+  EXPECT_NE(Dpc.find("Dpc->DeferredRoutine = "
+                     "(__typeof__(Dpc->DeferredRoutine))(DeferredRoutine);"),
+            std::string::npos)
       << Dpc;
   EXPECT_NE(Dpc.find("Dpc->DpcData = 0;"), std::string::npos);
   // A scalar read of a union in place reads its scalar.
   EXPECT_NE(decompile("PsGetProcessCreateTimeQuadPart")
                 .find("return Process->CreateTime.QuadPart;"),
+            std::string::npos);
+  // LLVM-C signs as HighC does, with the prototype's pointers, and stores
+  // and returns them as their members' and its result's types.
+  const auto llvm = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile_llvm(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  const std::string Signature =
+      "void KeInitializeDpc(_KDPC* Dpc, void (*DeferredRoutine)(void*, void*, "
+      "void*, void*), void* DeferredContext) {";
+  EXPECT_NE(Dpc.find(Signature), std::string::npos);
+  const std::string LlvmDpc = llvm("KeInitializeDpc");
+  EXPECT_NE(LlvmDpc.find(Signature), std::string::npos) << LlvmDpc;
+  const size_t LlvmRecord = LlvmDpc.find("struct _KDPC\n{");
+  ASSERT_NE(LlvmRecord, std::string::npos);
+  EXPECT_LT(LlvmDpc.find("#include <stdint.h>"), LlvmRecord);
+  EXPECT_NE(
+      LlvmDpc.find("Dpc->DeferredRoutine = "
+                   "(__typeof__(Dpc->DeferredRoutine))(DeferredRoutine);"),
+      std::string::npos);
+  EXPECT_NE(llvm("PsGetProcessId")
+                .find("void* PsGetProcessId(_EPROCESS* Process) {\n    "
+                      "return (void*)Process->UniqueProcessId;"),
             std::string::npos);
 
   // A member the user renames reads by its new name, in the definition and
@@ -3991,6 +4043,9 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
   EXPECT_NE(After.find("Dpc->Routine = "), std::string::npos) << After;
   EXPECT_NE(After.find("(*Routine)(struct _KDPC *"), std::string::npos);
   EXPECT_EQ(After.find("DeferredRoutine = "), std::string::npos);
+  const std::string LlvmAfter = llvm("KeInitializeDpc");
+  EXPECT_NE(LlvmAfter.find("Dpc->Routine = "), std::string::npos) << LlvmAfter;
+  EXPECT_NE(LlvmAfter.find("(*Routine)(struct _KDPC *"), std::string::npos);
 }
 
 TEST_F(SessionCAPITest, PDBReferenceNamesTheCopyALoadFinds) {

@@ -2341,6 +2341,8 @@ void LLVMCWriter::collectOmittedUnknowns(llvm::Function &Fn) {
 }
 
 void LLVMCWriter::setupFunction(llvm::Function &Fn) {
+  PointerParams.clear();
+  PointerReturnType.clear();
   UseScalarExpressionTypes = false;
   RawMemoryUpdates.clear();
   RawMemoryUpdateInputs.clear();
@@ -2385,6 +2387,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   DebugFn.reset();
   DebugThisRecord = nullptr;
   DebugThisArg = nullptr;
+  ParamDebugTypes.clear();
   FunctionEntry = 0;
   SyntheticFrame = nullptr;
   FrameBaseOffset = 0;
@@ -2466,6 +2469,9 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
         if (DebugIdx < DebugFn->Params.size() &&
             !DebugFn->Params[DebugIdx].first.empty())
           Raw = DebugFn->Params[DebugIdx].first;
+        if (DebugIdx < DebugFn->Params.size() &&
+            DebugFn->Params[DebugIdx].second)
+          ParamDebugTypes[&Arg] = DebugFn->Params[DebugIdx].second;
       }
       if (Raw.empty() && Arg.hasName())
         Raw = Arg.getName().str();
@@ -8908,8 +8914,11 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
           Ty->Pointee->Kind == NdTypeKind::Struct &&
           !Ty->Pointee->SourceName.empty()) {
         const std::string Tag = cNamedTypeSpelling(Ty->Pointee->SourceName);
-        if (!Tag.empty())
+        if (!Tag.empty()) {
+          if (Opts.RecordDefinitions && Arg.getType()->isIntegerTy())
+            PointerParams.insert(&Arg);
           return Tag + "*";
+        }
       }
       if (Ty && Ty->Kind == NdTypeKind::Struct && Ty->IsEnum &&
           !Ty->SourceName.empty()) {
@@ -8921,12 +8930,44 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     return typeToCLLVM(Arg.getType());
   };
 
+  // A pointer the debug information or the local types give a parameter or
+  // the result, which the code holds as an integer of its width, in a unit
+  // that defines the program's records: its uses convert it.
+  auto PointerDebugType = [&](const TypeRef &Ty, const llvm::Type *Held) {
+    return Opts.RecordDefinitions && !Opts.PreserveLLVMFunctionTypes && Ty &&
+           Ty->Kind == NdTypeKind::Ptr && Ty->Pointee && Held &&
+           Held->isIntegerTy() && Ty->Size &&
+           Held->getIntegerBitWidth() == Ty->Size * 8u;
+  };
+  auto ParamDecl = [&](llvm::Argument &Arg, unsigned ParamIdx) {
+    size_t DebugIdx = ParamIdx;
+    if (SretParamIdx >= 0 && static_cast<int>(ParamIdx) > SretParamIdx)
+      DebugIdx = static_cast<size_t>(static_cast<int>(ParamIdx) - 1);
+    const bool Sret =
+        SretParamIdx >= 0 && static_cast<int>(ParamIdx) == SretParamIdx;
+    if (!Sret && DebugFn && DebugIdx < DebugFn->Params.size()) {
+      const TypeRef &Ty = DebugFn->Params[DebugIdx].second;
+      if (PointerDebugType(Ty, Arg.getType()) &&
+          Ty->Pointee->Kind != NdTypeKind::Struct) {
+        PointerParams.insert(&Arg);
+        return declarationToC(Ty, BindParam(Arg, ParamIdx));
+      }
+    }
+    return ParamTypeStr(Arg, ParamIdx) + " " + BindParam(Arg, ParamIdx);
+  };
+
   if (EmitFunctionWrapper) {
     auto *FuncTy = Fn.getFunctionType();
     std::string RetStr =
         InferredVoid ? "void" : typeToCLLVM(FuncTy->getReturnType());
     if (std::string Ty = IndirectReturnTypeStr(); !Ty.empty())
       RetStr = std::move(Ty);
+    else if (!InferredVoid && DebugFn &&
+             PointerDebugType(DebugFn->ReturnType, FuncTy->getReturnType()) &&
+             DebugFn->ReturnType->Pointee->Kind != NdTypeKind::Func) {
+      RetStr = typeToC(DebugFn->ReturnType);
+      PointerReturnType = RetStr;
+    }
     std::string Signature;
     llvm::raw_string_ostream SignatureOS(Signature);
     SignatureOS << RetStr << " " << FName << "(";
@@ -8935,8 +8976,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     for (auto &Arg : Fn.args()) {
       if (ParamIdx > 0)
         SignatureOS << ", ";
-      SignatureOS << ParamTypeStr(Arg, ParamIdx) << " "
-                  << BindParam(Arg, ParamIdx);
+      SignatureOS << ParamDecl(Arg, ParamIdx);
       ++ParamIdx;
     }
     if (Fn.isVarArg() && ParamIdx != 0) {

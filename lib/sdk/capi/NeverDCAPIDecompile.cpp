@@ -497,9 +497,16 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
     SourceMap->LLVMSources = Native->Sources.get();
     Opts.SourceMap = SourceMap;
   }
+  DebugContext *Debug = S->decompileDebug();
+  // The program's records, as its local types define them.
+  if (const LocalTypesDebugContext *Local = S->LocalTypesDbg.get();
+      Local && Debug == Local)
+    Opts.RecordDefinitions = [Local](const std::vector<TypeRef> &Records) {
+      return Local->definitions(Records);
+    };
   try {
     LLVMCEmitter Emitter;
-    Emitter.emit(*Native->Module, OS, Opts, S->decompileDebug(), &S->Img, LF);
+    Emitter.emit(*Native->Module, OS, Opts, Debug, &S->Img, LF);
   } catch (const std::exception &Error) {
     S->setError(emissionFailure(Error));
     return dupStr(std::string());

@@ -103,6 +103,12 @@ public:
   /// import entry lists, which is already the C name on some formats.
   llvm::StringRef cNameOfGlobal(llvm::StringRef Name, bool Declaration) const;
   void writeIncludes(llvm::Module &Mod);
+  /// What writeModule writes after the includes.
+  void writeModuleBody(llvm::Module &Mod);
+  /// The program's records \p Text names, as its local types define them
+  /// (CEmitterOptions::RecordDefinitions), and the typedefs of their tags
+  /// it spells them by.
+  void writeRecordDefinitions(llvm::StringRef Text);
   void writeStructDefs(llvm::Module &Mod);
   std::string aggregateMemberPath(llvm::Type *Ty,
                                   llvm::ArrayRef<unsigned> Indices);
@@ -222,6 +228,17 @@ public:
     std::string Text;
     TypeRef Type;
   };
+  /// \p Text, a member of type \p Member that \p Load reads, as the value
+  /// the load gives: an integer read of a pointer member converts it.
+  std::string memberAsAccessed(const llvm::LoadInst &Load, std::string Text,
+                               const TypeRef &Member) const;
+  /// The parameters the signature types as pointers, from the debug
+  /// information or the local types, which the code computes with as
+  /// integers.
+  std::set<const llvm::Argument *> PointerParams;
+  /// The pointer type the signature returns, where the code returns it as
+  /// an integer; empty otherwise.
+  std::string PointerReturnType;
   TypeRef typeOfValue(const llvm::Value *V) const;
   std::string indirectCalleeStr(const llvm::Value *Callee,
                                 bool MarkChain = false);
@@ -859,6 +876,8 @@ public:
   std::optional<FunctionSym> DebugFn;
   TypeRef DebugThisRecord;
   const llvm::Argument *DebugThisArg = nullptr;
+  /// The type the debug information gives each parameter.
+  std::map<const llvm::Argument *, TypeRef> ParamDebugTypes;
   va_t FunctionEntry = 0;
   const llvm::AllocaInst *SyntheticFrame = nullptr;
   uint64_t FrameBaseOffset = 0;

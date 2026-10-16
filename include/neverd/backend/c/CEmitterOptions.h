@@ -43,6 +43,8 @@ struct CRecordDefinitions {
   /// The ordinary identifiers Text declares, which the unit's own names
   /// step around.
   std::vector<std::string> Identifiers;
+  /// The enumerations Text defines, by their tags' names.
+  std::vector<std::string> Enumerations;
 };
 
 struct CEmitterOptions {

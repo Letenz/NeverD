@@ -1009,11 +1009,21 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
             // address the code holds as an integer is cast as the address.
             if (MemberType->Kind == NdTypeKind::Ptr)
               if (const HighExpr *Address =
-                      peelIntegerViewOps(Stmt.StoreVal.get());
-                  Address && Address != Stmt.StoreVal.get() && Address->Type &&
-                  Address->Type->Kind == NdTypeKind::Ptr &&
-                  Address->Type->Size == MemberType->Size)
-                Value = exprStr(*Address);
+                      peelIntegerViewOps(Stmt.StoreVal.get())) {
+                if (Address != Stmt.StoreVal.get() && Address->Type &&
+                    Address->Type->Kind == NdTypeKind::Ptr &&
+                    Address->Type->Size == MemberType->Size)
+                  Value = exprStr(*Address);
+                // A parameter the signature types as a pointer, stored
+                // whole, is its address.
+                else if ((Address->Kind == ExprKind::Var ||
+                          Address->Kind == ExprKind::Phi) &&
+                         Address->Var.Kind == MedVar::Param)
+                  if (const TypeRef Declared = debugParamType(Address->Var);
+                      Declared && Declared->Kind == NdTypeKind::Ptr &&
+                      Declared->Size == MemberType->Size)
+                    Value = copyForwardName(varName(Address->Var));
+              }
             Value = "(__typeof__(" + *Member + "))(" + Value + ")";
           }
           OS << Value;

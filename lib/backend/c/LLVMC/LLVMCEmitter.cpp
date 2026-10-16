@@ -371,6 +371,14 @@ llvm::StringRef LLVMCWriter::cNameOfGlobal(llvm::StringRef Name,
   return llvm_name::cNameOfLLVMName(Name, Opts.Format, Opts.TheArch);
 }
 
+namespace {
+struct RestoreOutput {
+  LLVMCOut &Out;
+  llvm::raw_ostream *Original;
+  ~RestoreOutput() { Out.retarget(Original); }
+};
+} // namespace
+
 void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   OnlyFunction = Only;
   SelectedGlobals =
@@ -381,9 +389,80 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   collectImageDataUses(Mod);
   writeIncludes(Mod);
   OS << "\n";
+  // What follows names the program's records, whose definitions go before
+  // it once it is written.
+  std::string Rest;
+  llvm::raw_string_ostream RestOS(Rest);
+  {
+    RestoreOutput Restore{OS, &OS.stream()};
+    OS.retarget(&RestOS);
+    writeModuleBody(Mod);
+  }
+  writeRecordDefinitions(Rest);
+  OS << Rest;
+}
+
+void LLVMCWriter::writeRecordDefinitions(llvm::StringRef Text) {
+  if (!Opts.RecordDefinitions || !Opts.EmitIncludes)
+    return;
+  // Every identifier the text spells: a record's or an enumerator's name
+  // among them.
+  std::set<std::string> Words;
+  for (size_t I = 0; I < Text.size();) {
+    if (!llvm::isAlpha(Text[I]) && Text[I] != '_') {
+      ++I;
+      continue;
+    }
+    size_t End = I + 1;
+    while (End < Text.size() && (llvm::isAlnum(Text[End]) || Text[End] == '_'))
+      ++End;
+    if (I == 0 || (!llvm::isAlnum(Text[I - 1]) && Text[I - 1] != '_'))
+      Words.insert(Text.substr(I, End - I).str());
+    I = End;
+  }
+  std::vector<TypeRef> Named;
+  Named.reserve(Words.size());
+  for (const std::string &Word : Words)
+    Named.push_back(NdType::makeNamedRecord(Word, 0));
+  CRecordDefinitions Definitions = Opts.RecordDefinitions(Named);
+  // The records and enumerations the text spells by their tags' names,
+  // which typedefs of those names declare.
+  std::vector<std::string> Spelled;
+  for (const auto &[Name, Union] : Definitions.Tags)
+    if (Words.count(Name))
+      Spelled.push_back(Name);
+  std::vector<std::string> Enumerations;
+  for (const std::string &Name : Definitions.Enumerations)
+    if (Words.count(Name))
+      Enumerations.push_back(Name);
+  // A name the definitions declare that the unit gives a function or an
+  // object of its own leaves them out: one name would mean both.
+  std::vector<std::string> Declared = Definitions.Identifiers;
+  llvm::append_range(Declared, Spelled);
+  llvm::append_range(Declared, Enumerations);
+  for (const std::string &Name : Declared)
+    if (GlobalIdentifierAllocator.holds(Name) ||
+        EmittedGlobalNames.count(Name)) {
+      OS << "/* The local types' definitions are left out: " << Name
+         << " names one of the unit's functions or objects too. */\n\n";
+      return;
+    }
+  for (const std::string &Name : Spelled)
+    OS << "typedef " << (Definitions.Tags[Name] ? "union " : "struct ") << Name
+       << " " << Name << ";\n";
+  if (!Definitions.Text.empty())
+    OS << "\n" << Definitions.Text << "\n";
+  // An enumeration's type is complete only where it is defined.
+  for (const std::string &Name : Enumerations)
+    OS << "typedef enum " << Name << " " << Name << ";\n";
+  if (!Enumerations.empty())
+    OS << "\n";
+}
+
+void LLVMCWriter::writeModuleBody(llvm::Module &Mod) {
   writeStructDefs(Mod);
   for (const auto &Global : Mod.globals()) {
-    if (Only && !SelectedGlobals.count(&Global))
+    if (OnlyFunction && !SelectedGlobals.count(&Global))
       continue;
     const auto It = ExternalDataIdentifiers.find(&Global);
     if (It == ExternalDataIdentifiers.end())
@@ -411,11 +490,6 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
         OS << SourceRecorder->end(*Event);
       OS << "\n";
     }
-  };
-  struct RestoreOutput {
-    LLVMCOut &Out;
-    llvm::raw_ostream *Original;
-    ~RestoreOutput() { Out.retarget(Original); }
   };
   if (OnlyFunction) {
     writeForwardDecls(Mod);

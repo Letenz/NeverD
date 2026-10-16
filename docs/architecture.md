@@ -194,17 +194,27 @@ records:
   (`completeType`). The decompiler names its member accesses by these, so a
   member the user renames reads by its new name. Members the debug
   information gave stay, and so do its records' ABI facts.
-- A decompiled HighC unit holds the definitions of the records its types
-  reach (`CEmitterOptions::RecordDefinitions`), and of what they hold by
-  value, after its includes. `renderEmbeddedC` renders them in exact widths,
-  with their checks, each under a guard of its own so that units
-  concatenate. A record whose members the unit names otherwise than the
-  library does stays declared only: its definition would disagree with the
-  code. The typedefs and enumerators the definitions declare reserve their
-  names from the unit's own.
+- A decompiled unit, HighC's or LLVM-C's, holds the definitions of the
+  records it names (`CEmitterOptions::RecordDefinitions`), and of what they
+  hold by value, after its includes. `renderEmbeddedC` renders them in exact
+  widths, with their checks, each under a guard of its own so that units
+  concatenate. A record whose members the unit, or the debug information
+  anywhere in the session, names otherwise than the library does stays
+  declared only: its definition would disagree with the code.
+- HighC asks for the records and enumerations its types reach before it
+  writes, and the typedefs and enumerators the definitions declare reserve
+  their names from the unit's own. LLVM-C asks after it writes for every
+  name its text spells: a record's or an enumeration's, or an enumerator of
+  an enumeration the decompiler displays, which stands for it. It declares a
+  typedef of each tag it spells, an enumeration's after its definition, and
+  leaves the definitions out where one of their names is one of the unit's
+  functions or objects.
 - A store to a pointer member of such a record casts the stored value to
   the member's type (`__typeof__`), which C converts an address of another
-  type, or an integer, to only by a cast.
+  type, or an integer, to only by a cast. LLVM-C computes with integers: a
+  parameter or a result that the debug information or a prototype types as
+  a pointer is declared as that pointer, and converts where the code
+  computes with it, as does a pointer member it reads.
 
 It also completes the functions the debug information names but leaves
 untyped from the prototype of their name, as the kernel's public symbols

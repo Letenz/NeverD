@@ -367,10 +367,11 @@ python3 scripts/check_type_renders.py --neverd build/bin/neverd \
 
 Decompiled units must compile with the records they name.
 `scripts/check_decompiled_types.py` decompiles kernel functions in HighC and
-compiles each unit for the Windows target with clang and mingw-w64's
-headers, as errors for int-to-pointer and incompatible pointer conversions:
-a unit that reads members of a record it leaves incomplete, or stores a
-value C does not convert to the member's type, fails:
+LLVM-C (`--route` picks one) and compiles each unit for the Windows target
+with clang and mingw-w64's headers, as errors for int-to-pointer and
+incompatible pointer conversions: a unit that reads members of a record it
+leaves incomplete, or passes a value C does not convert to the type of the
+member or parameter it reaches, fails:
 
 ```sh
 python3 scripts/check_decompiled_types.py --neverd build/bin/neverd \
@@ -384,10 +385,11 @@ unittests/types/fixtures/local_types.pdb --func use`.
 `LocalTypesDebugContext.GivesTheDebugInformationsRecordsTheirMembers` covers
 the members the context gives, the definitions a unit holds and what a
 dropped context takes back. `SessionCAPITest.FunctionsHoldTheRecordsTheirPDBTypes`
-covers the same through a session on the fixture, a renamed member reaching
-the pseudocode among them, in every build;
-`SessionCAPIKernelInputs.KernelFunctionsHoldTheRecordsTheyName` (with the kernel's
-environment variables) covers `KeInitializeDpc` and the kernel's unions.
+covers the same through a session on the fixture in both routes, a renamed
+member reaching the pseudocode among them, in every build;
+`SessionCAPIKernelInputs.KernelFunctionsHoldTheRecordsTheyName` (with the
+kernel's environment variables) covers `KeInitializeDpc`, the kernel's
+unions and LLVM-C's typed signatures.
 
 ## Scalar x86 floating-point state
 
