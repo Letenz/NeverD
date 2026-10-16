@@ -1484,6 +1484,11 @@ private slots:
     code->setCursorLine(labelRow);
     QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
                  std::optional<Address>(block));
+    // A note on the label stays the line's, where the code shows it, not
+    // the block instruction's comment.
+    const auto note = code->commentTarget();
+    QVERIFY(note);
+    QVERIFY(!note->contains(QStringLiteral("mapped_address")));
   }
 
   void codeEditKeepsThePlaceInALongFunction() {

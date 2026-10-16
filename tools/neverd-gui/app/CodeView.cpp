@@ -1646,8 +1646,12 @@ std::optional<QJsonObject> CodeText::commentTarget() const {
                        {"anchor", row.value("code_anchor").toString()},
                        {"text", row.value("code_comment").toString()}};
     // A note saved before the engine could map this row retains its source
-    // identity; adding an address mapping must not hide subsequent edits.
-    if (!row.value("code_comment_is_source").toBool())
+    // identity; adding an address mapping must not hide subsequent edits. A
+    // label's row maps to its block only for navigation: the worker shows an
+    // instruction's comment on the rows the engine maps, so a note on the
+    // label stays the line's.
+    if (!row.value("code_comment_is_source").toBool() &&
+        !lines_[cursorLine_].label)
       if (const auto at = currentAddress())
         target["mapped_address"] = hexAddress(*at);
     return target;
