@@ -362,11 +362,15 @@ llvm::Expected<PatchResult> publishSourcePatch(
   }
 
   if (Image.isMachO()) {
-    auto File = llvm::MemoryBuffer::getFile(Candidate.string());
-    if (!File)
-      return patchError("cannot read native segment candidate");
-    const auto Buffer = (*File)->getBuffer();
-    std::vector<uint8_t> Raw(Buffer.bytes_begin(), Buffer.bytes_end());
+    std::vector<uint8_t> Raw;
+    {
+      auto File = llvm::MemoryBuffer::getFile(Candidate.string());
+      if (!File)
+        return patchError("cannot read native segment candidate");
+      const auto Buffer = (*File)->getBuffer();
+      Raw.assign(Buffer.bytes_begin(), Buffer.bytes_end());
+    }
+    // Release any file mapping before truncating the candidate on Windows.
     if (auto E = completeMachOChainedSegmentTable(Raw, Image.Arch))
       return E;
     if (auto E = writeBytes(Candidate, Raw))
