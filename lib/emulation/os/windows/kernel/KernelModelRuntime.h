@@ -60,6 +60,9 @@ llvm::Expected<uint64_t> timeToSecondsSince1980(const KernelModel &Model,
 /// Pinned Unicode upcasing that is independent of the system NLS table.
 /// Units at or above U+00C0 require an explicit NLS owner and fail clearly.
 llvm::Expected<uint16_t> uppercaseUnicodeUnit(uint16_t Unit);
+/// Scalar case exports: ANSI bytes require ASCII; WCHAR/wint_t values use
+/// the same NLS-independent mapping as counted Unicode strings.
+llvm::Expected<uint64_t> uppercaseCharacter(uint64_t Value, bool Narrow);
 llvm::Expected<uint64_t> hashUnicodeString(const KernelModel &Model,
                                            GuestMemory &Memory,
                                            llvm::ArrayRef<uint64_t> A);

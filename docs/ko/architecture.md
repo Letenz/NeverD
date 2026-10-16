@@ -1744,3 +1744,5 @@ KernelFileSystem은 FILE_OBJECT마다 provider token 하나를 유지합니다. 
 `KernelMemoryCalls`가 검사형 메모리 복사 진입을 소유하며 기존 move/fill, 풀 수명 및 사용자 메모리 검사를 재사용한다. `KernelModelRuntime`이 `RtlImageNtHeader` 원시 서명 검사를 소유한다. 이는 이미지 실행에 필요한 로더 검증을 대체하지 않으며 어댑터는 의미를 복제하지 않는다.
 
 `KernelModelRuntime`이 Unicode 해시, NLS와 무관한 공통 대문자 매핑, 1980 기준 초 변환을 담당합니다. `KernelRuntimeCalls`는 기존 페이징 문자열 풀로 출력을 할당합니다. 문자열/시간 API 표가 내보내기 식별자, 인수 수, APC_LEVEL 제한을 통일하고 필드 접근 순서는 구현 계층이 관리합니다.
+
+`uppercaseCharacter`는 스칼라 인수를 좁힌 후 허용 여부를 확인하고 기존 `uppercaseUnicodeUnit`에 위임합니다. CRT와 계수형 문자열 API 표는 별도 ABI 식별자로 같은 매핑을 사용하며 어댑터나 호스트 로캘이 다른 의미를 제공하지 않습니다.

@@ -644,6 +644,19 @@ llvm::Expected<uint16_t> uppercaseUnicodeUnit(uint16_t Unit) {
   return Unit >= 'a' && Unit <= 'z' ? uint16_t(Unit - 32) : Unit;
 }
 
+llvm::Expected<uint64_t> uppercaseCharacter(uint64_t Value, bool Narrow) {
+  // Kernel toupper converts the low byte through the active code page, even
+  // for int carriers outside the portable CRT input domain. ASCII is shared
+  // by ANSI and UTF-8 modes; extended bytes require a declared code page.
+  const uint16_t Unit = Narrow ? uint8_t(Value) : uint16_t(Value);
+  if (Narrow && Unit > MaxASCII)
+    return runtimeError("toupper requires an unmodeled ANSI code page");
+  auto Upper = uppercaseUnicodeUnit(Unit);
+  if (!Upper)
+    return Upper.takeError();
+  return uint64_t(*Upper);
+}
+
 llvm::Expected<uint64_t> hashUnicodeString(const KernelModel &Model,
                                            GuestMemory &Memory,
                                            llvm::ArrayRef<uint64_t> A) {

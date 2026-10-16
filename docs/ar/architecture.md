@@ -1769,3 +1769,5 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 يمتلك `KernelMemoryCalls` قبول النسخ المفحوصة ويعيد استخدام move/fill وفحوص عمر التجمع وذاكرة المستخدم. يمتلك `KernelModelRuntime` فحص التوقيع الخام `RtlImageNtHeader`. لا يحل هذا الفحص محل تحقق المحمل اللازم لتنفيذ الصورة؛ ولا تكرر المحولات الدلالات.
 
 تملك `KernelModelRuntime` تجزئة Unicode وقرار التحويل المشترك المستقل عن NLS والتحويل إلى ثوان منذ 1980. تستخدم `KernelRuntimeCalls` مالك تجمع السلاسل القابل للترحيل الحالي. توحّد جداول API هوية الصادرات وعدد الوسائط وحد APC_LEVEL، ويبقى ترتيب الوصول إلى الحقول داخل التنفيذ.
+
+تُضيّق `uppercaseCharacter` الوسائط قبل قبولها وتفوّض التحويل إلى `uppercaseUnicodeUnit`. تشترك جداول CRT وUnicode في القرار مع هويات ABI مستقلة؛ ولا يضيف المهايئ أو إعداد لغة المضيف تعيينًا آخر.
