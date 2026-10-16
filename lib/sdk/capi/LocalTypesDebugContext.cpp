@@ -241,6 +241,7 @@ std::optional<FunctionSym> signatureOf(const types::TypeLibrary &Library,
   Converter Convert(Library);
   FunctionSym Declared;
   Declared.Name = Name.str();
+  Declared.NoReturn = Function.NoReturn;
   Declared.ReturnType = Function.Return ? Convert.convert(*Function.Return, 0)
                                         : NdType::makeVoid();
   if (!Declared.ReturnType)
@@ -323,10 +324,11 @@ llvm::StringSet<> prototypeTypeNames(const types::TypeLibrary &Library) {
 LocalTypesDebugContext::LocalTypesDebugContext(
     const DebugContext &Inner, std::shared_ptr<const types::TypeLibrary> Types,
     std::map<va_t, std::string> Declarations, const BinaryImage *Image,
-    std::vector<types::HeaderLibrary> Headers)
+    std::vector<types::HeaderLibrary> Headers,
+    std::unordered_map<uint64_t, std::string> Recognized)
     : Inner(Inner), Types(std::move(Types)),
       Declarations(std::move(Declarations)), Image(Image),
-      Headers(std::move(Headers)) {}
+      Headers(std::move(Headers)), Recognized(std::move(Recognized)) {}
 
 LocalTypesDebugContext::~LocalTypesDebugContext() {
   std::lock_guard<std::mutex> Guard(Mutex);
@@ -610,6 +612,10 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   std::string Name = Names.empty() ? std::string() : Names.front();
   if (Name.empty() && AtEntry)
     Name = Function->Name;
+  // Signatures name a function by its bytes where nothing else does.
+  if (const auto Matched = Recognized.find(Addr);
+      Name.empty() && Matched != Recognized.end())
+    Name = Matched->second;
   std::optional<FunctionSym> Known =
       Name.empty() ? std::nullopt : resolvePrototype(Name);
   if (Known)
@@ -636,6 +642,7 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   Typed.PlatformConvention = true;
   Typed.PrototypeLibrary = std::move(Known->PrototypeLibrary);
   Typed.PrototypeDeclaration = std::move(Known->PrototypeDeclaration);
+  Typed.NoReturn = Known->NoReturn;
   return Typed;
 }
 

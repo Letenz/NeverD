@@ -341,8 +341,9 @@ std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
 bool isNoReturnFunction(std::string_view Name);
 
 /// True if \p Target resolves through \p Img to a known no-return import
-/// veneer or statically linked function symbol.  This is the image-aware
-/// counterpart of isNoReturnFunction() shared by discovery and CFG recovery.
+/// veneer, or to a function the image exports or a symbol names so.  This is
+/// the image-aware counterpart of isNoReturnFunction() shared by discovery
+/// and CFG recovery.
 bool isNoReturnTarget(const BinaryImage &Img, va_t Target);
 
 /// Exact no-return name lookup for one operation on an unchanged image.
@@ -352,9 +353,13 @@ public:
   /// Names a function address that a restricted (`--func`) load has not
   /// ingested, such as a PDB public loaded on demand.
   using NameResolver = std::function<std::optional<std::string>(va_t)>;
+  /// Whether the routine of a name never returns by a declaration the
+  /// tables do not hold, such as a header library's `_Noreturn` prototype.
+  using DeclaredNoReturn = std::function<bool(llvm::StringRef)>;
 
   explicit NoReturnTargetIndex(const BinaryImage &Img,
-                               NameResolver ResolveName = {});
+                               NameResolver ResolveName = {},
+                               DeclaredNoReturn Declared = {});
   bool contains(const BinaryImage &Img, va_t Target) const;
   /// Drop demand-loaded name answers between sequential runs of the same
   /// immutable image. All querying workers must have joined first.
@@ -368,6 +373,7 @@ private:
   /// share one index.
   bool SymbolsIndexed = true;
   NameResolver ResolveName;
+  DeclaredNoReturn Declared;
   mutable std::mutex LazyMutex;
   mutable std::map<va_t, bool> LazyAnswers;
 };

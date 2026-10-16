@@ -582,8 +582,11 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         E.Kind == ExprKind::Load && useMsvcSegmentedRead(Opts, CurrentFunc);
     if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
+      // A read MSVC's <intrin.h> spells for Windows, as __readgsqword.
       if (!MsvcSegmentedScalar)
         HasSegmentedMemory = true;
+      else if (Opts.Format == BinaryFormat::COFF)
+        NeedsMsvcIntrinsics = true;
       const bool IsMemoryExpr =
           E.Kind == ExprKind::Load || E.Kind == ExprKind::Store ||
           (E.Kind == ExprKind::BinOp &&
@@ -1658,6 +1661,7 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
 
   for (auto &H : Headers)
     OS << "#include <" << H << ">\n";
+  IncludedHeaders = Headers;
   if (NeedsFEnvAccess)
     OS << "#pragma STDC FENV_ACCESS ON\n";
   OS << "\n";
@@ -1891,7 +1895,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
          DefinedFunctionsByIdentifier.count(Name)) &&
         !SourceRuntimeLinkNames.count(Name))
       continue;
-    if (libc::isKnownFunction(Name) && !isOwnFunctionName(Name, Funcs))
+    if (libc::isKnownFunction(Name) &&
+        (!isOwnFunctionName(Name, Funcs) || includesHeaderOf(Name)))
       continue;
     if (CIntrinsicNames.count(Name))
       continue;
@@ -1903,7 +1908,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     std::string CleanName = Name;
     if (!CleanName.empty() && CleanName[0] == '_')
       CleanName = CleanName.substr(1);
-    if (libc::isKnownFunction(CleanName) && !isOwnFunctionName(Name, Funcs))
+    if (libc::isKnownFunction(CleanName) &&
+        (!isOwnFunctionName(Name, Funcs) || includesHeaderOf(CleanName)))
       continue;
 
     ExternFuncs.insert(Name);
