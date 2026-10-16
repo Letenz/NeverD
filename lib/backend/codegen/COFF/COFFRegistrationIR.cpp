@@ -31,6 +31,7 @@
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
+#include "neverd/ir/med/X86RegistrationSEHCall.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include "llvm/IR/CFG.h"
@@ -715,6 +716,9 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       return rejectIR("scope handler target bypasses its checked source entry");
   }
   size_t CopyWork = 0;
+  const auto AdjacentExits = getRegistrationSEHAdjacentExits(ReplayMed);
+  if (!AdjacentExits)
+    return rejectIR("source adjacent finally exit is not proven");
   coff_registration::RegistrationCopySlots CopySlots;
   if (!CopySlots.build(Function, CallbackFunctions, CopyWork))
     return rejectIR("parent copy storage has no closed recovery graph");
@@ -759,7 +763,13 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       }
     }
     std::set<const llvm::BasicBlock *> Expected;
+    const auto Adjacent = AdjacentExits->find(Block.Id);
+    if (Adjacent != AdjacentExits->end() &&
+        Block.Succs != std::vector<int>{Adjacent->second})
+      return rejectIR("source adjacent finally successor changed");
     for (int Successor : Block.Succs) {
+      if (Adjacent != AdjacentExits->end())
+        continue;
       auto Destination = SourceEntries.find(Successor);
       if (Destination == SourceEntries.end())
         return rejectIR(

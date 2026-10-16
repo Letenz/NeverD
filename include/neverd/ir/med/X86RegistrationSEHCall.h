@@ -39,6 +39,12 @@ getRegistrationSEHReturns(const MedFunc &Function);
 std::optional<std::map<std::tuple<int, va_t, int>, va_t>>
 getRegistrationSEHNonlocalCalls(const MedFunc &Function);
 
+/// Bind adjacent finally calls which cannot resume at their physical return
+/// PC. Maps the caller block to the callback entry block, accepting either the
+/// original edge or its checked noreturn form for independent source replay.
+std::optional<std::map<int, int>>
+getRegistrationSEHAdjacentExits(const MedFunc &Function);
+
 } // namespace neverd
 
 #endif // NEVERD_IR_MED_X86REGISTRATIONSEHCALL_H
