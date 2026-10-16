@@ -1797,3 +1797,5 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 `KernelMDLCalls` 将旧映射入口归一到现有六参数映射器。缓存属性、物理页身份、权限与生命周期仍由 `KernelPhysicalMemory` 和 MDL 记录负责。完整释放的内核映像别名不增加环境依赖；用户视图保留该依赖。
 
 `KernelModelFileRequests` 的 `queryFileDevice` 统一校验文件身份、头部、挂载状态和拓扑。基础查询返回文件所拥有的设备，关联查询另行校验文件扩展路由并选择附加栈顶层；两者均借用返回对象。
+
+`KernelModelFileCreate` 在现有 `FileOperation` 中管理设备指针打开。名称解析、CREATE 数据包和最终释放复用普通文件打开的状态管理。对象管理器通过内部句柄取得文件引用，`queryFileDevice` 提供关联设备，现有句柄关闭续接执行 CLEANUP。续接完成后才退出原调用线程的临界区。公共输出重叠不会替换内部保留的文件对象。
