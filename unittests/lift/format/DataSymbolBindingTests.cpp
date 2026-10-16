@@ -20,11 +20,13 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cctype>
 #include <cstring>
 #include <iterator>
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -180,6 +182,52 @@ protected:
         {Stub.string()});
   }
 
+  // Variadic calls made after a join of two calls, which leave their scratch
+  // registers behind: to a routine of the library whose save area starts
+  // past its named parameter, to an import nothing describes, and as a tail
+  // call that sets every argument register.
+  fs::path variadicLibrary(llvm::StringRef Target) {
+    const auto Stub =
+        sharedLibrary(Target, "vstub",
+                      "int puts(const char *s) { return s != 0; }\n"
+                      "int vprintf(const char *f, __builtin_va_list ap) {\n"
+                      "  (void)ap;\n"
+                      "  return f != 0;\n"
+                      "}\n"
+                      "int hook(const char *s) { return s == 0; }\n"
+                      "int ext_note(const char *f, ...) { return f != 0; }\n");
+    return sharedLibrary(
+        Target, "variadic",
+        "int puts(const char *);\n"
+        "int vprintf(const char *, __builtin_va_list);\n"
+        "int hook(const char *);\n"
+        "int ext_note(const char *, ...);\n"
+        "__attribute__((noinline, visibility(\"hidden\")))\n"
+        "int note(const char *fmt, ...) {\n"
+        "  __builtin_va_list ap;\n"
+        "  __builtin_va_start(ap, fmt);\n"
+        "  int n = vprintf(fmt, ap);\n"
+        "  __builtin_va_end(ap);\n"
+        "  return n;\n"
+        "}\n"
+        "__attribute__((noinline)) int fmt_only(int c, const char *s) {\n"
+        "  if (c) puts(s); else hook(s);\n"
+        "  return note(\"plain\\n\");\n"
+        "}\n"
+        "__attribute__((noinline)) int fmt_one(int c, const char *s) {\n"
+        "  if (c) puts(s); else hook(s);\n"
+        "  return note(\"%d\\n\", c);\n"
+        "}\n"
+        "__attribute__((noinline)) int fmt_import(int c, const char *s) {\n"
+        "  if (c) puts(s); else hook(s);\n"
+        "  return ext_note(\"plain\\n\");\n"
+        "}\n"
+        "__attribute__((noinline)) int fwd3(int c) {\n"
+        "  return note(\"%d %d %d\\n\", c, c + 1, c + 2);\n"
+        "}\n",
+        {Stub.string()});
+  }
+
   /// The shared library \p Name assembled from \p Assembly for \p Target.
   fs::path assembledLibrary(llvm::StringRef Target, llvm::StringRef Name,
                             llvm::StringRef Assembly) {
@@ -223,6 +271,42 @@ protected:
         Names.push_back(Part.rsplit(' ').second.ltrim('*').str());
     }
     return Names;
+  }
+
+  /// How many arguments each call of \p Callee in \p Body passes, in order.
+  static std::vector<int> callArgumentCounts(const std::string &Body,
+                                             const std::string &Callee) {
+    std::vector<int> Counts;
+    for (size_t At = Body.find(Callee + "("); At != std::string::npos;
+         At = Body.find(Callee + "(", At + 1)) {
+      if (At > 0 && (std::isalnum(static_cast<unsigned char>(Body[At - 1])) ||
+                     Body[At - 1] == '_'))
+        continue;
+      int Depth = 0, Count = 0;
+      bool Quoted = false, Any = false;
+      for (size_t I = At + Callee.size(); I < Body.size(); ++I) {
+        const char C = Body[I];
+        if (Quoted) {
+          if (C == '\\')
+            ++I;
+          else if (C == '"')
+            Quoted = false;
+          continue;
+        }
+        if (C == '"')
+          Quoted = true;
+        else if (C == '(' && ++Depth == 1)
+          continue;
+        else if (C == ')' && --Depth == 0) {
+          Counts.push_back(Any ? Count + 1 : 0);
+          break;
+        } else if (C == ',' && Depth == 1)
+          ++Count;
+        if (Depth >= 1 && !std::isspace(static_cast<unsigned char>(C)))
+          Any = true;
+      }
+    }
+    return Counts;
   }
 
   std::string source(const BinaryImage &Image, bool LLVM,
@@ -511,6 +595,71 @@ TEST_F(DataSymbolBindingTest, CallsThroughPointerVariablesPassTheirArguments) {
       ASSERT_FALSE(Plain.empty()) << C;
       EXPECT_EQ(Plain.find("(0)"), std::string::npos) << Plain;
       EXPECT_EQ(Plain.find("return_address"), std::string::npos) << Plain;
+    }
+  }
+}
+
+// LLVM declares a callee nothing describes from the module's calls.  Where
+// they pass it different numbers of arguments, a declaration made from the
+// first call's would cut a longer later call's.
+TEST_F(DataSymbolBindingTest, UndescribedCalleesKeepEveryCallsArguments) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "requires cross-target Clang and ld.lld";
+  for (const char *Target : {"x86_64-linux-gnu", "i386-linux-gnu"}) {
+    SCOPED_TRACE(Target);
+    const auto Stub =
+        sharedLibrary(Target, "nstub",
+                      "int ext_note(const char *f, ...) { return f != 0; }\n");
+    auto Loaded = loadBinary(
+        sharedLibrary(Target, "twice",
+                      "int ext_note(const char *, ...);\n"
+                      "__attribute__((noinline)) int twice(int c) {\n"
+                      "  ext_note(\"start\\n\");\n"
+                      "  return ext_note(\"%d %d\\n\", c, c + 1);\n"
+                      "}\n",
+                      {Stub.string()}));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    const auto C = source(*Loaded, /*LLVM=*/true, {"twice"});
+    const std::string Body = functionBody(C, "twice");
+    ASSERT_FALSE(Body.empty()) << C;
+    EXPECT_EQ(callArgumentCounts(Body, "ext_note"), (std::vector<int>{1, 3}))
+        << Body;
+  }
+}
+
+// A variadic call passes what its caller sets, past its callee's named
+// parameters: never a register that only holds what earlier calls left in it
+// (which HighC would trap on before the call), nor, in a tail call, the
+// caller's own incoming stack, for which a variadic routine's open arity
+// says nothing.
+TEST_F(DataSymbolBindingTest, VariadicCallsPassOnlyWhatTheirCallerSets) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "requires cross-target Clang and ld.lld";
+  const std::tuple<const char *, const char *, int> Calls[] = {
+      {"fmt_only", "note", 1},
+      {"fmt_one", "note", 2},
+      {"fmt_import", "ext_note", 1},
+      {"fwd3", "note", 4}};
+  for (const char *Target : {"x86_64-linux-gnu", "i386-linux-gnu",
+                             "armv7-linux-gnueabi", "aarch64-linux-gnu"}) {
+    SCOPED_TRACE(Target);
+    auto Loaded = loadBinary(variadicLibrary(Target));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(LLVM);
+      const auto C =
+          source(*Loaded, LLVM, {"fmt_only", "fmt_one", "fmt_import", "fwd3"});
+      for (const auto &[Caller, Callee, Count] : Calls) {
+        SCOPED_TRACE(Caller);
+        const std::string Body = functionBody(C, Caller);
+        ASSERT_FALSE(Body.empty()) << C;
+        // Structuring may copy the tail call into each branch.
+        const std::vector<int> Counts = callArgumentCounts(Body, Callee);
+        EXPECT_FALSE(Counts.empty()) << Body;
+        for (int Passed : Counts)
+          EXPECT_EQ(Passed, Count) << Body;
+        EXPECT_EQ(Body.find("__builtin_trap"), std::string::npos) << Body;
+      }
     }
   }
 }

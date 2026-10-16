@@ -3899,6 +3899,29 @@ which must pass nothing in either backend (not the slot's address as a virtual
 call's object), and a call whose outgoing stores leave a gap below a
 `push {r4, r6, r7, lr}`, whose HighC must not pass the saved link register.
 
+`UndescribedCalleesKeepEveryCallsArguments` builds an x86-64 and an i386
+function that calls an import nothing describes with one argument, then
+with three; its LLVM C must keep each call's arguments.
+
+`VariadicCallsPassOnlyWhatTheirCallerSets` builds, for x86-64, i386, ARM and
+AArch64, a library whose functions call a variadic routine (a `vprintf`
+wrapper with one named parameter) and an undescribed variadic import after a
+join of two calls, and call the routine with every argument register set (a
+tail call on the register ABIs, after an alignment `push` on i386). HighC and
+LLVM C must pass exactly the format and the arguments each caller sets: no
+trap on a register earlier calls left behind, and no incoming stack slot taken
+for the routine's open arity. `MedCallLeftovers.JoinsOfCallClobbersOnly`
+checks which clobbers and joins `ValuesLeftByCalls` names, loops and exception
+entries included.
+
+`ELFARM32ModeTest.MixedImagePairsItsPLTWithTheImports` links a mixed
+ARM/Thumb shared library and requires the PLT entry a Thumb `bl puts` reaches
+to be paired with `puts`. `LinkerThunkToAnImportStandsForTheImport` links a
+stripped Thumb library whose tail call to `puts` goes through lld's thunk: the
+thunk and the PLT entry must both stand for `puts`, and the decompiled caller
+must call `puts` with its string. `LinkerThunk.*` checks each long-branch
+form's target, state and size, and that a direct jump is never a long branch.
+
 `LLVMCValues.ImageStringsInACodeSegmentFollowTheirSection` requires a string
 in `.rodata` inside an R+X segment to print, its bytes in `.text` not to, and
 the segment rule without section headers.

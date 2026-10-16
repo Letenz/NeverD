@@ -528,9 +528,9 @@ struct MedFunc {
   int64_t VariadicOverflowBase = 0;
 
   /// The position of the first integer argument register a variadic
-  /// function's register save area spills (AAPCS64): the registers before it
-  /// carry its named parameters, the rest only what each caller passes.  -1
-  /// where unknown.
+  /// function's register save area spills (AAPCS64, AAPCS32): the registers
+  /// before it carry its named parameters, the rest only what each caller
+  /// passes.  -1 where unknown.
   int VariadicFirstRegister = -1;
 
   /// The position of the first vector argument register a variadic

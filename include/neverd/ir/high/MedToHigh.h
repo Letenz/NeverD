@@ -17,11 +17,13 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedIR.h"
 
 #include <functional>
 #include <map>
+#include <optional>
 #include <set>
 #include <tuple>
 
@@ -522,6 +524,10 @@ private:
   /// function).
   std::set<int64_t> LoadedEntrySlots;
   const MedFunc *LoadedEntrySlotsFor = nullptr;
+  /// What earlier calls left in CurMed's registers, which no call passes on
+  /// (cached per function).
+  std::optional<ValuesLeftByCalls> LeftByCalls;
+  const MedFunc *LeftByCallsFor = nullptr;
   /// Definition index and complete frame-coordinate proofs for one immutable
   /// conversion. A second conversion of the same MedFunc starts fresh.
   std::shared_ptr<detail::HighEntryStackOffsets> EntryStackOffsets;
