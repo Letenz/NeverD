@@ -65,9 +65,7 @@ struct JNIState {
   std::map<uint64_t, const mobile::dalvik::Method *> DexMethods;
   std::map<uint64_t, const mobile::dalvik::Field *> DexFields;
   std::shared_ptr<mobile::dalvik::Heap> Heap;
-  std::map<std::string, std::shared_ptr<JNIObject>> MethodConstants;
   uint64_t NextEnvironment = 0, NextReference = 1, NextFrame = 1;
 };
-bool jniAssignable(llvm::StringRef Source, llvm::StringRef Destination);
 } // namespace neverd::emulation::android_model
 #endif

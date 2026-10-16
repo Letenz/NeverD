@@ -219,7 +219,7 @@ int jni_stale_ref(void) {
 int jni_unknown_method(void) {
   Handle e = attach();
   Ref cls = C(e, Ref, 6, "java/lang/String");
-  return (int)C(e, Ref, 33, cls, "intern", "()Ljava/lang/String;");
+  return (int)C(e, Ref, 33, cls, "trim", "()Ljava/lang/String;");
 }
 int jni_invalid_utf8(void) {
   Handle e = attach();
@@ -838,5 +838,99 @@ int jni_dex_objects(int seed, U64 form, U64 scenario, U64 *out) {
   out[31] = C(e, U64, 134, cl, statics, (void *)0);
   CHECK(sum == out[31]);
   CHECK(!C(e, U8, 228));
+  return 0;
+}
+
+/* Cross-boundary identities and dispatch; Java values are computed by DEX. */
+#define J(E, R, S, ...) ((R (*)(Handle, ...))(*(E))[S])((E), __VA_ARGS__)
+int jni_dex_language(int seed, U64 form, U64 *out) {
+  Handle e = attach();
+  Ref child = C(e, Ref, 6, "runtime/language/Child");
+  Ref base = C(e, Ref, 6, "runtime/language/Base");
+  Ref iface = C(e, Ref, 6, "runtime/language/Operation");
+  Ref object = C(e, Ref, 6, "java/lang/Object");
+  Ref language = C(e, Ref, 6, "runtime/language/Language");
+  Ref string = C(e, Ref, 6, "java/lang/String");
+  U64 args[2] = {(unsigned)seed, 0};
+  Ref ctor = C(e, Ref, 33, child, "<init>", "(I)V");
+  Ref a = C(e, Ref, 30, child, ctor, args);
+  Ref b = C(e, Ref, 30, child, ctor, args);
+  Ref compute = C(e, Ref, 33, base, "compute", "(I)J");
+  args[0] = 17;
+  out[0] = form == 0 ? C(e, U64, 52, a, compute, 17) : form == 1 ?
+      dex_instance_v(e, a, compute, 17) : C(e, U64, 54, a, compute, args);
+  out[1] = C(e, U64, 84, a, base, compute, args);
+  Ref interface_method = C(e, Ref, 33, iface, "compute", "(I)J");
+  out[2] = C(e, U64, 54, a, interface_method, args);
+  Ref field = C(e, Ref, 94, child, "value", "I");
+  out[3] = (unsigned)C(e, int, 100, a, field);
+  out[4] = C(e, U8, 24, J(e, Ref, 10, child), base);
+  out[5] = C(e, U8, 11, child, iface) + 2 * C(e, U8, 11, base, child);
+  Ref shared = C(e, Ref, 144, child, "shared", "I");
+  out[6] = C(e, int, 150, child, shared);
+  Ref equals = C(e, Ref, 33, object, "equals", "(Ljava/lang/Object;)Z");
+  args[0] = b;
+  out[7] = C(e, U8, 39, a, equals, args);
+  out[8] = C(e, U8, 69, a, object, equals, args);
+  Ref literal = C(e, Ref, 113, language, "literal", "()Ljava/lang/String;");
+  Ref text = C(e, Ref, 116, language, literal, (void *)0);
+  U16 units[] = {'A', 0, 0xd83d, 0xde00, 0xd800, 0xffff, 'Z'};
+  Ref native = C(e, Ref, 163, units, 7);
+  Ref intern = C(e, Ref, 33, string, "intern", "()Ljava/lang/String;");
+  Ref interned = C(e, Ref, 36, native, intern, (void *)0);
+  out[9] = C(e, U8, 24, text, interned);
+  out[10] = (unsigned)C(e, int, 51, native, J(e, Ref, 33, string, "hashCode", "()I"), (void *)0);
+  Ref name = C(e, Ref, 36, a, J(e, Ref, 33, base, "name", "()Ljava/lang/String;"), (void *)0);
+  out[11] = C(e, int, 164, name);
+  C(e, void, 143, language, J(e, Ref, 113, language, "escape", "()V"), (void *)0);
+  CHECK(C(e, U8, 228));
+  Ref thrown = C(e, Ref, 15);
+  C(e, void, 17);
+  Ref saved = C(e, Ref, 145, language, J(e, Ref, 144, language, "saved", "Ljava/lang/Throwable;"));
+  out[12] = C(e, U8, 24, thrown, saved);
+  Ref problem = C(e, Ref, 6, "runtime/language/Problem");
+  out[13] = C(e, int, 100, thrown, J(e, Ref, 94, problem, "code", "I"));
+  Ref throwable = C(e, Ref, 6, "java/lang/Throwable");
+  Ref message_method = C(e, Ref, 33, throwable, "getMessage", "()Ljava/lang/String;");
+  Ref message = C(e, Ref, 36, thrown, message_method, (void *)0);
+  args[0] = C(e, Ref, 167, "detail");
+  out[14] = C(e, U8, 39, message, J(e, Ref, 33, string, "equals", "(Ljava/lang/Object;)Z"), args);
+  C(e, int, 13, thrown);
+  Ref again = C(e, Ref, 15);
+  C(e, void, 17);
+  out[15] = C(e, U8, 24, thrown, again);
+  out[16] = C(e, U8, 24, J(e, Ref, 31, thrown), problem);
+  Ref exception = C(e, Ref, 6, "java/lang/RuntimeException");
+  Ref ex = C(e, Ref, 30, exception, J(e, Ref, 33, exception, "<init>", "(Ljava/lang/String;)V"), args);
+  out[17] = C(e, U8, 32, ex, throwable);
+  out[18] = C(e, U8, 24, J(e, Ref, 36, ex, message_method, (void *)0), args[0]);
+  Ref global = C(e, Ref, 21, text);
+  CHECK(C(vm, int, 5) == 0);
+  e = attach();
+  language = C(e, Ref, 6, "runtime/language/Language");
+  out[19] = C(e, U8, 24, global, J(e, Ref, 116, language, literal, (void *)0));
+  C(e, void, 22, global);
+  return 0;
+}
+
+#undef J
+
+int jni_string_intern_identity(void) {
+  Handle e = attach();
+  Ref cls = C(e, Ref, 6, "java/lang/String");
+  Ref intern = C(e, Ref, 33, cls, "intern", "()Ljava/lang/String;");
+  Ref a = C(e, Ref, 167, "independent");
+  Ref b = C(e, Ref, 167, "independent");
+  CHECK(!C(e, U8, 24, a, b));
+  Ref first = C(e, Ref, 36, a, intern, (void *)0);
+  Ref second = C(e, Ref, 36, b, intern, (void *)0);
+  CHECK(C(e, U8, 24, a, first) && C(e, U8, 24, first, second));
+  Ref global = C(e, Ref, 21, first);
+  CHECK(C(vm, int, 5) == 0);
+  e = attach();
+  Ref c = C(e, Ref, 167, "independent");
+  Ref third = C(e, Ref, 36, c, intern, (void *)0);
+  CHECK(C(e, U8, 24, global, third));
+  C(e, void, 22, global);
   return 0;
 }

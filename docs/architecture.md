@@ -6722,7 +6722,8 @@ alternate semantics or service responses. JNI object limits and Binder stream
 admission fail explicitly rather than borrowing a host VM or driver.
 `AndroidJNIMethods` owns JNI method identities and descriptor/argument binding;
 all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
-The finite intrinsic catalogue remains in that owner.
+The finite intrinsic catalogue and value semantics live in `dalvik::Library`;
+JNI retains opaque identities and argument/reference transport only.
 `LinuxBinderTransactions` routes object-free messages between guest-owned opens;
 LinuxMemory owns their read-only arenas and every service body remains guest code.
 `LinuxGPUCommands` owns explicitly selected PM4 admission and execution, using
@@ -6762,8 +6763,14 @@ static field instructions have one semantic owner in Runtime, including recursiv
 initialization, persistent erroneous classes and terminal non-Java stops.
 Program's convenience execute creates a fresh Runtime; repeated calls must use
 the workload instance. Execution is synchronous, without Java preemption or a
-concurrent Java memory-model claim. The supported class contract excludes floating/volatile fields, hierarchy
-and interface dispatch, synchronization and exception handlers.
+concurrent Java memory-model claim. The supported class contract excludes
+floating/volatile fields, synchronization and default interface bodies.
+`Program` owns superclass/interface assignability and member resolution;
+Runtime selects virtual, super and direct targets, allocates inherited fields,
+and initializes supplied superclasses before child initializers. Explicit
+public abstract interfaces are admitted without inventing implementations.
+Constructor chaining retains an uninitialized identity until the outermost
+constructor returns; premature escape remains a clear stop.
 
 `dalvik::Heap` is the single retained Java object/array owner for JNI and DEX.
 Its bounded identities are separate from native reference handles and guest
@@ -6775,6 +6782,17 @@ budget/stop mapping. Weak object-array edges and integer field identities avoid
 host ownership cycles while the heap retains objects until workload teardown.
 Java reference assignability, including array covariance, has one shared owner.
 Uninitialized construction and unsupported constructor escape fail explicitly.
+
+`dalvik::Library` is the single implementation of the bounded UTF-16 String,
+Object, Class and Throwable value methods called by JNI and DEX. Heap owns
+class identity, literal/intern pools and retained storage accounting; JNI local
+handles do not duplicate those pools. DEX constants preserve NUL and isolated
+surrogate units. Library work shares the caller's budget and deadline.
+Runtime consumes decoded ordered try regions, routes only Java throws, and
+preserves the same heap throwable through move-exception, rethrow and JNI.
+Frame storage is released on every unwind, including caught exceptions;
+resource/unsupported stops remain terminal and cannot be caught by Java.
+This is neither a second decoder nor an ART/JVM class-loader implementation.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.

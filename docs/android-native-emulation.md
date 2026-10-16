@@ -822,12 +822,13 @@ checksums, metadata, instruction boundaries and code flow before native guest
 constructors run. Duplicate definitions and platform class replacements fail.
 The reader's existing annotation and format restrictions also apply.
 
-`FindClass`, method lookup and field lookup bind the supplied class and exact descriptor.
+`FindClass`, method lookup and field lookup bind supplied declarations and exact descriptors,
+including inherited members.
 Ordinary, V and A calls share the same JNI descriptor/argument owner as the
 intrinsics. Method identities belong to this VM and survive local frame or
 thread teardown. The execution contract supports static/instance methods,
-constructors and nonvolatile integral/reference fields on direct Object subclasses
-without interfaces. Supported bodies include integer/wide constants and moves,
+constructors and nonvolatile integral/reference fields on finite supplied
+class hierarchies, including public abstract interface declarations. Supported bodies include integer/wide constants and moves,
 32/64-bit arithmetic and shifts, narrowing/sign extension, signed comparisons,
 branches, packed/sparse switches, loops, recursion and static calls to supplied
 methods. Integral arguments/results include boolean, byte, char, short, int and
@@ -851,8 +852,8 @@ NoClassDefFoundError. Nested initialization Errors propagate. Effects already
 performed by Java code remain observable. An unsupported instruction, invalid
 execution or exhausted resource budget terminates the workload rather than
 being converted into a Java exception or silently restarting initialization.
-These modeled throwables retain type identity, not a complete ART cause/stack
-trace object graph. Initialization follows the synchronous subset of
+Modeled throwables retain heap identity and explicit constructor messages,
+without a complete ART cause/stack-trace object graph. Initialization follows the synchronous subset of
 [Java class initialization](https://docs.oracle.com/javase/specs/jls/se25/html/jls-12.html#jls-12.4.2)
 and [JNI initialization triggers](https://docs.oracle.com/en/java/javase/25/docs/specs/jni/functions.html#findclass).
 
@@ -867,12 +868,16 @@ preempt Java threads or equate bytecode steps with physical CPU/GPU timing.
 Native scheduling and explicitly configured virtual clocks retain their owners.
 
 DEX and JNI share a bounded heap, object identities, field values and array
-storage. `new-instance`, direct constructors, direct/private and exact-owner
-virtual calls, `iget`/`iput` and reference static fields execute supplied bodies.
-The empty Object constructor is the only platform constructor admitted by DEX.
-Uninitialized objects can be moved but cannot be read, returned or escape to
-another method/field before construction completes; constructor chaining and
-self-escape remain outside the profile. JNI `AllocObject` explicitly creates
+storage. `new-instance`, direct/private calls, virtual/interface dispatch,
+`invoke-super`, `iget`/`iput` and reference static fields execute supplied bodies.
+Objects include inherited fields and methods resolve from declared and actual
+types. Superclasses initialize before subclasses; static members retain the
+state of their declaring class. JNI ordinary calls select the actual override,
+while nonvirtual calls validate and execute the named class's resolved method.
+Direct `this`/super constructor chains keep one object identity, with initialization
+completed only after the outer constructor returns. Uninitialized objects can
+be moved but cannot escape through calls, fields or returns; arbitrary
+constructor self-escape remains outside the profile. JNI `AllocObject` explicitly creates
 zeroed storage without running the constructor; `NewObject` ordinary/V/A runs it.
 
 Reference registers remain distinct from integers (only literal zero can also
@@ -893,10 +898,25 @@ is retained until workload teardown with finite byte/object limits; reaching a
 model limit stops explicitly, without claiming that a real Java VM would throw
 OutOfMemoryError. There is no garbage-collection or ART layout claim.
 
+DEX string constants (including encoded static String values), reference class literals,
+and the same bounded String/Object/Class value methods available through JNI
+now execute in the shared runtime. UTF-16 preserves embedded NUL, supplementary
+characters and isolated surrogates. Literal strings and `String.intern` share a
+workload pool; class objects share identity with FindClass/GetObjectClass.
+Supported throwable constructors accept no argument or a String message;
+`Throwable.getMessage` returns that actual message identity.
+
+Ordered typed catches, catch-all handlers, `move-exception`, explicit throws,
+rethrows and compiled finally paths execute decoded control flow. Exceptions
+from modeled arithmetic, arrays and library operations follow the same handler
+selection. The original throwable survives JNI ExceptionOccurred/Throw and
+catch/rethrow. Non-Java failures and budget stops cannot be swallowed by a catch.
+
 This is a bounded interpreter, not complete ART. Float/double execution,
-encoded reference constants, string literals/library calls from DEX, exception
-handlers, synchronization, volatile fields, inherited dispatch and external/native
-Java calls remain unsupported. An unsupported operation never supplies a guessed Java result.
+other encoded reference constants, default/static interface bodies, interface
+fields, synchronization, volatile fields, cross-class nonpublic member access,
+and external/native Java methods remain unsupported. The finite library catalogue
+is explicit; an unknown method never supplies a guessed Java result.
 Binder system-service implementations and GPU shaders are independent inputs
 and are not supplied by admitting DEX.
 
@@ -912,4 +932,7 @@ and sequential guest-thread execution against independently run Java class files
 calls, typed field access, reference identity, primitive/object/nested arrays,
 copy-back, global references across reattachment and recoverable Java exceptions.
 It also tests invalid field IDs/accessor types, final writes and heap limits.
+`test_android_dex_language.py` adds independent JVM checks for UTF-16 operations,
+interning, thrown-object identity, ordered handlers, finally effects, repeated
+unwinding, inherited fields and class/interface/super/JNI nonvirtual dispatch.
 The JVM and D8 prepare/check fixtures only; NeverD execution uses neither.

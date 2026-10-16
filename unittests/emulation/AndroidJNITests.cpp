@@ -132,6 +132,11 @@ TEST_P(AndroidJNI, IntrinsicJavaMethodsExecuteArgumentsAndPreserveIdentity) {
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);
 }
+TEST_P(AndroidJNI, StringInternIdentitySurvivesReferenceAndThreadTeardown) {
+  auto R = run("jni_string_intern_identity");
+  EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+}
 TEST_P(AndroidJNI, MethodExceptionsPreserveArrayAndExceptionPrecedence) {
   auto R = run("jni_method_exceptions");
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;

@@ -8,6 +8,8 @@
 //===----------------------------------------------------------------------===//
 #include "neverd/dalvik/Runtime.h"
 
+#include "neverd/dalvik/Library.h"
+
 #include <bit>
 #include <limits>
 #include <type_traits>
@@ -159,12 +161,24 @@ struct Runtime::State {
   std::map<const Class *, ClassState> classes;
   std::optional<ExecutionResult> stopped;
   struct Engine;
+  void throwable(ExecutionResult &result) {
+    if (result.stop != ExecutionStop::Thrown || result.throwable)
+      return;
+    auto value = heap->allocate(Object::Throwable, result.exception, 0);
+    if (!value) {
+      result.stop = ExecutionStop::HeapLimit;
+      result.diagnostic = "Java throwable storage budget exhausted";
+      result.exception.clear();
+    } else
+      result.throwable = value->Identity;
+  }
   ExecutionResult invoke(const std::function<uint64_t()> &body) {
     if (stopped)
       return *stopped;
     try {
       return {ExecutionStop::Returned, body(), {}, {}};
-    } catch (const Halt &halt) {
+    } catch (Halt &halt) {
+      throwable(halt.result);
       if (halt.result.stop != ExecutionStop::Thrown)
         stopped = halt.result;
       return halt.result;
@@ -213,24 +227,42 @@ struct Runtime::State::Engine {
                   const Frame *frame = nullptr) const {
     known(type);
     auto value = object(id, frame, true);
-    if (value && !referenceAssignable(objectDescriptor(*value), type))
+    if (value && !program.assignable(objectDescriptor(*value), type))
       fail(ExecutionStop::Invalid,
            "object value is incompatible with declared type");
   }
   uint64_t allocate(std::string_view name, bool initialized, unsigned depth) {
+    if (name == "Ljava/lang/String;" || name == "Ljava/lang/Object;" ||
+        (!program.containsClass(name) && program.knownReference(name) &&
+         program.assignable(name, "Ljava/lang/Throwable;"))) {
+      auto value = state.heap->allocate(
+          name == "Ljava/lang/String;"   ? Object::String
+          : name == "Ljava/lang/Object;" ? Object::Instance
+                                         : Object::Throwable,
+          name.substr(1, name.size() - 2), 0);
+      if (!value)
+        fail(ExecutionStop::HeapLimit, "Java object storage budget exhausted");
+      value->Initialized = initialized;
+      return value->Identity;
+    }
     initialize(name, depth);
     const auto *klass = program.findClass(name);
-    if (has(klass->access, "abstract"))
+    if (has(klass->access, "abstract") || has(klass->access, "interface"))
       fail(ExecutionStop::Unsupported, "abstract DEX class allocation");
+    std::vector<const Field *> fields;
+    for (auto base = klass; base;
+         base = program.findClass(program.parent(base->name)))
+      for (const auto &field : base->fields)
+        if (!has(field.access, "static"))
+          fields.push_back(&field);
     auto value =
         state.heap->allocate(Object::Instance, name.substr(1, name.size() - 2),
-                             0, klass->fields.size() * 64);
+                             0, fields.size() * 64);
     if (!value)
       fail(ExecutionStop::HeapLimit, "Java object storage budget exhausted");
     value->Initialized = initialized;
-    for (const auto &field : klass->fields)
-      if (!has(field.access, "static"))
-        value->Fields.emplace(&field, 0);
+    for (auto field : fields)
+      value->Fields.emplace(field, 0);
     return value->Identity;
   }
   std::shared_ptr<Object> array(std::string_view type, int32_t length) {
@@ -273,7 +305,7 @@ struct Runtime::State::Engine {
     if (array.Type == Object::ObjectArray) {
       if (write) {
         auto value = object(*write, nullptr, true);
-        if (value && !referenceAssignable(objectDescriptor(*value), type))
+        if (value && !program.assignable(objectDescriptor(*value), type))
           fail(ExecutionStop::Thrown, "incompatible array element",
                "java/lang/ArrayStoreException");
         array.Elements[index] = value;
@@ -326,7 +358,7 @@ struct Runtime::State::Engine {
     } else {
       auto instance = object(receiver, frame);
       if (instance->Type != Object::Instance ||
-          objectDescriptor(*instance) != ref.owner)
+          !program.assignable(objectDescriptor(*instance), ref.owner))
         fail(ExecutionStop::Invalid, "field receiver type mismatch");
       value = &instance->Fields.at(&field);
     }
@@ -339,6 +371,8 @@ struct Runtime::State::Engine {
     if (owner == caller)
       return true;
     const auto *klass = program.findClass(owner);
+    if (!klass)
+      return program.knownReference(owner);
     auto package = [](std::string_view name) {
       const auto slash = name.rfind('/');
       return slash == name.npos ? std::string_view() : name.substr(0, slash);
@@ -369,10 +403,19 @@ struct Runtime::State::Engine {
         uint64_t value = 0;
         const auto &type = field.reference.type;
         if (referenceType(type) &&
-            !std::holds_alternative<std::monostate>(field.value))
+            !std::holds_alternative<std::monostate>(field.value) &&
+            !(type == "Ljava/lang/String;" &&
+              std::holds_alternative<std::string>(field.value)))
           fail(ExecutionStop::Unsupported,
                "encoded reference field value is unsupported");
-        if (auto integer = std::get_if<int64_t>(&field.value)) {
+        if (auto text = std::get_if<std::string>(&field.value);
+            text && type == "Ljava/lang/String;") {
+          auto literal = state.heap->literal(*text);
+          if (!literal)
+            fail(ExecutionStop::HeapLimit,
+                 "Java string storage budget exhausted");
+          value = literal->Identity;
+        } else if (auto integer = std::get_if<int64_t>(&field.value)) {
           value = narrow(uint64_t(*integer), type);
           int64_t canonical =
               type == "J" ? std::bit_cast<int64_t>(value)
@@ -398,6 +441,9 @@ struct Runtime::State::Engine {
            "java/lang/NoClassDefFoundError");
     storage.status = ClassState::Initializing;
     try {
+      if (!has(klass->access, "interface") && klass->superclass &&
+          program.containsClass(*klass->superclass))
+        initialize(*klass->superclass, depth + 1);
       for (const auto &method : klass->methods)
         if (method.reference.name == "<clinit>") {
           if (!method.reference.parameters.empty() ||
@@ -410,15 +456,17 @@ struct Runtime::State::Engine {
       if (halt.result.stop == ExecutionStop::Thrown) {
         storage.status = ClassState::Erroneous;
         // Nested initialization Errors propagate; Java exceptions are wrapped.
-        if (!referenceAssignable("L" + halt.result.exception + ";",
-                                 "Ljava/lang/Error;"))
+        if (!program.assignable("L" + halt.result.exception + ";",
+                                "Ljava/lang/Error;")) {
           halt.result.exception = "java/lang/ExceptionInInitializerError";
+          halt.result.throwable = 0;
+        }
       }
       throw;
     }
   }
   uint64_t run(const Method &method, std::span<const uint64_t> args,
-               unsigned depth, bool initializer = false) {
+               unsigned depth, bool initializer = false, bool chained = false) {
     if (auto reason = program.unsupported(method))
       halt(ExecutionStop::Unsupported, method, 0, *reason);
     const bool constructor = method.reference.name == "<init>";
@@ -432,6 +480,11 @@ struct Runtime::State::Engine {
     if (depth >= 64 || bytes > remaining_stack)
       halt(ExecutionStop::StackLimit, method, 0, "DEX frame budget exhausted");
     remaining_stack -= bytes;
+    struct RestoreStack {
+      uint64_t &remaining;
+      uint64_t bytes;
+      ~RestoreStack() { remaining += bytes; }
+    } restore{remaining_stack, bytes};
     Frame frame(method);
     if (args.size() != method.reference.parameters.size() + !is_static ||
         method.incomingWords() > method.registers)
@@ -443,7 +496,8 @@ struct Runtime::State::Engine {
         halt(ExecutionStop::Thrown, method, 0, "null method receiver",
              "java/lang/NullPointerException");
       if (!receiver || receiver->Type != Object::Instance ||
-          objectDescriptor(*receiver) != method.reference.owner)
+          !program.assignable(objectDescriptor(*receiver),
+                              method.reference.owner))
         frame.invalid("method receiver type mismatch");
       if (constructor) {
         if (receiver->Initialized || method.reference.returns != "V")
@@ -470,7 +524,20 @@ struct Runtime::State::Engine {
     for (size_t i = 0; i < method.instructions.size(); ++i)
       if (!positions.emplace(method.instructions[i].pc, i).second)
         frame.invalid("duplicate instruction address");
-    std::optional<uint64_t> pending;
+    for (const auto &region : method.tries) {
+      if (region.start >= region.end || region.handlers.empty() ||
+          !positions.contains(region.start))
+        frame.invalid("invalid try region");
+      for (const auto &handler : region.handlers) {
+        if (!positions.contains(handler.target))
+          frame.invalid("invalid handler target");
+        if (handler.type &&
+            (!program.knownReference(*handler.type) ||
+             !program.assignable(*handler.type, "Ljava/lang/Throwable;")))
+          halt(ExecutionStop::Unsupported, method, 0, "unmodeled catch type");
+      }
+    }
+    std::optional<uint64_t> pending, caught;
     std::string pending_type;
     for (size_t index = 0; index < method.instructions.size();) {
       const auto &insn = method.instructions[index++];
@@ -490,6 +557,15 @@ struct Runtime::State::Engine {
         index = positions.at(*target);
       };
       try {
+        if (op == "move-exception") {
+          count(1);
+          if (!caught)
+            frame.invalid("move-exception outside handler entry");
+          frame.putRef(r[0], *caught);
+          caught.reset();
+          continue;
+        }
+        caught.reset(); // A handler may intentionally ignore its throwable.
         if (op == "move-result" || op == "move-result-wide" ||
             op == "move-result-object") {
           count(1);
@@ -508,10 +584,40 @@ struct Runtime::State::Engine {
         pending.reset();
         if (op == "nop")
           continue;
-        if (op == "const" || op == "const/4" || op == "const/16" ||
-            op == "const/high16" || op == "const-wide" ||
-            op == "const-wide/16" || op == "const-wide/32" ||
-            op == "const-wide/high16") {
+        if (op == "const-string" || op == "const-string/jumbo") {
+          count(1);
+          auto text = std::get_if<std::string>(&insn.literal);
+          if (!text)
+            frame.invalid("missing string literal");
+          auto value = state.heap->literal(*text);
+          if (!value)
+            fail(ExecutionStop::HeapLimit,
+                 "Java string storage budget exhausted");
+          frame.putRef(r[0], value->Identity);
+        } else if (op == "const-class") {
+          count(1);
+          auto type = std::get_if<std::string>(&insn.reference);
+          if (!type || !referenceType(*type) || !program.knownReference(*type))
+            fail(ExecutionStop::Unsupported, "unmodeled class literal");
+          auto name = type->starts_with('L') ? type->substr(1, type->size() - 2)
+                                             : *type;
+          auto value = state.heap->classObject(name);
+          if (!value)
+            fail(ExecutionStop::HeapLimit,
+                 "Java class storage budget exhausted");
+          frame.putRef(r[0], value->Identity);
+        } else if (op == "throw") {
+          count(1);
+          auto value = object(frame.ref(r[0]));
+          if (!program.assignable(objectDescriptor(*value),
+                                  "Ljava/lang/Throwable;"))
+            frame.invalid("throw operand is not a throwable");
+          throw Halt{{ExecutionStop::Thrown, 0, value->ClassName,
+                      "explicit throw", value->Identity}};
+        } else if (op == "const" || op == "const/4" || op == "const/16" ||
+                   op == "const/high16" || op == "const-wide" ||
+                   op == "const-wide/16" || op == "const-wide/32" ||
+                   op == "const-wide/high16") {
           count(1);
           auto literal = std::get_if<int64_t>(&insn.literal);
           if (!literal)
@@ -551,14 +657,14 @@ struct Runtime::State::Engine {
           if (constructor) {
             if (!frame.base_initialized)
               frame.invalid("constructor returned without base initialization");
-            state.heap->get(frame.constructing)->Initialized = true;
+            if (!chained)
+              state.heap->get(frame.constructing)->Initialized = true;
           }
           if (!empty && value != narrow(value, method.reference.returns))
             frame.invalid(
                 "return value is not canonical for its declared type");
           if (method.reference.returns == "Z" && value > 1)
             frame.invalid("noncanonical boolean return");
-          remaining_stack += bytes;
           return value;
         } else if (op == "goto" || op == "goto/16" || op == "goto/32") {
           count(0);
@@ -708,7 +814,7 @@ struct Runtime::State::Engine {
           auto value =
               object(frame.ref(r[op == "check-cast" ? 0 : 1]), nullptr, true);
           bool matches =
-              value && referenceAssignable(objectDescriptor(*value), *type);
+              value && program.assignable(objectDescriptor(*value), *type);
           if (op == "instance-of")
             frame.put(r[0], matches);
           else if (value && !matches)
@@ -716,55 +822,41 @@ struct Runtime::State::Engine {
                  "java/lang/ClassCastException");
         } else if (op == "invoke-static" || op == "invoke-static/range" ||
                    op == "invoke-direct" || op == "invoke-direct/range" ||
+                   op == "invoke-super" || op == "invoke-super/range" ||
+                   op == "invoke-interface" || op == "invoke-interface/range" ||
                    op == "invoke-virtual" || op == "invoke-virtual/range") {
           auto reference = std::get_if<MethodRef>(&insn.reference);
           if (!reference)
             frame.invalid("missing method reference");
-          bool static_call = op.starts_with("invoke-static"),
-               direct = op.starts_with("invoke-direct");
-          if (direct &&
-              *reference ==
-                  MethodRef{"Ljava/lang/Object;", "<init>", {}, "V"}) {
-            count(1);
-            if (!frame.constructing || frame.base_initialized ||
-                frame.ref(r[0]) != frame.constructing)
-              frame.invalid(
-                  "base constructor requires this uninitialized receiver");
-            frame.base_initialized = true;
-            continue;
-          }
-          auto callee = program.findMethod(*reference, static_call);
-          if (!callee)
-            halt(ExecutionStop::Unsupported, method, frame.pc,
-                 "unmodeled method " + reference->identity());
-          if (auto reason = program.unsupported(*callee))
-            halt(ExecutionStop::Unsupported, method, frame.pc, *reason);
-          if (!accessible(callee->reference.owner, callee->access,
-                          method.reference.owner))
-            halt(ExecutionStop::Unsupported, method, frame.pc,
-                 "inaccessible cross-class call");
-          const bool ctor = reference->name == "<init>";
-          if (!static_call &&
-              direct != (ctor || has(callee->access, "private")))
-            frame.invalid("invoke kind does not match method access");
+          const bool static_call = op.starts_with("invoke-static"),
+                     direct = op.starts_with("invoke-direct"),
+                     super = op.starts_with("invoke-super"),
+                     ctor = reference->name == "<init>";
           std::vector<uint64_t> values;
           size_t word = 0;
+          uint64_t receiver = 0;
           if (!static_call) {
             if (r.empty())
               frame.invalid("missing invocation receiver");
-            auto id = frame.ref(r[word++]);
-            if (ctor && id == frame.constructing)
-              halt(ExecutionStop::Unsupported, method, frame.pc,
-                   "constructor chaining is unsupported");
-            values.push_back(id);
+            receiver = frame.ref(r[word++]);
+            if (!ctor)
+              compatible(receiver, reference->owner, &frame);
+            if (!receiver)
+              fail(ExecutionStop::Thrown, "null method receiver",
+                   "java/lang/NullPointerException");
+            values.push_back(receiver);
           }
           for (const auto &type : reference->parameters) {
-            bool wide = type == "J";
+            const bool wide = type == "J";
+            if (!integral(type) && !referenceType(type))
+              fail(ExecutionStop::Unsupported, "floating method invocation");
             if (word >= r.size() ||
                 (wide && (word + 1 >= r.size() || r[word + 1] != r[word] + 1)))
               frame.invalid("invoke argument word mismatch");
             auto bits = referenceType(type) ? frame.ref(r[word])
                                             : frame.get(r[word], wide);
+            if (referenceType(type))
+              compatible(bits, type);
             if (bits != narrow(bits, type) || (type == "Z" && bits > 1))
               frame.invalid(
                   "invoke argument is not canonical for its declared type");
@@ -773,10 +865,91 @@ struct Runtime::State::Engine {
           }
           if (word != r.size())
             frame.invalid("invoke argument count mismatch");
-          auto value = run(*callee, values, depth + 1);
+          auto selected = *reference;
+          const bool chain = ctor && receiver == frame.constructing;
+          if (ctor) {
+            auto value = state.heap->get(receiver);
+            if (!direct || !value || value->Initialized ||
+                (!chain && objectDescriptor(*value) != reference->owner) ||
+                (chain && (frame.base_initialized ||
+                           (reference->owner != method.reference.owner &&
+                            reference->owner !=
+                                program.parent(method.reference.owner)))))
+              frame.invalid("invalid constructor receiver or chaining order");
+          }
+          const Method *callee = program.findMethod(selected, static_call);
+          if (!static_call && !direct) {
+            auto owner = program.findClass(reference->owner);
+            if (owner &&
+                op.starts_with("invoke-interface") !=
+                    has(owner->access, "interface") &&
+                !super)
+              frame.invalid("invoke interface/class kind mismatch");
+            // Resolve the symbolic declaration before selecting an override.
+            bool resolved = callee != nullptr;
+            auto declaration = *reference;
+            for (unsigned n = 0;
+                 !resolved && !declaration.owner.empty() && n < 64; ++n) {
+              resolved = libraryMethod(declaration, false) != nullptr;
+              declaration.owner = program.parent(declaration.owner);
+            }
+            if (!resolved)
+              fail(ExecutionStop::Unsupported,
+                   "unresolved virtual declaration " + reference->identity());
+            if (callee && has(callee->access, "private"))
+              frame.invalid("virtual invocation names a private method");
+          }
+          if (super) {
+            if (has(method.access, "static") || ctor ||
+                !program.assignable(method.reference.owner, reference->owner))
+              frame.invalid("invalid super invocation");
+            selected.owner = program.parent(method.reference.owner);
+            callee = program.findMethod(selected, false);
+          } else if (!static_call && !direct) {
+            callee = program.virtualMethod(selected,
+                                           objectDescriptor(*object(receiver)));
+          }
+          uint64_t result = 0;
+          if (callee) {
+            if (!accessible(callee->reference.owner, callee->access,
+                            method.reference.owner))
+              fail(ExecutionStop::Unsupported, "inaccessible cross-class call");
+            if (!static_call &&
+                direct != (ctor || has(callee->access, "private")))
+              frame.invalid("invoke kind does not match method access");
+            result = run(*callee, values, depth + 1, false, chain);
+          } else {
+            const LibraryMethod *library = libraryMethod(selected, static_call);
+            if (!library && !static_call && !ctor) {
+              // Resolve the finite platform base only after supplied virtual
+              // overrides.
+              auto owner = selected.owner;
+              for (unsigned i = 0; !owner.empty() && i < 64 && !library; ++i) {
+                selected.owner = owner;
+                library = libraryMethod(selected, false);
+                owner = program.parent(owner);
+              }
+            }
+            if (!library)
+              fail(ExecutionStop::Unsupported,
+                   "unmodeled method " + reference->identity());
+            if (direct != ctor && !static_call)
+              frame.invalid("invalid library invoke kind");
+            auto args = std::span<const uint64_t>(values).subspan(!static_call);
+            auto executed =
+                executeLibrary(*state.heap, *library, receiver, args, admit,
+                               super || direct, &program);
+            if (executed.stop != ExecutionStop::Returned)
+              throw Halt{std::move(executed)};
+            result = executed.value;
+            if (ctor && !chain)
+              state.heap->get(receiver)->Initialized = true;
+          }
+          if (chain)
+            frame.base_initialized = true;
           pending_type = reference->returns;
           if (pending_type != "V")
-            pending = value;
+            pending = result;
         } else if (op.starts_with("sget") || op.starts_with("sput") ||
                    op.starts_with("iget") || op.starts_with("iput")) {
           bool static_field = op.starts_with('s'),
@@ -789,7 +962,7 @@ struct Runtime::State::Engine {
           if (!field)
             halt(ExecutionStop::Unsupported, method, frame.pc,
                  "unmodeled field");
-          if (!accessible(reference->owner, field->access,
+          if (!accessible(field->reference.owner, field->access,
                           method.reference.owner))
             halt(ExecutionStop::Unsupported, method, frame.pc,
                  "inaccessible cross-class field");
@@ -873,6 +1046,28 @@ struct Runtime::State::Engine {
               wide);
         }
       } catch (Halt &failure) {
+        state.throwable(failure.result);
+        bool handled = false;
+        if (failure.result.stop == ExecutionStop::Thrown) {
+          for (const auto &region : method.tries) {
+            if (frame.pc < region.start || frame.pc >= region.end)
+              continue;
+            for (const auto &handler : region.handlers) {
+              if (handler.type &&
+                  !program.assignable("L" + failure.result.exception + ";",
+                                      *handler.type))
+                continue;
+              branch(handler.target);
+              caught = failure.result.throwable;
+              pending.reset();
+              handled = true;
+              break;
+            }
+            break; // DEX try ranges do not overlap.
+          }
+        }
+        if (handled)
+          continue;
         if (failure.result.diagnostic.find(" at code-unit ") ==
             std::string::npos)
           failure.result.diagnostic =
@@ -907,18 +1102,71 @@ bool Program::knownReference(std::string_view name) const {
     name.remove_prefix(1);
   if (integral(name))
     return true;
-  if (name == "Ljava/lang/Object;" || name == "Ljava/lang/String;" ||
-      name == "Ljava/lang/Class;")
+  if (name.starts_with('L') && name.ends_with(';') &&
+      platformClass(name.substr(1, name.size() - 2)))
     return true;
   return containsClass(name) && !unsupportedClass(name);
 }
+std::string Program::parent(std::string_view name) const {
+  if (auto c = findClass(name))
+    return c->superclass.value_or("");
+  if (!name.starts_with('L') || !name.ends_with(';'))
+    return "Ljava/lang/Object;";
+  auto p = javaParent(name.substr(1, name.size() - 2));
+  return p.empty() ? "" : "L" + std::string(p) + ";";
+}
+bool Program::assignable(std::string_view source,
+                         std::string_view destination) const {
+  if (source == destination)
+    return true;
+  if (!referenceType(source) || !referenceType(destination))
+    return false;
+  if (source.starts_with('[')) {
+    if (destination == "Ljava/lang/Object;" ||
+        destination == "Ljava/lang/Cloneable;" ||
+        destination == "Ljava/io/Serializable;")
+      return true;
+    return destination.starts_with('[') && referenceType(source.substr(1)) &&
+           referenceType(destination.substr(1)) &&
+           assignable(source.substr(1), destination.substr(1));
+  }
+  if (destination.starts_with('['))
+    return false;
+  std::vector<std::string> pending{std::string(source)};
+  std::set<std::string> seen;
+  while (!pending.empty()) {
+    auto name = std::move(pending.back());
+    pending.pop_back();
+    if (name == destination)
+      return true;
+    if (!seen.insert(name).second)
+      continue;
+    if (auto c = findClass(name)) {
+      pending.insert(pending.end(), c->interfaces.begin(), c->interfaces.end());
+      if (c->superclass)
+        pending.push_back(*c->superclass);
+    } else {
+      if (referenceAssignable(name, destination))
+        return true;
+      if (auto base = parent(name); !base.empty())
+        pending.push_back(std::move(base));
+    }
+  }
+  return false;
+}
 const Field *Program::findField(const FieldRef &reference,
                                 bool is_static) const {
-  if (auto klass = findClass(reference.owner))
+  auto name = reference.owner;
+  for (unsigned depth = 0; depth < 64; ++depth) {
+    const auto *klass = findClass(name);
+    if (!klass)
+      break;
     for (const auto &field : klass->fields)
-      if (field.reference == reference &&
-          has(field.access, "static") == is_static)
-        return &field;
+      if (field.reference.name == reference.name &&
+          field.reference.type == reference.type)
+        return has(field.access, "static") == is_static ? &field : nullptr;
+    name = parent(name);
+  }
   return nullptr;
 }
 const Field *Program::findStaticField(const FieldRef &reference) const {
@@ -926,11 +1174,47 @@ const Field *Program::findStaticField(const FieldRef &reference) const {
 }
 const Method *Program::findMethod(const MethodRef &reference,
                                   bool is_static) const {
-  if (auto owner = findClass(reference.owner))
-    for (const auto &method : owner->methods)
-      if (method.reference == reference &&
-          has(method.access, "static") == is_static)
+  std::set<std::string> seen;
+  std::function<const Method *(std::string_view, unsigned)> find =
+      [&](std::string_view name, unsigned depth) -> const Method * {
+    const auto *klass = findClass(name);
+    if (!klass || depth >= 64 || !seen.insert(klass->name).second)
+      return nullptr;
+    for (const auto &method : klass->methods)
+      if (method.reference.name == reference.name &&
+          method.reference.parameters == reference.parameters &&
+          method.reference.returns == reference.returns)
+        return has(method.access, "static") == is_static ? &method : nullptr;
+    if (reference.name.starts_with('<'))
+      return nullptr;
+    if (auto base = find(parent(name), depth + 1))
+      return base;
+    // The admitted interfaces contain public abstract declarations only.
+    if (!is_static)
+      for (const auto &interface : klass->interfaces)
+        if (auto method = find(interface, depth + 1))
+          return method;
+    return nullptr;
+  };
+  return find(reference.owner, 0);
+}
+const Method *Program::virtualMethod(const MethodRef &reference,
+                                     std::string_view receiver) const {
+  if (!assignable(receiver, reference.owner))
+    return nullptr;
+  auto name = std::string(receiver);
+  for (unsigned depth = 0; depth < 64; ++depth) {
+    const auto *klass = findClass(name);
+    if (!klass)
+      break;
+    for (const auto &method : klass->methods)
+      if (method.reference.name == reference.name &&
+          method.reference.parameters == reference.parameters &&
+          method.reference.returns == reference.returns &&
+          !has(method.access, "static") && !has(method.access, "private"))
         return &method;
+    name = parent(name);
+  }
   return nullptr;
 }
 const Method *Program::findStatic(const MethodRef &reference) const {
@@ -938,19 +1222,56 @@ const Method *Program::findStatic(const MethodRef &reference) const {
 }
 std::optional<std::string>
 Program::unsupportedClass(std::string_view name) const {
-  auto owner = classes.find(std::string(name));
-  if (owner == classes.end())
+  std::set<std::string> visiting, done;
+  std::function<std::optional<std::string>(std::string_view, unsigned)> check =
+      [&](std::string_view name, unsigned depth) -> std::optional<std::string> {
+    if (done.contains(std::string(name)))
+      return std::nullopt;
+    const auto *klass = findClass(name);
+    if (!klass) {
+      if (name == "Ljava/lang/Object;" ||
+          (name.starts_with('L') && name.ends_with(';') &&
+           platformClass(name.substr(1, name.size() - 2)) &&
+           referenceAssignable(name, "Ljava/lang/Throwable;")))
+        return std::nullopt;
+      return "class is not supplied by DEX";
+    }
+    if (depth >= 64 || !visiting.insert(klass->name).second)
+      return "DEX cyclic or excessively deep hierarchy";
+    if (!klass->superclass)
+      return "DEX class has no superclass";
+    if (const auto *base = findClass(*klass->superclass);
+        base && (has(base->access, "final") || has(base->access, "interface")))
+      return "DEX invalid superclass";
+    if (auto reason = check(*klass->superclass, depth + 1))
+      return reason;
+    for (const auto &iface : klass->interfaces) {
+      const auto *base = findClass(iface);
+      if (!base || !has(base->access, "interface"))
+        return "unmodeled DEX interface";
+      if (auto reason = check(iface, depth + 1))
+        return reason;
+    }
+    if (has(klass->access, "interface")) {
+      if (!klass->fields.empty())
+        return "interface fields are outside the execution profile";
+      for (const auto &method : klass->methods)
+        if (!has(method.access, "abstract") || !has(method.access, "public"))
+          return "default or static interface bodies are unsupported";
+    }
+    for (const auto &field : klass->fields)
+      if ((!integral(field.reference.type) &&
+           !referenceType(field.reference.type)) ||
+          has(field.access, "volatile"))
+        return "DEX floating or volatile field is unsupported";
+    visiting.erase(klass->name);
+    done.insert(klass->name);
+    return std::nullopt;
+  };
+  // Unknown ancestors are never recursively admitted through knownReference.
+  if (!findClass(name))
     return "class is not supplied by DEX";
-  const auto &klass = owner->second;
-  if (klass.superclass != "Ljava/lang/Object;" || !klass.interfaces.empty() ||
-      has(klass.access, "interface"))
-    return "DEX class requires unmodeled hierarchy";
-  for (const auto &field : klass.fields)
-    if ((!integral(field.reference.type) &&
-         !referenceType(field.reference.type)) ||
-        has(field.access, "volatile"))
-      return "DEX floating or volatile field is unsupported";
-  return std::nullopt;
+  return check(name, 0);
 }
 std::optional<std::string> Program::unsupported(const Method &method) const {
   auto owner = classes.find(method.reference.owner);
@@ -962,8 +1283,8 @@ std::optional<std::string> Program::unsupported(const Method &method) const {
   if (has(method.access, "native") || has(method.access, "abstract") ||
       has(method.access, "synchronized") ||
       has(method.access, "declared-synchronized") ||
-      method.instructions.empty() || !method.tries.empty())
-    return "DEX native, abstract, synchronized or exception-handler body is "
+      method.instructions.empty())
+    return "DEX native, abstract or synchronized body is "
            "unsupported";
   if (method.reference.returns != "V" && !integral(method.reference.returns) &&
       !knownReference(method.reference.returns))

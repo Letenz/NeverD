@@ -11,10 +11,13 @@
 #include "neverd/dalvik/Runtime.h"
 
 namespace neverd::emulation::android_model {
-bool jniAssignable(llvm::StringRef Source, llvm::StringRef Destination) {
+bool Bionic::jniAssignable(llvm::StringRef Source,
+                           llvm::StringRef Destination) const {
   auto Descriptor = [](llvm::StringRef Name) {
     return Name.starts_with("[") ? Name.str() : "L" + Name.str() + ";";
   };
+  if (JNI.Dex)
+    return JNI.Dex->assignable(Descriptor(Source), Descriptor(Destination));
   return mobile::dalvik::referenceAssignable(Descriptor(Source),
                                              Descriptor(Destination));
 }
@@ -34,24 +37,7 @@ Bionic::jniClass(llvm::StringRef Name) {
     return I->second;
   // Intrinsic and explicitly supplied classes are known. Absence of an
   // arbitrary application class is not evidence that FindClass should throw.
-  bool Known = Name == "java/lang/Object" || Name == "java/lang/Class" ||
-               Name == "java/lang/String" || Name == "java/lang/Throwable" ||
-               Name == "java/lang/Exception" || Name == "java/lang/Error" ||
-               Name == "java/lang/RuntimeException" ||
-               Name == "java/lang/ArithmeticException" ||
-               Name == "java/lang/NullPointerException" ||
-               Name == "java/lang/IllegalArgumentException" ||
-               Name == "java/lang/IndexOutOfBoundsException" ||
-               Name == "java/lang/ArrayIndexOutOfBoundsException" ||
-               Name == "java/lang/StringIndexOutOfBoundsException" ||
-               Name == "java/lang/NegativeArraySizeException" ||
-               Name == "java/lang/ArrayStoreException" ||
-               Name == "java/lang/ClassCastException" ||
-               Name == "java/lang/OutOfMemoryError" ||
-               Name == "java/lang/LinkageError" ||
-               Name == "java/lang/ExceptionInInitializerError" ||
-               Name == "java/lang/NoClassDefFoundError" ||
-               Name == "[Ljava/lang/Object;" || Name == "[Ljava/lang/String;" ||
+  bool Known = mobile::dalvik::platformClass(Name.str()) ||
                (Name.size() == 2 && Name[0] == '[' &&
                 llvm::StringRef("ZBCSIJFD").contains(Name[1]));
   if (JNI.Dex && JNI.Dex->containsClass("L" + Name.str() + ";")) {
@@ -80,10 +66,10 @@ Bionic::jniClass(llvm::StringRef Name) {
   }
   if (!Known)
     return failure("JNI class resolution requires an unmodeled class: " + Name);
-  auto Object = jniNewObject(JNIObject::Class, Name, 0);
+  auto Object = JNI.Heap->classObject(Name.str());
   if (!Object)
-    return Object.takeError();
-  JNI.Classes.emplace(Name.str(), *Object);
+    return failure("JNI class storage budget exhausted");
+  JNI.Classes.emplace(Name.str(), Object);
   return Object;
 }
 
@@ -232,8 +218,9 @@ BionicResult Bionic::jniObjects(unsigned Slot, const NativeCallEvent &Call) {
       return Ref(*Class);
     }
     if (Slot == 13) {
-      if ((*Object)->Type != JNIObject::Throwable)
-        return failure("JNI Throw requires a throwable object");
+      if (!jniAssignable((*Object)->ClassName, "java/lang/Throwable") ||
+          !(*Object)->Initialized)
+        return failure("JNI Throw requires an initialized throwable object");
       Thread.Exception = *Object;
       return value(0);
     }
@@ -241,7 +228,20 @@ BionicResult Bionic::jniObjects(unsigned Slot, const NativeCallEvent &Call) {
       if ((*Object)->Type != JNIObject::Class)
         return failure("JNI operation requires a class reference");
     if (Slot == 10) {
-      auto Name = mobile::dalvik::javaParent((*Object)->ClassName);
+      if ((*Object)->ClassName == "java/lang/Cloneable" ||
+          (*Object)->ClassName == "java/io/Serializable")
+        return value(0);
+      std::string Name;
+      if (JNI.Dex && JNI.Dex->containsClass("L" + (*Object)->ClassName + ";")) {
+        const auto *Declaration =
+            JNI.Dex->findClass("L" + (*Object)->ClassName + ";");
+        if (mobile::dalvik::has(Declaration->access, "interface"))
+          return value(0);
+        auto Parent = JNI.Dex->parent(Declaration->name);
+        if (!Parent.empty())
+          Name = Parent.substr(1, Parent.size() - 2);
+      } else
+        Name = mobile::dalvik::javaParent((*Object)->ClassName);
       if (Name.empty())
         return value(0);
       auto Class = jniClass(Name);

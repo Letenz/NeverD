@@ -94,7 +94,9 @@ Bionic::runDex(const std::function<mobile::dalvik::ExecutionResult(
   if (Executed.stop == ExecutionStop::Returned)
     return value(Executed.value);
   if (Executed.stop == ExecutionStop::Thrown) {
-    if (auto E = jniException(Executed.exception))
+    if (Executed.throwable)
+      JNI.Threads.at(threadID()).Exception = JNI.Heap->get(Executed.throwable);
+    else if (auto E = jniException(Executed.exception))
       return std::move(E);
     return value(0);
   }
