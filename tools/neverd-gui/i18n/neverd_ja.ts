@@ -3409,6 +3409,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>正確な幅（u32）</translation>
     </message>
     <message>
+        <source>Exact widths (uint32)</source>
+        <translation>正確な幅（uint32）</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>名前で型を絞り込み</translation>
     </message>

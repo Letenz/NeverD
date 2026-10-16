@@ -3439,6 +3439,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>عروض دقيقة ‎(u32)</translation>
     </message>
     <message>
+        <source>Exact widths (uint32)</source>
+        <translation>عروض دقيقة ‎(uint32)</translation>
+    </message>
+    <message>
         <source>Filter types by name</source>
         <translation>تصفية الأنواع بالاسم</translation>
     </message>

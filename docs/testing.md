@@ -317,7 +317,7 @@ compiles the result:
   workbench shows as C/C++, compiles as C++ as well;
 - Rust with rustc in both of its spellings, exact widths and Windows' names
   as aliases (64-bit layouts only);
-- Go with `go vet` for Windows.
+- Go with `go vet` for Windows, in both spellings too.
 
 A missing toolchain is reported and skipped. Without `--binary` it checks the
 fixture:

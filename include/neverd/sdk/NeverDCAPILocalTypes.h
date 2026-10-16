@@ -82,11 +82,10 @@ NEVERD_API const char *neverd_local_type_json(neverd_session_t Sess,
 /// "dependencies" (the default) every type they need, else each alone for
 /// reading.  "asserts" adds checks of every size and offset that the
 /// compiler verifies.  "spelling" names builtins: C and C++ take each, and
-/// windows unless asked; Rust takes windows, aliases of exact widths as
-/// wdk-sys declares them (pub type ULONG = u32), or portable (u32), its
-/// default; Go takes portable.  NULL with neverd_last_error() for an
-/// unknown type, a spelling the language does not take or other malformed
-/// options.
+/// windows unless asked; Rust and Go take windows, aliases of exact widths
+/// as wdk-sys declares them (pub type ULONG = u32), or portable (u32,
+/// uint32), their default.  NULL with neverd_last_error() for an unknown
+/// type, a spelling the language does not take or other malformed options.
 NEVERD_API const char *neverd_local_types_source(neverd_session_t Sess,
                                                  const char *OptionsJson);
 
