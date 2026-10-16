@@ -1795,25 +1795,32 @@ TEST(MedSEHHandlerEntry, HandlerSharedWithTheNormalPathMergesBothValues) {
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
 }
 
-TEST(MedSEHHandlerEntry, AHandlerResumingAtANopEndsTheArmThere) {
-  // MinGW's startup scope ends at a nop the guarded code falls through, and
-  // resumes at the next nop, which prints nothing: no statement carries the
-  // handler's address. The arm runs on to the return after the __try instead
-  // of jumping to a label that does not exist.
+// MinGW's startup scope ends at a nop the guarded code falls through, and
+// resumes at the next nop, which prints nothing: no statement carries the
+// handler's address, and the guarded block reaches the handler block both as
+// its successor and as its scope's target. The normal path returns 7.
+static BinaryImage makeNopResumeSharedHandlerImage() {
   auto Img = makeSharedHandlerImage();
-  const uint8_t Code[] = {0x31, 0xc0, // xor eax, eax
-                          0x88, 0x11, // mov [rcx], dl
-                          0x90,       // nop
-                          0x90,       // nop
-                          0xc3};      // ret
+  const uint8_t Code[] = {0xb8, 7,    0, 0, 0, // mov eax, 7
+                          0x88, 0x11,          // mov [rcx], dl
+                          0x90,                // nop
+                          0x90,                // nop
+                          0xc3};               // ret
   std::copy(std::begin(Code), std::end(Code),
             Img.Segments.front().Data.begin());
   Img.Symbols.front() = Symbol::makeFunc(Img.Entry, sizeof(Code));
   ExceptionFunction &EH = Img.ExceptionMetadata.Functions.front();
   EH.CodeRange = {Img.Entry, Img.Entry + sizeof(Code)};
-  EH.SEH->Scopes.front().GuardedRange = {Img.Entry + 2, Img.Entry + 5};
-  EH.SEH->Scopes.front().HandlerVA = Img.Entry + 5;
+  EH.SEH->Scopes.front().GuardedRange = {Img.Entry + 5, Img.Entry + 8};
+  EH.SEH->Scopes.front().HandlerVA = Img.Entry + 8;
   Img.ExceptionMetadata.rebuildIndex();
+  return Img;
+}
+
+TEST(MedSEHHandlerEntry, AHandlerResumingAtANopEndsTheArmThere) {
+  // The arm runs on to the return after the __try instead of jumping to a
+  // label that does not exist.
+  auto Img = makeNopResumeSharedHandlerImage();
   auto Low = decodeFixedSEHFrame(Img);
   auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
   ASSERT_TRUE(verifyMedFunc(Med, "seh-shared-handler-nop"));
@@ -1829,6 +1836,35 @@ TEST(MedSEHHandlerEntry, AHandlerResumingAtANopEndsTheArmThere) {
   EXPECT_NE(Source.substr(Handler).find("exception_code;"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+}
+
+TEST(MedSEHHandlerEntry, LLVMKeepsTheNormalPathValueOfAHandlerItFallsInto) {
+  // The edge into the handler block is both ordinary and exceptional; its
+  // ordinary copy into the merged RAX must survive, or the function returns
+  // what that PHI's storage started with.
+  auto Img = makeNopResumeSharedHandlerImage();
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.LiftMode = true;
+  // The emitter's own IR: this image has no native SEH lowering, which the
+  // optimizer's exception-rewrite contract requires.
+  Opts.NoOpt = true;
+  Opts.OnlyFunctionEntries.insert(Img.Entry);
+  llvm::LLVMContext Context;
+  auto Result = Pipeline().run(Img, Context, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_NE(Result.LlvmModule, nullptr);
+  std::vector<uint64_t> Returned;
+  for (llvm::Function &Fn : *Result.LlvmModule)
+    for (llvm::BasicBlock &Block : Fn)
+      if (auto *Ret = llvm::dyn_cast<llvm::ReturnInst>(Block.getTerminator()))
+        if (auto *Value = llvm::dyn_cast_or_null<llvm::ConstantInt>(
+                Ret->getReturnValue()))
+          Returned.push_back(Value->getZExtValue());
+  std::string IR;
+  llvm::raw_string_ostream Stream(IR);
+  Result.LlvmModule->print(Stream, nullptr);
+  EXPECT_EQ(Returned, std::vector<uint64_t>{7}) << IR;
 }
 
 TEST(MedSEHHandlerEntry, HighCCapturesTheExceptionCodeInTheExceptArm) {
