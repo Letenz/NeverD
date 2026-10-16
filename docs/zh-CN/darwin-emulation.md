@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 39a521d14dfb31f7e045451a8039cdc180e2e6fabd816f96a0c746ddfa3d19f1 -->
+<!-- i18n-source: 9087505960d4cc4b5cf6a7c11547f25f65721975e0679c47f898ae3f18a0fcf8 -->
 
 [← 文档索引](README.md)
 
@@ -1913,10 +1913,13 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 classic lazy 指针程序会在进入来宾前提前解析。每个程序必须独立声明目标槽、普通库 ordinal 和符号；仅允许指针类型、零 addend，以及一条紧接 DONE 的 DO_BIND，不继承上一程序的状态。一个指向本地可执行原始字节的 rebase 可与同槽的一次 lazy bind 合并，但两条原始记录都计入预算，其他重复或重叠均拒绝。`dyld_stub_binder` 仅在存在实际 lazy 调用时作为强、零 addend 的普通 classic bind 接受；进入其拒绝门会在读取 C 调用帧或参数、修改 errno 或记录原生调用前失败。这支持普通调用桩及稳定的预解析指针，不实现运行时 lazy resolver 或 dyld 私有状态。六函数 C 样本在调用前和重复调用后检查全部槽；原生对照请求提前绑定，并与来宾比较输出和退出状态。
 
+`open`、`lseek`、`pread`、`pwrite`、`dup` 和 `dup2` 共用已有文件目录、变更及描述符游标。`open` 通常记录两个参数，低 32 位 flags 含 O_CREAT 时记录三个。ARM64 的可选提升 int 只读取入口 SP 的四个有效字节，不读取填充；x64 使用第三个通用寄存器参数。报告保留原始载体，独立的内核参数把 mode 截断至 16 位。没有 O_CREAT 时 mode 为零且不读取可选存储；x64 必需的返回地址仍正常验证。参数读取失败先于调用记录、errno 和文件副作用。此契约依据 [Apple ARM64 ABI](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms) 和 [XNU open 包装函数](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c)。O0/O1/O2 原生对照覆盖共享偏移、定位 I/O、dup2 失败、超过 4 GiB 的偏移、mode 截断和二进制内容。线程取消和兼容路径转换仍不支持。
+
 ```text
 provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
 C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
 entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
@@ -1926,11 +1929,13 @@ gates: RX/max RX; errno: RW/max RW; both resident model reservations
 budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
 preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
 report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
-call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
+call carriers: hex; full GP bits or defined ARM64 int vararg bytes; exact arity; null result if incomplete/nonreturning
+open: 2 args or 3 with O_CREAT; ARM64 mode int at SP, x64 third GP; kernel mode_t 16 bits
 basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
 classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
 _exit: status 35; stdout_hex 58; named calls 2; events 2
-native common catalogue: 82; required methods/platform: 97; matching ARM64 identities: 291
+file calls: main status 73; stdout_hex 460044; named calls 40; events 41
+native common catalogue: 82; required methods/platform: 98; matching ARM64 identities: 294
 ```
 
 ```json

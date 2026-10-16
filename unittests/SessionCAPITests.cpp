@@ -3797,7 +3797,11 @@ TEST_F(SessionCAPITest, DeclaredTypesJoinThePDBsAndStayWithTheProject) {
             true);
 }
 
-TEST_F(SessionCAPITest, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
+// These checks require developer-supplied Windows kernel and PDB inputs.
+// Keep the self-contained SessionCAPITest qualification independent of them.
+class SessionCAPIKernelInputs : public SessionCAPITest {};
+
+TEST_F(SessionCAPIKernelInputs, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
   // ntoskrnl.exe and its PDB, as a developer points to them.
   const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
   const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");
@@ -3841,7 +3845,7 @@ TEST_F(SessionCAPITest, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
   EXPECT_EQ(Mine->getAsObject()->getInteger("size"), 32);
 }
 
-TEST_F(SessionCAPITest, KernelFunctionsDecompileWithTheirPrototypes) {
+TEST_F(SessionCAPIKernelInputs, KernelFunctionsDecompileWithTheirPrototypes) {
   const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
   const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");
   if (!Kernel || !PDB)
@@ -3929,7 +3933,7 @@ TEST_F(SessionCAPITest, FunctionsHoldTheRecordsTheirPDBTypes) {
   EXPECT_EQ(After.find("Packed->Count"), std::string::npos);
 }
 
-TEST_F(SessionCAPITest, KernelFunctionsHoldTheRecordsTheyName) {
+TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
   const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
   const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");
   if (!Kernel || !PDB)

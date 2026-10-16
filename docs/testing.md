@@ -307,11 +307,15 @@ python3 scripts/check_type_renders.py --neverd build/bin/neverd \
 
 With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
 ntoskrnl.exe and its PDB,
-`SessionCAPITest.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
+`SessionCAPIKernelInputs.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
 and checks that the headers join its PDB without conflicts.
-`SessionCAPITest.KernelFunctionsDecompileWithTheirPrototypes` decompiles
+`SessionCAPIKernelInputs.KernelFunctionsDecompileWithTheirPrototypes` decompiles
 `NtCreateFile`, `IoAllocateIrp`, `PsCreateSystemThread` and
 `IofCompleteRequest` and checks the signatures the headers give them.
+Run these external-input checks with `--gtest_filter=SessionCAPIKernelInputs.*`.
+Without the two inputs they remain explicit skips. The Linux Lift qualification
+requires every `SessionCAPITest.*` case to execute and pass using repository
+fixtures; it does not claim Windows kernel input coverage.
 `LocalTypesDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
 the conversion and which functions take a prototype without a program.
 `scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
@@ -382,7 +386,7 @@ the members the context gives, the definitions a unit holds and what a
 dropped context takes back. `SessionCAPITest.FunctionsHoldTheRecordsTheirPDBTypes`
 covers the same through a session on the fixture, a renamed member reaching
 the pseudocode among them, in every build;
-`SessionCAPITest.KernelFunctionsHoldTheRecordsTheyName` (with the kernel's
+`SessionCAPIKernelInputs.KernelFunctionsHoldTheRecordsTheyName` (with the kernel's
 environment variables) covers `KeInitializeDpc` and the kernel's unions.
 
 ## Scalar x86 floating-point state
