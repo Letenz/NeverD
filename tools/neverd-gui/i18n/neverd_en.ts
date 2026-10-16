@@ -2331,6 +2331,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Put the cursor on a parameter of the function to convert it</translation>
     </message>
     <message>
+        <source>Jump to disassembly</source>
+        <translation>Jump to disassembly</translation>
+    </message>
+    <message>
         <source>Synchronize with disassembly</source>
         <translation>Synchronize with disassembly</translation>
     </message>

@@ -2331,6 +2331,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Coloque el cursor sobre un parámetro de la función para convertirlo</translation>
     </message>
     <message>
+        <source>Jump to disassembly</source>
+        <translation>Saltar al desensamblado</translation>
+    </message>
+    <message>
         <source>Synchronize with disassembly</source>
         <translation>Sincronizar con el desensamblado</translation>
     </message>

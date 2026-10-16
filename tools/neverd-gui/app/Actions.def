@@ -226,7 +226,7 @@ NEVERD_VIEW_ACTION(
     QT_TRANSLATE_NOOP("Actions", "Move to the start of the previous function"))
 NEVERD_VIEW_ACTION(
     JumpPseudocode, QT_TRANSLATE_NOOP("Actions", "Jump to pseudo&code"), "Tab",
-    "pseudocode",
+    "jump_pseudocode",
     QT_TRANSLATE_NOOP("Actions", "Switch between disassembly and pseudocode"))
 NEVERD_VIEW_ACTION(JumpAnywhere,
                    QT_TRANSLATE_NOOP("Actions", "Jump &anywhere..."), "G",

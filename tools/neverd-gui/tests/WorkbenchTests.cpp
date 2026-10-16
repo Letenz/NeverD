@@ -1081,6 +1081,68 @@ private slots:
     QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
   }
 
+  void contextMenusOfferTabWithItsKey() {
+    // Tab's switch to the other pane is in both context menus with its key:
+    // a code window's as Jump to disassembly beside the synchronization
+    // switch, the disassembly's as Jump to pseudocode.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    const Address function = Base + 0x140;
+    assembly->navigate(function);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 3);
+    code->setPreludeFolded(false);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    code->setCursorLine(3);
+    assembly->navigate(function, false);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
+    QString shown;
+    bool jumpOffered = true;
+    withCodeMenu(code, [&](QMenu *menu) {
+      auto *cross =
+          menu->findChild<QAction *>(QStringLiteral("codeJumpDisassembly"));
+      QVERIFY(cross);
+      shown = cross->text();
+      // The disassembly's own wording would point back at this window.
+      jumpOffered =
+          menu->actions().contains(bench.action(ActionId::JumpPseudocode));
+      cross->trigger();
+    });
+    QCOMPARE(shown, QStringLiteral("Jump to disassembly\tTab"));
+    QVERIFY(!jumpOffered);
+    QTRY_VERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(function + 6));
+
+    QStringList texts;
+    QTimer probe;
+    connect(&probe, &QTimer::timeout, this, [&] {
+      auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+      if (!menu)
+        return;
+      probe.stop();
+      for (const QAction *action : menu->actions())
+        texts << action->text();
+      menu->close();
+    });
+    probe.start(5);
+    emit assembly->contextMenuRequested(assembly->mapToGlobal(QPoint(40, 40)));
+    QVERIFY(texts.contains(bench.action(ActionId::JumpPseudocode)->text()));
+    QCOMPARE(bench.action(ActionId::JumpPseudocode)->shortcut(),
+             QKeySequence(Qt::Key_Tab));
+  }
+
   void assemblyAndCodeCursorsFollowEachOther() {
     // A move in the disassembly takes a code window showing the same
     // function to the instruction's row and leaves the focus there; a code
