@@ -30,6 +30,7 @@
 #include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/ir/med/X86RegistrationCall.h"
 #include "neverd/ir/med/X86RegistrationEntry.h"
+#include "neverd/ir/med/X86RegistrationSEHRegisters.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -1151,6 +1152,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     mergeLoopCarriedVectorReads(Func);
     debugVerifyMedFunc(Func, "mergeLoopCarriedVectorReads");
 
+    x86_registration::discardUnusedSEHCallInputs(Func);
     detectCc(Func, TheArch, Fmt);
     completeX86RegistrationEntryParameters(Func);
     debugVerifyMedFunc(Func, "detectCc");

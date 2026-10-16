@@ -98,6 +98,9 @@ protected:
     return emulateProcess(Path, GetParam().OS, Options);
   }
 };
+// These semantic batches make repeated bounded guest runs. Their host allowance
+// is independent of the native cancellation tests' explicit short deadlines.
+constexpr uint64_t BatchedProcessTimeoutMicroseconds = 20'000'000;
 TEST_P(DarwinProcess, MachSelfPortsPreserveExplicitBitsAndIndependentRuns) {
   Options.InstructionQuantum = 1024;
   const bool X64 = GetParam().ISA == GuestArchitecture::X64;
@@ -2668,7 +2671,7 @@ TEST_P(DarwinProcess,
 TEST_P(DarwinProcess,
        ImmediateSelectPreservesBitmapsCopiesAndProviderPremises) {
   Options.InstructionQuantum = 1024;
-  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Limits.TimeoutMicroseconds = BatchedProcessTimeoutMicroseconds;
   Options.DarwinFiles.emplace().Files["/data"] = {'a', 'b', 0, 0xff, 'e', 'f'};
   Options.Arguments[2] = "/data";
   const bool X64 = GetParam().ISA == GuestArchitecture::X64;
@@ -2679,9 +2682,12 @@ TEST_P(DarwinProcess,
                                  0, UINT32_MAX, UINT32_MAX, 0,  4,  6,  6};
   constexpr uint64_t High[] = {0, 0x1234567800000000ULL, 0xffffffff00000000ULL};
   for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    SCOPED_TRACE(Repeat);
     auto R = run("immediate-select");
     ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
-    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+        << R->Diagnostic << " instructions=" << R->Instructions
+        << " services=" << R->Services.size();
     EXPECT_EQ(R->ExitStatus, 37);
     EXPECT_EQ(R->StandardOutput, "s");
     EXPECT_TRUE(R->StandardError.empty());
@@ -3276,7 +3282,7 @@ TEST_P(DarwinProcess,
 TEST_P(DarwinProcess,
        SymbolicFileSystemsKeepOwnSnapshotAndFollowedTargetSeparate) {
   Options.InstructionQuantum = 1024;
-  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Limits.TimeoutMicroseconds = BatchedProcessTimeoutMicroseconds;
   Options.Arguments[2] = "/link";
   Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
   Options.DarwinTime.reset();
@@ -3286,9 +3292,11 @@ TEST_P(DarwinProcess,
                          "created-symbolic-filesystem",
                          "virtual-symbolic-filesystem"};
   for (unsigned Kind = 0; Kind != 3; ++Kind) {
+    SCOPED_TRACE(Modes[Kind]);
     const auto Wanted = darwin_test::symbolicFileSystemServices(Kind);
     ASSERT_EQ(Wanted.size(), Kind == 1 ? 33u : Kind == 2 ? 35u : 32u);
     for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      SCOPED_TRACE(Repeat);
       Options.DarwinFiles =
           darwin_test::symbolicLinkFileSystemOptions(Kind == 1);
       if (Kind == 2)
@@ -4525,6 +4533,46 @@ TEST_P(DarwinProcess, LibSystemMemoryCallsPreserveMappingsAndCErrorOrder) {
   }
 }
 
+TEST_P(DarwinProcess, StartupDylibsShareDataAndKeepThreadLocalInstances) {
+  Options.InstructionQuantum = 1024;
+  for (const char *Kind : {"classic", "chained"}) {
+    const auto Directory =
+        std::filesystem::path(Path.string() + "-dylib-" + Kind);
+    Options.Darwin =
+        DarwinProcessOptions{{{"@loader_path/libneverd-base.dylib",
+                               Directory / "libneverd-base.dylib"},
+                              {"@loader_path/libneverd-leaf.dylib",
+                               Directory / "libneverd-leaf.dylib"},
+                              {"unused.dylib", Directory / "does-not-exist"}}};
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      auto R = emulateProcess(Directory / "main", GetParam().OS, Options);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+      EXPECT_EQ(R->ExitStatus, 83);
+      EXPECT_EQ(R->StandardOutput, std::string("D\0T", 3));
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_TRUE(R->Services.empty());
+      ASSERT_FALSE(R->NativeCalls.empty());
+      EXPECT_EQ(R->NativeCalls.back().Name, "_write");
+      unsigned TLV = 0;
+      for (const auto &Call : R->NativeCalls) {
+        if (Call.Name != "__tlv_get_addr")
+          continue;
+        ++TLV;
+        EXPECT_EQ(Call.ArgumentCount, 1u);
+        EXPECT_TRUE(Call.Result);
+      }
+      EXPECT_GT(TLV, 10u);
+    }
+    Options.Limits.Events = 2;
+    auto Limited = emulateProcess(Directory / "main", GetParam().OS, Options);
+    ASSERT_TRUE(bool(Limited)) << llvm::toString(Limited.takeError());
+    EXPECT_EQ(Limited->Stop, ProcessStopReason::EventLimit);
+    EXPECT_EQ(Limited->Events, 2u);
+    EXPECT_TRUE(Limited->StandardOutput.empty());
+    Options.Limits.Events = process_defaults::Events;
+  }
+}
 INSTANTIATE_TEST_SUITE_P(Transports, DarwinProcess,
                          testing::ValuesIn(profiles()),
                          [](const testing::TestParamInfo<Profile> &P) {

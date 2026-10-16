@@ -630,6 +630,29 @@ class CapabilitySchemaTests(unittest.TestCase):
                 frozenset({"PublicSession.sanitize"}),
             )
 
+    def test_cli_help_cannot_end_declarations_or_bind_other_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cli = root / "tools" / "neverd"
+            cli.mkdir(parents=True)
+            (cli / "NeverDCLIOptions.cpp").write_text(
+                'cl::SubCommand TypesCmd("types", "types");\n'
+                'cl::SubCommand OtherCmd("other", "other");\n'
+                'cl::opt<std::string> Spelling("spelling",\n'
+                '    cl::desc("names (widths); cl::sub(OtherCmd) is only help"),\n'
+                '    cl::sub(TypesCmd));\n'
+                'cl::opt<bool> Next("next", cl::sub(OtherCmd));\n',
+                encoding="utf-8",
+            )
+            surfaces = capabilities.collect_public_surfaces(root)
+            self.assertEqual(
+                surfaces["cli"],
+                frozenset({
+                    "neverd types", "neverd types --spelling",
+                    "neverd other", "neverd other --next",
+                }),
+            )
+
     def test_cli_literal_inventory_uses_the_declarative_value_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

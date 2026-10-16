@@ -3,6 +3,7 @@ add_neverd_unittest(NeverDSEHRuntimeMemoryTests
   eh/SEHImageFormatTests.cpp
   eh/X64CRTFrameTests.cpp
   eh/RegistrationSEHControlTests.cpp
+  eh/RegistrationSEHEpilogueTests.cpp
   eh/RegistrationConditionalFrameTests.cpp
   eh/RegistrationJumpRuntimeTests.cpp
   eh/RegistrationJumpCaptureTests.cpp
@@ -22,6 +23,10 @@ add_neverd_unittest(NeverDRegistrationCalleeStackTests
 
 add_neverd_unittest(NeverDHighCParamUsageTests
   core/HighCParamUsageTests.cpp
+  LINK_COMPONENTS BackendC)
+
+add_neverd_unittest(NeverDHighCSupervisorCallTests
+  core/HighCSupervisorCallTests.cpp
   LINK_COMPONENTS BackendC)
 
 add_neverd_unittest(NeverDFPParameterMaskTests

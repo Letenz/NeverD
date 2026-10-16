@@ -17,6 +17,8 @@
 
 #include "neverd/ir/low/CFGBuilder.h"
 
+#include "X86/RegistrationSEHControl.h"
+
 #include "neverd/Limits.h"
 #include "neverd/decode/InstructionRelocations.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -2351,6 +2353,11 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
       }
 
       restoreAdjacentNoReturnCall(Rec, Dec.directCallTarget(DI));
+      if (Img.Arch == Arch::X86 && Rec.Ops.size() == 2)
+        if (const auto *EH =
+                Img.ExceptionMetadata.findFunction(CurrentFuncEntry))
+          registration_state::restoreAdjacentSEHFinallyCall(Img, *EH, Rec.Addr,
+                                                            Rec.Size, Rec.Ops);
       classifyInsn(Rec);
       if (Rec.IsCall && !Rec.IsIndirect && Rec.Immediate)
         rewriteGetPcThunkCall(Img, Rec, Next);

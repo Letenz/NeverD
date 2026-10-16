@@ -1956,6 +1956,8 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
   if (session(s)->path.ends_with("code-edits.bin") ||
       session(s)->path.ends_with("code-edits-cpp.bin") ||
       session(s)->path.ends_with("code-edits-mapped.bin") ||
+      session(s)->path.ends_with("code-numbers.bin") ||
+      session(s)->path.ends_with("code-numbers-paged.bin") ||
       session(s)->path.ends_with("code-folding.bin") ||
       session(s)->path.ends_with("code-folding-cpp.bin") ||
       session(s)->path.ends_with("local-references.bin") ||
@@ -1968,12 +1970,28 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                              session(s)->path.ends_with("code-folding-cpp.bin");
     const bool paged =
         localReferences || session(s)->path.ends_with("tab-sync-paged.bin");
+    // Numbers on two rows mapped to instructions, beside a comment's.
+    const bool numbers = session(s)->path.ends_with("code-numbers.bin");
     std::string full = "#include <stdint.h>\n"
                        "int32_t function_20(int32_t v0) {\n"
                        "  int32_t v1 = v0 + function_22();\n"
                        "  const char *message = \"v0 v1 function_22\";\n"
                        "  return v1;\n"
                        "}\n";
+    if (numbers)
+      full = "#include <stdint.h>\n"
+             "int32_t function_20(int32_t v0) {\n"
+             "  int32_t v1 = v0 + 24; /* 8 */\n"
+             "  return v1 & 0xFFFFFFFF;\n"
+             "}\n";
+    // A number on the third page, after statements without digits.
+    if (session(s)->path.ends_with("code-numbers-paged.bin")) {
+      full = "#include <stdint.h>\n"
+             "int32_t function_20(int32_t v0) {\n";
+      for (int i = 0; i < 600; ++i)
+        full += "  v0 += v0;\n";
+      full += "  return v0 + 24;\n}\n";
+    }
     if (codeFolding)
       full = "#include <stdint.h>\n"
              "int32_t function_20(int32_t v0) {\n"
@@ -2022,16 +2040,19 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
     for (auto i = first; i < end; ++i) {
       const bool mapped =
           (session(s)->path.ends_with("code-edits-mapped.bin") && i == 2) ||
-          (codeFolding && i == 5) || (paged && i == 550);
-      rows.push_back({{"line", i},
-                      {"object_id", "source:" + std::to_string(i)},
-                      {"kind", "source"},
-                      {"mapping_status", mapped ? "mapped" : "unmapped"},
-                      {"addresses",
-                       mapped ? (paged ? Json::array({hexAddress(address + 8),
-                                                      hexAddress(address + 9)})
-                                       : Json::array({hexAddress(address + 2)}))
-                              : Json::array()}});
+          (numbers && (i == 2 || i == 3)) || (codeFolding && i == 5) ||
+          (paged && i == 550);
+      rows.push_back(
+          {{"line", i},
+           {"object_id", "source:" + std::to_string(i)},
+           {"kind", "source"},
+           {"mapping_status", mapped ? "mapped" : "unmapped"},
+           {"addresses",
+            mapped ? (paged    ? Json::array({hexAddress(address + 8),
+                                              hexAddress(address + 9)})
+                      : i == 3 ? Json::array({hexAddress(address + 6)})
+                               : Json::array({hexAddress(address + 2)}))
+                   : Json::array()}});
     }
     const auto beginByte = first < starts.size() ? starts[first] : full.size();
     const auto endByte = end < starts.size() ? starts[end] : full.size();

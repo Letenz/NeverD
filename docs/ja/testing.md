@@ -11,6 +11,14 @@ NeverD のテストは、表現が期待した形か、バイナリ fixture の�
 
 `PipelineOutcome.ResolvedCalls*` はレジスタ群、call/invoke の同一性、スタックバイトの結合と分割、狭い値が自分のスロットに収まること、バイト不足の拒否を検証します。`MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` は記録されたオフセットを検証します。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` は x64、ARM32、AArch64 の ELF、PE、Mach-O を対象とします。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` は 3 形式で、長さの破壊、書き込み可能・範囲外のソース、同名のローカル関数、誤ったソースレジスタ、別の入口、再配置可能なイメージを拒否します。ホスト C 差分テストでは参照 C を別の翻訳単位で O0、生成 C を O2 でコンパイルし、ホスト最適化器の漸化式の誤コンパイルが参照値を汚さないようにします。AArch64 FMA テストが `-mfma` を要求するのは x86 ホストのみです。
 
+## MXCSR 復元のテスト
+
+`InterpreterSpecialization.MXCSR*` は任意の初期状態、正確なメモリ値、予約ビット、DAZ、別名、無効な形式、ノード投影、予算境界を検証します。`PEFixedImageTest.RawMXCSR*` は legacy/VEX バイトとマスクを結び付けた記録を検証します。マシン状態とネイティブ/LLVM 精緻化のテストは、未使用の機能でもインターフェースを拡張できないことを確認します。
+
+## セグメント書き込みの復元テスト
+
+`InterpreterSpecialization.SegmentedWrite*` は独立したバイトメモリ結果、全スカラー幅、基底加算の桁あふれ、フレームのエイリアス、上書きされたポインター由来、ノード間の無効化、正確な予算と不足予算を検証します。`SegmentedWritesAndReadsShareLinearMemory` は同一および異なる基底を扱います。`PEFixedImageTest.RawSegmented*` はネイティブバイト、戻りスロットのエイリアス拒否、機能変更後の証跡を検証します。既存の互換性値は保持します。特化、PE 固定イメージ、機械状態、ネイティブ/LLVM 精緻化のテストをビルドしてください。未使用の書き込み機能もソースと証明の拒否対象です。
+
 ## 具体的な入口メモリシード
 
 `NeverDSymbolicTests`、`NeverDConcolicTests`、`NeverDConcolicIntegrationTests` を実行します。`LowIRConcolicMemory.*` と記号層のテストは両エンディアン、別名ストア、独立バンク、欠落・不正範囲、リセット、実行後のシード拒否、予算境界、epoch、モデル幅、メモリ候補の再実行と重複排除を検証します。既存のネイティブ形式・アーキテクチャ行列も維持します。
@@ -2027,3 +2035,5 @@ CRT 回帰は全バイト／UTF-16 単位、引数幅、変更不要な読み取
 回帰は保持・失効スレッド、要求元・ワーカー・接続中のコンテキスト、モジュール境界と穴、出力幅、寿命、権限、IRQL を検査します。元の CRT と実際の WDK フィクスチャーで静的・動的 KernelMode 照会、ファイル照会フィクスチャーで UserMode 呼び出しを検査します。両 WDK 系列に通常版と CFG 版を含め、不足する二つの宣言は実際の kit 型によるローカル ABI で補います。利用不能なバックエンドはスキップします。
 
 旧 MDL マッピングの検証は実 WDK の静的・動的呼び出し、アタッチ済みワーカー、独自イメージの別名、モードの縮小、IRQL、プロセス切り替え、失効した記述子、重複マッピング、注入した別名予算の枯渇を含みます。カーネル不足は MDL を保持して未対応の bugcheck を報告し、ユーザー不足は捕捉可能です。元のラッパーのプローブは引数と戻り値の幅のみを検証し、注入したマッパーは検証しません。
+
+`KernelFileQueries.BaseDevice*` は基底と二段フィルターの区別、参照数維持、拡張ポインターの無視、作成・クリーンアップ・クローズ状態、破損レコードと IRQL を検査します。独自および実 WDK 通常／CFG フィクスチャは既存のバックエンド、再配置、スケジューリング、呼び出し元寿命の組合せで静的・動的クエリを実行します。

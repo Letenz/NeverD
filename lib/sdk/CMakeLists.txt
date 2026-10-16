@@ -26,6 +26,7 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPILocalTypes.cpp
     capi/NeverDCAPITypeFit.cpp
     capi/LocalTypesDebugContext.cpp
+    capi/SessionSidecar.cpp
     capi/NeverDCAPIOptimize.cpp
     capi/NeverDCAPIPatch.cpp
     capi/NeverDCAPISourcePatch.cpp

@@ -97,6 +97,155 @@ TEST_F(PEFixedImageTest, RawArchitectureCannotRelabelEvidence) {
   EXPECT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
 }
 
+TEST_F(PEFixedImageTest, RawSegmentedWriteContractBindsUnusedCapability) {
+  auto Loaded = load(machineExitFixture({0xff, 0xd0}));
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  auto O = machineExitOptions(Base + 0x1000, MachineExitKind::Call);
+  const auto Before = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+  ASSERT_TRUE(Before.complete()) << Before.Diagnostic;
+  ASSERT_TRUE(Before.RawEnvironment);
+  O.X64SegmentedWrites = true;
+  const auto After = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+  ASSERT_TRUE(After.complete()) << After.Diagnostic;
+  ASSERT_TRUE(After.RawEnvironment);
+  EXPECT_NE(Before.RawEnvironment->Domain->DomainDigest,
+            After.RawEnvironment->Domain->DomainDigest);
+  auto Error = validateSpecializationRawEnvironment(After, O);
+  EXPECT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+  Error = validateSpecializationRawEnvironment(Before, O);
+  ASSERT_TRUE(bool(Error));
+  llvm::consumeError(std::move(Error));
+  O.X64SegmentedWrites = false;
+  Error = validateSpecializationRawEnvironment(After, O);
+  ASSERT_TRUE(bool(Error));
+  llvm::consumeError(std::move(Error));
+}
+
+TEST_F(PEFixedImageTest, RawMXCSRContractBindsBothWritableMasks) {
+  auto Loaded = load(machineExitFixture({0xff, 0xd0}));
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  auto O = machineExitOptions(Base + 0x1000, MachineExitKind::Call);
+  const auto Before = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+  ASSERT_TRUE(Before.complete()) << Before.Diagnostic;
+  std::set<std::string> Digests{Before.RawEnvironment->Domain->DomainDigest};
+  for (uint32_t Mask : {0xffbfU, 0xffffU}) {
+    O.X64MXCSRMask = Mask;
+    const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    ASSERT_TRUE(R.RawEnvironment);
+    EXPECT_TRUE(Digests.insert(R.RawEnvironment->Domain->DomainDigest).second);
+    auto Error = validateSpecializationRawEnvironment(R, O);
+    ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+    Error = validateSpecializationRawEnvironment(Before, O);
+    ASSERT_TRUE(bool(Error));
+    llvm::consumeError(std::move(Error));
+    O.X64MXCSRMask = Mask ^ 0x40;
+    Error = validateSpecializationRawEnvironment(R, O);
+    ASSERT_TRUE(bool(Error));
+    llvm::consumeError(std::move(Error));
+  }
+}
+
+TEST_F(PEFixedImageTest, RawMXCSRNativeLoadsRetainReservedBitProofs) {
+  for (bool Vex : {false, true})
+    for (bool Invalid : {false, true}) {
+      // mov dword ptr [rbx], immediate; (v)ldmxcsr [rbx]; ret.
+      std::vector<uint8_t> Code{
+          0xc7, 0x03, 0x80, 0x1f, uint8_t(Invalid ? 1 : 0), 0};
+      if (Vex)
+        Code.insert(Code.end(), {0xc5, 0xf8, 0xae, 0x13});
+      else
+        Code.insert(Code.end(), {0x0f, 0xae, 0x13});
+      const auto Exit = Base + 0x1000 + Code.size();
+      Code.push_back(0xc3);
+      auto Loaded = load(machineExitFixture(Code));
+      ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+      auto O = machineExitOptions(Exit, MachineExitKind::Return);
+      EXPECT_FALSE(
+          specializeBinaryInterpreter(*Loaded, Base + 0x1000, O).complete());
+      O.X64MXCSRMask = 0xffbf;
+      const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+      if (Invalid) {
+        EXPECT_EQ(R.Status, SpecializationStatus::Unsupported);
+        EXPECT_NE(R.Diagnostic.find("reserved bits"), std::string::npos);
+        EXPECT_TRUE(R.Residual.Blocks.empty());
+        continue;
+      }
+      ASSERT_TRUE(R.complete()) << R.Diagnostic;
+      auto Error = validateSpecializationRawEnvironment(R, O);
+      ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+      unsigned Loads = 0;
+      for (const auto &Block : R.Residual.Blocks)
+        for (const auto &Op : Block.Ops)
+          if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+              Op.Inputs[0].Offset == uint64_t(Intrinsic::Ldmxcsr))
+            ++Loads;
+      EXPECT_EQ(Loads, 1U);
+    }
+}
+
+TEST_F(PEFixedImageTest, RawSegmentedWriteCannotPreserveAliasedNativeReturn) {
+  // CALL reaches the store at +11; the outer RET at +10 is a declared exit.
+  // A fixed, arbitrary segment base can place the store on the internal return
+  // word, even though RBX itself has external entry provenance.
+  const std::vector<uint8_t> Code{0xe8, 6, 0,    0,    0,    0xb8, 7,    0,
+                                  0,    0, 0xc3, 0x65, 0x48, 0x89, 0x0b, 0xc3};
+  for (bool Store : {false, true}) {
+    auto Bytes = Code;
+    if (!Store)
+      std::fill(Bytes.begin() + 11, Bytes.begin() + 15, 0x90);
+    auto Loaded = load(machineExitFixture(Bytes));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    auto O = machineExitOptions(Base + 0x100a, MachineExitKind::Return);
+    O.X64SegmentedWrites = true;
+    O.ProveStoreReturnSlotSeparation = true;
+    const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+    if (!Store) {
+      ASSERT_TRUE(R.complete()) << R.Diagnostic;
+      auto Error = validateSpecializationRawEnvironment(R, O);
+      EXPECT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+    } else {
+      EXPECT_FALSE(R.complete());
+      EXPECT_NE(R.Diagnostic.find("return address"), std::string::npos)
+          << R.Diagnostic;
+      EXPECT_TRUE(R.Residual.Blocks.empty());
+      EXPECT_FALSE(R.RawEnvironment);
+    }
+  }
+}
+
+TEST_F(PEFixedImageTest, RawSegmentedStoreRetainsEveryScalarWidth) {
+  const std::vector<std::vector<uint8_t>> Stores{{0x65, 0x88, 0x0b},
+                                                 {0x65, 0x66, 0x89, 0x0b},
+                                                 {0x65, 0x89, 0x0b},
+                                                 {0x65, 0x48, 0x89, 0x0b}};
+  for (unsigned I = 0; I != Stores.size(); ++I) {
+    auto Code = Stores[I];
+    const auto Exit = Base + 0x1000 + Code.size();
+    Code.push_back(0xc3);
+    auto Loaded = load(machineExitFixture(Code));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    auto O = machineExitOptions(Exit, MachineExitKind::Return);
+    O.X64SegmentedReads = true;
+    EXPECT_FALSE(
+        specializeBinaryInterpreter(*Loaded, Base + 0x1000, O).complete());
+    O.X64SegmentedWrites = true;
+    const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    auto Error = validateSpecializationRawEnvironment(R, O);
+    ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+    unsigned Count = 0;
+    for (const auto &B : R.Residual.Blocks)
+      for (const auto &Op : B.Ops)
+        if (Op.Opcode == NdOp::STORE) {
+          ++Count;
+          EXPECT_EQ(Op.MemoryAddressSpace, NdMemoryAddressSpace::X86GS);
+          EXPECT_EQ(lowMemoryOperands(Op).AccessSize, 1U << I);
+        }
+    EXPECT_EQ(Count, 1U);
+  }
+}
+
 TEST_F(PEFixedImageTest, RecoveryArchitectureSelectionPrecedesProvider) {
   struct UnreachableProvider final : SpecializationProvider {
     mutable unsigned DomainReads = 0;

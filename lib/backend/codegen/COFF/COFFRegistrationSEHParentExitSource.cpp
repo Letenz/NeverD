@@ -18,15 +18,21 @@ bindSEHParentExitSources(RegistrationSEHParentExitContract &Contract,
   const auto Exits = getRegistrationSEHParentExits(Source);
   if (!Exits ||
       (!Exits->empty() && !Source.RegistrationStates->SEHParentChainComplete) ||
-      !Contract.Targets.empty() || Exits->size() != Contract.Transfers.size())
+      !Contract.Targets.empty() || !Contract.SourceChainRemovals.empty() ||
+      Exits->size() != Contract.Transfers.size())
     return rejectIR("parent transfers have no complete source exit set");
   for (const auto &[Id, Exit] : *Exits) {
     const auto Found = Contract.Transfers.find(Id);
     if (Found == Contract.Transfers.end() ||
         Found->second.Callback != Exit.EntryVA ||
-        Found->second.Address != Exit.Branch->Addr)
+        Found->second.Address != Exit.Operation->Addr)
       return rejectIR("parent transfer changed its source instruction");
     Contract.Targets.emplace(Id, Exit.TargetBlock);
+    if (Exit.Operation->Opcode == NdOp::STORE &&
+        !Contract.SourceChainRemovals
+             .emplace(Exit.Operation->Addr, Exit.Operation->OriginSeq)
+             .second)
+      return rejectIR("parent transfer duplicates a source chain removal");
   }
   return llvm::Error::success();
 }

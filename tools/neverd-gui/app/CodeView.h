@@ -4,6 +4,8 @@
 #include "LibraryCodeView.h"
 #include "StyledText.h"
 
+#include "neverd/support/IntegerLiterals.h"
+
 #include <QAbstractScrollArea>
 #include <QHash>
 #include <QJsonArray>
@@ -54,6 +56,10 @@ public:
   /// Select the first row mapped to \p address, waiting for all pages and
   /// expanding its fold if needed. A new load or cursor move cancels the wait.
   void selectAddress(Address address);
+  /// Follow the disassembly's cursor to \p address: move to the first shown
+  /// row mapped to it and mark the others, without unfolding, waiting or
+  /// reporting an instruction no row maps. Neither move says locationChanged.
+  void revealAddress(Address address);
   QString currentToken() const;
   /// The selected source name's image address or declared-local identity.
   std::optional<QJsonObject> renameTarget() const;
@@ -71,6 +77,24 @@ public:
   quint64 documentVersion() const { return serial_; }
   /// The original source row under the cursor, independent of folding.
   std::optional<QJsonObject> commentTarget() const;
+  /// The integer literal under the cursor in source code the worker edits,
+  /// as a number edit names it: its source line, that line's text as the
+  /// engine wrote it, and its index among the line's literals, counted as
+  /// neverd/support/IntegerLiterals.h counts them.
+  struct NumberTarget {
+    int line = 0;
+    QString anchor;
+    int index = 0;
+    /// The literal as the engine wrote it, which the worker spells the
+    /// other bases from.
+    IntegerLiteral literal;
+    LiteralSyntax syntax = LiteralSyntax::C;
+    /// The base it reads in now.
+    LiteralRadix shown = LiteralRadix::Decimal;
+    /// The base the user gave it; Number where the decompiler chose.
+    LiteralRadix chosen = LiteralRadix::Number;
+  };
+  std::optional<NumberTarget> numberTarget() const;
   QString selectedText() const;
   QString allText() const;
   bool findText(const QString &text, bool forward);
@@ -141,6 +165,8 @@ public:
                                                              int column) const;
 
 signals:
+  /// The cursor moved to a row mapped to \p address, not by selectAddress or
+  /// revealAddress following the disassembly.
   void locationChanged(neverd::gui::Address address);
   void addressSelected(neverd::gui::Address address, bool mapped);
   /// A name was double-clicked; the owner resolves and navigates.
@@ -212,6 +238,14 @@ private:
   LibraryCodeView library_;
   std::optional<Address> function_;
   std::optional<Address> pendingAddress_, selectedAddress_;
+  /// Where the cursor and the view were when the same function loads again,
+  /// after an edit: the source lines of the cursor and of the first shown
+  /// line, and the cursor's column. The first pages clamp both, so the
+  /// complete text puts them back.
+  struct SourcePlace {
+    int cursorLine = 0, cursorColumn = 0, topLine = 0;
+  };
+  std::optional<SourcePlace> placeAfterLoad_;
   QString representation_, status_, highlight_;
   QJsonObject sourceOptions_, renderedOptions_;
   quint64 serial_ = 0;
@@ -265,6 +299,8 @@ private:
   int cursorLine_ = 0, cursorColumn_ = 0;
   std::optional<std::pair<int, int>> anchor_;
   bool selecting_ = false;
+  /// The cursor follows the disassembly, which needs no word of the move.
+  bool following_ = false;
   QVector<int> marked_;
   qreal charWidth_ = 8;
   int lineHeight_ = 16, ascent_ = 12, gutterChars_ = 4;

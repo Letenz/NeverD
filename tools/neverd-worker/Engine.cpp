@@ -731,7 +731,7 @@ void Engine::namesChanged() {
   functionOrder_.clear();
 }
 Json Engine::functionGraph(std::uint64_t address) {
-  prepareFunction(address);
+  prepareFunction(address, "low");
   return backendJson(neverd_cfg_json(session_, address), true);
 }
 void Engine::commentsChanged() {

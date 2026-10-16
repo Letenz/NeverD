@@ -53,6 +53,16 @@ def run(executable):
         high = source(llvm_client, B)
         assert high["fixture_prepared_view"] == "source", high
         reused(source(llvm_client, representation="llvmc"), llvm)
+        # Opening a native graph prepares only its analysis. Source for the
+        # same entry then uses the retained pipeline instead of preparing again.
+        graph_client = clients.enter_context(Client(executable))
+        ok(graph_client, "open", {"path": str(binary), "analysis": False,
+                                   "read_only": True})
+        ok(graph_client, "cfg", {"address": A})
+        graph_source = source(graph_client)
+        assert graph_source["fixture_prepared_view"] == "low", graph_source
+        assert graph_source["fixture_prepares"] == 1, graph_source
+        reused(source(graph_client), graph_source)
         first = source(client)
         assert first["fixture_prepares"] == 1 and first["fixture_pages"] == 1
         assert first["fixture_renders"] == 0, first

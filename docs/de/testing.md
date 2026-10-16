@@ -12,6 +12,14 @@ risikoreichen Pull Request das breitere Aggregat aus.
 
 `PipelineOutcome.ResolvedCalls*` prüft Registergruppen, call/invoke-Identität, Zusammenfügen und Aufteilen von Stackbytes, schmale Werte in ihren eigenen Plätzen sowie die Ablehnung fehlender Bytes. `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` prüft die aufgezeichneten Offsets. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` deckt x64, ARM32 und AArch64 für ELF, PE und Mach-O ab. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` prüft alle drei Formate und verwirft überschriebene Längen, beschreibbare oder zu große Bereiche, gleichnamige lokale Funktionen, falsche Quellregister, alternative Einstiege und verschiebbare Objektdateien. C-Differenztests kompilieren die Referenz separat mit O0 und den erzeugten C-Code mit O2, damit ein fehlerhaft optimierter Rekurrenzwert des Hostcompilers die Referenz nicht verfälscht. Der AArch64-FMA-Test fordert `-mfma` nur auf x86-Hosts an.
 
+## Prüfungen der MXCSR-Wiederherstellung
+
+`InterpreterSpecialization.MXCSR*` prüft beliebige Anfangszustände, exakte Speicherwerte, reservierte Bits, DAZ, Aliase, ungültige Formen, Knotenprojektion und Budgetgrenzen. `PEFixedImageTest.RawMXCSR*` prüft Legacy/VEX-Bytes und maskengebundene Nachweise. Maschinenzustands- und native/LLVM-Verfeinerungstests verhindern, dass ungenutzte Fähigkeiten die Schnittstellen erweitern.
+
+## Tests für segmentierte Schreibzugriffe
+
+`InterpreterSpecialization.SegmentedWrite*` prüft unabhängige Byte-Speicherergebnisse, alle Skalarbreiten, Adressüberlauf, Frame-Aliase, überschriebene Zeigerherkunft, knotenübergreifende Invalidierung und genaue oder zu kleine Budgets. `SegmentedWritesAndReadsShareLinearMemory` deckt gleiche und verschiedene Basisadressen ab. `PEFixedImageTest.RawSegmented*` prüft native Bytes, die Ablehnung von Rückkehr-Aliasen und geänderte Fähigkeitsnachweise. Bestehende Kompatibilitätswerte bleiben erhalten. Die Tests für Spezialisierung, feste PE-Abbilder, Maschinenzustand und native/LLVM-Verfeinerung bauen; Ablehnungsprüfungen erfassen auch ungenutzte Schreibfähigkeiten.
+
 ## Konkrete Eingangsspeicher-Seeds
 
 `NeverDSymbolicTests`, `NeverDConcolicTests` und `NeverDConcolicIntegrationTests` ausführen. `LowIRConcolicMemory.*` und symbolische Tests prüfen beide Byteordnungen, Alias-Stores, getrennte Bänke, fehlende/ungültige Bereiche, Reset und verspätete Seeds, Budgetgrenzen, Epochen, Modellbreiten, Speicher-Replay und Deduplizierung. Die bisherige native Format-/Architekturmatrix bleibt erhalten.
@@ -2143,3 +2151,5 @@ Debug-Regressionen prüfen die short-Regeln aller drei Eingänge, Lesen an Gastg
 Regressionen prüfen gehaltene/veraltete Threads, Anforderer-/Worker-/angeheftete Kontexte, Modulgrenzen und Lücken, Ausgabebreite, Lebensdauer, Rechte und IRQL. Originale und echte WDK-CRT-Fixtures führen statische/dynamische KernelMode-Abfragen aus; Datei-Fixtures prüfen auch UserMode-Aufrufer. Beide WDK-Familien enthalten Normal/CFG. Zwei fehlende Deklarationen verwenden lokale ABIs mit echten Kit-Typen. Nicht verfügbare Backends bleiben übersprungen.
 
 Die alten MDL-Aufrufe werden mit echten statischen und dynamischen WDK-Aufrufen, angehängten Workern, eigenen Abbild-Aliasen, Modusverengung, IRQL, Prozesswechseln, abgelaufenen Deskriptoren, doppelten Kernelabbildungen und injiziertem Budgetmangel geprüft. Kernelmangel erhält das MDL und meldet den nicht modellierten Bugcheck; Benutzermangel bleibt abfangbar. Originale Wrapper-Proben prüfen nur Argumentweitergabe und Rückgabebreite, nicht den injizierten Mapper.
+
+`KernelFileQueries.BaseDevice*` prüft die Basis unter zwei Filtern, unveränderte Referenzen, ignorierte Erweiterungszeiger, Erstellungs-/Bereinigungs-/Schließzustände, beschädigte Datensätze und IRQL. Eigene und echte WDK-Fixtures in Normal-/CFG-Varianten führen statische und dynamische Abfragen in der bestehenden Matrix aus Backends, Relokation, Planung und Aufruferlebensdauer aus.

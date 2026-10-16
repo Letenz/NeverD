@@ -167,6 +167,23 @@ QPushButton *buttonNamed(QWidget *window, const QString &text) {
 }
 /// Accepts every "Load a new file" dialog with its defaults while it lives,
 /// as pressing Enter does.
+/// Shows \p code's context menu at its cursor and hands it to \p use, which
+/// may trigger one of its entries; the menu then closes.
+void withCodeMenu(CodeText *code, const std::function<void(QMenu *)> &use) {
+  QTimer probe;
+  QObject::connect(&probe, &QTimer::timeout, &probe, [&] {
+    auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+    if (!menu)
+      return;
+    probe.stop();
+    use(menu);
+    menu->close();
+  });
+  probe.start(5);
+  emit code->contextMenuRequested(
+      code->viewport()->mapToGlobal(QPoint(40, 40)));
+}
+
 class LoadDialogAcceptor {
 public:
   LoadDialogAcceptor() {
@@ -973,7 +990,6 @@ private slots:
     auto *code = view->text();
     QTRY_VERIFY(!code->loading() && code->lineCount() > 2);
     code->setPreludeFolded(false);
-    const auto initialAssembly = assembly->currentAddress();
     if (native) {
       code->setCursorLine(0);
       QVERIFY(code->findText(QStringLiteral("return ("), true));
@@ -995,17 +1011,34 @@ private slots:
       QTRY_VERIFY(decoded);
     } else
       QCOMPARE(target, std::optional<Address>(function + 2));
-    // Clicks and arrow keys select source rows without moving assembly.
+    // Clicks and arrow keys move the source cursor and take the assembly
+    // cursor to the row's instruction, leaving the focus and the jump
+    // history where they are.
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    const bool back = assembly->canGoBack();
+    const bool forward = assembly->canGoForward();
     if (!native) {
+      code->setCursorLine(0);
+      assembly->navigate(function, false);
+      QTRY_COMPARE(assembly->currentAddress(),
+                   std::optional<Address>(function));
       const int height = int(
           std::ceil(QFontMetricsF(Theme::instance().codeFont()).lineSpacing()));
       QTest::mouseClick(code->viewport(), Qt::LeftButton, {},
                         QPoint(100, 2 * height + height / 2));
       QCOMPARE(code->currentAddress(), target);
+      QTRY_COMPARE(assembly->currentAddress(), target);
     }
+    assembly->navigate(function, false);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
     QTest::keyClick(code, Qt::Key_Right);
-    QTest::qWait(250);
-    QCOMPARE(assembly->currentAddress(), initialAssembly);
+    QTRY_COMPARE(assembly->currentAddress(), target);
+    QVERIFY(code->hasFocus());
+    QCOMPARE(assembly->canGoBack(), back);
+    QCOMPARE(assembly->canGoForward(), forward);
     // Assembly navigation leaves this unpinned source on its own function.
     assembly->navigate(other);
     QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(other));
@@ -1046,6 +1079,289 @@ private slots:
     QTRY_VERIFY(code->hasFocus());
     QTest::keyClick(code, Qt::Key_Tab);
     QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
+  }
+
+  void contextMenusOfferTabWithItsKey() {
+    // Tab's switch to the other pane is in both context menus with its key:
+    // a code window's as Jump to disassembly beside the synchronization
+    // switch, the disassembly's as Jump to pseudocode.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    const Address function = Base + 0x140;
+    assembly->navigate(function);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 3);
+    code->setPreludeFolded(false);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    code->setCursorLine(3);
+    assembly->navigate(function, false);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
+    QString shown;
+    bool jumpOffered = true;
+    withCodeMenu(code, [&](QMenu *menu) {
+      auto *cross =
+          menu->findChild<QAction *>(QStringLiteral("codeJumpDisassembly"));
+      QVERIFY(cross);
+      shown = cross->text();
+      // The disassembly's own wording would point back at this window.
+      jumpOffered =
+          menu->actions().contains(bench.action(ActionId::JumpPseudocode));
+      cross->trigger();
+    });
+    QCOMPARE(shown, QStringLiteral("Jump to disassembly\tTab"));
+    QVERIFY(!jumpOffered);
+    QTRY_VERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(function + 6));
+
+    QStringList texts;
+    QTimer probe;
+    connect(&probe, &QTimer::timeout, this, [&] {
+      auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+      if (!menu)
+        return;
+      probe.stop();
+      for (const QAction *action : menu->actions())
+        texts << action->text();
+      menu->close();
+    });
+    probe.start(5);
+    emit assembly->contextMenuRequested(assembly->mapToGlobal(QPoint(40, 40)));
+    QVERIFY(texts.contains(bench.action(ActionId::JumpPseudocode)->text()));
+    QCOMPARE(bench.action(ActionId::JumpPseudocode)->shortcut(),
+             QKeySequence(Qt::Key_Tab));
+  }
+
+  void assemblyAndCodeCursorsFollowEachOther() {
+    // A move in the disassembly takes a code window showing the same
+    // function to the instruction's row and leaves the focus there; a code
+    // window showing another function stays. "Synchronize with disassembly"
+    // in the code's context menu lets both browse apart.
+    QTemporaryDir directory;
+    Workbench bench;
+    const auto restore = qScopeGuard(
+        [] { QSettings().remove(QStringLiteral("code/synchronize")); });
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    const Address function = Base + 0x140;
+    assembly->navigate(function);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 3);
+    code->setPreludeFolded(false);
+    code->setCursorLine(1);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    assembly->focusContent();
+    QTRY_VERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
+    assembly->navigate(function + 6, false);
+    QTRY_COMPARE(code->cursorLine(), 3);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(function + 6));
+    QVERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
+    assembly->navigate(function + 2, false);
+    QTRY_COMPARE(code->cursorLine(), 2);
+    // An instruction no row maps leaves the cursor where it is.
+    assembly->navigate(function + 9, false);
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(function + 9));
+    QTest::qWait(100);
+    QCOMPARE(code->cursorLine(), 2);
+    // Another function is not decompiled on the way.
+    assembly->navigate(Base + 0x180, false);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x180));
+    QTest::qWait(200);
+    QCOMPARE(code->function(), std::optional<Address>(function));
+    QCOMPARE(code->cursorLine(), 2);
+
+    // Apart, the code's rows move neither the disassembly nor the other way.
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    withCodeMenu(code, [](QMenu *menu) {
+      auto *synchronize =
+          menu->findChild<QAction *>(QStringLiteral("codeSynchronize"));
+      QVERIFY(synchronize && synchronize->isChecked());
+      synchronize->trigger();
+    });
+    QVERIFY(
+        !QSettings().value(QStringLiteral("code/synchronize"), true).toBool());
+    code->setCursorLine(3);
+    QTest::qWait(200);
+    QCOMPARE(assembly->currentFunction(), std::optional<Address>(Base + 0x180));
+    assembly->navigate(function, false);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
+    assembly->focusContent();
+    QTRY_VERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
+    assembly->navigate(function + 2, false);
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(function + 2));
+    QTest::qWait(100);
+    QCOMPARE(code->cursorLine(), 3);
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    withCodeMenu(code, [](QMenu *menu) {
+      auto *synchronize =
+          menu->findChild<QAction *>(QStringLiteral("codeSynchronize"));
+      QVERIFY(synchronize && !synchronize->isChecked());
+      synchronize->trigger();
+    });
+    code->setCursorLine(2);
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(function + 2));
+    code->setCursorLine(3);
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(function + 6));
+  }
+
+  void pseudocodeNumbersTakeTheBaseTheUserPicks() {
+    // Hex-Rays' bases for a pseudocode number: H toggles between
+    // hexadecimal and decimal, the context menu offers each base with what
+    // the number would read in it, # gives the number back to the
+    // decompiler, a base that would change its type is refused, and each
+    // change is a step of the history.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address function = Base + 0x140;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 3);
+    code->setPreludeFolded(false);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    // A comment's digits are no number.
+    code->setCursorLine(1);
+    QVERIFY(code->findText(QStringLiteral("8 */"), true));
+    QVERIFY(!code->numberTarget());
+    code->setCursorLine(1);
+    QVERIFY(code->findText(QStringLiteral("24"), true));
+    const auto target = code->numberTarget();
+    QVERIFY(target.has_value());
+    QCOMPARE(target->line, 2);
+    QCOMPARE(target->index, 0);
+    QCOMPARE(target->literal.Text, std::string("24"));
+    QCOMPARE(target->chosen, neverd::LiteralRadix::Number);
+
+    QVERIFY(bench.action(ActionId::EditOperandDecimal)->isEnabled());
+    QVERIFY(!bench.action(ActionId::EditOperandOffset)->isEnabled());
+    bench.action(ActionId::EditOperandDecimal)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(QStringLiteral("v0 + 0x18; /* 8 */")),
+        OpenTimeoutMs);
+    QStringList offered;
+    withCodeMenu(code, [&](QMenu *menu) {
+      for (const QAction *action : menu->actions())
+        if (action->objectName().startsWith(QStringLiteral("codeNumber_")))
+          offered << action->text();
+      auto *hex = menu->findChild<QAction *>(QStringLiteral("codeNumber_hex"));
+      QVERIFY(hex && hex->isChecked());
+      auto *octal =
+          menu->findChild<QAction *>(QStringLiteral("codeNumber_octal"));
+      QVERIFY(octal && octal->isEnabled());
+      octal->trigger();
+    });
+    QCOMPARE(offered, (QStringList{QStringLiteral("&Number\t24"),
+                                   QStringLiteral("&Hexadecimal\t0x18"),
+                                   QStringLiteral("&Decimal\t24"),
+                                   QStringLiteral("Octa&l\t030"),
+                                   QStringLiteral("&Binary\t0b11000"),
+                                   QStringLiteral("&Character\t'\\030'")}));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(QStringLiteral("v0 + 030; /* 8 */")),
+        OpenTimeoutMs);
+    bench.action(ActionId::EditOperandNumber)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(QStringLiteral("v0 + 24; /* 8 */")),
+        OpenTimeoutMs);
+    QTRY_VERIFY(bench.session.canUndo());
+    bench.session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(QStringLiteral("v0 + 030; /* 8 */")),
+        OpenTimeoutMs);
+
+    // An unsigned int has no character constant; in decimal it keeps its
+    // type with a suffix.
+    code->setCursorLine(2);
+    QVERIFY(code->findText(QStringLiteral("0xFFFFFFFF"), true));
+    bench.action(ActionId::EditOperandChar)->trigger();
+    QTest::qWait(200);
+    QVERIFY(code->allText().contains(QStringLiteral("v1 & 0xFFFFFFFF;")));
+    bench.action(ActionId::EditOperandDecimal)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(QStringLiteral("v1 & 4294967295U;")),
+        OpenTimeoutMs);
+    QVERIFY(code->allText().contains(QStringLiteral("v0 + 030; /* 8 */")));
+  }
+
+  void codeEditKeepsThePlaceInALongFunction() {
+    // An edit loads the function's pages again. The first page used to
+    // clamp the cursor and the view, which then stayed near its end: the
+    // cursor on a number of the third page jumped away from it.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers-paged.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address function = Base + 0x140;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 600,
+                             OpenTimeoutMs);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    code->setCursorLine(0);
+    QVERIFY(code->findText(QStringLiteral("24"), true));
+    const int line = code->cursorLine();
+    const int top = code->verticalScrollBar()->value();
+    QVERIFY(line > 512);
+    QVERIFY(top > 256);
+    bench.action(ActionId::EditOperandDecimal)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(QStringLiteral("return v0 + 0x18;")),
+        OpenTimeoutMs);
+    QCOMPARE(code->cursorLine(), line);
+    QCOMPARE(code->verticalScrollBar()->value(), top);
+    const auto target = code->numberTarget();
+    QVERIFY(target.has_value());
+    QCOMPARE(target->shown, neverd::LiteralRadix::Hex);
   }
 
   void graphJumpDuringFunctionLoadKeepsLatestAddress() {
@@ -4370,7 +4686,16 @@ private slots:
       return target && target->value("parameter").toInt(-1) == position;
     };
     QTRY_VERIFY(onParameter(QStringLiteral("arg0"), 0));
-    QTRY_VERIFY(bench.action(ActionId::EditConvertToStruct)->isEnabled());
+    // The commands follow the view the focus moves to, at once: T is the
+    // disassembly's, Convert to struct * the pseudocode's.
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    bench.window->disassembly()->focusContent();
+    QVERIFY(bench.action(ActionId::EditOperandStruct)->isEnabled());
+    QVERIFY(!bench.action(ActionId::EditConvertToStruct)->isEnabled());
+    code->setFocus();
+    QVERIFY(bench.action(ActionId::EditConvertToStruct)->isEnabled());
+    QVERIFY(!bench.action(ActionId::EditOperandStruct)->isEnabled());
 
     QStringList listed;
     QString member;
@@ -4970,20 +5295,23 @@ private slots:
     QCOMPARE(pseudocode->text()->function(),
              std::optional<Address>(Base + 0x140));
 
-    // IR rows select independently; Tab moves the disassembly cursor.
+    // An IR row the user selects takes the disassembly cursor along; Tab
+    // moves the focus there too.
     bench.action(ActionId::ViewLowIR)->trigger();
     CodeView *ir = nullptr;
     QTRY_VERIFY((ir = bench.codeView(QStringLiteral("low"))) != nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(ir->text()->lineCount() > 3, OpenTimeoutMs);
-    ir->text()->setCursorLine(3);
-    QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x140));
     bench.window->activateWindow();
     QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
     ir->text()->setFocus();
     QTRY_VERIFY(ir->text()->hasFocus());
-    bench.action(ActionId::JumpPseudocode)->trigger();
+    ir->text()->setCursorLine(3);
     QTRY_COMPARE(disassembly->currentItem(),
                  std::optional<Address>(Base + 0x143));
+    QVERIFY(ir->text()->hasFocus());
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    QTRY_VERIFY(disassembly->isAncestorOf(QApplication::focusWidget()));
+    QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x143));
 
     // Copy takes the lines selected in the window holding the focus, also in
     // an IR window switched to pseudocode, which is not the pseudocode

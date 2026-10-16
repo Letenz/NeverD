@@ -41,7 +41,8 @@ void mark(llvm::Instruction &Instruction, va_t Owner, uint64_t Identity,
 std::optional<SEHParentExitPlan> prepareSEHParentExits(
     const MedFunc &Source,
     const std::map<int, llvm::BasicBlock *> &OriginalBlocks,
-    const std::map<llvm::BasicBlock *, std::pair<int, int>> &CopyEdges) {
+    const std::map<llvm::BasicBlock *, std::pair<int, int>> &CopyEdges,
+    const std::map<std::pair<va_t, int>, llvm::Instruction *> *ChainIR) {
   auto Sources = getRegistrationSEHParentExits(Source);
   if (!Sources ||
       (!Sources->empty() &&
@@ -56,6 +57,21 @@ std::optional<SEHParentExitPlan> prepareSEHParentExits(
     if (SourceBlock == OriginalBlocks.end() ||
         TargetBlock == OriginalBlocks.end())
       return std::nullopt;
+    if (Exit.Operation->Opcode == NdOp::STORE) {
+      const auto Identity =
+          std::make_pair(Exit.Operation->Addr, Exit.Operation->OriginSeq);
+      if (!ChainIR || !ChainIR->count(Identity))
+        return std::nullopt;
+      auto *Store =
+          llvm::dyn_cast_or_null<llvm::StoreInst>(ChainIR->at(Identity));
+      if (!Store || Store->getParent() != SourceBlock->second ||
+          !llvm::isa<llvm::ConstantPointerNull>(Store->getPointerOperand()) ||
+          Store->getPointerAddressSpace() != 257 ||
+          !Store->getValueOperand()->getType()->isIntegerTy(32) ||
+          Store->isAtomic() || Store->isVolatile() ||
+          !Plan.ChainRemovals.emplace(Identity, Store).second)
+        return std::nullopt;
+    }
     auto *Branch = llvm::dyn_cast<llvm::UncondBrInst>(
         SourceBlock->second->getTerminator());
     if (!Branch)
@@ -78,6 +94,13 @@ SEHParentExitProjection::SEHParentExitProjection(llvm::Function &Parent,
     : Parent(Parent), Owner(Owner), Plan(Plan) {
   if (Plan.Sources.empty())
     return;
+  // The private transfer restores the physical caller chain. A source
+  // fallthrough's virtual FS removal is subsumed by that same checked write,
+  // and must never execute on the runtime callback's current chain.
+  for (const auto &[Identity, Store] : Plan.ChainRemovals) {
+    DetachedRemovals.emplace(Store, Store->getNextNode());
+    Store->removeFromParent();
+  }
   llvm::IRBuilder<> Entry(&*Parent.getEntryBlock().getFirstInsertionPt());
   Context = Entry.CreateAlloca(llvm::ArrayType::get(Entry.getPtrTy(), 5),
                                nullptr, "registration.parent.context");
@@ -112,7 +135,7 @@ SEHParentExitProjection::SEHParentExitProjection(llvm::Function &Parent,
     Restore->setVolatile(true);
     auto *Call = Builder.CreateCall(Longjmp, {Context});
     Call->setDoesNotReturn();
-    mark(*Call, Owner, Plan.Sources.at(Id).Branch->Addr, 3);
+    mark(*Call, Owner, Plan.Sources.at(Id).Operation->Addr, 3);
     Calls.emplace(Id, Call);
     Builder.CreateUnreachable();
   }
@@ -126,6 +149,9 @@ SEHParentExitProjection::~SEHParentExitProjection() {
 void SEHParentExitProjection::rollback() {
   if (Committed || !Context)
     return;
+  for (const auto &[Store, Next] : DetachedRemovals)
+    Store->insertBefore(Next->getIterator());
+  DetachedRemovals.clear();
   for (const auto &[Id, Call] : Calls) {
     Plan.Branches.at(Id)->setSuccessor(0, OriginalTargets.at(Id));
     Call->getParent()->eraseFromParent();
@@ -142,6 +168,9 @@ void SEHParentExitProjection::rollback() {
 void SEHParentExitProjection::commit() {
   assert(!Committed && "parent continuation committed twice");
   Committed = true;
+  for (const auto &[Store, Next] : DetachedRemovals)
+    Store->deleteValue();
+  DetachedRemovals.clear();
 }
 
 void SEHParentExitProjection::emitCapture(

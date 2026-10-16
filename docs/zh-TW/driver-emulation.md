@@ -769,3 +769,5 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 `IoThreadToProcess` 共用保留執行緒的建立行程身分。`PsGetCurrentThreadPreviousMode` 與 `ExGetPreviousMode` 共用狀態及 DISPATCH_LEVEL 上限，原先過寬的准入已修正。`RtlPcToFileHeader` 以完整位寬查詢固定模組清單，寫入八位元組結果，未命中寫零，不讀取 PC 所指記憶體。有界非分頁查詢允許所有有效 IRQL，但輸出必須駐留；缺少清單明確失敗，動態展開表及 retpoline 範圍仍不在模型內。
 
 `MmMapLockedPages` 共用現有映射器，固定使用快取頁面、HIGH 優先級及耗盡時 bugcheck 旗標。核心映射允許 DISPATCH_LEVEL；程序所屬的使用者檢視要求不高於 APC_LEVEL，耗盡時保留既有資源例外。帶 bugcheck 旗標的核心映射耗盡會明確停止為模型錯誤，不能作為成功呼叫傳回 NULL；實際 bugcheck 處理仍未建模。
+
+[`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject) 借用存活檔案的基礎裝置，不遍歷附加堆疊、不增加參照，也不讀取檔案擴充。本設定要求未掛載的自有路由及 IRQL <= DISPATCH_LEVEL；掛載 VPB 或錯誤的物件／拓撲狀態明確停止。微軟將此介面保留供系統使用，此 IRQL 上限屬於模型策略，並非公布的 Windows 契約。

@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 5edfb602025b5842453dbc5914dad53572f14fdc63e424ca65e66d45415e59c3 -->
+<!-- i18n-source: 6d44f96afae7f68162fb5f61324f22a7893d7ea9bb0e2df38768afc67bf2c060 -->
 
 [← 문서 목록](README.md)
 
@@ -33,7 +33,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 `LC_UNIXTHREAD`는 PC만 설정된 완전한 네이티브 64비트 일반 레지스터 레코드 하나를 요구합니다. 초기 스택에는 argc, 종료된 argv/envp, `executable_path=<input filename>`을 포함하는 종료된 apple 벡터가 있습니다. 사용자 SP/플래그, 다른 레지스터, 추가 flavor, 충돌하는 진입점은 거부합니다. 호스트 환경이나 Linux 보조 벡터를 상속하지 않습니다. [dyld 구조](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md)를 참고하세요.
 
-아래의 유한 libSystem 계약 밖 dylib 및 가져오기, 생성자/소멸자, TLS 섹션, arm64e/PAC, 미지원 CPU 하위 유형, 암호화 및 모델링하지 않은 로드 명령은 실행 전에 실패합니다. 지원하는 PIE는 선호 주소를 사용하며 ASLR이 아닙니다. 서명 blob은 메타데이터이며 AMFI나 entitlement 정책을 구현하지 않습니다.
+아래의 유한 libSystem, 명시적 시작 dylib 및 일반 C 주 스레드 TLS 계약을 지원합니다. 생성자/소멸자, TLS 콜백, arm64e/PAC, 미지원 CPU 하위 유형, 암호화와 미모델링 명령은 실행 전에 실패합니다. 주 실행 파일은 선호 주소를, dylib는 결정적 독립 주소를 사용합니다. 서명 메타데이터는 AMFI나 entitlement를 구현하지 않습니다.
 
 ## Darwin 서비스
 
@@ -1799,7 +1799,7 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 ## 유한 libSystem 가져오기
 
-기본 ISA의 thin 실행 파일은 강한 `/usr/lib/libSystem.B.dylib` 의존성 하나를 바인딩할 수 있습니다. `LC_MAIN`, `MH_TWOLEVEL`, 일반 라이브러리 ordinal 및 1.0 이하 호환 버전 요구가 필요합니다. 원본 classic 포인터 스트림 또는 generic64 체인, 미정의 심볼, 정확한 슬롯과 로컬 rebase를 완전히 검증합니다. 다른 의존성, weak/threaded 바인딩, 미지원 relocation, 초기화, TLS 및 인증 포인터는 실행 전에 거부합니다.
+기본 thin 실행 파일과 아래의 명시적 시작 dylib는 강한 `/usr/lib/libSystem.B.dylib` 의존성을 바인딩합니다. 주 진입점 `LC_MAIN`, `MH_TWOLEVEL`, 일반 ordinal이 필요하며 libSystem 호환 요구는 1.0 이하여야 합니다. 원본 classic/generic64 fixup과 미정의 심볼의 완전한 바인딩을 검증합니다. 알 수 없는 심볼, weak/threaded 바인딩, 다른 relocation, 초기화 콜백과 인증 포인터는 거부합니다.
 
 가져오기가 있을 때만 인증된 진입점과 매 실행의 새 주 스레드 errno를 만듭니다. 래퍼는 Darwin 커널 효과를 공유하며 실패를 `-1`과 errno로 변환하고 성공 시 errno를 보존합니다. C `_exit`는 Mach-O `__exit`이고 C `exit`의 `_exit`는 미지원입니다. 일반 함수는 반환 프레임을 검사하며 종료 함수는 반환 주소가 필요 없습니다. 보고서는 공급자, 링크 이름, 인수 개수와 전체 비트를 유지하고 미완료/비복귀 결과는 null입니다. 기존 raw 보고서는 호환됩니다.
 
@@ -1819,7 +1819,7 @@ C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
 C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
-entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
+entry: LC_MAIN main + MH_TWOLEVEL images; ordinary positive ordinals; main preferred base
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
 errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
@@ -1835,9 +1835,32 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
+native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
 ```
 
 ```json
 {"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
+```
+
+## 명시적 시작 dylib와 주 스레드 TLS
+
+`darwin.modules`는 대소문자를 구분하는 정확한 설치 이름과 원본 Mach-O 경로를 최대 32개 지정합니다. 도달 가능한 의존성만 읽으며 `@loader_path`는 문자 그대로 비교하고 호스트 라이브러리를 검색하지 않습니다. MH_DYLIB의 ISA/플랫폼, 식별자와 버전을 확인하고 일반 ordinal로 실제 제공자를 선택합니다. 같은 이름의 export와 공유 의존성은 각각의 정체성을 유지하며 전체 입력과 상주 데이터는 공통 예산을 사용합니다.
+
+일반 C의 초기화/제로 초기화 TLS와 최대 16바이트 정렬을 지원합니다. 준비 시 모듈별 저장소를 매핑하고 비용을 계산하며 첫 접근에서 재배치된 실시간 연속 템플릿을 복사합니다. 앞선 BSS/간격 수정도 보존합니다. 기술자와 복귀 프레임을 검증하고 TLS 페이지의 재사용, 해제 및 보호 변경을 거부합니다. 원본 O0/O1/O2 classic/chained 네이티브 대조와 다섯 C/CLI/Python 프로필을 비교합니다. 순환, 약한/재export, 초기화/종료 콜백, dlopen/dlsym, 스레드와 전체 프레임워크는 미구현이며 Intel 네이티브와 실제 iOS는 미검증입니다.
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"darwin":{"modules":[{"name":"@loader_path/libneverd-base.dylib","path":"/inputs/libneverd-base.dylib"},{"name":"@loader_path/libneverd-leaf.dylib","path":"/inputs/libneverd-leaf.dylib"}]}}
+```
+
+```text
+graph: strong acyclic startup; exact install name; same ISA/platform; MH_DYLIB + LC_ID_DYLIB
+catalogue: max 32; only reachable inputs; no host lookup or @ path expansion
+budget: aggregate full files; aggregate resident mappings/TLS/metadata; 65536 records
+exports: regular / thread-local; ordinary dependency ordinal; rebased actual provider
+TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live contiguous first copy
+resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
+lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
+unsupported: cycles; weak/reexports/resolvers; imported addends; callbacks; dlopen/dlsym; threads
+workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
+native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
 ```

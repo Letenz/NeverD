@@ -2325,6 +2325,26 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>変換するには関数のパラメーターにカーソルを置いてください</translation>
     </message>
     <message>
+        <source>Jump to disassembly</source>
+        <translation>逆アセンブルへジャンプ</translation>
+    </message>
+    <message>
+        <source>Synchronize with disassembly</source>
+        <translation>逆アセンブルと同期</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>8 進数(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>基数を変更するには疑似コードの数値にカーソルを置いてください</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 はその基数では同じ型で表記できません</translation>
+    </message>
+    <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
         <translation>%1 に MAP ファイルがあるかどうか判別できませんでした：%2</translation>
     </message>

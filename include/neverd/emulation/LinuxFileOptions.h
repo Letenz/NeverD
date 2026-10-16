@@ -87,6 +87,9 @@ struct LinuxFileOptions {
   /// writes/truncate. Requires dense initial bytes/blocks, no set-ID bits and a
   /// realtime clock.
   std::set<std::string> TrackWriteMetadata;
+  /// Optional bounded entry/exit observations at the common ioctl boundary.
+  /// Capture failures never supply guest bytes or change service semantics.
+  std::optional<LinuxIoctlTraceOptions> IoctlTrace;
 };
 } // namespace neverd::emulation
 #endif

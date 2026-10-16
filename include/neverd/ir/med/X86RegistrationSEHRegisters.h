@@ -40,6 +40,10 @@ inline bool isSEHRegisterIntrinsic(const MedOp &Op) {
 /// the original CALL/RETURN's sequence identity.
 bool hasValidSEHRegisterShape(const MedOp &Op);
 
+/// Keep unused callback register transport from creating physical function
+/// parameters. Run after SSA construction and before ABI recovery.
+void discardUnusedSEHCallInputs(MedFunc &Function);
+
 } // namespace neverd::x86_registration
 
 #endif // NEVERD_IR_MED_X86REGISTRATIONSEHREGISTERS_H

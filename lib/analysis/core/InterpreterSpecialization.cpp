@@ -489,10 +489,7 @@ bool supported(const LowOp &Op, const SpecializationOptions &Options) {
                   [](const NdVar &V) { return V.Size > 8; }))
     return supportedWideOperation(Op, Options);
   if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
-      (!Options.X64SegmentedReads || Op.Opcode != NdOp::LOAD ||
-       (Op.MemoryAddressSpace != NdMemoryAddressSpace::X86FS &&
-        Op.MemoryAddressSpace != NdMemoryAddressSpace::X86GS) ||
-       (Op.NumInputs == 2 && !Op.Inputs[0].isConst())))
+      !supportsRuntimeMemoryOperation(Op, Options))
     return false;
   for (unsigned I = 0; I < Op.NumInputs; ++I)
     if (!validValue(Op.Inputs[I]))
@@ -559,6 +556,7 @@ bool supported(const LowOp &Op, const SpecializationOptions &Options) {
   case NdOp::INTRINSIC:
     return x64::runtimeFlagsIntrinsic(Op, Options.X64FlagsProfile) ||
            detail::stringTransferShape(Op) ||
+           supportsRuntimeControlOperation(Op, Options) ||
            (Options.X64CR8State && detail::taskPriorityOperation(Op));
   default:
     return false;
@@ -2195,14 +2193,8 @@ bool Specializer::evaluate(int Id) {
   const SymRef FrameRoot =
       Options.FrameBaseRegister ? Ctx.mkFreshVar(64, "entry_frame") : SymRef();
   seed(Ctx, State, FrameRoot, Draft.Incoming);
-  if (Options.X64SegmentedReads) {
-    // Projection forgets base correlations across nodes, enlarging the input
-    // domain. Distinct variables do not assert distinct linear addresses.
-    State.setX64MemoryAddressSpaceBase(NdMemoryAddressSpace::X86FS,
-                                       Ctx.mkFreshVar(64, "fs_base"));
-    State.setX64MemoryAddressSpaceBase(NdMemoryAddressSpace::X86GS,
-                                       Ctx.mkFreshVar(64, "gs_base"));
-  }
+  seedRuntimeMemoryState(Ctx, State, Options);
+  auto RuntimeControls = seedRuntimeControlState(Ctx, Options);
   // Rebuilt nodes forget correlations, including prior writes, but retain the
   // full architectural domain. Runtime intrinsics are never removed.
   SymRef TaskPriority =
@@ -2623,13 +2615,15 @@ bool Specializer::evaluate(int Id) {
       }
       LowOp Residual = Original;
       LowOp Evaluated = Original;
-      const bool SegmentedRead =
-          Original.Opcode == NdOp::LOAD &&
+      const bool RuntimeMemory =
           Original.MemoryAddressSpace != NdMemoryAddressSpace::Default;
       const auto PriorityOperation = detail::taskPriorityOperation(Original);
+      const bool RuntimeControl =
+          supportsRuntimeControlOperation(Original, Options);
       const bool EnvironmentRead =
-          SegmentedRead ||
-          PriorityOperation == detail::X64TaskPriorityOperation::Read;
+          (RuntimeMemory && Original.Opcode == NdOp::LOAD) ||
+          PriorityOperation == detail::X64TaskPriorityOperation::Read ||
+          RuntimeControl;
       const bool CompareExchange = Original.Opcode == NdOp::ATOMIC_CMPXCHG;
       // An offset's provenance says nothing about the value read through an
       // arbitrary base. Keep that value unsafe through copies and frame spills.
@@ -2639,13 +2633,19 @@ bool Specializer::evaluate(int Id) {
       llvm::SmallVector<SymStorePreservationRange, 4> ProvedStoreRanges;
       for (unsigned J = 0; J < Original.NumInputs; ++J)
         OutputUnsafe |= unsafeOrigin(Original.Inputs[J], Origins);
-      if (FrameRoot && !SegmentedRead &&
+      if (FrameRoot && (!RuntimeMemory || Original.Opcode == NdOp::STORE) &&
           (Original.Opcode == NdOp::LOAD || Original.Opcode == NdOp::STORE ||
            CompareExchange)) {
         const auto Memory = lowMemoryOperands(Original);
-        const auto Displacement = frameOffset(
-            Ctx, Exec.pathPredicate(), Exec.operandValue(*Memory.Address),
-            FrameRoot, FrameOffsetProof::Required);
+        // An offset behind a runtime base is not a frame address, even when
+        // the offset itself contains the frame root. Separation checks below
+        // use the executed full address; ordinary unknown writes invalidate
+        // every unproved frame fact.
+        const auto Displacement =
+            RuntimeMemory ? std::nullopt
+                          : frameOffset(Ctx, Exec.pathPredicate(),
+                                        Exec.operandValue(*Memory.Address),
+                                        FrameRoot, FrameOffsetProof::Required);
         if (Failed)
           return false;
         if (Displacement) {
@@ -2667,7 +2667,8 @@ bool Specializer::evaluate(int Id) {
           }
         }
         if (Original.Opcode == NdOp::STORE || CompareExchange) {
-          if (!Displacement && Options.ExternalStoresDisjointEntryFrame &&
+          if (!Displacement && !RuntimeMemory &&
+              Options.ExternalStoresDisjointEntryFrame &&
               !unsafeOrigin(*Memory.Address, Origins)) {
             const auto &Bounds = *Options.EntryFrameBounds;
             StorePreservation =
@@ -2788,7 +2789,8 @@ bool Specializer::evaluate(int Id) {
                 if (*Displacement + B < 8)
                   return fail(SpecializationStatus::Unsupported,
                               "STORE overlaps the entry return control slot");
-            } else if (unsafeOrigin(*Memory.Address, Origins)) {
+            } else if (RuntimeMemory ||
+                       unsafeOrigin(*Memory.Address, Origins)) {
               bool Separated = false;
               if (Options.ProveStoreReturnSlotSeparation) {
                 // Unknown provenance alone cannot prove separation. The current
@@ -2890,7 +2892,7 @@ bool Specializer::evaluate(int Id) {
       SymRef FiniteReadValue;
       // Admission above limits wide reads to the explicit nonfaulting domain.
       // Every feasible address still needs one complete, untruncated witness.
-      if (Original.Opcode == NdOp::LOAD && !SegmentedRead && !ExternalExit) {
+      if (Original.Opcode == NdOp::LOAD && !RuntimeMemory && !ExternalExit) {
         const auto Memory = lowMemoryOperands(Original);
         const SymRef Address = Exec.operandValue(*Memory.Address);
         // Exact root-relative translation preserves domain cardinality, even
@@ -3005,6 +3007,52 @@ bool Specializer::evaluate(int Id) {
             DefinedTemporaries.insert(Output.Offset + B);
         }
         OutputUnsafe = true;
+      } else if (RuntimeControl) {
+        uint64_t Scratch = DispatchTargetTemp + 8;
+        const auto Transition = lowerRuntimeControlOperation(
+            Original, State, RuntimeControls, Options, [&](uint16_t Bytes) {
+              const auto Slot = NdVar::tmp(Scratch, Bytes);
+              Scratch += Bytes;
+              return Slot;
+            });
+        if (!Transition)
+          return fail(SpecializationStatus::InvalidInput,
+                      "invalid runtime control transition");
+        for (const auto &Scalar : Transition->Ops) {
+          if (++Result.EvaluatedOperations > Options.MaxOperations)
+            return fail(
+                SpecializationStatus::BudgetExceeded,
+                "runtime control transition operation budget exhausted");
+          if (Scalar.Opcode == NdOp::STORE ||
+              lowMemoryOperands(Scalar).StoredValue ||
+              Exec.step(Scalar) != StepResult::Continue)
+            return fail(SpecializationStatus::Unsupported,
+                        "runtime control transition was not exact");
+          if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "runtime control symbolic-node budget exhausted");
+        }
+        if (Transition->Rejected) {
+          const auto Bad =
+              enumerate(Ctx, Exec.pathPredicate(),
+                        {Exec.operandValue(*Transition->Rejected)}, 1);
+          if (Failed)
+            return false;
+          if (Bad.Status == FiniteValueStatus::Unknown)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "runtime control validity proof exceeded its budget");
+          if (Bad.Status != FiniteValueStatus::Complete ||
+              Bad.Tuples != std::vector<std::vector<uint64_t>>{{0}})
+            return fail(SpecializationStatus::Unsupported,
+                        Transition->InvalidValueDiagnostic);
+        }
+        if (Transition->OutputState) {
+          const auto &[Index, Value] = *Transition->OutputState;
+          if (Index >= RuntimeControls.Values.size())
+            return fail(SpecializationStatus::InvalidInput,
+                        "runtime control state index is invalid");
+          RuntimeControls.Values[Index] = Exec.operandValue(Value);
+        }
       } else if (PriorityOperation) {
         // Scratch is live only for this transition. Keeping the resulting
         // SymRef locally avoids collision with later string/frame scratch.
@@ -3843,10 +3891,12 @@ SpecializationResult Specializer::run() {
          "interface");
     return std::move(Result);
   }
-  if (Options.X64SegmentedReads &&
-      (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution)) {
-    fail(SpecializationStatus::InvalidInput,
-         "segmented reads require explicit nonfaulting machine state");
+  if (auto Error = validateRuntimeMemoryOptions(Options)) {
+    fail(SpecializationStatus::InvalidInput, llvm::toString(std::move(Error)));
+    return std::move(Result);
+  }
+  if (auto Error = validateRuntimeControlOptions(Options)) {
+    fail(SpecializationStatus::InvalidInput, llvm::toString(std::move(Error)));
     return std::move(Result);
   }
   if (Options.X64CR8State &&

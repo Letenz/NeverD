@@ -22,6 +22,7 @@ class BasicBlock;
 class CallInst;
 class Function;
 class Instruction;
+class StoreInst;
 class UncondBrInst;
 } // namespace llvm
 
@@ -30,12 +31,15 @@ namespace neverd::x86_registration {
 struct SEHParentExitPlan {
   std::map<int, RegistrationSEHParentExit> Sources;
   std::map<int, llvm::UncondBrInst *> Branches;
+  std::map<std::pair<va_t, int>, llvm::StoreInst *> ChainRemovals;
 };
 
 std::optional<SEHParentExitPlan> prepareSEHParentExits(
     const MedFunc &Source,
     const std::map<int, llvm::BasicBlock *> &OriginalBlocks,
-    const std::map<llvm::BasicBlock *, std::pair<int, int>> &CopyEdges);
+    const std::map<llvm::BasicBlock *, std::pair<int, int>> &CopyEdges,
+    const std::map<std::pair<va_t, int>, llvm::Instruction *> *ChainIR =
+        nullptr);
 
 /// Temporarily close source callbacks with a private nonlocal continuation.
 /// Outlining recovers these exact allocations. Failure restores every original
@@ -63,6 +67,7 @@ private:
   llvm::Function *CreatedLongjmp = nullptr;
   std::map<int, llvm::CallInst *> Calls;
   std::map<int, llvm::BasicBlock *> OriginalTargets;
+  std::map<llvm::StoreInst *, llvm::Instruction *> DetachedRemovals;
   bool Committed = false;
 };
 

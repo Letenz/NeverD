@@ -2331,6 +2331,26 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
         <translation>Placez le curseur sur un paramètre de la fonction pour le convertir</translation>
     </message>
     <message>
+        <source>Jump to disassembly</source>
+        <translation>Aller au désassemblage</translation>
+    </message>
+    <message>
+        <source>Synchronize with disassembly</source>
+        <translation>Synchroniser avec le désassemblage</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>Octa&amp;l</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>Placez le curseur sur un nombre du pseudo-code pour changer sa base</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 ne peut pas s&apos;écrire dans cette base avec le même type</translation>
+    </message>
+    <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
         <translation>Impossible de déterminer si %1 a un fichier MAP : %2</translation>
     </message>

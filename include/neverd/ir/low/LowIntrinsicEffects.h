@@ -35,6 +35,43 @@ inline bool lowIntrinsicHasOnlyValueEffects(const LowOp &Op) {
       Op.NumInputs > 2 ? Op.Inputs[2].Size : 0);
 }
 
+/// The memory operands of an intrinsic whose complete effects
+/// intrinsicMemoryAccessRoles describes, checked against its LowIR shape.
+/// Complete stays false for every other operation, so an unknown or malformed
+/// intrinsic keeps conservative effect handling.
+inline LowMemoryOperandView lowIntrinsicMemoryOperands(const LowOp &Op) {
+  LowMemoryOperandView View;
+  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs == 0 || Op.NumInputs > 6 ||
+      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+      Op.Inputs[0].Offset >= static_cast<uint64_t>(Intrinsic::_Count) ||
+      (!Op.Output.isReg() && !Op.Output.isTemp()) || Op.Output.Size == 0 ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return View;
+  const auto Roles =
+      intrinsicMemoryAccessRoles(static_cast<Intrinsic>(Op.Inputs[0].Offset));
+  if (!Roles || Op.NumInputs != Roles->NumInputs)
+    return View;
+  for (uint8_t I = 1; I < Op.NumInputs; ++I) {
+    const NdVar &Input = Op.Inputs[I];
+    const bool Operand = I == Roles->Address || I == Roles->StoredValue;
+    if (Input.Size == 0 ||
+        (Operand ? !Input.isReg() && !Input.isTemp() && !Input.isConst()
+                 : !Input.isConst()))
+      return View;
+  }
+  const uint64_t Width = Op.Inputs[Roles->AccessSize].Offset;
+  if (Width == 0 || Width > 16 ||
+      (Roles->ReturnsMemoryValue && Op.Output.Size != Width) ||
+      (Roles->StoredValue && Op.Inputs[Roles->StoredValue].Size != Width))
+    return View;
+  View.Address = &Op.Inputs[Roles->Address];
+  if (Roles->StoredValue)
+    View.StoredValue = &Op.Inputs[Roles->StoredValue];
+  View.AccessSize = static_cast<uint16_t>(Width);
+  View.Complete = true;
+  return View;
+}
+
 } // namespace neverd
 
 #endif // NEVERD_IR_LOW_LOWINTRINSICEFFECTS_H

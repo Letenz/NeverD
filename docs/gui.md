@@ -171,15 +171,36 @@ shows the whole function and the visible area.
 
 Opening a file or database starts with disassembly and does not generate
 pseudocode, including when a saved desktop had it open. **F5** or **Tab** opens
-Pseudocode on the right of disassembly. The panes browse independently: clicks,
-arrow keys and scrolling do not move the other pane. **Tab** from a code window
-selects its mapped instruction in disassembly; Tab from disassembly selects the
+Pseudocode on the right of disassembly. The cursors follow each other, as
+Hex-Rays' synchronized views do: a click or arrow key on a code row mapped to
+an instruction moves the disassembly cursor there, keeping the focus in the
+code and adding no jump to the history, and a move in the disassembly takes a
+code window showing the same function to the instruction's rows and marks
+them. A code window showing another function stays on it rather than
+decompiling on every step; F5 or Tab opens the new one. The code window's
+context menu turns **Synchronize with disassembly** off to browse apart, and
+the choice is kept; beside it, **Jump to disassembly** shows Tab's key, as
+**Jump to pseudocode** does in the disassembly's menu. Following a cursor costs
+well under a millisecond in a 50,000-line function: neither direction
+decompiles, and the source side only searches the rows it shows. **Tab** from a code window selects its mapped instruction
+in disassembly and moves the focus there; Tab from disassembly selects the
 mapped source row in the last code window used, keeping its representation and
 both panes visible. A folded target row expands, and a new function waits for
 all its source pages before selecting the row. An unmapped source row falls
 back to its function entry with a message; an unmapped instruction reports that
 no source row is available and keeps the existing source cursor. Closing or
 hiding a pane stops its requests; showing it again resumes its own function.
+
+Right-click a number in pseudocode for its bases, each showing what the number
+would read in it: the decompiler's own choice (**Number**, `#`),
+**Hexadecimal** (`Q`), **Decimal**, **Octal**, **Binary** (`B`) and
+**Character** (`R`). **H** toggles between hexadecimal and decimal, as in
+Hex-Rays. A C literal keeps its type in every base, taking the suffix that
+keeps it (`0xFFFFFFFF` reads `4294967295U`), and a character constant holds
+only ASCII characters of an int (`'eliF'`); a base that would change the
+number is refused with a message. The base belongs to the number on its line,
+is a step of the history, and is kept with the project like a source comment;
+a line the decompiler writes differently afterwards drops it.
 
 Native HighC keeps ordinary cleanup but skips optional symbolic expression
 simplification by default. Use the source window's **Optimization** menu or
@@ -241,8 +262,8 @@ source once and pages it from there; a function longer than one page keeps the l
 such as `main`. The
 LLVM views translate the current function alone,
 with the others declared, so a function the engine refuses to translate shows
-its reason without affecting other functions. Tab navigates using explicit
-instruction mappings. C opens at the function: the includes, support types and
+its reason without affecting other functions. Synchronization and Tab
+navigate using explicit instruction mappings. C opens at the function: the includes, support types and
 declarations before its definition fold into one line. Recognized library
 operations in C can fold into one-line summaries too. Click a summary or press
 Keypad + on it to expand it; Keypad - folds the declarations again, and the

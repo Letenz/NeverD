@@ -16,8 +16,10 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
+#include "neverd/ir/med/X86RegistrationSEHBoundCall.h"
 #include "neverd/ir/med/X86RegistrationSEHCall.h"
 #include "neverd/ir/med/X86RegistrationSEHParentExit.h"
+#include "neverd/ir/med/X86RegistrationSEHRegisters.h"
 #include "neverd/ir/med/X86RegistrationSEHStateStore.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/COFF/COFFLoader.h"
@@ -106,7 +108,293 @@ MedFunc parentExit(bool Runtime) {
   return Function;
 }
 
+MedFunc parentFallthrough(bool Runtime) {
+  auto Function = parentExit(Runtime);
+  auto &States = *Function.RegistrationStates;
+  auto &Exit = States.SEHInvocationExits.front();
+  Exit.Exit = RegistrationSEHInvocationExit::Kind::ParentFallthrough;
+  Exit.TargetVA = Exit.EndAddress = 0x180a;
+  auto &Finally = Function.Blocks[1];
+  Finally.EndAddr = 0x180a;
+  States.Blocks[1].Range.End = 0x180a;
+  auto &Remove = Finally.Ops.back();
+  Remove.Opcode = NdOp::STORE;
+  Remove.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+  Remove.Inputs[0] = MedVar::makeConst(0, 4);
+  MedVar Value;
+  Value.Kind = MedVar::Reg;
+  Value.TheArch = Arch::X86;
+  Value.RegOff = x86reg::RCX;
+  Value.Size = 4;
+  Remove.addInput(Value);
+  auto &Target = Function.Blocks[2];
+  Target.StartAddr = 0x180a;
+  Target.EndAddr = 0x1811;
+  States.Blocks[2].Range = {Target.StartAddr, Target.EndAddr};
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = 0x1810;
+  Return.OriginSeq = 0;
+  Target.Ops.push_back(Return);
+  States.ChainOperationsComplete = true;
+  States.ChainAccesses.push_back(
+      {0x1803, 0x180a, 0, RegistrationChainAccess::Kind::Remove});
+  States.SEHControls.push_back(
+      {RegistrationSEHControlContract::Kind::ParentEpilogue, 0x180a, 0x1811,
+       0x1810});
+  return Function;
+}
+
 } // namespace
+
+TEST(RegistrationSEHParentExit, UnusedTransportDoesNotAddAParentParameter) {
+  using namespace x86_registration;
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Function = parentFallthrough(false);
+    MedVar Value;
+    Value.Kind = MedVar::Reg;
+    Value.TheArch = Arch::X86;
+    Value.RegOff = x86reg::RCX;
+    Value.Id = 20;
+    Value.Size = 4;
+    MedOp Write;
+    Write.Opcode = NdOp::INTRINSIC;
+    Write.Addr = 0x1000;
+    Write.addInput(
+        MedVar::makeConst(unsigned(Intrinsic::X86SEHRegisterWrite), 2));
+    Write.addInput(MedVar::makeConst(unsigned(SEHRegisterRole::CallInput), 1));
+    Write.addInput(MedVar::makeConst(0x1800, 4));
+    Write.addInput(MedVar::makeConst(Write.Addr, 4));
+    Write.addInput(MedVar::makeConst(x86reg::RCX, 2));
+    Write.addInput(Value);
+    MedOp Read = Write;
+    Read.Addr = 0x1800;
+    Read.NumInputs = 5;
+    Read.Inputs[0] =
+        MedVar::makeConst(unsigned(Intrinsic::X86SEHRegisterRead), 2);
+    Read.Inputs[1] =
+        MedVar::makeConst(unsigned(SEHRegisterRole::CallbackInput), 1);
+    Read.Inputs[3] = MedVar::makeConst(Read.Addr, 4);
+    Read.Output = Value;
+    Read.Output.SSAVer = 1;
+    if (Mutation == 4)
+      Read.NumInputs = 4;
+    if (Mutation == 5)
+      Function.RegistrationStates->Blocks[1].Unknown = true;
+    auto &Caller = Function.Blocks[0];
+    auto &Callback = Function.Blocks[1];
+    Caller.Ops.insert(Caller.Ops.begin(), Write);
+    if (Mutation == 9)
+      Caller.Ops.insert(Caller.Ops.begin() + 1, Read);
+    else
+      Callback.Ops.insert(Callback.Ops.begin(), Read);
+    if (Mutation == 1 || Mutation == 2 || Mutation == 3) {
+      MedOp Use;
+      Use.Addr = 0x1801;
+      if (Mutation == 1) {
+        Use.Opcode = NdOp::STORE;
+        Use.addInput(MedVar::makeConst(0x5000, 4));
+        Use.addInput(Read.Output);
+      } else if (Mutation == 2) {
+        Use.Opcode = NdOp::COPY;
+        Use.Output = Read.Output;
+        Use.Output.Id = 21;
+        Use.addInput(Read.Output);
+      } else {
+        Use.Opcode = NdOp::CALL;
+        Use.addInput(MedVar::makeConst(0x5000, 4));
+      }
+      Callback.Ops.insert(Callback.Ops.end() - 1, Use);
+    }
+    if (Mutation == 6) {
+      PhiNode Phi;
+      Phi.Output = Read.Output;
+      Phi.Output.Id = 21;
+      Phi.Args.emplace_back(1, Read.Output);
+      Function.Blocks[2].Phis.push_back(Phi);
+    }
+    if (Mutation == 7) {
+      MedCallClobber Clobber;
+      Clobber.PreservedPrefixSize = 4;
+      Clobber.PreservedInput = Read.Output;
+      Function.CallClobbers.push_back(Clobber);
+    }
+    if (Mutation == 8) {
+      Function.CallInfos.emplace_back();
+      Function.CallInfos.back().Args.push_back(Read.Output);
+    }
+    discardUnusedSEHCallInputs(Function);
+    EXPECT_EQ(Caller.Ops.front().Inputs[5].Kind == MedVar::Unspecified,
+              Mutation == 0);
+  }
+}
+
+TEST(RegistrationSEHParentExit, ParentCallsDoNotRequireAnAbsentJumpProtocol) {
+  auto Function = parentExit(false);
+  auto &States = *Function.RegistrationStates;
+  States.HasBoundSEHCallees = true;
+  States.SEHBoundCallsComplete = false;
+  EXPECT_FALSE(getX86RegistrationSEHBoundCalls(Function));
+  EXPECT_TRUE(getRegistrationSEHNonlocalCalls(Function));
+  States.SEHJumpCapturesComplete = false;
+  EXPECT_FALSE(getRegistrationSEHNonlocalCalls(Function));
+}
+
+TEST(RegistrationSEHParentExit, AdjacentExitRequiresEveryPhysicalAndCFGEdge) {
+  for (bool Detached : {false, true})
+    for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+      SCOPED_TRACE(Detached);
+      SCOPED_TRACE(Mutation);
+      auto Function = parentFallthrough(false);
+      auto &States = *Function.RegistrationStates;
+      auto &Caller = Function.Blocks[0];
+      auto &Callback = Function.Blocks[1];
+      Function.Entry = Caller.StartAddr = 0x17fb;
+      Caller.EndAddr = Callback.StartAddr;
+      States.Blocks[0].Range = {Caller.StartAddr, Caller.EndAddr};
+      Caller.Ops.back().Addr = Caller.StartAddr;
+      States.SEHInvocationExits.front().CallVA = Caller.StartAddr;
+      States.SEHControls.push_back(
+          {RegistrationSEHControlContract::Kind::NearCall, Caller.StartAddr,
+           Caller.EndAddr, Callback.StartAddr});
+      Caller.Ops.back().DoesNotReturn = Detached;
+      Caller.Succs = Detached ? std::vector<int>{} : std::vector<int>{1};
+      Callback.Preds = Detached ? std::vector<int>{} : std::vector<int>{0};
+      if (Mutation == 1)
+        ++Caller.Ops.back().Inputs[0].ConstVal;
+      if (Mutation == 2)
+        States.SEHControls.pop_back();
+      if (Mutation == 3)
+        ++States.SEHControls.back().Target;
+      if (Mutation == 4)
+        Callback.Preds.push_back(1);
+      if (Mutation == 5)
+        Caller.Ops.back().Dead = true;
+      if (Mutation == 6) {
+        Caller.Succs.clear();
+        Caller.Ops.back().DoesNotReturn = false;
+      }
+      const auto Exits = getRegistrationSEHAdjacentExits(Function);
+      EXPECT_EQ(bool(Exits), Mutation == 0);
+      if (!Mutation) {
+        ASSERT_TRUE(Exits);
+        EXPECT_EQ(*Exits, (std::map<int, int>{{0, 1}}));
+      }
+    }
+}
+
+TEST(RegistrationSEHParentExit, FallthroughBindsTheSourceSegmentOffsetCopy) {
+  for (bool Wide : {false, true})
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      SCOPED_TRACE(Wide);
+      SCOPED_TRACE(Mutation);
+      auto Function = parentFallthrough(true);
+      auto &Finally = Function.Blocks[1];
+      auto &States = *Function.RegistrationStates;
+      MedOp Copy;
+      Copy.Opcode = NdOp::COPY;
+      Copy.Addr = Finally.Ops.back().Addr;
+      Copy.OriginSeq = 0;
+      Copy.Output.Kind = MedVar::Temp;
+      Copy.Output.Id = 10;
+      Copy.Output.Size = 4;
+      Copy.addInput(MedVar::makeConst(0, 4));
+      MedOp Extend;
+      Extend.Opcode = NdOp::INT_ZEXT;
+      Extend.Addr = Copy.Addr;
+      Extend.OriginSeq = 1;
+      Extend.Output = Copy.Output;
+      Extend.Output.Id = 12;
+      Extend.Output.Size = 8;
+      Extend.addInput(Copy.Output);
+      Finally.Ops.back().Inputs[0] = Wide ? Extend.Output : Copy.Output;
+      Finally.Ops.back().OriginSeq = Wide ? 2 : 1;
+      States.ChainAccesses.front().OpSeq = Wide ? 2 : 1;
+      States.SEHInvocationExits.front().OpSeq = Wide ? 2 : 1;
+      if (Mutation == 1)
+        Copy.Inputs[0].ConstVal = 4;
+      if (Mutation == 2)
+        --Copy.Addr;
+      if (Mutation == 3)
+        Copy.OriginSeq = -1;
+      if (Mutation == 4)
+        Copy.Output.Id = 11;
+      if (Mutation == 5)
+        Copy.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      if (Mutation == 6)
+        Copy.Inputs[0].Size = 2;
+      if (Mutation == 7)
+        Copy.Dead = true;
+      Finally.Ops.insert(Finally.Ops.end() - 1, Copy);
+      if (Wide)
+        Finally.Ops.insert(Finally.Ops.end() - 1, Extend);
+      EXPECT_EQ(bool(getRegistrationSEHParentExits(Function)), Mutation == 0);
+    }
+}
+
+TEST(RegistrationSEHParentExit, FallthroughRequiresItsRemovalAndWholeEpilogue) {
+  for (bool Runtime : {false, true})
+    for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+      SCOPED_TRACE(Runtime);
+      SCOPED_TRACE(Mutation);
+      auto Function = parentFallthrough(Runtime);
+      auto &States = *Function.RegistrationStates;
+      auto &Remove = Function.Blocks[1].Ops.back();
+      switch (Mutation) {
+      case 1:
+        States.ChainOperationsComplete = false;
+        break;
+      case 2:
+        States.ChainAccesses.clear();
+        break;
+      case 3:
+        States.ChainAccesses.front().AccessKind =
+            RegistrationChainAccess::Kind::Install;
+        break;
+      case 4:
+        States.ChainAccesses.push_back(States.ChainAccesses.front());
+        break;
+      case 5:
+        ++States.ChainAccesses.front().OpSeq;
+        break;
+      case 6:
+        States.SEHControls.clear();
+        break;
+      case 7:
+        ++States.SEHControls.front().EndAddress;
+        break;
+      case 8:
+        States.SEHControls.front().Control =
+            RegistrationSEHControlContract::Kind::NearReturn;
+        break;
+      case 9:
+        Remove.MemoryAddressSpace = NdMemoryAddressSpace::Default;
+        break;
+      case 10:
+        Remove.Inputs[1] = MedVar::makeConst(0, 4);
+        break;
+      case 11:
+        Function.Blocks[2].Ops.back().Dead = true;
+        break;
+      case 12:
+        Function.Blocks[2].Succs = {0};
+        break;
+      case 13:
+        ++States.SEHInvocationExits.front().EndAddress;
+        break;
+      }
+      auto Exits = getRegistrationSEHParentExits(Function);
+      EXPECT_EQ(bool(Exits), Mutation == 0);
+      if (Mutation)
+        continue;
+      ASSERT_EQ(Exits->size(), 1u);
+      EXPECT_EQ(Exits->at(1).Operation, &Remove);
+      const auto Returns = getRegistrationSEHReturns(Function);
+      ASSERT_TRUE(Returns);
+      EXPECT_TRUE(Returns->ReturnBlocks.empty());
+    }
+}
 
 TEST(RegistrationSEHParentExit, BindsOrdinaryAndRuntimeSourceExits) {
   for (bool Runtime : {false, true}) {
@@ -118,7 +406,7 @@ TEST(RegistrationSEHParentExit, BindsOrdinaryAndRuntimeSourceExits) {
     EXPECT_EQ(Exits->at(1).TargetBlock, 2);
     EXPECT_EQ(Exits->at(1).RestoreBlock, 1);
     EXPECT_EQ(Exits->at(1).StackOffset, -64);
-    EXPECT_EQ(Exits->at(1).Branch, &Function.Blocks[1].Ops[1]);
+    EXPECT_EQ(Exits->at(1).Operation, &Function.Blocks[1].Ops[1]);
     EXPECT_EQ(Exits->at(1).Restore, &Function.Blocks[1].Ops[0]);
     EXPECT_EQ(Exits->at(1).Invocations.size(), 1u);
     auto Owners = registrationSEHCallbackOwners(Function);
@@ -522,48 +810,59 @@ TEST(RegistrationSEHParentExit, NativeChainGatePreservesAnalysisOwnership) {
 }
 
 TEST(RegistrationSEHParentExit, FailedOutliningRestoresTheOriginalModule) {
-  for (bool ExistingIntrinsic : {false, true}) {
-    SCOPED_TRACE(ExistingIntrinsic);
-    auto Source = parentExit(false);
-    llvm::LLVMContext Context;
-    llvm::Module Module("parent-rollback", Context);
-    Module.setDataLayout("e-p:32:32");
-    auto *Function = llvm::Function::Create(
-        llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false),
-        llvm::GlobalValue::ExternalLinkage, "parent", Module);
-    auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
-    auto *Finally = llvm::BasicBlock::Create(Context, "finally", Function);
-    auto *Resume = llvm::BasicBlock::Create(Context, "resume", Function);
-    llvm::IRBuilder<> Builder(Entry);
-    Builder.CreateBr(Finally);
-    Builder.SetInsertPoint(Finally);
-    Builder.CreateBr(Resume);
-    Builder.SetInsertPoint(Resume);
-    Builder.CreateRetVoid();
-    if (ExistingIntrinsic)
-      llvm::Intrinsic::getOrInsertDeclaration(&Module,
-                                              llvm::Intrinsic::eh_sjlj_longjmp);
-    const std::map<int, llvm::BasicBlock *> Blocks{
-        {0, Entry}, {1, Finally}, {2, Resume}};
-    auto Plan = x86_registration::prepareSEHParentExits(Source, Blocks, {});
-    ASSERT_TRUE(Plan);
-    const auto Text = [&] {
-      std::string Buffer;
-      llvm::raw_string_ostream Stream(Buffer);
-      Module.print(Stream, nullptr);
-      return Buffer;
-    };
-    const auto Original = Text();
-    {
-      x86_registration::SEHParentExitProjection Projection(*Function,
-                                                           Source.Entry, *Plan);
-      EXPECT_NE(Finally->getTerminator()->getSuccessor(0), Resume);
-      ASSERT_EQ(Projection.calls().size(), 1u);
+  for (bool ExistingIntrinsic : {false, true})
+    for (bool Fallthrough : {false, true}) {
+      SCOPED_TRACE(ExistingIntrinsic);
+      SCOPED_TRACE(Fallthrough);
+      auto Source = Fallthrough ? parentFallthrough(false) : parentExit(false);
+      llvm::LLVMContext Context;
+      llvm::Module Module("parent-rollback", Context);
+      Module.setDataLayout("e-p:32:32");
+      auto *Function = llvm::Function::Create(
+          llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false),
+          llvm::GlobalValue::ExternalLinkage, "parent", Module);
+      auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+      auto *Finally = llvm::BasicBlock::Create(Context, "finally", Function);
+      auto *Resume = llvm::BasicBlock::Create(Context, "resume", Function);
+      llvm::IRBuilder<> Builder(Entry);
+      Builder.CreateBr(Finally);
+      Builder.SetInsertPoint(Finally);
+      std::map<std::pair<va_t, int>, llvm::Instruction *> ChainIR;
+      if (Fallthrough)
+        ChainIR.emplace(std::make_pair(0x1803, 0),
+                        Builder.CreateStore(Builder.getInt32(7),
+                                            llvm::ConstantPointerNull::get(
+                                                Builder.getPtrTy(257))));
+      Builder.CreateBr(Resume);
+      Builder.SetInsertPoint(Resume);
+      Builder.CreateRetVoid();
+      if (ExistingIntrinsic)
+        llvm::Intrinsic::getOrInsertDeclaration(
+            &Module, llvm::Intrinsic::eh_sjlj_longjmp);
+      const std::map<int, llvm::BasicBlock *> Blocks{
+          {0, Entry}, {1, Finally}, {2, Resume}};
+      auto Plan =
+          x86_registration::prepareSEHParentExits(Source, Blocks, {}, &ChainIR);
+      ASSERT_TRUE(Plan);
+      const auto Text = [&] {
+        std::string Buffer;
+        llvm::raw_string_ostream Stream(Buffer);
+        Module.print(Stream, nullptr);
+        return Buffer;
+      };
+      const auto Original = Text();
+      {
+        x86_registration::SEHParentExitProjection Projection(
+            *Function, Source.Entry, *Plan);
+        EXPECT_NE(Finally->getTerminator()->getSuccessor(0), Resume);
+        if (Fallthrough)
+          EXPECT_EQ(ChainIR.begin()->second->getParent(), nullptr);
+        ASSERT_EQ(Projection.calls().size(), 1u);
+        EXPECT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+        Projection.rollback();
+        Projection.rollback();
+      }
       EXPECT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
-      Projection.rollback();
-      Projection.rollback();
+      EXPECT_EQ(Text(), Original);
     }
-    EXPECT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
-    EXPECT_EQ(Text(), Original);
-  }
 }

@@ -82,6 +82,10 @@ NEVERD_IDA_ACTION("OpChar", "R", EditOperandChar)
 NEVERD_IDA_ACTION("OpOffset", "O", EditOperandOffset)
 NEVERD_IDA_ACTION("ChangeSign", "_", EditOperandNegate)
 NEVERD_IDA_ACTION("BitwiseNegate", "~", EditOperandInvert)
+// In pseudocode the same keys give a number its base: Hex-Rays' H toggles
+// between hexadecimal and decimal, and R makes it a character constant.
+NEVERD_IDA_ACTION("hx:HexDec", "H", EditOperandDecimal)
+NEVERD_IDA_ACTION("hx:Char", "R", EditOperandChar)
 NEVERD_IDA_ACTION("MakeCode", "C", EditDefineCode)
 NEVERD_IDA_PLANNED("MakeArray", "*", "Edit")
 NEVERD_IDA_PLANNED("MakeAlignment", "L", "Edit")

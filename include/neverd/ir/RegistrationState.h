@@ -178,7 +178,11 @@ struct RegistrationSEHExceptionAccess {
 /// exact parent instruction. CallVA is zero for a runtime invocation. These
 /// facts authorize state/CFG flow, not native replacement of the invocation.
 struct RegistrationSEHInvocationExit {
-  enum class Kind : uint8_t { NearReturn, ParentJump } Exit = Kind::NearReturn;
+  enum class Kind : uint8_t {
+    NearReturn,
+    ParentJump,
+    ParentFallthrough
+  } Exit = Kind::NearReturn;
   va_t EntryVA = InvalidVA;
   va_t CallVA = 0;
   va_t Address = InvalidVA;
@@ -188,6 +192,9 @@ struct RegistrationSEHInvocationExit {
   va_t StackRestoreVA = InvalidVA;
   int StackRestoreSeq = -1;
   int32_t StackOffset = 0;
+  bool isParentExit() const {
+    return Exit == Kind::ParentJump || Exit == Kind::ParentFallthrough;
+  }
   bool operator==(const RegistrationSEHInvocationExit &) const = default;
 };
 

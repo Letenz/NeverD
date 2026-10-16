@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 5edfb602025b5842453dbc5914dad53572f14fdc63e424ca65e66d45415e59c3 -->
+<!-- i18n-source: 6d44f96afae7f68162fb5f61324f22a7893d7ea9bb0e2df38768afc67bf2c060 -->
 
 [← 文件索引](README.md)
 
@@ -33,7 +33,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 `LC_UNIXTHREAD` 要求恰好一份完整的原生 64 位元一般暫存器紀錄，只有 PC 已設定。起始堆疊含 argc、以零結尾的 argv/envp，以及含 `executable_path=<input filename>` 的零結尾 apple 向量。自訂 SP、旗標、其他暫存器、額外 flavor 或衝突進入點均拒絕。不繼承宿主環境或 Linux 輔助向量。參考 [dyld 架構](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md)。
 
-下述有限 libSystem 契約以外的 dylib 和匯入、建構／解構函式、TLS 區段、arm64e/PAC、其他不支援的 CPU 子型別、加密內容與未建模載入命令，都在執行前失敗。支援的 PIE 使用偏好位址，並非 ASLR。簽章資料只是中繼資料，不實作 AMFI 或 entitlement 政策。
+支援下述有限 libSystem、明確指定的啟動 dylib 和普通 C 主執行緒 TLS。建構/解構與 TLS 回呼、arm64e/PAC、未支援子型別、加密內容及未建模命令仍在執行前失敗。主程式使用偏好位址，dylib 採確定性獨立配置；簽章資料不實作 AMFI 或 entitlement。
 
 ## Darwin 服務
 
@@ -1799,7 +1799,7 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 ## 有界 libSystem 匯入
 
-基線架構的薄執行檔可繫結一個強依賴 `/usr/lib/libSystem.B.dylib`。必須有 `LC_MAIN`、`MH_TWOLEVEL` 及一般庫 ordinal，相容版本需求不得超過 1.0。載入器完整驗證原始 classic 指標流或 generic64 鏈、未定義符號、精確槽與本地 rebase 目標。其他庫/符號、weak/threaded 繫結、未支援 relocation、初始化、TLS 與認證指標會在執行前失敗。
+基線薄執行檔及下述明確指定的啟動 dylib 可繫結強依賴 `/usr/lib/libSystem.B.dylib`。主入口須為 `LC_MAIN`，並使用 `MH_TWOLEVEL` 與一般庫 ordinal；libSystem 相容需求不得超過 1.0。原始 classic/generic64 fixup、未定義符號閉包及槽均須完整驗證。未知符號、weak/threaded 繫結、其他 relocation、初始化回呼與認證指標仍被拒絕。
 
 僅在存在匯入時配置函式入口及每次全新的主執行緒 errno。包裝函式共用原始 Darwin 核心行為，失敗轉成 `-1` 與 errno，成功保留 errno。C `_exit` 的 Mach-O 名為 `__exit`；C `exit` 的 `_exit` 仍不支援。普通函式驗證返回框架；不返回的 `_exit` 無需可用返回位址。報告保留庫、連結名、參數數量及完整位元；未完成或不返回的結果為 null，原始系統呼叫報告保持相容。
 
@@ -1819,7 +1819,7 @@ C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
 C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
-entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
+entry: LC_MAIN main + MH_TWOLEVEL images; ordinary positive ordinals; main preferred base
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
 errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
@@ -1835,9 +1835,32 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
+native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
 ```
 
 ```json
 {"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
+```
+
+## 明確指定的啟動 dylib 與主執行緒 TLS
+
+`darwin.modules` 以精確且區分大小寫的安裝名稱指定原始 Mach-O 路徑，最多 32 項；只讀取可達依賴。`@loader_path` 按字面比對，不搜尋宿主函式庫。MH_DYLIB 必須具有相同 ISA/平台及相符身分、版本；一般依賴序號選擇實際提供者。同名匯出與共享依賴保持身分，完整檔案、映射、TLS 和中繼資料使用共同預算。
+
+支援普通 C 初始化/零初始化 TLS，對齊上限 16 位元組。準備時映射並計費每個模組的獨立儲存，首次存取複製重定位後的即時連續範本，保留先前對 BSS/間隙的修改。描述符與返回框架須通過驗證；TLS 頁不能被重新配置、解除映射或變更保護。原創樣例比較原生 O0/O1/O2 classic/chained 與五個平台的 C/CLI/Python。循環、弱/重匯出、初始化/解構回呼、dlopen/dlsym、執行緒與完整框架尚未實作；Intel 原生及實體 iOS 未驗證。
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"darwin":{"modules":[{"name":"@loader_path/libneverd-base.dylib","path":"/inputs/libneverd-base.dylib"},{"name":"@loader_path/libneverd-leaf.dylib","path":"/inputs/libneverd-leaf.dylib"}]}}
+```
+
+```text
+graph: strong acyclic startup; exact install name; same ISA/platform; MH_DYLIB + LC_ID_DYLIB
+catalogue: max 32; only reachable inputs; no host lookup or @ path expansion
+budget: aggregate full files; aggregate resident mappings/TLS/metadata; 65536 records
+exports: regular / thread-local; ordinary dependency ordinal; rebased actual provider
+TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live contiguous first copy
+resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
+lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
+unsupported: cycles; weak/reexports/resolvers; imported addends; callbacks; dlopen/dlsym; threads
+workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
+native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
 ```

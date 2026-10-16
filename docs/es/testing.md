@@ -12,6 +12,14 @@ agregado más amplio antes de un pull request de alto riesgo.
 
 `PipelineOutcome.ResolvedCalls*` comprueba grupos de registros, identidad call/invoke, unión y división de bytes de pila, valores estrechos en sus propias ranuras y rechazo de bytes ausentes. `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` comprueba los desplazamientos registrados. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` cubre x64, ARM32 y AArch64 en ELF, PE y Mach-O. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` cubre los tres formatos y rechaza longitudes sobrescritas, intervalos modificables o excesivos, funciones locales homónimas, registros de origen incorrectos, entradas alternativas e imágenes reubicables. Las pruebas diferenciales C compilan la referencia por separado con O0 y el C generado con O2, para que un fallo del optimizador del host en una recurrencia no contamine el resultado esperado. La prueba FMA de AArch64 solo solicita `-mfma` en hosts x86.
 
+## Pruebas de recuperación MXCSR
+
+`InterpreterSpecialization.MXCSR*` cubre estados iniciales arbitrarios, valores exactos de memoria, bits reservados, DAZ, alias, formas inválidas, proyección y límites de presupuesto. `PEFixedImageTest.RawMXCSR*` comprueba bytes legacy/VEX y registros vinculados a la máscara. Las pruebas de estado de máquina y refinamiento nativo/LLVM rechazan ampliaciones implícitas de las interfaces, incluso con capacidades sin usar.
+
+## Pruebas de recuperación de escrituras segmentadas
+
+`InterpreterSpecialization.SegmentedWrite*` comprueba resultados independientes de memoria por bytes, todos los anchos escalares, desbordamiento de direcciones, alias de pila, procedencia de punteros sobrescritos, invalidación entre nodos y presupuestos exactos o insuficientes. `SegmentedWritesAndReadsShareLinearMemory` cubre bases iguales y distintas. `PEFixedImageTest.RawSegmented*` comprueba bytes nativos, rechazo de alias de retorno y cambios en las evidencias. Se conservan los valores de compatibilidad existentes. Compilar las pruebas de especialización, imagen PE fija, estado de máquina y refinamiento nativo/LLVM; los rechazos también cubren capacidades de escritura sin usar.
+
 ## Semillas concretas de memoria de entrada
 
 Ejecutar `NeverDSymbolicTests`, `NeverDConcolicTests` y `NeverDConcolicIntegrationTests`. `LowIRConcolicMemory.*` y las pruebas simbólicas cubren ambos órdenes de bytes, escrituras con alias, bancos independientes, rangos ausentes/inválidos, reinicio y semillas tardías, límites de presupuesto, épocas, anchuras del modelo, reproducción de candidatos y deduplicación. Se mantiene la matriz nativa de formatos y arquitecturas.
@@ -2128,3 +2136,5 @@ Las regresiones comprueban las reglas short de las tres entradas, lecturas en l�
 Las regresiones cubren hilos retenidos/caducados, contextos solicitante/worker/vinculado, límites y huecos de módulos, ancho de salida, vida útil, derechos e IRQL. Las fixtures CRT originales y WDK genuinas ejecutan consultas KernelMode estáticas/dinámicas; las fixtures de archivos también comprueban llamantes UserMode. Ambas familias WDK incluyen normal/CFG. Dos declaraciones ausentes usan ABI locales con tipos genuinos del kit. Los backends no disponibles se omiten.
 
 Las comprobaciones MDL antiguas cubren llamadas WDK reales estáticas y dinámicas, un trabajador adjunto, alias de imágenes originales, reducción del modo, IRQL, cambios de proceso, descriptores caducados, mapeos duplicados y agotamiento de presupuesto inyectado. El fallo del núcleo conserva el MDL y comunica el bugcheck no modelado; el fallo de usuario puede capturarse. Las sondas del wrapper original solo prueban argumentos y anchura del retorno, no el mapeador inyectado.
+
+`KernelFileQueries.BaseDevice*` comprueba la base bajo dos filtros, referencias sin cambios, punteros de extensión ignorados, estados de creación/limpieza/cierre, registros dañados e IRQL. Las fixtures originales y WDK reales normales/CFG ejecutan consultas estáticas y dinámicas en la matriz existente de motores, reubicación, planificación y vida del llamante.

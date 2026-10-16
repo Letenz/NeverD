@@ -315,7 +315,14 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       return Result;
     }
     if (!Opts.InterpreterSpecialization->X64TerminalImports.empty()) {
-      Result.Error = "machine-state source does not support terminal import domains";
+      Result.Error =
+          "machine-state source does not support terminal import domains";
+      Trace.finish(false);
+      return Result;
+    }
+    if (Opts.InterpreterSpecialization->X64MXCSRMask) {
+      Result.Error =
+          "machine-state recovery requires a versioned MXCSR source interface";
       Trace.finish(false);
       return Result;
     }
@@ -326,7 +333,8 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       Trace.finish(false);
       return Result;
     }
-    if (Opts.InterpreterSpecialization->X64SegmentedReads) {
+    if (Opts.InterpreterSpecialization->X64SegmentedReads ||
+        Opts.InterpreterSpecialization->X64SegmentedWrites) {
       Result.Error = "machine-state recovery requires a versioned FS/GS "
                      "base source interface";
       Trace.finish(false);
@@ -525,8 +533,8 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     return Result;
   }
 
-  // Both source routes need the same ABI/return recovery. LLVM views can
-  // postpone only the HighIR projection; they must not bypass those proofs.
+  // Source and analysis views share ABI/return recovery. Views that do not
+  // consume HighIR postpone only that projection, retaining those proofs.
   if (Opts.DeferHighIR && !Opts.DumpHigh) {
     Trace.start(NativePipelineTrace::Stage::HighIR);
     try {
