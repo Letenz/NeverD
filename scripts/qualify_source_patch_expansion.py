@@ -14,6 +14,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 from run_lift_qualification import audit
+from check_source_patch_expansion_runtime import native_architecture
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -35,12 +36,7 @@ def main():
     if actual != args.source_commit or dirty:
         raise ValueError("qualification requires the exact clean source commit")
     system = platform.system()
-    architecture = {
-        "AMD64": "x64",
-        "x86_64": "x64",
-        "arm64": "arm64",
-        "aarch64": "arm64",
-    }.get(platform.machine())
+    architecture = native_architecture(platform.machine())
     if architecture != args.expected_arch:
         raise ValueError("unexpected native architecture")
     inventory = json.loads(
@@ -110,7 +106,7 @@ def main():
         check=True,
     )
     report["files"] = {
-        str(p.relative_to(output)): hashlib.sha256(p.read_bytes()).hexdigest()
+        p.relative_to(output).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in sorted(output.rglob("*"))
         if p.is_file()
     }

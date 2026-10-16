@@ -3,12 +3,54 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 import tempfile
 import unittest
 
 from scripts import check_source_patch_expansion_runtime as runtime
+
+
+class NativeTransportTests(unittest.TestCase):
+    def test_native_architecture_accepts_windows_spelling_and_refuses_32_bit(self):
+        for name, expected in (
+            ("AMD64", "x64"),
+            ("x86_64", "x64"),
+            ("ARM64", "arm64"),
+            ("arm64", "arm64"),
+            ("aarch64", "arm64"),
+            ("i386", None),
+            ("armv7l", None),
+            ("unknown", None),
+        ):
+            with self.subTest(machine=name):
+                self.assertEqual(runtime.native_architecture(name), expected)
+
+    def test_source_receipt_hash_uses_exact_utf8_api_input(self):
+        code = "// 原实现\nint replacement(int x) { return x + 1; }\n"
+        payload = code.encode("utf-8")
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "replacement.c"
+            runtime.write_patch_source(source, code)
+            self.assertEqual(source.read_bytes(), payload)
+            self.assertEqual(
+                runtime.digest(source), hashlib.sha256(payload).hexdigest()
+            )
+
+    def test_process_paths_follow_evidence_os_on_any_audit_host(self):
+        self.assertEqual(
+            runtime.process_image_name(r"D:\work\native\callback-ir.exe", "Windows"),
+            "callback-ir.exe",
+        )
+        self.assertEqual(
+            runtime.process_image_name("/tmp/native/callback-ir", "Linux"),
+            "callback-ir",
+        )
+        self.assertEqual(
+            runtime.process_image_name(r"/tmp/native/back\slash", "Darwin"),
+            r"back\slash",
+        )
 
 
 class ExpansionEvidenceTests(unittest.TestCase):
@@ -99,7 +141,7 @@ class ExpansionEvidenceTests(unittest.TestCase):
                     self.save(
                         root / f"{variant}-{x}-{attempt}.json",
                         {
-                            "command": [str(root / variant), str(x)],
+                            "command": ["/synthetic/" + variant, str(x)],
                             "returncode": 0,
                             "stdout": " ".join(map(str, actual))
                             + ("" if exception else " 0x1000")
@@ -110,7 +152,7 @@ class ExpansionEvidenceTests(unittest.TestCase):
 
     def refresh(self):
         self.report["evidence_files"] = {
-            str(p.relative_to(self.root)): runtime.digest(p)
+            p.relative_to(self.root).as_posix(): runtime.digest(p)
             for p in self.root.rglob("*")
             if p.is_file() and p != self.root / "report.json"
         }
@@ -122,6 +164,30 @@ class ExpansionEvidenceTests(unittest.TestCase):
             runtime.audit(self.root)
 
     def test_complete_synthetic_inventory_validates(self):
+        self.assertEqual(len(runtime.audit(self.root)["observations"]), 84)
+
+    def test_windows_evidence_can_be_audited_on_another_os(self):
+        self.report["system"] = "Windows"
+        for root in (self.root, self.root / "exceptions"):
+            for variant in runtime.VARIANTS:
+                path = root / (variant + "-receipt.json")
+                receipt = json.loads(path.read_text())
+                receipt["target"] = "x86_64-pc-windows-msvc19.45.0"
+                self.save(path, receipt)
+            for variant in ("original", *runtime.VARIANTS):
+                for x in runtime.ARGUMENTS:
+                    for attempt in range(3):
+                        path = root / f"{variant}-{x}-{attempt}.json"
+                        log = json.loads(path.read_text())
+                        log["command"][0] = "D:\\native\\" + variant
+                        self.save(path, log)
+        for name, code in (
+            ("missing-library", 0xC0000135),
+            ("missing-symbol", 0xC0000139),
+        ):
+            self.report["loader_rejections"][name]["returncode"] = code
+            self.save(self.root / (name + "-process.json"), {"returncode": code})
+        self.refresh()
         self.assertEqual(len(runtime.audit(self.root)["observations"]), 84)
 
     def test_missing_process_cannot_be_replaced_by_duplicate(self):

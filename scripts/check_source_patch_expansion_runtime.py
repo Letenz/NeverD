@@ -12,7 +12,7 @@ import ctypes
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import platform
 import re
 import subprocess
@@ -94,6 +94,26 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def native_architecture(machine: str) -> str | None:
+    return {
+        "amd64": "x64",
+        "x86_64": "x64",
+        "arm64": "arm64",
+        "aarch64": "arm64",
+    }.get(machine.lower())
+
+
+def write_patch_source(path: Path, code: str) -> None:
+    # The receipt hashes the UTF-8 bytes passed to the API, without OS newline
+    # translation or a platform-specific text encoding.
+    path.write_bytes(code.encode("utf-8"))
+
+
+def process_image_name(command: str, system: str) -> str:
+    path = PureWindowsPath if system == "Windows" else PurePosixPath
+    return path(command).name
+
+
 def expected(variant: str, x: int) -> list[int]:
     values = [x + 1, x + 7, x + 43, x + 1, x + 2, x + 20]
     if variant.startswith(("callback-", "combined-")):
@@ -159,7 +179,7 @@ def audit(root: Path) -> dict:
     if set(report["providers"]) != {"old", "new"}:
         raise ValueError("incomplete provider inventory")
     expected_files = {
-        str(p.relative_to(root))
+        p.relative_to(root).as_posix()
         for p in root.rglob("*")
         if p.is_file() and p != root / "report.json"
     }
@@ -186,7 +206,8 @@ def audit(root: Path) -> dict:
             or len(fields) != 7
             or list(map(int, fields[:6])) != row["actual"]
             or int(fields[6], 16) != row["entry_address"]
-            or Path(log["command"][0]).name != report["images"][key[0]]["path"]
+            or process_image_name(log["command"][0], report["system"])
+            != report["images"][key[0]]["path"]
             or log["command"][1:] != [str(key[1])]
         ):
             raise ValueError("process log differs from observation")
@@ -210,7 +231,7 @@ def audit(root: Path) -> dict:
             (root / "exceptions" / (variant + "-receipt.json")).read_text()
         )
         validate_receipt(receipt, report["system"], report["architecture"], variant)
-    if audit_exceptions(root / "exceptions") != report["exceptions"]:
+    if audit_exceptions(root / "exceptions", report["system"]) != report["exceptions"]:
         raise ValueError("exception subreport differs from manifest")
     return report
 
@@ -376,7 +397,7 @@ int main(int argc, char **argv) {
             compiler_path=clang,
             compiler_args=["-O0", "-fno-omit-frame-pointer"],
         )
-        (directory / (variant + "-source.cpp")).write_text(code)
+        write_patch_source(directory / (variant + "-source.cpp"), code)
         (directory / (variant + "-receipt.json")).write_text(
             json.dumps(receipt, indent=2) + "\n"
         )
@@ -401,11 +422,11 @@ int main(int argc, char **argv) {
                 )
     report = {"images": images, "providers": providers, "observations": observations}
     (directory / "report.json").write_text(json.dumps(report, indent=2) + "\n")
-    audit_exceptions(directory)
+    audit_exceptions(directory, system)
     return report
 
 
-def audit_exceptions(root):
+def audit_exceptions(root, system):
     report = json.loads((root / "report.json").read_text())
     if set(report["images"]) != {"original", *VARIANTS}:
         raise ValueError("incomplete exception image inventory")
@@ -433,7 +454,8 @@ def audit_exceptions(root):
             or row["returncode"]
             or log["returncode"]
             or list(map(int, log["stdout"].strip().split())) != row["actual"]
-            or Path(log["command"][0]).name != report["images"][key[0]]["path"]
+            or process_image_name(log["command"][0], system)
+            != report["images"][key[0]]["path"]
             or log["command"][1:] != [str(key[1])]
         ):
             raise ValueError("invalid exception process observation")
@@ -464,9 +486,7 @@ def qualify(args: argparse.Namespace) -> None:
     root = args.output.resolve()
     root.mkdir(parents=True, exist_ok=False)
     system = platform.system()
-    arch = {"AMD64": "x64", "x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}.get(
-        platform.machine()
-    )
+    arch = native_architecture(platform.machine())
     if arch != args.expected_arch or system not in ("Darwin", "Linux", "Windows"):
         raise ValueError(f"wrong native host {system}/{platform.machine()}")
     if system == "Darwin":
@@ -606,7 +626,7 @@ def qualify(args: argparse.Namespace) -> None:
                     "extern int dependency_data;",
                     "__declspec(dllimport) extern int dependency_data;",
                 )
-            (root / (variant + "-source.c")).write_text(code)
+            write_patch_source(root / (variant + "-source.c"), code)
             receipt = session.patch_source(
                 code,
                 path,
@@ -654,7 +674,7 @@ def qualify(args: argparse.Namespace) -> None:
             (root / (name + "-receipt.json")).write_text(
                 json.dumps(receipt, indent=2) + "\n"
             )
-            (root / (name + "-source.c")).write_text(code)
+            write_patch_source(root / (name + "-source.c"), code)
             result = run(
                 [str(path), "7"], root / (name + "-process.json"), allow_failure=True
             )
@@ -729,7 +749,7 @@ def qualify(args: argparse.Namespace) -> None:
         "loader_rejections": loader_rejections,
         "exceptions": exceptions,
         "evidence_files": {
-            str(p.relative_to(root)): digest(p)
+            p.relative_to(root).as_posix(): digest(p)
             for p in sorted(root.rglob("*"))
             if p.is_file()
         },
