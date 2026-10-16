@@ -79,6 +79,11 @@ __declspec(dllimport) DEVICE IoAttachDeviceToDeviceStack(DEVICE, DEVICE);
 __declspec(dllimport) void IoDetachDevice(DEVICE);
 __declspec(dllimport) DEVICE IoGetAttachedDeviceReference(DEVICE);
 __declspec(dllimport) DEVICE IoGetDeviceAttachmentBaseRef(DEVICE);
+__declspec(dllimport) NTSTATUS IoGetDeviceObjectPointer(TEXT *, U32, FILEPTR *,
+                                                        DEVICE *);
+__declspec(dllimport) void *MmGetSystemRoutineAddress(TEXT *);
+__declspec(dllimport) U8 KeAreApcsDisabled(void);
+__declspec(dllimport) U8 KeAreAllApcsDisabled(void);
 __declspec(dllimport) void *IoAllocateWorkItem(DEVICE);
 __declspec(dllimport) void IoQueueWorkItem(void *, void (*)(DEVICE, void *),
                                            U32, void *);
@@ -114,6 +119,7 @@ static U16 Mode;
 static HANDLE HeldHandle;
 static FILEPTR OpenedFile, HeldFile;
 static PACKET PendingOpen;
+static U8 PendingMajor;
 static U32 OpenCreates, OpenCleanups, OpenCloses;
 
 static NTSTATUS cancelCompletion(DEVICE Device, PACKET Irp, void *Context) {
@@ -140,7 +146,8 @@ static NTSTATUS forwardOpen(PACKET Irp, U8 Major) {
   return IofCallDriver(Volume, Irp);
 }
 static void openWorker(DEVICE Device, void *Context) {
-  if (Device != Guest || Context != PendingOpen || forwardOpen(PendingOpen, 0))
+  if (Device != Guest || Context != PendingOpen ||
+      forwardOpen(PendingOpen, PendingMajor))
     Failed = 1;
   IoFreeWorkItem(Work);
   Done = 1;
@@ -150,6 +157,9 @@ static NTSTATUS fileDispatch(DEVICE Device, PACKET Irp) {
   U8 Major = Stack[0];
   FILEPTR File = *(FILEPTR *)(Stack + 0x30);
   CHECK(Device == Guest && File == *(FILEPTR *)((U8 *)Irp + 0xc0));
+  U8 Pointer = Mode == 'B' || Mode == 'V' || Mode == 'K' || Mode == 'T';
+  if (Pointer && (Major == 0 || Major == 18))
+    CHECK(KeAreApcsDisabled() && !KeAreAllApcsDisabled());
   if (!Major) {
     U8 *Security = *(U8 **)(Stack + 8);
     CHECK(*(U32 *)((U8 *)Irp + 0x10) == 0x884);
@@ -159,8 +169,13 @@ static NTSTATUS fileDispatch(DEVICE Device, PACKET Irp) {
     CHECK(*(void **)(Security + 8));
     OpenedFile = File;
     ++OpenCreates;
-    if (Mode == 'P' && !Done) {
+    if (Pointer) {
+      CHECK(*(U32 *)(Stack + 0x10) == 0x1000040);
+      CHECK(*(U16 *)(Stack + 0x1a) == 3);
+    }
+    if ((Mode == 'P' || Mode == 'V') && !Done) {
       PendingOpen = Irp;
+      PendingMajor = Major;
       Stack[3] |= 1;
       Work = IoAllocateWorkItem(Guest);
       CHECK(Work);
@@ -173,6 +188,15 @@ static NTSTATUS fileDispatch(DEVICE Device, PACKET Irp) {
           *(U32 *)((U8 *)Irp + 0x10) == 0x10);
   } else if (Major == 18) {
     ++OpenCleanups;
+    if (Mode == 'K' && !Done) {
+      PendingOpen = Irp;
+      PendingMajor = Major;
+      Stack[3] |= 1;
+      Work = IoAllocateWorkItem(Guest);
+      CHECK(Work);
+      IoQueueWorkItem(Work, openWorker, 1, Irp);
+      return 0x103;
+    }
     if (Mode == 'X') {
       CHECK(*(U32 *)((U8 *)Irp + 0x10) == 0x404);
       CHECK(*(void **)((U8 *)Irp + 0x48) == (U8 *)Irp + 0x30);
@@ -301,11 +325,44 @@ static void fileUnload(DRIVER Driver) {
     if (OpenCloses || OpenCleanups != 1)
       return;
     ObfDereferenceObject(HeldFile);
+  } else if (HeldFile) {
+    if (OpenCloses || OpenCleanups != 1)
+      return;
+    ObfDereferenceObject(HeldFile);
   }
   if (OpenCreates != OpenCleanups || OpenCleanups != OpenCloses)
     return;
   IoDetachDevice(Volume);
   IoDeleteDevice(Guest);
+}
+
+static NTSTATUS pointerCases(void) {
+  TEXT Name;
+  FILEPTR File = 0;
+  DEVICE Device = 0;
+  typedef NTSTATUS (*OPENPOINTER)(TEXT *, U32, FILEPTR *, DEVICE *);
+  OPENPOINTER Open = IoGetDeviceObjectPointer;
+  if (Mode == 'T') {
+    RtlInitUnicodeString(&Name, (const U16 *)L"IoGetDeviceObjectPointer");
+    Open = (OPENPOINTER)MmGetSystemRoutineAddress(&Name);
+    CHECK(Open);
+  }
+  RtlInitUnicodeString(&Name, (const U16 *)L"\\Device\\DeclaredVolume\\Data");
+  CHECK(!KeAreApcsDisabled());
+  CHECK(!Open(&Name, 0x100081, &File, &Device));
+  CHECK(File == OpenedFile && Device == Guest);
+  CHECK(!KeAreApcsDisabled() && !KeAreAllApcsDisabled());
+  CHECK(OpenCreates == 1 && OpenCleanups == 1 && OpenCloses == 0);
+  CHECK((*(U32 *)((U8 *)File + 0x50) & 0x4002) == 0x4000);
+  if (Mode == 'V' || Mode == 'K')
+    CHECK(Done && !Failed);
+  if (Mode == 'T')
+    HeldFile = File;
+  else {
+    ObfDereferenceObject(File);
+    CHECK(OpenCloses == 1);
+  }
+  return 0;
 }
 
 static NTSTATUS referenceVolume(DEVICE *Result) {
@@ -350,7 +407,8 @@ NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
   CHECK(!IoCreateDevice(Driver, 0, 0, 0x22, 0, 0, &Guest));
   const NTSTATUS Status = referenceVolume(&Volume);
   U8 Opens = Mode == 'C' || Mode == 'P' || Mode == 'X' || Mode == 'U' ||
-             Mode == 'R' || Mode == 'Q';
+             Mode == 'R' || Mode == 'Q' || Mode == 'B' || Mode == 'V' ||
+             Mode == 'K' || Mode == 'T';
   if (!Opens && Mode != 'S' && Mode != 'L' && Mode != 'G' && Mode != 'F' &&
       Mode != 'W') {
     CHECK((U32)Status == 0xc0000034u && !Volume);
@@ -374,6 +432,8 @@ NTSTATUS DriverEntry(DRIVER Driver, REGISTRY Registry) {
         *(NTSTATUS(**)(DEVICE, PACKET))((U8 *)Driver + 0x70 + Major * 8) =
             fileDispatch;
     *(void (**)(DRIVER))((U8 *)Driver + 0x68) = fileUnload;
+    if (Mode == 'B' || Mode == 'V' || Mode == 'K' || Mode == 'T')
+      return pointerCases();
     return openCases();
   }
   CHECK(*(U32 *)((U8 *)Guest + 0x98) == 511);

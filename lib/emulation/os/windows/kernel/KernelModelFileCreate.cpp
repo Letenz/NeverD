@@ -42,8 +42,29 @@ KernelModel::resumeFileAPI(FileAPIContinuation Continuation) {
 }
 
 llvm::Expected<uint64_t>
-KernelModel::createFile(llvm::ArrayRef<uint64_t> A, bool OpenOnly,
+KernelModel::getDeviceObjectPointer(llvm::ArrayRef<uint64_t> A,
+                                    const KernelContextCapture *Context) {
+  auto Entered = enterApcRegion(ApcRegionKind::Critical);
+  if (!Entered)
+    return Entered.takeError();
+  auto Opened = createFile(A, FileOpenKind::DevicePointer, Context);
+  if (Opened && PendingFileOperation) {
+    // The originating thread keeps its critical region across CREATE and
+    // private-handle CLEANUP, including callbacks that complete elsewhere.
+    FileOperations.at(*PendingFileOperation).CriticalRegion = true;
+    return Opened;
+  }
+  auto Left = leaveApcRegion(ApcRegionKind::Critical);
+  if (!Left)
+    return llvm::joinErrors(Opened.takeError(), Left.takeError());
+  return Opened;
+}
+
+llvm::Expected<uint64_t>
+KernelModel::createFile(llvm::ArrayRef<uint64_t> A, FileOpenKind Kind,
                         const KernelContextCapture *Context) {
+  const bool OpenOnly = Kind != FileOpenKind::Create;
+  const bool DevicePointer = Kind == FileOpenKind::DevicePointer;
   const auto Process = executionProcessContext();
   if (!Process || Process->RestrictedAttachment ||
       CurrentIRQL != scheduler::PassiveLevel)
@@ -60,8 +81,8 @@ KernelModel::createFile(llvm::ArrayRef<uint64_t> A, bool OpenOnly,
       NextFileOperation == UINT64_MAX || NextIRPCall == UINT64_MAX)
     return createError(
         "cannot replace an outstanding operation or open during unload");
-  const uint32_t Options = uint32_t(A[OpenOnly ? 5 : 8]);
-  const uint32_t Share = uint32_t(A[OpenOnly ? 4 : 6]);
+  const uint32_t Options = DevicePointer ? 0x40 : uint32_t(A[OpenOnly ? 5 : 8]);
+  const uint32_t Share = DevicePointer ? 3 : uint32_t(A[OpenOnly ? 4 : 6]);
   if ((!OpenOnly && uint32_t(A[7]) != 1) || (Options & ~OpenOptions))
     return createError("only existing-node FILE_OPEN options are implemented");
   if (((Options & 0x41) == 0x41 || Share & ~7u) && A.size() == 14 &&
@@ -86,12 +107,22 @@ KernelModel::createFile(llvm::ArrayRef<uint64_t> A, bool OpenOnly,
       return StatusInvalidParameter;
     Allocation = *Value;
   }
-  if (auto E = validateGuestAccess(A[2], ObjectAttributesSize, false))
-    return E;
-  std::array<uint8_t, ObjectAttributesSize> Attributes;
-  if (auto E = Memory.read(A[2], Attributes))
-    return E;
   using namespace llvm::support::endian;
+  std::array<uint8_t, ObjectAttributesSize> Attributes{};
+  if (DevicePointer) {
+    // This profile uses case-insensitive device opens. Keep the wrapper's
+    // private OBJECT_ATTRIBUTES out of caller memory; the ordinary CREATE
+    // owner consumes the same parsed fields.
+    write32le(Attributes.data(), ObjectAttributesSize);
+    write64le(Attributes.data() + ObjectNameOffset, A[0]);
+    write32le(Attributes.data() + ObjectFlagsOffset,
+              ObjectKernelHandle | ObjectCaseInsensitive);
+  } else {
+    if (auto E = validateGuestAccess(A[2], ObjectAttributesSize, false))
+      return E;
+    if (auto E = Memory.read(A[2], Attributes))
+      return E;
+  }
   if (read32le(Attributes.data()) != ObjectAttributesSize)
     return StatusInvalidParameter;
   const auto Flags = read32le(Attributes.data() + ObjectFlagsOffset);
@@ -155,10 +186,12 @@ KernelModel::createFile(llvm::ArrayRef<uint64_t> A, bool OpenOnly,
         "volume opens without a file-name suffix are unsupported");
   if (FileName.size() > MaxFileSystemPathBytes)
     return createError("file name exceeds the volume path limit");
-  if (auto E = validateObjectOutput(A[0], 8))
-    return E;
-  if (auto E = validateObjectOutput(A[3], 16))
-    return E;
+  if (!DevicePointer) {
+    if (auto E = validateObjectOutput(A[0], 8))
+      return E;
+    if (auto E = validateObjectOutput(A[3], 16))
+      return E;
+  }
   if (NextObjectHandle > profile::SystemThreadHandleLimit)
     return StatusInsufficientResources;
   if (auto E = snapshot())
@@ -222,11 +255,17 @@ KernelModel::createFile(llvm::ArrayRef<uint64_t> A, bool OpenOnly,
   if (RootFile)
     ++FileObjects.at(RootFile).InternalIOHolds;
   FileOperation Operation;
+  Operation.DevicePointer = DevicePointer;
   Operation.File = *Body;
   Operation.IRP = *Packet;
   Operation.Root = RootFile;
-  Operation.HandleOutput = A[0];
-  Operation.StatusOutput = A[3];
+  if (DevicePointer) {
+    Operation.FileOutput = A[2];
+    Operation.DeviceOutput = A[3];
+  } else {
+    Operation.HandleOutput = A[0];
+    Operation.StatusOutput = A[3];
+  }
   Operation.ReservedHandle = Handle;
   Operation.Storage = *Storage;
   Operation.StorageSize = 16;
@@ -469,10 +508,12 @@ KernelModel::resumeFileOperation(uint64_t ID) {
                                        *Flags | FileOpenCancelled, 4))
         return E;
     } else if (!(Operation.Status & profile::NTStatusFailureMask)) {
-      if (auto E = validateObjectOutput(Operation.HandleOutput, 8))
-        return E;
-      if (auto E = validateObjectOutput(Operation.StatusOutput, 16))
-        return E;
+      if (!Operation.DevicePointer) {
+        if (auto E = validateObjectOutput(Operation.HandleOutput, 8))
+          return E;
+        if (auto E = validateObjectOutput(Operation.StatusOutput, 16))
+          return E;
+      }
       retainReservedObjectHandle(Operation.ReservedHandle, File.Address,
                                  Operation.Access, Operation.Attributes,
                                  Operation.CallerProcess);
@@ -502,8 +543,61 @@ KernelModel::resumeFileOperation(uint64_t ID) {
         return std::optional<uint64_t>{};
     }
   }
+  if (Operation.DevicePointer && !Operation.PointerPublished &&
+      !(Operation.Status & profile::NTStatusFailureMask)) {
+    auto Type = objectType(ObjectKind::File);
+    if (!Type)
+      return Type.takeError();
+    // CREATE has retired its IOSB. Reuse the private storage for the wrapper's
+    // local referenced object, so overlapping public outputs cannot change it.
+    auto Referenced = referenceObjectByHandle(
+        {Operation.ReservedHandle, 0, *Type, KernelMode, Operation.Storage, 0});
+    if (!Referenced)
+      return Referenced.takeError();
+    Operation.Status = uint32_t(*Referenced);
+    if (!(Operation.Status & profile::NTStatusFailureMask)) {
+      auto File = Memory.readInteger(Operation.Storage, 8);
+      if (!File)
+        return File.takeError();
+      if (auto E = validateObjectOutput(Operation.FileOutput, 8))
+        return E;
+      if (auto E = Memory.writeInteger(Operation.FileOutput, *File, 8))
+        return E;
+      auto Device = queryFileDevice(*File, FileDeviceQuery::Related);
+      if (!Device)
+        return Device.takeError();
+      if (auto E = validateObjectOutput(Operation.DeviceOutput, 8))
+        return E;
+      if (auto E = Memory.writeInteger(Operation.DeviceOutput, *Device, 8))
+        return E;
+    }
+    Operation.PointerPublished = true;
+    auto Closed = closeHandle(Operation.ReservedHandle);
+    if (!Closed)
+      return Closed.takeError();
+    // The wrapper ignores ZwClose's NTSTATUS, but must wait for its actual
+    // CLEANUP before restoring APC state or returning the reference status.
+    if (PendingWdmCall || PendingWait)
+      return std::optional<uint64_t>{};
+  }
+  if (Operation.DevicePointer && Operation.PointerPublished) {
+    const auto File = FileObjects.find(Operation.File);
+    if (std::any_of(FileHandleCloses.begin(), FileHandleCloses.end(),
+                    [&](const auto &Entry) {
+                      return Entry.second.File == Operation.File;
+                    }) ||
+        (File != FileObjects.end() && File->second.State == FileState::Closing))
+      return createError(
+          "device open requires completed private-handle close continuation");
+  }
+  if (Operation.CriticalRegion) {
+    auto Left = leaveApcRegion(ApcRegionKind::Critical);
+    if (!Left)
+      return Left.takeError();
+    Operation.CriticalRegion = false;
+  }
   const auto Status = Operation.CancelOpen ? 0 : Operation.Status;
-  if (!Operation.CancelOpen) {
+  if (!Operation.CancelOpen && !Operation.DevicePointer) {
     if (!(Status & profile::NTStatusFailureMask)) {
       // The public wrapper publishes handle, Information, then Status. Preserve
       // that sequence when these caller outputs overlap.
