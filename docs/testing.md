@@ -4248,8 +4248,8 @@ bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
 stack-only facts cannot preserve a capture, deallocated buffers refuse and a
 frame-preserving call supplies no scalar result authority.
 
-The EH4 jump matrix repeats thirty capture/resumption scenarios with and without
-GS cookies: parent and callback jumps, zero values, filter search, incoming
+The EH4 jump matrix repeats thirty-five capture/resumption scenarios with and
+without GS cookies: parent and callback jumps, zero values, filter search, incoming
 parameters, retired scopes, private leaf/graph calls with a live buffer, and
 registered EH3/EH4 helpers borrowing the parent buffer and a scalar object, and
 correlated filter searches while a finally invocation is suspended.
@@ -4273,7 +4273,7 @@ four calls, unwind the same finally, check the restored state and nonvolatile
 register, then raise another exception. The native mutation tests alter the saved
 state slot, read address, volatile accesses, placement, use closure and captured
 projection key while retaining verifier-clean IR. The full source profile now
-contains 129 scenarios; older compiler profiles keep their original membership.
+contains 144 scenarios; older compiler profiles keep their original membership.
 
 The EH4/GS `longjmp-callee`, `longjmp-returning-callee` and
 `longjmp-scalar-callee` variants retain the source helper's registration while
@@ -4295,21 +4295,44 @@ replay and native installation to reject it. A changed check in the fixture's
 unreachable except body remains harmless for that proved invocation; the live
 ordinary-return check retains its independent obligation.
 
+`RegistrationCopyEdge` checks unavailable handler-register PHIs through cyclic
+private register/snapshot transports. Frozen poison is permitted only when its
+entire bounded use graph has no observer. Return values, call arguments, global
+stores, address escapes, arithmetic, atomic accesses, over-wide slots and budget
+exhaustion refuse; C++ copy edges keep their stricter nonvolatile slot rule.
+`RegistrationSEHDynamicScope.ProvesUnreachedSourceAddressExpressions` checks
+all-arm frame-coordinate PHIs in source blocks without execution receipts.
+Reordered equivalent arms and checked runtime handler roots pass. Exceptional
+arms also require the same coordinate; malformed runtime definitions refuse.
+Differing coordinates, missing provenance,
+numeric addresses, narrow/wide aliases, duplicate definitions and cycles grant
+no logical-state write authority.
 
 `RegistrationFilterState.*` checks paired dispositions and states at shared
 returns, captured search cursors, arbitrary negative dispositions, continuation
 inside a finally block and reordered edges for EH3, EH4 and EH4+GS. Missing or
 wrong image cookie inputs, full/partial EH and GS slot writes refuse EH4
-resumption; a disjoint scalar write remains valid. Selected handlers, unknown results,
-escaping searches, bad stacks, cycles and incomplete instruction boundaries
-refuse. Skipping one or several filter scopes records the last callback state
+resumption; a disjoint scalar write remains valid. Selected handlers abandon
+only their own suspended paths, including a filter-activated cleanup. Unknown
+results, escaping searches, bad stacks, recurrent selection and incomplete
+instruction boundaries refuse. MedIR rejects unordered/duplicate selected scope
+indices, finally rows, missing handlers, unknown roots and incorrect entry
+states. Skipping one or several filter scopes records the last callback state
 and its final runtime state separately. `RegistrationSEHJumpABI` checks complete
 state projections and rejects missing, invalid, unordered or contradictory
 pairs. Native installation mutations change the reload address, volatility,
 atomicity, alignment, selector, projection keys/results, uses and placement
 before the capture. They also remove a projection or compare another value.
 
-`registration_filter_state.s` supplies seven runtime cases:
+`registration_filter_state.s` supplies twelve runtime cases. Five handler-selection
+cases (`longjmp-handler-selected`, `longjmp-handler-cleanup`,
+`longjmp-handler-captured-cursor`, `longjmp-handler-nested-finally` and
+`longjmp-handler-mixed-resumption`) check handler entry state, cleanup/filter
+order, actual caller PC, return value and restored FS chain. Handler-only cases
+require the captured continuation to remain unreachable; the mixed case alternates
+selection and continuation, checking distinct traces and restored registers.
+Nested selection abandons both suspended callback invocations. They run with
+EH3, EH4 and EH4+GS. The other seven cases are:
 `longjmp-filter-correlated-state`, `longjmp-filter-shared-state`,
 `longjmp-filter-captured-cursor`, `longjmp-filter-negative-disposition`,
 `longjmp-filter-skipped-scope`, `longjmp-filter-two-resume-mappings` and
@@ -4326,7 +4349,7 @@ permutation whose bytes, fixups and enclosing graph are otherwise valid.
 `longjmp-filter-callback-activation` omits the ordinary activation of scope 2;
 its distinct filter and handler acquire their entry proofs only from the
 continued callback state. Unit controls require both roots and reject complete
-proof publication when any filter path selects a handler instead of resuming.
+proof publication when a filter path has an unknown disposition.
 The genuine `CorpusFuncLoadX86FilterThunksPrintTheirValue` regression retains
 structured filters when an ordinary finally's raise selects a handler: that
 path must not be treated as a failed nonlocal resumption.

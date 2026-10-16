@@ -7,6 +7,7 @@
 #include "COFFRegistrationSEHDynamicScope.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/X86RegistrationSEHStateStore.h"
 
 #include <functional>
@@ -46,12 +47,21 @@ bindDynamicSEHState(const MedFunc &Source, const RegistrationFrame &Frame,
       return rejectIR("dynamic scope frame value identity is ambiguous");
   }
   std::map<Key, const MedOp *> Definitions;
+  std::map<Key, const PhiNode *> Phis;
   std::map<Key, int32_t> Offsets;
   for (const auto &Block : Source.Blocks) {
     for (const auto &Phi : Block.Phis) {
       if (++Work > limits::kMaxRegistrationEHStateWork)
         return rejectIR("dynamic scope phis exceed their work budget");
-      Definitions[KeyOf(Phi.Output)] = nullptr;
+      const auto Key = KeyOf(Phi.Output);
+      const auto [Definition, Added] = Definitions.emplace(Key, nullptr);
+      if (Added)
+        Phis.emplace(Key, &Phi);
+      else {
+        Definition->second = nullptr;
+        Phis.erase(Key);
+        Offsets.erase(Key);
+      }
     }
     for (const auto &Op : Block.Ops) {
       if (++Work > limits::kMaxRegistrationEHStateWork)
@@ -62,6 +72,7 @@ bindDynamicSEHState(const MedFunc &Source, const RegistrationFrame &Frame,
       if (!Added) {
         It->second = nullptr;
         Offsets.erase(KeyOf(Op.Output));
+        Phis.erase(KeyOf(Op.Output));
         continue;
       }
       const auto Found = Frames.find({Op.Addr, Op.OriginSeq});
@@ -78,14 +89,42 @@ bindDynamicSEHState(const MedFunc &Source, const RegistrationFrame &Frame,
       return Address ? std::nullopt
                      : std::optional<int64_t>(int32_t(Value.ConstVal));
     const auto Found = Definitions.find(KeyOf(Value));
-    if (Found == Definitions.end() || !Found->second)
+    if (Found == Definitions.end())
       return std::nullopt;
+    if (!Found->second) {
+      const auto Phi = Phis.find(KeyOf(Value));
+      if (!Address || Phi == Phis.end() || Phi->second->Output.Size != 4 ||
+          Phi->second->Args.empty())
+        return std::nullopt;
+      // An unreachable join has no dynamic frame receipt. Every source arm
+      // must independently name the same established frame coordinate; an
+      // integer with matching bits, a narrow alias or a cycle is insufficient.
+      std::optional<int64_t> Offset;
+      for (const auto &[Predecessor, Input] : Phi->second->Args) {
+        if (Input.Size != 4)
+          return std::nullopt;
+        const auto Arm = Resolve(Input, true, Depth + 1);
+        if (!Arm || (Offset && Offset != Arm))
+          return std::nullopt;
+        Offset = Arm;
+      }
+      if (const auto &Entry = Phi->second->ExceptionalEntry)
+        if (Entry->Size != 4 || Resolve(*Entry, true, Depth + 1) != Offset)
+          return std::nullopt;
+      return Offset;
+    }
     if (Address) {
       const auto Offset = Offsets.find(KeyOf(Value));
       if (Offset != Offsets.end())
         return Offset->second;
     }
     const auto &Op = *Found->second;
+    // Handler entry definitions are runtime roots, not source instructions,
+    // so they have no FrameValues identity. Use the shared coordinate proof
+    // and convert its entry-ESP origin to the established EBP origin.
+    if (Address)
+      if (const auto Offset = registrationRootEntryStackOffset(Op))
+        return *Offset + 4;
     if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
       return Resolve(Op.Inputs[0], Address, Depth + 1);
     // A semantically unreachable source block still exists in native IR.

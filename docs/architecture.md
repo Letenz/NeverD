@@ -692,9 +692,25 @@ filter effects after a returning `RaiseException`, including changed parent
 cells. Each returned state supplies its own exceptional roots before the
 frames join, so a filter can establish the proof for a scope absent from
 ordinary parent flow. A failed search cannot publish a complete root proof.
-Handler-selected paths contribute no ordinary returning frame. Ordinary
-propagation can retain a conditional return from an external search, while
-nonlocal unwind still requires every path to resume inside its proved search.
+Handler selection keeps the captured scope separate from the written state.
+The iterative unwind owner finishes its local cleanup under that scope's bound,
+then publishes handler entry at the enclosing level. Its cycle key includes the
+bound and selected scope; nested selections share the original work budget.
+`RegistrationJumpContinuation` restores capture registers only for normal unwind
+outcomes. Selected paths use the canonical exceptional-entry owner, discarding
+suspended callback stacks and registers. LowIR records selected scopes separately
+from resumed states; MedIR checks their handler roots without inventing a
+resumption projection. COFF admission repeats the source analysis independently.
+Ordinary propagation can retain a conditional return from an external search;
+nonlocal unwind requires every path to close inside the proved registration.
+The COFF copy-edge owner accepts frozen poison only through a complete,
+unobserved private scalar transport graph. This includes cycles kept live by
+jump snapshots, but excludes return values, calls, escaping addresses and source
+memory. Other copy shapes retain their existing checks and work budget.
+Static addresses in unreached source blocks may join equivalent frame values
+through PHIs. Every ordinary and exceptional arm must have the same proved
+coordinate, including checked runtime frame definitions at handler entry. This
+address proof grants no execution or state-transition receipt.
 Unwind records the logical state left at entry or by
 the last completed callback together with the final runtime state. Remaining
 filter-only unwind steps may make those values differ. MedIR binds a variable
