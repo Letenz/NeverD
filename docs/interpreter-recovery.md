@@ -599,3 +599,9 @@ Alignment forwards `MaxCuts` to the shared inference owner. After input validati
 Under `ExplicitMachineState` and `NormalNonfaultingExecution`, an admitted 16-byte `LOAD` can use immutable image evidence only when every feasible address has a complete 16-byte witness. Symbolic execution retains all 128 bits. Residual materialization uses scalar parts in storage order and captures an overlapping address before writing any destination byte. Both byte orders share this rule. Every emitted operation consumes the existing operation budget.
 
 An incomplete address domain or unavailable immutable span retains the whole runtime read without partial witnesses. A provider returning a malformed byte extent refuses the result. Writable memory and runtime observations do not acquire immutable authority. Raw receipts bind all witness bytes, including the upper half. Source wrapping and independent native proofs keep their existing width and environment requirements.
+
+<!-- i18n-section: unrooted-native-stack -->
+
+## Internal transfers after changing the stack
+
+Explicit raw machine regions can follow internal near CALL and RET instructions when the current stack pointer is no longer an entry-relative value. The architecture adapter retains the physical target capture, push, return-word read and pop. Every internal return still requires an exhaustive finite target proof from the actual stack word. Only proved entry-relative return cells enter the frame projection and preservation inventory; losing an unrelated stack relation at a graph boundary can still cause recovery to refuse. Ordinary function recovery retains its restored-frame requirements. This capability supplies a raw region result; whole-function composition and source or native equivalence remain separate obligations.

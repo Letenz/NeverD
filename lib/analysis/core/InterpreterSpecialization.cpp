@@ -2394,7 +2394,12 @@ bool Specializer::evaluate(int Id) {
                       FrameRoot, FrameOffsetProof::Required);
       if (Failed)
         return false;
-      if (!Displacement)
+      // A raw region has explicit outgoing transfers rather than an ordinary
+      // restored-frame return boundary. Its physical calls and internal
+      // returns can use an arbitrary current stack. Only proved root-relative
+      // cells may enter the frame projection or its preservation inventory.
+      const bool RawRegion = RawDomain && !Options.RequireRestoredFrameAtReturn;
+      if (!Displacement && !RawRegion)
         return fail(SpecializationStatus::Unsupported,
                     "native stack control has no exact entry-relative stack "
                     "pointer");
@@ -2408,7 +2413,7 @@ bool Specializer::evaluate(int Id) {
           NdVar::tmp(IsReturn ? NativeCallTargetTemp : NativeReturnTemp, 8)};
       auto Expanded = expandNativeStackControl(
           Instruction, Stack, Scratch,
-          IsReturn && *Displacement == 0 && Options.X64MachineExits.empty()
+          IsReturn && Displacement == 0 && !RawRegion
               ? NativeReturnExpansion::OuterFunctionBoundary
               : NativeReturnExpansion::InternalTransfer,
           Reserved);
@@ -2428,7 +2433,8 @@ bool Specializer::evaluate(int Id) {
       NativeCallPrefixSize = Expanded->OriginalPrefixSize;
       Frame.NativeStackActive = true;
       if (Instruction.NativeStackControl ==
-          SpecializationNativeStackControl::Call) {
+              SpecializationNativeStackControl::Call &&
+          Displacement) {
         // Frame offsets are uint64_t modular displacements, just like the
         // architectural stack arithmetic. Subtraction through zero is defined.
         Frame.NativeReturnSlots.insert(*Displacement - uint64_t{8});
@@ -2436,8 +2442,10 @@ bool Specializer::evaluate(int Id) {
           return fail(SpecializationStatus::BudgetExceeded,
                       "native return-slot context budget exhausted");
       } else if (ExpandedReturn) {
-        const SymRef ReturnValue =
-            State.load(Ctx.mkAdd(FrameRoot, Ctx.mkConst(64, *Displacement)), 8);
+        const SymRef ReturnAddress =
+            Displacement ? Ctx.mkAdd(FrameRoot, Ctx.mkConst(64, *Displacement))
+                         : Exec.operandValue(Stack);
+        const SymRef ReturnValue = State.load(ReturnAddress, Stack.Size);
         auto Targets = enumerate(Ctx, Exec.pathPredicate(), {ReturnValue},
                                  Options.MaxIndirectTargets);
         if (Failed)
@@ -2452,7 +2460,8 @@ bool Specializer::evaluate(int Id) {
               SpecializationStatus::UnresolvedControl,
               "native return address is not an exact finite target set");
         }
-        Frame.NativeReturnSlots.erase(*Displacement);
+        if (Displacement)
+          Frame.NativeReturnSlots.erase(*Displacement);
       }
       // Reaching the untouched entry return slot is an outer exit even when
       // native code has discarded one or more intermediate frames.
