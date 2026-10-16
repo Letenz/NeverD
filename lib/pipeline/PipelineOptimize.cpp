@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "OptimizationGuards.h"
 #include "SemanticConvergence.h"
 
 #include "neverd/Common.h"
@@ -460,6 +461,7 @@ runOptimizationPipeline(llvm::Module &Mod,
   llvm::PassInstrumentationCallbacks PIC;
   llvm::OptNoneInstrumentation OptNone(/*DebugLogging=*/false);
   OptNone.registerCallbacks(PIC);
+  registerOptNoneInterproceduralGuard(PIC);
   llvm::PassBuilder PB(nullptr, llvm::PipelineTuningOptions(), std::nullopt,
                        &PIC);
 

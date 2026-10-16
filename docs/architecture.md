@@ -778,6 +778,8 @@ This prevents unused PHI copies from reading unavailable register values in
 `optnone` code. Escaping slots, live values, source observations and volatile or
 atomic operations remain intact; no source-frame initialization is invented.
 Ordinary analysis IR retains its original value graph.
+
+`OptimizationGuards` supplements LLVM’s `optnone` instrumentation: optional module and call-graph passes are skipped when the module defines a protected function, because those passes can rewrite its CFG or replace callback arguments with poison. Required adaptors and ordinary function optimizations still run. Registration source projection retains prologue-save memory occurrences until native reconstruction can bind them.
 `lib/ir/low/X86/RegistrationEntryABI.cpp` binds those returns to source bytes and
 keeps callback returns separate. The LLVM adapter selects cdecl, stdcall,
 thiscall or fastcall and independently validates its exact parameter attributes;

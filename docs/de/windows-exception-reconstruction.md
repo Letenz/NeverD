@@ -257,3 +257,5 @@ Nah-Rücksprung. Der Laufzeiteinstieg behält seinen eigenen Registervertrag und
 übernimmt keine Eingaben eines früheren gewöhnlichen Aufrufs. Ein ausschließlich
 durch einen nachgewiesenen gewöhnlichen finally-Aufruf referenzierter Scope
 bleibt erhalten, auch wenn ihn kein try level des Quellcodes aktiviert.
+
+Die Rekonstruktion des echten MSVC-x86-Exports `/Od /GS-` `nonlocal_finally_return` wird mit optimierter und unoptimierter Quell-LLVM-IR in beiden Patch-Modi ausgeführt. Ein äußerer SEH-Beobachter prüft normale und außergewöhnliche Rückkehr, Stack und Kettenwiederherstellung an zwei Basisadressen. Direkte Elternrückkehr mit `/O2` und GS-Wrapper sind davon nicht erfasst.

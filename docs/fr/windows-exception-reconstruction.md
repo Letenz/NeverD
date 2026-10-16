@@ -264,3 +264,5 @@ proche physique. L’entrée du runtime conserve son propre contrat de registres
 et ne reprend pas les entrées d’un appel ordinaire antérieur. Un scope référencé
 uniquement par un appel ordinaire à finally authentifié est conservé, même si
 aucun try level du code source ne l’active.
+
+La reconstruction de `nonlocal_finally_return` produit par MSVC x86 `/Od /GS-` est exécutée avec LLVM source optimisé ou non et les deux modes de patch. Un observateur SEH extérieur vérifie les retours normaux et exceptionnels, la pile et la chaîne à deux bases imposées. Cette couverture ne comprend pas le retour direct au parent de `/O2` ni les wrappers GS.

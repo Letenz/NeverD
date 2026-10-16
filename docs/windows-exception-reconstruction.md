@@ -1021,3 +1021,5 @@ same change:
 Do not broaden an allow-list solely because a new record can be decoded. The
 acceptance criterion is preservation of runtime exception behavior in the
 final linked image.
+
+Genuine MSVC x86 `/Od /GS-` `nonlocal_finally_return` reconstruction is exercised with optimized and unoptimized source LLVM through both patch modes. A separate outer SEH observer checks normal and exceptional returns, stack guards and chain restoration at two forced bases. This coverage does not extend to the `/O2` direct-parent-return or GS wrapper forms.

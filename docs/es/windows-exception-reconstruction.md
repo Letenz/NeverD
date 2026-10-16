@@ -256,3 +256,5 @@ físico. La entrada del runtime conserva su propio contrato de registros y no
 reutiliza entradas de una llamada ordinaria anterior. También se conserva un
 scope referenciado únicamente por una llamada ordinaria a finally autenticada,
 aunque ningún try level del código fuente lo active.
+
+La reconstrucción de `nonlocal_finally_return` de MSVC x86 `/Od /GS-` se ejecuta con LLVM fuente optimizado y sin optimizar en ambos modos de parche. Un observador SEH externo comprueba retornos normales y excepcionales, guardas y restauración de la cadena en dos bases forzadas. Esto no cubre el retorno directo al padre de `/O2` ni los wrappers GS.

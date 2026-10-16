@@ -1694,6 +1694,8 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 
 `KernelMemoryCalls` 負責檢查型記憶體複製的准入，並沿用移動／填充操作、集區生命週期與使用者記憶體檢查。`KernelModelRuntime` 負責 `RtlImageNtHeader` 原始簽章探測。此探測不能替代執行映像所需的載入器驗證；配接器不重複兩者語義。
 
+`OptimizationGuards` 補充 LLVM 的 `optnone` 檢查：模組內有受保護函式時，略過可能改寫其 CFG 或將回呼引數替換為 poison 的選用模組與呼叫圖最佳化。必要適配器與一般函式最佳化仍執行。註冊鏈來源投影保留序言儲存的記憶體記錄，供原生重建綁定。
+
 `KernelModelRuntime` 統一負責 Unicode 雜湊、不依賴 NLS 的大寫映射及 1980 紀元秒數轉換。`KernelRuntimeCalls` 透過既有分頁字串集區配置輸出。字串與時間 API 表統一匯出身分、參數數量及 APC_LEVEL 限制；欄位存取順序由實作層負責。
 
 `uppercaseCharacter` 先縮窄純量參數，再檢查准入並委託既有 `uppercaseUnicodeUnit`。CRT 與計數字串 API 表以各自 ABI 身分共用映射，介接層與宿主地區設定不提供另一套語意。

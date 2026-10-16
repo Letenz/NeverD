@@ -10,6 +10,7 @@
 
 #include "neverd/backend/ExceptionRewriteContract.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
+#include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
@@ -17,6 +18,8 @@
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/MC/BinaryRewrite.h"
+#include "llvm/Support/FileSystem.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -65,11 +68,46 @@ TEST(PipelineOutcome, NativeFinallyInputsRetainSourceLLVM) {
             EXPECT_TRUE(Function.hasCompleteLiftCoverage()) << Function.Name;
           if (Image->Arch != Arch::X86)
             continue;
-          // An external source-handler identity does not supply the missing
-          // ordinary-finally invocation and nonlocal-exit reconstruction.
           auto Native = exception_rewrite::validateExceptionRewriteContracts(
               *Result.LlvmModule);
-          EXPECT_FALSE(bool(Native));
+          bool Reconstruct = false;
+#ifdef LLVM_NEVERD_X86_REGISTRATION_EH
+          Reconstruct = std::string(Profile) == "Od-no-gs" &&
+                        std::string(Name) == "nonlocal_finally_return";
+#endif
+          if (Reconstruct) {
+            ASSERT_TRUE(bool(Native)) << llvm::toString(Native.takeError());
+            const auto *Source =
+                Image->ExceptionMetadata.findFunction(Export->Addr);
+            ASSERT_NE(Source, nullptr);
+            unsigned Checked = 0;
+            for (const auto &Function : *Result.LlvmModule) {
+              auto Identity = rewrite_source::getOriginalVA(Function);
+              ASSERT_TRUE(bool(Identity))
+                  << llvm::toString(Identity.takeError());
+              if (Function.isDeclaration() || *Identity != Export->Addr)
+                continue;
+              auto Error =
+                  validateCOFFRegistrationIR(Function, *Source, *Image);
+              ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+              ++Checked;
+            }
+            ASSERT_EQ(Checked, 1u);
+            if (const char *Output =
+                    std::getenv("NEVERD_NONLOCAL_FINALLY_OUTPUT")) {
+              std::error_code EC = llvm::sys::fs::create_directories(Output);
+              ASSERT_FALSE(EC) << EC.message();
+              const auto IR = std::filesystem::path(Output) /
+                              (NoOpt ? "return-raw.ll" : "return-opt.ll");
+              llvm::raw_fd_ostream OS(IR.string(), EC);
+              ASSERT_FALSE(EC) << EC.message();
+              Result.LlvmModule->print(OS, nullptr);
+            }
+          } else {
+            // A source-handler identity alone cannot supply missing nonlocal
+            // exit or cookie proofs in the other native MSVC forms.
+            EXPECT_FALSE(bool(Native));
+          }
           if (!Native)
             llvm::consumeError(Native.takeError());
           if (std::string(Profile) != "Od-gs" &&
