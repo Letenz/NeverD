@@ -855,6 +855,14 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>プログラムの型をレイアウトとソースとともに表示</translation>
     </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>構造体オフセット(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>オペランドをローカル型のメンバーとして表示します。型はコードのアクセスとの一致度で並べ替えられます</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2589,6 +2597,12 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>DWARF loaded: %1</source>
         <translation>DWARF を読み込みました：%1</translation>
     </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>%n 個のオペランドを %1 のメンバーとして表示しました</numerusform>
+        </translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -3794,6 +3808,141 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>%1 行 %2 列：%3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>%n 個のオフセットのうち %1 個がメンバーにちょうど一致</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>%n 個中 %1 個の型</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n バイト</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>%n 個の型</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>アクセス</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>%1 を経由するほかの %n 個の命令もメンバーとして表示</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>適用</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>場所：%1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>バイト</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>メンバー</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>このバイトを含むメンバーはありません</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>一致する型はありません。</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>オフセット</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>オペランドのポインター経由でコードが行うアクセスを読み取っています…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>型を検索：名前、typedef、Type.member、.member</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>構造体オフセット</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>数値 %1 を構造体または共用体内のオフセットとして扱います。</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>オペランドは数値のままです。</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>プログラムには構造体も共用体もありません。ローカル型（Shift+F1）で宣言してください。</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>レジスタは %2 の先頭から %1 バイトの位置（%3）を指しています。それより前へのアクセスは、CONTAINING_RECORD が戻すように、レコードの前方のメンバーを読み取ります。</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>型</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>関数内で %1 を経由する %n 回のアクセスがメンバーにどう一致するかで型を並べています。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>アドレス</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>ヘッダー</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>型の範囲外</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>パディング</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>読み取り</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>ポインター</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>ユーザー</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>書き込み</translation>
     </message>
 </context>
 </TS>

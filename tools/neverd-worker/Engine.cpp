@@ -249,6 +249,9 @@ using LocalTypesFunction = const char *(*)(neverd_session_t, const char *);
 using LocalTypeNamesFunction = const char *(*)(neverd_session_t, const char *);
 // The most source one declaration reads.
 constexpr std::size_t MaxDeclarationBytes = 4u << 20;
+// The most other instructions one structure offset goes to, which with the
+// instruction's own row fill a history command.
+constexpr std::size_t MaxOperandFormatRows = 63;
 // The user's type declarations beside the input, as the engine reads them.
 constexpr std::string_view TypeDeclarationsSuffix = ".neverd-types.json";
 using LocalTypeFunction = const char *(*)(neverd_session_t, const char *,
@@ -2307,22 +2310,49 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                     "accesses must be a list of at most 4096 accesses");
       request["accesses"] = accesses;
     }
+    // The operand a structure offset would change: a displacement is a
+    // pointer's, whose accesses the engine reads in the function; a number
+    // is an offset by itself.
+    std::optional<std::size_t> operand;
     if (p.contains("address")) {
-      request["function"] =
-          hexAddress(parseAddress(stringField(p, "function", {}, 32)));
-      request["target"] = {
-          {"address", hexAddress(parseAddress(stringField(p, "address")))}};
+      const auto address = parseAddress(stringField(p, "address"));
+      std::optional<std::int64_t> number;
+      operand = listing().structOperand(
+          address,
+          p.contains("operand")
+              ? std::optional<std::size_t>(sizeField(p, "operand", 0, 7))
+              : std::nullopt,
+          &number);
+      if (!operand)
+        throw Error("invalid_request",
+                    "The instruction at " + hexAddress(address) +
+                        " has no number or displacement from a register to "
+                        "show as a structure offset");
+      if (number) {
+        if (!request.contains("accesses"))
+          request["accesses"] = Json::array();
+        request["accesses"].push_back(
+            {{"offset", *number}, {"size", 0}, {"use", "address"}});
+      } else {
+        request["function"] =
+            hexAddress(parseAddress(stringField(p, "function", {}, 32)));
+        request["target"] = {{"address", hexAddress(address)}};
+      }
     }
     const auto fit =
         engineSymbol<LocalTypesFunction>("neverd_local_types_fit_json");
     const auto reply = ownedString(fit(session_, request.dump().c_str()));
     if (reply.empty())
       throw Error("local_types_failed", error());
+    Json result;
     try {
-      return Json::parse(reply);
+      result = Json::parse(reply);
     } catch (const Json::exception &) {
       throw Error("engine_error", "Engine returned malformed JSON");
     }
+    if (operand)
+      result["operand"] = *operand;
+    return result;
   }
   if (operation == "local_types" || operation == "local_type" ||
       operation == "local_types_source") {
@@ -2997,15 +3027,16 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     // The listing's own number again also clears a structure offset.
     const bool reset = action == numberBaseName(NumberBase::Number);
     const auto &candidates = structure || reset ? *structs : *numbers;
+    const std::optional<std::size_t> asked =
+        p.contains("operand")
+            ? std::optional<std::size_t>(sizeField(p, "operand", 0, 7))
+            : std::nullopt;
     std::optional<std::size_t> chosen;
-    if (p.contains("operand"))
-      if (const auto asked = sizeField(p, "operand", 0, 7);
-          asked < candidates.size() && candidates[asked])
-        chosen = asked;
-    for (std::size_t i = 0; structure && !chosen && i < structs->size(); ++i)
-      if ((*structs)[i] && !(i < numbers->size() && (*numbers)[i]))
-        chosen = i;
-    for (std::size_t i = candidates.size(); !chosen && i-- > 0;)
+    if (structure)
+      chosen = listing().structOperand(address, asked);
+    if (!structure && asked && *asked < candidates.size() && candidates[*asked])
+      chosen = asked;
+    for (std::size_t i = candidates.size(); !structure && !chosen && i-- > 0;)
       if (candidates[i])
         chosen = i;
     if (!chosen)
@@ -3059,22 +3090,71 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     else
       throw Error("invalid_request", "action is a base of OperandFormats.def, "
                                      "\"negate\" or \"invert\"");
-    if (formats.set(session_, address, static_cast<int>(operand),
-                    next.dump().c_str()) != 0)
-      throw Error("invalid_request", error());
+    // A structure offset may go to other instructions too, as every access
+    // through the same pointer does: the displacement each one adds to a
+    // register, all of them one step of the history.
+    std::vector<std::pair<std::uint64_t, std::size_t>> others;
+    if (p.contains("also")) {
+      const auto &also = p.at("also");
+      if (!structure)
+        throw Error("invalid_request",
+                    "Only a structure offset goes to other instructions");
+      if (!also.is_array() || also.size() > MaxOperandFormatRows)
+        throw Error("invalid_request",
+                    "also lists at most " +
+                        std::to_string(MaxOperandFormatRows) + " instructions");
+      for (const auto &value : also) {
+        if (!value.is_string())
+          throw Error("invalid_request", "also lists instruction addresses");
+        const auto at = parseAddress(value.get<std::string>());
+        if (at == address ||
+            std::any_of(others.begin(), others.end(),
+                        [&](const auto &other) { return other.first == at; }))
+          continue;
+        if (const auto chosen = listing().structOperand(at, std::nullopt))
+          others.emplace_back(at, *chosen);
+      }
+    }
+    try {
+      if (formats.set(session_, address, static_cast<int>(operand),
+                      next.dump().c_str()) != 0)
+        throw Error("invalid_request", error());
+      for (const auto &[at, index] : others)
+        if (formats.set(session_, at, static_cast<int>(index),
+                        next.dump().c_str()) != 0)
+          throw Error("invalid_request", error());
+    } catch (...) {
+      // The sidecar still holds the formats before these.
+      (void)formats.load(session_);
+      throw;
+    }
+    // One history step holds every row the change made, the instruction's
+    // first.
+    std::map<std::uint64_t, std::pair<Json, Json>> changed;
+    for (const auto &row : state.at("operands"))
+      changed[parseAddress(row.at("addr").get<std::string>())].first = row;
     state["operands"] = operandFormatRows();
-    const Json after = rowAt(state.at("operands"));
-    if (before == after)
+    for (const auto &row : state.at("operands"))
+      changed[parseAddress(row.at("addr").get<std::string>())].second = row;
+    const Json after = changed[address].second;
+    Json command{{"kind", "operand"},
+                 {"address", hexAddress(address)},
+                 {"before", before},
+                 {"after", after}};
+    for (const auto &[at, sides] : changed)
+      if (at != address && sides.first != sides.second)
+        command["rows"].push_back({{"address", hexAddress(at)},
+                                   {"before", sides.first},
+                                   {"after", sides.second}});
+    if (before == after && !command.contains("rows"))
       return {{"address", hexAddress(address)},
               {"operand", operand},
               {"format", next},
+              {"also", 0},
               {"saved", false}};
     const auto checkpoint = store;
     try {
-      store.stage({{"kind", "operand"},
-                   {"address", hexAddress(address)},
-                   {"before", before},
-                   {"after", after}});
+      store.stage(std::move(command));
       store.persist(state);
     } catch (...) {
       store = checkpoint;
@@ -3088,6 +3168,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     return {{"address", hexAddress(address)},
             {"operand", operand},
             {"format", next},
+            {"also", others.size()},
             {"saved", true}};
   }
   if (operation == "decompile") {

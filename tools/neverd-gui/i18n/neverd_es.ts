@@ -855,6 +855,14 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>Muestra los tipos del programa con su disposición y su código fuente</translation>
     </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>Desplazamiento de es&amp;tructura...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>Muestra el operando como miembro de un tipo local, con los tipos ordenados según cómo encajan en ellos los accesos del código</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2595,6 +2603,13 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>DWARF loaded: %1</source>
         <translation>DWARF cargado: %1</translation>
     </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>Se mostró %n operando como miembro de %1</numerusform>
+            <numerusform>Se mostraron %n operandos como miembros de %1</numerusform>
+        </translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -3808,6 +3823,147 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>Línea %1, columna %2: %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>Desplazamientos que caen justo en miembros: %1 de %n</numerusform>
+            <numerusform>Desplazamientos que caen justo en miembros: %1 de %n</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>%1 de %n tipo</numerusform>
+            <numerusform>%1 de %n tipos</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n byte</numerusform>
+            <numerusform>%n bytes</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>%n tipo</numerusform>
+            <numerusform>%n tipos</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>Acceso</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>Mostrar también como miembro la otra instrucción que pasa por %1 (%n)</numerusform>
+            <numerusform>Mostrar también como miembros las otras %n instrucciones que pasan por %1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Aplicar</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>En %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Bytes</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>Miembro</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>Ningún miembro contiene este byte</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>Ningún tipo coincide.</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>Desplazamiento</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>Leyendo lo que hace el código a través del puntero del operando…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>Buscar tipos: un nombre, un typedef, Tipo.miembro o .miembro</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>Desplazamiento de estructura</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>El número %1 como desplazamiento dentro de una estructura o unión.</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>El operando conserva su número.</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>El programa no tiene estructuras ni uniones. Declárelas en Tipos locales (Shift+F1).</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>El registro apunta %1 bytes dentro de %2, en %3: los accesos anteriores leen los miembros previos de la estructura, como deshace CONTAINING_RECORD.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Tipo</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>Tipos ordenados según cómo cae en sus miembros el %n acceso de la función a través de %1.</numerusform>
+            <numerusform>Tipos ordenados según cómo caen en sus miembros los %n accesos de la función a través de %1.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>dirección</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>encabezado</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>fuera del tipo</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>relleno</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>lectura</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>el puntero</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>usuario</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>escritura</translation>
     </message>
 </context>
 </TS>

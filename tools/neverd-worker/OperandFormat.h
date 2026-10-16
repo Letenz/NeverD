@@ -186,6 +186,10 @@ std::vector<bool> formattableOperands(std::string_view operands,
 /// memory operands that add a displacement to a base register, by index.
 std::vector<bool> structOperands(std::string_view operands,
                                  OperandDialect dialect);
+/// The number operand \p index of \p operands is, as written, a negative
+/// one with its sign; none when it is no plain number.
+std::optional<std::int64_t> operandNumber(std::string_view operands,
+                                          std::size_t index);
 
 /// Classify one identifier of operand text for \p dialect.
 bool isRegisterName(OperandDialect dialect, std::string_view name);

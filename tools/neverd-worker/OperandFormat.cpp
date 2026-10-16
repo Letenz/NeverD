@@ -835,6 +835,17 @@ std::vector<bool> structOperands(std::string_view operands,
   return result;
 }
 
+std::optional<std::int64_t> operandNumber(std::string_view operands,
+                                          std::size_t index) {
+  const auto pieces = splitOperands(tokenize(operands));
+  if (index >= pieces.size())
+    return std::nullopt;
+  const auto value = plainNumber(pieces[index], ~std::uint64_t(0));
+  if (!value)
+    return std::nullopt;
+  return static_cast<std::int64_t>(*value);
+}
+
 OperandDialect operandDialect(std::string_view architecture) {
   const auto name = lower(architecture);
   if (name == "x86_64" || name == "x86-64" || name == "x86" || name == "x64" ||

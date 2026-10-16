@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QSaveFile>
 #include <QSet>
@@ -811,6 +812,52 @@ void Session::formatOperand(Address address, std::optional<int> operand,
     payload.insert(QStringLiteral("operand"), *operand);
   command(QStringLiteral("operand_format"), payload,
           [this](const QJsonObject &) { refreshHistory(); });
+}
+
+void Session::formatOperandStruct(Address address, std::optional<int> operand,
+                                  const QString &type, qint64 delta,
+                                  const QStringList &others,
+                                  std::optional<quint64> epoch) {
+  if (!acceptsEdit(epoch))
+    return;
+  if (dirty_)
+    save();
+  // The worker takes 63 other instructions in a step; more go on in steps
+  // of their own.
+  constexpr int Step = 63;
+  QJsonObject payload{{"address", hexAddress(address)},
+                      {"action", QStringLiteral("struct")},
+                      {"type", type},
+                      {"delta", delta}};
+  if (operand)
+    payload.insert(QStringLiteral("operand"), *operand);
+  if (!others.isEmpty())
+    payload.insert(QStringLiteral("also"),
+                   QJsonArray::fromStringList(others.mid(0, Step)));
+  const QStringList rest = others.mid(Step);
+  command(QStringLiteral("operand_format"), payload,
+          [this, type, delta, rest,
+           count = int(others.size()) + 1](const QJsonObject &) {
+            refreshHistory();
+            emit message(
+                tr("Showed %n operands as members of %1", "", count).arg(type),
+                0);
+            // The rest go on in steps of their own, each with its first
+            // instruction leading.
+            for (qsizetype at = 0; at < rest.size(); at += Step + 1)
+              if (const auto next = addressValue(rest.at(at))) {
+                QJsonObject more{{"address", hexAddress(*next)},
+                                 {"action", QStringLiteral("struct")},
+                                 {"type", type},
+                                 {"delta", delta}};
+                const QStringList also = rest.mid(at + 1, Step);
+                if (!also.isEmpty())
+                  more.insert(QStringLiteral("also"),
+                              QJsonArray::fromStringList(also));
+                command(QStringLiteral("operand_format"), more,
+                        [this](const QJsonObject &) { refreshHistory(); });
+              }
+          });
 }
 
 void Session::createFunction(Address address, std::optional<quint64> epoch) {

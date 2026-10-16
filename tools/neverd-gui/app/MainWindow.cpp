@@ -31,6 +31,7 @@
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
 #include "TitleBar.h"
+#include "TypePickerDialog.h"
 #include "WindowFrame.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
@@ -1174,7 +1175,13 @@ void MainWindow::connectActions() {
 #include "neverd/OperandFormats.def"
            std::pair{ActionId::EditOperandNegate, QStringLiteral("negate")},
            std::pair{ActionId::EditOperandInvert, QStringLiteral("invert")}})
-    on(id, [formatOperand, action] { formatOperand(action); });
+    // A structure offset names a type the user picks first.
+    on(id, [this, formatOperand, action] {
+      if (action == QLatin1String("struct"))
+        chooseStructOffset();
+      else
+        formatOperand(action);
+    });
   // Data items are the disassembly's; a pseudocode window keeps its keys.
   for (const auto &[id, action] :
        {std::pair{ActionId::EditDefineCode, QStringLiteral("code")},
@@ -1475,6 +1482,8 @@ void MainWindow::updateActions() {
         ActionId::EditOperandChar, ActionId::EditOperandOffset,
         ActionId::EditOperandNegate, ActionId::EditOperandInvert})
     actions_.action(id)->setEnabled(operandFormats);
+  actions_.action(ActionId::EditOperandStruct)
+      ->setEnabled(operandFormats && session_.showsStructOffsets());
   actions_.action(ActionId::EditComment)
       ->setEnabled(location && !session_.readOnly());
   actions_.action(ActionId::EditRepeatableComment)
@@ -2749,6 +2758,10 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   for (const auto id :
        {ActionId::EditRename, ActionId::EditComment, ActionId::EditBookmark})
     menu.addAction(actions_.action(id));
+  // IDA offers the operand's structure offset after its rename.
+  if (auto *structure = actions_.action(ActionId::EditOperandStruct);
+      structure->isEnabled() && !focusedCodeView())
+    menu.addAction(structure);
   for (const auto id :
        {ActionId::EditCreateFunction, ActionId::EditDeleteFunction,
         ActionId::EditDefineCode, ActionId::EditDefineData,
@@ -2819,6 +2832,27 @@ void MainWindow::functionsMenu(const QPoint &position) {
   connect(rowRemove, &QAction::triggered, this,
           [this, entry = *entry] { session_.deleteFunction(entry); });
   menu.exec(table->viewport()->mapToGlobal(position));
+}
+
+void MainWindow::chooseStructOffset() {
+  // Pseudocode windows keep their keys.
+  if (focusedCodeView() || !session_.showsStructOffsets())
+    return;
+  const auto address = currentAddress();
+  if (!address)
+    return;
+  QJsonObject query{{"address", hexAddress(*address)}};
+  if (const auto function = currentFunction())
+    query.insert(QStringLiteral("function"), hexAddress(*function));
+  if (const auto operand = disassembly_->currentOperand())
+    query.insert(QStringLiteral("operand"), *operand);
+  // The edit goes to the session the dialog was opened for.
+  const auto epoch = session_.epoch();
+  TypePickerDialog dialog(session_, query, this);
+  if (dialog.exec() != QDialog::Accepted || session_.epoch() != epoch)
+    return;
+  session_.formatOperandStruct(*address, dialog.operand(), dialog.typeName(),
+                               dialog.delta(), dialog.others(), epoch);
 }
 
 void MainWindow::editFunction(Address entry) {

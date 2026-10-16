@@ -855,6 +855,14 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>Показать типы программы с их размещением и исходным кодом</translation>
     </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>Смещение в с&amp;труктуре...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>Показать операнд как поле локального типа; типы упорядочены по тому, насколько им соответствуют обращения кода</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2601,6 +2609,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>DWARF loaded: %1</source>
         <translation>DWARF загружен: %1</translation>
     </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>%n операнд показан как поле %1</numerusform>
+            <numerusform>%n операнда показаны как поля %1</numerusform>
+            <numerusform>%n операндов показаны как поля %1</numerusform>
+        </translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -3822,6 +3838,153 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>Строка %1, столбец %2: %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>Точно на поля попадают смещения: %1 из %n</numerusform>
+            <numerusform>Точно на поля попадают смещения: %1 из %n</numerusform>
+            <numerusform>Точно на поля попадают смещения: %1 из %n</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>%1 из %n типа</numerusform>
+            <numerusform>%1 из %n типов</numerusform>
+            <numerusform>%1 из %n типов</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n байт</numerusform>
+            <numerusform>%n байта</numerusform>
+            <numerusform>%n байт</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>%n тип</numerusform>
+            <numerusform>%n типа</numerusform>
+            <numerusform>%n типов</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>Доступ</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>Также показать как поле ещё %n инструкцию, обращающуюся через %1</numerusform>
+            <numerusform>Также показать как поля ещё %n инструкции, обращающиеся через %1</numerusform>
+            <numerusform>Также показать как поля ещё %n инструкций, обращающихся через %1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Применить</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>По адресу %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Байты</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>Поле</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>Ни одно поле не содержит этот байт</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>Подходящих типов нет.</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>Смещение</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>Чтение того, что код делает через указатель операнда…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>Поиск типов: имя, typedef, Тип.поле или .поле</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>Смещение в структуре</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>Число %1 как смещение в структуре или объединении.</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>Операнд сохраняет своё число.</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>В программе нет структур и объединений. Объявите их в окне «Локальные типы» (Shift+F1).</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>Регистр указывает на %1 байт внутрь %2, на %3: обращения перед ним читают более ранние поля записи, как это отменяет CONTAINING_RECORD.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Тип</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>Типы упорядочены по тому, как %n обращение функции через %1 попадает на их поля.</numerusform>
+            <numerusform>Типы упорядочены по тому, как %n обращения функции через %1 попадают на их поля.</numerusform>
+            <numerusform>Типы упорядочены по тому, как %n обращений функции через %1 попадают на их поля.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>адрес</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>заголовок</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>вне типа</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>заполнение</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>чтение</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>указатель</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>пользователь</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>запись</translation>
     </message>
 </context>
 </TS>

@@ -43,6 +43,13 @@ NEVERD_THEME_COLOR(ListingError, "#CD3131", "#F44747")
 NEVERD_THEME_COLOR(ListingFlowMnemonic, "#AF00DB", "#C586C0")
 NEVERD_THEME_COLOR(ListingStructOffset, "#267F99", "#4EC9B0")
 
+// How well a type fits the code's accesses, and the characters a search
+// matched, as Visual Studio Code's testing and list highlight colors.
+NEVERD_THEME_COLOR(FitExact, "#388A34", "#89D185")
+NEVERD_THEME_COLOR(FitPartial, "#BF8803", "#CCA700")
+NEVERD_THEME_COLOR(FitOutside, "#CD3131", "#F48771")
+NEVERD_THEME_COLOR(MatchHighlight, "#0066BF", "#2AAAFF")
+
 // Listing surfaces.
 NEVERD_THEME_COLOR(ListingBackground, "#FFFFFF", "#1E1E1E")
 NEVERD_THEME_COLOR(ListingCurrentLine, "#F0F0F0", "#2A2D2E")

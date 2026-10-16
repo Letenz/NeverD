@@ -3638,6 +3638,33 @@ Listing::structOperands(std::uint64_t address) {
 
 bool Listing::namesStructOffsets() { return impl_->typeMember != nullptr; }
 
+std::optional<std::size_t>
+Listing::structOperand(std::uint64_t address, std::optional<std::size_t> asked,
+                       std::optional<std::int64_t> *number) {
+  auto &d = *impl_;
+  d.build();
+  const auto item = d.itemAt(address);
+  if (!item || item->kind != ItemKind::Instruction || item->start != address)
+    return std::nullopt;
+  const auto &operands = d.instructionOf(*item).operands;
+  const auto structs = neverd::worker::structOperands(operands, d.dialect);
+  const auto numbers = formattableOperands(operands, d.dialect);
+  std::optional<std::size_t> chosen;
+  if (asked && *asked < structs.size() && structs[*asked])
+    chosen = asked;
+  for (std::size_t i = 0; !chosen && i < structs.size(); ++i)
+    if (structs[i] && !(i < numbers.size() && numbers[i]))
+      chosen = i;
+  for (std::size_t i = structs.size(); !chosen && i-- > 0;)
+    if (structs[i])
+      chosen = i;
+  if (chosen && number)
+    *number = *chosen < numbers.size() && numbers[*chosen]
+                  ? operandNumber(operands, *chosen)
+                  : std::nullopt;
+  return chosen;
+}
+
 void Listing::setStringOptions(std::string options) {
   if (impl_->stringOptions == options)
     return;

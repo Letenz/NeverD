@@ -160,6 +160,33 @@ def run(executable):
         line = ok(owner, "listing", {"address": read["address"], "before": 0, "after": 1})["lines"][0]
         assert "[rcx+2]" in line["text"], line
 
+        # A number is an offset by itself: `cmp r9, 1` takes an address one
+        # byte in, where no member of these records begins.
+        compare = next(line for line in lines if line["text"].lstrip().startswith("cmp"))
+        number = ok(owner, "local_types_fit", {"function": use, "address": compare["address"]})
+        assert number["operand"] == 1 and "target" not in number, number
+        assert number["accesses"] == [{"offset": 1, "size": 0, "use": "address"}], number
+        assert all(c["exact"] == 0 for c in number["candidates"]), number
+        assert number["candidates"][0]["fits"][0]["fit"] == "inside", number
+        # Every access through a pointer at once, one step of the history.
+        header = next(line for line in lines if "[r8+5]" in line["text"])
+        flags = next(line for line in lines if "[rdx+8]" in line["text"])
+        before = len(ok(owner, "history", {"offset": 0, "limit": 64})["items"])
+        both = ok(owner, "operand_format", {"address": flags["address"], "action": "struct",
+                                            "type": "_THREAD_LIKE", "also": [header["address"]]})
+        assert both["also"] == 1 and both["saved"] is True, both
+        shown = ok(owner, "listing", {"address": use, "before": 0, "after": 40})["lines"]
+        assert any("[rdx+_THREAD_LIKE.MiscFlags]" in line["text"] for line in shown), shown
+        assert any("[r8+(_THREAD_LIKE.Header+5)]" in line["text"] for line in shown), shown
+        after = len(ok(owner, "history", {"offset": 0, "limit": 64})["items"])
+        assert after == before + 1, (before, after)
+        refused = owner.call("operand_format", {"address": flags["address"], "action": "hex",
+                                                "also": [header["address"]]})
+        assert refused["status"] == "error", refused
+        ok(owner, "undo")
+        shown = ok(owner, "listing", {"address": use, "before": 0, "after": 40})["lines"]
+        assert not any("_THREAD_LIKE" in line["text"] for line in shown), shown
+
         missing = owner.call("local_type", {"name": "_NO_SUCH_TYPE"})
         assert missing["status"] == "error" and missing["error"]["code"] == "local_types_failed", missing
         malformed = owner.call("local_types_source", {"asserts": "yes"})
