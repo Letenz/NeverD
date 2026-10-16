@@ -97,6 +97,11 @@ constexpr SourceLanguage Languages[] = {
     {"python", "Python",
      QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Python (*.py)"), "py",
      false},
+    // JavaScript whose JSDoc TypeScript checks.
+    {"javascript", "JS/TS",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
+                       "JavaScript module (*.js *.mjs)"),
+     "js", false},
 };
 /// The language types shown in \p language are declared in: that one, or C
 /// where it renders only.
@@ -142,6 +147,12 @@ constexpr Spelling PythonSpellings[] = {
     {"portable", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
                                    "Exact widths (c_uint32)")},
 };
+constexpr Spelling JavaScriptSpellings[] = {
+    {"windows",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
+    {"portable", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
+                                   "JavaScript types (number, bigint)")},
+};
 
 /// The spellings each language chooses from, where the choice is kept and
 /// what it is until chosen.  C's serves the layout too.
@@ -156,6 +167,8 @@ const SpellingChoice SpellingChoices[] = {
     {"rust", RustSpellings, "localTypes/rustSpelling", "portable"},
     {"go", GoSpellings, "localTypes/goSpelling", "portable"},
     {"python", PythonSpellings, "localTypes/pythonSpelling", "portable"},
+    {"javascript", JavaScriptSpellings, "localTypes/javascriptSpelling",
+     "portable"},
 };
 
 /// The choice \p language makes: C++'s and the layout's are C's.

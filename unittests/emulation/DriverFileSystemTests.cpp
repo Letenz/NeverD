@@ -13,6 +13,8 @@
 
 #include "neverd/emulation/DriverSession.h"
 
+#include "llvm/Support/Endian.h"
+
 #include <algorithm>
 #include <array>
 
@@ -82,6 +84,79 @@ TEST(DriverFileSystemDeclaration,
   auto Null = driverOptionsFromScenarioJSON("{\"filesystem\":null}", Base);
   ASSERT_FALSE(bool(Null));
   rejects(Null.takeError(), "array");
+}
+
+TEST(DriverFileSystemDeclaration, MetadataUsesDeclaredIdentityAndBoundedNames) {
+  KernelFileSystem FS;
+  auto V = inventory();
+  V[0].Nodes[1].FileID = UINT64_MAX;
+  ok(FS.initialize(V));
+  ok(FS.bindDevice(0, 0x1000));
+  const auto Open = take(FS.reserveOpen(0x1000, UINT64_MAX, 0x2000, 0x80, 7));
+  ASSERT_EQ(Open.Status, 0u);
+  for (auto [Class, Size] :
+       {std::pair{4u, 40u}, {5u, 24u}, {6u, 8u}, {34u, 56u}, {35u, 8u}}) {
+    for (uint32_t Length = 0; Length <= Size + 1; ++Length) {
+      auto Result = take(FS.queryInformation(Open.Token, Class, Length));
+      if (Length < Size) {
+        EXPECT_EQ(Result.Status, windows::StatusInfoLengthMismatch);
+        EXPECT_TRUE(Result.Bytes.empty());
+        continue;
+      }
+      EXPECT_EQ(Result.Status, 0u);
+      ASSERT_EQ(Result.Bytes.size(), Size);
+      auto U64 = [&](unsigned Offset) {
+        return llvm::support::endian::read64le(Result.Bytes.data() + Offset);
+      };
+      if (Class == 4 || Class == 34) {
+        EXPECT_EQ(U64(0), 0u);
+        EXPECT_EQ(U64(8), 1u);
+        EXPECT_EQ(U64(16), 2u);
+        EXPECT_EQ(U64(24), 3u);
+      }
+      if (Class == 5 || Class == 34) {
+        EXPECT_EQ(U64(Class == 5 ? 0 : 32), 512u);
+        EXPECT_EQ(U64(Class == 5 ? 8 : 40), 3u);
+      }
+      if (Class == 6)
+        EXPECT_EQ(U64(0), UINT64_MAX);
+    }
+  }
+  for (uint32_t Length = 0; Length <= 18; ++Length) {
+    auto Result = take(FS.queryInformation(Open.Token, 9, Length));
+    if (Length < 8) {
+      EXPECT_EQ(Result.Status, windows::StatusInfoLengthMismatch);
+      EXPECT_TRUE(Result.Bytes.empty());
+      continue;
+    }
+    const uint32_t Copied = std::min(10u, (Length - 4) & ~1u);
+    ASSERT_EQ(Result.Bytes.size(), 4u + Copied);
+    EXPECT_EQ(Result.Status, Copied == 10 ? 0u : windows::StatusBufferOverflow);
+    EXPECT_EQ(llvm::support::endian::read32le(Result.Bytes.data()), 10u);
+    const std::array<uint8_t, 10> Name{'\\', 0, 'D', 0, 'a', 0, 't', 0, 'a', 0};
+    EXPECT_TRUE(
+        std::equal(Result.Bytes.begin() + 4, Result.Bytes.end(), Name.begin()));
+  }
+  auto Unsupported = FS.queryInformation(Open.Token, 59, 64);
+  ASSERT_FALSE(bool(Unsupported));
+  rejects(Unsupported.takeError(), "not implemented");
+  ok(FS.cleanupOpen(Open.Token));
+  EXPECT_EQ(take(FS.queryInformation(Open.Token, 6, 8)).Status, 0u);
+  ok(FS.closeOpen(Open.Token));
+  auto Closed = FS.queryInformation(Open.Token, 6, 8);
+  ASSERT_FALSE(bool(Closed));
+  rejects(Closed.takeError(), "retained provider open");
+  const auto Directory = take(FS.reserveOpen(0x1000, 0, 0x3000, 0x80, 7));
+  ASSERT_EQ(Directory.Status, 0u);
+  EXPECT_EQ(take(FS.queryInformation(Directory.Token, 5, 24)).Bytes,
+            (std::vector<uint8_t>{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                  0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0}));
+  EXPECT_EQ(take(FS.queryInformation(Directory.Token, 9, 8)).Bytes,
+            (std::vector<uint8_t>{2, 0, 0, 0, '\\', 0}));
+  EXPECT_EQ(take(FS.queryInformation(Directory.Token, 35, 8)).Bytes,
+            (std::vector<uint8_t>{0x10, 0, 0, 0, 0, 0, 0, 0}));
+  ok(FS.cleanupOpen(Directory.Token));
+  ok(FS.closeOpen(Directory.Token));
 }
 
 TEST(DriverFileSystemDeclaration, EveryRequiredZeroHasPresence) {

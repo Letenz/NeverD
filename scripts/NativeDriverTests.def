@@ -10,6 +10,31 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverQueriesBufferedFileInformation/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverQueriesBufferedFileInformation/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverQueriesBufferedFileInformation/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverQueriesBufferedFileInformation/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkQueriesBufferedFileInformation/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkQueriesBufferedFileInformation/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkQueriesBufferedFileInformation/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkQueriesBufferedFileInformation/{backend}CheckedRebased")
+
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/KernelDeviceQueryExecution."
     "GenuineWdkRetainsQueriedDeletedDevices/{backend}LegacyPreferred")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(

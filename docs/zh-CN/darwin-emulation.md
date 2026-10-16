@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 124a88c959c13d8407e343d17f7964de3af1071a89f0c6430eaab22959ce3ebc -->
+<!-- i18n-source: 00509a4718fb83deef9b9430e71183313790e9707bed10468cdbd18f5c715de3 -->
 
 [← 文档索引](README.md)
 
@@ -46,8 +46,8 @@ BSD 系统调用遵循 Darwin ABI。ARM64 从 X16 读取服务号，x64 使用 B
 旧式原始 mmap 的零长度请求返回零而不分配内存；`MAP_UNIX03` 已支持，零长度返回 EINVAL。
 Unmap/protect 地址必须对齐；允许 NONE/READ/WRITE，WRITE 隐含 READ，不接受匿名可执行映射。
 
-设备与模拟器的 Mach-O 平台标记必须分别匹配。此版本接受不依赖动态库、重定位、
-初始化函数或 TLS 的独立可执行文件。需要 dyld 链接、Mach IPC、线程、宿主文件系统、
+设备与模拟器的 Mach-O 平台标记必须分别匹配。此版本在下述有限 libSystem 导入与 fixup 契约内接受可执行文件。需要
+初始化函数、TLS、其他 dyld 行为、Mach IPC、线程、宿主文件系统、
 Objective-C/Swift 运行时、Foundation/UIKit，或 arm64e/PAC 的输入会明确拒绝；
 不会用空实现假装执行成功。它不等同于完整 macOS/iOS 系统，也不是 Apple 的 Simulator。
 
@@ -1899,4 +1899,37 @@ lchown364 / final symbolic vnode / existing ownership_mutations grants
 lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / main58 stdoutW / virtual1281 guarded bytes
 native preparation489 observations including258 lchown / ARM64 O0 O1 O2
 common native82 / mandatory95 per matching platform / ARM64 required285
+```
+
+## 有界 libSystem 导入
+
+基线架构的薄可执行文件可绑定一个强依赖 `/usr/lib/libSystem.B.dylib`。导入要求 `LC_MAIN`、`MH_TWOLEVEL` 和普通库 ordinal，声明的兼容版本需求不得超过 1.0。加载器从原始字节完整验证 classic 指针流或 generic64 链，包括未定义符号、精确槽、本地 rebase 目标及元数据预算。其他库和符号、weak/lazy/threaded 绑定、节或外部/本地 relocation、初始化函数、TLS 和认证指针会在执行前明确失败。
+
+仅有导入时才分配经过认证的标量函数入口和每次运行全新的主线程 errno 存储。包装函数共用原有 Darwin 内核行为，把错误转换为 `-1` 和 errno，成功调用保留 errno。C `_exit` 对应 Mach-O `__exit`；C `exit`（Mach-O `_exit`）仍不支持。普通函数需要有效返回帧，不返回的 `_exit` 无需可用返回地址。报告保留库、精确链接名、声明的参数数量和完整载体位值；未完成或不返回的调用结果为 null。只有原始系统调用的报告保持兼容。
+
+`SG_READ_ONLY` 在 fixup 后把当前段权限设为只读，同时保留声明的最大权限。O0/O1/O2 原生对照确认：最大权限为读写时，`mprotect` 可以恢复写权限。函数入口页和 errno 页是独立的驻留模型保留页，来宾不能解除映射或修改保护。准备与执行共用同一个期限和事件账户，解码元数据及模型页计入已有内存预算。
+
+独立原生控制覆盖 O0/O1/O2，同一作者编写的对象经系统、classic、chained 链接后都在真实 libSystem 上执行。进程/C/CLI/Python 覆盖五个平台/架构组合，匹配的 ARM64 HVF 覆盖 macOS、iOS 设备和 Simulator。这个有限单线程契约尚未补齐 dlopen/dlsym、任意 dylib、dyld shared cache、构造函数、线程、Objective-C/Swift 框架，也未完成 Intel HVF 或真实 iOS 设备验收。
+
+```text
+provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
+C -> Mach-O: read -> _read; write -> _write; close -> _close
+C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
+fixups: classic non-lazy pointer bind/rebase; DYLD_CHAINED_PTR_64 / PTR_64_OFFSET
+unsupported: weak/lazy/threaded streams; authenticated/multi-start chains; other relocations
+errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
+SG_READ_ONLY: current R after fixup; original declared maximum is retained
+gates: RX/max RX; errno: RW/max RW; both resident model reservations
+budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
+preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
+report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
+call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
+basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+_exit: status 35; stdout_hex 58; named calls 2; events 2
+native common catalogue: 82; required methods/platform: 96; matching ARM64 identities: 288
+```
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
 ```

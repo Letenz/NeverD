@@ -4544,6 +4544,113 @@ INSTANTIATE_TEST_SUITE_P(
       return Name;
     });
 
+class DarwinLibSystemPublic : public ProcessPublic,
+                              public testing::WithParamInterface<
+                                  std::pair<const char *, const char *>> {};
+TEST_P(DarwinLibSystemPublic, ImportedCallsKeepErrnoAndReportsAcrossCAndCLI) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const auto &[File, Profile] = GetParam();
+  const char *Names[] = {"___error", "___error", "_getpid", "_getpid", "_write",
+                         "_write",   "_read",    "_write",  "_read",   "_close",
+                         "_close",   "_read",    "_write",  "_close"};
+  const unsigned Counts[] = {0, 0, 0, 0, 3, 3, 3, 3, 3, 1, 1, 3, 3, 1};
+  for (const char *Kind : {"classic", "chained"}) {
+    SCOPED_TRACE(Kind);
+    Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) /
+            (std::string(File) + "-libsystem-" + Kind))
+               .string();
+    for (bool Exit : {false, true}) {
+      llvm::json::Array Args{"libsystem"};
+      if (Exit)
+        Args.push_back("exit");
+      const auto Options = jsonText(llvm::json::Object{
+          {"backend", "unicorn"},
+          {"instruction_quantum", 1024},
+          {"timeout_microseconds", 5000000},
+          {"arguments", std::move(Args)},
+          {"darwin_files", llvm::json::Object{{"files", llvm::json::Array{}},
+                                              {"stdin_hex", "6162006364"}}}});
+      for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+        auto Text = takeString(neverd_emulate_process_json(
+            Session, Path.c_str(), Profile, Options.c_str()));
+        ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+        auto Report = llvm::json::parse(Text);
+        ASSERT_TRUE(bool(Report));
+        const auto *O = Report->getAsObject();
+        ASSERT_NE(O, nullptr);
+        EXPECT_EQ(O->getInteger(field::Version), 1);
+        EXPECT_EQ(O->getString(field::Stop), "exited")
+            << O->getString(field::Diagnostic).value_or("").str();
+        EXPECT_EQ(O->getInteger(field::ExitStatus), Exit ? 35 : 58);
+        EXPECT_EQ(O->getString(field::Stdout), Exit ? "58" : "4100ff4221");
+        EXPECT_EQ(O->getString(field::Stderr), "");
+        EXPECT_EQ(O->getString(field::Backend), "unicorn");
+        ASSERT_NE(O->getArray(field::Services), nullptr);
+        EXPECT_TRUE(O->getArray(field::Services)->empty());
+        const auto *Darwin = O->getObject(field::Darwin);
+        ASSERT_NE(Darwin, nullptr);
+        const auto *Calls = Darwin->getArray(field::NativeCalls);
+        ASSERT_NE(Calls, nullptr);
+        ASSERT_EQ(Calls->size(), Exit ? 2u : 14u);
+        for (unsigned I = 0; I != Calls->size(); ++I) {
+          SCOPED_TRACE(I);
+          const auto *Call = (*Calls)[I].getAsObject();
+          ASSERT_NE(Call, nullptr);
+          EXPECT_EQ(Call->getString(field::Module),
+                    "/usr/lib/libSystem.B.dylib");
+          EXPECT_EQ(Call->getString(field::Name),
+                    Exit ? (I ? "__exit" : "_write") : Names[I]);
+          const auto *Arguments = Call->getArray(field::Arguments);
+          ASSERT_NE(Arguments, nullptr);
+          EXPECT_EQ(Arguments->size(), Exit ? (I ? 1u : 3u) : Counts[I]);
+        }
+        if (Exit) {
+          EXPECT_EQ((*Calls)[1].getAsObject()->get(field::Result)->kind(),
+                    llvm::json::Value::Null);
+        } else {
+          EXPECT_EQ((*Calls)[0].getAsObject()->getString(field::Result),
+                    (*Calls)[1].getAsObject()->getString(field::Result));
+          EXPECT_EQ((*(*Calls)[12].getAsObject()->getArray(field::Arguments))[0]
+                        .getAsString(),
+                    "1234567800000001");
+          EXPECT_EQ((*(*Calls)[13].getAsObject()->getArray(field::Arguments))[0]
+                        .getAsString(),
+                    "12345678ffffffff");
+          EXPECT_EQ((*Calls)[13].getAsObject()->getString(field::Result),
+                    "ffffffffffffffff");
+        }
+        EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+        if (!Repeat) {
+          EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),
+                    process_cli::GuestFailure);
+          ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
+        }
+      }
+    }
+  }
+#endif
+}
+INSTANTIATE_TEST_SUITE_P(
+    Platforms, DarwinLibSystemPublic,
+    testing::Values(std::pair{"macos-arm64", MacOSMachO64},
+                    std::pair{"macos-x86_64", MacOSMachO64},
+                    std::pair{"ios-arm64", IOSMachO64},
+                    std::pair{"ios-simulator-arm64", IOSSimulatorMachO64},
+                    std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}),
+    [](const testing::TestParamInfo<std::pair<const char *, const char *>>
+           &Info) {
+      std::string Name = Info.param.first;
+      std::replace(Name.begin(), Name.end(), '-', '_');
+      return Name;
+    });
+
 class DarwinSymbolicOwnershipPublic
     : public ProcessPublic,
       public testing::WithParamInterface<

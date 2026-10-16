@@ -61,7 +61,7 @@ Guard pages and the private main-return gate remain reserved.
 `LC_MAIN` receives `argc`, `argv`, `envp` and the apple vector as four integer
 arguments under the platform's scalar entry convention. A return produces the
 low eight-bit process exit status. The bounded startup model accepts the
-standard `/usr/lib/dyld` command only for import-free `LC_MAIN`; it implements
+standard `/usr/lib/dyld` command for `LC_MAIN` within the finite import contract below; it implements
 that entry handoff without loading or running host dyld. Nonzero `stacksize`
 requests are rejected, since the caller's explicit `stack_size` owns the budget.
 
@@ -73,10 +73,10 @@ extra flavors and conflicting entries are rejected. No host environment or
 auxiliary Linux vector is inherited. Startup follows the distinction described
 in Apple's [dyld architecture](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-External dylibs, imports, rebases/chained fixups, constructors/destructors,
+Dylibs and imports outside the finite libSystem contract, constructors/destructors,
 thread-local sections, arm64e/PAC and other nonbaseline CPU subtypes,
-encrypted payloads and unmodeled load commands fail before execution. PIE
-images without fixups use their preferred addresses; this is deterministic
+encrypted payloads and unmodeled load commands fail before execution. Supported PIE
+images use their preferred addresses; this is deterministic
 placement, not ASLR. Code-signing blobs are metadata, not an implementation
 of AMFI or entitlement policy.
 
@@ -2688,4 +2688,37 @@ lchown364 / final symbolic vnode / existing ownership_mutations grants
 lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / main58 stdoutW / virtual1281 guarded bytes
 native preparation489 observations including258 lchown / ARM64 O0 O1 O2
 common native82 / mandatory95 per matching platform / ARM64 required285
+```
+
+## Bounded libSystem imports
+
+Thin baseline executables may bind a single strong `/usr/lib/libSystem.B.dylib` dependency under the finite contract below. Imports require `LC_MAIN`, `MH_TWOLEVEL` and an ordinary provider ordinal; the declared compatibility requirement must not exceed 1.0. The loader validates original classic pointer streams or generic64 chains, including all undefined symbols, exact slots, local rebase targets and bounded metadata. Unsupported dependencies, symbols, weak/lazy/threaded binding, section/external/local relocations, initializers, TLS and authenticated pointers fail before execution.
+
+The process maps authenticated scalar call gates and one fresh main-thread errno word only when imports are present. Named wrappers share the raw Darwin kernel effects; they convert errors to `-1` and errno, while successful calls preserve errno. C `_exit` is Mach-O `__exit`; C `exit` (Mach-O `_exit`) remains unsupported. Ordinary functions require a valid return frame; a terminal `_exit` needs no usable return address. Calls retain provider, exact linkage name, declared argument count and complete carrier bits. Incomplete or nonreturning calls have a null result. Raw-only reports remain unchanged.
+
+`SG_READ_ONLY` makes current segment protection read-only after fixups while preserving its declared maximum protection. Native O0/O1/O2 observations confirm that a declared read/write maximum permits restoring write access with `mprotect`. Gate and errno pages are separate resident model reservations and cannot be unmapped or reprotected by the guest. Preparation and execution retain one deadline and event account; decoded metadata and model pages consume the existing memory budget.
+
+Independent native controls cover O0/O1/O2. The same authored object runs through the system linker, classic linking and chained linking against real libSystem. Portable process/C/CLI/Python checks cover all five platform/ISA combinations; matching ARM64 HVF checks cover macOS, iOS-device and Simulator profiles. This finite single-thread contract does not complete dlopen/dlsym, arbitrary dylib loading, dyld shared cache, constructors, threads, Objective-C/Swift frameworks, Intel HVF or physical iOS qualification.
+
+```text
+provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
+C -> Mach-O: read -> _read; write -> _write; close -> _close
+C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
+fixups: classic non-lazy pointer bind/rebase; DYLD_CHAINED_PTR_64 / PTR_64_OFFSET
+unsupported: weak/lazy/threaded streams; authenticated/multi-start chains; other relocations
+errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
+SG_READ_ONLY: current R after fixup; original declared maximum is retained
+gates: RX/max RX; errno: RW/max RW; both resident model reservations
+budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
+preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
+report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
+call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
+basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+_exit: status 35; stdout_hex 58; named calls 2; events 2
+native common catalogue: 82; required methods/platform: 96; matching ARM64 identities: 288
+```
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
 ```

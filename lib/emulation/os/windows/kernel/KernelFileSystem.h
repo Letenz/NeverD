@@ -39,6 +39,10 @@ public:
     uint64_t FileObject = 0;
     uint64_t Token = 0;
   };
+  struct QueryResult {
+    uint32_t Status = 0;
+    std::vector<uint8_t> Bytes;
+  };
 
   llvm::Error
   initialize(const std::optional<std::vector<DriverFileSystemVolume>> &Input);
@@ -58,6 +62,8 @@ public:
                                          uint32_t ShareAccess);
   const Open *findOpen(uint64_t Token) const;
   const DriverFileSystemNode *nodeForOpen(uint64_t Token) const;
+  llvm::Expected<QueryResult> queryInformation(uint64_t Token, uint32_t Class,
+                                               uint32_t Length) const;
   llvm::Error cleanupOpen(uint64_t Token);
   llvm::Error closeOpen(uint64_t Token);
   size_t openCount() const { return Opens.size(); }

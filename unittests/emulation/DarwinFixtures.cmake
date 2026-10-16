@@ -32,6 +32,33 @@ foreach(_darwin_profile macos ios ios-simulator)
       DEPENDS fixtures/darwin_process.c
       VERBATIM)
     list(APPEND _darwin_outputs "${_darwin_output}")
+    set(_darwin_libsystem_object "${_darwin_output}-libsystem.o")
+    add_custom_command(OUTPUT "${_darwin_libsystem_object}"
+      COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" "--target=${_darwin_target}"
+        -std=c11 -ffreestanding -fno-builtin -fno-stack-protector
+        -nostdinc -isysroot "${_darwin_fixture_dir}"
+        -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
+        -fno-asynchronous-unwind-tables -O1 -c
+        "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/darwin_libsystem.c"
+        -o "${_darwin_libsystem_object}"
+      DEPENDS fixtures/darwin_libsystem.c VERBATIM)
+    foreach(_darwin_link_kind classic chained)
+      if(_darwin_link_kind STREQUAL "classic")
+        set(_darwin_fixup_flag -no_fixup_chains)
+      else()
+        set(_darwin_fixup_flag -fixup_chains)
+      endif()
+      set(_darwin_libsystem_output "${_darwin_output}-libsystem-${_darwin_link_kind}")
+      add_custom_command(OUTPUT "${_darwin_libsystem_output}"
+        COMMAND "${NEVERD_PROCESS_LD64}" -arch "${_darwin_arch}"
+          -platform_version "${_darwin_profile}" 14.0 14.0 -e _main
+          "${_darwin_fixup_flag}" "${_darwin_libsystem_object}"
+          "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/darwin_libsystem.tbd"
+          -o "${_darwin_libsystem_output}"
+        DEPENDS "${_darwin_libsystem_object}" fixtures/darwin_libsystem.tbd
+        VERBATIM)
+      list(APPEND _darwin_outputs "${_darwin_libsystem_output}")
+    endforeach()
   endforeach()
 endforeach()
 add_custom_target(NeverDDarwinFixtures DEPENDS ${_darwin_outputs})
@@ -59,6 +86,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND NOT CMAKE_CROSSCOMPILING)
   add_dependencies(NeverDDarwinProcessTests NeverDDarwinNativeOracle)
   target_compile_definitions(NeverDDarwinProcessTests PRIVATE
     NEVERD_DARWIN_NATIVE_ORACLE="${_darwin_native}")
+  set(_darwin_libsystem_native "${_darwin_fixture_dir}/macos-libsystem-native")
+  add_custom_command(OUTPUT "${_darwin_libsystem_native}"
+    COMMAND xcrun clang -arch "${_darwin_native_arch}"
+      "${_darwin_fixture_dir}/macos-${_darwin_native_arch}-libsystem.o"
+      -o "${_darwin_libsystem_native}"
+    DEPENDS "${_darwin_fixture_dir}/macos-${_darwin_native_arch}-libsystem.o"
+    VERBATIM)
+  add_custom_target(NeverDDarwinLibSystemNativeOracle DEPENDS "${_darwin_libsystem_native}")
+  add_dependencies(NeverDDarwinProcessTests NeverDDarwinLibSystemNativeOracle)
+  target_compile_definitions(NeverDDarwinProcessTests PRIVATE
+    NEVERD_DARWIN_LIBSYSTEM_NATIVE_ORACLE="${_darwin_libsystem_native}")
 endif()
 if(TARGET NeverDProcessPublicTests)
   add_dependencies(NeverDProcessPublicTests NeverDDarwinFixtures)

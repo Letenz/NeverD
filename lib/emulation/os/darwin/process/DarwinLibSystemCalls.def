@@ -1,0 +1,15 @@
+//===- DarwinLibSystemCalls.def - Finite imported function inventory -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Mach-O linkage spellings. __exit is C _exit; _exit is C exit and requires
+// a separate lifecycle contract.
+#ifdef NEVERD_DARWIN_LIBSYSTEM_CALL
+NEVERD_DARWIN_LIBSYSTEM_CALL(Read, "_read", 3, ServiceKind::Read)
+NEVERD_DARWIN_LIBSYSTEM_CALL(Write, "_write", 3, ServiceKind::Write)
+NEVERD_DARWIN_LIBSYSTEM_CALL(Close, "_close", 1, ServiceKind::Close)
+NEVERD_DARWIN_LIBSYSTEM_CALL(GetPID, "_getpid", 0, ServiceKind::GetPID)
+NEVERD_DARWIN_LIBSYSTEM_CALL(Exit, "__exit", 1, ServiceKind::Exit)
+NEVERD_DARWIN_LIBSYSTEM_CALL(Error, "___error", 0, std::nullopt)
+#endif

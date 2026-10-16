@@ -256,6 +256,7 @@ NEVERD_KERNEL_IRQL_API(IoGetRelatedDeviceObject, Dispatch)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ioqueryfileinformation
 // Reserved helper: the supported target-kernel query path can block.
 NEVERD_KERNEL_IRQL_API(IoQueryFileInformation, Passive)
+NEVERD_KERNEL_IRQL_API(ZwQueryInformationFile, Passive)
 NEVERD_KERNEL_IRQL_API(ZwCreateFile, Passive)
 NEVERD_KERNEL_IRQL_API(ZwOpenFile, Passive)
 NEVERD_KERNEL_IRQL_API(IoCreateFile, Passive)

@@ -289,6 +289,9 @@ RegistrationStateAnalysis analyze(LowFunc F, Variant V, va_t CookieVA = 0x4000,
   Runtime.Raise = [](const LowOp &Op, const FrameState &, size_t &) {
     return Op.Addr == 0x1850 || Op.Addr == 0x1857;
   };
+  Runtime.ImageMemory = [](va_t Address, uint16_t Width, bool Write, size_t &) {
+    return Address == 0x4400 && Width == 4 && !Write;
+  };
   std::vector<RegistrationSEHControlContract> Controls;
   if (UnwindJump)
     for (const auto &Block : F.Blocks)
@@ -524,7 +527,7 @@ TEST(RegistrationFilterState,
 
 TEST(RegistrationFilterState, CleanupJumpRetiresThePendingHandler) {
   for (unsigned Protocol = 0; Protocol != 3; ++Protocol)
-    for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+    for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
       SCOPED_TRACE(Protocol);
       SCOPED_TRACE(Mutation);
       auto F = filterFrame(Variant::HandlerCleanup, Protocol);
@@ -544,6 +547,10 @@ TEST(RegistrationFilterState, CleanupJumpRetiresThePendingHandler) {
         Boundary.Address += Delta;
       if (Mutation == 1 || Mutation == 2)
         Cleanup.Ops[4].Inputs[1] = NdVar::cst(Mutation, 4);
+      if (Mutation == 9)
+        Cleanup.Ops[4].Inputs[1] = NdVar::reg(x86reg::RBP, 4);
+      if (Mutation >= 10)
+        Cleanup.Ops[4].Inputs[1] = NdVar::reg(x86reg::RAX, 4);
       if (Mutation == 3)
         Cleanup.Ops[1].Inputs[1] = NdVar::cst(uint32_t(-140), 4);
       if (Mutation == 4) {
@@ -559,9 +566,33 @@ TEST(RegistrationFilterState, CleanupJumpRetiresThePendingHandler) {
       for (unsigned I = 0; I != Cleanup.Ops.size(); ++I)
         Cleanup.Ops[I].Seq = I;
       F.Blocks.back() = std::move(Cleanup);
+      if (Mutation >= 10) {
+        LowBlock Scalar;
+        Scalar.Id = F.Blocks.size();
+        Scalar.StartAddr = Mutation >= 12 ? 0x19f8 : 0x19fb;
+        Scalar.EndAddr = 0x1a00;
+        Scalar.Succs = {F.Blocks.back().Id};
+        emitOp(Scalar, Scalar.StartAddr, NdOp::LOAD, NdVar::reg(x86reg::RAX, 4),
+               {NdVar::cst(Mutation == 11 ? 0x4404 : 0x4400, 4)});
+        Scalar.InstructionBoundaries = {{Scalar.StartAddr, 5, 0, 1}};
+        if (Mutation >= 12) {
+          // Scalar use retains alias taint. Neither dereferencing these bits
+          // nor mixing in the physical frame receives jump-value authority.
+          if (Mutation == 12)
+            emitOp(Scalar, 0x19fd, NdOp::LOAD, NdVar::reg(x86reg::RAX, 4),
+                   {NdVar::reg(x86reg::RAX, 4)});
+          else
+            emitOp(Scalar, 0x19fd, NdOp::INT_ADD, NdVar::reg(x86reg::RAX, 4),
+                   {NdVar::reg(x86reg::RAX, 4), NdVar::reg(x86reg::RBP, 4)});
+          Scalar.InstructionBoundaries.push_back({0x19fd, 3, 1, 1});
+        }
+        F.ExceptionMetadata->Registration->Scopes.back().HandlerVA =
+            Scalar.StartAddr;
+        F.Blocks.push_back(std::move(Scalar));
+      }
       const auto Result =
           analyze(std::move(F), Variant::HandlerCleanup, 0x4000, true);
-      if (Mutation >= 2 && Mutation != 7) {
+      if (Mutation >= 3 && Mutation != 7 && Mutation != 10) {
         EXPECT_FALSE(Result.Complete);
         EXPECT_FALSE(Result.SEHJumpResumptionsComplete);
         continue;

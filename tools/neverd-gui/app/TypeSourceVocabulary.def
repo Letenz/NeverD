@@ -10,7 +10,7 @@
 /// shows types in.  Highlighting is presentation only.
 ///
 /// NEVERD_TYPE_SOURCE_KEYWORD(Language, Word): a keyword of the language
-///   (c, cpp, rust, go or python); C++ colors C's words too.
+///   (c, cpp, rust, go, python or javascript); C++ colors C's words too.
 /// NEVERD_TYPE_SOURCE_BUILTIN(Language, Word): a builtin type name.
 ///
 //===----------------------------------------------------------------------===//
@@ -79,6 +79,24 @@ NEVERD_TYPE_SOURCE_KEYWORD("python", "in")
 NEVERD_TYPE_SOURCE_KEYWORD("python", "is")
 NEVERD_TYPE_SOURCE_KEYWORD("python", "pass")
 NEVERD_TYPE_SOURCE_KEYWORD("python", "self")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "export")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "class")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "static")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "get")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "set")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "return")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "const")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "new")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "function")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "if")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "throw")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "for")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "of")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "this")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "true")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "false")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "void")
+NEVERD_TYPE_SOURCE_KEYWORD("javascript", "import")
 
 NEVERD_TYPE_SOURCE_BUILTIN("c", "void")
 NEVERD_TYPE_SOURCE_BUILTIN("c", "char")
@@ -170,6 +188,17 @@ NEVERD_TYPE_SOURCE_BUILTIN("python", "c_uint8")
 NEVERD_TYPE_SOURCE_BUILTIN("python", "c_uint16")
 NEVERD_TYPE_SOURCE_BUILTIN("python", "c_uint32")
 NEVERD_TYPE_SOURCE_BUILTIN("python", "c_uint64")
+
+NEVERD_TYPE_SOURCE_BUILTIN("javascript", "DataView")
+NEVERD_TYPE_SOURCE_BUILTIN("javascript", "ArrayBuffer")
+NEVERD_TYPE_SOURCE_BUILTIN("javascript", "BigInt")
+NEVERD_TYPE_SOURCE_BUILTIN("javascript", "Number")
+NEVERD_TYPE_SOURCE_BUILTIN("javascript", "Object")
+NEVERD_TYPE_SOURCE_BUILTIN("javascript", "RangeError")
+NEVERD_TYPE_SOURCE_BUILTIN("javascript", "Uint8Array")
+NEVERD_TYPE_SOURCE_BUILTIN("javascript", "number")
+NEVERD_TYPE_SOURCE_BUILTIN("javascript", "bigint")
+NEVERD_TYPE_SOURCE_BUILTIN("javascript", "boolean")
 
 #undef NEVERD_TYPE_SOURCE_KEYWORD
 #undef NEVERD_TYPE_SOURCE_BUILTIN

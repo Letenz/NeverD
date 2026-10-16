@@ -94,11 +94,12 @@ before nesting. It reports a record whose nesting does not flatten back to the
 stream's member list, or whose members cannot sit where they say
 (`layoutProblem`).
 
-`renderType` and `renderTypes` spell types as C, C++, Rust, Go or Python
-(`TypeLanguages.def`), each member marked with its offset. Builtins take
-the spellings each language has (`BuiltinSpellings.def`): C and C++ name
-them as Windows, IDA or the compiler does, or by exact widths; Rust, Go and
-Python by exact widths or by Windows' names, which a module or file
+`renderType` and `renderTypes` spell types as C, C++, Rust, Go, Python or
+JavaScript (`TypeLanguages.def`), each member marked with its offset.
+Builtins take the spellings each language has (`TypeLanguages.def` lists
+them, `BuiltinSpellings.def` names them): C and C++ name them as Windows,
+IDA or the compiler does, or by exact widths; Rust, Go, Python and
+JavaScript by exact widths or by Windows' names, which a module or file
 declares as aliases as wdk-sys does. Every language
 reproduces the library's layout exactly. An explicit filler moves a member
 that the language's own rules would place earlier. Rust and Go read what they
@@ -120,6 +121,22 @@ A module declares its classes first, binds each typedef after those it
 names (an array's after the layout of what it holds, since ctypes sizes an
 array type once), and lays each record out after what it holds by value.
 Python renders only; its declarations do not read back.
+
+JavaScript reads records through a `DataView`: a class per record, made on
+the bytes, the offset the record begins at and their byte order
+(little-endian unless the caller says), with an accessor per member at the
+offset the library records. An anonymous record's members are the parent's,
+as C reaches them; a named member of a record defined in place reads through
+a class of its own. Integers of up to four bytes are numbers and wider ones
+bigints, as `DataView` reads them; a pointer is its address. Array elements
+read through methods that take their index, bitfields through accessors
+whose arithmetic follows C (32-bit for units of up to four bytes, bigint
+for eight). JSDoc types every accessor, so the one module is the workbench's
+JS/TS: TypeScript checks it with `checkJs`. With asserts, the module reads
+and writes back every accessor in a buffer of its record's size, which
+throws past its end. JavaScript renders only, and no language but C and
+C++ renders prototypes (`rendersPrototypes`, `readsDeclarations`; the C
+API's language list says both).
 
 `parseTypes` reads C, C++, Rust and Go declarations back into the library
 (`TypeParse.h`), and `layOutRecord` lays each record out under MSVC or
@@ -5430,7 +5447,7 @@ libraries supplied by the CMake helper.
 | `lib/sdk` | Public C ABI, session lifecycle, queries, persistence, plugins, lift/decompile/patch/audit/hunt entry points | Aggregates the engine components into `libneverd` |
 | `lib/pass` | LLVM IR obfuscation passes and MIR pass runner | IR |
 | `lib/debug` | DWARF, PDB, and linker-map debug contexts | IR |
-| `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust, Go and Python | LLVM DebugInfo PDB |
+| `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust, Go, Python and JavaScript | LLVM DebugInfo PDB |
 | `lib/sigs` | Signature parsing, databases, and matching | Loader |
 | `lib/libc` | Known libc names and call-model support | Standalone component |
 | `lib/symbolic` | Width-exact symbolic execution, bounded path exploration, stable control-decision histories, and the exact concrete shadow | LowIR |
@@ -6765,6 +6782,10 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymState` uses modulo-2^64 relative coordinates only for regions with a 64-bit symbolic base. A read crossing relative zero splits into two nonwrapping spans, keeping each input origin within one span; a store writes the complete value. Absolute-memory, register and temporary bank range overflow still refuses. This indexing rule supplies no actual-address validity, nonalias or frame-separation premise; ordinary cross-region invalidation and per-STORE preservation proofs remain unchanged. Unicorn, KVM and WHP share this analysis rule.
 
+### Bounded libSystem imports
+
+`MachOProgramLinking` owns strict original-byte classic and generic64 chain facts, complete undefined-symbol closure and preparation bounds. The Darwin process owns provider/symbol admission, pointer publication, read-only-after-fixup protection, authenticated libSystem gates and main-thread errno. `DarwinLibSystemCalls.def` binds exact Mach-O names, arities and typed kernel effects; wrappers reuse `DarwinServices` without inventing raw traps. `DarwinMemory` owns resident model reservations and the original maximum protections. Preparation and execution share `ExecutionBudget`; `ProcessReport` alone serializes optional `darwin.native_calls`. No host dyld or library code is loaded.
+
 ### Sequential raw compare-and-exchange
 
 `SymExec` owns the value semantics of admitted raw `ATOMIC_CMPXCHG`: capture address, expected, desired and old value before publishing the output, then commit `ite(Old == Expected, Desired, Old)` once. `SymState` owns that write's byte effects, alias invalidation and preservation budget. `InterpreterSpecialization` owns admission and provenance: Old uses the pre-write memory origin; conditional writes conservatively combine Old, expected and desired origins and invalidate possibly overlapping affine spills. Even a failed comparison requires the complete write footprint to be separated from protected return cells. The original atomic operation, ordering and occurrence remain in the residual; refusal publishes no partial residual CFG.
@@ -6876,6 +6897,8 @@ This is neither a second decoder nor an ART/JVM class-loader implementation.
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
 
 KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing operation accepts an already admitted node and mapped access, checks both directions, and excludes metadata-only opens from sharing conflicts. CLEANUP releases sharing without retiring the token; CLOSE removes the cleaned token. Cleaned retained bodies still count toward the 1024-open bound. Exact binding validation compares tokens with the file-object owner. `KernelModelFileCreate` owns CREATE and cancellation producers and reserves handle capacity before callbacks. `DriverSession` retains the original caller through pending work and nested CLOSE. The common object owner publishes the handle; namespace lookup retains a real directory body, and the terminal provider reads the admitted packet. Scenario close intent remains separate. Bidirectional token checks run on snapshot and unload.
+
+`KernelModelFileQueries` owns both borrowed IoQueryFileInformation and buffered ZwQueryInformationFile continuations, caller publication and packet disposal. KernelMode handle references reuse the object owner. Native SystemBuffer allocations register with the physical-memory owner; ordinary request retirement leaves them to the query owner. `KernelFileSystem::queryInformation` alone encodes declared metadata from retained open tokens. The terminal route consumes the actual admitted IRP class and length; adapters and reports do not reconstruct metadata.
 
 ### Raw environment architecture ownership
 

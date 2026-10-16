@@ -227,4 +227,4 @@ map을 검증합니다. parser 변경 시 공통 모델을 쓰는 ARM format cas
 decode 가능하다는 이유만으로 allow-list를 넓히지 않습니다. 최종 linked image에서 runtime
 exception behavior가 보존되는 것이 수용 기준입니다.
 
-선택된 handler의 cleanup은 동일한 유효 capture와 같다고 증명된 상수 값으로 다시 점프할 수 있습니다(0은 1로 정규화). 이 점프는 handler와 중단된 중첩 finally 호출을 취소하고 capture의 unwind 경계를 복원합니다. 함수 본체 밖의 callback과 도달 불가능한 꼬리도 검증된 소속을 유지합니다. 다른 capture, 다른 값 또는 동등성이 불명확한 값은 별도 증명이 필요합니다.
+선택된 handler의 cleanup은 동일한 유효 capture로 새 스칼라 값을 사용해 다시 점프할 수 있습니다(0은 1로 정규화). unwind 동안 각 값은 해당 프레임 효과와 함께 유지되며 재개된 EAX 값이 됩니다. 이 점프는 handler와 중단된 중첩 finally 호출을 취소하고 capture의 unwind 경계를 복원합니다. 함수 본체 밖의 callback과 도달 불가능한 꼬리도 검증된 소속을 유지합니다. 다른 capture와 프레임 주소의 유출은 별도 증명이 필요합니다.
