@@ -855,6 +855,14 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>显示程序的类型及其内存布局和源码</translation>
     </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>结构体偏移(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>将操作数显示为本地类型的成员，类型按代码的访问与其吻合的程度排序</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2589,6 +2597,12 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>DWARF loaded: %1</source>
         <translation>已加载 DWARF：%1</translation>
     </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>已将 %n 个操作数显示为 %1 的成员</numerusform>
+        </translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -3397,10 +3411,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Windows 名称（ULONG）</translation>
     </message>
     <message>
-        <source>IDA names (unsigned int)</source>
-        <translation>IDA 名称（unsigned int）</translation>
-    </message>
-    <message>
         <source>C keywords (unsigned long)</source>
         <translation>C 关键字（unsigned long）</translation>
     </message>
@@ -3794,6 +3804,141 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>第 %1 行，第 %2 列：%3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>%n 个偏移中有 %1 个恰好落在成员上</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>共 %n 个类型，显示 %1 个</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n 字节</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>%n 个类型</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>访问</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>同时将经由 %1 的其他 %n 条指令显示为成员</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>应用</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>位于 %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>字节</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>成员</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>没有成员包含这个字节</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>没有匹配的类型。</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>偏移</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>正在读取代码通过操作数指针进行的访问…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>搜索类型：名称、typedef、Type.member 或 .member</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>结构体偏移</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>将数字 %1 作为结构体或联合体中的偏移。</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>操作数保持原来的数字。</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>程序没有结构体或联合体，可在本地类型（Shift+F1）中声明。</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>寄存器指向 %2 内 %1 字节处，即 %3：在它之前的访问读取的是记录中更靠前的成员，正如 CONTAINING_RECORD 所还原的那样。</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>类型</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>按函数中经由 %1 的 %n 次访问落在成员上的情况对类型排序。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>取地址</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>头文件</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>超出类型范围</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>填充</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>读</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>该指针</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>用户</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>写</translation>
     </message>
 </context>
 </TS>

@@ -98,9 +98,11 @@ llvm::Error KernelModel::validateRequestCompletion(uint64_t IRP,
   // An IOCTL with no output allocation can use Information as a driver-defined
   // value. Otherwise READ/WRITE and IOCTL output retain the WDM byte limit.
   // https://learn.microsoft.com/windows-hardware/drivers/kernel/failure-to-initialize-output-buffers
-  const bool HasIOCTLOutput =
-      Request->Kind == DriverRequestKind::DeviceControl && Request->OutputSize;
-  const bool HasTransferCount = HasIOCTLOutput ||
+  const bool HasControlOutput =
+      (Request->Kind == DriverRequestKind::DeviceControl ||
+       Request->Kind == DriverRequestKind::FileSystemControl) &&
+      Request->OutputSize;
+  const bool HasTransferCount = HasControlOutput ||
                                 Request->Kind == DriverRequestKind::Read ||
                                 Request->Kind == DriverRequestKind::Write;
   if (HasTransferCount && Information > Request->TransferSize)

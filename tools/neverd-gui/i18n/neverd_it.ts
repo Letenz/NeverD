@@ -855,6 +855,14 @@
         <source>Show the program's types with their layouts and source</source>
         <translation>Mostra i tipi del programma con layout e sorgente</translation>
     </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>Offset di s&amp;truttura...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>Mostra l&apos;operando come membro di un tipo locale, con i tipi ordinati in base a quanto vi corrispondono gli accessi del codice</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2595,6 +2603,13 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
         <source>DWARF loaded: %1</source>
         <translation>DWARF caricato: %1</translation>
     </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>%n operando mostrato come membro di %1</numerusform>
+            <numerusform>%n operandi mostrati come membri di %1</numerusform>
+        </translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -3403,10 +3418,6 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
         <translation>Nomi Windows (ULONG)</translation>
     </message>
     <message>
-        <source>IDA names (unsigned int)</source>
-        <translation>Nomi IDA (unsigned int)</translation>
-    </message>
-    <message>
         <source>C keywords (unsigned long)</source>
         <translation>Parole chiave C (unsigned long)</translation>
     </message>
@@ -3808,6 +3819,147 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>Riga %1, colonna %2: %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>Offset che cadono esattamente su membri: %1 di %n</numerusform>
+            <numerusform>Offset che cadono esattamente su membri: %1 di %n</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>%1 di %n tipo</numerusform>
+            <numerusform>%1 di %n tipi</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n byte</numerusform>
+            <numerusform>%n byte</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>%n tipo</numerusform>
+            <numerusform>%n tipi</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>Accesso</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>Mostra come membro anche l&apos;altra istruzione che passa per %1 (%n)</numerusform>
+            <numerusform>Mostra come membri anche le altre %n istruzioni che passano per %1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Applica</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>A %1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Byte</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>Membro</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>Nessun membro contiene questo byte</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>Nessun tipo corrisponde.</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>Offset</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>Lettura di ciò che il codice fa tramite il puntatore dell&apos;operando…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>Cerca tipi: un nome, un typedef, Tipo.membro o .membro</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>Offset di struttura</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>Il numero %1 come offset in una struttura o unione.</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>L&apos;operando mantiene il suo numero.</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
+        <translation>Il programma non ha strutture né unioni. Dichiarale in Tipi locali (Shift+F1).</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>Il registro punta %1 byte dentro %2, a %3: gli accessi che lo precedono leggono i membri precedenti del record, come annulla CONTAINING_RECORD.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Tipo</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>Tipi ordinati in base a come il %n accesso della funzione tramite %1 cade sui loro membri.</numerusform>
+            <numerusform>Tipi ordinati in base a come i %n accessi della funzione tramite %1 cadono sui loro membri.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>indirizzo</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>intestazione</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>fuori dal tipo</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>riempimento</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>lettura</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>il puntatore</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>utente</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>scrittura</translation>
     </message>
 </context>
 </TS>

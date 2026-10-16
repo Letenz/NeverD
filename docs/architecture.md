@@ -97,11 +97,14 @@ stream's member list, or whose members cannot sit where they say
 `renderType` and `renderTypes` spell types as C, C++, Rust, Go, Python,
 JavaScript or Lua (`TypeLanguages.def`), each member marked with its
 offset. Builtins take the spellings each language has (`TypeLanguages.def`
-lists them, `BuiltinSpellings.def` names them): C and C++ name them as
-Windows, IDA or the compiler does, or by exact widths; Rust, Go, Python,
-JavaScript and Lua by exact widths or by Windows' names, which a module or
-file declares as aliases as wdk-sys does (Lua's comments only, its values
-being its integers either way). Every language
+lists them, `BuiltinSpellings.def` names them), and every language names
+them by exact widths unless asked: `uint32_t`, `u32`, `uint32`,
+`ctypes.c_uint32`, a JavaScript `number`. Each also takes Windows' names,
+which Rust, Go, Python, JavaScript and Lua declare as aliases as wdk-sys
+does (Lua's comments only, its values being its integers either way), and C
+and C++ the compiler's keywords too. IDA's own spelling, Microsoft's sized
+integers, reads in as C but does not render, being neither portable nor
+what the program's headers say. Every language
 reproduces the library's layout exactly. An explicit filler moves a member
 that the language's own rules would place earlier. Rust and Go read what they
 cannot express through accessors whose arithmetic follows C, signed bitfields
@@ -177,6 +180,29 @@ after the program's PDB and before the user's declarations:
 - a typedef names the program's type, as C binds it;
 - a header record laid out with a type the program sizes otherwise is left
   out and reported (`conflicts`).
+
+`TypeFit.h` judges which records a pointer points at by what the code
+does through it, as an analyst checks a guess against the code.
+`memberAt` lands an access of some bytes at an offset on the member that
+holds it: exactly, at its start or inside it, on padding, or outside the
+record.  It prefers, among a union's alternatives, the one the access fits
+best, a named member over an array's element and a scalar over the record
+it begins.  `fitTypes` ranks the records:
+- those that hold every access come first;
+- then the better score, where an access landing exactly on a named member
+  counts most, on an array's element a little less, and one landing in part
+  or on padding counts against;
+- a pointer into a record, as a list entry's is, takes the member start that
+  explains accesses before it best (CONTAINING_RECORD's shift).
+It matches names as an editor's quick open does, a record's typedefs and
+`Type.member` paths included.  The evidence comes from MedIR
+(`MedPointerAccesses`): every load and store whose address is an SSA value
+plus a constant, through copies, and every such address the code passes on.
+`neverd_local_types_fit_json` joins the two for an instruction's memory
+operand, and `neverd_local_type_member_json` names one landing.  A
+structure offset is an operand format (`OperandFormats.def`) that names a
+local type and a delta; the worker spells it from the type's current
+layout, so an edited type renames its operands.
 
 `neverd_types_convert` and `neverd types --data-model` read and render
 declarations without a program, which is how the generator builds the
@@ -446,6 +472,19 @@ template arguments and explicit ABI arguments remain visible. DWARF record
 identities supply type spellings, not guessed layouts or implicit member-call
 conventions. The GUI offers a separate C choice for non-C images and omits it
 when only C is offered.
+
+The reader reads the definitions a unit holds of the program's local types:
+unions, anonymous structures and unions, bit-fields, enumerations,
+`#pragma pack` and `DECLSPEC_ALIGN`, and their `static_assert` and `offsetof`
+checks. A member access reaches a field through anonymous members as C
+counts it. C and C++ keep the definitions as written, and C++ reads the code
+that uses them. Rust and Go spell a record whose fields their own structures
+lay out as C does, Rust's under its packing and alignment, and an
+enumeration as int constants. They show a union, an anonymous member, a
+bit-field or a volatile member as C with its reason, and Go a packed or
+aligned record too, as they do the code that reaches such a member. In Rust
+and Go, a typedef of a record by its own tag is the record: defined where
+the text defines it, opaque where the text only declares it.
 Explicit C keeps native throw calls and separate handler entries with unwind
 metadata in comments; C++ keeps structured exception syntax. Their caches are
 separate. The C exception view depends on the image's original runtime and
@@ -5240,9 +5279,9 @@ cutoff was reached.
 ## Verified LowIR concolic branch flips
 
 `NeverDConcolic` follows one native LowIR trace from explicit entry-register
-byte ranges. Its concrete shadow is a second `SymExec`, so concrete and
+and optional entry-memory byte ranges. Its concrete shadow is a second `SymExec`, so concrete and
 symbolic execution share the same operation and bit-width semantics. Missing
-register bytes, unsupported operations, opaque effects, unsummarized calls,
+register or memory bytes, unsupported operations, opaque effects, unsummarized calls,
 and unresolved memory effects stop the exact trace; none is filled with an
 invented zero.
 
@@ -5250,7 +5289,7 @@ Each non-constant control decision has a stable occurrence identity containing
 its machine address, sequence, block, LowIR operation index, loop invocation,
 and kind. For a conditional decision, the engine asks the bounded bit-vector
 solver for the exact earlier constraint prefix plus the opposite polarity. A
-SAT model is projected only from epoch-zero register-input origins that are
+SAT model is projected only from epoch-zero register or absolute-memory input origins that are
 fully covered by the caller's baseline seed. The candidate is published only
 after the query evaluates true under the projected bytes and a fresh execution
 reaches the same earlier decisions and target occurrence with the target
@@ -5262,8 +5301,32 @@ The result is deliberately one trace, never path coverage: public reports use
 projection, replay, and candidate-budget failures retain typed statuses and do
 not publish an unverified seed. JSON image identity hashes `BinaryImage::Raw`,
 the exact snapshot parsed by the loader, rather than reopening the source path.
-The initial public slice is register-seeded and intraprocedural on x86-64 and
-AArch64 PE, ELF, and Mach-O images.
+The version 1 C/JSON interface remains register-seeded and intraprocedural on
+x86-64 and AArch64 PE, ELF, and Mach-O images.
+
+### Concrete entry-memory seeds
+
+The C++ `LowIRConcolicOptions::InitialMemory` API accepts owned RAM snapshots
+in increasing address order within each range, independently of target byte
+order. `MaxMemorySeedBytes` bounds their total size before copying or tracing;
+the default is 1 MiB and zero accepts no bytes. Empty, overlapping and wrapping
+ranges are rejected. The concrete shadow receives the snapshot while the
+primary symbolic state retains free entry-memory origins. Stores update the
+snapshot normally; missing bytes are never supplied implicitly.
+
+Reports requesting memory use version 2 and retain `InitialMemory` plus each
+candidate's `MemorySeed`. Projection, query evaluation, fresh replay and
+deduplication include both register and memory bytes. Symbolic-base loads
+without an absolute entry-input origin still refuse projection. A candidate
+certifies the selected decision occurrence and its earlier decision prefix;
+it does not certify the whole replay suffix, path coverage or equivalence.
+
+Emulation can supply snapshot bytes through `ProcessView::read` while the
+process is stopped. This reads committed RAM through the shared backend
+interface; pre-access write hooks alone are not a committed-memory snapshot.
+Concrete bytes establish no allocation ownership, lifetime, immutable data or
+disjointness. These remain separate proof obligations or explicit environment
+contracts. Symbolic execution depends on neither an emulator nor a loader.
 
 ## Component map
 
@@ -6954,6 +7017,8 @@ The finite intrinsic catalogue and value semantics live in `dalvik::Library`;
 JNI retains opaque identities and argument/reference transport only.
 `LinuxBinderTransactions` routes object-free messages between guest-owned opens;
 LinuxMemory owns their read-only arenas and every service body remains guest code.
+It preserves admitted libbinder request/status flags at this shared transport
+boundary. No frontend interprets a status payload or invents a service result.
 `LinuxGPUCommands` owns explicitly selected PM4 admission and execution, using
 MemoryView physical pins and the existing KGSL context/memstore owner.
 `LinuxGPUObjects` allocates retained RAM through `AddressSpace::allocateBacking`
@@ -7043,6 +7108,12 @@ KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing
 `KernelModelFileRequests` also owns synchronous buffered `ZwReadFile` and `ZwWriteFile`. Handle scope, offset/key capture and copied write input belong to the producer. Shared completion publishes read bytes and IOSB in the eligible original caller, then disposes each owned packet and buffer once. Storage drivers own content and file-position changes.
 
 `KernelModelFileRequests` also owns bufferless `ZwFlushBuffersFile` production. Its granted-mask check and immediate publication/disposal differ from deferred native read/write/query packets; all reuse the original-caller notification and single-release owner.
+
+`KernelModelFileRequests` owns native device/filesystem control buffer capture and publication. Both use the same file hold, caller continuation and packet release; producer-specific deferral distinguishes device control from FSCTL. Control output limits are checked by the shared completion validator.
+
+`KernelModelRuntime` owns kernel CRT classification, in-place conversion and checked string writes. `KernelCStringAPIs.def` supplies export identity, argument count and IRQL admission to every caller surface. Unit accesses reuse guest-memory permissions and lifetime guards; reports and adapters do not repeat copy or error semantics.
+
+`KernelMemoryCalls` owns checked memory-copy admission and reuses its existing move/fill operations, including pool lifetime and user-memory checks. `KernelModelRuntime` owns the raw `RtlImageNtHeader` signature probe. This probe is distinct from the loader validation needed to execute an image; adapters do not duplicate either operation.
 
 ### Darwin imported file calls
 

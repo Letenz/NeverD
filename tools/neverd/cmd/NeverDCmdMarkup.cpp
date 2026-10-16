@@ -686,12 +686,28 @@ int runOperands(neverd_session_t Sess) {
       return 1;
     }
     std::string Format;
-    if (!OperandClear)
-      Format = formatv("{0}", json::Value(json::Object{
-                                  {"base", OperandBase.getValue()},
-                                  {"negate", OperandNegate.getValue()},
-                                  {"invert", OperandInvert.getValue()}}))
-                   .str();
+    if (!OperandStruct.empty() && OperandBase.getValue() != "number" &&
+        OperandBase.getValue() != "struct") {
+      WithColor::error() << "--struct shows a structure offset; leave out "
+                            "--base\n";
+      return 1;
+    }
+    if (OperandStruct.empty() && OperandDelta != 0) {
+      WithColor::error() << "--delta goes with --struct\n";
+      return 1;
+    }
+    if (!OperandClear) {
+      json::Object Object{{"base", OperandStruct.empty()
+                                       ? OperandBase.getValue()
+                                       : std::string("struct")},
+                          {"negate", OperandNegate.getValue()},
+                          {"invert", OperandInvert.getValue()}};
+      if (!OperandStruct.empty()) {
+        Object["type"] = OperandStruct.getValue();
+        Object["delta"] = static_cast<int64_t>(OperandDelta.getValue());
+      }
+      Format = formatv("{0}", json::Value(std::move(Object))).str();
+    }
     if (neverd_operand_format_set(Sess, *Addr, static_cast<int>(OperandIndex),
                                   OperandClear ? nullptr : Format.c_str()) !=
         0) {
@@ -736,6 +752,11 @@ int runOperands(neverd_session_t Sess) {
             Changes += "sign ";
           if (Operand->getBoolean("invert").value_or(false))
             Changes += "bits ";
+          if (std::optional<StringRef> Type = Operand->getString("type")) {
+            Changes += Type->str();
+            if (const int64_t Delta = Operand->getInteger("delta").value_or(0))
+              Changes += ", delta " + std::to_string(Delta);
+          }
           outs() << format(
               "  %-18s %-8lld %-10s %s\n",
               Object->getString("addr").value_or("").str().c_str(),

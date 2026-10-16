@@ -1019,3 +1019,28 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/KernelFileObjectExecution."
     "GenuineWdkBufferedNativeFileTransfers/{backend}CheckedRebased")
+
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "OriginalImportsAndLookupPreserveCheckedWrites/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "OriginalImportsAndLookupPreserveCheckedWrites/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "OriginalImportsAndLookupPreserveCheckedWrites/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "OriginalImportsAndLookupPreserveCheckedWrites/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "GenuineWdkCallsPreserveCheckedWrites/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "GenuineWdkCallsPreserveCheckedWrites/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "GenuineWdkCallsPreserveCheckedWrites/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "GenuineWdkCallsPreserveCheckedWrites/{backend}CheckedRebased")

@@ -9,6 +9,10 @@ para modificar NeverD con seguridad. Cubre deliberadamente solo el código
 propio de NeverD; los submódulos LLVM, Capstone y Unicorn mantienen su propia
 arquitectura interna.
 
+## Semillas concretas de memoria de entrada
+
+`SymExecConcreteShadow` recibe bytes de RAM en orden de dirección antes de ejecutar; la memoria simbólica de entrada sigue libre. La opción C++ `InitialMemory` está limitada por `MaxMemorySeedBytes` (1 MiB por defecto; cero no admite bytes). Se rechazan rangos vacíos, solapados o con desbordamiento. Los informes con memoria usan la versión 2 y conservan `InitialMemory` y `MemorySeed` por candidato. La proyección acepta solo entradas de registro o memoria absoluta de época cero cubiertas por la semilla. La consulta, la nueva ejecución y la deduplicación incluyen ambos conjuntos de bytes. Se siguen rechazando bytes ausentes, bases simbólicas y efectos aproximados; las escrituras actualizan la memoria concreta normalmente. `ProcessView::read` permite leer RAM confirmada con el proceso detenido; los eventos previos al acceso no son una captura completa. La observación no prueba propiedad, duración, inmutabilidad ni separación. El candidato verifica solo la decisión elegida y las anteriores. C/JSON, Python y CLI siguen usando registros en la versión 1.
+
 ## Límite de sustitución de fuentes y objetos
 
 `SourcePatchCompiler` gestiona la identidad del compilador y el artefacto. `validateSourcePatchTarget` admite los destinos tanto de fuentes como de IR externo; el triplete por sí solo no demuestra soporte. `bindSourcePatch` autentica entradas IR; `PatchObject` gestiona secciones nativas, reubicaciones y evidencias de rangos FDE. `publishSourcePatch` prepara, verifica y publica la transacción exacta. `COFFSourceImage` gestiona el nuevo almacenamiento y las tablas de desenrollado PE x86/x64/ARM32/ARM64; las reescrituras elevadas conservan evidencias EH originales separadas. Consulte [los parches de fuentes](source-patching.md).
@@ -1886,3 +1890,9 @@ KernelFileSystem mantiene un provider token por FILE_OBJECT. La operación priva
 `KernelModelFileRequests` también posee las operaciones síncronas con búfer `ZwReadFile` / `ZwWriteFile`. El productor captura el ámbito del handle, desplazamiento, clave y copia de escritura. La finalización compartida publica bytes e IOSB en el llamador original habilitado y libera cada paquete y búfer propio una sola vez. El controlador de almacenamiento posee los cambios de contenido y posición.
 
 `KernelModelFileRequests` también posee la producción sin búfer de `ZwFlushBuffersFile`. La máscara de acceso y la publicación/liberación inmediata difieren de los paquetes nativos diferidos de lectura, escritura y consulta; comparten la notificación del llamador original y una única liberación.
+
+`KernelModelFileRequests` controla la captura y publicación de búferes de control nativo. Comparten retención del archivo, continuación del llamador y liberación del paquete; el aplazamiento del productor distingue control de dispositivo y FSCTL. El validador común de finalización comprueba los límites de salida.
+
+`KernelModelRuntime` es responsable de clasificación CRT, conversión en el búfer y escritura comprobada de cadenas. `KernelCStringAPIs.def` aporta identidad exportada, número de argumentos y admisión IRQL a todas las rutas. Los accesos por unidad reutilizan permisos y vida útil del invitado; informes y adaptadores no duplican la semántica de copia o errores.
+
+`KernelMemoryCalls` controla la admisión de copias comprobadas y reutiliza move/fill y las verificaciones de vida del pool y memoria de usuario. `KernelModelRuntime` controla la prueba de firma bruta `RtlImageNtHeader`. Esta prueba no sustituye la validación del cargador necesaria para ejecutar imágenes; los adaptadores no duplican su semántica.
