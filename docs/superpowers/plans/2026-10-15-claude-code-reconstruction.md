@@ -847,3 +847,39 @@ The actual complete Bash tool sandbox flow is still unqualified. External
 signal forwarding, optional observation, full helper function correspondence,
 original built-in engine dispatch and broader reconstruction work remain open.
 progress-v28.json must preserve this distinction and must not complete the goal.
+
+
+## Complete Bash boundary, observation and signal forwarding
+
+The current requested stage has three explicit checks:
+
+- [x] Compare external TERM/INT/HUP/QUIT/USR1/USR2 against the original on
+  native x64 and ARM64, both default termination and a caught signal returning
+  37. Workload readiness and both supervisors' SigCgt masks precede delivery
+  to the driver's own child. No signal is sent to a wrapper or another task.
+- [x] Compare optional USER_NOTIF observation with/without encoded command,
+  missing and dropped consumer, and actual queue backpressure. Require exact
+  normal event order, syscall numbers, escaped/relative/dirfd paths and owned
+  worker PID attribution. Telemetry loss under backpressure is checked without
+  interpreting the event channel as enforcement.
+- [ ] Reconstruct the two recorded layouts inside each native runner, require
+  the four sealed candidate hashes and full graph readback, then compare real
+  Bash tool calls under nested bubblewrap/seccomp with fresh fixture state.
+- [ ] Seal native evidence and a new runtime acceptance addendum, update the
+  reviewable CI PR and progress checkpoint. Preserve prior candidate packages.
+
+At 172ce01955da4aaaaacadf5e1b91a6a21c4fd0e0, run 38924570199 passes all
+four helper jobs. Each Ubuntu 22.04 architecture adds twelve external signal
+and five observer cases to the eleven prior role/descriptor cases. The first
+run 38924159682 reached observation but its validator omitted the source's
+encoded-command header; that failure remains separate from accepted evidence.
+The corrected validator checks the header and retains partial/raw observations.
+
+The native Bash workflow rebuilds from fixed published input and pinned Bun.
+Its public formatting data contains only hashes and whitespace insertions;
+all 4,602 unique projections reproduce prior verified NeverD formatter output.
+No captured source, assets or reconstructed client is committed or uploaded.
+Every original row must match the independent NeverD inventory, both resulting
+layouts must match the sealed local candidate, and readback must match every
+selected source/asset before execution. This is build preparation, not yet a
+Bash acceptance claim. The full recovery objective remains incomplete.
