@@ -128,15 +128,18 @@ TEST(DriverWDMUserMapping, PoolAliasesCatchReadOnlyFaultAndRelockTheSamePages) {
       ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
       expectLifecycle(*Result,
                       {UserMappingFirstByte, UserMappingSecondByte, 1, 7});
-      const auto MappingCount = [&](uint8_t Mode) {
+      const auto MappingCount = [&](llvm::StringRef Name, uint8_t Mode) {
         return std::count_if(
             Result->Calls.begin(), Result->Calls.end(), [&](const auto &Call) {
-              return Call.Name == "MmMapLockedPagesSpecifyCache" &&
-                     uint8_t(Call.Arguments[1]) == Mode;
+              return Call.Name == Name && uint8_t(Call.Arguments[1]) == Mode;
             });
       };
-      EXPECT_EQ(MappingCount(windows::UserMode), 2);
-      EXPECT_EQ(MappingCount(windows::KernelMode), 1);
+      EXPECT_EQ(MappingCount("MmMapLockedPagesSpecifyCache", windows::UserMode),
+                1);
+      EXPECT_EQ(
+          MappingCount("MmMapLockedPagesSpecifyCache", windows::KernelMode), 0);
+      EXPECT_EQ(MappingCount("MmMapLockedPages", windows::UserMode), 1);
+      EXPECT_EQ(MappingCount("MmMapLockedPages", windows::KernelMode), 1);
     }
 }
 

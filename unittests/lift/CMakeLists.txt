@@ -24,6 +24,10 @@ add_neverd_unittest(NeverDHighCParamUsageTests
   core/HighCParamUsageTests.cpp
   LINK_COMPONENTS BackendC)
 
+add_neverd_unittest(NeverDHighCSupervisorCallTests
+  core/HighCSupervisorCallTests.cpp
+  LINK_COMPONENTS BackendC)
+
 add_neverd_unittest(NeverDFPParameterMaskTests
   core/FPParameterMaskTests.cpp
   core/MedCallingConvTests.cpp
@@ -326,6 +330,7 @@ add_neverd_unittest(NeverDLiftTests
   core/MedCallingConvTests.cpp
   core/FPParameterMaskTests.cpp
   core/MedDceImplicitSpTests.cpp
+  core/MedCallLeftoversTests.cpp
   core/MedVariadicTests.cpp
   eh/COFFExceptionTests.cpp
   eh/COFFExceptionARM32UnwindTests.cpp

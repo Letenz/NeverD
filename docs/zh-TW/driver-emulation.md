@@ -359,7 +359,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `KeFlushIoBuffers` | 有效且已鎖定／非分頁的 MDL 與一致性快取；不釋放映射或 registers |
 | `IoConnectInterrupt`, `IoDisconnectInterrupt`, `IoConnectInterruptEx`, `IoDisconnectInterruptEx` | 精確配置的獨佔／共用 latched 或 level_sensitive 線路；PASSIVE_LEVEL 下傳統 ABI 與 Ex 1／2／4、嚴格連線世代及鎖所有權 |
 | `KeSynchronizeExecution`, `KeAcquireInterruptSpinLock`, `KeReleaseInterruptSpinLock` | 真正 BOOLEAN 同步回呼，在不低於配置 DIRQL 的同步 IRQL 下持有同一把不可遞迴鎖；恢復原始呼叫者 IRQL 與所有權 |
-| `MmMapLockedPagesSpecifyCache`、`MmGetSystemAddressForMdlSafe`、`MmUnmapLockedPages` | 使用者／系統對映繼承實體頁面快取屬性及各自權限；非分頁集區 MDL 透過安全輔助函式重用原系統對映 |
+| `MmMapLockedPages`、`MmMapLockedPagesSpecifyCache`、`MmGetSystemAddressForMdlSafe`、`MmUnmapLockedPages` | 使用者／系統對映繼承實體頁面快取屬性及各自權限；非分頁集區 MDL 透過安全輔助函式重用原系統對映 |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | 獨立或 IRP 關聯的非分頁集區／使用者描述元；可修改鏈指標，鎖頁與系統別名獨立；不支援配額 |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | 明確配置的工作階段登錄、每個控制代碼的權限與生命週期、查詢緩衝區大小及修改；不存取主機登錄 |
 | `ZwEnumerateValueKey` | 依建立順序列舉 Basic、Full、Partial 值資訊；取代保留索引，刪除壓縮索引，重建附加至尾端。需要 `KEY_QUERY_VALUE`，超出範圍傳回 `STATUS_NO_MORE_ENTRIES`。與值查詢共用序列化：x64 Full 資料按 8 位元組對齊，空資料位移為 `0xffffffff`，填補和不完整 UTF-16 單元維持原值 |
@@ -767,3 +767,7 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 `vDbgPrintExWithPrefix` 與 `DbgPrint` / `DbgPrintEx` 共用有限格式化器、全部篩選器啟用的觀察模型及 DIRQL 上限。客體 x64 `va_list` 以八位元組槽前進，但只讀取實際純量寬度；重複的 `hh` 依固定核心的 16 位元 short 規則處理。前綴依序使用 128/256/384/512 位元組緩衝；成功時截於首個 NUL，最終溢位時發布以換行結尾的 511 位元組。模型先檢查完整的有界本文（512 位元組），截斷不會放行無效或不支援的尾端。ASCII 前綴在 1 MiB 上限內掃描至終止符。Unicode 轉換仍要求 PASSIVE_LEVEL；主機篩選器、偵錯回呼及傳輸尚未建模。
 
 `IoThreadToProcess` 共用保留執行緒的建立行程身分。`PsGetCurrentThreadPreviousMode` 與 `ExGetPreviousMode` 共用狀態及 DISPATCH_LEVEL 上限，原先過寬的准入已修正。`RtlPcToFileHeader` 以完整位寬查詢固定模組清單，寫入八位元組結果，未命中寫零，不讀取 PC 所指記憶體。有界非分頁查詢允許所有有效 IRQL，但輸出必須駐留；缺少清單明確失敗，動態展開表及 retpoline 範圍仍不在模型內。
+
+`MmMapLockedPages` 共用現有映射器，固定使用快取頁面、HIGH 優先級及耗盡時 bugcheck 旗標。核心映射允許 DISPATCH_LEVEL；程序所屬的使用者檢視要求不高於 APC_LEVEL，耗盡時保留既有資源例外。帶 bugcheck 旗標的核心映射耗盡會明確停止為模型錯誤，不能作為成功呼叫傳回 NULL；實際 bugcheck 處理仍未建模。
+
+[`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject) 借用存活檔案的基礎裝置，不遍歷附加堆疊、不增加參照，也不讀取檔案擴充。本設定要求未掛載的自有路由及 IRQL <= DISPATCH_LEVEL；掛載 VPB 或錯誤的物件／拓撲狀態明確停止。微軟將此介面保留供系統使用，此 IRQL 上限屬於模型策略，並非公布的 Windows 契約。

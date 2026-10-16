@@ -356,7 +356,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `GetScatterGatherList`, `PutScatterGatherList` | DISPATCH_LEVEL 테이블 메서드. 실제 인라인 또는 자원 대기 콜백, 고정된 MDL 뷰, 명시적 매핑 해제 |
 | `AllocateAdapterChannel`, `MapTransfer`, `FlushAdapterBuffers`, `FreeMapRegisters` | 변환된 버스 마스터 채널 콜백, 공유 레지스터 할당량, 연속 MDL 조각, 전체 플러시와 정확한 보유 레지스터 해제 |
 | `KeFlushIoBuffers` | 유효한 잠금／비페이지 MDL에 대한 일관성 CPU 캐시 플러시. DMA 매핑은 해제하지 않음 |
-| `MmMapLockedPagesSpecifyCache`, `MmGetSystemAddressForMdlSafe`, `MmUnmapLockedPages` | 사용자/시스템 매핑은 물리 페이지 캐시 속성과 각 권한을 유지하며 비페이지 풀 MDL은 안전 도우미로 원래 시스템 매핑을 재사용 |
+| `MmMapLockedPages`, `MmMapLockedPagesSpecifyCache`, `MmGetSystemAddressForMdlSafe`, `MmUnmapLockedPages` | 사용자/시스템 매핑은 물리 페이지 캐시 속성과 각 권한을 유지하며 비페이지 풀 MDL은 안전 도우미로 원래 시스템 매핑을 재사용 |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | 독립 또는 IRP 연결 비페이지 풀/사용자 MDL, 변경 가능한 체인 링크, 독립 잠금과 시스템 별칭. 할당량은 미지원 |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | 명시적인 세션 레지스트리, 핸들별 권한과 수명, 쿼리 버퍼 크기와 변경. 호스트 레지스트리에 접근하지 않음 |
 | `ZwEnumerateValueKey` | 생성 순서로 Basic, Full, Partial 값 정보를 열거. 교체는 인덱스를 유지하고 삭제는 인덱스를 압축하며 재생성은 끝에 추가. `KEY_QUERY_VALUE` 필요, 범위 밖은 `STATUS_NO_MORE_ENTRIES`. 값 조회와 직렬화를 공유하며 x64 Full 데이터는 8바이트 정렬, 빈 데이터 오프셋은 `0xffffffff`. 패딩과 불완전한 UTF-16 단위는 유지 |
@@ -762,3 +762,7 @@ ASCII 이름, 네임스페이스 링크, RootDirectory로 유지되는 디렉터
 `vDbgPrintExWithPrefix`는 `DbgPrint` / `DbgPrintEx`와 유한 포매터, 모든 필터가 켜진 관찰 모델, DIRQL 상한을 공유합니다. 게스트 x64 `va_list`는 8바이트 슬롯으로 이동하지만 실제 스칼라 너비만 읽으며, `hh`는 고정 커널의 16비트 short 규칙을 따릅니다. 접두사 버퍼는 128/256/384/512바이트로 늘어납니다. 성공하면 첫 NUL까지, 최종 오버플로이면 줄바꿈으로 끝나는 511바이트를 게시합니다. 전체 본문(최대 512바이트)을 먼저 검사하므로 잘려 나가는 잘못되거나 미지원인 꼬리도 허용하지 않습니다. ASCII 접두사는 1 MiB 한도 안에서 종결자까지 읽습니다. Unicode 변환에는 PASSIVE_LEVEL이 필요하며 호스트 필터, 디버그 콜백과 전송은 모델링하지 않습니다.
 
 `IoThreadToProcess`는 유지된 스레드의 생성 프로세스 ID를 공유합니다. `PsGetCurrentThreadPreviousMode`는 `ExGetPreviousMode`와 상태 및 DISPATCH_LEVEL 상한을 공유하며 기존의 과도한 허용 범위를 수정합니다. `RtlPcToFileHeader`는 전체 너비 주소로 고정 모듈 목록을 조회하고 PC 메모리를 읽지 않고 8바이트를 씁니다. 일치하지 않으면 0입니다. 이 제한된 비페이징 조회는 상주 출력에서 모든 유효 IRQL을 허용합니다. 목록 누락은 명시적으로 실패하며 동적 언와인드 테이블과 retpoline 범위는 지원하지 않습니다.
+
+`MmMapLockedPages`는 기존 매퍼에 캐시된 페이지, HIGH 우선순위와 자원 부족 시 bugcheck 플래그를 전달합니다. 커널 매핑은 DISPATCH_LEVEL까지, 프로세스 소유 사용자 뷰는 APC_LEVEL까지 허용하며 후자의 자원 부족은 기존 예외를 발생시킵니다. bugcheck 플래그가 있는 커널 자원 부족은 명시적 모델 오류로 중단하며 성공한 호출처럼 NULL을 반환하지 않습니다. 실제 bugcheck 처리는 지원하지 않습니다.
+
+[`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject)는 살아 있는 파일의 기본 장치를 빌리며 연결 스택 탐색, 참조 증가, 파일 확장 조회를 하지 않습니다. 이 프로필은 소유된 비마운트 경로와 IRQL <= DISPATCH_LEVEL로 제한되며 마운트된 VPB나 잘못된 소유권／토폴로지는 명시적으로 중단합니다. Microsoft가 시스템용으로 예약한 함수이므로 이 IRQL 상한은 공개 Windows 계약이 아닌 모델 정책입니다.

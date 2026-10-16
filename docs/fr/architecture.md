@@ -1920,3 +1920,7 @@ KernelFileSystem conserve un provider token par FILE_OBJECT. L’opération priv
 `KernelModelRuntime` possède les largeurs scalaires et la règle commune de publication du préfixe et du tampon. Les appels variadiques ordinaires utilisent le lecteur ABI existant ; l’adaptateur x64 `va_list` vérifie chaque scalaire invité demandé avec un pas de huit octets. Ni le répartiteur ni l’adaptateur ne dupliquent l’analyse du format.
 
 Les alias réutilisent les propriétaires existants des threads/processus et des contextes, même pendant un attachement. `RtlPcToFileHeader` utilise `LoadedModules`, comme les requêtes de modules système ; les régions mappées de `ImageRAM` ne remplacent pas l’identité des modules. Aucun état de l’hôte n’est consulté.
+
+`KernelMDLCalls` normalise l’entrée historique vers le mappeur existant à six arguments. `KernelPhysicalMemory` et les enregistrements MDL conservent les attributs de cache, l’identité des pages, les droits et la durée de vie. Seuls les alias d’image noyau entièrement libérés ne laissent aucune dépendance environnementale ; les vues utilisateur la conservent.
+
+`queryFileDevice` dans `KernelModelFileRequests` centralise la validation de l’identité du fichier, de son en-tête, du montage et de la topologie. La requête de base renvoie le périphérique possédé par le fichier ; la requête associée vérifie aussi le routage par extension et choisit le sommet attaché. Les deux résultats sont empruntés.

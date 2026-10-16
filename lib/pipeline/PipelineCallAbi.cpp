@@ -271,6 +271,12 @@ void propagateForwardedCallArities(
     const int FPArity = static_cast<int>(FPRegs.size());
     if (IsVariadicPublic)
       CalleeIsVariadic[Probe.Entry] = true;
+    // A routine found variadic only here, a va_list wrapper, keeps its arity
+    // open for the overflow its callers pass, as one whose prologue says so
+    // does (callRecoveryTotalArity).
+    if (IsVariadicPublic && !PreviousVariadic)
+      CalleeTotalArity[Probe.Entry] =
+          std::max(CalleeTotalArity[Probe.Entry], limits::kMaxCallArgs);
     bool Grew = CalleeRegArity[Probe.Entry] > PreviousRegArity ||
                 CalleeTotalArity[Probe.Entry] > PreviousTotalArity ||
                 (CalleeIsVariadic.count(Probe.Entry) != 0 &&

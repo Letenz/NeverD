@@ -301,10 +301,22 @@ class ProcessIntegrationTests(unittest.TestCase):
             options = {"backend": "unicorn", "linux_files": {"files": [], "devices": [device]},
                        "android": {"entry_symbol": "devices_sequence", "initialize": False,
                                    "arguments": [route], "libraries": {"libdevice.so": ["ioctl"]}}}
+            options["linux_files"]["ioctl_trace"] = {
+                "event_limit": 16, "byte_limit": 4096,
+                "requests": [{"request": 0xa1000001, "memory": [
+                    {"offset": 0, "size": 24},
+                    {"offset": 0, "size": 8, "pointer_offset": 8}]}]}
             result = session.emulate_process(str(Path(fixtures) / "devices-O2-relr.so"),
                                              "android-aarch64-api28-v1", json.dumps(options))
             self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
             self.assertEqual(result["return_value"], "0")
+            self.assertFalse(result["ioctl_trace_truncated"])
+            self.assertEqual(len(result["ioctl_trace"]), 5)
+            for index in (0, 2, 4):
+                event = result["ioctl_trace"][index]
+                self.assertEqual(event["memory"][1]["before_hex"], "c75556c7c7c7c7c7")
+                self.assertEqual(event["memory"][1]["after_hex"], "c79091c7c7c7c7c7")
+                self.assertEqual("return_address" in event, route != 0)
             if route in (1, 3):
                 calls = [c for c in result["android"]["native_calls"] if c["name"] == "ioctl"]
                 self.assertTrue(any(c["result"] == "25" for c in calls))

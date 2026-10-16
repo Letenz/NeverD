@@ -8,6 +8,7 @@
 
 #include "FunctionDiscoveryDetail.h"
 
+#include "neverd/loader/LinkerThunk.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
 
@@ -162,6 +163,61 @@ bool ImportThunkCandidates::allows(va_t Start, uint64_t Size) const {
   return Next == Bodies.begin() || std::prev(Next)->second <= Start;
 }
 
+/// Pair each long-branch or interworking thunk a linker wrote that jumps to
+/// an import's stub with that import: a Thumb tail call reaches an ARM PLT
+/// entry through `__ThumbV7PILongThunk_puts`, a distant A64 call through
+/// `__AArch64ADRPThunk_*`.  Only the forms a linker alone writes count
+/// (linkerLongBranchThunkAt); a direct jump to a stub ends many a routine.
+static size_t
+pairLinkerThunksWithImports(BinaryImage &Img, std::set<va_t> &Existing,
+                            const ImportThunkCandidates &Candidates) {
+  if ((Img.Arch != Arch::ARM && Img.Arch != Arch::AArch64) ||
+      Img.ImportStubIndices.empty())
+    return 0;
+  // A Thumb thunk may start at any halfword, an ARM or A64 one at a word.
+  const size_t Step =
+      Img.Arch == Arch::ARM ? arm::kThumbInsnSize : aarch64::kInsnSize;
+  size_t Added = 0;
+  for (const Segment &Seg : Img.Segments) {
+    if (!Seg.isExecutable())
+      continue;
+    for (size_t Offset = 0; Offset + Step <= Seg.Data.size(); Offset += Step) {
+      const va_t VA = Seg.VA + Offset;
+      for (const InstructionMode Mode :
+           {InstructionMode::Thumb, InstructionMode::ARM}) {
+        if (Img.Arch == Arch::AArch64 && Mode == InstructionMode::Thumb)
+          continue;
+        if (Img.Arch == Arch::ARM && Mode == InstructionMode::ARM &&
+            VA % arm::kInsnSize != 0)
+          continue;
+        const std::optional<LinkerThunk> Thunk = linkerLongBranchThunkAt(
+            Img, VA, Img.Arch == Arch::ARM ? Mode : InstructionMode::Default);
+        if (!Thunk)
+          continue;
+        const auto Stub = Img.ImportStubIndices.find(Thunk->Target);
+        if (Stub == Img.ImportStubIndices.end())
+          continue;
+        // Bytes known to run in the other instruction set are no such thunk.
+        if (Img.Arch == Arch::ARM)
+          if (const std::optional<InstructionMode> Known =
+                  Img.instructionModeAt(VA);
+              Known && *Known != Mode)
+            continue;
+        if (!Img.isCodeRange(VA, Thunk->Size) ||
+            !Candidates.allows(VA, Thunk->Size))
+          continue;
+        Img.recordImportStub(VA, Stub->second);
+        if (Existing.insert(VA).second) {
+          Img.Symbols.push_back(Symbol::makeFunc(VA, Thunk->Size));
+          ++Added;
+        }
+        break;
+      }
+    }
+  }
+  return Added;
+}
+
 void scanImportThunks(BinaryImage &Img) {
   std::map<va_t, size_t> TargetImports;
   for (size_t I = 0; I < Img.Imports.size(); ++I)
@@ -195,6 +251,7 @@ void scanImportThunks(BinaryImage &Img) {
       break;
     }
   }
+  Added += pairLinkerThunksWithImports(Img, Existing, Candidates);
   LLVM_DEBUG(llvm::dbgs() << "func-discovery: import thunk scan added " << Added
                           << " functions\n");
 }

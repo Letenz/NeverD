@@ -219,6 +219,35 @@ std::string processResultJSON(const ProcessResult &Result) {
       {field::Stderr, llvm::toHex(Result.StandardError, true)},
       {field::Services, std::move(Services)},
       {field::CPUExit, nullptr}};
+  if (Result.IoctlTraceEnabled) {
+    llvm::json::Array Calls;
+    for (const auto &Event : Result.IoctlTrace) {
+      llvm::json::Array Memory;
+      for (const auto &M : Event.Memory)
+        Memory.push_back(llvm::json::Object{
+            {field::Address,
+             M.Address ? llvm::json::Value(bits(*M.Address)) : nullptr},
+            {field::Size, M.Size},
+            {field::IoctlTraceBefore, llvm::toHex(M.Before, true)},
+            {field::IoctlTraceAfter, llvm::toHex(M.After, true)},
+            {field::IoctlTraceBeforeStatus, M.BeforeStatus},
+            {field::IoctlTraceAfterStatus, M.AfterStatus}});
+      llvm::json::Object Call{
+          {field::PC, bits(Event.PC)},
+          {field::DeviceRequest, bits(Event.Request)},
+          {field::DeviceArgument, bits(Event.Argument)},
+          {field::ThreadID, Event.ThreadID},
+          {field::IoctlTraceFD, Event.FD},
+          {field::Result,
+           Event.Result ? llvm::json::Value(bits(*Event.Result)) : nullptr},
+          {field::Memory, std::move(Memory)}};
+      if (Event.ReturnAddress)
+        Call[field::ReturnAddress] = bits(*Event.ReturnAddress);
+      Calls.push_back(std::move(Call));
+    }
+    Object[field::IoctlTrace] = std::move(Calls);
+    Object[field::IoctlTraceTruncated] = Result.IoctlTraceTruncated;
+  }
   if (Result.Profile == ProcessProfile::AndroidNativeAArch64) {
     Object[field::Android] = androidResultJSON(Result);
     Object[field::ReturnValue] =

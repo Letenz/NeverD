@@ -677,6 +677,104 @@ TEST_F(KernelFileQueries,
   call("IoDeleteDevice", {Upper});
 }
 
+TEST_F(KernelFileQueries, BaseDeviceBorrowsFileDeviceBelowAttachedFilters) {
+  uint64_t Lower = Device;
+  std::array<uint64_t, 2> Filters{};
+  for (auto &Filter : Filters) {
+    call("IoCreateDevice", {Model->driverObject(), 0, 0, 0x22, 0, 0, Scratch});
+    Filter = read(Scratch);
+    EXPECT_EQ(call("IoAttachDeviceToDeviceStack", {Filter, Device}), Lower);
+    Lower = Filter;
+  }
+  const auto File = open();
+  const auto References = read(Device + DeviceReferenceCount, 4);
+  for (unsigned I = 0; I != 3; ++I) {
+    EXPECT_EQ(call("IoGetBaseFileSystemDeviceObject", {File}), Device);
+    EXPECT_EQ(call("IoGetRelatedDeviceObject", {File}), Filters.back());
+    EXPECT_EQ(read(Device + DeviceReferenceCount, 4), References);
+    for (auto Filter : Filters)
+      EXPECT_EQ(read(Filter + DeviceReferenceCount, 4), 0u);
+  }
+  // The base query does not route through, or dereference, this field.
+  ok(Memory->writeInteger(File + FileExtensionOffset, UINT64_MAX, 8));
+  EXPECT_EQ(call("IoGetBaseFileSystemDeviceObject", {File}), Device);
+  auto Related = Model->call("IoGetRelatedDeviceObject", {File});
+  ASSERT_FALSE(bool(Related));
+  rejects(Related.takeError(), "file-extension routing");
+  ok(Memory->writeInteger(File + FileExtensionOffset, 0, 8));
+  close();
+  auto Closed = Model->call("IoGetBaseFileSystemDeviceObject", {File});
+  ASSERT_FALSE(bool(Closed));
+  rejects(Closed.takeError(), "live file");
+  call("IoDetachDevice", {Filters.front()});
+  call("IoDeleteDevice", {Filters.back()});
+  call("IoDetachDevice", {Device});
+  call("IoDeleteDevice", {Filters.front()});
+  EXPECT_EQ(read(Device + DeviceReferenceCount, 4), 0u);
+}
+
+TEST_F(KernelFileQueries, BaseDevicePreservesFileAdmissionAndIrqlBounds) {
+  auto Create = begin(DriverRequestKind::Create);
+  const auto File = read(Create.IRP + IRPOriginalFileOffset);
+  EXPECT_EQ(call("IoGetBaseFileSystemDeviceObject", {File}), Device);
+  finish(Create.IRP);
+  for (auto Args : {std::vector<uint64_t>{}, std::vector<uint64_t>{File, 0},
+                    std::vector<uint64_t>{0}, std::vector<uint64_t>{Scratch},
+                    std::vector<uint64_t>{File + 1}}) {
+    auto Bad = Model->call("IoGetBaseFileSystemDeviceObject", Args);
+    ASSERT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+  for (uint8_t Level : {uint8_t(1), uint8_t(2)}) {
+    EXPECT_EQ(call("KfRaiseIrql", {Level}), 0u);
+    EXPECT_EQ(call("IoGetBaseFileSystemDeviceObject", {File}), Device);
+    call("KeLowerIrql", {0});
+  }
+  call("KfRaiseIrql", {3});
+  auto High = Model->call("IoGetBaseFileSystemDeviceObject", {File});
+  ASSERT_FALSE(bool(High));
+  rejects(High.takeError(), "IRQL");
+  call("KeLowerIrql", {0});
+  finish(begin(DriverRequestKind::Cleanup).IRP);
+  EXPECT_EQ(call("IoGetBaseFileSystemDeviceObject", {File}), Device);
+  auto Close = begin(DriverRequestKind::Close);
+  auto Closing = Model->call("IoGetBaseFileSystemDeviceObject", {File});
+  ASSERT_FALSE(bool(Closing));
+  rejects(Closing.takeError(), "live file");
+  finish(Close.IRP);
+}
+
+TEST_F(KernelFileQueries, BaseDeviceRejectsUnownedRoutesAndChangedRecords) {
+  const auto File = open();
+  for (auto Address : {File + FileVPBOffset, Device + DeviceVPBOffset}) {
+    ok(Memory->writeInteger(Address, Scratch, 8));
+    auto Mounted = Model->call("IoGetBaseFileSystemDeviceObject", {File});
+    ASSERT_FALSE(bool(Mounted));
+    rejects(Mounted.takeError(), "mounted VPB routing");
+    ok(Memory->writeInteger(Address, 0, 8));
+  }
+  for (auto Address : {File, File + 2}) {
+    const auto Saved = read(Address, 2);
+    ok(Memory->writeInteger(Address, 0, 2));
+    auto Header = Model->call("IoGetBaseFileSystemDeviceObject", {File});
+    ASSERT_FALSE(bool(Header));
+    rejects(Header.takeError(), "header");
+    ok(Memory->writeInteger(Address, Saved, 2));
+  }
+  ok(Memory->writeInteger(File + FileDeviceOffset, Scratch, 8));
+  auto Identity = Model->call("IoGetBaseFileSystemDeviceObject", {File});
+  ASSERT_FALSE(bool(Identity));
+  rejects(Identity.takeError(), "identity");
+  ok(Memory->writeInteger(File + FileDeviceOffset, Device, 8));
+  ok(Memory->writeInteger(Device + DeviceAttachedOffset, Scratch, 8));
+  auto Topology = Model->call("IoGetBaseFileSystemDeviceObject", {File});
+  ASSERT_FALSE(bool(Topology));
+  llvm::consumeError(Topology.takeError());
+  ok(Memory->writeInteger(Device + DeviceAttachedOffset, 0, 8));
+  EXPECT_EQ(call("IoGetBaseFileSystemDeviceObject", {File}), Device);
+  close();
+}
+
 class KernelFileTransfers : public KernelFileQueries {
 protected:
   void SetUp() override {

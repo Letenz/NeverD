@@ -25,6 +25,63 @@
 #include "llvm/Support/JSON.h"
 
 namespace neverd::emulation {
+TEST(ProcessReport, IoctlTraceHasStrictBoundsAndExplicitCaptureStatus) {
+  const char *Good = R"({"linux_files":{"files":[],"ioctl_trace":{
+    "event_limit":8,"byte_limit":256,"requests":[{"request":"4294967295",
+    "memory":[{"offset":1,"size":8,"pointer_offset":0}]}]}}})";
+  auto O = processOptionsFromJSON(Good);
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->LinuxFiles && O->LinuxFiles->IoctlTrace);
+  const auto &T = *O->LinuxFiles->IoctlTrace;
+  EXPECT_EQ(T.EventLimit, 8u);
+  EXPECT_EQ(T.ByteLimit, 256u);
+  ASSERT_EQ(T.Requests.at(UINT32_MAX).size(), 1u);
+  EXPECT_EQ(T.Requests.at(UINT32_MAX)[0].PointerOffset, 0u);
+  for (
+      const char *Bad :
+      {"null", "true", "{}",
+       R"({"event_limit":0,"byte_limit":1,"requests":[]})",
+       R"({"event_limit":4097,"byte_limit":1,"requests":[]})",
+       R"({"event_limit":1,"byte_limit":1048577,"requests":[]})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[],"extra":0})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[{"request":4294967296,"memory":[]}]})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[{"request":0,"memory":[]},{"request":0,"memory":[]}]})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[{"request":0,"memory":[{"offset":0,"size":0}]}]})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[{"request":0,"memory":[{"offset":0,"size":4097}]}]})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[{"request":0,"memory":[{"offset":"18446744073709551615","size":2}]}]})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[{"request":0,"memory":[{"offset":0,"size":1,"pointer_offset":null}]}]})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[{"request":0,"memory":[{"offset":0,"size":1,"pointer_offset":"18446744073709551615"}]}]})"}) {
+    auto R = processOptionsFromJSON(
+        std::string(R"({"linux_files":{"files":[],"ioctl_trace":)") + Bad +
+        "}}");
+    EXPECT_FALSE(bool(R)) << Bad;
+    llvm::consumeError(R.takeError());
+  }
+  ProcessResult R{ProcessProfile::LinuxELF64,
+                  GuestArchitecture::X64,
+                  ExecutionBackendKind::Unicorn,
+                  {}};
+  auto Off = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  EXPECT_FALSE(Off.getAsObject()->get("ioctl_trace"));
+  R.IoctlTraceEnabled = true;
+  R.IoctlTraceTruncated = true;
+  ProcessIoctlEvent E;
+  E.PC = 0x1234;
+  E.Request = UINT32_MAX;
+  E.Result = uint64_t(-13);
+  E.ReturnAddress = 0x1238;
+  E.Memory.push_back({0x2000, 2, {0, 0xff}, {}, "complete", "byte_limit"});
+  R.IoctlTrace.push_back(E);
+  auto V = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  const auto *J =
+      V.getAsObject()->getArray("ioctl_trace")->front().getAsObject();
+  EXPECT_EQ(J->getString("result"), "fffffffffffffff3");
+  EXPECT_EQ(J->getString("return_address"), "1238");
+  EXPECT_EQ(
+      J->getArray("memory")->front().getAsObject()->getString("before_hex"),
+      "00ff");
+  EXPECT_EQ(V.getAsObject()->getBoolean("ioctl_trace_truncated"), true);
+}
 namespace {
 namespace field = process_report;
 TEST(ProcessReport, DarwinNamedCallsRetainProviderArityFullBitsAndNullResults) {

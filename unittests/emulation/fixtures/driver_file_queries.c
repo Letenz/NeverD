@@ -77,6 +77,8 @@ __declspec(dllimport) int KeSetEvent(void *, int, U8);
 __declspec(dllimport) NTSTATUS KeWaitForSingleObject(void *, U32, U8, U8,
                                                      void *);
 __declspec(dllimport) DEVICE IoGetRelatedDeviceObject(void *);
+__declspec(dllimport) DEVICE IoGetBaseFileSystemDeviceObject(void *);
+__declspec(dllimport) void *MmGetSystemRoutineAddress(REGISTRY);
 __declspec(dllimport) NTSTATUS IoQueryFileInformation(void *, U32, U32, void *,
                                                       U32 *);
 __declspec(dllimport) NTSTATUS ZwQueryInformationFile(void *, QUERY_STATUS *,
@@ -243,6 +245,19 @@ static NTSTATUS handle(DEVICE Owner, PACKET Irp) {
   } else if (Stack[0] == 14) {
     CHECK(CurrentFile != File && Creates == 2);
     CHECK(IoGetRelatedDeviceObject(File) == Device);
+    CHECK(IoGetBaseFileSystemDeviceObject(File) == Device);
+    static U16 BaseName[] = {'I', 'o', 'G', 'e', 't', 'B', 'a', 's',
+                             'e', 'F', 'i', 'l', 'e', 'S', 'y', 's',
+                             't', 'e', 'm', 'D', 'e', 'v', 'i', 'c',
+                             'e', 'O', 'b', 'j', 'e', 'c', 't', 0};
+    struct {
+      U16 Length, MaximumLength;
+      U16 *Buffer;
+    } BaseRoutine = {sizeof(BaseName) - 2, sizeof(BaseName), BaseName};
+    typedef DEVICE (*BASE_QUERY)(void *);
+    BASE_QUERY BaseQuery =
+        (BASE_QUERY)MmGetSystemRoutineAddress((REGISTRY)&BaseRoutine);
+    CHECK(BaseQuery && BaseQuery(File) == Device);
     CallerThread = PsGetCurrentThread();
     void *Handle = 0;
     if (Native)
