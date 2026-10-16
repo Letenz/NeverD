@@ -488,7 +488,9 @@ void TypePickerDialog::listed(const QJsonObject &payload, bool first) {
              "", int(through.size()))
               .arg(base.isEmpty() ? tr("the pointer") : base));
     const int others = int(instructions.size()) - 1;
-    every_->setVisible(others > 0);
+    // A parameter becomes a pointer to the type: the operands of other
+    // instructions stay as they are.
+    every_->setVisible(!parameter_ && others > 0);
     every_->setText(
         tr("Also show the %n other instructions that go through %1 as "
            "members",
