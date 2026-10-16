@@ -2,6 +2,7 @@ import copy
 import unittest
 
 from scripts.replay_windows_registration import source_cases, source_records
+from scripts.check_windows_registration_rewrite import PARENT_EXIT_CASES
 
 
 class RegistrationSourceReplayTests(unittest.TestCase):
@@ -13,7 +14,11 @@ class RegistrationSourceReplayTests(unittest.TestCase):
         self.assertEqual(len(r5), 64)
         eh4_jumps = {name for name in current
                      if name.startswith("eh4-") and "longjmp-" in name}
-        self.assertEqual(len(current), 216)
+        self.assertEqual(len(current), 237)
+        parent_exits = {prefix + case for prefix in ("", "eh4-", "eh4-gs-")
+                        for case in PARENT_EXIT_CASES}
+        self.assertEqual(len(parent_exits), 21)
+        self.assertTrue(parent_exits <= set(current))
         self.assertEqual(len(eh4_jumps), 118)
         for prefix in ("eh4-", "eh4-gs-"):
             for case in ("longjmp-filter-correlated-state", "longjmp-filter-shared-state",
@@ -29,7 +34,7 @@ class RegistrationSourceReplayTests(unittest.TestCase):
                                  current["longjmp-" + kind])
                 self.assertEqual(current[prefix + "longjmp-eh4-" + kind + "-mixed-gs"],
                                  current["longjmp-" + kind])
-        self.assertEqual(set(current) - set(r5) - eh4_jumps, {
+        self.assertEqual(set(current) - set(r5) - eh4_jumps - parent_exits, {
             "longjmp-shared-parent-call", "shared-parent-throwing-call",
             "longjmp-private-parent-call", "longjmp-private-parent-graph",
             "longjmp-multistate-capture", "longjmp-handler-selected",
@@ -56,7 +61,7 @@ class RegistrationSourceReplayTests(unittest.TestCase):
         "longjmp-filter-register-loop",
         "longjmp-filter-frame-loop",
         "longjmp-filter-private-loop"})
-        self.assertEqual(set(current) - set(r4) - eh4_jumps, {
+        self.assertEqual(set(current) - set(r4) - eh4_jumps - parent_exits, {
             "longjmp-state-activate-call", "longjmp-state-activate-unwind",
             "longjmp-state-retire", "longjmp-state-sentinel",
             "longjmp-state-byte", "longjmp-state-word",

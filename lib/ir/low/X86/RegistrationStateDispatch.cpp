@@ -127,6 +127,7 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
     }
     MergeFlag(Dest.Uninstalled, Source.Uninstalled);
     MergeFlag(Dest.Installed, Source.Installed);
+    MergeFlag(Dest.AbandonedSEHGuard, Source.AbandonedSEHGuard);
     MergeFlag(Dest.CanDispatch, Source.CanDispatch);
   }
   if (Changed && charge(1 + 2 * std::bit_width(Work.size() + 1)))

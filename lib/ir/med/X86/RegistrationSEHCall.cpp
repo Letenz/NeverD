@@ -9,6 +9,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/X86RegistrationSEHCall.h"
+#include "neverd/ir/med/X86RegistrationSEHParentExit.h"
 
 #include <set>
 #include <tuple>
@@ -40,6 +41,8 @@ getRegistrationSEHReturns(const MedFunc &Function) {
   RegistrationSEHReturns Result;
   if (Exits.empty())
     return Result;
+  if (!getRegistrationSEHParentExits(Function))
+    return std::nullopt;
   std::set<va_t> Entries;
   for (const auto &Scope : Function.ExceptionMetadata->Registration->Scopes)
     if (Scope.IsFinally)
@@ -67,6 +70,8 @@ getRegistrationSEHReturns(const MedFunc &Function) {
   }
   std::set<std::tuple<va_t, va_t, va_t, int>> Seen;
   for (const auto &Exit : Exits) {
+    if (Exit.Exit == RegistrationSEHInvocationExit::Kind::ParentJump)
+      continue;
     const auto Call = Calls.find(Exit.CallVA);
     const auto Return = Returns.find({Exit.Address, Exit.OpSeq});
     if (Exit.Exit != RegistrationSEHInvocationExit::Kind::NearReturn ||

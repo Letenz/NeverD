@@ -10,7 +10,9 @@
 #include "MedLLVMRegistrationSEHDynamicScope.h"
 #include "MedLLVMRegistrationSEHFinally.h"
 #include "MedLLVMRegistrationSEHJump.h"
+#include "MedLLVMRegistrationSEHParentExit.h"
 #include "MedLLVMRegistrationSEHProof.h"
+#include "MedLLVMRegistrationSEHRegisters.h"
 #include "MedLLVMRegistrationSEHState.h"
 
 #include "neverd/Limits.h"
@@ -137,10 +139,25 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   std::map<llvm::BasicBlock *, std::vector<int32_t>> Dynamic;
   std::set<llvm::BasicBlock *> CallbackBlocks;
   const auto CallbackOwners = registrationSEHCallbackOwners(Func);
-  if (!CallbackOwners)
+  const auto ParentExits = x86_registration::prepareSEHParentExits(
+      Func, OriginalBlockMap, PHICopyEdges);
+  if (!CallbackOwners || !ParentExits)
+    return false;
+  std::map<int, int> ParentEdges;
+  std::set<llvm::BasicBlock *> ParentExitBlocks;
+  for (const auto &[Id, Exit] : ParentExits->Sources) {
+    ParentEdges.emplace(Id, Exit.TargetBlock);
+    ParentExitBlocks.insert(ParentExits->Branches.at(Id)->getParent());
+  }
+  if (!ParentEdges.empty() &&
+      (!llvm::isa<llvm::UncondBrInst>(Parent.getEntryBlock().getTerminator()) ||
+       !x86_registration::canPreserveSEHCallbackABI(Parent) ||
+       llvm::any_of(OriginalBlockMap, [&](const auto &Block) {
+         return Block.second == &Parent.getEntryBlock();
+       })))
     return false;
   const auto CopyOwners = registrationPHICopyOwners(
-      *CallbackOwners, OriginalBlockMap, PHICopyEdges);
+      *CallbackOwners, OriginalBlockMap, PHICopyEdges, ParentEdges);
   if (!CopyOwners)
     return false;
   for (const auto &[Block, Owner] : *CopyOwners)
@@ -254,8 +271,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
               Copy->second != std::make_pair(CallbackVA, Scope.IsFinally))
             return false;
         }
-        for (llvm::BasicBlock *Successor : llvm::successors(Block))
-          Pending.push_back(Successor);
+        if (!ParentExitBlocks.count(Block))
+          for (llvm::BasicBlock *Successor : llvm::successors(Block))
+            Pending.push_back(Successor);
       }
       Seeds.emplace_back();
       for (const MedOp &Op : BlocksAt.at(CallbackVA)->Ops) {
@@ -540,12 +558,22 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   }
   x86_registration::IncomingFrameProjection IncomingProjection(
       Parent, EH.CodeRange.Begin, *Incoming);
+  x86_registration::SEHParentExitProjection ParentProjection(
+      Parent, EH.CodeRange.Begin, *ParentExits);
+  for (const auto &[Id, Call] : ParentProjection.calls()) {
+    auto &Request = Requests[CallbackIndices.at(
+        {ParentExits->Sources.at(Id).EntryVA, true})];
+    Request.NonReturningCalls.push_back(Call);
+    Request.Blocks.push_back(Call->getParent());
+    AllCallbackBlocks.insert(Call->getParent());
+  }
   std::vector<X86RegistrationCallbackInstructionMap> CallbackInstructions;
   auto Outlined =
       outlineX86RegistrationCallbacks(Parent, Requests, &CallbackInstructions);
   if (!Outlined) {
     const std::string Detail = llvm::toString(Outlined.takeError());
     LLVM_DEBUG(llvm::dbgs() << Detail << '\n');
+    ParentProjection.rollback();
     IncomingProjection.rollback();
     for (const auto &Original : SourceOriginals) {
       Original.Instruction->setMetadata(
@@ -566,8 +594,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   }
 
   // Commit. All source occurrences, callbacks and control edges are closed.
+  ParentProjection.commit();
   IncomingProjection.commit();
-  if (!StateWrites->empty()) {
+  if (!StateWrites->empty() || !ParentExits->Sources.empty()) {
     llvm::SmallVector<llvm::GlobalValue *> CallbackABI(Outlined->begin(),
                                                        Outlined->end());
     llvm::appendToCompilerUsed(*Mod, CallbackABI);
@@ -604,6 +633,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       llvm::MDNode::get(*Ctx,
                         {med_llvm_eh::mdUInt(*Ctx, EH.CodeRange.Begin, 64),
                          med_llvm_eh::mdUInt(*Ctx, FrameEntrySPOffset, 64)}));
+  ParentProjection.emitCapture(OriginalBlockMap);
   auto *None = llvm::ConstantTokenNone::get(*Ctx);
   auto *I8 = llvm::Type::getInt8Ty(*Ctx);
   auto *I32 = llvm::Type::getInt32Ty(*Ctx);
@@ -706,6 +736,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   x86_registration::emitSEHNestedFinallyCalls(NestedFinallyCalls, *Outlined,
                                               CallbackInstructions, Parent,
                                               EH.CodeRange.Begin);
+  x86_registration::bindSEHRegisterCallbackInputs(*Outlined);
   x86_registration::emitSEHCallbackStateWrites(*StateWrites, *Outlined,
                                                CallbackInstructions, Parent);
 

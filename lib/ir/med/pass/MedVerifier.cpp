@@ -22,6 +22,7 @@
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
 #include "neverd/ir/med/X86RegistrationFrame.h"
+#include "neverd/ir/med/X86RegistrationSEHRegisters.h"
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"
@@ -49,6 +50,9 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
   // 1. Check operand size consistency
   for (const auto &Blk : Func.Blocks) {
     for (const auto &Op : Blk.Ops) {
+      if (x86_registration::isSEHRegisterIntrinsic(Op) &&
+          !x86_registration::hasValidSEHRegisterShape(Op))
+        Err("invalid SEH register exchange", Blk.Id, Op.Addr);
       if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace))
         Err("operation has an unknown memory address space", Blk.Id, Op.Addr);
       else {

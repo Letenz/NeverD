@@ -41,6 +41,7 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateFinallyCall.cpp
   X86/RegistrationStateSEHCall.cpp
   X86/RegistrationStateSEHExit.cpp
+  X86/RegistrationStateSEHParentExit.cpp
   X86/RegistrationStateSEHException.cpp
   X86/RegistrationStateLocalUnwind.cpp
   X86/RegistrationStateTryLevel.cpp

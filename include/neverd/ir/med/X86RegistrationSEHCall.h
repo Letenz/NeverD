@@ -27,8 +27,9 @@ struct RegistrationSEHReturns {
 };
 
 /// Bind checked physical near returns to their current CALLs and successors.
-/// These invocations share the parent frame and have no ordinary register or
-/// stack arguments. Native emission still owns frame and result projection.
+/// These invocations share the parent frame and have no ordinary ABI register
+/// or stack arguments. Explicit SEH register exchanges carry their machine
+/// values; native emission owns their private frame and result projection.
 std::optional<RegistrationSEHReturns>
 getRegistrationSEHReturns(const MedFunc &Function);
 

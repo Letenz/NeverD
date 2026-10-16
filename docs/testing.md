@@ -6873,6 +6873,33 @@ public section/inplace installation and rebased images. Their independent
 source replay also rejects replacing the generated finally return with
 `unreachable`.
 
+The seven `finally-parent-*` reconstruction cases and their EH4/EH4+GS variants
+cover ordinary and runtime SavedESP branches, multiple parent destinations,
+mixed near-return/nonlocal exits and another exception after resumption.
+They also check the current EBX/ESI/EDI values written by the finally and restore
+the original caller's nonvolatile registers before returning. The register-input
+case computes from the ordinary caller's values while retaining a scope that
+is never activated by source try levels. Reentry checks run before the second
+exception, whose handler has a separate runtime register contract.
+Each case requires the original, independently installed outputs, both CLI
+patch modes, IR/EXE inputs, optimization on/off and rebased images (20 runtime
+observations). The reentry sources explicitly reconnect their live registration;
+the unwind case additionally builds a control without this repair and requires
+`RegistrationSEHParentExit.InputPE32RejectsAnAbandonedUnwindGuard` to reject it.
+The invalid control is never counted or executed as a passing runtime fixture.
+`RegistrationSEHParentExit` checks 37 changed source/invocation facts and complete
+module rollback after failed outlining. `RegistrationSEHParentExitIRMutations`
+checks 36 verifier-clean changes to capture, private storage, aliases, FS:[0],
+selectors, source destinations and retained callback ABI. Callback-to-parent
+PHI copies require the exact authenticated edge, including recovered scalar
+slots shared by multiple destinations. The complete source replay profile
+includes all 237 reconstruction cases and requires 4,740 runtime observations.
+`RegistrationSEHRegisterIRMutations` checks 30 edits to register slots, aliases,
+source order, runtime-entry selection and constant outputs.
+`RegistrationCookieABI` checks ECX-only recovery despite incidental EDX/XMM/stack
+values and conflicting inferred signatures, cross-block cookie PHIs, and 18
+invalid source occurrences that must not acquire the cookie-call protocol.
+
 `RAMReservationTests.cpp` checks public write witnesses across identical-value and ABA stores, retained slices, address reuse, sibling mappings, rollback, cancellation, fault-prefix commits and opaque execution. `UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` checks owned loader facts at preferred, downward and kernel load addresses: restored bytes do not restore invalidated provenance. `DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` distinguishes active CFG pointer replacement from dormant fallback retention.
 
 `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` checks PE output, an independent DIR64 reader, model rebasing and exclusion of rewritten debug records. `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` rejects source/base/order mismatches and excludes formatting replacements even when bytes match. These checks certify diagnostic metadata, not native recovery.
