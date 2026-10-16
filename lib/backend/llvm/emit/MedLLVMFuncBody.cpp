@@ -361,6 +361,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   RegistrationChainIR.clear();
   RegistrationIncomingIR.clear();
   RegistrationMemoryIR.clear();
+  SEHRegisterSlots.clear();
   ParamArgs.clear();
   ParamRegoffMap.clear();
   DynVlaBases.clear();

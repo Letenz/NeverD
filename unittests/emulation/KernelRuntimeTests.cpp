@@ -1433,7 +1433,7 @@ TEST_F(KernelRuntime, DebugIntegersUseWindowsWidthsAndFormattingRules) {
       formatted(
           "%+06d %#08x %I64u %ld %hhd %hu %p %%",
           {uint64_t(-42), 0xab, UINT64_MAX, 0x100000001, 0xff, 0xffff, 0x1234}),
-      "-00042 0x0000ab 18446744073709551615 1 -1 65535 0000000000001234 %");
+      "-00042 0x0000ab 18446744073709551615 1 255 65535 0000000000001234 %");
   EXPECT_EQ(formatted("%#.0o|%.0u|%08.4X|%lld|%zu",
                       {0, 0, 0xab, 0x8000000000000000ULL, UINT64_MAX}),
             "0||    00AB|-9223372036854775808|18446744073709551615");
@@ -1493,6 +1493,152 @@ TEST_F(KernelRuntime, DebugChecksFormatAndStringLifetimesBeforePublication) {
   auto Value = debug("prefix %s", {Pointer});
   ASSERT_FALSE(static_cast<bool>(Value));
   EXPECT_NE(llvm::toString(Value.takeError()).find("freed"), std::string::npos);
+  EXPECT_TRUE(Result.Messages.empty());
+}
+
+TEST_F(KernelRuntime, DebugWrappersShareRepeatedShortAndBufferRules) {
+  for (bool Extended : {false, true}) {
+    EXPECT_EQ(formatted("%hhd|%hhu|%hhx", {384, 0xffff, 0x12347788}, Extended),
+              "384|65535|7788");
+    EXPECT_EQ(formatted("A%cz", {0}, Extended), "A");
+    EXPECT_EQ(formatted(std::string(511, 'x'), {}, Extended),
+              std::string(511, 'x'));
+    EXPECT_EQ(formatted(std::string(512, 'x'), {}, Extended),
+              std::string(510, 'x') + "\n");
+  }
+}
+
+TEST_F(KernelRuntime, PrefixedDebugUsesGrowingAttemptsAndOverflowNewline) {
+  struct Case {
+    unsigned PrefixLength, BodyLength, KeptPrefix, KeptBody;
+    bool Newline;
+  };
+  // Independent observations of the pinned kernel's four buffer attempts.
+  const Case Cases[] = {{700, 0, 127, 0, false}, {127, 1, 127, 1, false},
+                        {254, 1, 254, 1, false}, {255, 1, 255, 1, false},
+                        {383, 1, 383, 1, false}, {510, 1, 510, 1, false},
+                        {511, 1, 510, 0, true},  {700, 2, 510, 0, true},
+                        {1, 512, 1, 509, true},  {0, 512, 0, 510, true}};
+  for (const auto &C : Cases) {
+    ascii(Scratch, std::string(C.PrefixLength, 'P'));
+    ascii(Scratch + 0x1000, std::string(C.BodyLength, 'b'));
+    EXPECT_EQ(invoke("vDbgPrintExWithPrefix",
+                     {Scratch, UINT64_MAX, UINT64_MAX, Scratch + 0x1000, 0}),
+              0u);
+    EXPECT_EQ(Result.Messages.back(), std::string(C.KeptPrefix, 'P') +
+                                          std::string(C.KeptBody, 'b') +
+                                          (C.Newline ? "\n" : ""));
+  }
+}
+
+TEST_F(KernelRuntime, PrefixedDebugReadsExactScalarWidthsAtGuestBoundary) {
+  struct Case {
+    const char *Format;
+    unsigned Size;
+    uint64_t Value;
+    const char *Text;
+  };
+  const Case Cases[] = {{"%c", 1, 'A', "A"},
+                        {"%lc", 2, 'B', "B"},
+                        {"%hhd", 2, 384, "384"},
+                        {"%hd", 2, 0xffff, "-1"},
+                        {"%hhx", 2, 0x7788, "7788"},
+                        {"%ld", 4, 0xfffffffe, "-2"},
+                        {"%I32u", 4, 0xffffffff, "4294967295"},
+                        {"%I64x", 8, 0x1122334455667788, "1122334455667788"},
+                        {"%p", 8, 0x1234, "0000000000001234"}};
+  ascii(Scratch, "pre:");
+  for (const auto &C : Cases) {
+    const uint64_t Address = Scratch + 0x10000 - C.Size;
+    ascii(Scratch + 0x1000, C.Format);
+    check(Memory->writeInteger(Address, C.Value, C.Size));
+    EXPECT_EQ(invoke("vDbgPrintExWithPrefix",
+                     {Scratch, 7, 2, Scratch + 0x1000, Address}),
+              0u);
+    EXPECT_EQ(Result.Messages.back(), std::string("pre:") + C.Text);
+  }
+  // Width reads four bytes, but still consumes an entire x64 argument slot.
+  ascii(Scratch + 0x1000, "%*d");
+  const uint64_t Arguments = Scratch + 0x10000 - 12;
+  check(Memory->writeInteger(Arguments, 3, 4));
+  check(Memory->writeInteger(Arguments + 8, 1, 4));
+  EXPECT_EQ(invoke("vDbgPrintExWithPrefix",
+                   {Scratch, 7, 2, Scratch + 0x1000, Arguments}),
+            0u);
+  EXPECT_EQ(Result.Messages.back(), "pre:  1");
+}
+
+TEST_F(KernelRuntime, PrefixedDebugPreservesNulsOnlyOnOverflow) {
+  ascii(Scratch, "pre:");
+  ascii(Scratch + 0x100, "A%cz");
+  check(Memory->writeInteger(Scratch + 0x800, 0, 8));
+  EXPECT_EQ(invoke("vDbgPrintExWithPrefix",
+                   {Scratch, 0, 0, Scratch + 0x100, Scratch + 0x800}),
+            0u);
+  EXPECT_EQ(Result.Messages.back(), "pre:A");
+  ascii(Scratch + 0x100, std::string("%c") + std::string(511, 'b'));
+  EXPECT_EQ(invoke("vDbgPrintExWithPrefix",
+                   {Scratch, 0, 0, Scratch + 0x100, Scratch + 0x800}),
+            0u);
+  EXPECT_EQ(Result.Messages.back(),
+            std::string("pre:\0", 5) + std::string(505, 'b') + "\n");
+}
+
+TEST_F(KernelRuntime, PrefixedDebugChecksAllGuestInputsBeforePublication) {
+  for (unsigned BadInput : {0u, 3u, 4u}) {
+    resetModel();
+    ascii(Scratch, "pre:");
+    ascii(Scratch + 0x100, "%u");
+    check(Memory->writeInteger(Scratch + 0x800, 1, 8));
+    const uint64_t Freed = invoke("ExAllocatePool2", {0x40, 32, Tag});
+    invoke("ExFreePool", {Freed});
+    std::vector<uint64_t> A{Scratch, 0, 0, Scratch + 0x100, Scratch + 0x800};
+    A[BadInput] = Freed;
+    auto Value = Model->call("vDbgPrintExWithPrefix", A);
+    ASSERT_FALSE(bool(Value));
+    EXPECT_NE(llvm::toString(Value.takeError()).find("freed"),
+              std::string::npos);
+    EXPECT_TRUE(Result.Messages.empty());
+  }
+  resetModel();
+  ascii(Scratch, std::string(700, 'P'));
+  ascii(Scratch + 0x800, "%f");
+  EXPECT_FALSE(
+      failure("vDbgPrintExWithPrefix", {Scratch, 0, 0, Scratch + 0x800, 0})
+          .empty());
+  EXPECT_FALSE(failure("vDbgPrintExWithPrefix", {0, 0, 0, 0}).empty());
+  EXPECT_TRUE(Result.Messages.empty());
+}
+
+TEST_F(KernelRuntime, PrefixedDebugEnforcesIrqlAndPagedArgumentLifetime) {
+  Model->enterExecution(1);
+  ascii(Scratch, "pre:");
+  ascii(Scratch + 0x100, "constant");
+  const uint64_t Paged = invoke("ExAllocatePool2", {0x100, 8, Tag});
+  check(Memory->writeInteger(Paged, 'A', 8));
+  invoke("KfRaiseIrql", {12});
+  EXPECT_EQ(
+      invoke("vDbgPrintExWithPrefix", {Scratch, 0, 0, Scratch + 0x100, Paged}),
+      0u);
+  EXPECT_EQ(Result.Messages.back(), "pre:constant");
+  ascii(Scratch + 0x100, "%c");
+  EXPECT_NE(
+      failure("vDbgPrintExWithPrefix", {Scratch, 0, 0, Scratch + 0x100, Paged})
+          .find("paged"),
+      std::string::npos);
+  resetModel();
+  Model->enterExecution(1);
+  ascii(Scratch, "");
+  ascii(Scratch + 0x100, "%lc");
+  check(Memory->writeInteger(Scratch + 0x800, 'A', 2));
+  invoke("KfRaiseIrql", {1});
+  EXPECT_NE(failure("vDbgPrintExWithPrefix",
+                    {Scratch, 0, 0, Scratch + 0x100, Scratch + 0x800})
+                .find("PASSIVE_LEVEL"),
+            std::string::npos);
+  invoke("KfRaiseIrql", {13});
+  EXPECT_NE(failure("vDbgPrintExWithPrefix", {0, 0, 0, 0, 0}).find("IRQL"),
+            std::string::npos);
   EXPECT_TRUE(Result.Messages.empty());
 }
 TEST(KernelRuntimeExecution, CompiledDriverUsesDynamicPoolAndWin64Varargs) {

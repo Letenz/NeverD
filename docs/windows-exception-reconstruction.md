@@ -198,6 +198,28 @@ complete body, entry kinds and physical near returns are checked. Ordinary
 callers, shared filter/handler entries and other uses of that result still
 require an observation proof; a `void` import declaration alone is insufficient.
 
+Checked fixed-frame SEH3/EH4 finally callbacks may restore SavedESP and branch
+directly to an already owned parent continuation. Native lowering uses a private
+SjLj context to restore the generated stack and FS:[0], preserves current logical
+registers and callback frame writes, and enters the exact source scope boundary.
+The installer independently checks context aliases, capture, transfer and dispatch;
+source buffers cannot replace this context. A runtime exit can abandon the CRT's
+temporary unwind guard: before another call or potentially faulting operation, the
+source must reconnect its live registration or remove it on return. Unproved
+chain repair and destinations outside the checked parent CFG remain rejected.
+
+A continuation may be reached only by the finally branch when every decoded
+path through its acyclic tail joins already owned parent code without crossing a
+filter or finally entry. This physical ownership proof grants no runtime-handler
+memory privilege; the SavedESP transfer and reaching state remain independently
+checked. An unanchored return or cycle cannot establish parent ownership.
+
+Ordinary finally calls explicitly exchange EAX/ECX/EDX/EBX/ESI/EDI through
+private parent-frame slots, including values returned by a physical near return.
+The runtime entry keeps its own register contract; it never borrows a previous
+ordinary call's inputs. A scope used only by an authenticated ordinary finally
+call is retained even when no source try level activates it.
+
 Deep scope chains retain the same proof budget. The solver batches equal
 source-frame contributions to exceptional roots and tracks unwind ancestry
 without copying each whole path. Runtime coverage includes a 259-row nested
@@ -999,3 +1021,5 @@ same change:
 Do not broaden an allow-list solely because a new record can be decoded. The
 acceptance criterion is preservation of runtime exception behavior in the
 final linked image.
+
+Genuine MSVC x86 `/Od` `nonlocal_finally_return` reconstruction is exercised with `/GS-` and `/GS`, optimized and unoptimized source LLVM, both patch modes and two forced bases. An outer SEH observer checks normal and exceptional returns, stack guards and chain restoration. The GS path retains the original exception-code normalization wrapper after proving its scalar helper cannot observe the caller frame. The `/O2` direct-parent-return shape remains unsupported.

@@ -112,6 +112,25 @@ hexadecimal age, NB10 keys and refusal of unusable identities or unsafe path
 components. `NeverDWorkerPDBLoad` opens a PE without the PDB beside it and finds
 that PDB before opening it.
 
+`MapFileTest.*` holds every safety fixture's linker MAP against its image, all
+six reading as consistent, changes a section's size or a link.exe build stamp
+to see another build refused, and reads GNU ld's file-aligned PE section sizes
+and IDA's segment:offset MAPs. `LoadDebugInfoTest.*Map*` checks that a PDB
+outranks the MAP beside it, that a named MAP fills only what the PDB leaves
+unnamed, and that a MAP of another build is passed over beside the binary and
+refused when named unless it is taken unchecked.
+`DebugInfoDiscovery.FindsTheCompanion*` finds DWARF companions by build ID under
+`NEVERD_DEBUG_FILE_DIRECTORY` and by `.gnu_debuglink` and its CRC, from the
+fixtures `unittests/debug/fixtures/Makefile` rebuilds;
+`LoadDebugInfoTest.ANamedDWARFFile*` refuses another build's or machine's file
+and `CompressedDWARFSectionsReadExpanded` reads zlib-compressed sections.
+`SessionCAPITest.DebugFilesLoadedAfterTheImage*` is the workbench flow: the
+open loads the MAP, and a PDB loaded afterwards replaces its names.
+`NeverDWorkerMapReference` runs the MAP and DWARF worker operations against the
+real engine, and `NeverDGuiController` asks the MAP question (the same build,
+declined, another build), asks nothing about it after an accepted PDB, and
+keeps the answer with the project.
+
 `SessionCAPITest.PrepareFunction*` checks analysis without source emission,
 restricted and whole-image scope, repeated and switched entries, address zero,
 unloaded sessions and unknown ARM mode. `NeverDWorkerSourceCache` verifies
@@ -6799,6 +6818,10 @@ range must retain separate owners; a damaged prefix supplies no new entry.
 
 `SafeSEHReference.*` checks immutable SafeSEH membership, malformed or ambiguous storage, relocations, foreign architectures/formats and declaration order across shards. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` uses `NEVERD_NONLOCAL_FINALLY_INPUTS` to test 32 LLVM combinations of the native MSVC x86/x64 O0/O2 and GS fixtures with source optimization enabled and disabled. It verifies LLVM and resolved call signatures while requiring unsupported x86 native EH reconstruction to remain rejected. The focused Windows EH job downloads the native fixture artifact and runs this matrix; without the input directory the test is explicitly skipped.
 
+`RegistrationPrologueSaves.*` and `PipelineOptNone.*` cover retained source memory, protected callback arguments/selectors and continued optimization of ordinary code. The native MSVC matrix positively checks the x86 `/Od` (`/GS-`, `/GS`) `nonlocal_finally_return` export, including independent COFF validation. `check_windows_finally_rewrite.py` compares raw/optimized IR through both patch modes at two forced bases: 24 observer executions, 1536 calls, chain/stack guards and a negative control. Its header-only EXE-to-DLL adapter requires a TLS-free input and retains original code; an outer SEH observer supplies exception search. Other MSVC profiles remain analysis/refusal coverage.
+
+`RegistrationEH4Wrapper.*` covers both bases, mutable/immutable runtime data, MXCSR branches, every-path definitions, caller-frame isolation, overlapping instructions/storage and exact PE relocations. The two MSVC profiles each include an independent negative control.
+
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` checks local-unwind calls from a checked Windows x64 SEH handler and from shared ordinary/exceptional entry paths. Negative cases cover mismatched unwind allocation, unstable or partial SP values, independent roots, incomplete input, absent or forged exception edges, work exhaustion, loads from unknown stack memory, foreign target relocations and untrusted runtime providers. The LowIR call proof and module receipt both feed SSA verification; ordinary returned-continuation tests retain their separate root rules.
 
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` and `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` check parent-PC corruption and disjoint parent-local writes on PE, ELF and Mach-O x64 and ELF i386. An intact callee PC alone cannot authorize an ordinary call.
@@ -6957,6 +6980,43 @@ instructions. The `normal-finally`, `eh4-normal-finally` and
 public section/inplace installation and rebased images. Their independent
 source replay also rejects replacing the generated finally return with
 `unreachable`.
+
+The nine `finally-parent-*` reconstruction cases and their EH4/EH4+GS variants
+cover ordinary and runtime SavedESP branches, multiple parent destinations,
+mixed near-return/nonlocal exits and another exception after resumption.
+The parent-only ordinary and unwind cases resume code with no ordinary incoming
+edge before joining an established parent epilogue. Their original and rebased
+executions must pass independently. `FinallyOnlyParentTailsRequireEveryPathToAnAnchor`
+checks single-block, chained and conditional tails in both block orders, with
+cycles, missing/duplicate edges, foreign callbacks, decoded-target mismatches,
+mode changes, guards and unanchored returns rejected.
+They also check the current EBX/ESI/EDI values written by the finally and restore
+the original caller's nonvolatile registers before returning. The register-input
+case computes from the ordinary caller's values while retaining a scope that
+is never activated by source try levels. Reentry checks run before the second
+exception, whose handler has a separate runtime register contract.
+Each case requires the original, independently installed outputs, both CLI
+patch modes, IR/EXE inputs, optimization on/off and rebased images (20 runtime
+observations). The reentry sources explicitly reconnect their live registration;
+the unwind case additionally builds a control without this repair and requires
+`RegistrationSEHParentExit.InputPE32RejectsAnAbandonedUnwindGuard` to reject it.
+The invalid control is never counted or executed as a passing runtime fixture.
+`RegistrationSEHParentExit` checks 37 changed source/invocation facts and complete
+module rollback after failed outlining. `RegistrationSEHParentExitIRMutations`
+checks 36 verifier-clean changes to capture, private storage, aliases, FS:[0],
+selectors, source destinations and retained callback ABI. Callback-to-parent
+PHI copies require the exact authenticated edge, including recovered scalar
+slots shared by multiple destinations. The complete source replay profile
+includes all 243 reconstruction cases and requires 4,860 runtime observations.
+`RegistrationSEHRegisterIRMutations` checks 30 edits to register slots, aliases,
+source order, runtime-entry selection and constant outputs.
+`RegistrationCookieABI` checks ECX-only recovery despite incidental EDX/XMM/stack
+values and conflicting inferred signatures, cross-block cookie PHIs, and 18
+invalid source occurrences that must not acquire the cookie-call protocol.
+`RegistrationConditionalFrame.XCPT4SelectedFunctionRetainsItsScalarFilterRange`
+checks that focused loading preserves the LowIR protected range and MedIR finally
+returns even when the native parent-chain gate fails. The parent-exit tests require
+both native preparation and independent COFF binding to reject that unsafe chain.
 
 `RAMReservationTests.cpp` checks public write witnesses across identical-value and ABA stores, retained slices, address reuse, sibling mappings, rollback, cancellation, fault-prefix commits and opaque execution. `UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` checks owned loader facts at preferred, downward and kernel load addresses: restored bytes do not restore invalidated provenance. `DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` distinguishes active CFG pointer replacement from dormant fallback retention.
 
@@ -7490,3 +7550,5 @@ zeroing, protection transitions, private mapping lifetime and EOF tails.
 Counted runtime regressions cover hash-output aliases, low-width carriers, odd lengths, reloaded descriptors, sequential overlap, allocation failure, NLS refusal, partial faults, lifetime and APC_LEVEL admission. Time tests cover subsecond epoch edges, the ULONG limit and input/output aliases. The original and genuine WDK CRT fixtures call all three exports statically and dynamically in entry, worker and unload; entry also exercises APC_LEVEL.
 
 Scalar uppercase regressions exhaust ASCII and the NLS-independent wide range with high carrier bits, and check extended-value refusal, exact arity and APC_LEVEL. Original and genuine WDK CRT fixtures exercise all three static imports and dynamic lookups in entry, worker and unload. The WDK ctype.h declarations retain 16-bit wint_t; no host C runtime provides the expected values.
+
+Debug regressions compare repeated-short rules across all three wrappers, scalar loads at guest boundaries, growing prefix attempts, embedded NUL publication, freed/paged inputs and IRQL. The original and genuine WDK CRT fixtures exercise static and dynamic prefix calls in entry, worker and unload, on both scheduling modes, contracts and load bases. Unavailable backends remain explicit skips.

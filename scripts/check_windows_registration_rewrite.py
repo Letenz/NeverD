@@ -112,6 +112,19 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-filter-register-loop": (79, 2666345),
               "longjmp-filter-frame-loop": (80, 2666345),
               "longjmp-filter-private-loop": (81, 2666345)})
+PARENT_EXIT_CASES = {
+    "finally-parent-jump": (82, 23),
+    "finally-parent-unwind": (83, 23),
+    "finally-parent-select": (84, 24),
+    "finally-parent-mixed-return": (85, 23),
+    "finally-parent-reenter-unwind": (86, 234),
+    "finally-parent-reenter-normal": (87, 234),
+    "finally-parent-register-input": (88, 23),
+    "finally-parent-only": (89, 23),
+    "finally-parent-only-unwind": (90, 23),
+}
+CASES.update({prefix + name: value for prefix in ("", "eh4-", "eh4-gs-")
+              for name, value in PARENT_EXIT_CASES.items()})
 EH4_JUMP_CASES = ("longjmp-finally", "longjmp-zero", "longjmp-filter",
                   "longjmp-parameter", "longjmp-callback",
                   "longjmp-unwind-callback", "longjmp-callback-zero",
@@ -363,7 +376,11 @@ def main(argv: list[str] | None = None) -> int:
             (output / f"{name}.def").write_text(definition, encoding="utf-8")
             commands.append([linker, "/lib", f"/def:{output / (name + '.def')}",
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
-        if 76 <= case <= 81:
+        if case in {value[0] for value in PARENT_EXIT_CASES.values()}:
+            sources = ["registration_parent_exit.s"]
+            if eh4:
+                sources.append("registration_eh4_runtime.c")
+        elif 76 <= case <= 81:
             sources = ["registration_callback_loop.s"]
             if eh4:
                 sources.append("registration_eh4_runtime.c")
@@ -386,27 +403,52 @@ def main(argv: list[str] | None = None) -> int:
             sources.append("registration_jump_callee_eh4.s" if "-eh4-" in args.case
                            else "registration_jump_callee.s")
         for source in sources:
-            commands.append([compiler, "--target=i686-pc-windows-msvc", "-O0",
+            compile_command = [compiler, "--target=i686-pc-windows-msvc", "-O0",
                              f"-DREGISTRATION_CASE={case}",
                              f"-DREGISTRATION_LOOP_EH4={int(eh4)}",
+                             f"-DREGISTRATION_PARENT_EH4={int(eh4)}",
                              "-DREGISTRATION_FORWARD_ONLY=1", f"-DREGISTRATION_EXPECT_GS={int(gs)}",
                              f"-DREGISTRATION_HELPER_GS={int(helper_gs)}",
                              *([f"-DREGISTRATION_MULTISTATE_EH4={int(eh4)}"] if case == 52 else []),
                              *( ["-x", "assembler-with-cpp"] if source.endswith(".s") else []),
                              "-fno-stack-protector", "-c", str(FIXTURES / source),
-                             "-o", str(output / (source + ".obj"))])
+                             "-o", str(output / (source + ".obj"))]
+            commands.append(compile_command)
+            if case == 86 and source == "registration_parent_exit.s":
+                commands.append([
+                    *[str(output / "unrepaired-parent.obj")
+                      if argument == str(output / (source + ".obj")) else argument
+                      for argument in compile_command],
+                    "-DREGISTRATION_PARENT_RESTORE_CHAIN=0"])
         original, patched = output / "original.exe", output / "patched.exe"
         for stale in (original, patched, output / "product-patched.exe",
                       output / "collision-patched.exe",
                       output / "rewrite.xml"):
             stale.unlink(missing_ok=True)
-        commands.append([linker, "/entry:mainCRTStartup", "/nodefaultlib",
+        link_command = [linker, "/entry:mainCRTStartup", "/nodefaultlib",
                          "/machine:x86", "/subsystem:console", "/dynamicbase:no",
                          "/export:registration_entry",
                          *( ["/export:registration_eh4_personality=_except_handler4"] if eh4 else []),
                          f"/out:{original}",
                          *(str(output / (name + ".obj")) for name in sources),
-                         *(str(output / (name + ".lib")) for name, _ in definitions)])
+                         *(str(output / (name + ".lib")) for name, _ in definitions)]
+        commands.append(link_command)
+        if case == 86:
+            # Never execute this control: its second exception follows the
+            # abandoned CRT unwind guard. Admission must reject the source.
+            unrepaired = output / "unrepaired-parent.exe"
+            replacements = {
+                f"/out:{original}": f"/out:{unrepaired}",
+                str(output / "registration_parent_exit.s.obj"):
+                    str(output / "unrepaired-parent.obj"),
+            }
+            commands.append([replacements.get(argument, argument)
+                             for argument in link_command])
+            environment["NEVERD_SEH_UNREPAIRED_PARENT_INPUT_PE32"] = str(unrepaired)
+            commands.append([
+                str(args.test_binary.resolve()),
+                "--gtest_filter=RegistrationSEHParentExit.InputPE32RejectsAnAbandonedUnwindGuard",
+                f"--gtest_output=xml:{output / 'unrepaired-parent.xml'}"])
         environment.update(NEVERD_REGISTRATION_INPUT_PE32=str(original),
                            NEVERD_REGISTRATION_OUTPUT_PE32=str(patched),
                            NEVERD_REGISTRATION_OUTPUT_IR=str(output / "registration.ll"))
@@ -425,6 +467,10 @@ def main(argv: list[str] | None = None) -> int:
         tests = ET.parse(output / "rewrite.xml").getroot()
         if int(tests.get("tests", "0")) != 1 or tests.findall(".//skipped"):
             raise ValueError("source reconstruction was not executed")
+        if case == 86:
+            control = ET.parse(output / "unrepaired-parent.xml").getroot()
+            if int(control.get("tests", "0")) != 1 or control.findall(".//skipped"):
+                raise ValueError("unrepaired parent-chain control was not executed")
         images = [(original, False), (patched, True),
                   (output / "product-patched.exe", True),
                   (output / "collision-patched.exe", True)]

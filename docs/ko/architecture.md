@@ -1743,6 +1743,12 @@ KernelFileSystem은 FILE_OBJECT마다 provider token 하나를 유지합니다. 
 
 `KernelMemoryCalls`가 검사형 메모리 복사 진입을 소유하며 기존 move/fill, 풀 수명 및 사용자 메모리 검사를 재사용한다. `KernelModelRuntime`이 `RtlImageNtHeader` 원시 서명 검사를 소유한다. 이는 이미지 실행에 필요한 로더 검증을 대체하지 않으며 어댑터는 의미를 복제하지 않는다.
 
+`OptimizationGuards`는 LLVM의 `optnone` 검사를 보완합니다. 보호된 함수를 정의하는 모듈에서는 CFG나 콜백 인수를 바꿀 수 있는 선택적 모듈 및 호출 그래프 최적화를 건너뜁니다. 필수 어댑터와 일반 함수 최적화는 계속 실행됩니다. 등록 체인 소스 투영은 네이티브 재구성이 연결할 때까지 프롤로그 저장의 메모리 기록을 유지합니다.
+
+`COFFRegistrationEH4Wrapper`가 보존된 EH4 전달을 증명합니다. `COFFRegistrationScalarLeaf`는 유한한 순방향 CFG, 레지스터와 플래그 초기화, 전용 MXCSR 저장소와 런타임 이미지 데이터를 검사합니다. 호출자 프레임 읽기, 주소 유출, 알 수 없는 호출, 명령 중첩과 불완전한 반환을 거부합니다. LLVM 출력과 독립 COFF 검증은 같은 로더 증명을 사용하며 원래 코드와 동적 읽기를 유지합니다.
+
 `KernelModelRuntime`이 Unicode 해시, NLS와 무관한 공통 대문자 매핑, 1980 기준 초 변환을 담당합니다. `KernelRuntimeCalls`는 기존 페이징 문자열 풀로 출력을 할당합니다. 문자열/시간 API 표가 내보내기 식별자, 인수 수, APC_LEVEL 제한을 통일하고 필드 접근 순서는 구현 계층이 관리합니다.
 
 `uppercaseCharacter`는 스칼라 인수를 좁힌 후 허용 여부를 확인하고 기존 `uppercaseUnicodeUnit`에 위임합니다. CRT와 계수형 문자열 API 표는 별도 ABI 식별자로 같은 매핑을 사용하며 어댑터나 호스트 로캘이 다른 의미를 제공하지 않습니다.
+
+`KernelModelRuntime`이 디버그 인수 너비와 공통 접두사 및 버퍼 게시 규칙을 소유합니다. 일반 가변 인수는 기존 호출 ABI 리더를 쓰고 명시적 x64 `va_list` 어댑터는 8바이트 간격으로 요청된 게스트 스칼라를 검사합니다. 디스패처와 어댑터는 형식 파싱을 복제하지 않습니다.

@@ -1666,6 +1666,10 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 
 `SafeSEHReference.*` 檢查不可變 SafeSEH 表成員、畸形或歧義儲存、重定位、其他架構與格式，以及分片間的宣告順序。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` 透過 `NEVERD_NONLOCAL_FINALLY_INPUTS`，測試原生 MSVC x86/x64、O0/O2、GS 開關及來源最佳化開關的 32 種 LLVM 組合。測試驗證 LLVM 與已解析呼叫簽章，並要求不支援的 x86 原生 EH 重建仍遭拒絕。Windows EH 專項作業下載原生 fixture artifact 並執行此矩陣；缺少輸入目錄時測試會明確跳過。
 
+`RegistrationPrologueSaves.*` 與 `PipelineOptNone.*` 驗證來源記憶體記錄、回呼引數與選擇器保護，以及一般程式仍可最佳化。原生 MSVC 矩陣正向檢查 x86 `/Od` (`/GS-`, `/GS`) 的 `nonlocal_finally_return` 匯出，並獨立驗證 COFF。`check_windows_finally_rewrite.py` 在兩個強制基址，以兩種修補模式比較原始與最佳化 IR：24 次觀察器執行、1536 次呼叫、異常鏈與堆疊哨兵及負向對照。僅改標頭的 EXE 至 DLL 適配要求無 TLS 並保留原始程式碼；外層 SEH 觀察器提供異常搜尋。其他 MSVC 形式仍僅涵蓋分析與拒絕。
+
+`RegistrationEH4Wrapper.*` 涵蓋兩個基址、可寫與唯讀執行階段資料、MXCSR 分支、逐路徑定義、呼叫者框架隔離、指令與儲存重疊及精確 PE 重定位。兩種 MSVC 形式各有獨立負向對照。
+
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` 檢查經過證明的 Windows x64 SEH 處理器及共用一般/例外入口中的區域展開呼叫。反例涵蓋展開配置不一致、SP 不穩定或寬度不完整、獨立根、不完整輸入、缺少或偽造例外邊、工作量耗盡、未知堆疊記憶體載入、外部目標重定位及不可信執行階段。LowIR 呼叫證明與模組憑據均進入 SSA 驗證；一般傳回接續測試保留各自的入口規則。
 
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` 和 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` 在 PE、ELF、Mach-O x64 及 ELF i386 上檢查父返回位址損壞和不相交的父區域變數寫入。只保住被呼叫者的返回位址不能授權一般呼叫。
@@ -1963,3 +1967,5 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 回歸測試涵蓋雜湊輸出別名、窄參數、奇數長度、描述符重讀、循序重疊、配置失敗、NLS 拒絕、部分故障、生命週期及 APC_LEVEL。時間測試涵蓋紀元邊界、ULONG 上限及輸入輸出別名。原創與真實 WDK CRT 驅動在入口、工作執行緒及卸載時靜態和動態呼叫三項介面；入口亦驗證 APC_LEVEL。
 
 純量大寫回歸窮舉 ASCII 及不依賴 NLS 的寬字元範圍，組合參數高位元，並檢查擴充值拒絕、精確參數數量與 APC_LEVEL。原創與真實 WDK CRT 夾具在入口、工作執行緒及卸載時驗證三項靜態匯入與動態查找。WDK ctype.h 保留 16 位元 wint_t，預期值不依賴宿主 C 執行階段。
+
+偵錯回歸涵蓋三個入口的重複 short 規則、客體邊界讀取、逐級前綴緩衝、內嵌 NUL、已釋放或分頁輸入及 IRQL。原始與真實 WDK CRT 測試映像在入口、工作執行緒及卸載中執行靜態及動態前綴呼叫，涵蓋兩種排程、執行契約及載入基址。不可用後端明確跳過。

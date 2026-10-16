@@ -375,7 +375,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `PoCallDriver`, `PoStartNextPowerIrp` | 轉送同一受管理的電源 IRP；Vista+ start-next 驗證不增加序列化交握 |
 | `PoSetPowerState`, `PoRequestPowerIrp` | 獨立裝置通知狀態及明確 PDO FIFO 驅動的真正子要求；範圍見上 |
 | `IoCreateSymbolicLink`、`IoDeleteSymbolicLink` | 一個工作階段命名空間內的 ASCII `\DosDevices\Name` 或 `\??\Name`，目標為 `\Device\Name` |
-| `DbgPrint`、`DbgPrintEx` | 經檢查的 Win64 可變參數格式化，最多輸出 512 位元組；啟用所有偵錯器篩選器 |
+| `DbgPrint`、`DbgPrintEx`、`vDbgPrintExWithPrefix` | 經檢查的 Win64 可變參數格式化，最多輸出 511 位元組；啟用所有偵錯器篩選器 |
 | `IoGetCurrentIrpStackLocation` | 傳回目前建模 IRP 的堆疊位置；正常編譯的 WDM 巨集讀取相同客體欄位 |
 | `KeGetCurrentIrql` | 讀取目前 IRQL/CR8，包括明確升降級；派送與工作項目從 `PASSIVE_LEVEL` 開始，DPC 從 `DISPATCH_LEVEL` 開始 |
 | `KfRaiseIrql`, `KeLowerIrql` | 真正的 x64 WDK IRQL 升降匯入，包含內聯輔助函式；每個執行必須在返回前按 LIFO 順序恢復儲存值。IRQL <= APC_LEVEL 的合法等待保留升降配對，並按等待時的 IRQL 恢復；DISPATCH_LEVEL 持鎖不能暫停。CR8 反映每次變化；設定的 CPU0 事件搶占使用 `scheduling`；任意巢狀中斷仍不受支援。 |
@@ -763,3 +763,5 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 `RtlHashUnicodeString`、`RtlUpcaseUnicodeString` 與 `RtlTimeToSecondsSince1980` 支援不高於 APC_LEVEL 的呼叫。雜湊演算法 0/1 使用 x65599，先清零輸出再讀取 Length，忽略 MaximumLength；區分大小寫時接受所有 UTF-16 單元。大寫轉換與忽略大小寫的雜湊支援小於 U+00C0 的單元，其餘明確要求尚未建模的 NLS 表。轉換保留循序重疊寫入，逐單元重讀 Buffer，結束後重讀 Length，不附加終止符。配置使用共用分頁 `Strg` 集區並由 `RtlFreeUnicodeString` 釋放；零長度配置仍不支援。奇數 Length 僅處理完整單元。時間轉換將 100 ns 刻度截斷為秒，扣除 1980 紀元，僅在 ULONG 範圍內寫入四位元組；越界時保留輸出及別名。
 
 `toupper`、`towupper` 與 `RtlUpcaseUnicodeChar` 共用 APC_LEVEL 限制及計數字串的大寫映射。核心 `toupper` 使用輸入低位元組，只接受 ASCII；擴充位元組（包括 EOF 的位元組值）需要尚未建模的字碼頁。寬字元輸入截為 16 位元，接受小於 U+00C0 的單元，其餘明確要求 NLS。這些純量介面與原位 CRT 轉換使用不同的核心輔助函式，不可混同映射規則。
+
+`vDbgPrintExWithPrefix` 與 `DbgPrint` / `DbgPrintEx` 共用有限格式化器、全部篩選器啟用的觀察模型及 DIRQL 上限。客體 x64 `va_list` 以八位元組槽前進，但只讀取實際純量寬度；重複的 `hh` 依固定核心的 16 位元 short 規則處理。前綴依序使用 128/256/384/512 位元組緩衝；成功時截於首個 NUL，最終溢位時發布以換行結尾的 511 位元組。模型先檢查完整的有界本文（512 位元組），截斷不會放行無效或不支援的尾端。ASCII 前綴在 1 MiB 上限內掃描至終止符。Unicode 轉換仍要求 PASSIVE_LEVEL；主機篩選器、偵錯回呼及傳輸尚未建模。

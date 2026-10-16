@@ -856,6 +856,22 @@
         <translation>Mostra i tipi del programma con layout e sorgente</translation>
     </message>
     <message>
+        <source>D&amp;WARF file...</source>
+        <translation>File D&amp;WARF...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>Carica le informazioni di debug da un file DWARF separato, una copia con i suoi simboli o un .dSYM</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>File &amp;MAP...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>Carica i nomi da un file MAP del linker</translation>
+    </message>
+    <message>
         <source>S&amp;tructure offset...</source>
         <translation>Offset di s&amp;truttura...</translation>
     </message>
@@ -2314,6 +2330,38 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
         <source>Put the cursor on a parameter of the function to convert it</source>
         <translation>Posiziona il cursore su un parametro della funzione per convertirlo</translation>
     </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>Impossibile stabilire se %1 ha un file MAP: %2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>Carica file DWARF</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>Carica file MAP</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>File MAP (*.map);;Tutti i file (*)</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>Carica un file MAP di un&apos;altra build</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;analisi.</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>File DWARF (*.debug *.dSYM);;Tutti i file (*)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2630,6 +2678,22 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
     <message>
         <source>DWARF loaded: %1</source>
         <translation>DWARF caricato: %1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>Aperto senza il file MAP accanto al file di input, come scelto</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>MAP caricato senza verifica: %1 (%2 nomi aggiunti, di un&apos;altra build)</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>MAP caricato: %1 (%2 nomi aggiunti)</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>MAP non caricato: %1 non corrisponde all&apos;immagine caricata</translation>
     </message>
     <message numerus="yes">
         <source>Showed %n operands as members of %1</source>
@@ -3847,6 +3911,49 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
     <message>
         <source>Line %1, column %2: %3</source>
         <translation>Riga %1, colonna %2: %3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>MAP di %1, %2 nomi. La sua marca temporale di build corrisponde a quella del file di input.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>MAP di %1, %2 nomi. Le sue sezioni sono dove le ha il file di input.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>MAP di %1, %2 nomi. Non registra nulla da confrontare con il file di input.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>MAP di %1, %2 nomi. Registra la marca temporale di build %3, ma quella del file di input è %4: appartiene a un&apos;altra build.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>MAP di %1, %2 nomi. Colloca %3 a %4, di %5 byte, ma il file di input lo ha a %6, di %7 byte: appartiene a un&apos;altra build.</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>MAP di %1, %2 nomi. %3 delle sue %4 funzioni si trovano fuori dal codice del file di input: appartiene a un&apos;altra build.</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>Trovato un file MAP</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>Caricare comunque il file MAP?</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>Caricare il file MAP?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
     </message>
 </context>
 <context>

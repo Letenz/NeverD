@@ -1766,6 +1766,12 @@ KernelFileSystem は FILE_OBJECT ごとに provider token を保持します。�
 
 `KernelMemoryCalls` が検査付きメモリコピーの受付を所有し、既存の move/fill とプール寿命・ユーザーメモリ検証を使う。`KernelModelRuntime` が `RtlImageNtHeader` の生署名検査を所有する。この検査は実行に必要なローダー検証を置き換えず、アダプターも意味論を複製しない。
 
+`OptimizationGuards` は LLVM の `optnone` 検査を補完します。保護対象の関数を定義するモジュールでは、CFG やコールバック引数を変更する可能性のある任意のモジュール・呼び出しグラフ最適化を省略します。必須アダプターと通常の関数最適化は実行されます。登録チェーンのソース投影は、ネイティブ再構築が照合するまでプロローグ保存のメモリー記録を保持します。
+
+`COFFRegistrationEH4Wrapper` が保持する EH4 転送を証明します。`COFFRegistrationScalarLeaf` は有界な前向き CFG、レジスターとフラグの初期化、私有 MXCSR 領域、実行時イメージデータを検査します。呼び出し元フレームの読み取り、アドレス流出、未知の呼び出し、命令重複、不完全な戻りを拒否します。LLVM 出力と独立 COFF 検証は同じローダー証明を使い、元のコードと動的読み取りを保持します。
+
 `KernelModelRuntime` は Unicode ハッシュ、NLS に依存しない共通大文字化、1980 年起点の秒への変換を所有します。`KernelRuntimeCalls` は既存のページプールで文字列を割り当てます。文字列・時刻 API 表がエクスポート、引数数、APC_LEVEL 制約を統一し、フィールドへのアクセス順序は実装側が管理します。
 
 `uppercaseCharacter` は引数幅を縮めてから判定し、既存の `uppercaseUnicodeUnit` に委譲します。CRT と計数文字列 API 表は別の ABI 識別子で同じ映射を使い、アダプターやホストのロケールに別の意味を持たせません。
+
+`KernelModelRuntime` がデバッグ引数の幅と共通のプレフィックス・バッファー公開規則を所有します。通常の可変引数は既存の呼び出し ABI リーダーを使い、明示的な x64 `va_list` アダプターは 8 バイト間隔で要求されたゲストスカラーを検査します。ディスパッチャーとアダプターは書式解析を重複しません。

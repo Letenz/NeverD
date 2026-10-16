@@ -268,6 +268,17 @@ using DwarfSearchFunction = void (*)(neverd_session_t, int);
 using SymbolTableReferenceFunction = const char *(*)(const char *);
 /// Whether the next load reads the image's static symbol table.
 using SymbolTableFunction = void (*)(neverd_session_t, int);
+/// The linker MAP beside an input and how it holds against the image, before
+/// the image is open.
+using MapReferenceFunction = const char *(*)(const char *);
+/// Whether the next load reads the MAP beside the image.
+using MapSearchFunction = void (*)(neverd_session_t, int);
+/// The MAP a user chose, read against the open image.
+using MapInspectFunction = const char *(*)(neverd_session_t, const char *);
+/// Load a MAP into the open image, unchecked or not.
+using MapLoadFunction = int (*)(neverd_session_t, const char *, int);
+/// Load a DWARF file into the open image.
+using DwarfLoadFunction = int (*)(neverd_session_t, const char *);
 
 using IdentifyFunction = const char *(*)(const char *);
 IdentifyFunction identifyFunction() {
@@ -672,6 +683,18 @@ bool Engine::findsSymbolTables() {
   return engineSymbol<SymbolTableReferenceFunction>(
              "neverd_symbol_table_reference_json") &&
          engineSymbol<SymbolTableFunction>("neverd_session_set_symbol_table");
+}
+bool Engine::findsMapFiles() {
+  return engineSymbol<MapReferenceFunction>("neverd_map_reference_json") &&
+         engineSymbol<MapSearchFunction>("neverd_session_set_map_search");
+}
+bool Engine::loadsMapFiles() {
+  return engineSymbol<MapInspectFunction>("neverd_session_inspect_map_json") &&
+         engineSymbol<MapLoadFunction>("neverd_session_load_map");
+}
+bool Engine::loadsDwarfFiles() {
+  return static_cast<bool>(
+      engineSymbol<DwarfLoadFunction>("neverd_session_load_dwarf"));
 }
 bool Engine::keepsOperandFormats() {
   return static_cast<bool>(operandFormats());
@@ -1323,9 +1346,11 @@ Json Engine::metadata() const {
           {"pdb", pdbInput_},
           {"pdb_download", mayDownload ? symbol : Json()},
           {"dwarf", dwarfInput_},
+          {"map", mapInput_},
           {"symbols", symbolsInput_},
-          // What the load read: {"enabled","kind","path"}, kind "dwarf",
-          // "pdb", "map" or "none".
+          // What the load read: {"enabled","kind","path","files"}, kind
+          // "dwarf", "pdb", "map" or "none", and every file read, the PDB or
+          // DWARF before a MAP.
           {"debug_info", debug},
           {"function_count",
            deferred ? Json(nullptr) : Json(neverd_func_count(session_))},
@@ -1409,6 +1434,12 @@ Json Engine::analysisSnapshot() {
     if (signatureStamp(utf8Path(input.at("path").get<std::string>())) !=
         input.at("stamp"))
       throw Error("input_changed", "Loaded signatures changed; reload them");
+  for (const Json *input : {&dwarfInput_, &mapInput_})
+    if (input->contains("path") && !input->value("stamp", Json()).is_null() &&
+        signatureStamp(utf8Path(input->at("path").get<std::string>())) !=
+            input->at("stamp"))
+      throw Error("input_changed",
+                  "A loaded debug file changed; load it again");
   auto options = openOptions_;
   if (loadOptions()) {
     const auto actual = backendJson(loadOptions().json(session_));
@@ -1429,6 +1460,7 @@ Json Engine::analysisSnapshot() {
           {"signatures", signatureInputs_},
           {"pdb", pdbInput_},
           {"dwarf", dwarfInput_},
+          {"map", mapInput_},
           {"symbols", symbolsInput_},
           {"string_options", stringOptions_.empty()
                                  ? Json::object()
@@ -1451,12 +1483,12 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
       pdb.is_object() && pdb.value("mode", Json("")) == "none";
   if (pdbDeclined)
     options["pdb"] = pdb;
-  // And the DWARF and the symbol table it declined.
-  if (const auto dwarf = snapshot.value("dwarf", Json()); dwarf.is_object())
-    options["dwarf"] = dwarf;
-  if (const auto symbols = snapshot.value("symbols", Json());
-      symbols.is_object())
-    options["symbols"] = symbols;
+  // And the DWARF, the MAP and the symbol table it declined; the files it
+  // chose load below, once the project's edits are checked.
+  for (const char *input : {"dwarf", "map", "symbols"})
+    if (const auto answer = snapshot.value(input, Json());
+        answer.is_object() && answer.value("mode", Json("")) == "none")
+      options[input] = answer;
   execute("open", options);
   if (inputHash() != snapshot.at("input_sha256").get<std::string>())
     throw Error("input_changed",
@@ -1491,6 +1523,12 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
         row.at("text").get_ref<const std::string &>().c_str());
   if (!pdb.is_null() && !pdbDeclined)
     execute("pdb_load", pdb);
+  // The DWARF and MAP files the owner loaded by choice load here the same
+  // way, after its PDB, which outranks a MAP.
+  for (const char *input : {"dwarf", "map"})
+    if (const auto chosen = snapshot.value(input, Json());
+        chosen.is_object() && chosen.contains("path"))
+      execute(std::string(input) + "_load", chosen);
   for (const auto &input : snapshot.at("signatures")) {
     const auto path = utf8Path(input.at("path").get<std::string>());
     if (signatureStamp(path) != input.at("stamp"))
@@ -1554,6 +1592,19 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         engineSymbol<DwarfReferenceFunction>("neverd_dwarf_reference_json");
     if (!reference)
       throw Error("unsupported", "This engine cannot find DWARF");
+    const auto path = stringField(p, "path", {}, 32768);
+    auto result = backendJson(reference(path.c_str()));
+    if (result.contains("error"))
+      throw Error("invalid_request", result.value("error", std::string()));
+    return result;
+  }
+  if (operation == "map_reference") {
+    // The linker MAP beside an input and how it holds against the image,
+    // before the image is opened.
+    const auto reference =
+        engineSymbol<MapReferenceFunction>("neverd_map_reference_json");
+    if (!reference)
+      throw Error("unsupported", "This engine cannot find MAP files");
     const auto path = stringField(p, "path", {}, 32768);
     auto result = backendJson(reference(path.c_str()));
     if (result.contains("error"))
@@ -1684,12 +1735,33 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     const bool pdbDeclined =
         p.contains("pdb") && p.at("pdb").value("mode", Json("")) == "none";
     // The user's answer for the DWARF of an ELF or Mach-O image: none, which
-    // leaves the image without it, is the only one there is.
+    // leaves the image without it, or the file to read it from once the
+    // image is open.
+    const auto declines = [&](const char *input) {
+      return p.contains(input) && p.at(input).value("mode", Json("")) == "none";
+    };
+    const auto chooses = [&](const char *input) {
+      return p.contains(input) && !declines(input);
+    };
     if (p.contains("dwarf") &&
         (!p.at("dwarf").is_object() ||
-         p.at("dwarf").value("mode", Json("")) != "none"))
-      throw Error("invalid_request", "DWARF selection is {\"mode\":\"none\"}");
-    const bool dwarfDeclined = p.contains("dwarf");
+         (!declines("dwarf") && !p.at("dwarf").contains("path"))))
+      throw Error("invalid_request",
+                  "DWARF selection is {\"mode\":\"none\"} or a file");
+    const bool dwarfDeclined = declines("dwarf");
+    const bool dwarfChosen = chooses("dwarf");
+    // And for the linker MAP beside the input: none, or the file to load once
+    // the image is, checked against it or not.
+    if (p.contains("map") &&
+        (!p.at("map").is_object() ||
+         (!declines("map") &&
+          (!p.at("map").contains("path") ||
+           (p.at("map").value("mode", Json("checked")) != "checked" &&
+            p.at("map").value("mode", Json("checked")) != "unchecked")))))
+      throw Error("invalid_request",
+                  "MAP selection is {\"mode\":\"none\"} or a file");
+    const bool mapDeclined = declines("map");
+    const bool mapChosen = chooses("map");
     // And for the image's static symbol table: none, which loads the image
     // as if stripped.
     if (p.contains("symbols") &&
@@ -1769,14 +1841,27 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         throw Error("unsupported",
                     "This engine cannot open a PE without its PDB");
     }
-    // Reading would load the DWARF the user declined.
-    if (dwarfDeclined) {
+    // Reading would load the DWARF the user declined, or one the file they
+    // chose replaces.
+    if (dwarfDeclined || dwarfChosen) {
       const auto search =
           engineSymbol<DwarfSearchFunction>("neverd_session_set_dwarf_search");
       if (!search)
         throw Error("unsupported",
                     "This engine cannot open an image without its DWARF");
       search(next.get(), 0);
+    }
+    // The MAP beside the input the user declined or replaced with a file
+    // stays unread, and so does one a chosen PDB or DWARF file outranks: the
+    // file loads once the image is, and the MAP's names would come first.
+    if (const auto search =
+            engineSymbol<MapSearchFunction>("neverd_session_set_map_search")) {
+      if (mapDeclined || mapChosen || dwarfChosen ||
+          (p.contains("pdb") && !pdbDeclined))
+        search(next.get(), 0);
+    } else if (mapDeclined) {
+      throw Error("unsupported",
+                  "This engine cannot open an image without its MAP file");
     }
     // Reading would load the symbol table the user declined.
     if (symbolsDeclined) {
@@ -1808,12 +1893,12 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       lock_ = std::move(nextLock);
     readOnly_ = readOnly;
     openOptions_ = p;
-    openOptions_.erase("pdb");
-    openOptions_.erase("dwarf");
-    openOptions_.erase("symbols");
+    for (const char *input : {"pdb", "dwarf", "map", "symbols"})
+      openOptions_.erase(input);
     signatureInputs_ = Json::array();
     pdbInput_ = nullptr;
     dwarfInput_ = dwarfDeclined ? Json{{"mode", "none"}} : Json(nullptr);
+    mapInput_ = mapDeclined ? Json{{"mode", "none"}} : Json(nullptr);
     symbolsInput_ = symbolsDeclined ? Json{{"mode", "none"}} : Json(nullptr);
     pdbDisplayNames_ = Json::array();
     backgroundAnalysis_ = p.value("analysis", true);
@@ -1873,6 +1958,24 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       } catch (const std::exception &failure) {
         warnings.push_back(std::string("The project's PDB was not loaded: ") +
                            failure.what());
+      }
+    }
+    // So do the DWARF and MAP files chosen for it, after its PDB.  A file the
+    // engine checks against the image proves itself again; only a MAP the
+    // user took unchecked stays bound to its file stamp.
+    const std::pair<const char *, const char *> chosen[] = {
+        {"dwarf", "The project's DWARF file was not loaded: "},
+        {"map", "The project's MAP file was not loaded: "}};
+    for (const auto &[input, failed] : chosen) {
+      if (!(std::string_view(input) == "dwarf" ? dwarfChosen : mapChosen))
+        continue;
+      auto selection = p.at(input);
+      if (selection.value("mode", Json("checked")) != "unchecked")
+        selection.erase("stamp");
+      try {
+        execute(std::string(input) + "_load", selection);
+      } catch (const std::exception &failure) {
+        warnings.push_back(std::string(failed) + failure.what());
       }
     }
     auto result = metadata();
@@ -1967,6 +2070,87 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     result["analysis"] = forAnalysis;
     result["loaded"] = true;
     return result;
+  }
+  if (operation == "map_inspect" || operation == "map_load") {
+    const auto inspect =
+        engineSymbol<MapInspectFunction>("neverd_session_inspect_map_json");
+    const auto load = engineSymbol<MapLoadFunction>("neverd_session_load_map");
+    if (!inspect || !load)
+      throw Error("unsupported", "This engine cannot load a selected MAP file");
+    const auto path = stringField(p, "path", {}, 32768);
+    if (path.empty())
+      throw Error("invalid_request", "Select a MAP file first");
+    if (!fs::is_regular_file(utf8Path(path)))
+      throw Error("map_load_failed",
+                  "The selected MAP file is not a regular file");
+    const auto stamp = signatureStamp(utf8Path(path));
+    if (p.contains("stamp") && p.at("stamp") != stamp)
+      throw Error("input_changed",
+                  "The selected MAP file changed; select it again");
+    const auto text = ownedString(inspect(session_, path.c_str()));
+    if (text.empty())
+      throw Error("map_load_failed", error());
+    auto result = Json::parse(text, nullptr, false);
+    if (!result.is_object() || !result.contains("match"))
+      throw Error("map_load_failed", "Invalid MAP inspection result");
+    result["stamp"] = stamp;
+    if (operation == "map_inspect")
+      return result;
+    const auto mode = stringField(p, "mode", "checked", 16);
+    if (mode != "checked" && mode != "unchecked")
+      throw Error("invalid_request", "MAP mode is checked or unchecked");
+    if (mode == "checked" && result.value("match", "") == "mismatch")
+      throw Error("map_mismatch", "The MAP file describes another build; "
+                                  "confirm loading it unchecked");
+    if (!load(session_, path.c_str(), mode == "unchecked" ? 1 : 0))
+      throw Error("map_load_failed", error());
+    if (signatureStamp(utf8Path(path)) != stamp)
+      throw Error("input_changed",
+                  "The selected MAP file changed while reading it");
+    mapInput_ = {{"path", path}, {"mode", mode}, {"stamp", stamp}};
+    analyzed_ = false;
+    preparedFunction_.reset();
+    listing_.reset();
+    invalidate();
+    ++revision_;
+    result["mode"] = mode;
+    result["loaded"] = true;
+    result["function_count"] = neverd_func_count(session_);
+    result["debug_info"] = metadata().at("debug_info");
+    return result;
+  }
+  if (operation == "dwarf_load") {
+    const auto load =
+        engineSymbol<DwarfLoadFunction>("neverd_session_load_dwarf");
+    if (!load)
+      throw Error("unsupported",
+                  "This engine cannot load a selected DWARF file");
+    const auto path = stringField(p, "path", {}, 32768);
+    if (path.empty())
+      throw Error("invalid_request", "Select a DWARF file first");
+    // A .dSYM bundle is a directory; its DWARF file proves itself by UUID.
+    std::error_code ec;
+    const bool bundle = fs::is_directory(utf8Path(path), ec);
+    if (!bundle && !fs::is_regular_file(utf8Path(path), ec))
+      throw Error("dwarf_load_failed",
+                  "The selected DWARF file is not a regular file");
+    const auto stamp = bundle ? Json() : signatureStamp(utf8Path(path));
+    if (p.contains("stamp") && p.at("stamp") != stamp)
+      throw Error("input_changed",
+                  "The selected DWARF file changed; select it again");
+    if (!load(session_, path.c_str()))
+      throw Error("dwarf_load_failed", error());
+    dwarfInput_ = {{"path", path}, {"stamp", stamp}};
+    analyzed_ = false;
+    preparedFunction_.reset();
+    listing_.reset();
+    invalidate();
+    ++revision_;
+    return {{"path", path},
+            {"stamp", stamp},
+            {"loaded", true},
+            {"function_count", neverd_func_count(session_)},
+            {"debug_info", metadata().at("debug_info")}};
   }
   if (operation == "signatures_load") {
     const auto path = stringField(p, "path", {}, 32768);

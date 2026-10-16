@@ -72,6 +72,43 @@ the file through the strict PDB loader.
 or before the PDB they chose loads. Epoch and request guards retire downloads on
 document changes, and network errors do not change the image.
 
+## Debug information files
+
+`debug/DebugInfoDiscovery` owns which debug files an image is read with and how
+their names rank: a PDB or DWARF, which also carries types and lines, before a
+linker MAP, which names addresses and nothing more. The PDB or DWARF is the
+session's debug context; a MAP the caller names is a names-only supplement
+published after it (`applyDebugInfo`), so it fills only the addresses the PDB or
+DWARF leaves unnamed. The MAP beside an image is read only when no PDB or DWARF
+describes it. `debug/MapFile` reads a MAP in its linker's dialect against the
+image's layout, read from its headers: link.exe's segment:offset publics are
+placed through the image's section numbering, which also reads IDA's and
+Borland's MAPs without an Rva+Base column, and names made up from an address
+(`MapAutomaticNames.def`) are left out. It also holds the MAP against the image
+(`MapMatches.def`): link.exe and lld-link record the build stamp, the other
+dialects the output sections' addresses and sizes, and most functions outside
+the image's code mean another layout. Discovery passes over a MAP that
+mismatches; a named one fails the load unless the request takes it unchecked.
+
+DWARF companions are found in GDB's order (`DWARFLocation.def`): the image's own
+sections, a `.dSYM` beside a Mach-O image, the file a debug directory keeps under
+an ELF image's build ID, the file its `.gnu_debuglink` names with the CRC it
+records, then a `.debug` file named after it. `debug/DebugFileIdentity` reads
+the identities they share; a companion of another build ID is passed over, and
+a DWARF file the user names must be of the image's machine and build. A
+companion stays `UnauthenticatedCompanion` trust: its names and lines load, its
+object extents do not. `debug/CompressedSections` expands SHF_COMPRESSED
+sections before the DWARF reader sees them, since the LLVM NeverD links may
+lack the decompressors.
+
+A debug file loaded into an open session (`neverd_session_load_pdb_ex`,
+`neverd_session_load_dwarf`, `neverd_session_load_map`) reads the image again
+with the options it was loaded with and publishes the session's whole request
+in rank order (`reloadDebugInformation`), so the result is the one a load that
+named the file gives: a PDB loaded after a MAP replaces the MAP's names. User
+names, comments and edits are kept, and the session is left as it was when the
+input changed or a file fails to load.
+
 ## Local types boundary
 
 `lib/types` (NeverDTypes) owns a program's named types as a reader sees and
@@ -627,6 +664,45 @@ checked near returns and continuations. Call-ABI recovery and LLVM callback
 lowering consume this one binding, so callback-private pushes cannot become
 cdecl arguments. Outlining exposes exact instruction clone identities for
 removing preflighted unused return transports without reopening the proof.
+`RegistrationStateSEHParentExit` owns the lifetime of an abandoned CRT unwind
+guard. Reconnecting the same live registration preserves its current try level
+and jump-buffer bindings. `SEHParentChainComplete` separately gates native parent
+resumption without invalidating otherwise complete logical source-state analysis.
+LLVM preparation and the independent COFF source check enforce that native gate;
+shared MedIR bindings retain the source exits for ABI recovery and decompilation.
+Once the native guard proof fails, guard-only lattice changes no longer reschedule
+logical state propagation; the native failure remains permanent. Native return
+projection still binds both near returns and parent branches independently.
+`RegistrationStateSEHParentOwnership` anchors acyclic continuation tails only
+when every physical successor leads to existing parent code. Its possible
+continuations remain separate from ordinary/except entries: they grant neither
+reaching state nor runtime-handler memory privileges before the exact SavedESP
+transfer succeeds. Callback roots, unanchored terminals and cycles are excluded.
+MedIR's `RegistrationSEHParentExit` binds the exact
+SavedESP restore and parent branch; callback ownership stops at this boundary.
+`RegistrationSEHParentRoots` gives an exclusively resumed parent block its own
+established EBP definition before SSA renaming. Every actual incoming edge must
+be a bound parent transfer; ordinary or independent entries keep their existing
+definitions. This prevents the callback's private runtime seed from escaping
+into parent code while preserving the current data registers and restored ESP.
+`MedLLVMRegistrationSEHParentExit` projects a private SjLj context transactionally,
+after checked PHI copies. `COFFRegistrationSEHParentExit` independently checks
+every context alias, capture and transfer; its source companion binds the
+resumption switch to exact source scope entries. Frame reaching-definition
+replay follows the authenticated callback transfers across this resumption,
+preserving current logical state instead of treating entry capture as a reset.
+`RegistrationSEHRegisters` inserts explicit data-register exchanges before SSA
+for checked ordinary finally calls. These intrinsics keep inputs and outputs in
+the ordinary def-use and partial-register passes. `MedLLVMRegistrationSEHRegisters`
+owns their private parent-frame slots and the separate runtime entry values;
+`COFFRegistrationSEHRegisters` authenticates storage and source execution order.
+These invocation slots are separate from the logical register snapshots of
+source setjmp calls and must not be restored by source longjmp resumptions.
+The shared scope-retention owner also includes rows used solely by authenticated
+ordinary calls, without making their source try levels active.
+`abi/MedABIPassI386.cpp` binds an authenticated EH4 cookie check to its current
+ECX value. Finally register exchanges and inferred callee signatures cannot add
+EDX, floating-point or stack arguments to that checked protocol.
 `X86/RegistrationSEHStateStore.cpp` binds complete source receipts to exact
 MedIR callback stores. Native writes require a checked byte, word or full-word
 constant store with a proved finite set of complete resulting states. Narrow
@@ -702,6 +778,10 @@ This prevents unused PHI copies from reading unavailable register values in
 `optnone` code. Escaping slots, live values, source observations and volatile or
 atomic operations remain intact; no source-frame initialization is invented.
 Ordinary analysis IR retains its original value graph.
+
+`OptimizationGuards` supplements LLVM’s `optnone` instrumentation: optional module and call-graph passes are skipped when the module defines a protected function, because those passes can rewrite its CFG or replace callback arguments with poison. Required adaptors and ordinary function optimizations still run. Registration source projection retains prologue-save memory occurrences until native reconstruction can bind them.
+
+`COFFRegistrationEH4Wrapper` owns the retained EH4 forwarding proof. `COFFRegistrationScalarLeaf` checks a bounded forward-only scalar CFG, initialized registers and flags, private MXCSR storage and mapped runtime data. It rejects caller-frame reads, escaping addresses, unknown calls, overlapping instructions and incomplete returns. LLVM emission and independent COFF validation consume the same loader proof; the original wrapper, helper and dynamic data reads remain in place.
 `lib/ir/low/X86/RegistrationEntryABI.cpp` binds those returns to source bytes and
 keeps callback returns separate. The LLVM adapter selects cdecl, stdcall,
 thiscall or fastcall and independently validates its exact parameter attributes;
@@ -7123,3 +7203,5 @@ of mappings, current/maximum rights, reserved pages and retained file leases.
 `KernelModelRuntime` owns Unicode hashing, the shared NLS-independent uppercase decision and conversion to 1980 epoch seconds. `KernelRuntimeCalls` owns uppercase allocation through the existing paged-string pool. The string/time API tables supply export identity, argument counts and APC_LEVEL admission; field access order remains inside these owners.
 
 `uppercaseCharacter` narrows scalar carriers before admission and delegates to the existing `uppercaseUnicodeUnit` owner. The CRT and counted-string API tables expose the same decision with independent ABI identities; no adapter or host locale supplies a second mapping.
+
+`KernelModelRuntime` owns scalar debug argument widths and the common prefix/buffer publication rule. Native variadic calls use the existing call-ABI reader; the explicit x64 `va_list` adapter checks each requested guest scalar with an eight-byte stride. Neither dispatcher nor adapter duplicates format parsing.

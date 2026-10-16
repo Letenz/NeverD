@@ -43,6 +43,14 @@ NEVERD_ACTION(FileLoadPdb, QT_TRANSLATE_NOOP("Actions", "&PDB file..."), "",
               "symbol_file",
               QT_TRANSLATE_NOOP("Actions",
                                 "Load symbols from a selected PDB file"))
+NEVERD_ACTION(FileLoadDwarf, QT_TRANSLATE_NOOP("Actions", "D&WARF file..."), "",
+              "dwarf_file",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Load debug information from a separate "
+                                "DWARF file, unstripped copy or .dSYM"))
+NEVERD_ACTION(FileLoadMap, QT_TRANSLATE_NOOP("Actions", "&MAP file..."), "",
+              "map_file",
+              QT_TRANSLATE_NOOP("Actions", "Load names from a linker MAP file"))
 NEVERD_ACTION(
     FileLoadSignatures,
     QT_TRANSLATE_NOOP("Actions", "&FLIRT signature file..."), "", "signatures",

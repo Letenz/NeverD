@@ -13,6 +13,7 @@
 #include "LoadFileDialog.h"
 #include "LocalTypesView.h"
 #include "MainWindow.h"
+#include "MapPromptDialog.h"
 #include "OutputWindow.h"
 #include "PdbPromptDialog.h"
 #include "ProjectDatabase.h"
@@ -3304,6 +3305,222 @@ private slots:
              QStringLiteral("none"));
     QVERIFY(metadata.value("debug_info").toObject().value("kind").toString() !=
             QLatin1String("dwarf"));
+  }
+
+  /// Write \p text as the MAP beside the fixture \p fixture in \p directory.
+  static bool writeMapBeside(const QTemporaryDir &directory,
+                             const QString &fixture, const QByteArray &text) {
+    QFile map(directory.filePath(QFileInfo(fixture).completeBaseName() +
+                                 QStringLiteral(".map")));
+    return map.open(QIODevice::WriteOnly) && map.write(text) == text.size();
+  }
+
+  void mapQuestionAtStartupGreetsAlone_data() {
+    QTest::addColumn<QByteArray>("map");
+    QTest::addColumn<bool>("accept");
+    QTest::addColumn<QString>("kind");
+    QTest::addColumn<QString>("mode");
+    QTest::newRow("same build, yes") << QByteArray("same build") << true
+                                     << QStringLiteral("map") << QString();
+    QTest::newRow("same build, no")
+        << QByteArray("same build") << false << QStringLiteral("none")
+        << QStringLiteral("none");
+    QTest::newRow("other build, yes")
+        << QByteArray("other build") << true << QStringLiteral("map")
+        << QStringLiteral("unchecked");
+  }
+
+  void mapQuestionAtStartupGreetsAlone() {
+    // An image no PDB or DWARF describes asks before it loads the MAP beside
+    // it, in a window of its own that says which linker wrote the MAP and
+    // whether it is of the input's build; one of another build defaults to
+    // No, and Yes still loads it, as the user chose.
+    QFETCH(QByteArray, map);
+    QFETCH(bool, accept);
+    QFETCH(QString, kind);
+    QFETCH(QString, mode);
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("map.bin"));
+    QVERIFY(writeMapBeside(directory, QStringLiteral("map.bin"), map));
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    bool answered = false, alone = false, cautious = false;
+    QString description;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      auto *dialog =
+          qobject_cast<MapPromptDialog *>(QApplication::activeModalWidget());
+      if (!dialog || answered)
+        return;
+      answered = true;
+      alone = dialog->isVisible() && !dialog->parentWidget() &&
+              !bench.window->isVisible();
+      if (auto *label =
+              dialog->findChild<QLabel *>(QStringLiteral("description")))
+        description = label->text();
+      if (auto *no = dialog->findChild<QPushButton *>(QStringLiteral("no")))
+        cautious = no->isDefault();
+      if (auto *button = dialog->findChild<QPushButton *>(
+              accept ? QStringLiteral("yes") : QStringLiteral("no")))
+        button->click();
+    });
+    answer.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(answered, OpenTimeoutMs);
+    QVERIFY(alone);
+    QCOMPARE(cautious, map == "other build");
+    QVERIFY2(description.startsWith(QLatin1String("link.exe MAP, 3 names.")),
+             qPrintable(description));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.window->isVisible());
+    const auto metadata = bench.session.metadata();
+    QCOMPARE(metadata.value("debug_info").toObject().value("kind").toString(),
+             kind);
+    QCOMPARE(metadata.value("map").toObject().value("mode").toString(), mode);
+  }
+
+  void unattendedRunsAskNoMapQuestion() {
+    // A capture or benchmark reads the MAP that discovery finds.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("map.bin"));
+    QVERIFY(writeMapBeside(directory, QStringLiteral("map.bin"), "same build"));
+    Workbench bench;
+    bench.window->setAsksForDebugInfo(false);
+    bool asked = false;
+    QTimer watch;
+    connect(&watch, &QTimer::timeout, this, [&] {
+      if (qobject_cast<MapPromptDialog *>(QApplication::activeModalWidget())) {
+        asked = true;
+        QApplication::activeModalWidget()->close();
+      }
+    });
+    watch.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!asked);
+    QCOMPARE(bench.session.metadata()
+                 .value("debug_info")
+                 .toObject()
+                 .value("kind")
+                 .toString(),
+             QStringLiteral("map"));
+  }
+
+  void anAcceptedPdbLeavesTheMapUnasked() {
+    // A PDB outranks the MAP beside the PE: once the user takes the PDB,
+    // the MAP is not asked about, and the open reads no MAP before the PDB.
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("symbols-local.bin"));
+    QFile pdb(directory.filePath(QStringLiteral("fixture.pdb")));
+    QVERIFY(pdb.open(QIODevice::WriteOnly));
+    pdb.write("matching fixture PDB");
+    pdb.close();
+    QVERIFY(writeMapBeside(directory, QStringLiteral("symbols-local.bin"),
+                           "same build"));
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    bool answeredPdb = false, askedMap = false;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      auto *modal = QApplication::activeModalWidget();
+      if (auto *dialog = qobject_cast<PdbPromptDialog *>(modal)) {
+        answeredPdb = true;
+        if (auto *yes = dialog->findChild<QPushButton *>(QStringLiteral("yes")))
+          yes->click();
+      } else if (qobject_cast<MapPromptDialog *>(modal)) {
+        askedMap = true;
+        modal->close();
+      }
+    });
+    answer.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(answeredPdb);
+    QVERIFY(!askedMap);
+    const auto debug = bench.session.metadata().value("debug_info").toObject();
+    QCOMPARE(debug.value("kind").toString(), QStringLiteral("pdb"));
+    QVERIFY(debug.value("files").toArray().isEmpty());
+  }
+
+  void declinedMapStaysDeclinedInTheProject() {
+    // The project keeps the answer, as it keeps the DWARF one: reopening it
+    // asks nothing and reads no MAP.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("map.bin"));
+    QVERIFY(writeMapBeside(directory, QStringLiteral("map.bin"), "same build"));
+    const auto database = ProjectDatabase::pathFor(path);
+    {
+      Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+      QTimer answer;
+      connect(&answer, &QTimer::timeout, this, [&] {
+        if (auto *dialog = qobject_cast<MapPromptDialog *>(
+                QApplication::activeModalWidget()))
+          if (auto *no = dialog->findChild<QPushButton *>(QStringLiteral("no")))
+            no->click();
+      });
+      answer.start(5);
+      bench.window->openFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      answer.stop();
+      bench.session.setComment(Base + 0x140, QStringLiteral("declined"));
+      QTRY_VERIFY(bench.session.dirty());
+      QSignalSpy saved(&bench.session, &Session::databaseSaved);
+      bench.session.save();
+      QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
+      QVERIFY(saved.first().first().toBool());
+    }
+    Workbench bench;
+    bool asked = false;
+    QTimer watch;
+    connect(&watch, &QTimer::timeout, this, [&] {
+      if (auto *dialog = qobject_cast<MapPromptDialog *>(
+              QApplication::activeModalWidget())) {
+        asked = true;
+        dialog->close();
+      }
+    });
+    watch.start(5);
+    bench.window->openFile(database);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!asked);
+    const auto metadata = bench.session.metadata();
+    QCOMPARE(metadata.value("map").toObject().value("mode").toString(),
+             QStringLiteral("none"));
+    QVERIFY(metadata.value("debug_info").toObject().value("kind").toString() !=
+            QLatin1String("map"));
+  }
+
+  void loadFileOffersTheDebugFilesTheImageCanHave() {
+    // File, Load file offers a PDB for a PE, DWARF for an ELF or Mach-O
+    // image, and a MAP for any image; a chosen MAP loads beside the image's
+    // other debug information.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("map.bin"));
+    QFile map(directory.filePath(QStringLiteral("chosen.map")));
+    QVERIFY(map.open(QIODevice::WriteOnly));
+    map.write("same build");
+    map.close();
+    Workbench bench;
+    bench.window->setAsksForDebugInfo(false);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *loadMap = bench.action(ActionId::FileLoadMap);
+    auto *loadDwarf = bench.action(ActionId::FileLoadDwarf);
+    QVERIFY(loadMap && loadDwarf);
+    QTRY_VERIFY(loadMap->isEnabled());
+    QCOMPARE(loadDwarf->isEnabled(),
+             bench.session.format() == QLatin1String("ELF") ||
+                 bench.session.format() == QLatin1String("Mach-O"));
+    QSignalSpy changed(&bench.session, &Session::functionsChanged);
+    bench.session.loadMap({{"path", map.fileName()}, {"mode", "checked"}});
+    QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 1, OpenTimeoutMs);
+    const auto metadata = bench.session.metadata();
+    QCOMPARE(metadata.value("map").toObject().value("mode").toString(),
+             QStringLiteral("checked"));
+    const auto files =
+        metadata.value("debug_info").toObject().value("files").toArray();
+    QCOMPARE(files.size(), 1);
+    QCOMPARE(files.first().toObject().value("kind").toString(),
+             QStringLiteral("map"));
   }
 
   void symbolQuestionAtStartupGreetsAlone_data() {

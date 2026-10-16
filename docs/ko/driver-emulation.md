@@ -372,7 +372,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `PoCallDriver`, `PoStartNextPowerIrp` | 관리 전원 IRP 전달 및 추가 핸드셰이크 없는 Vista+ 검증 |
 | `PoSetPowerState`, `PoRequestPowerIrp` | 독립 장치 알림 상태와 명시적 PDO FIFO의 실제 자식 요청. 범위는 위 설명 |
 | `IoCreateSymbolicLink`, `IoDeleteSymbolicLink` | 하나의 세션 네임스페이스에서 ASCII `\DosDevices\Name` 또는 `\??\Name`을 사용하며 `\Device\Name`을 가리킴 |
-| `DbgPrint`, `DbgPrintEx` | 검증된 Win64 가변 인수 포맷팅, 최대 출력 512바이트. 모든 디버거 필터가 활성화됨 |
+| `DbgPrint`, `DbgPrintEx`, `vDbgPrintExWithPrefix` | 검증된 Win64 가변 인수 포맷팅, 최대 출력 511바이트. 모든 디버거 필터가 활성화됨 |
 | `IoGetCurrentIrpStackLocation` | 활성 모델 IRP의 스택 위치를 반환함. 일반적인 컴파일된 WDM 매크로도 동일한 게스트 필드를 읽음 |
 | `KeGetCurrentIrql` | 명시적인 상승과 복원을 포함한 현재 IRQL/CR8을 읽습니다. 디스패치와 작업 항목은 `PASSIVE_LEVEL`, DPC는 `DISPATCH_LEVEL`에서 시작합니다 |
 | `KfRaiseIrql`, `KeLowerIrql` | 실제 x64 WDK IRQL 상승·하강 임포트와 인라인 도우미입니다. 각 실행은 반환 전에 저장 값을 LIFO 순서로 복원합니다. IRQL <= APC_LEVEL의 유효한 대기는 상승 상태를 보존하고 대기 당시 IRQL에서 재개합니다. DISPATCH_LEVEL 잠금 보유 중에는 중단할 수 없습니다. CR8은 변경을 반영하며 설정된 CPU0 이벤트 선점에는 `scheduling`을 사용합니다. 임의의 중첩 인터럽트는 지원하지 않습니다. |
@@ -758,3 +758,5 @@ ASCII 이름, 네임스페이스 링크, RootDirectory로 유지되는 디렉터
 `RtlHashUnicodeString`, `RtlUpcaseUnicodeString`, `RtlTimeToSecondsSince1980`은 APC_LEVEL 이하에서 호출할 수 있습니다. 해시 알고리즘 0/1은 x65599를 사용하며 Length를 읽기 전에 출력을 지우고 MaximumLength는 무시합니다. 대소문자를 구분하는 해시는 모든 UTF-16 단위를 허용합니다. 대문자 변환을 사용하는 작업은 U+00C0 미만을 지원하며 그 이상은 모델링되지 않은 NLS 테이블을 명시적으로 요구합니다. 대문자 변환은 겹치는 영역에 순서대로 쓰고 각 단위에서 Buffer를, 마지막에 Length를 다시 읽으며 종료 문자를 추가하지 않습니다. 할당은 공유 페이징 `Strg` 풀과 `RtlFreeUnicodeString`을 사용하며 길이 0 할당은 지원하지 않습니다. 홀수 Length에서는 완전한 단위만 처리합니다. 시간 변환은 100 ns 값을 초로 절삭하고 1980 기준값을 빼며 ULONG 범위 안에서만 4바이트를 씁니다. 범위 밖에서는 출력을 유지합니다.
 
 `toupper`, `towupper`, `RtlUpcaseUnicodeChar`는 APC_LEVEL 제한과 계수형 Unicode 함수의 대문자 매핑을 공유합니다. 커널 toupper는 입력의 하위 바이트를 사용하며 ASCII만 허용합니다. EOF의 바이트 값을 포함한 확장 값은 모델링되지 않은 코드 페이지가 필요합니다. 와이드 입력은 16비트로 좁혀 U+00C0 미만을 허용하고 나머지는 NLS를 명시적으로 요구합니다. 이 스칼라 함수는 제자리 CRT 변환과 다른 커널 보조 함수를 사용하므로 매핑 규칙을 혼동하지 않습니다.
+
+`vDbgPrintExWithPrefix`는 `DbgPrint` / `DbgPrintEx`와 유한 포매터, 모든 필터가 켜진 관찰 모델, DIRQL 상한을 공유합니다. 게스트 x64 `va_list`는 8바이트 슬롯으로 이동하지만 실제 스칼라 너비만 읽으며, `hh`는 고정 커널의 16비트 short 규칙을 따릅니다. 접두사 버퍼는 128/256/384/512바이트로 늘어납니다. 성공하면 첫 NUL까지, 최종 오버플로이면 줄바꿈으로 끝나는 511바이트를 게시합니다. 전체 본문(최대 512바이트)을 먼저 검사하므로 잘려 나가는 잘못되거나 미지원인 꼬리도 허용하지 않습니다. ASCII 접두사는 1 MiB 한도 안에서 종결자까지 읽습니다. Unicode 변환에는 PASSIVE_LEVEL이 필요하며 호스트 필터, 디버그 콜백과 전송은 모델링하지 않습니다.

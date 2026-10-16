@@ -159,6 +159,14 @@ llvm::Expected<std::string> formatDebugMessage(const KernelModel &Model,
                                                uint64_t Format,
                                                unsigned FirstArgument,
                                                ArgumentReader ReadArgument);
+/// The same finite formatter with a guest x64 va_list and the kernel's
+/// 128/256/384/512-byte prefix attempts. The entire bounded body is checked
+/// before publication; truncation does not admit invalid or unsupported tails.
+llvm::Expected<std::string> formatPrefixedDebugMessage(const KernelModel &Model,
+                                                       GuestMemory &Memory,
+                                                       uint64_t Prefix,
+                                                       uint64_t Format,
+                                                       uint64_t Arguments);
 } // namespace runtime
 } // namespace neverd::emulation
 

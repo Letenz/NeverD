@@ -1003,7 +1003,10 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   }
   case NdOp::STORE: {
     // A prologue save keeps the caller's register, which no source reads.
-    if (Op.PrologueSave)
+    // Registration reconstruction still binds every source memory occurrence.
+    // Retain these writes until that contract is built; LLVM can subsequently
+    // remove unobservable saves from the generated private frame.
+    if (Op.PrologueSave && (!CurMedFunc || !CurMedFunc->RegistrationStates))
       return;
     auto *Val = GetInput(1);
     if (CurMedFunc && CurMedFunc->SkippedSSA) {

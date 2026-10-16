@@ -228,6 +228,8 @@ private:
   llvm::Value *widenToI128(llvm::Value *V, llvm::IRBuilder<> &Builder);
 
   llvm::Value *emitIntrinsic(const MedOp &Op, llvm::IRBuilder<> &Builder);
+  llvm::Value *emitSEHRegisterIntrinsic(const MedOp &Op,
+                                        llvm::IRBuilder<> &Builder);
   llvm::Value *emitFloatOp(const MedOp &Op, llvm::IRBuilder<> &Builder);
   llvm::Value *emitAesIntrinsic(const MedOp &Op, Intrinsic IC,
                                 llvm::IRBuilder<> &Builder);
@@ -2058,6 +2060,7 @@ private:
   std::map<std::pair<va_t, int>, llvm::Instruction *> RegistrationChainIR;
   std::map<std::pair<va_t, int>, llvm::Instruction *> RegistrationIncomingIR;
   std::map<std::pair<va_t, int>, llvm::Instruction *> RegistrationMemoryIR;
+  std::map<std::pair<va_t, uint64_t>, llvm::AllocaInst *> SEHRegisterSlots;
   /// LLVM symbol chosen for each lifted function body. Usually identical to
   /// MedFunc::Name; an address-backed native personality body uses its stable
   /// auto name so the canonical ABI name remains an external declaration.

@@ -6,6 +6,7 @@
 
 #include "COFFNativeEHProvenance.h"
 #include "COFFRegistrationIRProof.h"
+#include "COFFRegistrationSEHParentExit.h"
 
 #include "neverd/backend/llvm/WindowsRegistrationFrame.h"
 
@@ -32,6 +33,7 @@ callbacks(const llvm::Function &Parent, const ExceptionFunction &Source,
     return Frame.takeError();
   std::map<CallbackKey, const llvm::Function *> Result;
   std::set<uint32_t> Indices;
+  std::set<const llvm::Instruction *> FSAccesses;
   const llvm::CallBase *Escape = nullptr;
   for (const auto &Block : Parent)
     for (const auto &Instruction : Block)
@@ -219,7 +221,7 @@ callbacks(const llvm::Function &Parent, const ExceptionFunction &Source,
         for (const auto &Operand : Instruction.operands())
           if (Operand->getType()->isPointerTy() &&
               Operand->getType()->getPointerAddressSpace() == 257)
-            return rejectIR("callback has an unauthenticated FS observation");
+            FSAccesses.insert(&Instruction);
         const auto *Call = llvm::dyn_cast<llvm::IntrinsicInst>(&Instruction);
         if (!Call)
           continue;
@@ -285,6 +287,12 @@ callbacks(const llvm::Function &Parent, const ExceptionFunction &Source,
   for (const auto &Key : Expected)
     if (!Result.count(Key))
       return rejectIR("source callback has no generated frame owner");
+  auto ParentExits =
+      bindSEHParentExitContext(Parent, Source.CodeRange.Begin, Result);
+  if (!ParentExits)
+    return ParentExits.takeError();
+  if (FSAccesses != ParentExits->ChainWrites)
+    return rejectIR("callback has an unauthenticated FS observation");
   return Result;
 }
 
