@@ -16,6 +16,7 @@
 #include "DarwinFileTestData.h"
 #include "DarwinFullSynchronizationTestData.h"
 #include "DarwinLibSystemFileTestData.h"
+#include "DarwinLibSystemMemoryTestData.h"
 #include "DarwinModeTestData.h"
 #include "DarwinOwnershipTestData.h"
 #include "DarwinSymbolicLinkFileSystemTestData.h"
@@ -4782,6 +4783,86 @@ TEST_P(DarwinLibSystemPublic,
       uint64_t Carrier = 0;
       ASSERT_FALSE(Mode->getAsInteger(16, Carrier));
       EXPECT_EQ(uint32_t(Carrier), 0x123401a1u);
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+      if (!Repeat) {
+        EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),
+                  process_cli::GuestFailure);
+        ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
+      }
+    }
+  }
+#endif
+}
+TEST_P(DarwinLibSystemPublic,
+       MemoryCallsKeepCChecksAndMappingLifetimeAcrossCAndCLI) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const auto &[File, Profile] = GetParam();
+  const auto Page =
+      std::string(File).find("arm64") != std::string::npos ? 16384u : 4096u;
+  const auto Input = emulation::darwin_test::libSystemMemoryOptions(Page);
+  const auto &Bytes = Input.Files.at("/data");
+  const auto FileHex = llvm::toHex(llvm::ArrayRef<uint8_t>(Bytes), true);
+  for (const char *Kind : {"classic", "chained"}) {
+    SCOPED_TRACE(Kind);
+    Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) /
+            (std::string(File) + "-libsystem-memory-" + Kind))
+               .string();
+    const auto Options = jsonText(llvm::json::Object{
+        {"backend", "unicorn"},
+        {"instruction_quantum", 1024},
+        {"timeout_microseconds", 5000000},
+        {"arguments",
+         llvm::json::Array{"memory", std::to_string(Page), "/data"}},
+        {"darwin_files",
+         llvm::json::Object{
+             {"files", llvm::json::Array{llvm::json::Object{
+                           {"path", "/data"}, {"bytes_hex", FileHex}}}}}}});
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Report));
+      const auto *O = Report->getAsObject();
+      ASSERT_NE(O, nullptr);
+      EXPECT_EQ(O->getInteger(field::Version), 1);
+      EXPECT_EQ(O->getString(field::Stop), "exited")
+          << O->getString(field::Diagnostic).value_or("").str();
+      EXPECT_EQ(O->getInteger(field::ExitStatus), 79);
+      EXPECT_EQ(O->getString(field::Stdout), "4d0050");
+      EXPECT_EQ(O->getString(field::Stderr), "");
+      EXPECT_EQ(O->getInteger(field::Events), 19);
+      ASSERT_NE(O->getArray(field::Services), nullptr);
+      EXPECT_TRUE(O->getArray(field::Services)->empty());
+      const auto *Darwin = O->getObject(field::Darwin);
+      ASSERT_NE(Darwin, nullptr);
+      const auto *Calls = Darwin->getArray(field::NativeCalls);
+      ASSERT_NE(Calls, nullptr);
+      ASSERT_EQ(Calls->size(),
+                std::size(emulation::darwin_test::LibSystemMemoryCalls));
+      for (unsigned I = 0; I != Calls->size(); ++I) {
+        const auto *Call = (*Calls)[I].getAsObject();
+        ASSERT_NE(Call, nullptr);
+        const auto &Expected = emulation::darwin_test::LibSystemMemoryCalls[I];
+        EXPECT_EQ(Call->getString(field::Name), Expected.Name);
+        EXPECT_EQ(Call->getString(field::Module), "/usr/lib/libSystem.B.dylib");
+        ASSERT_NE(Call->getArray(field::Arguments), nullptr);
+        EXPECT_EQ(Call->getArray(field::Arguments)->size(), Expected.Count);
+        EXPECT_TRUE(Call->getString(field::Result));
+      }
+      for (unsigned I : {1u, 2u, 5u, 9u, 10u})
+        EXPECT_EQ((*Calls)[I].getAsObject()->getString(field::Result),
+                  "ffffffffffffffff");
+      EXPECT_EQ((*(*Calls)[3].getAsObject()->getArray(field::Arguments))[3]
+                    .getAsString(),
+                "1002");
       EXPECT_EQ(neverd_session_is_loaded(Session), 0);
       if (!Repeat) {
         EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),

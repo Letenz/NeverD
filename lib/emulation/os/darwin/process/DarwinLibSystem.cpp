@@ -61,6 +61,18 @@ readLibSystemArguments(ExecutionBackend &CPU, const IntegerABI &ABI,
   Arguments.Kernel = Arguments.Carriers;
   if (Kind == LibSystemGateKind::Open)
     Arguments.Kernel[2] = uint16_t(Arguments.Kernel[2]);
+  if (Kind == LibSystemGateKind::Mmap || Kind == LibSystemGateKind::Mprotect)
+    Arguments.Kernel[2] = uint32_t(Arguments.Kernel[2]);
+  if (Kind == LibSystemGateKind::Mmap) {
+    const auto Flags = uint32_t(Arguments.Carriers[3]);
+    // The C UNIX03 wrapper rejects these before entering the kernel. Keep
+    // original carriers in the report and raw BSD mmap semantics unchanged.
+    if (!Arguments.Carriers[1] ||
+        !(Flags & (value::MapPrivate | value::MapShared)))
+      Arguments.Error = value::InvalidArgument;
+    Arguments.Kernel[3] = Flags | value::MapUnix03;
+    Arguments.Kernel[4] = uint32_t(Arguments.Kernel[4]);
+  }
   return Arguments;
 }
 llvm::Error prepareLibSystem(AddressSpace &Space, const ProcessImage &Image) {
@@ -136,8 +148,13 @@ invokeLibSystem(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
   uint64_t Value = value::LibSystemGate + Image.Memory.PageSize;
   if (Definition.Kernel) {
     ProcessServiceEvent Event{Request.PC, 0, Arguments->Kernel, std::nullopt};
-    auto Returned = handleService(*Definition.Kernel, CPU, Memory, Files,
-                                  Entropy, Event, Options, Result);
+    auto Invoke = [&]() -> llvm::Expected<std::optional<ServiceResult>> {
+      if (Arguments->Error)
+        return std::optional<ServiceResult>({*Arguments->Error, true});
+      return handleService(*Definition.Kernel, CPU, Memory, Files, Entropy,
+                           Event, Options, Result);
+    };
+    auto Returned = Invoke();
     if (!Returned)
       return Returned.takeError();
     if (!*Returned)

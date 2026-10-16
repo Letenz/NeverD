@@ -7403,3 +7403,14 @@ partially committed allocation or pending free.
 These fixtures do not supply an Android system-service implementation or shader.
 
 `KernelFileTransfers` covers packet fields, offset sentinels, append-only handles, zero lengths, aliased outputs, immediate and pending statuses, worker notification and refusal before publication. `OriginalBufferedNativeFileTransfers` and `GenuineWdkBufferedNativeFileTransfers` execute imported and dynamically resolved calls across backends, contracts, load bases and scheduling. Configure `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` and `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` for genuine normal/CFG images; unavailable backends remain explicit skips.
+
+### Imported Darwin memory calls
+
+`DarwinLibSystemTest.Memory*` checks C argument widths, original carriers, early
+errno, transport failure before effects and resident gate reservations on both
+ISAs. `DarwinProcess.LibSystemMemoryCallsPreserveMappingsAndCErrorOrder` runs
+ordinary C through classic/chained bindings on all five profiles; matching
+ARM64 HVF identities are mandatory. Public C/CLI and real Python tests repeat
+the same workload. `DarwinNative.LibSystemMemoryCallsMatchNativeMappingsAndCErrorOrder`
+compares the system-linked object with original native file bytes, anonymous
+zeroing, protection transitions, private mapping lifetime and EOF tails.
