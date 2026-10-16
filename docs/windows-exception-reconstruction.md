@@ -827,6 +827,13 @@ stores. A bounded pure filter may supply its return expression using the proven
 parent-frame coordinate; its original native statements remain available.
 Owned filter, handler and continuation entries keep their labels and bodies
 after ordinary branches or returns, even without an explicit machine `goto`.
+An empty `__except` arm whose handler is where its try falls through, as in
+MSVC's nested levels at -O0, ends there; any other one jumps to its handler.
+A try body's end that prints nothing keeps the labels jumps land on. A filter
+call is named as the function list names the filter: an export, then the
+function's symbol rather than a section's. A shared handler resumes after its
+try at the first statement its code still has: MinGW's startup scope resumes
+at a `nop`.
 The renderer does not invent a catch-all clause for an unstructured region.
 Isolated EH3/EH4 table entries retain their checked parent EBP when state
 propagation exhausts its budget. This proves a frame coordinate for analysis,

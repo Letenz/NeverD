@@ -117,8 +117,30 @@ void parseExceptions(const llvm::object::COFFObjectFile &Obj, BinaryImage &Img,
 /// contributes diagnostics without publishing guessed or partial bindings.
 void parseImports(const llvm::object::COFFObjectFile &Obj, BinaryImage &Img);
 
+/// Whether the symbol record \p Sym is a debug record, such as `.file` or
+/// `.bf`/`.ef`: neither a name nor a place in the image.
+inline bool isDebugRecord(const llvm::object::COFFSymbolRef &Sym) {
+  return Sym.getSectionNumber() == llvm::COFF::IMAGE_SYM_DEBUG ||
+         Sym.isFileRecord() ||
+         Sym.getStorageClass() == llvm::COFF::IMAGE_SYM_CLASS_FUNCTION;
+}
+
+/// Whether the symbol record \p Sym is a section's own symbol: static, not a
+/// function, and followed by its auxiliary section definition.  GNU ld keeps
+/// one for each section an object contributes, at that object's first
+/// function or variable.  A static function's record also has an auxiliary
+/// record, its function definition, and names that function.
+inline bool isSectionDefinition(const llvm::object::COFFSymbolRef &Sym) {
+  return Sym.getStorageClass() == llvm::COFF::IMAGE_SYM_CLASS_STATIC &&
+         Sym.getComplexType() != llvm::COFF::IMAGE_SYM_DTYPE_FUNCTION &&
+         Sym.getNumberOfAuxSymbols() > 0;
+}
+
 /// Parse the COFF symbol table (.symtab) and populate Img.Symbols.
 /// Applies to object files and some executables with embedded symbols.
+/// A linked image's debug records are left out, and its section definitions
+/// load as Symbol::IsSection: they bound what an object contributed but name
+/// nothing.  An object file's relocations still name its sections.
 /// SectionVAs is an optional one-based mapped-section table; relocatable COFF
 /// uses it because its format-native section VirtualAddress fields must be 0.
 void parseSymbolTable(const llvm::object::COFFObjectFile &Obj, BinaryImage &Img,

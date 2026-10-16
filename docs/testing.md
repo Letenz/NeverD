@@ -7091,6 +7091,18 @@ arm that resumes at a `nop` without a jump, and
 `X86_64_PipelineE2E.DecompileC_MinGWStartupSEHWithX87Callee` decompiles
 MinGW-w64-shaped startup code (`test_mingw_startup_seh.s`) whose guarded callee
 resets the x87 state.
+`COFFExceptionIR.HighCEmptyExceptArmResumingAfterItsTryPrintsNoJump` prints
+MSVC's nested -O0 levels with empty arms, and
+`HighCLeftOutTryTailKeepsTheLabelAJumpLandsOn` keeps the label that switch
+cases leave a try body for. `HighCSEHFilterIsNamedAsTheFunctionListNamesIt`
+names a filter by its function symbol over a `.text` section symbol, and by
+an export. `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
+`unittests/loader/fixtures/mingw_sections.exe` (its Makefile rebuilds it with
+MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its
+`.file` record is dropped, and a static function's own record names it.
+`HighControlFlowSemantics.SlotCallGoesThroughThePointerItHolds` calls through
+MinGW's `__imp_X` variables, which hold the image's own code, relocated or in
+a fixed image, rather than naming an import by their spelling.
 Malformed unwind/prologue and converted-SP checks run with source projection
 enabled too. `WindowsEHModesCorpus.DecompileMatrixFailsClosedWithAuditableExceptionMetadata`
 runs the original eleven-case matrix, including the complete x64 xcpt4 image.

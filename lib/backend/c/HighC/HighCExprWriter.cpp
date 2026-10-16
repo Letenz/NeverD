@@ -5990,7 +5990,14 @@ HighCWriter::ImageSymbolName HighCWriter::imageSymbolName(va_t Addr) const {
       Named.Raw = symbolScheme(CName) != SymbolScheme::None
                       ? CName.str()
                       : stripLeadingUnderscores(Sym->Name).str();
-      Named.Readable = symbolComment(CName, Named.Raw);
+      // An object named as an import slot (`__imp_X`) is that slot, a
+      // variable such as MinGW's, and not the function `X` a call through
+      // it reaches, which symbolComment() reads it as.
+      Named.Readable = stripImportSymbolPrefix(CName) != CName &&
+                               symbolScheme(CName) == SymbolScheme::None &&
+                               isPlainSymbolText(CName)
+                           ? CName.str()
+                           : symbolComment(CName, Named.Raw);
       Named.Symbol = Sym->Name;
     }
   }

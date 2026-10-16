@@ -407,6 +407,7 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
     if (Stmt.Kind == StmtKind::Goto)
       ++GotoTargetUses[Stmt.GotoTarget];
   });
+  decideExceptArms(Func);
   // Handler labels first: a try body keeps a trailing goto that owns one.
   walkStmts(Func.Body, [&](const HighStmt &Stmt) {
     for (const HighEHClause &Clause : Stmt.EHClauses) {
@@ -429,12 +430,14 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
       if (Clause.Kind == HighEHClauseKind::SEHExcept &&
           Reachable(Clause.HandlerVA)) {
         // An attached `__except` body is already printed in-place.  A label
-        // is only required when HighC still has to `goto` the handler.
+        // is only required when HighC still has to `goto` the handler, which
+        // an arm resuming where its try falls through does not.
         const size_t Index = &Clause - Stmt.EHClauses.data();
         if (Index < Stmt.EHClauseBodies.size() &&
             !Stmt.EHClauseBodies[Index].empty())
           continue;
-        GotoTargets.insert(Clause.HandlerVA);
+        if (!FallthroughExceptArms.count(&Stmt))
+          GotoTargets.insert(Clause.HandlerVA);
       }
       // An Itanium landing pad is a block of this function, so the clause
       // comment can point at a real label instead of a bare address.
@@ -3186,6 +3189,10 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     return Hit;
   };
   std::map<const HighStmt *, Site> Sites;
+  // The sites in program order, as the walk meets them. Candidates and the
+  // per-name site lists follow it: a fold changes what later candidates see,
+  // so their order cannot be where the statements were allocated.
+  std::vector<const HighStmt *> SiteOrder;
   std::map<uint64_t, std::vector<const HighStmt *>> Linear;
   std::map<uint64_t, uint64_t> JoinAfterTry;
   std::map<uint64_t, uint64_t> RegionParent;
@@ -3246,6 +3253,7 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       Info.Cleanup = Cleanup;
       Info.Handler = Handler;
       Sites[&S] = Info;
+      SiteOrder.push_back(&S);
       Seq.push_back(&S);
       if (valueForwardSplitsRegion(S.Kind)) {
         const uint64_t BodyRegion = NextRegion++;
@@ -3421,7 +3429,8 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
   };
   std::vector<Candidate> Candidates;
   std::set<const HighStmt *> CandidateStmts;
-  for (const auto &[Stmt, Info] : Sites) {
+  for (const HighStmt *Stmt : SiteOrder) {
+    const Site &Info = Sites.at(Stmt);
     (void)Info;
     if (Analysis.DeadStmts.count(Stmt) || stmtHiddenFromC(*Stmt))
       continue;
@@ -3545,7 +3554,8 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
           if (Op)
             CountReads(*Op, Into);
       };
-  for (const auto &[Stmt, Info] : Sites) {
+  for (const HighStmt *Stmt : SiteOrder) {
+    const Site &Info = Sites.at(Stmt);
     (void)Info;
     SiteNames &Names = NamesAt[Stmt];
     const bool Assign = Stmt->Kind == StmtKind::Assign && Stmt->Dst;
@@ -6502,6 +6512,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   // Frame projection can hide an ordinary-edge PHI copy after a try. Settle
   // clause exits against the statements that will actually be printed, while
   // retaining all previously required labels as conservative entry evidence.
+  decideExceptArms(Func);
   FallthroughTryExits.clear();
   {
     std::set<std::pair<va_t, va_t>> Kept;
