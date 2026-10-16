@@ -21,6 +21,8 @@
 #include "neverd/backend/llvm/WindowsRegistrationFrame.h"
 #include "neverd/backend/llvm/X86RegistrationSEHScope.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/X86RegistrationCallback.h"
+#include "neverd/ir/med/X86RegistrationSEHCall.h"
 #include "neverd/ir/med/X86RegistrationSEHStateStore.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -132,6 +134,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   std::map<llvm::BasicBlock *, int32_t> Active;
   std::map<llvm::BasicBlock *, std::vector<int32_t>> Dynamic;
   std::set<llvm::BasicBlock *> CallbackBlocks;
+  const auto CallbackOwners = registrationSEHCallbackOwners(Func);
+  if (!CallbackOwners)
+    return false;
   const int32_t Sentinel = *Chain.SeededTryLevel;
   for (const MedBlock &Block : Func.Blocks) {
     auto IR = OriginalBlockMap.find(Block.Id);
@@ -143,7 +148,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
         State->second->Range.Begin != Block.StartAddr ||
         State->second->Range.End != Block.EndAddr || State->second->Unknown)
       return false;
-    if (State->second->CallbackOnly) {
+    if (CallbackOwners->count(Block.Id)) {
       CallbackBlocks.insert(IR->second);
       continue;
     }
@@ -370,11 +375,19 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     bool NoReturn;
   };
   std::map<va_t, va_t> DirectCalls;
+  std::map<va_t, std::tuple<int, va_t, int>> CallKeys;
   for (const MedBlock &Block : Func.Blocks)
     for (const MedOp &Op : Block.Ops)
-      if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst() &&
-          !DirectCalls.emplace(Op.Addr, Op.Inputs[0].ConstVal).second)
-        return false;
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst()) {
+        if (!DirectCalls.emplace(Op.Addr, Op.Inputs[0].ConstVal).second)
+          return false;
+        CallKeys.emplace(Op.Addr,
+                         std::make_tuple(Block.Id, Op.Addr, Op.OriginSeq));
+      }
+  const auto FinallyReturns = getRegistrationSEHReturns(Func);
+  const auto FinallyJumps = getRegistrationSEHNonlocalCalls(Func);
+  if (!FinallyReturns || !FinallyJumps)
+    return false;
   std::set<llvm::BasicBlock *> AllCallbackBlocks;
   for (const auto &Request : Requests)
     for (llvm::BasicBlock *Block : Request.Blocks)
@@ -402,25 +415,33 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
         Finally = Callback->second;
     if (AllCallbackBlocks.count(CallBlock)) {
       if (Finally) {
+        const bool NoReturn = llvm::none_of(
+            Requests[*Finally].Blocks, [](const llvm::BasicBlock *Block) {
+              return llvm::isa<llvm::ReturnInst>(Block->getTerminator());
+            });
         std::vector<llvm::Instruction *> DiscardedResults;
-        if (!x86_registration::collectDiscardedRegistrationResult(
+        if (!NoReturn &&
+            !x86_registration::collectDiscardedRegistrationResult(
                 *const_cast<llvm::CallInst *>(Call), DiscardedResults))
           return false;
         DeadCallResults.insert(DeadCallResults.end(), DiscardedResults.begin(),
                                DiscardedResults.end());
         for (size_t Index = 0; Index != Requests.size(); ++Index)
           if (llvm::is_contained(Requests[Index].Blocks, CallBlock)) {
+            const auto &Key = CallKeys.at(Address);
+            const auto Returned = FinallyReturns->ReturningCalls.find(Key);
+            const auto Jumped = FinallyJumps->find(Key);
+
             if (Requests[Index].Kind != X86RegistrationCallbackKind::Finally ||
-                llvm::none_of(States.SEHInvocationExits, [&](const auto &Exit) {
-                  return Exit.Exit ==
-                             RegistrationSEHInvocationExit::Kind::NearReturn &&
-                         Exit.CallVA == Address &&
-                         Exit.EntryVA == DirectCalls.at(Address);
-                }))
+                (NoReturn ? Returned != FinallyReturns->ReturningCalls.end() ||
+                                Jumped == FinallyJumps->end() ||
+                                Jumped->second != DirectCalls.at(Address)
+                          : Returned == FinallyReturns->ReturningCalls.end() ||
+                                Returned->second != DirectCalls.at(Address)))
               return false;
             NestedFinallyCalls.push_back(
                 {Call, Address, DirectCalls.at(Address), Index, *Finally,
-                 std::move(DiscardedResults)});
+                 NoReturn, std::move(DiscardedResults)});
           }
       }
       continue;

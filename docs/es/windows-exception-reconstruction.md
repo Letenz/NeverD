@@ -224,3 +224,5 @@ Cada forma nativa nueva debe incluir en el mismo cambio:
 
 Poder decodificar un record no basta para ampliar la allow-list. El criterio es
 preservar el comportamiento de excepciones en la imagen final enlazada.
+
+El cleanup del handler seleccionado puede saltar otra vez a la misma captura válida con un valor constante cuya igualdad esté probada (cero pasa a uno). El salto cancela el handler y los finally suspendidos y restaura el límite de desenrollado de la captura. Los callbacks externos al cuerpo principal y sus colas inalcanzables conservan su pertenencia verificada. Otras capturas, valores distintos o igualdad desconocida requieren pruebas separadas.

@@ -338,8 +338,16 @@ and current jump resumption; they supply neither a normal return nor restored
 registers. A still-live capture remains available to later checked transfers.
 Selection and capture resumption remain separate proof outcomes, including
 mixed searches. Selected-filter writes also supply independent cleanup roots.
-Recurrent selection, an escaping search, and a new jump during the selected
-handler's cleanup still require separate complete transfer proofs.
+A selected handler's cleanup can supersede that selection with a new jump to
+its same live capture and a proved equal constant value (zero normalizes to one).
+This restores the capture's unwind bound and retires all suspended finally
+invocations, including nested ordinary calls. Out-of-line callbacks retain their
+scope ownership and authenticated physical CALL/RET boundaries. Their unreachable
+tails remain callback code without acquiring a fabricated reaching state.
+LLVM and installation share the same MedIR invocation and callback ownership
+queries; a nonreturning nested call requires both a checked jump exit and no
+ordinary return. Different captures or values, unknown value equality, recurrent
+selection, and escaping searches still require separate complete transfer proofs.
 Scopes without any proved activation remain unsupported.
 Mapped PE data,
 including zero-fill storage, retains its runtime values and access permissions;

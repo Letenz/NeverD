@@ -232,3 +232,5 @@ HighC state annotation、personality binding 保留、重建 try/catch graph，�
 
 不能只因能解碼新 record 就擴大 allow-list。接受標準是最終 linked image 中的 runtime
 exception behavior 得到保留。
+
+所選 handler 的 cleanup 可再次跳至同一有效 capture，使用已證明相同的常數值（零轉為一），取消 handler 並恢復 capture 的展開邊界。巢狀 finally 呼叫一併終止；函式範圍外的回呼及不可達尾端仍須保留已驗證的歸屬。不同 capture、不同值或未知的相等關係仍需獨立證明。

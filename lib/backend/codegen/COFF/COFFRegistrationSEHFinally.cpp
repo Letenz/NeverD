@@ -10,6 +10,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/X86RegistrationSEHJump.h"
+#include "neverd/ir/med/X86RegistrationSEHCall.h"
 
 namespace neverd::coff_registration {
 
@@ -48,13 +49,10 @@ llvm::Expected<std::set<const llvm::CallBase *>> bindSEHFinallyCalls(
                .second)
         return rejectIR("ordinary finally source invocation is ambiguous");
     }
-  std::set<std::pair<va_t, va_t>> ReturningCalls;
-  for (const auto &Exit : Source.RegistrationStates->SEHInvocationExits) {
-    if (!Charge())
-      return rejectIR("ordinary finally exits exceed their work budget");
-    if (Exit.Exit == RegistrationSEHInvocationExit::Kind::NearReturn)
-      ReturningCalls.emplace(Exit.CallVA, Exit.EntryVA);
-  }
+  const auto Returns = getRegistrationSEHReturns(Source);
+  const auto Nonlocal = getRegistrationSEHNonlocalCalls(Source);
+  if (!Returns || !Nonlocal)
+    return rejectIR("ordinary finally calls lost their source exits");
   std::set<const llvm::Function *> FinallyOwners, ReturningCallbacks;
   for (const auto &[Key, Callback] : Callbacks) {
     if (!Key.second)
@@ -124,14 +122,22 @@ llvm::Expected<std::set<const llvm::CallBase *>> bindSEHFinallyCalls(
         } else {
           const auto *Frame =
               getX86RegistrationSEHJumpParentFrame(*Function, Parent);
+          const auto Key =
+              std::make_tuple(Origin.Block, *Address, Origin.Sequence);
+          const auto Returned = Returns->ReturningCalls.find(Key);
+          const auto Jumped = Nonlocal->find(Key);
+          const bool NoReturn = !ReturningCallbacks.count(Callee->second);
           if (!FinallyOwners.count(Function) ||
               !llvm::isa<llvm::CallInst>(Call) || !Frame ||
               Call->getArgOperand(1) != Frame ||
-              !ReturningCalls.count({*Address, *Target}) ||
-              !ReturningCallbacks.count(Callee->second) ||
-              Call->doesNotReturn())
+              Call->doesNotReturn() != NoReturn ||
+              (NoReturn
+                   ? Returned != Returns->ReturningCalls.end() ||
+                         Jumped == Nonlocal->end() || Jumped->second != *Target
+                   : Returned == Returns->ReturningCalls.end() ||
+                         Returned->second != *Target))
             return rejectIR(
-                "nested finally call lost its frame or near return");
+                "nested finally call lost its frame or checked exit");
         }
         Result.insert(Call);
       }

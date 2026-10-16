@@ -221,3 +221,5 @@ Ogni nuova forma nativa deve includere nello stesso change:
 
 La sola decodifica non amplia l’allow-list. Il criterio è preservare il
 comportamento delle eccezioni nell’immagine finale collegata.
+
+Il cleanup del handler selezionato può saltare nuovamente alla stessa cattura valida con un valore costante dimostrato uguale (zero diventa uno). Il salto annulla il handler e i finally sospesi e ripristina il limite di unwind della cattura. Callback esterni al corpo principale e code irraggiungibili mantengono la loro appartenenza verificata. Catture o valori diversi e uguaglianze sconosciute richiedono prove separate.

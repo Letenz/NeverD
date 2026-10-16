@@ -9,6 +9,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/X86RegistrationSEHCall.h"
 #include "neverd/ir/med/X86RegistrationSEHJump.h"
 #include "neverd/lift/X86Regs.h"
 
@@ -491,6 +492,91 @@ TEST(RegistrationSEHJumpABI, CapturedBoundsDisambiguateTheSameVisibleState) {
           Call.ResumeStateMap,
           (std::map<std::pair<int32_t, int32_t>, int32_t>{{{-1, 0}, -1}}));
     }
+  }
+}
+
+TEST(RegistrationSEHJumpABI, BindsNestedNonlocalCallsToTheirInvocation) {
+  for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    JumpCallFixture F;
+    auto &Function = F.Function;
+    auto &States = *Function.RegistrationStates;
+    Function.ExceptionMetadata->Registration->Scopes = {{-1, 0, 0x1800, true}};
+    auto Callback = Function.Blocks[1];
+    Callback.Id = 2;
+    Callback.StartAddr = 0x1800;
+    Callback.EndAddr = 0x1825;
+    Callback.Ops.back().Addr = 0x1820;
+    auto &Caller = Function.Blocks[1];
+    Caller.Ops.clear();
+    auto Call = operation(NdOp::CALL, {}, {MedVar::makeConst(0x1800, 4)});
+    Call.Addr = 0x1020;
+    Call.OriginSeq = 30;
+    Caller.Ops.push_back(Call);
+    Caller.Succs = {3};
+    Function.Blocks.push_back(std::move(Callback));
+    MedBlock Continuation;
+    Continuation.Id = 3;
+    Continuation.StartAddr = 0x1025;
+    Continuation.EndAddr = 0x1026;
+    Function.Blocks.push_back(std::move(Continuation));
+    RegistrationBlockState CallbackState;
+    CallbackState.BlockId = 2;
+    CallbackState.Range = {0x1800, 0x1825};
+    CallbackState.Levels = {0};
+    CallbackState.CallbackOnly = CallbackState.Reached = true;
+    States.Blocks.push_back(CallbackState);
+    auto &Resume = States.SEHJumpResumptions.front();
+    Resume.Address = 0x1820;
+    Resume.EntryVA = 0x1800;
+    Resume.OrdinaryCall = 0x1020;
+    Resume.ValueOffset = -8;
+    States.SEHControls.push_back(
+        {RegistrationSEHControlContract::Kind::NearCall, 0x1020, 0x1025,
+         0x1800});
+    if (Mutation == 1)
+      ++Resume.OrdinaryCall;
+    if (Mutation == 2)
+      ++Resume.EntryVA;
+    if (Mutation == 3)
+      States.SEHControls.clear();
+    if (Mutation == 4)
+      States.SEHJumpResumptionsComplete = false;
+    if (Mutation == 5)
+      States.SEHInvocationExitsComplete = false;
+    if (Mutation == 6)
+      Function.Blocks[1].Ops.back().Dead = true;
+    if (Mutation == 7)
+      Function.Blocks[1].Ops.back().OriginSeq = -1;
+    if (Mutation == 8)
+      Function.Blocks[1].Ops.back().Inputs[0] = MedVar::makeConst(0x1900, 4);
+    if (Mutation == 9) {
+      States.SEHJumpResumptions.clear();
+      const auto Calls = getRegistrationSEHNonlocalCalls(Function);
+      ASSERT_TRUE(Calls);
+      EXPECT_TRUE(Calls->empty());
+      continue;
+    }
+    if (Mutation == 10) {
+      auto Runtime = Resume;
+      Runtime.OrdinaryCall = 0;
+      States.SEHJumpResumptions.push_back(Runtime);
+    }
+    const auto Calls = getRegistrationSEHNonlocalCalls(Function);
+    if (Mutation && Mutation != 10) {
+      EXPECT_FALSE(Calls);
+      continue;
+    }
+    ASSERT_TRUE(Calls);
+    ASSERT_EQ(Calls->size(), 1u);
+    EXPECT_EQ(Calls->at({1, 0x1020, 30}), 0x1800u);
+    F.recover();
+    const auto Finally = llvm::find_if(Function.CallInfos, [](const auto &CI) {
+      return CI.TargetAddr == 0x1800;
+    });
+    ASSERT_NE(Finally, Function.CallInfos.end());
+    EXPECT_TRUE(Finally->Args.empty());
+    EXPECT_EQ(Finally->IntegerRegisterArgCount, 0);
   }
 }
 
