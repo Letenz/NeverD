@@ -747,3 +747,7 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 
 
 支援範圍包含 ASCII 名稱、命名空間連結及作為 RootDirectory 保留的目錄控制代碼。根目錄後綴 `\` 與無後綴的磁碟區開啟不同，後者未實作。支援目錄／非目錄與同步非警示選項。`IoCancelFileOpen` 對尚未發布的底層成功開啟明確傳送 CLEANUP，最後參考釋放傳送 CLOSE；上層改為失敗而未取消會遭拒。DriverEntry 可保留控制代碼至 DriverUnload。非同步完成與巢狀清理保留各自的完成、分派及 API 結果。報告使用 `file_object`、`file_open_operation`、`filesystem_device`、`filesystem_file_id`，驅動程式建立請求的 `file` 為 null。EA、裝置提示、二進位 ID、重新解析、oplock、交易、ACL、替換檔名儲存及框架檔案系統分派仍不支援。
+
+`ZwReadFile` / `ZwWriteFile` 支援緩衝裝置堆疊上已開啟的同步 WDM 檔案，要求 PASSIVE_LEVEL、中斷與特殊核心 APC 啟用，Event、APC 常式及內容均為 NULL。KernelMode 保留控制代碼範圍而不檢查授權遮罩；僅附加寫入仍使用偏移 −1。NULL 或 −2 使用儲存的位置，其他負偏移無效，寫入 −1 除外。長度與鍵按 ULONG 擷取。寫入先複製輸入再派發；讀取完成先複製位元組，再寫 Information 與四位元組 Status。立即錯誤保留呼叫端 IOSB，擱置錯誤會發布 IOSB。擱置呼叫等待完成並保留原呼叫端；零長度仍派發。共用完成不推進檔案位置，單次上限 1 MiB。非同步檔案、direct/neither I/O、快取 Fast I/O、完成連接埠、框架擁有的路由與宣告式提供者資料 I/O 仍不支援。報告來源為 `ZwReadFile` / `ZwWriteFile`。
+
+`ZwSetInformationFile` 透過同一檔案擁有者實作同步 FilePositionInformation (14)。它擷取八位元組輸入，要求 Length >= 8、位置為非負帶正負號 64 位元值；裝置磁區大小非零時檢查非快取對齊。它先更新儲存的位置，再寫四位元組 Status 與八位元組 Information=0，保留 IOSB 填補及輸出失敗前已執行的寫入。不建立 IRP，也不重設檔案事件。控制代碼範圍、呼叫端資格及同檔案序列規則沿用檔案 API 契約。其他類別與非同步位置設定仍不支援。位置查詢及後續 NULL/−2 讀寫偏移觀察此狀態。

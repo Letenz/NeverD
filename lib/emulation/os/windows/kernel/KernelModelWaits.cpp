@@ -220,8 +220,8 @@ KernelModel::pollWait(const Wait &Pending) {
     return *Ready ? std::optional<uint32_t>{windows::StatusSuccess}
                   : std::optional<uint32_t>{};
   }
-  if (Pending.Type == Wait::Kind::FileInformationQuery) {
-    auto Ready = fileInformationQueryReady(Pending.Object);
+  if (Pending.Type == Wait::Kind::FileRequest) {
+    auto Ready = fileRequestReady(Pending.Object);
     if (!Ready)
       return Ready.takeError();
     return *Ready ? std::optional<uint32_t>{windows::StatusSuccess}

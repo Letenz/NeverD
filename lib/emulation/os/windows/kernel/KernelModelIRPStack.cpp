@@ -612,8 +612,8 @@ KernelModel::finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue) {
     return finishFileCloseDispatch(Token, ResultValue);
   if (Call->second.Kind == IRPCallKind::FileHandleClose)
     return finishFileHandleDispatch(Token, ResultValue);
-  if (Call->second.Kind == IRPCallKind::FileInformationQuery)
-    return finishFileInformationDispatch(Token, ResultValue);
+  if (Call->second.Kind == IRPCallKind::FileRequest)
+    return finishFileRequestDispatch(Token, ResultValue);
   if (Call->second.Kind == IRPCallKind::FileOperation)
     return finishFileOperationDispatch(Token, ResultValue);
   if (Call->second.Kind == IRPCallKind::PowerCompletion)
