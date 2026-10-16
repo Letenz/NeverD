@@ -568,3 +568,31 @@ Each ARM64 invocation shares only its pinned read-only executable across
 cases; HOME, work, temporary state and network namespaces remain fresh.
 Other platforms and tools such as Bash, Grep and Glob still require this
 expanded coverage. The full recovery goal remains active.
+
+
+## Eight-platform Read/Edit supplement complete
+
+The same fourteen-case matrix now passes across all eight distributions and
+both source layouts, for 224 additional differential pairs. The four Linux
+packages, native macOS ARM64, Rosetta macOS x64, and native Windows x64/ARM64
+have separately sealed diagnostics and full ordered protocol/API comparisons.
+Exact workspace byte checks include CRLF and composed/decomposed Unicode.
+
+[Windows run 38856660629](https://github.com/gmh5225/test_mac_intel/actions/runs/38856660629)
+passes at `38d4a830b23b18ce3a36942c7b8f3313ceeb8908`. It revalidates the
+independent native builds, source readback, previous configuration/behavior
+matrix and new core-tool cases. Native source hashes use the exact Windows
+CRLF checkout bytes; downloaded raw protocol records were independently
+normalized and compared again without comparator changes.
+
+The macOS x64 authored HTTP qualification initially exceeded its 30-second
+bound. The retained retry adds a separate bounded independent Bun startup
+before the server; all qualification controls and captured-client cases pass.
+The existing pinned executable paths were reused with fresh per-case state;
+a separate metadata addendum corrects an inherited receipt field that called
+this a per-run copy. Original sealed evidence remains unchanged.
+
+`progress-v20.json` is the active private checkpoint. Bash/Grep/Glob, token-cap
+Read truncation, broader features, semantic/type/module recovery, native
+implementations, Bun revision differences and source-text/performance
+observability remain open. The complete recovery goal stays active.
