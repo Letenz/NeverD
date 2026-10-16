@@ -1883,3 +1883,5 @@ KernelFileSystem conserva un provider token per FILE_OBJECT. L’operazione priv
 `KernelModelFileRequests` possiede anche i trasferimenti sincroni bufferizzati `ZwReadFile` / `ZwWriteFile`. Il produttore acquisisce ambito dell’handle, offset, chiave e copia dei dati scritti. Il completamento condiviso pubblica byte letti e IOSB nel chiamante originale idoneo, poi libera ogni pacchetto e buffer posseduto una sola volta. Il driver di archiviazione possiede le modifiche a contenuto e posizione.
 
 `KernelModelFileRequests` possiede anche la produzione senza buffer di `ZwFlushBuffersFile`. Controllo della maschera di accesso e pubblicazione/rilascio immediati differiscono dai pacchetti nativi differiti di lettura, scrittura e query; notifica al chiamante originale e rilascio singolo restano condivisi.
+
+`KernelModelFileRequests` gestisce acquisizione e pubblicazione dei buffer di controllo nativi. Ritenzione del file, continuazione del chiamante e rilascio del pacchetto sono condivisi; il differimento del produttore distingue controllo dispositivo e FSCTL. Il validatore comune verifica i limiti dell’uscita.

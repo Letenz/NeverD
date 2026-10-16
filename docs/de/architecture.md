@@ -1888,3 +1888,5 @@ KernelFileSystem hält je FILE_OBJECT ein provider token. Die private Freigabeop
 `KernelModelFileRequests` besitzt auch synchrone gepufferte `ZwReadFile`-/`ZwWriteFile`-Operationen. Der Erzeuger erfasst Handle-Gültigkeit, Offset, Schlüssel und kopierte Schreibdaten. Die gemeinsame Abschlussverarbeitung veröffentlicht Lesedaten und IOSB im zulässigen ursprünglichen Aufrufer und gibt eigene Pakete und Puffer genau einmal frei. Der Speichertreiber besitzt Inhalts- und Positionsänderungen.
 
 `KernelModelFileRequests` besitzt auch die pufferlose Erzeugung für `ZwFlushBuffersFile`. Zugriffsmaske und unmittelbare Veröffentlichung/Freigabe unterscheiden sich von verzögerten nativen Lese-, Schreib- und Abfragepaketen; Benachrichtigung des ursprünglichen Aufrufers und einmalige Freigabe bleiben gemeinsam verwaltet.
+
+`KernelModelFileRequests` besitzt Puffererfassung und Veröffentlichung nativer Steueraufrufe. Dateihaltung, Aufruferfortsetzung und Paketfreigabe sind gemeinsam; die erzeugerspezifische Verzögerung unterscheidet Gerätesteuerung und FSCTL. Die gemeinsame Abschlussprüfung begrenzt die Ausgabe.
