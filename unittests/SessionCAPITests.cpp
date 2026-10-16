@@ -3561,15 +3561,21 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
   EXPECT_NE(RustWindows.find("pub Value: ULONG,"), std::string::npos);
   // A spelling the language does not take fails, saying which it takes.
   EXPECT_EQ(neverd_local_types_source(
-                Session, R"({"language":"rust","spelling":"ida"})"),
+                Session, R"({"language":"rust","spelling":"keywords"})"),
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
-            "rust names builtins as windows or portable, not ida");
+            "rust names builtins as portable or windows, not keywords");
   EXPECT_EQ(neverd_local_types_source(
                 Session, R"({"language":"go","spelling":"keywords"})"),
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
-            "go names builtins as windows or portable, not keywords");
+            "go names builtins as portable or windows, not keywords");
+  // IDA's spelling, Microsoft's sized integers, does not render.
+  EXPECT_EQ(neverd_local_types_source(Session,
+                                      R"({"language":"c","spelling":"ida"})"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)),
+            "\"spelling\" must be portable, windows or keywords");
   const std::string GoWindows = takeString(neverd_local_types_source(
       Session,
       R"({"language":"go","spelling":"windows","types":["_PACKED"]})"));
@@ -3582,10 +3588,10 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
   EXPECT_NE(Python.find("assert ctypes.sizeof(_PACKED) == 0x7"),
             std::string::npos);
   EXPECT_EQ(neverd_local_types_source(
-                Session, R"({"language":"python","spelling":"ida"})"),
+                Session, R"({"language":"python","spelling":"keywords"})"),
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
-            "python names builtins as windows or portable, not ida");
+            "python names builtins as portable or windows, not keywords");
   // JavaScript reads through a DataView, its accessors checked within
   // their record.
   const std::string Script = takeString(neverd_local_types_source(
@@ -3597,18 +3603,18 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
                 Session, R"({"language":"javascript","spelling":"keywords"})"),
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
-            "javascript names builtins as windows or portable, not keywords");
+            "javascript names builtins as portable or windows, not keywords");
   // Lua reads through string.unpack, its accessors checked as it runs.
   const std::string Lua = takeString(neverd_local_types_source(
       Session, R"({"language":"lua","types":["_PACKED"],"asserts":true})"));
   EXPECT_NE(Lua.find("local T = record(\"_PACKED\", 0x7)"), std::string::npos)
       << Lua;
   EXPECT_NE(Lua.find("check(M._PACKED, function(r)"), std::string::npos);
-  EXPECT_EQ(neverd_local_types_source(Session,
-                                      R"({"language":"lua","spelling":"ida"})"),
+  EXPECT_EQ(neverd_local_types_source(
+                Session, R"({"language":"lua","spelling":"keywords"})"),
             nullptr);
   EXPECT_EQ(takeString(neverd_last_error(Session)),
-            "lua names builtins as windows or portable, not ida");
+            "lua names builtins as portable or windows, not keywords");
   // Prototypes render in C and C++; asked of another language, they fail.
   EXPECT_EQ(neverd_local_types_source(
                 Session, R"({"language":"rust","prototypes":true})"),
@@ -3647,14 +3653,15 @@ TEST(SessionCAPILocalTypes, LanguagesSayHowEachNamesBuiltins) {
     if (Language.getBoolean("prototypes").value_or(false))
       Prototypes += (Prototypes.empty() ? "" : " ") + Id;
   }
+  // Every language spells exact widths unless asked, and lists them first.
   using Choice = std::pair<std::string, std::string>;
-  EXPECT_EQ(Taken["c"], Choice("windows", "windows ida keywords portable"));
-  EXPECT_EQ(Taken["cpp"], Choice("windows", "windows ida keywords portable"));
-  EXPECT_EQ(Taken["rust"], Choice("portable", "windows portable"));
-  EXPECT_EQ(Taken["go"], Choice("portable", "windows portable"));
-  EXPECT_EQ(Taken["python"], Choice("portable", "windows portable"));
-  EXPECT_EQ(Taken["javascript"], Choice("portable", "windows portable"));
-  EXPECT_EQ(Taken["lua"], Choice("portable", "windows portable"));
+  EXPECT_EQ(Taken["c"], Choice("portable", "portable windows keywords"));
+  EXPECT_EQ(Taken["cpp"], Choice("portable", "portable windows keywords"));
+  EXPECT_EQ(Taken["rust"], Choice("portable", "portable windows"));
+  EXPECT_EQ(Taken["go"], Choice("portable", "portable windows"));
+  EXPECT_EQ(Taken["python"], Choice("portable", "portable windows"));
+  EXPECT_EQ(Taken["javascript"], Choice("portable", "portable windows"));
+  EXPECT_EQ(Taken["lua"], Choice("portable", "portable windows"));
   EXPECT_EQ(Reads, "c cpp rust go");
   EXPECT_EQ(Prototypes, "c cpp");
 }
@@ -3956,6 +3963,118 @@ TEST_F(SessionCAPITest, FunctionsHoldTheRecordsTheirPDBTypes) {
   const std::string LlvmAfter = llvm();
   EXPECT_NE(LlvmAfter.find("Packed->Items"), std::string::npos) << LlvmAfter;
   EXPECT_NE(LlvmAfter.find("uint16_t Items;"), std::string::npos);
+}
+
+TEST_F(SessionCAPITest, LocalTypesFitWhatTheCodeDoesThroughAPointer) {
+  // use() reads Device->Size through rcx: of the program's records only a
+  // _DEVICE holds a member of that width there.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "local_types.exe", std::ios::binary);
+  const std::string Exe =
+      write("local_types.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  neverd_session_set_pdb_path(Session,
+                              (Fixtures / "local_types.pdb").string().c_str());
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto parse = [&](const char *Raw) {
+    auto Parsed = llvm::json::parse(takeString(Raw));
+    EXPECT_TRUE(static_cast<bool>(Parsed))
+        << takeString(neverd_last_error(Session));
+    return Parsed && Parsed->getAsObject() ? *Parsed->getAsObject()
+                                           : llvm::json::Object();
+  };
+  const int Index = neverd_func_find_by_name(Session, "use");
+  ASSERT_GE(Index, 0);
+  const neverd_va_t Use = neverd_func_entry(Session, Index);
+  auto Rows =
+      llvm::json::parse(takeString(neverd_disasm_json(Session, Use, 16)));
+  ASSERT_TRUE(static_cast<bool>(Rows) && Rows->getAsArray());
+  std::optional<std::string> Read;
+  for (const llvm::json::Value &Row : *Rows->getAsArray())
+    if (const llvm::json::Object *Object = Row.getAsObject();
+        Object && Object->getString("op_str").value_or("").contains("rcx + 2]"))
+      Read = Object->getString("addr")->str();
+  ASSERT_TRUE(Read);
+
+  const std::string Request = llvm::formatv(R"({{"function":"{0:x}",)"
+                                            R"("target":{{"address":"{1}"},)"
+                                            R"("limit":3})",
+                                            Use, *Read)
+                                  .str();
+  llvm::json::Object Fit =
+      parse(neverd_local_types_fit_json(Session, Request.c_str()));
+  const llvm::json::Object *Target = Fit.getObject("target");
+  ASSERT_NE(Target, nullptr) << Request;
+  EXPECT_EQ(Target->getString("base"), "rcx");
+  EXPECT_EQ(Target->getInteger("offset"), 2);
+  EXPECT_EQ(Target->getInteger("size"), 2);
+  EXPECT_EQ(Target->getArray("accesses")->size(), 1u);
+  const llvm::json::Array *Candidates = Fit.getArray("candidates");
+  ASSERT_TRUE(Candidates && Candidates->size() == 3u);
+  const llvm::json::Object &Best = *(*Candidates)[0].getAsObject();
+  EXPECT_EQ(Best.getString("name"), "_DEVICE");
+  EXPECT_EQ(Best.getInteger("exact"), 1);
+  const llvm::json::Object &Size = *(*Best.getArray("fits"))[0].getAsObject();
+  EXPECT_EQ(Size.getString("path"), "Size");
+  EXPECT_EQ(Size.getString("type"), "uint16_t");
+  EXPECT_EQ((*Candidates)[1].getAsObject()->getInteger("exact"), 0);
+
+  // A pointer to a device's Links, as a list walk holds: the device's type
+  // before it and the link where it points.
+  llvm::json::Object Walk = parse(neverd_local_types_fit_json(
+      Session, R"({"accesses":[{"offset":-8,"size":2},{"offset":0,"size":8}],)"
+               R"("text":"device"})"));
+  const llvm::json::Object &Links =
+      *(*Walk.getArray("candidates"))[0].getAsObject();
+  EXPECT_EQ(Links.getString("name"), "_DEVICE");
+  EXPECT_EQ(Links.getInteger("shift"), 8);
+  EXPECT_EQ(Links.getString("shiftPath"), "Links");
+  EXPECT_EQ(Links.getInteger("exact"), 2);
+  // Member paths match too.
+  llvm::json::Object Member = parse(
+      neverd_local_types_fit_json(Session, R"({"text":"dev.links.blink"})"));
+  EXPECT_EQ((*Member.getArray("candidates"))[0].getAsObject()->getString(
+                "matchedMember"),
+            "Links.Blink");
+
+  llvm::json::Object At = parse(
+      neverd_local_type_member_json(Session, "_DEVICE", 0x18, 4, nullptr));
+  EXPECT_EQ(At.getString("record"), "_DEVICE");
+  EXPECT_EQ(At.getString("fit"), "start");
+  EXPECT_EQ(At.getString("path"), "MajorFunction[0]");
+  EXPECT_EQ(neverd_local_type_member_json(Session, "_NOPE", 0, 1, nullptr),
+            nullptr);
+  for (const char *Malformed :
+       {R"({"limit":0})", R"({"accesses":[{"offset":1}]})",
+        R"({"accesses":[{"offset":1,"size":4,"use":"address"}]})",
+        R"({"target":{"address":"0x1"}})", "[]"})
+    EXPECT_EQ(neverd_local_types_fit_json(Session, Malformed), nullptr)
+        << Malformed;
+
+  // T: the displacement shown as the member of _DEVICE it lands on, kept
+  // beside the binary; a type the program lacks, or a sign, is refused.
+  const neverd_va_t At2 = std::stoull(*Read, nullptr, 16);
+  EXPECT_EQ(neverd_operand_format_set(Session, At2, 1,
+                                      R"({"base":"struct","type":"_DEVICE"})"),
+            0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(neverd_operand_format_set(Session, At2, 1,
+                                      R"({"base":"struct","type":"_NOPE"})"),
+            -1);
+  EXPECT_EQ(neverd_operand_format_set(
+                Session, At2, 1,
+                R"({"base":"struct","type":"_DEVICE","negate":true})"),
+            -1);
+  EXPECT_EQ(neverd_operand_format_set(Session, At2, 1,
+                                      R"({"base":"hex","type":"_DEVICE"})"),
+            -1);
+  const std::string Formats = takeString(neverd_operand_formats_json(Session));
+  EXPECT_NE(Formats.find(R"("type":"_DEVICE")"), std::string::npos) << Formats;
+  ASSERT_EQ(neverd_operand_formats_save(Session), 0);
+  ASSERT_EQ(neverd_operand_formats_load(Session), 0);
+  EXPECT_EQ(takeString(neverd_operand_formats_json(Session)), Formats);
 }
 
 TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {

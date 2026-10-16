@@ -177,6 +177,9 @@ private:
   void rename();
   /// IDA's Edit function dialog for the function at \p entry.
   void editFunction(Address entry);
+  /// T: the operand under the cursor as a member of the local type the
+  /// user picks among those the code's accesses fit (TypePickerDialog).
+  void chooseStructOffset();
   /// The Functions window's context menu for the row at \p position.
   void functionsMenu(const QPoint &position);
   void comment();

@@ -21,6 +21,7 @@
 #include "SettingsKeys.h"
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
+#include "TypePickerDialog.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
@@ -3876,6 +3877,11 @@ private slots:
 
   void localTypesLayOutAndRenderTheProgramsTypes() {
     QTemporaryDir directory;
+    // A choice kept before exact widths became the default starts over.
+    QSettings().setValue(QStringLiteral("localTypes/spelling"),
+                         QStringLiteral("ida"));
+    QSettings().setValue(QStringLiteral("localTypes/luaSpelling"),
+                         QStringLiteral("windows"));
     Workbench bench;
     bench.window->openFile(
         writeFixture(directory, QStringLiteral("local-types.bin")));
@@ -3946,23 +3952,24 @@ private slots:
         ids.append(spelling->itemData(index).toString());
       return ids;
     };
+    // Exact widths come first, every language's default.
+    const QStringList twoSpellings{QStringLiteral("portable"),
+                                   QStringLiteral("windows")};
     types->setPage(2);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language rust spelling portable")));
     QVERIFY(!spelling->isHidden());
-    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
-                                     QStringLiteral("portable")}));
-    spelling->setCurrentIndex(0);
+    QCOMPARE(choices(), twoSpellings);
+    spelling->setCurrentIndex(1);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language rust spelling windows")));
     types->setPage(3);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language go spelling portable")));
     QVERIFY(!spelling->isHidden());
-    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
-                                     QStringLiteral("portable")}));
-    QCOMPARE(spelling->itemText(1), QStringLiteral("Exact widths (uint32)"));
-    spelling->setCurrentIndex(0);
+    QCOMPARE(choices(), twoSpellings);
+    QCOMPARE(spelling->itemText(0), QStringLiteral("Exact widths (uint32)"));
+    spelling->setCurrentIndex(1);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language go spelling windows")));
     // Python renders through ctypes, with its own two spellings.
@@ -3970,9 +3977,8 @@ private slots:
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language python spelling portable")));
     QVERIFY(!spelling->isHidden());
-    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
-                                     QStringLiteral("portable")}));
-    QCOMPARE(spelling->itemText(1), QStringLiteral("Exact widths (c_uint32)"));
+    QCOMPARE(choices(), twoSpellings);
+    QCOMPARE(spelling->itemText(0), QStringLiteral("Exact widths (c_uint32)"));
     // JavaScript whose JSDoc TypeScript checks, as one tab.
     const auto *tabBar =
         types->findChild<QTabBar *>(QStringLiteral("localTypesTabs"));
@@ -3981,37 +3987,37 @@ private slots:
     types->setPage(5);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language javascript spelling portable")));
-    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
-                                     QStringLiteral("portable")}));
-    QCOMPARE(spelling->itemText(1),
+    QCOMPARE(choices(), twoSpellings);
+    QCOMPARE(spelling->itemText(0),
              QStringLiteral("JavaScript types (number, bigint)"));
     // Lua, whose spelling names the C types its comments give.
     QCOMPARE(tabBar->tabText(6), QStringLiteral("Lua"));
     types->setPage(6);
     QTRY_VERIFY(source->toPlainText().startsWith(
         QStringLiteral("// language lua spelling portable")));
-    QCOMPARE(choices(), (QStringList{QStringLiteral("windows"),
-                                     QStringLiteral("portable")}));
+    QCOMPARE(choices(), twoSpellings);
     types->setPage(1);
     QTRY_VERIFY(source->toPlainText().startsWith(
-        QStringLiteral("// language c spelling windows")));
+        QStringLiteral("// language c spelling portable")));
     QVERIFY(source->toPlainText().contains(QStringLiteral("struct _DEVICE")));
     QVERIFY(!spelling->isHidden());
     for (auto *box : types->findChildren<QCheckBox *>())
       QVERIFY2(!box->isHidden(), qPrintable(box->text()));
-    QCOMPARE(
-        choices(),
-        (QStringList{QStringLiteral("windows"), QStringLiteral("ida"),
-                     QStringLiteral("keywords"), QStringLiteral("portable")}));
-    QCOMPARE(spelling->currentData().toString(), QStringLiteral("windows"));
+    QCOMPARE(choices(),
+             (QStringList{QStringLiteral("portable"), QStringLiteral("windows"),
+                          QStringLiteral("keywords")}));
+    QCOMPARE(spelling->currentData().toString(), QStringLiteral("portable"));
     QCOMPARE(QSettings().value(QStringLiteral("localTypes/view")).toString(),
              QStringLiteral("c"));
+    QCOMPARE(QSettings()
+                 .value(QStringLiteral("localTypes/spellings/rust"))
+                 .toString(),
+             QStringLiteral("windows"));
     QCOMPARE(
-        QSettings().value(QStringLiteral("localTypes/rustSpelling")).toString(),
+        QSettings().value(QStringLiteral("localTypes/spellings/go")).toString(),
         QStringLiteral("windows"));
-    QCOMPARE(
-        QSettings().value(QStringLiteral("localTypes/goSpelling")).toString(),
-        QStringLiteral("windows"));
+    QVERIFY(!QSettings().contains(QStringLiteral("localTypes/spelling")));
+    QVERIFY(!QSettings().contains(QStringLiteral("localTypes/luaSpelling")));
 
     // The command line shows a type by name, and says when none has it.
     auto *output = bench.window->findChild<OutputWindow *>();
@@ -4027,6 +4033,89 @@ private slots:
     filter->setText(QStringLiteral("list"));
     QTRY_COMPARE(list->model()->rowCount(), 1);
     types->setPage(0);
+  }
+
+  void structureOffsetsRankTypesByTheCodesAccesses() {
+    // T on `mov rax, [rcx+8]` lists the local types by how function_7's
+    // accesses through rcx land on their members, the one that holds them
+    // all first and previewed as the operand becomes; Apply shows the
+    // operand, and every other access through rcx, as members of it in one
+    // step of the history.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-types.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.session.showsStructOffsets());
+    auto *disassembly = bench.window->findChild<DisassemblyView *>();
+    QVERIFY(disassembly);
+    const Address read = Base + 0x70;
+    const auto lineAt = [&](Address at) {
+      disassembly->navigate(at);
+      return disassembly->listing()->currentLineText();
+    };
+    disassembly->navigate(read);
+    disassembly->focusContent();
+    QTRY_COMPARE(disassembly->currentItem(), std::optional<Address>(read));
+    QTRY_VERIFY(disassembly->listing()->currentLineText().contains(
+        QLatin1String("[rcx+8]")));
+    QTRY_VERIFY(bench.action(ActionId::EditOperandStruct)->isEnabled());
+
+    QStringList listed;
+    QString expression, every, summary;
+    auto *picker = new QTimer(&bench.session);
+    connect(picker, &QTimer::timeout, picker, [&, picker] {
+      auto *dialog =
+          qobject_cast<TypePickerDialog *>(QApplication::activeModalWidget());
+      if (!dialog || !dialog->isActiveWindow())
+        return;
+      auto *list =
+          dialog->findChild<QListWidget *>(QStringLiteral("typePickerList"));
+      auto *search =
+          dialog->findChild<QLineEdit *>(QStringLiteral("typePickerSearch"));
+      if (!list || !search || list->count() < 2 || !search->hasFocus())
+        return;
+      picker->stop();
+      picker->deleteLater();
+      for (int row = 0; row < list->count(); ++row)
+        listed << list->item(row)->text();
+      expression =
+          dialog->findChild<QLabel *>(QStringLiteral("typePickerExpression"))
+              ->text();
+      summary = dialog->findChild<QLabel *>(QStringLiteral("typePickerSummary"))
+                    ->text();
+      auto *box =
+          dialog->findChild<QCheckBox *>(QStringLiteral("typePickerEvery"));
+      every = box->isVisibleTo(dialog) ? box->text() : QString();
+      box->setChecked(true);
+      QTest::keyClick(search, Qt::Key_Return);
+    });
+    picker->start(10);
+    bench.action(ActionId::EditOperandStruct)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        listed,
+        (QStringList{QStringLiteral("_DEVICE"), QStringLiteral("_LIST_ENTRY")}),
+        OpenTimeoutMs);
+    QCOMPARE(expression, QStringLiteral("[rcx+_DEVICE.Links.Flink]"));
+    QCOMPARE(every, QStringLiteral("Also show the 2 other instructions that "
+                                   "go through rcx as members"));
+    QCOMPARE(summary, QStringLiteral("2 types"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        lineAt(read).contains(QLatin1String("[rcx+_DEVICE.Links.Flink]")),
+        OpenTimeoutMs);
+    QTRY_VERIFY(lineAt(read + 1).contains(QLatin1String("[rcx+_DEVICE.Type]")));
+    QTRY_VERIFY(
+        lineAt(read + 2).contains(QLatin1String("[rcx+_DEVICE.Links.Blink]")));
+    // The number of `add rcx, 18h` stays: no access went through it.
+    QTRY_VERIFY(lineAt(read + 3).contains(QLatin1String("rcx, 18h")));
+
+    // One undo takes the three back.
+    bench.session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        lineAt(read + 2).contains(QLatin1String("[rcx+10h]")), OpenTimeoutMs);
+    QTRY_VERIFY(lineAt(read).contains(QLatin1String("[rcx+8]")));
+    QVERIFY2(bench.session.lastError().isEmpty(),
+             qPrintable(bench.session.lastError()));
   }
 
   void localTypesAreDeclaredEditedAndDeletedByIdasKeys() {

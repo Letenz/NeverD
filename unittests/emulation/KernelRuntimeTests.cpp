@@ -54,6 +54,15 @@ protected:
     check(Model->initialize(Image, DriverOptions{}));
   }
 
+  void resetModel() {
+    // Terminal CPU faults allow observation but cannot be resumed. Independent
+    // fault probes need their own backend and model, including RAM ownership.
+    Model.reset();
+    Memory.reset();
+    Result = {};
+    SetUp();
+  }
+
   uint64_t invoke(const char *Name, std::initializer_list<uint64_t> Arguments) {
     auto Value = Model->call(Name, Arguments);
     if (!Value) {
@@ -1962,5 +1971,400 @@ TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {
         "KeGetCurrentThread", "PsGetCurrentThreadId", "PsGetThreadId"})
     EXPECT_EQ(Calls[Name], 1u) << Name;
 }
+using namespace std::string_view_literals;
+
+TEST_F(KernelRuntime, DigitClassificationKeepsTheKernelMaskAndCarrierWidth) {
+  for (uint32_t Value = 0; Value < 512; ++Value) {
+    const uint64_t Expected = Value % 256 >= '0' && Value % 256 <= '9' ? 4 : 0;
+    EXPECT_EQ(invoke("isdigit", {Value}), Expected);
+    EXPECT_EQ(invoke("isdigit", {0xaabbccdd00000000ull | Value}), Expected);
+  }
+  for (uint64_t Value : {uint64_t{0xffffffff}, uint64_t{0xfffffffe},
+                         uint64_t{0xaabbccddffffffff}})
+    EXPECT_EQ(invoke("isdigit", {Value}), 0u);
+  EXPECT_EQ(invoke("isdigit", {0xaabbccdd00000130}), 4u);
+  EXPECT_FALSE(failure("isdigit", {}).empty());
+}
+
+TEST_F(KernelRuntime, InPlaceCaseConversionPreservesEveryOtherUnit) {
+  constexpr uint64_t Buffer = Scratch + 0x20000;
+  check(Memory->map(Buffer, 0x20000, Read | Write));
+  for (const char *Name : {"_strupr", "_wcslwr", "_wcsupr"}) {
+    const unsigned Width = std::string_view(Name) == "_strupr" ? 1 : 2;
+    const bool Lower = std::string_view(Name) == "_wcslwr";
+    const unsigned Count = Width == 1 ? 256 : 65536;
+    std::vector<uint8_t> Bytes(Count * Width);
+    for (unsigned I = 1; I < Count; ++I) {
+      Bytes[(I - 1) * Width] = uint8_t(I);
+      if (Width == 2)
+        Bytes[(I - 1) * Width + 1] = uint8_t(I >> 8);
+    }
+    check(Memory->write(Buffer, Bytes));
+    EXPECT_EQ(invoke(Name, {Buffer}), Buffer);
+    // Exhaustive original-export probes establish that only ASCII changes;
+    // accented characters, surrogate code units and fullwidth letters remain.
+    const unsigned First = Lower ? 'A' : 'a';
+    for (unsigned I = First; I <= First + 25; ++I)
+      Bytes[(I - 1) * Width] = uint8_t(Lower ? I + 32 : I - 32);
+    std::vector<uint8_t> Actual(Bytes.size());
+    check(Memory->read(Buffer, Actual));
+    EXPECT_EQ(Actual, Bytes) << Name;
+    ASSERT_FALSE(HasFailure());
+  }
+  EXPECT_EQ(invoke("_strupr", {0}), 0u);
+  EXPECT_EQ(invoke("_wcslwr", {0}), 0u);
+  EXPECT_FALSE(failure("_wcsupr", {0}).empty());
+}
+
+TEST_F(KernelRuntime,
+       CaseConversionWritesOnlyChangedUnitsAndKeepsPartialStores) {
+  for (const char *Name : {"_strupr", "_wcslwr", "_wcsupr"}) {
+    resetModel();
+    const unsigned Width = std::string_view(Name) == "_strupr" ? 1 : 2;
+    const bool Lower = std::string_view(Name) == "_wcslwr";
+    const uint64_t Address = Scratch + 0x2000;
+    check(Memory->writeInteger(Address, 0x80, Width));
+    check(Memory->writeInteger(Address + Width, 0, Width));
+    check(Memory->protect(Address, 0x1000, Read));
+    EXPECT_EQ(invoke(Name, {Address}), Address);
+    check(Memory->protect(Address, 0x1000, Read | Write));
+    check(Memory->writeInteger(Address, Lower ? 'A' : 'a', Width));
+    check(Memory->protect(Address, 0x1000, Read));
+    EXPECT_FALSE(failure(Name, {Address}).empty());
+    EXPECT_EQ(integer(Address, Width), Lower ? 'A' : 'a');
+    resetModel();
+    const uint64_t Edge = Scratch + 0x10000 - 2 * Width;
+    check(Memory->writeInteger(Edge, Lower ? 'A' : 'a', Width));
+    check(Memory->writeInteger(Edge + Width, Lower ? 'B' : 'b', Width));
+    EXPECT_FALSE(failure(Name, {Edge}).empty());
+    EXPECT_EQ(integer(Edge, Width), Lower ? 'a' : 'A');
+    EXPECT_EQ(integer(Edge + Width, Width), Lower ? 'b' : 'B');
+    ASSERT_FALSE(HasFailure());
+  }
+}
+
+TEST_F(KernelRuntime, CheckedCopiesPreserveCapacityErrorsAndTruncationBytes) {
+  struct Case {
+    uint64_t Capacity, Count, Status;
+    std::string_view Output;
+  };
+  // Concrete byte/unit observations from the original exports, including
+  // errors which clear the first unit after writing later units.
+  const Case Cases[] = {{0, 6, 22, "!!!!!!!!"},
+                        {1, 6, 34, "\0!!!!!!!"sv},
+                        {2, 6, 34, "\0B!!!!!!"sv},
+                        {4, 6, 34, "\0BCD!!!!"sv},
+                        {5, 6, 0, "ABCD\0!!!"sv},
+                        {8, 0, 0, "\0!!!!!!!"sv},
+                        {8, 1, 0, "A\0!!!!!!"sv},
+                        {8, 3, 0, "ABC\0!!!!"sv},
+                        {3, 3, 34, "\0BC!!!!!"sv},
+                        {4, 3, 0, "ABC\0!!!!"sv},
+                        {1, UINT64_MAX, 80, "\0!!!!!!!"sv},
+                        {3, UINT64_MAX, 80, "AB\0!!!!!"sv},
+                        {4, UINT64_MAX, 80, "ABC\0!!!!"sv},
+                        {5, UINT64_MAX, 0, "ABCD\0!!!"sv},
+                        {UINT64_MAX, uint64_t{1} << 32, 0, "ABCD\0!!!"sv}};
+  for (const char *Name : {"strncpy_s", "wcsncpy_s"}) {
+    const unsigned Width = std::string_view(Name) == "strncpy_s" ? 1 : 2;
+    for (const auto &C : Cases) {
+      SCOPED_TRACE(::testing::Message()
+                   << Name << ' ' << C.Capacity << ' ' << C.Count);
+      const uint64_t Source = Scratch + 0x100;
+      if (Width == 1) {
+        ascii(Scratch, "!!!!!!!!");
+        ascii(Source, "ABCD");
+      } else {
+        wide(Scratch, u"!!!!!!!!");
+        wide(Source, u"ABCD");
+      }
+      EXPECT_EQ(invoke(Name, {Scratch, C.Capacity, Source, C.Count}), C.Status);
+      for (unsigned I = 0; I < C.Output.size(); ++I)
+        EXPECT_EQ(integer(Scratch + I * Width, Width), uint8_t(C.Output[I]));
+      ASSERT_FALSE(HasFailure());
+    }
+  }
+  for (uint64_t Capacity : {1u, 2u, 4u, 5u}) {
+    ascii(Scratch, "!!!!!!!!");
+    ascii(Scratch + 0x100, "ABCD");
+    EXPECT_EQ(invoke("strcpy_s", {Scratch, Capacity, Scratch + 0x100}),
+              Capacity == 5 ? 0u : 34u);
+    const std::string_view Expected = Capacity == 1   ? "\0!!!!!!!"sv
+                                      : Capacity == 2 ? "\0B!!!!!!"sv
+                                      : Capacity == 4 ? "\0BCD!!!!"sv
+                                                      : "ABCD\0!!!"sv;
+    EXPECT_EQ(bytesText(Scratch, 8), Expected);
+  }
+}
+
+TEST_F(KernelRuntime, CheckedAppendAndNullArgumentsKeepKernelErrorEffects) {
+  const uint64_t Source = Scratch + 0x100;
+  wide(Source, u"CD");
+  for (uint64_t Capacity : {0u, 1u, 2u, 3u, 4u, 5u}) {
+    wide(Scratch, u"AB\0!!!!!"sv);
+    EXPECT_EQ(invoke("wcscat_s", {Scratch, Capacity, Source}),
+              Capacity < 3   ? 22u
+              : Capacity < 5 ? 34u
+                             : 0u);
+    const std::u16string_view Expected = Capacity == 0   ? u"AB\0!!!!!"sv
+                                         : Capacity < 3  ? u"\0B\0!!!!!"sv
+                                         : Capacity == 3 ? u"\0BC!!!!!"sv
+                                         : Capacity == 4 ? u"\0BCD!!!!"sv
+                                                         : u"ABCD\0!!!"sv;
+    EXPECT_EQ(units(Scratch, 8), Expected);
+  }
+  for (const char *Name : {"strcpy_s", "strncpy_s", "wcscat_s", "wcsncpy_s"}) {
+    const bool Counted =
+        std::string_view(Name).find("ncpy") != std::string_view::npos;
+    const unsigned Width = Name[0] == 'w' ? 2 : 1;
+    auto Call = [&](uint64_t D, uint64_t Size, uint64_t S, uint64_t Count) {
+      return Counted ? invoke(Name, {D, Size, S, Count})
+                     : invoke(Name, {D, Size, S});
+    };
+    EXPECT_EQ(Call(0, 0, 0, 1), 22u);
+    EXPECT_EQ(Call(0, 4, Source, 1), 22u);
+    check(Memory->writeInteger(Scratch, 0x55555555, 4));
+    EXPECT_EQ(Call(Scratch, 4, 0, 1), 22u);
+    EXPECT_EQ(integer(Scratch, Width), 0u);
+    EXPECT_EQ(integer(Scratch + Width, Width), Width == 1 ? 0x55u : 0x5555u);
+    if (Counted) {
+      EXPECT_EQ(Call(0, 0, 1, 0), 0u);
+      EXPECT_EQ(Call(0, 1, 1, 0), 22u);
+      EXPECT_EQ(Call(Scratch, 1, 1, 0), 0u);
+      EXPECT_EQ(integer(Scratch, Width), 0u);
+    }
+  }
+}
+
+TEST_F(KernelRuntime,
+       CheckedStringFaultsPreserveEarlierUnitsAndValidateLifetime) {
+  for (const char *Name : {"strcpy_s", "strncpy_s", "wcscat_s", "wcsncpy_s"}) {
+    const bool Counted =
+        std::string_view(Name).find("ncpy") != std::string_view::npos;
+    const unsigned Width = Name[0] == 'w' ? 2 : 1;
+    const uint64_t Edge = Scratch + 0x10000 - 2 * Width;
+    auto Fail = [&](uint64_t D, uint64_t Size, uint64_t S) {
+      return Counted ? failure(Name, {D, Size, S, 4})
+                     : failure(Name, {D, Size, S});
+    };
+    for (bool SourceFault : {false, true}) {
+      resetModel();
+      const uint64_t Destination = SourceFault ? Scratch : Edge;
+      const uint64_t Source = SourceFault ? Edge : Scratch;
+      check(Memory->writeInteger(Destination, 0, Width));
+      for (unsigned I = 0; I < (SourceFault ? 2u : 4u); ++I)
+        check(Memory->writeInteger(Source + I * Width, I == 3 ? 0 : 'A' + I,
+                                   Width));
+      EXPECT_FALSE(Fail(Destination, 4, Source).empty());
+      EXPECT_EQ(integer(Destination, Width), 'A');
+      EXPECT_EQ(integer(Destination + Width, Width), 'B');
+    }
+    resetModel();
+    check(Memory->writeInteger(Scratch, 0, Width));
+    const auto Pool = invoke("ExAllocatePoolWithTag", {0, 16, Tag});
+    invoke("ExFreePoolWithTag", {Pool, Tag});
+    EXPECT_NE(Fail(Pool, 1, Scratch).find("freed"), std::string::npos);
+    EXPECT_NE(Fail(Scratch, 1, Pool).find("freed"), std::string::npos);
+    ASSERT_FALSE(HasFailure());
+  }
+}
+
+TEST_F(KernelRuntime, CheckedCopiesFollowThePinnedSequentialAliasBehavior) {
+  // These are observed kernel instruction effects, not portable C overlap
+  // guarantees. Earlier stores can replace a later source terminator.
+  ascii(Scratch, "ABCD\0!!!"sv);
+  EXPECT_EQ(invoke("strcpy_s", {Scratch + 2, 6, Scratch}), 34u);
+  EXPECT_EQ(bytesText(Scratch, 8), "AB\0BABAB"sv);
+  ascii(Scratch, "ABCD\0!!!"sv);
+  EXPECT_EQ(invoke("strncpy_s", {Scratch + 2, 6, Scratch, 4}), 0u);
+  EXPECT_EQ(bytesText(Scratch, 8), "ABABAB\0!"sv);
+  wide(Scratch, u"ABCD\0!!!"sv);
+  EXPECT_EQ(invoke("wcsncpy_s", {Scratch + 4, 6, Scratch, 4}), 0u);
+  EXPECT_EQ(units(Scratch, 8), u"ABABAB\0!"sv);
+  wide(Scratch, u"ABCD\0!!!"sv);
+  EXPECT_EQ(invoke("wcscat_s", {Scratch + 4, 6, Scratch}), 34u);
+  EXPECT_EQ(units(Scratch, 8), u"AB\0DABCD"sv);
+  ascii(Scratch, "ABCD");
+  EXPECT_EQ(invoke("strcpy_s", {Scratch, 5, Scratch}), 0u);
+  EXPECT_EQ(bytesText(Scratch, 5), "ABCD\0"sv);
+}
+
+TEST_F(KernelRuntime, CheckedStringsBoundScansAndRespectPagedStorage) {
+  Model->enterExecution(0x100);
+  const uint64_t Pool = invoke("ExAllocatePoolWithTag", {1, 16, Tag});
+  ascii(Pool, "a");
+  const uint64_t Old = invoke("KfRaiseIrql", {2});
+  EXPECT_NE(failure("_strupr", {Pool}).find("paged pool"), std::string::npos);
+  EXPECT_NE(failure("strcpy_s", {Scratch, 8, Pool}).find("paged pool"),
+            std::string::npos);
+  EXPECT_EQ(invoke("isdigit", {'7'}), 4u);
+  invoke("KeLowerIrql", {Old});
+  invoke("ExFreePoolWithTag", {Pool, Tag});
+  constexpr uint64_t Buffer = Scratch + 0x400000, Limit = 1024 * 1024;
+  check(Memory->map(Buffer, Limit + 0x1000, Read | Write));
+  check(Memory->write(Buffer, std::vector<uint8_t>(Limit, 'a')));
+  EXPECT_NE(failure("_strupr", {Buffer}).find("1 MiB"), std::string::npos);
+  EXPECT_EQ(integer(Buffer, 1), 'A');
+  EXPECT_EQ(integer(Buffer + Limit - 1, 1), 'A');
+  EXPECT_EQ(integer(Buffer + Limit, 1), 0u);
+  // Capacity is a full size_t; a huge value does not force access to unused
+  // capacity. An actual scan is still bounded, including alias expansion.
+  ascii(Scratch, "ABCD");
+  EXPECT_EQ(invoke("strcpy_s", {Scratch + 0x100, UINT64_MAX, Scratch}), 0u);
+  EXPECT_EQ(bytesText(Scratch + 0x100, 5), "ABCD\0"sv);
+  EXPECT_FALSE(failure("strcpy_s", {UINT64_MAX, 2, Scratch}).empty());
+}
+
+TEST_F(KernelRuntime, CheckedMemoryCopiesPreserveDistinctErrorEffects) {
+  struct Case {
+    uint64_t Capacity, Count, Status;
+    bool NullDestination, NullSource;
+    std::string_view CopyBytes, MoveBytes;
+  };
+  const Case Cases[] = {
+      {0, 0, 0, true, true, "!!!!!!!!", "!!!!!!!!"},
+      {8, 3, 22, true, false, "!!!!!!!!", "!!!!!!!!"},
+      {8, 3, 22, false, true, "\0\0\0\0\0\0\0\0"sv, "!!!!!!!!"},
+      {0, 3, 22, false, true, "!!!!!!!!", "!!!!!!!!"},
+      {0, 3, 34, false, false, "!!!!!!!!", "!!!!!!!!"},
+      {2, 3, 34, false, false, "\0\0!!!!!!"sv, "!!!!!!!!"},
+      {8, uint64_t{1} << 32, 34, false, false, "\0\0\0\0\0\0\0\0"sv,
+       "!!!!!!!!"},
+      {3, 3, 0, false, false, "ABC!!!!!", "ABC!!!!!"},
+      {UINT64_MAX, 3, 0, false, false, "ABC!!!!!", "ABC!!!!!"}};
+  ascii(Scratch + 0x100, "ABCDE");
+  for (const char *Name : {"memcpy_s", "memmove_s"})
+    for (const auto &C : Cases) {
+      SCOPED_TRACE(::testing::Message()
+                   << Name << ' ' << C.Capacity << ' ' << C.Count);
+      ascii(Scratch, "!!!!!!!!");
+      EXPECT_EQ(invoke(Name, {C.NullDestination ? 0 : Scratch, C.Capacity,
+                              C.NullSource ? 0 : Scratch + 0x100, C.Count}),
+                C.Status);
+      EXPECT_EQ(bytesText(Scratch, 8), std::string_view(Name) == "memcpy_s"
+                                           ? C.CopyBytes
+                                           : C.MoveBytes);
+      ASSERT_FALSE(HasFailure());
+    }
+}
+
+TEST_F(KernelRuntime, CheckedMemoryCopiesUseMoveSemanticsAndIgnoreZeroCount) {
+  for (const char *Name : {"memcpy_s", "memmove_s"}) {
+    ascii(Scratch, "ABCDEFGH");
+    EXPECT_EQ(invoke(Name, {Scratch + 2, 4, Scratch, 4}), 0u);
+    EXPECT_EQ(bytesText(Scratch, 8), "ABABCDGH");
+    ascii(Scratch, "ABCDEFGH");
+    EXPECT_EQ(invoke(Name, {Scratch, 4, Scratch + 2, 4}), 0u);
+    EXPECT_EQ(bytesText(Scratch, 8), "CDEFEFGH");
+    EXPECT_EQ(invoke(Name, {Scratch, 8, Scratch, 8}), 0u);
+    EXPECT_EQ(bytesText(Scratch, 8), "CDEFEFGH");
+    EXPECT_EQ(invoke(Name, {UINT64_MAX, UINT64_MAX, UINT64_MAX, 0}), 0u);
+    // Capacity failure must not read a non-null source.
+    ascii(Scratch, "!!!!!!!!");
+    EXPECT_EQ(invoke(Name, {Scratch, 2, UINT64_MAX, 3}), 34u);
+    EXPECT_EQ(bytesText(Scratch, 8), std::string_view(Name) == "memcpy_s"
+                                         ? "\0\0!!!!!!"sv
+                                         : "!!!!!!!!"sv);
+  }
+}
+
+TEST_F(KernelRuntime, CheckedMemoryCopiesRetainStorageAndOperationLimits) {
+  const uint64_t Source = Scratch + 0x100;
+  ascii(Source, "ABCD");
+  ascii(Scratch, "!!!!!!!!");
+  check(Memory->protect(Scratch, 0x1000, Read));
+  EXPECT_EQ(invoke("memmove_s", {Scratch, 2, 0, 3}), 22u);
+  EXPECT_FALSE(failure("memcpy_s", {Scratch, 2, 0, 3}).empty());
+  EXPECT_EQ(bytesText(Scratch, 8), "!!!!!!!!");
+  for (const char *Name : {"memcpy_s", "memmove_s"}) {
+    resetModel();
+    ascii(Source, "ABCD");
+    check(Memory->protect(Scratch, 0x1000, Read));
+    EXPECT_FALSE(failure(Name, {Scratch, 4, Source, 4}).empty());
+  }
+  resetModel();
+  Model->enterExecution(0x100);
+  ascii(Source, "ABCD");
+  const auto Pool = invoke("ExAllocatePoolWithTag", {0, 16, Tag});
+  invoke("ExFreePoolWithTag", {Pool, Tag});
+  EXPECT_NE(failure("memcpy_s", {Pool, 4, 0, 1}).find("freed"),
+            std::string::npos);
+  EXPECT_EQ(invoke("memmove_s", {Pool, 4, 0, 1}), 22u);
+  for (const char *Name : {"memcpy_s", "memmove_s"}) {
+    EXPECT_NE(
+        failure(Name, {Scratch, 0x100001, Source, 0x100001}).find("1 MiB"),
+        std::string::npos);
+    const auto Paged = invoke("ExAllocatePoolWithTag", {1, 16, Tag});
+    ascii(Paged, "A");
+    const auto Old = invoke("KfRaiseIrql", {2});
+    EXPECT_NE(failure(Name, {Scratch, 4, Paged, 2}).find("paged pool"),
+              std::string::npos);
+    invoke("KeLowerIrql", {Old});
+    invoke("ExFreePoolWithTag", {Paged, Tag});
+  }
+  EXPECT_NE(failure("memcpy_s", {Scratch, 0x100001, 0, 1}).find("1 MiB"),
+            std::string::npos);
+  EXPECT_EQ(invoke("memmove_s", {Scratch, UINT64_MAX, 0, 1}), 22u);
+}
+
+TEST_F(KernelRuntime, RawImageHeadersUseSignaturesAndUnsignedDosOffsets) {
+  for (uint64_t Base : {Scratch, uint64_t{0x160000000}}) {
+    if (Base != Scratch)
+      check(Memory->map(Base, 0x1000, Read | Write));
+    check(Memory->writeInteger(Base, 0x5a4d, 2));
+    check(Memory->writeInteger(Base + 60, 0x80, 4));
+    check(Memory->writeInteger(Base + 0x80, 0x4550, 4));
+    check(Memory->writeInteger(Base + 0x84, UINT64_MAX, 8));
+    EXPECT_EQ(invoke("RtlImageNtHeader", {Base}), Base + 0x80);
+    check(Memory->writeInteger(Base + 0x80, 0x12345678, 4));
+    EXPECT_EQ(invoke("RtlImageNtHeader", {Base}), 0u);
+    check(Memory->writeInteger(Base, 0, 2));
+    check(Memory->writeInteger(Base + 60, 0xffffffff, 4));
+    EXPECT_EQ(invoke("RtlImageNtHeader", {Base}), 0u);
+  }
+  constexpr uint64_t Far = Scratch + 0x80000000;
+  check(Memory->map(Far, 0x1000, Read | Write));
+  check(Memory->writeInteger(Scratch, 0x5a4d, 2));
+  check(Memory->writeInteger(Scratch + 60, 0x80000100, 4));
+  check(Memory->writeInteger(Far + 0x100, 0x4550, 4));
+  EXPECT_EQ(invoke("RtlImageNtHeader", {Scratch}), Far + 0x100);
+}
+
+TEST_F(KernelRuntime, RawImageHeaderFencePrecedesSignatureAccess) {
+  constexpr uint64_t Fence = 0x7ffffffeffff, Base = Fence - 0x1fff;
+  check(Memory->map(Base, 0x3000, Read | Write));
+  for (uint32_t Offset :
+       {0x80u, 0x1ef6u, 0x1ef7u, 0x1ef8u, 0x1fffu, 0x2000u, 0xffffffffu}) {
+    check(Memory->writeInteger(Base, 0x5a4d, 2));
+    check(Memory->writeInteger(Base + 60, Offset, 4));
+    if (Offset < 0x3000)
+      check(Memory->writeInteger(Base + Offset, 0x4550, 4));
+    EXPECT_EQ(invoke("RtlImageNtHeader", {Base}),
+              Base + Offset + 264 < Fence ? Base + Offset : 0u);
+  }
+  EXPECT_EQ(invoke("RtlImageNtHeader", {0}), 0u);
+  EXPECT_EQ(invoke("RtlImageNtHeader", {UINT64_MAX}), 0u);
+  EXPECT_FALSE(failure("RtlImageNtHeader", {Scratch + 0x10000}).empty());
+  resetModel();
+  const uint64_t Edge = Scratch + 0x10000 - 2;
+  check(Memory->writeInteger(Edge, 0, 2));
+  EXPECT_EQ(invoke("RtlImageNtHeader", {Edge}), 0u);
+  check(Memory->writeInteger(Edge, 0x5a4d, 2));
+  EXPECT_FALSE(failure("RtlImageNtHeader", {Edge}).empty());
+  resetModel();
+  Model->enterExecution(0x100);
+  const auto Pool = invoke("ExAllocatePoolWithTag", {1, 256, Tag});
+  check(Memory->writeInteger(Pool, 0x5a4d, 2));
+  check(Memory->writeInteger(Pool + 60, 0x80, 4));
+  check(Memory->writeInteger(Pool + 0x80, 0x4550, 4));
+  const auto Old = invoke("KfRaiseIrql", {2});
+  EXPECT_NE(failure("RtlImageNtHeader", {Pool}).find("paged pool"),
+            std::string::npos);
+  invoke("KeLowerIrql", {Old});
+  invoke("ExFreePoolWithTag", {Pool, Tag});
+  EXPECT_NE(failure("RtlImageNtHeader", {Pool}).find("freed"),
+            std::string::npos);
+}
+
 } // namespace
 } // namespace neverd::emulation

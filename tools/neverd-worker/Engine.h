@@ -65,6 +65,9 @@ public:
   static bool listsLocalTypes();
   /// Whether the engine adds declared types (local_types_declare).
   static bool declaresLocalTypes();
+  /// Whether the engine ranks local types by the code's accesses through a
+  /// pointer (local_types_fit) and names structure offsets by them.
+  static bool fitsLocalTypes();
   /// Whether the engine finds the PDB a PE names before opening it, and
   /// opens a PE without it.
   static bool findsPdbFiles();

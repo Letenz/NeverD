@@ -140,7 +140,7 @@ TEST(SymExecConcreteShadow, MissingRegisterAndTemporaryBytesFailClosed) {
       Shadow.step(op(NdOp::COPY, NdVar::reg(16, 8), {NdVar::tmp(0, 8)})));
 }
 
-TEST(SymExecConcreteShadow, InitialMemoryAndApproximateEffectsFailClosed) {
+TEST(SymExecConcreteShadow, UnseededMemoryAndApproximateEffectsFailClosed) {
   SymExecConcreteShadow Shadow;
   ASSERT_TRUE(Shadow.reset(llvm::endianness::little));
   EXPECT_FALSE(Shadow.step(
@@ -164,6 +164,73 @@ TEST(SymExecConcreteShadow, ExactStoreThenLoadKeepsTheShadowComplete) {
   ASSERT_TRUE(Shadow.step(
       op(NdOp::LOAD, NdVar::reg(16, 4), {NdVar::cst(0x401000, 8)})));
   EXPECT_EQ(Shadow.value(NdVar::reg(16, 4)), 0x12345678u);
+}
+
+TEST(SymExecConcreteShadow, EntryMemoryUsesAddressOrderAndIndependentBanks) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    SymExecConcreteShadow Shadow;
+    ASSERT_TRUE(Shadow.reset(Order));
+    ASSERT_TRUE(Shadow.setRegister(0, 8, 0x87654321));
+    ASSERT_TRUE(Shadow.setMemory(2, {0x33, 0x44}));
+    ASSERT_TRUE(Shadow.setMemory(0, {0x11, 0x22}));
+    ASSERT_TRUE(
+        Shadow.step(op(NdOp::LOAD, NdVar::reg(16, 4), {NdVar::cst(0, 8)})));
+    EXPECT_EQ(Shadow.value(NdVar::reg(16, 4)),
+              Order == llvm::endianness::little ? 0x44332211u : 0x11223344u);
+    EXPECT_EQ(Shadow.value(NdVar::reg(0, 8)), 0x87654321u);
+  }
+}
+
+TEST(SymExecConcreteShadow, SnapshotBytesAreMutableAndLoadsKeepAliases) {
+  SymExecConcreteShadow Shadow;
+  ASSERT_TRUE(Shadow.reset(llvm::endianness::little));
+  ASSERT_TRUE(Shadow.setRegister(0, 8, 0x1001));
+  ASSERT_TRUE(Shadow.setMemory(0x1000, {0x11, 0x22, 0x33, 0x44}));
+  ASSERT_TRUE(Shadow.step(
+      op(NdOp::STORE, NdVar{}, {NdVar::reg(0, 8), NdVar::cst(0xBBAA, 2)})));
+  ASSERT_TRUE(
+      Shadow.step(op(NdOp::LOAD, NdVar::reg(16, 4), {NdVar::cst(0x1000, 8)})));
+  EXPECT_EQ(Shadow.value(NdVar::reg(16, 4)), 0x44BBAA11u);
+}
+
+TEST(SymExecConcreteShadow,
+     MemorySeedsRejectEmptyWrappedOverlappingAndLateData) {
+  SymExecConcreteShadow Shadow;
+  ASSERT_TRUE(Shadow.reset(llvm::endianness::little));
+  EXPECT_FALSE(Shadow.setMemory(0, {}));
+  EXPECT_FALSE(Shadow.setMemory(0, {1}));
+
+  ASSERT_TRUE(Shadow.reset(llvm::endianness::little));
+  EXPECT_FALSE(Shadow.setMemory(UINT64_MAX, {1, 2}));
+
+  for (uint64_t Address : {0x1000u, 0x1001u, 0x1003u}) {
+    ASSERT_TRUE(Shadow.reset(llvm::endianness::little));
+    ASSERT_TRUE(Shadow.setMemory(0x1001, {1, 2, 3}));
+    EXPECT_FALSE(Shadow.setMemory(Address, {1, 2}));
+  }
+
+  ASSERT_TRUE(Shadow.reset(llvm::endianness::little));
+  ASSERT_TRUE(Shadow.setMemory(UINT64_MAX, {0x5A}));
+  ASSERT_TRUE(Shadow.step(
+      op(NdOp::LOAD, NdVar::reg(16, 1), {NdVar::cst(UINT64_MAX, 8)})));
+  EXPECT_EQ(Shadow.value(NdVar::reg(16, 1)), 0x5Au);
+  EXPECT_FALSE(Shadow.setMemory(0, {1}));
+  EXPECT_FALSE(Shadow.value(NdVar::reg(16, 1)).has_value());
+}
+
+TEST(SymExecConcreteShadow, MemorySeedsNeverFillHolesOrSurviveReset) {
+  SymExecConcreteShadow Shadow;
+  ASSERT_TRUE(Shadow.reset(llvm::endianness::little));
+  ASSERT_TRUE(Shadow.setMemory(0x1000, {1}));
+  ASSERT_TRUE(Shadow.setMemory(0x1002, {3, 4}));
+  EXPECT_FALSE(
+      Shadow.step(op(NdOp::LOAD, NdVar::reg(16, 4), {NdVar::cst(0x1000, 8)})));
+
+  ASSERT_TRUE(Shadow.reset(llvm::endianness::little));
+  ASSERT_TRUE(Shadow.setMemory(0x1000, {1, 2, 3, 4}));
+  ASSERT_TRUE(Shadow.reset(llvm::endianness::little));
+  EXPECT_FALSE(
+      Shadow.step(op(NdOp::LOAD, NdVar::reg(16, 4), {NdVar::cst(0x1000, 8)})));
 }
 
 } // namespace

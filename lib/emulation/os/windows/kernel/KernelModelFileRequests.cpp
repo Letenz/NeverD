@@ -161,6 +161,9 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
                                  const KernelContextCapture *Context) {
   const bool Query = Kind == DriverRequestKind::QueryInformation;
   const bool Flush = Kind == DriverRequestKind::FlushBuffers;
+  const bool FileSystemControl = Kind == DriverRequestKind::FileSystemControl;
+  const bool Control =
+      Kind == DriverRequestKind::DeviceControl || FileSystemControl;
   const bool Transfer =
       Kind == DriverRequestKind::Read || Kind == DriverRequestKind::Write;
   const bool Write = Kind == DriverRequestKind::Write;
@@ -179,12 +182,16 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
       PendingFileRequestContinuation || PendingFileOperation ||
       NextFileRequest == UINT64_MAX || NextIRPCall == UINT64_MAX)
     return fileRequestError("cannot replace an outstanding continuation");
-  if (Transfer && (A[1] || A[2] || A[3]))
+  if ((Transfer || Control) && (A[1] || A[2] || A[3]))
     return fileRequestError(
-        "native transfers with events or APCs are unsupported");
+        "native requests with events or APCs are unsupported");
   const uint64_t OffsetPointer = Transfer ? A[7] : 0;
   const uint64_t KeyPointer = Transfer ? A[8] : 0;
-  const uint64_t StatusOutput = Native ? A[Transfer ? 4 : 1] : 0;
+  const uint64_t StatusOutput = Native ? A[Transfer || Control ? 4 : 1] : 0;
+  const uint32_t ControlCode = Control ? uint32_t(A[5]) : 0;
+  const uint32_t InputLength = Control ? uint32_t(A[7]) : 0;
+  const uint32_t OutputLength = Control ? uint32_t(A[9]) : 0;
+  const uint64_t InputPointer = Control ? A[6] : 0;
   uint32_t GrantedAccess = 0;
   std::array<uint64_t, 5> Normalized;
   if (Native) {
@@ -199,12 +206,15 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
     // Zw selects KernelMode for object referencing. The handle's process scope
     // still applies, but its granted mask is not a kernel-mode access check.
     GrantedAccess = Handle->GrantedAccess;
-    Normalized = Flush ? std::array<uint64_t, 5>{Handle->Object, 0, 0, 0, 0}
-                 : Transfer
-                     ? std::array<uint64_t, 5>{Handle->Object, 0,
-                                               uint32_t(A[6]), A[5], 0}
-                     : std::array<uint64_t, 5>{Handle->Object, uint32_t(A[4]),
-                                               uint32_t(A[3]), A[2], 0};
+    Normalized =
+        Flush     ? std::array<uint64_t, 5>{Handle->Object, 0, 0, 0, 0}
+        : Control ? std::array<uint64_t, 5>{Handle->Object, 0,
+                                            std::max(InputLength, OutputLength),
+                                            A[8], 0}
+        : Transfer ? std::array<uint64_t, 5>{Handle->Object, 0, uint32_t(A[6]),
+                                             A[5], 0}
+                   : std::array<uint64_t, 5>{Handle->Object, uint32_t(A[4]),
+                                             uint32_t(A[3]), A[2], 0};
     A = Normalized;
   }
   const auto Found = FileObjects.find(A[0]);
@@ -227,6 +237,29 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
       return StatusAccessDenied;
     if (File.Asynchronous || File.State != FileState::Open)
       return fileRequestError("native flush requires an open synchronous file");
+  }
+  if (Control) {
+    if (File.Asynchronous || File.State != FileState::Open)
+      return fileRequestError(
+          "native control requires an open synchronous file");
+    if (ControlCode & 3)
+      return fileRequestError("native control requires METHOD_BUFFERED");
+    // These codes perform additional I/O-manager actions before ordinary
+    // dispatch (offload admission, file extension state or shared accounting).
+    if (ControlCode == 0x94264 || ControlCode == 0x98268 ||
+        ControlCode == 0x9042c || ControlCode == 0x90020)
+      return fileRequestError(
+          "control code requires unmodeled manager actions");
+    if (InputLength && !InputPointer)
+      return fileRequestError(
+          "native control requires initialized input bytes");
+    auto Completion =
+        Memory.readInteger(File.Address + FileCompletionContextOffset, 8);
+    if (!Completion)
+      return Completion.takeError();
+    if (*Completion)
+      return fileRequestError(
+          "native control completion ports are unsupported");
   }
   uint64_t ByteOffset = 0;
   uint32_t Key = 0;
@@ -344,7 +377,14 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
     return fileRequestError("file I/O hold capacity exhausted");
   if (Length > profile::KernelArenaSize)
     return fileRequestError("buffer exceeds the 1 MiB model operation limit");
-  if (Length)
+  if (Control) {
+    if (InputLength)
+      if (auto E = validateGuestAccess(InputPointer, InputLength, false))
+        return E;
+    if (OutputLength)
+      if (auto E = validateObjectOutput(A[3], OutputLength))
+        return E;
+  } else if (Length)
     if (auto E = Write ? validateGuestAccess(A[3], Length, false)
                        : validateObjectOutput(A[3], Length))
       return E;
@@ -367,6 +407,21 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
       return DeviceFlags.takeError();
     if (!(*DeviceFlags & DeviceBufferedIO))
       return fileRequestError("native transfers require buffered device I/O");
+  }
+  if (Control) {
+    auto DeviceFlags = Memory.readInteger(*Top + DeviceFlagsOffset, 4);
+    if (!DeviceFlags)
+      return DeviceFlags.takeError();
+    if (*DeviceFlags & 0x80000)
+      return fileRequestError("native control buffered bypass is unsupported");
+    if (!FileSystemControl) {
+      auto FastIO = Memory.readInteger(
+          Devices.at(*Top).OwnerDriver + DriverFastIOOffset, 8);
+      if (!FastIO)
+        return FastIO.takeError();
+      if (*FastIO)
+        return fileRequestError("native Fast I/O control is unsupported");
+    }
   }
   auto Count = Memory.readInteger(*Top + DeviceStackCountOffset, 1);
   if (!Count)
@@ -441,7 +496,12 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
       return Owned.takeError();
     Buffer = *Owned;
     std::vector<uint8_t> Bytes(Length);
-    if (Write)
+    if (Control && InputLength) {
+      if (auto E = Memory.read(
+              InputPointer,
+              llvm::MutableArrayRef<uint8_t>(Bytes).take_front(InputLength)))
+        return E;
+    } else if (Write)
       if (auto E = Memory.read(A[3], Bytes))
         return E;
     if (auto E = Memory.write(Buffer, Bytes))
@@ -464,18 +524,22 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
   ++File.InternalIOHolds;
   DriverRequestResult Observation;
   Observation.Kind = Kind;
-  Observation.Origin = Flush ? DriverRequestOrigin::FileHandleFlush
-                       : Transfer
-                           ? (Write ? DriverRequestOrigin::FileHandleWrite
-                                    : DriverRequestOrigin::FileHandleRead)
-                       : Native ? DriverRequestOrigin::FileHandleQuery
-                                : DriverRequestOrigin::FileInformationQuery;
+  Observation.Origin =
+      Control
+          ? (FileSystemControl ? DriverRequestOrigin::FileHandleSystemControl
+                               : DriverRequestOrigin::FileHandleDeviceControl)
+      : Flush    ? DriverRequestOrigin::FileHandleFlush
+      : Transfer ? (Write ? DriverRequestOrigin::FileHandleWrite
+                          : DriverRequestOrigin::FileHandleRead)
+      : Native   ? DriverRequestOrigin::FileHandleQuery
+                 : DriverRequestOrigin::FileInformationQuery;
   Observation.Device = Devices.at(File.Device).Name;
   Observation.File = File.ScenarioID;
   Observation.RequestorProcessID = Process->ProcessID;
   if (Query)
     Observation.FileInformationClass = Class;
   Observation.ByteOffset = ByteOffset;
+  Observation.ControlCode = ControlCode;
   Observation.IRP = *Packet;
   associateFileRequest(Observation, File);
   if (const auto *Owner = pnpDeviceForPDO(File.PnpDevice))
@@ -502,6 +566,12 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
   Record.OutputSize = Write ? 0 : Length;
   Record.InputSize = Write ? Length : 0;
   Record.TransferSize = Length;
+  if (Control) {
+    Record.OutputSize = OutputLength;
+    Record.InputSize = InputLength;
+    Record.TransferSize = OutputLength;
+    Record.UserInput = InputPointer;
+  }
   Record.AsynchronousFile = File.Asynchronous;
   Record.ProcessID = Process->ProcessID;
   Record.CallbackProcessID = Process->ProcessID;
@@ -528,7 +598,9 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
   // The bounded profile uses normal I/O priority. The service tail encodes
   // that hint after producer allocation and before invoking the driver.
   const uint32_t PacketFlags =
-      Flush ? 0x60000u
+      Control ? 0x60000u | (FileSystemControl ? 0x800u : 0u) |
+                    (Length ? (OutputLength ? 0x70u : 0x30u) : 0u)
+      : Flush ? 0x60000u
       : Transfer
           ? 0x60000u | (Write ? 0xa00u : 0x900u) |
                 (Write ? (Length ? 0x30u : 0x10u) : (Length ? 0x70u : 0x50u)) |
@@ -548,13 +620,19 @@ KernelModel::beginFileAPIRequest(llvm::ArrayRef<uint64_t> A,
             {*Packet + IRPUserEventOffset, Event, 8},
             {Request.Stack, Major, 1},
             {Request.Stack + StackFlagsOffset,
-             Transfer ? (Write && (*Flags & 0x10) ? 4u : 0u)
-                      : (Class == 75 ? 1u : 0u),
+             Control    ? (GrantedAccess & 1) | (2 * (GrantedAccess & 2))
+             : Transfer ? (Write && (*Flags & 0x10) ? 4u : 0u)
+                        : (Class == 75 ? 1u : 0u),
              1},
-            {Request.Stack + StackQueryLengthOffset, Length, 4},
+            {Request.Stack + StackQueryLengthOffset,
+             Control ? OutputLength : Length, 4},
             {Request.Stack + StackQueryClassOffset,
-             Transfer ? Key : (Class == 75 ? 71 : Class), 4},
-            {Request.Stack + StackReadWriteByteOffset, ByteOffset, 8},
+             Control    ? InputLength
+             : Transfer ? Key
+                        : (Class == 75 ? 71 : Class),
+             4},
+            {Request.Stack + StackReadWriteByteOffset,
+             Control ? ControlCode : ByteOffset, Control ? 4u : 8u},
             {Request.Stack + StackDeviceOffset, *Top, 8},
             {Request.Stack + StackFileOffset, File.Address, 8}}})
     if (auto E = Memory.writeInteger(F.Address, F.Value, F.Width))
@@ -650,11 +728,12 @@ llvm::Error KernelModel::publishFileRequestCompletion(uint64_t IRP) {
   auto &Query = FileRequests.at(Request.FileRequestID);
   if (Query.CompletionPublished)
     return llvm::Error::success();
-  // IRP_DEFER_IO_COMPLETION retains immediate native read/write/query packets
-  // until the producer regains control. Flush does not set that flag: eligible
-  // completion publishes and disposes before dispatch returns. Queued packets
-  // still notify through the original caller boundary.
+  // IRP_DEFER_IO_COMPLETION retains immediate native read/write/query/fsctl
+  // packets until the producer regains control. Flush and device control omit
+  // it: eligible completion publishes and disposes before dispatch returns.
+  // Queued packets still notify through the original caller boundary.
   if (Query.Native && Request.Kind != DriverRequestKind::FlushBuffers &&
+      Request.Kind != DriverRequestKind::DeviceControl &&
       !Request.PendingMarked && !Request.DispatchReturned)
     return llvm::Error::success();
   // IopfCompleteRequest queues requestor APC delivery when a worker or an
@@ -681,7 +760,10 @@ llvm::Error KernelModel::publishFileRequestCompletion(uint64_t IRP) {
           profile::NTStatusErrorSeverity &&
       Observation.Information &&
       (Request.Kind == DriverRequestKind::Read ||
-       Request.Kind == DriverRequestKind::QueryInformation)) {
+       Request.Kind == DriverRequestKind::QueryInformation ||
+       ((Request.Kind == DriverRequestKind::DeviceControl ||
+         Request.Kind == DriverRequestKind::FileSystemControl) &&
+        Request.OutputSize))) {
     if (auto E = validateGuestAccess(Request.SystemBuffer,
                                      Observation.Information, false))
       return E;

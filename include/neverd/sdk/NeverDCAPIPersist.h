@@ -141,17 +141,22 @@ NEVERD_API int neverd_items_load(neverd_session_t Sess);
 
 /// Show operand \p Operand (0 to 7) of the instruction at \p Addr as the JSON
 /// object \p FormatJson says: {"base": a base of OperandFormats.def ("number"
-/// is the listing's own choice, "hex", "decimal", "binary", "char", "offset"),
-/// "negate"?: true to change the sign, "invert"?: true to invert the bits}.
-/// NULL, or the "number" base unchanged, forgets the operand's format.
-/// \p Addr lies in executable code.  Returns 0, or -1 with
-/// neverd_last_error.  neverd_operand_formats_save keeps the formats.
+/// is the listing's own choice, "hex", "decimal", "binary", "char", "offset",
+/// "struct"), "negate"?: true to change the sign, "invert"?: true to invert
+/// the bits}.  A structure offset ("struct", IDA's T) adds "type", a
+/// structure or union of the program's local types, and "delta"?, how many
+/// bytes into the type the register points: the number lands delta bytes
+/// further in (neverd_local_type_member_json), and 0 with delta 2 shows as
+/// `[rcx+(_KAPC.Size-2)]`.  A structure offset neither negates nor
+/// inverts.  NULL, or the "number" base unchanged, forgets the
+/// operand's format.  \p Addr lies in executable code.  Returns 0, or -1
+/// with neverd_last_error.  neverd_operand_formats_save keeps the formats.
 NEVERD_API int neverd_operand_format_set(neverd_session_t Sess,
                                          neverd_va_t Addr, int Operand,
                                          const char *FormatJson);
 /// The user's operand formats, [{"addr","operands":[{"operand","base",
-/// "negate","invert"},...]},...] in address order.  Free with
-/// neverd_free_string.
+/// "negate","invert","type"?,"delta"?},...]},...] in address order, "type"
+/// and "delta" a structure offset's.  Free with neverd_free_string.
 NEVERD_API const char *neverd_operand_formats_json(neverd_session_t Sess);
 /// Write or read the formats as `<input>.neverd-operands.json`, which
 /// neverd_session_load reads too.  Return 0, or -1 with neverd_last_error.

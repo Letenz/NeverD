@@ -9,6 +9,10 @@ per modificare NeverD in sicurezza. Copre intenzionalmente solo il codice di
 NeverD; i sottomoduli LLVM, Capstone e Unicorn mantengono la propria
 architettura interna.
 
+## Seed concreti della memoria iniziale
+
+`SymExecConcreteShadow` riceve byte RAM in ordine di indirizzo prima di eseguire; la memoria simbolica iniziale rimane libera. In C++, `InitialMemory` è limitata da `MaxMemorySeedBytes` (1 MiB predefinito; zero non accetta byte). Intervalli vuoti, sovrapposti o con riporto vengono rifiutati. I rapporti con memoria usano la versione 2 e conservano `InitialMemory` e `MemorySeed` di ogni candidato. La proiezione accetta solo ingressi di registro o memoria assoluta di epoca zero coperti dal seed. Verifica della query, nuova esecuzione e deduplicazione includono entrambi gli insiemi di byte. Byte mancanti, basi simboliche ed effetti approssimati restano rifiutati; le scritture aggiornano normalmente la memoria concreta. `ProcessView::read` legge RAM confermata a processo fermo; gli eventi prima dell’accesso non sono uno snapshot completo. L’osservazione non prova proprietà, durata, immutabilità o disgiunzione. Il candidato verifica soltanto la decisione scelta e quelle precedenti. C/JSON, Python e CLI restano basati sui registri nella versione 1.
+
 ## Confine della sostituzione di sorgenti e oggetti
 
 `SourcePatchCompiler` gestisce identità del compilatore e scelta dell’artefatto. `validateSourcePatchTarget` ammette i target comuni a sorgenti e IR fornito; la sola tripla non prova il supporto. `bindSourcePatch` autentica gli ingressi IR; `PatchObject` gestisce sezioni native, rilocazioni e prove degli intervalli FDE. `publishSourcePatch` prepara, verifica e pubblica la transazione esatta. `COFFSourceImage` gestisce nuovo spazio e tabelle di unwinding PE x86/x64/ARM32/ARM64; le riscritture del codice sollevato mantengono prove EH originali separate. Vedere [le patch da sorgente](source-patching.md).
@@ -1883,5 +1887,11 @@ KernelFileSystem conserva un provider token per FILE_OBJECT. L’operazione priv
 `KernelModelFileRequests` possiede anche i trasferimenti sincroni bufferizzati `ZwReadFile` / `ZwWriteFile`. Il produttore acquisisce ambito dell’handle, offset, chiave e copia dei dati scritti. Il completamento condiviso pubblica byte letti e IOSB nel chiamante originale idoneo, poi libera ogni pacchetto e buffer posseduto una sola volta. Il driver di archiviazione possiede le modifiche a contenuto e posizione.
 
 `KernelModelFileRequests` possiede anche la produzione senza buffer di `ZwFlushBuffersFile`. Controllo della maschera di accesso e pubblicazione/rilascio immediati differiscono dai pacchetti nativi differiti di lettura, scrittura e query; notifica al chiamante originale e rilascio singolo restano condivisi.
+
+`KernelModelFileRequests` gestisce acquisizione e pubblicazione dei buffer di controllo nativi. Ritenzione del file, continuazione del chiamante e rilascio del pacchetto sono condivisi; il differimento del produttore distingue controllo dispositivo e FSCTL. Il validatore comune verifica i limiti dell’uscita.
+
+`KernelModelRuntime` gestisce classificazione CRT, conversione sul posto e scritture controllate di stringhe. `KernelCStringAPIs.def` fornisce identità esportata, numero di argomenti e ammissione IRQL a ogni percorso. Gli accessi per unità riusano permessi e controlli di durata del guest; report e adattatori non duplicano la semantica di copia o errore.
+
+`KernelMemoryCalls` possiede l’ammissione delle copie controllate e riusa move/fill, durata del pool e controlli di memoria utente. `KernelModelRuntime` possiede la verifica della firma grezza `RtlImageNtHeader`. Questa verifica non sostituisce la convalida del loader necessaria all’esecuzione; gli adattatori non duplicano le due semantiche.
 
 `OptimizationGuards` integra il controllo `optnone` di LLVM: i passaggi facoltativi di modulo e grafo delle chiamate vengono saltati se esiste una funzione protetta, perché possono modificarne il CFG o sostituire gli argomenti del callback con poison. Gli adattatori obbligatori e le ottimizzazioni delle funzioni ordinarie restano attivi. La proiezione conserva le scritture di salvataggio del prologo fino al loro collegamento nella ricostruzione nativa.

@@ -74,8 +74,7 @@ TEST(LocalTypes, BuiltinSizesFollowTheDataModel) {
   EXPECT_EQ(builtinBytes(Builtin::WChar, DataModel::LLP64), 2u);
   EXPECT_EQ(pointerBytes(DataModel::ILP32), 4u);
   EXPECT_STREQ(builtinInfo(Builtin::ULong).Windows, "ULONG");
-  EXPECT_STREQ(builtinInfo(Builtin::ULong).IDA, "unsigned int");
-  EXPECT_STREQ(builtinInfo(Builtin::ULongLong).IDA, "unsigned __int64");
+  EXPECT_STREQ(builtinInfo(Builtin::ULongLong).Keywords, "unsigned long long");
 }
 
 TEST(LocalTypes, ReplacingATypeKeepsItsOrdinal) {
