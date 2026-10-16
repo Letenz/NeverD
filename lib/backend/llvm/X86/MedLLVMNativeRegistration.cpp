@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../eh/MedLLVMEHHelpers.h"
+#include "MedLLVMRegistrationCopyBlocks.h"
 #include "MedLLVMRegistrationIncoming.h"
 #include "MedLLVMRegistrationSEHDynamicScope.h"
 #include "MedLLVMRegistrationSEHFinally.h"
@@ -55,7 +56,8 @@ bool mayUnwind(const llvm::CallInst &Call) {
 
 bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     const MedFunc &Func, llvm::Function &Parent,
-    const std::map<int, llvm::BasicBlock *> &OriginalBlockMap) {
+    const std::map<int, llvm::BasicBlock *> &OriginalBlockMap,
+    const std::map<llvm::BasicBlock *, std::pair<int, int>> &PHICopyEdges) {
   if (TargetArch != Arch::X86 || TargetFormat != BinaryFormat::COFF ||
       !Func.ExceptionMetadata || !Func.RegistrationStates || Func.SkippedSSA ||
       Func.CalleePopBytes || !Func.RegistrationCallerCleanupABIComplete ||
@@ -137,6 +139,12 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   const auto CallbackOwners = registrationSEHCallbackOwners(Func);
   if (!CallbackOwners)
     return false;
+  const auto CopyOwners = registrationPHICopyOwners(
+      *CallbackOwners, OriginalBlockMap, PHICopyEdges);
+  if (!CopyOwners)
+    return false;
+  for (const auto &[Block, Owner] : *CopyOwners)
+    CallbackBlocks.insert(Block);
   const int32_t Sentinel = *Chain.SeededTryLevel;
   for (const MedBlock &Block : Func.Blocks) {
     auto IR = OriginalBlockMap.find(Block.Id);
@@ -240,8 +248,12 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
         for (const auto &[VA, Candidate] : BlocksAt)
           if (OriginalBlockMap.at(Candidate->Id) == Block)
             SourceBlock = Candidate;
-        if (!SourceBlock)
-          return false;
+        if (!SourceBlock) {
+          const auto Copy = CopyOwners->find(Block);
+          if (Copy == CopyOwners->end() ||
+              Copy->second != std::make_pair(CallbackVA, Scope.IsFinally))
+            return false;
+        }
         for (llvm::BasicBlock *Successor : llvm::successors(Block))
           Pending.push_back(Successor);
       }

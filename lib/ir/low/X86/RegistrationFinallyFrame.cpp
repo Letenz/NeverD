@@ -6,12 +6,13 @@
 /// \file
 /// Interprets finally effects under the actual ordinary or runtime invocation.
 
+#include "RegistrationCallbackGraph.h"
 #include "RegistrationFrameEffects.h"
 #include "RegistrationStateSolver.h"
 
 #include "neverd/lift/X86Regs.h"
 
-#include <deque>
+#include <utility>
 
 namespace neverd::registration_state {
 
@@ -64,26 +65,10 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
   const auto InitialLevel = Initial.load(Chain.TryLevelOffset, 4).Constant;
   if (!InitialLevel || !validLevel(int32_t(*InitialLevel)))
     return false;
-  struct Key {
-    size_t Block;
-    size_t FirstOp;
-    int32_t Level;
-    std::optional<uint32_t> Disposition;
-    auto operator<=>(const Key &) const = default;
-  };
-  const auto MakeKey = [&](size_t Block, size_t FirstOp, int32_t Level,
-                           const FrameState &Frame) {
-    const auto &Value = Frame.Registers[x86reg::RAX / x86reg::GeneralRegStride];
-    return Key{Block, FirstOp, Level,
-               FilterOutcomes && !Value.MayBeFrame ? Value.Constant
-                                                   : std::nullopt};
-  };
-  const Key InitialKey =
-      MakeKey(Entry->second, 0, int32_t(*InitialLevel), Initial);
-  std::map<Key, FrameState> Incoming{{InitialKey, Initial}};
-  std::deque<Key> Pending{InitialKey};
-  std::set<Key> Queued{InitialKey};
-  std::map<Key, std::set<Key>> Edges;
+  RegistrationCallbackGraph Graph;
+  const auto Charge = [&](size_t Work) { return charge(Work); };
+  if (!Graph.add(Entry->second, 0, Initial, std::nullopt, Charge))
+    return false;
   SEHFrameOutcomes Returned;
   SEHFilterOutcomes FilterReturned;
   SEHHandlerOutcomes SelectedHandlers;
@@ -94,23 +79,11 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
     return !Value.MayBeFrame && Value.Constant &&
            mergeSEHFrameOutcome(FilterReturned[*Value.Constant], State);
   };
-  const auto Enqueue = [&](const Key &Current, size_t Block, size_t FirstOp,
-                           int32_t Level, const FrameState &Frame) {
-    if (!charge(Frame.cellCount() + Frame.OtherRegisterBytes.size() + 10))
-      return false;
-    const Key Next = MakeKey(Block, FirstOp, Level, Frame);
-    Edges[Current].insert(Next);
-    auto [It, New] = Incoming.emplace(Next, Frame);
-    if ((New || It->second.merge(Frame)) && Queued.insert(Next).second)
-      Pending.push_back(Next);
-    return true;
-  };
-  while (!Pending.empty()) {
-    const Key Current = Pending.front();
-    const size_t I = Current.Block;
-    Pending.pop_front();
-    Queued.erase(Current);
-    FrameState State = Incoming.at(Current);
+  while (!Graph.empty()) {
+    const size_t Current = Graph.take();
+    const size_t I = Graph.node(Current).Block;
+    const size_t FirstOp = Graph.node(Current).FirstOp;
+    FrameState State = Graph.node(Current).Frame;
     FrameTransfer Transfer(State, *Chain.RegistrationOffset);
     const auto &Block = Function.Blocks[I];
     if (InvalidBlocks[I] ||
@@ -121,8 +94,7 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
     std::set<va_t> ProvenStores;
     SEHFrameOutcomes NestedOutcomes;
     std::optional<size_t> ResumeAt;
-    for (size_t OpIndex = Current.FirstOp; OpIndex < Block.Ops.size();
-         ++OpIndex) {
+    for (size_t OpIndex = FirstOp; OpIndex < Block.Ops.size(); ++OpIndex) {
       const auto &Op = Block.Ops[OpIndex];
       if (!charge(1 + State.cellCount() + Op.Output.Size) ||
           (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)) ||
@@ -319,8 +291,7 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
         State.trimCallbackCells();
       }
     }
-    const va_t Begin =
-        Current.FirstOp ? Block.Ops[Current.FirstOp].Addr : Block.StartAddr;
+    const va_t Begin = FirstOp ? Block.Ops[FirstOp].Addr : Block.StartAddr;
     const va_t End = ResumeAt && *ResumeAt < Block.Ops.size()
                          ? Block.Ops[*ResumeAt].Addr
                          : Block.EndAddr;
@@ -332,7 +303,7 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
       continue;
     if (ResumeAt && *ResumeAt < Block.Ops.size()) {
       for (const auto &[Level, Frame] : NestedOutcomes)
-        if (!Enqueue(Current, I, *ResumeAt, Level, Frame))
+        if (!Graph.add(I, *ResumeAt, Frame, Current, Charge))
           return false;
       continue;
     }
@@ -343,45 +314,27 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
     }
     if (Block.Succs.empty())
       return false;
+    const auto SelectedBranch =
+        NestedOutcomes.empty() ? knownSuccessor(Block, Transfer) : std::nullopt;
     if (NestedOutcomes.empty() && !mergeSEHFrameOutcome(NestedOutcomes, State))
       return false;
     for (const auto &[Level, Outcome] : NestedOutcomes)
       for (int Next : Block.Succs) {
         const auto Successor = Index.find(Next);
-        if (Successor == Index.end() ||
-            !Enqueue(Current, Successor->second, 0, Level, Outcome))
+        if (Successor == Index.end())
+          return false;
+        if ((!SelectedBranch ||
+             Function.Blocks[Successor->second].StartAddr == *SelectedBranch) &&
+            !Graph.add(Successor->second, 0, Outcome, Current, Charge))
           return false;
       }
   }
   if (Returned.empty() && FilterReturned.empty() && SelectedHandlers.empty() &&
       (!Jump || Jump->Resumed.empty()))
     return false;
-  // Every reachable path must return, select a handler or repeat the jump.
-  // A fixed point with a return arm and one recurrent arm proves no exit.
-  std::map<Key, size_t> Predecessors;
-  for (const auto &[Node, Frame] : Incoming) {
-    if (!charge(1 + Edges[Node].size()))
-      return false;
-    Predecessors.try_emplace(Node, 0);
-    for (const auto &Next : Edges[Node])
-      ++Predecessors[Next];
-  }
-  for (const auto &[Node, Count] : Predecessors)
-    if (!Count)
-      Pending.push_back(Node);
-  size_t Retired = 0;
-  while (!Pending.empty()) {
-    const Key Node = Pending.front();
-    Pending.pop_front();
-    ++Retired;
-    for (const auto &Next : Edges[Node]) {
-      if (!charge(1))
-        return false;
-      if (!--Predecessors[Next])
-        Pending.push_back(Next);
-    }
-  }
-  if (Retired != Incoming.size())
+  // A bounded CFG loop advances to different complete frames. A recurrent
+  // execution configuration still cannot borrow a sibling's terminal exit.
+  if (!Graph.closes(Charge))
     return false;
   if (FilterOutcomes) {
     for (auto &[Disposition, Frames] : FilterReturned)

@@ -206,6 +206,9 @@ _registration_entry:
   mov eax,91
   jmp .Lfinish
 .Lfilter:
+#if REGISTRATION_HAS_CALLBACK_LOOP && REGISTRATION_LOOP_IN_FILTER
+  registration_bounded_loop
+#endif
   mov eax,[ebp-100]
   imul eax,eax,10
   add eax,3
@@ -297,6 +300,9 @@ _registration_entry:
 #endif
   ret
 .Lfinally:
+#if REGISTRATION_HAS_CALLBACK_LOOP && !REGISTRATION_LOOP_IN_FILTER
+  registration_bounded_loop
+#endif
   mov eax,[ebp-100]
   imul eax,eax,10
   add eax,2

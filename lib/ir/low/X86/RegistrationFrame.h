@@ -152,6 +152,9 @@ struct FrameState {
   size_t memoryAccessWork(const FrameValue &Address, uint16_t Width,
                           bool Write = false) const;
 
+  /// A lookup key only; complete frame equality still proves identity.
+  size_t snapshotHash() const;
+
   bool operator==(const FrameState &) const = default;
   bool merge(const FrameState &Other);
   void forgetCellValues();

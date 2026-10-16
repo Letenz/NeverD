@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "COFFRegistrationIRProof.h"
 
+#include "COFFRegistrationCopyEdges.h"
+#include "COFFRegistrationCopySlots.h"
 #include "COFFRegistrationSEHStateDispatch.h"
 
 #include "neverd/Limits.h"
@@ -190,6 +192,14 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
       }
   if (Segments.size() != Blocks.size())
     return rejectIR("source execution segment set is incomplete");
+  RegistrationCopySlots CopySlots;
+  if (!ReachedCxxSource && !Callbacks.empty()) {
+    std::vector<const llvm::Function *> Outlined;
+    for (const auto &[Key, Function] : Callbacks)
+      Outlined.push_back(Function);
+    if (!CopySlots.build(Parent, Outlined, Work))
+      return rejectIR("callback copy storage has no closed recovery graph");
+  }
   std::set<const llvm::Instruction *> SeenEvents;
   for (const auto &[Id, Segment] : Segments) {
     if (!Segment.Enter || !Segment.Exit)
@@ -297,8 +307,17 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
           !Operations.empty() && Operations.back().Opcode == NdOp::RETURN;
       if (SourceReturn != llvm::isa<llvm::ReturnInst>(Term))
         return rejectIR("callback return changed its source execution exit");
-      for (unsigned Index = 0; Index < Term->getNumSuccessors(); ++Index)
-        ActualSuccessors.insert(Term->getSuccessor(Index));
+      for (unsigned Index = 0; Index < Term->getNumSuccessors(); ++Index) {
+        const auto *Next = Term->getSuccessor(Index);
+        if (!ExpectedSuccessors.count(Next)) {
+          Next = registrationCopyDestination(*Term->getParent(), *Next,
+                                             ExpectedSuccessors, Work,
+                                             !ReachedCxxSource, &CopySlots);
+          if (!Next)
+            return rejectIR("callback edge gained unproved copy instructions");
+        }
+        ActualSuccessors.insert(Next);
+      }
       if (ExpectedSuccessors != ActualSuccessors)
         return rejectIR(
             "callback normal flow changed its source execution graph");
