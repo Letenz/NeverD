@@ -2977,6 +2977,15 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   menu.addSeparator();
   menu.addAction(actions_.action(ActionId::EditCopy));
   menu.addAction(actions_.action(ActionId::EditCopyAddress));
+  // A code window selects its whole text for Copy, as an editor does.
+  if (auto *code = focusedCodeView()) {
+    auto *all = menu.addAction(icon(QStringLiteral("select_all")),
+                               tr("Select &all") + QLatin1Char('\t') +
+                                   QKeySequence(QKeySequence::SelectAll)
+                                       .toString(QKeySequence::NativeText));
+    all->setObjectName(QStringLiteral("codeSelectAll"));
+    connect(all, &QAction::triggered, code->text(), &CodeText::selectAll);
+  }
   // A code window's folds: the declarations before the function and the
   // recognized library operations.
   if (auto *code = focusedCodeView()) {

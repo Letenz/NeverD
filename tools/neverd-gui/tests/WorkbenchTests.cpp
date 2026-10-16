@@ -1323,6 +1323,80 @@ private slots:
     QVERIFY(code->allText().contains(QStringLiteral("v0 + 030; /* 8 */")));
   }
 
+  void codeTextSelectsLikeAnEditor() {
+    // Ctrl+A selects the whole function, a drag held below the text scrolls
+    // and extends the selection past the first screen, and a right click
+    // inside the selection keeps it for Copy, as in an editor.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-numbers-paged.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address function = Base + 0x140;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    // Ctrl+A while pages still arrive selects the whole function once the
+    // last one is in, its folded prelude included.
+    bool pressed = false;
+    QObject context;
+    connect(code->verticalScrollBar(), &QScrollBar::rangeChanged, &context,
+            [&] {
+              if (pressed || !code->loading() || code->lineCount() == 0)
+                return;
+              pressed = true;
+              QTest::keyClick(code, Qt::Key_A, Qt::ControlModifier);
+            });
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 600,
+                             OpenTimeoutMs);
+    QVERIFY(pressed);
+    QCOMPARE(code->selectedText(), code->allText());
+    code->setPreludeFolded(false);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+
+    QTest::keyClick(code, Qt::Key_A, Qt::ControlModifier);
+    QCOMPARE(code->selectedText(), code->allText());
+    bench.action(ActionId::EditCopy)->trigger();
+    QCOMPARE(clipboardText(), code->allText());
+
+    code->setCursorLine(0);
+    QCOMPARE(code->verticalScrollBar()->value(), 0);
+    const int height = int(
+        std::ceil(QFontMetricsF(Theme::instance().codeFont()).lineSpacing()));
+    QTest::mousePress(code->viewport(), Qt::LeftButton, {},
+                      QPoint(60, 2 * height + height / 2));
+    const QPoint below(60, code->viewport()->height() + 3 * height);
+    QTest::mouseMove(code->viewport(), below);
+    QTRY_VERIFY(code->verticalScrollBar()->value() > 100);
+    QTest::mouseRelease(code->viewport(), Qt::LeftButton, {}, below);
+    const int last = code->cursorLine();
+    QVERIFY(last > 100);
+    const QString selected = code->selectedText();
+    QCOMPARE(int(selected.count(QLatin1Char('\n'))), last - 2);
+
+    // A right click inside the selection opens the menu over it.
+    withCodeMenu(code, [](QMenu *menu) {
+      QVERIFY(menu->findChild<QAction *>(QStringLiteral("codeSelectAll")));
+    });
+    QTimer closer;
+    connect(&closer, &QTimer::timeout, this, [] {
+      if (auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget()))
+        menu->close();
+    });
+    closer.start(5);
+    QTest::mouseClick(code->viewport(), Qt::RightButton, {},
+                      QPoint(60, code->viewport()->height() / 2));
+    closer.stop();
+    QCOMPARE(code->selectedText(), selected);
+  }
+
   void codeEditKeepsThePlaceInALongFunction() {
     // An edit loads the function's pages again. The first page used to
     // clamp the cursor and the view, which then stayed near its end: the

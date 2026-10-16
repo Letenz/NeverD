@@ -280,7 +280,11 @@ declare one-byte-aligned, `may_alias` types instead. A call argument that points
 to a string, directly or through a pointer the image holds, shows the string
 beside it, after its encoding unless that is ASCII or UTF-8:
 `puts(u8s /* "你好" */)`, `/* GBK "中文" */`. Copy and export always use the
-complete code.
+complete code. Text selects as in an editor: drag with the mouse, which scrolls
+while it is held beyond an edge, extend with Shift and the arrows or a Shift
+click, or press **Ctrl+A** (also **Select all** in the context menu) for the
+whole function; **Ctrl+C** or the context menu's **Copy** copies it, and a
+right click inside the selection keeps it.
 
 Global data is declared the way C source declares it, with the value the image
 holds: a string the code reaches by its address is its array
