@@ -288,6 +288,105 @@ protected:
     return Library;
   }
 
+  // An image's own copy of the unwinder's _Unwind_Resume, whose body reads
+  // argument registers no caller sets, and a routine that calls it after
+  // another call.  libgcc's saves the exception-data registers as it enters
+  // for the __builtin_eh_return that ends it (x0-x3, RAX and RDX); LLVM
+  // libunwind's passes them on to __unw_getcontext, which stores them all.
+  fs::path unwinderLibrary(llvm::StringRef Target) {
+    if (Target.starts_with("aarch64"))
+      return assembledLibrary(Target, "unwinder", R"(.text
+.globl _Unwind_Resume
+.hidden _Unwind_Resume
+.type _Unwind_Resume,%function
+_Unwind_Resume:
+  stp x29, x30, [sp, #-64]!
+  mov x29, sp
+  stp x19, x20, [sp, #16]
+  stp x0, x1, [sp, #32]
+  stp x2, x3, [sp, #48]
+  mov x19, x0
+  add x1, x29, #64
+  bl install
+  mov x4, x0
+  ldp x0, x1, [sp, #32]
+  ldp x2, x3, [sp, #48]
+  ldp x19, x20, [sp, #16]
+  ldp x29, x30, [sp], #64
+  add sp, sp, x4
+  ret
+.size _Unwind_Resume, .-_Unwind_Resume
+.globl resume_after
+.type resume_after,%function
+resume_after:
+  stp x29, x30, [sp, #-32]!
+  mov x29, sp
+  str x19, [sp, #16]
+  mov x19, x0
+  mov w0, #1
+  bl step
+  mov x0, x19
+  bl _Unwind_Resume
+.size resume_after, .-resume_after
+)");
+    if (Target.starts_with("armv7"))
+      return assembledLibrary(Target, "unwinder", R"(.syntax unified
+.arm
+.text
+.globl __unw_getcontext
+.hidden __unw_getcontext
+.type __unw_getcontext,%function
+__unw_getcontext:
+  stm r0, {r0-r12}
+  str sp, [r0, #52]
+  str lr, [r0, #56]
+  str lr, [r0, #60]
+  mov r0, #0
+  bx lr
+.size __unw_getcontext, .-__unw_getcontext
+.globl _Unwind_Resume
+.hidden _Unwind_Resume
+.type _Unwind_Resume,%function
+_Unwind_Resume:
+  push {r4, lr}
+  sub sp, sp, #64
+  mov r4, r0
+  mov r0, sp
+  bl __unw_getcontext
+  mov r0, r4
+  mov r1, sp
+  bl phase2
+  add sp, sp, #64
+  pop {r4, pc}
+.size _Unwind_Resume, .-_Unwind_Resume
+.globl resume_after
+.type resume_after,%function
+resume_after:
+  push {r4, lr}
+  mov r4, r0
+  mov r0, #1
+  bl step
+  mov r0, r4
+  bl _Unwind_Resume
+  pop {r4, pc}
+.size resume_after, .-resume_after
+)");
+    return sharedLibrary(
+        Target, "unwinder",
+        "long install(void *exc, void *frame);\n"
+        "void step(int);\n"
+        "__attribute__((noinline, visibility(\"hidden\")))\n"
+        "void _Unwind_Resume(void *exc) {\n"
+        "  __builtin_unwind_init();\n"
+        "  long offset = install(exc, __builtin_frame_address(0));\n"
+        "  __builtin_eh_return(offset, __builtin_return_address(0));\n"
+        "}\n"
+        "__attribute__((noinline)) void resume_after(void *exc) {\n"
+        "  step(1);\n"
+        "  _Unwind_Resume(exc);\n"
+        "}\n");
+  }
+
   /// The shared library \p Name assembled from \p Assembly for \p Target.
   fs::path assembledLibrary(llvm::StringRef Target, llvm::StringRef Name,
                             llvm::StringRef Assembly) {
@@ -849,6 +948,33 @@ TEST_F(DataSymbolBindingTest, CallsTakeNoIncomingRegisterAnEarlierCallChanged) {
         ASSERT_FALSE(Body.empty()) << C;
         EXPECT_EQ(parameterNames(Body).size(), Params) << Body;
       }
+    }
+  }
+}
+
+// An image's copy of a routine of the Itanium C++ ABI's runtime or unwinder
+// takes the parameters the ABI declares, however its body reads argument
+// registers: what _Unwind_Resume saves or passes on of them carries no
+// argument of its callers.
+TEST_F(DataSymbolBindingTest, ItaniumRuntimeCopiesTakeTheirDeclaredParameters) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "requires cross-target Clang and ld.lld";
+  for (const char *Target :
+       {"x86_64-linux-gnu", "armv7-linux-gnueabi", "aarch64-linux-gnu"}) {
+    SCOPED_TRACE(Target);
+    auto Loaded = loadBinary(unwinderLibrary(Target));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(LLVM);
+      const auto C = source(*Loaded, LLVM, {"_Unwind_Resume", "resume_after"});
+      const std::string Resume = functionBody(C, "_Unwind_Resume");
+      ASSERT_FALSE(Resume.empty()) << C;
+      EXPECT_EQ(parameterNames(Resume).size(), 1u) << Resume;
+      const std::string Caller = functionBody(C, "resume_after");
+      ASSERT_FALSE(Caller.empty()) << C;
+      EXPECT_EQ(callArgumentCounts(Caller, "_Unwind_Resume"),
+                (std::vector<int>{1}))
+          << Caller;
     }
   }
 }

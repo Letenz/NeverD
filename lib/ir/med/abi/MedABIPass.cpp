@@ -481,6 +481,19 @@ void recoverCallAbi(
   const AbiCallPolicy *Policy = abiCallPolicy(TheArch, Fmt);
   const IntegerArgumentLayout DefaultIntegerLayout =
       TRI.integerArgumentLayout(Fmt);
+  // A routine with a platform prototype takes exactly its declared
+  // parameters (detectRegisterParams): an incoming register past them is no
+  // parameter it passes on, however its calls read the register.
+  const std::optional<size_t> OwnPrototypeArgs =
+      Convention && Convention->PrototypeArgCount
+          ? Convention->PrototypeArgCount(Func.Name)
+          : std::nullopt;
+  auto takesIncomingRegister = [&](uint64_t RegOff) {
+    if (!OwnPrototypeArgs)
+      return true;
+    const int Index = DefaultIntegerLayout.registerIndex(RegOff);
+    return Index >= 0 && static_cast<size_t>(Index) < *OwnPrototypeArgs;
+  };
   // The integer argument layout of the call being recovered: that of a
   // direct callee with its own register order (CalleeIntRegs), else the
   // convention's.  The parameters this function forwards are numbered in
@@ -1254,8 +1267,9 @@ void recoverCallAbi(
           // arity, or a hole below a found argN (`lea rdx` without `mov rcx`
           // still has live-in rcx as arg0 on Win64). Do not invent trailing
           // registers the callee never takes.
-          const bool AllowLiveIn = (CalleeRegArgs >= 0 && K < CalleeRegArgs) ||
-                                   (MaxRegArg >= 0 && K <= MaxRegArg);
+          const bool AllowLiveIn = ((CalleeRegArgs >= 0 && K < CalleeRegArgs) ||
+                                    (MaxRegArg >= 0 && K <= MaxRegArg)) &&
+                                   takesIncomingRegister(IntParamRegs[K]);
           bool FromLiveIn = false;
           auto V = findReachingArgReg(Func, TRI, TheArch, Blk.Id, K,
                                       IntegerLayout, AllowLiveIn, &FromLiveIn,
