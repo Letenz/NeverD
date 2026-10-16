@@ -684,15 +684,21 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 
 `RtlCaptureContext` 在 checked-x64 Unicorn/KVM/WHP 上共用导入和动态调用实现，要求 IRQL <= DISPATCH_LEVEL。目标为 16 字节对齐、完整可读写的 1232 字节内核记录；仅写 `[48,72)`、`[120,262)`、`[280,284)`、`[416,672)`，其余字节（包括 x87 数据、指针和 MXCSR mask）保持不变。ContextFlags 为 `0x10000f`，调用者 RSP=入口 RSP+8，RIP 取实际返回槽；入口 RSP-8 写入 8 字节标志暂存值，RAX 返回零扩展 EFLAGS，算术标志按 ADD(入口 RSP-8,8) 更新。DS/ES/FS/GS 使用 checked 逻辑 SS 选择子，不代表宿主或原始后端选择子。完整记录、返回槽和暂存槽必须通过普通内核 RAM、有效对象、权限和唯一物理映射检查；记录不得与返回/暂存范围重叠，入口 RSP 模 16 必须为 8。采集或准入失败不改变 CPU/RAM，legacy 明确拒绝。这是有界模型，不代表所有 Windows 实现；即使捕获字节被覆盖，仍保留未重建环境依赖，不授予 UNPACK 还原或符号前提。
 
-文件对象按地址保持唯一身份，由场景句柄、附加句柄和调用方指针共同引用。ObOpenObjectByPointer 支持已创建的 FILE_OBJECT、内核访问和可选 OBJ_KERNEL_HANDLE，并把通用文件权限映射为具体权限。关闭某进程的最后一个句柄时，若其他进程仍有句柄，则发送 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL；关闭全局最后一个句柄才发送 CLEANUP。延迟的场景 CLEANUP 保留声明的下层响应。即使场景编号已复用，CLOSE 仍等待最后一个句柄、指针和正在执行的关闭续调。内核句柄属于系统进程：CLEANUP 临时使用该有效进程，但保留调用线程、创建进程及 PreviousMode；CLOSE 恢复实际释放方的进程。挂起回调暂停释放方。在提供方成功打开之前失败的 CREATE，只保留带引用的存储并清除设备关联；显式取消的提供方打开仍保留设备，直到 CLOSE。每个关联对象只计入一次 DEVICE_OBJECT.ReferenceCount。WDM 与 KMDF 共用这些生命周期；普通 KMDF 设备以 STATUS_INVALID_DEVICE_REQUEST 完成 LOCK_CONTROL。关闭回调内重新打开、存在未完成文件 I/O 时关闭、KMDF 筛选驱动的 LOCK_CONTROL 转发、文件系统名称查询和提供方数据／控制 I/O 仍未支持。
+文件对象按地址保持唯一身份，由场景句柄、附加句柄和调用方指针共同引用。ObOpenObjectByPointer 支持已创建的 FILE_OBJECT、内核访问和可选 OBJ_KERNEL_HANDLE，并把通用文件权限映射为具体权限。关闭某进程的最后一个句柄时，若其他进程仍有句柄，则发送 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL；关闭全局最后一个句柄才发送 CLEANUP。延迟的场景 CLEANUP 保留声明的下层响应。即使场景编号已复用，CLOSE 仍等待最后一个句柄、指针和正在执行的关闭续调。内核句柄属于系统进程：CLEANUP 临时使用该有效进程，但保留调用线程、创建进程及 PreviousMode；CLOSE 恢复实际释放方的进程。挂起回调暂停释放方。在提供方成功打开之前失败的 CREATE，只保留带引用的存储并清除设备关联；显式取消的提供方打开仍保留设备，直到 CLOSE。每个关联对象只计入一次 DEVICE_OBJECT.ReferenceCount。WDM 与 KMDF 共用这些生命周期；普通 KMDF 设备以 STATUS_INVALID_DEVICE_REQUEST 完成 LOCK_CONTROL。关闭回调内重新打开、存在未完成文件 I/O 时关闭、KMDF 筛选驱动的 LOCK_CONTROL 转发、提供方数据／控制 I/O 仍未支持。
 
 ## 文件信息查询 IRP
 
-`IoQueryFileInformation` 向现有已建模 WDM 文件的设备栈发送真实的 `IRP_MJ_QUERY_INFORMATION`，信息由来宾驱动提供，不虚构文件系统元数据。调用方须具有已知进程和线程，处于 PASSIVE_LEVEL，并启用中断及特殊内核 APC。同一文件的重叠 I/O、已挂载 VPB、文件扩展路由、框架拥有的被查询文件，以及异步查询最后引用所需的延迟删除均明确不支持。`IoGetRelatedDeviceObject` 在 IRQL <= DISPATCH_LEVEL 返回已验证的未挂载设备栈顶层。
+`IoQueryFileInformation` 向现有已建模 WDM 文件的设备栈发送真实的 `IRP_MJ_QUERY_INFORMATION`，信息由来宾驱动或显式声明的文件系统提供方提供。调用方须具有已知进程和线程，处于 PASSIVE_LEVEL，并启用中断及特殊内核 APC。同一文件的重叠 I/O、已挂载 VPB、文件扩展路由、框架拥有的被查询文件，以及异步查询最后引用所需的延迟删除均明确不支持。`IoGetRelatedDeviceObject` 在 IRQL <= DISPATCH_LEVEL 返回已验证的未挂载设备栈顶层。
 
 查询在完成期间借用调用方缓冲区。非挂起调用返回分发状态，挂起调用返回完成状态；立即以错误状态完成时不发布私有 IOSB，返回长度为零。工作线程完成的通知在原调用方恢复时交付。同步查询保持文件存活至最终 CLOSE 结束，之后只写入四字节 ReturnedLength，保留相邻字节并支持与输出缓冲区别名重叠。报告使用 kind `query_information`、origin `IoQueryFileInformation` 和 `file_information_class`；场景输入不能伪造这种请求。类 75 转为类 71 并设置栈标志 1；其他类编号传给来宾驱动，不宣称提供方已实现各类元数据。
 
 同步查询在最终 CLOSE 结束前保持临界区域，随后恢复调用方原有的 APC 状态。待交付通知在符合条件的内核 API 返回边界及所属线程恢复来宾指令前可见，包括退出守护区域和恢复 IRQL。报告字节在原进程中采集，完成查询的工作线程不会读取其用户缓冲区。分配失败会重置同步文件事件，但不修改 ReturnedLength。
+
+`ZwQueryInformationFile` 通过同一查询所有者解析具有进程作用域的文件句柄，单独分配清零的 SystemBuffer，借用调用方输出区。本地类为 Access (8)、同步 Position (14)、Mode (16)、Alignment (17)、IsRemoteDevice (51)；Mode 和 Alignment 仍建立自有 IRP。转发类为 4/5/6/7/9/14/21/22/28/34/35/59/71/75，其中异步 Position 转发，75 转为 71 并设置栈标志 1。KernelMode 引用保留句柄作用域，但不检查已授予的访问掩码。报告来源为 `ZwQueryInformationFile`。
+
+立即完成会保留原生数据包，直到分发返回。非错误完成先复制输出，再写 Information 和四字节 Status；立即错误保留调用方 IOSB。挂起完成通知原来的可交付线程；异步挂起调用在返回时复制整个私有 16 字节 IOSB，其他写入保留填充字节。共享物理内存所有者控制缓冲区回收。原生 Fast I/O、未列出的类、零长度缓冲调用和过短的 Mode/Alignment 缓冲区均明确拒绝；这不表示支持通用 NtQueryInformationFile 或 APC 运行时。
+
+声明式提供方通过保留的打开 token 回答 Basic (4)、Standard (5)、Internal (6)、Name (9)、NetworkOpen (34)、AttributeTag (35)，保留声明的时间戳、分配大小、EOF、属性和完整 64 位文件 ID。名称是准入 ASCII 路径的卷内相对 UTF-16 编码。固定结构缓冲区过短返回 STATUS_INFO_LENGTH_MISMATCH；名称至少需要八字节，截断时只返回完整 UTF-16 单元，并报告 STATUS_BUFFER_OVERFLOW 和完整名称长度。两个查询 API 共用编码器与真实来宾筛选器路径，其他提供方信息类仍未支持。
 
 ## 处理器身份与 DPC 级别提升
 
@@ -703,7 +709,7 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 
 ## 声明式文件系统清单
 
-可选 `filesystem` 在 DriverEntry 前声明会话内卷。省略表示可用性未知，`[]` 表示无提供方；每个卷显式包含根目录。现有声明节点可通过真实 CREATE 请求打开，入口为 `ZwOpenFile` 以及 `ZwCreateFile`、`IoCreateFile` 的 FILE_OPEN 形式。名称查找、来宾筛选器、共享、句柄和指针生命周期复用统一所有者，不读取宿主文件。新建、覆盖、删除、元数据查询、数据 I/O、枚举及文件系统控制仍未实现。
+可选 `filesystem` 在 DriverEntry 前声明会话内卷。省略表示可用性未知，`[]` 表示无提供方；每个卷显式包含根目录。现有声明节点可通过真实 CREATE 请求打开，入口为 `ZwOpenFile` 以及 `ZwCreateFile`、`IoCreateFile` 的 FILE_OPEN 形式。名称查找、来宾筛选器、共享、句柄和指针生命周期复用统一所有者，不读取宿主文件。新建、覆盖、删除、数据 I/O、枚举及文件系统控制仍未实现。
 
 名称和路径限可打印 ASCII，按大小写折叠判断身份；父目录须显式声明，64 位文件 ID 在各卷内唯一。不接受别名、流、链接、重解析点和 Unicode 路径。每个节点必须给出类型、属性、分配大小及四个非负有符号 64 位时间戳，包括零。文件必须提供精确十六进制 `data`，空文件用空字符串；EOF 为字节数。目录不含 data 且分配为零。扇区为 512–4096 的二次幂，文件分配按扇区对齐且覆盖 EOF；对齐掩码为小于扇区大小的 2^n−1。`full_access` 仅排除 ACL 拒绝；允许只读、隐藏、系统、目录、存档及单独使用的 NORMAL 属性。
 

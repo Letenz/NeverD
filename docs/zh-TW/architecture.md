@@ -1670,6 +1670,8 @@ KernelModelObjects 在共用物件表管理檔案控制代碼與指標計數。K
 
 KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共享操作接收已獲准的節點及已映射權限，雙向檢查共享衝突；僅存取中繼資料的開啟不參與衝突。CLEANUP 釋放共享限制但保留 token，CLOSE 刪除已清理的 token。仍被參照的已清理物件也計入 1024 個開啟的上限。嚴格綁定驗證將 token 與檔案物件 owner 對照。 `KernelModelFileCreate` 擁有 CREATE 與取消生產者，在回呼前保留控制代碼容量。`DriverSession` 在非同步操作與巢狀 CLOSE 中保留原呼叫者。共同物件擁有者發布控制代碼；名稱查找保留真實目錄物件，終端提供者讀取已准入封包。場景關閉意圖獨立保留，快照與卸載執行雙向 token 驗證。
 
+`KernelModelFileQueries` 共同擁有借用緩衝的 IoQueryFileInformation 與獨立緩衝的 ZwQueryInformationFile 續調、呼叫端發布及封包回收。KernelMode 控制代碼參考重用物件擁有者。原生 SystemBuffer 向實體記憶體擁有者登記，一般要求回收留待查詢擁有者處理。僅 `KernelFileSystem::queryInformation` 依保留的開啟 token 編碼宣告中繼資料；終端路徑使用實際 IRP 類別與長度，介接和報告層不重建資料。
+
 ### 原始環境的架構歸屬
 
 `RecoveryArchitecture` 根據 `SpecializationOptions::Architecture` 選擇原生契約，與編譯主機無關。現有預設值為 x64；沒有轉接器的架構明確拒絕。`arch/x86_64` 負責原生選項編碼、主映像範圍規則、外部退出比對成本及實體退出回執。core 負責通用預算、策略編碼及圖與證據的完整性。x64 選項與回執摘要保留原有位元組編碼；驗證宣告前檢查預期與儲存的架構識別。`RawArchitectureReceiptCompatibility` 固定重構前的摘要值，架構不符測試禁止把 x64 證據改標為 ARM64。此邊界尚未實作 ARM64 原生恢復。

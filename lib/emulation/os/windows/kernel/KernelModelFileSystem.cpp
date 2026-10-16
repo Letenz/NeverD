@@ -125,6 +125,7 @@ llvm::Error KernelModel::validateFileSystemRoute(llvm::ArrayRef<uint64_t> Route,
           (Kind != DriverRequestKind::Create &&
            Kind != DriverRequestKind::Cleanup &&
            Kind != DriverRequestKind::Close &&
+           Kind != DriverRequestKind::QueryInformation &&
            Kind != DriverRequestKind::UnlockAll))
         return filesystemError(
             "file I/O for this declared volume route is not implemented");
@@ -156,7 +157,31 @@ llvm::Expected<uint64_t> KernelModel::dispatchFileSystem(uint64_t Device,
     return filesystemError("terminal packet substituted its FILE_OBJECT");
   uint32_t Status = StatusSuccess;
   uint64_t Information = 0;
-  if (Request->Kind == DriverRequestKind::Create) {
+  if (Request->Kind == DriverRequestKind::QueryInformation) {
+    if (!File.ProviderOpen)
+      return filesystemError("query lost its retained provider open");
+    auto Class = Memory.readInteger(Stack + StackQueryClassOffset, 4);
+    auto Length = Memory.readInteger(Stack + StackQueryLengthOffset, 4);
+    auto Buffer = Memory.readInteger(IRP + IRPSystemBufferOffset, 8);
+    if (!Class || !Length || !Buffer)
+      return llvm::joinErrors(
+          Class.takeError(),
+          llvm::joinErrors(Length.takeError(), Buffer.takeError()));
+    if (*Buffer != Request->SystemBuffer || *Length > Request->BufferSize)
+      return filesystemError("query substituted or exceeded its buffer");
+    auto Query = FileSystem.queryInformation(
+        *File.ProviderOpen, uint32_t(*Class), uint32_t(*Length));
+    if (!Query)
+      return Query.takeError();
+    Status = Query->Status;
+    Information = Query->Bytes.size();
+    if (!Query->Bytes.empty()) {
+      if (auto E = validateObjectOutput(*Buffer, Query->Bytes.size()))
+        return E;
+      if (auto E = Memory.write(*Buffer, Query->Bytes))
+        return E;
+    }
+  } else if (Request->Kind == DriverRequestKind::Create) {
     if (File.ProviderOpen || File.OpenCancelled ||
         !FileOperations.contains(File.CreateOperation))
       return filesystemError("CREATE lost its unpublished open operation");
