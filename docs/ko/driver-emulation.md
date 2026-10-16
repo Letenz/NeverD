@@ -691,6 +691,8 @@ PASSIVE_LEVEL에서 길이가 4 미만이면 결과에 접근하지 않고 `STAT
 
 `ZwQueryInformationFile`은 공통 조회 소유자로 프로세스 범위 파일 핸들을 확인하고 별도의 0으로 초기화한 SystemBuffer를 할당하며 호출자 출력을 빌립니다. 로컬 클래스는 Access (8), 동기 Position (14), Mode (16), Alignment (17), IsRemoteDevice (51)입니다. Mode와 Alignment도 자체 IRP를 만듭니다. 전달 클래스는 4/5/6/7/9/14/21/22/28/34/35/59/71/75이며 비동기 Position은 전달하고 75는 71과 스택 플래그 1로 바꿉니다. KernelMode 참조는 핸들 범위를 유지하고 부여된 접근 마스크를 검사하지 않습니다. 보고서 origin은 `ZwQueryInformationFile`입니다.
 
+게스트 장치의 READ/WRITE 완료는 동기 전송과 0바이트 전송에서도 저장된 `FILE_OBJECT.CurrentByteOffset`을 유지합니다. 요청의 명시적 `byte_offset` 자체는 파일 위치를 바꾸지 않습니다. 위치 변경에는 구현된 파일 시스템 처리나 파일 위치 설정 작업이 필요합니다.
+
 즉시 완료는 디스패치 복귀까지 패킷을 유지합니다. 오류가 아닌 완료는 출력을 복사한 뒤 Information과 4바이트 Status를 쓰고, 즉시 오류는 호출자 IOSB를 보존합니다. 보류 완료는 원래 전달 가능한 스레드에 알립니다. 비동기 보류 호출은 복귀할 때 사설 IOSB 16바이트 전체를 복사하고 다른 쓰기는 패딩을 보존합니다. 공통 물리 메모리 소유자가 해제를 관리합니다. 네이티브 Fast I/O, 미등재 클래스, 길이 0 버퍼, 짧은 Mode/Alignment 버퍼는 거부하며 범용 NtQueryInformationFile 또는 APC 지원을 뜻하지 않습니다.
 
 선언 공급자는 유지된 열기 토큰으로 Basic (4), Standard (5), Internal (6), Name (9), NetworkOpen (34), AttributeTag (35)를 반환하며 선언된 시각, 할당, EOF, 속성과 64비트 ID를 보존합니다. 이름은 허용된 ASCII 경로의 볼륨 상대 UTF-16입니다. 짧은 고정 구조 버퍼는 STATUS_INFO_LENGTH_MISMATCH를 반환합니다. 이름은 최소 8바이트가 필요하며 잘리면 완전한 UTF-16 단위, STATUS_BUFFER_OVERFLOW 및 전체 이름 길이를 반환합니다. 두 API는 인코더와 실제 게스트 필터 경로를 공유하며 다른 공급자 클래스는 지원하지 않습니다.

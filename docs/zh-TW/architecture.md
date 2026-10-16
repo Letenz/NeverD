@@ -1672,6 +1672,8 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 
 `KernelModelFileQueries` 共同擁有借用緩衝的 IoQueryFileInformation 與獨立緩衝的 ZwQueryInformationFile 續調、呼叫端發布及封包回收。KernelMode 控制代碼參考重用物件擁有者。原生 SystemBuffer 向實體記憶體擁有者登記，一般要求回收留待查詢擁有者處理。僅 `KernelFileSystem::queryInformation` 依保留的開啟 token 編碼宣告中繼資料；終端路徑使用實際 IRP 類別與長度，介接和報告層不重建資料。
 
+`KernelModelIO` 回收傳輸所有權時不修改 `FILE_OBJECT.CurrentByteOffset`。請求偏移與完成位元組數不能替代檔案系統的位置更新；同步原生 Position 查詢讀取保留的欄位。
+
 ### 原始環境的架構歸屬
 
 `RecoveryArchitecture` 根據 `SpecializationOptions::Architecture` 選擇原生契約，與編譯主機無關。現有預設值為 x64；沒有轉接器的架構明確拒絕。`arch/x86_64` 負責原生選項編碼、主映像範圍規則、外部退出比對成本及實體退出回執。core 負責通用預算、策略編碼及圖與證據的完整性。x64 選項與回執摘要保留原有位元組編碼；驗證宣告前檢查預期與儲存的架構識別。`RawArchitectureReceiptCompatibility` 固定重構前的摘要值，架構不符測試禁止把 x64 證據改標為 ARM64。此邊界尚未實作 ARM64 原生恢復。

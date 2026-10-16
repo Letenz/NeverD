@@ -1877,6 +1877,8 @@ KernelFileSystem hält je FILE_OBJECT ein provider token. Die private Freigabeop
 
 `KernelModelFileQueries` besitzt Fortsetzungen, Veröffentlichung und Freigabe für ausgeliehenes IoQueryFileInformation und gepuffertes ZwQueryInformationFile. KernelMode-Handles nutzen den Objektbesitzer. Native SystemBuffer werden beim physischen Speicherbesitzer registriert und von der normalen Anforderungsfreigabe dem Abfragebesitzer überlassen. Nur `KernelFileSystem::queryInformation` kodiert deklarierte Metadaten aus gehaltenen Öffnungstoken. Der Endpunkt liest tatsächliche IRP-Klasse und Länge; Adapter und Berichte rekonstruieren keine Metadaten.
 
+`KernelModelIO` gibt die Übertragung frei, ohne `FILE_OBJECT.CurrentByteOffset` zu ändern. Anforderungsoffset und abgeschlossene Bytezahl ersetzen keine Positionsänderung durch das Dateisystem; native Position-Abfragen synchroner Dateien lesen das erhaltene Feld.
+
 ### Architekturzuständigkeit der Rohumgebung
 
 `RecoveryArchitecture` wählt den nativen Vertrag anhand von `SpecializationOptions::Architecture`, unabhängig vom Build-Host. Der bisherige Standard bleibt x64; Ziele ohne Adapter werden ausdrücklich abgelehnt. `arch/x86_64` besitzt die Kodierung nativer Optionen, die Bereichsregeln des primären Abbilds, die Kosten des Austrittsabgleichs und die physischen Austrittsnachweise. Der Kern besitzt gemeinsame Budgets, Richtlinienkodierung sowie Graph- und Beweisintegrität. Die Bytekodierung der x64-Prüfsummen bleibt erhalten; erwartete und gespeicherte Architektur werden vor der Deklaration geprüft. `RawArchitectureReceiptCompatibility` fixiert die bisherigen Prüfsummen; Abweichungstests verbieten, x64-Nachweise als ARM64 umzubenennen. Native ARM64-Wiederherstellung ist weiterhin nicht implementiert.
