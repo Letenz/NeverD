@@ -337,6 +337,9 @@ TEST_P(AndroidDevices, RejectedGPUProgramsCannotPublishEarlierWrites) {
 }
 
 TEST_P(AndroidDevices, RejectedIndirectGPUProgramsPreserveAllFetchedRAM) {
+  // O0 initializes and compares complete pinned pages in each case. Keep the
+  // instruction/event budgets while allowing the same wall time as objects.
+  Options.Limits.TimeoutMicroseconds = 30000000;
   auto D = contextDeviceTestInput();
   D.ReadOnlyMappings[0].Updates.clear();
   D.KGSL->SynchronousA3xx = true;
