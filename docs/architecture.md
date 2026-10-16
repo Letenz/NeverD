@@ -1885,6 +1885,21 @@ queries retain their existing conditional-root policy.
 Numerical coordinate membership supplies neither input known bits nor negative
 dependency/origin authority. Other architecture/format admission remains with
 its existing proof owners.
+
+The AArch64 compact table (`tryAArch64CompactTable`) traces the shifted entry
+back to its byte or halfword load through copies, zero and sign extensions and
+low-byte views, and reads each entry as that chain leaves it: the entry itself,
+or its zero or sign extension, as GCC's `add xd, xa, wo, sxtb #2` makes it. A
+view narrower than the entry, or a zero extension of a sign extension, rejects
+the table. The table base is folded where the entry is loaded, because GCC
+reuses the base register for the anchor before the branch.
+A compact table carries no relocations, so its readable capacity is the rest
+of its data owner. That capacity bounds storage only for a selector no guard
+bounds. Once a precise guard authenticates the index domain, the capacity is
+cut to the guard bound: the owner's later bytes are adjacent data the dispatch
+cannot select. Decoding them would charge the fixed point for slots no runtime
+coordinate reaches and leave the guarded domain looking like a partial subset,
+which a case that calls a function cannot close.
 Guard identity can name a contained architectural register lane at its exact
 full-register writer. The shared reaching-value resolver names that complete
 definition and retains the lane's offset and width, so a comparison of AL or

@@ -2201,6 +2201,20 @@ agree. Borrowed RBP fields, negative displacements and both signed and unsigned
 index extensions are covered; changed bases/offsets, partial reloads, stores,
 calls and memory barriers must not recover a table from the earlier guard.
 
+`JTE_AArch64.GCCCompactSignedEntriesMayPrecedeTheAnchor` assembles GCC's
+compact switch (`test_jumptable_gcc_compact_a64.s`): the entry loaded back into
+the index register, the table base register reused for the anchor, and signed
+byte and halfword entries (`sxtb #2`, `sxth #2`) with a case before the anchor.
+It requires the exact targets and the lifted switch cases, and no table for a
+halfword entry the dispatch truncates to its low byte.
+`JTE_AArch64.GCCCompactGuardBoundsTheStorageItReads` is libgcc's
+`size_of_encoded_value`: a guard bounds the index below bytes that follow the
+table in its data owner, and one case calls `abort`. It requires the five
+guarded targets. These functions have their own object: a case that calls a
+function with the computed target still in X0 passes a pointer of unknown
+origin, which makes module arbitration treat every writable table in the same
+object as possibly modified.
+
 `ModuleJumpTableBudget.*` uses a real ELF table inventory to separate the
 400000-operation input boundary from scan, retained-source, queue and cumulative
 transfer limits. It checks both function orders, unrelated code occurrences,
