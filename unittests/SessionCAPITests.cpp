@@ -4018,7 +4018,7 @@ TEST_F(SessionCAPITest, LocalTypesFitWhatTheCodeDoesThroughAPointer) {
   EXPECT_EQ(Best.getInteger("exact"), 1);
   const llvm::json::Object &Size = *(*Best.getArray("fits"))[0].getAsObject();
   EXPECT_EQ(Size.getString("path"), "Size");
-  EXPECT_EQ(Size.getString("type"), "USHORT");
+  EXPECT_EQ(Size.getString("type"), "uint16_t");
   EXPECT_EQ((*Candidates)[1].getAsObject()->getInteger("exact"), 0);
 
   // A pointer to a device's Links, as a list walk holds: the device's type
