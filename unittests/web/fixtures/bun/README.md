@@ -3,6 +3,28 @@
 The [cross-container corpus](cross/README.md) extends this Linux x64 baseline
 with complete Linux ARM64, macOS x64/ARM64 and Windows x64/ARM64 inputs.
 
+## Local source recovery driver
+
+The optional development target `neverd-web-source-recovery` exposes the
+existing embedded recovery parser and readable-source owner for a single
+local JavaScript file. Build it explicitly in a JavaScript-enabled test tree:
+
+```console
+cmake --build build-web-dev --target neverd-web-source-recovery
+build-web-dev/bin/neverd-web-source-recovery readable module /absolute/input.js /absolute/new-output
+build-web-dev/bin/neverd-web-source-recovery check module /absolute/edited.js /absolute/new-check
+```
+
+`script` and `commonjs` are also explicit source-type choices. Each operation
+captures a bounded immutable input, preserves its bytes, and writes a receipt
+in a fresh directory. The readable operation inserts whitespace and compares
+the full parser tree; check only establishes syntax admission. Neither compiles
+nor runs input, restores erased names or types, or proves behavioral
+equivalence. Errors and failed source checks return a nonzero status. This
+manual tool has no production dependency and uses no external parser.
+
+## Captured corpus
+
 These inert inputs were authored for NeverD. The `*.graph.bin` files are exact
 graph ranges from real compiler outputs, captured on 2026-10-10. They contain
 source/asset/map/cache data and possible Bun-generated JavaScript scaffolding,

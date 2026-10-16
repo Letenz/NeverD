@@ -322,7 +322,7 @@ by a checked inventory; the six earlier platform inventories were rechecked
 without changes. Wine startup failures and earlier fixture failures remain
 recorded separately from passing native observations.
 
-The defined reconstruction acceptance is complete for all eight retained
+The bounded reconstruction matrix passes for all eight retained
 distributions: readable anchored source evidence, independent repeatable
 builds, 232 original/rebuilt configuration and behavior case pairs, 26 startup
 case pairs, and loading/materialization checks for 16 retained native addons.
@@ -330,3 +330,22 @@ These bounded results do not recover erased TypeScript information, native
 addon source or the original Bun revision, and do not establish live-service,
 hardware or universal behavioral equivalence. No recovered private source or
 executable is part of this repository change.
+
+## Reopened overall goal
+
+The earlier overall completion was premature. The user explicitly requires
+continued complete recovery; the preceding acceptance is a milestone only.
+The existing immutable delivery recipes compile hash-pinned captured source,
+not edited readable files. A usable development project therefore still needs
+an explicit, auditable source selection path: preserve the baseline, derive
+readable source with the shared parser, record intentional edits, reject
+malformed or ambiguous inputs, and prove that an edited module changes the
+rebuilt program. Formatting equality must not be described as universal
+behavioral equivalence because source text and locations are observable.
+
+After qualifying that path, continue evidence-backed semantic naming and
+types, classify unresolved runtime dependencies, broaden real feature
+coverage, and investigate the independent Bun revision and opaque native
+components. Keep erased information unknown unless evidence recovers it.
+Issues 714–718 retain their completed bounded scope; they do not close this
+larger goal. Preserve prior completion receipts as superseded history.
