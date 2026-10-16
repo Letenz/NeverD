@@ -623,3 +623,44 @@ live counting are not claimed. Windows expansion is running in
 [38862647678](https://github.com/gmh5225/test_mac_intel/actions/runs/38862647678).
 `progress-v21.json` records these passing cases and the higher-priority search
 failure together. Total goal status remains active.
+
+
+## Native Windows token-cap supplement and managed Linux search repair
+
+The seven token-cap cases now pass on all eight distributions (112 pairs).
+Windows run 38862647678 succeeds at 3e032a1084e65f96f39407e8b51c96235e1cc591;
+downloaded raw results were normalized again and sealed for both architectures.
+This remains explicit small-cap coverage, not live counting or default-cap stress.
+
+Linux x64 now has a runnable managed search supplement. The original embedded
+search and both rebuilt layouts match thirteen Grep/Glob cases (26 pairs),
+including malformed regex, Unicode, pagination and exclusion of external rg
+configuration. An authored launcher selects the independently built ripgrep
+14.1.1 / PCRE2 10.45 through the client's existing system-rg configuration.
+The recovered JavaScript and previously sealed development packages remain
+unchanged. Seven helper controls and six launcher controls pass before client
+execution. Two native public-source builds produce byte-identical helpers.
+
+The old Rust wrapper reported generated version constants instead of the
+linked PCRE2 version. A recorded source overlay queries PCRE2_CONFIG_VERSION;
+the native check still requires 10.45. An incomplete upload omitting four
+hidden public metadata files was rejected and the upload fixed. A fixture
+readiness timeout occurred before a preserved client ran; the unchanged
+sequential retry passes. These failures remain in the evidence.
+
+Two Glob results initially differ only in durationMs. The captured source
+shows Date.now() subtraction at the result construction. A search-specific
+comparator normalizes that field only at the exact six-field Glob protocol
+result schema, retains the original numbers, and passes eleven mutation
+controls for ordering, counts, truncation, schema and invalid timing values.
+No file/content/error differences are excluded. Performance equivalence is
+not claimed.
+
+The managed runtime package has 615 verified files, both layouts, helper,
+launcher sources, upstream source/crate archives, patch, and acceptance data.
+Launchers rebuild byte-identically from the packaged source and both packaged
+clients pass isolated version invocations. progress-v22.json records this
+bounded repair and the still-open whole-recovery objective. Embedded rg
+dispatch, apply-seccomp, other distributions and broader functionality remain
+open. Native Linux ARM64 expansion is underway; its original thirteen-case
+search baseline already passes.
