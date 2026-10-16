@@ -769,3 +769,5 @@ ASCII 名、名前空間リンク、RootDirectory として保持したディレ
 `IoThreadToProcess` は保持されたスレッドの作成元プロセス識別子を共有します。`PsGetCurrentThreadPreviousMode` は `ExGetPreviousMode` と状態および DISPATCH_LEVEL 上限を共有し、従来の広すぎる制限を修正します。`RtlPcToFileHeader` は固定モジュール一覧を全幅アドレスで検索し、PC を読み出さずに 8 バイトを書きます。不一致ならゼロです。この限定非ページクエリは常駐出力で全有効 IRQL を許可します。一覧の欠如は明示的な失敗で、動的アンワインド表と retpoline 範囲は対象外です。
 
 `MmMapLockedPages` は既存のマッパーを使い、キャッシュ済みページ、HIGH 優先度、資源不足時の bugcheck を指定します。カーネルマッピングは DISPATCH_LEVEL まで、プロセス所有のユーザービューは APC_LEVEL まで許可し、後者の資源不足は既存の例外になります。bugcheck 指定のカーネル資源不足は明示的なモデルエラーで停止し、成功として NULL を返しません。実際の bugcheck 処理は未対応です。
+
+[`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject) は有効なファイルの基底デバイスを借用し、接続スタックの走査、参照の追加、ファイル拡張の参照を行いません。本プロファイルは所有済みの未マウント経路と IRQL <= DISPATCH_LEVEL に限定され、マウント済み VPB や所有者・トポロジーの不整合は明示的に停止します。Microsoft は本ルーチンをシステム用に予約しており、この IRQL 上限は公開 Windows 契約ではなくモデル方針です。

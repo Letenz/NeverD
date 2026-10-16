@@ -193,6 +193,13 @@ struct SpecializationOptions {
   /// Only the raw residual API supports this environment contract. V1 source
   /// wrapping and native proof APIs do not have authenticated base inputs.
   bool X64SegmentedReads = false;
+  /// Retain ordinary scalar FS/GS stores with a 64-bit offset and fixed,
+  /// arbitrary long-mode bases. Requires explicit nonfaulting machine state.
+  /// Full linear addresses may alias any memory, including live return cells;
+  /// offset provenance grants no frame or separation fact. This raw-residual
+  /// contract is independent of X64SegmentedReads. Source and native proof
+  /// interfaces without authenticated base inputs refuse it.
+  bool X64SegmentedWrites = false;
   /// Retain CR8 reads/writes with a symbolic four-bit task-priority state.
   /// Requires explicit nonfaulting machine state and KernelX64NoFaultV1.
   /// Every retained memory access must be ordinary memory without device side

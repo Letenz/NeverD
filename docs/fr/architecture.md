@@ -9,6 +9,10 @@ pour modifier NeverD en toute sécurité. Il couvre volontairement uniquement le
 code appartenant à NeverD ; les sous-modules LLVM, Capstone et Unicorn gardent
 leur propre architecture interne.
 
+## Restauration de la mémoire à l’exécution
+
+`X64SegmentedWrites` autorise séparément les écritures FS/GS ordinaires de 1/2/4/8 octets à décalage de 64 bits, sous un état machine explicitement sans faute. `arch/x86_64` possède la validation, l’admission et l’initialisation des bases symboliques. Le cœur utilise les adresses linéaires complètes et l’invalidation habituelle des alias. Des bases fixes arbitraires peuvent recouvrir la pile, d’autres segments et des cases de retour actives. La capacité est liée aux justificatifs raw. Les interfaces source et de preuve native sans entrées de base authentifiées continuent de refuser ce domaine.
+
 ## Graines concrètes de mémoire initiale
 
 `SymExecConcreteShadow` reçoit les octets RAM par ordre d’adresse avant exécution ; la mémoire symbolique initiale reste libre. L’option C++ `InitialMemory` est bornée par `MaxMemorySeedBytes` (1 MiB par défaut ; zéro interdit tout octet). Les plages vides, chevauchantes ou débordantes sont refusées. Les rapports avec mémoire utilisent la version 2 et conservent `InitialMemory` et le `MemorySeed` de chaque candidat. La projection accepte seulement les entrées de registre ou de mémoire absolue d’époque zéro couvertes par la graine. La vérification de requête, la nouvelle exécution et la déduplication utilisent les deux ensembles d’octets. Les octets absents, bases symboliques et effets approximatifs restent refusés ; les écritures modifient normalement la mémoire concrète. À l’arrêt, `ProcessView::read` lit la RAM validée ; les événements avant accès ne forment pas un instantané complet. Une observation ne prouve ni propriété, durée de vie, immutabilité ni disjonction. Le candidat valide uniquement la décision visée et les précédentes. C/JSON, Python et CLI restent limités aux registres en version 1.
@@ -1918,3 +1922,5 @@ KernelFileSystem conserve un provider token par FILE_OBJECT. L’opération priv
 Les alias réutilisent les propriétaires existants des threads/processus et des contextes, même pendant un attachement. `RtlPcToFileHeader` utilise `LoadedModules`, comme les requêtes de modules système ; les régions mappées de `ImageRAM` ne remplacent pas l’identité des modules. Aucun état de l’hôte n’est consulté.
 
 `KernelMDLCalls` normalise l’entrée historique vers le mappeur existant à six arguments. `KernelPhysicalMemory` et les enregistrements MDL conservent les attributs de cache, l’identité des pages, les droits et la durée de vie. Seuls les alias d’image noyau entièrement libérés ne laissent aucune dépendance environnementale ; les vues utilisateur la conservent.
+
+`queryFileDevice` dans `KernelModelFileRequests` centralise la validation de l’identité du fichier, de son en-tête, du montage et de la topologie. La requête de base renvoie le périphérique possédé par le fichier ; la requête associée vérifie aussi le routage par extension et choisit le sommet attaché. Les deux résultats sont empruntés.

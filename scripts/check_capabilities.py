@@ -1291,9 +1291,14 @@ def collect_public_surfaces(root: Path) -> dict[str, frozenset[str]]:
             for variable, command in command_declarations(code):
                 local_commands.setdefault(variable, set()).add(command)
                 cli_declarations.add(f"neverd {command}")
-            for match in option_declaration.finditer(code):
+            # Keep source offsets while masking literal contents: help text
+            # may contain ); without ending the C++ declaration.
+            declarations = CXX_NON_CODE.sub(
+                lambda match: re.sub(r"[^\r\n]", " ", match.group(0)), code
+            )
+            for match in option_declaration.finditer(declarations):
                 variable = match.group(1)
-                body = match.group(2)
+                body = code[match.start(2):match.end(2)]
                 literal = re.match(r'\s*"([^"]+)"', body)
                 constant = re.match(r"\s*([A-Za-z_]\w*::[A-Za-z_]\w*)", body)
                 if literal is not None:
@@ -1304,7 +1309,9 @@ def collect_public_surfaces(root: Path) -> dict[str, frozenset[str]]:
                     option = None
                 if option is None:
                     continue
-                for subcommand_variable in CLI_SUBCOMMAND_REFERENCE.findall(body):
+                for subcommand_variable in CLI_SUBCOMMAND_REFERENCE.findall(
+                    _cxx_code(body)
+                ):
                     # Anonymous namespaces routinely reuse short identifiers in
                     # separate translation units.  Resolve a same-file command
                     # first; only an extern-style reference may fall back to

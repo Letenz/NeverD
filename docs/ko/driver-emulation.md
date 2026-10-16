@@ -764,3 +764,5 @@ ASCII 이름, 네임스페이스 링크, RootDirectory로 유지되는 디렉터
 `IoThreadToProcess`는 유지된 스레드의 생성 프로세스 ID를 공유합니다. `PsGetCurrentThreadPreviousMode`는 `ExGetPreviousMode`와 상태 및 DISPATCH_LEVEL 상한을 공유하며 기존의 과도한 허용 범위를 수정합니다. `RtlPcToFileHeader`는 전체 너비 주소로 고정 모듈 목록을 조회하고 PC 메모리를 읽지 않고 8바이트를 씁니다. 일치하지 않으면 0입니다. 이 제한된 비페이징 조회는 상주 출력에서 모든 유효 IRQL을 허용합니다. 목록 누락은 명시적으로 실패하며 동적 언와인드 테이블과 retpoline 범위는 지원하지 않습니다.
 
 `MmMapLockedPages`는 기존 매퍼에 캐시된 페이지, HIGH 우선순위와 자원 부족 시 bugcheck 플래그를 전달합니다. 커널 매핑은 DISPATCH_LEVEL까지, 프로세스 소유 사용자 뷰는 APC_LEVEL까지 허용하며 후자의 자원 부족은 기존 예외를 발생시킵니다. bugcheck 플래그가 있는 커널 자원 부족은 명시적 모델 오류로 중단하며 성공한 호출처럼 NULL을 반환하지 않습니다. 실제 bugcheck 처리는 지원하지 않습니다.
+
+[`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject)는 살아 있는 파일의 기본 장치를 빌리며 연결 스택 탐색, 참조 증가, 파일 확장 조회를 하지 않습니다. 이 프로필은 소유된 비마운트 경로와 IRQL <= DISPATCH_LEVEL로 제한되며 마운트된 VPB나 잘못된 소유권／토폴로지는 명시적으로 중단합니다. Microsoft가 시스템용으로 예약한 함수이므로 이 IRQL 상한은 공개 Windows 계약이 아닌 모델 정책입니다.

@@ -10,6 +10,10 @@ NeverD 테스트는 표현 모양이 예상과 같은지, 바이너리 fixture�
 
 `PipelineOutcome.ResolvedCalls*`는 레지스터 그룹, call/invoke 식별, 스택 바이트 결합·분할, 좁은 값의 자기 슬롯 배치, 누락 바이트 거부를 검사합니다. `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue`는 기록된 오프셋을 검사합니다. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument`는 x64, ARM32, AArch64의 ELF, PE, Mach-O를 다룹니다. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths`는 세 형식에서 변경된 길이, 쓰기 가능·범위 초과 데이터, 같은 이름의 로컬 함수, 잘못된 원본 레지스터, 대체 진입점 및 재배치 가능 이미지를 거부합니다. 호스트 C 차등 테스트는 참조 C를 별도 번역 단위에서 O0로, 생성 C를 O2로 컴파일하여 호스트 최적화기의 순환식 오컴파일이 기준값을 오염시키지 않도록 합니다. AArch64 FMA 검사는 x86 호스트에서만 `-mfma`를 요청합니다.
 
+## 세그먼트 쓰기 복원 검사
+
+`InterpreterSpecialization.SegmentedWrite*`는 독립 바이트 메모리 결과, 모든 스칼라 폭, 베이스 덧셈 순환, 프레임 별칭, 덮어쓴 포인터 출처, 노드 간 무효화 및 정확하거나 부족한 예산을 검사합니다. `SegmentedWritesAndReadsShareLinearMemory`는 같거나 다른 베이스를 다룹니다. `PEFixedImageTest.RawSegmented*`는 네이티브 바이트, 반환 슬롯 별칭 거부 및 기능 변경 증빙을 검사합니다. 기존 호환성 값은 유지됩니다. 특수화, PE 고정 이미지, 머신 상태, 네이티브/LLVM 정제 테스트를 빌드하세요. 소스 및 증명 거부 검사는 사용하지 않는 쓰기 기능도 포함합니다.
+
 ## 구체적 진입 메모리 시드
 
 `NeverDSymbolicTests`, `NeverDConcolicTests`, `NeverDConcolicIntegrationTests`를 실행합니다. `LowIRConcolicMemory.*`와 기호 계층 테스트는 두 바이트 순서, 별칭 저장, 독립 뱅크, 누락/잘못된 범위, 초기화와 늦은 시드, 예산 경계, epoch, 모델 폭, 메모리 후보 재실행과 중복 제거를 검증합니다. 기존 네이티브 형식/아키텍처 행렬도 회귀 검사합니다.
@@ -2017,3 +2021,5 @@ CRT 회귀는 모든 바이트/UTF-16 단위, 인수 폭, 변경이 없는 읽�
 회귀는 유지되거나 만료된 스레드, 요청자/작업자/연결 컨텍스트, 모듈 경계와 구멍, 출력 너비, 수명, 권한, IRQL을 검사합니다. 원본 및 실제 WDK CRT 픽스처는 정적/동적 KernelMode 조회를, 파일 조회 픽스처는 UserMode 호출자도 검사합니다. 두 WDK 계열 모두 일반/CFG 이미지를 포함하며 누락된 두 선언은 실제 kit 타입의 로컬 ABI로 보완합니다. 사용할 수 없는 백엔드는 건너뜁니다.
 
 레거시 MDL 검증에는 실제 WDK 정적·동적 호출, 프로세스에 연결된 작업자, 자체 이미지 별칭, 모드 축소, IRQL, 프로세스 전환, 만료된 설명자, 중복 시스템 매핑과 주입된 별칭 예산 소진이 포함됩니다. 커널 부족은 MDL을 보존하고 미지원 bugcheck를 보고하며 사용자 부족은 예외 처리할 수 있습니다. 원본 래퍼 탐침은 인수 전달과 반환 폭만 검증하고 주입된 매퍼는 검증하지 않습니다.
+
+`KernelFileQueries.BaseDevice*`는 기본 장치와 두 필터 계층, 참조 유지, 확장 포인터 무시, 생성／정리／닫기 상태, 손상된 기록 및 IRQL을 검사합니다. 자체 및 실제 WDK 일반／CFG 파일 쿼리 픽스처는 기존 백엔드, 재배치, 스케줄링과 호출자 수명 조합에서 정적／동적 기본 쿼리를 실행합니다.

@@ -169,6 +169,17 @@ loadMachOExecutionImage(const std::filesystem::path &Path,
              Type == S_MOD_TERM_FUNC_POINTERS || Type == S_INIT_FUNC_OFFSETS);
         Result.HasTLS |= Section.size && Type >= S_THREAD_LOCAL_REGULAR &&
                          Type <= S_THREAD_LOCAL_INIT_FUNCTION_POINTERS;
+        if (Section.size && Type >= S_THREAD_LOCAL_REGULAR &&
+            Type <= S_THREAD_LOCAL_INIT_FUNCTION_POINTERS) {
+          if (Section.align > 63 ||
+              (Type != S_THREAD_LOCAL_ZEROFILL &&
+               (Section.offset < S.fileoff || Section.size > S.filesize ||
+                Section.offset - S.fileoff > S.filesize - Section.size ||
+                Section.addr - S.vmaddr != Section.offset - S.fileoff)))
+            return failure("macho execution: invalid TLS section storage");
+          Result.TLSSections.push_back(
+              {Section.addr, Section.size, Type, Section.align});
+        }
         Result.HasFixups |= Section.nreloc != 0;
       }
       break;
@@ -231,6 +242,9 @@ loadMachOExecutionImage(const std::filesystem::path &Path,
     }
     case LC_ENCRYPTION_INFO_64:
       Result.Encrypted |= Obj.getEncryptionInfoCommand64(LC).cryptid != 0;
+      break;
+    case LC_ID_DYLIB:
+      ++Result.DylibIdentities;
       break;
     case LC_SYMTAB:
     case LC_UUID:

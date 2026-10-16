@@ -9,6 +9,10 @@ per modificare NeverD in sicurezza. Copre intenzionalmente solo il codice di
 NeverD; i sottomoduli LLVM, Capstone e Unicorn mantengono la propria
 architettura interna.
 
+## Recupero della memoria a runtime
+
+`X64SegmentedWrites` ammette separatamente scritture FS/GS ordinarie di 1/2/4/8 byte con offset a 64 bit, in uno stato macchina esplicitamente privo di fault. `arch/x86_64` gestisce validazione, ammissione e inizializzazione delle basi simboliche. Il nucleo usa indirizzi lineari completi e la normale invalidazione degli alias. Basi fisse arbitrarie possono sovrapporsi allo stack, ad altri segmenti e a celle di ritorno attive. La capacità è inclusa nelle attestazioni raw. Le interfacce sorgente e di prova nativa senza input di base autenticati continuano a rifiutare questo dominio.
+
 ## Seed concreti della memoria iniziale
 
 `SymExecConcreteShadow` riceve byte RAM in ordine di indirizzo prima di eseguire; la memoria simbolica iniziale rimane libera. In C++, `InitialMemory` è limitata da `MaxMemorySeedBytes` (1 MiB predefinito; zero non accetta byte). Intervalli vuoti, sovrapposti o con riporto vengono rifiutati. I rapporti con memoria usano la versione 2 e conservano `InitialMemory` e `MemorySeed` di ogni candidato. La proiezione accetta solo ingressi di registro o memoria assoluta di epoca zero coperti dal seed. Verifica della query, nuova esecuzione e deduplicazione includono entrambi gli insiemi di byte. Byte mancanti, basi simboliche ed effetti approssimati restano rifiutati; le scritture aggiornano normalmente la memoria concreta. `ProcessView::read` legge RAM confermata a processo fermo; gli eventi prima dell’accesso non sono uno snapshot completo. L’osservazione non prova proprietà, durata, immutabilità o disgiunzione. Il candidato verifica soltanto la decisione scelta e quelle precedenti. C/JSON, Python e CLI restano basati sui registri nella versione 1.
@@ -1907,3 +1911,5 @@ KernelFileSystem conserva un provider token per FILE_OBJECT. L’operazione priv
 Gli alias riusano i proprietari di thread/processi e contesti anche durante il collegamento a un processo. `RtlPcToFileHeader` usa `LoadedModules` come le query dei moduli di sistema; le regioni di `ImageRAM` non sostituiscono l’identità dei moduli. Non viene consultato stato host.
 
 `KernelMDLCalls` normalizza l’ingresso precedente nel mapper esistente a sei argomenti. `KernelPhysicalMemory` e i record MDL gestiscono ancora cache, identità fisica, permessi e durata. Solo gli alias di immagini kernel completamente liberati non lasciano dipendenze ambientali; le viste utente le mantengono.
+
+`queryFileDevice` in `KernelModelFileRequests` verifica in comune identità del file, intestazione, montaggio e topologia. La query base restituisce il dispositivo del file; quella correlata verifica anche i percorsi di estensione e sceglie il vertice collegato. Entrambi i risultati sono presi in prestito.

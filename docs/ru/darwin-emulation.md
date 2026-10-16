@@ -1,6 +1,6 @@
 **Языки**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 5edfb602025b5842453dbc5914dad53572f14fdc63e424ca65e66d45415e59c3 -->
+<!-- i18n-source: 6d44f96afae7f68162fb5f61324f22a7893d7ea9bb0e2df38768afc67bf2c060 -->
 
 [← Оглавление документации](README.md)
 
@@ -33,7 +33,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 `LC_UNIXTHREAD` требует ровно одну полную запись нативных общих 64-битных регистров с заполненным только PC. Стек содержит argc, завершённые argv/envp и завершённый вектор apple с `executable_path=<input filename>`. Собственные SP/флаги, другие регистры, дополнительные flavors и конфликтующие входы отклоняются. Окружение хоста и вспомогательный Linux-вектор не наследуются. См. [архитектуру dyld](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-Dylib и импорты вне ограниченного контракта libSystem ниже, конструкторы/деструкторы, TLS-секции, arm64e/PAC, неподдерживаемые подтипы CPU, шифрование и немоделируемые команды приводят к отказу до выполнения. Поддерживаемый PIE использует предпочтительные адреса без ASLR. Подписи являются метаданными, а не реализацией AMFI или политик entitlements.
+Ограниченный контракт ниже поддерживает libSystem, явные стартовые dylib и обычный C TLS главного потока. Конструкторы/деструкторы, TLS-callbacks, arm64e/PAC, неподдерживаемые подтипы CPU, шифрование и немоделируемые команды отклоняются до выполнения. Главный файл сохраняет предпочтительный адрес; dylib получают отдельные детерминированные адреса. Подписи не реализуют AMFI или entitlements.
 
 ## Службы Darwin
 
@@ -1797,7 +1797,7 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 ## Ограниченные импорты libSystem
 
-Тонкий исполняемый файл базовой ISA может связать одну сильную зависимость `/usr/lib/libSystem.B.dylib`. Требуются `LC_MAIN`, `MH_TWOLEVEL`, обычный ordinal и требуемая совместимость не выше 1.0. Полностью проверяются исходные classic-потоки или цепочки generic64, неопределённые символы, точные слоты и локальные rebase. Прочие зависимости, weak/threaded-привязки, неподдерживаемые relocation, инициализация, TLS и аутентифицированные указатели отклоняются до исполнения.
+Базовые thin-программы и описанные ниже явные стартовые dylib могут сильно связывать `/usr/lib/libSystem.B.dylib`. Нужны главный вход `LC_MAIN`, `MH_TWOLEVEL`, обычные ordinal и требуемая совместимость libSystem не выше 1.0. Проверяются исходные classic/generic64 fixup и полное связывание неопределённых символов. Неизвестные символы, weak/threaded-привязки, другие relocation, callbacks и аутентифицированные указатели по-прежнему отклоняются.
 
 Только импорты выделяют аутентифицированные входы и новый errno главного потока. Обёртки используют общие эффекты ядра Darwin: ошибка даёт `-1` и errno, успех сохраняет errno. C `_exit` имеет имя Mach-O `__exit`; C `exit` с именем `_exit` не поддерживается. Обычные функции проверяют кадр возврата; завершающему вызову адрес возврата не нужен. Отчёт сохраняет поставщика, точное имя, число аргументов и все биты; незавершённый или невозвращающийся результат — null. Старые raw-отчёты совместимы.
 
@@ -1817,7 +1817,7 @@ C -> Mach-O: read -> _read; write -> _write; close -> _close
 C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
 C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
 C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
-entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
+entry: LC_MAIN main + MH_TWOLEVEL images; ordinary positive ordinals; main preferred base
 fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
 unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
 errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
@@ -1833,9 +1833,32 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 99; matching ARM64 identities: 297
+native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
 ```
 
 ```json
 {"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
+```
+
+## Явные стартовые dylib и TLS главного потока
+
+`darwin.modules` задаёт до 32 точных имён установки с учётом регистра и путей к исходным Mach-O. Читаются только достижимые зависимости; `@loader_path` сравнивается буквально, без поиска библиотек хоста. Проверяются ISA, платформа, идентификатор и версия MH_DYLIB; обычный ordinal выбирает фактического поставщика. Одноимённые экспорты и общие зависимости сохраняют идентичность. Полные файлы и резидентные данные используют общие соответствующие бюджеты.
+
+Инициализированный и нулевой C TLS допускает выравнивание до 16 байт. Память каждого модуля отображается и учитывается при подготовке; первый доступ копирует живой непрерывный шаблон после relocation, включая прежние изменения BSS и промежутков. Дескрипторы и возвратные кадры проверяются; TLS-страницы нельзя повторно занять, снять или перепротектировать. Авторские нативные O0/O1/O2 classic/chained проверки сравниваются с пятью профилями C/CLI/Python. Циклы, слабые экспорты/реэкспорты, callbacks, dlopen/dlsym, потоки и полные frameworks не реализованы; нативный Intel и физический iOS не квалифицированы.
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"darwin":{"modules":[{"name":"@loader_path/libneverd-base.dylib","path":"/inputs/libneverd-base.dylib"},{"name":"@loader_path/libneverd-leaf.dylib","path":"/inputs/libneverd-leaf.dylib"}]}}
+```
+
+```text
+graph: strong acyclic startup; exact install name; same ISA/platform; MH_DYLIB + LC_ID_DYLIB
+catalogue: max 32; only reachable inputs; no host lookup or @ path expansion
+budget: aggregate full files; aggregate resident mappings/TLS/metadata; 65536 records
+exports: regular / thread-local; ordinary dependency ordinal; rebased actual provider
+TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live contiguous first copy
+resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
+lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
+unsupported: cycles; weak/reexports/resolvers; imported addends; callbacks; dlopen/dlsym; threads
+workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
+native common catalogue: 82; required methods/platform: 100; matching ARM64 identities: 300
 ```

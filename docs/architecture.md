@@ -8,6 +8,10 @@ This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
+## Runtime memory recovery
+
+`X64SegmentedWrites` separately admits ordinary 1/2/4/8-byte FS/GS stores with 64-bit offsets under explicit nonfaulting machine state. `arch/x86_64` owns runtime memory validation, admission and symbolic base initialization. Core uses complete linear addresses and ordinary alias invalidation; fixed arbitrary bases may alias the frame, other segments and live return cells. The capability is bound into raw receipts. Source and native proof interfaces without authenticated base inputs continue to refuse this domain.
+
 ## Source and object replacement boundary
 
 `SourcePatchCompiler` owns compiler identity and artifact selection.
@@ -267,6 +271,11 @@ library. `neverd_types_languages_json` says, also without a program, which
 builtin spellings each language takes and which it takes unless asked;
 `neverd types --json` names the one its source took, in every mode, so that
 an agent reads one object.
+
+`SessionSidecar.cpp` owns the shared atomic write for Session sidecars. Type
+declaration and persistence adapters use that same private helper. Private
+Session LLVM tests compile their actual type/debug owners and sidecar helper
+directly; the shared SDK keeps its existing public C boundary.
 
 The decompiler reads the local types through `LocalTypesDebugContext`
 (`lib/sdk/capi`), which wraps the program's debug context whenever the
@@ -7104,6 +7113,24 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
 
+### Explicit Darwin startup graphs and TLS
+
+`MachOExecutionImage` owns dylib-identity counts and original TLS section facts;
+`MachOProgramLinking` owns dependency identities/versions, export-trie addresses,
+fixups and complete undefined-symbol closure. `DarwinImage` resolves the explicit
+catalogue into one bounded acyclic graph, checks every dependency edge and
+assigns disjoint placements. Its graph-wide input, metadata, record and resident
+ledgers charge shared nodes once and retain one preparation deadline.
+`DarwinTLSPreparation` admits exact descriptors and contiguous template storage,
+publishes keys and physically maps charged TLS reservations before execution.
+`DarwinTLS` alone owns main-thread instantiation and the authenticated TLV return:
+it copies live relocated bytes once, validates descriptor/frame identity and
+preserves non-result registers. `DarwinMemory` keeps TLS reservations resident;
+`ProcessReport` serializes named resolver events through the existing schema.
+Public `DarwinProcessOptions` and `darwin.modules` only supply original inputs;
+no host loader, search, callback execution or second symbol-resolution owner is
+introduced. See [Darwin environments](darwin-emulation.md) for the finite contract.
+
 ### Sequential raw compare-and-exchange
 
 `SymExec` owns the value semantics of admitted raw `ATOMIC_CMPXCHG`: capture address, expected, desired and old value before publishing the output, then commit `ite(Old == Expected, Desired, Old)` once. `SymState` owns that write's byte effects, alias invalidation and preservation budget. `InterpreterSpecialization` owns admission and provenance: Old uses the pre-write memory origin; conditional writes conservatively combine Old, expected and desired origins and invalidate possibly overlapping affine spills. Even a failed comparison requires the complete write footprint to be separated from protected return cells. The original atomic operation, ordering and occurrence remain in the residual; refusal publishes no partial residual CFG.
@@ -7269,3 +7296,15 @@ of mappings, current/maximum rights, reserved pages and retained file leases.
 Thread query aliases reuse the existing thread/process and execution-context owners, including during process attachment. `RtlPcToFileHeader` uses `LoadedModules`, alongside system module queries; `ImageRAM` describes mapped regions and is not a substitute for module identity. No host process, thread or module state is consulted.
 
 `KernelMDLCalls` normalizes the legacy mapping entry into the existing six-argument mapper. `KernelPhysicalMemory` and MDL records continue to own cache attributes, page identity, permissions and lifetime. Only fully released kernel image aliases remain recoverable without an environment dependency; user views retain that dependency.
+
+`queryFileDevice` in `KernelModelFileRequests` owns common file identity, header, mount and topology checks. Base queries return the owned file device; related queries additionally validate file-extension routing and select the attached top. Both borrow their result.
+
+
+### Linux ioctl observation ownership
+
+`LinuxIoctlTrace` surrounds the existing `LinuxFiles::deviceIoctl` decision at
+one shared raw/native service boundary. It owns bounded diagnostic reads and
+entry-resolved addresses, never device replies or a second ABI decoder.
+`LinuxServices` supplies the current task; Android supplies its native return
+address. `ProcessReport` serializes the optional stream. Trace limits and
+capture failures cannot replace the original service outcome.

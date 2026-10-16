@@ -10,6 +10,10 @@ NeverD 的測試回答三個不同問題：表示形狀是否符合預期、完�
 
 `PipelineOutcome.ResolvedCalls*` 檢查暫存器分組、call／invoke 身分、堆疊位元組封裝與拆分、窄值留在各自的堆疊槽，以及缺少位元組時的拒絕。`MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` 檢查記錄的偏移。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` 涵蓋 x64、ARM32、AArch64 的 ELF、PE、Mach-O。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` 涵蓋三種格式，拒絕長度被改寫、可寫或越界範圍、同名本地函式、錯誤來源暫存器、替代入口及可重定位映像。主機 C 差分測試將原始 C 獨立以 O0 編譯，產生的 C 仍以 O2 編譯，避免主機最佳化器錯算迴圈遞推而污染對照。AArch64 FMA 檢查僅在 x86 主機要求 `-mfma`。
 
+## 分段寫入還原檢查
+
+`InterpreterSpecialization.SegmentedWrite*` 檢查獨立位元組記憶體結果、全部純量寬度、基址加法回繞、堆疊別名、覆寫的指標來源、跨節點失效及精確與不足預算。`SegmentedWritesAndReadsShareLinearMemory` 涵蓋相同及不同段基址。`PEFixedImageTest.RawSegmented*` 檢查原生位元組、有效返回槽別名拒絕及能力變更憑據。既有憑據相容性數值維持不變。建置特化、PE 固定映像、機器狀態及原生/LLVM 細化測試；原始碼與證明拒絕測試也涵蓋未使用的寫入能力。
+
 ## 具體入口記憶體種子
 
 執行 `NeverDSymbolicTests`、`NeverDConcolicTests` 與 `NeverDConcolicIntegrationTests`。`LowIRConcolicMemory.*` 和符號層測試涵蓋兩種位元組序、別名寫入、獨立儲存空間、缺漏及非法範圍、重設與晚種子、精確/不足/零預算、epoch、模型寬度、候選重新執行及去重；既有原生架構/格式矩陣維持回歸。
@@ -1973,3 +1977,5 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 上下文查詢回歸涵蓋保留／失效執行緒、要求者／工作執行緒／附加上下文、模組邊界與空洞、精確輸出寬度、生命週期、權限及 IRQL。原始與真實 WDK CRT 測試映像執行靜態／動態 KernelMode 查詢，檔案查詢映像另測 UserMode 呼叫者。兩個 WDK 家族均有一般／CFG 映像；缺少的兩個宣告以真實 kit 型別補充本地 ABI。不可用後端明確跳過。
 
 舊式 MDL 映射驗證涵蓋真實 WDK 靜態及動態呼叫、附加程序的工作執行緒、原創映像別名、模式窄化、IRQL、程序切換、過期描述符、重複核心映射及注入的別名預算耗盡。核心耗盡保留 MDL 並回報未建模的 bugcheck；使用者耗盡仍可捕捉。原始包裝器探針僅驗證參數轉送與傳回寬度，不驗證注入的映射器。
+
+`KernelFileQueries.BaseDevice*` 檢查基礎裝置與兩層篩選裝置的差異、參照不變、忽略擴充指標、建立／清理／關閉階段、損壞記錄及 IRQL。原創與真實 WDK 一般／CFG 檔案查詢夾具在既有後端、重定位、排程及呼叫端生命週期矩陣中執行靜態與動態基礎查詢。

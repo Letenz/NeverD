@@ -535,17 +535,22 @@ int main(void) {
             {}, nullptr, InterpreterEntryAlignment{16, 3});
 }
 
-TEST(InterpreterMachineStateTest, V1RefusesRetainedSegmentedReads) {
+TEST(InterpreterMachineStateTest, V1RefusesRetainedSegmentedMemory) {
   for (auto Space :
        {NdMemoryAddressSpace::X86FS, NdMemoryAddressSpace::X86GS}) {
-    auto Load = operation(NdOp::LOAD, NdVar::reg(x86reg::RAX, 8),
-                          {NdVar::scalar(16, 8)});
-    Load.MemoryAddressSpace = Space;
-    const auto F = function({{Load}, {operation(NdOp::RETURN, {}, {})}});
-    auto Wrapped = wrapInterpreterMachineStateX64(F);
-    ASSERT_FALSE(static_cast<bool>(Wrapped));
-    EXPECT_NE(llvm::toString(Wrapped.takeError()).find("special memory"),
-              std::string::npos);
+    for (bool Write : {false, true}) {
+      auto Access =
+          Write ? operation(NdOp::STORE, {},
+                            {NdVar::scalar(16, 8), NdVar::reg(x86reg::RAX, 8)})
+                : operation(NdOp::LOAD, NdVar::reg(x86reg::RAX, 8),
+                            {NdVar::scalar(16, 8)});
+      Access.MemoryAddressSpace = Space;
+      const auto F = function({{Access}, {operation(NdOp::RETURN, {}, {})}});
+      auto Wrapped = wrapInterpreterMachineStateX64(F);
+      ASSERT_FALSE(static_cast<bool>(Wrapped));
+      EXPECT_NE(llvm::toString(Wrapped.takeError()).find("special memory"),
+                std::string::npos);
+    }
   }
 }
 
@@ -645,17 +650,18 @@ TEST(InterpreterMachineStateTest, PipelineRefusesUnmappedSegmentEnvironment) {
   Options.InterpreterSpecialization->ExplicitMachineState = true;
   Options.InterpreterSpecialization->NormalNonfaultingExecution = true;
   llvm::LLVMContext Context;
-  for (bool Segmented : {false, true}) {
-    SCOPED_TRACE(Segmented);
-    Options.InterpreterSpecialization->X64SegmentedReads = Segmented;
-    Options.InterpreterSpecialization->X64CR8State = !Segmented;
+  for (unsigned Kind = 0; Kind != 3; ++Kind) {
+    SCOPED_TRACE(Kind);
+    Options.InterpreterSpecialization->X64SegmentedReads = Kind == 1;
+    Options.InterpreterSpecialization->X64SegmentedWrites = Kind == 2;
+    Options.InterpreterSpecialization->X64CR8State = Kind == 0;
     Options.InterpreterSpecialization->X64FlagsProfile =
         InterpreterMachineStateProfile::KernelX64NoFaultV1;
     Pipeline P;
     const auto Result = P.run(Image, Context, Options);
     EXPECT_FALSE(Result.Success);
-    EXPECT_NE(Result.Error.find(Segmented ? "FS/GS base source interface"
-                                          : "task-priority source interface"),
+    EXPECT_NE(Result.Error.find(Kind ? "FS/GS base source interface"
+                                     : "task-priority source interface"),
               std::string::npos);
     EXPECT_FALSE(Result.LlvmModule);
   }

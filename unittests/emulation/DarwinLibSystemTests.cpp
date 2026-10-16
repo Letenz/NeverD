@@ -11,6 +11,7 @@
 #include "os/darwin/kernel/DarwinFiles.h"
 #include "os/darwin/kernel/DarwinMemory.h"
 #include "os/darwin/process/DarwinLibSystem.h"
+#include "os/darwin/process/DarwinTLS.h"
 
 namespace neverd::emulation::darwin_model {
 namespace {
@@ -368,6 +369,97 @@ TEST_P(DarwinLibSystemTest, MemoryArgumentFaultPrecedesEvenEarlyCError) {
   EXPECT_TRUE(Result.Services.empty());
   EXPECT_EQ(llvm::cantFail(Space->readInteger(Errno, 4)), 71u);
   EXPECT_EQ(Space->mappedBytes(), Before);
+}
+TEST_P(DarwinLibSystemTest, TLVPreservesRegistersAndCopiesLiveTemplatesOnce) {
+  Image.TLS = {{Data + 256, 32, Data + 512}, {Data + 320, 32, Data + 1024}};
+  Image.TLSDescriptors = {{Data, {0, 8}}, {Data + 32, {1, 8}}};
+  const uint64_t Gate =
+      value::LibSystemGate +
+      unsigned(LibSystemGateKind::TLVBootstrap) * value::LibSystemGateStride;
+  for (unsigned I = 0; I != 2; ++I) {
+    const auto D = Data + I * 32;
+    llvm::cantFail(Space->writeInteger(D, Gate, 8));
+    llvm::cantFail(Space->writeInteger(D + 8, I + 1, 8));
+    llvm::cantFail(Space->writeInteger(D + 16, 8, 8));
+    llvm::cantFail(Space->writeInteger(Image.TLS[I].Template + 8, 71 + I, 8));
+  }
+  for (unsigned R = 0; R < unsigned(CPURegister::Invalid); ++R) {
+    const auto Register = CPURegister(R);
+    if (registerMatches(Register, Image.Architecture) &&
+        !CPU->Registers.contains(Register))
+      CPU->Registers[Register] = {0x1122334400000000ULL + R,
+                                  registerWidth(Register) > 64 ? 0x88776655
+                                                               : 0};
+  }
+  auto ABI = llvm::cantFail(
+      IntegerABI::get(GetParam() ? IntegerCallingConvention::SysVAMD64
+                                 : IntegerCallingConvention::AAPCS64));
+  auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
+  DarwinTLS Runtime(Image);
+  ServiceRequest Request{GetParam() ? ServiceRequestKind::X64Syscall
+                                    : ServiceRequestKind::AArch64SVC,
+                         Gate, Gate + (GetParam() ? 2 : 4),
+                         value::LibSystemSVC};
+  for (unsigned I : {0u, 0u, 1u}) {
+    CPU->Registers[ABI.info().StackPointer] = {SP, 0};
+    CPU->Registers[ABI.info().Arguments[0]] = {Data + I * 32, 0};
+    const auto Before = CPU->Registers;
+    auto R = Runtime.invoke(*CPU, *Budget, Request, Result);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_TRUE(*R);
+    const auto Value = Image.TLS[I].Storage + 8;
+    EXPECT_EQ(CPU->Registers[ABI.info().Result][0], Value);
+    for (const auto &[Register, Bits] : Before)
+      if (Register != ABI.info().Result &&
+          Register != ABI.info().StackPointer &&
+          Register != CPURegister::X64PC && Register != CPURegister::AArch64PC)
+        EXPECT_EQ(CPU->Registers[Register], Bits) << unsigned(Register);
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Value, 8)),
+              I                                ? 72u
+              : Result.NativeCalls.size() == 1 ? 71u
+                                               : 99u);
+    llvm::cantFail(Space->writeInteger(Value, 99, 8));
+    llvm::cantFail(Space->writeInteger(Image.TLS[I].Template + 8, 13, 8));
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Errno, 4)), 71u);
+  }
+  EXPECT_EQ(Result.NativeCalls.size(), 3u);
+  EXPECT_TRUE(Result.Services.empty());
+}
+TEST_P(DarwinLibSystemTest, TLVRejectsTamperingAndInvalidFramesBeforeCopying) {
+  Image.TLS = {{Data + 256, 32, Data + 512}};
+  Image.TLSDescriptors = {{Data, {0, 8}}};
+  const uint64_t Gate =
+      value::LibSystemGate +
+      unsigned(LibSystemGateKind::TLVBootstrap) * value::LibSystemGateStride;
+  auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
+  auto ABI = llvm::cantFail(
+      IntegerABI::get(GetParam() ? IntegerCallingConvention::SysVAMD64
+                                 : IntegerCallingConvention::AAPCS64));
+  ServiceRequest Request{GetParam() ? ServiceRequestKind::X64Syscall
+                                    : ServiceRequestKind::AArch64SVC,
+                         Gate, Gate + (GetParam() ? 2 : 4),
+                         value::LibSystemSVC};
+  for (unsigned Field = 0; Field != 5; ++Field) {
+    DarwinTLS Runtime(Image);
+    llvm::cantFail(Space->writeInteger(Data, Gate, 8));
+    llvm::cantFail(Space->writeInteger(Data + 8, 1, 8));
+    llvm::cantFail(Space->writeInteger(Data + 16, 8, 8));
+    llvm::cantFail(Space->writeInteger(Data + 512 + 8, 0xdead, 8));
+    CPU->Registers[ABI.info().Arguments[0]] = {Data, 0};
+    if (Field < 3)
+      llvm::cantFail(Space->writeInteger(Data + Field * 8, UINT64_MAX, 8));
+    else if (Field == 3)
+      CPU->Registers[ABI.info().Arguments[0]][0] = Data + 1;
+    else if (GetParam())
+      llvm::cantFail(Space->writeInteger(SP, Data, 8));
+    else
+      CPU->Registers[ABI.info().Link][0] = Data;
+    auto R = Runtime.invoke(*CPU, *Budget, Request, Result);
+    ASSERT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Data + 512 + 8, 8)), 0xdeadu);
+    EXPECT_TRUE(Result.NativeCalls.empty());
+  }
 }
 INSTANTIATE_TEST_SUITE_P(Architectures, DarwinLibSystemTest,
                          testing::Values(false, true));

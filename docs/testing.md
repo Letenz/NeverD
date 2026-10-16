@@ -4,6 +4,10 @@
 
 # Testing NeverD
 
+## Segmented store recovery checks
+
+`InterpreterSpecialization.SegmentedWrite*` checks independent byte-memory results, all scalar widths, base-addition wraparound, frame aliases, overwritten pointer origins, cross-node invalidation and exact/short budgets. `SegmentedWritesAndReadsShareLinearMemory` covers equal and distinct segment bases. `PEFixedImageTest.RawSegmented*` checks native bytes, live return-cell alias refusal and changed capability receipts. The existing receipt compatibility cases retain their values. Build the specialization, PE fixed-image, machine-state and native/LLVM refinement test owners; source and proof refusal checks include an unused write capability.
+
 ## Concrete entry-memory concolic replay
 
 Build `NeverDSymbolicTests`, `NeverDConcolicTests` and
@@ -212,6 +216,9 @@ colliding or shadowed names. The controller edits source, C and LLVM C with a
 pinned view and a different hidden assembly location, then checks undo/redo,
 save/restart and instruction-mapped comments. Snapshot coverage also verifies
 that read-only replicas load these edits without changing durable owner files.
+Source-name checks preserve unordered spans, distinguish partial overlap from
+complete token containment, keep adjacent spans separate, reject duplicate or
+overlapping accepted ranges, and remap every name after repeated renames.
 
 `NeverDWorkerSourceCache` counts actual preparation and source-page calls across
 A-to-B-to-A navigation, including a subsequent graph or IR request. It checks
@@ -347,6 +354,18 @@ structure offsets and their undo included, and the GUI controller test
 `structureOffsetsRankTypesByTheCodesAccesses` drives T through the picker on
 the mock engine.
 
+`NdTypeDisplayPaths.ArrayMembersNameTheirElements` names an array member's
+elements as a record names its members: the element an access of its width
+reads, the element an address inside the array points at, members of record
+elements, and arrays of arrays. Half an element, a wider read of characters
+and two arrays overlaying each other stay raw, and a record alternative keeps
+its bytes from an array overlaying it.
+`HighCPointerAddresses.ArrayMembersPrintTheirElements` prints `Apc->Reserved[1]`
+for a store 40 bytes into a declared record like the kernel's `_KAPC`, an
+untyped pointer stored to a record pointer member without a cast, and an
+integer stored to one with its conversion. LLVM-C names no elements: its
+lookups pass `ArrayElements` false.
+
 `TypeParse.ReadsOneFunctionsDeclarationAgainstTheLibrary` reads a function's
 declaration against the library without changing it, and refuses one that
 names a type the library lacks, defines one, or declares more than one
@@ -381,6 +400,9 @@ requires every `SessionCAPITest.*` case to execute and pass using repository
 fixtures; it does not claim Windows kernel input coverage.
 `LocalTypesDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
 the conversion and which functions take a prototype without a program.
+Build and run `NeverDSessionLLVMTests` as well: its private Session queries
+link the actual local-type/debug implementations and shared atomic sidecar
+helper into the test executable. It must not acquire a libneverd dependency.
 `scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
 decompiles with the prototypes an IDA dump shows; it decompiles each
 function by address and resolves IDA's typedefs through the shipped headers:
@@ -7565,6 +7587,35 @@ Checked memory regressions distinguish full-capacity clearing from unchanged err
 
 `KernelFileTransfers` checks native control packet fields, ULONG truncation, zero-length carriers, copied read-only input, IOSB aliases, separate input/output bounds, deferral and eligible-thread notification. The existing original and genuine WDK transfer fixtures call both control APIs through imports and dynamic lookup across four buffer shapes and nine completion modes.
 
+### Explicit Darwin dylibs and TLS
+
+Build `NeverDDarwinProcessTests`, `NeverDProcessPublicTests` and `neverd` in the
+CPU-emulation profile. `DarwinDylib.*` checks graph identity/version/platform,
+shared input accounting, resident TLS budgets, cycles, malformed layouts and
+preparation timeout. `DarwinLinking.ExportTries*` and
+`ThreadLocalExportMustNameAnAdmittedDescriptor` cover original export facts;
+`DarwinLibSystemTest.TLV*` checks descriptor/frame refusal, live-copy lifetime
+and full GP/vector preservation on both ISAs. `DarwinMemoryTest.MappedTLS*`
+checks actual reservation charging and mapping/protection refusal.
+
+`DarwinProcess.StartupDylibsShareDataAndKeepThreadLocalInstances` compiles the
+original three-module C workload for all five profiles with classic and chained
+fixups. It checks shared dependencies, duplicate export spellings, relocated data,
+zero-only and initialized TLS, live template mutation and fresh repeated runs.
+The mandatory native inventory now has 100 methods per matching profile, or
+300 matching ARM64 identities; the separate common native catalogue remains 82.
+Unavailable transports remain explicit skips. `DarwinNative.StartupDylibsAndTLSMatchOriginalNativeImages`
+compares a system-linked executable and its original libraries with real macOS
+execution. Independent O0/O1/O2 classic/chained controls complement that test.
+
+`DarwinLibSystemPublic.StartupDylibsAndTLSKeepIdentityAcrossCAndCLI` checks the
+same explicit catalogue and reports through C and CLI. With
+`NEVERD_TEST_LIBNEVERD` and `NEVERD_TEST_DARWIN_FIXTURES` set, the real Python
+`test_darwin_startup_dylibs_share_data_and_isolate_tls` repeats every profile.
+Run these alongside DarwinImage, linking, memory, existing libSystem calls,
+raw startup and shared process/API regressions before publishing. Guest deadlines
+and event limits are unchanged; native Intel and physical iOS need other hosts.
+
 ### Imported Darwin memory calls
 
 `DarwinLibSystemTest.Memory*` checks C argument widths, original carriers, early
@@ -7585,3 +7636,21 @@ Debug regressions compare repeated-short rules across all three wrappers, scalar
 Context-query tests cover retained and stale threads, requestor/worker/attached contexts, module boundaries and holes, exact output width, lifetime, rights and IRQL. Original and genuine WDK CRT fixtures exercise static/dynamic KernelMode queries; the file-query fixtures also check UserMode callers. Both WDK families include normal/CFG images. Two omitted query declarations use local ABIs with genuine kit types. Unavailable backends remain skips.
 
 Legacy MDL mapping checks cover static and dynamic genuine WDK calls, an attached worker, original image aliases, mode narrowing, IRQL, process switching, stale descriptors, duplicate system mappings and injected alias-budget exhaustion. Kernel shortage retains the MDL and reports unsupported bugcheck processing; user shortage remains catchable. Original wrapper probes verify argument forwarding and return width, not the injected mapper.
+
+`KernelFileQueries.BaseDevice*` checks base versus two attached filters, unchanged references, ignored extension pointers, create/cleanup/close admission, corrupt records and IRQL. Original and genuine WDK normal/CFG file-query fixtures execute static and dynamic base queries across the existing backend, relocation, scheduling and caller-lifetime matrix.
+
+
+## Ioctl memory evidence
+
+`AndroidDevices.IoctlTrace*` checks raw/named/variadic/dynamic routes against
+unchanged guest instruction/event counts, pointer payload bytes and errno
+outcomes. It also checks unreadability, address overflow and trace exhaustion.
+`LinuxFileNamespace.IoctlTraceKeepsEntryPointerAndRefusedCallBytes` covers both
+LP64 architectures, a pointer overwritten by the ioctl and an unsupported
+retry with complete RAM equality. `ProcessReport.IoctlTrace*` checks strict
+JSON admission and lossless evidence serialization. The Python device
+integration exercises the same report through the public C SDK.
+
+`NeverDHighCSupervisorCallTests` verifies that an unmodeled live ARM/AArch64
+SVC result returns a recoverable emission error. Unused results retain the
+side-effecting statement without acquiring a Linux syscall contract.

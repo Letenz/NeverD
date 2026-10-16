@@ -12,6 +12,20 @@
 
 namespace neverd::emulation::linux_model {
 llvm::Error validateFileOptions(const LinuxFileOptions &Options) {
+  if (Options.IoctlTrace) {
+    const auto &T = *Options.IoctlTrace;
+    if (!T.EventLimit || T.EventLimit > 4096 || !T.ByteLimit ||
+        T.ByteLimit > 1048576 || T.Requests.size() > 64)
+      return failure("invalid ioctl trace bounds");
+    for (const auto &[Request, Ranges] : T.Requests) {
+      if (Ranges.size() > 16)
+        return failure("too many ioctl trace ranges");
+      for (const auto &R : Ranges)
+        if (!R.Size || R.Size > 4096 || R.Offset > UINT64_MAX - R.Size ||
+            (R.PointerOffset && *R.PointerOffset > UINT64_MAX - 8))
+          return failure("invalid ioctl trace range");
+    }
+  }
   if (Options.DescriptorLimit < 3 ||
       Options.DescriptorLimit > FileDescriptorLimit ||
       Options.Directories.size() + Options.Files.size() +

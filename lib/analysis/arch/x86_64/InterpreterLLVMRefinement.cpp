@@ -78,7 +78,7 @@ InterpreterLLVMRefinementResult checkBinaryLLVMRefinement(
     Result.Native.Proof.Diagnostic = Result.Diagnostic;
     return Result;
   }
-  if (Options.X64SegmentedReads) {
+  if (Options.X64SegmentedReads || Options.X64SegmentedWrites) {
     Result.Stage = InterpreterLLVMRefinementStage::Native;
     Result.Native.Proof.Status = LowIRRefinementStatus::Unsupported;
     Result.Diagnostic = "native proof requires authenticated FS/GS base inputs";

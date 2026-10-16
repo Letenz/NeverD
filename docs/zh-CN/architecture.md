@@ -7,6 +7,10 @@
 本指南说明贡献者安全修改 NeverD 所需了解的生产边界。内容有意仅涵盖
 NeverD 自有代码；LLVM、Capstone 和 Unicorn 子模块维护各自的内部架构。
 
+## 运行态内存恢复
+
+`X64SegmentedWrites` 独立允许显式无故障机器状态下、使用 64 位偏移的普通 1/2/4/8 字节 FS/GS 写入。`arch/x86_64` 负责运行态内存选项验证、操作准入和符号基址初始化。核心使用完整线性地址和正常别名失效规则；任意固定基址仍可能与栈帧、其他段和活跃返回槽重叠。该能力写入原始恢复凭据。缺少已认证基址输入的源码与原生证明接口继续拒绝此执行域。
+
 ## 具体入口内存种子
 
 `SymExecConcreteShadow` 在执行前接收按地址排列的 RAM 字节；它们只进入具体状态，符号侧的入口内存仍为自由输入。C++ `LowIRConcolicOptions::InitialMemory` 默认受 `MaxMemorySeedBytes` 的 1 MiB 总量限制，零预算不接收字节；空、重叠和回绕范围明确拒绝。使用内存的报告为版本 2，保留 `InitialMemory` 和候选的 `MemorySeed`。投影仅接受已覆盖的 epoch-zero 寄存器或绝对内存来源，并用两类字节重新计算查询、从头重放及去重。缺字节、符号基址来源和近似效果继续拒绝；写入按正常别名规则修改具体内存。`ProcessView::read` 可在暂停时捕获已提交 RAM，写入前的钩子不构成完整快照。观测不证明区域归属、寿命、不变性或不相交；候选仅验证指定分支及先前决策，不证明后续路径或完整等价。C/JSON、Python 和 CLI 的版本 1 接口仍只接收寄存器。
@@ -1787,3 +1791,5 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 线程查询别名复用既有线程／进程和执行上下文所有者，进程附加期间也保持一致。`RtlPcToFileHeader` 与系统模块查询共用 `LoadedModules`；`ImageRAM` 表示映射区间，不能代替模块身份。实现不读取宿主进程、线程或模块状态。
 
 `KernelMDLCalls` 将旧映射入口归一到现有六参数映射器。缓存属性、物理页身份、权限与生命周期仍由 `KernelPhysicalMemory` 和 MDL 记录负责。完整释放的内核映像别名不增加环境依赖；用户视图保留该依赖。
+
+`KernelModelFileRequests` 的 `queryFileDevice` 统一校验文件身份、头部、挂载状态和拓扑。基础查询返回文件所拥有的设备，关联查询另行校验文件扩展路由并选择附加栈顶层；两者均借用返回对象。

@@ -20,6 +20,12 @@ inline constexpr uint64_t ModelledFlags[] = {x86reg::CF, x86reg::PF, x86reg::AF,
                                              x86reg::OF};
 
 const RecoveryArchitecture &recoveryArchitecture();
+llvm::Error validateRuntimeMemoryOptions(const SpecializationOptions &Options);
+bool supportsRuntimeMemoryOperation(const LowOp &Op,
+                                    const SpecializationOptions &Options);
+void seedRuntimeMemoryState(symbolic::SymContext &Ctx,
+                            symbolic::SymState &State,
+                            const SpecializationOptions &Options);
 std::string externalExitDigest(const SpecializationExternalExit &Exit);
 llvm::Error validateExternalExits(const SpecializationResult &Result,
                                   const SpecializationOptions &Options);

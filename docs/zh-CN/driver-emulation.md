@@ -769,3 +769,5 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 `IoThreadToProcess` 复用保留线程的创建进程身份。`PsGetCurrentThreadPreviousMode` 与 `ExGetPreviousMode` 共用状态和 DISPATCH_LEVEL 上限，原先过宽的准入已修正。`RtlPcToFileHeader` 按完整位宽查询固定模块清单，写入八字节结果，未命中写零，不读取 PC 所指内存。有界非分页查询允许所有有效 IRQL，但输出必须驻留；缺少清单明确失败，动态展开表和 retpoline 范围仍不在模型内。
 
 `MmMapLockedPages` 复用现有映射器，固定使用缓存页面、HIGH 优先级及耗尽时 bugcheck 标志。内核映射允许 DISPATCH_LEVEL；进程所属的用户视图要求不高于 APC_LEVEL，耗尽时保留已有资源异常。带 bugcheck 标志的内核映射耗尽会明确停止为模型错误，不能作为成功调用返回 NULL；实际 bugcheck 处理仍未建模。
+
+[`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject) 借用存活文件的基础设备，不遍历附加栈、不增加引用，也不读取文件扩展。本配置要求未挂载的自有路由及 IRQL <= DISPATCH_LEVEL；挂载 VPB 或错误的对象／拓扑状态明确停止。微软将此接口保留供系统使用，该 IRQL 上限属于模型策略，并非公布的 Windows 契约。

@@ -11,6 +11,7 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Support/Error.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,11 +35,19 @@ struct MachOProgramFixup {
   bool Bind = false, WeakImport = false;
   MachOProgramFixupOrigin Origin = MachOProgramFixupOrigin::ClassicRebase;
 };
+struct MachOProgramExport {
+  std::string Name;
+  uint64_t Address = 0;
+  bool ThreadLocal = false;
+};
 struct MachOProgramLinking {
+  std::optional<MachOProgramDependency> Identity;
   std::vector<MachOProgramDependency> Dependencies;
   std::vector<MachOProgramFixup> Fixups;
+  std::vector<MachOProgramExport> Exports;
   /// Conservative charge for decoded records, strings and reader indexes.
   uint64_t MetadataBytes = 0;
+  uint64_t Records = 0;
 };
 /// Read original bytes, never analysis-patched pointers or host libraries.
 /// Ordinary pointer streams, independently complete lazy pointer programs and

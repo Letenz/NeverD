@@ -337,6 +337,9 @@ TEST_P(AndroidDevices, RejectedGPUProgramsCannotPublishEarlierWrites) {
 }
 
 TEST_P(AndroidDevices, RejectedIndirectGPUProgramsPreserveAllFetchedRAM) {
+  // O0 initializes and compares complete pinned pages in each case. Keep the
+  // instruction/event budgets while allowing the same wall time as objects.
+  Options.Limits.TimeoutMicroseconds = 30000000;
   auto D = contextDeviceTestInput();
   D.ReadOnlyMappings[0].Updates.clear();
   D.KGSL->SynchronousA3xx = true;
@@ -411,6 +414,83 @@ TEST_P(AndroidDevices, RawNamedVariadicAndDynamicCallsShareTransactions) {
     ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
     EXPECT_EQ(R.ReturnValue, 0u);
   }
+}
+
+TEST_P(AndroidDevices, IoctlTracePreservesCallsAndCapturesTransientPayloads) {
+  for (uint64_t Route = 0; Route != 4; ++Route) {
+    SCOPED_TRACE(Route);
+    Options.LinuxFiles->IoctlTrace.reset();
+    const auto Before = run("devices_sequence", {Route});
+    auto &T = Options.LinuxFiles->IoctlTrace.emplace();
+    T.Requests[0xa1000001] = {{0, 24, {}}, {0, 8, 8}};
+    T.Requests[0xa1000002] = {
+        {0, 4, {}}, {0, 4, 0}, {0x8000000000000000ULL, 4, {}}};
+    const auto R = run("devices_sequence", {Route});
+    ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 0u);
+    EXPECT_EQ(R.Instructions, Before.Instructions);
+    EXPECT_EQ(R.Events, Before.Events);
+    EXPECT_EQ(R.StandardOutput, Before.StandardOutput);
+    EXPECT_TRUE(R.IoctlTraceEnabled);
+    EXPECT_FALSE(R.IoctlTraceTruncated);
+    ASSERT_EQ(R.IoctlTrace.size(), 5u);
+    for (unsigned I : {0u, 2u, 4u}) {
+      const auto &C = R.IoctlTrace[I];
+      EXPECT_EQ(C.Request, 0xa1000001u);
+      EXPECT_EQ(C.Result, 37u);
+      EXPECT_NE(C.PC, 0u);
+      EXPECT_EQ(C.ThreadID, 1000u);
+      EXPECT_EQ(C.ReturnAddress.has_value(), Route != 0);
+      ASSERT_EQ(C.Memory.size(), 2u);
+      auto Packet = C.Memory[0].Before;
+      ASSERT_EQ(Packet.size(), 24u);
+      EXPECT_EQ(Packet[0], 0x31);
+      EXPECT_EQ(Packet[1], 0x32);
+      Packet[0] = 0x52;
+      Packet[1] = 0x53;
+      EXPECT_EQ(C.Memory[0].After, Packet);
+      EXPECT_EQ(C.Memory[1].Address,
+                llvm::support::endian::read64le(Packet.data() + 8));
+      EXPECT_EQ(C.Memory[1].Before,
+                (std::vector<uint8_t>{0xc7, 0x55, 0x56, 0xc7, 0xc7, 0xc7, 0xc7,
+                                      0xc7}));
+      EXPECT_EQ(C.Memory[1].After,
+                (std::vector<uint8_t>{0xc7, 0x90, 0x91, 0xc7, 0xc7, 0xc7, 0xc7,
+                                      0xc7}));
+      for (const auto &M : C.Memory) {
+        EXPECT_EQ(M.BeforeStatus, "complete");
+        EXPECT_EQ(M.AfterStatus, "complete");
+      }
+    }
+    const auto &Bad = R.IoctlTrace[1];
+    EXPECT_EQ(Bad.Result, uint64_t(-13));
+    EXPECT_EQ(Bad.Memory[0].BeforeStatus, "unreadable");
+    EXPECT_EQ(Bad.Memory[0].AfterStatus, "unreadable");
+    EXPECT_EQ(Bad.Memory[1].BeforeStatus, "unreadable");
+    EXPECT_EQ(Bad.Memory[1].AfterStatus, "unresolved_entry_address");
+    EXPECT_EQ(Bad.Memory[2].BeforeStatus, "address_overflow");
+    EXPECT_EQ(R.IoctlTrace[3].Result, uint64_t(-9));
+    EXPECT_TRUE(R.IoctlTrace[3].Memory.empty());
+  }
+}
+
+TEST_P(AndroidDevices, IoctlTraceExhaustionDoesNotStopTheGuest) {
+  auto &T = Options.LinuxFiles->IoctlTrace.emplace();
+  T.EventLimit = 2;
+  T.ByteLimit = 24;
+  T.Requests[0xa1000001] = {{0, 24, {}}, {0, 8, 8}};
+  auto R = run("devices_sequence", {1});
+  ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+  EXPECT_TRUE(R.IoctlTraceTruncated);
+  ASSERT_EQ(R.IoctlTrace.size(), 2u);
+  const auto &M = R.IoctlTrace[0].Memory;
+  ASSERT_EQ(M.size(), 2u);
+  EXPECT_EQ(M[0].Before.size(), 24u);
+  EXPECT_TRUE(M[0].After.empty());
+  EXPECT_EQ(M[0].AfterStatus, "byte_limit");
+  EXPECT_EQ(M[1].BeforeStatus, "byte_limit");
+  EXPECT_EQ(M[1].AfterStatus, "unresolved_entry_address");
 }
 
 TEST_P(AndroidDevices, DeviceMappingsOutliveDescriptorsAcrossEveryCallRoute) {
