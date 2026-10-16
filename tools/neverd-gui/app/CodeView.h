@@ -238,6 +238,14 @@ private:
   LibraryCodeView library_;
   std::optional<Address> function_;
   std::optional<Address> pendingAddress_, selectedAddress_;
+  /// Where the cursor and the view were when the same function loads again,
+  /// after an edit: the source lines of the cursor and of the first shown
+  /// line, and the cursor's column. The first pages clamp both, so the
+  /// complete text puts them back.
+  struct SourcePlace {
+    int cursorLine = 0, cursorColumn = 0, topLine = 0;
+  };
+  std::optional<SourcePlace> placeAfterLoad_;
   QString representation_, status_, highlight_;
   QJsonObject sourceOptions_, renderedOptions_;
   quint64 serial_ = 0;

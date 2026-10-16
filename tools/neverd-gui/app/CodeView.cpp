@@ -429,6 +429,7 @@ void CodeText::cancel() {
 
 void CodeText::clear() {
   cancel();
+  placeAfterLoad_.reset();
   source_.clear();
   sourceBytes_ = renderedChars_ = renderedRows_ = widestLine_ = 0;
   interrupted_ = false;
@@ -473,6 +474,17 @@ void CodeText::load(Address function, const QString &representation,
   const bool same = function_ == function && representation_ == representation;
   const auto nextOptions =
       options.value_or(same ? sourceOptions_ : QJsonObject());
+  // A reload of complete text keeps its place; one a newer reload cuts short
+  // keeps the place the first one saved.
+  if (!same)
+    placeAfterLoad_.reset();
+  else if (!placeAfterLoad_ && !loading_ && !interrupted_ &&
+           cursorLine_ < lines_.size())
+    placeAfterLoad_ =
+        SourcePlace{lines_[cursorLine_].sourceLine, cursorColumn_,
+                    lines_[std::clamp(verticalScrollBar()->value(), 0,
+                                      int(lines_.size()) - 1)]
+                        .sourceLine};
   cancel();
   function_ = function;
   representation_ = representation;
@@ -551,6 +563,21 @@ void CodeText::request(int offset, quint64 serial) {
         // projection requires rebuilding earlier lines.
         rebuildLines(!library_.anyFolded());
         emit foldingChanged();
+        if (const auto place = std::exchange(placeAfterLoad_, {});
+            place && !lines_.isEmpty()) {
+          // The first shown line at or after a source line.
+          const auto shown = [this](int source) {
+            for (int i = 0; i < lines_.size(); ++i)
+              if (lines_[i].sourceLine >= source)
+                return i;
+            return int(lines_.size()) - 1;
+          };
+          cursorLine_ = shown(place->cursorLine);
+          cursorColumn_ =
+              std::clamp(place->cursorColumn, 0,
+                         int(lines_[cursorLine_].styled.text.size()));
+          verticalScrollBar()->setValue(shown(place->topLine));
+        }
         const auto mapping = payload.value("mapping_status").toString();
         status_ = session_.metadata().value("analyzed").toBool()
                       ? QString()
@@ -582,6 +609,7 @@ void CodeText::request(int offset, quint64 serial) {
           return;
         loading_ = false;
         pendingAddress_.reset();
+        placeAfterLoad_.reset();
         if (!lines_.isEmpty() && sourceOptions_ != renderedOptions_) {
           sourceOptions_ = renderedOptions_;
           status_ = tr("Transformation failed: %1").arg(message);
