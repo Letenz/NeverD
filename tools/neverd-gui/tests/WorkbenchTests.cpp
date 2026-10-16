@@ -1381,19 +1381,35 @@ private slots:
     const QString selected = code->selectedText();
     QCOMPARE(int(selected.count(QLatin1Char('\n'))), last - 2);
 
-    // A right click inside the selection opens the menu over it.
-    withCodeMenu(code, [](QMenu *menu) {
-      QVERIFY(menu->findChild<QAction *>(QStringLiteral("codeSelectAll")));
-    });
-    QTimer closer;
-    connect(&closer, &QTimer::timeout, this, [] {
-      if (auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget()))
+    // A right click inside the selection keeps it, and the menu's Copy,
+    // beside Select all, copies it.
+    QApplication::clipboard()->clear();
+    const QPoint inside(60, code->viewport()->height() / 2);
+    QTest::mousePress(code->viewport(), Qt::RightButton, {}, inside);
+    QTest::mouseRelease(code->viewport(), Qt::RightButton, {}, inside);
+    QCOMPARE(code->selectedText(), selected);
+    auto *copy = bench.action(ActionId::EditCopy);
+    bool clicked = false;
+    QTimer clicker;
+    connect(&clicker, &QTimer::timeout, this, [&] {
+      auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+      if (!menu)
+        return;
+      clicker.stop();
+      clicked = menu->actions().contains(copy) &&
+                menu->findChild<QAction *>(QStringLiteral("codeSelectAll"));
+      if (clicked)
+        QTest::mouseClick(menu, Qt::LeftButton, {},
+                          menu->actionGeometry(copy).center());
+      if (menu->isVisible())
         menu->close();
     });
-    closer.start(5);
-    QTest::mouseClick(code->viewport(), Qt::RightButton, {},
-                      QPoint(60, code->viewport()->height() / 2));
-    closer.stop();
+    clicker.start(5);
+    QContextMenuEvent request(QContextMenuEvent::Mouse, inside,
+                              code->viewport()->mapToGlobal(inside));
+    QApplication::sendEvent(code->viewport(), &request);
+    QVERIFY(clicked);
+    QCOMPARE(clipboardText(), selected);
     QCOMPARE(code->selectedText(), selected);
   }
 
