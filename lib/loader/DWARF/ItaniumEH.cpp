@@ -167,6 +167,143 @@ PointerBases computeBases(const BinaryImage &Img) {
   return Bases;
 }
 
+/// Runtime indices may name additional FDEs outside the original section.
+/// Decode their actual CIE/FDE storage rather than assigning bounds from the
+/// search keys alone. Offsets remain relative to the primary frame section so
+/// existing consumers have one stable CIE identity namespace.
+void appendIndexedELFFrames(const BinaryImage &Img, const FrameSection &Sec,
+                            const PointerBases &Bases, ParseResult &Frames) {
+  if (Img.IsRelocatable || !Img.ELFMetadata)
+    return;
+  auto Malformed = [&](const char *Message) {
+    Frames.ParseStatus = mergeExceptionParseStatus(
+        Frames.ParseStatus, ExceptionParseStatus::Malformed);
+    Frames.Diagnostics.emplace_back(Message);
+  };
+  const ELFProgramHeader *Header = nullptr;
+  for (const auto &P : Img.ELFMetadata->ProgramHeaders) {
+    if (P.Type != llvm::ELF::PT_GNU_EH_FRAME)
+      continue;
+    if (Header) {
+      Malformed("multiple runtime DWARF frame indices");
+      return;
+    }
+    Header = &P;
+  }
+  if (!Header)
+    return;
+  constexpr uint64_t MaxIndex = 32 * 1024 * 1024;
+  constexpr uint64_t MaxDecode = 64 * 1024 * 1024;
+  const auto Size = Header->FileSize;
+  const auto VA = Header->VirtualAddress;
+  const uint8_t *Bytes =
+      Size >= 4 && Size <= MaxIndex ? Img.readVA(VA, Size) : nullptr;
+  if (!Bytes || Bytes[0] != 1) {
+    Malformed("invalid runtime DWARF frame index");
+    return;
+  }
+  // An omitted search table is legal; the primary frame section remains the
+  // only discoverable source in that profile.
+  if (Bytes[2] == dweh::Omit || Bytes[3] == dweh::Omit)
+    return;
+  PointerBases HeaderBases = Bases;
+  HeaderBases.Data = VA;
+  size_t Cursor = 4;
+  va_t FrameVA = 0, Count = 0;
+  if (!readEncodedPointer(Bytes, Size, Cursor, VA, Bytes[1], HeaderBases,
+                          Img.getPointerSize(), &Img, FrameVA) ||
+      !readEncodedPointer(Bytes, Size, Cursor, VA, Bytes[2], {},
+                          Img.getPointerSize(), nullptr, Count) ||
+      Count > (1u << 20)) {
+    Malformed("unreadable runtime DWARF frame index header");
+    return;
+  }
+  std::map<va_t, size_t> Known;
+  for (size_t I = 0; I < Frames.FDEs.size(); ++I)
+    Known.emplace(Sec.VA + Frames.FDEs[I].SectionOffset, I);
+  uint64_t Budget = MaxDecode;
+  va_t Previous = 0;
+  for (uint64_t I = 0; I < Count; ++I) {
+    va_t Start = 0, FDEVA = 0;
+    if (!readEncodedPointer(Bytes, Size, Cursor, VA, Bytes[3], HeaderBases,
+                            Img.getPointerSize(), &Img, Start) ||
+        !readEncodedPointer(Bytes, Size, Cursor, VA, Bytes[3], HeaderBases,
+                            Img.getPointerSize(), &Img, FDEVA) ||
+        (I && Start <= Previous)) {
+      Malformed("invalid or unsorted runtime DWARF frame index entry");
+      return;
+    }
+    Previous = Start;
+    if (auto Found = Known.find(FDEVA); Found != Known.end()) {
+      if (Frames.FDEs[Found->second].InitialLocation != Start)
+        Malformed("runtime DWARF index key disagrees with its FDE");
+      continue;
+    }
+    const uint8_t *Prefix = Img.readVA(FDEVA, 8);
+    if (!Prefix) {
+      Malformed("runtime DWARF index names an unreadable FDE");
+      continue;
+    }
+    const uint32_t Word = readLE<uint32_t>(Prefix);
+    uint64_t Length = Word, IDOffset = 4, IDSize = 4;
+    if (Word == UINT32_MAX) {
+      Prefix = Img.readVA(FDEVA, 20);
+      if (!Prefix) {
+        Malformed("runtime DWARF index names a truncated DWARF64 FDE");
+        continue;
+      }
+      Length = readLE<uint64_t>(Prefix + 4);
+      IDOffset = 12;
+      IDSize = 8;
+    }
+    const uint64_t Distance = IDSize == 8 ? readLE<uint64_t>(Prefix + IDOffset)
+                                          : readLE<uint32_t>(Prefix + IDOffset);
+    if (Length < IDSize || Length > Budget || FDEVA > UINT64_MAX - IDOffset ||
+        !Distance || Distance > FDEVA + IDOffset ||
+        FDEVA + IDOffset - Distance < Sec.VA) {
+      Malformed("runtime DWARF index has an invalid FDE/CIE extent");
+      continue;
+    }
+    const va_t CIEVA = FDEVA + IDOffset - Distance;
+    if (Distance > Budget - Length) {
+      Malformed("indexed DWARF records exceed the decode budget");
+      return;
+    }
+    const uint64_t Span = Distance + Length;
+    const uint8_t *Storage = Img.readVA(CIEVA, Span);
+    if (!Storage) {
+      Malformed("indexed DWARF CIE and FDE have no complete backing range");
+      continue;
+    }
+    Budget -= Span;
+    auto Added = parseEHFrame(Img, {Storage, size_t(Span), CIEVA}, Bases);
+    auto Found =
+        std::find_if(Added.FDEs.begin(), Added.FDEs.end(), [&](const auto &F) {
+          return CIEVA + F.SectionOffset == FDEVA && F.InitialLocation == Start;
+        });
+    if (Added.ParseStatus != ExceptionParseStatus::Complete ||
+        Found == Added.FDEs.end()) {
+      Malformed(
+          "indexed DWARF records do not decode to their declared identity");
+      continue;
+    }
+    const uint64_t Shift = CIEVA - Sec.VA;
+    for (auto &CIE : Added.CIEs) {
+      CIE.SectionOffset += Shift;
+      if (llvm::none_of(Frames.CIEs, [&](const auto &Old) {
+            return Old.SectionOffset == CIE.SectionOffset;
+          }))
+        Frames.CIEs.push_back(std::move(CIE));
+    }
+    auto FDE = std::move(*Found);
+    FDE.SectionOffset += Shift;
+    FDE.CIESectionOffset += Shift;
+    FDE.InitialLocationOffset += Shift;
+    Known.emplace(FDEVA, Frames.FDEs.size());
+    Frames.FDEs.push_back(std::move(FDE));
+  }
+}
+
 /// Classify the exceptional shape of a decoded LSDA so the IR layers do not
 /// each have to re-derive it from the action chain.
 void summarizeItanium(const ItaniumEHInfo &Info,
@@ -210,7 +347,9 @@ void recordFrameExtents(BinaryImage &Img) {
   FrameSection Sec;
   if (Img.IsRelocatable || !findFrameSection(Img, Sec) || Sec.Size == 0)
     return;
-  const ParseResult Frames = parseEHFrame(Img, Sec, computeBases(Img));
+  const auto Bases = computeBases(Img);
+  ParseResult Frames = parseEHFrame(Img, Sec, Bases);
+  appendIndexedELFFrames(Img, Sec, Bases, Frames);
   std::vector<std::pair<va_t, va_t>> Ranges;
   Ranges.reserve(Frames.FDEs.size());
   for (const DwarfFDE &FDE : Frames.FDEs) {
@@ -263,6 +402,7 @@ void parseItaniumExceptions(BinaryImage &Img) {
 
   const PointerBases Bases = computeBases(Img);
   ParseResult Frames = parseEHFrame(Img, Sec, Bases);
+  appendIndexedELFFrames(Img, Sec, Bases, Frames);
   if (Frames.FDEs.empty() && Frames.CIEs.empty())
     return;
 

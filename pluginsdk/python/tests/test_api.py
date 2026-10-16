@@ -652,12 +652,15 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(options.mappings[0].original_va, 0)
             self.assertEqual(options.compiler_args[0], b"-DBASE=37")
             self.assertEqual(options.source_name, b"/space path/source.c")
-            self.assertEqual(options.binding_count, 2)
+            self.assertEqual(options.binding_count, 3)
             self.assertEqual(options.bindings[0].symbol, b"helper")
             self.assertEqual(options.bindings[0].kind, 0)
             self.assertEqual(options.bindings[0].original_va, 0x1000)
             self.assertEqual(options.bindings[1].kind, 2)
             self.assertEqual(options.bindings[1].size, 4)
+            self.assertEqual(options.bindings[2].kind, 3)
+            self.assertEqual(options.bindings[2].original_va, 0x2000)
+            self.assertEqual(options.bindings[2].size, 0)
             return 1
 
         host.call.side_effect = verify
@@ -665,7 +668,8 @@ class SessionTests(unittest.TestCase):
             b"a\0b", "/tmp/patch", input_kind="object", artifact="object",
             compiler="neverc", mappings={"replacement": 0},
             compiler_args=["-DBASE=37"], source_name="/space path/source.c",
-            bindings={"helper": ("function", 0x1000), "count": ("data", 0x3000, 4)},
+            bindings={"helper": ("function", 0x1000), "count": ("data", 0x3000, 4),
+                      "saved": ("original", 0x2000)},
         )
         self.assertTrue(report["success"])
 

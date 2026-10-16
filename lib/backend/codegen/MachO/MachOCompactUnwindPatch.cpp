@@ -10,6 +10,7 @@
 
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/MachO/MachOExceptionPatch.h"
+#include "neverd/backend/codegen/MachO/MachOLayoutGrowth.h"
 #include "neverd/loader/MachO/CompactUnwind.h"
 #include "neverd/object/MachOLayout.h"
 #include "neverd/object/SectionNames.h"
@@ -2814,112 +2815,7 @@ llvm::Expected<uint64_t> nativeCompactHeaderVA(llvm::ArrayRef<uint8_t> Binary) {
         "native unwind needs an authenticated Mach header mapping");
   return *Base;
 }
-llvm::Error declareNativeCompactSection(std::vector<uint8_t> &Binary,
-                                        uint64_t Size) {
-  using namespace llvm::MachO;
-  const auto H = parseMachOHeader(Binary.data(), Binary.size());
-  const uint64_t End = uint64_t(H.HeaderSize) + H.SizeOfCmds;
-  const unsigned SectionSize = H.Is64 ? sizeof(section_64) : sizeof(section);
-  if (!rangeInBounds(End, SectionSize, Binary.size()) ||
-      llvm::any_of(llvm::ArrayRef<uint8_t>(Binary).slice(End, SectionSize),
-                   [](uint8_t B) { return B != 0; }))
-    return llvm::createStringError(
-        llvm::errc::not_supported,
-        "native compact section needs unused load-command capacity");
-  std::optional<uint64_t> TextCommand, Insert, NewOff, NewVA;
-  uint32_t TextCommandSize = 0;
-  uint64_t FirstData = Binary.size();
-  bool Invalid = false;
-  forEachMachOLoadCommand(
-      Binary.data(), Binary.size(),
-      [&](const uint8_t *P, uint32_t Cmd, uint32_t CmdSize, bool Is64) {
-        if (Cmd != (Is64 ? LC_SEGMENT_64 : LC_SEGMENT))
-          return;
-        const auto F = readMachOSegment(P, Is64);
-        const bool Text = readMachOName(F.SegName) == "__TEXT";
-        uint64_t Last = F.FileOff;
-        const uint64_t Required =
-            (Is64 ? sizeof(segment_command_64) : sizeof(segment_command)) +
-            uint64_t(F.NSects) * SectionSize;
-        if (CmdSize != Required) {
-          Invalid = true;
-          return;
-        }
-        forEachMachOSectionAuto(
-            P, Is64,
-            [&](uint64_t Addr, uint64_t Extent, uint32_t Offset, uint32_t,
-                uint32_t, const char *) {
-              if (Offset && Extent)
-                FirstData = std::min<uint64_t>(FirstData, Offset);
-              if (Text && Offset && Extent) {
-                if (!rangeInBounds(Offset, Extent, Binary.size()) ||
-                    Addr < F.VMAddr || Offset < F.FileOff ||
-                    Addr - F.VMAddr != Offset - F.FileOff)
-                  Invalid = true;
-                else
-                  Last = std::max(Last, uint64_t(Offset) + Extent);
-              }
-            });
-        if (!Text)
-          return;
-        if (TextCommand || CmdSize < (Is64 ? sizeof(segment_command_64)
-                                           : sizeof(segment_command)) +
-                                         uint64_t(F.NSects) * SectionSize) {
-          Invalid = true;
-          return;
-        }
-        TextCommand = P - Binary.data();
-        TextCommandSize = CmdSize;
-        Insert = *TextCommand + CmdSize;
-        NewOff = llvm::alignTo(Last, 4);
-        NewVA = F.VMAddr + *NewOff - F.FileOff;
-        if (*NewOff < F.FileOff ||
-            !rangeInBounds(*NewOff - F.FileOff, Size, F.FileSize) ||
-            !rangeInBounds(*NewOff, Size, Binary.size()) ||
-            llvm::any_of(
-                llvm::ArrayRef<uint8_t>(Binary).slice(*NewOff, Size),
-                [](uint8_t B) { return B != 0; }))
-          Invalid = true;
-      });
-  if (Invalid || !TextCommand || End + SectionSize > FirstData ||
-      (!H.Is64 &&
-       (*NewOff > UINT32_MAX || *NewVA > UINT32_MAX || Size > UINT32_MAX)))
-    return llvm::createStringError(
-        llvm::errc::not_supported,
-        "native compact section needs unused mapped TEXT capacity");
-  std::memmove(Binary.data() + *Insert + SectionSize, Binary.data() + *Insert,
-               End - *Insert);
-  std::memset(Binary.data() + *Insert, 0, SectionSize);
-  if (H.Is64) {
-    auto *Seg =
-        reinterpret_cast<segment_command_64 *>(Binary.data() + *TextCommand);
-    Seg->cmdsize = TextCommandSize + SectionSize;
-    ++Seg->nsects;
-    auto *S = reinterpret_cast<section_64 *>(Binary.data() + *Insert);
-    std::memcpy(S->sectname, "__unwind_info", 13);
-    std::memcpy(S->segname, "__TEXT", 7);
-    S->addr = *NewVA;
-    S->size = Size;
-    S->offset = *NewOff;
-    S->align = 2;
-    reinterpret_cast<mach_header_64 *>(Binary.data())->sizeofcmds +=
-        SectionSize;
-  } else {
-    auto *Seg =
-        reinterpret_cast<segment_command *>(Binary.data() + *TextCommand);
-    Seg->cmdsize = TextCommandSize + SectionSize;
-    ++Seg->nsects;
-    auto *S = reinterpret_cast<section *>(Binary.data() + *Insert);
-    std::memcpy(S->sectname, "__unwind_info", 13);
-    std::memcpy(S->segname, "__TEXT", 7);
-    S->addr = *NewVA;
-    S->size = Size;
-    S->offset = *NewOff;
-    S->align = 2;
-    reinterpret_cast<mach_header *>(Binary.data())->sizeofcmds += SectionSize;
-  }
-  return llvm::Error::success();
-}
+
 } // namespace
 
 llvm::Error installNativeMachOCompactUnwind(
@@ -2998,8 +2894,11 @@ llvm::Error installNativeMachOCompactUnwind(
     return Encoded.takeError();
   auto Candidate = Binary;
   if (!*Located) {
-    if (auto E = declareNativeCompactSection(Candidate, Encoded->size()))
-      return E;
+    auto Declared =
+        declareMachOTextMetadata(Candidate, Architecture, "__unwind_info",
+                                 llvm::alignTo(Encoded->size(), 4096));
+    if (!Declared)
+      return Declared.takeError();
   } else if (auto E =
                  reserveMachOCompactUnwindStorage(Candidate, Encoded->size()))
     return E;

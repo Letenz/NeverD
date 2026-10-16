@@ -4,6 +4,7 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFPatchObject.cpp
   COFF/COFFFH4Encoding.cpp
   COFF/COFFInplace.cpp
+  COFF/COFFLayoutGrowth.cpp
   COFF/COFFPatch.cpp
   COFF/COFFSourceCallSymbols.cpp
   COFF/COFFTrampolineRegions.cpp
@@ -66,9 +67,15 @@ add_neverd_component_library(NeverDCodeGen
   ELF/ELFSectionPatch.cpp
   ELF/ELFSourceRelocations.cpp
   ELF/ELFSourceSymbols.cpp
+  ELF/ELFSourceDependencies.cpp
   MachO/MachOCompactUnwindPatch.cpp
   MachO/MachOExceptionPatch.cpp
   MachO/MachOInplace.cpp
+  MachO/MachOSourceDependencies.cpp
+  MachO/MachODependencyState.cpp
+  MachO/MachOExportLayout.cpp
+  MachO/MachOHeaderGrowth.cpp
+  MachO/MachOLayoutGrowth.cpp
   MachO/MachOPatch.cpp
   MachO/MachOPatchObject.cpp
   MachO/MachOReloc.cpp
@@ -79,6 +86,13 @@ add_neverd_component_library(NeverDCodeGen
   PatchStorage.cpp
   SourcePatch.cpp
   SourcePatchBindings.cpp
+  SourcePatchDependencies.cpp
+  SourcePatchCallback.cpp
+  SourcePatchCallbackCOFF.cpp
+  SourcePatchCallbackSymbols.cpp
+  SourcePatchCallbackMachine.cpp
+  SourcePatchCallbackDwarf.cpp
+  SourcePatchPreparation.cpp
   rewrite/BinaryRewriter.cpp
   rewrite/InplaceRewriter.cpp
 

@@ -26,6 +26,7 @@ from .abi import (
     NeverDSanitizeResultV1,
     NeverDSourcePatchMappingV1,
     NeverDSourcePatchBindingV1,
+    NeverDSourcePatchDependencyV1,
     NeverDSourcePatchOptionsV1,
     NeverDSimplifyOptions,
     NeverDSimplifyResult,
@@ -1701,6 +1702,7 @@ class Session:
         *,
         mappings: Mapping[str, int] | None = None,
         bindings: Mapping[str, tuple[str, int] | tuple[str, int, int]] | None = None,
+        dependencies: Mapping[str, tuple[str, str]] | None = None,
         input_kind: str = "source",
         compiler: str = "clang",
         compiler_path: os.PathLike[str] | str | None = None,
@@ -1717,8 +1719,9 @@ class Session:
         Mapping keys are exact replacement symbols; an empty key selects a
         sole external definition. Empty mappings retain legacy name matching.
         Bindings map declarations to ``(kind, original_address[, size])``;
-        kinds are ``function``, ``const`` (read-only data), and ``data``
-        (writable data). They share existing storage or call existing code.
+        kinds are ``function``, ``original`` (saved replaced body), ``const``
+        (read-only data), and ``data`` (writable data). Dependencies map exact
+        import symbols to ``(library, kind)``; kind is ``function`` or ``data``.
         Explicit compiler selection never falls back to another executable.
         Profiles unavailable in the loaded engine raise ``NeverDError``.
         """
@@ -1783,9 +1786,9 @@ class Session:
             if len(reference) not in (2, 3):
                 raise ValueError("bindings require (kind, address[, size])")
             kind, address = reference[:2]
-            kinds = ("function", "const", "data")
+            kinds = ("function", "const", "data", "original")
             if kind not in kinds:
-                raise ValueError("binding kind must be function, const, or data")
+                raise ValueError("binding kind must be function, const, data, or original")
             native_bindings[index] = NeverDSourcePatchBindingV1(
                 _utf8_argument("binding symbol", symbol, allow_empty=False),
                 kinds.index(kind), _unsigned("binding address", address, 64),
@@ -1793,6 +1796,20 @@ class Session:
             )
         options.bindings = native_bindings
         options.binding_count = len(references)
+        imports = list((dependencies or {}).items())
+        if len(imports) > 4096:
+            raise ValueError("too many new dependencies")
+        native_dependencies = (NeverDSourcePatchDependencyV1 * len(imports))()
+        for index, (symbol, request) in enumerate(imports):
+            if len(request) != 2 or request[1] not in ("function", "data"):
+                raise ValueError("dependencies require (library, function|data)")
+            native_dependencies[index] = NeverDSourcePatchDependencyV1(
+                _utf8_argument("dependency library", request[0], allow_empty=False),
+                _utf8_argument("dependency symbol", symbol, allow_empty=False),
+                ("function", "data").index(request[1]),
+            )
+        options.dependencies = native_dependencies
+        options.dependency_count = len(imports)
         options.timeout_seconds = _unsigned("compiler timeout", timeout_seconds, 32)
         if options.timeout_seconds > 3600:
             raise ValueError("compiler timeout must not exceed 3600 seconds")
