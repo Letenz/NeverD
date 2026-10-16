@@ -85,7 +85,7 @@ struct RenderOptions {
 /// Whether \p Lang renders function prototypes: C and C++ do.
 bool rendersPrototypes(Language Lang);
 /// Whether \p Lang's declarations read back (TypeParse.h): C, C++, Rust
-/// and Go's do; Python and JavaScript render only.
+/// and Go's do; Python, JavaScript and Lua render only.
 bool readsDeclarations(Language Lang);
 /// How the workbench shows \p Lang, such as "Rust".
 llvm::StringRef languageDisplay(Language Lang);

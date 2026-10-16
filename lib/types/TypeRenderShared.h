@@ -242,6 +242,11 @@ std::string renderJavaScript(const TypeLibrary &Library, const LocalType &Type,
 std::string renderJavaScriptModule(const TypeLibrary &Library,
                                    llvm::ArrayRef<const LocalType *> Types,
                                    const RenderOptions &Options);
+std::string renderLua(const TypeLibrary &Library, const LocalType &Type,
+                      const RenderOptions &Options);
+std::string renderLuaModule(const TypeLibrary &Library,
+                            llvm::ArrayRef<const LocalType *> Types,
+                            const RenderOptions &Options);
 
 } // namespace neverd::types::render
 

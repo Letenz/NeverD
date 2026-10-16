@@ -229,6 +229,30 @@ private slots:
     QCOMPARE(colorAt(5, int(last.lastIndexOf(QLatin1String("//")))), comment);
   }
 
+  void typeSourceColorsLuasComments() {
+    // Lua comments with --, after code too.
+    QTextDocument document;
+    document.setPlainText(
+        QStringLiteral("-- 0x08 uint32_t Flags: integer\n"
+                       "local T = record(\"_X\", 0x10) -- 0x10\n"));
+    TypeSourceHighlighter highlighter(&document);
+    highlighter.setLanguage(QStringLiteral("lua"));
+    const Theme &theme = Theme::instance();
+    const auto colorAt = [&](int line, int column) {
+      const QTextBlock block = document.findBlockByNumber(line);
+      for (const QTextLayout::FormatRange &range : block.layout()->formats())
+        if (column >= range.start && column < range.start + range.length)
+          return range.format.foreground().color();
+      return QColor();
+    };
+    QCOMPARE(colorAt(0, 0), theme.color(ColorRole::ListingComment));
+    QCOMPARE(colorAt(0, 4), theme.color(ColorRole::ListingNumber));
+    QCOMPARE(colorAt(1, 0), theme.color(ColorRole::ListingKeyword));
+    const QString code = document.findBlockByNumber(1).text();
+    QCOMPARE(colorAt(1, int(code.indexOf(QLatin1String("--")))),
+             theme.color(ColorRole::ListingComment));
+  }
+
   void flowLayoutWrapsRatherThanOverlaps() {
     // A combo box that keeps its width and the checkboxes after it, as the
     // Local Types options are: narrow, they wrap to rows of their own, each

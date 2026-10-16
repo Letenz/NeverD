@@ -336,7 +336,10 @@ compiles the result:
 - JavaScript by running the module with `node`, in both spellings, whose
   checks read and write back every accessor within its record, and by
   `tsc --noEmit --allowJs --checkJs --strict`, which checks its JSDoc as
-  TypeScript (`--tsc` names the compiler; without one it is skipped).
+  TypeScript (`--tsc` names the compiler; without one it is skipped);
+- Lua by running the module with Lua 5.3 or later, in both spellings, whose
+  checks do the same (`--lua` names the interpreter, `lua5.4`, `lua5.3` or
+  `lua` by default).
 
 A missing toolchain is reported and skipped. Without `--binary` it checks the
 fixture:
