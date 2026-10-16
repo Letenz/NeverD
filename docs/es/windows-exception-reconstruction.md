@@ -230,3 +230,31 @@ El cleanup del handler seleccionado puede saltar a la misma captura o a otra cap
 Un filtro invocado por RaiseException dentro de un finally suspendido puede saltar a la misma captura o a otra válida, o retornar por otra rama. Los efectos de retorno y salto se mantienen separados; el salto termina el filtro y todos los finally suspendidos y anidados, conservando su destino y valor.
 
 Los bucles finitos de callbacks finally y filtros conservan un marco completo por paso, incluidos contadores en registros, celdas del padre y pila privada. Se rechazan estados completos recurrentes, terminación no demostrada y presupuestos agotados. Cada bloque de copia PHI debe conservar su arista fuente y su callback; el instalador comprueba el índice escape exacto del almacenamiento escalar recuperado y los accesos privados no atómicos de todos sus alias.
+
+Un finally SEH3/EH4 con marco fijo verificado puede restaurar SavedESP y saltar
+a una continuación ya atribuida al padre. Un contexto SjLj privado restaura la
+pila generada y FS:[0], conserva los registros lógicos actuales y las escrituras
+del callback, y entra en el límite exacto del scope original. El instalador
+verifica por separado alias, captura, transferencia y selección; un búfer original
+no puede sustituir este contexto. Una salida del runtime puede abandonar el nodo
+temporal de desenrollado del CRT: antes de otra llamada u operación que pueda
+provocar una excepción, el código original debe reconectar su registration activo
+o retirarlo al retornar. Se rechazan reparaciones no probadas y destinos fuera
+del CFG padre verificado.
+
+Una continuación puede alcanzarse únicamente desde el salto del finally si
+todos los caminos decodificados de su tramo final acíclico confluyen en código
+padre ya atribuido, sin atravesar una entrada de filter o finally. Esta prueba
+física no concede permisos de memoria del handler del runtime; la transferencia
+SavedESP y los estados de entrada se verifican por separado. Un retorno sin
+conexión al padre o un ciclo no puede establecer esa pertenencia.
+
+
+Las llamadas ordinarias a finally intercambian EAX/ECX/EDX/EBX/ESI/EDI mediante
+posiciones privadas del marco padre, incluidos los valores del retorno cercano
+físico. La entrada del runtime conserva su propio contrato de registros y no
+reutiliza entradas de una llamada ordinaria anterior. También se conserva un
+scope referenciado únicamente por una llamada ordinaria a finally autenticada,
+aunque ningún try level del código fuente lo active.
+
+La reconstrucción MSVC x86 `/Od` de `nonlocal_finally_return` se verifica con `/GS-` y `/GS`, IR fuente optimizado o sin optimizar, ambos modos de parche y dos bases forzadas. Un observador SEH externo comprueba retornos, pila y cadena. La ruta GS conserva el normalizador original después de probar que su auxiliar escalar no observa el marco llamador. El retorno directo al padre de `/O2` sigue sin soporte.

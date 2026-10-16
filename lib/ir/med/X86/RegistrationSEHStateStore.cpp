@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/med/MedIR.h"
+#include "neverd/ir/med/X86RegistrationSEHCall.h"
 #include "neverd/ir/med/X86RegistrationSEHStateStore.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -209,6 +210,21 @@ getX86RegistrationSEHRetainedScopes(const MedFunc &Function) {
     for (int32_t Level : Binding.TargetLevels)
       if (!Include(Callback, Level))
         return std::nullopt;
+  // An ordinary finally invocation can be the only use of a table row. Keep
+  // its callback identity even when no source try-level ever activates it.
+  // Both returning and nonlocal calls must bind to their checked occurrences;
+  // a mere direct target or an otherwise unused table row grants no retention.
+  std::set<va_t> Called;
+  if (const auto Returns = getRegistrationSEHReturns(Function))
+    for (const auto &[Identity, Target] : Returns->ReturningCalls)
+      Called.insert(Target);
+  if (const auto Nonlocal = getRegistrationSEHNonlocalCalls(Function))
+    for (const auto &[Identity, Target] : *Nonlocal)
+      Called.insert(Target);
+  for (uint32_t I = 0; I != Chain.Scopes.size(); ++I)
+    if (Chain.Scopes[I].IsFinally && Called.count(Chain.Scopes[I].HandlerVA) &&
+        !Include(Callback, I))
+      return std::nullopt;
   std::vector<uint32_t> Result;
   for (uint32_t I = 0; I != Chain.Scopes.size(); ++I) {
     if (Parent.count(I))

@@ -13,14 +13,17 @@
 #include "LoadFileDialog.h"
 #include "LocalTypesView.h"
 #include "MainWindow.h"
+#include "MapPromptDialog.h"
 #include "OutputWindow.h"
 #include "PdbPromptDialog.h"
 #include "ProjectDatabase.h"
 #include "QuickStartDialog.h"
 #include "Session.h"
+#include "SetTypeDialog.h"
 #include "SettingsKeys.h"
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
+#include "TypePickerDialog.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
@@ -29,6 +32,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
+#include <QCompleter>
 #include <QDateTime>
 #include <QDialogButtonBox>
 #include <QDragEnterEvent>
@@ -3303,6 +3307,222 @@ private slots:
             QLatin1String("dwarf"));
   }
 
+  /// Write \p text as the MAP beside the fixture \p fixture in \p directory.
+  static bool writeMapBeside(const QTemporaryDir &directory,
+                             const QString &fixture, const QByteArray &text) {
+    QFile map(directory.filePath(QFileInfo(fixture).completeBaseName() +
+                                 QStringLiteral(".map")));
+    return map.open(QIODevice::WriteOnly) && map.write(text) == text.size();
+  }
+
+  void mapQuestionAtStartupGreetsAlone_data() {
+    QTest::addColumn<QByteArray>("map");
+    QTest::addColumn<bool>("accept");
+    QTest::addColumn<QString>("kind");
+    QTest::addColumn<QString>("mode");
+    QTest::newRow("same build, yes") << QByteArray("same build") << true
+                                     << QStringLiteral("map") << QString();
+    QTest::newRow("same build, no")
+        << QByteArray("same build") << false << QStringLiteral("none")
+        << QStringLiteral("none");
+    QTest::newRow("other build, yes")
+        << QByteArray("other build") << true << QStringLiteral("map")
+        << QStringLiteral("unchecked");
+  }
+
+  void mapQuestionAtStartupGreetsAlone() {
+    // An image no PDB or DWARF describes asks before it loads the MAP beside
+    // it, in a window of its own that says which linker wrote the MAP and
+    // whether it is of the input's build; one of another build defaults to
+    // No, and Yes still loads it, as the user chose.
+    QFETCH(QByteArray, map);
+    QFETCH(bool, accept);
+    QFETCH(QString, kind);
+    QFETCH(QString, mode);
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("map.bin"));
+    QVERIFY(writeMapBeside(directory, QStringLiteral("map.bin"), map));
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    bool answered = false, alone = false, cautious = false;
+    QString description;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      auto *dialog =
+          qobject_cast<MapPromptDialog *>(QApplication::activeModalWidget());
+      if (!dialog || answered)
+        return;
+      answered = true;
+      alone = dialog->isVisible() && !dialog->parentWidget() &&
+              !bench.window->isVisible();
+      if (auto *label =
+              dialog->findChild<QLabel *>(QStringLiteral("description")))
+        description = label->text();
+      if (auto *no = dialog->findChild<QPushButton *>(QStringLiteral("no")))
+        cautious = no->isDefault();
+      if (auto *button = dialog->findChild<QPushButton *>(
+              accept ? QStringLiteral("yes") : QStringLiteral("no")))
+        button->click();
+    });
+    answer.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(answered, OpenTimeoutMs);
+    QVERIFY(alone);
+    QCOMPARE(cautious, map == "other build");
+    QVERIFY2(description.startsWith(QLatin1String("link.exe MAP, 3 names.")),
+             qPrintable(description));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.window->isVisible());
+    const auto metadata = bench.session.metadata();
+    QCOMPARE(metadata.value("debug_info").toObject().value("kind").toString(),
+             kind);
+    QCOMPARE(metadata.value("map").toObject().value("mode").toString(), mode);
+  }
+
+  void unattendedRunsAskNoMapQuestion() {
+    // A capture or benchmark reads the MAP that discovery finds.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("map.bin"));
+    QVERIFY(writeMapBeside(directory, QStringLiteral("map.bin"), "same build"));
+    Workbench bench;
+    bench.window->setAsksForDebugInfo(false);
+    bool asked = false;
+    QTimer watch;
+    connect(&watch, &QTimer::timeout, this, [&] {
+      if (qobject_cast<MapPromptDialog *>(QApplication::activeModalWidget())) {
+        asked = true;
+        QApplication::activeModalWidget()->close();
+      }
+    });
+    watch.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!asked);
+    QCOMPARE(bench.session.metadata()
+                 .value("debug_info")
+                 .toObject()
+                 .value("kind")
+                 .toString(),
+             QStringLiteral("map"));
+  }
+
+  void anAcceptedPdbLeavesTheMapUnasked() {
+    // A PDB outranks the MAP beside the PE: once the user takes the PDB,
+    // the MAP is not asked about, and the open reads no MAP before the PDB.
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("symbols-local.bin"));
+    QFile pdb(directory.filePath(QStringLiteral("fixture.pdb")));
+    QVERIFY(pdb.open(QIODevice::WriteOnly));
+    pdb.write("matching fixture PDB");
+    pdb.close();
+    QVERIFY(writeMapBeside(directory, QStringLiteral("symbols-local.bin"),
+                           "same build"));
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    bool answeredPdb = false, askedMap = false;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      auto *modal = QApplication::activeModalWidget();
+      if (auto *dialog = qobject_cast<PdbPromptDialog *>(modal)) {
+        answeredPdb = true;
+        if (auto *yes = dialog->findChild<QPushButton *>(QStringLiteral("yes")))
+          yes->click();
+      } else if (qobject_cast<MapPromptDialog *>(modal)) {
+        askedMap = true;
+        modal->close();
+      }
+    });
+    answer.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(answeredPdb);
+    QVERIFY(!askedMap);
+    const auto debug = bench.session.metadata().value("debug_info").toObject();
+    QCOMPARE(debug.value("kind").toString(), QStringLiteral("pdb"));
+    QVERIFY(debug.value("files").toArray().isEmpty());
+  }
+
+  void declinedMapStaysDeclinedInTheProject() {
+    // The project keeps the answer, as it keeps the DWARF one: reopening it
+    // asks nothing and reads no MAP.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("map.bin"));
+    QVERIFY(writeMapBeside(directory, QStringLiteral("map.bin"), "same build"));
+    const auto database = ProjectDatabase::pathFor(path);
+    {
+      Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+      QTimer answer;
+      connect(&answer, &QTimer::timeout, this, [&] {
+        if (auto *dialog = qobject_cast<MapPromptDialog *>(
+                QApplication::activeModalWidget()))
+          if (auto *no = dialog->findChild<QPushButton *>(QStringLiteral("no")))
+            no->click();
+      });
+      answer.start(5);
+      bench.window->openFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      answer.stop();
+      bench.session.setComment(Base + 0x140, QStringLiteral("declined"));
+      QTRY_VERIFY(bench.session.dirty());
+      QSignalSpy saved(&bench.session, &Session::databaseSaved);
+      bench.session.save();
+      QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
+      QVERIFY(saved.first().first().toBool());
+    }
+    Workbench bench;
+    bool asked = false;
+    QTimer watch;
+    connect(&watch, &QTimer::timeout, this, [&] {
+      if (auto *dialog = qobject_cast<MapPromptDialog *>(
+              QApplication::activeModalWidget())) {
+        asked = true;
+        dialog->close();
+      }
+    });
+    watch.start(5);
+    bench.window->openFile(database);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!asked);
+    const auto metadata = bench.session.metadata();
+    QCOMPARE(metadata.value("map").toObject().value("mode").toString(),
+             QStringLiteral("none"));
+    QVERIFY(metadata.value("debug_info").toObject().value("kind").toString() !=
+            QLatin1String("map"));
+  }
+
+  void loadFileOffersTheDebugFilesTheImageCanHave() {
+    // File, Load file offers a PDB for a PE, DWARF for an ELF or Mach-O
+    // image, and a MAP for any image; a chosen MAP loads beside the image's
+    // other debug information.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("map.bin"));
+    QFile map(directory.filePath(QStringLiteral("chosen.map")));
+    QVERIFY(map.open(QIODevice::WriteOnly));
+    map.write("same build");
+    map.close();
+    Workbench bench;
+    bench.window->setAsksForDebugInfo(false);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *loadMap = bench.action(ActionId::FileLoadMap);
+    auto *loadDwarf = bench.action(ActionId::FileLoadDwarf);
+    QVERIFY(loadMap && loadDwarf);
+    QTRY_VERIFY(loadMap->isEnabled());
+    QCOMPARE(loadDwarf->isEnabled(),
+             bench.session.format() == QLatin1String("ELF") ||
+                 bench.session.format() == QLatin1String("Mach-O"));
+    QSignalSpy changed(&bench.session, &Session::functionsChanged);
+    bench.session.loadMap({{"path", map.fileName()}, {"mode", "checked"}});
+    QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 1, OpenTimeoutMs);
+    const auto metadata = bench.session.metadata();
+    QCOMPARE(metadata.value("map").toObject().value("mode").toString(),
+             QStringLiteral("checked"));
+    const auto files =
+        metadata.value("debug_info").toObject().value("files").toArray();
+    QCOMPARE(files.size(), 1);
+    QCOMPARE(files.first().toObject().value("kind").toString(),
+             QStringLiteral("map"));
+  }
+
   void symbolQuestionAtStartupGreetsAlone_data() {
     QTest::addColumn<bool>("accept");
     QTest::newRow("yes") << true;
@@ -4032,6 +4252,266 @@ private slots:
     filter->setText(QStringLiteral("list"));
     QTRY_COMPARE(list->model()->rowCount(), 1);
     types->setPage(0);
+  }
+
+  void structureOffsetsRankTypesByTheCodesAccesses() {
+    // T on `mov rax, [rcx+8]` lists the local types by how function_7's
+    // accesses through rcx land on their members, the one that holds them
+    // all first and previewed as the operand becomes; Apply shows the
+    // operand, and every other access through rcx, as members of it in one
+    // step of the history.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-types.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.session.showsStructOffsets());
+    auto *disassembly = bench.window->findChild<DisassemblyView *>();
+    QVERIFY(disassembly);
+    const Address read = Base + 0x70;
+    const auto lineAt = [&](Address at) {
+      disassembly->navigate(at);
+      return disassembly->listing()->currentLineText();
+    };
+    disassembly->navigate(read);
+    disassembly->focusContent();
+    QTRY_COMPARE(disassembly->currentItem(), std::optional<Address>(read));
+    QTRY_VERIFY(disassembly->listing()->currentLineText().contains(
+        QLatin1String("[rcx+8]")));
+    QTRY_VERIFY(bench.action(ActionId::EditOperandStruct)->isEnabled());
+
+    QStringList listed;
+    QString expression, every, summary;
+    auto *picker = new QTimer(&bench.session);
+    connect(picker, &QTimer::timeout, picker, [&, picker] {
+      auto *dialog =
+          qobject_cast<TypePickerDialog *>(QApplication::activeModalWidget());
+      if (!dialog || !dialog->isActiveWindow())
+        return;
+      auto *list =
+          dialog->findChild<QListWidget *>(QStringLiteral("typePickerList"));
+      auto *search =
+          dialog->findChild<QLineEdit *>(QStringLiteral("typePickerSearch"));
+      if (!list || !search || list->count() < 2 || !search->hasFocus())
+        return;
+      picker->stop();
+      picker->deleteLater();
+      for (int row = 0; row < list->count(); ++row)
+        listed << list->item(row)->text();
+      expression =
+          dialog->findChild<QLabel *>(QStringLiteral("typePickerExpression"))
+              ->text();
+      summary = dialog->findChild<QLabel *>(QStringLiteral("typePickerSummary"))
+                    ->text();
+      auto *box =
+          dialog->findChild<QCheckBox *>(QStringLiteral("typePickerEvery"));
+      every = box->isVisibleTo(dialog) ? box->text() : QString();
+      box->setChecked(true);
+      QTest::keyClick(search, Qt::Key_Return);
+    });
+    picker->start(10);
+    bench.action(ActionId::EditOperandStruct)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        listed,
+        (QStringList{QStringLiteral("_DEVICE"), QStringLiteral("_LIST_ENTRY")}),
+        OpenTimeoutMs);
+    QCOMPARE(expression, QStringLiteral("[rcx+_DEVICE.Links.Flink]"));
+    QCOMPARE(every, QStringLiteral("Also show the 2 other instructions that "
+                                   "go through rcx as members"));
+    QCOMPARE(summary, QStringLiteral("2 types"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        lineAt(read).contains(QLatin1String("[rcx+_DEVICE.Links.Flink]")),
+        OpenTimeoutMs);
+    QTRY_VERIFY(lineAt(read + 1).contains(QLatin1String("[rcx+_DEVICE.Type]")));
+    QTRY_VERIFY(
+        lineAt(read + 2).contains(QLatin1String("[rcx+_DEVICE.Links.Blink]")));
+    // The number of `add rcx, 18h` stays: no access went through it.
+    QTRY_VERIFY(lineAt(read + 3).contains(QLatin1String("rcx, 18h")));
+
+    // One undo takes the three back.
+    bench.session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        lineAt(read + 2).contains(QLatin1String("[rcx+10h]")), OpenTimeoutMs);
+    QTRY_VERIFY(lineAt(read).contains(QLatin1String("[rcx+8]")));
+    QVERIFY2(bench.session.lastError().isEmpty(),
+             qPrintable(bench.session.lastError()));
+  }
+
+  void pseudocodeParametersTakeTypesByConvertAndY() {
+    // In function_7's pseudocode, Convert to struct * on arg0 ranks the local
+    // types by the reads through rcx and makes it a _DEVICE * under the name
+    // the user gives, whose members the code then reads; Y on arg1 completes
+    // a type's name, refuses one the program lacks and states one that
+    // reads; Y on the function shows its declaration and hands it back to
+    // analysis.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-types.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.session.convertsParameters());
+    const Address function = Base + 0x70;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
+                                 code->allText().contains("void* arg0"),
+                             OpenTimeoutMs);
+    const auto onParameter = [&](const QString &name, int position) {
+      code->setCursorLine(0);
+      if (!code->findText(name, true))
+        return false;
+      code->setFocus();
+      const auto target = code->renameTarget();
+      return target && target->value("parameter").toInt(-1) == position;
+    };
+    QTRY_VERIFY(onParameter(QStringLiteral("arg0"), 0));
+    QTRY_VERIFY(bench.action(ActionId::EditConvertToStruct)->isEnabled());
+
+    QStringList listed;
+    QString member;
+    auto *picker = new QTimer(&bench.session);
+    connect(picker, &QTimer::timeout, picker, [&, picker] {
+      auto *dialog =
+          qobject_cast<TypePickerDialog *>(QApplication::activeModalWidget());
+      if (!dialog || !dialog->isActiveWindow())
+        return;
+      auto *list =
+          dialog->findChild<QListWidget *>(QStringLiteral("typePickerList"));
+      auto *search =
+          dialog->findChild<QLineEdit *>(QStringLiteral("typePickerSearch"));
+      auto *name =
+          dialog->findChild<QLineEdit *>(QStringLiteral("typePickerName"));
+      if (!list || !search || !name || list->count() < 2 || !search->hasFocus())
+        return;
+      picker->stop();
+      picker->deleteLater();
+      for (int row = 0; row < list->count(); ++row)
+        listed << list->item(row)->text();
+      name->setText(QStringLiteral("Device"));
+      member = dialog->findChild<QLabel *>(QStringLiteral("typePickerMember"))
+                   ->text();
+      QTest::keyClick(search, Qt::Key_Return);
+    });
+    picker->start(10);
+    bench.action(ActionId::EditConvertToStruct)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        listed,
+        (QStringList{QStringLiteral("_DEVICE"), QStringLiteral("_LIST_ENTRY")}),
+        OpenTimeoutMs);
+    QCOMPARE(member, QStringLiteral("_DEVICE *Device"));
+    QTRY_VERIFY_WITH_TIMEOUT(code->allText().contains("_DEVICE *Device") &&
+                                 code->allText().contains("Device->Type"),
+                             OpenTimeoutMs);
+
+    // Y on arg1: its type, a name completed, one refused, one stated.
+    QTRY_VERIFY(onParameter(QStringLiteral("arg1"), 1));
+    QTRY_VERIFY(bench.action(ActionId::EditSetType)->isEnabled());
+    QString subject, completed, refused;
+    int stage = 0;
+    auto *typer = new QTimer(&bench.session);
+    connect(typer, &QTimer::timeout, typer, [&, typer] {
+      auto *dialog =
+          qobject_cast<SetTypeDialog *>(QApplication::activeModalWidget());
+      // The completion list is a window of its own while it shows.
+      if (!dialog || (stage != 1 && !dialog->isActiveWindow()))
+        return;
+      auto *field =
+          dialog->findChild<QLineEdit *>(QStringLiteral("setTypeField"));
+      auto *status =
+          dialog->findChild<QLabel *>(QStringLiteral("setTypeStatus"));
+      auto *apply =
+          dialog->findChild<QPushButton *>(QStringLiteral("setTypeApply"));
+      if (!field || !status || !apply || !field->isEnabled())
+        return;
+      if (stage == 0) {
+        if (field->text() != QLatin1String("int64_t") || !apply->isEnabled())
+          return;
+        subject = dialog->findChild<QLabel *>(QStringLiteral("setTypeSubject"))
+                      ->text();
+        field->selectAll();
+        QTest::keyClicks(field, QStringLiteral("_LIS"));
+        stage = 1;
+      } else if (stage == 1) {
+        auto *completer = dialog->findChild<QCompleter *>();
+        auto *popup = completer ? completer->popup() : nullptr;
+        if (!popup || !popup->isVisible() || !popup->model()->rowCount())
+          return;
+        completed = popup->model()->index(0, 0).data().toString();
+        popup->setCurrentIndex(popup->model()->index(0, 0));
+        QTest::keyClick(popup, Qt::Key_Return);
+        stage = 2;
+      } else if (stage == 2) {
+        if (field->text() != QLatin1String("_LIST_ENTRY"))
+          return;
+        QTest::keyClicks(field, QStringLiteral(" *NOPE"));
+        stage = 3;
+      } else if (stage == 3) {
+        if (!status->text().startsWith(QStringLiteral("✗")))
+          return;
+        refused = status->text();
+        QVERIFY(!apply->isEnabled());
+        field->selectAll();
+        QTest::keyClicks(field, QStringLiteral("_LIST_ENTRY *"));
+        stage = 4;
+      } else if (stage == 4) {
+        if (!apply->isEnabled() ||
+            !status->text().contains(QLatin1String("_LIST_ENTRY *arg1")))
+          return;
+        typer->stop();
+        typer->deleteLater();
+        QTest::keyClick(field, Qt::Key_Return);
+      }
+    });
+    typer->start(10);
+    bench.action(ActionId::EditSetType)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(code->allText().contains("_LIST_ENTRY *arg1"),
+                             OpenTimeoutMs);
+    QCOMPARE(subject, QStringLiteral(
+                          "arg1, parameter 2 of function_7, arrives in rdx."));
+    QCOMPARE(completed, QStringLiteral("_LIST_ENTRY"));
+    QVERIFY2(refused.contains(QLatin1String("'NOPE' names no type")),
+             qPrintable(refused));
+
+    // Y on the function: the declaration the user gave it, which goes back
+    // to analysis.
+    code->setCursorLine(0);
+    QVERIFY(code->findText(QStringLiteral("function_7"), true));
+    code->setFocus();
+    QString declaration;
+    auto *resetter = new QTimer(&bench.session);
+    connect(resetter, &QTimer::timeout, resetter, [&, resetter] {
+      auto *dialog =
+          qobject_cast<SetTypeDialog *>(QApplication::activeModalWidget());
+      if (!dialog || !dialog->isActiveWindow())
+        return;
+      auto *field =
+          dialog->findChild<QLineEdit *>(QStringLiteral("setTypeField"));
+      auto *reset =
+          dialog->findChild<QPushButton *>(QStringLiteral("setTypeReset"));
+      if (!field || !reset || !field->isEnabled() || !reset->isVisible())
+        return;
+      resetter->stop();
+      resetter->deleteLater();
+      declaration = field->text();
+      reset->click();
+    });
+    resetter->start(10);
+    bench.action(ActionId::EditSetType)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(code->allText().contains("void* arg0"),
+                             OpenTimeoutMs);
+    QCOMPARE(declaration, QStringLiteral("int64_t function_7(_DEVICE *Device, "
+                                         "_LIST_ENTRY *arg1)"));
+    // One undo states the declaration again.
+    bench.session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(code->allText().contains("_LIST_ENTRY *arg1"),
+                             OpenTimeoutMs);
+    QVERIFY2(bench.session.lastError().isEmpty(),
+             qPrintable(bench.session.lastError()));
   }
 
   void localTypesAreDeclaredEditedAndDeletedByIdasKeys() {

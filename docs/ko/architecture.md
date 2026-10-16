@@ -8,6 +8,10 @@
 설명합니다. 의도적으로 NeverD 소유 코드만 다루며 LLVM, Capstone, Unicorn
 서브모듈은 각자의 내부 아키텍처를 유지합니다.
 
+## 구체적 진입 메모리 시드
+
+`SymExecConcreteShadow`는 실행 전에 주소 순서의 RAM 바이트를 받습니다. 구체 상태만 초기화하며 기호 상태의 진입 메모리는 자유 입력으로 남습니다. C++ `InitialMemory`는 `MaxMemorySeedBytes`로 제한됩니다(기본 1 MiB, 0은 바이트를 허용하지 않음). 비어 있거나 겹치거나 주소가 순환하는 범위는 거부합니다. 메모리 보고서는 버전 2이며 `InitialMemory`와 후보의 `MemorySeed`를 보존합니다. 투영은 시드가 덮는 epoch-zero 레지스터 또는 절대 메모리 입력만 허용하고, 질의 평가·새 재실행·중복 제거에 두 종류의 바이트를 모두 사용합니다. 누락된 바이트, 기호 기준 주소와 근사 효과는 계속 거부하며 저장은 구체 메모리를 정상 갱신합니다. 정지 상태의 `ProcessView::read`로 커밋된 RAM을 읽을 수 있지만 접근 전 후크는 완전한 스냅샷이 아닙니다. 관측은 소유권·수명·불변성·비중첩을 증명하지 않습니다. 후보는 대상 분기와 앞선 결정만 검증합니다. 버전 1 C/JSON, Python 및 CLI는 레지스터 전용입니다.
+
 ## 소스 및 오브젝트 대체 경계
 
 `SourcePatchCompiler`는 컴파일러 식별과 산출물 선택을 담당합니다. `validateSourcePatchTarget`는 소스와 외부 IR의 공통 대상 판정이며 대상 트리플만으로 지원을 증명할 수 없습니다. `bindSourcePatch`는 IR 진입점 매핑을 확인하고 `PatchObject`는 네이티브 섹션, 재배치 및 FDE 범위 증거를 관리합니다. `publishSourcePatch`는 준비, 검증 및 배타적 출력을 담당합니다. `COFFSourceImage`는 PE x86/x64/ARM32/ARM64의 새 저장 공간과 언와인드 테이블을 담당하며 리프팅 후 재작성은 원래 EH의 별도 증거를 요구합니다. [소스 패치](source-patching.md)를 참조하세요.
@@ -1734,3 +1738,19 @@ KernelFileSystem은 FILE_OBJECT마다 provider token 하나를 유지합니다. 
 `KernelModelFileRequests`는 버퍼 없는 `ZwFlushBuffersFile` 생성도 소유합니다. 권한 마스크 확인과 즉시 게시·해제 규칙은 지연 완료하는 네이티브 읽기/쓰기/조회와 다르며, 원래 호출자 알림과 단일 해제 소유자를 공유합니다.
 
 `KernelModelFileRequests`가 네이티브 제어 버퍼 캡처와 게시를 소유합니다. 파일 유지, 호출자 연속 실행과 패킷 해제를 공유하며 생산자의 지연 완료 규칙으로 장치 제어와 FSCTL을 구분합니다. 공통 완료 검증기가 출력 한계를 확인합니다.
+
+`KernelModelRuntime`이 커널 CRT 분류, 제자리 변환과 검사된 문자열 쓰기를 소유합니다. `KernelCStringAPIs.def`는 모든 호출 경로에 내보내기 식별자, 인수 개수와 IRQL 조건을 제공합니다. 단위 접근은 게스트 권한과 수명 검증을 재사용하며 보고서/어댑터가 복사 및 오류 의미를 중복 구현하지 않습니다.
+
+`KernelMemoryCalls`가 검사형 메모리 복사 진입을 소유하며 기존 move/fill, 풀 수명 및 사용자 메모리 검사를 재사용한다. `KernelModelRuntime`이 `RtlImageNtHeader` 원시 서명 검사를 소유한다. 이는 이미지 실행에 필요한 로더 검증을 대체하지 않으며 어댑터는 의미를 복제하지 않는다.
+
+`OptimizationGuards`는 LLVM의 `optnone` 검사를 보완합니다. 보호된 함수를 정의하는 모듈에서는 CFG나 콜백 인수를 바꿀 수 있는 선택적 모듈 및 호출 그래프 최적화를 건너뜁니다. 필수 어댑터와 일반 함수 최적화는 계속 실행됩니다. 등록 체인 소스 투영은 네이티브 재구성이 연결할 때까지 프롤로그 저장의 메모리 기록을 유지합니다.
+
+`COFFRegistrationEH4Wrapper`가 보존된 EH4 전달을 증명합니다. `COFFRegistrationScalarLeaf`는 유한한 순방향 CFG, 레지스터와 플래그 초기화, 전용 MXCSR 저장소와 런타임 이미지 데이터를 검사합니다. 호출자 프레임 읽기, 주소 유출, 알 수 없는 호출, 명령 중첩과 불완전한 반환을 거부합니다. LLVM 출력과 독립 COFF 검증은 같은 로더 증명을 사용하며 원래 코드와 동적 읽기를 유지합니다.
+
+`KernelModelRuntime`이 Unicode 해시, NLS와 무관한 공통 대문자 매핑, 1980 기준 초 변환을 담당합니다. `KernelRuntimeCalls`는 기존 페이징 문자열 풀로 출력을 할당합니다. 문자열/시간 API 표가 내보내기 식별자, 인수 수, APC_LEVEL 제한을 통일하고 필드 접근 순서는 구현 계층이 관리합니다.
+
+`uppercaseCharacter`는 스칼라 인수를 좁힌 후 허용 여부를 확인하고 기존 `uppercaseUnicodeUnit`에 위임합니다. CRT와 계수형 문자열 API 표는 별도 ABI 식별자로 같은 매핑을 사용하며 어댑터나 호스트 로캘이 다른 의미를 제공하지 않습니다.
+
+`KernelModelRuntime`이 디버그 인수 너비와 공통 접두사 및 버퍼 게시 규칙을 소유합니다. 일반 가변 인수는 기존 호출 ABI 리더를 쓰고 명시적 x64 `va_list` 어댑터는 8바이트 간격으로 요청된 게스트 스칼라를 검사합니다. 디스패처와 어댑터는 형식 파싱을 복제하지 않습니다.
+
+스레드 조회 별칭은 기존 스레드/프로세스 및 실행 컨텍스트 소유자를 재사용하며 프로세스 연결 중에도 일관됩니다. `RtlPcToFileHeader`는 시스템 모듈 조회와 같은 `LoadedModules`를 사용합니다. `ImageRAM`의 매핑 범위는 모듈 ID를 대체하지 않습니다. 호스트 상태를 참조하지 않습니다.

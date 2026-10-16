@@ -36,7 +36,13 @@ NEVERD_KERNEL_IRQL_API(ExRaiseAccessViolation, Passive)
 NEVERD_KERNEL_IRQL_API(ExRaiseDatatypeMisalignment, Passive)
 NEVERD_KERNEL_IRQL_API(ProbeForRead, APC)
 NEVERD_KERNEL_IRQL_API(ProbeForWrite, APC)
-NEVERD_KERNEL_IRQL_API(ExGetPreviousMode, Any)
+// ExGetPreviousMode's WDK contract is <= DISPATCH_LEVEL. The byte-result
+// alias uses the same bounded admission and the same thread state.
+NEVERD_KERNEL_IRQL_API(ExGetPreviousMode, Dispatch)
+NEVERD_KERNEL_IRQL_API(PsGetCurrentThreadPreviousMode, Dispatch)
+// Pinned nonpaged lookup over the fixed module inventory; output residency
+// is checked separately. No dynamic function-table callback is executed.
+NEVERD_KERNEL_IRQL_API(RtlPcToFileHeader, Any)
 NEVERD_KERNEL_IRQL_API(NtQuerySystemInformation, Passive)
 NEVERD_KERNEL_IRQL_API(ZwQuerySystemInformation, Passive)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetrequestorprocessid
@@ -287,6 +293,7 @@ NEVERD_KERNEL_IRQL_API(KeWaitForMultipleObjects, Dispatch)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-dbgprintex
 NEVERD_KERNEL_IRQL_API(DbgPrint, Device)
 NEVERD_KERNEL_IRQL_API(DbgPrintEx, Device)
+NEVERD_KERNEL_IRQL_API(vDbgPrintExWithPrefix, Device)
 
 // Byte operations and Unicode copying are permitted at any IRQL with resident
 // operands. The modeled C memory primitives have the same residency rule as
@@ -298,6 +305,9 @@ NEVERD_KERNEL_IRQL_API(DbgPrintEx, Device)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlcomparememory
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlzeromemory
 NEVERD_KERNEL_IRQL_API(RtlCopyUnicodeString, Any)
+NEVERD_KERNEL_IRQL_API(memcpy_s, Any)
+NEVERD_KERNEL_IRQL_API(memmove_s, Any)
+NEVERD_KERNEL_IRQL_API(RtlImageNtHeader, Any)
 NEVERD_KERNEL_IRQL_API(memcpy, Any)
 NEVERD_KERNEL_IRQL_API(memmove, Any)
 NEVERD_KERNEL_IRQL_API(memset, Any)

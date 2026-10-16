@@ -1439,6 +1439,8 @@ add_neverd_unittest(NeverDRegistrationStateTests
 )
 
 add_neverd_unittest(NeverDRegistrationEHTests
+  eh/RegistrationEH4WrapperTests.cpp
+  eh/RegistrationPrologueSavesTests.cpp
   eh/RegistrationTryLevelTests.cpp
   eh/RegistrationSEHPrivateCallTests.cpp
 
@@ -1500,6 +1502,9 @@ add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
 add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
   eh/RegistrationSEHReturnTests.cpp
+  eh/RegistrationSEHParentExitTests.cpp
+  eh/RegistrationSEHParentExitIRMutations.cpp
+  eh/RegistrationSEHRegisterIRMutations.cpp
   eh/RegistrationSEHCallbackTests.cpp
   eh/RegistrationSEHStateStoreTests.cpp
   eh/RegistrationSEHExceptionNativeTests.cpp
@@ -1507,6 +1512,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationSEHJumpStateNativeTests.cpp
   eh/RegistrationSEHJumpCaptureNativeTests.cpp
   eh/RegistrationSEHJumpABITests.cpp
+  eh/RegistrationCookieABITests.cpp
   eh/RegistrationCopyEdgeTests.cpp
   eh/RegistrationRecoveredCopyTests.cpp
   eh/RegistrationSEHBoundNativeTests.cpp
@@ -1925,6 +1931,10 @@ add_neverd_unittest(NeverDMedStackAlignmentTests
 )
 add_neverd_unittest(NeverDMedPrologueSavesTests
   core/MedPrologueSavesTests.cpp
+  LINK_COMPONENTS IRMed
+)
+add_neverd_unittest(NeverDMedPointerAccessesTests
+  core/MedPointerAccessesTests.cpp
   LINK_COMPONENTS IRMed
 )
 target_compile_definitions(NeverDMBASourceTests PRIVATE

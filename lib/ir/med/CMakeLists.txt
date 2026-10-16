@@ -3,6 +3,7 @@ add_neverd_component_library(NeverDIRMed
   MedComLibraryRecognition.cpp
   MedDispatchSlots.cpp
   MedDynamicStack.cpp
+  MedPointerAccesses.cpp
   X86/RegistrationFrame.cpp
   X86/RegistrationCallback.cpp
   X86/RegistrationCatchContext.cpp
@@ -10,8 +11,11 @@ add_neverd_component_library(NeverDIRMed
   X86/RegistrationCall.cpp
   X86/RegistrationCallResult.cpp
   X86/RegistrationSEHCall.cpp
+  X86/RegistrationSEHRegisters.cpp
   X86/RegistrationSEHCallback.cpp
   X86/RegistrationSEHNonlocalCall.cpp
+  X86/RegistrationSEHParentExit.cpp
+  X86/RegistrationSEHParentRoots.cpp
   X86/RegistrationSEHRuntimeReturn.cpp
   X86/RegistrationSEHJump.cpp
   X86/RegistrationSEHJumpReplacement.cpp

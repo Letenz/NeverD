@@ -542,3 +542,14 @@ NEVERD_PARITY_TEXT(
     MissingRelocations,
     "driver image: requested rebase requires unstripped DIR64 relocations")
 #endif
+
+#ifndef NEVERD_WDM_CRT_STRINGS_FIXTURE
+#define NEVERD_WDM_CRT_STRINGS_FIXTURE ""
+#endif
+#ifndef NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE
+#define NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE ""
+#endif
+#ifdef NEVERD_PARITY_IMAGE
+NEVERD_PARITY_IMAGE(WdmCRTStrings, NEVERD_WDM_CRT_STRINGS_FIXTURE)
+NEVERD_PARITY_IMAGE(WdmCRTStringsCFG, NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE)
+#endif

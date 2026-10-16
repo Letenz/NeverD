@@ -49,6 +49,13 @@ struct BinaryImage;
 /// Unknown intrinsic effects retain the conservative boundary.
 bool isAbiRecoveryBarrier(const MedOp &Op);
 
+/// Recover the sole ECX argument of an exact, source-checked PE32 cookie call.
+/// Incidental register values and inferred callee signatures do not extend it.
+bool recoverI386RegistrationCookieCall(const MedFunc &Func,
+                                       const MedBlock &Block, size_t CallIndex,
+                                       const TargetRegInfo &TRI,
+                                       MedCallInfo &Info);
+
 struct AbiSpillContext {
   const MedFunc &Func;
   const TargetRegInfo &TRI;

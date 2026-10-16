@@ -136,6 +136,21 @@ kernel's. A name the program has no type for, or the PDB's types failing to read
 is a `local_types_failed` error. The three are listed in `capabilities` when
 the engine has them.
 
+`local_types_fit {text?,records?,shifts?,limit?,spelling?,accesses?,
+function?,address?,parameter?}` ranks the program's structures and unions by
+how the code's accesses through a pointer land on their members, through the
+SDK's `neverd_local_types_fit_json`: the accesses `[{offset,size,use}]` the
+request lists, and with `address` and `function` those the instruction at
+`address` makes through its memory operand's pointer and every other access
+of the function through the same pointer, or with `parameter` and
+`function` those the function makes through its parameter of that position
+(as `function_type` lists it), from the register it arrives in.  `text` matches type names and their
+typedefs as an editor's quick open does, `Type.member` and `.member` member
+paths too.  It returns the SDK's `{accesses,target?,candidates,total}`; an
+instruction that reaches no memory through a pointer is a
+`local_types_failed` error.  It is listed in `capabilities` with
+`operand_struct` when the engine has it.
+
 `local_types_declare {source,language?}` and `local_types_forget {names}` are
 writer commands: the first reads C, C++, Rust or Go declarations into the
 program's local types through `neverd_local_types_declare` and returns
@@ -151,17 +166,55 @@ with `save_failed`. Neither joins undo history. Both are listed in
 `dwarf_reference {path}` needs no open binary either: it returns the SDK's
 `neverd_dwarf_reference_json`, `{dwarf:null}` or `{dwarf:{path,location}}` --
 the file that holds an ELF or Mach-O image's DWARF, with location `input` (the
-image's own sections), `dsym` (a .dSYM bundle beside a Mach-O image) or
-`beside` (a split .debug file beside the image, matched by name alone), the
-first in the order the open reads them. A PE, an image without DWARF and an
-SBF program answer null. The GUI asks before an `open`, as IDA asks "Load DWARF
-debug information?", and passes a declined answer as `dwarf:{mode:"none"}`,
-the only `dwarf` value there is: the open reads no DWARF, though other debug
-information still loads, and the answer is saved with the project and kept by
-read-only replicas. `open` and `metadata` return it as `dwarf`, null when the
-DWARF was read, and what the load read as `debug_info:{enabled,kind,path}`,
-kind `dwarf`, `pdb`, `map` or `none`. `dwarf_reference` is listed in `capabilities` when the engine
-has `neverd_dwarf_reference_json` and `neverd_session_set_dwarf_search`.
+image's own sections), `dsym` (a .dSYM bundle beside a Mach-O image),
+`build-id` (the file a debug directory keeps under the image's build ID),
+`debuglink` (the file the image's .gnu_debuglink names, of the CRC it records)
+or `beside` (a split .debug file beside the image, matched by name), the first
+in the order the open reads them, which is GDB's. A PE, an image without DWARF
+and an SBF program answer null. The GUI asks before an `open`, as IDA asks
+"Load DWARF debug information?", and passes a declined answer as
+`dwarf:{mode:"none"}`: the open reads no DWARF, though other debug information
+still loads, and the answer is saved with the project and kept by read-only
+replicas. `open` and `metadata` return it as `dwarf`, null when the DWARF was
+read, and what the load read as `debug_info:{enabled,kind,path,files}`, kind
+`dwarf`, `pdb`, `map` or `none`, and `files` every file read, the PDB or DWARF
+first: `[{kind,path,names,dialect?,match?,functions?}]`. `dwarf_reference` is
+listed in `capabilities` when the engine has `neverd_dwarf_reference_json` and
+`neverd_session_set_dwarf_search`.
+
+`dwarf_load {path,stamp?}` reads the DWARF of the open ELF or Mach-O image from
+a file the user chose -- a split .debug file, an unstripped copy or a .dSYM
+bundle -- through `neverd_session_load_dwarf`, in place of the DWARF it has. Its
+machine must be the image's, and a build ID or UUID both record must agree.
+The engine reads the image again, so the DWARF's names replace a MAP's. A
+successful load changes the revision and returns `{path,stamp,loaded,
+function_count,debug_info}`; the GUI saves `{path,stamp}` as the project's
+`dwarf`, which `open` loads again once the image is, leaving the file open
+without it and with a warning when it no longer loads. `dwarf_load` is listed
+in `capabilities` when the engine has it.
+
+`map_reference {path}` needs no open binary: it returns the SDK's
+`neverd_map_reference_json`, `{map:null}` or `{map:{path,dialect,functions,
+data,outside,match,reason?,stamp?,section?,names}}` -- the linker MAP beside
+the input (`<stem>.map` or `<name>.map`), its linker format, its names and how
+it holds against the image: `verified` (it records the image's build stamp),
+`consistent` (its sections are where the image has them), `unverified` or
+`mismatch`, with `reason` `stamp`, `section` or `outside`. The open reads the
+MAP only when no PDB or DWARF describes the image, and never one that
+mismatches it, so the GUI asks only then, after the PDB and DWARF questions,
+and passes a declined answer as `map:{mode:"none"}`, or a mismatched MAP the
+user still wants as `map:{path,mode:"unchecked",stamp}`. `map_inspect {path}`
+reads a MAP the user chose against the open image, the same object with its
+`stamp`, and `map_load {path,mode,stamp?}` loads it through
+`neverd_session_load_map`: `checked` refuses a mismatched MAP with
+`map_mismatch`, `unchecked` records the user's confirmation. Its names fill
+only what a PDB or DWARF leaves unnamed, and replace an earlier MAP's. A
+successful load changes the revision and returns the inspection with
+`{mode,loaded,function_count,debug_info}`; the GUI saves `{path,mode,stamp}`
+as the project's `map`, which `open` loads again after its PDB. With a `pdb`
+selection, a `dwarf` file or a `map` value the open reads no MAP itself.
+`map_reference`, `map_inspect` and `map_load` are listed in `capabilities`
+when the engine has them.
 
 `symbol_table_reference {path}` needs no open binary either: it returns the
 SDK's `neverd_symbol_table_reference_json`, `{symbols:null}` or
@@ -246,8 +299,11 @@ diagnostic; fixed-image authentication still requires its stricter evidence.
 | `rename` | `{address,name}`; any address: a function, data or a label. The name is not empty, has no spaces or control characters, is not an automatic form such as `sub_1234`, and is not used at another address. Requires clean annotations; never autosaves staged notes. Commits the rename plus history through the journal, reloads through the public C ABI, invalidates caches and increments revision. Returns `{address,name,saved:true}`. Requires the writer lock. |
 | `code_edit` | `{address,representation,kind}` for a function's source view (`c/llvmc/source/cpp/rust/go`). `kind:"name"` adds `{original,name,identity}` from a current local `code_names` target; an empty name or the original name clears the alias. `kind:"comment"` adds `{line,anchor,text}` from a current source row; empty text removes it. Refuses obsolete/ambiguous targets, colliding or invalid local names, dirty annotations and read-only sessions. Commits the presentation edit and history, invalidates caches and increments revision. Returns `{address,saved}`, `saved:false` on no change. Image names use `rename` and mapped instruction comments use `annotation_set`. |
 | `function_create` / `function_delete` | `{address}`. Capability present only with an engine that keeps function edits. Creates a function at the address, or deletes the one that starts there, as the engine allows (`<binary>.neverd-functions.json`). Requires clean annotations; commits the edit plus history, restarts function-level analysis and the reference index, and increments revision. Returns `{address,created,saved:true}`. Requires the writer lock. |
+| `function_attributes` | `{address}`. Capability present with `function_edit`. Returns the SDK's `neverd_func_attributes_json`: what the Edit function dialog shows of the function that starts at the address, each attribute the user's statement, else analysis' answer, `type` the user's C declaration or null, and `stated` the user's statements. Reads only. |
+| `function_edit` | `{address,attributes}`. Capability present only with an engine that keeps function edits. `attributes` states one key of `include/neverd/sdk/FunctionAttributes.def` or more: `noreturn`, `library`, `static` (true or false), `color` (`#RRGGBB`) and `type`, the function's C declaration as IDA's Y sets it, which the engine reads against the local types and refuses when it does not read or bind; null hands a key back to analysis. Commits the row (`<binary>.neverd-functions.json`) plus one history command and increments revision; a `type` drops only the decompiled text. Returns `{address,row,saved:true}`. Requires clean annotations and the writer lock. |
+| `function_type` | `{address,declaration?}` or `{address,parameter,type}`. Capability present when the engine gives functions declarations. Returns the SDK's `neverd_func_type_json`: the declaration the user edits (the stated one, else the signature the decompiler prints) with its parameters' `name`, `type` and `location` (`rcx`, `stack+0x28`); with `declaration`, that one read instead, its `problems` by line and column; with `parameter` and `type`, the declaration Convert to struct * would state, an `invalid_request` when the function's declaration or the type does not read. Reads only: state a declaration with `function_edit`. |
 | `item_define` | `{address,action,size?}`. Capability present only with an engine that keeps data items. `action:"code"` decodes native file-backed executable bytes from the exact address up to a basic block boundary or existing code, without creating a function. Calls fall through; branches, returns and unmodelled flow end the block. At most 256 instructions; invalid or truncated bytes, ambiguous modes, and overlaps with another typed item fail atomically. Stores one validated `kind:"code"` row per instruction, with its actual size. `"data"` makes the item a value of `size` 1, 2, 4 or 8 bytes, or without a size the next of byte, word, dword and qword after the current one; `"string"` makes the string that starts there an item, read with the `string_options` encodings; `"undefine"` shows the item's bytes as undefined bytes. Data/string/undefine are refused on automatic function instructions; manually defined code can be replaced or undefined. Commits the items (`<binary>.neverd-items.json`) plus one history command, invalidates caches and increments revision. Returns `{address,kind,size,saved}`; code's size is the entire converted block. `saved:false` for already defined code or undefined bytes. Requires clean annotations and the writer lock. |
-| `operand_format` | `{address,operand?:0-7,action}`. Capability present only with an engine that keeps operand formats. The address must start an instruction whose listing shows formats (x86 so far; other dialects are `unsupported`). A format changes an operand that is a plain number: `operand` when it is one, otherwise (or without `operand`) the instruction's last number; an instruction without one is `invalid_request`. `action` is a base of `include/neverd/OperandFormats.def` (`number`, `hex`, `decimal`, `binary`, `char`, `offset`; `number` also clears both flags), or `negate`/`invert` to toggle the sign change or the bitwise complement. Commits the formats (`<binary>.neverd-operands.json`) plus one history command; listing lines show the change without the listing being built again. Increments revision and returns `{address,operand,format:{base,negate,invert},saved}` with the operand that took the format, `saved:false` when nothing changed. Requires clean annotations and the writer lock. |
+| `operand_format` | `{address,operand?:0-7,action}`. Capability present only with an engine that keeps operand formats. The address must start an instruction whose listing shows formats (x86 so far; other dialects are `unsupported`). A format changes an operand that is a plain number: `operand` when it is one, otherwise (or without `operand`) the instruction's last number; an instruction without one is `invalid_request`. `action` is a base of `include/neverd/OperandFormats.def` (`number`, `hex`, `decimal`, `binary`, `char`, `offset`, `struct`; `number` also clears both flags), or `negate`/`invert` to toggle the sign change or the bitwise complement. `struct` (capability `operand_struct`) shows a structure offset, as IDA's T does, and takes `type`, a structure or union of the local types, and `delta?`, how many bytes into it the register points: it also changes a displacement from a base register, which it takes first when `operand` names none, and the listing shows `[rcx+_KTHREAD.Process]` or `[rcx+(_KAPC.Type-10h)]`, the number again where the type has no member; a structure offset changes neither sign nor bits. A type the program lacks is `invalid_request`. Commits the formats (`<binary>.neverd-operands.json`) plus one history command; listing lines show the change without the listing being built again. Increments revision and returns `{address,operand,format:{base,negate,invert,type?,delta?},saved}` with the operand that took the format, `saved:false` when nothing changed. Requires clean annotations and the writer lock. |
 | `reload` | Explicitly reloads the sidecars, discards staged annotations, clears dirty state, invalidates caches and increments revision. Returns metadata. |
 | `history` | Standard `offset/limit` page. Returns `{schema_version:1,items,total,cursor,offset,next_offset,complete,can_undo,can_redo,available,blocked_reason,source_sha256}`. Items contain `{kind:"annotation"|"rename"|"function"|"item"|"operand"|"code",address,before,after,index,applied}`. Hashing is lazy and runs on the Session execution thread; the existing dashboard API can require VM analysis. |
 | `undo` / `redo` | No payload. Annotation changes/cursor movement remain dirty until Save. Rename, function, item, operand and code history changes require clean annotations and commit immediately. Return the history listing plus `{dirty,saved,address}`. All operations require the writer lock. |

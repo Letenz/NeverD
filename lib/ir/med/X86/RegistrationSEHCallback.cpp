@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
+#include "neverd/ir/med/X86RegistrationSEHParentExit.h"
 
 #include <set>
 
@@ -47,6 +48,9 @@ registrationSEHCallbackOwners(const MedFunc &Function) {
   for (const auto &Scope : Scopes)
     Roots.emplace(Scope.IsFinally ? Scope.HandlerVA : Scope.FilterVA,
                   Scope.IsFinally);
+  const auto ParentExits = getRegistrationSEHParentExits(Function);
+  if (!ParentExits)
+    return std::nullopt;
   std::map<int, std::pair<va_t, bool>> Result;
   size_t Work = 0;
   for (const auto &Root : Roots) {
@@ -68,6 +72,11 @@ registrationSEHCallbackOwners(const MedFunc &Function) {
       const auto *State = ById.at(Id);
       if (State->Reached && !State->CallbackOnly)
         return std::nullopt;
+      if (const auto Exit = ParentExits->find(Id); Exit != ParentExits->end()) {
+        if (!Root.second || Exit->second.EntryVA != Root.first)
+          return std::nullopt;
+        continue;
+      }
       const auto &Successors = Blocks.at(Id)->Succs;
       Work += Successors.size();
       if (Work > limits::kMaxRegistrationEHStateWork)

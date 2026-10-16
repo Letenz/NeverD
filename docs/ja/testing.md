@@ -11,6 +11,10 @@ NeverD のテストは、表現が期待した形か、バイナリ fixture の�
 
 `PipelineOutcome.ResolvedCalls*` はレジスタ群、call/invoke の同一性、スタックバイトの結合と分割、狭い値が自分のスロットに収まること、バイト不足の拒否を検証します。`MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` は記録されたオフセットを検証します。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` は x64、ARM32、AArch64 の ELF、PE、Mach-O を対象とします。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` は 3 形式で、長さの破壊、書き込み可能・範囲外のソース、同名のローカル関数、誤ったソースレジスタ、別の入口、再配置可能なイメージを拒否します。ホスト C 差分テストでは参照 C を別の翻訳単位で O0、生成 C を O2 でコンパイルし、ホスト最適化器の漸化式の誤コンパイルが参照値を汚さないようにします。AArch64 FMA テストが `-mfma` を要求するのは x86 ホストのみです。
 
+## 具体的な入口メモリシード
+
+`NeverDSymbolicTests`、`NeverDConcolicTests`、`NeverDConcolicIntegrationTests` を実行します。`LowIRConcolicMemory.*` と記号層のテストは両エンディアン、別名ストア、独立バンク、欠落・不正範囲、リセット、実行後のシード拒否、予算境界、epoch、モデル幅、メモリ候補の再実行と重複排除を検証します。既存のネイティブ形式・アーキテクチャ行列も維持します。
+
 ## テストビルドの構成
 
 `BUILD_TESTING` を有効にしない限りテストは無効です。全スイートには通常 Release
@@ -1272,9 +1276,9 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `windows-alignment-oracle.yml` は `check_windows_alignment.py` と `WindowsAlignmentCases.def` を使い、独自の x64 Windows 例外を 72 件観測します。九つの aligned SSE 形式を、七つの非整列アドレス／アクセス権のケースと、整列済みだがアクセス不能なページの対照で実行します。例外コード、引数、障害 PC、保存コンテキスト、生の出力、ソースとバイナリのハッシュを保持し、入力と RAM が不変であることを確認します。これは OS の動作の観測であり、KVM/WHP の実行認証や SEH 対応の追加ではありません。
 
-`native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 58 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
+`native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 68 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 133 ワークロードから 266 件の WHP 結果を要求します。内訳は組み込み 27、WDK 66 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5085 CPU + 266 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 108 driver API checks = 5760`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM66 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 135 ワークロードから 270 件の WHP 結果を要求します。内訳は組み込み 27、WDK 68 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 116 driver API checks = 5772`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 実際の WDK インベントリは `driver_device_queries.c`、`driver_file_objects.c`、`driver_file_handles.c` の通常版と CFG 版もビルドします。`DriverDeviceQueryTests.cpp` と `DriverFileObjectTests.cpp` は可搬版と同じ検証で、両契約、基址、スケジュール方式の参照保持、失敗 CREATE、プロセス識別、最終ハンドル CLEANUP、遅延 CLOSE を確認します。3 系統はネイティブ必須項目であり、インベントリ検証は `NEVERD_WDK_FIXTURE` を持つソースを独立に探索し、WDK ビルドの欠落を検出します。
 
@@ -1716,6 +1720,10 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 
 `SafeSEHReference.*` は不変の SafeSEH テーブルへの所属、不正または曖昧な格納領域、再配置、他のアーキテクチャと形式、分割間の宣言順序を検査します。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` は `NEVERD_NONLOCAL_FINALLY_INPUTS` を使い、ネイティブ MSVC の x86/x64、O0/O2、GS とソース最適化の有無を組み合わせた 32 通りの LLVM 出力を検証します。LLVM と解決済み呼び出しシグネチャを検証し、未対応の x86 ネイティブ EH 再構築は拒否されることも確認します。Windows EH 専用ジョブはネイティブ fixture artifact を取得して実行し、入力ディレクトリがなければテストは明示的にスキップされます。
 
+`RegistrationPrologueSaves.*` と `PipelineOptNone.*` はソースメモリー記録、コールバック引数と選択器の保護、通常コードの最適化を検証します。ネイティブ MSVC 行列は x86 `/Od` (`/GS-`, `/GS`) の `nonlocal_finally_return` を独立した COFF 検証とともに受理します。`check_windows_finally_rewrite.py` は二つの固定ベース、両パッチ方式、最適化前後の IR で、24 回の観測実行と 1536 回の呼び出し、チェーン・スタック保護、負の対照を検査します。EXE から DLL への変換は TLS のない入力のヘッダーだけを変更し、外側の SEH 観測器が例外検索を提供します。他の MSVC 形式は解析と拒否の検査です。
+
+`RegistrationEH4Wrapper.*` は二つのベース、可変・不変の実行時データ、MXCSR 分岐、全経路の定義、呼び出し元フレームの分離、命令・領域の重複、正確な PE 再配置を検査します。両 MSVC 形式に独立した負の対照があります。
+
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` は証明された Windows x64 SEH ハンドラーと通常・例外共有入口からのローカル巻き戻し呼び出しを検証します。反例は巻き戻し割り当ての不一致、不安定または部分幅の SP、独立入口、不完全な入力、欠落・偽造された例外辺、予算不足、不明なスタックメモリ、外部再配置、未認証ランタイムを含みます。LowIR 証明とモジュール証明書を SSA 検証へ渡し、通常の戻り継続テストは独立した入口規則を維持します。
 
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` と `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` は、PE・ELF・Mach-O x64 と ELF i386 で親の戻りアドレス破壊と重ならない親ローカル書き込みを検査します。呼び出し先の戻りアドレス保持だけでは通常呼び出しを許可できません。
@@ -2002,6 +2010,18 @@ KernelFileObjectTests と KernelObjectTests は型付きオープン、型不一
 
 `KernelFileTransfers` はパケット、オフセット特殊値、追記専用ハンドル、長さゼロ、出力エイリアス、即時・保留状態、ワーカー通知、公開前の拒否を検証します。`OriginalBufferedNativeFileTransfers` / `GenuineWdkBufferedNativeFileTransfers` はバックエンド、契約、ロード位置、スケジューリングを変えてインポートと動的解決を実行します。実 WDK の通常/CFG イメージには `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` / `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` を設定します。利用不能なバックエンドは明示的にスキップします。
 
+CRT 回帰は全バイト／UTF-16 単位、引数幅、変更不要な読み取り専用バッファー、件数／容量、切り詰め、NULL 順序、逐次エイリアス、部分障害、解放済み領域、走査上限を検証します。原作 `driver_crt_strings.c` と実 WDK の `NEVERD_WDM_CRT_STRINGS_FIXTURE`／`NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE` は入口・ワーカー・アンロードのインポートと動的解決を、passive／dispatch IRQL と両スケジューリング方式で検証します。ネイティブゲートは両契約・両ロード基址を要求し、利用不能なバックエンドは明示的にスキップします。
+
+メモリ回帰は容量全体のゼロ化とエラー時の無変更、ゼロ長、完全幅、重なり、ページ化・解放済み・読み取り専用メモリと上限を区別する。ヘッダー検査は符号なし DOS オフセット、64 ビット結果、境界、署名のみの受理と故障順を検証する。独自および実 WDK CRT フィクスチャが入口・ワーカー・アンロードのインポート／動的呼び出しを実行する。固定 WDK に `RtlImageNtHeader` 宣言がないためローカル ABI 宣言を使い、PE 型とインポートライブラリは実キットを使う。 固定 WDK の ntoskrnl.lib は memcpy_s をゲストコードとしてリンクする。独自フィクスチャは直接インポートを検証し、両方が動的エクスポート呼び出しを検証する。
+
 `KernelFileTransfers` はフラッシュ権限、全デバイス転送方式でのバッファなしパケット、64 ビット Information、ディスパッチ復帰前の公開・解放、ワーカー／ガード領域の通知、非同期／同時呼び出し拒否を検証します。既存の独自・実 WDK 転送フィクスチャも、ユーザー IOSB と九つの完了条件でインポート・動的検索のフラッシュを実行します。
 
 `KernelFileTransfers` は制御パケット、ULONG 切り詰め、ゼロ長ポインター、読み取り専用入力のコピー、IOSB 別名、入出力別の上限、遅延完了と元スレッドへの通知を検証します。既存の独自・実 WDK 転送フィクスチャは両 API のインポートと動的検索を四つのバッファ形態、九つの完了モードで実行します。
+
+回帰テストは出力のエイリアス、引数幅、奇数長、記述子の再読取、重複領域、割り当て失敗、NLS 拒否、部分書き込み、寿命、APC_LEVEL を確認します。時刻テストは起点前後の秒未満、ULONG 上限、入出力のエイリアスを扱います。独自および実 WDK の CRT ドライバーは入口・ワーカー・アンロードで静的／動的呼び出しを実行し、入口では APC_LEVEL も検証します。
+
+回帰テストは ASCII と NLS 非依存のワイド範囲を高位ビット付きで網羅し、拡張値拒否、引数数、APC_LEVEL を確認します。独自および実 WDK CRT では入口・ワーカー・アンロードで静的／動的呼び出しを確認します。WDK ctype.h の wint_t は 16 ビットであり、期待値にホスト CRT を使用しません。
+
+デバッグ回帰は三つの入口の short 規則、ゲスト境界での読み取り、段階的バッファー、埋め込み NUL、解放済み・ページ入力、IRQL を検査します。元の CRT と実際の WDK フィクスチャーで静的・動的呼び出しをエントリー、ワーカー、アンロードに実行し、両スケジュール、契約、ロードベースを検査します。利用不能なバックエンドは明示的にスキップします。
+
+回帰は保持・失効スレッド、要求元・ワーカー・接続中のコンテキスト、モジュール境界と穴、出力幅、寿命、権限、IRQL を検査します。元の CRT と実際の WDK フィクスチャーで静的・動的 KernelMode 照会、ファイル照会フィクスチャーで UserMode 呼び出しを検査します。両 WDK 系列に通常版と CFG 版を含め、不足する二つの宣言は実際の kit 型によるローカル ABI で補います。利用不能なバックエンドはスキップします。

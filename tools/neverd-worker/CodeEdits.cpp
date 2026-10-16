@@ -199,6 +199,8 @@ void CodeEdits::validateRow(const Json &row) {
     const auto names = view.value("names", Json::object());
     if (!names.empty())
       (void)parseAddress(stringField(view, "identity"));
+    if (view.contains("shape"))
+      (void)parseAddress(stringField(view, "shape", {}, 32));
     const auto comments = view.value("comments", Json::object());
     if (!names.is_object() || !comments.is_object() || names.size() > 2048 ||
         comments.size() > 2048)
@@ -236,9 +238,17 @@ Json CodeEdits::change(Json row, const Json &request) {
   if (kind == "name") {
     const auto identity = stringField(request, "identity", {}, 32);
     (void)parseAddress(identity);
-    if (view.value("identity", std::string()) != identity)
+    // The names stay while the text is the same code's: the same locals
+    // in the same order (decorate's code_shape).
+    const auto shape = request.value("shape", std::string());
+    if (view.value("identity", std::string()) != identity &&
+        (shape.empty() || view.value("shape", std::string()) != shape))
       view["names"] = Json::object();
     view["identity"] = identity;
+    if (!shape.empty())
+      view["shape"] = shape;
+    else
+      view.erase("shape");
     const auto original = stringField(request, "original", {}, 256);
     const auto name = stringField(request, "name", {}, 256);
     if (!identifier(original) ||
@@ -492,11 +502,51 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
     if ((typed || binding) && ts[i].text != "mut")
       ++declarations[ts[i].text];
   }
+  // The function's parameters by position, as its definition declares
+  // them, and what its locals are: their names in the order the code
+  // declares them, and how many parameters it takes.  A type change, its
+  // own or a callee's, rewrites the text but keeps them.
+  std::unordered_map<std::string, std::size_t> parameters;
+  std::string shape;
+  if (definition) {
+    int depth = 0;
+    std::size_t position = 0;
+    std::optional<std::string> named;
+    auto at = *definition + 1;
+    for (; at < bodyEnd; ++at) {
+      const auto &text = ts[at].text;
+      if (text == "(" && ++depth == 1)
+        continue;
+      if (text == ")" && --depth == 0)
+        break;
+      if (depth == 1 && text == ",") {
+        if (named)
+          parameters.emplace(*named, position);
+        named.reset();
+        ++position;
+      } else if (depth == 1 && identifier(text) && declarations.contains(text))
+        named = text;
+    }
+    if (named)
+      parameters.emplace(*named, position);
+    std::set<std::string> seen;
+    for (auto i = at; i + 1 < bodyEnd; ++i)
+      if (identifier(ts[i].text) && declarations.contains(ts[i].text) &&
+          !parameters.contains(ts[i].text) && !member(ts, i) &&
+          seen.insert(ts[i].text).second)
+        shape += ts[i].text + ",";
+    shape = sourceIdentity(shape + "|" + std::to_string(parameters.size()));
+  }
+  if (!shape.empty())
+    view["code_shape"] = shape;
   Json edits = Json::object();
   if (!row.is_null())
     edits = row.at("views").value(representation, Json::object());
-  const bool stale = !edits.value("names", Json::object()).empty() &&
-                     edits.value("identity", std::string()) != identity;
+  // Names given in another text of the same code still name its locals.
+  const bool stale =
+      !edits.value("names", Json::object()).empty() &&
+      edits.value("identity", std::string()) != identity &&
+      (shape.empty() || edits.value("shape", std::string()) != shape);
   const auto aliases =
       stale ? Json::object() : edits.value("names", Json::object());
   view["code_edits_stale"] = stale;
@@ -575,6 +625,9 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
     } else if (i >= body && i < bodyEnd && declarations[token.text] == 1) {
       name["kind"] = "local";
       name["identity"] = identity;
+      if (const auto parameter = parameters.find(token.text);
+          parameter != parameters.end())
+        name["parameter"] = parameter->second;
       if (aliases.contains(token.text))
         display = aliases.at(token.text).get<std::string>();
     } else if (globals.contains(token.text)) {

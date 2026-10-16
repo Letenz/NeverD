@@ -21,6 +21,7 @@
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/ExceptionInfo.h"
 
@@ -785,6 +786,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     }
   }
 
+  RegistrationRoots.seedSEHParentFrames(Func);
+
   // Step 2: Compute dominance frontiers
   std::vector<std::set<int>> DF(GraphN);
   for (int B = 0; B < N; ++B) {
@@ -964,8 +967,11 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           CxxThrowingCalls.count({F.B, Op.Addr}))
         for (int Id : SEHTrackedIds)
           CxxCallVersions[{F.B, Op.Addr}][Id] = GetVersion(Id);
+      const bool RuntimeCoordinate = hasValidRegistrationRootShape(Op);
       for (uint8_t I = 0; I < Op.NumInputs; ++I) {
-        if (Op.Inputs[I].Id >= 0)
+        // A runtime coordinate defines a new frame value independently of an
+        // incoming machine register, including at a resumed parent block.
+        if (Op.Inputs[I].Id >= 0 && !RuntimeCoordinate)
           Op.Inputs[I].SSAVer = GetVersion(Op.Inputs[I].Id);
       }
       if (Op.Output.Id >= 0 && Op.Output.Size > 0) {

@@ -7,6 +7,10 @@
 本指南說明貢獻者安全修改 NeverD 所需理解的生產邊界。內容刻意只涵蓋
 NeverD 自有程式碼；LLVM、Capstone 與 Unicorn 子模組各自維護內部架構。
 
+## 具體入口記憶體種子
+
+`SymExecConcreteShadow` 在執行前接收依位址排列的 RAM 位元組；僅更新具體狀態，符號端的入口記憶體維持自由輸入。C++ `LowIRConcolicOptions::InitialMemory` 的 `MaxMemorySeedBytes` 預設上限為 1 MiB，零預算不接受位元組；空白、重疊或繞回範圍會拒絕。記憶體報告採版本 2，保留 `InitialMemory` 與候選 `MemorySeed`。投影僅接受已有種子涵蓋、epoch 為零的暫存器或絕對記憶體來源；查詢、重新執行和去重包含兩類位元組。缺漏、符號基底與近似效果繼續拒絕，寫入正常更新具體記憶體。暫停時可由 `ProcessView::read` 讀取已提交 RAM；寫入前鉤子不能代表完整快照。觀測不證明所有權、生命週期、不變性或不相交；候選只驗證指定分支和先前決策。版本 1 的 C/JSON、Python 與 CLI 仍只接受暫存器。
+
 ## 原始碼與物件替換邊界
 
 `SourcePatchCompiler` 負責編譯器身分與製品選擇。`validateSourcePatchTarget` 統一決定原始碼與外部 IR 的目標准入，目標三元組本身不足以證明支援。`bindSourcePatch` 確認 IR 入口映射；`PatchObject` 負責原生區段、重定位與 FDE 範圍證據。`publishSourcePatch` 暫存、檢查並獨占發佈完整交易。`COFFSourceImage` 負責 PE x86/x64/ARM32/ARM64 的新儲存與展開表；提升後的重寫仍要求獨立的原 EH 證據。參見[原始碼 patch](source-patching.md)。
@@ -1685,3 +1689,19 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 `KernelModelFileRequests` 也擁有無緩衝區的 `ZwFlushBuffersFile` 產生路徑。其權限遮罩檢查及立即發布／釋放規則與延遲完成的原生讀寫／查詢封包不同；各路徑共用原呼叫者通知及單次釋放的擁有者。
 
 `KernelModelFileRequests` 負責原生裝置／檔案系統控制的緩衝區擷取與發布。兩者共用檔案保留、呼叫者接續與封包釋放，以產生者的延遲完成規則區分裝置控制和 FSCTL。共用完成驗證器檢查控制輸出界限。
+
+`KernelModelRuntime` 統一負責核心 CRT 分類、原地轉換及受檢字串寫入。`KernelCStringAPIs.def` 向各呼叫入口提供匯出身分、參數數量及 IRQL 准入。逐單元存取沿用客體記憶體權限與生命週期檢查；報告和介接層不重複實作複製或錯誤語意。
+
+`KernelMemoryCalls` 負責檢查型記憶體複製的准入，並沿用移動／填充操作、集區生命週期與使用者記憶體檢查。`KernelModelRuntime` 負責 `RtlImageNtHeader` 原始簽章探測。此探測不能替代執行映像所需的載入器驗證；配接器不重複兩者語義。
+
+`OptimizationGuards` 補充 LLVM 的 `optnone` 檢查：模組內有受保護函式時，略過可能改寫其 CFG 或將回呼引數替換為 poison 的選用模組與呼叫圖最佳化。必要適配器與一般函式最佳化仍執行。註冊鏈來源投影保留序言儲存的記憶體記錄，供原生重建綁定。
+
+`COFFRegistrationEH4Wrapper` 負責保留的 EH4 轉送證明。`COFFRegistrationScalarLeaf` 檢查有界且只向前的純量 CFG、暫存器與旗標初始化、私有 MXCSR 儲存及映像執行階段資料；拒絕呼叫者框架讀取、位址逸出、未知呼叫、指令重疊及不完整返回。LLVM 發射與獨立 COFF 驗證共用載入器證明，原包裝器、輔助函式及動態資料讀取繼續原位執行。
+
+`KernelModelRuntime` 統一負責 Unicode 雜湊、不依賴 NLS 的大寫映射及 1980 紀元秒數轉換。`KernelRuntimeCalls` 透過既有分頁字串集區配置輸出。字串與時間 API 表統一匯出身分、參數數量及 APC_LEVEL 限制；欄位存取順序由實作層負責。
+
+`uppercaseCharacter` 先縮窄純量參數，再檢查准入並委託既有 `uppercaseUnicodeUnit`。CRT 與計數字串 API 表以各自 ABI 身分共用映射，介接層與宿主地區設定不提供另一套語意。
+
+`KernelModelRuntime` 統一擁有偵錯參數純量寬度及前綴和緩衝發布規則。一般變參呼叫使用既有呼叫 ABI 讀取器；明確的 x64 `va_list` 配接器以八位元組步長檢查每個實際請求的客體純量。分派器及配接器不重複解析格式。
+
+執行緒查詢別名共用既有執行緒／行程及執行上下文所有者，行程附加期間亦然。`RtlPcToFileHeader` 與系統模組查詢共用 `LoadedModules`；`ImageRAM` 表示映射區間，不能代替模組身分。實作不讀取主機行程、執行緒或模組狀態。

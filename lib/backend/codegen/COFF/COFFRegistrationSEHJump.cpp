@@ -112,7 +112,11 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
           }
         } else if (const auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(&I);
                    Slot && Function == &Parent && Slot != Frame.Slot &&
-                   !IncomingSetup.count(Slot))
+                   !IncomingSetup.count(Slot) &&
+                   !Slot->getMetadata(
+                       windows_eh_md::RegistrationRegisterAttachment))
+          // The register-exchange validator independently authenticates every
+          // invocation slot and rejects snapshot accesses to that storage.
           Registers.insert(Slot);
         const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
         const auto *Operation =

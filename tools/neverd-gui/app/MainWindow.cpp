@@ -18,6 +18,7 @@
 #include "ListingView.h"
 #include "LoadFileDialog.h"
 #include "LocalTypesView.h"
+#include "MapPromptDialog.h"
 #include "MicrosoftSymbols.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
@@ -27,10 +28,12 @@
 #include "Resolve.h"
 #include "SecondaryTextDelegate.h"
 #include "Session.h"
+#include "SetTypeDialog.h"
 #include "SettingsKeys.h"
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
 #include "TitleBar.h"
+#include "TypePickerDialog.h"
 #include "WindowFrame.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
@@ -1095,6 +1098,8 @@ void MainWindow::connectActions() {
   });
   on(ActionId::FileReload, [this] { reloadInput(); });
   on(ActionId::FileLoadPdb, [this] { loadPdb(); });
+  on(ActionId::FileLoadDwarf, [this] { loadDwarf(); });
+  on(ActionId::FileLoadMap, [this] { loadMap(); });
   on(ActionId::FileLoadSignatures, [this] {
     const auto path = QFileDialog::getOpenFileName(
         this, tr("Load signature pack"), {},
@@ -1174,7 +1179,13 @@ void MainWindow::connectActions() {
 #include "neverd/OperandFormats.def"
            std::pair{ActionId::EditOperandNegate, QStringLiteral("negate")},
            std::pair{ActionId::EditOperandInvert, QStringLiteral("invert")}})
-    on(id, [formatOperand, action] { formatOperand(action); });
+    // A structure offset names a type the user picks first.
+    on(id, [this, formatOperand, action] {
+      if (action == QLatin1String("struct"))
+        chooseStructOffset();
+      else
+        formatOperand(action);
+    });
   // Data items are the disassembly's; a pseudocode window keeps its keys.
   for (const auto &[id, action] :
        {std::pair{ActionId::EditDefineCode, QStringLiteral("code")},
@@ -1187,6 +1198,8 @@ void MainWindow::connectActions() {
       if (const auto address = currentAddress())
         session_.defineItem(*address, action);
     });
+  on(ActionId::EditSetType, [this] { setType(); });
+  on(ActionId::EditConvertToStruct, [this] { convertToStruct(); });
   on(ActionId::JumpBack, [this] { navigateHistory(false); });
   on(ActionId::JumpForward, [this] { navigateHistory(true); });
   on(ActionId::JumpNextFunction, [this] { stepFunction(true); });
@@ -1437,13 +1450,31 @@ void MainWindow::updateActions() {
       ->setEnabled(loaded && disassembly_->canGoForward());
   actions_.action(ActionId::EditUndo)->setEnabled(loaded && session_.canUndo());
   actions_.action(ActionId::EditRedo)->setEnabled(loaded && session_.canRedo());
+  // A debug file the user chose is kept with the project.
   actions_.action(ActionId::FileSave)
       ->setEnabled(loaded && (session_.dirty() ||
-                              session_.metadata().value("pdb").isObject()));
+                              session_.metadata().value("pdb").isObject() ||
+                              session_.metadata().value("dwarf").isObject() ||
+                              session_.metadata().value("map").isObject()));
+  // A PE has a PDB, an ELF or Mach-O image DWARF, and any image a MAP but
+  // the EVM and SBF programs, which describe themselves.
+  const QString format = session_.format();
+  const bool selfDescribed =
+      format == QLatin1String("EVM") ||
+      session_.architecture().compare(QLatin1String("sbf"),
+                                      Qt::CaseInsensitive) == 0;
+  const bool loadsDebugFile = loaded && !session_.opening();
   actions_.action(ActionId::FileLoadPdb)
-      ->setEnabled(loaded && !session_.opening() &&
-                   session_.format() == QLatin1String("PE") &&
+      ->setEnabled(loadsDebugFile && format == QLatin1String("PE") &&
                    session_.loadsPdbFiles());
+  actions_.action(ActionId::FileLoadDwarf)
+      ->setEnabled(loadsDebugFile && !selfDescribed &&
+                   (format == QLatin1String("ELF") ||
+                    format == QLatin1String("Mach-O")) &&
+                   session_.loadsDwarfFiles());
+  actions_.action(ActionId::FileLoadMap)
+      ->setEnabled(loadsDebugFile && !selfDescribed &&
+                   session_.loadsMapFiles());
   actions_.action(ActionId::EditRename)
       ->setEnabled(location && !session_.readOnly());
   // A function starts where none starts yet; the one the cursor is in can
@@ -1475,6 +1506,20 @@ void MainWindow::updateActions() {
         ActionId::EditOperandChar, ActionId::EditOperandOffset,
         ActionId::EditOperandNegate, ActionId::EditOperandInvert})
     actions_.action(id)->setEnabled(operandFormats);
+  // A structure offset is the disassembly's; a pseudocode window's
+  // parameters take a type instead.
+  actions_.action(ActionId::EditOperandStruct)
+      ->setEnabled(operandFormats && session_.showsStructOffsets() &&
+                   !focusedCodeView());
+  const bool declarations =
+      location && !session_.readOnly() && session_.typesFunctions();
+  CodeView *code = focusedCodeView();
+  actions_.action(ActionId::EditSetType)
+      ->setEnabled(declarations && (code ? code->text()->function().has_value()
+                                         : currentFunction().has_value()));
+  actions_.action(ActionId::EditConvertToStruct)
+      ->setEnabled(declarations && session_.convertsParameters() && code &&
+                   code->text()->function().has_value());
   actions_.action(ActionId::EditComment)
       ->setEnabled(location && !session_.readOnly());
   actions_.action(ActionId::EditRepeatableComment)
@@ -1640,7 +1685,11 @@ void MainWindow::openAskingForDebugFiles(const QString &path,
           dialog.exec();
           auto chosen = options;
           chosen.pdb = dialog.choice();
-          openNow(path, chosen);
+          // A PDB outranks a MAP: the MAP is asked about only without one.
+          if (chosen.pdb.contains(QStringLiteral("path")))
+            openNow(path, chosen);
+          else
+            openAskingForMap(path, chosen);
         });
       },
       [this, path, options](const QString &, const QString &message) {
@@ -1652,7 +1701,7 @@ void MainWindow::openAskingForDebugFiles(const QString &path,
 
 void MainWindow::openAskingForDwarf(const QString &path, LoadOptions options) {
   if (!options.dwarf.isEmpty() || !session_.findsDwarf()) {
-    openNow(path, options);
+    openAskingForMap(path, options);
     return;
   }
   session_.read(
@@ -1660,7 +1709,7 @@ void MainWindow::openAskingForDwarf(const QString &path, LoadOptions options) {
       [this, path, options](const QJsonObject &payload) {
         const auto reference = payload.value("dwarf").toObject();
         if (reference.isEmpty()) {
-          openNow(path, options);
+          openAskingForMap(path, options);
           return;
         }
         // A modal must run after the query delivery barrier is released.
@@ -1670,15 +1719,60 @@ void MainWindow::openAskingForDwarf(const QString &path, LoadOptions options) {
           DwarfPromptDialog dialog(reference, isVisible() ? this : nullptr);
           dialog.setAttribute(Qt::WA_QuitOnClose, false);
           auto chosen = options;
-          if (dialog.exec() != QDialog::Accepted)
-            chosen.dwarf = {{"mode", "none"}};
-          openNow(path, chosen);
+          // DWARF outranks a MAP: the MAP is asked about only without it.
+          if (dialog.exec() == QDialog::Accepted) {
+            openNow(path, chosen);
+            return;
+          }
+          chosen.dwarf = {{"mode", "none"}};
+          openAskingForMap(path, chosen);
         });
       },
       [this, path, options](const QString &, const QString &message) {
         output_->append(
             tr("Could not tell whether %1 has DWARF: %2").arg(path, message),
             1);
+        openNow(path, options);
+      });
+}
+
+void MainWindow::openAskingForMap(const QString &path, LoadOptions options) {
+  // The questions before this one found no PDB or DWARF, or the user
+  // declined it: only then does the open read the MAP beside the input.
+  if (!options.map.isEmpty() || !session_.findsMapFiles()) {
+    openNow(path, options);
+    return;
+  }
+  session_.read(
+      QStringLiteral("map_reference"), {{"path", path}}, this,
+      [this, path, options](const QJsonObject &payload) {
+        const auto reference = payload.value("map").toObject();
+        if (reference.isEmpty()) {
+          openNow(path, options);
+          return;
+        }
+        // A modal must run after the query delivery barrier is released.
+        QTimer::singleShot(0, this, [this, path, options, reference] {
+          // It greets alone before the workbench shows, as the others do;
+          // No, Escape and closing it load the input without the MAP.
+          MapPromptDialog dialog(reference, isVisible() ? this : nullptr);
+          dialog.setAttribute(Qt::WA_QuitOnClose, false);
+          auto chosen = options;
+          if (dialog.exec() != QDialog::Accepted)
+            chosen.map = {{"mode", "none"}};
+          // The open passes over a MAP of another build unless it is named.
+          else if (MapPromptDialog::mismatched(reference))
+            chosen.map = {{"path", reference.value("path")},
+                          {"mode", "unchecked"}};
+          else
+            chosen.acceptedMap = reference.value("path").toString();
+          openNow(path, chosen);
+        });
+      },
+      [this, path, options](const QString &, const QString &message) {
+        output_->append(tr("Could not tell whether %1 has a MAP file: %2")
+                            .arg(path, message),
+                        1);
         openNow(path, options);
       });
 }
@@ -1814,6 +1908,60 @@ void MainWindow::loadPdb() {
           session_.loadPdb(selection);
         });
       });
+}
+
+void MainWindow::loadDwarf() {
+  if (!session_.loaded() || !session_.loadsDwarfFiles())
+    return;
+  const auto epoch = session_.epoch();
+  const auto path = QFileDialog::getOpenFileName(
+      this, tr("Load DWARF file"),
+      QFileInfo(session_.projectPath()).absolutePath(),
+      tr("DWARF files (*.debug *.dSYM);;All files (*)"));
+  if (path.isEmpty() || !session_.loaded() || session_.epoch() != epoch)
+    return;
+  session_.loadDwarf({{"path", path}});
+}
+
+void MainWindow::loadMap() {
+  if (!session_.loaded() || !session_.loadsMapFiles())
+    return;
+  const auto epoch = session_.epoch();
+  const auto path = QFileDialog::getOpenFileName(
+      this, tr("Load MAP file"),
+      QFileInfo(session_.projectPath()).absolutePath(),
+      tr("MAP files (*.map);;All files (*)"));
+  if (path.isEmpty() || !session_.loaded() || session_.epoch() != epoch)
+    return;
+  session_.read(QStringLiteral("map_inspect"), {{"path", path}}, this,
+                [this, epoch](const QJsonObject &facts) {
+                  // A modal must run after the query delivery barrier is
+                  // released.
+                  QTimer::singleShot(0, this, [this, epoch, facts] {
+                    confirmMap(facts, epoch);
+                  });
+                });
+}
+
+void MainWindow::confirmMap(const QJsonObject &facts, quint64 epoch) {
+  if (!session_.loaded() || session_.epoch() != epoch)
+    return;
+  QString mode = QStringLiteral("checked");
+  if (MapPromptDialog::mismatched(facts)) {
+    const auto answer = QMessageBox::warning(
+        this, tr("Load a MAP file of another build"),
+        tr("%1\n\nLoad its names anyway? Names at the wrong addresses "
+           "mislead the analysis.")
+            .arg(MapPromptDialog::description(facts)),
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes || !session_.loaded() ||
+        session_.epoch() != epoch)
+      return;
+    mode = QStringLiteral("unchecked");
+  }
+  session_.loadMap({{"path", facts.value("path")},
+                    {"mode", mode},
+                    {"stamp", facts.value("stamp")}});
 }
 
 void MainWindow::applyIndicator() {
@@ -2746,9 +2894,23 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   if (auto *edit = actions_.action(ActionId::EditFunction); edit->isEnabled())
     menu.addAction(edit);
   menu.addSeparator();
-  for (const auto id :
-       {ActionId::EditRename, ActionId::EditComment, ActionId::EditBookmark})
+  menu.addAction(actions_.action(ActionId::EditRename));
+  // Hex-Rays offers a variable's type, and a parameter's pointer to a
+  // record, after its rename.
+  if (auto *type = actions_.action(ActionId::EditSetType); type->isEnabled())
+    menu.addAction(type);
+  if (auto *convert = actions_.action(ActionId::EditConvertToStruct);
+      convert->isEnabled()) {
+    const auto target = focusedCodeView()->text()->renameTarget();
+    if (target && target->contains(QStringLiteral("parameter")))
+      menu.addAction(convert);
+  }
+  for (const auto id : {ActionId::EditComment, ActionId::EditBookmark})
     menu.addAction(actions_.action(id));
+  // IDA offers the operand's structure offset after its rename.
+  if (auto *structure = actions_.action(ActionId::EditOperandStruct);
+      structure->isEnabled() && !focusedCodeView())
+    menu.addAction(structure);
   for (const auto id :
        {ActionId::EditCreateFunction, ActionId::EditDeleteFunction,
         ActionId::EditDefineCode, ActionId::EditDefineData,
@@ -2819,6 +2981,114 @@ void MainWindow::functionsMenu(const QPoint &position) {
   connect(rowRemove, &QAction::triggered, this,
           [this, entry = *entry] { session_.deleteFunction(entry); });
   menu.exec(table->viewport()->mapToGlobal(position));
+}
+
+void MainWindow::chooseStructOffset() {
+  // Pseudocode windows keep their keys.
+  if (focusedCodeView() || !session_.showsStructOffsets())
+    return;
+  const auto address = currentAddress();
+  if (!address)
+    return;
+  QJsonObject query{{"address", hexAddress(*address)}};
+  if (const auto function = currentFunction())
+    query.insert(QStringLiteral("function"), hexAddress(*function));
+  if (const auto operand = disassembly_->currentOperand())
+    query.insert(QStringLiteral("operand"), *operand);
+  // The edit goes to the session the dialog was opened for.
+  const auto epoch = session_.epoch();
+  TypePickerDialog dialog(session_, query, {}, this);
+  if (dialog.exec() != QDialog::Accepted || session_.epoch() != epoch)
+    return;
+  session_.formatOperandStruct(*address, dialog.operand(), dialog.typeName(),
+                               dialog.delta(), dialog.others(), epoch);
+}
+
+void MainWindow::setType() {
+  if (session_.readOnly() || !session_.typesFunctions())
+    return;
+  // The parameter under a pseudocode cursor, else the function the cursor
+  // is in, as Y types a variable or the function in IDA.
+  const QPointer<CodeView> view = focusedCodeView();
+  std::optional<Address> function;
+  std::optional<int> parameter;
+  QString name;
+  if (view) {
+    function = view->text()->function();
+    if (const auto target = view->text()->renameTarget();
+        target && target->contains(QStringLiteral("parameter"))) {
+      parameter = target->value(QStringLiteral("parameter")).toInt();
+      name = target->value(QStringLiteral("name")).toString();
+    }
+  } else {
+    function = currentFunction();
+  }
+  if (!function) {
+    output_->append(tr("Put the cursor in a function to set its type"), 1);
+    return;
+  }
+  if (name.isEmpty())
+    name = displayAddress(*function);
+  const auto epoch = session_.epoch();
+  SetTypeDialog dialog(session_, *function, parameter, name, this);
+  const bool accepted = dialog.exec() == QDialog::Accepted;
+  if (view) {
+    view->window()->activateWindow();
+    view->text()->setFocus();
+  }
+  if (!accepted || session_.epoch() != epoch)
+    return;
+  session_.editFunction(
+      *function,
+      {{"type", dialog.resets() ? QJsonValue(QJsonValue::Null)
+                                : QJsonValue(dialog.declaration())}},
+      epoch);
+}
+
+void MainWindow::convertToStruct() {
+  CodeView *code = focusedCodeView();
+  if (!code || session_.readOnly() || !session_.convertsParameters())
+    return;
+  const QPointer<CodeView> view = code;
+  const auto function = code->text()->function();
+  const auto target = code->text()->renameTarget();
+  if (!function || !target || !target->contains(QStringLiteral("parameter"))) {
+    output_->append(
+        tr("Put the cursor on a parameter of the function to convert it"), 1);
+    return;
+  }
+  const int parameter = target->value(QStringLiteral("parameter")).toInt();
+  const QString name = target->value(QStringLiteral("name")).toString();
+  const auto epoch = session_.epoch();
+  TypePickerDialog dialog(
+      session_, {{"function", hexAddress(*function)}, {"parameter", parameter}},
+      name, this);
+  const bool accepted = dialog.exec() == QDialog::Accepted;
+  if (view) {
+    view->window()->activateWindow();
+    view->text()->setFocus();
+  }
+  if (!accepted || session_.epoch() != epoch)
+    return;
+  // The type names the parameter too when the user gave it another name.
+  QString type = dialog.typeName() + QStringLiteral(" *");
+  if (dialog.parameterName() != name)
+    type += dialog.parameterName();
+  session_.read(
+      QStringLiteral("function_type"),
+      {{"address", hexAddress(*function)},
+       {"parameter", parameter},
+       {"type", type}},
+      this,
+      [this, function = *function, epoch](const QJsonObject &reply) {
+        if (session_.epoch() == epoch)
+          session_.editFunction(
+              function, {{"type", reply.value(QStringLiteral("declaration"))}},
+              epoch);
+      },
+      [this](const QString &, const QString &message) {
+        output_->append(tr("Cannot convert the parameter: %1").arg(message), 2);
+      });
 }
 
 void MainWindow::editFunction(Address entry) {

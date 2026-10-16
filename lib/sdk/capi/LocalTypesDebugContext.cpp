@@ -7,6 +7,7 @@
 #include "LocalTypesDebugContext.h"
 
 #include "neverd/Limits.h"
+#include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -231,6 +232,44 @@ TypeRef decompilerTypeOf(const types::TypeLibrary &Library,
   return Converter(Library).convert(Type, 0);
 }
 
+std::optional<FunctionSym> signatureOf(const types::TypeLibrary &Library,
+                                       const types::FunctionDef &Function,
+                                       llvm::StringRef Name) {
+  if (Function.Variadic)
+    return std::nullopt;
+  Converter Convert(Library);
+  FunctionSym Declared;
+  Declared.Name = Name.str();
+  Declared.ReturnType = Function.Return ? Convert.convert(*Function.Return, 0)
+                                        : NdType::makeVoid();
+  if (!Declared.ReturnType)
+    return std::nullopt;
+  for (const types::Parameter &Param : Function.Params) {
+    TypeRef Type = Param.Type ? Convert.convert(*Param.Type, 0) : nullptr;
+    if (!Type || Type->Kind == NdTypeKind::Func ||
+        Type->Kind == NdTypeKind::Void)
+      return std::nullopt;
+    Declared.Params.emplace_back(Param.Name, std::move(Type));
+  }
+  switch (Function.Convention) {
+  case types::CallingConvention::Cdecl:
+    Declared.CallConv = DebugCallConv::Cdecl;
+    break;
+  case types::CallingConvention::Stdcall:
+    Declared.CallConv = DebugCallConv::Stdcall;
+    break;
+  case types::CallingConvention::Fastcall:
+    Declared.CallConv = DebugCallConv::Fastcall;
+    break;
+  case types::CallingConvention::Thiscall:
+    Declared.CallConv = DebugCallConv::Thiscall;
+    break;
+  default:
+    break;
+  }
+  return Declared;
+}
+
 llvm::StringSet<> prototypeTypeNames(const types::TypeLibrary &Library) {
   std::vector<std::string> Work;
   for (const auto &Entry : Library.prototypes()) {
@@ -256,8 +295,10 @@ llvm::StringSet<> prototypeTypeNames(const types::TypeLibrary &Library) {
 }
 
 LocalTypesDebugContext::LocalTypesDebugContext(
-    const DebugContext &Inner, std::shared_ptr<const types::TypeLibrary> Types)
-    : Inner(Inner), Types(std::move(Types)) {}
+    const DebugContext &Inner, std::shared_ptr<const types::TypeLibrary> Types,
+    std::map<va_t, std::string> Declarations)
+    : Inner(Inner), Types(std::move(Types)),
+      Declarations(std::move(Declarations)) {}
 
 LocalTypesDebugContext::~LocalTypesDebugContext() {
   std::lock_guard<std::mutex> Guard(Mutex);
@@ -443,30 +484,43 @@ LocalTypesDebugContext::prototype(llvm::StringRef Name) const {
   if (auto Known = Signatures.find(Name); Known != Signatures.end())
     return Known->second;
   std::optional<FunctionSym> &Signature = Signatures[Name];
-  const types::FunctionDef *Function = Types->findPrototype(Name);
-  if (!Function || Function->Variadic)
-    return Signature;
-  Converter Convert(*Types);
-  FunctionSym Declared;
-  Declared.Name = Name.str();
-  Declared.ReturnType = Function->Return ? Convert.convert(*Function->Return, 0)
-                                         : NdType::makeVoid();
-  if (!Declared.ReturnType)
-    return Signature;
-  for (const types::Parameter &Param : Function->Params) {
-    TypeRef Type = Param.Type ? Convert.convert(*Param.Type, 0) : nullptr;
-    if (!Type || Type->Kind == NdTypeKind::Func ||
-        Type->Kind == NdTypeKind::Void)
-      return Signature;
-    Declared.Params.emplace_back(Param.Name, std::move(Type));
-  }
-  Signature = std::move(Declared);
+  if (const types::FunctionDef *Function = Types->findPrototype(Name))
+    Signature = signatureOf(*Types, *Function, Name);
+  return Signature;
+}
+
+std::optional<FunctionSym> LocalTypesDebugContext::declared(va_t Entry) const {
+  const auto Declaration = Declarations.find(Entry);
+  if (Declaration == Declarations.end())
+    return std::nullopt;
+  std::lock_guard<std::mutex> Guard(Mutex);
+  if (auto Known = DeclaredSignatures.find(Entry);
+      Known != DeclaredSignatures.end())
+    return Known->second;
+  std::optional<FunctionSym> &Signature = DeclaredSignatures[Entry];
+  const types::FunctionDeclaration Read =
+      types::parseFunctionDeclaration(Declaration->second, *Types);
+  if (Read.ok())
+    Signature = signatureOf(*Types, *Read.Function, Read.Name);
   return Signature;
 }
 
 std::optional<FunctionSym>
 LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   std::optional<FunctionSym> Function = Inner.resolveFunction(Addr);
+  // The user's declaration states the function's parameters and return,
+  // whatever the debug information says; its name and extent stay.
+  if (std::optional<FunctionSym> User = declared(Addr)) {
+    FunctionSym Declared =
+        Function && Function->Addr == Addr ? *Function : FunctionSym();
+    Declared.Addr = Addr;
+    Declared.ReturnType = std::move(User->ReturnType);
+    Declared.Params = std::move(User->Params);
+    if (User->CallConv != DebugCallConv::Unknown)
+      Declared.CallConv = User->CallConv;
+    Declared.PlatformConvention = true;
+    return Declared;
+  }
   // Only a function the debug information names at its entry and leaves
   // untyped: a declaration of the program's own describes its build.
   if (!Function || Function->Addr != Addr || Function->Name.empty() ||

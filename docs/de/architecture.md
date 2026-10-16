@@ -9,6 +9,10 @@ müssen, um NeverD sicher zu ändern. Er behandelt bewusst nur NeverD-eigenen
 Code; die LLVM-, Capstone- und Unicorn-Submodule behalten ihre interne
 Architektur.
 
+## Konkrete Eingangsspeicher-Seeds
+
+`SymExecConcreteShadow` erhält vor der Ausführung RAM-Bytes in Adressreihenfolge; der symbolische Eingangsspeicher bleibt frei. Die C++-Option `InitialMemory` unterliegt `MaxMemorySeedBytes` (Standard 1 MiB; null erlaubt keine Bytes). Leere, überlappende und überlaufende Bereiche werden abgelehnt. Speicherberichte verwenden Version 2 mit `InitialMemory` und `MemorySeed` je Kandidat. Die Projektion akzeptiert nur abgedeckte Register- oder absolute Speichereingaben der Epoche null. Abfrageprüfung, erneute Ausführung und Deduplizierung berücksichtigen beide Bytebestände. Fehlende Bytes, symbolische Basisadressen und angenäherte Effekte bleiben ausgeschlossen; Stores aktualisieren den konkreten Speicher normal. `ProcessView::read` liest im angehaltenen Zustand bestätigten RAM; Hooks vor einem Zugriff ersetzen keinen vollständigen Snapshot. Beobachtungen beweisen weder Besitz, Lebensdauer, Unveränderlichkeit noch Disjunktheit. Ein Kandidat bestätigt nur die Zielentscheidung und ihren vorherigen Entscheidungspfad. C/JSON, Python und CLI bleiben in Version 1 registerbasiert.
+
 ## Grenze für Quellcode- und Objektersetzung
 
 `SourcePatchCompiler` verwaltet Compileridentität und Artefaktauswahl. `validateSourcePatchTarget` ist die gemeinsame Zielzulassung für Quellcode und geliefertes IR; das Tripel allein beweist keinen Support. `bindSourcePatch` bestätigt IR-Einstiege; `PatchObject` verwaltet native Abschnitte, Relokationen und FDE-Bereichsnachweise. `publishSourcePatch` bereitet die genaue Transaktion vor, prüft und veröffentlicht sie exklusiv. `COFFSourceImage` verwaltet neuen PE-x64-Speicher und Unwind-Tabellen; geliftete Umschreibungen behalten ihre getrennten ursprünglichen EH-Nachweise. Siehe [Quellcodepatches](source-patching.md).
@@ -1890,3 +1894,19 @@ KernelFileSystem hält je FILE_OBJECT ein provider token. Die private Freigabeop
 `KernelModelFileRequests` besitzt auch die pufferlose Erzeugung für `ZwFlushBuffersFile`. Zugriffsmaske und unmittelbare Veröffentlichung/Freigabe unterscheiden sich von verzögerten nativen Lese-, Schreib- und Abfragepaketen; Benachrichtigung des ursprünglichen Aufrufers und einmalige Freigabe bleiben gemeinsam verwaltet.
 
 `KernelModelFileRequests` besitzt Puffererfassung und Veröffentlichung nativer Steueraufrufe. Dateihaltung, Aufruferfortsetzung und Paketfreigabe sind gemeinsam; die erzeugerspezifische Verzögerung unterscheidet Gerätesteuerung und FSCTL. Die gemeinsame Abschlussprüfung begrenzt die Ausgabe.
+
+`KernelModelRuntime` besitzt CRT-Klassifizierung, Umwandlung im Puffer und geprüfte String-Schreibvorgänge. `KernelCStringAPIs.def` liefert Exportidentität, Argumentzahl und IRQL-Zulassung für alle Aufrufwege. Einheitenzugriffe verwenden die vorhandenen Gastrechte und Lebensdauerprüfungen; Berichte und Adapter duplizieren keine Kopier- oder Fehlersemantik.
+
+`KernelMemoryCalls` besitzt die Zulassung geprüfter Speicherkopien und verwendet vorhandene move/fill-Operationen sowie Pool-Lebensdauer- und Benutzerspeicherprüfungen. `KernelModelRuntime` besitzt die rohe Signaturprüfung `RtlImageNtHeader`. Sie ersetzt keine zum Ausführen nötige Loaderprüfung; Adapter duplizieren diese Semantik nicht.
+
+`OptimizationGuards` ergänzt LLVMs `optnone`-Prüfung: Optionale Modul- und Aufrufgraph-Pässe werden bei einer geschützten Funktionsdefinition übersprungen, da sie deren CFG oder Callback-Argumente verändern können. Erforderliche Adapter und Optimierungen gewöhnlicher Funktionen laufen weiter. Die Quellprojektion bewahrt Prologsicherungen als Speicherereignisse, bis die native Rekonstruktion sie bindet.
+
+`COFFRegistrationEH4Wrapper` besitzt den Nachweis des erhaltenen EH4-Transfers. `COFFRegistrationScalarLeaf` prüft einen begrenzten vorwärts gerichteten CFG, initialisierte Register und Flags, privaten MXCSR-Speicher und Laufzeitdaten des Images. Aufruferrahmenzugriffe, entweichende Adressen, unbekannte Aufrufe, überlappende Anweisungen und unvollständige Rückkehr werden abgelehnt. LLVM und unabhängige COFF-Prüfung teilen denselben Loader-Nachweis; Originalcode und dynamische Lesezugriffe bleiben erhalten.
+
+`KernelModelRuntime` verantwortet Unicode-Hashing, die gemeinsame NLS-unabhängige Großschreibung und Sekunden seit 1980. `KernelRuntimeCalls` verwendet den bestehenden Pool für paged Zeichenketten. Die API-Tabellen vereinheitlichen Exporte, Argumentanzahl und APC_LEVEL; die Zugriffsreihenfolge bleibt bei den Implementierungen.
+
+`uppercaseCharacter` kürzt skalare Argumente vor der Zulassung und delegiert an `uppercaseUnicodeUnit`. CRT- und Unicode-API-Tabellen teilen die Entscheidung unter eigenen ABI-Identitäten; weder Adapter noch Host-Locale liefern eine zweite Zuordnung.
+
+`KernelModelRuntime` besitzt Skalarbreiten und die gemeinsame Veröffentlichung von Präfix und Puffer. Gewöhnliche variadische Aufrufe nutzen den vorhandenen ABI-Leser; der explizite x64-`va_list`-Adapter prüft jeden angeforderten Gastskalar bei acht Byte Schrittweite. Dispatcher und Adapter duplizieren keine Formatanalyse.
+
+Die Aliase nutzen bestehende Besitzer von Threads/Prozessen und Ausführungskontexten, auch während Prozessanheftung. `RtlPcToFileHeader` verwendet wie Systemmodulabfragen `LoadedModules`; abgebildete Regionen aus `ImageRAM` ersetzen keine Modulidentität. Hostzustand wird nicht abgefragt.

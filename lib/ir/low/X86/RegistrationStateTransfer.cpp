@@ -205,6 +205,8 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
             RegistrationCookieCheck{
                 Op.Addr, Op.Addr + Boundary->second.second.Size, Op.Seq});
     }
+    if (!validateSEHParentChainUse(After, Op, Transfer))
+      Result.SEHParentChainComplete = false;
     if (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)) {
       CompleteImageReads = false;
       if (CheckCalls) {
@@ -301,10 +303,18 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
           After.Unknown = false;
           After.Uninstalled = false;
           After.Installed = true;
+          After.AbandonedSEHGuard = false;
           After.JumpCaptures.clear();
           ProvenInstallation = true;
           if (EH4 && !cookiesReady(After.Frame))
             CompleteCookies = false;
+          recordChainAccess(Op, Block, RegistrationChainAccess::Kind::Install);
+        } else if (Address.Constant == uint32_t{0} && Width == 4 && AtEnd &&
+                   Stored.Offset == Chain.RegistrationOffset &&
+                   canReconnectSEHParentChain(After)) {
+          // Republish the same live node after abandoning a CRT callback.
+          // Keep its current TryLevel and buffer bindings, unlike first entry.
+          After.AbandonedSEHGuard = false;
           recordChainAccess(Op, Block, RegistrationChainAccess::Kind::Install);
         } else if (Address.Constant == uint32_t{0} && Width == 4 && AtEnd &&
                    Stored.PreviousChain && After.Installed &&
@@ -313,6 +323,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
           After.Unknown = false;
           After.Uninstalled = true;
           After.Installed = false;
+          After.AbandonedSEHGuard = false;
           After.JumpCaptures.clear();
           recordChainAccess(Op, Block, RegistrationChainAccess::Kind::Remove);
         } else {

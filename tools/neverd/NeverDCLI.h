@@ -279,6 +279,7 @@ extern llvm::cl::opt<bool> Verbose;
 extern llvm::cl::opt<bool> JsonOutput;
 extern llvm::cl::opt<bool> NoDebug;
 extern llvm::cl::opt<bool> NoDwarf;
+extern llvm::cl::opt<bool> NoPdb;
 extern llvm::cl::opt<bool> NoSymtab;
 extern llvm::cl::list<std::string> ARMFunctionModeHints;
 extern llvm::cl::opt<std::string> PdbFile;
@@ -286,6 +287,9 @@ extern llvm::cl::opt<bool> PdbUnverified;
 extern llvm::cl::opt<std::string> SymbolPathOption;
 extern llvm::cl::opt<bool> DownloadSymbols;
 extern llvm::cl::opt<std::string> MapFile;
+extern llvm::cl::opt<bool> MapUnchecked;
+extern llvm::cl::opt<bool> NoMap;
+extern llvm::cl::opt<std::string> DwarfFile;
 extern llvm::cl::opt<bool> NoOpt;
 extern llvm::cl::opt<size_t> MaxFunc;
 
@@ -352,6 +356,14 @@ extern llvm::cl::opt<std::string> TypesOrigin;
 extern llvm::cl::opt<std::string> TypesDataModel;
 extern llvm::cl::opt<bool> TypesKeepGoing;
 extern llvm::cl::opt<bool> TypesPrototypes;
+extern llvm::cl::opt<bool> TypesFit;
+extern llvm::cl::opt<std::string> TypesFunc;
+extern llvm::cl::opt<int> TypesParam;
+extern llvm::cl::opt<std::string> TypesAt;
+extern llvm::cl::list<std::string> TypesAccess;
+extern llvm::cl::opt<std::string> TypesMatch;
+extern llvm::cl::opt<unsigned> TypesLimit;
+extern llvm::cl::opt<std::string> TypesMember;
 
 // Xrefs.
 extern llvm::cl::opt<std::string> XrefAddr;
@@ -440,6 +452,10 @@ extern llvm::cl::opt<std::string> FunctionDelete;
 extern llvm::cl::opt<std::string> FunctionEdit;
 extern llvm::cl::list<std::string> FunctionSet;
 extern llvm::cl::opt<std::string> FunctionShow;
+extern llvm::cl::opt<std::string> FunctionDeclaration;
+extern llvm::cl::opt<std::string> FunctionCheck;
+extern llvm::cl::opt<std::string> FunctionRetype;
+extern llvm::cl::opt<bool> FunctionApply;
 extern llvm::cl::opt<bool> FunctionEditsList;
 extern llvm::cl::opt<std::string> ItemData;
 extern llvm::cl::opt<std::string> ItemString;
@@ -460,6 +476,8 @@ extern llvm::cl::opt<std::string> OperandBase;
 extern llvm::cl::opt<bool> OperandNegate;
 extern llvm::cl::opt<bool> OperandInvert;
 extern llvm::cl::opt<bool> OperandClear;
+extern llvm::cl::opt<std::string> OperandStruct;
+extern llvm::cl::opt<long long> OperandDelta;
 
 // Search.
 extern llvm::cl::opt<std::string> SearchText;
@@ -607,6 +625,11 @@ int runSwitches(neverd_session_t Sess);
 int runTypes(neverd_session_t Sess);
 /// `neverd types --data-model`: --declare files converted without a binary.
 int runTypesConvert();
+/// `neverd types --fit`: the records a pointer may point at, best first
+/// (NeverDCmdTypeFit.cpp).
+int runTypesFit(neverd_session_t Sess, llvm::raw_ostream &Out);
+/// `neverd types --type T --member offset[:size]`: where an access lands.
+int runTypesMember(neverd_session_t Sess, llvm::raw_ostream &Out);
 int runStrings(neverd_session_t Sess);
 
 // NeverDCmdDisasm.cpp — code views.

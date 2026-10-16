@@ -80,12 +80,37 @@ NEVERD_API const char *neverd_pdb_reference_json(const char *Path,
 /// image: {"dwarf":null} for another format, for an image without DWARF, or
 /// for one whose debug information is never read (SBF), and otherwise
 /// {"dwarf":{"path","location"}}.  "path" is the file that holds it, and
-/// "location" is where neverd_session_load() reads it from, in its order:
-/// "input" (the image's own sections), "dsym" (a .dSYM bundle beside a
-/// Mach-O image) or "beside" (a split .debug file beside the image, matched
-/// by name alone).  {"dwarf":null,"error"} when \p Path names no readable
-/// file.  Paths are UTF-8.  Free with neverd_free_string.
+/// "location" is where neverd_session_load() reads it from, in its order,
+/// which is GDB's: "input" (the image's own sections), "dsym" (a .dSYM bundle
+/// beside a Mach-O image), "build-id" (the file /usr/lib/debug/.build-id
+/// keeps under the image's build ID), "debuglink" (the file the image's
+/// .gnu_debuglink names, of the CRC it records) or "beside" (a split .debug
+/// file beside the image, matched by name).  A companion that records another
+/// build ID than the image is passed over.  {"dwarf":null,"error"} when
+/// \p Path names no readable file.  Paths are UTF-8.  Free with
+/// neverd_free_string.
 NEVERD_API const char *neverd_dwarf_reference_json(const char *Path);
+/// The linker MAP beside the input at \p Path -- <stem>.map or <name>.map --
+/// and how it holds against the image, without loading the image:
+/// {"map":null} when there is none, when it names no function, or for an
+/// input whose debug information is never read (EVM, SBF), and otherwise
+/// {"map":{"path","dialect","functions","data","outside","match","reason"?,
+/// "stamp"?,"section"?,"names"}}.  "dialect" is the linker format: "msvc"
+/// (link.exe and lld-link /MAP, also Borland's and IDA's MAPs), "lld-link"
+/// (/lldmap), "ld.lld", "gnu-ld" or "ld64".  "functions" and "data" count
+/// its names and "names" holds its first function names, at most eight.
+/// "match" says how it holds: "verified" (it records the image's build
+/// stamp), "consistent" (it places every section the image also has where
+/// the image has it), "unverified" (it states nothing to hold against the
+/// image) or "mismatch", with "reason": "stamp" ("stamp":{"map","image"}
+/// differ), "section" ("section":{"segment","name","map":{"address","size"},
+/// "image":{...}} places one elsewhere) or "outside" ("outside" of its
+/// functions, most of them, lie outside the image's code).  "stamp" is also
+/// there for any MAP that records one.  neverd_session_load() reads the MAP
+/// only when no PDB or DWARF describes the image, and never one that
+/// mismatches it.  {"map":null,"error"} when \p Path names no readable file.
+/// Paths are UTF-8.  Free with neverd_free_string.
+NEVERD_API const char *neverd_map_reference_json(const char *Path);
 /// The static symbol table of the image at \p Path, which strip removes,
 /// found without loading the image: {"symbols":null} for an image without
 /// one, for an object file, which is never read without its table, and for
@@ -196,6 +221,8 @@ NEVERD_API const char *neverd_session_inspect_pdb_json(neverd_session_t Sess,
 /// keeping user names, comments and edits; 0 with neverd_last_error on failure,
 /// leaving the existing image and analysis usable. Missing CodeView identity
 /// is an error. The selected path becomes the next-load debug search policy.
+/// The image is read again, so the PDB's names replace those of a MAP the
+/// image was loaded with, as they would had the load named the PDB.
 NEVERD_API int neverd_session_load_pdb(neverd_session_t Sess, const char *Path);
 
 /// Apply a manually selected PDB with an explicit trust choice. With
@@ -210,9 +237,58 @@ NEVERD_API int neverd_session_load_pdb_ex(neverd_session_t Sess,
                                           const char *Path,
                                           int UseWithoutIdentity);
 
-/// Linker MAP counterpart of neverd_session_set_pdb_path().
+/// Read the next neverd_session_load()'s linker MAP from \p Path instead of
+/// the one beside the binary.  It is read after a PDB or DWARF, whose names
+/// outrank its own: its names fill only the addresses they leave unnamed.
+/// The named file is authoritative: neverd_session_load() fails if it cannot
+/// be read, holds no function names, or contradicts the image (see
+/// neverd_map_reference_json).  Pass NULL or "" to resume searching.  UTF-8.
 NEVERD_API void neverd_session_set_map_path(neverd_session_t Sess,
                                             const char *Path);
+
+/// neverd_session_set_map_path() with an explicit trust choice for the next
+/// load.  With Unchecked == 1 the named MAP is read even when what it records
+/// contradicts the image -- another build stamp, a section placed elsewhere,
+/// functions outside the image's code -- which the caller must have had the
+/// user confirm.  0 is the policy of neverd_session_set_map_path().  Returns
+/// 1, or 0 with neverd_last_error for any other Unchecked.
+NEVERD_API int neverd_session_set_map_path_ex(neverd_session_t Sess,
+                                              const char *Path, int Unchecked);
+
+/// The linker MAP at \p MapPath read against the loaded image, as
+/// neverd_map_reference_json() reports one, without changing the session.
+/// NULL with neverd_last_error when it cannot be read or names no function.
+/// Caller frees.
+NEVERD_API const char *neverd_session_inspect_map_json(neverd_session_t Sess,
+                                                       const char *MapPath);
+
+/// Load the linker MAP at \p Path into the loaded image beside its other
+/// debug information: its names fill the addresses a PDB or DWARF leaves
+/// unnamed, and take the place of an earlier MAP's.  With Unchecked == 1 a
+/// MAP that contradicts the image loads too, which the caller must have had
+/// the user confirm; 0 refuses it, and other values fail.  Returns 1,
+/// keeping user names, comments and edits; 0 with neverd_last_error,
+/// leaving the existing image and analysis usable.  The MAP becomes part of
+/// the next load's debug search policy.
+NEVERD_API int neverd_session_load_map(neverd_session_t Sess, const char *Path,
+                                       int Unchecked);
+
+/// Read the next neverd_session_load()'s DWARF from \p Path instead of
+/// finding it: a split .debug file, an unstripped copy of the image, or a
+/// .dSYM bundle or the DWARF file in one.  Its machine must be the image's,
+/// and a build ID or UUID both record must agree; otherwise, or when it
+/// cannot be read or holds no DWARF, neverd_session_load() fails.  Only an
+/// ELF or Mach-O image has one.  Pass NULL or "" to resume finding it.
+/// UTF-8.
+NEVERD_API void neverd_session_set_dwarf_path(neverd_session_t Sess,
+                                              const char *Path);
+
+/// Load the DWARF at \p Path, a file as neverd_session_set_dwarf_path()
+/// takes, into the loaded ELF or Mach-O image in place of the DWARF it has;
+/// a MAP's names give way to its own.  Same transaction and result contract
+/// as neverd_session_load_map().
+NEVERD_API int neverd_session_load_dwarf(neverd_session_t Sess,
+                                         const char *Path);
 
 /// Pass 0 to analyze the image alone, ignoring any debug file beside it.
 /// The escape hatch for a stale companion file that names functions worse than
@@ -234,6 +310,13 @@ NEVERD_API void neverd_session_set_pdb_search(neverd_session_t Sess,
 /// it.  Enabled by default.
 NEVERD_API void neverd_session_set_dwarf_search(neverd_session_t Sess,
                                                 int Enabled);
+
+/// Pass 0 to load an image without the linker MAP beside it: the next
+/// neverd_session_load() reads none, though a MAP named with
+/// neverd_session_set_map_path() still loads and other debug information is
+/// still found.  For a user who declined it.  Enabled by default.
+NEVERD_API void neverd_session_set_map_search(neverd_session_t Sess,
+                                              int Enabled);
 
 /// Pass 0 to load an image without its static symbol table, as if it had
 /// been stripped: the next neverd_session_load() reads only the symbols
@@ -304,6 +387,14 @@ NEVERD_API const char *neverd_session_debug_info_kind(neverd_session_t Sess);
 /// Path of the file the debug symbols came from, empty when there are none.
 /// Caller frees.
 NEVERD_API const char *neverd_session_debug_info_path(neverd_session_t Sess);
+
+/// Every file the session's debug information was read from, the PDB or
+/// DWARF first: {"enabled","kind","files":[{"kind","path","names",
+/// "dialect"?,"match"?,"functions"?}]}.  "kind" is
+/// neverd_session_debug_info_kind()'s, "names" counts the names a file
+/// published into the image, and a MAP has its "dialect", "match" and
+/// "functions" as neverd_map_reference_json() spells them.  Caller frees.
+NEVERD_API const char *neverd_session_debug_info_json(neverd_session_t Sess);
 
 // ===--------------------------------------------------------------------===//
 // Error handling
