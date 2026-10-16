@@ -2337,6 +2337,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Поставьте курсор на параметр функции, чтобы преобразовать его</translation>
     </message>
     <message>
+        <source>Synchronize with disassembly</source>
+        <translation>Синхронизировать с дизассемблированным кодом</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>В&amp;осьмеричное</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>Поставьте курсор на число в псевдокоде, чтобы изменить его систему счисления</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 нельзя записать в этой системе счисления с тем же типом</translation>
+    </message>
+    <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
         <translation>Не удалось определить, есть ли у %1 MAP-файл: %2</translation>
     </message>

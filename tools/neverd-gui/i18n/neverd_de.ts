@@ -2331,6 +2331,22 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <translation>Setzen Sie den Cursor auf einen Parameter der Funktion, um ihn umzuwandeln</translation>
     </message>
     <message>
+        <source>Synchronize with disassembly</source>
+        <translation>Mit Disassemblierung synchronisieren</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>Okta&amp;l</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>Setzen Sie den Cursor auf eine Zahl im Pseudocode, um ihre Basis zu ändern</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 lässt sich in dieser Basis nicht mit demselben Typ schreiben</translation>
+    </message>
+    <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
         <translation>Ob %1 eine MAP-Datei hat, ließ sich nicht ermitteln: %2</translation>
     </message>

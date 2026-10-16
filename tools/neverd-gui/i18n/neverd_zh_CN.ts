@@ -2325,6 +2325,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>请将光标放在函数的参数上以转换它</translation>
     </message>
     <message>
+        <source>Synchronize with disassembly</source>
+        <translation>与反汇编同步</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>八进制(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>请将光标放在伪代码的数字上以更改其进制</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 在该进制下无法保持相同类型</translation>
+    </message>
+    <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
         <translation>无法判断 %1 是否有 MAP 文件：%2</translation>
     </message>
