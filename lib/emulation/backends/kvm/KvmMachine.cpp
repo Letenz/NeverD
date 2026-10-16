@@ -94,7 +94,7 @@ public:
   X64BranchModel BranchModel = X64BranchModel::Intel;
   X64BranchModel branchModel() const override { return BranchModel; }
   explicit KvmMachine(MemoryProjection &Memory) : Memory(Memory) {}
-  llvm::Error enableDirectSupervisor() {
+  llvm::Error configureDirectMSRFilter() {
 #if defined(KVM_CAP_X86_MSR_FILTER) && defined(KVM_CAP_X86_USER_SPACE_MSR)
     if (ioctl(System, KVM_CHECK_EXTENSION, KVM_CAP_X86_MSR_FILTER) <= 0 ||
         ioctl(System, KVM_CHECK_EXTENSION, KVM_CAP_X86_USER_SPACE_MSR) <= 0 ||
@@ -126,6 +126,14 @@ public:
     if (ioctl(VM, KVM_X86_SET_MSR_FILTER, &Filter) < 0)
       return diagnostic::unavailable(diagnostic::KvmCapabilities,
                                      BackendAvailability::MissingCapability);
+    return llvm::Error::success();
+#else
+    return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                   BackendAvailability::MissingCapability);
+#endif
+  }
+  llvm::Error enableDirectSupervisor() {
+#if defined(KVM_CAP_X86_MSR_FILTER) && defined(KVM_CAP_X86_USER_SPACE_MSR)
     const int Slots = ioctl(System, KVM_CHECK_EXTENSION, KVM_CAP_NR_MEMSLOTS);
     if (Slots <= 0)
       return diagnostic::unavailable(diagnostic::KvmCapabilities,
@@ -662,6 +670,10 @@ createKvmMachine(MemoryProjection &Memory, bool DirectSupervisor) {
   if (ioctl(M->CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
     return diagnostic::unavailable(diagnostic::KvmCapabilities,
                                    BackendAvailability::MissingCapability);
+  // Install the MSR policy before any vCPU entry, including the startup probe.
+  if (DirectSupervisor)
+    if (auto E = M->configureDirectMSRFilter())
+      return E;
   M->initializeSynchronizedRegisters();
   if (auto E =
           verifyX64Machine(*M, Memory, &M->MXCSRMask, true, &M->BranchModel))
