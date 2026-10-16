@@ -684,6 +684,7 @@ private:
     uint64_t ApcState;
     uint32_t PreviousProcessID;
     bool PreviousUserContext;
+    bool Private = false;
   };
   std::vector<ProcessAttachment> ProcessAttachments;
   bool hasProcessAttachment(uint64_t Execution) const;
@@ -865,8 +866,11 @@ private:
   llvm::Expected<uint64_t> processObject(uint32_t ProcessID);
   llvm::Expected<uint64_t> requestorProcess(uint64_t IRP);
   llvm::Expected<uint64_t> currentProcess();
-  llvm::Error stackAttachProcess(uint64_t Process, uint64_t ApcState);
-  llvm::Error unstackDetachProcess(uint64_t ApcState);
+  llvm::Error stackAttachProcess(uint64_t Process, uint64_t ApcState,
+                                 bool Private = false);
+  llvm::Error unstackDetachProcess(uint64_t ApcState, bool Private = false);
+  llvm::Error probeAndLockProcessPages(uint64_t MDL, uint64_t Process,
+                                       uint8_t Mode, uint32_t Operation);
   llvm::Expected<uint64_t> allocateUserBuffer(uint32_t Size,
                                               llvm::ArrayRef<uint8_t> Initial,
                                               DriverUserPageAccess Access,
