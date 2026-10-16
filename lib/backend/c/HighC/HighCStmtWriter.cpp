@@ -1016,13 +1016,27 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
             // which C converts the stored bytes' type to only by a cast:
             // an address to a pointer of another type, or an integer.  An
             // address the code holds as an integer is cast as the address.
+            // C converts an untyped pointer to an object pointer itself.
+            const auto untyped = [&](const TypeRef &Type) {
+              return Type && Type->Kind == NdTypeKind::Ptr &&
+                     (!Type->Pointee ||
+                      Type->Pointee->Kind == NdTypeKind::Void) &&
+                     Type->Size == MemberType->Size;
+            };
+            const bool ObjectMember =
+                MemberType->Kind == NdTypeKind::Ptr &&
+                !(MemberType->Pointee &&
+                  MemberType->Pointee->Kind == NdTypeKind::Func);
+            bool Untyped = untyped(StoredType);
             if (MemberType->Kind == NdTypeKind::Ptr)
               if (const HighExpr *Address =
                       peelIntegerViewOps(Stmt.StoreVal.get())) {
                 if (Address != Stmt.StoreVal.get() && Address->Type &&
                     Address->Type->Kind == NdTypeKind::Ptr &&
-                    Address->Type->Size == MemberType->Size)
+                    Address->Type->Size == MemberType->Size) {
                   Value = exprStr(*Address);
+                  Untyped = untyped(Address->Type);
+                }
                 // A parameter the signature types as a pointer, stored
                 // whole, is its address.
                 else if ((Address->Kind == ExprKind::Var ||
@@ -1030,10 +1044,13 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                          Address->Var.Kind == MedVar::Param)
                   if (const TypeRef Declared = debugParamType(Address->Var);
                       Declared && Declared->Kind == NdTypeKind::Ptr &&
-                      Declared->Size == MemberType->Size)
+                      Declared->Size == MemberType->Size) {
                     Value = copyForwardName(varName(Address->Var));
+                    Untyped = untyped(Declared);
+                  }
               }
-            Value = "(__typeof__(" + *Member + "))(" + Value + ")";
+            if (!(ObjectMember && Untyped))
+              Value = "(__typeof__(" + *Member + "))(" + Value + ")";
           }
           OS << Value;
         }

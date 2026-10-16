@@ -1140,6 +1140,8 @@ void completeDisplayRecord(DebugContext *Dbg, const TypeRef &Ty) {
   }
 }
 
+// LLVM-C names members only: every display lookup here passes
+// ArrayElements false, so an array stays one member, as this takes it.
 std::optional<std::string> canonicalizeDisplayPath(llvm::StringRef Field) {
   std::string Path;
   llvm::StringRef Rest(Field);
@@ -1653,8 +1655,10 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       const bool Hit =
           Candidate == 0 ||
           (!Array && (argListStandardField(Slot.Type, Candidate, AccessSize) ||
-                      (Slot.Type &&
-                       Slot.Type->displayFieldPathAt(Candidate, AccessSize))));
+                      (Slot.Type && Slot.Type->displayFieldPathAt(
+                                        Candidate, AccessSize,
+                                        /*EnterNestedAtZero=*/true,
+                                        /*ArrayElements=*/false))));
       if (!Hit) {
         if (Slot.DebugType && Cover && !Slot.Name.empty() && !Container) {
           Container = &Slot;
@@ -1678,8 +1682,13 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       if (!Var->Type || (Var->Type->Size && Candidate >= Var->Type->Size))
         continue;
       if (Var->Type->Kind == NdTypeKind::Array ||
-          (!Var->Type->displayFieldPathAt(Candidate, AccessSize) &&
-           !(AccessSize == 0 && Var->Type->displayFieldPathAt(Candidate)))) {
+          (!Var->Type->displayFieldPathAt(Candidate, AccessSize,
+                                          /*EnterNestedAtZero=*/true,
+                                          /*ArrayElements=*/false) &&
+           !(AccessSize == 0 &&
+             Var->Type->displayFieldPathAt(Candidate, 0,
+                                           /*EnterNestedAtZero=*/true,
+                                           /*ArrayElements=*/false)))) {
         if (Var->Type->Size && Remember(Off - Candidate, *Var)) {
           Container = &FrameSlots[Off - Candidate];
           ContainerRel = Candidate;
@@ -1823,11 +1832,13 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       return Out;
     }
     if (AccessSize && Display) {
-      if (auto Field = Display->displayFieldPathAt(
-              0, AccessSize, /*EnterNestedAtZero=*/true)) {
+      if (auto Field = Display->displayFieldPathAt(0, AccessSize,
+                                                   /*EnterNestedAtZero=*/true,
+                                                   /*ArrayElements=*/false)) {
         if (auto Path = canonicalizeDisplayPath(*Field)) {
           Out.Text = FieldText(*Path);
-          Out.Type = Display->displayFieldTypeAt(0, AccessSize);
+          Out.Type = Display->displayFieldTypeAt(0, AccessSize,
+                                                 /*ArrayElements=*/false);
           return Out;
         }
       }
@@ -1836,7 +1847,7 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       if (auto Field = Display->displayFieldNameAt(0)) {
         if (auto Path = canonicalizeDisplayPath(*Field)) {
           Out.Text = FieldText(*Path);
-          Out.Type = Display->displayFieldTypeAt(0);
+          Out.Type = Display->displayFieldTypeAt(0, 0, /*ArrayElements=*/false);
           return Out;
         }
       }
@@ -1870,17 +1881,21 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
   }
   const bool EnterNested = !AddressOf;
   auto Field = Display
-                   ? Display->displayFieldPathAt(Rel, AccessSize, EnterNested)
+                   ? Display->displayFieldPathAt(Rel, AccessSize, EnterNested,
+                                                 /*ArrayElements=*/false)
                    : std::nullopt;
   if (!Field && AccessSize == 0 && Display)
-    Field = Display->displayFieldPathAt(Rel, 0, EnterNested);
+    Field = Display->displayFieldPathAt(Rel, 0, EnterNested,
+                                        /*ArrayElements=*/false);
   auto Path = Field ? canonicalizeDisplayPath(*Field) : std::nullopt;
   if (!Path && Owner->Type && Display.get() != Owner->Type.get()) {
-    Field = Owner->Type->displayFieldPathAt(Rel, AccessSize, EnterNested);
+    Field = Owner->Type->displayFieldPathAt(Rel, AccessSize, EnterNested,
+                                            /*ArrayElements=*/false);
     Path = Field ? canonicalizeDisplayPath(*Field) : std::nullopt;
     if (Path) {
       Out.Text = OwnerText + "." + *Path;
-      Out.Type = Owner->Type->displayFieldTypeAt(Rel, AccessSize);
+      Out.Type = Owner->Type->displayFieldTypeAt(Rel, AccessSize,
+                                                 /*ArrayElements=*/false);
       if (AddressOf)
         Out.Text = "&" + Out.Text;
       return Out;
@@ -1899,7 +1914,9 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     return std::nullopt;
   }
   Out.Text = FieldText(*Path);
-  Out.Type = Display ? Display->displayFieldTypeAt(Rel, AccessSize) : nullptr;
+  Out.Type = Display ? Display->displayFieldTypeAt(Rel, AccessSize,
+                                                   /*ArrayElements=*/false)
+                     : nullptr;
   if (AddressOf)
     Out.Text = "&" + Out.Text;
   return Out;
@@ -2043,7 +2060,8 @@ TypeRef LLVMCWriter::typeOfValue(const llvm::Value *V) const {
   if (Peeled->second == 0 && DebugFn && !DebugFn->Params.empty())
     return DebugFn->Params[0].second;
   completeDisplayRecord(Dbg, DebugThisRecord);
-  return DebugThisRecord->displayFieldTypeAt(Peeled->second);
+  return DebugThisRecord->displayFieldTypeAt(Peeled->second, 0,
+                                             /*ArrayElements=*/false);
 }
 
 std::optional<LLVMCWriter::TypedAccess>
@@ -2114,7 +2132,8 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     return std::nullopt;
   completeDisplayRecord(Dbg, Rec);
   auto Field =
-      Rec->displayFieldPathAt(Peeled->second, AccessSize, EnterNestedAtZero);
+      Rec->displayFieldPathAt(Peeled->second, AccessSize, EnterNestedAtZero,
+                              /*ArrayElements=*/false);
   if (!Field)
     return std::nullopt;
   auto Path = canonicalizeDisplayPath(*Field);
@@ -2122,7 +2141,8 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     return std::nullopt;
   TypedAccess Out;
   Out.Text = BaseName + "->" + *Path;
-  Out.Type = Rec->displayFieldTypeAt(Peeled->second, AccessSize);
+  Out.Type = Rec->displayFieldTypeAt(Peeled->second, AccessSize,
+                                     /*ArrayElements=*/false);
   return Out;
 }
 
