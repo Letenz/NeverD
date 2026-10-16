@@ -168,8 +168,11 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
     return std::nullopt;
   if (Img->findImportAt(Addr) || !terminatesStrings(*Img))
     return std::nullopt;
+  // Data a linker placed in the code segment (`.rodata` in the R+X mapping
+  // of an Android image) is still data: the finest provenance decides.
   const Segment *Seg = Img->getSegmentFor(Addr);
-  if (!Seg || !Seg->isReadable() || Seg->isWritable() || Seg->isExecutable())
+  if (!Seg || !Seg->isReadable() || Seg->isWritable() ||
+      Img->isCodeAddress(Addr))
     return std::nullopt;
   // A file header or an alignment gap is mapped but holds no program data: a
   // small integer in an image loaded at zero lands there.

@@ -3755,6 +3755,10 @@ which must pass nothing in either backend (not the slot's address as a virtual
 call's object), and a call whose outgoing stores leave a gap below a
 `push {r4, r6, r7, lr}`, whose HighC must not pass the saved link register.
 
+`LLVMCValues.ImageStringsInACodeSegmentFollowTheirSection` requires a string
+in `.rodata` inside an R+X segment to print, its bytes in `.text` not to, and
+the segment rule without section headers.
+
 `LinkedLiteralAddsToTheDataItNames` links an ARM getter whose
 `ldr r0, [pc, r0]` reads its literal right after `bx lr`. It requires the
 `ARMLinkedLiteral` certificate for the static variable at the ADD output,

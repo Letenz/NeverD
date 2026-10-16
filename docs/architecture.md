@@ -1857,7 +1857,11 @@ unit scales shorten the expression without substituting C array arithmetic or
 assuming that a pointer is in bounds.
 Generic LLVM arithmetic and control builtins do not request target ISA headers.
 Both C routes reject string-literal replacement when loader fixup provenance
-overlaps any candidate byte, including its terminator.
+overlaps any candidate byte, including its terminator. Bytes in code are no
+candidate, as `BinaryImage::isCodeAddress` decides: by the section that holds
+them, so the read-only data a linker maps with the code (the single R+X
+segment of an Android image) still prints as its literals, and by the segment
+only without section headers.
 
 ELF GOT data identities come from the exact relocation symbol snapshot through
 `collectDataSymbolBindings`, shared by HighC and LLVM emission. The loader's
