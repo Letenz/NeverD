@@ -386,13 +386,15 @@ class WDKDriverFixtureTests(unittest.TestCase):
         sources = fixtures.ROOT / "unittests/emulation/fixtures"
         original = {path.name for pattern in ("driver_wdm_*.c", "driver_kmdf_*.c")
                     for path in sources.glob(pattern)}
-        # Declared public_api fixtures must support genuine headers. This
-        # checks declared bindings, not discovery of every dual-mode source.
-        portable = {source for _, source, _, _, profile in inventory
-                    if profile == "public_api"}
-        for source in portable:
-            self.assertIn("#ifdef NEVERD_WDK_FIXTURE",
-                          (sources / source).read_text(), source)
+        # Discover dual-mode sources independently: an available WDK branch
+        # must not silently disappear from reproducible builds and native CI.
+        portable = {path.name for path in sources.glob("*.c")
+                    if re.search(r"^#ifdef NEVERD_WDK_FIXTURE\s*$",
+                                 path.read_text(), re.M)}
+        self.assertEqual(portable, {
+            source for _, source, _, _, profile in inventory
+            if profile == "public_api"
+        })
         original.update(portable)
         self.assertEqual({source for _, source, *_ in inventory}, original)
         configured = re.findall(
