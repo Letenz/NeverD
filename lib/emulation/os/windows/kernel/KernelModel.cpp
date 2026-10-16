@@ -58,8 +58,10 @@ bool singleComponent(llvm::StringRef Name, llvm::StringRef Prefix) {
          !Name.drop_front(Prefix.size()).contains('\\');
 }
 
-llvm::Error validateObjectNameText(llvm::StringRef Name) {
-  if (Name.size() > profile::MaxDeviceNameSize)
+llvm::Error
+validateObjectNameText(llvm::StringRef Name,
+                       size_t MaxCharacters = profile::MaxDeviceNameSize) {
+  if (Name.size() > MaxCharacters)
     return modelError("object name exceeds the bounded namespace size");
   for (unsigned char C : Name)
     if (C < ' ' || C > '~')
@@ -392,7 +394,8 @@ llvm::Error KernelModel::finishEntry() {
   return llvm::Error::success();
 }
 
-llvm::Expected<std::string> KernelModel::readObjectName(uint64_t Address) {
+llvm::Expected<std::string> KernelModel::readObjectName(uint64_t Address,
+                                                        size_t MaxCharacters) {
   if (auto E = runtime::checkBufferRange(Address, 16))
     return E;
   if (auto E = validateGuestAccess(Address, 16, false))
@@ -406,8 +409,7 @@ llvm::Expected<std::string> KernelModel::readObjectName(uint64_t Address) {
   auto Buffer = Memory.readInteger(Address + 8, 8);
   if (!Buffer)
     return Buffer.takeError();
-  if ((*Length & 1) || *Length > *Maximum ||
-      *Length > profile::MaxDeviceNameSize * 2)
+  if ((*Length & 1) || *Length > *Maximum || *Length > MaxCharacters * 2)
     return modelError("invalid or oversized object-name UNICODE_STRING");
   if (auto E = runtime::checkBufferRange(*Buffer, *Length))
     return E;
@@ -424,7 +426,7 @@ llvm::Expected<std::string> KernelModel::readObjectName(uint64_t Address) {
                         "Unicode namespace case folding is unsupported");
     Name.push_back(static_cast<char>(Bytes[I]));
   }
-  if (auto E = validateObjectNameText(Name))
+  if (auto E = validateObjectNameText(Name, MaxCharacters))
     return E;
   return Name;
 }
@@ -685,6 +687,8 @@ llvm::Error KernelModel::snapshot() {
     return modelError(
         "filesystem volume device inventory differs from its owner");
   Result.FileSystem = std::move(*Volumes);
+  if (auto E = validateFileSystemOpenBindings())
+    return E;
   if (!DriverObject)
     return modelError("cannot snapshot an uninitialized kernel model");
   // A terminal CPU fault still permits pure reads of committed RAM. Keep the

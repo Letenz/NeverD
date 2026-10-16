@@ -19,6 +19,37 @@ llvm::Error fileError(const llvm::Twine &Text) {
 }
 } // namespace
 
+bool KernelModel::owesFileClose(const OpenFile &File) const {
+  if (File.State == FileState::Failed || File.State == FileState::Closing)
+    return false;
+  return File.DeferredClose.has_value() ||
+         File.Source == OpenFile::Origin::DriverCreate;
+}
+
+void KernelModel::associateFileRequest(DriverRequestResult &Observation,
+                                       const OpenFile &File) const {
+  Observation.FileObject = File.Address;
+  if (File.Source == OpenFile::Origin::DriverCreate)
+    Observation.FileOpenOperation = File.CreateOperation;
+  if (File.ProviderOpen)
+    if (const auto *Open = FileSystem.findOpen(*File.ProviderOpen)) {
+      Observation.FileSystemDevice = Open->DeviceObject;
+      Observation.FileSystemFileID = Open->FileID;
+    }
+}
+
+llvm::Error KernelModel::validateFileSystemOpenBindings() const {
+  std::vector<KernelFileSystem::OpenBinding> Bindings;
+  for (const auto &[Object, File] : FileObjects)
+    if (File.ProviderOpen) {
+      if (File.Source != OpenFile::Origin::DriverCreate ||
+          File.State == FileState::Failed || !File.CreateOperation)
+        return fileError("provider open lost its live driver-created file");
+      Bindings.push_back({Object, *File.ProviderOpen});
+    }
+  return FileSystem.validateOpenBindings(Bindings);
+}
+
 llvm::Error
 KernelModel::retireFileIfUnreferenced(uint64_t Object,
                                       std::optional<uint32_t> CallerProcess) {
@@ -32,12 +63,21 @@ KernelModel::retireFileIfUnreferenced(uint64_t Object,
   if (File.HandleCloseHolds || File.InternalIOHolds)
     return llvm::Error::success();
   if (File.State == FileState::Failed) {
+    if (File.ProviderOpen || owesFileClose(File))
+      return fileError("failed file still owns provider teardown");
+    if (auto E = prepareReleaseRange(Object, windows::FileSize))
+      return E;
+    if (File.NameStorage) {
+      if (auto E = prepareReleaseRange(File.NameStorage, File.NameStorageSize))
+        return E;
+      FreedRanges.emplace(File.NameStorage, File.NameStorageSize);
+    }
     FreedRanges.emplace(Object, windows::FileSize);
     FileObjects.erase(Found);
     ReferencedObjects.erase(References);
     return llvm::Error::success();
   }
-  if (!File.DeferredClose)
+  if (!owesFileClose(File))
     return llvm::Error::success();
   if (PendingWdmCall || PendingWait)
     return fileError("file CLOSE requires the preceding continuation to start");
@@ -45,7 +85,20 @@ KernelModel::retireFileIfUnreferenced(uint64_t Object,
   if (!CallerProcess && !Process)
     return fileError(
         "file CLOSE requires the releasing thread's process context");
-  auto Close = std::move(*File.DeferredClose);
+  DeferredFileClose Close;
+  if (File.DeferredClose) {
+    Close = std::move(*File.DeferredClose);
+  } else {
+    if (File.State != FileState::Cleaned)
+      return fileError("automatic CLOSE requires completed CLEANUP");
+    Close.Input.Kind = DriverRequestKind::Close;
+    DriverRequestResult Observation;
+    Observation.Kind = DriverRequestKind::Close;
+    Observation.Origin = DriverRequestOrigin::FileFinalClose;
+    associateFileRequest(Observation, File);
+    Close.ResultIndex = Result.Requests.size();
+    Result.Requests.push_back(std::move(Observation));
+  }
   File.DeferredClose.reset();
   Close.Input.RequestorProcessID =
       CallerProcess ? *CallerProcess : Process->ProcessID;
@@ -200,6 +253,7 @@ KernelModel::beginFileHandleRequest(uint64_t Object, DriverRequestKind Kind,
     Observation.Origin = DriverRequestOrigin::FileHandleClose;
     Observation.File = File.ScenarioID;
     Observation.RequestorProcessID = ProcessID;
+    associateFileRequest(Observation, File);
     Index = Result.Requests.size();
     Result.Requests.push_back(std::move(Observation));
   }

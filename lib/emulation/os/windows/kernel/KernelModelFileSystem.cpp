@@ -110,16 +110,175 @@ llvm::Error KernelModel::validateFileSystemDevice(uint64_t Address,
   return llvm::Error::success();
 }
 
-llvm::Error
-KernelModel::validateFileSystemRoute(llvm::ArrayRef<uint64_t> Route) const {
+llvm::Error KernelModel::validateFileSystemRoute(llvm::ArrayRef<uint64_t> Route,
+                                                 uint64_t FileObject,
+                                                 DriverRequestKind Kind) const {
   for (uint64_t Address : Route) {
     const auto Found = Devices.find(Address);
     if (Found == Devices.end())
       return filesystemError("captured route lost its device identity");
-    if (Found->second.OwnerKind == DeviceOwnerKind::FileSystemProvider)
-      return filesystemError(
-          "file I/O for a declared volume is not implemented");
+    if (Found->second.OwnerKind == DeviceOwnerKind::FileSystemProvider) {
+      const auto File = FileObjects.find(FileObject);
+      if (File == FileObjects.end() ||
+          File->second.Source != OpenFile::Origin::DriverCreate ||
+          File->second.Device != Address ||
+          (Kind != DriverRequestKind::Create &&
+           Kind != DriverRequestKind::Cleanup &&
+           Kind != DriverRequestKind::Close &&
+           Kind != DriverRequestKind::UnlockAll))
+        return filesystemError(
+            "file I/O for this declared volume route is not implemented");
+    }
   }
   return llvm::Error::success();
+}
+
+llvm::Expected<uint64_t> KernelModel::dispatchFileSystem(uint64_t Device,
+                                                         uint64_t IRP) {
+  auto *Request = requestForIRP(IRP);
+  if (!Request || Request->Completed || Request->FileSystemReceived)
+    return filesystemError("terminal dispatch requires a fresh live packet");
+  if (auto E = validateFileSystemRoute(Request->DeviceRoute,
+                                       Request->FileAddress, Request->Kind))
+    return E;
+  auto &File = FileObjects.at(Request->FileAddress);
+  if (!FileSystem.ownsDevice(Device) || File.Device != Device)
+    return filesystemError("terminal dispatch lost its bound volume");
+  auto Cursor = requestStackCursor(IRP);
+  if (!Cursor)
+    return Cursor.takeError();
+  const uint64_t Stack = IRP + IRPSize + *Cursor * StackSize;
+  auto StackFile = Memory.readInteger(Stack + StackFileOffset, 8);
+  auto Original = Memory.readInteger(IRP + IRPOriginalFileOffset, 8);
+  if (!StackFile || !Original)
+    return llvm::joinErrors(StackFile.takeError(), Original.takeError());
+  if (*StackFile != File.Address || *Original != File.Address)
+    return filesystemError("terminal packet substituted its FILE_OBJECT");
+  uint32_t Status = StatusSuccess;
+  uint64_t Information = 0;
+  if (Request->Kind == DriverRequestKind::Create) {
+    if (File.ProviderOpen || File.OpenCancelled ||
+        !FileOperations.contains(File.CreateOperation))
+      return filesystemError("CREATE lost its unpublished open operation");
+    auto Security = Memory.readInteger(Stack + StackParametersOffset, 8);
+    auto Options = Memory.readInteger(Stack + StackInputLengthOffset, 4);
+    auto Share = Memory.readInteger(Stack + StackCreateShareOffset, 2);
+    auto Flags = Memory.readInteger(Stack + StackFlagsOffset, 1);
+    auto Related = Memory.readInteger(File.Address + FileRelatedOffset, 8);
+    auto EALength = Memory.readInteger(Stack + 0x20, 4);
+    auto EABuffer = Memory.readInteger(IRP + IRPSystemBufferOffset, 8);
+    if (!Security || !Options || !Share || !Flags || !Related || !EALength ||
+        !EABuffer)
+      return llvm::joinErrors(
+          Security.takeError(),
+          llvm::joinErrors(
+              Options.takeError(),
+              llvm::joinErrors(
+                  Share.takeError(),
+                  llvm::joinErrors(
+                      Flags.takeError(),
+                      llvm::joinErrors(
+                          Related.takeError(),
+                          llvm::joinErrors(EALength.takeError(),
+                                           EABuffer.takeError()))))));
+    if (*EALength || *EABuffer)
+      return filesystemError("CREATE extended attributes are not implemented");
+    if (*Security != Request->SecurityContext || *Related != File.RelatedFile ||
+        *Flags & ~0x80u)
+      return filesystemError("CREATE changed unsupported structural fields");
+    auto Access =
+        Memory.readInteger(*Security + SecurityDesiredAccessOffset, 4);
+    if (!Access)
+      return Access.takeError();
+    if (*Access != FileOperations.at(File.CreateOperation).Access ||
+        (*Options >> 24) != 1 || (*Options & 0xffffff & ~0x61u) || *Share & ~7u)
+      return filesystemError(
+          "CREATE requires admitted FILE_OPEN access and options");
+    auto NameBuffer =
+        Memory.readInteger(File.Address + FileNameBufferOffset, 8);
+    auto NameCapacity =
+        Memory.readInteger(File.Address + FileNameOffset + 2, 2);
+    if (!NameBuffer || !NameCapacity)
+      return llvm::joinErrors(NameBuffer.takeError(), NameCapacity.takeError());
+    if (*NameBuffer != File.NameStorage || *NameCapacity > File.NameStorageSize)
+      return filesystemError("replacement filename storage is not implemented");
+    auto Name =
+        readObjectName(File.Address + FileNameOffset, MaxFileSystemPathBytes);
+    if (!Name)
+      return Name.takeError();
+    std::string Path = *Name;
+    if (File.RelatedFile) {
+      const auto Root = FileObjects.find(File.RelatedFile);
+      const auto *Node =
+          Root != FileObjects.end() && Root->second.ProviderOpen
+              ? FileSystem.nodeForOpen(*Root->second.ProviderOpen)
+              : nullptr;
+      if (!Node || Node->Kind != DriverFileNodeKind::Directory ||
+          Name->empty() || Name->front() == '\\')
+        return filesystemError("relative CREATE lost its retained directory");
+      Path = Node->Path + (Node->Path == "\\" ? "" : "\\") + *Name;
+    }
+    auto Node = FileSystem.lookupNode(Device, Path, !(*Flags & 0x80));
+    if (!Node)
+      return Node.takeError();
+    if ((*Options & 0x41) == 0x41) {
+      Status = StatusInvalidParameter;
+    } else if (!*Node) {
+      const auto Last = Path.rfind('\\');
+      auto Parent = FileSystem.lookupNode(
+          Device, Last ? Path.substr(0, Last) : "\\", !(*Flags & 0x80));
+      if (!Parent)
+        return Parent.takeError();
+      Status = *Parent && (*Parent)->Kind == DriverFileNodeKind::Directory
+                   ? StatusObjectNameNotFound
+                   : StatusObjectPathNotFound;
+    } else if ((*Options & 1) &&
+               (*Node)->Kind != DriverFileNodeKind::Directory) {
+      Status = StatusNotADirectory;
+    } else if ((*Options & 0x40) &&
+               (*Node)->Kind == DriverFileNodeKind::Directory) {
+      Status = StatusFileIsADirectory;
+    } else if ((*Node)->Kind == DriverFileNodeKind::File &&
+               (*(*Node)->Attributes & 1) && (*Access & 0x6)) {
+      Status = StatusAccessDenied;
+    } else {
+      auto Open = FileSystem.reserveOpen(Device, *(*Node)->FileID, File.Address,
+                                         uint32_t(*Access), uint32_t(*Share));
+      if (!Open)
+        return Open.takeError();
+      Status = Open->Status;
+      if (!Status) {
+        File.ProviderOpen = Open->Token;
+        const auto *State = FileSystem.findOpen(Open->Token);
+        const uint32_t Demand = State->SharingDemand;
+        for (unsigned I = 0; I != 6; ++I) {
+          const bool Value = I < 3 ? (Demand & (1u << I)) != 0
+                                   : Demand && (*Share & (1u << (I - 3)));
+          if (auto E = Memory.writeInteger(
+                  File.Address + FileReadAccessOffset + I, Value, 1))
+            return E;
+        }
+        Information = 1; // FILE_OPENED; the declared node is unchanged.
+      }
+    }
+  } else {
+    if (!File.ProviderOpen || !FileSystem.findOpen(*File.ProviderOpen))
+      return filesystemError("lifecycle packet lost its provider token");
+    if (Request->Kind == DriverRequestKind::Cleanup)
+      if (auto E = FileSystem.cleanupOpen(*File.ProviderOpen))
+        return E;
+  }
+  Request->FileSystemReceived = true;
+  associateFileRequest(Result.Requests[Request->ResultIndex], File);
+  if (auto E = Memory.writeInteger(IRP + IRPStatusOffset, Status, 4))
+    return E;
+  if (auto E = Memory.writeInteger(IRP + IRPInformationOffset, Information, 8))
+    return E;
+  Request->IOStatusWritten.fill(true);
+  if (auto E = completeRequest(IRP, 0))
+    return E;
+  if (PendingWdmCall)
+    IRPCalls.at(PendingWdmCall->Token.ID).ReturnValue = Status;
+  return Status;
 }
 } // namespace neverd::emulation

@@ -679,7 +679,7 @@ PASSIVE_LEVEL에서 길이가 4 미만이면 결과에 접근하지 않고 `STAT
 
 `RtlCaptureContext`는 checked-x64 Unicorn/KVM/WHP의 가져오기/동적 호출에 같은 구현을 사용하며 IRQL <= DISPATCH_LEVEL을 요구합니다. 16바이트 정렬된 읽기/쓰기 가능한 1232바이트 커널 레코드의 `[48,72)`, `[120,262)`, `[280,284)`, `[416,672)`만 씁니다. 나머지와 x87 데이터/포인터, MXCSR mask는 보존합니다. ContextFlags=`0x10000f`, 호출자 RSP=진입 RSP+8, RIP는 실제 반환 슬롯입니다. 진입 RSP-8에 8바이트 플래그를 쓰고 RAX는 0 확장 EFLAGS, 산술 플래그는 ADD(진입 RSP-8,8) 결과입니다. DS/ES/FS/GS는 checked 논리 SS이며 호스트나 원시 전송 값이 아닙니다. 전체 레코드와 반환/임시 슬롯은 일반 커널 RAM, 객체 수명, 권한, 유일한 물리 매핑을 검사하며 겹침을 거부합니다. 진입 RSP의 16 나머지는 8입니다. 수집/검사 실패는 CPU/RAM을 바꾸지 않고 legacy는 거부합니다. 모든 Windows 구현을 뜻하지 않으며 덮어쓴 뒤에도 환경 의존성을 유지하여 UNPACK 복원이나 기호 전제를 허가하지 않습니다.
 
-파일 본체의 주소별 신원은 시나리오 핸들, 추가 핸들, 호출자 포인터가 공유합니다. ObOpenObjectByPointer는 생성된 FILE_OBJECT의 커널 접근과 선택적 OBJ_KERNEL_HANDLE을 지원하며 일반 권한을 구체적 권한으로 변환합니다. 프로세스의 마지막 핸들을 닫을 때 다른 프로세스에 핸들이 남으면 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL을, 전체 마지막이면 CLEANUP을 보냅니다. 지연된 CLEANUP은 선언된 하위 응답을 보존합니다. 번호를 재사용해도 CLOSE는 마지막 핸들, 포인터, 종료 후속 호출을 기다립니다. 커널 핸들의 CLEANUP은 유효 프로세스를 잠시 시스템으로 바꾸면서 스레드, 생성 프로세스, PreviousMode를 유지하며 CLOSE는 실제 해제 프로세스로 돌아옵니다. 대기 중인 콜백은 해제자를 중지시킵니다. CREATE 실패는 참조된 저장소만 남기고 장치 연결을 없앱니다. 연결된 본체는 DEVICE_OBJECT.ReferenceCount에 한 번만 포함됩니다. WDM과 KMDF가 수명을 공유하며 일반 KMDF 장치는 LOCK_CONTROL을 STATUS_INVALID_DEVICE_REQUEST로 완료합니다. 종료 콜백 중 재열기, 미완료 파일 I/O 중 닫기, KMDF 필터의 LOCK_CONTROL 전달, 이름 조회 및 공급자의 파일 I/O는 미지원입니다.
+파일 본체의 주소별 신원은 시나리오 핸들, 추가 핸들, 호출자 포인터가 공유합니다. ObOpenObjectByPointer는 생성된 FILE_OBJECT의 커널 접근과 선택적 OBJ_KERNEL_HANDLE을 지원하며 일반 권한을 구체적 권한으로 변환합니다. 프로세스의 마지막 핸들을 닫을 때 다른 프로세스에 핸들이 남으면 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL을, 전체 마지막이면 CLEANUP을 보냅니다. 지연된 CLEANUP은 선언된 하위 응답을 보존합니다. 번호를 재사용해도 CLOSE는 마지막 핸들, 포인터, 종료 후속 호출을 기다립니다. 커널 핸들의 CLEANUP은 유효 프로세스를 잠시 시스템으로 바꾸면서 스레드, 생성 프로세스, PreviousMode를 유지하며 CLOSE는 실제 해제 프로세스로 돌아옵니다. 대기 중인 콜백은 해제자를 중지시킵니다. 공급자의 열기가 성립하기 전에 CREATE가 실패하면 참조된 저장소만 남기고 장치 연결을 없앱니다. 명시적으로 취소된 열기는 CLOSE까지 장치를 유지합니다. 연결된 본체는 DEVICE_OBJECT.ReferenceCount에 한 번만 포함됩니다. WDM과 KMDF가 수명을 공유하며 일반 KMDF 장치는 LOCK_CONTROL을 STATUS_INVALID_DEVICE_REQUEST로 완료합니다. 종료 콜백 중 재열기, 미완료 파일 I/O 중 닫기, KMDF 필터의 LOCK_CONTROL 전달, 이름 조회 및 공급자의 데이터／제어 I/O는 미지원입니다.
 
 ## 파일 정보 조회 IRP
 
@@ -698,7 +698,7 @@ PASSIVE_LEVEL에서 길이가 4 미만이면 결과에 접근하지 않고 `STAT
 
 ## 선언된 파일 시스템 목록
 
-선택 항목 `filesystem`은 DriverEntry 전에 세션 볼륨을 선언합니다. 생략은 가용성 미상이며 `[]`는 공급자가 없음을 뜻합니다. 빈 볼륨에도 명시적 루트 디렉터리가 필요합니다. 호스트 파일을 읽거나 파일 I/O 성공을 가정하지 않습니다. 장치 조회, 포인터 참조, 게스트 필터 연결은 같은 장치 식별자를 사용합니다. 생성／열기, 메타데이터 조회, 읽기／쓰기, 디렉터리 열거 및 제어는 아직 지원하지 않으며, 선언된 볼륨이 포함된 경로는 파일 객체 생성이나 IRP 제출 전에 거부합니다.
+선택적 `filesystem`은 DriverEntry 전에 세션 볼륨을 선언합니다. 생략은 가용성 미상, `[]`는 공급자 없음을 뜻하며 각 볼륨은 루트를 명시해야 합니다. 기존 노드는 `ZwOpenFile` 및 `ZwCreateFile`, `IoCreateFile`의 FILE_OPEN을 통해 실제 CREATE 요청으로 열 수 있습니다. 이름 조회, 게스트 필터, 공유, 핸들과 포인터 수명은 공통 소유자를 사용하며 호스트 파일을 읽지 않습니다. 생성, 덮어쓰기, 삭제, 메타데이터 조회, 데이터 I/O, 열거 및 제어는 아직 지원하지 않습니다.
 
 이름과 경로는 출력 가능한 ASCII이며 대소문자를 무시하고 부모 디렉터리를 명시해야 합니다. 64비트 파일 ID는 볼륨 내에서 고유합니다. 별칭, 스트림, 링크, 재분석 지점, Unicode는 지원하지 않습니다. 종류, 속성, 할당 크기와 네 개의 음이 아닌 signed64 타임스탬프는 0도 명시해야 합니다. 파일은 빈 문자열을 포함한 정확한 16진수 `data`가 필요하며 EOF는 바이트 수입니다. 디렉터리는 data 없이 할당 크기 0입니다. 섹터는 512–4096의 2의 거듭제곱이고 할당은 섹터 정렬 및 EOF 이상, 마스크는 섹터보다 작은 2^n−1입니다. `full_access`는 ACL 거부만 제외합니다.
 
@@ -731,3 +731,6 @@ PASSIVE_LEVEL에서 길이가 4 미만이면 결과에 접근하지 않고 `STAT
 ```
 
 `configuration.filesystem`은 입력이며 최상위 `filesystem`은 독립 상태에 `device_object`와 노드 `end_of_file`을 추가합니다. 실행 또는 투영 검증 중지 후에도 상태는 남습니다. `devices`는 게스트 장치만 포함합니다. 언로드 후 세션 볼륨은 남을 수 있지만 게스트 참조, 핸들, 연결 및 IRP는 해제해야 합니다. `[]`를 포함한 선언은 복원되지 않은 의존성을 남기며 실행 가능한 UNPACK 복원을 막습니다. 구형 Unicorn은 중지 전 거부된 쓰기를 반영할 수 있으며 진단에 투영 오류가 남습니다.
+
+
+ASCII 이름, 네임스페이스 링크, RootDirectory로 유지되는 디렉터리 핸들을 지원합니다. 루트 접미사 `\`와 지원하지 않는 접미사 없는 볼륨 열기는 구분됩니다. 디렉터리／비디렉터리 및 비경고 동기 옵션을 지원합니다. `IoCancelFileOpen`은 아직 게시되지 않은 하위 성공 열기에 CLEANUP을 보내며 마지막 참조 해제가 CLOSE를 보냅니다. 취소 없는 상위 실패는 거부합니다. DriverEntry 핸들은 DriverUnload에서 닫을 수 있습니다. 비동기 작업과 중첩 해제에서도 완료, 디스패치, API 반환값을 유지합니다. 보고서는 `file_object`, `file_open_operation`, `filesystem_device`, `filesystem_file_id`를 사용하며 드라이버 생성 요청의 `file`은 null입니다. EA, 장치 힌트, 바이너리 ID, 재분석, oplock, 트랜잭션, ACL, 파일명 저장소 교체 및 프레임워크 경로는 미지원입니다.

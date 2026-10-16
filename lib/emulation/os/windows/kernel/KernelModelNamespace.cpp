@@ -154,7 +154,10 @@ llvm::Expected<uint32_t> KernelModel::mapObjectAccess(ObjectKind Kind,
 
 llvm::Expected<KernelModel::ObjectLookup>
 KernelModel::lookupNamedObject(llvm::StringRef Name, uint64_t Root,
-                               uint32_t Attributes, bool OpenLink) {
+                               uint32_t Attributes, bool OpenLink,
+                               bool ParseDevice, unsigned LinkDepth) {
+  if (LinkDepth >= 16)
+    return namespaceError("symbolic-link traversal exceeds its bounded depth");
   std::string Path = Name.str();
   const bool Fold = Attributes & ObjectCaseInsensitive;
   if (Root) {
@@ -179,10 +182,11 @@ KernelModel::lookupNamedObject(llvm::StringRef Name, uint64_t Root,
   if (llvm::StringRef(Path).equals_insensitive("\\Registry") ||
       llvm::StringRef(Path).starts_with_insensitive("\\Registry\\"))
     return namespaceError("registry name parsing requires a registry open API");
-  if (Path.size() > profile::MaxDeviceNameSize)
+  if (Path.size() >
+      profile::MaxDeviceNameSize + (ParseDevice ? MaxFileSystemPathBytes : 0))
     return namespaceError("object path exceeds the bounded namespace size");
-  if (Path.size() > 1 &&
-      (Path.back() == '\\' || llvm::StringRef(Path).contains("\\\\")))
+  if (Path.size() > 1 && ((!ParseDevice && Path.back() == '\\') ||
+                          llvm::StringRef(Path).contains("\\\\")))
     return ObjectLookup{StatusObjectNameInvalid};
   auto Find = [&](llvm::StringRef Candidate) -> uint64_t {
     for (const auto &[Object, State] : ReferencedObjects) {
@@ -207,10 +211,19 @@ KernelModel::lookupNamedObject(llvm::StringRef Name, uint64_t Root,
     if (!Object)
       return ObjectLookup{Last ? StatusObjectNameNotFound
                                : StatusObjectPathNotFound};
+    if (ParseDevice && ReferencedObjects.at(Object).Kind == ObjectKind::Device)
+      return ObjectLookup{StatusSuccess, Object, Last ? "" : Path.substr(End)};
+    if (ParseDevice)
+      if (const auto Link = SymbolicLinks.find(Object);
+          Link != SymbolicLinks.end() && (!Last || !OpenLink))
+        return lookupNamedObject(Link->second.Target +
+                                     (Last ? "" : Path.substr(End)),
+                                 0, Attributes, false, true, LinkDepth + 1);
     if (Last) {
       if (const auto Link = SymbolicLinks.find(Object);
           Link != SymbolicLinks.end() && !OpenLink)
-        return lookupNamedObject(Link->second.Target, 0, Attributes, false);
+        return lookupNamedObject(Link->second.Target, 0, Attributes, false,
+                                 ParseDevice, LinkDepth + 1);
       return ObjectLookup{StatusSuccess, Object};
     }
     if (ReferencedObjects.at(Object).Kind != ObjectKind::Directory)

@@ -216,7 +216,8 @@ public:
       FrameworkCallbackLock,
       FileClose,
       FileHandleClose,
-      FileInformationQuery
+      FileInformationQuery,
+      FileOperation
     };
     Kind Type = Kind::Dispatcher;
     uint64_t Object = 0;
@@ -237,6 +238,13 @@ public:
   std::optional<uint64_t> takeFileQueryContinuation();
   llvm::Expected<std::optional<uint64_t>>
   resumeFileInformationQuery(uint64_t ID);
+  struct FileAPIContinuation {
+    bool Query = false;
+    uint64_t ID = 0;
+  };
+  std::optional<FileAPIContinuation> takeFileAPIContinuation();
+  llvm::Expected<std::optional<uint64_t>>
+  resumeFileAPI(FileAPIContinuation Continuation);
   std::optional<uint64_t> nextEventTime() const;
   bool hasQueuedDPC() const { return Scheduler.hasQueuedDPC(); }
   bool hasQueuedPriorityCallback() const {
@@ -989,11 +997,12 @@ private:
   struct ObjectLookup {
     uint64_t Status;
     uint64_t Object = 0;
+    std::string RemainingName;
   };
-  llvm::Expected<ObjectLookup> lookupNamedObject(llvm::StringRef Name,
-                                                 uint64_t Root,
-                                                 uint32_t Attributes,
-                                                 bool OpenLink);
+  llvm::Expected<ObjectLookup>
+  lookupNamedObject(llvm::StringRef Name, uint64_t Root, uint32_t Attributes,
+                    bool OpenLink, bool ParseDevice = false,
+                    unsigned LinkDepth = 0);
   std::string objectName(uint64_t Object) const;
   uint64_t findSymbolicLink(llvm::StringRef Key) const;
   const ObjectHandle *findObjectHandle(uint64_t Handle) const;
@@ -1200,7 +1209,10 @@ private:
   uint64_t FileSystemProviderDriver = 0;
   uint64_t deviceOwnerDriver(DeviceOwnerKind Kind) const;
   llvm::Error initializeFileSystem(const DriverOptions &Options);
-  llvm::Error validateFileSystemRoute(llvm::ArrayRef<uint64_t> Route) const;
+  llvm::Error validateFileSystemRoute(
+      llvm::ArrayRef<uint64_t> Route, uint64_t FileObject = 0,
+      DriverRequestKind Kind = DriverRequestKind::DeviceControl) const;
+  llvm::Expected<uint64_t> dispatchFileSystem(uint64_t Device, uint64_t IRP);
   bool PnpDevicesPrepared = false;
   std::vector<DriverPnpDevice> ConfiguredPnpDevices;
   std::map<std::string, PnpDeviceRecord> PnpDevices;
@@ -1233,6 +1245,8 @@ private:
     std::optional<size_t> SourceIndex;
   };
   struct OpenFile {
+    enum class Origin { Scenario, DriverCreate };
+    Origin Source = Origin::Scenario;
     uint64_t Address = 0;
     uint64_t Device = 0;
     /// Stable lifecycle owner even after the opened FDO is detached.
@@ -1244,10 +1258,20 @@ private:
     bool ScenarioCleanupRequested = false;
     uint32_t HandleCloseHolds = 0;
     uint32_t InternalIOHolds = 0;
-    bool QueryEventInitialized = false;
+    bool FileEventInitialized = false;
+    uint64_t CreateOperation = 0;
+    std::optional<uint64_t> ProviderOpen;
+    uint64_t NameStorage = 0;
+    uint64_t NameStorageSize = 0;
+    bool OpenCancelled = false;
+    uint64_t RelatedFile = 0;
     std::optional<DeferredFileClose> DeferredCleanup;
     std::optional<DeferredFileClose> DeferredClose;
   };
+  bool owesFileClose(const OpenFile &File) const;
+  void associateFileRequest(DriverRequestResult &Observation,
+                            const OpenFile &File) const;
+  llvm::Error validateFileSystemOpenBindings() const;
   // Scenario identifiers name an open instance, not its object-manager body.
   // A new CREATE may reuse an identifier while an older body remains held.
   std::map<uint32_t, uint64_t> Files;
@@ -1255,7 +1279,9 @@ private:
   llvm::Expected<Invocation> beginFileRequest(const DriverRequest &Input,
                                               std::optional<size_t> SourceIndex,
                                               size_t Index,
-                                              uint64_t RetainedFile = 0);
+                                              uint64_t RetainedFile = 0,
+                                              uint64_t DispatchDevice = 0,
+                                              uint64_t FileOperationID = 0);
   llvm::Error retireFileIfUnreferenced(
       uint64_t Object, std::optional<uint32_t> CallerProcess = std::nullopt);
   llvm::Error tryFinalizeFileClose(uint64_t IRP);
@@ -1305,6 +1331,36 @@ private:
   llvm::Error waitForFileInformationQuery(uint64_t ID);
   llvm::Expected<std::optional<uint64_t>>
   finishFileInformationDispatch(uint64_t Token, uint64_t ReturnValue);
+  struct FileOperation {
+    bool CancelOpen = false;
+    uint64_t File = 0, IRP = 0, Root = 0;
+    uint64_t HandleOutput = 0, StatusOutput = 0, ReservedHandle = 0;
+    uint64_t Storage = 0, StorageSize = 0, AccessState = 0;
+    uint64_t CallerExecution = 0, CallerThread = 0;
+    uint32_t CallerProcess = 0, Access = 0, Attributes = 0;
+    uint32_t Status = 0;
+    uint64_t Information = 0;
+    size_t ResultIndex = 0;
+    bool Released = false, RootReleased = false, CompletionPublished = false;
+  };
+  std::map<uint64_t, FileOperation> FileOperations;
+  uint64_t NextFileOperation = 1;
+  std::optional<uint64_t> PendingFileOperation;
+  llvm::Expected<uint64_t> createFile(llvm::ArrayRef<uint64_t> A, bool OpenOnly,
+                                      const KernelContextCapture *Context);
+  llvm::Expected<uint64_t> cancelFileOpen(llvm::ArrayRef<uint64_t> A,
+                                          const KernelContextCapture *Context);
+  llvm::Expected<bool> fileOperationReady(uint64_t ID) const;
+  llvm::Error waitForFileOperation(uint64_t ID);
+  llvm::Expected<std::optional<uint64_t>> resumeFileOperation(uint64_t ID);
+  llvm::Expected<std::optional<uint64_t>>
+  finishFileOperationDispatch(uint64_t Token, uint64_t ReturnValue);
+  llvm::Error startFileOperationDispatch(uint64_t ID, const Invocation &Call);
+  llvm::Error prepareCancelFileOpenPacket(uint64_t IRP, uint64_t ID);
+  llvm::Error publishFileOperationCompletion(uint64_t IRP);
+  void retainReservedObjectHandle(uint64_t Handle, uint64_t Object,
+                                  uint32_t Access, uint32_t Attributes,
+                                  uint32_t ProcessID);
   bool Unloading = false;
   bool Unloaded = false;
   struct RequestedPower {
@@ -1392,6 +1448,8 @@ private:
     /// Internal query producers borrow caller storage through completion.
     bool BorrowedSystemBuffer = false;
     uint64_t FileQueryOperation = 0;
+    uint64_t FileOperation = 0;
+    bool FileSystemReceived = false;
     uint64_t UserBuffer = 0;
     uint64_t UserInput = 0;
     std::vector<UserRegion> UserRegions;
@@ -1439,7 +1497,8 @@ private:
     Cancel,
     FileClose,
     FileHandleClose,
-    FileInformationQuery
+    FileInformationQuery,
+    FileOperation
   };
   struct IRPCall {
     IRPCallKind Kind;
@@ -1451,6 +1510,7 @@ private:
     std::optional<uint32_t> FrameworkDispatchStatus;
     uint64_t FileHandleOperation = 0;
     uint64_t FileQueryOperation = 0;
+    uint64_t FileOperation = 0;
   };
   struct ProviderReceipt {
     uint64_t Device = 0;
@@ -1683,7 +1743,9 @@ private:
                                                   uint64_t DataOffset,
                                                   uint64_t DataSize);
   llvm::Expected<uint64_t> makeUnicodeString(const std::string &Text);
-  llvm::Expected<std::string> readObjectName(uint64_t Address);
+  llvm::Expected<std::string>
+  readObjectName(uint64_t Address,
+                 size_t MaxCharacters = profile::MaxDeviceNameSize);
   llvm::Expected<uint64_t> createDevice(llvm::ArrayRef<uint64_t> Arguments);
   struct DeviceCreation {
     uint32_t Status;

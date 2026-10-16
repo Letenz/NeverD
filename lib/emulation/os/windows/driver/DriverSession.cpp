@@ -587,7 +587,7 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
     std::optional<KernelModel::Wait> Wait;
     std::optional<uint64_t> ResumeValue;
     std::optional<uint64_t> FileHandleContinuation;
-    std::optional<uint64_t> FileQueryContinuation;
+    std::optional<KernelModel::FileAPIContinuation> FileAPIContinuation;
     std::optional<uint8_t> ResumeIRQL;
     size_t WaitEvent = 0;
     bool PrivateStack = false;
@@ -859,7 +859,7 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
             return Order.takeError();
           Frame->Slice->ReadyOrder = *Order;
         }
-        if (!BeforeChild && !Frame->FileQueryContinuation) {
+        if (!BeforeChild && !Frame->FileAPIContinuation) {
           Frame->ResumeValue = **Status;
           Result.Calls[Frame->WaitEvent].Result = **Status;
         }
@@ -1446,10 +1446,10 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
         Stop(DriverStopReason::Returned, "");
         break;
       }
-      if (auto Query = Kernel.takeFileQueryContinuation()) {
-        if (Frame.FileQueryContinuation)
-          return failure("file query cannot replace its caller continuation");
-        Frame.FileQueryContinuation = *Query;
+      if (auto Query = Kernel.takeFileAPIContinuation()) {
+        if (Frame.FileAPIContinuation)
+          return failure("file API cannot replace its caller continuation");
+        Frame.FileAPIContinuation = *Query;
         Frame.ChildCall = Kernel.takeGuestCall();
         Frame.Wait = Kernel.takeWait();
         Frame.WaitEvent = Result.Calls.size() - 1;
@@ -1663,47 +1663,6 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
           }
           Current->PendingEntry.reset();
         }
-        if (Current->FileQueryContinuation && !Current->ChildCall &&
-            !Current->Wait) {
-          Kernel.enterExecution(Current->Base, Current->ThreadKey,
-                                Current->ReturnToken.ID
-                                    ? Current->ReturnToken
-                                    : Kernel.scheduledGuestCall(Current->ID));
-          if (auto E = Kernel.activateInheritedProcess()) {
-            ModelFailure(std::move(E));
-            return llvm::Error::success();
-          }
-          auto Continued = Kernel.resumeFileInformationQuery(
-              *Current->FileQueryContinuation);
-          if (!Continued) {
-            ModelFailure(Continued.takeError());
-            return llvm::Error::success();
-          }
-          Current->ChildCall = Kernel.takeGuestCall();
-          Current->Wait = Kernel.takeWait();
-          if (*Continued) {
-            if (Current->ChildCall || Current->Wait) {
-              ModelFailure(failure("file query published before its callback"));
-              return llvm::Error::success();
-            }
-            Current->FileQueryContinuation.reset();
-            Current->ResumeValue = **Continued;
-            Result.Calls[Current->WaitEvent].Result = **Continued;
-          } else if (!Current->ChildCall) {
-            if (!Current->Wait) {
-              ModelFailure(failure(session_diagnostic::MissingModelCallback));
-              return llvm::Error::success();
-            }
-            Current->PausedModel = Kernel.captureExecutionContext();
-            if (Current->ID)
-              if (auto E = Kernel.suspendScheduled(Current->ID)) {
-                ModelFailure(std::move(E));
-                return llvm::Error::success();
-              }
-            Waiting.push_back(std::move(Current));
-            continue;
-          }
-        }
         if (Current->FileHandleContinuation) {
           Kernel.enterExecution(Current->Base, Current->ThreadKey,
                                 Current->ReturnToken.ID
@@ -1723,9 +1682,51 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
               ModelFailure(failure(session_diagnostic::MissingModelCallback));
               return llvm::Error::success();
             }
+            if (!Current->FileAPIContinuation) {
+              Current->ResumeValue = **Continued;
+              Result.Calls[Current->WaitEvent].Result = **Continued;
+            }
+          } else if (!Current->ChildCall) {
+            Current->PausedModel = Kernel.captureExecutionContext();
+            if (Current->ID)
+              if (auto E = Kernel.suspendScheduled(Current->ID)) {
+                ModelFailure(std::move(E));
+                return llvm::Error::success();
+              }
+            Waiting.push_back(std::move(Current));
+            continue;
+          }
+        }
+        if (Current->FileAPIContinuation && !Current->ChildCall &&
+            !Current->Wait) {
+          Kernel.enterExecution(Current->Base, Current->ThreadKey,
+                                Current->ReturnToken.ID
+                                    ? Current->ReturnToken
+                                    : Kernel.scheduledGuestCall(Current->ID));
+          if (auto E = Kernel.activateInheritedProcess()) {
+            ModelFailure(std::move(E));
+            return llvm::Error::success();
+          }
+          auto Continued = Kernel.resumeFileAPI(*Current->FileAPIContinuation);
+          if (!Continued) {
+            ModelFailure(Continued.takeError());
+            return llvm::Error::success();
+          }
+          Current->ChildCall = Kernel.takeGuestCall();
+          Current->Wait = Kernel.takeWait();
+          if (*Continued) {
+            if (Current->ChildCall || Current->Wait) {
+              ModelFailure(failure("file API published before its callback"));
+              return llvm::Error::success();
+            }
+            Current->FileAPIContinuation.reset();
             Current->ResumeValue = **Continued;
             Result.Calls[Current->WaitEvent].Result = **Continued;
           } else if (!Current->ChildCall) {
+            if (!Current->Wait) {
+              ModelFailure(failure(session_diagnostic::MissingModelCallback));
+              return llvm::Error::success();
+            }
             Current->PausedModel = Kernel.captureExecutionContext();
             if (Current->ID)
               if (auto E = Kernel.suspendScheduled(Current->ID)) {
@@ -1774,7 +1775,7 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
         }
         if (!Current)
           continue;
-        if (Current->FileQueryContinuation && !Current->ChildCall &&
+        if (Current->FileAPIContinuation && !Current->ChildCall &&
             !Current->Wait)
           continue;
         if (Current->Exception) {
@@ -1983,7 +1984,7 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
             }
             if (*Completion) {
               if (!Parent->Wait) {
-                if (!Parent->FileQueryContinuation) {
+                if (!Parent->FileAPIContinuation) {
                   Parent->ResumeValue = **Completion;
                   Result.Calls[Parent->WaitEvent].Result = **Completion;
                 }

@@ -80,8 +80,8 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A,
   if (*Disabled)
     return queryError("requires enabled special kernel APCs");
   if (Unloading || Unloaded || PendingWdmCall || PendingWait ||
-      PendingFileQueryContinuation || NextFileInformationQuery == UINT64_MAX ||
-      NextIRPCall == UINT64_MAX)
+      PendingFileQueryContinuation || PendingFileOperation ||
+      NextFileInformationQuery == UINT64_MAX || NextIRPCall == UINT64_MAX)
     return queryError("cannot replace an outstanding continuation");
   const auto Found = FileObjects.find(A[0]);
   if (Found == FileObjects.end() || (Found->second.State != FileState::Open &&
@@ -140,7 +140,7 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A,
   // resource failure leaves that reset visible without changing ReturnedLength.
   if (!File.Asynchronous) {
     const uint64_t FileEvent = File.Address + FileEventOffset;
-    File.QueryEventInitialized = true;
+    File.FileEventInitialized = true;
     auto Initialized =
         Dispatcher.isWaitable(FileEvent)
             ? Dispatcher.call("KeResetEvent", {FileEvent}, CurrentIRQL,
@@ -184,6 +184,7 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A,
   Observation.RequestorProcessID = Process->ProcessID;
   Observation.FileInformationClass = Class;
   Observation.IRP = *Packet;
+  associateFileRequest(Observation, File);
   if (const auto *Owner = pnpDeviceForPDO(File.PnpDevice))
     Observation.DeviceID = Result.PnpDevices[Owner->ResultIndex].ID;
   const size_t Index = Result.Requests.size();
