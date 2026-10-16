@@ -328,6 +328,17 @@ structure offsets and their undo included, and the GUI controller test
 `structureOffsetsRankTypesByTheCodesAccesses` drives T through the picker on
 the mock engine.
 
+`TypeParse.ReadsOneFunctionsDeclarationAgainstTheLibrary` reads a function's
+declaration against the library without changing it, and refuses one that
+names a type the library lacks, defines one, or declares more than one
+function. `SessionCAPITest.FunctionDeclarationsBindByAddress` states a
+declaration for the fixture's `use` over its PDB's, through the C API:
+where each parameter arrives, the records the first parameter's accesses
+rank, the declaration Convert to struct * proposes, the refused
+declarations, and the sidecar's load. `FunctionDeclarationsNeedNoDebugInformation`
+does the same on the image read without its PDB, of a type the user
+declares, and checks that another function's text stays as it was.
+
 `HeaderLibrary.*` reads the embedded Windows kernel library and checks how a
 header library joins a program's types. After running
 `scripts/generate_windows_kernel_types.py`, check the library in every
