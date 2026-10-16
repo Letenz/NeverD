@@ -879,6 +879,22 @@
         <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
         <translation>Показать операнд как поле локального типа; типы упорядочены по тому, насколько им соответствуют обращения кода</translation>
     </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>Пре&amp;вратить в struct *...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>Задать текущей функции или параметру под курсором тип C, проверяемый по мере ввода</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>Сделать параметр под курсором указателем на локальный тип; типы упорядочены по тому, насколько им соответствуют обращения через него</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>Задать тип(&amp;Y)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2307,6 +2323,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Local Types</source>
         <translation>Локальные типы</translation>
+    </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>Не удалось преобразовать параметр: %1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>Поставьте курсор в функцию, чтобы задать её тип</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>Поставьте курсор на параметр функции, чтобы преобразовать его</translation>
     </message>
     <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
@@ -4088,6 +4116,117 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>write</source>
         <translation>запись</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>&amp;Имя:</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>Указатель на %1, запись из %n байта</numerusform>
+            <numerusform>Указатель на %1, запись из %n байт</numerusform>
+            <numerusform>Указатель на %1, запись из %n байт</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>Преобразовать в struct *</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>Чтение того, что код делает через параметр…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>Имя параметра, которое сохраняет объявление</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>Типы упорядочены по тому, как %n обращение функции через %1, куда передаётся %2, попадает на их поля.</numerusform>
+            <numerusform>Типы упорядочены по тому, как %n обращения функции через %1, куда передаётся %2, попадают на их поля.</numerusform>
+            <numerusform>Типы упорядочены по тому, как %n обращений функции через %1, куда передаётся %2, попадают на их поля.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>регистр</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1, %n байт</numerusform>
+            <numerusform>%1, %n байта</numerusform>
+            <numerusform>%1, %n байт</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1, параметр %2 функции %3, передаётся в %4.</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1, параметр %2 функции %3.</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Применить</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>Передаётся в</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>В столбце %1: %2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>Вернуть объявление функции её отладочной информации и анализу</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Имя</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>Чтение объявления…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>Читается: %n параметр</numerusform>
+            <numerusform>Читается: %n параметра</numerusform>
+            <numerusform>Читается: %n параметров</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>Задать тип %1</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>Объявление %1 в том виде, в каком его печатает декомпилятор; читается по локальным типам по мере ввода.</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>Объявление, которое вы дали %1; читается по локальным типам по мере ввода.</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>Объявление функции не читается, поэтому её параметры нельзя типизировать по одному. Задайте вместо этого тип функции.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Тип</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>Использовать тип &amp;анализа</translation>
     </message>
 </context>
 </TS>

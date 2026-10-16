@@ -879,6 +879,22 @@
         <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
         <translation>將運算元顯示為本機型別的成員，型別依程式碼的存取與其相符的程度排序</translation>
     </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>轉換為 struct *(&amp;V)...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>為目前函式或游標處的參數指定 C 型別，輸入時即時檢查</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>將游標處的參數改為指向本機型別的指標，型別依其存取與之相符的程度排序</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>設定型別(&amp;Y)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2295,6 +2311,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Local Types</source>
         <translation>本機型別</translation>
+    </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>無法轉換參數：%1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>請將游標放在函式內以設定其型別</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>請將游標放在函式的參數上以轉換它</translation>
     </message>
     <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
@@ -4046,6 +4074,109 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>write</source>
         <translation>寫入</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>名稱(&amp;N)：</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>指向 %1 的指標，該結構 %n 位元組</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>轉換為 struct *</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>正在讀取程式碼經由該參數所做的存取…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>參數名稱，宣告中會保留</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>依函式經由 %1（%2 由此傳入）的 %n 次存取落在各型別成員上的情形排序。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>該暫存器</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1，%n 位元組</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1，%3 的第 %2 個參數，經 %4 傳入。</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1，%3 的第 %2 個參數。</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>套用</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>傳入位置</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>第 %1 欄：%2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>將函式宣告交還給偵錯資訊與分析</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名稱</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>正在讀取宣告…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>可讀：%n 個參數</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>設定 %1 的型別</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>反編譯器印出的 %1 宣告，輸入時依本機型別讀取。</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>你為 %1 指定的宣告，輸入時依本機型別讀取。</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>函式的宣告無法讀取，因此不能逐一設定參數型別。請改為設定函式的型別。</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>型別</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>使用分析得出的型別(&amp;A)</translation>
     </message>
 </context>
 </TS>

@@ -879,6 +879,22 @@
         <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
         <translation>피연산자를 로컬 형식의 멤버로 표시합니다. 형식은 코드의 액세스가 얼마나 맞는지에 따라 정렬됩니다</translation>
     </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>struct *로 변환(&amp;V)...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>현재 함수 또는 커서 아래 매개변수에 C 형식을 지정합니다. 입력하는 동안 검사됩니다</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>커서 아래 매개변수를 로컬 형식에 대한 포인터로 만듭니다. 형식은 그 액세스가 얼마나 맞는지에 따라 정렬됩니다</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>형식 설정(&amp;Y)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2295,6 +2311,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Local Types</source>
         <translation>로컬 형식</translation>
+    </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>매개변수를 변환할 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>형식을 설정하려면 함수 안에 커서를 두세요</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>변환하려면 함수의 매개변수에 커서를 두세요</translation>
     </message>
     <message>
         <source>Could not tell whether %1 has a MAP file: %2</source>
@@ -4046,6 +4074,109 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>write</source>
         <translation>쓰기</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>이름(&amp;N):</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>%1에 대한 포인터(%n바이트 구조)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>struct *로 변환</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>코드가 매개변수를 통해 하는 일을 읽는 중…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>선언에 유지되는 매개변수 이름</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>%2이(가) 전달되는 %1을(를) 통한 함수의 액세스 %n개가 멤버에 어떻게 맞는지에 따라 형식을 정렬했습니다.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>레지스터</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1, %n바이트</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1: %3의 매개변수 %2이며 %4(으)로 전달됩니다.</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1: %3의 매개변수 %2입니다.</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>적용</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>전달 위치</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>%1번째 열: %2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>함수 선언을 디버그 정보와 분석 결과로 되돌립니다</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>이름</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>선언을 읽는 중…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>읽기 성공: 매개변수 %n개</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>%1의 형식 설정</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>디컴파일러가 출력하는 %1의 선언입니다. 입력하는 동안 로컬 형식에 따라 읽습니다.</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>%1에 지정한 선언입니다. 입력하는 동안 로컬 형식에 따라 읽습니다.</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>함수 선언을 읽을 수 없어 매개변수 형식을 하나씩 지정할 수 없습니다. 대신 함수의 형식을 설정하세요.</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>형식</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>분석 형식 사용(&amp;A)</translation>
     </message>
 </context>
 </TS>

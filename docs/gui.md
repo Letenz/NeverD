@@ -464,6 +464,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | P | Create a function at the address (**Edit → Functions** also deletes the current one) |
 | D / A / U | Make data (again for the next size) / a string / bytes of the item |
 | T | Show the operand as a structure offset, the local types ranked by the code's accesses |
+| Y | Set the type of the parameter under the pseudocode cursor, or the current function's declaration, checked as you type |
 | C | Define native instructions from the selected byte through a basic block |
 | : or ; | Comment the address |
 | Alt+M / Ctrl+M | Mark a position / jump to a marked position |
@@ -937,6 +938,33 @@ where the type no longer has a member. The command line sets it
 (`neverd operands <input> --addr <address> --struct _KTHREAD`, `--delta 16`)
 and ranks the types as the window does (`neverd types <input> --fit --func
 <function> --at <address>`, `--match <text>`, `--access 0x220:8`).
+
+**Edit → Set type** (Y, as IDA's) gives a function a C declaration of the
+program's local types, which the decompiler prints and binds each parameter
+by, ahead of the debug information. In pseudocode, with the cursor on a
+parameter, it types that parameter alone. Elsewhere, and in the disassembly,
+it edits the function's whole declaration. The dialog starts from the
+declaration as the decompiler prints it. Each keystroke reads the text
+against the local types, and the dialog then shows one of two things:
+- the resulting declaration and, for each parameter, the register or stack
+  slot it arrives in;
+- where the text stops reading and why (`At column 26: 'NOPE' names no type`),
+  where Enter puts the cursor.
+Typing a name lists the local types it matches, ranked as the
+structure offset search ranks them; Ctrl+Space lists them at once. A
+declaration the user gave can go back to what analysis and the debug
+information say. **Edit → Convert to struct *** (in the pseudocode context menu
+after Set type, as Hex-Rays offers it) makes the parameter under the cursor a
+pointer to a local type. The types are ranked by what the function does
+through the register the parameter arrives in, with the same preview of each
+access as a structure offset, and the parameter can take a new name in the
+same step. Either change is one step of undo history, kept in
+`<input>.neverd-functions.json`; callers see the new prototype. Names the user
+gave the function's locals stay while the code keeps its locals. The command
+line does the same (`neverd function-edits <input> --declaration <entry>`,
+`--retype '0=struct _KAPC *Apc' --apply`, `--check '<declaration>'`,
+`--edit <entry> --set 'type=<declaration>'`, `neverd types <input> --fit
+--func <function> --param 0`).
 
 Opening a file never starts whole-program analysis. The listing, function list,
 references and graph come from the loader and from per-function work: a

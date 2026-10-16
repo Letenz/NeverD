@@ -20,6 +20,7 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1084,14 +1085,6 @@ const char *neverd_local_types_fit_json(neverd_session_t s,
   Json accesses = query.value("accesses", Json::array());
   Json target;
   if (query.contains("target")) {
-    const auto at =
-        parseAddress(query["target"].value("address", std::string("0")));
-    if (!localTypesFixture(s) || at < RecordFunctionEntry ||
-        at > RecordFunctionEntry + 2) {
-      state.error = "the instruction at " + hexAddress(at) +
-                    " reaches no memory through a pointer";
-      return nullptr;
-    }
     const Json reads = {{{"address", hexAddress(RecordFunctionEntry)},
                          {"offset", 8},
                          {"size", 8},
@@ -1104,12 +1097,31 @@ const char *neverd_local_types_fit_json(neverd_session_t s,
                          {"offset", 16},
                          {"size", 0},
                          {"use", "address"}}};
-    const Json &own = reads[at - RecordFunctionEntry];
-    target = {{"base", "rcx"},
-              {"offset", own["offset"]},
-              {"size", own["size"]},
-              {"use", own["use"]},
-              {"accesses", reads}};
+    if (query["target"].contains("parameter")) {
+      // function_7's first parameter arrives in rcx, which every read goes
+      // through; its second is a number the code adds.
+      if (!localTypesFixture(s) || query["target"]["parameter"] != 0) {
+        state.error = "the parameter does not arrive in an integer register, "
+                      "where NeverD follows a pointer's accesses";
+        return nullptr;
+      }
+      target = {{"base", "rcx"}, {"parameter", 0}, {"accesses", reads}};
+    } else {
+      const auto at =
+          parseAddress(query["target"].value("address", std::string("0")));
+      if (!localTypesFixture(s) || at < RecordFunctionEntry ||
+          at > RecordFunctionEntry + 2) {
+        state.error = "the instruction at " + hexAddress(at) +
+                      " reaches no memory through a pointer";
+        return nullptr;
+      }
+      const Json &own = reads[at - RecordFunctionEntry];
+      target = {{"base", "rcx"},
+                {"offset", own["offset"]},
+                {"size", own["size"]},
+                {"use", own["use"]},
+                {"accesses", reads}};
+    }
     for (const auto &read : reads)
       accesses.push_back({{"offset", read["offset"]},
                           {"size", read["size"]},
@@ -1476,6 +1488,55 @@ int neverd_prepare_function_view(neverd_session_t s, neverd_va_t address,
   session(s)->preparedView = representation ? representation : "";
   return prepareMockFunction(s, address);
 }
+namespace {
+/// A function's declaration: the user's, else the one the mock prints.
+std::string mockDeclaration(neverd_session_t s, neverd_va_t address) {
+  const auto &stated = session(s)->functionAttributes;
+  if (const auto it = stated.find(address);
+      it != stated.end() && it->second.contains("type"))
+    return it->second["type"].get<std::string>();
+  if (address == RecordFunctionEntry)
+    return "int64_t function_7(void* arg0, int64_t arg1)";
+  const char *name = neverd_func_name(s, neverd_func_find_by_addr(s, address));
+  const std::string spelled = name ? name : "function";
+  neverd_free_string(name);
+  return "int " + spelled + "(void)";
+}
+
+/// The parameters of \p declaration as the mock reads them: each one's
+/// type and its name, the identifier it ends with.
+std::vector<std::pair<std::string, std::string>>
+mockParameters(const std::string &declaration) {
+  std::vector<std::pair<std::string, std::string>> parameters;
+  const auto open = declaration.find('(');
+  const auto close = declaration.rfind(')');
+  if (open == std::string::npos || close == std::string::npos || close < open)
+    return parameters;
+  std::string list = declaration.substr(open + 1, close - open - 1);
+  if (list == "void")
+    return parameters;
+  std::stringstream stream(list);
+  std::string piece;
+  while (std::getline(stream, piece, ',')) {
+    const auto first = piece.find_first_not_of(' ');
+    const auto last = piece.find_last_not_of(' ');
+    if (first == std::string::npos)
+      continue;
+    piece = piece.substr(first, last - first + 1);
+    auto begin = piece.size();
+    while (begin &&
+           (std::isalnum(static_cast<unsigned char>(piece[begin - 1])) ||
+            piece[begin - 1] == '_'))
+      --begin;
+    std::string type = piece.substr(0, begin);
+    while (!type.empty() && type.back() == ' ')
+      type.pop_back();
+    parameters.emplace_back(type, piece.substr(begin));
+  }
+  return parameters;
+}
+} // namespace
+
 const char *neverd_decompile(neverd_session_t s, neverd_va_t address) {
   ++session(s)->sourceRenders;
   if (!prepareMockFunction(s, address))
@@ -1493,6 +1554,23 @@ const char *neverd_decompile(neverd_session_t s, neverd_va_t address) {
     return copy(address == Base + 0x140
                     ? "int function_20(void) {\n  return function_22();\n}\n"
                     : "int called(void) {\n  return 42;\n}\n");
+  // function_7 reads its first parameter's members once a declaration
+  // makes it a _DEVICE *.
+  if (localTypesFixture(s) && address == RecordFunctionEntry) {
+    const std::string declaration = mockDeclaration(s, address);
+    const auto parameters = mockParameters(declaration);
+    const std::string first =
+        parameters.empty() ? std::string("arg0") : parameters[0].second;
+    const bool device =
+        !parameters.empty() &&
+        parameters[0].first.find("_DEVICE") != std::string::npos;
+    return copy(
+        "/* neverd.entry: " + hexAddress(address) + " */\n" + declaration +
+        " {\n    int64_t v1;\n\n    v1 = " +
+        (device ? first + "->Links.Flink" : "*(int64_t *)(" + first + " + 8)") +
+        ";\n    return v1 + " +
+        (device ? first + "->Type" : "*(uint16_t *)" + first) + ";\n}\n");
+  }
   std::string text;
   for (int i = 0; i < 700; ++i)
     text += "// code line " + std::to_string(i) + "\n";
@@ -2515,7 +2593,7 @@ int neverd_func_delete(neverd_session_t s, neverd_va_t address) {
   return 0;
 }
 constexpr const char *FunctionAttributeKeys[] = {"noreturn", "library",
-                                                 "static", "color"};
+                                                 "static", "color", "type"};
 int neverd_func_edit(neverd_session_t s, neverd_va_t address,
                      const char *text) {
   auto &state = *session(s);
@@ -2541,6 +2619,12 @@ int neverd_func_edit(neverd_session_t s, neverd_va_t address,
                   std::end(FunctionAttributeKeys),
                   key) == std::end(FunctionAttributeKeys)) {
       state.error = "unknown function attribute \"" + key + "\"";
+      return -1;
+    }
+    // A declaration of a type the mock's library lacks does not read.
+    if (key == "type" && value.is_string() &&
+        value.get<std::string>().find("NOPE") != std::string::npos) {
+      state.error = "the declaration does not read: 1:1: 'NOPE' names no type";
       return -1;
     }
     if (value.is_null())
@@ -2578,8 +2662,86 @@ const char *neverd_func_attributes_json(neverd_session_t s,
               {"static", stated.contains("static") ? stated["static"] : Json()},
               {"color", stated.contains("color") ? stated["color"] : Json()},
               {"purged_bytes", 0},
+              {"type", stated.contains("type") ? stated["type"] : Json()},
               {"stated", stated}};
   return copy(result.dump());
+}
+const char *neverd_func_type_json(neverd_session_t s, neverd_va_t address,
+                                  const char *options) {
+  auto &state = *session(s);
+  state.error.clear();
+  if (neverd_func_find_by_addr(s, address) < 0) {
+    state.error = "no function starts at " + hexAddress(address);
+    return nullptr;
+  }
+  Json query = Json::object();
+  try {
+    if (options && *options)
+      query = Json::parse(options);
+  } catch (const Json::exception &) {
+    state.error = "malformed request";
+    return nullptr;
+  }
+  const bool stated = state.functionAttributes.contains(address) &&
+                      state.functionAttributes[address].contains("type");
+  std::string declaration = mockDeclaration(s, address);
+  if (query.contains("declaration"))
+    declaration = query["declaration"].get<std::string>();
+  if (query.contains("parameter")) {
+    std::string type = query.value("type", std::string());
+    if (type.find("NOPE") != std::string::npos) {
+      state.error = "the type does not read: 1:1: 'NOPE' names no type";
+      return nullptr;
+    }
+    auto parameters = mockParameters(declaration);
+    const auto index = query["parameter"].get<std::size_t>();
+    if (index >= parameters.size()) {
+      state.error = "\"parameter\" is a position from 0 to " +
+                    std::to_string(parameters.size() - 1);
+      return nullptr;
+    }
+    // A type that ends in a name names the parameter too.
+    const auto named = mockParameters("f(" + type + ")");
+    if (!named.empty() && !named[0].first.empty() && !named[0].second.empty())
+      parameters[index] = named[0];
+    else
+      parameters[index].first = type;
+    std::string list;
+    for (const auto &[parameterType, name] : parameters)
+      list += (list.empty() ? "" : ", ") + parameterType +
+              (parameterType.ends_with("*") ? "" : " ") + name;
+    declaration =
+        declaration.substr(0, declaration.find('(')) + "(" + list + ")";
+  }
+  Json reply{{"entry", hexAddress(address)},
+             {"stated", stated && !query.contains("declaration") &&
+                            !query.contains("parameter")},
+             {"declaration", declaration}};
+  if (const auto bad = declaration.find("NOPE"); bad != std::string::npos) {
+    reply["problems"] = Json::array({{{"line", 1},
+                                      {"column", bad + 1},
+                                      {"message", "'NOPE' names no type"}}});
+    return copy(reply.dump());
+  }
+  static const char *const Locations[] = {"rcx", "rdx", "r8", "r9"};
+  Json parameters = Json::array();
+  std::size_t index = 0;
+  for (const auto &[type, name] : mockParameters(declaration)) {
+    Json parameter{{"name", name}, {"type", type}};
+    parameter["location"] =
+        index < 4 ? std::string(Locations[index])
+                  : "stack+0x" + hexAddress(0x28 + 8 * (index - 4)).substr(2);
+    parameters.push_back(std::move(parameter));
+    ++index;
+  }
+  const auto open = declaration.find('(');
+  const auto head = declaration.substr(0, open);
+  const auto space = head.find_last_of(" *");
+  reply["name"] = space == std::string::npos ? head : head.substr(space + 1);
+  reply["return"] = space == std::string::npos ? "int" : head.substr(0, space);
+  reply["variadic"] = false;
+  reply["parameters"] = std::move(parameters);
+  return copy(reply.dump());
 }
 const char *neverd_functions_json(neverd_session_t s) {
   std::map<std::uint64_t, Json> rows;
