@@ -4320,7 +4320,7 @@ bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
 stack-only facts cannot preserve a capture, deallocated buffers refuse and a
 frame-preserving call supplies no scalar result authority.
 
-The EH4 jump matrix repeats fifty-three capture/resumption scenarios with and
+The EH4 jump matrix repeats fifty-nine capture/resumption scenarios with and
 without GS cookies: parent and callback jumps, zero values, filter search, incoming
 parameters, retired scopes, private leaf/graph calls with a live buffer, and
 registered EH3/EH4 helpers borrowing the parent buffer and a scalar object, and
@@ -4345,7 +4345,22 @@ four calls, unwind the same finally, check the restored state and nonvolatile
 register, then raise another exception. The native mutation tests alter the saved
 state slot, read address, volatile accesses, placement, use closure and captured
 projection key while retaining verifier-clean IR. The full source profile now
-contains 198 scenarios; older compiler profiles keep their original membership.
+contains 216 scenarios; older compiler profiles keep their original membership.
+
+`longjmp-finally-{register,frame,private}-loop` and the corresponding
+`longjmp-filter-*` fixtures add 18 EH3/EH4/EH4+GS scenarios. Three iterations
+contribute observable trace digits before a suspended finally continues;
+register, parent-cell and callback-stack counters must all survive reconstruction.
+The complete profile has 4,320 original/generated executions at two bases.
+`RegistrationCallbackLoop` rejects recurrent or unknown counters, bad branch
+identities, live-buffer writes, unbalanced stacks and exhausted work, while
+accepting reordered blocks and successors. `RegistrationSEHPHICopy` checks exact
+source-edge and callback ownership. `RegistrationRecoveredCopy` authenticates
+parent escape indices, both callback frame recipes and all scalar-slot aliases;
+wrong parents, unknown recoveries, address escapes, atomic or mistyped accesses
+and observable frozen values refuse installation. Ten verifier-clean mutations
+per actual outlined copy block also reject changed recovery, storage, operations
+and control flow when replaying the linked source fixtures.
 
 The EH4/GS `longjmp-callee`, `longjmp-returning-callee` and
 `longjmp-scalar-callee` variants retain the source helper's registration while

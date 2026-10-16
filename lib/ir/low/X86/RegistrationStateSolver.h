@@ -267,6 +267,8 @@ private:
   bool validateSEHCallContinuation(size_t I, const LowOp &Op,
                                    va_t CallerEntry = 0);
   bool validateSEHInvocationBlock(size_t I);
+  std::optional<va_t> knownSuccessor(const LowBlock &Block,
+                                     const FrameTransfer &Transfer) const;
   bool transferSEHExit(size_t I, Domain &After, const LowOp &Op,
                        BlockFacts &Facts);
   bool returnNestedFinally(Domain &After, const LowOp &Op, BlockFacts &Facts,
