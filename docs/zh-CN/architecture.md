@@ -1759,3 +1759,7 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 ### 原始环境的架构归属
 
 `RecoveryArchitecture` 根据 `SpecializationOptions::Architecture` 选择原生契约，与编译主机无关。现有默认值为 x64；没有适配器的架构明确拒绝。`arch/x86_64` 负责原生选项编码、主映像范围规则、外部退出匹配成本和物理退出回执。core 负责通用预算、策略编码及图与证据的完整性。x64 选项和回执摘要保留原有字节编码；验证声明前检查预期与存储的架构标识。`RawArchitectureReceiptCompatibility` 固定重构前的摘要值，架构不匹配测试禁止把 x64 证据改标为 ARM64。这一边界尚未实现 ARM64 原生恢复。
+
+## 具体入口内存种子
+
+`SymExecConcreteShadow` 在执行前接收按地址排列的 RAM 字节；它们只进入具体状态，符号侧的入口内存仍为自由输入。C++ `LowIRConcolicOptions::InitialMemory` 默认受 `MaxMemorySeedBytes` 的 1 MiB 总量限制，零预算不接收字节；空、重叠和回绕范围明确拒绝。使用内存的报告为版本 2，保留 `InitialMemory` 和候选的 `MemorySeed`。投影仅接受已覆盖的 epoch-zero 寄存器或绝对内存来源，并用两类字节重新计算查询、从头重放及去重。缺字节、符号基址来源和近似效果继续拒绝；写入按正常别名规则修改具体内存。`ProcessView::read` 可在暂停时捕获已提交 RAM，写入前的钩子不构成完整快照。观测不证明区域归属、寿命、不变性或不相交；候选仅验证指定分支及先前决策，不证明后续路径或完整等价。C/JSON、Python 和 CLI 的版本 1 接口仍只接收寄存器。

@@ -1679,3 +1679,7 @@ KernelFileSystem 為每個 FILE_OBJECT 保留一個 provider token。私有共�
 ### 原始環境的架構歸屬
 
 `RecoveryArchitecture` 根據 `SpecializationOptions::Architecture` 選擇原生契約，與編譯主機無關。現有預設值為 x64；沒有轉接器的架構明確拒絕。`arch/x86_64` 負責原生選項編碼、主映像範圍規則、外部退出比對成本及實體退出回執。core 負責通用預算、策略編碼及圖與證據的完整性。x64 選項與回執摘要保留原有位元組編碼；驗證宣告前檢查預期與儲存的架構識別。`RawArchitectureReceiptCompatibility` 固定重構前的摘要值，架構不符測試禁止把 x64 證據改標為 ARM64。此邊界尚未實作 ARM64 原生恢復。
+
+## 具體入口記憶體種子
+
+`SymExecConcreteShadow` 在執行前接收依位址排列的 RAM 位元組；僅更新具體狀態，符號端的入口記憶體維持自由輸入。C++ `LowIRConcolicOptions::InitialMemory` 的 `MaxMemorySeedBytes` 預設上限為 1 MiB，零預算不接受位元組；空白、重疊或繞回範圍會拒絕。記憶體報告採版本 2，保留 `InitialMemory` 與候選 `MemorySeed`。投影僅接受已有種子涵蓋、epoch 為零的暫存器或絕對記憶體來源；查詢、重新執行和去重包含兩類位元組。缺漏、符號基底與近似效果繼續拒絕，寫入正常更新具體記憶體。暫停時可由 `ProcessView::read` 讀取已提交 RAM；寫入前鉤子不能代表完整快照。觀測不證明所有權、生命週期、不變性或不相交；候選只驗證指定分支和先前決策。版本 1 的 C/JSON、Python 與 CLI 仍只接受暫存器。

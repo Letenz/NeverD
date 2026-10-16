@@ -1964,3 +1964,7 @@ KernelFileObjectTests 与 KernelObjectTests 覆盖带类型的指针打开、类
 `longjmp-handler-cleanup-jump` 与 `longjmp-handler-nested-cleanup-jump` 在所选 handler 的直接或嵌套 cleanup 中取消选择并重新跳转。EH3、EH4、EH4+GS 六组变体在两个基址对比原始与九种生成映像，检查轨迹 236/2367、值 42、恢复的 EBX 与状态 0。源、MedIR 和安装器变异拒绝错误缓冲区、帧地址值逃逸、伪造调用身份、错误回调归属、缺失 noreturn 及新增普通返回。`longjmp-handler-cleanup-value`、`longjmp-handler-nested-cleanup-value` 及对应的 `-zero` 场景另外覆盖 12 组协议变体，将原跳转值 42 替换为 43 或零，验证恢复后的 EAX 为 43 或 1。另有两个 `-dynamic-value` 场景共六组协议变体，从可变映像数据读取迭代次数后减一，检查负值、零与正值的恢复。完整源配置现含 216 个场景，旧编译器配置保持原成员。
 
 `longjmp-finally-{register,frame,private}-loop` 与对应的 `longjmp-filter-*` 增加 18 个 EH3/EH4/EH4+GS 场景。三次迭代写入可观察的轨迹，区分寄存器、父帧槽及回调私有栈计数器；完整配置在两个基址执行 4,320 个原始与生成映像。`RegistrationCallbackLoop` 覆盖终止、重现状态、未知计数器、错误分支、缓冲区破坏、栈平衡及预算耗尽。`RegistrationSEHPHICopy` 和 `RegistrationRecoveredCopy` 验证源边、回调归属、父帧恢复及所有标量槽别名；错误索引、地址逃逸、原子或错宽访问、可观察的未定义值必须拒绝安装。
+
+## 具体入口内存种子
+
+运行 `NeverDSymbolicTests`、`NeverDConcolicTests` 和 `NeverDConcolicIntegrationTests`。新增 `LowIRConcolicMemory.*` 及符号层检查覆盖两种字节序、别名写入、独立寄存器/内存空间、缺失和非法范围、重置与晚种子、精确/不足/零预算、来源 epoch、模型宽度、内存候选重新执行及去重；现有六种原生架构/格式组合继续回归。

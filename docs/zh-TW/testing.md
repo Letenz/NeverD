@@ -1945,3 +1945,7 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 `DriverFileSystemTests.cpp` / `KernelFileSystemTests.cpp` / `DriverFileSystemExecutionTests.cpp` / `DriverScenarioPublic` / `test_driver_filesystem_integration.py`: 選用的 `filesystem` 在 DriverEntry 前宣告工作階段磁碟區。省略表示可用性未知，`[]` 表示無提供者；每個磁碟區明確包含根目錄。現有節點可經真實 CREATE 請求開啟，入口為 `ZwOpenFile` 及 `ZwCreateFile`、`IoCreateFile` 的 FILE_OPEN 形式。名稱查找、來賓篩選器、共用、控制代碼與指標生命週期使用共同擁有者，不讀取主機檔案。新增、覆寫、刪除、中繼資料查詢、資料 I/O、列舉與檔案系統控制仍未實作。 `NEVERD_WDM_FILESYSTEM_FIXTURE`, `NEVERD_WDM_FILESYSTEM_CFG_FIXTURE`, `NEVERD_TEST_DRIVER_FILESYSTEM_FIXTURE`, `NEVERD_TEST_LIBNEVERD`. `UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery`: `configuration.filesystem` 保存輸入；頂層 `filesystem` 來自獨立狀態擁有者，增加 `device_object` 與節點 `end_of_file`，執行或投影驗證停止後仍保留。通用 `devices` 僅包含來賓裝置。工作階段磁碟區可在卸載後保留，但來賓物件、參考、控制代碼、附加與 IRP 必須釋放。任何宣告，包括 `[]`，均保留未重建相依性並阻止可執行 UNPACK 復原。舊版 Unicorn 可能在停止前提交遭拒寫入；診斷仍保留投影錯誤。
 
 `KernelFileCreateTests.cpp` 涵蓋生產者返回前保留封包、共用失敗、非同步期間保留相對根目錄、明確取消、失敗／別名輸出與卸載清理。`DriverFileSystemExecutionTests.cpp` 在兩種契約、基址與可用後端執行原創及真實 WDK 普通／CFG 呼叫者，包含協作與指令時鐘排程。C API／CLI／Python 保留相同檔案身分。不可用後端仍為跳過，事件及 APC 探針邊界不代表完整核心。
+
+## 具體入口記憶體種子
+
+執行 `NeverDSymbolicTests`、`NeverDConcolicTests` 與 `NeverDConcolicIntegrationTests`。`LowIRConcolicMemory.*` 和符號層測試涵蓋兩種位元組序、別名寫入、獨立儲存空間、缺漏及非法範圍、重設與晚種子、精確/不足/零預算、epoch、模型寬度、候選重新執行及去重；既有原生架構/格式矩陣維持回歸。

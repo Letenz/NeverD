@@ -1999,3 +1999,7 @@ KernelFileObjectTests と KernelObjectTests は型付きオープン、型不一
 `DriverFileSystemTests.cpp` / `KernelFileSystemTests.cpp` / `DriverFileSystemExecutionTests.cpp` / `DriverScenarioPublic` / `test_driver_filesystem_integration.py`: 任意の `filesystem` は DriverEntry 前にセッションのボリュームを宣言します。省略は可用性不明、`[]` は提供元なしで、各ボリュームには明示的なルートが必要です。既存ノードは `ZwOpenFile` と `ZwCreateFile`、`IoCreateFile` の FILE_OPEN で実際の CREATE 要求を通じて開けます。名前検索、ゲストフィルター、共有、ハンドルと参照の寿命は共通の所有者を使い、ホストファイルを読みません。新規作成、上書き、削除、メタデータ照会、データ I/O、列挙、制御は未対応です。 `NEVERD_WDM_FILESYSTEM_FIXTURE`, `NEVERD_WDM_FILESYSTEM_CFG_FIXTURE`, `NEVERD_TEST_DRIVER_FILESYSTEM_FIXTURE`, `NEVERD_TEST_LIBNEVERD`. `UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery`: `configuration.filesystem` は入力、上位 `filesystem` は独立した状態で、`device_object` と各ノードの `end_of_file` を追加します。実行や投影検証の停止後も状態を保持します。`devices` はゲストのみです。アンロード時にセッションボリュームは残せますが、ゲストの参照、ハンドル、接続、IRP は解放が必要です。`[]` を含む宣言は未再構築依存性を保持し、実行可能 UNPACK 復元を禁止します。旧 Unicorn は拒否書き込みを停止前に反映する場合があり、投影エラーを診断に残します。
 
 `KernelFileCreateTests.cpp` はパケット保持、共有失敗、非同期の相対ルート保持、明示的取消、失敗／出力エイリアス、アンロードを検証します。`DriverFileSystemExecutionTests.cpp` は両契約、両基址、利用可能バックエンドで独自および実際の WDK 通常／CFG ドライバーを協調・命令時計スケジュールで実行します。C API／CLI／Python も同じ識別を保持します。利用不可はスキップであり、イベントや APC のプローブ境界は完全なカーネルを証明しません。
+
+## 具体的な入口メモリシード
+
+`NeverDSymbolicTests`、`NeverDConcolicTests`、`NeverDConcolicIntegrationTests` を実行します。`LowIRConcolicMemory.*` と記号層のテストは両エンディアン、別名ストア、独立バンク、欠落・不正範囲、リセット、実行後のシード拒否、予算境界、epoch、モデル幅、メモリ候補の再実行と重複排除を検証します。既存のネイティブ形式・アーキテクチャ行列も維持します。
