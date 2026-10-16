@@ -143,6 +143,10 @@ static int realMain(int Argc, char *Argv[]) {
     WithColor::error() << "--pdb-unverified needs the PDB named by --pdb\n";
     return 1;
   }
+  if (MapUnchecked && MapFile.getValue().empty()) {
+    WithColor::error() << "--map-unchecked needs the MAP named by --map\n";
+    return 1;
+  }
 
   neverd_session_t Sess = neverd_session_create();
   SessionGuard SessGuard(Sess);
@@ -151,12 +155,16 @@ static int realMain(int Argc, char *Argv[]) {
   // place before the load rather than adjusted afterwards.
   neverd_session_set_debug_info_enabled(Sess, NoDebug ? 0 : 1);
   neverd_session_set_dwarf_search(Sess, NoDwarf ? 0 : 1);
+  neverd_session_set_map_search(Sess, NoMap ? 0 : 1);
   neverd_session_set_symbol_table(Sess, NoSymtab ? 0 : 1);
   if (!PdbFile.getValue().empty())
     neverd_session_set_pdb_path_ex(Sess, PdbFile.getValue().c_str(),
                                    PdbUnverified ? 1 : 0);
+  if (!DwarfFile.getValue().empty())
+    neverd_session_set_dwarf_path(Sess, DwarfFile.getValue().c_str());
   if (!MapFile.getValue().empty())
-    neverd_session_set_map_path(Sess, MapFile.getValue().c_str());
+    neverd_session_set_map_path_ex(Sess, MapFile.getValue().c_str(),
+                                   MapUnchecked ? 1 : 0);
   if (SymbolPathOption.getNumOccurrences())
     neverd_session_set_symbol_path(Sess, SymbolPathOption.getValue().c_str());
   // The download goes into a store the load then searches.
@@ -337,14 +345,27 @@ static int realMain(int Argc, char *Argv[]) {
     // Which names the run is working from is worth stating up front: it
     // explains why a function reads as `parse_header` in one run and
     // `sub_140001A20` in the next.
-    const char *DbgKind = neverd_session_debug_info_kind(Sess);
-    const char *DbgPath = neverd_session_debug_info_path(Sess);
-    if (DbgPath[0] != '\0')
-      outs() << "Debug: " << DbgKind << " ("
-             << pathToUTF8(std::filesystem::u8path(DbgPath).filename())
-             << ")\n";
-    neverd_free_string(DbgKind);
-    neverd_free_string(DbgPath);
+    // A MAP read beside a PDB or DWARF follows it.
+    const char *DbgFiles = neverd_session_debug_info_json(Sess);
+    if (auto Parsed = llvm::json::parse(DbgFiles)) {
+      std::string Line;
+      if (const auto *Files = Parsed->getAsObject()->getArray("files"))
+        for (const auto &File : *Files) {
+          const auto *Entry = File.getAsObject();
+          if (!Line.empty())
+            Line += ", ";
+          Line += Entry->getString("kind").value_or("").str() + " (" +
+                  pathToUTF8(std::filesystem::u8path(
+                                 Entry->getString("path").value_or("").str())
+                                 .filename()) +
+                  ")";
+        }
+      if (!Line.empty())
+        outs() << "Debug: " << Line << "\n";
+    } else {
+      consumeError(Parsed.takeError());
+    }
+    neverd_free_string(DbgFiles);
   }
 
   // Dispatch to the category handler for the active subcommand.  Each reads its

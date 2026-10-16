@@ -286,6 +286,9 @@ extern llvm::cl::opt<bool> PdbUnverified;
 extern llvm::cl::opt<std::string> SymbolPathOption;
 extern llvm::cl::opt<bool> DownloadSymbols;
 extern llvm::cl::opt<std::string> MapFile;
+extern llvm::cl::opt<bool> MapUnchecked;
+extern llvm::cl::opt<bool> NoMap;
+extern llvm::cl::opt<std::string> DwarfFile;
 extern llvm::cl::opt<bool> NoOpt;
 extern llvm::cl::opt<size_t> MaxFunc;
 

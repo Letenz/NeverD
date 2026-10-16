@@ -10,6 +10,7 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPIBench.cpp
     capi/NeverDCAPIBenchDecode.cpp
     capi/NeverDCAPIConcolic.cpp
+    capi/NeverDCAPIDebugFiles.cpp
     capi/NeverDCAPIDecompile.cpp
     capi/NeverDCAPIDevirtualize.cpp
     capi/NeverDCAPIEmulation.cpp

@@ -4170,6 +4170,194 @@ TEST_F(SessionCAPITest, DWARFReferenceNamesWhatALoadReads) {
   EXPECT_TRUE(Missing.getString("error"));
 }
 
+/// The name the session's function list gives \p Entry; empty when it lists
+/// none there.
+std::string functionNameAt(neverd_session_t Session, neverd_va_t Entry) {
+  for (int Index = 0, Count = neverd_func_count(Session); Index < Count;
+       ++Index)
+    if (neverd_func_entry(Session, Index) == Entry)
+      return takeString(neverd_func_name(Session, Index));
+  return {};
+}
+
+/// The kinds of the files a session read its debug information from.
+std::vector<std::string> debugFileKinds(neverd_session_t Session) {
+  std::vector<std::string> Kinds;
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_session_debug_info_json(Session)));
+  EXPECT_TRUE(static_cast<bool>(Parsed)) << llvm::toString(Parsed.takeError());
+  if (Parsed)
+    if (const auto *Files = Parsed->getAsObject()->getArray("files"))
+      for (const auto &File : *Files)
+        Kinds.push_back(File.getAsObject()->getString("kind")->str());
+  return Kinds;
+}
+
+// The workbench loads a PDB the user accepted after the image, with the
+// open's own PDB search off.  The MAP beside the image loaded with it, and
+// the PDB's names must still replace the MAP's, as a load that named the PDB
+// would have it.
+TEST_F(SessionCAPITest, DebugFilesLoadedAfterTheImageRankAsALoadWouldRankThem) {
+  const auto Fixtures = std::filesystem::path(__FILE__).parent_path() /
+                        "safety" / "fixtures" / "binaries";
+  const auto read = [&](const char *Name) {
+    std::ifstream Input(Fixtures / Name, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(Input), {});
+  };
+  const std::string Image =
+      write("safety_cases_pe_x64.exe", read("safety_cases_pe_x64.exe"));
+  const std::string PDB =
+      write("safety_cases_pe_x64.pdb", read("safety_cases_pe_x64.pdb"));
+  std::string Map = read("safety_cases_pe_x64.exe.map");
+  const std::string MainRow = "                 main\n";
+  ASSERT_NE(Map.find(MainRow), std::string::npos);
+  Map.replace(Map.find(MainRow), MainRow.size(),
+              "                 map_says_main\n");
+  const std::string MapPath = write("safety_cases_pe_x64.exe.map", Map);
+  constexpr neverd_va_t Main = 0x140001250;
+
+  neverd_session_set_pdb_search(Session, 0);
+  ASSERT_EQ(neverd_session_load(Session, Image.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_debug_info_kind(Session)), "map");
+  EXPECT_EQ(functionNameAt(Session, Main), "map_says_main");
+
+  ASSERT_EQ(neverd_session_load_pdb(Session, PDB.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_debug_info_kind(Session)), "pdb");
+  EXPECT_EQ(functionNameAt(Session, Main), "main");
+  EXPECT_EQ(debugFileKinds(Session), std::vector<std::string>{"pdb"});
+
+  // A MAP loaded after the PDB fills only what the PDB leaves unnamed.
+  ASSERT_EQ(neverd_session_load_map(Session, MapPath.c_str(), 0), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_debug_info_kind(Session)), "pdb");
+  EXPECT_EQ(functionNameAt(Session, Main), "main");
+  EXPECT_EQ(debugFileKinds(Session), (std::vector<std::string>{"pdb", "map"}));
+  EXPECT_EQ(neverd_session_load_map(Session, MapPath.c_str(), 2), 0);
+
+  // Declined, the MAP beside the image stays unread.
+  neverd_session_set_pdb_search(Session, 0);
+  neverd_session_set_pdb_path(Session, nullptr);
+  neverd_session_set_map_path(Session, nullptr);
+  neverd_session_set_map_search(Session, 0);
+  ASSERT_EQ(neverd_session_load(Session, Image.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_debug_info_kind(Session)), "none");
+  EXPECT_TRUE(debugFileKinds(Session).empty());
+}
+
+TEST_F(SessionCAPITest, MapReferenceNamesWhatALoadReadsAndHowItHolds) {
+  const auto Fixtures = std::filesystem::path(__FILE__).parent_path() /
+                        "safety" / "fixtures" / "binaries";
+  const auto read = [&](const char *Name) {
+    std::ifstream Input(Fixtures / Name, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(Input), {});
+  };
+  const auto reference = [](const std::string &Path) {
+    auto Parsed =
+        llvm::json::parse(takeString(neverd_map_reference_json(Path.c_str())));
+    EXPECT_TRUE(static_cast<bool>(Parsed))
+        << llvm::toString(Parsed.takeError());
+    return Parsed ? llvm::json::Object(*Parsed->getAsObject())
+                  : llvm::json::Object();
+  };
+  const std::string Image = write("app", read("safety_cases_elf_x64"));
+  EXPECT_EQ(takeString(neverd_map_reference_json(Image.c_str())),
+            "{\"map\":null}");
+
+  std::string Text = read("safety_cases_elf_x64.map");
+  write("app.map", Text);
+  auto Answer = reference(Image);
+  const auto *Map = Answer.getObject("map");
+  ASSERT_TRUE(Map);
+  EXPECT_EQ(Map->getString("path"),
+            std::filesystem::absolute(Directory / "app.map").string());
+  EXPECT_EQ(Map->getString("dialect"), "ld.lld");
+  EXPECT_EQ(Map->getString("match"), "consistent");
+  EXPECT_GT(Map->getInteger("functions").value_or(0), 0);
+  EXPECT_EQ(Map->getInteger("outside"), 0);
+  ASSERT_TRUE(Map->getArray("names"));
+  EXPECT_FALSE(Map->getArray("names")->empty());
+  EXPECT_EQ(Map->get("reason"), nullptr);
+
+  // A MAP of another layout says where it differs.
+  const std::string Row = "1a70             1a70      351    16 .text\n";
+  ASSERT_NE(Text.find(Row), std::string::npos);
+  Text.replace(Text.find(Row), Row.size(),
+               "1a70             1a70      352    16 .text\n");
+  write("app.map", Text);
+  Answer = reference(Image);
+  Map = Answer.getObject("map");
+  ASSERT_TRUE(Map);
+  EXPECT_EQ(Map->getString("match"), "mismatch");
+  EXPECT_EQ(Map->getString("reason"), "section");
+  const auto *Section = Map->getObject("section");
+  ASSERT_TRUE(Section);
+  EXPECT_EQ(Section->getString("name"), ".text");
+  EXPECT_EQ(Section->getObject("map")->getString("size"), "0x352");
+  EXPECT_EQ(Section->getObject("image")->getString("size"), "0x351");
+
+  // The loaded image answers the same about a MAP chosen for it, and the
+  // load leaves the mismatched one beside it unread.
+  neverd_session_set_dwarf_search(Session, 0);
+  ASSERT_EQ(neverd_session_load(Session, Image.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_debug_info_kind(Session)), "none");
+  auto Inspected = llvm::json::parse(takeString(neverd_session_inspect_map_json(
+      Session, (Directory / "app.map").string().c_str())));
+  ASSERT_TRUE(static_cast<bool>(Inspected));
+  EXPECT_EQ(Inspected->getAsObject()->getString("match"), "mismatch");
+  EXPECT_EQ(neverd_session_load_map(
+                Session, (Directory / "app.map").string().c_str(), 0),
+            0);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("another build"),
+            std::string::npos);
+  ASSERT_EQ(neverd_session_load_map(
+                Session, (Directory / "app.map").string().c_str(), 1),
+            1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_debug_info_kind(Session)), "map");
+
+  const std::string Missing = (Directory / "absent").string();
+  EXPECT_NE(reference(Missing).getString("error"), std::nullopt);
+}
+
+TEST_F(SessionCAPITest, ADWARFFileLoadedAfterTheImageNamesItsFunctions) {
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "debug" / "fixtures";
+  const auto read = [&](const char *Name) {
+    std::ifstream Input(Fixtures / Name, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(Input), {});
+  };
+  const std::string Image = write("image.so", read("companion.so"));
+  const std::string Companion =
+      write("elsewhere.debug", read("companion.so.debug"));
+  ASSERT_EQ(neverd_session_load(Session, Image.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_session_load_dwarf(Session, Companion.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_debug_info_kind(Session)), "dwarf");
+  EXPECT_EQ(takeString(neverd_session_debug_info_path(Session)), Companion);
+  bool Named = false;
+  for (int Index = 0, Count = neverd_func_count(Session); Index < Count;
+       ++Index)
+    Named |= takeString(neverd_func_name(Session, Index)) == "named_by_dwarf";
+  EXPECT_TRUE(Named);
+
+  // The next load reads it again by the path named for it.
+  neverd_session_set_dwarf_path(Session, Companion.c_str());
+  ASSERT_EQ(neverd_session_load(Session, Image.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_debug_info_path(Session)), Companion);
+  neverd_session_set_dwarf_path(Session,
+                                (Directory / "absent").string().c_str());
+  EXPECT_EQ(neverd_session_load(Session, Image.c_str()), 0);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("DWARF file not found"),
+            std::string::npos);
+  neverd_session_set_dwarf_path(Session, nullptr);
+}
+
 TEST_F(SessionCAPITest, SymbolTableReferenceNamesWhatADeclinedLoadSkips) {
   const auto Fixtures = std::filesystem::path(__FILE__).parent_path() /
                         "safety" / "fixtures" / "binaries";

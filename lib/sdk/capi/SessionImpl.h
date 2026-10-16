@@ -45,6 +45,7 @@
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
@@ -108,6 +109,12 @@ struct Session {
   std::unique_ptr<DebugContext> Dbg;
   DebugInfoKind DbgKind = DebugInfoKind::None;
   std::filesystem::path DbgPath;
+  /// Every file the debug information was read from, Dbg's first.
+  std::vector<DebugInfoFile> DbgFiles;
+  /// Whether neverd_session_load() read the image from FilePath, so a debug
+  /// file loaded later can read it again the same way
+  /// (reloadDebugInformation).
+  bool ReadFromFile = false;
   /// The program's local types, read from its debug information when first
   /// asked for (NeverDCAPILocalTypes.cpp).  A new image or PDB drops them.
   std::unique_ptr<types::TypeLibrary> LocalTypes;
@@ -1010,6 +1017,22 @@ struct PipelineRunner {
 /// naming \p Kind.
 bool saveSidecar(Session *S, const std::filesystem::path &Path,
                  llvm::json::Value Values, llvm::StringRef Kind);
+
+/// Read the session's input again as it was loaded and publish \p Request's
+/// debug information into it, in the order the names rank, so a file loaded
+/// after the image ranks as it would had the load named it: a PDB's or
+/// DWARF's names replace a MAP's, and a MAP's fill only what they leave.
+/// The session then takes the image, keeping the user's names, comments and
+/// edits, and \p Request becomes its next load's.  \p Unchanged, when given,
+/// is asked once the files are read and before the session takes them; it
+/// sets the error when it answers false.  Returns 1, or 0 with the session's
+/// error and the session as it was.
+int reloadDebugInformation(Session &S, DebugInfoRequest Request,
+                           llvm::function_ref<bool()> Unchanged = {});
+
+/// The files \p S read its debug information from, as
+/// neverd_session_debug_info_json() lists them.
+llvm::json::Array debugInfoFilesJson(const Session &S);
 
 } // namespace sdk
 } // namespace neverd
