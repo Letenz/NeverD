@@ -3925,6 +3925,12 @@ mutable/truncated storage, independent roots and budget refusal. Pointer tests
 cover nested recurrences, shared expression DAGs, role-neutral address leaves
 and independently materialized SELECT arms. Both suites retain ambiguous
 relocatable comparisons and distinguish adjacent objects' one-past addresses.
+`MedConstantPropagation` also checks full SSA identities at maximum integer
+IDs/versions and atomic budget refusal on reverse-ordered width chains.
+`HighCSourceCalls.ReusedConverterRebuildsClobberIdentityAndOrder` checks first
+record precedence and clearing/restoring clobbers between conversions of the
+same function, against a fresh converter. The worker code-edit checks cover
+every C++ raw-string prefix while renaming surrounding identifiers.
 C value tests compile and execute
 relocated address arithmetic and freeze projections at O0/O2; vector and FP
 helper tests cover indirect calls and emitted Windows analysis bodies.
