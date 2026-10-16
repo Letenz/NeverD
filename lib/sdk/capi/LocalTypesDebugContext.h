@@ -13,7 +13,9 @@
 ///   untyped takes one; a typed declaration of the program's own stays;
 /// - the members of its records, which the decompiler names its accesses
 ///   by, so that a member the user renames reads by its new name;
-/// - the C that defines those records, which a decompiled unit holds.
+/// - the C that defines those records, which a decompiled unit holds;
+/// - the declarations the user gives functions, by their addresses, as
+///   IDA's Y does: these come first, before the debug information's.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -28,8 +30,10 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 
+#include <map>
 #include <memory>
 #include <mutex>
+#include <string>
 
 namespace neverd::sdk {
 
@@ -39,6 +43,13 @@ namespace neverd::sdk {
 /// function by value or a record larger than a display offset reaches.
 TypeRef decompilerTypeOf(const types::TypeLibrary &Library,
                          const types::TypeExpr &Type);
+
+/// \p Function's signature, named \p Name, as the decompiler's types
+/// describe it.  None for a variadic one, whose calls pass more than it
+/// declares, or one with a type the decompiler cannot describe.
+std::optional<FunctionSym> signatureOf(const types::TypeLibrary &Library,
+                                       const types::FunctionDef &Function,
+                                       llvm::StringRef Name);
 
 /// The names of the types the decompiler reads with \p Library's
 /// prototypes: those their parameters and returns name, and those these
@@ -50,17 +61,20 @@ llvm::StringSet<> prototypeTypeNames(const types::TypeLibrary &Library);
 class LocalTypesDebugContext final : public DebugContext {
 public:
   /// \p Inner outlives this; \p Types holds the prototypes and the types
-  /// they name.
+  /// they name.  \p Declarations are the C declarations the user gave the
+  /// functions at those addresses, which read against \p Types.
   LocalTypesDebugContext(const DebugContext &Inner,
-                         std::shared_ptr<const types::TypeLibrary> Types);
+                         std::shared_ptr<const types::TypeLibrary> Types,
+                         std::map<va_t, std::string> Declarations = {});
   /// Takes back the members it gave the debug information's records, so
   /// that the context made after a change to the library gives them anew.
   /// The records are the debug information's, which the session's calls,
   /// one at a time, share: no decompilation reads them meanwhile.
   ~LocalTypesDebugContext() override;
 
-  /// The inner function, its return type and parameters the library's
-  /// prototype of its name where the inner context gives neither.
+  /// The inner function, its return type and parameters those of the
+  /// user's declaration at its entry, else the library's prototype of its
+  /// name where the inner context gives neither.
   std::optional<FunctionSym> resolveFunction(va_t Addr) const override;
 
   std::optional<std::string> functionName(va_t Addr) const override {
@@ -132,13 +146,20 @@ public:
   std::optional<va_t> precedingDataSymbol(va_t Addr) const override {
     return Inner.precedingDataSymbol(Addr);
   }
-  bool hasInfo() const override { return Inner.hasInfo(); }
+  bool hasInfo() const override {
+    return Inner.hasInfo() || !Declarations.empty();
+  }
 
   /// The signature the library gives \p Name: its return type and named
   /// parameters.  None for a name without a prototype, a variadic one,
   /// whose calls pass more than it declares, or one with a type the
   /// decompiler cannot describe.
   std::optional<FunctionSym> prototype(llvm::StringRef Name) const;
+
+  /// The signature of the user's declaration of the function at \p Entry.
+  /// None where the user declared none, or one that no longer reads against
+  /// the library, or has a type the decompiler cannot describe.
+  std::optional<FunctionSym> declared(va_t Entry) const;
 
   /// The C that defines \p Records for a decompiled unit
   /// (CEmitterOptions::RecordDefinitions): each one the library defines, of
@@ -163,8 +184,10 @@ private:
 
   const DebugContext &Inner;
   std::shared_ptr<const types::TypeLibrary> Types;
+  std::map<va_t, std::string> Declarations;
   mutable std::mutex Mutex;
   mutable llvm::StringMap<std::optional<FunctionSym>> Signatures;
+  mutable std::map<va_t, std::optional<FunctionSym>> DeclaredSignatures;
   /// The debug information's records it gave members to.
   mutable std::vector<TypeRef> Completed;
   mutable llvm::DenseSet<const NdType *> CompletedRecords;

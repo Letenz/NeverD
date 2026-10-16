@@ -198,6 +198,26 @@ It matches names as an editor's quick open does, a record's typedefs and
 `Type.member` paths included.  The evidence comes from MedIR
 (`MedPointerAccesses`): every load and store whose address is an SSA value
 plus a constant, through copies, and every such address the code passes on.
+
+A function's type, as IDA's Y sets it, is the user's C declaration of it,
+kept by its address among the function's attributes ("type",
+`FunctionAttributes.def`). `parseFunctionDeclaration` reads it against the
+library without changing it: one function, of the library's types only. The
+C API refuses a declaration that does not read, a variadic one, and one
+whose calling convention NeverD does not place the image's parameters by.
+`LocalTypesDebugContext` is the one layer that applies it: its
+`resolveFunction` gives the declared return and parameters ahead of the debug
+information's and the prototypes the library knows by name, and wraps a
+`NullDebugContext` for an image without debug information. The C backends
+then bind each declared parameter to the register or stack slot its
+convention passes it in (`placeSourceParameters`), as they bind a PDB's, and
+a function's callers see it. Analysis never reads a declaration, so a change
+drops only what the decompiler made (`Session::declarationsChanged`).
+`neverd_func_type_json` reports the declaration the user edits: theirs, else
+the signature the decompiler prints, which reads as C. It also gives the one
+Convert to struct * makes, with one parameter's type replaced, and the
+register or slot each parameter arrives in; `neverd_local_types_fit_json`
+ranks the records by what the code does through that register.
 `neverd_local_types_fit_json` joins the two for an instruction's memory
 operand, and `neverd_local_type_member_json` names one landing.  A
 structure offset is an operand format (`OperandFormats.def`) that names a

@@ -110,14 +110,20 @@ int runTypesFit(neverd_session_t Sess, raw_ostream &Out) {
   }
   if (!Accesses.empty())
     Request["accesses"] = std::move(Accesses);
-  if (!TypesAt.empty()) {
-    const std::optional<uint64_t> At = parseAddrArg(TypesAt);
-    if (!At) {
+  if (!TypesAt.empty() && TypesParam >= 0) {
+    WithColor::error() << "--at and --param name a pointer each; give one\n";
+    return 1;
+  }
+  if (!TypesAt.empty() || TypesParam >= 0) {
+    std::optional<uint64_t> At;
+    if (!TypesAt.empty() && !(At = parseAddrArg(TypesAt))) {
       WithColor::error() << "--at needs an instruction's address (hex)\n";
       return 1;
     }
     if (TypesFunc.empty()) {
-      WithColor::error() << "--at needs the --func the instruction is in\n";
+      WithColor::error()
+          << (At ? "--at needs the --func the instruction is in\n"
+                 : "--param needs the --func it is of\n");
       return 1;
     }
     const std::optional<uint64_t> Entry = functionEntry(Sess);
@@ -126,9 +132,11 @@ int runTypesFit(neverd_session_t Sess, raw_ostream &Out) {
       return 1;
     }
     Request["function"] = "0x" + utohexstr(*Entry);
-    Request["target"] = json::Object{{"address", "0x" + utohexstr(*At)}};
+    Request["target"] =
+        At ? json::Object{{"address", "0x" + utohexstr(*At)}}
+           : json::Object{{"parameter", static_cast<int64_t>(TypesParam)}};
   } else if (!TypesFunc.empty()) {
-    WithColor::error() << "--func names the function of --at\n";
+    WithColor::error() << "--func names the function of --at or --param\n";
     return 1;
   }
   std::string Text;
@@ -147,8 +155,13 @@ int runTypesFit(neverd_session_t Sess, raw_ostream &Out) {
   if (const json::Object *Target = Root->getObject("target")) {
     Out << "Accesses through "
         << Target->getString("base").value_or("the pointer") << " in "
-        << TypesFunc << ", the instruction's at "
-        << offsetText(Target->getInteger("offset").value_or(0)) << ":\n";
+        << TypesFunc;
+    if (const std::optional<int64_t> Parameter =
+            Target->getInteger("parameter"))
+      Out << ", its parameter " << *Parameter << ":\n";
+    else
+      Out << ", the instruction's at "
+          << offsetText(Target->getInteger("offset").value_or(0)) << ":\n";
     if (const json::Array *List = Target->getArray("accesses"))
       for (const json::Value &Value : *List)
         if (const json::Object *Access = Value.getAsObject())

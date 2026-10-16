@@ -29,6 +29,7 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPIPatch.cpp
     capi/NeverDCAPISourcePatch.cpp
     capi/NeverDCAPIPersist.cpp
+    capi/NeverDCAPIFunctionType.cpp
     capi/NeverDCAPIRoundtrip.cpp
     capi/NeverDCAPISafety.cpp
     capi/NeverDCAPISanitize.cpp

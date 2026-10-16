@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "FunctionDeclaration.h"
 #include "JSONText.h"
 #include "SessionImpl.h"
 
@@ -177,10 +178,29 @@ bool readTarget(neverd_session_t Sess, Session &S,
   const std::optional<uint64_t> Function = addressOf(Request.get("function"));
   const std::optional<uint64_t> Address =
       Wanted ? addressOf(Wanted->get("address")) : std::nullopt;
-  if (!Function || !Address) {
-    Error = "a \"target\" names an instruction's \"address\" in the "
-            "\"function\" whose code it is";
+  const llvm::json::Value *Parameter =
+      Wanted ? Wanted->get("parameter") : nullptr;
+  const std::optional<int64_t> Index =
+      Parameter ? Parameter->getAsInteger() : std::nullopt;
+  if (!Function || (Address.has_value() == (Parameter != nullptr)) ||
+      (Parameter && (!Index || *Index < 0))) {
+    Error = "a \"target\" names an instruction's \"address\", or a "
+            "\"parameter\" by its position from 0, of the \"function\"";
     return false;
+  }
+  // A parameter is where the function's declaration says the convention
+  // passes it, read before the analysis the accesses come from.
+  std::optional<SourceABIValueLocation> Location;
+  if (Parameter) {
+    Location = parameterLocation(Sess, S, *Function,
+                                 static_cast<size_t>(*Index), Error);
+    if (!Location)
+      return false;
+    if (Location->Kind != SourceABICarrierKind::IntegerRegister) {
+      Error = "the parameter does not arrive in an integer register, where "
+              "NeverD follows a pointer's accesses";
+      return false;
+    }
   }
   if (!neverd_prepare_function_view(Sess, *Function, "med")) {
     Error =
@@ -193,6 +213,52 @@ bool readTarget(neverd_session_t Sess, Session &S,
     return false;
   }
   const MedPointerAccesses Uses(*Func);
+  if (Parameter) {
+    // The register's value at entry: what the entry block's first copies
+    // read of it, and what they make of it.
+    std::vector<MedVar> Values;
+    if (!Func->Blocks.empty())
+      for (const MedOp &Op : Func->Blocks.front().Ops) {
+        if (Op.Opcode != NdOp::COPY)
+          break;
+        if (Op.NumInputs == 1 && Op.Output.Kind == MedVar::Reg &&
+            Op.Inputs[0].Kind == MedVar::Reg &&
+            Op.Output.RegOff == Location->RegisterOffset &&
+            Op.Inputs[0].RegOff == Location->RegisterOffset) {
+          Values.push_back(Op.Inputs[0]);
+          Values.push_back(Op.Output);
+        }
+      }
+    std::vector<MedPointerAccess> Through;
+    for (const MedVar &Base : Values)
+      for (const MedPointerAccess &Access : Uses.through(Base))
+        if (!llvm::is_contained(Through, Access))
+          Through.push_back(Access);
+    llvm::sort(Through,
+               [](const MedPointerAccess &A, const MedPointerAccess &B) {
+                 return std::tie(A.Addr, A.Offset, A.Bytes) <
+                        std::tie(B.Addr, B.Offset, B.Bytes);
+               });
+    llvm::json::Object Described{{"parameter", *Index}};
+    MedVar Register;
+    Register.Kind = MedVar::Reg;
+    Register.RegOff = Location->RegisterOffset;
+    Register.Size = Location->ValueBytes ? Location->ValueBytes : 8;
+    Register.TheArch = S.Img.Arch;
+    if (std::string Name = registerName(Register); !Name.empty())
+      Described["base"] = std::move(Name);
+    llvm::json::Array List;
+    for (const MedPointerAccess &Access : Through) {
+      Accesses.push_back({Access.Offset, Access.Bytes, useOf(Access.Kind)});
+      List.push_back(llvm::json::Object{{"address", vaHex(Access.Addr)},
+                                        {"offset", Access.Offset},
+                                        {"size", Access.Bytes},
+                                        {"use", useName(useOf(Access.Kind))}});
+    }
+    Described["accesses"] = std::move(List);
+    Target = std::move(Described);
+    return true;
+  }
   const auto At = Uses.at(*Address);
   if (!At) {
     Error = "the instruction at " + vaHex(*Address) +

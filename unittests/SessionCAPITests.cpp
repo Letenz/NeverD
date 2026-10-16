@@ -4077,6 +4077,186 @@ TEST_F(SessionCAPITest, LocalTypesFitWhatTheCodeDoesThroughAPointer) {
   EXPECT_EQ(takeString(neverd_operand_formats_json(Session)), Formats);
 }
 
+TEST_F(SessionCAPITest, FunctionDeclarationsBindByAddress) {
+  // IDA's Y: the declaration the user gives use() comes before its PDB's,
+  // binds each parameter where the convention passes it, and is kept.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "local_types.exe", std::ios::binary);
+  const std::string Exe =
+      write("local_types.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  neverd_session_set_pdb_path(Session,
+                              (Fixtures / "local_types.pdb").string().c_str());
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto parse = [&](const char *Raw) {
+    auto Parsed = llvm::json::parse(takeString(Raw));
+    EXPECT_TRUE(static_cast<bool>(Parsed))
+        << takeString(neverd_last_error(Session));
+    return Parsed && Parsed->getAsObject() ? *Parsed->getAsObject()
+                                           : llvm::json::Object();
+  };
+  const int Index = neverd_func_find_by_name(Session, "use");
+  ASSERT_GE(Index, 0);
+  const neverd_va_t Use = neverd_func_entry(Session, Index);
+  const auto decompiled = [&] {
+    return takeString(neverd_decompile(Session, Use));
+  };
+  ASSERT_NE(decompiled().find("Device->Size"), std::string::npos);
+
+  // The declaration the decompiler prints, and where each parameter arrives.
+  llvm::json::Object Printed =
+      parse(neverd_func_type_json(Session, Use, nullptr));
+  EXPECT_EQ(Printed.getBoolean("stated"), false);
+  const llvm::json::Array *Params = Printed.getArray("parameters");
+  ASSERT_TRUE(Params && Params->size() == 5u)
+      << Printed.getString("declaration").value_or("").str();
+  EXPECT_EQ((*Params)[0].getAsObject()->getString("name"), "Device");
+  EXPECT_EQ((*Params)[0].getAsObject()->getString("location"), "rcx");
+  EXPECT_EQ((*Params)[3].getAsObject()->getString("location"), "r9");
+  EXPECT_EQ((*Params)[4].getAsObject()->getString("location"), "stack+0x28");
+
+  // What the code does through the first parameter ranks the records.
+  const std::string Request =
+      llvm::formatv(R"({{"function":"{0:x}","target":{{"parameter":0},)"
+                    R"("limit":2})",
+                    Use)
+          .str();
+  llvm::json::Object Fit =
+      parse(neverd_local_types_fit_json(Session, Request.c_str()));
+  const llvm::json::Object *Target = Fit.getObject("target");
+  ASSERT_TRUE(Target) << takeString(neverd_last_error(Session));
+  EXPECT_EQ(Target->getString("base"), "rcx");
+  EXPECT_EQ(Target->getInteger("parameter"), 0);
+  EXPECT_EQ(Target->getArray("accesses")->size(), 1u);
+  EXPECT_EQ((*Fit.getArray("candidates"))[0].getAsObject()->getString("name"),
+            "_DEVICE");
+  // A parameter on the stack has no register to follow.
+  const std::string OnStack =
+      llvm::formatv(R"({{"function":"{0:x}","target":{{"parameter":4}})", Use)
+          .str();
+  EXPECT_EQ(neverd_local_types_fit_json(Session, OnStack.c_str()), nullptr);
+
+  // Convert to struct *: the declaration with that parameter's type, and
+  // the name the type gives it; nothing changes until it is stated.
+  llvm::json::Object Proposed = parse(neverd_func_type_json(
+      Session, Use, R"({"parameter":0,"type":"_THREAD_LIKE *Thing"})"));
+  const std::string Declaration =
+      Proposed.getString("declaration").value_or("").str();
+  EXPECT_NE(Declaration.find("_THREAD_LIKE *Thing"), std::string::npos)
+      << Declaration;
+  EXPECT_NE(Declaration.find("_PACKED *Packed"), std::string::npos)
+      << Declaration;
+  EXPECT_NE(decompiled().find("Device->Size"), std::string::npos);
+
+  // Stated, it binds ahead of the PDB's: no member of a _THREAD_LIKE is two
+  // bytes at +2.
+  const std::string Edit =
+      llvm::formatv(
+          "{0}", llvm::json::Value(llvm::json::Object{{"type", Declaration}}))
+          .str();
+  ASSERT_EQ(neverd_func_edit(Session, Use, Edit.c_str()), 0)
+      << takeString(neverd_last_error(Session));
+  std::string Text = decompiled();
+  EXPECT_NE(Text.find("_THREAD_LIKE* Thing"), std::string::npos) << Text;
+  EXPECT_EQ(Text.find("->Size"), std::string::npos) << Text;
+  EXPECT_EQ(
+      parse(neverd_func_type_json(Session, Use, nullptr)).getBoolean("stated"),
+      true);
+  EXPECT_EQ(parse(neverd_func_attributes_json(Session, Use)).getString("type"),
+            Declaration);
+
+  // Declarations that do not read, or that NeverD cannot bind, are refused
+  // and change nothing.
+  for (const char *Bad : {R"j({"type":"int use(NOPE *x)"})j",
+                          R"j({"type":"int use(int a, ...)"})j",
+                          R"j({"type":"int use(int a, int a)"})j",
+                          R"j({"type":"int use(struct _NOPE *x)"})j",
+                          R"j({"type":"int use(int a); int other(void)"})j",
+                          R"({"type":""})", R"({"type":7})"})
+    EXPECT_EQ(neverd_func_edit(Session, Use, Bad), -1) << Bad;
+  EXPECT_NE(decompiled().find("_THREAD_LIKE* Thing"), std::string::npos);
+
+  // A check says where a declaration fails before it is stated.
+  llvm::json::Object Checked = parse(neverd_func_type_json(
+      Session, Use, R"j({"declaration":"int use(_DEVICE *Device, NOPE x)"})j"));
+  const llvm::json::Array *Problems = Checked.getArray("problems");
+  ASSERT_TRUE(Problems && !Problems->empty());
+  EXPECT_EQ((*Problems)[0].getAsObject()->getInteger("column"), 26);
+  EXPECT_EQ(
+      neverd_func_type_json(Session, Use, R"({"parameter":9,"type":"int"})"),
+      nullptr);
+  EXPECT_EQ(neverd_func_type_json(Session, Use, R"({"parameter":0})"), nullptr);
+  EXPECT_EQ(
+      neverd_func_type_json(Session, Use, R"({"parameter":0,"type":"NOPE *"})"),
+      nullptr);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("1:1"),
+            std::string::npos);
+  EXPECT_EQ(neverd_func_type_json(Session, Use,
+                                  R"j({"declaration":"int f(void)",)j"
+                                  R"("parameter":0,"type":"int"})"),
+            nullptr);
+  EXPECT_EQ(neverd_func_type_json(Session, Use + 1, nullptr), nullptr);
+
+  // The sidecar keeps it; a load without it hands the PDB's back, and one
+  // with it, as an undo's redo writes, states it again.
+  ASSERT_EQ(neverd_functions_save(Session), 0);
+  std::ifstream Saved(Exe + ".neverd-functions.json");
+  const std::string Rows(std::istreambuf_iterator<char>(Saved), {});
+  EXPECT_NE(Rows.find("\"type\""), std::string::npos) << Rows;
+  write("local_types.exe.neverd-functions.json", "[]");
+  ASSERT_EQ(neverd_functions_load(Session), 0);
+  EXPECT_NE(decompiled().find("Device->Size"), std::string::npos);
+  write("local_types.exe.neverd-functions.json", Rows);
+  ASSERT_EQ(neverd_functions_load(Session), 0);
+  EXPECT_NE(decompiled().find("_THREAD_LIKE* Thing"), std::string::npos);
+  // Null hands the function back to its debug information.
+  ASSERT_EQ(neverd_func_edit(Session, Use, R"({"type":null})"), 0);
+  EXPECT_NE(decompiled().find("Device->Size"), std::string::npos);
+}
+
+TEST_F(SessionCAPITest, FunctionDeclarationsNeedNoDebugInformation) {
+  // An image read without its debug information takes the declarations the
+  // user gives its functions, of the types the user declares.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "local_types.exe", std::ios::binary);
+  const std::string Exe =
+      write("local_types.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  neverd_session_set_debug_info_enabled(Session, 0);
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_GE(neverd_session_discover_functions(Session), 0)
+      << takeString(neverd_last_error(Session));
+  const int Index = neverd_func_find_by_name(Session, "use");
+  ASSERT_GE(Index, 0);
+  const neverd_va_t Use = neverd_func_entry(Session, Index);
+  // Another function, which the declaration says nothing of.
+  std::optional<neverd_va_t> Other;
+  for (int I = 0; I < neverd_func_count(Session) && !Other; ++I)
+    if (neverd_func_entry(Session, I) != Use)
+      Other = neverd_func_entry(Session, I);
+  ASSERT_TRUE(Other);
+  const std::string OtherBefore = takeString(neverd_decompile(Session, *Other));
+  ASSERT_EQ(takeString(neverd_decompile(Session, Use)).find("->"),
+            std::string::npos);
+
+  const std::string Declared = takeString(neverd_local_types_declare(
+      Session, "typedef struct DEV { unsigned short Type, Size; } DEV;",
+      nullptr));
+  ASSERT_NE(Declared.find("\"problems\":[]"), std::string::npos) << Declared;
+  ASSERT_EQ(neverd_func_edit(Session, Use,
+                             R"({"type":"int use(DEV *Device, void *Thread, )"
+                             R"j(void *Packed, void *Forward, int Kind)"})j"),
+            0)
+      << takeString(neverd_last_error(Session));
+  const std::string Text = takeString(neverd_decompile(Session, Use));
+  EXPECT_NE(Text.find("Device->Size"), std::string::npos) << Text;
+  EXPECT_EQ(takeString(neverd_decompile(Session, *Other)), OtherBefore);
+}
+
 TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
   const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
   const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");

@@ -147,11 +147,37 @@ struct Session {
   }
 
   /// The debug context the decompiler reads: the program's own completed
-  /// from its local types (LocalTypesDebugContext), when it has any.  Built
-  /// at the first decompilation; the pipeline it fed goes with it.
+  /// from its local types (LocalTypesDebugContext), when it has any, and
+  /// the declarations the user gave its functions, with or without debug
+  /// information.  Built at the first decompilation; the pipeline it fed
+  /// goes with it.
   std::unique_ptr<LocalTypesDebugContext> LocalTypesDbg;
   bool LocalTypesChecked = false;
   DebugContext *decompileDebug();
+  /// The debug context of an image without debug information, which the
+  /// user's declarations complete.
+  NullDebugContext NoDebugInfo;
+  /// The C declarations the user gave functions, by entry
+  /// (FunctionAttributes::Type).
+  std::map<va_t, std::string> functionDeclarations() const {
+    std::map<va_t, std::string> Declarations;
+    for (const auto &[Entry, Attributes] : FunctionAttributeEdits)
+      if (Attributes.Type)
+        Declarations.emplace(Entry, *Attributes.Type);
+    return Declarations;
+  }
+  /// Whether \p Text declares a function the decompiler can bind, as
+  /// FunctionAttributes::Type: it reads against the local types as one
+  /// function's declaration, is not variadic, every type it names has a
+  /// decompiler type, and its calling convention is one NeverD places the
+  /// image's parameters by.  False, with \p Error, otherwise.
+  bool checkFunctionDeclaration(const std::string &Text, std::string &Error);
+  /// After the user's declarations change: the decompiler reads them anew,
+  /// and only what it made of them goes.  Analysis never reads them.
+  void declarationsChanged() {
+    dropLocalTypesDebug();
+    clearPipelineResult();
+  }
   /// The program's local types, read when first asked for; null with the
   /// session's error when its PDB's types cannot be read.
   types::TypeLibrary *readLocalTypes();
@@ -470,7 +496,12 @@ struct Session {
     std::optional<bool> Library;
     std::optional<bool> Static;
     std::optional<uint32_t> Color;
-    bool empty() const { return !NoReturn && !Library && !Static && !Color; }
+    /// The C declaration the user gave the function, which the decompiler
+    /// prints and binds its parameters by (FunctionAttributes.def).
+    std::optional<std::string> Type;
+    bool empty() const {
+      return !NoReturn && !Library && !Static && !Color && !Type;
+    }
     bool operator==(const FunctionAttributes &) const = default;
   };
   std::map<va_t, FunctionAttributes> FunctionAttributeEdits;

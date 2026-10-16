@@ -966,14 +966,20 @@ cl::opt<bool> TypesFit(
     "fit",
     cl::desc("Rank the structures and unions a pointer may point at by how "
              "the accesses through it land on their members: those the "
-             "instruction --at makes through its pointer in --func, and each "
-             "--access"),
+             "instruction --at makes through its pointer in --func, or "
+             "--func makes through its parameter --param, and each --access"),
     cl::sub(TypesCmd));
 cl::opt<std::string>
     TypesFunc("func",
-              cl::desc("With --fit --at, the function the instruction is in: "
-                       "its name or entry address (hex)"),
+              cl::desc("With --fit --at or --param, the function the "
+                       "instruction is in or the parameter is of: its name or "
+                       "entry address (hex)"),
               cl::init(""), cl::value_desc("function"), cl::sub(TypesCmd));
+cl::opt<int> TypesParam(
+    "param",
+    cl::desc("With --fit, the parameter of --func, from 0 as its declaration "
+             "lists it, whose accesses the types are ranked by"),
+    cl::init(-1), cl::value_desc("index"), cl::sub(TypesCmd));
 cl::opt<std::string>
     TypesAt("at",
             cl::desc("With --fit, the instruction (hex) whose memory "
@@ -1350,8 +1356,35 @@ cl::opt<std::string>
 cl::list<std::string> FunctionSet(
     "set",
     cl::desc("An attribute --edit states: noreturn, library or static "
-             "=true|false, color=#RRGGBB; =default hands it back to analysis"),
+             "=true|false, color=#RRGGBB, type=<C declaration> as IDA's Y "
+             "sets it; =default hands it back to analysis"),
     cl::value_desc("key=value"), cl::sub(FunctionEditsCmd));
+
+cl::opt<std::string> FunctionDeclaration(
+    "declaration",
+    cl::desc("Show the C declaration of the function at this address (hex) "
+             "as IDA's Y edits it, the user's or the one the decompiler "
+             "prints, and where each parameter arrives"),
+    cl::init(""), cl::value_desc("address"), cl::sub(FunctionEditsCmd));
+
+cl::opt<std::string> FunctionCheck(
+    "check",
+    cl::desc("With --declaration, read this declaration instead, as the "
+             "function's type would read, changing nothing"),
+    cl::init(""), cl::value_desc("declaration"), cl::sub(FunctionEditsCmd));
+
+cl::opt<std::string> FunctionRetype(
+    "retype",
+    cl::desc("With --declaration, the declaration with one parameter's type "
+             "changed, as Convert to struct * makes it: index=type, the type "
+             "naming the parameter too if it likes (0='struct _KAPC *Apc')"),
+    cl::init(""), cl::value_desc("index=type"), cl::sub(FunctionEditsCmd));
+
+cl::opt<bool> FunctionApply(
+    "apply",
+    cl::desc("With --declaration and --check or --retype, state the "
+             "declaration as the function's type"),
+    cl::sub(FunctionEditsCmd));
 
 cl::opt<std::string>
     FunctionShow("show",
