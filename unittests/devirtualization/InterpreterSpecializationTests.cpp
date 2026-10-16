@@ -139,7 +139,8 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
         std::map<uint64_t, uint8_t> Memory = {}, uint64_t Flags = 0,
         std::map<NdMemoryAddressSpace, uint64_t> SegmentBases = {},
         std::optional<uint64_t> TaskPriority = std::nullopt,
-        llvm::ArrayRef<uint64_t> Timestamps = {}) {
+        llvm::ArrayRef<uint64_t> Timestamps = {},
+        std::map<uint64_t, uint8_t> *FinalMemory = nullptr) {
   using Location = std::pair<VnodeSpace, uint64_t>;
   std::map<Location, uint8_t> Bytes;
   bool Defined = true;
@@ -271,7 +272,13 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
       }
       case NdOp::STORE: {
         const auto Access = lowMemoryOperands(Op);
-        const uint64_t Address = read(*Access.Address);
+        uint64_t Address = read(*Access.Address);
+        if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
+          const auto Base = SegmentBases.find(Op.MemoryAddressSpace);
+          if (Base == SegmentBases.end())
+            return std::nullopt;
+          Address += Base->second;
+        }
         const uint64_t Value = read(*Access.StoredValue);
         for (unsigned I = 0; I < Access.AccessSize; ++I)
           Memory[Address + I] = static_cast<uint8_t>(Value >> (8 * I));
@@ -289,10 +296,12 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
       }
       case NdOp::RETURN: {
         const auto Value = read(reg(0));
-        return Defined && TimestampIndex == Timestamps.size() &&
-                       TimestampOutputs.empty()
-                   ? std::optional<uint64_t>(Value)
-                   : std::nullopt;
+        if (!Defined || TimestampIndex != Timestamps.size() ||
+            !TimestampOutputs.empty())
+          return std::nullopt;
+        if (FinalMemory)
+          *FinalMemory = std::move(Memory);
+        return Value;
       }
       case NdOp::NOP:
         break;
@@ -4619,5 +4628,7 @@ TEST(InterpreterSpecialization, TimestampTransitionMatchesCompleteStateOracle) {
         NdVar::tmp(Transition->PlaceholderOutputs[0].Offset, 8)})
     EXPECT_FALSE(x64::lowerRuntimeTimestampRead(I, Invalid));
 }
+
+#include "SegmentedStoreTests.inc"
 
 } // namespace

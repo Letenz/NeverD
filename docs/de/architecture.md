@@ -9,6 +9,10 @@ müssen, um NeverD sicher zu ändern. Er behandelt bewusst nur NeverD-eigenen
 Code; die LLVM-, Capstone- und Unicorn-Submodule behalten ihre interne
 Architektur.
 
+## Wiederherstellung von Laufzeitspeicher
+
+`X64SegmentedWrites` erlaubt unabhängig gewöhnliche FS/GS-Schreibzugriffe mit 1/2/4/8 Byte und 64-Bit-Offsets bei ausdrücklich fehlerfreiem Maschinenzustand. `arch/x86_64` übernimmt Optionsprüfung, Zulassung und Initialisierung symbolischer Basisadressen. Der Kern verwendet vollständige lineare Adressen und die normale Aliasinvalidierung. Beliebige feste Basisadressen können sich mit Stackframes, anderen Segmenten und aktiven Rückkehrzellen überschneiden. Die Fähigkeit ist in raw-Nachweise eingebunden. Quellcode- und native Beweisschnittstellen ohne authentifizierte Basiseingaben lehnen diesen Bereich weiterhin ab.
+
 ## Konkrete Eingangsspeicher-Seeds
 
 `SymExecConcreteShadow` erhält vor der Ausführung RAM-Bytes in Adressreihenfolge; der symbolische Eingangsspeicher bleibt frei. Die C++-Option `InitialMemory` unterliegt `MaxMemorySeedBytes` (Standard 1 MiB; null erlaubt keine Bytes). Leere, überlappende und überlaufende Bereiche werden abgelehnt. Speicherberichte verwenden Version 2 mit `InitialMemory` und `MemorySeed` je Kandidat. Die Projektion akzeptiert nur abgedeckte Register- oder absolute Speichereingaben der Epoche null. Abfrageprüfung, erneute Ausführung und Deduplizierung berücksichtigen beide Bytebestände. Fehlende Bytes, symbolische Basisadressen und angenäherte Effekte bleiben ausgeschlossen; Stores aktualisieren den konkreten Speicher normal. `ProcessView::read` liest im angehaltenen Zustand bestätigten RAM; Hooks vor einem Zugriff ersetzen keinen vollständigen Snapshot. Beobachtungen beweisen weder Besitz, Lebensdauer, Unveränderlichkeit noch Disjunktheit. Ein Kandidat bestätigt nur die Zielentscheidung und ihren vorherigen Entscheidungspfad. C/JSON, Python und CLI bleiben in Version 1 registerbasiert.

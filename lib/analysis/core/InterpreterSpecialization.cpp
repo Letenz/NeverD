@@ -489,10 +489,7 @@ bool supported(const LowOp &Op, const SpecializationOptions &Options) {
                   [](const NdVar &V) { return V.Size > 8; }))
     return supportedWideOperation(Op, Options);
   if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
-      (!Options.X64SegmentedReads || Op.Opcode != NdOp::LOAD ||
-       (Op.MemoryAddressSpace != NdMemoryAddressSpace::X86FS &&
-        Op.MemoryAddressSpace != NdMemoryAddressSpace::X86GS) ||
-       (Op.NumInputs == 2 && !Op.Inputs[0].isConst())))
+      !supportsRuntimeMemoryOperation(Op, Options))
     return false;
   for (unsigned I = 0; I < Op.NumInputs; ++I)
     if (!validValue(Op.Inputs[I]))
@@ -2195,14 +2192,7 @@ bool Specializer::evaluate(int Id) {
   const SymRef FrameRoot =
       Options.FrameBaseRegister ? Ctx.mkFreshVar(64, "entry_frame") : SymRef();
   seed(Ctx, State, FrameRoot, Draft.Incoming);
-  if (Options.X64SegmentedReads) {
-    // Projection forgets base correlations across nodes, enlarging the input
-    // domain. Distinct variables do not assert distinct linear addresses.
-    State.setX64MemoryAddressSpaceBase(NdMemoryAddressSpace::X86FS,
-                                       Ctx.mkFreshVar(64, "fs_base"));
-    State.setX64MemoryAddressSpaceBase(NdMemoryAddressSpace::X86GS,
-                                       Ctx.mkFreshVar(64, "gs_base"));
-  }
+  seedRuntimeMemoryState(Ctx, State, Options);
   // Rebuilt nodes forget correlations, including prior writes, but retain the
   // full architectural domain. Runtime intrinsics are never removed.
   SymRef TaskPriority =
@@ -2623,12 +2613,11 @@ bool Specializer::evaluate(int Id) {
       }
       LowOp Residual = Original;
       LowOp Evaluated = Original;
-      const bool SegmentedRead =
-          Original.Opcode == NdOp::LOAD &&
+      const bool RuntimeMemory =
           Original.MemoryAddressSpace != NdMemoryAddressSpace::Default;
       const auto PriorityOperation = detail::taskPriorityOperation(Original);
       const bool EnvironmentRead =
-          SegmentedRead ||
+          (RuntimeMemory && Original.Opcode == NdOp::LOAD) ||
           PriorityOperation == detail::X64TaskPriorityOperation::Read;
       const bool CompareExchange = Original.Opcode == NdOp::ATOMIC_CMPXCHG;
       // An offset's provenance says nothing about the value read through an
@@ -2639,13 +2628,19 @@ bool Specializer::evaluate(int Id) {
       llvm::SmallVector<SymStorePreservationRange, 4> ProvedStoreRanges;
       for (unsigned J = 0; J < Original.NumInputs; ++J)
         OutputUnsafe |= unsafeOrigin(Original.Inputs[J], Origins);
-      if (FrameRoot && !SegmentedRead &&
+      if (FrameRoot && (!RuntimeMemory || Original.Opcode == NdOp::STORE) &&
           (Original.Opcode == NdOp::LOAD || Original.Opcode == NdOp::STORE ||
            CompareExchange)) {
         const auto Memory = lowMemoryOperands(Original);
-        const auto Displacement = frameOffset(
-            Ctx, Exec.pathPredicate(), Exec.operandValue(*Memory.Address),
-            FrameRoot, FrameOffsetProof::Required);
+        // An offset behind a runtime base is not a frame address, even when
+        // the offset itself contains the frame root. Separation checks below
+        // use the executed full address; ordinary unknown writes invalidate
+        // every unproved frame fact.
+        const auto Displacement =
+            RuntimeMemory ? std::nullopt
+                          : frameOffset(Ctx, Exec.pathPredicate(),
+                                        Exec.operandValue(*Memory.Address),
+                                        FrameRoot, FrameOffsetProof::Required);
         if (Failed)
           return false;
         if (Displacement) {
@@ -2667,7 +2662,8 @@ bool Specializer::evaluate(int Id) {
           }
         }
         if (Original.Opcode == NdOp::STORE || CompareExchange) {
-          if (!Displacement && Options.ExternalStoresDisjointEntryFrame &&
+          if (!Displacement && !RuntimeMemory &&
+              Options.ExternalStoresDisjointEntryFrame &&
               !unsafeOrigin(*Memory.Address, Origins)) {
             const auto &Bounds = *Options.EntryFrameBounds;
             StorePreservation =
@@ -2788,7 +2784,8 @@ bool Specializer::evaluate(int Id) {
                 if (*Displacement + B < 8)
                   return fail(SpecializationStatus::Unsupported,
                               "STORE overlaps the entry return control slot");
-            } else if (unsafeOrigin(*Memory.Address, Origins)) {
+            } else if (RuntimeMemory ||
+                       unsafeOrigin(*Memory.Address, Origins)) {
               bool Separated = false;
               if (Options.ProveStoreReturnSlotSeparation) {
                 // Unknown provenance alone cannot prove separation. The current
@@ -2890,7 +2887,7 @@ bool Specializer::evaluate(int Id) {
       SymRef FiniteReadValue;
       // Admission above limits wide reads to the explicit nonfaulting domain.
       // Every feasible address still needs one complete, untruncated witness.
-      if (Original.Opcode == NdOp::LOAD && !SegmentedRead && !ExternalExit) {
+      if (Original.Opcode == NdOp::LOAD && !RuntimeMemory && !ExternalExit) {
         const auto Memory = lowMemoryOperands(Original);
         const SymRef Address = Exec.operandValue(*Memory.Address);
         // Exact root-relative translation preserves domain cardinality, even
@@ -3843,10 +3840,8 @@ SpecializationResult Specializer::run() {
          "interface");
     return std::move(Result);
   }
-  if (Options.X64SegmentedReads &&
-      (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution)) {
-    fail(SpecializationStatus::InvalidInput,
-         "segmented reads require explicit nonfaulting machine state");
+  if (auto Error = validateRuntimeMemoryOptions(Options)) {
+    fail(SpecializationStatus::InvalidInput, llvm::toString(std::move(Error)));
     return std::move(Result);
   }
   if (Options.X64CR8State &&

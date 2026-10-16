@@ -12,7 +12,21 @@
 
 #include "llvm/Support/Errc.h"
 
+namespace neverd::symbolic {
+class SymContext;
+class SymState;
+} // namespace neverd::symbolic
+
 namespace neverd::analysis {
+/// Runtime address-space policy belongs to the declared architecture. The
+/// common executor handles the resulting full addresses and ordinary aliases.
+llvm::Error validateRuntimeMemoryOptions(const SpecializationOptions &Options);
+bool supportsRuntimeMemoryOperation(const LowOp &Op,
+                                    const SpecializationOptions &Options);
+void seedRuntimeMemoryState(symbolic::SymContext &Ctx,
+                            symbolic::SymState &State,
+                            const SpecializationOptions &Options);
+
 struct RawEnvironmentPreparation {
   uint64_t Bytes = 0;
   uint64_t Records = 0;
