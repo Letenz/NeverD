@@ -44,6 +44,17 @@ def run(executable):
         rust = ok(owner, "local_types_source", {"language": "rust", "types": ["_PACKED"],
                                                 "dependencies": False})
         assert rust["language"] == "rust" and "#[repr(C, packed(1))]" in rust["source"]
+        # Python renders as ctypes, and declares nothing.
+        python = ok(owner, "local_types_source", {"language": "python", "types": ["_PACKED"],
+                                                  "dependencies": False})
+        assert python["language"] == "python", python
+        assert "class _PACKED(ctypes.Structure):" in python["source"], python
+        assert '    _layout_ = "ms"\n' in python["source"], python
+        unread = ok(owner, "local_types_declare", {"language": "python", "source": "X = 1"})
+        assert unread["types"] == [] and "do not read" in unread["problems"][0]["message"], unread
+        # Prototypes render in C and C++ only, and fail elsewhere.
+        refused = owner.call("local_types_source", {"language": "python", "prototypes": True})
+        assert refused["status"] == "error" and "c and cpp" in refused["error"]["message"], refused
 
         # Declared types join the program's, and the project keeps them.
         assert "local_types_declare" in owner.hello["capabilities"]

@@ -175,7 +175,7 @@ cl::SubCommand SwitchesCmd("switches",
                            "List the switch jump tables analysis recovers");
 cl::SubCommand TypesCmd("types",
                         "List the program's local types, lay one out, or "
-                        "render them as C, C++, Rust or Go");
+                        "render them as C, C++, Rust, Go or Python");
 cl::SubCommand DashboardCmd("dashboard", "Show binary overview dashboard");
 cl::SubCommand SigsCmd("sigs", "Apply FLIRT signatures to binary");
 cl::SubCommand SymbolicCmd("sym-explore",
@@ -930,19 +930,22 @@ cl::opt<std::string>
                          "header library NeverD ships) or user (--declare)"),
                 cl::init(""), cl::value_desc("origin"), cl::sub(TypesCmd));
 cl::opt<std::string>
-    TypesLanguage("lang", cl::desc("Render as c, cpp, rust or go (default c)"),
+    TypesLanguage("lang",
+                  cl::desc("Render as c, cpp, rust, go or python (default c)"),
                   cl::init("c"), cl::value_desc("language"), cl::sub(TypesCmd));
 cl::opt<std::string> TypesSpelling(
     "spelling",
     cl::desc("Spell builtins as windows (ULONG), ida (unsigned int), "
              "keywords (unsigned long) or portable (uint32_t) in C and C++, "
              "windows by default; as windows (aliases, as wdk-sys declares "
-             "them) or portable (u32, uint32: the default) in Rust and Go"),
+             "them) or portable (u32, uint32, ctypes.c_uint32: the default) "
+             "in Rust, Go and Python"),
     cl::init(""), cl::value_desc("style"), cl::sub(TypesCmd));
-cl::opt<bool> TypesAsserts("asserts",
-                           cl::desc("Follow each record with checks of its "
-                                    "size and offsets the compiler verifies"),
-                           cl::sub(TypesCmd));
+cl::opt<bool> TypesAsserts(
+    "asserts",
+    cl::desc("Follow each record with checks of its size and offsets the "
+             "compiler verifies, or Python's ctypes as the module runs"),
+    cl::sub(TypesCmd));
 cl::opt<bool>
     TypesDecimalOffsets("decimal-offsets",
                         cl::desc("Show offsets in decimal rather than hex"),

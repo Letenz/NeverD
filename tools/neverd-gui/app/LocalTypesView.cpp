@@ -75,23 +75,37 @@ constexpr int SortRole = Qt::UserRole;
 constexpr int NameRole = Qt::UserRole + 1;
 constexpr int RefersRole = Qt::UserRole + 2;
 
-/// The languages a type renders in, in tab order after the layout.
+/// The languages a type renders in, in tab order after the layout, and
+/// whether their declarations read back as the engine's parseTypes reads.
 struct SourceLanguage {
   const char *id;
   const char *title;
   const char *filter;
   const char *suffix;
+  bool reads;
 };
 // C/C++ shows C, which C++ compiles too.
 constexpr SourceLanguage Languages[] = {
     {"c", "C/C++",
      QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "C/C++ header (*.h)"),
-     "h"},
+     "h", true},
     {"rust", "Rust",
-     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Rust (*.rs)"), "rs"},
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Rust (*.rs)"), "rs",
+     true},
     {"go", "Go", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Go (*.go)"),
-     "go"},
+     "go", true},
+    {"python", "Python",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Python (*.py)"), "py",
+     false},
 };
+/// The language types shown in \p language are declared in: that one, or C
+/// where it renders only.
+QString declaredIn(const QString &language) {
+  for (const SourceLanguage &entry : Languages)
+    if (language == QLatin1String(entry.id) && entry.reads)
+      return language;
+  return QStringLiteral("c");
+}
 
 /// How C and C++, and the layout, spell builtins (the engine's spellings).
 struct Spelling {
@@ -122,6 +136,12 @@ constexpr Spelling GoSpellings[] = {
     {"portable",
      QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Exact widths (uint32)")},
 };
+constexpr Spelling PythonSpellings[] = {
+    {"windows",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Windows names (ULONG)")},
+    {"portable", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView",
+                                   "Exact widths (c_uint32)")},
+};
 
 /// The spellings each language chooses from, where the choice is kept and
 /// what it is until chosen.  C's serves the layout too.
@@ -135,6 +155,7 @@ const SpellingChoice SpellingChoices[] = {
     {"c", Spellings, "localTypes/spelling", "windows"},
     {"rust", RustSpellings, "localTypes/rustSpelling", "portable"},
     {"go", GoSpellings, "localTypes/goSpelling", "portable"},
+    {"python", PythonSpellings, "localTypes/pythonSpelling", "portable"},
 };
 
 /// The choice \p language makes: C++'s and the layout's are C's.
@@ -1083,14 +1104,15 @@ void LocalTypesView::run(TypesCommand command) {
     return;
   switch (command) {
   case TypesCommand::Add:
-    openEditor(language(), QString(), tr("Add types"));
+    openEditor(declaredIn(language()), QString(), tr("Add types"));
     return;
   case TypesCommand::Edit: {
     if (current_.isEmpty())
       return;
-    // The type as the language shown declares it, alone and unchecked: its
-    // checks would refuse the change they were made before.
-    const QString name = current_, lang = language();
+    // The type as the language shown declares it, or C where that language
+    // renders only: alone and unchecked, since its checks would refuse the
+    // change they were made before.
+    const QString name = current_, lang = declaredIn(language());
     QJsonObject options{{"language", lang},
                         {"hexOffsets", hex_->isChecked()},
                         {"asserts", false},
