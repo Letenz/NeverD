@@ -1423,6 +1423,7 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationCallbackLoopTests.cpp
   eh/RegistrationFilterJumpTests.cpp
   eh/RegistrationSEHTryLevelTests.cpp
+  eh/RegistrationLocalUnwindTests.cpp
   eh/RegistrationScalarCallStateTests.cpp
   eh/RegistrationRuntimeMemberStateTests.cpp
   eh/RegistrationMemberArgumentStateTests.cpp
@@ -1615,6 +1616,7 @@ target_include_directories(NeverDMedLLVMDeadSlotsTests PRIVATE
 
 add_neverd_unittest(NeverDRegistrationCallResultTests
   eh/RegistrationCallResultTests.cpp
+  eh/RegistrationSEHLocalUnwindTests.cpp
   eh/RegistrationSEHRuntimeReturnTests.cpp
   eh/RegistrationLLVMCallResultTests.cpp
   LINK_COMPONENTS IRMed BackendLLVM

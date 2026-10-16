@@ -23,6 +23,7 @@ add_neverd_component_library(NeverDIRMed
   X86/RegistrationSEHJump.cpp
   X86/RegistrationSEHJumpReplacement.cpp
   X86/RegistrationSEHBoundCall.cpp
+  X86/RegistrationSEHLocalUnwind.cpp
   X86/RegistrationSEHStateStore.cpp
   X86/RegistrationEntry.cpp
   X86/RegistrationRoots.cpp
