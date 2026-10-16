@@ -456,3 +456,67 @@ u64 threads_last_exit(u64 *out, u64 mode) {
     raw_call(93, 264);
   return 1;
 }
+
+static long raw_priority(u64 number, u64 who, long nice) {
+  register u64 x8 __asm__("x8") = number;
+  register u64 x0 __asm__("x0") = 0;
+  register u64 x1 __asm__("x1") = who;
+  register long x2 __asm__("x2") = nice;
+  __asm__ volatile("svc #0"
+                   : "+r"(x0)
+                   : "r"(x1), "r"(x2), "r"(x8)
+                   : "memory", "cc");
+  return (long)x0;
+}
+static void *priority_grandchild(void *arg) {
+  u64 *row = arg;
+  row[0] = gettid();
+  row[1] = raw_priority(141, 0, 0);
+  row[2] = raw_priority(140, 0, 12);
+  row[3] = raw_priority(141, 0, 0);
+  return 0;
+}
+static void *priority_child(void *arg) {
+  u64 *out = arg, *row = out + 32;
+  while (!__atomic_load_n(out + 15, __ATOMIC_ACQUIRE))
+    gettid();
+  row[0] = gettid();
+  row[1] = raw_priority(141, 0, 0);
+  row[2] = raw_priority(140, 0, 9);
+  row[3] = raw_priority(141, 0, 0);
+  *__errno() = 0;
+  row[4] = syscall(140, 0, 0, 0);
+  row[5] = *__errno();
+  row[6] = raw_priority(141, 0, 0);
+  u64 grandchild;
+  row[7] = pthread_create(&grandchild, 0, priority_grandchild, out + 64);
+  if (row[7])
+    return (void *)1;
+  row[8] = pthread_join(grandchild, 0);
+  row[9] = raw_priority(141, 0, 0);
+  row[10] = raw_priority(141, out[64], 0);
+  return 0;
+}
+u64 threads_priority(u64 *out, u64 mode) {
+  if (!mode) {
+    out[0] = raw_priority(140, 0, 3);
+    out[1] = raw_priority(141, 0, 0);
+  }
+  out[4] = gettid();
+  out[5] = pthread_create(out + 16, 0, priority_child, out);
+  if (out[5])
+    return 1;
+  if (!mode) {
+    out[2] = raw_priority(140, 0, 5);
+    out[3] = raw_priority(141, 0, 0);
+  }
+  __atomic_store_n(out + 15, 1, __ATOMIC_RELEASE);
+  out[6] = pthread_join(out[16], 0);
+  out[7] = raw_priority(141, out[32], 0);
+  out[8] = raw_priority(140, out[32], 19);
+  out[9] = raw_priority(141, 0, 0);
+  *__errno() = 0;
+  out[10] = syscall(141, 0, out[32]);
+  out[11] = *__errno();
+  return 0;
+}

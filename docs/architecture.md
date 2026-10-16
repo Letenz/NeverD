@@ -4230,6 +4230,14 @@ readiness and completion; `GuestThreads` advances to the earliest deadline only
 when no thread is runnable. All clock reads share `LinuxClock`; no timestamp or
 successful sleep is synthesized in the Bionic dispatcher.
 
+`LinuxPriority` owns the optional initial nice observations and subsequent
+per-task changes. `GuestThreads` borrows this owner to inherit the creating
+thread's current value only after CPU/stack preparation, with rollback if handle
+publication fails. Unknown parent values stay unknown. Finished child tasks lose
+their kernel priority identity even while their joinable userspace handle remains;
+the entry/leader retains the same zombie lifetime as its proc record. Nice state
+does not change the cooperative scheduler's round-robin execution policy.
+
 Android's `AndroidSymbols.def` owns Bionic symbol spellings and handler bindings;
 `AndroidDiagnostics.def` owns native-model diagnostics. The entry point validates
 TLS and provider lifetime before resolving an exact handler or a diagnostic
