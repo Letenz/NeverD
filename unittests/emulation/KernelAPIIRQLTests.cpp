@@ -70,6 +70,9 @@ TEST(DriverKernelAPIIRQL, UnicodeCopyInitAndComparisonHaveDifferentCeilings) {
   expectLimit("RtlHashUnicodeString", 1);
   expectLimit("RtlUpcaseUnicodeString", 1);
   expectLimit("RtlTimeToSecondsSince1980", 1);
+  expectLimit("RtlUpcaseUnicodeChar", 1);
+  expectLimit("toupper", 1);
+  expectLimit("towupper", 1);
 }
 
 TEST(DriverKernelAPIIRQL, DeviceCreationDeletionAndSymbolicLinksDiffer) {

@@ -1775,3 +1775,5 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 `KernelMemoryCalls` 负责检查型内存复制的准入并复用移动／填充操作，包括池生命周期和用户内存检查。`KernelModelRuntime` 负责 `RtlImageNtHeader` 原始签名探测。探测结果不能替代执行镜像所需的加载器验证；适配器不重复实现这两种语义。
 
 `KernelModelRuntime` 统一负责 Unicode 哈希、不依赖 NLS 的大写映射及 1980 纪元秒数转换。`KernelRuntimeCalls` 通过已有分页字符串池分配大写输出。字符串和时间 API 表统一导出身份、参数个数与 APC_LEVEL 限制；字段访问顺序由实现层负责。
+
+`uppercaseCharacter` 先收窄标量参数，再进行准入检查并委托已有 `uppercaseUnicodeUnit`。CRT 与计数字符串 API 表以各自 ABI 身份共享映射；适配层和宿主区域设置不提供另一套语义。
