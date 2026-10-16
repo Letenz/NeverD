@@ -2297,10 +2297,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>載入 DWARF 檔案</translation>
     </message>
     <message>
-        <source>Debug files (*.debug *.dbg *.sym);;All files (*)</source>
-        <translation>偵錯檔案 (*.debug *.dbg *.sym);;所有檔案 (*)</translation>
-    </message>
-    <message>
         <source>Load MAP file</source>
         <translation>載入 MAP 檔案</translation>
     </message>
@@ -2319,6 +2315,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>%1
 
 是否仍然載入其中的名稱？位於錯誤位址的名稱會誤導分析。</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug);;All files (*)</source>
+        <translation>DWARF 檔案 (*.debug);;所有檔案 (*)</translation>
     </message>
 </context>
 <context>
@@ -2648,6 +2648,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>MAP loaded: %1 (%2 names added)</source>
         <translation>已載入 MAP：%1（新增 %2 個名稱）</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>未載入 MAP：%1 與載入後的映像不符</translation>
     </message>
 </context>
 <context>

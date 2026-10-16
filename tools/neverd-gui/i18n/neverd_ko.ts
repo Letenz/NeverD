@@ -2297,10 +2297,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>DWARF 파일 불러오기</translation>
     </message>
     <message>
-        <source>Debug files (*.debug *.dbg *.sym);;All files (*)</source>
-        <translation>디버그 파일 (*.debug *.dbg *.sym);;모든 파일 (*)</translation>
-    </message>
-    <message>
         <source>Load MAP file</source>
         <translation>MAP 파일 불러오기</translation>
     </message>
@@ -2319,6 +2315,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>%1
 
 그래도 이름을 불러오시겠습니까? 잘못된 주소의 이름은 분석을 오도합니다.</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug);;All files (*)</source>
+        <translation>DWARF 파일 (*.debug);;모든 파일 (*)</translation>
     </message>
 </context>
 <context>
@@ -2648,6 +2648,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>MAP loaded: %1 (%2 names added)</source>
         <translation>MAP를 불러왔습니다: %1 (추가된 이름 %2개)</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>MAP를 불러오지 않았습니다: %1은(는) 불러온 이미지와 맞지 않습니다</translation>
     </message>
 </context>
 <context>

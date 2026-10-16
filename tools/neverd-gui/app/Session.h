@@ -48,6 +48,10 @@ struct LoadOptions {
   /// for one of another build) and file stamp; empty reads the one beside
   /// it when no PDB or DWARF describes the image.
   QJsonObject map;
+  /// The MAP beside the input the user agreed to load, which the open reads
+  /// only when it holds against the image as loaded; empty otherwise.  The
+  /// project does not keep it.
+  QString acceptedMap;
   /// {"mode":"none"} when the user declined the image's static symbol table,
   /// which loads it as if stripped; empty reads it.
   QJsonObject symbols;

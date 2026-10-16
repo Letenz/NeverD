@@ -41,9 +41,9 @@ def run(executable):
         pdb = root / "safety_cases_pe_x64.pdb"
         shutil.copyfile(FIXTURES / "safety_cases_pe_x64.pdb", pdb)
         text = (FIXTURES / "safety_cases_pe_x64.exe.map").read_text()
-        assert "                 main\n" in text
+        assert "                 main" in text
         beside = root / "safety_cases_pe_x64.exe.map"
-        beside.write_text(text.replace("                 main\n", "                 map_says_main\n"))
+        beside.write_text(text.replace("                 main", "                 map_says_main", 1))
 
         owner = clients.enter_context(Client(executable))
         for capability in ("map_reference", "map_inspect", "map_load", "dwarf_load"):

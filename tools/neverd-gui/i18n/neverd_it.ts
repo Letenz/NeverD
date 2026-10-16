@@ -2303,10 +2303,6 @@ Usare questo PDB per l&apos;analisi? I suoi simboli, tipi, firme delle funzioni 
         <translation>Carica file DWARF</translation>
     </message>
     <message>
-        <source>Debug files (*.debug *.dbg *.sym);;All files (*)</source>
-        <translation>File di debug (*.debug *.dbg *.sym);;Tutti i file (*)</translation>
-    </message>
-    <message>
         <source>Load MAP file</source>
         <translation>Carica file MAP</translation>
     </message>
@@ -2325,6 +2321,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>%1
 
 Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;analisi.</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug);;All files (*)</source>
+        <translation>File DWARF (*.debug);;Tutti i file (*)</translation>
     </message>
 </context>
 <context>
@@ -2654,6 +2654,10 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>MAP loaded: %1 (%2 names added)</source>
         <translation>MAP caricato: %1 (%2 nomi aggiunti)</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>MAP non caricato: %1 non corrisponde all&apos;immagine caricata</translation>
     </message>
 </context>
 <context>

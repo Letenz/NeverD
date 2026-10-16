@@ -1467,9 +1467,11 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
       pdb.is_object() && pdb.value("mode", Json("")) == "none";
   if (pdbDeclined)
     options["pdb"] = pdb;
-  // And the DWARF, the MAP and the symbol table it declined or chose.
+  // And the DWARF, the MAP and the symbol table it declined; the files it
+  // chose load below, once the project's edits are checked.
   for (const char *input : {"dwarf", "map", "symbols"})
-    if (const auto answer = snapshot.value(input, Json()); answer.is_object())
+    if (const auto answer = snapshot.value(input, Json());
+        answer.is_object() && answer.value("mode", Json("")) == "none")
       options[input] = answer;
   execute("open", options);
   if (inputHash() != snapshot.at("input_sha256").get<std::string>())

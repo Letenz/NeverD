@@ -2297,10 +2297,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>DWARF ファイルを読み込む</translation>
     </message>
     <message>
-        <source>Debug files (*.debug *.dbg *.sym);;All files (*)</source>
-        <translation>デバッグファイル (*.debug *.dbg *.sym);;すべてのファイル (*)</translation>
-    </message>
-    <message>
         <source>Load MAP file</source>
         <translation>MAP ファイルを読み込む</translation>
     </message>
@@ -2319,6 +2315,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>%1
 
 それでも名前を読み込みますか？誤ったアドレスの名前は解析を誤らせます。</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug);;All files (*)</source>
+        <translation>DWARF ファイル (*.debug);;すべてのファイル (*)</translation>
     </message>
 </context>
 <context>
@@ -2648,6 +2648,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>MAP loaded: %1 (%2 names added)</source>
         <translation>MAP を読み込みました：%1（追加した名前 %2 個）</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>MAP を読み込みませんでした：%1 は読み込んだイメージと一致しません</translation>
     </message>
 </context>
 <context>

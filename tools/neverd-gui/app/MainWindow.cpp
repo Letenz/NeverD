@@ -1740,6 +1740,8 @@ void MainWindow::openAskingForMap(const QString &path, LoadOptions options) {
           else if (MapPromptDialog::mismatched(reference))
             chosen.map = {{"path", reference.value("path")},
                           {"mode", "unchecked"}};
+          else
+            chosen.acceptedMap = reference.value("path").toString();
           openNow(path, chosen);
         });
       },
@@ -1891,7 +1893,7 @@ void MainWindow::loadDwarf() {
   const auto path = QFileDialog::getOpenFileName(
       this, tr("Load DWARF file"),
       QFileInfo(session_.projectPath()).absolutePath(),
-      tr("Debug files (*.debug *.dbg *.sym);;All files (*)"));
+      tr("DWARF files (*.debug);;All files (*)"));
   if (path.isEmpty() || !session_.loaded() || session_.epoch() != epoch)
     return;
   session_.loadDwarf({{"path", path}});

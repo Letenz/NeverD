@@ -568,6 +568,13 @@ void Session::sendOpen(const QString &requested, const QString &path,
                           "chosen"),
                        0);
         reportMaps(payload.value("debug_info").toObject());
+        // A binary file's MAP is held against the image only as it loads.
+        if (!options.acceptedMap.isEmpty() &&
+            payload.value("debug_info").toObject().value("kind").toString() !=
+                QLatin1String("map"))
+          emit message(tr("MAP not loaded: %1 does not fit the image as loaded")
+                           .arg(QDir::toNativeSeparators(options.acceptedMap)),
+                       1);
         if (std::exchange(reloading_, false))
           emit message(tr("Reloaded the input file"), 0);
         emit opened();

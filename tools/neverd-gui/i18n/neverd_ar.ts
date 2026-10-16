@@ -2327,10 +2327,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>تحميل ملف DWARF</translation>
     </message>
     <message>
-        <source>Debug files (*.debug *.dbg *.sym);;All files (*)</source>
-        <translation>ملفات التصحيح (*.debug *.dbg *.sym);;جميع الملفات (*)</translation>
-    </message>
-    <message>
         <source>Load MAP file</source>
         <translation>تحميل ملف MAP</translation>
     </message>
@@ -2349,6 +2345,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>%1
 
 هل تريد تحميل أسمائه رغم ذلك؟ الأسماء الموضوعة عند عناوين خاطئة تضلل التحليل.</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug);;All files (*)</source>
+        <translation>ملفات DWARF (*.debug);;جميع الملفات (*)</translation>
     </message>
 </context>
 <context>
@@ -2678,6 +2678,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>MAP loaded: %1 (%2 names added)</source>
         <translation>تم تحميل MAP: %1 (عدد الأسماء المضافة: %2)</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>لم يُحمَّل MAP: لا يطابق %1 الصورة كما حُمِّلت</translation>
     </message>
 </context>
 <context>

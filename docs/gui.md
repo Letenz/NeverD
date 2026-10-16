@@ -732,10 +732,12 @@ elsewhere, or most of its functions outside the input's code — asks *Load the
 MAP file anyway?* with **No** the default, since the open would pass over it;
 **Yes** loads it unchecked, which the project keeps. **No**, Escape or closing
 the dialog opens the file without the MAP, which the project keeps too. The
-Output window names the MAP that loaded and the names it added. The command
-line reads an image without the MAP beside it with `--no-map`, names one with
-`--map`, which a PDB or DWARF still outranks, and takes one of another build
-with `--map-unchecked`.
+Output window names the MAP that loaded and the names it added, and says so
+when a binary file's MAP, which can be held against the image only as it
+loads, does not fit it. The command line reads an image without the MAP beside
+it with `--no-map`, names one with `--map`, which a PDB or DWARF still
+outranks unless `--no-pdb` or `--no-dwarf` declines it, and takes one of
+another build with `--map-unchecked`.
 
 **File → Load file** loads a debug file into the open image: **PDB file...**
 for a PE, **DWARF file...** for an ELF or Mach-O image — a split `.debug` file,

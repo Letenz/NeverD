@@ -2309,10 +2309,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Загрузить файл DWARF</translation>
     </message>
     <message>
-        <source>Debug files (*.debug *.dbg *.sym);;All files (*)</source>
-        <translation>Отладочные файлы (*.debug *.dbg *.sym);;Все файлы (*)</translation>
-    </message>
-    <message>
         <source>Load MAP file</source>
         <translation>Загрузить файл MAP</translation>
     </message>
@@ -2331,6 +2327,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>%1
 
 Всё равно загрузить его имена? Имена по неверным адресам вводят анализ в заблуждение.</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug);;All files (*)</source>
+        <translation>Файлы DWARF (*.debug);;Все файлы (*)</translation>
     </message>
 </context>
 <context>
@@ -2660,6 +2660,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>MAP loaded: %1 (%2 names added)</source>
         <translation>MAP загружен: %1 (добавлено имён: %2)</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>MAP не загружен: %1 не соответствует загруженному образу</translation>
     </message>
 </context>
 <context>
