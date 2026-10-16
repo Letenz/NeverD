@@ -160,6 +160,75 @@ TEST_P(AndroidDevices, GPUObjectsShareMemoryAndRetireOnlyTheirFinalOwner) {
   }
 }
 
+TEST_P(AndroidDevices, LegacyGPUObjectsShareModernFlagsMemoryAndLifetime) {
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.KGSL->MemoryObjects = true;
+  // Force a collision at an otherwise aligned starting address.
+  D.ReadOnlyMappings.push_back({0x10000000, std::vector<uint8_t>(4096), {}});
+  for (bool Commands : {false, true}) {
+    D.KGSL->SynchronousA3xx = Commands;
+    Options.LinuxFiles->Devices.at("/fixture/control") = D;
+    for (uint64_t Route = 0; Route != 4; ++Route) {
+      SCOPED_TRACE(testing::Message() << Route << ':' << Commands);
+      auto R = run("devices_gpu_legacy", {Route, Commands});
+      ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+      ASSERT_EQ(R.ReturnValue, 0u);
+    }
+  }
+}
+
+TEST_P(AndroidDevices, LegacyGPURefusalsCheckCompleteRecordsBeforeEffects) {
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.KGSL->MemoryObjects = true;
+  D.KGSL->SynchronousA3xx = true;
+  Options.LinuxFiles->Devices.at("/fixture/control") = D;
+  for (uint64_t Mode = 0; Mode != 5; ++Mode) {
+    SCOPED_TRACE(Mode);
+    Options.Android->Memory = {
+        {Buffer, 8192, std::vector<uint8_t>(8192, 0xa5), false}};
+    Options.Android->ReadMemory = {{Buffer, 8192}};
+    if (Mode >= 2)
+      Options.Android->ReadMemory.push_back({0x23000000, 4096, false});
+    auto R = run("devices_gpu_legacy_rejected", {Mode, Buffer});
+    ASSERT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    ASSERT_FALSE(R.Services.back().Result);
+    ASSERT_EQ(R.MemorySnapshots.size(), Mode >= 2 ? 2u : 1u);
+    auto Expected = std::vector<uint8_t>(8192, 0xa5);
+    auto Put32 = [&](unsigned At, uint32_t Value) {
+      llvm::support::endian::write32le(Expected.data() + At, Value);
+    };
+    auto Put64 = [&](unsigned At, uint64_t Value) {
+      llvm::support::endian::write64le(Expected.data() + At, Value);
+    };
+    if (Mode < 2) {
+      const unsigned At = Mode ? 4064 : 0;
+      Put32(At, 0xdeadbeef);
+      Put32(At + 4, Mode ? 0 : 8);
+      Put64(At + 8, 4096);
+      Put64(At + 16, 0xabcdef);
+      Put64(At + 24, 0x11223344);
+      Put64(At + 32, 0x1234);
+      Put64(At + 40, 0x5678);
+    } else if (Mode == 2) {
+      Put64(4056, 0x10000001);
+      Put32(4064, 2);
+    } else if (Mode == 3)
+      Put32(4092, 2);
+    else {
+      Put64(0, 0x10002000);
+      Put32(8, 0);
+    }
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+    if (Mode >= 2) {
+      auto Bytes = std::vector<uint8_t>(4096, 0);
+      llvm::support::endian::write32le(Bytes.data(), 0x76543210);
+      EXPECT_EQ(R.MemorySnapshots[1].Bytes, Bytes);
+    }
+  }
+}
+
 TEST_P(AndroidDevices, GPUObjectAddressesExcludeLegacyDeviceRanges) {
   Options.Limits.TimeoutMicroseconds = 30000000;
   auto D = contextDeviceTestInput();
@@ -223,7 +292,7 @@ TEST_P(AndroidDevices, GPUObjectRefusalsPreserveRecordsAndMappings) {
       llvm::support::endian::write32le(Expected.data() + At, Value);
     };
     Put64(0, 8192);
-    Put64(8, Mode == 0 ? 0x100000000ULL : 0);
+    Put64(8, Mode == 0 ? 8 : Mode < 3 ? 0 : 0x000c0000);
     Put64(24, Mode < 3 ? 0xabcdef : 12288);
     Put32(32, Mode < 3 ? 0xdeadbeef : 2);
     Put32(36, Mode == 1 ? 1 : 0);
@@ -457,6 +526,90 @@ TEST(AndroidDeviceMemory, RefusedTransactionsDoNotAdvanceTheOpenDescription) {
         Kernel.handle(Kind, {0, 0, {3, Buffer + 64, 1, 0, 0, 0}, {}})));
     EXPECT_EQ(Result.Diagnostic, linux_model::DeviceOperation);
   }
+}
+
+TEST(AndroidDeviceMemory, LegacyGPURefusedCopyoutKeepsAllocationAndFreeState) {
+  ExecutionConfiguration C;
+  C.Backend = ExecutionBackendKind::Unicorn;
+  C.Architecture = GuestArchitecture::AArch64;
+  C.Contract = ExecutionContract::CheckedUserAArch64;
+  auto Probe = probeExecutionBackend(C);
+  ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+  if (Probe->Availability != BackendAvailability::Available)
+    GTEST_SKIP() << Probe->Reason;
+  auto Backend = createExecutionBackend(C, 4 * 1024 * 1024);
+  ASSERT_TRUE(bool(Backend)) << llvm::toString(Backend.takeError());
+  auto &CPU = *Backend->CPU;
+  auto &Space = *CPU.addressSpace();
+  constexpr uint64_t Buffer = 0x21000000;
+  ASSERT_EQ(
+      llvm::toString(Space.map(Buffer, 8192, Read | Write | UserAccessible)),
+      "");
+  ASSERT_EQ(llvm::toString(CPU.write(Buffer, {'/', 'd', 0})), "");
+  ProcessOptions Options;
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.KGSL->MemoryObjects = true;
+  Options.LinuxFiles.emplace().Devices["/d"] = D;
+  const linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, 4096};
+  ProcessResult Result{ProcessProfile::AndroidNativeAArch64,
+                       GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn,
+                       {}};
+  linux_model::LinuxServices Kernel(CPU, Layout, Buffer + 8192, Options,
+                                    Result);
+  auto Call = [&](linux_model::ServiceKind Kind, std::array<uint64_t, 6> Args) {
+    return llvm::cantFail(Kernel.handle(Kind, {0, 0, Args, {}}));
+  };
+  auto Ioctl = [&](uint64_t Request, uint64_t Argument) {
+    return Call(linux_model::ServiceKind::Ioctl,
+                {3, Request, Argument, 0, 0, 0});
+  };
+  ASSERT_EQ(Call(linux_model::ServiceKind::OpenAt,
+                 {uint64_t(-100), Buffer, 2, 0, 0, 0}),
+            3u);
+  const uint64_t Before = Space.physicalMemory()->allocatedBytes();
+  uint8_t Allocation[48]{};
+  llvm::support::endian::write64le(Allocation + 8, 4096);
+  ASSERT_EQ(llvm::toString(CPU.write(Buffer + 4064, Allocation)), "");
+  ASSERT_EQ(
+      llvm::toString(Space.protect(Buffer + 4096, 4096, Read | UserAccessible)),
+      "");
+  ASSERT_FALSE(Ioctl(0xc0300934, Buffer + 4064));
+  EXPECT_EQ(Space.physicalMemory()->allocatedBytes(), Before);
+  // Inspect the same kernel owner after refusal; this is not process
+  // resumption.
+  ASSERT_EQ(llvm::toString(Space.protect(Buffer + 4096, 4096,
+                                         Read | Write | UserAccessible)),
+            "");
+  ASSERT_EQ(Ioctl(0xc0300934, Buffer + 4064), 0u);
+  ASSERT_EQ(llvm::toString(CPU.read(Buffer + 4064, Allocation)), "");
+  EXPECT_EQ(llvm::support::endian::read32le(Allocation), 2u);
+  EXPECT_EQ(llvm::support::endian::read64le(Allocation + 24), 0x10000000u);
+  EXPECT_EQ(Space.physicalMemory()->allocatedBytes(), Before + 4096);
+  auto Mapping = Call(linux_model::ServiceKind::Mmap, {0, 4096, 3, 1, 3, 8192});
+  ASSERT_TRUE(Mapping);
+  ASSERT_LT(*Mapping, uint64_t(-4095));
+  const uint8_t Release[8] = {2, 0, 0, 0, 0x78, 0x56, 0x34, 0x12};
+  ASSERT_EQ(llvm::toString(CPU.write(Buffer + 4092, Release)), "");
+  ASSERT_EQ(
+      llvm::toString(Space.protect(Buffer + 4096, 4096, Read | UserAccessible)),
+      "");
+  ASSERT_FALSE(Ioctl(0xc0080935, Buffer + 4092));
+  ASSERT_EQ(
+      Call(linux_model::ServiceKind::Munmap, {*Mapping, 4096, 0, 0, 0, 0}), 0u);
+  uint8_t Query[72]{};
+  llvm::support::endian::write32le(Query + 8, 2);
+  ASSERT_EQ(llvm::toString(CPU.write(Buffer + 64, Query)), "");
+  // A refused free must not mark pending: unmapping leaves this ID alive.
+  EXPECT_EQ(Ioctl(0xc0480936, Buffer + 64), 0u);
+  EXPECT_EQ(Space.physicalMemory()->allocatedBytes(), Before + 4096);
+  ASSERT_EQ(llvm::toString(Space.protect(Buffer + 4096, 4096,
+                                         Read | Write | UserAccessible)),
+            "");
+  EXPECT_EQ(Ioctl(0xc0080935, Buffer + 4092), 0u);
+  EXPECT_EQ(Ioctl(0xc0080935, Buffer + 4092), uint64_t(-22));
+  EXPECT_EQ(Space.physicalMemory()->allocatedBytes(), Before);
 }
 
 INSTANTIATE_TEST_SUITE_P(

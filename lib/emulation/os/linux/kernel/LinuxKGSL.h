@@ -23,21 +23,30 @@ inline constexpr uint32_t WaitTimestamp = 0x400c0907;
 inline constexpr uint32_t AllocateObject = 0xc0300945;
 inline constexpr uint32_t FreeObject = 0x40200946;
 inline constexpr uint32_t ObjectInfo = 0xc0300947;
+inline constexpr uint32_t AllocateID = 0xc0300934;
+inline constexpr uint32_t FreeID = 0xc0080935;
+inline constexpr uint32_t MemoryInfo = 0xc0480936;
 inline bool isObjectRequest(uint32_t Request) {
   return Request == AllocateObject || Request == FreeObject ||
-         Request == ObjectInfo;
+         Request == ObjectInfo || Request == AllocateID || Request == FreeID ||
+         Request == MemoryInfo;
 }
 inline constexpr uint64_t GPUReadOnly = 0x01000000;
+inline constexpr uint64_t Force32Bit = 0x100000000ULL;
+inline constexpr uint64_t AlignmentMask = 0x00ff0000;
 inline constexpr uint64_t MaximumAllocation = 32768;
 inline constexpr uint64_t MaximumAllocations = 64;
 /// Deterministic GPU VA policy, excluding explicit legacy device ranges.
 inline std::optional<uint64_t>
 allocationAddress(const LinuxDeviceOptions &Device, uint64_t Start,
-                  uint64_t Size) {
+                  uint64_t Size, uint64_t Alignment = 4096) {
   if (Size > UINT32_MAX)
     return std::nullopt;
   const uint64_t Extent = Size + 4096;
   for (;;) {
+    if (Start > UINT64_MAX - (Alignment - 1))
+      return std::nullopt;
+    Start = (Start + Alignment - 1) & ~(Alignment - 1);
     if (Start >= 0x100000000ULL || Extent > 0x100000000ULL - Start)
       return std::nullopt;
     bool Collision = false;

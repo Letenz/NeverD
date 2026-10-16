@@ -7373,4 +7373,16 @@ The raw `GPUObjectStorage` case and Android object lifecycle/address-range cases
 have a 30-second per-execution wall budget for word-by-word O0 page checks on
 contended hosts; their guest instruction and event budgets are unchanged.
 Existing device cases retain their deadlines.
+`LegacyGPU*` adds old/new allocation, query and release mixing, normalized
+alignment and FORCE_32BIT flags, address collision recovery, ID-before-address
+lookup, interior data versus guard queries, complete reserved fields and pending
+frees. Its mixed PM4 case allocates the command buffer through GPUOBJ and writes
+into GPUMEM_ID storage. Cross-page records with a read-only trailing page must
+preserve the complete input and live RAM; imported objects without a modeled
+kernel ID stop explicitly. Raw errno and Bionic errno adapters are checked by
+independent callers. Run these cases alongside the existing GPUObject tests;
+the same public C API/CLI/Python case now includes both allocation interfaces.
+The kernel-owner test also observes allocation capacity, ID/address reuse and
+unmap-after-refused-free state, so unchanged output bytes alone cannot hide a
+partially committed allocation or pending free.
 These fixtures do not supply an Android system-service implementation or shader.

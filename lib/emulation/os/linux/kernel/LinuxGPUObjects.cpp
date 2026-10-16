@@ -31,9 +31,13 @@ LinuxFiles::gpuObjectIoctl(LinuxDeviceState &Device, uint32_t Request,
   if (!Memory || !Device.GPU)
     return unsupported(Result,
                        "GPU objects require owned RAM and process state");
-  const unsigned Size = Request == kgsl::FreeObject   ? 32
-                        : Request == kgsl::FreeMemory ? 8
-                                                      : 48;
+  const bool LegacyAlloc = Request == kgsl::AllocateID;
+  const bool LegacyInfo = Request == kgsl::MemoryInfo;
+  const bool LegacyFree = Request == kgsl::FreeID;
+  const unsigned Size = Request == kgsl::FreeObject                 ? 32
+                        : Request == kgsl::FreeMemory || LegacyFree ? 8
+                        : LegacyInfo                                ? 72
+                                                                    : 48;
   if (Argument > Layout.UserLimit || Size > Layout.UserLimit - Argument)
     return Outcome(uint64_t(0) - BadAddress);
   auto Readable = CPU.canAccess(Argument, Size, Read | UserAccessible);
@@ -41,7 +45,7 @@ LinuxFiles::gpuObjectIoctl(LinuxDeviceState &Device, uint32_t Request,
     return Readable.takeError();
   if (!*Readable)
     return Outcome(uint64_t(0) - BadAddress);
-  uint8_t Data[48]{};
+  uint8_t Data[72]{};
   if (auto E = CPU.read(Argument, llvm::MutableArrayRef(Data, Size)))
     return std::move(E);
   auto Get32 = [&](unsigned At) {
@@ -53,56 +57,101 @@ LinuxFiles::gpuObjectIoctl(LinuxDeviceState &Device, uint32_t Request,
   auto Put64 = [&](unsigned At, uint64_t Value) {
     llvm::support::endian::write64le(Data + At, Value);
   };
+  auto Put32 = [&](unsigned At, uint32_t Value) {
+    llvm::support::endian::write32le(Data + At, Value);
+  };
+  // Preflight the complete _IOWR record before changing allocation state.
+  auto Writable = [&]() {
+    return CPU.canAccess(Argument, Size, Write | UserAccessible);
+  };
+  auto WriteRecord = [&]() {
+    return CPU.write(Argument, llvm::ArrayRef(Data, Size));
+  };
   auto &GPU = *Device.GPU;
-  if (Request == kgsl::FreeObject || Request == kgsl::FreeMemory) {
+  if (Request == kgsl::FreeObject || Request == kgsl::FreeMemory ||
+      LegacyFree) {
     auto I = GPU.Allocations.end();
+    const uint32_t ID = Get32(LegacyFree ? 0 : 16);
     if (Request == kgsl::FreeMemory)
       I = GPU.Allocations.find(Get64(0));
-    else if (Get32(16))
+    else if (ID)
       I = std::find_if(GPU.Allocations.begin(), GPU.Allocations.end(),
-                       [&](const auto &A) { return A.second.ID == Get32(16); });
+                       [&](const auto &A) { return A.second.ID == ID; });
     if (I == GPU.Allocations.end())
       return Outcome(uint64_t(0) - InvalidArgument);
     if (Request == kgsl::FreeObject && Get64(0))
       return unsupported(Result, "GPU asynchronous free flags are unmodeled");
     if (I->second.PendingFree)
       return Outcome(uint64_t(0) - 16); // EBUSY: a VMA still holds this object.
+    if (LegacyFree) {
+      auto Allowed = Writable();
+      if (!Allowed)
+        return Allowed.takeError();
+      if (!*Allowed)
+        return unsupported(Result, "GPU object result is not fully writable");
+      if (auto E = WriteRecord())
+        return std::move(E);
+    }
     if (I->second.UserAddress)
       I->second.PendingFree = true;
     else
       GPU.Allocations.erase(I);
     return Outcome(0);
   }
-  if (Request == kgsl::ObjectInfo) {
-    auto I = std::find_if(
-        GPU.Allocations.begin(), GPU.Allocations.end(),
-        [&](const auto &A) { return Get32(40) && A.second.ID == Get32(40); });
+  if (Request == kgsl::ObjectInfo || LegacyInfo) {
+    const uint32_t ID = Get32(LegacyInfo ? 8 : 40);
+    auto I = GPU.Allocations.end();
+    if (ID)
+      I = std::find_if(GPU.Allocations.begin(), GPU.Allocations.end(),
+                       [&](const auto &A) { return A.second.ID == ID; });
+    else if (LegacyInfo && Get64(0)) {
+      I = GPU.Allocations.upper_bound(Get64(0));
+      if (I != GPU.Allocations.begin()) {
+        --I;
+        if (Get64(0) - I->first >= I->second.Bytes.size())
+          I = GPU.Allocations.end();
+      } else
+        I = GPU.Allocations.end();
+    }
     if (I == GPU.Allocations.end())
       return Outcome(uint64_t(0) - InvalidArgument);
-    auto Writable = CPU.canAccess(Argument, Size, Write | UserAccessible);
-    if (!Writable)
-      return Writable.takeError();
-    if (!*Writable)
+    if (!I->second.ID)
+      return unsupported(Result, "GPU imported allocation IDs are unmodeled");
+    auto Allowed = Writable();
+    if (!Allowed)
+      return Allowed.takeError();
+    if (!*Allowed)
       return unsupported(Result, "GPU object result is not fully writable");
     const auto &Object = I->second;
     Put64(0, I->first);
-    Put64(8, Object.ReadOnly ? kgsl::GPUReadOnly : 0);
+    if (LegacyInfo) {
+      Put32(8, Object.ID);
+      Put32(12, uint32_t(Object.Flags));
+    } else
+      Put64(8, Object.Flags);
     Put64(16, Object.Bytes.size());
     Put64(24, Object.Bytes.size() + 4096); // IOMMU guard footprint.
     Put64(32, Object.UserAddress);
-    if (auto E = CPU.write(Argument, Data))
+    if (auto E = WriteRecord())
       return std::move(E);
     return Outcome(0);
   }
-  const uint64_t Length = Get64(0), Flags = Get64(8);
+  const uint64_t Length = Get64(LegacyAlloc ? 8 : 0);
+  uint64_t Flags =
+      LegacyAlloc ? uint64_t(Get32(4)) | kgsl::Force32Bit : Get64(8);
   if (!Length || Length > UINT32_MAX)
     return Outcome(uint64_t(0) - InvalidArgument);
-  if ((Flags & ~kgsl::GPUReadOnly) || Get32(36))
+  if ((Flags & ~(kgsl::GPUReadOnly | kgsl::Force32Bit | kgsl::AlignmentMask)) ||
+      (!LegacyAlloc && Get32(36)))
     return unsupported(Result,
                        "GPU allocation flags or metadata are unmodeled");
   const uint64_t Rounded = (Length + 4095) & ~uint64_t(4095);
-  const auto GPUAddress =
-      kgsl::allocationAddress(*Device.Options, GPU.NextAddress, Rounded);
+  // The admitted 4 KiB page profile normalizes hints to [4 KiB, 32 MiB].
+  const uint64_t Align = std::clamp((Flags & kgsl::AlignmentMask) >> 16,
+                                    uint64_t(12), uint64_t(25));
+  Flags = (Flags & ~kgsl::AlignmentMask) | (Align << 16);
+  const auto GPUAddress = kgsl::allocationAddress(
+      *Device.Options, GPU.NextAddress, Rounded, 1ULL << Align);
   if (Rounded > kgsl::MaximumAllocation ||
       GPU.Allocations.size() >= kgsl::MaximumAllocations || !GPUAddress)
     return unsupported(Result, "GPU object memory budget exhausted");
@@ -119,10 +168,10 @@ LinuxFiles::gpuObjectIoctl(LinuxDeviceState &Device, uint32_t Request,
     if (!Occupied)
       break;
   }
-  auto Writable = CPU.canAccess(Argument, Size, Write | UserAccessible);
-  if (!Writable)
-    return Writable.takeError();
-  if (!*Writable)
+  auto Allowed = Writable();
+  if (!Allowed)
+    return Allowed.takeError();
+  if (!*Allowed)
     return unsupported(Result, "GPU object result is not fully writable");
   auto Bytes = Memory->allocateGPUObject(Rounded);
   if (!Bytes) {
@@ -132,14 +181,22 @@ LinuxFiles::gpuObjectIoctl(LinuxDeviceState &Device, uint32_t Request,
     llvm::consumeError(std::move(E));
     return Outcome(uint64_t(0) - NoMemory);
   }
-  Put64(0, Rounded);
-  Put64(24, Rounded + 4096);
-  llvm::support::endian::write32le(Data + 32, ID);
-  if (auto E = CPU.write(Argument, Data))
+  if (LegacyAlloc) {
+    Put32(0, ID);
+    Put32(4, uint32_t(Flags));
+    Put64(8, Rounded);
+    Put64(16, Rounded + 4096);
+    Put64(24, *GPUAddress);
+  } else {
+    Put64(0, Rounded);
+    Put64(8, Flags);
+    Put64(24, Rounded + 4096);
+    Put32(32, ID);
+  }
+  if (auto E = WriteRecord())
     return std::move(E);
-  GPU.Allocations.emplace(
-      *GPUAddress,
-      GPUAllocation{std::move(*Bytes), bool(Flags & kgsl::GPUReadOnly), ID});
+  GPU.Allocations.emplace(*GPUAddress,
+                          GPUAllocation{std::move(*Bytes), Flags, ID});
   GPU.NextAddress = *GPUAddress + Rounded + 4096;
   return Outcome(0);
 }
