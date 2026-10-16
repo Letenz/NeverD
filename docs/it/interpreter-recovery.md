@@ -203,6 +203,14 @@ Prima di acquisire l’intera immagine dei flag, ogni flag aritmetico o di direz
 
 I temporanei LowIR sono locali a una sola istruzione nativa sollevata. Ogni byte letto deve essere stato definito prima nella stessa istruzione; il riuso di un offset da un’istruzione precedente o l’annullamento algebrico di un valore indefinito non dimostrano la validità del sorgente. Le costanti d’ingresso possono vincolare solo registri fisici.
 
+<!-- i18n-section: supervisor-interrupt-control -->
+
+## Controllo del flag di interrupt in modalità supervisore
+
+Il recupero LowIR grezzo e le prove di relazione nativa ammettono le forme canoniche x64 di `CLI`/`STI` solo con il profilo esplicito `KernelX64NoFaultV1`. Il componente condiviso dei flag x64 azzera o imposta IF preservando tutti gli altri flag, registri generali e byte di memoria. Il recupero mantiene l’operazione intrinseca originale; le prove registrano la transizione e confrontano sempre i flag di sistema finali, anche senza osservazioni dei registri ordinari.
+
+Il profilo fissa CPL0/IOPL0 ed esclude eventi asincroni, consegna di eventi di debug e transizioni di privilegio. Non osserva quindi l’inibizione temporanea degli interrupt di STI. Un profilo assente o utente rifiuta queste istruzioni; l’ABI sorgente esistente resta limitata al proprio profilo utente. Questo supporto non fornisce un modello di consegna degli interrupt o di transizione di privilegio.
+
 <!-- i18n-section: raw-cmpxchg -->
 
 ## Confronto e scambio nel modello raw sequenziale

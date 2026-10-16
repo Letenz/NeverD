@@ -206,6 +206,14 @@ Vor einem vollständigen Flags-Schnappschuss muss jedes modellierte arithmetisch
 
 LowIR-Temporärwerte gelten nur innerhalb einer gehobenen nativen Anweisung. Jedes gelesene Byte muss zuvor in derselben Anweisung definiert worden sein; ein wiederverwendeter Offset aus einer früheren Anweisung oder ein algebraisch aufgehobener undefinierter Wert ist kein Beleg für gültigen Quellcode. Eintrittskonstanten dürfen nur physische Register binden.
 
+<!-- i18n-section: supervisor-interrupt-control -->
+
+## Interrupt-Flag im Supervisor-Modus
+
+Die rohe LowIR-Wiederherstellung und native Relationsbeweise erlauben kanonische x64-Formen von `CLI`/`STI` nur mit dem expliziten Profil `KernelX64NoFaultV1`. Die gemeinsame x64-Flag-Semantik löscht beziehungsweise setzt IF und erhält alle anderen Flags, allgemeinen Register und Speicherbytes. Die Wiederherstellung behält das ursprüngliche Intrinsic bei; Beweise erfassen seinen Flag-Übergang und vergleichen stets die abschließenden Systemflags, auch ohne Beobachtungen gewöhnlicher Register.
+
+Das Profil legt CPL0/IOPL0 fest und schließt asynchrone Ereignisse, die Zustellung von Debug-Ereignissen und Privilegwechsel aus. Die vorübergehende Interrupt-Sperre von STI wird daher nicht beobachtet. Ein fehlendes Profil oder ein Benutzerprofil weist diese Befehle zurück; die bestehende Quellcode-ABI bleibt auf ihr Benutzerprofil beschränkt. Diese Unterstützung liefert kein Modell für Interrupt-Zustellung oder Privilegwechsel.
+
 <!-- i18n-section: raw-cmpxchg -->
 
 ## Vergleich und Austausch im sequenziellen Raw-Modell

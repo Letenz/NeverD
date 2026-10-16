@@ -32,6 +32,7 @@ inline bool hasLegacyIntegerBankAudit(unsigned Id) {
   case X86_INS_CDQE:
   case X86_INS_CLC:
   case X86_INS_CLD:
+  case X86_INS_CLI:
   case X86_INS_CMC:
   case X86_INS_CMOVA:
   case X86_INS_CMOVAE:
@@ -123,6 +124,7 @@ inline bool hasLegacyIntegerBankAudit(unsigned Id) {
   case X86_INS_SHRD:
   case X86_INS_STC:
   case X86_INS_STD:
+  case X86_INS_STI:
   case X86_INS_SUB:
   case X86_INS_TEST:
   case X86_INS_XADD:

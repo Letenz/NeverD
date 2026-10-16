@@ -2379,4 +2379,6 @@ TEST(OriginalBinaryUndefinedIndependence,
   expectRefusal(P, Status::Unsupported, Limits);
 }
 
+#include "KernelInterruptFlagTests.inc"
+
 } // namespace

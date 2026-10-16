@@ -322,6 +322,14 @@ Before a full flag snapshot, every modelled arithmetic or direction flag must ha
 
 LowIR temporaries are local to one lifted native instruction. Every byte read must have been defined earlier in that instruction; a reused offset from a prior instruction or an algebraically cancelled undefined value is not source evidence. Entry constants may bind physical registers only.
 
+<!-- i18n-section: supervisor-interrupt-control -->
+
+## Supervisor interrupt control
+
+Raw LowIR recovery and native relation proofs admit canonical x64 `CLI`/`STI` only with the explicit `KernelX64NoFaultV1` profile. The shared x64 flags owner clears/sets IF while preserving every other flag, general-purpose register and memory byte. Recovery retains the original intrinsic; proofs record its flag transition and always compare final system flags, even without ordinary register observations.
+
+This profile fixes CPL0/IOPL0 and excludes asynchronous events, debug delivery and privilege transitions. It therefore does not observe STI's temporary interrupt inhibition. A missing or user profile refuses these instructions; the existing source ABI remains restricted to its user profile. This support supplies no interrupt-delivery or privilege-transition model.
+
 <!-- i18n-section: raw-cmpxchg -->
 
 ## Sequential raw compare-and-exchange
