@@ -257,4 +257,4 @@ reutiliza entradas de una llamada ordinaria anterior. También se conserva un
 scope referenciado únicamente por una llamada ordinaria a finally autenticada,
 aunque ningún try level del código fuente lo active.
 
-La reconstrucción de `nonlocal_finally_return` de MSVC x86 `/Od /GS-` se ejecuta con LLVM fuente optimizado y sin optimizar en ambos modos de parche. Un observador SEH externo comprueba retornos normales y excepcionales, guardas y restauración de la cadena en dos bases forzadas. Esto no cubre el retorno directo al padre de `/O2` ni los wrappers GS.
+La reconstrucción MSVC x86 `/Od` de `nonlocal_finally_return` se verifica con `/GS-` y `/GS`, IR fuente optimizado o sin optimizar, ambos modos de parche y dos bases forzadas. Un observador SEH externo comprueba retornos, pila y cadena. La ruta GS conserva el normalizador original después de probar que su auxiliar escalar no observa el marco llamador. El retorno directo al padre de `/O2` sigue sin soporte.

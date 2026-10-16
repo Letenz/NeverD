@@ -72,7 +72,8 @@ TEST(PipelineOutcome, NativeFinallyInputsRetainSourceLLVM) {
               *Result.LlvmModule);
           bool Reconstruct = false;
 #ifdef LLVM_NEVERD_X86_REGISTRATION_EH
-          Reconstruct = std::string(Profile) == "Od-no-gs" &&
+          Reconstruct = (std::string(Profile) == "Od-no-gs" ||
+                         std::string(Profile) == "Od-gs") &&
                         std::string(Name) == "nonlocal_finally_return";
 #endif
           if (Reconstruct) {
@@ -97,8 +98,10 @@ TEST(PipelineOutcome, NativeFinallyInputsRetainSourceLLVM) {
                     std::getenv("NEVERD_NONLOCAL_FINALLY_OUTPUT")) {
               std::error_code EC = llvm::sys::fs::create_directories(Output);
               ASSERT_FALSE(EC) << EC.message();
+              const std::string Prefix =
+                  std::string(Profile) == "Od-gs" ? "return-gs-" : "return-";
               const auto IR = std::filesystem::path(Output) /
-                              (NoOpt ? "return-raw.ll" : "return-opt.ll");
+                              (Prefix + (NoOpt ? "raw.ll" : "opt.ll"));
               llvm::raw_fd_ostream OS(IR.string(), EC);
               ASSERT_FALSE(EC) << EC.message();
               Result.LlvmModule->print(OS, nullptr);

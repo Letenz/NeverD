@@ -254,4 +254,4 @@ gli ingressi di una precedente chiamata ordinaria. Uno scope referenziato solo d
 una chiamata ordinaria a finally autenticata viene conservato anche se nessun
 try level del codice sorgente lo attiva.
 
-La ricostruzione di `nonlocal_finally_return` da MSVC x86 `/Od /GS-` viene eseguita con LLVM sorgente ottimizzato e non, in entrambe le modalità di patch. Un osservatore SEH esterno verifica ritorni normali ed eccezionali, stack e ripristino della catena su due basi forzate. Sono esclusi da questa copertura il ritorno diretto al padre di `/O2` e i wrapper GS.
+La ricostruzione MSVC x86 `/Od` di `nonlocal_finally_return` viene verificata con `/GS-` e `/GS`, IR sorgente ottimizzato o meno, entrambe le modalità di patch e due basi forzate. Un osservatore SEH esterno verifica ritorni, stack e catena. Il percorso GS conserva il normalizzatore originale dopo aver provato che il suo helper scalare non osserva il frame chiamante. Il ritorno diretto al padre di `/O2` resta non supportato.

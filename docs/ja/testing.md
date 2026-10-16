@@ -1720,7 +1720,9 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 
 `SafeSEHReference.*` は不変の SafeSEH テーブルへの所属、不正または曖昧な格納領域、再配置、他のアーキテクチャと形式、分割間の宣言順序を検査します。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` は `NEVERD_NONLOCAL_FINALLY_INPUTS` を使い、ネイティブ MSVC の x86/x64、O0/O2、GS とソース最適化の有無を組み合わせた 32 通りの LLVM 出力を検証します。LLVM と解決済み呼び出しシグネチャを検証し、未対応の x86 ネイティブ EH 再構築は拒否されることも確認します。Windows EH 専用ジョブはネイティブ fixture artifact を取得して実行し、入力ディレクトリがなければテストは明示的にスキップされます。
 
-`RegistrationPrologueSaves.*` と `PipelineOptNone.*` はソースメモリー記録、コールバック引数と選択器の保護、通常コードの最適化を検証します。ネイティブ MSVC 行列は x86 `/Od /GS-` の `nonlocal_finally_return` を独立した COFF 検証とともに受理します。`check_windows_finally_rewrite.py` は二つの固定ベース、両パッチ方式、最適化前後の IR で、12 回の観測実行と 768 回の呼び出し、チェーン・スタック保護、負の対照を検査します。EXE から DLL への変換は TLS のない入力のヘッダーだけを変更し、外側の SEH 観測器が例外検索を提供します。他の MSVC 形式は解析と拒否の検査です。
+`RegistrationPrologueSaves.*` と `PipelineOptNone.*` はソースメモリー記録、コールバック引数と選択器の保護、通常コードの最適化を検証します。ネイティブ MSVC 行列は x86 `/Od` (`/GS-`, `/GS`) の `nonlocal_finally_return` を独立した COFF 検証とともに受理します。`check_windows_finally_rewrite.py` は二つの固定ベース、両パッチ方式、最適化前後の IR で、24 回の観測実行と 1536 回の呼び出し、チェーン・スタック保護、負の対照を検査します。EXE から DLL への変換は TLS のない入力のヘッダーだけを変更し、外側の SEH 観測器が例外検索を提供します。他の MSVC 形式は解析と拒否の検査です。
+
+`RegistrationEH4Wrapper.*` は二つのベース、可変・不変の実行時データ、MXCSR 分岐、全経路の定義、呼び出し元フレームの分離、命令・領域の重複、正確な PE 再配置を検査します。両 MSVC 形式に独立した負の対照があります。
 
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` は証明された Windows x64 SEH ハンドラーと通常・例外共有入口からのローカル巻き戻し呼び出しを検証します。反例は巻き戻し割り当ての不一致、不安定または部分幅の SP、独立入口、不完全な入力、欠落・偽造された例外辺、予算不足、不明なスタックメモリ、外部再配置、未認証ランタイムを含みます。LowIR 証明とモジュール証明書を SSA 検証へ渡し、通常の戻り継続テストは独立した入口規則を維持します。
 
