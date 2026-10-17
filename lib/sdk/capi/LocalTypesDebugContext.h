@@ -89,8 +89,9 @@ public:
       const BinaryImage *Image = nullptr,
       std::vector<types::HeaderLibrary> Headers = {},
       std::unordered_map<uint64_t, std::string> Recognized = {});
-  /// Takes back the members it gave the debug information's records, so
-  /// that the context made after a change to the library gives them anew.
+  /// Takes back the members and enumerators it gave the debug information's
+  /// types, and gives back those they held, so that the context made after
+  /// a change to the library gives them anew.
   /// The records are the debug information's, which the session's calls,
   /// one at a time, share: no decompilation reads them meanwhile.
   ~LocalTypesDebugContext() override;
@@ -147,8 +148,11 @@ public:
     return Inner.resolveFramePointerVariableAt(FuncAddr, UsePC, Offset);
   }
   /// A record's members for display from the library, where it defines a
-  /// record of the name and size whose members none have been given yet;
-  /// otherwise the debug information's.
+  /// record of the name and size, and an enumeration's enumerators where it
+  /// defines one of the name: the library is the authority on the names, so
+  /// that one the user renames reads by its new name.  The debug
+  /// information's stay on a record the library does not lay out where they
+  /// lie, such as a C++ class whose bases the PDB flattens into it.
   void completeType(const TypeRef &Type) const override;
   std::optional<TypeSym> resolveType(uint64_t TypeId) const override {
     return Inner.resolveType(TypeId);
@@ -211,6 +215,11 @@ private:
   /// that is unknown.
   const types::LocalType *definedRecord(llvm::StringRef Name,
                                         uint16_t Size) const;
+  /// Gives \p Type, a record or an enumeration of the debug information,
+  /// the library's members or enumerators of its name, the members only
+  /// where each one it has lies where one of the library's does.  False
+  /// where the library has none to give.  Holds Mutex.
+  bool takeLibraryNames(const TypeRef &Type) const;
   /// The names the image states for the function at \p Entry, the one it
   /// is shown under first (BinaryImage::statedFunctionNamesAt).
   std::vector<std::string> statedNames(va_t Entry) const;
@@ -239,8 +248,16 @@ private:
   mutable std::map<va_t, std::vector<std::string>> StatedNames;
   mutable std::map<va_t, std::string> ImportNames;
   mutable std::map<va_t, std::optional<FunctionSym>> DeclaredSignatures;
-  /// The debug information's records it gave members to.
-  mutable std::vector<TypeRef> Completed;
+  /// A type of the debug information it gave the library's names, with
+  /// the names the type held before, which it takes back: none for a record
+  /// the debug information had given no members.
+  struct Named {
+    TypeRef Type;
+    std::vector<std::string> Names;
+    std::vector<uint16_t> Offsets;
+    std::vector<TypeRef> Types;
+  };
+  mutable std::vector<Named> Completed;
   mutable llvm::DenseSet<const NdType *> CompletedRecords;
   mutable llvm::StringSet<> Read;
   /// The records and enumerations of the library's names that the debug

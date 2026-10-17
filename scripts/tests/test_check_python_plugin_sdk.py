@@ -148,6 +148,29 @@ typedef enum {
         audit.check_versions(errors)
         self.assertEqual(errors, [])
 
+    def test_source_patch_dependency_layout_is_audited_with_its_pointer(self) -> None:
+        import ctypes
+
+        from neverd_plugin import abi
+
+        errors: list[str] = []
+        audit.check_source_patch_abi(errors)
+        self.assertEqual(errors, [])
+
+        class WrongDependency(ctypes.Structure):
+            _fields_ = [
+                ("library", ctypes.c_char_p),
+                ("symbol", ctypes.c_char_p),
+                ("kind", ctypes.c_uint64),
+            ]
+
+        with mock.patch.object(abi, "NeverDSourcePatchDependencyV1", WrongDependency):
+            audit.check_source_patch_abi(errors)
+        self.assertTrue(any(
+            message.startswith("neverd_source_patch_dependency_v1 field/type mismatch")
+            for message in errors
+        ), errors)
+
     def test_concolic_seed_ceiling_cannot_drift_from_public_header(self) -> None:
         from neverd_plugin import api
 

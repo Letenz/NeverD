@@ -9,7 +9,9 @@ LIBC_NO_RETURN_SYMBOL("mingw_longjmp")
 LIBC_NO_RETURN_SYMBOL("CxxThrowException")
 LIBC_NO_RETURN_SYMBOL("report_gsfailure")
 LIBC_NO_RETURN_SYMBOL("raise_securityfailure")
-LIBC_NO_RETURN_SYMBOL("TerminateProcess")
+// TerminateProcess is absent: it returns when it ends another process, or
+// fails to, and only the current process's pseudo-handle makes it end the
+// caller, as raise_securityfailure calls it.
 // msvcrt's _amsg_exit ends the program with exit code 255 after its runtime
 // error message; the Universal CRT and vcruntime declare _invoke_watson,
 // _invalid_parameter_noinfo_noreturn and __std_terminate noreturn.  A plain

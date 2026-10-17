@@ -767,6 +767,17 @@ void recoverCallAbi(
         ExternalArity = libc::libcArityForSymbol(CI.TargetName);
       else if (VariableCallee && !VariableCallee->ImportName.empty())
         ExternalArity = libc::libcArityForSymbol(VariableCallee->ImportName);
+      // An import the tables do not know, whose prototype the program's types
+      // declare, publishes the integer arguments it takes in its summary
+      // (importPrototypeArguments, LowToMed): the call passes exactly those,
+      // as one the tables know does, and no register it happens to hold.
+      if (!ExternalArity && IsIndirectImport && Op.CalleeRegisterArgs >= 0 &&
+          Op.CalleeVectorSlots == 0 && Op.CalleeVectorArgs <= 0) {
+        libc::LibCArity Declared;
+        Declared.IntArgs =
+            std::max<int>(Op.CalleeRegisterArgs, Op.CalleeStackArgs);
+        ExternalArity = Declared;
+      }
 
       // The callee's integer register-argument count, if it is a known direct
       // intra-module target; -1 when unknown (external / indirect).  Used to

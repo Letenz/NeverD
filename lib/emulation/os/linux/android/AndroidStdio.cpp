@@ -50,21 +50,21 @@ llvm::Expected<Bionic::InputStream *> Bionic::inputStream(uint64_t Handle) {
   return &I->second;
 }
 
-llvm::Error Bionic::opaqueHandle(uint64_t Handle) {
-  // The token page deliberately has no readable FILE layout. Its second page
-  // supplies the one-byte buffer used when allocation fails or buffering is
-  // disabled. Both pages count against the workload's memory limit.
+llvm::Error Bionic::opaqueHandle(uint64_t Handle, llvm::StringRef Kind) {
+  // An opaque token deliberately exposes no readable guest layout. FILE
+  // allocations have a separate second page for their fallback byte buffer.
   auto Mapped = CPU.canAccess(Handle, PageSize, UserAccessible);
   if (!Mapped)
     return Mapped.takeError();
   if (!*Mapped)
-    return failure("unmapped Bionic FILE handle");
+    return failure(llvm::Twine("unmapped Bionic ") + Kind + " handle");
   for (unsigned Permission : {Read, Write, Execute}) {
     auto Changed = CPU.canAccess(Handle, 1, Permission | UserAccessible);
     if (!Changed)
       return Changed.takeError();
     if (*Changed)
-      return failure("Bionic FILE storage must remain opaque");
+      return failure(llvm::Twine("Bionic ") + Kind +
+                     " storage must remain opaque");
   }
   return llvm::Error::success();
 }

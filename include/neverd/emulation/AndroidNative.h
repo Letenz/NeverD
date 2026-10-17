@@ -38,6 +38,12 @@ struct NativeMemorySnapshot {
   std::vector<uint8_t> Bytes;
 };
 
+/// One visible logd v4 entry. Payload is opaque; no host log is consulted.
+struct NativeLogRecord {
+  uint32_t ID = 0, PID = 0, TID = 0, Seconds = 0, Nanoseconds = 0, UID = 0;
+  std::vector<uint8_t> Payload;
+};
+
 /// Android 9 / API 28, little-endian AArch64. Function
 /// arguments are AAPCS64 scalar register/stack values, not process argv.
 /// Explicit inputs never inherit host properties, files, or environment.
@@ -51,6 +57,11 @@ struct AndroidNativeOptions {
   /// Find/read/enumeration share stable guest records with generation zero;
   /// enumeration uses name order, not an inferred device-area traversal order.
   std::map<std::string, std::string> Properties;
+  /// Complete, timestamp-ordered visible snapshot for the bounded liblog
+  /// reader. Absent is unknown; an empty vector explicitly supplies no logs.
+  /// IDs 0..5, at most 4096 entries and 1 MiB including v4 headers. This does
+  /// not infer permissions, logd sockets, live producers or persistent logs.
+  std::optional<std::vector<NativeLogRecord>> LogRecords;
   std::vector<NativeMemoryRegion> Memory;
   std::vector<NativeMemoryRead> ReadMemory;
   /// Constructors normally execute before the call, sharing its budget.

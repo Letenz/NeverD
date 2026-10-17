@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 2dececbb333d44745a37cffde5543a187cfe8daacdeb237691dae825824997c8 -->
+<!-- i18n-source: f85e400322f7b1abd9461fe80492cb140c811c56a1bb2f6c6685b72dee6c7364 -->
 
 [← Índice de documentación](README.md)
 
@@ -33,7 +33,7 @@ Los segmentos conservan permisos actuales/máximos y relleno a cero. `__PAGEZERO
 
 `LC_UNIXTHREAD` exige exactamente un registro completo de estado general nativo de 64 bits, con solo PC establecido. La pila contiene argc, argv/envp terminados y un vector apple terminado con `executable_path=<input filename>`. Se rechazan SP/flags propios, otros registros, flavors adicionales y entradas contradictorias. No se heredan el entorno anfitrión ni un vector auxiliar Linux. Referencia: [arquitectura dyld](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-El contrato limitado siguiente admite libSystem, dylibs de inicio explícitas y TLS C ordinario del hilo principal. Constructores/destructores, callbacks TLS, arm64e/PAC, subtipos CPU no admitidos, cifrado y comandos no modelados siguen fallando antes de ejecutar. El programa principal conserva su dirección preferida; las dylibs reciben direcciones separadas deterministas. Las firmas no implementan AMFI ni entitlements.
+El contrato limitado siguiente admite libSystem, dylibs de inicio explícitas y TLS C ordinario del hilo principal. Destructores globales, antiguos inicializadores TLS, arm64e/PAC, subtipos CPU no admitidos, cifrado y comandos no modelados siguen fallando antes de ejecutar. El programa principal conserva su dirección preferida; las dylibs reciben direcciones separadas deterministas. Las firmas no implementan AMFI ni entitlements.
 
 ## Servicios Darwin
 
@@ -1833,7 +1833,7 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 101; matching ARM64 identities: 303
+native common catalogue: 82; required methods/platform: 102; matching ARM64 identities: 306
 ```
 
 ```json
@@ -1844,7 +1844,7 @@ native common catalogue: 82; required methods/platform: 101; matching ARM64 iden
 
 `darwin.modules` asigna hasta 32 nombres de instalación exactos, sensibles a mayúsculas, a rutas Mach-O originales. Solo se leen dependencias alcanzables; `@loader_path` se compara literalmente, sin buscar bibliotecas del host. Se verifican ISA, plataforma, identidad y versión de cada MH_DYLIB; el ordinal elige el proveedor real. Exportaciones homónimas y dependencias compartidas conservan su identidad. Archivos completos y datos residentes comparten sus respectivos presupuestos.
 
-TLS C inicializado o cero admite alineación máxima de 16 bytes. El almacenamiento de cada módulo se mapea y contabiliza al preparar; el primer acceso copia la plantilla contigua viva tras relocation, incluidos cambios previos del BSS y huecos. Se validan descriptores y retornos; las páginas TLS no se reutilizan, liberan ni reprotegen. Controles nativos originales O0/O1/O2 classic/chained comparan cinco perfiles C/CLI/Python. Ciclos, exports débiles/reexports, callbacks, dlopen/dlsym, hilos y frameworks completos siguen pendientes; Intel nativo e iOS físico no están cualificados.
+TLS C inicializado o cero admite alineación máxima de 16 bytes. El almacenamiento de cada módulo se mapea y contabiliza al preparar; el primer acceso copia la plantilla contigua viva tras relocation, incluidos cambios previos del BSS y huecos. Se validan descriptores y retornos; las páginas TLS no se reutilizan, liberan ni reprotegen. Controles nativos originales O0/O1/O2 classic/chained comparan cinco perfiles C/CLI/Python. Ciclos, exports débiles/reexports, destructores globales/antiguos inicializadores TLS, dlopen/dlsym, hilos y frameworks completos siguen pendientes; Intel nativo e iOS físico no están cualificados.
 
 ```json
 {"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"darwin":{"modules":[{"name":"@loader_path/libneverd-base.dylib","path":"/inputs/libneverd-base.dylib"},{"name":"@loader_path/libneverd-leaf.dylib","path":"/inputs/libneverd-leaf.dylib"}]}}
@@ -1859,9 +1859,9 @@ TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live co
 resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
 lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
 addends: checked signed ordinary provider offsets; data/TLS initializers; original provider spans only
-unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; callbacks; dlopen/dlsym; threads
+unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; global destructors/legacy TLS init; dlopen/dlsym; threads
 workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
-native common catalogue: 82; required methods/platform: 101; matching ARM64 identities: 303
+native common catalogue: 82; required methods/platform: 102; matching ARM64 identities: 306
 ```
 
 ## Desplazamientos de importaciones dylib de Darwin
@@ -1869,3 +1869,9 @@ native common catalogue: 82; required methods/platform: 101; matching ARM64 iden
 Las importaciones ordinarias fuertes de dylib admiten sumandos de bytes con signo para punteros globales y plantillas TLS. `DarwinImage` combina una sola vez la dirección exportada, el desplazamiento de la biblioteca y el sumando; comprueba desbordamientos y exige pertenencia a los segmentos originales del proveedor elegido. El valor del puntero no implica un ancho de acceso. Las entradas libSystem, los descriptores TLV importados y el enlace diferido conservan sumando cero.
 
 Los controles originales nativos O0/O1/O2 con classic/chained devuelven 78 sin salida. C, CLI y Python cubren los cinco perfiles; Intel nativo e iOS físico siguen sin validar.
+
+## Constructores de inicio y terminación TLS
+
+Los originales `S_MOD_INIT_FUNC_POINTERS`, `S_INIT_FUNC_OFFSETS` de solo lectura y un `LC_ROUTINES_64` se ejecutan antes de `LC_MAIN`. El postorden respeta las dependencias declaradas e inicializa cada imagen compartida una vez. Los destinos pertenecen a segmentos ejecutables originales; ARM64 exige cuatro bytes alineados. Se rechazan tablas pendientes modificadas. Los cinco argumentos incluyen `ProgramVars`; el nombre procede del ejecutable con independencia de argv0. El código invitado C++ `thread_local` realiza la construcción diferida.
+
+`__tlv_atexit` usa la ABI void de dos argumentos, ignora el DSO adicional y conserva errno y el registro de resultado; el evento contiene null. El almacenamiento contabilizado admite1024 registros, incluidos nulos y duplicados, con objetos opacos de64 bits. El retorno de main y C `exit` recorren la lista en orden inverso; los registros nuevos preceden a los antiguos. Los marcos bajo el SP actual y la red zone x64 conservan objetos vivos de pila. Todo comparte el presupuesto original y el resultado final espera la terminación de los callbacks. C `_exit` y BSD exit directo terminan inmediatamente. exit reentrante, destructores globales, secciones TLS antiguas e hilos siguen rechazados. Cinco perfiles de software, tres ARM64 HVF y controles originales O0/O1/O2 classic/chained cubren las rutas sin protección de pila en los controles; los imports guard siguen rechazados. Intel nativo e iOS físico no están validados.

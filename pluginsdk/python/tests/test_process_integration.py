@@ -1287,6 +1287,60 @@ class ProcessIntegrationTests(unittest.TestCase):
                         self.assertEqual(int(calls[15]["arguments"][3], 16), page)
                         self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
+    def test_darwin_constructors_and_tls_callbacks_keep_process_lifetime(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory_handle = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory_handle.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        modes = {"return": (37, "LPEabFM2N1", 8), "exit": (37, "LPEabFM2N1", 7),
+                 "raw": (38, "LPEabFM", 4), "ctor-exit": (37, "LPEab2N1", 5),
+                 "ctor-raw": (38, "LPEab", 2), "stack-exit": (37, "LPEabFMS2N1", 8),
+                 "dtor-raw": (39, "LPEabFM2", 5)}
+        for platform, architecture in (("macos", "x86_64"), ("macos", "arm64"),
+                                       ("ios", "arm64"), ("ios-simulator", "x86_64"),
+                                       ("ios-simulator", "arm64")):
+            for kind in ("classic", "chained"):
+                directory = (Path(fixtures) / f"{platform}-{architecture}-callbacks-{kind}").resolve(strict=True)
+                modules = [{"name": f"@loader_path/{name}", "path": str(directory / name)}
+                           for name in ("libleaf.dylib", "libmiddle.dylib")]
+                options = {"backend": "unicorn", "instruction_quantum": 1024,
+                           "timeout_microseconds": 5000000, "darwin": {"modules": modules},
+                           "environment": ["NEVERD_CALLBACK_SCOPE=one"]}
+                for mode, (status, output, returns) in modes.items():
+                    options["arguments"] = ["different/argv-zero", mode]
+                    for repeat in range(2):
+                        with self.subTest(platform=platform, architecture=architecture,
+                                          kind=kind, mode=mode, repeat=repeat):
+                            result = session.emulate_process(str(directory / "main"),
+                                                             f"{platform}-macho64-v1", json.dumps(options))
+                            self.assertEqual(result["stop_reason"], "exited", result["diagnostic"])
+                            self.assertEqual(result["exit_status"], status)
+                            self.assertEqual(result["stdout_hex"], output.encode().hex())
+                            self.assertEqual(result["stderr_hex"], "")
+                            self.assertEqual(result["services"], [])
+                            self.assertEqual(result["schema_version"], 1)
+                            calls = result["darwin"]["native_calls"]
+                            registrations = [c for c in calls if c["name"] == "__tlv_atexit"]
+                            self.assertEqual(len(registrations), 4 if mode == "stack-exit" else
+                                             2 if "raw" in mode else 3)
+                            self.assertTrue(all(c["result"] is None and len(c["arguments"]) == 2
+                                                for c in registrations))
+                            self.assertEqual(result["events"], len(calls) + returns)
+                            self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_darwin_startup_dylibs_share_data_and_isolate_tls(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")

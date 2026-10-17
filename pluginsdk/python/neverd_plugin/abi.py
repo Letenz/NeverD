@@ -1159,6 +1159,11 @@ _declare(
     ["neverd_session_t", "const char *"],
 )
 _declare(
+    "neverd_session_set_source_symbolic",
+    "void",
+    ["neverd_session_t", "int"],
+)
+_declare(
     "neverd_session_set_map_path_ex",
     "int",
     ["neverd_session_t", "const char *", "int"],
