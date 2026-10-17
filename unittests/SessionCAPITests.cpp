@@ -512,6 +512,8 @@ protected:
 
   std::string write(std::string_view Name, std::string_view Text) {
     const std::string Path = (Directory / Name).string();
+    std::filesystem::create_directories(
+        std::filesystem::path(Path).parent_path());
     std::ofstream Output(Path, std::ios::binary);
     Output.write(Text.data(), static_cast<std::streamsize>(Text.size()));
     Output.close();
@@ -2650,19 +2652,19 @@ TEST_F(SessionCAPITest, SidecarWritesRespectWorkerOwnership) {
     neverd::ProjectWriteLock Writer(Input);
     ASSERT_TRUE(static_cast<bool>(Writer)) << Writer.error();
     EXPECT_NE(neverd_annotations_save(Session), 0);
-    EXPECT_FALSE(std::filesystem::exists(Input + ".neverd-annotations.json"));
+    EXPECT_FALSE(std::filesystem::exists(Input + ".neverd/annotations.json"));
     EXPECT_NE(neverd_rename_func(Session, "evm_entry", "blocked_name"), 0);
     EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "evm_entry");
     EXPECT_EQ(takeString(neverd_renames_json(Session)), "[]");
-    EXPECT_FALSE(std::filesystem::exists(Input + ".neverd-renames.json"));
+    EXPECT_FALSE(std::filesystem::exists(Input + ".neverd/renames.json"));
     // Read-only views remain usable while another writer owns the input.
     EXPECT_EQ(takeString(neverd_annotation_get(Session, 0)), "staged note");
   }
   ASSERT_EQ(neverd_annotations_save(Session), 0);
   ASSERT_EQ(neverd_rename_func(Session, "evm_entry", "saved_name"), 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "saved_name");
-  EXPECT_TRUE(std::filesystem::exists(Input + ".neverd-annotations.json"));
-  EXPECT_TRUE(std::filesystem::exists(Input + ".neverd-renames.json"));
+  EXPECT_TRUE(std::filesystem::exists(Input + ".neverd/annotations.json"));
+  EXPECT_TRUE(std::filesystem::exists(Input + ".neverd/renames.json"));
 }
 
 TEST_F(SessionCAPITest, OperandFormatsPersistByInstructionAndOperand) {
@@ -3353,11 +3355,11 @@ TEST_F(SessionCAPITest, ReloadingRenamesRestoresNamesRemovedFromTheSidecar) {
   ASSERT_EQ(neverd_rename_func(Session, "evm_entry", "reviewed_entry"), 0);
   ASSERT_EQ(takeString(neverd_func_name(Session, 0)), "reviewed_entry");
 
-  write("original.evm.neverd-renames.json", "invalid JSON");
+  write("original.evm.neverd/renames.json", "invalid JSON");
   EXPECT_NE(neverd_renames_load(Session), 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "reviewed_entry");
 
-  write("original.evm.neverd-renames.json", "[]");
+  write("original.evm.neverd/renames.json", "[]");
   ASSERT_EQ(neverd_renames_load(Session), 0);
   EXPECT_EQ(takeString(neverd_renames_json(Session)), "[]");
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "evm_entry");
@@ -3368,12 +3370,12 @@ TEST_F(SessionCAPITest,
   const std::string Path = write("reload.evm", "6001600055");
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
   neverd_annotation_set(Session, 0, "discard this unsaved note");
-  ASSERT_FALSE(std::filesystem::exists(Path + ".neverd-annotations.json"));
+  ASSERT_FALSE(std::filesystem::exists(Path + ".neverd/annotations.json"));
   ASSERT_EQ(neverd_annotations_load(Session), 0);
   EXPECT_TRUE(takeString(neverd_annotation_get(Session, 0)).empty());
 
   ASSERT_EQ(neverd_rename_func(Session, "evm_entry", "reviewed_entry"), 0);
-  ASSERT_TRUE(std::filesystem::remove(Path + ".neverd-renames.json"));
+  ASSERT_TRUE(std::filesystem::remove(Path + ".neverd/renames.json"));
   ASSERT_EQ(neverd_renames_load(Session), 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "evm_entry");
   EXPECT_EQ(takeString(neverd_renames_json(Session)), "[]");
@@ -3406,7 +3408,7 @@ TEST_F(SessionCAPITest,
         if (takeString(neverd_func_name(Session, 0)) != "evm_entry")
           _exit(7);
         for (const char *Suffix :
-             {".neverd-annotations.json", ".neverd-renames.json"}) {
+             {".neverd/annotations.json", ".neverd/renames.json"}) {
           std::ifstream Input(Path + Suffix);
           std::string Text((std::istreambuf_iterator<char>(Input)),
                            std::istreambuf_iterator<char>());
@@ -4295,13 +4297,13 @@ TEST_F(SessionCAPITest, FunctionDeclarationsBindByAddress) {
   // The sidecar keeps it; a load without it hands the PDB's back, and one
   // with it, as an undo's redo writes, states it again.
   ASSERT_EQ(neverd_functions_save(Session), 0);
-  std::ifstream Saved(Exe + ".neverd-functions.json");
+  std::ifstream Saved(Exe + ".neverd/functions.json");
   const std::string Rows(std::istreambuf_iterator<char>(Saved), {});
   EXPECT_NE(Rows.find("\"type\""), std::string::npos) << Rows;
-  write("local_types.exe.neverd-functions.json", "[]");
+  write("local_types.exe.neverd/functions.json", "[]");
   ASSERT_EQ(neverd_functions_load(Session), 0);
   EXPECT_NE(decompiled().find("Device->Size"), std::string::npos);
-  write("local_types.exe.neverd-functions.json", Rows);
+  write("local_types.exe.neverd/functions.json", Rows);
   ASSERT_EQ(neverd_functions_load(Session), 0);
   EXPECT_NE(decompiled().find("_THREAD_LIKE* Thing"), std::string::npos);
   // Null hands the function back to its debug information.
@@ -5281,7 +5283,7 @@ TEST_F(SessionCAPITest, NativeAnalysisPreservesLoaderNamesAndSavedRenames) {
   EXPECT_EQ(neverd_func_entry(Session, 0), Entry);
   EXPECT_EQ(neverd_func_size(Session, 0), 6);
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "reviewed_entry");
-  ASSERT_TRUE(std::filesystem::remove(Path + ".neverd-renames.json"));
+  ASSERT_TRUE(std::filesystem::remove(Path + ".neverd/renames.json"));
   ASSERT_EQ(neverd_renames_load(Session), 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "named_entry");
   EXPECT_EQ(neverd_func_count(Session), 1);
@@ -7910,7 +7912,7 @@ TEST_F(SessionCAPITest, SignatureCannotReplaceAStatedHexPlaceholderName) {
     ASSERT_EQ(neverd_rename_func(Session, Name.c_str(), "user_choice"), 0);
     ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 1);
     EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "user_choice");
-    write(Name + ".elf.neverd-renames.json", "[]");
+    write(Name + ".elf.neverd/renames.json", "[]");
     ASSERT_EQ(neverd_renames_load(Session), 0);
     EXPECT_EQ(takeString(neverd_func_name(Session, 0)), Name);
   }
@@ -7930,7 +7932,7 @@ TEST_F(SessionCAPITest,
   ASSERT_GE(Index, 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, Index)), "library_guess");
   ASSERT_EQ(neverd_rename_func(Session, "library_guess", "user_choice"), 0);
-  write("stripped-identity.elf.neverd-renames.json", "[]");
+  write("stripped-identity.elf.neverd/renames.json", "[]");
   ASSERT_EQ(neverd_renames_load(Session), 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, Index)), "library_guess");
   write("identity.pat", "B809000000C3 00 0000 0006 :0000 other_guess\n");
@@ -7992,7 +7994,7 @@ TEST_F(SessionCAPITest, AnnotationsPreserveExactNumericAddressKeys) {
         "{\"addr\":" + std::to_string(Address) + ",\"text\":\"" + Text + "\"}";
   }
   Rows += ']';
-  write("integer-notes.elf.neverd-annotations.json", Rows);
+  write("integer-notes.elf.neverd/annotations.json", Rows);
   ASSERT_EQ(neverd_annotations_load(Session), 0);
   for (const auto &[Address, Text] : Expected)
     EXPECT_EQ(takeString(neverd_annotation_get(Session, Address)), Text);
@@ -8003,7 +8005,7 @@ TEST_F(SessionCAPITest, AnnotationsPreserveExactNumericAddressKeys) {
   expectPersistedRows(takeString(neverd_annotations_json(Session)), "text",
                       Expected);
   ASSERT_EQ(neverd_annotations_save(Session), 0);
-  expectPersistedRows(readSidecar("integer-notes.elf.neverd-annotations.json"),
+  expectPersistedRows(readSidecar("integer-notes.elf.neverd/annotations.json"),
                       "text", Expected);
   for (const auto &Item : Expected)
     neverd_annotation_remove(Session, Item.first);
@@ -8025,7 +8027,7 @@ TEST_F(SessionCAPITest, NumericRenameReachesExactHighAddressFunction) {
                        sizeof(llvm::object::ELF64LE::Phdr));
   ASSERT_EQ(neverd_func_entry(Session, 0), Entry);
   ASSERT_EQ(takeString(neverd_func_name(Session, 0)), "entry");
-  write("integer-rename.elf.neverd-renames.json",
+  write("integer-rename.elf.neverd/renames.json",
         "[{\"addr\":" + std::to_string(Entry) +
             ",\"renamed\":\"high_renamed\"}]");
   ASSERT_EQ(neverd_renames_load(Session), 0);
@@ -8036,7 +8038,7 @@ TEST_F(SessionCAPITest, NumericRenameReachesExactHighAddressFunction) {
   expectPersistedRows(takeString(neverd_renames_json(Session)), "renamed",
                       Expected);
   ASSERT_EQ(neverd_renames_save(Session), 0);
-  expectPersistedRows(readSidecar("integer-rename.elf.neverd-renames.json"),
+  expectPersistedRows(readSidecar("integer-rename.elf.neverd/renames.json"),
                       "renamed", Expected);
   ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
   ASSERT_EQ(neverd_func_count(Session), 1);
@@ -8068,10 +8070,10 @@ TEST_F(SessionCAPITest, PersistedAddressEncodingsKeepCanonicalSaveRoundTrips) {
     SCOPED_TRACE(Value.Annotation);
     const std::string Text = "note_" + std::to_string(Index);
     const std::string Name = "renamed_" + std::to_string(Index++);
-    write("encodings.elf.neverd-annotations.json",
+    write("encodings.elf.neverd/annotations.json",
           "[{\"addr\":" + std::string(Value.Annotation) + ",\"text\":\"" +
               Text + "\"}]");
-    write("encodings.elf.neverd-renames.json",
+    write("encodings.elf.neverd/renames.json",
           "[{\"addr\":" + std::string(Value.Rename) + ",\"renamed\":\"" + Name +
               "\"}]");
     ASSERT_EQ(neverd_annotations_load(Session), 0);
@@ -8087,9 +8089,9 @@ TEST_F(SessionCAPITest, PersistedAddressEncodingsKeepCanonicalSaveRoundTrips) {
                         Renames);
     ASSERT_EQ(neverd_annotations_save(Session), 0);
     ASSERT_EQ(neverd_renames_save(Session), 0);
-    expectPersistedRows(readSidecar("encodings.elf.neverd-annotations.json"),
+    expectPersistedRows(readSidecar("encodings.elf.neverd/annotations.json"),
                         "text", Notes);
-    expectPersistedRows(readSidecar("encodings.elf.neverd-renames.json"),
+    expectPersistedRows(readSidecar("encodings.elf.neverd/renames.json"),
                         "renamed", Renames);
     ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
     ASSERT_EQ(neverd_func_count(Session), 1);

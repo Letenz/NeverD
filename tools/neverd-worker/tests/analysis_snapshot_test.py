@@ -20,7 +20,7 @@ def durable_files(directory):
     # Windows refuses reads of the writer's exclusively locked runtime file.
     # Compare every input and sidecar; the persistent OS lock carries no edits.
     return {p.name: p.read_bytes() for p in Path(directory).iterdir()
-            if not p.name.endswith(".neverd-gui.lock")}
+            if not p.name.endswith(".neverd/local/writer.lock")}
 
 
 def run(executable):
@@ -76,7 +76,8 @@ def run(executable):
         # Refused code sidecars must not replace the previously loaded project.
         invalid = Path(directory) / "invalid.bin"
         invalid.write_bytes(b"fixture")
-        Path(str(invalid) + ".neverd-code.json").write_text(json.dumps([
+        Path(str(invalid) + ".neverd").mkdir(exist_ok=True)
+        Path(str(invalid) + ".neverd/code.json").write_text(json.dumps([
             {"addr": BASE, "views": {}}, {"addr": BASE, "views": {}}]))
         assert owner.call("open", {"path": str(invalid)})["error"]["code"] == "invalid_request"
         assert Path(ok(owner, "metadata")["path"]).resolve() == binary.resolve()

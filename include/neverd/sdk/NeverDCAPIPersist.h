@@ -44,6 +44,23 @@ NEVERD_API const char *neverd_annotation_get(neverd_session_t Sess,
                                              neverd_va_t Addr);
 NEVERD_API const char *neverd_annotations_json(neverd_session_t Sess);
 NEVERD_API int neverd_annotations_save(neverd_session_t Sess);
+
+// ===--------------------------------------------------------------------===//
+// The project folder: `<input>.neverd/` beside the input
+// ===--------------------------------------------------------------------===//
+
+/// The loaded input's project folder and which build of the input its files
+/// describe: {"folder","input":{"name","size","sha256"},"recorded":{"name",
+/// "size","sha256"} or null,"matches"}.  "recorded" is the project.json the
+/// folder keeps, null before the project has one; "matches" is false when it
+/// names another build, whose addresses may not be this one's.  NULL with
+/// neverd_last_error() when no file is loaded.
+NEVERD_API const char *neverd_project_json(neverd_session_t Sess);
+/// Records in the project folder's project.json that its files describe the
+/// loaded build of the input.  Each project file the C API writes records it;
+/// a writer of its own calls this after it writes.  0 on success, -1 with
+/// neverd_last_error().
+NEVERD_API int neverd_project_record(neverd_session_t Sess);
 NEVERD_API int neverd_annotations_load(neverd_session_t Sess);
 
 // ===--------------------------------------------------------------------===//

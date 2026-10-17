@@ -45,6 +45,7 @@
 #include "neverd/loader/StaticSymbolTable.h"
 #include "neverd/sbf/analysis/SBFAnalysisLimits.h"
 #include "neverd/sbf/analysis/SBFFunctionBody.h"
+#include "neverd/support/ProjectFiles.h"
 #include "neverd/sdk/NeverDPlugin.h"
 #include "neverd/support/BinaryLoading.h"
 #include "neverd/support/FilePath.h"
@@ -552,6 +553,9 @@ int neverd_session_load(neverd_session_t Sess, const char *Path) {
   LoadOpts.OnlyFunctionEntries = S->OnlyFunctionEntries;
   LoadOpts.ARMFunctionModes = S->ARMFunctionModes;
   LoadOpts.ReadStaticSymbols = S->ReadsStaticSymbols;
+  // A project an older NeverD kept as files beside the input moves into its
+  // folder, where the rest of the C API and the workbench read it.
+  project_files::migrate(P);
   // The file reads with the loader the caller chose, else the one its
   // project keeps.
   if (S->RequestedLoad) {

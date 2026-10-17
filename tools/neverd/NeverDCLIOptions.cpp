@@ -192,6 +192,13 @@ cl::SubCommand
 // Takes text rather than a binary, so it is not among the subcommands that
 // register the positional input file below.
 cl::SubCommand SimplifyCmd("simplify", "Simplify a bitvector expression");
+// A project's files under version control; neither takes a binary.
+cl::SubCommand MergeProjectCmd("merge-project",
+                               "Merge a project file three ways, as git's "
+                               "merge driver for NeverD projects");
+cl::SubCommand SetupGitCmd("setup-git",
+                           "Set up a git repository to share NeverD "
+                           "projects");
 cl::SubCommand OptimizeIRCmd("optimize-ir",
                              "Optimize textual LLVM IR transactionally");
 cl::SubCommand
@@ -1671,6 +1678,20 @@ cl::opt<std::string>
                      "signatures/ beside neverd, then ./signatures)"),
             cl::init(""), cl::sub(SigsCmd), cl::sub(AuditCmd), cl::sub(HuntCmd),
             cl::sub(DecompileCmd), cl::sub(FuncsCmd));
+
+//===----------------------------------------------------------------------===//
+// merge-project and setup-git
+//===----------------------------------------------------------------------===//
+
+cl::list<std::string> MergeProjectFiles(cl::Positional,
+                                        cl::desc("<base> <ours> <theirs>"),
+                                        cl::sub(MergeProjectCmd));
+cl::opt<std::string> MergeProjectPath(
+    "path", cl::desc("The merged file's path, for messages (git's %P)"),
+    cl::init(""), cl::sub(MergeProjectCmd));
+cl::opt<std::string> SetupGitFolder(cl::Positional,
+                                    cl::desc("[<folder in the repository>]"),
+                                    cl::init(""), cl::sub(SetupGitCmd));
 
 //===----------------------------------------------------------------------===//
 // Simplify-specific options

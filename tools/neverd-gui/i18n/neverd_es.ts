@@ -2644,6 +2644,22 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>Base de datos guardada: %1</translation>
     </message>
     <message>
+        <source>The project&apos;s files describe another build of %1 (SHA-256 %2…); their addresses may not match this one. The next edit records this build.</source>
+        <translation>Los archivos del proyecto describen otra compilación de %1 (SHA-256 %2…); sus direcciones pueden no coincidir con esta. La próxima edición registra esta compilación.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here.</source>
+        <translation>Los archivos del proyecto cambiaron en el disco y se cargaron; deshacer empieza aquí.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here. Unsaved comments kept on top: %1</source>
+        <translation>Los archivos del proyecto cambiaron en el disco y se cargaron; deshacer empieza aquí. Comentarios sin guardar conservados encima: %1</translation>
+    </message>
+    <message>
+        <source>The input file changed on disk; reload it to continue editing.</source>
+        <translation>El archivo de entrada cambió en el disco; vuelva a cargarlo para seguir editando.</translation>
+    </message>
+    <message>
         <source>Could not save the database: %1</source>
         <translation>No se pudo guardar la base de datos: %1</translation>
     </message>

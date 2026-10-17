@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QString>
 #include <QStringList>
@@ -23,9 +24,9 @@ namespace neverd::gui {
 class ProjectDatabase final {
 public:
   static constexpr char Extension[] = ".nddb";
-  /// The project's files the workbench itself keeps beside an input: the
-  /// bookmarks and the debug files chosen, shared with the project, and the
-  /// user's own place and desktop in it.
+  /// The project files the workbench itself keeps, by the keys a database
+  /// names them (sidecarSuffixes): the bookmarks and the debug files chosen,
+  /// shared with the project, and the user's own place and desktop in it.
   static constexpr char BookmarksSuffix[] = ".neverd-bookmarks.json";
   static constexpr char DebugFilesSuffix[] = ".neverd-debug.json";
   static constexpr char WorkbenchSuffix[] = ".neverd-workbench.json";
@@ -91,14 +92,32 @@ public:
   /// worker's edit tables and history, its load options and local types,
   /// and the workbench's shared bookmarks and debug files.
   static const QStringList &sidecarSuffixes();
-  /// The JSON file \p suffix beside \p input, if it exists and parses.
+  /// The project folder beside \p input, `<input>.neverd/`, which holds the
+  /// project's files (neverd/support/ProjectFiles.def).
+  static QString projectFolder(const QString &input);
+  /// Where the project of \p input keeps the file a database names \p key:
+  /// one of sidecarSuffixes(), the suffix NeverD gave the file beside the
+  /// input before projects had a folder.
+  static QString projectFilePath(const QString &input, const QString &key);
+  /// Move the files an older NeverD kept beside \p input into its folder.
+  static void migrate(const QString &input);
+  /// Create the project folder of \p input with its .gitignore and
+  /// .gitattributes; an error message, or an empty string.
+  static QString prepareFolder(const QString &input);
+  /// The project file \p suffix of \p input, if it exists and parses.
   static std::optional<QJsonDocument> readProjectFile(const QString &input,
                                                       const char *suffix);
-  /// Replace the JSON file \p suffix beside \p input with \p document as
+  /// Replace the project file \p suffix of \p input with \p document as
   /// version control reads it best: two-space indentation, sorted keys, a
   /// final newline.  Returns an error message, or an empty string.
   static QString writeProjectFile(const QString &input, const char *suffix,
                                   const QJsonDocument &document);
+  /// The bookmarks a bookmarks file holds, {"addr","name","note"} rows as
+  /// the command line's bookmarks command writes them, as the bookmarks
+  /// window lists them: {"address","text","note"}.
+  static QJsonArray bookmarkRows(const QJsonArray &file);
+  /// The bookmarks file of \p rows: by address, one bookmark at each.
+  static QJsonArray bookmarkFile(const QJsonArray &rows);
 };
 
 } // namespace neverd::gui

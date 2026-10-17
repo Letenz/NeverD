@@ -2644,6 +2644,22 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
         <translation>Database salvato: %1</translation>
     </message>
     <message>
+        <source>The project&apos;s files describe another build of %1 (SHA-256 %2…); their addresses may not match this one. The next edit records this build.</source>
+        <translation>I file del progetto descrivono un’altra build di %1 (SHA-256 %2…); i loro indirizzi potrebbero non corrispondere a questa. La prossima modifica registra questa build.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here.</source>
+        <translation>I file del progetto sono cambiati sul disco e sono stati caricati; l’annullamento parte da qui.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here. Unsaved comments kept on top: %1</source>
+        <translation>I file del progetto sono cambiati sul disco e sono stati caricati; l’annullamento parte da qui. Commenti non salvati mantenuti sopra: %1</translation>
+    </message>
+    <message>
+        <source>The input file changed on disk; reload it to continue editing.</source>
+        <translation>Il file di input è cambiato sul disco; ricaricalo per continuare a modificare.</translation>
+    </message>
+    <message>
         <source>Could not save the database: %1</source>
         <translation>Impossibile salvare il database: %1</translation>
     </message>

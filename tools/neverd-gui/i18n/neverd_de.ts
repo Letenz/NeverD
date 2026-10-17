@@ -2644,6 +2644,22 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
         <translation>Datenbank gespeichert: %1</translation>
     </message>
     <message>
+        <source>The project&apos;s files describe another build of %1 (SHA-256 %2…); their addresses may not match this one. The next edit records this build.</source>
+        <translation>Die Projektdateien beschreiben einen anderen Build von %1 (SHA-256 %2…); ihre Adressen passen womöglich nicht zu diesem. Die nächste Bearbeitung hält diesen Build fest.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here.</source>
+        <translation>Die Projektdateien haben sich auf der Festplatte geändert und wurden geladen; Rückgängig beginnt hier.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here. Unsaved comments kept on top: %1</source>
+        <translation>Die Projektdateien haben sich auf der Festplatte geändert und wurden geladen; Rückgängig beginnt hier. Darüber behaltene ungespeicherte Kommentare: %1</translation>
+    </message>
+    <message>
+        <source>The input file changed on disk; reload it to continue editing.</source>
+        <translation>Die Eingabedatei hat sich auf der Festplatte geändert; laden Sie sie neu, um weiter zu bearbeiten.</translation>
+    </message>
+    <message>
         <source>Could not save the database: %1</source>
         <translation>Die Datenbank konnte nicht gespeichert werden: %1</translation>
     </message>

@@ -214,7 +214,7 @@ A source reads whole or not at all. The C API keeps the user's declarations
 in order and reads them again over the program's types whenever those are
 read anew, as after loading another PDB. A declaration that no longer reads
 is left out and reported (`declarationProblems`), never silently dropped.
-The worker writes the declarations to `<input>.neverd-types.json` at once;
+The worker writes the declarations to the project folder's `types.json` at once;
 they do not join undo history.
 
 Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
