@@ -1217,6 +1217,38 @@ public:
       cover(Body);
     if (!Failed && Runs.empty())
       fail("no call of ordinary flow reaches the pad");
+    // Every covered call of ordinary flow sits in a run.  The walk passes
+    // over a statement only the unwinder enters, which may still hold one a
+    // jump reaches.
+    if (!Failed) {
+      std::set<const HighStmt *> Wrapped;
+      std::function<void(const HighStmt &)> Mark = [&](const HighStmt &S) {
+        Wrapped.insert(&S);
+        for (const auto *List : {&S.Body, &S.ElseBody, &S.DefaultBody})
+          for (const HighStmt &Child : *List)
+            Mark(Child);
+        for (const SwitchCase &Case : S.Cases)
+          for (const HighStmt &Child : Case.Body)
+            Mark(Child);
+        for (const auto &Clause : S.EHClauseBodies)
+          for (const HighStmt &Child : Clause)
+            Mark(Child);
+      };
+      // A run's statements are neighbours in one list.
+      for (const Run &R : Runs)
+        for (const HighStmt *S = R.First; S <= R.Last; ++S)
+          Mark(*S);
+      walkStmts(Body, [&](const HighStmt &S) {
+        if (Failed || !Normal.count(nodeOf(S)) || Wrapped.count(&S))
+          return;
+        forEachStatementExpr(S, [&](const HighExpr *E) {
+          forEachCallSite(E, [&](va_t Site) {
+            if (Site && padAt(LSDA, Site) == Pad)
+              fail("a covered call lies outside every scope");
+          });
+        });
+      });
+    }
     return !Failed;
   }
 

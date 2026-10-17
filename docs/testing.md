@@ -7179,9 +7179,10 @@ statement took a covered jump's address.
 `ABranchWhoseArmsCallThroughThePadIsOneScope` wraps the whole branch, and
 `ACopyWithoutAnAddressKeepsItsCallsInstruction` places calls copied into both
 arms by their instruction. `AnExceptionSpilledThroughAFrameAddressIsResumed`
-follows the exception through the slot address clang keeps for a large frame. `ACallOfNoInstructionKeepsTheCleanupPad` and
-`AJumpIntoACleanupScopeKeepsThePad` keep the pad where a scope cannot be
-proved. `NothingFallsOutOfAnEndlessLoop` prints no dead statement after a
+follows the exception through the slot address clang keeps for a large frame. `ACallOfNoInstructionKeepsTheCleanupPad`,
+`AJumpIntoACleanupScopeKeepsThePad` and
+`ACoveredCallOnlyAJumpReachesKeepsThePad` keep the pad where a scope cannot
+be proved. `NothingFallsOutOfAnEndlessLoop` prints no dead statement after a
 `while (1)` that only returns. `HighControlFlowSemantics.AMergedCallKeepsAnInstructionOnlyIfItHadOne`
 checks that merging two branches' equal calls forgets their instructions.
 Malformed unwind/prologue and converted-SP checks run with source projection

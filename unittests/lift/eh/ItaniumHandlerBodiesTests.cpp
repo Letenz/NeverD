@@ -592,6 +592,28 @@ TEST(ItaniumHandlerBodies, AJumpIntoACleanupScopeKeepsThePad) {
       << Source;
 }
 
+TEST(ItaniumHandlerBodies, ACoveredCallOnlyAJumpReachesKeepsThePad) {
+  // v2 = risky2(); goto L_call; if (v4 == 0) { L_call: v1 = risky(); }
+  // The branch is entered only by the jump to its body, so no walk over
+  // ordinary statements reaches the call in it; the pad stays.
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = kCall;
+  std::vector<HighStmt> Inside;
+  Inside.push_back(assign(1, callAt("risky", kRisky, kCall), kCall));
+  std::vector<HighStmt> Body;
+  Body.push_back(assign(2, callAt("risky2", kRisky2, kLater), kLater));
+  Body.push_back(std::move(Jump));
+  Body.push_back(branch(equals(use(4, 4), 0), std::move(Inside)));
+  Body.push_back(ret(use(1)));
+  const HighFunc Func = cleanupFunction(
+      cleanupSites({{kCall, kPad}, {kLater, kPad}}), std::move(Body));
+  const std::string Source = body(emit(Func));
+  EXPECT_EQ(Source.find("} catch (...) {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("L_401040: /* landing pad"), std::string::npos)
+      << Source;
+}
+
 TEST(ItaniumHandlerBodies, NothingFallsOutOfAnEndlessLoop) {
   // while (1) { v1 = risky(); if (v1 == 0) return v1; }  return 7;
   // With the pad gone the loop ends the function; the return after it, which
