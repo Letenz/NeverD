@@ -130,8 +130,8 @@ std::string jsonText(llvm::json::Object Value) {
   return Text;
 }
 
-// Pass the original JSON as one argument. cmd.exe splits embedded newlines
-// even inside shell quotes and also expands percent signs in guest strings.
+// LLVM response files retain one JSON argument without exceeding Windows'
+// CreateProcess command-line limit. The child still runs without a shell.
 int runCLIRequest(llvm::StringRef Path, llvm::StringRef Profile,
                   llvm::StringRef Options, llvm::StringRef Output,
                   bool CaptureErrors = false) {
@@ -149,8 +149,38 @@ int runCLIRequest(llvm::StringRef Path, llvm::StringRef Profile,
       "--" + std::string(process_cli::ProfileOption) + "=" + Profile.str();
   const std::string OptionsArg =
       "--" + std::string(process_cli::OptionsOption) + "=" + Options.str();
+  const std::string ResponsePath = Output.str() + ".rsp";
+  auto RemoveResponse =
+      llvm::scope_exit([&] { llvm::sys::fs::remove(ResponsePath); });
+  std::error_code ResponseError;
+  llvm::raw_fd_ostream Response(ResponsePath, ResponseError);
+  if (ResponseError) {
+    ADD_FAILURE() << "cannot create CLI response file: "
+                  << ResponseError.message();
+    return -1;
+  }
+#ifdef _WIN32
+  Response << test::shellQuote(OptionsArg);
+#else
+  // LLVM's GNU response tokenizer consumes escapes even inside single quotes.
+  Response << '"';
+  for (char C : OptionsArg) {
+    if (C == '\\' || C == '"')
+      Response << '\\';
+    Response << C;
+  }
+  Response << '"';
+#endif
+  Response << '\n';
+  Response.close();
+  if (Response.has_error()) {
+    ADD_FAILURE() << "cannot write CLI response file";
+    Response.clear_error();
+    return -1;
+  }
+  const std::string ResponseArg = "@" + ResponsePath;
   const llvm::StringRef Args[] = {NEVERD_PROCESS_CLI, process_cli::Command,
-                                  Path, ProfileArg, OptionsArg};
+                                  Path, ProfileArg, ResponseArg};
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, CaptureErrors ? llvm::StringRef("") : Output,
       CaptureErrors ? Output : llvm::StringRef("")};
@@ -230,6 +260,32 @@ TEST_F(ProcessPublic, ReturnsOutputAndGuestStatusWithoutLoadingAnalysisImage) {
   run(options(Normal));
   EXPECT_EQ(neverd_session_is_loaded(Session), 1);
   EXPECT_EQ(takeString(neverd_segments_json(Session)), Before);
+}
+
+TEST_F(ProcessPublic, CLIResponsePreservesLargeJSONAndQuotedEnvironment) {
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  auto Request = llvm::cantFail(llvm::json::parse(options(EchoEnvironment)));
+  const std::string Special =
+      " spaces 'quotes' \"double\" \\ %PATH%\n\r\t\xc3\xa9";
+  const std::string Payload =
+      std::string(EchoEnvironmentSize - Special.size(), 'x') + Special;
+  (*Request.getAsObject())[field::Environment] = llvm::json::Array{Payload};
+  std::string Options;
+  llvm::raw_string_ostream Stream(Options);
+  Stream << Request;
+  ASSERT_GT(Options.size(), 32767u);
+  auto Expected = run(Options);
+  ASSERT_EQ(Expected.getAsObject()->getString(field::Stop), "exited");
+  ASSERT_EQ(Expected.getAsObject()->getInteger(field::ExitStatus), ExitStatus);
+  ASSERT_EQ(Expected.getAsObject()->getString(field::Stdout),
+            llvm::toHex(Payload, true));
+  EXPECT_EQ(runCLIRequest(Path, LinuxELF64, Options, Output),
+            process_cli::GuestFailure);
+  ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Expected));
 }
 
 TEST_F(ProcessPublic, WindowsPE64RunsThroughSDKAndCLIWithoutAnalysisState) {
