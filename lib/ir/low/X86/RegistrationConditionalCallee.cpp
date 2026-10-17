@@ -19,6 +19,8 @@
 
 #include "llvm/ADT/ScopeExit.h"
 
+#include <algorithm>
+
 namespace neverd::registration_state {
 
 namespace {
@@ -246,14 +248,25 @@ proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
 namespace neverd {
 using namespace registration_state;
 
+namespace {
+// Active analyzeCheckedX86SEHStates calls on this thread. Bound SEH calls are
+// checked only by analyses nested less deeply than the limit.
+thread_local unsigned SEHStateAnalysisDepth = 0;
+constexpr unsigned kMaxBoundCallCheckDepth = 4;
+} // namespace
+
+unsigned x86SEHStateAnalysisLevel() {
+  return std::min(SEHStateAnalysisDepth, kMaxBoundCallCheckDepth);
+}
+
 RegistrationStateAnalysis analyzeCheckedX86SEHStates(
     const BinaryImage &Image, const LowFunc &Function,
     const std::vector<RegistrationCalleeStackContract> *Stacks,
     const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
     const std::vector<RegistrationSEHControlContract> *Controls,
     RegistrationCallCalleeIndex *Index) {
-  static thread_local unsigned Depth = 0;
-  const bool CheckBoundCalls = Depth < 4;
+  unsigned &Depth = SEHStateAnalysisDepth;
+  const bool CheckBoundCalls = Depth < kMaxBoundCallCheckDepth;
   ++Depth;
   auto RestoreDepth = llvm::scope_exit([&] { --Depth; });
   BoundCalleeProver Prove =

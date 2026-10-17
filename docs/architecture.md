@@ -7053,6 +7053,20 @@ operations; FXAM writes only the status word, so the shared frame-preserving
 intrinsic policy accepts it directly. Among nested proof builds, only
 `buildNoReturnProof`'s local-stack fallback still normalizes the x87 stack.
 
+LowIR construction shares stack-pop answers across its workers
+(`RegistrationStackPopMemo`). A fresh `getCheckedX86CalleeStackPop` answer
+depends on the image, the callee and `x86SEHStateAnalysisLevel()`: an SEH
+state analysis nested four deep no longer checks bound calls. The memo records
+each fresh answer with the work it charged under that key; a later query for
+the same image object, callee and level charges that work again before taking
+the answer, so the answer and the exhaustion of a caller's cumulative budget
+match a fresh proof. A query that exhausts the budget records nothing.
+
+The i64-caller re-conversion in `modelWideIntReturns` takes
+`RegistrationCallerCleanupABIComplete` and `RegistrationCxxEntryPopBytes` from
+the first conversion of the same LowFunc: they depend only on the LowFunc and
+the image, and no stage changes a LowFunc after MedIR.
+
 `_local_unwind2` uses an unsigned stopping bound: it stops at the -1 sentinel or a level no greater than the requested bound, even when an enclosing link skips that index. The shared PE32 EH3 solver joins the actual stopping levels and only the effects of traversed finally callbacks; a zero-step unwind preserves the incoming registration level and frame-memory facts. Existing frame-argument, runtime-field and callback-stack proofs remain mandatory.
 
 The `_local_unwind2` bound is a numeric operand, not a scope-table index. Any constant 32-bit unsigned bound can prove a zero-step exit; only actual current levels index the table. Dynamic bounds and invalid current levels remain unproved.

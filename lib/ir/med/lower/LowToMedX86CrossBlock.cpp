@@ -15,10 +15,13 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/support/GraphCycles.h"
 
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <set>
+#include <tuple>
 #include <vector>
 
 namespace neverd {
@@ -76,32 +79,12 @@ void LowToMedConverter::mergePartialWritesCrossBlockX86(MedFunc &Func) {
   std::map<int, size_t> IdToIdx;
   for (size_t I = 0; I < N; ++I)
     IdToIdx[Func.Blocks[I].Id] = I;
-  std::vector<bool> InLoop(N, false);
-  for (size_t S = 0; S < N; ++S) {
-    std::vector<bool> Vis(N, false);
-    std::vector<size_t> Stack;
-    for (int Su : Func.Blocks[S].Succs) {
-      auto It = IdToIdx.find(Su);
-      if (It != IdToIdx.end())
-        Stack.push_back(It->second);
-    }
-    while (!Stack.empty()) {
-      size_t Cur = Stack.back();
-      Stack.pop_back();
-      if (Cur == S) {
-        InLoop[S] = true;
-        break;
-      }
-      if (Vis[Cur])
-        continue;
-      Vis[Cur] = true;
-      for (int Su : Func.Blocks[Cur].Succs) {
-        auto It = IdToIdx.find(Su);
-        if (It != IdToIdx.end() && !Vis[It->second])
-          Stack.push_back(It->second);
-      }
-    }
-  }
+  std::vector<std::vector<size_t>> SuccIdx(N);
+  for (size_t I = 0; I < N; ++I)
+    for (int Su : Func.Blocks[I].Succs)
+      if (auto It = IdToIdx.find(Su); It != IdToIdx.end())
+        SuccIdx[I].push_back(It->second);
+  const std::vector<bool> InLoop = nodesOnCycles(SuccIdx);
 
   // Wide-parent regions that are loop-carried via preserving partial writes
   // inside a loop (e.g. BL/BH, or a legacy XMM write into YMM). For those the
@@ -156,17 +139,32 @@ void LowToMedConverter::mergePartialWritesCrossBlockX86(MedFunc &Func) {
 
   // True when a strictly wider read fully containing the partial write's bytes
   // exists in a different block (so it observes the merged parent, not the
-  // narrow write directly).
+  // narrow write directly).  Per region, the first two distinct blocks with
+  // such a read decide that for every block.
+  struct WideReadBlocks {
+    std::optional<size_t> First, Second;
+  };
+  std::map<std::tuple<uint64_t, uint16_t, uint64_t, uint16_t>, WideReadBlocks>
+      WideReadsByRegion;
   auto wideParentReadElsewhere = [&](uint64_t POff, uint16_t PSz, uint64_t WOff,
                                      uint16_t WSz, size_t Block) -> bool {
-    for (const auto &R : Reads) {
-      if (R.Block == Block || R.Sz <= PSz)
-        continue;
-      if (R.Off <= POff && R.Off + R.Sz >= POff + PSz && R.Off >= WOff &&
-          R.Off + R.Sz <= WOff + WSz)
-        return true;
-    }
-    return false;
+    auto [It, Inserted] = WideReadsByRegion.try_emplace({POff, PSz, WOff, WSz});
+    WideReadBlocks &Found = It->second;
+    if (Inserted)
+      for (const auto &R : Reads) {
+        if (R.Sz <= PSz)
+          continue;
+        if (R.Off <= POff && R.Off + R.Sz >= POff + PSz && R.Off >= WOff &&
+            R.Off + R.Sz <= WOff + WSz) {
+          if (!Found.First) {
+            Found.First = R.Block;
+          } else if (R.Block != *Found.First) {
+            Found.Second = R.Block;
+            break;
+          }
+        }
+      }
+    return (Found.First && *Found.First != Block) || Found.Second;
   };
 
   // True when the wide parent is (re)defined at full width earlier in the same

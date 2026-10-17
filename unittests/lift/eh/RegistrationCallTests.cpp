@@ -265,6 +265,80 @@ TEST(RegistrationCallABI, NestedReturningStackProofIsBoundedAndNonCircular) {
   }
 }
 
+TEST(RegistrationCallABI, RecordedStackPopsChargeTheirFreshWork) {
+  ThrowImage F;
+  F.Image.Imports.clear();
+  auto &Text = F.Image.Segments[0];
+  // Three wrappers, each pushing an argument and relying on its child's
+  // proved `ret 4`, so the proof charges work for several nested bodies.
+  constexpr unsigned Count = 3;
+  Text.Data.assign(Count * 0x20, 0xcc);
+  for (unsigned I = 0; I != Count; ++I) {
+    const size_t Offset = I * 0x20;
+    size_t Return = Offset;
+    if (I + 1 != Count) {
+      Text.Data[Offset] = 0x6a;
+      Text.Data[Offset + 1] = 0;
+      Text.Data[Offset + 2] = 0xe8;
+      writeLE<uint32_t>(Text.Data.data() + Offset + 3, uint32_t(0x20 - 7));
+      Return += 7;
+    }
+    Text.Data[Return] = 0xc2;
+    Text.Data[Return + 1] = 4;
+    Text.Data[Return + 2] = 0;
+    F.Image.Symbols.push_back(Symbol::makeFunc(Text.VA + Offset, 0x20));
+  }
+  Text.Size = Text.FileSz = Text.Data.size();
+  Section Code;
+  Code.Name = ".text";
+  Code.VA = Text.VA;
+  Code.Size = Code.FileSz = Text.Size;
+  Code.Flags = Text.Flags;
+  F.Image.Sections = {Code};
+
+  size_t FreshWork = 0;
+  const auto Fresh = getCheckedX86CalleeStackPop(F.Image, Text.VA, &FreshWork);
+  ASSERT_EQ(Fresh, std::optional<uint32_t>{4});
+  ASSERT_GT(FreshWork, 1u);
+
+  RegistrationStackPopMemo Memo(F.Image);
+  RegistrationStackPopMemoScope Scope(Memo);
+  // The first query records its answer; later ones replay it with its work.
+  for (unsigned Query = 0; Query != 2; ++Query) {
+    SCOPED_TRACE(Query);
+    size_t Work = 0;
+    EXPECT_EQ(getCheckedX86CalleeStackPop(F.Image, Text.VA, &Work), Fresh);
+    EXPECT_EQ(Work, FreshWork);
+  }
+  // Outside any SEH state analysis; answers of other levels stay apart.
+  ASSERT_EQ(x86SEHStateAnalysisLevel(), 0u);
+  ASSERT_TRUE(Memo.find(F.Image, Text.VA, 0));
+  EXPECT_FALSE(Memo.find(F.Image, Text.VA, 1));
+  // The budget decides exactly as it does for a fresh computation: a total
+  // that just fits succeeds at the limit, one unit less fails.
+  for (const bool Fits : {true, false}) {
+    SCOPED_TRACE(Fits);
+    size_t Replayed = limits::kMaxRegistrationEHStateWork - FreshWork + !Fits;
+    size_t Computed = Replayed;
+    const auto Answer =
+        getCheckedX86CalleeStackPop(F.Image, Text.VA, &Replayed);
+    {
+      // A fresh computation from the same remaining budget.
+      RegistrationStackPopMemo Empty(F.Image);
+      RegistrationStackPopMemoScope Inner(Empty);
+      EXPECT_EQ(getCheckedX86CalleeStackPop(F.Image, Text.VA, &Computed),
+                Answer);
+    }
+    EXPECT_EQ(Replayed, Computed);
+    EXPECT_EQ(Answer.has_value(), Fits);
+    EXPECT_EQ(Replayed, limits::kMaxRegistrationEHStateWork);
+  }
+  // Another image never reads this memo.
+  ThrowImage Other;
+  Other.Image = F.Image;
+  EXPECT_FALSE(Memo.find(Other.Image, Text.VA, 0));
+}
+
 TEST(RegistrationCallABI, ReturningStackProofDoesNotNormalizeTheX87Stack) {
   // Normalization refuses the first three bodies: an unproved tag for FCHS or
   // FXAM, or a return block split by TOP. The last FXAM has a proved tag.

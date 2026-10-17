@@ -596,12 +596,20 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
             getTargetRegInfo(TheArch).isX87StackReg(Op.Inputs[0].Offset);
       }
   Func.ExplicitX87ReturnValue = HasReturn && AllX87Returns;
-  if (Low.RegistrationStates && Image)
+  if (KnownRegistrationFrameFacts &&
+      KnownRegistrationFrameFacts->Entry == Low.Entry) {
     Func.RegistrationCallerCleanupABIComplete =
-        hasCallerCleanupRegistrationABI(Low, *Image);
-  if (Low.ExceptionMetadata && Low.ExceptionMetadata->Cxx && Image)
+        KnownRegistrationFrameFacts->CallerCleanupABIComplete;
     Func.RegistrationCxxEntryPopBytes =
-        getCheckedX86RegistrationCxxParentABI(Low, *Image);
+        KnownRegistrationFrameFacts->CxxEntryPopBytes;
+  } else {
+    if (Low.RegistrationStates && Image)
+      Func.RegistrationCallerCleanupABIComplete =
+          hasCallerCleanupRegistrationABI(Low, *Image);
+    if (Low.ExceptionMetadata && Low.ExceptionMetadata->Cxx && Image)
+      Func.RegistrationCxxEntryPopBytes =
+          getCheckedX86RegistrationCxxParentABI(Low, *Image);
+  }
   if (SourceCallHintsEnabled && Image && Fmt == BinaryFormat::MachO &&
       TheArch == Arch::AArch64 && Image->Arch == TheArch) {
     Func.RegisterCopyProjections = sourceRegisterCopies(*Image, Low);

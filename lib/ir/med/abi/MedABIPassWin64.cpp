@@ -66,9 +66,10 @@ void takeIndirectCallRegisters(AbiCallContext &C) {
     if (K > 0 && !C.FoundMask[K - 1])
       break;
     bool FoundDef = false;
-    auto V = findReachingArgReg(C.Func, C.TRI, C.TheArch, C.Blk.Id, K, C.Layout,
-                                /*AllowUnknownLiveIn=*/false, nullptr,
-                                &FoundDef, C.CallIdx, BinaryFormat::COFF);
+    auto V =
+        findReachingArgReg(C.Func, C.TRI, C.TheArch, C.Blk.Id, K, C.Layout,
+                           /*AllowUnknownLiveIn=*/false, nullptr, &FoundDef,
+                           C.CallIdx, BinaryFormat::COFF, C.Blocks);
     if (!V || !FoundDef)
       break;
     C.Found[K] = *V;
@@ -91,7 +92,7 @@ void takeVirtualCallResultBuffer(AbiCallContext &C) {
     if (auto V =
             findReachingArgReg(C.Func, C.TRI, C.TheArch, C.Blk.Id, 1, C.Layout,
                                /*AllowUnknownLiveIn=*/false, nullptr, nullptr,
-                               C.CallIdx, BinaryFormat::COFF)) {
+                               C.CallIdx, BinaryFormat::COFF, C.Blocks)) {
       C.Found[1] = *V;
       C.FoundMask[1] = true;
     }

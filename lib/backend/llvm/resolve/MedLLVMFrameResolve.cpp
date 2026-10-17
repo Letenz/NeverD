@@ -373,17 +373,8 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
     const PhiNode *BPhi = lookupPhi(B);
     if (!APhi || !BPhi)
       return false;
-    for (const MedBlock &Block : CurMedFunc->Blocks) {
-      bool HasA = false;
-      bool HasB = false;
-      for (const PhiNode &Phi : Block.Phis) {
-        HasA |= &Phi == APhi;
-        HasB |= &Phi == BPhi;
-      }
-      if (HasA || HasB)
-        return HasA && HasB;
-    }
-    return false;
+    const MedBlock *Block = lookupPhiBlock(APhi);
+    return Block && Block == lookupPhiBlock(BPhi);
   };
   using AffinePair =
       std::pair<AddressProvenanceVarKey, AddressProvenanceVarKey>;
