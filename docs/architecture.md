@@ -262,15 +262,20 @@ architecture joins, in order. Its calling convention's rules then place
 each parameter (`placeSourceParameters`, one file per convention).
 `scripts/generate_windows_types.py` renders, from mingw-w64's headers, what
 a driver's `<ntifs.h>` declares into `lib/types/headers/WindowsKernelX64.h`
-and `WindowsKernelX86.h`, and what a program's `<windows.h>`, `<winternl.h>`
-and the headers of the libraries programs most often call declare into
-`WindowsUserX64.h`, `WindowsUserX86.h` and `WindowsUserARM64.h`; mingw-w64's
-DDK declares no ARM64 kernel. The build embeds each file in a unit of its
-own, and `headerLibrary` reads each once. The C API joins the libraries the
-table names to an image (an x64 or x86 PE of the native subsystem joins its
+and `WindowsKernelX86.h`, and what a program's `<windows.h>`, the headers of
+the libraries programs most often call and phnt's native API (the `Nt`,
+`Zw`, `Rtl` and `Ldr` routines ntdll exports, the PEB and the TEB) declare
+into `WindowsUserX64.h`, `WindowsUserX86.h` and `WindowsUserARM64.h`;
+mingw-w64's DDK declares no ARM64 kernel. phnt is read with mingw-w64's SDK
+for Windows 11 24H2, in place of `<winternl.h>`; `scripts/windows_types`
+supplies what it takes from Microsoft's SDK that mingw-w64 lacks or spells
+otherwise. The build embeds each file in a unit of its own, and
+`headerLibrary` reads each once. The C API joins the libraries the table
+names to an image (an x64 or x86 PE of the native subsystem joins its
 kernel's; one of the Windows GUI or console subsystem joins its user mode's,
-then its kernel's for the native API ntdll exports, which an ARM64 one has
-none of) after the program's PDB and before the user's declarations:
+then, on x64 and x86, its kernel's for the few ntdll exports only the
+kernel's headers declare, such as `RtlIsNameLegalDOS8Dot3`) after the
+program's PDB and before the user's declarations:
 - a header type joins only where the program has no type of its name;
 - a typedef names the program's type, as C binds it;
 - a header record laid out with a type the program sizes otherwise is left
@@ -804,7 +809,12 @@ take their bodies from the landing pad, as the pad runs for each clause's
 selector (`attachItaniumHandlerBodies`); `__cxa_begin_catch` becomes the catch
 parameter and `__cxa_end_catch` the end of the catch. A pad whose code this
 cannot follow exactly, or that also dispatches an enclosing try's clause,
-keeps the region in its commented form with the pad in place. A pad that only
+keeps the region in its commented form with the pad in place. The pad's
+copies of the exception are followed through the frame (`ExceptionTrack`): to
+a slot it is spilled to, through a variable holding that slot's address, and,
+in a frame too large for an immediate offset, through a copy of the base
+clang keeps in a slot; a write that may change what such an address reads
+ends the copy. A pad that only
 cleans up, which every call site reaching it enters with no action, is such a
 scope around the calls of ordinary flow that its call sites cover. A call
 keeps the address of its call instruction (`HighExpr::CallSiteAddr`) when a

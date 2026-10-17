@@ -443,9 +443,17 @@ declarations, and the sidecar's load. `FunctionDeclarationsNeedNoDebugInformatio
 does the same on the image read without its PDB, of a type the user
 declares, and checks that another function's text stays as it was.
 
+`TypeParse.SizesAMemberReachedThroughANullPointer` reads
+`sizeof(((T *)0)->Member)`, as phnt's `RTL_FIELD_SIZE` spells it.
 `HeaderLibrary.*` reads the embedded Windows libraries and checks how a
-header library joins a program's types. After running
-`scripts/generate_windows_types.py`, check each library in every language:
+header library joins a program's types;
+`HeaderLibrary.TheUserLibrariesDeclareNtdllsNativeAPI` checks phnt's
+routines and the PEB, TEB and loader records each user mode library lays
+out. The user mode libraries read a checkout of
+[phnt](https://github.com/winsiderss/phnt) besides mingw-w64's headers:
+`scripts/generate_windows_types.py --phnt <checkout>` (each generated
+header names the commit). After running it, check each library in every
+language:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
@@ -7347,7 +7355,14 @@ statement took a covered jump's address.
 `ABranchWhoseArmsCallThroughThePadIsOneScope` wraps the whole branch, and
 `ACopyWithoutAnAddressKeepsItsCallsInstruction` places calls copied into both
 arms by their instruction. `AnExceptionSpilledThroughAFrameAddressIsResumed`
-follows the exception through the slot address clang keeps for a large frame. `ACallOfNoInstructionKeepsTheCleanupPad`,
+follows the exception through the slot address clang keeps for a large frame.
+`AnExceptionSpilledOffACopiedFrameBaseIsResumed` follows it through a copy of
+the base clang reaches the far slots from,
+`ASpillAndAReloadThroughTwoBaseCopiesMatch` through one copy to the spill and
+another to the reload, and
+`AReadThroughABaseRewrittenAfterTheSpillKeepsThePad` keeps the pad when the
+base's slot changes between the spill and the copy.
+`ACallOfNoInstructionKeepsTheCleanupPad`,
 `AJumpIntoACleanupScopeKeepsThePad` and
 `ACoveredCallOnlyAJumpReachesKeepsThePad` keep the pad where a scope cannot
 be proved. `NothingFallsOutOfAnEndlessLoop` prints no dead statement after a
