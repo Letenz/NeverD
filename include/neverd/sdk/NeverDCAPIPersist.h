@@ -6,7 +6,7 @@
 ///
 /// \file
 /// Per-address annotations and function renames, each persisted to a JSON
-/// sidecar file next to the analyzed binary.
+/// file in the analyzed binary's project folder, `<input>.neverd/`.
 ///
 /// All returned strings are heap-allocated via strdup(); callers must
 /// free them with neverd_free_string().
@@ -160,7 +160,7 @@ NEVERD_API const char *neverd_func_type_json(neverd_session_t Sess,
 /// order, where "state" is "created" or "deleted" and the attributes are
 /// neverd_func_edit's.  Free with neverd_free_string.
 NEVERD_API const char *neverd_functions_json(neverd_session_t Sess);
-/// Write or read the edits as `<input>.neverd-functions.json`, which
+/// Write or read the edits as `<input>.neverd/functions.json`, which
 /// neverd_session_load reads too.  Return 0, or -1 with neverd_last_error.
 NEVERD_API int neverd_functions_save(neverd_session_t Sess);
 NEVERD_API int neverd_functions_load(neverd_session_t Sess);
@@ -185,7 +185,7 @@ NEVERD_API int neverd_item_clear(neverd_session_t Sess, neverd_va_t Addr);
 /// The user's data items, [{"addr","kind","size","encoding"?}] in address
 /// order.  Free with neverd_free_string.
 NEVERD_API const char *neverd_items_json(neverd_session_t Sess);
-/// Write or read the items as `<input>.neverd-items.json`, which
+/// Write or read the items as `<input>.neverd/items.json`, which
 /// neverd_session_load reads too.  Return 0, or -1 with neverd_last_error.
 NEVERD_API int neverd_items_save(neverd_session_t Sess);
 NEVERD_API int neverd_items_load(neverd_session_t Sess);
@@ -209,7 +209,7 @@ NEVERD_API int neverd_operand_format_set(neverd_session_t Sess,
 /// "negate","invert","type"?,"delta"?},...]},...] in address order, "type"
 /// and "delta" a structure offset's.  Free with neverd_free_string.
 NEVERD_API const char *neverd_operand_formats_json(neverd_session_t Sess);
-/// Write or read the formats as `<input>.neverd-operands.json`, which
+/// Write or read the formats as `<input>.neverd/operands.json`, which
 /// neverd_session_load reads too.  Return 0, or -1 with neverd_last_error.
 NEVERD_API int neverd_operand_formats_save(neverd_session_t Sess);
 NEVERD_API int neverd_operand_formats_load(neverd_session_t Sess);
