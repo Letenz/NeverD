@@ -412,13 +412,18 @@ entry alike): those bodies print as code. A C library routine the code calls,
 directly or through the slot or symbol the loader binds for its import
 (`libraryCallee`), takes the declaration a header gives it, or the prototype
 the runtime's tables give it, which the unit declares itself, weak where the
-image's reference is weak (`__gmon_start__`). Its arguments convert to the
-parameter types; a pointer it returns converts to the integer that holds it;
-the result of one that returns nothing is never read, and where code reads
-the register it left that is zero, as for any undefined value
-(`libraryResult`; `LibCReturnKinds.inc` records pointer results). A
-definition named like such a routine is the image's own copy and takes its
-address (`atexit_140001234`), as a body lifted under an import's name does.
+image's reference is weak (`__gmon_start__`). A call passes the parameters
+that declaration has, and its arguments convert to their types; a pointer it
+returns converts to the integer that holds it (`LibCReturnKinds.inc` records
+pointer results). The result of a callee the unit declares to return
+nothing, such a routine or a definition whose result MedIR settled as none,
+is never read, and where code reads the register it left that is zero, as
+for any undefined value (`callResult`). A definition named like such a
+routine is the image's own copy and takes its address (`atexit_140001234`),
+as a body lifted under an import's name does; in a Windows program so does
+one named like a routine the mingw-w64 headers declare (`__mingw_printf`,
+`MinGWHeaderFunctions.inc`), and in a whole module `main`, which C holds to
+the signature it gives main.
 An address into a byte array the module defines is an offset into it, in a
 global's initializer as in code, and an import a global names is declared
 before the globals. A function with Windows exception handling includes

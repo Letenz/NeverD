@@ -19,6 +19,7 @@
 #include "LLVMCWriter.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/ParameterSites.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/MsvcCallee.h"
@@ -2759,6 +2760,23 @@ LLVMCWriter::debugFunction(const llvm::Function &Callee) const {
   return std::nullopt;
 }
 
+bool LLVMCWriter::calleeReturnsNothing(const llvm::CallBase &Call) const {
+  const llvm::Function *Callee = Call.getCalledFunction();
+  if (!Callee || Callee->isIntrinsic() || Call.getType()->isVoidTy() ||
+      Opts.PreserveLLVMFunctionTypes)
+    return false;
+  if (Callee->getReturnType()->isVoidTy())
+    return true;
+  // A definition prints its settled result (setupFunction's InferredVoid);
+  // another the unit only declares keeps the type its LLVM declaration has.
+  if (Callee->isDeclaration() || (OnlyFunction && Callee != OnlyFunction) ||
+      !llvm_value_provenance::returnsNoValue(*Callee))
+    return false;
+  const std::optional<FunctionSym> Debug = debugFunction(*Callee);
+  return !Debug ||
+         !isMsvcIndirectReturn(Debug->ReturnType, Opts.TheArch, Opts.Format);
+}
+
 std::optional<FunctionSym>
 LLVMCWriter::debugCallee(const llvm::CallBase &Call) const {
   if (!Dbg)
@@ -3053,6 +3071,11 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
     }
     return false;
   };
+  // A routine the runtime's tables type takes the parameters the unit
+  // declares for it.
+  if (const LibraryCallee Library = libraryCallee(Call);
+      Library.Prototype && !Library.Prototype->Variadic)
+    return Clamp(Library.Prototype->ParamCount);
   if (auto FS = debugCallee(Call)) {
     // A pointer-encoded class return may be a real RAX pointer rather than
     // an indirect result. With no debug parameters, live integer machine

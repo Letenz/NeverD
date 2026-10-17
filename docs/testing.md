@@ -7308,13 +7308,20 @@ caller carries an unwind record;
 `ALibraryRoutineCalledThroughItsImportTakesItsDeclaration` calls `fputc`,
 `getenv` and `free` through import symbols with their headers' types and
 `EnterCriticalSection` with the runtime tables' prototype;
-`ARuntimeRoutineReturningAFunctionPointerIsDeclared` declares `_onexit`;
+`ARuntimeRoutineReturningAFunctionPointerIsDeclared` declares `_onexit`, and
+`ARuntimeRoutineCalledDirectlyTakesItsPrototype` declares it for a direct
+call, which passes only its parameter;
 `ACastBetweenAnIntegerAndAPointerConverts` passes a volatile read's integer
 to a pointer parameter and adds to a pointer it read;
-`AWeakImportIsDeclaredWeak` links without `__gmon_start__`; and
+`AWeakImportIsDeclaredWeak` links without `__gmon_start__`;
 `ADefinitionOfALibraryRoutinesNameTakesItsAddress` renames the image's own
-`atexit`. `LLVMCIntrinsicSemantics.RepMovsForwardBackwardDynamicAndOverlap`
-runs `rep movs` copies of each width and direction, overlapping ones too, and
+`atexit`, `AMinGWRoutineTheProgramLinksTakesItsAddress` a Windows program's
+`__mingw_printf` and no other format's, and
+`AWholeModulesMainTakesItsAddress` a whole module's `main`; and
+`ACalleeThatReturnsNothingLeavesItsResultUndefined` calls a definition
+settled as returning nothing alone, or reads zero for its result.
+`LLVMCIntrinsicSemantics.RepMovsForwardBackwardDynamicAndOverlap` runs
+`rep movs` copies of each width and direction, overlapping ones too, and
 `RepMovsRejectsUnprovedContracts` refuses other shapes.
 `LibCResult.ReadsWhetherTheDeclaredResultIsAPointer` reads pointer results
 from headers, typedefs included, and from the runtime tables.
