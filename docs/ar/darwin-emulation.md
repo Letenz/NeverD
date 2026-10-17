@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: b5def749fb0046ea78f303729be92635342a635e568b7dc2d665a9adf1e4dc71 -->
+<!-- i18n-source: 9fc13e22f8389ee3a151e7b2f022bbf58f728e5597159984b0585f1b88cbb48e -->
 
 [← فهرس الوثائق](README.md)
 
@@ -33,7 +33,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 يتطلب `LC_UNIXTHREAD` سجلاً واحداً كاملاً للسجلات العامة الأصلية ذات 64 بت، مع تعيين PC فقط. يحتوي المكدس الأولي argc وargv/envp المنتهيين ومتجه apple منتهياً يتضمن `executable_path=<input filename>`. تُرفض قيم SP والأعلام المخصصة والسجلات الأخرى وflavors الإضافية ونقاط الدخول المتعارضة. لا تُورث بيئة المضيف أو متجه Linux المساعد. المرجع: [معمارية dyld](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-يدعم العقد المحدود أدناه libSystem ومكتبات dylib الصريحة عند البدء وTLS العادي بلغة C للخيط الرئيسي. تبقى الإنهاء الانتقائي لـDSO ومهيئات TLS القديمة وarm64e/PAC وأنواع CPU غير المدعومة والتشفير والأوامر غير المنمذجة مرفوضة قبل التنفيذ. يحتفظ البرنامج الرئيسي بعنوانه المفضل وتُعطى dylib عناوين منفصلة حتمية. لا تنفذ بيانات التوقيع AMFI أو entitlements.
+يدعم العقد المحدود أدناه libSystem ومكتبات dylib الصريحة عند البدء ومنشئات البدء وTLS بلغة C/C++ للخيط الرئيسي ودوال هدم C/C++ عند انتهاء العملية. يبقى الإنهاء الانتقائي لـDSO والتهيئة المحلية الثابتة باستخدام guard ومهيئات TLS القديمة وarm64e/PAC وأنواع CPU غير المدعومة والتشفير والأوامر غير المنمذجة مرفوضة قبل التنفيذ. يحتفظ البرنامج الرئيسي بعنوانه المفضل وتُعطى dylib عناوين منفصلة حتمية. لا تنفذ بيانات التوقيع AMFI أو entitlements.
 
 ## خدمات Darwin
 

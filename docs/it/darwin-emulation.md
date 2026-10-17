@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b5def749fb0046ea78f303729be92635342a635e568b7dc2d665a9adf1e4dc71 -->
+<!-- i18n-source: 9fc13e22f8389ee3a151e7b2f022bbf58f728e5597159984b0585f1b88cbb48e -->
 
 [← Indice della documentazione](README.md)
 
@@ -33,7 +33,7 @@ I segmenti mantengono permessi correnti/massimi e riempimento a zero. `__PAGEZER
 
 `LC_UNIXTHREAD` richiede un solo record completo dei registri generali nativi a 64 bit, con il solo PC valorizzato. Lo stack contiene argc, argv/envp terminati e un vettore apple terminato con `executable_path=<input filename>`. SP/flag personalizzati, altri registri, flavor aggiuntivi e ingressi conflittuali sono rifiutati. Non sono ereditati ambiente host o vettore ausiliario Linux. Riferimento: [architettura dyld](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-Il contratto limitato seguente supporta libSystem, dylib di avvio esplicite e TLS C ordinario del thread principale. Distruttori globali, vecchi inizializzatori TLS, arm64e/PAC, sottotipi CPU non supportati, cifratura e comandi non modellati falliscono ancora prima dell'esecuzione. Il programma principale mantiene l'indirizzo preferito; le dylib ricevono indirizzi separati deterministici. Le firme non implementano AMFI o entitlements.
+Il contratto limitato seguente supporta libSystem, dylib di avvio esplicite, costruttori di avvio, TLS C/C++ del thread principale e distruttori C/C++ alla fine del processo. La finalizzazione selettiva dei DSO, l'inizializzazione delle variabili statiche locali tramite guard, i vecchi inizializzatori TLS, arm64e/PAC, sottotipi CPU non supportati, cifratura e comandi non modellati falliscono ancora prima dell'esecuzione. Il programma principale mantiene l'indirizzo preferito; le dylib ricevono indirizzi separati deterministici. Le firme non implementano AMFI o entitlements.
 
 ## Servizi Darwin
 

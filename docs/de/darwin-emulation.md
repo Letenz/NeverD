@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b5def749fb0046ea78f303729be92635342a635e568b7dc2d665a9adf1e4dc71 -->
+<!-- i18n-source: 9fc13e22f8389ee3a151e7b2f022bbf58f728e5597159984b0585f1b88cbb48e -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -33,7 +33,7 @@ Segmente behalten aktuelle/maximale Rechte und Nullfüllung. `__PAGEZERO` reserv
 
 `LC_UNIXTHREAD` verlangt genau einen vollständigen nativen 64-Bit-Allgemeinregistersatz, in dem nur PC belegt ist. Der Startstack enthält argc, terminierte argv/envp und einen terminierten apple-Vektor mit `executable_path=<input filename>`. Eigene SP/Flags, andere Register, zusätzliche Flavors und widersprüchliche Eintritte sind unzulässig. Hostumgebung und Linux-Hilfsvektor werden nicht übernommen. Grundlage: [dyld-Architektur](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-Der folgende begrenzte Vertrag unterstützt libSystem, explizite Start-dylibs und gewöhnliches C-TLS des Hauptthreads. Globale Destruktoren, alte TLS-Initialisierer, arm64e/PAC, nicht unterstützte CPU-Untertypen, Verschlüsselung und nicht modellierte Befehle scheitern weiterhin vor Ausführung. Das Hauptprogramm behält seine bevorzugte Adresse; dylibs erhalten getrennte deterministische Adressen. Signaturmetadaten implementieren weder AMFI noch Entitlements.
+Der folgende begrenzte Vertrag unterstützt libSystem, explizite Start-dylibs, Startkonstruktoren, C/C++-TLS des Hauptthreads und C/C++-Destruktoren beim Prozessende. Selektive DSO-Finalisierung, die Initialisierung lokaler statischer Variablen mit guard, alte TLS-Initialisierer, arm64e/PAC, nicht unterstützte CPU-Untertypen, Verschlüsselung und nicht modellierte Befehle scheitern weiterhin vor Ausführung. Das Hauptprogramm behält seine bevorzugte Adresse; dylibs erhalten getrennte deterministische Adressen. Signaturmetadaten implementieren weder AMFI noch Entitlements.
 
 ## Darwin-Dienste
 

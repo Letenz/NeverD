@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b5def749fb0046ea78f303729be92635342a635e568b7dc2d665a9adf1e4dc71 -->
+<!-- i18n-source: 9fc13e22f8389ee3a151e7b2f022bbf58f728e5597159984b0585f1b88cbb48e -->
 
 [← 文档索引](README.md)
 
@@ -46,7 +46,7 @@ BSD 系统调用遵循 Darwin ABI。ARM64 从 X16 读取服务号，x64 使用 B
 旧式原始 mmap 的零长度请求返回零而不分配内存；`MAP_UNIX03` 已支持，零长度返回 EINVAL。
 Unmap/protect 地址必须对齐；允许 NONE/READ/WRITE，WRITE 隐含 READ，不接受匿名可执行映射。
 
-设备与模拟器的平台必须分别匹配。支持下述有限 libSystem、显式启动 dylib 和普通 C 主线程 TLS 契约。选择性 DSO 析构回调、旧式 TLS 初始化段、其他未建模 dyld 行为、Mach IPC、线程、Objective-C/Swift 框架、arm64e/PAC、加密内容和未建模命令仍明确拒绝。主程序保持偏好地址，dylib 使用确定性独立地址；签名数据不提供 AMFI 或 entitlement 实现。
+设备与模拟器的平台必须分别匹配。支持下述有限 libSystem、显式启动 dylib、启动构造函数、主线程 C/C++ TLS 和进程终止时的 C/C++ 析构。选择性 DSO 终结、使用 guard 的局部静态初始化、旧式 TLS 初始化段、其他未建模 dyld 行为、Mach IPC、线程、Objective-C/Swift 框架、arm64e/PAC、加密内容和未建模命令仍明确拒绝。主程序保持偏好地址，dylib 使用确定性独立地址；签名数据不提供 AMFI 或 entitlement 实现。
 
 测试使用自行编写、由 Clang/LLD 生成的五种 Mach-O 平台/架构用例，另有独立构造的
 线程入口和畸形文件测试、4 KiB/16 KiB 内存测试，以及 C API/CLI 报告一致性测试。

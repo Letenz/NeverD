@@ -73,7 +73,7 @@ extra flavors and conflicting entries are rejected. No host environment or
 auxiliary Linux vector is inherited. Startup follows the distinction described
 in Apple's [dyld architecture](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-The finite contracts below admit libSystem, explicit startup dylibs, startup constructors and main-thread C/C++ TLS. Global destructors, legacy TLS initializer sections, arm64e/PAC, unsupported CPU subtypes, encrypted payloads and unmodeled load commands fail explicitly. Main executables retain their preferred addresses and dylibs receive disjoint deterministic placements. Code-signing blobs are metadata, without AMFI or entitlement policy.
+The finite contracts below admit libSystem, explicit startup dylibs, startup constructors, main-thread C/C++ TLS and process-lifetime C/C++ destruction. Selective DSO finalization, guard-based local static initialization, legacy TLS initializer sections, arm64e/PAC, unsupported CPU subtypes, encrypted payloads and unmodeled load commands fail explicitly. Main executables retain their preferred addresses and dylibs receive disjoint deterministic placements. Code-signing blobs are metadata, without AMFI or entitlement policy.
 
 ## Darwin services
 

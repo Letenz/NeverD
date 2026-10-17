@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b5def749fb0046ea78f303729be92635342a635e568b7dc2d665a9adf1e4dc71 -->
+<!-- i18n-source: 9fc13e22f8389ee3a151e7b2f022bbf58f728e5597159984b0585f1b88cbb48e -->
 
 [← ドキュメント一覧](README.md)
 
@@ -33,7 +33,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 `LC_UNIXTHREAD` は PC だけが設定された完全なネイティブ 64 ビット汎用レジスタレコードを一つだけ許可します。初期スタックは argc、終端付き argv/envp、`executable_path=<input filename>` を含む終端付き apple ベクターで構成します。独自 SP/フラグ、他のレジスタ、追加 flavor、矛盾するエントリを拒否し、ホスト環境や Linux 補助ベクターを継承しません。[dyld の設計](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md)を参照してください。
 
-以下の有限 libSystem、明示的な起動 dylib、通常の C メインスレッド TLS に対応します。選択的 DSO 終了処理、旧 TLS 初期化セクション、arm64e/PAC、未対応 CPU サブタイプ、暗号化、未モデル化コマンドは実行前に拒否します。主実行形式は優先アドレス、dylib は決定的な独立アドレスを使います。署名メタデータは AMFI や entitlement を実装しません。
+以下の有限 libSystem、明示的な起動 dylib、起動コンストラクタ、メインスレッド C/C++ TLS、プロセス終了時の C/C++ デストラクタに対応します。選択的 DSO 終了処理、guard を使うローカル静的変数の初期化、旧 TLS 初期化セクション、arm64e/PAC、未対応 CPU サブタイプ、暗号化、未モデル化コマンドは実行前に拒否します。主実行形式は優先アドレス、dylib は決定的な独立アドレスを使います。署名メタデータは AMFI や entitlement を実装しません。
 
 ## Darwin サービス
 

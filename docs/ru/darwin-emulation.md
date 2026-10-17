@@ -1,6 +1,6 @@
 **Языки**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b5def749fb0046ea78f303729be92635342a635e568b7dc2d665a9adf1e4dc71 -->
+<!-- i18n-source: 9fc13e22f8389ee3a151e7b2f022bbf58f728e5597159984b0585f1b88cbb48e -->
 
 [← Оглавление документации](README.md)
 
@@ -33,7 +33,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 `LC_UNIXTHREAD` требует ровно одну полную запись нативных общих 64-битных регистров с заполненным только PC. Стек содержит argc, завершённые argv/envp и завершённый вектор apple с `executable_path=<input filename>`. Собственные SP/флаги, другие регистры, дополнительные flavors и конфликтующие входы отклоняются. Окружение хоста и вспомогательный Linux-вектор не наследуются. См. [архитектуру dyld](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-Ограниченный контракт ниже поддерживает libSystem, явные стартовые dylib и обычный C TLS главного потока. Глобальные деструкторы, старые инициализаторы TLS, arm64e/PAC, неподдерживаемые подтипы CPU, шифрование и немоделируемые команды отклоняются до выполнения. Главный файл сохраняет предпочтительный адрес; dylib получают отдельные детерминированные адреса. Подписи не реализуют AMFI или entitlements.
+Ограниченный контракт ниже поддерживает libSystem, явные стартовые dylib, стартовые конструкторы, C/C++ TLS главного потока и деструкторы C/C++ при завершении процесса. Выборочная финализация DSO, инициализация локальных статических переменных через guard, старые инициализаторы TLS, arm64e/PAC, неподдерживаемые подтипы CPU, шифрование и немоделируемые команды отклоняются до выполнения. Главный файл сохраняет предпочтительный адрес; dylib получают отдельные детерминированные адреса. Подписи не реализуют AMFI или entitlements.
 
 ## Службы Darwin
 

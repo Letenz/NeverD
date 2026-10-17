@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b5def749fb0046ea78f303729be92635342a635e568b7dc2d665a9adf1e4dc71 -->
+<!-- i18n-source: 9fc13e22f8389ee3a151e7b2f022bbf58f728e5597159984b0585f1b88cbb48e -->
 
 [← Index de la documentation](README.md)
 
@@ -33,7 +33,7 @@ Les segments conservent permissions courantes/maximales et zones à zéro. `__PA
 
 `LC_UNIXTHREAD` exige un seul enregistrement complet de registres généraux 64 bits natifs, avec uniquement PC renseigné. La pile contient argc, argv/envp terminés et un vecteur apple terminé avec `executable_path=<input filename>`. SP/flags personnalisés, autres registres, saveurs supplémentaires ou entrées conflictuelles sont refusés. Aucun environnement hôte ni vecteur auxiliaire Linux n’est hérité. Voir l’[architecture dyld](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-Le contrat fini ci-dessous couvre libSystem, les dylibs de démarrage explicites et le TLS C ordinaire du thread principal. Destructeurs globaux, anciens initialiseurs TLS, arm64e/PAC, sous-types non pris en charge, chiffrement et commandes non modélisées restent refusés. L'exécutable garde son adresse préférée et les dylibs reçoivent des adresses distinctes déterministes. Les signatures ne modélisent ni AMFI ni les entitlements.
+Le contrat fini ci-dessous couvre libSystem, les dylibs de démarrage explicites, les constructeurs de démarrage, le TLS C/C++ du thread principal et les destructeurs C/C++ de fin de processus. La finalisation sélective des DSO, l'initialisation des variables statiques locales avec guard, les anciens initialiseurs TLS, arm64e/PAC, sous-types non pris en charge, chiffrement et commandes non modélisées restent refusés. L'exécutable garde son adresse préférée et les dylibs reçoivent des adresses distinctes déterministes. Les signatures ne modélisent ni AMFI ni les entitlements.
 
 ## Services Darwin
 
