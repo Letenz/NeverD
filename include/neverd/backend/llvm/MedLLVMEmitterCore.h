@@ -1286,6 +1286,8 @@ private:
   /// constant or an undefined variable.  Backed by \ref ensureDefPhiIndex.
   const MedOp *lookupDef(const MedVar &V) const;
   const PhiNode *lookupPhi(const MedVar &V) const;
+  /// The block of CurMedFunc holding \p Phi, or null.
+  const MedBlock *lookupPhiBlock(const PhiNode *Phi) const;
 
   /// Recursive worker for \ref varIsFrameDerived.  Walks the operand DAG of
   /// \p V once (the \p Visited set collapses shared sub-expressions and breaks
@@ -1909,6 +1911,7 @@ private:
   mutable const MedFunc *DefPhiIndexFor = nullptr;
   mutable llvm::DenseMap<std::pair<int64_t, int>, const MedOp *> DefIndex;
   mutable llvm::DenseMap<std::pair<int64_t, int>, const PhiNode *> PhiIndex;
+  mutable llvm::DenseMap<const PhiNode *, const MedBlock *> PhiBlocks;
 
   // Occurrence-level proof that a value graph contains an emitted function
   // identity. Integer emission asks this for many operands, so solve each

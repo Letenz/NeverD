@@ -78,6 +78,7 @@ void MedLLVMEmitter::ensureDefPhiIndex() const {
   DefPhiIndexFor = CurMedFunc;
   DefIndex.clear();
   PhiIndex.clear();
+  PhiBlocks.clear();
   if (!CurMedFunc)
     return;
   // try_emplace keeps the FIRST op/phi defining each identity, matching the old
@@ -86,9 +87,11 @@ void MedLLVMEmitter::ensureDefPhiIndex() const {
     for (const MedOp &Op : Blk.Ops)
       if (!Op.Output.isConst())
         DefIndex.try_emplace(medVarDefKey(Op.Output), &Op);
-    for (const PhiNode &P : Blk.Phis)
+    for (const PhiNode &P : Blk.Phis) {
+      PhiBlocks.try_emplace(&P, &Blk);
       if (!P.Output.isConst())
         PhiIndex.try_emplace(medVarDefKey(P.Output), &P);
+    }
   }
 }
 
@@ -106,6 +109,12 @@ const PhiNode *MedLLVMEmitter::lookupPhi(const MedVar &V) const {
   ensureDefPhiIndex();
   auto It = PhiIndex.find(medVarDefKey(V));
   return It == PhiIndex.end() ? nullptr : It->second;
+}
+
+const MedBlock *MedLLVMEmitter::lookupPhiBlock(const PhiNode *Phi) const {
+  ensureDefPhiIndex();
+  auto It = PhiBlocks.find(Phi);
+  return It == PhiBlocks.end() ? nullptr : It->second;
 }
 
 //===----------------------------------------------------------------------===//
