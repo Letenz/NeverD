@@ -254,6 +254,63 @@ TEST_P(AArch64SIMD, WideningRejects128BitElements) {
 TEST_P(AArch64SIMD, WideningRejectsScalarEncoding) {
   expectRejected(0x5f08a43f);
 }
+TEST_P(AArch64SIMD, LaneMovesUseNEONAlternativeAndPreserveOtherState) {
+  struct LaneCase {
+    uint32_t Word;
+    unsigned Bits, Lane, ResultBits;
+    bool Signed;
+  };
+  // Independently assembled with llvm-mc -triple=aarch64 -show-encoding.
+  constexpr LaneCase Cases[] = {
+      {0x0e013c3f, 8, 0, 32, false},  // UMOV WZR, V1.B[0]
+      {0x0e1f3c3f, 8, 15, 32, false},
+      {0x0e023c3f, 16, 0, 32, false}, // UMOV WZR, V1.H[0]
+      {0x0e1e3c3f, 16, 7, 32, false},
+      {0x0e043c3f, 32, 0, 32, false}, // MOV WZR, V1.S[0]
+      {0x0e1c3c3f, 32, 3, 32, false},
+      {0x4e083c3f, 64, 0, 64, false}, // MOV XZR, V1.D[0]
+      {0x4e183c3f, 64, 1, 64, false},
+      {0x0e012c3f, 8, 0, 32, true},   // SMOV WZR, V1.B[0]
+      {0x0e1f2c3f, 8, 15, 32, true},
+      {0x0e022c3f, 16, 0, 32, true},
+      {0x0e1e2c3f, 16, 7, 32, true},
+      {0x4e012c3f, 8, 0, 64, true},
+      {0x4e1f2c3f, 8, 15, 64, true},
+      {0x4e022c3f, 16, 0, 64, true},
+      {0x4e1e2c3f, 16, 7, 64, true},
+      {0x4e042c3f, 32, 0, 64, true},
+      {0x4e1c2c3f, 32, 3, 64, true},
+  };
+  for (const auto Input : {RegisterValue{0, UINT64_MAX},
+                          RegisterValue{UINT64_MAX, 0},
+                          RegisterValue{0x80ff7f000102ff80ULL,
+                                        0x817f8000ffffffffULL}}) {
+    vector(1, Input);
+    for (const auto &Case : Cases) {
+      SCOPED_TRACE(Case.Word);
+      for (unsigned Destination : {0u, 7u, 31u}) {
+        llvm::cantFail(CPU->setReg(AArch64Register::X0, UINT64_MAX));
+        llvm::cantFail(CPU->setReg(AArch64Register::X7, UINT64_MAX));
+        auto ExpectedScalars = scalars();
+        const auto ExpectedVectors = vectors();
+        ExpectedScalars[unsigned(AArch64Register::PC)] = Code + 4;
+        const auto Mask =
+            Case.Bits == 64 ? UINT64_MAX : (uint64_t(1) << Case.Bits) - 1;
+        auto Value = (Input[Case.Lane * Case.Bits / 64] >>
+                      (Case.Lane * Case.Bits % 64)) & Mask;
+        if (Case.Signed && (Value & (uint64_t(1) << (Case.Bits - 1))))
+          Value |= ~Mask;
+        if (Destination != 31)
+          ExpectedScalars[unsigned(AArch64Register::X0) + Destination] =
+              Case.ResultBits == 32 ? uint32_t(Value) : Value;
+        ASSERT_NO_FATAL_FAILURE(
+            expectSuccess(run((Case.Word & ~31u) | Destination)));
+        EXPECT_EQ(scalars(), ExpectedScalars);
+        EXPECT_EQ(vectors(), ExpectedVectors);
+      }
+    }
+  }
+}
 TEST_P(AArch64SIMD, CMHIProducesUnsignedElementMasksAndPreservesOtherState) {
   struct Comparison {
     const char *Name;

@@ -6165,6 +6165,10 @@ oracles check signed extension, unsigned high bits, both source halves, all
 8/16/32-bit source widths, boundary shifts and overlapping registers. Complete
 scalar/vector state and guard memory are compared at both privileges; reserved
 element-size and scalar encodings fail without mutation.
+Lane-move tests cover UMOV/SMOV, their MOV aliases, all legal element/result
+widths, first/last lanes, sign extension, W-register upper clearing and XZR.
+Capstone's `HasNEONorSME` group is satisfied by baseline NEON; SME-only feature
+groups and unsupported register views remain rejected.
 
 `AArch64ReductionCases.def` records 34 independently assembled baseline forms of
 CMEQ (register/zero and scalar/vector), UZP1, XTN/XTN2 and UMAXV. Integer lane

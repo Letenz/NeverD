@@ -72,7 +72,10 @@ bool baselineFeatures(const cs_insn &I) {
     const auto Group = I.detail->groups[Index];
     if (Group >= AARCH64_FEATURE_HASV8_0A &&
         Group != AARCH64_FEATURE_HASV8_0A &&
-        Group != AARCH64_FEATURE_HASFPARMV8 && Group != AARCH64_FEATURE_HASNEON)
+        Group != AARCH64_FEATURE_HASFPARMV8 && Group != AARCH64_FEATURE_HASNEON &&
+        // This is a disjunction, not an SME requirement. Baseline NEON
+        // supplies fixed-width lane moves carrying this Capstone group.
+        Group != AARCH64_FEATURE_HASNEONORSME)
       return false;
   }
   return true;
