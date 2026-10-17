@@ -518,6 +518,9 @@ public:
     /// Conservative patch requests run neither transformation.
     bool EnableControlFlowRecovery = true;
     uint32_t SourcePasses = SourceViewOptions::BasicPasses;
+    /// Keep every function's body its own: an LLVM profile runs no inliner
+    /// over the module.  Source views set it.
+    bool KeepFunctionBoundaries = false;
     /// Per SemanticFixedPointPass invocation.  Deep has independent early and
     /// late invocations, so each receives this complete budget.  Zero means
     /// unlimited and still stops on a stable state or exact cycle.
