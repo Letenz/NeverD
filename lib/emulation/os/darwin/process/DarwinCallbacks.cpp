@@ -49,8 +49,9 @@ llvm::Error DarwinCallbacks::enter(ExecutionBackend &CPU, uint64_t Address,
                                    uint64_t Top,
                                    llvm::ArrayRef<uint64_t> Arguments,
                                    bool Callback) {
-  if (auto E = target(CPU, Address))
-    return E;
+  if (Callback)
+    if (auto E = target(CPU, Address))
+      return E;
   if (Top <= StackBase || Top > Stack.SP)
     return failure("Darwin callback stack escapes process startup storage");
   auto ABI = abi(Image);

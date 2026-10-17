@@ -45,6 +45,7 @@ class ImageGraph {
   ProcessImage Out{};
   uint64_t Available = 0, FileBytes = 0, Records = 0, ModelBytes = 0;
   uint64_t NextAddress = DylibBase;
+  bool RetainCallbacks = false;
 
   llvm::Error check() {
     if (Budget && !Budget->remainingMicroseconds())
@@ -210,7 +211,7 @@ class ImageGraph {
       Out.Memory.Maximum.push_back({Segment.VA + N.Bias,
                                     (Segment.Size + Page - 1) & ~(Page - 1),
                                     Info.MaximumProtection});
-      if (Segment.isExecutable()) {
+      if (RetainCallbacks && Segment.isExecutable()) {
         if (++Records > 65536)
           return failure("Darwin startup graph exceeds its record limit");
         if (auto E = charge(sizeof(ExecutableSpan)))
@@ -463,6 +464,14 @@ public:
         return F.Bind && N.Dependencies[F.LibraryOrdinal - 1] == SystemProvider;
       });
     });
+    RetainCallbacks = llvm::any_of(Nodes, [](const auto &N) {
+      return N.Loaded.HasInitializers ||
+             llvm::any_of(N.Linking.Fixups, [&](const auto &F) {
+               return F.Bind &&
+                      N.Dependencies[F.LibraryOrdinal - 1] == SystemProvider &&
+                      libSystemImport(F.Symbol) == LibSystemGateKind::TLVAtExit;
+             });
+    });
     if (Imports) {
       ModelBytes = 2 * Page;
       Out.Memory.Reserved = {{LibSystemGate, Page, 5},
@@ -494,8 +503,11 @@ public:
     Out.HasTLSCallbacks = llvm::any_of(Out.Imports, [](const auto &I) {
       return I.second == LibSystemGateKind::TLVAtExit;
     });
-    if (auto E = charge(DarwinCallbacks::metadataBytes(Out.HasTLSCallbacks)))
-      return std::move(E);
+    if (RetainCallbacks || llvm::any_of(Out.Imports, [](const auto &I) {
+          return I.second == LibSystemGateKind::NormalExit;
+        }))
+      if (auto E = charge(DarwinCallbacks::metadataBytes(Out.HasTLSCallbacks)))
+        return std::move(E);
     if (Out.Plan.MappedBytes + ModelBytes > Available - Out.MetadataBytes)
       return failure(diagnostic::ProcessLimits);
     if (auto E = check())
