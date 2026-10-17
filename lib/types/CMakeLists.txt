@@ -18,6 +18,7 @@ endforeach()
 add_neverd_component_library(NeverDTypes
   CTypeParser.cpp
   CTypeRender.cpp
+  DWARFTypeImport.cpp
   GoTypeParser.cpp
   GoTypeRender.cpp
   HeaderLibrary.cpp

@@ -3674,10 +3674,6 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
         <translation>Die PDB definiert keine Typen.</translation>
     </message>
     <message>
-        <source>No local types: this program has no PDB with types.</source>
-        <translation>Keine lokalen Typen: Dieses Programm hat keine PDB mit Typen.</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>Typen, deren Layout nicht der PDB entspricht: %1</translation>
     </message>
@@ -3951,6 +3947,25 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
     <message>
         <source>at %1, %2 bytes</source>
         <translation>bei %1, %2 Bytes</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>Aus DWARF</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>%n aus DWARF</numerusform>
+            <numerusform>%n aus DWARF</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>Das DWARF definiert keine Typen.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>Keine lokalen Typen: Dieses Programm hat kein PDB oder DWARF mit Typen.</translation>
     </message>
 </context>
 <context>

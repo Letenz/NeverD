@@ -4109,6 +4109,62 @@ TEST_F(SessionCAPITest, CodeNamesValuesByTheEnumeratorsTheUserNames) {
   }
 }
 
+TEST_F(SessionCAPITest, ObjectsTakeTheirLocalTypesFromTheirDWARF) {
+  // A relocatable object's DWARF gives its local types, which its code
+  // reads members of by name: the DWARF reader resolves the object's
+  // relocations whenever it reads a value, for as long as the session
+  // keeps the types.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "dwarf_types.gcc.o", std::ios::binary);
+  const std::string Object =
+      write("dwarf_types.gcc.o",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Object.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_local_types_json(Session, nullptr)));
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  const llvm::json::Object *Root = Parsed->getAsObject();
+  ASSERT_TRUE(Root);
+  EXPECT_EQ(Root->getString("source"), "dwarf");
+  EXPECT_EQ(Root->getString("dataModel"), "LP64");
+  std::set<std::string> Names;
+  if (const llvm::json::Array *Types = Root->getArray("types"))
+    for (const llvm::json::Value &Type : *Types)
+      if (const llvm::json::Object *Entry = Type.getAsObject())
+        if (std::optional<llvm::StringRef> Name = Entry->getString("name")) {
+          Names.insert(Name->str());
+          EXPECT_EQ(Entry->getString("origin"), "dwarf") << Name->str();
+        }
+  for (const char *Name : {"device", "flags", "value", "pair_t", "color",
+                           "mode_t_", "packed", "forward_only"})
+    EXPECT_TRUE(Names.count(Name)) << Name;
+
+  // GCC packs the bit-fields after kind, into the bytes of their types'
+  // units that hold them, and tail follows them.
+  const std::string Source = takeString(neverd_local_types_source(
+      Session, R"({"language":"c","types":["flags"],"asserts":true})"));
+  EXPECT_NE(Source.find("uint32_t ready : 1;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" : 0;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("offsetof(struct flags, tail) == 0x8"),
+            std::string::npos)
+      << Source;
+
+  // HighC reads the members by name and defines the records it reads them
+  // of; LLVM-C binds no debug parameters in a relocatable object.
+  const int Index = neverd_func_find_by_name(Session, "use");
+  ASSERT_GE(Index, 0);
+  const std::string Use =
+      takeString(neverd_decompile(Session, neverd_func_entry(Session, Index)));
+  EXPECT_NE(Use.find("int32_t use(device* d, packed* p,"), std::string::npos)
+      << Use;
+  EXPECT_NE(Use.find("d->size"), std::string::npos) << Use;
+  EXPECT_NE(Use.find("p->count"), std::string::npos) << Use;
+  EXPECT_NE(Use.find("struct device\n{"), std::string::npos) << Use;
+  EXPECT_NE(Use.find("struct packed\n{"), std::string::npos) << Use;
+}
+
 TEST_F(SessionCAPITest, LocalTypesFitWhatTheCodeDoesThroughAPointer) {
   // use() reads Device->Size through rcx: of the program's records only a
   // _DEVICE holds a member of that width there.
