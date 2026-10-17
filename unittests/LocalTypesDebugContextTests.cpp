@@ -278,16 +278,27 @@ TEST(LocalTypesDebugContext, GivesTheDebugInformationsRecordsTheirMembers) {
   EXPECT_EQ(Holder->displayFieldPathAt(16, 8), "Next");
   EXPECT_TRUE(Context->readTypes().contains("_HOLDER"));
 
-  // Records of another size, and members given already, stay as they are.
+  // A record of another size stays as it is.
   const TypeRef Smaller = NdType::makeNamedRecord("_HEADER", 4);
   Context->completeType(Smaller);
   EXPECT_TRUE(Smaller->FieldDisplayNames.empty());
+  // Members the debug information gave where the library's lie take the
+  // library's names, as those the user renamed there do; members that lie
+  // where the library's do not, as a C++ base's flattened into its class,
+  // stay.
   const TypeRef Own = NdType::makeNamedRecord("_LARGE", 8);
   Own->FieldDisplayNames = {"Theirs"};
   Own->FieldDisplayOffsets = {0};
   Own->FieldDisplayTypes = {NdType::makeInt(8, true)};
   Context->completeType(Own);
-  EXPECT_EQ(Own->FieldDisplayNames, std::vector<std::string>{"Theirs"});
+  EXPECT_EQ(Own->displayFieldPathAt(0, 8), "Quad");
+  EXPECT_EQ(Own->displayFieldPathAt(4, 4), "High");
+  const TypeRef Elsewhere = NdType::makeNamedRecord("_LARGE", 8);
+  Elsewhere->FieldDisplayNames = {"Theirs"};
+  Elsewhere->FieldDisplayOffsets = {2};
+  Elsewhere->FieldDisplayTypes = {NdType::makeInt(2, true)};
+  Context->completeType(Elsewhere);
+  EXPECT_EQ(Elsewhere->FieldDisplayNames, std::vector<std::string>{"Theirs"});
 
   // A unit holds the records whose members it names as the library does,
   // and what they hold by value; one named otherwise stays declared.
@@ -298,11 +309,56 @@ TEST(LocalTypesDebugContext, GivesTheDebugInformationsRecordsTheirMembers) {
             std::string::npos);
   EXPECT_EQ(Defined.Records.count("_HOLDER"), 1u);
   EXPECT_TRUE(Defined.Records.at("_LARGE")) << "held by value, a union";
-  const CRecordDefinitions Otherwise = Context->definitions({Own});
+  const CRecordDefinitions Otherwise = Context->definitions({Elsewhere});
   EXPECT_TRUE(Otherwise.Text.empty());
 
   // The context takes back what it gave, for the next to give anew.
   Context.reset();
   EXPECT_TRUE(Holder->FieldDisplayNames.empty());
   EXPECT_EQ(Own->FieldDisplayNames, std::vector<std::string>{"Theirs"});
+  EXPECT_EQ(Own->FieldDisplayOffsets, std::vector<uint16_t>{0});
+}
+
+TEST(LocalTypesDebugContext, NamesValuesByTheLibrarysEnumerators) {
+  using namespace neverd;
+  auto Library = std::make_shared<types::TypeLibrary>();
+  ASSERT_TRUE(types::parseCTypes(R"(
+    typedef enum _COLOR { Red, Green = 5, Huge = 0x10000, Below = -1 } COLOR;
+    typedef struct _PAINT { COLOR Color; ULONG Count; } PAINT;
+  )",
+                                 *Library)
+                  .ok());
+  NamesOnlyDebugContext Names;
+  auto Context = std::make_unique<sdk::LocalTypesDebugContext>(Names, Library);
+  // A record's member of an enumeration is the enumeration, its values
+  // named by its enumerators: those a display holds, none negative and
+  // none wider than 16 bits.
+  const TypeRef Paint = NdType::makeNamedRecord("_PAINT", 8);
+  Context->completeType(Paint);
+  ASSERT_EQ(Paint->FieldDisplayTypes.size(), 2u);
+  const TypeRef Color = Paint->FieldDisplayTypes[0];
+  ASSERT_TRUE(Color && Color->IsEnum);
+  EXPECT_EQ(Color->SourceName, "_COLOR");
+  EXPECT_EQ(Color->Size, 4);
+  EXPECT_TRUE(Color->IsSigned);
+  EXPECT_EQ(Color->displayFieldNameAt(5), "Green");
+  EXPECT_EQ(Color->FieldDisplayNames,
+            (std::vector<std::string>{"Red", "Green"}));
+
+  // An enumeration the debug information gave enumerators takes the
+  // library's, which the user may have renamed, and gets its own back.
+  const TypeRef Given = NdType::makeNamedRecord("_COLOR", 0, /*Enum=*/true);
+  Given->FieldDisplayNames = {"Rouge", "Vert"};
+  Given->FieldDisplayOffsets = {0, 5};
+  Context->completeType(Given);
+  EXPECT_EQ(Given->displayFieldNameAt(5), "Green");
+  EXPECT_TRUE(Context->readTypes().contains("_COLOR"));
+  // A unit holds the enumeration, its enumerators agreeing.
+  const CRecordDefinitions Defined = Context->definitions({Given});
+  EXPECT_NE(Defined.Text.find("enum _COLOR\n{"), std::string::npos)
+      << Defined.Text;
+  EXPECT_EQ(Defined.Enumerations, std::vector<std::string>{"_COLOR"});
+  Context.reset();
+  EXPECT_EQ(Given->FieldDisplayNames,
+            (std::vector<std::string>{"Rouge", "Vert"}));
 }

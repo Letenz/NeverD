@@ -383,6 +383,12 @@ void GoWriter::bitAccessors(const std::string &Type, const Slot &Place,
         Access.Signed ? "uint" + Bits + "(value)" : "value";
     const std::string Getter = unique(Names.member(Bit->Name), Taken);
     const std::string Setter = unique("Set" + Names.member(Bit->Name), Taken);
+    if (Paths && !Bit->Name.empty()) {
+      MemberPath &Path = (*Paths)[Bit->Name];
+      Path.Hops = Prefix;
+      Path.Getter = Getter;
+      Path.Setter = Setter;
+    }
     const std::string Where =
         bitText(Access.Shift, Access.Width) + " of " + Place.Name + ".\n";
     Out += "\n// " + Getter + " reads " + Where;

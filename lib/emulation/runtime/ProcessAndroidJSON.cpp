@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "ProcessAndroidJSON.h"
 
+#include "../os/linux/android/AndroidLog.h"
+
 #include "neverd/emulation/ProcessReportFields.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -78,6 +80,51 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       (Name == field::Initialize ? Out.Initialize
        : Name == field::JNI      ? Out.JNI
                                  : Out.DrainThreads) = *B;
+    } else if (Name == field::LogRecords) {
+      const auto *Records = V.getAsArray();
+      if (!Records || Records->size() > android_model::LogRecordLimit)
+        return invalid(Name);
+      Out.LogRecords.emplace();
+      uint64_t Remaining = android_model::LogSnapshotLimit;
+      for (const auto &Item : *Records) {
+        const auto *Record = Item.getAsObject();
+        if (!Record || Record->size() != 7)
+          return invalid(Name);
+        NativeLogRecord R;
+        for (const auto &[Key, Entry] : *Record) {
+          llvm::StringRef K = Key;
+          if (K == field::LogPayload) {
+            auto Text = Entry.getAsString();
+            if (!Text || Text->size() % 2 ||
+                Text->size() / 2 > android_model::LogPayloadLimit ||
+                !llvm::all_of(*Text, llvm::isHexDigit))
+              return invalid(K);
+            auto Bytes = llvm::fromHex(*Text);
+            R.Payload.assign(Bytes.begin(), Bytes.end());
+          } else {
+            uint32_t *Destination = K == field::LogID         ? &R.ID
+                                    : K == field::LogPID      ? &R.PID
+                                    : K == field::LogTID      ? &R.TID
+                                    : K == field::Seconds     ? &R.Seconds
+                                    : K == field::Nanoseconds ? &R.Nanoseconds
+                                    : K == field::FileUID     ? &R.UID
+                                                              : nullptr;
+            if (!Destination)
+              return invalid(K);
+            auto N = number(Entry, K);
+            if (!N)
+              return N.takeError();
+            if (*N > UINT32_MAX)
+              return invalid(K);
+            *Destination = uint32_t(*N);
+          }
+        }
+        const uint64_t Size = 28 + R.Payload.size();
+        if (Size > Remaining)
+          return invalid(Name);
+        Remaining -= Size;
+        Out.LogRecords->push_back(std::move(R));
+      }
     } else if (Name == field::DexImages) {
       const auto *Images = V.getAsArray();
       if (!Images || Images->size() > 16)
@@ -201,6 +248,8 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
     } else
       return invalid(Name);
   }
+  if (auto E = android_model::validateLogRecords(Out.LogRecords))
+    return std::move(E);
   return Out;
 }
 llvm::json::Object androidResultJSON(const ProcessResult &Result) {

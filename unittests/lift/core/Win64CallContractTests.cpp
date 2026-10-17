@@ -374,7 +374,8 @@ TEST(Win64CallContract, OwnedX87ContextKeepsCallSetupAndTailArguments) {
   ASSERT_FALSE(CallerBody.empty()) << Source;
   EXPECT_NE(CallerBody.find("RtlVirtualUnwind("), std::string::npos)
       << CallerBody;
-  for (const char *Value : {"501", "602", "703", "804"})
+  // 501, 602, 703 and 804, as C writes numbers by default.
+  for (const char *Value : {"0x1F5", "0x25A", "0x2BF", "0x324"})
     EXPECT_NE(CallerBody.find(Value), std::string::npos) << Value << '\n'
                                                          << CallerBody;
   const std::string ThunkBody = body(Source, "x87_thunk");

@@ -6,6 +6,8 @@
 /// \file Finite libSystem function ABI, errno and shared kernel effects.
 #include "DarwinLibSystem.h"
 
+#include "DarwinCallbacks.h"
+
 #include "neverd/emulation/AddressSpace.h"
 
 #include "llvm/Support/Endian.h"
@@ -107,7 +109,8 @@ llvm::Expected<bool>
 invokeLibSystem(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
                 DarwinEntropy &Entropy, const ProcessImage &Image,
                 LibSystemGateKind Binding, const ServiceRequest &Request,
-                const ProcessOptions &Options, ProcessResult &Result) {
+                const ProcessOptions &Options, ProcessResult &Result,
+                DarwinCallbacks *Callbacks) {
   if (Binding == LibSystemGateKind::StubBinder ||
       Binding == LibSystemGateKind::TLVBootstrap)
     return failure(diagnostic::LibSystemResolver);
@@ -135,7 +138,8 @@ invokeLibSystem(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
               Call.Arguments.begin());
   Result.NativeCalls.push_back(std::move(Call));
   uint64_t ReturnPC = 0;
-  if (Definition.Kernel != ServiceKind::Exit) {
+  if (Definition.Kernel != ServiceKind::Exit &&
+      Binding != LibSystemGateKind::NormalExit) {
     auto Address = ABI->readReturnAddress(CPU, (*SP)[0]);
     if (!Address)
       return Address.takeError();
@@ -147,6 +151,25 @@ invokeLibSystem(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
     if (!*Executable || (!X64 && ReturnPC % 4))
       return failure(diagnostic::LibSystemFrame);
     Result.NativeCalls.back().ReturnAddress = ReturnPC;
+  }
+  if (Binding == LibSystemGateKind::TLVAtExit ||
+      Binding == LibSystemGateKind::NormalExit) {
+    if (!Callbacks)
+      return failure("Darwin callback lifecycle is unavailable");
+    if (Binding == LibSystemGateKind::NormalExit)
+      return Callbacks->exit(CPU, Arguments->Carriers[0], Result);
+    if (auto E = Callbacks->addTLS(CPU, Arguments->Carriers[0],
+                                   Arguments->Carriers[1]))
+      return std::move(E);
+    // The actual runtime entry is void(function, object). Clang can supply
+    // an unused third DSO carrier and an unused result; neither is consumed.
+    if (auto E = CPU.writeRegister(ABI->info().StackPointer, {*ReturnSP, 0}))
+      return std::move(E);
+    if (auto E = CPU.writeRegister(
+            X64 ? CPURegister::X64PC : CPURegister::AArch64PC, {ReturnPC, 0}))
+      return std::move(E);
+    Result.PC = ReturnPC;
+    return true;
   }
   uint64_t Value = value::LibSystemGate + Image.Memory.PageSize;
   if (Definition.Kernel) {

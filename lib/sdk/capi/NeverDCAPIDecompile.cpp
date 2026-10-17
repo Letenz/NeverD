@@ -624,9 +624,11 @@ dialectLocalTypes(const LocalTypesDebugContext *Local, llvm::StringRef Original,
   for (const auto &[Record, Members] : Embedded.Members) {
     auto &Paths = Result.Members[Record];
     for (const auto &[Name, Path] : Members) {
-      auto &Hops = Paths[Name];
+      SourceDialectLocalTypes::Path &To = Paths[Name];
       for (const types::MemberPath::Hop &Hop : Path.Hops)
-        Hops.push_back({Hop.Name, Hop.Accessor});
+        To.Hops.push_back({Hop.Name, Hop.Accessor});
+      To.Getter = Path.Getter;
+      To.Setter = Path.Setter;
     }
   }
   for (const std::string &Name : Held->DeclaredTypes)
@@ -1581,6 +1583,12 @@ static const char *decompileAllImpl(neverd_session_t Sess,
   if (UseLlvmRoute)
     Opts.LiftMode = true;
   Opts.SourceProjection = true;
+  // Symbolic source simplification is the caller's explicit choice for the
+  // whole program, never a default.
+  if (S && S->SourceSymbolic) {
+    Opts.SymbolicHighC = true;
+    Opts.SymbolicLLVMSource = true;
+  }
   // A named ARM function with no instruction-state evidence is not a
   // candidate for either C route. Reject the whole requested output before
   // analysis so a partly marked image cannot silently omit that function.

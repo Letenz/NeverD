@@ -9,8 +9,15 @@
 namespace neverd::worker {
 namespace fs = std::filesystem;
 namespace {
+// The history and the recovery journal are the user's own records and stay
+// compact; the edit tables are the project's shared state, indented for
+// version control (sidecarText), and each file has its own bound.
 constexpr std::size_t MaxHistoryBytes = 8 * 1024 * 1024;
 constexpr std::size_t MaxJournalBytes = 24 * 1024 * 1024;
+constexpr std::size_t MaxStateFileBytes = 16 * 1024 * 1024;
+std::string compactText(const Json &value) {
+  return value.dump(-1, ' ', false, Json::error_handler_t::replace);
+}
 fs::path sidecar(fs::path binary, const char *suffix) {
   binary += suffix;
   return binary;
@@ -252,7 +259,8 @@ ProjectHistory::ProjectHistory(fs::path binary, std::string sourceHash,
 Json ProjectHistory::diskState() const {
   Json state = Json::object();
 #define NEVERD_USER_STATE_TABLE(Table, Kind, Suffix, Optional)                 \
-  if (auto rows = read(sidecar(binary_, Suffix)); rows.is_null())              \
+  if (auto rows = read(sidecar(binary_, Suffix), MaxStateFileBytes);           \
+      rows.is_null())                                                          \
     state[Table] = Json::array();                                              \
   else                                                                         \
     state[Table] = std::move(rows);
@@ -262,7 +270,15 @@ Json ProjectHistory::diskState() const {
 
 void ProjectHistory::writeSidecars(const Json &state) const {
 #define NEVERD_USER_STATE_TABLE(Table, Kind, Suffix, Optional)                 \
-  writer_(sidecar(binary_, Suffix), state.at(Table));
+  writer_(sidecar(binary_, Suffix), sidecarText(state.at(Table)));
+#include "UserStateTables.def"
+}
+
+void ProjectHistory::checkSidecarBudgets(const Json &state) {
+#define NEVERD_USER_STATE_TABLE(Table, Kind, Suffix, Optional)                 \
+  if (sidecarText(state.at(Table)).size() > MaxStateFileBytes)                 \
+    throw Error("history_budget_exceeded", "A user state file exceeds 16 "     \
+                                           "MiB");
 #include "UserStateTables.def"
 }
 
@@ -320,7 +336,7 @@ void ProjectHistory::stage(Json command) {
   commands_.push_back(std::move(command));
   ++cursor_;
   while (commands_.size() > 128 ||
-         commands_.dump().size() > MaxHistoryBytes / 2) {
+         compactText(commands_).size() > MaxHistoryBytes / 2) {
     commands_.erase(commands_.begin());
     --cursor_;
   }
@@ -366,7 +382,7 @@ void ProjectHistory::persist(const Json &state) {
                                  "worker; reload and inspect before editing");
   const auto after = normalizedState(state);
   const auto nextDocument = document(after);
-  if (nextDocument.dump().size() > MaxHistoryBytes)
+  if (compactText(nextDocument).size() > MaxHistoryBytes)
     throw Error("history_budget_exceeded",
                 "Persisted user history exceeds 8 MiB");
   const Json journal{{"schema_version", 1},
@@ -375,12 +391,13 @@ void ProjectHistory::persist(const Json &state) {
                      {"after", after},
                      {"before_history", previousDocument_},
                      {"after_history", nextDocument}};
-  if (journal.dump().size() > MaxJournalBytes)
+  if (compactText(journal).size() > MaxJournalBytes)
     throw Error("history_budget_exceeded", "Recovery journal exceeds 24 MiB");
-  writer_(journalPath_, journal);
+  checkSidecarBudgets(after);
+  writer_(journalPath_, compactText(journal));
   // From this point any failure leaves a recoverable write-ahead journal.
   writeSidecars(after);
-  writer_(historyPath_, nextDocument);
+  writer_(historyPath_, compactText(nextDocument));
   std::error_code ec;
   if (!fs::remove(journalPath_, ec) || ec)
     throw Error(
@@ -421,14 +438,15 @@ void ProjectHistory::recover() {
                   "Recovery history does not describe its target state");
     const auto &commands = history.at("commands");
     if (!commands.is_array() || commands.size() > 128 ||
-        history.dump().size() > MaxHistoryBytes)
+        compactText(history).size() > MaxHistoryBytes)
       throw Error("history_invalid",
                   "Recovery history exceeds its command or byte budget");
     (void)sizeField(history, "cursor", 0, commands.size());
     for (const auto &command : commands)
       validateCommand(command);
+    checkSidecarBudgets(after);
     writeSidecars(after);
-    writer_(historyPath_, history);
+    writer_(historyPath_, compactText(history));
     std::error_code ec;
     if (!fs::remove(journalPath_, ec) || ec)
       throw Error("recovery_required", "Cannot clean up recovered journal");

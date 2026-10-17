@@ -10,6 +10,7 @@
 #include "os/darwin/kernel/DarwinEntropy.h"
 #include "os/darwin/kernel/DarwinFiles.h"
 #include "os/darwin/kernel/DarwinMemory.h"
+#include "os/darwin/process/DarwinCallbacks.h"
 #include "os/darwin/process/DarwinLibSystem.h"
 #include "os/darwin/process/DarwinTLS.h"
 
@@ -164,15 +165,36 @@ protected:
     for (unsigned I = 0; I != Arguments.size(); ++I)
       CPU->Registers[ABI.info().Arguments[I]] = {Arguments[I], 0};
   }
-  llvm::Expected<bool>
-  invoke(LibSystemGateKind Kind = LibSystemGateKind::Open) {
+  llvm::Expected<bool> invoke(LibSystemGateKind Kind = LibSystemGateKind::Open,
+                              DarwinCallbacks *Callbacks = nullptr) {
     DarwinEntropy Entropy(Options.DarwinSystem);
     ServiceRequest Request{GetParam() ? ServiceRequestKind::X64Syscall
                                       : ServiceRequestKind::AArch64SVC,
                            value::LibSystemGate, 0,
                            uint16_t(value::LibSystemSVC)};
     return invokeLibSystem(*CPU, *Memory, *Files, Entropy, Image, Kind, Request,
-                           Options, Result);
+                           Options, Result, Callbacks);
+  }
+  InitialStack callbackStack() {
+    Options.StackSize = Image.Memory.PageSize;
+    const uint64_t Base = value::StackTop - Options.StackSize;
+    llvm::cantFail(
+        Space->map(Base, Options.StackSize, Read | Write | UserAccessible));
+    Image.MainEntry = true;
+    Image.Plan.Entry = Code;
+    Image.HasTLSCallbacks = true;
+    Image.ExecutableSpans = {{Code, 16}};
+    return {value::StackTop - 256, 2, Data, Data + 16, Data + 32, Data + 48};
+  }
+  IntegerABI callbackABI() {
+    return llvm::cantFail(
+        IntegerABI::get(GetParam() ? IntegerCallingConvention::SysVAMD64
+                                   : IntegerCallingConvention::AAPCS64));
+  }
+  void balanceCallback() {
+    const auto ABI = callbackABI();
+    CPU->Registers[ABI.info().StackPointer][0] +=
+        ABI.info().returnAddressSize();
   }
   void expectAbsent() {
     EXPECT_TRUE(Result.NativeCalls.empty());
@@ -459,6 +481,216 @@ TEST_P(DarwinLibSystemTest, TLVRejectsTamperingAndInvalidFramesBeforeCopying) {
     llvm::consumeError(R.takeError());
     EXPECT_EQ(llvm::cantFail(Space->readInteger(Data + 512 + 8, 8)), 0xdeadu);
     EXPECT_TRUE(Result.NativeCalls.empty());
+  }
+}
+TEST_P(DarwinLibSystemTest,
+       CallbackRegistrationIsVoidAndIgnoresTheCompilerDSOCarrier) {
+  auto Stack = callbackStack();
+  DarwinCallbacks Callbacks(Image, Options, Stack);
+  const auto ABI = callbackABI();
+  setArguments({Code + 4, UINT64_MAX, 0x12345678, 0, 0, 0});
+  CPU->Registers[ABI.info().Result] = {
+      GetParam() ? 0xaabbccdd11223344ULL : Code + 4, 0};
+  const auto Before = CPU->Registers;
+  CPU->FailedRegister = ABI.info().Arguments[2];
+  auto R = invoke(LibSystemGateKind::TLVAtExit, &Callbacks);
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+  EXPECT_TRUE(*R);
+  for (const auto &[Register, Value] : Before)
+    if (Register != ABI.info().StackPointer &&
+        Register != (GetParam() ? CPURegister::X64PC : CPURegister::AArch64PC))
+      EXPECT_EQ(CPU->Registers[Register], Value);
+  ASSERT_EQ(Result.NativeCalls.size(), 1u);
+  EXPECT_EQ(Result.NativeCalls[0].Name, "__tlv_atexit");
+  EXPECT_EQ(Result.NativeCalls[0].ArgumentCount, 2u);
+  EXPECT_EQ(Result.NativeCalls[0].Arguments[1], UINT64_MAX);
+  EXPECT_FALSE(Result.NativeCalls[0].Result);
+  EXPECT_TRUE(Result.NativeCalls[0].ReturnAddress);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Errno, 4)), 71u);
+  EXPECT_TRUE(Result.Services.empty());
+}
+TEST_P(DarwinLibSystemTest,
+       CallbackLIFOIncludesNestedRegistrationsBeforeOlderEntries) {
+  auto Stack = callbackStack();
+  DarwinCallbacks Callbacks(Image, Options, Stack);
+  const auto ABI = callbackABI();
+  ASSERT_TRUE(bool(Callbacks.start(*CPU)));
+  llvm::cantFail(Callbacks.addTLS(*CPU, Code + 4, 11));
+  llvm::cantFail(Callbacks.addTLS(*CPU, Code + 8, 22));
+  balanceCallback(); // Return from main, retaining its full scalar value
+                     // privately.
+  CPU->Registers[ABI.info().Result] = {0x123, 0};
+  auto Continue = Callbacks.returned(*CPU, value::ReturnGate, Result);
+  ASSERT_TRUE(bool(Continue)) << llvm::toString(Continue.takeError());
+  ASSERT_TRUE(*Continue);
+  EXPECT_EQ(Result.PC, Code + 8);
+  EXPECT_EQ(llvm::cantFail(ABI.readArgument(
+                *CPU, CPU->Registers[ABI.info().StackPointer][0], 0)),
+            22u);
+  EXPECT_FALSE(Result.ExitStatus);
+  EXPECT_FALSE(Result.ReturnValue);
+  llvm::cantFail(Callbacks.addTLS(*CPU, Code + 12, UINT64_MAX));
+  for (uint64_t Expected : {Code + 12, Code + 4}) {
+    balanceCallback();
+    Continue = Callbacks.returned(*CPU, DarwinCallbacks::ReturnGate, Result);
+    ASSERT_TRUE(bool(Continue)) << llvm::toString(Continue.takeError());
+    ASSERT_TRUE(*Continue);
+    EXPECT_EQ(Result.PC, Expected);
+    EXPECT_EQ(CPU->Registers[ABI.info().Arguments[0]][0],
+              Expected == Code + 12 ? UINT64_MAX : 11u);
+  }
+  balanceCallback();
+  Continue = Callbacks.returned(*CPU, DarwinCallbacks::ReturnGate, Result);
+  ASSERT_TRUE(bool(Continue)) << llvm::toString(Continue.takeError());
+  EXPECT_FALSE(*Continue);
+  EXPECT_EQ(Result.Stop, ProcessStopReason::Exited);
+  EXPECT_EQ(Result.ExitStatus, 0x23);
+  EXPECT_EQ(Result.ReturnValue, 0x123u);
+}
+TEST_P(DarwinLibSystemTest,
+       CallbackCapacityCountsNullsAndAllowsAnInFlightReplacement) {
+  auto Stack = callbackStack();
+  DarwinCallbacks Callbacks(Image, Options, Stack);
+  ASSERT_TRUE(bool(Callbacks.start(*CPU)));
+  for (size_t I = 1; I < DarwinCallbacks::TLSCallbackLimit; ++I)
+    llvm::cantFail(Callbacks.addTLS(*CPU, 0, UINT64_MAX));
+  llvm::cantFail(Callbacks.addTLS(*CPU, Code + 4, 7));
+  auto Overflow = Callbacks.addTLS(*CPU, 0, 0);
+  ASSERT_TRUE(bool(Overflow));
+  EXPECT_NE(llvm::toString(std::move(Overflow)).find("limit"),
+            std::string::npos);
+  balanceCallback();
+  auto Continue = Callbacks.returned(*CPU, value::ReturnGate, Result);
+  ASSERT_TRUE(bool(Continue));
+  ASSERT_TRUE(*Continue);
+  llvm::cantFail(Callbacks.addTLS(*CPU, Code + 4, 9));
+  balanceCallback();
+  Continue = Callbacks.returned(*CPU, DarwinCallbacks::ReturnGate, Result);
+  ASSERT_TRUE(bool(Continue));
+  ASSERT_TRUE(*Continue);
+  EXPECT_EQ(CPU->Registers[callbackABI().info().Arguments[0]][0], 9u);
+  balanceCallback();
+  Continue = Callbacks.returned(*CPU, DarwinCallbacks::ReturnGate, Result);
+  ASSERT_TRUE(bool(Continue));
+  EXPECT_FALSE(*Continue);
+}
+TEST_P(DarwinLibSystemTest,
+       CallbackTargetsCannotUsePaddingPrivateGatesOrForeignMemory) {
+  auto Stack = callbackStack();
+  DarwinCallbacks Callbacks(Image, Options, Stack);
+  for (uint64_t Address :
+       {Code + 16, Data, value::ReturnGate, value::LibSystemGate, UINT64_MAX}) {
+    auto E = Callbacks.addTLS(*CPU, Address, 0);
+    ASSERT_TRUE(bool(E)) << Address;
+    llvm::consumeError(std::move(E));
+  }
+  if (!GetParam()) {
+    for (uint64_t Address : {Code + 1, Code + 14}) {
+      auto E = Callbacks.addTLS(*CPU, Address, 0);
+      ASSERT_TRUE(bool(E));
+      llvm::consumeError(std::move(E));
+    }
+  } else
+    llvm::cantFail(Callbacks.addTLS(*CPU, Code + 15, 0));
+  llvm::cantFail(
+      Space->protect(Code, Image.Memory.PageSize, Read | UserAccessible));
+  auto E = Callbacks.addTLS(*CPU, Code, 0);
+  ASSERT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+}
+TEST_P(DarwinLibSystemTest, CallbackFramesAndLivePermissionsAreAuthenticated) {
+  auto Stack = callbackStack();
+  DarwinCallbacks Callbacks(Image, Options, Stack);
+  ASSERT_TRUE(bool(Callbacks.start(*CPU)));
+  auto Forged = Callbacks.returned(*CPU, DarwinCallbacks::ReturnGate, Result);
+  ASSERT_FALSE(bool(Forged));
+  llvm::consumeError(Forged.takeError());
+  const auto SPRegister = callbackABI().info().StackPointer;
+  const auto OriginalSP = CPU->Registers[SPRegister];
+  CPU->Registers[SPRegister][0] -= 16;
+  auto Unbalanced = Callbacks.returned(*CPU, value::ReturnGate, Result);
+  ASSERT_FALSE(bool(Unbalanced));
+  llvm::consumeError(Unbalanced.takeError());
+  CPU->Registers[SPRegister] = OriginalSP;
+  llvm::cantFail(Callbacks.addTLS(*CPU, Code + 4, 0));
+  balanceCallback();
+  llvm::cantFail(
+      Space->protect(Code, Image.Memory.PageSize, Read | UserAccessible));
+  auto Revoked = Callbacks.returned(*CPU, value::ReturnGate, Result);
+  ASSERT_FALSE(bool(Revoked));
+  llvm::consumeError(Revoked.takeError());
+  EXPECT_FALSE(Result.ExitStatus);
+  EXPECT_FALSE(Result.ReturnValue);
+}
+TEST_P(DarwinLibSystemTest,
+       NormalExitUsesADeeperFrameAndPreservesOpaqueStackObjects) {
+  auto Stack = callbackStack();
+  DarwinCallbacks Callbacks(Image, Options, Stack);
+  const auto ABI = callbackABI();
+  ASSERT_TRUE(bool(Callbacks.start(*CPU)));
+  const uint64_t Current = Stack.SP - 512 - (GetParam() ? 8 : 0);
+  const uint64_t Object = Current + 16;
+  for (unsigned I = 0; I < 8; ++I)
+    llvm::cantFail(Space->writeInteger(Object + 8 * I, UINT64_MAX - I, 8));
+  llvm::cantFail(Callbacks.addTLS(*CPU, Code + 4, Object));
+  CPU->Registers[ABI.info().StackPointer] = {Current, 0};
+  auto Continue = Callbacks.exit(*CPU, 0x125, Result);
+  ASSERT_TRUE(bool(Continue)) << llvm::toString(Continue.takeError());
+  ASSERT_TRUE(*Continue);
+  EXPECT_LE(CPU->Registers[ABI.info().StackPointer][0],
+            Current - ABI.info().RedZoneSize);
+  EXPECT_EQ(CPU->Registers[ABI.info().Arguments[0]][0], Object);
+  for (unsigned I = 0; I < 8; ++I)
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Object + 8 * I, 8)),
+              UINT64_MAX - I);
+  auto Reentrant = Callbacks.exit(*CPU, 1, Result);
+  ASSERT_FALSE(bool(Reentrant));
+  llvm::consumeError(Reentrant.takeError());
+  EXPECT_FALSE(Result.ExitStatus);
+  balanceCallback();
+  Continue = Callbacks.returned(*CPU, DarwinCallbacks::ReturnGate, Result);
+  ASSERT_TRUE(bool(Continue));
+  EXPECT_FALSE(*Continue);
+  EXPECT_EQ(Result.ExitStatus, 37);
+  EXPECT_FALSE(Result.ReturnValue);
+}
+TEST_P(DarwinLibSystemTest,
+       StartupCallbacksRecheckPendingTablesAndPrepareMainAfresh) {
+  for (bool Mutate : {false, true}) {
+    if (Mutate)
+      SetUp();
+    auto Stack = callbackStack();
+    const auto ABI = callbackABI();
+    Image.Initializers = {{Data + 512, Code + 4, Code + 4, 8},
+                          {Data + 520, Code + 8, Code + 8, 8}};
+    llvm::cantFail(Space->writeInteger(Data + 512, Code + 4, 8));
+    llvm::cantFail(Space->writeInteger(Data + 520, Code + 8, 8));
+    DarwinCallbacks Callbacks(Image, Options, Stack);
+    auto Start = Callbacks.start(*CPU);
+    ASSERT_TRUE(bool(Start));
+    EXPECT_EQ(*Start, Code + 4);
+    EXPECT_EQ(CPU->Registers[ABI.info().Arguments[4]][0], Stack.ProgramVars);
+    if (Mutate)
+      llvm::cantFail(Space->writeInteger(Data + 520, Code + 12, 8));
+    balanceCallback();
+    auto Continue =
+        Callbacks.returned(*CPU, DarwinCallbacks::ReturnGate, Result);
+    if (Mutate) {
+      ASSERT_FALSE(bool(Continue));
+      EXPECT_NE(llvm::toString(Continue.takeError()).find("table was modified"),
+                std::string::npos);
+      continue;
+    }
+    ASSERT_TRUE(bool(Continue));
+    ASSERT_TRUE(*Continue);
+    EXPECT_EQ(Result.PC, Code + 8);
+    balanceCallback();
+    Continue = Callbacks.returned(*CPU, DarwinCallbacks::ReturnGate, Result);
+    ASSERT_TRUE(bool(Continue));
+    ASSERT_TRUE(*Continue);
+    EXPECT_EQ(Result.PC, Code);
+    EXPECT_EQ(CPU->Registers[ABI.info().Arguments[0]][0], Stack.Argc);
+    EXPECT_EQ(CPU->Registers[ABI.info().Arguments[4]][0], 0u);
   }
 }
 INSTANTIATE_TEST_SUITE_P(Architectures, DarwinLibSystemTest,

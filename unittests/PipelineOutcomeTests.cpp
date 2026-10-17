@@ -1651,7 +1651,7 @@ void expectOwnedStageResult(const BinaryImage &Image,
   Options.TheArch = Image.Arch;
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Stream, Options));
   EXPECT_NE(Source.find("owned_trace_return"), std::string::npos);
-  EXPECT_NE(Source.find("42"), std::string::npos);
+  EXPECT_NE(Source.find("0x2A"), std::string::npos);
 }
 
 void exerciseOwnedPipelineStages() {

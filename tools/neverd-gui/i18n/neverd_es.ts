@@ -60,6 +60,14 @@
         <translation>Guardar los comentarios y el historial junto al binario</translation>
     </message>
     <message>
+        <source>Pac&amp;k database...</source>
+        <translation>Empa&amp;quetar base de datos...</translation>
+    </message>
+    <message>
+        <source>Write the project and its binary into one NeverD database file</source>
+        <translation>Escribir el proyecto y su binario en un único archivo de base de datos de NeverD</translation>
+    </message>
+    <message>
         <source>&amp;Close</source>
         <translation>C&amp;errar</translation>
     </message>
@@ -1933,6 +1941,10 @@ Haga doble clic para ir a la declaración.</translation>
         <translation>Los comentarios se han modificado. ¿Guardarlos antes de continuar?</translation>
     </message>
     <message>
+        <source>%1 lacks the latest changes. Save them into it before continuing?</source>
+        <translation>A %1 le faltan los últimos cambios. ¿Guardarlos en ella antes de continuar?</translation>
+    </message>
+    <message>
         <source>Cannot jump to %1: %2</source>
         <translation>No se puede saltar a %1: %2</translation>
     </message>
@@ -2133,6 +2145,14 @@ Con signo: %4</translation>
     <message>
         <source>Create LST file</source>
         <translation>Crear archivo LST</translation>
+    </message>
+    <message>
+        <source>Pack database</source>
+        <translation>Empaquetar base de datos</translation>
+    </message>
+    <message>
+        <source>NeverD databases (*%1)</source>
+        <translation>Bases de datos de NeverD (*%1)</translation>
     </message>
     <message>
         <source>Cannot write %1</source>

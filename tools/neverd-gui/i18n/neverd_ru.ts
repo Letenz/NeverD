@@ -60,6 +60,14 @@
         <translation>Сохранить комментарии и историю рядом с двоичным файлом</translation>
     </message>
     <message>
+        <source>Pac&amp;k database...</source>
+        <translation>&amp;Упаковать базу данных...</translation>
+    </message>
+    <message>
+        <source>Write the project and its binary into one NeverD database file</source>
+        <translation>Записать проект и его двоичный файл в один файл базы данных NeverD</translation>
+    </message>
+    <message>
         <source>&amp;Close</source>
         <translation>За&amp;крыть</translation>
     </message>
@@ -1939,6 +1947,10 @@ Double-click to go to the declaration.</source>
         <translation>Комментарии изменены. Сохранить их, прежде чем продолжить?</translation>
     </message>
     <message>
+        <source>%1 lacks the latest changes. Save them into it before continuing?</source>
+        <translation>В %1 нет последних изменений. Сохранить их в него перед продолжением?</translation>
+    </message>
+    <message>
         <source>Cannot jump to %1: %2</source>
         <translation>Не удалось перейти к %1: %2</translation>
     </message>
@@ -2139,6 +2151,14 @@ Signed: %4</source>
     <message>
         <source>Create LST file</source>
         <translation>Создать файл LST</translation>
+    </message>
+    <message>
+        <source>Pack database</source>
+        <translation>Упаковать базу данных</translation>
+    </message>
+    <message>
+        <source>NeverD databases (*%1)</source>
+        <translation>Базы данных NeverD (*%1)</translation>
     </message>
     <message>
         <source>Cannot write %1</source>

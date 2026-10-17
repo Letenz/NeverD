@@ -3,6 +3,7 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidBionic.cpp
   AndroidCallbacks.cpp
   AndroidAllocation.cpp
+  AndroidLog.cpp
   AndroidDlfcn.cpp
   AndroidKernelCalls.cpp
   AndroidMemoryCalls.cpp

@@ -75,6 +75,11 @@ NEVERD_ACTION(
 NEVERD_ACTION(FileSave, QT_TRANSLATE_NOOP("Actions", "&Save"), "Ctrl+W", "save",
               QT_TRANSLATE_NOOP("Actions",
                                 "Save comments and history beside the binary"))
+NEVERD_ACTION(FilePackDatabase,
+              QT_TRANSLATE_NOOP("Actions", "Pac&k database..."), "",
+              "pack_database",
+              QT_TRANSLATE_NOOP("Actions", "Write the project and its binary "
+                                           "into one NeverD database file"))
 NEVERD_ACTION(FileClose, QT_TRANSLATE_NOOP("Actions", "&Close"), "", "close",
               QT_TRANSLATE_NOOP("Actions", "Close the current binary"))
 NEVERD_ACTION(FileQuickStart, QT_TRANSLATE_NOOP("Actions", "&Quick start"), "",

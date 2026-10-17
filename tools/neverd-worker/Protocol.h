@@ -47,4 +47,11 @@ private:
   std::string text_;
 };
 std::string frame(const Json &message, const EncodedJson &payload);
+/// The text of a user state file beside the input: JSON indented by two
+/// spaces with sorted keys and a final newline, byte for byte as the engine's
+/// writer (SessionSidecar.cpp) prints the same files. The CLI and the
+/// workbench then write identical files for identical state, and a project
+/// diffs and merges line by line under version control. Size budgets measure
+/// this text, the bytes a later read checks.
+std::string sidecarText(const Json &value);
 } // namespace neverd::worker

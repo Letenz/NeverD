@@ -228,7 +228,7 @@ Pipeline::LLVMEmissionResult Pipeline::emitLLVMSharded(
     const std::vector<std::pair<va_t, std::string>> &Imports,
     const BinaryImage &Img, BinaryFormat Fmt, bool NoOpt, unsigned NumThreads,
     bool RecordSources, llvm::ArrayRef<sigs::LibraryRecognition> Recognitions,
-    const DebugContext *Dbg) {
+    const DebugContext *Dbg, const SourceViewOptions &View) {
   const size_t N = Funcs.size();
   NumThreads = std::max(
       1u, std::min<unsigned>(NumThreads, static_cast<unsigned>(N ? N : 1)));
@@ -254,14 +254,14 @@ Pipeline::LLVMEmissionResult Pipeline::emitLLVMSharded(
     return Result;
   };
   return runLLVMShardPipeline(Funcs, Ctx, ShardPlan.NumShards, NumThreads,
-                              NoOpt, EmitShard);
+                              NoOpt, EmitShard, View);
 }
 
 Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
     const std::vector<MedFunc> &Funcs, llvm::LLVMContext &Ctx,
     unsigned NumShards, unsigned NumThreads, bool NoOpt,
-    llvm::function_ref<LLVMEmissionResult(unsigned, llvm::LLVMContext &)>
-        Emit) {
+    llvm::function_ref<LLVMEmissionResult(unsigned, llvm::LLVMContext &)> Emit,
+    const SourceViewOptions &View) {
   LLVMEmissionResult Result;
   if (NumShards == 0) {
     Result.Error = "LLVM shard planning failed: no shards";
@@ -334,7 +334,7 @@ Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
         if (!NoOpt) {
           ShardPhase = "optimization";
           OptimizationResult Optimization =
-              optimizeOrPromoteModule(*M, Emission.Sources.get());
+              optimizeOrPromoteModule(*M, Emission.Sources.get(), View);
           if (Optimization.Stop == OptimizationStopReason::InputInvalid) {
             // The shard was verified above. A blocking native EH contract
             // keeps value-changing passes off this module; the shared helper

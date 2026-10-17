@@ -94,6 +94,10 @@ struct PipelineOptions {
   bool NoOpt = false;
   /// Optional HighIR expression rewriting; machine/ABI recovery is unaffected.
   bool SymbolicHighC = false;
+  /// Whole-program LLVM-to-C source runs the symbolic optimizer, as
+  /// SourceViewOptions::Symbolic does for one function.  Binary lifting and
+  /// patching never do.
+  bool SymbolicLLVMSource = false;
   /// Native source views may postpone HighIR projection after shared ABI and
   /// return recovery. Patch/lift, VM routes and DumpHigh retain eager behavior.
   bool DeferHighIR = false;
@@ -637,14 +641,13 @@ private:
   /// indivisible scheduling unit.  Such a group may exceed the soft slice
   /// budget, because splitting it would make later group-level EH lowering
   /// impossible to validate or commit atomically.
-  static LLVMEmissionResult
-  emitLLVMSharded(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &Ctx,
-                  Arch TheArch,
-                  const std::vector<std::pair<va_t, std::string>> &Imports,
-                  const BinaryImage &Img, BinaryFormat Fmt, bool NoOpt,
-                  unsigned NumThreads, bool RecordSources = false,
-                  llvm::ArrayRef<sigs::LibraryRecognition> Recognitions = {},
-                  const DebugContext *Dbg = nullptr);
+  static LLVMEmissionResult emitLLVMSharded(
+      const std::vector<MedFunc> &Funcs, llvm::LLVMContext &Ctx, Arch TheArch,
+      const std::vector<std::pair<va_t, std::string>> &Imports,
+      const BinaryImage &Img, BinaryFormat Fmt, bool NoOpt, unsigned NumThreads,
+      bool RecordSources = false,
+      llvm::ArrayRef<sigs::LibraryRecognition> Recognitions = {},
+      const DebugContext *Dbg = nullptr, const SourceViewOptions &View = {});
 
   /// Execute the common shard lifecycle. The emitter creates each module in
   /// its worker's context; only a complete linked module is returned in the
@@ -654,7 +657,8 @@ private:
       const std::vector<MedFunc> &Funcs, llvm::LLVMContext &Ctx,
       unsigned NumShards, unsigned NumThreads, bool NoOpt,
       llvm::function_ref<LLVMEmissionResult(unsigned, llvm::LLVMContext &)>
-          Emit);
+          Emit,
+      const SourceViewOptions &View = {});
 
   /// Shared source call/return recovery before either HighIR or LLVM emission.
   void prepareSourceMedIR(const BinaryImage &Img, PipelineResult &Result,
