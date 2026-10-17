@@ -97,6 +97,10 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
     return Signatures;
   CFGBuilder Builder;
   Builder.setKnownFuncEntries(&Entries);
+  // The callees' builds prove each x87 call effect from the same callee
+  // graphs: build each once.  A 32-bit printf engine in a call cycle with
+  // the heap reaches every build here, and its jump tables take seconds.
+  Builder.setX87CallGraphCache(createX87CallGraphCache());
   size_t Inspected = 0;
   size_t Operations = 0;
   while (!Pending.empty() && Inspected < limits::kMaxCallEffectExtraLifts) {

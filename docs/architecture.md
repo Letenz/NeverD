@@ -3403,11 +3403,18 @@ Cache locks cover lookup
 and publication, while graph construction runs outside the lock. Each query
 still independently bounds and pays for its complete call closure and dataflow
 work; caller-dependent answers are not shared. A completely lifted, nontruncated
-CFG with exceptional edges or a block without any successor, return or modeled
-stop may retain an empty refusal marker. It grants no effect and rejects before
-graph-work charging, exactly as the original projection did. Incomplete lifting,
-invalid boundaries or successors, and the fixed graph-size limit retain no
-marker; a caller's exhausted proof allowance also cannot create one. Every normal
+CFG with exceptional edges, a block without any successor, return or modeled
+stop, invalid boundaries or successors, or more work than the fixed graph-size
+limit may retain an empty refusal marker: each is a fact of that CFG, so a later
+builder reads the refusal instead of lifting the body again (Wine's 32-bit
+printf engine, which every heap and debug-output routine reaches through a call
+cycle, resolves its jump tables for seconds). It grants no effect and rejects
+before graph-work charging, exactly as the original projection did. Incomplete
+lifting retains no marker, since a proof that ran out or threw can cause it
+and another request may finish; a caller's exhausted proof allowance also
+cannot create one. The bodies a restricted run lifts for the signatures of the
+callees it omits (`omittedDirectCalleeSignatures`) share one cache of their
+own, whose construction context differs from the pipeline's. Every normal
 return must agree on the stack change, and a pushed result must be initialized
 without reading an empty slot. Cycles in the call graph, incomplete lifting,
 environment restores, tag changes, unknown intrinsics and exceptional edges
