@@ -170,6 +170,12 @@ NEVERD_LINUX_AUX(NULL, 0, 0)
   NEVERD_LINUX_SERVICE(Name, X64, ARM, Count)
 #include "neverd/emulation/LinuxUnavailableSyscalls.def"
 #undef NEVERD_LINUX_UNAVAILABLE_SYSCALL
+NEVERD_LINUX_SERVICE(SetSocketOption, 54, 208, 5)
+NEVERD_LINUX_SERVICE(GetSocketOption, 55, 209, 5)
+NEVERD_LINUX_SERVICE(Socket, 41, 198, 3)
+NEVERD_LINUX_SERVICE(Connect, 42, 203, 3)
+NEVERD_LINUX_SERVICE(SendTo, 44, 206, 6)
+NEVERD_LINUX_SERVICE(ReceiveFrom, 45, 207, 6)
 NEVERD_LINUX_SERVICE(SignalAction, 13, 134, 4)
 NEVERD_LINUX_SERVICE(Mincore, 27, 232, 3)
 // Linux UAPI: x86-64 and asm-generic numbers, followed by fixed arity.

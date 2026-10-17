@@ -4,6 +4,13 @@
 
 # Testing NeverD
 
+`AArch64SIMD.RegisterShifts*` checks baseline USHL/SSHL scalar D and fixed
+vectors against independent bit selection, including signed low-byte amounts,
+oversized shifts, destination aliases, cleared upper lanes, complete register
+and guarded memory state, and reserved lane encodings. It runs in both checked
+execution modes on available transports; integer shifts retain FP control and
+status. Instruction semantics follow the [Arm instruction reference](https://documentation-service.arm.com/static/6245c734b059dc5ff9a8bdab).
+
 `AndroidThread.ForeignTasks*` checks foreign pidfds and CPU-clock observations
 while children live and after they exit, raw and Bionic errno results, identity
 reservation conflicts, invalid flags and refusal of unsupported local thread
@@ -2266,6 +2273,15 @@ guarded targets. These functions have their own object: a case that calls a
 function with the computed target still in X0 passes a pointer of unknown
 origin, which makes module arbitration treat every writable table in the same
 object as possibly modified.
+`JTE_AArch64.ZlibInflateDispatchReachesEveryMode` assembles zlib's `inflate`
+as GCC 15.2 compiles it for AArch64 (`test_jumptable_inflate_gcc_a64.s`). Its
+31-mode state loop dispatches through `ldrh w0, [x0, w1, uxtw #1]`, and its
+cases keep updating a 64-bit bit buffer. The test requires every target the
+halfword table encodes. It needs two resolver rules. Structural value matches
+must not resolve edge predicates: once the table's own targets are in the
+graph, the predicates of the loop's branches exhaust the candidate budget. The
+address role must follow the `uxtw` extension from the recorded index to its
+scale; the fallback search over every scale in the loop also exhausts it.
 
 `ModuleJumpTableBudget.*` uses a real ELF table inventory to separate the
 400000-operation input boundary from scan, retained-source, queue and cumulative
@@ -4070,6 +4086,16 @@ trap on a register earlier calls left behind, and no incoming stack slot taken
 for the routine's open arity. `MedCallLeftovers.JoinsOfCallClobbersOnly`
 checks which clobbers and joins `ValuesLeftByCalls` names, loops and exception
 entries included.
+`CallsTakeNoIncomingRegisterAnEarlierCallChanged` links, for x86-64, i386,
+ARM and AArch64, a routine that reads four argument registers with callers
+that declare it with one, calling it after another call, after a join of two
+calls and in a destructor run on a normal and an exceptional path: no caller
+takes a parameter for a register an earlier call may have changed, HighC and
+LLVM C alike. `VariadicCallsTakeNoSpillAboveAnUnsetRegister` keeps an AArch64
+-O0 spill above an unset register out of a variadic call's arguments.
+`ItaniumRuntimeCopiesTakeTheirDeclaredParameters` links an image's own copy
+of `_Unwind_Resume` for x86-64, ARM and AArch64: it takes its one declared
+parameter, and its callers pass it one argument.
 
 `ELFARM32ModeTest.MixedImagePairsItsPLTWithTheImports` links a mixed
 ARM/Thumb shared library and requires the PLT entry a Thumb `bl puts` reaches
@@ -8024,3 +8050,30 @@ side-effecting statement without acquiring a Linux syscall contract.
 `KernelMDLChain.CreateMdl*` and `KernelMDLUserMapping.CreateMdl*` cover full-width guards, untouched bytes, zero/wrapping metadata, pool and stack lifetime, locks, aliases, failed release, partial reuse, IRP refusal and IRQL. The genuine WDK user-mapping fixture exercises static/dynamic creation, owned pool, interior caller pool and caller stack records, physical identity and complete unload. Original probes distinguish wrapper writes, pool flag translation and injected allocator/free boundaries.
 
 `KernelMDLChain.AdvanceMdl*` and `KernelMDLUserMapping.AdvanceMdl*` check repeated page crossings, PFN tails, exact-end refusal, narrow arguments, stable mapping extents, failed teardown, permissions, storage ownership, process context and unsupported dependencies. The genuine WDK user-mapping fixture uses static/dynamic advance, explicit unmap and automatic unlock. Original-code probes separately cover the entire advance routine, restoration helper and unmap wrapper with explicit mapping-kind/PTE-release injection; they do not execute the operating system page database.
+
+## Offline Android resolver and Linux stream contracts
+
+Build `NeverDAndroidNativeTests` and `NeverDLinuxProcessTests` with CPU emulation
+and Android fixture compilation enabled. Filter `*AndroidNetwork*` covers
+resolver result ordering, LP64 layout, null/error ordering, ownership,
+IPv4/IPv6 formatting, named/raw/dynamic calls, short transfers, alias lifetime,
+refusal and unknown-input stops. Original C fixtures run at O0/O2 with ordinary,
+APS2 and RELR relocations on available checked AArch64 transports; unavailable
+backends are skips. `*LinuxNetwork*` checks x64/AArch64 shared descriptors,
+failed-admission atomicity, full byte streams and strict JSON. Tests never use
+host networking. Run the complete affected owners before review.
+
+The network fixtures also exercise TCP failure followed by connected UDP,
+IPv4/IPv6, named/raw/dynamic calls, FD reuse, packet truncation, peek, empty
+datagrams and explicit error completions. The original C receive caller makes
+its own protocol decision for valid and malformed synthetic replies. Kernel
+tests cover event ordering, send prerequisites, retry after interrupted route
+selection, absent readiness, failed output admission and strict wire limits.
+The same native fixture checks static/dynamic fortified memory calls, overlap,
+zero size, unknown extent, failure-before-pointer ordering and byte guards.
+
+`NeverDAAPCS64CallContractTests` checks bounded breadth-first callee discovery
+and preserves unknown operands across call/exception boundaries without
+inventing forwarded entry parameters. `NeverDLLVMImportVeneerBoundaryTests`
+checks exact unwind-owned code pointers on ELF/COFF/Mach-O for x64/AArch64,
+adjacent symbol ends, and rejection of unproved/continuation/data addresses.

@@ -3916,26 +3916,26 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsDecompileWithTheirPrototypes) {
   };
   // The WDK's parameter names and records, where the PDB has only names.
   const std::string Create = signature("NtCreateFile");
-  EXPECT_NE(Create.find("(void** FileHandle, uint32_t DesiredAccess, "
-                        "_OBJECT_ATTRIBUTES* ObjectAttributes, "
-                        "_IO_STATUS_BLOCK* IoStatusBlock"),
+  EXPECT_NE(Create.find("(PHANDLE FileHandle, ACCESS_MASK DesiredAccess, "
+                        "POBJECT_ATTRIBUTES ObjectAttributes, "
+                        "PIO_STATUS_BLOCK IoStatusBlock"),
             std::string::npos)
       << Create;
   EXPECT_NE(Create.find("uint32_t EaLength)"), std::string::npos) << Create;
   // A pointer a C declaration returns comes back in RAX.
   const std::string Irp = signature("IoAllocateIrp");
-  EXPECT_NE(Irp.find("_IRP* IoAllocateIrp(char StackSize, uint8_t "
+  EXPECT_NE(Irp.find("PIRP IoAllocateIrp(CCHAR StackSize, BOOLEAN "
                      "ChargeQuota)"),
             std::string::npos)
       << Irp;
-  EXPECT_NE(
-      signature("PsCreateSystemThread").find("void (*StartRoutine)(void*)"),
-      std::string::npos);
+  EXPECT_NE(signature("PsCreateSystemThread")
+                .find("PKSTART_ROUTINE StartRoutine, PVOID StartContext)"),
+            std::string::npos);
   EXPECT_EQ(signature("IofCompleteRequest").rfind("void ", 0), 0u);
   // The linker folded PsGetThreadProcess into this, so that the PDB names
   // neither; the export it is shown under names it.
   EXPECT_NE(signature("IoThreadToProcess")
-                .find("_EPROCESS* IoThreadToProcess(_ETHREAD* Thread)"),
+                .find("PEPROCESS IoThreadToProcess(PETHREAD Thread)"),
             std::string::npos);
   // Exported under another name than the PDB's RtlAreNamesEqual.
   EXPECT_NE(signature("FsRtlAreNamesEqual").find("Name1, "), std::string::npos);
@@ -4189,6 +4189,89 @@ TEST_F(SessionCAPITest, ObjectsTakeTheirLocalTypesFromTheirDWARF) {
   EXPECT_NE(Use.find("p->count"), std::string::npos) << Use;
   EXPECT_NE(Use.find("struct device\n{"), std::string::npos) << Use;
   EXPECT_NE(Use.find("struct packed\n{"), std::string::npos) << Use;
+}
+
+TEST_F(SessionCAPITest, ThirtyTwoBitLinuxObjectsLayRecordsOutAsGCCDoes) {
+  // GCC's i386 code packs bit-fields as on any System V target and aligns
+  // long long and double to four, which a 32-bit data model alone, read as
+  // Microsoft's, does not say: the session takes the record ABI from the
+  // object's platform and architecture.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "dwarf_types.gcc32.o", std::ios::binary);
+  const std::string Object =
+      write("dwarf_types.gcc32.o",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Object.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_local_types_json(Session, nullptr)));
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  const llvm::json::Object *Root = Parsed->getAsObject();
+  ASSERT_TRUE(Root);
+  EXPECT_EQ(Root->getString("source"), "dwarf");
+  EXPECT_EQ(Root->getString("dataModel"), "ILP32");
+  EXPECT_EQ(Root->getString("recordABI"), "i386-sysv");
+
+  // The records render as GCC laid them out, with nothing to make GNU's
+  // compilers lay them out as Microsoft's: flags' bit-fields share kind's
+  // unit, and device's eight-byte union aligns to four.
+  const std::string Source = takeString(neverd_local_types_source(
+      Session,
+      R"({"language":"c","types":["flags","device"],"asserts":true})"));
+  for (const char *Expected :
+       {"sizeof(struct flags) == 0xC", "offsetof(struct flags, tail) == 0x8",
+        "offsetof(struct device, time) == 0x1C",
+        "sizeof(struct device) == 0x54"})
+    EXPECT_NE(Source.find(Expected), std::string::npos) << Expected << Source;
+  for (const char *Unexpected :
+       {"NEVERD_MS_STRUCT", "NEVERD_ALIGN8 ", "#pragma pack"})
+    EXPECT_EQ(Source.find(Unexpected), std::string::npos)
+        << Unexpected << Source;
+
+  // A declaration lays out as the program's records do.
+  const auto parse = [&](const char *Raw) {
+    auto Parsed = llvm::json::parse(takeString(Raw));
+    EXPECT_TRUE(static_cast<bool>(Parsed))
+        << takeString(neverd_last_error(Session));
+    return Parsed && Parsed->getAsObject() ? *Parsed->getAsObject()
+                                           : llvm::json::Object();
+  };
+  const llvm::json::Object Declared = parse(neverd_local_types_declare(
+      Session, "struct sample { char c; long long q; double d; };", nullptr));
+  EXPECT_EQ(Declared.getArray("problems")->size(), 0u);
+  EXPECT_EQ(parse(neverd_local_type_json(Session, "sample", nullptr))
+                .getInteger("size"),
+            20);
+}
+
+TEST_F(SessionCAPITest, CodeReadsTheRecordsItsMembersReach) {
+  // first_child reads l->head->child, a node no type of its own names, and
+  // sum_list walks nodes from l->head: HighC asks the local types for the
+  // records it reads members of as it renders, and the unit defines them.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "dwarf_chains.gcc.o", std::ios::binary);
+  const std::string Object =
+      write("dwarf_chains.gcc.o",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Object.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto decompile = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  const std::string First = decompile("first_child");
+  EXPECT_NE(First.find("->child"), std::string::npos) << First;
+  EXPECT_NE(First.find("->value"), std::string::npos) << First;
+  EXPECT_NE(First.find("struct node\n{"), std::string::npos) << First;
+  const std::string Sum = decompile("sum_list");
+  EXPECT_NE(Sum.find("->next"), std::string::npos) << Sum;
+  EXPECT_NE(Sum.find("->value"), std::string::npos) << Sum;
+  EXPECT_EQ(Sum.find("+ 0x10)"), std::string::npos) << Sum;
 }
 
 TEST_F(SessionCAPITest, LocalTypesFitWhatTheCodeDoesThroughAPointer) {
@@ -4532,7 +4615,7 @@ TEST_F(SessionCAPITest, KnownRoutinesTakeTheirPrototypesByTheirNames) {
   // The parameters the prototype declares after those the code reads, which
   // its callers pass, follow them.
   const std::string Set = decompile("KeSetEvent");
-  EXPECT_NE(Set.find(" Event, int32_t Increment, uint8_t Wait) {"),
+  EXPECT_NE(Set.find("(PRKEVENT Event, KPRIORITY Increment, BOOLEAN Wait) {"),
             std::string::npos)
       << Set;
   // The whole program's C takes the same prototypes, over the functions the
@@ -4649,7 +4732,7 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
   // A definition named as a routine the headers declare that reads none of
   // its parameters shows those the prototype declares.
   const std::string Atoms = decompile("InitAtomTable");
-  EXPECT_NE(Atoms.find("int32_t InitAtomTable(uint32_t nSize) {"),
+  EXPECT_NE(Atoms.find("WINBOOL InitAtomTable(DWORD nSize) {"),
             std::string::npos)
       << Atoms;
   // ExitProcess returns to no caller: Finish ends at its call, where it
@@ -4772,8 +4855,8 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
                            Session, neverd_func_entry(Session, Index)));
   };
   const std::string Signature =
-      "void KeInitializeDpc(_KDPC* Dpc, void (*DeferredRoutine)(void*, void*, "
-      "void*, void*), void* DeferredContext) {";
+      "void KeInitializeDpc(PRKDPC Dpc, PKDEFERRED_ROUTINE DeferredRoutine, "
+      "PVOID DeferredContext) {";
   EXPECT_NE(Dpc.find(Signature), std::string::npos);
   const std::string LlvmDpc = llvm("KeInitializeDpc");
   EXPECT_NE(LlvmDpc.find(Signature), std::string::npos) << LlvmDpc;
@@ -4785,8 +4868,8 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
                    "(__typeof__(Dpc->DeferredRoutine))(DeferredRoutine);"),
       std::string::npos);
   EXPECT_NE(llvm("PsGetProcessId")
-                .find("void* PsGetProcessId(_EPROCESS* Process) {\n    "
-                      "return (void*)Process->UniqueProcessId;"),
+                .find("HANDLE PsGetProcessId(PEPROCESS Process) {\n    "
+                      "return (HANDLE)Process->UniqueProcessId;"),
             std::string::npos);
 
   // A member the user renames reads by its new name, in the definition and

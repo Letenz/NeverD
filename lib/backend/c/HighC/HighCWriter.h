@@ -130,10 +130,24 @@ public:
   /// Whether the unit can spell \p Type, a pointer to a named record, by
   /// the record's name alone.
   bool spellsRecordPointer(const TypeRef &Type) const;
+  /// Whether \p Value, printed as \p Text, is a local the unit declares as
+  /// \p Type, which an assignment of it needs no conversion to.
+  bool sameDeclaredLocal(const HighExpr &Value, const std::string &Text,
+                         const TypeRef &Type) const;
   /// Whether the unit defines \p Record where code reads its members: the
   /// program's local types define the records a unit names
   /// (RecordDefinitions), and a record they leave out stays incomplete.
   bool definesRecord(const TypeRef &Record) const;
+  /// The records the unit asks the local types for besides those its types
+  /// name: those an earlier rendering's code read members of through others
+  /// (HighCEmitter::emit).
+  std::vector<TypeRef> ExtraRecords;
+  /// Where a rendering keeps the records its code would read members of
+  /// that the unit does not define, for the next to ask for.
+  std::vector<TypeRef> *WantedRecords = nullptr;
+  /// Notes \p Record, which the code would read members of, for the next
+  /// rendering (WantedRecords).
+  void wantRecord(const TypeRef &Record) const;
   /// Asks the program's local types for the definitions of the records the
   /// unit names (CEmitterOptions::RecordDefinitions), and keeps the names
   /// they declare from the unit's own.
@@ -458,6 +472,10 @@ public:
   /// Whether \p Addr is a member of a record the unit defines from the
   /// program's local types (RecordDefinitions).
   bool memberOfDefinedRecord(const HighExpr &Addr) const;
+  /// \p Type with \p Declarator, by the typedef its declaration names it by
+  /// (NdType::TypedefName) where the unit defines that typedef, as IDA
+  /// prints `PKDEFERRED_ROUTINE DeferredRoutine`; else as C spells it.
+  std::string declaredAs(const TypeRef &Type, llvm::StringRef Declarator) const;
   /// Frame displacement that is a unique interior field of a named record
   /// slot (`record.p` at wrapper+8). Exact slot addresses stay unnamed here.
   std::optional<std::string>

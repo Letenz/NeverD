@@ -945,8 +945,7 @@ private:
         }
     }
     Visiting.erase(Struct.Name);
-    llvm::Expected<RecordDef> Layout =
-        layOutRecord(Library, Draft, Options.Rules);
+    llvm::Expected<RecordDef> Layout = layOutRecord(Library, Draft);
     if (!Layout) {
       fail(Struct.Line, Struct.Column, llvm::toString(Layout.takeError()));
       return nullptr;

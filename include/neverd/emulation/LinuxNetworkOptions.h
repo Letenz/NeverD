@@ -1,0 +1,60 @@
+//===- LinuxNetworkOptions.h - Explicit offline stream inputs ---*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Bounded offline network contracts and their semantic checks.
+
+#ifndef NEVERD_EMULATION_LINUXNETWORKOPTIONS_H
+#define NEVERD_EMULATION_LINUXNETWORKOPTIONS_H
+
+#include <cstdint>
+#include <vector>
+
+namespace neverd::emulation {
+/// One explicit receive completion. Error is a positive Linux errno and has
+/// no bytes. AfterSend gates availability on accepted stream bytes or UDP
+/// datagrams; it does not model elapsed time or acknowledge application data.
+struct LinuxNetworkReceive {
+  std::vector<uint8_t> Bytes;
+  uint32_t Error = 0;
+  uint64_t AfterSend = 0;
+};
+/// One ordered TCP connection attempt. Addresses are Linux sockaddr_in (16
+/// bytes) or sockaddr_in6 (28 bytes), with network-order port/address bytes.
+/// These are virtual peers; the model never opens a host socket.
+struct LinuxStreamConnection {
+  std::vector<uint8_t> Peer;
+  uint32_t ConnectErrno = 0;
+  /// The complete outgoing stream expected from the guest. A mismatch or
+  /// exhausted contract stops before consuming any bytes from that call.
+  std::vector<uint8_t> ExpectedSend;
+  std::vector<uint8_t> Receive;
+  /// Explicit peer EOF after Receive. False leaves an unknown waiting boundary.
+  bool ReceiveEOF = false;
+  /// Explicit per-call transfer ceilings permit short I/O without host timing.
+  uint32_t MaxSend = 65536, MaxReceive = 65536;
+  /// Ordered short reads/errors, mutually exclusive with the legacy Receive
+  /// byte stream. Empty TCP data completions are invalid; EOF stays explicit.
+  std::vector<LinuxNetworkReceive> ReceiveEvents;
+};
+/// One ordered connected UDP route observation. A successful connect selects
+/// a default peer, not a handshake or delivery confirmation. Reconnect and
+/// unconnected routing require additional contracts and remain unsupported.
+struct LinuxDatagramConnection {
+  std::vector<uint8_t> Peer;
+  uint32_t ConnectErrno = 0;
+  std::vector<std::vector<uint8_t>> ExpectedSend;
+  /// Every data completion is one whole datagram, including an empty one.
+  /// A short buffer discards its remaining bytes unless MSG_PEEK is used.
+  std::vector<LinuxNetworkReceive> ReceiveEvents;
+};
+struct LinuxNetworkOptions {
+  /// Attempts are consumed only after the exact peer and guest memory pass
+  /// validation. Descriptor aliases share the selected connection and cursors.
+  std::vector<LinuxStreamConnection> Connections;
+  std::vector<LinuxDatagramConnection> DatagramConnections;
+};
+} // namespace neverd::emulation
+#endif

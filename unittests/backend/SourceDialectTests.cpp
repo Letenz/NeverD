@@ -11,6 +11,7 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/loader/SymbolSpelling.h"
+#include "neverd/types/TypeLayout.h"
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
@@ -1403,6 +1404,7 @@ struct BitFieldPrograms {
 
 BitFieldPrograms bitFieldPrograms() {
   using namespace neverd::types;
+  // Laid out as GNU's compilers lay them out, which the C side builds with.
   TypeLibrary Library(DataModel::LP64);
   EXPECT_TRUE(parseCTypes(R"(
     struct _FLAGS {
@@ -1417,14 +1419,30 @@ BitFieldPrograms bitFieldPrograms() {
       };
       unsigned long long Wide : 40;
     };
+    struct _SHARED {
+      unsigned char Kind;
+      unsigned int Ready : 1;
+      unsigned int Level : 3;
+      int Delta : 4;
+      unsigned long long Wide : 40;
+      unsigned short Tail;
+    };
   )",
                           Library)
                   .ok());
+  // GNU's compilers pack _SHARED's bit-fields at the bit after Kind, in the
+  // bytes of the units of their types that Kind starts, which no field of
+  // those types can hold.
   const LocalType *Flags = Library.find("_FLAGS");
+  const LocalType *Shared = Library.find("_SHARED");
   EXPECT_NE(Flags, nullptr);
-  if (!Flags)
+  EXPECT_NE(Shared, nullptr);
+  if (!Flags || !Shared)
     return {};
-  const LocalType *Roots[] = {Flags};
+  EXPECT_EQ(Shared->Record->Members[1].Name, "Ready");
+  EXPECT_EQ(Shared->Record->Members[1].BitOffset, 8u);
+  EXPECT_EQ(Shared->Record->Members[5].BitOffset, 64u);
+  const LocalType *Roots[] = {Flags, Shared};
   RenderOptions C;
   C.Lang = Language::C;
   C.Spelling = BuiltinSpelling::Portable;
@@ -1440,6 +1458,16 @@ BitFieldPrograms bitFieldPrograms() {
     F->Wide += 0x10;
     return F->Ready + F->Level * 16 + (uint32_t)F->Delta * 256 + (uint32_t)F->Wide;
 }
+uint32_t share(struct _SHARED *S) {
+    S->Kind = 7;
+    S->Ready = 1;
+    S->Level |= 5;
+    S->Delta = -3;
+    S->Wide = 0x123456789A;
+    S->Wide += 0x10;
+    S->Tail = 0xBEEF;
+    return S->Ready + S->Level * 16 + (uint32_t)S->Delta * 256 + (uint32_t)S->Wide + S->Tail;
+}
 )";
   const std::string Unit =
       "#include <stdint.h>\n" + Definitions.Text + "\n" + Code;
@@ -1452,6 +1480,12 @@ int main(void) {
     printf("%u\n", update(&f));
     const unsigned char *bytes = (const unsigned char *)&f;
     for (unsigned i = 0; i < sizeof f; ++i)
+        printf("%u\n", bytes[i]);
+    struct _SHARED s;
+    memset(&s, 0, sizeof s);
+    printf("%u\n", share(&s));
+    bytes = (const unsigned char *)&s;
+    for (unsigned i = 0; i < sizeof s; ++i)
         printf("%u\n", bytes[i]);
     return 0;
 }
@@ -1486,10 +1520,24 @@ int main(void) {
       Programs.Go = "package main\n\nimport (\n\t\"fmt\"\n\t\"unsafe\"\n)\n\n" +
                     View.Text + R"(
 func main() {
+	// Go zeroes a variable's fields, which may leave its padding as the
+	// stack had it; C's memset zeroes every byte.
 	var f _FLAGS
-	fmt.Println(update(&f))
 	bytes := (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))
+	for i := range bytes {
+		bytes[i] = 0
+	}
+	fmt.Println(update(&f))
 	for _, b := range bytes {
+		fmt.Println(b)
+	}
+	var s _SHARED
+	shared := (*[unsafe.Sizeof(s)]byte)(unsafe.Pointer(&s))
+	for i := range shared {
+		shared[i] = 0
+	}
+	fmt.Println(share(&s))
+	for _, b := range shared {
 		fmt.Println(b)
 	}
 }
@@ -1507,6 +1555,15 @@ fn main() {
                                     core::mem::size_of::<_FLAGS>())
     };
     for b in bytes {
+        println!("{}", b);
+    }
+    let mut s: _SHARED = unsafe { core::mem::zeroed() };
+    println!("{}", unsafe { share(&mut s) });
+    let shared = unsafe {
+        core::slice::from_raw_parts(&s as *const _SHARED as *const u8,
+                                    core::mem::size_of::<_SHARED>())
+    };
+    for b in shared {
         println!("{}", b);
     }
 }

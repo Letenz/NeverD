@@ -36,12 +36,16 @@ llvm::Expected<uint8_t> Bionic::byte(uint64_t Address) {
 BionicResult Bionic::copyMemory(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   uint64_t Size = A[2];
+  const bool Copy =
+      Call.Name == symbol::Memcpy || Call.Name == symbol::MemcpyChk;
+  if ((Call.Name == symbol::MemcpyChk || Call.Name == symbol::MemmoveChk) &&
+      Size > A[3])
+    return failure("FORTIFY destination extent exceeded: " + Call.Name);
   if (auto E = access(A[0], Size, Write))
     return std::move(E);
   if (auto E = access(A[1], Size, Read))
     return std::move(E);
-  if (Call.Name == symbol::Memcpy && Size &&
-      (A[0] <= A[1] ? A[1] - A[0] < Size : A[0] - A[1] < Size))
+  if (Copy && Size && (A[0] <= A[1] ? A[1] - A[0] < Size : A[0] - A[1] < Size))
     return failure(diagnostic::MemcpyOverlap);
   std::vector<uint8_t> Bytes(Size);
   if (Size) {
@@ -56,6 +60,8 @@ BionicResult Bionic::copyMemory(const NativeCallEvent &Call) {
 BionicResult Bionic::setMemory(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   uint64_t Size = A[2];
+  if (Call.Name == symbol::MemsetChk && Size > A[3])
+    return failure("FORTIFY destination extent exceeded: " + Call.Name);
   if (auto E = access(A[0], Size, Write))
     return std::move(E);
   std::vector<uint8_t> Bytes(Size, static_cast<uint8_t>(A[1]));
