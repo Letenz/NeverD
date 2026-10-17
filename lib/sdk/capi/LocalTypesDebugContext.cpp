@@ -29,6 +29,24 @@ bool isDisplayName(llvm::StringRef Name) {
                       [](char C) { return llvm::isAlnum(C) || C == '_'; });
 }
 
+/// The enumerators of \p Enum, of \p Bytes, a display names its values by,
+/// as a PDB's enumerations hold them: none negative, none wider than 16
+/// bits.
+std::vector<std::pair<uint16_t, std::string>>
+displayedEnumerators(const types::EnumDef &Enum, unsigned Bytes) {
+  std::vector<std::pair<uint16_t, std::string>> Shown;
+  const unsigned Bits = Bytes * 8;
+  for (const types::Enumerator &Value : Enum.Values) {
+    if (types::builtinInfo(Enum.Underlying).Signed && Bits &&
+        (Value.Value >> (Bits - 1) & 1))
+      continue;
+    if (Value.Value > std::numeric_limits<uint16_t>::max())
+      continue;
+    Shown.emplace_back(uint16_t(Value.Value), Value.Name);
+  }
+  return Shown;
+}
+
 class Converter {
 public:
   explicit Converter(const types::TypeLibrary &Library) : Library(Library) {}
@@ -111,7 +129,7 @@ private:
     case types::TypeKind::Typedef:
       return Type->Target ? convert(*Type->Target, Depth + 1) : nullptr;
     case types::TypeKind::Enum:
-      return Type->Enum ? builtin(Type->Enum->Underlying) : nullptr;
+      return Type->Enum ? enumeration(Name, *Type->Enum) : nullptr;
     case types::TypeKind::Function:
       return Type->Function ? function(*Type->Function, Depth) : nullptr;
     case types::TypeKind::Struct:
@@ -123,6 +141,25 @@ private:
       return record(Name, *Type->Record, Depth);
     }
     return nullptr;
+  }
+
+  /// A named enumeration as debug information gives one: a record of its
+  /// integer's size and sign whose display fields are its enumerators, by
+  /// value, so that the decompiler names the values it compares and
+  /// stores.
+  TypeRef enumeration(llvm::StringRef Name, const types::EnumDef &Enum) {
+    TypeRef Integer = builtin(Enum.Underlying);
+    if (!Integer || Integer->Kind != NdTypeKind::Int)
+      return Integer;
+    TypeRef Named = NdType::makeNamedRecord(Name.str(), Integer->Size,
+                                            /*Enum=*/true);
+    Named->IsSigned = Integer->IsSigned;
+    for (const auto &[Value, Enumerator] : displayedEnumerators(
+             Enum, types::builtinBytes(Enum.Underlying, Library.dataModel()))) {
+      Named->FieldDisplayNames.push_back(Enumerator);
+      Named->FieldDisplayOffsets.push_back(Value);
+    }
+    return Named;
   }
 
   /// A function type, as a pointer to it is spelled: scalars, and pointers
@@ -332,10 +369,10 @@ LocalTypesDebugContext::LocalTypesDebugContext(
 
 LocalTypesDebugContext::~LocalTypesDebugContext() {
   std::lock_guard<std::mutex> Guard(Mutex);
-  for (const TypeRef &Record : Completed) {
-    Record->FieldDisplayNames.clear();
-    Record->FieldDisplayOffsets.clear();
-    Record->FieldDisplayTypes.clear();
+  for (Named &Type : Completed) {
+    Type.Type->FieldDisplayNames = std::move(Type.Names);
+    Type.Type->FieldDisplayOffsets = std::move(Type.Offsets);
+    Type.Type->FieldDisplayTypes = std::move(Type.Types);
   }
 }
 
@@ -350,49 +387,94 @@ LocalTypesDebugContext::definedRecord(llvm::StringRef Name,
   return !Size || Size == Type->Record->Size ? Type : nullptr;
 }
 
+bool LocalTypesDebugContext::takeLibraryNames(const TypeRef &Type) const {
+  std::vector<std::string> Names;
+  std::vector<uint16_t> Offsets;
+  std::vector<TypeRef> Members;
+  const types::LocalType *Local = nullptr;
+  if (Type->IsEnum) {
+    Local = Types->find(Type->SourceName);
+    if (!Local || Local->Kind != types::TypeKind::Enum || !Local->Enum)
+      return false;
+    for (const auto &[Value, Enumerator] : displayedEnumerators(
+             *Local->Enum, types::builtinBytes(Local->Enum->Underlying,
+                                               Types->dataModel()))) {
+      Names.push_back(Enumerator);
+      Offsets.push_back(Value);
+    }
+  } else {
+    Local = definedRecord(Type->SourceName, Type->Size);
+    const TypeRef From =
+        Local ? Converter(*Types).convert(
+                    *types::makeNamed(Local->Name, Local->Kind), 0)
+              : nullptr;
+    if (!From || From->Kind != NdTypeKind::Struct)
+      return false;
+    // Each member the debug information gave lies where one of the
+    // library's does, as the members of the same record do under names the
+    // user changed; a record laid out otherwise keeps its own.
+    const std::set<uint16_t> Lie(From->FieldDisplayOffsets.begin(),
+                                 From->FieldDisplayOffsets.end());
+    for (size_t I = 0; I < Type->FieldDisplayNames.size(); ++I)
+      if (!Type->FieldDisplayNames[I].empty() &&
+          (I >= Type->FieldDisplayOffsets.size() ||
+           !Lie.count(Type->FieldDisplayOffsets[I])))
+        return false;
+    Names = From->FieldDisplayNames;
+    Offsets = From->FieldDisplayOffsets;
+    Members = From->FieldDisplayTypes;
+  }
+  CompletedRecords.insert(Type.get());
+  Read.insert(Local->Name);
+  if (Names == Type->FieldDisplayNames && Offsets == Type->FieldDisplayOffsets)
+    return true;
+  Completed.push_back({Type, std::move(Type->FieldDisplayNames),
+                       std::move(Type->FieldDisplayOffsets),
+                       std::move(Type->FieldDisplayTypes)});
+  Type->FieldDisplayNames = std::move(Names);
+  Type->FieldDisplayOffsets = std::move(Offsets);
+  Type->FieldDisplayTypes = std::move(Members);
+  return true;
+}
+
 void LocalTypesDebugContext::completeType(const TypeRef &Type) const {
   TypeRef Record = Type;
   while (Record && Record->Kind == NdTypeKind::Ptr)
     Record = Record->Pointee;
-  if (Record && Record->Kind == NdTypeKind::Struct && !Record->IsEnum &&
-      !Record->SourceName.empty()) {
+  if (!Record || Record->Kind != NdTypeKind::Struct ||
+      Record->SourceName.empty()) {
+    Inner.completeType(Type);
+    return;
+  }
+  {
     std::lock_guard<std::mutex> Guard(Mutex);
     if (CompletedRecords.contains(Record.get()))
       return;
     // The library's members, which a record none has been given members
-    // takes whole: the debug information's own stay where it gave them.
-    if (const types::LocalType *Local =
-            definedRecord(Record->SourceName, Record->Size);
-        Local && Record->FieldDisplayNames.empty()) {
-      const TypeRef From = Converter(*Types).convert(
-          *types::makeNamed(Local->Name, Local->Kind), 0);
-      if (From && From->Kind == NdTypeKind::Struct) {
-        Record->FieldDisplayNames = From->FieldDisplayNames;
-        Record->FieldDisplayOffsets = From->FieldDisplayOffsets;
-        Record->FieldDisplayTypes = From->FieldDisplayTypes;
-        Completed.push_back(Record);
-        CompletedRecords.insert(Record.get());
-        Read.insert(Local->Name);
-        return;
-      }
-    }
+    // takes whole.
+    if (!Record->IsEnum && Record->FieldDisplayNames.empty() &&
+        takeLibraryNames(Record))
+      return;
   }
   Inner.completeType(Type);
+  if (!Record->IsEnum && Record->FieldDisplayNames.empty())
+    return;
+  std::lock_guard<std::mutex> Guard(Mutex);
+  if (CompletedRecords.contains(Record.get()))
+    return;
   // What the debug information gave a record or an enumeration of one of
   // the library's names: a unit holds the library's definition only where
   // that agrees with it.
-  if (Record && Record->Kind == NdTypeKind::Struct &&
-      !Record->SourceName.empty() &&
-      (Record->IsEnum || !Record->FieldDisplayNames.empty())) {
-    std::lock_guard<std::mutex> Guard(Mutex);
-    const types::LocalType *Local = Types->find(Record->SourceName);
-    if (Local && !CompletedRecords.contains(Record.get()) &&
-        (Record->IsEnum
-             ? Local->Kind == types::TypeKind::Enum
-             : definedRecord(Record->SourceName, Record->Size) != nullptr) &&
-        GivenTypes.insert(Record.get()).second)
-      Given[Record->SourceName].push_back(Record);
-  }
+  if (const types::LocalType *Local = Types->find(Record->SourceName);
+      Local &&
+      (Record->IsEnum
+           ? Local->Kind == types::TypeKind::Enum
+           : definedRecord(Record->SourceName, Record->Size) != nullptr) &&
+      GivenTypes.insert(Record.get()).second)
+    Given[Record->SourceName].push_back(Record);
+  // The library's names in place of those it gave, which are the same
+  // unless the user renamed them.
+  takeLibraryNames(Record);
 }
 
 CRecordDefinitions
