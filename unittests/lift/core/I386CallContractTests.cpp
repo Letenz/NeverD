@@ -19,6 +19,7 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/IR/Instructions.h"
@@ -582,6 +583,55 @@ std::pair<std::vector<MedVar>, bool> importCallArguments(BinaryFormat Format,
   return {Func.CallInfos.empty() ? std::vector<MedVar>{}
                                  : Func.CallInfos[0].Args,
           !Func.Params.empty()};
+}
+
+TEST(I386CallContract, APICPLTEntryJumpsByTheGOTItsCallerHolds) {
+  // A shared object's PLT entry, `jmp *islower@GOT(%ebx)`, jumps by the GOT
+  // address the psABI has its caller hold in EBX, which the dynamic section
+  // names (DT_PLTGOT): it passes its caller's argument on to islower.
+  constexpr va_t Plt = 0x3D0, GotPlt = 0x2000, Slot = GotPlt + 0x10;
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::ELF;
+  Img.DynInfo.PltGotAddr = GotPlt;
+  Segment Code;
+  Code.Name = ".plt";
+  Code.VA = Plt;
+  Code.Data = {0xFF, 0xA3, 0x10, 0x00, 0x00, 0x00}; // jmp *0x10(%ebx)
+  Code.Data.resize(0x10, 0xCC);
+  Code.Size = Code.FileSz = Code.Data.size();
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Segments.push_back(std::move(Code));
+  Segment Got;
+  Got.Name = ".got.plt";
+  Got.VA = GotPlt;
+  Got.Size = Got.FileSz = 0x18;
+  Got.Data.assign(Got.Size, 0);
+  Got.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Img.Segments.push_back(std::move(Got));
+  Img.Imports.push_back({"libc.so.6", "islower", 0, Slot});
+  ASSERT_TRUE(Img.recordImportStorageSlot(Slot, "islower", 0,
+                                          ImportStorageEvidence::LoaderBind));
+  scanImportThunks(Img);
+  ASSERT_NE(Img.findImportStubAt(Plt), nullptr);
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Plt};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Img.Arch;
+  Options.Format = Img.Format;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
+  EXPECT_NE(Source.find("sub_3D0(int32_t arg0)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("islower(arg0)"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
 }
 
 } // namespace
