@@ -7166,6 +7166,24 @@ MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its
 `HighControlFlowSemantics.SlotCallGoesThroughThePointerItHolds` calls through
 MinGW's `__imp_X` variables, which hold the image's own code, relocated or in
 a fixed image, rather than naming an import by their spelling.
+`HighControlFlowSemantics.AShiftByZeroIsItsOperand` reads AArch64's bit-0
+`tbz` test as `x & 1`.
+
+`NeverDItaniumHandlerTests` spells Itanium landing pads as C++ handlers.
+`ItaniumHandlerBodies.ACleanupOnlyPadBecomesACatchAllThatRethrows` prints a
+pad that only cleans up as `try { … } catch (...) { cleanup; throw; }` and
+keeps it labelled in C. `ACleanupScopeHoldsNoCallItsPadDoesNotCover` keeps a
+call that reaches no pad out of the scopes, and
+`ACopiedCallKeepsTheCoverOfItsInstruction` does so for a tail copy whose
+statement took a covered jump's address.
+`ABranchWhoseArmsCallThroughThePadIsOneScope` wraps the whole branch, and
+`ACopyWithoutAnAddressKeepsItsCallsInstruction` places calls copied into both
+arms by their instruction. `AnExceptionSpilledThroughAFrameAddressIsResumed`
+follows the exception through the slot address clang keeps for a large frame. `ACallOfNoInstructionKeepsTheCleanupPad` and
+`AJumpIntoACleanupScopeKeepsThePad` keep the pad where a scope cannot be
+proved. `NothingFallsOutOfAnEndlessLoop` prints no dead statement after a
+`while (1)` that only returns. `HighControlFlowSemantics.AMergedCallKeepsAnInstructionOnlyIfItHadOne`
+checks that merging two branches' equal calls forgets their instructions.
 Malformed unwind/prologue and converted-SP checks run with source projection
 enabled too. `WindowsEHModesCorpus.DecompileMatrixFailsClosedWithAuditableExceptionMetadata`
 runs the original eleven-case matrix, including the complete x64 xcpt4 image.

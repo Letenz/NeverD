@@ -702,9 +702,17 @@ take their bodies from the landing pad, as the pad runs for each clause's
 selector (`attachItaniumHandlerBodies`); `__cxa_begin_catch` becomes the catch
 parameter and `__cxa_end_catch` the end of the catch. A pad whose code this
 cannot follow exactly, or that also dispatches an enclosing try's clause,
-keeps the region in its commented form with the pad in place. In C, every
-landing pad of the call-site table keeps its label, so a pad that only runs
-cleanups is not read as dead code after a return.
+keeps the region in its commented form with the pad in place. A pad that only
+cleans up, which every call site reaching it enters with no action, is such a
+scope around the calls of ordinary flow that its call sites cover. A call
+keeps the address of its call instruction (`HighExpr::CallSiteAddr`) when a
+tail is copied over a jump or into both arms of a branch, so the scopes hold
+exactly the covered calls and no other; a call that stands for the equal calls
+of two branches keeps none (`withMergedCallSites`). A call of no single
+instruction, a jump into a scope, or a covered call in a handler's code keeps
+the pad in place. In C, every landing pad of the
+call-site table keeps its label, so a pad that only runs cleanups is not read
+as dead code after a return.
 
 DWARF subprogram extents are collected, sorted and swept once before publication
 instead of comparing every pair during ingestion. Duplicate entries, overlaps
