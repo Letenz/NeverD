@@ -561,6 +561,14 @@ void CWriter::record(const LocalType &Type, std::string &Out) {
     Out += std::string(Keyword) + " " + Names.type(Type.Name) + ";\n";
     return;
   }
+  // A record of no bytes, as Rust's unit structures are, has no C
+  // definition: C++ gives an empty one a byte, and C none at all.  It is
+  // declared, which a pointer to it needs.
+  if (!Record.Size) {
+    Out += "// " + Type.Name + ": 0 bytes, which C defines no record of\n";
+    Out += std::string(Keyword) + " " + Names.type(Type.Name) + ";\n";
+    return;
+  }
   Digits = offsetDigits(Record.Size);
   Fillers = 0;
   std::string Header = "// " + Type.Name + ": " + hex(Record.Size) + " (" +
@@ -621,23 +629,24 @@ void CWriter::asserts(const LocalType &Type, std::string &Out) {
   const char *Assert = "static_assert";
   Asserted = true;
   const std::string Name = tagged(Type);
+  const std::string Quoted = stringLiteralBody(Type.Name);
   if (Type.Kind == TypeKind::Enum) {
     Out += std::string(Assert) + "(sizeof(" + Name + ") == " +
            std::to_string(
                builtinBytes(Type.Enum->Underlying, Library.dataModel())) +
-           ", \"" + Type.Name + "\");\n";
+           ", \"" + Quoted + "\");\n";
     return;
   }
   const RecordDef &Record = *Type.Record;
   Out += std::string(Assert) + "(sizeof(" + Name + ") == " + hex(Record.Size) +
-         ", \"" + Type.Name + "\");\n";
+         ", \"" + Quoted + "\");\n";
   std::vector<std::pair<std::string, uint64_t>> Members;
   hoisted(Record, 0, Members);
   llvm::StringSet<> Seen;
   for (const auto &[Member, Byte] : Members)
     if (Seen.insert(Member).second)
       Out += std::string(Assert) + "(offsetof(" + Name + ", " + Member +
-             ") == " + hex(Byte) + ", \"" + Type.Name + "." + Member + "\");\n";
+             ") == " + hex(Byte) + ", \"" + Quoted + "." + Member + "\");\n";
 }
 
 void CWriter::definition(const LocalType &Type, std::string &Out) {

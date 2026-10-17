@@ -166,7 +166,7 @@ INSTANTIATE_TEST_SUITE_P(Compilers, DWARFTypeImport,
                          ::testing::Values("dwarf_types.gcc.o",
                                            "dwarf_types.clang.o"));
 
-TEST(DWARFTypeImportRust, ReadsRustsLayoutsAndLeavesVariantsOut) {
+TEST(DWARFTypeImportRust, ReadsRustsLayoutsAndHoldsVariantsAsBytes) {
   auto Object = llvm::object::ObjectFile::createObjectFile(NEVERD_TYPES_FIXTURES
                                                            "/rust_dwarf.o");
   ASSERT_TRUE(static_cast<bool>(Object)) << llvm::toString(Object.takeError());
@@ -190,16 +190,26 @@ TEST(DWARFTypeImportRust, ReadsRustsLayoutsAndLeavesVariantsOut) {
   EXPECT_EQ(Kind->Enum->Underlying, Builtin::UChar);
   ASSERT_EQ(Kind->Enum->Values.size(), 2u);
   EXPECT_EQ(Kind->Enum->Values[1].Value, 2u);
-  // An enumeration with data is variants, which local types do not hold:
-  // left out, with why; its variants' own structures stay.
-  EXPECT_EQ(Library.find("rust_dwarf::Shape"), nullptr);
-  ASSERT_EQ(Stats.Skipped.size(), 1u);
-  EXPECT_EQ(Stats.Skipped[0], "rust_dwarf::Shape: variants, as a Rust "
-                              "enumeration's");
+  // An enumeration with data is variants, which local types do not spell:
+  // its bytes, as large and aligned as the enumeration, so that what holds
+  // it lays out; its variants' own structures stay.
+  const LocalType *Shape = Library.find("rust_dwarf::Shape");
+  ASSERT_NE(Shape, nullptr);
+  ASSERT_TRUE(Shape->Record);
+  EXPECT_EQ(shapeOf(*Shape->Record), "struct{__variants@0}");
+  EXPECT_EQ(Shape->Record->Size, 16u);
+  EXPECT_EQ(Shape->Record->Alignment, 8u);
+  EXPECT_NE(Shape->Comment.find("Rust enumeration"), std::string::npos);
+  EXPECT_TRUE(Stats.Skipped.empty());
   EXPECT_NE(Library.find("rust_dwarf::Shape::Square"), nullptr);
+  // Members of no bytes, () and PhantomData, lie nowhere.
+  const LocalType *Holder = Library.find("rust_dwarf::Holder");
+  ASSERT_NE(Holder, nullptr);
+  EXPECT_EQ(shapeOf(*Holder->Record), "struct{shape@0 tag@16}");
+  EXPECT_EQ(Holder->Record->Size, 24u);
 }
 
-TEST(DWARFTypeImportGo, ReadsGosStructuresByTheirPackagesNames) {
+TEST(DWARFTypeImportGo, ReadsGosStructuresAndFuncValues) {
   std::string Go;
   if (const char *FromEnv = std::getenv("NEVERD_TEST_GO"))
     Go = FromEnv;
@@ -220,9 +230,15 @@ TEST(DWARFTypeImportGo, ReadsGosStructuresByTheirPackagesNames) {
     ASSERT_FALSE(Error);
     Source << "package main\n"
               "type Point struct {\n\tX int32\n\tY int64\n\tName string\n}\n"
+              "type Calls struct {\n\t_ [2]byte\n"
+              "\tEqual func(a, b uintptr) bool\n\t_ [6]byte\n"
+              "\tPair func() (int, bool)\n\tCount int32\n}\n"
               "//go:noinline\n"
               "func area(p *Point) int64 { return int64(p.X) * p.Y }\n"
-              "func main() { println(area(&Point{X: 2, Y: 3})) }\n";
+              "//go:noinline\n"
+              "func calls(c *Calls) int32 { return c.Count }\n"
+              "func main() {\n\tprintln(area(&Point{X: 2, Y: 3}))\n"
+              "\tprintln(calls(&Calls{Count: 4}))\n}\n";
   }
   const std::string Program = path("program");
   const std::string Output = path("go.txt");
@@ -254,5 +270,39 @@ TEST(DWARFTypeImportGo, ReadsGosStructuresByTheirPackagesNames) {
   const LocalType *String = Library.find("string");
   ASSERT_NE(String, nullptr);
   EXPECT_EQ(String->Record->Size, 16u);
+  // Blank fields take numbers past their first; a func value is the
+  // address of its closure, a pointer to its function, whose one result
+  // Go lists as a parameter, and one of several results an address alone.
+  const LocalType *Calls = Library.find("main.Calls");
+  ASSERT_NE(Calls, nullptr);
+  EXPECT_EQ(shapeOf(*Calls->Record), "struct{_@0 Equal@8 _1@16 Pair@24 "
+                                     "Count@32}");
+  const auto pointee = [&](llvm::StringRef Wanted) -> const TypeExpr * {
+    for (const Member &Field : Calls->Record->Members)
+      if (Field.Name == Wanted) {
+        const TypeExpr *Type = Field.Type.get();
+        while (Type && Type->Kind == TypeExprKind::Named)
+          if (const LocalType *Named = Library.find(Type->Name);
+              Named && Named->Kind == TypeKind::Typedef)
+            Type = Named->Target.get();
+          else
+            break;
+        return Type && Type->Kind == TypeExprKind::Pointer ? Type->Element.get()
+                                                           : nullptr;
+      }
+    return nullptr;
+  };
+  const TypeExpr *Equal = pointee("Equal");
+  ASSERT_NE(Equal, nullptr);
+  ASSERT_EQ(Equal->Kind, TypeExprKind::Function);
+  ASSERT_TRUE(Equal->Function);
+  EXPECT_EQ(Equal->Function->Params.size(), 2u);
+  ASSERT_TRUE(Equal->Function->Return);
+  EXPECT_EQ(Equal->Function->Return->Kind, TypeExprKind::Builtin);
+  EXPECT_EQ(Equal->Function->Return->TheBuiltin, Builtin::Bool);
+  const TypeExpr *Pair = pointee("Pair");
+  ASSERT_NE(Pair, nullptr);
+  EXPECT_EQ(Pair->Kind, TypeExprKind::Builtin);
+  EXPECT_EQ(Pair->TheBuiltin, Builtin::Void);
   llvm::sys::fs::remove_directories(Dir);
 }
