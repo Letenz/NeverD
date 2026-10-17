@@ -48,6 +48,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -1893,11 +1894,29 @@ private:
   mutable std::map<
       std::tuple<AddressProvenanceVarKey, bool, AddressProvenanceVarKey>, bool>
       StableOffsetCache;
+  // Bound default-budget queries, keyed by their bindings in order.
+  using BoundFrameSlotQuery =
+      std::tuple<AddressProvenanceVarKey, bool,
+                 std::vector<std::pair<AddressProvenanceVarKey, uint64_t>>>;
+  // Hashes the frame-slot caches' keys. The caches are only probed, filled
+  // and cleared, so their order cannot reach an answer.
+  struct FrameSlotQueryHash {
+    size_t operator()(const std::pair<AddressProvenanceVarKey, bool> &K) const {
+      return llvm::hash_value(K);
+    }
+    size_t operator()(const BoundFrameSlotQuery &K) const {
+      const auto &Bindings = std::get<2>(K);
+      return llvm::hash_combine(
+          std::get<0>(K), std::get<1>(K),
+          llvm::hash_combine_range(Bindings.begin(), Bindings.end()));
+    }
+  };
   // Only completed default-budget, unbound top-level frame-slot queries.
   // Nested path assumptions and externally shared budgets remain query-local.
   mutable const MedFunc *ClosedFrameSlotCacheFor = nullptr;
-  mutable std::map<std::pair<AddressProvenanceVarKey, bool>,
-                   std::optional<med_llvm::SlotKey>>
+  mutable std::unordered_map<std::pair<AddressProvenanceVarKey, bool>,
+                             std::optional<med_llvm::SlotKey>,
+                             FrameSlotQueryHash>
       ClosedFrameSlotCache;
   // Unbound shared-budget queries. The budget only decides where a walk
   // stops: a walk that needs Nodes takes the same path under any budget that
@@ -1911,15 +1930,12 @@ private:
     bool Complete = false;
   };
   mutable const MedFunc *SharedBudgetFrameSlotCacheFor = nullptr;
-  mutable std::map<std::pair<AddressProvenanceVarKey, bool>,
-                   SharedBudgetFrameSlotProof>
+  mutable std::unordered_map<std::pair<AddressProvenanceVarKey, bool>,
+                             SharedBudgetFrameSlotProof, FrameSlotQueryHash>
       SharedBudgetFrameSlotCache;
-  // Bound default-budget queries, keyed by their bindings in order.
-  using BoundFrameSlotQuery =
-      std::tuple<AddressProvenanceVarKey, bool,
-                 std::vector<std::pair<AddressProvenanceVarKey, uint64_t>>>;
   mutable const MedFunc *BoundFrameSlotCacheFor = nullptr;
-  mutable std::map<BoundFrameSlotQuery, std::optional<med_llvm::SlotKey>>
+  mutable std::unordered_map<
+      BoundFrameSlotQuery, std::optional<med_llvm::SlotKey>, FrameSlotQueryHash>
       BoundFrameSlotCache;
   // A failed select/PHI table audit has no LLVM value to cache, but its
   // MedIR result is independent of the current IRBuilder.
