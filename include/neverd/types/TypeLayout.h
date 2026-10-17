@@ -25,19 +25,6 @@
 
 namespace neverd::types {
 
-/// How a compiler lays a record out.
-enum class LayoutRules : uint8_t {
-  /// Microsoft's: a bitfield shares a storage unit only with the bitfields
-  /// of its type's size before it.
-  MSVC,
-  /// The Itanium ABI's, as GCC and Clang outside Windows: a bitfield goes
-  /// wherever it fits without crossing a unit of its type.
-  Itanium,
-};
-
-/// The rules a data model's compilers follow: Microsoft's for LLP64.
-LayoutRules defaultRules(DataModel Model);
-
 /// A member as source declares it.
 struct DraftMember {
   /// Empty for an anonymous record, or an unnamed bitfield, which only
@@ -71,11 +58,11 @@ struct DraftRecord {
   std::vector<DraftMember> Members;
 };
 
-/// \p Draft laid out under \p Rules.  An error names a member whose size the
-/// library does not know, such as a record only declared, held by value.
+/// \p Draft laid out as \p Library's program lays records out (its
+/// recordABI).  An error names a member whose size the library does not
+/// know, such as a record only declared, held by value.
 llvm::Expected<RecordDef> layOutRecord(const TypeLibrary &Library,
-                                       const DraftRecord &Draft,
-                                       LayoutRules Rules);
+                                       const DraftRecord &Draft);
 
 } // namespace neverd::types
 

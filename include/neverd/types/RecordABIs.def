@@ -1,0 +1,34 @@
+//===- RecordABIs.def - How targets lay records out -------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// How a target's compilers lay records out, beyond what its data model
+/// says: where its bit-fields go and how far its scalars align.
+///
+/// NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit)
+///   Spelling          Its name in the C API.
+///   Rules             Where its bit-fields go: MSVC or Itanium.
+///   ScalarAlignLimit  The largest alignment a builtin scalar takes in a
+///                     record, which otherwise aligns to its size.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_RECORD_ABI
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit)
+#endif
+
+/// Microsoft's compilers, and MinGW's, which lay records out as they do.
+NEVERD_RECORD_ABI(Microsoft, "microsoft", MSVC, 16)
+/// GCC and Clang on the 64-bit System V and Apple targets.
+NEVERD_RECORD_ABI(Itanium, "itanium", Itanium, 16)
+/// The i386 System V ABI: long long, double and long double align to four
+/// in a record.
+NEVERD_RECORD_ABI(I386SystemV, "i386-sysv", Itanium, 4)
+/// The 32-bit ARM procedure call standard: eight-byte scalars align to
+/// eight.
+NEVERD_RECORD_ABI(AAPCS32, "aapcs32", Itanium, 8)
+
+#undef NEVERD_RECORD_ABI

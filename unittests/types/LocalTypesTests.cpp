@@ -9,6 +9,7 @@
 #include "neverd/types/LocalTypes.h"
 
 #include <gtest/gtest.h>
+#include <optional>
 
 using namespace neverd::types;
 using neverd::types::test::shapeOf;
@@ -75,6 +76,41 @@ TEST(LocalTypes, BuiltinSizesFollowTheDataModel) {
   EXPECT_EQ(pointerBytes(DataModel::ILP32), 4u);
   EXPECT_STREQ(builtinInfo(Builtin::ULong).Windows, "ULONG");
   EXPECT_STREQ(builtinInfo(Builtin::ULongLong).Keywords, "unsigned long long");
+}
+
+TEST(LocalTypes, ScalarsAlignAsTheirRecordABISays) {
+  // The i386 System V ABI aligns eight-byte scalars to four in a record,
+  // Microsoft's compilers and ARM's to eight; the data model says neither.
+  const auto alignment = [](DataModel Model, std::optional<RecordABI> ABI,
+                            Builtin Type) {
+    TypeLibrary Library(Model);
+    if (ABI)
+      Library.setRecordABI(*ABI);
+    TypeExpr Scalar;
+    Scalar.Kind = TypeExprKind::Builtin;
+    Scalar.TheBuiltin = Type;
+    return Library.alignOf(Scalar);
+  };
+  EXPECT_EQ(TypeLibrary(DataModel::ILP32).recordABI(), RecordABI::Microsoft);
+  EXPECT_EQ(TypeLibrary(DataModel::LP64).recordABI(), RecordABI::Itanium);
+  EXPECT_EQ(alignment(DataModel::ILP32, std::nullopt, Builtin::LongLong), 8u);
+  EXPECT_EQ(
+      alignment(DataModel::ILP32, RecordABI::I386SystemV, Builtin::LongLong),
+      4u);
+  EXPECT_EQ(
+      alignment(DataModel::ILP32, RecordABI::I386SystemV, Builtin::Double), 4u);
+  EXPECT_EQ(
+      alignment(DataModel::ILP32, RecordABI::I386SystemV, Builtin::LongDouble),
+      4u);
+  EXPECT_EQ(alignment(DataModel::ILP32, RecordABI::AAPCS32, Builtin::Double),
+            8u);
+  EXPECT_EQ(alignment(DataModel::ILP32, RecordABI::I386SystemV, Builtin::Int),
+            4u);
+  // An alignment is a power of two, a twelve-byte scalar's too.
+  EXPECT_EQ(alignment(DataModel::ILP32, std::nullopt, Builtin::LongDouble), 8u);
+  EXPECT_EQ(alignment(DataModel::LP64, std::nullopt, Builtin::LongDouble), 16u);
+  EXPECT_EQ(layoutRulesOf(RecordABI::I386SystemV), LayoutRules::Itanium);
+  EXPECT_EQ(recordABIName(RecordABI::I386SystemV), "i386-sysv");
 }
 
 TEST(LocalTypes, ReplacingATypeKeepsItsOrdinal) {

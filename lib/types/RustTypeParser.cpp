@@ -1101,8 +1101,7 @@ private:
       Draft.Members.push_back({Field.Name, Type, false, 0, std::string()});
     }
     Visiting.erase(Record.Name);
-    llvm::Expected<RecordDef> Layout =
-        layOutRecord(Library, Draft, Options.Rules);
+    llvm::Expected<RecordDef> Layout = layOutRecord(Library, Draft);
     if (!Layout) {
       fail(Record.Line, Record.Column, llvm::toString(Layout.takeError()));
       return nullptr;
