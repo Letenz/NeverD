@@ -68,6 +68,36 @@ struct AbiSpillContext {
 
 /// One call's argument recovery in recoverCallAbi, as the steps of its
 /// calling convention's AbiCallPolicy see it.
+/// The blocks of one function by id, for a pass that adds or removes no
+/// blocks while it uses the index; operations and PHIs may change.
+class MedBlockIdIndex {
+public:
+  explicit MedBlockIdIndex(const MedFunc &Func) {
+    for (const MedBlock &Block : Func.Blocks) {
+      if (!First.emplace(Block.Id, &Block).second)
+        Unique = false;
+      Last[Block.Id] = &Block;
+    }
+  }
+  /// Whether no two blocks share an id.
+  bool unique() const { return Unique; }
+  /// The first block with \p Id, or null.
+  const MedBlock *first(int Id) const {
+    const auto It = First.find(Id);
+    return It == First.end() ? nullptr : It->second;
+  }
+  /// The last block with \p Id, or null.
+  const MedBlock *last(int Id) const {
+    const auto It = Last.find(Id);
+    return It == Last.end() ? nullptr : It->second;
+  }
+
+private:
+  std::map<int, const MedBlock *> First;
+  std::map<int, const MedBlock *> Last;
+  bool Unique = true;
+};
+
 struct AbiCallContext {
   const MedFunc &Func;
   const MedBlock &Blk;
@@ -86,6 +116,8 @@ struct AbiCallContext {
   int MaxArgs = 0;
   /// The offset of a stack address from the stack pointer at the call.
   llvm::function_ref<std::optional<int64_t>(const MedVar &)> CallStackOffset;
+  /// Func's blocks by id, when the caller keeps them; null builds them.
+  const MedBlockIdIndex *Blocks = nullptr;
 };
 
 /// The incoming value of a scratch register that carries no argument is
@@ -268,7 +300,8 @@ std::optional<MedVar>
 findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
                    int BlockId, int ArgIdx, const IntegerArgumentLayout &Layout,
                    bool AllowUnknownLiveIn = false, bool *FromLiveIn = nullptr,
-                   bool *FoundDef = nullptr);
+                   bool *FoundDef = nullptr,
+                   const MedBlockIdIndex *Blocks = nullptr);
 
 /// Unique predecessor's `if (p)` / `if (!p)` pointer.  After an intervening
 /// Win64 thiscall clobbers rcx. The callee this is the guarded table, not
