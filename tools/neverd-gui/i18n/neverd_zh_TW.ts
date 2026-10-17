@@ -60,6 +60,14 @@
         <translation>將註解和歷程記錄儲存至二進位檔案所在目錄</translation>
     </message>
     <message>
+        <source>Pac&amp;k database...</source>
+        <translation>打包資料庫(&amp;K)...</translation>
+    </message>
+    <message>
+        <source>Write the project and its binary into one NeverD database file</source>
+        <translation>將專案及其二進位檔案寫入一個 NeverD 資料庫檔案</translation>
+    </message>
+    <message>
         <source>&amp;Close</source>
         <translation>關閉(&amp;C)</translation>
     </message>
@@ -1927,6 +1935,10 @@ Double-click to go to the declaration.</source>
         <translation>註解已變更。是否在繼續之前儲存？</translation>
     </message>
     <message>
+        <source>%1 lacks the latest changes. Save them into it before continuing?</source>
+        <translation>%1 尚未包含最新的變更。繼續之前要將其儲存到其中嗎？</translation>
+    </message>
+    <message>
         <source>Cannot jump to %1: %2</source>
         <translation>無法跳至 %1：%2</translation>
     </message>
@@ -2127,6 +2139,14 @@ Signed: %4</source>
     <message>
         <source>Create LST file</source>
         <translation>建立 LST 檔案</translation>
+    </message>
+    <message>
+        <source>Pack database</source>
+        <translation>打包資料庫</translation>
+    </message>
+    <message>
+        <source>NeverD databases (*%1)</source>
+        <translation>NeverD 資料庫 (*%1)</translation>
     </message>
     <message>
         <source>Cannot write %1</source>

@@ -134,11 +134,6 @@ constexpr char RepresentationDock[] = "ir-a";
 constexpr char ExtensionsDock[] = "extensions";
 constexpr char LocalTypesDock[] = "local-types";
 
-// Workbench state keys inside a NeverD database.
-constexpr char LocationState[] = "location";
-constexpr char BookmarksState[] = "bookmarks";
-constexpr char DesktopState[] = "desktop";
-
 QString chooserDockId(ChooserKind kind) {
   return QStringLiteral("chooser-%1").arg(int(kind));
 }
@@ -882,6 +877,7 @@ void MainWindow::connectSession() {
   session_.setStateProvider([this] { return projectState(); });
   connect(&session_, &Session::unloaded, this, [this] {
     pseudocodeAfterJump_.reset();
+    showBookmarks({});
     updateTitle();
     updateActions();
   });
@@ -898,7 +894,12 @@ void MainWindow::connectSession() {
           [this](const QString &action) {
             const auto choice = QMessageBox::question(
                 this, tr("Unsaved changes"),
-                tr("Comments were changed. Save them before continuing?"),
+                session_.databaseOutOfDate()
+                    ? tr("%1 lacks the latest changes. Save them into it "
+                         "before continuing?")
+                          .arg(QFileInfo(session_.databasePath()).fileName())
+                    : tr("Comments were changed. Save them before "
+                         "continuing?"),
                 QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
                 QMessageBox::Save);
             session_.resolveTransition(
@@ -1161,6 +1162,7 @@ void MainWindow::connectActions() {
   on(ActionId::FileExportListing, [this] { exportCurrent(false); });
   on(ActionId::FileExportPseudocode, [this] { exportCurrent(true); });
   on(ActionId::FileSave, [this] { session_.save(); });
+  on(ActionId::FilePackDatabase, [this] { packDatabase(); });
   on(ActionId::FileClose, [this] { session_.closeFile(); });
   on(ActionId::FileQuickStart, [this] { showQuickStart(); });
   on(ActionId::FileExit, [this] { close(); });
@@ -1502,12 +1504,10 @@ void MainWindow::updateActions() {
       ->setEnabled(loaded && disassembly_->canGoForward());
   actions_.action(ActionId::EditUndo)->setEnabled(loaded && session_.canUndo());
   actions_.action(ActionId::EditRedo)->setEnabled(loaded && session_.canRedo());
-  // A debug file the user chose is kept with the project.
-  actions_.action(ActionId::FileSave)
-      ->setEnabled(loaded && (session_.dirty() ||
-                              session_.metadata().value("pdb").isObject() ||
-                              session_.metadata().value("dwarf").isObject() ||
-                              session_.metadata().value("map").isObject()));
+  // Edits other than comments, and the debug files chosen, are kept as they
+  // are made; a database the user opened is written back by Save.
+  actions_.action(ActionId::FileSave)->setEnabled(loaded && session_.dirty());
+  actions_.action(ActionId::FilePackDatabase)->setEnabled(loaded);
   // A PE has a PDB, an ELF or Mach-O image DWARF, and any image a MAP but
   // the EVM and SBF programs, which describe themselves.
   const QString format = session_.format();
@@ -3404,11 +3404,11 @@ QHash<QString, QByteArray> MainWindow::projectState() const {
   if (const auto function = currentFunction())
     location.insert(QStringLiteral("function"), hexAddress(*function));
   location.insert(QStringLiteral("graph"), disassembly_->graphMode());
-  state.insert(QString::fromLatin1(LocationState),
+  state.insert(QString::fromLatin1(ProjectDatabase::LocationState),
                QJsonDocument(location).toJson(QJsonDocument::Compact));
-  state.insert(QString::fromLatin1(BookmarksState),
-               QJsonDocument(bookmarks()).toJson(QJsonDocument::Compact));
-  state.insert(QString::fromLatin1(DesktopState),
+  state.insert(QString::fromLatin1(ProjectDatabase::BookmarksState),
+               QJsonDocument(bookmarks_).toJson(QJsonDocument::Compact));
+  state.insert(QString::fromLatin1(ProjectDatabase::DesktopState),
                KDDockWidgets::LayoutSaver().serializeLayout());
   return state;
 }
@@ -3416,13 +3416,20 @@ QHash<QString, QByteArray> MainWindow::projectState() const {
 void MainWindow::restoreProjectState() {
   const auto &state = session_.databaseState();
   const auto location =
-      QJsonDocument::fromJson(state.value(QString::fromLatin1(LocationState)))
+      QJsonDocument::fromJson(
+          state.value(QString::fromLatin1(ProjectDatabase::LocationState)))
           .object();
-  if (const auto bookmarks = QJsonDocument::fromJson(
-          state.value(QString::fromLatin1(BookmarksState)));
-      bookmarks.isArray() && !bookmarks.array().isEmpty())
-    setBookmarks(bookmarks.array());
-  if (const auto desktop = state.value(QString::fromLatin1(DesktopState));
+  // The project's bookmarks, else those this machine's settings kept for it.
+  QJsonArray rows =
+      QJsonDocument::fromJson(
+          state.value(QString::fromLatin1(ProjectDatabase::BookmarksState)))
+          .array();
+  if (rows.isEmpty())
+    for (const auto &row : QSettings().value(bookmarksKey()).toList())
+      rows.append(QJsonObject::fromVariantMap(row.toMap()));
+  showBookmarks(rows);
+  if (const auto desktop =
+          state.value(QString::fromLatin1(ProjectDatabase::DesktopState));
       !desktop.isEmpty() &&
       !KDDockWidgets::LayoutSaver().restoreLayout(desktop))
     output_->append(
@@ -3459,20 +3466,39 @@ void MainWindow::navigateInitialAddress() {
   restoreGraph_ = false;
 }
 
-QJsonArray MainWindow::bookmarks() const {
-  QJsonArray rows;
-  for (const auto &row : QSettings().value(bookmarksKey()).toList())
-    rows.append(QJsonObject::fromVariantMap(row.toMap()));
-  return rows;
+void MainWindow::showBookmarks(const QJsonArray &rows) {
+  bookmarks_ = rows;
+  if (auto *chooser = choosers_.value(int(ChooserKind::Bookmarks)))
+    chooser->model().setLocalRows(rows);
 }
 
 void MainWindow::setBookmarks(const QJsonArray &rows) {
-  QVariantList list;
-  for (const auto &row : rows)
-    list.append(row.toObject().toVariantMap());
-  QSettings().setValue(bookmarksKey(), list);
-  if (auto *chooser = choosers_.value(int(ChooserKind::Bookmarks)))
-    chooser->model().setLocalRows(rows);
+  showBookmarks(rows);
+  // A read-only project is another workbench's to write; its bookmarks stay
+  // in this machine's settings.
+  if (session_.readOnly()) {
+    QVariantList list;
+    for (const auto &row : rows)
+      list.append(row.toObject().toVariantMap());
+    QSettings().setValue(bookmarksKey(), list);
+    return;
+  }
+  session_.saveBookmarks(rows);
+}
+
+void MainWindow::packDatabase() {
+  if (!session_.loaded())
+    return;
+  const auto path = QFileDialog::getSaveFileName(
+      this, tr("Pack database"), session_.databasePath(),
+      tr("NeverD databases (*%1)")
+          .arg(QLatin1String(ProjectDatabase::Extension)));
+  if (path.isEmpty())
+    return;
+  session_.packDatabase(path.endsWith(QLatin1String(ProjectDatabase::Extension),
+                                      Qt::CaseInsensitive)
+                            ? path
+                            : path + QLatin1String(ProjectDatabase::Extension));
 }
 
 QString MainWindow::bookmarksKey() const {
@@ -3517,7 +3543,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     event->ignore();
     return;
   }
-  // The database remembers where the user was, like the desktop does.
+  // The project remembers where the user was, like the desktop does.
   if (session_.loaded())
     session_.saveDatabaseState();
   KDDockWidgets::LayoutSaver().saveToFile(layoutPath());

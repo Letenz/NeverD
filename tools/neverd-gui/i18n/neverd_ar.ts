@@ -60,6 +60,14 @@
         <translation>حفظ التعليقات والسجل بجوار الملف الثنائي</translation>
     </message>
     <message>
+        <source>Pac&amp;k database...</source>
+        <translation>حزم قاعدة البيانات(&amp;K)...</translation>
+    </message>
+    <message>
+        <source>Write the project and its binary into one NeverD database file</source>
+        <translation>كتابة المشروع وملفه الثنائي في ملف قاعدة بيانات NeverD واحد</translation>
+    </message>
+    <message>
         <source>&amp;Close</source>
         <translation>إغلاق(&amp;C)</translation>
     </message>
@@ -1957,6 +1965,10 @@ Double-click to go to the declaration.</source>
         <translation>تم تغيير التعليقات. هل تريد حفظها قبل المتابعة؟</translation>
     </message>
     <message>
+        <source>%1 lacks the latest changes. Save them into it before continuing?</source>
+        <translation>تفتقر %1 إلى آخر التغييرات. هل تريد حفظها فيها قبل المتابعة؟</translation>
+    </message>
+    <message>
         <source>Cannot jump to %1: %2</source>
         <translation>تعذّر الانتقال إلى %1: %2</translation>
     </message>
@@ -2157,6 +2169,14 @@ Signed: %4</source>
     <message>
         <source>Create LST file</source>
         <translation>إنشاء ملف LST</translation>
+    </message>
+    <message>
+        <source>Pack database</source>
+        <translation>حزم قاعدة البيانات</translation>
+    </message>
+    <message>
+        <source>NeverD databases (*%1)</source>
+        <translation>قواعد بيانات NeverD (*%1)</translation>
     </message>
     <message>
         <source>Cannot write %1</source>

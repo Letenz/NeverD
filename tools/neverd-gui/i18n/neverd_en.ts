@@ -60,6 +60,14 @@
         <translation>Save comments and history beside the binary</translation>
     </message>
     <message>
+        <source>Pac&amp;k database...</source>
+        <translation>Pac&amp;k database...</translation>
+    </message>
+    <message>
+        <source>Write the project and its binary into one NeverD database file</source>
+        <translation>Write the project and its binary into one NeverD database file</translation>
+    </message>
+    <message>
         <source>&amp;Close</source>
         <translation>&amp;Close</translation>
     </message>
@@ -1933,6 +1941,10 @@ Double-click to go to the declaration.</translation>
         <translation>Comments were changed. Save them before continuing?</translation>
     </message>
     <message>
+        <source>%1 lacks the latest changes. Save them into it before continuing?</source>
+        <translation>%1 lacks the latest changes. Save them into it before continuing?</translation>
+    </message>
+    <message>
         <source>Cannot jump to %1: %2</source>
         <translation>Cannot jump to %1: %2</translation>
     </message>
@@ -2133,6 +2145,14 @@ Signed: %4</translation>
     <message>
         <source>Create LST file</source>
         <translation>Create LST file</translation>
+    </message>
+    <message>
+        <source>Pack database</source>
+        <translation>Pack database</translation>
+    </message>
+    <message>
+        <source>NeverD databases (*%1)</source>
+        <translation>NeverD databases (*%1)</translation>
     </message>
     <message>
         <source>Cannot write %1</source>

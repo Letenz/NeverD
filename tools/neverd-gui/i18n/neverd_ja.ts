@@ -60,6 +60,14 @@
         <translation>コメントと履歴をバイナリと同じ場所に保存します</translation>
     </message>
     <message>
+        <source>Pac&amp;k database...</source>
+        <translation>データベースにパック(&amp;K)...</translation>
+    </message>
+    <message>
+        <source>Write the project and its binary into one NeverD database file</source>
+        <translation>プロジェクトとそのバイナリを 1 つの NeverD データベースファイルに書き込みます</translation>
+    </message>
+    <message>
         <source>&amp;Close</source>
         <translation>閉じる(&amp;C)</translation>
     </message>
@@ -1927,6 +1935,10 @@ Double-click to go to the declaration.</source>
         <translation>コメントが変更されました。続行する前に保存しますか？</translation>
     </message>
     <message>
+        <source>%1 lacks the latest changes. Save them into it before continuing?</source>
+        <translation>%1 には最新の変更が含まれていません。続行する前に保存しますか？</translation>
+    </message>
+    <message>
         <source>Cannot jump to %1: %2</source>
         <translation>%1 へジャンプできません：%2</translation>
     </message>
@@ -2127,6 +2139,14 @@ Signed: %4</source>
     <message>
         <source>Create LST file</source>
         <translation>LST ファイルを作成</translation>
+    </message>
+    <message>
+        <source>Pack database</source>
+        <translation>データベースにパック</translation>
+    </message>
+    <message>
+        <source>NeverD databases (*%1)</source>
+        <translation>NeverD データベース (*%1)</translation>
     </message>
     <message>
         <source>Cannot write %1</source>

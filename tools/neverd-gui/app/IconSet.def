@@ -71,6 +71,7 @@ NEVERD_ICON("symbol_file", File, "a page with a name tag")
 NEVERD_ICON("dwarf_file", File, "a page with a tree of entries")
 NEVERD_ICON("map_file", File, "a page with a table of addresses and names")
 NEVERD_ICON("save", File, "a floppy disk")
+NEVERD_ICON("pack_database", File, "an arrow into a database cylinder")
 NEVERD_ICON("close", File, "a page with a cross")
 NEVERD_ICON("exit", File, "a door with an arrow leaving it")
 
