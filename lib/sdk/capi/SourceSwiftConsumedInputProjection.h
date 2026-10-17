@@ -176,7 +176,6 @@ public:
     for (const auto &F : Result.MedFuncs)
       Names.emplace(F.Entry, F.Name);
     Converter.setFuncNames(&Names);
-    Converter.setJumpTables(Current->Low->JumpTables);
     const auto MedReplay = Converter.convert(*Current->Med, Image.Arch);
     using namespace swift_consumed_input_detail;
     if (!sameBody(*Rebuilt->High, *Current->High, Image) ||
