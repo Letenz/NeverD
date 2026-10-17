@@ -51,7 +51,8 @@ public:
     QString inputName, inputSha256;
     qint64 inputSize = 0;
     QString generator, savedAt;
-    /// Sidecar file suffix (".neverd-annotations.json") -> bytes.
+    /// A project file by the key the database names it
+    /// (sidecarSuffixes(): ".neverd-annotations.json") -> bytes.
     QHash<QString, QByteArray> sidecars;
     /// The suffixes the database packed when it was saved, stored or not; a
     /// database saved before a kind of file was packed leaves that kind
