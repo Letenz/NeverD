@@ -2329,6 +2329,9 @@ scalar ranges and frame intervals consume one saturating budget, including
 nested queries. Interval regressions reject independent rootless cycles and
 mutually seeded recurrences that eventually grow into another stack slot;
 reversing PHI-arm order must preserve the result.
+`LLVMFrameSlotProof.ParallelStackPointerPhisAnchorOnlyInOneBlock` accepts an
+i386 back edge that returns ESP through the RSP PHI of the same header, and
+refuses the same RSP PHI placed in another block.
 Repeated reaching-store iterations and successor edges reuse an unbound alias
 proof only for the identical address and write width within that one reload
 query. Overlapping and differently sized writes retain their independent
@@ -7103,8 +7106,18 @@ answer. `RegistrationCallABI.ReturningStackProofDoesNotNormalizeTheX87Stack`
 keeps the stack proof for bodies whose x87 normalization alone is incomplete
 or splits blocks by TOP, and for FXAM with a proved or unproved tag.
 `RegistrationCallABI.ScalarReturnDescribesEAXBesideAnX87Result` pins the leaf
-contract's EAX result for a leaf that also returns an x87 value. `NeverDX87CallGraphTests` provides the focused `X87CallStack.*` and
+contract's EAX result for a leaf that also returns an x87 value.
+`RegistrationCallABI.RecordedStackPopsChargeTheirFreshWork` checks that a
+recorded stack-pop answer charges the work of the fresh proof: the answer and
+an exhausted caller budget match a fresh proof, answers of another SEH
+analysis level stay apart, and another image object never reads the record.
+`NeverDX87CallGraphTests` provides the focused `X87CallStack.*` and
 `X87CallGraphCache.*` checks for the shared-cache and invocation boundaries.
+
+`MedStackDelta.*` (in `NeverDLiftTests`) resolves the stack-pointer offset
+behind 64 joins in a row, each merging two arms; every path reaches the live-in
+stack pointer exactly at the depth limit, and one more join exceeds it.
+`NeverDGraphCyclesTests` checks component grouping and a million-node chain.
 
 `MedCxxContinuationFrame.ProtectedSourcesFollowCompactedBlockIdentities` uses
 native jump blocks removed before SSA. Both asynchronous and synchronous
