@@ -143,6 +143,28 @@ before nesting. It reports a record whose nesting does not flatten back to the
 stream's member list, or whose members cannot sit where they say
 (`layoutProblem`).
 
+`importDWARFTypes` reads every named structure, union, class, enumeration
+and typedef of a program's DWARF units, C's, C++'s, Rust's and Go's, which
+a session with DWARF reads as its local types (`DWARFDebugContext::
+withDWARFContext`). DWARF keeps a record as its source declares it, so
+nothing is rebuilt: anonymous members stay in place, bit-fields keep their
+bits, in the storage unit of their type that holds them as a declared
+record's layout gives it (`layOutRecord`), and a structure holds its members
+by offset, since Rust reorders its fields. Packing and a declared alignment
+are inferred from the offsets and the size, as for a PDB. Types are named as
+the DWARF debug context names the records the decompiler reads
+(`llvm::dumpTypeQualifiedName`): within their namespaces and records for C++
+and Rust (`crate::module::Type`), with their package for Go (`main.Point`).
+A typedef of an anonymous record names it, as C's declarations read; a
+typedef of a record of its own name is that record. The same name in many
+units, as a header's types are, is one type, the first definition, which a
+declaration elsewhere names; another unit's definition of another size is
+reported as a conflict. A record DWARF describes in a way local types do not
+hold, such as a Rust enumeration's variants or a virtual base, is left out
+with the reason (`DWARFTypeImportStats::Skipped`), as is one whose members
+cannot sit where they say. A base type local types do not spell, such as a
+complex number, holds its bytes.
+
 `renderType` and `renderTypes` spell types as C, C++, Rust, Go, Python,
 JavaScript or Lua (`TypeLanguages.def`), each member marked with its
 offset. Builtins take the spellings each language has (`TypeLanguages.def`
@@ -4582,6 +4604,12 @@ while `LinuxServices.cpp` remains the authoritative kernel-service dispatcher
 for both Linux processes and Android native workloads. An optional runtime
 instruction observer receives only attempts admitted by `ExecutionSession`'s
 existing budget; OS models do not replace CPU hooks to collect traces.
+Selected Android execution observations instead use `ExecutionSession` watches
+to read stopped scalar state and explicit memory. `AndroidObservation` owns
+shared C++/JSON admission and capture, and the runtime owns watch continuation.
+Checked quantum boundaries precede a watch of the next instruction, so a
+cooperatively selected thread cannot inherit another thread's skipped watch.
+Observation stops preserve the current quantum and do not charge a service.
 The device API query reads the explicit immutable property catalogue and shares
 `AndroidStrings`' bounded decimal conversion with `atoi`. The reported property
 does not select a different Bionic ABI or infer a Linux kernel contract.
@@ -5011,6 +5039,15 @@ subset. CPU transport availability does not imply arbitrary OS compatibility.
 `driver-strict` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native Windows x64 CI with Unicorn disabled passes all 359 required checks: 131 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). Native ARM64 runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
 
 Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profile. `NativeLegacyX64` describes native x64 driver execution. `NeverDNativeDriverTests` validates the original corpus and can run with Unicorn disabled.
+
+`UnicornStepper` invalidates translated blocks at each stopped entry because
+host backing writes can bypass the engine's store hooks. A one-instruction
+entry removes blocks covering its first byte through the current mapping;
+this also retires a cross-page instruction whose operand bytes changed. Each
+later entry performs the same check, including executable aliases. Direct
+runs and multi-instruction maintenance retain full invalidation, as does an
+entry whose exclusive invalidation end would wrap. This transport policy does
+not change instruction admission, memory transactions or stop/deadline checks.
 
 Checked ARM64 has one complete state boundary. `Registers.def` defines 39 scalar fields and 32 128-bit vectors; `captureAArch64State` stages every read, applies declared widths and NZCV normalization, then publishes once. Unicorn, KVM, WHP and HVF transfer the same inventory, including TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR and FPSR. Native adapters enable FP/SIMD through CPACR_EL1. Any scalar/vector read failure or cancelled entry preserves all caller state.
 

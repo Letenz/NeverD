@@ -3702,10 +3702,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>لا يعرّف ملف PDB أي أنواع.</translation>
     </message>
     <message>
-        <source>No local types: this program has no PDB with types.</source>
-        <translation>لا توجد أنواع محلية: لا يملك هذا البرنامج ملف PDB فيه أنواع.</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>أنواع لا يطابق تخطيطها ما يسرده PDB: %1</translation>
     </message>
@@ -3764,10 +3760,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>(padding)</source>
         <translation>(حشو)</translation>
-    </message>
-    <message>
-        <source>Double-click to open %1</source>
-        <translation>انقر نقرًا مزدوجًا لفتح %1</translation>
     </message>
     <message>
         <source>Export local types</source>
@@ -3992,6 +3984,56 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Lua (*.lua)</source>
         <translation>Lua ‎(*.lua)</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n members</source>
+        <translation>
+            <numerusform>%n من الأعضاء</numerusform>
+            <numerusform>%n من الأعضاء</numerusform>
+            <numerusform>%n من الأعضاء</numerusform>
+            <numerusform>%n من الأعضاء</numerusform>
+            <numerusform>%n من الأعضاء</numerusform>
+            <numerusform>%n من الأعضاء</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Ctrl+click to open</source>
+        <translation>Ctrl+نقرة للفتح</translation>
+    </message>
+    <message>
+        <source>Double-click or Ctrl+click to open %1</source>
+        <translation>انقر نقرًا مزدوجًا أو Ctrl+نقرة لفتح %1</translation>
+    </message>
+    <message>
+        <source>bits %1 of the unit at %2</source>
+        <translation>البتات %1 من الوحدة عند %2</translation>
+    </message>
+    <message>
+        <source>at %1, %2 bytes</source>
+        <translation>عند %1، %2 بايت</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>من DWARF</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>%n من DWARF</numerusform>
+            <numerusform>%n من DWARF</numerusform>
+            <numerusform>%n من DWARF</numerusform>
+            <numerusform>%n من DWARF</numerusform>
+            <numerusform>%n من DWARF</numerusform>
+            <numerusform>%n من DWARF</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>لا يعرّف DWARF أي أنواع.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>لا توجد أنواع محلية: لا يحتوي هذا البرنامج على PDB أو DWARF بأنواع.</translation>
     </message>
 </context>
 <context>

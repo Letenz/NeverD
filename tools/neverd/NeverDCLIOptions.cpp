@@ -1000,8 +1000,9 @@ cl::opt<std::string>
                 cl::init(""), cl::value_desc("text"), cl::sub(TypesCmd));
 cl::opt<std::string>
     TypesOrigin("origin",
-                cl::desc("List the types of one origin: pdb, header (a "
-                         "header library NeverD ships) or user (--declare)"),
+                cl::desc("List the types of one origin: pdb, dwarf, header "
+                         "(a header library NeverD ships) or user "
+                         "(--declare)"),
                 cl::init(""), cl::value_desc("origin"), cl::sub(TypesCmd));
 cl::opt<std::string>
     TypesLanguage("lang",

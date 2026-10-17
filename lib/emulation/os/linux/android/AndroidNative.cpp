@@ -6,6 +6,7 @@
 #include "../../../runtime/RuntimeValues.h"
 #include "AndroidInternal.h"
 #include "AndroidLog.h"
+#include "AndroidObservation.h"
 #include "AndroidThreads.h"
 
 #include "neverd/emulation/ExecutionSession.h"
@@ -57,6 +58,13 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         Read.Address > UINT64_MAX - Read.Size)
       return failure(diagnostic::SnapshotLimits);
     ReportSize += Read.Size;
+  }
+  if (Native.ObserveExecution) {
+    auto Bytes = executionObservationBytes(*Native.ObserveExecution,
+                                           Options.OutputLimit - ReportSize);
+    if (!Bytes)
+      return Bytes.takeError();
+    ReportSize += *Bytes;
   }
   uint64_t SymbolCount = 0, CatalogBytes = 0;
   if (Native.LogRecords)
@@ -125,7 +133,12 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     if (auto E = initializeMemoryRegion(**Space, Region, *Resources))
       return std::move(E);
   }
-  for (const auto &Read : Native.ReadMemory) {
+  auto EntryReads = Native.ReadMemory;
+  if (Native.ObserveExecution)
+    EntryReads.insert(EntryReads.end(),
+                      Native.ObserveExecution->ReadMemory.begin(),
+                      Native.ObserveExecution->ReadMemory.end());
+  for (const auto &Read : EntryReads) {
     if (!Read.RequireMappedAtEntry)
       continue;
     auto Accessible = (*Space)->canAccess(Read.Address, Read.Size,
@@ -176,6 +189,14 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   if (!Session)
     return Session.takeError();
   auto &CPU = (*Session)->cpu();
+  if (Native.ObserveExecution) {
+    Result.ExecutionObservationsEnabled = true;
+    std::vector<ExecutionWatch> Watches;
+    for (uint64_t PC : Native.ObserveExecution->PCs)
+      Watches.push_back({PC, 4});
+    if (auto E = (*Session)->watchExecution(std::move(Watches)))
+      return std::move(E);
+  }
   linux_model::LinuxServices Kernel(CPU, Layout, Linked->InitialBreak, Options,
                                     Result);
   GuestThreads Threads(CPU, *Calls, Options, Result, Kernel.clock(),
@@ -217,6 +238,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   };
   bool NeedSchedule = false;
   uint64_t QuantumRemaining = Options.InstructionQuantum;
+  bool ResumeObservation = false;
   auto FinishThread = [&](uint64_t Value, uint32_t ExitStatus = 0) {
     if (!Threads.callbacks().empty()) {
       Result.Stop = ProcessStopReason::UnsupportedService;
@@ -270,6 +292,9 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       NeedSchedule = false;
       QuantumRemaining = Options.InstructionQuantum;
     }
+    if (!QuantumRemaining || (!Threads.enabled() && !ResumeObservation))
+      QuantumRemaining = Options.InstructionQuantum;
+    ResumeObservation = false;
     if (auto E = Kernel.synchronizeDevices()) {
       RuntimeFailure(std::move(E));
       break;
@@ -277,12 +302,9 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     TraceThreadID = Threads.id();
     auto &Callbacks = Threads.callbacks();
     const uint64_t Before = Resources->instructions();
-    auto Exit = (*Session)->run(Result.PC, Threads.enabled()
-                                               ? QuantumRemaining
-                                               : Options.InstructionQuantum);
-    if (Threads.enabled())
-      QuantumRemaining -=
-          std::min(QuantumRemaining, Resources->instructions() - Before);
+    auto Exit = (*Session)->run(Result.PC, QuantumRemaining);
+    QuantumRemaining -=
+        std::min(QuantumRemaining, Resources->instructions() - Before);
     if (!Exit) {
       RuntimeFailure(Exit.takeError());
       break;
@@ -294,6 +316,29 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       break;
     }
     Result.PC = (*PC)[0];
+    if (Exit->Kind == SessionExitKind::ExecutionWatch) {
+      const auto &Observation = *Native.ObserveExecution;
+      if (Result.ExecutionObservations.size() == Observation.Limit) {
+        Result.ExecutionObservationsTruncated = true;
+        if (auto E = (*Session)->watchExecution({})) {
+          RuntimeFailure(std::move(E));
+          break;
+        }
+      } else {
+        auto Captured = captureExecutionObservation(CPU, Observation, Result.PC,
+                                                    Threads.id(),
+                                                    Resources->instructions());
+        if (!Captured) {
+          RuntimeFailure(Captured.takeError());
+          break;
+        }
+        Result.ExecutionObservations.push_back(std::move(*Captured));
+      }
+      // A read-only stop consumes neither a scheduling quantum nor a service
+      // event. Resume the watched instruction in this same thread.
+      ResumeObservation = true;
+      continue;
+    }
     if ((Exit->Kind == SessionExitKind::Quantum ||
          (Exit->Kind == SessionExitKind::CPU && Result.LastCPUExit &&
           Result.LastCPUExit->Kind == ExecutionExitKind::ServiceRequest)) &&

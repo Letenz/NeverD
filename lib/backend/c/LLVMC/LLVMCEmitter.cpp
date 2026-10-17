@@ -424,6 +424,10 @@ void LLVMCWriter::writeRecordDefinitions(llvm::StringRef Text) {
   Named.reserve(Words.size());
   for (const std::string &Word : Words)
     Named.push_back(NdType::makeNamedRecord(Word, 0));
+  // And the records whose members it reads, which it need not spell.
+  for (const std::string &Name : MemberRecords)
+    if (!Words.count(Name))
+      Named.push_back(NdType::makeNamedRecord(Name, 0));
   CRecordDefinitions Definitions = Opts.RecordDefinitions(Named);
   // The records and enumerations the text spells by their tags' names,
   // which typedefs of those names declare.
