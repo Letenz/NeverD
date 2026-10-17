@@ -513,6 +513,13 @@ has the same early return beside a virtual tail call.
 Build and run `NeverDSessionLLVMTests` as well: its private Session queries
 link the actual local-type/debug implementations and shared atomic sidecar
 helper into the test executable. It must not acquire a libneverd dependency.
+This standalone link includes the real project-input recorder through the
+sidecar owner; information panels must not be required to resolve it. Run
+`SessionCAPITest.InputSha256IsTheHashOfTheLoadedFile` and the existing sidecar
+persistence/failure tests against the shared SDK when changing these owners.
+`SidecarWritesRecordInputAndKeepAMatchingManifest` checks that saving a sidecar
+records the real input, public queries agree, and recording the same input
+preserves other manifest fields and bytes.
 `scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
 decompiles with the prototypes an IDA dump shows; it decompiles each
 function by address and resolves IDA's typedefs through the shipped headers:
