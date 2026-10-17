@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "../../../runtime/RuntimeValues.h"
 #include "AndroidInternal.h"
+#include "AndroidLog.h"
 #include "AndroidThreads.h"
 
 #include "neverd/emulation/ExecutionSession.h"
@@ -19,6 +20,8 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       !Options.Environment.empty())
     return failure(diagnostic::NativeOptions);
   const auto &Native = *Options.Android;
+  if (auto E = validateLogRecords(Native.LogRecords))
+    return std::move(E);
   if (!Native.ThreadLimit ||
       Native.ThreadLimit > thread_model::MaximumIdentities ||
       (Native.DrainThreads && Native.ThreadLimit == 1))
@@ -56,6 +59,9 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     ReportSize += Read.Size;
   }
   uint64_t SymbolCount = 0, CatalogBytes = 0;
+  if (Native.LogRecords)
+    for (const auto &Record : *Native.LogRecords)
+      CatalogBytes += 28 + Record.Payload.size();
   if (Native.Libraries.size() > 256)
     return failure(diagnostic::LibraryCount);
   for (const auto &[Library, Symbols] : Native.Libraries) {

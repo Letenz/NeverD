@@ -6628,6 +6628,11 @@ fdopen access checks and buffer sizing; it does not reopen a path or duplicate
 a cursor. Unknown metadata remains unsupported. Each modeled call completes
 atomically within the cooperative scheduler, while errno stays in caller TLS.
 
+`AndroidLog` owns liblog list/logger identities and snapshot cursors. Its shared
+admission validates both JSON and C++ input; each read emits the same v4 packet
+from explicit visible records. Opaque guest tokens share the Linux memory owner.
+No logd transport or permission state is inferred. See [Android log readers](android-log-reader.md).
+
 `AndroidProperties` builds one immutable guest property table from explicit
 inputs. Name lookup, stable `prop_info` identities, serials, legacy reads and
 callback strings share those records; the device API-level query uses the same

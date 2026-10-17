@@ -6169,6 +6169,13 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 
 ### Android native workloads
 
+`AndroidLog.*` checks the five liblog reader operations with independent O0/O2
+callers, ordinary/APS2/RELR relocations and Unicorn/HVF. It compares complete
+v4 message bytes, PID/time/tail selection, exact-time exclusion, separate cursors,
+reopening, provider identity, handle retirement, errno and unsupported inputs.
+`AndroidLogOptions.*` checks strict JSON admission; the same validator admits
+C++ snapshots before execution. See [Android log readers](android-log-reader.md).
+
 `AndroidDevices.*` runs independent O0/O2 callers with ordinary, APS2 and RELR
 relocations. Raw, named, variadic and dynamic ioctl routes check full buffers,
 errno, scalar argument width, independent opens, descriptor reuse and provider
