@@ -16,6 +16,7 @@
 
 #include "../CIdentifier.h"
 #include "../CSourceRecorder.h"
+#include "../DebugParamBinding.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/pass/LLVMC/LLVMCPasses.h"
@@ -902,7 +903,23 @@ public:
   const llvm::Argument *DebugThisArg = nullptr;
   /// The type the debug information gives each parameter.
   std::map<const llvm::Argument *, TypeRef> ParamDebugTypes;
-  va_t FunctionEntry = 0;
+  /// The debug parameter each argument holds, bound by where the convention
+  /// passes it (bindDebugParams), and the name each reads as.  Unbound for
+  /// an MSVC indirect result, whose arguments keep their positions.
+  std::vector<DebugParamBinding> ArgDebugBindings;
+  std::vector<std::string> ArgDebugNames;
+  bool DebugArgsBound = false;
+  /// Binds the debug signature's parameters to \p Fn's arguments.
+  void bindDebugArguments(const llvm::Function &Fn);
+  /// The name the debug signature gives \p Arg, or empty.
+  std::string debugArgumentName(const llvm::Argument &Arg) const;
+  /// The debug parameter argument \p ArgNo holds whole, past an MSVC
+  /// indirect result at \p SretParamIdx; none when it holds none.
+  std::optional<size_t> debugParamIndexOf(unsigned ArgNo,
+                                          int SretParamIdx) const;
+  /// The function's address in the image, which a relocatable object's
+  /// first function has as zero; none for a function of no address.
+  std::optional<va_t> FunctionEntry;
   const llvm::AllocaInst *SyntheticFrame = nullptr;
   uint64_t FrameBaseOffset = 0;
   /// PDB stack-pointer offset -> frame-alloca offset of an address-taken use.

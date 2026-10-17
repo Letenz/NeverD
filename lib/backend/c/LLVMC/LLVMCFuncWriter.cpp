@@ -19,6 +19,7 @@
 #include "LLVMCWriter.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/ParameterSites.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -2389,7 +2390,10 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   DebugThisRecord = nullptr;
   DebugThisArg = nullptr;
   ParamDebugTypes.clear();
-  FunctionEntry = 0;
+  ArgDebugBindings.clear();
+  ArgDebugNames.clear();
+  DebugArgsBound = false;
+  FunctionEntry.reset();
   SyntheticFrame = nullptr;
   FrameBaseOffset = 0;
   SpLocalOwner.clear();
@@ -2420,11 +2424,11 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   PhiTailIncoming = nullptr;
 
   if (auto VAOr = rewrite_source::getOriginalVA(Fn)) {
-    if (*VAOr && **VAOr)
+    if (*VAOr)
       FunctionEntry = static_cast<va_t>(**VAOr);
   }
   if (Dbg && FunctionEntry) {
-    if (auto FS = Dbg->resolveFunction(FunctionEntry)) {
+    if (auto FS = Dbg->resolveFunction(*FunctionEntry)) {
       DebugFn = std::move(*FS);
       // The declaration names the arguments by position.  An i386 function
       // declared to take every argument on the stack takes no register: one
@@ -2436,7 +2440,25 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
                          DebugFn->CallConv != DebugCallConv::Stdcall &&
                          DebugFn->CallConv != DebugCallConv::Unknown) ||
                         Fn.arg_size() <= DebugFn->Params.size();
-      if (DebugPositional && !Fn.arg_empty() && !DebugFn->Params.empty() &&
+      bindDebugArguments(Fn);
+      // The record the first parameter points to is reached through the
+      // argument that holds that pointer, where the convention put it.  A
+      // record whose bytes arrive in registers has no address there.
+      llvm::Argument *FirstAddress = nullptr;
+      if (DebugArgsBound) {
+        TypeRef First;
+        if (!DebugFn->Params.empty())
+          First = DebugFn->Params[0].second;
+        for (llvm::Argument &Arg : Fn.args()) {
+          const DebugParamBinding &B = ArgDebugBindings[Arg.getArgNo()];
+          if (B.Index == 0 && B.Whole && First &&
+              First->Kind == NdTypeKind::Ptr)
+            FirstAddress = &Arg;
+        }
+      } else if (DebugPositional && !Fn.arg_empty()) {
+        FirstAddress = Fn.getArg(0);
+      }
+      if (FirstAddress && !DebugFn->Params.empty() &&
           DebugFn->Params[0].second) {
         TypeRef Ty = DebugFn->Params[0].second;
         TypeRef Rec = Ty;
@@ -2445,14 +2467,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
         if (Rec && Rec->Kind == NdTypeKind::Struct &&
             !Rec->SourceName.empty()) {
           DebugThisRecord = Rec;
-          DebugThisArg = Fn.getArg(0);
-          std::string ThisName = "this";
-          if (!DebugFn->Params[0].first.empty())
-            ThisName = DebugFn->Params[0].first;
-          ValNames[DebugThisArg] = ThisName;
-          if (Fn.arg_size() > 1 && DebugFn->Params.size() > 1 &&
-              !DebugFn->Params[1].first.empty())
-            ValNames[Fn.getArg(1)] = DebugFn->Params[1].first;
+          DebugThisArg = FirstAddress;
         }
       }
     }
@@ -2473,7 +2488,13 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
       std::string Raw;
       if (Sret >= 0 && static_cast<int>(ParamIdx) == Sret)
         Raw = "result";
-      else if (DebugFn && DebugPositional) {
+      else if (DebugArgsBound) {
+        Raw = ArgDebugNames[ParamIdx];
+        if (const std::optional<size_t> DebugIdx =
+                debugParamIndexOf(ParamIdx, -1);
+            DebugIdx && DebugFn->Params[*DebugIdx].second)
+          ParamDebugTypes[&Arg] = DebugFn->Params[*DebugIdx].second;
+      } else if (DebugFn && DebugPositional) {
         size_t DebugIdx = ParamIdx;
         if (Sret >= 0 && static_cast<int>(ParamIdx) > Sret)
           DebugIdx = static_cast<size_t>(ParamIdx - 1);
@@ -2528,7 +2549,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
         return Var->Type->Size;
       if (!Dbg || !FunctionEntry)
         return 0;
-      auto Var = Dbg->resolveVariable(FunctionEntry, Disp);
+      auto Var = Dbg->resolveVariable(*FunctionEntry, Disp);
       if (!Var || !Var->Type)
         return 0;
       Dbg->completeType(Var->Type);
@@ -2647,12 +2668,85 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   ConditionChainBodies.clear();
 }
 
+void LLVMCWriter::bindDebugArguments(const llvm::Function &Fn) {
+  ArgDebugBindings.clear();
+  ArgDebugNames.clear();
+  DebugArgsBound = false;
+  // An MSVC indirect result keeps its arguments' positions.
+  if (!DebugFn ||
+      (!Opts.PreserveLLVMFunctionTypes &&
+       isMsvcIndirectReturn(DebugFn->ReturnType, Opts.TheArch, Opts.Format)))
+    return;
+  // Where each argument arrives, as the lifted function records it; an
+  // argument of no recorded place binds by position, as an integer prefix.
+  const auto Recorded = parameter_sites::getParameterSites(Fn);
+  std::vector<RecoveredParamSite> Sites;
+  for (const llvm::Argument &Arg : Fn.args()) {
+    RecoveredParamSite Site;
+    if (Recorded) {
+      Site.RegOff = (*Recorded)[Arg.getArgNo()].RegOff;
+      Site.MedIndex = static_cast<int>((*Recorded)[Arg.getArgNo()].MedIndex);
+    }
+    if (Arg.getType()->isSized())
+      Site.Bytes = static_cast<uint16_t>(
+          Fn.getDataLayout().getTypeStoreSize(Arg.getType()));
+    Sites.push_back(Site);
+  }
+  DebugParamBindings Bound =
+      bindDebugParams(Opts.TheArch, Opts.Format, *DebugFn, Sites, Dbg);
+  ArgDebugBindings = std::move(Bound.Params);
+  DebugArgsBound = true;
+  // A piece's name, `result` or a source name can meet another argument's;
+  // every argument keeps its machine name then.
+  std::set<std::string> Spelled;
+  for (const DebugParamBinding &Binding : ArgDebugBindings) {
+    ArgDebugNames.push_back(debugParamName(*DebugFn, Binding));
+    if (!ArgDebugNames.back().empty() &&
+        !Spelled.insert(ArgDebugNames.back()).second) {
+      ArgDebugNames.assign(ArgDebugBindings.size(), {});
+      break;
+    }
+  }
+}
+
+std::string LLVMCWriter::debugArgumentName(const llvm::Argument &Arg) const {
+  if (!DebugFn)
+    return {};
+  if (DebugArgsBound)
+    return Arg.getArgNo() < ArgDebugNames.size() ? ArgDebugNames[Arg.getArgNo()]
+                                                 : std::string();
+  return Arg.getArgNo() < DebugFn->Params.size()
+             ? DebugFn->Params[Arg.getArgNo()].first
+             : std::string();
+}
+
+std::optional<size_t> LLVMCWriter::debugParamIndexOf(unsigned ArgNo,
+                                                     int SretParamIdx) const {
+  if (!DebugFn)
+    return std::nullopt;
+  if (DebugArgsBound) {
+    if (ArgNo >= ArgDebugBindings.size())
+      return std::nullopt;
+    const DebugParamBinding &Binding = ArgDebugBindings[ArgNo];
+    if (!Binding.Whole || Binding.Index < 0 ||
+        static_cast<size_t>(Binding.Index) >= DebugFn->Params.size())
+      return std::nullopt;
+    return static_cast<size_t>(Binding.Index);
+  }
+  size_t DebugIdx = ArgNo;
+  if (SretParamIdx >= 0 && static_cast<int>(ArgNo) > SretParamIdx)
+    DebugIdx = static_cast<size_t>(static_cast<int>(ArgNo) - 1);
+  if (DebugIdx >= DebugFn->Params.size())
+    return std::nullopt;
+  return DebugIdx;
+}
+
 std::optional<FunctionSym>
 LLVMCWriter::debugFunction(const llvm::Function &Callee) const {
   if (!Dbg)
     return std::nullopt;
   if (auto VAOr = rewrite_source::getOriginalVA(Callee)) {
-    if (*VAOr && **VAOr)
+    if (*VAOr)
       if (auto FS = Dbg->resolveFunction(static_cast<va_t>(**VAOr)))
         return FS;
   }
@@ -3698,9 +3792,8 @@ std::string LLVMCWriter::composedReprintText(const llvm::Value *V) {
     if (const auto *Arg = llvm::dyn_cast<llvm::Argument>(Cur)) {
       if (auto It = ValNames.find(Arg); It != ValNames.end())
         return It->second;
-      if (DebugFn && Arg->getArgNo() < DebugFn->Params.size() &&
-          !DebugFn->Params[Arg->getArgNo()].first.empty())
-        return DebugFn->Params[Arg->getArgNo()].first;
+      if (std::string Name = debugArgumentName(*Arg); !Name.empty())
+        return Name;
       if (DebugThisArg == Arg)
         return "this";
       return {};
@@ -8940,11 +9033,10 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       if (std::string Ty = IndirectReturnTypeStr(); !Ty.empty())
         return Ty;
     }
-    size_t DebugIdx = ParamIdx;
-    if (SretParamIdx >= 0 && static_cast<int>(ParamIdx) > SretParamIdx)
-      DebugIdx = static_cast<size_t>(static_cast<int>(ParamIdx) - 1);
-    if (DebugFn && DebugIdx < DebugFn->Params.size()) {
-      TypeRef Ty = DebugFn->Params[DebugIdx].second;
+    const std::optional<size_t> DebugIdx =
+        debugParamIndexOf(ParamIdx, SretParamIdx);
+    if (DebugIdx) {
+      TypeRef Ty = DebugFn->Params[*DebugIdx].second;
       if (Ty && Ty->Kind == NdTypeKind::Ptr && Ty->Pointee &&
           Ty->Pointee->Kind == NdTypeKind::Struct &&
           !Ty->Pointee->SourceName.empty()) {
@@ -8995,13 +9087,12 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     return cNamedTypeSpelling(Ty->TypedefName);
   };
   auto ParamDecl = [&](llvm::Argument &Arg, unsigned ParamIdx) {
-    size_t DebugIdx = ParamIdx;
-    if (SretParamIdx >= 0 && static_cast<int>(ParamIdx) > SretParamIdx)
-      DebugIdx = static_cast<size_t>(static_cast<int>(ParamIdx) - 1);
+    const std::optional<size_t> DebugIdx =
+        debugParamIndexOf(ParamIdx, SretParamIdx);
     const bool Sret =
         SretParamIdx >= 0 && static_cast<int>(ParamIdx) == SretParamIdx;
-    if (!Sret && DebugFn && DebugIdx < DebugFn->Params.size()) {
-      const TypeRef &Ty = DebugFn->Params[DebugIdx].second;
+    if (!Sret && DebugIdx) {
+      const TypeRef &Ty = DebugFn->Params[*DebugIdx].second;
       if (const std::string Name = Alias(Ty, Arg.getType()); !Name.empty()) {
         if (PointerDebugType(Ty, Arg.getType()))
           PointerParams.insert(&Arg);
