@@ -2266,6 +2266,15 @@ guarded targets. These functions have their own object: a case that calls a
 function with the computed target still in X0 passes a pointer of unknown
 origin, which makes module arbitration treat every writable table in the same
 object as possibly modified.
+`JTE_AArch64.ZlibInflateDispatchReachesEveryMode` assembles zlib's `inflate`
+as GCC 15.2 compiles it for AArch64 (`test_jumptable_inflate_gcc_a64.s`). Its
+31-mode state loop dispatches through `ldrh w0, [x0, w1, uxtw #1]`, and its
+cases keep updating a 64-bit bit buffer. The test requires every target the
+halfword table encodes. It needs two resolver rules. Structural value matches
+must not resolve edge predicates: once the table's own targets are in the
+graph, the predicates of the loop's branches exhaust the candidate budget. The
+address role must follow the `uxtw` extension from the recorded index to its
+scale; the fallback search over every scale in the loop also exhausts it.
 
 `ModuleJumpTableBudget.*` uses a real ELF table inventory to separate the
 400000-operation input boundary from scan, retained-source, queue and cumulative
