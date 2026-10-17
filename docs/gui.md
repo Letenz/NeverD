@@ -79,7 +79,12 @@ Double-clicking a goto's label (`goto L_14024FAB5;`) moves the cursor to the
 label and the disassembly to the block it labels, as IDA's labels do; Back
 returns to the goto. Pseudocode and C name a label after its block's address,
 so the label's row maps to that block: clicking it, or Tab, goes there too.
-LLVM C numbers its labels, which name no address.
+LLVM C numbers its labels, which name no address. The record pseudocode
+declares for a function's stack is named after the function
+(`struct frame_140003FE0 { ... } stack_storage;`): double-clicking it,
+`stack_storage` or `frame_base` takes the disassembly to where the function
+begins, and double-clicking a member (`var_m32`) to the instruction of the
+first statement that reads or writes it, while the code stays.
 
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped

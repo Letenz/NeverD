@@ -63,6 +63,38 @@ labelDefinition(QStringView line) {
     return std::nullopt;
   return std::pair{line.left(end), address};
 }
+/// The function a frame record's name stands for: HighC declares a
+/// function's stack as a record named `frame_` and the function's address in
+/// hexadecimal (writeFunctionProjection in
+/// lib/backend/c/HighC/HighCFuncWriter.cpp), `frame_140003FE0`.
+std::optional<Address> frameRecordAddress(QStringView name) {
+  if (!name.startsWith(u"frame_") || name.size() == 6)
+    return std::nullopt;
+  for (const QChar digit : name.mid(6))
+    if (!((digit >= u'0' && digit <= u'9') || (digit >= u'A' && digit <= u'F')))
+      return std::nullopt;
+  bool valid = false;
+  const Address address = name.mid(6).toULongLong(&valid, 16);
+  if (!valid)
+    return std::nullopt;
+  return address;
+}
+
+/// Whether \p word stands alone in \p line, rather than in a longer name.
+bool containsWord(QStringView line, QStringView word) {
+  const auto identifier = [](QChar c) {
+    return c.isLetterOrNumber() || c == u'_';
+  };
+  for (qsizetype at = line.indexOf(word); at >= 0;
+       at = line.indexOf(word, at + 1)) {
+    const qsizetype end = at + word.size();
+    if ((at == 0 || !identifier(line[at - 1])) &&
+        (end == line.size() || !identifier(line[end])))
+      return true;
+  }
+  return false;
+}
+
 /// How often a drag beyond an edge scrolls the text.
 constexpr int DragScrollMs = 40;
 /// The fold over the lines before a definition: C's includes and
@@ -2007,6 +2039,12 @@ void CodeText::mouseDoubleClickEvent(QMouseEvent *event) {
     goToLabel(token, label->second, label->first);
     return;
   }
+  // So is the function's frame: the disassembly goes to where the function
+  // begins, or to where it reads or writes the member, while the code stays.
+  if (const auto frame = frameAddress(token)) {
+    emit labelActivated(*frame);
+    return;
+  }
   // A type or macro this code declares opens at its declaration; the
   // language's own words name nothing in the binary.
   const auto &words = vocabularyOf(dialectOf(representation_, pageLanguage_));
@@ -2271,6 +2309,74 @@ CodeText::addressLabel(const QString &name) const {
     start = end + 1;
   }
   return std::nullopt;
+}
+
+std::optional<Address> CodeText::frameAddress(const QString &name) const {
+  if (!labelsNameAddresses() || !function_)
+    return std::nullopt;
+  // The record of the function's stack, and the storage of it.
+  if (const auto record = frameRecordAddress(name))
+    return record;
+  if (name == QLatin1String("stack_storage") ||
+      name == QLatin1String("frame_base"))
+    return function_;
+  // A member, which the lines from the record's to its closing brace name.
+  const QStringView source(source_);
+  int line = 0;
+  qsizetype start = 0;
+  const auto next = [&]() -> std::optional<QStringView> {
+    if (start >= source.size())
+      return std::nullopt;
+    qsizetype end = source.indexOf(QLatin1Char('\n'), start);
+    if (end < 0)
+      end = source.size();
+    const QStringView text = source.mid(start, end - start);
+    start = end + 1;
+    ++line;
+    return text;
+  };
+  bool inRecord = false, member = false;
+  while (const auto text = next()) {
+    const QStringView trimmed = text->trimmed();
+    if (!inRecord) {
+      for (qsizetype at = trimmed.indexOf(u"frame_"); at >= 0;
+           at = trimmed.indexOf(u"frame_", at + 1)) {
+        qsizetype end = at + 6;
+        while (end < trimmed.size() &&
+               (trimmed[end].isLetterOrNumber() || trimmed[end] == u'_'))
+          ++end;
+        if (frameRecordAddress(trimmed.mid(at, end - at)) &&
+            trimmed.endsWith(u'{'))
+          inRecord = true;
+      }
+      continue;
+    }
+    if (trimmed.startsWith(u'}'))
+      break;
+    member |= containsWord(trimmed, name);
+  }
+  if (!member)
+    return std::nullopt;
+  // Where the cursor's line reads or writes it, else the first line after the
+  // record that does and that an instruction maps to.
+  if (cursorLine_ >= 0 && cursorLine_ < lines_.size() &&
+      !lines_[cursorLine_].label && !lines_[cursorLine_].addresses.isEmpty() &&
+      containsWord(lines_[cursorLine_].styled.text, name))
+    return lines_[cursorLine_].addresses.front();
+  while (const auto text = next()) {
+    if (!containsWord(*text, name))
+      continue;
+    for (const auto &value : std::as_const(sourceRows_)) {
+      const auto row = value.toMap();
+      if (row.value(QStringLiteral("line"), -1).toInt() != line - 1)
+        continue;
+      for (const auto &address :
+           row.value(QStringLiteral("addresses")).toList())
+        if (const auto parsed = parseAddress(address.toString()))
+          return parsed;
+    }
+  }
+  return function_;
 }
 
 void CodeText::goToLabel(const QString &name, int sourceLine, Address address) {
