@@ -891,6 +891,7 @@ struct Session {
       Recovery.CallEntryReadGPRs = PipeResult.CallEntryReadGPRs;
       Recovery.CallEntryStackArgs = PipeResult.CallEntryStackArgs;
       Recovery.CallEntryStackSlots = PipeResult.CallEntryStackSlots;
+      Recovery.CallEntryArgumentCounts = PipeResult.CallEntryArgumentCounts;
       Recovery.CallArgumentSources = PipeResult.CallArgumentSources;
       Recovery.OmittedCallees = PipeResult.OmittedCallees;
       recoverModuleCallAbi(Img, Recovery, FuncNames);

@@ -433,6 +433,8 @@ python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsUserX64.h --data-model LLP64
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsUserX86.h --data-model ILP32
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/WindowsUserARM64.h --data-model LLP64
 ```
 
 With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
@@ -483,6 +485,13 @@ at `ExitProcess`; it finds `Finish`, which only its export names, although
 Start inlines it and ends `.text` at that call; and that `SetFilePointerEx`
 takes its `LARGE_INTEGER` in two of its five slots, without the local stored
 above them.
+`SessionCAPITest.ARM64ImportsPassWhatTheirPrototypesCount` loads
+`user_imports_arm64.exe`, the same program built for ARM64 with a call to
+`CreateWindowExW` added, and checks that it joins the ARM64 user mode
+library alone in LLP64, that `CreateFileW`
+takes its caller's untouched x0 as the first of seven, that `GetLastError`
+takes no argument, that `ExitProcess` returns to no caller, and that
+`CreateWindowExW` takes its last four of twelve from the stack.
 `HeaderLibrary.EveryLibraryReadsLaidOutForItsDataModel` reads every library
 the build embeds and checks its pointers' and records' sizes, and
 `HeaderLibrary.TheNoReturnTablesHoldEveryNoReturnRoutine` checks that the

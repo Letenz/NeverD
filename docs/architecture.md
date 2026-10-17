@@ -256,13 +256,13 @@ each parameter (`placeSourceParameters`, one file per convention).
 a driver's `<ntifs.h>` declares into `lib/types/headers/WindowsKernelX64.h`
 and `WindowsKernelX86.h`, and what a program's `<windows.h>`, `<winternl.h>`
 and the headers of the libraries programs most often call declare into
-`WindowsUserX64.h` and `WindowsUserX86.h`; mingw-w64's DDK declares no ARM64
-kernel. The build embeds each file in a unit of its own, and `headerLibrary`
-reads each once. The C API joins the libraries the table names to an image
-(an x64 or x86 PE of the native subsystem joins its kernel's; one of the
-Windows GUI or console subsystem joins its user mode's, then its kernel's
-for the native API ntdll exports) after the program's PDB and before the
-user's declarations:
+`WindowsUserX64.h`, `WindowsUserX86.h` and `WindowsUserARM64.h`; mingw-w64's
+DDK declares no ARM64 kernel. The build embeds each file in a unit of its
+own, and `headerLibrary` reads each once. The C API joins the libraries the
+table names to an image (an x64 or x86 PE of the native subsystem joins its
+kernel's; one of the Windows GUI or console subsystem joins its user mode's,
+then its kernel's for the native API ntdll exports, which an ARM64 one has
+none of) after the program's PDB and before the user's declarations:
 - a header type joins only where the program has no type of its name;
 - a typedef names the program's type, as C binds it;
 - a header record laid out with a type the program sizes otherwise is left
@@ -433,6 +433,15 @@ by its prototype or its decoration, pops its arguments as it returns
 the call as for a callee of the image whose `ret` pops, so the caller's
 stack accesses after it read the right slots. An i386 extern declares the convention its prototype states,
 as WINAPI's `__attribute__((stdcall))`, whose callee pops its arguments.
+Where the setup of each call gives it its arguments and no summary does
+(Windows on ARM64), a prototype of integer and pointer parameters counts
+them (`CallEntryArgumentCounts`): a call to the import passes that many, a
+register its caller passes on untouched included, and no register an
+earlier call left. A floating or record parameter gives no count, and
+neither does a variadic prototype, which the header libraries do not give.
+An exported routine's prototype gives its definition its parameters there,
+but not yet its callers within the image their count, as the register
+summaries do on x64.
 A callee the
 pipeline does not decompile returns what its declaration says, as the C
 writers read it, so that a caller returning what a `void` routine left in

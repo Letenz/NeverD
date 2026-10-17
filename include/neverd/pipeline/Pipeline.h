@@ -273,6 +273,11 @@ struct PipelineResult {
   /// The bytes each import of CallEntryStackSlots pops as it returns, by the
   /// stub or slot a call names it by: a stdcall routine's arguments.
   std::map<va_t, int> CallEntryStackPops;
+  /// The integer arguments each prototyped import takes, by the stub or slot
+  /// a call names it by, where the setup of each call gives it its arguments
+  /// (Windows on ARM64): a call to one passes that many and no other
+  /// register.
+  std::map<va_t, int> CallEntryArgumentCounts;
   /// Entries of indirect-call dispatchers (`_guard_dispatch_icall`): a call to
   /// one passes the argument registers its caller set.
   std::set<va_t> CallDispatchThunks;

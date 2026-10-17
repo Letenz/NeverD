@@ -4725,6 +4725,64 @@ TEST_F(SessionCAPITest, X86ImportsTakeTheirStdcallPrototypes) {
   EXPECT_EQ(Seek.find(", 0, 0"), std::string::npos) << Seek;
 }
 
+TEST_F(SessionCAPITest, ARM64ImportsPassWhatTheirPrototypesCount) {
+  // An ARM64 program calling routines kernel32, user32 and ntdll export.  The
+  // setup of each call gives it its arguments, and an import's prototype
+  // counts them.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "user_imports_arm64.exe", std::ios::binary);
+  const std::string Program =
+      write("user_imports_arm64.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Program.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_GE(neverd_session_discover_functions(Session), 0)
+      << takeString(neverd_last_error(Session));
+  // It joins the ARM64 user mode headers alone: no kernel library describes
+  // ARM64.
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_local_types_json(Session, nullptr)));
+  ASSERT_TRUE(static_cast<bool>(Parsed));
+  const llvm::json::Array *Headers = Parsed->getAsObject()->getArray("headers");
+  ASSERT_TRUE(Headers && Headers->size() == 1u);
+  EXPECT_EQ((*Headers)[0].getAsObject()->getString("name"),
+            "windows-user-arm64");
+  EXPECT_EQ(Parsed->getAsObject()->getString("dataModel"), "LLP64");
+  const auto decompile = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  // Open jumps to CreateFileW through its slot and passes its own argument
+  // on in x0, which it never writes.
+  const std::string Open = decompile("Open");
+  EXPECT_NE(Open.find("Open(int64_t arg0)"), std::string::npos) << Open;
+  EXPECT_NE(Open.find("CreateFileW((uint16_t*)(uintptr_t)arg0, 0x80000000, "
+                      "1, 0, 3, 0, 0)"),
+            std::string::npos)
+      << Open;
+  // GetLastError takes nothing: the x0 Probe was called with is none.
+  const std::string Probe = decompile("Probe");
+  EXPECT_NE(Probe.find("GetLastError()"), std::string::npos) << Probe;
+  EXPECT_EQ(Probe.find("GetLastError(arg0"), std::string::npos) << Probe;
+  // ExitProcess takes the code and returns to no caller.
+  const std::string Finish = decompile("Finish");
+  EXPECT_NE(Finish.find("ExitProcess(uint32_t uExitCode) "
+                        "__attribute__((noreturn));"),
+            std::string::npos)
+      << Finish;
+  EXPECT_NE(Finish.find("ExitProcess(arg0);"), std::string::npos) << Finish;
+  // CreateWindowExW takes twelve: the last four are on the stack.
+  const std::string Window = decompile("Window");
+  EXPECT_NE(Window.find("0x10000000, 1, 2, 3, 4, (HWND__*)(uintptr_t)arg0, 0, "
+                        "(HINSTANCE__*)(uintptr_t)arg1, 0);"),
+            std::string::npos)
+      << Window;
+}
+
 TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
   const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
   const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");

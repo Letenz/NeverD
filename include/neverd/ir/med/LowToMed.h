@@ -125,6 +125,11 @@ public:
   void setCallEntryStackSlots(const std::set<va_t> *S) {
     CallEntryStackSlots = S;
   }
+  /// The integer arguments prototyped imports take where call setup gives
+  /// calls their arguments (PipelineResult::CallEntryArgumentCounts).
+  void setCallEntryArgumentCounts(const std::map<va_t, int> *M) {
+    CallEntryArgumentCounts = M;
+  }
   /// Indirect-call dispatchers (PipelineResult::CallDispatchThunks).
   void setCallDispatchThunks(const std::set<va_t> *S) {
     CallDispatchThunks = S;
@@ -356,6 +361,7 @@ private:
   const std::map<va_t, va_t> *CallArgumentSources = nullptr;
   const std::map<va_t, int> *CallEntryStackArgs = nullptr;
   const std::set<va_t> *CallEntryStackSlots = nullptr;
+  const std::map<va_t, int> *CallEntryArgumentCounts = nullptr;
   const std::set<va_t> *CallDispatchThunks = nullptr;
   const std::map<va_t, int> *CallVariadicFrom = nullptr;
   const std::map<va_t, FormattedCall> *FormattedCalls = nullptr;

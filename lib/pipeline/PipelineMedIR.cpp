@@ -138,6 +138,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setCallArgumentSources(&Result.CallArgumentSources);
     Local.setCallEntryStackArgs(&Result.CallEntryStackArgs);
     Local.setCallEntryStackSlots(&Result.CallEntryStackSlots);
+    Local.setCallEntryArgumentCounts(&Result.CallEntryArgumentCounts);
     Local.setCallDispatchThunks(&Result.CallDispatchThunks);
     Local.setCallVariadicFrom(&Result.CallVariadicFrom);
     Local.setFormattedCalls(&Result.FormattedCalls);
