@@ -1256,14 +1256,26 @@ void recoverCallAbi(
           const bool AllowLiveIn = (CalleeRegArgs >= 0 && K < CalleeRegArgs) ||
                                    (MaxRegArg >= 0 && K <= MaxRegArg);
           bool FromLiveIn = false;
-          auto V = findReachingArgReg(Func, TRI, TheArch, Blk.Id, K,
-                                      IntegerLayout, AllowLiveIn, &FromLiveIn);
+          bool FoundDefinition = false;
+          auto V =
+              findReachingArgReg(Func, TRI, TheArch, Blk.Id, K, IntegerLayout,
+                                 AllowLiveIn, &FromLiveIn, &FoundDefinition);
           if (!V)
             break;
           if ((IsIndirectImport || VariableCallee) &&
               (FromLiveIn || V->Kind == MedVar::Param) &&
               !incomingArgumentReachesCall(Ctx, K))
             break;
+          // A direct callee's arity proves it reads a register, not that
+          // this caller's entry value reaches it.  Calls and exceptional
+          // roots break that provenance. Keep the required unknown operand
+          // without promoting it into a fictitious forwarded parameter.
+          if (!CI.IsIndirect && !FoundDefinition &&
+              (FromLiveIn || V->Kind == MedVar::Param) &&
+              !incomingArgumentReachesCall(Ctx, K)) {
+            *V = MedVar::makeUnspecified(V->Size, TheArch);
+            FromLiveIn = false;
+          }
           Found[K] = *V;
           FoundMask[K] = true;
           if (FromLiveIn) {

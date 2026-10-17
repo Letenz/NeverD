@@ -14,8 +14,10 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/Limits.h"
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/ir/med/MedABIPass.h"
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -179,6 +181,107 @@ TEST(AAPCS64CallContract, APLTEntryPassesTheArgumentsOfItsImport) {
   ASSERT_FALSE(UidBody.empty()) << Source;
   EXPECT_NE(UidBody.find("sub_10110(void)"), std::string::npos) << UidBody;
   EXPECT_NE(UidBody.find("getuid()"), std::string::npos) << UidBody;
+}
+
+TEST(AAPCS64CallContract, OnlyReachingEntryRegistersBecomeForwardedParameters) {
+  for (unsigned Mode : {0, 1, 2, 3}) {
+    SCOPED_TRACE(Mode);
+    BinaryImage Image;
+    Image.Arch = Arch::AArch64;
+    Image.Format = BinaryFormat::ELF;
+    MedFunc F;
+    F.Entry = Text;
+    F.CC = CallingConv::ARM_AAPCS;
+    F.Blocks.emplace_back();
+    F.Blocks.front().Id = 0;
+    F.Blocks.front().StartAddr = Text;
+    F.Blocks.front().EndAddr = Text + 16;
+    auto Call = [](va_t Target) {
+      MedOp Op;
+      Op.Opcode = NdOp::CALL;
+      Op.addInput(MedVar::makeConst(Target, 8));
+      return Op;
+    };
+    if (Mode == 1)
+      F.Blocks.front().Ops.push_back(Call(Text + 0x80));
+    if (Mode >= 2) {
+      F.Blocks.emplace_back();
+      F.Blocks.back().Id = 1;
+      F.Blocks.back().StartAddr = Text + 32;
+      F.Blocks.back().EndAddr = Text + 48;
+      if (Mode == 2)
+        F.ModuleAnalysisRoots.insert(Text + 32);
+      else
+        F.Blocks.back().ExceptionalPreds.emplace_back();
+    }
+    F.Blocks.back().Ops.push_back(Call(Text + 0x40));
+    std::map<va_t, int> Regs{{Text + 0x40, 3}}, Total = Regs;
+    recoverCallAbi(F, Image.Arch, {}, &Image, &Regs, &Total);
+    ASSERT_FALSE(F.CallInfos.empty());
+    const auto &C = F.CallInfos.back();
+    ASSERT_EQ(C.Args.size(), 3u);
+    if (Mode == 0) {
+      EXPECT_EQ(F.Params.size(), 3u);
+      for (const auto &V : C.Args)
+        EXPECT_EQ(V.Kind, MedVar::Param);
+    } else {
+      EXPECT_TRUE(F.Params.empty());
+      for (const auto &V : C.Args)
+        EXPECT_EQ(V.Kind, MedVar::Unspecified);
+    }
+  }
+}
+
+TEST(AAPCS64CallContract,
+     DirectCalleesPrecedeDeepLowerAddressChainsWithinBudget) {
+  constexpr va_t First = 0x10000, Zero = 0x20000, One = 0x20040,
+                 Caller = 0x30000;
+  auto BL = [](va_t At, va_t Target) {
+    return 0x94000000u | (uint32_t((Target - At) / 4) & 0x03ffffffu);
+  };
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::ELF;
+  auto Text = codeSegment(".text", First, Caller - First + 0x100);
+  auto Add = [&](va_t At, const char *Name, std::vector<uint32_t> Words) {
+    place(Text, At, Words);
+    auto S = Symbol::makeFunc(At);
+    S.Name = Name;
+    S.Size = Words.size() * 4;
+    Image.Symbols.push_back(std::move(S));
+  };
+  for (size_t I = 0; I <= limits::kMaxCallEffectExtraLifts; ++I) {
+    const auto At = First + I * 32;
+    if (I != limits::kMaxCallEffectExtraLifts)
+      Add(At, "", {PushFrame, SetFrame, BL(At + 8, At + 32), PopFrame, Ret});
+    else
+      Add(At, "", {0xD2800120u, Ret}); // mov x0, 9
+  }
+  Add(Zero, "takes_none", {0xD28000e0u, Ret}); // mov x0, 7
+  Add(One, "takes_one", {0xF900001fu, Ret});   // str xzr, [x0]
+  Add(Caller, "selected_caller",
+      {PushFrame, SetFrame, BL(Caller + 8, First), BL(Caller + 12, Zero),
+       BL(Caller + 16, One), PopFrame, Ret});
+  Image.Segments.push_back(std::move(Text));
+  llvm::LLVMContext Context;
+  const auto Result = run(Image, Context, {Caller});
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_TRUE(Result.OmittedCallees);
+  std::set<va_t> Summarized;
+  for (const auto &F : Result.OmittedCallees->Bodies)
+    Summarized.insert(F.Entry);
+  EXPECT_TRUE(Summarized.contains(Zero));
+  EXPECT_TRUE(Summarized.contains(One));
+  EXPECT_LE(Summarized.size(), limits::kMaxCallEffectExtraLifts);
+  const auto &Function = Result.MedFuncs.front();
+  unsigned Checked = 0;
+  for (const auto &Call : Function.CallInfos)
+    if (Call.TargetAddr == Zero || Call.TargetAddr == One) {
+      EXPECT_EQ(Call.Args.size(), Call.TargetAddr == Zero ? 0u : 1u);
+      ++Checked;
+    }
+  EXPECT_EQ(Checked, 2u);
 }
 
 /// lower(c) tail-calls islower and bump(c) returns toupper(c) + 1, each
