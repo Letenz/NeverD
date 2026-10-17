@@ -2030,6 +2030,11 @@ private:
   mutable const MedFunc *AddrPredCacheFor = nullptr;
   mutable std::map<med_llvm::SlotKey, bool> SlotAddressEscapesCache;
   mutable std::map<med_llvm::SlotKey, bool> SlotMatchingKeyLoadCache;
+  // The slot keys of every call argument and stored value of
+  // AddrPredCacheFor, and of every default-space load address, each found
+  // once rather than rescanned for every slot asked about.
+  mutable std::optional<std::set<med_llvm::SlotKey>> EscapingSlotKeys;
+  mutable std::optional<std::set<med_llvm::SlotKey>> LoadedSlotKeys;
   mutable std::map<med_llvm::SlotKey, bool> SlotReloadUsedLocallyCache;
   // writableDataSegOf result per (Kind,Id,SSAVer,RequireRelocBase).  The
   // writable-base search descends the whole address DAG (and chases stack
