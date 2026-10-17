@@ -96,7 +96,7 @@ U64 log_invalid(unsigned char *Out, U64 Which) {
     android_logger_list_free(List);
     return !R && *__errno() == 73 ? 0 : 3;
   }
-  android_logger_open(List, 0);
+  void *Logger = android_logger_open(List, 0);
   if (Which == 3)
     android_logger_list_free(List);
   if (Which == 4)
@@ -107,6 +107,10 @@ U64 log_invalid(unsigned char *Out, U64 Which) {
   }
   if (Which == 6 && munmap(List, 4096))
     return 5;
+  if (Which == 7 && mprotect(Logger, 4096, 3))
+    return 6;
+  if (Which == 8 && munmap(Logger, 4096))
+    return 7;
   return android_logger_list_read(List, (void *)Out);
 }
 

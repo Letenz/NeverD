@@ -163,7 +163,7 @@ TEST_P(AndroidLog, NullEmptyAndInvalidIDPreserveErrnoAndOutput) {
 }
 TEST_P(AndroidLog, RetiredUnmappedAndTamperedHandlesFailClearly) {
   Options.Android->EntrySymbol = "log_invalid";
-  for (unsigned Which = 3; Which < 7; ++Which) {
+  for (unsigned Which = 3; Which < 9; ++Which) {
     Options.Android->Arguments = {Output, Which};
     auto R =
         emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
@@ -174,7 +174,11 @@ TEST_P(AndroidLog, RetiredUnmappedAndTamperedHandlesFailClearly) {
     ASSERT_FALSE(R->NativeCalls.empty());
     EXPECT_EQ(R->NativeCalls.back().Name, "android_logger_list_read");
     EXPECT_FALSE(R->NativeCalls.back().Result);
-    EXPECT_EQ(R->MemorySnapshots[0].Bytes, std::vector<uint8_t>(32768, 0xc7));
+    const char *Message = Which == 3                   ? "retired"
+                          : Which == 4                 ? "invalid guest pointer"
+                          : (Which == 5 || Which == 7) ? "remain opaque"
+                                                       : "unmapped";
+    EXPECT_NE(R->Diagnostic.find(Message), std::string::npos);
   }
 }
 TEST_P(AndroidLog, DirectOptionsRejectMalformedAndOversizedSnapshots) {

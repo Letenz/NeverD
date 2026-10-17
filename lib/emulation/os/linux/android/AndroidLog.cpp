@@ -101,10 +101,10 @@ BionicResult Bionic::logCall(const NativeCallEvent &Call) {
   if (auto E = opaqueHandle(A[0], "logger_list"))
     return std::move(E);
   auto &List = I->second;
+  for (const auto &[ID, Token] : List.Loggers)
+    if (auto E = opaqueHandle(Token, "logger"))
+      return std::move(E);
   if (Name == symbol::LoggerListFree) {
-    for (const auto &[ID, Token] : List.Loggers)
-      if (auto E = opaqueHandle(Token, "logger"))
-        return std::move(E);
     for (const auto &[ID, Token] : List.Loggers)
       if (auto E = release(Token))
         return std::move(E);
@@ -121,11 +121,8 @@ BionicResult Bionic::logCall(const NativeCallEvent &Call) {
       return unsupportedLog(
           "security and kernel buffer admission is not modeled");
     auto Existing = List.Loggers.find(ID);
-    if (Existing != List.Loggers.end()) {
-      if (auto E = opaqueHandle(Existing->second, "logger"))
-        return std::move(E);
+    if (Existing != List.Loggers.end())
       return value(Existing->second);
-    }
     auto Token = logToken();
     if (!Token)
       return Token.takeError();
