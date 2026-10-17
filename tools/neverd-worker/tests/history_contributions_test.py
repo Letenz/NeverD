@@ -168,6 +168,8 @@ def run(executable):
         large = Path(directory) / "large-state.bin"
         large.write_bytes(b"large user state fixture")
         large_annotations = Path(str(large) + ".neverd/annotations.json")
+        # Written before any tool opens the binary, so before its folder.
+        large_annotations.parent.mkdir(exist_ok=True)
         large_annotations.write_text(json.dumps(
             [dict(addr=hex(int(BASE, 16) + index), text="x" * 220) for index in range(29000)],
             separators=(",", ":")))

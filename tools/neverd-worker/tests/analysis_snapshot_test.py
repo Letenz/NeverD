@@ -18,9 +18,11 @@ def ok(client, operation, payload=None):
 
 def durable_files(directory):
     # Windows refuses reads of the writer's exclusively locked runtime file.
-    # Compare every input and sidecar; the persistent OS lock carries no edits.
-    return {p.name: p.read_bytes() for p in Path(directory).iterdir()
-            if not p.name.endswith(".neverd/local/writer.lock")}
+    # Compare every input and every file of its project folder; the
+    # persistent OS lock carries no edits.
+    root = Path(directory)
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*")
+            if p.is_file() and not p.as_posix().endswith(".neverd/local/writer.lock")}
 
 
 def run(executable):
