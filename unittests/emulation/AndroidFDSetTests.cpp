@@ -190,6 +190,18 @@ TEST_P(AndroidFDSet, ClosedProvidersCannotModifyOrQueryBitmaps) {
   }
 }
 
+TEST_P(AndroidFDSet, RawAndBionicPselectShareKernelStateAndErrnoBoundary) {
+  Options.LinuxFiles.emplace().Files["/select-input"] = {1, 2};
+  for (unsigned Mode : {0u, 1u}) {
+    auto Expected = Options.Android->Memory[0].Bytes;
+    const std::array<uint64_t, 7> Words = {
+        2, 73, 1, 1, 0, Mode ? UINT64_MAX : uint64_t(-9), Mode ? 9u : 73u};
+    for (unsigned I = 0; I != Words.size(); ++I)
+      llvm::support::endian::write64le(Expected.data() + 8 * I, Words[I]);
+    check(run("fdset_select", {Buffer, Mode}), Expected);
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(
     Native, AndroidFDSet,
     testing::Combine(testing::Values("fdset-O0-none", "fdset-O0-android",

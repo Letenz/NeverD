@@ -68,3 +68,45 @@ __asm__(".global fdset_wide_index\n"
 __asm__(".type __FD_SET_chk, @function\n"
         ".type __FD_CLR_chk, @function\n"
         ".type __FD_ISSET_chk, @function\n");
+
+extern long syscall(long, ...);
+extern int open(const char *, int, ...);
+extern int close(int);
+static long raw_select(U n, void *read_set, void *write_set, void *except_set,
+                       void *timeout) {
+  register U x0 __asm__("x0") = n;
+  register void *x1 __asm__("x1") = read_set;
+  register void *x2 __asm__("x2") = write_set;
+  register void *x3 __asm__("x3") = except_set;
+  register void *x4 __asm__("x4") = timeout;
+  register U x5 __asm__("x5") = 0;
+  register U x8 __asm__("x8") = 72;
+  __asm__ volatile("svc #0"
+                   : "+r"(x0)
+                   : "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5), "r"(x8)
+                   : "memory", "cc");
+  return (long)x0;
+}
+U fdset_select(U *out, U mode) {
+  int fd = open("/select-input", 0);
+  if (fd < 0 || fd >= 64)
+    return 1;
+  U sets[3][16] = {{0}, {0}, {0}}, time[2] = {0, 0};
+  for (unsigned i = 0; i != 3; ++i)
+    __FD_SET_chk(fd, sets[i], sizeof(sets[i]));
+  *__errno() = 73;
+  out[0] = mode
+               ? syscall(72, fd + 1, sets[0], sets[1], sets[2], time, (void *)0)
+               : raw_select(fd + 1, sets[0], sets[1], sets[2], time);
+  out[1] = *__errno();
+  for (unsigned i = 0; i != 3; ++i)
+    out[2 + i] = __FD_ISSET_chk(fd, sets[i], sizeof(sets[i]));
+  if (close(fd))
+    return 2;
+  __FD_SET_chk(fd, sets[0], sizeof(sets[0]));
+  out[5] =
+      mode ? syscall(72, fd + 1, sets[0], (void *)0, (void *)0, time, (void *)0)
+           : raw_select(fd + 1, sets[0], 0, 0, time);
+  out[6] = *__errno();
+  return 0;
+}
