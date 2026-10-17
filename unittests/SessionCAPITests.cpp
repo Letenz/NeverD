@@ -4637,6 +4637,68 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
   EXPECT_EQ(Finish.find("sub_14000108E"), std::string::npos) << Finish;
 }
 
+TEST_F(SessionCAPITest, X86ImportsTakeTheirStdcallPrototypes) {
+  // A 32-bit program calling routines kernel32, user32 and ntdll export,
+  // __stdcall as WINAPI declares them.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "user_imports_x86.exe", std::ios::binary);
+  const std::string Program =
+      write("user_imports_x86.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Program.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_GE(neverd_session_discover_functions(Session), 0)
+      << takeString(neverd_last_error(Session));
+  // It joins the x86 user mode headers, then the x86 kernel's.
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_local_types_json(Session, nullptr)));
+  ASSERT_TRUE(static_cast<bool>(Parsed));
+  const llvm::json::Array *Headers = Parsed->getAsObject()->getArray("headers");
+  ASSERT_TRUE(Headers && Headers->size() == 2u);
+  EXPECT_EQ((*Headers)[0].getAsObject()->getString("name"), "windows-user-x86");
+  EXPECT_EQ((*Headers)[1].getAsObject()->getString("name"),
+            "windows-kernel-x86");
+  EXPECT_EQ(Parsed->getAsObject()->getString("dataModel"), "ILP32");
+  const auto decompile = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  // The declarations say the callee pops its arguments, as it does.
+  const std::string Open = decompile("Open");
+  EXPECT_NE(Open.find("extern __attribute__((stdcall)) void* CreateFileW("
+                      "uint16_t* lpFileName,"),
+            std::string::npos)
+      << Open;
+  EXPECT_NE(Open.find("CreateFileW((uint16_t*)(uintptr_t)arg0, 0x80000000, "
+                      "1, 0, 3, 0, 0)"),
+            std::string::npos)
+      << Open;
+  const std::string Probe = decompile("Probe");
+  EXPECT_NE(Probe.find("extern __attribute__((stdcall)) int32_t "
+                       "ZwClose(void* Handle);"),
+            std::string::npos)
+      << Probe;
+  // ExitProcess returns to no caller.  Finish is found though only its
+  // export names it: Start inlines it and ends the code at ExitProcess.
+  const std::string Finish = decompile("Finish");
+  EXPECT_NE(Finish.find("ExitProcess(uint32_t uExitCode) "
+                        "__attribute__((noreturn));"),
+            std::string::npos)
+      << Finish;
+  EXPECT_EQ(Finish.find("return (int32_t)sub_"), std::string::npos) << Finish;
+  // SetFilePointerEx takes its LARGE_INTEGER in two of the five slots it
+  // pops; the local stored above them is no argument.
+  const std::string Seek = decompile("Seek");
+  EXPECT_NE(Seek.find("SetFilePointerEx(arg0, arg1, arg2, "), std::string::npos)
+      << Seek;
+  EXPECT_NE(Seek.find(", 0);"), std::string::npos) << Seek;
+  EXPECT_EQ(Seek.find(", 0, 0"), std::string::npos) << Seek;
+}
+
 TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
   const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
   const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");

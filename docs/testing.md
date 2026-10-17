@@ -424,6 +424,8 @@ python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsKernelX64.h --data-model LLP64
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsUserX64.h --data-model LLP64
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/WindowsUserX86.h --data-model ILP32
 ```
 
 With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
@@ -466,6 +468,18 @@ that `ZwClose` takes the kernel headers' prototype, that a function stops at
 `ExitProcess` rather than running into the next one, that an export
 reading no parameter shows the one its prototype declares, and that LLVM-C
 declares the imports it calls and calls `GetLastError` with no argument.
+`SessionCAPITest.X86ImportsTakeTheirStdcallPrototypes` loads
+`user_imports_x86.exe`, the same program built for x86, and checks that it
+joins the x86 libraries in ILP32, that its externs declare
+`__attribute__((stdcall))` with their prototypes, and that a function stops
+at `ExitProcess`; it finds `Finish`, which only its export names, although
+Start inlines it and ends `.text` at that call; and that `SetFilePointerEx`
+takes its `LARGE_INTEGER` in two of its five slots, without the local stored
+above them.
+`HeaderLibrary.EveryLibraryReadsLaidOutForItsDataModel` reads every library
+the build embeds and checks its pointers' and records' sizes, and
+`HeaderLibrary.TheNoReturnTablesHoldEveryNoReturnRoutine` checks that the
+noreturn tables hold every routine a library declares `_Noreturn`.
 `SessionCAPITest.LocalTypesFitWhatTheCodeDoesThroughAPointer` checks that the
 program's own record ranks before a header record the accesses fit as
 exactly.

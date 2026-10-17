@@ -3486,6 +3486,10 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
        FS.CallConv == DebugCallConv::Thiscall ||
        FS.CallConv == DebugCallConv::Fastcall))
     Prefix += "__fastcall ";
+  // An i386 callee declares how it takes its arguments and who pops them,
+  // as its definition does: WINAPI's stdcall callee pops its own.
+  else if (Opts.TheArch == Arch::X86 && FS.CallConv != DebugCallConv::Cdecl)
+    Prefix += debugCallConvAttribute(FS.CallConv).str();
   return Prefix + declarationToC(ReturnType, Declarator + ")");
 }
 

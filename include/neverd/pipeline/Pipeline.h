@@ -266,6 +266,10 @@ struct PipelineResult {
   /// reads, including through tail calls (0 when none), keyed by callee
   /// entry. Absent entries leave the stack arguments to the call-site scan.
   std::map<va_t, int> CallEntryStackArgs;
+  /// The callees in CallEntryStackArgs whose count a typed prototype gives
+  /// slot by slot where every argument is on the stack (i386): a call to one
+  /// passes those slots and no register.
+  std::set<va_t> CallEntryStackSlots;
   /// Entries of indirect-call dispatchers (`_guard_dispatch_icall`): a call to
   /// one passes the argument registers its caller set.
   std::set<va_t> CallDispatchThunks;
