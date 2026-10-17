@@ -93,6 +93,7 @@ public:
   /// Whether a member asks GNU's i386 compilers for the alignment of eight
   /// that Microsoft's give it.
   bool alignsEightByteMembers() const { return EightByteMembers; }
+  bool microsoftBitfields() const { return MicrosoftBitfields; }
   /// Whether a type rendered so far is followed by checks.
   bool asserts() const { return Asserted; }
   const NameSpelling &names() const { return Names; }
@@ -134,6 +135,8 @@ private:
   mutable std::set<Builtin> UsedBuiltins;
   bool AlignsRecords = false;
   bool EightByteMembers = false;
+  /// Whether a record asks GNU compilers for Microsoft's bit-field layout.
+  bool MicrosoftBitfields = false;
   bool Asserted = false;
 };
 
@@ -260,14 +263,26 @@ void CWriter::line(unsigned Indent, llvm::StringRef Code,
 
 std::string CWriter::keyword(const RecordDef &Record) {
   std::string Text = Record.Union ? "union" : "struct";
-  if (!Record.Alignment)
-    return Text;
-  // As the Windows headers declare it; C++ has a keyword.
-  const std::string Bytes = std::to_string(Record.Alignment);
-  if (Cpp)
-    return Text + " alignas(" + Bytes + ")";
-  AlignsRecords = true;
-  return Text + " DECLSPEC_ALIGN(" + Bytes + ")";
+  if (Record.Alignment) {
+    // As the Windows headers declare it; C++ has a keyword.
+    const std::string Bytes = std::to_string(Record.Alignment);
+    if (Cpp) {
+      Text += " alignas(" + Bytes + ")";
+    } else {
+      AlignsRecords = true;
+      Text += " DECLSPEC_ALIGN(" + Bytes + ")";
+    }
+  }
+  // Microsoft's compilers fill a bit-field's storage unit apart from the
+  // members around it, where GNU's pack bits into whatever has room; GNU
+  // lays such a record out as Microsoft's do only when asked.
+  if (defaultRules(Library.dataModel()) == LayoutRules::MSVC &&
+      llvm::any_of(Record.Members,
+                   [](const Member &Field) { return Field.isBitfield(); })) {
+    MicrosoftBitfields = true;
+    Text += " NEVERD_MS_STRUCT";
+  }
+  return Text;
 }
 
 std::string CWriter::memberAlignment(const TypeExpr &Type) {
@@ -702,6 +717,13 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
            "defined(__i386__)\n#define NEVERD_ALIGN8 "
            "__attribute__((aligned(8)))\n#else\n#define "
            "NEVERD_ALIGN8\n#endif\n#endif\n";
+  // GNU's x86 compilers lay a record's bit-fields out as Microsoft's do
+  // when asked; Microsoft's need not be.
+  if (Writer.microsoftBitfields())
+    Out += "\n#ifndef NEVERD_MS_STRUCT\n#if !defined(_MSC_VER) && "
+           "(defined(__i386__) || defined(__x86_64__))\n#define "
+           "NEVERD_MS_STRUCT __attribute__((ms_struct))\n#else\n#define "
+           "NEVERD_MS_STRUCT\n#endif\n#endif\n";
   // C++'s static_assert, which C11 spells _Static_assert: <assert.h> would
   // name it, but freestanding C, as a driver's, need not have the header.
   const bool LongChecked = spellingOf(Options) == BuiltinSpelling::Keywords &&

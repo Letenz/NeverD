@@ -105,7 +105,7 @@ struct _THREAD_LIKE
     uint64_t Header;                                            // 0x00
     union                                                       // 0x08
     {
-        struct                                                  // 0x08
+        struct NEVERD_MS_STRUCT                                 // 0x08
         {
             uint32_t AutoBoostActive : 1;                       // 0x08 bit 0
             uint32_t ReadyTransition : 1;                       // 0x08 bit 1
@@ -115,7 +115,7 @@ struct _THREAD_LIKE
     };
     union                                                       // 0x0C
     {
-        struct                                                  // 0x0C
+        struct NEVERD_MS_STRUCT                                 // 0x0C
         {
             uint32_t ThreadFlagsSpare : 2;                      // 0x0C bits 0..1
             uint32_t AutoAlignment : 1;                         // 0x0C bit 2
