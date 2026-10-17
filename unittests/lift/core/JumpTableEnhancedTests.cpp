@@ -3482,6 +3482,49 @@ static fs::path jteX64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_enhanced.o";
 }
 
+static fs::path recursiveSwitchX64Obj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_recursive.o";
+}
+
+// Every case of `evaluate` calls `evaluate`. Such a call enters at the
+// function's entry, as every invocation does, so it reaches the dispatch only
+// through the guard; only a call to an interior address is another entry.
+// The table holds offsets from its base, which is the start of .rodata; the
+// loader writes them from the object's relocations.
+TEST_F(JTE_X86_64, RecursiveCallsKeepTheRelativeTable) {
+  auto ImageOrErr = neverd::loadBinary(recursiveSwitchX64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  const neverd::Symbol *Function = Image.findSymbol("evaluate");
+  ASSERT_NE(Function, nullptr);
+  const neverd::Section *Rodata = nullptr;
+  for (const neverd::Section &Section : Image.Sections)
+    if (Section.Name == ".rodata")
+      Rodata = &Section;
+  constexpr size_t Cases = 6;
+  ASSERT_NE(Rodata, nullptr);
+
+  neverd::CFGBuilder Builder;
+  const neverd::LowFunc Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  const neverd::JumpTable &Table = Low.JumpTables.front();
+  EXPECT_EQ(Table.BaseAddr, Rodata->VA);
+  std::vector<neverd::va_t> Expected;
+  for (size_t Case = 0; Case < Cases; ++Case) {
+    const uint8_t *Bytes = Image.readVA(Rodata->VA + Case * 4, 4);
+    ASSERT_NE(Bytes, nullptr);
+    int32_t Entry = 0;
+    std::memcpy(&Entry, Bytes, sizeof(Entry));
+    Expected.push_back(Rodata->VA + static_cast<int64_t>(Entry));
+  }
+  EXPECT_EQ(Table.Targets, Expected);
+  EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+}
+
 struct COFFImageRelativeRVASwitchOptions {
   bool ScalarStorageBase = false;
   bool ScalarTargetBase = false;
