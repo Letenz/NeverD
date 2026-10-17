@@ -2503,6 +2503,7 @@ set(X86_64_TEST_SOURCES
   x86_64/test_sse_misc.c
   x86_64/test_intrinsics_system.c
   x86_64/test_switch.c
+  x86_64/test_o0_switch_break.c
   x86_64/test_roundtrip.c
   x86_64/test_debug_records.c
   x86_64/test_debug_params.c
@@ -2860,6 +2861,10 @@ foreach(src ${X86_64_TEST_SOURCES})
   elseif(src MATCHES "test_debug_records|test_debug_params")
     # The records and signatures under test come from the DWARF description.
     set(extra_flags -g)
+  elseif(src MATCHES "test_o0_switch_break")
+    # A position-independent table: its entries carry no relocation, so the
+    # break-only case blocks they name are not retained as address-taken.
+    set(extra_flags -fPIC)
   elseif(src MATCHES "test_return_join")
     set(extra_flags -O2)
   elseif(src MATCHES "test_extern_calls_nopic")

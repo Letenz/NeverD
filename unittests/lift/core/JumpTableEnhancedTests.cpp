@@ -266,7 +266,7 @@ TEST(JumpTableHighSelector, MissingExactSelectorRemainsAnUnresolvedGoto) {
   JT.InsnAddr = 0x100;
   JT.Targets = {0x200, 0x300};
   neverd::MedToHighConverter Converter;
-  Converter.setJumpTables({JT});
+  Med.JumpTables = {JT};
   const neverd::HighFunc High = Converter.convert(Med, neverd::Arch::X64);
 
   EXPECT_TRUE(std::none_of(High.Body.begin(), High.Body.end(),

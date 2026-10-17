@@ -33,6 +33,7 @@
 #include "neverd/libc/LibCPoll.h"
 #include "neverd/libc/LibCPthread.h"
 #include "neverd/libc/LibCRegex.h"
+#include "neverd/libc/LibCResult.h"
 #include "neverd/libc/LibCSched.h"
 #include "neverd/libc/LibCSearch.h"
 #include "neverd/libc/LibCSetjmp.h"
@@ -334,20 +335,29 @@ const LibCPrototype *libcPrototype(std::string_view Name, BinaryFormat Format) {
              : nullptr;
 }
 
-std::optional<bool> libcReturnsValue(std::string_view Name,
+std::optional<LibCResult> libcResult(std::string_view Name,
                                      BinaryFormat Format) {
   if (const LibCPrototype *Prototype = libcPrototype(Name, Format))
-    return Prototype->Return != "void";
-  enum class ReturnKind { Void, Value };
-  static const std::unordered_map<std::string_view, ReturnKind> Kinds = {
-#define NEVERD_LIBC_RETURN_KIND(NAME, KIND) {NAME, ReturnKind::KIND},
+    return Prototype->Return == "void"        ? LibCResult::Void
+           : isPointerType(Prototype->Return) ? LibCResult::Pointer
+                                              : LibCResult::Value;
+  static const std::unordered_map<std::string_view, LibCResult> Kinds = {
+#define NEVERD_LIBC_RETURN_KIND(NAME, KIND) {NAME, LibCResult::KIND},
 #include "neverd/libc/LibCReturnKinds.inc"
 #undef NEVERD_LIBC_RETURN_KIND
   };
   const auto It = Kinds.find(Name);
   if (It == Kinds.end())
     return std::nullopt;
-  return It->second == ReturnKind::Value;
+  return It->second;
+}
+
+std::optional<bool> libcReturnsValue(std::string_view Name,
+                                     BinaryFormat Format) {
+  const std::optional<LibCResult> Result = libcResult(Name, Format);
+  if (!Result)
+    return std::nullopt;
+  return *Result != LibCResult::Void;
 }
 
 const char *headerOfDataObject(std::string_view Name) {

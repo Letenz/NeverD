@@ -174,7 +174,6 @@ replayCurrentFunction(const BinaryImage &Image, const PipelineResult &Result,
   for (const auto &F : Result.MedFuncs)
     Names.emplace(F.Entry, F.Name);
   Converter.setFuncNames(&Names);
-  Converter.setJumpTables(Current->Low->JumpTables);
   const auto MedReplay = Converter.convert(*Current->Med, Image.Arch);
   if (!objc_value_copy_detail::sameBody(*Rebuilt->High, *Current->High) ||
       !objc_value_copy_detail::sameBody(*Rebuilt->High, MedReplay))

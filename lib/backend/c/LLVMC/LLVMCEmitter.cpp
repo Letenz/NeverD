@@ -16,6 +16,7 @@
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 
 #include "../FloatConversion.h"
+#include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
 #include "../pass/LLVMC/LLVMCBitTests.h"
@@ -46,6 +47,7 @@
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/PEImportShadow.h"
+#include "neverd/libc/LibCResult.h"
 #include "neverd/loader/DataSymbolBinding.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -252,6 +254,7 @@ bool LLVMCWriter::isNativeVectorIntrinsic(const llvm::CallBase &Call,
 void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
   GlobalIdentifierAllocator = CProjectionIdentifierAllocator{};
   FunctionIdentifiers.clear();
+  FunctionIdentifierNames.clear();
   FunctionSymbolNames.clear();
   FunctionSources.clear();
   ExternalDataIdentifiers.clear();
@@ -341,10 +344,30 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
                           : cNameOfSymbol(DebugName, Opts.Format, Opts.TheArch);
     FunctionSymbolNames.emplace(&Fn, CName.str());
     FunctionSources.emplace(&Fn, DebugName.empty() ? Name.str() : DebugName);
-    if (!Fn.isDeclaration())
+    std::string Stem;
+    if (!Fn.isDeclaration()) {
       CName = cDefinitionName(CName, Opts.Format);
-    FunctionIdentifiers.emplace(
-        &Fn, GlobalIdentifierAllocator.allocate(CName, "nd_function"));
+      // The image's own copy of a C library routine, as a statically linked
+      // `atexit`, is not the routine a header or the runtime's tables
+      // declare the name for, and takes its address as a body lifted under
+      // an import's name does (`fprintf_1400014B0`).
+      if (libc::isKnownFunction(CName) ||
+          libc::libcPrototype(CName, Opts.Format)) {
+        auto VA = rewrite_source::getOriginalVA(Fn);
+        if (!VA)
+          llvm::consumeError(VA.takeError());
+        else if (*VA)
+          Stem = (CName + "_" + llvm::utohexstr(**VA)).str();
+      }
+    }
+    if (!Stem.empty())
+      CName = Stem;
+    const auto Entry =
+        FunctionIdentifiers
+            .emplace(&Fn,
+                     GlobalIdentifierAllocator.allocate(CName, "nd_function"))
+            .first;
+    FunctionIdentifierNames.insert(Entry->second);
   }
   std::set<const llvm::GlobalVariable *> CallableGlobals;
   for (const auto &Function : Mod)
@@ -565,6 +588,9 @@ void LLVMCWriter::writeModuleBody(llvm::Module &Mod) {
     WriteFunctions();
   }
   writeForwardDecls(Mod);
+  // A global's initializer can hold an import's address, as an import
+  // table's mirror does.
+  writeImportCalleeDecls(Mod);
   writeGlobals(Mod);
   // Code that reaches image data through a mirror the environment holds
   // names the data itself, as one function's output does.
@@ -573,7 +599,6 @@ void LLVMCWriter::writeModuleBody(llvm::Module &Mod) {
     if (!Fn.isDeclaration())
       Defined.push_back(&Fn);
   writeReferencedImageObjects(Defined, Functions);
-  writeImportCalleeDecls(Mod);
   OS << "\n" << Functions;
   recordSourceNames(Mod);
 }
@@ -633,6 +658,13 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   for (auto &Fn : Mod) {
     if (OnlyFunction && &Fn != OnlyFunction)
       continue;
+    // Windows exception handling prints as `__try` with the filter
+    // dispositions and intrinsics <excpt.h> defines.
+    if (Opts.Format == BinaryFormat::COFF && !Fn.isDeclaration() &&
+        (functionHasWindowsEHPads(Fn) ||
+         (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Fn) &&
+          functionNeedsAnalysisOnlyEHWrap(Fn))))
+      Headers.insert("excpt.h");
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
         HasFloatingArithmetic |= Inst.getOpcode() == llvm::Instruction::FAdd ||
@@ -652,6 +684,17 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
         }
         if (llvm::isa<llvm::FenceInst>(&Inst))
           HasCIntrinsics = true;
+        // A library routine called through its import takes the header that
+        // declares it, as a direct call does, and one the runtime's tables
+        // type the header its prototype's types need (`FILE`).
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst);
+            Call && !Call->getCalledFunction())
+          if (const LibraryCallee Library = libraryCallee(*Call)) {
+            if (!Library.Prototype)
+              Headers.insert(libc::headerFor(Library.Name));
+            else if (!Library.Prototype->Header.empty())
+              Headers.insert(std::string(Library.Prototype->Header));
+          }
         if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
           if (isLLVMX86SegmentedAddressSpace(LI->getPointerAddressSpace())) {
             HasCIntrinsics = true;
@@ -720,17 +763,8 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
             continue;
           }
           auto *Callee = CI->getCalledFunction();
-          if (!Callee) {
-            // A call through a slot prints by the name of the routine the
-            // slot reaches (resolveImportCalleeName), which a C library
-            // header declares; writeImportCalleeDecls declares any other.
-            if (const std::string Name =
-                    resolveImportCalleeName(CI->getCalledOperand());
-                !Name.empty() && libc::isKnownFunction(Name))
-              if (const char *Hdr = libc::headerFor(Name))
-                Headers.insert(Hdr);
+          if (!Callee)
             continue;
-          }
           const auto IID = Callee->getIntrinsicID();
           if (IID == llvm::Intrinsic::memcpy ||
               IID == llvm::Intrinsic::memmove || IID == llvm::Intrinsic::memset)
@@ -1396,64 +1430,147 @@ void LLVMCWriter::writeReferencedImageObjects(
     OS << "\n";
 }
 
+std::string LLVMCWriter::boundImportCallee(const llvm::CallBase &Call) const {
+  if (Call.getCalledFunction() ||
+      llvm::isa<llvm::InlineAsm>(Call.getCalledOperand()))
+    return {};
+  const llvm::Value *Slot = Call.getCalledOperand()->stripPointerCasts();
+  if (const auto *Cast = llvm::dyn_cast<llvm::IntToPtrInst>(Slot))
+    Slot = Cast->getOperand(0);
+  const auto *Symbol = llvm::dyn_cast<llvm::GlobalVariable>(Slot);
+  const bool CalledSymbol =
+      Symbol && Symbol->isDeclaration() && data_symbol::isMarked(*Symbol);
+  const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Slot);
+  const auto SlotVA =
+      Load ? imageDataVA(Load->getPointerOperand()) : std::nullopt;
+  // So does the slot of a symbol the image defines itself, which the loader
+  // starts at that routine (ownRoutineOfImport).
+  const auto OwnRoutineSlot = [&] {
+    const Import *Imp = Img->findImportAt(*SlotVA);
+    return Imp && Imp->IATAddr == *SlotVA &&
+           ownRoutineOfImport(*Img, *Imp).has_value();
+  };
+  if (!CalledSymbol &&
+      (!Img || !SlotVA ||
+       (!Img->ImportStorageSlots.count(*SlotVA) && !OwnRoutineSlot())))
+    return {};
+  return resolveImportCalleeName(Call.getCalledOperand());
+}
+
+LLVMCWriter::LibraryCallee
+LLVMCWriter::libraryCallee(const llvm::CallBase &Call) const {
+  if (Opts.PreserveLLVMFunctionTypes)
+    return {};
+  if (const llvm::Function *Callee = Call.getCalledFunction()) {
+    // The module's own definition is its code, and another routine it
+    // declares is declared as its calls type it (writeForwardDecls), unless
+    // a header declares it, as one an LLVM intrinsic prints as may be.
+    if (!Callee->isDeclaration())
+      return {};
+    std::string Name;
+    if (!Callee->isIntrinsic())
+      Name = functionIdentifier(*Callee);
+    else if (const char *Mapped =
+                 llvmIntrinsicToCName(Callee->getName().str().c_str()))
+      Name = Mapped;
+    if (Name.empty() || !libc::headerFor(Name))
+      return {};
+    return {std::move(Name), nullptr};
+  }
+  if (llvm::isa<llvm::InlineAsm>(Call.getCalledOperand()))
+    return {};
+  // A routine called through its import has the declaration a direct call
+  // to it would: its header's, or the runtime tables' where the unit
+  // declares it from them.
+  if (std::string Name = resolveImportCalleeName(Call.getCalledOperand());
+      !Name.empty() && libc::headerFor(Name))
+    return {std::move(Name), nullptr};
+  std::string Name = boundImportCallee(Call);
+  if (Name.empty() || FunctionIdentifierNames.count(Name))
+    return {};
+  if (const libc::LibCPrototype *Prototype =
+          libc::libcPrototype(Name, Opts.Format))
+    return {std::move(Name), Prototype};
+  return {};
+}
+
+std::string LLVMCWriter::libraryResult(const llvm::CallBase &Call,
+                                       std::string Expr) const {
+  llvm::Type *Type = Call.getType();
+  if (!Type->isIntegerTy() && !Type->isPointerTy() &&
+      !Type->isFloatingPointTy())
+    return Expr;
+  const LibraryCallee Library = libraryCallee(Call);
+  if (!Library)
+    return Expr;
+  const std::optional<libc::LibCResult> Result =
+      libc::libcResult(Library.Name, Opts.Format);
+  if (!Result)
+    return Expr;
+  // C does not convert the pointer a routine returns to the integer the
+  // machine holds it in.
+  if (*Result == libc::LibCResult::Pointer && Type->isIntegerTy())
+    return "((" + typeToCLLVM(Type) + ")(uintptr_t)" + Expr + ")";
+  // A routine that returns nothing leaves its result register undefined, of
+  // which zero is a stable choice, as an undefined value's is.
+  if (*Result == libc::LibCResult::Void)
+    return "(" + Expr + ", (" + typeToCLLVM(Type) + ")0)";
+  return Expr;
+}
+
 void LLVMCWriter::writeImportCalleeDecls(llvm::Module &Mod) {
-  std::set<std::string> Declared;
-  for (const llvm::Function &Fn : Mod)
-    Declared.insert(functionIdentifier(Fn));
   // Each import with the type its calls return; one whose calls disagree is
   // left to them.
   std::map<std::string, std::optional<std::string>> Imports;
+  // Each routine the runtime's tables type, with their prototype.
+  std::map<std::string, const libc::LibCPrototype *> Typed;
+  // The imports a weak reference names, whose null address the code tests
+  // (`__gmon_start__`).
+  std::set<std::string> Weak;
   for (const llvm::Function &Fn : Mod) {
     if (Fn.isDeclaration() || (OnlyFunction && &Fn != OnlyFunction))
       continue;
     for (const llvm::BasicBlock &Block : Fn)
       for (const llvm::Instruction &Inst : Block) {
         const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst);
-        if (!Call || Call->getCalledFunction() ||
-            llvm::isa<llvm::InlineAsm>(Call->getCalledOperand()))
+        if (!Call)
           continue;
         // A call through a slot the loader binds names another module's
         // routine, in the import table or outside it (an ELF GOT entry), as
         // does a call to the symbol such a slot holds, which the slot's load
         // folds to.  One a header the unit includes declares keeps that
-        // prototype, and one the runtime's tables type (RaiseException) the
-        // one a unit compiles with them; any other, such as most of the
-        // Windows API, is declared here.
-        const llvm::Value *Slot = Call->getCalledOperand()->stripPointerCasts();
-        if (const auto *Cast = llvm::dyn_cast<llvm::IntToPtrInst>(Slot))
-          Slot = Cast->getOperand(0);
-        const auto *Symbol = llvm::dyn_cast<llvm::GlobalVariable>(Slot);
-        const bool CalledSymbol =
-            Symbol && Symbol->isDeclaration() && data_symbol::isMarked(*Symbol);
-        const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Slot);
-        const auto SlotVA =
-            Load ? imageDataVA(Load->getPointerOperand()) : std::nullopt;
-        // So does the slot of a symbol the image defines itself, which the
-        // loader starts at that routine (ownRoutineOfImport).
-        const auto OwnRoutineSlot = [&] {
-          const Import *Imp = Img->findImportAt(*SlotVA);
-          return Imp && Imp->IATAddr == *SlotVA &&
-                 ownRoutineOfImport(*Img, *Imp).has_value();
-        };
-        if (!CalledSymbol &&
-            (!Img || !SlotVA ||
-             (!Img->ImportStorageSlots.count(*SlotVA) && !OwnRoutineSlot())))
+        // prototype, and one the runtime's tables type (RaiseException) takes
+        // theirs (libraryCallee); any other, such as most of the Windows API,
+        // is declared as the machine calls it.
+        std::string Name = boundImportCallee(*Call);
+        if (Name.empty() || FunctionIdentifierNames.count(Name) ||
+            libc::isKnownFunction(Name))
           continue;
-        std::string Name = resolveImportCalleeName(Call->getCalledOperand());
-        if (Name.empty() || Declared.count(Name) ||
-            libc::isKnownFunction(Name) ||
-            libc::libcPrototype(Name, Opts.Format))
+        if (const auto *Symbol = llvm::dyn_cast<llvm::GlobalValue>(
+                Call->getCalledOperand()->stripPointerCasts());
+            Symbol && Symbol->hasExternalWeakLinkage())
+          Weak.insert(Name);
+        if (const LibraryCallee Library = libraryCallee(*Call);
+            Library.Prototype) {
+          Typed.emplace(Library.Name, Library.Prototype);
           continue;
+        }
         const std::string Return = typeToCLLVM(Call->getType());
         const auto [Import, Added] = Imports.emplace(Name, Return);
         if (!Added && Import->second && *Import->second != Return)
           Import->second.reset();
       }
   }
+  auto Extern = [&](const std::string &Name) {
+    return Weak.count(Name) ? "extern __attribute__((weak)) " : "extern ";
+  };
+  for (const auto &[Name, Prototype] : Typed)
+    OS << Extern(Name) << c_library::declaration(*Prototype, Name, Opts.TheArch)
+       << ";\n";
   // Unprototyped, the declaration takes the arguments the machine passed.
   for (const auto &[Name, Return] : Imports)
     if (Return)
-      OS << "extern " << *Return << " " << Name << "();\n";
+      OS << Extern(Name) << *Return << " " << Name << "();\n";
 }
 
 void LLVMCWriter::collectImageDataUses(llvm::Module &Mod) {
@@ -1541,8 +1658,11 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
       continue;
     if (llvmc::isCStackAllocationFunction(Fn))
       continue;
-    if (!OnlyFunction && GuardAnalysisOnlyFunctions &&
-        !isReferencedByExecutableProjection(Fn))
+    // Every definition prints as code, one with Windows exception semantics
+    // too (writeAnalysisOnlyFunction), so each is declared before the bodies
+    // that call it; another module's routine is declared where a body or a
+    // global names it.
+    if (!OnlyFunction && Fn.isDeclaration() && !isReferencedByProjection(Fn))
       continue;
 
     std::string RawName = Fn.getName().str();

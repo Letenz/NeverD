@@ -1835,4 +1835,46 @@ TEST_F(NativePointerRelocationBoundary,
       << LLVM.err;
 }
 
+TEST_F(NativePointerRelocationBoundary, MinGWProgramWholeModuleLLVMCCompiles) {
+  // A MinGW program links the runtime's start-up code, its own stdio
+  // helpers and copies of library routines (atexit), TLS data among .data
+  // and SEH-guarded start-up code, and calls the C library and the Windows
+  // API through their import table.  Its whole-module LLVM C compiles.
+  if (!exec("x86_64-w64-mingw32-gcc", {"--version"}).ok())
+    GTEST_SKIP() << "the program needs the MinGW compiler";
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "compiling the program's C needs Clang's GNU driver";
+  const fs::path Source = tmpFile("mingw_program.c");
+  const fs::path Exe = tmpFile("mingw_program.exe");
+  {
+    std::ofstream OS(Source);
+    ASSERT_TRUE(OS) << Source;
+    OS << R"c(#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+static void farewell(void) { fputs("bye\n", stderr); }
+int main(int argc, char **argv) {
+  atexit(farewell);
+  char *copy = malloc(strlen(argv[0]) + 1);
+  strcpy(copy, argv[0]);
+  printf("%s %d\n", copy, argc);
+  free(copy);
+  return 0;
+}
+)c";
+  }
+  RunResult Built =
+      exec("x86_64-w64-mingw32-gcc", {"-O2", "-Wl,--no-insert-timestamp",
+                                      Source.string(), "-o", Exe.string()});
+  ASSERT_TRUE(Built.ok()) << Built.err;
+
+  RunResult C = decompileToC(Exe);
+  ASSERT_TRUE(C.ok()) << C.err;
+  RunResult Syntax =
+      exec(NEVERD_TEST_CLANG,
+           {"--target=x86_64-w64-mingw32", "-fms-extensions", "-fsyntax-only",
+            "-w", tmpFile("decompiled.c").string()});
+  EXPECT_TRUE(Syntax.ok()) << Syntax.err;
+}
+
 } // namespace

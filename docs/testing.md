@@ -6827,7 +6827,7 @@ Return-slot checks reject overlapping, unknown, atomic and opaque-callee writes 
 
 Mixed exits from a single internal call site retain both outcomes: a checked bare near RET pops its own intact return PC and resumes the exact continuation, while an exit that discards that PC keeps its original control flow. `MixedExitsResumeOnlyTheMatchingInvocation` covers PE/ELF/Mach-O x64 and ELF i386, verifies optimized and unoptimized LLVM, and executes x64 C with sanitizers. Companion tests cover repeated invocations and reject multiple sites sharing a RET, independent or exceptional roots, new predecessors exposed by the continuation, open indirect exits, corrupted PCs, immediate-cleanup returns and language-runtime metadata. Each rebuilt CFG must revalidate the invocation; this does not authorize shared SEH callback returns. Nonlocal exits also prove the parent return slot separately: the outer RET must consume the original entry PC at the exact entry SP. Over-release and writes that corrupt or may alias that PC are refused; disjoint private writes remain valid.
 
-`NeverDSysVCallContractTests` covers x86-64 System V call contracts on the shapes of QtXml's `QDomNode::save` and `QDomNode::isDocument`. A direct callee whose summary reads an argument register receives the caller's value of it, including an incoming `this` passed through untouched; a virtual call takes the object a dominating block loaded into `RDI`; a method that returns without writing `RAX` on one path while only passing callee results on the others is void; and a byte written to `AL` before a comparison chain is the value returned on every path. The emitted programs run at `-O0` and `-O2` under AddressSanitizer and undefined-behavior traps.
+`NeverDSysVCallContractTests` covers x86-64 System V call contracts on the shapes of QtXml's `QDomNode::save` and `QDomNode::isDocument`. A direct callee whose summary reads an argument register receives the caller's value of it, including an incoming `this` passed through untouched, in a Mach-O image as in an ELF one; a virtual call takes the object a dominating block loaded into `RDI`; a method that returns without writing `RAX` on one path while only passing callee results on the others is void; and a byte written to `AL` before a comparison chain is the value returned on every path. The emitted programs run at `-O0` and `-O2` under AddressSanitizer and undefined-behavior traps.
 
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` checks the CoreImage provider, CIImage factory, complete 48-byte logical record and x2 pointer, rejecting missing or wrong providers, x86_64 and conflicting declarations. `ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` retains the original call independently of result assignments at the same machine address. `RejectsChangedCopyCallBodyAndCurrentImage` rejects 24 edits to receipts, arguments, stores, frames, metadata, imports, duplicate calls and saved IR, including consistent edits to both MedIR and HighIR. `GeneratedCExecutesAgainstIndependentPhysicalCopyABI` executes unchanged generated C at O0/O2 on ARM64 against a callee accepting the independently compiler-observed x2 pointer, checking all six floating bit patterns, selector/receiver identity, one evaluation, returned object, legal copy writes, unchanged inputs and boundary guards. Other hosts skip this physical ABI execution test.
 
@@ -7279,8 +7279,34 @@ defined after it.
 `HighControlFlowSemantics.SlotCallGoesThroughThePointerItHolds` calls through
 MinGW's `__imp_X` variables, which hold the image's own code, relocated or in
 a fixed image, rather than naming an import by their spelling.
+`StaticSymbolTableTest.MinGWImportVariableNoCodeChangesIsConstant` reads
+`mingw_imp_slots.exe`, which calls through two such variables: the one nothing
+changes is constant, the one its lazy binding rewrites is not.
+`SessionCAPITest.MinGWImportVariableCallsReachTheirFunction` decompiles its
+caller: HighC and LLVM C call the constant one's function directly and the
+lazy one through its variable.
 `HighControlFlowSemantics.AShiftByZeroIsItsOperand` reads AArch64's bit-0
 `tbz` test as `x & 1`.
+`HighControlFlowSemantics.ATruthValueSelectingOneOrZeroIsItself` reads -O0
+AArch64's `cset w8, eq; and w8, w8, #1` as the comparison itself, or its
+negation, and keeps a selection by a value that may hold another number.
+`NativePointerRelocationBoundary.MinGWProgramWholeModuleLLVMCCompiles` links
+a program against the MinGW-w64 runtime, when its compiler is installed, and
+compiles the program's whole-module LLVM C for x86-64 MinGW. The LLVMCValues
+cases it rests on compile and run on the host:
+`ACallerWithUnwindInformationSeesItsCalleeDeclared` declares a callee whose
+caller carries an unwind record;
+`ALibraryRoutineCalledThroughItsImportTakesItsDeclaration` calls `fputc`,
+`getenv` and `free` through import symbols with their headers' types and
+`EnterCriticalSection` with the runtime tables' prototype;
+`ARuntimeRoutineReturningAFunctionPointerIsDeclared` declares `_onexit`;
+`AWeakImportIsDeclaredWeak` links without `__gmon_start__`; and
+`ADefinitionOfALibraryRoutinesNameTakesItsAddress` renames the image's own
+`atexit`. `LLVMCIntrinsicSemantics.RepMovsForwardBackwardDynamicAndOverlap`
+runs `rep movs` copies of each width and direction, overlapping ones too, and
+`RepMovsRejectsUnprovedContracts` refuses other shapes.
+`LibCResult.ReadsWhetherTheDeclaredResultIsAPointer` reads pointer results
+from headers, typedefs included, and from the runtime tables.
 
 `NeverDItaniumHandlerTests` spells Itanium landing pads as C++ handlers.
 `ItaniumHandlerBodies.ACleanupOnlyPadBecomesACatchAllThatRethrows` prints a

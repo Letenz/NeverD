@@ -388,4 +388,27 @@ TEST(StaticSymbolTableTest, MinGWDataAmongCodeIsData) {
   }
 }
 
+TEST(StaticSymbolTableTest, MinGWImportVariableNoCodeChangesIsConstant) {
+  // The fixture calls `add_one` and `twice` through `__imp_X` variables, as
+  // MinGW's runtime defines them for the functions it supplies in place of an
+  // import (__MINGW_IMP_SYMBOL).  `__imp_twice` starts at a lazy binding that
+  // rewrites it; nothing changes `__imp_add_one`.
+  const auto Path = std::filesystem::path(__FILE__).parent_path() / "fixtures" /
+                    "mingw_imp_slots.exe";
+  const auto Image = load(readBytes(Path), /*ReadStaticSymbols=*/true);
+  const auto *Constant = Image.findSymbol("__imp_add_one");
+  const auto *Lazy = Image.findSymbol("__imp_twice");
+  const auto *AddOne = Image.findSymbol("add_one");
+  ASSERT_NE(Constant, nullptr);
+  ASSERT_NE(Lazy, nullptr);
+  ASSERT_NE(AddOne, nullptr);
+  ASSERT_EQ(Image.ConstantCodeSlots.size(), 1u);
+  ASSERT_TRUE(Image.ConstantCodeSlots.count(Constant->Addr));
+  EXPECT_EQ(Image.ConstantCodeSlots.at(Constant->Addr), AddOne->Addr);
+  EXPECT_FALSE(Image.ConstantCodeSlots.count(Lazy->Addr));
+  // Declined, the symbol table names no such variable.
+  EXPECT_TRUE(load(readBytes(Path), /*ReadStaticSymbols=*/false)
+                  .ConstantCodeSlots.empty());
+}
+
 } // namespace
