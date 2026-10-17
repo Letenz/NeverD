@@ -22,8 +22,7 @@ NEVERD_PROJECT_FILE(Manifest, "project.json", "", true)
 NEVERD_PROJECT_FILE(Annotations, "annotations.json", ".neverd-annotations.json",
                     true)
 NEVERD_PROJECT_FILE(Renames, "renames.json", ".neverd-renames.json", true)
-NEVERD_PROJECT_FILE(Functions, "functions.json", ".neverd-functions.json",
-                    true)
+NEVERD_PROJECT_FILE(Functions, "functions.json", ".neverd-functions.json", true)
 NEVERD_PROJECT_FILE(Items, "items.json", ".neverd-items.json", true)
 NEVERD_PROJECT_FILE(Operands, "operands.json", ".neverd-operands.json", true)
 NEVERD_PROJECT_FILE(Code, "code.json", ".neverd-code.json", true)
@@ -31,8 +30,7 @@ NEVERD_PROJECT_FILE(Code, "code.json", ".neverd-code.json", true)
 NEVERD_PROJECT_FILE(Types, "types.json", ".neverd-types.json", true)
 // How a binary file is read: processor, placement and platform.
 NEVERD_PROJECT_FILE(Load, "load.json", ".neverd-load.json", true)
-NEVERD_PROJECT_FILE(Bookmarks, "bookmarks.json", ".neverd-bookmarks.json",
-                    true)
+NEVERD_PROJECT_FILE(Bookmarks, "bookmarks.json", ".neverd-bookmarks.json", true)
 // The PDB, DWARF, MAP and symbol table choices.
 NEVERD_PROJECT_FILE(DebugFiles, "debug.json", ".neverd-debug.json", true)
 // Each user's own: undo history, a save's write-ahead journal, where the

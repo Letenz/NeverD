@@ -66,7 +66,7 @@ bool neverd::sdk::saveSidecar(Session *S, const std::filesystem::path &Path,
     return false;
   }
   // A file the project now has describes this build of the input.
-  return Path == project_files::path(S->FilePath,
-                                     project_files::File::Manifest) ||
+  return Path ==
+             project_files::path(S->FilePath, project_files::File::Manifest) ||
          recordProjectInput(S);
 }

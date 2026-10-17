@@ -45,10 +45,10 @@
 #include "neverd/loader/StaticSymbolTable.h"
 #include "neverd/sbf/analysis/SBFAnalysisLimits.h"
 #include "neverd/sbf/analysis/SBFFunctionBody.h"
-#include "neverd/support/ProjectFiles.h"
 #include "neverd/sdk/NeverDPlugin.h"
 #include "neverd/support/BinaryLoading.h"
 #include "neverd/support/FilePath.h"
+#include "neverd/support/ProjectFiles.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Object/Binary.h"

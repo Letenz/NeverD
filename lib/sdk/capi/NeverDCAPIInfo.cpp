@@ -906,8 +906,8 @@ static llvm::json::Object projectInput(Session &S) {
 
 /// The input the project's project.json names, if it names one.
 static std::optional<llvm::json::Object> recordedInput(const Session &S) {
-  auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(project_files::path(
-      S.FilePath, project_files::File::Manifest)));
+  auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(
+      project_files::path(S.FilePath, project_files::File::Manifest)));
   if (!Buffer)
     return std::nullopt;
   llvm::Expected<llvm::json::Value> Manifest =
@@ -917,7 +917,8 @@ static std::optional<llvm::json::Object> recordedInput(const Session &S) {
     return std::nullopt;
   }
   const llvm::json::Object *Object = Manifest->getAsObject();
-  const llvm::json::Object *Input = Object ? Object->getObject("input") : nullptr;
+  const llvm::json::Object *Input =
+      Object ? Object->getObject("input") : nullptr;
   if (!Input)
     return std::nullopt;
   return *Input;

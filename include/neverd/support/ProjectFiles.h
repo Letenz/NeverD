@@ -55,8 +55,7 @@ inline std::filesystem::path folder(std::filesystem::path Input) {
   return Input;
 }
 
-inline std::filesystem::path path(const std::filesystem::path &Input,
-                                  File Id) {
+inline std::filesystem::path path(const std::filesystem::path &Input, File Id) {
   return (folder(Input) / std::string(describe(Id).Path)).make_preferred();
 }
 
