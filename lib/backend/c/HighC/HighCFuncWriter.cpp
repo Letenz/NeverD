@@ -843,10 +843,10 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
       const TypeRef Fwd = It->second;
       // Map cursor: untyped `int64_t v1` from `bins[i]` is a node pointer.
       // A join dest (`v5 = p->field`) must stay the scalar, not the
-      // containing record FieldForwardTypes may have attached.
-      if (Fwd->Kind == NdTypeKind::Ptr && Fwd->Pointee &&
-          Fwd->Pointee->Kind == NdTypeKind::Struct &&
-          !Fwd->Pointee->SourceName.empty() &&
+      // containing record FieldForwardTypes may have attached.  A record
+      // the unit declares no typedef of keeps the scalar too: C spells it
+      // by its tag alone.
+      if (spellsRecordPointer(Fwd) &&
           (!Ty || Ty->Kind == NdTypeKind::Int ||
            Ty->Kind == NdTypeKind::Unknown ||
            (Ty->Kind == NdTypeKind::Ptr &&
@@ -2187,7 +2187,7 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
     if (!E)
       return std::nullopt;
     if (E->Kind == ExprKind::Load && !E->Operands.empty() && E->Operands[0]) {
-      if (auto Path = typedMemberAccess(*E->Operands[0]))
+      if (auto Path = loadedMemberAccess(*E))
         return std::make_pair(*Path, typedMemberType(*E->Operands[0]));
       return std::nullopt;
     }
