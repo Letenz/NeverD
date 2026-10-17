@@ -7429,6 +7429,37 @@ TEST_F(SessionCAPITest, UserFunctionAttributesDecideHowCallsEndAndPersist) {
   }
 }
 
+TEST_F(SessionCAPITest, WholeProgramSourceSimplifiesSymbolicallyOnRequest) {
+  // entry: return (a ^ b) + 2 * (a & b), the mixed Boolean-arithmetic
+  // spelling of a + b.
+  const auto Input =
+      write("mba.elf",
+            makeNativeELF(false, 0x400000, {},
+                          std::string_view("\x89\xf8\x31\xf0\x89\xf9\x21\xf1"
+                                           "\x01\xc9\x01\xc8\xc3",
+                                           13)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  const auto keepsMBA = [&](int UseLlvmRoute) {
+    const std::string Program =
+        takeString(neverd_decompile_all(Session, Input.c_str(), UseLlvmRoute,
+                                        /*NoOpt=*/0, /*MaxFunctions=*/0));
+    EXPECT_NE(Program.find(" + "), std::string::npos)
+        << takeString(neverd_last_error(Session)) << Program;
+    return Program.find(" ^ ") != std::string::npos ||
+           Program.find(" & ") != std::string::npos;
+  };
+  // Ordinary source keeps the machine's expression in both routes.
+  EXPECT_TRUE(keepsMBA(0));
+  EXPECT_TRUE(keepsMBA(1));
+  neverd_session_set_source_symbolic(Session, 1);
+  EXPECT_FALSE(keepsMBA(0));
+  EXPECT_FALSE(keepsMBA(1));
+  // The choice holds until the caller changes it.
+  neverd_session_set_source_symbolic(Session, 0);
+  EXPECT_TRUE(keepsMBA(0));
+  EXPECT_TRUE(keepsMBA(1));
+}
+
 TEST_F(SessionCAPITest, AStatedNoReturnCalleeKeepsItsArguments) {
   // A statement decides whether a call returns, never what its callee reads:
   // one function's C still passes argc, as a whole program's does.

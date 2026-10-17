@@ -1564,6 +1564,12 @@ static const char *decompileAllImpl(neverd_session_t Sess,
   if (UseLlvmRoute)
     Opts.LiftMode = true;
   Opts.SourceProjection = true;
+  // Symbolic source simplification is the caller's explicit choice for the
+  // whole program, never a default.
+  if (S && S->SourceSymbolic) {
+    Opts.SymbolicHighC = true;
+    Opts.SymbolicLLVMSource = true;
+  }
   // A named ARM function with no instruction-state evidence is not a
   // candidate for either C route. Reject the whole requested output before
   // analysis so a partly marked image cannot silently omit that function.

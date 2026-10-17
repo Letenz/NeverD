@@ -285,6 +285,9 @@ struct Session {
   /// (neverd_session_discover_functions); kept until the next load.
   std::optional<std::vector<std::pair<va_t, std::string>>> DiscoveredFunctions;
   std::set<va_t> OnlyFunctionEntries;
+  /// Whole-program source simplifies symbolically
+  /// (neverd_session_set_source_symbolic).
+  bool SourceSymbolic = false;
   std::map<va_t, InstructionMode> ARMFunctionModes;
   evm::Hardfork EVMFork = evm::Hardfork::Latest;
   bool EVMStrict = true;

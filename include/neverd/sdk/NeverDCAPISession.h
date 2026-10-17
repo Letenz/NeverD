@@ -296,6 +296,16 @@ NEVERD_API int neverd_session_load_dwarf(neverd_session_t Sess,
 NEVERD_API void neverd_session_set_debug_info_enabled(neverd_session_t Sess,
                                                       int Enabled);
 
+/// Pass nonzero for whole-program decompilation (neverd_decompile_all() and
+/// neverd_decompile_all_ex()) to simplify the source symbolically, as the
+/// "symbolic" source option of neverd_ir_view_ex_json() does for one
+/// function, with every function's whole-program evidence: it removes
+/// mixed Boolean-arithmetic expressions and other identities the machine
+/// computes.  Off by default, where source keeps the machine's expressions;
+/// lifting and patching are unaffected.
+NEVERD_API void neverd_session_set_source_symbolic(neverd_session_t Sess,
+                                                   int Enabled);
+
 /// Pass 0 to load a PE without the PDB it names: the next
 /// neverd_session_load() searches for none, though a PDB named with
 /// neverd_session_set_pdb_path() still loads and other debug information is

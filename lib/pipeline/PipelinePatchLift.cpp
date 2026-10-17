@@ -204,7 +204,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     LLVMEmissionResult Emission = emitLLVMSharded(
         Result.MedFuncs, Ctx, Img.Arch, ImportMap, Img, Img.abiFormat(),
         Opts.NoOpt, Workers, !Result.LibraryRecognitions.empty(),
-        Result.LibraryRecognitions, Dbg);
+        Result.LibraryRecognitions, Dbg,
+        SourceViewOptions{.Symbolic = Opts.SymbolicLLVMSource});
     Result.BackendUnhandledValueIntrinsics = Emission.UnhandledValueIntrinsics;
     Result.LLVMVerifierFailed = Emission.LLVMVerifierFailed;
     Result.LlvmModule = std::move(Emission.Module);
@@ -256,9 +257,11 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       Options.Conservative = Opts.PatchMode;
       const bool SourceOnly = Opts.SourceProjection && !Opts.PatchMode;
       OptimizationResult Optimization =
-          SourceOnly ? optimizeOrPromoteModule(*Result.LlvmModule,
-                                               Result.LLVMSources.get())
-                     : optimizeModule(*Result.LlvmModule, Options);
+          SourceOnly
+              ? optimizeOrPromoteModule(
+                    *Result.LlvmModule, Result.LLVMSources.get(),
+                    SourceViewOptions{.Symbolic = Opts.SymbolicLLVMSource})
+              : optimizeModule(*Result.LlvmModule, Options);
       // Match the source SDK and sharded C route: a verified analysis module
       // keeps its explicit incomplete native EH contract and only promotes
       // temporary allocas. Binary rewriting still requires native lowering.

@@ -724,7 +724,8 @@ cl::opt<bool> Devirtualize(
     cl::sub(DecompileCmd));
 cl::opt<bool> SourceSymbolic(
     "symbolic-simplify",
-    cl::desc("Symbolically simplify the selected source function"),
+    cl::desc("Symbolically simplify the source: the function --func selects, "
+             "or else every function"),
     cl::sub(DecompileCmd));
 cl::opt<std::string>
     SourceLLVMLevel("llvm-opt",
