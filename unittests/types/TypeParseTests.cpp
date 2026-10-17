@@ -407,6 +407,33 @@ TEST(TypeParse, RefusesWhatItCannotLayOutAndKeepsGoingWhenAsked) {
   EXPECT_NE(Library.find("C"), nullptr);
 }
 
+TEST(TypeParse, AnEnumerationOfNoValuesReadsBackWithItsType) {
+  // `typedef enum _CLASS CLASS;` alone, as Microsoft's compilers take it and
+  // phnt declares USERTHREADINFOCLASS.  C has no enumeration without
+  // enumerators: it renders with its underlying type, which completes it.
+  TypeLibrary Library;
+  ASSERT_TRUE(parseCTypes("typedef enum _CLASS CLASS;\n"
+                          "typedef struct _QUERY { CLASS Class; } QUERY;",
+                          Library)
+                  .ok());
+  for (Language Lang : {Language::C, Language::Cpp}) {
+    RenderOptions Render;
+    Render.Lang = Lang;
+    Render.Asserts = true;
+    const std::string Text = renderTypes(Library, {}, Render);
+    EXPECT_NE(Text.find("enum _CLASS : int32_t;"), std::string::npos) << Text;
+    TypeLibrary Back;
+    ParseOptions Read;
+    Read.Lang = Lang;
+    ASSERT_TRUE(parseTypes(Text, Back, Read).ok()) << Text;
+    const LocalType *Class = Back.find("_CLASS");
+    ASSERT_NE(Class, nullptr);
+    ASSERT_TRUE(Class->Enum);
+    EXPECT_TRUE(Class->Enum->Values.empty());
+    EXPECT_EQ(Back.sizeOf(*makeNamed("QUERY", TypeKind::Typedef)), 4u);
+  }
+}
+
 TEST(TypeParse, ConvertsWithoutAProgram) {
   // A C header read and rendered as Rust and Go, and back.
   TypeLibrary Library;
@@ -455,6 +482,28 @@ TEST(TypeParse, ChecksStaticAssertions) {
   ASSERT_EQ(Wrong.Problems.size(), 1u);
   EXPECT_EQ(Wrong.Problems[0].Line, 2u);
   EXPECT_EQ(Wrong.Problems[0].Message, "a static assertion fails: B");
+}
+
+TEST(TypeParse, SizesAMemberReachedThroughANullPointer) {
+  // As RTL_FIELD_SIZE and RTL_SIZEOF_THROUGH_FIELD spell it.
+  TypeLibrary Library;
+  EXPECT_TRUE(parseCTypes(R"(
+    typedef struct _A {
+      char c;
+      struct { short s; long long q; };
+      struct { int i; char b[3]; } n;
+    } A;
+    _Static_assert(sizeof(((A *)0)->q) == 8, "A.q");
+    _Static_assert(sizeof(((A *)0)->n.b) == 3, "A.n.b");
+    _Static_assert(__builtin_offsetof(A, q) + sizeof(((A *)0)->q) == 24,
+                   "A through q");
+  )",
+                          Library)
+                  .ok());
+  const ParseResult Missing = parseCTypes(
+      "_Static_assert(sizeof(((A *)0)->z) == 1, \"A.z\");", Library);
+  ASSERT_EQ(Missing.Problems.size(), 1u);
+  EXPECT_EQ(Missing.Problems[0].Message, "no member 'z' to take the size of");
 }
 
 TEST(TypeParse, ReportsWhereAndChangesNothingOnAProblem) {

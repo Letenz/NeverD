@@ -1783,6 +1783,11 @@ private:
           At.Text == "_Alignof" || At.Text == "__alignof" ||
           At.Text == "__alignof__") {
         take();
+        // The size of a member reached through a null pointer to its
+        // record, as RTL_FIELD_SIZE spells it: sizeof(((T *)0)->Member).
+        if (At.Text == "sizeof" && isPunct("(") && isPunct("(", 1) &&
+            isPunct("(", 2) && startsType(3))
+          return memberSize(At);
         // The size of a string literal is its bytes and the terminator's,
         // as INTERNET_MAX_URL_LENGTH counts sizeof("://").
         if (At.Text == "sizeof" &&
@@ -1871,6 +1876,50 @@ private:
       return std::nullopt;
     (void)At;
     return int64_t(Bits / 8);
+  }
+
+  /// sizeof(((type *)0)->member.member...), anonymous records looked
+  /// through: the size of the member.
+  std::optional<int64_t> memberSize(const Token &At) {
+    take();
+    take();
+    const TypeExprRef Pointer = typeInParentheses();
+    if (!Pointer)
+      return std::nullopt;
+    if (Pointer->Kind != TypeExprKind::Pointer || !Pointer->Element ||
+        peek().Kind != TokenKind::Number || peek().Value != 0) {
+      fail(peek(), "expected a null pointer to a record");
+      return std::nullopt;
+    }
+    take();
+    if (!expect(")", "after the null pointer") ||
+        !expect("->", "after the null pointer"))
+      return std::nullopt;
+    const RecordDef *Record = recordOf(*Pointer->Element);
+    const neverd::types::Member *Found = nullptr;
+    uint64_t Bits = 0;
+    do {
+      if (peek().Kind != TokenKind::Word) {
+        fail(peek(), "expected a member's name");
+        return std::nullopt;
+      }
+      const Token Name = take();
+      Found = Record ? find(*Record, Name.Text, Bits) : nullptr;
+      if (!Found) {
+        fail(Name, "no member '" + Name.Text + "' to take the size of");
+        return std::nullopt;
+      }
+      Record = recordOf(*Found->Type);
+    } while (accept("."));
+    if (!expect(")", "after the member"))
+      return std::nullopt;
+    const std::optional<uint64_t> Size =
+        Found->isBitfield() ? std::nullopt : Library.sizeOf(*Found->Type);
+    if (!Size) {
+      fail(At, "sizeof a member whose size is unknown");
+      return std::nullopt;
+    }
+    return int64_t(*Size);
   }
 
   const RecordDef *recordOf(const TypeExpr &Type) const {
