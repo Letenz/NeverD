@@ -12,6 +12,10 @@ Capstone, and Unicorn submodules keep their own internal architecture.
 
 `X64MXCSRMask` enables raw MXCSR loads and scalar state reads/writes with an explicit effective mask (`0xffbf` or `0xffff`). The x64 adapter owns the legal initial-state domain and transitions. Core charges work and requires a proof that reserved bits are clear; the nonfaulting flag alone supplies no such proof. Original intrinsics remain observable. MXCSR memory stores, source wrapping and native/LLVM certificates still require their own contracts.
 
+`SourcePatchPreparation` owns the shared pre-installation layout and dependency transaction. `SourcePatchCallback` authenticates saved original entries and delegates instruction relocation and native unwind records to their architecture/format owners. `SourcePatchDependencies` plans explicit imports; format-owned ELF/PE/Mach-O writers preserve existing loader identities. Source, supplied IR and native objects consume these same plans. The final native-object section/permission proof and `publishSourcePatch` reload check remain authoritative; CLI, C API and Python do not duplicate loader or relocation decisions.
+
+Six selected native OS/ISA jobs passed with zero failed or skipped cases: 3669 GoogleTest executions, 1008 native process observations (504 functional and 504 C++ exception observations), 12 real loader rejections, 96 images and 84 publication receipts. [Exact native evidence](source-patching.md).
+
 ## Runtime memory recovery
 
 `X64SegmentedWrites` separately admits ordinary 1/2/4/8-byte FS/GS stores with 64-bit offsets under explicit nonfaulting machine state. `arch/x86_64` owns runtime memory validation, admission and symbolic base initialization. Core uses complete linear addresses and ordinary alias invalidation; fixed arbitrary bases may alias the frame, other segments and live return cells. The capability is bound into raw receipts. Source and native proof interfaces without authenticated base inputs continue to refuse this domain.
@@ -299,14 +303,22 @@ The decompiler reads the local types through `LocalTypesDebugContext`
 (`lib/sdk/capi`), which wraps the program's debug context whenever the
 program has local types. The local types are the authority on the program's
 records:
-- A record the debug information names, but gives no members yet, takes the
-  library's when the library defines a record of its name and size
-  (`completeType`). The decompiler names its member accesses by these, so a
-  member the user renames reads by its new name. Members the debug
-  information gave stay, and so do its records' ABI facts.
+- A record the debug information names takes the library's members when
+  the library defines a record of its name and size (`completeType`), and
+  an enumeration of the library's name takes its enumerators. The
+  decompiler names its member accesses and the values it compares with or
+  stores to an enumeration by these, so a member or an enumerator the user
+  renames reads by its new name. Members the debug information gave give
+  way only where each lies where one of the library's does: a C++ class
+  whose bases a PDB flattens into it keeps its own. The records' ABI facts
+  stay, and the context gives back what the types held when it goes.
 - A decompiled unit, HighC's or LLVM-C's, holds the definitions of the
   records it names (`CEmitterOptions::RecordDefinitions`), and of what they
-  hold by value, after its includes. `renderEmbeddedC` renders them in exact
+  hold by value, after its includes. Only a program whose library holds
+  types defines them: a context made for the user's declarations alone, or
+  over an empty library, as an image with no PDB, header library or
+  declared types has, defines none, and LLVM-C keeps its machine types
+  there. `renderEmbeddedC` renders them in exact
   widths, with their checks, each under a guard of its own so that units
   concatenate. A record whose members the unit, or the debug information
   anywhere in the session, names otherwise than the library does stays
@@ -380,8 +392,13 @@ line loads it first. The prototype's types convert to the decompiler's
 types:
 - records become named records that C passes and returns by value, with
   their members' names for display;
-- typedefs become what they name, and enumerations their underlying
-  integers;
+- typedefs become what they name;
+- a named enumeration becomes an integer of its underlying type's size and
+  sign that names its values by its enumerators, as a PDB's enumerations
+  do, so that HighC and LLVM-C compare with and store `PowerOn` rather than
+  `1`, and a unit that spells the enumeration by its tag declares that
+  name after defining it (`typedef enum X X;`); an anonymous one becomes
+  its underlying integer;
 - pointers to functions become pointers to C signatures of scalars and
   opaque pointers.
 
@@ -500,8 +517,13 @@ emitted source caches include the options in their identity. LLVM call-site
 preparation owns a separate MedIR copy so opening that view cannot change the
 prepared inputs used by a later HighC enhancement. The additive
 `neverd_ir_view_ex_json` API validates options before preparation; the legacy
-page API keeps default behavior and bytecode support. Source options never
-change the lifting, patching or general module optimizer defaults.
+page API keeps default behavior and bytecode support. Whole-program
+decompilation takes symbolic simplification as an explicit session choice
+(`neverd_session_set_source_symbolic`, the CLI's `--symbolic-simplify` without
+`--func`): HighIR conversion and the LLVM source optimizer, sharded or not,
+then simplify every function with whole-program evidence such as the wide
+returns its callers observe, which one function's view lacks. Source options
+never change the lifting, patching or general module optimizer defaults.
 
 LLVMC defaults to LLVM O2 after ordinary frame and SSA promotion. Basic scalar
 cleanup, O0, O1, O3 and a bounded custom pass selection are explicit alternatives.
@@ -622,15 +644,19 @@ unions, anonymous structures and unions, bit-fields, enumerations,
 `#pragma pack` and `DECLSPEC_ALIGN`, and their `static_assert` and `offsetof`
 checks. A member access reaches a field through anonymous members as C
 counts it. C and C++ keep the definitions as written, and C++ reads the code
-that uses them. A Rust or Go page takes the definitions as Local Types
-renders them in its language (`renderEmbeddedSource`): the types the unit
+that uses them. A Rust or Go page, or a whole program spelled in Rust or Go, takes the
+definitions as Local Types renders them in its language
+(`renderEmbeddedSource`): the types the unit
 defines, the records it only points to as opaque types, and no module
 header, in place of the C bytes the source map records
 (`CSourceMap::LocalTypes`). The code reaches a member as that rendering
 names it: through the fields that hold its anonymous records, and in Go
 through the methods that read a union's members and the members Go cannot
-align, which return pointers. A bit-field, which the renderings read
-through methods, stays C with its reason. Without the program's types, as
+align, which return pointers. A bit-field reads through the getter and
+stores through the setter the renderings give the record that holds its
+storage (`MemberPath::Getter`, `Setter`); a compound assignment or an
+increment stores what it computes from the getter, and a `bool` bit-field,
+or one with no methods, stays C with its reason. Without the program's types, as
 the corpus reads a unit's text alone, Rust and Go spell a record whose
 fields their own structures lay out as C does, Rust's under its packing
 and alignment, and an enumeration as int constants, and show a union, an
@@ -4556,6 +4582,12 @@ while `LinuxServices.cpp` remains the authoritative kernel-service dispatcher
 for both Linux processes and Android native workloads. An optional runtime
 instruction observer receives only attempts admitted by `ExecutionSession`'s
 existing budget; OS models do not replace CPU hooks to collect traces.
+Selected Android execution observations instead use `ExecutionSession` watches
+to read stopped scalar state and explicit memory. `AndroidObservation` owns
+shared C++/JSON admission and capture, and the runtime owns watch continuation.
+Checked quantum boundaries precede a watch of the next instruction, so a
+cooperatively selected thread cannot inherit another thread's skipped watch.
+Observation stops preserve the current quantum and do not charge a service.
 The device API query reads the explicit immutable property catalogue and shares
 `AndroidStrings`' bounded decimal conversion with `atoi`. The reported property
 does not select a different Bionic ABI or infer a Linux kernel contract.
@@ -4985,6 +5017,15 @@ subset. CPU transport availability does not imply arbitrary OS compatibility.
 `driver-strict` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native Windows x64 CI with Unicorn disabled passes all 359 required checks: 131 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). Native ARM64 runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
 
 Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profile. `NativeLegacyX64` describes native x64 driver execution. `NeverDNativeDriverTests` validates the original corpus and can run with Unicorn disabled.
+
+`UnicornStepper` invalidates translated blocks at each stopped entry because
+host backing writes can bypass the engine's store hooks. A one-instruction
+entry removes blocks covering its first byte through the current mapping;
+this also retires a cross-page instruction whose operand bytes changed. Each
+later entry performs the same check, including executable aliases. Direct
+runs and multi-instruction maintenance retain full invalidation, as does an
+entry whose exclusive invalidation end would wrap. This transport policy does
+not change instruction admission, memory transactions or stop/deadline checks.
 
 Checked ARM64 has one complete state boundary. `Registers.def` defines 39 scalar fields and 32 128-bit vectors; `captureAArch64State` stages every read, applies declared widths and NZCV normalization, then publishes once. Unicorn, KVM, WHP and HVF transfer the same inventory, including TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR and FPSR. Native adapters enable FP/SIMD through CPACR_EL1. Any scalar/vector read failure or cancelled entry preserves all caller state.
 
@@ -6628,6 +6669,11 @@ fdopen access checks and buffer sizing; it does not reopen a path or duplicate
 a cursor. Unknown metadata remains unsupported. Each modeled call completes
 atomically within the cooperative scheduler, while errno stays in caller TLS.
 
+`AndroidLog` owns liblog list/logger identities and snapshot cursors. Its shared
+admission validates both JSON and C++ input; each read emits the same v4 packet
+from explicit visible records. Opaque guest tokens share the Linux memory owner.
+No logd transport or permission state is inferred. See [Android log readers](android-log-reader.md).
+
 `AndroidProperties` builds one immutable guest property table from explicit
 inputs. Name lookup, stable `prop_info` identities, serials, legacy reads and
 callback strings share those records; the device API-level query uses the same
@@ -7280,8 +7326,18 @@ it copies live relocated bytes once, validates descriptor/frame identity and
 preserves non-result registers. `DarwinMemory` keeps TLS reservations resident;
 `ProcessReport` serializes named resolver events through the existing schema.
 Public `DarwinProcessOptions` and `darwin.modules` only supply original inputs;
-no host loader, search, callback execution or second symbol-resolution owner is
+no host loader, search or second symbol-resolution owner is
 introduced. See [Darwin environments](darwin-emulation.md) for the finite contract.
+
+`MachOExecutionImage` also retains original constructor section/routines facts.
+`DarwinImage` alone admits local executable targets after relocation and orders
+shared dependencies once in postorder. `DarwinCallbacks` owns startup, main and
+main-thread TLS termination, authenticated return frames and private pending
+exit state. It reuses `IntegerABI`, the original process stack/return page and
+the existing `ExecutionSession` budget. `DarwinStack` owns bounded `ProgramVars`;
+`DarwinLibSystem` decodes the exact void TLS-registration and nonreturning exit
+ABIs before delegating their lifecycle effects. Runtime callback targets retain
+unrounded original executable spans, and termination preserves the current stack.
 
 ### Sequential raw compare-and-exchange
 

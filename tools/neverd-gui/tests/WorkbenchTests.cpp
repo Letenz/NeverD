@@ -33,6 +33,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QCompleter>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDialogButtonBox>
 #include <QDragEnterEvent>
@@ -49,6 +50,7 @@
 #include <QItemSelectionModel>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QHelpEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -68,9 +70,11 @@
 #include <QTabBar>
 #include <QTableView>
 #include <QTemporaryDir>
+#include <QTextBlock>
 #include <QTest>
 #include <QTimer>
 #include <QToolButton>
+#include <QToolTip>
 #include <QTranslator>
 #include <QTreeView>
 #include <QTreeWidget>
@@ -1951,9 +1955,12 @@ private slots:
     bench.action(ActionId::EditRedo)->trigger();
     QTRY_VERIFY_WITH_TIMEOUT(
         code->allText().contains(QString::fromUtf8("本行注释")), OpenTimeoutMs);
+    // Save keeps the project beside the binary; packing writes a database.
     bench.session.save();
-    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(path + ".nddb"), OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(!bench.session.dirty(), OpenTimeoutMs);
+    QVERIFY(!QFileInfo::exists(path + ".nddb"));
+    bench.session.packDatabase(path + ".nddb");
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(path + ".nddb"), OpenTimeoutMs);
     QString databaseError;
     const auto stored = ProjectDatabase::read(path + ".nddb", &databaseError);
     QVERIFY2(stored.has_value(), qPrintable(databaseError));
@@ -3763,13 +3770,16 @@ private slots:
       bench.window->openFile(path);
       QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
       answer.stop();
-      bench.session.setComment(Base + 0x140, QStringLiteral("declined"));
-      QTRY_VERIFY(bench.session.dirty());
-      QSignalSpy saved(&bench.session, &Session::databaseSaved);
-      bench.session.save();
-      QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
-      QVERIFY(saved.first().first().toBool());
+      // The answer is the project's as soon as it is given, in a file
+      // beside the binary rather than a database.
+      const auto debug =
+          QJsonDocument::fromJson(readAll(path + ".neverd-debug.json"))
+              .object();
+      QCOMPARE(debug.value("dwarf").toObject().value("mode").toString(),
+               QStringLiteral("none"));
+      QVERIFY(!bench.session.dirty());
     }
+    QVERIFY(!QFileInfo::exists(database));
     Workbench bench;
     bool asked = false;
     QTimer watch;
@@ -3781,7 +3791,7 @@ private slots:
       }
     });
     watch.start(5);
-    bench.window->openFile(database);
+    bench.window->openFile(path);
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     QVERIFY(!asked);
     const auto metadata = bench.session.metadata();
@@ -3945,13 +3955,16 @@ private slots:
       bench.window->openFile(path);
       QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
       answer.stop();
-      bench.session.setComment(Base + 0x140, QStringLiteral("declined"));
-      QTRY_VERIFY(bench.session.dirty());
-      QSignalSpy saved(&bench.session, &Session::databaseSaved);
-      bench.session.save();
-      QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
-      QVERIFY(saved.first().first().toBool());
+      // The answer is the project's as soon as it is given, in a file
+      // beside the binary rather than a database.
+      const auto debug =
+          QJsonDocument::fromJson(readAll(path + ".neverd-debug.json"))
+              .object();
+      QCOMPARE(debug.value("map").toObject().value("mode").toString(),
+               QStringLiteral("none"));
+      QVERIFY(!bench.session.dirty());
     }
+    QVERIFY(!QFileInfo::exists(database));
     Workbench bench;
     bool asked = false;
     QTimer watch;
@@ -3963,7 +3976,7 @@ private slots:
       }
     });
     watch.start(5);
-    bench.window->openFile(database);
+    bench.window->openFile(path);
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     QVERIFY(!asked);
     const auto metadata = bench.session.metadata();
@@ -4102,13 +4115,16 @@ private slots:
       bench.window->openFile(path);
       QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
       answer.stop();
-      bench.session.setComment(Base + 0x140, QStringLiteral("declined"));
-      QTRY_VERIFY(bench.session.dirty());
-      QSignalSpy saved(&bench.session, &Session::databaseSaved);
-      bench.session.save();
-      QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
-      QVERIFY(saved.first().first().toBool());
+      // The answer is the project's as soon as it is given, in a file
+      // beside the binary rather than a database.
+      const auto debug =
+          QJsonDocument::fromJson(readAll(path + ".neverd-debug.json"))
+              .object();
+      QCOMPARE(debug.value("symbols").toObject().value("mode").toString(),
+               QStringLiteral("none"));
+      QVERIFY(!bench.session.dirty());
     }
+    QVERIFY(!QFileInfo::exists(database));
     Workbench bench;
     bool asked = false;
     QTimer watch;
@@ -4120,7 +4136,7 @@ private slots:
       }
     });
     watch.start(5);
-    bench.window->openFile(database);
+    bench.window->openFile(path);
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     QVERIFY(!asked);
     QCOMPARE(bench.session.metadata()
@@ -4736,6 +4752,105 @@ private slots:
     filter->setText(QStringLiteral("list"));
     QTRY_COMPARE(list->model()->rowCount(), 1);
     types->setPage(0);
+  }
+
+  void localTypesShowKindsPathsAndCards() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-types.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.action(ActionId::ViewLocalTypes)->trigger();
+    auto *types = bench.window->findChild<LocalTypesView *>();
+    QVERIFY(types);
+    auto *list =
+        types->findChild<QTreeView *>(QStringLiteral("localTypesList"));
+    auto *layout =
+        types->findChild<QTreeWidget *>(QStringLiteral("localTypesLayout"));
+    auto *source =
+        types->findChild<QPlainTextEdit *>(QStringLiteral("localTypesSource"));
+    auto *path = types->findChild<QLabel *>(QStringLiteral("localTypesPath"));
+    QVERIFY(list && layout && source && path);
+    QTRY_COMPARE(list->model()->rowCount(), 3);
+
+    // Each type shows the icon of its kind, and hovering its name says what
+    // it is, how big and where it comes from.
+    for (int row = 0; row < list->model()->rowCount(); ++row) {
+      const QModelIndex name = list->model()->index(row, 1);
+      QVERIFY2(!name.data(Qt::DecorationRole).value<QIcon>().isNull(),
+               qPrintable(name.data().toString()));
+      QVERIFY(name.data(Qt::ToolTipRole)
+                  .toString()
+                  .contains(QStringLiteral("<b>%1</b>")
+                                .arg(name.data().toString())));
+    }
+    const QModelIndexList device =
+        list->model()->match(list->model()->index(0, 1), Qt::DisplayRole,
+                             QStringLiteral("_DEVICE"), 1, Qt::MatchExactly);
+    QCOMPARE(device.size(), 1);
+    const QString card = device.first().data(Qt::ToolTipRole).toString();
+    QVERIFY2(card.contains(QStringLiteral("structure")) &&
+                 card.contains(QStringLiteral("bytes")),
+             qPrintable(card));
+
+    // The breadcrumb names the records that hold the member selected, and
+    // a crumb selects the record it names.
+    types->showType(QStringLiteral("_DEVICE"));
+    QTRY_COMPARE(layout->topLevelItemCount(), 4);
+    QTreeWidgetItem *bit = layout->topLevelItem(3)->child(1);
+    layout->setCurrentItem(bit);
+    QVERIFY(path->isVisibleTo(types));
+    QVERIFY2(path->text().contains(QStringLiteral("_DEVICE")) &&
+                 path->text().contains(QStringLiteral("union")) &&
+                 path->text().contains(bit->text(2)),
+             qPrintable(path->text()));
+    emit path->linkActivated(QStringLiteral("3/"));
+    QCOMPARE(layout->currentItem(), layout->topLevelItem(3));
+    emit path->linkActivated(QString());
+    QCOMPARE(layout->currentItem(), nullptr);
+    QVERIFY(!path->isVisibleTo(types));
+    // A member's row says where it lies.
+    QVERIFY2(bit->toolTip(2).contains(QStringLiteral("bits")),
+             qPrintable(bit->toolTip(2)));
+    QVERIFY(layout->topLevelItem(2)->toolTip(2).contains(
+        QStringLiteral("<b>Links</b>")));
+
+    // The member selected shows its line in the source, which marks the line
+    // its cursor is on.
+    layout->setCurrentItem(layout->topLevelItem(2));
+    types->setPage(1);
+    QTRY_VERIFY(source->textCursor().block().text().contains(
+        QStringLiteral("Links;")));
+    QCOMPARE(source->extraSelections().size(), 1);
+    QCOMPARE(source->extraSelections().first().cursor.block(),
+             source->textCursor().block());
+
+    // Hovering a type's name in the source says what it is; Ctrl+click opens
+    // it, as an editor follows a definition.
+    const QTextCursor word =
+        source->document()->find(QStringLiteral("_LIST_ENTRY"));
+    QVERIFY(!word.isNull());
+    QTextCursor inside(source->document());
+    inside.setPosition(word.selectionStart() + 3);
+    const QPoint point = source->cursorRect(inside).center();
+    QHelpEvent help(QEvent::ToolTip, point,
+                    source->viewport()->mapToGlobal(point));
+    QApplication::sendEvent(source->viewport(), &help);
+    QTRY_VERIFY(QToolTip::text().contains(QStringLiteral("_LIST_ENTRY")));
+    QTest::mouseClick(source->viewport(), Qt::LeftButton, Qt::ControlModifier,
+                      point);
+    QTRY_COMPARE(types->currentType(), QStringLiteral("_LIST_ENTRY"));
+    QTest::keyClick(source, Qt::Key_Escape);
+    QTRY_COMPARE(types->currentType(), QStringLiteral("_DEVICE"));
+
+    // So does Ctrl+click on a member's type in the layout.
+    types->setPage(0);
+    QTRY_COMPARE(layout->topLevelItemCount(), 4);
+    QTreeWidgetItem *links = layout->topLevelItem(2);
+    const QRect row = layout->visualItemRect(links);
+    QTest::mouseClick(layout->viewport(), Qt::LeftButton, Qt::ControlModifier,
+                      row.center());
+    QTRY_COMPARE(types->currentType(), QStringLiteral("_LIST_ENTRY"));
   }
 
   void structureOffsetsRankTypesByTheCodesAccesses() {
@@ -5800,16 +5915,16 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(operandFormat().isEmpty(), OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(shown("rsp, 20h"), OpenTimeoutMs);
 
-    // A restarted worker reopens the file where its database left it.  The
-    // worker writes the sidecar before it answers, and an edit in flight asks
-    // to be saved first.
+    // A restarted worker reopens the file where the user was.  The worker
+    // writes the sidecar before it answers, and an edit in flight asks to be
+    // saved first.
     QTRY_VERIFY_WITH_TIMEOUT(!bench.session.dirty(), OpenTimeoutMs);
+    const auto place = disassembly->currentItem();
+    QVERIFY(place && *place != bench.session.entryAddress());
     bench.session.restart();
     QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
-    QTRY_COMPARE_WITH_TIMEOUT(disassembly->currentItem(),
-                              std::optional<Address>(Base + 0x140),
-                              OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(disassembly->currentItem(), place, OpenTimeoutMs);
     QVERIFY2(bench.session.lastError().isEmpty(),
              qPrintable(bench.session.lastError()));
   }
@@ -6226,7 +6341,7 @@ private slots:
             (native ? "/make-code-native.png" : "/make-code-fixture.png")));
       }
       QSignalSpy saved(&bench.session, &Session::databaseSaved);
-      bench.session.save();
+      bench.session.packDatabase(database);
       QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
       QVERIFY(saved.first().first().toBool());
       // C is not consumed as a data definition in the source window.
@@ -6257,6 +6372,265 @@ private slots:
     }
   }
 
+  /// The rows of the bookmarks window, which Jump to mark opens.
+  static QStringList bookmarkTexts(Workbench &bench) {
+    bench.action(ActionId::JumpMark)->trigger();
+    for (auto *view : bench.window->findChildren<ChooserView *>())
+      if (view->model().kind() == ChooserKind::Bookmarks) {
+        QStringList texts;
+        for (int row = 0; row < view->model().rowCount(); ++row)
+          texts << view->model()
+                       .data(view->model().index(row, 1), Qt::DisplayRole)
+                       .toString();
+        return texts;
+      }
+    return {};
+  }
+
+  /// Mark the current position as \p text, as Mark position does.
+  bool markPosition(Workbench &bench, const QString &text) {
+    QTimer answer;
+    bool accepted = false;
+    connect(&answer, &QTimer::timeout, &answer, [&] {
+      if (auto *dialog =
+              qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+        dialog->setTextValue(text);
+        accepted = true;
+        dialog->accept();
+      }
+    });
+    answer.start(5);
+    if (!QTest::qWaitFor(
+            [&] { return bench.action(ActionId::EditBookmark)->isEnabled(); },
+            OpenTimeoutMs))
+      return false;
+    bench.action(ActionId::EditBookmark)->trigger();
+    return QTest::qWaitFor([&] { return accepted; }, OpenTimeoutMs);
+  }
+
+  QString commentAt(Workbench &bench, Address address) {
+    QString comment;
+    bool read = false;
+    bench.session.read(QStringLiteral("resolve"),
+                       {{"query", hexAddress(address)}}, &bench.session,
+                       [&](const QJsonObject &payload) {
+                         comment = payload.value("comment").toString();
+                         read = true;
+                       });
+    if (!QTest::qWaitFor([&] { return read; }, OpenTimeoutMs))
+      return QStringLiteral("(no reply)");
+    return comment;
+  }
+
+  void projectFilesTravelWithTheBinary() {
+    // Saving keeps a binary's project in JSON files beside it and writes no
+    // database: a copy of the binary with the shared files, as a git clone
+    // has, opens the same analysis.  Where the user was is the user's own,
+    // in a file a repository ignores.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("shared.bin"));
+    {
+      Workbench bench;
+      bench.window->openFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      auto *view = bench.window->disassembly();
+      view->navigate(Base + 0x140);
+      QTRY_COMPARE(view->currentItem(), std::optional<Address>(Base + 0x140));
+      QVERIFY(markPosition(bench, QString::fromUtf8("共享标记")));
+      QCOMPARE(bookmarkTexts(bench),
+               QStringList{QString::fromUtf8("共享标记")});
+      const auto bookmarks = readAll(path + ".neverd-bookmarks.json");
+      QVERIFY2(bookmarks.startsWith("[\n  {\n    \"address\": \""),
+               bookmarks.constData());
+      QVERIFY(bookmarks.contains(QString::fromUtf8("共享标记").toUtf8()));
+      QVERIFY(!bench.action(ActionId::FileSave)->isEnabled());
+      bench.session.setComment(Base + 0x140, QStringLiteral("shared comment"));
+      QTRY_VERIFY(bench.session.dirty());
+      QVERIFY(bench.action(ActionId::FileSave)->isEnabled());
+      bench.session.save();
+      QTRY_VERIFY_WITH_TIMEOUT(!bench.session.dirty(), OpenTimeoutMs);
+      QVERIFY(!bench.action(ActionId::FileSave)->isEnabled());
+      QVERIFY(readAll(path + ".neverd-annotations.json")
+                  .startsWith("[\n  {\n    \"addr\": "));
+      QVERIFY(bench.window->close());
+    }
+    QVERIFY(QDir(directory.path())
+                .entryList({QStringLiteral("*.nddb")}, QDir::Files)
+                .isEmpty());
+    const auto workbench =
+        QJsonDocument::fromJson(readAll(path + ".neverd-workbench.json"))
+            .object();
+    QCOMPARE(workbench.value("location").toObject().value("address").toString(),
+             hexAddress(Base + 0x140));
+
+    // The clone: the binary and the shared files, without history, journal
+    // or the user's own workbench.
+    QTemporaryDir clone;
+    const auto copy = clone.filePath(QStringLiteral("shared.bin"));
+    QVERIFY(QFile::copy(path, copy));
+    for (const auto &name :
+         QDir(directory.path())
+             .entryList({QStringLiteral("shared.bin.neverd-*")}, QDir::Files)) {
+      if (name.endsWith(QLatin1String("-history.json")) ||
+          name.endsWith(QLatin1String("-journal.json")) ||
+          name.endsWith(QLatin1String("-workbench.json")) ||
+          name.endsWith(QLatin1String(".lock")))
+        continue;
+      QVERIFY(QFile::copy(directory.filePath(name), clone.filePath(name)));
+    }
+    {
+      Workbench bench;
+      bench.window->openFile(copy);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      QCOMPARE(commentAt(bench, Base + 0x140),
+               QStringLiteral("shared comment"));
+      QCOMPARE(bookmarkTexts(bench),
+               QStringList{QString::fromUtf8("共享标记")});
+      QVERIFY(!bench.session.dirty());
+      QVERIFY(bench.window->close());
+    }
+    // With the user's own workbench file, the place comes back too.
+    QFile::remove(copy + ".neverd-workbench.json");
+    QVERIFY(QFile::copy(path + ".neverd-workbench.json",
+                        copy + ".neverd-workbench.json"));
+    Workbench bench;
+    bench.window->openFile(copy);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(bench.window->disassembly()->currentItem(),
+                              std::optional<Address>(Base + 0x140),
+                              OpenTimeoutMs);
+  }
+
+  void anOpenedDatabaseSavesBackAndAsksBeforeLosingEdits() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("packed.bin"));
+    const auto database = directory.filePath(QStringLiteral("team.nddb"));
+    {
+      Workbench bench;
+      bench.window->openFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      QVERIFY(bench.action(ActionId::FilePackDatabase)->isEnabled());
+      QSignalSpy saved(&bench.session, &Session::databaseSaved);
+      bench.session.packDatabase(database);
+      QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
+      QVERIFY(saved.first().first().toBool());
+    }
+    const auto databaseRenames = [&] {
+      QString error;
+      const auto contents = ProjectDatabase::read(database, &error);
+      return contents ? contents->sidecars.value(
+                            QStringLiteral(".neverd-renames.json"))
+                      : QByteArray();
+    };
+    Workbench bench;
+    bench.window->openFile(database);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.session.openedFromDatabase());
+    // Opening it changes nothing that needs saving.
+    QVERIFY(!bench.session.dirty());
+    QVERIFY(!bench.action(ActionId::FileSave)->isEnabled());
+    // An edit is kept beside the unpacked copy at once, and the database
+    // lacks it until Save writes it back.
+    bench.session.rename(Base + 0x140, QStringLiteral("first_name"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.databaseOutOfDate(), OpenTimeoutMs);
+    QVERIFY(bench.session.dirty());
+    QVERIFY(bench.action(ActionId::FileSave)->isEnabled());
+    QVERIFY(!databaseRenames().contains("first_name"));
+    QSignalSpy saved(&bench.session, &Session::databaseSaved);
+    bench.session.save();
+    QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
+    QVERIFY(saved.first().first().toBool());
+    QTRY_VERIFY(!bench.session.dirty());
+    QVERIFY(databaseRenames().contains("first_name"));
+    QVERIFY(!QFileInfo::exists(ProjectDatabase::pathFor(path)));
+
+    // Quitting asks before such an edit is lost; discarding it leaves the
+    // database as it was.
+    bench.session.rename(Base + 0x140, QStringLiteral("second_name"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.databaseOutOfDate(), OpenTimeoutMs);
+    QString question;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, &answer, [&] {
+      if (auto *box =
+              qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+        question = box->text();
+        box->button(QMessageBox::Discard)->click();
+      }
+    });
+    answer.start(5);
+    QSignalSpy approved(&bench.session, &Session::quitApproved);
+    QVERIFY(!bench.session.requestQuit());
+    QTRY_COMPARE_WITH_TIMEOUT(approved.size(), 1, OpenTimeoutMs);
+    answer.stop();
+    QVERIFY2(question.contains(QStringLiteral("team.nddb")),
+             qPrintable(question));
+    QVERIFY(databaseRenames().contains("first_name"));
+    QVERIFY(!databaseRenames().contains("second_name"));
+  }
+
+  void bookmarksFromBeforeProjectsKeptThemStillShow() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("legacy.bin"));
+    // A database from before keeps its bookmarks and debug file choices in
+    // its state alone.
+    const auto database = directory.filePath(QStringLiteral("legacy.nddb"));
+    QCOMPARE(ProjectDatabase::save(
+                 database, path,
+                 {{QStringLiteral("bookmarks"),
+                   QJsonDocument(QJsonArray{QJsonObject{
+                                     {"address", hexAddress(Base + 0x140)},
+                                     {"text", "from the database"}}})
+                       .toJson(QJsonDocument::Compact)},
+                  {QStringLiteral("dwarf-input.json"), R"({"mode":"none"})"}}),
+             QString());
+    {
+      Workbench bench;
+      bench.window->openFile(database);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      QCOMPARE(bookmarkTexts(bench),
+               QStringList{QStringLiteral("from the database")});
+      // Its choices now have a file beside the unpacked copy too, which the
+      // database lacks without anything to save: opening changed nothing.
+      QCOMPARE(QJsonDocument::fromJson(
+                   readAll(bench.session.filePath() + ".neverd-debug.json"))
+                   .object()
+                   .value("dwarf")
+                   .toObject()
+                   .value("mode")
+                   .toString(),
+               QStringLiteral("none"));
+      QVERIFY(!bench.session.dirty());
+    }
+    // This machine's settings kept a binary's bookmarks.
+    QSettings().setValue(
+        QStringLiteral("bookmarks/") +
+            QString::fromLatin1(QCryptographicHash::hash(
+                                    path.toUtf8(), QCryptographicHash::Sha1)
+                                    .toHex()),
+        QVariantList{QVariantMap{{"address", hexAddress(Base)},
+                                 {"text", "from the settings"}}});
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(bookmarkTexts(bench),
+             QStringList{QStringLiteral("from the settings")});
+    QVERIFY(!QFileInfo::exists(path + ".neverd-bookmarks.json"));
+    // The next mark keeps them all with the project.
+    auto *view = bench.window->disassembly();
+    view->navigate(Base + 0x140);
+    view->focusContent();
+    QTRY_COMPARE(view->currentItem(), std::optional<Address>(Base + 0x140));
+    QVERIFY(markPosition(bench, QStringLiteral("made now")));
+    const auto rows =
+        QJsonDocument::fromJson(readAll(path + ".neverd-bookmarks.json"))
+            .array();
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows.at(0).toObject().value("text").toString(),
+             QStringLiteral("from the settings"));
+    QCOMPARE(rows.at(1).toObject().value("text").toString(),
+             QStringLiteral("made now"));
+  }
+
   void databaseCarriesTheProject() {
     QTemporaryDir directory;
     const auto path = writeFixture(directory, QStringLiteral("project.bin"));
@@ -6274,8 +6648,9 @@ private slots:
       QTRY_VERIFY(view->isVisible() && !view->text()->loading());
       bench.session.setComment(Base + 0x140, QStringLiteral("packed comment"));
       QTRY_VERIFY(bench.session.dirty());
+      // Packing commits the staged comment first.
       QSignalSpy saved(&bench.session, &Session::databaseSaved);
-      bench.session.save();
+      bench.session.packDatabase(database);
       QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
       QVERIFY(saved.first().first().toBool());
       QVERIFY(QFileInfo::exists(database));

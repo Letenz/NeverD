@@ -724,8 +724,8 @@ TEST(DarwinLinking,
     Version.u32(Version.Dependency + 20, 0x20000);
     Reject(Version, "provider");
     LinkingImage Exit(Chain);
-    std::copy_n("_exit\0", 6, Exit.Bytes.data() + 32785);
-    std::copy_n("_exit\0", 6,
+    std::copy_n("_fork\0", 6, Exit.Bytes.data() + 32785);
+    std::copy_n("_fork\0", 6,
                 Exit.Bytes.data() + (Chain ? Exit.Chain + 76 : Exit.Bind + 2));
     if (!Chain) {
       std::move(Exit.Bytes.begin() + Exit.Bind + 9,

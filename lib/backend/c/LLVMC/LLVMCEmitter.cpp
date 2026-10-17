@@ -1319,20 +1319,29 @@ void LLVMCWriter::writeImportCalleeDecls(llvm::Module &Mod) {
         if (!Call || Call->getCalledFunction() ||
             llvm::isa<llvm::InlineAsm>(Call->getCalledOperand()))
           continue;
-        // Only a slot the loader binds outside the import table names an
-        // import no header declares (an ELF GOT entry); a table's imports
-        // keep their headers' prototypes.
+        // A call through a slot the loader binds names another module's
+        // routine, in the import table or outside it (an ELF GOT entry), as
+        // does a call to the symbol such a slot holds, which the slot's load
+        // folds to.  One a header the unit includes declares keeps that
+        // prototype, and one the runtime's tables type (RaiseException) the
+        // one a unit compiles with them; any other, such as most of the
+        // Windows API, is declared here.
         const llvm::Value *Slot = Call->getCalledOperand()->stripPointerCasts();
         if (const auto *Cast = llvm::dyn_cast<llvm::IntToPtrInst>(Slot))
           Slot = Cast->getOperand(0);
+        const auto *Symbol = llvm::dyn_cast<llvm::GlobalVariable>(Slot);
+        const bool CalledSymbol =
+            Symbol && Symbol->isDeclaration() && data_symbol::isMarked(*Symbol);
         const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Slot);
         const auto SlotVA =
             Load ? imageDataVA(Load->getPointerOperand()) : std::nullopt;
-        if (!Img || !SlotVA || !Img->ImportStorageSlots.count(*SlotVA) ||
-            Img->findImportAt(*SlotVA))
+        if (!CalledSymbol &&
+            (!Img || !SlotVA || !Img->ImportStorageSlots.count(*SlotVA)))
           continue;
         std::string Name = resolveImportCalleeName(Call->getCalledOperand());
-        if (Name.empty() || Declared.count(Name))
+        if (Name.empty() || Declared.count(Name) ||
+            libc::isKnownFunction(Name) ||
+            libc::libcPrototype(Name, Opts.Format))
           continue;
         const std::string Return = typeToCLLVM(Call->getType());
         const auto [Import, Added] = Imports.emplace(Name, Return);

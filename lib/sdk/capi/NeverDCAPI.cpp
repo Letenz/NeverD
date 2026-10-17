@@ -763,6 +763,11 @@ void neverd_session_set_debug_info_enabled(neverd_session_t Sess, int Enabled) {
     S->DbgRequest.Enabled = Enabled != 0;
 }
 
+void neverd_session_set_source_symbolic(neverd_session_t Sess, int Enabled) {
+  if (auto *S = toSession(Sess))
+    S->SourceSymbolic = Enabled != 0;
+}
+
 void neverd_session_set_pdb_search(neverd_session_t Sess, int Enabled) {
   if (auto *S = toSession(Sess))
     S->DbgRequest.SearchPDB = Enabled != 0;

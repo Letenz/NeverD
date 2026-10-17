@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: be6fcc291675e50f0ce8d8517475c9efa35e98e854f9dd96e0a044bdf3b28e88 -->
+<!-- i18n-source: 1eae101089e730c29ba3fda92db515fe148fe41b758d6f5b69156252591d9b3f -->
 
 [← Documentation Index](README.md)
 
@@ -92,21 +92,46 @@ CPU 行列は十二の組み合わせすべてでソース、外部 IR、ネイ�
 GCC C オブジェクトも ELF x86、ARM32、ARM64 に設置し、Linux QEMU user mode で実行しました。アダプタはイメージから ARM/Thumb を選択し、GNU property は ELF ポインタ幅で整列します。
 
 <!-- i18n-section: references -->
-## 元の参照と記憶領域
+## 元の実装へのコールバック、配置拡張と依存関係
 
-束縛は外部宣言に対応します。`function` には確認済みの元関数またはインポートスタブ、`data` には書込み可能領域、`const` には const の IR 宣言が必要です。オブジェクトのデータ束縛には非ゼロの範囲を指定します。領域境界を越えたり RELRO への書込み権限を与えたりできません。置換対象の元本体を呼び戻すための、プロローグを保存するトランポリンはありません。
+バインディングは外部宣言を指定します。`function` は元の関数またはインポートスタブを認証し、`data` は書き込み可能な領域、`const` は const IR 宣言を要求します。オブジェクトのデータにはゼロでない範囲が必要で、領域境界を越えたり RELRO への書き込みを許可したりできません。置換する関数の元の本体を呼ぶには `original` を明示します。公開入口は置換関数を呼び、保存された入口は完全な命令単位で再配置した先頭部分を実行して元の本体へ続きます。ソース、外部 IR、ネイティブオブジェクトは、浮動小数点・スタック引数や複数コールバックを含め同じ契約を使います。
 
-新しいコードは RX、可変状態は RW に置きます。既存のインポートだけを再利用し、GOT/IAT スロットと呼出可能なスタブを区別します。Mach-O は `-Wl,-headerpad,0x400` などのロードコマンド余白、PE はセクションヘッダー余白が必要です。不足すると失敗します。ELF `.data.rel.ro` と元の CET/IBT 保護には追加の契約が必要なため、現在は拒否します。
+コールバックには認証済みの関数範囲、命令モード、継続先、アンワインド証拠が必要です。未知の命令、安全でない PC 相対参照、コピー領域内への分岐、未対応のローダー再配置、重複するコールバック、未モデル化のハンドラー付きプロローグは公開前に拒否されます。ABI の一致する宣言は呼び出し側の責任です。レシートの `original_callbacks` に保存入口を記録します。
+
+PE32/PE32+ はファイル内領域を移動し、モデル化されたデバッグ、シンボル、証明書、オーバーレイのポインターを更新して、満杯のセクションヘッダー表を拡張できます。元の RVA は維持します。Mach-O x64/ARM64 PIE は、隣接する page-zero 保護領域と末尾の linkedit セグメントが条件を満たせば、検査済みのヘッダー先頭拡張からコマンドとアンワインド領域を確保し、元のコード・データのアドレスを維持します。このプロファイルは `-Wl,-headerpad,0x400` や隣接する未使用アンワインドページを必要としません。明示的なヘッダーアドレス参照、未知のロードコマンド、コードとデータの混在所有、壊れた範囲、未対応配置は拒否されます。ヘッダーとアンワインド容量はインストール前にまとめて計画します。
+
+新しいコードは RX、可変状態は RW です。明示的な `--dependency` は ELF 動的メタデータ、PE インポート記述子／IAT、Mach-O dylib／bind メタデータを通じて関数・データを追加します。既存インポートの識別、序数、バージョン記録を維持し、スロットと呼び出しスタブを区別します。対象 OS ローダーに適したライブラリ名・パスを指定してください。下の例は ELF 共有ライブラリ名を使います。ライブラリやシンボルの欠落は実行時の実際のローダーエラーで確認します。TLS、IFUNC、新規シンボルバージョン契約、ロード時コンストラクター、未モデル化の再配置は未対応です。ELF `.data.rel.ro` と CET/IBT にも追加契約が必要です。 ネイティブ COFF オブジェクトでは、新しい関数・データのインポートを `__declspec(dllimport)` で宣言し、再配置が IAT を指定する必要があります。通常の直接外部参照は拒否されます。
 
 ```sh
+# ELF example: the original target is at 0x401140.
 neverd patch app --from-source=replacement.c --entry=replacement --func=0x401140 \
+  --bind=original:saved_target=0x401140 \
   --bind=function:original_helper=0x401190 \
   --bind=data:shared_counter=0x404020:4 \
   --bind=const:lookup_table=0x402040:64 \
+  --dependency=function:extra_function=libpatch_extra.so \
+  --dependency=data:extra_state=libpatch_extra.so \
   --patch-report -o app.bound
 ```
 
-Mach-O のアンワインド表の拡張には、隣接するファイル領域と仮想領域にも余白が必要です。ヘッダー余白だけでは予約できません。検証用入力は両方の要件を個別に満たします。
+構造体サイズで検査する追記式の依存関係オプションは、ソース、外部 IR、ネイティブオブジェクトに共通です。レシートは `added_imports` を含み、候補を再ロードして全コールバック、インポート、領域権限、インストール済みバイトを再検査します。失敗時は入力と既存の出力を保持します。
+
+<!-- i18n-section: examples -->
+## 実行可能なサンプル
+
+[Windows/macOS/Linux の完全なサンプル](../../examples/source-patch/README.md) には元プログラム、置換関数、依存ライブラリのソース、ビルドコマンドと実際のホストで動く Python SDK プラグインが含まれます。Python を有効にした NeverD ビルドを使用し、リポジトリのルートから新しい出力ディレクトリを指定して実行します。
+
+```sh
+# Linux / macOS
+python3 examples/source-patch/run.py --neverd build-example-host/bin/neverd --clang clang --output build-example-native
+```
+
+```powershell
+# Windows: Visual Studio developer PowerShell
+python examples/source-patch/run.py --neverd build-example-host/bin/neverd.exe --clang clang --output build-example-native
+```
+
+既定では両方の経路を実行します。`--api cli` または `--api sdk` で一方を選べます。対象アドレスは自動検出されます。入力 `7` に対し、元プログラムは `8`、両方のパッチは `36` を出力します。ドライバーは実行、レシート、ライブラリ欠落時のロード失敗を検証し、完全なビルドと patch コマンドを `commands.json` に保存します。
 
 <!-- i18n-section: exceptions -->
 ## C++ 例外
@@ -128,13 +153,35 @@ IBT を要求する ELF x86/x64 元プログラムは現在拒否します。ソ
 report = session.patch_source(
     replacement_source, "app.patched",
     mappings={"replacement": original_address},
-    compiler="gcc", compiler_path="/path/to/gcc", artifact="object",
-    bindings={"shared_counter": ("data", original_counter_address, 4)},
+    compiler="clang", compiler_path="/path/to/clang", artifact="object",
+    bindings={
+        "saved_target": ("original", original_address),
+        "shared_counter": ("data", original_counter_address, 4),
+    },
+    dependencies={
+        "extra_function": ("libpatch_extra.so", "function"),
+        "extra_state": ("libpatch_extra.so", "data"),
+    },
 )
 ```
 
 <!-- i18n-section: verification -->
 ## ビルドと検証
+
+選択した六つのネイティブ OS／ISA ジョブは失敗・スキップゼロで合格しました。GoogleTest 3669 回、ネイティブプロセス観測 1008 回（機能 504 回、C++ 例外 504 回）、実ローダー拒否 12 回、96 イメージ、84 公開レシートです。
+
+| ホスト | ソース | Harness | CI ジョブ | テスト | 観測／拒否 |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+各成果物が検証するのは下表の正確なソースと harness コミットです。後続の dev 統合と文書コミットは別のローカル・文書チェックで扱います。過去の失敗・キャンセルは失敗のまま保持します。過去の補足観測216回、PE ARM32、旧32ビット Apple の CPU／互換層の結果は、新機能のネイティブハードウェアや C++ 例外の証明にはなりません。
+
+Windows ARM64 の検証では、固定されたサブモジュールと検証済み LLVM-MinGW ツールチェーンからネイティブ ARM64 Unicorn C DLL を実際にビルドし、MSVC インポートライブラリと明示的な CMake ターゲット上書きを使います。隔離したビルド用コピーは、非 SEH ジャンプ関数の組、命令キャッシュ同期を伴う ARM64 ページコミットコールバック、Windows LLP64 用の64ビット即値マスクという三つのホスト修正を認証します。サブモジュールのソースとリビジョンは変更しません。これは CPU 行列のテストホストを検証するもので、標準の MSVC ARM64 JIT 対応を示すものではありません。五つのホスト復帰チェックは、パッチ済みプロセスのネイティブ実行や C++ 例外の証拠と分けて記録します。
 
 `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` で互換性のあるコンパイラを指定します（Clang 22.1.6 を検証済み）。統合ビルドはビルドディレクトリ内の LLVM コピーだけを修正し、サブモジュールや共有プリビルドキャッシュは変更しません。r3/r4 の x64 PLT 不具合により IR パッチが拒否される場合があります。ネイティブオブジェクトはこの MC 経路を通りません。`NEVERD_TEST_REQUIRE_FIXED_LLVM=1` は修正済みの正確な PLT 生成を必須にします。
 
@@ -187,7 +234,7 @@ C 専用の生成元検証 [cc91afb3b](https://github.com/NeverSight/NeverD/acti
 
 同じワークフローで、Windows x64 上の Windows x86 を 30 回、Linux x64 上の Linux x86 を 48 回、QEMU ユーザーモードの Linux ARM32 を 96 回観測します。ARM32 は ARM と Thumb が半数ずつで、Linux では対応する GCC オブジェクトも検証します。各シナリオを 3 回実行します。報告では `native`、`compatibility`、`rosetta`、`qemu-user` を区別し、対象と実際のホストのアーキテクチャを記録します。Rosetta は Intel ネイティブ実行の要件を満たしません。
 
-全 14 CPU 対象プロファイルは、引き続き 154 件のソース／IR／オブジェクト行列で検証します。PE ARM32、Mach-O i386、ARMv7 iOS、ARMv7k watchOS は現在 CPU 検証であり、ネイティブ OS ローダーや C++ アンワインダーの保証ではありません。NeverC は x64／ARM64 の純粋な C 専用のままです。32 ビットの生成には Clang と対応する ELF GCC ドライバーを使用します。検証器は NeverC をビルドも変更もしません。
+全 14 CPU 対象プロファイルは、引き続き 283 件のソース／IR／オブジェクト行列で検証します。PE ARM32、Mach-O i386、ARMv7 iOS、ARMv7k watchOS は現在 CPU 検証であり、ネイティブ OS ローダーや C++ アンワインダーの保証ではありません。NeverC は x64／ARM64 の純粋な C 専用のままです。32 ビットの生成には Clang と対応する ELF GCC ドライバーを使用します。検証器は NeverC をビルドも変更もしません。
 
 Windows x64 と ARM64 でも、それぞれ 36 回の Clang C++ FH3 観測を実行します。
 
@@ -207,6 +254,6 @@ ELF ARM と Thumb は別プロファイルです。ソース生成器へ `-marm`
 
 [Apple 互換性検証](https://github.com/gmh5225/test_mac_intel/actions/runs/38771214358)では、Linux 上の Darling で Mach-O i386 の 30 回、Intel macOS 上の touchHLE で ARMv7/ARMv7k の 60 回の実行が成功しました。原本と、ソース IR・コンパイル済みオブジェクト・外部オブジェクトによる各置換を、それぞれ 3 回実行します。独立監査では、追加実行全体の 72 イメージ、66 件のパッチ公開記録、216 回の実行に加え、GitHub 成果物のサイズ、SHA256、正確なコミット、完全なケース一覧を確認しました。Linux 入力は引き続き `fcee81c9a5` に固定し、PE 入力は `a542f97ba`、Mach-O 入力は `8f5f06762` で生成しています。検証スクリプトのコミットはリンク先の実行に別途記録しています。
 
-Mach-O の修正は、ARM/Thumb 混在というイメージ全体の情報とは独立して選択した Thumb 関数を認証し、証拠のある Thumb エクスポートポインターと ARM32 アンワインドのコードアドレスを正規化します。データポインターや範囲長は変更しません。統合 LLVM ソースビルドでは、ローカルの CPU マトリクス 154 件と例外契約 258 件がすべて成功し、失敗もスキップもありませんでした。旧 Mach-O プローブには記録済みのオープンソースリンカーとアンワインド領域の予約を使用し、i386 には正しく整列した起動入口と 64 KiB のページゼロ領域を用意します。
+Mach-O の修正は、ARM/Thumb 混在というイメージ全体の情報とは独立して選択した Thumb 関数を認証し、証拠のある Thumb エクスポートポインターと ARM32 アンワインドのコードアドレスを正規化します。データポインターや範囲長は変更しません。統合 LLVM ソースビルドでは、ローカルの CPU マトリクス 283 件と例外契約 258 件がすべて成功し、失敗もスキップもありませんでした。旧 Mach-O プローブには記録済みのオープンソースリンカーとアンワインド領域の予約を使用し、i386 には正しく整列した起動入口と 64 KiB のページゼロ領域を用意します。
 
 これらの結果が示すのは、指定したエミュレーターと互換レイヤーでの C コード実行です。Wine は Microsoft Windows ではなく、Darling は macOS ではありません。iOS HLE 内での ARMv7k 実行は watchOS、WatchKit、Apple 実機の検証にはなりません。旧 Apple SDK やネイティブ 32 ビットハードウェアの対応を推定せず、C++ 例外アンワインドの検証にも数えません。既存のネイティブ実行と互換モードの証拠は別に保持します。NeverC はビルドも変更もしていません。

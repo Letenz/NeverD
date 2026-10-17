@@ -267,8 +267,8 @@ TEST(ItaniumHandlerBodies, SelectorTestsAreDecidedPerClause) {
   const size_t All = Source.find("} catch (...) {");
   ASSERT_NE(Int, std::string::npos) << Source;
   ASSERT_NE(All, std::string::npos) << Source;
-  EXPECT_NE(Source.find("return 20;", Int), std::string::npos) << Source;
-  EXPECT_LT(Source.find("return 20;", Int), All) << Source;
+  EXPECT_NE(Source.find("return 0x14;", Int), std::string::npos) << Source;
+  EXPECT_LT(Source.find("return 0x14;", Int), All) << Source;
   EXPECT_NE(Source.find("return 10;", All), std::string::npos) << Source;
   EXPECT_EQ(Source.find("eh_selector"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v7 =="), std::string::npos) << Source;

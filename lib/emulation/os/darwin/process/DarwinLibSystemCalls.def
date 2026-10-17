@@ -3,8 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-// Mach-O linkage spellings. __exit is C _exit; _exit is C exit and requires
-// a separate lifecycle contract.
+// Mach-O linkage spellings. __exit is C _exit; _exit is normal C exit.
 #ifdef NEVERD_DARWIN_LIBSYSTEM_CALL
 NEVERD_DARWIN_LIBSYSTEM_CALL(Read, "_read", 3, ServiceKind::Read)
 NEVERD_DARWIN_LIBSYSTEM_CALL(Write, "_write", 3, ServiceKind::Write)
@@ -22,4 +21,6 @@ NEVERD_DARWIN_LIBSYSTEM_CALL(Pwrite, "_pwrite", 4, ServiceKind::Pwrite)
 NEVERD_DARWIN_LIBSYSTEM_CALL(Mmap, "_mmap", 6, ServiceKind::Mmap)
 NEVERD_DARWIN_LIBSYSTEM_CALL(Mprotect, "_mprotect", 3, ServiceKind::Mprotect)
 NEVERD_DARWIN_LIBSYSTEM_CALL(Munmap, "_munmap", 2, ServiceKind::Munmap)
+NEVERD_DARWIN_LIBSYSTEM_CALL(TLVAtExit, "__tlv_atexit", 2, std::nullopt)
+NEVERD_DARWIN_LIBSYSTEM_CALL(NormalExit, "_exit", 1, std::nullopt)
 #endif

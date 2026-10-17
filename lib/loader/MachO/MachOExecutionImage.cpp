@@ -163,10 +163,24 @@ loadMachOExecutionImage(const std::filesystem::path &Path,
             Section.addr - S.vmaddr > S.vmsize - Section.size)
           return failure("macho execution: section escapes its segment");
         const auto Type = Section.flags & SECTION_TYPE;
-        Result.HasInitializers |=
-            Section.size &&
-            (Type == S_MOD_INIT_FUNC_POINTERS ||
-             Type == S_MOD_TERM_FUNC_POINTERS || Type == S_INIT_FUNC_OFFSETS);
+        Result.HasTerminators |=
+            Section.size && Type == S_MOD_TERM_FUNC_POINTERS;
+        if (Section.size &&
+            (Type == S_MOD_INIT_FUNC_POINTERS || Type == S_INIT_FUNC_OFFSETS)) {
+          const uint64_t Width = Type == S_INIT_FUNC_OFFSETS ? 4 : 8;
+          if (Section.align > 63 || Section.addr % Width ||
+              Section.size % Width || Section.offset < S.fileoff ||
+              Section.size > S.filesize ||
+              Section.offset - S.fileoff > S.filesize - Section.size ||
+              Section.addr - S.vmaddr != Section.offset - S.fileoff ||
+              !(S.initprot & VM_PROT_READ) ||
+              (Type == S_INIT_FUNC_OFFSETS && (S.initprot & VM_PROT_WRITE)))
+            return failure(
+                "macho execution: invalid initializer section storage");
+          Result.HasInitializers = true;
+          Result.InitializerSections.push_back(
+              {Section.addr, Section.size, Type});
+        }
         Result.HasTLS |= Section.size && Type >= S_THREAD_LOCAL_REGULAR &&
                          Type <= S_THREAD_LOCAL_INIT_FUNCTION_POINTERS;
         if (Section.size && Type >= S_THREAD_LOCAL_REGULAR &&
@@ -187,6 +201,22 @@ loadMachOExecutionImage(const std::filesystem::path &Path,
     case LC_MAIN: {
       ++Result.MainEntries;
       Result.RequestedStackSize = Obj.getEntryPointCommand(LC).stacksize;
+      break;
+    }
+    case LC_ROUTINES_64: {
+      if (Result.Routine || LC.C.cmdsize != sizeof(routines_command_64))
+        return failure(
+            "macho execution: invalid or duplicate routines command");
+      // Retain the original header word, not the analysis loader's init array.
+      // The mapped header base is added after all segment commands are read.
+      for (unsigned At = 16; At < sizeof(routines_command_64); At += 8)
+        if (llvm::support::endian::read64le(LC.Ptr + At))
+          return failure(
+              "macho execution: unsupported routines module or reserved word");
+      Result.Routine =
+          MachOExecutionRoutine{uint64_t(LC.Ptr - Input.data()) + 8,
+                                llvm::support::endian::read64le(LC.Ptr + 8)};
+      Result.HasInitializers = true;
       break;
     }
     case LC_UNIXTHREAD:
@@ -263,6 +293,11 @@ loadMachOExecutionImage(const std::filesystem::path &Path,
   if (HeaderSegments != 1)
     return failure("macho execution: image requires one mapped Mach header");
   Image.Base = HeaderAddress;
+  if (Result.Routine) {
+    if (Result.Routine->Slot > UINT64_MAX - HeaderAddress)
+      return failure("macho execution: routines slot overflow");
+    Result.Routine->Slot += HeaderAddress;
+  }
   macho_loader::parseEntryPoint(Obj, Image, HeaderAddress);
   return Result;
 }

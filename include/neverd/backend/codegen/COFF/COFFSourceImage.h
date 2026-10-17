@@ -6,6 +6,8 @@
 #ifndef NEVERD_BACKEND_CODEGEN_COFF_COFFSOURCEIMAGE_H
 #define NEVERD_BACKEND_CODEGEN_COFF_COFFSOURCEIMAGE_H
 
+#include "neverd/backend/codegen/SourcePatchCallback.h"
+
 #include "llvm/Support/Error.h"
 
 #include <cstdint>
@@ -37,5 +39,17 @@ llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
                                    const BinaryImage &Original,
                                    const CompiledImage &Compiled,
                                    const COFFObjectEvidence *Object = nullptr);
+/// Original-prefix evidence is independently rederived from the input bytes
+/// and native unwind program. It is neither native-object nor MC provenance.
+struct COFFOriginalCallback {
+  SourceCallbackPrefix Prefix;
+  uint64_t UnwindVA = 0;
+};
+llvm::Error
+installCOFFCallbackImage(std::vector<uint8_t> &Binary,
+                         const BinaryImage &Original,
+                         const CompiledImage &Storage,
+                         llvm::ArrayRef<COFFOriginalCallback> Callbacks);
+
 } // namespace neverd
 #endif

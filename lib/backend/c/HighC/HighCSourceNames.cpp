@@ -51,6 +51,13 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
       return;
     }
   };
+  // The enumerations a callee's declaration takes, whose enumerators its
+  // calls pass: C cannot declare an enumeration before defining it.
+  const auto VisitEnumeration = [&](const TypeRef &Type) {
+    if (Type && Type->Kind == NdTypeKind::Struct && Type->IsEnum &&
+        !Type->SourceName.empty() && Named.insert(Type->SourceName).second)
+      Records.push_back(Type);
+  };
   std::function<void(const HighExpr &)> VisitExpr = [&](const HighExpr &E) {
     Visit(E.Type);
     if (E.SourceCallHint) {
@@ -58,6 +65,12 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
       for (const auto &Parameter : E.SourceCallHint->Signature.Parameters)
         Visit(Parameter.Type);
     }
+    if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::None)
+      if (const std::optional<FunctionSym> Callee = debugCallee(E)) {
+        VisitEnumeration(Callee->ReturnType);
+        for (const auto &[Name, Type] : Callee->Params)
+          VisitEnumeration(Type);
+      }
     E.forEachChildExpr([&](const ExprPtr &Child) { VisitExpr(*Child); });
   };
   for (const HighFunc &Function : Funcs) {
@@ -87,6 +100,8 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
   // The typedefs and enumerators they declare are the program's names: the
   // unit's own step around them.
   for (const std::string &Name : RecordDefinitions.Identifiers)
+    GlobalIdentifierAllocator.allocateVerbatim(Name);
+  for (const std::string &Name : RecordDefinitions.Enumerations)
     GlobalIdentifierAllocator.allocateVerbatim(Name);
 }
 

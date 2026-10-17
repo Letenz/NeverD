@@ -284,6 +284,9 @@ compileSourcePatch(llvm::StringRef Source,
       // Keep compiler-owned frames instead of inventing native unwind recipes.
       Args.push_back("-fno-omit-frame-pointer");
       Args.push_back("-mno-omit-leaf-frame-pointer");
+      // Older ARM backends require the frame-chain policy as well to retain
+      // leaf frames and their compact-unwind records.
+      Args.push_back("-mframe-chain=aapcs+leaf");
     }
     Args.push_back("-c");
   } else {

@@ -3,6 +3,7 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidBionic.cpp
   AndroidCallbacks.cpp
   AndroidAllocation.cpp
+  AndroidLog.cpp
   AndroidDlfcn.cpp
   AndroidKernelCalls.cpp
   AndroidMemoryCalls.cpp
@@ -33,6 +34,7 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidMemory.cpp
   AndroidFinalizers.cpp
   AndroidNative.cpp
+  AndroidObservation.cpp
   LINK_COMPONENTS Dalvik Loader EmulationRuntime EmulationImage EmulationABI EmulationLinuxKernel
   LLVM_COMPONENTS Support)
 if(WIN32)

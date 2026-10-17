@@ -253,6 +253,12 @@ std::string missingHighFunctionReason(const PipelineResult &Result,
 }
 } // namespace
 
+/// Whether the program has local types, whose records a unit defines: a
+/// context made for the user's declarations alone holds none.
+static bool holdsLocalTypes(const LocalTypesDebugContext &Local) {
+  return Local.library().size() != 0;
+}
+
 /// The source \p Route emitted for \p Entry under the current pipeline, if it
 /// holds what the caller needs: a map when \p SourceMap asks for one.
 static const char *cachedSource(Session &S, va_t Entry,
@@ -437,7 +443,7 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
   if (SourceMap)
     SourceMap->LocalTypes.reset();
   if (const LocalTypesDebugContext *Local = S->LocalTypesDbg.get();
-      Local && Debug == Local)
+      Local && Debug == Local && holdsLocalTypes(*Local))
     Opts.RecordDefinitions = [Local,
                               SourceMap](const std::vector<TypeRef> &Records) {
       CRecordDefinitions Definitions = Local->definitions(Records);
@@ -510,7 +516,7 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
   DebugContext *Debug = S->decompileDebug();
   // The program's records, as its local types define them.
   if (const LocalTypesDebugContext *Local = S->LocalTypesDbg.get();
-      Local && Debug == Local)
+      Local && Debug == Local && holdsLocalTypes(*Local))
     Opts.RecordDefinitions = [Local](const std::vector<TypeRef> &Records) {
       return Local->definitions(Records);
     };
@@ -580,19 +586,20 @@ std::string unofferedDialectReason(SourceDialect Dialect,
       .str();
 }
 
-/// The local types \p Original, a HighC unit, defines (CSourceMap::LocalTypes)
-/// as \p Dialect, Rust or Go, defines them, from the library they were
-/// rendered from, and how its code reaches their members; none when the
-/// text holds no definitions, or not once.
+/// The local types \p Original, a HighC unit, defines (\p Held, as
+/// CSourceMap::LocalTypes keeps them) as \p Dialect, Rust or Go, defines
+/// them, from the library of \p Local they were rendered from, and how its
+/// code reaches their members; none when the text holds no definitions, or
+/// not once.
 std::optional<SourceDialectLocalTypes>
-dialectLocalTypes(const Session &S, llvm::StringRef Original,
-                  const CSourceMap &Map, SourceDialect Dialect) {
-  const LocalTypesDebugContext *Local = S.LocalTypesDbg.get();
-  if (!Map.LocalTypes || !Local)
+dialectLocalTypes(const LocalTypesDebugContext *Local, llvm::StringRef Original,
+                  const std::optional<CSourceLocalTypes> &Held,
+                  SourceDialect Dialect) {
+  if (!Held || !Local)
     return std::nullopt;
-  const size_t At = Original.find(Map.LocalTypes->Text);
+  const size_t At = Original.find(Held->Text);
   if (At == llvm::StringRef::npos ||
-      Original.find(Map.LocalTypes->Text, At + 1) != llvm::StringRef::npos)
+      Original.find(Held->Text, At + 1) != llvm::StringRef::npos)
     return std::nullopt;
   const types::TypeLibrary &Library = Local->library();
   const auto found = [&](const std::vector<std::string> &Names) {
@@ -608,22 +615,23 @@ dialectLocalTypes(const Session &S, llvm::StringRef Original,
   // As the C does: exact widths, with the checks of every layout.
   Render.Spelling = types::BuiltinSpelling::Portable;
   Render.Asserts = true;
-  const types::EmbeddedSource Embedded =
-      types::renderEmbeddedSource(Library, found(Map.LocalTypes->Types),
-                                  found(Map.LocalTypes->DeclaredTypes), Render);
+  const types::EmbeddedSource Embedded = types::renderEmbeddedSource(
+      Library, found(Held->Types), found(Held->DeclaredTypes), Render);
   SourceDialectLocalTypes Result;
   Result.CBegin = At;
-  Result.CEnd = At + Map.LocalTypes->Text.size();
+  Result.CEnd = At + Held->Text.size();
   Result.Text = Embedded.Text;
   for (const auto &[Record, Members] : Embedded.Members) {
     auto &Paths = Result.Members[Record];
     for (const auto &[Name, Path] : Members) {
-      auto &Hops = Paths[Name];
+      SourceDialectLocalTypes::Path &To = Paths[Name];
       for (const types::MemberPath::Hop &Hop : Path.Hops)
-        Hops.push_back({Hop.Name, Hop.Accessor});
+        To.Hops.push_back({Hop.Name, Hop.Accessor});
+      To.Getter = Path.Getter;
+      To.Setter = Path.Setter;
     }
   }
-  for (const std::string &Name : Map.LocalTypes->DeclaredTypes)
+  for (const std::string &Name : Held->DeclaredTypes)
     Result.Opaque.insert(Name);
   return Result;
 }
@@ -654,7 +662,8 @@ const Session::FunctionSource &dialectSource(neverd_session_t Sess, va_t Entry,
   Options.Names = Map.Names;
   const llvm::StringRef Original(Raw);
   if (Dialect == SourceDialect::Rust || Dialect == SourceDialect::Go)
-    Options.LocalTypes = dialectLocalTypes(S, Original, Map, Dialect);
+    Options.LocalTypes = dialectLocalTypes(S.LocalTypesDbg.get(), Original,
+                                           Map.LocalTypes, Dialect);
   SourceDialectText Spelled = spellInDialect(Original, Options);
   for (CSourceRegion &Region : Map.Regions) {
     std::vector<CSourceSpan> Spans;
@@ -1551,8 +1560,18 @@ static const char *decompileAllImpl(neverd_session_t Sess,
   const std::unique_ptr<LocalTypesDebugContext> LocalTypes =
       localTypesOf(S, InputPath, R, NoDebugInformation);
   DebugContext *Debug = LocalTypes ? LocalTypes.get() : R.Dbg.get();
-  const auto RecordDefinitions = [&](const std::vector<TypeRef> &Records) {
-    return LocalTypes->definitions(Records);
+  // The definitions of the records a unit names, which a Rust or Go
+  // spelling of it defines as its own.
+  std::optional<CSourceLocalTypes> Held;
+  const auto recordDefinitions = [&](CEmitterOptions &COpts) {
+    if (LocalTypes && holdsLocalTypes(*LocalTypes))
+      COpts.RecordDefinitions = [&](const std::vector<TypeRef> &Records) {
+        CRecordDefinitions Definitions = LocalTypes->definitions(Records);
+        if (!Definitions.Text.empty())
+          Held = CSourceLocalTypes{Definitions.Text, Definitions.Types,
+                                   Definitions.DeclaredTypes};
+        return Definitions;
+      };
   };
 
   PipelineOptions Opts;
@@ -1564,6 +1583,12 @@ static const char *decompileAllImpl(neverd_session_t Sess,
   if (UseLlvmRoute)
     Opts.LiftMode = true;
   Opts.SourceProjection = true;
+  // Symbolic source simplification is the caller's explicit choice for the
+  // whole program, never a default.
+  if (S && S->SourceSymbolic) {
+    Opts.SymbolicHighC = true;
+    Opts.SymbolicLLVMSource = true;
+  }
   // A named ARM function with no instruction-state evidence is not a
   // candidate for either C route. Reject the whole requested output before
   // analysis so a partly marked image cannot silently omit that function.
@@ -1707,8 +1732,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     COpts.Format = R.Img.abiFormat();
     COpts.UserNames = S ? &S->Renames : nullptr;
     COpts.AccessWidths = AccessWidths ? &*AccessWidths : nullptr;
-    if (LocalTypes)
-      COpts.RecordDefinitions = RecordDefinitions;
+    recordDefinitions(COpts);
     try {
       LLVMCEmitter Emitter;
       Emitter.emit(*R.Result.LlvmModule, OS, COpts, Debug, &R.Img);
@@ -1728,8 +1752,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     COpts.StructuredExceptionSyntax = Dialect.has_value();
     if (Dialect)
       COpts.SourceNames = &Names;
-    if (LocalTypes)
-      COpts.RecordDefinitions = RecordDefinitions;
+    recordDefinitions(COpts);
     try {
       HighCEmitter Emitter;
       Emitter.emit(R.Result.HighFuncs, OS, COpts, Debug);
@@ -1744,6 +1767,9 @@ static const char *decompileAllImpl(neverd_session_t Sess,
       Options.TheArch = R.Img.Arch;
       Options.Format = R.Img.abiFormat();
       Options.Names = Names;
+      if (*Dialect == SourceDialect::Rust || *Dialect == SourceDialect::Go)
+        Options.LocalTypes =
+            dialectLocalTypes(LocalTypes.get(), Buf, Held, *Dialect);
       return dupStr(spellInDialect(Buf, Options).Text);
     }
   }

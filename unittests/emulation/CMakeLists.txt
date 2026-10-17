@@ -236,6 +236,7 @@ include(ProcessFixtures.cmake)
 add_neverd_unittest(NeverDDarwinProcessTests
   DarwinProcessTests.cpp
   DarwinImageTests.cpp
+  DarwinCallbackTests.cpp
   DarwinLinkingTests.cpp
   DarwinDylibTests.cpp
   DarwinLibSystemTests.cpp
@@ -273,6 +274,7 @@ set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
 add_neverd_unittest(NeverDAndroidNativeTests
   AndroidNativeTests.cpp
   AndroidMemoryTests.cpp
+  AndroidObservationTests.cpp
   AndroidTokenTests.cpp
   AndroidPropertyTests.cpp
   AndroidStdioTests.cpp
@@ -288,6 +290,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidSignalTests.cpp
   AndroidSnapshotTests.cpp
   AndroidAllocationTests.cpp
+  AndroidLogTests.cpp
   AndroidResidencyTests.cpp
   AndroidFileTests.cpp
   AndroidDeviceTests.cpp

@@ -450,6 +450,8 @@ private:
       return P;
     }
     case ExprKind::Member:
+      if (auto Bits = bitField(E))
+        return Printed{Bits->Holder + "." + Bits->Getter + "()", PrecAtom};
       return place(E);
     case ExprKind::SizeofExpr:
     case ExprKind::SizeofType:
@@ -900,6 +902,40 @@ private:
     return P;
   }
 
+  /// The place \p E, a member of one of the program's types, names through
+  /// \p Hops, which Rust reaches as fields.
+  std::string localPlace(const Expr *E,
+                         llvm::ArrayRef<SourceDialectLocalTypes::Hop> Hops) {
+    const Expr *Base = E->Ops.front();
+    std::string Text = E->Postfix
+                           ? "(*" + paren(value(Base, nullptr), PrecUnary) + ")"
+                           : paren(place(Base), PrecAtom);
+    for (const SourceDialectLocalTypes::Hop &Hop : Hops) {
+      if (Hop.Accessor) {
+        unsupported("a member the program's types read through a method");
+        return "_";
+      }
+      Text += "." + Hop.Name;
+    }
+    return Text;
+  }
+
+  /// A bit-field of one of the program's types, as Rust reads and writes
+  /// it: the record whose methods do, and their names.
+  struct BitField {
+    std::string Holder, Getter, Setter;
+  };
+  std::optional<BitField> bitField(const Expr *E) {
+    if (E->Kind != ExprKind::Member || !E->Field || !E->Field->BitWidth ||
+        !valueType(E)->isInteger() ||
+        valueType(E)->TheKind == CType::Kind::Bool)
+      return std::nullopt;
+    std::optional<SourceDialectLocalTypes::Path> Path = localMember(E);
+    if (!Path || !Path->bitField())
+      return std::nullopt;
+    return BitField{localPlace(E, Path->Hops), Path->Getter, Path->Setter};
+  }
+
   Printed place(const Expr *E) {
     switch (E->Kind) {
     case ExprKind::Paren:
@@ -938,19 +974,12 @@ private:
       const Expr *Base = E->Ops.front();
       // A member of one of the program's types, by the fields that hold it.
       if (auto Path = localMember(E)) {
-        if (Path->empty())
+        // Only the methods of a bit-field's record read and write it.
+        if (Path->bitField())
+          unsupported("a bit-field where Rust needs a place");
+        if (Path->Hops.empty() || refused())
           return Printed{"_", PrecAtom};
-        std::string Text =
-            E->Postfix ? "(*" + paren(value(Base, nullptr), PrecUnary) + ")"
-                       : paren(place(Base), PrecAtom);
-        for (const SourceDialectLocalTypes::Hop &Hop : *Path) {
-          if (Hop.Accessor) {
-            unsupported("a member the program's types read through a method");
-            return Printed{"_", PrecAtom};
-          }
-          Text += "." + Hop.Name;
-        }
-        return Printed{Text, PrecAtom};
+        return Printed{localPlace(E, Path->Hops), PrecAtom};
       }
       if (E->Field && E->Field->BitWidth) {
         unsupported("a bit-field");
@@ -1207,6 +1236,21 @@ private:
     case ExprKind::Assign: {
       const Expr *L = E->Ops[0], *R = E->Ops[1];
       const CType *Target = valueType(L);
+      // A bit-field takes what its setter stores, computed from its getter.
+      if (auto Bits = bitField(L)) {
+        Printed Stored = value(R, Target);
+        if (E->Text != "=") {
+          const llvm::StringRef Op = E->Text.drop_back();
+          Printed Current = convert(
+              Printed{Bits->Holder + "." + Bits->Getter + "()", PrecAtom},
+              Target, E->OpTy);
+          Stored = convert(
+              binaryText(Current, Op, value(R, E->OpTy), binaryPrecedence(Op)),
+              E->OpTy, Target);
+        }
+        line(Bits->Holder + "." + Bits->Setter + "(" + Stored.Text + ");");
+        return;
+      }
       Printed Place = place(L);
       if (E->Text == "=") {
         line(Place.Text + " = " + value(R, Target).Text + ";");
@@ -1239,6 +1283,12 @@ private:
     }
     case ExprKind::Unary:
       if (E->Text == "++" || E->Text == "--") {
+        if (auto Bits = bitField(E->Ops.front())) {
+          line(Bits->Holder + "." + Bits->Setter + "(" + Bits->Holder + "." +
+               Bits->Getter + "()" + (E->Text == "++" ? " + 1" : " - 1") +
+               ");");
+          return;
+        }
         line(place(E->Ops.front()).Text +
              (E->Text == "++" ? " += 1;" : " -= 1;"));
         return;

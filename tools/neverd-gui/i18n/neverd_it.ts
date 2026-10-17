@@ -60,6 +60,14 @@
         <translation>Salva commenti e cronologia accanto al binario</translation>
     </message>
     <message>
+        <source>Pac&amp;k database...</source>
+        <translation>I&amp;mpacchetta database...</translation>
+    </message>
+    <message>
+        <source>Write the project and its binary into one NeverD database file</source>
+        <translation>Scrivi il progetto e il suo binario in un unico file di database NeverD</translation>
+    </message>
+    <message>
         <source>&amp;Close</source>
         <translation>C&amp;hiudi</translation>
     </message>
@@ -1933,6 +1941,10 @@ Fai doppio clic per andare alla dichiarazione.</translation>
         <translation>I commenti sono stati modificati. Salvarli prima di continuare?</translation>
     </message>
     <message>
+        <source>%1 lacks the latest changes. Save them into it before continuing?</source>
+        <translation>A %1 mancano le ultime modifiche. Salvarle prima di continuare?</translation>
+    </message>
+    <message>
         <source>Cannot jump to %1: %2</source>
         <translation>Impossibile andare a %1: %2</translation>
     </message>
@@ -2133,6 +2145,14 @@ Con segno: %4</translation>
     <message>
         <source>Create LST file</source>
         <translation>Crea file LST</translation>
+    </message>
+    <message>
+        <source>Pack database</source>
+        <translation>Impacchetta database</translation>
+    </message>
+    <message>
+        <source>NeverD databases (*%1)</source>
+        <translation>Database NeverD (*%1)</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -3718,10 +3738,6 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
         <translation>(riempimento)</translation>
     </message>
     <message>
-        <source>Double-click to open %1</source>
-        <translation>Fai doppio clic per aprire %1</translation>
-    </message>
-    <message>
         <source>Export local types</source>
         <translation>Esporta i tipi locali</translation>
     </message>
@@ -3912,6 +3928,29 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>Lua (*.lua)</source>
         <translation>Lua (*.lua)</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n members</source>
+        <translation>
+            <numerusform>%n membri</numerusform>
+            <numerusform>%n membri</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Ctrl+click to open</source>
+        <translation>Ctrl+clic per aprire</translation>
+    </message>
+    <message>
+        <source>Double-click or Ctrl+click to open %1</source>
+        <translation>Fai doppio clic o Ctrl+clic per aprire %1</translation>
+    </message>
+    <message>
+        <source>bits %1 of the unit at %2</source>
+        <translation>bit %1 dell’unità a %2</translation>
+    </message>
+    <message>
+        <source>at %1, %2 bytes</source>
+        <translation>a %1, %2 byte</translation>
     </message>
 </context>
 <context>

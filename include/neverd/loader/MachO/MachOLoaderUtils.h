@@ -29,6 +29,12 @@
 namespace neverd {
 namespace macho_loader {
 
+/// Only the last fifteen encodings denote negative special library ordinals.
+inline int32_t chainedLibraryOrdinal(uint32_t Raw, uint32_t Modulus) {
+  const int32_t Value = static_cast<int32_t>(Raw);
+  return Raw > Modulus - 16 ? Value - static_cast<int32_t>(Modulus) : Value;
+}
+
 /// Whether strip removes the defined symbol \p NType describes from a linked
 /// image: a local symbol, or a private external one, which no other image
 /// links to.  An image read without its static symbol table skips these.

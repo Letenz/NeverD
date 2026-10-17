@@ -8,6 +8,7 @@
 
 #include "neverd/emulation/ProcessCall.h"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -38,6 +39,28 @@ struct NativeMemorySnapshot {
   std::vector<uint8_t> Bytes;
 };
 
+/// Read-only observations immediately before selected guest instructions.
+/// PCs are absolute guest addresses, not image-relative offsets. At most 64
+/// distinct aligned PCs; Limit bounds the retained records across all threads.
+struct NativeExecutionObservationOptions {
+  std::vector<uint64_t> PCs;
+  uint64_t Limit = 0;
+  /// The same explicit ranges are copied at each point. Deferred mappings
+  /// must be readable when observed; no mapping or provider is synthesized.
+  std::vector<NativeMemoryRead> ReadMemory;
+};
+struct NativeExecutionObservation {
+  uint64_t PC = 0, ThreadID = 0, Instructions = 0, SP = 0, NZCV = 0;
+  std::array<uint64_t, 31> Registers{};
+  std::vector<NativeMemorySnapshot> Memory;
+};
+
+/// One visible logd v4 entry. Payload is opaque; no host log is consulted.
+struct NativeLogRecord {
+  uint32_t ID = 0, PID = 0, TID = 0, Seconds = 0, Nanoseconds = 0, UID = 0;
+  std::vector<uint8_t> Payload;
+};
+
 /// Android 9 / API 28, little-endian AArch64. Function
 /// arguments are AAPCS64 scalar register/stack values, not process argv.
 /// Explicit inputs never inherit host properties, files, or environment.
@@ -51,6 +74,11 @@ struct AndroidNativeOptions {
   /// Find/read/enumeration share stable guest records with generation zero;
   /// enumeration uses name order, not an inferred device-area traversal order.
   std::map<std::string, std::string> Properties;
+  /// Complete, timestamp-ordered visible snapshot for the bounded liblog
+  /// reader. Absent is unknown; an empty vector explicitly supplies no logs.
+  /// IDs 0..5, at most 4096 entries and 1 MiB including v4 headers. This does
+  /// not infer permissions, logd sockets, live producers or persistent logs.
+  std::optional<std::vector<NativeLogRecord>> LogRecords;
   std::vector<NativeMemoryRegion> Memory;
   std::vector<NativeMemoryRead> ReadMemory;
   /// Constructors normally execute before the call, sharing its budget.
@@ -58,6 +86,7 @@ struct AndroidNativeOptions {
   bool Initialize = true;
   /// Retain this many admitted instruction PCs. Zero disables tracing.
   uint64_t TraceLimit = 0;
+  std::optional<NativeExecutionObservationOptions> ObserveExecution;
   /// Concrete analysis choice for bytes returned by malloc and the new tail
   /// of realloc. Zero preserves the default. This is not a claim about an
   /// Android allocator or proof that reading uninitialized bytes is valid.

@@ -366,13 +366,10 @@ inline std::string toString(uint32_t V) {
 // Codegen-layer helpers (segment building, chained fixups, droppable LCs)
 // ===--------------------------------------------------------------------===//
 
-/// Load commands that are safe to drop when inserting a new segment
-/// (they reference __LINKEDIT data that may shift or become stale).
+/// The old signature is invalidated by rewriting and replaced by the signing
+/// policy. Other linkedit commands remain live and must be moved, not deleted.
 constexpr uint32_t kDroppableLinkEditCmds[] = {
     llvm::MachO::LC_CODE_SIGNATURE,
-    llvm::MachO::LC_SOURCE_VERSION,
-    llvm::MachO::LC_DATA_IN_CODE,
-    llvm::MachO::LC_FUNCTION_STARTS,
 };
 
 inline bool shouldDropLoadCommand(uint32_t Cmd) {

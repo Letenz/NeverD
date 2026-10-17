@@ -1677,6 +1677,12 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   // The program's records the unit names, as its local types define them.
   if (!RecordDefinitions.Text.empty())
     OS << RecordDefinitions.Text << "\n";
+  // An enumeration's type is complete only where it is defined, and the
+  // unit spells it by its tag's name.
+  for (const std::string &Name : RecordDefinitions.Enumerations)
+    OS << "typedef enum " << Name << " " << Name << ";\n";
+  if (!RecordDefinitions.Enumerations.empty())
+    OS << "\n";
 }
 
 void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {

@@ -2002,6 +2002,15 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
               ParamName != ValNames.end()
                   ? ParamName->second
                   : integerCallStoredText(SI->getValueOperand());
+          // A constant stored to an enumeration names its enumerator.
+          if (const auto *Constant =
+                  llvm::dyn_cast<llvm::ConstantInt>(SI->getValueOperand());
+              Constant && Member->Type &&
+              Member->Type->Kind == NdTypeKind::Struct &&
+              Member->Type->IsEnum && Constant->getBitWidth() <= 64)
+            if (auto Name =
+                    enumeratorDisplay(Member->Type, Constant->getZExtValue()))
+              Value = *Name;
           // A member the unit's definitions declare takes their type, which
           // C converts an integer or another pointer to only by a cast.
           const llvm::Type *Stored = SI->getValueOperand()->getType();

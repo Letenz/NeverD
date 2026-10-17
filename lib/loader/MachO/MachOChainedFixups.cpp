@@ -40,12 +40,6 @@ struct ChainedImportRecord {
   bool Valid = false;
 };
 
-/// Only the last fifteen encodings denote negative special library ordinals.
-int32_t chainedLibraryOrdinal(uint32_t Raw, uint32_t Modulus) {
-  const int32_t Value = static_cast<int32_t>(Raw);
-  return Raw > Modulus - 16 ? Value - static_cast<int32_t>(Modulus) : Value;
-}
-
 /// Decode the import table without deduplicating it: chained pointer records
 /// refer to this table by ordinal, so even two equal names must retain distinct
 /// indices and addends.  A malformed entry remains an invalid element rather

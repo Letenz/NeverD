@@ -368,11 +368,18 @@ void RustWriter::accessors(const RecordPlan &Plan, std::string &Out) const {
         Read = "unsafe { " + Read + " }";
         Write = "unsafe { " + Write + " }";
       }
-      Methods += "    pub const fn " + unique(Names.member(Bit->Name)) +
-                 "(&self) -> " + Value + " {\n        " + Read + "\n    }\n";
-      Methods += "    pub fn " + unique("set_" + Names.member(Bit->Name)) +
-                 "(&mut self, value: " + Value + ") {\n        " + Write +
-                 "\n    }\n";
+      const std::string Getter = unique(Names.member(Bit->Name));
+      const std::string Setter = unique("set_" + Names.member(Bit->Name));
+      Methods += "    pub const fn " + Getter + "(&self) -> " + Value +
+                 " {\n        " + Read + "\n    }\n";
+      Methods += "    pub fn " + Setter + "(&mut self, value: " + Value +
+                 ") {\n        " + Write + "\n    }\n";
+      if (Paths && !Bit->Name.empty()) {
+        MemberPath &Path = (*Paths)[Bit->Name];
+        Path.Hops = Prefix;
+        Path.Getter = Getter;
+        Path.Setter = Setter;
+      }
     }
   }
   if (!Methods.empty())
