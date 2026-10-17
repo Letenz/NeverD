@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 1eae101089e730c29ba3fda92db515fe148fe41b758d6f5b69156252591d9b3f -->
+<!-- i18n-source: 63d86e1a94d8b33e055360514902466c202d434ebb87823cd91181b98a556871 -->
 
 [← Documentation Index](README.md)
 
@@ -132,6 +132,8 @@ python examples/source-patch/run.py --neverd build-example-host/bin/neverd.exe -
 ```
 
 Se ejecutan ambas rutas por defecto; añada `--api cli` o `--api sdk` para elegir una. La dirección de destino se detecta automáticamente. Con `7`, el original imprime `8` y ambos parches imprimen `36`. El controlador comprueba ejecuciones, recibos y fallos reales del cargador sin la biblioteca; los comandos completos se guardan en `commands.json`.
+
+Los ejemplos de CLI y SDK Python alojado pasaron en Linux, macOS y Windows x64/ARM64 nativos: 54 ejecuciones y 12 rechazos reales por biblioteca ausente. [CI y fuentes exactas por host](../../examples/source-patch/README.md#native-validation).
 
 <!-- i18n-section: exceptions -->
 ## Excepciones C++

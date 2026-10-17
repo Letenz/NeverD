@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: 1eae101089e730c29ba3fda92db515fe148fe41b758d6f5b69156252591d9b3f -->
+<!-- i18n-source: 63d86e1a94d8b33e055360514902466c202d434ebb87823cd91181b98a556871 -->
 
 [← Documentation Index](README.md)
 
@@ -132,6 +132,8 @@ python examples/source-patch/run.py --neverd build-example-host/bin/neverd.exe -
 ```
 
 يعمل المساران افتراضيًا؛ أضف `--api cli` أو `--api sdk` لاختيار أحدهما. يُكتشف عنوان الهدف تلقائيًا. عند الإدخال `7` يطبع الأصل `8` وتطبع النسختان المعدلتان `36`. يتحقق المشغّل من التنفيذ والإيصالات وفشل المحمّل الفعلي عند غياب المكتبة، ويحفظ الأوامر الكاملة في `commands.json`.
+
+نجحت أمثلة CLI وPython SDK المستضاف على Linux وmacOS وWindows بمعماريتي x64 وARM64 بشكل أصلي: 54 تنفيذًا و12 رفض تحميل فعليًا عند غياب المكتبة. [CI والمصادر الدقيقة لكل مضيف](../../examples/source-patch/README.md#native-validation).
 
 <!-- i18n-section: exceptions -->
 ## استثناءات C++
