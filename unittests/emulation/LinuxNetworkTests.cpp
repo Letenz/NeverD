@@ -161,6 +161,125 @@ TEST_P(LinuxNetwork,
   Options.LinuxNetwork.reset();
   EXPECT_FALSE(call(ServiceKind::Socket, 2, 1, 0));
 }
+TEST_P(LinuxNetwork, DatagramBoundariesPeekTruncationAndAliasesAreShared) {
+  const auto Peer = Options.LinuxNetwork->Connections[0].Peer;
+  LinuxDatagramConnection D;
+  D.Peer = Peer;
+  D.ExpectedSend = {{1, 2, 3}, {}};
+  D.ReceiveEvents = {{{7, 8, 9}, 0, 1}, {{}, 0, 2}, {{10}, 0, 2}};
+  Options.LinuxNetwork->DatagramConnections = {D, D};
+  const auto FD = call(ServiceKind::Socket, 2, 2, 17).value();
+  ASSERT_EQ(call(ServiceKind::Connect, FD, Base, 16), 0u);
+  EXPECT_FALSE(call(ServiceKind::ReceiveFrom, FD, Base + 128, 3));
+  const uint8_t Wrong[] = {1, 2, 4}, Right[] = {1, 2, 3};
+  llvm::cantFail(cpu().write(Base + 64, Wrong));
+  EXPECT_FALSE(call(ServiceKind::SendTo, FD, Base + 64, 3));
+  EXPECT_FALSE(call(ServiceKind::SendTo, FD, Base + 64, 2));
+  llvm::cantFail(cpu().write(Base + 64, Right));
+  EXPECT_EQ(call(ServiceKind::Write, FD, Base + 64, 3), 3u);
+  const auto Alias = call(ServiceKind::Dup, FD).value();
+  EXPECT_EQ(call(ServiceKind::Close, FD), 0u);
+  uint8_t Length[4];
+  llvm::support::endian::write32le(Length, 3);
+  llvm::cantFail(cpu().write(Base + 96, Length));
+  std::vector<uint8_t> Guard(32, 0xa5);
+  llvm::cantFail(cpu().write(Base + 160, Guard));
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, Alias, Base + 128, 2, 2 | 0x20,
+                 Base + 160, Base + 96),
+            3u);
+  llvm::cantFail(cpu().read(Base + 96, Length));
+  EXPECT_EQ(llvm::support::endian::read32le(Length), 16u);
+  llvm::cantFail(cpu().read(Base + 160, Guard));
+  EXPECT_TRUE(std::equal(Peer.begin(), Peer.begin() + 3, Guard.begin()));
+  EXPECT_TRUE(std::all_of(Guard.begin() + 3, Guard.end(),
+                          [](uint8_t V) { return V == 0xa5; }));
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, Alias, Base + 128, 1), 1u);
+  EXPECT_FALSE(call(ServiceKind::ReceiveFrom, Alias, Base + 128, 3));
+  EXPECT_EQ(call(ServiceKind::SendTo, Alias, UINT64_MAX, 0), 0u);
+  // read(0) leaves the empty datagram queued; recv(0) consumes it.
+  EXPECT_EQ(call(ServiceKind::Read, Alias, UINT64_MAX, 0), 0u);
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, Alias, UINT64_MAX, 0, 2), 0u);
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, Alias, UINT64_MAX, 0), 0u);
+  EXPECT_EQ(call(ServiceKind::Read, Alias, Base + 128, 3), 1u);
+  uint8_t Last;
+  llvm::cantFail(cpu().read(Base + 128, llvm::MutableArrayRef(&Last, 1)));
+  EXPECT_EQ(Last, 10);
+  EXPECT_FALSE(call(ServiceKind::Read, Alias, Base + 128, 3));
+  EXPECT_EQ(call(ServiceKind::Socket, 2, 2, 0), FD);
+  EXPECT_EQ(call(ServiceKind::Connect, FD, Base, 16), 0u);
+  EXPECT_FALSE(call(ServiceKind::Read, FD, Base + 128, 3));
+}
+
+TEST_P(LinuxNetwork,
+       DatagramFaultAdmissionAndExplicitErrorsDoNotInventPackets) {
+  LinuxDatagramConnection D;
+  D.Peer = Options.LinuxNetwork->Connections[0].Peer;
+  D.ReceiveEvents = {{{}, 4, 0}, {{}, 11, 0}, {{1, 2}, 0, 0}};
+  Options.LinuxNetwork->DatagramConnections = {D};
+  const auto FD = call(ServiceKind::Socket, 2, 2, 0).value();
+  EXPECT_EQ(call(ServiceKind::Connect, FD, 1, 16), uint64_t(-14));
+  EXPECT_EQ(call(ServiceKind::Connect, FD, Base, 16), 0u);
+  EXPECT_FALSE(call(ServiceKind::Connect, FD, Base, 16));
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, FD, 1, 2), uint64_t(-4));
+  EXPECT_FALSE(call(ServiceKind::ReceiveFrom, FD, 1, 2));
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, FD, 1, 2, 0x40), uint64_t(-11));
+  EXPECT_FALSE(call(ServiceKind::ReceiveFrom, FD, 1, 2));
+  EXPECT_FALSE(
+      call(ServiceKind::ReceiveFrom, FD, Base + 128, 2, 0, Base + 160, 1));
+  uint8_t Length[4];
+  llvm::support::endian::write32le(Length, 16);
+  llvm::cantFail(cpu().write(Base + 128, Length));
+  EXPECT_FALSE(call(ServiceKind::ReceiveFrom, FD, Base + 128, 2, 0, Base + 160,
+                    Base + 128));
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, FD, Base + 128, 1), 1u);
+  // The suffix of a truncated datagram is gone, not a second stream read.
+  EXPECT_FALSE(call(ServiceKind::ReceiveFrom, FD, Base + 128, 2));
+}
+
+TEST_P(LinuxNetwork, DatagramRouteErrorsAndInterruptRetryHaveNoHandshake) {
+  LinuxDatagramConnection D;
+  D.Peer = Options.LinuxNetwork->Connections[0].Peer;
+  D.ConnectErrno = 4;
+  auto Success = D;
+  Success.ConnectErrno = 0;
+  auto Failure = D;
+  Failure.ConnectErrno = 101;
+  Options.LinuxNetwork->DatagramConnections = {D, Success, Failure};
+  const auto FD = call(ServiceKind::Socket, 2, 2 | 0x800, 17).value();
+  EXPECT_EQ(call(ServiceKind::Connect, FD, Base, 16), uint64_t(-4));
+  EXPECT_EQ(call(ServiceKind::Connect, FD, Base, 16), 0u);
+  EXPECT_FALSE(call(ServiceKind::ReceiveFrom, FD, Base, 2, 0x40));
+  EXPECT_EQ(call(ServiceKind::Close, FD), 0u);
+  EXPECT_EQ(call(ServiceKind::Socket, 2, 2, 17), FD);
+  EXPECT_EQ(call(ServiceKind::Connect, FD, Base, 16), uint64_t(-101));
+  EXPECT_FALSE(call(ServiceKind::Connect, FD, Base, 16));
+}
+
+TEST_P(LinuxNetwork, StreamEventsKeepOrderingPartialReadsErrorsAndExplicitEOF) {
+  auto &C = Options.LinuxNetwork->Connections.front();
+  C.Receive.clear();
+  C.ReceiveEvents = {{{}, 4, 0}, {{7, 8, 9}, 0, 3}, {{}, 11, 3}, {{10}, 0, 3}};
+  const auto FD = open();
+  EXPECT_EQ(call(ServiceKind::Connect, FD, Base, 16), 0u);
+  EXPECT_EQ(call(ServiceKind::Read, FD, Base + 128, 3), uint64_t(-4));
+  EXPECT_FALSE(call(ServiceKind::Read, FD, Base + 128, 3));
+  const uint8_t Send[] = {1, 2, 3};
+  llvm::cantFail(cpu().write(Base + 64, Send));
+  EXPECT_EQ(call(ServiceKind::Write, FD, Base + 64, 3), 2u);
+  EXPECT_FALSE(call(ServiceKind::Read, FD, Base + 128, 3));
+  EXPECT_EQ(call(ServiceKind::Write, FD, Base + 66, 1), 1u);
+  EXPECT_EQ(call(ServiceKind::Read, FD, Base + 128, 3), 2u);
+  EXPECT_EQ(call(ServiceKind::Read, FD, Base + 130, 3), 1u);
+  EXPECT_FALSE(call(ServiceKind::Read, FD, Base + 131, 1));
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, FD, Base + 131, 1, 0x40),
+            uint64_t(-11));
+  EXPECT_EQ(call(ServiceKind::Read, FD, Base + 131, 2), 1u);
+  EXPECT_EQ(call(ServiceKind::Read, FD, Base + 132, 1), 0u);
+  uint8_t Read[4];
+  llvm::cantFail(cpu().read(Base + 128, Read));
+  EXPECT_EQ(std::vector(Read, Read + 4), (std::vector<uint8_t>{7, 8, 9, 10}));
+}
+
 INSTANTIATE_TEST_SUITE_P(Raw, LinuxNetwork,
                          testing::Values(GuestArchitecture::X64,
                                          GuestArchitecture::AArch64));
@@ -173,6 +292,8 @@ TEST(LinuxNetworkJSON, StrictWireAndSemanticAdmission) {
       llvm::consumeError(P.takeError());
   };
   Check(R"({"linux_network":{"connections":[]}})", true);
+  Check(R"({"linux_network":{"datagram_connections":[]}})", true);
+  Check(R"({"linux_network":{"datagram_connections":null}})", false);
   Check(R"({"linux_network":{"connections":[],"unknown":0}})", false);
   Check(
       R"({"linux_network":{"connections":[{"peer_hex":"020023297f0000010000000000000000","connect_errno":111}]}})",
@@ -184,6 +305,45 @@ TEST(LinuxNetworkJSON, StrictWireAndSemanticAdmission) {
       R"({"linux_network":{"connections":[{"peer_hex":"020023297f0000010000000000000000","max_send":0}]}})",
       false);
   Check(R"({"linux_network":{"connections":[{"peer_hex":"0z"}]}})", false);
+  const std::string Peer = "\"peer_hex\":\"020023297f0000010000000000000000\"";
+  auto Event = [&](llvm::StringRef Fields, bool Datagram, bool Valid) {
+    Check("{\"linux_network\":{\"" +
+              std::string(Datagram ? "datagram_connections" : "connections") +
+              "\":[{" + Peer + "," + Fields.str() + "}]}}",
+          Valid);
+  };
+  Event(R"("receive_events":[{"receive_hex":""}])", true, true);
+  Event(R"("receive_events":[{"receive_hex":""}])", false, false);
+  Event(R"("receive_events":[{"errno":4}])", false, true);
+  Event(R"("receive_events":[{"errno":0}])", true, false);
+  Event(R"("receive_events":[{"errno":4,"receive_hex":""}])", true, false);
+  Event(R"("receive_events":[{}])", true, false);
+  Event(R"("receive_events":[{"errno":5}])", true, false);
+  Event(R"("receive_events":[{"errno":104}])", false, false);
+  Event(R"("receive_events":[{"errno":4,"after_send":-1}])", true, false);
+  Event(R"("receive_events":[{"errno":4,"after_send":1}])", true, false);
+  Event(
+      R"("expected_datagrams":[""],"receive_events":[{"receive_hex":"01","after_send":1}])",
+      true, true);
+  Event(
+      R"("expected_datagrams":["00"],"receive_events":[{"errno":4,"after_send":1},{"errno":4}])",
+      true, false);
+  Event(R"("connect_errno":101,"expected_datagrams":[""])", true, false);
+  Event(R"("receive_eof":true)", true, false);
+  Event(
+      R"("expected_send_hex":"00","receive_events":[{"receive_hex":"01","after_send":1}],"receive_eof":true)",
+      false, true);
+  Event(R"("receive_hex":"","receive_events":[])", false, false);
+  Event(R"("receive_events":[{"errno":4,"extra":0}])", false, false);
+  // C++ admission shares byte and event limits with JSON callers.
+  LinuxNetworkOptions N;
+  LinuxDatagramConnection D;
+  D.Peer = {2, 0, 0x23, 0x29, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+  D.ExpectedSend = {std::vector<uint8_t>(65508)};
+  N.DatagramConnections = {D};
+  auto E = linux_model::validateNetworkOptions(N);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
   Check(
       R"({"android":{"resolver_queries":[{"node":null,"service":"9001","error":8}]}})",
       true);

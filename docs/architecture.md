@@ -7659,9 +7659,12 @@ capture failures cannot replace the original service outcome.
 
 ## Offline network ownership
 
-`LinuxFiles` owns virtual TCP descriptions and their descriptor aliases,
-connection attempts and byte cursors. Raw services and Bionic wrappers use that
+`LinuxFiles` owns virtual TCP/UDP descriptions and their descriptor aliases,
+connection attempts, stream/packet cursors and explicit receive completions.
+`LinuxDatagram` implements packet effects on that same owner. Raw services and Bionic wrappers use that
 same owner. Bionic owns LP64 resolver allocations and libc error conversion;
 `ProcessNetworkJSON` parses explicit inputs and invokes the same admission
 validators as C++ sessions. Neither layer invokes a host resolver or transport.
+Send prerequisites gate receive input availability; application acknowledgement
+state remains owned by guest code, never inferred by an OS send result.
 See [offline network contracts](linux-network-contracts.md).

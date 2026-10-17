@@ -54,20 +54,59 @@ llvm::Error text(const llvm::json::Value &V, llvm::StringRef Name,
   Out = S->str();
   return llvm::Error::success();
 }
+llvm::Error receiveEvents(const llvm::json::Value &Value,
+                          std::vector<LinuxNetworkReceive> &Out,
+                          uint64_t &Remaining) {
+  const auto *Events = Value.getAsArray();
+  if (!Events || Events->size() > 4096)
+    return invalid(field::ReceiveEvents);
+  for (const auto &Item : *Events) {
+    const auto *Event = Item.getAsObject();
+    if (!Event || bool(Event->get(field::NetworkReceive)) ==
+                      bool(Event->get(field::NetworkErrno)))
+      return invalid(field::ReceiveEvents);
+    LinuxNetworkReceive E;
+    for (const auto &[Key, V] : *Event) {
+      llvm::StringRef Name = Key;
+      if (Name == field::NetworkReceive) {
+        if (auto Error = bytes(V, Name, E.Bytes, Remaining))
+          return Error;
+      } else if (Name == field::NetworkErrno) {
+        if (auto Error = number(V, Name, E.Error))
+          return Error;
+        if (!E.Error)
+          return invalid(Name);
+      } else if (Name == field::AfterSend) {
+        auto N = process_json::integer<uint64_t>(V);
+        if (!N)
+          return invalid(Name);
+        E.AfterSend = *N;
+      } else
+        return invalid(Name);
+    }
+    Out.push_back(std::move(E));
+  }
+  return llvm::Error::success();
+}
 } // namespace
 llvm::Expected<LinuxNetworkOptions>
 linuxNetworkOptionsFromJSON(const llvm::json::Value &Value) {
   const auto *Object = Value.getAsObject();
-  const auto *Connections =
-      Object ? Object->getArray(field::Connections) : nullptr;
-  if (!Object || Object->size() != 1 || !Connections ||
-      Connections->size() > 256)
+  if (!Object || Object->empty())
     return invalid(field::LinuxNetwork);
+  for (const auto &[Key, V] : *Object)
+    if ((Key != field::Connections && Key != field::DatagramConnections) ||
+        !V.getAsArray() || V.getAsArray()->size() > 256)
+      return invalid(field::LinuxNetwork);
+  const llvm::json::Array Empty;
+  const auto *Connections = Object->getArray(field::Connections);
+  const auto *Datagrams = Object->getArray(field::DatagramConnections);
   LinuxNetworkOptions Out;
   uint64_t Remaining = 1024 * 1024 + 256 * 28;
-  for (const auto &Item : *Connections) {
+  for (const auto &Item : Connections ? *Connections : Empty) {
     const auto *C = Item.getAsObject();
-    if (!C || !C->get(field::NetworkPeer))
+    if (!C || !C->get(field::NetworkPeer) ||
+        (C->get(field::NetworkReceive) && C->get(field::ReceiveEvents)))
       return invalid(field::Connections);
     LinuxStreamConnection Connection;
     for (const auto &[Key, V] : *C) {
@@ -88,6 +127,9 @@ linuxNetworkOptionsFromJSON(const llvm::json::Value &Value) {
                                                      : Connection.MaxReceive;
         if (auto E = number(V, Name, Destination))
           return std::move(E);
+      } else if (Name == field::ReceiveEvents) {
+        if (auto E = receiveEvents(V, Connection.ReceiveEvents, Remaining))
+          return std::move(E);
       } else if (Name == field::ReceiveEOF) {
         auto B = V.getAsBoolean();
         if (!B)
@@ -97,6 +139,37 @@ linuxNetworkOptionsFromJSON(const llvm::json::Value &Value) {
         return invalid(Name);
     }
     Out.Connections.push_back(std::move(Connection));
+  }
+  for (const auto &Item : Datagrams ? *Datagrams : Empty) {
+    const auto *C = Item.getAsObject();
+    if (!C || !C->get(field::NetworkPeer))
+      return invalid(field::DatagramConnections);
+    LinuxDatagramConnection Connection;
+    for (const auto &[Key, V] : *C) {
+      llvm::StringRef Name = Key;
+      if (Name == field::NetworkPeer) {
+        if (auto E = bytes(V, Name, Connection.Peer, Remaining))
+          return std::move(E);
+      } else if (Name == field::ConnectErrno) {
+        if (auto E = number(V, Name, Connection.ConnectErrno))
+          return std::move(E);
+      } else if (Name == field::ExpectedDatagrams) {
+        const auto *Packets = V.getAsArray();
+        if (!Packets || Packets->size() > 4096)
+          return invalid(Name);
+        for (const auto &Packet : *Packets) {
+          std::vector<uint8_t> Payload;
+          if (auto E = bytes(Packet, Name, Payload, Remaining))
+            return std::move(E);
+          Connection.ExpectedSend.push_back(std::move(Payload));
+        }
+      } else if (Name == field::ReceiveEvents) {
+        if (auto E = receiveEvents(V, Connection.ReceiveEvents, Remaining))
+          return std::move(E);
+      } else
+        return invalid(Name);
+    }
+    Out.DatagramConnections.push_back(std::move(Connection));
   }
   if (auto E = linux_model::validateNetworkOptions(Out))
     return std::move(E);
