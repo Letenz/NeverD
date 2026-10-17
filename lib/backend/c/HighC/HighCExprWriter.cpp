@@ -308,6 +308,17 @@ std::string HighCWriter::castOperandText(std::string Text) const {
   return "(" + Text + ")";
 }
 
+bool HighCWriter::sameDeclaredLocal(const HighExpr &Value,
+                                    const std::string &Text,
+                                    const TypeRef &Type) const {
+  if ((Value.Kind != ExprKind::Var && Value.Kind != ExprKind::Phi) || !Type)
+    return false;
+  std::string Storage;
+  const auto It = DeclaredCTypes.find(plainText(Text, Storage).str());
+  return It != DeclaredCTypes.end() && It->second &&
+         typeToC(It->second) == typeToC(Type);
+}
+
 bool HighCWriter::declaredLocalInteger(const HighExpr &E, uint16_t Width,
                                        bool Signed) {
   if (E.Kind != ExprKind::Var && E.Kind != ExprKind::Phi)
@@ -4215,8 +4226,12 @@ HighCWriter::typedMemberAccess(const HighExpr &Addr, uint16_t AccessSize,
     if (auto Overlay = frameTypedMemberAccess(*OverlayDisp, AccessSize))
       return Overlay;
   const TypeRef Record = declaredRecordPointee(*Base);
-  if (!Record || !definesRecord(Record))
+  if (!Record)
     return std::nullopt;
+  if (!definesRecord(Record)) {
+    wantRecord(Record);
+    return std::nullopt;
+  }
   completeDisplayRecord(Dbg, Record);
   const auto Field =
       Record->displayFieldPathAt(Peeled->second, AccessSize, EnterNestedAtZero);
@@ -4296,8 +4311,12 @@ TypeRef HighCWriter::typedMemberType(const HighExpr &Addr,
     if (TypeRef OverlayTy = frameTypedMemberType(*OverlayDisp, AccessSize))
       return OverlayTy;
   const TypeRef Record = declaredRecordPointee(*Peeled->first);
-  if (!Record || !definesRecord(Record))
+  if (!Record)
     return nullptr;
+  if (!definesRecord(Record)) {
+    wantRecord(Record);
+    return nullptr;
+  }
   completeDisplayRecord(Dbg, Record);
   if (readsWholeRecord(*Record, Peeled->second, AccessSize, true))
     return nullptr;

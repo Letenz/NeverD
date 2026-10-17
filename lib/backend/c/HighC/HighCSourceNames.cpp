@@ -89,6 +89,9 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
           Visit(Type);
       }
   }
+  // Those an earlier rendering's code read members of through others.
+  for (const TypeRef &Record : ExtraRecords)
+    Visit(Record);
   if (Records.empty())
     return;
   // Their members as the code names them, which the definitions must agree
@@ -172,6 +175,11 @@ bool HighCWriter::spellsRecordPointer(const TypeRef &Type) const {
   return !Opts.RecordDefinitions || !Opts.EmitIncludes ||
          Type->Pointee->IsEnum ||
          RecordTypedefs.count(cNamedTypeSpelling(Type->Pointee->SourceName));
+}
+
+void HighCWriter::wantRecord(const TypeRef &Record) const {
+  if (WantedRecords && Record && !Record->SourceName.empty())
+    WantedRecords->push_back(Record);
 }
 
 bool HighCWriter::definesRecord(const TypeRef &Record) const {

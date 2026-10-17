@@ -4191,6 +4191,35 @@ TEST_F(SessionCAPITest, ObjectsTakeTheirLocalTypesFromTheirDWARF) {
   EXPECT_NE(Use.find("struct packed\n{"), std::string::npos) << Use;
 }
 
+TEST_F(SessionCAPITest, CodeReadsTheRecordsItsMembersReach) {
+  // first_child reads l->head->child, a node no type of its own names, and
+  // sum_list walks nodes from l->head: HighC asks the local types for the
+  // records it reads members of as it renders, and the unit defines them.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "dwarf_chains.gcc.o", std::ios::binary);
+  const std::string Object =
+      write("dwarf_chains.gcc.o",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Object.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto decompile = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  const std::string First = decompile("first_child");
+  EXPECT_NE(First.find("->child"), std::string::npos) << First;
+  EXPECT_NE(First.find("->value"), std::string::npos) << First;
+  EXPECT_NE(First.find("struct node\n{"), std::string::npos) << First;
+  const std::string Sum = decompile("sum_list");
+  EXPECT_NE(Sum.find("->next"), std::string::npos) << Sum;
+  EXPECT_NE(Sum.find("->value"), std::string::npos) << Sum;
+  EXPECT_EQ(Sum.find("+ 0x10)"), std::string::npos) << Sum;
+}
+
 TEST_F(SessionCAPITest, LocalTypesFitWhatTheCodeDoesThroughAPointer) {
   // use() reads Device->Size through rcx: of the program's records only a
   // _DEVICE holds a member of that width there.
