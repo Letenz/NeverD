@@ -310,7 +310,11 @@ records:
   information gave stay, and so do its records' ABI facts.
 - A decompiled unit, HighC's or LLVM-C's, holds the definitions of the
   records it names (`CEmitterOptions::RecordDefinitions`), and of what they
-  hold by value, after its includes. `renderEmbeddedC` renders them in exact
+  hold by value, after its includes. Only a program whose library holds
+  types defines them: a context made for the user's declarations alone, or
+  over an empty library, as an image with no PDB, header library or
+  declared types has, defines none, and LLVM-C keeps its machine types
+  there. `renderEmbeddedC` renders them in exact
   widths, with their checks, each under a guard of its own so that units
   concatenate. A record whose members the unit, or the debug information
   anywhere in the session, names otherwise than the library does stays
@@ -626,8 +630,9 @@ unions, anonymous structures and unions, bit-fields, enumerations,
 `#pragma pack` and `DECLSPEC_ALIGN`, and their `static_assert` and `offsetof`
 checks. A member access reaches a field through anonymous members as C
 counts it. C and C++ keep the definitions as written, and C++ reads the code
-that uses them. A Rust or Go page takes the definitions as Local Types
-renders them in its language (`renderEmbeddedSource`): the types the unit
+that uses them. A Rust or Go page, or a whole program spelled in Rust or Go, takes the
+definitions as Local Types renders them in its language
+(`renderEmbeddedSource`): the types the unit
 defines, the records it only points to as opaque types, and no module
 header, in place of the C bytes the source map records
 (`CSourceMap::LocalTypes`). The code reaches a member as that rendering
