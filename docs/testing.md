@@ -877,9 +877,13 @@ module and semantic proofs remain unchanged. The compiler copy lowers
 whole-object lifetime markers to the older `(i64 size, ptr)` signature, using
 the actual static allocation size or `-1` for a variable-sized allocation.
 The Clang 18 O2 execution remains required; it must not consume the newer
-one-argument intrinsic with verification disabled. The source dialect bit-field
-differential uses its native C oracle's record ABI: Microsoft on Windows and
-Itanium on the 64-bit System V and Apple hosts, with independent layout
+one-argument intrinsic with verification disabled. The same copy spells
+binary80 hexadecimal literals with the older `0xK` prefix while retaining all
+80 bits. LLVM tokenization keeps identical-looking
+names, labels, inline assembly and metadata strings unchanged.
+The source dialect bit-field differential uses its native C oracle's record
+ABI: Microsoft on Windows and Itanium on the 64-bit System V and Apple hosts,
+with independent layout
 assertions before the Rust/Go byte comparisons. Both record ABIs' actual
 generated Rust/Go views are also read on every host. The C syntax reader
 recognizes only the emitted `NEVERD_MS_STRUCT` prefix, including after
@@ -5941,9 +5945,10 @@ five-second guests, so its complete CTest method has a 120-second allowance.
 The original integer-formatting matrix contains four thirty-second guests and
 has a 150-second CTest allowance. The policy matches only those two methods and
 their four WHP contract/base variants; other driver methods retain their
-existing limits. The created-regular-attributes Darwin differential uses the
-same twenty-second guest allowance as the other semantic batches. Instruction
-bounds, public defaults and all result assertions remain unchanged.
+existing limits. The created-regular-attributes and created-directory-filesystem
+Darwin differentials use the same twenty-second guest allowance as the other
+semantic batches, including repeated complete filesystem record copies.
+Instruction bounds, public defaults and all result assertions remain unchanged.
 
 The four `SessionCAPIKernelInputs` checks require developer-supplied kernel/PDB
 files. Their exact missing-input reasons are recorded as external-input skips;
