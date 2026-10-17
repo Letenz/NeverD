@@ -295,6 +295,11 @@ private:
   BionicResult nextProperty(const PropertyCallback &Callback);
   llvm::Error propertyCallbackEntry(uint64_t Entry);
   BionicResult syscall(const NativeCallEvent &Call);
+  BionicResult socketTransfer(const NativeCallEvent &Call);
+  BionicResult addressText(const NativeCallEvent &Call);
+  BionicResult resolveAddress(const NativeCallEvent &Call);
+  BionicResult freeAddresses(const NativeCallEvent &Call);
+  std::map<uint64_t, uint64_t> ResolverNodes;
   BionicResult threadCall(const NativeCallEvent &Call);
   BionicResult finalizeCall(const NativeCallEvent &Call);
   BionicResult once(const NativeCallEvent &Call);

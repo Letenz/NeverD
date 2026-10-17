@@ -62,6 +62,15 @@ BionicResult Bionic::usleep(const NativeCallEvent &Call) {
       Duration, Kernel.clock(), Threads ? Threads->kernel() : nullptr, Result));
 }
 
+BionicResult Bionic::socketTransfer(const NativeCallEvent &Call) {
+  auto Adapted = Call;
+  Adapted.Arguments[4] = Adapted.Arguments[5] = 0;
+  return kernelCall(Call.Name == symbol::Send
+                        ? linux_model::ServiceKind::SendTo
+                        : linux_model::ServiceKind::ReceiveFrom,
+                    Adapted);
+}
+
 BionicResult Bionic::syscall(const NativeCallEvent &Call) {
   return kernelCall(std::nullopt, Call);
 }

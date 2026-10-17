@@ -7,6 +7,7 @@
 #include "AndroidInternal.h"
 #include "AndroidLog.h"
 #include "AndroidObservation.h"
+#include "AndroidResolver.h"
 #include "AndroidThreads.h"
 
 #include "neverd/emulation/ExecutionSession.h"
@@ -21,6 +22,9 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       !Options.Environment.empty())
     return failure(diagnostic::NativeOptions);
   const auto &Native = *Options.Android;
+  if (Native.ResolverQueries)
+    if (auto E = validateResolverQueries(*Native.ResolverQueries))
+      return std::move(E);
   if (auto E = validateLogRecords(Native.LogRecords))
     return std::move(E);
   if (!Native.ThreadLimit ||

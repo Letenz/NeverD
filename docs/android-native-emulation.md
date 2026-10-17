@@ -1012,3 +1012,12 @@ It also tests invalid field IDs/accessor types, final writes and heap limits.
 interning, thrown-object identity, ordered handlers, finally effects, repeated
 unwinding, inherited fields and class/interface/super/JNI nonvirtual dispatch.
 The JVM and D8 prepare/check fixtures only; NeverD execution uses neither.
+
+## Offline address resolution and TCP
+
+Explicit `android.resolver_queries` and `linux_network` inputs allow bounded
+`getaddrinfo`/`freeaddrinfo`, `inet_ntop`/`inet_pton`, socket creation, timeout
+options, connect and scalar
+stream I/O. See [offline network contracts](linux-network-contracts.md) for the
+API 28 layout, ownership checks, errno, descriptor aliases and unsupported
+boundaries. No host DNS or sockets are used.

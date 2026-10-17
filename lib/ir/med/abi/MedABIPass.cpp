@@ -1271,9 +1271,10 @@ void recoverCallAbi(
                                     (MaxRegArg >= 0 && K <= MaxRegArg)) &&
                                    takesIncomingRegister(IntParamRegs[K]);
           bool FromLiveIn = false;
-          auto V = findReachingArgReg(Func, TRI, TheArch, Blk.Id, K,
-                                      IntegerLayout, AllowLiveIn, &FromLiveIn,
-                                      nullptr, static_cast<int>(OI), Fmt);
+          bool FoundDefinition = false;
+          auto V = findReachingArgReg(
+              Func, TRI, TheArch, Blk.Id, K, IntegerLayout, AllowLiveIn,
+              &FromLiveIn, &FoundDefinition, static_cast<int>(OI), Fmt);
           if (!V)
             break;
           // What only earlier calls left in the register is an argument only
@@ -1289,6 +1290,16 @@ void recoverCallAbi(
               (FromLiveIn || V->Kind == MedVar::Param) &&
               !incomingArgumentReachesCall(Ctx, K))
             break;
+          // A direct callee's arity proves it reads a register, not that
+          // this caller's entry value reaches it.  Calls and exceptional
+          // roots break that provenance. Keep the required unknown operand
+          // without promoting it into a fictitious forwarded parameter.
+          if (!CI.IsIndirect && !FoundDefinition &&
+              (FromLiveIn || V->Kind == MedVar::Param) &&
+              !incomingArgumentReachesCall(Ctx, K)) {
+            *V = MedVar::makeUnspecified(V->Size, TheArch);
+            FromLiveIn = false;
+          }
           Found[K] = *V;
           FoundMask[K] = true;
           if (FromLiveIn) {
