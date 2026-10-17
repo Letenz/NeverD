@@ -411,7 +411,14 @@ registers, gives no count. A call to an import such a prototype counts
 passes exactly those slots and no register (`CallEntryStackSlots`): a store
 above them, a local the caller keeps there, is no argument. The arity
 tables count a `long long` as one argument, so their counts bound no i386
-call's slots. An i386 extern declares the convention its prototype states,
+call's slots. Where no declaration gives an import's arguments, the thunk an
+import library links for a stdcall routine, and its slot, spell the bytes it
+pops (`_NlsValidateLocale@8`, `stdcallArgumentBytes`), which count them
+slot by slot. A call reaches the import through either. A stdcall import,
+by its prototype or its decoration, pops its arguments as it returns
+(`CallEntryStackPops`): LowToMed raises the caller's stack pointer after
+the call as for a callee of the image whose `ret` pops, so the caller's
+stack accesses after it read the right slots. An i386 extern declares the convention its prototype states,
 as WINAPI's `__attribute__((stdcall))`, whose callee pops its arguments.
 A callee the
 pipeline does not decompile returns what its declaration says, as the C
