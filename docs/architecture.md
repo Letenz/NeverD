@@ -319,7 +319,11 @@ builtin spellings each language takes and which it takes unless asked;
 an agent reads one object.
 
 `SessionSidecar.cpp` owns the shared atomic write for Session sidecars. Type
-declaration and persistence adapters use that same private helper. Private
+declaration and persistence adapters use that same private helper. It also owns
+recording the project's input after a successful sidecar write.
+`SessionProjectInput.h` supplies the same private input/hash observations to
+that recorder and the information queries, without a dependency on UI adapters.
+Private
 Session LLVM tests compile their actual type/debug owners and sidecar helper
 directly; the shared SDK keeps its existing public C boundary.
 
