@@ -4801,6 +4801,15 @@ that same owner. This does not replace Linux process startup's synthesized
 stack vector or expose host capability state. Supplied feature bits do not
 authorize instructions outside the checked CPU contract.
 
+`AndroidCalendar` owns fixed-zone admission, Gregorian conversion and the LP64
+`tm` layout. It initializes a dedicated process-owned guest arena only when a
+calendar import is present, including named dynamic providers. The shared
+non-reentrant result is separate from caller-owned `_r` storage, TLS, malloc
+ownership and immutable zone names. Backend selection and thread scheduling
+do not change that identity. Its explicit fixed zone is independent of the
+kernel's legacy `gettimeofday` timezone pair; neither inherits host tzdata.
+Calendar conversion reads caller timestamps and does not advance guest clocks.
+
 Bionic also owns the API 28 `pthread_once` control state. It requests guest
 initialization through an internal callback result; the native runner suspends
 the import and runs the callback on the same CPU and live stack. Pending
