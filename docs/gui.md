@@ -234,10 +234,18 @@ The CLI equivalents are `--llvm-opt=O2`, `--llvm-control-flow=true` and
 without `--func`, `--symbolic-simplify` simplifies every function of the whole
 program in either route. These choices apply to the current function;
 navigating to another function restores the defaults.
+**Symbolic simplification for every function**, in the same menu and in
+**Options > General**, makes symbolic simplification the default: every code
+window applies it to the function it shows and to each function it opens, in
+this session and later ones, as IDA's gooMBA does with `MBA_RUN_AUTOMATICALLY`.
+One function can still turn it off.
 An enhancement runs in the analysis worker while the previous source remains
 visible. **Cancel transformation** stops that request, and **Restore default
-source** returns to the ordinary view. Failed enhancements retain the preceding
-source. Required machine control-flow, ABI and exception recovery still run.
+source** returns to the defaults. Failed enhancements retain the preceding
+source; a function that shows no source yet, as one opened under the
+every-function default, shows its ordinary source instead, with the reason in
+the status line. Required machine control-flow, ABI and exception recovery
+still run.
 These display defaults do not change the conservative binary patch pipeline.
 
 The native **LLVM IR** view shows lifted IR with temporary slots promoted to

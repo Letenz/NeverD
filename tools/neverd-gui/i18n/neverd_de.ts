@@ -1598,6 +1598,10 @@ Doppelklicken, um zur Deklaration zu springen.</translation>
         <translation>Symbolische Vereinfachung</translation>
     </message>
     <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>Symbolische Vereinfachung für alle Funktionen</translation>
+    </message>
+    <message>
         <source>Recover LLVM control flow</source>
         <translation>LLVM-Kontrollfluss wiederherstellen</translation>
     </message>
@@ -2117,6 +2121,10 @@ Mit Vorzeichen: %4</translation>
     <message>
         <source>Show segment:address line prefixes</source>
         <translation>Zeilenpräfixe Segment:Adresse anzeigen</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>Symbolische Vereinfachung für alle Funktionen</translation>
     </message>
     <message>
         <source>Shortcuts</source>
