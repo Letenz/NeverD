@@ -384,6 +384,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   SelectedGlobals =
       Only ? referencedGlobals(*Only) : std::set<const llvm::GlobalValue *>{};
   EmittedGlobalNames.clear();
+  RecordPointerTags.clear();
   CurMod = &Mod;
   prepareFunctionIdentifiers(Mod);
   collectImageDataUses(Mod);
@@ -402,9 +403,35 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   OS << Rest;
 }
 
+std::string LLVMCWriter::recordPointerSpelling(const NdType &Record) {
+  std::string Tag = cNamedTypeSpelling(Record.SourceName);
+  if (Tag.empty())
+    return {};
+  RecordPointerTags.insert(Tag);
+  return Tag + "*";
+}
+
 void LLVMCWriter::writeRecordDefinitions(llvm::StringRef Text) {
-  if (!Opts.RecordDefinitions || !Opts.EmitIncludes)
+  if (!Opts.EmitIncludes)
     return;
+  // A record only pointers name, which no definition below completes, is
+  // declared incomplete, as HighC declares it.  A name the unit gives a
+  // function or an object of its own is that, not a type.
+  auto DeclareIncomplete = [&](const std::set<std::string> &Defined) {
+    bool Any = false;
+    for (const std::string &Tag : RecordPointerTags)
+      if (!Defined.count(Tag) && !GlobalIdentifierAllocator.holds(Tag) &&
+          !EmittedGlobalNames.count(Tag)) {
+        OS << "typedef struct " << Tag << " " << Tag << ";\n";
+        Any = true;
+      }
+    if (Any)
+      OS << "\n";
+  };
+  if (!Opts.RecordDefinitions) {
+    DeclareIncomplete({});
+    return;
+  }
   // Every identifier the text spells: a record's or an enumerator's name
   // among them.
   std::set<std::string> Words;
@@ -449,8 +476,10 @@ void LLVMCWriter::writeRecordDefinitions(llvm::StringRef Text) {
         EmittedGlobalNames.count(Name)) {
       OS << "/* The local types' definitions are left out: " << Name
          << " names one of the unit's functions or objects too. */\n\n";
+      DeclareIncomplete({});
       return;
     }
+  DeclareIncomplete(std::set<std::string>(Spelled.begin(), Spelled.end()));
   for (const std::string &Name : Spelled)
     OS << "typedef " << (Definitions.Tags[Name] ? "union " : "struct ") << Name
        << " " << Name << ";\n";
