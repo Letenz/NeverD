@@ -175,6 +175,85 @@ TEST_P(AArch64SIMD, IntegerDuplicationFillsBothLanes) {
   ASSERT_NO_FATAL_FAILURE(expectSuccess(run(DuplicateInteger)));
   EXPECT_EQ(vector(LastVector), (RegisterValue{InitialScalar, InitialScalar}));
 }
+TEST_P(AArch64SIMD, WideningShiftsPreserveFullStateAndReadBeforeWriting) {
+  struct WidenCase {
+    uint32_t Word;
+    unsigned Bits, Shift;
+    bool High, Signed;
+  };
+  constexpr WidenCase Cases[] = {
+#define NEVERD_AARCH64_WIDEN_CASE(Word, Bits, Shift, High, Signed) \
+  {Word, Bits, Shift, High, Signed},
+#include "AArch64WidenCases.def"
+#undef NEVERD_AARCH64_WIDEN_CASE
+  };
+  constexpr RegisterValue Inputs[] = {
+      {0x80ff7f000102ff80ULL, 0xffffffff00000001ULL},
+      {0x800000007fffffffULL, 0x800080007fff7fffULL},
+      {0, UINT64_MAX},
+  };
+  llvm::cantFail(CPU->setReg(AArch64Register::FPCR,
+                           DefaultNaN | FlushToZero | (1u << RoundingShift)));
+  llvm::cantFail(CPU->setReg(AArch64Register::FPSR, InitialFPSR));
+  std::array<uint8_t, 64> Guard;
+  Guard.fill(0xa5);
+  llvm::cantFail(CPU->write(Stack, Guard));
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Word);
+    for (unsigned Destination : {31u, 1u}) {
+      SCOPED_TRACE(Destination);
+      for (const auto &Input : Inputs) {
+        vector(31, {InitialVectorLow, InitialVectorHigh});
+        vector(1, Input);
+        auto ExpectedVectors = vectors();
+        auto ExpectedScalars = scalars();
+        ExpectedScalars[unsigned(AArch64Register::PC)] = Code + 4;
+        RegisterValue Expected{};
+        const auto Source = Input[Case.High ? 1 : 0];
+        const auto SourceMask = (uint64_t(1) << Case.Bits) - 1;
+        const unsigned WideBits = 2 * Case.Bits;
+        const auto ResultMask =
+            WideBits == 64 ? UINT64_MAX : (uint64_t(1) << WideBits) - 1;
+        for (unsigned I = 0; I < 64 / Case.Bits; ++I) {
+          const auto Lane = (Source >> (I * Case.Bits)) & SourceMask;
+          // Multiplication in the widened signed domain avoids shifting a
+          // negative C++ value. Even the largest product fits int64_t.
+          const int64_t Extended =
+              Case.Signed && (Lane & (uint64_t(1) << (Case.Bits - 1)))
+                  ? int64_t(Lane) - (int64_t(1) << Case.Bits)
+                  : int64_t(Lane);
+          const auto Value =
+              uint64_t(Extended * (int64_t(1) << Case.Shift)) & ResultMask;
+          Expected[I * WideBits / 64] |= Value << (I * WideBits % 64);
+        }
+        ExpectedVectors[Destination] = Expected;
+        ASSERT_NO_FATAL_FAILURE(
+            expectSuccess(run((Case.Word & ~31u) | Destination)));
+        EXPECT_EQ(vectors(), ExpectedVectors);
+        EXPECT_EQ(scalars(), ExpectedScalars);
+        std::array<uint8_t, 64> After;
+        llvm::cantFail(CPU->snapshotBacking(Stack, After));
+        EXPECT_EQ(After, Guard);
+      }
+    }
+  }
+}
+TEST_P(AArch64SIMD, ZeroSizeFieldBelongsToModifiedImmediateInsteadOfWidening) {
+  // immh == 0 belongs to a different encoding class: MOVI v31.4h, #1, LSL #8.
+  auto ExpectedVectors = vectors();
+  auto ExpectedScalars = scalars();
+  ExpectedVectors[31] = {0x0100010001000100ULL, 0};
+  ExpectedScalars[unsigned(AArch64Register::PC)] = Code + 4;
+  ASSERT_NO_FATAL_FAILURE(expectSuccess(run(0x0f00a43f)));
+  EXPECT_EQ(vectors(), ExpectedVectors);
+  EXPECT_EQ(scalars(), ExpectedScalars);
+}
+TEST_P(AArch64SIMD, WideningRejects128BitElements) {
+  expectRejected(0x0f40a43f);
+}
+TEST_P(AArch64SIMD, WideningRejectsScalarEncoding) {
+  expectRejected(0x5f08a43f);
+}
 TEST_P(AArch64SIMD, CMHIProducesUnsignedElementMasksAndPreservesOtherState) {
   struct Comparison {
     const char *Name;
