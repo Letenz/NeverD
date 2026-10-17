@@ -4,6 +4,13 @@
 
 # Testing NeverD
 
+`AArch64SIMD.RegisterShifts*` checks baseline USHL/SSHL scalar D and fixed
+vectors against independent bit selection, including signed low-byte amounts,
+oversized shifts, destination aliases, cleared upper lanes, complete register
+and guarded memory state, and reserved lane encodings. It runs in both checked
+execution modes on available transports; integer shifts retain FP control and
+status. Instruction semantics follow the [Arm instruction reference](https://documentation-service.arm.com/static/6245c734b059dc5ff9a8bdab).
+
 `AndroidThread.ForeignTasks*` checks foreign pidfds and CPU-clock observations
 while children live and after they exit, raw and Bionic errno results, identity
 reservation conflicts, invalid flags and refusal of unsupported local thread
