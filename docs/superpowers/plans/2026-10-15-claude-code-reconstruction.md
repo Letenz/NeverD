@@ -1112,3 +1112,34 @@ supplies the measured library input and disables the standalone default LTO
 flag, absent from the original metadata. Generated configuration fragments and
 actual link commands are retained. No version bytes, comparator, file limit or
 ABI floor are rewritten to turn a mismatch into a pass.
+
+Both Rust plans in 38986987671 verify the shared graph and compile rg, then
+fail six previously ambiguous Bun integer comparisons. Their effective locks
+are identical: 1bc3c6d8c1975d2693c16ca22cf84f9ea12d66ca2565916c292d27030919c723.
+No original package or checksum changes; 24 packages are added. The next recipe
+pins those exact bytes and keeps the public Rust planner unchanged. Six exact
+hash/line-gated casts specify i32 address-family and u16 SystemError types,
+preserving the separate i32 syscall errors. Dry-run readback passes. Full native
+engine run 38987905619 is still pending qualification and actual-client tests.
+
+Component repeat 38987372440 matches 34 of 36 strict pairs. Both Ugrep version
+outputs and every functional case match exactly; only Bfs metadata differs.
+Independent readback checks every raw stream, retained boundary controls and
+exact source revision, preserving both failures. Bfs run 38987558717 passes
+all upstream strategies after adding the compiler runner's owned UID/GID to
+test account fixtures, with the existing skips retained. Its ABI gate correctly
+rejects statx/fcntl64 GLIBC_2.28 dependencies. Public Bun's exact compatibility
+functions provide the next outer-link implementation; forwarding, forced
+old-symbol fallback and no-argument/integer/pointer controls precede the full
+upstream suite. Native run 38988361407 remains a candidate until readback.
+
+The immutable grpc-source-evidence-v2 addendum verifies 1,506 files. Ten explicit
+constructors use exact owning MethodDefinition start/end map anchors: the plain
+constructor key spans, non-static/uncomputed kind, shared end and every formal
+name/anchor must agree. Duplicate or explicitly unmapped function starts still
+refuse the owner rule. All prior 194 links are unchanged; totals are now 204
+upstream TypeScript links, 87 written parameter and 83 return annotations.
+Sixteen refusal controls and Unicode/CRLF checks pass. Two synthetic constructors
+and two unmapped arrow functions remain unknown. The manifest is
+9ef8d0c734ca8dfe57bf394b94572a5b23725b0e8ea013cdc9aa24570506f523.
+These are correspondence candidates; erased original types are not recovered.
