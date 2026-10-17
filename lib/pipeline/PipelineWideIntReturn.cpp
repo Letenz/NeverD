@@ -503,6 +503,11 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
         Reconv.setI64Callees(&I64RetCallees);
         if (HasIndI64)
           Reconv.setI64IndirectSites(&IndIt->second);
+        // MedFuncs[I] is the first conversion of the same LowFunc.
+        Reconv.setRegistrationFrameFacts(
+            {Result.MedFuncs[I].Entry,
+             Result.MedFuncs[I].RegistrationCallerCleanupABIComplete,
+             Result.MedFuncs[I].RegistrationCxxEntryPopBytes});
         MedFunc NewMF =
             Reconv.convert(Result.LowFuncs[I], Img.Arch, Img.abiFormat());
         NewMF.OriginalSize = Result.LowFuncs[I].OriginalSize;
