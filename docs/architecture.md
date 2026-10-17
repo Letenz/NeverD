@@ -4579,6 +4579,12 @@ while `LinuxServices.cpp` remains the authoritative kernel-service dispatcher
 for both Linux processes and Android native workloads. An optional runtime
 instruction observer receives only attempts admitted by `ExecutionSession`'s
 existing budget; OS models do not replace CPU hooks to collect traces.
+Selected Android execution observations instead use `ExecutionSession` watches
+to read stopped scalar state and explicit memory. `AndroidObservation` owns
+shared C++/JSON admission and capture, and the runtime owns watch continuation.
+Checked quantum boundaries precede a watch of the next instruction, so a
+cooperatively selected thread cannot inherit another thread's skipped watch.
+Observation stops preserve the current quantum and do not charge a service.
 The device API query reads the explicit immutable property catalogue and shares
 `AndroidStrings`' bounded decimal conversion with `atoi`. The reported property
 does not select a different Bionic ABI or infer a Linux kernel contract.

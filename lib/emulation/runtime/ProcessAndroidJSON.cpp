@@ -6,6 +6,7 @@
 #include "ProcessAndroidJSON.h"
 
 #include "../os/linux/android/AndroidLog.h"
+#include "../os/linux/android/AndroidObservation.h"
 
 #include "neverd/emulation/ProcessReportFields.h"
 
@@ -38,6 +39,71 @@ llvm::Expected<std::string> string(const llvm::json::Value &V,
   return S->str();
 }
 std::string bits(uint64_t V) { return llvm::utohexstr(V, true); }
+llvm::Expected<std::vector<NativeMemoryRead>>
+memoryReads(const llvm::json::Value &Value) {
+  const auto *Array = Value.getAsArray();
+  if (!Array)
+    return invalid(field::ReadMemory);
+  std::vector<NativeMemoryRead> Reads;
+  for (const auto &Item : *Array) {
+    const auto *Object = Item.getAsObject();
+    if (!Object || !Object->get(field::Address) || !Object->get(field::Size))
+      return invalid(field::ReadMemory);
+    NativeMemoryRead Read;
+    for (const auto &[Key, V] : *Object) {
+      llvm::StringRef Name = Key;
+      if (Name == field::Address || Name == field::Size) {
+        auto N = number(V, Name);
+        if (!N)
+          return N.takeError();
+        (Name == field::Address ? Read.Address : Read.Size) = *N;
+      } else if (Name == field::RequireMappedAtEntry) {
+        auto B = V.getAsBoolean();
+        if (!B)
+          return invalid(Name);
+        Read.RequireMappedAtEntry = *B;
+      } else
+        return invalid(Name);
+    }
+    Reads.push_back(Read);
+  }
+  return Reads;
+}
+llvm::Expected<NativeExecutionObservationOptions>
+observationOptions(const llvm::json::Value &Value) {
+  const auto *Object = Value.getAsObject();
+  if (!Object)
+    return invalid(field::ObserveExecution);
+  NativeExecutionObservationOptions Out;
+  for (const auto &[Key, V] : *Object) {
+    llvm::StringRef Name = Key;
+    if (Name == field::ObservationPCs) {
+      const auto *PCs = V.getAsArray();
+      if (!PCs)
+        return invalid(Name);
+      for (const auto &PC : *PCs) {
+        auto N = number(PC, Name);
+        if (!N)
+          return N.takeError();
+        Out.PCs.push_back(*N);
+      }
+    } else if (Name == field::ObservationLimit) {
+      auto N = number(V, Name);
+      if (!N)
+        return N.takeError();
+      Out.Limit = *N;
+    } else if (Name == field::ReadMemory) {
+      auto Reads = memoryReads(V);
+      if (!Reads)
+        return Reads.takeError();
+      Out.ReadMemory = std::move(*Reads);
+    } else
+      return invalid(Name);
+  }
+  if (auto E = android_model::validateExecutionObservation(Out))
+    return std::move(E);
+  return Out;
+}
 } // namespace
 llvm::Expected<AndroidNativeOptions>
 androidOptionsFromJSON(const llvm::json::Value &Value) {
@@ -192,7 +258,17 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
           Names.push_back(std::move(*S));
         }
       }
-    } else if (Name == field::Memory || Name == field::ReadMemory) {
+    } else if (Name == field::ObserveExecution) {
+      auto Observation = observationOptions(V);
+      if (!Observation)
+        return Observation.takeError();
+      Out.ObserveExecution = std::move(*Observation);
+    } else if (Name == field::ReadMemory) {
+      auto Reads = memoryReads(V);
+      if (!Reads)
+        return Reads.takeError();
+      Out.ReadMemory = std::move(*Reads);
+    } else if (Name == field::Memory) {
       const auto *A = V.getAsArray();
       if (!A)
         return invalid(Name);
@@ -203,7 +279,6 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         if (O->get(field::Path) && O->get(field::Bytes))
           return invalid(field::Path);
         NativeMemoryRegion Region;
-        bool RequireMappedAtEntry = true;
         for (const auto &[K, Entry] : *O) {
           llvm::StringRef Field = K;
           if (Field == field::Address || Field == field::Size) {
@@ -211,19 +286,13 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
             if (!N)
               return N.takeError();
             (Field == field::Address ? Region.Address : Region.Size) = *N;
-          } else if (Name == field::ReadMemory &&
-                     Field == field::RequireMappedAtEntry) {
-            auto B = Entry.getAsBoolean();
-            if (!B)
-              return invalid(Field);
-            RequireMappedAtEntry = *B;
-          } else if (Name == field::Memory && Field == field::Bytes) {
+          } else if (Field == field::Bytes) {
             auto S = Entry.getAsString();
             if (!S || S->size() % 2 || !llvm::all_of(*S, llvm::isHexDigit))
               return invalid(Field);
             std::string Data = llvm::fromHex(*S);
             Region.Bytes.assign(Data.begin(), Data.end());
-          } else if (Name == field::Memory && Field == field::Path) {
+          } else if (Field == field::Path) {
             auto S = string(Entry, Field);
             if (!S)
               return S.takeError();
@@ -231,7 +300,7 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
               return invalid(Field);
             Region.File = std::filesystem::path(std::u8string(
                 reinterpret_cast<const char8_t *>(S->data()), S->size()));
-          } else if (Name == field::Memory && Field == field::Executable) {
+          } else if (Field == field::Executable) {
             auto B = Entry.getAsBoolean();
             if (!B)
               return invalid(Field);
@@ -239,11 +308,7 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
           } else
             return invalid(Field);
         }
-        if (Name == field::Memory)
-          Out.Memory.push_back(std::move(Region));
-        else
-          Out.ReadMemory.push_back(
-              {Region.Address, Region.Size, RequireMappedAtEntry});
+        Out.Memory.push_back(std::move(Region));
       }
     } else
       return invalid(Name);
@@ -283,6 +348,29 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
                          {field::Trace, std::move(Trace)},
                          {field::TraceTruncated, Result.TraceTruncated},
                          {field::Memory, std::move(Memory)}};
+  if (Result.ExecutionObservationsEnabled) {
+    llvm::json::Array Observations;
+    for (const auto &Record : Result.ExecutionObservations) {
+      llvm::json::Array Registers, Reads;
+      for (uint64_t R : Record.Registers)
+        Registers.push_back(bits(R));
+      for (const auto &Read : Record.Memory)
+        Reads.push_back(
+            llvm::json::Object{{field::Address, bits(Read.Address)},
+                               {field::Bytes, llvm::toHex(Read.Bytes, true)}});
+      Observations.push_back(llvm::json::Object{
+          {field::PC, bits(Record.PC)},
+          {field::ThreadID, Record.ThreadID},
+          {field::Instructions, Record.Instructions},
+          {field::ObservationSP, bits(Record.SP)},
+          {field::ObservationNZCV, bits(Record.NZCV)},
+          {field::ObservationRegisters, std::move(Registers)},
+          {field::Memory, std::move(Reads)}});
+    }
+    Out[field::ExecutionObservations] = std::move(Observations);
+    Out[field::ExecutionObservationsTruncated] =
+        Result.ExecutionObservationsTruncated;
+  }
   if (!Result.NativeThreads.empty()) {
     llvm::json::Array Threads, Spans;
     for (const auto &T : Result.NativeThreads)
