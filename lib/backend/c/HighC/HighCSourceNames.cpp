@@ -51,6 +51,13 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
       return;
     }
   };
+  // The enumerations a callee's declaration takes, whose enumerators its
+  // calls pass: C cannot declare an enumeration before defining it.
+  const auto VisitEnumeration = [&](const TypeRef &Type) {
+    if (Type && Type->Kind == NdTypeKind::Struct && Type->IsEnum &&
+        !Type->SourceName.empty() && Named.insert(Type->SourceName).second)
+      Records.push_back(Type);
+  };
   std::function<void(const HighExpr &)> VisitExpr = [&](const HighExpr &E) {
     Visit(E.Type);
     if (E.SourceCallHint) {
@@ -58,6 +65,12 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
       for (const auto &Parameter : E.SourceCallHint->Signature.Parameters)
         Visit(Parameter.Type);
     }
+    if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::None)
+      if (const std::optional<FunctionSym> Callee = debugCallee(E)) {
+        VisitEnumeration(Callee->ReturnType);
+        for (const auto &[Name, Type] : Callee->Params)
+          VisitEnumeration(Type);
+      }
     E.forEachChildExpr([&](const ExprPtr &Child) { VisitExpr(*Child); });
   };
   for (const HighFunc &Function : Funcs) {
@@ -87,6 +100,8 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
   // The typedefs and enumerators they declare are the program's names: the
   // unit's own step around them.
   for (const std::string &Name : RecordDefinitions.Identifiers)
+    GlobalIdentifierAllocator.allocateVerbatim(Name);
+  for (const std::string &Name : RecordDefinitions.Enumerations)
     GlobalIdentifierAllocator.allocateVerbatim(Name);
 }
 
@@ -119,8 +134,10 @@ void HighCWriter::writeSourceRecordDeclarations(
         const char *Keyword = Tag != RecordDefinitions.Tags.end() && Tag->second
                                   ? "union"
                                   : "struct";
-        if (Declared.insert(Name).second)
+        if (Declared.insert(Name).second) {
           OS << "typedef " << Keyword << " " << Name << " " << Name << ";\n";
+          RecordTypedefs.insert(Name);
+        }
       }
       Visit(Record);
     }
@@ -142,6 +159,26 @@ void HighCWriter::writeSourceRecordDeclarations(
     Signature(Function);
   if (!Declared.empty())
     OS << "\n";
+}
+
+bool HighCWriter::spellsRecordPointer(const TypeRef &Type) const {
+  if (!Type || Type->Kind != NdTypeKind::Ptr || !Type->Pointee ||
+      Type->Pointee->Kind != NdTypeKind::Struct ||
+      Type->Pointee->SourceName.empty())
+    return false;
+  // Only the program's local types leave a record the unit names without a
+  // typedef; a unit without includes leaves its declarations to whoever
+  // builds it.
+  return !Opts.RecordDefinitions || !Opts.EmitIncludes ||
+         Type->Pointee->IsEnum ||
+         RecordTypedefs.count(cNamedTypeSpelling(Type->Pointee->SourceName));
+}
+
+bool HighCWriter::definesRecord(const TypeRef &Record) const {
+  return !Opts.RecordDefinitions || !Opts.EmitIncludes ||
+         (Record && !Record->SourceName.empty() &&
+          RecordDefinitions.Records.count(
+              cNamedTypeSpelling(Record->SourceName)));
 }
 
 void HighCWriter::recordSourceNames(const std::vector<HighFunc> &Funcs) {

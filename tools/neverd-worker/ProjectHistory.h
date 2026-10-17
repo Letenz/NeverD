@@ -5,7 +5,9 @@
 #include <string_view>
 
 namespace neverd::worker {
-using AtomicWriter = void (*)(const std::filesystem::path &, const Json &);
+/// Replaces a file with the given text in one atomic step.
+using AtomicWriter = void (*)(const std::filesystem::path &,
+                              const std::string &);
 
 // Durable user-edit history above the public C ABI. No analysis objects or
 // pointers enter the store; recovery only replaces known user sidecar files.
@@ -43,6 +45,9 @@ private:
   Json commands_ = Json::array(), committedState_, previousDocument_;
   std::size_t cursor_ = 0;
   Json diskState() const;
+  /// Refuses \p state when one of its files would pass the size a later read
+  /// accepts.
+  static void checkSidecarBudgets(const Json &state);
   void writeSidecars(const Json &state) const;
   Json document(const Json &state) const;
   void recover();

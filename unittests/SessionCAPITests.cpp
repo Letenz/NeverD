@@ -4053,6 +4053,118 @@ TEST_F(SessionCAPITest, FunctionsHoldTheRecordsTheirPDBTypes) {
   EXPECT_NE(LlvmAfter.find("uint16_t Items;"), std::string::npos);
 }
 
+TEST_F(SessionCAPITest, CodeNamesValuesByTheEnumeratorsTheUserNames) {
+  // A member of an enumeration compares with and takes the enumerators the
+  // program's types name, as the user renames them.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "renames.exe", std::ios::binary);
+  const std::string Exe = write(
+      "renames.exe", std::string(std::istreambuf_iterator<char>(Input), {}));
+  neverd_session_set_pdb_path(Session,
+                              (Fixtures / "renames.pdb").string().c_str());
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto decompile = [&](const char *Name, bool Llvm) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    if (Index < 0)
+      return std::string();
+    const neverd_va_t Entry = neverd_func_entry(Session, Index);
+    return takeString(Llvm ? neverd_decompile_llvm(Session, Entry)
+                           : neverd_decompile(Session, Entry));
+  };
+  for (bool Llvm : {false, true}) {
+    const std::string IsOn = decompile("is_on", Llvm);
+    EXPECT_NE(IsOn.find("Device->State"), std::string::npos) << IsOn;
+    EXPECT_NE(IsOn.find(" PowerOn)"), std::string::npos) << IsOn;
+    EXPECT_NE(IsOn.find("Device->Size"), std::string::npos);
+    const std::string Sleep = decompile("sleep_device", Llvm);
+    EXPECT_NE(Sleep.find("Device->State = PowerSleep;"), std::string::npos)
+        << Sleep;
+  }
+
+  const std::string Renamed = takeString(neverd_local_types_declare(
+      Session,
+      "typedef enum _POWER_STATE { Off, On, Asleep } POWER_STATE;\n"
+      "struct _DEVICE_STATE { unsigned short Type; unsigned short Length; "
+      "POWER_STATE State; };\n",
+      R"({"language":"c"})"));
+  EXPECT_NE(Renamed.find("\"decompilation\":true"), std::string::npos)
+      << Renamed << takeString(neverd_last_error(Session));
+  for (bool Llvm : {false, true}) {
+    const std::string IsOn = decompile("is_on", Llvm);
+    EXPECT_NE(IsOn.find(" On)"), std::string::npos) << IsOn;
+    EXPECT_EQ(IsOn.find("PowerOn"), std::string::npos);
+    EXPECT_NE(IsOn.find("Device->Length"), std::string::npos);
+    // The unit defines the enumeration as the user named it; HighC, which
+    // spells its type by its tag, declares that name too.
+    EXPECT_NE(IsOn.find("    On = 1,"), std::string::npos);
+    if (!Llvm)
+      EXPECT_NE(IsOn.find("typedef enum _POWER_STATE _POWER_STATE;"),
+                std::string::npos);
+    const std::string Sleep = decompile("sleep_device", Llvm);
+    EXPECT_NE(Sleep.find("Device->State = Asleep;"), std::string::npos)
+        << Sleep;
+  }
+}
+
+TEST_F(SessionCAPITest, ObjectsTakeTheirLocalTypesFromTheirDWARF) {
+  // A relocatable object's DWARF gives its local types, which its code
+  // reads members of by name: the DWARF reader resolves the object's
+  // relocations whenever it reads a value, for as long as the session
+  // keeps the types.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "dwarf_types.gcc.o", std::ios::binary);
+  const std::string Object =
+      write("dwarf_types.gcc.o",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Object.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_local_types_json(Session, nullptr)));
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  const llvm::json::Object *Root = Parsed->getAsObject();
+  ASSERT_TRUE(Root);
+  EXPECT_EQ(Root->getString("source"), "dwarf");
+  EXPECT_EQ(Root->getString("dataModel"), "LP64");
+  std::set<std::string> Names;
+  if (const llvm::json::Array *Types = Root->getArray("types"))
+    for (const llvm::json::Value &Type : *Types)
+      if (const llvm::json::Object *Entry = Type.getAsObject())
+        if (std::optional<llvm::StringRef> Name = Entry->getString("name")) {
+          Names.insert(Name->str());
+          EXPECT_EQ(Entry->getString("origin"), "dwarf") << Name->str();
+        }
+  for (const char *Name : {"device", "flags", "value", "pair_t", "color",
+                           "mode_t_", "packed", "forward_only"})
+    EXPECT_TRUE(Names.count(Name)) << Name;
+
+  // GCC packs the bit-fields after kind, into the bytes of their types'
+  // units that hold them, and tail follows them.
+  const std::string Source = takeString(neverd_local_types_source(
+      Session, R"({"language":"c","types":["flags"],"asserts":true})"));
+  EXPECT_NE(Source.find("uint32_t ready : 1;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" : 0;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("offsetof(struct flags, tail) == 0x8"),
+            std::string::npos)
+      << Source;
+
+  // HighC reads the members by name and defines the records it reads them
+  // of; LLVM-C binds no debug parameters in a relocatable object.
+  const int Index = neverd_func_find_by_name(Session, "use");
+  ASSERT_GE(Index, 0);
+  const std::string Use =
+      takeString(neverd_decompile(Session, neverd_func_entry(Session, Index)));
+  EXPECT_NE(Use.find("int32_t use(device* d, packed* p,"), std::string::npos)
+      << Use;
+  EXPECT_NE(Use.find("d->size"), std::string::npos) << Use;
+  EXPECT_NE(Use.find("p->count"), std::string::npos) << Use;
+  EXPECT_NE(Use.find("struct device\n{"), std::string::npos) << Use;
+  EXPECT_NE(Use.find("struct packed\n{"), std::string::npos) << Use;
+}
+
 TEST_F(SessionCAPITest, LocalTypesFitWhatTheCodeDoesThroughAPointer) {
   // use() reads Device->Size through rcx: of the program's records only a
   // _DEVICE holds a member of that width there.
@@ -4497,6 +4609,17 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
       << Probe;
   EXPECT_NE(Probe.find("ZwClose((void*)(uintptr_t)arg0)"), std::string::npos)
       << Probe;
+  // LLVM-C declares the imports it calls that no header it includes
+  // declares, and passes them what their prototypes take.
+  const std::string Lowered = takeString(neverd_decompile_llvm_ex(
+      Session,
+      neverd_func_entry(Session, neverd_func_find_by_name(Session, "Probe")),
+      0));
+  EXPECT_NE(Lowered.find("extern uint64_t GetLastError();"), std::string::npos)
+      << Lowered;
+  EXPECT_NE(Lowered.find("extern uint64_t ZwClose();"), std::string::npos)
+      << Lowered;
+  EXPECT_NE(Lowered.find("(GetLastError())"), std::string::npos) << Lowered;
   // A definition named as a routine the headers declare that reads none of
   // its parameters shows those the prototype declares.
   const std::string Atoms = decompile("InitAtomTable");

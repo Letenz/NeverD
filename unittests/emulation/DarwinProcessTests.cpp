@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "DarwinAdvisoryLockTestData.h"
+#include "DarwinCallbackTestData.h"
 #include "DarwinCreatedAdvisoryLockTestData.h"
 #include "DarwinCreatedAttributeTestData.h"
 #include "DarwinCreatedSynchronizationTestData.h"
@@ -4533,6 +4534,66 @@ TEST_P(DarwinProcess, LibSystemMemoryCallsPreserveMappingsAndCErrorOrder) {
   }
 }
 
+TEST_P(DarwinProcess, DylibConstructorsAndTLSCallbacksKeepStartupAndExitOrder) {
+  for (const char *Kind : {"classic", "chained"}) {
+    SCOPED_TRACE(Kind);
+    const auto Directory =
+        std::filesystem::path(Path.string() + "-callbacks-" + Kind);
+    for (const auto &Test : darwin_test::CallbackCases) {
+      SCOPED_TRACE(Test.Mode);
+      darwin_test::callbackOptions(Options, Directory, Test.Mode);
+      for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+        auto R = emulateProcess(Directory / "main", GetParam().OS, Options);
+        ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+        EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+        EXPECT_EQ(R->ExitStatus, Test.Status);
+        EXPECT_EQ(R->StandardOutput, Test.Output);
+        EXPECT_TRUE(R->StandardError.empty());
+        EXPECT_TRUE(R->Services.empty());
+        EXPECT_EQ(bool(R->ReturnValue), llvm::StringRef(Test.Mode) == "return");
+        unsigned Registrations = 0;
+        for (const auto &Call : R->NativeCalls)
+          if (Call.Name == "__tlv_atexit") {
+            ++Registrations;
+            EXPECT_EQ(Call.ArgumentCount, 2u);
+            EXPECT_FALSE(Call.Result);
+            EXPECT_TRUE(Call.ReturnAddress);
+          }
+        EXPECT_EQ(Registrations, llvm::StringRef(Test.Mode) == "stack-exit" ? 4u
+                                 : llvm::StringRef(Test.Mode).contains("raw")
+                                     ? 2u
+                                     : 3u);
+      }
+    }
+    darwin_test::callbackOptions(Options, Directory, "dtor-exit");
+    auto Reentrant = emulateProcess(Directory / "main", GetParam().OS, Options);
+    ASSERT_TRUE(bool(Reentrant)) << llvm::toString(Reentrant.takeError());
+    EXPECT_EQ(Reentrant->Stop, ProcessStopReason::RuntimeFailure);
+    EXPECT_NE(Reentrant->Diagnostic.find("reentrant"), std::string::npos);
+    EXPECT_EQ(Reentrant->StandardOutput, "LPEabFM2");
+    EXPECT_FALSE(Reentrant->ExitStatus);
+    EXPECT_FALSE(Reentrant->ReturnValue);
+    darwin_test::callbackOptions(Options, Directory, "return");
+    auto Reference = emulateProcess(Directory / "main", GetParam().OS, Options);
+    ASSERT_TRUE(bool(Reference));
+    // Stop inside the last TLS destructor: main's value is still private.
+    Options.Limits.Events = Reference->Events - 1;
+    auto Limited = emulateProcess(Directory / "main", GetParam().OS, Options);
+    ASSERT_TRUE(bool(Limited)) << llvm::toString(Limited.takeError());
+    EXPECT_EQ(Limited->Stop, ProcessStopReason::EventLimit);
+    EXPECT_FALSE(Limited->ExitStatus);
+    EXPECT_FALSE(Limited->ReturnValue);
+    EXPECT_EQ(Limited->StandardOutput, "LPEabFM2N1");
+    Options.Limits.Events = process_defaults::Events;
+    Options.Limits.Instructions = Reference->Instructions - 1;
+    Limited = emulateProcess(Directory / "main", GetParam().OS, Options);
+    ASSERT_TRUE(bool(Limited)) << llvm::toString(Limited.takeError());
+    EXPECT_EQ(Limited->Stop, ProcessStopReason::InstructionLimit);
+    EXPECT_FALSE(Limited->ExitStatus);
+    EXPECT_FALSE(Limited->ReturnValue);
+    Options.Limits.Instructions = process_defaults::Instructions;
+  }
+}
 TEST_P(DarwinProcess, StartupDylibsShareDataAndKeepThreadLocalInstances) {
   Options.InstructionQuantum = 1024;
   for (const char *Kind : {"classic", "chained"}) {

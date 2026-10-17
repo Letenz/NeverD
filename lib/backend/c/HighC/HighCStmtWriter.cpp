@@ -854,6 +854,16 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         DeclaredType = Pointer;
         PointerFromCallResult = true;
       }
+      // A local declared as a pointer, such as one a typed record's pointer
+      // member gives its type (FieldForwardTypes), takes every value as one.
+      bool PointerFromDeclaration = false;
+      if (const auto Declared = DeclaredCTypes.find(DestName);
+          Declared != DeclaredCTypes.end() && Declared->second &&
+          Declared->second->Kind == NdTypeKind::Ptr &&
+          (!DeclaredType || DeclaredType->Kind != NdTypeKind::Ptr)) {
+        DeclaredType = Declared->second;
+        PointerFromDeclaration = true;
+      }
       TypeRef ProjectedValueType = Stmt.Val->Type;
       if (Stmt.Val->Kind == ExprKind::Load && !Stmt.Val->Operands.empty() &&
           Stmt.Val->Operands[0]) {
@@ -904,6 +914,11 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                                     : callResultPointerType(*Stmt.Val);
         if (DirectAddress)
           OS << "(" << typeToC(DeclaredType) << ")(" << ValueText << ")";
+        else if (PointerFromDeclaration && ProjectedValueType &&
+                 ProjectedValueType->Kind == NdTypeKind::Ptr &&
+                 typeToC(cDisplayType(ProjectedValueType)) ==
+                     typeToC(DeclaredType))
+          OS << ValueText;
         else if (PointerFromCallResult &&
                  ((Printed && typeToC(Printed) == typeToC(DeclaredType)) ||
                   (Stmt.Val->Kind == ExprKind::Const &&
@@ -1026,6 +1041,13 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           const TypeRef StoredType = Stmt.StoreVal->Type;
           const TypeRef MemberType = typedMemberType(
               *Stmt.StoreAddr, StoredType ? StoredType->Size : 0);
+          // A constant stored to an enumeration names its enumerator.
+          if (MemberType && MemberType->Kind == NdTypeKind::Struct &&
+              MemberType->IsEnum)
+            if (const HighExpr *Const = peelIntegerViewOps(Stmt.StoreVal.get());
+                Const && Const->Kind == ExprKind::Const)
+              if (auto Name = enumeratorDisplay(MemberType, Const->ConstVal))
+                Value = *Name;
           // A sign/zero-extended integer call can reuse an 8-byte pointer
           // field. Make the C conversion explicit without widening the store.
           if (!Overlayed && isIntegerOverlayStore(*Stmt.StoreVal) &&

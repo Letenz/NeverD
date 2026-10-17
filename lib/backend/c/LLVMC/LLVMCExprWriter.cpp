@@ -2157,6 +2157,14 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
   Out.Text = BaseName + "->" + *Path;
   Out.Type = Rec->displayFieldTypeAt(Peeled->second, AccessSize,
                                      /*ArrayElements=*/false);
+  // A value of a size is no whole record no member of which holds it, as a
+  // union whose alternatives are all that wide is; the address of one is.
+  if (EnterNestedAtZero && AccessSize && Out.Type &&
+      Out.Type->Kind == NdTypeKind::Struct && !Out.Type->IsEnum &&
+      !Out.Type->displayFieldPathAt(0, AccessSize, /*EnterNestedAtZero=*/true,
+                                    /*ArrayElements=*/false))
+    return std::nullopt;
+  MemberRecords.insert(Rec->SourceName);
   return Out;
 }
 

@@ -555,6 +555,9 @@ TEST_F(TypeRenderFixture, EmbeddedSourceSaysHowCodeReachesEachMember) {
       return Text;
     for (const MemberPath::Hop &Hop : Path->second.Hops)
       Text += (Text.empty() ? "" : ".") + Hop.Name + (Hop.Accessor ? "()" : "");
+    // A bit-field's methods, after the hops to the record that has them.
+    if (!Path->second.Getter.empty())
+      Text += " " + Path->second.Getter + "/" + Path->second.Setter;
     return Text;
   };
   const EmbeddedSource Rust =
@@ -569,8 +572,10 @@ TEST_F(TypeRenderFixture, EmbeddedSourceSaysHowCodeReachesEachMember) {
   EXPECT_EQ(hops(Rust, "_THREAD_LIKE", "MiscFlags"), "Anonymous1.MiscFlags");
   EXPECT_EQ(hops(Rust, "_PACKED", "Value"), "Value");
   EXPECT_EQ(hops(Rust, "_LARGE_INTEGER", "QuadPart"), "QuadPart");
-  // A bit-field reads through its own methods, which no path names.
-  EXPECT_EQ(hops(Rust, "_THREAD_LIKE", "AutoBoostActive"), "");
+  // A bit-field reads and writes through methods of the record that holds
+  // its storage, here a structure in an anonymous union.
+  EXPECT_EQ(hops(Rust, "_THREAD_LIKE", "AutoBoostActive"),
+            "Anonymous1.Anonymous AutoBoostActive/set_AutoBoostActive");
   // Go reads a union's members, and what it cannot align, through
   // methods that return pointers to them.
   const EmbeddedSource Go =
@@ -582,6 +587,8 @@ TEST_F(TypeRenderFixture, EmbeddedSourceSaysHowCodeReachesEachMember) {
   EXPECT_EQ(hops(Go, "_PACKED", "Tag"), "Tag");
   EXPECT_EQ(hops(Go, "_PACKED", "Value"), "Value()");
   EXPECT_EQ(hops(Go, "_LARGE_INTEGER", "QuadPart"), "QuadPart()");
+  EXPECT_EQ(hops(Go, "_THREAD_LIKE", "AutoBoostActive"),
+            "Anonymous1.Anonymous() AutoBoostActive/SetAutoBoostActive");
   EXPECT_TRUE(renderEmbeddedSource(*Library, Defined, Declared, in(Language::C))
                   .Text.empty());
 }

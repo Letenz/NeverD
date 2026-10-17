@@ -797,6 +797,10 @@ public:
   /// Calls currently being printed as expressions, so a cyclic reprint
   /// falls back to the instruction name.
   std::vector<const llvm::CallBase *> RenderingCalls;
+  /// The records whose members the text reads, by their names in the
+  /// source, which writeRecordDefinitions has the local types define: the
+  /// text reaches them through members and need not spell them.
+  mutable std::set<std::string> MemberRecords;
   mutable std::map<const llvm::Value *, std::string> KnownImmediates;
   bool UseScalarExpressionTypes = false;
   std::set<std::string> ScopedScalarNames;

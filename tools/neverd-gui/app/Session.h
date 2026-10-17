@@ -79,7 +79,19 @@ public:
   QString workerPath() const { return workerPath_; }
   bool loaded() const { return loaded_; }
   bool opening() const { return opening_; }
-  bool dirty() const { return dirty_ || pendingWrites_ > 0; }
+  /// Whether quitting or opening another file must ask first: edits are
+  /// staged or in flight, or a database the user opened lacks its edits.
+  bool dirty() const {
+    return dirty_ || pendingWrites_ > 0 ||
+           (openedFromDatabase_ && databaseDirty_);
+  }
+  /// Whether the user opened a NeverD database, which saving writes back.
+  /// A binary's project is the files beside it, which its edits update.
+  bool openedFromDatabase() const { return openedFromDatabase_; }
+  /// Whether the database the user opened lacks edits made since.
+  bool databaseOutOfDate() const {
+    return openedFromDatabase_ && databaseDirty_;
+  }
   bool readOnly() const { return metadata_.value("read_only").toBool(); }
   /// The input the worker analyzes (a database's unpacked copy).
   QString filePath() const { return filePath_; }
@@ -198,10 +210,18 @@ public:
 
   // Edits.  \p epoch is the session the user aimed at, when an edit was
   // prepared across a dialog or other asynchronous step.
-  /// Commit staged edits and pack the project into its database.
+  /// Commit staged edits beside the binary, and write a database the user
+  /// opened back.
   void save();
-  /// Update only the workbench state of an existing database.
+  /// Commit staged edits and pack the project, its binary included, into
+  /// the database \p path: one file to keep or send.
+  void packDatabase(const QString &path);
+  /// Remember where the user is: in the database the user opened, or in a
+  /// file of the user's own beside a binary.
   void saveDatabaseState();
+  /// Keep \p rows as the project's bookmarks, shared with it beside the
+  /// binary.
+  void saveBookmarks(const QJsonArray &rows);
   /// Whether the worker's engine keeps function edits.
   bool keepsFunctionEdits() const {
     return capabilities_.contains(QStringLiteral("function_create"));
@@ -353,7 +373,12 @@ private:
   void sendOpen(const QString &requested, const QString &path,
                 const QString &database,
                 const QHash<QString, QByteArray> &state, LoadOptions options);
-  void packDatabase();
+  /// Pack the project into the database \p path.
+  void writeDatabase(const QString &path);
+  /// Keep the debug files chosen for the input with the project, beside it.
+  /// \p loadedNow is a file the user loaded into the open project, which
+  /// a database the user opened then lacks.
+  void recordDebugChoices(bool loadedNow);
   void requestTransition(const QString &action);
   void finishTransition();
   void refreshHistory();
@@ -396,6 +421,9 @@ private:
   quint64 sessionEpoch_ = 0;
   int pendingWrites_ = 0;
   bool connected_ = false, loaded_ = false, opening_ = false, dirty_ = false;
+  /// The project is a database the user opened, and edits since it was
+  /// last written are only in its unpacked files.
+  bool openedFromDatabase_ = false, databaseDirty_ = false;
   bool transitionReady_ = false, restartPending_ = false, starting_ = false;
 };
 

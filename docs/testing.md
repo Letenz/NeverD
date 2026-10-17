@@ -463,8 +463,9 @@ declares the imports as the headers do.
 and checks that it joins the user mode headers and then the kernel's, that
 `CreateFileW` takes the parameter its caller forwards as the first of seven,
 that `ZwClose` takes the kernel headers' prototype, that a function stops at
-`ExitProcess` rather than running into the next one, and that an export
-reading no parameter shows the one its prototype declares.
+`ExitProcess` rather than running into the next one, that an export
+reading no parameter shows the one its prototype declares, and that LLVM-C
+declares the imports it calls and calls `GetLastError` with no argument.
 `SessionCAPITest.LocalTypesFitWhatTheCodeDoesThroughAPointer` checks that the
 program's own record ranks before a header record the accesses fit as
 exactly.
@@ -6163,6 +6164,15 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 
 `RepeatedOperandsSurviveCodeWorkingSetEviction` repeats operand, memory-hook and relative-branch checks before and after a larger code working set. Checked execution retains bounded, owned Capstone metadata only while the current instruction bytes match; every step still fetches current bytes and checks execute permissions. Full operand details and decoder aliases remain available on cache hits.
 
+`HostOperandWriteRefreshesAnInstructionAtThePageTail` changes only operand
+bytes through another mapping, including a separately backed x64 page tail.
+`HostWriteAfterStopRefreshesAnUnexecutedInstruction` changes a potentially
+translated successor before its first execution. `RepeatedStepsRetainExactLoopAndStopState`
+checks loop results and the precise stopped PC under repeated checked entries.
+Together with the user-projection, RAM-transaction, code-alias and direct-run
+suites, these guard bounded Unicorn translation invalidation. Test duration
+is useful for local comparisons, not a portable throughput guarantee.
+
 `WhpStateTransferTests.cpp` checks both XSAVE API generations with injected register transfers: exact changed groups, complete capture, ignored padding, partial failures, cancellation, exception priority and partition replacement. `ContinuedStepsReuseCapturedRegistersAndFP` counts avoided installs; `PartialTransferFailuresPreserveStateAndForceFullRetry` requires complete restoration. These are protocol checks, not native execution evidence; existing native FP, state-transition, driver and ring3 suites remain required.
 
 `CancelledDirectRunPublishesACompleteBoundary` verifies complete state at an acknowledged direct-run cancellation. `FailedDirectCapturePreservesStateAndForcesFullRetry` requires unchanged caller state when register, XSAVE or metadata capture fails during cancellation, followed by a complete retry; neither API generation may publish a partial register prefix.
@@ -6170,6 +6180,15 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 `WhpStateTransferCases.def` also covers every partial prefix of the combined 32-register capture and conflicts in all seven metadata fields. Both XSAVE API generations must preserve caller state and force a complete retry. The same suite checks one register read per step and recovers omitted XSAVE metadata from that read.
 
 ### Android native workloads
+
+`AndroidObservation.*` checks complete workload equality with and without
+selected PC observations across ordinary/APS2/RELR images and Unicorn/HVF.
+Exact instruction bytes provide independent before-store register and memory
+expectations. Single- and multi-thread runs use quanta as short as one
+instruction; truncation, unknown imports, unreadable memory and output-budget
+admission are covered. `AndroidObservationOptions.*` checks strict JSON.
+`RuntimeSession.CheckedQuantumEndsBeforeTheNextExecutionWatch` covers the
+shared watch/quantum boundary on checked x64 and AArch64 transports.
 
 `AndroidLog.*` checks the five liblog reader operations with independent O0/O2
 callers, ordinary/APS2/RELR relocations and Unicorn/HVF. It compares complete
@@ -7818,8 +7837,8 @@ checks actual reservation charging and mapping/protection refusal.
 original three-module C workload for all five profiles with classic and chained
 fixups. It checks shared dependencies, duplicate export spellings, relocated data,
 zero-only and initialized TLS, live template mutation and fresh repeated runs.
-The mandatory native inventory now has 101 methods per matching profile, or
-303 matching ARM64 identities; the separate common native catalogue remains 82.
+The mandatory native inventory now has 102 methods per matching profile, or
+306 matching ARM64 identities; the separate common native catalogue remains 82.
 Unavailable transports remain explicit skips. `DarwinNative.StartupDylibsAndTLSMatchOriginalNativeImages`
 compares a system-linked executable and its original libraries with real macOS
 execution. Independent O0/O1/O2 classic/chained controls complement that test.
@@ -7831,6 +7850,25 @@ same explicit catalogue and reports through C and CLI. With
 Run these alongside DarwinImage, linking, memory, existing libSystem calls,
 raw startup and shared process/API regressions before publishing. Guest deadlines
 and event limits are unchanged; native Intel and physical iOS need other hosts.
+
+### Darwin constructors and TLS termination
+
+`DarwinCallbackFixtures.cmake` builds the original header-free C/C++ dependency
+graph for all five profiles in classic/chained formats. `DarwinCallbacks.*`
+checks original constructor forms, malformed storage/routines and executable
+target bounds. `DarwinLibSystemTest.Callback*`, `NormalExit*` and
+`StartupCallbacks*` check void registration, opaque values, nested LIFO,
+capacity/nulls, current-stack preservation, live permissions and pending tables.
+`DarwinProcess.DylibConstructorsAndTLSCallbacksKeepStartupAndExitOrder` repeats
+all exit paths, fresh processes and shared instruction/event limits. It adds
+one mandatory method: 102 per profile and 306 matching ARM64 identities.
+`DarwinNative.ConstructorsAndTLSCallbacksMatchOriginalNativeImages` compares
+both system-linked formats with actual macOS execution; independent original
+O0/O1/O2 controls disable stack protection, whose guard imports remain outside
+this provider. `DarwinLibSystemPublic.ConstructorsAndTLSCallbacksKeepLifetimeAcrossCAndCLI`
+and genuine Python `test_darwin_constructors_and_tls_callbacks_keep_process_lifetime`
+check all five profiles, void JSON results and repeated session isolation.
+Native Intel and physical iOS remain unqualified. No guest budget is increased.
 
 ### Imported Darwin data and TLS pointer offsets
 

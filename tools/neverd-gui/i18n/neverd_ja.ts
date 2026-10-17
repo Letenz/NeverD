@@ -60,6 +60,14 @@
         <translation>コメントと履歴をバイナリと同じ場所に保存します</translation>
     </message>
     <message>
+        <source>Pac&amp;k database...</source>
+        <translation>データベースにパック(&amp;K)...</translation>
+    </message>
+    <message>
+        <source>Write the project and its binary into one NeverD database file</source>
+        <translation>プロジェクトとそのバイナリを 1 つの NeverD データベースファイルに書き込みます</translation>
+    </message>
+    <message>
         <source>&amp;Close</source>
         <translation>閉じる(&amp;C)</translation>
     </message>
@@ -1927,6 +1935,10 @@ Double-click to go to the declaration.</source>
         <translation>コメントが変更されました。続行する前に保存しますか？</translation>
     </message>
     <message>
+        <source>%1 lacks the latest changes. Save them into it before continuing?</source>
+        <translation>%1 には最新の変更が含まれていません。続行する前に保存しますか？</translation>
+    </message>
+    <message>
         <source>Cannot jump to %1: %2</source>
         <translation>%1 へジャンプできません：%2</translation>
     </message>
@@ -2127,6 +2139,14 @@ Signed: %4</source>
     <message>
         <source>Create LST file</source>
         <translation>LST ファイルを作成</translation>
+    </message>
+    <message>
+        <source>Pack database</source>
+        <translation>データベースにパック</translation>
+    </message>
+    <message>
+        <source>NeverD databases (*%1)</source>
+        <translation>NeverD データベース (*%1)</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -3647,10 +3667,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>この PDB には型が定義されていません。</translation>
     </message>
     <message>
-        <source>No local types: this program has no PDB with types.</source>
-        <translation>ローカル型はありません：このプログラムには型を含む PDB がありません。</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>PDB の一覧どおりに配置できない型：%1</translation>
     </message>
@@ -3709,10 +3725,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>(padding)</source>
         <translation>（パディング）</translation>
-    </message>
-    <message>
-        <source>Double-click to open %1</source>
-        <translation>ダブルクリックで %1 を開く</translation>
     </message>
     <message>
         <source>Export local types</source>
@@ -3897,6 +3909,46 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Lua (*.lua)</source>
         <translation>Lua (*.lua)</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n members</source>
+        <translation>
+            <numerusform>メンバー %n 個</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Ctrl+click to open</source>
+        <translation>Ctrl+クリックで開く</translation>
+    </message>
+    <message>
+        <source>Double-click or Ctrl+click to open %1</source>
+        <translation>ダブルクリックまたは Ctrl+クリックで %1 を開く</translation>
+    </message>
+    <message>
+        <source>bits %1 of the unit at %2</source>
+        <translation>%2 のユニットの %1 ビット</translation>
+    </message>
+    <message>
+        <source>at %1, %2 bytes</source>
+        <translation>%1、%2 バイト</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>DWARF から</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>DWARF から %n 個</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>DWARF は型を定義していません。</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>ローカル型がありません: このプログラムには型を含む PDB も DWARF もありません。</translation>
     </message>
 </context>
 <context>

@@ -117,7 +117,10 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
 /// How code reaches a member that C names on its own, directly or through
 /// the anonymous records that hold it, in a language that spells the record
 /// otherwise: the fields, and the methods that return a pointer to a
-/// member, that lead to it, the member's own last.
+/// member, that lead to it, the member's own last.  A bit-field, which both
+/// languages read and write through methods of the record that holds its
+/// storage, has the hops that lead to that record, none for the outer one,
+/// and the methods' names.
 struct MemberPath {
   struct Hop {
     std::string Name;
@@ -126,6 +129,9 @@ struct MemberPath {
     bool Accessor = false;
   };
   std::vector<Hop> Hops;
+  /// A bit-field's methods: one returns its value, the other takes the
+  /// value to store.  Empty for other members.
+  std::string Getter, Setter;
 };
 
 /// Types as a Rust or Go text holds them beside code that uses them, as a
@@ -134,8 +140,8 @@ struct MemberPath {
 struct EmbeddedSource {
   std::string Text;
   /// For each record Text defines, by its name, how code reaches each
-  /// member it names in C, by the member's name.  A bit-field, or a member
-  /// the language reads only through a method that takes more, has none.
+  /// member it names in C, by the member's name.  A member the language
+  /// reads only through a method that takes more has none.
   std::map<std::string, std::map<std::string, MemberPath>> Members;
 };
 /// \p Defined as \p Options.Lang, Rust or Go, defines them, and \p Declared,

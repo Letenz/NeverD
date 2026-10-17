@@ -30,17 +30,20 @@ llvm::Expected<std::unique_ptr<ExecutionSession>> ExecutionSession::create(
         // A resumed watch stop executes exactly its own instruction.
         const bool Resumed = S->WatchResume == PC;
         S->WatchResume.reset();
-        if (!Resumed && S->watched(PC)) {
+        // Checked quanta end before observing the next instruction. Otherwise
+        // a watch at the boundary could be resumed by a different guest thread
+        // at the same PC and incorrectly skip that thread's observation.
+        if (Size && !S->Budget->hasInstructions())
+          S->AdmissionStop = SessionExitKind::InstructionLimit;
+        else if (Size && S->Admitted == S->Quantum)
+          S->AdmissionStop = SessionExitKind::Quantum;
+        else if (!Resumed && S->watched(PC)) {
           S->WatchedPC = PC;
           S->AdmissionStop = SessionExitKind::ExecutionWatch;
         } else if (!Size)
           // A direct watch handoff is not an admitted instruction. On resume,
           // the CPU retires one instruction before rearming its page overlay.
           return;
-        else if (!S->Budget->hasInstructions())
-          S->AdmissionStop = SessionExitKind::InstructionLimit;
-        else if (S->Admitted == S->Quantum)
-          S->AdmissionStop = SessionExitKind::Quantum;
         else if (!S->Budget->consumeInstructions())
           S->AdmissionStop = SessionExitKind::InstructionLimit;
         else {

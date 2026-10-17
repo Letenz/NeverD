@@ -10,7 +10,8 @@
 namespace neverd::emulation::darwin_model {
 llvm::Expected<InitialStack> prepareStack(GuestMemory &Memory,
                                           const ProcessOptions &Options,
-                                          llvm::StringRef ExecutableName) {
+                                          llvm::StringRef ExecutableName,
+                                          uint64_t MainHeader) {
   const uint64_t Base = value::StackTop - Options.StackSize;
   std::vector<uint8_t> Bytes(Options.StackSize, 0);
   uint64_t Cursor = Bytes.size();
@@ -27,6 +28,17 @@ llvm::Expected<InitialStack> prepareStack(GuestMemory &Memory,
       PushString((value::ExecutablePathPrefix + ExecutableName).str());
   if (!Executable)
     return Executable.takeError();
+  uint64_t Progname = 0, Vars = 0;
+  if (MainHeader) {
+    auto Name = PushString(ExecutableName);
+    if (!Name)
+      return Name.takeError();
+    Progname = *Name;
+    if (Cursor < 80)
+      return failure(diagnostic::StartupVector);
+    Cursor = (Cursor - 80) & ~uint64_t(15);
+    Vars = Base + Cursor;
+  }
   const auto Arguments = Options.Arguments.empty()
                              ? std::vector<std::string>{ExecutableName.str()}
                              : Options.Arguments;
@@ -50,10 +62,28 @@ llvm::Expected<InitialStack> prepareStack(GuestMemory &Memory,
     llvm::support::endian::write64le(Bytes.data() + Cursor, Word);
     Cursor += 8;
   }
+  InitialStack Stack{
+      SP,
+      Arguments.size(),
+      SP + 8,
+      SP + 8 * (Arguments.size() + 2),
+      SP + 8 * (Arguments.size() + Options.Environment.size() + 3),
+      Vars};
+  if (Vars) {
+    auto *Data = Bytes.data() + (Vars - Base);
+    // ProgramVars contains the header and pointers to process-owned variables.
+    // argv and envp each require one additional level of indirection.
+    const uint64_t Fields[] = {MainHeader, Vars + 40, Vars + 48, Vars + 56,
+                               Vars + 64};
+    for (unsigned I = 0; I != 5; ++I)
+      llvm::support::endian::write64le(Data + 8 * I, Fields[I]);
+    llvm::support::endian::write32le(Data + 40, Stack.Argc);
+    llvm::support::endian::write64le(Data + 48, Stack.Argv);
+    llvm::support::endian::write64le(Data + 56, Stack.Envp);
+    llvm::support::endian::write64le(Data + 64, Progname);
+  }
   if (auto E = Memory.write(Base, Bytes))
     return std::move(E);
-  return InitialStack{
-      SP, Arguments.size(), SP + 8, SP + 8 * (Arguments.size() + 2),
-      SP + 8 * (Arguments.size() + Options.Environment.size() + 3)};
+  return Stack;
 }
 } // namespace neverd::emulation::darwin_model
