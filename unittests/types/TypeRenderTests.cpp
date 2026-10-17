@@ -759,3 +759,49 @@ TEST(TypeRender, NamesThatAreNoIdentifiersCompile) {
   EXPECT_EQ(Renamed[1].first, "_SECOND::None");
   EXPECT_EQ(Renamed[1].second, "_SECOND_None");
 }
+
+TEST(TypeRender, ThirtyTwoBitRecordsAlignTheirEightByteMembers) {
+  // Microsoft's 32-bit compilers align an eight-byte scalar to eight, which
+  // the 32-bit library holds; GNU's i386 ABI aligns it to four inside a
+  // record, so the source asks GNU's for it wherever no pack decides it.
+  // Microsoft's are not asked: a pack around a record holding the member
+  // could not reduce an alignment they were told.
+  TypeLibrary Library(DataModel::ILP32);
+  ASSERT_TRUE(parseCTypes(R"(
+    typedef struct _STRING64 {
+      USHORT Length;
+      USHORT MaximumLength;
+      ULONGLONG Buffer;
+    } STRING64;
+    typedef union _QUAD { ULONGLONG Quad; double Real[2]; } QUAD;
+    #pragma pack(push, 4)
+    typedef struct _PACKED4 { ULONG Low; ULONGLONG High; } PACKED4;
+    #pragma pack(pop)
+    #pragma pack(push, 8)
+    typedef struct _PACKED8 { ULONG Low; ULONGLONG Wide; } PACKED8;
+    #pragma pack(pop)
+  )",
+                          Library)
+                  .ok());
+  RenderOptions C = in(Language::C);
+  C.Asserts = true;
+  const std::string Text = renderTypes(Library, {}, C);
+  EXPECT_TRUE(contains(Text, "#define NEVERD_ALIGN8 __attribute__")) << Text;
+  EXPECT_TRUE(contains(Text, "NEVERD_ALIGN8 uint64_t Buffer;"));
+  EXPECT_TRUE(contains(Text, "NEVERD_ALIGN8 uint64_t Quad;"));
+  EXPECT_TRUE(contains(Text, "NEVERD_ALIGN8 double Real[2];"));
+  EXPECT_TRUE(contains(Text, "    uint16_t Length;"));
+  // A pack below eight decides the alignment itself; pack(8) only lowers
+  // an alignment, so GNU's would stay four under it.
+  EXPECT_TRUE(contains(Text, "    uint64_t High;"));
+  EXPECT_TRUE(contains(Text, "NEVERD_ALIGN8 uint64_t Wide;"));
+  const std::string Cpp = renderTypes(Library, {}, in(Language::Cpp));
+  EXPECT_TRUE(contains(Cpp, "NEVERD_ALIGN8 uint64_t Buffer;")) << Cpp;
+  // A 64-bit library's own alignment holds on every compiler.
+  TypeLibrary Wide(DataModel::LLP64);
+  ASSERT_TRUE(parseCTypes("typedef struct _STRING64 { USHORT Length; USHORT "
+                          "MaximumLength; ULONGLONG Buffer; } STRING64;",
+                          Wide)
+                  .ok());
+  EXPECT_FALSE(contains(renderTypes(Wide, {}, C), "NEVERD_ALIGN8"));
+}

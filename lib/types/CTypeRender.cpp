@@ -90,6 +90,9 @@ public:
   const std::set<Builtin> &builtins() const { return UsedBuiltins; }
   /// Whether a record rendered so far declares its alignment.
   bool alignsRecords() const { return AlignsRecords; }
+  /// Whether a member asks GNU's i386 compilers for the alignment of eight
+  /// that Microsoft's give it.
+  bool alignsEightByteMembers() const { return EightByteMembers; }
   /// Whether a type rendered so far is followed by checks.
   bool asserts() const { return Asserted; }
   const NameSpelling &names() const { return Names; }
@@ -110,6 +113,11 @@ private:
   std::string tagged(const LocalType &Type) const;
   /// "struct" or "union", with the alignment \p Record declares.
   std::string keyword(const RecordDef &Record);
+  /// The alignment a member of \p Type declares where the 32-bit data
+  /// model's own does not hold everywhere: the library aligns an eight-byte
+  /// scalar to eight, as Microsoft's compilers do, where GNU's i386 ABI
+  /// aligns it to four inside a record.  Empty for any other member.
+  std::string memberAlignment(const TypeExpr &Type);
   std::string offset(uint64_t Byte) const {
     return offsetText(Byte, Options, Digits);
   }
@@ -125,6 +133,7 @@ private:
   unsigned Fillers = 0;
   mutable std::set<Builtin> UsedBuiltins;
   bool AlignsRecords = false;
+  bool EightByteMembers = false;
   bool Asserted = false;
 };
 
@@ -259,6 +268,38 @@ std::string CWriter::keyword(const RecordDef &Record) {
     return Text + " alignas(" + Bytes + ")";
   AlignsRecords = true;
   return Text + " DECLSPEC_ALIGN(" + Bytes + ")";
+}
+
+std::string CWriter::memberAlignment(const TypeExpr &Type) {
+  if (Library.dataModel() != DataModel::ILP32)
+    return {};
+  // What the member holds, through arrays and typedefs.
+  const TypeExpr *Held = &Type;
+  for (unsigned Hop = 0; Held && Hop < 64; ++Hop) {
+    if (Held->Kind == TypeExprKind::Array) {
+      Held = Held->Element.get();
+      continue;
+    }
+    if (Held->Kind != TypeExprKind::Named)
+      break;
+    const LocalType *Named = Library.find(Held->Name);
+    if (!Named || Named->Kind != TypeKind::Typedef)
+      return {};
+    Held = Named->Target.get();
+  }
+  if (!Held || Held->Kind != TypeExprKind::Builtin)
+    return {};
+  const BuiltinInfo &Info = builtinInfo(Held->TheBuiltin);
+  const unsigned Bytes = builtinBytes(Held->TheBuiltin, Library.dataModel());
+  if (Bytes != 8 || Library.alignOf(*Held) != 8 ||
+      (Info.Class != BuiltinClass::Integer &&
+       Info.Class != BuiltinClass::Float))
+    return {};
+  // Microsoft's compilers align it to eight already, and a pack they cannot
+  // reduce a declared alignment by decides it where one holds the record:
+  // only GNU's are asked.
+  EightByteMembers = true;
+  return "NEVERD_ALIGN8 ";
 }
 
 std::string CWriter::tagged(const LocalType &Type) const {
@@ -460,6 +501,11 @@ void CWriter::body(const RecordDef &Record, uint32_t Pack, unsigned Indent,
       continue;
     }
     std::string Code = declare(*Field.Type, Name);
+    // An eight-byte scalar keeps the alignment the library gives it on every
+    // 32-bit compiler, unless a pack below eight decides it: a pack only
+    // lowers an alignment, so under pack(8) GNU's stays four.
+    if (!Field.isBitfield() && (!Pack || Pack >= 8))
+      Code = memberAlignment(*Field.Type) + Code;
     std::string Comment;
     if (Field.isBitfield()) {
       Code += " : " + std::to_string(Field.BitWidth);
@@ -649,6 +695,13 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
     Out += "\n#ifndef DECLSPEC_ALIGN\n#if defined(_MSC_VER)\n#define "
            "DECLSPEC_ALIGN(x) __declspec(align(x))\n#else\n#define "
            "DECLSPEC_ALIGN(x) __attribute__((aligned(x)))\n#endif\n#endif\n";
+  // GNU's i386 compilers align an eight-byte member to eight as
+  // Microsoft's do when asked, which a pack still reduces.
+  if (Writer.alignsEightByteMembers())
+    Out += "\n#ifndef NEVERD_ALIGN8\n#if !defined(_MSC_VER) && "
+           "defined(__i386__)\n#define NEVERD_ALIGN8 "
+           "__attribute__((aligned(8)))\n#else\n#define "
+           "NEVERD_ALIGN8\n#endif\n#endif\n";
   // C++'s static_assert, which C11 spells _Static_assert: <assert.h> would
   // name it, but freestanding C, as a driver's, need not have the header.
   const bool LongChecked = spellingOf(Options) == BuiltinSpelling::Keywords &&
