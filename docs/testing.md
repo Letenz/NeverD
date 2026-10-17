@@ -7355,7 +7355,14 @@ statement took a covered jump's address.
 `ABranchWhoseArmsCallThroughThePadIsOneScope` wraps the whole branch, and
 `ACopyWithoutAnAddressKeepsItsCallsInstruction` places calls copied into both
 arms by their instruction. `AnExceptionSpilledThroughAFrameAddressIsResumed`
-follows the exception through the slot address clang keeps for a large frame. `ACallOfNoInstructionKeepsTheCleanupPad`,
+follows the exception through the slot address clang keeps for a large frame.
+`AnExceptionSpilledOffACopiedFrameBaseIsResumed` follows it through a copy of
+the base clang reaches the far slots from,
+`ASpillAndAReloadThroughTwoBaseCopiesMatch` through one copy to the spill and
+another to the reload, and
+`AReadThroughABaseRewrittenAfterTheSpillKeepsThePad` keeps the pad when the
+base's slot changes between the spill and the copy.
+`ACallOfNoInstructionKeepsTheCleanupPad`,
 `AJumpIntoACleanupScopeKeepsThePad` and
 `ACoveredCallOnlyAJumpReachesKeepsThePad` keep the pad where a scope cannot
 be proved. `NothingFallsOutOfAnEndlessLoop` prints no dead statement after a

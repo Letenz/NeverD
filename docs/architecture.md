@@ -809,7 +809,12 @@ take their bodies from the landing pad, as the pad runs for each clause's
 selector (`attachItaniumHandlerBodies`); `__cxa_begin_catch` becomes the catch
 parameter and `__cxa_end_catch` the end of the catch. A pad whose code this
 cannot follow exactly, or that also dispatches an enclosing try's clause,
-keeps the region in its commented form with the pad in place. A pad that only
+keeps the region in its commented form with the pad in place. The pad's
+copies of the exception are followed through the frame (`ExceptionTrack`): to
+a slot it is spilled to, through a variable holding that slot's address, and,
+in a frame too large for an immediate offset, through a copy of the base
+clang keeps in a slot; a write that may change what such an address reads
+ends the copy. A pad that only
 cleans up, which every call site reaching it enters with no action, is such a
 scope around the calls of ordinary flow that its call sites cover. A call
 keeps the address of its call instruction (`HighExpr::CallSiteAddr`) when a
