@@ -4,6 +4,13 @@
 
 # Testing NeverD
 
+`AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
+packed and RELR relocations on available CPU backends. Independent byte oracles
+cover word boundaries, untouched canaries, boolean queries, full-width extents,
+signed-int narrowing, read-only and partial-page access, overflow, FORTIFY error
+priority and dynamic provider closure. These are memory API tests; they do not
+establish readiness or execute host networking.
+
 `AArch64SIMD.RegisterShifts*` checks baseline USHL/SSHL scalar D and fixed
 vectors against independent bit selection, including signed low-byte amounts,
 oversized shifts, destination aliases, cleared upper lanes, complete register

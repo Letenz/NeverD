@@ -147,6 +147,17 @@ model. Symbol versions are not used to select alternate implementations.
 The supported Bionic subset is:
 
 - `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strnlen`, `strcmp`, `strncmp`.
+- `__FD_SET_chk`, `__FD_CLR_chk`, `__FD_ISSET_chk`, using the Bionic LP64
+  1024-bit descriptor bitmap. The signed low 32-bit descriptor must be 0..1023,
+  then the full-width object extent must be at least 128 bytes. Invalid values
+  stop with a non-returning FORTIFY `runtime_failure` before touching the bitmap;
+  signal delivery is not modeled. Valid calls access only the selected eight-byte
+  word, preserve other bits and errno, and do not require an open descriptor.
+  Queries return 0 or 1 and accept read-only memory; mutations require read/write
+  access. Guest-pointer and wrapping-address failures remain explicit. These
+  rules follow the pinned API 28 [checks](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/private/bionic_fortify.h)
+  and [bitmap ABI](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/include/sys/select.h).
+  Bitmap operations alone do not implement `select` readiness or socket polling.
 - `strchr`, `strrchr`, `__strchr_chk`, `__strrchr_chk`, with byte-width character
   conversion, NUL matches, full-width object extents and unchanged errno. The
   first search can return before reaching a terminator; reverse search must
