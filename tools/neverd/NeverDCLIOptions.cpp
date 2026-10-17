@@ -724,7 +724,8 @@ cl::opt<bool> Devirtualize(
     cl::sub(DecompileCmd));
 cl::opt<bool> SourceSymbolic(
     "symbolic-simplify",
-    cl::desc("Symbolically simplify the selected source function"),
+    cl::desc("Symbolically simplify the source: the function --func selects, "
+             "or else every function"),
     cl::sub(DecompileCmd));
 cl::opt<std::string>
     SourceLLVMLevel("llvm-opt",
@@ -1596,7 +1597,12 @@ cl::opt<std::string> PatchEntry("entry",
                                 cl::init(""), cl::sub(PatchCmd));
 cl::list<std::string> PatchBindings(
     "bind",
-    cl::desc("Original reference: function|const|data:SYMBOL=VA[:SIZE]"),
+    cl::desc(
+        "Original reference: function|original|const|data:SYMBOL=VA[:SIZE]"),
+    cl::ZeroOrMore, cl::sub(PatchCmd));
+cl::list<std::string> PatchDependencies(
+    "dependency",
+    cl::desc("New loader import: function|data:SYMBOL=LIBRARY (repeatable)"),
     cl::ZeroOrMore, cl::sub(PatchCmd));
 cl::list<std::string>
     PatchCompilerArgs("compiler-arg",

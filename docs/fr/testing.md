@@ -1875,11 +1875,28 @@ Le refus contrôlé des doubles décalages indique le compteur masqué et la lar
 
 ## Correctifs de source et objets natifs
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
+L'inventaire actuel `unittests/Inputs/source-patch-expansion.json` contient 283 cas CPU, 14 de disposition, 16 de rappels, 265 de contrats d'exceptions et la liste C API exacte de l'hôte. `scripts/qualify_source_patch_expansion.py` exige cet inventaire complet, sans échec ni saut, sur un commit source exact et propre. `scripts/check_source_patch_expansion_runtime.py` exécute séparément rappels, dépendances et combinaisons IR/objet via le chargeur natif : 84 observations fonctionnelles, 84 d'exceptions et deux contrôles de bibliothèque/symbole absent par hôte. Il vérifie de vraies bibliothèques anciennes/nouvelles, les arguments flottants/sur pile, les appels répétés à l'original, le nettoyage unique, les métadonnées du chargeur et les empreintes de publication. CPU, compatibilité et processus OS natifs restent des preuves distinctes.
+
+Les six jobs natifs OS/ISA sélectionnés ont réussi sans échec ni saut : 3669 exécutions GoogleTest, 1008 observations de processus natifs (504 fonctionnelles et 504 d’exceptions C++), 12 refus réels du chargeur, 96 images et 84 reçus de publication.
+
+| Hôte | Source | Harness | Job CI | Tests | Observations / refus |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+Ces artefacts qualifient exactement les commits source et harness ci-dessous. Les commits ultérieurs d’intégration dev et de documentation ont leurs propres contrôles locaux et documentaires. Les anciens échecs ou annulations restent des échecs. Les 216 observations supplémentaires historiques, PE ARM32 et les résultats CPU/compatibilité Apple 32 bits anciens ne prouvent aucune nouvelle couverture matérielle native ou d’exceptions C++.
+
+La qualification Windows ARM64 utilise une DLL C Unicorn ARM64 native, réellement construite à partir du sous-module fixé avec LLVM-MinGW vérifié, une bibliothèque d'import MSVC et une cible CMake explicitement substituée. La copie de compilation isolée authentifie trois corrections d'hôte : paire de sauts sans SEH, callback ARM64 de validation des pages avec synchronisation du cache d'instructions et masques immédiats 64 bits pour Windows LLP64. Les sources et la révision du sous-module restent inchangées. Cela qualifie l'hôte de la matrice CPU, sans établir la prise en charge du JIT MSVC ARM64 par défaut. Les cinq contrôles de reprise de l'hôte restent distincts des preuves des processus patchés natifs et des exceptions C++.
+
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 283 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-`sourcePatchTargetTriple` choisit le mode ARM, l’ABI flottante ELF et le sous-type CPU Mach-O à partir de l’image. `COFFPatchObject` et `MachOPatchObject` authentifient les symboles, définitions auxiliaires／de section et enregistrements natifs sans inventer d’ID MC. Les installateurs de format enregistrent les tables réelles. Les 154 tests CPU exigent source／IR／objets, quatre architectures, trois formats, état, arguments flottants／de pile et deux rebasages non nuls. Les conteneurs Mach-O 32 bits anciens gardent du vrai code compilateur ; ils ne certifient pas un OS.
+`sourcePatchTargetTriple` choisit le mode ARM, l’ABI flottante ELF et le sous-type CPU Mach-O à partir de l’image. `COFFPatchObject` et `MachOPatchObject` authentifient les symboles, définitions auxiliaires／de section et enregistrements natifs sans inventer d’ID MC. Les installateurs de format enregistrent les tables réelles. Les 283 tests CPU exigent source／IR／objets, quatre architectures, trois formats, état, arguments flottants／de pile et deux rebasages non nuls. Les conteneurs Mach-O 32 bits anciens gardent du vrai code compilateur ; ils ne certifient pas un OS.
 
 [Correctifs de source et objets natifs](source-patching.md)
 

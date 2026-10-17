@@ -3945,6 +3945,42 @@ TEST_F(SessionCAPIKernelInputs, KernelExportsTakeTheirPrototypesWithoutThePDB) {
   EXPECT_EQ(Pool.find("unknown"), std::string::npos) << Pool;
 }
 
+TEST_F(SessionCAPITest, WholeProgramsHoldTheRecordsTheirLocalTypesDefine) {
+  // Decompiling the whole program the session holds reads it as each
+  // function's decompilation does: with the program's local types.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  const auto load = [&](const char *Name) {
+    std::ifstream Input(Fixtures / (std::string(Name) + ".exe"),
+                        std::ios::binary);
+    const std::string Exe =
+        write(std::string(Name) + ".exe",
+              std::string(std::istreambuf_iterator<char>(Input), {}));
+    neverd_session_set_pdb_path(
+        Session, (Fixtures / (std::string(Name) + ".pdb")).string().c_str());
+    EXPECT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+        << takeString(neverd_last_error(Session));
+    return Exe;
+  };
+  const std::string Exe = load("local_types");
+  for (int Llvm : {0, 1}) {
+    const std::string Program =
+        takeString(neverd_decompile_all(Session, Exe.c_str(), Llvm, 0, 0));
+    EXPECT_NE(Program.find("struct _DEVICE\n{"), std::string::npos)
+        << Program << takeString(neverd_last_error(Session));
+    EXPECT_NE(Program.find("Device->Size"), std::string::npos);
+    EXPECT_NE(Program.find("Packed->Count"), std::string::npos);
+  }
+  // A Rust spelling of the whole program defines the types as Rust does.
+  const std::string Rust = load("rust_types");
+  const std::string Program = takeString(
+      neverd_decompile_all_ex(Session, Rust.c_str(), NEVERD_OUTPUT_RUST, 0, 0));
+  EXPECT_NE(Program.find("pub union _DPC_0 {"), std::string::npos)
+      << Program << takeString(neverd_last_error(Session));
+  EXPECT_NE(Program.find("(*Dpc).Anonymous.TargetInfoAsUlong"),
+            std::string::npos);
+}
+
 TEST_F(SessionCAPITest, FunctionsHoldTheRecordsTheirPDBTypes) {
   // A function its PDB types reads its records' members as the local types
   // name them, and its unit defines those records.
@@ -7513,6 +7549,37 @@ TEST_F(SessionCAPITest, UserFunctionAttributesDecideHowCallsEndAndPersist) {
     EXPECT_EQ(stated(Reopened), "{\"noreturn\":true}");
     neverd_session_destroy(Reopened);
   }
+}
+
+TEST_F(SessionCAPITest, WholeProgramSourceSimplifiesSymbolicallyOnRequest) {
+  // entry: return (a ^ b) + 2 * (a & b), the mixed Boolean-arithmetic
+  // spelling of a + b.
+  const auto Input =
+      write("mba.elf",
+            makeNativeELF(false, 0x400000, {},
+                          std::string_view("\x89\xf8\x31\xf0\x89\xf9\x21\xf1"
+                                           "\x01\xc9\x01\xc8\xc3",
+                                           13)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  const auto keepsMBA = [&](int UseLlvmRoute) {
+    const std::string Program =
+        takeString(neverd_decompile_all(Session, Input.c_str(), UseLlvmRoute,
+                                        /*NoOpt=*/0, /*MaxFunctions=*/0));
+    EXPECT_NE(Program.find(" + "), std::string::npos)
+        << takeString(neverd_last_error(Session)) << Program;
+    return Program.find(" ^ ") != std::string::npos ||
+           Program.find(" & ") != std::string::npos;
+  };
+  // Ordinary source keeps the machine's expression in both routes.
+  EXPECT_TRUE(keepsMBA(0));
+  EXPECT_TRUE(keepsMBA(1));
+  neverd_session_set_source_symbolic(Session, 1);
+  EXPECT_FALSE(keepsMBA(0));
+  EXPECT_FALSE(keepsMBA(1));
+  // The choice holds until the caller changes it.
+  neverd_session_set_source_symbolic(Session, 0);
+  EXPECT_TRUE(keepsMBA(0));
+  EXPECT_TRUE(keepsMBA(1));
 }
 
 TEST_F(SessionCAPITest, AStatedNoReturnCalleeKeepsItsArguments) {

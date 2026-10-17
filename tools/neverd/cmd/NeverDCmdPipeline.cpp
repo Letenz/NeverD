@@ -82,6 +82,7 @@ std::optional<std::string> validateSanitizeArguments() {
       {PatchEntry.getNumOccurrences(), "--entry"},
       {PatchCompilerArgs.getNumOccurrences(), "--compiler-arg"},
       {PatchBindings.getNumOccurrences(), "--bind"},
+      {PatchDependencies.getNumOccurrences(), "--dependency"},
       {PatchCompilerTimeout.getNumOccurrences(), "--compiler-timeout"},
       {PatchReport.getNumOccurrences(), "--patch-report"},
       {PatchFuncAddr.getNumOccurrences(), "--func"},
@@ -115,7 +116,8 @@ std::optional<std::string> validateSourcePatchArguments() {
     return "compiler options require --from-c or --from-source";
   if (Inputs == 0 &&
       (PatchFuncAddr.getNumOccurrences() || PatchEntry.getNumOccurrences() ||
-       PatchReport.getNumOccurrences() || PatchBindings.getNumOccurrences()))
+       PatchReport.getNumOccurrences() || PatchBindings.getNumOccurrences() ||
+       PatchDependencies.getNumOccurrences()))
     return "replacement options require an external patch input";
   if (Inputs && PatchFromIR.empty() && PatchFromC.empty() &&
       PatchFromSource.empty() && PatchFromObject.empty())
@@ -150,7 +152,8 @@ bool usesSourcePatchRequest() {
          (!PatchFromIR.empty() &&
           (PatchFuncAddr.getNumOccurrences() ||
            PatchEntry.getNumOccurrences() || PatchReport ||
-           PatchBindings.getNumOccurrences()));
+           PatchBindings.getNumOccurrences() ||
+           PatchDependencies.getNumOccurrences()));
 }
 
 int runSourcePatch(neverd_session_t Sess, StringRef Output, int Strategy) {
@@ -208,12 +211,15 @@ int runSourcePatch(neverd_session_t Sess, StringRef Output, int Strategy) {
     neverd_source_patch_binding_v1 Binding{};
     if (Kind == "function")
       Binding.kind = NEVERD_SOURCE_BIND_FUNCTION;
+    else if (Kind == "original")
+      Binding.kind = NEVERD_SOURCE_BIND_ORIGINAL_FUNCTION;
     else if (Kind == "const")
       Binding.kind = NEVERD_SOURCE_BIND_READ_ONLY_DATA;
     else if (Kind == "data")
       Binding.kind = NEVERD_SOURCE_BIND_WRITABLE_DATA;
     else {
-      WithColor::error() << "--bind kind must be function, const, or data\n";
+      WithColor::error()
+          << "--bind kind must be function, original, const, or data\n";
       return 1;
     }
     if (Symbol.empty() || Address.empty() ||
@@ -229,6 +235,29 @@ int runSourcePatch(neverd_session_t Sess, StringRef Output, int Strategy) {
   }
   Options.bindings = Bindings.data();
   Options.binding_count = Bindings.size();
+  std::vector<std::string> ImportNames, Libraries;
+  std::vector<neverd_source_patch_dependency_v1> Dependencies;
+  ImportNames.reserve(PatchDependencies.size());
+  Libraries.reserve(PatchDependencies.size());
+  for (const auto &Text : PatchDependencies) {
+    const auto [Kind, Rest] = StringRef(Text).split(':');
+    const auto [Symbol, Library] = Rest.split('=');
+    if ((Kind != "function" && Kind != "data") || Symbol.empty() ||
+        Library.empty()) {
+      WithColor::error()
+          << "--dependency requires function|data:SYMBOL=LIBRARY\n";
+      return 1;
+    }
+    ImportNames.push_back(Symbol.str());
+    Libraries.push_back(Library.str());
+    Dependencies.push_back(
+        {Libraries.back().c_str(), ImportNames.back().c_str(),
+         static_cast<uint32_t>(Kind == "function"
+                                   ? NEVERD_SOURCE_DEPENDENCY_FUNCTION
+                                   : NEVERD_SOURCE_DEPENDENCY_DATA)});
+  }
+  Options.dependencies = Dependencies.data();
+  Options.dependency_count = Dependencies.size();
   return neverd_patch_source(Sess, (*Buffer)->getBufferStart(),
                              (*Buffer)->getBufferSize(), &Options,
                              Output.str().c_str())
@@ -585,14 +614,20 @@ int runLift(neverd_session_t Sess) {
 }
 
 int runDecompile(neverd_session_t Sess) {
-  const bool SourceTransforms = SourceSymbolic.getNumOccurrences() ||
-                                SourceLLVMControlFlow.getNumOccurrences() ||
-                                SourceLLVMLevel.getNumOccurrences() ||
-                                SourceLLVMPasses.getNumOccurrences();
-  if (SourceTransforms && (ExportFunc.empty() || NoOpt || Devirtualize)) {
-    WithColor::error()
-        << "source optimization options require --func and cannot "
-           "combine with --no-opt or --devirtualize\n";
+  const bool LLVMSourceTransforms = SourceLLVMControlFlow.getNumOccurrences() ||
+                                    SourceLLVMLevel.getNumOccurrences() ||
+                                    SourceLLVMPasses.getNumOccurrences();
+  const bool SourceTransforms =
+      SourceSymbolic.getNumOccurrences() || LLVMSourceTransforms;
+  if (SourceTransforms && (NoOpt || Devirtualize)) {
+    WithColor::error() << "source optimization options cannot combine with "
+                          "--no-opt or --devirtualize\n";
+    return 1;
+  }
+  // Symbolic simplification also applies to the whole program; the LLVM
+  // source options shape one function's view.
+  if (LLVMSourceTransforms && ExportFunc.empty()) {
+    WithColor::error() << "LLVM source optimization options require --func\n";
     return 1;
   }
   if (!LlvmRoute && (SourceLLVMControlFlow.getNumOccurrences() ||
@@ -939,6 +974,7 @@ int runDecompile(neverd_session_t Sess) {
                          : neverd_decompile(Sess, Entry);
     }
   } else {
+    neverd_session_set_source_symbolic(Sess, SourceSymbolic ? 1 : 0);
     Source =
         DedicatedLanguage
             ? neverd_decompile_all_ex(Sess, InPath, Language, NoOpt, MaxFunc)

@@ -87,6 +87,11 @@ llvm::Error validateX86SourceProperties(const BinaryImage &Original) {
     auto Features = readELFPatchPropertyNote(*Note, sizeof(typename ELF::Addr));
     if (!Features)
       return Features.takeError();
+    if (Original.Arch == Arch::X86 &&
+        (*Features & llvm::ELF::GNU_PROPERTY_X86_FEATURE_1_SHSTK))
+      return llvm::createStringError(
+          llvm::errc::not_supported,
+          "i386 shadow-stack images require a shadow-stack-safe import thunk");
     if (*Features & llvm::ELF::GNU_PROPERTY_X86_FEATURE_1_IBT)
       return llvm::createStringError(
           llvm::errc::not_supported,
@@ -147,9 +152,13 @@ llvm::Expected<std::optional<uint64_t>> resolveELFSourceSymbol(
   const bool Slot = Specifier == "GOTPCREL" ||
                     Specifier == "GOTPCREL_NORELAX" || Specifier == "GOT" ||
                     Specifier == "GOT_PAGE" || Specifier == "GOT_LO12";
+  const bool LocalGOTOffset =
+      Image.Arch == Arch::X86 && Specifier == "GOTOFF" &&
+      Request.Specifier == 10 && !Request.IsPCRel && Request.BitWidth == 32 &&
+      parseNdDataSymbol(Request.Symbol).has_value();
   if (!Slot && Specifier != "PLT" &&
       !(Request.Specifier == 0 && Specifier.empty()) && !AArch64Call &&
-      !AArch64Absolute)
+      !AArch64Absolute && !LocalGOTOffset)
     return Fail("unsupported relocation specifier: " + Specifier + " (" +
                 llvm::Twine(Request.Specifier) + ", " + Request.FixupKindName +
                 ", " + Request.SectionName + ")");

@@ -202,6 +202,7 @@
           "neverd_session_set_pdb_path",
           "neverd_session_set_pdb_path_ex",
           "neverd_session_set_pdb_search",
+          "neverd_session_set_source_symbolic",
           "neverd_session_set_symbol_path",
           "neverd_session_set_symbol_table",
           "neverd_session_symbol_count",

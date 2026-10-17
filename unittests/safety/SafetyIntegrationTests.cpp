@@ -704,17 +704,19 @@ TEST_P(SafetyIntegration, EveryFindingCarriesStatedIdentity) {
   }
 }
 
-TEST_P(SafetyIntegration, MapOnlyIdentityReplacesTheDefaultCompanion) {
+TEST_P(SafetyIntegration, MapOnlyIdentityAfterDecliningNativeDebug) {
   const FixtureSpec &Spec = GetParam();
   const std::string MapPath = Spec.Path + ".map";
 
   neverd_session_t Sess = neverd_session_create();
+  neverd_session_set_pdb_search(Sess, 0);
+  neverd_session_set_dwarf_search(Sess, 0);
   neverd_session_set_map_path(Sess, MapPath.c_str());
   ASSERT_TRUE(neverd_session_load(Sess, Spec.Path.c_str()))
       << takeOwned(neverd_last_error(Sess));
 
-  // An explicit --map outranks the PDB beside a PE and the DWARF inside an ELF
-  // or Mach-O, so the run must report names with no types and no lines.
+  // A named MAP supplements native debug information. Explicitly declining
+  // PDB and DWARF leaves only MAP names, with no types or source lines.
   EXPECT_EQ(takeOwned(neverd_session_debug_info_kind(Sess)), "map");
   EXPECT_TRUE(hasFunctionNamed(Sess, "leaks_memory"));
 

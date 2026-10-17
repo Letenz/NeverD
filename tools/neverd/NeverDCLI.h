@@ -502,6 +502,7 @@ extern llvm::cl::opt<std::string> PatchCompileMode;
 extern llvm::cl::opt<std::string> PatchEntry;
 extern llvm::cl::list<std::string> PatchCompilerArgs;
 extern llvm::cl::list<std::string> PatchBindings;
+extern llvm::cl::list<std::string> PatchDependencies;
 extern llvm::cl::opt<unsigned> PatchCompilerTimeout;
 extern llvm::cl::opt<bool> PatchReport;
 extern llvm::cl::opt<std::string> PatchFuncAddr;

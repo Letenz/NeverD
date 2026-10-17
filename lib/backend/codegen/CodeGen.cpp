@@ -299,7 +299,8 @@ static void ensureTargets() {
 }
 
 CodegenResult Codegen::compile(llvm::Module &Mod, Arch TargetArch,
-                               BinaryFormat ObjectFormat) {
+                               BinaryFormat ObjectFormat,
+                               llvm::StringRef TargetTriple) {
   CodegenResult Result;
   ensureTargets();
 
@@ -316,7 +317,10 @@ CodegenResult Codegen::compile(llvm::Module &Mod, Arch TargetArch,
     return Result;
   }
 
-  llvm::Triple TT(TripleStr);
+  llvm::Triple TT(TargetTriple.empty() ? llvm::StringRef(TripleStr)
+                                       : TargetTriple);
+  if (!tripleMatchesTarget(TT, TargetArch, ObjectFormat))
+    return Result;
   Mod.setTargetTriple(TT);
 
   std::string Err;

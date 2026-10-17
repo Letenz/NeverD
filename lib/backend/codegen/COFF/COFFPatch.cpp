@@ -20,6 +20,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/BinaryUtils.h"
 #include "neverd/backend/codegen/COFF/COFFExceptionPatch.h"
+#include "neverd/backend/codegen/COFF/COFFLayoutGrowth.h"
 #include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
 #include "neverd/backend/codegen/COFF/COFFReloc.h"
 #include "neverd/backend/codegen/COFF/COFFSourceImage.h"
@@ -296,6 +297,11 @@ uint64_t COFFPatcher::appendExecSegment(std::vector<uint8_t> &Binary,
                                         llvm::StringRef SegName,
                                         Arch /*TargetArch*/) {
   using namespace llvm::object;
+  auto Growth = ensureCOFFSectionHeaderCapacity(Binary, 1);
+  if (!Growth) {
+    llvm::WithColor::error() << llvm::toString(Growth.takeError()) << "\n";
+    return 0;
+  }
   PatchLayout Layout;
   if (!parseLayout(Binary, Layout))
     return 0;
