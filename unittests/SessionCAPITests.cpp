@@ -3405,12 +3405,14 @@ TEST_F(SessionCAPITest,
           _exit(6);
         if (takeString(neverd_func_name(Session, 0)) != "evm_entry")
           _exit(7);
+        // The files the first saves wrote, as a project table is written:
+        // indented, with a final line break.
         for (const char *Suffix :
              {".neverd-annotations.json", ".neverd-renames.json"}) {
           std::ifstream Input(Path + Suffix);
           std::string Text((std::istreambuf_iterator<char>(Input)),
                            std::istreambuf_iterator<char>());
-          if (Text != "[]")
+          if (Text != "[]\n")
             _exit(8);
         }
         _exit(0);
