@@ -223,6 +223,23 @@ The supported Bionic subset is:
   Imported, dynamic and raw calls use the shared descriptor owner. Inputs must
   declare the ordered request, scalar/byte expectations, result and outputs;
   missing transactions stop. This does not provide a driver or device mapping.
+- `localtime`, `localtime_r`, `gmtime` and `gmtime_r`, converting signed 64-bit
+  timestamps to API 28's 56-byte LP64 `struct tm` for civil years 1..9999.
+  Local conversion requires `android.fixed_time_zone`, for example
+  `{"name":"FIX+08","offset_seconds":28800}`. This is a complete fixed zone
+  with no transitions or leap-second corrections: the offset is seconds east
+  of UTC, within ±86400, and the abbreviation is 1..32 printable non-space
+  ASCII bytes. It is not a tzdb name or a host-zone lookup. GMT conversion uses
+  zero offset and the `GMT` abbreviation without requiring that input.
+  The non-reentrant APIs share one process-owned guest object across threads;
+  `_r` writes caller storage, preserves ABI padding, and leaves that static
+  object alone. Zone strings have stable, read-only guest storage. Supported
+  conversions preserve errno and read the timestamp before writing output,
+  including overlapping input/output. Missing local-zone input and dates
+  outside the admitted range stop explicitly; wider-year overflow effects,
+  tzdata transitions, leap seconds, `tzset` and calendar formatting remain
+  unsupported. No host clock, locale or environment is consulted. The ABI and
+  storage contract follow [API 28 Bionic's calendar implementation](https://raw.githubusercontent.com/aosp-mirror/platform_bionic/android-9.0.0_r1/libc/tzcode/localtime.c).
 - `getauxval`, reading the complete immutable `android.auxiliary_vector`
   input. Each entry has unsigned 64-bit `type` and `value` fields; numeric
   strings, including hexadecimal values, are accepted. At most 128 unique,

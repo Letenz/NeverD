@@ -288,6 +288,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidRandomTests.cpp
   AndroidNetworkTests.cpp
   AndroidAuxvTests.cpp
+  AndroidCalendarTests.cpp
   AndroidThreadAttributeTests.cpp
   AndroidThreadTests.cpp
   AndroidTimeTests.cpp

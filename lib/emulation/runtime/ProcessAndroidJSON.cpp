@@ -253,6 +253,19 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
           return Value.takeError();
         Out.AuxiliaryVector->push_back({*Type, *Value});
       }
+    } else if (Name == field::FixedTimeZone) {
+      const auto *Zone = V.getAsObject();
+      if (!Zone || Zone->size() != 2)
+        return invalid(Name);
+      auto Offset = Zone->getInteger(field::ZoneOffsetSeconds);
+      const auto *Text = Zone->get(field::ZoneName);
+      if (!Offset || !Text || *Offset < INT32_MIN || *Offset > INT32_MAX)
+        return invalid(Name);
+      auto Label = string(*Text, field::ZoneName);
+      if (!Label)
+        return Label.takeError();
+      Out.FixedTimeZone =
+          AndroidFixedTimeZone{int32_t(*Offset), std::move(*Label)};
     } else if (Name == field::DefaultScope) {
       const auto *Scope = V.getAsArray();
       if (!Scope)

@@ -11,6 +11,7 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidOnce.cpp
   AndroidQueries.cpp
   AndroidAuxv.cpp
+  AndroidCalendar.cpp
   AndroidRandom.cpp
   AndroidProperties.cpp
   AndroidJNI.cpp

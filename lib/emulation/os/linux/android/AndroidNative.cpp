@@ -24,6 +24,8 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   const auto &Native = *Options.Android;
   if (auto E = validateAuxiliaryVector(Native))
     return std::move(E);
+  if (auto E = validateCalendar(Native))
+    return std::move(E);
   if (Native.ResolverQueries)
     if (auto E = validateResolverQueries(*Native.ResolverQueries))
       return std::move(E);

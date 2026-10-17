@@ -6274,6 +6274,15 @@ constructor/finalizer queries, duplicate/null/oversized input rejection, the
 Malformed JSON shape and unsigned ranges are checked separately. These are
 authored inputs; the tests do not inherit host auxiliary-vector values.
 
+`AndroidCalendarTests` exercises imported and named calendar calls at O0/O2
+with ordinary, Android-packed and RELR relocations on available ARM64
+transports. Independent civil dates cover negative epochs, 1900/2000/2100
+leap rules, post-2038 seconds and years 1/9999. Full-buffer comparisons cover
+LP64 fields, padding, zone bytes, aliasing, fixed offsets in both directions,
+shared process storage across APIs/threads, caller storage and errno isolation.
+Missing zones, excluded ranges, closed providers, invalid memory and malformed
+zone input remain visible failures. Tests never read the host time zone.
+
 `AndroidObservation.*` checks complete workload equality with and without
 selected PC observations across ordinary/APS2/RELR images and Unicorn/HVF.
 Exact instruction bytes provide independent before-store register and memory
