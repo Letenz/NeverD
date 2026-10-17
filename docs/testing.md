@@ -7316,6 +7316,8 @@ runs `rep movs` copies of each width and direction, overlapping ones too, and
 `RepMovsRejectsUnprovedContracts` refuses other shapes.
 `LibCResult.ReadsWhetherTheDeclaredResultIsAPointer` reads pointer results
 from headers, typedefs included, and from the runtime tables.
+`MinGWHeaderFunctions.NamesWhatTheHeadersDeclare` reads the routines the
+mingw-w64 headers declare, its own, the runtime's and the C library's.
 
 `NeverDItaniumHandlerTests` spells Itanium landing pads as C++ handlers.
 `ItaniumHandlerBodies.ACleanupOnlyPadBecomesACatchAllThatRethrows` prints a
