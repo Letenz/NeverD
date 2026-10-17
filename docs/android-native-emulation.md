@@ -223,6 +223,20 @@ The supported Bionic subset is:
   Imported, dynamic and raw calls use the shared descriptor owner. Inputs must
   declare the ordered request, scalar/byte expectations, result and outputs;
   missing transactions stop. This does not provide a driver or device mapping.
+- `getauxval`, reading the complete immutable `android.auxiliary_vector`
+  input. Each entry has unsigned 64-bit `type` and `value` fields; numeric
+  strings, including hexadecimal values, are accepted. At most 128 unique,
+  nonzero types are admitted; the `AT_NULL` terminator is implicit. For example,
+  `[{"type":16,"value":0},{"type":26,"value":0}]` explicitly advertises zero
+  HWCAP/HWCAP2 for this workload, not the host's capabilities. Omitting the
+  vector stops the query as unknown; `[]` is an explicitly empty vector.
+  A missing key returns zero and sets the calling thread's errno to `ENOENT`;
+  a present zero leaves errno unchanged, matching
+  [API 28 Bionic](https://raw.githubusercontent.com/aosp-mirror/platform_bionic/android-9.0.0_r1/libc/bionic/getauxval.cpp).
+  Constructors, finalizers and named dynamic calls use the same input.
+  Pointer-valued entries are guest values; callers must provide their backing
+  memory separately. No host auxv is consulted, no Linux process startup stack
+  is changed, and advertised features never relax checked CPU admission.
 - `sysconf`, for Android's `_SC_PAGESIZE` (`0x27`) and `_SC_PAGE_SIZE` (`0x28`)
   selectors. Both return the same guest page size as `getpagesize`, mappings
   and allocation rounding, without changing errno. The selector uses its
