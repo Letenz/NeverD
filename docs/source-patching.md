@@ -131,6 +131,8 @@ python examples/source-patch/run.py --neverd build-example-host/bin/neverd.exe -
 
 Both paths run by default; add `--api cli` or `--api sdk` to choose one. The target address is discovered automatically. With input `7`, the original prints `8` and both patches print `36`. The driver checks execution, receipts and actual missing-library failures; full build and patch commands are saved in `commands.json`.
 
+CLI and hosted Python SDK examples passed on native Linux, macOS and Windows x64/ARM64: 54 executions and 12 real missing-library rejections. [Per-host CI and exact sources](../examples/source-patch/README.md#native-validation).
+
 <!-- i18n-section: exceptions -->
 ## C++ exceptions
 

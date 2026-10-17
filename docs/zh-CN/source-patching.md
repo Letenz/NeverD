@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 1eae101089e730c29ba3fda92db515fe148fe41b758d6f5b69156252591d9b3f -->
+<!-- i18n-source: 63d86e1a94d8b33e055360514902466c202d434ebb87823cd91181b98a556871 -->
 
 [← Documentation Index](README.md)
 
@@ -132,6 +132,8 @@ python examples/source-patch/run.py --neverd build-example-host/bin/neverd.exe -
 ```
 
 默认运行两条路径；可加 `--api cli` 或 `--api sdk` 单独选择。目标地址自动发现。输入 `7` 时，原程序输出 `8`，两种补丁均输出 `36`。驱动检查真实执行、凭据和缺库加载失败，完整构建与 patch 命令保存在 `commands.json`。
+
+CLI 与宿主 Python SDK 示例已在 Linux、macOS、Windows 的 x64/ARM64 原生实跑：54 次执行、12 次真实缺库拒绝。[各平台 CI 与实际源码](../../examples/source-patch/README.md#native-validation)。
 
 <!-- i18n-section: exceptions -->
 ## C++ 异常
