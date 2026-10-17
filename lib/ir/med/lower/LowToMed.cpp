@@ -318,6 +318,25 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   const auto FPParamRegs = TRI.floatingParamRegs(TargetFormat);
   const int8_t Slots =
       static_cast<int8_t>(std::min<size_t>(ArgRegs.size(), kTrackedArgSlots));
+  // Where the setup of each call gives it its arguments (Windows on ARM64),
+  // an import its prototype counts (CallEntryArgumentCounts) takes that many
+  // integer arguments, the registers' first: its calls pass those and no
+  // other register.  The setup supplies the values.  Its stack arguments
+  // are counted as positions, the registers' included, or 0 for none.
+  if (Convention && Convention->ArgumentsFromCallSetup &&
+      Convention->ImportArgumentsFromPrototype &&
+      !Convention->RegparmOnlyForInternalCalls && CallEntryArgumentCounts)
+    if (auto C = CallEntryArgumentCounts->find(ArgumentsKey);
+        C != CallEntryArgumentCounts->end()) {
+      MOp.CalleeRegisterArgs =
+          static_cast<int8_t>(std::min<int>(C->second, Slots));
+      MOp.CalleeStackArgs =
+          C->second > static_cast<int>(ArgRegs.size())
+              ? static_cast<int8_t>(std::min(
+                    C->second,
+                    static_cast<int>(std::numeric_limits<int8_t>::max())))
+              : 0;
+    }
   // An indirect-call dispatcher calls the function in its target register.
   // Its arguments are the registers this function set before the call, the
   // rule IDA uses; a register only passed through from this function's
