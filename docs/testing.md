@@ -424,6 +424,8 @@ python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsKernelX64.h --data-model LLP64
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsUserX64.h --data-model LLP64
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/WindowsUserX86.h --data-model ILP32
 ```
 
 With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
@@ -466,6 +468,18 @@ that `ZwClose` takes the kernel headers' prototype, that a function stops at
 `ExitProcess` rather than running into the next one, that an export
 reading no parameter shows the one its prototype declares, and that LLVM-C
 declares the imports it calls and calls `GetLastError` with no argument.
+`SessionCAPITest.X86ImportsTakeTheirStdcallPrototypes` loads
+`user_imports_x86.exe`, the same program built for x86, and checks that it
+joins the x86 libraries in ILP32, that its externs declare
+`__attribute__((stdcall))` with their prototypes, and that a function stops
+at `ExitProcess`; it finds `Finish`, which only its export names, although
+Start inlines it and ends `.text` at that call; and that `SetFilePointerEx`
+takes its `LARGE_INTEGER` in two of its five slots, without the local stored
+above them.
+`HeaderLibrary.EveryLibraryReadsLaidOutForItsDataModel` reads every library
+the build embeds and checks its pointers' and records' sizes, and
+`HeaderLibrary.TheNoReturnTablesHoldEveryNoReturnRoutine` checks that the
+noreturn tables hold every routine a library declares `_Noreturn`.
 `SessionCAPITest.LocalTypesFitWhatTheCodeDoesThroughAPointer` checks that the
 program's own record ranks before a header record the accesses fit as
 exactly.
@@ -7085,7 +7099,11 @@ The source registration solver uses one administration-boundary check for object
 `NeverDRegistrationCalleeStackTests` runs the decoded PE32 call/return ABI
 controls, including a cycle between a registration parent and an ordinary
 wrapper. An unbalanced recursive wrapper cannot borrow its own pending ESP
-answer. `NeverDX87CallGraphTests` provides the focused `X87CallStack.*` and
+answer. `RegistrationCallABI.ReturningStackProofDoesNotNormalizeTheX87Stack`
+keeps the stack proof for bodies whose x87 normalization alone is incomplete
+or splits blocks by TOP, and for FXAM with a proved or unproved tag.
+`RegistrationCallABI.ScalarReturnDescribesEAXBesideAnX87Result` pins the leaf
+contract's EAX result for a leaf that also returns an x87 value. `NeverDX87CallGraphTests` provides the focused `X87CallStack.*` and
 `X87CallGraphCache.*` checks for the shared-cache and invocation boundaries.
 
 `MedCxxContinuationFrame.ProtectedSourcesFollowCompactedBlockIdentities` uses
@@ -7166,6 +7184,25 @@ MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its
 `HighControlFlowSemantics.SlotCallGoesThroughThePointerItHolds` calls through
 MinGW's `__imp_X` variables, which hold the image's own code, relocated or in
 a fixed image, rather than naming an import by their spelling.
+`HighControlFlowSemantics.AShiftByZeroIsItsOperand` reads AArch64's bit-0
+`tbz` test as `x & 1`.
+
+`NeverDItaniumHandlerTests` spells Itanium landing pads as C++ handlers.
+`ItaniumHandlerBodies.ACleanupOnlyPadBecomesACatchAllThatRethrows` prints a
+pad that only cleans up as `try { … } catch (...) { cleanup; throw; }` and
+keeps it labelled in C. `ACleanupScopeHoldsNoCallItsPadDoesNotCover` keeps a
+call that reaches no pad out of the scopes, and
+`ACopiedCallKeepsTheCoverOfItsInstruction` does so for a tail copy whose
+statement took a covered jump's address.
+`ABranchWhoseArmsCallThroughThePadIsOneScope` wraps the whole branch, and
+`ACopyWithoutAnAddressKeepsItsCallsInstruction` places calls copied into both
+arms by their instruction. `AnExceptionSpilledThroughAFrameAddressIsResumed`
+follows the exception through the slot address clang keeps for a large frame. `ACallOfNoInstructionKeepsTheCleanupPad`,
+`AJumpIntoACleanupScopeKeepsThePad` and
+`ACoveredCallOnlyAJumpReachesKeepsThePad` keep the pad where a scope cannot
+be proved. `NothingFallsOutOfAnEndlessLoop` prints no dead statement after a
+`while (1)` that only returns. `HighControlFlowSemantics.AMergedCallKeepsAnInstructionOnlyIfItHadOne`
+checks that merging two branches' equal calls forgets their instructions.
 Malformed unwind/prologue and converted-SP checks run with source projection
 enabled too. `WindowsEHModesCorpus.DecompileMatrixFailsClosedWithAuditableExceptionMetadata`
 runs the original eleven-case matrix, including the complete x64 xcpt4 image.
