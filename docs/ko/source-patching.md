@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: be6fcc291675e50f0ce8d8517475c9efa35e98e854f9dd96e0a044bdf3b28e88 -->
+<!-- i18n-source: 3939548e7578565e45b3ed09f402c73232e4b5099c88f84723b13ca1886e4345 -->
 
 [← Documentation Index](README.md)
 
@@ -92,21 +92,29 @@ CPU 행렬은 열두 조합 모두에서 소스, 외부 IR, 네이티브 객체 
 GCC C 객체도 ELF x86, ARM32, ARM64에 설치하고 Linux QEMU user mode에서 실행했습니다. 어댑터는 이미지에서 ARM/Thumb을 선택하며 GNU property는 ELF 포인터 너비로 정렬합니다.
 
 <!-- i18n-section: references -->
-## 원래 참조 및 저장 공간
+## 원래 구현 콜백, 배치 확장과 새 의존성
 
-바인딩은 외부 선언에 대응합니다. `function`에는 확인된 원래 함수/임포트 스텁, `data`에는 쓰기 가능한 저장 공간, `const`에는 const IR 선언이 필요합니다. 오브젝트 데이터 바인딩은 0이 아닌 범위가 필요합니다. 저장 경계를 넘거나 RELRO에 쓰기 권한을 부여할 수 없습니다. 대체되는 원래 함수 본체로의 콜백은 거부됩니다. 이 프로파일에는 원래 프롤로그를 저장하는 콜백 트램펄린이 없습니다.
+바인딩은 외부 선언을 지정합니다. `function`은 원래 함수나 임포트 스텁을 인증하고, `data`는 쓰기 가능한 저장소, `const`는 const IR 선언을 요구합니다. 객체 데이터 바인딩에는 0이 아닌 범위가 필요하며 저장소 경계를 넘거나 RELRO 쓰기 권한을 부여할 수 없습니다. 교체하는 함수의 원래 본문을 호출하려면 `original`을 명시합니다. 공개 진입점은 교체 함수를 호출하고, 저장된 진입점은 완전한 명령 단위로 재배치한 접두부를 실행한 뒤 원래 본문으로 이어집니다. 소스, 외부 IR, 네이티브 객체는 부동소수점·스택 인자와 여러 콜백을 포함해 같은 계약을 사용합니다.
 
-새 코드는 RX, 변경 가능한 상태는 RW로 유지됩니다. 기존 임포트만 재사용하며 GOT/IAT 슬롯과 호출 가능한 스텁을 구분합니다. Mach-O에는 `-Wl,-headerpad,0x400` 같은 로드 명령 여유 공간, PE에는 섹션 헤더 여유 공간이 필요합니다. 공간이 부족하면 실패합니다. ELF `.data.rel.ro`와 원래 CET/IBT 보호에는 추가 계약이 필요하여 현재는 거부합니다.
+콜백에는 인증된 함수 경계, 명령 모드, 복귀 연결 주소와 언와인드 증거가 필요합니다. 알 수 없는 명령, 안전하지 않은 PC 상대 참조, 복사한 접두부 내부로의 분기, 미지원 로더 재배치, 중첩 콜백, 모델링하지 않은 핸들러 프롤로그는 게시 전에 거부합니다. ABI에 맞는 선언은 호출자가 제공해야 합니다. 영수증의 `original_callbacks`에 저장된 진입점을 기록합니다.
+
+PE32/PE32+는 파일 범위를 이동하고 모델링된 디버그·심볼·인증서·오버레이 포인터를 갱신하여 꽉 찬 섹션 헤더 표를 확장하면서 원래 RVA를 유지할 수 있습니다. Mach-O x64/ARM64 PIE는 인접한 page-zero 보호 영역과 마지막 linkedit 세그먼트가 조건을 충족하면 검사된 헤더 접두부 확장으로 명령·언와인드 저장소를 확보하고 원래 코드·데이터 주소를 유지합니다. 이 프로필은 `-Wl,-headerpad,0x400`이나 인접한 빈 언와인드 페이지를 요구하지 않습니다. 명시적 헤더 주소 참조, 알 수 없는 로드 명령, 코드·데이터 소유권 혼합, 잘못된 범위와 미지원 배치는 거부합니다. 설치 전에 헤더 공간과 언와인드 용량을 함께 계획합니다.
+
+새 코드는 RX, 가변 상태는 RW로 유지합니다. 명시적 `--dependency` 요청은 ELF 동적 메타데이터, PE 임포트 설명자/IAT 또는 Mach-O dylib/bind 메타데이터로 함수·데이터를 추가합니다. 기존 임포트 식별·서수·버전 기록을 유지하고 슬롯과 호출 스텁을 구별합니다. 대상 OS 로더에 맞는 라이브러리 이름·경로를 선택해야 합니다. 아래 예는 ELF 공유 라이브러리 이름을 사용합니다. 누락된 라이브러리나 심볼은 실행 시 실제 로더 오류로 확인합니다. TLS, IFUNC, 새 심볼 버전 계약, 로드 시 생성자와 모델링하지 않은 재배치는 미지원이며 ELF `.data.rel.ro`와 CET/IBT도 추가 계약이 필요합니다. 네이티브 COFF 객체는 새 함수·데이터 임포트를 `__declspec(dllimport)`로 선언하여 재배치가 IAT를 식별해야 합니다. 일반 직접 외부 참조는 거부합니다.
 
 ```sh
+# ELF example: the original target is at 0x401140.
 neverd patch app --from-source=replacement.c --entry=replacement --func=0x401140 \
+  --bind=original:saved_target=0x401140 \
   --bind=function:original_helper=0x401190 \
   --bind=data:shared_counter=0x404020:4 \
   --bind=const:lookup_table=0x402040:64 \
+  --dependency=function:extra_function=libpatch_extra.so \
+  --dependency=data:extra_state=libpatch_extra.so \
   --patch-report -o app.bound
 ```
 
-Mach-O 언와인드 테이블 확장에는 인접한 파일 및 가상 공간의 여유도 필요합니다. 헤더 여유 공간만으로 확보되지 않습니다. 검증 입력은 두 요구 사항을 별도로 충족합니다.
+구조체 크기를 검사하는 추가형 의존성 옵션은 소스, 외부 IR과 네이티브 객체에 공통 적용됩니다. 영수증은 `added_imports`를 포함하고 후보를 다시 로드한 뒤 모든 콜백·임포트·저장소 권한·설치 바이트를 재검사합니다. 실패하면 입력과 기존 대상을 보존합니다.
 
 <!-- i18n-section: exceptions -->
 ## C++ 예외
@@ -128,13 +136,35 @@ IBT 요구가 있는 ELF x86/x64 원본은 현재 거부합니다. 소스 설치
 report = session.patch_source(
     replacement_source, "app.patched",
     mappings={"replacement": original_address},
-    compiler="gcc", compiler_path="/path/to/gcc", artifact="object",
-    bindings={"shared_counter": ("data", original_counter_address, 4)},
+    compiler="clang", compiler_path="/path/to/clang", artifact="object",
+    bindings={
+        "saved_target": ("original", original_address),
+        "shared_counter": ("data", original_counter_address, 4),
+    },
+    dependencies={
+        "extra_function": ("libpatch_extra.so", "function"),
+        "extra_state": ("libpatch_extra.so", "data"),
+    },
 )
 ```
 
 <!-- i18n-section: verification -->
 ## 빌드 및 검증
+
+선택한 여섯 네이티브 OS/ISA 작업은 실패·건너뛰기 없이 통과했습니다. GoogleTest 실행 3669회, 네이티브 프로세스 관측 1008회(기능 504회, C++ 예외 504회), 실제 로더 거부 12회, 이미지 96개, 게시 영수증 84개입니다.
+
+| 호스트 | 소스 | Harness | CI 작업 | 테스트 | 관측 / 거부 |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+각 산출물은 아래 표의 정확한 소스와 harness 커밋만 검증합니다. 이후 dev 통합과 문서 커밋에는 별도의 로컬·문서 검사를 적용합니다. 과거 실패·취소 작업은 실패로 보존합니다. 과거의 보충 관측 216회, PE ARM32 및 구형 32비트 Apple CPU/호환 계층 결과는 새 기능의 네이티브 하드웨어나 C++ 예외 증거가 아닙니다.
+
+Windows ARM64 검증은 고정 서브모듈과 검증된 LLVM-MinGW 도구 체인으로 실제 빌드한 네이티브 ARM64 Unicorn C DLL, MSVC 임포트 라이브러리, 명시적 CMake 대상 재정의를 사용합니다. 격리된 빌드 복사본은 비 SEH 점프 함수 쌍, 명령 캐시 동기화를 포함한 ARM64 페이지 커밋 콜백, Windows LLP64용 64비트 즉시값 마스크라는 세 호스트 수정을 인증합니다. 서브모듈 소스와 리비전은 그대로입니다. 이는 CPU 행렬의 테스트 호스트를 검증하며 기본 MSVC ARM64 JIT 지원을 입증하지 않습니다. 다섯 호스트 복구 검사는 패치 프로세스의 네이티브 실행 및 C++ 예외 증거와 별도로 기록합니다.
 
 `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE`로 호환 컴파일러를 선택하세요(Clang 22.1.6 검증). 통합 빌드는 빌드 디렉터리의 LLVM 복사본만 수정하고 서브모듈과 공유 사전 빌드 캐시는 유지합니다. r3/r4의 x64 PLT 버그는 IR 패치를 거부하게 할 수 있습니다. 네이티브 오브젝트는 해당 MC 경로를 거치지 않습니다. `NEVERD_TEST_REQUIRE_FIXED_LLVM=1`은 수정된 정확한 PLT 생성을 요구합니다.
 
@@ -187,7 +217,7 @@ C 전용 생성기 검증 [cc91afb3b](https://github.com/NeverSight/NeverD/actio
 
 같은 워크플로에서 Windows x64의 Windows x86 관측 30회, Linux x64의 Linux x86 관측 48회, QEMU 사용자 모드의 Linux ARM32 관측 96회를 요구합니다. ARM32는 ARM과 Thumb에 절반씩 배정하며 Linux 검사에는 해당 대상의 GCC 객체도 포함합니다. 각 시나리오는 세 번 반복합니다. 보고서는 `native`, `compatibility`, `rosetta`, `qemu-user`를 구분하고 대상 및 실제 호스트 아키텍처를 함께 기록합니다. Rosetta는 Intel 네이티브 실행 요건을 충족하지 않습니다.
 
-전체 14개 CPU 대상 프로필은 계속 154개 소스/IR/객체 행렬로 검증합니다. PE ARM32, Mach-O i386, ARMv7 iOS, ARMv7k watchOS는 현재 CPU 검증 범위이며 네이티브 OS 로더나 C++ 언와인더의 검증을 뜻하지 않습니다. NeverC는 x64/ARM64 순수 C 전용으로 유지합니다. 32비트 생성에는 Clang과 해당 ELF GCC 드라이버를 사용합니다. 검증기는 NeverC를 빌드하거나 수정하지 않습니다.
+전체 14개 CPU 대상 프로필은 계속 283개 소스/IR/객체 행렬로 검증합니다. PE ARM32, Mach-O i386, ARMv7 iOS, ARMv7k watchOS는 현재 CPU 검증 범위이며 네이티브 OS 로더나 C++ 언와인더의 검증을 뜻하지 않습니다. NeverC는 x64/ARM64 순수 C 전용으로 유지합니다. 32비트 생성에는 Clang과 해당 ELF GCC 드라이버를 사용합니다. 검증기는 NeverC를 빌드하거나 수정하지 않습니다.
 
 Windows x64와 ARM64에서도 각각 Clang C++ FH3 관측 36회를 실행합니다.
 
@@ -207,6 +237,6 @@ ELF ARM과 Thumb는 별도 프로필입니다. 소스 생성기에 `-marm` 또�
 
 [Apple 호환성 검증](https://github.com/gmh5225/test_mac_intel/actions/runs/38771214358)에서는 Linux의 Darling에서 Mach-O i386 실행 30회, Intel macOS의 touchHLE에서 ARMv7/ARMv7k 실행 60회가 통과했습니다. 원본과 소스 IR, 컴파일 객체, 외부 객체를 사용한 각 교체 결과를 세 번씩 실행합니다. 독립 감사는 이 추가 실행들의 이미지 72개, 패치 게시 기록 66개, 실행 216회 전체와 GitHub 산출물 크기, SHA256, 정확한 커밋, 전체 사례 목록을 확인했습니다. Linux 입력은 계속 `fcee81c9a5`에 고정되며 PE 입력은 `a542f97ba`, Mach-O 입력은 `8f5f06762`에서 생성했습니다. 검증 스크립트 커밋은 연결된 실행에 별도로 기록합니다.
 
-Mach-O 수정은 이미지 전체의 ARM/Thumb 혼합 정보와 별개로 선택된 Thumb 함수를 인증하고, 증거가 있는 Thumb 내보내기 포인터와 ARM32 언와인드 코드 주소를 정규화합니다. 데이터 포인터나 범위 길이는 바꾸지 않습니다. 통합 LLVM 소스 빌드는 로컬에서 CPU 매트릭스 검사 154개와 예외 계약 검사 258개를 모두 통과했으며 실패나 건너뛰기가 없습니다. 구형 Mach-O 테스트는 기록된 오픈 소스 링커와 예약된 언와인드 공간을 사용합니다. i386에는 올바르게 정렬된 시작 진입점과 64 KiB 페이지 제로 세그먼트가 있습니다.
+Mach-O 수정은 이미지 전체의 ARM/Thumb 혼합 정보와 별개로 선택된 Thumb 함수를 인증하고, 증거가 있는 Thumb 내보내기 포인터와 ARM32 언와인드 코드 주소를 정규화합니다. 데이터 포인터나 범위 길이는 바꾸지 않습니다. 통합 LLVM 소스 빌드는 로컬에서 CPU 매트릭스 검사 283개와 예외 계약 검사 258개를 모두 통과했으며 실패나 건너뛰기가 없습니다. 구형 Mach-O 테스트는 기록된 오픈 소스 링커와 예약된 언와인드 공간을 사용합니다. i386에는 올바르게 정렬된 시작 진입점과 64 KiB 페이지 제로 세그먼트가 있습니다.
 
 이 결과는 명시한 에뮬레이터와 호환 계층에서의 C 코드 실행을 입증합니다. Wine은 Microsoft Windows가 아니며 Darling은 macOS가 아닙니다. iOS HLE 안의 ARMv7k 실행은 watchOS, WatchKit 또는 Apple 실기기 검증이 아닙니다. 구형 Apple SDK나 네이티브 32비트 하드웨어 지원을 추론하지 않으며 C++ 예외 언와인드 검증으로도 간주하지 않습니다. 기존 네이티브 및 호환 모드 증거는 계속 분리해 기록합니다. NeverC는 빌드하거나 변경하지 않았습니다.

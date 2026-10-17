@@ -8,6 +8,7 @@
 #include "neverd/backend/codegen/COFF/COFFSourceImage.h"
 #include "neverd/backend/codegen/PatchObject.h"
 #include "neverd/backend/codegen/PatchStorage.h"
+#include "neverd/backend/codegen/SourcePatchPreparation.h"
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/object/PELayout.h"
 #include "neverd/support/ISAEncoding.h"
@@ -330,10 +331,12 @@ resolve(const NativeCOFF &Object, uint32_t Index, const BinaryImage &Original,
   }
   // DLL-import fields explicitly name the existing IAT slot. Direct calls
   // require an independently authenticated original function or import stub.
-  if (llvm::StringRef(S.Name).starts_with("__imp_") && !Callable) {
+  const llvm::StringRef ImportPrefix =
+      Original.Arch == Arch::X86 ? "_imp_" : "__imp_";
+  if (llvm::StringRef(S.Name).starts_with(ImportPrefix) && !Callable) {
     std::set<uint64_t> Slots;
-    const auto Name =
-        canonicalName(llvm::StringRef(S.Name).drop_front(6), Original.Arch);
+    const auto Name = canonicalName(
+        llvm::StringRef(S.Name).drop_front(ImportPrefix.size()), Original.Arch);
     for (const auto &I : Original.Imports)
       if (I.Name == Name && I.IATAddr)
         Slots.insert(I.IATAddr);
@@ -550,12 +553,15 @@ relocate(NativeCOFF &Object, const BinaryImage &Original,
 } // namespace
 
 llvm::Expected<PatchResult> installCOFFObjectPatch(
-    llvm::StringRef Bytes, const BinaryImage &Original,
+    llvm::StringRef Bytes, const BinaryImage &OriginalInput,
     llvm::ArrayRef<SourcePatchMapping> Mappings,
     llvm::ArrayRef<SourcePatchBinding> RequestedBindings,
     const std::filesystem::path &Output,
     llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt,
-    const DynCodePatchEvidence *DynCode) {
+    const DynCodePatchEvidence *DynCode,
+    const SourcePatchPreparation *Preparation) {
+  const BinaryImage &Original =
+      Preparation ? Preparation->Image : OriginalInput;
   auto Object = readObject(Bytes, Original);
   if (!Object)
     return Object.takeError();
@@ -605,7 +611,7 @@ llvm::Expected<PatchResult> installCOFFObjectPatch(
                                       Mappings, RequestedBindings))
       return std::move(E);
   return publishSourcePatch(
-      Original, Mappings, Output,
+      OriginalInput, Mappings, Output,
       [&](const std::filesystem::path &Input,
           const std::filesystem::path &Candidate)
           -> llvm::Expected<PatchResult> {
@@ -613,11 +619,9 @@ llvm::Expected<PatchResult> installCOFFObjectPatch(
         auto R = BinaryPatcher::readPatchWrite(
             Input, Candidate, true, "object_patch",
             [&](std::vector<uint8_t> &Binary, PatchResult &Result) {
-              if (auto E = installCOFFSourceImage(
-                      Binary, Original, Object->Image, &Object->Evidence)) {
-                Failure = llvm::toString(std::move(E));
-                return false;
-              }
+              // Entry offsets belong to the prepared input. Header growth may
+              // move every section's raw storage, so write the authenticated
+              // jumps before the format installer moves those bytes together.
               for (const auto &M : Mappings) {
                 const auto Mode = Original.instructionModeAt(M.OriginalVA);
                 const uint64_t Target = Object->Image.SymbolAddrs.at(M.Symbol);
@@ -637,6 +641,11 @@ llvm::Expected<PatchResult> installCOFFObjectPatch(
                     {M.Symbol, M.OriginalVA, Target, M.Symbol});
                 Result.PatchedOriginalEntries.push_back(M.OriginalVA);
               }
+              if (auto E = installCOFFSourceImage(
+                      Binary, Original, Object->Image, &Object->Evidence)) {
+                Failure = llvm::toString(std::move(E));
+                return false;
+              }
               llvm::sort(Result.PatchedOriginalEntries);
               Result.TrampolineCount = Mappings.size();
               Result.CodeSize = Object->Image.Bytes.size();
@@ -647,6 +656,13 @@ llvm::Expected<PatchResult> installCOFFObjectPatch(
                                       : Failure);
         return R;
       },
-      PrepareReceipt);
+      PrepareReceipt, Preparation,
+      [&](const BinaryImage &Final) -> llvm::Error {
+        for (const auto &S : Object->Image.Sections)
+          if (auto E =
+                  validateInstalledSourcePatchSection(Final, Object->Image, S))
+            return E;
+        return llvm::Error::success();
+      });
 }
 } // namespace neverd

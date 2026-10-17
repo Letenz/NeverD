@@ -272,13 +272,39 @@ llvm::Error readIndex(llvm::ArrayRef<uint8_t> Binary,
           *Entry.DescriptorVA < TableEndVA &&
           rangeInBounds(Region.TableFileOff, Region.TableSize, Binary.size());
       if (!OriginalDescriptor) {
-        if (!Generated)
-          return patchError(
-              "EHABI descriptor has no authenticated storage owner");
-        auto Model =
-            validateGeneratedDescriptor(*Generated, *Entry.DescriptorVA);
-        if (!Model)
-          return Model.takeError();
+        unsigned Owners = 0;
+        llvm::ArrayRef<uint8_t> Storage;
+        forEachELFPhdr(
+            Binary.data(), Binary.size(),
+            [&](const ELFPhdrFields &P, const uint8_t *, bool) {
+              if (P.Type != llvm::ELF::PT_LOAD ||
+                  *Entry.DescriptorVA < P.VAddr ||
+                  !rangeInBounds(*Entry.DescriptorVA - P.VAddr, 4, P.FileSz))
+                return;
+              ++Owners;
+              if ((P.Flags & llvm::ELF::PF_W) || !(P.Flags & llvm::ELF::PF_R) ||
+                  !rangeInBounds(P.Offset, P.FileSz, Binary.size()))
+                return;
+              const uint64_t Offset = *Entry.DescriptorVA - P.VAddr;
+              Storage = Binary.slice(P.Offset + Offset, P.FileSz - Offset);
+            });
+        if (Owners) {
+          if (Owners != 1 || Storage.empty())
+            return patchError(
+                "EHABI descriptor has no unique immutable LOAD mapping");
+          auto Model = validateDescriptorBytes(Storage, 0, *Entry.DescriptorVA,
+                                               "the registered input");
+          if (!Model)
+            return Model.takeError();
+        } else {
+          if (!Generated)
+            return patchError(
+                "EHABI descriptor has no authenticated storage owner");
+          auto Model =
+              validateGeneratedDescriptor(*Generated, *Entry.DescriptorVA);
+          if (!Model)
+            return Model.takeError();
+        }
         Out.push_back(Entry);
         continue;
       }

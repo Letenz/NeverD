@@ -3516,26 +3516,41 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
                                            : llvm::json::Object();
   };
 
-  // Without its PDB the program has no local types.
+  // Without its PDB the program has no local types of its own, only those
+  // of the headers that declare what a console program calls.
   neverd_session_set_pdb_search(Session, 0);
   ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1);
   llvm::json::Object None = parse(neverd_local_types_json(Session, nullptr));
   EXPECT_EQ(None.getString("source"), "none");
-  EXPECT_EQ(None.getArray("types")->size(), 0u);
+  EXPECT_EQ(None.getObject("stats")->getObject("origins")->size(), 1u);
+  EXPECT_GT(None.getObject("stats")
+                ->getObject("origins")
+                ->getInteger("header")
+                .value_or(0),
+            16000);
 
   neverd_session_set_pdb_path(Session, PDB.c_str());
   ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
       << takeString(neverd_last_error(Session));
-  llvm::json::Object List =
-      parse(neverd_local_types_json(Session, R"({"filter":"THREAD"})"));
+  llvm::json::Object List = parse(neverd_local_types_json(
+      Session, R"({"filter":"THREAD","origin":"pdb"})"));
   EXPECT_EQ(List.getString("source"), "pdb");
   EXPECT_EQ(List.getString("dataModel"), "LLP64");
   ASSERT_EQ(List.getArray("types")->size(), 1u);
   EXPECT_EQ((*List.getArray("types"))[0].getAsObject()->getString("name"),
             "_THREAD_LIKE");
   EXPECT_EQ(List.getObject("stats")->getArray("nestingMismatches")->size(), 0u);
-  // A console program takes no kernel headers.
-  EXPECT_EQ(List.get("headers"), nullptr);
+  // A console program joins the user mode headers after its PDB, then the
+  // kernel's for the native API: the kernel's KUSER_SHARED_DATA holds a
+  // record user mode lays out otherwise, and is left out.
+  const llvm::json::Array *Headers = List.getArray("headers");
+  ASSERT_TRUE(Headers && Headers->size() == 2u);
+  const llvm::json::Object &User = *(*Headers)[0].getAsObject();
+  EXPECT_EQ(User.getString("name"), "windows-user-x64");
+  EXPECT_EQ(User.getArray("conflicts")->size(), 0u);
+  const llvm::json::Object &Native = *(*Headers)[1].getAsObject();
+  EXPECT_EQ(Native.getString("name"), "windows-kernel-x64");
+  EXPECT_EQ(Native.getArray("conflicts")->size(), 2u);
 
   llvm::json::Object Thread =
       parse(neverd_local_type_json(Session, "_THREAD_LIKE", nullptr));
@@ -3930,6 +3945,42 @@ TEST_F(SessionCAPIKernelInputs, KernelExportsTakeTheirPrototypesWithoutThePDB) {
   EXPECT_EQ(Pool.find("unknown"), std::string::npos) << Pool;
 }
 
+TEST_F(SessionCAPITest, WholeProgramsHoldTheRecordsTheirLocalTypesDefine) {
+  // Decompiling the whole program the session holds reads it as each
+  // function's decompilation does: with the program's local types.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  const auto load = [&](const char *Name) {
+    std::ifstream Input(Fixtures / (std::string(Name) + ".exe"),
+                        std::ios::binary);
+    const std::string Exe =
+        write(std::string(Name) + ".exe",
+              std::string(std::istreambuf_iterator<char>(Input), {}));
+    neverd_session_set_pdb_path(
+        Session, (Fixtures / (std::string(Name) + ".pdb")).string().c_str());
+    EXPECT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+        << takeString(neverd_last_error(Session));
+    return Exe;
+  };
+  const std::string Exe = load("local_types");
+  for (int Llvm : {0, 1}) {
+    const std::string Program =
+        takeString(neverd_decompile_all(Session, Exe.c_str(), Llvm, 0, 0));
+    EXPECT_NE(Program.find("struct _DEVICE\n{"), std::string::npos)
+        << Program << takeString(neverd_last_error(Session));
+    EXPECT_NE(Program.find("Device->Size"), std::string::npos);
+    EXPECT_NE(Program.find("Packed->Count"), std::string::npos);
+  }
+  // A Rust spelling of the whole program defines the types as Rust does.
+  const std::string Rust = load("rust_types");
+  const std::string Program = takeString(
+      neverd_decompile_all_ex(Session, Rust.c_str(), NEVERD_OUTPUT_RUST, 0, 0));
+  EXPECT_NE(Program.find("pub union _DPC_0 {"), std::string::npos)
+      << Program << takeString(neverd_last_error(Session));
+  EXPECT_NE(Program.find("(*Dpc).Anonymous.TargetInfoAsUlong"),
+            std::string::npos);
+}
+
 TEST_F(SessionCAPITest, FunctionsHoldTheRecordsTheirPDBTypes) {
   // A function its PDB types reads its records' members as the local types
   // name them, and its unit defines those records.
@@ -4056,7 +4107,12 @@ TEST_F(SessionCAPITest, LocalTypesFitWhatTheCodeDoesThroughAPointer) {
   const llvm::json::Object &Size = *(*Best.getArray("fits"))[0].getAsObject();
   EXPECT_EQ(Size.getString("path"), "Size");
   EXPECT_EQ(Size.getString("type"), "uint16_t");
-  EXPECT_EQ((*Candidates)[1].getAsObject()->getInteger("exact"), 0);
+  // A record of the Windows headers the access fits as exactly, such as
+  // ACE_HEADER's AceSize, follows the program's own.
+  EXPECT_EQ(Best.getString("origin"), "pdb");
+  const llvm::json::Object &Next = *(*Candidates)[1].getAsObject();
+  EXPECT_EQ(Next.getString("origin"), "header");
+  EXPECT_EQ(Next.getInteger("exact"), 1);
 
   // A pointer to a device's Links, as a list walk holds: the device's type
   // before it and the link where it points.
@@ -4390,6 +4446,72 @@ TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
             std::string::npos)
       << Probe;
   EXPECT_EQ(Probe.find("unknown"), std::string::npos) << Probe;
+}
+
+TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
+  // A program without debug information that calls routines kernel32,
+  // user32 and ntdll export, which NeverD's user mode headers declare, and
+  // the kernel's headers the native routines they do not.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "user_imports.exe", std::ios::binary);
+  const std::string Program =
+      write("user_imports.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Program.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_GE(neverd_session_discover_functions(Session), 0)
+      << takeString(neverd_last_error(Session));
+  // A program of the console subsystem joins the user mode headers, then
+  // the kernel's for the native API.
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_local_types_json(Session, nullptr)));
+  ASSERT_TRUE(static_cast<bool>(Parsed));
+  const llvm::json::Array *Headers = Parsed->getAsObject()->getArray("headers");
+  ASSERT_NE(Headers, nullptr);
+  ASSERT_EQ(Headers->size(), 2u);
+  EXPECT_EQ((*Headers)[0].getAsObject()->getString("name"), "windows-user-x64");
+  EXPECT_EQ((*Headers)[1].getAsObject()->getString("name"),
+            "windows-kernel-x64");
+  const auto decompile = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  // Open passes the name it was given on as the first of CreateFileW's
+  // seven parameters.
+  const std::string Open = decompile("Open");
+  EXPECT_NE(Open.find("Open(int64_t arg0) {"), std::string::npos) << Open;
+  EXPECT_NE(Open.find("CreateFileW((uint16_t*)(uintptr_t)arg0, 0x80000000, "
+                      "1, 0, 3, 0, 0)"),
+            std::string::npos)
+      << Open;
+  // GetLastError takes nothing; CloseHandle and ZwClose, which only the
+  // kernel's headers declare, take the handle.
+  const std::string Probe = decompile("Probe");
+  EXPECT_NE(Probe.find(" = GetLastError();"), std::string::npos) << Probe;
+  EXPECT_NE(Probe.find("extern int32_t ZwClose(void* Handle);"),
+            std::string::npos)
+      << Probe;
+  EXPECT_NE(Probe.find("ZwClose((void*)(uintptr_t)arg0)"), std::string::npos)
+      << Probe;
+  // A definition named as a routine the headers declare that reads none of
+  // its parameters shows those the prototype declares.
+  const std::string Atoms = decompile("InitAtomTable");
+  EXPECT_NE(Atoms.find("int32_t InitAtomTable(uint32_t nSize) {"),
+            std::string::npos)
+      << Atoms;
+  // ExitProcess returns to no caller: Finish ends at its call, where it
+  // would run on into the trap after it and the function after that.
+  const std::string Finish = decompile("Finish");
+  EXPECT_NE(Finish.find("extern void ExitProcess(uint32_t uExitCode) "
+                        "__attribute__((noreturn));"),
+            std::string::npos)
+      << Finish;
+  EXPECT_EQ(Finish.find("__debugbreak"), std::string::npos) << Finish;
+  EXPECT_EQ(Finish.find("sub_14000108E"), std::string::npos) << Finish;
 }
 
 TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
@@ -7427,6 +7549,37 @@ TEST_F(SessionCAPITest, UserFunctionAttributesDecideHowCallsEndAndPersist) {
     EXPECT_EQ(stated(Reopened), "{\"noreturn\":true}");
     neverd_session_destroy(Reopened);
   }
+}
+
+TEST_F(SessionCAPITest, WholeProgramSourceSimplifiesSymbolicallyOnRequest) {
+  // entry: return (a ^ b) + 2 * (a & b), the mixed Boolean-arithmetic
+  // spelling of a + b.
+  const auto Input =
+      write("mba.elf",
+            makeNativeELF(false, 0x400000, {},
+                          std::string_view("\x89\xf8\x31\xf0\x89\xf9\x21\xf1"
+                                           "\x01\xc9\x01\xc8\xc3",
+                                           13)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  const auto keepsMBA = [&](int UseLlvmRoute) {
+    const std::string Program =
+        takeString(neverd_decompile_all(Session, Input.c_str(), UseLlvmRoute,
+                                        /*NoOpt=*/0, /*MaxFunctions=*/0));
+    EXPECT_NE(Program.find(" + "), std::string::npos)
+        << takeString(neverd_last_error(Session)) << Program;
+    return Program.find(" ^ ") != std::string::npos ||
+           Program.find(" & ") != std::string::npos;
+  };
+  // Ordinary source keeps the machine's expression in both routes.
+  EXPECT_TRUE(keepsMBA(0));
+  EXPECT_TRUE(keepsMBA(1));
+  neverd_session_set_source_symbolic(Session, 1);
+  EXPECT_FALSE(keepsMBA(0));
+  EXPECT_FALSE(keepsMBA(1));
+  // The choice holds until the caller changes it.
+  neverd_session_set_source_symbolic(Session, 0);
+  EXPECT_TRUE(keepsMBA(0));
+  EXPECT_TRUE(keepsMBA(1));
 }
 
 TEST_F(SessionCAPITest, AStatedNoReturnCalleeKeepsItsArguments) {

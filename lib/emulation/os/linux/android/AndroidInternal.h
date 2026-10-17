@@ -216,7 +216,18 @@ private:
   std::map<uint64_t, DirectoryStream> DirectoryStreams;
   BionicResult openDirectory(const NativeCallEvent &Call);
   BionicResult directoryCall(const NativeCallEvent &Call);
-  llvm::Error opaqueHandle(uint64_t Handle);
+  llvm::Error opaqueHandle(uint64_t Handle, llvm::StringRef Kind = "FILE");
+  struct LogList {
+    uint32_t Mode = 0, Tail = 0, PID = 0, Seconds = 0, Nanoseconds = 0;
+    std::map<uint32_t, uint64_t> Loggers;
+    std::vector<size_t> Selected;
+    size_t Position = 0;
+    bool Started = false;
+  };
+  std::map<uint64_t, LogList> LogLists;
+  llvm::Expected<uint64_t> logToken();
+  BionicResult logCall(const NativeCallEvent &Call);
+  BionicResult unsupportedLog(llvm::StringRef Detail);
   struct InputStream {
     uint32_t FD;
     uint64_t Token, Buffer = 0, Capacity = 0, Begin = 0, End = 0;

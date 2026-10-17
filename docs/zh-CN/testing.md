@@ -1684,11 +1684,28 @@ MSVC 单元测试目标使用 `/bigobj`，允许 GoogleTest 和 LLVM 模板实�
 
 ## 源码与原生对象 patch
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
+当前扩展清单保存在 `unittests/Inputs/source-patch-expansion.json`：283 项 CPU 矩阵、14 项布局、16 项回调、265 项异常契约，以及精确的主机 C API 清单。`scripts/qualify_source_patch_expansion.py` 要求干净、精确的源码提交执行完整清单，零失败、零跳过。`scripts/check_source_patch_expansion_runtime.py` 另经原生 OS 加载器执行回调、依赖及组合 IR／对象镜像：每主机 84 次功能、84 次异常观测和两项缺库／缺符号对照，检查真实新旧共享库、浮点／栈参数、重复原实现调用、恰好一次清理、加载元数据及发布哈希。CPU、兼容层和原生 OS 进程证据保持独立。
+
+六个选定的原生 OS／ISA 任务均零失败、零跳过：3669 次 GoogleTest 执行、1008 次原生进程观测（504 次功能、504 次 C++ 异常）、12 次真实加载拒绝、96 个镜像和 84 份发布凭据。
+
+| 主机 | 源码 | Harness | CI 任务 | 测试 | 观测／拒绝 |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+这些产物只验收下表的实际源码与 harness 提交；后续 dev 整合和文档提交另有本机及文档检查。早期失败或取消的任务仍保留为失败。历史 216 次补充观测、PE ARM32 及旧 32 位 Apple 的 CPU／兼容层结果，不构成新能力的原生硬件或 C++ 异常证明。
+
+Windows ARM64 验收使用原生 ARM64 Unicorn C DLL：以固定子模块和已验证的 LLVM-MinGW 工具链真实构建，生成 MSVC 导入库并显式覆盖 CMake 目标。隔离的构建副本认证三项主机修正：非 SEH 跳转函数对、带指令缓存同步的 ARM64 页面提交回调，以及适配 Windows LLP64 的 64 位立即数掩码。子模块源码及版本不变。这证明 CPU 矩阵测试主机可用，不代表默认 MSVC ARM64 JIT 已受支持。五项主机恢复检查与补丁进程的原生执行、C++ 异常证据分开记录。
+
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 283 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-当前矩阵要求 154 项检查成功，覆盖源码／IR／原生对象、四架构三格式、ARMv7k watchOS 与 ARMv7 iOS、可写／只读状态、浮点／栈参数和两次非零基址变化。旧 32 位 Mach-O 使用真实编译器代码和元数据的容器执行测试，不代表操作系统运行验证；原生对象不伪造 MC 范围身份。
+当前矩阵要求 283 项检查成功，覆盖源码／IR／原生对象、四架构三格式、ARMv7k watchOS 与 ARMv7 iOS、可写／只读状态、浮点／栈参数和两次非零基址变化。旧 32 位 Mach-O 使用真实编译器代码和元数据的容器执行测试，不代表操作系统运行验证；原生对象不伪造 MC 范围身份。
 
 [源码与原生对象 patch](source-patching.md)
 

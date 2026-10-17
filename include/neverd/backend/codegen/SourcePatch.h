@@ -25,6 +25,7 @@ namespace neverd {
 llvm::Error validateSourcePatchTarget(Arch Architecture, BinaryFormat Format);
 
 struct BinaryImage;
+struct SourcePatchPreparation;
 
 /// Select the frontend ABI from loader-owned image evidence. The same triple
 /// must be used by the frontend, supplied-IR validation and final codegen.
@@ -53,7 +54,15 @@ llvm::Expected<PatchResult> installSourcePatch(
     llvm::Module &Module, const BinaryImage &Image,
     llvm::ArrayRef<SourcePatchMapping> Mappings,
     const std::filesystem::path &OutputPath, llvm::StringRef TextSection = {},
-    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt = {});
+    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt = {},
+    const SourcePatchPreparation *Preparation = nullptr);
+
+struct CompiledImage;
+struct CompiledSection;
+/// Prove the full relocated section's byte identity and native permissions.
+llvm::Error validateInstalledSourcePatchSection(const BinaryImage &Final,
+                                                const CompiledImage &Image,
+                                                const CompiledSection &Section);
 
 /// Shared transaction for IR and object installers. Each installer supplies
 /// its own source evidence; publication checks exact receipts and entry bytes.
@@ -63,7 +72,9 @@ llvm::Expected<PatchResult> publishSourcePatch(
     llvm::function_ref<llvm::Expected<PatchResult>(
         const std::filesystem::path &, const std::filesystem::path &)>
         Install,
-    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt = {});
+    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt = {},
+    const SourcePatchPreparation *Preparation = nullptr,
+    llvm::function_ref<llvm::Error(const BinaryImage &)> VerifyCandidate = {});
 
 } // namespace neverd
 

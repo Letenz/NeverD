@@ -146,7 +146,7 @@ TEST(RegistrationThrowHighC, KeepsUnknownObjectConstructionAndRuntimeCall) {
     EXPECT_EQ(Text.find("throw WithoutDefaultConstructor("), std::string::npos)
         << Text;
     EXPECT_NE(Text.find("CxxThrowException("), std::string::npos) << Text;
-    EXPECT_NE(Text.find(" = 17;"), std::string::npos) << Text;
+    EXPECT_NE(Text.find(" = 0x11;"), std::string::npos) << Text;
     if (HasCall)
       EXPECT_NE(Text.find("    touch_object("), std::string::npos) << Text;
   }

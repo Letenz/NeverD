@@ -12,6 +12,10 @@ Capstone, and Unicorn submodules keep their own internal architecture.
 
 `X64MXCSRMask` enables raw MXCSR loads and scalar state reads/writes with an explicit effective mask (`0xffbf` or `0xffff`). The x64 adapter owns the legal initial-state domain and transitions. Core charges work and requires a proof that reserved bits are clear; the nonfaulting flag alone supplies no such proof. Original intrinsics remain observable. MXCSR memory stores, source wrapping and native/LLVM certificates still require their own contracts.
 
+`SourcePatchPreparation` owns the shared pre-installation layout and dependency transaction. `SourcePatchCallback` authenticates saved original entries and delegates instruction relocation and native unwind records to their architecture/format owners. `SourcePatchDependencies` plans explicit imports; format-owned ELF/PE/Mach-O writers preserve existing loader identities. Source, supplied IR and native objects consume these same plans. The final native-object section/permission proof and `publishSourcePatch` reload check remain authoritative; CLI, C API and Python do not duplicate loader or relocation decisions.
+
+Six selected native OS/ISA jobs passed with zero failed or skipped cases: 3669 GoogleTest executions, 1008 native process observations (504 functional and 504 C++ exception observations), 12 real loader rejections, 96 images and 84 publication receipts. [Exact native evidence](source-patching.md).
+
 ## Runtime memory recovery
 
 `X64SegmentedWrites` separately admits ordinary 1/2/4/8-byte FS/GS stores with 64-bit offsets under explicit nonfaulting machine state. `arch/x86_64` owns runtime memory validation, admission and symbolic base initialization. Core uses complete linear addresses and ordinary alias invalidation; fixed arbitrary bases may alias the frame, other segments and live return cells. The capability is bound into raw receipts. Source and native proof interfaces without authenticated base inputs continue to refuse this domain.
@@ -219,16 +223,21 @@ Windows kernel's PDB names records, but no typedefs and no prototypes.
 They are the one source of what a known routine takes and returns, as IDA's
 type libraries are beside its signatures: signatures (`signatures/`)
 recognize a routine by its bytes and only name it. A platform or an
-architecture joins by a header under `lib/types/headers/` and a row of the
-table naming the data model, format, architecture and subsystem it
-describes, and the spelling its headers name builtins in, which shows its
-declarations as they read (Windows' `ULONG`); its calling convention's rules
-then place each parameter (`placeSourceParameters`, one file per
-convention).
-`scripts/generate_windows_kernel_types.py` renders what `<ntifs.h>` declares,
-from mingw-w64's DDK headers, into `lib/types/headers/WindowsKernelX64.h`.
-The build embeds the file, and `headerLibrary` reads it once. The C API joins
-a library to an image the table names (an x64 PE of the native subsystem)
+architecture joins by a header under `lib/types/headers/`, a row of
+`HeaderLibraries.def` naming its data model and the spelling its headers
+name builtins in, which shows its declarations as they read (Windows'
+`ULONG`), and rows of `HeaderLibraryImages.def`: how an image's headers tell
+its kind (a PE's subsystem), and the libraries an image of each kind and
+architecture joins, in order. Its calling convention's rules then place
+each parameter (`placeSourceParameters`, one file per convention).
+`scripts/generate_windows_types.py` renders, from mingw-w64's headers, what
+a driver's `<ntifs.h>` declares into `lib/types/headers/WindowsKernelX64.h`,
+and what a program's `<windows.h>`, `<winternl.h>` and the headers of the
+libraries programs most often call declare into `WindowsUserX64.h`. The
+build embeds the files, and `headerLibrary` reads each once. The C API joins
+the libraries the table names to an image (an x64 PE of the native
+subsystem joins the kernel's; one of the Windows GUI or console subsystem
+joins user mode's, then the kernel's for the native API ntdll exports)
 after the program's PDB and before the user's declarations:
 - a header type joins only where the program has no type of its name;
 - a typedef names the program's type, as C binds it;
@@ -301,7 +310,11 @@ records:
   information gave stay, and so do its records' ABI facts.
 - A decompiled unit, HighC's or LLVM-C's, holds the definitions of the
   records it names (`CEmitterOptions::RecordDefinitions`), and of what they
-  hold by value, after its includes. `renderEmbeddedC` renders them in exact
+  hold by value, after its includes. Only a program whose library holds
+  types defines them: a context made for the user's declarations alone, or
+  over an empty library, as an image with no PDB, header library or
+  declared types has, defines none, and LLVM-C keeps its machine types
+  there. `renderEmbeddedC` renders them in exact
   widths, with their checks, each under a guard of its own so that units
   concatenate. A record whose members the unit, or the debug information
   anywhere in the session, names otherwise than the library does stays
@@ -357,7 +370,12 @@ exports, which takes the prototype of the import's name: `resolveFunction`
 gives it at the slot or stub to the C backends, which declare and call it
 so, and `resolvePrototype` gives it by name to the call analysis, which
 passes exactly its parameters where the libc tables know none of the name
-(`importPrototypeArguments`), and to the return contracts. A callee the
+(`importPrototypeArguments`), and to the return contracts. A routine the image
+exports, whose name binds a prototype, is called with at least what the
+prototype declares, as its export fixes the convention for the callers within
+the image too: the declared parameters join what its body reads in its own
+summary, so that a system call stub's callers pass the stack arguments its
+dispatcher reads, and a body that reads past them keeps those. A callee the
 pipeline does not decompile returns what its declaration says, as the C
 writers read it, so that a caller returning what a `void` routine left in
 RAX returns nothing too. A routine never returns where its name says so, as
@@ -490,8 +508,13 @@ emitted source caches include the options in their identity. LLVM call-site
 preparation owns a separate MedIR copy so opening that view cannot change the
 prepared inputs used by a later HighC enhancement. The additive
 `neverd_ir_view_ex_json` API validates options before preparation; the legacy
-page API keeps default behavior and bytecode support. Source options never
-change the lifting, patching or general module optimizer defaults.
+page API keeps default behavior and bytecode support. Whole-program
+decompilation takes symbolic simplification as an explicit session choice
+(`neverd_session_set_source_symbolic`, the CLI's `--symbolic-simplify` without
+`--func`): HighIR conversion and the LLVM source optimizer, sharded or not,
+then simplify every function with whole-program evidence such as the wide
+returns its callers observe, which one function's view lacks. Source options
+never change the lifting, patching or general module optimizer defaults.
 
 LLVMC defaults to LLVM O2 after ordinary frame and SSA promotion. Basic scalar
 cleanup, O0, O1, O3 and a bounded custom pass selection are explicit alternatives.
@@ -612,8 +635,9 @@ unions, anonymous structures and unions, bit-fields, enumerations,
 `#pragma pack` and `DECLSPEC_ALIGN`, and their `static_assert` and `offsetof`
 checks. A member access reaches a field through anonymous members as C
 counts it. C and C++ keep the definitions as written, and C++ reads the code
-that uses them. A Rust or Go page takes the definitions as Local Types
-renders them in its language (`renderEmbeddedSource`): the types the unit
+that uses them. A Rust or Go page, or a whole program spelled in Rust or Go, takes the
+definitions as Local Types renders them in its language
+(`renderEmbeddedSource`): the types the unit
 defines, the records it only points to as opaque types, and no module
 header, in place of the C bytes the source map records
 (`CSourceMap::LocalTypes`). The code reaches a member as that rendering
@@ -6617,6 +6641,11 @@ instance. `LinuxFiles::descriptorStatus` borrows live description facts for
 fdopen access checks and buffer sizing; it does not reopen a path or duplicate
 a cursor. Unknown metadata remains unsupported. Each modeled call completes
 atomically within the cooperative scheduler, while errno stays in caller TLS.
+
+`AndroidLog` owns liblog list/logger identities and snapshot cursors. Its shared
+admission validates both JSON and C++ input; each read emits the same v4 packet
+from explicit visible records. Opaque guest tokens share the Linux memory owner.
+No logd transport or permission state is inferred. See [Android log readers](android-log-reader.md).
 
 `AndroidProperties` builds one immutable guest property table from explicit
 inputs. Name lookup, stable `prop_info` identities, serials, legacy reads and

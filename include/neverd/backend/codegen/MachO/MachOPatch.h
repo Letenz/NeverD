@@ -87,6 +87,7 @@ private:
     uint64_t SegmentVMSize = 0;
     uint64_t SegmentFileOff = 0;
     uint64_t SegmentFileSize = 0;
+    uint32_t SegmentNSects = 0;
     uint64_t WritableSize = 0;
     uint64_t LinkeditVA = 0;
     uint64_t LinkeditVMSize = 0;

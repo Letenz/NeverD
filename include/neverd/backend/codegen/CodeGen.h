@@ -37,6 +37,12 @@ struct PatchedFunctionEntry {
 };
 
 struct PatchResult {
+  struct OriginalCallback {
+    std::string Symbol;
+    va_t OriginalVA = 0;
+    va_t CallbackVA = 0;
+    uint32_t CopiedSize = 0;
+  };
   bool Success = false;
   size_t CodeSize = 0;
   size_t TrampolineCount = 0;
@@ -45,6 +51,7 @@ struct PatchResult {
   /// entry trampolines were committed to the output artifact.
   std::vector<va_t> PatchedOriginalEntries;
   std::vector<PatchedFunctionEntry> PatchedFunctions;
+  std::vector<OriginalCallback> OriginalCallbacks;
 };
 
 namespace patch_receipt_detail {
@@ -107,7 +114,8 @@ llvm::Error validateReplacementIR(const llvm::Module &Module, Arch TargetArch);
 class Codegen {
 public:
   CodegenResult compile(llvm::Module &Mod, Arch TargetArch,
-                        BinaryFormat ObjectFormat = BinaryFormat::MachO);
+                        BinaryFormat ObjectFormat = BinaryFormat::MachO,
+                        llvm::StringRef TargetTriple = {});
 
   /// Compile directly to fixed-up image bytes using the caller's address
   /// model, bypassing the relocatable object intermediate format.

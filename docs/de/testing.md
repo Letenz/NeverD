@@ -1876,11 +1876,28 @@ Die geprüfte Ablehnung doppelter Verschiebungen meldet den maskierten Zähler u
 
 ## Quellcode- und native Objektpatches
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
+Das aktuelle Inventar `unittests/Inputs/source-patch-expansion.json` umfasst 283 CPU-Matrixfälle, 14 Layout-, 16 Rückruf-, 265 Ausnahmevertragsfälle und die genaue hostspezifische C-API-Liste. `scripts/qualify_source_patch_expansion.py` verlangt dieses vollständige Inventar ohne Fehler oder übersprungene Fälle an einem exakten, sauberen Quellcommit. `scripts/check_source_patch_expansion_runtime.py` führt Rückruf-, Abhängigkeits- und kombinierte IR-/Objektabbilder separat über den nativen OS-Loader aus: pro Host 84 Funktions-, 84 Ausnahmebeobachtungen und zwei Kontrollen für fehlende Bibliotheken/Symbole. Geprüft werden echte alte/neue Bibliotheken, Gleitkomma-/Stackargumente, wiederholte Originalaufrufe, genau einmalige Bereinigung, Loadermetadaten und Veröffentlichungs-Hashes. CPU-, Kompatibilitäts- und native OS-Prozessnachweise bleiben getrennt.
+
+Die sechs ausgewählten nativen OS/ISA-Jobs bestanden ohne Fehler oder Überspringen: 3669 GoogleTest-Ausführungen, 1008 native Prozessbeobachtungen (504 funktionale und 504 C++-Ausnahmebeobachtungen), 12 echte Loader-Ablehnungen, 96 Images und 84 Veröffentlichungsbelege.
+
+| Host | Quelle | Harness | CI-Job | Tests | Beobachtungen / Ablehnungen |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+Die Artefakte qualifizieren genau die unten genannten Quell- und Harness-Commits. Spätere dev-Integrations- und Dokumentationscommits haben eigene lokale und Dokumentationsprüfungen. Frühere fehlgeschlagene oder abgebrochene Jobs bleiben Fehlschläge. Die historischen 216 ergänzenden Beobachtungen sowie PE ARM32 und ältere 32-Bit-Apple-CPU-/Kompatibilitätsergebnisse belegen keine neue native Hardware- oder C++-Ausnahmeabdeckung.
+
+Die Windows-ARM64-Qualifikation nutzt eine native ARM64-Unicorn-C-DLL, tatsächlich aus dem festgelegten Submodul mit verifiziertem LLVM-MinGW gebaut, eine MSVC-Importbibliothek und eine explizite CMake-Zielersetzung. Die isolierte Build-Kopie authentifiziert drei Hostkorrekturen: das Sprungfunktionspaar ohne SEH, einen ARM64-Seiten-Commit-Callback mit Befehls-Cache-Synchronisierung und 64-Bit-Sofortwertmasken für Windows LLP64. Submodulquellen und Revision bleiben unverändert. Dies qualifiziert den Testhost für die CPU-Matrix; standardmäßige MSVC-ARM64-JIT-Unterstützung folgt daraus nicht. Die fünf Host-Wiederherstellungsprüfungen werden von nativen Patchprozess- und C++-Ausnahmenachweisen getrennt geführt.
+
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 283 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-`sourcePatchTargetTriple` bestimmt ARM-Modus, ELF-Fließkomma-ABI und Mach-O-CPU-Untertyp anhand des Images. `COFFPatchObject` und `MachOPatchObject` prüfen native Symbole, Hilfs／Abschnittsdefinitionen und Unwind-Daten ohne erfundene MC-IDs. Format-Installer registrieren die tatsächlichen Tabellen. Die 154 CPU-Prüfungen verlangen Quellcode／IR／Objekte, vier Architekturen, drei Formate, Zustand, Fließkomma／Stackargumente und zwei von null verschiedene Basisverschiebungen. Alte 32-Bit-Mach-O-Container behalten echten Compiler-Code, bestätigen jedoch kein OS.
+`sourcePatchTargetTriple` bestimmt ARM-Modus, ELF-Fließkomma-ABI und Mach-O-CPU-Untertyp anhand des Images. `COFFPatchObject` und `MachOPatchObject` prüfen native Symbole, Hilfs／Abschnittsdefinitionen und Unwind-Daten ohne erfundene MC-IDs. Format-Installer registrieren die tatsächlichen Tabellen. Die 283 CPU-Prüfungen verlangen Quellcode／IR／Objekte, vier Architekturen, drei Formate, Zustand, Fließkomma／Stackargumente und zwei von null verschiedene Basisverschiebungen. Alte 32-Bit-Mach-O-Container behalten echten Compiler-Code, bestätigen jedoch kein OS.
 
 [Quellcode- und native Objektpatches](source-patching.md)
 

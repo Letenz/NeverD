@@ -226,8 +226,9 @@ disabling symbolic
 expression simplification does not disable recovery or its targeted proofs.
 The CLI equivalents are `--llvm-opt=O2`, `--llvm-control-flow=true` and
 `--symbolic-simplify`. LLVM-specific overrides require `--func --llvm`;
-HighC symbolic simplification requires `--func`. These choices apply to the
-current function; navigating to another function restores the defaults.
+without `--func`, `--symbolic-simplify` simplifies every function of the whole
+program in either route. These choices apply to the current function;
+navigating to another function restores the defaults.
 An enhancement runs in the analysis worker while the previous source remains
 visible. **Cancel transformation** stops that request, and **Restore default
 source** returns to the ordinary view. Failed enhancements retain the preceding

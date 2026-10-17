@@ -288,6 +288,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidSignalTests.cpp
   AndroidSnapshotTests.cpp
   AndroidAllocationTests.cpp
+  AndroidLogTests.cpp
   AndroidResidencyTests.cpp
   AndroidFileTests.cpp
   AndroidDeviceTests.cpp

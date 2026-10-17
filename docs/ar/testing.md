@@ -1785,11 +1785,28 @@ guest/Python5,000,000us / quantum1024 / public10s
 
 ## تصحيحات المصدر والكائنات الأصلية
 
-تعني `CPU` تثبيت المصدر وIR والكائنات وإعادة تحميل الصورة وتنفيذ الدالة بدقة. تتطلب المصفوفة 154 اختبارًا عبر 14 ملف هدف، بما فيها ELF ARM وThumb المنفصلان، وأربع معماريات مع ELF وPE وMach-O. لا يثبت تنفيذ CPU صحة محمل نظام التشغيل أو آلية فك استثناءات C++؛ وتظل أهداف PE ARM32 وMach-O ذات 32 بت ضمن تحقق CPU دون ادعاء تشغيل نظام أصلي.
+تتضمن القائمة الحالية `unittests/Inputs/source-patch-expansion.json` عدد 283 حالة CPU و14 للتخطيط و16 للاستدعاءات الراجعة و265 لعقود الاستثناء، وقائمة C API الدقيقة لكل مضيف. تتطلب `scripts/qualify_source_patch_expansion.py` القائمة الكاملة بلا فشل أو تخطٍ عند commit مصدر دقيق ونظيف. تنفذ `scripts/check_source_patch_expansion_runtime.py` صور IR/الكائن للاستدعاءات والتبعيات والجمع بينهما عبر محمّل OS الأصلي بصورة مستقلة: 84 ملاحظة وظيفية و84 للاستثناء وضابطي غياب مكتبة/رمز لكل مضيف. تتحقق من مكتبات قديمة وجديدة حقيقية ومعاملات الفاصلة العائمة والمكدس والاستدعاء المتكرر للأصل والتنظيف مرة واحدة وبيانات المحمّل وبصمات النشر. تبقى أدلة CPU والتوافق وعمليات OS الأصلية منفصلة.
+
+نجحت المهام الست المختارة لأنظمة التشغيل والمعماريات الأصلية بلا إخفاق أو تخطٍّ: 3669 تنفيذ GoogleTest، و1008 ملاحظات لعمليات أصلية (504 وظيفية و504 لاستثناءات C++)، و12 رفضاً فعلياً من المحمّل، و96 صورة و84 إيصال نشر.
+
+| المضيف | المصدر | Harness | مهمة CI | الاختبارات | الملاحظات / الرفض |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+تؤهّل هذه الآثار تحديداً مراجعات المصدر وharness المدرجة أدناه. تخضع مراجعات دمج dev والتوثيق اللاحقة لفحوص محلية وتوثيقية مستقلة. تظل المهام السابقة الفاشلة أو الملغاة إخفاقات. لا تثبت الملاحظات التكميلية التاريخية الـ216 ولا نتائج CPU/التوافق لـPE ARM32 وApple القديمة ذات32بت تغطية عتاد أصلي أو استثناءات C++ للقدرات الجديدة.
+
+يستخدم تأهيل Windows ARM64 مكتبة Unicorn C DLL أصلية لمعمارية ARM64، بُنيت فعلياً من الوحدة الفرعية المثبتة بأدوات LLVM-MinGW المتحقق منها، مع مكتبة استيراد MSVC وتجاوز صريح لهدف CMake. توثّق نسخة البناء المعزولة ثلاثة إصلاحات للمضيف: زوج انتقالات بلا SEH، ورد نداء ARM64 لتخصيص الصفحات مع مزامنة ذاكرة التعليمات المخبأة، وأقنعة قيم فورية 64 بت لـ Windows LLP64. لا تتغير مصادر الوحدة الفرعية أو مراجعتها. هذا يؤهل مضيف الاختبار لمصفوفة CPU ولا يثبت دعم JIT MSVC ARM64 الافتراضي. تُسجّل فحوص استعادة المضيف الخمسة منفصلة عن أدلة التنفيذ الأصلي للعمليات المعدلة واستثناءات C++.
+
+تعني `CPU` تثبيت المصدر وIR والكائنات وإعادة تحميل الصورة وتنفيذ الدالة بدقة. تتطلب المصفوفة 283 اختبارًا عبر 14 ملف هدف، بما فيها ELF ARM وThumb المنفصلان، وأربع معماريات مع ELF وPE وMach-O. لا يثبت تنفيذ CPU صحة محمل نظام التشغيل أو آلية فك استثناءات C++؛ وتظل أهداف PE ARM32 وMach-O ذات 32 بت ضمن تحقق CPU دون ادعاء تشغيل نظام أصلي.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-يحدد `sourcePatchTargetTriple` وضع ARM وABI الفاصلة العائمة ELF والنوع الفرعي CPU في Mach-O من الصورة. يتحقق `COFFPatchObject` و`MachOPatchObject` من رموز الكائن وتعريفاته المساعدة／الأقسام وسجلاته الأصلية دون اختلاق معرفات MC، وتسجل مثبتات التنسيق الجداول الفعلية. تتطلب اختبارات CPU البالغ عددها 154 المصدر／IR／الكائنات وأربع معماريات وثلاثة تنسيقات وحالة ووسائط فاصلة عائمة／مكدس وتغييرين غير صفريين للقاعدة. تحتفظ حاويات Mach-O القديمة ذات 32 بت بشيفرة مترجم حقيقية، ولا تصادق على OS.
+يحدد `sourcePatchTargetTriple` وضع ARM وABI الفاصلة العائمة ELF والنوع الفرعي CPU في Mach-O من الصورة. يتحقق `COFFPatchObject` و`MachOPatchObject` من رموز الكائن وتعريفاته المساعدة／الأقسام وسجلاته الأصلية دون اختلاق معرفات MC، وتسجل مثبتات التنسيق الجداول الفعلية. تتطلب اختبارات CPU البالغ عددها 283 المصدر／IR／الكائنات وأربع معماريات وثلاثة تنسيقات وحالة ووسائط فاصلة عائمة／مكدس وتغييرين غير صفريين للقاعدة. تحتفظ حاويات Mach-O القديمة ذات 32 بت بشيفرة مترجم حقيقية، ولا تصادق على OS.
 
 [تصحيحات المصدر والكائنات الأصلية](source-patching.md)
 

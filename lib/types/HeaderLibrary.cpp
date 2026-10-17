@@ -24,23 +24,15 @@ constexpr unsigned char WindowsKernelX64Source[] = {
 #include "WindowsKernelX64.inc"
 };
 
+/// lib/types/headers/WindowsUserX64.h, as the build embeds it.
+constexpr unsigned char WindowsUserX64Source[] = {
+#include "WindowsUserX64.inc"
+};
+
 constexpr size_t LibraryCount = 0
-#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Format, Arch, Subsystem,  \
-                              Spelling)                                        \
-  +1
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Spelling) +1
 #include "neverd/types/HeaderLibraries.def"
     ;
-
-DataModel modelOf(HeaderLibrary Library) {
-  switch (Library) {
-#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Format, Arch, Subsystem,  \
-                              Spelling)                                        \
-  case HeaderLibrary::Id:                                                      \
-    return DataModel::Model;
-#include "neverd/types/HeaderLibraries.def"
-  }
-  return DataModel::LLP64;
-}
 
 /// A library read once, with what reading it met.
 struct Read {
@@ -64,10 +56,19 @@ std::optional<uint64_t> sizeOfNamed(const TypeLibrary &Library,
 
 } // namespace
 
+DataModel headerLibraryModel(HeaderLibrary Library) {
+  switch (Library) {
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Spelling)                 \
+  case HeaderLibrary::Id:                                                      \
+    return DataModel::Model;
+#include "neverd/types/HeaderLibraries.def"
+  }
+  return DataModel::LLP64;
+}
+
 llvm::StringRef headerLibraryName(HeaderLibrary Library) {
   switch (Library) {
-#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Format, Arch, Subsystem,  \
-                              Spelling)                                        \
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Spelling)                 \
   case HeaderLibrary::Id:                                                      \
     return Name;
 #include "neverd/types/HeaderLibraries.def"
@@ -77,8 +78,7 @@ llvm::StringRef headerLibraryName(HeaderLibrary Library) {
 
 llvm::StringRef headerLibrarySource(HeaderLibrary Library) {
   switch (Library) {
-#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Format, Arch, Subsystem,  \
-                              Spelling)                                        \
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Spelling)                 \
   case HeaderLibrary::Id:                                                      \
     return llvm::StringRef(reinterpret_cast<const char *>(File##Source),       \
                            sizeof(File##Source));
@@ -89,8 +89,7 @@ llvm::StringRef headerLibrarySource(HeaderLibrary Library) {
 
 BuiltinSpelling headerLibrarySpelling(HeaderLibrary Library) {
   switch (Library) {
-#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Format, Arch, Subsystem,  \
-                              Spelling)                                        \
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Spelling)                 \
   case HeaderLibrary::Id:                                                      \
     return BuiltinSpelling::Spelling;
 #include "neverd/types/HeaderLibraries.def"
@@ -101,7 +100,7 @@ BuiltinSpelling headerLibrarySpelling(HeaderLibrary Library) {
 const TypeLibrary *headerLibrary(HeaderLibrary Library, std::string *Error) {
   Read &Entry = reads()[size_t(Library)];
   std::call_once(Entry.Once, [&] {
-    TypeLibrary Types(modelOf(Library));
+    TypeLibrary Types(headerLibraryModel(Library));
     ParseOptions Options;
     Options.Rules = defaultRules(Types.dataModel());
     Options.Origin = TypeOrigin::Header;

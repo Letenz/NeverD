@@ -13,6 +13,10 @@ Architektur.
 
 `X64MXCSRMask` aktiviert rohe MXCSR-Ladevorgänge und skalare Zustandszugriffe mit expliziter effektiver Maske (`0xffbf` oder `0xffff`). Der x64-Adapter besitzt den gültigen Anfangszustandsraum und die Übergänge. Der Kern zählt den Aufwand und verlangt den Beweis, dass reservierte Bits null sind; die Fehlerfreiheitsoption genügt nicht. Ursprüngliche Intrinsics bleiben beobachtbar. MXCSR-Speicherzugriffe zum Schreiben, Quellschnittstellen und native/LLVM-Zertifikate benötigen eigene Verträge.
 
+`SourcePatchPreparation` besitzt die gemeinsame Layout-/Abhängigkeitstransaktion vor der Installation. `SourcePatchCallback` authentifiziert gesicherte Originaleinstiege und delegiert Befehlsrelokation und native Unwind-Daten an Architektur-/Formatverantwortliche. `SourcePatchDependencies` plant explizite Importe; ELF-/PE-/Mach-O-Schreiber bewahren bestehende Loaderidentitäten. Quelltext, gelieferte IR und native Objekte verwenden dieselben Pläne. Die abschließenden Abschnitts-/Rechtenachweise und das erneute Laden in `publishSourcePatch` bleiben maßgeblich; CLI, C API und Python duplizieren keine Loader- oder Relokationsentscheidungen.
+
+Die sechs ausgewählten nativen OS/ISA-Jobs bestanden ohne Fehler oder Überspringen: 3669 GoogleTest-Ausführungen, 1008 native Prozessbeobachtungen (504 funktionale und 504 C++-Ausnahmebeobachtungen), 12 echte Loader-Ablehnungen, 96 Images und 84 Veröffentlichungsbelege. [Exakte native Nachweise](source-patching.md).
+
 ## Wiederherstellung von Laufzeitspeicher
 
 `X64SegmentedWrites` erlaubt unabhängig gewöhnliche FS/GS-Schreibzugriffe mit 1/2/4/8 Byte und 64-Bit-Offsets bei ausdrücklich fehlerfreiem Maschinenzustand. `arch/x86_64` übernimmt Optionsprüfung, Zulassung und Initialisierung symbolischer Basisadressen. Der Kern verwendet vollständige lineare Adressen und die normale Aliasinvalidierung. Beliebige feste Basisadressen können sich mit Stackframes, anderen Segmenten und aktiven Rückkehrzellen überschneiden. Die Fähigkeit ist in raw-Nachweise eingebunden. Quellcode- und native Beweisschnittstellen ohne authentifizierte Basiseingaben lehnen diesen Bereich weiterhin ab.

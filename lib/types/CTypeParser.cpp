@@ -18,6 +18,7 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringSwitch.h"
 
 #include <functional>
@@ -636,8 +637,11 @@ private:
     bool NoReturn = false;
   };
 
-  void note(std::vector<std::string> &Names, const std::string &Name) {
-    if (!llvm::is_contained(Names, Name))
+  /// Notes \p Name in \p Names once, in source order: a system header's
+  /// library declares thousands, so \p Seen keeps them for lookup.
+  void note(std::vector<std::string> &Names, llvm::StringSet<> &Seen,
+            const std::string &Name) {
+    if (Seen.insert(Name).second)
       Names.push_back(Name);
   }
 
@@ -721,7 +725,7 @@ private:
           Type = makeFunction(std::move(Function));
         }
         Library.definePrototype(Name, Type->Function);
-        note(Result.Prototypes, Name);
+        note(Result.Prototypes, NotedPrototypes, Name);
         // A definition's body holds no declarations this reads.
         if (isPunct("{")) {
           skipBody();
@@ -786,7 +790,7 @@ private:
       else
         Local.Record = Type->Record;
       Library.define(std::move(Local));
-      note(Result.Types, Name);
+      note(Result.Types, NotedTypes, Name);
       Named = makeNamed(Name, Kind);
     } else {
       defineTypedef(Name, Type, std::get<2>(*Naming));
@@ -865,7 +869,7 @@ private:
       Local.Target = Type;
     }
     Library.define(std::move(Local));
-    note(Result.Types, Name);
+    note(Result.Types, NotedTypes, Name);
   }
 
   /// Reads a declaration's specifiers into \p Spec; false when none name a
@@ -1245,7 +1249,7 @@ private:
     Local.Origin = Options.Origin;
     Local.Record = std::move(Def);
     Library.define(std::move(Local));
-    note(Result.Types, Name);
+    note(Result.Types, NotedTypes, Name);
     return makeNamed(Name, Kind);
   }
 
@@ -1426,7 +1430,7 @@ private:
     Local.Origin = Options.Origin;
     Local.Enum = std::move(Def);
     Library.define(std::move(Local));
-    note(Result.Types, Name);
+    note(Result.Types, NotedTypes, Name);
     return makeNamed(Name, TypeKind::Enum);
   }
 
@@ -1780,6 +1784,19 @@ private:
           At.Text == "_Alignof" || At.Text == "__alignof" ||
           At.Text == "__alignof__") {
         take();
+        // The size of a string literal is its bytes and the terminator's,
+        // as INTERNET_MAX_URL_LENGTH counts sizeof("://").
+        if (At.Text == "sizeof" &&
+            (peek().Kind == TokenKind::String ||
+             (isPunct("(", 0) && peek(1).Kind == TokenKind::String))) {
+          const bool Parenthesized = accept("(");
+          uint64_t Size = 1;
+          while (peek().Kind == TokenKind::String)
+            Size += take().Text.size();
+          if (Parenthesized && !expect(")", "after a string"))
+            return std::nullopt;
+          return int64_t(Size);
+        }
         TypeExprRef Type = typeInParentheses();
         if (!Type)
           return std::nullopt;
@@ -1916,6 +1933,8 @@ private:
   TypeLibrary &Library;
   const ParseOptions &Options;
   ParseResult &Result;
+  /// The names Result lists.
+  llvm::StringSet<> NotedTypes, NotedPrototypes;
   const bool Cpp;
   bool Failed = false;
   /// Open extern "C" and namespace blocks.

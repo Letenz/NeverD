@@ -330,6 +330,22 @@ TEST(TypeParse, ReadsWhatGnuPreprocessedHeadersHold) {
   EXPECT_EQ(Log.Params[1].Type->Kind, TypeExprKind::Pointer);
 }
 
+TEST(TypeParse, SizesAStringLiteralWithItsTerminator) {
+  // <wininet.h>'s INTERNET_MAX_URL_LENGTH, as -E leaves it, sizes the
+  // arrays of <commctrl.h> and <shlobj.h>; adjacent literals are one.
+  const TypeLibrary Library = parsed(R"(
+    typedef unsigned short WCHAR;
+    typedef struct tagLITEM {
+      WCHAR szUrl[(2048+32+sizeof("://"))];
+      char Joined[sizeof "ab" "c"];
+      char Empty[sizeof("")];
+    } LITEM;
+    _Static_assert(sizeof(LITEM) == 2 * 2084 + 4 + 1 + 1, "LITEM");
+  )");
+  EXPECT_EQ(shapeOf(recordOf(Library, "tagLITEM")),
+            "struct{szUrl@0 Joined@4168 Empty@4172}");
+}
+
 TEST(TypeParse, RefusesWhatItCannotLayOutAndKeepsGoingWhenAsked) {
   TypeLibrary Library;
   // A #pragma pack of an unknown name leaves every layout after it unknown.

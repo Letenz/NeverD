@@ -98,6 +98,11 @@ add_neverd_unittest(NeverDSourceDialectTests
   backend/SourceDialectTests.cpp
   LINK_COMPONENTS BackendC
 )
+
+add_neverd_unittest(NeverDSourcePatchLayoutTests
+  SourcePatchLayoutTests.cpp
+  LINK_COMPONENTS CodeGen
+)
 add_neverd_unittest(NeverDItaniumHandlerTests
   lift/eh/ItaniumHandlerBodiesTests.cpp
   LINK_COMPONENTS BackendC
@@ -283,6 +288,11 @@ add_subdirectory(lift)
 add_subdirectory(translate)
 if(NEVERD_ENABLE_SEMANTIC_TESTS)
   add_subdirectory(semantic)
+  add_neverd_unittest(NeverDSourcePatchCallbackTests
+    SourcePatchCallbackTests.cpp
+    LINK_COMPONENTS CodeGen
+    LINK_LIBS unicorn
+  )
   if(TARGET neverd_shared)
     add_neverd_tool(NeverDSourcePatchLegacyFixture
       SourcePatchLegacyMachOFixture.cpp
