@@ -301,6 +301,28 @@ void PythonWriter::typedefinition(const LocalType &Type,
   }
   if (!Type.Target)
     return;
+  // A typedef of a function type is one too, which no value is.
+  const TypeExpr *Target = Type.Target.get();
+  for (unsigned Hop = 0; Target && Hop < 64; ++Hop) {
+    if (Target->Kind == TypeExprKind::Function && Target->Function) {
+      Out += "# " + Name + " is the function type " +
+             C.declare(*makeFunction(Target->Function)) +
+             "; a pointer to it is ctypes.c_void_p.\n";
+      return;
+    }
+    const LocalType *Named = Target->Kind == TypeExprKind::Named
+                                 ? Library.find(Target->Name)
+                                 : nullptr;
+    if (!Named)
+      break;
+    if (Named->Kind == TypeKind::Function && Named->Function) {
+      Out += "# " + Name + " is the function type " +
+             C.declare(*makeFunction(Named->Function)) +
+             "; a pointer to it is ctypes.c_void_p.\n";
+      return;
+    }
+    Target = Named->Kind == TypeKind::Typedef ? Named->Target.get() : nullptr;
+  }
   const std::string Says = note(*Type.Target);
   Out += Says.empty() ? Name + " = " + type(*Type.Target) + "\n"
                       : line(Name + " = " + type(*Type.Target), Says);
