@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
@@ -125,6 +126,11 @@ public:
   void setCallEntryStackSlots(const std::set<va_t> *S) {
     CallEntryStackSlots = S;
   }
+  /// The integer arguments prototyped imports take where call setup gives
+  /// calls their arguments (PipelineResult::CallEntryArgumentCounts).
+  void setCallEntryArgumentCounts(const std::map<va_t, int> *M) {
+    CallEntryArgumentCounts = M;
+  }
   /// Indirect-call dispatchers (PipelineResult::CallDispatchThunks).
   void setCallDispatchThunks(const std::set<va_t> *S) {
     CallDispatchThunks = S;
@@ -174,6 +180,21 @@ public:
   /// same pre-SSA register-pair modeling runs and buildSsa places the high-half
   /// loop PHI. Optional; null = no-op.
   void setI64IndirectSites(const std::set<va_t> *S) { I64IndirectSites = S; }
+
+  /// Registration frame facts that an earlier conversion of the same LowFunc
+  /// against the same image proved
+  /// (MedFunc::RegistrationCallerCleanupABIComplete and
+  /// RegistrationCxxEntryPopBytes).  They depend on nothing else, so a
+  /// re-conversion of Entry reuses them instead of proving them again.
+  /// Optional; unset = prove them.
+  struct RegistrationFrameFacts {
+    va_t Entry = 0;
+    bool CallerCleanupABIComplete = false;
+    std::optional<uint16_t> CxxEntryPopBytes;
+  };
+  void setRegistrationFrameFacts(const RegistrationFrameFacts &Facts) {
+    KnownRegistrationFrameFacts = Facts;
+  }
 
   struct StackSlot {
     int64_t Offset;
@@ -356,6 +377,7 @@ private:
   const std::map<va_t, va_t> *CallArgumentSources = nullptr;
   const std::map<va_t, int> *CallEntryStackArgs = nullptr;
   const std::set<va_t> *CallEntryStackSlots = nullptr;
+  const std::map<va_t, int> *CallEntryArgumentCounts = nullptr;
   const std::set<va_t> *CallDispatchThunks = nullptr;
   const std::map<va_t, int> *CallVariadicFrom = nullptr;
   const std::map<va_t, FormattedCall> *FormattedCalls = nullptr;
@@ -380,6 +402,9 @@ private:
   /// returns; see setI64IndirectSites.  Null unless the pipeline re-converts a
   /// caller whose function-pointer call threads an i64 accumulator.
   const std::set<va_t> *I64IndirectSites = nullptr;
+
+  /// See setRegistrationFrameFacts.
+  std::optional<RegistrationFrameFacts> KnownRegistrationFrameFacts;
 };
 
 /// Model a 32-bit target's 64-bit integer call return (i386 EDX:EAX, ARM32

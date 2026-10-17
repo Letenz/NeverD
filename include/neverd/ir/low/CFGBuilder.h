@@ -1148,6 +1148,8 @@ private:
     int FpuTopIn = 0;
     int FpuTopOut = 0;
     bool FpuReset = false;
+
+    bool operator==(const InsnRecord &Other) const = default;
   };
 
   void explore(const BinaryImage &Img, Decoder &Dec, va_t Addr);
@@ -1921,6 +1923,9 @@ private:
     const std::map<va_t, JumpTableInfo> *ConsumerRoleInfos = nullptr;
     /// Borrowed from the enclosing round; never retained by a proposal.
     FiniteJumpTableRoundCertificate *FiniteRoundCertificate = nullptr;
+
+    bool
+    operator==(const GuardedJumpTableGroupProofContext &Other) const = default;
   };
   enum class GuardedJumpTableGroupKind : uint8_t {
     DenseGuard,
@@ -1940,6 +1945,8 @@ private:
     std::map<va_t, JumpTableInfo> Infos;
     std::map<va_t, std::vector<va_t>> Targets;
     bool Published = false;
+
+    bool operator==(const GuardedJumpTableGroupState &Other) const = default;
   };
   std::optional<GuardedJumpTableGroupProofContext> GuardedGroupProofContext;
   std::optional<GuardedJumpTableGroupKey> GuardedGroupIdentity;

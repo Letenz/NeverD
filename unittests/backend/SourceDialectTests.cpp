@@ -1406,8 +1406,6 @@ BitFieldPrograms bitFieldPrograms() {
   using namespace neverd::types;
   // Laid out as GNU's compilers lay them out, which the C side builds with.
   TypeLibrary Library(DataModel::LP64);
-  ParseOptions Gnu;
-  Gnu.Rules = LayoutRules::Itanium;
   EXPECT_TRUE(parseCTypes(R"(
     struct _FLAGS {
       unsigned char Kind;
@@ -1430,7 +1428,7 @@ BitFieldPrograms bitFieldPrograms() {
       unsigned short Tail;
     };
   )",
-                          Library, Gnu)
+                          Library)
                   .ok());
   // GNU's compilers pack _SHARED's bit-fields at the bit after Kind, in the
   // bytes of the units of their types that Kind starts, which no field of

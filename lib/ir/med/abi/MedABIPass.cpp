@@ -203,10 +203,10 @@ struct ReachingStackPtrResult {
   std::optional<int64_t> Delta;
 };
 
-ReachingStackPtrResult findReachingStackPtr(const MedFunc &Func,
-                                            const TargetRegInfo &TRI,
-                                            int BlockId, int BeforeIdx,
-                                            MedDefSiteIndex *Defs = nullptr) {
+ReachingStackPtrResult
+findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
+                     int BeforeIdx, MedDefSiteIndex *Defs = nullptr,
+                     const MedBlockIdIndex *Index = nullptr) {
   // Walk transparent predecessors once and collect every boundary at which the
   // reaching SP becomes concrete: a local SP definition, an SP PHI, or a
   // function-entry block.  The former recursive walk only marked the current
@@ -217,10 +217,10 @@ ReachingStackPtrResult findReachingStackPtr(const MedFunc &Func,
   // boundary, so a visited worklist preserves the exact all-path agreement
   // check while making the traversal linear in the reachable CFG.
   using State = std::pair<int, int>;
-  std::map<int, const MedBlock *> Blocks;
-  for (const MedBlock &Block : Func.Blocks)
-    if (!Blocks.emplace(Block.Id, &Block).second)
-      return {};
+  std::optional<MedBlockIdIndex> OwnBlocks;
+  const MedBlockIdIndex &Blocks = Index ? *Index : OwnBlocks.emplace(Func);
+  if (!Blocks.unique())
+    return {};
 
   std::vector<State> Worklist{{BlockId, BeforeIdx}};
   std::set<State> Visited;
@@ -260,10 +260,10 @@ ReachingStackPtrResult findReachingStackPtr(const MedFunc &Func,
     if (!Visited.insert(Current).second)
       continue;
 
-    auto BlockIt = Blocks.find(Current.first);
-    if (BlockIt == Blocks.end())
+    const MedBlock *Found = Blocks.first(Current.first);
+    if (!Found)
       return {};
-    const MedBlock &Block = *BlockIt->second;
+    const MedBlock &Block = *Found;
     const int Boundary =
         std::clamp(Current.second, 0, static_cast<int>(Block.Ops.size()));
 
@@ -299,11 +299,10 @@ ReachingStackPtrResult findReachingStackPtr(const MedFunc &Func,
     }
 
     for (int PredId : Block.Preds) {
-      auto PredIt = Blocks.find(PredId);
-      if (PredIt == Blocks.end())
+      const MedBlock *Pred = Blocks.first(PredId);
+      if (!Pred)
         return {};
-      Worklist.emplace_back(PredId,
-                            static_cast<int>(PredIt->second->Ops.size()));
+      Worklist.emplace_back(PredId, static_cast<int>(Pred->Ops.size()));
     }
   }
 
@@ -624,6 +623,8 @@ void recoverCallAbi(
   // recovery quadratic in a 12k-block function.
   MedDefinitionIndex Definitions(Func);
   MedDefSiteIndex DefSites(Func);
+  // The loop adds no blocks, so one index serves every call's walks.
+  const MedBlockIdIndex BlockIds(Func);
   auto lookupDefinition = [&](const MedVar &V) { return Definitions.find(V); };
   for (auto &Blk : Func.Blocks) {
     for (size_t OI = 0; OI < Blk.Ops.size(); ++OI) {
@@ -1108,7 +1109,7 @@ void recoverCallAbi(
       }
       if (!HaveCallSpBasis || !HaveCallSpDelta) {
         ReachingStackPtrResult Reaching = findReachingStackPtr(
-            Func, TRI, Blk.Id, static_cast<int>(OI), &DefSites);
+            Func, TRI, Blk.Id, static_cast<int>(OI), &DefSites, &BlockIds);
         if (!HaveCallSpBasis && Reaching.Basis) {
           buildCallSpOffsets(Func, TRI, *Reaching.Basis, 0, CallSpOffsets, 0,
                              &DefSites);
@@ -1142,7 +1143,8 @@ void recoverCallAbi(
                          FoundMask,
                          FromStackScan,
                          MaxArgs,
-                         CallRelativeStackOffset};
+                         CallRelativeStackOffset,
+                         &BlockIds};
 
       // A value spilled to the call frame before the call (an outgoing `push` /
       // `str [sp,#k]` landing at or above the call SP) means the ABI has run
@@ -1195,7 +1197,7 @@ void recoverCallAbi(
           auto V =
               findReachingArgReg(Func, TRI, TheArch, Blk.Id, K, IntegerLayout,
                                  /*AllowUnknownLiveIn=*/false, nullptr, nullptr,
-                                 static_cast<int>(OI), Fmt);
+                                 static_cast<int>(OI), Fmt, &BlockIds);
           if (!V)
             continue;
           Found[K] = *V;
@@ -1281,9 +1283,10 @@ void recoverCallAbi(
                                    takesIncomingRegister(IntParamRegs[K]);
           bool FromLiveIn = false;
           bool FoundDefinition = false;
-          auto V = findReachingArgReg(
-              Func, TRI, TheArch, Blk.Id, K, IntegerLayout, AllowLiveIn,
-              &FromLiveIn, &FoundDefinition, static_cast<int>(OI), Fmt);
+          auto V =
+              findReachingArgReg(Func, TRI, TheArch, Blk.Id, K, IntegerLayout,
+                                 AllowLiveIn, &FromLiveIn, &FoundDefinition,
+                                 static_cast<int>(OI), Fmt, &BlockIds);
           if (!V)
             break;
           // What only earlier calls left in the register is an argument only
@@ -1422,7 +1425,7 @@ void recoverCallAbi(
           auto V =
               findReachingArgReg(Func, TRI, TheArch, Blk.Id, K, IntegerLayout,
                                  /*AllowUnknownLiveIn=*/false, nullptr, nullptr,
-                                 static_cast<int>(OI), Fmt);
+                                 static_cast<int>(OI), Fmt, &BlockIds);
           if (!V)
             continue;
           Found[K] = *V;

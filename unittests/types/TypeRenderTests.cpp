@@ -814,8 +814,6 @@ TEST(TypeRender, GnuBitFieldsThatShareBytesTakeStorageOfTheirOwn) {
   // takes, and the record's alignment, which those bytes no longer give,
   // is declared or filled.
   TypeLibrary Library(DataModel::LP64);
-  ParseOptions Gnu;
-  Gnu.Rules = LayoutRules::Itanium;
   ASSERT_TRUE(parseCTypes(R"(
     struct _SHARED {
       unsigned char Kind;
@@ -831,7 +829,7 @@ TEST(TypeRender, GnuBitFieldsThatShareBytesTakeStorageOfTheirOwn) {
       unsigned int Next;
     };
   )",
-                          Library, Gnu)
+                          Library)
                   .ok());
   const LocalType *Shared = Library.find("_SHARED");
   ASSERT_NE(Shared, nullptr);

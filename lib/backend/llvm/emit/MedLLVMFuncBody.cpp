@@ -24,6 +24,7 @@
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/LLVMValueProvenance.h"
+#include "neverd/backend/ParameterSites.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
@@ -373,6 +374,14 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   EHSelectorAlloca = nullptr;
   SEHExceptionCodeSlots.clear();
 
+  // Where each argument arrives, for a writer binding a debug signature: the
+  // places MedToHigh gives HighC's parameters.
+  if (LLVMFunc->arg_size() == Func.Params.size()) {
+    std::vector<parameter_sites::Site> Sites;
+    for (const MedVar &Param : Func.Params)
+      Sites.push_back({Param.RegOff, Param.Id});
+    parameter_sites::setParameterSites(*LLVMFunc, Sites);
+  }
   unsigned PI = 0;
   for (auto &Arg : LLVMFunc->args()) {
     if (PI < Func.Params.size()) {

@@ -19,6 +19,8 @@ extern int socket(int, int, int);
 extern int connect(int, const void *, u32);
 extern long send(int, const void *, u64, int);
 extern long recv(int, void *, u64, int);
+extern long recvfrom(int, void *, u64, int, void *, u32 *);
+extern long sendto(int, const void *, u64, int, const void *, u32);
 extern int close(int);
 extern int dup(int);
 extern long write(int, const void *, u64);
@@ -26,6 +28,133 @@ extern long read(int, void *, u64);
 extern long syscall(long, ...);
 extern void *dlopen(const char *, int);
 extern void *dlsym(void *, const char *);
+extern void *checked_copy(void *, const void *, u64,
+                          u64) __asm__("__memcpy_chk");
+extern void *checked_move(void *, const void *, u64,
+                          u64) __asm__("__memmove_chk");
+extern void *checked_fill(void *, int, u64, u64) __asm__("__memset_chk");
+/* These address-only imports have no PLT calls. Supply the function type
+ * normally inherited from libc.so when linking against the Android sysroot. */
+__asm__(".type __memcpy_chk, %function\n"
+        ".type __memmove_chk, %function\n"
+        ".type __memset_chk, %function\n");
+
+u64 network_checked_memory(u64 *out, u64 mode) {
+  unsigned char *dst = (void *)(out + 32);
+  const unsigned char src[] = {0, 0xff, 0x42};
+  void *(*volatile copy_call)(void *, const void *, u64, u64) = checked_copy;
+  void *(*volatile move_call)(void *, const void *, u64, u64) = checked_move;
+  void *(*volatile fill_call)(void *, int, u64, u64) = checked_fill;
+  if (mode >= 1 && mode <= 3) {
+    if (mode == 1)
+      copy_call((void *)1, (void *)1, 2, 1);
+    if (mode == 2)
+      move_call((void *)1, (void *)1, 2, 1);
+    if (mode == 3)
+      fill_call((void *)1, 0, 2, 1);
+    return 99;
+  }
+  if (mode == 4) {
+    out[0] = (u64)copy_call((void *)1, (void *)1, 0, 0);
+    out[1] = (u64)move_call((void *)1, (void *)1, 0, 0);
+    out[2] = (u64)fill_call((void *)1, 0, 0, 0);
+    return 0;
+  }
+  if (mode == 6) {
+    copy_call(dst, dst + 1, 3, 3);
+    return 99;
+  }
+  if (mode == 7) {
+    copy_call((void *)1, src, 3, 3);
+    return 99;
+  }
+  if (mode == 5) {
+    void *handle = dlopen("libc.so", 2);
+    void *(*copy)(void *, const void *, u64, u64) =
+        dlsym(handle, "__memcpy_chk");
+    void *(*move)(void *, const void *, u64, u64) =
+        dlsym(handle, "__memmove_chk");
+    void *(*fill)(void *, int, u64, u64) = dlsym(handle, "__memset_chk");
+    if (!copy || !move || !fill)
+      return 1;
+    out[0] = copy(dst, src, 3, 3) == dst;
+    out[1] = move(dst + 1, dst, 3, 4096) == dst + 1;
+    out[2] = fill(dst + 4, 0x1ab, 2, (u64)-1) == dst + 4;
+  } else {
+    out[0] = copy_call(dst, src, 3, 3) == dst;
+    out[1] = move_call(dst + 1, dst, 3, 4096) == dst + 1;
+    out[2] = fill_call(dst + 4, 0x1ab, 2, (u64)-1) == dst + 4;
+  }
+  return 0;
+}
+
+u64 network_datagram(u64 *out, u64 mode) {
+  unsigned char peer[28] = {2, 0, 0x23, 0x29, 127, 0, 0, 1};
+  const int ipv6 = (mode & 2) != 0, raw = mode & 1;
+  if (ipv6) {
+    peer[0] = 10;
+    peer[4] = peer[7] = 0;
+    peer[23] = 1;
+  }
+  u32 size = ipv6 ? 28 : 16;
+  int tcp = socket(ipv6 ? 10 : 2, 1, 6);
+  out[0] = connect(tcp, peer, size);
+  out[1] = *__errno();
+  if (close(tcp))
+    return 1;
+  int fd =
+      raw ? syscall(198, ipv6 ? 10 : 2, 2, 17) : socket(ipv6 ? 10 : 2, 2, 17);
+  out[2] = fd == tcp;
+  out[3] = raw ? syscall(203, fd, peer, size) : connect(fd, peer, size);
+  int alias = dup(fd);
+  if (alias < 0 || close(fd))
+    return 2;
+  const unsigned char packet[] = {0, 0xff, 0x42};
+  out[4] = raw ? syscall(206, alias, packet, 3, 0, 0, 0)
+               : sendto(alias, packet, 3, 0, 0, 0);
+  unsigned char *payload = (void *)(out + 32), *source = (void *)(out + 40);
+  u32 length = 3;
+  out[5] = raw ? syscall(207, alias, payload, 2, 2 | 0x20, source, &length)
+               : recvfrom(alias, payload, 2, 2 | 0x20, source, &length);
+  out[6] = length;
+  out[7] = recv(alias, payload + 8, 1, 0);      /* discard packet suffix */
+  out[8] = send(alias, (void *)1, 0, 0);        /* a genuine empty datagram */
+  out[9] = read(alias, (void *)1, 0);           /* no dequeue */
+  out[10] = recv(alias, (void *)1, 0, 2);       /* peek empty datagram */
+  out[11] = recv(alias, (void *)1, 0, 0);       /* consume it */
+  out[12] = recv(alias, payload + 16, 8, 0x40); /* explicit EAGAIN */
+  out[13] = *__errno();
+  void *handle = dlopen("libc.so", 2);
+  long (*receive)(int, void *, u64, int) = dlsym(handle, "recv");
+  if (!receive)
+    return 3;
+  out[14] = receive(alias, payload + 16, 8, 0);
+  out[15] = *__errno();
+  return close(alias);
+}
+
+u64 network_receive_events(u64 *out, u64 unused) {
+  (void)unused;
+  const unsigned char peer[16] = {2, 0, 0x23, 0x29, 127, 0, 0, 1};
+  int fd = socket(2, 1, 6);
+  if (connect(fd, peer, 16))
+    return 1;
+  unsigned char *payload = (void *)(out + 32);
+  out[0] = recv(fd, payload, 8, 0);
+  out[1] = *__errno();
+  const unsigned char request[] = {0, 0xff, 0x42};
+  out[2] = send(fd, request, 3, 0);
+  out[3] = recv(fd, payload, 8, 0);
+  out[4] = recv(fd, payload + 2, 8, 0);
+  out[5] = recv(fd, payload + 3, 8, 0x40);
+  out[6] = *__errno();
+  out[7] = recv(fd, payload + 3, 8, 0);
+  out[8] = recv(fd, payload + 4, 8, 0);
+  // The caller's protocol decision is ordinary guest code, not an OS ACK.
+  out[9] = payload[0] == 'O' && payload[1] == 'K' && payload[2] == 0 &&
+           payload[3] == '!';
+  return close(fd);
+}
 
 u64 network_resolve(u64 *out, u64 mode) {
   struct address_info hints = {0}, *result = (void *)0x1234;

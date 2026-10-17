@@ -223,14 +223,22 @@ renders prototypes (`rendersPrototypes`, `readsDeclarations`; the C API's
 language list says both).
 
 `parseTypes` reads C, C++, Rust and Go declarations back into the library
-(`TypeParse.h`), and `layOutRecord` lays each record out under MSVC or
-Itanium rules (`TypeLayout.h`):
+(`TypeParse.h`), and `layOutRecord` lays each record out as the library's
+record ABI does (`TypeLayout.h`):
 - C and C++ take every builtin spelling the renderers write, `#pragma pack`,
   alignment specifiers and static assertions, which are checked;
 - Rust and Go take what their renderers write: records named `<Parent>_<n>`
   that the parent holds go back in place, a `_bitfield` comment lists its
   bitfields, and Go's unions, unaligned members and flexible arrays come
   back from their accessor methods.
+
+A library's record ABI (`RecordABIs.def`) says what its data model does not:
+whether bit-fields go as Microsoft's compilers or the Itanium ABI place them,
+and how far a scalar aligns in a record, four for long long and double under
+the i386 System V ABI. The C API takes a program's from its platform and
+architecture (`recordABIOf`), so a 32-bit Linux program's records read,
+parse and render as GCC lays them out, and an ARM one's as the AAPCS does.
+Parsing and every renderer read the library's ABI; nothing else carries one.
 
 A source reads whole or not at all. The C API keeps the user's declarations
 in order and reads them again over the program's types whenever those are
@@ -256,13 +264,13 @@ each parameter (`placeSourceParameters`, one file per convention).
 a driver's `<ntifs.h>` declares into `lib/types/headers/WindowsKernelX64.h`
 and `WindowsKernelX86.h`, and what a program's `<windows.h>`, `<winternl.h>`
 and the headers of the libraries programs most often call declare into
-`WindowsUserX64.h` and `WindowsUserX86.h`; mingw-w64's DDK declares no ARM64
-kernel. The build embeds each file in a unit of its own, and `headerLibrary`
-reads each once. The C API joins the libraries the table names to an image
-(an x64 or x86 PE of the native subsystem joins its kernel's; one of the
-Windows GUI or console subsystem joins its user mode's, then its kernel's
-for the native API ntdll exports) after the program's PDB and before the
-user's declarations:
+`WindowsUserX64.h`, `WindowsUserX86.h` and `WindowsUserARM64.h`; mingw-w64's
+DDK declares no ARM64 kernel. The build embeds each file in a unit of its
+own, and `headerLibrary` reads each once. The C API joins the libraries the
+table names to an image (an x64 or x86 PE of the native subsystem joins its
+kernel's; one of the Windows GUI or console subsystem joins its user mode's,
+then its kernel's for the native API ntdll exports, which an ARM64 one has
+none of) after the program's PDB and before the user's declarations:
 - a header type joins only where the program has no type of its name;
 - a typedef names the program's type, as C binds it;
 - a header record laid out with a type the program sizes otherwise is left
@@ -433,6 +441,15 @@ by its prototype or its decoration, pops its arguments as it returns
 the call as for a callee of the image whose `ret` pops, so the caller's
 stack accesses after it read the right slots. An i386 extern declares the convention its prototype states,
 as WINAPI's `__attribute__((stdcall))`, whose callee pops its arguments.
+Where the setup of each call gives it its arguments and no summary does
+(Windows on ARM64), a prototype of integer and pointer parameters counts
+them (`CallEntryArgumentCounts`): a call to the import passes that many, a
+register its caller passes on untouched included, and no register an
+earlier call left. A floating or record parameter gives no count, and
+neither does a variadic prototype, which the header libraries do not give.
+An exported routine's prototype gives its definition its parameters there,
+but not yet its callers within the image their count, as the register
+summaries do on x64.
 A callee the
 pipeline does not decompile returns what its declaration says, as the C
 writers read it, so that a caller returning what a `void` routine left in
@@ -763,6 +780,14 @@ units can parse disjoint unit groups in parallel using independent LLVM object
 and DWARF contexts, then merge facts in source order. Only immutable input bytes
 are shared. Small and compressed inputs stay serial to avoid setup costs and
 per-worker decompression memory; `NEVERD_THREADS=1` selects the serial path.
+
+A DWARF declaration's type is its own `DW_AT_type`. A DIE without one takes
+the type that the declarations its `DW_AT_specification` and
+`DW_AT_abstract_origin` chain names declare, resolved as return types are:
+conflicting declarations count as none. Function parameters, locals, record
+parameters and global objects read types this way. The out-of-line copy of an
+inlined function names its parameters and locals only by abstract origin, and
+a variable defined apart from its declaration names it only by specification.
 
 ```mermaid
 flowchart LR
@@ -6652,7 +6677,7 @@ HighIR tail copying consults `SourceCallTypeHint::requiresUniqueSourceOccurrence
 
 The shared `SourceABI` owner distinguishes a logical by-value record from its physical address carrier. Darwin ARM64 C declarations for six or sixteen doubles keep the complete record type and use an eight-byte integer-register or naturally aligned stack carrier, independently of floating argument registers and the x8 result pointer. ABI equality and projection batching retain this distinction, calling convention and parameter roles. Partial, overlapping, incompatible or stale carriers are rejected. This declaration alone does not bind LowIR calls, project entries, emit HighC calls or authorize frame borrows: those require a separate copy-storage proof. Compiler and native ABI tests cover register exhaustion, stack packing, arbitrary floating bits, copy mutation isolation and independent indirect results; they are not a complete `setTransform:` recovery test.
 
-Debug signatures name recovered parameters by where they arrive, never by position. `SourceParameterPlacement` places each source parameter under the ordinary convention of its target: System V x86-64, Microsoft x64, AAPCS64 and i386 cdecl/stdcall, each in its own file. It returns the registers and stack slots that hold each parameter's pieces, and the hidden result pointer. HighC binds a recovered parameter to the piece at its register or entry stack offset; an i386 stack parameter's offset counts from the lowest stack parameter number, since MedABIPass numbers the stack parameters before it promotes a register parameter a call passes on. LLVM-C, which does not know where each argument arrives, names the arguments by position, and names none of an i386 function declared to take every argument on the stack that has more recovered arguments than declared: a recovered register comes before its stack arguments. A later piece is named after its parameter and byte offset (`p_8`), and the declared type applies only where the location holds the whole value as its bytes. Placement stops at the first parameter whose place the rules cannot be sure of: a record whose passing the source does not state, a scalar wider than a register, a memory record of unknown alignment, or Apple arm64 stack packing. Later parameters keep their machine names, and functions of languages with their own conventions, such as Go, bind nothing. The DWARF loader gives parameter and result types alone a passing mode and scalar layout: C records pass by value, C++ classes as `DW_AT_calling_convention` states, and `_Complex` values as complex numbers. Rust records stay unknown, because Rust's own ABI and `extern "C"` pass some records differently. PDB records follow the Microsoft C++ ABI: i386 passes them as their bytes, while x64 passes them as their bytes or as an address in the same position. Call prototypes and argument casts still come only from signatures that map by position, whose parameters are all integers or all floating values.
+Debug signatures name recovered parameters by where they arrive, never by position. `SourceParameterPlacement` places each source parameter under the ordinary convention of its target: System V x86-64, Microsoft x64, AAPCS64 and i386 cdecl/stdcall, each in its own file. It returns the registers and stack slots that hold each parameter's pieces, and the hidden result pointer. HighC binds a recovered parameter to the piece at its register or entry stack offset; an i386 stack parameter's offset counts from the lowest stack parameter number, since MedABIPass numbers the stack parameters before it promotes a register parameter a call passes on. LLVM-C binds its arguments the same way, through the binding the two writers share (`bindDebugParams`, `lib/backend/c/DebugParamBinding`): the LLVM emitter records where each argument arrives in the `neverd.parameter-sites` function metadata, its register or the MedIR parameter index that numbers its stack slot. An argument of no recorded place binds by position only while every parameter before it fills one integer slot, as in every convention, and an MSVC indirect result keeps its arguments' positions in both writers. A later piece is named after its parameter and byte offset (`p_8`), and the declared type applies only where the location holds the whole value as its bytes. Placement stops at the first parameter whose place the rules cannot be sure of: a record whose passing the source does not state, a scalar wider than a register, a memory record of unknown alignment, or Apple arm64 stack packing. Later parameters keep their machine names, and functions of languages with their own conventions, such as Go, bind nothing. The DWARF loader gives parameter and result types alone a passing mode and scalar layout: C records pass by value, C++ classes as `DW_AT_calling_convention` states, and `_Complex` values as complex numbers. Rust records stay unknown, because Rust's own ABI and `extern "C"` pass some records differently. PDB records follow the Microsoft C++ ABI: i386 passes them as their bytes, while x64 passes them as their bytes or as an address in the same position. Call prototypes and argument casts still come only from signatures that map by position, whose parameters are all integers or all floating values.
 
 The shared `SourceFrameAnalysis` can check initialized private by-value copies at an original call when independent effect certificates describe the consumer and any complete indirect-result producer. It checks all reaching paths and loop backedges, exact active ranges, other argument aliases and later uses. Consuming a copy invalidates its initialization and saved-byte identities; a later read requires a new definite write. Initialization facts also expire on possible writes and frame release, while retained Swift scratch obligations remain intact. The query returns parameter extents only after complete frame restoration; it grants no machine identity, SDK effect, call binding or source-publication permission. Tests include branches, loops, partial writes, aliases and retained scratch; native ARM64 fixtures with real ObjC/CALayer reject reads of consumed copies and accept independently initialized disposable copies.
 
@@ -7044,6 +7069,20 @@ previously gained through normalization was a proved FXAM lowered to ordinary
 operations; FXAM writes only the status word, so the shared frame-preserving
 intrinsic policy accepts it directly. Among nested proof builds, only
 `buildNoReturnProof`'s local-stack fallback still normalizes the x87 stack.
+
+LowIR construction shares stack-pop answers across its workers
+(`RegistrationStackPopMemo`). A fresh `getCheckedX86CalleeStackPop` answer
+depends on the image, the callee and `x86SEHStateAnalysisLevel()`: an SEH
+state analysis nested four deep no longer checks bound calls. The memo records
+each fresh answer with the work it charged under that key; a later query for
+the same image object, callee and level charges that work again before taking
+the answer, so the answer and the exhaustion of a caller's cumulative budget
+match a fresh proof. A query that exhausts the budget records nothing.
+
+The i64-caller re-conversion in `modelWideIntReturns` takes
+`RegistrationCallerCleanupABIComplete` and `RegistrationCxxEntryPopBytes` from
+the first conversion of the same LowFunc: they depend only on the LowFunc and
+the image, and no stage changes a LowFunc after MedIR.
 
 `_local_unwind2` uses an unsigned stopping bound: it stops at the -1 sentinel or a level no greater than the requested bound, even when an enclosing link skips that index. The shared PE32 EH3 solver joins the actual stopping levels and only the effects of traversed finally callbacks; a zero-step unwind preserves the incoming registration level and frame-memory facts. Existing frame-argument, runtime-field and callback-stack proofs remain mandatory.
 
@@ -7659,9 +7698,12 @@ capture failures cannot replace the original service outcome.
 
 ## Offline network ownership
 
-`LinuxFiles` owns virtual TCP descriptions and their descriptor aliases,
-connection attempts and byte cursors. Raw services and Bionic wrappers use that
+`LinuxFiles` owns virtual TCP/UDP descriptions and their descriptor aliases,
+connection attempts, stream/packet cursors and explicit receive completions.
+`LinuxDatagram` implements packet effects on that same owner. Raw services and Bionic wrappers use that
 same owner. Bionic owns LP64 resolver allocations and libc error conversion;
 `ProcessNetworkJSON` parses explicit inputs and invokes the same admission
 validators as C++ sessions. Neither layer invokes a host resolver or transport.
+Send prerequisites gate receive input availability; application acknowledgement
+state remains owned by guest code, never inferred by an OS send result.
 See [offline network contracts](linux-network-contracts.md).

@@ -7,6 +7,8 @@
 #include "neverd/types/LocalTypes.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/bit.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <algorithm>
 #include <cassert>
@@ -22,18 +24,51 @@ constexpr BuiltinInfo Builtins[] = {
 #include "neverd/types/BuiltinTypes.def"
 };
 
-/// The alignment of a builtin of \p Bytes, as every supported ABI aligns
-/// its scalars: to their size, up to the largest the model allows.
-uint32_t scalarAlignment(uint64_t Bytes, DataModel Model) {
+/// The alignment of a builtin of \p Bytes in a record, as every supported
+/// ABI aligns its scalars: to their size, as a power of two, up to \p ABI's
+/// limit.
+uint32_t scalarAlignment(uint64_t Bytes, RecordABI ABI) {
   if (!Bytes)
     return 1;
-  // 32-bit targets align eight-byte scalars to four outside Windows; local
-  // types keep the conservative eight, which MSVC uses.
-  (void)Model;
-  return static_cast<uint32_t>(std::min<uint64_t>(Bytes, 16));
+  return static_cast<uint32_t>(
+      llvm::bit_floor(std::min<uint64_t>(Bytes, scalarAlignLimitOf(ABI))));
 }
 
 } // namespace
+
+LayoutRules layoutRulesOf(RecordABI ABI) {
+  switch (ABI) {
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit)             \
+  case RecordABI::Name:                                                        \
+    return LayoutRules::Rules;
+#include "neverd/types/RecordABIs.def"
+  }
+  llvm_unreachable("unknown record ABI");
+}
+
+uint32_t scalarAlignLimitOf(RecordABI ABI) {
+  switch (ABI) {
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit)             \
+  case RecordABI::Name:                                                        \
+    return ScalarAlignLimit;
+#include "neverd/types/RecordABIs.def"
+  }
+  llvm_unreachable("unknown record ABI");
+}
+
+llvm::StringRef recordABIName(RecordABI ABI) {
+  switch (ABI) {
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit)             \
+  case RecordABI::Name:                                                        \
+    return Spelling;
+#include "neverd/types/RecordABIs.def"
+  }
+  llvm_unreachable("unknown record ABI");
+}
+
+RecordABI defaultRecordABI(DataModel Model) {
+  return Model == DataModel::LP64 ? RecordABI::Itanium : RecordABI::Microsoft;
+}
 
 const BuiltinInfo &builtinInfo(Builtin Type) {
   return Builtins[static_cast<size_t>(Type)];
@@ -128,7 +163,8 @@ TypeExprRef qualified(TypeExprRef Type, bool Const, bool Volatile) {
 }
 
 TypeLibrary::TypeLibrary(const TypeLibrary &Other)
-    : Model(Other.Model), Prototypes(Other.Prototypes), ByName(Other.ByName) {
+    : Model(Other.Model), ABI(Other.ABI), Prototypes(Other.Prototypes),
+      ByName(Other.ByName) {
   ByOrdinal.reserve(Other.ByOrdinal.size());
   for (const auto &Type : Other.ByOrdinal)
     ByOrdinal.push_back(Type ? std::make_unique<LocalType>(*Type) : nullptr);
@@ -295,7 +331,7 @@ uint32_t TypeLibrary::requiredAlignOf(const TypeExpr &Type) const {
 uint32_t TypeLibrary::alignOf(const TypeExpr &Type) const {
   switch (Type.Kind) {
   case TypeExprKind::Builtin:
-    return scalarAlignment(builtinBytes(Type.TheBuiltin, Model), Model);
+    return scalarAlignment(builtinBytes(Type.TheBuiltin, Model), ABI);
   case TypeExprKind::Pointer:
     return Type.PointerBytes;
   case TypeExprKind::Array:
@@ -306,7 +342,7 @@ uint32_t TypeLibrary::alignOf(const TypeExpr &Type) const {
     return Type.Record ? alignOf(*Type.Record) : 1;
   case TypeExprKind::Enum:
     return Type.Enum ? scalarAlignment(
-                           builtinBytes(Type.Enum->Underlying, Model), Model)
+                           builtinBytes(Type.Enum->Underlying, Model), ABI)
                      : 4;
   case TypeExprKind::Named: {
     const LocalType *Named = resolve(Type.Name);
@@ -319,7 +355,7 @@ uint32_t TypeLibrary::alignOf(const TypeExpr &Type) const {
     case TypeKind::Enum:
       return Named->Enum
                  ? scalarAlignment(builtinBytes(Named->Enum->Underlying, Model),
-                                   Model)
+                                   ABI)
                  : 4;
     case TypeKind::Typedef:
       return Named->Target ? alignOf(*Named->Target) : 1;

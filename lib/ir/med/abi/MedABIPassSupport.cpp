@@ -58,10 +58,11 @@ bool incomingArgumentReachesCall(const AbiCallContext &C, int ArgIndex) {
   if (C.Func.Blocks.empty() || C.CallIdx < 0)
     return false;
   size_t Remaining = limits::kMaxCallSetupStackProofWork;
-  std::map<int, const MedBlock *> Blocks;
-  for (const auto &B : C.Func.Blocks)
-    if (!Blocks.emplace(B.Id, &B).second)
-      return false;
+  std::optional<MedBlockIdIndex> OwnBlocks;
+  const MedBlockIdIndex &Blocks =
+      C.Blocks ? *C.Blocks : OwnBlocks.emplace(C.Func);
+  if (!Blocks.unique())
+    return false;
   std::vector<std::pair<const MedBlock *, size_t>> Work{
       {&C.Blk, static_cast<size_t>(C.CallIdx)}};
   std::set<int> Seen;
@@ -98,11 +99,10 @@ bool incomingArgumentReachesCall(const AbiCallContext &C, int ArgIndex) {
     } else if (B->Preds.empty())
       return false;
     for (int Id : B->Preds) {
-      auto P = Blocks.find(Id);
-      if (P == Blocks.end() || std::count(P->second->Succs.begin(),
-                                          P->second->Succs.end(), B->Id) != 1)
+      const MedBlock *P = Blocks.first(Id);
+      if (!P || std::count(P->Succs.begin(), P->Succs.end(), B->Id) != 1)
         return false;
-      Work.emplace_back(P->second, P->second->Ops.size());
+      Work.emplace_back(P, P->Ops.size());
     }
   }
   return ReachedEntry;
@@ -118,10 +118,11 @@ std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C) {
   // A per-call bound also limits path duplication in diamonds. Exhaustion
   // publishes no partial predecessor proof.
   size_t Remaining = limits::kMaxCallSetupStackProofWork;
-  std::map<int, const MedBlock *> Blocks;
-  for (const MedBlock &B : C.Func.Blocks)
-    if (!Blocks.emplace(B.Id, &B).second)
-      return {};
+  std::optional<MedBlockIdIndex> OwnBlocks;
+  const MedBlockIdIndex &Blocks =
+      C.Blocks ? *C.Blocks : OwnBlocks.emplace(C.Func);
+  if (!Blocks.unique())
+    return {};
   std::set<int> Active;
   auto same = [](const MedVar &A, const MedVar &B) {
     return A.Kind == B.Kind && A.Id == B.Id && A.SSAVer == B.SSAVer &&
@@ -188,15 +189,14 @@ std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C) {
       bool First = true;
       std::set<int> Preds;
       for (int Id : B.Preds) {
-        const auto P = Blocks.find(Id);
-        if (!Remaining || !Preds.insert(Id).second || P == Blocks.end() ||
-            std::count(P->second->Succs.begin(), P->second->Succs.end(),
-                       B.Id) != 1) {
+        const MedBlock *P = Blocks.first(Id);
+        if (!Remaining || !Preds.insert(Id).second || !P ||
+            std::count(P->Succs.begin(), P->Succs.end(), B.Id) != 1) {
           Common.clear();
           break;
         }
         --Remaining;
-        Stores Incoming = Visit(*P->second, P->second->Ops.size(), Depth + 1);
+        Stores Incoming = Visit(*P, P->Ops.size(), Depth + 1);
         if (First) {
           Common = std::move(Incoming);
           First = false;
@@ -824,12 +824,28 @@ static std::optional<StackAddressStep> parseStackAddressStep(const MedOp &Op) {
   }
 }
 
+// stackPtrDelta's answers within one query, by value identity and depth. The
+// depth cap makes an answer depend on the depth it was asked at; within that,
+// a PHI DAG shares each answer instead of re-walking it once per path.
+using StackDeltaMemo =
+    std::map<std::tuple<int, int, int, uint64_t, int>, std::optional<int64_t>>;
+
+static std::optional<int64_t>
+stackPtrDeltaAt(const MedFunc &Func, const TargetRegInfo &TRI, const MedVar &V,
+                int Depth, MedDefSiteIndex *Defs, StackDeltaMemo &Memo);
+
 std::optional<int64_t> stackPtrDelta(const MedFunc &Func,
                                      const TargetRegInfo &TRI, const MedVar &V,
                                      int Depth, MedDefSiteIndex *Defs) {
-  if (Depth > 128 || V.isConst())
-    return std::nullopt;
+  StackDeltaMemo Memo;
+  return stackPtrDeltaAt(Func, TRI, V, Depth, Defs, Memo);
+}
 
+static std::optional<int64_t> stackPtrDeltaUncached(const MedFunc &Func,
+                                                    const TargetRegInfo &TRI,
+                                                    const MedVar &V, int Depth,
+                                                    MedDefSiteIndex *Defs,
+                                                    StackDeltaMemo &Memo) {
   const MedDefSite Site = Defs ? Defs->find(V) : findFuncDef(Func, V);
   if (Site.Ambiguous)
     return std::nullopt;
@@ -839,7 +855,7 @@ std::optional<int64_t> stackPtrDelta(const MedFunc &Func,
       (void)Pred;
       if (sameDefIdentity(Incoming, V))
         continue;
-      auto Delta = stackPtrDelta(Func, TRI, Incoming, Depth + 1, Defs);
+      auto Delta = stackPtrDeltaAt(Func, TRI, Incoming, Depth + 1, Defs, Memo);
       if (!Delta || (Common && *Common != *Delta))
         return std::nullopt;
       Common = *Delta;
@@ -867,7 +883,7 @@ std::optional<int64_t> stackPtrDelta(const MedFunc &Func,
       return 0;
   }
   if (auto Step = parseStackAddressStep(*Def)) {
-    auto Base = stackPtrDelta(Func, TRI, *Step->Base, Depth + 1, Defs);
+    auto Base = stackPtrDeltaAt(Func, TRI, *Step->Base, Depth + 1, Defs, Memo);
     if (!Base)
       return std::nullopt;
     return safety::detail::checkedStackOffset(*Base, Step->Delta,
@@ -878,11 +894,26 @@ std::optional<int64_t> stackPtrDelta(const MedFunc &Func,
     const auto Store = reachingStore(DefBlock, LoadIndex);
     if (!Store)
       return std::nullopt;
-    return stackPtrDelta(Func, TRI,
-                         *safety::detail::storedValue(DefBlock.Ops[*Store]),
-                         Depth + 1, Defs);
+    return stackPtrDeltaAt(Func, TRI,
+                           *safety::detail::storedValue(DefBlock.Ops[*Store]),
+                           Depth + 1, Defs, Memo);
   }
   return std::nullopt;
+}
+
+static std::optional<int64_t>
+stackPtrDeltaAt(const MedFunc &Func, const TargetRegInfo &TRI, const MedVar &V,
+                int Depth, MedDefSiteIndex *Defs, StackDeltaMemo &Memo) {
+  if (Depth > 128 || V.isConst())
+    return std::nullopt;
+  // The answer reads V only through its definition identity.
+  const auto Key = std::make_tuple(static_cast<int>(V.Kind), V.Id, V.SSAVer,
+                                   V.RegOff, Depth);
+  if (const auto It = Memo.find(Key); It != Memo.end())
+    return It->second;
+  const auto Delta = stackPtrDeltaUncached(Func, TRI, V, Depth, Defs, Memo);
+  Memo.emplace(Key, Delta);
+  return Delta;
 }
 
 // Whether \p V is, or derives from (through copies, width casts and a constant
@@ -1173,10 +1204,10 @@ std::optional<MedVar>
 findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
                    int BlockId, int ArgIdx, const IntegerArgumentLayout &Layout,
                    bool AllowUnknownLiveIn, bool *FromLiveIn, bool *FoundDef,
-                   int CallIdx, BinaryFormat Format) {
-  std::map<int, const MedBlock *> ById;
-  for (const auto &B : Func.Blocks)
-    ById[B.Id] = &B;
+                   int CallIdx, BinaryFormat Format,
+                   const MedBlockIdIndex *Blocks) {
+  std::optional<MedBlockIdIndex> OwnBlocks;
+  const MedBlockIdIndex &ById = Blocks ? *Blocks : OwnBlocks.emplace(Func);
 
   const uint64_t ArgReg =
       ArgIdx >= 0 && ArgIdx < static_cast<int>(Layout.Registers.size())
@@ -1216,10 +1247,10 @@ findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
   if (FoundDef)
     *FoundDef = false;
 
-  auto It = ById.find(BlockId);
-  if (It == ById.end())
+  const MedBlock *LastCallBlock = ById.last(BlockId);
+  if (!LastCallBlock)
     return std::nullopt;
-  const MedBlock &CallBlock = *It->second;
+  const MedBlock &CallBlock = *LastCallBlock;
   // The caller took a write in the call's block before its call-boundary
   // stop; whatever reaches the call also passes the call at that stop.
   if (CallIdx >= 0) {
@@ -1262,10 +1293,10 @@ findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
     Work.pop_back();
     if (!Visited.insert(BId).second)
       continue;
-    auto BIt = ById.find(BId);
-    if (BIt == ById.end())
+    const MedBlock *Pred = ById.last(BId);
+    if (!Pred)
       continue;
-    const MedBlock &B = *BIt->second;
+    const MedBlock &B = *Pred;
     bool Left = false;
     if (auto V = scanOps(B, static_cast<int>(B.Ops.size()), Left)) {
       if (!Left) {

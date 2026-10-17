@@ -70,8 +70,13 @@ protected:
   ProcessResult run(const char *Entry, uint64_t Mode = 0) {
     Options.Android->EntrySymbol = Entry;
     Options.Android->Arguments = {Buffer, Mode};
-    return llvm::cantFail(
-        emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options));
+    auto Result =
+        emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+    // Preserve loader diagnostics in Release too: cantFail's failure path is
+    // unreachable in an assertion-disabled build.
+    if (!Result)
+      llvm::report_fatal_error(Result.takeError());
+    return std::move(*Result);
   }
   void returned(const ProcessResult &R) {
     ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
@@ -123,6 +128,110 @@ TEST_P(AndroidNetwork,
   returned(R);
   EXPECT_EQ(word(R, 0), UINT64_MAX);
   EXPECT_EQ(word(R, 1), 97u);
+}
+
+TEST_P(AndroidNetwork, DatagramFallbackRetainsPacketsSourcesAndExplicitErrors) {
+  Options.Android->Libraries["libc.so"] = {"recv"};
+  for (uint64_t Mode : {0, 1, 2, 3}) {
+    const auto &Peer = Mode & 2 ? IPv6 : IPv4;
+    LinuxStreamConnection Failure;
+    Failure.Peer = Peer;
+    Failure.ConnectErrno = 111;
+    Options.LinuxNetwork->Connections = {Failure};
+    LinuxDatagramConnection D;
+    D.Peer = Peer;
+    D.ExpectedSend = {{0, 0xff, 0x42}, {}};
+    D.ReceiveEvents = {
+        {{7, 8, 9}, 0, 1}, {{}, 0, 2}, {{}, 11, 2}, {{10, 11}, 0, 2}};
+    Options.LinuxNetwork->DatagramConnections = {D};
+    const auto R = run("network_datagram", Mode);
+    returned(R);
+    EXPECT_EQ(word(R, 0), UINT64_MAX);
+    EXPECT_EQ(word(R, 1), 111u);
+    EXPECT_EQ(word(R, 2), 1u);
+    EXPECT_EQ(word(R, 3), 0u);
+    EXPECT_EQ(word(R, 4), 3u);
+    EXPECT_EQ(word(R, 5), 3u);
+    EXPECT_EQ(word(R, 6), Peer.size());
+    EXPECT_EQ(word(R, 7), 1u);
+    for (unsigned I = 8; I <= 11; ++I)
+      EXPECT_EQ(word(R, I), 0u);
+    EXPECT_EQ(word(R, 12), UINT64_MAX);
+    EXPECT_EQ(word(R, 13), 11u);
+    EXPECT_EQ(word(R, 14), 2u);
+    EXPECT_EQ(word(R, 15), 11u);
+    const auto &Bytes = R.MemorySnapshots[0].Bytes;
+    EXPECT_EQ(Bytes[256], 7);
+    EXPECT_EQ(Bytes[257], 8);
+    EXPECT_EQ(Bytes[258], 0xa5);
+    EXPECT_EQ(Bytes[264], 7);
+    EXPECT_EQ(Bytes[265], 0xa5);
+    EXPECT_EQ(Bytes[272], 10);
+    EXPECT_EQ(Bytes[273], 11);
+    EXPECT_EQ(Bytes[274], 0xa5);
+    EXPECT_TRUE(
+        std::equal(Peer.begin(), Peer.begin() + 3, Bytes.begin() + 320));
+    EXPECT_EQ(Bytes[323], 0xa5);
+  }
+}
+
+TEST_P(AndroidNetwork, FortifiedMemorySharesCopyMoveAndFillSemantics) {
+  Options.Android->Libraries["libc.so"] = {"__memcpy_chk", "__memmove_chk",
+                                           "__memset_chk"};
+  for (uint64_t Mode : {0, 4, 5}) {
+    SCOPED_TRACE(Mode);
+    auto R = run("network_checked_memory", Mode);
+    returned(R);
+    for (const char *Name : {"__memcpy_chk", "__memmove_chk", "__memset_chk"})
+      EXPECT_EQ(std::count_if(R.NativeCalls.begin(), R.NativeCalls.end(),
+                              [&](const auto &C) { return C.Name == Name; }),
+                1);
+    for (unsigned I = 0; I != 3; ++I)
+      EXPECT_EQ(word(R, I), 1u);
+    const auto &Bytes = R.MemorySnapshots[0].Bytes;
+    const std::vector<uint8_t> Expected =
+        Mode == 4 ? std::vector<uint8_t>(7, 0xa5)
+                  : std::vector<uint8_t>{0, 0, 0xff, 0x42, 0xab, 0xab, 0xa5};
+    EXPECT_TRUE(
+        std::equal(Expected.begin(), Expected.end(), Bytes.begin() + 256));
+  }
+  for (uint64_t Mode : {1, 2, 3, 6, 7}) {
+    SCOPED_TRACE(Mode);
+    auto R = run("network_checked_memory", Mode);
+    EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure) << R.Diagnostic;
+    EXPECT_FALSE(R.ReturnValue);
+    EXPECT_NE(R.Diagnostic.find(Mode == 6   ? "overlapping memcpy"
+                                : Mode == 7 ? "invalid guest pointer"
+                                            : "FORTIFY"),
+              std::string::npos);
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_FALSE(R.NativeCalls.back().Result);
+  }
+}
+
+TEST_P(AndroidNetwork, StreamReceiveEventsLeaveProtocolDecisionsToGuestCode) {
+  for (bool Malformed : {false, true}) {
+    auto &C = Options.LinuxNetwork->Connections[0];
+    C.ExpectedSend = {0, 0xff, 0x42};
+    C.MaxSend = 8;
+    C.Receive.clear();
+    C.ReceiveEvents = {{{}, 4, 0},
+                       {{'O', 'K', 0}, 0, 3},
+                       {{}, 11, 3},
+                       {{uint8_t(Malformed ? '?' : '!')}, 0, 3}};
+    const auto R = run("network_receive_events");
+    returned(R);
+    EXPECT_EQ(word(R, 0), UINT64_MAX);
+    EXPECT_EQ(word(R, 1), 4u);
+    EXPECT_EQ(word(R, 2), 3u);
+    EXPECT_EQ(word(R, 3), 2u);
+    EXPECT_EQ(word(R, 4), 1u);
+    EXPECT_EQ(word(R, 5), UINT64_MAX);
+    EXPECT_EQ(word(R, 6), 11u);
+    EXPECT_EQ(word(R, 7), 1u);
+    EXPECT_EQ(word(R, 8), 0u);
+    EXPECT_EQ(word(R, 9), !Malformed);
+  }
 }
 
 TEST_P(AndroidNetwork, AddressFormattingPreservesABIAndBufferBounds) {

@@ -333,6 +333,7 @@ add_neverd_unittest(NeverDLiftTests
   core/FPParameterMaskTests.cpp
   core/MedDceImplicitSpTests.cpp
   core/MedCallLeftoversTests.cpp
+  core/MedStackDeltaTests.cpp
   core/MedVariadicTests.cpp
   eh/COFFExceptionTests.cpp
   eh/COFFExceptionARM32UnwindTests.cpp
@@ -2577,6 +2578,7 @@ set(AARCH64_TEST_SOURCES
   aarch64/test_linux_svc_a64.s
   aarch64/test_jumptable_index_identity_a64.s
   aarch64/test_jumptable_gcc_compact_a64.s
+  aarch64/test_jumptable_inflate_gcc_a64.s
   aarch64/test_pageoff_wrong_base_a64.s
   aarch64/test_pageoff_reaching_a64.s
   aarch64/test_pageoff_alternatives_a64.s

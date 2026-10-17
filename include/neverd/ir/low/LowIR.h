@@ -224,6 +224,8 @@ struct LowOp {
     if (NumInputs < 6)
       Inputs[NumInputs++] = V;
   }
+
+  bool operator==(const LowOp &Other) const = default;
 };
 
 inline X86ShadowStackReadShape x86ShadowStackReadLowShape(const LowOp &Op,
@@ -1199,6 +1201,8 @@ struct LowSEHLocalUnwindEvidence {
 struct LowFunctionTemporary {
   uint64_t Offset = 0;
   uint16_t Bytes = 0;
+
+  bool operator==(const LowFunctionTemporary &Other) const = default;
 };
 
 struct LowFunc {

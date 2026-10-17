@@ -45,7 +45,6 @@ struct SourceProblem {
 struct ParseOptions {
   /// C or C++.
   Language Lang = Language::C;
-  LayoutRules Rules = LayoutRules::MSVC;
   /// What the types defined record as their origin.
   TypeOrigin Origin = TypeOrigin::User;
   /// C and C++: keep the declarations that read when others do not, each

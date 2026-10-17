@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <gtest/gtest.h>
 #include <map>
+#include <optional>
 
 using namespace neverd::types;
 using neverd::types::test::shapeOf;
@@ -22,8 +23,12 @@ using neverd::types::test::shapeOf;
 namespace {
 
 /// \p Source read into a new library, every problem a failure.
-TypeLibrary parsed(llvm::StringRef Source, ParseOptions Options = {}) {
-  TypeLibrary Library;
+TypeLibrary parsed(llvm::StringRef Source, ParseOptions Options = {},
+                   DataModel Model = DataModel::LLP64,
+                   std::optional<RecordABI> ABI = std::nullopt) {
+  TypeLibrary Library(Model);
+  if (ABI)
+    Library.setRecordABI(*ABI);
   const ParseResult Result = parseTypes(Source, Library, Options);
   for (const SourceProblem &Problem : Result.Problems)
     ADD_FAILURE() << Problem.Line << ":" << Problem.Column << ": "
@@ -119,15 +124,48 @@ TEST(TypeParse, ReadsOneFunctionsDeclarationAgainstTheLibrary) {
 }
 
 TEST(TypeParse, BitfieldsShareUnitsUnderItanium) {
-  ParseOptions Options;
-  Options.Rules = LayoutRules::Itanium;
   const TypeLibrary Library = parsed(
       "struct B { unsigned a : 4; unsigned short c : 3; unsigned d : 30; };",
-      Options);
+      {}, DataModel::LP64);
   const RecordDef &B = recordOf(Library, "B");
   // c fits after a; d would cross a 32-bit unit and takes the next.
   EXPECT_EQ(shapeOf(B), "struct{a@0b:4 c@4b:3 d@32b:30}");
   EXPECT_EQ(B.Size, 8u);
+}
+
+TEST(TypeParse, ThirtyTwoBitRecordsLayOutAsTheirABISays) {
+  // One declaration, three 32-bit ABIs: the i386 System V ABI packs the
+  // bit-field into the byte after c and aligns long long and double to
+  // four, Microsoft's compilers give the bit-field a unit of its own and
+  // align them to eight, as ARM's do after packing the bit-field.
+  const char *Source = "struct S { char c; unsigned int b : 4; long long q; "
+                       "double d; short t; };";
+  const RecordDef I386 = recordOf(
+      parsed(Source, {}, DataModel::ILP32, RecordABI::I386SystemV), "S");
+  EXPECT_EQ(shapeOf(I386), "struct{c@0 b@8b:4 q@4 d@12 t@20}");
+  EXPECT_EQ(I386.Size, 24u);
+  const RecordDef Microsoft =
+      recordOf(parsed(Source, {}, DataModel::ILP32), "S");
+  EXPECT_EQ(shapeOf(Microsoft), "struct{c@0 b@32b:4 q@8 d@16 t@24}");
+  EXPECT_EQ(Microsoft.Size, 32u);
+  const RecordDef ARM =
+      recordOf(parsed(Source, {}, DataModel::ILP32, RecordABI::AAPCS32), "S");
+  EXPECT_EQ(shapeOf(ARM), "struct{c@0 b@8b:4 q@8 d@16 t@24}");
+  EXPECT_EQ(ARM.Size, 32u);
+
+  // A long long bit-field spans two units of four bytes on i386, where
+  // ARM's may not cross one of eight.
+  const char *Wide =
+      "struct W { char c[5]; unsigned long long x : 40; char after; };";
+  const RecordDef I386Wide =
+      recordOf(parsed(Wide, {}, DataModel::ILP32, RecordABI::I386SystemV), "W");
+  EXPECT_EQ(shapeOf(I386Wide), "struct{c@0 x@40b:40 after@10}");
+  EXPECT_EQ(I386Wide.Members[1].StorageBitOffset, 32u);
+  EXPECT_EQ(I386Wide.Size, 12u);
+  const RecordDef ARMWide =
+      recordOf(parsed(Wide, {}, DataModel::ILP32, RecordABI::AAPCS32), "W");
+  EXPECT_EQ(shapeOf(ARMWide), "struct{c@0 x@64b:40 after@13}");
+  EXPECT_EQ(ARMWide.Size, 16u);
 }
 
 TEST(TypeParse, ReadsAnonymousRecordsAndWindowsNames) {

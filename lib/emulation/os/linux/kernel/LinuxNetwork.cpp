@@ -15,6 +15,29 @@
 #include <algorithm>
 
 namespace neverd::emulation::linux_model {
+namespace {
+bool connectError(uint32_t Error) {
+  return Error == 0 || Error == 4 || Error == 111 || Error == 110 ||
+         Error == 101 || Error == 113 || Error == 13;
+}
+llvm::Error receiveEvents(llvm::ArrayRef<LinuxNetworkReceive> Events,
+                          uint64_t SentLimit, bool Datagram, uint64_t &Bytes) {
+  if (Events.size() > 4096)
+    return failure("offline network has too many receive events");
+  uint64_t Previous = 0;
+  for (const auto &E : Events) {
+    if (E.AfterSend < Previous || E.AfterSend > SentLimit ||
+        (E.Error && E.Error != 4 && E.Error != 11) ||
+        (E.Error && !E.Bytes.empty()) ||
+        (!Datagram && !E.Error && E.Bytes.empty()) ||
+        (Datagram && E.Bytes.size() > 65507))
+      return failure("invalid offline receive event");
+    Previous = E.AfterSend;
+    Bytes += E.Bytes.size();
+  }
+  return llvm::Error::success();
+}
+} // namespace
 uint16_t networkAddressFamily(llvm::ArrayRef<uint8_t> Address) {
   if (Address.size() < 2)
     return 0;
@@ -27,22 +50,44 @@ uint16_t networkAddressFamily(llvm::ArrayRef<uint8_t> Address) {
   return 0;
 }
 llvm::Error validateNetworkOptions(const LinuxNetworkOptions &Options) {
-  if (Options.Connections.size() > 256)
+  if (Options.Connections.size() + Options.DatagramConnections.size() > 256)
     return failure("offline network has too many connection attempts");
   uint64_t Bytes = 0;
   for (const auto &C : Options.Connections) {
-    if (!networkAddressFamily(C.Peer) ||
-        (C.ConnectErrno != 0 && C.ConnectErrno != 111 &&
-         C.ConnectErrno != 110 && C.ConnectErrno != 101 &&
-         C.ConnectErrno != 113 && C.ConnectErrno != 13) ||
+    if (!networkAddressFamily(C.Peer) || !connectError(C.ConnectErrno) ||
         !C.MaxSend || C.MaxSend > 65536 || !C.MaxReceive ||
         C.MaxReceive > 65536 ||
-        (C.ConnectErrno &&
-         (!C.ExpectedSend.empty() || !C.Receive.empty() || C.ReceiveEOF)))
+        (C.ConnectErrno && (!C.ExpectedSend.empty() || !C.Receive.empty() ||
+                            C.ReceiveEOF || !C.ReceiveEvents.empty())) ||
+        (!C.Receive.empty() && !C.ReceiveEvents.empty()))
       return failure("invalid offline TCP connection contract");
     Bytes += C.ExpectedSend.size() + C.Receive.size();
+    if (auto E =
+            receiveEvents(C.ReceiveEvents, C.ExpectedSend.size(), false, Bytes))
+      return E;
     if (Bytes > 1024 * 1024)
       return failure("offline network stream byte limit exceeded");
+  }
+  for (const auto &C : Options.DatagramConnections) {
+    if (!networkAddressFamily(C.Peer) || !connectError(C.ConnectErrno) ||
+        C.ExpectedSend.size() > 4096 ||
+        (C.ConnectErrno &&
+         (!C.ExpectedSend.empty() || !C.ReceiveEvents.empty())))
+      return failure("invalid offline UDP connection contract");
+    if (networkAddressFamily(C.Peer) == 10 &&
+        !llvm::all_of(llvm::ArrayRef(C.Peer).slice(4, 4),
+                      [](uint8_t V) { return V == 0; }))
+      return failure("offline UDP requires zero IPv6 flow information");
+    for (const auto &Packet : C.ExpectedSend) {
+      if (Packet.size() > 65507)
+        return failure("offline UDP datagram exceeds the supported size");
+      Bytes += Packet.size();
+    }
+    if (auto E =
+            receiveEvents(C.ReceiveEvents, C.ExpectedSend.size(), true, Bytes))
+      return E;
+    if (Bytes > 1024 * 1024)
+      return failure("offline network byte limit exceeded");
   }
   return llvm::Error::success();
 }
@@ -64,11 +109,11 @@ LinuxFiles::network(ServiceKind Kind, const ProcessServiceEvent &Event,
                        "socket services require linux_files and linux_network");
   if (Kind == ServiceKind::Socket) {
     const uint32_t Family = A[0], Type = A[1], Protocol = A[2];
-    if ((Family != 2 && Family != 10) ||
-        (Type & ~uint32_t(OpenCloseOnExec | OpenNonBlock)) != 1 ||
-        (Protocol != 0 && Protocol != 6))
+    const auto BaseType = Type & ~uint32_t(OpenCloseOnExec | OpenNonBlock);
+    if ((Family != 2 && Family != 10) || (BaseType != 1 && BaseType != 2) ||
+        (Protocol != 0 && Protocol != (BaseType == 1 ? 6u : 17u)))
       return unsupported(Result,
-                         "only offline IPv4/IPv6 TCP sockets are modeled");
+                         "only offline IPv4/IPv6 TCP/UDP sockets are modeled");
     const auto FD = nextDescriptor();
     if (FD == Options->DescriptorLimit)
       return Reply(uint64_t(0) - TooManyFiles);
@@ -83,11 +128,12 @@ LinuxFiles::network(ServiceKind Kind, const ProcessServiceEvent &Event,
   auto *Socket = std::get_if<OpenSocket>(I->second.get());
   if (!Socket)
     return Reply(uint64_t(0) - 88); // ENOTSOCK
+  const bool Datagram = (Socket->Flags & 0xf) == 2;
   if (Kind == ServiceKind::SetSocketOption ||
       Kind == ServiceKind::GetSocketOption) {
     const uint32_t Level = A[1], Name = A[2];
     if (Level != 1 || (Name != 20 && Name != 21))
-      return unsupported(Result, "unmodeled TCP socket option");
+      return unsupported(Result, "unmodeled socket option");
     auto &Seconds =
         Name == 20 ? Socket->ReceiveTimeoutSeconds : Socket->SendTimeoutSeconds;
     auto Accessible = [&](uint64_t Address, uint64_t Size,
@@ -114,8 +160,8 @@ LinuxFiles::network(ServiceKind Kind, const ProcessServiceEvent &Event,
       // Whole seconds avoid inventing the guest kernel's HZ and rounding.
       // Keep negative seconds distinct from zero (immediate vs infinite).
       if (Usec || Sec > 86400)
-        return unsupported(Result,
-                           "TCP timeout requires whole seconds up to one day");
+        return unsupported(
+            Result, "socket timeout requires whole seconds up to one day");
       Seconds = Sec;
       return Reply(0);
     }
@@ -147,12 +193,13 @@ LinuxFiles::network(ServiceKind Kind, const ProcessServiceEvent &Event,
     return Reply(0);
   }
   if (Kind == ServiceKind::Connect) {
+    if (Socket->Datagram)
+      return unsupported(Result, "UDP reconnect requires a new route contract");
     if (Socket->Connection)
       return Reply(uint64_t(0) - 106); // EISCONN
     if (Socket->Failed)
-      return unsupported(Result,
-                         "a failed TCP socket must be closed before reuse");
-    if (Socket->Flags & OpenNonBlock)
+      return unsupported(Result, "a failed socket must be closed before reuse");
+    if (!Datagram && (Socket->Flags & OpenNonBlock))
       return unsupported(Result,
                          "asynchronous TCP connection completion is unmodeled");
     const uint32_t Size = A[2];
@@ -169,8 +216,22 @@ LinuxFiles::network(ServiceKind Kind, const ProcessServiceEvent &Event,
     if (auto E = CPU.read(A[1], Peer))
       return std::move(E);
     if (networkAddressFamily(Peer) != Socket->Family)
-      return unsupported(Result,
-                         "TCP peer requires a canonical matching sockaddr");
+      return unsupported(Result, "peer requires a canonical matching sockaddr");
+    if (Datagram) {
+      if (NextDatagramConnection == Network->DatagramConnections.size() ||
+          Network->DatagramConnections[NextDatagramConnection].Peer != Peer)
+        return unsupported(
+            Result, "UDP peer has no matching offline route observation");
+      const auto &C = Network->DatagramConnections[NextDatagramConnection++];
+      if (C.ConnectErrno) {
+        // EINTR can be retried on this description. No successful route or
+        // packet state is published by a failed attempt.
+        Socket->Failed = C.ConnectErrno != 4;
+        return Reply(uint64_t(0) - C.ConnectErrno);
+      }
+      Socket->Datagram = &C;
+      return Reply(0);
+    }
     if (NextConnection == Network->Connections.size() ||
         Network->Connections[NextConnection].Peer != Peer)
       return unsupported(Result,
@@ -183,6 +244,13 @@ LinuxFiles::network(ServiceKind Kind, const ProcessServiceEvent &Event,
     Socket->Connection = &C;
     return Reply(0);
   }
+  if (Datagram) {
+    if (Kind == ServiceKind::SendTo && A[4])
+      return unsupported(
+          Result, "UDP explicit destinations require a routing contract");
+    return transferDatagram(*Socket, Kind == ServiceKind::SendTo, A[1], A[2],
+                            Result, uint32_t(A[3]), A[4], A[5]);
+  }
   if ((Kind == ServiceKind::SendTo || Kind == ServiceKind::ReceiveFrom) &&
       (A[4] || A[5]))
     return unsupported(
@@ -193,13 +261,28 @@ LinuxFiles::network(ServiceKind Kind, const ProcessServiceEvent &Event,
   if (Flags & ~uint32_t(0x4000 | 0x40))
     return unsupported(Result, "unmodeled TCP transfer flags");
   return transferSocket(*Socket, Kind == ServiceKind::SendTo, A[1], A[2],
-                        Result);
+                        Result, Flags);
+}
+
+std::optional<uint64_t>
+LinuxFiles::receiveSocketError(OpenSocket &Socket,
+                               const LinuxNetworkReceive &Event, uint32_t Flags,
+                               ProcessResult &Result) {
+  if (Event.Error == 11 && !(Flags & 0x40) && !(Socket.Flags & OpenNonBlock) &&
+      !Socket.ReceiveTimeoutSeconds)
+    return unsupported(Result,
+                       "EAGAIN receive requires nonblocking or timeout state");
+  ++Socket.ReceiveEvent;
+  return uint64_t(0) - Event.Error;
 }
 
 llvm::Expected<std::optional<uint64_t>>
 LinuxFiles::transferSocket(OpenSocket &Socket, bool Send, uint64_t Address,
-                           uint64_t Size, ProcessResult &Result) {
+                           uint64_t Size, ProcessResult &Result,
+                           uint32_t Flags) {
   using Reply = std::optional<uint64_t>;
+  if ((Socket.Flags & 0xf) == 2)
+    return transferDatagram(Socket, Send, Address, Size, Result, Flags);
   if (!Socket.Connection)
     return unsupported(Result,
                        "TCP transfer requires a completed offline connection");
@@ -208,7 +291,17 @@ LinuxFiles::transferSocket(OpenSocket &Socket, bool Send, uint64_t Address,
   if (!Size)
     return Reply(0);
   const auto &C = *Socket.Connection;
-  const auto &Bytes = Send ? C.ExpectedSend : C.Receive;
+  const LinuxNetworkReceive *Event = nullptr;
+  if (!Send && !C.ReceiveEvents.empty() &&
+      Socket.ReceiveEvent < C.ReceiveEvents.size()) {
+    Event = &C.ReceiveEvents[Socket.ReceiveEvent];
+    if (Socket.Sent < Event->AfterSend)
+      return unsupported(Result,
+                         "TCP receive event awaits declared outgoing bytes");
+    if (Event->Error)
+      return receiveSocketError(Socket, *Event, Flags, Result);
+  }
+  const auto &Bytes = Send ? C.ExpectedSend : Event ? Event->Bytes : C.Receive;
   auto &Position = Send ? Socket.Sent : Socket.Received;
   if (Position == Bytes.size()) {
     if (!Send && C.ReceiveEOF)
@@ -244,6 +337,10 @@ LinuxFiles::transferSocket(OpenSocket &Socket, bool Send, uint64_t Address,
   } else if (auto E = CPU.write(Address, Expected))
     return std::move(E);
   Position += Transfer;
+  if (Event && Position == Bytes.size()) {
+    ++Socket.ReceiveEvent;
+    Position = 0;
+  }
   return Reply(Transfer);
 }
 } // namespace neverd::emulation::linux_model

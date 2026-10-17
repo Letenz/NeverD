@@ -1299,7 +1299,16 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
       if (Full && *Full != Self)
         return Recurse(*Full);
     }
-    TypeRef Named = NdType::makeNamedRecord(Name, 0, true);
+    // An enumeration is as wide and signed as its underlying integer, which
+    // a convention passes it as.
+    const TypeRef Underlying = Recurse(Rec.getUnderlyingType());
+    TypeRef Named = NdType::makeNamedRecord(
+        Name,
+        Underlying && Underlying->Kind == NdTypeKind::Int ? Underlying->Size
+                                                          : 0,
+        true);
+    if (Underlying && Underlying->Kind == NdTypeKind::Int)
+      Named->IsSigned = Underlying->IsSigned;
     noteRecordFields(Named, Rec.getFieldList(), UseIpi);
     if (!Rec.isForwardRef() && Walk == TpiWalk::Fields) {
       attachDisplayFields(Named, Rec.getFieldList(), UseIpi, Depth);
