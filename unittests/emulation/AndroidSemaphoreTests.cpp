@@ -82,6 +82,11 @@ TEST_P(AndroidSemaphore, CountsErrorsAndPaddingFollowTheLP64Contract) {
 
 TEST_P(AndroidSemaphore, MultipleWaitersRecheckTokensAfterEveryWake) {
   Options.Android->ThreadLimit = 3;
+  // The largest quantum deliberately runs 100,000 polling instructions before
+  // another thread can make progress. Native single-step transports can take
+  // longer than the default process deadline on a busy host. Keep the same
+  // instruction bound and scheduling cases; this is not a timeout test.
+  Options.Limits.TimeoutMicroseconds = 30000000;
   for (uint64_t Quantum : {7, 4096, 100000}) {
     Options.InstructionQuantum = Quantum;
     for (uint64_t Mode = 0; Mode != 4; ++Mode) {
