@@ -8949,6 +8949,10 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
             !Pointer.empty()) {
           if (Opts.RecordDefinitions && Arg.getType()->isIntegerTy())
             PointerParams.insert(&Arg);
+          // The typedef the prototype names the pointer by, as PRKDPC, in a
+          // unit that defines the program's types.
+          if (Opts.RecordDefinitions && !Ty->TypedefName.empty())
+            return cNamedTypeSpelling(Ty->TypedefName);
           return Pointer;
         }
       }
@@ -8971,6 +8975,22 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
            Held->isIntegerTy() && Ty->Size &&
            Held->getIntegerBitWidth() == Ty->Size * 8u;
   };
+  // The typedef a prototype names a parameter's or the result's type by
+  // (NdType::TypedefName), where the unit defines the program's types and
+  // the typedef holds what the code does: a pointer it holds as an integer
+  // of its width, or an integer or enumeration of the width it holds.
+  auto Alias = [&](const TypeRef &Ty, const llvm::Type *Held) -> std::string {
+    if (!Opts.RecordDefinitions || Opts.PreserveLLVMFunctionTypes || !Ty ||
+        Ty->TypedefName.empty() || !Held)
+      return {};
+    const bool Integer = (Ty->Kind == NdTypeKind::Int ||
+                          (Ty->Kind == NdTypeKind::Struct && Ty->IsEnum)) &&
+                         Held->isIntegerTy() && Ty->Size &&
+                         Held->getIntegerBitWidth() == Ty->Size * 8u;
+    if (!Integer && !PointerDebugType(Ty, Held))
+      return {};
+    return cNamedTypeSpelling(Ty->TypedefName);
+  };
   auto ParamDecl = [&](llvm::Argument &Arg, unsigned ParamIdx) {
     size_t DebugIdx = ParamIdx;
     if (SretParamIdx >= 0 && static_cast<int>(ParamIdx) > SretParamIdx)
@@ -8979,6 +8999,11 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
         SretParamIdx >= 0 && static_cast<int>(ParamIdx) == SretParamIdx;
     if (!Sret && DebugFn && DebugIdx < DebugFn->Params.size()) {
       const TypeRef &Ty = DebugFn->Params[DebugIdx].second;
+      if (const std::string Name = Alias(Ty, Arg.getType()); !Name.empty()) {
+        if (PointerDebugType(Ty, Arg.getType()))
+          PointerParams.insert(&Arg);
+        return Name + " " + BindParam(Arg, ParamIdx);
+      }
       if (PointerDebugType(Ty, Arg.getType()) &&
           Ty->Pointee->Kind != NdTypeKind::Struct) {
         PointerParams.insert(&Arg);
@@ -8999,6 +9024,16 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
              DebugFn->ReturnType->Pointee->Kind != NdTypeKind::Func) {
       RetStr = typeToC(DebugFn->ReturnType);
       PointerReturnType = RetStr;
+      if (std::string Name =
+              Alias(DebugFn->ReturnType, FuncTy->getReturnType());
+          !Name.empty())
+        RetStr = PointerReturnType = std::move(Name);
+    } else if (!InferredVoid && DebugFn) {
+      if (std::string Name =
+              Alias(DebugFn->ReturnType, FuncTy->getReturnType());
+          !Name.empty() &&
+          !PointerDebugType(DebugFn->ReturnType, FuncTy->getReturnType()))
+        RetStr = std::move(Name);
     }
     std::string Signature;
     llvm::raw_string_ostream SignatureOS(Signature);

@@ -3916,26 +3916,26 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsDecompileWithTheirPrototypes) {
   };
   // The WDK's parameter names and records, where the PDB has only names.
   const std::string Create = signature("NtCreateFile");
-  EXPECT_NE(Create.find("(void** FileHandle, uint32_t DesiredAccess, "
-                        "_OBJECT_ATTRIBUTES* ObjectAttributes, "
-                        "_IO_STATUS_BLOCK* IoStatusBlock"),
+  EXPECT_NE(Create.find("(PHANDLE FileHandle, ACCESS_MASK DesiredAccess, "
+                        "POBJECT_ATTRIBUTES ObjectAttributes, "
+                        "PIO_STATUS_BLOCK IoStatusBlock"),
             std::string::npos)
       << Create;
   EXPECT_NE(Create.find("uint32_t EaLength)"), std::string::npos) << Create;
   // A pointer a C declaration returns comes back in RAX.
   const std::string Irp = signature("IoAllocateIrp");
-  EXPECT_NE(Irp.find("_IRP* IoAllocateIrp(char StackSize, uint8_t "
+  EXPECT_NE(Irp.find("PIRP IoAllocateIrp(CCHAR StackSize, BOOLEAN "
                      "ChargeQuota)"),
             std::string::npos)
       << Irp;
-  EXPECT_NE(
-      signature("PsCreateSystemThread").find("void (*StartRoutine)(void*)"),
-      std::string::npos);
+  EXPECT_NE(signature("PsCreateSystemThread")
+                .find("PKSTART_ROUTINE StartRoutine, PVOID StartContext)"),
+            std::string::npos);
   EXPECT_EQ(signature("IofCompleteRequest").rfind("void ", 0), 0u);
   // The linker folded PsGetThreadProcess into this, so that the PDB names
   // neither; the export it is shown under names it.
   EXPECT_NE(signature("IoThreadToProcess")
-                .find("_EPROCESS* IoThreadToProcess(_ETHREAD* Thread)"),
+                .find("PEPROCESS IoThreadToProcess(PETHREAD Thread)"),
             std::string::npos);
   // Exported under another name than the PDB's RtlAreNamesEqual.
   EXPECT_NE(signature("FsRtlAreNamesEqual").find("Name1, "), std::string::npos);
@@ -4561,7 +4561,7 @@ TEST_F(SessionCAPITest, KnownRoutinesTakeTheirPrototypesByTheirNames) {
   // The parameters the prototype declares after those the code reads, which
   // its callers pass, follow them.
   const std::string Set = decompile("KeSetEvent");
-  EXPECT_NE(Set.find(" Event, int32_t Increment, uint8_t Wait) {"),
+  EXPECT_NE(Set.find("(PRKEVENT Event, KPRIORITY Increment, BOOLEAN Wait) {"),
             std::string::npos)
       << Set;
   // The whole program's C takes the same prototypes, over the functions the
@@ -4678,7 +4678,7 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
   // A definition named as a routine the headers declare that reads none of
   // its parameters shows those the prototype declares.
   const std::string Atoms = decompile("InitAtomTable");
-  EXPECT_NE(Atoms.find("int32_t InitAtomTable(uint32_t nSize) {"),
+  EXPECT_NE(Atoms.find("WINBOOL InitAtomTable(DWORD nSize) {"),
             std::string::npos)
       << Atoms;
   // ExitProcess returns to no caller: Finish ends at its call, where it
@@ -4801,8 +4801,8 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
                            Session, neverd_func_entry(Session, Index)));
   };
   const std::string Signature =
-      "void KeInitializeDpc(_KDPC* Dpc, void (*DeferredRoutine)(void*, void*, "
-      "void*, void*), void* DeferredContext) {";
+      "void KeInitializeDpc(PRKDPC Dpc, PKDEFERRED_ROUTINE DeferredRoutine, "
+      "PVOID DeferredContext) {";
   EXPECT_NE(Dpc.find(Signature), std::string::npos);
   const std::string LlvmDpc = llvm("KeInitializeDpc");
   EXPECT_NE(LlvmDpc.find(Signature), std::string::npos) << LlvmDpc;
@@ -4814,8 +4814,8 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
                    "(__typeof__(Dpc->DeferredRoutine))(DeferredRoutine);"),
       std::string::npos);
   EXPECT_NE(llvm("PsGetProcessId")
-                .find("void* PsGetProcessId(_EPROCESS* Process) {\n    "
-                      "return (void*)Process->UniqueProcessId;"),
+                .find("HANDLE PsGetProcessId(PEPROCESS Process) {\n    "
+                      "return (HANDLE)Process->UniqueProcessId;"),
             std::string::npos);
 
   // A member the user renames reads by its new name, in the definition and

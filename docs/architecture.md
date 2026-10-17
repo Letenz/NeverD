@@ -449,7 +449,14 @@ line loads it first. The prototype's types convert to the decompiler's
 types:
 - records become named records that C passes and returns by value, with
   their members' names for display;
-- typedefs become what they name;
+- typedefs become what they name, keeping the typedef's name for display
+  (`NdType::TypedefName`) on what the conversion makes, a scalar, a pointer
+  or an enumeration: HighC and LLVM-C print a signature's parameter or
+  result by it where the unit defines the typedef, as IDA prints
+  `PKDEFERRED_ROUTINE DeferredRoutine` and `NTSTATUS`, and a unit asks for
+  the typedefs its types name. LLVM-C does so where the typedef holds what
+  its code does: a pointer it holds as an integer of the pointer's width, or
+  an integer of the width it holds;
 - a named enumeration becomes an integer of its underlying type's size and
   sign that names its values by its enumerators, as a PDB's enumerations
   do, so that HighC and LLVM-C compare with and store `PowerOn` rather than

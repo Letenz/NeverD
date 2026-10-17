@@ -3410,8 +3410,16 @@ int HighCWriter::debugSymRichness(const FunctionSym &FS) const {
 TypeRef HighCWriter::cDisplayType(const TypeRef &Ty) {
   if (!Ty)
     return Ty;
-  if (Ty->Kind == NdTypeKind::Ptr)
-    return NdType::makePtr(cDisplayType(Ty->Pointee));
+  if (Ty->Kind == NdTypeKind::Ptr) {
+    TypeRef Pointer = NdType::makePtr(cDisplayType(Ty->Pointee));
+    // The typedef a declaration names the pointer by, as PRKEVENT, stays.
+    if (!Ty->TypedefName.empty()) {
+      auto Named = std::make_shared<NdType>(*Pointer);
+      Named->TypedefName = Ty->TypedefName;
+      return Named;
+    }
+    return Pointer;
+  }
   if (Ty->Kind == NdTypeKind::Struct && !Ty->SourceName.empty()) {
     auto Out = std::make_shared<NdType>(*Ty);
     Out->SourceName = cNamedTypeSpelling(Ty->SourceName);

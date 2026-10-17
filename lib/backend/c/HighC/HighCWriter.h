@@ -472,6 +472,10 @@ public:
   /// Whether \p Addr is a member of a record the unit defines from the
   /// program's local types (RecordDefinitions).
   bool memberOfDefinedRecord(const HighExpr &Addr) const;
+  /// \p Type with \p Declarator, by the typedef its declaration names it by
+  /// (NdType::TypedefName) where the unit defines that typedef, as IDA
+  /// prints `PKDEFERRED_ROUTINE DeferredRoutine`; else as C spells it.
+  std::string declaredAs(const TypeRef &Type, llvm::StringRef Declarator) const;
   /// Frame displacement that is a unique interior field of a named record
   /// slot (`record.p` at wrapper+8). Exact slot addresses stay unnamed here.
   std::optional<std::string>
