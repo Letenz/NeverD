@@ -39,6 +39,7 @@
 #include <cctype>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -2858,9 +2859,14 @@ std::string LLVMCWriter::indirectCalleeStr(const llvm::Value *Callee,
     for (const llvm::Instruction *I : Chain)
       if (!MaterializedExpressions.count(I))
         Analysis.Inlinable.insert(I);
+  // The slot's offset reads in its natural base, as other numbers do.
+  const std::string Slot =
+      Off <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max())
+          ? integerConstantText(llvm::APInt(64, Off))
+          : std::to_string(Off);
   std::string Text = Off == 0 ? "(**(void ***)(" + ObjStr + "))"
                               : "(*(void **)((uintptr_t)(*(void **)(" + ObjStr +
-                                    ")) + " + std::to_string(Off) + "))";
+                                    ")) + " + Slot + "))";
   if (SourceRecorder && !MarkChain)
     for (const auto *I : Chain)
       Text = SourceRecorder->expression(*I, std::move(Text));
