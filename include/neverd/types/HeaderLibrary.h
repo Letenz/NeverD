@@ -8,8 +8,10 @@
 /// The type libraries NeverD ships (HeaderLibraries.def): the types and
 /// prototypes a system's headers declare, which a program's own debug
 /// information may lack, as the Windows kernel's PDB lacks every typedef and
-/// prototype.  A library joins a program's types where the program has none
-/// of the name: the program's own debug information describes its build.
+/// prototype and a program's lacks those of the routines it imports.  The
+/// libraries an image's kind and architecture name
+/// (HeaderLibraryImages.def) join its types where the program has none of
+/// the name: the program's own debug information describes its build.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -26,14 +28,15 @@
 namespace neverd::types {
 
 enum class HeaderLibrary : uint8_t {
-#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Format, Arch, Subsystem,  \
-                              Spelling)                                        \
-  Id,
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Spelling) Id,
 #include "neverd/types/HeaderLibraries.def"
 };
 
 /// The library's name, as JSON gives it: windows-kernel-x64.
 llvm::StringRef headerLibraryName(HeaderLibrary Library);
+
+/// The data model the library is laid out for.
+DataModel headerLibraryModel(HeaderLibrary Library);
 
 /// The library's declarations as C, as NeverD embeds them.
 llvm::StringRef headerLibrarySource(HeaderLibrary Library);

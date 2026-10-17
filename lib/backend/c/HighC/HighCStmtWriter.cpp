@@ -841,6 +841,14 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         DeclaredType = It->second;
         PointerTypeFromCall = true;
       }
+      // A local a typed call's pointer result declares takes what its other
+      // assignments give as that pointer.
+      bool PointerFromCallResult = false;
+      if (const TypeRef Pointer = callResultPointerTypeNamed(DestName);
+          Pointer && (!DeclaredType || DeclaredType->Kind != NdTypeKind::Ptr)) {
+        DeclaredType = Pointer;
+        PointerFromCallResult = true;
+      }
       TypeRef ProjectedValueType = Stmt.Val->Type;
       if (Stmt.Val->Kind == ExprKind::Load && !Stmt.Val->Operands.empty() &&
           Stmt.Val->Operands[0]) {
@@ -850,6 +858,13 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
             ProjectedValueType = Slot->second.Type;
         }
       }
+      // A value C declares as a pointer, as such a local, a typed record's
+      // pointer member or a pointer object of the image, gives an integer
+      // its address.
+      if (const TypeRef Pointer = printedPointerType(*Stmt.Val);
+          Pointer &&
+          (!ProjectedValueType || ProjectedValueType->Kind != NdTypeKind::Ptr))
+        ProjectedValueType = Pointer;
       const std::string AddressText =
           PointerTypeFromCall ? addrStr(*Stmt.Val) : std::string();
       const bool DirectAddress =
@@ -876,8 +891,19 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       else
         OS << DestName << " = ";
       if (DeclaredType && DeclaredType->Kind == NdTypeKind::Ptr) {
+        // Its call's result, a value of its pointer type or a null pointer
+        // constant needs no conversion.
+        const TypeRef Printed = !PointerFromCallResult ? nullptr
+                                : Stmt.Val->Kind == ExprKind::Call
+                                    ? callResultType(*Stmt.Val)
+                                    : callResultPointerType(*Stmt.Val);
         if (DirectAddress)
           OS << "(" << typeToC(DeclaredType) << ")(" << ValueText << ")";
+        else if (PointerFromCallResult &&
+                 ((Printed && typeToC(Printed) == typeToC(DeclaredType)) ||
+                  (Stmt.Val->Kind == ExprKind::Const &&
+                   Stmt.Val->ConstVal == 0)))
+          OS << ValueText;
         else
           OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)(" << ValueText
              << ")";
@@ -1095,7 +1121,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
              << ValueText << ")";
         else if (ProjectedDestType &&
                  ProjectedDestType->Kind == NdTypeKind::Int &&
-                 isStringLiteralText(ValueText))
+                 (isStringLiteralText(ValueText) ||
+                  printedPointerType(*Stmt.StoreVal)))
           OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
              << ValueText << ")";
         else

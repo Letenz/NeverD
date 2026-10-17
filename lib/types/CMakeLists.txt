@@ -1,6 +1,6 @@
 # The type libraries of system headers (HeaderLibraries.def), embedded so
 # that reading one reads no file at run time.
-set(NEVERD_HEADER_LIBRARIES WindowsKernelX64)
+set(NEVERD_HEADER_LIBRARIES WindowsKernelX64 WindowsUserX64)
 set(NEVERD_HEADER_LIBRARY_INCS)
 foreach(Library IN LISTS NEVERD_HEADER_LIBRARIES)
   set(Source "${CMAKE_CURRENT_SOURCE_DIR}/headers/${Library}.h")
