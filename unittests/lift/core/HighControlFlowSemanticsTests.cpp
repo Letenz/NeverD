@@ -1205,6 +1205,28 @@ TEST(HighControlFlowSemantics, SliceJoiningRejectsDifferentOrObservableValues) {
   }
 }
 
+TEST(HighControlFlowSemantics, AMergedCallKeepsAnInstructionOnlyIfItHadOne) {
+  auto Call = [](va_t Site) {
+    auto E = HighExpr::makeCall("release", 0x4000, {local(0)});
+    E->CallSiteAddr = Site;
+    return HighExpr::makeBinop(NdOp::INT_ADD, E, HighExpr::makeConst(1, 8));
+  };
+  // Copies of one statement: the same instruction stays.
+  const ExprPtr Copy = Call(0x1010);
+  EXPECT_EQ(withMergedCallSites(Copy, Call(0x1010)), Copy);
+  // Two instructions made one call: it keeps neither, and the value the
+  // other statement shared is not changed in place.
+  const ExprPtr Kept = Call(0x1010);
+  const ExprPtr Merged = withMergedCallSites(Kept, Call(0x1020));
+  ASSERT_NE(Merged, Kept);
+  EXPECT_EQ(Merged->Operands[0]->CallSiteAddr, 0U);
+  EXPECT_EQ(Kept->Operands[0]->CallSiteAddr, 0x1010U);
+  EXPECT_TRUE(Merged->structuralEq(*Kept));
+  // A value without calls is left as it is.
+  const ExprPtr Plain = local(1);
+  EXPECT_EQ(withMergedCallSites(Plain, local(1)), Plain);
+}
+
 TEST(HighControlFlowSemantics, MemoryBoundaryAncestorsMatchIndividualQueries) {
   for (const bool Atomic : {false, true}) {
     auto Memory = HighExpr::makeLoad(local(0), NdType::makeInt(8));
