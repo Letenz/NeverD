@@ -1009,6 +1009,7 @@
           "neverd patch --compiler-timeout",
           "neverd patch --const-enc",
           "neverd patch --const-pool",
+          "neverd patch --dependency",
           "neverd patch --download-symbols",
           "neverd patch --dwarf",
           "neverd patch --entry",
