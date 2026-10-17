@@ -1418,15 +1418,9 @@ struct BitFieldPrograms {
   std::string C, Rust, Go;
 };
 
-BitFieldPrograms bitFieldPrograms() {
+BitFieldPrograms bitFieldPrograms(neverd::types::DataModel Model) {
   using namespace neverd::types;
-  // Use the native C oracle's record ABI. Windows Clang uses Microsoft
-  // bit-field allocation; the System V and Apple hosts use Itanium allocation.
-#if defined(_WIN32)
-  TypeLibrary Library(DataModel::LLP64);
-#else
-  TypeLibrary Library(DataModel::LP64);
-#endif
+  TypeLibrary Library(Model);
   EXPECT_TRUE(parseCTypes(R"(
     struct _FLAGS {
       unsigned char Kind;
@@ -1533,6 +1527,7 @@ int main(void) {
       }
     SourceDialectOptions Opts;
     Opts.Dialect = Dialect;
+    Opts.Format = Microsoft ? BinaryFormat::COFF : BinaryFormat::ELF;
     Opts.LocalTypes = Local;
     const SourceDialectText View = spellInDialect(Unit, Opts);
     EXPECT_TRUE(View.Unread.empty())
@@ -1593,6 +1588,46 @@ fn main() {
   return Programs;
 }
 
+TEST(SourceDialect, BitFieldViewsReadBothRecordABIs) {
+  // Read the actual generated declarations on every host. The native C
+  // execution below separately checks the ABI of the executing compiler.
+  for (auto Model :
+       {neverd::types::DataModel::LP64, neverd::types::DataModel::LLP64}) {
+    SCOPED_TRACE(static_cast<int>(Model));
+    const BitFieldPrograms Programs = bitFieldPrograms(Model);
+    ASSERT_FALSE(Programs.C.empty());
+    EXPECT_NE(Programs.Rust.find("fn update("), std::string::npos);
+    EXPECT_NE(Programs.Go.find("func update("), std::string::npos);
+    EXPECT_EQ(Programs.Rust.find("uint32_t update("), std::string::npos);
+    EXPECT_EQ(Programs.Go.find("uint32_t update("), std::string::npos);
+  }
+}
+
+TEST(SourceDialect, MicrosoftRecordMarkersKeepTagsAndAlignment) {
+  constexpr llvm::StringLiteral C = R"(
+struct DECLSPEC_ALIGN(16) NEVERD_MS_STRUCT _ALIGNED {
+  unsigned int Ready : 1;
+  unsigned int Spare : 31;
+};
+union NEVERD_MS_STRUCT _UNION {
+  unsigned int Ready : 1;
+  unsigned int Raw;
+};
+unsigned int aligned(struct _ALIGNED *p) { return p->Ready; }
+unsigned int raw(union _UNION *p) { return p->Raw; }
+)";
+  const auto View = spell(C, SourceDialect::C);
+  ASSERT_TRUE(View.Unread.empty()) << View.Text;
+  EXPECT_EQ(tokens(View.Text), tokens(C));
+  // Unknown layout macros must still fail, rather than being skipped as if
+  // every identifier between a record keyword and its tag were an attribute.
+  const auto Unknown = spell("struct NEVERD_MS_STRUCT_OTHER _FLAGS { "
+                             "unsigned int Ready : 1; };\n"
+                             "int read(struct _FLAGS *p) { return p->Ready; }",
+                             SourceDialect::C);
+  EXPECT_FALSE(Unknown.Unread.empty());
+}
+
 TEST(SourceDialect, BitFieldsOfTheProgramsTypesComputeWhatCComputes) {
   const std::string Clang = NEVERD_TEST_CLANG;
   if (Clang.empty())
@@ -1608,7 +1643,14 @@ TEST(SourceDialect, BitFieldsOfTheProgramsTypesComputeWhatCComputes) {
     GoCompiler = *Found;
   if (Rustc.empty() && GoCompiler.empty())
     GTEST_SKIP() << "no rustc or go: the views' meaning is not executed";
-  const BitFieldPrograms Programs = bitFieldPrograms();
+  // Match the actual native C compiler without overriding its record ABI.
+#if defined(_WIN32)
+  const BitFieldPrograms Programs =
+      bitFieldPrograms(neverd::types::DataModel::LLP64);
+#else
+  const BitFieldPrograms Programs =
+      bitFieldPrograms(neverd::types::DataModel::LP64);
+#endif
   ASSERT_FALSE(Programs.C.empty());
 
   llvm::SmallString<128> Dir;

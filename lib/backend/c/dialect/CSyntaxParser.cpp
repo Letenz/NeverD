@@ -453,6 +453,11 @@ private:
           if (!expect(")"))
             return false;
         }
+        // CTypeRender places this exact bit-field layout marker after the
+        // optional alignment and before the tag (also for anonymous records).
+        // The Local Types rendering owns the layout of the foreign views.
+        if (isIdent("NEVERD_MS_STRUCT"))
+          ++Pos;
         if (tok().Kind != TokenKind::Identifier) {
           // A structure or union without a tag, as a record's member.
           if (!AnonymousRecords || !isPunct("{"))

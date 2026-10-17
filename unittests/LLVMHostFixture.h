@@ -9,11 +9,58 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
 namespace neverd::test {
+
+inline void lowerHostLifetimeSignatures(llvm::Module &Module) {
+  // LLVM 18 expects (i64 size, ptr), whereas the embedded LLVM spells a
+  // whole-object lifetime with just ptr. A newer signature can parse in an
+  // old Clang with verification disabled and then crash its SROA pass.
+  // Keep the same objects and lifetime boundaries in the compiler copy.
+  auto &Context = Module.getContext();
+  auto *SizeType = llvm::Type::getInt64Ty(Context);
+  auto WithSize = [&](llvm::AttributeList Attributes) {
+    return llvm::AttributeList::get(
+        Context, Attributes.getFnAttrs(), Attributes.getRetAttrs(),
+        {llvm::AttributeSet(), Attributes.getParamAttrs(0)});
+  };
+  for (auto &Function : llvm::make_early_inc_range(Module)) {
+    const auto ID = Function.getIntrinsicID();
+    if ((ID != llvm::Intrinsic::lifetime_start &&
+         ID != llvm::Intrinsic::lifetime_end) ||
+        Function.arg_size() != 1)
+      continue;
+    const std::string Name = Function.getName().str();
+    Function.setName(Name + ".host.new");
+    auto *Type = llvm::FunctionType::get(
+        Function.getReturnType(), {SizeType, Function.getArg(0)->getType()},
+        false);
+    auto *Legacy = llvm::Function::Create(
+        Type, Function.getLinkage(), Function.getAddressSpace(), Name, &Module);
+    Legacy->setAttributes(WithSize(Function.getAttributes()));
+    Legacy->addParamAttr(0, llvm::Attribute::ImmArg);
+    for (auto *User : llvm::make_early_inc_range(Function.users())) {
+      auto *Call = llvm::cast<llvm::CallInst>(User);
+      auto *Pointer = Call->getArgOperand(0);
+      uint64_t Bytes = UINT64_MAX;
+      if (auto *Allocation = llvm::dyn_cast<llvm::AllocaInst>(Pointer))
+        if (auto Size = Allocation->getAllocationSize(Module.getDataLayout());
+            Size && !Size->isScalable())
+          Bytes = Size->getFixedValue();
+      auto *Replacement = llvm::CallInst::Create(
+          Type, Legacy, {llvm::ConstantInt::get(SizeType, Bytes), Pointer}, "",
+          Call->getIterator());
+      Replacement->setAttributes(WithSize(Call->getAttributes()));
+      Replacement->copyMetadata(*Call);
+      Call->eraseFromParent();
+    }
+    Function.eraseFromParent();
+  }
+}
 
 inline void lowerHostConversionAnnotations(llvm::Instruction &Instruction) {
   auto *Trunc = llvm::dyn_cast<llvm::TruncInst>(&Instruction);
@@ -75,6 +122,7 @@ inline void printHostCompilerFixture(const llvm::Module &Module,
         lowerHostConversionAnnotations(Instruction);
       }
   }
+  lowerHostLifetimeSignatures(*Fixture);
   Fixture->print(Out, nullptr);
 }
 
