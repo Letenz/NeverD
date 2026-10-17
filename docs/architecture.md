@@ -412,20 +412,27 @@ entry alike): those bodies print as code. A C library routine the code calls,
 directly or through the slot or symbol the loader binds for its import
 (`libraryCallee`), takes the declaration a header gives it, or the prototype
 the runtime's tables give it, which the unit declares itself, weak where the
-image's reference is weak (`__gmon_start__`). Its arguments convert to the
-parameter types; a pointer it returns converts to the integer that holds it;
-the result of one that returns nothing is never read, and where code reads
-the register it left that is zero, as for any undefined value
-(`libraryResult`; `LibCReturnKinds.inc` records pointer results). A
-definition named like such a routine is the image's own copy and takes its
-address (`atexit_140001234`), as a body lifted under an import's name does.
+image's reference is weak (`__gmon_start__`). A call passes the parameters
+that declaration has, and its arguments convert to their types; a pointer it
+returns converts to the integer that holds it (`LibCReturnKinds.inc` records
+pointer results). The result of a callee the unit declares to return
+nothing, such a routine or a definition whose result MedIR settled as none,
+is never read, and where code reads the register it left that is zero, as
+for any undefined value (`callResult`). A definition named like such a
+routine is the image's own copy and takes its address (`atexit_140001234`),
+as a body lifted under an import's name does; in a Windows program so does
+one named like a routine the mingw-w64 headers declare (`__mingw_printf`,
+`MinGWHeaderFunctions.inc`), and in a whole module `main`, which C holds to
+the signature it gives main.
 An address into a byte array the module defines is an offset into it, in a
 global's initializer as in code, and an import a global names is declared
 before the globals. A function with Windows exception handling includes
-`<excpt.h>`, which names what its filters print. `rep movs` copies element
-by element in its direction, as `rep stos` stores; a shape the lifter does
-not emit is refused, since an intrinsic would take its operands in the
-constraints' order.
+`<excpt.h>`, which names what its filters print. A value the writer spells
+by a cached text, as a volatile read by its own name, keeps its conversion
+where a cast moves it between an integer and a pointer (`castOfText`).
+`rep movs` copies element by element in its direction, as `rep stos`
+stores; a shape the lifter does not emit is refused, since an intrinsic
+would take its operands in the constraints' order.
 Where a linker folded identical
 functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's
@@ -640,6 +647,10 @@ never change the lifting, patching or general module optimizer defaults.
 
 LLVMC defaults to LLVM O2 after ordinary frame and SSA promotion. Basic scalar
 cleanup, O0, O1, O3 and a bounded custom pass selection are explicit alternatives.
+A view's module holds some of the image's functions, so a writable table of
+code pointers is externally initialized while LLVM optimizes it: a call
+through a function pointer that code outside the module may rewrite, as a
+lazily bound `__imp_X`, stays a call through it.
 LLVM dispatcher recovery defaults on independently of the compiler level and
 optional symbolic fixed-point expression rewriting. Recovery retains its
 targeted constant proofs; `llvm_control_flow: false` explicitly disables that
