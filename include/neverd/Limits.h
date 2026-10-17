@@ -92,10 +92,13 @@ constexpr uint32_t kMaxJumpTableBoundSymbolEvidenceWork = 65536;
 /// Local symbolization allowance for an exact finite-coordinate query.  Such
 /// a query may symbolize the expanded candidate graph before enumerating at
 /// most 64 coordinates.  The largest supported 64-way expanded selector uses
-/// about 68 Ki work; retain the next power of two.  Every visit also debits the
-/// candidate-wide aggregate account, so this allowance cannot multiply
-/// whole-CFG work across queries.
-constexpr uint32_t kMaxJumpTableFiniteSetSymbolEvidenceWork = 131072;
+/// about 68 Ki work.  A selector read from a loop-carried value expands every
+/// definition the loop gives it: a 16-way table on the high word of a 64-bit
+/// accumulator that every case updates (OptStress336 dense16) uses about
+/// 355 Ki work on ARM32 and 138 Ki on i386.  Retain the next power of two.
+/// Every visit also debits the candidate-wide aggregate account, so this
+/// allowance cannot multiply whole-CFG work across queries.
+constexpr uint32_t kMaxJumpTableFiniteSetSymbolEvidenceWork = 524288;
 
 /// Per-core proposal allowance inside one mask-domain fixed point.  Retained
 /// LowIR, coordinates and proposal batches also debit the aggregate account
