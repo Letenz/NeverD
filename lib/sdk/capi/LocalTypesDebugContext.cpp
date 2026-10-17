@@ -126,8 +126,18 @@ private:
     if (!Type)
       return nullptr;
     switch (Type->Kind) {
-    case types::TypeKind::Typedef:
-      return Type->Target ? convert(*Type->Target, Depth + 1) : nullptr;
+    case types::TypeKind::Typedef: {
+      TypeRef Target =
+          Type->Target ? convert(*Type->Target, Depth + 1) : nullptr;
+      // A type this conversion made, a scalar, a pointer or an enumeration,
+      // keeps the typedef's name for display; a record is shared, and
+      // keeps its tag's.
+      if (!Target || (Target->Kind == NdTypeKind::Struct && !Target->IsEnum))
+        return Target;
+      TypeRef Named = std::make_shared<NdType>(*Target);
+      Named->TypedefName = Name.str();
+      return Named;
+    }
     case types::TypeKind::Enum:
       return Type->Enum ? enumeration(Name, *Type->Enum) : nullptr;
     case types::TypeKind::Function:
@@ -548,6 +558,11 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
     if (Record->IsEnum || (Spelled && Local->Kind == types::TypeKind::Enum)) {
       if (Local->Kind == types::TypeKind::Enum && AllAgree(*Record, *Local))
         Roots.push_back(Local);
+      continue;
+    }
+    // A typedef the unit spells, as a signature does a parameter's.
+    if (Spelled && Local->Kind == types::TypeKind::Typedef) {
+      Roots.push_back(Local);
       continue;
     }
     // A record the unit names members of otherwise than the library does

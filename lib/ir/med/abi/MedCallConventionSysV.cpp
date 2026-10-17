@@ -14,9 +14,12 @@
 // reads exactly its parameters, through its PLT stub or its GOT slot alike.
 // A function's register parameters are those its callers pass: the ones its
 // summary lists, not a register whose old value only a byte write keeps
-// (`setg cl` merges into RCX).
+// (`setg cl` merges into RCX).  The routines of the Itanium C++ ABI's runtime
+// and unwinder take the parameters it declares.
 //
 //===----------------------------------------------------------------------===//
+
+#include "MedCallConventionItanium.h"
 
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/lift/X86Regs.h"
@@ -45,6 +48,7 @@ const CallArgumentConvention SysVX64CallArguments = {
     .UndefinedIncomingScratchRegisters = true,
     .IndirectCallsTakePrecedingSetup = true,
     .ParametersFromIncomingReads = true,
+    .PrototypeArgCount = itaniumRuntimeArgCount,
     .FormattedCallArguments = true,
 };
 

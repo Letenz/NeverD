@@ -449,7 +449,14 @@ line loads it first. The prototype's types convert to the decompiler's
 types:
 - records become named records that C passes and returns by value, with
   their members' names for display;
-- typedefs become what they name;
+- typedefs become what they name, keeping the typedef's name for display
+  (`NdType::TypedefName`) on what the conversion makes, a scalar, a pointer
+  or an enumeration: HighC and LLVM-C print a signature's parameter or
+  result by it where the unit defines the typedef, as IDA prints
+  `PKDEFERRED_ROUTINE DeferredRoutine` and `NTSTATUS`, and a unit asks for
+  the typedefs its types name. LLVM-C does so where the typedef holds what
+  its code does: a pointer it holds as an integer of the pointer's width, or
+  an integer of the width it holds;
 - a named enumeration becomes an integer of its underlying type's size and
   sign that names its values by its enumerators, as a PDB's enumerations
   do, so that HighC and LLVM-C compare with and store `PowerOn` rather than
@@ -2855,6 +2862,29 @@ incoming stack slots to pass on. A call to such a routine records its named
 count (`MedCallInfo::VarArgFixedCount`), so an LLVM declaration of a routine
 the module does not emit stays variadic. A declaration made from one call's
 arguments would cut another call's.
+
+The search for the value an argument register holds at a call (MedABI's
+`findReachingArgReg`, HighIR's `reachingRegisterAtCall`) ends a path back from
+the call at a call that may change the register (`callClobbersRegister`, the
+rule SSA's call clobbers follow) as it ends it at a write, and at an exception
+handler's entry, where the unwinder leaves caller-saved registers unspecified.
+Where such ends close every path and none reaches the function's entry, the
+value is what the calls left (`valueLeftByCall`), which no parameter carries.
+It fills a slot only where the callee is known to read the register. In a slot
+it is not known to take, and for an import reached through its slot, which
+takes only proven incoming values, the arguments end there as where nothing
+was found. In the call's own block an intrinsic not proven to keep the call
+setup ends the search as well.
+
+The Itanium C++ ABI declares the routines of its runtime and of the unwinder
+it runs on (`libc::kItaniumRuntimePrototypes`). An image's own copy of one
+takes the parameters of its declaration under the conventions of the
+platforms that follow the ABI (System V x86-64, AAPCS, AAPCS64 and Apple's
+arm64; `itaniumRuntimeArgCount`), as Win64 gives a WDK routine its
+prototype's, however its body reads argument registers: libgcc's
+`_Unwind_Resume` saves the exception-data registers (x0-x3, RAX and RDX) as
+it enters, for the `__builtin_eh_return` that ends it. Call-argument recovery
+promotes no incoming register past a prototyped routine's parameters.
 
 Where every variadic argument travels on the stack (Darwin AArch64, i386
 cdecl), no register save area shows that a routine is variadic. The routine

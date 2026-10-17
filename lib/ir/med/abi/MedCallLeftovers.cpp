@@ -6,6 +6,9 @@
 
 #include "neverd/ir/med/MedCallLeftovers.h"
 
+#include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
+
 #include "llvm/ADT/STLExtras.h"
 
 #include <map>
@@ -18,7 +21,49 @@ std::tuple<int, int, int> valueKey(const MedVar &V) {
   return {static_cast<int>(V.Kind), V.Id, V.SSAVer};
 }
 
+/// Whether every call keeps all of the view: the convention preserves its
+/// low bytes through the whole view, or one of its callee-saved ranges
+/// holds it.
+bool conventionPreserves(const TargetRegInfo &TRI, BinaryFormat Format,
+                         uint64_t RegOff, uint16_t Size) {
+  if (Size == 0)
+    return false;
+  if (TRI.callPreservedPrefixSize(RegOff, Size) >= Size)
+    return true;
+  return llvm::any_of(TRI.callPreservedRanges(Format), [&](const auto &Range) {
+    return RegOff >= Range.Offset && Size <= Range.Bytes &&
+           RegOff + Size <= Range.Offset + Range.Bytes;
+  });
+}
+
 } // namespace
+
+bool callClobbersRegister(const MedOp &Call, uint64_t RegOff, uint16_t Size,
+                          const TargetRegInfo &TRI, BinaryFormat Format) {
+  if ((Call.Opcode != NdOp::CALL && Call.Opcode != NdOp::INDIR_CALL) ||
+      Call.PreservesCallerSaved)
+    return false;
+  if (TRI.isFrameOrLinkReg(RegOff) || TRI.isStackPointer(RegOff) ||
+      (Call.Output.Kind == MedVar::Reg && Call.Output.RegOff == RegOff))
+    return false;
+  return !conventionPreserves(TRI, Format, RegOff, Size) &&
+         !callPreservesRegisterBytes(TRI.TheArch, Call.CallPreservedGPRs,
+                                     RegOff, Size);
+}
+
+std::optional<MedVar> valueLeftByCall(const MedFunc &Func, const MedOp &Call,
+                                      uint64_t RegOff, uint16_t Size,
+                                      const TargetRegInfo &TRI,
+                                      BinaryFormat Format) {
+  if (!callClobbersRegister(Call, RegOff, Size, TRI, Format))
+    return std::nullopt;
+  for (const MedCallClobber &Clobber : Func.CallClobbers)
+    if (Call.CallSiteId != 0 && Clobber.CallSiteId == Call.CallSiteId &&
+        Clobber.Value.Kind == MedVar::Reg && Clobber.Value.RegOff == RegOff &&
+        Clobber.Value.Size == Size)
+      return Clobber.Value;
+  return MedVar::makeUnspecified(Size, TRI.TheArch);
+}
 
 ValuesLeftByCalls::ValuesLeftByCalls(const MedFunc &Func) {
   std::set<std::tuple<int, int, int>> ResultFields;
@@ -51,7 +96,8 @@ ValuesLeftByCalls::ValuesLeftByCalls(const MedFunc &Func) {
     auto reachedBy = [&](const MedVar &Incoming) {
       const auto Key = valueKey(Incoming);
       Readers[Key].push_back(Phi);
-      ReachedByOther |= !Values.count(Key) && !Joins.count(Key);
+      ReachedByOther |= Incoming.Kind != MedVar::Unspecified &&
+                        !Values.count(Key) && !Joins.count(Key);
     };
     for (const auto &[Pred, Incoming] : Phi->Args)
       reachedBy(Incoming);
@@ -74,7 +120,8 @@ ValuesLeftByCalls::ValuesLeftByCalls(const MedFunc &Func) {
 }
 
 bool ValuesLeftByCalls::contains(const MedVar &V) const {
-  return V.Kind == MedVar::Reg && Values.count(valueKey(V));
+  return V.Kind == MedVar::Unspecified ||
+         (V.Kind == MedVar::Reg && Values.count(valueKey(V)));
 }
 
 } // namespace neverd

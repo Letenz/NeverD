@@ -4070,6 +4070,16 @@ trap on a register earlier calls left behind, and no incoming stack slot taken
 for the routine's open arity. `MedCallLeftovers.JoinsOfCallClobbersOnly`
 checks which clobbers and joins `ValuesLeftByCalls` names, loops and exception
 entries included.
+`CallsTakeNoIncomingRegisterAnEarlierCallChanged` links, for x86-64, i386,
+ARM and AArch64, a routine that reads four argument registers with callers
+that declare it with one, calling it after another call, after a join of two
+calls and in a destructor run on a normal and an exceptional path: no caller
+takes a parameter for a register an earlier call may have changed, HighC and
+LLVM C alike. `VariadicCallsTakeNoSpillAboveAnUnsetRegister` keeps an AArch64
+-O0 spill above an unset register out of a variadic call's arguments.
+`ItaniumRuntimeCopiesTakeTheirDeclaredParameters` links an image's own copy
+of `_Unwind_Resume` for x86-64, ARM and AArch64: it takes its one declared
+parameter, and its callers pass it one argument.
 
 `ELFARM32ModeTest.MixedImagePairsItsPLTWithTheImports` links a mixed
 ARM/Thumb shared library and requires the PLT entry a Thumb `bl puts` reaches

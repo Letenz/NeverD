@@ -481,6 +481,19 @@ void recoverCallAbi(
   const AbiCallPolicy *Policy = abiCallPolicy(TheArch, Fmt);
   const IntegerArgumentLayout DefaultIntegerLayout =
       TRI.integerArgumentLayout(Fmt);
+  // A routine with a platform prototype takes exactly its declared
+  // parameters (detectRegisterParams): an incoming register past them is no
+  // parameter it passes on, however its calls read the register.
+  const std::optional<size_t> OwnPrototypeArgs =
+      Convention && Convention->PrototypeArgCount
+          ? Convention->PrototypeArgCount(Func.Name)
+          : std::nullopt;
+  auto takesIncomingRegister = [&](uint64_t RegOff) {
+    if (!OwnPrototypeArgs)
+      return true;
+    const int Index = DefaultIntegerLayout.registerIndex(RegOff);
+    return Index >= 0 && static_cast<size_t>(Index) < *OwnPrototypeArgs;
+  };
   // The integer argument layout of the call being recovered: that of a
   // direct callee with its own register order (CalleeIntRegs), else the
   // convention's.  The parameters this function forwards are numbered in
@@ -1172,7 +1185,8 @@ void recoverCallAbi(
             continue;
           auto V =
               findReachingArgReg(Func, TRI, TheArch, Blk.Id, K, IntegerLayout,
-                                 /*AllowUnknownLiveIn=*/false, nullptr);
+                                 /*AllowUnknownLiveIn=*/false, nullptr, nullptr,
+                                 static_cast<int>(OI), Fmt);
           if (!V)
             continue;
           Found[K] = *V;
@@ -1253,15 +1267,25 @@ void recoverCallAbi(
           // arity, or a hole below a found argN (`lea rdx` without `mov rcx`
           // still has live-in rcx as arg0 on Win64). Do not invent trailing
           // registers the callee never takes.
-          const bool AllowLiveIn = (CalleeRegArgs >= 0 && K < CalleeRegArgs) ||
-                                   (MaxRegArg >= 0 && K <= MaxRegArg);
+          const bool AllowLiveIn = ((CalleeRegArgs >= 0 && K < CalleeRegArgs) ||
+                                    (MaxRegArg >= 0 && K <= MaxRegArg)) &&
+                                   takesIncomingRegister(IntParamRegs[K]);
           bool FromLiveIn = false;
           bool FoundDefinition = false;
-          auto V =
-              findReachingArgReg(Func, TRI, TheArch, Blk.Id, K, IntegerLayout,
-                                 AllowLiveIn, &FromLiveIn, &FoundDefinition);
+          auto V = findReachingArgReg(
+              Func, TRI, TheArch, Blk.Id, K, IntegerLayout, AllowLiveIn,
+              &FromLiveIn, &FoundDefinition, static_cast<int>(OI), Fmt);
           if (!V)
             break;
+          // What only earlier calls left in the register is an argument only
+          // where the callee is known to read it, and an import reached
+          // through its slot takes only proven incoming values.
+          if (!AllowLiveIn || IsIndirectImport || VariableCallee) {
+            if (!LeftByCalls)
+              LeftByCalls.emplace(Func);
+            if (LeftByCalls->contains(*V))
+              break;
+          }
           if ((IsIndirectImport || VariableCallee) &&
               (FromLiveIn || V->Kind == MedVar::Param) &&
               !incomingArgumentReachesCall(Ctx, K))
@@ -1388,7 +1412,8 @@ void recoverCallAbi(
             continue;
           auto V =
               findReachingArgReg(Func, TRI, TheArch, Blk.Id, K, IntegerLayout,
-                                 /*AllowUnknownLiveIn=*/false, nullptr);
+                                 /*AllowUnknownLiveIn=*/false, nullptr, nullptr,
+                                 static_cast<int>(OI), Fmt);
           if (!V)
             continue;
           Found[K] = *V;
@@ -2444,11 +2469,17 @@ void recoverCallAbi(
           if (!LeftByCalls->contains(IntPart[I]))
             continue;
           // An indirect call has no callee to say its stack slots are
-          // arguments, and where integer arguments fill every register
-          // before the stack, a register no one set below them shows they
-          // are not (an -O0 spill near the call).
+          // arguments, nor has a variadic one for those past its named
+          // parameters.  Where integer arguments fill every register before
+          // the stack, a register no one set below them shows they are not
+          // (an -O0 spill near the call).  Apple's arm64 passes variadic
+          // arguments on the stack alone.
+          const bool OpenStackArguments =
+              CI.IsIndirect ||
+              (OpenVariadicArity &&
+               !(Convention && Convention->VariadicArgumentsOnStack));
           const bool NoStackArguments =
-              StackPart.empty() || (CI.IsIndirect && !PositionalSlots);
+              StackPart.empty() || (OpenStackArguments && !PositionalSlots);
           if (NoStackArguments) {
             for (size_t J = I; J < IntPart.size(); ++J)
               if (IntPart[J].Kind == MedVar::Param &&

@@ -3587,7 +3587,13 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
           !isSwiftErrorEntryProjected(Func, Opts.TheArch))))
       throw std::invalid_argument("Indirect record or error-register source "
                                   "entries need a projection proof");
-  auto Render = [&](llvm::raw_ostream &OS, CSourceRecorder *Recorder) {
+  // The records the code reads members of through others, as
+  // `l->head->child` reads a node, which only a rendering finds: each
+  // rendering asks the local types for those an earlier one found.
+  std::vector<TypeRef> Extra;
+  std::set<std::string> Asked;
+  auto Render = [&](llvm::raw_ostream &OS, CSourceRecorder *Recorder,
+                    std::vector<TypeRef> *Wanted = nullptr) {
     std::vector<HighFunc> Working = Funcs;
     if (Opts.StructuredExceptionSyntax) {
       attachCxxFuncletBodies(Working);
@@ -3601,29 +3607,64 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                       ? &PreparedImageFunctionNames
                       : nullptr,
                   Recorder);
+    W.ExtraRecords = Extra;
+    W.WantedRecords = Wanted;
     W.prepareFunctionReturns(Working);
     W.writeAll(Working);
   };
+  // Whether rendering number \p Pass notes records for the next; and whether
+  // \p Wanted, what one noted, asks for a record none asked for before.
+  const auto Collects = [&](unsigned Pass) {
+    return Opts.RecordDefinitions && Opts.EmitIncludes &&
+           Pass + 1 < limits::kMaxHighCRecordDefinitionRenders;
+  };
+  const auto Grew = [&](std::vector<TypeRef> &Wanted) {
+    bool Any = false;
+    for (TypeRef &Record : Wanted)
+      if (Asked.insert(Record->SourceName).second) {
+        Extra.push_back(std::move(Record));
+        Any = true;
+      }
+    return Any;
+  };
   if (!Opts.SourceMap) {
-    Render(Out, nullptr);
+    std::string Text;
+    for (unsigned Pass = 0;; ++Pass) {
+      Text.clear();
+      llvm::raw_string_ostream TextOS(Text);
+      std::vector<TypeRef> Wanted;
+      Render(TextOS, nullptr, Collects(Pass) ? &Wanted : nullptr);
+      if (!Grew(Wanted))
+        break;
+    }
+    Out << Text;
     return true;
   }
   std::string Ordinary;
-  llvm::raw_string_ostream OrdinaryOS(Ordinary);
   std::optional<CSourceRecorder> Positions;
-  if (!Opts.SourceMap->Recognitions || Opts.SourceMap->Recognitions->empty()) {
-    try {
-      Positions.emplace(*Opts.SourceMap, llvm::StringRef(),
-                        CSourceRecorder::Recording::Positions);
-      Positions->prepareHighSources();
-    } catch (const std::exception &) {
-      Positions.reset();
+  for (unsigned Pass = 0;; ++Pass) {
+    Ordinary.clear();
+    llvm::raw_string_ostream OrdinaryOS(Ordinary);
+    Positions.reset();
+    if (!Opts.SourceMap->Recognitions ||
+        Opts.SourceMap->Recognitions->empty()) {
+      try {
+        Positions.emplace(*Opts.SourceMap, llvm::StringRef(),
+                          CSourceRecorder::Recording::Positions);
+        Positions->prepareHighSources();
+      } catch (const std::exception &) {
+        Positions.reset();
+      }
     }
+    // Position recording adds no bytes and cannot influence expression
+    // spelling.  Render failures are ordinary source failures, not optional
+    // mapping failures.
+    std::vector<TypeRef> Wanted;
+    Render(OrdinaryOS, Positions ? &*Positions : nullptr,
+           Collects(Pass) ? &Wanted : nullptr);
+    if (!Grew(Wanted))
+      break;
   }
-  // Position recording adds no bytes and cannot influence expression spelling.
-  // Render failures are ordinary source failures, not optional mapping
-  // failures.
-  Render(OrdinaryOS, Positions ? &*Positions : nullptr);
   if (Positions && Positions->finishPositions(Ordinary)) {
     Out << Ordinary;
     return true;
