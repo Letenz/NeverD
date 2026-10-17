@@ -71,8 +71,9 @@ The SDK uses `bindings={"saved_target": ("original", VA)}` and
 Layout growth is automatic in the ordinary `section` installation strategy.
 The original requests no patch reserve; Mach-O explicitly uses `-headerpad,0`.
 On Windows, [header_section.c](header_section.c) fills the section table with
-small exported read-only data sections. The driver requires both PE headers
-and Mach-O prefixes to actually grow, and checks that the target VA is unchanged.
+small exported read-only data sections until the combined patch exceeds the
+remaining header capacity. The driver requires PE headers and Mach-O prefixes
+to actually grow, and checks that the target VA is unchanged.
 Supported PE header growth and checked Mach-O PIE header/unwind growth preserve
 the original code/data VAs. This is not permission to expand arbitrary layouts.
 Unprovable prefixes, unsupported unwind/relocations, TLS, IFUNC, new symbol

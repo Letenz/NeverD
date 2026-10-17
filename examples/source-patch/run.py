@@ -121,22 +121,29 @@ def main() -> None:
                      "-Wl,-keep_dwarf_unwind", "-Wl,-adhoc_codesign"]
     link = [clang, *flags, str(HERE / "original.c"), *app_flags]
     if system == "Windows":
-        # Use actual read-only sections, not spare headers reserved for patches.
-        probe = root / "probe.exe"
-        run([*link, "-o", str(probe)], "build-probe")
-        count = layout(probe, system)["free_header_bytes"] // 40
+        # The linker may keep its own spare headers. Leave fewer than the
+        # combined patch needs and verify actual header growth after publication.
         objects = []
-        for index in range(count):
-            obj = root / f"header-{index}.obj"
-            run([clang, *flags, "-c", str(HERE / "header_section.c"),
-                 f'-DEXAMPLE_SECTION=".demo{index}"', f"-DEXAMPLE_SYMBOL=demo_{index}",
-                 "-o", str(obj)], f"build-section-{index}")
-            objects.append(str(obj))
+        for attempt in range(8):
+            probe = root / f"probe-{attempt}.exe"
+            run([*link, *objects, "-o", str(probe)], f"build-probe-{attempt}")
+            spare = layout(probe, system)["free_header_bytes"]
+            if 0 <= spare < 3 * 40:
+                break
+            count = max(1, spare // 40 - 2)
+            for index in range(len(objects), len(objects) + count):
+                obj = root / f"header-{index}.obj"
+                run([clang, *flags, "-c", str(HERE / "header_section.c"),
+                     f'-DEXAMPLE_SECTION=".demo{index}"', f"-DEXAMPLE_SYMBOL=demo_{index}",
+                     "-o", str(obj)], f"build-section-{index}")
+                objects.append(str(obj))
+        else:
+            raise ValueError("the linker retains too much section-header capacity")
         link += objects
     run([*link, "-o", str(original)], "build-original")
     before = layout(original, system)
-    if system == "Windows" and not 0 <= before["free_header_bytes"] < 40:
-        raise ValueError("the original PE section table is not full")
+    if system == "Windows" and not 0 <= before["free_header_bytes"] < 3 * 40:
+        raise ValueError("the original retains too much section-header capacity")
     original_hash = sha256(original)
     exports = json.loads(run([neverd, "exports", str(original), "--json"], "exports").stdout)
     addresses = {int(row["addr"], 0) if isinstance(row["addr"], str) else row["addr"]
@@ -186,7 +193,10 @@ def main() -> None:
         layouts[api] = after
         if api != "original":
             if system == "Windows" and after["header_bytes"] <= before["header_bytes"]:
-                raise ValueError(f"{api}: the full PE header table did not grow")
+                raise ValueError(f"{api}: the PE header table did not grow")
+            if (system == "Windows" and (after["sections"] - before["sections"]) * 40
+                    <= before["free_header_bytes"]):
+                raise ValueError(f"{api}: the patch did not exceed original header capacity")
             if system == "Darwin" and after["text_vmaddr"] >= before["text_vmaddr"]:
                 raise ValueError(f"{api}: the tight Mach-O header prefix did not grow")
             saved = json.loads(run([neverd, "exports", str(image), "--json"],
