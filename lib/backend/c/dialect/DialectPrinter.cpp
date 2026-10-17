@@ -185,7 +185,7 @@ void DialectPrinter::directive(const TopLevel &Item) {
   line((lineComment() + " " + Item.Text).str());
 }
 
-std::optional<std::vector<SourceDialectLocalTypes::Hop>>
+std::optional<SourceDialectLocalTypes::Path>
 DialectPrinter::localMember(const Expr *E) const {
   if (!Opts.LocalTypes || E->Ops.empty() || !E->Ops.front()->Ty)
     return std::nullopt;
@@ -200,15 +200,17 @@ DialectPrinter::localMember(const Expr *E) const {
   llvm::StringRef Tag = Base->Record->Spelling;
   Tag.consume_front("struct ") || Tag.consume_front("union ");
   const auto Members = Opts.LocalTypes->Members.find(Tag.str());
+  const bool BitField = E->Field && E->Field->BitWidth;
   if (Members != Opts.LocalTypes->Members.end())
     if (const auto Path = Members->second.find(E->Text.str());
-        Path != Members->second.end() && !Path->second.empty())
+        Path != Members->second.end() &&
+        (BitField ? Path->second.bitField() : !Path->second.Hops.empty()))
       return Path->second;
-  unsupported(E->Field && E->Field->BitWidth
-                  ? "a bit-field, which the program's types read through "
-                    "methods"
-                  : "a member the program's types do not reach as a field");
-  return std::vector<SourceDialectLocalTypes::Hop>();
+  unsupported(BitField ? "a bit-field the program's types read through no "
+                         "methods"
+                       : "a member the program's types do not reach as a "
+                         "field");
+  return SourceDialectLocalTypes::Path();
 }
 
 bool DialectPrinter::localRecord(const CType *Ty) const {

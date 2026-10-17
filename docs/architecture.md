@@ -652,8 +652,11 @@ header, in place of the C bytes the source map records
 (`CSourceMap::LocalTypes`). The code reaches a member as that rendering
 names it: through the fields that hold its anonymous records, and in Go
 through the methods that read a union's members and the members Go cannot
-align, which return pointers. A bit-field, which the renderings read
-through methods, stays C with its reason. Without the program's types, as
+align, which return pointers. A bit-field reads through the getter and
+stores through the setter the renderings give the record that holds its
+storage (`MemberPath::Getter`, `Setter`); a compound assignment or an
+increment stores what it computes from the getter, and a `bool` bit-field,
+or one with no methods, stays C with its reason. Without the program's types, as
 the corpus reads a unit's text alone, Rust and Go spell a record whose
 fields their own structures lay out as C does, Rust's under its packing
 and alignment, and an enumeration as int constants, and show a union, an
