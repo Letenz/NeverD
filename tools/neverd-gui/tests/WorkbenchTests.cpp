@@ -2514,6 +2514,161 @@ private slots:
     QVERIFY(view->text()->status().contains("O2"));
   }
 
+  void symbolicSimplificationOfEveryFunctionIsTheDefaultUntilTurnedOff() {
+    QTemporaryDir directory;
+    Workbench bench;
+    const auto forget = qScopeGuard(
+        [] { QSettings().remove(settings::SymbolicSimplification); });
+    QStringList diagnostics;
+    connect(&bench.session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    bench.window->openFile(writeFixture(directory, "source-cache.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    QTRY_VERIFY_WITH_TIMEOUT(!view->text()->loading() &&
+                                 !view->text()->allText().isEmpty(),
+                             OpenTimeoutMs);
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    const QJsonObject symbolic{{"symbolic", true}};
+    // Turned on, it reaches the shown function at once and stays on.
+    {
+      QMenu choices;
+      view->addSourceActions(choices);
+      auto *every = choices.findChild<QAction *>("sourceSymbolicEvery");
+      QVERIFY(every && every->isCheckable() && !every->isChecked());
+      every->trigger();
+    }
+    QVERIFY(QSettings().value(settings::SymbolicSimplification).toBool());
+    QTRY_VERIFY(!view->text()->loading() &&
+                view->text()->status().contains("Symbolic simplification"));
+    QCOMPARE(view->text()->sourceOptions(), symbolic);
+    QVERIFY(diagnostics.join('\n').contains("\"symbolic\":true"));
+    {
+      QMenu choices;
+      view->addSourceActions(choices);
+      QVERIFY(choices.findChild<QAction *>("sourceSymbolic")->isChecked());
+      QVERIFY(choices.findChild<QAction *>("sourceSymbolicEvery")->isChecked());
+      QVERIFY(!choices.findChild<QAction *>("sourceDefault")->isEnabled());
+    }
+    // Another function opens with it.
+    view->text()->load(Base + 16, "source");
+    QTRY_VERIFY(!view->text()->loading() && !view->text()->allText().isEmpty());
+    QCOMPARE(view->text()->sourceOptions(), symbolic);
+    // One function turns it off; Restore default source turns it on again.
+    {
+      QMenu choices;
+      view->addSourceActions(choices);
+      choices.findChild<QAction *>("sourceSymbolic")->trigger();
+    }
+    QTRY_VERIFY(!view->text()->loading());
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    {
+      QMenu choices;
+      view->addSourceActions(choices);
+      auto *restore = choices.findChild<QAction *>("sourceDefault");
+      QVERIFY(restore->isEnabled());
+      restore->trigger();
+    }
+    QTRY_VERIFY(!view->text()->loading());
+    QCOMPARE(view->text()->sourceOptions(), symbolic);
+    // An IR has no source options to take.
+    bench.action(ActionId::ViewLowIR)->trigger();
+    auto *ir = bench.codeView(QStringLiteral("low"));
+    QVERIFY(ir);
+    QTRY_VERIFY(!ir->text()->loading() && !ir->text()->allText().isEmpty());
+    QVERIFY(ir->text()->sourceOptions().isEmpty());
+    QVERIFY(!ir->text()->status().contains("source view"));
+    // Options > General shows the same choice and turns it off everywhere.
+    bool shownOn = false;
+    QTimer dialogProbe;
+    connect(&dialogProbe, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *box = dialog
+                      ? dialog->findChild<QCheckBox *>("optionsSymbolicEvery")
+                      : nullptr;
+      if (!box)
+        return;
+      dialogProbe.stop();
+      shownOn = box->isChecked();
+      box->setChecked(false);
+      dialog->findChild<QDialogButtonBox *>()
+          ->button(QDialogButtonBox::Ok)
+          ->click();
+    });
+    dialogProbe.start(10);
+    bench.action(ActionId::OptionsGeneral)->trigger();
+    QVERIFY(shownOn);
+    QVERIFY(!QSettings().value(settings::SymbolicSimplification).toBool());
+    QTRY_VERIFY(!view->text()->loading());
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    view->text()->load(Base, "source");
+    QTRY_VERIFY(!view->text()->loading() && !view->text()->allText().isEmpty());
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+  }
+
+  void symbolicSimplificationOfEveryFunctionGivesWayToOrdinarySource() {
+    QTemporaryDir directory;
+    Workbench bench;
+    const auto forget = qScopeGuard(
+        [] { QSettings().remove(settings::SymbolicSimplification); });
+    SourceDefaults::instance().setSymbolic(true);
+    bench.window->openFile(writeFixture(directory, "source-options-fail.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    // A refused simplification still shows the function.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !view->text()->loading() &&
+            view->text()->status().contains("Transformation failed"),
+        OpenTimeoutMs);
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    QVERIFY(!view->text()->allText().isEmpty());
+    QVERIFY(!view->text()->allText().contains("refused"));
+  }
+
+  void cancellingSymbolicSimplificationOfANewFunctionShowsOrdinarySource() {
+    QTemporaryDir directory;
+    Workbench bench;
+    const auto forget = qScopeGuard(
+        [] { QSettings().remove(settings::SymbolicSimplification); });
+    QStringList diagnostics;
+    connect(&bench.session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    SourceDefaults::instance().setSymbolic(true);
+    bench.window->openFile(writeFixture(directory, "source-options-slow.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    QTRY_VERIFY_WITH_TIMEOUT(diagnostics.join('\n').contains(
+                                 "fixture symbolic transformation started"),
+                             5000);
+    QVERIFY(view->text()->loading());
+    QVERIFY(view->text()->allText().isEmpty());
+    QMenu cancellation;
+    view->addSourceActions(cancellation);
+    auto *cancel = cancellation.findChild<QAction *>("sourceCancel");
+    QVERIFY(cancel && cancel->isEnabled());
+    cancel->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!view->text()->loading() &&
+                                 !view->text()->allText().isEmpty(),
+                             OpenTimeoutMs);
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    QVERIFY(view->text()->status().contains("Cancelled"));
+  }
+
   void largePseudocodeKeepsProcessingEvents() {
     QTemporaryDir directory;
     Workbench bench;

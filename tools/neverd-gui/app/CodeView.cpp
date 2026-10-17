@@ -2,6 +2,7 @@
 
 #include "Icons.h"
 #include "Session.h"
+#include "SettingsKeys.h"
 #include "ShrinkableRow.h"
 #include "Theme.h"
 
@@ -25,6 +26,7 @@
 #include <QScopedValueRollback>
 #include <QScrollBar>
 #include <QSet>
+#include <QSettings>
 #include <QTextLine>
 #include <QToolButton>
 #include <QToolTip>
@@ -415,6 +417,28 @@ QHash<QString, int> llvmDefinitions(QStringView source) {
 }
 } // namespace
 
+SourceDefaults &SourceDefaults::instance() {
+  static SourceDefaults defaults;
+  return defaults;
+}
+
+bool SourceDefaults::symbolic() const {
+  return QSettings().value(settings::SymbolicSimplification, false).toBool();
+}
+
+void SourceDefaults::setSymbolic(bool enabled) {
+  if (enabled == symbolic())
+    return;
+  QSettings().setValue(settings::SymbolicSimplification, enabled);
+  emit changed();
+}
+
+QJsonObject SourceDefaults::options(const QString &representation) {
+  if (CodeView::isSource(representation) && instance().symbolic())
+    return {{"symbolic", true}};
+  return {};
+}
+
 CodeText::CodeText(Session &session, QWidget *parent)
     : QAbstractScrollArea(parent), session_(session) {
   setFocusPolicy(Qt::StrongFocus);
@@ -435,6 +459,25 @@ CodeText::CodeText(Session &session, QWidget *parent)
       load(*function_, representation_);
     else
       interrupted_ = true;
+  });
+  // A new default reaches the shown function too, whatever this window
+  // chose for it; a hidden window takes it when it shows again.
+  connect(&SourceDefaults::instance(), &SourceDefaults::changed, this, [this] {
+    if (!function_ || !CodeView::isSource(representation_))
+      return;
+    auto options = sourceOptions_;
+    if (SourceDefaults::instance().symbolic())
+      options["symbolic"] = true;
+    else
+      options.remove("symbolic");
+    if (options == sourceOptions_)
+      return;
+    if (isVisible()) {
+      load(*function_, representation_, options);
+    } else {
+      sourceOptions_ = options;
+      interrupted_ = true;
+    }
   });
   connect(&session_, &Session::unloaded, this, &CodeText::clear);
   // A drag held beyond an edge scrolls toward it, the faster the farther
@@ -500,6 +543,7 @@ void CodeText::cancel() {
   ++serial_;
   pendingAddress_.reset();
   selectedAddress_.reset();
+  statusNote_.clear();
   session_.cancelAnalysisReads(this);
   if (loading_) {
     sourceOptions_ = renderedOptions_;
@@ -555,8 +599,8 @@ void CodeText::clear() {
 void CodeText::load(Address function, const QString &representation,
                     std::optional<QJsonObject> options) {
   const bool same = function_ == function && representation_ == representation;
-  const auto nextOptions =
-      options.value_or(same ? sourceOptions_ : QJsonObject());
+  const auto nextOptions = options.value_or(
+      same ? sourceOptions_ : SourceDefaults::options(representation));
   // A reload of complete text keeps its place; one a newer reload cuts short
   // keeps the place the first one saved.
   if (!same) {
@@ -605,6 +649,25 @@ void CodeText::load(Address function, const QString &representation,
 void CodeText::setSourceOptions(const QJsonObject &options) {
   if (function_ && CodeView::isSource(representation_))
     load(*function_, representation_, options);
+}
+
+QJsonObject CodeText::defaultSourceOptions() const {
+  return SourceDefaults::options(representation_);
+}
+
+void CodeText::cancelTransformation() {
+  if (loading_ && lines_.isEmpty() && sourceOptions_.value("symbolic").toBool())
+    showOrdinary(tr("Cancelled"));
+  else
+    cancel();
+}
+
+void CodeText::showOrdinary(const QString &why) {
+  auto options = sourceOptions_;
+  options.remove("symbolic");
+  load(*function_, representation_, options);
+  // Pages arrive from the event loop, after this.
+  statusNote_ = why;
 }
 
 void CodeText::request(int offset, quint64 serial) {
@@ -682,6 +745,9 @@ void CodeText::request(int offset, quint64 serial) {
           status_ +=
               QStringLiteral(" · ") + sourceOptions_.value("llvm_optimization")
                                           .toString(QStringLiteral("O2"));
+        if (!statusNote_.isEmpty())
+          status_ += (status_.isEmpty() ? QString() : QStringLiteral(" · ")) +
+                     std::exchange(statusNote_, {});
         updateRange();
         viewport()->update();
         if (const auto address = std::exchange(pendingAddress_, {}))
@@ -701,6 +767,12 @@ void CodeText::request(int offset, quint64 serial) {
           sourceOptions_ = renderedOptions_;
           status_ = tr("Transformation failed: %1").arg(message);
           emit statusChanged();
+          return;
+        }
+        // Symbolic simplification never keeps a function from showing: its
+        // ordinary source follows.
+        if (sourceOptions_.value("symbolic").toBool()) {
+          showOrdinary(tr("Transformation failed: %1").arg(message));
           return;
         }
         // A refused function reads in no language and names nothing.
@@ -2552,6 +2624,16 @@ void CodeView::addSourceActions(QMenu &menu) {
       options.remove("symbolic");
     text_->setSourceOptions(options);
   });
+  // The default every function opens with, kept for later sessions.
+  auto *every =
+      menu.addAction(icon(QStringLiteral("source_symbolic_every")),
+                     tr("Symbolic simplification for every function"));
+  every->setObjectName(QStringLiteral("sourceSymbolicEvery"));
+  every->setCheckable(true);
+  every->setChecked(SourceDefaults::instance().symbolic());
+  connect(every, &QAction::triggered, this, [](bool enabled) {
+    SourceDefaults::instance().setSymbolic(enabled);
+  });
   if (representation() == QLatin1String("llvmc")) {
     auto *recovery = menu.addAction(icon(QStringLiteral("source_control_flow")),
                                     tr("Recover LLVM control flow"));
@@ -2640,14 +2722,14 @@ void CodeView::addSourceActions(QMenu &menu) {
   auto *reset = menu.addAction(icon(QStringLiteral("undo")),
                                tr("Restore default source"));
   reset->setObjectName(QStringLiteral("sourceDefault"));
-  reset->setEnabled(!text_->sourceOptions().isEmpty());
+  reset->setEnabled(text_->sourceOptions() != text_->defaultSourceOptions());
   connect(reset, &QAction::triggered, this,
-          [this] { text_->setSourceOptions({}); });
+          [this] { text_->setSourceOptions(text_->defaultSourceOptions()); });
   auto *cancel = menu.addAction(icon(QStringLiteral("cancel")),
                                 tr("Cancel transformation"));
   cancel->setObjectName(QStringLiteral("sourceCancel"));
   cancel->setEnabled(text_->loading());
-  connect(cancel, &QAction::triggered, text_, &CodeText::cancel);
+  connect(cancel, &QAction::triggered, text_, &CodeText::cancelTransformation);
 }
 
 void CodeView::updateRepresentations() {

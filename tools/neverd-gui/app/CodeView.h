@@ -24,6 +24,26 @@ namespace neverd::gui {
 
 class Session;
 
+/// The source choices every function's code opens with: whether source is
+/// simplified symbolically, which removes mixed Boolean-arithmetic
+/// obfuscation at a cost.  The user's settings keep it; a code window may
+/// still choose otherwise for the function it shows.
+class SourceDefaults final : public QObject {
+  Q_OBJECT
+public:
+  static SourceDefaults &instance();
+  bool symbolic() const;
+  void setSymbolic(bool enabled);
+  /// The options a function opens with in \p representation: none in an IR.
+  static QJsonObject options(const QString &representation);
+
+signals:
+  void changed();
+
+private:
+  SourceDefaults() = default;
+};
+
 /// Text of one function in a code representation: C pseudocode (native or
 /// through LLVM) or a textual IR.  Lines are fetched in pages and colored
 /// locally; explicit navigation uses the worker's instruction mappings.
@@ -48,10 +68,15 @@ public:
             std::optional<QJsonObject> options = std::nullopt);
   const QJsonObject &sourceOptions() const { return sourceOptions_; }
   void setSourceOptions(const QJsonObject &options);
+  /// The options a function opens with in this representation.
+  QJsonObject defaultSourceOptions() const;
   void clear();
   /// Stop obsolete requests/pages, including an in-flight analysis process
   /// when no other view still subscribes to its result.
   void cancel();
+  /// Cancel as the user does: a symbolic simplification of a function that
+  /// shows no source yet gives way to its ordinary source.
+  void cancelTransformation();
   std::optional<Address> function() const { return function_; }
   QString representation() const { return representation_; }
   /// The assembly-selected address on the cursor line, or its primary mapping.
@@ -213,6 +238,9 @@ protected:
 private:
   void request(int offset, quint64 serial);
   void appendPage(const QJsonObject &payload, int offset);
+  /// Load the function's source without symbolic simplification, saying
+  /// \p why in the status line when it arrives.
+  void showOrdinary(const QString &why);
   /// The library regions of the loaded function, its prelude and epilogue.
   QJsonArray foldRegions() const;
   /// The source line where the epilogue begins.
@@ -269,6 +297,8 @@ private:
   };
   std::optional<SourcePlace> placeAfterLoad_;
   QString representation_, status_, highlight_;
+  /// Why the source on its way is not the one asked for (showOrdinary).
+  QString statusNote_;
   QJsonObject sourceOptions_, renderedOptions_;
   quint64 serial_ = 0;
   bool inComment_ = false, loading_ = false, foldAfterLoad_ = false;

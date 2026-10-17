@@ -2616,6 +2616,11 @@ void MainWindow::showOptions() {
       new QCheckBox(tr("Show segment:address line prefixes"), &dialog);
   prefixes->setChecked(true);
   form->addRow(prefixes);
+  auto *symbolic =
+      new QCheckBox(tr("Symbolic simplification for every function"), &dialog);
+  symbolic->setObjectName(QStringLiteral("optionsSymbolicEvery"));
+  symbolic->setChecked(SourceDefaults::instance().symbolic());
+  form->addRow(symbolic);
   auto *buttons = new QDialogButtonBox(
       QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
   form->addRow(buttons);
@@ -2628,6 +2633,7 @@ void MainWindow::showOptions() {
   disassembly_->listing()->setShowPrefixes(prefixes->isChecked());
   Theme::instance().setMode(theme->currentIndex() == 0 ? Theme::Mode::Dark
                                                        : Theme::Mode::Light);
+  SourceDefaults::instance().setSymbolic(symbolic->isChecked());
 }
 
 void MainWindow::showStringOptions() {
