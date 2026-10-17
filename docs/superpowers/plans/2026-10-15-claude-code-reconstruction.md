@@ -1072,3 +1072,43 @@ anchors and eleven ambiguous shapes per platform remain unknown. The v3
 manifest is 8124e76ac514246359ef963fded00c21d92905e1d44e58a8c9c7bb83c31936a7.
 Original erased types, the private Bun revision, other-platform engine
 integration and full reconstruction acceptance remain unfinished.
+
+## Shared Rust graph and exact component metadata continuation
+
+The independent direct Rust/C library qualification is complete for both
+architectures in 38966864371. Full Bun run 38968068585 then fails at the final
+link: Bun rebuilds std with its own features and LTO graph, while standalone
+archives refer to a different std crate identity. Those archives remain useful
+source provenance and component evidence; they are not admitted engine inputs.
+
+The next implementation stages only the pinned public rg/PCRE2 source and
+unchanged seccomp C source. Ripgrep is a target-specific dependency of
+bun_runtime in the same Rust/std graph. Exact entry, C-build, Cargo, planner and
+source-glob hashes gate the patch. Lock resolution occurs in a bootstrap plan
+only; the final plan and full build use --locked. A pre-build verifier checks
+the actual root-to-rg dependency, one source-built target std and the PCRE2
+overlay. Full plans, effective locks and raw controls are retained. Native run
+38986987671 at 3f33d16c12cb2360fe405394f48a4abdc405fea7 is still in progress.
+Five focused Bun tests pass, including rejection of split/unlocked graphs.
+The old memfd profile is revoked; 38986987667 passes profile selection and skips
+actual-client execution because no replacement engine is qualified yet. This
+workflow result is not client acceptance.
+
+Strict Ugrep/Bfs comparison run 38969756428 executes every case: 33 of 36 pairs
+match exactly, including every functional case. The remaining differences are
+x64 Ugrep SIMD metadata and both Bfs build-flag outputs. Ugrep must retain SSE2
+while disabling host-selected AVX2/AVX512. Producer 38986089116 at
+81e36700bcc24044361524b823f76bf7b88021f2 passes both native builds. Independent
+readback verifies all package files, source inputs, raw controls, ELF metadata
+and upstream skips; both complete Ugrep version outputs now equal the original
+bytes. Full strict comparisons are being repeated with those exact candidates.
+
+Bfs's GLIBC_2.38 standalone candidate is still not a portable engine component.
+A separate build uses the original measured LLVM-23 command, compatibility
+poison macros, Oniguruma paths, non-PIE flags and architecture-specific sysroot
+paths with a public replacement sysroot. First run 38985545815 compiles
+Oniguruma but fails Bfs's final link because -lonig is missing. The replacement
+supplies the measured library input and disables the standalone default LTO
+flag, absent from the original metadata. Generated configuration fragments and
+actual link commands are retained. No version bytes, comparator, file limit or
+ABI floor are rewritten to turn a mismatch into a pass.
