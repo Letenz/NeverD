@@ -134,6 +134,11 @@ public:
   /// line that defines it, when the shown code defines that label.
   std::optional<std::pair<Address, int>>
   addressLabel(const QString &name) const;
+  /// Where the disassembly shows the function's frame part \p name names:
+  /// the function's address for the frame record HighC declares and its
+  /// storage, and for a member of it the instruction the cursor's line, else
+  /// the first line that reads or writes it, maps to.
+  std::optional<Address> frameAddress(const QString &name) const;
   /// The image address the global name at a line and column of LLVM IR
   /// stands for there, as the engine resolved it: a function's entry, or the
   /// byte a constant offset from an image mirror reaches.
@@ -182,8 +187,8 @@ signals:
   void nameActivated(const QString &name);
   /// A global the code declares at an image address was double-clicked.
   void objectActivated(neverd::gui::Address address);
-  /// A goto label was double-clicked: \p address is the block it labels,
-  /// where the disassembly goes while the code goes to the label.
+  /// A place in this function was double-clicked: \p address is where the
+  /// disassembly goes, the block a goto label names or the function's frame.
   void labelActivated(neverd::gui::Address address);
   void statusChanged();
   void foldingChanged();

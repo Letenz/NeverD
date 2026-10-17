@@ -1496,6 +1496,77 @@ private slots:
     QVERIFY(!note->contains(QStringLiteral("mapped_address")));
   }
 
+  void frameRecordsGoToTheirFunctionAndMembersToTheirUses() {
+    // The record HighC declares for a function's stack names the function:
+    // a double-click on it, or on its storage, takes the disassembly to where
+    // the function begins, and on a member to the instruction that first
+    // reads or writes it, while the code stays; Back returns.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-frame.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address function = Base + 0x140;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 10);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    QSignalSpy names(code, &CodeText::nameActivated);
+    const auto doubleClick = [&] {
+      const QPointF point(code->viewport()->width() / 2.0, 1);
+      QMouseEvent click(QEvent::MouseButtonDblClick, point,
+                        code->viewport()->mapToGlobal(point), Qt::LeftButton,
+                        Qt::LeftButton, Qt::NoModifier);
+      QApplication::sendEvent(code->viewport(), &click);
+    };
+    code->setCursorLine(0);
+    QVERIFY(code->findText(QStringLiteral("return stack_storage"), true));
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function + 0xC));
+
+    const QString record =
+        QStringLiteral("frame_") + QString::number(function, 16).toUpper();
+    code->setCursorLine(0);
+    QVERIFY(code->findText(record, true));
+    QCOMPARE(code->currentToken(), record);
+    const int recordRow = code->cursorLine();
+    doubleClick();
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function));
+    QCOMPARE(code->cursorLine(), recordRow);
+    QVERIFY(code->hasFocus());
+    bench.action(ActionId::JumpBack)->trigger();
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function + 0xC));
+
+    // A member's declaration goes to the statement that first writes it.
+    code->setCursorLine(0);
+    QVERIFY(code->findText(QStringLiteral("var_m30"), true));
+    QCOMPARE(code->currentToken(), QStringLiteral("var_m30"));
+    QVERIFY(code->cursorLine() < recordRow + 5);
+    doubleClick();
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function + 6));
+
+    // The storage is the frame's too.
+    code->setCursorLine(0);
+    QVERIFY(code->findText(QStringLiteral("stack_storage"), true));
+    QCOMPARE(code->currentToken(), QStringLiteral("stack_storage"));
+    doubleClick();
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function));
+    QCOMPARE(names.size(), 0);
+    QCOMPARE(code->function(), std::optional<Address>(function));
+  }
+
   void codeEditKeepsThePlaceInALongFunction() {
     // An edit loads the function's pages again. The first page used to
     // clamp the cursor and the view, which then stayed near its end: the
