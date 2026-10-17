@@ -198,8 +198,7 @@ bool LLVMCWriter::isAnalysisOnlyFunction(const llvm::Function &Fn) const {
          llvm::Triple(Module->getTargetTriple()).isOSWindows();
 }
 
-bool LLVMCWriter::isReferencedByExecutableProjection(
-    const llvm::Function &Fn) const {
+bool LLVMCWriter::isReferencedByProjection(const llvm::Function &Fn) const {
   llvm::SmallVector<const llvm::User *, 16> Worklist;
   llvm::SmallPtrSet<const llvm::User *, 32> Visited;
   for (const llvm::User *User : Fn.users())
@@ -209,14 +208,10 @@ bool LLVMCWriter::isReferencedByExecutableProjection(
     const llvm::User *User = Worklist.pop_back_val();
     if (!Visited.insert(User).second)
       continue;
-    if (const auto *Inst = llvm::dyn_cast<llvm::Instruction>(User)) {
-      const llvm::Function *Owner = Inst->getFunction();
-      if (Owner && !isAnalysisOnlyFunction(*Owner))
-        return true;
-      continue;
-    }
+    if (llvm::isa<llvm::Instruction>(User))
+      return true;
     if (const auto *Owner = llvm::dyn_cast<llvm::Function>(User)) {
-      if (!Owner->isDeclaration() && !isAnalysisOnlyFunction(*Owner))
+      if (!Owner->isDeclaration())
         return true;
       continue;
     }

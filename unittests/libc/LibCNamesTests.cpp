@@ -533,6 +533,7 @@ TEST(LibCResult, ReadsWhetherTheDeclaredResultIsAPointer) {
             LibCResult::Pointer);
   EXPECT_EQ(libcResult("__getmainargs", BinaryFormat::COFF), LibCResult::Value);
   EXPECT_EQ(libcResult("_initterm", BinaryFormat::COFF), LibCResult::Void);
+  EXPECT_EQ(libcResult("_onexit", BinaryFormat::COFF), LibCResult::Pointer);
   EXPECT_FALSE(libcResult("__acrt_iob_func", BinaryFormat::ELF).has_value());
   EXPECT_FALSE(
       libcResult("neverd_unknown_routine", BinaryFormat::ELF).has_value());

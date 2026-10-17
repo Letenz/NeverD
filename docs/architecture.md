@@ -404,6 +404,25 @@ data or export names it (`recordConstantCodeSlots`, `ConstantCodeSlots`).
 LowToMed then lowers a call through it as a call to that function, which both
 C routes print. A lazy binding, which the function it starts at rewrites,
 stays a variable the call loads.
+
+Whole-module LLVM C is one translation unit a C compiler builds. Every
+definition is declared before the bodies, one an unwind record marks for
+exception analysis too (`neverd.windows.eh` holds an ELF FDE or a `.pdata`
+entry alike): those bodies print as code. A C library routine the code calls,
+directly or through the slot or symbol the loader binds for its import
+(`libraryCallee`), takes the declaration a header gives it, or the prototype
+the runtime's tables give it, which the unit declares itself, weak where the
+image's reference is weak (`__gmon_start__`). Its arguments convert to the
+parameter types; a pointer it returns converts to the integer that holds it;
+the result of one that returns nothing is never read, and where code reads
+the register it left that is zero, as for any undefined value
+(`libraryResult`; `LibCReturnKinds.inc` records pointer results). A
+definition named like such a routine is the image's own copy and takes its
+address (`atexit_140001234`), as a body lifted under an import's name does.
+An address into a byte array the module defines is an offset into it, in a
+global's initializer as in code, and an import a global names is declared
+before the globals. A function with Windows exception handling includes
+`<excpt.h>`, which names what its filters print.
 Where a linker folded identical
 functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's

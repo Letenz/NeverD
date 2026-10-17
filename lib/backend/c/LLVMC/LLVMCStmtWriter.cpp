@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../render/X86FPStateHelpers.h"
 #include "LLVMCIntegerMinMax.h"
@@ -31,6 +32,7 @@
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/libc/LibCResult.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -4752,18 +4754,17 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
     ResultLive = false;
   if (ResultLive && unreadMsvcThisReturn(Call))
     ResultLive = false;
-  // A memory routine its header declares returns its destination, a
-  // pointer, which C converts to the integer that holds it only by a cast.
-  const bool PointerResult =
-      ResultLive && Call.getType()->isIntegerTy() && Call.getCalledFunction() &&
-      Call.getCalledFunction()->isDeclaration() &&
-      libc::headerFor(CalleeName) &&
-      (libc::isMemSetName(CalleeName) || libc::isMemCopyName(CalleeName));
+  // A library routine that returns nothing, whose result nothing reads, is
+  // called alone.
+  if (const LibraryCallee Library =
+          ResultLive ? libraryCallee(Call) : LibraryCallee();
+      Library &&
+      libc::libcResult(Library.Name, Opts.Format) == libc::LibCResult::Void &&
+      !valueFeedsPrintedUse(&Call))
+    ResultLive = false;
   if (ResultLive)
     OS << Name << " = ";
-  if (PointerResult)
-    OS << "(" << typeToCLLVM(Call.getType()) << ")(uintptr_t)";
-  OS << callExpr(Call) << ";\n";
+  OS << callExpr(Call, /*Statement=*/!ResultLive) << ";\n";
   AfterCxxThrow = NoReturn;
 }
 
@@ -4824,7 +4825,7 @@ LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
          valueStr(Call.getCalledOperand()) + "))";
 }
 
-std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
+std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
   if (llvmc::cStackAllocation(Call))
     throw std::runtime_error(
         "private C stack allocation cannot be an expression");
@@ -4919,6 +4920,7 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
 
   std::string Expr = CalleeName + "(";
   const unsigned Limit = printedCallArgLimit(Call, CalleeName);
+  const LibraryCallee Library = libraryCallee(Call);
   for (unsigned ArgIdx = 0; ArgIdx < Limit; ++ArgIdx) {
     if (ArgIdx > 0)
       Expr += ", ";
@@ -4945,21 +4947,31 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
         throw std::runtime_error("invalid source scalar argument");
       Argument = "(" + Spelling.str() + ")(" + Argument + ")";
     }
-    const auto *Callee = Call.getCalledFunction();
-    const bool HeaderInteger =
-        !Opts.PreserveLLVMFunctionTypes && Callee && Callee->isDeclaration() &&
-        libc::headerFor(CalleeName) &&
-        Call.getArgOperand(ArgIdx)->getType()->isIntegerTy();
+    const bool Integer = Call.getArgOperand(ArgIdx)->getType()->isIntegerTy();
+    const bool HeaderInteger = Library && !Library.Prototype && Integer;
+    const libc::LibCPrototype *Prototype =
+        Library.Prototype && ArgIdx < Library.Prototype->ParamCount
+            ? Library.Prototype
+            : nullptr;
+    const std::string Param =
+        Prototype
+            ? c_library::typeSpelling(Prototype->Params[ArgIdx], Opts.TheArch)
+            : std::string();
     // A header's pointer parameter takes the integer that holds an address
     // converted, an object's or a function's (qsort's comparison).
-    if (HeaderInteger && libc::isObjectPointerParameter(CalleeName, ArgIdx))
+    if (HeaderInteger && libc::isObjectPointerParameter(Library.Name, ArgIdx))
       Argument = "(void *)(uintptr_t)(" + Argument + ")";
     else if (const auto Function =
                  HeaderInteger
-                     ? libc::functionPointerParameter(CalleeName, ArgIdx)
+                     ? libc::functionPointerParameter(Library.Name, ArgIdx)
                      : std::nullopt)
       Argument =
           "(" + std::string(*Function) + ")(uintptr_t)(" + Argument + ")";
+    // A parameter the runtime's tables type takes an integer converted to
+    // its pointer, and an address converted to its integer.
+    else if (Prototype &&
+             (libc::isPointerType(Param) ? Integer : PointerSpelling))
+      Argument = "(" + Param + ")(uintptr_t)(" + Argument + ")";
     // An address, such as a string literal, passed where the callee is
     // declared to take an integer converts to it.
     else if (PointerSpelling &&
@@ -4970,7 +4982,7 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
   }
   Expr += ")";
   RenderingCalls.pop_back();
-  return Expr;
+  return Statement ? Expr : libraryResult(Call, std::move(Expr));
 }
 
 namespace {
@@ -5435,13 +5447,27 @@ bool LLVMCWriter::declaredParameterIsInteger(const llvm::CallBase &Call,
                                              llvm::StringRef CalleeName,
                                              unsigned ArgIdx) const {
   // Headers and the MSVC table declare their own prototypes, and a module's
-  // own definition its C one; others are declared as LLVM types them.
-  const llvm::Function *Callee = Call.getCalledFunction();
-  if (!Callee || Callee->isIntrinsic() || Opts.PreserveLLVMFunctionTypes ||
-      (!Callee->isDeclaration() && !OnlyFunction) ||
-      libc::isKnownFunction(CalleeName) || msvcCallee(CalleeName, Opts.Format))
+  // own definition its C one, which keeps the LLVM types where no debug
+  // information types it; others are declared as LLVM types them.  A call
+  // through a pointer casts it to the call's own LLVM type
+  // (indirectCalleeType), and an import named for its slot is declared
+  // without parameters.
+  if (Opts.PreserveLLVMFunctionTypes)
     return false;
-  const llvm::FunctionType *Type = Callee->getFunctionType();
+  const llvm::Function *Callee = Call.getCalledFunction();
+  if (!Callee) {
+    if (llvm::isa<llvm::InlineAsm>(Call.getCalledOperand()) ||
+        !resolveImportCalleeName(Call.getCalledOperand()).empty())
+      return false;
+  } else if (Callee->isIntrinsic() ||
+             (!Callee->isDeclaration() && !OnlyFunction &&
+              debugFunction(*Callee)) ||
+             libc::isKnownFunction(CalleeName) ||
+             msvcCallee(CalleeName, Opts.Format)) {
+    return false;
+  }
+  const llvm::FunctionType *Type =
+      Callee ? Callee->getFunctionType() : Call.getFunctionType();
   return ArgIdx < Type->getNumParams() &&
          Type->getParamType(ArgIdx)->isIntegerTy();
 }

@@ -66,6 +66,10 @@ inline constexpr auto kWindowsCRTPrototypes = std::to_array<LibCPrototype>({
     windowsCRTPrototype("_initterm_e", "int",
                         {"int (**)(void)", "int (**)(void)"}),
     windowsCRTPrototype("_amsg_exit", "void", {"int"}),
+    windowsCRTPrototype("_onexit", "int (*)(void)", {"int (*)(void)"}),
+    windowsCRTPrototype(
+        "__dllonexit", "int (*)(void)",
+        {"int (*)(void)", "void (***)(void)", "void (***)(void)"}),
     windowsCRTPrototype("_cexit", "void", {}),
     windowsCRTPrototype("_c_exit", "void", {}),
     windowsCRTPrototype("_lock", "void", {"int"}),

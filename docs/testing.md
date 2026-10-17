@@ -7290,6 +7290,19 @@ lazy one through its variable.
 `HighControlFlowSemantics.ATruthValueSelectingOneOrZeroIsItself` reads -O0
 AArch64's `cset w8, eq; and w8, w8, #1` as the comparison itself, or its
 negation, and keeps a selection by a value that may hold another number.
+`NativePointerRelocationBoundary.MinGWProgramWholeModuleLLVMCCompiles` links
+a program against the MinGW-w64 runtime, when its compiler is installed, and
+compiles the program's whole-module LLVM C for x86-64 MinGW. The LLVMCValues
+cases it rests on compile and run on the host:
+`ACallerWithUnwindInformationSeesItsCalleeDeclared` declares a callee whose
+caller carries an unwind record;
+`ALibraryRoutineCalledThroughItsImportTakesItsDeclaration` calls `fputc`,
+`getenv` and `free` through import symbols with their headers' types and
+`EnterCriticalSection` with the runtime tables' prototype;
+`ARuntimeRoutineReturningAFunctionPointerIsDeclared` declares `_onexit`;
+`AWeakImportIsDeclaredWeak` links without `__gmon_start__`; and
+`ADefinitionOfALibraryRoutinesNameTakesItsAddress` renames the image's own
+`atexit`.
 `LibCResult.ReadsWhetherTheDeclaredResultIsAPointer` reads pointer results
 from headers, typedefs included, and from the runtime tables.
 
