@@ -7302,7 +7302,9 @@ caller carries an unwind record;
 `ARuntimeRoutineReturningAFunctionPointerIsDeclared` declares `_onexit`;
 `AWeakImportIsDeclaredWeak` links without `__gmon_start__`; and
 `ADefinitionOfALibraryRoutinesNameTakesItsAddress` renames the image's own
-`atexit`.
+`atexit`. `LLVMCIntrinsicSemantics.RepMovsForwardBackwardDynamicAndOverlap`
+runs `rep movs` copies of each width and direction, overlapping ones too, and
+`RepMovsRejectsUnprovedContracts` refuses other shapes.
 `LibCResult.ReadsWhetherTheDeclaredResultIsAPointer` reads pointer results
 from headers, typedefs included, and from the runtime tables.
 

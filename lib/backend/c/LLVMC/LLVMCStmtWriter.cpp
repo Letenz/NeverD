@@ -4643,6 +4643,70 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
       llvm::StringRef(AsmStr).contains("rep stos"))
     llvm::report_fatal_error("unsupported REP STOS inline assembly contract");
 
+  if (auto Movs = classifyX86RepMovs(Opts.TheArch, Call)) {
+    // The processor reads each element whole before it writes it, so an
+    // overlapping copy repeats what it already wrote, as `rep movsb` does
+    // forward over a destination one byte past its source.
+    const std::string Src = freshVar("movs_src");
+    const std::string Dst = freshVar("movs_dst");
+    const std::string Count = freshVar("movs_count");
+    const std::string Backward = freshVar("movs_backward");
+    const std::string Element = freshVar("movs_element");
+    const std::string AddrTy =
+        "uint" + std::to_string(Movs->AddressBits) + "_t";
+    emitIndent(Indent);
+    OS << "{\n";
+    emitIndent(Indent + 1);
+    OS << AddrTy << " " << Src << " = (" << AddrTy << ")(uintptr_t)("
+       << valueStr(Call.getArgOperand(0)) << ");\n";
+    emitIndent(Indent + 1);
+    OS << AddrTy << " " << Dst << " = (" << AddrTy << ")(uintptr_t)("
+       << valueStr(Call.getArgOperand(1)) << ");\n";
+    emitIndent(Indent + 1);
+    OS << AddrTy << " " << Count << " = " << valueStr(Call.getArgOperand(2))
+       << ";\n";
+    emitIndent(Indent + 1);
+    OS << "int " << Backward << " = "
+       << (Movs->Dir == X86RepMovs::Dynamic
+               ? "(" + valueStr(Call.getArgOperand(3)) + ") != 0"
+           : Movs->Dir == X86RepMovs::Backward ? "1"
+                                               : "0")
+       << ";\n";
+    emitIndent(Indent + 1);
+    OS << "while (" << Count << " != 0) {\n";
+    emitIndent(Indent + 2);
+    OS << "unsigned char " << Element << "[" << Movs->ElementBytes << "];\n";
+    for (unsigned Byte = 0; Byte < Movs->ElementBytes; ++Byte) {
+      emitIndent(Indent + 2);
+      OS << Element << "[" << Byte << "] = ((const unsigned char*)(uintptr_t)"
+         << Src << ")[" << Byte << "];\n";
+    }
+    for (unsigned Byte = 0; Byte < Movs->ElementBytes; ++Byte) {
+      emitIndent(Indent + 2);
+      OS << "((unsigned char*)(uintptr_t)" << Dst << ")[" << Byte
+         << "] = " << Element << "[" << Byte << "];\n";
+    }
+    for (const std::string *Address : {&Src, &Dst}) {
+      emitIndent(Indent + 2);
+      OS << *Address << " = " << Backward << " ? " << *Address << " - "
+         << Movs->ElementBytes << " : " << *Address << " + "
+         << Movs->ElementBytes << ";\n";
+    }
+    emitIndent(Indent + 2);
+    OS << "--" << Count << ";\n";
+    emitIndent(Indent + 1);
+    OS << "}\n";
+    emitIndent(Indent);
+    OS << "}\n";
+    return true;
+  }
+  // An intrinsic in place of a MOVS this contract does not prove would take
+  // its operands in the constraints' order (source first), which no copy
+  // intrinsic does.
+  if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
+      llvm::StringRef(AsmStr).contains("rep movs"))
+    llvm::report_fatal_error("unsupported REP MOVS inline assembly contract");
+
   std::vector<std::string> ArgStrs;
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));

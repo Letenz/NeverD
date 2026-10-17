@@ -422,7 +422,10 @@ address (`atexit_140001234`), as a body lifted under an import's name does.
 An address into a byte array the module defines is an offset into it, in a
 global's initializer as in code, and an import a global names is declared
 before the globals. A function with Windows exception handling includes
-`<excpt.h>`, which names what its filters print.
+`<excpt.h>`, which names what its filters print. `rep movs` copies element
+by element in its direction, as `rep stos` stores; a shape the lifter does
+not emit is refused, since an intrinsic would take its operands in the
+constraints' order.
 Where a linker folded identical
 functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's

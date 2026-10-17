@@ -8520,7 +8520,8 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
                       llvm::CleanupPadInst>(&Inst))
           continue;
         if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
-          if (classifyX86RepStos(Opts.TheArch, *Call))
+          if (classifyX86RepStos(Opts.TheArch, *Call) ||
+              classifyX86RepMovs(Opts.TheArch, *Call))
             continue;
         if (Analysis.IntrinsicStructVals.count(&Inst))
           continue;
