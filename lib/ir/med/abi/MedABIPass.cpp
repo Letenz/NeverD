@@ -727,27 +727,35 @@ void recoverCallAbi(
 
       const bool IsDirectImport =
           !CI.IsIndirect && Img && Img->findImportAt(CI.TargetAddr);
-      // LowIR canonicalizes an import-slot load to an exact indirect target.
-      // The import's ABI still applies: a forwarded incoming register need
-      // not have a setup write. Names alone do not prove this identity.
+      // The word an indirect call jumps through: the constant slot LowIR
+      // canonicalizes an x86 `jmp [rip+slot]` to, or the slot the register
+      // it goes through was loaded from, as an AArch64 PLT entry's
+      // `ldr x17, [x16, #slot]; br x17` or a -fno-plt call loads it.
+      const std::optional<va_t> CallSlot =
+          CI.IsIndirect ? indirectCallSlot(Func, Op, lookupDefinition)
+                        : std::nullopt;
+      // An import's slot names the import, whose ABI applies: a forwarded
+      // incoming register need not have a setup write.  Names alone do not
+      // prove this identity.
       bool IsIndirectImport = false;
-      if (CI.IsIndirect && Img && Op.NumInputs && Op.Inputs[0].isConst())
-        if (std::string Name = importCalleeName(*Img, CI.TargetAddr);
+      if (CallSlot && Img)
+        if (std::string Name = importCalleeName(*Img, *CallSlot);
             !Name.empty()) {
           CI.TargetName = std::move(Name);
+          CI.TargetAddr = *CallSlot;
           IsIndirectImport = true;
         }
       // The routine the function-pointer variable an indirect call goes
       // through starts at: the call passes its arguments, but takes neither
-      // its name nor its contract (PointerVariableCallee).
+      // its name nor its contract (PointerVariableCallee).  An import's slot
+      // the loader starts at this image's own routine, as a PLT slot of a
+      // symbol the image defines, passes that routine's arguments too.
       const PointerVariableCallee *VariableCallee = nullptr;
-      if (CI.IsIndirect && !IsIndirectImport && PointerCallees &&
-          !PointerCallees->empty())
-        if (const std::optional<va_t> Slot =
-                indirectCallSlot(Func, Op, lookupDefinition))
-          if (const auto Callee = PointerCallees->find(*Slot);
-              Callee != PointerCallees->end())
-            VariableCallee = &Callee->second;
+      if (CallSlot && PointerCallees)
+        if (const auto Callee = PointerCallees->find(*CallSlot);
+            Callee != PointerCallees->end() &&
+            (!IsIndirectImport || Callee->second.LocalEntry != InvalidVA))
+          VariableCallee = &Callee->second;
 
       // An external placeholder collision, indirect call or import keeps its
       // existing output here (promoteFloatCallResult).
