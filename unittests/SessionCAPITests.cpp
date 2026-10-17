@@ -4039,6 +4039,11 @@ TEST_F(SessionCAPITest, FunctionsHoldTheRecordsTheirPDBTypes) {
   // The library's members name the four bytes of a flag union in place,
   // which the PDB's leave unnamed.
   EXPECT_NE(Use.find("Thread->MiscFlags"), std::string::npos);
+  // The enumeration Microsoft x64 passes fifth, on the stack, as wide as its
+  // underlying int.
+  EXPECT_NE(Use.find("_USES_FORWARD* Forward, _SIGNED_KIND Kind) {"),
+            std::string::npos)
+      << Use;
   // LLVM-C defines them too, and declares the typedefs its signature
   // spells, the enumeration's after its definition.
   const auto llvm = [&] {
@@ -4178,17 +4183,26 @@ TEST_F(SessionCAPITest, ObjectsTakeTheirLocalTypesFromTheirDWARF) {
       << Source;
 
   // HighC reads the members by name and defines the records it reads them
-  // of; LLVM-C binds no debug parameters in a relocatable object.
+  // of.
   const int Index = neverd_func_find_by_name(Session, "use");
   ASSERT_GE(Index, 0);
-  const std::string Use =
-      takeString(neverd_decompile(Session, neverd_func_entry(Session, Index)));
+  const uint64_t UseEntry = neverd_func_entry(Session, Index);
+  const std::string Use = takeString(neverd_decompile(Session, UseEntry));
   EXPECT_NE(Use.find("int32_t use(device* d, packed* p,"), std::string::npos)
       << Use;
   EXPECT_NE(Use.find("d->size"), std::string::npos) << Use;
   EXPECT_NE(Use.find("p->count"), std::string::npos) << Use;
   EXPECT_NE(Use.find("struct device\n{"), std::string::npos) << Use;
   EXPECT_NE(Use.find("struct packed\n{"), std::string::npos) << Use;
+  // So does LLVM-C, though use sits at address zero, as an object's first
+  // function does.
+  EXPECT_EQ(UseEntry, 0u);
+  const std::string LLVMC =
+      takeString(neverd_decompile_llvm(Session, UseEntry));
+  EXPECT_NE(LLVMC.find("use(device* d, packed* p, aligned* a, tail* t, "
+                       "uses_forward* f)"),
+            std::string::npos)
+      << LLVMC;
 }
 
 TEST_F(SessionCAPITest, ThirtyTwoBitLinuxObjectsLayRecordsOutAsGCCDoes) {

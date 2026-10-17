@@ -4528,35 +4528,6 @@ TypeRef HighCWriter::callResultType(const HighExpr &Call) const {
   return ReturnType;
 }
 
-std::optional<int64_t> HighCWriter::stackParamOffset(const HighFunc &Func,
-                                                     size_t Index) const {
-  const HighParam &Param = Func.Params[Index];
-  if (Param.RegOff != kNoParamReg || Param.MedIndex < 0)
-    return std::nullopt;
-  const auto Layout =
-      getTargetRegInfo(Opts.TheArch).integerArgumentLayout(Opts.Format);
-  if (!Layout.SlotBytes)
-    return std::nullopt;
-  // Stack arguments are numbered after every register position, or after the
-  // registers the function uses where they follow those (i386 regparm): from
-  // the lowest stack number, the first slot's.  A register parameter MedIR
-  // promotes later, such as one a forwarder passes on, takes no number of
-  // the stack's.
-  int First = static_cast<int>(Layout.Registers.size());
-  if (const CallArgumentConvention *Convention =
-          callArgumentConvention(Opts.TheArch, Opts.Format);
-      Convention && Convention->StackArgumentsFollowUsedRegisters) {
-    First = Param.MedIndex;
-    for (const HighParam &Other : Func.Params)
-      if (Other.RegOff == kNoParamReg && Other.MedIndex >= 0)
-        First = std::min(First, Other.MedIndex);
-  }
-  if (Param.MedIndex < First)
-    return std::nullopt;
-  return Layout.EntryStackBase +
-         static_cast<int64_t>(Param.MedIndex - First) * Layout.SlotBytes;
-}
-
 void HighCWriter::bindParams(const HighFunc &Func) const {
   if (ParamCacheOf == &Func && ParamCacheEntry == Func.Entry &&
       ParamBindings.size() == Func.Params.size())
@@ -4599,94 +4570,17 @@ void HighCWriter::bindParams(const HighFunc &Func) const {
         Bind(PI, DI);
     }
   } else {
-    std::vector<TypeRef> Types;
-    for (const auto &[Name, Type] : DebugFn->Params) {
-      (void)Name;
-      if (Type)
-        Dbg->completeType(Type);
-      Types.push_back(Type);
-    }
-    if (DebugFn->ReturnType)
-      Dbg->completeType(DebugFn->ReturnType);
-    // fastcall and thiscall pass leading values in registers that the
-    // ordinary i386 rules do not describe, and a function built without
-    // lowering does not say where its parameters arrive.
-    const bool OrdinaryConvention =
-        Opts.TheArch != Arch::X86 ||
-        DebugFn->CallConv == DebugCallConv::Unknown ||
-        DebugFn->CallConv == DebugCallConv::Cdecl ||
-        DebugFn->CallConv == DebugCallConv::Stdcall;
-    // A function whose code reads no parameter has none to locate: what
-    // its declaration takes goes unread (unreadDeclaredParams).
-    const bool Located = Func.Params.empty() ||
-                         llvm::any_of(Func.Params, [](const HighParam &P) {
-                           return P.RegOff != kNoParamReg || P.MedIndex >= 0;
-                         });
-    const auto Placement =
-        OrdinaryConvention && Located
-            ? placeSourceParameters(Opts.TheArch, Opts.Format,
-                                    DebugFn->ReturnType, Types)
-            : std::nullopt;
-    if (Placement) {
-      ParamsPlaced = true;
-      for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
-        const HighParam &Param = Func.Params[PI];
-        const std::optional<int64_t> Stack = stackParamOffset(Func, PI);
-        auto At = [&](const SourceABIValueLocation &Where, int64_t &Delta) {
-          Delta = 0;
-          if (Where.Kind == SourceABICarrierKind::Stack) {
-            if (!Stack || *Stack < Where.EntryStackOffset ||
-                *Stack >= Where.EntryStackOffset +
-                              std::max<int64_t>(Where.ValueBytes, 1))
-              return false;
-            Delta = *Stack - Where.EntryStackOffset;
-            return true;
-          }
-          return Param.RegOff != kNoParamReg &&
-                 Where.RegisterOffset == Param.RegOff;
-        };
-        int64_t Delta = 0;
-        if (Placement->ResultPointer && At(*Placement->ResultPointer, Delta)) {
-          ParamBindings[PI].Result = true;
-          continue;
-        }
-        for (size_t DI = 0; DI < Placement->Parameters.size(); ++DI)
-          for (const SourceParameterPiece &Piece : Placement->Parameters[DI]) {
-            if (!At(Piece.Location, Delta))
-              continue;
-            const TypeRef &Declared = Types[DI];
-            const uint16_t Size = Declared ? Declared->Size : 0;
-            const uint16_t Held = Param.Type ? Param.Type->Size : 0;
-            // A record is the location's value only where the source says
-            // the call passes its bytes: a C++ class can arrive as the
-            // address of a copy at the same place.
-            const bool Bytes = !Declared ||
-                               Declared->Kind != NdTypeKind::Struct ||
-                               Declared->IsEnum ||
-                               Declared->Passing == NdRecordPassing::ByValue;
-            DebugParamBinding &B = ParamBindings[PI];
-            B.Index = static_cast<int>(DI);
-            B.Offset = static_cast<uint16_t>(Piece.Offset + Delta);
-            B.Whole = Bytes && !Piece.Indirect && Piece.Offset == 0 &&
-                      Delta == 0 && Piece.Location.ValueBytes >= Size &&
-                      (Piece.Location.Kind != SourceABICarrierKind::Stack ||
-                       Held >= Size);
-          }
-      }
-    } else {
-      // Without rules or locations, a debug parameter is the one at its
-      // position only while each before it fills one integer slot, as in
-      // every convention.
-      const uint16_t Word = pointerBytes(Opts.TheArch);
-      for (size_t PI = 0; PI < std::min(Func.Params.size(), Count); ++PI) {
-        const TypeRef &Type = DebugFn->Params[PI].second;
-        if (!Type || Type->Size > Word ||
-            !(Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr ||
-              (Type->Kind == NdTypeKind::Struct && Type->IsEnum)))
-          break;
-        Bind(PI, PI);
-      }
-    }
+    // Bound where the convention passes each parameter, as LLVM-C binds its
+    // arguments (bindDebugParams).
+    std::vector<RecoveredParamSite> Sites;
+    for (const HighParam &Param : Func.Params)
+      Sites.push_back(
+          {Param.RegOff, Param.MedIndex,
+           static_cast<uint16_t>(Param.Type ? Param.Type->Size : 0)});
+    DebugParamBindings Bound =
+        bindDebugParams(Opts.TheArch, Opts.Format, *DebugFn, Sites, Dbg);
+    ParamBindings = std::move(Bound.Params);
+    ParamsPlaced = Bound.Placed;
   }
   for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
     const DebugParamBinding &B = ParamBindings[PI];

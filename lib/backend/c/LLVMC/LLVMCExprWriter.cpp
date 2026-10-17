@@ -1315,7 +1315,7 @@ void LLVMCWriter::discoverSyntheticFrame(llvm::Function &Fn) {
         static_cast<int64_t>(Off) - static_cast<int64_t>(FrameBaseOffset);
     for (int Delta = 0; Delta < 16 && Aligned - Delta > 0; ++Delta) {
       const int64_t Query = Disp + (Aligned - Delta);
-      if (auto Var = Dbg->resolveStackPointerVariable(FunctionEntry, Query))
+      if (auto Var = Dbg->resolveStackPointerVariable(*FunctionEntry, Query))
         Owners[Var->StackOffset].insert(Off);
     }
   }
@@ -1328,7 +1328,7 @@ void LLVMCWriter::discoverSyntheticFrame(llvm::Function &Fn) {
   const int64_t ScanEnd = std::min<int64_t>(Aligned, 4096);
   std::map<std::string, int64_t> FirstSPNameOffset;
   for (int64_t Stack = -15; Stack <= ScanEnd; ++Stack) {
-    const auto Var = Dbg->resolveStackPointerVariable(FunctionEntry, Stack);
+    const auto Var = Dbg->resolveStackPointerVariable(*FunctionEntry, Stack);
     if (!Var || Var->IsParam || Var->Name.empty() ||
         isReservedFrameName(Var->Name))
       continue;
@@ -1364,7 +1364,7 @@ std::optional<VariableSym> LLVMCWriter::debugFrameVariable(int64_t Disp) const {
   };
   std::optional<VariableSym> Found;
   if (Dbg && FunctionEntry)
-    Found = Accept(Dbg->resolveVariable(FunctionEntry, Disp));
+    Found = Accept(Dbg->resolveVariable(*FunctionEntry, Disp));
   if (Found) {
     const auto Candidates = SpLocalNameCandidates.find(Found->Name);
     const uint64_t AccessOff =
@@ -1384,7 +1384,7 @@ std::optional<VariableSym> LLVMCWriter::debugFrameVariable(int64_t Disp) const {
     for (int64_t Delta = 0; !Found && Delta < 16 && Aligned - Delta > 0;
          ++Delta) {
       Found = Accept(Dbg->resolveStackPointerVariable(
-          FunctionEntry, Disp + (Aligned - Delta)));
+          *FunctionEntry, Disp + (Aligned - Delta)));
       if (!Found)
         continue;
       const auto Owned = SpLocalOwner.find(Found->StackOffset);

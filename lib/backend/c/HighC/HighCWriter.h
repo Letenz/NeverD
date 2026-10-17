@@ -16,6 +16,7 @@
 
 #include "../CIdentifier.h"
 #include "../CSourceRecorder.h"
+#include "../DebugParamBinding.h"
 #include "../FloatConversion.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
@@ -429,16 +430,7 @@ public:
   /// where the convention passes each (SourceParameterPlacement), never by
   /// position: System V passes `f(double x, int n)` with n in the first
   /// integer register.
-  struct DebugParamBinding {
-    /// The debug parameter it holds a piece of, or -1.
-    int Index = -1;
-    /// Where the piece starts in that parameter's value.
-    uint16_t Offset = 0;
-    /// It holds the whole value the debug type describes.
-    bool Whole = false;
-    /// It holds the hidden pointer to the result's storage.
-    bool Result = false;
-  };
+  using DebugParamBinding = neverd::DebugParamBinding;
   DebugParamBinding debugParamBinding(const HighFunc &Func, size_t Index) const;
   /// The name \p Func's parameter \p Index reads as by its debug signature:
   /// the debug parameter's, `<name>_<offset>` for a later piece of one, or
@@ -1023,10 +1015,6 @@ public:
   mutable bool ParamsPlaced = false;
   /// Fills the cache for \p Func.
   void bindParams(const HighFunc &Func) const;
-  /// Where a stack parameter of \p Func arrives, from the entry stack
-  /// pointer; none for a register parameter or an unknown location.
-  std::optional<int64_t> stackParamOffset(const HighFunc &Func,
-                                          size_t Index) const;
   /// emittedParamIndices' answers, which walk the function's body.
   mutable std::map<std::pair<const HighFunc *, va_t>, std::vector<size_t>>
       EmittedParamIndices;
