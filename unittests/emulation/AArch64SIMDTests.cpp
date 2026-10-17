@@ -182,7 +182,7 @@ TEST_P(AArch64SIMD, WideningShiftsPreserveFullStateAndReadBeforeWriting) {
     bool High, Signed;
   };
   constexpr WidenCase Cases[] = {
-#define NEVERD_AARCH64_WIDEN_CASE(Word, Bits, Shift, High, Signed) \
+#define NEVERD_AARCH64_WIDEN_CASE(Word, Bits, Shift, High, Signed)             \
   {Word, Bits, Shift, High, Signed},
 #include "AArch64WidenCases.def"
 #undef NEVERD_AARCH64_WIDEN_CASE
@@ -193,7 +193,7 @@ TEST_P(AArch64SIMD, WideningShiftsPreserveFullStateAndReadBeforeWriting) {
       {0, UINT64_MAX},
   };
   llvm::cantFail(CPU->setReg(AArch64Register::FPCR,
-                           DefaultNaN | FlushToZero | (1u << RoundingShift)));
+                             DefaultNaN | FlushToZero | (1u << RoundingShift)));
   llvm::cantFail(CPU->setReg(AArch64Register::FPSR, InitialFPSR));
   std::array<uint8_t, 64> Guard;
   Guard.fill(0xa5);
@@ -262,7 +262,7 @@ TEST_P(AArch64SIMD, LaneMovesUseNEONAlternativeAndPreserveOtherState) {
   };
   // Independently assembled with llvm-mc -triple=aarch64 -show-encoding.
   constexpr LaneCase Cases[] = {
-      {0x0e013c3f, 8, 0, 32, false},  // UMOV WZR, V1.B[0]
+      {0x0e013c3f, 8, 0, 32, false}, // UMOV WZR, V1.B[0]
       {0x0e1f3c3f, 8, 15, 32, false},
       {0x0e023c3f, 16, 0, 32, false}, // UMOV WZR, V1.H[0]
       {0x0e1e3c3f, 16, 7, 32, false},
@@ -270,7 +270,7 @@ TEST_P(AArch64SIMD, LaneMovesUseNEONAlternativeAndPreserveOtherState) {
       {0x0e1c3c3f, 32, 3, 32, false},
       {0x4e083c3f, 64, 0, 64, false}, // MOV XZR, V1.D[0]
       {0x4e183c3f, 64, 1, 64, false},
-      {0x0e012c3f, 8, 0, 32, true},   // SMOV WZR, V1.B[0]
+      {0x0e012c3f, 8, 0, 32, true}, // SMOV WZR, V1.B[0]
       {0x0e1f2c3f, 8, 15, 32, true},
       {0x0e022c3f, 16, 0, 32, true},
       {0x0e1e2c3f, 16, 7, 32, true},
@@ -281,10 +281,9 @@ TEST_P(AArch64SIMD, LaneMovesUseNEONAlternativeAndPreserveOtherState) {
       {0x4e042c3f, 32, 0, 64, true},
       {0x4e1c2c3f, 32, 3, 64, true},
   };
-  for (const auto Input : {RegisterValue{0, UINT64_MAX},
-                          RegisterValue{UINT64_MAX, 0},
-                          RegisterValue{0x80ff7f000102ff80ULL,
-                                        0x817f8000ffffffffULL}}) {
+  for (const auto Input :
+       {RegisterValue{0, UINT64_MAX}, RegisterValue{UINT64_MAX, 0},
+        RegisterValue{0x80ff7f000102ff80ULL, 0x817f8000ffffffffULL}}) {
     vector(1, Input);
     for (const auto &Case : Cases) {
       SCOPED_TRACE(Case.Word);
@@ -297,7 +296,8 @@ TEST_P(AArch64SIMD, LaneMovesUseNEONAlternativeAndPreserveOtherState) {
         const auto Mask =
             Case.Bits == 64 ? UINT64_MAX : (uint64_t(1) << Case.Bits) - 1;
         auto Value = (Input[Case.Lane * Case.Bits / 64] >>
-                      (Case.Lane * Case.Bits % 64)) & Mask;
+                      (Case.Lane * Case.Bits % 64)) &
+                     Mask;
         if (Case.Signed && (Value & (uint64_t(1) << (Case.Bits - 1))))
           Value |= ~Mask;
         if (Destination != 31)
