@@ -1143,3 +1143,60 @@ Sixteen refusal controls and Unicode/CRLF checks pass. Two synthetic constructor
 and two unmapped arrow functions remain unknown. The manifest is
 9ef8d0c734ca8dfe57bf394b94572a5b23725b0e8ea013cdc9aa24570506f523.
 These are correspondence candidates; erased original types are not recovered.
+
+## Qualified source engines and remaining actual-client search failure
+
+Source-engine run 38987905619 reaches both final links and the GLIBC_2.17 gate,
+then correctly fails the version control: PCRE2_SYS_STATIC=1 bypasses the pinned
+external library and builds bundled PCRE2 10.46. Run 38989752164 at
+4636fe32e458946113e7e3a8fa84488b72a52433 fixes that input, using the exact
+source-built PCRE2 10.45/JIT library. Both complete engines pass all ten
+RLIMIT_FSIZE=0 controls. Independent qualification rehashes all 200 package
+files, source inputs, unchanged base Cargo packages/checksums, effective locks,
+single-std build graphs, actual ELF requirements and raw control outputs. Both
+cores retain the original GLIBC_2.17 floor. The old memfd profile stays revoked.
+
+Both engines are admitted as components at d5b16182db085ff9e1cbf12fef79581109ac8cdf.
+Actual-client run 38991982622 rebuilds both original-provider layouts twice on
+each native architecture, reads back every module row and gets identical
+repeated client hashes. Helper direct/FD3/observer/external-signal checks and
+all 28 real Bash comparisons complete. Built-in search then fails G03-count:
+the original returns two matches, but x64 readable and ARM64 preserved return
+zero. This run remains a failure, with both diagnostic archives retained and
+their API/ZIP hashes independently checked. No count oracle, file limit or
+comparison rule is relaxed. Diagnostic run 38992721064 adds the actual client
+debug logs and owned repeated synchronous/asynchronous path/FD3 child probes.
+
+Portable Bfs run 38988969527 matches both full original version outputs while
+retaining GLIBC_2.17. The public Bun compatibility functions, section collection
+and exact measured Bfs compiler/configuration inputs are retained. Run
+38989732649 then passes all 36 strict Ugrep/Bfs original-component pairs, with
+full raw stdout, stderr and exit status rederived independently. The sealed
+771-file native-extra-role-correspondence-v1 manifest is
+eada7389a7e097e2b9e773295031a7647f46ce904ac2f05cb816ed308aa0ea53.
+Exact original transitive dependency identities remain unproven.
+
+Bfs library producer 38991059015 at 0242407cee7107ffd73e0a9838e458e4e2c70879
+exports 29 freshly compiled C objects and Oniguruma without a Rust/C++ standard
+library archive. Only main's symbol is renamed; its actual text bytes remain
+unchanged. Both native library hosts pass four zero-file-budget controls and
+all eight upstream strategies are repeated, retaining 26-27 explicit skips per
+543 cases. Every member is independently byte-compared with its owned object.
+Optional Bun integration 608b5cec80a1bfea3be1d8a80a0c965fef1e17da links those
+qualified C archives directly and adds original POSIX timer linkage. The
+default source patch remains byte-identical; unqualified flags refuse before
+mutation. Full engine run 38992912659 and default regression 38992912592 still
+require build/control qualification. Ugrep remains explicitly unsupported in
+the engine; standalone correspondence is not engine integration.
+
+Windows run 38990344501 independently observes real original rg --pre child
+execution on x64 and ARM64. All six raw ARGV0 variants are visible to an owned
+receiver before dispatch, then absent in the actual child. This proves
+consumption for present-empty, recognized, unknown and Unicode values; absent
+is retained as a separate control. Nine authored controls precede 22 original
+selector cases and six actual rg child observations per architecture. The v3
+platform addendum rehashes 1,267 files including prior platform evidence, with
+manifest a112bcdf3d87128fe85d910429ec1a2da6536745b9e31f2aa4908845b7eb0a0f.
+It does not establish Windows source-engine integration or recover erased
+original types. Complete rebuilding and execution across all platforms remains
+the final acceptance target; the overall goal is open.
