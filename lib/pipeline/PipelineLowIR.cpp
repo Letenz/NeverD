@@ -23,6 +23,7 @@
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
+#include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
@@ -3805,7 +3806,12 @@ void Pipeline::buildLowIR(
     Weight[I] = std::min(Gap, kMaxDecodeWeight);
   }
 
+  // Registration stack proofs repeat the same fresh query for one callee from
+  // many callers. The image does not change during these builds, so their
+  // recorded answers, replayed with their work, are the fresh ones.
+  RegistrationStackPopMemo StackPops(Img);
   parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
+    RegistrationStackPopMemoScope StackPopScope(StackPops);
     Decoder LocalDec;
     if (!LocalDec.init(Img))
       return;
@@ -3885,6 +3891,7 @@ void Pipeline::buildLowIR(
   auto rebuildFunctions = [&](const std::vector<bool> &Rebuild) {
     CachedArbitration.reset();
     parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
+      RegistrationStackPopMemoScope StackPopScope(StackPops);
       Decoder LocalDec;
       if (!LocalDec.init(Img))
         return;
