@@ -1021,6 +1021,13 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           const TypeRef StoredType = Stmt.StoreVal->Type;
           const TypeRef MemberType = typedMemberType(
               *Stmt.StoreAddr, StoredType ? StoredType->Size : 0);
+          // A constant stored to an enumeration names its enumerator.
+          if (MemberType && MemberType->Kind == NdTypeKind::Struct &&
+              MemberType->IsEnum)
+            if (const HighExpr *Const = peelIntegerViewOps(Stmt.StoreVal.get());
+                Const && Const->Kind == ExprKind::Const)
+              if (auto Name = enumeratorDisplay(MemberType, Const->ConstVal))
+                Value = *Name;
           // A sign/zero-extended integer call can reuse an 8-byte pointer
           // field. Make the C conversion explicit without widening the store.
           if (!Overlayed && isIntegerOverlayStore(*Stmt.StoreVal) &&

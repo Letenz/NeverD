@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 2dececbb333d44745a37cffde5543a187cfe8daacdeb237691dae825824997c8 -->
+<!-- i18n-source: f85e400322f7b1abd9461fe80492cb140c811c56a1bb2f6c6685b72dee6c7364 -->
 
 [← 文档索引](README.md)
 
@@ -46,7 +46,7 @@ BSD 系统调用遵循 Darwin ABI。ARM64 从 X16 读取服务号，x64 使用 B
 旧式原始 mmap 的零长度请求返回零而不分配内存；`MAP_UNIX03` 已支持，零长度返回 EINVAL。
 Unmap/protect 地址必须对齐；允许 NONE/READ/WRITE，WRITE 隐含 READ，不接受匿名可执行映射。
 
-设备与模拟器的平台必须分别匹配。支持下述有限 libSystem、显式启动 dylib 和普通 C 主线程 TLS 契约。初始化/析构回调、TLS 回调、其他未建模 dyld 行为、Mach IPC、线程、Objective-C/Swift 框架、arm64e/PAC、加密内容和未建模命令仍明确拒绝。主程序保持偏好地址，dylib 使用确定性独立地址；签名数据不提供 AMFI 或 entitlement 实现。
+设备与模拟器的平台必须分别匹配。支持下述有限 libSystem、显式启动 dylib 和普通 C 主线程 TLS 契约。全局析构回调、旧式 TLS 初始化段、其他未建模 dyld 行为、Mach IPC、线程、Objective-C/Swift 框架、arm64e/PAC、加密内容和未建模命令仍明确拒绝。主程序保持偏好地址，dylib 使用确定性独立地址；签名数据不提供 AMFI 或 entitlement 实现。
 
 测试使用自行编写、由 Clang/LLD 生成的五种 Mach-O 平台/架构用例，另有独立构造的
 线程入口和畸形文件测试、4 KiB/16 KiB 内存测试，以及 C API/CLI 报告一致性测试。
@@ -1906,7 +1906,7 @@ common native82 / mandatory95 per matching platform / ARM64 required285
 
 `SG_READ_ONLY` 在 fixup 后把当前段权限设为只读，同时保留声明的最大权限。O0/O1/O2 原生对照确认：最大权限为读写时，`mprotect` 可以恢复写权限。函数入口页和 errno 页是独立的驻留模型保留页，来宾不能解除映射或修改保护。准备与执行共用同一个期限和事件账户，解码元数据及模型页计入已有内存预算。
 
-独立原生控制覆盖 O0/O1/O2，同一作者编写的对象经系统、classic、chained 链接后都在真实 libSystem 上执行。进程/C/CLI/Python 覆盖五个平台/架构组合，匹配的 ARM64 HVF 覆盖 macOS、iOS 设备和 Simulator。这个有限单线程契约尚未补齐 dlopen/dlsym、任意 dylib、dyld shared cache、构造函数、线程、Objective-C/Swift 框架，也未完成 Intel HVF 或真实 iOS 设备验收。
+独立原生控制覆盖 O0/O1/O2，同一作者编写的对象经系统、classic、chained 链接后都在真实 libSystem 上执行。进程/C/CLI/Python 覆盖五个平台/架构组合，匹配的 ARM64 HVF 覆盖 macOS、iOS 设备和 Simulator。这个有限单线程契约尚未补齐 dlopen/dlsym、任意 dylib、dyld shared cache、线程、Objective-C/Swift 框架，也未完成 Intel HVF 或真实 iOS 设备验收。
 
 classic lazy 指针程序会在进入来宾前提前解析。每个程序必须独立声明目标槽、普通库 ordinal 和符号；仅允许指针类型、零 addend，以及一条紧接 DONE 的 DO_BIND，不继承上一程序的状态。一个指向本地可执行原始字节的 rebase 可与同槽的一次 lazy bind 合并，但两条原始记录都计入预算，其他重复或重叠均拒绝。`dyld_stub_binder` 仅在存在实际 lazy 调用时作为强、零 addend 的普通 classic bind 接受；进入其拒绝门会在读取 C 调用帧或参数、修改 errno 或记录原生调用前失败。这支持普通调用桩及稳定的预解析指针，不实现运行时 lazy resolver 或 dyld 私有状态。六函数 C 样本在调用前和重复调用后检查全部槽；原生对照请求提前绑定，并与来宾比较输出和退出状态。
 
@@ -1936,7 +1936,7 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 101; matching ARM64 identities: 303
+native common catalogue: 82; required methods/platform: 102; matching ARM64 identities: 306
 ```
 
 ```json
@@ -1949,7 +1949,7 @@ native common catalogue: 82; required methods/platform: 101; matching ARM64 iden
 
 支持初始化、零初始化和不超过 16 字节对齐的普通 C TLS。准备阶段实际映射并计费每个模块的独立存储；首次访问复制已重定位的实时连续模板，包括此前对 BSS/间隙的修改。后续写入、跨库指针身份和每次进程的新状态保持稳定。24 字节描述符的 thunk/key/offset 和返回帧均须有效；TLS 页面不能被 mmap 借用或被 munmap/mprotect 改变。
 
-原创样例覆盖两个同名数据导出、共享依赖、跨库 TLS、模板修改及重复执行。原生 O0/O1/O2 classic/chained 对照与五个平台的 C/CLI/Python 测试保持独立。循环、弱导出、重导出、初始化/析构回调、dlopen/dlsym、线程和完整 Apple 框架仍未实现；Intel 原生和实体 iOS 尚未验证。
+原创样例覆盖两个同名数据导出、共享依赖、跨库 TLS、模板修改及重复执行。原生 O0/O1/O2 classic/chained 对照与五个平台的 C/CLI/Python 测试保持独立。循环、弱导出、重导出、全局析构与旧式 TLS 初始化段、dlopen/dlsym、线程和完整 Apple 框架仍未实现；Intel 原生和实体 iOS 尚未验证。
 
 ```json
 {"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"darwin":{"modules":[{"name":"@loader_path/libneverd-base.dylib","path":"/inputs/libneverd-base.dylib"},{"name":"@loader_path/libneverd-leaf.dylib","path":"/inputs/libneverd-leaf.dylib"}]}}
@@ -1964,9 +1964,9 @@ TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live co
 resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
 lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
 addends: checked signed ordinary provider offsets; data/TLS initializers; original provider spans only
-unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; callbacks; dlopen/dlsym; threads
+unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; global destructors/legacy TLS init; dlopen/dlsym; threads
 workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
-native common catalogue: 82; required methods/platform: 101; matching ARM64 identities: 303
+native common catalogue: 82; required methods/platform: 102; matching ARM64 identities: 306
 ```
 
 ## Darwin dylib 导入偏移
@@ -1974,3 +1974,9 @@ native common catalogue: 82; required methods/platform: 101; matching ARM64 iden
 普通强 dylib 导入支持带符号的字节偏移，可初始化全局指针与 TLS 模板指针。`DarwinImage` 统一计算导出地址、库的加载偏移及导入加数，检查溢出并限定在所选提供库的原始段范围内；指针值检查不推测访问宽度。libSystem 入口、导入的 TLV 描述符和延迟绑定仍要求零加数。
 
 原创 O0/O1/O2 classic/chained 原生对照均返回 78，输出为空。C、CLI 和 Python 覆盖全部五种配置；Intel 原生执行与 iOS 真机仍未验证。
+
+## 启动构造函数与 TLS 退出回调
+
+原始 `S_MOD_INIT_FUNC_POINTERS`、只读 `S_INIT_FUNC_OFFSETS` 和单个 `LC_ROUTINES_64` 在 `LC_MAIN` 前执行；依赖按声明顺序后序初始化，共享库只执行一次。入口必须属于当前映像原始可执行段，ARM64 要求完整且对齐的四字节；待执行表被修改会明确失败。构造函数接收 argc/argv/envp/apple/`ProgramVars`，程序名取可执行文件名，与自定义 argv0 无关。C++ `thread_local` 包装代码自行完成惰性构造。
+
+`__tlv_atexit` 采用真实的两参数 void ABI，忽略编译器额外的 DSO 参数，保留 errno 与结果寄存器；事件结果为 null。预先计费的队列最多容纳 1024 项，包括空回调和重复项，对象值按完整 64 位保留。main 返回及 C `exit` 逆序执行，析构中新注册的项先于旧项。回调栈位于当前 SP 与 x64 red zone 下方，以保留深层退出时仍有效的栈对象。所有调用、返回和指令沿用原预算，回调结束后才发布退出结果；C `_exit` 和原始 BSD exit 立即终止。重入 exit、全局析构、旧式 TLS 初始化段和线程仍不支持。五种软件配置、三种 ARM64 HVF 配置及独立 O0/O1/O2 classic/chained 原生控制覆盖这些路径；控制样本关闭栈保护，guard 数据导入仍拒绝。Intel 原生与 iOS 真机仍未验证。

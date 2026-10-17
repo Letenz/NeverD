@@ -12,6 +12,7 @@
 #include "neverd/emulation/AddressSpace.h"
 
 namespace neverd::emulation::darwin_model {
+class DarwinCallbacks;
 struct LibSystemBinding {
   llvm::StringLiteral Symbol;
   unsigned Arguments;
@@ -32,6 +33,7 @@ llvm::Expected<bool>
 invokeLibSystem(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
                 DarwinEntropy &Entropy, const ProcessImage &Image,
                 LibSystemGateKind Binding, const ServiceRequest &Request,
-                const ProcessOptions &Options, ProcessResult &Result);
+                const ProcessOptions &Options, ProcessResult &Result,
+                DarwinCallbacks *Callbacks = nullptr);
 } // namespace neverd::emulation::darwin_model
 #endif

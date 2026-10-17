@@ -10,6 +10,7 @@
 #include "../kernel/DarwinFiles.h"
 #include "../kernel/DarwinMemory.h"
 #include "../kernel/DarwinSystem.h"
+#include "DarwinCallbacks.h"
 #include "DarwinLibSystem.h"
 #include "DarwinTLS.h"
 
@@ -134,7 +135,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   if (auto E =
           MapPages(StackBase, Options.StackSize, Read | Write | UserAccessible))
     return preparationFailure(std::move(E), Profile, Options);
-  auto Stack = prepareStack(**Space, Options, Path.filename().string());
+  auto Stack = prepareStack(**Space, Options, Path.filename().string(),
+                            Image->Initializers.empty() ? 0 : Image->Plan.Base);
   if (!Stack)
     return Stack.takeError();
   if (auto E = (*Space)->map(ReturnGate, Image->Memory.PageSize, Read | Write))
@@ -146,6 +148,10 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   if (auto E =
           (*Space)->write(ReturnGate, X64 ? llvm::ArrayRef<uint8_t>(TrapX64)
                                           : llvm::ArrayRef<uint8_t>(TrapARM64)))
+    return std::move(E);
+  if (auto E = (*Space)->write(DarwinCallbacks::ReturnGate,
+                               X64 ? llvm::ArrayRef<uint8_t>(TrapX64)
+                                   : llvm::ArrayRef<uint8_t>(TrapARM64)))
     return std::move(E);
   if (auto E = (*Space)->protect(ReturnGate, Image->Memory.PageSize,
                                  Read | Execute | UserAccessible))
@@ -160,23 +166,10 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   if (!Backend)
     return Backend.takeError();
   const auto PCRegister = X64 ? CPURegister::X64PC : CPURegister::AArch64PC;
-  if (Image->MainEntry) {
-    auto ABI = IntegerABI::get(X64 ? IntegerCallingConvention::SysVAMD64
-                                   : IntegerCallingConvention::AAPCS64);
-    if (!ABI)
-      return ABI.takeError();
-    const uint64_t Arguments[] = {Stack->Argc, Stack->Argv, Stack->Envp,
-                                  Stack->Apple};
-    auto Frame = ABI->prepareCall(*Backend->CPU, StackBase,
-                                  Stack->SP - StackBase, ReturnGate, Arguments);
-    if (!Frame)
-      return Frame.takeError();
-  } else if (auto E = Backend->CPU->writeRegister(X64 ? CPURegister::X64SP
-                                                      : CPURegister::AArch64SP,
-                                                  {Stack->SP, 0}))
-    return std::move(E);
-  if (auto E = Backend->CPU->writeRegister(PCRegister, {Image->Plan.Entry, 0}))
-    return std::move(E);
+  DarwinCallbacks Callbacks(*Image, Options, *Stack);
+  auto Start = Callbacks.start(*Backend->CPU);
+  if (!Start)
+    return Start.takeError();
   if (!Resources->remainingMicroseconds())
     return preparationTimeout(Profile, Options, Image->Architecture,
                               Image->Plan.Entry, &*Backend);
@@ -193,7 +186,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   DarwinEntropy Entropy(Options.DarwinSystem);
   ProcessResult Result{Profile.Profile, Image->Architecture, Backend->Kind,
                        Backend->Reason};
-  Result.Entry = Result.PC = Image->Plan.Entry;
+  Result.Entry = Image->Plan.Entry;
+  Result.PC = *Start;
   auto RuntimeFailure = [&](llvm::Error E) {
     Result.Stop = ProcessStopReason::RuntimeFailure;
     Result.Diagnostic = llvm::toString(std::move(E));
@@ -247,11 +241,11 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         Request->Kind == (X64 ? ServiceRequestKind::X64Syscall
                               : ServiceRequestKind::AArch64SVC) &&
         (X64 || Request->Immediate == LibSystemSVC)) {
-      auto Returned =
-          Import->second == LibSystemGateKind::TLVBootstrap
-              ? TLS.invoke(CPU, *Resources, *Request, Result)
-              : invokeLibSystem(CPU, Memory, Files, Entropy, *Image,
-                                Import->second, *Request, Options, Result);
+      auto Returned = Import->second == LibSystemGateKind::TLVBootstrap
+                          ? TLS.invoke(CPU, *Resources, *Request, Result)
+                          : invokeLibSystem(CPU, Memory, Files, Entropy, *Image,
+                                            Import->second, *Request, Options,
+                                            Result, &Callbacks);
       if (!Returned) {
         RuntimeFailure(Returned.takeError());
         break;
@@ -267,17 +261,16 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       Result.Diagnostic = diagnostic::ServiceTrap;
       break;
     }
-    if (Image->MainEntry && Request->PC == ReturnGate) {
-      auto Value =
-          CPU.readRegister(X64 ? CPURegister::X64AX : CPURegister::AArch64X0);
-      if (!Value) {
-        RuntimeFailure(Value.takeError());
+    if (Request->PC == ReturnGate ||
+        Request->PC == DarwinCallbacks::ReturnGate) {
+      auto Continued = Callbacks.returned(CPU, Request->PC, Result);
+      if (!Continued) {
+        RuntimeFailure(Continued.takeError());
         break;
       }
-      Result.Stop = ProcessStopReason::Exited;
-      Result.ExitStatus = (*Value)[0] & 0xff;
-      Result.ReturnValue = (*Value)[0];
-      break;
+      if (!*Continued)
+        break;
+      continue;
     }
     auto Event = readService(CPU, *Request);
     if (!Event) {

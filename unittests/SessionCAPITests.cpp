@@ -4055,6 +4055,62 @@ TEST_F(SessionCAPITest, FunctionsHoldTheRecordsTheirPDBTypes) {
   EXPECT_NE(LlvmAfter.find("uint16_t Items;"), std::string::npos);
 }
 
+TEST_F(SessionCAPITest, CodeNamesValuesByTheEnumeratorsTheUserNames) {
+  // A member of an enumeration compares with and takes the enumerators the
+  // program's types name, as the user renames them.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "renames.exe", std::ios::binary);
+  const std::string Exe = write(
+      "renames.exe", std::string(std::istreambuf_iterator<char>(Input), {}));
+  neverd_session_set_pdb_path(Session,
+                              (Fixtures / "renames.pdb").string().c_str());
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto decompile = [&](const char *Name, bool Llvm) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    if (Index < 0)
+      return std::string();
+    const neverd_va_t Entry = neverd_func_entry(Session, Index);
+    return takeString(Llvm ? neverd_decompile_llvm(Session, Entry)
+                           : neverd_decompile(Session, Entry));
+  };
+  for (bool Llvm : {false, true}) {
+    const std::string IsOn = decompile("is_on", Llvm);
+    EXPECT_NE(IsOn.find("Device->State"), std::string::npos) << IsOn;
+    EXPECT_NE(IsOn.find(" PowerOn)"), std::string::npos) << IsOn;
+    EXPECT_NE(IsOn.find("Device->Size"), std::string::npos);
+    const std::string Sleep = decompile("sleep_device", Llvm);
+    EXPECT_NE(Sleep.find("Device->State = PowerSleep;"), std::string::npos)
+        << Sleep;
+  }
+
+  const std::string Renamed = takeString(neverd_local_types_declare(
+      Session,
+      "typedef enum _POWER_STATE { Off, On, Asleep } POWER_STATE;\n"
+      "struct _DEVICE_STATE { unsigned short Type; unsigned short Length; "
+      "POWER_STATE State; };\n",
+      R"({"language":"c"})"));
+  EXPECT_NE(Renamed.find("\"decompilation\":true"), std::string::npos)
+      << Renamed << takeString(neverd_last_error(Session));
+  for (bool Llvm : {false, true}) {
+    const std::string IsOn = decompile("is_on", Llvm);
+    EXPECT_NE(IsOn.find(" On)"), std::string::npos) << IsOn;
+    EXPECT_EQ(IsOn.find("PowerOn"), std::string::npos);
+    EXPECT_NE(IsOn.find("Device->Length"), std::string::npos);
+    // The unit defines the enumeration as the user named it; HighC, which
+    // spells its type by its tag, declares that name too.
+    EXPECT_NE(IsOn.find("    On = 1,"), std::string::npos);
+    if (!Llvm)
+      EXPECT_NE(IsOn.find("typedef enum _POWER_STATE _POWER_STATE;"),
+                std::string::npos);
+    const std::string Sleep = decompile("sleep_device", Llvm);
+    EXPECT_NE(Sleep.find("Device->State = Asleep;"), std::string::npos)
+        << Sleep;
+  }
+}
+
 TEST_F(SessionCAPITest, LocalTypesFitWhatTheCodeDoesThroughAPointer) {
   // use() reads Device->Size through rcx: of the program's records only a
   // _DEVICE holds a member of that width there.
@@ -4499,6 +4555,17 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
       << Probe;
   EXPECT_NE(Probe.find("ZwClose((void*)(uintptr_t)arg0)"), std::string::npos)
       << Probe;
+  // LLVM-C declares the imports it calls that no header it includes
+  // declares, and passes them what their prototypes take.
+  const std::string Lowered = takeString(neverd_decompile_llvm_ex(
+      Session,
+      neverd_func_entry(Session, neverd_func_find_by_name(Session, "Probe")),
+      0));
+  EXPECT_NE(Lowered.find("extern uint64_t GetLastError();"), std::string::npos)
+      << Lowered;
+  EXPECT_NE(Lowered.find("extern uint64_t ZwClose();"), std::string::npos)
+      << Lowered;
+  EXPECT_NE(Lowered.find("(GetLastError())"), std::string::npos) << Lowered;
   // A definition named as a routine the headers declare that reads none of
   // its parameters shows those the prototype declares.
   const std::string Atoms = decompile("InitAtomTable");

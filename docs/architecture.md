@@ -303,11 +303,15 @@ The decompiler reads the local types through `LocalTypesDebugContext`
 (`lib/sdk/capi`), which wraps the program's debug context whenever the
 program has local types. The local types are the authority on the program's
 records:
-- A record the debug information names, but gives no members yet, takes the
-  library's when the library defines a record of its name and size
-  (`completeType`). The decompiler names its member accesses by these, so a
-  member the user renames reads by its new name. Members the debug
-  information gave stay, and so do its records' ABI facts.
+- A record the debug information names takes the library's members when
+  the library defines a record of its name and size (`completeType`), and
+  an enumeration of the library's name takes its enumerators. The
+  decompiler names its member accesses and the values it compares with or
+  stores to an enumeration by these, so a member or an enumerator the user
+  renames reads by its new name. Members the debug information gave give
+  way only where each lies where one of the library's does: a C++ class
+  whose bases a PDB flattens into it keeps its own. The records' ABI facts
+  stay, and the context gives back what the types held when it goes.
 - A decompiled unit, HighC's or LLVM-C's, holds the definitions of the
   records it names (`CEmitterOptions::RecordDefinitions`), and of what they
   hold by value, after its includes. Only a program whose library holds
@@ -388,8 +392,13 @@ line loads it first. The prototype's types convert to the decompiler's
 types:
 - records become named records that C passes and returns by value, with
   their members' names for display;
-- typedefs become what they name, and enumerations their underlying
-  integers;
+- typedefs become what they name;
+- a named enumeration becomes an integer of its underlying type's size and
+  sign that names its values by its enumerators, as a PDB's enumerations
+  do, so that HighC and LLVM-C compare with and store `PowerOn` rather than
+  `1`, and a unit that spells the enumeration by its tag declares that
+  name after defining it (`typedef enum X X;`); an anonymous one becomes
+  its underlying integer;
 - pointers to functions become pointers to C signatures of scalars and
   opaque pointers.
 
@@ -643,8 +652,11 @@ header, in place of the C bytes the source map records
 (`CSourceMap::LocalTypes`). The code reaches a member as that rendering
 names it: through the fields that hold its anonymous records, and in Go
 through the methods that read a union's members and the members Go cannot
-align, which return pointers. A bit-field, which the renderings read
-through methods, stays C with its reason. Without the program's types, as
+align, which return pointers. A bit-field reads through the getter and
+stores through the setter the renderings give the record that holds its
+storage (`MemberPath::Getter`, `Setter`); a compound assignment or an
+increment stores what it computes from the getter, and a `bool` bit-field,
+or one with no methods, stays C with its reason. Without the program's types, as
 the corpus reads a unit's text alone, Rust and Go spell a record whose
 fields their own structures lay out as C does, Rust's under its packing
 and alignment, and an enumeration as int constants, and show a union, an
@@ -4570,6 +4582,12 @@ while `LinuxServices.cpp` remains the authoritative kernel-service dispatcher
 for both Linux processes and Android native workloads. An optional runtime
 instruction observer receives only attempts admitted by `ExecutionSession`'s
 existing budget; OS models do not replace CPU hooks to collect traces.
+Selected Android execution observations instead use `ExecutionSession` watches
+to read stopped scalar state and explicit memory. `AndroidObservation` owns
+shared C++/JSON admission and capture, and the runtime owns watch continuation.
+Checked quantum boundaries precede a watch of the next instruction, so a
+cooperatively selected thread cannot inherit another thread's skipped watch.
+Observation stops preserve the current quantum and do not charge a service.
 The device API query reads the explicit immutable property catalogue and shares
 `AndroidStrings`' bounded decimal conversion with `atoi`. The reported property
 does not select a different Bionic ABI or infer a Linux kernel contract.
@@ -7299,8 +7317,18 @@ it copies live relocated bytes once, validates descriptor/frame identity and
 preserves non-result registers. `DarwinMemory` keeps TLS reservations resident;
 `ProcessReport` serializes named resolver events through the existing schema.
 Public `DarwinProcessOptions` and `darwin.modules` only supply original inputs;
-no host loader, search, callback execution or second symbol-resolution owner is
+no host loader, search or second symbol-resolution owner is
 introduced. See [Darwin environments](darwin-emulation.md) for the finite contract.
+
+`MachOExecutionImage` also retains original constructor section/routines facts.
+`DarwinImage` alone admits local executable targets after relocation and orders
+shared dependencies once in postorder. `DarwinCallbacks` owns startup, main and
+main-thread TLS termination, authenticated return frames and private pending
+exit state. It reuses `IntegerABI`, the original process stack/return page and
+the existing `ExecutionSession` budget. `DarwinStack` owns bounded `ProgramVars`;
+`DarwinLibSystem` decodes the exact void TLS-registration and nonreturning exit
+ABIs before delegating their lifecycle effects. Runtime callback targets retain
+unrounded original executable spans, and termination preserves the current stack.
 
 ### Sequential raw compare-and-exchange
 

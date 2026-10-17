@@ -11,6 +11,8 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/loader/SymbolSpelling.h"
+#include "neverd/types/TypeParse.h"
+#include "neverd/types/TypeRender.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
@@ -1232,6 +1234,7 @@ struct _PACKED
 {
     uint8_t Tag;
     uint32_t Value;
+    uint32_t Wide : 3;
 };
 #pragma pack(pop)
 
@@ -1241,7 +1244,13 @@ uint32_t target(_DPC *Dpc, struct _PACKED *Packed) {
     return (uint32_t)Dpc->Type;
 }
 uint32_t ready(_DPC *Dpc) {
-    return Dpc->Ready;
+    Dpc->Ready = 1;
+    Dpc->Spare |= 4;
+    Dpc->Spare++;
+    return Dpc->Ready + Dpc->Spare;
+}
+uint32_t wide(struct _PACKED *Packed) {
+    return Packed->Wide;
 }
 )C";
   const llvm::StringRef C(Source);
@@ -1255,15 +1264,26 @@ uint32_t ready(_DPC *Dpc) {
     Local.CEnd = End;
     Local.Text = Go ? "// The program's types, in Go.\n"
                     : "// The program's types, in Rust.\n";
-    Local.Members["_DPC"]["TargetInfoAsUlong"] = {{"Anonymous", false},
-                                                  {"TargetInfoAsUlong", Go}};
-    Local.Members["_DPC"]["Type"] = {
-        {"Anonymous", false}, {"Anonymous", Go}, {"Type", false}};
-    Local.Members["_DPC"]["Number"] = {
-        {"Anonymous", false}, {"Anonymous", Go}, {"Number", false}};
-    Local.Members["_DPC"]["Context"] = {Hop{"Context", false}};
-    Local.Members["_PACKED"]["Tag"] = {Hop{"Tag", false}};
-    Local.Members["_PACKED"]["Value"] = {Hop{"Value", Go}};
+    using Path = SourceDialectLocalTypes::Path;
+    const auto field = [](std::vector<Hop> Hops) {
+      Path P;
+      P.Hops = std::move(Hops);
+      return P;
+    };
+    Local.Members["_DPC"]["TargetInfoAsUlong"] =
+        field({{"Anonymous", false}, {"TargetInfoAsUlong", Go}});
+    Local.Members["_DPC"]["Type"] =
+        field({{"Anonymous", false}, {"Anonymous", Go}, {"Type", false}});
+    Local.Members["_DPC"]["Number"] =
+        field({{"Anonymous", false}, {"Anonymous", Go}, {"Number", false}});
+    Local.Members["_DPC"]["Context"] = field({Hop{"Context", false}});
+    Local.Members["_PACKED"]["Tag"] = field({Hop{"Tag", false}});
+    Local.Members["_PACKED"]["Value"] = field({Hop{"Value", Go}});
+    // A bit-field's methods belong to the record that holds its storage.
+    Local.Members["_DPC"]["Ready"] =
+        Path{{}, "Ready", Go ? "SetReady" : "set_Ready"};
+    Local.Members["_DPC"]["Spare"] =
+        Path{{}, "Spare", Go ? "SetSpare" : "set_Spare"};
     SourceDialectOptions Opts;
     Opts.Dialect = Dialect;
     Opts.LocalTypes = Local;
@@ -1287,10 +1307,24 @@ uint32_t ready(_DPC *Dpc) {
                                "(*Dpc).Anonymous.TargetInfoAsUlong;"),
                 std::string::npos);
     }
-    // A bit-field reads through methods no path names: shown as C.
+    // A bit-field reads through its getter and stores through its setter,
+    // which a compound assignment and an increment compute from the getter.
+    const std::string Semicolon = Go ? "" : ";";
+    const std::string Dpc = Go ? "Dpc" : "(*Dpc)";
+    const std::string Setter = Go ? ".SetSpare(" : ".set_Spare(";
+    EXPECT_NE(View.Text.find(Dpc + (Go ? ".SetReady(1)" : ".set_Ready(1)") +
+                             Semicolon),
+              std::string::npos)
+        << View.Text;
+    EXPECT_NE(View.Text.find(Dpc + Setter + Dpc + ".Spare() | 4)" + Semicolon),
+              std::string::npos);
+    EXPECT_NE(View.Text.find(Dpc + Setter + Dpc + ".Spare() + 1)" + Semicolon),
+              std::string::npos);
+    EXPECT_NE(View.Text.find(Dpc + ".Ready() + " + Dpc + ".Spare()"),
+              std::string::npos);
+    // One the program's types give no methods for shows as C.
     EXPECT_TRUE(llvm::is_contained(
-        View.Unread,
-        "a bit-field, which the program's types read through methods"))
+        View.Unread, "a bit-field the program's types read through no methods"))
         << View.Text;
     EXPECT_EQ(View.Unread.size(), 1u);
   }
@@ -1356,6 +1390,201 @@ TEST(SourceDialect, RustViewComputesWhatCComputes) {
   // the scalar results exact while comparing the same logical line endings.
   EXPECT_EQ(normalizeLineEndings(*RustResult), normalizeLineEndings(*CResult))
       << Rust.Text;
+  llvm::sys::fs::remove_directories(Dir);
+}
+
+/// C that reads and writes bit-fields of the program's types, and the views
+/// of it that read and write them through the methods Local Types' Rust and
+/// Go renderings give them, each with its definitions and a main that
+/// prints what the function returns and the record's bytes.
+struct BitFieldPrograms {
+  std::string C, Rust, Go;
+};
+
+BitFieldPrograms bitFieldPrograms() {
+  using namespace neverd::types;
+  TypeLibrary Library(DataModel::LP64);
+  EXPECT_TRUE(parseCTypes(R"(
+    struct _FLAGS {
+      unsigned char Kind;
+      union {
+        struct {
+          unsigned int Ready : 1;
+          unsigned int Level : 3;
+          int Delta : 4;
+        };
+        unsigned int Raw;
+      };
+      unsigned long long Wide : 40;
+    };
+  )",
+                          Library)
+                  .ok());
+  const LocalType *Flags = Library.find("_FLAGS");
+  EXPECT_NE(Flags, nullptr);
+  if (!Flags)
+    return {};
+  const LocalType *Roots[] = {Flags};
+  RenderOptions C;
+  C.Lang = Language::C;
+  C.Spelling = BuiltinSpelling::Portable;
+  C.Asserts = true;
+  const EmbeddedC Definitions = renderEmbeddedC(Library, Roots, C);
+  const std::string Code = R"(uint32_t update(struct _FLAGS *F) {
+    F->Ready = 1;
+    F->Level |= 5;
+    F->Level++;
+    F->Delta = -3;
+    F->Delta -= 2;
+    F->Wide = 0x123456789A;
+    F->Wide += 0x10;
+    return F->Ready + F->Level * 16 + (uint32_t)F->Delta * 256 + (uint32_t)F->Wide;
+}
+)";
+  const std::string Unit =
+      "#include <stdint.h>\n" + Definitions.Text + "\n" + Code;
+  BitFieldPrograms Programs;
+  Programs.C = Unit + R"(#include <stdio.h>
+#include <string.h>
+int main(void) {
+    struct _FLAGS f;
+    memset(&f, 0, sizeof f);
+    printf("%u\n", update(&f));
+    const unsigned char *bytes = (const unsigned char *)&f;
+    for (unsigned i = 0; i < sizeof f; ++i)
+        printf("%u\n", bytes[i]);
+    return 0;
+}
+)";
+  for (SourceDialect Dialect : {SourceDialect::Rust, SourceDialect::Go}) {
+    const bool Go = Dialect == SourceDialect::Go;
+    RenderOptions Options;
+    Options.Lang = Go ? Language::Go : Language::Rust;
+    Options.Spelling = BuiltinSpelling::Portable;
+    Options.Asserts = true;
+    const EmbeddedSource Embedded =
+        renderEmbeddedSource(Library, Roots, {}, Options);
+    SourceDialectLocalTypes Local;
+    Local.CBegin = Unit.find(Definitions.Text);
+    Local.CEnd = Local.CBegin + Definitions.Text.size();
+    Local.Text = Embedded.Text;
+    for (const auto &[Record, Members] : Embedded.Members)
+      for (const auto &[Name, Path] : Members) {
+        SourceDialectLocalTypes::Path &To = Local.Members[Record][Name];
+        for (const MemberPath::Hop &Hop : Path.Hops)
+          To.Hops.push_back({Hop.Name, Hop.Accessor});
+        To.Getter = Path.Getter;
+        To.Setter = Path.Setter;
+      }
+    SourceDialectOptions Opts;
+    Opts.Dialect = Dialect;
+    Opts.LocalTypes = Local;
+    const SourceDialectText View = spellInDialect(Unit, Opts);
+    EXPECT_TRUE(View.Unread.empty())
+        << (View.Unread.empty() ? "" : View.Unread.front()) << View.Text;
+    if (Go)
+      Programs.Go = "package main\n\nimport (\n\t\"fmt\"\n\t\"unsafe\"\n)\n\n" +
+                    View.Text + R"(
+func main() {
+	var f _FLAGS
+	fmt.Println(update(&f))
+	bytes := (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))
+	for _, b := range bytes {
+		fmt.Println(b)
+	}
+}
+)";
+    else
+      Programs.Rust =
+          "#![allow(unused, non_snake_case, non_camel_case_types, "
+          "unused_mut, unused_parens, unused_unsafe, unused_assignments)]\n" +
+          View.Text + R"(
+fn main() {
+    let mut f: _FLAGS = unsafe { core::mem::zeroed() };
+    println!("{}", unsafe { update(&mut f) });
+    let bytes = unsafe {
+        core::slice::from_raw_parts(&f as *const _FLAGS as *const u8,
+                                    core::mem::size_of::<_FLAGS>())
+    };
+    for b in bytes {
+        println!("{}", b);
+    }
+}
+)";
+  }
+  return Programs;
+}
+
+TEST(SourceDialect, BitFieldsOfTheProgramsTypesComputeWhatCComputes) {
+  const std::string Clang = NEVERD_TEST_CLANG;
+  if (Clang.empty())
+    GTEST_SKIP() << "no clang: the C side is not executed";
+  std::string Rustc, GoCompiler;
+  if (const char *FromEnv = std::getenv("NEVERD_TEST_RUSTC"))
+    Rustc = FromEnv;
+  else if (auto Found = llvm::sys::findProgramByName("rustc"))
+    Rustc = *Found;
+  if (const char *FromEnv = std::getenv("NEVERD_TEST_GO"))
+    GoCompiler = FromEnv;
+  else if (auto Found = llvm::sys::findProgramByName("go"))
+    GoCompiler = *Found;
+  if (Rustc.empty() && GoCompiler.empty())
+    GTEST_SKIP() << "no rustc or go: the views' meaning is not executed";
+  const BitFieldPrograms Programs = bitFieldPrograms();
+  ASSERT_FALSE(Programs.C.empty());
+
+  llvm::SmallString<128> Dir;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-bit-fields", Dir));
+  auto Write = [&](llvm::StringRef Name, llvm::StringRef Text) {
+    llvm::SmallString<128> Path(Dir);
+    llvm::sys::path::append(Path, Name);
+    std::error_code EC;
+    llvm::raw_fd_ostream OS(Path, EC);
+    EXPECT_FALSE(EC) << Path.str().str();
+    OS << Text;
+    return std::string(Path);
+  };
+  llvm::SmallString<128> CBinary(Dir);
+  llvm::sys::path::append(CBinary, "c.out");
+  auto CBuild = run(
+      Clang,
+      {"-O1", "-fwrapv", "-o", CBinary.str(), Write("program.c", Programs.C)},
+      Dir);
+  ASSERT_TRUE(bool(CBuild)) << llvm::toString(CBuild.takeError());
+  auto CResult = run(CBinary, {}, Dir);
+  ASSERT_TRUE(bool(CResult)) << llvm::toString(CResult.takeError());
+  if (!Rustc.empty()) {
+    llvm::SmallString<128> RustBinary(Dir);
+    llvm::sys::path::append(RustBinary, "rust.out");
+    auto Build = run(Rustc,
+                     {"--edition=2021", "-O", "-C", "overflow-checks=off", "-o",
+                      RustBinary.str(), Write("program.rs", Programs.Rust)},
+                     Dir);
+    ASSERT_TRUE(bool(Build)) << llvm::toString(Build.takeError()) << "\n"
+                             << Programs.Rust;
+    auto Result = run(RustBinary, {}, Dir);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    EXPECT_EQ(normalizeLineEndings(*Result), normalizeLineEndings(*CResult))
+        << Programs.Rust;
+  }
+  if (!GoCompiler.empty()) {
+    llvm::SmallString<128> Module(Dir);
+    llvm::sys::path::append(Module, "go");
+    ASSERT_FALSE(llvm::sys::fs::create_directory(Module));
+    Write("go/go.mod", "module bits\n\ngo 1.22\n");
+    Write("go/main.go", Programs.Go);
+    llvm::SmallString<128> GoBinary(Dir);
+    llvm::sys::path::append(GoBinary, "go.out");
+    auto Build =
+        run(GoCompiler,
+            {"build", "-C", Module.str(), "-o", GoBinary.str(), "."}, Module);
+    ASSERT_TRUE(bool(Build)) << llvm::toString(Build.takeError()) << "\n"
+                             << Programs.Go;
+    auto Result = run(GoBinary, {}, Dir);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    EXPECT_EQ(normalizeLineEndings(*Result), normalizeLineEndings(*CResult))
+        << Programs.Go;
+  }
   llvm::sys::fs::remove_directories(Dir);
 }
 

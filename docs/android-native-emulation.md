@@ -97,6 +97,34 @@ thread and `exit_group` ends the workload. Destructors are not run when the
 observation ends at the selected function's return. The libc
 `exit` import and automatic FINI-array execution remain unsupported.
 
+### Selected execution observations
+
+`android.observe_execution` records state immediately before explicit absolute
+guest PCs, without patching code or supplying call results:
+
+```json
+{"pcs":["0x40001000","0x40001004"],"limit":32,
+ "read_memory":[{"address":"0x20000000","size":64}]}
+```
+
+The object requires 1–64 unique, four-byte-aligned `pcs` and a positive `limit`.
+Each retained record contains `pc`, `thread_id`, the admitted instruction count
+before that point, `registers` in x0–x30 order, `sp`, `nzcv`, and the requested
+memory bytes. These are scalar observations, not complete CPU/OS checkpoints.
+Addresses and register bits use hexadecimal strings in reports. The same
+memory ranges are copied at every point. `require_mapped_at_entry: false`
+allows a range created during execution; it must be readable at every captured
+point. An unreadable range fails before executing that watched instruction.
+
+The complete retained capacity shares `output_limit` with ordinary snapshots,
+thread records and PC tracing. `execution_observations_truncated` becomes true
+only when another point matches after the retained limit; execution continues
+with observation disabled. Unreached addresses produce no records. Observations
+consume no guest instruction or service event and preserve cooperative quantum
+boundaries. Their host work still counts against the existing wall-time limit.
+They neither prove coverage beyond supplied inputs nor implement an unknown
+provider's memory, IPC or external effects.
+
 ## Linking and Android contracts
 
 The loader reads original PT_LOAD/PT_DYNAMIC file bytes, independently of
