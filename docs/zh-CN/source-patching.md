@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: be6fcc291675e50f0ce8d8517475c9efa35e98e854f9dd96e0a044bdf3b28e88 -->
+<!-- i18n-source: 3939548e7578565e45b3ed09f402c73232e4b5099c88f84723b13ca1886e4345 -->
 
 [← Documentation Index](README.md)
 
@@ -92,21 +92,29 @@ CPU 矩阵要求十二种组合的源码、外部 IR 和原生对象均成功安
 GCC C 对象也在 ELF x86、ARM32、ARM64 上完成安装，并通过 Linux QEMU user mode 执行。适配器从镜像选择 ARM/Thumb 模式，GNU property 记录按 ELF 指针宽度对齐。
 
 <!-- i18n-section: references -->
-## 原程序引用与存储
+## 原实现回调、布局扩容与新增依赖
 
-绑定对应外部声明：`function` 要求已确认的原函数或导入桩；`data` 要求可写存储；`const` 要求 IR 中为 const 声明。对象数据绑定必须提供非零范围。范围不能跨越存储边界，也不能赋予 RELRO 写权限。不能回调被替换函数的原始函数体：此配置尚无保存原序言的回调跳板。
+绑定对应外部声明。`function` 验证原函数或导入桩；`data` 要求可写存储；`const` 要求常量 IR 声明。对象数据绑定必须给出非零范围，不能跨越存储边界或授予 RELRO 写权限。调用被替换函数的原实现时，必须显式使用 `original`。公开入口仍进入替换函数；保存的入口执行按完整指令重定位的前缀，再跳回原函数后续部分。源码、外部 IR 和原生对象共享此契约，包括浮点与栈参数和多个回调。
 
-新代码保持 RX，新可变状态保持 RW。只复用已有导入，并区分 GOT/IAT 槽与可调用桩。Mach-O 需要空余加载命令空间，例如 `-Wl,-headerpad,0x400`；PE 需要空余节头空间。空间不足会失败。ELF `.data.rel.ro` 和原 CET/IBT 保护需要额外契约，目前明确拒绝。
+回调必须验证函数边界、指令模式、继续执行地址和展开证据。未知指令、不安全的 PC 相对引用、跳入复制前缀的分支、不支持的加载重定位、重叠回调和未建模的带处理器序言都会在发布前失败。调用者仍须提供 ABI 匹配的声明。凭据通过 `original_callbacks` 记录保存的入口地址。
+
+PE32/PE32+ 可通过移动文件内存储范围并更新已建模的调试、符号、证书和附加数据指针，扩容已满的节头表，同时保留原 RVA。Mach-O x64/ARM64 PIE 在相邻 page-zero 保护区和末尾 linkedit 段满足条件时，可通过经过检查的头部前缀扩展取得命令和展开存储，原代码／数据地址保持不变。此配置不要求 `-Wl,-headerpad,0x400` 或相邻的空闲展开页。显式头部地址引用、未知加载命令、混合代码／数据归属、损坏范围和不支持的布局会被拒绝。安装前统一规划头部空间和展开容量。
+
+新代码保持 RX，可变状态保持 RW。显式 `--dependency` 请求通过 ELF 动态元数据、PE 导入描述符／IAT 或 Mach-O dylib／bind 元数据新增函数或数据导入。原导入身份、序号和版本记录保持稳定；槽位与可调用桩保留各自含义。库名／路径应符合目标 OS 加载器的规则。下例使用 ELF 共享库名。执行时缺库或缺符号必须产生真实加载器错误。TLS、IFUNC、新符号版本契约、加载期构造器和未建模重定位仍不支持；ELF `.data.rel.ro` 和 CET/IBT 仍需额外契约。 原生 COFF 对象必须用 `__declspec(dllimport)` 声明新增函数／数据导入，使重定位明确指向 IAT；普通的直接外部引用会被拒绝。
 
 ```sh
+# ELF example: the original target is at 0x401140.
 neverd patch app --from-source=replacement.c --entry=replacement --func=0x401140 \
+  --bind=original:saved_target=0x401140 \
   --bind=function:original_helper=0x401190 \
   --bind=data:shared_counter=0x404020:4 \
   --bind=const:lookup_table=0x402040:64 \
+  --dependency=function:extra_function=libpatch_extra.so \
+  --dependency=data:extra_state=libpatch_extra.so \
   --patch-report -o app.bound
 ```
 
-Mach-O 展开表增长还需要相邻的空余文件与虚拟空间；仅预留头部空间并不能满足这一要求。测试样本分别处理这两种空间限制。
+追加式、按结构大小检查的依赖选项适用于源码、外部 IR 和原生对象请求。凭据包含 `added_imports`；重新加载候选文件后再次核对全部回调、导入、存储权限和安装字节。失败保留输入和任何已有目标文件。
 
 <!-- i18n-section: exceptions -->
 ## C++ 异常
@@ -128,13 +136,35 @@ ELF 使用编译器的 FDE/LSDA；Mach-O 使用紧凑展开/DWARF。PE x64/ARM64
 report = session.patch_source(
     replacement_source, "app.patched",
     mappings={"replacement": original_address},
-    compiler="gcc", compiler_path="/path/to/gcc", artifact="object",
-    bindings={"shared_counter": ("data", original_counter_address, 4)},
+    compiler="clang", compiler_path="/path/to/clang", artifact="object",
+    bindings={
+        "saved_target": ("original", original_address),
+        "shared_counter": ("data", original_counter_address, 4),
+    },
+    dependencies={
+        "extra_function": ("libpatch_extra.so", "function"),
+        "extra_state": ("libpatch_extra.so", "data"),
+    },
 )
 ```
 
 <!-- i18n-section: verification -->
 ## 构建与验证
+
+六个选定的原生 OS／ISA 任务均零失败、零跳过：3669 次 GoogleTest 执行、1008 次原生进程观测（504 次功能、504 次 C++ 异常）、12 次真实加载拒绝、96 个镜像和 84 份发布凭据。
+
+| 主机 | 源码 | Harness | CI 任务 | 测试 | 观测／拒绝 |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+这些产物只验收下表的实际源码与 harness 提交；后续 dev 整合和文档提交另有本机及文档检查。早期失败或取消的任务仍保留为失败。历史 216 次补充观测、PE ARM32 及旧 32 位 Apple 的 CPU／兼容层结果，不构成新能力的原生硬件或 C++ 异常证明。
+
+Windows ARM64 验收使用原生 ARM64 Unicorn C DLL：以固定子模块和已验证的 LLVM-MinGW 工具链真实构建，生成 MSVC 导入库并显式覆盖 CMake 目标。隔离的构建副本认证三项主机修正：非 SEH 跳转函数对、带指令缓存同步的 ARM64 页面提交回调，以及适配 Windows LLP64 的 64 位立即数掩码。子模块源码及版本不变。这证明 CPU 矩阵测试主机可用，不代表默认 MSVC ARM64 JIT 已受支持。五项主机恢复检查与补丁进程的原生执行、C++ 异常证据分开记录。
 
 通过 `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` 指定兼容的源码编译器（已验证 Clang 22.1.6）。集成构建只修正构建目录中的 LLVM 副本，不改子模块或共享预编译缓存。r3/r4 预编译版的 x64 PLT 问题可能导致 IR patch 被拒绝；原生对象避开该 MC 路径。`NEVERD_TEST_REQUIRE_FIXED_LLVM=1` 要求编译器生成精确且已修正的 PLT 引用。
 
@@ -187,7 +217,7 @@ AArch64 指令重定位要求显式 RELA 加数。隐式 REL 指令加数会在�
 
 同一工作流要求 Windows x64 上的 Windows x86 执行 30 次、Linux x64 上的 Linux x86 执行 48 次，并通过 QEMU 用户模式执行 96 次 Linux ARM32 观测，ARM 与 Thumb 各占一半。Linux 检查包含匹配目标的 GCC 对象。每种场景重复三次。报告区分 `native`、`compatibility`、`rosetta` 和 `qemu-user`，同时记录目标架构与实际宿主架构。Rosetta 不能满足 Intel 原生执行要求。
 
-全部 14 个 CPU 目标配置仍由 154 项源码／IR／对象矩阵覆盖。PE ARM32、Mach-O i386、ARMv7 iOS 和 ARMv7k watchOS 目前有 CPU 验证，不据此宣称原生 OS 加载器或 C++ 展开器验证通过。NeverC 继续只支持 x64／ARM64 纯 C；32 位编译由 Clang 和匹配目标的 ELF GCC 驱动承担。验证器不会构建或修改 NeverC。
+全部 14 个 CPU 目标配置仍由 283 项源码／IR／对象矩阵覆盖。PE ARM32、Mach-O i386、ARMv7 iOS 和 ARMv7k watchOS 目前有 CPU 验证，不据此宣称原生 OS 加载器或 C++ 展开器验证通过。NeverC 继续只支持 x64／ARM64 纯 C；32 位编译由 Clang 和匹配目标的 ELF GCC 驱动承担。验证器不会构建或修改 NeverC。
 
 Windows x64 和 ARM64 还会各自执行 36 次 Clang C++ FH3 观测。
 
@@ -207,6 +237,6 @@ ELF ARM 与 Thumb 使用独立配置。源码编译器明确接收 `-marm` 或 `
 
 [Apple 兼容性验证](https://github.com/gmh5225/test_mac_intel/actions/runs/38771214358)通过了 Linux 上 Darling 的 30 次 Mach-O i386 执行，以及 Intel macOS 上 touchHLE 的 60 次 ARMv7/ARMv7k 执行。每个原始镜像以及源码 IR、编译对象、外部对象替换结果均执行三次。独立审计核验了这些补充运行中的全部 72 个镜像、66 份补丁发布记录和 216 次执行，包括 GitHub 产物大小、SHA256、精确提交及完整用例清单。Linux 输入仍固定于 `fcee81c9a5`；PE 输入生成于 `a542f97ba`，Mach-O 输入生成于 `8f5f06762`。验证脚本的提交号在对应运行中单独记录。
 
-Mach-O 修复按所选函数认证 Thumb 模式，避免被镜像整体的 ARM/Thumb 混合模式覆盖；仅规范化有证据的 Thumb 导出指针，并统一 ARM32 展开代码地址，不改变数据指针或范围长度。集成 LLVM 源码构建在本机通过全部 154 项 CPU 矩阵检查和 258 项异常契约检查，零失败、零跳过。旧 Mach-O 测试程序使用已记录的开源链接器并预留展开元数据容量；i386 使用正确对齐的启动入口和 64 KiB 页零段。
+Mach-O 修复按所选函数认证 Thumb 模式，避免被镜像整体的 ARM/Thumb 混合模式覆盖；仅规范化有证据的 Thumb 导出指针，并统一 ARM32 展开代码地址，不改变数据指针或范围长度。集成 LLVM 源码构建在本机通过全部 283 项 CPU 矩阵检查和 258 项异常契约检查，零失败、零跳过。旧 Mach-O 测试程序使用已记录的开源链接器并预留展开元数据容量；i386 使用正确对齐的启动入口和 64 KiB 页零段。
 
 这些结果证明指定模拟器和兼容层下的 C 代码执行。Wine 不等于 Microsoft Windows，Darling 不等于 macOS；iOS HLE 中的 ARMv7k 执行不能证明 watchOS、WatchKit 或 Apple 实机支持。不能据此推断旧 Apple SDK 或原生 32 位硬件覆盖，这些测试也不认证 C++ 异常展开。既有原生与兼容模式证据继续分开记录。NeverC 未构建、未修改。

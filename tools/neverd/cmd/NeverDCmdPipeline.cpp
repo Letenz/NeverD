@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -81,6 +82,7 @@ std::optional<std::string> validateSanitizeArguments() {
       {PatchEntry.getNumOccurrences(), "--entry"},
       {PatchCompilerArgs.getNumOccurrences(), "--compiler-arg"},
       {PatchBindings.getNumOccurrences(), "--bind"},
+      {PatchDependencies.getNumOccurrences(), "--dependency"},
       {PatchCompilerTimeout.getNumOccurrences(), "--compiler-timeout"},
       {PatchReport.getNumOccurrences(), "--patch-report"},
       {PatchFuncAddr.getNumOccurrences(), "--func"},
@@ -114,7 +116,8 @@ std::optional<std::string> validateSourcePatchArguments() {
     return "compiler options require --from-c or --from-source";
   if (Inputs == 0 &&
       (PatchFuncAddr.getNumOccurrences() || PatchEntry.getNumOccurrences() ||
-       PatchReport.getNumOccurrences() || PatchBindings.getNumOccurrences()))
+       PatchReport.getNumOccurrences() || PatchBindings.getNumOccurrences() ||
+       PatchDependencies.getNumOccurrences()))
     return "replacement options require an external patch input";
   if (Inputs && PatchFromIR.empty() && PatchFromC.empty() &&
       PatchFromSource.empty() && PatchFromObject.empty())
@@ -149,7 +152,8 @@ bool usesSourcePatchRequest() {
          (!PatchFromIR.empty() &&
           (PatchFuncAddr.getNumOccurrences() ||
            PatchEntry.getNumOccurrences() || PatchReport ||
-           PatchBindings.getNumOccurrences()));
+           PatchBindings.getNumOccurrences() ||
+           PatchDependencies.getNumOccurrences()));
 }
 
 int runSourcePatch(neverd_session_t Sess, StringRef Output, int Strategy) {
@@ -207,12 +211,15 @@ int runSourcePatch(neverd_session_t Sess, StringRef Output, int Strategy) {
     neverd_source_patch_binding_v1 Binding{};
     if (Kind == "function")
       Binding.kind = NEVERD_SOURCE_BIND_FUNCTION;
+    else if (Kind == "original")
+      Binding.kind = NEVERD_SOURCE_BIND_ORIGINAL_FUNCTION;
     else if (Kind == "const")
       Binding.kind = NEVERD_SOURCE_BIND_READ_ONLY_DATA;
     else if (Kind == "data")
       Binding.kind = NEVERD_SOURCE_BIND_WRITABLE_DATA;
     else {
-      WithColor::error() << "--bind kind must be function, const, or data\n";
+      WithColor::error()
+          << "--bind kind must be function, original, const, or data\n";
       return 1;
     }
     if (Symbol.empty() || Address.empty() ||
@@ -228,6 +235,29 @@ int runSourcePatch(neverd_session_t Sess, StringRef Output, int Strategy) {
   }
   Options.bindings = Bindings.data();
   Options.binding_count = Bindings.size();
+  std::vector<std::string> ImportNames, Libraries;
+  std::vector<neverd_source_patch_dependency_v1> Dependencies;
+  ImportNames.reserve(PatchDependencies.size());
+  Libraries.reserve(PatchDependencies.size());
+  for (const auto &Text : PatchDependencies) {
+    const auto [Kind, Rest] = StringRef(Text).split(':');
+    const auto [Symbol, Library] = Rest.split('=');
+    if ((Kind != "function" && Kind != "data") || Symbol.empty() ||
+        Library.empty()) {
+      WithColor::error()
+          << "--dependency requires function|data:SYMBOL=LIBRARY\n";
+      return 1;
+    }
+    ImportNames.push_back(Symbol.str());
+    Libraries.push_back(Library.str());
+    Dependencies.push_back(
+        {Libraries.back().c_str(), ImportNames.back().c_str(),
+         static_cast<uint32_t>(Kind == "function"
+                                   ? NEVERD_SOURCE_DEPENDENCY_FUNCTION
+                                   : NEVERD_SOURCE_DEPENDENCY_DATA)});
+  }
+  Options.dependencies = Dependencies.data();
+  Options.dependency_count = Dependencies.size();
   return neverd_patch_source(Sess, (*Buffer)->getBufferStart(),
                              (*Buffer)->getBufferSize(), &Options,
                              Output.str().c_str())
@@ -343,6 +373,29 @@ bool configureSBF(neverd_session_t Sess) {
     }
   }
   return true;
+}
+
+/// The address the image exports \p Name at: a routine the function list
+/// does not hold before discovery, as a leaf without unwind data.
+std::optional<uint64_t> exportedAddress(neverd_session_t Sess, StringRef Name) {
+  const char *Raw = neverd_exports_json(Sess);
+  Expected<json::Value> Parsed = json::parse(Raw ? Raw : "[]");
+  neverd_free_string(Raw);
+  if (!Parsed) {
+    consumeError(Parsed.takeError());
+    return std::nullopt;
+  }
+  if (const json::Array *Exports = Parsed->getAsArray())
+    for (const json::Value &Export : *Exports)
+      if (const json::Object *Row = Export.getAsObject();
+          Row && Row->getString("name") == Name) {
+        uint64_t Address = 0;
+        StringRef Text = Row->getString("addr").value_or("");
+        if ((Text.consume_front("0x") || Text.consume_front("0X")) &&
+            !Text.getAsInteger(16, Address))
+          return Address;
+      }
+  return std::nullopt;
 }
 
 } // namespace
@@ -748,7 +801,13 @@ int runDecompile(neverd_session_t Sess) {
       }
     } else {
       FuncIdx = neverd_func_find_by_name(Sess, ExportFunc.c_str());
-      if (FuncIdx < 0 && !FuncRef.empty() &&
+      if (FuncIdx < 0)
+        if (const std::optional<uint64_t> Exported =
+                exportedAddress(Sess, FuncRef)) {
+          HaveDirectAddr = true;
+          DirectAddr = *Exported;
+        }
+      if (FuncIdx < 0 && !HaveDirectAddr && !FuncRef.empty() &&
           !FuncRef.getAsInteger(16, DirectAddr)) {
         HaveDirectAddr = true;
         FuncIdx = neverd_func_find_by_addr(Sess, DirectAddr);

@@ -1534,6 +1534,15 @@ void HighCWriter::applyDebugCallSlotTypes(const HighFunc &Func) {
       if (It == FrameSlots.end())
         continue;
       TypeRef Next = cDisplayType(Expected->Pointee);
+      // A unit that defines the program's records reads members only of
+      // those it defines (prepareRecordDefinitions): the callee's record
+      // names no member of a local it does not define.
+      if (Next && Next->Kind == NdTypeKind::Struct && !Next->IsEnum &&
+          !Next->SourceName.empty() && Opts.RecordDefinitions &&
+          Opts.EmitIncludes &&
+          !RecordDefinitions.Records.count(
+              cNamedTypeSpelling(Next->SourceName)))
+        continue;
       if (Next && (!It->second.CallType ||
                    Next->FieldDisplayNames.size() >=
                        It->second.CallType->FieldDisplayNames.size()))
@@ -4426,29 +4435,7 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
     if (Name.empty() || ValueForward.count(Name) || FieldForward.count(Name) ||
         CopyForward.count(Name) || CallResultNames.count(Name))
       return;
-    TypeRef ReturnType;
-    if (const auto FS = debugCallee(*S.Val)) {
-      if (Dbg)
-        Dbg->completeType(FS->ReturnType);
-      ReturnType = cDisplayType(FS->ReturnType);
-      if (isMsvcIndirectReturn(FS->ReturnType, Opts.TheArch, Opts.Format) &&
-          ReturnType && ReturnType->Kind != NdTypeKind::Ptr) {
-        if (const NdType *Record = msvcIndirectReturnRecord(
-                FS->ReturnType, Opts.TheArch, Opts.Format)) {
-          if (ReturnType->Kind == NdTypeKind::Struct)
-            ReturnType = NdType::makePtr(ReturnType);
-          else
-            ReturnType = NdType::makePtr(
-                NdType::makeNamedRecord(cNamedTypeSpelling(Record->SourceName),
-                                        Record->Size ? Record->Size : 8));
-        }
-      }
-    } else if (const MsvcCallee *Msvc =
-                   msvcCallee(callIdentifier(*S.Val), Opts.Format))
-      ReturnType = msvcSyntheticReturn(Msvc->ReturnKind);
-    // A result whose type C cannot spell keeps the destination's type.
-    if (ReturnType && !hasCValueLayout(ReturnType))
-      ReturnType = nullptr;
+    const TypeRef ReturnType = callResultType(*S.Val);
     if (ReturnType)
       CallResultTypes[Name] = ReturnType;
     std::string Stem = callResultStem(callIdentifier(*S.Val));
@@ -4512,6 +4499,33 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
       CallResultTypes[Stem] = ReturnType;
     CallResultNames[Name] = std::move(Stem);
   });
+}
+
+TypeRef HighCWriter::callResultType(const HighExpr &Call) const {
+  TypeRef ReturnType;
+  if (const auto FS = debugCallee(Call)) {
+    if (Dbg)
+      Dbg->completeType(FS->ReturnType);
+    ReturnType = cDisplayType(FS->ReturnType);
+    if (isMsvcIndirectReturn(FS->ReturnType, Opts.TheArch, Opts.Format) &&
+        ReturnType && ReturnType->Kind != NdTypeKind::Ptr) {
+      if (const NdType *Record = msvcIndirectReturnRecord(
+              FS->ReturnType, Opts.TheArch, Opts.Format)) {
+        if (ReturnType->Kind == NdTypeKind::Struct)
+          ReturnType = NdType::makePtr(ReturnType);
+        else
+          ReturnType = NdType::makePtr(
+              NdType::makeNamedRecord(cNamedTypeSpelling(Record->SourceName),
+                                      Record->Size ? Record->Size : 8));
+      }
+    }
+  } else if (const MsvcCallee *Msvc =
+                 msvcCallee(callIdentifier(Call), Opts.Format))
+    ReturnType = msvcSyntheticReturn(Msvc->ReturnKind);
+  // A result whose type C cannot spell keeps the destination's type.
+  if (ReturnType && !hasCValueLayout(ReturnType))
+    ReturnType = nullptr;
+  return ReturnType;
 }
 
 std::optional<int64_t> HighCWriter::stackParamOffset(const HighFunc &Func,
@@ -4598,9 +4612,12 @@ void HighCWriter::bindParams(const HighFunc &Func) const {
         DebugFn->CallConv == DebugCallConv::Unknown ||
         DebugFn->CallConv == DebugCallConv::Cdecl ||
         DebugFn->CallConv == DebugCallConv::Stdcall;
-    const bool Located = llvm::any_of(Func.Params, [](const HighParam &P) {
-      return P.RegOff != kNoParamReg || P.MedIndex >= 0;
-    });
+    // A function whose code reads no parameter has none to locate: what
+    // its declaration takes goes unread (unreadDeclaredParams).
+    const bool Located = Func.Params.empty() ||
+                         llvm::any_of(Func.Params, [](const HighParam &P) {
+                           return P.RegOff != kNoParamReg || P.MedIndex >= 0;
+                         });
     const auto Placement =
         OrdinaryConvention && Located
             ? placeSourceParameters(Opts.TheArch, Opts.Format,

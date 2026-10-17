@@ -67,24 +67,46 @@ std::optional<uint16_t> peSubsystem(const Session &S) {
                    : std::nullopt;
 }
 
+/// The kinds of image the header libraries describe
+/// (HeaderLibraryImages.def).
+enum class HeaderImageKind : uint8_t {
+#define NEVERD_HEADER_IMAGE_KIND(Kind) Kind,
+#include "neverd/types/HeaderLibraryImages.def"
+};
+
+/// The kind of the session's image, as its headers tell it; none for an
+/// image no header library describes.
+std::optional<HeaderImageKind> headerImageKind(const Session &S) {
+  if (const std::optional<uint16_t> Subsystem = peSubsystem(S))
+    switch (*Subsystem) {
+#define NEVERD_HEADER_PE_SUBSYSTEM(Subsystem, Kind)                            \
+  case Subsystem:                                                              \
+    return HeaderImageKind::Kind;
+#include "neverd/types/HeaderLibraryImages.def"
+    }
+  return std::nullopt;
+}
+
 /// Joins the header libraries that describe the session's image
-/// (HeaderLibraries.def) to its types, after the program's own.
+/// (HeaderLibraryImages.def) to its types, after the program's own, in the
+/// order the rows list them.
 void joinHeaders(Session &S) {
-  const std::optional<uint16_t> Subsystem = peSubsystem(S);
+  const std::optional<HeaderImageKind> Kind = headerImageKind(S);
+  if (!Kind)
+    return;
   const auto join = [&](types::HeaderLibrary Library) {
+    if (types::headerLibraryModel(Library) != S.LocalTypes->dataModel())
+      return;
     Session::JoinedHeaders Joined{Library, {}, {}};
     if (const types::TypeLibrary *Headers =
             types::headerLibrary(Library, &Joined.Error))
       Joined.Merge = types::mergeHeaderTypes(*S.LocalTypes, *Headers);
     S.LocalTypeHeaders.push_back(std::move(Joined));
   };
-#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Form, Machine, Sub,       \
-                              Spelling)                                        \
-  if (S.Img.Format == BinaryFormat::Form && S.Img.Arch == Arch::Machine &&     \
-      Subsystem == Sub &&                                                      \
-      S.LocalTypes->dataModel() == types::DataModel::Model)                    \
-    join(types::HeaderLibrary::Id);
-#include "neverd/types/HeaderLibraries.def"
+#define NEVERD_HEADER_LIBRARY_IMAGE(ImageKind, Machine, Library)               \
+  if (*Kind == HeaderImageKind::ImageKind && S.Img.Arch == Arch::Machine)      \
+    join(types::HeaderLibrary::Library);
+#include "neverd/types/HeaderLibraryImages.def"
 }
 
 /// Applies \p Declaration to \p Library: the types its source declares, or

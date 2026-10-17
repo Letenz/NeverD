@@ -13,6 +13,10 @@ arquitectura interna.
 
 `X64MXCSRMask` habilita cargas MXCSR y lecturas/escrituras escalares con una máscara efectiva explícita (`0xffbf` o `0xffff`). El adaptador x64 define los estados iniciales válidos y sus transiciones. El núcleo contabiliza el trabajo y exige demostrar que los bits reservados son cero; la opción sin fallos no basta. Las operaciones intrínsecas originales siguen siendo observables. Las escrituras MXCSR en memoria, la interfaz de código fuente y los certificados nativos/LLVM necesitan contratos propios.
 
+`SourcePatchPreparation` es responsable de la transacción común de disposición y dependencias previa a la instalación. `SourcePatchCallback` autentica las entradas originales guardadas y delega reubicación de instrucciones y desenrollado nativo a los responsables de arquitectura/formato. `SourcePatchDependencies` planifica importaciones explícitas; los escritores ELF/PE/Mach-O conservan las identidades del cargador. Fuente, IR suministrado y objetos nativos usan los mismos planes. La prueba final de secciones/permisos y la recarga de `publishSourcePatch` siguen siendo la autoridad; CLI, C API y Python no duplican decisiones del cargador ni de reubicación.
+
+Los seis trabajos nativos OS/ISA seleccionados pasaron sin fallos ni omisiones: 3669 ejecuciones GoogleTest, 1008 observaciones de procesos nativos (504 funcionales y 504 de excepciones C++), 12 rechazos reales del cargador, 96 imágenes y 84 recibos de publicación. [Evidencia nativa exacta](source-patching.md).
+
 ## Recuperación de memoria en ejecución
 
 `X64SegmentedWrites` admite por separado escrituras FS/GS ordinarias de 1/2/4/8 bytes con desplazamientos de 64 bits, bajo un estado de máquina explícitamente sin fallos. `arch/x86_64` controla la validación, la admisión y la inicialización de bases simbólicas. El núcleo utiliza direcciones lineales completas e invalidación normal de alias. Las bases fijas arbitrarias pueden solaparse con la pila, otros segmentos y posiciones de retorno activas. La capacidad se vincula a las evidencias raw. Las interfaces de fuente y prueba nativa sin entradas de base autenticadas siguen rechazando este dominio.

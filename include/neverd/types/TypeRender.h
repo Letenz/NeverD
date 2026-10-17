@@ -27,6 +27,7 @@
 #include "llvm/ADT/StringRef.h"
 
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -167,6 +168,24 @@ std::string renderType(const TypeLibrary &Library, const LocalType &Type,
 std::string spellType(const TypeLibrary &Library, const TypeExpr &Type,
                       const std::string &Declarator,
                       const RenderOptions &Options);
+
+namespace render {
+class CSpeller;
+} // namespace render
+
+/// Spells types as spellType does, the library's names spelled once for
+/// every type it spells: a library a system's headers declare holds tens of
+/// thousands.  It reads \p Library, which must outlive it and stay as it is.
+class TypeSpeller {
+public:
+  TypeSpeller(const TypeLibrary &Library, const RenderOptions &Options);
+  ~TypeSpeller();
+  std::string spell(const TypeExpr &Type,
+                    const std::string &Declarator = std::string()) const;
+
+private:
+  std::unique_ptr<render::CSpeller> Speller;
+};
 
 /// \p Types and every type they need, in an order that compiles, after what
 /// the spelling needs declared.  Every type when \p Types is empty.

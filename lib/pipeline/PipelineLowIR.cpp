@@ -3116,6 +3116,11 @@ struct ImportPrototypeArguments {
   std::map<va_t, int> StackArgs;
   /// The bytes of the scalar float each routine returns, where it does.
   std::map<va_t, uint16_t> FloatReturns;
+  /// What the prototypes of the image's own exported routines that \p
+  /// Effects summarizes declare: their callers pass at least these, which
+  /// join what each body reads itself.
+  std::map<va_t, GPRReadWidths> DeclaredReads;
+  std::map<va_t, int> DeclaredStackArgs;
 };
 
 /// The arguments of the libc imports that \p Funcs and the callees
@@ -3128,7 +3133,11 @@ struct ImportPrototypeArguments {
 /// Windows C runtime's `_initterm`), else one the arity tables give
 /// (LibCNames.h), by the exact name where the import entry is the C name,
 /// else one the program's types declare (\p Dbg's resolvePrototype), as the
-/// Windows kernel's headers declare the routines a driver imports.
+/// Windows kernel's headers declare the routines a driver imports.  A routine
+/// the image exports whose name binds a prototype (\p Dbg's resolveFunction)
+/// is listed too: where \p Effects summarizes its body, in DeclaredReads and
+/// DeclaredStackArgs, which join what the body reads, otherwise as an
+/// import is.
 /// Each integer register argument is read pointer-wide.  A floating argument
 /// is listed only under System V, which passes it in the next vector
 /// register at its width, and only when every argument has a register.
@@ -3164,6 +3173,9 @@ ImportPrototypeArguments importPrototypeArguments(
     int Integers = 0;
     std::vector<uint8_t> Floats;
     std::vector<uint8_t> Order;
+    /// The bytes each integer argument declares, in order, where a
+    /// prototype gives them.
+    std::vector<uint8_t> IntegerBytes;
   };
   // The prototype the program's types declare for a routine of another
   // module.  A positional convention passes a record by value in an integer
@@ -3177,14 +3189,11 @@ ImportPrototypeArguments importPrototypeArguments(
             ? llvm::StringRef(Name)
             : cNameOfSymbol(Name, Img.Format, Img.Arch));
   };
-  auto DeclaredArguments =
-      [&](const std::string &Name) -> std::optional<Arguments> {
-    const std::optional<FunctionSym> Function = Declared(Name);
-    if (!Function)
-      return std::nullopt;
+  auto SignatureArguments =
+      [&](const FunctionSym &Function) -> std::optional<Arguments> {
     const bool Positional = Convention && Convention->PositionalArgumentSlots;
     Arguments Result;
-    for (const auto &[ParamName, Type] : Function->Params) {
+    for (const auto &[ParamName, Type] : Function.Params) {
       (void)ParamName;
       if (!Type)
         return std::nullopt;
@@ -3199,8 +3208,33 @@ ImportPrototypeArguments importPrototypeArguments(
         return std::nullopt;
       ++Result.Integers;
       Result.Order.push_back(0);
+      // A record takes its whole slot, by value or by its address.
+      Result.IntegerBytes.push_back(
+          static_cast<uint8_t>(Type->Kind == NdTypeKind::Int && Type->Size &&
+                                       Type->Size < TRI.PointerSize
+                                   ? Type->Size
+                                   : TRI.PointerSize));
     }
     return Result;
+  };
+  auto DeclaredArguments =
+      [&](const std::string &Name) -> std::optional<Arguments> {
+    const std::optional<FunctionSym> Function = Declared(Name);
+    return Function ? SignatureArguments(*Function) : std::nullopt;
+  };
+  // A routine the image exports, whose name binds a prototype
+  // (LocalTypesDebugContext), takes what that prototype declares from every
+  // caller: its export binds the convention, which a compiler keeps for the
+  // callers within the image too, as a Windows system call stub's callers
+  // pass the parameters its dispatcher reads from the stack.  A body that
+  // reads more keeps it.  Only a convention of register summaries reads it.
+  auto ExportedArguments = [&](va_t Addr) -> std::optional<Arguments> {
+    if (!Dbg || !RegisterArguments || !Img.findExportAt(Addr))
+      return std::nullopt;
+    const std::optional<FunctionSym> Function = Dbg->resolveFunction(Addr);
+    if (!Function || Function->PrototypeLibrary.empty())
+      return std::nullopt;
+    return SignatureArguments(*Function);
   };
   // A runtime's own prototype names its routine exactly, where stripping
   // leading underscores for the arity tables could reach another runtime's.
@@ -3275,11 +3309,19 @@ ImportPrototypeArguments importPrototypeArguments(
       if (const auto Callee = PointerCallees->find(Addr);
           Callee != PointerCallees->end())
         Name = Callee->second.ImportName;
-    if (Name.empty())
-      return;
-    if (const uint16_t Bytes = RoutineFloatReturn(Name))
-      Result.FloatReturns[Addr] = Bytes;
-    const std::optional<Arguments> Routine = RoutineArguments(Name);
+    std::optional<Arguments> Routine;
+    // The summary of an exported routine's own body joins its prototype.
+    bool Joins = false;
+    if (!Name.empty()) {
+      if (const uint16_t Bytes = RoutineFloatReturn(Name))
+        Result.FloatReturns[Addr] = Bytes;
+      Routine = RoutineArguments(Name);
+    } else {
+      Routine = ExportedArguments(Addr);
+      if (!Routine)
+        return;
+      Joins = Effects.count(Addr) != 0;
+    }
     if (Routine && !Routine->Floats.empty() && !SlotVectors &&
         (!VectorArguments ||
          Routine->Floats.size() > kX64VectorArgumentFamilies ||
@@ -3296,22 +3338,31 @@ ImportPrototypeArguments importPrototypeArguments(
     if (!Count || (*Count > InRegisters && !StackArguments))
       return;
     GPRReadWidths Widths{};
+    // An import's integer arguments are read pointer-wide; an exported
+    // routine's body reads what its prototype declares, which joins its own
+    // reads: a BOOLEAN's caller may set only its low byte.
+    size_t Integer = 0;
     for (int K = 0; K < InRegisters; ++K) {
       if (SlotVectors && Routine->Order[K]) {
         Widths[kX64VectorFamilyBase + K] = Routine->Order[K];
         continue;
       }
+      const uint8_t Bytes = Joins && Integer < Routine->IntegerBytes.size()
+                                ? Routine->IntegerBytes[Integer]
+                                : static_cast<uint8_t>(TRI.PointerSize);
+      ++Integer;
       if (const auto Family = gprFamilyOf(Img.Arch, Registers[K]))
-        Widths[*Family] = static_cast<uint8_t>(TRI.PointerSize);
+        Widths[*Family] = Bytes;
     }
     if (!SlotVectors)
       for (size_t K = 0; K < Routine->Floats.size(); ++K)
         Widths[kX64VectorFamilyBase + K] = Routine->Floats[K];
-    Result.Reads[Addr] = Widths;
+    (Joins ? Result.DeclaredReads : Result.Reads)[Addr] = Widths;
     // Counted as positions, the registers' included, as the stack summary
     // counts them (LocalRegisterEffect::StackArgs); 0 for none on the stack.
     if (StackArguments)
-      Result.StackArgs[Addr] = *Count > InRegisters ? *Count : 0;
+      (Joins ? Result.DeclaredStackArgs : Result.StackArgs)[Addr] =
+          *Count > InRegisters ? *Count : 0;
   };
   for (const LowFunc &F : Funcs)
     for (const LowBlock &Block : F.Blocks)
@@ -3575,6 +3626,21 @@ void computeCallRegisterEffects(
     for (auto &[Addr, Count] : Prototyped.StackArgs)
       if (!DispatchThunks.count(Addr))
         FixedEntryStackArgs.try_emplace(Addr, Count);
+    // An exported routine's body reads its declared parameters at entry, as
+    // its callers pass them, whatever else it reads.
+    for (const auto &[Addr, Widths] : Prototyped.DeclaredReads)
+      if (auto Effect = Effects.find(Addr); Effect != Effects.end() &&
+                                            !Effect->second.Blocks.empty() &&
+                                            !FixedEntryReads.count(Addr)) {
+        RegisterStep Declared;
+        Declared.Reads = Widths;
+        std::vector<RegisterStep> &Steps = Effect->second.Blocks.front().Steps;
+        Steps.insert(Steps.begin(), Declared);
+      }
+    for (const auto &[Addr, Count] : Prototyped.DeclaredStackArgs)
+      if (auto Effect = Effects.find(Addr);
+          Effect != Effects.end() && !Effect->second.UnknownStackReads)
+        Effect->second.StackArgs = std::max(Effect->second.StackArgs, Count);
     Result.CallFloatReturns = std::move(Prototyped.FloatReturns);
   }
   CallRegisterSummaries Summaries =

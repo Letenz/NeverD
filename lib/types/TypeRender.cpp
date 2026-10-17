@@ -684,10 +684,22 @@ renamedNames(const TypeLibrary &Library, Language Lang) {
 std::string spellType(const TypeLibrary &Library, const TypeExpr &Type,
                       const std::string &Declarator,
                       const RenderOptions &Options) {
+  return TypeSpeller(Library, Options).spell(Type, Declarator);
+}
+
+TypeSpeller::TypeSpeller(const TypeLibrary &Library,
+                         const RenderOptions &Options) {
   RenderOptions C = Options;
   if (C.Lang != Language::Cpp)
     C.Lang = Language::C;
-  return render::CSpeller(Library, C).declare(Type, Declarator);
+  Speller = std::make_unique<render::CSpeller>(Library, C);
+}
+
+TypeSpeller::~TypeSpeller() = default;
+
+std::string TypeSpeller::spell(const TypeExpr &Type,
+                               const std::string &Declarator) const {
+  return Speller->declare(Type, Declarator);
 }
 
 std::string renderTypes(const TypeLibrary &Library,

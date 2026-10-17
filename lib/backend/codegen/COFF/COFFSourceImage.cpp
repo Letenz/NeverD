@@ -7,6 +7,7 @@
 #include "neverd/backend/codegen/COFF/COFFSourceImage.h"
 
 #include "neverd/backend/codegen/COFF/COFFExceptionPatch.h"
+#include "neverd/backend/codegen/COFF/COFFLayoutGrowth.h"
 #include "neverd/backend/codegen/PatchStorage.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/object/PELayout.h"
@@ -179,10 +180,11 @@ llvm::Error verifyLanguage(const BinaryImage &Reloaded,
 }
 } // namespace
 
-llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
-                                   const BinaryImage &Original,
-                                   const CompiledImage &Compiled,
-                                   const COFFObjectEvidence *Object) {
+static llvm::Error installCOFFImage(std::vector<uint8_t> &Binary,
+                                    const BinaryImage &Original,
+                                    const CompiledImage &Compiled,
+                                    const COFFObjectEvidence *Object,
+                                    bool OriginalCallbacks) {
   using Kind = llvm::mc_rewrite::RewriteSectionKind;
   if (auto E = validateCOFFReplacementFeatures(Original, Compiled.TargetArch))
     return E;
@@ -192,7 +194,8 @@ llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
           (Original.Arch == Arch::X64 || Original.Arch == Arch::AArch64) ||
       Compiled.TargetArch != Original.Arch ||
       (Object
-           ? (Compiled.InputKind != RewriteInputKind::ReplacementObject ||
+           ? ((!OriginalCallbacks &&
+               Compiled.InputKind != RewriteInputKind::ReplacementObject) ||
               !Compiled.FunctionRanges.empty() ||
               !Compiled.FunctionOwnerAddrs.empty() || Object->Functions.empty())
            : (Compiled.InputKind != RewriteInputKind::ReplacementIR ||
@@ -474,19 +477,12 @@ llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
                       Read | Data | llvm::COFF::IMAGE_SCN_MEM_WRITE});
   if (!Metadata.empty())
     Chunks.push_back({".ndmeta", MetaRVA, Metadata, Read | Data});
-  uint64_t HeaderLimit = getPESizeOfHeaders(PE);
-  forEachPESection(PE, [&](const PESectionFields &Section, uint16_t) {
-    if (Section.SizeOfRawData)
-      HeaderLimit = std::min<uint64_t>(HeaderLimit, Section.PointerToRawData);
-  });
+  auto HeaderGrowth = ensureCOFFSectionHeaderCapacity(Binary, Chunks.size());
+  if (!HeaderGrowth)
+    return HeaderGrowth.takeError();
+  PE = locatePEHeaders(Binary.data(), Binary.size());
   const uint64_t TableOffset = PE.SectionTable - Binary.data();
   const uint16_t OldCount = PE.NumSections;
-  if (OldCount + Chunks.size() > UINT16_MAX ||
-      !rangeInBounds(TableOffset,
-                     (OldCount + Chunks.size()) *
-                         sizeof(llvm::object::coff_section),
-                     std::min<uint64_t>(HeaderLimit, Binary.size())))
-    return fail("insufficient unused PE section-header space");
   size_t Index = 0;
   uint64_t ImageEnd = 0;
   uint64_t AddedCode = 0, AddedData = 0;
@@ -580,5 +576,126 @@ llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
   }
   return verifyLanguage(*Reloaded, Original, Compiled, Generated,
                         Object != nullptr);
+}
+llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
+                                   const BinaryImage &Original,
+                                   const CompiledImage &Compiled,
+                                   const COFFObjectEvidence *Object) {
+  return installCOFFImage(Binary, Original, Compiled, Object, false);
+}
+
+llvm::Error
+installCOFFCallbackImage(std::vector<uint8_t> &Binary,
+                         const BinaryImage &Original,
+                         const CompiledImage &Storage,
+                         llvm::ArrayRef<COFFOriginalCallback> Callbacks) {
+  // The shared writer consumes exact physical ranges, but their provenance
+  // here is an authenticated original instruction prefix, never a fabricated
+  // compiler or native-object identity.
+  COFFObjectEvidence Ranges;
+  for (const auto &Callback : Callbacks) {
+    const auto &Prefix = Callback.Prefix;
+    const auto *Function =
+        Original.ExceptionMetadata.findFunction(Prefix.OriginalVA);
+    const auto *Bytes = Original.readVA(Prefix.OriginalVA, Prefix.CopiedSize);
+    if ((!Function && Original.Arch != Arch::X86) || !Bytes)
+      return fail("callback has no original native frame or code bytes");
+    auto Reencoded = relocateSourceCallbackPrefix(
+        Original.Arch, Prefix.Mode, {Bytes, Prefix.CopiedSize},
+        Prefix.OriginalVA, Prefix.CallbackVA);
+    if (!Reencoded)
+      return Reencoded.takeError();
+    if (Reencoded->Bytes != Prefix.Bytes ||
+        Reencoded->CopiedSize != Prefix.CopiedSize)
+      return fail(
+          "callback relocation receipt is not derived from the original bytes");
+    llvm::Expected<std::vector<uint8_t>> Frame =
+        Original.Arch == Arch::X86
+            ? llvm::Expected<std::vector<uint8_t>>(std::vector<uint8_t>{})
+            : encodeSourceCallbackCOFFUnwind(Prefix, *Function, Original.Arch);
+    if (!Frame)
+      return Frame.takeError();
+    auto Matches = [&](uint64_t VA, llvm::ArrayRef<uint8_t> Bytes) {
+      return VA >= Storage.BaseVA &&
+             rangeInBounds(VA - Storage.BaseVA, Bytes.size(),
+                           Storage.Bytes.size()) &&
+             std::equal(Bytes.begin(), Bytes.end(),
+                        Storage.Bytes.begin() + VA - Storage.BaseVA);
+    };
+    if (!Matches(Prefix.CallbackVA, Prefix.Bytes) ||
+        (!Frame->empty() && !Matches(Callback.UnwindVA, *Frame)))
+      return fail(
+          "callback image differs from the decoded original frame contract");
+    Ranges.Functions.push_back(
+        {Prefix.CallbackVA, Prefix.CallbackVA + Prefix.Bytes.size()});
+  }
+  if (auto Error = installCOFFImage(Binary, Original, Storage, &Ranges, true))
+    return Error;
+  if (Original.Arch != Arch::X86)
+    return llvm::Error::success();
+  // x86 has no pdata directory. Publish ordinary typed COFF symbols for the
+  // generated entry points, preserving every old symbol and string offset.
+  auto PE = locatePEHeaders(Binary.data(), Binary.size());
+  const uint64_t OldOffset = PE.FileHeader->PointerToSymbolTable;
+  const uint64_t OldCount = PE.FileHeader->NumberOfSymbols;
+  const uint64_t OldSize = OldCount * sizeof(llvm::object::coff_symbol16);
+  if ((!OldOffset != !OldCount) ||
+      (OldCount && !rangeInBounds(OldOffset, OldSize + 4, Binary.size())))
+    return fail("invalid original COFF symbol table");
+  std::vector<uint8_t> Symbols, Strings(4, 0);
+  if (OldCount) {
+    const uint64_t StringsOffset = OldOffset + OldSize;
+    const uint32_t StringsSize =
+        readLE<uint32_t>(Binary.data() + StringsOffset);
+    if (StringsSize < 4 ||
+        !rangeInBounds(StringsOffset, StringsSize, Binary.size()))
+      return fail("invalid original COFF string table");
+    Symbols.assign(Binary.begin() + OldOffset, Binary.begin() + StringsOffset);
+    Strings.assign(Binary.begin() + StringsOffset,
+                   Binary.begin() + StringsOffset + StringsSize);
+  }
+  for (const auto &Callback : Callbacks) {
+    const auto &Prefix = Callback.Prefix;
+    llvm::object::coff_symbol16 Symbol{};
+    unsigned Owners = 0;
+    forEachPESection(PE, [&](const PESectionFields &Section, uint16_t Index) {
+      const uint64_t VA = Original.Base + Section.VirtualAddress;
+      if (Prefix.CallbackVA >= VA &&
+          rangeInBounds(Prefix.CallbackVA - VA, Prefix.Bytes.size(),
+                        Section.VirtualSize)) {
+        ++Owners;
+        Symbol.SectionNumber = Index + 1;
+        Symbol.Value = Prefix.CallbackVA - VA;
+      }
+    });
+    if (Owners != 1)
+      return fail("x86 callback symbol has no unique section");
+    const std::string Name =
+        "__nd_original_" + std::to_string(Prefix.CallbackVA);
+    if (Strings.size() > UINT32_MAX - Name.size() - 1)
+      return fail("callback string table exceeds COFF limits");
+    Symbol.Name.Offset.Zeroes = 0;
+    Symbol.Name.Offset.Offset = Strings.size();
+    Symbol.Type = llvm::COFF::IMAGE_SYM_DTYPE_FUNCTION
+                  << llvm::COFF::SCT_COMPLEX_TYPE_SHIFT;
+    Symbol.StorageClass = llvm::COFF::IMAGE_SYM_CLASS_STATIC;
+    const auto *Data = reinterpret_cast<const uint8_t *>(&Symbol);
+    Symbols.insert(Symbols.end(), Data, Data + sizeof(Symbol));
+    Strings.insert(Strings.end(), Name.begin(), Name.end());
+    Strings.push_back(0);
+  }
+  writeLE<uint32_t>(Strings.data(), Strings.size());
+  const uint64_t NewOffset = Binary.size();
+  if (Symbols.size() / sizeof(llvm::object::coff_symbol16) > UINT32_MAX ||
+      NewOffset > UINT32_MAX ||
+      Symbols.size() + Strings.size() > UINT32_MAX - NewOffset)
+    return fail("callback symbol table exceeds COFF limits");
+  Binary.insert(Binary.end(), Symbols.begin(), Symbols.end());
+  Binary.insert(Binary.end(), Strings.begin(), Strings.end());
+  PE = locatePEHeaders(Binary.data(), Binary.size());
+  PE.FileHeader->PointerToSymbolTable = NewOffset;
+  PE.FileHeader->NumberOfSymbols =
+      Symbols.size() / sizeof(llvm::object::coff_symbol16);
+  return llvm::Error::success();
 }
 } // namespace neverd

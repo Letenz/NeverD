@@ -510,6 +510,24 @@ public:
   /// Widening views and untyped add/sub/mul stay wrapped.
   bool isSameWidthUnsigned(const HighExpr &E, uint16_t Width) const;
   std::optional<FunctionSym> debugCallee(const HighExpr &E) const;
+  /// The pointer type a local is declared with where a typed call's pointer
+  /// result declares it (collectCallResultNames, emitLocalDecls), whatever
+  /// the type of its machine value; null for any other value or name.
+  TypeRef callResultPointerType(const HighExpr &Value) const;
+  /// The type a typed call's result declares the local it is assigned to
+  /// with (collectCallResultNames): its callee's return, a pointer to the
+  /// record an MSVC call returns through a hidden pointer; null where C
+  /// cannot spell it.
+  TypeRef callResultType(const HighExpr &Call) const;
+  TypeRef callResultPointerTypeNamed(const std::string &Name) const;
+  /// The pointer type of the member \p Value reads, where it prints as a
+  /// typed record's member (`Format->lpDecimalSep`); null otherwise.
+  TypeRef typedPointerMemberLoad(const HighExpr &Value) const;
+  /// The pointer type \p Value prints as where its machine value is an
+  /// integer: a local a typed call's pointer result declares, a typed
+  /// record's pointer member, or an object of the image declared as a
+  /// pointer.  An integer it is stored to takes it as the address it is.
+  TypeRef printedPointerType(const HighExpr &Value) const;
   /// Whether the debug information declares \p E's callee: it types its
   /// return or parameters, or names it where the unit includes no header
   /// that declares it.  A public symbol's name alone yields to the header's

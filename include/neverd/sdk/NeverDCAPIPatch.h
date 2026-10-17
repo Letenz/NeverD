@@ -213,7 +213,10 @@ typedef struct neverd_source_patch_mapping_v1 {
 enum neverd_source_patch_binding_kind {
   NEVERD_SOURCE_BIND_FUNCTION = 0,
   NEVERD_SOURCE_BIND_READ_ONLY_DATA = 1,
-  NEVERD_SOURCE_BIND_WRITABLE_DATA = 2
+  NEVERD_SOURCE_BIND_WRITABLE_DATA = 2,
+  /// Call the saved original body of an explicitly replaced entry. The
+  /// installer authenticates the copied instructions and native unwind state.
+  NEVERD_SOURCE_BIND_ORIGINAL_FUNCTION = 3
 };
 
 /// An external declaration bound to existing image storage/code. Data size
@@ -225,6 +228,19 @@ typedef struct neverd_source_patch_binding_v1 {
   neverd_va_t original_va;
   uint64_t size;
 } neverd_source_patch_binding_v1;
+
+enum neverd_source_patch_dependency_kind {
+  NEVERD_SOURCE_DEPENDENCY_FUNCTION = 0,
+  NEVERD_SOURCE_DEPENDENCY_DATA = 1
+};
+
+/// Add a named import through the native OS loader. Library and symbol are
+/// explicit; no guessed ordinal, symbol version or TLS contract is admitted.
+typedef struct neverd_source_patch_dependency_v1 {
+  const char *library;
+  const char *symbol;
+  uint32_t kind;
+} neverd_source_patch_dependency_v1;
 
 /// All enum fields use fixed-width carriers. Initialize the complete structure
 /// to zero and set struct_size. Future fields will be appended. An empty
@@ -247,6 +263,9 @@ typedef struct neverd_source_patch_options_v1 {
   uint32_t timeout_seconds; /* zero selects 30 seconds */
   const neverd_source_patch_binding_v1 *bindings;
   size_t binding_count;
+  /// Optional, size-gated tail. Old callers end after binding_count.
+  const neverd_source_patch_dependency_v1 *dependencies;
+  size_t dependency_count;
 } neverd_source_patch_options_v1;
 
 /// Compile/admit an explicit replacement and publish a new file. InputSize is
