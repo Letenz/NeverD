@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 1eae101089e730c29ba3fda92db515fe148fe41b758d6f5b69156252591d9b3f -->
+<!-- i18n-source: 63d86e1a94d8b33e055360514902466c202d434ebb87823cd91181b98a556871 -->
 
 [← Documentation Index](README.md)
 
@@ -132,6 +132,8 @@ python examples/source-patch/run.py --neverd build-example-host/bin/neverd.exe -
 ```
 
 既定では両方の経路を実行します。`--api cli` または `--api sdk` で一方を選べます。対象アドレスは自動検出されます。入力 `7` に対し、元プログラムは `8`、両方のパッチは `36` を出力します。ドライバーは実行、レシート、ライブラリ欠落時のロード失敗を検証し、完全なビルドと patch コマンドを `commands.json` に保存します。
+
+CLI とホスト内 Python SDK の例を Linux・macOS・Windows の x64/ARM64 でネイティブ実行し、54 回の実行と 12 回の依存ライブラリ欠落による拒否を確認しました。[各ホストの CI と実際のソース](../../examples/source-patch/README.md#native-validation)。
 
 <!-- i18n-section: exceptions -->
 ## C++ 例外

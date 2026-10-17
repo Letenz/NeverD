@@ -52,15 +52,23 @@ typedef long long LONGLONG;
 typedef unsigned long long ULONGLONG;
 typedef float FLOAT;
 typedef double DOUBLE;
+#define _HRESULT_DEFINED
+typedef long HRESULT;
 """
 
-# Per data model: the MSVC target C and C++ compile for, the GNU target the
-# portable spelling also compiles for, and Go's GOARCH.
+# Per data model: the target every spelling of C and C++ compiles for, the
+# GNU target the portable spelling also compiles for, if another, and Go's
+# GOOS and GOARCH.  A 32-bit program GCC or Clang laid out goes by its record
+# ABI instead, and builds for its own target alone.
 TARGETS = {
-    "LLP64": ("x86_64-pc-windows-msvc", "x86_64-linux-gnu", "amd64"),
-    "ILP32": ("i686-pc-windows-msvc", "i686-linux-gnu", "386"),
-    "LP64": ("x86_64-linux-gnu", "x86_64-linux-gnu", "amd64"),
+    "LLP64": ("x86_64-pc-windows-msvc", "x86_64-linux-gnu", "windows",
+              "amd64"),
+    "ILP32": ("i686-pc-windows-msvc", "i686-linux-gnu", "windows", "386"),
+    "LP64": ("x86_64-linux-gnu", "x86_64-linux-gnu", "windows", "amd64"),
+    "i386-sysv": ("i686-linux-gnu", None, "linux", "386"),
+    "aapcs32": ("armv7-linux-gnueabihf", None, "linux", "arm"),
 }
+THIRTY_TWO_BIT = ("ILP32", "i386-sysv", "aapcs32")
 
 
 def run(command, **options):
@@ -123,7 +131,7 @@ class Checker:
         if not clang:
             self.skip("C and C++", f"{self.arguments.clang} not found")
             return
-        msvc, gnu, _ = TARGETS[model]
+        msvc, gnu, _, _ = TARGETS[model]
         cxx = clang + "++" if shutil.which(clang + "++") else clang
         for spelling in SPELLINGS:
             for language, suffix in (("c", ".h"), ("cpp", ".hpp")):
@@ -133,7 +141,8 @@ class Checker:
                 units = [("c++", "-std=c++20", header.stem + "-cpp.cpp")]
                 if language == "c":
                     units.insert(0, ("c", "-std=c11", header.stem + ".c"))
-                targets = [msvc] + ([gnu] if spelling == "portable" else [])
+                targets = [msvc] + ([gnu] if gnu and spelling == "portable"
+                                    else [])
                 for unit_language, standard, name in units:
                     unit = self.work / name
                     unit.write_text(f'#include "{header.name}"\n',
@@ -168,7 +177,7 @@ class Checker:
         if not rustc:
             self.skip("Rust", "rustc not found")
             return
-        if model == "ILP32":
+        if model in THIRTY_TWO_BIT:
             self.skip("Rust", "32-bit layouts need a 32-bit Rust target")
             return
         for spelling in RUST_SPELLINGS:
@@ -185,8 +194,9 @@ class Checker:
         if not go:
             self.skip("Go", "go not found")
             return
-        environment = dict(os.environ, GOOS="windows",
-                           GOARCH=TARGETS[model][2], GOFLAGS="-mod=mod")
+        _, _, goos, goarch = TARGETS[model]
+        environment = dict(os.environ, GOOS=goos, GOARCH=goarch,
+                           GOFLAGS="-mod=mod")
         for spelling in GO_SPELLINGS:
             module = self.work / f"go-{spelling}"
             module.mkdir()
@@ -195,7 +205,7 @@ class Checker:
             (module / "go.mod").write_text("module types\n\ngo 1.22\n",
                                            encoding="utf-8")
             result = run([go, "vet", "./..."], cwd=module, env=environment)
-            self.report(f"go {spelling} {TARGETS[model][2]}",
+            self.report(f"go {spelling} {goarch}",
                         diagnostics(result))
 
     def python(self, model):
@@ -204,7 +214,7 @@ class Checker:
         if not python:
             self.skip("Python", "python3 not found")
             return
-        if model == "ILP32":
+        if model in THIRTY_TWO_BIT:
             self.skip("Python", "32-bit layouts need a 32-bit Python")
             return
         for spelling in PYTHON_SPELLINGS:
@@ -298,6 +308,8 @@ def main():
         else:
             listing = json.loads(checker.neverd("--json"))
             model = listing.get("dataModel", "LLP64")
+            if listing.get("recordABI") in TARGETS:
+                model = listing["recordABI"]
             if listing.get("source") not in ("pdb", "dwarf") or \
                     not listing.get("types"):
                 sys.exit(f"{arguments.binary} has no local types to check")

@@ -24,6 +24,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <set>
+#include <tuple>
+#include <utility>
 
 namespace neverd::types::render {
 namespace {
@@ -89,6 +91,11 @@ private:
                    std::string &Out) const;
   void structure(const RecordPlan &Plan, std::string &Out);
   void unionStorage(const RecordPlan &Plan, std::string &Out);
+  /// The body of the getter and of the setter of a bit-field whose run's
+  /// storage is of another width than its value, or bytes.
+  std::pair<std::string, std::string>
+  foreignBits(const BitAccess &Access, const std::string &Storage,
+              const std::string &Value) const;
   void bitAccessors(const std::string &Type, const Slot &Place,
                     const std::string &Storage, llvm::StringSet<> &Taken,
                     std::string &Out) const;
@@ -326,8 +333,12 @@ Field GoWriter::field(const Slot &Place, uint32_t Pack) const {
   Field Result;
   Result.Name = Place.Name;
   uint32_t Own;
-  if (Place.TheKind == Slot::Kind::Bitfields) {
-    const unsigned Bytes = bitStorage(Library, *Place.Storage).Bytes;
+  if (Place.TheKind == Slot::Kind::Bitfields && Place.StorageArray) {
+    Result.Type = "[" + std::to_string(Place.StorageBytes) + "]byte";
+    Result.Size = Place.StorageBytes;
+    Own = 1;
+  } else if (Place.TheKind == Slot::Kind::Bitfields) {
+    const unsigned Bytes = unsigned(Place.StorageBytes);
     Result.Type = "uint" + std::to_string(Bytes * 8);
     Result.Size = Bytes;
     Own = scalarAlign(Bytes);
@@ -350,19 +361,25 @@ void GoWriter::bitAccessors(const std::string &Type, const Slot &Place,
                             const std::string &Storage,
                             llvm::StringSet<> &Taken, std::string &Out) const {
   for (const Member *Bit : Place.Bits) {
-    const BitAccess Access = bitAccess(Library, *Bit);
+    const BitAccess Access = bitAccess(Library, *Bit, Place);
     const std::string Bits = std::to_string(Access.UnitBits);
-    std::string Value = (Access.Signed ? "int" : "uint") + Bits;
+    std::string Value =
+        (Access.Signed ? "int" : "uint") + std::to_string(Access.ValueBits);
     // A builtin of the unit's size keeps its own name: ULONG, not UINT.
     if (Bit->Type && Bit->Type->Kind == TypeExprKind::Builtin &&
         builtinBytes(Bit->Type->TheBuiltin, Library.dataModel()) * 8 ==
-            Access.UnitBits &&
+            Access.ValueBits &&
         builtinInfo(Bit->Type->TheBuiltin).Signed == Access.Signed &&
         builtinInfo(Bit->Type->TheBuiltin).Class != BuiltinClass::Float &&
         builtinInfo(Bit->Type->TheBuiltin).Class != BuiltinClass::Bool)
       Value = builtin(Bit->Type->TheBuiltin);
-    std::string Read;
-    if (Access.Signed) {
+    std::string Read, Write;
+    const bool Foreign =
+        Place.StorageArray || Access.UnitBits != Access.ValueBits;
+    if (Foreign) {
+      // Storage of another width than the value, as GNU's packing makes it.
+      std::tie(Read, Write) = foreignBits(Access, Storage, Value);
+    } else if (Access.Signed) {
       // Up to the top, then back down: C extends a signed field's sign.
       const uint64_t Up = Access.UnitBits - Access.Shift - Access.Width;
       const uint64_t Down = Access.UnitBits - Access.Width;
@@ -390,15 +407,73 @@ void GoWriter::bitAccessors(const std::string &Type, const Slot &Place,
       Path.Setter = Setter;
     }
     const std::string Where =
-        bitText(Access.Shift, Access.Width) + " of " + Place.Name + ".\n";
+        bitText(Bit->BitOffset - Place.Byte * 8, Access.Width) + " of " +
+        Place.Name + ".\n";
+    if (Write.empty())
+      Write = Storage + " = " + Storage + "&^(" + Access.Mask + Shift +
+              ") | (" + Stored + "&" + Access.Mask + ")" + Shift;
     Out += "\n// " + Getter + " reads " + Where;
     Out += "func (" + Receiver + " *" + Type + ") " + Getter + "() " + Value +
-           " {\n\treturn " + Read + "\n}\n";
+           " {\n\t" + (Foreign ? "" : "return ") + Read + "\n}\n";
     Out += "\n// " + Setter + " writes " + Where;
     Out += "func (" + Receiver + " *" + Type + ") " + Setter + "(value " +
-           Value + ") {\n\t" + Storage + " = " + Storage + "&^(" + Access.Mask +
-           Shift + ") | (" + Stored + "&" + Access.Mask + ")" + Shift + "\n}\n";
+           Value + ") {\n\t" + Write + "\n}\n";
   }
+}
+
+std::pair<std::string, std::string>
+GoWriter::foreignBits(const BitAccess &Access, const std::string &Storage,
+                      const std::string &Value) const {
+  const std::string Unit = std::to_string(Access.UnitBits);
+  const std::string Shift = std::to_string(Access.Shift);
+  const bool Whole = Access.Width >= Access.UnitBits;
+  // The mask in a variable: shifted past 64 bits, a constant does not
+  // compile.
+  const std::string Mask = "mask := uint" + Unit + "(" + Access.Mask + ")\n\t";
+  std::string Load, Store = Mask, Raw;
+  if (Access.ArrayBytes) {
+    // The bytes, low first, as the record holds them; a ninth holds the
+    // top of a field of 64 bits that begins inside a byte.
+    const auto byte = [&](unsigned K) {
+      return Storage + "[" + std::to_string(Access.ArrayByte + K) + "]";
+    };
+    const unsigned Low = std::min(Access.ArrayBytes, 8u);
+    std::string Bytes;
+    for (unsigned K = 0; K < Low; ++K)
+      Bytes += (K ? " | " : "") + std::string("uint64(") + byte(K) + ")" +
+               (K ? "<<" + std::to_string(8 * K) : "");
+    Load += "unit := " + Bytes + "\n\t";
+    Raw = Access.Shift ? "unit>>" + Shift : "unit";
+    Store += "unit := " + Bytes + "\n\tunit = unit&^(mask<<" + Shift +
+             ") | (uint64(value)&mask)<<" + Shift;
+    for (unsigned K = 0; K < Low; ++K)
+      Store += "\n\t" + byte(K) + " = byte(unit" +
+               (K ? ">>" + std::to_string(8 * K) : "") + ")";
+    if (Access.ArrayBytes > 8) {
+      const std::string Rest = std::to_string(64 - Access.Shift);
+      Load += "top := uint64(" + byte(8) + ")\n\t";
+      Raw = "(" + Raw + " | top<<" + Rest + ")";
+      Store += "\n\t" + byte(8) + " = byte(uint64(" + byte(8) + ")&^(mask>>" +
+               Rest + ") | (uint64(value)&mask)>>" + Rest + ")";
+    }
+  } else {
+    Raw = Access.Shift ? Storage + ">>" + Shift : Storage;
+    Store += Storage + " = " + Storage + "&^(mask<<" + Shift + ") | (uint" +
+             Unit + "(value)&mask)<<" + Shift;
+  }
+  std::string Read;
+  if (Access.Signed) {
+    // Up to the top, then back down: C extends a signed field's sign.
+    const std::string Spare = std::to_string(Access.UnitBits - Access.Width);
+    Read = Value + "(int" + Unit + "((" + Raw + ")<<" + Spare + ") >> " +
+           Spare + ")";
+  } else if (Whole) {
+    Read = Value + "(" + Raw + ")";
+  } else {
+    Load = Mask + Load;
+    Read = Value + "((" + Raw + ")&mask)";
+  }
+  return {Load + "return " + Read, Store};
 }
 
 void GoWriter::asserts(
@@ -505,7 +580,7 @@ void GoWriter::structure(const RecordPlan &Plan, std::string &Out) {
     if (Place.TheKind == Slot::Kind::Bitfields)
       for (const Member *Bit : Place.Bits)
         Note += (Note.empty() ? " " : ", ") + Bit->Name + " " +
-                bitText(Bit->BitOffset - Bit->StorageBitOffset, Bit->BitWidth);
+                bitText(Bit->BitOffset - Place.Byte * 8, Bit->BitWidth);
     if (!Written.Bytes.empty())
       Note += " " + Written.Bytes + ", unaligned";
     Fields += withComment("\t" + Written.Name + " " + Written.Type,

@@ -593,6 +593,23 @@ ABI references: Android 9 [`dlfcn.h`](https://android.googlesource.com/platform/
 [`dlsym`/`dlclose`](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/linker/linker.cpp),
 and [`dlerror`](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/linker/dlfcn.cpp).
 
+## API 28 pseudo-random sequences
+
+`rand`/`random` share one guest process sequence; `srand`/`srandom` reset it
+using the low 32 bits of the seed. The default 31-word additive generator,
+signed seed expansion and 310 warm-up steps follow the pinned
+[Android 9 random implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/upstream-netbsd/common/lib/libc/stdlib/random.c)
+and [Bionic aliases](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/rand.cpp).
+An unseeded process starts with seed 1; seed 0 has its own sequence. Calls are
+atomic within the guest scheduler and never use host entropy or host libc state.
+
+`rand_r` updates exactly four guest bytes using the separate
+[Android 9 recurrence](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/upstream-netbsd/lib/libc/stdlib/rand_r.c),
+retains the high bit in the stored seed and returns the low 31 bits. Invalid or
+read-only seed memory stops explicitly; successful calls preserve errno.
+`initstate` and `setstate` remain unsupported.
+These deterministic sequences reproduce the pinned ABI; they are not entropy.
+
 ## API 28 mutexes
 
 The Bionic model implements `pthread_mutexattr_init`, `destroy`, `gettype`,
@@ -634,6 +651,31 @@ futex supplies guest behavior.
 ABI references: Android 9 [`pthread_mutex.cpp`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/pthread_mutex.cpp)
 and [`pthread_types.h`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/include/bits/pthread_types.h).
 These declarations and state rules inform an independent implementation.
+
+## API 28 unnamed semaphores
+
+`sem_init`, `sem_destroy`, `sem_getvalue`, `sem_post`, `sem_trywait` and
+`sem_wait` share the guest count word. The LP64 object occupies 16 bytes;
+these operations access only its first aligned 32-bit word and preserve the
+reserved bytes. The low bit records process sharing. The signed upper 31 bits
+hold the count or the contended state. Initialization rejects values above
+`0x3fffffff` before accessing the object; posting at that limit returns
+`-1/EOVERFLOW`. An empty try-wait returns `-1/EAGAIN`. Success preserves TLS
+errno. API 28 destroy returns zero without accessing the supplied object.
+
+A blocking wait requires enabled guest-thread scheduling. Posting to a
+contended word wakes all modeled waiters; each reloads shared RAM before
+competing for a token. A runnable caller may consume a token first, leaving
+a woken waiter asleep again with its original import still pending. Invalid
+state, changed sharing or inaccessible storage on resumption fail explicitly.
+A wait with no possible producer reports the existing guest-thread deadlock.
+Shared semaphores support participants in this modeled process; this does not
+create external process participants. Timed waits, named semaphores, signal
+interruption and raw futex interoperability remain unsupported.
+
+This independently authored model follows Android 9
+[`semaphore.cpp`](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/bionic/semaphore.cpp)
+and [`semaphore.h`](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/include/semaphore.h).
 
 ## API 28 thread attributes
 
@@ -705,8 +747,8 @@ threads release storage on completion. Invalid non-null or retired handles
 fail at the API 28 target boundary; NULL lookup returns ESRCH, self-join
 returns EDEADLK, and detached or already claimed targets return EINVAL.
 If no thread is runnable, an admitted sleep can advance virtual time to its
-deadline. With no such deadline, outstanding join, once or mutex waits produce
-an explicit unsupported stop.
+deadline. With no such deadline, outstanding join, once, mutex or semaphore
+waits produce an explicit unsupported stop.
 `pthread_exit` returns its pointer to a joiner; raw `SYS_exit` terminates only
 the current thread and leaves its pthread result zero. When the last thread
 exits without an entry return, its low eight status bits become the workload
@@ -970,3 +1012,12 @@ It also tests invalid field IDs/accessor types, final writes and heap limits.
 interning, thrown-object identity, ordered handlers, finally effects, repeated
 unwinding, inherited fields and class/interface/super/JNI nonvirtual dispatch.
 The JVM and D8 prepare/check fixtures only; NeverD execution uses neither.
+
+## Offline address resolution and TCP
+
+Explicit `android.resolver_queries` and `linux_network` inputs allow bounded
+`getaddrinfo`/`freeaddrinfo`, `inet_ntop`/`inet_pton`, socket creation, timeout
+options, connect and scalar
+stream I/O. See [offline network contracts](linux-network-contracts.md) for the
+API 28 layout, ownership checks, errno, descriptor aliases and unsupported
+boundaries. No host DNS or sockets are used.

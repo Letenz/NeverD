@@ -59,8 +59,10 @@ clang -dynamiclib -fPIC examples/source-patch/extra.c -Wl,-install_name,@rpath/l
 ```
 
 ```powershell
-# Windows: select aarch64-pc-windows-msvc in a native ARM64 developer shell.
+# Windows x64 developer shell:
 clang --target=x86_64-pc-windows-msvc -shared examples/source-patch/extra.c -Wl,/implib:build-demo/patch_extra.lib -o build-demo/patch_extra.dll
+# Windows ARM64 developer shell:
+clang --target=aarch64-pc-windows-msvc -shared examples/source-patch/extra.c -Wl,/implib:build-demo/patch_extra.lib -o build-demo/patch_extra.dll
 ```
 
 The CLI uses `--bind=original:saved_target=VA` and two `--dependency` requests.
@@ -80,3 +82,23 @@ Unprovable prefixes, unsupported unwind/relocations, TLS, IFUNC, new symbol
 versions, constructors and unsupported storage/layout shapes still fail.
 Declarations must match the original ABI. See the
 [support and refusal contract](../../docs/source-patching.md#original-callbacks-layout-growth-and-dependencies).
+
+## Native validation
+
+Both APIs passed on six native OS/ISA profiles: **54 executions and 12 real
+missing-library rejections**. Each row retains the actual tested source.
+
+| Native host | Source | CI job |
+|---|---|---|
+| Linux x64 | [6fcce147777](https://github.com/NeverSight/NeverD/commit/6fcce147777d268496e02ccd5a1e31cc5da2dda9) | [117285625395](https://github.com/gmh5225/test_mac_intel/actions/runs/38995039494/job/117285625395) |
+| Linux ARM64 | [c8cd6516fe7](https://github.com/NeverSight/NeverD/commit/c8cd6516fe78e274d62765b7bb9a69ddce7cdf6e) | [117320814392](https://github.com/gmh5225/test_mac_intel/actions/runs/39006802145/job/117320814392) |
+| macOS ARM64 | [6fcce147777](https://github.com/NeverSight/NeverD/commit/6fcce147777d268496e02ccd5a1e31cc5da2dda9) | [117285625491](https://github.com/gmh5225/test_mac_intel/actions/runs/38995039494/job/117285625491) |
+| macOS Intel | [c8cd6516fe7](https://github.com/NeverSight/NeverD/commit/c8cd6516fe78e274d62765b7bb9a69ddce7cdf6e) | [117352023342](https://github.com/gmh5225/test_mac_intel/actions/runs/39017326655/job/117352023342) |
+| Windows x64 | [ed30bb08cdc](https://github.com/NeverSight/NeverD/commit/ed30bb08cdccf069e9e82a0e2de0afc274989364) | [117305059547](https://github.com/gmh5225/test_mac_intel/actions/runs/39001450708/job/117305059547) |
+| Windows ARM64 | [c8cd6516fe7](https://github.com/NeverSight/NeverD/commit/c8cd6516fe78e274d62765b7bb9a69ddce7cdf6e) | [117320814217](https://github.com/gmh5225/test_mac_intel/actions/runs/39006802145/job/117320814217) |
+
+Artifacts contain source hashes, build/patch commands, images, receipts and
+process logs; their GitHub size/SHA-256 and actual binary architecture were
+independently checked. Windows ARM64 uses native ARM64 NeverD, Python and
+images; the verified x64 Clang producer runs under Windows compatibility.
+These example counts are separate from the full feature qualification matrix.

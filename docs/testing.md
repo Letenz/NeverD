@@ -14,6 +14,20 @@ pidfd lifetimes. `LinuxPIDFD.*` retains the fixed-catalogue kernel matrix.
 zero-size identities at O0/O2 across Android relocation formats and available
 Unicorn/HVF backends. `AndroidAllocationOptions.*` rejects non-byte inputs.
 
+`AndroidSemaphore.*` runs independently authored API 28 callers at O0/O2
+with ordinary, Android-packed and RELR relocations on available CPU backends.
+It checks full object bytes, reserved padding, errno, overflow, aliasing,
+read-only tails, dynamic provider lifetimes, multiple consumers, token
+competition after wake, deadlock and failed resumption. Timed waits remain an
+explicit unsupported boundary.
+
+`AndroidRandom.*` compares 64-value sequences with answers produced by a
+separate Android 9 BSD implementation, including zero/high-bit seeds, aliases,
+reseeding, per-process isolation, two guest threads, dynamic provider lifetime,
+`rand_r` writes and invalid/read-only pointers. Native callers run at O0/O2
+with ordinary, packed and RELR relocations on available CPU backends. Custom
+state generators retain an explicit unsupported test.
+
 ## MXCSR recovery checks
 
 `InterpreterSpecialization.MXCSR*` covers arbitrary entry state, exact memory values, reserved bits, DAZ, aliases, malformed forms, node projection and exact/short budgets. `PEFixedImageTest.RawMXCSR*` checks legacy/VEX native bytes and mask-bound receipts. The machine-state and native/LLVM refinement owners verify that unused capabilities cannot expand their interfaces.
@@ -2252,6 +2266,15 @@ guarded targets. These functions have their own object: a case that calls a
 function with the computed target still in X0 passes a pointer of unknown
 origin, which makes module arbitration treat every writable table in the same
 object as possibly modified.
+`JTE_AArch64.ZlibInflateDispatchReachesEveryMode` assembles zlib's `inflate`
+as GCC 15.2 compiles it for AArch64 (`test_jumptable_inflate_gcc_a64.s`). Its
+31-mode state loop dispatches through `ldrh w0, [x0, w1, uxtw #1]`, and its
+cases keep updating a 64-bit bit buffer. The test requires every target the
+halfword table encodes. It needs two resolver rules. Structural value matches
+must not resolve edge predicates: once the table's own targets are in the
+graph, the predicates of the loop's branches exhaust the candidate budget. The
+address role must follow the `uxtw` extension from the recorded index to its
+scale; the fallback search over every scale in the loop also exhausts it.
 
 `ModuleJumpTableBudget.*` uses a real ELF table inventory to separate the
 400000-operation input boundary from scan, retained-source, queue and cumulative
@@ -4059,6 +4082,16 @@ trap on a register earlier calls left behind, and no incoming stack slot taken
 for the routine's open arity. `MedCallLeftovers.JoinsOfCallClobbersOnly`
 checks which clobbers and joins `ValuesLeftByCalls` names, loops and exception
 entries included.
+`CallsTakeNoIncomingRegisterAnEarlierCallChanged` links, for x86-64, i386,
+ARM and AArch64, a routine that reads four argument registers with callers
+that declare it with one, calling it after another call, after a join of two
+calls and in a destructor run on a normal and an exceptional path: no caller
+takes a parameter for a register an earlier call may have changed, HighC and
+LLVM C alike. `VariadicCallsTakeNoSpillAboveAnUnsetRegister` keeps an AArch64
+-O0 spill above an unset register out of a variadic call's arguments.
+`ItaniumRuntimeCopiesTakeTheirDeclaredParameters` links an image's own copy
+of `_Unwind_Resume` for x86-64, ARM and AArch64: it takes its one declared
+parameter, and its callers pass it one argument.
 
 `ELFARM32ModeTest.MixedImagePairsItsPLTWithTheImports` links a mixed
 ARM/Thumb shared library and requires the PLT entry a Thumb `bl puts` reaches
@@ -6148,6 +6181,17 @@ cmake -S . -B build-native -G Ninja \
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves, scalar conversions and fixed-width SIMD operations at EL0/EL1. Scalar conversion tests check signed/unsigned W/X inputs, truncation and saturation, FP32/FP64 resizing, rounding, upper-lane clearing and cumulative status. Fixed-point, packed and FP16 conversion forms remain rejected. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
+`AArch64WidenCases.def` records 36 independently assembled SSHLL/USHLL and
+SSHLL2/USHLL2 forms, including zero-shift SXTL/UXTL aliases. Independent integer
+oracles check signed extension, unsigned high bits, both source halves, all
+8/16/32-bit source widths, boundary shifts and overlapping registers. Complete
+scalar/vector state and guard memory are compared at both privileges; reserved
+element-size and scalar encodings fail without mutation.
+Lane-move tests cover UMOV/SMOV, their MOV aliases, all legal element/result
+widths, first/last lanes, sign extension, W-register upper clearing and XZR.
+Capstone's `HasNEONorSME` group is satisfied by baseline NEON; SME-only feature
+groups and unsupported register views remain rejected.
+
 `AArch64ReductionCases.def` records 34 independently assembled baseline forms of
 CMEQ (register/zero and scalar/vector), UZP1, XTN/XTN2 and UMAXV. Integer lane
 oracles cover all admitted widths, unsigned high bits, narrowing truncation,
@@ -7194,6 +7238,21 @@ an export. `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
 `unittests/loader/fixtures/mingw_sections.exe` (its Makefile rebuilds it with
 MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its
 `.file` record is dropped, and a static function's own record names it.
+`StaticSymbolTableTest.MinGWDataAmongCodeIsData` reads `mingw_text_data.exe`
+and its i386 build `mingw_text_data32.exe`, which keep a -1-headed pointer
+table in `.text` as GNU ld keeps `__CTOR_LIST__`: the table is data, the
+pointer to it in `.data` points to data, and its entry is a slot that holds
+code.
+`SessionCAPITest.LLVMCReadsAPointerTableAmongCodeAsData` emits LLVM-C for the
+function that reads the table through `.data`, which was refused before.
+`NativePointerRelocationBoundary.MinGWPointerTableAmongCodeMirrorsItsFunction`
+finds the entry of both fixtures' tables as the function's address in the
+`.text` pointer-table mirror, and
+`MinGWPointerTableAmongCodeTooLargeToMirrorIsRefused` pads `.text` past the
+embedding limit with MinGW-w64 GCC, when installed, and expects the refusal.
+`LLVMCValues.AGlobalAnEarlierInitializerNamesIsDeclaredFirst` compiles and runs
+a whole module whose `.data`-like global points into a constructor list
+defined after it.
 `HighControlFlowSemantics.SlotCallGoesThroughThePointerItHolds` calls through
 MinGW's `__imp_X` variables, which hold the image's own code, relocated or in
 a fixed image, rather than naming an import by their spelling.
@@ -7997,3 +8056,21 @@ side-effecting statement without acquiring a Linux syscall contract.
 `KernelMDLChain.CreateMdl*` and `KernelMDLUserMapping.CreateMdl*` cover full-width guards, untouched bytes, zero/wrapping metadata, pool and stack lifetime, locks, aliases, failed release, partial reuse, IRP refusal and IRQL. The genuine WDK user-mapping fixture exercises static/dynamic creation, owned pool, interior caller pool and caller stack records, physical identity and complete unload. Original probes distinguish wrapper writes, pool flag translation and injected allocator/free boundaries.
 
 `KernelMDLChain.AdvanceMdl*` and `KernelMDLUserMapping.AdvanceMdl*` check repeated page crossings, PFN tails, exact-end refusal, narrow arguments, stable mapping extents, failed teardown, permissions, storage ownership, process context and unsupported dependencies. The genuine WDK user-mapping fixture uses static/dynamic advance, explicit unmap and automatic unlock. Original-code probes separately cover the entire advance routine, restoration helper and unmap wrapper with explicit mapping-kind/PTE-release injection; they do not execute the operating system page database.
+
+## Offline Android resolver and Linux stream contracts
+
+Build `NeverDAndroidNativeTests` and `NeverDLinuxProcessTests` with CPU emulation
+and Android fixture compilation enabled. Filter `*AndroidNetwork*` covers
+resolver result ordering, LP64 layout, null/error ordering, ownership,
+IPv4/IPv6 formatting, named/raw/dynamic calls, short transfers, alias lifetime,
+refusal and unknown-input stops. Original C fixtures run at O0/O2 with ordinary,
+APS2 and RELR relocations on available checked AArch64 transports; unavailable
+backends are skips. `*LinuxNetwork*` checks x64/AArch64 shared descriptors,
+failed-admission atomicity, full byte streams and strict JSON. Tests never use
+host networking. Run the complete affected owners before review.
+
+`NeverDAAPCS64CallContractTests` checks bounded breadth-first callee discovery
+and preserves unknown operands across call/exception boundaries without
+inventing forwarded entry parameters. `NeverDLLVMImportVeneerBoundaryTests`
+checks exact unwind-owned code pointers on ELF/COFF/Mach-O for x64/AArch64,
+adjacent symbol ends, and rejection of unproved/continuation/data addresses.

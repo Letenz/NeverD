@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 1eae101089e730c29ba3fda92db515fe148fe41b758d6f5b69156252591d9b3f -->
+<!-- i18n-source: 63d86e1a94d8b33e055360514902466c202d434ebb87823cd91181b98a556871 -->
 
 [← Documentation Index](README.md)
 
@@ -132,6 +132,8 @@ python examples/source-patch/run.py --neverd build-example-host/bin/neverd.exe -
 ```
 
 Per impostazione predefinita vengono eseguiti entrambi i percorsi; aggiungere `--api cli` o `--api sdk` per sceglierne uno. L’indirizzo di destinazione viene rilevato automaticamente. Con `7`, l’originale stampa `8` ed entrambe le patch stampano `36`. Il driver verifica esecuzioni, ricevute ed errori reali del loader senza libreria; i comandi completi sono salvati in `commands.json`.
+
+Gli esempi CLI e SDK Python ospitato sono passati su Linux, macOS e Windows x64/ARM64 nativi: 54 esecuzioni e 12 rifiuti reali per libreria mancante. [CI e sorgenti esatti per host](../../examples/source-patch/README.md#native-validation).
 
 <!-- i18n-section: exceptions -->
 ## Eccezioni C++

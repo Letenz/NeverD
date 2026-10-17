@@ -76,6 +76,11 @@ LinuxFiles::writeDescriptor(ServiceKind Kind, uint32_t FD, uint64_t Address,
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return Reply(uint64_t(0) - BadDescriptor);
+  if (auto *Socket = std::get_if<OpenSocket>(I->second.get())) {
+    if (Kind != ServiceKind::Write)
+      return unsupported(Result, "vectored TCP writes are unmodeled");
+    return transferSocket(*Socket, true, Address, Size, Result);
+  }
   auto *F = std::get_if<OpenFile>(I->second.get());
   if (!F)
     return unsupported(Result, DeviceOperation);

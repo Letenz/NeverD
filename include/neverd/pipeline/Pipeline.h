@@ -270,6 +270,9 @@ struct PipelineResult {
   /// slot by slot where every argument is on the stack (i386): a call to one
   /// passes those slots and no register.
   std::set<va_t> CallEntryStackSlots;
+  /// The bytes each import of CallEntryStackSlots pops as it returns, by the
+  /// stub or slot a call names it by: a stdcall routine's arguments.
+  std::map<va_t, int> CallEntryStackPops;
   /// Entries of indirect-call dispatchers (`_guard_dispatch_icall`): a call to
   /// one passes the argument registers its caller set.
   std::set<va_t> CallDispatchThunks;

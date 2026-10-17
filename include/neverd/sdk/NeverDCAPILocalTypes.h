@@ -35,9 +35,15 @@ extern "C" {
 
 /// The program's local types in brief:
 /// {"source":"pdb"|"dwarf"|"none","dataModel":"LLP64"|"LP64"|"ILP32",
+/// "recordABI":"microsoft"|"itanium"|"i386-sysv"|"aapcs32",
 /// "stats":{"structs","unions","enums","declaredOnly","nestingMismatches":
 /// [name,...]},"types":[{"ordinal","name","kind","size","members",
-/// "origin"},...]}.  "kind" is struct, union, enum, typedef or function;
+/// "origin"},...]}.  "recordABI" says how the program's compilers laid its
+/// records out, which declarations are laid out by and the renderings
+/// follow: Microsoft's for a Windows program, else its architecture's
+/// System V ABI, whose bit-fields go as the Itanium ABI's and whose 32-bit
+/// x86 scalars align to four.  "kind" is struct, union, enum, typedef or
+/// function;
 /// "size" is absent for a type without one, and "members" counts a record's
 /// named members, anonymous records' included, or an enumeration's values.
 /// "stats" adds "origins", how many types each origin gave: "pdb", "dwarf",
@@ -140,7 +146,7 @@ NEVERD_API const char *neverd_types_languages_json(void);
 /// The user's declarations in the order made:
 /// [{"language","source"} | {"forget":[name,...]}, ...].
 NEVERD_API const char *neverd_type_declarations_json(neverd_session_t Sess);
-/// Write or read the declarations as `<input>.neverd-types.json`, which
+/// Write or read the declarations as `<input>.neverd/types.json`, which
 /// neverd_session_load reads too.  Reading them reads the program's types
 /// anew.  Return 0, or -1 with neverd_last_error.
 NEVERD_API int neverd_type_declarations_save(neverd_session_t Sess);

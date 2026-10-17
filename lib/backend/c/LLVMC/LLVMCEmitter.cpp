@@ -750,6 +750,12 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
 
           if (const char *Hdr = libc::headerFor(stripLeadingUnderscores(Name)))
             Headers.insert(Hdr);
+          // A callee the image names as a C library routine, as the
+          // Windows kernel's own memset is, is declared by that header too
+          // (writeForwardDecls leaves it to the header).
+          else if (const char *Named =
+                       libc::headerFor(functionIdentifier(*Callee)))
+            Headers.insert(Named);
         }
       }
     }
@@ -986,31 +992,65 @@ void LLVMCWriter::writeImageByteArray(const llvm::GlobalVariable &Global,
 }
 
 void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
-  if (OnlyFunction)
+  // Initializers can refer forward or form cycles. The declarations use the
+  // same storage shape and linkage as the definitions below.
+  auto declare = [&](const llvm::GlobalVariable &Global) {
+    OS << llvmc::storageAlignment(Global.getValueType(), Mod.getDataLayout(),
+                                  Global.getAlign().valueOrOne());
+    OS << (Global.hasLocalLinkage() ? "static " : "extern ");
+    if (Global.isConstant())
+      OS << "const ";
+    auto *Array = llvm::dyn_cast<llvm::ArrayType>(Global.getValueType());
+    const auto *Data =
+        llvm::dyn_cast<llvm::ConstantDataArray>(Global.getInitializer());
+    const bool String = Global.isConstant() && Data && Data->isString() &&
+                        !parseNdDataSymbol(Global.getName());
+    OS << (String ? "char"
+                  : typeToCLLVM(Array ? Array->getElementType()
+                                      : Global.getValueType()))
+       << " " << globalNameStr(&Global);
+    if (Array)
+      OS << "[" << Array->getNumElements() << "]";
+    OS << ";\n";
+  };
+  if (OnlyFunction) {
+    for (const auto &Global : Mod.globals())
+      if (SelectedGlobals.count(&Global) && Global.hasInitializer() &&
+          !mirrorsImageStorage(Global))
+        declare(Global);
+  } else {
+    // The whole module defines the image's storage too, in module order: a
+    // mirror built while an earlier mirror's initializer resolved follows
+    // the initializer that names it.
+    std::set<const llvm::GlobalVariable *> Defined, NamedEarlier;
     for (const auto &Global : Mod.globals()) {
-      if (!SelectedGlobals.count(&Global) || !Global.hasInitializer() ||
-          mirrorsImageStorage(Global))
+      Defined.insert(&Global);
+      if (!Global.hasInitializer())
         continue;
-      // Initializers can refer forward or form cycles. The declarations use
-      // the same storage shape and linkage as the definitions below.
-      OS << llvmc::storageAlignment(Global.getValueType(), Mod.getDataLayout(),
-                                    Global.getAlign().valueOrOne());
-      OS << (Global.hasLocalLinkage() ? "static " : "extern ");
-      if (Global.isConstant())
-        OS << "const ";
-      auto *Array = llvm::dyn_cast<llvm::ArrayType>(Global.getValueType());
-      const auto *Data =
-          llvm::dyn_cast<llvm::ConstantDataArray>(Global.getInitializer());
-      const bool String = Global.isConstant() && Data && Data->isString() &&
-                          !parseNdDataSymbol(Global.getName());
-      OS << (String ? "char"
-                    : typeToCLLVM(Array ? Array->getElementType()
-                                        : Global.getValueType()))
-         << " " << globalNameStr(&Global);
-      if (Array)
-        OS << "[" << Array->getNumElements() << "]";
-      OS << ";\n";
+      llvm::SmallVector<const llvm::Constant *, 16> Work{
+          Global.getInitializer()};
+      llvm::SmallPtrSet<const llvm::Constant *, 16> Seen;
+      while (!Work.empty()) {
+        const llvm::Constant *C = Work.pop_back_val();
+        if (!Seen.insert(C).second)
+          continue;
+        if (const auto *Var = llvm::dyn_cast<llvm::GlobalVariable>(C)) {
+          if (!Defined.count(Var))
+            NamedEarlier.insert(Var);
+        } else if (!llvm::isa<llvm::GlobalValue>(C)) {
+          for (const llvm::Use &Operand : C->operands())
+            if (const auto *Next = llvm::dyn_cast<llvm::Constant>(Operand))
+              Work.push_back(Next);
+        }
+      }
     }
+    for (const auto &Global : Mod.globals())
+      if (NamedEarlier.count(&Global) && Global.hasInitializer() &&
+          !Global.getName().empty() &&
+          !ExternalDataIdentifiers.count(&Global) &&
+          !sourceStringOnlyCalledByValue(Global))
+        declare(Global);
+  }
   // Permission to read a scalar from the image is not permission to remove a
   // volatile/atomic access. Its named object must survive declaration pruning.
   std::set<va_t> ObservedImageObjects;

@@ -455,6 +455,8 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
       for (const auto &LF : Result.LowFuncs)
         if (LF.CalleePopBytes > 0)
           CalleePop[LF.Entry] = LF.CalleePopBytes;
+      for (const auto &[Address, Bytes] : Result.CallEntryStackPops)
+        CalleePop.try_emplace(Address, Bytes);
 
       // Stack-probe slot set for the i64-caller re-conversion (mirrors
       // buildMedIR): keep the prologue chkstk call from killing the live-in

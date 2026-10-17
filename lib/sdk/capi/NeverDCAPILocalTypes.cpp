@@ -18,6 +18,7 @@
 #include "neverd/debug/DWARFLoader.h"
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/support/FilePath.h"
+#include "neverd/support/ProjectFiles.h"
 #include "neverd/support/ProjectWriteLock.h"
 #include "neverd/types/DWARFTypeImport.h"
 #include "neverd/types/TypeJSON.h"
@@ -38,8 +39,33 @@ namespace {
 types::DataModel dataModelOf(const BinaryImage &Img) {
   if (Img.Bits == Bitness::Bits32)
     return types::DataModel::ILP32;
-  return Img.Format == BinaryFormat::COFF ? types::DataModel::LLP64
-                                          : types::DataModel::LP64;
+  return Img.abiFormat() == BinaryFormat::COFF ? types::DataModel::LLP64
+                                               : types::DataModel::LP64;
+}
+
+/// How \p Img's compilers laid its records out: as Microsoft's for a
+/// Windows program, and for any other as its architecture's System V ABI
+/// says, which for a 32-bit one its data model does not.
+types::RecordABI recordABIOf(const BinaryImage &Img) {
+  if (Img.abiFormat() == BinaryFormat::COFF)
+    return types::RecordABI::Microsoft;
+  if (Img.Bits != Bitness::Bits32)
+    return types::RecordABI::Itanium;
+  switch (Img.Arch) {
+  case Arch::X86:
+    return types::RecordABI::I386SystemV;
+  case Arch::ARM:
+    return types::RecordABI::AAPCS32;
+  default:
+    return types::RecordABI::Itanium;
+  }
+}
+
+/// An empty library for \p Img's types.
+std::unique_ptr<types::TypeLibrary> libraryFor(const BinaryImage &Img) {
+  auto Library = std::make_unique<types::TypeLibrary>(dataModelOf(Img));
+  Library->setRecordABI(recordABIOf(Img));
+  return Library;
 }
 
 /// The PE subsystem of the session's image, read from its file's optional
@@ -124,7 +150,6 @@ types::ParseResult apply(const Session::TypeDeclaration &Declaration,
   }
   types::ParseOptions Options;
   Options.Lang = Declaration.Lang;
-  Options.Rules = types::defaultRules(Library.dataModel());
   Options.Origin = types::TypeOrigin::User;
   return types::parseTypes(Declaration.Source, Library, Options);
 }
@@ -141,9 +166,7 @@ void redeclare(Session &S) {
 }
 
 std::filesystem::path declarationsPath(const Session &S) {
-  auto Path = S.FilePath;
-  Path += ".neverd-types.json";
-  return Path;
+  return project_files::path(S.FilePath, project_files::File::Types);
 }
 
 llvm::json::Array declarationRows(const Session &S) {
@@ -216,7 +239,7 @@ types::TypeLibrary *localTypes(Session &S) {
   if (S.LocalTypes)
     return S.LocalTypes.get();
   if (S.DbgKind == DebugInfoKind::DWARF && S.Dbg) {
-    auto Library = std::make_unique<types::TypeLibrary>(dataModelOf(S.Img));
+    auto Library = libraryFor(S.Img);
     types::DWARFTypeImportStats Stats;
     if (llvm::Error Err =
             static_cast<const DWARFDebugContext &>(*S.Dbg).withDWARFContext(
@@ -244,7 +267,7 @@ types::TypeLibrary *localTypes(Session &S) {
     return S.LocalTypes.get();
   }
   if (S.DbgKind != DebugInfoKind::PDB || !S.Dbg) {
-    S.LocalTypes = std::make_unique<types::TypeLibrary>(dataModelOf(S.Img));
+    S.LocalTypes = libraryFor(S.Img);
     S.LocalTypesSource = "none";
     joinHeaders(S);
     redeclare(S);
@@ -534,7 +557,7 @@ DebugContext *Session::decompileDebug() {
   LocalTypesDbg = std::make_unique<LocalTypesDebugContext>(
       Dbg ? *Dbg : static_cast<const DebugContext &>(NoDebugInfo),
       Library ? std::make_shared<types::TypeLibrary>(*Library)
-              : std::make_shared<types::TypeLibrary>(dataModelOf(Img)),
+              : std::shared_ptr<types::TypeLibrary>(libraryFor(Img)),
       std::move(Declarations), &Img, std::move(Headers), SigDB.buildNameMap());
   return LocalTypesDbg.get();
 }
@@ -620,6 +643,7 @@ const char *neverd_local_types_json(neverd_session_t Sess,
   llvm::json::Object Result{
       {"source", S->LocalTypesSource},
       {"dataModel", types::dataModelName(Library->dataModel())},
+      {"recordABI", types::recordABIName(Library->recordABI())},
       {"stats",
        llvm::json::Object{{"structs", S->LocalTypeStats.Structs},
                           {"unions", S->LocalTypeStats.Unions},
@@ -915,7 +939,6 @@ const char *neverd_types_convert(const char *RequestJson) {
                     "its source");
     types::ParseOptions Parse;
     Parse.Lang = *Lang;
-    Parse.Rules = types::defaultRules(*Model);
     Parse.KeepGoing = KeepGoing;
     const types::ParseResult Result =
         types::parseTypes(*Source, Library, Parse);

@@ -683,6 +683,12 @@ private:
   /// a stale VA.
   bool segHasPtrRelocSlots(const Segment *S) const;
 
+  /// True when the loader recorded a relocated code- or data-pointer slot in
+  /// segment \p S, import storage aside.  In code such a slot lies only inside
+  /// a data object the image places among it (GNU ld's `__CTOR_LIST__` in
+  /// `.text`), and only such a code segment mirrors as a pointer table.
+  bool segHasLoaderPtrRelocSlots(const Segment *S) const;
+
   /// Preserved registration callees observe the original image. Any
   /// intersecting data run must keep that storage identity across all module
   /// functions.

@@ -103,7 +103,6 @@ const TypeLibrary *headerLibrary(HeaderLibrary Library, std::string *Error) {
   std::call_once(Entry.Once, [&] {
     TypeLibrary Types(headerLibraryModel(Library));
     ParseOptions Options;
-    Options.Rules = defaultRules(Types.dataModel());
     Options.Origin = TypeOrigin::Header;
     const ParseResult Result =
         parseCTypes(headerLibrarySource(Library), Types, Options);
@@ -155,8 +154,22 @@ HeaderMerge mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers) {
         }
     }
   }
-  for (const std::string &Name : Merge.Conflicts)
+  // A record that goes stays declared: the types that point to it, which
+  // need no layout of it, still name it.
+  for (const std::string &Name : Merge.Conflicts) {
+    const LocalType *Type = Library.find(Name);
+    if (Type && Type->Record &&
+        (Type->Kind == TypeKind::Struct || Type->Kind == TypeKind::Union)) {
+      LocalType Declared = *Type;
+      auto Record = std::make_shared<RecordDef>();
+      Record->Union = Type->Record->Union;
+      Record->Defined = false;
+      Declared.Record = std::move(Record);
+      Library.define(std::move(Declared));
+      continue;
+    }
     Library.remove(Name);
+  }
   Merge.Types = Added.size() - Merge.Conflicts.size();
   for (const auto &Entry : Headers.prototypes())
     if (!Library.findPrototype(Entry.first())) {

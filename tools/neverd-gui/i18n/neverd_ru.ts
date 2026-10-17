@@ -1603,6 +1603,10 @@ Double-click to go to the declaration.</source>
         <translation>Символьное упрощение</translation>
     </message>
     <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>Символьное упрощение всех функций</translation>
+    </message>
+    <message>
         <source>Recover LLVM control flow</source>
         <translation>Восстановить поток управления LLVM</translation>
     </message>
@@ -2123,6 +2127,10 @@ Signed: %4</source>
     <message>
         <source>Show segment:address line prefixes</source>
         <translation>Показывать префиксы строк «сегмент:адрес»</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>Символьное упрощение всех функций</translation>
     </message>
     <message>
         <source>Shortcuts</source>
@@ -2648,6 +2656,22 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Database saved: %1</source>
         <translation>База данных сохранена: %1</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files describe another build of %1 (SHA-256 %2…); their addresses may not match this one. The next edit records this build.</source>
+        <translation>Файлы проекта описывают другую сборку %1 (SHA-256 %2…); их адреса могут не совпадать с этой. Следующее изменение запишет эту сборку.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here.</source>
+        <translation>Файлы проекта изменились на диске и были загружены; отмена начинается отсюда.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here. Unsaved comments kept on top: %1</source>
+        <translation>Файлы проекта изменились на диске и были загружены; отмена начинается отсюда. Несохранённые комментарии, сохранённые поверх: %1</translation>
+    </message>
+    <message>
+        <source>The input file changed on disk; reload it to continue editing.</source>
+        <translation>Входной файл изменился на диске; перезагрузите его, чтобы продолжить редактирование.</translation>
     </message>
     <message>
         <source>Could not save the database: %1</source>

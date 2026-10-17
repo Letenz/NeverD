@@ -180,6 +180,18 @@ MedLLVMEmitter::embedExecSegmentRun(const Segment *Seg) {
   if (auto It = SegmentDataGlobals.find(RunStart);
       It != SegmentDataGlobals.end())
     return {It->second, RunStart};
+  // Code holds a relocated pointer slot only inside a data object the image
+  // places among it, such as GNU ld's __CTOR_LIST__: the segment mirrors as
+  // the pointer table it then is, or not at all, rather than keep a stale
+  // address in raw bytes.
+  if (segHasLoaderPtrRelocSlots(Seg)) {
+    auto *Table = llvm::dyn_cast_or_null<llvm::GlobalVariable>(
+        buildCodePtrSegmentGlobal(Seg->VA, RunStart));
+    if (!Table)
+      return {nullptr, 0};
+    SegmentDataGlobals[RunStart] = Table;
+    return {Table, RunStart};
+  }
   auto *ArrTy =
       llvm::ArrayType::get(llvm::Type::getInt8Ty(*Ctx), Seg->Data.size());
   auto *Init =
@@ -225,6 +237,16 @@ bool MedLLVMEmitter::segHasPtrRelocSlots(const Segment *S) const {
          segmentHoldsSlot(*S, ConflictingImportStorageSlots) ||
          segmentHoldsSlot(*S, ExternalFunctionPointerSlots) ||
          overlapsRuntimeCallableSlots();
+}
+
+bool MedLLVMEmitter::segHasLoaderPtrRelocSlots(const Segment *S) const {
+  if (!S || !Img)
+    return false;
+  auto holds = [&](const std::set<uint64_t> &Slots) {
+    auto It = Slots.lower_bound(S->VA);
+    return It != Slots.end() && S->contains(*It);
+  };
+  return holds(Img->CodePtrRelocSlots) || holds(Img->DataPtrRelocSlots);
 }
 
 bool MedLLVMEmitter::isReadOnlyAfterReloc(const Segment *S) const {

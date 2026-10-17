@@ -24,6 +24,26 @@ namespace neverd::gui {
 
 class Session;
 
+/// The source choices every function's code opens with: whether source is
+/// simplified symbolically, which removes mixed Boolean-arithmetic
+/// obfuscation at a cost.  The user's settings keep it; a code window may
+/// still choose otherwise for the function it shows.
+class SourceDefaults final : public QObject {
+  Q_OBJECT
+public:
+  static SourceDefaults &instance();
+  bool symbolic() const;
+  void setSymbolic(bool enabled);
+  /// The options a function opens with in \p representation: none in an IR.
+  static QJsonObject options(const QString &representation);
+
+signals:
+  void changed();
+
+private:
+  SourceDefaults() = default;
+};
+
 /// Text of one function in a code representation: C pseudocode (native or
 /// through LLVM) or a textual IR.  Lines are fetched in pages and colored
 /// locally; explicit navigation uses the worker's instruction mappings.
@@ -48,10 +68,15 @@ public:
             std::optional<QJsonObject> options = std::nullopt);
   const QJsonObject &sourceOptions() const { return sourceOptions_; }
   void setSourceOptions(const QJsonObject &options);
+  /// The options a function opens with in this representation.
+  QJsonObject defaultSourceOptions() const;
   void clear();
   /// Stop obsolete requests/pages, including an in-flight analysis process
   /// when no other view still subscribes to its result.
   void cancel();
+  /// Cancel as the user does: a symbolic simplification of a function that
+  /// shows no source yet gives way to its ordinary source.
+  void cancelTransformation();
   std::optional<Address> function() const { return function_; }
   QString representation() const { return representation_; }
   /// The assembly-selected address on the cursor line, or its primary mapping.
@@ -134,6 +159,11 @@ public:
   /// line that defines it, when the shown code defines that label.
   std::optional<std::pair<Address, int>>
   addressLabel(const QString &name) const;
+  /// Where the disassembly shows the function's frame part \p name names:
+  /// the function's address for the frame record HighC declares and its
+  /// storage, and for a member of it the instruction the cursor's line, else
+  /// the first line that reads or writes it, maps to.
+  std::optional<Address> frameAddress(const QString &name) const;
   /// The image address the global name at a line and column of LLVM IR
   /// stands for there, as the engine resolved it: a function's entry, or the
   /// byte a constant offset from an image mirror reaches.
@@ -182,8 +212,8 @@ signals:
   void nameActivated(const QString &name);
   /// A global the code declares at an image address was double-clicked.
   void objectActivated(neverd::gui::Address address);
-  /// A goto label was double-clicked: \p address is the block it labels,
-  /// where the disassembly goes while the code goes to the label.
+  /// A place in this function was double-clicked: \p address is where the
+  /// disassembly goes, the block a goto label names or the function's frame.
   void labelActivated(neverd::gui::Address address);
   void statusChanged();
   void foldingChanged();
@@ -208,6 +238,9 @@ protected:
 private:
   void request(int offset, quint64 serial);
   void appendPage(const QJsonObject &payload, int offset);
+  /// Load the function's source without symbolic simplification, saying
+  /// \p why in the status line when it arrives.
+  void showOrdinary(const QString &why);
   /// The library regions of the loaded function, its prelude and epilogue.
   QJsonArray foldRegions() const;
   /// The source line where the epilogue begins.
@@ -264,6 +297,8 @@ private:
   };
   std::optional<SourcePlace> placeAfterLoad_;
   QString representation_, status_, highlight_;
+  /// Why the source on its way is not the one asked for (showOrdinary).
+  QString statusNote_;
   QJsonObject sourceOptions_, renderedOptions_;
   quint64 serial_ = 0;
   bool inComment_ = false, loading_ = false, foldAfterLoad_ = false;

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 1eae101089e730c29ba3fda92db515fe148fe41b758d6f5b69156252591d9b3f -->
+<!-- i18n-source: 63d86e1a94d8b33e055360514902466c202d434ebb87823cd91181b98a556871 -->
 
 [← Documentation Index](README.md)
 
@@ -132,6 +132,8 @@ python examples/source-patch/run.py --neverd build-example-host/bin/neverd.exe -
 ```
 
 Standardmäßig laufen beide Wege; mit `--api cli` oder `--api sdk` lässt sich einer wählen. Die Zieladresse wird automatisch ermittelt. Bei Eingabe `7` gibt das Original `8` und jeder Patch `36` aus. Der Treiber prüft Ausführung, Belege und echte Ladefehler bei fehlender Bibliothek; vollständige Build- und Patch-Befehle stehen in `commands.json`.
+
+CLI und gehostetes Python-SDK wurden nativ auf Linux, macOS und Windows x64/ARM64 geprüft: 54 Ausführungen und 12 echte Ladeverweigerungen bei fehlender Bibliothek. [CI und genaue Quellen pro Host](../../examples/source-patch/README.md#native-validation).
 
 <!-- i18n-section: exceptions -->
 ## C++-Ausnahmen

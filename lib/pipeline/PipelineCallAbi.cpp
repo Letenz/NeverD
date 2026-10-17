@@ -54,7 +54,8 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
   const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
   if (!Convention || !Convention->ArgumentsFromCallSetup || Img.IsRelocatable)
     return {};
-  std::set<va_t> Present, Pending, Entries;
+  std::set<va_t> Present, Queued, Entries;
+  std::queue<va_t> Pending;
   for (const auto &Symbol : Img.Symbols)
     if (Symbol.IsFunc && !Symbol.IsBoundaryGuess)
       Entries.insert(Symbol.Addr);
@@ -64,8 +65,8 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
     if (!Present.count(Target) && !Img.findImportAt(Target) &&
         !Img.isImportStubAt(Target) &&
         (Entries.count(Target) || Img.hasKnownFunctionEntryAt(Target)) &&
-        Img.hasExecutableCodeOwnerAt(Target))
-      Pending.insert(Target);
+        Img.hasExecutableCodeOwnerAt(Target) && Queued.insert(Target).second)
+      Pending.push(Target);
   };
   auto enqueueCallees = [&](const MedFunc &F) {
     // A call through a function-pointer variable passes the arguments of the
@@ -97,12 +98,19 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
     return Signatures;
   CFGBuilder Builder;
   Builder.setKnownFuncEntries(&Entries);
+  // The callees' builds prove each x87 call effect from the same callee
+  // graphs: build each once.  A 32-bit printf engine in a call cycle with
+  // the heap reaches every build here, and its jump tables take seconds.
+  Builder.setX87CallGraphCache(createX87CallGraphCache());
   size_t Inspected = 0;
   size_t Operations = 0;
+  // Visit the selected functions' direct callees before their descendants.
+  // A deep lower-address chain must not consume the bounded support budget
+  // before another direct callee can supply its signature.
   while (!Pending.empty() && Inspected < limits::kMaxCallEffectExtraLifts) {
     ++Inspected;
-    const va_t Target = *Pending.begin();
-    Pending.erase(Pending.begin());
+    const va_t Target = Pending.front();
+    Pending.pop();
     Present.insert(Target);
     LowFunc Low =
         Builder.build(Img, Dec, Target, Img.getFunctionNameAt(Target));

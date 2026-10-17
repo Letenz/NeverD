@@ -925,7 +925,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
           MOp.NumInputs >= 1 && MOp.Inputs[0].isConst()) {
         auto Pop = TheArch == Arch::X86 ? registrationCallStackPop(Low, LB, LOp)
                                         : std::nullopt;
-        if (!Pop && CalleePopMap && MOp.Opcode == NdOp::CALL) {
+        // A call through an import's slot (`call [__imp__Sleep@4]`) names
+        // the import as its stub does.
+        if (!Pop && CalleePopMap) {
           const auto It = CalleePopMap->find(MOp.Inputs[0].ConstVal);
           if (It != CalleePopMap->end())
             Pop = It->second;
