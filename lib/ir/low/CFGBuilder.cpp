@@ -4044,8 +4044,176 @@ void CFGBuilder::multiStageResolve(const BinaryImage &Img, Decoder &Dec,
   };
   RememberPublishedJumpTables();
 
+  // A stage is a deterministic function of the state it starts from: its
+  // accounts and scratch inventories are reset below, and its caches answer
+  // as a fresh computation would.  StageStart holds every other member a
+  // stage reads or leaves behind, except the build-wide marker account, which
+  // a stage only debits and reads only for exhaustion.  When a stage that
+  // published no new graph starts where the previous one started, every
+  // remaining retry repeats it and debits the same amount; if the account
+  // covers all of those debits, stopping and charging them returns what the
+  // bounded retries return.  One-shot testing injections make retries differ.
+  struct StageStart {
+    std::map<va_t, InsnRecord> Insns;
+    std::set<va_t> BlockStarts;
+    // explore() only adds to ExploredAddrs; equal sizes mean equal sets.
+    size_t ExploredCount;
+    std::vector<va_t> CallTargets;
+    std::map<va_t, std::set<va_t>> OwnInteriorCallSites;
+    std::vector<va_t> DiscoveredCodeRefs;
+    std::map<va_t, std::set<va_t>> DiscoveredCodeRefSources;
+    std::map<va_t, JumpTableInfo> ResolvedTableInfo;
+    std::optional<GuardedJumpTableGroupProofContext> GroupProofContext;
+    std::optional<GuardedJumpTableGroupKey> GroupIdentity;
+    std::optional<GuardedJumpTableGroupState> GroupState;
+    bool GroupRejected;
+    std::map<va_t, StrongJumpTableRoleProposal> StrongProposals;
+    std::map<va_t, ProvisionalRelativeEdgeProposal> ProvisionalEdges;
+    std::set<va_t> Quarantined;
+    std::set<va_t> EverStrongProposals;
+    bool MarkerEvidenceIncomplete;
+    bool ProofContextComplete;
+    bool RequestedCompleteProof;
+    std::set<va_t> PersistentRoots, OrdinaryRoots, DurableRoots;
+    std::set<va_t> ExceptionalEntries;
+    std::map<va_t, std::set<va_t>> RelocationRootSources;
+    std::optional<std::set<va_t>> ActiveProofRoots;
+    va_t ActiveCandidate;
+    uint32_t ActiveProofRank, ActiveDependencyRank;
+    bool ActiveConsumerAudit;
+    std::set<va_t> PotentialBranches, EverPublishedBranches,
+        LostValidatedBranches, StackIncompleteBranches, IndexIncompleteBranches,
+        ValidatedPhysicalBranches;
+    std::set<va_t> AmbiguousGOTPC, PendingAmbiguousGOTPC;
+    std::set<I386GOTOFFAmbiguityReplayKey> PendingGOTPCKeys, CurrentGOTOFFKeys;
+    std::set<va_t> PublishedReachable;
+    std::vector<va_t> PublishedStarts;
+    uint64_t Decoded, Lifted;
+    std::set<va_t> DecodedAddrs, LiftedAddrs, DecodeFailures, Unsupported,
+        Truncated;
+    std::vector<RelocatedInstructionAddressOccurrence> AddressOccurrences;
+    std::vector<I386GetPcOccurrence> GetPcOccurrences;
+    std::vector<RelocatedInstructionScalarOperandOccurrence> ScalarOperands;
+    std::vector<RelocatedInstructionScalarModelOccurrence> ScalarModels;
+    size_t GOTOFFEvidenceRemaining;
+    bool GOTOFFShapeClaimed, GOTOFFEvidenceIncomplete, GOTEvidenceIncomplete,
+        GOTOFFAmbiguousReach;
+    std::optional<std::pair<va_t, va_t>> FuncRange, AuthoritativeFuncRange;
+    int FpuTop, RetPopBytes;
+    std::vector<LowFunctionTemporary> Temporaries;
+
+    bool operator==(const StageStart &Other) const = default;
+  };
+  const auto Sorted = [](const llvm::DenseSet<va_t> &Values) {
+    std::vector<va_t> Result(Values.begin(), Values.end());
+    llvm::sort(Result);
+    return Result;
+  };
+  const auto CaptureStageStart = [&]() {
+    return StageStart{Insns,
+                      BlockStarts,
+                      ExploredAddrs.size(),
+                      Sorted(CallTargets),
+                      OwnInteriorCallSites,
+                      Sorted(DiscoveredCodeRefs),
+                      DiscoveredCodeRefSources,
+                      ResolvedTableInfo,
+                      GuardedGroupProofContext,
+                      GuardedGroupIdentity,
+                      GuardedGroupState,
+                      GuardedGroupRejected,
+                      PriorStrongJumpTableProposals,
+                      PriorProvisionalRelativeEdges,
+                      QuarantinedJumpTableProposals,
+                      EverStrongJumpTableProposalBranches,
+                      IncompleteBranchMarkerEvidenceIncomplete,
+                      JumpTableProofContextComplete,
+                      RequestedCompleteJumpTableProof,
+                      PersistentCFGRoots,
+                      OrdinaryCFGRoots,
+                      DurableCFGRoots,
+                      CurrentExceptionalEntries,
+                      RelocationCFGRootSources,
+                      ActiveJumpTableProofRoots,
+                      ActiveJumpTableCandidateAddr,
+                      ActiveJumpTableCandidateProofRank,
+                      ActiveJumpTableCandidateDependencyRank,
+                      ActiveJumpTableConsumerAudit,
+                      PotentialJumpTableBranches,
+                      EverPublishedJumpTableBranches,
+                      LostValidatedJumpTableBranches,
+                      StackTableEvidenceIncompleteBranches,
+                      IndexDomainEvidenceIncompleteBranches,
+                      ValidatedPhysicalJumpTableBranches,
+                      AmbiguousI386GOTPCBranches,
+                      PendingAmbiguousI386GOTPCBranches,
+                      PendingAmbiguousI386GOTPCKeys,
+                      CurrentI386GOTOFFAmbiguityKeys,
+                      PublishedReachableInsns,
+                      PublishedBlockStarts,
+                      DecodedInstructionCount,
+                      LiftedInstructionCount,
+                      DecodedInstructionAddresses,
+                      LiftedInstructionAddresses,
+                      DecodeFailureAddresses,
+                      UnsupportedInstructionAddresses,
+                      TruncatedPathAddresses,
+                      RelocatedInstructionAddressOccurrences,
+                      I386GetPcOccurrences,
+                      RelocatedInstructionScalarOperandOccurrences,
+                      RelocatedInstructionScalarModelOccurrences,
+                      I386GOTOFFProposalEvidenceRemaining,
+                      I386GOTOFFProposalShapeClaimed,
+                      I386GOTOFFProposalEvidenceIncomplete,
+                      I386GOTModelEvidenceIncomplete,
+                      I386GOTOFFAmbiguousModelReach,
+                      CurrentFuncRange,
+                      AuthoritativeCurrentFuncRange,
+                      Dec.getX86FpuTop(),
+                      Dec.getX86RetPopBytes(),
+                      Func.FunctionTemporaries};
+  };
+  const bool StageTestingInjections =
+      I386GOTModelEvidenceBudgetForTesting ||
+      I386GOTOFFProposalEvidenceBudgetForTesting ||
+      IncompleteBranchMarkerEvidenceBudgetForTesting ||
+      StackTableEvidenceBudgetForTesting ||
+      MaskFixedPointEvidenceBudgetForTesting ||
+      NestedMutationTrackingStageAllowanceForTesting ||
+      FiniteSetSymbolEvidenceBudgetForTesting ||
+      ExhaustUntrackedJumpTableCandidateForTesting ||
+      ExhaustStableI386AmbiguityCommitTailForTesting ||
+      ExhaustProposalStageCommitTailForTesting ||
+      ExhaustPublishedJumpTableGroupCommitTailForTesting ||
+      RevokePublishedJumpTableGroupOwnerForTesting ||
+      ProposalOldStateCleanupEvidenceExhaustionForTesting;
+  std::optional<StageStart> PreviousStart;
+  size_t PreviousMarkerEvidence = 0;
+  bool PreviousStageGrew = true;
+
   bool ReachedFixedPoint = false;
   for (int Stage = 0; Stage < limits::kMaxMultiStageRetries; ++Stage) {
+    // Only a stage after one that grew nothing can repeat it; capturing the
+    // start of every other stage would cost a copy for nothing.
+    if (PreviousStageGrew || StageTestingInjections) {
+      PreviousStart.reset();
+    } else {
+      StageStart Start = CaptureStageStart();
+      if (PreviousStart && *PreviousStart == Start &&
+          PreviousMarkerEvidence >= IncompleteBranchMarkerEvidenceRemaining) {
+        const size_t Debit =
+            PreviousMarkerEvidence - IncompleteBranchMarkerEvidenceRemaining;
+        const size_t Retries = limits::kMaxMultiStageRetries - Stage;
+        if (!Debit ||
+            IncompleteBranchMarkerEvidenceRemaining / Debit >= Retries) {
+          IncompleteBranchMarkerEvidenceRemaining -= Debit * Retries;
+          break;
+        }
+      }
+      PreviousStart = std::move(Start);
+      PreviousMarkerEvidence = IncompleteBranchMarkerEvidenceRemaining;
+    }
+    PreviousStageGrew = false;
     // A joint proof has no individual member authority. Remove every live
     // member before rebuilding the next immutable graph. The cached complete
     // state is comparison-only, and publication prepaid this withdrawal.
@@ -5197,6 +5365,7 @@ void CFGBuilder::multiStageResolve(const BinaryImage &Img, Decoder &Dec,
     // Newly decoded targets change reaching definitions and table ownership.
     // Marker deletion is a declassification and therefore cannot commit on a
     // graph-growing round; carry the conservative union into revalidation.
+    PreviousStageGrew = true;
     RestoreIncompleteBranchMarkers();
     completeExactAArch64PageBases(Img);
     splitBlocks();
