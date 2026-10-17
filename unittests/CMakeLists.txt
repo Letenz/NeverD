@@ -79,6 +79,12 @@ add_neverd_unittest(NeverDCaseListTests
 target_include_directories(NeverDCaseListTests PRIVATE
   "${CMAKE_SOURCE_DIR}/include")
 
+add_neverd_unittest(NeverDGraphCyclesTests
+  GraphCyclesTests.cpp
+)
+target_include_directories(NeverDGraphCyclesTests PRIVATE
+  "${CMAKE_SOURCE_DIR}/include")
+
 add_neverd_unittest(NeverDPipelineOutcomeTests
   PipelineOutcomeTests.cpp
   LINK_COMPONENTS Pipeline BackendC

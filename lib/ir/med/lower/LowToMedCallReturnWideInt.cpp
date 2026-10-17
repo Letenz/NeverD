@@ -11,9 +11,11 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/support/GraphCycles.h"
 
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
@@ -177,11 +179,38 @@ void modelCallWideIntReturn(MedFunc &Func, Arch TheArch,
   std::map<int, MedBlock *> FirstById;
   std::map<int, std::vector<MedBlock *>> BlocksById;
   std::map<int, std::set<int>> SuccIdsById;
+  bool UniqueIds = true;
   for (auto &B : Func.Blocks) {
-    FirstById.emplace(B.Id, &B);
+    UniqueIds &= FirstById.emplace(B.Id, &B).second;
     BlocksById[B.Id].push_back(&B);
     SuccIdsById[B.Id].insert(B.Succs.begin(), B.Succs.end());
   }
+  // Strongly connected components of the successor graph reaches() walks
+  // (ids without a block are sinks), computed on first use.
+  std::map<int, size_t> ComponentOf;
+  auto component = [&](int Id) -> std::optional<size_t> {
+    if (ComponentOf.empty()) {
+      std::map<int, size_t> Node;
+      std::vector<int> Ids;
+      for (const auto &[BlockId, Block] : FirstById) {
+        (void)Block;
+        Node.emplace(BlockId, Ids.size());
+        Ids.push_back(BlockId);
+      }
+      std::vector<std::vector<size_t>> Succs(Ids.size());
+      for (size_t I = 0; I < Ids.size(); ++I)
+        for (int Succ : FirstById.at(Ids[I])->Succs)
+          if (const auto It = Node.find(Succ); It != Node.end())
+            Succs[I].push_back(It->second);
+      const std::vector<size_t> Components = stronglyConnectedComponents(Succs);
+      for (size_t I = 0; I < Ids.size(); ++I)
+        ComponentOf.emplace(Ids[I], Components[I]);
+    }
+    const auto It = ComponentOf.find(Id);
+    if (It == ComponentOf.end())
+      return std::nullopt;
+    return It->second;
+  };
 
   // Whether block \p From reaches block \p To along successor edges.
   auto reaches = [&](int From, int To) {
@@ -218,7 +247,11 @@ void modelCallWideIntReturn(MedFunc &Func, Arch TheArch,
           if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == RegOff)
             for (const auto &A : Phi.Args)
               Merges |= A.first == BlockId;
-        if (Merges && reaches(B->Id, BlockId))
+        // With unique ids, BlockId's successor list is the edge reaches()
+        // follows, so a successor leads back exactly when it shares
+        // BlockId's component.
+        if (Merges && (UniqueIds ? component(B->Id) == component(BlockId)
+                                 : reaches(B->Id, BlockId)))
           return true;
       }
     }
