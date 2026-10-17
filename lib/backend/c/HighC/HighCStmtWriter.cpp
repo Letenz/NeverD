@@ -40,6 +40,11 @@ namespace neverd {
 
 namespace {
 
+/// A goto label, named after the address of the block it labels.  The
+/// workbench reads this spelling back to take a click on a label to its
+/// block (labelDefinition in tools/neverd-gui/app/CodeView.cpp).
+std::string blockLabel(va_t Addr) { return "L_" + llvm::utohexstr(Addr); }
+
 // MSVC `HandlerType` adjectives from CRT `ehdata.h`.
 constexpr uint32_t kCxxCatchConst = 0x1u;
 constexpr uint32_t kCxxCatchVolatile = 0x2u;
@@ -146,6 +151,30 @@ size_t printedTryBodyEnd(TryExitTest Hidden, TryExitTest LeftOut,
 bool stmtsAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
                      const std::vector<HighStmt> &Stmts, size_t End);
 
+/// Whether a `break` in \p Stmts ends the loop that holds them: one that no
+/// nested loop or switch takes for its own.
+bool breaksOutOf(const std::vector<HighStmt> &Stmts) {
+  for (const HighStmt &S : Stmts) {
+    switch (S.Kind) {
+    case StmtKind::Break:
+      return true;
+    case StmtKind::While:
+    case StmtKind::DoWhile:
+    case StmtKind::For:
+    case StmtKind::Switch:
+      continue;
+    default:
+      break;
+    }
+    if (breaksOutOf(S.Body) || breaksOutOf(S.ElseBody))
+      return true;
+    for (const auto &ClauseBody : S.EHClauseBodies)
+      if (breaksOutOf(ClauseBody))
+        return true;
+  }
+  return false;
+}
+
 bool stmtAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
                     const HighStmt &Stmt) {
   if (Hidden(Stmt))
@@ -154,6 +183,14 @@ bool stmtAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
   case StmtKind::Return:
   case StmtKind::Goto:
     return true;
+  case StmtKind::While:
+  case StmtKind::DoWhile:
+  case StmtKind::For:
+    // A loop whose test always holds runs until a statement in it leaves;
+    // with no break that ends it, nothing falls out of it.
+    return (!Stmt.Cond ||
+            (Stmt.Cond->Kind == ExprKind::Const && Stmt.Cond->ConstVal != 0)) &&
+           !breaksOutOf(Stmt.Body);
   case StmtKind::IfElse:
     return stmtsAlwaysExit(Hidden, LeftOut, Stmt.Body, Stmt.Body.size()) &&
            stmtsAlwaysExit(Hidden, LeftOut, Stmt.ElseBody,
@@ -168,7 +205,13 @@ bool stmtAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
       return false;
     if (Stmt.EHClauseBodies.empty())
       return true;
-    for (const auto &ClauseBody : Stmt.EHClauseBodies) {
+    for (size_t I = 0; I < Stmt.EHClauseBodies.size(); ++I) {
+      // A cleanup runs while the exception unwinds and rethrows it: nothing
+      // after the try follows it.
+      if (I < Stmt.EHClauses.size() &&
+          Stmt.EHClauses[I].Kind == HighEHClauseKind::CxxCleanup)
+        continue;
+      const auto &ClauseBody = Stmt.EHClauseBodies[I];
       if (!stmtsAlwaysExit(Hidden, LeftOut, ClauseBody,
                            hasFallthroughExceptClause(Stmt)
                                ? printedTryBodyEnd(Hidden, LeftOut, ClauseBody)
@@ -1412,7 +1455,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       OS << "__leave;\n";
       break;
     }
-    OS << "goto L_" + llvm::utohexstr(Stmt.GotoTarget) + ";\n";
+    OS << "goto " + blockLabel(Stmt.GotoTarget) + ";\n";
     break;
 
   case StmtKind::Break:
@@ -1560,7 +1603,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
              << " */\n";
         } else if (GotoTargets.count(Clause.HandlerVA)) {
           emitIndent(Indent + 1);
-          OS << "goto L_" << llvm::utohexstr(Clause.HandlerVA) << ";\n";
+          OS << "goto " << blockLabel(Clause.HandlerVA) << ";\n";
         }
       }
     }
@@ -1807,7 +1850,7 @@ bool HighCWriter::tryWriteCursorForLoop(const std::vector<HighStmt> &Stmts,
 
   auto WriteLabel = [&](const HighStmt &S) {
     if (Targeted(S))
-      OS << "L_" + llvm::utohexstr(S.Addr) + ":\n";
+      OS << blockLabel(S.Addr) + ":\n";
   };
   auto WriteAssignRhs = [&](const HighStmt &S) {
     auto DeclaredType = declaredParamType(S.Dst->Var);
@@ -2033,7 +2076,7 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
             const HighStmt &N = Try.Body[K];
             if (N.Addr && N.Addr != InvalidVA && N.Addr != NameAt &&
                 N.Addr != JoinAt && GotoTargets.count(N.Addr))
-              OS << "L_" + llvm::utohexstr(N.Addr) + ":\n";
+              OS << blockLabel(N.Addr) + ":\n";
             WriteVisible(N, Inner);
           }
         });
@@ -2234,7 +2277,7 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
       if (!IsGotoTarget(Addr) || Addr == LastLabel ||
           !EmittedLabels.insert(Addr).second)
         return;
-      OS << "L_" + llvm::utohexstr(Addr) + ":";
+      OS << blockLabel(Addr) + ":";
       if (LandingPadLabels.count(Addr))
         OS << " /* landing pad: the unwinder enters here */";
       OS << "\n";
@@ -2384,7 +2427,7 @@ void HighCWriter::writeTryBodyUnisolated(const std::vector<HighStmt> &Stmts,
   std::function<void(const HighStmt &)> Label = [&](const HighStmt &S) {
     if (S.Addr && S.Addr != InvalidVA && GotoTargets.count(S.Addr) &&
         EmittedLabels.insert(S.Addr).second) {
-      OS << "L_" << llvm::utohexstr(S.Addr) << ":";
+      OS << blockLabel(S.Addr) << ":";
       if (LandingPadLabels.count(S.Addr))
         OS << " /* landing pad: the unwinder enters here */";
       OS << "\n";

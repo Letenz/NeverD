@@ -60,22 +60,6 @@ uint64_t checkedStackAlign(uint64_t Size) {
   return checkedStackAdd(Size, Mask) & ~Mask;
 }
 
-llvm::StringRef debugCallConvAttribute(DebugCallConv CC) {
-  switch (CC) {
-  case DebugCallConv::Cdecl:
-    return "__attribute__((cdecl)) ";
-  case DebugCallConv::Stdcall:
-    return "__attribute__((stdcall)) ";
-  case DebugCallConv::Thiscall:
-    return "__attribute__((thiscall)) ";
-  case DebugCallConv::Fastcall:
-    return "__fastcall ";
-  case DebugCallConv::Unknown:
-    return "";
-  }
-  return "";
-}
-
 std::optional<FunctionSym> debugFunction(DebugContext *Dbg, va_t Entry) {
   if (!Dbg)
     return std::nullopt;
@@ -1911,6 +1895,22 @@ bool fieldProjectionDoesNotNarrow(const HighExpr *Expr,
   return Expr == Source;
 }
 } // namespace
+
+llvm::StringRef debugCallConvAttribute(DebugCallConv CC) {
+  switch (CC) {
+  case DebugCallConv::Cdecl:
+    return "__attribute__((cdecl)) ";
+  case DebugCallConv::Stdcall:
+    return "__attribute__((stdcall)) ";
+  case DebugCallConv::Thiscall:
+    return "__attribute__((thiscall)) ";
+  case DebugCallConv::Fastcall:
+    return "__fastcall ";
+  case DebugCallConv::Unknown:
+    return "";
+  }
+  return "";
+}
 
 void HighCWriter::collectFieldLoadTypes(const HighFunc &Func) {
   FieldForwardTypes.clear();
@@ -4538,15 +4538,19 @@ std::optional<int64_t> HighCWriter::stackParamOffset(const HighFunc &Func,
   if (!Layout.SlotBytes)
     return std::nullopt;
   // Stack arguments are numbered after every register position, or after the
-  // registers the function uses where they follow those (i386 regparm).
+  // registers the function uses where they follow those (i386 regparm): from
+  // the lowest stack number, the first slot's.  A register parameter MedIR
+  // promotes later, such as one a forwarder passes on, takes no number of
+  // the stack's.
   int First = static_cast<int>(Layout.Registers.size());
   if (const CallArgumentConvention *Convention =
           callArgumentConvention(Opts.TheArch, Opts.Format);
-      Convention && Convention->StackArgumentsFollowUsedRegisters)
-    First =
-        static_cast<int>(llvm::count_if(Func.Params, [](const HighParam &P) {
-          return P.RegOff != kNoParamReg;
-        }));
+      Convention && Convention->StackArgumentsFollowUsedRegisters) {
+    First = Param.MedIndex;
+    for (const HighParam &Other : Func.Params)
+      if (Other.RegOff == kNoParamReg && Other.MedIndex >= 0)
+        First = std::min(First, Other.MedIndex);
+  }
   if (Param.MedIndex < First)
     return std::nullopt;
   return Layout.EntryStackBase +

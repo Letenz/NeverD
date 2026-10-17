@@ -2644,6 +2644,22 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
         <translation>Database saved: %1</translation>
     </message>
     <message>
+        <source>The project&apos;s files describe another build of %1 (SHA-256 %2…); their addresses may not match this one. The next edit records this build.</source>
+        <translation>The project&apos;s files describe another build of %1 (SHA-256 %2…); their addresses may not match this one. The next edit records this build.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here.</source>
+        <translation>The project&apos;s files changed on disk and were loaded; undo starts here.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here. Unsaved comments kept on top: %1</source>
+        <translation>The project&apos;s files changed on disk and were loaded; undo starts here. Unsaved comments kept on top: %1</translation>
+    </message>
+    <message>
+        <source>The input file changed on disk; reload it to continue editing.</source>
+        <translation>The input file changed on disk; reload it to continue editing.</translation>
+    </message>
+    <message>
         <source>Could not save the database: %1</source>
         <translation>Could not save the database: %1</translation>
     </message>
