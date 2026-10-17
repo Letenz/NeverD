@@ -750,6 +750,12 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
 
           if (const char *Hdr = libc::headerFor(stripLeadingUnderscores(Name)))
             Headers.insert(Hdr);
+          // A callee the image names as a C library routine, as the
+          // Windows kernel's own memset is, is declared by that header too
+          // (writeForwardDecls leaves it to the header).
+          else if (const char *Named =
+                       libc::headerFor(functionIdentifier(*Callee)))
+            Headers.insert(Named);
         }
       }
     }

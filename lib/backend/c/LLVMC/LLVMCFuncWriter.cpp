@@ -2687,8 +2687,11 @@ std::optional<unsigned>
 LLVMCWriter::prototypedParamCount(const llvm::Function &Callee) const {
   // printedCallArgLimit's prototype case: parameters, and a result returned
   // through a hidden pointer counted unless a member's `this` precedes it.
+  // A callee the lift declared variadic, as calls that pass more registers
+  // than a prototype declares make it, still takes what its calls pass: no
+  // fewer than its fixed parameters.
   const std::optional<FunctionSym> FS = debugFunction(Callee);
-  if (!FS || FS->Params.empty() || Callee.isVarArg())
+  if (!FS || FS->Params.empty())
     return std::nullopt;
   const bool Indirect =
       isMsvcIndirectReturn(FS->ReturnType, Opts.TheArch, Opts.Format);
