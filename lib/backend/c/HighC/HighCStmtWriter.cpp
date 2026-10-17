@@ -146,6 +146,30 @@ size_t printedTryBodyEnd(TryExitTest Hidden, TryExitTest LeftOut,
 bool stmtsAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
                      const std::vector<HighStmt> &Stmts, size_t End);
 
+/// Whether a `break` in \p Stmts ends the loop that holds them: one that no
+/// nested loop or switch takes for its own.
+bool breaksOutOf(const std::vector<HighStmt> &Stmts) {
+  for (const HighStmt &S : Stmts) {
+    switch (S.Kind) {
+    case StmtKind::Break:
+      return true;
+    case StmtKind::While:
+    case StmtKind::DoWhile:
+    case StmtKind::For:
+    case StmtKind::Switch:
+      continue;
+    default:
+      break;
+    }
+    if (breaksOutOf(S.Body) || breaksOutOf(S.ElseBody))
+      return true;
+    for (const auto &ClauseBody : S.EHClauseBodies)
+      if (breaksOutOf(ClauseBody))
+        return true;
+  }
+  return false;
+}
+
 bool stmtAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
                     const HighStmt &Stmt) {
   if (Hidden(Stmt))
@@ -154,6 +178,14 @@ bool stmtAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
   case StmtKind::Return:
   case StmtKind::Goto:
     return true;
+  case StmtKind::While:
+  case StmtKind::DoWhile:
+  case StmtKind::For:
+    // A loop whose test always holds runs until a statement in it leaves;
+    // with no break that ends it, nothing falls out of it.
+    return (!Stmt.Cond ||
+            (Stmt.Cond->Kind == ExprKind::Const && Stmt.Cond->ConstVal != 0)) &&
+           !breaksOutOf(Stmt.Body);
   case StmtKind::IfElse:
     return stmtsAlwaysExit(Hidden, LeftOut, Stmt.Body, Stmt.Body.size()) &&
            stmtsAlwaysExit(Hidden, LeftOut, Stmt.ElseBody,
@@ -168,7 +200,13 @@ bool stmtAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
       return false;
     if (Stmt.EHClauseBodies.empty())
       return true;
-    for (const auto &ClauseBody : Stmt.EHClauseBodies) {
+    for (size_t I = 0; I < Stmt.EHClauseBodies.size(); ++I) {
+      // A cleanup runs while the exception unwinds and rethrows it: nothing
+      // after the try follows it.
+      if (I < Stmt.EHClauses.size() &&
+          Stmt.EHClauses[I].Kind == HighEHClauseKind::CxxCleanup)
+        continue;
+      const auto &ClauseBody = Stmt.EHClauseBodies[I];
       if (!stmtsAlwaysExit(Hidden, LeftOut, ClauseBody,
                            hasFallthroughExceptClause(Stmt)
                                ? printedTryBodyEnd(Hidden, LeftOut, ClauseBody)
