@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file One bounded startup graph, relocation ledger and mapping owner.
+#include "DarwinCallbacks.h"
 #include "DarwinLibSystem.h"
 #include "DarwinProcess.h"
 #include "DarwinTLS.h"
@@ -14,6 +15,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/BinaryFormat/MachO.h"
+#include "llvm/Support/Endian.h"
 
 #include <deque>
 #include <set>
@@ -37,6 +39,7 @@ class ImageGraph {
   const ProcessOptions &Options;
   ExecutionBudget *Budget;
   std::deque<Node> Nodes;
+  std::vector<size_t> StartupOrder;
   std::map<std::string, const DarwinModuleInput *> Catalogue;
   std::map<std::string, size_t> Resident;
   ProcessImage Out{};
@@ -73,7 +76,7 @@ class ImageGraph {
               : L.MainEntries || L.ThreadEntries) ||
         L.HasNonEntryThreadState || L.RequestedStackSize)
       return failure(diagnostic::ImageEntry);
-    if (L.HasInitializers)
+    if (L.HasTerminators)
       return failure(diagnostic::ImageDependencies);
     if (L.DylibIdentities != (Main ? 0u : 1u))
       return failure("Darwin image has an invalid dylib identity");
@@ -94,7 +97,7 @@ class ImageGraph {
     if (auto E = validate(N.Loaded, Main))
       return E;
     N.Linked = !Main || N.Loaded.HasFixups || N.Loaded.HasTLS ||
-               !N.Loaded.Dependencies.empty();
+               N.Loaded.HasInitializers || !N.Loaded.Dependencies.empty();
     if (N.Linked) {
       if (!(N.Loaded.Flags & MH_TWOLEVEL) || (Main && !N.Loaded.MainEntries))
         return failure(diagnostic::LibSystemNamespace);
@@ -159,6 +162,7 @@ class ImageGraph {
       N.Dependencies.push_back(Target);
     }
     N.Active = false;
+    StartupOrder.push_back(Index);
     return check();
   }
   llvm::Error map(Node &N, bool Main) {
@@ -206,6 +210,13 @@ class ImageGraph {
       Out.Memory.Maximum.push_back({Segment.VA + N.Bias,
                                     (Segment.Size + Page - 1) & ~(Page - 1),
                                     Info.MaximumProtection});
+      if (Segment.isExecutable()) {
+        if (++Records > 65536)
+          return failure("Darwin startup graph exceeds its record limit");
+        if (auto E = charge(sizeof(ExecutableSpan)))
+          return E;
+        Out.ExecutableSpans.push_back({Segment.VA + N.Bias, Segment.Size});
+      }
       auto Copy = Segment;
       if (Info.Flags & SG_READ_ONLY)
         Copy.Flags = machoProtToNd(Info.InitialProtection & ~VM_PROT_WRITE);
@@ -318,6 +329,92 @@ class ImageGraph {
     }
     return llvm::Error::success();
   }
+  llvm::Error initializer(const Node &N, uint64_t Address, unsigned Width) {
+    if (++Records > 65536)
+      return failure("Darwin startup graph exceeds its record limit");
+    if (auto E = charge(sizeof(StartupCallback)))
+      return E;
+    const auto &Image = N.Loaded.Image;
+    const auto Storage = llvm::find_if(Image.Segments, [&](const auto &S) {
+      return Address >= S.VA && Width <= S.FileSz &&
+             Address - S.VA <= S.FileSz - Width;
+    });
+    if (Storage == Image.Segments.end())
+      return failure("Darwin initializer has no original file storage");
+    const auto *Bytes =
+        Image.Raw.data() + Storage->FileOff + (Address - Storage->VA);
+    uint64_t Word = Width == 4 ? llvm::support::endian::read32le(Bytes)
+                               : llvm::support::endian::read64le(Bytes);
+    if (Width == 8 && !Word)
+      return failure("Darwin initializer contains a null pointer");
+    const uint64_t Slot = Address + N.Bias;
+    const auto F =
+        llvm::lower_bound(Out.Fixups, Slot, [](const auto &A, uint64_t B) {
+          return A.Address < B;
+        });
+    if ((F != Out.Fixups.begin() && std::prev(F)->Address + 8 > Slot) ||
+        (F != Out.Fixups.end() && F->Address < Slot + Width &&
+         (Width != 8 || F->Address != Slot)))
+      return failure("Darwin initializer overlaps a relocation");
+    uint64_t Target;
+    if (F != Out.Fixups.end() && F->Address == Slot) {
+      Word = Target = F->Value;
+    } else {
+      const uint64_t Base = N.Bias + (Width == 4 ? Image.Base : 0);
+      if (Word > UINT64_MAX - Base)
+        return failure("Darwin initializer target overflows");
+      Target = Word + Base;
+    }
+    const uint64_t EntrySize =
+        Out.Architecture == GuestArchitecture::X64 ? 1 : 4;
+    if (!Target || (EntrySize == 4 && Target % 4) ||
+        !llvm::any_of(Image.Segments, [&](const auto &S) {
+          const uint64_t Begin = S.VA + N.Bias;
+          return S.isExecutable() && Target >= Begin && EntrySize <= S.Size &&
+                 Target - Begin <= S.Size - EntrySize;
+        }))
+      return failure(
+          "Darwin initializer target is outside its executable image");
+    Out.Initializers.push_back({Slot, Word, Target, Width});
+    return llvm::Error::success();
+  }
+  llvm::Error initializers(const Node &N) {
+    if (N.Loaded.InitializerSections.size() > 65536 - Records)
+      return failure("Darwin startup graph exceeds its record limit");
+    Records += N.Loaded.InitializerSections.size();
+    if (auto E = charge(2 * N.Loaded.InitializerSections.size() *
+                        sizeof(MachOExecutionInitializerSection)))
+      return E;
+    auto Sections = N.Loaded.InitializerSections;
+    llvm::sort(Sections, [](const auto &A, const auto &B) {
+      return A.Address < B.Address;
+    });
+    uint64_t PreviousEnd = 0;
+    for (const auto &S : Sections) {
+      if (auto E = check())
+        return E;
+      if (S.Address < PreviousEnd ||
+          (N.Loaded.Routine && S.Address < N.Loaded.Routine->Slot + 8 &&
+           S.Address + S.Size > N.Loaded.Routine->Slot))
+        return failure(
+            "Darwin initializer storage overlaps another callback table");
+      PreviousEnd = S.Address + S.Size;
+    }
+    if (N.Loaded.Routine)
+      if (auto E = initializer(N, N.Loaded.Routine->Slot, 8))
+        return E;
+    // dyld visits all pointer sections before the compact-offset sections.
+    for (const uint32_t Type : {S_MOD_INIT_FUNC_POINTERS, S_INIT_FUNC_OFFSETS})
+      for (const auto &S : N.Loaded.InitializerSections) {
+        if (S.Type != Type)
+          continue;
+        const unsigned Width = Type == S_INIT_FUNC_OFFSETS ? 4 : 8;
+        for (uint64_t Offset = 0; Offset < S.Size; Offset += Width)
+          if (auto E = initializer(N, S.Address + Offset, Width))
+            return E;
+      }
+    return llvm::Error::success();
+  }
 
 public:
   ImageGraph(ProfileSpec Profile, const ProcessOptions &Options,
@@ -388,6 +485,17 @@ public:
       if (auto E = link(N))
         return std::move(E);
     }
+    llvm::sort(Out.Fixups, [](const auto &A, const auto &B) {
+      return A.Address < B.Address;
+    });
+    for (size_t Index : StartupOrder)
+      if (auto E = initializers(Nodes[Index]))
+        return std::move(E);
+    Out.HasTLSCallbacks = llvm::any_of(Out.Imports, [](const auto &I) {
+      return I.second == LibSystemGateKind::TLVAtExit;
+    });
+    if (auto E = charge(DarwinCallbacks::metadataBytes(Out.HasTLSCallbacks)))
+      return std::move(E);
     if (Out.Plan.MappedBytes + ModelBytes > Available - Out.MetadataBytes)
       return failure(diagnostic::ProcessLimits);
     if (auto E = check())

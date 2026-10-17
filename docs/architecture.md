@@ -7280,8 +7280,18 @@ it copies live relocated bytes once, validates descriptor/frame identity and
 preserves non-result registers. `DarwinMemory` keeps TLS reservations resident;
 `ProcessReport` serializes named resolver events through the existing schema.
 Public `DarwinProcessOptions` and `darwin.modules` only supply original inputs;
-no host loader, search, callback execution or second symbol-resolution owner is
+no host loader, search or second symbol-resolution owner is
 introduced. See [Darwin environments](darwin-emulation.md) for the finite contract.
+
+`MachOExecutionImage` also retains original constructor section/routines facts.
+`DarwinImage` alone admits local executable targets after relocation and orders
+shared dependencies once in postorder. `DarwinCallbacks` owns startup, main and
+main-thread TLS termination, authenticated return frames and private pending
+exit state. It reuses `IntegerABI`, the original process stack/return page and
+the existing `ExecutionSession` budget. `DarwinStack` owns bounded `ProgramVars`;
+`DarwinLibSystem` decodes the exact void TLS-registration and nonreturning exit
+ABIs before delegating their lifecycle effects. Runtime callback targets retain
+unrounded original executable spans, and termination preserves the current stack.
 
 ### Sequential raw compare-and-exchange
 

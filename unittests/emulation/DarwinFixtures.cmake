@@ -223,3 +223,5 @@ if(TARGET NeverDProcessPublicTests)
 endif()
 include(DarwinDylibFixtures.cmake)
 include(DarwinAddendFixtures.cmake)
+
+include(DarwinCallbackFixtures.cmake)

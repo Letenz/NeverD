@@ -73,7 +73,7 @@ extra flavors and conflicting entries are rejected. No host environment or
 auxiliary Linux vector is inherited. Startup follows the distinction described
 in Apple's [dyld architecture](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-The finite contracts below admit libSystem, explicit startup dylibs and ordinary C main-thread TLS. Constructors/destructors, TLS callbacks, arm64e/PAC, unsupported CPU subtypes, encrypted payloads and unmodeled load commands fail before execution. Main executables retain their preferred addresses and dylibs receive disjoint deterministic placements. Code-signing blobs are metadata, without AMFI or entitlement policy.
+The finite contracts below admit libSystem, explicit startup dylibs, startup constructors and main-thread C/C++ TLS. Global destructors, legacy TLS initializer sections, arm64e/PAC, unsupported CPU subtypes, encrypted payloads and unmodeled load commands fail explicitly. Main executables retain their preferred addresses and dylibs receive disjoint deterministic placements. Code-signing blobs are metadata, without AMFI or entitlement policy.
 
 ## Darwin services
 
@@ -2693,7 +2693,7 @@ The process maps authenticated scalar call gates and one fresh main-thread errno
 
 `SG_READ_ONLY` makes current segment protection read-only after fixups while preserving its declared maximum protection. Native O0/O1/O2 observations confirm that a declared read/write maximum permits restoring write access with `mprotect`. Gate and errno pages are separate resident model reservations and cannot be unmapped or reprotected by the guest. Preparation and execution retain one deadline and event account; decoded metadata and model pages consume the existing memory budget.
 
-Independent native controls cover O0/O1/O2. The same authored object runs through the system linker, classic linking and chained linking against real libSystem. Portable process/C/CLI/Python checks cover all five platform/ISA combinations; matching ARM64 HVF checks cover macOS, iOS-device and Simulator profiles. This finite single-thread contract does not complete dlopen/dlsym, arbitrary dylib loading, dyld shared cache, constructors, threads, Objective-C/Swift frameworks, Intel HVF or physical iOS qualification.
+Independent native controls cover O0/O1/O2. The same authored object runs through the system linker, classic linking and chained linking against real libSystem. Portable process/C/CLI/Python checks cover all five platform/ISA combinations; matching ARM64 HVF checks cover macOS, iOS-device and Simulator profiles. This finite single-thread contract does not complete dlopen/dlsym, arbitrary dylib loading, dyld shared cache, threads, Objective-C/Swift frameworks, Intel HVF or physical iOS qualification.
 
 Classic lazy pointer programs are resolved eagerly before entry. Each program must explicitly name its destination, ordinary provider ordinal and symbol; only pointer type and zero addend are admitted, with one DO_BIND immediately followed by DONE and no inherited state. One exact original rebase to local executable bytes plus one lazy bind may share a slot; both raw records consume the budget, and all other collisions fail. `dyld_stub_binder` is admitted only as a strong, zero-addend ordinary classic bind alongside actual lazy calls. Entering its refusal gate fails before C frame/argument decoding, errno changes or a native-call record. This supports ordinary call stubs with stable prepared pointers, without implementing the runtime lazy resolver or dyld private state. The six-function C fixture observes all slots before calls and after repeated calls; a native control requests eager binding and compares output/status with guest execution.
 
@@ -2723,7 +2723,7 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 101; matching ARM64 identities: 303
+native common catalogue: 82; required methods/platform: 102; matching ARM64 identities: 306
 ```
 
 ```json
@@ -2792,10 +2792,60 @@ Independent native O0/O1/O2 classic/chained controls retain status 83 and
 binary stdout `440054`; portable C/CLI/Python checks cover all five profiles.
 
 Nonzero libSystem gate, imported TLV descriptor and classic lazy addends,
-weak/reexport/resolver exports, constructors,
-destructors, TLS initialization callbacks, runtime dlopen/dlsym, threads and
+weak/reexport/resolver exports, global destructors,
+legacy TLS initialization sections, runtime dlopen/dlsym, threads and
 complete Apple frameworks remain unsupported. Native Intel and physical iOS
 execution remain unqualified.
+
+### Startup constructors and TLS termination
+
+Original `S_MOD_INIT_FUNC_POINTERS`, read-only `S_INIT_FUNC_OFFSETS` and one
+`LC_ROUTINES_64` initializer run before `LC_MAIN`. Dependencies initialize in
+declared postorder, with shared images initialized once. Within an image,
+the routines initializer precedes pointer sections, then compact offsets.
+Targets must belong to that image's original executable segment spans; ARM64
+requires four aligned entry bytes. Page padding and foreign/runtime targets
+give no callback authority. Relocations resolve through the existing ledger;
+compact offsets add the original image base and slide once. A pending slot
+modified by guest code fails explicitly before entry. Nonempty terminator
+sections and routines module/reserved state remain unsupported. These finite
+forms follow Apple's [initializer traversal](https://github.com/apple-oss-distributions/dyld/blob/dyld-1125.5/common/MachOAnalyzer.cpp).
+
+Constructors receive `argc`, `argv`, `envp`, `apple` and a bounded `ProgramVars`
+record containing the main Mach header and pointers to process-owned argc,
+argv, envp and program-name variables. The program name is the executable
+basename, independent of a custom argv0. `LC_MAIN` receives a fresh ordinary
+entry frame after startup. Guest C++ `thread_local` wrappers execute their
+own lazy construction code through the existing TLV resolver.
+
+Mach-O `__tlv_atexit` models the runtime `void _tlv_atexit(function, object)`
+ABI. Clang's unused third DSO carrier is ignored; the completed native-call
+event has two arguments and a null result, preserving errno and the result
+register. At most 1,024 pending registrations, including null callbacks and
+duplicates, fit in precharged storage. Objects are opaque full-width values.
+Null callbacks do nothing. Main return and C `exit` (Mach-O `_exit`) drain
+registrations in reverse order; registrations made by a destructor run before
+older entries. This follows Apple's [TLS termination owner](https://github.com/apple-oss-distributions/dyld/blob/dyld-1125.5/dyld/DyldRuntimeState.cpp)
+and [runtime entry ABI](https://github.com/apple-oss-distributions/dyld/blob/dyld-1125.5/dyld/DyldAPIs.cpp).
+
+Termination frames sit below the current SP and its x64 red zone, preserving
+live caller-stack objects during deep `exit`. Each balanced callback return
+uses a separate authenticated trap in the existing private return page.
+All guest instructions, calls and returns share the original session and
+instruction/event/deadline budget. Exit status and a main return value become
+final only after callbacks finish. C `_exit` (Mach-O `__exit`) and raw BSD exit
+terminate immediately, including from a constructor or destructor.
+Reentrant normal `exit` during termination fails explicitly. C `atexit`,
+`__cxa_atexit`, global destructors, legacy `S_THREAD_LOCAL_INIT_FUNCTION_POINTERS`,
+threads, exception runtimes and complete Apple frameworks remain unsupported.
+
+The original C/C++ graph checks dependency order, startup arguments,
+constructor TLS access, lazy TLS construction once, nested LIFO destruction,
+early constructor exits, live stack objects and fresh processes. Five portable
+profiles and three matching ARM64 HVF profiles cover classic/chained inputs;
+independent original macOS O0/O1/O2 controls disable stack-protector imports.
+Guard-data imports outside the finite provider remain refused. Native Intel
+and physical iOS execution remain unqualified.
 
 ```json
 {"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"darwin":{"modules":[{"name":"@loader_path/libneverd-base.dylib","path":"/inputs/libneverd-base.dylib"},{"name":"@loader_path/libneverd-leaf.dylib","path":"/inputs/libneverd-leaf.dylib"}]}}
@@ -2810,7 +2860,7 @@ TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live co
 resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
 lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
 addends: checked signed ordinary provider offsets; data/TLS initializers; original provider spans only
-unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; callbacks; dlopen/dlsym; threads
+unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; global destructors/legacy TLS init; dlopen/dlsym; threads
 workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
-native common catalogue: 82; required methods/platform: 101; matching ARM64 identities: 303
+native common catalogue: 82; required methods/platform: 102; matching ARM64 identities: 306
 ```

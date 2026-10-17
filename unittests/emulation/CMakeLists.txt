@@ -236,6 +236,7 @@ include(ProcessFixtures.cmake)
 add_neverd_unittest(NeverDDarwinProcessTests
   DarwinProcessTests.cpp
   DarwinImageTests.cpp
+  DarwinCallbackTests.cpp
   DarwinLinkingTests.cpp
   DarwinDylibTests.cpp
   DarwinLibSystemTests.cpp
