@@ -14,6 +14,13 @@ pidfd lifetimes. `LinuxPIDFD.*` retains the fixed-catalogue kernel matrix.
 zero-size identities at O0/O2 across Android relocation formats and available
 Unicorn/HVF backends. `AndroidAllocationOptions.*` rejects non-byte inputs.
 
+`AndroidSemaphore.*` runs independently authored API 28 callers at O0/O2
+with ordinary, Android-packed and RELR relocations on available CPU backends.
+It checks full object bytes, reserved padding, errno, overflow, aliasing,
+read-only tails, dynamic provider lifetimes, multiple consumers, token
+competition after wake, deadlock and failed resumption. Timed waits remain an
+explicit unsupported boundary.
+
 ## MXCSR recovery checks
 
 `InterpreterSpecialization.MXCSR*` covers arbitrary entry state, exact memory values, reserved bits, DAZ, aliases, malformed forms, node projection and exact/short budgets. `PEFixedImageTest.RawMXCSR*` checks legacy/VEX native bytes and mask-bound receipts. The machine-state and native/LLVM refinement owners verify that unused capabilities cannot expand their interfaces.

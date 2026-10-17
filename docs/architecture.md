@@ -4709,6 +4709,12 @@ waits. Selection, context switching, wait resumption and result publication
 have separate helpers; wake never publishes a successful lock. Priority
 inheritance and external-process scheduling remain unsupported.
 
+`AndroidSemaphore` owns API 28 count-word validation and transitions in guest
+RAM. Static and dynamic import dispatch share it. `GuestThreads` retains only
+the suspended request, address, sharing bit and wake readiness; resumption
+reloads the word through Bionic. A wake does not allocate a token or publish a
+return. No host semaphore or second count registry participates.
+
 `LinuxMemory` owns anonymous placement, syscall errors and the process break.
 It queries `AddressSpace::mappings()` for current virtual ranges and permissions;
 it does not maintain another mapping table. The pure snapshot is sorted and
