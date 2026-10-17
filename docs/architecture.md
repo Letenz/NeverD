@@ -508,8 +508,13 @@ emitted source caches include the options in their identity. LLVM call-site
 preparation owns a separate MedIR copy so opening that view cannot change the
 prepared inputs used by a later HighC enhancement. The additive
 `neverd_ir_view_ex_json` API validates options before preparation; the legacy
-page API keeps default behavior and bytecode support. Source options never
-change the lifting, patching or general module optimizer defaults.
+page API keeps default behavior and bytecode support. Whole-program
+decompilation takes symbolic simplification as an explicit session choice
+(`neverd_session_set_source_symbolic`, the CLI's `--symbolic-simplify` without
+`--func`): HighIR conversion and the LLVM source optimizer, sharded or not,
+then simplify every function with whole-program evidence such as the wide
+returns its callers observe, which one function's view lacks. Source options
+never change the lifting, patching or general module optimizer defaults.
 
 LLVMC defaults to LLVM O2 after ordinary frame and SSA promotion. Basic scalar
 cleanup, O0, O1, O3 and a bounded custom pass selection are explicit alternatives.

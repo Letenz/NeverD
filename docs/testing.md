@@ -1877,7 +1877,9 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 ```
 
 `NeverDMBASourceTests` assembles generic 8/16/32/64-bit arithmetic and shared
-Boolean identities as ELF, COFF, and Mach-O. It checks both HighC and LLVMC for
+Boolean identities as ELF, COFF, and Mach-O. Ordinary source keeps MBA, so
+every case decompiles with the explicit `--symbolic-simplify`, whole-program
+or for one function. It checks both HighC and LLVMC for
 remaining MBA, recompiles their C at `-O0` and `-O2` with undefined-behavior
 traps, and compares results with unsigned arithmetic, parity, and memory-store
 oracles. A full-product counterexample ensures low-word rules do not discard

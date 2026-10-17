@@ -614,14 +614,20 @@ int runLift(neverd_session_t Sess) {
 }
 
 int runDecompile(neverd_session_t Sess) {
-  const bool SourceTransforms = SourceSymbolic.getNumOccurrences() ||
-                                SourceLLVMControlFlow.getNumOccurrences() ||
-                                SourceLLVMLevel.getNumOccurrences() ||
-                                SourceLLVMPasses.getNumOccurrences();
-  if (SourceTransforms && (ExportFunc.empty() || NoOpt || Devirtualize)) {
-    WithColor::error()
-        << "source optimization options require --func and cannot "
-           "combine with --no-opt or --devirtualize\n";
+  const bool LLVMSourceTransforms = SourceLLVMControlFlow.getNumOccurrences() ||
+                                    SourceLLVMLevel.getNumOccurrences() ||
+                                    SourceLLVMPasses.getNumOccurrences();
+  const bool SourceTransforms =
+      SourceSymbolic.getNumOccurrences() || LLVMSourceTransforms;
+  if (SourceTransforms && (NoOpt || Devirtualize)) {
+    WithColor::error() << "source optimization options cannot combine with "
+                          "--no-opt or --devirtualize\n";
+    return 1;
+  }
+  // Symbolic simplification also applies to the whole program; the LLVM
+  // source options shape one function's view.
+  if (LLVMSourceTransforms && ExportFunc.empty()) {
+    WithColor::error() << "LLVM source optimization options require --func\n";
     return 1;
   }
   if (!LlvmRoute && (SourceLLVMControlFlow.getNumOccurrences() ||
@@ -968,6 +974,7 @@ int runDecompile(neverd_session_t Sess) {
                          : neverd_decompile(Sess, Entry);
     }
   } else {
+    neverd_session_set_source_symbolic(Sess, SourceSymbolic ? 1 : 0);
     Source =
         DedicatedLanguage
             ? neverd_decompile_all_ex(Sess, InPath, Language, NoOpt, MaxFunc)
