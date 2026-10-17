@@ -23,13 +23,16 @@ using namespace neverd;
 void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
   if (!Opts.RecordDefinitions || !Opts.EmitIncludes)
     return;
-  // Every named record and enumeration the unit's types reach.
+  // Every named record and enumeration the unit's types reach, and the
+  // typedefs its declarations name them by, which a signature spells.
   std::vector<TypeRef> Records;
   std::set<const NdType *> Seen;
   std::set<std::string> Named;
   std::function<void(const TypeRef &)> Visit = [&](const TypeRef &Type) {
     if (!Type || !Seen.insert(Type.get()).second)
       return;
+    if (!Type->TypedefName.empty() && Named.insert(Type->TypedefName).second)
+      Records.push_back(NdType::makeNamedRecord(Type->TypedefName));
     switch (Type->Kind) {
     case NdTypeKind::Ptr:
       Visit(Type->Pointee);
@@ -106,6 +109,15 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
     GlobalIdentifierAllocator.allocateVerbatim(Name);
   for (const std::string &Name : RecordDefinitions.Enumerations)
     GlobalIdentifierAllocator.allocateVerbatim(Name);
+}
+
+std::string HighCWriter::declaredAs(const TypeRef &Type,
+                                    llvm::StringRef Declarator) const {
+  if (Type && !Type->TypedefName.empty() &&
+      llvm::is_contained(RecordDefinitions.Types, Type->TypedefName))
+    return cNamedTypeSpelling(Type->TypedefName) +
+           (Declarator.empty() ? "" : " " + Declarator.str());
+  return declarationToC(Type, Declarator);
 }
 
 bool HighCWriter::memberOfDefinedRecord(const HighExpr &Addr) const {
