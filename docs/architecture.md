@@ -4783,6 +4783,13 @@ the Android adapter owns LP64 field order, reserved-mask filtering and errno.
 The kernel owner installs a new action before copying the old action out, so a
 copy fault does not undo the installation. No CPU backend or SDK interprets a
 handler address, queues a signal or delivers one.
+`AndroidAuxv` owns admission and lookup of the native workload's explicit,
+complete auxiliary vector. Bionic alone applies `getauxval`'s full-width
+lookup and thread-local errno behavior; constructors and dynamic imports use
+that same owner. This does not replace Linux process startup's synthesized
+stack vector or expose host capability state. Supplied feature bits do not
+authorize instructions outside the checked CPU contract.
+
 Bionic also owns the API 28 `pthread_once` control state. It requests guest
 initialization through an internal callback result; the native runner suspends
 the import and runs the callback on the same CPU and live stack. Pending

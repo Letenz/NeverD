@@ -10,6 +10,7 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidMemoryCalls.cpp
   AndroidOnce.cpp
   AndroidQueries.cpp
+  AndroidAuxv.cpp
   AndroidRandom.cpp
   AndroidProperties.cpp
   AndroidJNI.cpp

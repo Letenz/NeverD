@@ -6265,6 +6265,15 @@ is useful for local comparisons, not a portable throughput guarantee.
 
 ### Android native workloads
 
+`AndroidAuxvTests` compares imported and named `getauxval` calls at O0/O2 with
+ordinary, Android-packed and RELR relocations on each available checked ARM64
+transport. It covers complete output buffers and canaries, 64-bit type/value
+preservation, absent versus empty input, present zero versus missing-key errno,
+constructor/finalizer queries, duplicate/null/oversized input rejection, the
+128-entry boundary, closed provider refusal and per-thread errno isolation.
+Malformed JSON shape and unsigned ranges are checked separately. These are
+authored inputs; the tests do not inherit host auxiliary-vector values.
+
 `AndroidObservation.*` checks complete workload equality with and without
 selected PC observations across ordinary/APS2/RELR images and Unicorn/HVF.
 Exact instruction bytes provide independent before-store register and memory
