@@ -75,7 +75,15 @@ struct SourceDialectLocalTypes {
     /// A method that returns a pointer to the member.
     bool Accessor = false;
   };
-  std::map<std::string, std::map<std::string, std::vector<Hop>>> Members;
+  /// The hops to a member, its own last.  A bit-field's lead to the record
+  /// whose methods read and write it, Getter and Setter.
+  struct Path {
+    std::vector<Hop> Hops;
+    std::string Getter, Setter;
+
+    bool bitField() const { return !Getter.empty() && !Setter.empty(); }
+  };
+  std::map<std::string, std::map<std::string, Path>> Members;
   /// The records the text defines without members, as it only points to
   /// them.
   std::set<std::string> Opaque;

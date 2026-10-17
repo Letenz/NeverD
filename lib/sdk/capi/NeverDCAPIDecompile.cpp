@@ -624,9 +624,11 @@ dialectLocalTypes(const LocalTypesDebugContext *Local, llvm::StringRef Original,
   for (const auto &[Record, Members] : Embedded.Members) {
     auto &Paths = Result.Members[Record];
     for (const auto &[Name, Path] : Members) {
-      auto &Hops = Paths[Name];
+      SourceDialectLocalTypes::Path &To = Paths[Name];
       for (const types::MemberPath::Hop &Hop : Path.Hops)
-        Hops.push_back({Hop.Name, Hop.Accessor});
+        To.Hops.push_back({Hop.Name, Hop.Accessor});
+      To.Getter = Path.Getter;
+      To.Setter = Path.Setter;
     }
   }
   for (const std::string &Name : Held->DeclaredTypes)
