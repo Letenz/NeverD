@@ -1420,8 +1420,13 @@ struct BitFieldPrograms {
 
 BitFieldPrograms bitFieldPrograms() {
   using namespace neverd::types;
-  // Laid out as GNU's compilers lay them out, which the C side builds with.
+  // Use the native C oracle's record ABI. Windows Clang uses Microsoft
+  // bit-field allocation; the System V and Apple hosts use Itanium allocation.
+#if defined(_WIN32)
+  TypeLibrary Library(DataModel::LLP64);
+#else
   TypeLibrary Library(DataModel::LP64);
+#endif
   EXPECT_TRUE(parseCTypes(R"(
     struct _FLAGS {
       unsigned char Kind;
@@ -1446,9 +1451,8 @@ BitFieldPrograms bitFieldPrograms() {
   )",
                           Library)
                   .ok());
-  // GNU's compilers pack _SHARED's bit-fields at the bit after Kind, in the
-  // bytes of the units of their types that Kind starts, which no field of
-  // those types can hold.
+  // Independently check the two native layouts before rendering the views:
+  // Itanium allocation shares Kind's unit, while Microsoft starts a new unit.
   const LocalType *Flags = Library.find("_FLAGS");
   const LocalType *Shared = Library.find("_SHARED");
   EXPECT_NE(Flags, nullptr);
@@ -1456,8 +1460,9 @@ BitFieldPrograms bitFieldPrograms() {
   if (!Flags || !Shared)
     return {};
   EXPECT_EQ(Shared->Record->Members[1].Name, "Ready");
-  EXPECT_EQ(Shared->Record->Members[1].BitOffset, 8u);
-  EXPECT_EQ(Shared->Record->Members[5].BitOffset, 64u);
+  const bool Microsoft = Library.recordABI() == RecordABI::Microsoft;
+  EXPECT_EQ(Shared->Record->Members[1].BitOffset, Microsoft ? 32u : 8u);
+  EXPECT_EQ(Shared->Record->Members[5].BitOffset, Microsoft ? 128u : 64u);
   const LocalType *Roots[] = {Flags, Shared};
   RenderOptions C;
   C.Lang = Language::C;

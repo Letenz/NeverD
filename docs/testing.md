@@ -861,6 +861,14 @@ They cover intermediate D0 transport, D16-D31 scratch registers and both arms
 of an FP return join. `NeverDARM32ObjectImmediateTests` runs the five ARM32 host C
 differentials separately; the Windows EH CI lane runs these cases with its
 Clang 18 toolchain, including NEON zip/mask shapes different from Clang 23.
+The shared HighC host fixture reports native `-m32` execution unavailable on
+macOS, where a 64-bit build would truncate the kernels' addresses. Linux and
+Windows retain the actual 32-bit differential. Native x87 IR inputs use
+`LLVMHostFixture.h` at both host compiler boundaries; the original verified
+module and semantic proofs remain unchanged. The source dialect bit-field
+differential uses its native C oracle's record ABI: Microsoft on Windows and
+Itanium on the 64-bit System V and Apple hosts, with independent layout
+assertions before the Rust/Go byte comparisons.
 The call controls retain explicitly prepared floating registers for both direct
 and indirect calls whose ABI operands have not yet been recovered.
 
