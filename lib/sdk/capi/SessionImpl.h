@@ -890,6 +890,7 @@ struct Session {
       Recovery.CallMayWriteGPRs = PipeResult.CallMayWriteGPRs;
       Recovery.CallEntryReadGPRs = PipeResult.CallEntryReadGPRs;
       Recovery.CallEntryStackArgs = PipeResult.CallEntryStackArgs;
+      Recovery.CallEntryStackSlots = PipeResult.CallEntryStackSlots;
       Recovery.CallArgumentSources = PipeResult.CallArgumentSources;
       Recovery.OmittedCallees = PipeResult.OmittedCallees;
       recoverModuleCallAbi(Img, Recovery, FuncNames);
@@ -1066,6 +1067,11 @@ struct PipelineRunner {
 /// naming \p Kind.
 bool saveSidecar(Session *S, const std::filesystem::path &Path,
                  llvm::json::Value Values, llvm::StringRef Kind);
+
+/// Records in the project folder's project.json which build of the input the
+/// project's files describe, when it names none or another; false with the
+/// session's error.
+bool recordProjectInput(Session *S);
 
 /// Read the session's input again as it was loaded and publish \p Request's
 /// debug information into it, in the order the names rank, so a file loaded

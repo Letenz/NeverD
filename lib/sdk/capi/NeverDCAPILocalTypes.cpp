@@ -18,6 +18,7 @@
 #include "neverd/debug/DWARFLoader.h"
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/support/FilePath.h"
+#include "neverd/support/ProjectFiles.h"
 #include "neverd/support/ProjectWriteLock.h"
 #include "neverd/types/DWARFTypeImport.h"
 #include "neverd/types/TypeJSON.h"
@@ -141,9 +142,7 @@ void redeclare(Session &S) {
 }
 
 std::filesystem::path declarationsPath(const Session &S) {
-  auto Path = S.FilePath;
-  Path += ".neverd-types.json";
-  return Path;
+  return project_files::path(S.FilePath, project_files::File::Types);
 }
 
 llvm::json::Array declarationRows(const Session &S) {

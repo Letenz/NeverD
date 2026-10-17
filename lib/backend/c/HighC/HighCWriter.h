@@ -45,6 +45,9 @@
 
 namespace neverd {
 
+/// The attribute that spells \p CC on a declaration, empty for none.
+llvm::StringRef debugCallConvAttribute(DebugCallConv CC);
+
 /// Internal writer that converts HighIR functions to C source text.
 /// Split across HighCEmitter.cpp (module-level orchestration),
 /// HighCFuncWriter.cpp (function rendering), HighCStmtWriter.cpp (statement

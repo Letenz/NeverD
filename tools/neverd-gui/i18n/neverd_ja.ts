@@ -2638,6 +2638,22 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>データベースを保存しました：%1</translation>
     </message>
     <message>
+        <source>The project&apos;s files describe another build of %1 (SHA-256 %2…); their addresses may not match this one. The next edit records this build.</source>
+        <translation>プロジェクトのファイルは %1 の別のビルド（SHA-256 %2…）を記述しています。アドレスがこのビルドと一致しない可能性があります。次の編集でこのビルドが記録されます。</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here.</source>
+        <translation>プロジェクトのファイルがディスク上で変更されたため読み込みました。元に戻す操作はここから始まります。</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here. Unsaved comments kept on top: %1</source>
+        <translation>プロジェクトのファイルがディスク上で変更されたため読み込みました。元に戻す操作はここから始まります。その上に保持した未保存のコメント：%1</translation>
+    </message>
+    <message>
+        <source>The input file changed on disk; reload it to continue editing.</source>
+        <translation>入力ファイルがディスク上で変更されました。編集を続けるには再読み込みしてください。</translation>
+    </message>
+    <message>
         <source>Could not save the database: %1</source>
         <translation>データベースを保存できませんでした：%1</translation>
     </message>
