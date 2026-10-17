@@ -9,7 +9,8 @@
 // a virtual call takes the object a dominating block loaded into RDI, and a
 // void method returns without writing RAX on one path while it tail-calls on
 // the others.  Also xxd's: wrappers pass their arguments straight to a libc
-// import, and end at a helper that never returns.
+// import, and end at a helper that never returns.  Mach-O images follow
+// the same convention.
 //
 //===----------------------------------------------------------------------===//
 
@@ -62,7 +63,7 @@ std::vector<uint8_t> rel32(va_t Next, va_t To) {
           static_cast<uint8_t>(Delta >> 16), static_cast<uint8_t>(Delta >> 24)};
 }
 
-BinaryImage makeImage() {
+BinaryImage makeImage(BinaryFormat Format = BinaryFormat::ELF) {
   std::vector<uint8_t> Code(0xC0, 0xCC);
   // is_doc(node): rdi = node->impl; return impl && impl->vtbl[11](impl) == 9.
   put(Code, IsDoc, {0x48, 0x8B,
@@ -120,7 +121,7 @@ BinaryImage makeImage() {
   BinaryImage Img;
   Img.Arch = Arch::X64;
   Img.Bits = Bitness::Bits64;
-  Img.Format = BinaryFormat::ELF;
+  Img.Format = Format;
   Img.Base = 0x400000;
   Img.Entry = Save;
   Segment Seg;
@@ -135,7 +136,9 @@ BinaryImage makeImage() {
   const char *Names[] = {"is_doc", "save", "helper", "helper2"};
   for (unsigned I = 0; I < 4; ++I) {
     Symbol Function = Symbol::makeFunc(Funcs[I].first, Funcs[I].second);
-    Function.Name = Names[I];
+    // A Mach-O symbol spells a C name with a leading underscore.
+    Function.Name =
+        (Format == BinaryFormat::MachO ? "_" : "") + std::string(Names[I]);
     Img.Symbols.push_back(std::move(Function));
     Img.KnownCodeRanges.push_back(
         {Funcs[I].first, Funcs[I].first + Funcs[I].second});
@@ -143,8 +146,8 @@ BinaryImage makeImage() {
   return Img;
 }
 
-std::string lift() {
-  BinaryImage Img = makeImage();
+std::string lift(BinaryFormat Format = BinaryFormat::ELF) {
+  BinaryImage Img = makeImage(Format);
   llvm::LLVMContext Ctx;
   PipelineOptions Opts;
   Opts.EmitDumpOutput = false;
@@ -291,6 +294,16 @@ int main(void) {
   return document.field8 == 1 && element.field8 == 2 ? 0 : 1;
 }
 )");
+}
+
+TEST(SysVCallContract, MachOCallsPassTheRegistersTheirCalleesRead) {
+  // Apple's x86-64 convention is the System V one: is_doc reads the RDI save
+  // never wrote, so the call passes save's own node there as on ELF.
+  const std::string Source = lift(BinaryFormat::MachO);
+  const std::string SaveBody = body(Source, "save");
+  ASSERT_FALSE(SaveBody.empty()) << Source;
+  EXPECT_EQ(SaveBody.find("is_doc()"), std::string::npos) << SaveBody;
+  EXPECT_NE(SaveBody.find("is_doc("), std::string::npos) << SaveBody;
 }
 
 TEST(SysVCallContract, ALowByteWriteIsTheReturnValueOnEveryPath) {

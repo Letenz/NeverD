@@ -13,6 +13,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../LibraryPrototype.h"
 #include "CSyntaxTree.h"
 
 #include "neverd/libc/LibCNames.h"
@@ -178,20 +179,20 @@ private:
 
   /// The C declaration of a C runtime routine NeverD knows.
   static std::string libcDeclaration(const libc::LibCPrototype &P) {
-    std::string Text = std::string(P.Return) + " " + std::string(P.Name) + "(";
+    std::string Function = std::string(P.Name) + "(";
     for (unsigned I = 0; I < P.ParamCount; ++I) {
       std::string Param(P.Params[I]);
       // The Windows API convention is spelled as MSVC spells it.
       for (size_t At = Param.find(libc::kWinapiMarker); At != std::string::npos;
            At = Param.find(libc::kWinapiMarker))
         Param.replace(At, libc::kWinapiMarker.size(), "__stdcall ");
-      Text += (I ? ", " : "") + Param;
+      Function += (I ? ", " : "") + Param;
     }
     if (P.Variadic)
-      Text += P.ParamCount ? ", ..." : "...";
+      Function += P.ParamCount ? ", ..." : "...";
     else if (!P.ParamCount)
-      Text += "void";
-    return Text + ");";
+      Function += "void";
+    return c_library::declarator(P.Return, Function + ")") + ";";
   }
 
   //===--- Types ---===//

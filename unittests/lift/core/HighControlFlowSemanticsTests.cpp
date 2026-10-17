@@ -1249,6 +1249,50 @@ TEST(HighControlFlowSemantics, AShiftByZeroIsItsOperand) {
   EXPECT_EQ(F.Body[0].RetVal->Op, NdOp::INT_RIGHT);
 }
 
+TEST(HighControlFlowSemantics, ATruthValueSelectingOneOrZeroIsItself) {
+  // -O0 AArch64 materializes `x == 0` as `cset w8, eq; and w8, w8, #1`,
+  // which reads `(x == 0 ? 1 : 0) & 1`.
+  auto Select = [](ExprPtr Condition, uint64_t Then, uint64_t Else) {
+    auto S = std::make_shared<HighExpr>();
+    S->Kind = ExprKind::BinOp;
+    S->Op = NdOp::SELECT;
+    S->Type = NdType::makeInt(4);
+    S->Operands = {std::move(Condition), HighExpr::makeConst(Then, 4),
+                   HighExpr::makeConst(Else, 4)};
+    return S;
+  };
+  for (const bool Inverted : {false, true}) {
+    SCOPED_TRACE(Inverted);
+    auto Equal = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                     HighExpr::makeConst(0, 8));
+    HighFunc F;
+    F.Body = {result(0, HighExpr::makeBinop(
+                            NdOp::INT_AND,
+                            Select(Equal, Inverted ? 0 : 1, Inverted ? 1 : 0),
+                            HighExpr::makeConst(1, 4)))};
+    simplifyAllExprs(F.Body);
+    const HighExpr &Value = *F.Body[0].RetVal;
+    ASSERT_EQ(Value.Kind, ExprKind::UnaryOp);
+    ASSERT_EQ(Value.Op, NdOp::INT_ZEXT);
+    EXPECT_EQ(Value.Type->Size, 4u);
+    const HighExpr *Truth = Value.Operands[0].get();
+    if (Inverted) {
+      ASSERT_EQ(Truth->Op, NdOp::BOOL_NOT);
+      Truth = Truth->Operands[0].get();
+    }
+    EXPECT_EQ(Truth->Op, NdOp::INT_EQUAL);
+  }
+  // A condition that may hold another number selects as `x != 0` does, and a
+  // value that may have other bits keeps its mask.
+  HighFunc F;
+  F.Body = {result(0, Select(local(0), 1, 0)),
+            result(4, HighExpr::makeBinop(NdOp::INT_AND, local(1),
+                                          HighExpr::makeConst(1, 8)))};
+  simplifyAllExprs(F.Body);
+  EXPECT_EQ(F.Body[0].RetVal->Op, NdOp::SELECT);
+  EXPECT_EQ(F.Body[1].RetVal->Op, NdOp::INT_AND);
+}
+
 TEST(HighControlFlowSemantics, MemoryBoundaryAncestorsMatchIndividualQueries) {
   for (const bool Atomic : {false, true}) {
     auto Memory = HighExpr::makeLoad(local(0), NdType::makeInt(8));
@@ -2723,7 +2767,7 @@ TEST(HighControlFlowSemantics, ThreadedSoleSuccessorKeepsItsTransferAndPhi) {
     Table.Targets = {0x1100, 0x1200, 0x1300};
     Table.CaseLabels = {0, 1, 2};
     MedToHighConverter Converter;
-    Converter.setJumpTables({Table});
+    M.JumpTables = {Table};
     const auto F = Converter.convert(M, Architecture);
     const uint64_t Expected[] = {7, 37, 93};
     for (uint64_t Condition : {0u, 1u, 2u}) {
@@ -2780,7 +2824,7 @@ TEST(HighControlFlowSemantics, SwitchPublishesTheCaseOfEachTablePosition) {
   Table.Targets = {0x1100, 0x1200, 0x1300};
   Table.CaseLabels = {0, 1, 2};
   MedToHighConverter Converter;
-  Converter.setJumpTables({Table});
+  M.JumpTables = {Table};
   const auto F = Converter.convert(M, Architecture);
 
   const auto Published = F.SwitchLabelsByJump.find(0x1008);
@@ -3119,7 +3163,7 @@ TEST(HighControlFlowSemantics, GotoToReturnBlockKeepsItsStoreAndLoad) {
   Table.Targets = {0x1100, 0x1200};
   Table.CaseLabels = {0, 1};
   MedToHighConverter Converter;
-  Converter.setJumpTables({Table});
+  M.JumpTables = {Table};
   const auto F = Converter.convert(M, Architecture);
   unsigned Stores = 0;
   walkStmts(F.Body,
@@ -6013,7 +6057,7 @@ TEST(HighControlFlowSemantics, JumpTableSuccessorsKeepCallsStoresAndPhiEdges) {
       Table.CaseLabels = {0, 1, 2};
       const std::map<va_t, std::string> Names{{0x2000, "observe"}};
       MedToHighConverter Converter;
-      Converter.setJumpTables({Table});
+      M.JumpTables = {Table};
       Converter.setFuncNames(&Names);
       const auto High = Converter.convert(M, Architecture);
       unsigned Stores = 0, Calls = 0;
@@ -6060,7 +6104,7 @@ TEST(HighControlFlowSemantics, JumpTableLoopEdgesPreserveParallelPhiSnapshots) {
       Table.Targets = {0x1200, 0x1100};
       Table.CaseLabels = {0, 1};
       MedToHighConverter Converter;
-      Converter.setJumpTables({Table});
+      Med.JumpTables = {Table};
       const auto High = Converter.convert(Med, Architecture);
       EXPECT_TRUE(buildHighSourceFlowGraph(High).Diagnostics.Complete);
       for (unsigned Count = 1; Count <= 8; ++Count) {
@@ -6071,7 +6115,7 @@ TEST(HighControlFlowSemantics, JumpTableLoopEdgesPreserveParallelPhiSnapshots) {
       // The loop successor's PHIs cannot be assigned to some other case if
       // its dispatch edge is missing. Incomplete metadata stays unsupported.
       Table.Targets[1] = 0x1200;
-      Converter.setJumpTables({Table});
+      Med.JumpTables = {Table};
       const auto Incomplete = Converter.convert(Med, Architecture);
       EXPECT_FALSE(buildHighSourceFlowGraph(Incomplete).Diagnostics.Complete);
     }

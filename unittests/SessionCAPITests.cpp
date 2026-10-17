@@ -3423,6 +3423,31 @@ TEST_F(SessionCAPITest,
 }
 #endif
 
+TEST_F(SessionCAPITest, MinGWImportVariableCallsReachTheirFunction) {
+  // A call through MinGW's `__imp_add_one`, which no code changes, calls
+  // add_one; one through `__imp_twice`, which its lazy binding rewrites, goes
+  // through the variable.  Both routes agree.
+  const auto Fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "loader" / "fixtures" / "mingw_imp_slots.exe";
+  std::ifstream Input(Fixture, std::ios::binary);
+  const std::string Exe =
+      write("mingw_imp_slots.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Index = neverd_func_find_by_name(Session, "entry");
+  ASSERT_GE(Index, 0);
+  const neverd_va_t Entry = neverd_func_entry(Session, Index);
+  const std::string Source = takeString(neverd_decompile(Session, Entry));
+  EXPECT_NE(Source.find("add_one(1)"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("imp_add_one"), std::string::npos) << Source;
+  // Neither `twice(2)` nor `bind_twice(2)`: the variable it calls through.
+  EXPECT_EQ(Source.find("twice(2)"), std::string::npos) << Source;
+  const std::string Llvm = takeString(neverd_decompile_llvm(Session, Entry));
+  EXPECT_NE(Llvm.find("add_one("), std::string::npos) << Llvm;
+  EXPECT_EQ(Llvm.find("twice(2)"), std::string::npos) << Llvm;
+}
+
 TEST_F(SessionCAPITest, LLVMCReadsAPointerTableAmongCodeAsData) {
   // The fixture keeps a pointer table among its code, as GNU ld keeps
   // __CTOR_LIST__ in .text, and reads it through a pointer in .data.  Taken

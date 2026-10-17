@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
 #include "HighCWriter.h"
@@ -2143,13 +2144,7 @@ HighCWriter::externalPrototype(const std::string &Name) const {
 }
 
 std::string HighCWriter::prototypeType(std::string_view Type) const {
-  std::string Text(Type);
-  const size_t At = Text.find(libc::kWinapiMarker);
-  if (At == std::string::npos)
-    return Text;
-  return Text.replace(At, libc::kWinapiMarker.size(),
-                      Opts.TheArch == Arch::X86 ? "__attribute__((stdcall)) "
-                                                : "");
+  return c_library::typeSpelling(Type, Opts.TheArch);
 }
 
 bool HighCWriter::takesPointerArgument(const HighExpr &E, size_t Index,

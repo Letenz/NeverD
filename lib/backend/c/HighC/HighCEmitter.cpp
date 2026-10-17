@@ -16,6 +16,7 @@
 
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../../../loader/Swift/SwiftErrorRuntime.h"
+#include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
 #include "../render/X86FPStateHelpers.h"
@@ -2163,18 +2164,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       // A routine no header declares takes the prototype the C library tables
       // give it; its calls convert their arguments to its parameter types.
       if (const libc::LibCPrototype *Prototype = prototypeForSymbol(Symbol)) {
-        OS << "extern ";
-        if (Prototype->Winapi && Opts.TheArch == Arch::X86)
-          OS << "__attribute__((stdcall)) ";
-        const std::string Return = prototypeType(Prototype->Return);
-        OS << Return << (Return.back() == '*' ? "" : " ") << Declared << "(";
-        for (unsigned I = 0; I < Prototype->ParamCount; ++I)
-          OS << (I ? ", " : "") << prototypeType(Prototype->Params[I]);
-        // ISO C before C23 spells no prototype of `...` alone.
-        if (Prototype->Variadic && Prototype->ParamCount)
-          OS << ", ...";
-        else if (!Prototype->Variadic && !Prototype->ParamCount)
-          OS << "void";
+        OS << "extern "
+           << c_library::declaration(*Prototype, Declared, Opts.TheArch);
       } else {
         const std::string Register =
             "int" + std::to_string(pointerBytes(Opts.TheArch) * 8) + "_t";
@@ -2204,8 +2195,9 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
             }
           }
         }
+        OS << ")";
       }
-      OS << ")" << LinkLabel;
+      OS << LinkLabel;
       if (NoReturn)
         OS << " __attribute__((noreturn))";
       OS << ";" << LinkComment << "\n";
