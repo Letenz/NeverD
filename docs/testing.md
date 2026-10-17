@@ -21,6 +21,13 @@ read-only tails, dynamic provider lifetimes, multiple consumers, token
 competition after wake, deadlock and failed resumption. Timed waits remain an
 explicit unsupported boundary.
 
+`AndroidRandom.*` compares 64-value sequences with answers produced by a
+separate Android 9 BSD implementation, including zero/high-bit seeds, aliases,
+reseeding, per-process isolation, two guest threads, dynamic provider lifetime,
+`rand_r` writes and invalid/read-only pointers. Native callers run at O0/O2
+with ordinary, packed and RELR relocations on available CPU backends. Custom
+state generators retain an explicit unsupported test.
+
 ## MXCSR recovery checks
 
 `InterpreterSpecialization.MXCSR*` covers arbitrary entry state, exact memory values, reserved bits, DAZ, aliases, malformed forms, node projection and exact/short budgets. `PEFixedImageTest.RawMXCSR*` checks legacy/VEX native bytes and mask-bound receipts. The machine-state and native/LLVM refinement owners verify that unused capabilities cannot expand their interfaces.
