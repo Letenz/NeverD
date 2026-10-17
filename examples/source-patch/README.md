@@ -19,9 +19,11 @@ staged `bin/sdk/python` package. A standalone `Session("app")` is not supported.
 If NeverD is not built yet, from the repository root:
 
 ```sh
-cmake -S . -B build-example-host -G Ninja -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_PYTHON_PLUGINS=ON
+cmake -S . -B build-example-host -G Ninja -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_PYTHON_PLUGINS=ON -DNEVERD_ENABLE_CPU_EMULATION=OFF -DNEVERD_ENABLE_DRIVER_EMULATION=OFF
 cmake --build build-example-host --target neverd --parallel 4
 ```
+
+These examples use the OS loader and need no CPU or driver emulation.
 
 Run from the repository root; `--output` must name a new directory. An existing
 Python-enabled NeverD build can replace `build-example-host` below.
