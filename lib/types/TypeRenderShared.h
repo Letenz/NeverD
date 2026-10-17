@@ -129,8 +129,14 @@ struct Slot {
   /// Field: the member.  Bitfields: the run, in order.
   const Member *Field = nullptr;
   std::vector<const Member *> Bits;
-  /// Bitfields: the storage unit's type.
+  /// Bitfields: the storage unit's type, an unsigned integer or, where none
+  /// lies at its own alignment between the members around the run, the
+  /// run's bytes: GNU's compilers share a unit's bytes with the members
+  /// before it, which a field of the unit's type would overlap.
   TypeExprRef Storage;
+  /// Bitfields: the bytes Storage takes, and whether it is an array of them.
+  uint64_t StorageBytes = 0;
+  bool StorageArray = false;
   /// In bytes from the record that holds the place.
   uint64_t Byte = 0;
   /// Filler: its length in bytes.
@@ -155,6 +161,11 @@ struct RecordPlan {
   std::vector<Slot> Slots;
   uint64_t TailFiller = 0;
   uint64_t TailPadding = 0;
+  /// The alignment a language declares for the record, which its places no
+  /// longer give it: bit-fields stored as bytes or in a narrower unit than
+  /// their types, as GNU's sharing of a unit's bytes makes them.  Zero
+  /// where the places do.
+  uint32_t Align = 0;
   std::vector<RecordPlan> Nested;
   /// Anonymous enumerations, by their generated names.
   std::vector<std::pair<std::string, const EnumDef *>> Enums;
@@ -177,14 +188,26 @@ BitStorage bitStorage(const TypeLibrary &Library, const TypeExpr &Type);
 /// One accessor's arithmetic on a run's unsigned storage, as Rust and Go
 /// spell it alike: the field's bits, sign-extended when the field is signed.
 struct BitAccess {
+  /// The bits of the storage the field's bits are counted in: a byte array's
+  /// read as one unsigned integer of 64 bits.
   unsigned UnitBits = 0;
+  /// The bits of the field's own type, which its value takes.
+  unsigned ValueBits = 0;
   uint64_t Shift = 0;
   uint32_t Width = 0;
   bool Signed = false;
   /// The mask of the field's bits, before shifting, in hexadecimal.
   std::string Mask;
+  /// In a run stored as bytes: the bytes that hold the field, from the
+  /// array's first, which Shift counts the field's bits in.  Up to nine,
+  /// for a field of 64 bits that begins inside a byte.
+  uint64_t ArrayByte = 0;
+  unsigned ArrayBytes = 0;
 };
 BitAccess bitAccess(const TypeLibrary &Library, const Member &Field);
+/// \p Field's access in \p Run, whose storage holds it.
+BitAccess bitAccess(const TypeLibrary &Library, const Member &Field,
+                    const Slot &Run);
 
 /// \p Type's innermost element through arrays, with their bounds.
 const TypeExpr &arrayElement(const TypeExpr &Type,

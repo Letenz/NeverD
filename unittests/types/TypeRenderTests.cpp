@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/types/PDBTypeImport.h"
+#include "neverd/types/TypeLayout.h"
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
@@ -804,4 +805,61 @@ TEST(TypeRender, ThirtyTwoBitRecordsAlignTheirEightByteMembers) {
                           Wide)
                   .ok());
   EXPECT_FALSE(contains(renderTypes(Wide, {}, C), "NEVERD_ALIGN8"));
+}
+
+TEST(TypeRender, GnuBitFieldsThatShareBytesTakeStorageOfTheirOwn) {
+  // GCC packs Ready at the bit after Kind, in the int whose first byte Kind
+  // is, and Wide after it in the long long that starts there too: Rust, Go
+  // and Python, which cannot overlap fields, store the run in the bytes it
+  // takes, and the record's alignment, which those bytes no longer give,
+  // is declared or filled.
+  TypeLibrary Library(DataModel::LP64);
+  ParseOptions Gnu;
+  Gnu.Rules = LayoutRules::Itanium;
+  ASSERT_TRUE(parseCTypes(R"(
+    struct _SHARED {
+      unsigned char Kind;
+      unsigned int Ready : 1;
+      unsigned int Level : 3;
+      int Delta : 4;
+      unsigned long long Wide : 40;
+      unsigned short Tail;
+    };
+    struct _NATURAL {
+      unsigned int Low : 8;
+      unsigned int High : 24;
+      unsigned int Next;
+    };
+  )",
+                          Library, Gnu)
+                  .ok());
+  const LocalType *Shared = Library.find("_SHARED");
+  ASSERT_NE(Shared, nullptr);
+  EXPECT_EQ(Shared->Record->Members[1].BitOffset, 8u);
+
+  const std::string Rust = renderTypes(Library, {}, in(Language::Rust));
+  EXPECT_TRUE(contains(Rust, "#[repr(C, align(8))]\n#[derive(Clone, Copy)]\n"
+                             "pub struct _SHARED {"))
+      << Rust;
+  EXPECT_TRUE(contains(Rust, "pub _bitfield: [u8; 6],")) << Rust;
+  // Wide, bits 16..55 of the record, in the run's bytes from its second.
+  EXPECT_TRUE(contains(Rust, "let unit = self._bitfield[1] as u64 | "
+                             "(self._bitfield[2] as u64) << 8"))
+      << Rust;
+  // Delta keeps its own type and sign.
+  EXPECT_TRUE(contains(Rust, "pub const fn Delta(&self) -> i32 {")) << Rust;
+  // A run its type's unit holds, without sharing a byte, stays in it.
+  EXPECT_TRUE(contains(Rust, "pub _bitfield: u32,")) << Rust;
+
+  const std::string Go = renderTypes(Library, {}, in(Language::Go));
+  EXPECT_TRUE(contains(Go, "_bitfield [6]byte")) << Go;
+  EXPECT_TRUE(contains(Go, "func (s *_SHARED) SetWide(value uint64) {")) << Go;
+
+  const std::string Python = renderTypes(Library, {}, in(Language::Python));
+  EXPECT_TRUE(contains(Python, "(\"_bitfield\", ctypes.c_uint8 * 6),"))
+      << Python;
+  EXPECT_TRUE(contains(Python, "_align_ = 8")) << Python;
+  EXPECT_TRUE(contains(Python, "int.from_bytes(bytes(self._bitfield[0:1]), "
+                               "\"little\")"))
+      << Python;
 }

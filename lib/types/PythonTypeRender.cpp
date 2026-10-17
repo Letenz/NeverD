@@ -140,6 +140,8 @@ private:
 
 public:
   mutable std::set<Builtin> Aliased;
+  /// Whether the types use long double where it is no float ctypes has.
+  mutable bool LongDouble = false;
   /// Whether a field holds a pointer as the host's own, which needs a
   /// Python of the program's pointer width.
   mutable bool HostPointers = false;
@@ -169,6 +171,10 @@ std::string PythonWriter::exact(Builtin Type) const {
       return "ctypes.c_float";
     if (Bytes == 8)
       return "ctypes.c_double";
+    if (Type == Builtin::LongDouble) {
+      LongDouble = true;
+      return "c_longdouble";
+    }
     return integer(Bytes, false);
   case BuiltinClass::Character:
     // C's char is ctypes' own; the wide ones are their widths, which
@@ -358,9 +364,9 @@ void PythonWriter::layout(const RecordPlan &Plan, const std::string &Indent,
     Out += Indent + Owner + "_pack_ = " + std::to_string(Plan.Pack) + "\n";
     Out += Indent + Owner + "_layout_ = \"ms\"\n";
   }
-  if (Record.Alignment)
-    Out +=
-        Indent + Owner + "_align_ = " + std::to_string(Record.Alignment) + "\n";
+  if (Record.Alignment || Plan.Align)
+    Out += Indent + Owner + "_align_ = " +
+           std::to_string(std::max(Record.Alignment, Plan.Align)) + "\n";
   std::vector<std::string> Anonymous;
   for (const Slot &Place : Plan.Slots)
     if (Place.TheKind == Slot::Kind::Field && Place.Field->isAnonymous() &&
@@ -394,11 +400,13 @@ void PythonWriter::layout(const RecordPlan &Plan, const std::string &Indent,
       std::string Doc;
       for (const Member *Bit : Place.Bits)
         Doc += (Doc.empty() ? "" : ", ") + Bit->Name + " " +
-               bitText(Bit->BitOffset - Bit->StorageBitOffset, Bit->BitWidth);
-      Out += line(
-          Item + "(\"" + fieldName(Place) + "\", " +
-              integer(bitStorage(Library, *Place.Storage).Bytes, false) + "),",
-          comment(Base + Place.Byte) + " " + Doc);
+               bitText(Bit->BitOffset - Place.Byte * 8, Bit->BitWidth);
+      const std::string Storage =
+          Place.StorageArray
+              ? "ctypes.c_uint8 * " + std::to_string(Place.StorageBytes)
+              : integer(unsigned(Place.StorageBytes), false);
+      Out += line(Item + "(\"" + fieldName(Place) + "\", " + Storage + "),",
+                  comment(Base + Place.Byte) + " " + Doc);
       break;
     }
     case Slot::Kind::Field: {
@@ -446,9 +454,22 @@ void PythonWriter::properties(const RecordPlan &Plan, std::string &Out) const {
     if (Place.TheKind != Slot::Kind::Bitfields)
       continue;
     for (const Member *Bit : Place.Bits) {
-      const BitAccess Access = bitAccess(Library, *Bit);
+      const BitAccess Access = bitAccess(Library, *Bit, Place);
       const std::string Name = unique(Names.member(Bit->Name));
-      const std::string Field = "self." + fieldName(Place);
+      std::string Field = "self." + fieldName(Place);
+      // A run stored as bytes: those that hold the field, read as one
+      // integer, low first, and written back so.
+      std::string Load, Store;
+      if (Access.ArrayBytes) {
+        const std::string Bytes =
+            Field + "[" + std::to_string(Access.ArrayByte) + ":" +
+            std::to_string(Access.ArrayByte + Access.ArrayBytes) + "]";
+        Load =
+            "        unit = int.from_bytes(bytes(" + Bytes + "), \"little\")\n";
+        Store = "        " + Bytes + " = list(unit.to_bytes(" +
+                std::to_string(Access.ArrayBytes) + ", \"little\"))\n";
+        Field = "unit";
+      }
       const std::string Shifted =
           Access.Shift
               ? "(" + Field + " >> " + std::to_string(Access.Shift) + ")"
@@ -456,8 +477,9 @@ void PythonWriter::properties(const RecordPlan &Plan, std::string &Out) const {
       Out += "\n    @property\n";
       Out += "    def " + Name + "(self) -> int:\n";
       Out += "        \"\"\"" + Bit->Name + ", " +
-             bitText(Access.Shift, Access.Width) + " of " + fieldName(Place) +
-             ".\"\"\"\n";
+             bitText(Bit->BitOffset - Place.Byte * 8, Access.Width) + " of " +
+             fieldName(Place) + ".\"\"\"\n";
+      Out += Load;
       if (Access.Signed) {
         // C extends a signed field's top bit.
         const uint64_t Top = uint64_t(1) << (Access.Width - 1);
@@ -466,15 +488,19 @@ void PythonWriter::properties(const RecordPlan &Plan, std::string &Out) const {
                hex(Top) + " else bits\n";
       } else {
         Out += "        return " + Shifted +
-               (Access.Width < Access.UnitBits ? " & " + Access.Mask : "") +
+               (Access.Width < Access.UnitBits || Access.ArrayBytes
+                    ? " & " + Access.Mask
+                    : "") +
                "\n";
       }
       const std::string Shift =
           Access.Shift ? " << " + std::to_string(Access.Shift) : "";
       Out += "\n    @" + Name + ".setter\n";
       Out += "    def " + Name + "(self, value: int) -> None:\n";
+      Out += Load;
       Out += "        " + Field + " = " + Field + " & ~(" + Access.Mask +
              Shift + ") | (value & " + Access.Mask + ")" + Shift + "\n";
+      Out += Store;
     }
   }
 }
@@ -688,6 +714,18 @@ void PythonWriter::module(llvm::ArrayRef<const LocalType *> Types,
       Out +=
           std::string(builtinInfo(Type).Windows) + " = " + exact(Type) + "\n";
   }
+  // C's long double: bytes aligned as C aligns them, which ctypes'
+  // c_longdouble is only on a host of the program's kind.
+  if (LongDouble)
+    Out +=
+        "\n\nclass c_longdouble(ctypes.Structure):\n    \"\"\"C's long "
+        "double: the x87's extended precision in " +
+        std::to_string(builtinBytes(Builtin::LongDouble, Library.dataModel())) +
+        " bytes, aligned as C aligns it.\"\"\"\n    _align_ = " +
+        std::to_string(Library.alignOf(*makeBuiltin(Builtin::LongDouble))) +
+        "\n    _fields_ = [(\"bytes\", ctypes.c_uint8 * " +
+        std::to_string(builtinBytes(Builtin::LongDouble, Library.dataModel())) +
+        ")]\n";
   if (HostPointers)
     Out += "\n# The program's pointers are 64-bit, as the host's must be.\n"
            "assert ctypes.sizeof(ctypes.c_void_p) == 8, \"these types need a "
