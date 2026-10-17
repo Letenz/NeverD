@@ -350,4 +350,42 @@ TEST(StaticSymbolTableTest, MinGWImageNamesNoSectionOrFileRecord) {
     EXPECT_TRUE(Names.count(Name)) << Name;
 }
 
+TEST(StaticSymbolTableTest, MinGWDataAmongCodeIsData) {
+  // GNU ld keeps __CTOR_LIST__, a table of constructors headed by -1, in
+  // .text; the fixtures, built for x86-64 and i386, keep such a table there
+  // and point at it from .data.  The base relocations, read before the symbol
+  // table, take the pointer to the table and the pointer in it for pointers
+  // in code.  The table's symbol, of no function type, starting no
+  // instruction, says both are data.
+  for (const auto &[File, Prefix] :
+       {std::pair<const char *, std::string>{"mingw_text_data.exe", ""},
+        std::pair<const char *, std::string>{"mingw_text_data32.exe", "_"}}) {
+    SCOPED_TRACE(File);
+    const auto Path =
+        std::filesystem::path(__FILE__).parent_path() / "fixtures" / File;
+    const auto Image = load(readBytes(Path), /*ReadStaticSymbols=*/true);
+    const auto *Table = Image.findSymbol(Prefix + "text_table");
+    const auto *Ref = Image.findSymbol(Prefix + "table_ref");
+    const auto *Twice = Image.findSymbol(Prefix + "twice");
+    ASSERT_NE(Table, nullptr);
+    ASSERT_NE(Ref, nullptr);
+    ASSERT_NE(Twice, nullptr);
+    EXPECT_TRUE(Image.DataInCode.count(Table->Addr));
+    EXPECT_FALSE(Image.DataInCode.count(Twice->Addr));
+    // The pointer to the table points to data.
+    EXPECT_TRUE(Image.DataPtrRelocSlots.count(Ref->Addr));
+    EXPECT_FALSE(Image.CodePtrRelocSlots.count(Ref->Addr));
+    // The table's entry is a slot that holds code, not an operand.
+    const va_t Entry = Table->Addr + Image.getPointerSize();
+    EXPECT_TRUE(Image.CodePtrRelocSlots.count(Entry));
+    EXPECT_FALSE(Image.CodeAddressRelocOperands.count(Entry));
+
+    // Declined, the symbol table says nothing of the table.
+    const auto Declined = load(readBytes(Path), /*ReadStaticSymbols=*/false);
+    EXPECT_TRUE(Declined.DataInCode.empty());
+    EXPECT_TRUE(Declined.CodePtrRelocSlots.count(Ref->Addr));
+    EXPECT_TRUE(Declined.CodeAddressRelocOperands.count(Entry));
+  }
+}
+
 } // namespace
