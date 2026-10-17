@@ -2195,9 +2195,9 @@ entry:
     std::string Source;
     llvm::raw_string_ostream OS(Source);
     ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
-    const size_t Declaration = Source.find(" callee(uint64_t arg0);");
+    const size_t Declaration = Source.find(" callee(uint64_t value);");
     ASSERT_NE(Declaration, std::string::npos) << Source;
-    EXPECT_LT(Declaration, Source.find(" caller(uint64_t arg0) {")) << Source;
+    EXPECT_LT(Declaration, Source.find(" caller(uint64_t value) {")) << Source;
     Source += R"(
 int main(void) { return caller(41) == 42 ? 0 : 1; }
 )";
@@ -2370,9 +2370,11 @@ entry:
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
   EXPECT_NE(Source.find("/* atexit */\n"), std::string::npos) << Source;
-  EXPECT_NE(Source.find(" atexit_401000(uint64_t arg0) {"), std::string::npos)
+  EXPECT_NE(Source.find(" atexit_401000(uint64_t function) {"),
+            std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("atexit_401000(arg0)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("atexit_401000(function)"), std::string::npos)
+      << Source;
   Source += R"(
 #include <stdlib.h>
 int main(void) { return register_exit(7) == 7 ? 0 : 1; }
