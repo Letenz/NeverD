@@ -36,7 +36,8 @@ struct ProfileSpec {
 ProfileSpec macOSProfile();
 ProfileSpec iOSProfile(bool Simulator);
 enum class LibSystemGateKind {
-#define NEVERD_DARWIN_LIBSYSTEM_CALL(Name, Symbol, Count, Kernel) Name,
+#define NEVERD_DARWIN_LIBSYSTEM_CALL(Name, Symbol, Count, Kernel, Provider)    \
+  Name,
 #include "DarwinLibSystemCalls.def"
 #undef NEVERD_DARWIN_LIBSYSTEM_CALL
   StubBinder,

@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 9fc13e22f8389ee3a151e7b2f022bbf58f728e5597159984b0585f1b88cbb48e -->
+<!-- i18n-source: 26e0c6dba6d3b863bb8dc0c4690bbc6ea61bbe5dd2accd19643847c8968fc13e -->
 
 [← 文件索引](README.md)
 
@@ -33,7 +33,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 `LC_UNIXTHREAD` 要求恰好一份完整的原生 64 位元一般暫存器紀錄，只有 PC 已設定。起始堆疊含 argc、以零結尾的 argv/envp，以及含 `executable_path=<input filename>` 的零結尾 apple 向量。自訂 SP、旗標、其他暫存器、額外 flavor 或衝突進入點均拒絕。不繼承宿主環境或 Linux 輔助向量。參考 [dyld 架構](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md)。
 
-支援下述有限 libSystem、明確指定的啟動 dylib、啟動建構函式、主執行緒 C/C++ TLS 與行程終止時的 C/C++ 解構。選擇性 DSO 終結、使用 guard 的區域靜態初始化、舊式 TLS 初始化段、arm64e/PAC、未支援子型別、加密內容及未建模命令仍在執行前失敗。主程式使用偏好位址，dylib 採確定性獨立配置；簽章資料不實作 AMFI 或 entitlement。
+支援下述有限 libSystem、明確指定的啟動 dylib、啟動建構函式、主執行緒 C/C++ TLS 與行程終止時的 C/C++ 解構。選擇性 DSO 終結、舊式 TLS 初始化段、arm64e/PAC、未支援子型別、加密內容及未建模命令仍在執行前失敗。主程式使用偏好位址，dylib 採確定性獨立配置；簽章資料不實作 AMFI 或 entitlement。
 
 ## Darwin 服務
 
@@ -1835,7 +1835,7 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 103; matching ARM64 identities: 309
+native common catalogue: 82; required methods/platform: 104; matching ARM64 identities: 312
 ```
 
 ```json
@@ -1863,7 +1863,7 @@ lifetime: one main-thread block/image/process; stable addresses; fresh subsequen
 addends: checked signed ordinary provider offsets; data/TLS initializers; original provider spans only
 unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; selective DSO finalization/legacy TLS init; dlopen/dlsym; threads
 workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
-native common catalogue: 82; required methods/platform: 103; matching ARM64 identities: 309
+native common catalogue: 82; required methods/platform: 104; matching ARM64 identities: 312
 ```
 
 ## Darwin dylib 匯入偏移
@@ -1882,4 +1882,12 @@ native common catalogue: 82; required methods/platform: 103; matching ARM64 iden
 
 C `atexit` 與 C++ `__cxa_atexit` 回傳整數零並保留 errno。C 回呼無參數，C++ 回呼接收完整物件值，DSO 僅保留為不透明事件資料。正常退出先完成一次主執行緒 TLS 解構，再依統一註冊順序逆序執行全域回呼；新註冊項先於舊項，全域階段不會重新清空 TLS。只有強註冊匯入才預留獨立的 1024 項全域佇列，既有 raw、建構函式與 TLS 預算不變。
 
-原創雙 dylib 程式涵蓋編譯器產生的全域解構、重複存取區域 static、巢狀註冊、深層堆疊物件與解構中的直接 `_exit`。區域 static 控制使用 `-fno-threadsafe-statics`；`__cxa_guard_*`、`__cxa_finalize`、dlopen/dlclose、執行緒及完整框架仍明確拒絕。五種軟體設定、三種 ARM64 HVF 設定與 C/CLI/Python 沿用報告格式及預算；Intel 原生與實體 iOS 尚未驗證。
+原創雙 dylib 程式涵蓋編譯器產生的全域解構、重複存取區域 static、巢狀註冊、深層堆疊物件與解構中的直接 `_exit`。區域 static 控制使用 `-fno-threadsafe-statics`；`__cxa_finalize`、dlopen/dlclose、執行緒及完整框架仍明確拒絕。五種軟體設定、三種 ARM64 HVF 設定與 C/CLI/Python 沿用報告格式及預算；Intel 原生與實體 iOS 尚未驗證。
+
+## 主執行緒 C++ 靜態初始化保護
+
+只接納 `/usr/lib/libc++.1.dylib`（相容版本不高於 1.0.0）的精確強匯入 `___cxa_guard_acquire`、`___cxa_guard_release`、`___cxa_guard_abort`，加數須為零。其他 C++ 符號、libc++abi、別名、弱匯入、重匯出及覆寫內建庫仍拒絕；與 libSystem 共用兩頁，單獨 guard 不預留回呼佇列。
+
+八位元組 guard 須非空且自然對齊。初始化位元組非零時 acquire 只讀此位元組並傳回整數零，不要求寫入權限或執行緒埠。零狀態需要明確非零 `darwin_system.thread_self_port`（`DarwinSystemOptions::ThreadSelfPort`）；埠 P 的 pending 為 `(uint64_t(P)<<32)|0x200`，acquire 傳回一，abort 恢復零，release 寫入 `(uint64_t(P)<<32)|0x101`。void 呼叫保留 errno/結果暫存器，報告結果為 null。遞迴、外部擁有者、等待位元、未知狀態及無效儲存在修改前失敗，不推斷宿主執行緒。
+
+預設 static 雙 dylib 樣例涵蓋啟動、TLS/全域解構中新建物件、重複存取、完整 guard/哨兵、abort/retry 與正常/raw 結束；沿用 LIFO、預算與新程序隔離。五種軟體、三種 ARM64 HVF、C/CLI/Python 及 O0/O1/O2 classic/chained 原生控制共同驗證。ARM64 使用 `-march=armv8-a -mcpu=generic` 並檢查成品 LDARB、無 LDAPR；僅 march 仍可能產生 LDAPRB。RCpc、並行初始化、例外及選擇性 DSO 終結仍未支援；x64 控制經 Rosetta，實體 Intel/iOS 尚未驗證。

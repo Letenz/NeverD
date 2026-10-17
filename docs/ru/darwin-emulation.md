@@ -1,6 +1,6 @@
 **Языки**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 9fc13e22f8389ee3a151e7b2f022bbf58f728e5597159984b0585f1b88cbb48e -->
+<!-- i18n-source: 26e0c6dba6d3b863bb8dc0c4690bbc6ea61bbe5dd2accd19643847c8968fc13e -->
 
 [← Оглавление документации](README.md)
 
@@ -33,7 +33,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 `LC_UNIXTHREAD` требует ровно одну полную запись нативных общих 64-битных регистров с заполненным только PC. Стек содержит argc, завершённые argv/envp и завершённый вектор apple с `executable_path=<input filename>`. Собственные SP/флаги, другие регистры, дополнительные flavors и конфликтующие входы отклоняются. Окружение хоста и вспомогательный Linux-вектор не наследуются. См. [архитектуру dyld](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-Ограниченный контракт ниже поддерживает libSystem, явные стартовые dylib, стартовые конструкторы, C/C++ TLS главного потока и деструкторы C/C++ при завершении процесса. Выборочная финализация DSO, инициализация локальных статических переменных через guard, старые инициализаторы TLS, arm64e/PAC, неподдерживаемые подтипы CPU, шифрование и немоделируемые команды отклоняются до выполнения. Главный файл сохраняет предпочтительный адрес; dylib получают отдельные детерминированные адреса. Подписи не реализуют AMFI или entitlements.
+Ограниченный контракт ниже поддерживает libSystem, явные стартовые dylib, стартовые конструкторы, C/C++ TLS главного потока и деструкторы C/C++ при завершении процесса. Выборочная финализация DSO, старые инициализаторы TLS, arm64e/PAC, неподдерживаемые подтипы CPU, шифрование и немоделируемые команды отклоняются до выполнения. Главный файл сохраняет предпочтительный адрес; dylib получают отдельные детерминированные адреса. Подписи не реализуют AMFI или entitlements.
 
 ## Службы Darwin
 
@@ -1833,7 +1833,7 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 103; matching ARM64 identities: 309
+native common catalogue: 82; required methods/platform: 104; matching ARM64 identities: 312
 ```
 
 ```json
@@ -1861,7 +1861,7 @@ lifetime: one main-thread block/image/process; stable addresses; fresh subsequen
 addends: checked signed ordinary provider offsets; data/TLS initializers; original provider spans only
 unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; selective DSO finalization/legacy TLS init; dlopen/dlsym; threads
 workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
-native common catalogue: 82; required methods/platform: 103; matching ARM64 identities: 309
+native common catalogue: 82; required methods/platform: 104; matching ARM64 identities: 312
 ```
 
 ## Смещения импортов dylib Darwin
@@ -1880,4 +1880,12 @@ native common catalogue: 82; required methods/platform: 103; matching ARM64 iden
 
 C `atexit` и C++ `__cxa_atexit` возвращают целый ноль и сохраняют errno. C callback не получает аргументов; C++ получает исходное значение объекта, а DSO остаётся непрозрачным значением события. Обычный выход завершает TLS главного потока ровно один раз, затем обходит общую очередь C/C++ в обратном порядке. Новые глобальные регистрации идут перед старыми; TLS повторно не обрабатывается. Только сильные импорты регистрации резервируют отдельные 1024 записи, сохраняя прежние бюджеты raw, конструкторов и TLS.
 
-Авторская программа с двумя dylib проверяет сгенерированные деструкторы, повторный доступ к локальному static, вложенные регистрации, объекты стека и `_exit` из деструктора. Локальные static используют `-fno-threadsafe-statics`. `__cxa_guard_*`, `__cxa_finalize`, dlopen/dlclose, потоки и полные frameworks по-прежнему отклоняются. Пять программных профилей, три ARM64 HVF и C/CLI/Python сохраняют прежние форматы и бюджеты. Нативный Intel и физический iOS не проверены.
+Авторская программа с двумя dylib проверяет сгенерированные деструкторы, повторный доступ к локальному static, вложенные регистрации, объекты стека и `_exit` из деструктора. Локальные static используют `-fno-threadsafe-statics`. `__cxa_finalize`, dlopen/dlclose, потоки и полные frameworks по-прежнему отклоняются. Пять программных профилей, три ARM64 HVF и C/CLI/Python сохраняют прежние форматы и бюджеты. Нативный Intel и физический iOS не проверены.
+
+## C++ guards главного потока
+
+Допускаются только сильные импорты без addend `___cxa_guard_acquire`, `___cxa_guard_release`, `___cxa_guard_abort` из `/usr/lib/libc++.1.dylib` (совместимость не выше 1.0.0). Другие C++ символы, libc++abi, псевдонимы, weak/reexport и подмена встроенных библиотек отклоняются. Две страницы общие с libSystem; один guard не резервирует очередь callback.
+
+Guard занимает восемь байт, указатель ненулевой и естественно выровненный. Ненулевой байт инициализации читается отдельно: acquire возвращает int 0 без записи и порта. Иначе нужен явный ненулевой P `darwin_system.thread_self_port` (`DarwinSystemOptions::ThreadSelfPort`): pending `(uint64_t(P)<<32)|0x200`, acquire 1, abort обнуляет, release пишет `(uint64_t(P)<<32)|0x101`. void сохраняет errno/регистры результата, в JSON результат null. Рекурсия, чужой владелец, ожидание, неизвестные состояния и неверная память отклоняются до изменений; ID хоста не выводится.
+
+Две оригинальные dylib со стандартными static проверяют запуск, создание в TLS/глобальных деструкторах, повторные обращения, все байты и ограничители, abort/retry, normal/raw exit, общий LIFO/бюджеты и новые процессы. Проверяются пять программных профилей, три ARM64 HVF, C/CLI/Python и O0/O1/O2 classic/chained. ARM64 требует `-march=armv8-a -mcpu=generic` и проверки итоговых LDARB/отсутствия LDAPR; один march может выдавать LDAPRB. RCpc, параллельность, исключения и выборочная DSO-финализация не поддерживаются. x64 использует Rosetta; физические Intel/iOS не квалифицированы.
