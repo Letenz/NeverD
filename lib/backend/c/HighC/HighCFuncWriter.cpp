@@ -1936,7 +1936,7 @@ void HighCWriter::collectFieldLoadTypes(const HighFunc &Func) {
           Val->Operands[0] && Val->MemoryOrdering == NdMemoryOrdering::None &&
           Val->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
         const uint16_t Size = Val->Type ? Val->Type->Size : 0;
-        Type = typedMemberType(*Val->Operands[0], Size);
+        Type = typedMemberType(*Val->Operands[0], Size, accessClassOf(Val));
         if (!Type)
           if (auto Index = typedIndexAccess(*Val->Operands[0]))
             Type = Index->ElemType;
@@ -1996,12 +1996,15 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
     if (Val->Kind == ExprKind::Load && !Val->Operands.empty() &&
         Val->Operands[0] && Val->MemoryOrdering == NdMemoryOrdering::None) {
       const uint16_t AccessSize = Val->Type ? Val->Type->Size : 0;
-      if (auto Member = typedMemberAccess(*Val->Operands[0], AccessSize)) {
+      if (auto Member = typedMemberAccess(*Val->Operands[0], AccessSize,
+                                          /*EnterNestedAtZero=*/true,
+                                          accessClassOf(Val))) {
         if (ForwardName) {
           FieldForward[DestName] = *Member;
           FieldForwardSources[DestName] = S.Val.get();
         }
-        if (TypeRef Ty = typedMemberType(*Val->Operands[0], AccessSize))
+        if (TypeRef Ty = typedMemberType(*Val->Operands[0], AccessSize,
+                                         accessClassOf(Val)))
           FieldForwardTypes[DestName] = std::move(Ty);
       } else if (auto Index = typedIndexAccess(*Val->Operands[0])) {
         if (ForwardName) {
@@ -2046,10 +2049,13 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
         !Val->Operands[0] || Val->MemoryOrdering != NdMemoryOrdering::None)
       return;
     const uint16_t AccessSize = Val->Type ? Val->Type->Size : 0;
-    if (auto Member = typedMemberAccess(*Val->Operands[0], AccessSize)) {
+    if (auto Member =
+            typedMemberAccess(*Val->Operands[0], AccessSize,
+                              /*EnterNestedAtZero=*/true, accessClassOf(Val))) {
       FieldForward[DestName] = *Member;
       FieldForwardSources[DestName] = S.Val.get();
-      if (TypeRef Ty = typedMemberType(*Val->Operands[0], AccessSize))
+      if (TypeRef Ty = typedMemberType(*Val->Operands[0], AccessSize,
+                                       accessClassOf(Val)))
         FieldForwardTypes[DestName] = std::move(Ty);
     }
   });
@@ -2188,7 +2194,7 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
       return std::nullopt;
     if (E->Kind == ExprKind::Load && !E->Operands.empty() && E->Operands[0]) {
       if (auto Path = loadedMemberAccess(*E))
-        return std::make_pair(*Path, typedMemberType(*E->Operands[0]));
+        return std::make_pair(*Path, loadedMemberType(*E));
       return std::nullopt;
     }
     if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
@@ -2397,7 +2403,9 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
     if (Val->Kind == ExprKind::Load && !Val->Operands.empty() &&
         Val->Operands[0]) {
       const uint16_t AccessSize = Val->Type ? Val->Type->Size : 0;
-      if (auto Member = typedMemberAccess(*Val->Operands[0], AccessSize);
+      if (auto Member =
+              typedMemberAccess(*Val->Operands[0], AccessSize,
+                                /*EnterNestedAtZero=*/true, accessClassOf(Val));
           Member && *Member == It->second)
         return;
       if (auto Index = typedIndexAccess(*Val->Operands[0])) {

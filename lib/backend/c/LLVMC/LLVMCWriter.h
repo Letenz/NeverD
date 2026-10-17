@@ -254,9 +254,17 @@ public:
   TypeRef typeOfValue(const llvm::Value *V) const;
   std::string indirectCalleeStr(const llvm::Value *Callee,
                                 bool MarkChain = false);
+  /// The member at \p Ptr an access of \p AccessSize bytes reads or
+  /// writes; of a union's alternatives of that width, the one its \p Class
+  /// holds (NdType::scalarOfClassAt).
   std::optional<TypedAccess>
   typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
-                    bool EnterNestedAtZero = true) const;
+                    bool EnterNestedAtZero = true,
+                    NdAccessClass Class = NdAccessClass::Unknown) const;
+  /// The member \p LI reads, and the member \p SI writes, as wide as the
+  /// value and of its class.
+  std::optional<TypedAccess> typedLoadAccess(const llvm::LoadInst &LI) const;
+  std::optional<TypedAccess> typedStoreAccess(const llvm::StoreInst &SI) const;
   /// PDB/S_LOCAL or HighC `var_mHEX` name for a synthetic `[N x i8] frame`
   /// GEP.  Address-of a slot is `&record` / `&var_m188`; a load of an
   /// interior field is `record.p`.  `Synthesize` creates a `var_m*` only

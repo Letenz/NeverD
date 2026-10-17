@@ -553,7 +553,15 @@ A unit's member access names a member only where the access reads it
 over a record's of the same width, which no scalar access reads whole, and
 a record in place only when the access reads all of it. A byte at the start
 of a header whose union's alternatives disagree names no member and stays a
-raw access.
+raw access. Of a union's scalar alternatives of the access's width, the one
+of the class of the value the code loads or stores names it
+(`NdAccessClass`, `NdType::scalarOfClassAt`): `v->i` for an integer,
+`v->d` for a double, the pointer for an address. The machine holds a pointer
+as an integer of its width, so an integer access takes a union's only
+pointer where it holds no integer, and the other way round; two
+alternatives of the class stay raw. HighC reads a float the code loads or
+stores as the bits of such a union as its floating alternative: `v->d`,
+not `__builtin_bit_cast(double, v->i)`.
 
 ## System boundary
 

@@ -1804,8 +1804,7 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
         ValueTexts[&Inst] = Text->second;
       return;
     }
-    if (auto Member = typedRecordAccess(LI->getPointerOperand(),
-                                        llvmAccessSize(LI->getType()))) {
+    if (auto Member = typedLoadAccess(*LI)) {
       ValueTypes[&Inst] = Member->Type;
       ValueTexts[&Inst] = Member->Text;
       return;
@@ -1985,9 +1984,7 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       }
       if (OmittedLeftoverNarrow.count(SI) || storeIsLeftoverHomeUndef(*SI))
         return;
-      if (auto Member = typedRecordAccess(
-              SI->getPointerOperand(),
-              llvmAccessSize(SI->getValueOperand()->getType()))) {
+      if (auto Member = typedStoreAccess(*SI)) {
         emitIndent(Indent);
         if (std::string Up =
                 inplaceIntegerUpdate(*SI, Member->Text, SI->getValueOperand());
@@ -5447,8 +5444,7 @@ std::string LLVMCWriter::comparedOperandText(const llvm::Value *V,
   const auto *LI = llvm::dyn_cast_or_null<llvm::LoadInst>(Typed);
   if (!LI)
     return Text;
-  auto Acc =
-      typedRecordAccess(LI->getPointerOperand(), llvmAccessSize(LI->getType()));
+  auto Acc = typedLoadAccess(*LI);
   if (!Acc)
     return Text;
   if (auto Name = enumeratorDisplay(Acc->Type, CI->getZExtValue()))
@@ -6930,8 +6926,7 @@ void LLVMCWriter::writeReturn(llvm::ReturnInst &Ret, int Indent) {
       if (!PointerReturnType.empty() && RV->getType()->isIntegerTy()) {
         std::optional<std::string> Address;
         if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(RV))
-          if (auto Acc = typedRecordAccess(LI->getPointerOperand(),
-                                           llvmAccessSize(LI->getType()));
+          if (auto Acc = typedLoadAccess(*LI);
               Acc && Acc->Type && Acc->Type->Kind == NdTypeKind::Ptr)
             Address = SourceRecorder
                           ? SourceRecorder->expression(*LI, Acc->Text)
