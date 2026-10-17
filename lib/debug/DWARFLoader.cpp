@@ -345,7 +345,9 @@ struct DWARFDebugContext::Impl {
   bool Loaded = false;
   bool AuthenticatedObjectExtents = false;
 
-  struct ReturnTypeResolution {
+  /// The type a DIE declares, found on the DIE or on the declarations its
+  /// DW_AT_specification and DW_AT_abstract_origin chain names.
+  struct DeclaredTypeResolution {
     enum class Status : uint8_t { Absent, Found, Malformed };
     Status TheStatus = Status::Absent;
     llvm::DWARFDie TypeDie;
@@ -354,7 +356,8 @@ struct DWARFDebugContext::Impl {
   TypeRef convertDwarfType(llvm::DWARFDie Die, int Depth = 0);
   std::optional<AuthenticatedRecordParameter>
   recordParameter(llvm::DWARFDie Die, va_t Entry) const;
-  ReturnTypeResolution resolveReturnType(llvm::DWARFDie Die) const;
+  DeclaredTypeResolution resolveDeclaredType(llvm::DWARFDie Die) const;
+  llvm::DWARFDie declaredTypeDie(llvm::DWARFDie Die) const;
   AuthenticatedReturnValueState classifyReturnValue(llvm::DWARFDie Die,
                                                     int Depth = 0) const;
   std::vector<Location> decodeLocations(llvm::DWARFDie Die,
@@ -643,8 +646,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
 
 std::optional<AuthenticatedRecordParameter>
 DWARFDebugContext::Impl::recordParameter(llvm::DWARFDie Die, va_t Entry) const {
-  llvm::DWARFDie Type =
-      Die.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
+  llvm::DWARFDie Type = declaredTypeDie(Die);
   bool Pointer = false;
   unsigned Depth = 0;
   for (; Type && Depth < 32; ++Depth) {
@@ -1251,9 +1253,9 @@ TypeRef DWARFDebugContext::Impl::convertDwarfType(llvm::DWARFDie Die,
   }
 }
 
-DWARFDebugContext::Impl::ReturnTypeResolution
-DWARFDebugContext::Impl::resolveReturnType(llvm::DWARFDie Die) const {
-  using Resolution = ReturnTypeResolution;
+DWARFDebugContext::Impl::DeclaredTypeResolution
+DWARFDebugContext::Impl::resolveDeclaredType(llvm::DWARFDie Die) const {
+  using Resolution = DeclaredTypeResolution;
   std::vector<llvm::DWARFDie> Active;
   std::function<Resolution(llvm::DWARFDie, unsigned)> Resolve =
       [&](llvm::DWARFDie Current, unsigned Depth) -> Resolution {
@@ -1326,6 +1328,20 @@ DWARFDebugContext::Impl::resolveReturnType(llvm::DWARFDie Die) const {
     return Result;
   };
   return Resolve(Die, 0);
+}
+
+llvm::DWARFDie
+DWARFDebugContext::Impl::declaredTypeDie(llvm::DWARFDie Die) const {
+  // A DIE's own type stands.  The out-of-line copy of an inlined function
+  // names its parameters only by DW_AT_abstract_origin, and a static data
+  // member's definition its declaration only by DW_AT_specification.
+  if (const llvm::DWARFDie Own =
+          Die.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type))
+    return Own;
+  const DeclaredTypeResolution Declared = resolveDeclaredType(Die);
+  return Declared.TheStatus == DeclaredTypeResolution::Status::Found
+             ? Declared.TypeDie
+             : llvm::DWARFDie();
 }
 
 AuthenticatedReturnValueState
@@ -1506,7 +1522,7 @@ bool containsPC(va_t PC, llvm::ArrayRef<std::pair<va_t, va_t>> AddressRanges) {
 void DWARFDebugContext::Impl::parseLocalVariable(
     llvm::DWARFDie Die, va_t FuncAddr, bool IsParam,
     llvm::ArrayRef<AddressRange> ScopeRanges) {
-  auto TypeDie = Die.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
+  auto TypeDie = declaredTypeDie(Die);
   TypeRef Type =
       TypeDie.isValid() ? convertDwarfType(TypeDie) : NdType::makeInt(4);
   if (!declaredTypeSize(Type))
@@ -1526,7 +1542,7 @@ void DWARFDebugContext::Impl::parseLocalVariable(
 
 void DWARFDebugContext::Impl::parseGlobalVariable(llvm::DWARFDie Die,
                                                   llvm::DWARFUnit *Unit) {
-  auto TypeDie = Die.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
+  auto TypeDie = declaredTypeDie(Die);
   TypeRef Type =
       TypeDie.isValid() ? convertDwarfType(TypeDie) : NdType::makeInt(4);
   const std::optional<uint64_t> Size = declaredTypeSize(Type);
@@ -1630,12 +1646,12 @@ void DWARFDebugContext::Impl::parseFunction(llvm::DWARFDie Die,
   }
 
   AuthenticatedReturnValueState ReturnState;
-  const ReturnTypeResolution ReturnType = resolveReturnType(Die);
-  if (ReturnType.TheStatus == ReturnTypeResolution::Status::Absent) {
+  const DeclaredTypeResolution ReturnType = resolveDeclaredType(Die);
+  if (ReturnType.TheStatus == DeclaredTypeResolution::Status::Absent) {
     // DWARF encodes a source-level void return by omitting DW_AT_type.
     ReturnState = {AuthenticatedReturnKind::NoValue, 0};
     Sym.ReturnType = NdType::makeVoid();
-  } else if (ReturnType.TheStatus == ReturnTypeResolution::Status::Found) {
+  } else if (ReturnType.TheStatus == DeclaredTypeResolution::Status::Found) {
     ReturnState = classifyReturnValue(ReturnType.TypeDie);
     Sym.ReturnType = convertDwarfType(ReturnType.TypeDie);
     if (!Sym.ReturnType || Sym.ReturnType->Kind == NdTypeKind::Unknown)
@@ -1655,8 +1671,7 @@ void DWARFDebugContext::Impl::parseFunction(llvm::DWARFDie Die,
     std::string Name;
     if (const char *RawName = Child.getName(llvm::DINameKind::ShortName))
       Name = RawName;
-    auto ParamDie =
-        Child.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
+    auto ParamDie = declaredTypeDie(Child);
     TypeRef Type =
         ParamDie.isValid() ? convertDwarfType(ParamDie) : NdType::makeInt(4);
     if (ParamDie.isValid() && Type)

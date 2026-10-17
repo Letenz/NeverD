@@ -19,6 +19,7 @@
 #include "neverd/debug/DWARFLoader.h"
 #include "neverd/debug/DebugInfoDiscovery.h"
 #include "neverd/debug/MapFile.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Loader.h"
 #include "neverd/loader/PointerRelocation.h"
@@ -423,12 +424,11 @@ void appendAttributeSpec(std::vector<uint8_t> &Abbrev,
   appendULEB(Abbrev, Form);
 }
 
+std::vector<uint8_t> makeELFWithDWARF(const std::vector<uint8_t> &Abbrev,
+                                      const std::vector<uint8_t> &Info);
+
 std::vector<uint8_t> makeELFDWARFReturnFixture(DWARFReturnFixtureKind Kind,
                                                unsigned CompileUnits = 1) {
-  using ELFT = llvm::object::ELF64LE;
-  using Elf_Ehdr = ELFT::Ehdr;
-  using Elf_Shdr = ELFT::Shdr;
-  using namespace llvm::ELF;
   using namespace llvm::dwarf;
 
   const bool DuplicateType = Kind == DWARFReturnFixtureKind::DuplicateType;
@@ -649,6 +649,19 @@ std::vector<uint8_t> makeELFDWARFReturnFixture(DWARFReturnFixtureKind Kind,
   for (unsigned I = 1; I < CompileUnits; ++I)
     Info.insert(Info.end(), Unit.begin(), Unit.end());
 
+  std::vector<uint8_t> Bytes = makeELFWithDWARF(Abbrev, Info);
+  if (CompileUnits > 1)
+    Bytes.resize(std::max<size_t>(Bytes.size(), 256 * 1024), 0);
+  return Bytes;
+}
+
+std::vector<uint8_t> makeELFWithDWARF(const std::vector<uint8_t> &Abbrev,
+                                      const std::vector<uint8_t> &Info) {
+  using ELFT = llvm::object::ELF64LE;
+  using Elf_Ehdr = ELFT::Ehdr;
+  using Elf_Shdr = ELFT::Shdr;
+  using namespace llvm::ELF;
+
   std::string SectionNames(1, '\0');
   const auto appendName = [](std::string &Table, llvm::StringRef Name) {
     const uint32_t Offset = static_cast<uint32_t>(Table.size());
@@ -721,9 +734,129 @@ std::vector<uint8_t> makeELFDWARFReturnFixture(DWARFReturnFixtureKind Kind,
   Sections[SectionNameTableSection].sh_addralign = 1;
   std::memcpy(Bytes.data() + SectionTableOffset, Sections.data(),
               sizeof(Sections));
-  if (CompileUnits > 1)
-    Bytes.resize(std::max<size_t>(Bytes.size(), 256 * 1024), 0);
   return Bytes;
+}
+
+/// The DIEs of an inlined function kept out of line, as compilers emit them:
+/// its copy at 0x1000 names its parameter and local only by
+/// DW_AT_abstract_origin.  `table` is defined at 0x2000 through
+/// DW_AT_specification of its declaration.  Only the declarations hold types.
+std::vector<uint8_t> makeELFDWARFOriginFixture() {
+  using namespace llvm::dwarf;
+  std::vector<uint8_t> Abbrev;
+  const auto declare =
+      [&](unsigned Code, Tag TheTag, bool Children,
+          std::initializer_list<std::pair<Attribute, Form>> Attributes) {
+        appendULEB(Abbrev, Code);
+        appendULEB(Abbrev, TheTag);
+        Abbrev.push_back(Children ? DW_CHILDREN_yes : DW_CHILDREN_no);
+        for (const auto &[TheAttribute, TheForm] : Attributes)
+          appendAttributeSpec(Abbrev, TheAttribute, TheForm);
+        appendULEB(Abbrev, 0);
+        appendULEB(Abbrev, 0);
+      };
+  declare(1, DW_TAG_compile_unit, true, {});
+  declare(2, DW_TAG_base_type, false,
+          {{DW_AT_name, DW_FORM_string},
+           {DW_AT_byte_size, DW_FORM_data1},
+           {DW_AT_encoding, DW_FORM_data1}});
+  declare(3, DW_TAG_structure_type, false,
+          {{DW_AT_name, DW_FORM_string}, {DW_AT_byte_size, DW_FORM_data1}});
+  declare(4, DW_TAG_pointer_type, false,
+          {{DW_AT_byte_size, DW_FORM_data1}, {DW_AT_type, DW_FORM_ref4}});
+  declare(5, DW_TAG_subprogram, true,
+          {{DW_AT_name, DW_FORM_string}, {DW_AT_inline, DW_FORM_data1}});
+  declare(6, DW_TAG_formal_parameter, false,
+          {{DW_AT_name, DW_FORM_string}, {DW_AT_type, DW_FORM_ref4}});
+  declare(7, DW_TAG_variable, false,
+          {{DW_AT_name, DW_FORM_string}, {DW_AT_type, DW_FORM_ref4}});
+  declare(8, DW_TAG_subprogram, true,
+          {{DW_AT_abstract_origin, DW_FORM_ref4},
+           {DW_AT_low_pc, DW_FORM_addr},
+           {DW_AT_high_pc, DW_FORM_data4},
+           {DW_AT_frame_base, DW_FORM_exprloc}});
+  declare(9, DW_TAG_formal_parameter, false,
+          {{DW_AT_abstract_origin, DW_FORM_ref4},
+           {DW_AT_location, DW_FORM_exprloc}});
+  declare(10, DW_TAG_variable, false,
+          {{DW_AT_abstract_origin, DW_FORM_ref4},
+           {DW_AT_location, DW_FORM_exprloc}});
+  declare(11, DW_TAG_variable, false,
+          {{DW_AT_name, DW_FORM_string},
+           {DW_AT_type, DW_FORM_ref4},
+           {DW_AT_declaration, DW_FORM_flag_present}});
+  declare(
+      12, DW_TAG_variable, false,
+      {{DW_AT_specification, DW_FORM_ref4}, {DW_AT_location, DW_FORM_exprloc}});
+  appendULEB(Abbrev, 0);
+
+  std::vector<uint8_t> Info;
+  appendU32LE(Info, 0);
+  appendU16LE(Info, 4);
+  appendU32LE(Info, 0);
+  Info.push_back(8);
+  appendULEB(Info, 1);
+  const auto here = [&] { return static_cast<uint32_t>(Info.size()); };
+  const auto name = [&](llvm::StringRef Name) {
+    Info.insert(Info.end(), Name.begin(), Name.end());
+    Info.push_back(0);
+  };
+  const auto expression = [&](std::initializer_list<uint8_t> Bytes) {
+    appendULEB(Info, Bytes.size());
+    Info.insert(Info.end(), Bytes);
+  };
+
+  const uint32_t Long = here();
+  appendULEB(Info, 2);
+  name("long");
+  Info.push_back(8);
+  Info.push_back(DW_ATE_signed);
+  const uint32_t Pair = here();
+  appendULEB(Info, 3);
+  name("Pair");
+  Info.push_back(16);
+  const uint32_t PairPointer = here();
+  appendULEB(Info, 4);
+  Info.push_back(8);
+  appendU32LE(Info, Pair);
+
+  const uint32_t Abstract = here();
+  appendULEB(Info, 5);
+  name("second_of");
+  Info.push_back(DW_INL_inlined);
+  const uint32_t AbstractParameter = here();
+  appendULEB(Info, 6);
+  name("p");
+  appendU32LE(Info, PairPointer);
+  const uint32_t AbstractLocal = here();
+  appendULEB(Info, 7);
+  name("count");
+  appendU32LE(Info, Long);
+  Info.push_back(0);
+
+  appendULEB(Info, 8);
+  appendU32LE(Info, Abstract);
+  appendU64LE(Info, 0x1000);
+  appendU32LE(Info, 0x10);
+  expression({DW_OP_call_frame_cfa});
+  appendULEB(Info, 9);
+  appendU32LE(Info, AbstractParameter);
+  expression({DW_OP_reg5});
+  appendULEB(Info, 10);
+  appendU32LE(Info, AbstractLocal);
+  expression({DW_OP_fbreg, 0x68}); // SLEB128 -24
+  Info.push_back(0);
+
+  const uint32_t Declaration = here();
+  appendULEB(Info, 11);
+  name("table");
+  appendU32LE(Info, Pair);
+  appendULEB(Info, 12);
+  appendU32LE(Info, Declaration);
+  expression({DW_OP_addr, 0x00, 0x20, 0, 0, 0, 0, 0, 0});
+  Info.push_back(0);
+  patchU32LE(Info, 0, static_cast<uint32_t>(Info.size() - 4));
+  return makeELFWithDWARF(Abbrev, Info);
 }
 
 AuthenticatedReturnValueState
@@ -1564,6 +1697,53 @@ TEST(DWARFSourceTypes, ReferencesPreserveQualifiedRecordIdentity) {
     EXPECT_EQ(Record->SourceName, "Demo::Widget<int>");
     EXPECT_EQ(Record->Size, 16);
   }
+}
+
+// Compilers name the parameters and locals of an inlined function's
+// out-of-line copy only by DW_AT_abstract_origin, and a variable defined
+// apart from its declaration only by DW_AT_specification: their types are
+// the declarations', not a guessed int.
+TEST(DWARFSourceTypes, OriginsAndSpecificationsDeclareTheTypes) {
+  ScratchDir Dir;
+  const auto Bytes = makeELFDWARFOriginFixture();
+  const auto Path = Dir.writeBytes("origin.elf", Bytes);
+  auto Context = DWARFDebugContext::load(Path, BinaryFormat::ELF,
+                                         DWARFLoadTrust::InImage, Bytes);
+  ASSERT_TRUE(Context && Context->hasInfo());
+
+  // Each declaration below is checked on its own, so a loader that misses
+  // one reference reports every place that depends on it.
+  const auto Function = Context->resolveFunction(0x1000);
+  ASSERT_TRUE(Function);
+  EXPECT_EQ(Function->Name, "second_of");
+  ASSERT_EQ(Function->Params.size(), 1U);
+  EXPECT_EQ(Function->Params[0].first, "p");
+  const TypeRef &Parameter = Function->Params[0].second;
+  ASSERT_TRUE(Parameter);
+  EXPECT_EQ(Parameter->Kind, NdTypeKind::Ptr);
+  EXPECT_TRUE(Parameter->Pointee &&
+              Parameter->Pointee->Kind == NdTypeKind::Struct &&
+              Parameter->Pointee->SourceName == "Pair");
+
+  const auto Records = Context->resolveAuthenticatedRecordParameters(0x1000);
+  EXPECT_EQ(Records.size(), 1U);
+  if (Records.size() == 1) {
+    EXPECT_EQ(Records[0].Register,
+              getTargetRegInfo(Arch::X64).IntParamRegs.front());
+    EXPECT_EQ(Records[0].QualifiedType, "Pair");
+    EXPECT_EQ(Records[0].ObjectBytes, 16U);
+  }
+
+  const auto Local = Context->resolveVariable(0x1000, -24);
+  EXPECT_TRUE(Local && Local->Name == "count" && Local->Type &&
+              Local->Type->Size == 8);
+
+  const auto Objects = Context->allDataObjects();
+  const auto Table = std::find_if(
+      Objects.begin(), Objects.end(),
+      [](const DataObjectSym &Object) { return Object.Addr == 0x2000; });
+  EXPECT_TRUE(Table != Objects.end() && Table->Name == "table" &&
+              Table->Size == 16);
 }
 
 TEST(DWARFParallelLoad, DuplicateDIEsAcrossWorkersCannotAuthenticateAType) {
