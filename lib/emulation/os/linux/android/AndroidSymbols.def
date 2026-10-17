@@ -108,8 +108,8 @@ NEVERD_ANDROID_CALL(SystemPropertyFindNth, "__system_property_find_nth",
 NEVERD_ANDROID_CALL(SystemPropertyRead, "__system_property_read", readProperty)
 NEVERD_ANDROID_CALL(SystemPropertySerial, "__system_property_serial",
                     propertySerial)
-NEVERD_ANDROID_CALL(SystemPropertyReadCallback, "__system_property_read_callback",
-                    readPropertyCallback)
+NEVERD_ANDROID_CALL(SystemPropertyReadCallback,
+                    "__system_property_read_callback", readPropertyCallback)
 NEVERD_ANDROID_CALL(SystemPropertyForEach, "__system_property_foreach",
                     forEachProperty)
 NEVERD_ANDROID_CALL(Malloc, "malloc", malloc)
