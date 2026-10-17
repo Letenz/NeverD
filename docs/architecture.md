@@ -7361,12 +7361,23 @@ introduced. See [Darwin environments](darwin-emulation.md) for the finite contra
 `MachOExecutionImage` also retains original constructor section/routines facts.
 `DarwinImage` alone admits local executable targets after relocation and orders
 shared dependencies once in postorder. `DarwinCallbacks` owns startup, main and
-main-thread TLS termination, authenticated return frames and private pending
+main-thread TLS and global termination, authenticated return frames and private pending
 exit state. It reuses `IntegerABI`, the original process stack/return page and
 the existing `ExecutionSession` budget. `DarwinStack` owns bounded `ProgramVars`;
 `DarwinLibSystem` decodes the exact void TLS-registration and nonreturning exit
 ABIs before delegating their lifecycle effects. Runtime callback targets retain
 unrounded original executable spans, and termination preserves the current stack.
+`DarwinLibSystemCalls.def` declares C and C++ registration arities; one private
+classification is shared with image admission. Global registration returns int
+zero through the existing ABI owner and preserves errno. `DarwinCallbacks`
+interleaves C/C++ LIFO work after the TLS phase exactly once and removes each
+entry before invoking original code. The DSO carrier is event data only.
+An externally discriminated private union preserves the old callback base and
+TLS record stride: strong global imports select precharged combined storage
+with a separate 1,024-entry quota. Raw and constructor/TLS-only images retain
+their previous admission budgets. Selective finalization and guard-based local
+static initialization remain explicit unsupported imports.
+
 
 ### Sequential raw compare-and-exchange
 

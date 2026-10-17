@@ -7867,7 +7867,7 @@ target bounds. `DarwinLibSystemTest.Callback*`, `NormalExit*` and
 capacity/nulls, current-stack preservation, live permissions and pending tables.
 `DarwinProcess.DylibConstructorsAndTLSCallbacksKeepStartupAndExitOrder` repeats
 all exit paths, fresh processes and shared instruction/event limits. It adds
-one mandatory method: 102 per profile and 306 matching ARM64 identities.
+the constructor/TLS method in the mandatory native inventory.
 `DarwinNative.ConstructorsAndTLSCallbacksMatchOriginalNativeImages` compares
 both system-linked formats with actual macOS execution; independent original
 O0/O1/O2 controls disable stack protection, whose guard imports remain outside
@@ -7875,6 +7875,29 @@ this provider. `DarwinLibSystemPublic.ConstructorsAndTLSCallbacksKeepLifetimeAcr
 and genuine Python `test_darwin_constructors_and_tls_callbacks_keep_process_lifetime`
 check all five profiles, void JSON results and repeated session isolation.
 Native Intel and physical iOS remain unqualified. No guest budget is increased.
+
+### Darwin C/C++ global exit callbacks
+
+`DarwinExitFixtures.cmake` builds a real two-dylib C++ graph with compiler-emitted
+`__cxa_atexit` and local-static initialization using `-fno-threadsafe-statics`.
+`DarwinLibSystemTest.Global*` checks exact arity/int results, errno, mixed LIFO,
+quota retirement, full-width objects, original targets and active-frame permissions.
+`DarwinLinking.CallbackStorage*` and `RegistrationOnly*` protect the old base/TLS
+footprint and conditional global metadata charge; raw and constructor-only
+minimum-budget cases remain separate. Guard and selective-finalization imports
+remain refused.
+
+`DarwinProcess.DylibGlobalsAndLocalStaticsFinalizeAfterTLS` covers eight native
+outcomes, global raw exit, explicit reentrant-exit refusal, fresh processes and
+shared terminal event/instruction limits. It raises the mandatory inventory to
+103 methods per profile and 309 matching ARM64 HVF identities.
+`DarwinNative.GlobalAndStaticDestructorsMatchOriginalNativeImages` compares both
+system-linked formats with original macOS execution. Independent O0/O1/O2
+controls cover all eight outcomes. C/CLI
+`GlobalAndStaticDestructorsKeepLifetimeAcrossCAndCLI` and genuine Python
+`test_darwin_global_and_static_destructors_keep_process_lifetime` check all five
+profiles and existing JSON call records. Native Intel and physical iOS remain
+unqualified; all guest budgets remain unchanged.
 
 ### Imported Darwin data and TLS pointer offsets
 
