@@ -3683,10 +3683,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>이 PDB에는 정의된 형식이 없습니다.</translation>
     </message>
     <message>
-        <source>No local types: this program has no PDB with types.</source>
-        <translation>로컬 형식이 없습니다. 이 프로그램에는 형식이 있는 PDB가 없습니다.</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>PDB에 나열된 대로 배치되지 않는 형식: %1</translation>
     </message>
@@ -3745,10 +3741,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>(padding)</source>
         <translation>(패딩)</translation>
-    </message>
-    <message>
-        <source>Double-click to open %1</source>
-        <translation>두 번 클릭하여 %1 열기</translation>
     </message>
     <message>
         <source>Export local types</source>
@@ -3933,6 +3925,46 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Lua (*.lua)</source>
         <translation>Lua (*.lua)</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n members</source>
+        <translation>
+            <numerusform>멤버 %n개</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Ctrl+click to open</source>
+        <translation>Ctrl+클릭하여 열기</translation>
+    </message>
+    <message>
+        <source>Double-click or Ctrl+click to open %1</source>
+        <translation>두 번 클릭하거나 Ctrl+클릭하여 %1 열기</translation>
+    </message>
+    <message>
+        <source>bits %1 of the unit at %2</source>
+        <translation>%2 단위의 %1비트</translation>
+    </message>
+    <message>
+        <source>at %1, %2 bytes</source>
+        <translation>%1, %2바이트</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>DWARF에서</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>DWARF에서 %n개</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>DWARF에 정의된 타입이 없습니다.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>로컬 타입 없음: 이 프로그램에는 타입이 있는 PDB나 DWARF가 없습니다.</translation>
     </message>
 </context>
 <context>

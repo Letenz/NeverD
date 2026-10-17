@@ -119,7 +119,11 @@ struct Session {
   /// asked for (NeverDCAPILocalTypes.cpp).  A new image or PDB drops them.
   std::unique_ptr<types::TypeLibrary> LocalTypes;
   types::PDBTypeImportStats LocalTypeStats;
-  /// Where they came from: "pdb", or "none" for an image without types.
+  /// The types DWARF describes that the import left out, each with why, and
+  /// the names its units define otherwise (DWARFTypeImportStats).
+  std::vector<std::string> LocalTypeSkipped, LocalTypeConflicts;
+  /// Where they came from: "pdb", "dwarf", or "none" for an image without
+  /// types.
   std::string LocalTypesSource;
   /// The declarations the user added, in order, read again over the
   /// program's types whenever those are read anew.
@@ -147,6 +151,8 @@ struct Session {
   void dropLocalTypes() {
     LocalTypes.reset();
     LocalTypeStats = {};
+    LocalTypeSkipped.clear();
+    LocalTypeConflicts.clear();
     LocalTypesSource.clear();
     DeclarationProblems.clear();
     LocalTypeHeaders.clear();

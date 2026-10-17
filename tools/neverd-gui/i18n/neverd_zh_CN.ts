@@ -3683,10 +3683,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>该 PDB 未定义任何类型。</translation>
     </message>
     <message>
-        <source>No local types: this program has no PDB with types.</source>
-        <translation>没有本地类型：此程序没有包含类型的 PDB。</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>布局与 PDB 所列不一致的类型：%1</translation>
     </message>
@@ -3745,10 +3741,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>(padding)</source>
         <translation>（填充）</translation>
-    </message>
-    <message>
-        <source>Double-click to open %1</source>
-        <translation>双击打开 %1</translation>
     </message>
     <message>
         <source>Export local types</source>
@@ -3933,6 +3925,46 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Lua (*.lua)</source>
         <translation>Lua (*.lua)</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n members</source>
+        <translation>
+            <numerusform>%n 个成员</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Ctrl+click to open</source>
+        <translation>Ctrl+点击打开</translation>
+    </message>
+    <message>
+        <source>Double-click or Ctrl+click to open %1</source>
+        <translation>双击或 Ctrl+点击打开 %1</translation>
+    </message>
+    <message>
+        <source>bits %1 of the unit at %2</source>
+        <translation>位于 %2 的单元中的 %1 位</translation>
+    </message>
+    <message>
+        <source>at %1, %2 bytes</source>
+        <translation>位于 %1，%2 字节</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>来自 DWARF</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>%n 个来自 DWARF</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>DWARF 中没有定义任何类型。</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>没有本地类型：此程序没有包含类型的 PDB 或 DWARF。</translation>
     </message>
 </context>
 <context>

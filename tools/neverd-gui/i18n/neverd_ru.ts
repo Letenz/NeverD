@@ -3697,10 +3697,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>PDB не определяет типов.</translation>
     </message>
     <message>
-        <source>No local types: this program has no PDB with types.</source>
-        <translation>Нет локальных типов: у программы нет PDB с типами.</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>Типов, размещение которых не совпадает с PDB: %1</translation>
     </message>
@@ -3759,10 +3755,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>(padding)</source>
         <translation>(заполнение)</translation>
-    </message>
-    <message>
-        <source>Double-click to open %1</source>
-        <translation>Дважды щёлкните, чтобы открыть %1</translation>
     </message>
     <message>
         <source>Export local types</source>
@@ -3963,6 +3955,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Lua (*.lua)</source>
         <translation>Lua (*.lua)</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n members</source>
+        <translation>
+            <numerusform>членов: %n</numerusform>
+            <numerusform>членов: %n</numerusform>
+            <numerusform>членов: %n</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Ctrl+click to open</source>
+        <translation>Ctrl+щелчок — открыть</translation>
+    </message>
+    <message>
+        <source>Double-click or Ctrl+click to open %1</source>
+        <translation>Дважды щёлкните или Ctrl+щелчок, чтобы открыть %1</translation>
+    </message>
+    <message>
+        <source>bits %1 of the unit at %2</source>
+        <translation>биты %1 блока по адресу %2</translation>
+    </message>
+    <message>
+        <source>at %1, %2 bytes</source>
+        <translation>по адресу %1, байтов: %2</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>Из DWARF</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>%n из DWARF</numerusform>
+            <numerusform>%n из DWARF</numerusform>
+            <numerusform>%n из DWARF</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>DWARF не определяет типов.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>Нет локальных типов: у этой программы нет PDB или DWARF с типами.</translation>
     </message>
 </context>
 <context>
