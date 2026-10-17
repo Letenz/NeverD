@@ -3041,6 +3041,9 @@ software deadline regression spends the budget inside an instruction observer
 and verifies that the following unmapped load never executes and a fresh run
 can stop normally. Keep native Windows repetition for the short-slice timer
 regression; a pass on another host does not qualify its timing behavior.
+The driver context fixture checks all 1296 guarded bytes at each of twelve
+captures. Constant-width copies and unrolled fixed loops reduce checked native
+instruction overhead while retaining every comparison and the existing budget.
 `AArch64ProjectionTests.cpp` executes through the ARM MMU using the actual
 native page-table projection, checking translations, remapping and write
 protection. These tests deliberately use Unicorn's architectural CPU TLB, not
