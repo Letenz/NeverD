@@ -186,12 +186,22 @@ imageFunctionSymbolsAt(const BinaryImage &Img, va_t Address) {
   return {Exact, Ending};
 }
 
-/// Whether the image's runtime calls the function at \p Address -- an
-/// initializer, the default a loader-owned pointer holds -- which makes it
-/// a function without a symbol naming it.
-bool isImageRuntimeFunction(const BinaryImage &Img, va_t Address) {
-  return Img.isRuntimeFunctionAt(Address) ||
-         (Img.Arch == Arch::ARM && Img.isRuntimeFunctionAt(Address | 1));
+/// Whether runtime ownership or unwind metadata proves a function entry
+/// without a symbol naming it.
+bool isImageFunctionEntry(const BinaryImage &Img, va_t Address) {
+  if (Img.isRuntimeFunctionAt(Address) ||
+      (Img.Arch == Arch::ARM && Img.isRuntimeFunctionAt(Address | 1)))
+    return true;
+  // Unwind metadata can prove an entry without a function symbol.  A code
+  // reference alone, an interior continuation, or a range over data cannot.
+  const auto *Segment = Img.getSegmentFor(Address);
+  const auto *Section = Img.getSectionFor(Address);
+  if (!Segment || !Segment->isReadable() ||
+      (Section && !Section->isExecutable()))
+    return false;
+  return !Img.ContinuationCodeStarts.count(Address) &&
+         Img.hasKnownFunctionEntryAt(Address) &&
+         Img.hasExecutableCodeOwnerAt(Address);
 }
 
 /// The entry of the function whose body holds \p Address past its first
@@ -225,7 +235,7 @@ llvm::Function *MedLLVMEmitter::resolveImageFunctionEntry(va_t Address) {
     return nullptr;
   if (const Symbol *Exact = imageFunctionSymbolsAt(*Img, Address).first)
     return materializeImageFunctionDeclaration(Address, Exact->Name);
-  return isImageRuntimeFunction(*Img, Address)
+  return isImageFunctionEntry(*Img, Address)
              ? materializeImageFunctionDeclaration(Address, {})
              : nullptr;
 }
@@ -236,10 +246,12 @@ llvm::Constant *MedLLVMEmitter::resolveImageFunctionAddress(va_t Address) {
   if (!Img || !Mod || !Ctx)
     return nullptr;
   const auto [Exact, Ending] = imageFunctionSymbolsAt(*Img, Address);
+  // Adjacent functions share an address with the previous function's end.
+  // Independent entry evidence owns that address before the end fallback.
+  if (!Exact && isImageFunctionEntry(*Img, Address))
+    return materializeImageFunctionDeclaration(Address, {});
   const Symbol *Use = Exact ? Exact : Ending;
   if (!Use) {
-    if (isImageRuntimeFunction(*Img, Address))
-      return materializeImageFunctionDeclaration(Address, {});
     return resolveDeclaredFunctionInterior(Address);
   }
   const va_t Entry = normalizeCodeAddress(Use->Addr, Img->Arch, Img->Mode);

@@ -21,6 +21,13 @@ read-only tails, dynamic provider lifetimes, multiple consumers, token
 competition after wake, deadlock and failed resumption. Timed waits remain an
 explicit unsupported boundary.
 
+`AndroidRandom.*` compares 64-value sequences with answers produced by a
+separate Android 9 BSD implementation, including zero/high-bit seeds, aliases,
+reseeding, per-process isolation, two guest threads, dynamic provider lifetime,
+`rand_r` writes and invalid/read-only pointers. Native callers run at O0/O2
+with ordinary, packed and RELR relocations on available CPU backends. Custom
+state generators retain an explicit unsupported test.
+
 ## MXCSR recovery checks
 
 `InterpreterSpecialization.MXCSR*` covers arbitrary entry state, exact memory values, reserved bits, DAZ, aliases, malformed forms, node projection and exact/short budgets. `PEFixedImageTest.RawMXCSR*` checks legacy/VEX native bytes and mask-bound receipts. The machine-state and native/LLVM refinement owners verify that unused capabilities cannot expand their interfaces.
@@ -4079,6 +4086,16 @@ trap on a register earlier calls left behind, and no incoming stack slot taken
 for the routine's open arity. `MedCallLeftovers.JoinsOfCallClobbersOnly`
 checks which clobbers and joins `ValuesLeftByCalls` names, loops and exception
 entries included.
+`CallsTakeNoIncomingRegisterAnEarlierCallChanged` links, for x86-64, i386,
+ARM and AArch64, a routine that reads four argument registers with callers
+that declare it with one, calling it after another call, after a join of two
+calls and in a destructor run on a normal and an exceptional path: no caller
+takes a parameter for a register an earlier call may have changed, HighC and
+LLVM C alike. `VariadicCallsTakeNoSpillAboveAnUnsetRegister` keeps an AArch64
+-O0 spill above an unset register out of a variadic call's arguments.
+`ItaniumRuntimeCopiesTakeTheirDeclaredParameters` links an image's own copy
+of `_Unwind_Resume` for x86-64, ARM and AArch64: it takes its one declared
+parameter, and its callers pass it one argument.
 
 `ELFARM32ModeTest.MixedImagePairsItsPLTWithTheImports` links a mixed
 ARM/Thumb shared library and requires the PLT entry a Thumb `bl puts` reaches
@@ -6168,6 +6185,17 @@ cmake -S . -B build-native -G Ninja \
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves, scalar conversions and fixed-width SIMD operations at EL0/EL1. Scalar conversion tests check signed/unsigned W/X inputs, truncation and saturation, FP32/FP64 resizing, rounding, upper-lane clearing and cumulative status. Fixed-point, packed and FP16 conversion forms remain rejected. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
+`AArch64WidenCases.def` records 36 independently assembled SSHLL/USHLL and
+SSHLL2/USHLL2 forms, including zero-shift SXTL/UXTL aliases. Independent integer
+oracles check signed extension, unsigned high bits, both source halves, all
+8/16/32-bit source widths, boundary shifts and overlapping registers. Complete
+scalar/vector state and guard memory are compared at both privileges; reserved
+element-size and scalar encodings fail without mutation.
+Lane-move tests cover UMOV/SMOV, their MOV aliases, all legal element/result
+widths, first/last lanes, sign extension, W-register upper clearing and XZR.
+Capstone's `HasNEONorSME` group is satisfied by baseline NEON; SME-only feature
+groups and unsupported register views remain rejected.
+
 `AArch64ReductionCases.def` records 34 independently assembled baseline forms of
 CMEQ (register/zero and scalar/vector), UZP1, XTN/XTN2 and UMAXV. Integer lane
 oracles cover all admitted widths, unsigned high bits, narrowing truncation,
@@ -8070,3 +8098,21 @@ final image for LDARB, absence of LDAPR and real guard imports. Preserve failed
 modern-host and march-only LDAPRB controls. Their refusal happened before the
 first guard call with no output; it does not prove unchanged memory. Native
 Intel, physical iOS, RCpc and concurrent initialization remain separate coverage.
+
+## Offline Android resolver and Linux stream contracts
+
+Build `NeverDAndroidNativeTests` and `NeverDLinuxProcessTests` with CPU emulation
+and Android fixture compilation enabled. Filter `*AndroidNetwork*` covers
+resolver result ordering, LP64 layout, null/error ordering, ownership,
+IPv4/IPv6 formatting, named/raw/dynamic calls, short transfers, alias lifetime,
+refusal and unknown-input stops. Original C fixtures run at O0/O2 with ordinary,
+APS2 and RELR relocations on available checked AArch64 transports; unavailable
+backends are skips. `*LinuxNetwork*` checks x64/AArch64 shared descriptors,
+failed-admission atomicity, full byte streams and strict JSON. Tests never use
+host networking. Run the complete affected owners before review.
+
+`NeverDAAPCS64CallContractTests` checks bounded breadth-first callee discovery
+and preserves unknown operands across call/exception boundaries without
+inventing forwarded entry parameters. `NeverDLLVMImportVeneerBoundaryTests`
+checks exact unwind-owned code pointers on ELF/COFF/Mach-O for x64/AArch64,
+adjacent symbol ends, and rejection of unproved/continuation/data addresses.

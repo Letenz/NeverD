@@ -704,6 +704,11 @@ constexpr unsigned kMaxFrameDisplacementDepth = 32;
 /// Fixed-point iterations when growing HighC frame aliases.
 constexpr unsigned kMaxFrameAliasFixedPoint = 64;
 
+/// Renderings of a HighC unit that ask the local types for the records an
+/// earlier one read members of through others.  The last rendering asks for
+/// none, and reads members of the records it lacks by their offsets.
+constexpr unsigned kMaxHighCRecordDefinitionRenders = 4;
+
 /// Expression nodes visited while finding the frame address of a C++ object
 /// an unwind action destroys.  Exhaustion keeps the action as a note.
 constexpr size_t kMaxCxxObjectAddressWork = 1048576;

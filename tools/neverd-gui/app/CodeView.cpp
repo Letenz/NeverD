@@ -2,6 +2,7 @@
 
 #include "Icons.h"
 #include "Session.h"
+#include "SettingsKeys.h"
 #include "ShrinkableRow.h"
 #include "Theme.h"
 
@@ -25,6 +26,7 @@
 #include <QScopedValueRollback>
 #include <QScrollBar>
 #include <QSet>
+#include <QSettings>
 #include <QTextLine>
 #include <QToolButton>
 #include <QToolTip>
@@ -63,6 +65,38 @@ labelDefinition(QStringView line) {
     return std::nullopt;
   return std::pair{line.left(end), address};
 }
+/// The function a frame record's name stands for: HighC declares a
+/// function's stack as a record named `frame_` and the function's address in
+/// hexadecimal (writeFunctionProjection in
+/// lib/backend/c/HighC/HighCFuncWriter.cpp), `frame_140003FE0`.
+std::optional<Address> frameRecordAddress(QStringView name) {
+  if (!name.startsWith(u"frame_") || name.size() == 6)
+    return std::nullopt;
+  for (const QChar digit : name.mid(6))
+    if (!((digit >= u'0' && digit <= u'9') || (digit >= u'A' && digit <= u'F')))
+      return std::nullopt;
+  bool valid = false;
+  const Address address = name.mid(6).toULongLong(&valid, 16);
+  if (!valid)
+    return std::nullopt;
+  return address;
+}
+
+/// Whether \p word stands alone in \p line, rather than in a longer name.
+bool containsWord(QStringView line, QStringView word) {
+  const auto identifier = [](QChar c) {
+    return c.isLetterOrNumber() || c == u'_';
+  };
+  for (qsizetype at = line.indexOf(word); at >= 0;
+       at = line.indexOf(word, at + 1)) {
+    const qsizetype end = at + word.size();
+    if ((at == 0 || !identifier(line[at - 1])) &&
+        (end == line.size() || !identifier(line[end])))
+      return true;
+  }
+  return false;
+}
+
 /// How often a drag beyond an edge scrolls the text.
 constexpr int DragScrollMs = 40;
 /// The fold over the lines before a definition: C's includes and
@@ -383,6 +417,28 @@ QHash<QString, int> llvmDefinitions(QStringView source) {
 }
 } // namespace
 
+SourceDefaults &SourceDefaults::instance() {
+  static SourceDefaults defaults;
+  return defaults;
+}
+
+bool SourceDefaults::symbolic() const {
+  return QSettings().value(settings::SymbolicSimplification, false).toBool();
+}
+
+void SourceDefaults::setSymbolic(bool enabled) {
+  if (enabled == symbolic())
+    return;
+  QSettings().setValue(settings::SymbolicSimplification, enabled);
+  emit changed();
+}
+
+QJsonObject SourceDefaults::options(const QString &representation) {
+  if (CodeView::isSource(representation) && instance().symbolic())
+    return {{"symbolic", true}};
+  return {};
+}
+
 CodeText::CodeText(Session &session, QWidget *parent)
     : QAbstractScrollArea(parent), session_(session) {
   setFocusPolicy(Qt::StrongFocus);
@@ -403,6 +459,25 @@ CodeText::CodeText(Session &session, QWidget *parent)
       load(*function_, representation_);
     else
       interrupted_ = true;
+  });
+  // A new default reaches the shown function too, whatever this window
+  // chose for it; a hidden window takes it when it shows again.
+  connect(&SourceDefaults::instance(), &SourceDefaults::changed, this, [this] {
+    if (!function_ || !CodeView::isSource(representation_))
+      return;
+    auto options = sourceOptions_;
+    if (SourceDefaults::instance().symbolic())
+      options["symbolic"] = true;
+    else
+      options.remove("symbolic");
+    if (options == sourceOptions_)
+      return;
+    if (isVisible()) {
+      load(*function_, representation_, options);
+    } else {
+      sourceOptions_ = options;
+      interrupted_ = true;
+    }
   });
   connect(&session_, &Session::unloaded, this, &CodeText::clear);
   // A drag held beyond an edge scrolls toward it, the faster the farther
@@ -468,6 +543,7 @@ void CodeText::cancel() {
   ++serial_;
   pendingAddress_.reset();
   selectedAddress_.reset();
+  statusNote_.clear();
   session_.cancelAnalysisReads(this);
   if (loading_) {
     sourceOptions_ = renderedOptions_;
@@ -523,8 +599,8 @@ void CodeText::clear() {
 void CodeText::load(Address function, const QString &representation,
                     std::optional<QJsonObject> options) {
   const bool same = function_ == function && representation_ == representation;
-  const auto nextOptions =
-      options.value_or(same ? sourceOptions_ : QJsonObject());
+  const auto nextOptions = options.value_or(
+      same ? sourceOptions_ : SourceDefaults::options(representation));
   // A reload of complete text keeps its place; one a newer reload cuts short
   // keeps the place the first one saved.
   if (!same) {
@@ -573,6 +649,25 @@ void CodeText::load(Address function, const QString &representation,
 void CodeText::setSourceOptions(const QJsonObject &options) {
   if (function_ && CodeView::isSource(representation_))
     load(*function_, representation_, options);
+}
+
+QJsonObject CodeText::defaultSourceOptions() const {
+  return SourceDefaults::options(representation_);
+}
+
+void CodeText::cancelTransformation() {
+  if (loading_ && lines_.isEmpty() && sourceOptions_.value("symbolic").toBool())
+    showOrdinary(tr("Cancelled"));
+  else
+    cancel();
+}
+
+void CodeText::showOrdinary(const QString &why) {
+  auto options = sourceOptions_;
+  options.remove("symbolic");
+  load(*function_, representation_, options);
+  // Pages arrive from the event loop, after this.
+  statusNote_ = why;
 }
 
 void CodeText::request(int offset, quint64 serial) {
@@ -650,6 +745,9 @@ void CodeText::request(int offset, quint64 serial) {
           status_ +=
               QStringLiteral(" · ") + sourceOptions_.value("llvm_optimization")
                                           .toString(QStringLiteral("O2"));
+        if (!statusNote_.isEmpty())
+          status_ += (status_.isEmpty() ? QString() : QStringLiteral(" · ")) +
+                     std::exchange(statusNote_, {});
         updateRange();
         viewport()->update();
         if (const auto address = std::exchange(pendingAddress_, {}))
@@ -669,6 +767,12 @@ void CodeText::request(int offset, quint64 serial) {
           sourceOptions_ = renderedOptions_;
           status_ = tr("Transformation failed: %1").arg(message);
           emit statusChanged();
+          return;
+        }
+        // Symbolic simplification never keeps a function from showing: its
+        // ordinary source follows.
+        if (sourceOptions_.value("symbolic").toBool()) {
+          showOrdinary(tr("Transformation failed: %1").arg(message));
           return;
         }
         // A refused function reads in no language and names nothing.
@@ -2007,6 +2111,12 @@ void CodeText::mouseDoubleClickEvent(QMouseEvent *event) {
     goToLabel(token, label->second, label->first);
     return;
   }
+  // So is the function's frame: the disassembly goes to where the function
+  // begins, or to where it reads or writes the member, while the code stays.
+  if (const auto frame = frameAddress(token)) {
+    emit labelActivated(*frame);
+    return;
+  }
   // A type or macro this code declares opens at its declaration; the
   // language's own words name nothing in the binary.
   const auto &words = vocabularyOf(dialectOf(representation_, pageLanguage_));
@@ -2273,6 +2383,74 @@ CodeText::addressLabel(const QString &name) const {
   return std::nullopt;
 }
 
+std::optional<Address> CodeText::frameAddress(const QString &name) const {
+  if (!labelsNameAddresses() || !function_)
+    return std::nullopt;
+  // The record of the function's stack, and the storage of it.
+  if (const auto record = frameRecordAddress(name))
+    return record;
+  if (name == QLatin1String("stack_storage") ||
+      name == QLatin1String("frame_base"))
+    return function_;
+  // A member, which the lines from the record's to its closing brace name.
+  const QStringView source(source_);
+  int line = 0;
+  qsizetype start = 0;
+  const auto next = [&]() -> std::optional<QStringView> {
+    if (start >= source.size())
+      return std::nullopt;
+    qsizetype end = source.indexOf(QLatin1Char('\n'), start);
+    if (end < 0)
+      end = source.size();
+    const QStringView text = source.mid(start, end - start);
+    start = end + 1;
+    ++line;
+    return text;
+  };
+  bool inRecord = false, member = false;
+  while (const auto text = next()) {
+    const QStringView trimmed = text->trimmed();
+    if (!inRecord) {
+      for (qsizetype at = trimmed.indexOf(u"frame_"); at >= 0;
+           at = trimmed.indexOf(u"frame_", at + 1)) {
+        qsizetype end = at + 6;
+        while (end < trimmed.size() &&
+               (trimmed[end].isLetterOrNumber() || trimmed[end] == u'_'))
+          ++end;
+        if (frameRecordAddress(trimmed.mid(at, end - at)) &&
+            trimmed.endsWith(u'{'))
+          inRecord = true;
+      }
+      continue;
+    }
+    if (trimmed.startsWith(u'}'))
+      break;
+    member |= containsWord(trimmed, name);
+  }
+  if (!member)
+    return std::nullopt;
+  // Where the cursor's line reads or writes it, else the first line after the
+  // record that does and that an instruction maps to.
+  if (cursorLine_ >= 0 && cursorLine_ < lines_.size() &&
+      !lines_[cursorLine_].label && !lines_[cursorLine_].addresses.isEmpty() &&
+      containsWord(lines_[cursorLine_].styled.text, name))
+    return lines_[cursorLine_].addresses.front();
+  while (const auto text = next()) {
+    if (!containsWord(*text, name))
+      continue;
+    for (const auto &value : std::as_const(sourceRows_)) {
+      const auto row = value.toMap();
+      if (row.value(QStringLiteral("line"), -1).toInt() != line - 1)
+        continue;
+      for (const auto &address :
+           row.value(QStringLiteral("addresses")).toList())
+        if (const auto parsed = parseAddress(address.toString()))
+          return parsed;
+    }
+  }
+  return function_;
+}
+
 void CodeText::goToLabel(const QString &name, int sourceLine, Address address) {
   if (library_.unfoldSourceLine(sourceLine)) {
     rebuildLines();
@@ -2446,6 +2624,16 @@ void CodeView::addSourceActions(QMenu &menu) {
       options.remove("symbolic");
     text_->setSourceOptions(options);
   });
+  // The default every function opens with, kept for later sessions.
+  auto *every =
+      menu.addAction(icon(QStringLiteral("source_symbolic_every")),
+                     tr("Symbolic simplification for every function"));
+  every->setObjectName(QStringLiteral("sourceSymbolicEvery"));
+  every->setCheckable(true);
+  every->setChecked(SourceDefaults::instance().symbolic());
+  connect(every, &QAction::triggered, this, [](bool enabled) {
+    SourceDefaults::instance().setSymbolic(enabled);
+  });
   if (representation() == QLatin1String("llvmc")) {
     auto *recovery = menu.addAction(icon(QStringLiteral("source_control_flow")),
                                     tr("Recover LLVM control flow"));
@@ -2534,14 +2722,14 @@ void CodeView::addSourceActions(QMenu &menu) {
   auto *reset = menu.addAction(icon(QStringLiteral("undo")),
                                tr("Restore default source"));
   reset->setObjectName(QStringLiteral("sourceDefault"));
-  reset->setEnabled(!text_->sourceOptions().isEmpty());
+  reset->setEnabled(text_->sourceOptions() != text_->defaultSourceOptions());
   connect(reset, &QAction::triggered, this,
-          [this] { text_->setSourceOptions({}); });
+          [this] { text_->setSourceOptions(text_->defaultSourceOptions()); });
   auto *cancel = menu.addAction(icon(QStringLiteral("cancel")),
                                 tr("Cancel transformation"));
   cancel->setObjectName(QStringLiteral("sourceCancel"));
   cancel->setEnabled(text_->loading());
-  connect(cancel, &QAction::triggered, text_, &CodeText::cancel);
+  connect(cancel, &QAction::triggered, text_, &CodeText::cancelTransformation);
 }
 
 void CodeView::updateRepresentations() {

@@ -1593,6 +1593,10 @@ Double-click to go to the declaration.</source>
         <translation>기호 단순화</translation>
     </message>
     <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>모든 함수에 기호 단순화 적용</translation>
+    </message>
+    <message>
         <source>Recover LLVM control flow</source>
         <translation>LLVM 제어 흐름 복원</translation>
     </message>
@@ -2111,6 +2115,10 @@ Signed: %4</source>
     <message>
         <source>Show segment:address line prefixes</source>
         <translation>줄 앞에 세그먼트:주소 접두사 표시</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>모든 함수에 기호 단순화 적용</translation>
     </message>
     <message>
         <source>Shortcuts</source>

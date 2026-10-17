@@ -593,6 +593,23 @@ ABI references: Android 9 [`dlfcn.h`](https://android.googlesource.com/platform/
 [`dlsym`/`dlclose`](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/linker/linker.cpp),
 and [`dlerror`](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/linker/dlfcn.cpp).
 
+## API 28 pseudo-random sequences
+
+`rand`/`random` share one guest process sequence; `srand`/`srandom` reset it
+using the low 32 bits of the seed. The default 31-word additive generator,
+signed seed expansion and 310 warm-up steps follow the pinned
+[Android 9 random implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/upstream-netbsd/common/lib/libc/stdlib/random.c)
+and [Bionic aliases](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/rand.cpp).
+An unseeded process starts with seed 1; seed 0 has its own sequence. Calls are
+atomic within the guest scheduler and never use host entropy or host libc state.
+
+`rand_r` updates exactly four guest bytes using the separate
+[Android 9 recurrence](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/upstream-netbsd/lib/libc/stdlib/rand_r.c),
+retains the high bit in the stored seed and returns the low 31 bits. Invalid or
+read-only seed memory stops explicitly; successful calls preserve errno.
+`initstate` and `setstate` remain unsupported.
+These deterministic sequences reproduce the pinned ABI; they are not entropy.
+
 ## API 28 mutexes
 
 The Bionic model implements `pthread_mutexattr_init`, `destroy`, `gettype`,
@@ -995,3 +1012,12 @@ It also tests invalid field IDs/accessor types, final writes and heap limits.
 interning, thrown-object identity, ordered handlers, finally effects, repeated
 unwinding, inherited fields and class/interface/super/JNI nonvirtual dispatch.
 The JVM and D8 prepare/check fixtures only; NeverD execution uses neither.
+
+## Offline address resolution and TCP
+
+Explicit `android.resolver_queries` and `linux_network` inputs allow bounded
+`getaddrinfo`/`freeaddrinfo`, `inet_ntop`/`inet_pton`, socket creation, timeout
+options, connect and scalar
+stream I/O. See [offline network contracts](linux-network-contracts.md) for the
+API 28 layout, ownership checks, errno, descriptor aliases and unsupported
+boundaries. No host DNS or sockets are used.

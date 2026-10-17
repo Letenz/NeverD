@@ -1593,6 +1593,10 @@ Double-click to go to the declaration.</source>
         <translation>符号化简</translation>
     </message>
     <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>所有函数都符号化简</translation>
+    </message>
+    <message>
         <source>Recover LLVM control flow</source>
         <translation>恢复 LLVM 控制流</translation>
     </message>
@@ -2111,6 +2115,10 @@ Signed: %4</source>
     <message>
         <source>Show segment:address line prefixes</source>
         <translation>显示“段:地址”行前缀</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>所有函数都符号化简</translation>
     </message>
     <message>
         <source>Shortcuts</source>

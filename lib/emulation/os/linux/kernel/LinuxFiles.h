@@ -54,6 +54,11 @@ public:
   std::optional<uint64_t> outputError(uint32_t FD) const;
   uint32_t outputTarget(uint32_t FD) const;
   bool isDevice(uint32_t FD) const;
+  bool isSocket(uint32_t FD) const;
+  llvm::Expected<std::optional<uint64_t>>
+  network(ServiceKind Kind, const ProcessServiceEvent &Event,
+          const std::optional<LinuxNetworkOptions> &Network,
+          ProcessResult &Result);
   bool isRegularFile(uint32_t FD) const;
   /// Missing descriptor returns EBADF; another descriptor kind returns null.
   /// The borrowed catalogue identity outlives every mapping in this process.
@@ -116,9 +121,21 @@ private:
   struct ProcessDescriptor {
     uint32_t PID, Flags;
   };
+  struct OpenSocket {
+    uint32_t Family, Flags;
+    const LinuxStreamConnection *Connection = nullptr;
+    uint64_t Sent = 0, Received = 0;
+    bool Failed = false;
+    int64_t ReceiveTimeoutSeconds = 0, SendTimeoutSeconds = 0;
+  };
+  size_t NextConnection = 0;
+  llvm::Expected<std::optional<uint64_t>>
+  transferSocket(OpenSocket &Socket, bool Send, uint64_t Address, uint64_t Size,
+                 ProcessResult &Result);
   using OpenDevice = std::shared_ptr<LinuxDeviceState>;
-  using Descriptor = std::variant<Stream, OpenFile, ProcessDescriptor,
-                                  OpenDevice, OpenDirectory, OpenProcFile>;
+  using Descriptor =
+      std::variant<Stream, OpenFile, ProcessDescriptor, OpenDevice,
+                   OpenDirectory, OpenProcFile, OpenSocket>;
 
   ExecutionBackend &CPU;
   const MemoryLayout &Layout;

@@ -1,0 +1,204 @@
+//===- LinuxNetworkTests.cpp - Shared offline descriptor contracts -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Bounded offline network contracts and their semantic checks.
+
+#include "gtest/gtest.h"
+#include "os/linux/kernel/LinuxNetwork.h"
+#include "os/linux/kernel/LinuxServices.h"
+
+#include "neverd/emulation/ExecutionConfiguration.h"
+#include "neverd/emulation/ProcessReport.h"
+
+#include "llvm/Support/Endian.h"
+
+namespace neverd::emulation {
+namespace {
+using linux_model::ServiceKind;
+constexpr uint64_t Base = 0x20000000;
+class LinuxNetwork : public testing::TestWithParam<GuestArchitecture> {
+protected:
+  std::optional<BackendSelection> Backend;
+  ProcessOptions Options;
+  ProcessResult Report{};
+  linux_model::MemoryLayout Layout{0x800000000000ULL, 4096};
+  std::unique_ptr<linux_model::LinuxServices> Kernel;
+  ExecutionBackend &cpu() { return *Backend->CPU; }
+  void SetUp() override {
+    ExecutionConfiguration C;
+    C.Backend = ExecutionBackendKind::Unicorn;
+    C.Architecture = GetParam();
+    C.Contract = GetParam() == GuestArchitecture::X64
+                     ? ExecutionContract::CheckedUserX64
+                     : ExecutionContract::CheckedUserAArch64;
+    auto P = probeExecutionBackend(C);
+    ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
+    if (P->Availability != BackendAvailability::Available)
+      GTEST_SKIP() << P->Reason;
+    Backend.emplace(llvm::cantFail(createExecutionBackend(C, 4 * 1024 * 1024)));
+    llvm::cantFail(
+        cpu().addressSpace()->map(Base, 8192, Read | Write | UserAccessible));
+    Options.LinuxFiles.emplace().DescriptorLimit = 6;
+    LinuxStreamConnection C0;
+    C0.Peer = {2, 0, 0x23, 0x29, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+    C0.ExpectedSend = {1, 2, 3};
+    C0.Receive = {7, 8};
+    C0.ReceiveEOF = true;
+    C0.MaxSend = C0.MaxReceive = 2;
+    Options.LinuxNetwork.emplace().Connections = {C0, C0};
+    llvm::cantFail(cpu().write(Base, C0.Peer));
+    Kernel = std::make_unique<linux_model::LinuxServices>(
+        cpu(), Layout, Base + 8192, Options, Report);
+  }
+  std::optional<uint64_t> call(ServiceKind K, uint64_t A = 0, uint64_t B = 0,
+                               uint64_t C = 0, uint64_t D = 0, uint64_t E = 0,
+                               uint64_t F = 0) {
+    return llvm::cantFail(Kernel->handle(K, {0, 0, {A, B, C, D, E, F}, {}}));
+  }
+  uint64_t open() { return call(ServiceKind::Socket, 2, 1, 6).value(); }
+};
+TEST_P(LinuxNetwork, TimeoutOptionsShareAliasesAndPreserveFailedWrites) {
+  const auto FD = open();
+  const auto Alias = call(ServiceKind::Dup, FD).value();
+  uint8_t Value[16]{};
+  auto Set = [&](uint32_t Name, int64_t Seconds, int64_t Micros) {
+    llvm::support::endian::write64le(Value, Seconds);
+    llvm::support::endian::write64le(Value + 8, Micros);
+    llvm::cantFail(cpu().write(Base + 64, Value));
+    return call(ServiceKind::SetSocketOption, FD, 1, Name, Base + 64, 16);
+  };
+  EXPECT_EQ(call(ServiceKind::SetSocketOption, 99, 1, 20, 1, 16), uint64_t(-9));
+  EXPECT_EQ(call(ServiceKind::SetSocketOption, 1, 1, 20, 1, 16), uint64_t(-88));
+  EXPECT_EQ(call(ServiceKind::SetSocketOption, FD, 1, 20, 1, 15),
+            uint64_t(-22));
+  EXPECT_EQ(call(ServiceKind::SetSocketOption, FD, 1, 20, 1, 16),
+            uint64_t(-14));
+  EXPECT_EQ(Set(20, 23, 0), 0u);
+  EXPECT_EQ(Set(21, 11, 0), 0u);
+  EXPECT_EQ(Set(20, 1, 1000000), uint64_t(-33));
+  EXPECT_FALSE(Set(20, 1, 1));
+  for (uint32_t Name : {20u, 21u})
+    for (uint32_t Length : {0u, 7u, 16u, 24u}) {
+      uint8_t Size[4];
+      llvm::support::endian::write32le(Size, Length);
+      llvm::cantFail(cpu().write(Base + 96, Size));
+      std::vector<uint8_t> Guard(32, 0xa5);
+      llvm::cantFail(cpu().write(Base + 128, Guard));
+      EXPECT_EQ(call(ServiceKind::GetSocketOption, Alias, 1, Name, Base + 128,
+                     Base + 96),
+                0u);
+      llvm::cantFail(cpu().read(Base + 96, Size));
+      const auto Count = std::min(Length, 16u);
+      EXPECT_EQ(llvm::support::endian::read32le(Size), Count);
+      llvm::cantFail(cpu().read(Base + 128, Guard));
+      uint8_t Expected[16]{};
+      llvm::support::endian::write64le(Expected, Name == 20 ? 23 : 11);
+      EXPECT_TRUE(std::equal(Expected, Expected + Count, Guard.begin()));
+      EXPECT_TRUE(std::all_of(Guard.begin() + Count, Guard.end(),
+                              [](uint8_t V) { return V == 0xa5; }));
+    }
+  EXPECT_EQ(call(ServiceKind::Close, FD), 0u);
+  EXPECT_EQ(call(ServiceKind::Connect, Alias, Base, 16), 0u);
+}
+
+TEST_P(LinuxNetwork, FailedAdmissionDoesNotConsumeConnectionOrStream) {
+  const auto FD = open();
+  EXPECT_EQ(call(ServiceKind::Connect, 99, 1, 16), uint64_t(-9));
+  EXPECT_EQ(call(ServiceKind::Connect, 1, 1, 16), uint64_t(-88));
+  EXPECT_EQ(call(ServiceKind::Connect, FD, 1, 129), uint64_t(-22));
+  EXPECT_EQ(call(ServiceKind::Connect, FD, 1, 16), uint64_t(-14));
+  EXPECT_EQ(call(ServiceKind::Connect, FD, Base, 16), 0u);
+  EXPECT_EQ(call(ServiceKind::Connect, FD, Base, 16), uint64_t(-106));
+  const uint8_t Wrong[] = {0xff, 2, 3};
+  llvm::cantFail(cpu().write(Base + 64, Wrong));
+  EXPECT_FALSE(call(ServiceKind::SendTo, FD, Base + 64, 3));
+  const uint8_t Right[] = {1, 2, 3};
+  llvm::cantFail(cpu().write(Base + 64, Right));
+  EXPECT_EQ(call(ServiceKind::Write, FD, Base + 64, 3), 2u);
+  EXPECT_EQ(call(ServiceKind::SendTo, FD, Base + 66, 1), 1u);
+  EXPECT_FALSE(call(ServiceKind::SendTo, FD, Base + 64, 1));
+  EXPECT_EQ(call(ServiceKind::SendTo, FD, UINT64_MAX, 0), 0u);
+  EXPECT_FALSE(call(ServiceKind::ReceiveFrom, FD, 1, 2));
+  EXPECT_EQ(call(ServiceKind::Read, FD, Base + 128, 4), 2u);
+  uint8_t Read[2];
+  llvm::cantFail(cpu().read(Base + 128, Read));
+  EXPECT_EQ(Read[0], 7);
+  EXPECT_EQ(Read[1], 8);
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, FD, 1, 2), 0u);
+}
+TEST_P(LinuxNetwork, SharedCursorsReplacementAndFDReuseKeepOneOwner) {
+  const auto FD = open(), Other = open();
+  ASSERT_EQ(FD, 3u);
+  ASSERT_EQ(Other, 4u);
+  ASSERT_EQ(call(ServiceKind::Connect, FD, Base, 16), 0u);
+  ASSERT_EQ(call(ServiceKind::Dup, FD), 5u);
+  EXPECT_EQ(call(ServiceKind::Socket, 2, 1, 0), uint64_t(-24));
+  EXPECT_EQ(call(ServiceKind::Dup3, FD, Other, 0x80000), Other);
+  EXPECT_EQ(call(ServiceKind::Close, FD), 0u);
+  EXPECT_EQ(call(ServiceKind::Close, 5), 0u);
+  EXPECT_EQ(call(ServiceKind::Read, Other, Base + 128, 1), 1u);
+  EXPECT_EQ(call(ServiceKind::Read, Other, Base + 129, 1), 1u);
+  EXPECT_EQ(call(ServiceKind::Lseek, Other, 0, 0), uint64_t(-29));
+  const auto Reused = open();
+  EXPECT_EQ(Reused, FD);
+  EXPECT_EQ(call(ServiceKind::Connect, Reused, Base, 16), 0u);
+  EXPECT_EQ(call(ServiceKind::Read, Reused, Base + 130, 2), 2u);
+  EXPECT_EQ(call(ServiceKind::Read, Other, Base + 132, 2), 0u);
+}
+TEST_P(LinuxNetwork,
+       MissingInputsNonblockingAndUnknownReadinessRemainUnsupported) {
+  Options.LinuxNetwork->Connections.front().ReceiveEOF = false;
+  const auto FD = open();
+  EXPECT_FALSE(call(ServiceKind::Write, FD, Base, 1));
+  EXPECT_EQ(call(ServiceKind::Connect, FD, Base, 16), 0u);
+  EXPECT_EQ(call(ServiceKind::Read, FD, Base + 128, 2), 2u);
+  EXPECT_FALSE(call(ServiceKind::Read, FD, Base + 128, 2));
+  const auto Nonblocking = call(ServiceKind::Socket, 2, 1 | 0x800, 0).value();
+  EXPECT_FALSE(call(ServiceKind::Connect, Nonblocking, Base, 16));
+  Options.LinuxNetwork.reset();
+  EXPECT_FALSE(call(ServiceKind::Socket, 2, 1, 0));
+}
+INSTANTIATE_TEST_SUITE_P(Raw, LinuxNetwork,
+                         testing::Values(GuestArchitecture::X64,
+                                         GuestArchitecture::AArch64));
+
+TEST(LinuxNetworkJSON, StrictWireAndSemanticAdmission) {
+  auto Check = [](llvm::StringRef Text, bool Valid) {
+    auto P = processOptionsFromJSON(Text);
+    EXPECT_EQ(bool(P), Valid);
+    if (!P)
+      llvm::consumeError(P.takeError());
+  };
+  Check(R"({"linux_network":{"connections":[]}})", true);
+  Check(R"({"linux_network":{"connections":[],"unknown":0}})", false);
+  Check(
+      R"({"linux_network":{"connections":[{"peer_hex":"020023297f0000010000000000000000","connect_errno":111}]}})",
+      true);
+  Check(
+      R"({"linux_network":{"connections":[{"peer_hex":"020023297f0000010000000000000000","connect_errno":115}]}})",
+      false);
+  Check(
+      R"({"linux_network":{"connections":[{"peer_hex":"020023297f0000010000000000000000","max_send":0}]}})",
+      false);
+  Check(R"({"linux_network":{"connections":[{"peer_hex":"0z"}]}})", false);
+  Check(
+      R"({"android":{"resolver_queries":[{"node":null,"service":"9001","error":8}]}})",
+      true);
+  Check(
+      R"({"android":{"resolver_queries":[{"node":"a","service":"1","error":11}]}})",
+      false);
+  Check(
+      R"({"android":{"resolver_queries":[{"node":"a","service":"1","error":8,"extra":0}]}})",
+      false);
+  Check(
+      R"({"android":{"resolver_queries":[{"node":"a","service":"1","family":10,"addresses":[{"sockaddr_hex":"020023297f0000010000000000000000"}]}]}})",
+      false);
+  Check(
+      R"({"android":{"resolver_queries":[{"node":"a","service":"1","error":8},{"node":"a","service":"1","error":8}]}})",
+      false);
+}
+} // namespace
+} // namespace neverd::emulation

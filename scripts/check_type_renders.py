@@ -52,6 +52,8 @@ typedef long long LONGLONG;
 typedef unsigned long long ULONGLONG;
 typedef float FLOAT;
 typedef double DOUBLE;
+#define _HRESULT_DEFINED
+typedef long HRESULT;
 """
 
 # Per data model: the MSVC target C and C++ compile for, the GNU target the

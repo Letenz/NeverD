@@ -264,11 +264,20 @@ const PhiNode *selectAuthoritativeArgPhi(const MedFunc &Func,
 /// parameter live-in).  \p FromLiveIn, when non-null, is set true if the value
 /// came from the live-in fallback.  nullopt when the register is never set on
 /// any path to the call.
+///
+/// A call that may change the register (callClobbersRegister under
+/// \p Format) ends a path as a write does, and so does an exception
+/// handler's entry, where the unwinder leaves the register unspecified.
+/// Where every path ends so, the value is what the calls left there
+/// (valueLeftByCall), which no parameter carries.  \p CallIdx, when not
+/// negative, is the call's index in its block: the block's operations
+/// before it are searched first.
 std::optional<MedVar>
 findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
                    int BlockId, int ArgIdx, const IntegerArgumentLayout &Layout,
                    bool AllowUnknownLiveIn = false, bool *FromLiveIn = nullptr,
-                   bool *FoundDef = nullptr);
+                   bool *FoundDef = nullptr, int CallIdx = -1,
+                   BinaryFormat Format = BinaryFormat::Unknown);
 
 /// Unique predecessor's `if (p)` / `if (!p)` pointer.  After an intervening
 /// Win64 thiscall clobbers rcx. The callee this is the guarded table, not
