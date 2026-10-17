@@ -34754,7 +34754,9 @@ TEST(HighCPointerAddresses, GetCurrentProcessTakesNoArguments) {
   EXPECT_TRUE(Args.empty()) << Source;
 }
 
-TEST(HighCPointerAddresses, TerminateProcessOmitsSuccessReturn) {
+TEST(HighCPointerAddresses, TerminateProcessReturnsItsResult) {
+  // Ending another process, here one of the null handle, which fails, it
+  // returns, and its caller with it.
   HighFunc Func;
   Func.Name = "raise";
   Func.ReturnType = NdType::makeInt(8);
@@ -34774,9 +34776,9 @@ TEST(HighCPointerAddresses, TerminateProcessOmitsSuccessReturn) {
   Ret.RetVal = HighExpr::makeVar(Dst);
   Func.Body.push_back(std::move(Ret));
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("TerminateProcess("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("return t3"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("t3 ="), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return (int64_t)TerminateProcess(0, 0xC0000409);"),
+            std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, RaiseSecurityFailureOmitsSuccessReturn) {
@@ -34917,7 +34919,8 @@ TEST(LLVMCPointerAddresses, RaiseSecurityFailureOmitsSuccessReturn) {
   EXPECT_EQ(Source.find("return"), std::string::npos) << Source;
 }
 
-TEST(LLVMCPointerAddresses, TerminateProcessOmitsSuccessReturn) {
+TEST(LLVMCPointerAddresses, TerminateProcessReturnsItsResult) {
+  // As in HighC: ending another process, it returns.
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-terminate", Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
@@ -34943,8 +34946,7 @@ TEST(LLVMCPointerAddresses, TerminateProcessOmitsSuccessReturn) {
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
   OS.flush();
   EXPECT_NE(Source.find("TerminateProcess("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("return t3"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("t3 ="), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, GsTebLoadPrintsReadGsQword) {

@@ -651,7 +651,9 @@ TEST(IsNoReturnFunction, MsvcGsHelpers) {
   EXPECT_TRUE(isNoReturnFunction("_report_gsfailure"));
   EXPECT_TRUE(isNoReturnFunction("raise_securityfailure"));
   EXPECT_TRUE(isNoReturnFunction("_raise_securityfailure"));
-  EXPECT_TRUE(isNoReturnFunction("TerminateProcess"));
+  // It returns when it ends another process; only the helpers' own call,
+  // with the current process's pseudo-handle, does not.
+  EXPECT_FALSE(isNoReturnFunction("TerminateProcess"));
 }
 
 TEST(IsNoReturnFunction, MicrosoftRuntimeTerminators) {
