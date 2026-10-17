@@ -3328,12 +3328,12 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
         }
         continue;
       }
-      if (llvm::isa<llvm::CastInst>(&Inst)) {
+      if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(&Inst)) {
         if (llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst>(&Inst))
           continue;
         if (auto Text = ValueTexts.find(Inst.getOperand(0));
             Text != ValueTexts.end() && !Text->second.empty())
-          ValueTexts[&Inst] = Text->second;
+          ValueTexts[&Inst] = castOfText(*Cast, Text->second);
         continue;
       }
       if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst)) {
@@ -3474,12 +3474,13 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
   }
   for (auto &BB : Fn) {
     for (auto &Inst : BB) {
-      if (!llvm::isa<llvm::CastInst>(&Inst) ||
+      const auto *Cast = llvm::dyn_cast<llvm::CastInst>(&Inst);
+      if (!Cast ||
           llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst>(&Inst))
         continue;
       if (auto Text = ValueTexts.find(Inst.getOperand(0));
           Text != ValueTexts.end() && !Text->second.empty())
-        ValueTexts[&Inst] = Text->second;
+        ValueTexts[&Inst] = castOfText(*Cast, Text->second);
     }
   }
 
@@ -3731,12 +3732,12 @@ void LLVMCWriter::markComposedPrints(llvm::Function &Fn) {
       if (auto Text = ValueTexts.find(&Inst);
           Text != ValueTexts.end() && !Text->second.empty())
         Mark(Inst);
-      if (llvm::isa<llvm::CastInst>(&Inst)) {
+      if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(&Inst)) {
         if (llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst>(&Inst))
           continue;
         if (auto Text = ValueTexts.find(Inst.getOperand(0));
             Text != ValueTexts.end() && !Text->second.empty()) {
-          ValueTexts[&Inst] = Text->second;
+          ValueTexts[&Inst] = castOfText(*Cast, Text->second);
           Mark(Inst);
         }
       }

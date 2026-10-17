@@ -2382,6 +2382,54 @@ int main(void) { return register_exit(7) == 7 ? 0 : 1; }
   compileAndRun(Source, "-O0");
 }
 
+TEST(LLVMCValues, ACastBetweenAnIntegerAndAPointerConverts) {
+  // A volatile read keeps its own name, which a cast of the value reads
+  // through; a cast between an integer and a pointer still converts it.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+define i64 @first_byte(ptr %bytes) {
+entry:
+  %byte = load i8, ptr %bytes
+  %wide = zext i8 %byte to i64
+  ret i64 %wide
+}
+define i64 @read_through(ptr %slot) {
+entry:
+  %address = load volatile i64, ptr %slot
+  %bytes = inttoptr i64 %address to ptr
+  %value = call i64 @first_byte(ptr %bytes)
+  ret i64 %value
+}
+define i64 @eight_past(ptr %slot) {
+entry:
+  %loaded = load volatile ptr, ptr %slot
+  %integer = ptrtoint ptr %loaded to i64
+  %sum = add i64 %integer, 8
+  ret i64 %sum
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::CEmitterOptions Options;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("first_byte((void*)("), std::string::npos) << Source;
+  Source += R"(
+int main(void) {
+  static unsigned char bytes[16] = {42};
+  uint64_t word = (uint64_t)(uintptr_t)bytes;
+  void *pointer = bytes;
+  return read_through(&word) == 42 &&
+                 eight_past(&pointer) == (uint64_t)(uintptr_t)bytes + 8
+             ? 0
+             : 1;
+}
+)";
+  compileAndRun(Source, "-O0");
+}
+
 TEST(LLVMCValues, ReloadedFieldGuardSurvivesAnInterveningCall) {
   llvm::LLVMContext Context;
   llvm::SMDiagnostic Diagnostic;

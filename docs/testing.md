@@ -7309,6 +7309,8 @@ caller carries an unwind record;
 `getenv` and `free` through import symbols with their headers' types and
 `EnterCriticalSection` with the runtime tables' prototype;
 `ARuntimeRoutineReturningAFunctionPointerIsDeclared` declares `_onexit`;
+`ACastBetweenAnIntegerAndAPointerConverts` passes a volatile read's integer
+to a pointer parameter and adds to a pointer it read;
 `AWeakImportIsDeclaredWeak` links without `__gmon_start__`; and
 `ADefinitionOfALibraryRoutinesNameTakesItsAddress` renames the image's own
 `atexit`. `LLVMCIntrinsicSemantics.RepMovsForwardBackwardDynamicAndOverlap`
