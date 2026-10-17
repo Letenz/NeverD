@@ -463,8 +463,9 @@ declares the imports as the headers do.
 and checks that it joins the user mode headers and then the kernel's, that
 `CreateFileW` takes the parameter its caller forwards as the first of seven,
 that `ZwClose` takes the kernel headers' prototype, that a function stops at
-`ExitProcess` rather than running into the next one, and that an export
-reading no parameter shows the one its prototype declares.
+`ExitProcess` rather than running into the next one, that an export
+reading no parameter shows the one its prototype declares, and that LLVM-C
+declares the imports it calls and calls `GetLastError` with no argument.
 `SessionCAPITest.LocalTypesFitWhatTheCodeDoesThroughAPointer` checks that the
 program's own record ranks before a header record the accesses fit as
 exactly.

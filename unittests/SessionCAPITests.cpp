@@ -4497,6 +4497,17 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
       << Probe;
   EXPECT_NE(Probe.find("ZwClose((void*)(uintptr_t)arg0)"), std::string::npos)
       << Probe;
+  // LLVM-C declares the imports it calls that no header it includes
+  // declares, and passes them what their prototypes take.
+  const std::string Lowered = takeString(neverd_decompile_llvm_ex(
+      Session,
+      neverd_func_entry(Session, neverd_func_find_by_name(Session, "Probe")),
+      0));
+  EXPECT_NE(Lowered.find("extern uint64_t GetLastError();"), std::string::npos)
+      << Lowered;
+  EXPECT_NE(Lowered.find("extern uint64_t ZwClose();"), std::string::npos)
+      << Lowered;
+  EXPECT_NE(Lowered.find("(GetLastError())"), std::string::npos) << Lowered;
   // A definition named as a routine the headers declare that reads none of
   // its parameters shows those the prototype declares.
   const std::string Atoms = decompile("InitAtomTable");
