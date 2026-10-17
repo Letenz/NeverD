@@ -3667,10 +3667,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>이 PDB에는 정의된 형식이 없습니다.</translation>
     </message>
     <message>
-        <source>No local types: this program has no PDB with types.</source>
-        <translation>로컬 형식이 없습니다. 이 프로그램에는 형식이 있는 PDB가 없습니다.</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>PDB에 나열된 대로 배치되지 않는 형식: %1</translation>
     </message>
@@ -3935,6 +3931,24 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>at %1, %2 bytes</source>
         <translation>%1, %2바이트</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>DWARF에서</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>DWARF에서 %n개</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>DWARF에 정의된 타입이 없습니다.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>로컬 타입 없음: 이 프로그램에는 타입이 있는 PDB나 DWARF가 없습니다.</translation>
     </message>
 </context>
 <context>

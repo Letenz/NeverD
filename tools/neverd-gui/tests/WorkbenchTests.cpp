@@ -46,11 +46,11 @@
 #include <QFileInfo>
 #include <QFontMetricsF>
 #include <QHeaderView>
+#include <QHelpEvent>
 #include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QHelpEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -70,8 +70,8 @@
 #include <QTabBar>
 #include <QTableView>
 #include <QTemporaryDir>
-#include <QTextBlock>
 #include <QTest>
+#include <QTextBlock>
 #include <QTimer>
 #include <QToolButton>
 #include <QToolTip>
@@ -4781,8 +4781,8 @@ private slots:
                qPrintable(name.data().toString()));
       QVERIFY(name.data(Qt::ToolTipRole)
                   .toString()
-                  .contains(QStringLiteral("<b>%1</b>")
-                                .arg(name.data().toString())));
+                  .contains(
+                      QStringLiteral("<b>%1</b>").arg(name.data().toString())));
     }
     const QModelIndexList device =
         list->model()->match(list->model()->index(0, 1), Qt::DisplayRole,
@@ -4819,8 +4819,8 @@ private slots:
     // its cursor is on.
     layout->setCurrentItem(layout->topLevelItem(2));
     types->setPage(1);
-    QTRY_VERIFY(source->textCursor().block().text().contains(
-        QStringLiteral("Links;")));
+    QTRY_VERIFY(
+        source->textCursor().block().text().contains(QStringLiteral("Links;")));
     QCOMPARE(source->extraSelections().size(), 1);
     QCOMPARE(source->extraSelections().first().cursor.block(),
              source->textCursor().block());

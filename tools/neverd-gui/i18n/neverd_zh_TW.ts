@@ -3667,10 +3667,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>此 PDB 未定義任何型別。</translation>
     </message>
     <message>
-        <source>No local types: this program has no PDB with types.</source>
-        <translation>沒有本機型別：此程式沒有含型別的 PDB。</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>配置與 PDB 所列不一致的型別：%1</translation>
     </message>
@@ -3935,6 +3931,24 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>at %1, %2 bytes</source>
         <translation>位於 %1，%2 位元組</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>來自 DWARF</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>%n 個來自 DWARF</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>DWARF 中沒有定義任何型別。</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>沒有本機型別：此程式沒有包含型別的 PDB 或 DWARF。</translation>
     </message>
 </context>
 <context>

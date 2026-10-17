@@ -3674,10 +3674,6 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
         <translation>Il PDB non definisce alcun tipo.</translation>
     </message>
     <message>
-        <source>No local types: this program has no PDB with types.</source>
-        <translation>Nessun tipo locale: questo programma non ha un PDB con tipi.</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>Tipi il cui layout non corrisponde al PDB: %1</translation>
     </message>
@@ -3951,6 +3947,25 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>at %1, %2 bytes</source>
         <translation>a %1, %2 byte</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>Da DWARF</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>%n da DWARF</numerusform>
+            <numerusform>%n da DWARF</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>Il DWARF non definisce tipi.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>Nessun tipo locale: questo programma non ha un PDB o DWARF con tipi.</translation>
     </message>
 </context>
 <context>

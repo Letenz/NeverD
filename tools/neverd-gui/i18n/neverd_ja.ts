@@ -3667,10 +3667,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>この PDB には型が定義されていません。</translation>
     </message>
     <message>
-        <source>No local types: this program has no PDB with types.</source>
-        <translation>ローカル型はありません：このプログラムには型を含む PDB がありません。</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>PDB の一覧どおりに配置できない型：%1</translation>
     </message>
@@ -3935,6 +3931,24 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>at %1, %2 bytes</source>
         <translation>%1、%2 バイト</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>DWARF から</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>DWARF から %n 個</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>DWARF は型を定義していません。</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>ローカル型がありません: このプログラムには型を含む PDB も DWARF もありません。</translation>
     </message>
 </context>
 <context>

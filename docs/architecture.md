@@ -143,6 +143,28 @@ before nesting. It reports a record whose nesting does not flatten back to the
 stream's member list, or whose members cannot sit where they say
 (`layoutProblem`).
 
+`importDWARFTypes` reads every named structure, union, class, enumeration
+and typedef of a program's DWARF units, C's, C++'s, Rust's and Go's, which
+a session with DWARF reads as its local types (`DWARFDebugContext::
+withDWARFContext`). DWARF keeps a record as its source declares it, so
+nothing is rebuilt: anonymous members stay in place, bit-fields keep their
+bits, in the storage unit of their type that holds them as a declared
+record's layout gives it (`layOutRecord`), and a structure holds its members
+by offset, since Rust reorders its fields. Packing and a declared alignment
+are inferred from the offsets and the size, as for a PDB. Types are named as
+the DWARF debug context names the records the decompiler reads
+(`llvm::dumpTypeQualifiedName`): within their namespaces and records for C++
+and Rust (`crate::module::Type`), with their package for Go (`main.Point`).
+A typedef of an anonymous record names it, as C's declarations read; a
+typedef of a record of its own name is that record. The same name in many
+units, as a header's types are, is one type, the first definition, which a
+declaration elsewhere names; another unit's definition of another size is
+reported as a conflict. A record DWARF describes in a way local types do not
+hold, such as a Rust enumeration's variants or a virtual base, is left out
+with the reason (`DWARFTypeImportStats::Skipped`), as is one whose members
+cannot sit where they say. A base type local types do not spell, such as a
+complex number, holds its bytes.
+
 `renderType` and `renderTypes` spell types as C, C++, Rust, Go, Python,
 JavaScript or Lua (`TypeLanguages.def`), each member marked with its
 offset. Builtins take the spellings each language has (`TypeLanguages.def`
