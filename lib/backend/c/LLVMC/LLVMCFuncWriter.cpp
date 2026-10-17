@@ -8555,10 +8555,10 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
               It->second->Kind == NdTypeKind::Ptr && It->second->Pointee &&
               It->second->Pointee->Kind == NdTypeKind::Struct &&
               !It->second->Pointee->SourceName.empty()) {
-            const std::string Tag =
-                cNamedTypeSpelling(It->second->Pointee->SourceName);
-            if (!Tag.empty()) {
-              OS << Tag << "* " << AllocName << ";\n";
+            if (std::string Pointer =
+                    recordPointerSpelling(*It->second->Pointee);
+                !Pointer.empty()) {
+              OS << Pointer << " " << AllocName << ";\n";
               continue;
             }
           }
@@ -8915,10 +8915,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
                                                     Opts.TheArch, Opts.Format);
     if (!Record)
       return {};
-    const std::string Tag = cNamedTypeSpelling(Record->SourceName);
-    if (Tag.empty())
-      return {};
-    return Tag + "*";
+    return recordPointerSpelling(*Record);
   };
 
   auto BindParam = [&](llvm::Argument &Arg, unsigned) { return getName(&Arg); };
@@ -8937,11 +8934,11 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       if (Ty && Ty->Kind == NdTypeKind::Ptr && Ty->Pointee &&
           Ty->Pointee->Kind == NdTypeKind::Struct &&
           !Ty->Pointee->SourceName.empty()) {
-        const std::string Tag = cNamedTypeSpelling(Ty->Pointee->SourceName);
-        if (!Tag.empty()) {
+        if (std::string Pointer = recordPointerSpelling(*Ty->Pointee);
+            !Pointer.empty()) {
           if (Opts.RecordDefinitions && Arg.getType()->isIntegerTy())
             PointerParams.insert(&Arg);
-          return Tag + "*";
+          return Pointer;
         }
       }
       if (Ty && Ty->Kind == NdTypeKind::Struct && Ty->IsEnum &&
@@ -9772,10 +9769,10 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
               Found->second->Kind == NdTypeKind::Ptr &&
               Found->second->Pointee &&
               Found->second->Pointee->Kind == NdTypeKind::Struct) {
-            const std::string Tag =
-                cNamedTypeSpelling(Found->second->Pointee->SourceName);
-            if (!Tag.empty())
-              Type = Tag + "*";
+            if (std::string Pointer =
+                    recordPointerSpelling(*Found->second->Pointee);
+                !Pointer.empty())
+              Type = std::move(Pointer);
           }
           Declaration =
               "    " + allocaAlignment(*AI) + Type + " " + It->second + ";\n";
