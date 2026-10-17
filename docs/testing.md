@@ -7290,6 +7290,8 @@ lazy one through its variable.
 `HighControlFlowSemantics.ATruthValueSelectingOneOrZeroIsItself` reads -O0
 AArch64's `cset w8, eq; and w8, w8, #1` as the comparison itself, or its
 negation, and keeps a selection by a value that may hold another number.
+`LibCResult.ReadsWhetherTheDeclaredResultIsAPointer` reads pointer results
+from headers, typedefs included, and from the runtime tables.
 
 `NeverDItaniumHandlerTests` spells Itanium landing pads as C++ handlers.
 `ItaniumHandlerBodies.ACleanupOnlyPadBecomesACatchAllThatRethrows` prints a

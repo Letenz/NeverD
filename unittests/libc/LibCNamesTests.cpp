@@ -7,6 +7,7 @@
 #include "neverd/libc/LibCExceptionRuntime.h"
 #include "neverd/libc/LibCFortify.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/LibCResult.h"
 #include "neverd/libc/LibCStartup.h"
 #include "neverd/libc/WindowsCRT.h"
 #include "neverd/loader/BinaryImage.h"
@@ -516,6 +517,25 @@ TEST(LibCReturnsValue, ReadsTheDeclaredResult) {
   // Neither declares it.
   EXPECT_FALSE(libcReturnsValue("neverd_unknown_routine", BinaryFormat::ELF)
                    .has_value());
+}
+
+TEST(LibCResult, ReadsWhetherTheDeclaredResultIsAPointer) {
+  // A header's declaration, a typedef's pointer too.
+  EXPECT_EQ(libcResult("getenv", BinaryFormat::ELF), LibCResult::Pointer);
+  EXPECT_EQ(libcResult("malloc", BinaryFormat::COFF), LibCResult::Pointer);
+  EXPECT_EQ(libcResult("signal", BinaryFormat::ELF), LibCResult::Pointer);
+  EXPECT_EQ(libcResult("newlocale", BinaryFormat::ELF), LibCResult::Pointer);
+  EXPECT_EQ(libcResult("strlen", BinaryFormat::ELF), LibCResult::Value);
+  EXPECT_EQ(libcResult("pthread_self", BinaryFormat::ELF), LibCResult::Value);
+  EXPECT_EQ(libcResult("free", BinaryFormat::MachO), LibCResult::Void);
+  // A prototype's result, in the image format it applies to.
+  EXPECT_EQ(libcResult("__acrt_iob_func", BinaryFormat::COFF),
+            LibCResult::Pointer);
+  EXPECT_EQ(libcResult("__getmainargs", BinaryFormat::COFF), LibCResult::Value);
+  EXPECT_EQ(libcResult("_initterm", BinaryFormat::COFF), LibCResult::Void);
+  EXPECT_FALSE(libcResult("__acrt_iob_func", BinaryFormat::ELF).has_value());
+  EXPECT_FALSE(
+      libcResult("neverd_unknown_routine", BinaryFormat::ELF).has_value());
 }
 
 TEST(LibCReturnsValue, TheGeneratedTableNamesOnlyKnownRoutines) {
