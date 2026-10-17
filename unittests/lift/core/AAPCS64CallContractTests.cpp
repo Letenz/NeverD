@@ -16,14 +16,17 @@
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
@@ -213,6 +216,41 @@ TEST(AAPCS64CallContract, PLTEntriesOfVariadicSystemCallsPassTheirArgsOn) {
                         "argument4);"),
             std::string::npos)
       << Source;
+}
+
+TEST(AAPCS64CallContract, APLTEntryInLLVMCCallsItsImportByName) {
+  // The entry calls the word it loads from islower's slot.  Its function is
+  // not islower, which it calls by that name as <ctype.h> declares it; the
+  // word is no value of the C.
+  const BinaryImage Img =
+      makeImage({{Plt, pltEntry(Plt, Got)}}, {}, {"islower"});
+  llvm::LLVMContext Ctx;
+  llvm::SMDiagnostic Error;
+  const auto Module = llvm::parseAssemblyString(R"(
+target triple = "aarch64-unknown-linux-gnu"
+@__nd_codeptr_20000 = external global i64
+define i64 @sub_10100(i64 %arg0) {
+  %ld = load volatile i64, ptr @__nd_codeptr_20000, align 8
+  %fn = inttoptr i64 %ld to ptr
+  %call = tail call i64 %fn(i64 %arg0)
+  ret i64 %call
+}
+)",
+                                                Error, Ctx);
+  ASSERT_TRUE(Module) << Error.getMessage().str();
+  CEmitterOptions Options;
+  Options.TheArch = Img.Arch;
+  Options.Format = Img.Format;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options, nullptr, &Img,
+                                  Module->getFunction("sub_10100")));
+  EXPECT_NE(Source.find("#include <ctype.h>"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("uint64_t sub_10100(uint64_t arg0) {"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("return islower(arg0);"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("volatile"), std::string::npos) << Source;
 }
 
 /// lower(c) tail-calls islower and bump(c) returns toupper(c) + 1, each

@@ -8457,7 +8457,8 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
         }
         if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
           if (!LI->isSimple()) {
-            NeedsDecl.insert(LI);
+            if (!isImportCalleeOnlyLoad(LI))
+              NeedsDecl.insert(LI);
             continue;
           }
           if (isImportCalleeOnlyLoad(LI) || computedAllocaLoadIsForwarded(LI) ||

@@ -321,6 +321,16 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
               DebugName =
                   symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch);
         }
+        // A call to a stub reaches its import, by whose name it calls; the
+        // stub's own body is not the import, and calls it by that name.
+        if (!Fn.isDeclaration() && !DebugName.empty() && Img)
+          if (const Import *Imp = Img->findImportStubAt(Addr);
+              Imp && !Imp->Name.empty() &&
+              cNameOfSymbol(DebugName, Opts.Format, Opts.TheArch) ==
+                  cNameOfSymbol(
+                      symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch),
+                      Opts.Format, Opts.TheArch))
+            DebugName.clear();
       }
     }
     // An image symbol carries the format's decoration; an LLVM name may have
@@ -709,8 +719,17 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
             continue;
           }
           auto *Callee = CI->getCalledFunction();
-          if (!Callee)
+          if (!Callee) {
+            // A call through a slot prints by the name of the routine the
+            // slot reaches (resolveImportCalleeName), which a C library
+            // header declares; writeImportCalleeDecls declares any other.
+            if (const std::string Name =
+                    resolveImportCalleeName(CI->getCalledOperand());
+                !Name.empty() && libc::isKnownFunction(Name))
+              if (const char *Hdr = libc::headerFor(Name))
+                Headers.insert(Hdr);
             continue;
+          }
           const auto IID = Callee->getIntrinsicID();
           if (IID == llvm::Intrinsic::memcpy ||
               IID == llvm::Intrinsic::memmove || IID == llvm::Intrinsic::memset)
