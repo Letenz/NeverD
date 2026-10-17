@@ -299,15 +299,18 @@ void ViewPlanner::field(const Slot &Place, uint64_t At, State &Into) const {
 }
 
 void ViewPlanner::bitfields(const Slot &Place, uint64_t At, State &Into) const {
-  const BitStorage Storage = bitStorage(Library, *Place.Storage);
+  // A view reads bytes where it likes: each field in the unit of its own
+  // type the record lays out, though GNU's packing shares its bytes.
+  const uint64_t Base = At - Place.Byte;
   for (const Member *Bit : Place.Bits) {
     // C's unnamed bitfields pad; nothing reads them.
     if (Bit->Name.empty())
       continue;
+    const BitStorage Storage = bitStorage(Library, *Bit->Type);
     ViewAccessor Accessor;
     Accessor.TheKind = ViewAccessor::Kind::Bits;
     Accessor.Name = Into.unique(Names.member(Bit->Name));
-    Accessor.Offset = At;
+    Accessor.Offset = Base + Bit->StorageBitOffset / 8;
     Accessor.Bits = bitAccess(Library, *Bit);
     Accessor.UnitBytes = Storage.Bytes;
     Accessor.Declared = Into.where(Options, At) +
