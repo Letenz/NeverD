@@ -443,9 +443,17 @@ declarations, and the sidecar's load. `FunctionDeclarationsNeedNoDebugInformatio
 does the same on the image read without its PDB, of a type the user
 declares, and checks that another function's text stays as it was.
 
+`TypeParse.SizesAMemberReachedThroughANullPointer` reads
+`sizeof(((T *)0)->Member)`, as phnt's `RTL_FIELD_SIZE` spells it.
 `HeaderLibrary.*` reads the embedded Windows libraries and checks how a
-header library joins a program's types. After running
-`scripts/generate_windows_types.py`, check each library in every language:
+header library joins a program's types;
+`HeaderLibrary.TheUserLibrariesDeclareNtdllsNativeAPI` checks phnt's
+routines and the PEB, TEB and loader records each user mode library lays
+out. The user mode libraries read a checkout of
+[phnt](https://github.com/winsiderss/phnt) besides mingw-w64's headers:
+`scripts/generate_windows_types.py --phnt <checkout>` (each generated
+header names the commit). After running it, check each library in every
+language:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
@@ -6265,6 +6273,24 @@ is useful for local comparisons, not a portable throughput guarantee.
 
 ### Android native workloads
 
+`AndroidAuxvTests` compares imported and named `getauxval` calls at O0/O2 with
+ordinary, Android-packed and RELR relocations on each available checked ARM64
+transport. It covers complete output buffers and canaries, 64-bit type/value
+preservation, absent versus empty input, present zero versus missing-key errno,
+constructor/finalizer queries, duplicate/null/oversized input rejection, the
+128-entry boundary, closed provider refusal and per-thread errno isolation.
+Malformed JSON shape and unsigned ranges are checked separately. These are
+authored inputs; the tests do not inherit host auxiliary-vector values.
+
+`AndroidCalendarTests` exercises imported and named calendar calls at O0/O2
+with ordinary, Android-packed and RELR relocations on available ARM64
+transports. Independent civil dates cover negative epochs, 1900/2000/2100
+leap rules, post-2038 seconds and years 1/9999. Full-buffer comparisons cover
+LP64 fields, padding, zone bytes, aliasing, fixed offsets in both directions,
+shared process storage across APIs/threads, caller storage and errno isolation.
+Missing zones, excluded ranges, closed providers, invalid memory and malformed
+zone input remain visible failures. Tests never read the host time zone.
+
 `AndroidObservation.*` checks complete workload equality with and without
 selected PC observations across ordinary/APS2/RELR images and Unicorn/HVF.
 Exact instruction bytes provide independent before-store register and memory
@@ -7299,14 +7325,25 @@ caller carries an unwind record;
 `ALibraryRoutineCalledThroughItsImportTakesItsDeclaration` calls `fputc`,
 `getenv` and `free` through import symbols with their headers' types and
 `EnterCriticalSection` with the runtime tables' prototype;
-`ARuntimeRoutineReturningAFunctionPointerIsDeclared` declares `_onexit`;
-`AWeakImportIsDeclaredWeak` links without `__gmon_start__`; and
+`ARuntimeRoutineReturningAFunctionPointerIsDeclared` declares `_onexit`, and
+`ARuntimeRoutineCalledDirectlyTakesItsPrototype` declares it for a direct
+call, which passes only its parameter;
+`ACastBetweenAnIntegerAndAPointerConverts` passes a volatile read's integer
+to a pointer parameter and adds to a pointer it read;
+`AWeakImportIsDeclaredWeak` links without `__gmon_start__`;
 `ADefinitionOfALibraryRoutinesNameTakesItsAddress` renames the image's own
-`atexit`. `LLVMCIntrinsicSemantics.RepMovsForwardBackwardDynamicAndOverlap`
-runs `rep movs` copies of each width and direction, overlapping ones too, and
+`atexit`, `AMinGWRoutineTheProgramLinksTakesItsAddress` a Windows program's
+`__mingw_printf` and no other format's, and
+`AWholeModulesMainTakesItsAddress` a whole module's `main`; and
+`ACalleeThatReturnsNothingLeavesItsResultUndefined` calls a definition
+settled as returning nothing alone, or reads zero for its result.
+`LLVMCIntrinsicSemantics.RepMovsForwardBackwardDynamicAndOverlap` runs
+`rep movs` copies of each width and direction, overlapping ones too, and
 `RepMovsRejectsUnprovedContracts` refuses other shapes.
 `LibCResult.ReadsWhetherTheDeclaredResultIsAPointer` reads pointer results
 from headers, typedefs included, and from the runtime tables.
+`MinGWHeaderFunctions.NamesWhatTheHeadersDeclare` reads the routines the
+mingw-w64 headers declare, its own, the runtime's and the C library's.
 
 `NeverDItaniumHandlerTests` spells Itanium landing pads as C++ handlers.
 `ItaniumHandlerBodies.ACleanupOnlyPadBecomesACatchAllThatRethrows` prints a
@@ -7318,7 +7355,14 @@ statement took a covered jump's address.
 `ABranchWhoseArmsCallThroughThePadIsOneScope` wraps the whole branch, and
 `ACopyWithoutAnAddressKeepsItsCallsInstruction` places calls copied into both
 arms by their instruction. `AnExceptionSpilledThroughAFrameAddressIsResumed`
-follows the exception through the slot address clang keeps for a large frame. `ACallOfNoInstructionKeepsTheCleanupPad`,
+follows the exception through the slot address clang keeps for a large frame.
+`AnExceptionSpilledOffACopiedFrameBaseIsResumed` follows it through a copy of
+the base clang reaches the far slots from,
+`ASpillAndAReloadThroughTwoBaseCopiesMatch` through one copy to the spill and
+another to the reload, and
+`AReadThroughABaseRewrittenAfterTheSpillKeepsThePad` keeps the pad when the
+base's slot changes between the spill and the copy.
+`ACallOfNoInstructionKeepsTheCleanupPad`,
 `AJumpIntoACleanupScopeKeepsThePad` and
 `ACoveredCallOnlyAJumpReachesKeepsThePad` keep the pad where a scope cannot
 be proved. `NothingFallsOutOfAnEndlessLoop` prints no dead statement after a
