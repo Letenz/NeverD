@@ -7,6 +7,7 @@
 
 #include "../os/linux/android/AndroidLog.h"
 #include "../os/linux/android/AndroidObservation.h"
+#include "ProcessNetworkJSON.h"
 
 #include "neverd/emulation/ProcessReportFields.h"
 
@@ -113,7 +114,12 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
   AndroidNativeOptions Out;
   for (const auto &[Key, V] : *Object) {
     llvm::StringRef Name = Key;
-    if (Name == field::EntrySymbol) {
+    if (Name == field::ResolverQueries) {
+      auto Queries = androidResolverQueriesFromJSON(V);
+      if (!Queries)
+        return Queries.takeError();
+      Out.ResolverQueries = std::move(*Queries);
+    } else if (Name == field::EntrySymbol) {
       auto S = string(V, Name);
       if (!S)
         return S.takeError();

@@ -7626,3 +7626,12 @@ capture failures cannot replace the original service outcome.
 `LockedMdl::StorageKind` separates descriptor storage from page provenance. Pool allocation and live execution-stack owners supply exact storage; shared release preflight checks all ranges before descriptor records retire. Pool free checks write permission before changing state. Partial construction and unlock retain the descriptor owner. Kernel memory borrowing refuses intersections with live MDL metadata. MmCreateMdl retains the default opaque unpack boundary.
 
 `LockedMdl::AdvanceRange` retains the original locked byte range and system mapping base independently of the current data window. Alias allocation, access validation, borrowing and retirement use that owner. The same MDL owner rotates and restores PFNs; page ownership and descriptor storage are unchanged. Existing pins stay live until cleanup, matching the inspected fixed-version producer and restoration consumer. No immediate physical unpin is inferred from generic API prose. MmAdvanceMdl remains opaque to unpack reconstruction.
+
+## Offline network ownership
+
+`LinuxFiles` owns virtual TCP descriptions and their descriptor aliases,
+connection attempts and byte cursors. Raw services and Bionic wrappers use that
+same owner. Bionic owns LP64 resolver allocations and libc error conversion;
+`ProcessNetworkJSON` parses explicit inputs and invokes the same admission
+validators as C++ sessions. Neither layer invokes a host resolver or transport.
+See [offline network contracts](linux-network-contracts.md).

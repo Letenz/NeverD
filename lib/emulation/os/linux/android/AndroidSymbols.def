@@ -20,6 +20,12 @@
 #define NEVERD_ANDROID_UNDEF_PREFIX
 #endif
 
+NEVERD_ANDROID_CALL(InetPton, "inet_pton", addressText)
+NEVERD_ANDROID_CALL(InetNtop, "inet_ntop", addressText)
+NEVERD_ANDROID_CALL(GetAddrInfo, "getaddrinfo", resolveAddress)
+NEVERD_ANDROID_CALL(FreeAddrInfo, "freeaddrinfo", freeAddresses)
+NEVERD_ANDROID_CALL(Send, "send", socketTransfer)
+NEVERD_ANDROID_CALL(Receive, "recv", socketTransfer)
 NEVERD_ANDROID_CALL(DLOpen, "dlopen", openLibrary)
 NEVERD_ANDROID_CALL(DLSym, "dlsym", lookupSymbol)
 NEVERD_ANDROID_CALL(DLClose, "dlclose", closeLibrary)

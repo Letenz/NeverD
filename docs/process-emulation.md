@@ -79,6 +79,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `stack_size` | 1048576 | Page-aligned stack within the memory budget |
 | `output_limit` | 1048576 | Combined captured stdout/stderr bytes |
 | `instruction_quantum` | 1024 | Admission interval before yielding to the runtime |
+| `linux_network` | Absent | Explicit offline TCP attempts and byte streams; requires `linux_files`; see [contracts](linux-network-contracts.md) |
 | `linux_time` | Absent | Explicit clock observations and optional idle advancement for Linux ELF64 and Android native workloads |
 | `linux_files` | Absent | Explicit guest file catalogue, bounded write grants and optional live FD links |
 | `linux_signals` | Absent | Explicit initial signal dispositions; no signal delivery or host handlers |

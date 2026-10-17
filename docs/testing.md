@@ -8024,3 +8024,21 @@ side-effecting statement without acquiring a Linux syscall contract.
 `KernelMDLChain.CreateMdl*` and `KernelMDLUserMapping.CreateMdl*` cover full-width guards, untouched bytes, zero/wrapping metadata, pool and stack lifetime, locks, aliases, failed release, partial reuse, IRP refusal and IRQL. The genuine WDK user-mapping fixture exercises static/dynamic creation, owned pool, interior caller pool and caller stack records, physical identity and complete unload. Original probes distinguish wrapper writes, pool flag translation and injected allocator/free boundaries.
 
 `KernelMDLChain.AdvanceMdl*` and `KernelMDLUserMapping.AdvanceMdl*` check repeated page crossings, PFN tails, exact-end refusal, narrow arguments, stable mapping extents, failed teardown, permissions, storage ownership, process context and unsupported dependencies. The genuine WDK user-mapping fixture uses static/dynamic advance, explicit unmap and automatic unlock. Original-code probes separately cover the entire advance routine, restoration helper and unmap wrapper with explicit mapping-kind/PTE-release injection; they do not execute the operating system page database.
+
+## Offline Android resolver and Linux stream contracts
+
+Build `NeverDAndroidNativeTests` and `NeverDLinuxProcessTests` with CPU emulation
+and Android fixture compilation enabled. Filter `*AndroidNetwork*` covers
+resolver result ordering, LP64 layout, null/error ordering, ownership,
+IPv4/IPv6 formatting, named/raw/dynamic calls, short transfers, alias lifetime,
+refusal and unknown-input stops. Original C fixtures run at O0/O2 with ordinary,
+APS2 and RELR relocations on available checked AArch64 transports; unavailable
+backends are skips. `*LinuxNetwork*` checks x64/AArch64 shared descriptors,
+failed-admission atomicity, full byte streams and strict JSON. Tests never use
+host networking. Run the complete affected owners before review.
+
+`NeverDAAPCS64CallContractTests` checks bounded breadth-first callee discovery
+and preserves unknown operands across call/exception boundaries without
+inventing forwarded entry parameters. `NeverDLLVMImportVeneerBoundaryTests`
+checks exact unwind-owned code pointers on ELF/COFF/Mach-O for x64/AArch64,
+adjacent symbol ends, and rejection of unproved/continuation/data addresses.
