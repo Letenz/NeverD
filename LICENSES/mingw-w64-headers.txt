@@ -1,4 +1,4 @@
-mingw-w64 headers read by scripts/generate_windows_kernel_types.py
+mingw-w64 headers read by scripts/generate_windows_types.py
 
 The DDK and PSDK headers that come from ReactOS (ddk/wdm.h, ddk/ntddk.h,
 ddk/ntifs.h, ntdef.h, dpfilter.h, devpropdef.h and others) state:
@@ -25,10 +25,19 @@ WITHOUT ANY WARRANTY. ALL WARRANTIES, EXPRESS OR IMPLIED ARE HEREBY
 DISCLAIMED. This includes but is not limited to warranties of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
+The SDK headers of the mingw-w64 runtime package that say so (winternl.h,
+tlhelp32.h, psapi.h, wininet.h and others) state:
+
+  This file has no copyright assigned and is placed in the Public Domain.
+  This file is part of the mingw-w64 runtime package.
+  No warranty is given; refer to the file DISCLAIMER.PD within this package.
+
 The other headers of the mingw-w64 runtime package (basetsd.h, guiddef.h,
-ktmtypes.h, basetyps.h, evntprov.h, pshpack*.h, poppack.h) are distributed
-by the mingw-w64 project, Copyright 2009-2016 the mingw-w64 project, under the
-Zope Public License 2.1:
+ktmtypes.h, basetyps.h, evntprov.h, pshpack*.h, poppack.h, winnt.h,
+winbase.h, winuser.h, commctrl.h and others), and those WIDL generates from
+its IDL files (objidl.h, oaidl.h, urlmon.h, shobjidl.h and others), are
+distributed by the mingw-w64 project, Copyright 2009-2016 the mingw-w64
+project, under the Zope Public License 2.1:
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions

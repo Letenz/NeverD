@@ -161,6 +161,8 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
       Kind != KernelAPIKind::MmGetSystemAddressForMdlSafe &&
       Kind != KernelAPIKind::MmGetPhysicalAddress &&
       Kind != KernelAPIKind::MmGetVirtualForPhysical &&
+      Kind != KernelAPIKind::IoGetInitialStack &&
+      Kind != KernelAPIKind::IoGetStackLimits &&
       Kind != KernelAPIKind::MmUnmapLockedPages &&
       Kind != KernelAPIKind::RtlCopyMemory &&
       Kind != KernelAPIKind::RtlMoveMemory)
@@ -413,6 +415,10 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
     return getDMAAdapter(A);
   case KernelAPIKind::IoAllocateMdl:
     return allocateMDL(A);
+  case KernelAPIKind::MmCreateMdl:
+    return createMDL(A[0], A[1], A[2]);
+  case KernelAPIKind::MmAdvanceMdl:
+    return advanceMDL(A[0], uint32_t(A[1]));
   case KernelAPIKind::IoBuildPartialMdl: {
     if (auto E = buildPartialMDL(A[0], A[1], A[2], uint32_t(A[3])))
       return E;

@@ -2016,3 +2016,9 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 `KernelPhysicalRAM.AddressQueries*` 與 `KernelMDLUserMapping.PhysicalQuery*` 涵蓋別名、位址空間身分、虛擬位址重用、精確邊界、完整位寬 PFN、IRQL、頁面鎖定及撤銷映射。真正 WDK 使用者映射夾具以 MDL PFN 核對靜態和動態 `MmGetPhysicalAddress`，涵蓋唯讀使用者檢視、DPC 層級系統檢視及舊鎖定別名存活時的重新映射。
 
 `KernelMDLUserMapping.PrimaryQuery*` 涵蓋精確配置位元組、同頁相鄰擁有者、完整位寬位址、IRQL、釋放、別名、映射替換、讀取保護及不支援的主要映射投影。真正 WDK 夾具執行靜態和動態 `MmGetVirtualForPhysical`，包含 DPC 層級系統檢視，以及舊鎖定別名存活時的使用者虛擬位址重新繫結。
+
+`DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*` 涵蓋啟用、回收、巢狀環境還原、完整位寬邊界、IRQL、行程附加、輸出重疊及先 High 後 Low 的錯誤寫入順序。原創和真正 WDK CRT 夾具在進入點、工作執行緒和卸載時靜態及動態呼叫兩項查詢，檢查區域變數位於傳回範圍內，並在 DISPATCH_LEVEL 再次查詢邊界。
+
+`KernelMDLChain.CreateMdl*` 與 `KernelMDLUserMapping.CreateMdl*` 涵蓋位寬、未改動位元組、空／回繞中繼資料、集區及堆疊生命週期、鎖、別名、失敗釋放、部分重用、IRP 拒絕及 IRQL。真正 WDK 夾具靜態及動態建立自有集區、呼叫者集區內部和堆疊描述符，驗證實體身分與完整卸載。原始探針區分欄位寫入、集區旗標轉換及注入的配置／釋放邊界。
+
+`KernelMDLChain.AdvanceMdl*` 與 `KernelMDLUserMapping.AdvanceMdl*` 檢查重複跨頁、尾標記、末端拒絕、參數位寬、完整映射、失敗清理、權限、儲存與程序生命週期。真正 WDK 夾具執行靜態／動態推進及兩種清理路徑。原始探針區分完整推進、恢復輔助函式及注入映射類型／PTE 釋放邊界的取消包裝，不執行系統頁資料庫。

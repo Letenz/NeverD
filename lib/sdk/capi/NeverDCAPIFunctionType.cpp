@@ -163,11 +163,10 @@ llvm::json::Object declarationReply(Session &S,
     return Reply;
   }
   const types::FunctionDef &Function = *Read.Function;
-  types::RenderOptions Options;
+  const types::TypeSpeller Speller(Library, types::RenderOptions());
   Reply["name"] = jsonSafeText(Read.Name);
   Reply["return"] = jsonSafeText(
-      Function.Return ? types::spellType(Library, *Function.Return, "", Options)
-                      : std::string("void"));
+      Function.Return ? Speller.spell(*Function.Return) : std::string("void"));
   Reply["variadic"] = Function.Variadic;
   const std::optional<SourceParameterPlacement> Placement =
       placementOf(S, Library, Function, Read.Name);
@@ -176,10 +175,8 @@ llvm::json::Object declarationReply(Session &S,
     const types::Parameter &Param = Function.Params[I];
     llvm::json::Object Row{
         {"name", jsonSafeText(Param.Name)},
-        {"type",
-         jsonSafeText(Param.Type
-                          ? types::spellType(Library, *Param.Type, "", Options)
-                          : std::string())}};
+        {"type", jsonSafeText(Param.Type ? Speller.spell(*Param.Type)
+                                         : std::string())}};
     if (Placement && I < Placement->Parameters.size() &&
         !Placement->Parameters[I].empty())
       if (std::string Where =

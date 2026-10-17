@@ -422,6 +422,83 @@ TEST(Win64CallContract, TheRuntimesOwnPrototypeFixesWhatItsSlotReads) {
   EXPECT_FALSE(Reads.count(slot(4)));
 }
 
+TEST(Win64CallContract, CallersPassWhatAnExportedRoutinesPrototypeDeclares) {
+  // The image exports a system call stub that reads only RCX itself: the
+  // kernel's dispatcher reads the rest of the five parameters its prototype
+  // declares, the fifth from the stack.  It also exports a routine whose
+  // body reads R9 past the three parameters its prototype declares, which
+  // its summary keeps.
+  constexpr va_t Caller = Text, Stub = Text + 0x30, Extra = Text + 0x40;
+  std::vector<uint8_t> Code(0x48, 0xCC);
+  // sub rsp, 38h; mov qword [rsp+20h], 0; mov r9d, 4; lea r8, [rsp+30h];
+  // mov edx, 12; mov rcx, -2; call Stub; add rsp, 38h; ret
+  std::vector<uint8_t> CallerCode = {
+      0x48, 0x83, 0xEC, 0x38, 0x48, 0xC7, 0x44, 0x24, 0x20, 0x00,
+      0x00, 0x00, 0x00, 0x41, 0xB9, 0x04, 0x00, 0x00, 0x00, 0x4C,
+      0x8D, 0x44, 0x24, 0x30, 0xBA, 0x0C, 0x00, 0x00, 0x00, 0x48,
+      0xC7, 0xC1, 0xFE, 0xFF, 0xFF, 0xFF, 0xE8};
+  for (uint8_t B : rel32(Caller + CallerCode.size() + 4, Stub))
+    CallerCode.push_back(B);
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x38, 0xC3})
+    CallerCode.push_back(B);
+  put(Code, Caller, CallerCode);
+  // mov r10, rcx; mov eax, 5; ret
+  put(Code, Stub, {0x4C, 0x8B, 0xD1, 0xB8, 0x05, 0x00, 0x00, 0x00, 0xC3});
+  // mov rax, r9; ret
+  put(Code, Extra, {0x4C, 0x89, 0xC8, 0xC3});
+  BinaryImage Img = makeImage(Code, {{Caller, "caller"}}, {});
+  Img.Exports.push_back({"QueryThing", 1, Stub});
+  Img.Exports.push_back({"AllocateThing", 2, Extra});
+  class ExportedPrototypes : public NullDebugContext {
+  public:
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != Stub && Addr != Extra)
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Addr = Addr;
+      Function.PrototypeLibrary = "windows-user-x64";
+      const TypeRef Pointer = NdType::makePtr(NdType::makeVoid());
+      if (Addr == Stub) {
+        Function.Name = "QueryThing";
+        Function.ReturnType = NdType::makeInt(4, true);
+        Function.Params = {{"Handle", Pointer},
+                           {"Class", NdType::makeInt(4, true)},
+                           {"Buffer", Pointer},
+                           {"Length", NdType::makeInt(4)},
+                           {"Returned", Pointer}};
+      } else {
+        Function.Name = "AllocateThing";
+        Function.ReturnType = Pointer;
+        Function.Params = {{"Heap", Pointer},
+                           {"Flags", NdType::makeInt(4)},
+                           {"Size", NdType::makeInt(8)}};
+      }
+      return Function;
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Caller, Extra};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts, &Dbg);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_TRUE(Result.CallEntryStackArgs.count(Stub));
+  EXPECT_EQ(Result.CallEntryStackArgs.at(Stub), 5);
+  // Each parameter is read as wide as the prototype declares it, which a
+  // caller setting only the low bytes of an argument register fills.
+  const auto &Reads = Result.CallEntryReadGPRs;
+  ASSERT_TRUE(Reads.count(Stub));
+  EXPECT_EQ(Reads.at(Stub)[family(x86reg::RCX)], 8u);
+  EXPECT_EQ(Reads.at(Stub)[family(x86reg::RDX)], 4u);
+  EXPECT_EQ(Reads.at(Stub)[family(x86reg::R8)], 8u);
+  EXPECT_EQ(Reads.at(Stub)[family(x86reg::R9)], 4u);
+  ASSERT_TRUE(Reads.count(Extra));
+  EXPECT_EQ(Reads.at(Extra)[family(x86reg::RCX)], 8u);
+  EXPECT_EQ(Reads.at(Extra)[family(x86reg::RDX)], 4u);
+  EXPECT_EQ(Reads.at(Extra)[family(x86reg::R9)], 8u);
+}
+
 TEST(Win64CallContract, TheStartupsKernel32CallsReadWhatTheyDeclare) {
   // MSVC's startup code calls these through their slots.  IsDebuggerPresent
   // takes no argument, GetModuleHandleW one, and RtlVirtualUnwind four in

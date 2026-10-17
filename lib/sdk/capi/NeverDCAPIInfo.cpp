@@ -635,7 +635,8 @@ static const char *symbolRows(Session &S, bool Data) {
   std::set<va_t> Renamed;
   J.array([&] {
     for (const auto &Sym : S.Img.Symbols) {
-      if (Data && Sym.IsFunc)
+      // A section's own symbol names nothing (Symbol::IsSection).
+      if (Sym.IsSection || (Data && Sym.IsFunc))
         continue;
       const auto Rename = S.Renames.find(Sym.Addr);
       if (Rename == S.Renames.end()) {

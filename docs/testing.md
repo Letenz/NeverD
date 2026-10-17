@@ -415,14 +415,15 @@ declarations, and the sidecar's load. `FunctionDeclarationsNeedNoDebugInformatio
 does the same on the image read without its PDB, of a type the user
 declares, and checks that another function's text stays as it was.
 
-`HeaderLibrary.*` reads the embedded Windows kernel library and checks how a
+`HeaderLibrary.*` reads the embedded Windows libraries and checks how a
 header library joins a program's types. After running
-`scripts/generate_windows_kernel_types.py`, check the library in every
-language:
+`scripts/generate_windows_types.py`, check each library in every language:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsKernelX64.h --data-model LLP64
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/WindowsUserX64.h --data-model LLP64
 ```
 
 With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
@@ -457,6 +458,16 @@ the `neverd.prototype` comment HighC prints.
 `kernel_imports.sys`, a driver calling kernel imports, and checks that a call
 passes what the prototype takes, a tail call forwarding it, and that the unit
 declares the imports as the headers do.
+`SessionCAPITest.UserImportsPassWhatTheirPrototypesTake` loads
+`user_imports.exe`, a console program calling kernel32, user32 and ntdll,
+and checks that it joins the user mode headers and then the kernel's, that
+`CreateFileW` takes the parameter its caller forwards as the first of seven,
+that `ZwClose` takes the kernel headers' prototype, that a function stops at
+`ExitProcess` rather than running into the next one, and that an export
+reading no parameter shows the one its prototype declares.
+`SessionCAPITest.LocalTypesFitWhatTheCodeDoesThroughAPointer` checks that the
+program's own record ranks before a header record the accesses fit as
+exactly.
 `HeaderLibrary.DeclaresTheKernelRoutinesTheCallAnalysisFixes` checks that the
 kernel's headers and `WindowsKernelRoutines.inc` agree on the bytes each
 parameter of a routine both know takes, and
@@ -469,6 +480,12 @@ the parameters its prototype declares and its code never reads, and that
 `ExRaiseStatus` the kernel exports without its PDB.
 `IsNoReturnTarget.ExportsAndDeclaredPrototypesNameNoReturnRoutines` covers
 exports and `_Noreturn` prototypes in the no-return index.
+`HighCReturnJoin.BareReturnBesideATailCallReturnsTheParameter` decompiles
+`if (b) return g(b); return a;` with a direct and an indirect tail call for
+x86-64, i386, ARM and AArch64 (`test_return_join.c`) and requires
+`return arg0;` without a trap; on ARM and AArch64 that path is a bare return.
+The HighC route of `IndirectTailFrame.ExclusiveReleaseCallsItsVirtualSlotInEveryRoute`
+has the same early return beside a virtual tail call.
 Build and run `NeverDSessionLLVMTests` as well: its private Session queries
 link the actual local-type/debug implementations and shared atomic sidecar
 helper into the test executable. It must not acquire a libneverd dependency.
@@ -771,6 +788,10 @@ lifts a raw five-integer kernel that saves XMM6/XMM7 with optimization enabled
 and disabled, then executes its LLVM-derived C at O0/O2 with UB traps for
 1,024 independent argument tuples. This checks host C execution, not native
 execution of every source architecture.
+`Win64CallContract.CallersPassWhatAnExportedRoutinesPrototypeDeclares`
+(`NeverDWin64CallContractTests`) checks that a routine the image exports,
+whose name binds a prototype, reads the parameters it declares, a system call
+stub's fifth on the stack too, together with any its body reads past them.
 
 `NeverDFPParameterMaskTests` runs the shared ABI suite and `FPParameterMask.*`.
 The mask controls retain live bytes, earlier stores, ambiguous definitions and
@@ -2200,6 +2221,20 @@ when their full-width pointer, displacement, load width and memory history
 agree. Borrowed RBP fields, negative displacements and both signed and unsigned
 index extensions are covered; changed bases/offsets, partial reloads, stores,
 calls and memory barriers must not recover a table from the earlier guard.
+
+`JTE_AArch64.GCCCompactSignedEntriesMayPrecedeTheAnchor` assembles GCC's
+compact switch (`test_jumptable_gcc_compact_a64.s`): the entry loaded back into
+the index register, the table base register reused for the anchor, and signed
+byte and halfword entries (`sxtb #2`, `sxth #2`) with a case before the anchor.
+It requires the exact targets and the lifted switch cases, and no table for a
+halfword entry the dispatch truncates to its low byte.
+`JTE_AArch64.GCCCompactGuardBoundsTheStorageItReads` is libgcc's
+`size_of_encoded_value`: a guard bounds the index below bytes that follow the
+table in its data owner, and one case calls `abort`. It requires the five
+guarded targets. These functions have their own object: a case that calls a
+function with the computed target still in X0 passes a pointer of unknown
+origin, which makes module arbitration treat every writable table in the same
+object as possibly modified.
 
 `ModuleJumpTableBudget.*` uses a real ELF table inventory to separate the
 400000-operation input boundary from scan, retained-source, queue and cumulative
@@ -7091,6 +7126,18 @@ arm that resumes at a `nop` without a jump, and
 `X86_64_PipelineE2E.DecompileC_MinGWStartupSEHWithX87Callee` decompiles
 MinGW-w64-shaped startup code (`test_mingw_startup_seh.s`) whose guarded callee
 resets the x87 state.
+`COFFExceptionIR.HighCEmptyExceptArmResumingAfterItsTryPrintsNoJump` prints
+MSVC's nested -O0 levels with empty arms, and
+`HighCLeftOutTryTailKeepsTheLabelAJumpLandsOn` keeps the label that switch
+cases leave a try body for. `HighCSEHFilterIsNamedAsTheFunctionListNamesIt`
+names a filter by its function symbol over a `.text` section symbol, and by
+an export. `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
+`unittests/loader/fixtures/mingw_sections.exe` (its Makefile rebuilds it with
+MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its
+`.file` record is dropped, and a static function's own record names it.
+`HighControlFlowSemantics.SlotCallGoesThroughThePointerItHolds` calls through
+MinGW's `__imp_X` variables, which hold the image's own code, relocated or in
+a fixed image, rather than naming an import by their spelling.
 Malformed unwind/prologue and converted-SP checks run with source projection
 enabled too. `WindowsEHModesCorpus.DecompileMatrixFailsClosedWithAuditableExceptionMetadata`
 runs the original eleven-case matrix, including the complete x64 xcpt4 image.
@@ -7847,3 +7894,9 @@ side-effecting statement without acquiring a Linux syscall contract.
 `KernelPhysicalRAM.AddressQueries*` and `KernelMDLUserMapping.PhysicalQuery*` cover aliases, address-space identity, VA reuse, exact bounds, full-width PFNs, IRQL, page locks and revoked mappings. The genuine WDK user-mapping fixture compares static/dynamic `MmGetPhysicalAddress` calls with MDL PFNs across read-only user views, DPC-level system views and rebinding while an earlier locked alias survives.
 
 `KernelMDLUserMapping.PrimaryQuery*` covers exact allocation bytes, adjacent owners on one page, full-width addresses, IRQL, retirement, aliases, replaced mappings, read protection and unsupported primary projections. The genuine WDK fixture exercises static and dynamic `MmGetVirtualForPhysical`, including a DPC-level system view and rebinding a user VA while an earlier locked alias survives.
+
+`DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*` checks activation, retirement, nested context restoration, full-width bounds, IRQL, process attachment, output overlap and high-before-low fault ordering. The original/genuine WDK CRT fixture calls both stack queries statically and dynamically in entry, worker and unload, checks a local variable against the returned bounds, and queries limits again at DISPATCH_LEVEL.
+
+`KernelMDLChain.CreateMdl*` and `KernelMDLUserMapping.CreateMdl*` cover full-width guards, untouched bytes, zero/wrapping metadata, pool and stack lifetime, locks, aliases, failed release, partial reuse, IRP refusal and IRQL. The genuine WDK user-mapping fixture exercises static/dynamic creation, owned pool, interior caller pool and caller stack records, physical identity and complete unload. Original probes distinguish wrapper writes, pool flag translation and injected allocator/free boundaries.
+
+`KernelMDLChain.AdvanceMdl*` and `KernelMDLUserMapping.AdvanceMdl*` check repeated page crossings, PFN tails, exact-end refusal, narrow arguments, stable mapping extents, failed teardown, permissions, storage ownership, process context and unsupported dependencies. The genuine WDK user-mapping fixture uses static/dynamic advance, explicit unmap and automatic unlock. Original-code probes separately cover the entire advance routine, restoration helper and unmap wrapper with explicit mapping-kind/PTE-release injection; they do not execute the operating system page database.

@@ -484,6 +484,11 @@ struct Symbol {
   /// the same, so a direct jump to such an address stays inside the jumping
   /// function instead of becoming a tail call.
   bool IsBoundaryGuess = false;
+  /// A linked COFF image's symbol for a section an object contributed, which
+  /// GNU ld keeps at that object's first function or variable.  It bounds
+  /// the contribution as any symbol does, but names nothing: findSymbolAt
+  /// and the function names pass over it, as IDA does.
+  bool IsSection = false;
   /// Set at the producer, independently of the bytes in Name. A linker may
   /// legitimately publish a symbol spelled sub_1234.
   NameOrigin Origin = NameOrigin::Stated;

@@ -1360,10 +1360,11 @@ struct BinaryImage {
     return nullptr;
   }
 
-  /// Find a symbol by address.
+  /// Find the symbol that names \p Addr: the first there, a section's own
+  /// symbol (Symbol::IsSection) aside.
   const Symbol *findSymbolAt(va_t Addr) const {
     for (const auto &Sym : Symbols)
-      if (Sym.Addr == Addr)
+      if (Sym.Addr == Addr && !Sym.IsSection)
         return &Sym;
     return nullptr;
   }
@@ -1621,7 +1622,7 @@ struct BinaryImage {
   const Symbol *functionNameSymbolAt(va_t Addr) const {
     const Symbol *Best = nullptr;
     for (const auto &Sym : Symbols)
-      if (Sym.Addr == Addr && !Sym.Name.empty() &&
+      if (Sym.Addr == Addr && !Sym.Name.empty() && !Sym.IsSection &&
           (!Best || functionNameRank(Sym) > functionNameRank(*Best)))
         Best = &Sym;
     return Best;

@@ -2060,3 +2060,9 @@ CRT 회귀는 모든 바이트/UTF-16 단위, 인수 폭, 변경이 없는 읽�
 `KernelPhysicalRAM.AddressQueries*`와 `KernelMDLUserMapping.PhysicalQuery*`는 별칭, 주소 공간 식별, VA 재사용, 경계, 전체 폭 PFN, IRQL, 페이지 잠금 및 해제된 매핑을 검사합니다. 실제 WDK 사용자 매핑 픽스처는 정적·동적 `MmGetPhysicalAddress`를 MDL PFN과 비교하며, 읽기 전용 사용자 뷰, DPC 수준 시스템 뷰 및 이전 고정 별칭이 남은 재매핑을 실행합니다.
 
 `KernelMDLUserMapping.PrimaryQuery*`는 정확한 할당 바이트, 같은 페이지의 인접 소유자, 전체 폭 주소, IRQL, 해제, 별칭, 매핑 교체, 읽기 보호 및 지원되지 않는 기본 매핑을 검사합니다. 실제 WDK 픽스처는 정적·동적 `MmGetVirtualForPhysical`, DPC 수준 시스템 뷰, 이전 고정 별칭이 남아 있는 사용자 VA 재매핑을 실행합니다.
+
+`DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*`는 활성화, 해제, 중첩 컨텍스트 복원, 전체 폭 경계, IRQL, 프로세스 연결, 출력 중복 및 High→Low 오류 쓰기 순서를 검사합니다. 자체 및 실제 WDK CRT 픽스처는 진입점, 작업자, 언로드에서 두 API를 정적·동적으로 호출하고 지역 변수 범위와 DISPATCH_LEVEL의 경계를 확인합니다.
+
+`KernelMDLChain.CreateMdl*` 및 `KernelMDLUserMapping.CreateMdl*`는 인수 폭, 보존 바이트, 빈 범위와 순환, 풀 및 스택 수명, 잠금, 별칭, 해제 실패, 부분 재사용, IRP 거부와 IRQL을 검사합니다. 실제 WDK 픽스처는 정적·동적 생성, 소유 풀, 호출자 풀 내부 및 스택 기술자, 물리 동일성과 완전한 언로드를 실행합니다. 원본 탐침은 필드 쓰기, 풀 플래그 변환과 주입된 할당／해제 경계를 구분합니다.
+
+`KernelMDLChain.AdvanceMdl*`과 `KernelMDLUserMapping.AdvanceMdl*`은 반복 페이지 이동, 꼬리, 끝 거절, 인수 폭, 전체 매핑, 정리 실패, 권한과 저장소/프로세스 수명을 검사합니다. 실제 WDK는 정적/동적 호출과 명시적 매핑 해제 및 자동 잠금 해제를 실행합니다. 원본 검사는 전체 진행, 복원 도우미, 매핑 종류/PTE 해제 경계를 주입한 래퍼를 구분하며 OS 페이지 데이터베이스 실행을 주장하지 않습니다.

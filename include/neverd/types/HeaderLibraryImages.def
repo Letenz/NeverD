@@ -1,0 +1,54 @@
+//===- HeaderLibraryImages.def - What header libraries describe -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The images the header libraries (HeaderLibraries.def) describe: the kinds
+/// of image, how an image's headers tell its kind, and the libraries an
+/// image of each kind and architecture joins, in order.  The first library
+/// to declare a name gives it.
+///
+/// NEVERD_HEADER_IMAGE_KIND(Kind)
+///   A kind of image whose code calls a system's API one set of headers
+///   declares.
+///
+/// NEVERD_HEADER_PE_SUBSYSTEM(Subsystem, Kind)
+///   A PE image of the subsystem (IMAGE_SUBSYSTEM_*) is of the kind.
+///
+/// NEVERD_HEADER_LIBRARY_IMAGE(Kind, Arch, Library)
+///   An image of the kind and architecture joins the library, after the
+///   rows above for the same image, where the library's data model is the
+///   image's.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_HEADER_IMAGE_KIND
+#define NEVERD_HEADER_IMAGE_KIND(Kind)
+#endif
+#ifndef NEVERD_HEADER_PE_SUBSYSTEM
+#define NEVERD_HEADER_PE_SUBSYSTEM(Subsystem, Kind)
+#endif
+#ifndef NEVERD_HEADER_LIBRARY_IMAGE
+#define NEVERD_HEADER_LIBRARY_IMAGE(Kind, Arch, Library)
+#endif
+
+// The Windows kernel, its drivers and the native programs ntdll starts.
+NEVERD_HEADER_IMAGE_KIND(WindowsKernel)
+// Windows programs and the libraries they load.
+NEVERD_HEADER_IMAGE_KIND(WindowsUser)
+
+NEVERD_HEADER_PE_SUBSYSTEM(1, WindowsKernel) // IMAGE_SUBSYSTEM_NATIVE
+NEVERD_HEADER_PE_SUBSYSTEM(2, WindowsUser)   // IMAGE_SUBSYSTEM_WINDOWS_GUI
+NEVERD_HEADER_PE_SUBSYSTEM(3, WindowsUser)   // IMAGE_SUBSYSTEM_WINDOWS_CUI
+
+NEVERD_HEADER_LIBRARY_IMAGE(WindowsKernel, X64, WindowsKernelX64)
+NEVERD_HEADER_LIBRARY_IMAGE(WindowsUser, X64, WindowsUserX64)
+// The native API ntdll exports, which the user mode headers declare few of:
+// the kernel's headers declare its Zw and Rtl routines.
+NEVERD_HEADER_LIBRARY_IMAGE(WindowsUser, X64, WindowsKernelX64)
+
+#undef NEVERD_HEADER_IMAGE_KIND
+#undef NEVERD_HEADER_PE_SUBSYSTEM
+#undef NEVERD_HEADER_LIBRARY_IMAGE

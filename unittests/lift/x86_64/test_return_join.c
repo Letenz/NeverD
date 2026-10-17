@@ -16,3 +16,21 @@ int call_then_store(int *p, int v) {
     *p = v;
   return r;
 }
+
+// A bare return beside a tail call.  AArch64 and ARM pass the first argument
+// in the result register, so the path that returns it writes nothing there;
+// x86 moves it.
+extern long g(long);
+long (*fp)(long);
+
+long passthrough_direct(long a, long b) {
+  if (b)
+    return g(b);
+  return a;
+}
+
+long passthrough_indirect(long a, long b) {
+  if (b)
+    return fp(b);
+  return a;
+}

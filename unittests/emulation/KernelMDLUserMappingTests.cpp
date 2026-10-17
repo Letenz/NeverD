@@ -257,6 +257,96 @@ protected:
   }
 };
 
+TEST_F(KernelMDLUserMapping, AdvanceMdlRefusesExistingAndNewUserViews) {
+  const auto IRP = begin();
+  const auto Pool = pool(3 * profile::PageSize);
+  const auto MDL = descriptor(Pool + 17, 8193);
+  call("MmProbeAndLockPages", {MDL, KernelMode, IoWriteAccess});
+  const auto System =
+      call("MmGetSystemAddressForMdlSafe", {MDL, NormalPagePriority});
+  const auto User = map(MDL);
+  rejected(Model->call("MmAdvanceMdl", {MDL, 4096}));
+  EXPECT_EQ(get(MDL + MDLByteCountOffset, 4), 8193u);
+  EXPECT_EQ(get(MDL + MDLMappedSystemVAOffset), System);
+  call("MmUnmapLockedPages", {User, MDL});
+  EXPECT_EQ(call("MmAdvanceMdl", {MDL, 4096}), StatusSuccess);
+  rejected(Model->call("MmMapLockedPagesSpecifyCache",
+                       {MDL, UserMode, MmCached, 0, 0, NormalPagePriority}));
+  put(System + 4096, 0x67, 1);
+  EXPECT_EQ(get(Pool + 4113, 1), 0x67u);
+  call("MmUnlockPages", {MDL});
+  call("IoFreeMdl", {MDL});
+  call("ExFreePool", {Pool});
+  complete(IRP);
+}
+
+TEST_F(KernelMDLUserMapping, AdvanceMdlRetainsUserPinOutsideProcessContext) {
+  const auto IRP = begin();
+  const auto User = get(IRP + IRPUserBufferOffset);
+  const auto MDL = descriptor(User + 17, 8192 - 17);
+  call("MmProbeAndLockPages", {MDL, UserMode, IoWriteAccess});
+  const auto System =
+      call("MmGetSystemAddressForMdlSafe", {MDL, NormalPagePriority});
+  put(User + 4113, 0x61, 1);
+  call("MmAdvanceMdl", {MDL, 4096});
+  success(Model->setUserRequestContext(false));
+  EXPECT_FALSE(allowed(User, Read));
+  EXPECT_EQ(get(System + 4096, 1), 0x61u);
+  put(System + 4096, 0x72, 1);
+  complete(IRP);
+  EXPECT_TRUE(Result.Requests.back().Completed);
+  // Neither-I/O completion retains backing for an independent probe lock.
+  EXPECT_EQ(get(System + 4096, 1), 0x72u);
+  put(System + 4096, 0x73, 1);
+  call("MmUnlockPages", {MDL});
+  EXPECT_FALSE(allowed(System, Read));
+  EXPECT_FALSE(allowed(System + 4096, Read));
+  call("IoFreeMdl", {MDL});
+  success(Model->recordDispatchReturn(IRP, StatusSuccess));
+  success(Model->finalizeRequest(IRP));
+}
+
+TEST_F(KernelMDLUserMapping, CreateMdlStorageOutlivesAllUserMappings) {
+  const auto IRP = begin();
+  const auto Pool = pool();
+  const auto MDL = call("MmCreateMdl", {0, Pool, profile::PageSize});
+  call("MmBuildMdlForNonPagedPool", {MDL});
+  const auto View = map(MDL);
+  rejected(Model->call("IoFreeMdl", {MDL}));
+  rejected(Model->call("ExFreePool", {MDL}));
+  put(View + 17, 0x65, 1);
+  EXPECT_EQ(get(Pool + 17, 1), 0x65u);
+  call("MmUnmapLockedPages", {View, MDL});
+  call("IoFreeMdl", {MDL});
+  call("ExFreePool", {Pool});
+  complete(IRP);
+}
+
+TEST_F(KernelMDLUserMapping, StackQueryRetainsBoundsAcrossProcessAttachment) {
+  const auto IRP = begin();
+  const auto Process = call("IoGetRequestorProcess", {IRP});
+  const auto Apc = pool(64);
+  constexpr uint64_t Base = profile::CallbackStackBase;
+  constexpr uint64_t Size = profile::CallbackStackSize;
+  success(Memory->map(Base, Size, Read | Write));
+  success(Model->activateStack(Base, Size));
+  const auto [Work, ID] = worker(IRP);
+  const auto Initial = call("IoGetInitialStack", {});
+  EXPECT_EQ(Initial, Base + Size);
+  call("KeStackAttachProcess", {Process, Apc});
+  EXPECT_EQ(call("IoGetInitialStack", {}), Initial);
+  call("IoGetStackLimits", {Scratch + 0x400, Scratch + 0x408});
+  EXPECT_EQ(get(Scratch + 0x400), Base);
+  EXPECT_EQ(get(Scratch + 0x408), Initial);
+  call("KeUnstackDetachProcess", {Apc});
+  EXPECT_EQ(call("IoGetInitialStack", {}), Initial);
+  finishWorker(Work, ID);
+  success(Model->retireStack(Base, Size));
+  process(ProcessA);
+  call("ExFreePoolWithTag", {Apc, PoolTag});
+  complete(IRP);
+}
+
 TEST_F(KernelMDLUserMapping, PrimaryQueryUsesExactPoolOwnersAndRetirement) {
   const auto First = pool(17), Second = pool(17);
   const auto FirstPA = call("MmGetPhysicalAddress", {First});

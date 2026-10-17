@@ -18,6 +18,7 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -61,6 +62,18 @@ static bool tryResolveNamedAddress(va_t Addr,
   return false;
 }
 
+/// Whether the pointer slot at \p Slot holds an address of \p Image's own
+/// code, under a relocation or in a fixed image's bytes: a variable the image
+/// initializes, which no loader binds to an import.
+static bool holdsOwnCodeAddress(const BinaryImage &Image, va_t Slot) {
+  if (Image.CodePtrRelocSlots.count(Slot))
+    return true;
+  const uint32_t Width = Image.getPointerSize();
+  const uint8_t *Bytes = Width ? Image.readVA(Slot, Width) : nullptr;
+  return Bytes && Image.hasExecutableCodeOwnerAt(
+                      static_cast<va_t>(readPtr(Bytes, Width == 8)));
+}
+
 /// The function a call reaches through the pointer slot at \p Slot. Only an
 /// import slot names it: one the import directory lists, the loader bound, or
 /// the linker named `__imp_X`. Any other name at \p Slot labels the slot
@@ -80,12 +93,17 @@ static bool tryResolveLoadedSlot(va_t Slot,
     std::string Name = DirectorySlot ? Imp->Name : std::string();
     // An import directory entry can carry no name (API-set and delay-load
     // imports often do); the symbol for its slot names the import. The linker
-    // names any import address slot `__imp_X` (`__imp__X` on i386).
+    // names any import address slot `__imp_X` (`__imp__X` on i386), but a
+    // slot that holds the image's own code is a variable of that name:
+    // MinGW's runtime defines `__imp_X` for each function it supplies in
+    // place of an import (__MINGW_IMP_SYMBOL), initialized to that function.
     if (Name.empty())
       if (const Symbol *Sym = Image->findSymbolAt(Slot);
           Sym && !Sym->Name.empty() &&
-          (DirectorySlot || llvm::StringRef(Sym->Name).starts_with("__imp_") ||
-           llvm::StringRef(Sym->Name).starts_with("_imp_")))
+          (DirectorySlot ||
+           ((llvm::StringRef(Sym->Name).starts_with("__imp_") ||
+             llvm::StringRef(Sym->Name).starts_with("_imp_")) &&
+            !holdsOwnCodeAddress(*Image, Slot))))
         Name = Sym->Name;
     // A slot holding `import + addend` reaches no function by that name.
     if (auto It = Storage.Slots.find(Slot); It != Storage.Slots.end()) {

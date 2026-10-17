@@ -980,7 +980,10 @@ std::string HighCWriter::storedValueText(const HighExpr &Value,
       LiteralAddressOperands.erase(&Value);
   });
   // A plain store converts the value to the memory's type like an
-  // assignment does.
+  // assignment does: an integer slot takes a pointer as the address it is.
+  if (Ordering == NdMemoryOrdering::None && To && To->Kind == NdTypeKind::Int &&
+      !To->IsEnum && printedPointerType(Value))
+    return "(" + typeToC(To) + ")(uintptr_t)(" + exprStr(Value) + ")";
   if (Ordering == NdMemoryOrdering::None && Value.Type &&
       Value.Type->Kind == NdTypeKind::Int)
     if (auto Converted = implicitIntegerConversion(Value, To))
@@ -2214,6 +2217,58 @@ std::string HighCWriter::stringArgumentNote(const HighExpr &Arg) {
   if (auto Text = imageStringComment(Opts.Image, *Target))
     return " /* " + *Text + " */";
   return {};
+}
+
+TypeRef HighCWriter::callResultPointerType(const HighExpr &Value) const {
+  if (Value.Kind != ExprKind::Var && Value.Kind != ExprKind::Phi)
+    return nullptr;
+  const std::string Name = varName(Value.Var);
+  const auto Renamed = CallResultNames.find(Name);
+  return callResultPointerTypeNamed(
+      Renamed == CallResultNames.end() ? Name : Renamed->second);
+}
+
+TypeRef HighCWriter::callResultPointerTypeNamed(const std::string &Name) const {
+  if (!CallResultTypes.count(Name))
+    return nullptr;
+  const auto Declared = DeclaredCTypes.find(Name);
+  return Declared != DeclaredCTypes.end() && Declared->second &&
+                 Declared->second->Kind == NdTypeKind::Ptr
+             ? Declared->second
+             : nullptr;
+}
+
+TypeRef HighCWriter::typedPointerMemberLoad(const HighExpr &Value) const {
+  if (Value.Kind != ExprKind::Load || Value.Operands.empty() ||
+      !Value.Operands[0])
+    return nullptr;
+  const uint16_t Size = Value.Type ? Value.Type->Size : 0;
+  if (!typedMemberAccess(*Value.Operands[0], Size))
+    return nullptr;
+  const TypeRef Member =
+      cDisplayType(typedMemberType(*Value.Operands[0], Size));
+  return Member && Member->Kind == NdTypeKind::Ptr ? Member : nullptr;
+}
+
+TypeRef HighCWriter::printedPointerType(const HighExpr &Value) const {
+  if (const TypeRef Local = callResultPointerType(Value))
+    return Local;
+  if (const TypeRef Member = typedPointerMemberLoad(Value))
+    return Member;
+  if (Value.Kind != ExprKind::Load || Value.Operands.empty() ||
+      !Value.Operands[0] || !Value.Type)
+    return nullptr;
+  const auto Address = constAddress(*Value.Operands[0]);
+  if (!Address)
+    return nullptr;
+  const auto Object = ImageObjects.find(*Address);
+  if (Object == ImageObjects.end() || !Object->second.Type)
+    return nullptr;
+  const TypeRef Declared = cDisplayType(Object->second.Type);
+  return Declared && Declared->Kind == NdTypeKind::Ptr &&
+                 Declared->Size == Value.Type->Size
+             ? Declared
+             : nullptr;
 }
 
 std::optional<FunctionSym> HighCWriter::debugCallee(const HighExpr &E) const {
@@ -5990,7 +6045,14 @@ HighCWriter::ImageSymbolName HighCWriter::imageSymbolName(va_t Addr) const {
       Named.Raw = symbolScheme(CName) != SymbolScheme::None
                       ? CName.str()
                       : stripLeadingUnderscores(Sym->Name).str();
-      Named.Readable = symbolComment(CName, Named.Raw);
+      // An object named as an import slot (`__imp_X`) is that slot, a
+      // variable such as MinGW's, and not the function `X` a call through
+      // it reaches, which symbolComment() reads it as.
+      Named.Readable = stripImportSymbolPrefix(CName) != CName &&
+                               symbolScheme(CName) == SymbolScheme::None &&
+                               isPlainSymbolText(CName)
+                           ? CName.str()
+                           : symbolComment(CName, Named.Raw);
       Named.Symbol = Sym->Name;
     }
   }
