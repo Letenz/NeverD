@@ -186,10 +186,10 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
     return llvm::APInt(WideArithmeticBits, Value);
   };
 
-  std::map<int, const MedBlock *> BlocksById;
-  for (const MedBlock &Block : CurMedFunc->Blocks)
-    if (!BlocksById.emplace(Block.Id, &Block).second)
-      return false;
+  const auto *UniqueBlocks = uniqueBlocksById();
+  if (!UniqueBlocks)
+    return false;
+  const std::map<int, const MedBlock *> &BlocksById = *UniqueBlocks;
 
   struct UnsignedRange {
     uint64_t Min = 0;
@@ -1307,10 +1307,10 @@ bool MedLLVMEmitter::frameReloadHasAllPathInitializer(const MedOp &Load) const {
   if (SiteIt == FrameReloadIndex.Loads.end())
     return false;
   const FrameReloadLoadSite Site = SiteIt->second;
-  std::map<int, const MedBlock *> Blocks;
-  for (const auto &Block : CurMedFunc->Blocks)
-    if (!Blocks.emplace(Block.Id, &Block).second)
-      return false;
+  const auto *UniqueBlocks = uniqueBlocksById();
+  if (!UniqueBlocks)
+    return false;
+  const std::map<int, const MedBlock *> &Blocks = *UniqueBlocks;
   const auto LoadBlock = Blocks.find(Site.BlockId);
   if (LoadBlock == Blocks.end() ||
       Site.Index >= LoadBlock->second->Ops.size() ||
