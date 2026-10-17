@@ -324,10 +324,14 @@ def check_source_patch_abi(errors: list[str]) -> None:
         "const neverd_source_patch_binding_v1 *": ctypes.POINTER(
             abi.NeverDSourcePatchBindingV1
         ),
+        "const neverd_source_patch_dependency_v1 *": ctypes.POINTER(
+            abi.NeverDSourcePatchDependencyV1
+        ),
     }
     for name, struct in (
         ("neverd_source_patch_mapping_v1", abi.NeverDSourcePatchMappingV1),
         ("neverd_source_patch_binding_v1", abi.NeverDSourcePatchBindingV1),
+        ("neverd_source_patch_dependency_v1", abi.NeverDSourcePatchDependencyV1),
         ("neverd_source_patch_options_v1", abi.NeverDSourcePatchOptionsV1),
     ):
         native = parse_c_struct_layout(source, name)

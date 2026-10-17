@@ -7818,8 +7818,8 @@ checks actual reservation charging and mapping/protection refusal.
 original three-module C workload for all five profiles with classic and chained
 fixups. It checks shared dependencies, duplicate export spellings, relocated data,
 zero-only and initialized TLS, live template mutation and fresh repeated runs.
-The mandatory native inventory now has 101 methods per matching profile, or
-303 matching ARM64 identities; the separate common native catalogue remains 82.
+The mandatory native inventory now has 102 methods per matching profile, or
+306 matching ARM64 identities; the separate common native catalogue remains 82.
 Unavailable transports remain explicit skips. `DarwinNative.StartupDylibsAndTLSMatchOriginalNativeImages`
 compares a system-linked executable and its original libraries with real macOS
 execution. Independent O0/O1/O2 classic/chained controls complement that test.
@@ -7831,6 +7831,25 @@ same explicit catalogue and reports through C and CLI. With
 Run these alongside DarwinImage, linking, memory, existing libSystem calls,
 raw startup and shared process/API regressions before publishing. Guest deadlines
 and event limits are unchanged; native Intel and physical iOS need other hosts.
+
+### Darwin constructors and TLS termination
+
+`DarwinCallbackFixtures.cmake` builds the original header-free C/C++ dependency
+graph for all five profiles in classic/chained formats. `DarwinCallbacks.*`
+checks original constructor forms, malformed storage/routines and executable
+target bounds. `DarwinLibSystemTest.Callback*`, `NormalExit*` and
+`StartupCallbacks*` check void registration, opaque values, nested LIFO,
+capacity/nulls, current-stack preservation, live permissions and pending tables.
+`DarwinProcess.DylibConstructorsAndTLSCallbacksKeepStartupAndExitOrder` repeats
+all exit paths, fresh processes and shared instruction/event limits. It adds
+one mandatory method: 102 per profile and 306 matching ARM64 identities.
+`DarwinNative.ConstructorsAndTLSCallbacksMatchOriginalNativeImages` compares
+both system-linked formats with actual macOS execution; independent original
+O0/O1/O2 controls disable stack protection, whose guard imports remain outside
+this provider. `DarwinLibSystemPublic.ConstructorsAndTLSCallbacksKeepLifetimeAcrossCAndCLI`
+and genuine Python `test_darwin_constructors_and_tls_callbacks_keep_process_lifetime`
+check all five profiles, void JSON results and repeated session isolation.
+Native Intel and physical iOS remain unqualified. No guest budget is increased.
 
 ### Imported Darwin data and TLS pointer offsets
 
