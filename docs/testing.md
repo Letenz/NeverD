@@ -70,7 +70,9 @@ generated C and generated Rust. Treat a missing compiler skip as missing
 backend evidence, not as semantic success.
 
 The native source dialect suite also uses `rustc` and `go` from `PATH`, or
-`NEVERD_TEST_RUSTC` and `NEVERD_TEST_GO`. It executes 32 Rust/C observations and
+`NEVERD_TEST_RUSTC` and `NEVERD_TEST_GO`. On Windows, its Rust executable
+fixtures select `lld-link` explicitly so Git Bash's POSIX `link.exe` cannot
+replace the COFF linker. It executes 32 Rust/C observations and
 12 Go/C observations covering integer promotion, narrowing, signed/unsigned
 comparison, arithmetic shifts and loops. The Go check compiles its generated
 scalar functions unchanged; it does not establish that every Go pseudocode
@@ -3034,7 +3036,11 @@ address-size truncation before adding FS. Only TPIDR_EL0 and FPCR/FPSR system-re
 `ExecutionExitTests.cpp` exercises real x64/ARM64 software and checked runs:
 pre-effect stops, deadlines followed by clean resumption, faults overriding stop
 requests, retained recoverable faults, guest traps versus unsupported operations,
-observer failures and software HLT without a workload-completion claim.
+observer failures and software HLT without a workload-completion claim. The
+software deadline regression spends the budget inside an instruction observer
+and verifies that the following unmapped load never executes and a fresh run
+can stop normally. Keep native Windows repetition for the short-slice timer
+regression; a pass on another host does not qualify its timing behavior.
 `AArch64ProjectionTests.cpp` executes through the ARM MMU using the actual
 native page-table projection, checking translations, remapping and write
 protection. These tests deliberately use Unicorn's architectural CPU TLB, not

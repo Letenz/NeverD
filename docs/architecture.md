@@ -4488,6 +4488,13 @@ LLVM Support. All transports share its physical x87 state and FXSAVE64 layout;
 Unicorn does not depend on KVM/WHP. KVM and WHP transfer the complete FP/SSE
 state through XSAVE packets; the ISA codec owns the shared layout and init-state
 rules. Unicorn converts its full tag word at its boundary.
+The portable Unicorn adapter enforces its admitted absolute deadline in the
+mandatory instruction hook, before observers and again before guest effects.
+It disables Unicorn's optional per-entry timer thread, so short scheduling
+slices do not wait for a host timer to retire. A timed-out CPU remains resumable
+under a newly admitted CPU budget; the owning workload still retains its
+original `ExecutionBudget`.
+
 CPU snapshots preserve x87 control/status, the physical nonempty `FPTag` mask,
 TOP, opcode,
 instruction/data pointers and all eight 80-bit payloads. This state contract

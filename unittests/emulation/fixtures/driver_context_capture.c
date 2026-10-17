@@ -40,8 +40,10 @@ NTSTATUS DriverEntry(U8 *, void *);
 static void *volatile EntryAddress = (void *)DriverEntry;
 
 static void put(U8 *P, U64 V, unsigned Size) {
-  for (unsigned I = 0; I < Size; ++I)
-    P[I] = (U8)(V >> (8 * I));
+  // This x64 fixture is little-endian. Each call has a constant 2/4/8-byte
+  // size, including unaligned fields; keep the complete oracle without guest
+  // loops that reconstruct each byte on a single-stepped native transport.
+  __builtin_memcpy(P, &V, Size);
 }
 
 static int verify(Capture Function, U8 Fill, U32 MXCSR) {
