@@ -640,6 +640,10 @@ never change the lifting, patching or general module optimizer defaults.
 
 LLVMC defaults to LLVM O2 after ordinary frame and SSA promotion. Basic scalar
 cleanup, O0, O1, O3 and a bounded custom pass selection are explicit alternatives.
+A view's module holds some of the image's functions, so a writable table of
+code pointers is externally initialized while LLVM optimizes it: a call
+through a function pointer that code outside the module may rewrite, as a
+lazily bound `__imp_X`, stays a call through it.
 LLVM dispatcher recovery defaults on independently of the compiler level and
 optional symbolic fixed-point expression rewriting. Recovery retains its
 targeted constant proofs; `llvm_control_flow: false` explicitly disables that
