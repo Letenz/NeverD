@@ -4,6 +4,13 @@
 
 # Testing NeverD
 
+`AArch64SIMD.RegisterShifts*` checks baseline USHL/SSHL scalar D and fixed
+vectors against independent bit selection, including signed low-byte amounts,
+oversized shifts, destination aliases, cleared upper lanes, complete register
+and guarded memory state, and reserved lane encodings. It runs in both checked
+execution modes on available transports; integer shifts retain FP control and
+status. Instruction semantics follow the [Arm instruction reference](https://documentation-service.arm.com/static/6245c734b059dc5ff9a8bdab).
+
 `AndroidThread.ForeignTasks*` checks foreign pidfds and CPU-clock observations
 while children live and after they exit, raw and Bionic errno results, identity
 reservation conflicts, invalid flags and refusal of unsupported local thread
@@ -8055,6 +8062,15 @@ APS2 and RELR relocations on available checked AArch64 transports; unavailable
 backends are skips. `*LinuxNetwork*` checks x64/AArch64 shared descriptors,
 failed-admission atomicity, full byte streams and strict JSON. Tests never use
 host networking. Run the complete affected owners before review.
+
+The network fixtures also exercise TCP failure followed by connected UDP,
+IPv4/IPv6, named/raw/dynamic calls, FD reuse, packet truncation, peek, empty
+datagrams and explicit error completions. The original C receive caller makes
+its own protocol decision for valid and malformed synthetic replies. Kernel
+tests cover event ordering, send prerequisites, retry after interrupted route
+selection, absent readiness, failed output admission and strict wire limits.
+The same native fixture checks static/dynamic fortified memory calls, overlap,
+zero size, unknown extent, failure-before-pointer ordering and byte guards.
 
 `NeverDAAPCS64CallContractTests` checks bounded breadth-first callee discovery
 and preserves unknown operands across call/exception boundaries without

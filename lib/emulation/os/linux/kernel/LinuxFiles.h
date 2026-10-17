@@ -124,14 +124,25 @@ private:
   struct OpenSocket {
     uint32_t Family, Flags;
     const LinuxStreamConnection *Connection = nullptr;
+    const LinuxDatagramConnection *Datagram = nullptr;
     uint64_t Sent = 0, Received = 0;
+    size_t ReceiveEvent = 0;
     bool Failed = false;
     int64_t ReceiveTimeoutSeconds = 0, SendTimeoutSeconds = 0;
   };
   size_t NextConnection = 0;
+  size_t NextDatagramConnection = 0;
+  std::optional<uint64_t> receiveSocketError(OpenSocket &Socket,
+                                             const LinuxNetworkReceive &Event,
+                                             uint32_t Flags,
+                                             ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>>
   transferSocket(OpenSocket &Socket, bool Send, uint64_t Address, uint64_t Size,
-                 ProcessResult &Result);
+                 ProcessResult &Result, uint32_t Flags = 0);
+  llvm::Expected<std::optional<uint64_t>>
+  transferDatagram(OpenSocket &Socket, bool Send, uint64_t Address,
+                   uint64_t Size, ProcessResult &Result, uint32_t Flags = 0,
+                   uint64_t PeerAddress = 0, uint64_t PeerLength = 0);
   using OpenDevice = std::shared_ptr<LinuxDeviceState>;
   using Descriptor =
       std::variant<Stream, OpenFile, ProcessDescriptor, OpenDevice,

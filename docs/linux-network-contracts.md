@@ -1,9 +1,10 @@
-# Offline resolver and stream contracts
+# Offline resolver, stream and datagram contracts
 
-NeverD can execute bounded Android address resolution and Linux TCP callers
+NeverD can execute bounded Android address resolution and Linux TCP/UDP callers
 without a host resolver or socket. These are explicit analysis inputs, not a
 network stack or observations of any deployed endpoint. Unknown query, peer,
 readiness or outgoing bytes stop execution instead of manufacturing success.
+These inputs do not implement an application's acknowledgement protocol.
 
 `android.resolver_queries` matches the nullable node and service strings and
 all four hint fields exactly. Null differs from an empty string. Each query
@@ -50,9 +51,10 @@ EAFNOSUPPORT before accessing pointers.
 attempts with canonical Linux `sockaddr_in` (16 bytes) or `sockaddr_in6` (28
 bytes). Ports and addresses use network byte order; the family uses the guest's
 little-endian ABI. A peer must match the next supplied attempt. `connect_errno`
-can supply ECONNREFUSED, ETIMEDOUT, ENETUNREACH, EHOSTUNREACH or EACCES instead of
+can supply EINTR, ECONNREFUSED, ETIMEDOUT, ENETUNREACH, EHOSTUNREACH or EACCES instead of
 success. A failed connection cannot carry stream data, and its socket must be
-closed before retry. There are at most 256 attempts and 1 MiB of stream bytes.
+closed before retry. There are at most 256 TCP/UDP attempts and 1 MiB of payload
+bytes combined.
 
 `socket`, `connect`, `sendto` and `recvfrom` share one implementation across raw
 x64/AArch64 Linux syscalls, Android named wrappers and `syscall`. Bionic `send`
@@ -71,8 +73,84 @@ negative seconds retain immediate-timeout state. Fractional timeouts stop
 because kernel tick rounding is not supplied. Short getters copy only the
 requested prefix and report its length. These options do not create peer
 readiness or advance the guest clock: stream completions remain explicit inputs. Cross-page partial faults, scatter/gather sockets,
-nonblocking connect completion, readiness polling, other socket options, UDP,
+nonblocking TCP connect completion, readiness polling, other socket options,
 shutdown and real transport are not covered by this bounded contract.
+
+## Ordered receive completions
+
+A TCP connection can use `receive_events` instead of `receive_hex`. Each event
+contains exactly one of a nonempty `receive_hex` or positive `errno` (EINTR 4
+or EAGAIN 11). Reset and fatal transport errors remain unsupported because they
+also require connection-state transitions. Optional
+`after_send` is the number of outgoing bytes that must already have been
+accepted. Events retain their order and short-read cursor. `receive_eof` still
+explicitly selects EOF after the last event; otherwise readiness stays unknown.
+An error is a single explicit completion, not a permanent socket error or an
+asynchronous signal model. EAGAIN requires nonblocking/MSG_DONTWAIT or nonzero
+receive-timeout state. No host or guest time is advanced by these observations.
+
+## Connected UDP
+
+`datagram_connections` supplies ordered UDP `connect` route observations,
+independently of the TCP attempt list. Either list may be omitted. A successful
+UDP connect sets the peer; it does not perform a handshake or prove delivery.
+Both IPv4 and IPv6 and protocol 0/17 are admitted, including nonblocking UDP
+creation. An interrupted connect may be retried on the same description using
+the next observation. Other failed connections require closing the description
+in this bounded model. Reconnect, AF_UNSPEC disconnect, bind and unconnected
+or explicit-destination sends remain unsupported. IPv6 flow information must
+be zero; source addresses come from the explicitly supplied connected peer.
+
+```json
+{
+  "linux_files": {"files": []},
+  "linux_network": {
+    "datagram_connections": [{
+      "peer_hex": "020023297f0000010000000000000000",
+      "expected_datagrams": ["00ff42", ""],
+      "receive_events": [
+        {"receive_hex": "4f4b", "after_send": 1},
+        {"receive_hex": "", "after_send": 2},
+        {"errno": 11, "after_send": 2}
+      ]
+    }]
+  }
+}
+```
+
+Each outgoing call must match a complete expected datagram; no short send is
+invented. UDP `after_send` counts accepted datagrams, including empty ones.
+Each receive event is one datagram or one error; there is no UDP EOF. A short
+receive discards the packet suffix. MSG_PEEK keeps the packet, MSG_TRUNC returns
+its full length, and MSG_WAITALL has no effect. A zero-size `recv` can consume a
+packet, whereas a zero-size scalar `read` leaves it queued. Scalar writes and
+reads use the same description and packet cursors as send/recv wrappers.
+`recvfrom` can copy the declared peer, truncating to the input socklen and
+publishing the full required length. A null peer pointer ignores socklen.
+
+Admission allows at most 4096 outgoing packets and 4096 receive events per
+connection, each UDP packet at most 65507 bytes. Failed memory admission,
+unsupported flags, mismatched bytes and unmet send prerequisites stop without
+consuming a packet. Partial-copy faults and payload overlap with the output
+socklen control word are explicitly unsupported, since Linux may consume or
+partially publish data on these paths. Valid output copies retain payload,
+address, then length order. FD aliases share packet cursors, timeout values and
+route identity; a reused descriptor gets fresh state.
+
+The datagram and receive rules follow the pinned Linux 5.10
+[UDP owner](https://github.com/torvalds/linux/blob/v5.10/net/ipv4/udp.c) and
+[socket syscall owner](https://github.com/torvalds/linux/blob/v5.10/net/socket.c).
+The implementation is an independent bounded model of these ABI contracts.
+
+Android's `__memcpy_chk`, `__memmove_chk` and `__memset_chk` use the ordinary
+Bionic memory owner after checking the supplied destination extent. An exceeded
+extent fails before pointer access; overlap remains unsupported for memcpy and
+supported for memmove. Zero-length calls touch no memory, and the compiler's
+unknown-extent sentinel does not require the whole sentinel-sized region to be
+mapped. Fortify failure is reported as a runtime failure, without fabricating
+a libc return or claiming to deliver SIGABRT. This follows the API 28
+[AArch64 checked-copy entry](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/arch-arm64/generic/bionic/__memcpy_chk.S)
+and [fortify contracts](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/fortify.cpp).
 
 These ABI rules follow the pinned [AOSP netdb definitions](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/include/netdb.h),
 [address resolver](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/dns/net/getaddrinfo.c)
