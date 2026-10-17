@@ -517,7 +517,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Ctrl+Shift+[ / Ctrl+Shift+] | Collapse / expand the current pseudocode brace block |
 | Ctrl+F5 | Write the function's pseudocode to a C file |
 | Alt+A | String literal options |
-| Ctrl+W | Save the database |
+| Ctrl+W | Save the project |
 | Ctrl+Shift+P | Command palette |
 
 Single-key shortcuts apply only while an analysis view has the keyboard focus,
@@ -834,24 +834,76 @@ that was confirmed. A selection that no longer loads leaves the database open
 without it, and Output says why; select the PDB again to restore it. On the
 command line, `--pdb <file> --pdb-unverified` makes the same choice for one run.
 
+## Saving and sharing a project
+
+A binary's project is a set of JSON files beside it, named after it: `ls` keeps
+`ls.neverd-renames.json` and its siblings. Renames, function edits, data items,
+operand formats, code edits, local types, bookmarks and the debug files chosen
+are written as they are made; comments are staged until **File → Save**
+(Ctrl+W) writes them. Saving and quitting write no database.
+
+The files are meant for version control. A teammate who clones a repository
+holding the binary and its shared files opens the same analysis by opening the
+binary. Each table is written with two-space indentation and sorted keys, and
+the command line writes the same bytes as the workbench, so a diff shows only
+the edits. A table written by an older version is compact JSON, and its first
+change after an update rewrites it whole once.
+
+| File (`<input>` + suffix) | Holds | In version control |
+| --- | --- | --- |
+| `.neverd-annotations.json` | Comments | Commit |
+| `.neverd-renames.json` | Renames | Commit |
+| `.neverd-functions.json` | Created, deleted and edited functions | Commit |
+| `.neverd-items.json` | Code and data definitions | Commit |
+| `.neverd-operands.json` | Operand formats | Commit |
+| `.neverd-code.json` | Pseudocode edits, such as variable names and number bases | Commit |
+| `.neverd-types.json` | Local types | Commit |
+| `.neverd-load.json` | How a binary file is read | Commit |
+| `.neverd-bookmarks.json` | Bookmarks | Commit |
+| `.neverd-debug.json` | The PDB, DWARF, MAP and symbol table choices | Commit |
+| `.neverd-history.json` | Undo and redo history | Ignore |
+| `.neverd-journal.json` | The write-ahead journal of an interrupted save | Ignore |
+| `.neverd-workbench.json` | Your location, graph mode and desktop | Ignore |
+| `.neverd-gui.lock` | The writer lock | Ignore |
+
+A suitable `.gitignore`:
+
+```gitignore
+*.neverd-history.json
+*.neverd-journal.json
+*.neverd-workbench.json
+*.neverd-gui.lock
+*.nddb
+```
+
+A debug file inside the project's folder is recorded relative to it, so the
+choice holds in a clone that keeps the file. Bookmarks made before projects
+kept them stay in the machine's settings and still show; the next bookmark
+writes them all into the project.
+
 ## Databases
 
-**File → Save** (Ctrl+W) packs the project into a NeverD database next to the
-input: `ls` saves to `ls.nddb`. A database is one SQLite file holding the input
-itself, its comments, renames, function edits, data items, operand formats, how
-a binary file is read and edit history, and the workbench state (location, graph mode, bookmarks and desktop). Each save is a
-single transaction, so a database is never left half written; the input is
-stored in independently compressed chunks that compress and expand in parallel,
-and an unchanged input is not rewritten.
+**File → Pack database** writes the project, its binary included, into one
+NeverD database, by default next to the input: `ls` packs into `ls.nddb`. It
+saves staged comments first. A database is one SQLite file holding the input
+itself, the project's tables and the workbench state (location, graph mode,
+bookmarks and desktop): one file to keep or send. Each pack is a single
+transaction, so a database is never left half written; the input is stored in
+independently compressed chunks that compress and expand in parallel, and an
+unchanged input is not rewritten.
 
 Open a `.nddb` file directly to continue a project anywhere, even without the
 original binary: the input is unpacked into a per-database working directory
 and checked against its SHA-256 digest, and a damaged database is reported
-instead of loaded. Opening a binary whose `.nddb` sits beside it restores the
-saved location, bookmarks and desktop; when its comment files are missing they
-are restored from the database, and a database that describes a different
-version of the file is reported and left unused until the next save replaces
-it. Closing the window updates the saved location of an existing database.
+instead of loaded. Edits made in an opened database are kept beside its
+unpacked copy at once, and **File → Save** writes them back into the database.
+Quitting, opening another file or reloading first asks to save them when the
+database lacks them. Opening a binary whose `.nddb` sits beside it restores the
+saved location, bookmarks and desktop unless the project's own files say
+otherwise; when its comment files are missing they are restored from the
+database, and a database that describes a different version of the file is
+reported and left unused until the next pack replaces it. Closing the window
+updates the saved location of a database you opened.
 
 A binary in a folder you cannot write to, such as `/usr/bin` or a read-only
 mount, opens all the same. IDA asks for another place for its database; the
@@ -870,7 +922,8 @@ not a NeverD database.
 
 Comments are staged and saved explicitly; renames, function edits and data
 items commit at once (staged comments are saved first). Opening another file, restarting the
-worker or quitting with unsaved comments offers Save, Discard and Cancel. Edits
+worker or quitting with unsaved comments, or with edits a database you opened
+lacks, offers Save, Discard and Cancel. Edits
 prepared for a session that has since closed are refused, never applied to the
 new one. Annotation, rename, function edit and data item commands have bounded undo/redo
 history bound to the input hash and sidecar contents; a write-ahead journal

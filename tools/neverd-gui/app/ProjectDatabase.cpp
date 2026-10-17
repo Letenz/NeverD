@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -189,9 +190,11 @@ std::optional<std::vector<Chunk>> compressInput(const QString &path,
 }
 } // namespace
 
-const QStringList &ProjectDatabase::sidecarSuffixes() {
-  // Every table the worker's edit history keeps, its history, and how a
-  // binary file is read, which no edit changes.
+namespace {
+/// What a database saved before it recorded its packed files packed: every
+/// table the worker's edit history keeps, its history, and how a binary file
+/// is read.
+const QStringList &legacySidecarSuffixes() {
   static const QStringList suffixes = {
 #define NEVERD_USER_STATE_TABLE(Table, Kind, Suffix, Optional)                 \
   QStringLiteral(Suffix),
@@ -199,6 +202,50 @@ const QStringList &ProjectDatabase::sidecarSuffixes() {
       QStringLiteral(".neverd-history.json"),
       QStringLiteral(".neverd-load.json")};
   return suffixes;
+}
+} // namespace
+
+const QStringList &ProjectDatabase::sidecarSuffixes() {
+  static const QStringList suffixes =
+      legacySidecarSuffixes() +
+      QStringList{QStringLiteral(".neverd-types.json"),
+                  QLatin1String(BookmarksSuffix),
+                  QLatin1String(DebugFilesSuffix)};
+  return suffixes;
+}
+
+std::optional<QJsonDocument>
+ProjectDatabase::readProjectFile(const QString &input, const char *suffix) {
+  QFile file(input + QLatin1String(suffix));
+  if (!file.open(QIODevice::ReadOnly))
+    return std::nullopt;
+  QJsonParseError error;
+  auto document = QJsonDocument::fromJson(file.readAll(), &error);
+  if (error.error != QJsonParseError::NoError)
+    return std::nullopt;
+  return document;
+}
+
+QString ProjectDatabase::writeProjectFile(const QString &input,
+                                          const char *suffix,
+                                          const QJsonDocument &document) {
+  // Qt indents by four spaces: halve each line's indentation, which is all
+  // the leading space a JSON line has.
+  QByteArray text;
+  for (const QByteArray &line :
+       document.toJson(QJsonDocument::Indented).split('\n')) {
+    qsizetype indent = 0;
+    while (indent < line.size() && line[indent] == ' ')
+      ++indent;
+    text += QByteArray(indent / 2, ' ') + line.mid(indent) + '\n';
+  }
+  text.chop(1);
+  QSaveFile file(input + QLatin1String(suffix));
+  if (!file.open(QIODevice::WriteOnly) || file.write(text) != text.size() ||
+      !file.commit())
+    return QCoreApplication::translate("ProjectDatabase", "Cannot write %1: %2")
+        .arg(file.fileName(), file.errorString());
+  return {};
 }
 
 QString ProjectDatabase::pathFor(const QString &binary) {
@@ -382,6 +429,8 @@ QString ProjectDatabase::save(const QString &database, const QString &binary,
         !writeMeta(db, QStringLiteral("saved_at"),
                    QDateTime::currentDateTimeUtc().toString(Qt::ISODate),
                    error) ||
+        !writeMeta(db, QStringLiteral("sidecar_suffixes"),
+                   sidecarSuffixes().join(QLatin1Char(' ')), error) ||
         !writeState(db, state, error))
       return fail(error);
     if (!db.commit())
@@ -448,6 +497,10 @@ ProjectDatabase::read(const QString &database, QString *error) {
   contents.inputSize = metaValue(db, QStringLiteral("input_size")).toLongLong();
   contents.generator = metaValue(db, QStringLiteral("generator"));
   contents.savedAt = metaValue(db, QStringLiteral("saved_at"));
+  const QString packed = metaValue(db, QStringLiteral("sidecar_suffixes"));
+  contents.packedSuffixes =
+      packed.isEmpty() ? legacySidecarSuffixes()
+                       : packed.split(QLatin1Char(' '), Qt::SkipEmptyParts);
   // A database names its input; never let that name leave the directory.
   if (contents.inputName.isEmpty() ||
       contents.inputName.contains(QLatin1Char('/')) ||
@@ -549,7 +602,9 @@ QString ProjectDatabase::unpack(const QString &database,
       const QString path = input + suffix;
       const auto stored = contents->sidecars.constFind(suffix);
       if (stored == contents->sidecars.cend()) {
-        QFile::remove(path);
+        // A file kind the database never packed may hold the only copy.
+        if (contents->packedSuffixes.contains(suffix))
+          QFile::remove(path);
         continue;
       }
       QFile sidecar(path + QStringLiteral(".unpacking"));

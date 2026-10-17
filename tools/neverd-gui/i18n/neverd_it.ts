@@ -60,6 +60,14 @@
         <translation>Salva commenti e cronologia accanto al binario</translation>
     </message>
     <message>
+        <source>Pac&amp;k database...</source>
+        <translation>I&amp;mpacchetta database...</translation>
+    </message>
+    <message>
+        <source>Write the project and its binary into one NeverD database file</source>
+        <translation>Scrivi il progetto e il suo binario in un unico file di database NeverD</translation>
+    </message>
+    <message>
         <source>&amp;Close</source>
         <translation>C&amp;hiudi</translation>
     </message>
@@ -1933,6 +1941,10 @@ Fai doppio clic per andare alla dichiarazione.</translation>
         <translation>I commenti sono stati modificati. Salvarli prima di continuare?</translation>
     </message>
     <message>
+        <source>%1 lacks the latest changes. Save them into it before continuing?</source>
+        <translation>A %1 mancano le ultime modifiche. Salvarle prima di continuare?</translation>
+    </message>
+    <message>
         <source>Cannot jump to %1: %2</source>
         <translation>Impossibile andare a %1: %2</translation>
     </message>
@@ -2133,6 +2145,14 @@ Con segno: %4</translation>
     <message>
         <source>Create LST file</source>
         <translation>Crea file LST</translation>
+    </message>
+    <message>
+        <source>Pack database</source>
+        <translation>Impacchetta database</translation>
+    </message>
+    <message>
+        <source>NeverD databases (*%1)</source>
+        <translation>Database NeverD (*%1)</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
