@@ -3686,7 +3686,7 @@ TEST_P(DarwinProcess,
 TEST_P(DarwinProcess,
        CreatedRegularAttributesKeepIndependentProvidersAndObjectState) {
   Options.InstructionQuantum = 1024;
-  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Limits.TimeoutMicroseconds = BatchedProcessTimeoutMicroseconds;
   Options.Arguments[2] = "/data";
   Options.DarwinSystem.emplace().Credentials =
       darwin_test::createdAttributeCredentials();

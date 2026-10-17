@@ -381,6 +381,63 @@ declare noundef range(i8 0, 4) i8 @callee(i8 noundef range(i8 0, 4))
   EXPECT_TRUE(Call->paramHasAttr(0, llvm::Attribute::NoUndef));
 }
 
+TEST(LLVMScalarDecision, HostCompilerCopyPreservesWholeObjectLifetimes) {
+  Source Input(R"(
+target datalayout = "e-p:64:64-p5:32:32-i64:64"
+define void @f(i64 %n) {
+  %fixed = alloca [3 x i32], align 4
+  %dynamic = alloca i8, i64 %n
+  %other = alloca i16, align 2, addrspace(5)
+  call void @llvm.lifetime.start.p0(ptr %fixed)
+  call void @llvm.lifetime.start.p0(ptr %dynamic)
+  call void @llvm.lifetime.start.p5(ptr addrspace(5) %other)
+  call void @llvm.lifetime.end.p0(ptr %fixed)
+  call void @llvm.lifetime.end.p0(ptr %dynamic)
+  call void @llvm.lifetime.end.p5(ptr addrspace(5) %other)
+  ret void
+}
+declare void @llvm.lifetime.start.p0(ptr)
+declare void @llvm.lifetime.end.p0(ptr)
+declare void @llvm.lifetime.start.p5(ptr addrspace(5))
+declare void @llvm.lifetime.end.p5(ptr addrspace(5))
+)");
+  ASSERT_TRUE(Input.Module);
+  ASSERT_FALSE(llvm::verifyModule(*Input.Module, &llvm::errs()));
+  const auto Before = Input.text();
+  const auto Text = neverd::test::printHostCompilerFixture(*Input.Module);
+  EXPECT_EQ(Input.text(), Before);
+  for (llvm::StringRef Boundary : {"start", "end"}) {
+    EXPECT_NE(
+        Text.find(
+            ("@llvm.lifetime." + Boundary + ".p0(i64 12, ptr %fixed)").str()),
+        std::string::npos);
+    EXPECT_NE(
+        Text.find(
+            ("@llvm.lifetime." + Boundary + ".p0(i64 -1, ptr %dynamic)").str()),
+        std::string::npos);
+    EXPECT_NE(Text.find(("@llvm.lifetime." + Boundary +
+                         ".p5(i64 2, ptr addrspace(5) %other)")
+                            .str()),
+              std::string::npos);
+  }
+  // The new LLVM reader upgrades the legacy signatures back to whole-object
+  // markers. This must still verify, with every original pointer retained.
+  Source Copy(Text);
+  ASSERT_TRUE(Copy.Module);
+  ASSERT_FALSE(llvm::verifyModule(*Copy.Module, &llvm::errs()));
+  unsigned Boundaries = 0;
+  for (auto &Block : Copy.function())
+    for (auto &Instruction : Block)
+      if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction))
+        if (Call->getIntrinsicID() == llvm::Intrinsic::lifetime_start ||
+            Call->getIntrinsicID() == llvm::Intrinsic::lifetime_end) {
+          ++Boundaries;
+          ASSERT_EQ(Call->arg_size(), 1u);
+          EXPECT_TRUE(llvm::isa<llvm::AllocaInst>(Call->getArgOperand(0)));
+        }
+  EXPECT_EQ(Boundaries, 6u);
+}
+
 TEST(LLVMScalarDecision, HostCompilerCopyPreservesScalarConversionPoison) {
   auto Evaluate = [](Source &Input, uint64_t Word) {
     auto *Argument = Input.function().getArg(0);

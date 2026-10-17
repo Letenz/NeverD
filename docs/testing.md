@@ -865,10 +865,17 @@ The shared HighC host fixture reports native `-m32` execution unavailable on
 macOS, where a 64-bit build would truncate the kernels' addresses. Linux and
 Windows retain the actual 32-bit differential. Native x87 IR inputs use
 `LLVMHostFixture.h` at both host compiler boundaries; the original verified
-module and semantic proofs remain unchanged. The source dialect bit-field
+module and semantic proofs remain unchanged. The compiler copy lowers
+whole-object lifetime markers to the older `(i64 size, ptr)` signature, using
+the actual static allocation size or `-1` for a variable-sized allocation.
+The Clang 18 O2 execution remains required; it must not consume the newer
+one-argument intrinsic with verification disabled. The source dialect bit-field
 differential uses its native C oracle's record ABI: Microsoft on Windows and
 Itanium on the 64-bit System V and Apple hosts, with independent layout
-assertions before the Rust/Go byte comparisons.
+assertions before the Rust/Go byte comparisons. Both record ABIs' actual
+generated Rust/Go views are also read on every host. The C syntax reader
+recognizes only the emitted `NEVERD_MS_STRUCT` prefix, including after
+`DECLSPEC_ALIGN(N)`; unknown layout macros still fail visibly.
 The call controls retain explicitly prepared floating registers for both direct
 and indirect calls whose ABI operands have not yet been recovered.
 
@@ -5920,6 +5927,15 @@ profile, rejects overlaps and missing identities, and keeps the original exit
 status. Reuse names, JUnit and input hashes accompany the outcome artifact.
 This avoids repeated native work within the hosted job's time limit without
 reducing its required coverage.
+
+The original WHP file-transfer matrix contains eighteen separately bounded
+five-second guests, so its complete CTest method has a 120-second allowance.
+The original integer-formatting matrix contains four thirty-second guests and
+has a 150-second CTest allowance. The policy matches only those two methods and
+their four WHP contract/base variants; other driver methods retain their
+existing limits. The created-regular-attributes Darwin differential uses the
+same twenty-second guest allowance as the other semantic batches. Instruction
+bounds, public defaults and all result assertions remain unchanged.
 
 The four `SessionCAPIKernelInputs` checks require developer-supplied kernel/PDB
 files. Their exact missing-input reasons are recorded as external-input skips;
