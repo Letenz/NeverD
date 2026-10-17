@@ -28,6 +28,22 @@ extern long write(int, const void *, u64);
 extern u64 unknown_native_function(u64);
 static volatile u64 seed = 5;
 static volatile u64 *volatile seed_pointer = &seed;
+/* A supplied executable page lets tests address exact instruction boundaries.
+ */
+u64 observation_call(u64 (*entry)(u64 *, u64), u64 *out, u64 value) {
+  return entry(out, value);
+}
+extern int pthread_create(u64 *, const void *, void *(*)(void *), void *);
+extern int pthread_join(u64, void **);
+u64 observation_threads(void *(*entry)(void *), u64 *out) {
+  u64 first, second;
+  if (pthread_create(&first, 0, entry, out) ||
+      pthread_create(&second, 0, entry, out + 4))
+    return 99;
+  if (pthread_join(first, 0) || pthread_join(second, 0))
+    return 98;
+  return out[0] + out[4];
+}
 __attribute__((constructor)) static void initialize(void) { seed = 17; }
 u64 add_arguments(u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g, u64 h, u64 i,
                   u64 j) {

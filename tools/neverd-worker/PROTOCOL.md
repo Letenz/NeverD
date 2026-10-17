@@ -638,7 +638,13 @@ process exit releases the kernel lock, including after a crash. Other workers
 must open read-only or wait. CLI builds predating this shared guard do not take the lock,
 so concurrent CLI sidecar editing is outside this guarantee. Read-only opens
 skip the lock and reject all edit/save/history mutation operations. History JSON
-is capped at 8 MiB and the write-ahead journal at 24 MiB. Addresses stay strings
+is capped at 8 MiB and the write-ahead journal at 24 MiB, both compact. The
+project tables (annotations, renames, functions, items, operands, code) are
+written for version control: two-space indentation, sorted keys, `\u0008` and
+`\u000c` for backspace and form feed, non-ASCII text as UTF-8 and one final line
+break. These are the CLI's bytes for the same table, so a project kept in git diffs
+only where its edits differ. Each such table is capped at 16 MiB as written.
+Addresses stay strings
 through history and recovery. Unknown command kinds and duplicate state addresses
 are rejected, and recovery can only write the fixed sidecar paths.
 

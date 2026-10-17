@@ -252,9 +252,16 @@ private:
   QHash<QString, QByteArray> projectState() const;
   void restoreProjectState();
   void navigateInitialAddress();
-  QJsonArray bookmarks() const;
+  const QJsonArray &bookmarks() const { return bookmarks_; }
+  /// Show \p rows as the project's bookmarks.
+  void showBookmarks(const QJsonArray &rows);
+  /// Show and keep \p rows as the project's bookmarks.
   void setBookmarks(const QJsonArray &rows);
+  /// Where this machine's settings kept a project's bookmarks before the
+  /// project kept them.
   QString bookmarksKey() const;
+  /// Ask where to pack the project, and pack it there.
+  void packDatabase();
 
   Session &session_;
   McpConnectionManager &mcp_;
@@ -286,6 +293,7 @@ private:
   QPointer<CodeView> tabCodeView_;
   std::optional<Address> initialAddress_;
   bool restoreGraph_ = false;
+  QJsonArray bookmarks_;
   QPointer<QDialog> quickStart_;
   QPointer<web::PackageReviewDialog> packageReview_;
   bool startupQuickStartPending_ = false;

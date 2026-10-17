@@ -96,7 +96,7 @@ add_neverd_unittest(NeverDNativeFinallyInputTests
 
 add_neverd_unittest(NeverDSourceDialectTests
   backend/SourceDialectTests.cpp
-  LINK_COMPONENTS BackendC
+  LINK_COMPONENTS BackendC Types
 )
 
 add_neverd_unittest(NeverDSourcePatchLayoutTests

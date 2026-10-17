@@ -716,6 +716,104 @@ private slots:
         directory.filePath(QStringLiteral("missing.nddb")), &error));
   }
 
+  void projectFilesPackWithTheProject() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto binary = directory.filePath(QStringLiteral("sample.bin"));
+    const auto write = [](const QString &path, const QByteArray &bytes) {
+      QFile file(path);
+      return file.open(QIODevice::WriteOnly) &&
+             file.write(bytes) == bytes.size();
+    };
+    const auto read = [](const QString &path) {
+      QFile file(path);
+      return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    QVERIFY(write(binary, "\x90\xc3"));
+    // The project's own files read like the worker's: two-space indents,
+    // keys sorted, one final line break.
+    QCOMPARE(
+        ProjectDatabase::writeProjectFile(
+            binary, ProjectDatabase::BookmarksSuffix,
+            QJsonDocument(QJsonArray{QJsonObject{
+                {"text", QString::fromUtf8("标记")}, {"address", "0x10"}}})),
+        QString());
+    QCOMPARE(
+        read(binary + ".neverd-bookmarks.json"),
+        QByteArray("[\n  {\n    \"address\": \"0x10\",\n    \"text\": \"") +
+            QString::fromUtf8("标记").toUtf8() + "\"\n  }\n]\n");
+    QCOMPARE(ProjectDatabase::readProjectFile(binary,
+                                              ProjectDatabase::BookmarksSuffix)
+                 ->array()
+                 .first()
+                 .toObject()
+                 .value("address")
+                 .toString(),
+             QStringLiteral("0x10"));
+    QVERIFY(!ProjectDatabase::readProjectFile(
+        binary, ProjectDatabase::WorkbenchSuffix));
+    QVERIFY(write(binary + ".neverd-debug.json", R"({"pdb":{"mode":"none"}})"));
+    QVERIFY(write(binary + ".neverd-types.json", R"({"types":["struct T"]})"));
+    QVERIFY(write(binary + ".neverd-items.json", "[]"));
+    // A workbench file is the user's own; a database keeps its own state.
+    QVERIFY(write(binary + ".neverd-workbench.json", "{}"));
+
+    // Local types, bookmarks and debug files go into the database and come
+    // back out of it.
+    const auto database = ProjectDatabase::pathFor(binary);
+    QCOMPARE(ProjectDatabase::save(database, binary, {}), QString());
+    QString error;
+    auto contents = ProjectDatabase::read(database, &error);
+    QVERIFY2(contents, qPrintable(error));
+    for (const char *suffix : {".neverd-types.json", ".neverd-bookmarks.json",
+                               ".neverd-debug.json", ".neverd-items.json"})
+      QVERIFY2(contents->sidecars.contains(QLatin1String(suffix)), suffix);
+    QVERIFY(
+        !contents->sidecars.contains(QStringLiteral(".neverd-workbench.json")));
+    QVERIFY(contents->packedSuffixes.contains(
+        QStringLiteral(".neverd-types.json")));
+    QTemporaryDir elsewhere;
+    const auto unpacked =
+        ProjectDatabase::unpack(database, elsewhere.path(), &error);
+    QVERIFY2(!unpacked.isEmpty(), qPrintable(error));
+    QCOMPARE(read(unpacked + ".neverd-types.json"),
+             read(binary + ".neverd-types.json"));
+    QCOMPARE(read(unpacked + ".neverd-bookmarks.json"),
+             read(binary + ".neverd-bookmarks.json"));
+    QCOMPARE(read(unpacked + ".neverd-debug.json"),
+             read(binary + ".neverd-debug.json"));
+
+    // A database written before it named the files it packs packed no local
+    // types: unpacking it keeps the types beside the input, while a table it
+    // did pack and now lacks is removed.
+    {
+      auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                          QStringLiteral("legacy"));
+      db.setDatabaseName(database);
+      QVERIFY(db.open());
+      QSqlQuery query(db);
+      QVERIFY(query.exec(
+          QStringLiteral("DELETE FROM meta WHERE key = 'sidecar_suffixes'")));
+      QVERIFY(query.exec(QStringLiteral(
+          "DELETE FROM sidecars WHERE suffix IN ('.neverd-types.json', "
+          "'.neverd-items.json', '.neverd-bookmarks.json', "
+          "'.neverd-debug.json')")));
+      db.close();
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("legacy"));
+    contents = ProjectDatabase::read(database, &error);
+    QVERIFY2(contents, qPrintable(error));
+    QVERIFY(!contents->packedSuffixes.contains(
+        QStringLiteral(".neverd-types.json")));
+    QVERIFY(write(unpacked + ".neverd-types.json", "only copy"));
+    QVERIFY(write(unpacked + ".neverd-items.json", "stale"));
+    QCOMPARE(ProjectDatabase::unpack(database, elsewhere.path(), &error),
+             unpacked);
+    QCOMPARE(read(unpacked + ".neverd-types.json"), QByteArray("only copy"));
+    QVERIFY(!QFileInfo::exists(unpacked + ".neverd-items.json"));
+    QVERIFY(QFileInfo::exists(unpacked + ".neverd-bookmarks.json"));
+  }
+
   void projectDatabaseIdentity() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());

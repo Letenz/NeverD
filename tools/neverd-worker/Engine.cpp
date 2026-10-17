@@ -537,9 +537,10 @@ void sortItems(Json &items, const Json &payload) {
     items.push_back(std::move(entry.second));
 }
 
-// Replace one sidecar atomically. Each sidecar is a separate durable file;
-// this is intentionally not advertised as a transaction spanning both files.
-void atomicWrite(const fs::path &path, const Json &value) {
+// Replace one sidecar atomically with \p body. Each sidecar is a separate
+// durable file; this is intentionally not advertised as a transaction
+// spanning both files.
+void atomicWrite(const fs::path &path, const std::string &body) {
   static std::atomic<std::uint64_t> sequence{0};
   fs::path temporary = path;
   temporary +=
@@ -547,9 +548,6 @@ void atomicWrite(const fs::path &path, const Json &value) {
       std::to_string(
           std::chrono::steady_clock::now().time_since_epoch().count()) +
       "-" + std::to_string(sequence++);
-  // Persistence validates compact serialized byte budgets. Write that same
-  // encoding, otherwise indentation can produce an unreadable saved history.
-  const auto body = value.dump(-1, ' ', false, Json::error_handler_t::replace);
 #ifdef _WIN32
   HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr,
                             CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -1937,7 +1935,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       try {
         fs::path sidecar = path;
         sidecar += std::string(LoadOptionsSuffix);
-        atomicWrite(sidecar, backendJson(loadOptions().json(session_)));
+        atomicWrite(sidecar,
+                    sidecarText(backendJson(loadOptions().json(session_))));
       } catch (const Error &failure) {
         warnings.push_back(std::string("Load options could not be saved: ") +
                            failure.what());
@@ -2454,7 +2453,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         fs::path sidecar =
             utf8Path(ownedString(neverd_session_file_path(session_)));
         sidecar += std::string(TypeDeclarationsSuffix);
-        atomicWrite(sidecar, backendJson(rows(session_)));
+        atomicWrite(sidecar, sidecarText(backendJson(rows(session_))));
       } catch (...) {
         (void)load(session_);
         throw;

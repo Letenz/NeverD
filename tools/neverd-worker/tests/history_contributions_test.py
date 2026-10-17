@@ -36,6 +36,14 @@ def run(executable):
         assert not history_path.exists(), "staged annotation history must not be autosaved"
         ok(client, "save")
         assert json.loads(history_path.read_text())["cursor"] == 1
+        # The project's edit tables read as version control diffs them: two
+        # spaces, sorted keys and a final newline, as the CLI writes them.
+        # The history is the user's own record and stays one compact line.
+        saved = annotations.read_text(encoding="utf-8")
+        assert saved == json.dumps(json.loads(saved), indent=2, sort_keys=True,
+                                   ensure_ascii=False) + "\n", saved
+        assert saved.startswith("[\n  {\n    \"addr\": "), saved
+        assert "\n" not in history_path.read_text(encoding="utf-8")
         ok(client, "rename", {"address": BASE, "name": "renamed"})
         assert ok(client, "undo")["saved"]
         assert ok(client, "functions", {"filter": "renamed"})["total"] == 0

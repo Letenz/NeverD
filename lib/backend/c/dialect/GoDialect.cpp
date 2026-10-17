@@ -411,8 +411,11 @@ private:
       return cast(E);
     case ExprKind::Call:
       return call(E);
-    case ExprKind::Subscript:
     case ExprKind::Member:
+      if (auto Bits = bitField(E))
+        return Printed{Bits->Holder + "." + Bits->Getter + "()", PrecAtom};
+      return place(E);
+    case ExprKind::Subscript:
       return place(E);
     case ExprKind::SizeofExpr:
     case ExprKind::SizeofType:
@@ -795,6 +798,34 @@ private:
     return Printed{Text, PrecAtom};
   }
 
+  /// What \p E, a member of one of the program's types, reaches through
+  /// \p Hops: fields, and methods that return pointers.
+  std::string localPath(const Expr *E,
+                        llvm::ArrayRef<SourceDialectLocalTypes::Hop> Hops) {
+    std::string Text = paren(E->Postfix ? value(E->Ops.front(), nullptr)
+                                        : place(E->Ops.front()),
+                             PrecAtom);
+    for (const SourceDialectLocalTypes::Hop &Hop : Hops)
+      Text += "." + Hop.Name + (Hop.Accessor ? "()" : "");
+    return Text;
+  }
+
+  /// A bit-field of one of the program's types, as Go reads and writes it:
+  /// the record whose methods do, and their names.
+  struct BitField {
+    std::string Holder, Getter, Setter;
+  };
+  std::optional<BitField> bitField(const Expr *E) {
+    if (E->Kind != ExprKind::Member || !E->Field || !E->Field->BitWidth ||
+        !valueType(E)->isInteger() ||
+        valueType(E)->TheKind == CType::Kind::Bool)
+      return std::nullopt;
+    std::optional<SourceDialectLocalTypes::Path> Path = localMember(E);
+    if (!Path || !Path->bitField())
+      return std::nullopt;
+    return BitField{localPath(E, Path->Hops), Path->Getter, Path->Setter};
+  }
+
   Printed place(const Expr *E) {
     switch (E->Kind) {
     case ExprKind::Paren:
@@ -827,14 +858,13 @@ private:
       // A member of one of the program's types, by the fields and methods
       // that reach it; a method returns a pointer to the member.
       if (auto Path = localMember(E)) {
-        if (Path->empty())
+        // Only the methods of a bit-field's record read and write it.
+        if (Path->bitField())
+          unsupported("a bit-field where Go needs a place");
+        if (Path->Hops.empty() || refused())
           return Printed{"_", PrecAtom};
-        std::string Text = paren(E->Postfix ? value(E->Ops.front(), nullptr)
-                                            : place(E->Ops.front()),
-                                 PrecAtom);
-        for (const SourceDialectLocalTypes::Hop &Hop : *Path)
-          Text += "." + Hop.Name + (Hop.Accessor ? "()" : "");
-        if (Path->back().Accessor)
+        const std::string Text = localPath(E, Path->Hops);
+        if (Path->Hops.back().Accessor)
           return Printed{"*" + Text, PrecUnary};
         return Printed{Text, PrecAtom};
       }
@@ -1152,6 +1182,11 @@ private:
       return;
     case ExprKind::Unary:
       if (E->Text == "++" || E->Text == "--") {
+        if (auto Bits = bitField(E->Ops.front())) {
+          line(Bits->Holder + "." + Bits->Setter + "(" + Bits->Holder + "." +
+               Bits->Getter + "()" + (E->Text == "++" ? " + 1" : " - 1") + ")");
+          return;
+        }
         line(place(E->Ops.front()).Text + E->Text.str());
         return;
       }
@@ -1193,30 +1228,45 @@ private:
   void assignment(const Expr *E) {
     const Expr *L = E->Ops[0], *R = E->Ops[1];
     const CType *Target = valueType(L);
-    const std::string Place = place(L).Text;
+    // A bit-field takes what its setter stores, computed from its getter.
+    const std::optional<BitField> Bits = bitField(L);
+    const std::string Place = Bits ? std::string() : place(L).Text;
+    const auto store = [&](const std::string &Value) {
+      line(Bits ? Bits->Holder + "." + Bits->Setter + "(" + Value + ")"
+                : Place + " = " + Value);
+    };
     if (E->Text == "=") {
       const Expr *Inner = skipParens(R);
       if (Inner->Kind == ExprKind::Conditional &&
           !(Inner->Ops[1]->Value && Inner->Ops[2]->Value &&
             *Inner->Ops[1]->Value == 1 && *Inner->Ops[2]->Value == 0)) {
         openBlock("if " + condition(Inner->Ops[0]).Text);
-        line(Place + " = " + value(Inner->Ops[1], Target).Text);
+        store(value(Inner->Ops[1], Target).Text);
         dedent();
         openBlock("} else");
-        line(Place + " = " + value(Inner->Ops[2], Target).Text);
+        store(value(Inner->Ops[2], Target).Text);
         closeBlock();
         return;
       }
       if (hoists(Inner)) {
-        hoisted(Inner, [&](const Expr *Last) {
-          line(Place + " = " + value(Last, Target).Text);
-        });
+        hoisted(Inner,
+                [&](const Expr *Last) { store(value(Last, Target).Text); });
         return;
       }
-      line(Place + " = " + value(R, Target).Text);
+      store(value(R, Target).Text);
       return;
     }
     const llvm::StringRef Op = E->Text.drop_back();
+    if (Bits) {
+      Printed Current =
+          convert(Printed{Bits->Holder + "." + Bits->Getter + "()", PrecAtom},
+                  Target, E->OpTy);
+      store(convert(binaryText(Current, Op, value(R, E->OpTy),
+                               binaryPrecedence(Op)),
+                    E->OpTy, Target)
+                .Text);
+      return;
+    }
     if (Target->isPointer()) {
       line(Place + " = " +
            pointerOffset(Printed{Place, PrecAtom}, R, Op == "-", Target).Text);

@@ -125,6 +125,9 @@ struct ProcessResult {
   std::vector<NativeThreadSnapshot> NativeThreads;
   /// Runs in Trace: each row owns PCs from Index to the next row's Index.
   std::vector<NativeTraceThread> TraceThreads;
+  std::vector<NativeExecutionObservation> ExecutionObservations;
+  bool ExecutionObservationsEnabled = false;
+  bool ExecutionObservationsTruncated = false;
 };
 
 llvm::Expected<ProcessProfile> parseProcessProfile(llvm::StringRef Name);

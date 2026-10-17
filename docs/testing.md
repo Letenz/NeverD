@@ -6172,6 +6172,15 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 
 ### Android native workloads
 
+`AndroidObservation.*` checks complete workload equality with and without
+selected PC observations across ordinary/APS2/RELR images and Unicorn/HVF.
+Exact instruction bytes provide independent before-store register and memory
+expectations. Single- and multi-thread runs use quanta as short as one
+instruction; truncation, unknown imports, unreadable memory and output-budget
+admission are covered. `AndroidObservationOptions.*` checks strict JSON.
+`RuntimeSession.CheckedQuantumEndsBeforeTheNextExecutionWatch` covers the
+shared watch/quantum boundary on checked x64 and AArch64 transports.
+
 `AndroidLog.*` checks the five liblog reader operations with independent O0/O2
 callers, ordinary/APS2/RELR relocations and Unicorn/HVF. It compares complete
 v4 message bytes, PID/time/tail selection, exact-time exclusion, separate cursors,

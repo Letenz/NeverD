@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QHash>
+#include <QJsonDocument>
 #include <QString>
 #include <QStringList>
 #include <optional>
@@ -9,10 +10,11 @@
 namespace neverd::gui {
 
 /// A NeverD database (`.nddb`): one SQLite file holding the analyzed input,
-/// the project's sidecar state (comments, renames, edit history) and the
-/// workbench state (location, bookmarks, desktop).  It is the packed form of
-/// a project; while a binary is open the worker keeps working on the
-/// unpacked sidecars beside it, and saving packs them again.
+/// the project's sidecar state (comments, renames, types, bookmarks, edit
+/// history) and the workbench state (location, desktop).  It is the packed
+/// form of a project, written when the user packs one or saves a project
+/// opened from a database.  A binary's project otherwise is the JSON files
+/// beside it, which its edits update and version control can share.
 ///
 /// Every write is one SQLite transaction, so a database is never left half
 /// written.  The input is stored in independently compressed chunks that are
@@ -21,6 +23,16 @@ namespace neverd::gui {
 class ProjectDatabase final {
 public:
   static constexpr char Extension[] = ".nddb";
+  /// The project's files the workbench itself keeps beside an input: the
+  /// bookmarks and the debug files chosen, shared with the project, and the
+  /// user's own place and desktop in it.
+  static constexpr char BookmarksSuffix[] = ".neverd-bookmarks.json";
+  static constexpr char DebugFilesSuffix[] = ".neverd-debug.json";
+  static constexpr char WorkbenchSuffix[] = ".neverd-workbench.json";
+  /// Workbench state keys (Contents::state).
+  static constexpr char LocationState[] = "location";
+  static constexpr char BookmarksState[] = "bookmarks";
+  static constexpr char DesktopState[] = "desktop";
   /// The SQLite application id in every database header: "NDDB" in ASCII,
   /// so NeverD and tools such as file(1) tell a database from other SQLite
   /// files whatever its name.
@@ -40,6 +52,10 @@ public:
     QString generator, savedAt;
     /// Sidecar file suffix (".neverd-annotations.json") -> bytes.
     QHash<QString, QByteArray> sidecars;
+    /// The suffixes the database packed when it was saved, stored or not; a
+    /// database saved before a kind of file was packed leaves that kind
+    /// alone when it unpacks.
+    QStringList packedSuffixes;
     /// Workbench state key -> JSON bytes.
     QHash<QString, QByteArray> state;
   };
@@ -71,8 +87,18 @@ public:
   /// cannot be made.
   static QString workingCopy(const QString &binary, QString *error = nullptr);
 
-  /// Sidecar suffixes the worker keeps beside an input.
+  /// The project's files beside an input that a database packs: the
+  /// worker's edit tables and history, its load options and local types,
+  /// and the workbench's shared bookmarks and debug files.
   static const QStringList &sidecarSuffixes();
+  /// The JSON file \p suffix beside \p input, if it exists and parses.
+  static std::optional<QJsonDocument> readProjectFile(const QString &input,
+                                                      const char *suffix);
+  /// Replace the JSON file \p suffix beside \p input with \p document as
+  /// version control reads it best: two-space indentation, sorted keys, a
+  /// final newline.  Returns an error message, or an empty string.
+  static QString writeProjectFile(const QString &input, const char *suffix,
+                                  const QJsonDocument &document);
 };
 
 } // namespace neverd::gui
