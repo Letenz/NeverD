@@ -5921,6 +5921,15 @@ status. Reuse names, JUnit and input hashes accompany the outcome artifact.
 This avoids repeated native work within the hosted job's time limit without
 reducing its required coverage.
 
+The original WHP file-transfer matrix contains eighteen separately bounded
+five-second guests, so its complete CTest method has a 120-second allowance.
+The original integer-formatting matrix contains four thirty-second guests and
+has a 150-second CTest allowance. The policy matches only those two methods and
+their four WHP contract/base variants; other driver methods retain their
+existing limits. The created-regular-attributes Darwin differential uses the
+same twenty-second guest allowance as the other semantic batches. Instruction
+bounds, public defaults and all result assertions remain unchanged.
+
 The four `SessionCAPIKernelInputs` checks require developer-supplied kernel/PDB
 files. Their exact missing-input reasons are recorded as external-input skips;
 they do not count as passed. Once their required environment variables are
