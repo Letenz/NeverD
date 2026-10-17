@@ -60,6 +60,14 @@
         <translation>حفظ التعليقات والسجل بجوار الملف الثنائي</translation>
     </message>
     <message>
+        <source>Pac&amp;k database...</source>
+        <translation>حزم قاعدة البيانات(&amp;K)...</translation>
+    </message>
+    <message>
+        <source>Write the project and its binary into one NeverD database file</source>
+        <translation>كتابة المشروع وملفه الثنائي في ملف قاعدة بيانات NeverD واحد</translation>
+    </message>
+    <message>
         <source>&amp;Close</source>
         <translation>إغلاق(&amp;C)</translation>
     </message>
@@ -1957,6 +1965,10 @@ Double-click to go to the declaration.</source>
         <translation>تم تغيير التعليقات. هل تريد حفظها قبل المتابعة؟</translation>
     </message>
     <message>
+        <source>%1 lacks the latest changes. Save them into it before continuing?</source>
+        <translation>تفتقر %1 إلى آخر التغييرات. هل تريد حفظها فيها قبل المتابعة؟</translation>
+    </message>
+    <message>
         <source>Cannot jump to %1: %2</source>
         <translation>تعذّر الانتقال إلى %1: %2</translation>
     </message>
@@ -2157,6 +2169,14 @@ Signed: %4</source>
     <message>
         <source>Create LST file</source>
         <translation>إنشاء ملف LST</translation>
+    </message>
+    <message>
+        <source>Pack database</source>
+        <translation>حزم قاعدة البيانات</translation>
+    </message>
+    <message>
+        <source>NeverD databases (*%1)</source>
+        <translation>قواعد بيانات NeverD (*%1)</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -3682,10 +3702,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>لا يعرّف ملف PDB أي أنواع.</translation>
     </message>
     <message>
-        <source>No local types: this program has no PDB with types.</source>
-        <translation>لا توجد أنواع محلية: لا يملك هذا البرنامج ملف PDB فيه أنواع.</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>أنواع لا يطابق تخطيطها ما يسرده PDB: %1</translation>
     </message>
@@ -3744,10 +3760,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>(padding)</source>
         <translation>(حشو)</translation>
-    </message>
-    <message>
-        <source>Double-click to open %1</source>
-        <translation>انقر نقرًا مزدوجًا لفتح %1</translation>
     </message>
     <message>
         <source>Export local types</source>
@@ -3972,6 +3984,56 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Lua (*.lua)</source>
         <translation>Lua ‎(*.lua)</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n members</source>
+        <translation>
+            <numerusform>%n من الأعضاء</numerusform>
+            <numerusform>%n من الأعضاء</numerusform>
+            <numerusform>%n من الأعضاء</numerusform>
+            <numerusform>%n من الأعضاء</numerusform>
+            <numerusform>%n من الأعضاء</numerusform>
+            <numerusform>%n من الأعضاء</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Ctrl+click to open</source>
+        <translation>Ctrl+نقرة للفتح</translation>
+    </message>
+    <message>
+        <source>Double-click or Ctrl+click to open %1</source>
+        <translation>انقر نقرًا مزدوجًا أو Ctrl+نقرة لفتح %1</translation>
+    </message>
+    <message>
+        <source>bits %1 of the unit at %2</source>
+        <translation>البتات %1 من الوحدة عند %2</translation>
+    </message>
+    <message>
+        <source>at %1, %2 bytes</source>
+        <translation>عند %1، %2 بايت</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>من DWARF</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>%n من DWARF</numerusform>
+            <numerusform>%n من DWARF</numerusform>
+            <numerusform>%n من DWARF</numerusform>
+            <numerusform>%n من DWARF</numerusform>
+            <numerusform>%n من DWARF</numerusform>
+            <numerusform>%n من DWARF</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>لا يعرّف DWARF أي أنواع.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>لا توجد أنواع محلية: لا يحتوي هذا البرنامج على PDB أو DWARF بأنواع.</translation>
     </message>
 </context>
 <context>

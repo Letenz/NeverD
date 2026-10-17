@@ -10,6 +10,7 @@
 #include "neverd/support/FilePath.h"
 
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace neverd;
@@ -31,7 +32,10 @@ bool neverd::sdk::saveSidecar(Session *S, const std::filesystem::path &Path,
     // TempFile owns the descriptor. Clear a handled stream error before its
     // destructor so ENOSPC/EFBIG becomes a C ABI error rather than LLVM abort.
     llvm::raw_fd_ostream OS(Temporary->FD, false);
-    OS << Values;
+    // Two-space indentation, sorted keys and a final newline, byte for byte
+    // as the workbench writes the same files (the worker's sidecarText), so
+    // a project diffs and merges line by line under version control.
+    OS << llvm::formatv("{0:2}", Values) << '\n';
     OS.flush();
     WriteError = OS.error();
     OS.clear_error();

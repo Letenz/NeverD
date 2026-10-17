@@ -3229,17 +3229,19 @@ ImportPrototypeArguments importPrototypeArguments(
         Result.Order.push_back(Result.Floats.back());
         continue;
       }
-      if (Type->Kind != NdTypeKind::Int && Type->Kind != NdTypeKind::Ptr &&
+      // An enumeration passes as the integer it is.
+      const bool Integer = Type->Kind == NdTypeKind::Int ||
+                           (Type->Kind == NdTypeKind::Struct && Type->IsEnum);
+      if (!Integer && Type->Kind != NdTypeKind::Ptr &&
           (Type->Kind != NdTypeKind::Struct || !Positional))
         return std::nullopt;
       ++Result.Integers;
       Result.Order.push_back(0);
       // A record takes its whole slot, by value or by its address.
-      Result.IntegerBytes.push_back(
-          static_cast<uint8_t>(Type->Kind == NdTypeKind::Int && Type->Size &&
-                                       Type->Size < TRI.PointerSize
-                                   ? Type->Size
-                                   : TRI.PointerSize));
+      Result.IntegerBytes.push_back(static_cast<uint8_t>(
+          Integer && Type->Size && Type->Size < TRI.PointerSize
+              ? Type->Size
+              : TRI.PointerSize));
     }
     return Result;
   };

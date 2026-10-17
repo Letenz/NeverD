@@ -421,6 +421,23 @@ TEST_P(RuntimeSession, ExecutionWatchesMergeAndRejectInvalidRanges) {
   EXPECT_EQ(reg(*S, PC), At);
   EXPECT_EQ(Budget->instructions(), Quantum);
 }
+TEST_P(RuntimeSession, CheckedQuantumEndsBeforeTheNextExecutionWatch) {
+  code(CounterX64, CounterARM);
+  const uint64_t Store =
+      Code + (GetParam().ISA == GuestArchitecture::X64 ? StoreOffsetX64
+                                                       : StoreOffsetARM);
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Store, 1}}));
+  EXPECT_EQ(llvm::cantFail(S->run(Code, BeforeStore)).Kind,
+            SessionExitKind::Quantum);
+  EXPECT_EQ(reg(*S, PC), Store);
+  EXPECT_EQ(Budget->instructions(), BeforeStore);
+  EXPECT_EQ(llvm::cantFail(S->run(Store, 1)).Kind,
+            SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(Budget->instructions(), BeforeStore);
+  EXPECT_EQ(llvm::cantFail(S->run(Store, 1)).Kind, SessionExitKind::Quantum);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), 1u);
+}
 TEST_P(RuntimeSession, WatchesCannotChangeUnderAPendingContinuation) {
   code(ServiceX64, ServiceARM);
   auto S = start();

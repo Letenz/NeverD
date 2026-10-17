@@ -60,6 +60,14 @@
         <translation>Kommentare und Verlauf neben der Binärdatei speichern</translation>
     </message>
     <message>
+        <source>Pac&amp;k database...</source>
+        <translation>Datenbank pac&amp;ken...</translation>
+    </message>
+    <message>
+        <source>Write the project and its binary into one NeverD database file</source>
+        <translation>Projekt und Binärdatei in eine einzige NeverD-Datenbankdatei schreiben</translation>
+    </message>
+    <message>
         <source>&amp;Close</source>
         <translation>S&amp;chließen</translation>
     </message>
@@ -1933,6 +1941,10 @@ Doppelklicken, um zur Deklaration zu springen.</translation>
         <translation>Die Kommentare wurden geändert. Vor dem Fortfahren speichern?</translation>
     </message>
     <message>
+        <source>%1 lacks the latest changes. Save them into it before continuing?</source>
+        <translation>%1 fehlen die neuesten Änderungen. Vor dem Fortfahren darin speichern?</translation>
+    </message>
+    <message>
         <source>Cannot jump to %1: %2</source>
         <translation>Sprung zu %1 nicht möglich: %2</translation>
     </message>
@@ -2133,6 +2145,14 @@ Mit Vorzeichen: %4</translation>
     <message>
         <source>Create LST file</source>
         <translation>LST-Datei erstellen</translation>
+    </message>
+    <message>
+        <source>Pack database</source>
+        <translation>Datenbank packen</translation>
+    </message>
+    <message>
+        <source>NeverD databases (*%1)</source>
+        <translation>NeverD-Datenbanken (*%1)</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -3654,10 +3674,6 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
         <translation>Die PDB definiert keine Typen.</translation>
     </message>
     <message>
-        <source>No local types: this program has no PDB with types.</source>
-        <translation>Keine lokalen Typen: Dieses Programm hat keine PDB mit Typen.</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>Typen, deren Layout nicht der PDB entspricht: %1</translation>
     </message>
@@ -3716,10 +3732,6 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
     <message>
         <source>(padding)</source>
         <translation>(Auffüllung)</translation>
-    </message>
-    <message>
-        <source>Double-click to open %1</source>
-        <translation>Doppelklicken, um %1 zu öffnen</translation>
     </message>
     <message>
         <source>Export local types</source>
@@ -3912,6 +3924,48 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
     <message>
         <source>Lua (*.lua)</source>
         <translation>Lua (*.lua)</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n members</source>
+        <translation>
+            <numerusform>%n Mitglieder</numerusform>
+            <numerusform>%n Mitglieder</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Ctrl+click to open</source>
+        <translation>Strg+Klick zum Öffnen</translation>
+    </message>
+    <message>
+        <source>Double-click or Ctrl+click to open %1</source>
+        <translation>Doppelklicken oder Strg+Klick, um %1 zu öffnen</translation>
+    </message>
+    <message>
+        <source>bits %1 of the unit at %2</source>
+        <translation>Bits %1 der Einheit bei %2</translation>
+    </message>
+    <message>
+        <source>at %1, %2 bytes</source>
+        <translation>bei %1, %2 Bytes</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>Aus DWARF</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>%n aus DWARF</numerusform>
+            <numerusform>%n aus DWARF</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>Das DWARF definiert keine Typen.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>Keine lokalen Typen: Dieses Programm hat kein PDB oder DWARF mit Typen.</translation>
     </message>
 </context>
 <context>

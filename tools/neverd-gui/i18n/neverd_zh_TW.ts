@@ -60,6 +60,14 @@
         <translation>將註解和歷程記錄儲存至二進位檔案所在目錄</translation>
     </message>
     <message>
+        <source>Pac&amp;k database...</source>
+        <translation>打包資料庫(&amp;K)...</translation>
+    </message>
+    <message>
+        <source>Write the project and its binary into one NeverD database file</source>
+        <translation>將專案及其二進位檔案寫入一個 NeverD 資料庫檔案</translation>
+    </message>
+    <message>
         <source>&amp;Close</source>
         <translation>關閉(&amp;C)</translation>
     </message>
@@ -1927,6 +1935,10 @@ Double-click to go to the declaration.</source>
         <translation>註解已變更。是否在繼續之前儲存？</translation>
     </message>
     <message>
+        <source>%1 lacks the latest changes. Save them into it before continuing?</source>
+        <translation>%1 尚未包含最新的變更。繼續之前要將其儲存到其中嗎？</translation>
+    </message>
+    <message>
         <source>Cannot jump to %1: %2</source>
         <translation>無法跳至 %1：%2</translation>
     </message>
@@ -2127,6 +2139,14 @@ Signed: %4</source>
     <message>
         <source>Create LST file</source>
         <translation>建立 LST 檔案</translation>
+    </message>
+    <message>
+        <source>Pack database</source>
+        <translation>打包資料庫</translation>
+    </message>
+    <message>
+        <source>NeverD databases (*%1)</source>
+        <translation>NeverD 資料庫 (*%1)</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -3647,10 +3667,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>此 PDB 未定義任何型別。</translation>
     </message>
     <message>
-        <source>No local types: this program has no PDB with types.</source>
-        <translation>沒有本機型別：此程式沒有含型別的 PDB。</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>配置與 PDB 所列不一致的型別：%1</translation>
     </message>
@@ -3709,10 +3725,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>(padding)</source>
         <translation>（填補）</translation>
-    </message>
-    <message>
-        <source>Double-click to open %1</source>
-        <translation>按兩下以開啟 %1</translation>
     </message>
     <message>
         <source>Export local types</source>
@@ -3897,6 +3909,46 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Lua (*.lua)</source>
         <translation>Lua (*.lua)</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n members</source>
+        <translation>
+            <numerusform>%n 個成員</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Ctrl+click to open</source>
+        <translation>Ctrl+按一下以開啟</translation>
+    </message>
+    <message>
+        <source>Double-click or Ctrl+click to open %1</source>
+        <translation>按兩下或 Ctrl+按一下以開啟 %1</translation>
+    </message>
+    <message>
+        <source>bits %1 of the unit at %2</source>
+        <translation>位於 %2 的單元中的 %1 位元</translation>
+    </message>
+    <message>
+        <source>at %1, %2 bytes</source>
+        <translation>位於 %1，%2 位元組</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>來自 DWARF</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>%n 個來自 DWARF</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>DWARF 中沒有定義任何型別。</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>沒有本機型別：此程式沒有包含型別的 PDB 或 DWARF。</translation>
     </message>
 </context>
 <context>

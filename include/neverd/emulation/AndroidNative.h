@@ -8,6 +8,7 @@
 
 #include "neverd/emulation/ProcessCall.h"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -36,6 +37,22 @@ struct NativeMemoryRead {
 struct NativeMemorySnapshot {
   uint64_t Address;
   std::vector<uint8_t> Bytes;
+};
+
+/// Read-only observations immediately before selected guest instructions.
+/// PCs are absolute guest addresses, not image-relative offsets. At most 64
+/// distinct aligned PCs; Limit bounds the retained records across all threads.
+struct NativeExecutionObservationOptions {
+  std::vector<uint64_t> PCs;
+  uint64_t Limit = 0;
+  /// The same explicit ranges are copied at each point. Deferred mappings
+  /// must be readable when observed; no mapping or provider is synthesized.
+  std::vector<NativeMemoryRead> ReadMemory;
+};
+struct NativeExecutionObservation {
+  uint64_t PC = 0, ThreadID = 0, Instructions = 0, SP = 0, NZCV = 0;
+  std::array<uint64_t, 31> Registers{};
+  std::vector<NativeMemorySnapshot> Memory;
 };
 
 /// One visible logd v4 entry. Payload is opaque; no host log is consulted.
@@ -69,6 +86,7 @@ struct AndroidNativeOptions {
   bool Initialize = true;
   /// Retain this many admitted instruction PCs. Zero disables tracing.
   uint64_t TraceLimit = 0;
+  std::optional<NativeExecutionObservationOptions> ObserveExecution;
   /// Concrete analysis choice for bytes returned by malloc and the new tail
   /// of realloc. Zero preserves the default. This is not a claim about an
   /// Android allocator or proof that reading uninitialized bytes is valid.

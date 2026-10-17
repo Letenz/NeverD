@@ -50,6 +50,76 @@ void insertChoices(QHash<QString, QByteArray> &state,
                  QJsonDocument(options.symbols).toJson(QJsonDocument::Compact));
 }
 
+/// A debug file choice's key in the project's debug files and in a
+/// database's workbench state.
+struct DebugChoice {
+  const char *Key, *State;
+};
+constexpr DebugChoice DebugChoices[] = {{"pdb", PdbInputState},
+                                        {"dwarf", DwarfInputState},
+                                        {"map", MapInputState},
+                                        {"symbols", SymbolsInputState}};
+
+/// \p choice with a path inside \p folder relative to it, so the project's
+/// debug files name a file the project keeps wherever it is checked out.
+QJsonObject withRelativePath(QJsonObject choice, const QDir &folder) {
+  const QString path = choice.value(QStringLiteral("path")).toString();
+  if (path.isEmpty() || QDir::isRelativePath(path))
+    return choice;
+  const QString relative = folder.relativeFilePath(path);
+  if (QDir::isRelativePath(relative) &&
+      !relative.startsWith(QLatin1String("..")))
+    choice.insert(QStringLiteral("path"), relative);
+  return choice;
+}
+
+QJsonObject withAbsolutePath(QJsonObject choice, const QDir &folder) {
+  const QString path = choice.value(QStringLiteral("path")).toString();
+  if (!path.isEmpty() && QDir::isRelativePath(path))
+    choice.insert(QStringLiteral("path"),
+                  QDir::cleanPath(folder.absoluteFilePath(path)));
+  return choice;
+}
+
+/// Read the project's own files beside \p input over what a database
+/// recorded: the bookmarks and debug files shared with the project, and the
+/// user's place and desktop in it.
+void overlayProjectFiles(const QString &input,
+                         QHash<QString, QByteArray> &state) {
+  const auto compact = [](const QJsonDocument &document) {
+    return document.toJson(QJsonDocument::Compact);
+  };
+  if (const auto bookmarks = ProjectDatabase::readProjectFile(
+          input, ProjectDatabase::BookmarksSuffix);
+      bookmarks && bookmarks->isArray())
+    state.insert(QLatin1String(ProjectDatabase::BookmarksState),
+                 compact(*bookmarks));
+  if (const auto debug = ProjectDatabase::readProjectFile(
+          input, ProjectDatabase::DebugFilesSuffix);
+      debug && debug->isObject()) {
+    const QDir folder = QFileInfo(input).dir();
+    for (const auto &choice : DebugChoices)
+      if (const auto value =
+              debug->object().value(QLatin1String(choice.Key)).toObject();
+          !value.isEmpty())
+        state.insert(QLatin1String(choice.State),
+                     compact(QJsonDocument(withAbsolutePath(value, folder))));
+  }
+  if (const auto workbench = ProjectDatabase::readProjectFile(
+          input, ProjectDatabase::WorkbenchSuffix);
+      workbench && workbench->isObject())
+    for (const char *key :
+         {ProjectDatabase::LocationState, ProjectDatabase::DesktopState}) {
+      const auto value = workbench->object().value(QLatin1String(key));
+      if (value.isObject())
+        state.insert(QLatin1String(key),
+                     compact(QJsonDocument(value.toObject())));
+      else if (value.isArray())
+        state.insert(QLatin1String(key),
+                     compact(QJsonDocument(value.toArray())));
+    }
+}
+
 bool isEdit(const QString &operation) {
   static const QSet<QString> edits{QStringLiteral("annotation_set"),
                                    QStringLiteral("rename"),
@@ -283,6 +353,9 @@ void Session::command(const QString &operation, const QJsonObject &payload,
           if (status == QLatin1String("ok")) {
             if (payload.contains("dirty"))
               dirty_ = payload.value("dirty").toBool();
+            // An opened database holds the project until it is written back.
+            if (edit && openedFromDatabase_)
+              databaseDirty_ = true;
             if (done)
               done(payload);
           } else {
@@ -305,6 +378,8 @@ void Session::command(const QString &operation, const QJsonObject &payload,
 void Session::resetState() {
   loaded_ = false;
   dirty_ = false;
+  openedFromDatabase_ = false;
+  databaseDirty_ = false;
   databaseState_.clear();
   metadata_ = {};
   history_ = {};
@@ -344,7 +419,7 @@ struct PreparedOpen {
 
 /// Runs off the GUI thread: unpack a database, or bring back a binary's
 /// sidecars from its database when they are missing.
-PreparedOpen prepareOpen(const QString &requested) {
+PreparedOpen unpackOrRestore(const QString &requested) {
   PreparedOpen prepared;
   if (ProjectDatabase::isDatabase(requested)) {
     prepared.database = requested;
@@ -412,6 +487,15 @@ PreparedOpen prepareOpen(const QString &requested) {
                                      "Could not restore %1 from the database.")
                                      .arg(sidecar.fileName()));
     }
+  return prepared;
+}
+
+/// Runs off the GUI thread: the files of the project \p requested opens,
+/// and the state it keeps.
+PreparedOpen prepareOpen(const QString &requested) {
+  PreparedOpen prepared = unpackOrRestore(requested);
+  if (prepared.error.isEmpty() && !prepared.input.isEmpty())
+    overlayProjectFiles(prepared.input, prepared.state);
   return prepared;
 }
 } // namespace
@@ -508,6 +592,8 @@ void Session::sendOpen(const QString &requested, const QString &path,
         databasePath_ = database;
         databaseState_ = state;
         loaded_ = true;
+        openedFromDatabase_ = ProjectDatabase::isDatabase(requested);
+        recordDebugChoices(false);
         QSettings store;
         auto recent = store.value(settings::RecentFiles).toStringList();
         recent.removeAll(requested);
@@ -620,8 +706,10 @@ void Session::reload(std::optional<LoadOptions> options) {
     return;
   }
   // A fresh worker reads the file's bytes as they are now; the annotations
-  // come from what was saved.  The file opened is the one the user named:
-  // a working copy is refreshed from it.
+  // come from what was saved, and the user returns to the same place.  The
+  // file opened is the one the user named: a working copy is refreshed from
+  // it.
+  saveDatabaseState();
   pendingFile_ = projectPath_.isEmpty() ? filePath_ : projectPath_;
   pendingOptions_ = std::exchange(reloadOptions_, {}).value_or(loadOptions_);
   reloading_ = true;
@@ -636,7 +724,10 @@ void Session::restart() {
     requestTransition(QStringLiteral("restart"));
     return;
   }
-  pendingFile_ = filePath_;
+  // The project the user opened, so a database stays the one saving
+  // writes back, and the place the user was.
+  saveDatabaseState();
+  pendingFile_ = projectPath_.isEmpty() ? filePath_ : projectPath_;
   pendingOptions_ = loadOptions_;
   resetState();
   emit unloaded();
@@ -670,14 +761,17 @@ void Session::resolveTransition(const QString &choice) {
   if (choice == QLatin1String("save")) {
     command(QStringLiteral("save"), {}, [this](const QJsonObject &) {
       dirty_ = false;
-      packDatabase();
+      if (openedFromDatabase_)
+        writeDatabase(databasePath_);
       transitionReady_ = true;
       finishTransition();
     });
     return;
   }
-  // Discard: staged annotations disappear with the session.
+  // Discard: staged annotations disappear with the session, and a database
+  // the user opened keeps what it held.
   dirty_ = false;
+  databaseDirty_ = false;
   transitionReady_ = true;
   finishTransition();
 }
@@ -688,6 +782,7 @@ void Session::finishTransition() {
   const auto action = std::exchange(transition_, {});
   transitionReady_ = false;
   dirty_ = false;
+  databaseDirty_ = false;
   if (action == QLatin1String("quit")) {
     emit quitApproved();
   } else if (action == QLatin1String("open")) {
@@ -723,20 +818,35 @@ void Session::refreshHistory() {
 void Session::save() {
   if (!loaded_)
     return;
-  if (!dirty()) {
-    packDatabase();
-    return;
-  }
+  // A binary's project keeps its edits beside it as they are made; a
+  // database the user opened is written back.
   command(QStringLiteral("save"), {}, [this](const QJsonObject &) {
     dirty_ = false;
     refreshHistory();
     emit message(tr("Comments and history saved"), 0);
-    packDatabase();
+    if (openedFromDatabase_)
+      writeDatabase(databasePath_);
   });
 }
 
-void Session::packDatabase() {
-  if (databasePath_.isEmpty() || readOnly())
+void Session::packDatabase(const QString &path) {
+  if (!loaded_ || path.isEmpty())
+    return;
+  // What is staged or still on its way to the worker belongs in the
+  // database too; the worker commits it in order before this save.
+  if (!dirty()) {
+    writeDatabase(path);
+    return;
+  }
+  command(QStringLiteral("save"), {}, [this, path](const QJsonObject &) {
+    dirty_ = false;
+    refreshHistory();
+    writeDatabase(path);
+  });
+}
+
+void Session::writeDatabase(const QString &path) {
+  if (path.isEmpty())
     return;
   auto state = stateProvider_ ? stateProvider_() : QHash<QString, QByteArray>{};
   insertChoices(state, loadOptions_);
@@ -744,34 +854,102 @@ void Session::packDatabase() {
   ++pendingWrites_;
   emit stateChanged();
   auto *watcher = new QFutureWatcher<QString>(this);
-  connect(watcher, &QFutureWatcherBase::finished, this,
-          [this, watcher, path = databasePath_] {
-            const QString error = watcher->result();
-            watcher->deleteLater();
-            --pendingWrites_;
-            if (error.isEmpty())
-              emit message(tr("Database saved: %1").arg(path), 0);
-            else
-              setError(tr("Could not save the database: %1").arg(error));
-            emit databaseSaved(error.isEmpty());
-            finishTransition();
-            emit stateChanged();
-          });
-  watcher->setFuture(
-      QtConcurrent::run([path = databasePath_, input = filePath_, state] {
-        return ProjectDatabase::save(path, input, state);
-      }));
+  connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, path] {
+    const QString error = watcher->result();
+    watcher->deleteLater();
+    --pendingWrites_;
+    if (error.isEmpty()) {
+      if (path == databasePath_)
+        databaseDirty_ = false;
+      emit message(tr("Database saved: %1").arg(path), 0);
+    } else {
+      setError(tr("Could not save the database: %1").arg(error));
+    }
+    emit databaseSaved(error.isEmpty());
+    finishTransition();
+    emit stateChanged();
+  });
+  watcher->setFuture(QtConcurrent::run([path, input = filePath_, state] {
+    return ProjectDatabase::save(path, input, state);
+  }));
 }
 
 void Session::saveDatabaseState() {
-  if (databasePath_.isEmpty() || readOnly() ||
-      !QFileInfo::exists(databasePath_) || !stateProvider_)
+  if (!loaded_ || readOnly() || !stateProvider_)
     return;
   auto state = stateProvider_();
-  insertChoices(state, loadOptions_);
-  if (const auto error = ProjectDatabase::saveState(databasePath_, state);
+  if (openedFromDatabase_) {
+    insertChoices(state, loadOptions_);
+    if (QFileInfo::exists(databasePath_))
+      if (const auto error = ProjectDatabase::saveState(databasePath_, state);
+          !error.isEmpty())
+        emit message(tr("Could not update the database: %1").arg(error), 1);
+    return;
+  }
+  // A binary's project keeps its user's place and desktop beside it, in a
+  // file that is the user's own rather than the project's.
+  QJsonObject workbench;
+  for (const char *key :
+       {ProjectDatabase::LocationState, ProjectDatabase::DesktopState}) {
+    const auto value = QJsonDocument::fromJson(state.value(QLatin1String(key)));
+    if (value.isObject())
+      workbench.insert(QLatin1String(key), value.object());
+    else if (value.isArray())
+      workbench.insert(QLatin1String(key), value.array());
+  }
+  if (const auto error = ProjectDatabase::writeProjectFile(
+          filePath_, ProjectDatabase::WorkbenchSuffix,
+          QJsonDocument(workbench));
       !error.isEmpty())
-    emit message(tr("Could not update the database: %1").arg(error), 1);
+    emit message(error, 1);
+}
+
+void Session::saveBookmarks(const QJsonArray &rows) {
+  if (!loaded_ || readOnly())
+    return;
+  if (const auto error = ProjectDatabase::writeProjectFile(
+          filePath_, ProjectDatabase::BookmarksSuffix, QJsonDocument(rows));
+      !error.isEmpty()) {
+    setError(error);
+    return;
+  }
+  if (openedFromDatabase_) {
+    databaseDirty_ = true;
+    emit stateChanged();
+  }
+}
+
+void Session::recordDebugChoices(bool loadedNow) {
+  if (!loaded_ || readOnly())
+    return;
+  const QDir folder = QFileInfo(filePath_).dir();
+  const QJsonObject chosen[] = {loadOptions_.pdb, loadOptions_.dwarf,
+                                loadOptions_.map, loadOptions_.symbols};
+  QJsonObject choices;
+  for (std::size_t i = 0; i < std::size(DebugChoices); ++i)
+    if (!chosen[i].isEmpty())
+      choices.insert(QLatin1String(DebugChoices[i].Key),
+                     withRelativePath(chosen[i], folder));
+  if (choices.isEmpty())
+    return;
+  // The same choices leave the file, and an opened database, as they are.
+  if (const auto saved = ProjectDatabase::readProjectFile(
+          filePath_, ProjectDatabase::DebugFilesSuffix);
+      saved && saved->object() == choices)
+    return;
+  if (const auto error = ProjectDatabase::writeProjectFile(
+          filePath_, ProjectDatabase::DebugFilesSuffix, QJsonDocument(choices));
+      !error.isEmpty()) {
+    emit message(error, 1);
+    return;
+  }
+  // A database written before projects kept their debug files still names
+  // the choices it opened with; only a newly loaded file makes it out of
+  // date.
+  if (openedFromDatabase_ && loadedNow) {
+    databaseDirty_ = true;
+    emit stateChanged();
+  }
 }
 
 bool Session::acceptsEdit(std::optional<quint64> epoch) {
@@ -1011,6 +1189,7 @@ void Session::loadPdb(const QJsonObject &selection) {
             metadata_.insert(QStringLiteral("debug_info"), result);
             metadata_.insert(QStringLiteral("pdb"), loadOptions_.pdb);
             metadata_.remove(QStringLiteral("pdb_download"));
+            recordDebugChoices(true);
             emit functionsChanged();
             emit stateChanged();
             reportPdb(result);
@@ -1030,6 +1209,7 @@ void Session::loadMap(const QJsonObject &selection) {
             metadata_.insert(QStringLiteral("debug_info"),
                              result.value("debug_info"));
             metadata_.insert(QStringLiteral("map"), loadOptions_.map);
+            recordDebugChoices(true);
             emit functionsChanged();
             emit stateChanged();
             reportMaps(result.value("debug_info").toObject());
@@ -1048,6 +1228,7 @@ void Session::loadDwarf(const QJsonObject &selection) {
             metadata_.insert(QStringLiteral("debug_info"),
                              result.value("debug_info"));
             metadata_.insert(QStringLiteral("dwarf"), loadOptions_.dwarf);
+            recordDebugChoices(true);
             emit functionsChanged();
             emit stateChanged();
             emit message(tr("DWARF loaded: %1")

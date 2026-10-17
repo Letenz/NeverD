@@ -203,6 +203,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_writer_lock_test.py"
                   "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_test_cli}")
         set_tests_properties(NeverDWorkerCLIWriterLock PROPERTIES TIMEOUT 60)
+        add_test(NAME NeverDWorkerCLISidecarParity
+          COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/sidecar_parity_test.py"
+                  "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_test_cli}")
+        set_tests_properties(NeverDWorkerCLISidecarParity PROPERTIES TIMEOUT 60)
       endif()
     endif()
   endif()

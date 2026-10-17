@@ -60,6 +60,14 @@
         <translation>주석과 기록을 바이너리와 같은 위치에 저장합니다</translation>
     </message>
     <message>
+        <source>Pac&amp;k database...</source>
+        <translation>데이터베이스로 묶기(&amp;K)...</translation>
+    </message>
+    <message>
+        <source>Write the project and its binary into one NeverD database file</source>
+        <translation>프로젝트와 바이너리를 하나의 NeverD 데이터베이스 파일에 기록합니다</translation>
+    </message>
+    <message>
         <source>&amp;Close</source>
         <translation>닫기(&amp;C)</translation>
     </message>
@@ -1927,6 +1935,10 @@ Double-click to go to the declaration.</source>
         <translation>주석이 변경되었습니다. 계속하기 전에 저장하시겠습니까?</translation>
     </message>
     <message>
+        <source>%1 lacks the latest changes. Save them into it before continuing?</source>
+        <translation>%1에 최신 변경 사항이 없습니다. 계속하기 전에 저장하시겠습니까?</translation>
+    </message>
+    <message>
         <source>Cannot jump to %1: %2</source>
         <translation>%1(으)로 이동할 수 없습니다: %2</translation>
     </message>
@@ -2127,6 +2139,14 @@ Signed: %4</source>
     <message>
         <source>Create LST file</source>
         <translation>LST 파일 만들기</translation>
+    </message>
+    <message>
+        <source>Pack database</source>
+        <translation>데이터베이스로 묶기</translation>
+    </message>
+    <message>
+        <source>NeverD databases (*%1)</source>
+        <translation>NeverD 데이터베이스 (*%1)</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -3647,10 +3667,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>이 PDB에는 정의된 형식이 없습니다.</translation>
     </message>
     <message>
-        <source>No local types: this program has no PDB with types.</source>
-        <translation>로컬 형식이 없습니다. 이 프로그램에는 형식이 있는 PDB가 없습니다.</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>PDB에 나열된 대로 배치되지 않는 형식: %1</translation>
     </message>
@@ -3709,10 +3725,6 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>(padding)</source>
         <translation>(패딩)</translation>
-    </message>
-    <message>
-        <source>Double-click to open %1</source>
-        <translation>두 번 클릭하여 %1 열기</translation>
     </message>
     <message>
         <source>Export local types</source>
@@ -3897,6 +3909,46 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Lua (*.lua)</source>
         <translation>Lua (*.lua)</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n members</source>
+        <translation>
+            <numerusform>멤버 %n개</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Ctrl+click to open</source>
+        <translation>Ctrl+클릭하여 열기</translation>
+    </message>
+    <message>
+        <source>Double-click or Ctrl+click to open %1</source>
+        <translation>두 번 클릭하거나 Ctrl+클릭하여 %1 열기</translation>
+    </message>
+    <message>
+        <source>bits %1 of the unit at %2</source>
+        <translation>%2 단위의 %1비트</translation>
+    </message>
+    <message>
+        <source>at %1, %2 bytes</source>
+        <translation>%1, %2바이트</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>DWARF에서</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>DWARF에서 %n개</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>DWARF에 정의된 타입이 없습니다.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>로컬 타입 없음: 이 프로그램에는 타입이 있는 PDB나 DWARF가 없습니다.</translation>
     </message>
 </context>
 <context>
