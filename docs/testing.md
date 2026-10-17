@@ -443,9 +443,17 @@ declarations, and the sidecar's load. `FunctionDeclarationsNeedNoDebugInformatio
 does the same on the image read without its PDB, of a type the user
 declares, and checks that another function's text stays as it was.
 
+`TypeParse.SizesAMemberReachedThroughANullPointer` reads
+`sizeof(((T *)0)->Member)`, as phnt's `RTL_FIELD_SIZE` spells it.
 `HeaderLibrary.*` reads the embedded Windows libraries and checks how a
-header library joins a program's types. After running
-`scripts/generate_windows_types.py`, check each library in every language:
+header library joins a program's types;
+`HeaderLibrary.TheUserLibrariesDeclareNtdllsNativeAPI` checks phnt's
+routines and the PEB, TEB and loader records each user mode library lays
+out. The user mode libraries read a checkout of
+[phnt](https://github.com/winsiderss/phnt) besides mingw-w64's headers:
+`scripts/generate_windows_types.py --phnt <checkout>` (each generated
+header names the commit). After running it, check each library in every
+language:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
