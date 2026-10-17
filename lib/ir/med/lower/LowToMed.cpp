@@ -47,6 +47,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <tuple>
 
@@ -318,6 +319,25 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   const auto FPParamRegs = TRI.floatingParamRegs(TargetFormat);
   const int8_t Slots =
       static_cast<int8_t>(std::min<size_t>(ArgRegs.size(), kTrackedArgSlots));
+  // Where the setup of each call gives it its arguments (Windows on ARM64),
+  // an import its prototype counts (CallEntryArgumentCounts) takes that many
+  // integer arguments, the registers' first: its calls pass those and no
+  // other register.  The setup supplies the values.  Its stack arguments
+  // are counted as positions, the registers' included, or 0 for none.
+  if (Convention && Convention->ArgumentsFromCallSetup &&
+      Convention->ImportArgumentsFromPrototype &&
+      !Convention->RegparmOnlyForInternalCalls && CallEntryArgumentCounts)
+    if (auto C = CallEntryArgumentCounts->find(ArgumentsKey);
+        C != CallEntryArgumentCounts->end()) {
+      MOp.CalleeRegisterArgs =
+          static_cast<int8_t>(std::min<int>(C->second, Slots));
+      MOp.CalleeStackArgs =
+          C->second > static_cast<int>(ArgRegs.size())
+              ? static_cast<int8_t>(std::min(
+                    C->second,
+                    static_cast<int>(std::numeric_limits<int8_t>::max())))
+              : 0;
+    }
   // An indirect-call dispatcher calls the function in its target register.
   // Its arguments are the registers this function set before the call, the
   // rule IDA uses; a register only passed through from this function's
@@ -596,12 +616,20 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
             getTargetRegInfo(TheArch).isX87StackReg(Op.Inputs[0].Offset);
       }
   Func.ExplicitX87ReturnValue = HasReturn && AllX87Returns;
-  if (Low.RegistrationStates && Image)
+  if (KnownRegistrationFrameFacts &&
+      KnownRegistrationFrameFacts->Entry == Low.Entry) {
     Func.RegistrationCallerCleanupABIComplete =
-        hasCallerCleanupRegistrationABI(Low, *Image);
-  if (Low.ExceptionMetadata && Low.ExceptionMetadata->Cxx && Image)
+        KnownRegistrationFrameFacts->CallerCleanupABIComplete;
     Func.RegistrationCxxEntryPopBytes =
-        getCheckedX86RegistrationCxxParentABI(Low, *Image);
+        KnownRegistrationFrameFacts->CxxEntryPopBytes;
+  } else {
+    if (Low.RegistrationStates && Image)
+      Func.RegistrationCallerCleanupABIComplete =
+          hasCallerCleanupRegistrationABI(Low, *Image);
+    if (Low.ExceptionMetadata && Low.ExceptionMetadata->Cxx && Image)
+      Func.RegistrationCxxEntryPopBytes =
+          getCheckedX86RegistrationCxxParentABI(Low, *Image);
+  }
   if (SourceCallHintsEnabled && Image && Fmt == BinaryFormat::MachO &&
       TheArch == Arch::AArch64 && Image->Arch == TheArch) {
     Func.RegisterCopyProjections = sourceRegisterCopies(*Image, Low);
@@ -685,7 +713,19 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
 
     size_t BoundaryIndex = 0;
     for (size_t LowOpIndex = 0; LowOpIndex < LB.Ops.size(); ++LowOpIndex) {
-      const LowOp &LOp = LB.Ops[LowOpIndex];
+      // A call through a slot that always holds one of the image's own
+      // functions calls that function (BinaryImage::ConstantCodeSlots).
+      std::optional<LowOp> DirectCall;
+      if (const LowOp &Call = LB.Ops[LowOpIndex];
+          Image && Call.Opcode == NdOp::INDIR_CALL && Call.NumInputs >= 1 &&
+          Call.Inputs[0].isConst())
+        if (auto It = Image->ConstantCodeSlots.find(Call.Inputs[0].Offset);
+            It != Image->ConstantCodeSlots.end()) {
+          DirectCall = Call;
+          DirectCall->Opcode = NdOp::CALL;
+          DirectCall->Inputs[0] = NdVar::cst(It->second, Call.Inputs[0].Size);
+        }
+      const LowOp &LOp = DirectCall ? *DirectCall : LB.Ops[LowOpIndex];
       while (BoundaryIndex < LB.InstructionBoundaries.size()) {
         const LowInstructionBoundary &Boundary =
             LB.InstructionBoundaries[BoundaryIndex];

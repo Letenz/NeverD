@@ -139,6 +139,14 @@ private:
   uint64_t tlsAddress() const;
   uint64_t threadID() const;
   bool Expired = false;
+  // Bionic's default generator belongs to the guest process, not a thread or
+  // the host C library. Calls run atomically inside the guest scheduler.
+  uint32_t RandomWords[31] = {};
+  unsigned RandomRear = 0;
+  bool RandomInitialized = false;
+  void seedRandom(uint32_t Seed);
+  uint32_t nextRandom();
+  BionicResult randomCall(const NativeCallEvent &Call);
   struct LibraryState {
     uint64_t Handle = 0, References = 0;
   };
@@ -287,6 +295,11 @@ private:
   BionicResult nextProperty(const PropertyCallback &Callback);
   llvm::Error propertyCallbackEntry(uint64_t Entry);
   BionicResult syscall(const NativeCallEvent &Call);
+  BionicResult socketTransfer(const NativeCallEvent &Call);
+  BionicResult addressText(const NativeCallEvent &Call);
+  BionicResult resolveAddress(const NativeCallEvent &Call);
+  BionicResult freeAddresses(const NativeCallEvent &Call);
+  std::map<uint64_t, uint64_t> ResolverNodes;
   BionicResult threadCall(const NativeCallEvent &Call);
   BionicResult finalizeCall(const NativeCallEvent &Call);
   BionicResult once(const NativeCallEvent &Call);

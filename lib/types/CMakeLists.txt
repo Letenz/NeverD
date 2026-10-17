@@ -2,7 +2,8 @@
 # that reading one reads no file at run time, each in a unit of its own
 # (HeaderLibrarySource.cpp.in): the largest compiles in about 5 s and 0.6 GB.
 set(NEVERD_HEADER_LIBRARIES
-  WindowsKernelX64 WindowsUserX64 WindowsKernelX86 WindowsUserX86)
+  WindowsKernelX64 WindowsUserX64 WindowsKernelX86 WindowsUserX86
+  WindowsUserARM64)
 set(NEVERD_HEADER_LIBRARY_SOURCES)
 foreach(NEVERD_HEADER_LIBRARY IN LISTS NEVERD_HEADER_LIBRARIES)
   set(Source "${CMAKE_CURRENT_SOURCE_DIR}/headers/${NEVERD_HEADER_LIBRARY}.h")

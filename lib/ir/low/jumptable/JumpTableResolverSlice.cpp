@@ -2535,13 +2535,24 @@ static bool provesExactUnsignedModuloRecipe(
   return Width == 32 && matchesObservedHighHalf();
 }
 
-enum class ResolverPredicateMode : uint8_t { Equality, Unsigned, Joined };
+// Unconstrained serves queries that compare reaching values structurally. Only
+// the finite-domain solver interprets an edge constraint; for a structural
+// match, a constraint wrapper could only make an arm differ from the value it
+// constrains. Leaving the constraint out over-approximates the feasible values.
+enum class ResolverPredicateMode : uint8_t {
+  Equality,
+  Unsigned,
+  Joined,
+  Unconstrained
+};
 
 // The source of truth for the predicate forms used by edge refinement. Local
 // shape inspection may avoid reconstructing operands only when this policy
 // cannot use their producer, and its exact, unguarded shape is known.
 static bool resolverPredicateCanFilter(NdOp Opcode,
                                        ResolverPredicateMode Mode) {
+  if (Mode == ResolverPredicateMode::Unconstrained)
+    return false;
   switch (Opcode) {
   case NdOp::INT_EQUAL:
   case NdOp::INT_NOTEQUAL:
@@ -5446,6 +5457,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       return ResolverPredicateMode::Joined;
     if (Query && Query->Relation == JumpTableValueRelation::UnsignedFeasibleSet)
       return ResolverPredicateMode::Unsigned;
+    if (Query && Query->Relation == JumpTableValueRelation::MustEqual)
+      return ResolverPredicateMode::Unconstrained;
     return ResolverPredicateMode::Equality;
   };
 
@@ -5542,6 +5555,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   // of the values of its operands. Unknown producers keep the complete walk.
   auto predicateCannotFilter = [&](int Block, int Before, NdVar V) {
     const auto Mode = predicateMode(ActiveValueQuery);
+    if (Mode == ResolverPredicateMode::Unconstrained)
+      return true;
     const auto &B = Graph.Blocks[Block];
     while (V.Size == 1) {
       if (V.isConst())
@@ -10914,10 +10929,40 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
         continue;
       if (!consumeWork(9))
         return false;
+      // An extended-register operand (AArch64 `[xN, wM, uxtw #s]`) widens the
+      // recorded index before scaling it. Follow that one extension, when the
+      // role allows it, to the scale in the same instruction that consumes
+      // its result.
+      NdVar ScaledIndex = Index.Value;
+      const LowOp &IndexUse = *ExactScale;
+      if (IndexUse.NumInputs == 1 && IndexUse.Output.isTemp() &&
+          ((IndexUse.Opcode == NdOp::INT_ZEXT && Role.AllowZeroExtension) ||
+           (IndexUse.Opcode == NdOp::INT_SEXT && Role.AllowSignExtension))) {
+        if (!sameVar(guestAddressView(IndexUse.Inputs[0]),
+                     guestAddressView(Index.Value)) ||
+            !consumeProduct(InsnIt->second.Ops.size(), 3))
+          continue;
+        ExactScale = nullptr;
+        bool Ambiguous = false;
+        for (const LowOp &Op : InsnIt->second.Ops) {
+          if (Op.Addr != IndexUse.Addr || Op.Seq <= IndexUse.Seq)
+            continue;
+          const int Side = scaleIndexSide(Op, Role.AddressScale);
+          if (Side >= 0 && sameVar(Op.Inputs[Side], IndexUse.Output)) {
+            Ambiguous |= ExactScale != nullptr;
+            ExactScale = &Op;
+          }
+          if (sameVar(Op.Output, IndexUse.Output))
+            break;
+        }
+        if (!ExactScale || Ambiguous)
+          continue;
+        ScaledIndex = IndexUse.Output;
+      }
       const int IndexSide = scaleIndexSide(*ExactScale, Role.AddressScale);
       if (IndexSide < 0 ||
           !sameVar(guestAddressView(ExactScale->Inputs[IndexSide]),
-                   guestAddressView(Index.Value)))
+                   guestAddressView(ScaledIndex)))
         continue;
       if (!ensureAppendCapacity(State.DynamicAlternatives) || !consumeWork())
         return false;

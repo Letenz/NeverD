@@ -228,10 +228,10 @@ encodings. Generated on 2026-10-06.
 
 `lib/types/headers/WindowsKernelX64.h` and `WindowsKernelX86.h` hold the
 types and prototypes that `<ntifs.h>`, `<ntddk.h>` and `<wdm.h>` declare for
-x64 and x86 drivers of Windows 10 2004, and `lib/types/headers/WindowsUserX64.h`
-and `WindowsUserX86.h` those that `<windows.h>`, `<winternl.h>` and the
-headers of the libraries programs most often call declare for x64 and x86
-programs of Windows 10 2004, as
+x64 and x86 drivers of Windows 10 2004, and `lib/types/headers/WindowsUserX64.h`,
+`WindowsUserX86.h` and `WindowsUserARM64.h` those that `<windows.h>`,
+`<winternl.h>` and the headers of the libraries programs most often call
+declare for x64, x86 and ARM64 programs of Windows 10 2004, as
 `scripts/generate_windows_types.py` renders them from the headers of
 mingw-w64 13.0.0 (the Ubuntu package mingw-w64-common 13.0.0-2ubuntu1). The
 DDK and PSDK headers they read that come from ReactOS (contributors include
@@ -343,6 +343,12 @@ distribution. See the [zlib license](https://zlib.net/zlib_license.html) and
 The Windows Web product includes the unchanged 1.3.2 notice under
 `share/neverd/licenses/zlib`; its exact source archive and hash are recorded
 in the product dependency manifest.
+
+The test fixture `unittests/lift/aarch64/test_jumptable_inflate_gcc_a64.s` is
+the AArch64 assembly GCC 15.2.0 produces for `inflate()` from the unchanged
+zlib 1.3.1 `inflate.c`, kept with only that function and the data it reads.
+The fixture retains zlib's copyright and license notice. It is assembled into a
+test object and is not shipped.
 
 ## Intel x86 approximation reference implementations
 

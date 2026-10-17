@@ -1603,6 +1603,10 @@ Double-click to go to the declaration.</source>
         <translation>Символьное упрощение</translation>
     </message>
     <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>Символьное упрощение всех функций</translation>
+    </message>
+    <message>
         <source>Recover LLVM control flow</source>
         <translation>Восстановить поток управления LLVM</translation>
     </message>
@@ -2123,6 +2127,10 @@ Signed: %4</source>
     <message>
         <source>Show segment:address line prefixes</source>
         <translation>Показывать префиксы строк «сегмент:адрес»</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>Символьное упрощение всех функций</translation>
     </message>
     <message>
         <source>Shortcuts</source>

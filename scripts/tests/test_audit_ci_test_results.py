@@ -663,6 +663,9 @@ class RealCTestOutcomeTests(unittest.TestCase):
             root = Path(directory)
             build = root / "build-ci"
             build.mkdir()
+            # The preceding reuse step prepared an empty exclusion in this
+            # failure-status regression; no completed pass is available.
+            (build / "ctest-reused-names.txt").write_text("")
             (build / "CTestTestfile.cmake").write_text(
                 f'add_test(failure [=[{sys.executable}]=] -c "import sys;sys.exit(1)")\n'
                 f'add_test(unstarted [=[{sys.executable}]=] -c "print(42)")\n'

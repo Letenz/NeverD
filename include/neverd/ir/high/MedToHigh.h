@@ -301,7 +301,6 @@ public:
   void setVariadicVectorCallees(const std::map<va_t, int> *Entries) {
     VariadicVectorCallees = Entries;
   }
-  void setJumpTables(const std::vector<JumpTable> &JTs) { JumpTables = JTs; }
 
   struct CallIndTarget {
     std::string Name = "indirect";
@@ -540,7 +539,6 @@ private:
   const std::map<va_t, std::string> *FuncNames = nullptr;
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;
   const std::map<va_t, int> *VariadicVectorCallees = nullptr;
-  std::vector<JumpTable> JumpTables;
   int NextHighTempId = 0;
   std::optional<MedVar> SwiftErrorEntryInput;
   int ExprRecurseDepth = 0;

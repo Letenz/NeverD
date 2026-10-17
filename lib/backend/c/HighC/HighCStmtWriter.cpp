@@ -952,10 +952,12 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                                     : callResultPointerType(*Stmt.Val);
         if (DirectAddress)
           OS << "(" << typeToC(DeclaredType) << ")(" << ValueText << ")";
-        else if (PointerFromDeclaration && ProjectedValueType &&
-                 ProjectedValueType->Kind == NdTypeKind::Ptr &&
-                 typeToC(cDisplayType(ProjectedValueType)) ==
-                     typeToC(DeclaredType))
+        else if (PointerFromDeclaration &&
+                 ((ProjectedValueType &&
+                   ProjectedValueType->Kind == NdTypeKind::Ptr &&
+                   typeToC(cDisplayType(ProjectedValueType)) ==
+                       typeToC(DeclaredType)) ||
+                  sameDeclaredLocal(*Stmt.Val, ValueText, DeclaredType)))
           OS << ValueText;
         else if (PointerFromCallResult &&
                  ((Printed && typeToC(Printed) == typeToC(DeclaredType)) ||

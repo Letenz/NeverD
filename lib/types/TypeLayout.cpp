@@ -24,13 +24,9 @@ llvm::Error problem(const llvm::Twine &Message) {
 
 } // namespace
 
-LayoutRules defaultRules(DataModel Model) {
-  return Model == DataModel::LP64 ? LayoutRules::Itanium : LayoutRules::MSVC;
-}
-
 llvm::Expected<RecordDef> layOutRecord(const TypeLibrary &Library,
-                                       const DraftRecord &Draft,
-                                       LayoutRules Rules) {
+                                       const DraftRecord &Draft) {
+  const LayoutRules Rules = Library.layoutRules();
   RecordDef Record;
   Record.Union = Draft.Union;
   Record.Pack = Draft.Pack;
@@ -112,10 +108,15 @@ llvm::Expected<RecordDef> layOutRecord(const TypeLibrary &Library,
           continue;
         }
         Bit = End;
-        // A field does not cross a unit of its type unless packed.
-        if (!Draft.Pack && Bit / Unit != (Bit + Field.Width - 1) / Unit)
+        // Unless packed, a field spans no more units of its type's
+        // alignment than its type has, as GCC places it: one unit of its
+        // size where it aligns to that, two of four bytes for the i386
+        // System V ABI's long long.
+        const uint64_t Span = uint64_t(Natural) * 8;
+        if (!Draft.Pack &&
+            (Bit % Span + Field.Width + Span - 1) / Span > Unit / Span)
           Bit = alignBits(Bit, Natural);
-        Storage = Bit / Unit * Unit;
+        Storage = Bit / Span * Span;
         End = Bit + Field.Width;
         if (!Field.Name.empty())
           Alignment = std::max(Alignment, Aligned);

@@ -304,6 +304,7 @@ class CiConfigurationTests(unittest.TestCase):
         self.assertEqual(
             verify_step.count("scripts.tests.test_audit_ci_test_results"), 1
         )
+        self.assertEqual(verify_step.count("scripts.tests.test_ci_test_reuse"), 1)
         self.assertEqual(
             verify_step.count("scripts.tests.test_neverd_bench_harness"), 1
         )

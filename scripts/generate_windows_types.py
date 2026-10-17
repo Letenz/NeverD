@@ -136,6 +136,8 @@ TARGETS = {
     "kernel-x86": kernel("i686-w64-mingw32", "ILP32", "x86",
                          "WindowsKernelX86.h"),
     "user-x86": user("i686-w64-mingw32", "ILP32", "x86", "WindowsUserX86.h"),
+    "user-arm64": user("aarch64-w64-mingw32", "LLP64", "ARM64",
+                       "WindowsUserARM64.h"),
 }
 
 # What the reader may refuse: the compiler's vector and tile types, and what

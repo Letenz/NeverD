@@ -337,7 +337,6 @@ inline bool objCNativeSwiftReceiverSourceCallBound(
   for (const auto &F : Result.MedFuncs)
     Names.emplace(F.Entry, F.Name);
   Converter.setFuncNames(&Names);
-  Converter.setJumpTables(Current->Low->JumpTables);
   const auto Replay = Converter.convert(*Current->Med, Image.Arch);
   auto BoundReplay =
       bindObjCSourceReferences(Replay, Image, nullptr, &Functions);

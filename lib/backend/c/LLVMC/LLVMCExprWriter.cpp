@@ -621,17 +621,19 @@ std::optional<uint64_t> LLVMCWriter::foldReadonlyScalar(va_t Addr,
 }
 
 std::string LLVMCWriter::imageDataCName(const llvm::Value *V) const {
-  // Full-module output owns the bytes of a pointer mirror it defines. Its
-  // interior fields are offsets into that object, not separate globals at the
-  // original VAs. Single-function output instead declares the referenced
-  // image objects, and so does a module for a mirror its environment holds
-  // (one with runtime-filled slots, such as an i386 GOT run and the data
-  // after it), which it does not define.
+  // Full-module output owns the bytes of a pointer mirror or a section's
+  // byte array it defines. Their interior fields are offsets into that
+  // object, as the code spells them, not separate globals at the original
+  // VAs. Single-function output instead declares the referenced image
+  // objects, and so does a module for a mirror its environment holds (one
+  // with runtime-filled slots, such as an i386 GOT run and the data after
+  // it), which it does not define.
   if (!OnlyFunction && V->getType()->isPointerTy())
     if (const auto *Global =
             llvm::dyn_cast<llvm::GlobalVariable>(llvm::getUnderlyingObject(V));
         Global && Global->hasInitializer() &&
-        parseNdCodePtrSymbol(Global->getName()))
+        (parseNdCodePtrSymbol(Global->getName()) ||
+         parseNdDataSymbol(Global->getName())))
       return {};
   const auto VA = imageDataVA(V);
   if (!VA)
@@ -1315,7 +1317,7 @@ void LLVMCWriter::discoverSyntheticFrame(llvm::Function &Fn) {
         static_cast<int64_t>(Off) - static_cast<int64_t>(FrameBaseOffset);
     for (int Delta = 0; Delta < 16 && Aligned - Delta > 0; ++Delta) {
       const int64_t Query = Disp + (Aligned - Delta);
-      if (auto Var = Dbg->resolveStackPointerVariable(FunctionEntry, Query))
+      if (auto Var = Dbg->resolveStackPointerVariable(*FunctionEntry, Query))
         Owners[Var->StackOffset].insert(Off);
     }
   }
@@ -1328,7 +1330,7 @@ void LLVMCWriter::discoverSyntheticFrame(llvm::Function &Fn) {
   const int64_t ScanEnd = std::min<int64_t>(Aligned, 4096);
   std::map<std::string, int64_t> FirstSPNameOffset;
   for (int64_t Stack = -15; Stack <= ScanEnd; ++Stack) {
-    const auto Var = Dbg->resolveStackPointerVariable(FunctionEntry, Stack);
+    const auto Var = Dbg->resolveStackPointerVariable(*FunctionEntry, Stack);
     if (!Var || Var->IsParam || Var->Name.empty() ||
         isReservedFrameName(Var->Name))
       continue;
@@ -1364,7 +1366,7 @@ std::optional<VariableSym> LLVMCWriter::debugFrameVariable(int64_t Disp) const {
   };
   std::optional<VariableSym> Found;
   if (Dbg && FunctionEntry)
-    Found = Accept(Dbg->resolveVariable(FunctionEntry, Disp));
+    Found = Accept(Dbg->resolveVariable(*FunctionEntry, Disp));
   if (Found) {
     const auto Candidates = SpLocalNameCandidates.find(Found->Name);
     const uint64_t AccessOff =
@@ -1384,7 +1386,7 @@ std::optional<VariableSym> LLVMCWriter::debugFrameVariable(int64_t Disp) const {
     for (int64_t Delta = 0; !Found && Delta < 16 && Aligned - Delta > 0;
          ++Delta) {
       Found = Accept(Dbg->resolveStackPointerVariable(
-          FunctionEntry, Disp + (Aligned - Delta)));
+          *FunctionEntry, Disp + (Aligned - Delta)));
       if (!Found)
         continue;
       const auto Owned = SpLocalOwner.find(Found->StackOffset);
@@ -2939,8 +2941,15 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
     return "0 /* unknown */";
   if (llvm::isa<llvm::FreezeInst>(V))
     return getName(V);
-  if (auto Imm = foldImmediate(V))
+  if (auto Imm = foldImmediate(V)) {
+    // An address that names a string spells its literal, a pointer.
+    const llvm::StringRef Text = *Imm;
+    if (Text.starts_with("\"") || Text.starts_with("L\"") ||
+        Text.starts_with("u\"") || Text.starts_with("U\"") ||
+        Text.starts_with("u8\""))
+      return AddressText(*Imm);
     return *Imm;
+  }
   // A scalar FP bitcast is materialized with a byte copy. Display provenance
   // may name its integer input, but that name cannot replace the float value.
   if (const auto *Inst = llvm::dyn_cast<llvm::Instruction>(V);
@@ -3783,9 +3792,17 @@ std::string LLVMCWriter::renderInlineImpl(const llvm::Instruction &Inst) {
         Condition && (*Condition == "0" || *Condition == "1"))
       return valueStr(*Condition == "1" ? Sel->getTrueValue()
                                         : Sel->getFalseValue());
+    // An arm C spells as a pointer, such as a string literal, converts to
+    // the integer the select yields.
+    auto Arm = [&](const llvm::Value *V) {
+      bool Pointer = false;
+      std::string Text = valueStr(V, &Pointer);
+      if (Pointer && Sel->getType()->isIntegerTy())
+        return "(" + typeToCLLVM(Sel->getType()) + ")(uintptr_t)(" + Text + ")";
+      return Text;
+    };
     return "(" + valueStr(Sel->getCondition()) + " ? " +
-           valueStr(Sel->getTrueValue()) + " : " +
-           valueStr(Sel->getFalseValue()) + ")";
+           Arm(Sel->getTrueValue()) + " : " + Arm(Sel->getFalseValue()) + ")";
   }
   if (const auto *RMW = llvm::dyn_cast<llvm::AtomicRMWInst>(&Inst))
     return atomicRMWText(*RMW);

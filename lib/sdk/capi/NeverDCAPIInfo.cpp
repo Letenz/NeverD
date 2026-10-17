@@ -13,7 +13,6 @@
 #include "JSONText.h"
 #include "LibraryPresentation.h"
 #include "SessionImpl.h"
-#include "SessionProjectInput.h"
 
 #include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/evm/bytecode/EVMBytecode.h"

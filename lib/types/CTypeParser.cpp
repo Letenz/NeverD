@@ -1234,8 +1234,7 @@ private:
     Draft.Alignment = Asked.Alignment;
     if (Asked.Packed)
       Draft.Pack = 1;
-    llvm::Expected<RecordDef> Laid =
-        layOutRecord(Library, Draft, Options.Rules);
+    llvm::Expected<RecordDef> Laid = layOutRecord(Library, Draft);
     if (!Laid) {
       fail(Open, llvm::toString(Laid.takeError()));
       return nullptr;

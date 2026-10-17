@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../render/X86FPStateHelpers.h"
 #include "LLVMCIntegerMinMax.h"
@@ -31,6 +32,7 @@
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/libc/LibCResult.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -4641,6 +4643,70 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
       llvm::StringRef(AsmStr).contains("rep stos"))
     llvm::report_fatal_error("unsupported REP STOS inline assembly contract");
 
+  if (auto Movs = classifyX86RepMovs(Opts.TheArch, Call)) {
+    // The processor reads each element whole before it writes it, so an
+    // overlapping copy repeats what it already wrote, as `rep movsb` does
+    // forward over a destination one byte past its source.
+    const std::string Src = freshVar("movs_src");
+    const std::string Dst = freshVar("movs_dst");
+    const std::string Count = freshVar("movs_count");
+    const std::string Backward = freshVar("movs_backward");
+    const std::string Element = freshVar("movs_element");
+    const std::string AddrTy =
+        "uint" + std::to_string(Movs->AddressBits) + "_t";
+    emitIndent(Indent);
+    OS << "{\n";
+    emitIndent(Indent + 1);
+    OS << AddrTy << " " << Src << " = (" << AddrTy << ")(uintptr_t)("
+       << valueStr(Call.getArgOperand(0)) << ");\n";
+    emitIndent(Indent + 1);
+    OS << AddrTy << " " << Dst << " = (" << AddrTy << ")(uintptr_t)("
+       << valueStr(Call.getArgOperand(1)) << ");\n";
+    emitIndent(Indent + 1);
+    OS << AddrTy << " " << Count << " = " << valueStr(Call.getArgOperand(2))
+       << ";\n";
+    emitIndent(Indent + 1);
+    OS << "int " << Backward << " = "
+       << (Movs->Dir == X86RepMovs::Dynamic
+               ? "(" + valueStr(Call.getArgOperand(3)) + ") != 0"
+           : Movs->Dir == X86RepMovs::Backward ? "1"
+                                               : "0")
+       << ";\n";
+    emitIndent(Indent + 1);
+    OS << "while (" << Count << " != 0) {\n";
+    emitIndent(Indent + 2);
+    OS << "unsigned char " << Element << "[" << Movs->ElementBytes << "];\n";
+    for (unsigned Byte = 0; Byte < Movs->ElementBytes; ++Byte) {
+      emitIndent(Indent + 2);
+      OS << Element << "[" << Byte << "] = ((const unsigned char*)(uintptr_t)"
+         << Src << ")[" << Byte << "];\n";
+    }
+    for (unsigned Byte = 0; Byte < Movs->ElementBytes; ++Byte) {
+      emitIndent(Indent + 2);
+      OS << "((unsigned char*)(uintptr_t)" << Dst << ")[" << Byte
+         << "] = " << Element << "[" << Byte << "];\n";
+    }
+    for (const std::string *Address : {&Src, &Dst}) {
+      emitIndent(Indent + 2);
+      OS << *Address << " = " << Backward << " ? " << *Address << " - "
+         << Movs->ElementBytes << " : " << *Address << " + "
+         << Movs->ElementBytes << ";\n";
+    }
+    emitIndent(Indent + 2);
+    OS << "--" << Count << ";\n";
+    emitIndent(Indent + 1);
+    OS << "}\n";
+    emitIndent(Indent);
+    OS << "}\n";
+    return true;
+  }
+  // An intrinsic in place of a MOVS this contract does not prove would take
+  // its operands in the constraints' order (source first), which no copy
+  // intrinsic does.
+  if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
+      llvm::StringRef(AsmStr).contains("rep movs"))
+    llvm::report_fatal_error("unsupported REP MOVS inline assembly contract");
+
   std::vector<std::string> ArgStrs;
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
@@ -4752,9 +4818,17 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
     ResultLive = false;
   if (ResultLive && unreadMsvcThisReturn(Call))
     ResultLive = false;
+  // A library routine that returns nothing, whose result nothing reads, is
+  // called alone.
+  if (const LibraryCallee Library =
+          ResultLive ? libraryCallee(Call) : LibraryCallee();
+      Library &&
+      libc::libcResult(Library.Name, Opts.Format) == libc::LibCResult::Void &&
+      !valueFeedsPrintedUse(&Call))
+    ResultLive = false;
   if (ResultLive)
     OS << Name << " = ";
-  OS << callExpr(Call) << ";\n";
+  OS << callExpr(Call, /*Statement=*/!ResultLive) << ";\n";
   AfterCxxThrow = NoReturn;
 }
 
@@ -4815,7 +4889,7 @@ LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
          valueStr(Call.getCalledOperand()) + "))";
 }
 
-std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
+std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
   if (llvmc::cStackAllocation(Call))
     throw std::runtime_error(
         "private C stack allocation cannot be an expression");
@@ -4910,6 +4984,7 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
 
   std::string Expr = CalleeName + "(";
   const unsigned Limit = printedCallArgLimit(Call, CalleeName);
+  const LibraryCallee Library = libraryCallee(Call);
   for (unsigned ArgIdx = 0; ArgIdx < Limit; ++ArgIdx) {
     if (ArgIdx > 0)
       Expr += ", ";
@@ -4936,21 +5011,31 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
         throw std::runtime_error("invalid source scalar argument");
       Argument = "(" + Spelling.str() + ")(" + Argument + ")";
     }
-    const auto *Callee = Call.getCalledFunction();
-    const bool HeaderInteger =
-        !Opts.PreserveLLVMFunctionTypes && Callee && Callee->isDeclaration() &&
-        libc::headerFor(CalleeName) &&
-        Call.getArgOperand(ArgIdx)->getType()->isIntegerTy();
+    const bool Integer = Call.getArgOperand(ArgIdx)->getType()->isIntegerTy();
+    const bool HeaderInteger = Library && !Library.Prototype && Integer;
+    const libc::LibCPrototype *Prototype =
+        Library.Prototype && ArgIdx < Library.Prototype->ParamCount
+            ? Library.Prototype
+            : nullptr;
+    const std::string Param =
+        Prototype
+            ? c_library::typeSpelling(Prototype->Params[ArgIdx], Opts.TheArch)
+            : std::string();
     // A header's pointer parameter takes the integer that holds an address
     // converted, an object's or a function's (qsort's comparison).
-    if (HeaderInteger && libc::isObjectPointerParameter(CalleeName, ArgIdx))
+    if (HeaderInteger && libc::isObjectPointerParameter(Library.Name, ArgIdx))
       Argument = "(void *)(uintptr_t)(" + Argument + ")";
     else if (const auto Function =
                  HeaderInteger
-                     ? libc::functionPointerParameter(CalleeName, ArgIdx)
+                     ? libc::functionPointerParameter(Library.Name, ArgIdx)
                      : std::nullopt)
       Argument =
           "(" + std::string(*Function) + ")(uintptr_t)(" + Argument + ")";
+    // A parameter the runtime's tables type takes an integer converted to
+    // its pointer, and an address converted to its integer.
+    else if (Prototype &&
+             (libc::isPointerType(Param) ? Integer : PointerSpelling))
+      Argument = "(" + Param + ")(uintptr_t)(" + Argument + ")";
     // An address, such as a string literal, passed where the callee is
     // declared to take an integer converts to it.
     else if (PointerSpelling &&
@@ -4961,7 +5046,7 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
   }
   Expr += ")";
   RenderingCalls.pop_back();
-  return Expr;
+  return Statement ? Expr : libraryResult(Call, std::move(Expr));
 }
 
 namespace {
@@ -5426,13 +5511,27 @@ bool LLVMCWriter::declaredParameterIsInteger(const llvm::CallBase &Call,
                                              llvm::StringRef CalleeName,
                                              unsigned ArgIdx) const {
   // Headers and the MSVC table declare their own prototypes, and a module's
-  // own definition its C one; others are declared as LLVM types them.
-  const llvm::Function *Callee = Call.getCalledFunction();
-  if (!Callee || Callee->isIntrinsic() || Opts.PreserveLLVMFunctionTypes ||
-      (!Callee->isDeclaration() && !OnlyFunction) ||
-      libc::isKnownFunction(CalleeName) || msvcCallee(CalleeName, Opts.Format))
+  // own definition its C one, which keeps the LLVM types where no debug
+  // information types it; others are declared as LLVM types them.  A call
+  // through a pointer casts it to the call's own LLVM type
+  // (indirectCalleeType), and an import named for its slot is declared
+  // without parameters.
+  if (Opts.PreserveLLVMFunctionTypes)
     return false;
-  const llvm::FunctionType *Type = Callee->getFunctionType();
+  const llvm::Function *Callee = Call.getCalledFunction();
+  if (!Callee) {
+    if (llvm::isa<llvm::InlineAsm>(Call.getCalledOperand()) ||
+        !resolveImportCalleeName(Call.getCalledOperand()).empty())
+      return false;
+  } else if (Callee->isIntrinsic() ||
+             (!Callee->isDeclaration() && !OnlyFunction &&
+              debugFunction(*Callee)) ||
+             libc::isKnownFunction(CalleeName) ||
+             msvcCallee(CalleeName, Opts.Format)) {
+    return false;
+  }
+  const llvm::FunctionType *Type =
+      Callee ? Callee->getFunctionType() : Call.getFunctionType();
   return ArgIdx < Type->getNumParams() &&
          Type->getParamType(ArgIdx)->isIntegerTy();
 }

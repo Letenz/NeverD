@@ -16,6 +16,7 @@
 #include "neverd/emulation/ExecutionExit.h"
 #include "neverd/emulation/LinuxFileOptions.h"
 #include "neverd/emulation/LinuxKernelOptions.h"
+#include "neverd/emulation/LinuxNetworkOptions.h"
 #include "neverd/emulation/LinuxPriorityOptions.h"
 #include "neverd/emulation/LinuxSignalOptions.h"
 #include "neverd/emulation/LinuxTimeOptions.h"
@@ -65,6 +66,7 @@ struct ProcessOptions {
   std::optional<WindowsProcessOptions> Windows;
   std::optional<LinuxTimeOptions> LinuxTime;
   std::optional<LinuxFileOptions> LinuxFiles;
+  std::optional<LinuxNetworkOptions> LinuxNetwork;
   std::optional<LinuxSignalOptions> LinuxSignals;
   std::optional<LinuxPriorityOptions> LinuxPriority;
   std::optional<LinuxKernelOptions> LinuxKernel;

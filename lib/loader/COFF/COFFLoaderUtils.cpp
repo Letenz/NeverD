@@ -24,6 +24,7 @@
 #include <cstring>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <optional>
 #include <set>
 #include <vector>
@@ -581,6 +582,140 @@ void recordSymbolTableDataInCode(BinaryImage &Img) {
       Img.CodeAddressRelocOperands.erase(Slot.SlotVA);
       applyAbsolutePointerRelocation(Img, Slot);
     }
+}
+
+void recordConstantCodeSlots(BinaryImage &Img) {
+  if (Img.IsRelocatable || (Img.Arch != Arch::X86 && Img.Arch != Arch::X64))
+    return;
+  const uint32_t Width = Img.getPointerSize();
+  // MinGW's runtime defines `__imp_X` for each function it supplies in place
+  // of an import (__MINGW_IMP_SYMBOL), initialized to that function.
+  std::map<va_t, va_t> Candidates;
+  for (const Symbol &Sym : Img.Symbols) {
+    const llvm::StringRef Name = Sym.Name;
+    if (Sym.IsFunc || Sym.IsSection ||
+        (!Name.starts_with("__imp_") && !Name.starts_with("_imp_")))
+      continue;
+    const va_t Slot = Sym.Addr;
+    const Section *Sec = Img.getSectionFor(Slot);
+    if (!Sec || Sec->isExecutable() || !Img.CodePtrRelocSlots.count(Slot) ||
+        Img.ImportStorageSlots.count(Slot) || Img.findImportAt(Slot))
+      continue;
+    const uint8_t *Bytes = Img.readVA(Slot, Width);
+    if (!Bytes)
+      continue;
+    const va_t Target = normalizeCodeAddress(
+        static_cast<va_t>(readPtr(Bytes, Width == 8)), Img.Arch, Img.Mode);
+    if (Img.hasAuthenticatedFunctionEntryAt(Target))
+      Candidates.emplace(Slot, Target);
+  }
+  if (Candidates.empty())
+    return;
+  // The candidate slot \p Size bytes at \p Addr overlap, if any.
+  auto SlotAt = [&](va_t Addr, uint64_t Size) -> std::optional<va_t> {
+    const va_t Last = Addr + (Size ? Size - 1 : 0);
+    if (Last < Addr)
+      return std::nullopt;
+    auto It = Candidates.upper_bound(Last);
+    if (It == Candidates.begin())
+      return std::nullopt;
+    --It;
+    if (It->first > InvalidVA - Width || It->first + Width <= Addr)
+      return std::nullopt;
+    return It->first;
+  };
+  std::set<va_t> Escaped;
+  // A pointer to the slot in data, or an export of it, lets it escape.
+  for (const std::set<uint64_t> *Pointers :
+       {&Img.CodePtrRelocSlots, &Img.DataPtrRelocSlots})
+    for (const uint64_t Pointer : *Pointers)
+      if (const uint8_t *Bytes = Img.readVA(Pointer, Width))
+        if (auto Slot =
+                SlotAt(static_cast<va_t>(readPtr(Bytes, Width == 8)), 1))
+          Escaped.insert(*Slot);
+  for (const Export &Exp : Img.Exports)
+    if (auto Slot = SlotAt(Exp.Addr, 1))
+      Escaped.insert(*Slot);
+  Decoder Dec;
+  if (!Dec.init(Img))
+    return;
+  // Instruction starts the image's metadata gives resynchronize the sweep.
+  std::set<va_t> Starts;
+  auto AddStart = [&](va_t Addr) {
+    Starts.insert(normalizeCodeAddress(Addr, Img.Arch, Img.Mode));
+  };
+  if (Img.Entry)
+    AddStart(Img.Entry);
+  for (const Symbol &Sym : Img.Symbols)
+    if (Sym.IsFunc && !Sym.IsSection)
+      AddStart(Sym.Addr);
+  for (const va_t Addr : Img.RuntimeFunctionAddrs)
+    AddStart(Addr);
+  for (const auto &[Begin, End] : Img.KnownCodeRanges)
+    AddStart(Begin);
+  for (const Export &Exp : Img.Exports)
+    AddStart(Exp.Addr);
+  const uint64_t AddressMask =
+      Img.Arch == Arch::X86 ? uint64_t{0xFFFFFFFF} : ~uint64_t{0};
+  for (const Section &Sec : Img.Sections) {
+    if (!Sec.isExecutable() || Sec.Size > InvalidVA - Sec.VA)
+      continue;
+    const va_t End = Sec.VA + Sec.Size;
+    va_t Cur = Sec.VA;
+    while (Cur < End && Escaped.size() < Candidates.size()) {
+      size_t Available = static_cast<size_t>(std::min<va_t>(16, End - Cur));
+      const uint8_t *Bytes = nullptr;
+      while (Available && !(Bytes = Img.readVA(Cur, Available)))
+        --Available;
+      DecodedInsn Insn{};
+      const int Len = Bytes && Dec.selectMode(Img, Cur)
+                          ? Dec.decodeOne(Bytes, Available, Cur, Insn)
+                          : 0;
+      if (Len <= 0 || !Insn.Raw || !Insn.Raw->detail) {
+        ++Cur;
+        continue;
+      }
+      // Each memory operand at a fixed address names what it reads or
+      // writes there; a load of the address itself, or the address as an
+      // immediate, lets the slot escape.
+      const cs_x86 &X86 = Insn.Raw->detail->x86;
+      for (uint8_t I = 0; I < X86.op_count; ++I) {
+        const cs_x86_op &Operand = X86.operands[I];
+        if (Operand.type == X86_OP_IMM) {
+          if (auto Slot =
+                  SlotAt(static_cast<va_t>(static_cast<uint64_t>(Operand.imm) &
+                                           AddressMask),
+                         1))
+            Escaped.insert(*Slot);
+          continue;
+        }
+        if (Operand.type != X86_OP_MEM || Operand.mem.index != X86_REG_INVALID)
+          continue;
+        std::optional<va_t> Address;
+        if (Operand.mem.base == X86_REG_RIP)
+          Address =
+              Insn.Addr + Insn.Size + static_cast<uint64_t>(Operand.mem.disp);
+        else if (Operand.mem.base == X86_REG_INVALID)
+          Address = static_cast<uint64_t>(Operand.mem.disp) & AddressMask;
+        if (!Address)
+          continue;
+        if (auto Slot = SlotAt(*Address, Operand.size ? Operand.size : 1))
+          if (Insn.Id == X86_INS_LEA || !(Operand.access & CS_AC_READ) ||
+              (Operand.access & CS_AC_WRITE))
+            Escaped.insert(*Slot);
+      }
+      // An instruction that runs over a known instruction start has lost the
+      // boundaries: take them up again at that start.
+      va_t After = Cur + static_cast<va_t>(Len);
+      if (auto Inside = Starts.upper_bound(Cur);
+          Inside != Starts.end() && *Inside < After)
+        After = *Inside;
+      Cur = After;
+    }
+  }
+  for (const auto &[Slot, Target] : Candidates)
+    if (!Escaped.count(Slot))
+      Img.ConstantCodeSlots.emplace(Slot, Target);
 }
 
 void parseTLSDirectory(const COFFObjectFile &Obj, BinaryImage &Img,

@@ -6536,7 +6536,7 @@ TEST(MedSwitchNorm, WidenedSelectorKeepsAllDistinctCaseBitPatterns) {
   EXPECT_EQ(LLVMCaseSwitch->getNumCases(), CaseCount);
 
   MedToHighConverter Converter;
-  Converter.setJumpTables({Table});
+  Func.JumpTables = {Table};
   HighFunc High = Converter.convert(Func, Arch::X64);
   auto HighSwitch = std::find_if(
       High.Body.begin(), High.Body.end(),
@@ -6630,7 +6630,7 @@ TEST(JumpTableHighSelector,
   Func.SwitchSelectorPlans.emplace(std::make_pair(DispatchAddress, 0), Plan);
 
   MedToHighConverter Converter;
-  Converter.setJumpTables({Table});
+  Func.JumpTables = {Table};
   HighFunc High = Converter.convert(Func, Arch::X64);
   EXPECT_TRUE(std::none_of(
       High.Body.begin(), High.Body.end(),

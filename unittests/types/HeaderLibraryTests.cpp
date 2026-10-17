@@ -151,11 +151,15 @@ TEST(HeaderLibrary, JoinsWhereTheProgramHasNoTypeOfTheName) {
                   .ok());
   const HeaderMerge Merge = mergeHeaderTypes(Program, Headers);
   // _HOLDER was laid out with the headers' _OBJ, and _USER holds it: both
-  // go, with the typedefs that name them.  OBJ names the program's _OBJ,
-  // and _POINTS only points to it.
+  // go, with the typedefs that name them, though a record stays declared
+  // for what points to it.  OBJ names the program's _OBJ, and _POINTS only
+  // points to it.
   EXPECT_EQ(Merge.Conflicts,
             (std::vector<std::string>{"_HOLDER", "HOLDER", "_USER", "USER"}));
-  EXPECT_EQ(Program.find("_HOLDER"), nullptr);
+  const LocalType *Holder = Program.find("_HOLDER");
+  ASSERT_NE(Holder, nullptr);
+  ASSERT_TRUE(Holder->Record);
+  EXPECT_FALSE(Holder->Record->Defined);
   EXPECT_EQ(Program.find("HOLDER"), nullptr);
   EXPECT_EQ(sizeOf(Program, "OBJ"), 16u);
   EXPECT_NE(Program.find("_POINTS"), nullptr);

@@ -79,7 +79,12 @@ Double-clicking a goto's label (`goto L_14024FAB5;`) moves the cursor to the
 label and the disassembly to the block it labels, as IDA's labels do; Back
 returns to the goto. Pseudocode and C name a label after its block's address,
 so the label's row maps to that block: clicking it, or Tab, goes there too.
-LLVM C numbers its labels, which name no address.
+LLVM C numbers its labels, which name no address. The record pseudocode
+declares for a function's stack is named after the function
+(`struct frame_140003FE0 { ... } stack_storage;`): double-clicking it,
+`stack_storage` or `frame_base` takes the disassembly to where the function
+begins, and double-clicking a member (`var_m32`) to the instruction of the
+first statement that reads or writes it, while the code stays.
 
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
@@ -229,10 +234,18 @@ The CLI equivalents are `--llvm-opt=O2`, `--llvm-control-flow=true` and
 without `--func`, `--symbolic-simplify` simplifies every function of the whole
 program in either route. These choices apply to the current function;
 navigating to another function restores the defaults.
+**Symbolic simplification for every function**, in the same menu and in
+**Options > General**, makes symbolic simplification the default: every code
+window applies it to the function it shows and to each function it opens, in
+this session and later ones, as IDA's gooMBA does with `MBA_RUN_AUTOMATICALLY`.
+One function can still turn it off.
 An enhancement runs in the analysis worker while the previous source remains
 visible. **Cancel transformation** stops that request, and **Restore default
-source** returns to the ordinary view. Failed enhancements retain the preceding
-source. Required machine control-flow, ABI and exception recovery still run.
+source** returns to the defaults. Failed enhancements retain the preceding
+source; a function that shows no source yet, as one opened under the
+every-function default, shows its ordinary source instead, with the reason in
+the status line. Required machine control-flow, ABI and exception recovery
+still run.
 These display defaults do not change the conservative binary patch pipeline.
 
 The native **LLVM IR** view shows lifted IR with temporary slots promoted to
