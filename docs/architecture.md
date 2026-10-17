@@ -6966,6 +6966,22 @@ bypass the shared x87 graph cache and parallel prefetch. The ordinary x87
 projection leaves a registration language graph opaque before constructing its
 callback closure; that graph needs a separate dispatcher invocation domain.
 
+Every PE32 registration ABI proof builds its callee with the decoded x87 stack
+(`CFGBuilder::buildIntegerFrameProof`): returning-stack, leaf, member,
+initializer, throw, conditional-call and caller-frame proofs alike. These
+proofs read integer registers, frame and object memory and near-return
+cleanup, never x87 state, and a call clobbers the same integer registers
+whichever register carries its result. The caller's own registration analysis
+runs before its x87 normalization, so its calls keep their decoded EAX
+results; a leaf's scalar-return fact likewise describes EAX at its return,
+even when the leaf also leaves a value on the x87 stack. A normalized callee
+would start its own x87 call proof, whose graphs reach a registration index
+again with a fresh budget at every level. The only x87 operation these proofs
+previously gained through normalization was a proved FXAM lowered to ordinary
+operations; FXAM writes only the status word, so the shared frame-preserving
+intrinsic policy accepts it directly. Among nested proof builds, only
+`buildNoReturnProof`'s local-stack fallback still normalizes the x87 stack.
+
 `_local_unwind2` uses an unsigned stopping bound: it stops at the -1 sentinel or a level no greater than the requested bound, even when an enclosing link skips that index. The shared PE32 EH3 solver joins the actual stopping levels and only the effects of traversed finally callbacks; a zero-step unwind preserves the incoming registration level and frame-memory facts. Existing frame-argument, runtime-field and callback-stack proofs remain mandatory.
 
 The `_local_unwind2` bound is a numeric operand, not a scope-table index. Any constant 32-bit unsigned bound can prove a zero-step exit; only actual current levels index the table. Dynamic bounds and invalid current levels remain unproved.

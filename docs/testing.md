@@ -7099,7 +7099,11 @@ The source registration solver uses one administration-boundary check for object
 `NeverDRegistrationCalleeStackTests` runs the decoded PE32 call/return ABI
 controls, including a cycle between a registration parent and an ordinary
 wrapper. An unbalanced recursive wrapper cannot borrow its own pending ESP
-answer. `NeverDX87CallGraphTests` provides the focused `X87CallStack.*` and
+answer. `RegistrationCallABI.ReturningStackProofDoesNotNormalizeTheX87Stack`
+keeps the stack proof for bodies whose x87 normalization alone is incomplete
+or splits blocks by TOP, and for FXAM with a proved or unproved tag.
+`RegistrationCallABI.ScalarReturnDescribesEAXBesideAnX87Result` pins the leaf
+contract's EAX result for a leaf that also returns an x87 value. `NeverDX87CallGraphTests` provides the focused `X87CallStack.*` and
 `X87CallGraphCache.*` checks for the shared-cache and invocation boundaries.
 
 `MedCxxContinuationFrame.ProtectedSourcesFollowCompactedBlockIdentities` uses
