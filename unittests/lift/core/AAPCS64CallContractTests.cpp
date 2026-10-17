@@ -26,6 +26,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/Regex.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -307,24 +308,90 @@ TEST(AAPCS64CallContract, TheLLVMRoutePassesTheArgumentThroughAGOTSlot) {
   }
 }
 
+/// A shared object that defines g(x) { return x + x; } and calls it through
+/// its PLT entry, as `f: b g@plt` does for a preemptible g.  The loader
+/// relocates g's slot to g itself.
+constexpr va_t OwnG = Text, OwnF = Text + 0x10, OwnStub = Plt;
+BinaryImage makeOwnRoutinePLT(const char *Import = "g",
+                              const char *Alias = nullptr) {
+  constexpr uint32_t AddW0W0 = 0x0B000000u; // add w0, w0, w0
+  const uint32_t BranchToStub =
+      0x14000000u | (static_cast<uint32_t>(OwnStub - OwnF) >> 2 & 0x3FFFFFF);
+  std::vector<std::pair<va_t, const char *>> Functions = {{OwnG, "g"},
+                                                          {OwnF, "f"}};
+  if (Alias)
+    Functions.push_back({OwnG, Alias});
+  BinaryImage Img = makeImage({{OwnG, {AddW0W0, Ret}},
+                               {OwnF, {BranchToStub}},
+                               {OwnStub, pltEntry(OwnStub, Got)}},
+                              Functions, {Import},
+                              /*Defined=*/true);
+  for (unsigned B = 0; B < 8; ++B)
+    Img.Segments.back().Data[B] = static_cast<uint8_t>(OwnG >> (8 * B));
+  Img.CodePtrRelocSlots.insert(Got);
+  return Img;
+}
+
 TEST(AAPCS64CallContract,
      ASlotTheLoaderStartsAtThisImagesRoutinePassesItsArgs) {
-  // A shared object's PLT entry for g, a function it defines itself: the
-  // loader binds g's slot to g here, whose one argument the entry passes on.
-  constexpr va_t G = Text, Stub = Plt;
-  constexpr uint32_t AddW0W0 = 0x0B000000u; // add w0, w0, w0
-  BinaryImage Img =
-      makeImage({{G, {AddW0W0, Ret}}, {Stub, pltEntry(Stub, Got)}}, {{G, "g"}},
-                {"g"}, /*Defined=*/true);
-  for (unsigned B = 0; B < 8; ++B)
-    Img.Segments.back().Data[B] = static_cast<uint8_t>(G >> (8 * B));
-  Img.CodePtrRelocSlots.insert(Got);
-  const std::string Source = highC(Img, {G, Stub});
+  // The PLT entry passes g's one argument on, to g by its name.
+  const BinaryImage Img = makeOwnRoutinePLT();
+  const std::string Source = highC(Img, {OwnG, OwnStub});
   const std::string Entry = body(Source, "sub_10100");
   ASSERT_FALSE(Entry.empty()) << Source;
   EXPECT_NE(Entry.find("sub_10100(int64_t arg0)"), std::string::npos) << Entry;
-  EXPECT_NE(Entry.find("(arg0)"), std::string::npos) << Entry;
+  EXPECT_TRUE(llvm::Regex("[^[:alnum:]_]g\\(arg0\\)").match(Entry)) << Entry;
   EXPECT_EQ(Entry.find("unknown value"), std::string::npos) << Entry;
+}
+
+TEST(AAPCS64CallContract, ACallThroughAnAliasesSlotKeepsTheAliasesName) {
+  // libgcc's __lttf2 and __letf2 name one routine: a call through the slot
+  // the loader binds to one of them names the routine by that name.
+  const BinaryImage Img = makeOwnRoutinePLT("galias", "galias");
+  const std::string Source = highC(Img, {OwnG, OwnF, OwnStub});
+  for (const char *Name : {"f", "sub_10100"}) {
+    SCOPED_TRACE(Name);
+    const std::string Body = body(Source, Name);
+    ASSERT_FALSE(Body.empty()) << Source;
+    EXPECT_TRUE(llvm::Regex("[^[:alnum:]_]galias\\(arg0\\)").match(Body))
+        << Body;
+  }
+}
+
+TEST(AAPCS64CallContract, ACallToThePLTEntryOfItsOwnRoutinePassesItsArgs) {
+  // f reaches g through g's PLT entry and passes its argument on, whether
+  // or not the entry and g are decompiled with it.
+  const BinaryImage Img = makeOwnRoutinePLT();
+  for (const std::set<va_t> &Entries :
+       {std::set<va_t>{OwnG, OwnF, OwnStub}, std::set<va_t>{OwnF}}) {
+    SCOPED_TRACE(Entries.size());
+    const std::string Source = highC(Img, Entries);
+    const std::string F = body(Source, "f");
+    ASSERT_FALSE(F.empty()) << Source;
+    EXPECT_NE(F.find("f(int64_t arg0)"), std::string::npos) << F;
+    EXPECT_TRUE(llvm::Regex("[^[:alnum:]_]g\\(arg0\\)").match(F)) << F;
+    EXPECT_FALSE(llvm::Regex("[^[:alnum:]_]g_[[:xdigit:]]+\\(").match(Source))
+        << Source;
+  }
+  // The LLVM route passes it too, rather than a value of its own: inlined
+  // or not, what f returns depends on its argument.
+  llvm::LLVMContext Ctx;
+  const PipelineResult Result = run(Img, Ctx, {OwnG, OwnF}, true);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_TRUE(Result.LlvmModule);
+  const llvm::Function *Fn = Result.LlvmModule->getFunction("f");
+  ASSERT_NE(Fn, nullptr);
+  std::string IR;
+  llvm::raw_string_ostream OS(IR);
+  Fn->print(OS);
+  ASSERT_EQ(Fn->arg_size(), 1u) << IR;
+  EXPECT_FALSE(Fn->getArg(0)->use_empty()) << IR;
+  for (const llvm::BasicBlock &Block : *Fn)
+    for (const llvm::Instruction &I : Block)
+      if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&I);
+          Call && !llvm::isa<llvm::IntrinsicInst>(Call))
+        for (const llvm::Value *Argument : Call->args())
+          EXPECT_FALSE(llvm::isa<llvm::Constant>(Argument)) << IR;
 }
 
 } // namespace

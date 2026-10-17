@@ -46,6 +46,7 @@
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/PEImportShadow.h"
+#include "neverd/loader/DataSymbolBinding.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -1387,8 +1388,16 @@ void LLVMCWriter::writeImportCalleeDecls(llvm::Module &Mod) {
         const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Slot);
         const auto SlotVA =
             Load ? imageDataVA(Load->getPointerOperand()) : std::nullopt;
+        // So does the slot of a symbol the image defines itself, which the
+        // loader starts at that routine (ownRoutineOfImport).
+        const auto OwnRoutineSlot = [&] {
+          const Import *Imp = Img->findImportAt(*SlotVA);
+          return Imp && Imp->IATAddr == *SlotVA &&
+                 ownRoutineOfImport(*Img, *Imp).has_value();
+        };
         if (!CalledSymbol &&
-            (!Img || !SlotVA || !Img->ImportStorageSlots.count(*SlotVA)))
+            (!Img || !SlotVA ||
+             (!Img->ImportStorageSlots.count(*SlotVA) && !OwnRoutineSlot())))
           continue;
         std::string Name = resolveImportCalleeName(Call->getCalledOperand());
         if (Name.empty() || Declared.count(Name) ||

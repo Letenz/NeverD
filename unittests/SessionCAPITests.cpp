@@ -7385,6 +7385,48 @@ TEST_F(SessionCAPITest, BothCBackendsAgreeWhichFunctionsReturnAValue) {
 #endif
 }
 
+TEST_F(SessionCAPITest, APLTEntryOfALibrarysOwnVariadicRoutineIsTheRoutine) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "builds a glibc shared object";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // A shared object calls report, a variadic routine it defines itself,
+  // through report's PLT entry, whose slot the loader starts at report.  The
+  // entry passes every argument on, which C cannot, so it shows as report;
+  // the call through it passes the format and value its caller wrote.
+  const auto Source =
+      write("variadic-own.c", "#include <stdarg.h>\n"
+                              "#include <stdio.h>\n"
+                              "__attribute__((noinline)) void report(const "
+                              "char *f, ...) {\n"
+                              "  va_list a;\n"
+                              "  va_start(a, f);\n"
+                              "  vprintf(f, a);\n"
+                              "  va_end(a);\n"
+                              "}\n"
+                              "void use(int x) { report(\"%d\", x); }\n");
+  const std::string Library = (Directory / "libreport.so").string();
+  std::string Message;
+  ASSERT_EQ(
+      llvm::sys::ExecuteAndWait(NEVERD_RUNTIME_FIXTURE_COMPILER,
+                                {NEVERD_RUNTIME_FIXTURE_COMPILER, "-O1",
+                                 "-fPIC", "-shared", Source, "-o", Library},
+                                std::nullopt, {}, 60, 0, &Message),
+      0)
+      << Message;
+  const std::string Page = takeString(
+      neverd_decompile_all(Session, Library.c_str(), /*UseLlvmRoute=*/0, 0, 0));
+  ASSERT_FALSE(Page.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_NE(Page.find("jumps to the import report,"), std::string::npos)
+      << Page;
+  EXPECT_NE(Page.find("report((int64_t)(uintptr_t)(\"%d\"), "),
+            std::string::npos)
+      << Page;
+  EXPECT_EQ(Page.find("report(0"), std::string::npos) << Page;
+#endif
+}
+
 TEST_F(SessionCAPITest, StartAloneCallsTheBoundStartupImportWithMain) {
 #if !defined(__linux__)
   GTEST_SKIP() << "builds a glibc program";

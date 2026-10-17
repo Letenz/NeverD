@@ -19,6 +19,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/IndirectCallSlot.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
@@ -74,10 +75,14 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
     auto lookupDefinition = [&](const MedVar &V) {
       return Definitions.find(V);
     };
+    // A call to the stub of an import the loader starts at this image's own
+    // routine passes that routine's arguments.
     for (const MedBlock &B : F.Blocks)
       for (const MedOp &Op : B.Ops)
         if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst())
-          enqueue(Op.Inputs[0].ConstVal);
+          enqueue(importOwnRoutine(Img, &Result.CallArgumentSources,
+                                   Op.Inputs[0].ConstVal)
+                      .value_or(Op.Inputs[0].ConstVal));
         else if (Op.Opcode == NdOp::INDIR_CALL &&
                  !Result.CallArgumentSources.empty())
           if (const std::optional<va_t> Slot =

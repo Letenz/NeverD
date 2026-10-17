@@ -992,6 +992,15 @@ void HighCWriter::writeFunction(const HighFunc &Func) {
           libc::libcVariadicForward(Import));
       return;
     }
+  // So does one of a variadic routine this file defines, which the image
+  // reaches through its own symbol's PLT slot: C passes no `...` on.
+  if (const HighFunc *Routine = variadicOwnRoutineOfStub(Func)) {
+    if (EmitFunctionWrapper)
+      OS << "/* neverd.entry: 0x" << llvm::utohexstr(Func.Entry) << " */\n";
+    c_stub::writeVariadicImportStub(OS, functionIdentifier(Func),
+                                    functionIdentifier(*Routine), {}, nullptr);
+    return;
+  }
   if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Func)) {
     writeAnalysisOnlyFunction(Func);
     return;
