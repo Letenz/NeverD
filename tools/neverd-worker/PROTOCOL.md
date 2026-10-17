@@ -649,7 +649,8 @@ is capped at 8 MiB and the write-ahead journal at 24 MiB, both compact.
 something outside this worker changed them: git, another tool or a person. When
 the edit tables differ from what the worker last committed, or the history no
 longer describes them, it resets the history to the files, reloads every table
-and keeps staged annotations staged on top of them; a changed local types file
+and keeps staged annotations staged on top of them, except those the files now
+hold as staged (`comments_kept` counts the rest); a changed local types file
 is reloaded and its analysis restarts. It answers `{changed, tables,
 local_types, comments_kept, dirty}`, and `changed:false` for files the worker
 wrote itself. Until a client syncs, an edit after such a change is refused with

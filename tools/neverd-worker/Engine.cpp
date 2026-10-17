@@ -2288,15 +2288,18 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                     "The project's files changed but could not be loaded",
                     {{"state_changed", true}});
       for (const auto &[address, text] : staged) {
-        store.stage(
-            {{"kind", "annotation"},
-             {"address", hexAddress(address)},
-             {"before", ownedString(neverd_annotation_get(session_, address))},
-             {"after", text}});
+        // A comment the files now hold as staged here needs no save.
+        auto before = ownedString(neverd_annotation_get(session_, address));
+        if (before == text)
+          continue;
+        store.stage({{"kind", "annotation"},
+                     {"address", hexAddress(address)},
+                     {"before", std::move(before)},
+                     {"after", text}});
         neverd_annotation_set(session_, address, text.c_str());
+        ++kept;
       }
-      dirty_ = !staged.empty();
-      kept = staged.size();
+      dirty_ = kept != 0;
     }
     if (types) {
       static const auto load =

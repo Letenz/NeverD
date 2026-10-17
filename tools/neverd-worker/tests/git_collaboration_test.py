@@ -125,6 +125,23 @@ def run(worker, cli=None):
         assert names == {"0x0": "alice_entry", "0x4": "bob_four", "0x6": "alice_six"}, names
         publish(alice, "alice again")
 
+        # A comment staged here that a pull brings as it is needs no save.
+        client = Client(worker)
+        try:
+            assert client.call("open", {"path": str(alice / "a.evm")})["status"] == "ok"
+            assert client.call("annotation_set", {"address": "0x14",
+                                                  "text": "same"})["status"] == "ok"
+            git(bob, "pull", "-q", "origin", "main")
+            edit(bob, ("project_sync", {}),
+                 ("annotation_set", {"address": "0x14", "text": "same"}), ("save", {}))
+            publish(bob, "bob same")
+            git(alice, "pull", "-q", "origin", "main")
+            synced = client.call("project_sync", {})
+            assert synced["payload"] == {"changed": True, "tables": True, "local_types": False,
+                                         "comments_kept": 0, "dirty": False}, synced
+        finally:
+            client.close()
+
         # A file git left with conflict markers is named, not taken.
         renames = alice / "a.evm.neverd/renames.json"
         kept = renames.read_text()
