@@ -7181,6 +7181,21 @@ an export. `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
 `unittests/loader/fixtures/mingw_sections.exe` (its Makefile rebuilds it with
 MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its
 `.file` record is dropped, and a static function's own record names it.
+`StaticSymbolTableTest.MinGWDataAmongCodeIsData` reads `mingw_text_data.exe`
+and its i386 build `mingw_text_data32.exe`, which keep a -1-headed pointer
+table in `.text` as GNU ld keeps `__CTOR_LIST__`: the table is data, the
+pointer to it in `.data` points to data, and its entry is a slot that holds
+code.
+`SessionCAPITest.LLVMCReadsAPointerTableAmongCodeAsData` emits LLVM-C for the
+function that reads the table through `.data`, which was refused before.
+`NativePointerRelocationBoundary.MinGWPointerTableAmongCodeMirrorsItsFunction`
+finds the entry of both fixtures' tables as the function's address in the
+`.text` pointer-table mirror, and
+`MinGWPointerTableAmongCodeTooLargeToMirrorIsRefused` pads `.text` past the
+embedding limit with MinGW-w64 GCC, when installed, and expects the refusal.
+`LLVMCValues.AGlobalAnEarlierInitializerNamesIsDeclaredFirst` compiles and runs
+a whole module whose `.data`-like global points into a constructor list
+defined after it.
 `HighControlFlowSemantics.SlotCallGoesThroughThePointerItHolds` calls through
 MinGW's `__imp_X` variables, which hold the image's own code, relocated or in
 a fixed image, rather than naming an import by their spelling.
