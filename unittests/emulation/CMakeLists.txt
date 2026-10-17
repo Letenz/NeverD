@@ -274,6 +274,7 @@ set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
 add_neverd_unittest(NeverDAndroidNativeTests
   AndroidNativeTests.cpp
   AndroidMemoryTests.cpp
+  AndroidObservationTests.cpp
   AndroidTokenTests.cpp
   AndroidPropertyTests.cpp
   AndroidStdioTests.cpp

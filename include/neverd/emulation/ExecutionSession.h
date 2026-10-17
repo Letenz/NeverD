@@ -57,6 +57,8 @@ public:
   /// instruction ends the run with SessionExitKind::ExecutionWatch and leaves
   /// the CPU at that PC. Resuming at the reported PC executes that one
   /// instruction without matching again, so an owner may keep the range.
+  /// In checked execution, an exhausted instruction budget or quantum takes
+  /// precedence over observing the next instruction.
   llvm::Error watchExecution(std::vector<ExecutionWatch> Watches);
   /// Replace RAM write watches while stopped. A committed write ends the run
   /// with MemoryWriteWatch before the next instruction, without charging it.
