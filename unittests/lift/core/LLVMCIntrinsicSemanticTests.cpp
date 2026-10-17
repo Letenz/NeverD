@@ -96,6 +96,59 @@ struct StosFixture {
   }
 };
 
+struct MovsFixture {
+  llvm::LLVMContext Context;
+  llvm::Module M{"rep-movs", Context};
+  llvm::IRBuilder<> B{Context};
+  llvm::Function *Fn;
+  llvm::CallInst *Call;
+
+  MovsFixture(unsigned Bytes, X86RepMovs::Direction Dir,
+              llvm::StringRef Name = "copy", bool Live = false,
+              bool BadConstraints = false, bool BadTemplate = false) {
+    M.setDataLayout("e-p:64:64");
+    const char Suffix = Bytes == 1   ? 'b'
+                        : Bytes == 2 ? 'w'
+                        : Bytes == 4 ? 'l'
+                                     : 'q';
+    std::string Rep = std::string("rep movs") + Suffix;
+    std::string Asm =
+        Dir == X86RepMovs::Forward ? Rep
+        : Dir == X86RepMovs::Backward
+            ? "std\n\t" + Rep + "\n\tcld"
+            : "test $6,$6\n\tje 1f\n\tstd\n\t1:\n\t" + Rep + "\n\tcld";
+    if (BadTemplate)
+      Asm += "\n\tnop";
+    const bool Dynamic = Dir == X86RepMovs::Dynamic;
+    std::string Constraints = std::string("={si},={di},={cx},0,1,2,") +
+                              (Dynamic ? "r," : "") +
+                              "~{memory},~{dirflag},~{cc}";
+    if (BadConstraints)
+      Constraints += ",~{flags}";
+    auto *Ret = llvm::StructType::get(
+        Context, {B.getInt64Ty(), B.getInt64Ty(), B.getInt64Ty()});
+    std::vector<llvm::Type *> Types{B.getInt64Ty(), B.getInt64Ty(),
+                                    B.getInt64Ty()};
+    if (Dynamic)
+      Types.push_back(B.getInt64Ty());
+    Fn = llvm::Function::Create(
+        llvm::FunctionType::get(Live ? B.getInt64Ty() : B.getVoidTy(), Types,
+                                false),
+        llvm::GlobalValue::ExternalLinkage, Name, M);
+    B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Fn));
+    auto *IA = llvm::InlineAsm::get(llvm::FunctionType::get(Ret, Types, false),
+                                    Asm, Constraints, true);
+    llvm::SmallVector<llvm::Value *, 4> Args;
+    for (auto &Arg : Fn->args())
+      Args.push_back(&Arg);
+    Call = B.CreateCall(IA, Args);
+    if (Live)
+      B.CreateRet(B.CreateExtractValue(Call, 0));
+    else
+      B.CreateRetVoid();
+  }
+};
+
 // Compile the emitted C itself. It checks both diagnostics and behavior, so a
 // renderer that prints a plausible mnemonic but drops the memory effect fails.
 void compileAndCheck(const std::string &Source, bool LLVMOnly = false,
@@ -1053,6 +1106,84 @@ TEST(LLVMCIntrinsicSemantics, RepStosRejectsUnprovedContracts) {
     EXPECT_FALSE(classifyX86RepStos(Arch::X64, *F.Call));
     EXPECT_DEATH((void)emit(F.M),
                  "unsupported REP STOS inline assembly contract");
+  }
+}
+
+TEST(LLVMCIntrinsicSemantics, RepMovsForwardBackwardDynamicAndOverlap) {
+  // copy<bytes>_<dir>(source, destination, count[, df]) moves count
+  // elements, the way the processor does: an element is read whole before it
+  // is written, and a forward byte copy one byte up repeats the first byte.
+  std::string Source = "#include <stdint.h>\n";
+  for (unsigned Bytes : {1u, 2u, 4u, 8u})
+    for (auto Dir :
+         {X86RepMovs::Forward, X86RepMovs::Backward, X86RepMovs::Dynamic}) {
+      const std::string Name =
+          "copy" + std::to_string(Bytes) + "_" + std::to_string(Dir);
+      MovsFixture F(Bytes, Dir, Name);
+      ASSERT_TRUE(classifyX86RepMovs(Arch::X64, *F.Call));
+      Source += emit(F.M);
+    }
+  Source += R"c(
+static unsigned char data[96];
+static void reset(void) {
+  for (unsigned i = 0; i < 96; ++i)
+    data[i] = (unsigned char)i;
+}
+static int expect(unsigned from, unsigned to, unsigned bytes, int backward) {
+  /* bytes moved from data[from] to data[to] as the processor moves them */
+  unsigned char model[96];
+  for (unsigned i = 0; i < 96; ++i)
+    model[i] = (unsigned char)i;
+  for (unsigned e = 0; e < 4; ++e) {
+    unsigned at = backward ? 3 - e : e;
+    unsigned char element[8];
+    for (unsigned b = 0; b < bytes; ++b)
+      element[b] = model[from + at * bytes + b];
+    for (unsigned b = 0; b < bytes; ++b)
+      model[to + at * bytes + b] = element[b];
+  }
+  for (unsigned i = 0; i < 96; ++i)
+    if (data[i] != model[i])
+      return 0;
+  return 1;
+}
+int main(void) {
+)c";
+  for (unsigned Bytes : {1u, 2u, 4u, 8u})
+    for (auto Dir :
+         {X86RepMovs::Forward, X86RepMovs::Backward, X86RepMovs::Dynamic})
+      for (bool Backward : {false, true}) {
+        if (Dir != X86RepMovs::Dynamic &&
+            Backward != (Dir == X86RepMovs::Backward))
+          continue;
+        const std::string Name =
+            "copy" + std::to_string(Bytes) + "_" + std::to_string(Dir);
+        const std::string Df =
+            Dir == X86RepMovs::Dynamic ? (Backward ? ",1" : ",0") : "";
+        // Disjoint, then overlapping by one byte upward.
+        for (unsigned To : {48u, 9u}) {
+          const unsigned From = 8;
+          const unsigned Start = Backward ? 3 * Bytes : 0;
+          Source += "reset(); " + Name + "((uintptr_t)&data[" +
+                    std::to_string(From + Start) + "],(uintptr_t)&data[" +
+                    std::to_string(To + Start) + "],4" + Df + ");\n";
+          Source += "if (!expect(" + std::to_string(From) + "," +
+                    std::to_string(To) + "," + std::to_string(Bytes) + "," +
+                    (Backward ? "1" : "0") + ")) return 1;\n";
+        }
+        Source += Name + "(0,0,0" + Df + ");\n";
+      }
+  Source += "return 0;}\n";
+  compileAndCheck(Source);
+}
+
+TEST(LLVMCIntrinsicSemantics, RepMovsRejectsUnprovedContracts) {
+  for (unsigned Variant = 0; Variant < 3; ++Variant) {
+    MovsFixture F(1, X86RepMovs::Dynamic, "bad_copy", Variant == 0,
+                  Variant == 1, Variant == 2);
+    EXPECT_FALSE(classifyX86RepMovs(Arch::X64, *F.Call));
+    EXPECT_DEATH((void)emit(F.M),
+                 "unsupported REP MOVS inline assembly contract");
   }
 }
 

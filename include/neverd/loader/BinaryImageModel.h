@@ -552,6 +552,12 @@ struct BinaryImage {
   /// writable segment holds them among plain data, which they do not make
   /// pointer storage.
   std::set<va_t> IndirectFunctionSlots;
+  /// Pointer slots the image initializes with one of its own functions and
+  /// no instruction of it changes or lets escape, slot -> function: MinGW's
+  /// `__imp_X` variables (__MINGW_IMP_SYMBOL), initialized to the function
+  /// its runtime supplies in place of an import.  A call through one calls
+  /// that function (coff_loader::recordConstantCodeSlots).
+  std::map<va_t, va_t> ConstantCodeSlots;
   /// Concrete Mach-O pointer bindings decoded from LC_DYLD_INFO bind bytecode
   /// or LC_DYLD_CHAINED_FIXUPS chains.  Kept separate from ImportPtrSlots so
   /// patch provenance remains an exact view of the indirect symbol table.

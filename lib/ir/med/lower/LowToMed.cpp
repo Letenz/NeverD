@@ -47,6 +47,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <tuple>
 
@@ -712,7 +713,19 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
 
     size_t BoundaryIndex = 0;
     for (size_t LowOpIndex = 0; LowOpIndex < LB.Ops.size(); ++LowOpIndex) {
-      const LowOp &LOp = LB.Ops[LowOpIndex];
+      // A call through a slot that always holds one of the image's own
+      // functions calls that function (BinaryImage::ConstantCodeSlots).
+      std::optional<LowOp> DirectCall;
+      if (const LowOp &Call = LB.Ops[LowOpIndex];
+          Image && Call.Opcode == NdOp::INDIR_CALL && Call.NumInputs >= 1 &&
+          Call.Inputs[0].isConst())
+        if (auto It = Image->ConstantCodeSlots.find(Call.Inputs[0].Offset);
+            It != Image->ConstantCodeSlots.end()) {
+          DirectCall = Call;
+          DirectCall->Opcode = NdOp::CALL;
+          DirectCall->Inputs[0] = NdVar::cst(It->second, Call.Inputs[0].Size);
+        }
+      const LowOp &LOp = DirectCall ? *DirectCall : LB.Ops[LowOpIndex];
       while (BoundaryIndex < LB.InstructionBoundaries.size()) {
         const LowInstructionBoundary &Boundary =
             LB.InstructionBoundaries[BoundaryIndex];

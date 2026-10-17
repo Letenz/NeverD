@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Extract whether each C library routine returns a value from C headers.
+"""Extract what each C library routine returns from C headers.
 
 The C library tables (include/neverd/libc) name each routine and the header
 that declares it, but not its result type. This compiles one translation unit
 that includes every such header the host provides and records, for each
-routine those headers declare, whether its declared result is void. A routine
-no header declares, such as a macro or another system's extension, is left
-out, so a lookup of it stays unknown. The generated table carries no header
-text.
+routine those headers declare, whether its declared result is void, a pointer
+(to an object or to a function) or another value. A routine no header
+declares, such as a macro or another system's extension, is left out, so a
+lookup of it stays unknown. The generated table carries no header text.
 """
 import argparse
 import re
@@ -39,6 +39,13 @@ DECLARATION = re.compile(r"^[|`]-FunctionDecl 0x[0-9a-f]+ .*? (\w+) '([^']*)'")
 # A function type returning void is spelled `void (parameters)`; `void (*`
 # begins a declarator, a function returning a pointer to a function.
 VOID_RESULT = re.compile(r"^void \((?!\*)")
+# One returning a pointer spells a `*` before its parameters, `char *(...)`,
+# or begins a declarator there, `void (*(int, ...))(int)`.
+POINTER_RESULT = re.compile(r"^[^(]*(?:\*\s*\(|\(\*)")
+# A top-level typedef, `|-TypedefDecl 0x... name 'type'` or, sugared,
+# `'type':'canonical type'`: signal's `__sighandler_t` names a pointer.
+TYPEDEF = re.compile(
+    r"^[|`]-TypedefDecl 0x[0-9a-f]+ .*? (\w+) '([^']*)'(?::'([^']*)')?")
 
 
 def read_tables():
@@ -72,11 +79,32 @@ def declared_results(compiler, headers):
              "-fno-color-diagnostics", "-Xclang", "-ast-dump", str(source)],
             check=True, capture_output=True, text=True).stdout
     types = {}
+    typedefs = {}
     for line in dump.splitlines():
         match = DECLARATION.match(line)
         if match:
             types[match.group(1)] = match.group(2)
-    return types
+        match = TYPEDEF.match(line)
+        if match:
+            typedefs[match.group(1)] = match.group(3) or match.group(2)
+    return types, typedefs
+
+
+def result_kind(function_type, typedefs):
+    """Void, Pointer or Value: what a function of this type returns."""
+    if VOID_RESULT.match(function_type):
+        return "Void"
+    if POINTER_RESULT.match(function_type):
+        return "Pointer"
+    # A result a typedef names is what the typedef names.
+    result = function_type.split("(", 1)[0].strip()
+    seen = set()
+    while result in typedefs and result not in seen:
+        seen.add(result)
+        result = typedefs[result]
+    if result.endswith("*") or "*)" in result:
+        return "Pointer"
+    return "Value"
 
 
 def library_version(compiler):
@@ -96,7 +124,7 @@ def main():
     parser.add_argument("--output", type=Path, default=OUTPUT)
     arguments = parser.parse_args()
     routines = read_tables()
-    types = declared_results(arguments.compiler, routines.values())
+    types, typedefs = declared_results(arguments.compiler, routines.values())
     compiler = subprocess.run([arguments.compiler, "--version"], check=True,
                               capture_output=True,
                               text=True).stdout.splitlines()[0]
@@ -110,7 +138,7 @@ def main():
     ]
     for name in sorted(routines):
         if name in types:
-            kind = "Void" if VOID_RESULT.match(types[name]) else "Value"
+            kind = result_kind(types[name], typedefs)
             lines.append(f"NEVERD_LIBC_RETURN_KIND(\"{name}\", {kind})")
     arguments.output.write_text("\n".join(lines) + "\n")
 

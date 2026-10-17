@@ -82,6 +82,51 @@ std::optional<X86RepStos> classifyX86RepStos(Arch TheArch,
   return std::nullopt;
 }
 
+std::optional<X86RepMovs> classifyX86RepMovs(Arch TheArch,
+                                             const llvm::CallInst &Call) {
+  const auto *IA = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
+  if (!IA || (TheArch != Arch::X86 && TheArch != Arch::X64) ||
+      !Call.use_empty() || !IA->hasSideEffects() || IA->isAlignStack() ||
+      IA->canThrow() || IA->getDialect() != llvm::InlineAsm::AD_ATT)
+    return std::nullopt;
+  const unsigned Bits = TheArch == Arch::X86 ? 32 : 64;
+  const auto *Ret = llvm::dyn_cast<llvm::StructType>(Call.getType());
+  if (!Ret || !Ret->isLiteral() || Ret->getNumElements() != 3 ||
+      llvm::any_of(Ret->elements(),
+                   [&](llvm::Type *T) { return !T->isIntegerTy(Bits); }))
+    return std::nullopt;
+  for (unsigned Bytes : {1u, 2u, 4u, 8u}) {
+    if (Bytes == 8 && TheArch == Arch::X86)
+      continue;
+    const char Suffix = Bytes == 1   ? 'b'
+                        : Bytes == 2 ? 'w'
+                        : Bytes == 4 ? 'l'
+                                     : 'q';
+    const std::string Rep = std::string("rep movs") + Suffix;
+    for (auto Dir :
+         {X86RepMovs::Forward, X86RepMovs::Backward, X86RepMovs::Dynamic}) {
+      const bool Dynamic = Dir == X86RepMovs::Dynamic;
+      const std::string Asm =
+          Dir == X86RepMovs::Forward ? Rep
+          : Dir == X86RepMovs::Backward
+              ? "std\n\t" + Rep + "\n\tcld"
+              : "test $6,$6\n\tje 1f\n\tstd\n\t1:\n\t" + Rep + "\n\tcld";
+      const std::string Constraints = std::string("={si},={di},={cx},0,1,2,") +
+                                      (Dynamic ? "r," : "") +
+                                      "~{memory},~{dirflag},~{cc}";
+      if (IA->getAsmString() != Asm ||
+          IA->getConstraintString() != Constraints ||
+          Call.arg_size() != (Dynamic ? 4u : 3u) ||
+          llvm::any_of(Call.args(), [&](const llvm::Use &Arg) {
+            return !Arg->getType()->isIntegerTy(Bits);
+          }))
+        continue;
+      return X86RepMovs{Dir, Bytes, Bits};
+    }
+  }
+  return std::nullopt;
+}
+
 const char *lookupX86AsmToC(const char *Mnem) {
   for (const auto &E : X86AsmTable)
     if (std::strcmp(Mnem, E.AsmStr) == 0)

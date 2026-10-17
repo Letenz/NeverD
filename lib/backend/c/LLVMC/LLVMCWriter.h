@@ -132,7 +132,9 @@ public:
 
   //--- Function rendering (LLVMCFuncWriter.cpp) ---
   bool isAnalysisOnlyFunction(const llvm::Function &Fn) const;
-  bool isReferencedByExecutableProjection(const llvm::Function &Fn) const;
+  /// Whether printed code or data names \p Fn: a body's instruction, a
+  /// definition's personality or a global's initializer.
+  bool isReferencedByProjection(const llvm::Function &Fn) const;
   void writeFunction(llvm::Function &Fn);
   void writeAnalysisOnlyFunction(llvm::Function &Fn);
   void writeFunctionProjection(llvm::Function &Fn);
@@ -544,6 +546,21 @@ public:
   prototypedParamCount(const llvm::Function &Callee) const;
   bool looksLikeHiddenSretOperand(const llvm::Value *Arg) const;
   std::string printedCalleeName(const llvm::CallBase &Call) const;
+  /// The C library routine \p Call reaches, directly or through its import,
+  /// whose declaration types its arguments and result: one a header the unit
+  /// includes declares, or one the runtime's tables type (Prototype), which
+  /// the unit declares itself (writeImportCalleeDecls).  Empty for another
+  /// call, which passes and returns what the machine did.
+  struct LibraryCallee {
+    std::string Name;
+    const libc::LibCPrototype *Prototype = nullptr;
+    explicit operator bool() const { return !Name.empty(); }
+  };
+  LibraryCallee libraryCallee(const llvm::CallBase &Call) const;
+  /// \p Call's text \p Expr as a value of the call's own type: the pointer a
+  /// library routine returns as the integer that holds it, and the result one
+  /// that returns nothing leaves undefined as zero.
+  std::string libraryResult(const llvm::CallBase &Call, std::string Expr) const;
   /// MSVC ctor/dtor that returns `this` and whose result is unread. A store
   /// into an alloca that nothing loads does not count. Print the call as a
   /// statement in a non-void function too.
@@ -607,9 +624,10 @@ public:
   /// whether the text is an address, as valueStr reports it.
   std::string callArgStr(const llvm::Value *Arg, const llvm::CallBase &Call,
                          unsigned ArgIdx, bool *PointerSpelling = nullptr);
-  /// Whether the declaration written for \p Call's callee is its LLVM
-  /// prototype, with an integer parameter at \p ArgIdx: C converts no
-  /// address to it implicitly.
+  /// Whether the declaration written for \p Call's callee, or the type a
+  /// call through a pointer casts it to, is its LLVM prototype, with an
+  /// integer parameter at \p ArgIdx: C converts no address to it
+  /// implicitly.
   bool declaredParameterIsInteger(const llvm::CallBase &Call,
                                   llvm::StringRef CalleeName,
                                   unsigned ArgIdx) const;
@@ -726,7 +744,8 @@ public:
   std::string unsignedCompareOperand(const llvm::Value *V, std::string Text);
   std::string renderInline(const llvm::Instruction &Inst);
   std::string renderInlineImpl(const llvm::Instruction &Inst);
-  std::string callExpr(const llvm::CallBase &Call);
+  /// \p Call as C; as a \p Statement, whose value nothing reads.
+  std::string callExpr(const llvm::CallBase &Call, bool Statement = false);
   /// The C function-pointer type of \p Call's callee, from the call's own
   /// type and convention.  \p Strict refuses what shown C may approximate.
   std::string indirectCalleeType(const llvm::CallBase &Call, bool Strict);
@@ -753,6 +772,8 @@ public:
   /// The helper each modeled supervisor call in the unit prints through.
   std::map<Intrinsic, std::string> SyscallHelperNames;
   std::map<const llvm::Function *, std::string> FunctionIdentifiers;
+  /// The identifiers FunctionIdentifiers gives the module's functions.
+  std::set<std::string> FunctionIdentifierNames;
   /// Exact projected prototypes captured while rendering definitions. They
   /// include source presentation choices such as inferred void and sret.
   std::map<const llvm::Function *, std::string> DefinitionDeclarations;
@@ -876,6 +897,9 @@ public:
   /// the import table print by name (resolveImportCalleeName), with the type
   /// the calls return.
   void writeImportCalleeDecls(llvm::Module &Mod);
+  /// The import a call through a slot the loader binds, or to the symbol
+  /// such a slot holds, reaches; empty for any other call.
+  std::string boundImportCallee(const llvm::CallBase &Call) const;
   /// Last store in the current block. Cleared with `AllocaImmediates`.
   std::map<const llvm::AllocaInst *, const llvm::Value *> AllocaLastValues;
   /// Last store seen in `collectTypedHomes`. Survives per-block

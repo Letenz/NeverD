@@ -2166,6 +2166,220 @@ int main(void) { return first_constructor() == 42 ? 0 : 1; }
     compileAndRun(Source, Optimization);
 }
 
+TEST(LLVMCValues, ACallerWithUnwindInformationSeesItsCalleeDeclared) {
+  // Every function an image describes for unwinding, as an ELF FDE or an x64
+  // .pdata entry, carries its exception record, which marks it for
+  // exception analysis.  Its body still prints as code that calls on.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+define i64 @caller(i64 %value) !neverd.windows.eh !1 {
+entry:
+  %result = call i64 @callee(i64 %value)
+  ret i64 %result
+}
+define i64 @callee(i64 %value) !neverd.windows.eh !1 {
+entry:
+  %result = add i64 %value, 1
+  ret i64 %result
+}
+!0 = !{}
+!1 = !{i32 11, !"complete", !"dwarf-fde", i8 0, i64 4096, i64 4100, i32 0, i32 0, i64 8192, i8 0, i8 0, i32 0, i16 0, i32 0, i32 0, !"none", !"", i64 0, i64 0, !"", !0, !0, !0, !0, !0, !0, !0, !0, !0, !0, i32 0, !0, i1 false, !0, !0}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  for (bool Preserve : {false, true}) {
+    SCOPED_TRACE(Preserve);
+    neverd::CEmitterOptions Options;
+    Options.PreserveLLVMFunctionTypes = Preserve;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+    const size_t Declaration = Source.find(" callee(uint64_t arg0);");
+    ASSERT_NE(Declaration, std::string::npos) << Source;
+    EXPECT_LT(Declaration, Source.find(" caller(uint64_t arg0) {")) << Source;
+    Source += R"(
+int main(void) { return caller(41) == 42 ? 0 : 1; }
+)";
+    compileAndRun(Source, "-O0");
+  }
+}
+
+TEST(LLVMCValues, ALibraryRoutineCalledThroughItsImportTakesItsDeclaration) {
+  // A whole module calls routines through their import table, whose mirror
+  // folds each slot's load to the import's symbol.  A routine a header
+  // declares takes its arguments and returns its result as that declaration
+  // types them, as a direct call to it does; one only the Windows runtime's
+  // tables type is declared from them.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+@fputc = external global i8, !neverd.data-symbol !0
+@getenv = external global i8, !neverd.data-symbol !0
+@free = external global i8, !neverd.data-symbol !0
+@EnterCriticalSection = external global i8, !neverd.data-symbol !0
+define i64 @use(i64 %stream, i64 %lock, i64 %name) {
+entry:
+  %put = call i64 @fputc(i64 120, i64 %stream)
+  %entered = call i64 @EnterCriticalSection(i64 %lock)
+  %value = call i64 @getenv(i64 %name)
+  %freed = call i64 @free(i64 %value)
+  %sum = add i64 %put, %value
+  ret i64 %sum
+}
+!0 = !{}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::CEmitterOptions Options;
+  Options.Format = neverd::BinaryFormat::COFF;
+  Options.TheArch = neverd::Arch::X64;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("#include <stdio.h>"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("#include <stdlib.h>"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("extern void EnterCriticalSection(void *);"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("fputc("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("    EnterCriticalSection((void *)(uintptr_t)("),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("((uint64_t)(uintptr_t)getenv("), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("    free((void *)(uintptr_t)("), std::string::npos)
+      << Source;
+  Source += R"c(
+static int entered;
+void EnterCriticalSection(void *lock) { entered = lock != 0; }
+int main(void) {
+  int lock = 0;
+  if (use((uint64_t)(uintptr_t)stderr, (uint64_t)(uintptr_t)&lock,
+          (uint64_t)(uintptr_t)"NEVERD_UNSET_VARIABLE") != 'x')
+    return 1;
+  return entered ? 0 : 2;
+}
+)c";
+  compileAndRun(Source, "-O0");
+}
+
+TEST(LLVMCValues, ARuntimeRoutineReturningAFunctionPointerIsDeclared) {
+  // msvcrt's _onexit takes and returns an _onexit_t, a function pointer,
+  // which its declaration spells inside the function's declarator.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+@_onexit = external global i8, !neverd.data-symbol !0
+define i64 @register_handler(i64 %function) {
+entry:
+  %registered = call i64 @_onexit(i64 %function)
+  ret i64 %registered
+}
+!0 = !{}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::CEmitterOptions Options;
+  Options.Format = neverd::BinaryFormat::COFF;
+  Options.TheArch = neverd::Arch::X64;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("extern int (*_onexit(int (*)(void)))(void);"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(
+      Source.find("((uint64_t)(uintptr_t)_onexit((int (*)(void))(uintptr_t)("),
+      std::string::npos)
+      << Source;
+  Source += R"c(
+int (*_onexit(int (*function)(void)))(void) { return function; }
+static int seven(void) { return 7; }
+int main(void) {
+  return register_handler((uint64_t)(uintptr_t)seven) ==
+                 (uint64_t)(uintptr_t)seven
+             ? 0
+             : 1;
+}
+)c";
+  compileAndRun(Source, "-O0");
+}
+
+TEST(LLVMCValues, AWeakImportIsDeclaredWeak) {
+  // An ELF _init calls __gmon_start__ only where profiling linked it: the
+  // weak reference's address is null otherwise, and the program links.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+@__gmon_start__ = extern_weak global [0 x i8], !neverd.data-symbol !0
+define i64 @init_profiling() {
+entry:
+  %absent = icmp eq i64 ptrtoint (ptr @__gmon_start__ to i64), 0
+  br i1 %absent, label %done, label %start
+start:
+  %started = call i64 @__gmon_start__()
+  br label %done
+done:
+  %result = phi i64 [ 0, %entry ], [ 1, %start ]
+  ret i64 %result
+}
+!0 = !{}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::CEmitterOptions Options;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("extern __attribute__((weak)) void "
+                        "__gmon_start__(void);"),
+            std::string::npos)
+      << Source;
+  Source += R"c(
+int main(void) {
+  init_profiling();
+  return 0;
+}
+)c";
+  compileAndRun(Source, "-O0");
+}
+
+TEST(LLVMCValues, ADefinitionOfALibraryRoutinesNameTakesItsAddress) {
+  // The image's own copy of a C library routine, as MinGW's atexit, is not
+  // the routine its header declares.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+define i32 @atexit(i64 %function) !neverd.rewrite.source-identity !0 {
+entry:
+  %low = trunc i64 %function to i32
+  ret i32 %low
+}
+define i32 @register_exit(i64 %function) {
+entry:
+  %result = call i32 @atexit(i64 %function)
+  ret i32 %result
+}
+!0 = !{i32 1, i64 4198400}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::CEmitterOptions Options;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("/* atexit */\n"), std::string::npos) << Source;
+  EXPECT_NE(Source.find(" atexit_401000(uint64_t arg0) {"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("atexit_401000(arg0)"), std::string::npos) << Source;
+  Source += R"(
+#include <stdlib.h>
+int main(void) { return register_exit(7) == 7 ? 0 : 1; }
+)";
+  compileAndRun(Source, "-O0");
+}
+
 TEST(LLVMCValues, ReloadedFieldGuardSurvivesAnInterveningCall) {
   llvm::LLVMContext Context;
   llvm::SMDiagnostic Diagnostic;

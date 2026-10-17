@@ -394,6 +394,38 @@ raw copy would reach one of its slots (`tryResolveGlobalData`). A mirror built
 while an earlier one's initializer resolved follows that initializer in the
 module, so whole-module LLVM-C declares each global an earlier initializer
 names before defining the globals in module order (`writeGlobals`).
+MinGW's runtime defines a `__imp_X` variable for each function it supplies
+in place of an import (__MINGW_IMP_SYMBOL), initialized to that function, and
+calls through it. Such a variable of an x86 or x64 image's symbol table that
+holds one of the image's function entries is constant when nothing changes or
+lets it escape: every instruction a linear sweep of the code finds naming it,
+resynchronized at the entries the metadata gives, reads it, and no pointer in
+data or export names it (`recordConstantCodeSlots`, `ConstantCodeSlots`).
+LowToMed then lowers a call through it as a call to that function, which both
+C routes print. A lazy binding, which the function it starts at rewrites,
+stays a variable the call loads.
+
+Whole-module LLVM C is one translation unit a C compiler builds. Every
+definition is declared before the bodies, one an unwind record marks for
+exception analysis too (`neverd.windows.eh` holds an ELF FDE or a `.pdata`
+entry alike): those bodies print as code. A C library routine the code calls,
+directly or through the slot or symbol the loader binds for its import
+(`libraryCallee`), takes the declaration a header gives it, or the prototype
+the runtime's tables give it, which the unit declares itself, weak where the
+image's reference is weak (`__gmon_start__`). Its arguments convert to the
+parameter types; a pointer it returns converts to the integer that holds it;
+the result of one that returns nothing is never read, and where code reads
+the register it left that is zero, as for any undefined value
+(`libraryResult`; `LibCReturnKinds.inc` records pointer results). A
+definition named like such a routine is the image's own copy and takes its
+address (`atexit_140001234`), as a body lifted under an import's name does.
+An address into a byte array the module defines is an offset into it, in a
+global's initializer as in code, and an import a global names is declared
+before the globals. A function with Windows exception handling includes
+`<excpt.h>`, which names what its filters print. `rep movs` copies element
+by element in its direction, as `rep stos` stores; a shape the lifter does
+not emit is refused, since an intrinsic would take its operands in the
+constraints' order.
 Where a linker folded identical
 functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's
@@ -6183,6 +6215,9 @@ inline architecture or format tests. A fact about an ISA is a `TargetRegInfo`
 trait set in its `lib/ir/TargetRegInfo<ISA>.cpp`. A calling-convention rule is a
 `CallArgumentConvention` entry in its own
 `lib/ir/med/abi/MedCallConvention<Name>.cpp`, listed in `MedCallConvention.cpp`.
+An entry for a format wins over one for every format of its architecture:
+Microsoft x64 is COFF's, and System V x86-64 that of ELF and Mach-O, whose
+x86-64 convention Apple took from it.
 Functions that never return are listed per runtime under `include/neverd/libc`
 (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`).
 Supporting another target then adds a file or a table entry instead of a branch
