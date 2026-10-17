@@ -21,6 +21,13 @@ read-only tails, dynamic provider lifetimes, multiple consumers, token
 competition after wake, deadlock and failed resumption. Timed waits remain an
 explicit unsupported boundary.
 
+`AndroidRandom.*` compares 64-value sequences with answers produced by a
+separate Android 9 BSD implementation, including zero/high-bit seeds, aliases,
+reseeding, per-process isolation, two guest threads, dynamic provider lifetime,
+`rand_r` writes and invalid/read-only pointers. Native callers run at O0/O2
+with ordinary, packed and RELR relocations on available CPU backends. Custom
+state generators retain an explicit unsupported test.
+
 ## MXCSR recovery checks
 
 `InterpreterSpecialization.MXCSR*` covers arbitrary entry state, exact memory values, reserved bits, DAZ, aliases, malformed forms, node projection and exact/short budgets. `PEFixedImageTest.RawMXCSR*` checks legacy/VEX native bytes and mask-bound receipts. The machine-state and native/LLVM refinement owners verify that unused capabilities cannot expand their interfaces.
@@ -6151,6 +6158,17 @@ cmake -S . -B build-native -G Ninja \
 `NeverDAArch64StateTests` checks corruption of every scalar field, both words of every vector, privilege changes, missing floating-point execution and preserved transport diagnostics. `NeverDAArch64FPTests` runs `OriginalProgramChecksCompleteStateAndOneDeadline` using independently assembled `AArch64ProbeCases.def` instructions at both privileges on real transports. The test relocates these PC-independent words to guest code without granting user access to monitor pages. Unicorn execution and explicit native skips do not replace native ARM64 startup evidence.
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves, scalar conversions and fixed-width SIMD operations at EL0/EL1. Scalar conversion tests check signed/unsigned W/X inputs, truncation and saturation, FP32/FP64 resizing, rounding, upper-lane clearing and cumulative status. Fixed-point, packed and FP16 conversion forms remain rejected. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
+
+`AArch64WidenCases.def` records 36 independently assembled SSHLL/USHLL and
+SSHLL2/USHLL2 forms, including zero-shift SXTL/UXTL aliases. Independent integer
+oracles check signed extension, unsigned high bits, both source halves, all
+8/16/32-bit source widths, boundary shifts and overlapping registers. Complete
+scalar/vector state and guard memory are compared at both privileges; reserved
+element-size and scalar encodings fail without mutation.
+Lane-move tests cover UMOV/SMOV, their MOV aliases, all legal element/result
+widths, first/last lanes, sign extension, W-register upper clearing and XZR.
+Capstone's `HasNEONorSME` group is satisfied by baseline NEON; SME-only feature
+groups and unsupported register views remain rejected.
 
 `AArch64ReductionCases.def` records 34 independently assembled baseline forms of
 CMEQ (register/zero and scalar/vector), UZP1, XTN/XTN2 and UMAXV. Integer lane

@@ -139,6 +139,14 @@ private:
   uint64_t tlsAddress() const;
   uint64_t threadID() const;
   bool Expired = false;
+  // Bionic's default generator belongs to the guest process, not a thread or
+  // the host C library. Calls run atomically inside the guest scheduler.
+  uint32_t RandomWords[31] = {};
+  unsigned RandomRear = 0;
+  bool RandomInitialized = false;
+  void seedRandom(uint32_t Seed);
+  uint32_t nextRandom();
+  BionicResult randomCall(const NativeCallEvent &Call);
   struct LibraryState {
     uint64_t Handle = 0, References = 0;
   };
