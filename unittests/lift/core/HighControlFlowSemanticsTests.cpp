@@ -3744,7 +3744,8 @@ TEST(HighControlFlowSemantics, SlotCallGoesThroughThePointerItHolds) {
   // symbol on a data slot names the variable, `int (*handler)(int)`, not the
   // callee: calling it by name would run the variable. A bound import slot
   // names its import, and a constant folded into `call rax` that lands in
-  // code is the callee itself.
+  // code is the callee itself. A slot spelled as an import that holds the
+  // image's own code is still a variable.
   const Arch Architecture = Arch::X64;
   BinaryImage Image;
   Image.Format = BinaryFormat::ELF;
@@ -3793,6 +3794,19 @@ TEST(HighControlFlowSemantics, SlotCallGoesThroughThePointerItHolds) {
   LinkerSlot.Name = "__imp_ZwClose";
   LinkerSlot.Addr = 0x404040;
   Image.Symbols.push_back(LinkerSlot);
+  // MinGW's own `__imp_X` variables, initialized to the function the runtime
+  // supplies in place of an import: one the loader relocates, and one a fixed
+  // image holds as is.
+  for (va_t Slot : {0x404048U, 0x404050U}) {
+    Symbol Variable;
+    Variable.Name = "__imp___acrt_iob_func";
+    Variable.Addr = Slot;
+    Image.Symbols.push_back(Variable);
+    for (unsigned I = 0; I < 8; ++I)
+      Image.Segments[1].Data[Slot - 0x404000 + I] =
+          static_cast<uint8_t>(uint64_t{0x401060} >> (8 * I));
+  }
+  Image.CodePtrRelocSlots.insert(0x404048);
   auto callIn = [](const HighFunc &F) -> ExprPtr {
     for (const HighStmt &S : F.Body) {
       if (S.Kind == StmtKind::Call && S.CallExpr)
@@ -3808,7 +3822,7 @@ TEST(HighControlFlowSemantics, SlotCallGoesThroughThePointerItHolds) {
                                           {0x404040, "__imp_ZwClose"},
                                           {0x401060, "target"}};
   for (va_t Constant : {0x404018U, 0x404020U, 0x404028U, 0x404030U, 0x404038U,
-                        0x404040U, 0x401060U}) {
+                        0x404040U, 0x404048U, 0x404050U, 0x401060U}) {
     SCOPED_TRACE(Constant);
     MedFunc M;
     M.Entry = 0x401000;

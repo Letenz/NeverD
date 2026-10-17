@@ -1940,3 +1940,13 @@ Les alias réutilisent les propriétaires existants des threads/processus et des
 `KernelModelIO` possède le wrapper de sonde de processus et la durée de vie de l’attachement privé. Il réutilise le changement de vue partagé et la sonde MDL ordinaire. Aucun stockage APC invité fictif n’est créé et un jeton public nul ne peut détacher cet état. Le propriétaire existant conserve admission et imbrication. L’exception atteint l’invité seulement après restauration réussie ; les erreurs de restauration restent des échecs du modèle.
 
 `KernelObjectAPIs.def` possède identité, arité, valeur et plafond IRQL de cette requête fixe. Aucun registre de callbacks ni appel au système hôte n’est ajouté.
+
+`KernelPhysicalMemory::resolveAddress` associe le `MemoryView` courant aux tranches exactes des allocations conservées et aux identités de pages existantes, y compris les alias. `KernelModel` valide séparément lecture, processus et résidence. La requête ne crée ni identité ni verrou de page ; le remplissage encore mappé ne réactive pas les octets libérés.
+
+`KernelModel::queryPrimaryVirtualAddress` déduit la VA principale des enregistrements non paginés actifs `PoolAllocation` et de `KernelPhysicalMemory::describe`, puis la valide par la requête directe. Il n’ajoute ni registre inverse d’alias, ni identité physique, ni verrou de page ; une adresse de stockage générique ne prouve pas un mapping principal.
+
+`activateStack` et `retireStack` possèdent `ExecutionStacks` ; les requêtes lient ses limites à l’identité courante `ExecutionThreadKeys`. Une réactivation garde l’étendue exacte ; chevauchement actif et taille de retrait différente sont refusés avant mutation. Les exécutions imbriquées d’un même thread gardent des limites distinctes. Ces requêtes restent opaques pour la reconstruction native après dépaquetage.
+
+`LockedMdl::StorageKind` sépare stockage du descripteur et provenance des pages. Le pool et la pile active possèdent les étendues exactes. Le contrôle commun valide toutes les plages avant de retirer les enregistrements ; libérer le pool vérifie d’abord les droits d’écriture. Construction partielle et déverrouillage conservent le propriétaire. Les emprunts mémoire refusent les métadonnées MDL actives. MmCreateMdl reste opaque à la reconstruction après dépaquetage.
+
+`LockedMdl::AdvanceRange` conserve séparément la plage verrouillée initiale et la base du mapping pour allouer les alias, vérifier les accès et libérer les ressources. Le propriétaire MDL centralise rotation et restauration des PFN sans changer les propriétaires des pages ou du descripteur. Le verrou initial reste actif jusqu’au nettoyage de cette version fixe. MmAdvanceMdl reste opaque à la reconstruction après dépaquetage.

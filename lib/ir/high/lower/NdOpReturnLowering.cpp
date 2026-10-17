@@ -20,13 +20,78 @@
 #include "neverd/loader/BinaryImage.h"
 
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <vector>
 
 namespace neverd {
 
 namespace {
+/// The parameter that arrives in register \p Reg, as the function's own
+/// parameter variable; null when none does.
+ExprPtr parameterInRegister(const MedFunc &Med, uint64_t Reg) {
+  for (size_t I = 0; I < Med.Params.size(); ++I) {
+    if (Med.Params[I].RegOff != Reg || I >= Med.TypedParams.size())
+      continue;
+    MedVar Parameter = Med.Params[I];
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = static_cast<int>(I);
+    return HighExpr::makeVar(Parameter, Med.TypedParams[I].Type);
+  }
+  return nullptr;
+}
+
+/// Whether every path from the function's entry into \p Block leaves the
+/// \p Width bytes of register at \p Reg as the caller passed them.  A phi or
+/// write of any of those bytes other than the copy that names the incoming
+/// value, a call, which clobbers them, an exceptional entry, which the
+/// unwinder fills, or an entry no predecessor explains, each leaves them
+/// otherwise.
+bool registerUntouchedFromEntry(const MedFunc &Med, const MedBlock &Block,
+                                uint64_t Reg, uint64_t Width) {
+  auto Overlaps = [&](const MedVar &V) {
+    return V.Kind == MedVar::Reg && V.Size > 0 && V.RegOff < Reg + Width &&
+           Reg < V.RegOff + V.Size;
+  };
+  auto IsIncomingCopy = [](const MedOp &Op) {
+    const MedVar &Out = Op.Output;
+    return Op.Opcode == NdOp::COPY && Op.NumInputs >= 1 &&
+           Op.Inputs[0].Kind == Out.Kind && Op.Inputs[0].RegOff == Out.RegOff &&
+           Op.Inputs[0].Size == Out.Size && Op.Inputs[0].Id == Out.Id &&
+           Op.Inputs[0].SSAVer == Out.SSAVer;
+  };
+  std::map<int, const MedBlock *> ById;
+  for (const MedBlock &Candidate : Med.Blocks)
+    ById.emplace(Candidate.Id, &Candidate);
+  std::set<int> Seen{Block.Id};
+  std::vector<const MedBlock *> Work{&Block};
+  while (!Work.empty()) {
+    const MedBlock &Current = *Work.back();
+    Work.pop_back();
+    if (!Current.ExceptionalPreds.empty())
+      return false;
+    for (const PhiNode &Phi : Current.Phis)
+      if (Overlaps(Phi.Output))
+        return false;
+    for (const MedOp &Op : Current.Ops)
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          (Overlaps(Op.Output) && !IsIncomingCopy(Op)))
+        return false;
+    if (Current.Preds.empty() && Current.StartAddr != Med.Entry)
+      return false;
+    for (const int Pred : Current.Preds) {
+      const auto It = ById.find(Pred);
+      if (It == ById.end())
+        return false;
+      if (Seen.insert(Pred).second)
+        Work.push_back(It->second);
+    }
+  }
+  return true;
+}
+
 /// A bare RET does not syntactically read the return-value register. A runtime
 /// declaration can still describe a source value occupying that incoming ABI
 /// slot (notably Objective-C self on AArch64). Bind it only when the complete
@@ -63,15 +128,7 @@ ExprPtr unchangedDeclaredReturnParameter(const MedFunc &Med,
         return nullptr;
     }
   }
-  for (size_t I = 0; I < Med.Params.size(); ++I) {
-    if (Med.Params[I].RegOff != ReturnReg || I >= Med.TypedParams.size())
-      continue;
-    MedVar Parameter = Med.Params[I];
-    Parameter.Kind = MedVar::Param;
-    Parameter.Id = static_cast<int>(I);
-    return HighExpr::makeVar(Parameter, Med.TypedParams[I].Type);
-  }
-  return nullptr;
+  return parameterInRegister(Med, ReturnReg);
 }
 
 /// A SUBBYTES that re-views the low bytes of the register it writes (`w0`
@@ -451,6 +508,19 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
     RetVal = medvarToExpr(CurOp.Inputs[0]);
   if (!RetVal)
     RetVal = unchangedDeclaredReturnParameter(Med, TRI, ReturnReg);
+  // A RETURN that no path from the entry reaches with a write of the result
+  // register returns what the caller passed there, as the bare `ret` beside
+  // the tail call of `if (b) return g(b); return a;` does: the parameter that
+  // arrives in it.  A register no parameter arrives in holds nothing the
+  // function computed.
+  if (!RetVal) {
+    const auto Param = std::find_if(
+        Med.Params.begin(), Med.Params.end(),
+        [&](const MedVar &P) { return P.RegOff == ReturnReg && P.Size > 0; });
+    if (Param != Med.Params.end() &&
+        registerUntouchedFromEntry(Med, CurBlock, ReturnReg, Param->Size))
+      RetVal = parameterInRegister(Med, ReturnReg);
+  }
 
   // A proven register-pair result occupies both integer return
   // registers.  The RETURN operand names only the low register, so recover

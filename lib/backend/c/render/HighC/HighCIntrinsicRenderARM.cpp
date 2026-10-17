@@ -12,6 +12,7 @@
 
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
+#include "neverd/support/IntegerLiterals.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -19,6 +20,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <iterator>
+#include <limits>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -27,6 +30,49 @@ namespace neverd {
 namespace {
 
 bool isAlive(const MedVar &V, const IsAliveFn &Fn) { return !Fn || Fn(V); }
+
+/// The value of the constant operand \p Text, in whichever base the writer
+/// spelled it (neverd/support/IntegerLiterals.h); none for any other operand.
+/// Constants up to 10 always read in decimal, so comparing such an operand
+/// with its decimal digits is exact.
+std::optional<uint64_t> constantOperand(llvm::StringRef Text) {
+  const std::string_view Operand(Text.data(), Text.size());
+  bool InComment = false;
+  const auto Literals = integerLiterals(Operand, LiteralSyntax::C, InComment);
+  if (Literals.size() != 1 || Literals.front().Begin != 0 ||
+      Literals.front().End != Operand.size())
+    return std::nullopt;
+  return Literals.front().Value;
+}
+
+/// Reads the constant operand \p Text into \p Value; false for any other
+/// operand or a value \p Value cannot hold.
+bool readConstant(llvm::StringRef Text, unsigned &Value) {
+  const auto Constant = constantOperand(Text);
+  if (!Constant || *Constant > std::numeric_limits<unsigned>::max())
+    return false;
+  Value = static_cast<unsigned>(*Constant);
+  return true;
+}
+
+/// The C type an exclusive access of \p Size bytes moves, or null for a
+/// size no exclusive access has.
+const char *exclusiveAccessType(llvm::StringRef Size) {
+  switch (constantOperand(Size).value_or(0)) {
+  case 1:
+    return "uint8_t";
+  case 2:
+    return "uint16_t";
+  case 4:
+    return "uint32_t";
+  case 8:
+    return "uint64_t";
+  case 16:
+    return "unsigned __int128";
+  default:
+    return nullptr;
+  }
+}
 
 std::string
 renderMopsSetPrologue(Intrinsic IID, const std::vector<MedVar> &Outputs,
@@ -295,7 +341,7 @@ std::string renderNeonShift(Intrinsic Id, const std::vector<std::string> &Ops,
       Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
   unsigned ElementBytes = 0;
   if (Op == std::end(Operations) || Ops.size() != 3 ||
-      llvm::StringRef(Ops[2]).getAsInteger(10, ElementBytes))
+      !readConstant(Ops[2], ElementBytes))
     return {};
   const auto *W = llvm::find_if(
       Widths, [&](const Width &Entry) { return Entry.Bytes == ElementBytes; });
@@ -357,8 +403,7 @@ std::string renderNeonShiftLeftUnsigned(Intrinsic Id,
       Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
   unsigned Shift = 0, ElementBytes = 0;
   if (Op == std::end(Operations) || Ops.size() != 3 ||
-      llvm::StringRef(Ops[1]).getAsInteger(10, Shift) ||
-      llvm::StringRef(Ops[2]).getAsInteger(10, ElementBytes))
+      !readConstant(Ops[1], Shift) || !readConstant(Ops[2], ElementBytes))
     return {};
   const auto *W = llvm::find_if(
       Widths, [&](const Width &Entry) { return Entry.Bytes == ElementBytes; });
@@ -405,8 +450,7 @@ std::string renderNeonPolyMultiply(Intrinsic Id,
       Ops.size() != (Op->ElementWidthOperand ? 3u : 2u))
     return {};
   unsigned ElementBytes = 1;
-  if (Op->ElementWidthOperand &&
-      llvm::StringRef(Ops[2]).getAsInteger(10, ElementBytes))
+  if (Op->ElementWidthOperand && !readConstant(Ops[2], ElementBytes))
     return {};
   const std::string Raw = typeToC(NdType::makeInt(ResultBytes, false));
   if (!Op->Long) {
@@ -451,7 +495,7 @@ std::string renderNeonDoublingMultiply(Intrinsic Id,
       Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
   unsigned ResultElement = 0;
   if (Op == std::end(Operations) || Ops.size() != 3 ||
-      llvm::StringRef(Ops[2]).getAsInteger(10, ResultElement))
+      !readConstant(Ops[2], ResultElement))
     return {};
   const unsigned SourceElement =
       Op->Widening ? ResultElement / 2 : ResultElement;
@@ -494,7 +538,7 @@ std::string renderNeonNarrowShift(Intrinsic Id,
       Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
   unsigned NarrowBytes = 0;
   if (Op == std::end(Operations) || Ops.size() != 3 || ResultBytes != 8 ||
-      llvm::StringRef(Ops[2]).getAsInteger(10, NarrowBytes) ||
+      !readConstant(Ops[2], NarrowBytes) ||
       (NarrowBytes != 1 && NarrowBytes != 2 && NarrowBytes != 4))
     return {};
   const char *Prefix = neonElementTypePrefix(Op->SourceElement);
@@ -574,8 +618,7 @@ std::string renderA64FixedHalfConversion(Intrinsic Id,
     return {};
   const bool Wide = Ops[2] == "1";
   unsigned FBits = 0;
-  if (llvm::StringRef(Ops[1]).getAsInteger(10, FBits) || FBits == 0 ||
-      FBits > (Wide ? 64u : 32u))
+  if (!readConstant(Ops[1], FBits) || FBits == 0 || FBits > (Wide ? 64u : 32u))
     return {};
   const bool Signed = Id == I::A64_ScvtfFixed || Id == I::A64_FcvtzsFixed;
   const std::string Integer =
@@ -866,18 +909,8 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
   case I::A64_Ldaxp: {
     if (Ops.size() < 2)
       return {};
-    const char *Type = nullptr;
-    if (Ops[1] == "1")
-      Type = "uint8_t";
-    else if (Ops[1] == "2")
-      Type = "uint16_t";
-    else if (Ops[1] == "4")
-      Type = "uint32_t";
-    else if (Ops[1] == "8")
-      Type = "uint64_t";
-    else if (Ops[1] == "16")
-      Type = "unsigned __int128";
-    else
+    const char *Type = exclusiveAccessType(Ops[1]);
+    if (!Type)
       return {};
     const bool Acquire = Id == I::A64_Ldaxr || Id == I::A64_Ldaxp;
     HasCIntrinsics = true;
@@ -891,18 +924,8 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
   case I::A64_Stlxp: {
     if (Ops.size() < 3)
       return {};
-    const char *Type = nullptr;
-    if (Ops[2] == "1")
-      Type = "uint8_t";
-    else if (Ops[2] == "2")
-      Type = "uint16_t";
-    else if (Ops[2] == "4")
-      Type = "uint32_t";
-    else if (Ops[2] == "8")
-      Type = "uint64_t";
-    else if (Ops[2] == "16")
-      Type = "unsigned __int128";
-    else
+    const char *Type = exclusiveAccessType(Ops[2]);
+    if (!Type)
       return {};
     const bool Release = Id == I::A64_Stlxr || Id == I::A64_Stlxp;
     HasCIntrinsics = true;
@@ -916,7 +939,7 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
     if (Ops.size() < 4)
       return {};
     const bool IsMax = Id == I::A64_Famax;
-    const bool IsQ = Ops[2] == "16";
+    const bool IsQ = constantOperand(Ops[2]) == 16u;
     const std::string &LaneBytes = Ops[3];
     const char *VecTy = nullptr;
     const char *Suffix = nullptr;

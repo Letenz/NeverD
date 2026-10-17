@@ -29,3 +29,11 @@ NEVERD_KERNEL_EXECUTION_API(KeLeaveGuardedRegion, 0, APC,
 NEVERD_KERNEL_EXECUTION_API(KeAreApcsDisabled, 0, Dispatch, apcsDisabled())
 NEVERD_KERNEL_EXECUTION_API(KeAreAllApcsDisabled, 0, Dispatch,
                             allApcsDisabled())
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-iogetinitialstack
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-iogetstacklimits
+// Stack extents come from the current live DriverSession execution, including
+// its private callback stack. An execution identity alone supplies no extent.
+NEVERD_KERNEL_EXECUTION_API(IoGetInitialStack, 0, APC, queryInitialStack())
+NEVERD_KERNEL_EXECUTION_API(IoGetStackLimits, 2, Any,
+                            queryStackLimits(A[0], A[1]))

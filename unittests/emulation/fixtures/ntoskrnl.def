@@ -83,6 +83,8 @@ EXPORTS
   vDbgPrintExWithPrefix
   MmGetSystemRoutineAddress
   MmIsAddressValid
+  MmGetPhysicalAddress
+  MmGetVirtualForPhysical
   KeRegisterBugCheckReasonCallback
   KeDeregisterBugCheckReasonCallback
   RtlCopyUnicodeString
@@ -124,6 +126,8 @@ EXPORTS
   IoGetRelatedDeviceObject
   IoGetBaseFileSystemDeviceObject
   IoGetDeviceObjectPointer
+  IoGetInitialStack
+  IoGetStackLimits
   KeStackAttachProcess
   KeUnstackDetachProcess
   RtlInitAnsiString

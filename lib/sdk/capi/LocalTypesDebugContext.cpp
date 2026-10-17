@@ -540,10 +540,13 @@ LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
   Options.Lang = types::Language::C;
   if (Header)
     Options.Spelling = types::headerLibrarySpelling(*Header);
+  std::unique_ptr<types::TypeSpeller> &Speller =
+      Spellers[types::spellingOf(Options)];
+  if (!Speller)
+    Speller = std::make_unique<types::TypeSpeller>(*Types, Options);
   Signature->PrototypeDeclaration =
       (Function->second->NoReturn ? "_Noreturn " : "") +
-      types::spellType(*Types, *types::makeFunction(Function->second),
-                       Name.str(), Options);
+      Speller->spell(*types::makeFunction(Function->second), Name.str());
   return Signature;
 }
 

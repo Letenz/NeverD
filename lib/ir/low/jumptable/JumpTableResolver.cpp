@@ -1948,6 +1948,7 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   // code anchor, scaled entries) — must precede the generic relative resolver,
   // which would otherwise latch onto the entry base as the (wrong) target base.
   bool RecoveredAArch64Compact = false;
+  bool CompactOwnerCapacity = false;
   if (!Recovered) {
     Recovered = tryAArch64CompactTable(Img, Rec, Info);
     RecoveredAArch64Compact = Recovered;
@@ -1977,8 +1978,10 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
           PhysicalStride >= Info.EntrySize) {
         const uint64_t Span = *OwnerEnd - Info.BaseAddr;
         const uint64_t Slots = 1 + (Span - Info.EntrySize) / PhysicalStride;
-        if (Slots <= limits::kMaxJumpTableEntries)
+        if (Slots <= limits::kMaxJumpTableEntries) {
           Info.PhysicalCapacity = static_cast<uint32_t>(Slots);
+          CompactOwnerCapacity = true;
+        }
       }
     }
   }
@@ -3714,6 +3717,16 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       Info.AuthenticatedGuardBound = Info.MaxEntries;
     }
   }
+  // The owner capacity a compact table borrowed above only bounds storage for
+  // a selector no guard bounds.  An authenticated guard bounds every runtime
+  // coordinate, so the owner's bytes past it are adjacent data: decoding them
+  // would charge the fixed point for slots the dispatch cannot select, and the
+  // guarded domain would look like a partial subset of its storage.
+  if (CompactOwnerCapacity && GuardFound && !Info.PreScaledIndex &&
+      Info.AuthenticatedGuardBound != 0 &&
+      Info.AuthenticatedGuardBound == Info.MaxEntries &&
+      Info.PhysicalCapacity > Info.AuthenticatedGuardBound)
+    Info.PhysicalCapacity = Info.AuthenticatedGuardBound;
   if (GuardedGroupProofContext && !FiniteJointGOTOFF && !FiniteJointAbsolute) {
     observeGroupProof("single-load-selector");
     if (!GroupHasSingleGuardedLoadAndSelector(Info))

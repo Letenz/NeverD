@@ -1809,3 +1809,13 @@ KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共�
 `KernelModelIO` 负责进程锁页包装及私有附加生命周期，复用共享进程视图切换和普通 MDL 探测。私有附加不伪造来宾 APC 存储，也不能用公开接口的零令牌解除；准入和嵌套仍由原附加所有者管理。只有恢复成功后才向来宾传递探测异常；恢复错误仍作为模型失败。
 
 `KernelObjectAPIs.def` 统一负责固定回调版本查询的标识、参数数量、值与 IRQL 上限，不引入回调注册表或宿主操作系统查询。
+
+`KernelPhysicalMemory::resolveAddress` 将当前 `MemoryView` 与保留的精确分配切片和既有页身份匹配，包括别名。`KernelModel` 单独检查映射可读性、进程上下文及驻留状态。查询不分配新身份或锁页；仍映射的页填充不能恢复已释放字节的生命周期。
+
+`KernelModel::queryPrimaryVirtualAddress` 依据既有存活的非分页 `PoolAllocation` 记录和 `KernelPhysicalMemory::describe` 推导主虚拟地址，再通过正向查询验证。不新增反向别名登记、物理身份或页锁；通用后备地址不能证明主映射。
+
+`activateStack` 和 `retireStack` 管理 `ExecutionStacks`；查询将该范围绑定到当前 `ExecutionThreadKeys` 身份。再次激活必须保留精确范围，存活栈重叠或回收范围不符在修改前拒绝。共享线程的嵌套执行仍有独立边界。这些环境查询在原生脱壳重建中仍属于不透明依赖。
+
+`LockedMdl::StorageKind` 将描述符存储与页来源分开。池分配和存活执行栈提供精确范围，共用释放预检先核对全部范围，再移除描述符记录。池释放在修改状态前检查写权限。部分 MDL 构建和解锁保留描述符所有者；内核内存借用拒绝与存活 MDL 元数据相交。MmCreateMdl 保留默认不透明脱壳边界。
+
+`LockedMdl::AdvanceRange` 独立保留原始锁定字节范围和系统映射基址，数据窗口可继续推进。别名分配、访问验证、借用与释放都使用该所有者；同一 MDL 层负责 PFN 旋转及恢复，页和描述符存储所有权不变。根据固定版本的生产端及清理端，原页锁保留到清理，不从通用文档推断立即解锁。MmAdvanceMdl 对脱壳重建保持不透明。

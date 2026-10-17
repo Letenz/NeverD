@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -343,6 +344,29 @@ bool configureSBF(neverd_session_t Sess) {
     }
   }
   return true;
+}
+
+/// The address the image exports \p Name at: a routine the function list
+/// does not hold before discovery, as a leaf without unwind data.
+std::optional<uint64_t> exportedAddress(neverd_session_t Sess, StringRef Name) {
+  const char *Raw = neverd_exports_json(Sess);
+  Expected<json::Value> Parsed = json::parse(Raw ? Raw : "[]");
+  neverd_free_string(Raw);
+  if (!Parsed) {
+    consumeError(Parsed.takeError());
+    return std::nullopt;
+  }
+  if (const json::Array *Exports = Parsed->getAsArray())
+    for (const json::Value &Export : *Exports)
+      if (const json::Object *Row = Export.getAsObject();
+          Row && Row->getString("name") == Name) {
+        uint64_t Address = 0;
+        StringRef Text = Row->getString("addr").value_or("");
+        if ((Text.consume_front("0x") || Text.consume_front("0X")) &&
+            !Text.getAsInteger(16, Address))
+          return Address;
+      }
+  return std::nullopt;
 }
 
 } // namespace
@@ -742,7 +766,13 @@ int runDecompile(neverd_session_t Sess) {
       }
     } else {
       FuncIdx = neverd_func_find_by_name(Sess, ExportFunc.c_str());
-      if (FuncIdx < 0 && !FuncRef.empty() &&
+      if (FuncIdx < 0)
+        if (const std::optional<uint64_t> Exported =
+                exportedAddress(Sess, FuncRef)) {
+          HaveDirectAddr = true;
+          DirectAddr = *Exported;
+        }
+      if (FuncIdx < 0 && !HaveDirectAddr && !FuncRef.empty() &&
           !FuncRef.getAsInteger(16, DirectAddr)) {
         HaveDirectAddr = true;
         FuncIdx = neverd_func_find_by_addr(Sess, DirectAddr);

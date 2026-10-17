@@ -407,6 +407,7 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
     if (Stmt.Kind == StmtKind::Goto)
       ++GotoTargetUses[Stmt.GotoTarget];
   });
+  decideExceptArms(Func);
   // Handler labels first: a try body keeps a trailing goto that owns one.
   walkStmts(Func.Body, [&](const HighStmt &Stmt) {
     for (const HighEHClause &Clause : Stmt.EHClauses) {
@@ -429,12 +430,14 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
       if (Clause.Kind == HighEHClauseKind::SEHExcept &&
           Reachable(Clause.HandlerVA)) {
         // An attached `__except` body is already printed in-place.  A label
-        // is only required when HighC still has to `goto` the handler.
+        // is only required when HighC still has to `goto` the handler, which
+        // an arm resuming where its try falls through does not.
         const size_t Index = &Clause - Stmt.EHClauses.data();
         if (Index < Stmt.EHClauseBodies.size() &&
             !Stmt.EHClauseBodies[Index].empty())
           continue;
-        GotoTargets.insert(Clause.HandlerVA);
+        if (!FallthroughExceptArms.count(&Stmt))
+          GotoTargets.insert(Clause.HandlerVA);
       }
       // An Itanium landing pad is a block of this function, so the clause
       // comment can point at a real label instead of a bare address.
@@ -1531,6 +1534,15 @@ void HighCWriter::applyDebugCallSlotTypes(const HighFunc &Func) {
       if (It == FrameSlots.end())
         continue;
       TypeRef Next = cDisplayType(Expected->Pointee);
+      // A unit that defines the program's records reads members only of
+      // those it defines (prepareRecordDefinitions): the callee's record
+      // names no member of a local it does not define.
+      if (Next && Next->Kind == NdTypeKind::Struct && !Next->IsEnum &&
+          !Next->SourceName.empty() && Opts.RecordDefinitions &&
+          Opts.EmitIncludes &&
+          !RecordDefinitions.Records.count(
+              cNamedTypeSpelling(Next->SourceName)))
+        continue;
       if (Next && (!It->second.CallType ||
                    Next->FieldDisplayNames.size() >=
                        It->second.CallType->FieldDisplayNames.size()))
@@ -3186,6 +3198,10 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     return Hit;
   };
   std::map<const HighStmt *, Site> Sites;
+  // The sites in program order, as the walk meets them. Candidates and the
+  // per-name site lists follow it: a fold changes what later candidates see,
+  // so their order cannot be where the statements were allocated.
+  std::vector<const HighStmt *> SiteOrder;
   std::map<uint64_t, std::vector<const HighStmt *>> Linear;
   std::map<uint64_t, uint64_t> JoinAfterTry;
   std::map<uint64_t, uint64_t> RegionParent;
@@ -3246,6 +3262,7 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       Info.Cleanup = Cleanup;
       Info.Handler = Handler;
       Sites[&S] = Info;
+      SiteOrder.push_back(&S);
       Seq.push_back(&S);
       if (valueForwardSplitsRegion(S.Kind)) {
         const uint64_t BodyRegion = NextRegion++;
@@ -3421,7 +3438,8 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
   };
   std::vector<Candidate> Candidates;
   std::set<const HighStmt *> CandidateStmts;
-  for (const auto &[Stmt, Info] : Sites) {
+  for (const HighStmt *Stmt : SiteOrder) {
+    const Site &Info = Sites.at(Stmt);
     (void)Info;
     if (Analysis.DeadStmts.count(Stmt) || stmtHiddenFromC(*Stmt))
       continue;
@@ -3545,7 +3563,8 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
           if (Op)
             CountReads(*Op, Into);
       };
-  for (const auto &[Stmt, Info] : Sites) {
+  for (const HighStmt *Stmt : SiteOrder) {
+    const Site &Info = Sites.at(Stmt);
     (void)Info;
     SiteNames &Names = NamesAt[Stmt];
     const bool Assign = Stmt->Kind == StmtKind::Assign && Stmt->Dst;
@@ -4416,29 +4435,7 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
     if (Name.empty() || ValueForward.count(Name) || FieldForward.count(Name) ||
         CopyForward.count(Name) || CallResultNames.count(Name))
       return;
-    TypeRef ReturnType;
-    if (const auto FS = debugCallee(*S.Val)) {
-      if (Dbg)
-        Dbg->completeType(FS->ReturnType);
-      ReturnType = cDisplayType(FS->ReturnType);
-      if (isMsvcIndirectReturn(FS->ReturnType, Opts.TheArch, Opts.Format) &&
-          ReturnType && ReturnType->Kind != NdTypeKind::Ptr) {
-        if (const NdType *Record = msvcIndirectReturnRecord(
-                FS->ReturnType, Opts.TheArch, Opts.Format)) {
-          if (ReturnType->Kind == NdTypeKind::Struct)
-            ReturnType = NdType::makePtr(ReturnType);
-          else
-            ReturnType = NdType::makePtr(
-                NdType::makeNamedRecord(cNamedTypeSpelling(Record->SourceName),
-                                        Record->Size ? Record->Size : 8));
-        }
-      }
-    } else if (const MsvcCallee *Msvc =
-                   msvcCallee(callIdentifier(*S.Val), Opts.Format))
-      ReturnType = msvcSyntheticReturn(Msvc->ReturnKind);
-    // A result whose type C cannot spell keeps the destination's type.
-    if (ReturnType && !hasCValueLayout(ReturnType))
-      ReturnType = nullptr;
+    const TypeRef ReturnType = callResultType(*S.Val);
     if (ReturnType)
       CallResultTypes[Name] = ReturnType;
     std::string Stem = callResultStem(callIdentifier(*S.Val));
@@ -4502,6 +4499,33 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
       CallResultTypes[Stem] = ReturnType;
     CallResultNames[Name] = std::move(Stem);
   });
+}
+
+TypeRef HighCWriter::callResultType(const HighExpr &Call) const {
+  TypeRef ReturnType;
+  if (const auto FS = debugCallee(Call)) {
+    if (Dbg)
+      Dbg->completeType(FS->ReturnType);
+    ReturnType = cDisplayType(FS->ReturnType);
+    if (isMsvcIndirectReturn(FS->ReturnType, Opts.TheArch, Opts.Format) &&
+        ReturnType && ReturnType->Kind != NdTypeKind::Ptr) {
+      if (const NdType *Record = msvcIndirectReturnRecord(
+              FS->ReturnType, Opts.TheArch, Opts.Format)) {
+        if (ReturnType->Kind == NdTypeKind::Struct)
+          ReturnType = NdType::makePtr(ReturnType);
+        else
+          ReturnType = NdType::makePtr(
+              NdType::makeNamedRecord(cNamedTypeSpelling(Record->SourceName),
+                                      Record->Size ? Record->Size : 8));
+      }
+    }
+  } else if (const MsvcCallee *Msvc =
+                 msvcCallee(callIdentifier(Call), Opts.Format))
+    ReturnType = msvcSyntheticReturn(Msvc->ReturnKind);
+  // A result whose type C cannot spell keeps the destination's type.
+  if (ReturnType && !hasCValueLayout(ReturnType))
+    ReturnType = nullptr;
+  return ReturnType;
 }
 
 std::optional<int64_t> HighCWriter::stackParamOffset(const HighFunc &Func,
@@ -4588,9 +4612,12 @@ void HighCWriter::bindParams(const HighFunc &Func) const {
         DebugFn->CallConv == DebugCallConv::Unknown ||
         DebugFn->CallConv == DebugCallConv::Cdecl ||
         DebugFn->CallConv == DebugCallConv::Stdcall;
-    const bool Located = llvm::any_of(Func.Params, [](const HighParam &P) {
-      return P.RegOff != kNoParamReg || P.MedIndex >= 0;
-    });
+    // A function whose code reads no parameter has none to locate: what
+    // its declaration takes goes unread (unreadDeclaredParams).
+    const bool Located = Func.Params.empty() ||
+                         llvm::any_of(Func.Params, [](const HighParam &P) {
+                           return P.RegOff != kNoParamReg || P.MedIndex >= 0;
+                         });
     const auto Placement =
         OrdinaryConvention && Located
             ? placeSourceParameters(Opts.TheArch, Opts.Format,
@@ -6502,6 +6529,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   // Frame projection can hide an ordinary-edge PHI copy after a try. Settle
   // clause exits against the statements that will actually be printed, while
   // retaining all previously required labels as conservative entry evidence.
+  decideExceptArms(Func);
   FallthroughTryExits.clear();
   {
     std::set<std::pair<va_t, va_t>> Kept;

@@ -502,6 +502,173 @@ TEST(COFFExceptionIR, HighCSEHFilterRendersNamedFilterCall) {
   EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
 }
 
+// A try at Begin whose one __except clause calls the filter at Filter and
+// resumes at Handler, around one call.
+HighStmt sehTryAround(va_t Begin, va_t End, va_t Filter, va_t Handler,
+                      const char *Work, std::vector<HighStmt> Arm = {}) {
+  HighStmt Try;
+  Try.Kind = StmtKind::SEHTry;
+  Try.EHIsReducible = true;
+  Try.Addr = Begin;
+  Try.EHRange = {Begin, End};
+  HighStmt Call;
+  Call.Kind = StmtKind::Call;
+  Call.Addr = Begin;
+  Call.CallExpr = HighExpr::makeCall(Work, 0x140002000, {});
+  Try.Body.push_back(std::move(Call));
+  HighEHClause Except;
+  Except.Kind = HighEHClauseKind::SEHExcept;
+  Except.FilterOrActionVA = Filter;
+  Except.HandlerVA = Handler;
+  Try.EHClauses.push_back(Except);
+  Try.EHClauseBodies.push_back(std::move(Arm));
+  return Try;
+}
+
+ExceptionFunction sehMetadata(va_t Begin, va_t End) {
+  ExceptionFunction EH;
+  EH.CodeRange = {Begin, End};
+  EH.ParseStatus = ExceptionParseStatus::Complete;
+  EH.Personality = ExceptionPersonality::CSpecificHandler;
+  return EH;
+}
+
+TEST(COFFExceptionIR, HighCSEHFilterIsNamedAsTheFunctionListNamesIt) {
+  // A MinGW object's `.text` section symbol and a linker label start where
+  // its first function does; the function's own symbol names the filter
+  // there.  An export names a filter no symbol does.
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Format = BinaryFormat::COFF;
+  for (const char *Name : {".text", "___tls_start__"}) {
+    Symbol Label;
+    Label.Name = Name;
+    Label.Addr = 0x140001100;
+    Label.IsSection = Label.Name == ".text";
+    Image.Symbols.push_back(Label);
+  }
+  Symbol Filter;
+  Filter.Name = "_gnu_exception_handler";
+  Filter.Addr = 0x140001100;
+  Filter.IsFunc = true;
+  Image.Symbols.push_back(Filter);
+  Export Exported;
+  Exported.Name = "startup_filter";
+  Exported.Addr = 0x140001300;
+  Image.Exports.push_back(Exported);
+
+  std::vector<HighFunc> Functions(2);
+  for (size_t I = 0; I < Functions.size(); ++I) {
+    HighFunc &Function = Functions[I];
+    Function.Name = I ? "exported_filter_fn" : "symbol_filter_fn";
+    Function.Entry = 0x140001000 + I * 0x40;
+    Function.ReturnType = NdType::makeVoid();
+    Function.Body.push_back(sehTryAround(Function.Entry, Function.Entry + 0x10,
+                                         I ? 0x140001300 : 0x140001100,
+                                         0x140001200, "work"));
+  }
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  Options.Image = &Image;
+  ASSERT_TRUE(HighCEmitter().emit(Functions, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("_gnu_exception_handler(GetExceptionInformation())"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("startup_filter(GetExceptionInformation())"),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("text(GetExceptionInformation())"), std::string::npos)
+      << Source;
+}
+
+TEST(COFFExceptionIR, HighCEmptyExceptArmResumingAfterItsTryPrintsNoJump) {
+  // MSVC's nested __try levels at -O0: an empty __except resumes at a lone
+  // jmp that ordinary flow takes too, past the inner try.  That handler
+  // prints nothing, so the arm ends where its try falls through.
+  HighFunc Function;
+  Function.Name = "nested_seh";
+  Function.Entry = 0x140004A00;
+  Function.ReturnType = NdType::makeVoid();
+  Function.ExceptionMetadata = sehMetadata(0x140004A00, 0x140004A60);
+  HighStmt Anchor;
+  Anchor.Kind = StmtKind::Block;
+  Anchor.Addr = 0x140004A24;
+  HighStmt Recover;
+  Recover.Kind = StmtKind::Call;
+  Recover.Addr = 0x140004A26;
+  Recover.CallExpr = HighExpr::makeCall("recover", 0x140002010, {});
+  HighStmt Outer = sehTryAround(0x140004A12, 0x140004A26, 0x1400083C0,
+                                0x140004A26, "outer_work", {Recover});
+  Outer.Body = {sehTryAround(0x140004A12, 0x140004A24, 0x14000838C, 0x140004A24,
+                             "inner_work"),
+                Anchor};
+  Function.Body.push_back(std::move(Outer));
+  HighStmt Ret;
+  Ret.Kind = StmtKind::Return;
+  Ret.Addr = 0x140004A57;
+  Function.Body.push_back(Ret);
+
+  const std::string Source = emitHighC({Function});
+  const size_t Inner =
+      Source.find("} __except (sub_14000838C(GetExceptionInformation())) {");
+  ASSERT_NE(Inner, std::string::npos) << Source;
+  const size_t Close = Source.find('}', Inner + 1);
+  ASSERT_NE(Close, std::string::npos) << Source;
+  EXPECT_EQ(Source.find_first_not_of(" \n", Source.find('\n', Inner)), Close)
+      << Source;
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("L_140004A24"), std::string::npos) << Source;
+}
+
+TEST(COFFExceptionIR, HighCLeftOutTryTailKeepsTheLabelAJumpLandsOn) {
+  // A switch's cases leave a __try body for its last statement, an empty
+  // anchor the body's printed end leaves out.  Its label stays at the end of
+  // the body, where control runs off it.
+  HighFunc Function;
+  Function.Name = "try_tail_label";
+  Function.Entry = 0x140004E90;
+  Function.ReturnType = NdType::makeVoid();
+  Function.ExceptionMetadata = sehMetadata(0x140004E90, 0x140004F78);
+  HighStmt Try =
+      sehTryAround(0x140004EA1, 0x140004F4D, 0x140008618, 0x140004F4D, "work");
+  HighStmt Leave;
+  Leave.Kind = StmtKind::Goto;
+  Leave.Addr = 0x140004EC0;
+  Leave.GotoTarget = 0x140004F4B;
+  HighStmt Branch;
+  Branch.Kind = StmtKind::If;
+  Branch.Addr = 0x140004EB8;
+  Branch.Cond = HighExpr::makeCall("failed", 0x140002020, {});
+  Branch.Body.push_back(Leave);
+  Try.Body.push_back(Branch);
+  HighStmt More;
+  More.Kind = StmtKind::Call;
+  More.Addr = 0x140004F30;
+  More.CallExpr = HighExpr::makeCall("more", 0x140002030, {});
+  Try.Body.push_back(More);
+  HighStmt Anchor;
+  Anchor.Kind = StmtKind::Block;
+  Anchor.Addr = 0x140004F4B;
+  Try.Body.push_back(Anchor);
+  Function.Body.push_back(std::move(Try));
+  HighStmt Ret;
+  Ret.Kind = StmtKind::Return;
+  Ret.Addr = 0x140004F70;
+  Function.Body.push_back(Ret);
+
+  const std::string Source = emitHighC({Function});
+  const size_t Jump = Source.find("goto L_140004F4B;");
+  const size_t Label = Source.find("L_140004F4B:");
+  const size_t Except = Source.find("} __except (");
+  ASSERT_NE(Jump, std::string::npos) << Source;
+  ASSERT_NE(Label, std::string::npos) << Source;
+  EXPECT_LT(Jump, Label) << Source;
+  EXPECT_LT(Label, Except) << Source;
+}
+
 TEST(COFFExceptionIR, HighCCommentsDisabledStillEmitsOnlyTrap) {
   HighFunc Function;
   Function.Name = "analysis_no_comments";
@@ -1264,7 +1431,7 @@ TEST(COFFExceptionIR, LLVMCExceptWrapContainsHandlerBody) {
 
   std::string Source = emitLLVMC(Module);
   const auto ExceptAt = Source.find("} __except (EXCEPTION_EXECUTE_HANDLER) {");
-  const auto StoreAt = Source.find("ProbeSink = 41");
+  const auto StoreAt = Source.find("ProbeSink = 0x29");
   EXPECT_NE(ExceptAt, std::string::npos) << Source;
   EXPECT_NE(StoreAt, std::string::npos) << Source;
   EXPECT_LT(ExceptAt, StoreAt) << Source;
@@ -1514,12 +1681,12 @@ TEST(COFFExceptionIR, LLVMCProjectsInternalInvokePhiBridgeCopy) {
   const std::string Source = emitLLVMC(Module);
   const auto InsideAt = Source.find("inside_step();");
   ASSERT_NE(InsideAt, std::string::npos) << Source;
-  const auto CopyAt = Source.find(" = 13;", InsideAt);
+  const auto CopyAt = Source.find(" = 0xD;", InsideAt);
   const auto GotoAt = Source.find("goto L_exit;", InsideAt);
   ASSERT_NE(CopyAt, std::string::npos) << Source;
   ASSERT_NE(GotoAt, std::string::npos) << Source;
   EXPECT_LT(CopyAt, GotoAt) << Source;
-  EXPECT_EQ(Source.find(" = 13;", GotoAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" = 0xD;", GotoAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
     const std::string Prelude =
         "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
@@ -1613,12 +1780,12 @@ TEST(COFFExceptionIR, LLVMCProjectsFallbackAdjacentInvokePhiBridgeCopy) {
   const std::string Source = emitLLVMC(Module);
   const auto InsideAt = Source.find("inside_step();");
   ASSERT_NE(InsideAt, std::string::npos) << Source;
-  const auto CopyAt = Source.find(" = 13;", InsideAt);
+  const auto CopyAt = Source.find(" = 0xD;", InsideAt);
   const auto GotoAt = Source.find("goto L_exit;", InsideAt);
   ASSERT_NE(CopyAt, std::string::npos) << Source;
   ASSERT_NE(GotoAt, std::string::npos) << Source;
   EXPECT_LT(CopyAt, GotoAt) << Source;
-  EXPECT_EQ(Source.find(" = 13;", GotoAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" = 0xD;", GotoAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
     const std::string Prelude =
         "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
@@ -2470,7 +2637,7 @@ TEST(COFFExceptionIR, LLVMCNestedFinallyInsideExceptContainsBothBodies) {
   const auto OuterAt = Source.find("outer_step();", BodyAt);
   const auto ExceptKw =
       Source.find("} __except (EXCEPTION_EXECUTE_HANDLER) {", BodyAt);
-  const auto StoreAt = Source.find("ProbeSink = 41", BodyAt);
+  const auto StoreAt = Source.find("ProbeSink = 0x29", BodyAt);
   EXPECT_NE(ArmAt, std::string::npos) << Source;
   EXPECT_NE(TryAt, std::string::npos) << Source;
   EXPECT_NE(RaiseAt, std::string::npos) << Source;
@@ -5754,8 +5921,8 @@ TEST(COFFExceptionIR, LargeImageStillResolvesAnImageRelativeJumpTable) {
   OS.flush();
   EXPECT_EQ(Source.find("L_FFFFFFFFFFFFFFFF"), std::string::npos) << Source;
   // Every case keeps its return value.
-  EXPECT_NE(Source.find("return 16;"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return 55;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x10;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x37;"), std::string::npos) << Source;
 }
 
 TEST(COFFExceptionIR, SymbolHeavyImageStillResolvesAnImageRelativeJumpTable) {
@@ -5871,6 +6038,6 @@ TEST(COFFExceptionIR, SymbolHeavyImageStillResolvesAnImageRelativeJumpTable) {
   OS.flush();
   EXPECT_EQ(Source.find("L_FFFFFFFFFFFFFFFF"), std::string::npos) << Source;
   // Every case keeps its return value.
-  EXPECT_NE(Source.find("return 16;"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return 55;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x10;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x37;"), std::string::npos) << Source;
 }

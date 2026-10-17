@@ -1402,7 +1402,7 @@ TEST(LLVMCIntrinsicSemantics, X87FpremKeepsTenByteOperandsAndC2) {
   EXPECT_NE(Text.find("__builtin_memcpy"), std::string::npos) << Text;
   EXPECT_NE(Text.find("fprem\\n\\tfnstsw %%ax"), std::string::npos) << Text;
   EXPECT_NE(Text.find("fnstsw %%ax"), std::string::npos) << Text;
-  EXPECT_NE(Text.find("1024"), std::string::npos) << Text;
+  EXPECT_NE(Text.find("0x400"), std::string::npos) << Text;
 #if defined(__x86_64__) && defined(__linux__)
   compileAndCheck(
       "#include <stdint.h>\n" + Text +

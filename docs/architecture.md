@@ -219,16 +219,21 @@ Windows kernel's PDB names records, but no typedefs and no prototypes.
 They are the one source of what a known routine takes and returns, as IDA's
 type libraries are beside its signatures: signatures (`signatures/`)
 recognize a routine by its bytes and only name it. A platform or an
-architecture joins by a header under `lib/types/headers/` and a row of the
-table naming the data model, format, architecture and subsystem it
-describes, and the spelling its headers name builtins in, which shows its
-declarations as they read (Windows' `ULONG`); its calling convention's rules
-then place each parameter (`placeSourceParameters`, one file per
-convention).
-`scripts/generate_windows_kernel_types.py` renders what `<ntifs.h>` declares,
-from mingw-w64's DDK headers, into `lib/types/headers/WindowsKernelX64.h`.
-The build embeds the file, and `headerLibrary` reads it once. The C API joins
-a library to an image the table names (an x64 PE of the native subsystem)
+architecture joins by a header under `lib/types/headers/`, a row of
+`HeaderLibraries.def` naming its data model and the spelling its headers
+name builtins in, which shows its declarations as they read (Windows'
+`ULONG`), and rows of `HeaderLibraryImages.def`: how an image's headers tell
+its kind (a PE's subsystem), and the libraries an image of each kind and
+architecture joins, in order. Its calling convention's rules then place
+each parameter (`placeSourceParameters`, one file per convention).
+`scripts/generate_windows_types.py` renders, from mingw-w64's headers, what
+a driver's `<ntifs.h>` declares into `lib/types/headers/WindowsKernelX64.h`,
+and what a program's `<windows.h>`, `<winternl.h>` and the headers of the
+libraries programs most often call declare into `WindowsUserX64.h`. The
+build embeds the files, and `headerLibrary` reads each once. The C API joins
+the libraries the table names to an image (an x64 PE of the native
+subsystem joins the kernel's; one of the Windows GUI or console subsystem
+joins user mode's, then the kernel's for the native API ntdll exports)
 after the program's PDB and before the user's declarations:
 - a header type joins only where the program has no type of its name;
 - a typedef names the program's type, as C binds it;
@@ -329,7 +334,10 @@ the image states (`BinaryImage::statedFunctionNameAt`, as
 producer stated, a PDB's function names among them; else the debug
 information's; else the name signatures recognized the function's bytes by
 (`SignatureDB::buildNameMap`). A name analysis or the user gave otherwise
-says nothing of what the function is. Where a linker folded identical
+says nothing of what the function is. A linked COFF image's section symbols,
+which GNU ld keeps at each object's first function or variable
+(`Symbol::IsSection`), name nothing there or in `findSymbolAt`; they only
+bound what each object contributed. Where a linker folded identical
 functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's
 prototype only where every other name's that has one takes and returns
@@ -354,7 +362,12 @@ exports, which takes the prototype of the import's name: `resolveFunction`
 gives it at the slot or stub to the C backends, which declare and call it
 so, and `resolvePrototype` gives it by name to the call analysis, which
 passes exactly its parameters where the libc tables know none of the name
-(`importPrototypeArguments`), and to the return contracts. A callee the
+(`importPrototypeArguments`), and to the return contracts. A routine the image
+exports, whose name binds a prototype, is called with at least what the
+prototype declares, as its export fixes the convention for the callers within
+the image too: the declared parameters join what its body reads in its own
+summary, so that a system call stub's callers pass the stack arguments its
+dispatcher reads, and a body that reads past them keeps those. A callee the
 pipeline does not decompile returns what its declaration says, as the C
 writers read it, so that a caller returning what a `void` routine left in
 RAX returns nothing too. A routine never returns where its name says so, as
@@ -383,6 +396,15 @@ API reports either as `"decompilation": true`, and the worker then
 refreshes its views as after loading signatures. Every declaration drops
 the context, which reads a copy of the library, and the context takes back
 the members it gave.
+
+A RETURN hands back the parameter that arrived in the result register when
+no path from the function's entry to it writes any byte of that register,
+calls a routine, which clobbers it, or enters through an exceptional edge
+(`registerUntouchedFromEntry` in `NdOpReturnLowering.cpp`). AArch64 and ARM
+pass the first argument in the result register, so the bare `ret` beside the
+tail call of `if (b) return g(b); return a;` returns `a`. Whether the
+function returns a value at all stays with the return contracts
+(`settleReturnContracts`).
 
 A unit's member access names a member only where the access reads it
 (`NdType::displayFieldIndexAt`): a field of the access's width, a scalar's
@@ -1882,6 +1904,21 @@ queries retain their existing conditional-root policy.
 Numerical coordinate membership supplies neither input known bits nor negative
 dependency/origin authority. Other architecture/format admission remains with
 its existing proof owners.
+
+The AArch64 compact table (`tryAArch64CompactTable`) traces the shifted entry
+back to its byte or halfword load through copies, zero and sign extensions and
+low-byte views, and reads each entry as that chain leaves it: the entry itself,
+or its zero or sign extension, as GCC's `add xd, xa, wo, sxtb #2` makes it. A
+view narrower than the entry, or a zero extension of a sign extension, rejects
+the table. The table base is folded where the entry is loaded, because GCC
+reuses the base register for the anchor before the branch.
+A compact table carries no relocations, so its readable capacity is the rest
+of its data owner. That capacity bounds storage only for a selector no guard
+bounds. Once a precise guard authenticates the index domain, the capacity is
+cut to the guard bound: the owner's later bytes are adjacent data the dispatch
+cannot select. Decoding them would charge the fixed point for slots no runtime
+coordinate reaches and leave the guarded domain looking like a partial subset,
+which a case that calls a function cannot close.
 Guard identity can name a contained architectural register lane at its exact
 full-register writer. The shared reaching-value resolver names that complete
 definition and retains the lane's offset and width, so a comparison of AL or
@@ -7429,3 +7466,13 @@ capture failures cannot replace the original service outcome.
 `KernelModelIO` owns the process-probe wrapper and private attachment lifetime. It reuses the shared process-view switch and ordinary MDL probe; private attachments have no fabricated guest APC storage and cannot be detached with a public zero token. The ordinary attachment owner retains admission and nesting. A probe exception reaches the guest only after successful restoration; restoration errors remain model failures.
 
 `KernelObjectAPIs.def` owns the fixed callback-version query’s identity, arity, value and IRQL ceiling. No callback registry or host operating-system query is introduced.
+
+`KernelPhysicalMemory::resolveAddress` matches the current `MemoryView` to exact retained allocation slices and existing page identities, including aliases. `KernelModel` separately admits readable mappings, process context and residency. A query neither allocates an identity nor pins a page; surviving mapped page padding cannot revive retired bytes.
+
+`KernelModel::queryPrimaryVirtualAddress` derives the primary VA from existing live nonpaged `PoolAllocation` records and `KernelPhysicalMemory::describe`, then authenticates it through the forward query. It adds no reverse-alias registry, physical identity or pin; generic backing addresses do not establish a primary mapping.
+
+`activateStack` and `retireStack` own `ExecutionStacks`; queries bind that extent to the current `ExecutionThreadKeys` identity. Exact reactivation preserves the extent, while overlapping live stacks and mismatched retirement fail before mutation. Nested executions keep separate bounds even when sharing a thread. These environment queries remain opaque to native unpack reconstruction.
+
+`LockedMdl::StorageKind` separates descriptor storage from page provenance. Pool allocation and live execution-stack owners supply exact storage; shared release preflight checks all ranges before descriptor records retire. Pool free checks write permission before changing state. Partial construction and unlock retain the descriptor owner. Kernel memory borrowing refuses intersections with live MDL metadata. MmCreateMdl retains the default opaque unpack boundary.
+
+`LockedMdl::AdvanceRange` retains the original locked byte range and system mapping base independently of the current data window. Alias allocation, access validation, borrowing and retirement use that owner. The same MDL owner rotates and restores PFNs; page ownership and descriptor storage are unchanged. Existing pins stay live until cleanup, matching the inspected fixed-version producer and restoration consumer. No immediate physical unpin is inferred from generic API prose. MmAdvanceMdl remains opaque to unpack reconstruction.

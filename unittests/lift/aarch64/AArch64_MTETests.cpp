@@ -69,9 +69,9 @@ TEST_F(AArch64_MTE, HighCUsesACLEAndCompiles) {
   EXPECT_NE(source.find("__arm_mte_get_tag"), std::string::npos) << source;
   EXPECT_NE(source.find("__builtin_arm_addg"), std::string::npos) << source;
   EXPECT_NE(source.find("__builtin_arm_subg"), std::string::npos) << source;
-  EXPECT_NE(source.find(" + 48"), std::string::npos) << source;
+  EXPECT_NE(source.find(" + 0x30"), std::string::npos) << source;
   EXPECT_NE(source.find(", 5)"), std::string::npos) << source;
-  EXPECT_NE(source.find(", 112, 9)"), std::string::npos) << source;
+  EXPECT_NE(source.find(", 0x70, 9)"), std::string::npos) << source;
   EXPECT_EQ(source.find("__neverd"), std::string::npos) << source;
   EXPECT_EQ(source.find("return arg0;"), std::string::npos) << source;
 

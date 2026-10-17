@@ -33,6 +33,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/types/HeaderLibrary.h"
 #include "neverd/types/LocalTypes.h"
+#include "neverd/types/TypeRender.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
@@ -230,6 +231,11 @@ private:
   std::unordered_map<uint64_t, std::string> Recognized;
   mutable std::mutex Mutex;
   mutable llvm::StringMap<std::optional<FunctionSym>> Signatures;
+  /// What spells the prototypes' declarations, by the spelling of builtins
+  /// their libraries' headers use: spelling one alone would name every type
+  /// of the libraries joined again.
+  mutable std::map<types::BuiltinSpelling, std::unique_ptr<types::TypeSpeller>>
+      Spellers;
   mutable std::map<va_t, std::vector<std::string>> StatedNames;
   mutable std::map<va_t, std::string> ImportNames;
   mutable std::map<va_t, std::optional<FunctionSym>> DeclaredSignatures;

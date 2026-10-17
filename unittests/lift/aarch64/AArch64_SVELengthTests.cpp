@@ -129,7 +129,7 @@ TEST_F(AArch64_SVELength, HighCUsesSVEACLEAndCompiles) {
   EXPECT_NE(source.find("#include <arm_sve.h>"), std::string::npos) << source;
   EXPECT_NE(source.find("svcntb()"), std::string::npos) << source;
   EXPECT_NE(source.find("arg0"), std::string::npos) << source;
-  EXPECT_EQ(source.find("return 17"), std::string::npos) << source;
+  EXPECT_EQ(source.find("return 0x11"), std::string::npos) << source;
 
   expectPairedClangSyntax(cFile, source);
 }

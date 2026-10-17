@@ -2014,3 +2014,13 @@ KernelFileObjectTests 与 KernelObjectTests 覆盖带类型的指针打开、类
 `KernelMDLUserMapping.ProcessProbe*` 检查参数位宽、操作归一化、IRQL、存活进程准入、探测期间线程身份、嵌套恢复、异常后重试及附加/恢复内存不足。真实 WDK 用户映射样例执行静态和动态调用，验证解除附加后的真实异常处理器、附加状态下的同进程调用、共享物理页和完整锁页释放。原始包装及终止处理函数探针只证明显式注入辅助调用边界间的控制流，不代表整个内核行为。
 
 `KernelObjects.FilterVersion*` 检查严格参数数量、与调用者无关的结果及分页 IRQL 边界。原创和真实 WDK CRT 样例在入口、工作线程及卸载阶段使用静态导入和动态查找调用，入口还覆盖 APC_LEVEL。原始两条指令的探针不注入辅助函数，验证完整返回寄存器及无数据内存副作用。
+
+`KernelPhysicalRAM.AddressQueries*` 与 `KernelMDLUserMapping.PhysicalQuery*` 覆盖别名、地址空间身份、虚拟地址重用、精确边界、完整位宽 PFN、IRQL、页锁及撤销映射。真实 WDK 用户映射夹具将静态及动态 `MmGetPhysicalAddress` 调用与 MDL PFN 对照，覆盖只读用户视图、DPC 级系统视图，以及旧锁页别名仍存活时的重新映射。
+
+`KernelMDLUserMapping.PrimaryQuery*` 覆盖精确分配字节、同页相邻所有者、完整位宽地址、IRQL、释放、别名、映射替换、读保护及不支持的主映射投影。真实 WDK 夹具执行静态和动态 `MmGetVirtualForPhysical`，包括 DPC 级系统视图，以及旧锁页别名仍存活时的用户虚拟地址重绑定。
+
+`DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*` 覆盖激活、回收、嵌套上下文恢复、完整位宽边界、IRQL、进程附加、输出重叠及先 High 后 Low 的故障写入顺序。原创及真实 WDK CRT 夹具在入口、工作线程和卸载阶段静态及动态调用两项栈查询，检查局部变量位于返回范围内，并在 DISPATCH_LEVEL 再次查询边界。
+
+`KernelMDLChain.CreateMdl*` 和 `KernelMDLUserMapping.CreateMdl*` 覆盖完整位宽检查、未改动字节、零长度／回绕元数据、池及栈生命周期、锁、别名、释放失败、部分复用、IRP 拒绝与 IRQL。真实 WDK 用户映射夹具静态及动态创建独立池、调用者池内部和栈描述符，检查物理身份及完整卸载。原始探针区分包装字段写入、池标志转换与注入的分配／释放边界。
+
+`KernelMDLChain.AdvanceMdl*` 与 `KernelMDLUserMapping.AdvanceMdl*` 检查反复跨页、PFN 尾、末端拒绝、窄参数、稳定映射范围、清理失败、权限、存储所有权、进程上下文和依赖拒绝。真实 WDK 夹具执行静态／动态推进、显式撤销及自动解锁。原始探针分别执行完整推进函数、恢复辅助函数及注入映射类型／PTE 释放边界的撤销包装；不宣称运行系统页数据库。

@@ -197,6 +197,13 @@ back to its function entry with a message; an unmapped instruction reports that
 no source row is available and keeps the existing source cursor. Closing or
 hiding a pane stops its requests; showing it again resumes its own function.
 
+Pseudocode writes a number in hexadecimal, as the disassembly shows it, unless
+its decimal digits are its natural reading: a value up to 10 or a round decimal
+number such as 100, 999 or 5000 (Ghidra's choice). Negative numbers read in
+decimal, and a C literal keeps the type the decompiler gave it. The CLI's C
+output follows the same rule; C through LLVM also keeps decimal where a
+hexadecimal literal would need a suffix to keep its type.
+
 Right-click a number in pseudocode for its bases, each showing what the number
 would read in it: the decompiler's own choice (**Number**, `#`),
 **Hexadecimal** (`Q`), **Decimal**, **Octal**, **Binary** (`B`) and
@@ -779,7 +786,10 @@ table?* — before the PDB and DWARF questions. IDA asks no such question; it
 follows the PDB and DWARF ones. The dialog shows the table — `.symtab` for ELF
 and SBF, the COFF symbol table of a PE, or `LC_SYMTAB` for the symbols a
 Mach-O image does not export — with its first function names, global ones
-first, and its tooltip lists them. **Yes** loads it. **No**, Escape or closing
+first, and its tooltip lists them. A MinGW PE's table also holds a symbol for
+each section an object contributed, at that object's first function or
+variable, and each object's `.file` record; like IDA and `nm`, NeverD takes no
+name from them. **Yes** loads it. **No**, Escape or closing
 the dialog opens the image as if it had been stripped: its functions take
 `sub_` names and their extents come from the code, while the names dynamic
 linking needs — imports, exports and `.dynsym` — still load. The project keeps

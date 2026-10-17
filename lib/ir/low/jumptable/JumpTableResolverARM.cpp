@@ -276,13 +276,14 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
   if (Shift == 0 || Shift > limits::kMaxShiftForEntrySize)
     return false;
 
-  // The shifted value traces through ZEXT/SEXT/COPY to a 1- or 2-byte LOAD.
-  // The byte/halfword entries are *unscaled* in the load address (`ldrb
-  // [base,idx]`), so unlike the word table the index is not multiplied —
-  // extract the two address operands directly rather than via the scaled-index
-  // analyzer.
+  // The shifted value traces through ZEXT/SEXT/COPY and low-byte views to a
+  // 1- or 2-byte LOAD.  The byte/halfword entries are *unscaled* in the load
+  // address (`ldrb [base,idx]`), so unlike the word table the index is not
+  // multiplied — extract the two address operands directly rather than via the
+  // scaled-index analyzer.
   bool Signed = false;
   uint16_t LoadWidth = 0;
+  std::vector<int> EntryChain;
   struct IndexCandidate {
     uint64_t Reg = InvalidVA;
     NdVar Value;
@@ -302,14 +303,15 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
       if (D < 0)
         break;
       const LowOp &O = Ops[D];
-      if (O.Opcode == NdOp::INT_SEXT && O.NumInputs >= 1) {
-        Signed = true;
-        V = O.Inputs[0];
-        CurFrom = D - 1;
-        continue;
-      }
-      if ((O.Opcode == NdOp::INT_ZEXT || O.Opcode == NdOp::COPY) &&
-          O.NumInputs >= 1) {
+      // GCC's `add xd, xa, wo, sxtb #2` views the low byte of the register
+      // the entry was loaded into before it sign-extends it.
+      const bool LowView = O.Opcode == NdOp::SUBBYTES && O.NumInputs == 2 &&
+                           O.Inputs[1].isConst() && O.Inputs[1].Offset == 0;
+      if (((O.Opcode == NdOp::INT_SEXT || O.Opcode == NdOp::INT_ZEXT ||
+            O.Opcode == NdOp::COPY) &&
+           O.NumInputs >= 1) ||
+          LowView) {
+        EntryChain.push_back(D);
         V = O.Inputs[0];
         CurFrom = D - 1;
         continue;
@@ -349,6 +351,48 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
   }
   if (LoadWidth != 1 && LoadWidth != 2)
     return false;
+  // What the chain from the loaded entry to the shift makes of it: the entry
+  // itself, or its zero or sign extension.  A view narrower than the entry
+  // truncates it, which no table encodes, and a zero extension of a sign
+  // extension is no extension of the entry.
+  {
+    enum class EntryView { Exact, Zero, Sign } View = EntryView::Exact;
+    uint16_t Width = LoadWidth;
+    for (auto It = EntryChain.rbegin(); It != EntryChain.rend(); ++It) {
+      const LowOp &O = Ops[*It];
+      const uint16_t Out = O.Output.Size;
+      switch (O.Opcode) {
+      case NdOp::COPY:
+        if (Out != Width)
+          return false;
+        break;
+      case NdOp::INT_ZEXT:
+        if (Out <= Width || View == EntryView::Sign)
+          return false;
+        View = EntryView::Zero;
+        Width = Out;
+        break;
+      case NdOp::INT_SEXT:
+        if (Out <= Width)
+          return false;
+        // The sign of a zero-extended entry is clear.
+        if (View == EntryView::Exact)
+          View = EntryView::Sign;
+        Width = Out;
+        break;
+      case NdOp::SUBBYTES:
+        if (Out < LoadWidth || Out > Width)
+          return false;
+        if (Out == LoadWidth)
+          View = EntryView::Exact;
+        Width = Out;
+        break;
+      default:
+        return false;
+      }
+    }
+    Signed = View == EntryView::Sign;
+  }
 
   // Whichever address operand folds to a non-empty data segment is the table
   // base; the other is the switch index register.
@@ -359,20 +403,18 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
     std::vector<JumpTableValueOccurrence> Alternatives;
     for (const LowOp &Def : Ops)
       if (Def.Opcode == NdOp::INT_ZEXT && Def.NumInputs >= 1 &&
-          Def.Output == Candidate.Value &&
-          Def.Inputs[0].Size != 0 &&
+          Def.Output == Candidate.Value && Def.Inputs[0].Size != 0 &&
           Def.Inputs[0].Size < Def.Output.Size &&
           (Def.Inputs[0].isReg() || Def.Inputs[0].isTemp()) &&
           (Def.Addr < Candidate.UseAddr ||
-           (Def.Addr == Candidate.UseAddr &&
-            Def.Seq < Candidate.UseSeq)))
+           (Def.Addr == Candidate.UseAddr && Def.Seq < Candidate.UseSeq)))
         Alternatives.push_back({Def.Inputs[0], Def.Addr, Def.Seq, false});
     if (Alternatives.empty())
       return;
     auto matches = [&](const std::vector<JumpTableValueOccurrence> &Values) {
-      const std::vector<bool> Result = tableValuesMatchAtUses({
-          {Candidate.Value, Candidate.UseAddr, Candidate.UseSeq, Values,
-           /*AllowZeroExtension=*/true, /*AllowSignExtension=*/false}});
+      const std::vector<bool> Result = tableValuesMatchAtUses(
+          {{Candidate.Value, Candidate.UseAddr, Candidate.UseSeq, Values,
+            /*AllowZeroExtension=*/true, /*AllowSignExtension=*/false}});
       return !Result.empty() && Result.front();
     };
     if (!matches(Alternatives))
@@ -389,7 +431,7 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
       for (size_t I = 0; I + Chunk <= Alternatives.size();) {
         std::vector<JumpTableValueOccurrence> Trial = Alternatives;
         Trial.erase(Trial.begin() + static_cast<ptrdiff_t>(I),
-                     Trial.begin() + static_cast<ptrdiff_t>(I + Chunk));
+                    Trial.begin() + static_cast<ptrdiff_t>(I + Chunk));
         if (!Trial.empty() && matches(Trial))
           Alternatives = std::move(Trial);
         else
@@ -397,11 +439,10 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
       }
     }
     const uint16_t Width = Alternatives.front().Value.Size;
-    if (Width == 0 ||
-        std::any_of(Alternatives.begin(), Alternatives.end(),
-                    [&](const auto &Occurrence) {
-                      return Occurrence.Value.Size != Width;
-                    }))
+    if (Width == 0 || std::any_of(Alternatives.begin(), Alternatives.end(),
+                                  [&](const auto &Occurrence) {
+                                    return Occurrence.Value.Size != Width;
+                                  }))
       return;
     Candidate.Alternatives = std::move(Alternatives);
     Candidate.Value = Candidate.Alternatives.front().Value;
@@ -411,11 +452,15 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
       Candidate.Reg = Candidate.Value.Offset;
   };
   std::optional<uint64_t> TableBase;
+  // Fold the base where the entry is loaded: GCC reuses its register for the
+  // anchor before the branch (`ldrb w0, [x1, w0, uxtw]; adr x1, anchor`).
+  const va_t LoadAddr =
+      TableLoadIdx >= 0 ? Ops[TableLoadIdx].Addr : static_cast<va_t>(InvalidVA);
   for (int Pick = 0; Pick < 2; ++Pick) {
     uint64_t BaseCand = Pick == 0 ? CandA.Reg : CandB.Reg;
     if (BaseCand == InvalidVA)
       continue;
-    auto V = foldRegConstant(Img, Rec, BaseCand);
+    auto V = foldRegConstant(Img, Rec, BaseCand, LoadAddr);
     if (!V || !Img.getSegmentFor(*V))
       continue;
     const auto *S = Img.getSegmentFor(*V);
@@ -438,8 +483,8 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
   // arithmetic as the switch selector and the exact-use plan cannot recover
   // the logical index.
   if (LoadWidth > 1 && AddressAddIdx >= 0) {
-    int ScaleDef = reachingDefIdx(Ops, AddressAddIdx - 1,
-                                  IndexCandidateAtLoad.Value);
+    int ScaleDef =
+        reachingDefIdx(Ops, AddressAddIdx - 1, IndexCandidateAtLoad.Value);
     if (ScaleDef >= 0) {
       const LowOp &Scale = Ops[ScaleDef];
       int InputNo = -1;

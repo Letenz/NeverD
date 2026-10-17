@@ -9258,6 +9258,10 @@ static fs::path indexIdentityA64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_index_identity_a64.o";
 }
 
+static fs::path gccCompactA64Obj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_gcc_compact_a64.o";
+}
+
 static fs::path pageoffWrongBaseA64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_pageoff_wrong_base_a64.o";
 }
@@ -9730,6 +9734,71 @@ TEST_F(JTE_AArch64, CompactIndexAcceptsExplicitWToXZeroExtension) {
                           [](const neverd::JumpTableSelectorUseRef &Ref) {
                             return Ref.ExpectedSize == 4;
                           }));
+}
+
+// GCC's compact switch loads the entry back into the index register, turns
+// the table base register into the anchor, and reads each entry as a signed
+// offset, so a case may precede the anchor.  A halfword entry the dispatch
+// truncates to its low byte encodes no table.
+TEST_F(JTE_AArch64, GCCCompactSignedEntriesMayPrecedeTheAnchor) {
+  auto ImageOrErr = neverd::loadBinary(gccCompactA64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  for (const char *Name : {"a64_gcc_compact_byte", "a64_gcc_compact_half"}) {
+    SCOPED_TRACE(Name);
+    const neverd::Symbol *Function = Image.findSymbol(Name);
+    ASSERT_NE(Function, nullptr);
+    neverd::CFGBuilder Builder;
+    const neverd::LowFunc Low =
+        Builder.build(Image, Decoder, Function->Addr, Function->Name);
+    ASSERT_EQ(Low.JumpTables.size(), 1u);
+    const neverd::va_t Before = Function->Addr + 0x20;
+    const neverd::va_t Anchor = Function->Addr + 0x28;
+    const neverd::va_t After = Function->Addr + 0x30;
+    EXPECT_EQ(Low.JumpTables.front().Targets,
+              (std::vector<neverd::va_t>{Anchor, Before, After, Before}));
+    EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+  }
+  const neverd::Symbol *Truncated =
+      Image.findSymbol("a64_gcc_compact_truncated");
+  ASSERT_NE(Truncated, nullptr);
+  neverd::CFGBuilder Builder;
+  const neverd::LowFunc Low =
+      Builder.build(Image, Decoder, Truncated->Addr, Truncated->Name);
+  EXPECT_TRUE(Low.JumpTables.empty());
+
+  auto R = liftToLLVMIRUnopt(gccCompactA64Obj());
+  ASSERT_EQ(R.exitCode, 0) << R.err;
+  const std::string Body = llvmFunctionBody(R.out, "a64_gcc_compact_byte");
+  ASSERT_FALSE(Body.empty()) << R.out;
+  for (int Case = 0; Case < 4; ++Case)
+    EXPECT_TRUE(llvmHasSwitchCase(Body, Case)) << Body;
+}
+
+TEST_F(JTE_AArch64, GCCCompactGuardBoundsTheStorageItReads) {
+  auto ImageOrErr = neverd::loadBinary(gccCompactA64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  const neverd::Symbol *Function =
+      Image.findSymbol("a64_gcc_compact_guarded_call");
+  ASSERT_NE(Function, nullptr);
+  neverd::CFGBuilder Builder;
+  const neverd::LowFunc Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  const neverd::va_t Anchor = Function->Addr + 0x2c;
+  const neverd::va_t Four = Function->Addr + 0x34;
+  const neverd::va_t Abort = Function->Addr + 0x3c;
+  const neverd::va_t Eight = Function->Addr + 0x40;
+  EXPECT_EQ(Low.JumpTables.front().Targets,
+            (std::vector<neverd::va_t>{Eight, Abort, Anchor, Four, Eight}));
+  EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
 }
 
 TEST_F(JTE_AArch64, CompactModuloDropsOlderReusedZeroExtension) {
