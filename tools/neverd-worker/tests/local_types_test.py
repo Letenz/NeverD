@@ -94,7 +94,7 @@ def run(executable):
         assert problem["problems"][0]["line"] == 2 and problem["problems"][0]["column"] == 3, problem
         forgot = ok(owner, "local_types_forget", {"names": ["_PACKED"]})
         assert forgot["removed"] == ["_PACKED"], forgot
-        sidecar = binary.with_name(binary.name + ".neverd-types.json")
+        sidecar = Path(str(binary) + ".neverd/types.json")
         assert sidecar.exists()
         rows = json.loads(sidecar.read_text())
         assert [row.get("language") for row in rows] == ["rust", None], rows
