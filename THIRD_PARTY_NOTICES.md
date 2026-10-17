@@ -344,6 +344,12 @@ The Windows Web product includes the unchanged 1.3.2 notice under
 `share/neverd/licenses/zlib`; its exact source archive and hash are recorded
 in the product dependency manifest.
 
+The test fixture `unittests/lift/aarch64/test_jumptable_inflate_gcc_a64.s` is
+the AArch64 assembly GCC 15.2.0 produces for `inflate()` from the unchanged
+zlib 1.3.1 `inflate.c`, kept with only that function and the data it reads.
+The fixture retains zlib's copyright and license notice. It is assembled into a
+test object and is not shipped.
+
 ## Intel x86 approximation reference implementations
 
 The following files incorporate publicly released x86 approximation reference
