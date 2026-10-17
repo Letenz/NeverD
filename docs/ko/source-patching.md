@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 1eae101089e730c29ba3fda92db515fe148fe41b758d6f5b69156252591d9b3f -->
+<!-- i18n-source: 63d86e1a94d8b33e055360514902466c202d434ebb87823cd91181b98a556871 -->
 
 [← Documentation Index](README.md)
 
@@ -132,6 +132,8 @@ python examples/source-patch/run.py --neverd build-example-host/bin/neverd.exe -
 ```
 
 기본적으로 두 경로를 모두 실행합니다. `--api cli` 또는 `--api sdk`로 하나를 선택할 수 있습니다. 대상 주소는 자동으로 찾습니다. 입력 `7`에서 원본은 `8`, 두 패치는 모두 `36`을 출력합니다. 드라이버는 실제 실행, 영수증 및 라이브러리 누락 시 로드 실패를 검사하고 전체 빌드와 patch 명령을 `commands.json`에 저장합니다.
+
+CLI와 호스트 Python SDK 예제를 Linux·macOS·Windows x64/ARM64에서 네이티브로 검증했습니다. 실행 54회와 실제 라이브러리 누락 거부 12회를 확인했습니다. [호스트별 CI와 실제 소스](../../examples/source-patch/README.md#native-validation).
 
 <!-- i18n-section: exceptions -->
 ## C++ 예외

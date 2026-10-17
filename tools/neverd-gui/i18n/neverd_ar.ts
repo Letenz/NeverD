@@ -1618,6 +1618,10 @@ Double-click to go to the declaration.</source>
         <translation>التبسيط الرمزي</translation>
     </message>
     <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>التبسيط الرمزي لجميع الدوال</translation>
+    </message>
+    <message>
         <source>Recover LLVM control flow</source>
         <translation>استعادة تدفق التحكم في LLVM</translation>
     </message>
@@ -2141,6 +2145,10 @@ Signed: %4</source>
     <message>
         <source>Show segment:address line prefixes</source>
         <translation>إظهار بادئات الأسطر بصيغة المقطع:العنوان</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>التبسيط الرمزي لجميع الدوال</translation>
     </message>
     <message>
         <source>Shortcuts</source>

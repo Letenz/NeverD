@@ -683,6 +683,12 @@ private:
   /// a stale VA.
   bool segHasPtrRelocSlots(const Segment *S) const;
 
+  /// True when the loader recorded a relocated code- or data-pointer slot in
+  /// segment \p S, import storage aside.  In code such a slot lies only inside
+  /// a data object the image places among it (GNU ld's `__CTOR_LIST__` in
+  /// `.text`), and only such a code segment mirrors as a pointer table.
+  bool segHasLoaderPtrRelocSlots(const Segment *S) const;
+
   /// Preserved registration callees observe the original image. Any
   /// intersecting data run must keep that storage identity across all module
   /// functions.
@@ -1286,6 +1292,11 @@ private:
   /// constant or an undefined variable.  Backed by \ref ensureDefPhiIndex.
   const MedOp *lookupDef(const MedVar &V) const;
   const PhiNode *lookupPhi(const MedVar &V) const;
+  /// The block of CurMedFunc holding \p Phi, or null.
+  const MedBlock *lookupPhiBlock(const PhiNode *Phi) const;
+  /// CurMedFunc's blocks by id, or null when two blocks share an id. Backed
+  /// by \ref ensureDefPhiIndex.
+  const std::map<int, const MedBlock *> *uniqueBlocksById() const;
 
   /// Recursive worker for \ref varIsFrameDerived.  Walks the operand DAG of
   /// \p V once (the \p Visited set collapses shared sub-expressions and breaks
@@ -1909,6 +1920,9 @@ private:
   mutable const MedFunc *DefPhiIndexFor = nullptr;
   mutable llvm::DenseMap<std::pair<int64_t, int>, const MedOp *> DefIndex;
   mutable llvm::DenseMap<std::pair<int64_t, int>, const PhiNode *> PhiIndex;
+  mutable llvm::DenseMap<const PhiNode *, const MedBlock *> PhiBlocks;
+  mutable std::map<int, const MedBlock *> UniqueBlockIndex;
+  mutable bool UniqueBlockIds = true;
 
   // Occurrence-level proof that a value graph contains an emitted function
   // identity. Integer emission asks this for many operands, so solve each

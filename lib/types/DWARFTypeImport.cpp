@@ -764,9 +764,9 @@ private:
 
   /// Gives \p Field, a bit-field, the storage unit it lives in, as the
   /// layout of a record its source declares does (layOutRecord): the unit
-  /// of its type's size that holds it, else, in a packed record that lets
-  /// it cross such units, the bytes from the one that holds its first bit.
-  /// False where neither holds it.
+  /// of its type's size, at its type's alignment, that holds it, else, in
+  /// a packed record that lets it cross such units, the bytes from the one
+  /// that holds its first bit.  False where neither holds it.
   bool bitStorage(Member &Field) const {
     const std::optional<Builtin> Own = integerOf(*Field.Type);
     if (!Own)
@@ -774,7 +774,8 @@ private:
     const uint64_t Bits = builtinBytes(*Own, Library.dataModel()) * 8;
     if (!Bits || Field.BitWidth > Bits)
       return false;
-    Field.StorageBitOffset = Field.BitOffset / Bits * Bits;
+    const uint64_t Span = uint64_t(Library.alignOf(*makeBuiltin(*Own))) * 8;
+    Field.StorageBitOffset = Field.BitOffset / Span * Span;
     if (Field.BitOffset + Field.BitWidth <= Field.StorageBitOffset + Bits)
       return true;
     Field.StorageBitOffset = Field.BitOffset / 8 * 8;

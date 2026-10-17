@@ -86,9 +86,11 @@ bool recoverI386RegistrationCookieCall(const MedFunc &Func,
     }
   }
   if (!Argument)
-    Argument = findReachingArgReg(Func, TRI, Arch::X86, Block.Id, 0, Layout,
-                                  /*AllowUnknownLiveIn=*/false, nullptr);
-  if (!Argument || Argument->Size != 4)
+    Argument =
+        findReachingArgReg(Func, TRI, Arch::X86, Block.Id, 0, Layout,
+                           /*AllowUnknownLiveIn=*/false, nullptr, nullptr,
+                           static_cast<int>(CallIndex), BinaryFormat::COFF);
+  if (!Argument || Argument->Size != 4 || Argument->Kind == MedVar::Unspecified)
     return false;
   Info.Args = {*Argument};
   Info.IntegerRegisterArgCount = 1;

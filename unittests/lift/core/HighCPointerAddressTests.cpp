@@ -27138,9 +27138,6 @@ TEST(HighCPointerAddresses, Win64CallOnlyBlockRecoversPredR9AndHome) {
   Setup.StartAddr = 0x140001000;
   Setup.Succs = {1};
   Setup.Ops.push_back(Copy(RSP, RSP, 0x140001000));
-  Setup.Ops.push_back(Copy(RCX1, MedVar::makeConst(0x1000, 8), 0x140001008));
-  Setup.Ops.push_back(Copy(RDX1, MedVar::makeConst(0xAAA, 8), 0x140001010));
-  Setup.Ops.push_back(Copy(R81, MedVar::makeConst(11, 4), 0x140001018));
   const MedVar RDI1 = Reg(15, 1, x86reg::RDI);
   Setup.Ops.push_back(Copy(RDI1, MedVar::makeConst(0xBBB, 8), 0x14000101C));
   Setup.Ops.push_back(Copy(ESI1, MedVar::makeConst(7, 4), 0x140001020));
@@ -27166,6 +27163,11 @@ TEST(HighCPointerAddresses, Win64CallOnlyBlockRecoversPredR9AndHome) {
   Setup.Ops.push_back(std::move(StoreHome));
   const MedVar RDIDangling = Reg(15, 61, x86reg::RDI);
   Setup.Ops.push_back(Copy(R91, RDIDangling, 0x140001040));
+  // The helper call may change rcx, rdx and r8, so they are set after it;
+  // rdi and rsi, which Win64 calls keep, carry r9 and the home slot.
+  Setup.Ops.push_back(Copy(R81, MedVar::makeConst(11, 4), 0x140001042));
+  Setup.Ops.push_back(Copy(RDX1, MedVar::makeConst(0xAAA, 8), 0x140001044));
+  Setup.Ops.push_back(Copy(RCX1, MedVar::makeConst(0x1000, 8), 0x140001046));
   // Later helper CALLs bump ESI/RDI SSA; those versions are CallClobbers
   // (`PreservedPrefixSize == 0`) so medvarToExpr is Undef until the walk
   // reaches `COPY esi = GetLength` / `COPY rdi = cstr` before the helpers.
@@ -27207,8 +27209,7 @@ TEST(HighCPointerAddresses, Win64CallOnlyBlockRecoversPredR9AndHome) {
   ASSERT_NE(CallAt, std::string::npos) << Source;
   const auto Open = Source.find('(', CallAt);
   ASSERT_NE(Open, std::string::npos) << Source;
-  // Count the commas between arguments, not those inside an argument such
-  // as the unknown r8 the helper call clobbered.
+  // Count the commas between arguments, not those inside an argument.
   int Depth = 0;
   size_t Commas = 0;
   size_t Close = std::string::npos;

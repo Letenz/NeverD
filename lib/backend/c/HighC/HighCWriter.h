@@ -16,6 +16,7 @@
 
 #include "../CIdentifier.h"
 #include "../CSourceRecorder.h"
+#include "../DebugParamBinding.h"
 #include "../FloatConversion.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
@@ -130,10 +131,24 @@ public:
   /// Whether the unit can spell \p Type, a pointer to a named record, by
   /// the record's name alone.
   bool spellsRecordPointer(const TypeRef &Type) const;
+  /// Whether \p Value, printed as \p Text, is a local the unit declares as
+  /// \p Type, which an assignment of it needs no conversion to.
+  bool sameDeclaredLocal(const HighExpr &Value, const std::string &Text,
+                         const TypeRef &Type) const;
   /// Whether the unit defines \p Record where code reads its members: the
   /// program's local types define the records a unit names
   /// (RecordDefinitions), and a record they leave out stays incomplete.
   bool definesRecord(const TypeRef &Record) const;
+  /// The records the unit asks the local types for besides those its types
+  /// name: those an earlier rendering's code read members of through others
+  /// (HighCEmitter::emit).
+  std::vector<TypeRef> ExtraRecords;
+  /// Where a rendering keeps the records its code would read members of
+  /// that the unit does not define, for the next to ask for.
+  std::vector<TypeRef> *WantedRecords = nullptr;
+  /// Notes \p Record, which the code would read members of, for the next
+  /// rendering (WantedRecords).
+  void wantRecord(const TypeRef &Record) const;
   /// Asks the program's local types for the definitions of the records the
   /// unit names (CEmitterOptions::RecordDefinitions), and keeps the names
   /// they declare from the unit's own.
@@ -415,16 +430,7 @@ public:
   /// where the convention passes each (SourceParameterPlacement), never by
   /// position: System V passes `f(double x, int n)` with n in the first
   /// integer register.
-  struct DebugParamBinding {
-    /// The debug parameter it holds a piece of, or -1.
-    int Index = -1;
-    /// Where the piece starts in that parameter's value.
-    uint16_t Offset = 0;
-    /// It holds the whole value the debug type describes.
-    bool Whole = false;
-    /// It holds the hidden pointer to the result's storage.
-    bool Result = false;
-  };
+  using DebugParamBinding = neverd::DebugParamBinding;
   DebugParamBinding debugParamBinding(const HighFunc &Func, size_t Index) const;
   /// The name \p Func's parameter \p Index reads as by its debug signature:
   /// the debug parameter's, `<name>_<offset>` for a later piece of one, or
@@ -458,6 +464,10 @@ public:
   /// Whether \p Addr is a member of a record the unit defines from the
   /// program's local types (RecordDefinitions).
   bool memberOfDefinedRecord(const HighExpr &Addr) const;
+  /// \p Type with \p Declarator, by the typedef its declaration names it by
+  /// (NdType::TypedefName) where the unit defines that typedef, as IDA
+  /// prints `PKDEFERRED_ROUTINE DeferredRoutine`; else as C spells it.
+  std::string declaredAs(const TypeRef &Type, llvm::StringRef Declarator) const;
   /// Frame displacement that is a unique interior field of a named record
   /// slot (`record.p` at wrapper+8). Exact slot addresses stay unnamed here.
   std::optional<std::string>
@@ -1005,10 +1015,6 @@ public:
   mutable bool ParamsPlaced = false;
   /// Fills the cache for \p Func.
   void bindParams(const HighFunc &Func) const;
-  /// Where a stack parameter of \p Func arrives, from the entry stack
-  /// pointer; none for a register parameter or an unknown location.
-  std::optional<int64_t> stackParamOffset(const HighFunc &Func,
-                                          size_t Index) const;
   /// emittedParamIndices' answers, which walk the function's body.
   mutable std::map<std::pair<const HighFunc *, va_t>, std::vector<size_t>>
       EmittedParamIndices;

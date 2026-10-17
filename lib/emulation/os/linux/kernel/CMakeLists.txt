@@ -1,5 +1,7 @@
 add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxServices.cpp
+  LinuxNetwork.cpp
+  LinuxDatagram.cpp
   LinuxTime.cpp
   LinuxClock.cpp
   LinuxCPUClock.cpp

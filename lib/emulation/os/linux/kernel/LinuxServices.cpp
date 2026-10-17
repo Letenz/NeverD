@@ -63,6 +63,13 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   if (unavailableKernelService(Kind, Options.LinuxKernel))
     return std::optional<uint64_t>(uint64_t(0) - ServiceNotImplemented);
   switch (Kind) {
+  case ServiceKind::SetSocketOption:
+  case ServiceKind::GetSocketOption:
+  case ServiceKind::Socket:
+  case ServiceKind::Connect:
+  case ServiceKind::SendTo:
+  case ServiceKind::ReceiveFrom:
+    return Files.network(Kind, Event, Options.LinuxNetwork, Result);
   case ServiceKind::PidFDOpen:
     if (Options.LinuxKernel && Options.LinuxKernel->GKI) {
       return Files.openProcessDescriptor(Event.Arguments[0], Event.Arguments[1],
@@ -154,7 +161,8 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Write:
   case ServiceKind::WriteV:
     if (Files.isDevice(Event.Arguments[0]) ||
-        Files.isRegularFile(Event.Arguments[0]))
+        Files.isRegularFile(Event.Arguments[0]) ||
+        Files.isSocket(Event.Arguments[0]))
       return Files.handle(Kind, Event, Result);
     if (Options.LinuxFiles) {
       if (auto E = Files.outputError(Event.Arguments[0])) {

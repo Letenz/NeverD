@@ -1,6 +1,7 @@
 add_neverd_component_library(NeverDEmulationAndroid
   AndroidImage.cpp
   AndroidBionic.cpp
+  AndroidResolver.cpp
   AndroidCallbacks.cpp
   AndroidAllocation.cpp
   AndroidLog.cpp
@@ -9,6 +10,7 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidMemoryCalls.cpp
   AndroidOnce.cpp
   AndroidQueries.cpp
+  AndroidRandom.cpp
   AndroidProperties.cpp
   AndroidJNI.cpp
   AndroidJNIObjects.cpp

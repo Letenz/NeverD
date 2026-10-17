@@ -4,6 +4,7 @@
 // objects with:
 //   gcc -g -O0 -c dwarf_types.c -o dwarf_types.gcc.o
 //   clang -g -O0 -c dwarf_types.c -o dwarf_types.clang.o
+//   gcc -m32 -g -O0 -c dwarf_types.c -o dwarf_types.gcc32.o
 
 #include <stdint.h>
 

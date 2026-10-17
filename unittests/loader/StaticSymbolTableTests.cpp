@@ -350,4 +350,65 @@ TEST(StaticSymbolTableTest, MinGWImageNamesNoSectionOrFileRecord) {
     EXPECT_TRUE(Names.count(Name)) << Name;
 }
 
+TEST(StaticSymbolTableTest, MinGWDataAmongCodeIsData) {
+  // GNU ld keeps __CTOR_LIST__, a table of constructors headed by -1, in
+  // .text; the fixtures, built for x86-64 and i386, keep such a table there
+  // and point at it from .data.  The base relocations, read before the symbol
+  // table, take the pointer to the table and the pointer in it for pointers
+  // in code.  The table's symbol, of no function type, starting no
+  // instruction, says both are data.
+  for (const auto &[File, Prefix] :
+       {std::pair<const char *, std::string>{"mingw_text_data.exe", ""},
+        std::pair<const char *, std::string>{"mingw_text_data32.exe", "_"}}) {
+    SCOPED_TRACE(File);
+    const auto Path =
+        std::filesystem::path(__FILE__).parent_path() / "fixtures" / File;
+    const auto Image = load(readBytes(Path), /*ReadStaticSymbols=*/true);
+    const auto *Table = Image.findSymbol(Prefix + "text_table");
+    const auto *Ref = Image.findSymbol(Prefix + "table_ref");
+    const auto *Twice = Image.findSymbol(Prefix + "twice");
+    ASSERT_NE(Table, nullptr);
+    ASSERT_NE(Ref, nullptr);
+    ASSERT_NE(Twice, nullptr);
+    EXPECT_TRUE(Image.DataInCode.count(Table->Addr));
+    EXPECT_FALSE(Image.DataInCode.count(Twice->Addr));
+    // The pointer to the table points to data.
+    EXPECT_TRUE(Image.DataPtrRelocSlots.count(Ref->Addr));
+    EXPECT_FALSE(Image.CodePtrRelocSlots.count(Ref->Addr));
+    // The table's entry is a slot that holds code, not an operand.
+    const va_t Entry = Table->Addr + Image.getPointerSize();
+    EXPECT_TRUE(Image.CodePtrRelocSlots.count(Entry));
+    EXPECT_FALSE(Image.CodeAddressRelocOperands.count(Entry));
+
+    // Declined, the symbol table says nothing of the table.
+    const auto Declined = load(readBytes(Path), /*ReadStaticSymbols=*/false);
+    EXPECT_TRUE(Declined.DataInCode.empty());
+    EXPECT_TRUE(Declined.CodePtrRelocSlots.count(Ref->Addr));
+    EXPECT_TRUE(Declined.CodeAddressRelocOperands.count(Entry));
+  }
+}
+
+TEST(StaticSymbolTableTest, MinGWImportVariableNoCodeChangesIsConstant) {
+  // The fixture calls `add_one` and `twice` through `__imp_X` variables, as
+  // MinGW's runtime defines them for the functions it supplies in place of an
+  // import (__MINGW_IMP_SYMBOL).  `__imp_twice` starts at a lazy binding that
+  // rewrites it; nothing changes `__imp_add_one`.
+  const auto Path = std::filesystem::path(__FILE__).parent_path() / "fixtures" /
+                    "mingw_imp_slots.exe";
+  const auto Image = load(readBytes(Path), /*ReadStaticSymbols=*/true);
+  const auto *Constant = Image.findSymbol("__imp_add_one");
+  const auto *Lazy = Image.findSymbol("__imp_twice");
+  const auto *AddOne = Image.findSymbol("add_one");
+  ASSERT_NE(Constant, nullptr);
+  ASSERT_NE(Lazy, nullptr);
+  ASSERT_NE(AddOne, nullptr);
+  ASSERT_EQ(Image.ConstantCodeSlots.size(), 1u);
+  ASSERT_TRUE(Image.ConstantCodeSlots.count(Constant->Addr));
+  EXPECT_EQ(Image.ConstantCodeSlots.at(Constant->Addr), AddOne->Addr);
+  EXPECT_FALSE(Image.ConstantCodeSlots.count(Lazy->Addr));
+  // Declined, the symbol table names no such variable.
+  EXPECT_TRUE(load(readBytes(Path), /*ReadStaticSymbols=*/false)
+                  .ConstantCodeSlots.empty());
+}
+
 } // namespace

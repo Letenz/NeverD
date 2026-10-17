@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
 #include "HighCWriter.h"
@@ -306,6 +307,17 @@ std::string HighCWriter::castOperandText(std::string Text) const {
   if (c_memory::castOperand(Plain) == Plain)
     return Text;
   return "(" + Text + ")";
+}
+
+bool HighCWriter::sameDeclaredLocal(const HighExpr &Value,
+                                    const std::string &Text,
+                                    const TypeRef &Type) const {
+  if ((Value.Kind != ExprKind::Var && Value.Kind != ExprKind::Phi) || !Type)
+    return false;
+  std::string Storage;
+  const auto It = DeclaredCTypes.find(plainText(Text, Storage).str());
+  return It != DeclaredCTypes.end() && It->second &&
+         typeToC(It->second) == typeToC(Type);
 }
 
 bool HighCWriter::declaredLocalInteger(const HighExpr &E, uint16_t Width,
@@ -2132,13 +2144,7 @@ HighCWriter::externalPrototype(const std::string &Name) const {
 }
 
 std::string HighCWriter::prototypeType(std::string_view Type) const {
-  std::string Text(Type);
-  const size_t At = Text.find(libc::kWinapiMarker);
-  if (At == std::string::npos)
-    return Text;
-  return Text.replace(At, libc::kWinapiMarker.size(),
-                      Opts.TheArch == Arch::X86 ? "__attribute__((stdcall)) "
-                                                : "");
+  return c_library::typeSpelling(Type, Opts.TheArch);
 }
 
 bool HighCWriter::takesPointerArgument(const HighExpr &E, size_t Index,
@@ -3399,8 +3405,16 @@ int HighCWriter::debugSymRichness(const FunctionSym &FS) const {
 TypeRef HighCWriter::cDisplayType(const TypeRef &Ty) {
   if (!Ty)
     return Ty;
-  if (Ty->Kind == NdTypeKind::Ptr)
-    return NdType::makePtr(cDisplayType(Ty->Pointee));
+  if (Ty->Kind == NdTypeKind::Ptr) {
+    TypeRef Pointer = NdType::makePtr(cDisplayType(Ty->Pointee));
+    // The typedef a declaration names the pointer by, as PRKEVENT, stays.
+    if (!Ty->TypedefName.empty()) {
+      auto Named = std::make_shared<NdType>(*Pointer);
+      Named->TypedefName = Ty->TypedefName;
+      return Named;
+    }
+    return Pointer;
+  }
   if (Ty->Kind == NdTypeKind::Struct && !Ty->SourceName.empty()) {
     auto Out = std::make_shared<NdType>(*Ty);
     Out->SourceName = cNamedTypeSpelling(Ty->SourceName);
@@ -4215,8 +4229,12 @@ HighCWriter::typedMemberAccess(const HighExpr &Addr, uint16_t AccessSize,
     if (auto Overlay = frameTypedMemberAccess(*OverlayDisp, AccessSize))
       return Overlay;
   const TypeRef Record = declaredRecordPointee(*Base);
-  if (!Record || !definesRecord(Record))
+  if (!Record)
     return std::nullopt;
+  if (!definesRecord(Record)) {
+    wantRecord(Record);
+    return std::nullopt;
+  }
   completeDisplayRecord(Dbg, Record);
   const auto Field =
       Record->displayFieldPathAt(Peeled->second, AccessSize, EnterNestedAtZero);
@@ -4296,8 +4314,12 @@ TypeRef HighCWriter::typedMemberType(const HighExpr &Addr,
     if (TypeRef OverlayTy = frameTypedMemberType(*OverlayDisp, AccessSize))
       return OverlayTy;
   const TypeRef Record = declaredRecordPointee(*Peeled->first);
-  if (!Record || !definesRecord(Record))
+  if (!Record)
     return nullptr;
+  if (!definesRecord(Record)) {
+    wantRecord(Record);
+    return nullptr;
+  }
   completeDisplayRecord(Dbg, Record);
   if (readsWholeRecord(*Record, Peeled->second, AccessSize, true))
     return nullptr;

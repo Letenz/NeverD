@@ -1496,6 +1496,77 @@ private slots:
     QVERIFY(!note->contains(QStringLiteral("mapped_address")));
   }
 
+  void frameRecordsGoToTheirFunctionAndMembersToTheirUses() {
+    // The record HighC declares for a function's stack names the function:
+    // a double-click on it, or on its storage, takes the disassembly to where
+    // the function begins, and on a member to the instruction that first
+    // reads or writes it, while the code stays; Back returns.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-frame.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address function = Base + 0x140;
+    bench.window->disassembly()->navigate(function);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 10);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    QSignalSpy names(code, &CodeText::nameActivated);
+    const auto doubleClick = [&] {
+      const QPointF point(code->viewport()->width() / 2.0, 1);
+      QMouseEvent click(QEvent::MouseButtonDblClick, point,
+                        code->viewport()->mapToGlobal(point), Qt::LeftButton,
+                        Qt::LeftButton, Qt::NoModifier);
+      QApplication::sendEvent(code->viewport(), &click);
+    };
+    code->setCursorLine(0);
+    QVERIFY(code->findText(QStringLiteral("return stack_storage"), true));
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function + 0xC));
+
+    const QString record =
+        QStringLiteral("frame_") + QString::number(function, 16).toUpper();
+    code->setCursorLine(0);
+    QVERIFY(code->findText(record, true));
+    QCOMPARE(code->currentToken(), record);
+    const int recordRow = code->cursorLine();
+    doubleClick();
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function));
+    QCOMPARE(code->cursorLine(), recordRow);
+    QVERIFY(code->hasFocus());
+    bench.action(ActionId::JumpBack)->trigger();
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function + 0xC));
+
+    // A member's declaration goes to the statement that first writes it.
+    code->setCursorLine(0);
+    QVERIFY(code->findText(QStringLiteral("var_m30"), true));
+    QCOMPARE(code->currentToken(), QStringLiteral("var_m30"));
+    QVERIFY(code->cursorLine() < recordRow + 5);
+    doubleClick();
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function + 6));
+
+    // The storage is the frame's too.
+    code->setCursorLine(0);
+    QVERIFY(code->findText(QStringLiteral("stack_storage"), true));
+    QCOMPARE(code->currentToken(), QStringLiteral("stack_storage"));
+    doubleClick();
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(function));
+    QCOMPARE(names.size(), 0);
+    QCOMPARE(code->function(), std::optional<Address>(function));
+  }
+
   void codeEditKeepsThePlaceInALongFunction() {
     // An edit loads the function's pages again. The first page used to
     // clamp the cursor and the view, which then stayed near its end: the
@@ -2441,6 +2512,161 @@ private slots:
                 view->text()->allText().contains("function_1"));
     QVERIFY(view->text()->sourceOptions().isEmpty());
     QVERIFY(view->text()->status().contains("O2"));
+  }
+
+  void symbolicSimplificationOfEveryFunctionIsTheDefaultUntilTurnedOff() {
+    QTemporaryDir directory;
+    Workbench bench;
+    const auto forget = qScopeGuard(
+        [] { QSettings().remove(settings::SymbolicSimplification); });
+    QStringList diagnostics;
+    connect(&bench.session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    bench.window->openFile(writeFixture(directory, "source-cache.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    QTRY_VERIFY_WITH_TIMEOUT(!view->text()->loading() &&
+                                 !view->text()->allText().isEmpty(),
+                             OpenTimeoutMs);
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    const QJsonObject symbolic{{"symbolic", true}};
+    // Turned on, it reaches the shown function at once and stays on.
+    {
+      QMenu choices;
+      view->addSourceActions(choices);
+      auto *every = choices.findChild<QAction *>("sourceSymbolicEvery");
+      QVERIFY(every && every->isCheckable() && !every->isChecked());
+      every->trigger();
+    }
+    QVERIFY(QSettings().value(settings::SymbolicSimplification).toBool());
+    QTRY_VERIFY(!view->text()->loading() &&
+                view->text()->status().contains("Symbolic simplification"));
+    QCOMPARE(view->text()->sourceOptions(), symbolic);
+    QVERIFY(diagnostics.join('\n').contains("\"symbolic\":true"));
+    {
+      QMenu choices;
+      view->addSourceActions(choices);
+      QVERIFY(choices.findChild<QAction *>("sourceSymbolic")->isChecked());
+      QVERIFY(choices.findChild<QAction *>("sourceSymbolicEvery")->isChecked());
+      QVERIFY(!choices.findChild<QAction *>("sourceDefault")->isEnabled());
+    }
+    // Another function opens with it.
+    view->text()->load(Base + 16, "source");
+    QTRY_VERIFY(!view->text()->loading() && !view->text()->allText().isEmpty());
+    QCOMPARE(view->text()->sourceOptions(), symbolic);
+    // One function turns it off; Restore default source turns it on again.
+    {
+      QMenu choices;
+      view->addSourceActions(choices);
+      choices.findChild<QAction *>("sourceSymbolic")->trigger();
+    }
+    QTRY_VERIFY(!view->text()->loading());
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    {
+      QMenu choices;
+      view->addSourceActions(choices);
+      auto *restore = choices.findChild<QAction *>("sourceDefault");
+      QVERIFY(restore->isEnabled());
+      restore->trigger();
+    }
+    QTRY_VERIFY(!view->text()->loading());
+    QCOMPARE(view->text()->sourceOptions(), symbolic);
+    // An IR has no source options to take.
+    bench.action(ActionId::ViewLowIR)->trigger();
+    auto *ir = bench.codeView(QStringLiteral("low"));
+    QVERIFY(ir);
+    QTRY_VERIFY(!ir->text()->loading() && !ir->text()->allText().isEmpty());
+    QVERIFY(ir->text()->sourceOptions().isEmpty());
+    QVERIFY(!ir->text()->status().contains("source view"));
+    // Options > General shows the same choice and turns it off everywhere.
+    bool shownOn = false;
+    QTimer dialogProbe;
+    connect(&dialogProbe, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *box = dialog
+                      ? dialog->findChild<QCheckBox *>("optionsSymbolicEvery")
+                      : nullptr;
+      if (!box)
+        return;
+      dialogProbe.stop();
+      shownOn = box->isChecked();
+      box->setChecked(false);
+      dialog->findChild<QDialogButtonBox *>()
+          ->button(QDialogButtonBox::Ok)
+          ->click();
+    });
+    dialogProbe.start(10);
+    bench.action(ActionId::OptionsGeneral)->trigger();
+    QVERIFY(shownOn);
+    QVERIFY(!QSettings().value(settings::SymbolicSimplification).toBool());
+    QTRY_VERIFY(!view->text()->loading());
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    view->text()->load(Base, "source");
+    QTRY_VERIFY(!view->text()->loading() && !view->text()->allText().isEmpty());
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+  }
+
+  void symbolicSimplificationOfEveryFunctionGivesWayToOrdinarySource() {
+    QTemporaryDir directory;
+    Workbench bench;
+    const auto forget = qScopeGuard(
+        [] { QSettings().remove(settings::SymbolicSimplification); });
+    SourceDefaults::instance().setSymbolic(true);
+    bench.window->openFile(writeFixture(directory, "source-options-fail.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    // A refused simplification still shows the function.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !view->text()->loading() &&
+            view->text()->status().contains("Transformation failed"),
+        OpenTimeoutMs);
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    QVERIFY(!view->text()->allText().isEmpty());
+    QVERIFY(!view->text()->allText().contains("refused"));
+  }
+
+  void cancellingSymbolicSimplificationOfANewFunctionShowsOrdinarySource() {
+    QTemporaryDir directory;
+    Workbench bench;
+    const auto forget = qScopeGuard(
+        [] { QSettings().remove(settings::SymbolicSimplification); });
+    QStringList diagnostics;
+    connect(&bench.session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    SourceDefaults::instance().setSymbolic(true);
+    bench.window->openFile(writeFixture(directory, "source-options-slow.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    QTRY_VERIFY_WITH_TIMEOUT(diagnostics.join('\n').contains(
+                                 "fixture symbolic transformation started"),
+                             5000);
+    QVERIFY(view->text()->loading());
+    QVERIFY(view->text()->allText().isEmpty());
+    QMenu cancellation;
+    view->addSourceActions(cancellation);
+    auto *cancel = cancellation.findChild<QAction *>("sourceCancel");
+    QVERIFY(cancel && cancel->isEnabled());
+    cancel->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!view->text()->loading() &&
+                                 !view->text()->allText().isEmpty(),
+                             OpenTimeoutMs);
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    QVERIFY(view->text()->status().contains("Cancelled"));
   }
 
   void largePseudocodeKeepsProcessingEvents() {

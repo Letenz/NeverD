@@ -23,6 +23,7 @@
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
+#include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
@@ -3127,6 +3128,9 @@ struct ImportPrototypeArguments {
   std::set<va_t> StackSlots;
   /// The bytes of those slots a stdcall routine pops as it returns.
   std::map<va_t, int> StackPops;
+  /// The integer arguments each import's prototype counts, where the setup
+  /// of each call gives it its arguments (Windows on ARM64).
+  std::map<va_t, int> Counts;
 };
 
 /// The arguments of the libc imports that \p Funcs and the callees
@@ -3424,6 +3428,9 @@ ImportPrototypeArguments importPrototypeArguments(
     if (StackArguments)
       (Joins ? Result.DeclaredStackArgs : Result.StackArgs)[Addr] =
           *Count > InRegisters ? *Count : 0;
+    if (RegisterArguments && !Name.empty() && Convention &&
+        Convention->ArgumentsFromCallSetup && Routine->Floats.empty())
+      Result.Counts[Addr] = *Count;
     if (StackArguments && !RegisterArguments && !Joins &&
         (Routine->Slots || Routine->Order.empty())) {
       Result.StackSlots.insert(Addr);
@@ -3498,6 +3505,15 @@ void computeCallRegisterEffects(
       Result.CallEntryStackArgs = std::move(Prototyped.StackArgs);
       Result.CallEntryStackSlots = std::move(Prototyped.StackSlots);
       Result.CallEntryStackPops = std::move(Prototyped.StackPops);
+    } else if (Convention && Convention->ImportArgumentsFromPrototype &&
+               Convention->ArgumentsFromCallSetup) {
+      // Where the setup of each call gives it its arguments (Windows on
+      // ARM64), a prototyped import's declaration still counts them.
+      Result.CallEntryArgumentCounts =
+          importPrototypeArguments(Img, Result.LowFuncs, {},
+                                   /*StackArguments=*/true, Dbg,
+                                   /*RegisterArguments=*/true, &PointerCallees)
+              .Counts;
     }
     return;
   }
@@ -3842,7 +3858,12 @@ void Pipeline::buildLowIR(
     Weight[I] = std::min(Gap, kMaxDecodeWeight);
   }
 
+  // Registration stack proofs repeat the same fresh query for one callee from
+  // many callers. The image does not change during these builds, so their
+  // recorded answers, replayed with their work, are the fresh ones.
+  RegistrationStackPopMemo StackPops(Img);
   parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
+    RegistrationStackPopMemoScope StackPopScope(StackPops);
     Decoder LocalDec;
     if (!LocalDec.init(Img))
       return;
@@ -3922,6 +3943,7 @@ void Pipeline::buildLowIR(
   auto rebuildFunctions = [&](const std::vector<bool> &Rebuild) {
     CachedArbitration.reset();
     parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
+      RegistrationStackPopMemoScope StackPopScope(StackPops);
       Decoder LocalDec;
       if (!LocalDec.init(Img))
         return;

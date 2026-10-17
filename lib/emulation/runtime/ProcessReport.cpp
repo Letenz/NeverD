@@ -15,6 +15,7 @@
 #include "ProcessLinuxPriorityJSON.h"
 #include "ProcessLinuxSignalsJSON.h"
 #include "ProcessLinuxTimeJSON.h"
+#include "ProcessNetworkJSON.h"
 #include "ProcessWindowsJSON.h"
 
 #include "neverd/emulation/ProcessReportFields.h"
@@ -98,6 +99,13 @@ llvm::Expected<ProcessOptions> processOptionsFromJSON(llvm::StringRef Text) {
       if (!Kernel)
         return Kernel.takeError();
       Options.LinuxKernel = std::move(*Kernel);
+      continue;
+    }
+    if (Name == field::LinuxNetwork) {
+      auto Network = linuxNetworkOptionsFromJSON(V);
+      if (!Network)
+        return Network.takeError();
+      Options.LinuxNetwork = std::move(*Network);
       continue;
     }
     if (Name == field::LinuxPriority) {

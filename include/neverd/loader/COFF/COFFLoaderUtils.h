@@ -146,6 +146,25 @@ inline bool isSectionDefinition(const llvm::object::COFFSymbolRef &Sym) {
 void parseSymbolTable(const llvm::object::COFFObjectFile &Obj, BinaryImage &Img,
                       uint64_t ImageBase, llvm::ArrayRef<va_t> SectionVAs = {});
 
+/// Record, once discovery has found the image's code, the data a linked
+/// image's own symbol table names among it: a symbol of no function type in
+/// an executable section that no code metadata claims, is no import thunk
+/// and starts no instruction, such as GNU ld's __CTOR_LIST__ and
+/// __DTOR_LIST__ in .text.  The relocated pointers to such an object, which
+/// the base relocations, read before the symbol table, took for pointers to
+/// code, become pointers to data (recordDataPointerTargets).
+void recordSymbolTableDataInCode(BinaryImage &Img);
+
+/// Records in Img.ConstantCodeSlots each `__imp_X` variable of an x86 or x64
+/// image's symbol table, MinGW's for a function its runtime supplies in place
+/// of an import (__MINGW_IMP_SYMBOL), that holds one of the image's function
+/// entries under a relocation and that no instruction changes or lets escape:
+/// every instruction that names it reads it, and no pointer in data or export
+/// names it.  A linear sweep of each executable section, resynchronized at
+/// the entries the image's metadata gives, finds those instructions.  A lazy
+/// binding that the function it starts at rewrites stays a variable.
+void recordConstantCodeSlots(BinaryImage &Img);
+
 /// Parse one delay-import descriptor from the already mapped image.  Supports
 /// current RVA descriptors and legacy VA descriptors, returning the number of
 /// imports appended.  Exposed separately for bounded synthetic-image tests.

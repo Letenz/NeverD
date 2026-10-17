@@ -1601,6 +1601,46 @@ TEST(X87CallGraphCache, ImmutableProjectionRejectionsReplayBudgetsExactly) {
     }
 }
 
+TEST(X87CallGraphCache, OversizedGraphsAreRetainedAsRefusals) {
+  // A body larger than any proof may walk is refused for its size, a fact of
+  // its complete CFG: the next builder reads the refusal, budget for budget,
+  // instead of lifting the body again (Wine's 32-bit printf engine takes
+  // seconds in its jump tables).
+  using Access = detail::X87CallGraphCacheTestAccess;
+  BinaryImage Image;
+  Image.Arch = Arch::X86;
+  Image.Bits = Bitness::Bits32;
+  Image.Format = BinaryFormat::ELF;
+  Image.Entry = 0x1000;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Image.Entry;
+  Text.Data.assign(60000, 0x40); // inc eax
+  Text.Data.push_back(0xc3);     // ret
+  Text.Size = Text.Data.size();
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Image.Segments.push_back(Text);
+  Image.Symbols.push_back(Symbol::makeFunc(Image.Entry, Text.Size));
+  Image.KnownCodeRanges.emplace_back(Image.Entry, Image.Entry + Text.Size);
+
+  auto Cache = createX87CallGraphCache();
+  CFGBuilder Seed;
+  Seed.setX87CallGraphCache(Cache);
+  EXPECT_FALSE(Access::query(Seed, Image, Image.Entry).first);
+  ASSERT_EQ(Access::stats(Seed)[1], 1u);
+  for (size_t Budget : {size_t(0), size_t(limits::kMaxX87CallProofWork)}) {
+    SCOPED_TRACE(Budget);
+    CFGBuilder Cold, Warm;
+    Warm.setX87CallGraphCache(Cache);
+    const auto Before = Access::stats(Warm);
+    const auto Actual = Access::query(Warm, Image, Image.Entry, Budget);
+    EXPECT_EQ(Actual, Access::query(Cold, Image, Image.Entry, Budget));
+    EXPECT_FALSE(Actual.first);
+    EXPECT_EQ(Access::stats(Warm)[0], Before[0] + (Budget != 0));
+    EXPECT_EQ(Access::stats(Warm)[1], 1u);
+  }
+}
+
 TEST(X87CallGraphCache, RejectionMarkersCannotSurviveChangedBuildContexts) {
   using Access = detail::X87CallGraphCacheTestAccess;
   for (bool Exceptional : {false, true})

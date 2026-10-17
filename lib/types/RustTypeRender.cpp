@@ -21,6 +21,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <set>
+#include <tuple>
+#include <utility>
 
 namespace neverd::types::render {
 namespace {
@@ -47,6 +49,9 @@ public:
   void opaque(const LocalType &Type, std::string &Out) const;
   /// The builtins rendered so far by their Windows names.
   const std::set<Builtin> &aliased() const { return Aliased; }
+  /// The definition of the type long double takes where it is no float
+  /// Rust has, which the types use: bytes aligned as C aligns them.
+  std::string longDouble() const;
   /// \p Type as an exact width, as Rust spells it.
   std::string exact(Builtin Type, bool Pointee) const;
 
@@ -61,6 +66,11 @@ private:
   void enumeration(const std::string &Name, const EnumDef &Enum,
                    std::string &Out) const;
   void accessors(const RecordPlan &Plan, std::string &Out) const;
+  /// The body of the getter and of the setter of a bit-field whose run's
+  /// storage is of another width than its value, or bytes.
+  std::pair<std::string, std::string>
+  foreignBits(const BitAccess &Access, const std::string &Field,
+              const std::string &Value) const;
   void asserts(const RecordPlan &Plan, std::string &Out) const;
   std::string comment(uint64_t Byte) const {
     return Options.Offsets ? offsetText(Byte, Options, Digits) : "";
@@ -75,6 +85,7 @@ private:
   const BuiltinSpelling Spelling;
   const NameSpelling Names;
   mutable std::set<Builtin> Aliased;
+  mutable bool LongDouble = false;
   unsigned Digits = 1;
   /// The outer record's offset of the record being written, in bytes.
   uint64_t Base = 0;
@@ -114,6 +125,18 @@ std::string RustWriter::builtin(Builtin Type, bool Pointee) const {
   return exact(Type, Pointee);
 }
 
+std::string RustWriter::longDouble() const {
+  if (!LongDouble)
+    return {};
+  const std::string Bytes =
+      std::to_string(builtinBytes(Builtin::LongDouble, Library.dataModel()));
+  return "\n/// C's long double: the x87's extended precision in " + Bytes +
+         " bytes, aligned as C aligns it.\n#[repr(C, align(" +
+         std::to_string(Library.alignOf(*makeBuiltin(Builtin::LongDouble))) +
+         "))]\n#[derive(Clone, Copy)]\npub struct c_longdouble(pub [u8; " +
+         Bytes + "]);\n";
+}
+
 std::string RustWriter::exact(Builtin Type, bool Pointee) const {
   const BuiltinInfo &Info = builtinInfo(Type);
   const unsigned Bytes = builtinBytes(Type, Library.dataModel());
@@ -129,6 +152,10 @@ std::string RustWriter::exact(Builtin Type, bool Pointee) const {
       return "f32";
     if (Bytes == 8)
       return "f64";
+    if (Type == Builtin::LongDouble) {
+      LongDouble = true;
+      return "c_longdouble";
+    }
     return "[u8; " + std::to_string(Bytes) + "]";
   case BuiltinClass::Character:
     return integer(Bytes, Type == Builtin::Char);
@@ -214,8 +241,9 @@ void RustWriter::record(const RecordPlan &Plan, bool Outer, std::string &Out) {
   std::string Repr = "#[repr(C)]";
   if (Plan.Pack)
     Repr = "#[repr(C, packed(" + std::to_string(Plan.Pack) + "))]";
-  else if (Record.Alignment)
-    Repr = "#[repr(C, align(" + std::to_string(Record.Alignment) + "))]";
+  else if (Record.Alignment || Plan.Align)
+    Repr = "#[repr(C, align(" +
+           std::to_string(std::max(Record.Alignment, Plan.Align)) + "))]";
   if (Outer)
     Out += "/// " + Plan.Name + ": " + hex(Record.Size) + " (" +
            std::to_string(Record.Size) + ") bytes" +
@@ -244,15 +272,15 @@ void RustWriter::record(const RecordPlan &Plan, bool Outer, std::string &Out) {
       std::string Doc;
       for (const Member *Bit : Place.Bits)
         Doc += (Doc.empty() ? "" : ", ") + Bit->Name + " " +
-               bitText(Bit->BitOffset - Bit->StorageBitOffset, Bit->BitWidth);
+               bitText(Bit->BitOffset - Place.Byte * 8, Bit->BitWidth);
       Out += "    /// " + Doc + "\n";
-      Out +=
-          withComment("    pub " + Place.Name + ": u" +
-                          std::to_string(
-                              bitStorage(Library, *Place.Storage).Bytes * 8) +
-                          ",",
-                      comment(Base + Place.Byte), Options) +
-          "\n";
+      const std::string Storage =
+          Place.StorageArray
+              ? "[u8; " + std::to_string(Place.StorageBytes) + "]"
+              : "u" + std::to_string(Place.StorageBytes * 8);
+      Out += withComment("    pub " + Place.Name + ": " + Storage + ",",
+                         comment(Base + Place.Byte), Options) +
+             "\n";
       break;
     }
     case Slot::Kind::Field: {
@@ -310,6 +338,61 @@ void RustWriter::record(const RecordPlan &Plan, bool Outer, std::string &Out) {
   Base = Saved;
 }
 
+std::pair<std::string, std::string>
+RustWriter::foreignBits(const BitAccess &Access, const std::string &Field,
+                        const std::string &Value) const {
+  const std::string Unit = std::to_string(Access.UnitBits);
+  const std::string Shift = std::to_string(Access.Shift);
+  const bool Whole = Access.Width >= Access.UnitBits;
+  std::string Load, Store, Raw;
+  if (Access.ArrayBytes) {
+    // The bytes, low first, as the record holds them; a ninth holds the
+    // top of a field of 64 bits that begins inside a byte.
+    const auto byte = [&](unsigned K) {
+      return Field + "[" + std::to_string(Access.ArrayByte + K) + "]";
+    };
+    const unsigned Low = std::min(Access.ArrayBytes, 8u);
+    std::string Bytes;
+    for (unsigned K = 0; K < Low; ++K)
+      Bytes += K ? " | (" + byte(K) + " as u64) << " + std::to_string(8 * K)
+                 : byte(K) + " as u64";
+    Load = "let unit = " + Bytes + ";\n        ";
+    Raw = Access.Shift ? "(unit >> " + Shift + ")" : "unit";
+    Store = "let mut unit = " + Bytes + ";\n        unit = (unit & !(" +
+            Access.Mask + " << " + Shift + ")) | (((value as u64) & " +
+            Access.Mask + ") << " + Shift + ");";
+    for (unsigned K = 0; K < Low; ++K)
+      Store += "\n        " + byte(K) + " = " +
+               (K ? "(unit >> " + std::to_string(8 * K) + ") as u8;"
+                  : "unit as u8;");
+    if (Access.ArrayBytes > 8) {
+      const std::string Rest = std::to_string(64 - Access.Shift);
+      Load += "let top = " + byte(8) + " as u64;\n        ";
+      Raw = "(" + Raw + " | top << " + Rest + ")";
+      Store += "\n        let top = (" + byte(8) + " as u64 & !(" +
+               Access.Mask + " >> " + Rest + ")) | (((value as u64) & " +
+               Access.Mask + ") >> " + Rest + ");\n        " + byte(8) +
+               " = top as u8;";
+    }
+  } else {
+    Raw = Access.Shift ? "(" + Field + " >> " + Shift + ")" : Field;
+    Store = Field + " = (" + Field + " & !(" + Access.Mask + " << " + Shift +
+            ")) | (((value as u" + Unit + ") & " + Access.Mask + ") << " +
+            Shift + ");";
+  }
+  std::string Read;
+  if (Access.Signed) {
+    // Up to the top, then back down: C extends a signed field's sign.
+    const std::string Spare = std::to_string(Access.UnitBits - Access.Width);
+    Read = "(((" + Raw + " << " + Spare + ") as i" + Unit + ") >> " + Spare +
+           ") as " + Value;
+  } else {
+    Read =
+        (Whole ? Raw : "(" + Raw + " & " + Access.Mask + ")") + " as " + Value;
+  }
+  return {Load + Read, Store};
+}
+
 void RustWriter::accessors(const RecordPlan &Plan, std::string &Out) const {
   std::string Methods;
   llvm::StringSet<> Taken;
@@ -322,21 +405,27 @@ void RustWriter::accessors(const RecordPlan &Plan, std::string &Out) const {
     if (Place.TheKind != Slot::Kind::Bitfields)
       continue;
     for (const Member *Bit : Place.Bits) {
-      const BitAccess Access = bitAccess(Library, *Bit);
-      const std::string Bits = std::to_string(Access.UnitBits);
-      const std::string Unsigned = "u" + Bits;
+      const BitAccess Access = bitAccess(Library, *Bit, Place);
+      const std::string Bits = std::to_string(Access.ValueBits);
+      const std::string Unsigned = "u" + std::to_string(Access.UnitBits);
       std::string Value = (Access.Signed ? "i" : "u") + Bits;
       // A builtin of the unit's size keeps its own name: ULONG, not UINT.
       if (Bit->Type->Kind == TypeExprKind::Builtin &&
           builtinBytes(Bit->Type->TheBuiltin, Library.dataModel()) * 8 ==
-              Access.UnitBits &&
+              Access.ValueBits &&
           builtinInfo(Bit->Type->TheBuiltin).Signed == Access.Signed &&
           builtinInfo(Bit->Type->TheBuiltin).Class != BuiltinClass::Float &&
           builtinInfo(Bit->Type->TheBuiltin).Class != BuiltinClass::Bool)
         Value = builtin(Bit->Type->TheBuiltin, /*Pointee=*/false);
       const std::string Field = "self." + Place.Name;
       std::string Read;
-      if (Access.Signed) {
+      std::string Write;
+      if (Place.StorageArray || Access.UnitBits != Access.ValueBits) {
+        // Storage of another width than the value, as GNU's packing makes
+        // it: the bits in the storage's unsigned integer, the bytes that
+        // hold them read as one, then the value of the field's own type.
+        std::tie(Read, Write) = foreignBits(Access, Field, Value);
+      } else if (Access.Signed) {
         // Up to the top, then back down: C extends a signed field's sign.
         const uint64_t Up = Access.UnitBits - Access.Shift - Access.Width;
         const uint64_t Down = Access.UnitBits - Access.Width;
@@ -358,11 +447,11 @@ void RustWriter::accessors(const RecordPlan &Plan, std::string &Out) const {
       const std::string Stored =
           Access.Signed ? "(value as " + Unsigned + ")" : "value";
       Methods += "    /// " + Bit->Name + ", " +
-                 bitText(Access.Shift, Access.Width) + " of " + Place.Name +
-                 ".\n";
-      std::string Write = Field + " = (" + Field + " & !(" + Access.Mask +
-                          Shift + ")) | ((" + Stored + " & " + Access.Mask +
-                          ")" + Shift + ");";
+                 bitText(Bit->BitOffset - Place.Byte * 8, Access.Width) +
+                 " of " + Place.Name + ".\n";
+      if (Write.empty())
+        Write = Field + " = (" + Field + " & !(" + Access.Mask + Shift +
+                ")) | ((" + Stored + " & " + Access.Mask + ")" + Shift + ");";
       // A union's field reads only in unsafe code.
       if (Plan.Record->Union) {
         Read = "unsafe { " + Read + " }";
@@ -510,7 +599,7 @@ EmbeddedSource renderRustEmbedded(const TypeLibrary &Library,
       Result.Text += "pub type " + std::string(builtinInfo(Type).Windows) +
                      " = " + Writer.exact(Type, /*Pointee=*/false) + ";\n";
   }
-  Result.Text += Body;
+  Result.Text += Writer.longDouble() + Body;
   return Result;
 }
 
@@ -538,7 +627,7 @@ std::string renderRustModule(const TypeLibrary &Library,
       Out += "pub type " + std::string(builtinInfo(Type).Windows) + " = " +
              Writer.exact(Type, /*Pointee=*/false) + ";\n";
   }
-  return Out + Body;
+  return Out + Writer.longDouble() + Body;
 }
 
 } // namespace neverd::types::render

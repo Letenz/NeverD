@@ -1970,6 +1970,7 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
       session(s)->path.ends_with("code-numbers.bin") ||
       session(s)->path.ends_with("code-numbers-paged.bin") ||
       session(s)->path.ends_with("code-labels.bin") ||
+      session(s)->path.ends_with("code-frame.bin") ||
       session(s)->path.ends_with("code-folding.bin") ||
       session(s)->path.ends_with("code-folding-cpp.bin") ||
       session(s)->path.ends_with("local-references.bin") ||
@@ -2020,6 +2021,28 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
              "  return v0;\n"
              "}\n";
     }
+    // The function's stack as HighC declares it, a record named after the
+    // function, whose members three statements read and write.
+    const bool frame = session(s)->path.ends_with("code-frame.bin");
+    if (frame) {
+      char record[32];
+      std::snprintf(record, sizeof record, "frame_%llX",
+                    static_cast<unsigned long long>(address));
+      full = std::string("#include <stdint.h>\n"
+                         "int32_t function_20(int32_t v0) {\n"
+                         "  _Alignas(16) struct ") +
+             record +
+             " {\n"
+             "    uint8_t gap0[54];\n"
+             "    uint16_t var_m32;\n"
+             "    uint64_t var_m30;\n"
+             "    uint8_t gap40[88];\n"
+             "  } stack_storage;\n"
+             "  stack_storage.var_m32 = (uint16_t)v0;\n"
+             "  stack_storage.var_m30 = 2;\n"
+             "  return stack_storage.var_m32;\n"
+             "}\n";
+    }
     if (codeFolding)
       full = "#include <stdint.h>\n"
              "int32_t function_20(int32_t v0) {\n"
@@ -2067,7 +2090,7 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
     Json rows = Json::array();
     for (auto i = first; i < end; ++i) {
       const bool mapped =
-          (labels && i >= 3 && i <= 6) ||
+          (labels && i >= 3 && i <= 6) || (frame && i >= 8 && i <= 10) ||
           (session(s)->path.ends_with("code-edits-mapped.bin") && i == 2) ||
           (numbers && (i == 2 || i == 3)) || (codeFolding && i == 5) ||
           (paged && i == 550);
@@ -2081,6 +2104,9 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
             : labels ? Json::array({hexAddress(address + (i == 3   ? 2
                                                           : i == 4 ? 4
                                                           : i == 5 ? 6
+                                                                   : 0xC))})
+            : frame  ? Json::array({hexAddress(address + (i == 8   ? 4
+                                                          : i == 9 ? 6
                                                                    : 0xC))})
             : paged  ? Json::array(
                            {hexAddress(address + 8), hexAddress(address + 9)})

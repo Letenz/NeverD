@@ -1593,6 +1593,10 @@ Double-click to go to the declaration.</source>
         <translation>シンボリック簡約</translation>
     </message>
     <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>すべての関数でシンボリック簡約</translation>
+    </message>
+    <message>
         <source>Recover LLVM control flow</source>
         <translation>LLVM の制御フローを復元</translation>
     </message>
@@ -2111,6 +2115,10 @@ Signed: %4</source>
     <message>
         <source>Show segment:address line prefixes</source>
         <translation>行頭に「セグメント:アドレス」を表示</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>すべての関数でシンボリック簡約</translation>
     </message>
     <message>
         <source>Shortcuts</source>

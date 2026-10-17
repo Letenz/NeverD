@@ -1032,6 +1032,8 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
       Img, "coff: loaded " + pathToUTF8(std::filesystem::u8path(
                                             Buffer.getBufferIdentifier().str())
                                             .filename()));
+  coff_loader::recordSymbolTableDataInCode(Img);
+  coff_loader::recordConstantCodeSlots(Img);
   // Classified before any table is read.  A PE is the format where schema and
   // language diverge most: Delphi and MSVC share the registration chain, Rust
   // and C++ share the `FuncInfo`, and a MinGW image carries Itanium tables

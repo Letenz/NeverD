@@ -1780,4 +1780,101 @@ TEST_F(NativePointerRelocationBoundary,
   }
 }
 
+TEST_F(NativePointerRelocationBoundary,
+       MinGWPointerTableAmongCodeMirrorsItsFunction) {
+  // GNU ld keeps __CTOR_LIST__, a -1-headed list of constructors, in .text.
+  // The loader's fixtures, for x86-64 and i386, keep such a table there and
+  // read it through .data.  The code segment mirrors as a pointer table, so
+  // the table's entry names the function rather than its original address.
+  const fs::path Fixtures =
+      fs::path(TEST_SOURCE_DIR).parent_path() / "loader" / "fixtures";
+  for (const char *Name : {"mingw_text_data.exe", "mingw_text_data32.exe"}) {
+    SCOPED_TRACE(Name);
+    RunResult LLVM = liftToLLVMIRUnopt(Fixtures / Name);
+    ASSERT_EQ(LLVM.exitCode, 0) << LLVM.err;
+    EXPECT_EQ(LLVM.err.find("refusing stale-address fallback"),
+              std::string::npos)
+        << LLVM.err;
+    EXPECT_TRUE(std::regex_search(
+        LLVM.out, std::regex(R"(@__nd_codeptr_[0-9A-Fa-f]+ = internal )"
+                             R"(constant [^\n]*ptrtoint \(ptr @_?twice to )"
+                             R"(i(32|64)\))")))
+        << LLVM.out;
+  }
+}
+
+TEST_F(NativePointerRelocationBoundary,
+       MinGWPointerTableAmongCodeTooLargeToMirrorIsRefused) {
+  // Past the embedding limit a code segment has no pointer-table mirror, and
+  // a raw copy of the table would keep its entry's original address.
+  if (!exec("x86_64-w64-mingw32-gcc", {"--version"}).ok())
+    GTEST_SKIP() << "the oversized fixture needs the MinGW compiler";
+  const fs::path Fixture = fs::path(TEST_SOURCE_DIR).parent_path() / "loader" /
+                           "fixtures" / "mingw_text_data.c";
+  const fs::path Source = tmpFile("mingw_big_text.c");
+  const fs::path Exe = tmpFile("mingw_big_text.exe");
+  {
+    std::ofstream OS(Source);
+    ASSERT_TRUE(OS) << Source;
+    OS << "#include \"" << Fixture.string() << "\"\n"
+       << "__attribute__((section(\".text$zz\"), used))\n"
+       << "static const unsigned char pad[1200000] = {1};\n";
+  }
+  RunResult Built =
+      exec("x86_64-w64-mingw32-gcc",
+           {"-O1", "-nostdlib", "-Wl,-e,entry", "-Wl,--no-insert-timestamp",
+            Source.string(), "-o", Exe.string()});
+  ASSERT_TRUE(Built.ok()) << Built.err;
+
+  RunResult LLVM = liftToLLVMIRUnopt(Exe);
+  EXPECT_NE(LLVM.exitCode, 0) << LLVM.out;
+  EXPECT_NE(LLVM.err.find("among code holds a relocated pointer its code "
+                          "segment cannot mirror; refusing stale-address "
+                          "fallback"),
+            std::string::npos)
+      << LLVM.err;
+}
+
+TEST_F(NativePointerRelocationBoundary, MinGWProgramWholeModuleLLVMCCompiles) {
+  // A MinGW program links the runtime's start-up code, its own stdio
+  // helpers and copies of library routines (atexit), TLS data among .data
+  // and SEH-guarded start-up code, and calls the C library and the Windows
+  // API through their import table.  Its whole-module LLVM C compiles.
+  if (!exec("x86_64-w64-mingw32-gcc", {"--version"}).ok())
+    GTEST_SKIP() << "the program needs the MinGW compiler";
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "compiling the program's C needs Clang's GNU driver";
+  const fs::path Source = tmpFile("mingw_program.c");
+  const fs::path Exe = tmpFile("mingw_program.exe");
+  {
+    std::ofstream OS(Source);
+    ASSERT_TRUE(OS) << Source;
+    OS << R"c(#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+static void farewell(void) { fputs("bye\n", stderr); }
+int main(int argc, char **argv) {
+  atexit(farewell);
+  char *copy = malloc(strlen(argv[0]) + 1);
+  strcpy(copy, argv[0]);
+  printf("%s %d\n", copy, argc);
+  free(copy);
+  return 0;
+}
+)c";
+  }
+  RunResult Built =
+      exec("x86_64-w64-mingw32-gcc", {"-O2", "-Wl,--no-insert-timestamp",
+                                      Source.string(), "-o", Exe.string()});
+  ASSERT_TRUE(Built.ok()) << Built.err;
+
+  RunResult C = decompileToC(Exe);
+  ASSERT_TRUE(C.ok()) << C.err;
+  RunResult Syntax =
+      exec(NEVERD_TEST_CLANG,
+           {"--target=x86_64-w64-mingw32", "-fms-extensions", "-fsyntax-only",
+            "-w", tmpFile("decompiled.c").string()});
+  EXPECT_TRUE(Syntax.ok()) << Syntax.err;
+}
+
 } // namespace

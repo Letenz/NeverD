@@ -400,6 +400,14 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   const auto &Ops = CurBlock.Ops;
   if (auto Registration = collectRegistrationCallArgs(CurBlock, CallIdx))
     return std::move(*Registration);
+  // The integer argument register at RegOff as this call reads it, where a
+  // call that may change the register ends a path back from it.
+  auto ReachingAtCall = [&](uint64_t RegOff, MedVar &Out) {
+    return CurMed &&
+           detail::reachingRegisterAtCall(
+               *CurMed, CurBlock, CallIdx, RegOff, getTargetRegInfo(TargetArch),
+               Image ? Image->abiFormat() : BinaryFormat::Unknown, Out);
+  };
   // A value this function sets: a constant, a parameter, or a definition
   // other than a register's incoming value.  A join is set when every value
   // reaching it is: a loop's running value is, but not one whose entry edge
@@ -691,7 +699,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   };
   auto tryPredSetupArg = [&](int K) -> bool {
     MedVar LiveIn;
-    if (!reachingRegAtBlockEntry(CurBlock, ParamRegs[K], LiveIn))
+    if (!ReachingAtCall(ParamRegs[K], LiveIn))
       return false;
     if (!isCallArgSetupDef(CurBlock, LiveIn, ParamRegs[K]) || EntryJoin(LiveIn))
       return false;
@@ -720,7 +728,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     if (!Fork)
       return false;
     MedVar LiveIn;
-    if (!reachingRegAtBlockEntry(CurBlock, ParamRegs[K], LiveIn))
+    if (!ReachingAtCall(ParamRegs[K], LiveIn))
       return false;
     for (const auto &Op : Fork->Ops) {
       if (Op.Output.Id != LiveIn.Id || Op.Output.SSAVer != LiveIn.SSAVer)
@@ -743,7 +751,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     return tryPredSetupArg(K) || tryDominatingForkSetup(K);
   };
   auto reachingAtEntry = [&](uint64_t RegOff, MedVar &LiveIn) {
-    return reachingRegAtBlockEntry(CurBlock, RegOff, LiveIn);
+    return ReachingAtCall(RegOff, LiveIn);
   };
   auto toExpr = [this](const MedVar &V) { return medvarToExpr(V); };
   auto opToExpr = [this](const MedOp &Op) { return medOpToExpr(Op); };
@@ -829,7 +837,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       if (Found[K])
         continue;
       MedVar LiveIn;
-      if (!reachingRegAtBlockEntry(CurBlock, ParamRegs[K], LiveIn))
+      if (!ReachingAtCall(ParamRegs[K], LiveIn))
         continue;
       // The arguments end before such a join, and past the fixed ones an
       // import reads, before what earlier calls left.
@@ -1062,7 +1070,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     // known to read the register: the slot still takes its place, as zero.
     // A register it reads keeps its unknown value.
     MedVar LiveIn;
-    if (reachingRegAtBlockEntry(CurBlock, ParamRegs[Index], LiveIn)) {
+    if (ReachingAtCall(ParamRegs[Index], LiveIn)) {
       const bool Read =
           CallIdx < Ops.size() && Ops[CallIdx].CalleeRegisterArgs > Index;
       return !Read && LeftByCall(LiveIn) ? nullptr : medvarToExpr(LiveIn);

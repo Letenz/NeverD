@@ -8,8 +8,12 @@
 // even-odd register pair and an 8-byte aligned stack slot, wasting the
 // register or the 4-byte lane before it.  The base variant (softfp) passes
 // floating arguments the same way; the VFP variant passes them in S0-S15.
+// The routines of the Itanium C++ ABI's runtime and unwinder take the
+// parameters it declares.
 //
 //===----------------------------------------------------------------------===//
+
+#include "MedCallConventionItanium.h"
 
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/loader/BinaryImage.h"
@@ -41,6 +45,7 @@ const CallArgumentConvention AAPCS32CallArguments = {
     .TheArch = Arch::ARM,
     .PairAlignedWideArguments = true,
     .ExternalFloatsInCoreRegisters = externalFloatsInCoreRegisters,
+    .PrototypeArgCount = itaniumRuntimeArgCount,
     .ArgumentsFromCallSetup = true,
 };
 

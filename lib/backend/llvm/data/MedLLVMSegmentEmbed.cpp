@@ -46,10 +46,25 @@
 #include <optional>
 #include <set>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace neverd {
+
+// Whether an address-ordered slot set or map holds a slot inside \p S. Only
+// the first slot at or above the segment base can be inside it.
+template <typename Slots>
+static bool segmentHoldsSlot(const Segment &S, const Slots &Ordered) {
+  const auto It = Ordered.lower_bound(S.VA);
+  if (It == Ordered.end())
+    return false;
+  if constexpr (std::is_same_v<typename Slots::key_type,
+                               typename Slots::value_type>)
+    return S.contains(*It);
+  else
+    return S.contains(It->first);
+}
 
 static bool collectRodataRun(const BinaryImage *Img, uint64_t SegVA,
                              std::vector<const Segment *> &Run,
@@ -165,6 +180,18 @@ MedLLVMEmitter::embedExecSegmentRun(const Segment *Seg) {
   if (auto It = SegmentDataGlobals.find(RunStart);
       It != SegmentDataGlobals.end())
     return {It->second, RunStart};
+  // Code holds a relocated pointer slot only inside a data object the image
+  // places among it, such as GNU ld's __CTOR_LIST__: the segment mirrors as
+  // the pointer table it then is, or not at all, rather than keep a stale
+  // address in raw bytes.
+  if (segHasLoaderPtrRelocSlots(Seg)) {
+    auto *Table = llvm::dyn_cast_or_null<llvm::GlobalVariable>(
+        buildCodePtrSegmentGlobal(Seg->VA, RunStart));
+    if (!Table)
+      return {nullptr, 0};
+    SegmentDataGlobals[RunStart] = Table;
+    return {Table, RunStart};
+  }
   auto *ArrTy =
       llvm::ArrayType::get(llvm::Type::getInt8Ty(*Ctx), Seg->Data.size());
   auto *Init =
@@ -190,40 +217,13 @@ bool MedLLVMEmitter::isMutableDataSeg(const Segment *S) const {
     return true;
   // A segment carrying any relocated pointer slot is likewise a pointer table,
   // not raw mutable scalar/array data.
-  auto overlaps = [&](const std::set<uint64_t> &Slots) {
-    for (uint64_t V : Slots)
-      if (S->contains(V))
-        return true;
-    return false;
-  };
-  return !segHasPtrRelocSlots(S) && !overlaps(Img->RelCodeRelocSlots);
+  return !segHasPtrRelocSlots(S) &&
+         !segmentHoldsSlot(*S, Img->RelCodeRelocSlots);
 }
 
 bool MedLLVMEmitter::segHasPtrRelocSlots(const Segment *S) const {
   if (!S || !Img)
     return false;
-  auto overlaps = [&](const std::set<uint64_t> &Slots) {
-    for (uint64_t V : Slots)
-      if (S->contains(V))
-        return true;
-    return false;
-  };
-  auto overlapsImports = [&]() {
-    for (const auto &[VA, Binding] : EffectiveImportStorageSlots) {
-      (void)Binding;
-      if (S->contains(VA))
-        return true;
-    }
-    for (va_t VA : ConflictingImportStorageSlots)
-      if (S->contains(VA))
-        return true;
-    for (const auto &[VA, Name] : ExternalFunctionPointerSlots) {
-      (void)Name;
-      if (S->contains(VA))
-        return true;
-    }
-    return false;
-  };
   auto overlapsRuntimeCallableSlots = [&]() {
     for (const RuntimeCallablePointerSlot &Slot :
          Img->RuntimeCallablePointerSlots)
@@ -231,8 +231,22 @@ bool MedLLVMEmitter::segHasPtrRelocSlots(const Segment *S) const {
         return true;
     return false;
   };
-  return overlaps(Img->CodePtrRelocSlots) || overlaps(Img->DataPtrRelocSlots) ||
-         overlapsImports() || overlapsRuntimeCallableSlots();
+  return segmentHoldsSlot(*S, Img->CodePtrRelocSlots) ||
+         segmentHoldsSlot(*S, Img->DataPtrRelocSlots) ||
+         segmentHoldsSlot(*S, EffectiveImportStorageSlots) ||
+         segmentHoldsSlot(*S, ConflictingImportStorageSlots) ||
+         segmentHoldsSlot(*S, ExternalFunctionPointerSlots) ||
+         overlapsRuntimeCallableSlots();
+}
+
+bool MedLLVMEmitter::segHasLoaderPtrRelocSlots(const Segment *S) const {
+  if (!S || !Img)
+    return false;
+  auto holds = [&](const std::set<uint64_t> &Slots) {
+    auto It = Slots.lower_bound(S->VA);
+    return It != Slots.end() && S->contains(*It);
+  };
+  return holds(Img->CodePtrRelocSlots) || holds(Img->DataPtrRelocSlots);
 }
 
 bool MedLLVMEmitter::isReadOnlyAfterReloc(const Segment *S) const {
