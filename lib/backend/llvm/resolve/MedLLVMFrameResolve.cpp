@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cassert>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -297,6 +298,59 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
       return It->second;
     }
   }
+  // The walk reads the budget only to stop when it is spent, and once it is
+  // spent every step fails and so does the query. A shared-budget walk thus
+  // repeats with the same charge under any budget covering its nodes, and runs
+  // out under any smaller one. A bound query has its own budget, so its
+  // bindings fix its answer.
+  const bool SharedBudgetReplayable =
+      !Bindings && SharedProofBudget &&
+      FeasibleEdgeState != FeasibleEdgeCacheState::Building;
+  if (SharedBudgetReplayable) {
+    if (SharedBudgetFrameSlotCacheFor != CurMedFunc) {
+      SharedBudgetFrameSlotCacheFor = CurMedFunc;
+      SharedBudgetFrameSlotCache.clear();
+    }
+    if (auto It = SharedBudgetFrameSlotCache.find(QueryKey);
+        It != SharedBudgetFrameSlotCache.end()) {
+      const SharedBudgetFrameSlotProof &Known = It->second;
+      if (Known.Complete && Known.Nodes <= *SharedProofBudget) {
+        *SharedProofBudget -= Known.Nodes;
+        AddressProvenanceWork.FrameSlotNodes += Known.Nodes;
+        AddressProvenanceWork.FrameSlotCacheHits += Known.CacheHits;
+        ++AddressProvenanceWork.FrameSlotReplays;
+        return Known.Slot;
+      }
+      // A complete walk needs Nodes; one that ran out needs more than Nodes.
+      // The cache hits counted before running out are not kept.
+      if (Known.Complete ? *SharedProofBudget < Known.Nodes
+                         : *SharedProofBudget <= Known.Nodes) {
+        AddressProvenanceWork.FrameSlotNodes += *SharedProofBudget;
+        *SharedProofBudget = 0;
+        ++AddressProvenanceWork.FrameSlotReplays;
+        return std::nullopt;
+      }
+    }
+  }
+  std::optional<BoundFrameSlotQuery> BoundKey;
+  if (Bindings && !SharedProofBudget && !FrameProofBudgetForTesting &&
+      FeasibleEdgeState != FeasibleEdgeCacheState::Building) {
+    if (BoundFrameSlotCacheFor != CurMedFunc) {
+      BoundFrameSlotCacheFor = CurMedFunc;
+      BoundFrameSlotCache.clear();
+    }
+    std::vector<std::pair<AddressProvenanceVarKey, uint64_t>> Bound;
+    Bound.reserve(Bindings->size());
+    for (const auto &[Value, Bits] : *Bindings)
+      Bound.emplace_back(addressProvenanceVarKey(Value), Bits);
+    BoundKey.emplace(QueryKey.first, RequireEntryStackPointer,
+                     std::move(Bound));
+    if (auto It = BoundFrameSlotCache.find(*BoundKey);
+        It != BoundFrameSlotCache.end()) {
+      ++AddressProvenanceWork.FrameSlotCacheHits;
+      return It->second;
+    }
+  }
   // Building/publishing feasible edges invalidates dependent proofs, including
   // queries already in progress. Do not publish a result from that generation.
   const uint64_t Generation = FrameReloadCacheGeneration;
@@ -311,10 +365,17 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
   size_t OwnProofBudget = FrameProofBudgetForTesting.value_or(8192);
   size_t &RemainingSlotProofNodes =
       SharedProofBudget ? *SharedProofBudget : OwnProofBudget;
+  const size_t StartingBudget = RemainingSlotProofNodes;
+  size_t ConsumedNodes = 0;
+  bool RanOut = false;
+  const uint64_t CacheHitsBefore = AddressProvenanceWork.FrameSlotCacheHits;
   auto consumeNode = [&] {
-    if (RemainingSlotProofNodes == 0)
+    if (RemainingSlotProofNodes == 0) {
+      RanOut = true;
       return false;
+    }
     --RemainingSlotProofNodes;
+    ++ConsumedNodes;
     ++AddressProvenanceWork.FrameSlotNodes;
     return true;
   };
@@ -606,10 +667,25 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
     return Proof;
   };
   auto Result = rec(V, 0);
-  if (Cacheable && ClosedFrameSlotCacheFor == CurMedFunc &&
-      Generation == FrameReloadCacheGeneration &&
-      FeasibleEdgeState != FeasibleEdgeCacheState::Building)
+  // Every step charges a node first and fails without one, and every failing
+  // step fails its query.
+  assert((!RanOut || !Result) && "a frame-slot walk that ran out succeeded");
+  const bool Published = Generation == FrameReloadCacheGeneration &&
+                         FeasibleEdgeState != FeasibleEdgeCacheState::Building;
+  if (Cacheable && ClosedFrameSlotCacheFor == CurMedFunc && Published)
     ClosedFrameSlotCache.emplace(QueryKey, Result);
+  if (SharedBudgetReplayable && SharedBudgetFrameSlotCacheFor == CurMedFunc &&
+      Published) {
+    SharedBudgetFrameSlotProof &Known = SharedBudgetFrameSlotCache[QueryKey];
+    if (!RanOut)
+      Known = {Result, ConsumedNodes,
+               AddressProvenanceWork.FrameSlotCacheHits - CacheHitsBefore,
+               /*Complete=*/true};
+    else if (!Known.Complete)
+      Known.Nodes = std::max(Known.Nodes, StartingBudget);
+  }
+  if (BoundKey && BoundFrameSlotCacheFor == CurMedFunc && Published)
+    BoundFrameSlotCache.emplace(std::move(*BoundKey), Result);
   return Result;
 }
 
