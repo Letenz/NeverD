@@ -285,7 +285,12 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
     return nullptr;
 
   const Segment *Seg = Img->getSegmentFor(SlotVA);
-  if (!Seg || Seg->Data.empty() || Seg->isExecutable())
+  // An executable segment holds relocated pointer slots only inside the data
+  // objects placed among its code (embedExecSegmentRun).
+  if (!Seg || Seg->Data.empty() ||
+      (Seg->isExecutable() &&
+       (!segHasLoaderPtrRelocSlots(Seg) ||
+        Seg->Data.size() > limits::kMaxSingleGlobalEmbedLen)))
     return nullptr;
 
   // A relocated pointer table (`.data.rel.ro`, or a `.rodata` dispatch/string-

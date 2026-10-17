@@ -2127,6 +2127,45 @@ int main(void) {
   }
 }
 
+TEST(LLVMCValues, AGlobalAnEarlierInitializerNamesIsDeclaredFirst) {
+  // A whole module defines its globals in module order.  An image mirror
+  // built while an earlier mirror's initializer resolved follows it, as a
+  // MinGW .data pointer to the constructor list GNU ld keeps in .text.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+@list_ref = internal global <{ i64, i64 }> <{ i64 ptrtoint (ptr getelementptr (i8, ptr @ctor_list, i64 8) to i64), i64 7 }>, align 16
+@ctor_list = internal constant <{ i64, i64, i64 }> <{ i64 -1, i64 ptrtoint (ptr @answer to i64), i64 0 }>, align 16
+define i64 @answer() {
+entry:
+  ret i64 42
+}
+define i64 @first_constructor() {
+entry:
+  %entry_address = load i64, ptr @list_ref
+  %entry_slot = inttoptr i64 %entry_address to ptr
+  %constructor = load ptr, ptr %entry_slot
+  %result = call i64 %constructor()
+  ret i64 %result
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  // Only the global named before its definition is declared.
+  EXPECT_LT(Source.find(" ctor_list;"), Source.find(" list_ref ="));
+  EXPECT_EQ(Source.find(" list_ref;"), std::string::npos);
+  Source += R"(
+int main(void) { return first_constructor() == 42 ? 0 : 1; }
+)";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization);
+}
+
 TEST(LLVMCValues, ReloadedFieldGuardSurvivesAnInterveningCall) {
   llvm::LLVMContext Context;
   llvm::SMDiagnostic Diagnostic;

@@ -492,6 +492,32 @@ llvm::Constant *MedLLVMEmitter::tryResolveGlobalData(uint64_t Addr,
   if (Off >= Seg->Data.size())
     return nullptr;
 
+  // A data object among code holds relocated pointers (GNU ld's
+  // __CTOR_LIST__) that only the code segment's pointer-table mirror
+  // relocates.  Without that mirror, past the embedding limit, every copy
+  // below starts at Addr and takes at most kMaxEmbeddedDataLen bytes; one
+  // that reaches such a pointer would keep its original address.
+  if (Seg->isExecutable()) {
+    const uint64_t PtrSz = Img->getPointerSize();
+    const uint64_t Begin = Addr - std::min<uint64_t>(Addr, PtrSz - 1);
+    const uint64_t End = Addr + std::min<uint64_t>(Seg->Data.size() - Off,
+                                                   limits::kMaxEmbeddedDataLen);
+    auto reaches = [&](const std::set<uint64_t> &Slots) {
+      auto It = Slots.lower_bound(Begin);
+      return It != Slots.end() && *It < End;
+    };
+    if (PtrSz != 0 &&
+        (reaches(Img->CodePtrRelocSlots) || reaches(Img->DataPtrRelocSlots))) {
+      if (!FatalDataPointerResolution)
+        syncError() << "med_llvm_emitter: data at 0x" << llvm::utohexstr(Addr)
+                    << " among code holds a relocated pointer its code "
+                       "segment cannot mirror; refusing stale-address "
+                       "fallback\n";
+      FatalDataPointerResolution = true;
+      return nullptr;
+    }
+  }
+
   const uint8_t *Start = Seg->Data.data() + Off;
   size_t MaxLen = Seg->Data.size() - Off;
 
