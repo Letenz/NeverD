@@ -5813,16 +5813,16 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(operandFormat().isEmpty(), OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(shown("rsp, 20h"), OpenTimeoutMs);
 
-    // A restarted worker reopens the file where its database left it.  The
-    // worker writes the sidecar before it answers, and an edit in flight asks
-    // to be saved first.
+    // A restarted worker reopens the file where the user was.  The worker
+    // writes the sidecar before it answers, and an edit in flight asks to be
+    // saved first.
     QTRY_VERIFY_WITH_TIMEOUT(!bench.session.dirty(), OpenTimeoutMs);
+    const auto place = disassembly->currentItem();
+    QVERIFY(place && *place != bench.session.entryAddress());
     bench.session.restart();
     QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
-    QTRY_COMPARE_WITH_TIMEOUT(disassembly->currentItem(),
-                              std::optional<Address>(Base + 0x140),
-                              OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(disassembly->currentItem(), place, OpenTimeoutMs);
     QVERIFY2(bench.session.lastError().isEmpty(),
              qPrintable(bench.session.lastError()));
   }

@@ -706,8 +706,10 @@ void Session::reload(std::optional<LoadOptions> options) {
     return;
   }
   // A fresh worker reads the file's bytes as they are now; the annotations
-  // come from what was saved.  The file opened is the one the user named:
-  // a working copy is refreshed from it.
+  // come from what was saved, and the user returns to the same place.  The
+  // file opened is the one the user named: a working copy is refreshed from
+  // it.
+  saveDatabaseState();
   pendingFile_ = projectPath_.isEmpty() ? filePath_ : projectPath_;
   pendingOptions_ = std::exchange(reloadOptions_, {}).value_or(loadOptions_);
   reloading_ = true;
@@ -723,7 +725,8 @@ void Session::restart() {
     return;
   }
   // The project the user opened, so a database stays the one saving
-  // writes back.
+  // writes back, and the place the user was.
+  saveDatabaseState();
   pendingFile_ = projectPath_.isEmpty() ? filePath_ : projectPath_;
   pendingOptions_ = loadOptions_;
   resetState();
