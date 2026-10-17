@@ -13,6 +13,10 @@ architettura interna.
 
 `X64MXCSRMask` abilita caricamenti MXCSR e letture/scritture scalari con una maschera effettiva esplicita (`0xffbf` o `0xffff`). L’adattatore x64 definisce gli stati iniziali validi e le transizioni. Il nucleo contabilizza il lavoro e richiede la prova che i bit riservati siano zero; l’opzione senza fault non basta. Le operazioni intrinseche originali restano osservabili. Scritture MXCSR in memoria, interfaccia sorgente e certificati nativi/LLVM richiedono contratti propri.
 
+`SourcePatchPreparation` possiede la transazione comune di layout e dipendenze precedente all'installazione. `SourcePatchCallback` autentica gli ingressi originali salvati e delega rilocazione delle istruzioni e unwinding nativo ai responsabili di architettura/formato. `SourcePatchDependencies` pianifica importazioni esplicite; gli scrittori ELF/PE/Mach-O preservano le identità del loader. Sorgenti, IR fornito e oggetti nativi usano gli stessi piani. La prova finale di sezioni/permessi e il ricaricamento di `publishSourcePatch` restano autorevoli; CLI, C API e Python non duplicano decisioni del loader o di rilocazione.
+
+I sei job nativi OS/ISA selezionati sono passati senza errori né casi saltati: 3669 esecuzioni GoogleTest, 1008 osservazioni di processi nativi (504 funzionali e 504 di eccezioni C++), 12 rifiuti reali del loader, 96 immagini e 84 ricevute di pubblicazione. [Prove native esatte](source-patching.md).
+
 ## Recupero della memoria a runtime
 
 `X64SegmentedWrites` ammette separatamente scritture FS/GS ordinarie di 1/2/4/8 byte con offset a 64 bit, in uno stato macchina esplicitamente privo di fault. `arch/x86_64` gestisce validazione, ammissione e inizializzazione delle basi simboliche. Il nucleo usa indirizzi lineari completi e la normale invalidazione degli alias. Basi fisse arbitrarie possono sovrapporsi allo stack, ad altri segmenti e a celle di ritorno attive. La capacità è inclusa nelle attestazioni raw. Le interfacce sorgente e di prova nativa senza input di base autenticati continuano a rifiutare questo dominio.

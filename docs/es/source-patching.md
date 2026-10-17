@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: be6fcc291675e50f0ce8d8517475c9efa35e98e854f9dd96e0a044bdf3b28e88 -->
+<!-- i18n-source: 3939548e7578565e45b3ed09f402c73232e4b5099c88f84723b13ca1886e4345 -->
 
 [← Documentation Index](README.md)
 
@@ -92,21 +92,29 @@ Los objetos nativos usan sus símbolos de función acotados, definiciones auxili
 Los objetos C de GCC también se instalaron y ejecutaron en ELF x86, ARM32 y ARM64 mediante Linux QEMU user mode. El adaptador elige ARM/Thumb desde la imagen y las propiedades GNU se alinean según el ancho de puntero ELF.
 
 <!-- i18n-section: references -->
-## Referencias originales y almacenamiento
+## Llamadas al original, ampliación de disposición y dependencias
 
-Los enlaces corresponden a declaraciones externas: `function` requiere una función original o stub de importación verificado; `data` requiere almacenamiento escribible; `const` requiere una declaración IR constante. Los datos de objetos necesitan una extensión distinta de cero. Los rangos no pueden cruzar límites ni conceder escritura en RELRO. Se rechazan callbacks al cuerpo original reemplazado: este perfil no tiene un trampolín que guarde el prólogo.
+Los enlaces nombran declaraciones externas: `function` autentica una función original o stub de importación, `data` exige almacenamiento escribible y `const` una declaración IR constante. Los datos de objeto requieren extensión no nula, sin cruzar límites ni conceder escritura a RELRO. Use explícitamente `original` para llamar al cuerpo guardado de la función sustituida. La entrada pública sigue llamando al reemplazo; la guardada ejecuta un prefijo reubicado de instrucciones completas y continúa en el original. Fuente, IR suministrado y objetos nativos comparten el contrato, incluidos argumentos flotantes/en pila y múltiples callbacks.
 
-El código nuevo permanece RX y el estado mutable RW. Solo se reutilizan importaciones existentes; los slots GOT/IAT y los stubs invocables se distinguen. Mach-O necesita espacio para comandos de carga, por ejemplo `-Wl,-headerpad,0x400`; PE necesita espacio para cabeceras de sección. La falta de espacio falla. ELF `.data.rel.ro` y las protecciones CET/IBT originales requieren contratos adicionales y se rechazan por ahora.
+Un callback requiere límites de función, modo de instrucciones, continuación y pruebas de desenrollado autenticados. Se rechazan antes de publicar las instrucciones desconocidas, referencias PC-relativas inseguras, saltos al prefijo copiado, reubicaciones de carga no compatibles, callbacks superpuestos y prólogos con manejadores no modelados. El llamador debe proporcionar una declaración ABI coincidente. El recibo registra las entradas guardadas en `original_callbacks`.
+
+PE32/PE32+ puede ampliar una tabla de cabeceras de sección llena moviendo rangos del archivo y actualizando los punteros modelados de depuración, símbolos, certificados y overlay, conservando los RVA originales. Mach-O x64/ARM64 PIE puede obtener espacio para comandos y desenrollado mediante una extensión verificada del prefijo de cabecera si lo permiten la guarda page-zero adyacente y el segmento linkedit final; las direcciones de código/datos originales no cambian. Este perfil no exige `-Wl,-headerpad,0x400` ni páginas libres adyacentes para desenrollado. Referencias explícitas a la cabecera, comandos desconocidos, propiedad mixta de código/datos, rangos malformados y disposiciones no compatibles se rechazan. Cabeceras y desenrollado se planifican juntos antes de instalar.
+
+El código nuevo sigue RX y el estado mutable RW. Las solicitudes explícitas `--dependency` añaden funciones/datos mediante metadatos dinámicos ELF, descriptores de importación/IAT PE o metadatos dylib/bind Mach-O. Se conservan identidades, ordinales y versiones existentes, distinguiendo slots y stubs invocables. Elija el nombre/ruta esperado por el cargador del OS destino. El ejemplo usa un nombre de biblioteca compartida ELF. La ausencia de biblioteca o símbolo debe producir un error real del cargador al ejecutar. TLS, IFUNC, nuevos contratos de versión, constructores al cargar y reubicaciones no modeladas siguen sin soporte; ELF `.data.rel.ro` y CET/IBT necesitan contratos adicionales. En objetos COFF nativos, declare los nuevos imports de funciones/datos con `__declspec(dllimport)` para que sus reubicaciones identifiquen la IAT. Se rechazan las referencias externas directas ordinarias.
 
 ```sh
+# ELF example: the original target is at 0x401140.
 neverd patch app --from-source=replacement.c --entry=replacement --func=0x401140 \
+  --bind=original:saved_target=0x401140 \
   --bind=function:original_helper=0x401190 \
   --bind=data:shared_counter=0x404020:4 \
   --bind=const:lookup_table=0x402040:64 \
+  --dependency=function:extra_function=libpatch_extra.so \
+  --dependency=data:extra_state=libpatch_extra.so \
   --patch-report -o app.bound
 ```
 
-El crecimiento de tablas Mach-O necesita también espacio libre adyacente en el archivo y en memoria virtual; la reserva de cabeceras no lo proporciona. Las entradas verificadas distinguen ambos requisitos.
+Las opciones de dependencia, añadidas al final y comprobadas según el tamaño de estructura, sirven para fuente, IR suministrado y objetos nativos. El recibo incluye `added_imports`; al recargar el candidato se vuelven a comprobar callbacks, importaciones, permisos y bytes instalados. Un fallo conserva la entrada y cualquier destino existente.
 
 <!-- i18n-section: exceptions -->
 ## Excepciones C++
@@ -128,13 +136,35 @@ Se fijan las entradas y se prepara el candidato junto al destino, se vuelve a ca
 report = session.patch_source(
     replacement_source, "app.patched",
     mappings={"replacement": original_address},
-    compiler="gcc", compiler_path="/path/to/gcc", artifact="object",
-    bindings={"shared_counter": ("data", original_counter_address, 4)},
+    compiler="clang", compiler_path="/path/to/clang", artifact="object",
+    bindings={
+        "saved_target": ("original", original_address),
+        "shared_counter": ("data", original_counter_address, 4),
+    },
+    dependencies={
+        "extra_function": ("libpatch_extra.so", "function"),
+        "extra_state": ("libpatch_extra.so", "data"),
+    },
 )
 ```
 
 <!-- i18n-section: verification -->
 ## Compilación y verificación
+
+Los seis trabajos nativos OS/ISA seleccionados pasaron sin fallos ni omisiones: 3669 ejecuciones GoogleTest, 1008 observaciones de procesos nativos (504 funcionales y 504 de excepciones C++), 12 rechazos reales del cargador, 96 imágenes y 84 recibos de publicación.
+
+| Host | Fuente | Harness | Trabajo CI | Pruebas | Observaciones / rechazos |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+Los artefactos validan exactamente los commits de fuente y harness indicados abajo. Los commits posteriores de integración dev y documentación tienen controles locales y documentales separados. Los fallos o cancelaciones anteriores siguen siendo fallos. Las 216 observaciones suplementarias históricas, PE ARM32 y los resultados CPU/compatibilidad de Apple antiguo de 32 bits no prueban nueva cobertura de hardware nativo ni de excepciones C++.
+
+La validación Windows ARM64 usa una DLL C Unicorn ARM64 nativa, compilada realmente desde el submódulo fijado con LLVM-MinGW verificado, una biblioteca de importación MSVC y una sustitución explícita del destino CMake. La copia de compilación aislada autentica tres correcciones del host: el par de saltos sin SEH, un callback ARM64 de compromiso de páginas con sincronización de caché de instrucciones y máscaras inmediatas de 64 bits para Windows LLP64. Las fuentes y revisión del submódulo no cambian. Esto valida el host de la matriz CPU, sin establecer soporte predeterminado para JIT MSVC ARM64. Los cinco controles de recuperación del host se registran aparte de las pruebas de procesos parcheados nativos y excepciones C++.
 
 Elija un compilador compatible con `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` (Clang 22.1.6 comprobado). La compilación integrada corrige una copia LLVM en el directorio de construcción sin modificar el submódulo ni la caché compartida. El fallo PLT x64 de r3/r4 puede rechazar un parche IR; los objetos nativos evitan esa ruta MC. `NEVERD_TEST_REQUIRE_FIXED_LLVM=1` exige la generación PLT exacta corregida.
 
@@ -187,7 +217,7 @@ El flujo de imágenes exige ejecución nativa en macOS ARM64 (`macos-15`) e Inte
 
 El mismo flujo exige 30 observaciones Windows x86 en Windows x64, 48 Linux x86 en Linux x64 y 96 Linux ARM32 mediante QEMU en modo usuario, repartidas por igual entre ARM y Thumb. Las pruebas Linux incluyen objetos GCC correspondientes al destino. Cada escenario se repite tres veces. Los informes distinguen `native`, `compatibility`, `rosetta` y `qemu-user`, y registran tanto la arquitectura de destino como la real del anfitrión. Rosetta no satisface un requisito Intel nativo.
 
-Los 14 perfiles CPU siguen cubiertos por la matriz de 154 pruebas de fuente/IR/objeto. PE ARM32, Mach-O i386, ARMv7 iOS y ARMv7k watchOS tienen actualmente verificación CPU, sin afirmar verificación del cargador OS nativo ni del desenrollador C++. NeverC sigue limitado a C puro en x64/ARM64; Clang y los controladores ELF GCC correspondientes producen los destinos de 32 bits. El verificador no compila ni modifica NeverC.
+Los 14 perfiles CPU siguen cubiertos por la matriz de 283 pruebas de fuente/IR/objeto. PE ARM32, Mach-O i386, ARMv7 iOS y ARMv7k watchOS tienen actualmente verificación CPU, sin afirmar verificación del cargador OS nativo ni del desenrollador C++. NeverC sigue limitado a C puro en x64/ARM64; Clang y los controladores ELF GCC correspondientes producen los destinos de 32 bits. El verificador no compila ni modifica NeverC.
 
 Windows x64 y ARM64 ejecutan también 36 observaciones Clang C++ FH3 cada uno.
 
@@ -207,6 +237,6 @@ Las [comprobaciones Linux adicionales en Actions personal](https://github.com/gm
 
 Las [comprobaciones de compatibilidad Apple](https://github.com/gmh5225/test_mac_intel/actions/runs/38771214358) superaron 30 ejecuciones Mach-O i386 con Darling en Linux y 60 ejecuciones ARMv7/ARMv7k con touchHLE en macOS Intel. Cada original y cada sustitución desde IR fuente, objeto compilado u objeto proporcionado se ejecutan tres veces. Las auditorías independientes verificaron las 72 imágenes, 66 recibos de publicación y 216 ejecuciones de estas pruebas adicionales, incluidos los tamaños de artefactos GitHub, SHA256, commits exactos e inventarios completos. Las entradas Linux siguen fijadas a `fcee81c9a5`; las PE se generaron en `a542f97ba` y las Mach-O en `8f5f06762`. Los commits del sistema de pruebas se registran por separado en las ejecuciones enlazadas.
 
-Las correcciones Mach-O autentican las funciones Thumb seleccionadas independientemente de la clasificación ARM/Thumb mixta de la imagen, normalizan los punteros de exportación Thumb acreditados y las direcciones de código de desenrollado ARM32 sin cambiar los punteros de datos ni las longitudes de los rangos. La compilación con fuentes LLVM integradas superó localmente las 154 comprobaciones de la matriz CPU y las 258 de contratos de excepción, sin fallos ni omisiones. Las pruebas Mach-O antiguas usan un enlazador de código abierto documentado y reservan espacio de desenrollado; i386 tiene una entrada de arranque correctamente alineada y un segmento de página cero de 64 KiB.
+Las correcciones Mach-O autentican las funciones Thumb seleccionadas independientemente de la clasificación ARM/Thumb mixta de la imagen, normalizan los punteros de exportación Thumb acreditados y las direcciones de código de desenrollado ARM32 sin cambiar los punteros de datos ni las longitudes de los rangos. La compilación con fuentes LLVM integradas superó localmente las 283 comprobaciones de la matriz CPU y las 258 de contratos de excepción, sin fallos ni omisiones. Las pruebas Mach-O antiguas usan un enlazador de código abierto documentado y reservan espacio de desenrollado; i386 tiene una entrada de arranque correctamente alineada y un segmento de página cero de 64 KiB.
 
 Estos resultados demuestran ejecución de C en los emuladores y capas de compatibilidad indicados. Wine no es Microsoft Windows, Darling no es macOS y la ejecución ARMv7k dentro de la HLE de iOS no valida watchOS, WatchKit ni dispositivos Apple. No se deduce cobertura de SDK Apple antiguos ni de hardware nativo de 32 bits; estas pruebas tampoco validan el desenrollado de excepciones C++. La evidencia nativa y de compatibilidad anterior permanece separada. NeverC no se compiló ni se modificó.

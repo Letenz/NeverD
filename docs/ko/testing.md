@@ -1750,7 +1750,24 @@ MSVC 단위 테스트 대상은 `/bigobj`를 사용하여 GoogleTest와 LLVM 템
 
 ## 소스 및 네이티브 오브젝트 패치
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
+현재 확장 목록은 `unittests/Inputs/source-patch-expansion.json`에 있습니다. CPU 행렬 283개, 배치 14개, 콜백 16개, 예외 계약 265개와 정확한 호스트별 C API 목록을 포함합니다. `scripts/qualify_source_patch_expansion.py`는 수정 없는 정확한 소스 커밋에서 전체 목록의 실패·건너뛰기 0을 요구합니다. `scripts/check_source_patch_expansion_runtime.py`는 네이티브 OS 로더로 콜백·의존성·결합 IR/객체를 별도 실행하며 호스트당 기능 84회, 예외 84회와 라이브러리·심볼 누락 대조 2개를 검사합니다. 실제 신구 공유 라이브러리, 부동소수점·스택 인자, 반복 원래 본문 호출, 정확히 한 번의 정리, 로더 메타데이터와 게시 해시를 확인합니다. CPU, 호환 계층, 네이티브 OS 프로세스 증거는 구분합니다.
+
+선택한 여섯 네이티브 OS/ISA 작업은 실패·건너뛰기 없이 통과했습니다. GoogleTest 실행 3669회, 네이티브 프로세스 관측 1008회(기능 504회, C++ 예외 504회), 실제 로더 거부 12회, 이미지 96개, 게시 영수증 84개입니다.
+
+| 호스트 | 소스 | Harness | CI 작업 | 테스트 | 관측 / 거부 |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+각 산출물은 아래 표의 정확한 소스와 harness 커밋만 검증합니다. 이후 dev 통합과 문서 커밋에는 별도의 로컬·문서 검사를 적용합니다. 과거 실패·취소 작업은 실패로 보존합니다. 과거의 보충 관측 216회, PE ARM32 및 구형 32비트 Apple CPU/호환 계층 결과는 새 기능의 네이티브 하드웨어나 C++ 예외 증거가 아닙니다.
+
+Windows ARM64 검증은 고정 서브모듈과 검증된 LLVM-MinGW 도구 체인으로 실제 빌드한 네이티브 ARM64 Unicorn C DLL, MSVC 임포트 라이브러리, 명시적 CMake 대상 재정의를 사용합니다. 격리된 빌드 복사본은 비 SEH 점프 함수 쌍, 명령 캐시 동기화를 포함한 ARM64 페이지 커밋 콜백, Windows LLP64용 64비트 즉시값 마스크라는 세 호스트 수정을 인증합니다. 서브모듈 소스와 리비전은 그대로입니다. 이는 CPU 행렬의 테스트 호스트를 검증하며 기본 MSVC ARM64 JIT 지원을 입증하지 않습니다. 다섯 호스트 복구 검사는 패치 프로세스의 네이티브 실행 및 C++ 예외 증거와 별도로 기록합니다.
+
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 283 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 

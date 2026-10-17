@@ -13,6 +13,10 @@ leur propre architecture interne.
 
 `X64MXCSRMask` active les chargements MXCSR bruts et les lectures/écritures scalaires avec un masque effectif explicite (`0xffbf` ou `0xffff`). L’adaptateur x64 définit les états initiaux valides et les transitions. Le cœur compte le travail et exige la preuve que les bits réservés sont nuls ; le mode sans faute ne suffit pas. Les intrinsèques d’origine restent observables. Les écritures mémoire MXCSR, l’interface source et les certificats natifs/LLVM demandent leurs propres contrats.
 
+`SourcePatchPreparation` possède la transaction commune de disposition et dépendances avant installation. `SourcePatchCallback` authentifie les entrées originales sauvegardées et délègue relocalisation des instructions et déroulement natif aux responsables d'architecture/format. `SourcePatchDependencies` planifie les imports explicites ; les écrivains ELF/PE/Mach-O conservent les identités du chargeur. Sources, IR fournis et objets natifs utilisent les mêmes plans. La preuve finale des sections/permissions et le rechargement de `publishSourcePatch` restent l'autorité ; CLI, C API et Python ne dupliquent pas les décisions du chargeur ou des relocalisations.
+
+Les six jobs natifs OS/ISA sélectionnés ont réussi sans échec ni saut : 3669 exécutions GoogleTest, 1008 observations de processus natifs (504 fonctionnelles et 504 d’exceptions C++), 12 refus réels du chargeur, 96 images et 84 reçus de publication. [Preuves natives exactes](source-patching.md).
+
 ## Restauration de la mémoire à l’exécution
 
 `X64SegmentedWrites` autorise séparément les écritures FS/GS ordinaires de 1/2/4/8 octets à décalage de 64 bits, sous un état machine explicitement sans faute. `arch/x86_64` possède la validation, l’admission et l’initialisation des bases symboliques. Le cœur utilise les adresses linéaires complètes et l’invalidation habituelle des alias. Des bases fixes arbitraires peuvent recouvrir la pile, d’autres segments et des cases de retour actives. La capacité est liée aux justificatifs raw. Les interfaces source et de preuve native sans entrées de base authentifiées continuent de refuser ce domaine.

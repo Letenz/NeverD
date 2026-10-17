@@ -7219,11 +7219,28 @@ both native preparation and independent COFF binding to reject that unsafe chain
 
 ## Source and native object replacement tests
 
+The current expansion inventory is checked in as `unittests/Inputs/source-patch-expansion.json`: 283 CPU matrix cases, 14 layout cases, 16 callback cases, 265 exception-contract cases and the exact host-specific C API list. `scripts/qualify_source_patch_expansion.py` requires the complete inventory with zero failures or skips at a clean, exact source commit. `scripts/check_source_patch_expansion_runtime.py` separately executes callback, dependency and combined IR/object images through the native OS loader: 84 functional and 84 exception observations plus two missing-library/symbol controls per host. It checks real old/new shared libraries, floating/stack arguments, repeated saved-body calls, exactly-once cleanup, loader metadata and publication hashes. CPU, compatibility and native OS process evidence remain separate.
+
+Six selected native OS/ISA jobs passed with zero failed or skipped cases: 3669 GoogleTest executions, 1008 native process observations (504 functional and 504 C++ exception observations), 12 real loader rejections, 96 images and 84 publication receipts.
+
+| Host | Source | Harness | CI job | Tests | Observations / refusals |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+These artifacts qualify exactly the source and harness commits listed below. Later dev integration and documentation commits have separate local and documentation checks. Earlier failed or cancelled jobs remain failures. The historical 216 supplementary observations, PE ARM32 and older 32-bit Apple CPU/compatibility results do not establish new native hardware or C++ exception coverage.
+
+The Windows ARM64 qualification uses a native ARM64 Unicorn C DLL built from the pinned submodule with the verified LLVM-MinGW toolchain, an MSVC import library and an explicit CMake target override. Its isolated build copy authenticates three host fixes: the non-SEH jump pair, an ARM64 page-commit callback with instruction-cache synchronization, and 64-bit immediate masks for Windows LLP64. The submodule source and revision stay unchanged. This qualifies the test host for the CPU matrix; it does not establish default MSVC ARM64 JIT support. The five host-recovery checks are separate from native patched-process and C++ exception evidence.
+
 `NeverDSourcePatchMatrixTests` compiles and links real fixtures, installs source
 or supplied IR, reloads the result and invokes the patched original entry in
 Unicorn. Four architectures (x86, x64, ARM32, ARM64) and three formats (ELF,
 PE, Mach-O) require successful source, supplied-IR and native-object installation,
-reload and exact execution. The 154-case inventory includes both ARMv7k watchOS
+reload and exact execution. The 283-case inventory includes both ARMv7k watchOS
 and ARMv7 iOS, mutable/readonly state, original floating-point and stack-argument
 bindings, and source/object entries at two nonzero image-base slides. Every
 invocation must reach the return address within a finite instruction/time budget.
@@ -7232,9 +7249,10 @@ Legacy Mach-O 32-bit containers retain compiler-produced instructions,
 relocated CFI and genuine symbols; their CPU execution is not an OS runtime
 qualification. Native object ranges never receive synthetic MC identities.
 On Apple Silicon, `NEVERD_TEST_DARWIN_ARCH=x86_64` runs the C API/CLI and
-seven exception scenarios through Rosetta 2 using x64 originals. Intel fixtures
-reserve file/virtual padding with `-Wl,-segalign,0x4000` independently of header
-padding; the default 4 KiB layout cannot hold a new compact-unwind page.
+seven exception scenarios through Rosetta 2 using x64 originals. Historical
+Intel fixtures reserve file/virtual padding with `-Wl,-segalign,0x4000`.
+The new tight-layout cases omit header/unwind reservations and require the
+admitted format-owned layout expansion described in the source patch guide.
 The exact reference regressions cover both x64 ELF PLT branches and Mach-O GOT
 data words. `NEVERD_TEST_REQUIRE_FIXED_LLVM=1` requires both corrected producers.
 See the [source patch matrix](source-patching.md).

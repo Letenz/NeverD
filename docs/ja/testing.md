@@ -1760,11 +1760,28 @@ MSVC の単体テストは `/bigobj` を指定し、GoogleTest と LLVM のテ�
 
 ## ソースとネイティブオブジェクトのパッチ
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
+現在の拡張一覧は `unittests/Inputs/source-patch-expansion.json` にあり、283 CPU 行列ケース、14 配置、16 コールバック、265 例外契約とホスト別の正確な C API 一覧を含みます。`scripts/qualify_source_patch_expansion.py` は変更のない正確なソースコミットで全一覧の失敗・スキップゼロを要求します。`scripts/check_source_patch_expansion_runtime.py` はネイティブ OS ローダーでコールバック、依存関係、両者を組み合わせた IR／オブジェクトを別途実行し、ホストごとに84 機能、84 例外観測とライブラリ・シンボル欠落の2対照を検査します。実際の新旧共有ライブラリ、浮動小数点・スタック引数、元の本体の反復呼び出し、一度だけの後処理、ローダーメタデータ、公開ハッシュを確認します。CPU、互換層、ネイティブ OS プロセスの証拠を分離します。
+
+選択した六つのネイティブ OS／ISA ジョブは失敗・スキップゼロで合格しました。GoogleTest 3669 回、ネイティブプロセス観測 1008 回（機能 504 回、C++ 例外 504 回）、実ローダー拒否 12 回、96 イメージ、84 公開レシートです。
+
+| ホスト | ソース | Harness | CI ジョブ | テスト | 観測／拒否 |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+各成果物が検証するのは下表の正確なソースと harness コミットです。後続の dev 統合と文書コミットは別のローカル・文書チェックで扱います。過去の失敗・キャンセルは失敗のまま保持します。過去の補足観測216回、PE ARM32、旧32ビット Apple の CPU／互換層の結果は、新機能のネイティブハードウェアや C++ 例外の証明にはなりません。
+
+Windows ARM64 の検証では、固定されたサブモジュールと検証済み LLVM-MinGW ツールチェーンからネイティブ ARM64 Unicorn C DLL を実際にビルドし、MSVC インポートライブラリと明示的な CMake ターゲット上書きを使います。隔離したビルド用コピーは、非 SEH ジャンプ関数の組、命令キャッシュ同期を伴う ARM64 ページコミットコールバック、Windows LLP64 用の64ビット即値マスクという三つのホスト修正を認証します。サブモジュールのソースとリビジョンは変更しません。これは CPU 行列のテストホストを検証するもので、標準の MSVC ARM64 JIT 対応を示すものではありません。五つのホスト復帰チェックは、パッチ済みプロセスのネイティブ実行や C++ 例外の証拠と分けて記録します。
+
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 283 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-`sourcePatchTargetTriple` はイメージから ARM モード、ELF 浮動小数点 ABI、Mach-O CPU サブタイプを選択します。`COFFPatchObject` と `MachOPatchObject` はオブジェクト自身のシンボル、補助／セクション定義、アンワインド記録で範囲を検証し、MC ID を捏造しません。形式ごとのインストーラが実際のテーブルを登録します。 154 件の CPU テストはソース／IR／オブジェクト、四つのアーキテクチャ、三形式、状態、浮動小数点・スタック引数、二つの非ゼロ再ベースを要求します。旧 32 ビット Mach-O コンテナは実際のコンパイラコードを保持しますが OS 検証ではありません。
+`sourcePatchTargetTriple` はイメージから ARM モード、ELF 浮動小数点 ABI、Mach-O CPU サブタイプを選択します。`COFFPatchObject` と `MachOPatchObject` はオブジェクト自身のシンボル、補助／セクション定義、アンワインド記録で範囲を検証し、MC ID を捏造しません。形式ごとのインストーラが実際のテーブルを登録します。 283 件の CPU テストはソース／IR／オブジェクト、四つのアーキテクチャ、三形式、状態、浮動小数点・スタック引数、二つの非ゼロ再ベースを要求します。旧 32 ビット Mach-O コンテナは実際のコンパイラコードを保持しますが OS 検証ではありません。
 
 [ソースとネイティブオブジェクトのパッチ](source-patching.md)
 

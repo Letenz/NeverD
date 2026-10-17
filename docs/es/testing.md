@@ -1861,11 +1861,28 @@ El rechazo verificado de desplazamientos dobles informa del contador enmascarado
 
 ## Parches de código fuente y objetos nativos
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
+El inventario actual `unittests/Inputs/source-patch-expansion.json` contiene 283 casos CPU, 14 de disposición, 16 de callbacks, 265 de contratos de excepciones y la lista C API exacta del host. `scripts/qualify_source_patch_expansion.py` exige todo el inventario sin fallos ni omisiones en un commit fuente exacto y limpio. `scripts/check_source_patch_expansion_runtime.py` ejecuta por separado imágenes IR/objeto de callbacks, dependencias y combinaciones mediante el cargador nativo: 84 observaciones funcionales, 84 de excepciones y dos controles de biblioteca/símbolo ausente por host. Comprueba bibliotecas antiguas/nuevas reales, argumentos flotantes/en pila, llamadas repetidas al original, limpieza exactamente una vez, metadatos del cargador y hashes de publicación. CPU, compatibilidad y procesos OS nativos siguen siendo pruebas separadas.
+
+Los seis trabajos nativos OS/ISA seleccionados pasaron sin fallos ni omisiones: 3669 ejecuciones GoogleTest, 1008 observaciones de procesos nativos (504 funcionales y 504 de excepciones C++), 12 rechazos reales del cargador, 96 imágenes y 84 recibos de publicación.
+
+| Host | Fuente | Harness | Trabajo CI | Pruebas | Observaciones / rechazos |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+Los artefactos validan exactamente los commits de fuente y harness indicados abajo. Los commits posteriores de integración dev y documentación tienen controles locales y documentales separados. Los fallos o cancelaciones anteriores siguen siendo fallos. Las 216 observaciones suplementarias históricas, PE ARM32 y los resultados CPU/compatibilidad de Apple antiguo de 32 bits no prueban nueva cobertura de hardware nativo ni de excepciones C++.
+
+La validación Windows ARM64 usa una DLL C Unicorn ARM64 nativa, compilada realmente desde el submódulo fijado con LLVM-MinGW verificado, una biblioteca de importación MSVC y una sustitución explícita del destino CMake. La copia de compilación aislada autentica tres correcciones del host: el par de saltos sin SEH, un callback ARM64 de compromiso de páginas con sincronización de caché de instrucciones y máscaras inmediatas de 64 bits para Windows LLP64. Las fuentes y revisión del submódulo no cambian. Esto valida el host de la matriz CPU, sin establecer soporte predeterminado para JIT MSVC ARM64. Los cinco controles de recuperación del host se registran aparte de las pruebas de procesos parcheados nativos y excepciones C++.
+
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 283 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-`sourcePatchTargetTriple` selecciona modo ARM, ABI flotante ELF y subtipo CPU Mach-O desde la imagen. `COFFPatchObject` y `MachOPatchObject` verifican símbolos, definiciones auxiliares／de sección y registros nativos sin inventar identificadores MC. Los instaladores de formato registran las tablas reales. Los 154 casos CPU exigen fuente／IR／objetos, cuatro arquitecturas, tres formatos, estado, argumentos flotantes／de pila y dos cambios de base no nulos. Los contenedores Mach-O antiguos de 32 bits conservan código real del compilador y no certifican un OS.
+`sourcePatchTargetTriple` selecciona modo ARM, ABI flotante ELF y subtipo CPU Mach-O desde la imagen. `COFFPatchObject` y `MachOPatchObject` verifican símbolos, definiciones auxiliares／de sección y registros nativos sin inventar identificadores MC. Los instaladores de formato registran las tablas reales. Los 283 casos CPU exigen fuente／IR／objetos, cuatro arquitecturas, tres formatos, estado, argumentos flotantes／de pila y dos cambios de base no nulos. Los contenedores Mach-O antiguos de 32 bits conservan código real del compilador y no certifican un OS.
 
 [Parches de código fuente y objetos nativos](source-patching.md)
 

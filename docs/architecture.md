@@ -12,6 +12,10 @@ Capstone, and Unicorn submodules keep their own internal architecture.
 
 `X64MXCSRMask` enables raw MXCSR loads and scalar state reads/writes with an explicit effective mask (`0xffbf` or `0xffff`). The x64 adapter owns the legal initial-state domain and transitions. Core charges work and requires a proof that reserved bits are clear; the nonfaulting flag alone supplies no such proof. Original intrinsics remain observable. MXCSR memory stores, source wrapping and native/LLVM certificates still require their own contracts.
 
+`SourcePatchPreparation` owns the shared pre-installation layout and dependency transaction. `SourcePatchCallback` authenticates saved original entries and delegates instruction relocation and native unwind records to their architecture/format owners. `SourcePatchDependencies` plans explicit imports; format-owned ELF/PE/Mach-O writers preserve existing loader identities. Source, supplied IR and native objects consume these same plans. The final native-object section/permission proof and `publishSourcePatch` reload check remain authoritative; CLI, C API and Python do not duplicate loader or relocation decisions.
+
+Six selected native OS/ISA jobs passed with zero failed or skipped cases: 3669 GoogleTest executions, 1008 native process observations (504 functional and 504 C++ exception observations), 12 real loader rejections, 96 images and 84 publication receipts. [Exact native evidence](source-patching.md).
+
 ## Runtime memory recovery
 
 `X64SegmentedWrites` separately admits ordinary 1/2/4/8-byte FS/GS stores with 64-bit offsets under explicit nonfaulting machine state. `arch/x86_64` owns runtime memory validation, admission and symbolic base initialization. Core uses complete linear addresses and ordinary alias invalidation; fixed arbitrary bases may alias the frame, other segments and live return cells. The capability is bound into raw receipts. Source and native proof interfaces without authenticated base inputs continue to refuse this domain.
