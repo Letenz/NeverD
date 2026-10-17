@@ -373,7 +373,20 @@ information's; else the name signatures recognized the function's bytes by
 says nothing of what the function is. A linked COFF image's section symbols,
 which GNU ld keeps at each object's first function or variable
 (`Symbol::IsSection`), name nothing there or in `findSymbolAt`; they only
-bound what each object contributed. Where a linker folded identical
+bound what each object contributed. Once discovery has found the code, such
+an image's symbol of no function type in an executable section is data
+among the code when no code metadata claims it, it is no import thunk, and it
+starts no instruction, as GNU ld's -1-headed `__CTOR_LIST__` in `.text`
+(`recordSymbolTableDataInCode`). The relocated pointers to it, and those it
+holds, which the base relocations took for pointers in code, are then
+pointers of data. LLVM-C mirrors a code segment that holds such slots as a
+pointer table, so a constructor's address in it is no stale one. Past the
+embedding limit the segment has no such mirror, and LLVM-C refuses data whose
+raw copy would reach one of its slots (`tryResolveGlobalData`). A mirror built
+while an earlier one's initializer resolved follows that initializer in the
+module, so whole-module LLVM-C declares each global an earlier initializer
+names before defining the globals in module order (`writeGlobals`).
+Where a linker folded identical
 functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's
 prototype only where every other name's that has one takes and returns

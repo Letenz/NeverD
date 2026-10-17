@@ -6,6 +6,7 @@
 
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
 
+#include "neverd/decode/Decoder.h"
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -512,6 +513,74 @@ void parseSymbolTable(const COFFObjectFile &Obj, BinaryImage &Img,
   }
   LLVM_DEBUG(llvm::dbgs() << "coff: parsed " << Img.Symbols.size()
                           << " symbols from symbol table\n");
+}
+
+void recordSymbolTableDataInCode(BinaryImage &Img) {
+  if (Img.IsRelocatable || !Img.ReadsStaticSymbols)
+    return;
+  Decoder Dec;
+  if (!Dec.init(Img))
+    return;
+  std::vector<va_t> Objects;
+  for (const Symbol &Sym : Img.Symbols) {
+    // A local label (`.l_startw`, an import thunk's `.text`) names code.
+    if (Sym.IsFunc || Sym.IsSection || Sym.Name.empty() ||
+        Sym.Name.front() == '.' || !Img.isCodeAddress(Sym.Addr) ||
+        Img.findImportStubAt(Sym.Addr))
+      continue;
+    // An assembler's code label has no function type either; code begins
+    // with an instruction, and a table such as GNU ld's -1-headed
+    // __CTOR_LIST__ does not.
+    size_t Available = 16;
+    const uint8_t *Bytes = nullptr;
+    while (Available && !(Bytes = Img.readVA(Sym.Addr, Available)))
+      --Available;
+    DecodedInsn Insn{};
+    if (!Available ||
+        (Dec.selectMode(Img, Sym.Addr) &&
+         Dec.decodeOneLight(Bytes, Available, Sym.Addr, Insn) > 0))
+      continue;
+    Objects.push_back(Sym.Addr);
+  }
+  if (!recordDataInCode(Img, Objects))
+    return;
+  // Such an object runs from its symbol up to the next one.
+  std::vector<va_t> Starts;
+  for (const Symbol &Sym : Img.Symbols)
+    if (!Sym.IsSection && !Sym.Name.empty())
+      Starts.push_back(Sym.Addr);
+  llvm::sort(Starts);
+  auto InData = [&](va_t Addr) {
+    const auto Object = Img.DataInCode.upper_bound(Addr);
+    if (Object == Img.DataInCode.begin())
+      return false;
+    const va_t Start = *std::prev(Object);
+    const auto Next = std::upper_bound(Starts.begin(), Starts.end(), Start);
+    return Next == Starts.end() || *Next > Addr;
+  };
+  // A pointer to such an object, or into it, points to data.
+  recordDataPointerTargets(Img, InData);
+  // A pointer such an object holds, which the base relocations recorded as
+  // an instruction's operand for its section's sake, is a pointer slot of
+  // data: GNU ld's __CTOR_LIST__ lists the constructors to run.
+  const uint32_t Width = Img.getPointerSize();
+  std::vector<AbsolutePointerRelocationEffect> Slots;
+  for (const auto &[SlotVA, Field] : Img.CodeAddressRelocOperands)
+    if (Field.Width == Width && !Field.PCRelativeFromInstructionEnd &&
+        Field.Kind == RelocatedAddressFieldKind::Generic && InData(SlotVA))
+      Slots.push_back(decideAbsolutePointerRelocation(
+          Img, SlotVA, Field.TargetVA, Field.TargetOwnerVA, [&](va_t Addr) {
+            PointerRelocationAddressClass Class =
+                classifyPointerRelocationAddress(Img, Addr);
+            if (Addr == SlotVA)
+              Class.Executable = false;
+            return Class;
+          }));
+  for (const AbsolutePointerRelocationEffect &Slot : Slots)
+    if (Slot.What != AbsolutePointerRelocationEffect::Kind::None) {
+      Img.CodeAddressRelocOperands.erase(Slot.SlotVA);
+      applyAbsolutePointerRelocation(Img, Slot);
+    }
 }
 
 void parseTLSDirectory(const COFFObjectFile &Obj, BinaryImage &Img,

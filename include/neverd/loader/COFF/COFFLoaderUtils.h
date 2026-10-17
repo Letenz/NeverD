@@ -146,6 +146,15 @@ inline bool isSectionDefinition(const llvm::object::COFFSymbolRef &Sym) {
 void parseSymbolTable(const llvm::object::COFFObjectFile &Obj, BinaryImage &Img,
                       uint64_t ImageBase, llvm::ArrayRef<va_t> SectionVAs = {});
 
+/// Record, once discovery has found the image's code, the data a linked
+/// image's own symbol table names among it: a symbol of no function type in
+/// an executable section that no code metadata claims, is no import thunk
+/// and starts no instruction, such as GNU ld's __CTOR_LIST__ and
+/// __DTOR_LIST__ in .text.  The relocated pointers to such an object, which
+/// the base relocations, read before the symbol table, took for pointers to
+/// code, become pointers to data (recordDataPointerTargets).
+void recordSymbolTableDataInCode(BinaryImage &Img);
+
 /// Parse one delay-import descriptor from the already mapped image.  Supports
 /// current RVA descriptors and legacy VA descriptors, returning the number of
 /// imports appended.  Exposed separately for bounded synthetic-image tests.

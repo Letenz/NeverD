@@ -3423,6 +3423,28 @@ TEST_F(SessionCAPITest,
 }
 #endif
 
+TEST_F(SessionCAPITest, LLVMCReadsAPointerTableAmongCodeAsData) {
+  // The fixture keeps a pointer table among its code, as GNU ld keeps
+  // __CTOR_LIST__ in .text, and reads it through a pointer in .data.  Taken
+  // for a pointer to code that no function owns, it made the emitter refuse
+  // every function that touched .data; the table's entry is a function's
+  // address, not a stale one.
+  const auto Fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "loader" / "fixtures" / "mingw_text_data.exe";
+  std::ifstream Input(Fixture, std::ios::binary);
+  const std::string Exe =
+      write("mingw_text_data.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Index = neverd_func_find_by_name(Session, "call_second");
+  ASSERT_GE(Index, 0);
+  const std::string Source = takeString(
+      neverd_decompile_llvm(Session, neverd_func_entry(Session, Index)));
+  EXPECT_NE(Source.find("call_second("), std::string::npos)
+      << takeString(neverd_last_error(Session));
+}
+
 TEST_F(SessionCAPITest, FailedDebugReloadPreservesLoadedImageAnalysisAndEdits) {
   const std::string Original = write("original.evm", "6001600055");
   const std::string Replacement = write("replacement.evm", "6002600055");
