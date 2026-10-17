@@ -23,6 +23,7 @@
 #include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedDynamicStack.h"
 
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
@@ -37,11 +38,20 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace neverd {
 
 namespace {
+// Hashes the query-local keys of canonicalFrameSlotKey's walks. They are
+// only probed, inserted and erased, so their order cannot reach an answer.
+struct FrameProofKeyHash {
+  template <typename Key> size_t operator()(const Key &K) const {
+    return llvm::hash_value(K);
+  }
+};
 // {(Id<<32)|SSAVer, Kind} key for the per-function frame-derived memo, matching
 // the DefIndex/PhiIndex scheme (lossless for 32-bit Id/SSAVer; the small Kind
 // enum never collides with DenseMap's int sentinels).
@@ -358,7 +368,7 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
   const uint64_t SpOff = TRI.StackPointer;
   const uint64_t FpOff = TRI.FramePointer;
   const unsigned PointerSize = TRI.PointerSize;
-  std::set<AddressProvenanceVarKey> Active;
+  std::unordered_set<AddressProvenanceVarKey, FrameProofKeyHash> Active;
   // Both walks share one saturating budget. The recurrence proof used to run
   // outside the slot budget and copied its visited set down every PHI/select
   // arm, re-expanding shared DAGs exponentially.
@@ -379,7 +389,9 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
     ++AddressProvenanceWork.FrameSlotNodes;
     return true;
   };
-  std::map<AddressProvenanceVarKey, med_llvm::SlotKey> ProvenSlots;
+  std::unordered_map<AddressProvenanceVarKey, med_llvm::SlotKey,
+                     FrameProofKeyHash>
+      ProvenSlots;
   auto sameVar = [](const MedVar &A, const MedVar &B) {
     return !A.isConst() && !B.isConst() && A.Kind == B.Kind && A.Id == B.Id &&
            A.SSAVer == B.SSAVer;
@@ -440,8 +452,9 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
   using AffinePair =
       std::pair<AddressProvenanceVarKey, AddressProvenanceVarKey>;
   using AffineMemoKey = std::pair<AffinePair, int>;
-  std::set<AffinePair> ActiveAffine;
-  std::map<AffineMemoKey, std::optional<int64_t>> AffineMemo;
+  std::unordered_set<AffinePair, FrameProofKeyHash> ActiveAffine;
+  std::unordered_map<AffineMemoKey, std::optional<int64_t>, FrameProofKeyHash>
+      AffineMemo;
   std::function<std::optional<int64_t>(const MedVar &, const MedVar &, int)>
       affineDeltaTo = [&](const MedVar &Start, const MedVar &Target,
                           int Depth) -> std::optional<int64_t> {
