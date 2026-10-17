@@ -191,6 +191,7 @@ target_include_directories(NeverDX64ExceptionTests PRIVATE
 add_neverd_unittest(NeverDLinuxProcessTests
   LinuxProcessTests.cpp
   LinuxPriorityTests.cpp
+  LinuxNetworkTests.cpp
   LinuxKernelAvailabilityTests.cpp
   LinuxPIDFDTests.cpp
   LinuxProcessLayoutTests.cpp
@@ -283,6 +284,9 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidBinderTests.cpp
   AndroidSearchTests.cpp
   AndroidMutexTests.cpp
+  AndroidSemaphoreTests.cpp
+  AndroidRandomTests.cpp
+  AndroidNetworkTests.cpp
   AndroidThreadAttributeTests.cpp
   AndroidThreadTests.cpp
   AndroidTimeTests.cpp

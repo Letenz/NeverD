@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/types/PDBTypeImport.h"
+#include "neverd/types/TypeLayout.h"
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
@@ -105,7 +106,7 @@ struct _THREAD_LIKE
     uint64_t Header;                                            // 0x00
     union                                                       // 0x08
     {
-        struct                                                  // 0x08
+        struct NEVERD_MS_STRUCT                                 // 0x08
         {
             uint32_t AutoBoostActive : 1;                       // 0x08 bit 0
             uint32_t ReadyTransition : 1;                       // 0x08 bit 1
@@ -115,7 +116,7 @@ struct _THREAD_LIKE
     };
     union                                                       // 0x0C
     {
-        struct                                                  // 0x0C
+        struct NEVERD_MS_STRUCT                                 // 0x0C
         {
             uint32_t ThreadFlagsSpare : 2;                      // 0x0C bits 0..1
             uint32_t AutoAlignment : 1;                         // 0x0C bit 2
@@ -758,4 +759,107 @@ TEST(TypeRender, NamesThatAreNoIdentifiersCompile) {
   EXPECT_EQ(Renamed[0].second, "Outer__Inner_int_");
   EXPECT_EQ(Renamed[1].first, "_SECOND::None");
   EXPECT_EQ(Renamed[1].second, "_SECOND_None");
+}
+
+TEST(TypeRender, ThirtyTwoBitRecordsAlignTheirEightByteMembers) {
+  // Microsoft's 32-bit compilers align an eight-byte scalar to eight, which
+  // the 32-bit library holds; GNU's i386 ABI aligns it to four inside a
+  // record, so the source asks GNU's for it wherever no pack decides it.
+  // Microsoft's are not asked: a pack around a record holding the member
+  // could not reduce an alignment they were told.
+  TypeLibrary Library(DataModel::ILP32);
+  ASSERT_TRUE(parseCTypes(R"(
+    typedef struct _STRING64 {
+      USHORT Length;
+      USHORT MaximumLength;
+      ULONGLONG Buffer;
+    } STRING64;
+    typedef union _QUAD { ULONGLONG Quad; double Real[2]; } QUAD;
+    #pragma pack(push, 4)
+    typedef struct _PACKED4 { ULONG Low; ULONGLONG High; } PACKED4;
+    #pragma pack(pop)
+    #pragma pack(push, 8)
+    typedef struct _PACKED8 { ULONG Low; ULONGLONG Wide; } PACKED8;
+    #pragma pack(pop)
+  )",
+                          Library)
+                  .ok());
+  RenderOptions C = in(Language::C);
+  C.Asserts = true;
+  const std::string Text = renderTypes(Library, {}, C);
+  EXPECT_TRUE(contains(Text, "#define NEVERD_ALIGN8 __attribute__")) << Text;
+  EXPECT_TRUE(contains(Text, "NEVERD_ALIGN8 uint64_t Buffer;"));
+  EXPECT_TRUE(contains(Text, "NEVERD_ALIGN8 uint64_t Quad;"));
+  EXPECT_TRUE(contains(Text, "NEVERD_ALIGN8 double Real[2];"));
+  EXPECT_TRUE(contains(Text, "    uint16_t Length;"));
+  // A pack below eight decides the alignment itself; pack(8) only lowers
+  // an alignment, so GNU's would stay four under it.
+  EXPECT_TRUE(contains(Text, "    uint64_t High;"));
+  EXPECT_TRUE(contains(Text, "NEVERD_ALIGN8 uint64_t Wide;"));
+  const std::string Cpp = renderTypes(Library, {}, in(Language::Cpp));
+  EXPECT_TRUE(contains(Cpp, "NEVERD_ALIGN8 uint64_t Buffer;")) << Cpp;
+  // A 64-bit library's own alignment holds on every compiler.
+  TypeLibrary Wide(DataModel::LLP64);
+  ASSERT_TRUE(parseCTypes("typedef struct _STRING64 { USHORT Length; USHORT "
+                          "MaximumLength; ULONGLONG Buffer; } STRING64;",
+                          Wide)
+                  .ok());
+  EXPECT_FALSE(contains(renderTypes(Wide, {}, C), "NEVERD_ALIGN8"));
+}
+
+TEST(TypeRender, GnuBitFieldsThatShareBytesTakeStorageOfTheirOwn) {
+  // GCC packs Ready at the bit after Kind, in the int whose first byte Kind
+  // is, and Wide after it in the long long that starts there too: Rust, Go
+  // and Python, which cannot overlap fields, store the run in the bytes it
+  // takes, and the record's alignment, which those bytes no longer give,
+  // is declared or filled.
+  TypeLibrary Library(DataModel::LP64);
+  ParseOptions Gnu;
+  Gnu.Rules = LayoutRules::Itanium;
+  ASSERT_TRUE(parseCTypes(R"(
+    struct _SHARED {
+      unsigned char Kind;
+      unsigned int Ready : 1;
+      unsigned int Level : 3;
+      int Delta : 4;
+      unsigned long long Wide : 40;
+      unsigned short Tail;
+    };
+    struct _NATURAL {
+      unsigned int Low : 8;
+      unsigned int High : 24;
+      unsigned int Next;
+    };
+  )",
+                          Library, Gnu)
+                  .ok());
+  const LocalType *Shared = Library.find("_SHARED");
+  ASSERT_NE(Shared, nullptr);
+  EXPECT_EQ(Shared->Record->Members[1].BitOffset, 8u);
+
+  const std::string Rust = renderTypes(Library, {}, in(Language::Rust));
+  EXPECT_TRUE(contains(Rust, "#[repr(C, align(8))]\n#[derive(Clone, Copy)]\n"
+                             "pub struct _SHARED {"))
+      << Rust;
+  EXPECT_TRUE(contains(Rust, "pub _bitfield: [u8; 6],")) << Rust;
+  // Wide, bits 16..55 of the record, in the run's bytes from its second.
+  EXPECT_TRUE(contains(Rust, "let unit = self._bitfield[1] as u64 | "
+                             "(self._bitfield[2] as u64) << 8"))
+      << Rust;
+  // Delta keeps its own type and sign.
+  EXPECT_TRUE(contains(Rust, "pub const fn Delta(&self) -> i32 {")) << Rust;
+  // A run its type's unit holds, without sharing a byte, stays in it.
+  EXPECT_TRUE(contains(Rust, "pub _bitfield: u32,")) << Rust;
+
+  const std::string Go = renderTypes(Library, {}, in(Language::Go));
+  EXPECT_TRUE(contains(Go, "_bitfield [6]byte")) << Go;
+  EXPECT_TRUE(contains(Go, "func (s *_SHARED) SetWide(value uint64) {")) << Go;
+
+  const std::string Python = renderTypes(Library, {}, in(Language::Python));
+  EXPECT_TRUE(contains(Python, "(\"_bitfield\", ctypes.c_uint8 * 6),"))
+      << Python;
+  EXPECT_TRUE(contains(Python, "_align_ = 8")) << Python;
+  EXPECT_TRUE(contains(Python, "int.from_bytes(bytes(self._bitfield[0:1]), "
+                               "\"little\")"))
+      << Python;
 }

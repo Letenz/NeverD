@@ -9,6 +9,7 @@
 #include "neverd/sdk/NeverDCAPIQuery.h"
 #include "neverd/sdk/NeverDCAPISession.h"
 #include "neverd/sdk/NeverDCAPISigs.h"
+#include "neverd/support/ProjectFiles.h"
 
 #include <algorithm>
 #include <cctype>
@@ -28,6 +29,14 @@
 using neverd::worker::hexAddress;
 using neverd::worker::Json;
 using neverd::worker::parseAddress;
+
+namespace project_files = neverd::project_files;
+/// A project file of the input at \p input, as the engine keeps it.
+static std::string projectFile(const std::string &input,
+                               project_files::File file) {
+  return project_files::path(input, file).string();
+}
+
 namespace {
 constexpr std::uint64_t Base = 0xffff800012340000ULL;
 constexpr std::uint64_t CodeBase = Base + 0x2700;
@@ -386,9 +395,11 @@ int neverd_session_load(neverd_session_t s, const char *path) {
     return 0;
   }
   session(s)->path = path;
-  session(s)->loadedWith = session(s)->requestedLoad.is_null()
-                               ? read(std::string(path) + ".neverd-load.json")
-                               : session(s)->requestedLoad;
+  project_files::migrate(path);
+  session(s)->loadedWith =
+      session(s)->requestedLoad.is_null()
+          ? read(projectFile(path, project_files::File::Load))
+          : session(s)->requestedLoad;
   if (!session(s)->loadedWith.is_object())
     session(s)->loadedWith = {{"loader", "auto"}};
   // A large table for GUI paging tests; its functions are never executed.
@@ -1959,6 +1970,7 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
       session(s)->path.ends_with("code-numbers.bin") ||
       session(s)->path.ends_with("code-numbers-paged.bin") ||
       session(s)->path.ends_with("code-labels.bin") ||
+      session(s)->path.ends_with("code-frame.bin") ||
       session(s)->path.ends_with("code-folding.bin") ||
       session(s)->path.ends_with("code-folding-cpp.bin") ||
       session(s)->path.ends_with("local-references.bin") ||
@@ -2009,6 +2021,28 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
              "  return v0;\n"
              "}\n";
     }
+    // The function's stack as HighC declares it, a record named after the
+    // function, whose members three statements read and write.
+    const bool frame = session(s)->path.ends_with("code-frame.bin");
+    if (frame) {
+      char record[32];
+      std::snprintf(record, sizeof record, "frame_%llX",
+                    static_cast<unsigned long long>(address));
+      full = std::string("#include <stdint.h>\n"
+                         "int32_t function_20(int32_t v0) {\n"
+                         "  _Alignas(16) struct ") +
+             record +
+             " {\n"
+             "    uint8_t gap0[54];\n"
+             "    uint16_t var_m32;\n"
+             "    uint64_t var_m30;\n"
+             "    uint8_t gap40[88];\n"
+             "  } stack_storage;\n"
+             "  stack_storage.var_m32 = (uint16_t)v0;\n"
+             "  stack_storage.var_m30 = 2;\n"
+             "  return stack_storage.var_m32;\n"
+             "}\n";
+    }
     if (codeFolding)
       full = "#include <stdint.h>\n"
              "int32_t function_20(int32_t v0) {\n"
@@ -2056,7 +2090,7 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
     Json rows = Json::array();
     for (auto i = first; i < end; ++i) {
       const bool mapped =
-          (labels && i >= 3 && i <= 6) ||
+          (labels && i >= 3 && i <= 6) || (frame && i >= 8 && i <= 10) ||
           (session(s)->path.ends_with("code-edits-mapped.bin") && i == 2) ||
           (numbers && (i == 2 || i == 3)) || (codeFolding && i == 5) ||
           (paged && i == 550);
@@ -2070,6 +2104,9 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
             : labels ? Json::array({hexAddress(address + (i == 3   ? 2
                                                           : i == 4 ? 4
                                                           : i == 5 ? 6
+                                                                   : 0xC))})
+            : frame  ? Json::array({hexAddress(address + (i == 8   ? 4
+                                                          : i == 9 ? 6
                                                                    : 0xC))})
             : paged  ? Json::array(
                            {hexAddress(address + 8), hexAddress(address + 9)})
@@ -2570,7 +2607,8 @@ const char *neverd_annotations_json(neverd_session_t s) {
 }
 int neverd_annotations_load(neverd_session_t s) {
   try {
-    auto values = read(session(s)->path + ".neverd-annotations.json");
+    auto values =
+        read(projectFile(session(s)->path, project_files::File::Annotations));
     session(s)->annotations.clear();
     for (const auto &item : values)
       session(s)
@@ -2596,7 +2634,8 @@ const char *neverd_renames_json(neverd_session_t s) {
 }
 int neverd_renames_load(neverd_session_t s) {
   try {
-    auto values = read(session(s)->path + ".neverd-renames.json");
+    auto values =
+        read(projectFile(session(s)->path, project_files::File::Renames));
     session(s)->names.clear();
     for (const auto &item : values)
       session(s)->names[parseAddress(item.at("addr").get<std::string>())] =
@@ -2803,7 +2842,8 @@ int neverd_functions_load(neverd_session_t s) {
   try {
     std::map<std::uint64_t, bool> edits;
     std::map<std::uint64_t, Json> attributes;
-    for (const auto &item : read(session(s)->path + ".neverd-functions.json")) {
+    for (const auto &item :
+         read(projectFile(session(s)->path, project_files::File::Functions))) {
       const auto address = parseAddress(item.at("addr").get<std::string>());
       if (item.contains("state"))
         edits[address] = item.at("state").get<std::string>() == "created";
@@ -2899,7 +2939,8 @@ const char *neverd_items_json(neverd_session_t s) {
 int neverd_items_load(neverd_session_t s) {
   try {
     std::map<std::uint64_t, Json> items;
-    for (const auto &item : read(session(s)->path + ".neverd-items.json"))
+    for (const auto &item :
+         read(projectFile(session(s)->path, project_files::File::Items)))
       items[parseAddress(item.at("addr").get<std::string>())] = item;
     session(s)->items = std::move(items);
     return 0;
@@ -2963,7 +3004,8 @@ const char *neverd_operand_formats_json(neverd_session_t s) {
 int neverd_operand_formats_load(neverd_session_t s) {
   try {
     std::map<std::uint64_t, std::map<int, Json>> formats;
-    for (const auto &row : read(session(s)->path + ".neverd-operands.json"))
+    for (const auto &row :
+         read(projectFile(session(s)->path, project_files::File::Operands)))
       for (const auto &format : row.at("operands"))
         formats[parseAddress(row.at("addr").get<std::string>())]
                [format.at("operand").get<int>()] = format;

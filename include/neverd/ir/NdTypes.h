@@ -87,6 +87,10 @@ struct NdType {
   /// (`char`, `ProbeError`, `Ns::Outer::Inner`).  A SourceName-only
   /// struct is not an ABI layout and must not authorize extents.
   std::string SourceName;
+  /// Display-only: the typedef a declaration names this type by, such as
+  /// PKDEFERRED_ROUTINE for a pointer to a function, which a signature
+  /// prints where its unit defines the typedef.  Never an ABI fact.
+  std::string TypedefName;
   /// Display-only TPI member names.  Parallel to FieldDisplayOffsets
   /// and FieldDisplayTypes; never an ABI layout and must not authorize
   /// extents.  An empty name at an offset is a tombstone for an

@@ -1618,6 +1618,10 @@ Double-click to go to the declaration.</source>
         <translation>التبسيط الرمزي</translation>
     </message>
     <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>التبسيط الرمزي لجميع الدوال</translation>
+    </message>
+    <message>
         <source>Recover LLVM control flow</source>
         <translation>استعادة تدفق التحكم في LLVM</translation>
     </message>
@@ -2143,6 +2147,10 @@ Signed: %4</source>
         <translation>إظهار بادئات الأسطر بصيغة المقطع:العنوان</translation>
     </message>
     <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>التبسيط الرمزي لجميع الدوال</translation>
+    </message>
+    <message>
         <source>Shortcuts</source>
         <translation>الاختصارات</translation>
     </message>
@@ -2666,6 +2674,22 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Database saved: %1</source>
         <translation>تم حفظ قاعدة البيانات: %1</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files describe another build of %1 (SHA-256 %2…); their addresses may not match this one. The next edit records this build.</source>
+        <translation>تصف ملفات المشروع إصدارًا آخر من %1 ‏(SHA-256 ‏%2…)؛ قد لا تطابق عناوينها هذا الإصدار. يسجّل التعديل التالي هذا الإصدار.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here.</source>
+        <translation>تغيّرت ملفات المشروع على القرص وتم تحميلها؛ يبدأ التراجع من هنا.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here. Unsaved comments kept on top: %1</source>
+        <translation>تغيّرت ملفات المشروع على القرص وتم تحميلها؛ يبدأ التراجع من هنا. التعليقات غير المحفوظة التي أُبقيت فوقها: %1</translation>
+    </message>
+    <message>
+        <source>The input file changed on disk; reload it to continue editing.</source>
+        <translation>تغيّر ملف الإدخال على القرص؛ أعد تحميله لمتابعة التحرير.</translation>
     </message>
     <message>
         <source>Could not save the database: %1</source>

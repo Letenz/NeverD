@@ -1598,6 +1598,10 @@ Double-click to go to the declaration.</translation>
         <translation>Symbolic simplification</translation>
     </message>
     <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>Symbolic simplification for every function</translation>
+    </message>
+    <message>
         <source>Recover LLVM control flow</source>
         <translation>Recover LLVM control flow</translation>
     </message>
@@ -2117,6 +2121,10 @@ Signed: %4</translation>
     <message>
         <source>Show segment:address line prefixes</source>
         <translation>Show segment:address line prefixes</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>Symbolic simplification for every function</translation>
     </message>
     <message>
         <source>Shortcuts</source>
@@ -2642,6 +2650,22 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>Database saved: %1</source>
         <translation>Database saved: %1</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files describe another build of %1 (SHA-256 %2…); their addresses may not match this one. The next edit records this build.</source>
+        <translation>The project&apos;s files describe another build of %1 (SHA-256 %2…); their addresses may not match this one. The next edit records this build.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here.</source>
+        <translation>The project&apos;s files changed on disk and were loaded; undo starts here.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here. Unsaved comments kept on top: %1</source>
+        <translation>The project&apos;s files changed on disk and were loaded; undo starts here. Unsaved comments kept on top: %1</translation>
+    </message>
+    <message>
+        <source>The input file changed on disk; reload it to continue editing.</source>
+        <translation>The input file changed on disk; reload it to continue editing.</translation>
     </message>
     <message>
         <source>Could not save the database: %1</source>

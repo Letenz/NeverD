@@ -19,12 +19,14 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -1170,21 +1172,42 @@ const PhiNode *selectAuthoritativeArgPhi(const MedFunc &Func,
 std::optional<MedVar>
 findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
                    int BlockId, int ArgIdx, const IntegerArgumentLayout &Layout,
-                   bool AllowUnknownLiveIn, bool *FromLiveIn, bool *FoundDef) {
+                   bool AllowUnknownLiveIn, bool *FromLiveIn, bool *FoundDef,
+                   int CallIdx, BinaryFormat Format) {
   std::map<int, const MedBlock *> ById;
   for (const auto &B : Func.Blocks)
     ById[B.Id] = &B;
 
-  auto scanBlock = [&](const MedBlock &B, int UpTo) -> std::optional<MedVar> {
+  const uint64_t ArgReg =
+      ArgIdx >= 0 && ArgIdx < static_cast<int>(Layout.Registers.size())
+          ? Layout.Registers[ArgIdx]
+          : 0;
+  const auto ArgBytes = static_cast<uint16_t>(TRI.PointerSize);
+  // The nearest write to the register before \p UpTo, or what the nearest
+  // call that may change the register left there (\p Left).  In the call's
+  // own block another barrier to call-setup recovery (an intrinsic not
+  // proven to keep the setup) ends the search there, as the caller's
+  // in-block scan stops at it.
+  auto scanOps = [&](const MedBlock &B, int UpTo, bool &Left,
+                     bool CallBlock = false) -> std::optional<MedVar> {
     for (int J = UpTo - 1; J >= 0; --J) {
       const auto &Op = B.Ops[J];
       if (Op.Output.Kind == MedVar::Reg && Op.Output.Size > 0 &&
           Layout.registerIndex(Op.Output.RegOff) == ArgIdx)
         return argRegSourceValueInBlock(B, J, TRI, Layout);
+      for (const MedVar &Aux : Op.IntrinsicOutputs)
+        if (Aux.Kind == MedVar::Reg && Aux.Size > 0 &&
+            Layout.registerIndex(Aux.RegOff) == ArgIdx)
+          return Aux;
+      if (ArgReg)
+        if (auto Value =
+                valueLeftByCall(Func, Op, ArgReg, ArgBytes, TRI, Format)) {
+          Left = true;
+          return Value;
+        }
+      if (CallBlock && Op.Opcode == NdOp::INTRINSIC && isAbiRecoveryBarrier(Op))
+        return std::nullopt;
     }
-    if (const PhiNode *Phi =
-            selectAuthoritativeArgPhi(Func, B, TRI, ArgIdx, Layout))
-      return Phi->Output;
     return std::nullopt;
   };
 
@@ -1196,17 +1219,44 @@ findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
   auto It = ById.find(BlockId);
   if (It == ById.end())
     return std::nullopt;
-  // The call block's straight-line ops were already handled by the caller (with
-  // its call-boundary stop); only its PHIs and the predecessor chain remain.
+  const MedBlock &CallBlock = *It->second;
+  // The caller took a write in the call's block before its call-boundary
+  // stop; whatever reaches the call also passes the call at that stop.
+  if (CallIdx >= 0) {
+    bool Left = false;
+    if (auto V = scanOps(
+            CallBlock,
+            std::min(CallIdx, static_cast<int>(CallBlock.Ops.size())), Left,
+            /*CallBlock=*/true)) {
+      if (FoundDef)
+        *FoundDef = !Left;
+      return V;
+    }
+  }
   if (const PhiNode *Phi =
-          selectAuthoritativeArgPhi(Func, *It->second, TRI, ArgIdx, Layout)) {
+          selectAuthoritativeArgPhi(Func, CallBlock, TRI, ArgIdx, Layout)) {
     if (FoundDef)
       *FoundDef = true;
     return Phi->Output;
   }
 
+  // A write or PHI ends a path back from the call, and so does a call that
+  // may change the register, or an exception handler's entry, where the
+  // unwinder leaves caller-saved registers unspecified.  The nearest write
+  // on any path wins, and the incoming value does where a path reaches the
+  // function's entry: only where calls end every path is the value theirs.
+  std::optional<MedVar> FirstLeft;
+  bool ReachedEntry = false;
   std::set<int> Visited{BlockId};
-  std::vector<int> Work(It->second->Preds.begin(), It->second->Preds.end());
+  std::vector<int> Work;
+  auto continuePaths = [&](const MedBlock &B) {
+    if (!B.ExceptionalPreds.empty() && !FirstLeft)
+      FirstLeft = MedVar::makeUnspecified(ArgBytes, TheArch);
+    if (B.Preds.empty() && B.ExceptionalPreds.empty())
+      ReachedEntry = true;
+    Work.insert(Work.end(), B.Preds.begin(), B.Preds.end());
+  };
+  continuePaths(CallBlock);
   while (!Work.empty()) {
     int BId = Work.back();
     Work.pop_back();
@@ -1215,15 +1265,28 @@ findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
     auto BIt = ById.find(BId);
     if (BIt == ById.end())
       continue;
-    if (auto V = scanBlock(*BIt->second,
-                           static_cast<int>(BIt->second->Ops.size()))) {
+    const MedBlock &B = *BIt->second;
+    bool Left = false;
+    if (auto V = scanOps(B, static_cast<int>(B.Ops.size()), Left)) {
+      if (!Left) {
+        if (FoundDef)
+          *FoundDef = true;
+        return V;
+      }
+      if (!FirstLeft)
+        FirstLeft = V;
+      continue;
+    }
+    if (const PhiNode *Phi =
+            selectAuthoritativeArgPhi(Func, B, TRI, ArgIdx, Layout)) {
       if (FoundDef)
         *FoundDef = true;
-      return V;
+      return Phi->Output;
     }
-    Work.insert(Work.end(), BIt->second->Preds.begin(),
-                BIt->second->Preds.end());
+    continuePaths(B);
   }
+  if (FirstLeft && !ReachedEntry)
+    return FirstLeft;
 
   // No in-function definition reaches the call: the value is the live-in
   // (incoming parameter), as when a caller forwards its own argument straight

@@ -284,6 +284,8 @@ struct X87CallGraph {
     None,
     ExceptionalEdges,
     MissingTerminator,
+    InconsistentBlocks,
+    ExceedsProofWork,
   };
   std::vector<X87CallGraphBlock> Blocks;
   size_t Cost = 0;
@@ -1081,14 +1083,14 @@ class X87CallEffectIndex {
       if (RetainBody)
         SharedGraphs->retainSummary(Settings, Entry, F, Witness);
     });
-    if (!F.hasCompleteInstructionLift() || !F.TruncatedPathAddresses.empty() ||
-        F.Blocks.empty() || F.Blocks.front().StartAddr != Entry)
-      return G;
     auto RejectProjection =
         [&](Graph::ProjectionRejection Reason) -> const Graph & {
-      // These two exclusions are immutable facts of a completely lifted CFG,
-      // not failures of a caller's proof allowance. Retain only an empty
-      // refusal marker; prove() still rejects !Complete before charging Cost.
+      // These exclusions are immutable facts of a completely lifted CFG, not
+      // failures of a caller's proof allowance: its blocks and its size.
+      // Retain only an empty refusal marker, which the next request reads
+      // instead of building the CFG again (a 32-bit printf engine's jump
+      // tables take seconds); prove() still rejects !Complete before
+      // charging Cost.
       G = Graph{};
       G.Rejection = Reason;
       if (SharedGraphs)
@@ -1096,22 +1098,28 @@ class X87CallEffectIndex {
       Complete.completed(It->second);
       return *It->second;
     };
+    // An incomplete lift can follow from a proof that ran out or threw, which
+    // another request may finish: it is never retained.
+    if (!F.hasCompleteInstructionLift() || !F.TruncatedPathAddresses.empty() ||
+        F.Blocks.empty() || F.Blocks.front().StartAddr != Entry)
+      return G;
     G.Blocks.resize(F.Blocks.size());
     for (size_t I = 0; I < F.Blocks.size(); ++I) {
       const LowBlock &Source = F.Blocks[I];
       Block &B = G.Blocks[I];
       if (Source.Id != static_cast<int>(I) ||
           Source.InstructionBoundaries.empty())
-        return G;
+        return RejectProjection(Graph::ProjectionRejection::InconsistentBlocks);
       if (!Source.ExceptionalSuccs.empty() || !Source.ExceptionalPreds.empty())
         return RejectProjection(Graph::ProjectionRejection::ExceptionalEdges);
       G.Cost += 1 + Source.Ops.size() + Source.Succs.size();
       if (G.Cost > limits::kMaxX87CallProofWork)
-        return G;
+        return RejectProjection(Graph::ProjectionRejection::ExceedsProofWork);
       B.Successors = Source.Succs;
       for (int S : B.Successors)
         if (S < 0 || static_cast<size_t>(S) >= F.Blocks.size())
-          return G;
+          return RejectProjection(
+              Graph::ProjectionRejection::InconsistentBlocks);
       for (const LowInstructionBoundary &Boundary :
            Source.InstructionBoundaries) {
         const auto RecIt = Builder.Insns.find(Boundary.Address);
@@ -1119,7 +1127,8 @@ class X87CallEffectIndex {
             RecIt->second.Size != Boundary.Size ||
             Boundary.FirstOp > Source.Ops.size() ||
             Boundary.OpCount > Source.Ops.size() - Boundary.FirstOp)
-          return G;
+          return RejectProjection(
+              Graph::ProjectionRejection::InconsistentBlocks);
         const auto &Rec = RecIt->second;
         Step S;
         S.Delta = demaskDelta(Rec.FpuTopOut - Rec.FpuTopIn);

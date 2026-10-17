@@ -34,6 +34,8 @@ LinuxFiles::descriptorStatus(uint32_t FD, ProcessResult &Result) const {
     return DescriptorStatus{0, std::nullopt, true};
   if (const auto *Device = std::get_if<OpenDevice>(I->second.get()))
     return DescriptorStatus{(*Device)->Options->AccessMode, std::nullopt};
+  if (std::holds_alternative<OpenSocket>(*I->second))
+    return DescriptorStatus{2, std::nullopt};
   if (const auto *S = std::get_if<Stream>(I->second.get()))
     return DescriptorStatus{*S == Stream::Input ? 0u : 1u, std::nullopt};
   unsupported(Result, "unmodeled descriptor access mode");

@@ -140,7 +140,7 @@ NEVERD_API const char *neverd_types_languages_json(void);
 /// The user's declarations in the order made:
 /// [{"language","source"} | {"forget":[name,...]}, ...].
 NEVERD_API const char *neverd_type_declarations_json(neverd_session_t Sess);
-/// Write or read the declarations as `<input>.neverd-types.json`, which
+/// Write or read the declarations as `<input>.neverd/types.json`, which
 /// neverd_session_load reads too.  Reading them reads the program's types
 /// anew.  Return 0, or -1 with neverd_last_error.
 NEVERD_API int neverd_type_declarations_save(neverd_session_t Sess);

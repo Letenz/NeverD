@@ -6,6 +6,7 @@
 #ifndef NEVERD_EMULATION_ANDROIDNATIVE_H
 #define NEVERD_EMULATION_ANDROIDNATIVE_H
 
+#include "neverd/emulation/AndroidResolverOptions.h"
 #include "neverd/emulation/ProcessCall.h"
 
 #include <array>
@@ -74,6 +75,8 @@ struct AndroidNativeOptions {
   /// Find/read/enumeration share stable guest records with generation zero;
   /// enumeration uses name order, not an inferred device-area traversal order.
   std::map<std::string, std::string> Properties;
+  /// Exact offline getaddrinfo observations. Missing queries remain unknown.
+  std::optional<std::vector<AndroidResolverQuery>> ResolverQueries;
   /// Complete, timestamp-ordered visible snapshot for the bounded liblog
   /// reader. Absent is unknown; an empty vector explicitly supplies no logs.
   /// IDs 0..5, at most 4096 entries and 1 MiB including v4 headers. This does

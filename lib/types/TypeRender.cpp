@@ -8,6 +8,8 @@
 
 #include "TypeRenderShared.h"
 
+#include "neverd/types/TypeLayout.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/Format.h"
@@ -532,7 +534,7 @@ BitStorage bitStorage(const TypeLibrary &Library, const TypeExpr &Type) {
 BitAccess bitAccess(const TypeLibrary &Library, const Member &Field) {
   const BitStorage Storage = bitStorage(Library, *Field.Type);
   BitAccess Access;
-  Access.UnitBits = Storage.Bytes * 8;
+  Access.UnitBits = Access.ValueBits = Storage.Bytes * 8;
   Access.Shift = Field.BitOffset - Field.StorageBitOffset;
   Access.Width = Field.BitWidth;
   Access.Signed = Storage.Signed;
@@ -542,6 +544,25 @@ BitAccess bitAccess(const TypeLibrary &Library, const Member &Field) {
       << llvm::format_hex(Mask, 0, /*Upper=*/true);
   if (Access.Mask.size() > 1)
     Access.Mask[1] = 'x';
+  return Access;
+}
+
+BitAccess bitAccess(const TypeLibrary &Library, const Member &Field,
+                    const Slot &Run) {
+  BitAccess Access = bitAccess(Library, Field);
+  if (!Run.StorageBytes)
+    return Access;
+  if (Run.StorageArray) {
+    // The bytes of the array that hold the field, read as one integer.
+    Access.ArrayByte = Field.BitOffset / 8 - Run.Byte;
+    Access.ArrayBytes = unsigned((Field.BitOffset + Field.BitWidth + 7) / 8 -
+                                 Field.BitOffset / 8);
+    Access.Shift = Field.BitOffset % 8;
+    Access.UnitBits = 64;
+    return Access;
+  }
+  Access.Shift = Field.BitOffset - Run.Byte * 8;
+  Access.UnitBits = unsigned(Run.StorageBytes * 8);
   return Access;
 }
 
@@ -562,20 +583,49 @@ RecordPlan planRecord(const TypeLibrary &Library, const RecordDef &Record,
   Plan.Name = std::move(Name);
   Plan.Record = &Record;
   Plan.Pack = Pack;
-  unsigned Anonymous = 0, Runs = 0;
+  unsigned Anonymous = 0;
   for (const Member &Field : Record.Members)
     if (Field.isAnonymous())
       ++Anonymous;
-  for (size_t I = 0; I < Record.Members.size(); ++I)
-    if (Record.Members[I].isBitfield() &&
-        (I == 0 || !Record.Members[I - 1].isBitfield() ||
-         Record.Members[I - 1].StorageBitOffset !=
-             Record.Members[I].StorageBitOffset))
-      ++Runs;
+  // The runs of bit-fields, each to the member after its last: those in one
+  // storage unit after one another, and under GNU's rules those that share
+  // a byte too, as GNU's compilers pack a field at the bit after the one
+  // before it.
+  const bool Gnu = !Record.Union &&
+                   defaultRules(Library.dataModel()) == LayoutRules::Itanium;
+  const auto firstByte = [](const Member &Bit) { return Bit.BitOffset / 8; };
+  const auto endByte = [](const Member &Bit) {
+    return (Bit.BitOffset + Bit.BitWidth + 7) / 8;
+  };
+  std::vector<size_t> RunEnd(Record.Members.size(), 0);
+  unsigned Runs = 0;
+  for (size_t I = 0; I < Record.Members.size(); ++I) {
+    const Member &First = Record.Members[I];
+    if (!First.isBitfield() || !First.Type)
+      continue;
+    uint64_t End = endByte(First);
+    size_t Next = I + 1;
+    for (; Next < Record.Members.size(); ++Next) {
+      const Member &Bit = Record.Members[Next];
+      if (!Bit.isBitfield() || !Bit.Type ||
+          (Bit.StorageBitOffset != First.StorageBitOffset &&
+           !(Gnu && firstByte(Bit) < End)))
+        break;
+      End = std::max(End, endByte(Bit));
+    }
+    RunEnd[I] = Next;
+    ++Runs;
+    I = Next - 1;
+  }
 
   SequentialLayout Layout(Pack);
   unsigned AnonymousSeen = 0, InlineSeen = 0, RunsSeen = 0;
+  // The alignment the places give the record, and whether a run of
+  // bit-fields is stored otherwise than in the unit of its first's type.
+  uint32_t Placed = 1;
+  bool Narrowed = false;
   const auto place = [&](Slot Next, uint64_t Size, uint32_t Align) {
+    Placed = std::max(Placed, Pack ? std::min(Align, Pack) : Align);
     if (!Record.Union) {
       const uint64_t At = Layout.end();
       const SequentialLayout::Step Step = Layout.place(Next.Byte, Size, Align);
@@ -598,17 +648,61 @@ RecordPlan planRecord(const TypeLibrary &Library, const RecordDef &Record,
     if (Field.isBitfield()) {
       Slot Run;
       Run.TheKind = Slot::Kind::Bitfields;
+      uint64_t First = firstByte(Field), Last = endByte(Field);
+      for (size_t Bit = I; Bit < RunEnd[I]; ++Bit) {
+        Run.Bits.push_back(&Record.Members[Bit]);
+        First = std::min(First, firstByte(Record.Members[Bit]));
+        Last = std::max(Last, endByte(Record.Members[Bit]));
+      }
+      const size_t After = RunEnd[I];
+      // The storage unit of the first field's type, where the record lays
+      // it out.
       Run.Storage = Field.Type;
       Run.Byte = Field.StorageBitOffset / 8;
-      while (I < Record.Members.size() && Record.Members[I].isBitfield() &&
-             Record.Members[I].StorageBitOffset == Field.StorageBitOffset)
-        Run.Bits.push_back(&Record.Members[I++]);
-      --I;
+      Run.StorageBytes = Library.sizeOf(*Field.Type).value_or(0);
+      if (Gnu) {
+        // Where it holds the run's bits and none of the members around
+        // them; else the smallest unsigned integer that does at its own
+        // alignment; else the run's bytes.
+        uint64_t Next = Record.Size;
+        for (size_t Later = After; Later < Record.Members.size(); ++Later)
+          if (Record.Members[Later].Type) {
+            Next = firstByte(Record.Members[Later]);
+            break;
+          }
+        const uint64_t Taken = Layout.end();
+        const auto holds = [&](uint64_t At, uint64_t Bytes) {
+          return At >= Taken && At <= First && At + Bytes >= Last &&
+                 At + Bytes <= Next;
+        };
+        if (!holds(Run.Byte, Run.StorageBytes)) {
+          Run.StorageBytes = 0;
+          for (const Builtin Unsigned : {Builtin::UChar, Builtin::UShort,
+                                         Builtin::UInt, Builtin::ULongLong}) {
+            const uint64_t Bytes = builtinBytes(Unsigned, Library.dataModel());
+            if (holds(First / Bytes * Bytes, Bytes)) {
+              Run.Storage = makeBuiltin(Unsigned);
+              Run.Byte = First / Bytes * Bytes;
+              Run.StorageBytes = Bytes;
+              break;
+            }
+          }
+          if (!Run.StorageBytes) {
+            Run.Storage = makeArray(makeBuiltin(Builtin::UChar), Last - First);
+            Run.Byte = First;
+            Run.StorageBytes = Last - First;
+            Run.StorageArray = true;
+          }
+          Narrowed = true;
+        }
+      }
+      I = After - 1;
       ++RunsSeen;
       Run.Name =
           Runs == 1 ? "_bitfield" : "_bitfield" + std::to_string(RunsSeen);
-      place(std::move(Run), Library.sizeOf(*Field.Type).value_or(0),
-            Library.alignOf(*Field.Type));
+      const uint64_t Bytes = Run.StorageBytes;
+      const uint32_t Alignment = Library.alignOf(*Run.Storage);
+      place(std::move(Run), Bytes, Alignment);
       continue;
     }
     Slot Place;
@@ -638,8 +732,15 @@ RecordPlan planRecord(const TypeLibrary &Library, const RecordDef &Record,
   }
   if (!Record.Union) {
     const uint64_t End = Layout.end();
-    const SequentialLayout::Step Step =
-        Layout.finish(Record.Size, Library.alignOf(Record));
+    // Where the places no longer align the record as its bit-fields' types
+    // do, the language pads only to theirs; the rest is filled, and the
+    // record's own alignment declared.
+    uint32_t Alignment = Library.alignOf(Record);
+    if (Narrowed && Placed < Alignment) {
+      Plan.Align = Alignment;
+      Alignment = Placed;
+    }
+    const SequentialLayout::Step Step = Layout.finish(Record.Size, Alignment);
     Plan.TailFiller = Step.Filler ? Record.Size - End : 0;
     Plan.TailPadding = Step.Padding;
   }

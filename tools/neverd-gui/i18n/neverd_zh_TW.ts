@@ -1593,6 +1593,10 @@ Double-click to go to the declaration.</source>
         <translation>符號化簡</translation>
     </message>
     <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>所有函式都符號化簡</translation>
+    </message>
+    <message>
         <source>Recover LLVM control flow</source>
         <translation>復原 LLVM 控制流程</translation>
     </message>
@@ -2111,6 +2115,10 @@ Signed: %4</source>
     <message>
         <source>Show segment:address line prefixes</source>
         <translation>顯示「區段:位址」行前綴</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>所有函式都符號化簡</translation>
     </message>
     <message>
         <source>Shortcuts</source>
@@ -2636,6 +2644,22 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Database saved: %1</source>
         <translation>資料庫已儲存：%1</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files describe another build of %1 (SHA-256 %2…); their addresses may not match this one. The next edit records this build.</source>
+        <translation>專案檔案描述的是 %1 的另一個建置（SHA-256 %2…），其中的位址可能與目前建置不一致。下一次編輯會記錄目前建置。</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here.</source>
+        <translation>專案檔案在磁碟上發生了變更，已重新載入；復原從此處開始。</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here. Unsaved comments kept on top: %1</source>
+        <translation>專案檔案在磁碟上發生了變更，已重新載入；復原從此處開始。保留在其上的未儲存註解：%1</translation>
+    </message>
+    <message>
+        <source>The input file changed on disk; reload it to continue editing.</source>
+        <translation>輸入檔案在磁碟上發生了變更；請重新載入後再繼續編輯。</translation>
     </message>
     <message>
         <source>Could not save the database: %1</source>

@@ -11,6 +11,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/MedCallLeftovers.h"
 
 #include <algorithm>
 #include <functional>
@@ -80,9 +81,18 @@ const PhiNode *registerPhi(const MedFunc &Func, const MedBlock &Block,
   return Widest;
 }
 
-bool reachingRegisterAtBlockEntry(const MedFunc &Func, const MedBlock &Block,
-                                  uint64_t RegOff, const TargetRegInfo &TRI,
-                                  MedVar &Out) {
+namespace {
+
+/// The register at \p RegOff as it enters \p Block, which
+/// reachingRegisterAtBlockEntry describes.  Under the convention \p *Calls,
+/// a call that may change the \p Size-byte view ends a path as a write does,
+/// and so does an exception handler's entry; the first value such an end
+/// leaves is kept in \p Left.  \p ReachedEntry says whether a path reached
+/// the function's entry, where the register holds its incoming value.
+bool registerEntering(const MedFunc &Func, const MedBlock &Block,
+                      uint64_t RegOff, const TargetRegInfo &TRI,
+                      const BinaryFormat *Calls, uint16_t Size, MedVar &Out,
+                      std::optional<MedVar> &Left, bool &ReachedEntry) {
   auto blockById = [&](int Id) { return blockOf(Func, Id); };
 
   std::set<int> Visited;
@@ -95,7 +105,10 @@ bool reachingRegisterAtBlockEntry(const MedFunc &Func, const MedBlock &Block,
       R = Phi->Output;
       return true;
     }
+    if (Calls && !Blk.ExceptionalPreds.empty() && !Left)
+      Left = MedVar::makeUnspecified(Size, TRI.TheArch);
     if (Blk.Preds.empty()) {
+      ReachedEntry |= Blk.ExceptionalPreds.empty();
       // Function entry: the identity COPY is the live-in. Do not invent every
       // unused incoming parameter; a later 1-arg call still has rdx live.
       for (const auto &Op : Blk.Ops) {
@@ -118,16 +131,75 @@ bool reachingRegisterAtBlockEntry(const MedFunc &Func, const MedBlock &Block,
     return false;
   };
   exitOf = [&](const MedBlock &Blk, MedVar &R) -> bool {
-    for (auto It = Blk.Ops.rbegin(); It != Blk.Ops.rend(); ++It)
+    for (auto It = Blk.Ops.rbegin(); It != Blk.Ops.rend(); ++It) {
       if (It->Output.Kind == MedVar::Reg && It->Output.RegOff == RegOff &&
           It->Output.Size > 0) {
         R = It->Output;
         return true;
       }
+      if (!Calls)
+        continue;
+      for (const MedVar &Aux : It->IntrinsicOutputs)
+        if (Aux.Kind == MedVar::Reg && Aux.RegOff == RegOff && Aux.Size > 0) {
+          R = Aux;
+          return true;
+        }
+      if (auto Value = valueLeftByCall(Func, *It, RegOff, Size, TRI, *Calls)) {
+        if (!Left)
+          Left = *Value;
+        return false;
+      }
+    }
     return entryOf(Blk, R);
   };
 
   return entryOf(Block, Out);
+}
+
+} // namespace
+
+bool reachingRegisterAtBlockEntry(const MedFunc &Func, const MedBlock &Block,
+                                  uint64_t RegOff, const TargetRegInfo &TRI,
+                                  MedVar &Out) {
+  std::optional<MedVar> Left;
+  bool ReachedEntry = false;
+  return registerEntering(Func, Block, RegOff, TRI, /*Calls=*/nullptr,
+                          /*Size=*/0, Out, Left, ReachedEntry);
+}
+
+bool reachingRegisterAtCall(const MedFunc &Func, const MedBlock &Block,
+                            size_t CallIdx, uint64_t RegOff,
+                            const TargetRegInfo &TRI, BinaryFormat Format,
+                            MedVar &Out) {
+  const auto Size = static_cast<uint16_t>(TRI.PointerSize);
+  for (size_t J = std::min(CallIdx, Block.Ops.size()); J-- > 0;) {
+    const MedOp &Op = Block.Ops[J];
+    if (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == RegOff &&
+        Op.Output.Size > 0) {
+      Out = Op.Output;
+      return true;
+    }
+    for (const MedVar &Aux : Op.IntrinsicOutputs)
+      if (Aux.Kind == MedVar::Reg && Aux.RegOff == RegOff && Aux.Size > 0) {
+        Out = Aux;
+        return true;
+      }
+    if (auto Value = valueLeftByCall(Func, Op, RegOff, Size, TRI, Format)) {
+      Out = *Value;
+      return true;
+    }
+  }
+  // What the calls left is the value only where they end every path: one
+  // that reaches the function's entry brings the incoming value.
+  std::optional<MedVar> Left;
+  bool ReachedEntry = false;
+  if (registerEntering(Func, Block, RegOff, TRI, &Format, Size, Out, Left,
+                       ReachedEntry))
+    return true;
+  if (!Left || ReachedEntry)
+    return false;
+  Out = *Left;
+  return true;
 }
 
 std::vector<StackSlotValue>

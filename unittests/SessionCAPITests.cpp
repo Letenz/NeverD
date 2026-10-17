@@ -512,6 +512,8 @@ protected:
 
   std::string write(std::string_view Name, std::string_view Text) {
     const std::string Path = (Directory / Name).string();
+    std::filesystem::create_directories(
+        std::filesystem::path(Path).parent_path());
     std::ofstream Output(Path, std::ios::binary);
     Output.write(Text.data(), static_cast<std::streamsize>(Text.size()));
     Output.close();
@@ -2650,19 +2652,19 @@ TEST_F(SessionCAPITest, SidecarWritesRespectWorkerOwnership) {
     neverd::ProjectWriteLock Writer(Input);
     ASSERT_TRUE(static_cast<bool>(Writer)) << Writer.error();
     EXPECT_NE(neverd_annotations_save(Session), 0);
-    EXPECT_FALSE(std::filesystem::exists(Input + ".neverd-annotations.json"));
+    EXPECT_FALSE(std::filesystem::exists(Input + ".neverd/annotations.json"));
     EXPECT_NE(neverd_rename_func(Session, "evm_entry", "blocked_name"), 0);
     EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "evm_entry");
     EXPECT_EQ(takeString(neverd_renames_json(Session)), "[]");
-    EXPECT_FALSE(std::filesystem::exists(Input + ".neverd-renames.json"));
+    EXPECT_FALSE(std::filesystem::exists(Input + ".neverd/renames.json"));
     // Read-only views remain usable while another writer owns the input.
     EXPECT_EQ(takeString(neverd_annotation_get(Session, 0)), "staged note");
   }
   ASSERT_EQ(neverd_annotations_save(Session), 0);
   ASSERT_EQ(neverd_rename_func(Session, "evm_entry", "saved_name"), 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "saved_name");
-  EXPECT_TRUE(std::filesystem::exists(Input + ".neverd-annotations.json"));
-  EXPECT_TRUE(std::filesystem::exists(Input + ".neverd-renames.json"));
+  EXPECT_TRUE(std::filesystem::exists(Input + ".neverd/annotations.json"));
+  EXPECT_TRUE(std::filesystem::exists(Input + ".neverd/renames.json"));
 }
 
 TEST_F(SessionCAPITest, OperandFormatsPersistByInstructionAndOperand) {
@@ -3353,11 +3355,11 @@ TEST_F(SessionCAPITest, ReloadingRenamesRestoresNamesRemovedFromTheSidecar) {
   ASSERT_EQ(neverd_rename_func(Session, "evm_entry", "reviewed_entry"), 0);
   ASSERT_EQ(takeString(neverd_func_name(Session, 0)), "reviewed_entry");
 
-  write("original.evm.neverd-renames.json", "invalid JSON");
+  write("original.evm.neverd/renames.json", "invalid JSON");
   EXPECT_NE(neverd_renames_load(Session), 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "reviewed_entry");
 
-  write("original.evm.neverd-renames.json", "[]");
+  write("original.evm.neverd/renames.json", "[]");
   ASSERT_EQ(neverd_renames_load(Session), 0);
   EXPECT_EQ(takeString(neverd_renames_json(Session)), "[]");
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "evm_entry");
@@ -3368,12 +3370,12 @@ TEST_F(SessionCAPITest,
   const std::string Path = write("reload.evm", "6001600055");
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
   neverd_annotation_set(Session, 0, "discard this unsaved note");
-  ASSERT_FALSE(std::filesystem::exists(Path + ".neverd-annotations.json"));
+  ASSERT_FALSE(std::filesystem::exists(Path + ".neverd/annotations.json"));
   ASSERT_EQ(neverd_annotations_load(Session), 0);
   EXPECT_TRUE(takeString(neverd_annotation_get(Session, 0)).empty());
 
   ASSERT_EQ(neverd_rename_func(Session, "evm_entry", "reviewed_entry"), 0);
-  ASSERT_TRUE(std::filesystem::remove(Path + ".neverd-renames.json"));
+  ASSERT_TRUE(std::filesystem::remove(Path + ".neverd/renames.json"));
   ASSERT_EQ(neverd_renames_load(Session), 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "evm_entry");
   EXPECT_EQ(takeString(neverd_renames_json(Session)), "[]");
@@ -3408,7 +3410,7 @@ TEST_F(SessionCAPITest,
         // The files the first saves wrote, as a project table is written:
         // indented, with a final line break.
         for (const char *Suffix :
-             {".neverd-annotations.json", ".neverd-renames.json"}) {
+             {".neverd/annotations.json", ".neverd/renames.json"}) {
           std::ifstream Input(Path + Suffix);
           std::string Text((std::istreambuf_iterator<char>(Input)),
                            std::istreambuf_iterator<char>());
@@ -3420,6 +3422,28 @@ TEST_F(SessionCAPITest,
       ::testing::ExitedWithCode(0), ".*");
 }
 #endif
+
+TEST_F(SessionCAPITest, LLVMCReadsAPointerTableAmongCodeAsData) {
+  // The fixture keeps a pointer table among its code, as GNU ld keeps
+  // __CTOR_LIST__ in .text, and reads it through a pointer in .data.  Taken
+  // for a pointer to code that no function owns, it made the emitter refuse
+  // every function that touched .data; the table's entry is a function's
+  // address, not a stale one.
+  const auto Fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "loader" / "fixtures" / "mingw_text_data.exe";
+  std::ifstream Input(Fixture, std::ios::binary);
+  const std::string Exe =
+      write("mingw_text_data.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Index = neverd_func_find_by_name(Session, "call_second");
+  ASSERT_GE(Index, 0);
+  const std::string Source = takeString(
+      neverd_decompile_llvm(Session, neverd_func_entry(Session, Index)));
+  EXPECT_NE(Source.find("call_second("), std::string::npos)
+      << takeString(neverd_last_error(Session));
+}
 
 TEST_F(SessionCAPITest, FailedDebugReloadPreservesLoadedImageAnalysisAndEdits) {
   const std::string Original = write("original.evm", "6001600055");
@@ -3892,26 +3916,26 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsDecompileWithTheirPrototypes) {
   };
   // The WDK's parameter names and records, where the PDB has only names.
   const std::string Create = signature("NtCreateFile");
-  EXPECT_NE(Create.find("(void** FileHandle, uint32_t DesiredAccess, "
-                        "_OBJECT_ATTRIBUTES* ObjectAttributes, "
-                        "_IO_STATUS_BLOCK* IoStatusBlock"),
+  EXPECT_NE(Create.find("(PHANDLE FileHandle, ACCESS_MASK DesiredAccess, "
+                        "POBJECT_ATTRIBUTES ObjectAttributes, "
+                        "PIO_STATUS_BLOCK IoStatusBlock"),
             std::string::npos)
       << Create;
   EXPECT_NE(Create.find("uint32_t EaLength)"), std::string::npos) << Create;
   // A pointer a C declaration returns comes back in RAX.
   const std::string Irp = signature("IoAllocateIrp");
-  EXPECT_NE(Irp.find("_IRP* IoAllocateIrp(char StackSize, uint8_t "
+  EXPECT_NE(Irp.find("PIRP IoAllocateIrp(CCHAR StackSize, BOOLEAN "
                      "ChargeQuota)"),
             std::string::npos)
       << Irp;
-  EXPECT_NE(
-      signature("PsCreateSystemThread").find("void (*StartRoutine)(void*)"),
-      std::string::npos);
+  EXPECT_NE(signature("PsCreateSystemThread")
+                .find("PKSTART_ROUTINE StartRoutine, PVOID StartContext)"),
+            std::string::npos);
   EXPECT_EQ(signature("IofCompleteRequest").rfind("void ", 0), 0u);
   // The linker folded PsGetThreadProcess into this, so that the PDB names
   // neither; the export it is shown under names it.
   EXPECT_NE(signature("IoThreadToProcess")
-                .find("_EPROCESS* IoThreadToProcess(_ETHREAD* Thread)"),
+                .find("PEPROCESS IoThreadToProcess(PETHREAD Thread)"),
             std::string::npos);
   // Exported under another name than the PDB's RtlAreNamesEqual.
   EXPECT_NE(signature("FsRtlAreNamesEqual").find("Name1, "), std::string::npos);
@@ -4167,6 +4191,35 @@ TEST_F(SessionCAPITest, ObjectsTakeTheirLocalTypesFromTheirDWARF) {
   EXPECT_NE(Use.find("struct packed\n{"), std::string::npos) << Use;
 }
 
+TEST_F(SessionCAPITest, CodeReadsTheRecordsItsMembersReach) {
+  // first_child reads l->head->child, a node no type of its own names, and
+  // sum_list walks nodes from l->head: HighC asks the local types for the
+  // records it reads members of as it renders, and the unit defines them.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "dwarf_chains.gcc.o", std::ios::binary);
+  const std::string Object =
+      write("dwarf_chains.gcc.o",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Object.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto decompile = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  const std::string First = decompile("first_child");
+  EXPECT_NE(First.find("->child"), std::string::npos) << First;
+  EXPECT_NE(First.find("->value"), std::string::npos) << First;
+  EXPECT_NE(First.find("struct node\n{"), std::string::npos) << First;
+  const std::string Sum = decompile("sum_list");
+  EXPECT_NE(Sum.find("->next"), std::string::npos) << Sum;
+  EXPECT_NE(Sum.find("->value"), std::string::npos) << Sum;
+  EXPECT_EQ(Sum.find("+ 0x10)"), std::string::npos) << Sum;
+}
+
 TEST_F(SessionCAPITest, LocalTypesFitWhatTheCodeDoesThroughAPointer) {
   // use() reads Device->Size through rcx: of the program's records only a
   // _DEVICE holds a member of that width there.
@@ -4409,13 +4462,13 @@ TEST_F(SessionCAPITest, FunctionDeclarationsBindByAddress) {
   // The sidecar keeps it; a load without it hands the PDB's back, and one
   // with it, as an undo's redo writes, states it again.
   ASSERT_EQ(neverd_functions_save(Session), 0);
-  std::ifstream Saved(Exe + ".neverd-functions.json");
+  std::ifstream Saved(Exe + ".neverd/functions.json");
   const std::string Rows(std::istreambuf_iterator<char>(Saved), {});
   EXPECT_NE(Rows.find("\"type\""), std::string::npos) << Rows;
-  write("local_types.exe.neverd-functions.json", "[]");
+  write("local_types.exe.neverd/functions.json", "[]");
   ASSERT_EQ(neverd_functions_load(Session), 0);
   EXPECT_NE(decompiled().find("Device->Size"), std::string::npos);
-  write("local_types.exe.neverd-functions.json", Rows);
+  write("local_types.exe.neverd/functions.json", Rows);
   ASSERT_EQ(neverd_functions_load(Session), 0);
   EXPECT_NE(decompiled().find("_THREAD_LIKE* Thing"), std::string::npos);
   // Null hands the function back to its debug information.
@@ -4508,7 +4561,7 @@ TEST_F(SessionCAPITest, KnownRoutinesTakeTheirPrototypesByTheirNames) {
   // The parameters the prototype declares after those the code reads, which
   // its callers pass, follow them.
   const std::string Set = decompile("KeSetEvent");
-  EXPECT_NE(Set.find(" Event, int32_t Increment, uint8_t Wait) {"),
+  EXPECT_NE(Set.find("(PRKEVENT Event, KPRIORITY Increment, BOOLEAN Wait) {"),
             std::string::npos)
       << Set;
   // The whole program's C takes the same prototypes, over the functions the
@@ -4625,7 +4678,7 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
   // A definition named as a routine the headers declare that reads none of
   // its parameters shows those the prototype declares.
   const std::string Atoms = decompile("InitAtomTable");
-  EXPECT_NE(Atoms.find("int32_t InitAtomTable(uint32_t nSize) {"),
+  EXPECT_NE(Atoms.find("WINBOOL InitAtomTable(DWORD nSize) {"),
             std::string::npos)
       << Atoms;
   // ExitProcess returns to no caller: Finish ends at its call, where it
@@ -4748,8 +4801,8 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
                            Session, neverd_func_entry(Session, Index)));
   };
   const std::string Signature =
-      "void KeInitializeDpc(_KDPC* Dpc, void (*DeferredRoutine)(void*, void*, "
-      "void*, void*), void* DeferredContext) {";
+      "void KeInitializeDpc(PRKDPC Dpc, PKDEFERRED_ROUTINE DeferredRoutine, "
+      "PVOID DeferredContext) {";
   EXPECT_NE(Dpc.find(Signature), std::string::npos);
   const std::string LlvmDpc = llvm("KeInitializeDpc");
   EXPECT_NE(LlvmDpc.find(Signature), std::string::npos) << LlvmDpc;
@@ -4761,8 +4814,8 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
                    "(__typeof__(Dpc->DeferredRoutine))(DeferredRoutine);"),
       std::string::npos);
   EXPECT_NE(llvm("PsGetProcessId")
-                .find("void* PsGetProcessId(_EPROCESS* Process) {\n    "
-                      "return (void*)Process->UniqueProcessId;"),
+                .find("HANDLE PsGetProcessId(PEPROCESS Process) {\n    "
+                      "return (HANDLE)Process->UniqueProcessId;"),
             std::string::npos);
 
   // A member the user renames reads by its new name, in the definition and
@@ -5468,7 +5521,7 @@ TEST_F(SessionCAPITest, NativeAnalysisPreservesLoaderNamesAndSavedRenames) {
   EXPECT_EQ(neverd_func_entry(Session, 0), Entry);
   EXPECT_EQ(neverd_func_size(Session, 0), 6);
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "reviewed_entry");
-  ASSERT_TRUE(std::filesystem::remove(Path + ".neverd-renames.json"));
+  ASSERT_TRUE(std::filesystem::remove(Path + ".neverd/renames.json"));
   ASSERT_EQ(neverd_renames_load(Session), 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "named_entry");
   EXPECT_EQ(neverd_func_count(Session), 1);
@@ -8139,7 +8192,7 @@ TEST_F(SessionCAPITest, SignatureCannotReplaceAStatedHexPlaceholderName) {
     ASSERT_EQ(neverd_rename_func(Session, Name.c_str(), "user_choice"), 0);
     ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 1);
     EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "user_choice");
-    write(Name + ".elf.neverd-renames.json", "[]");
+    write(Name + ".elf.neverd/renames.json", "[]");
     ASSERT_EQ(neverd_renames_load(Session), 0);
     EXPECT_EQ(takeString(neverd_func_name(Session, 0)), Name);
   }
@@ -8159,7 +8212,7 @@ TEST_F(SessionCAPITest,
   ASSERT_GE(Index, 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, Index)), "library_guess");
   ASSERT_EQ(neverd_rename_func(Session, "library_guess", "user_choice"), 0);
-  write("stripped-identity.elf.neverd-renames.json", "[]");
+  write("stripped-identity.elf.neverd/renames.json", "[]");
   ASSERT_EQ(neverd_renames_load(Session), 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, Index)), "library_guess");
   write("identity.pat", "B809000000C3 00 0000 0006 :0000 other_guess\n");
@@ -8221,7 +8274,7 @@ TEST_F(SessionCAPITest, AnnotationsPreserveExactNumericAddressKeys) {
         "{\"addr\":" + std::to_string(Address) + ",\"text\":\"" + Text + "\"}";
   }
   Rows += ']';
-  write("integer-notes.elf.neverd-annotations.json", Rows);
+  write("integer-notes.elf.neverd/annotations.json", Rows);
   ASSERT_EQ(neverd_annotations_load(Session), 0);
   for (const auto &[Address, Text] : Expected)
     EXPECT_EQ(takeString(neverd_annotation_get(Session, Address)), Text);
@@ -8232,7 +8285,7 @@ TEST_F(SessionCAPITest, AnnotationsPreserveExactNumericAddressKeys) {
   expectPersistedRows(takeString(neverd_annotations_json(Session)), "text",
                       Expected);
   ASSERT_EQ(neverd_annotations_save(Session), 0);
-  expectPersistedRows(readSidecar("integer-notes.elf.neverd-annotations.json"),
+  expectPersistedRows(readSidecar("integer-notes.elf.neverd/annotations.json"),
                       "text", Expected);
   for (const auto &Item : Expected)
     neverd_annotation_remove(Session, Item.first);
@@ -8254,7 +8307,7 @@ TEST_F(SessionCAPITest, NumericRenameReachesExactHighAddressFunction) {
                        sizeof(llvm::object::ELF64LE::Phdr));
   ASSERT_EQ(neverd_func_entry(Session, 0), Entry);
   ASSERT_EQ(takeString(neverd_func_name(Session, 0)), "entry");
-  write("integer-rename.elf.neverd-renames.json",
+  write("integer-rename.elf.neverd/renames.json",
         "[{\"addr\":" + std::to_string(Entry) +
             ",\"renamed\":\"high_renamed\"}]");
   ASSERT_EQ(neverd_renames_load(Session), 0);
@@ -8265,7 +8318,7 @@ TEST_F(SessionCAPITest, NumericRenameReachesExactHighAddressFunction) {
   expectPersistedRows(takeString(neverd_renames_json(Session)), "renamed",
                       Expected);
   ASSERT_EQ(neverd_renames_save(Session), 0);
-  expectPersistedRows(readSidecar("integer-rename.elf.neverd-renames.json"),
+  expectPersistedRows(readSidecar("integer-rename.elf.neverd/renames.json"),
                       "renamed", Expected);
   ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
   ASSERT_EQ(neverd_func_count(Session), 1);
@@ -8297,10 +8350,10 @@ TEST_F(SessionCAPITest, PersistedAddressEncodingsKeepCanonicalSaveRoundTrips) {
     SCOPED_TRACE(Value.Annotation);
     const std::string Text = "note_" + std::to_string(Index);
     const std::string Name = "renamed_" + std::to_string(Index++);
-    write("encodings.elf.neverd-annotations.json",
+    write("encodings.elf.neverd/annotations.json",
           "[{\"addr\":" + std::string(Value.Annotation) + ",\"text\":\"" +
               Text + "\"}]");
-    write("encodings.elf.neverd-renames.json",
+    write("encodings.elf.neverd/renames.json",
           "[{\"addr\":" + std::string(Value.Rename) + ",\"renamed\":\"" + Name +
               "\"}]");
     ASSERT_EQ(neverd_annotations_load(Session), 0);
@@ -8316,9 +8369,9 @@ TEST_F(SessionCAPITest, PersistedAddressEncodingsKeepCanonicalSaveRoundTrips) {
                         Renames);
     ASSERT_EQ(neverd_annotations_save(Session), 0);
     ASSERT_EQ(neverd_renames_save(Session), 0);
-    expectPersistedRows(readSidecar("encodings.elf.neverd-annotations.json"),
+    expectPersistedRows(readSidecar("encodings.elf.neverd/annotations.json"),
                         "text", Notes);
-    expectPersistedRows(readSidecar("encodings.elf.neverd-renames.json"),
+    expectPersistedRows(readSidecar("encodings.elf.neverd/renames.json"),
                         "renamed", Renames);
     ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
     ASSERT_EQ(neverd_func_count(Session), 1);

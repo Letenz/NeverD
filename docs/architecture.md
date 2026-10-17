@@ -236,7 +236,7 @@ A source reads whole or not at all. The C API keeps the user's declarations
 in order and reads them again over the program's types whenever those are
 read anew, as after loading another PDB. A declaration that no longer reads
 is left out and reported (`declarationProblems`), never silently dropped.
-The worker writes the declarations to `<input>.neverd-types.json` at once;
+The worker writes the declarations to the project folder's `types.json` at once;
 they do not join undo history.
 
 Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
@@ -373,7 +373,20 @@ information's; else the name signatures recognized the function's bytes by
 says nothing of what the function is. A linked COFF image's section symbols,
 which GNU ld keeps at each object's first function or variable
 (`Symbol::IsSection`), name nothing there or in `findSymbolAt`; they only
-bound what each object contributed. Where a linker folded identical
+bound what each object contributed. Once discovery has found the code, such
+an image's symbol of no function type in an executable section is data
+among the code when no code metadata claims it, it is no import thunk, and it
+starts no instruction, as GNU ld's -1-headed `__CTOR_LIST__` in `.text`
+(`recordSymbolTableDataInCode`). The relocated pointers to it, and those it
+holds, which the base relocations took for pointers in code, are then
+pointers of data. LLVM-C mirrors a code segment that holds such slots as a
+pointer table, so a constructor's address in it is no stale one. Past the
+embedding limit the segment has no such mirror, and LLVM-C refuses data whose
+raw copy would reach one of its slots (`tryResolveGlobalData`). A mirror built
+while an earlier one's initializer resolved follows that initializer in the
+module, so whole-module LLVM-C declares each global an earlier initializer
+names before defining the globals in module order (`writeGlobals`).
+Where a linker folded identical
 functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's
 prototype only where every other name's that has one takes and returns
@@ -411,7 +424,14 @@ registers, gives no count. A call to an import such a prototype counts
 passes exactly those slots and no register (`CallEntryStackSlots`): a store
 above them, a local the caller keeps there, is no argument. The arity
 tables count a `long long` as one argument, so their counts bound no i386
-call's slots. An i386 extern declares the convention its prototype states,
+call's slots. Where no declaration gives an import's arguments, the thunk an
+import library links for a stdcall routine, and its slot, spell the bytes it
+pops (`_NlsValidateLocale@8`, `stdcallArgumentBytes`), which count them
+slot by slot. A call reaches the import through either. A stdcall import,
+by its prototype or its decoration, pops its arguments as it returns
+(`CallEntryStackPops`): LowToMed raises the caller's stack pointer after
+the call as for a callee of the image whose `ret` pops, so the caller's
+stack accesses after it read the right slots. An i386 extern declares the convention its prototype states,
 as WINAPI's `__attribute__((stdcall))`, whose callee pops its arguments.
 A callee the
 pipeline does not decompile returns what its declaration says, as the C
@@ -429,7 +449,14 @@ line loads it first. The prototype's types convert to the decompiler's
 types:
 - records become named records that C passes and returns by value, with
   their members' names for display;
-- typedefs become what they name;
+- typedefs become what they name, keeping the typedef's name for display
+  (`NdType::TypedefName`) on what the conversion makes, a scalar, a pointer
+  or an enumeration: HighC and LLVM-C print a signature's parameter or
+  result by it where the unit defines the typedef, as IDA prints
+  `PKDEFERRED_ROUTINE DeferredRoutine` and `NTSTATUS`, and a unit asks for
+  the typedefs its types name. LLVM-C does so where the typedef holds what
+  its code does: a pointer it holds as an integer of the pointer's width, or
+  an integer of the width it holds;
 - a named enumeration becomes an integer of its underlying type's size and
   sign that names its values by its enumerators, as a PDB's enumerations
   do, so that HighC and LLVM-C compare with and store `PowerOn` rather than
@@ -2836,6 +2863,29 @@ count (`MedCallInfo::VarArgFixedCount`), so an LLVM declaration of a routine
 the module does not emit stays variadic. A declaration made from one call's
 arguments would cut another call's.
 
+The search for the value an argument register holds at a call (MedABI's
+`findReachingArgReg`, HighIR's `reachingRegisterAtCall`) ends a path back from
+the call at a call that may change the register (`callClobbersRegister`, the
+rule SSA's call clobbers follow) as it ends it at a write, and at an exception
+handler's entry, where the unwinder leaves caller-saved registers unspecified.
+Where such ends close every path and none reaches the function's entry, the
+value is what the calls left (`valueLeftByCall`), which no parameter carries.
+It fills a slot only where the callee is known to read the register. In a slot
+it is not known to take, and for an import reached through its slot, which
+takes only proven incoming values, the arguments end there as where nothing
+was found. In the call's own block an intrinsic not proven to keep the call
+setup ends the search as well.
+
+The Itanium C++ ABI declares the routines of its runtime and of the unwinder
+it runs on (`libc::kItaniumRuntimePrototypes`). An image's own copy of one
+takes the parameters of its declaration under the conventions of the
+platforms that follow the ABI (System V x86-64, AAPCS, AAPCS64 and Apple's
+arm64; `itaniumRuntimeArgCount`), as Win64 gives a WDK routine its
+prototype's, however its body reads argument registers: libgcc's
+`_Unwind_Resume` saves the exception-data registers (x0-x3, RAX and RDX) as
+it enters, for the `__builtin_eh_return` that ends it. Call-argument recovery
+promotes no incoming register past a prototyped routine's parameters.
+
 Where every variadic argument travels on the stack (Darwin AArch64, i386
 cdecl), no register save area shows that a routine is variadic. The routine
 is variadic when the `va_list` it passes to a known consumer (`vprintf` and
@@ -3383,11 +3433,18 @@ Cache locks cover lookup
 and publication, while graph construction runs outside the lock. Each query
 still independently bounds and pays for its complete call closure and dataflow
 work; caller-dependent answers are not shared. A completely lifted, nontruncated
-CFG with exceptional edges or a block without any successor, return or modeled
-stop may retain an empty refusal marker. It grants no effect and rejects before
-graph-work charging, exactly as the original projection did. Incomplete lifting,
-invalid boundaries or successors, and the fixed graph-size limit retain no
-marker; a caller's exhausted proof allowance also cannot create one. Every normal
+CFG with exceptional edges, a block without any successor, return or modeled
+stop, invalid boundaries or successors, or more work than the fixed graph-size
+limit may retain an empty refusal marker: each is a fact of that CFG, so a later
+builder reads the refusal instead of lifting the body again (Wine's 32-bit
+printf engine, which every heap and debug-output routine reaches through a call
+cycle, resolves its jump tables for seconds). It grants no effect and rejects
+before graph-work charging, exactly as the original projection did. Incomplete
+lifting retains no marker, since a proof that ran out or threw can cause it
+and another request may finish; a caller's exhausted proof allowance also
+cannot create one. The bodies a restricted run lifts for the signatures of the
+callees it omits (`omittedDirectCalleeSignatures`) share one cache of their
+own, whose construction context differs from the pipeline's. Every normal
 return must agree on the stack change, and a pushed result must be initialized
 without reading an empty slot. Cycles in the call graph, incomplete lifting,
 environment restores, tag changes, unknown intrinsics and exceptional edges
@@ -4731,6 +4788,12 @@ mutex acquisition to Bionic, retaining the original event across repeated
 waits. Selection, context switching, wait resumption and result publication
 have separate helpers; wake never publishes a successful lock. Priority
 inheritance and external-process scheduling remain unsupported.
+
+`AndroidSemaphore` owns API 28 count-word validation and transitions in guest
+RAM. Static and dynamic import dispatch share it. `GuestThreads` retains only
+the suspended request, address, sharing bit and wake readiness; resumption
+reloads the word through Bionic. A wake does not allocate a token or publish a
+return. No host semaphore or second count registry participates.
 
 `LinuxMemory` owns anonymous placement, syscall errors and the process break.
 It queries `AddressSpace::mappings()` for current virtual ranges and permissions;
@@ -7593,3 +7656,12 @@ capture failures cannot replace the original service outcome.
 `LockedMdl::StorageKind` separates descriptor storage from page provenance. Pool allocation and live execution-stack owners supply exact storage; shared release preflight checks all ranges before descriptor records retire. Pool free checks write permission before changing state. Partial construction and unlock retain the descriptor owner. Kernel memory borrowing refuses intersections with live MDL metadata. MmCreateMdl retains the default opaque unpack boundary.
 
 `LockedMdl::AdvanceRange` retains the original locked byte range and system mapping base independently of the current data window. Alias allocation, access validation, borrowing and retirement use that owner. The same MDL owner rotates and restores PFNs; page ownership and descriptor storage are unchanged. Existing pins stay live until cleanup, matching the inspected fixed-version producer and restoration consumer. No immediate physical unpin is inferred from generic API prose. MmAdvanceMdl remains opaque to unpack reconstruction.
+
+## Offline network ownership
+
+`LinuxFiles` owns virtual TCP descriptions and their descriptor aliases,
+connection attempts and byte cursors. Raw services and Bionic wrappers use that
+same owner. Bionic owns LP64 resolver allocations and libc error conversion;
+`ProcessNetworkJSON` parses explicit inputs and invokes the same admission
+validators as C++ sessions. Neither layer invokes a host resolver or transport.
+See [offline network contracts](linux-network-contracts.md).

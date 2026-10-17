@@ -1598,6 +1598,10 @@ Double-cliquez pour aller à la déclaration.</translation>
         <translation>Simplification symbolique</translation>
     </message>
     <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>Simplification symbolique de toutes les fonctions</translation>
+    </message>
+    <message>
         <source>Recover LLVM control flow</source>
         <translation>Récupérer le flot de contrôle LLVM</translation>
     </message>
@@ -2117,6 +2121,10 @@ Signé : %4</translation>
     <message>
         <source>Show segment:address line prefixes</source>
         <translation>Afficher les préfixes de ligne segment:adresse</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>Simplification symbolique de toutes les fonctions</translation>
     </message>
     <message>
         <source>Shortcuts</source>
@@ -2642,6 +2650,22 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
     <message>
         <source>Database saved: %1</source>
         <translation>Base de données enregistrée : %1</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files describe another build of %1 (SHA-256 %2…); their addresses may not match this one. The next edit records this build.</source>
+        <translation>Les fichiers du projet décrivent une autre version de %1 (SHA-256 %2…) ; leurs adresses peuvent ne pas correspondre à celle-ci. La prochaine modification enregistre cette version.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here.</source>
+        <translation>Les fichiers du projet ont changé sur le disque et ont été chargés ; l’annulation commence ici.</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here. Unsaved comments kept on top: %1</source>
+        <translation>Les fichiers du projet ont changé sur le disque et ont été chargés ; l’annulation commence ici. Commentaires non enregistrés conservés par-dessus : %1</translation>
+    </message>
+    <message>
+        <source>The input file changed on disk; reload it to continue editing.</source>
+        <translation>Le fichier d’entrée a changé sur le disque ; rechargez-le pour continuer à modifier.</translation>
     </message>
     <message>
         <source>Could not save the database: %1</source>

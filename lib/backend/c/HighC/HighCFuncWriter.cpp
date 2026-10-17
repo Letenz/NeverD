@@ -6043,7 +6043,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         Declarator += ", ";
       const std::string Identifier =
           ParameterIdentifiers.allocate(Name, "nd_arg");
-      Declarator += declarationToC(Ty, Identifier);
+      Declarator += declaredAs(Ty, Identifier);
       // A parameter's name has its declared type, as a local's has.
       if (const TypeRef Display = cDisplayType(Ty);
           Display && Display->Kind == NdTypeKind::Int && !Display->IsEnum)
@@ -6105,7 +6105,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     }
     if (Emitted == 0)
       Declarator += "void";
-    OS << declarationToC(ReturnType, Declarator + ")") << " {\n";
+    OS << declaredAs(ReturnType, Declarator + ")") << " {\n";
   }
   if (Func.Body.empty()) {
     // Conversion produced no statements.  An empty `{ }` looks like a

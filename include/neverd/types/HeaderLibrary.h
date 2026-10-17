@@ -58,7 +58,8 @@ struct HeaderMerge {
   size_t Prototypes = 0;
   /// The header types left out: each holds by value a type whose size the
   /// program gives otherwise, so its layout would not hold, or holds one
-  /// left out.
+  /// left out.  A record left out stays declared, as the types that point
+  /// to it name it.
   std::vector<std::string> Conflicts;
 };
 

@@ -21,6 +21,7 @@
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
+#include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -384,19 +385,13 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
         Op.PreservesCallerSaved)
       return Result;
-    for (const auto &[RegOff, Ids] : RegOffToIds) {
-      if (TRI.isFrameOrLinkReg(RegOff) || TRI.isStackPointer(RegOff) ||
-          (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == RegOff))
-        continue;
-      for (int Id : Ids) {
-        auto It = RegVarOfId.find(Id);
-        if (It == RegVarOfId.end() ||
-            (!fullyPreserved(RegOff, It->second.Size) &&
-             !callPreservesRegisterBytes(TRI.TheArch, Op.CallPreservedGPRs,
-                                         RegOff, It->second.Size)))
+    for (const auto &[RegOff, Ids] : RegOffToIds)
+      for (int Id : Ids)
+        if (const auto It = RegVarOfId.find(Id);
+            It != RegVarOfId.end() &&
+            callClobbersRegister(Op, RegOff, It->second.Size, TRI,
+                                 TargetFormat))
           Result.insert(Id);
-      }
-    }
     return Result;
   };
 

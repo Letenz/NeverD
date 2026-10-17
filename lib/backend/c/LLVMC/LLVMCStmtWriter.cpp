@@ -4756,8 +4756,17 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
     ResultLive = false;
   if (ResultLive && unreadMsvcThisReturn(Call))
     ResultLive = false;
+  // A memory routine its header declares returns its destination, a
+  // pointer, which C converts to the integer that holds it only by a cast.
+  const bool PointerResult =
+      ResultLive && Call.getType()->isIntegerTy() && Call.getCalledFunction() &&
+      Call.getCalledFunction()->isDeclaration() &&
+      libc::headerFor(CalleeName) &&
+      (libc::isMemSetName(CalleeName) || libc::isMemCopyName(CalleeName));
   if (ResultLive)
     OS << Name << " = ";
+  if (PointerResult)
+    OS << "(" << typeToCLLVM(Call.getType()) << ")(uintptr_t)";
   OS << callExpr(Call) << ";\n";
   AfterCxxThrow = NoReturn;
 }
