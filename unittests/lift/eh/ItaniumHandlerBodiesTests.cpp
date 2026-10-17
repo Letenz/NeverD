@@ -592,6 +592,36 @@ TEST(ItaniumHandlerBodies, AJumpIntoACleanupScopeKeepsThePad) {
       << Source;
 }
 
+TEST(ItaniumHandlerBodies, NothingFallsOutOfAnEndlessLoop) {
+  // while (1) { v1 = risky(); if (v1 == 0) return v1; }  return 7;
+  // With the pad gone the loop ends the function; the return after it, which
+  // nothing reaches, is not printed.  A loop a break leaves still continues.
+  for (const bool Breaks : {false, true}) {
+    HighStmt Loop;
+    Loop.Kind = StmtKind::While;
+    Loop.Addr = kEntry;
+    Loop.Cond = constant(1, 1);
+    Loop.Body.push_back(assign(1, callAt("risky", kRisky, kCall), kCall));
+    std::vector<HighStmt> Leave;
+    if (Breaks) {
+      HighStmt Break;
+      Break.Kind = StmtKind::Break;
+      Leave.push_back(std::move(Break));
+    } else {
+      Leave.push_back(ret(use(1)));
+    }
+    Loop.Body.push_back(branch(equals(use(1), 0), std::move(Leave)));
+    std::vector<HighStmt> Body;
+    Body.push_back(std::move(Loop));
+    Body.push_back(ret(constant(7)));
+    const HighFunc Func =
+        cleanupFunction(cleanupSites({{kCall, kPad}}), std::move(Body));
+    const std::string Source = body(emit(Func));
+    EXPECT_NE(Source.find("} catch (...) {"), std::string::npos) << Source;
+    EXPECT_EQ(Source.find("return 7;") != std::string::npos, Breaks) << Source;
+  }
+}
+
 TEST(ItaniumHandlerBodies, ACatchParameterPointerIsItsValue) {
   std::vector<HighStmt> Pad;
   Pad.push_back(assign(2, beginCatch(exception())));
