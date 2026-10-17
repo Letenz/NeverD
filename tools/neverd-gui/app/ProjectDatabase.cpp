@@ -287,7 +287,17 @@ QString ProjectDatabase::writeProjectFile(const QString &input,
     qsizetype indent = 0;
     while (indent < line.size() && line[indent] == ' ')
       ++indent;
-    text += QByteArray(indent / 2, ' ') + line.mid(indent) + '\n';
+    const QByteArray content = line.mid(indent);
+    // An empty array or object closes on the line that opens it, as the
+    // engine and the command line write it ("[]", not "[\n]").  A string
+    // holds no raw line break, so the break before it is the writer's.
+    if ((content.startsWith(']') && text.endsWith("[\n")) ||
+        (content.startsWith('}') && text.endsWith("{\n"))) {
+      text.chop(1);
+      text += content + '\n';
+      continue;
+    }
+    text += QByteArray(indent / 2, ' ') + content + '\n';
   }
   text.chop(1);
   if (const auto error = prepareFolder(input); !error.isEmpty())

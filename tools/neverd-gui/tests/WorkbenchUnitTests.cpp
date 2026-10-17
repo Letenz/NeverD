@@ -757,6 +757,21 @@ private slots:
     QCOMPARE(
         rows.at(1).toObject(),
         (QJsonObject{{"address", "0x1a"}, {"text", "last"}, {"note", "kept"}}));
+    // No bookmarks read as the command line writes none, and an empty
+    // member closes where it opens.
+    const auto empty = directory.filePath(QStringLiteral("empty.bin"));
+    QCOMPARE(ProjectDatabase::writeProjectFile(empty,
+                                               ProjectDatabase::BookmarksSuffix,
+                                               QJsonDocument(QJsonArray())),
+             QString());
+    QCOMPARE(read(empty + ".neverd/bookmarks.json"), QByteArray("[]\n"));
+    QCOMPARE(ProjectDatabase::writeProjectFile(
+                 empty, ProjectDatabase::DebugFilesSuffix,
+                 QJsonDocument(QJsonObject{{"pdb", QJsonObject()},
+                                           {"paths", QJsonArray()}})),
+             QString());
+    QCOMPARE(read(empty + ".neverd/debug.json"),
+             QByteArray("{\n  \"paths\": [],\n  \"pdb\": {}\n}\n"));
     QVERIFY(!ProjectDatabase::readProjectFile(
         binary, ProjectDatabase::WorkbenchSuffix));
     QVERIFY(write(binary + ".neverd/debug.json", R"({"pdb":{"mode":"none"}})"));
