@@ -1596,7 +1596,12 @@ cl::opt<std::string> PatchEntry("entry",
                                 cl::init(""), cl::sub(PatchCmd));
 cl::list<std::string> PatchBindings(
     "bind",
-    cl::desc("Original reference: function|const|data:SYMBOL=VA[:SIZE]"),
+    cl::desc(
+        "Original reference: function|original|const|data:SYMBOL=VA[:SIZE]"),
+    cl::ZeroOrMore, cl::sub(PatchCmd));
+cl::list<std::string> PatchDependencies(
+    "dependency",
+    cl::desc("New loader import: function|data:SYMBOL=LIBRARY (repeatable)"),
     cl::ZeroOrMore, cl::sub(PatchCmd));
 cl::list<std::string>
     PatchCompilerArgs("compiler-arg",

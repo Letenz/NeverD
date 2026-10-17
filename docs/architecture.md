@@ -12,6 +12,10 @@ Capstone, and Unicorn submodules keep their own internal architecture.
 
 `X64MXCSRMask` enables raw MXCSR loads and scalar state reads/writes with an explicit effective mask (`0xffbf` or `0xffff`). The x64 adapter owns the legal initial-state domain and transitions. Core charges work and requires a proof that reserved bits are clear; the nonfaulting flag alone supplies no such proof. Original intrinsics remain observable. MXCSR memory stores, source wrapping and native/LLVM certificates still require their own contracts.
 
+`SourcePatchPreparation` owns the shared pre-installation layout and dependency transaction. `SourcePatchCallback` authenticates saved original entries and delegates instruction relocation and native unwind records to their architecture/format owners. `SourcePatchDependencies` plans explicit imports; format-owned ELF/PE/Mach-O writers preserve existing loader identities. Source, supplied IR and native objects consume these same plans. The final native-object section/permission proof and `publishSourcePatch` reload check remain authoritative; CLI, C API and Python do not duplicate loader or relocation decisions.
+
+Six selected native OS/ISA jobs passed with zero failed or skipped cases: 3669 GoogleTest executions, 1008 native process observations (504 functional and 504 C++ exception observations), 12 real loader rejections, 96 images and 84 publication receipts. [Exact native evidence](source-patching.md).
+
 ## Runtime memory recovery
 
 `X64SegmentedWrites` separately admits ordinary 1/2/4/8-byte FS/GS stores with 64-bit offsets under explicit nonfaulting machine state. `arch/x86_64` owns runtime memory validation, admission and symbolic base initialization. Core uses complete linear addresses and ordinary alias invalidation; fixed arbitrary bases may alias the frame, other segments and live return cells. The capability is bound into raw receipts. Source and native proof interfaces without authenticated base inputs continue to refuse this domain.
@@ -306,7 +310,11 @@ records:
   information gave stay, and so do its records' ABI facts.
 - A decompiled unit, HighC's or LLVM-C's, holds the definitions of the
   records it names (`CEmitterOptions::RecordDefinitions`), and of what they
-  hold by value, after its includes. `renderEmbeddedC` renders them in exact
+  hold by value, after its includes. Only a program whose library holds
+  types defines them: a context made for the user's declarations alone, or
+  over an empty library, as an image with no PDB, header library or
+  declared types has, defines none, and LLVM-C keeps its machine types
+  there. `renderEmbeddedC` renders them in exact
   widths, with their checks, each under a guard of its own so that units
   concatenate. A record whose members the unit, or the debug information
   anywhere in the session, names otherwise than the library does stays
@@ -622,8 +630,9 @@ unions, anonymous structures and unions, bit-fields, enumerations,
 `#pragma pack` and `DECLSPEC_ALIGN`, and their `static_assert` and `offsetof`
 checks. A member access reaches a field through anonymous members as C
 counts it. C and C++ keep the definitions as written, and C++ reads the code
-that uses them. A Rust or Go page takes the definitions as Local Types
-renders them in its language (`renderEmbeddedSource`): the types the unit
+that uses them. A Rust or Go page, or a whole program spelled in Rust or Go, takes the
+definitions as Local Types renders them in its language
+(`renderEmbeddedSource`): the types the unit
 defines, the records it only points to as opaque types, and no module
 header, in place of the C bytes the source map records
 (`CSourceMap::LocalTypes`). The code reaches a member as that rendering

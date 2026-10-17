@@ -780,6 +780,14 @@ class NeverDSourcePatchBindingV1(ctypes.Structure):
     ]
 
 
+class NeverDSourcePatchDependencyV1(ctypes.Structure):
+    _fields_ = [
+        ("library", ctypes.c_char_p),
+        ("symbol", ctypes.c_char_p),
+        ("kind", ctypes.c_uint32),
+    ]
+
+
 class NeverDSourcePatchOptionsV1(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_size_t),
@@ -798,6 +806,8 @@ class NeverDSourcePatchOptionsV1(ctypes.Structure):
         ("timeout_seconds", ctypes.c_uint32),
         ("bindings", ctypes.POINTER(NeverDSourcePatchBindingV1)),
         ("binding_count", ctypes.c_size_t),
+        ("dependencies", ctypes.POINTER(NeverDSourcePatchDependencyV1)),
+        ("dependency_count", ctypes.c_size_t),
     ]
 
 
