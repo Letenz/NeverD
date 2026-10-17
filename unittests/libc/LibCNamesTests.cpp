@@ -95,10 +95,36 @@ TEST(VarArgFixedCount, PosixWhitelist) {
   EXPECT_EQ(varArgFixedCount("sem_open"), 1u);
 }
 
+TEST(VarArgFixedCount, LinuxProcessControlNamesOneInteger) {
+  // syscall(number, ...) and prctl(option, ...) read their further
+  // arguments as the integer they name requires.
+  for (const char *Name : {"syscall", "prctl"}) {
+    SCOPED_TRACE(Name);
+    EXPECT_TRUE(isKnownFunction(Name));
+    EXPECT_EQ(varArgFixedCount(Name), 1u);
+    EXPECT_EQ(varArgFixedParamKind(Name, 0), VarArgFixedParamKind::Integer);
+    EXPECT_EQ(varArgFixedParamKind(Name, 1), VarArgFixedParamKind::Unknown);
+  }
+  EXPECT_STREQ(headerFor("syscall"), "unistd.h");
+  // ptrace(request, ...) is variadic only as Linux and Android declare it;
+  // Darwin's takes its pid, address and datum fixed, so no call reads its
+  // arguments as variadic ones.
+  EXPECT_TRUE(isKnownFunction("ptrace"));
+  EXPECT_STREQ(headerFor("ptrace"), "sys/ptrace.h");
+  EXPECT_EQ(varArgFixedCount("ptrace"), 0u);
+  const LibCVariadicForward *Forward = libcVariadicForward("ptrace");
+  ASSERT_NE(Forward, nullptr);
+  EXPECT_EQ(Forward->Format, BinaryFormat::ELF);
+  EXPECT_EQ(Forward->Count, 3u);
+  EXPECT_EQ(libcVariadicForward("syscall")->Format, BinaryFormat::Unknown);
+}
+
 TEST(VarArgFixedParamKind, OpenPreservesPathAndFlags) {
   EXPECT_EQ(varArgFixedParamKind("open", 0), VarArgFixedParamKind::Pointer);
   EXPECT_EQ(varArgFixedParamKind("open", 1), VarArgFixedParamKind::Integer);
   EXPECT_EQ(varArgFixedParamKind("open", 2), VarArgFixedParamKind::Unknown);
+  EXPECT_EQ(varArgFixedParamKind("execl", 0), VarArgFixedParamKind::Pointer);
+  EXPECT_EQ(varArgFixedParamKind("ioctl", 0), VarArgFixedParamKind::Integer);
 }
 
 TEST(VarArgFixedCount, DarwinObjectiveCMessageStubs) {

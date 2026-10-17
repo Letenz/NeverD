@@ -181,6 +181,40 @@ TEST(AAPCS64CallContract, APLTEntryPassesTheArgumentsOfItsImport) {
   EXPECT_NE(UidBody.find("getuid()"), std::string::npos) << UidBody;
 }
 
+TEST(AAPCS64CallContract, PLTEntriesOfVariadicSystemCallsPassTheirArgsOn) {
+  // syscall reads at most six arguments after the number, ptrace three after
+  // the request and prctl four after the option.  Each entry passes every
+  // argument on, which C does one by one.
+  constexpr va_t Sys = Plt, Trace = Plt + 0x10, Control = Plt + 0x20;
+  const BinaryImage Img = makeImage({{Sys, pltEntry(Sys, Got)},
+                                     {Trace, pltEntry(Trace, Got + 8)},
+                                     {Control, pltEntry(Control, Got + 16)}},
+                                    {}, {"syscall", "ptrace", "prctl"});
+  const std::string Source = highC(Img, {Sys, Trace, Control});
+  EXPECT_NE(Source.find("long sub_10100(long arg0, ...) {"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("return syscall(arg0, argument1, argument2, "
+                        "argument3, argument4, argument5, argument6);"),
+            std::string::npos)
+      << Source;
+  // glibc's request is an enumeration, which <sys/ptrace.h> declares.
+  EXPECT_NE(Source.find("#include <sys/ptrace.h>"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("long sub_10110(enum __ptrace_request arg0, ...) {"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("return ptrace(arg0, argument1, argument2, "
+                        "argument3);"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("int sub_10120(int arg0, ...) {"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("return prctl(arg0, argument1, argument2, argument3, "
+                        "argument4);"),
+            std::string::npos)
+      << Source;
+}
+
 /// lower(c) tail-calls islower and bump(c) returns toupper(c) + 1, each
 /// through the GOT slot the call loads, as -fno-plt builds them.
 BinaryImage makeGOTCalls() {
