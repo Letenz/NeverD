@@ -390,10 +390,6 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
         continue;
       }
       try {
-        if (FI < Result.LowFuncs.size())
-          Local.setJumpTables(Result.LowFuncs[FI].JumpTables);
-        else
-          Local.setJumpTables({});
         Pending[FI] = Local.convert(MF, Img.Arch);
         auto &HF = Pending[FI];
         // Structuring may invert or simplify an If condition. Its statement

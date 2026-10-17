@@ -55,6 +55,16 @@ struct X86RepStos {
 std::optional<X86RepStos> classifyX86RepStos(Arch TheArch,
                                              const llvm::CallInst &Call);
 
+// The same contract for MOVS, whose source, destination and count register
+// updates the lifted IR represents separately too.
+struct X86RepMovs {
+  enum Direction { Forward, Backward, Dynamic } Dir;
+  unsigned ElementBytes;
+  unsigned AddressBits;
+};
+std::optional<X86RepMovs> classifyX86RepMovs(Arch TheArch,
+                                             const llvm::CallInst &Call);
+
 //--- Arch-specific (LLVMCIntrinsicRenderX86.cpp) ---
 const char *lookupX86AsmToC(const char *Mnem);
 InlineAsmRender renderX86InlineAsm(Arch TheArch, const std::string &AsmStr,
