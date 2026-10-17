@@ -39,7 +39,7 @@ std::string hex(uint64_t Value) {
 
 const char *conventionSpelling(CallingConvention Convention) {
   switch (Convention) {
-#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide)                    \
+#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide, Pops)              \
   case CallingConvention::Name:                                                \
     return C;
 #include "neverd/types/CallingConventions.def"

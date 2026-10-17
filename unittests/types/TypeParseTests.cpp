@@ -407,6 +407,26 @@ TEST(TypeParse, RefusesWhatItCannotLayOutAndKeepsGoingWhenAsked) {
   EXPECT_NE(Library.find("C"), nullptr);
 }
 
+TEST(TypeParse, AVariadicRoutineIsCdeclWhateverItsConvention) {
+  // phnt declares RtlInitializeSidEx NTAPI: only its caller knows what a
+  // call pushes, so compilers take a convention whose callee pops as cdecl.
+  TypeLibrary Library(DataModel::ILP32);
+  ASSERT_TRUE(
+      parseCTypes("long __stdcall RtlInitializeSidEx(void *Sid, void *Auth, "
+                  "unsigned char Count, ...);\n"
+                  "long __stdcall RtlInitializeSid(void *Sid, void *Auth, "
+                  "unsigned char Count);",
+                  Library)
+          .ok());
+  const FunctionDef *Variadic = Library.findPrototype("RtlInitializeSidEx");
+  ASSERT_NE(Variadic, nullptr);
+  EXPECT_TRUE(Variadic->Variadic);
+  EXPECT_EQ(Variadic->Convention, CallingConvention::Cdecl);
+  const FunctionDef *Fixed = Library.findPrototype("RtlInitializeSid");
+  ASSERT_NE(Fixed, nullptr);
+  EXPECT_EQ(Fixed->Convention, CallingConvention::Stdcall);
+}
+
 TEST(TypeParse, AnEnumerationOfNoValuesReadsBackWithItsType) {
   // `typedef enum _CLASS CLASS;` alone, as Microsoft's compilers take it and
   // phnt declares USERTHREADINFOCLASS.  C has no enumeration without

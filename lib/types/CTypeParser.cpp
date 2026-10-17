@@ -441,12 +441,23 @@ bool ignoredWord(llvm::StringRef Word) {
 /// Whether a target with 64-bit pointers keeps \p Convention.
 bool keptWide(CallingConvention Convention) {
   switch (Convention) {
-#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide)                    \
+#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide, Pops)              \
   case CallingConvention::Name:                                                \
     return Wide;
 #include "neverd/types/CallingConventions.def"
   }
   return true;
+}
+
+/// Whether the callee of \p Convention pops its stack arguments.
+bool calleePops(CallingConvention Convention) {
+  switch (Convention) {
+#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide, Pops)              \
+  case CallingConvention::Name:                                                \
+    return Pops;
+#include "neverd/types/CallingConventions.def"
+  }
+  return false;
 }
 
 /// const and volatile in GNU's spellings too.
@@ -1620,6 +1631,11 @@ private:
     while (!Failed) {
       if (accept("...")) {
         Function->Variadic = true;
+        // Only the caller knows what a variadic call pushes: compilers take
+        // a convention whose callee pops, as phnt's NTAPI
+        // RtlInitializeSidEx, as cdecl.
+        if (calleePops(Function->Convention))
+          Function->Convention = CallingConvention::Cdecl;
         expect(")", "after '...'");
         return Function;
       }

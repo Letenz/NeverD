@@ -130891,7 +130891,7 @@ VOID __stdcall RtlInitializeResource(PRTL_RESOURCE Resource);
 VOID __stdcall RtlInitializeSListHead(PSLIST_HEADER ListHead);
 VOID __stdcall RtlInitializeSRWLock(PRTL_SRWLOCK SRWLock);
 NTSTATUS __stdcall RtlInitializeSid(PSID Sid, PSID_IDENTIFIER_AUTHORITY IdentifierAuthority, UCHAR SubAuthorityCount);
-NTSTATUS __stdcall RtlInitializeSidEx(PSID Sid, PSID_IDENTIFIER_AUTHORITY IdentifierAuthority, UCHAR SubAuthorityCount, ...);
+NTSTATUS __cdecl RtlInitializeSidEx(PSID Sid, PSID_IDENTIFIER_AUTHORITY IdentifierAuthority, UCHAR SubAuthorityCount, ...);
 VOID __stdcall RtlInitializeUnicodePrefix(PUNICODE_PREFIX_TABLE PrefixTable);
 PVOID __stdcall RtlInsertElementGenericTable(PRTL_GENERIC_TABLE Table, PVOID Buffer, CLONG BufferSize, PBOOLEAN NewElement);
 PVOID __stdcall RtlInsertElementGenericTableAvl(PRTL_AVL_TABLE Table, PVOID Buffer, CLONG BufferSize, PBOOLEAN NewElement);
