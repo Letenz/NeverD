@@ -4191,6 +4191,60 @@ TEST_F(SessionCAPITest, ObjectsTakeTheirLocalTypesFromTheirDWARF) {
   EXPECT_NE(Use.find("struct packed\n{"), std::string::npos) << Use;
 }
 
+TEST_F(SessionCAPITest, ThirtyTwoBitLinuxObjectsLayRecordsOutAsGCCDoes) {
+  // GCC's i386 code packs bit-fields as on any System V target and aligns
+  // long long and double to four, which a 32-bit data model alone, read as
+  // Microsoft's, does not say: the session takes the record ABI from the
+  // object's platform and architecture.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "dwarf_types.gcc32.o", std::ios::binary);
+  const std::string Object =
+      write("dwarf_types.gcc32.o",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Object.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_local_types_json(Session, nullptr)));
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  const llvm::json::Object *Root = Parsed->getAsObject();
+  ASSERT_TRUE(Root);
+  EXPECT_EQ(Root->getString("source"), "dwarf");
+  EXPECT_EQ(Root->getString("dataModel"), "ILP32");
+  EXPECT_EQ(Root->getString("recordABI"), "i386-sysv");
+
+  // The records render as GCC laid them out, with nothing to make GNU's
+  // compilers lay them out as Microsoft's: flags' bit-fields share kind's
+  // unit, and device's eight-byte union aligns to four.
+  const std::string Source = takeString(neverd_local_types_source(
+      Session,
+      R"({"language":"c","types":["flags","device"],"asserts":true})"));
+  for (const char *Expected :
+       {"sizeof(struct flags) == 0xC", "offsetof(struct flags, tail) == 0x8",
+        "offsetof(struct device, time) == 0x1C",
+        "sizeof(struct device) == 0x54"})
+    EXPECT_NE(Source.find(Expected), std::string::npos) << Expected << Source;
+  for (const char *Unexpected :
+       {"NEVERD_MS_STRUCT", "NEVERD_ALIGN8 ", "#pragma pack"})
+    EXPECT_EQ(Source.find(Unexpected), std::string::npos)
+        << Unexpected << Source;
+
+  // A declaration lays out as the program's records do.
+  const auto parse = [&](const char *Raw) {
+    auto Parsed = llvm::json::parse(takeString(Raw));
+    EXPECT_TRUE(static_cast<bool>(Parsed))
+        << takeString(neverd_last_error(Session));
+    return Parsed && Parsed->getAsObject() ? *Parsed->getAsObject()
+                                           : llvm::json::Object();
+  };
+  const llvm::json::Object Declared = parse(neverd_local_types_declare(
+      Session, "struct sample { char c; long long q; double d; };", nullptr));
+  EXPECT_EQ(Declared.getArray("problems")->size(), 0u);
+  EXPECT_EQ(parse(neverd_local_type_json(Session, "sample", nullptr))
+                .getInteger("size"),
+            20);
+}
+
 TEST_F(SessionCAPITest, CodeReadsTheRecordsItsMembersReach) {
   // first_child reads l->head->child, a node no type of its own names, and
   // sum_list walks nodes from l->head: HighC asks the local types for the

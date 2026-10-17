@@ -103,7 +103,6 @@ const TypeLibrary *headerLibrary(HeaderLibrary Library, std::string *Error) {
   std::call_once(Entry.Once, [&] {
     TypeLibrary Types(headerLibraryModel(Library));
     ParseOptions Options;
-    Options.Rules = defaultRules(Types.dataModel());
     Options.Origin = TypeOrigin::Header;
     const ParseResult Result =
         parseCTypes(headerLibrarySource(Library), Types, Options);

@@ -223,14 +223,22 @@ renders prototypes (`rendersPrototypes`, `readsDeclarations`; the C API's
 language list says both).
 
 `parseTypes` reads C, C++, Rust and Go declarations back into the library
-(`TypeParse.h`), and `layOutRecord` lays each record out under MSVC or
-Itanium rules (`TypeLayout.h`):
+(`TypeParse.h`), and `layOutRecord` lays each record out as the library's
+record ABI does (`TypeLayout.h`):
 - C and C++ take every builtin spelling the renderers write, `#pragma pack`,
   alignment specifiers and static assertions, which are checked;
 - Rust and Go take what their renderers write: records named `<Parent>_<n>`
   that the parent holds go back in place, a `_bitfield` comment lists its
   bitfields, and Go's unions, unaligned members and flexible arrays come
   back from their accessor methods.
+
+A library's record ABI (`RecordABIs.def`) says what its data model does not:
+whether bit-fields go as Microsoft's compilers or the Itanium ABI place them,
+and how far a scalar aligns in a record, four for long long and double under
+the i386 System V ABI. The C API takes a program's from its platform and
+architecture (`recordABIOf`), so a 32-bit Linux program's records read,
+parse and render as GCC lays them out, and an ARM one's as the AAPCS does.
+Parsing and every renderer read the library's ABI; nothing else carries one.
 
 A source reads whole or not at all. The C API keeps the user's declarations
 in order and reads them again over the program's types whenever those are
