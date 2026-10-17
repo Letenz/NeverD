@@ -7279,6 +7279,12 @@ defined after it.
 `HighControlFlowSemantics.SlotCallGoesThroughThePointerItHolds` calls through
 MinGW's `__imp_X` variables, which hold the image's own code, relocated or in
 a fixed image, rather than naming an import by their spelling.
+`StaticSymbolTableTest.MinGWImportVariableNoCodeChangesIsConstant` reads
+`mingw_imp_slots.exe`, which calls through two such variables: the one nothing
+changes is constant, the one its lazy binding rewrites is not.
+`SessionCAPITest.MinGWImportVariableCallsReachTheirFunction` decompiles its
+caller: HighC and LLVM C call the constant one's function directly and the
+lazy one through its variable.
 `HighControlFlowSemantics.AShiftByZeroIsItsOperand` reads AArch64's bit-0
 `tbz` test as `x & 1`.
 `HighControlFlowSemantics.ATruthValueSelectingOneOrZeroIsItself` reads -O0

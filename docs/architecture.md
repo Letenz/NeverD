@@ -394,6 +394,16 @@ raw copy would reach one of its slots (`tryResolveGlobalData`). A mirror built
 while an earlier one's initializer resolved follows that initializer in the
 module, so whole-module LLVM-C declares each global an earlier initializer
 names before defining the globals in module order (`writeGlobals`).
+MinGW's runtime defines a `__imp_X` variable for each function it supplies
+in place of an import (__MINGW_IMP_SYMBOL), initialized to that function, and
+calls through it. Such a variable of an x86 or x64 image's symbol table that
+holds one of the image's function entries is constant when nothing changes or
+lets it escape: every instruction a linear sweep of the code finds naming it,
+resynchronized at the entries the metadata gives, reads it, and no pointer in
+data or export names it (`recordConstantCodeSlots`, `ConstantCodeSlots`).
+LowToMed then lowers a call through it as a call to that function, which both
+C routes print. A lazy binding, which the function it starts at rewrites,
+stays a variable the call loads.
 Where a linker folded identical
 functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's
