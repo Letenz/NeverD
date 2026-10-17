@@ -2385,6 +2385,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   OmittedLeftoverNarrow.clear();
   LeftoverSiblingFill.clear();
   DebugFn.reset();
+  DebugPositional = true;
   DebugThisRecord = nullptr;
   DebugThisArg = nullptr;
   ParamDebugTypes.clear();
@@ -2425,7 +2426,17 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   if (Dbg && FunctionEntry) {
     if (auto FS = Dbg->resolveFunction(FunctionEntry)) {
       DebugFn = std::move(*FS);
-      if (!Fn.arg_empty() && !DebugFn->Params.empty() &&
+      // The declaration names the arguments by position.  An i386 function
+      // declared to take every argument on the stack takes no register: one
+      // recovered anyway, such as an ECX a call passes on, comes before the
+      // stack arguments and moves every name after it.  Where more arguments
+      // were recovered than declared, none is named.
+      DebugPositional = Opts.TheArch != Arch::X86 ||
+                        (DebugFn->CallConv != DebugCallConv::Cdecl &&
+                         DebugFn->CallConv != DebugCallConv::Stdcall &&
+                         DebugFn->CallConv != DebugCallConv::Unknown) ||
+                        Fn.arg_size() <= DebugFn->Params.size();
+      if (DebugPositional && !Fn.arg_empty() && !DebugFn->Params.empty() &&
           DebugFn->Params[0].second) {
         TypeRef Ty = DebugFn->Params[0].second;
         TypeRef Rec = Ty;
@@ -2462,7 +2473,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
       std::string Raw;
       if (Sret >= 0 && static_cast<int>(ParamIdx) == Sret)
         Raw = "result";
-      else if (DebugFn) {
+      else if (DebugFn && DebugPositional) {
         size_t DebugIdx = ParamIdx;
         if (Sret >= 0 && static_cast<int>(ParamIdx) > Sret)
           DebugIdx = static_cast<size_t>(ParamIdx - 1);

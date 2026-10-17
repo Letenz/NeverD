@@ -886,6 +886,8 @@ public:
   /// the same value. Survives per-block `AllocaImmediates` resets.
   std::map<const llvm::AllocaInst *, std::string> OmittedAllocaImmediates;
   std::optional<FunctionSym> DebugFn;
+  /// DebugFn's parameters are the function's arguments in order.
+  bool DebugPositional = true;
   TypeRef DebugThisRecord;
   const llvm::Argument *DebugThisArg = nullptr;
   /// The type the debug information gives each parameter.
