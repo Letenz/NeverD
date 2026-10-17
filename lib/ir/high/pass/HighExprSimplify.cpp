@@ -95,6 +95,81 @@ static bool isZeroConst(const ExprPtr &E) {
   return E && E->Kind == ExprKind::Const && E->ConstVal == 0;
 }
 
+/// Whether \p Op yields a truth value: a comparison, a flag or a boolean
+/// operation, which is 0 or 1.
+static bool isTruthOp(NdOp Op) {
+  switch (Op) {
+  case NdOp::INT_EQUAL:
+  case NdOp::INT_NOTEQUAL:
+  case NdOp::INT_LESS:
+  case NdOp::INT_SLESS:
+  case NdOp::INT_LESSEQUAL:
+  case NdOp::INT_SLESSEQUAL:
+  case NdOp::INT_CARRY:
+  case NdOp::INT_SOVF:
+  case NdOp::INT_SBOR:
+  case NdOp::BOOL_AND:
+  case NdOp::BOOL_OR:
+  case NdOp::BOOL_XOR:
+  case NdOp::BOOL_NOT:
+  case NdOp::FLOAT_EQUAL:
+  case NdOp::FLOAT_NOTEQUAL:
+  case NdOp::FLOAT_LESS:
+  case NdOp::FLOAT_LESSEQUAL:
+  case NdOp::FLOAT_ISNAN:
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// Whether integer \p E is 0 or 1, whatever it reads: a truth value, or an
+/// extension, a selection or a bitwise combination of such values.
+static bool zeroOrOne(const ExprPtr &E, unsigned Depth = 0) {
+  if (!E || !E->Type || E->Type->Kind != NdTypeKind::Int || !E->Type->Size ||
+      Depth > 8)
+    return false;
+  switch (E->Kind) {
+  case ExprKind::Const:
+    return E->Operands.empty() && E->ConstVal <= 1;
+  case ExprKind::Cast:
+    return E->Operands.size() == 1 && zeroOrOne(E->Operands[0], Depth + 1);
+  case ExprKind::UnaryOp:
+    if (isTruthOp(E->Op))
+      return true;
+    return (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT) &&
+           E->Operands.size() == 1 && zeroOrOne(E->Operands[0], Depth + 1);
+  case ExprKind::BinOp:
+    if (isTruthOp(E->Op))
+      return true;
+    if (E->Op == NdOp::SELECT)
+      return E->Operands.size() == 3 && zeroOrOne(E->Operands[1], Depth + 1) &&
+             zeroOrOne(E->Operands[2], Depth + 1);
+    if (E->Operands.size() != 2)
+      return false;
+    if (E->Op == NdOp::INT_AND)
+      return zeroOrOne(E->Operands[0], Depth + 1) ||
+             zeroOrOne(E->Operands[1], Depth + 1);
+    if (E->Op == NdOp::INT_OR || E->Op == NdOp::INT_XOR)
+      return zeroOrOne(E->Operands[0], Depth + 1) &&
+             zeroOrOne(E->Operands[1], Depth + 1);
+    return false;
+  default:
+    return false;
+  }
+}
+
+/// \p V, an integer of \p Ty's width, read as \p Ty.
+static ExprPtr asIntegerType(const ExprPtr &V, const TypeRef &Ty) {
+  if (V->Type->IsSigned == Ty->IsSigned)
+    return V;
+  auto Cast = std::make_shared<HighExpr>();
+  Cast->Kind = ExprKind::Cast;
+  Cast->Type = Cast->CastTo = Ty;
+  Cast->Operands = {V};
+  return Cast;
+}
+
 /// A constant mask observes only these bits. In particular, a masked status
 /// word must not evaluate unknown incoming bits that the machine never reads.
 /// This is local bit projection, independent of optional symbolic rewriting.
@@ -757,6 +832,32 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
     }
   }
 
+  // A truth value selects one or zero as itself: -O0 AArch64 materializes
+  // `a == b` as `cset w8, eq`, which reads `a == b ? 1 : 0`.  A condition
+  // that may hold another value selects as `c != 0` does, and stays.
+  if (E->Kind == ExprKind::BinOp && E->Op == NdOp::SELECT &&
+      E->Operands.size() == 3 && E->Type && E->Type->Kind == NdTypeKind::Int &&
+      E->Operands[1] && E->Operands[2] &&
+      E->Operands[1]->Kind == ExprKind::Const &&
+      E->Operands[1]->Operands.empty() &&
+      E->Operands[2]->Kind == ExprKind::Const &&
+      E->Operands[2]->Operands.empty() &&
+      E->Operands[1]->ConstVal + E->Operands[2]->ConstVal == 1 &&
+      E->Operands[1]->ConstVal <= 1 && zeroOrOne(E->Operands[0]) &&
+      E->Operands[0]->Type->Size <= E->Type->Size) {
+    ExprPtr Truth = E->Operands[0];
+    if (E->Operands[1]->ConstVal == 0)
+      Truth = HighExpr::makeUnary(NdOp::BOOL_NOT, Truth);
+    if (Truth->Type->Size == E->Type->Size) {
+      Replace(asIntegerType(Truth, E->Type));
+    } else {
+      auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, Truth);
+      Extended->Type = E->Type;
+      Replace(std::move(Extended));
+    }
+    return;
+  }
+
   if (E->Kind != ExprKind::BinOp || E->Operands.size() != 2)
     return;
 
@@ -900,6 +1001,20 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
           E->Operands[1]->Type ? E->Operands[1]->Type->Size : 8);
     }
   }
+
+  // A value that is 0 or 1 masked by one is itself (`cset w8, ne; and w8,
+  // w8, #1`).
+  if (E->Op == NdOp::INT_AND && E->Type && E->Type->Kind == NdTypeKind::Int)
+    for (unsigned I = 0; I < 2; ++I)
+      if (E->Operands[I] && E->Operands[I]->Kind == ExprKind::Const &&
+          E->Operands[I]->Operands.empty() && E->Operands[I]->ConstVal == 1 &&
+          E->Operands[1 - I] && E->Operands[1 - I]->Type &&
+          E->Operands[1 - I]->Type->Kind == NdTypeKind::Int &&
+          E->Operands[1 - I]->Type->Size == E->Type->Size &&
+          zeroOrOne(E->Operands[1 - I])) {
+        Replace(asIntegerType(E->Operands[1 - I], E->Type));
+        return;
+      }
 
   // `and [mem], 0` lifts as a read of the old value masked to zero.
   if ((E->Op == NdOp::INT_AND || E->Op == NdOp::INT_MULT) && E->Type &&

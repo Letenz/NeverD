@@ -1249,6 +1249,50 @@ TEST(HighControlFlowSemantics, AShiftByZeroIsItsOperand) {
   EXPECT_EQ(F.Body[0].RetVal->Op, NdOp::INT_RIGHT);
 }
 
+TEST(HighControlFlowSemantics, ATruthValueSelectingOneOrZeroIsItself) {
+  // -O0 AArch64 materializes `x == 0` as `cset w8, eq; and w8, w8, #1`,
+  // which reads `(x == 0 ? 1 : 0) & 1`.
+  auto Select = [](ExprPtr Condition, uint64_t Then, uint64_t Else) {
+    auto S = std::make_shared<HighExpr>();
+    S->Kind = ExprKind::BinOp;
+    S->Op = NdOp::SELECT;
+    S->Type = NdType::makeInt(4);
+    S->Operands = {std::move(Condition), HighExpr::makeConst(Then, 4),
+                   HighExpr::makeConst(Else, 4)};
+    return S;
+  };
+  for (const bool Inverted : {false, true}) {
+    SCOPED_TRACE(Inverted);
+    auto Equal = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                     HighExpr::makeConst(0, 8));
+    HighFunc F;
+    F.Body = {result(0, HighExpr::makeBinop(
+                            NdOp::INT_AND,
+                            Select(Equal, Inverted ? 0 : 1, Inverted ? 1 : 0),
+                            HighExpr::makeConst(1, 4)))};
+    simplifyAllExprs(F.Body);
+    const HighExpr &Value = *F.Body[0].RetVal;
+    ASSERT_EQ(Value.Kind, ExprKind::UnaryOp);
+    ASSERT_EQ(Value.Op, NdOp::INT_ZEXT);
+    EXPECT_EQ(Value.Type->Size, 4u);
+    const HighExpr *Truth = Value.Operands[0].get();
+    if (Inverted) {
+      ASSERT_EQ(Truth->Op, NdOp::BOOL_NOT);
+      Truth = Truth->Operands[0].get();
+    }
+    EXPECT_EQ(Truth->Op, NdOp::INT_EQUAL);
+  }
+  // A condition that may hold another number selects as `x != 0` does, and a
+  // value that may have other bits keeps its mask.
+  HighFunc F;
+  F.Body = {result(0, Select(local(0), 1, 0)),
+            result(4, HighExpr::makeBinop(NdOp::INT_AND, local(1),
+                                          HighExpr::makeConst(1, 8)))};
+  simplifyAllExprs(F.Body);
+  EXPECT_EQ(F.Body[0].RetVal->Op, NdOp::SELECT);
+  EXPECT_EQ(F.Body[1].RetVal->Op, NdOp::INT_AND);
+}
+
 TEST(HighControlFlowSemantics, MemoryBoundaryAncestorsMatchIndividualQueries) {
   for (const bool Atomic : {false, true}) {
     auto Memory = HighExpr::makeLoad(local(0), NdType::makeInt(8));

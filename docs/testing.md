@@ -7281,6 +7281,9 @@ MinGW's `__imp_X` variables, which hold the image's own code, relocated or in
 a fixed image, rather than naming an import by their spelling.
 `HighControlFlowSemantics.AShiftByZeroIsItsOperand` reads AArch64's bit-0
 `tbz` test as `x & 1`.
+`HighControlFlowSemantics.ATruthValueSelectingOneOrZeroIsItself` reads -O0
+AArch64's `cset w8, eq; and w8, w8, #1` as the comparison itself, or its
+negation, and keeps a selection by a value that may hold another number.
 
 `NeverDItaniumHandlerTests` spells Itanium landing pads as C++ handlers.
 `ItaniumHandlerBodies.ACleanupOnlyPadBecomesACatchAllThatRethrows` prints a
