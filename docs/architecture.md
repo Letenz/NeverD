@@ -7305,8 +7305,12 @@ observations. Bionic aliases enter this owner through the service registry.
 Guest path parsing retains a trailing separator's directory requirement
 separately from the catalogue key. Open, access and status share this lookup
 constraint. Directory creation resolves the parent and final name separately,
-so an existing final name still returns `EEXIST`. Catalogue configuration
-continues to require canonical file keys.
+so an existing final name still returns `EEXIST`. The same parser folds repeated
+separators after importing the original bounded guest string, as Linux's
+[`link_path_walk`](https://kernel.googlesource.com/pub/scm/linux/kernel/git/torvalds/linux/+/v4.9/fs/namei.c)
+does. Dot components and symbolic-link traversal retain their explicit
+unsupported boundaries. Catalogue configuration continues to require canonical
+file keys; no host path or filesystem participates in resolution.
 
 `LinuxFiles` shares pathname import and catalogue classification between open
 and existence queries. The catalogue's files, ancestor directories and root
