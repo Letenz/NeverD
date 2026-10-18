@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Undefined-output admission for complete legacy 128-bit vector moves.
+/// Undefined-output admission for legacy packed and scalar vector moves.
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_LIB_LIFT_X86_X86LEGACYVECTORMOVEAUDIT_H
@@ -14,16 +14,17 @@
 
 namespace neverd::vectormoveaudit {
 
-// Intel SDM Vol. 2B, MOVDQU/MOVDQA/MOVUPS/MOVUPD/MOVAPS/MOVAPD: all 128
-// destination bits are copied; legacy writes preserve higher vector bits and
-// flags. This is only undefined-output coverage, not a preserved-opaque-bank
-// audit. Aligned memory forms retain the lifter-owned alignment guard in the
-// bound operation span.
+// Intel SDM Vol. 2B: packed moves copy all 128 bits. MOVSS/MOVSD copy the low
+// scalar, merging register destinations or clearing the remaining XMM bits
+// for memory loads. Legacy writes preserve higher vector bits and flags.
+// This is only undefined-output coverage, not a preserved-opaque-bank audit.
+// Aligned forms retain the lifter-owned guard in the bound operation span.
 inline bool form(const cs_insn *Insn, Arch Target) {
   const auto &X = Insn->detail->x86;
   if (X.op_count != 2 || Insn->size > 15)
     return false;
   uint8_t RequiredPrefix = 0, LoadOpcode = 0, StoreOpcode = 0;
+  unsigned MemoryBytes = 16;
   switch (Insn->id) {
   case X86_INS_MOVDQU:
     RequiredPrefix = 0xf3;
@@ -52,6 +53,18 @@ inline bool form(const cs_insn *Insn, Arch Target) {
     RequiredPrefix = 0x66;
     LoadOpcode = 0x28;
     StoreOpcode = 0x29;
+    break;
+  case X86_INS_MOVSS:
+    RequiredPrefix = 0xf3;
+    MemoryBytes = 4;
+    LoadOpcode = 0x10;
+    StoreOpcode = 0x11;
+    break;
+  case X86_INS_MOVSD:
+    RequiredPrefix = 0xf2;
+    MemoryBytes = 8;
+    LoadOpcode = 0x10;
+    StoreOpcode = 0x11;
     break;
   default:
     return false;
@@ -84,7 +97,7 @@ inline bool form(const cs_insn *Insn, Arch Target) {
   const uint8_t ModRM = Insn->bytes[Pos + 2];
   const unsigned AddressSize =
       Long ? (AddressPrefix ? 4 : 8) : (AddressPrefix ? 2 : 4);
-  // Capstone removes mandatory F3 from its normalized repeat-prefix field;
+  // Capstone removes mandatory F2/F3 from its normalized repeat-prefix field;
   // the raw prefix above remains authoritative for the instruction identity.
   if ((Opcode != LoadOpcode && Opcode != StoreOpcode) || X.modrm != ModRM ||
       X.encoding.modrm_offset != Pos + 2 || X.opcode[0] != 0x0f ||
@@ -96,7 +109,8 @@ inline bool form(const cs_insn *Insn, Arch Target) {
       X.avx_rm != X86_AVX_RM_INVALID || X.avx_cc != X86_AVX_CC_INVALID)
     return false;
   for (unsigned I = 0; I != 2; ++I)
-    if (X.operands[I].size != 16 ||
+    if (X.operands[I].size !=
+            (X.operands[I].type == X86_OP_MEM ? MemoryBytes : 16) ||
         X.operands[I].avx_bcast != X86_AVX_BCAST_INVALID ||
         X.operands[I].avx_zero_opmask)
       return false;
@@ -114,8 +128,8 @@ inline bool form(const cs_insn *Insn, Arch Target) {
     return !AddressPrefix && !(Rex & 2) && Pos + 3 == Insn->size &&
            !X.encoding.disp_size && !X.encoding.disp_offset && !X.disp &&
            !X.sib && Register(RMOperand, (ModRM & 7) + ((Rex & 1) ? 8 : 0));
-  return legacyaudit::memoryOperand(Insn, RMOperand, 16, AddressSize, Long, Rex,
-                                    Pos + 3);
+  return legacyaudit::memoryOperand(Insn, RMOperand, MemoryBytes, AddressSize,
+                                    Long, Rex, Pos + 3);
 }
 
 } // namespace neverd::vectormoveaudit

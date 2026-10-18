@@ -2099,3 +2099,10 @@ ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverD
 cmake --build build-release --target NeverDX86NativeStateAuditTests
 ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
 ```
+
+`NeverDX86ScalarMoveAuditTests` は従来の MOVSS/MOVSD を元の命令バイトと完全なデコーダ詳細に照らして厳密に検査します。独立したバイト単位の期待値はレジスタマージ、メモリロードのゼロ拡張、スカラーストア、全アラインメント剰余、16/32/64 ビットのアドレス計算、全レジスタ・フラグ・MXCSR の保持を確認します。メモリ不足や読み取り専用領域へのストアはアーキテクチャ上の出力を確定してはなりません。文字列、VEX/EVEX、セグメント、不正形式は受理せず、記録は全操作範囲を束縛しても不透明状態の保持を保証しません。
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```

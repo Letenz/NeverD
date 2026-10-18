@@ -2167,3 +2167,10 @@ ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverD
 cmake --build build-release --target NeverDX86NativeStateAuditTests
 ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
 ```
+
+`NeverDX86ScalarMoveAuditTests` строго проверяет классические MOVSS/MOVSD по исходным байтам и полным деталям декодера. Независимые побайтовые эталоны охватывают слияние регистров, расширение нулями при загрузке, скалярные записи, все остатки выравнивания, адресацию 16/32/64 бит и полное сохранение регистров, флагов и MXCSR. Отсутствующие байты или запись в память только для чтения не должны фиксировать архитектурные выходы. Строковые, VEX/EVEX, сегментированные и некорректные формы остаются запрещены; квитанции связывают все операции, не подтверждая сохранение непрозрачного состояния.
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```

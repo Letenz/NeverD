@@ -2195,3 +2195,10 @@ ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverD
 cmake --build build-release --target NeverDX86NativeStateAuditTests
 ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
 ```
+
+`NeverDX86ScalarMoveAuditTests` verifica rigorosamente MOVSS/MOVSD classico rispetto ai byte originali e a tutti i dettagli del decoder. Oracoli indipendenti per byte coprono fusione dei registri, estensione con zeri dei caricamenti, scritture scalari, tutti i residui di allineamento, indirizzamento a 16/32/64 bit e conservazione completa di registri, flag e MXCSR. Byte mancanti o scritture in memoria di sola lettura non devono confermare uscite architetturali. Le forme per stringhe, VEX/EVEX, segmentate e malformate restano rifiutate; le ricevute vincolano tutte le operazioni senza certificare la conservazione dello stato opaco.
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```

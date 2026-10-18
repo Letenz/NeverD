@@ -45,6 +45,11 @@ add_neverd_unittest(NeverDX86NativeStateAuditTests
   LINK_COMPONENTS InterpreterSpecialization Decode Lift IRLow Loader
 )
 
+add_neverd_unittest(NeverDX86ScalarMoveAuditTests
+  ScalarMoveAuditTests.cpp
+  LINK_COMPONENTS Decode Lift IRLow Loader
+)
+
 add_neverd_unittest(NeverDOriginalBinaryUndefinedIndependenceTests
   OriginalBinaryUndefinedIndependenceTests.cpp
   LINK_COMPONENTS BinaryInterpreterSpecialization

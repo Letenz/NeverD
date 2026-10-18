@@ -8780,3 +8780,10 @@ ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverD
 cmake --build build-release --target NeverDX86NativeStateAuditTests
 ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
 ```
+
+`NeverDX86ScalarMoveAuditTests` checks strict legacy MOVSS/MOVSD admission against original bytes and complete decoder detail. Independent byte oracles cover register merge, memory-load zero extension, scalar stores, every alignment, 16/32/64-bit addressing and complete register/flag/MXCSR preservation. Missing memory and read-only stores must not commit architectural outputs. Negative cases retain closed string, VEX/EVEX, segmented and malformed forms, and receipts bind the complete emitted span without granting opaque-state preservation.
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```

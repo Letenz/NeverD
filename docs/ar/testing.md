@@ -2125,3 +2125,10 @@ ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverD
 cmake --build build-release --target NeverDX86NativeStateAuditTests
 ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
 ```
+
+تتحقق `NeverDX86ScalarMoveAuditTests` بدقة من صيغ MOVSS/MOVSD التقليدية بمقارنتها بالبايتات الأصلية وتفاصيل فك الترميز الكاملة. تغطي مراجع مستقلة على مستوى البايت دمج السجلات والتمديد بالأصفار عند التحميل والكتابات العددية وجميع بواقي المحاذاة والعنونة ذات 16/32/64 بت وحفظ السجلات والأعلام وMXCSR بالكامل. يجب ألا تثبّت البايتات المفقودة أو الكتابة إلى ذاكرة للقراءة فقط أي مخرجات معمارية. تظل صيغ السلاسل وVEX/EVEX والصيغ المقطعية والمشوهة مرفوضة؛ وتربط الإيصالات جميع العمليات دون إثبات حفظ الحالة المعتمة.
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
