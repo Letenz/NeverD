@@ -43,6 +43,25 @@ bool isRecordTag(dw::Tag Tag) {
          Tag == dw::DW_TAG_union_type;
 }
 
+/// Whether \p Die is of a Go unit, whose functions list their results as
+/// parameters marked DW_AT_variable_parameter.
+bool ofGo(const llvm::DWARFDie &Die) {
+  llvm::DWARFUnit *Unit = Die.getDwarfUnit();
+  if (!Unit)
+    return false;
+  return dw::toUnsigned(Unit->getUnitDIE().find(dw::DW_AT_language), 0) ==
+         dw::DW_LANG_Go;
+}
+
+/// Whether \p Die, a record, holds a variant part, as a Rust enumeration
+/// with data does.
+bool hasVariants(const llvm::DWARFDie &Die) {
+  for (const llvm::DWARFDie &Child : Die.children())
+    if (Child.getTag() == dw::DW_TAG_variant_part)
+      return true;
+  return false;
+}
+
 bool isTypeTag(dw::Tag Tag) {
   return isRecordTag(Tag) || Tag == dw::DW_TAG_enumeration_type ||
          Tag == dw::DW_TAG_typedef;
@@ -200,6 +219,9 @@ private:
         return;
       }
       Local.Record = std::move(Record);
+      if (hasVariants(Die))
+        Local.Comment = "a Rust enumeration: its variants, which local "
+                        "types do not spell, are its bytes";
       ++(Kind == TypeKind::Union ? Stats.Unions : Stats.Structs);
     }
     Library.define(std::move(Local));
@@ -370,8 +392,27 @@ private:
     }
     case dw::DW_TAG_array_type:
       return array(Die, Why, Depth, ByValue);
-    case dw::DW_TAG_subroutine_type:
-      return function(Die, Why, Depth);
+    case dw::DW_TAG_subroutine_type: {
+      // A subroutine type with a size is a value of it: a Go func value,
+      // the address of the closure that calls the function.  Several
+      // results, which C returns as no one value, leave it an address.
+      const std::optional<uint64_t> Bytes =
+          unsignedOf(Die, dw::DW_AT_byte_size);
+      if (!Bytes)
+        return function(Die, Why, Depth);
+      const llvm::DWARFUnit *Unit = Die.getDwarfUnit();
+      if (!Unit || *Bytes != Unit->getAddressByteSize()) {
+        Why =
+            Refusal{"a function value of " + std::to_string(*Bytes) + " bytes"};
+        return nullptr;
+      }
+      TypeExprRef Function = function(Die, Why, Depth);
+      if (!Function && Why)
+        return nullptr;
+      return makePointer(Function ? std::move(Function)
+                                  : makeBuiltin(Builtin::Void),
+                         unsigned(*Bytes));
+    }
     case dw::DW_TAG_ptr_to_member_type:
       Why = Refusal{"a pointer to a member"};
       return nullptr;
@@ -518,6 +559,9 @@ private:
     return Element;
   }
 
+  /// A function type.  Go lists a function's results as parameters marked
+  /// DW_AT_variable_parameter: one is its result, and several, which C
+  /// returns as no one value, leave no function, with no reason.
   TypeExprRef function(const llvm::DWARFDie &Die, std::optional<Refusal> &Why,
                        unsigned Depth) {
     auto Function = std::make_shared<FunctionDef>();
@@ -528,6 +572,8 @@ private:
                            : makeBuiltin(Builtin::Void);
     if (!Function->Return)
       return nullptr;
+    const bool Go = ofGo(Die);
+    unsigned Results = 0;
     for (const llvm::DWARFDie &Child : Die.children()) {
       if (Child.getTag() == dw::DW_TAG_unspecified_parameters) {
         Function->Variadic = true;
@@ -535,6 +581,20 @@ private:
       }
       if (Child.getTag() != dw::DW_TAG_formal_parameter)
         continue;
+      if (Go && dw::toUnsigned(Child.find(dw::DW_AT_variable_parameter), 0)) {
+        const llvm::DWARFDie Result =
+            Child.getAttributeValueAsReferencedDie(dw::DW_AT_type);
+        if (++Results > 1)
+          continue;
+        Function->Return =
+            Result.isValid() ? expr(Result, Why, Depth + 1, false) : nullptr;
+        if (!Function->Return) {
+          if (!Why)
+            Why = Refusal{"a result of no type"};
+          return nullptr;
+        }
+        continue;
+      }
       const llvm::DWARFDie Type =
           Child.getAttributeValueAsReferencedDie(dw::DW_AT_type);
       Parameter Param;
@@ -548,6 +608,8 @@ private:
       }
       Function->Params.push_back(std::move(Param));
     }
+    if (Results > 1)
+      return nullptr;
     return makeFunction(std::move(Function));
   }
 
@@ -645,6 +707,30 @@ private:
     return Bytes;
   }
 
+  /// A Rust enumeration with data, whose variants local types do not spell:
+  /// its bytes, as large and as aligned as the enumeration, so that what
+  /// holds it lies where the compiler laid it.
+  std::shared_ptr<const RecordDef> variantBytes(const llvm::DWARFDie &Die,
+                                                std::optional<Refusal> &Why) {
+    const std::optional<uint64_t> Bytes = unsignedOf(Die, dw::DW_AT_byte_size);
+    const uint64_t Align = unsignedOf(Die, dw::DW_AT_alignment).value_or(0);
+    if (!Bytes || !Align || (Align & (Align - 1))) {
+      Why = Refusal{"variants, as a Rust enumeration's, of no stated "
+                    "alignment"};
+      return nullptr;
+    }
+    auto Record = std::make_shared<RecordDef>();
+    Record->Size = *Bytes;
+    Record->Alignment = uint32_t(Align);
+    if (*Bytes) {
+      Member Field;
+      Field.Name = "__variants";
+      Field.Type = makeArray(makeBuiltin(Builtin::UChar), *Bytes);
+      Record->Members.push_back(std::move(Field));
+    }
+    return Record;
+  }
+
   std::shared_ptr<const RecordDef> record(const llvm::DWARFDie &Die,
                                           std::optional<Refusal> &Why,
                                           unsigned Depth) {
@@ -655,10 +741,8 @@ private:
         uint32_t(unsignedOf(Die, dw::DW_AT_alignment).value_or(0));
     for (const llvm::DWARFDie &Child : Die.children()) {
       const dw::Tag Tag = Child.getTag();
-      if (Tag == dw::DW_TAG_variant_part) {
-        Why = Refusal{"variants, as a Rust enumeration's"};
-        return nullptr;
-      }
+      if (Tag == dw::DW_TAG_variant_part)
+        return variantBytes(Die, Why);
       if (Tag == dw::DW_TAG_inheritance) {
         if (Child.find(dw::DW_AT_virtuality)) {
           Why = Refusal{"a virtual base"};
@@ -744,8 +828,17 @@ private:
         Why = Refusal{"a member that does not begin at a byte"};
         return nullptr;
       }
+      // A member that holds no bytes, as Rust's () and PhantomData, lies
+      // nowhere a record's bytes say; C spells none.  An array of none, as
+      // a trailing `data[0]`, still names the bytes after it.
+      const bool Void = Field.Type->Kind == TypeExprKind::Builtin &&
+                        Field.Type->TheBuiltin == Builtin::Void;
+      if (!BitSize && Field.Type->Kind != TypeExprKind::Array &&
+          (Void || Library.sizeOf(*Field.Type) == std::optional<uint64_t>(0)))
+        continue;
       Record->Members.push_back(std::move(Field));
     }
+    distinctNames(*Record);
     // Rust lays a structure's fields out in an order of its own, which
     // DWARF lists in the source's: a structure holds them by offset.
     if (!Record->Union)
@@ -760,6 +853,29 @@ private:
       return nullptr;
     }
     return Record;
+  }
+
+  /// Numbers the second and later members of a name another has, as Go's
+  /// blank fields `_` are, past any name taken; the comment keeps it.
+  static void distinctNames(RecordDef &Record) {
+    llvm::StringSet<> Taken;
+    for (const Member &Field : Record.Members)
+      if (!Field.Name.empty())
+        Taken.insert(Field.Name);
+    llvm::StringMap<unsigned> Seen;
+    for (Member &Field : Record.Members) {
+      if (Field.Name.empty() || Seen[Field.Name]++ == 0)
+        continue;
+      unsigned Number = Seen[Field.Name] - 1;
+      std::string Name;
+      do
+        Name = Field.Name + std::to_string(Number++);
+      while (!Taken.insert(Name).second);
+      Field.Comment = Field.Comment.empty()
+                          ? "DWARF names it " + Field.Name
+                          : Field.Comment + "; DWARF names it " + Field.Name;
+      Field.Name = std::move(Name);
+    }
   }
 
   /// Gives \p Field, a bit-field, the storage unit it lives in, as the
