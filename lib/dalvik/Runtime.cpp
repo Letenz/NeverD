@@ -402,6 +402,28 @@ struct Runtime::State::Engine {
           continue;
         uint64_t value = 0;
         const auto &type = field.reference.type;
+        if (const auto *platform = program.platformValue(field)) {
+          if (const auto *text = std::get_if<std::string>(&platform->value)) {
+            auto bytes = javaStringBytes(*text);
+            auto string =
+                platform->intern_string
+                    ? state.heap->literal(*text)
+                    : state.heap->allocate(Object::String, "java/lang/String",
+                                           bytes.size());
+            if (!string)
+              fail(ExecutionStop::HeapLimit,
+                   "Java platform string storage budget exhausted");
+            if (!platform->intern_string) {
+              string->Bytes = std::move(bytes);
+              string->Length = string->Bytes.size() / 2;
+            }
+            value = string->Identity;
+          } else {
+            value = narrow(uint64_t(std::get<int64_t>(platform->value)), type);
+          }
+          storage.fields.emplace(&field, value);
+          continue;
+        }
         if (referenceType(type) &&
             !std::holds_alternative<std::monostate>(field.value) &&
             !(type == "Ljava/lang/String;" &&
@@ -1080,7 +1102,9 @@ struct Runtime::State::Engine {
   }
 };
 
-Program::Program(std::vector<Class> declarations) {
+Program::Program(
+    std::vector<Class> declarations,
+    std::optional<std::map<std::string, std::string>> android_properties) {
   for (auto &item : declarations) {
     if (item.name.starts_with("Ljava/") || item.name.starts_with("Ljavax/") ||
         item.name.starts_with("Landroid/") || item.name.starts_with("Ldalvik/"))
@@ -1089,6 +1113,8 @@ Program::Program(std::vector<Class> declarations) {
     if (!classes.emplace(std::move(name), std::move(item)).second)
       throw Error("duplicate supplied DEX class");
   }
+  if (android_properties)
+    addAndroidVersion(*android_properties);
 }
 bool Program::containsClass(std::string_view name) const {
   return findClass(name) != nullptr;

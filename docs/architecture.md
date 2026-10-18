@@ -7910,6 +7910,14 @@ public abstract interfaces are admitted without inventing implementations.
 Constructor chaining retains an uninitialized identity until the outermost
 constructor returns; premature escape remains a clear stop.
 
+`lib/dalvik/AndroidVersion.cpp` supplies the fixed API 28 scalar `Build.VERSION`
+declarations and property-derived initial values when Android opts into JNI.
+Program keeps those declarations separate from untrusted supplied DEX; Runtime
+materializes their fields once into this same Heap. JNI does not maintain a
+second version cache. Nonempty property strings and interned defaults retain
+their distinct allocation rules. This projection does not execute the enclosing
+framework initializer or infer application state.
+
 `dalvik::Heap` is the single retained Java object/array owner for JNI and DEX.
 Its bounded identities are separate from native reference handles and guest
 addresses. JNI borrows, object arrays and DEX array instructions all refer to the

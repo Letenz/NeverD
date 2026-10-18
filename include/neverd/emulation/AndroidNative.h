@@ -125,7 +125,8 @@ struct AndroidNativeOptions {
   bool DrainThreads = false;
   /// Opt into a bounded JNI 1.6 native-interface model. Threads initially
   /// remain detached. Intrinsic classes and explicitly supplied DEX bodies
-  /// share this workload VM; framework services are not inferred.
+  /// share this workload VM. Scalar API 28 Build.VERSION fields project the
+  /// explicit Properties snapshot; framework services are not inferred.
   bool JNI = false;
   /// Complete explicit DEX 035/037/038/039 images (Android API 28). No host
   /// classpath is consulted. Requires JNI; bounded integral static bodies only.

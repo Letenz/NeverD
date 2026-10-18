@@ -894,12 +894,13 @@ The supported class set comprises Object, Class, String, Throwable, Exception,
 Error, RuntimeException, NullPointerException, IllegalArgumentException, IndexOutOfBoundsException,
 ArrayIndexOutOfBoundsException, StringIndexOutOfBoundsException,
 NegativeArraySizeException, ArrayStoreException and OutOfMemoryError, plus the
-primitive and Object/String array classes. Unknown classes stop rather than
+primitive and Object/String array classes and the scalar Build.VERSION
+projection described below. Unknown classes stop rather than
 inventing an application class or assuming ClassNotFoundException. `ThrowNew`
 admits only a null message for these intrinsic throwable classes.
 
 Java execution includes the intrinsic methods and explicit integral DEX bodies
-below. There is no field execution, general class loader, native-method registration, monitor, weak-reference,
+below. There is no general class loader, native-method registration, monitor, weak-reference,
 critical/direct-buffer, GC or JIT model.
 Attachment names/groups and VM destruction also remain unsupported. The model
 retains at most 4096 objects and 4096 live references/borrows, with object storage
@@ -967,13 +968,42 @@ Semantic references are the pinned Android 9
 and JNI invocation contracts linked above. No host Java runtime is invoked.
 
 
+### Android version fields
+
+With `android.jni`, the bounded `android/os/Build$VERSION` scalar projection
+reads the same explicit `android.properties` snapshot as Bionic. It admits
+`INCREMENTAL`, `RELEASE`, `BASE_OS`, `SECURITY_PATCH`, `SDK`, `SDK_INT`,
+`FIRST_SDK_INT`, `PREVIEW_SDK_INT`, `CODENAME` and
+`MIN_SUPPORTED_TARGET_SDK_INT`. String defaults and signed 32-bit parsing follow
+[API 28 Build](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/Build.java),
+[SystemProperties JNI](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/jni/android_os_SystemProperties.cpp)
+and [ParseInt](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/base/include/android-base/parseint.h).
+Missing/empty values use the field's platform default; an invalid/overflowing
+integer becomes zero. Decimal leading zeroes are not octal, and hexadecimal
+requires `0x`/`0X` at the original start of the property.
+
+JNI and supplied DEX instructions use the same Runtime field and heap identity.
+Nonempty property Strings are separate from interned literals; a default keeps
+its literal identity. Repeated reads and detach/reattach retain the field value.
+Final writes, wrong accessors, forged identities, unknown fields, malformed
+property encodings and exhausted budgets fail explicitly.
+
+This is a read-only scalar view of platform state, not execution of the full
+framework class initializer, enclosing `Build` class, array/resource-version
+fields or a host boot classpath. Changing property values does not change the
+API 28 execution profile. Supplied DEX still cannot replace platform classes.
+No application context, registration, service reply or SDK-private cache is
+created by this projection.
+
 ## Explicit DEX methods and object state
 
 With JNI enabled, `android.dex_images` accepts an array of complete hex-encoded
 DEX images. This is an explicit classpath for this workload; the model never
 searches the host, phone, APK store or network. The Android API 28 profile admits
 versions 035, 037, 038 and 039, at most 16 images and 1 MiB of input, further
-limited by the process memory allowance. The shared DEX reader checks container
+limited by the process memory allowance. The process JSON contract reserves
+2 MiB for this hexadecimal payload in addition to its 64 KiB metadata budget;
+other fields and escape overhead receive no extra allowance. The shared DEX reader checks container
 checksums, metadata, instruction boundaries and code flow before native guest
 constructors run. Duplicate definitions and platform class replacements fail.
 The reader's existing annotation and format restrictions also apply.

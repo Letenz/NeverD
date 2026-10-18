@@ -56,6 +56,35 @@ TEST_P(AndroidJNI, VMThreadAttachmentAndVersions) {
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);
 }
+TEST_P(AndroidJNI, BuildVersionFieldsUseTheNativePropertySnapshot) {
+  Options.Android->Properties = {{"ro.build.version.release", "9.2"},
+                                 {"ro.build.version.incremental", "9.2"},
+                                 {"ro.build.version.sdk", "0x1c"}};
+  Options.Android->Arguments = {28, 1};
+  auto R = run("jni_build_version");
+  EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, BuildVersionMissingAndEmptyPropertiesKeepPlatformDefaults) {
+  Options.Android->Properties = {{"ro.build.version.release", ""}};
+  Options.Android->Arguments = {0, 0};
+  auto R = run("jni_build_version");
+  EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, BuildVersionRejectsWrongTypesWritesAndUnknownFields) {
+  for (const char *Entry :
+       {"jni_build_version_wrong_accessor", "jni_build_version_write",
+        "jni_build_version_unknown_field"}) {
+    auto R = run(Entry);
+    EXPECT_EQ(R.Stop, std::string_view(Entry).ends_with("unknown_field")
+                          ? ProcessStopReason::UnsupportedService
+                          : ProcessStopReason::RuntimeFailure)
+        << Entry << R.Diagnostic;
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_FALSE(R.NativeCalls.back().Result.has_value());
+  }
+}
 TEST_P(AndroidJNI, ModifiedUTF8UTF16AndRangeException) {
   auto R = run("jni_string_values");
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;

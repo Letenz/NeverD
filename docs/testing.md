@@ -3472,6 +3472,20 @@ ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMI
 
 ## Process emulation checks
 
+`AndroidJNI.BuildVersion*` compares JNI version fields with native property
+reads across O0/O2, relocation packing and available CPU backends. It checks
+property/default string identity, signed SDK values, field IDs surviving
+detach/reattach, wrong accessor/write refusal and unknown fields.
+`AndroidVersion.*` in `NeverDDalvikTests` checks shared DEX/direct-field identity,
+Android integer parsing boundaries, noninterned UTF-16 values, rejected platform
+replacement, malformed inputs and terminal heap exhaustion. Run the complete
+Dalvik and Android JNI suites when changing this shared field owner.
+`ProcessReport.DexWireBudgetPreservesTheMetadataAndDecodedByteBounds` checks the
+full 1 MiB DEX allowance, split images, both wire limits and malformed inputs.
+`ProcessPublic.DexWireAllowanceReachesSharedValidation` checks that the C API
+admits a large request to the DEX validator while retaining the non-DEX text
+limit. The wire allowance never bypasses DEX container validation.
+
 `AndroidSleepTests.cpp` compiles independent O0/O2 callers with ordinary, APS2 and
 RELR relocations. It checks raw, named and variadic relative sleeps, complete
 observed bytes, request/remaining aliases, malformed inputs, multiple deadlines,
