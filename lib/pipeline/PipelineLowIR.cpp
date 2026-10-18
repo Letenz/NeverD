@@ -3777,15 +3777,36 @@ struct PipelineAnalysisCache::Impl {
                                         limits::kMaxPipelineCallBodyBytes},
                                        &this->Entries)) {}
 
+  /// \p CandidateEntries is sorted and holds each entry once.
   bool matches(const BinaryImage &Img, DebugContext *Dbg,
-               const std::set<va_t> &CandidateEntries) const {
+               llvm::ArrayRef<va_t> CandidateEntries) const {
     // Object identity is only a guard: the owner must retire this state on
     // reload/mutation. These two inventories can grow during const analysis,
     // and affect CFG boundaries, ownership and proof work charges.
-    return Image == &Img && Debug == Dbg && Entries == CandidateEntries &&
+    return Image == &Img && Debug == Dbg &&
+           std::equal(Entries.begin(), Entries.end(), CandidateEntries.begin(),
+                      CandidateEntries.end()) &&
            VerifiedEntries == Img.VerifiedFunctionEntries;
   }
 };
+
+namespace {
+/// The starts of the image's function symbols that are not boundary
+/// guesses, sorted and each once: the entries every run knows.  An image
+/// holds tens of thousands, which a sorted vector gathers and compares with
+/// the kept facts' far sooner than a set is built and torn down per run.
+std::vector<va_t> symbolFunctionStarts(const BinaryImage &Img,
+                                       const std::set<va_t> &BoundaryGuesses) {
+  std::vector<va_t> Starts;
+  Starts.reserve(Img.Symbols.size());
+  for (const auto &Sym : Img.Symbols)
+    if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
+      Starts.push_back(Sym.Addr);
+  llvm::sort(Starts);
+  Starts.erase(std::unique(Starts.begin(), Starts.end()), Starts.end());
+  return Starts;
+}
+} // namespace
 
 std::optional<AnalysisCacheWarmup>
 Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
@@ -3794,16 +3815,15 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
     return std::nullopt;
   // The entries a selected-function run of a symbol start knows (buildLowIR
   // below): its own entry adds nothing to them, so its run shares this state.
-  const std::set<va_t> BoundaryGuesses = Img.boundaryGuessFunctionStarts();
-  std::set<va_t> CandidateEntries;
-  for (const auto &Sym : Img.Symbols)
-    if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
-      CandidateEntries.insert(Sym.Addr);
+  const std::vector<va_t> CandidateEntries =
+      symbolFunctionStarts(Img, Img.boundaryGuessFunctionStarts());
   PipelineAnalysisCache &Cache = *Opts.AnalysisCache;
   // Facts for another symbol inventory serve no later run.
   if (!Cache.Facts || !Cache.Facts->matches(Img, Dbg, CandidateEntries)) {
     Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
-        Img, Dbg, std::move(CandidateEntries), /*RetainBodies=*/true);
+        Img, Dbg,
+        std::set<va_t>(CandidateEntries.begin(), CandidateEntries.end()),
+        /*RetainBodies=*/true);
   } else {
     Cache.Facts->Callees.trimMemoizedProofs(
         limits::kMaxRetainedNoReturnAnswers);
@@ -3834,22 +3854,35 @@ void Pipeline::buildLowIR(
   const std::set<va_t> BoundaryGuesses = Img.boundaryGuessFunctionStarts();
   // The same symbol inventory owns both full-image and selected-function CFGs;
   // unselected bodies need not be lifted to preserve their entry boundaries.
-  std::set<va_t> CandidateEntries;
-  for (const auto &Sym : Img.Symbols)
-    if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
-      CandidateEntries.insert(Sym.Addr);
-  bool AddsEntries = false;
+  std::vector<va_t> CandidateEntries =
+      symbolFunctionStarts(Img, BoundaryGuesses);
+  std::vector<va_t> Added;
+  const auto Add = [&](va_t Entry) {
+    if (!std::binary_search(CandidateEntries.begin(), CandidateEntries.end(),
+                            Entry))
+      Added.push_back(Entry);
+  };
   for (const auto &C : Candidates)
     if (!BoundaryGuesses.count(C.first))
-      AddsEntries |= CandidateEntries.insert(C.first).second;
+      Add(C.first);
   if (Opts.OnlyFunctionEntries.empty()) {
     // A chained-unwind continuation is part of its parent function: a jump
     // to it must be followed, not modeled as a tail call to a missing one.
     for (const auto &[Start, End] : Img.KnownCodeRanges) {
       (void)End;
       if (Start != 0 && !Img.ContinuationCodeStarts.count(Start))
-        AddsEntries |= CandidateEntries.insert(Start).second;
+        Add(Start);
     }
+  }
+  const bool AddsEntries = !Added.empty();
+  if (AddsEntries) {
+    llvm::sort(Added);
+    Added.erase(std::unique(Added.begin(), Added.end()), Added.end());
+    const size_t Symbols = CandidateEntries.size();
+    CandidateEntries.insert(CandidateEntries.end(), Added.begin(), Added.end());
+    std::inplace_merge(CandidateEntries.begin(),
+                       CandidateEntries.begin() + Symbols,
+                       CandidateEntries.end());
   }
   const bool Restricted =
       !Opts.OnlyFunctionEntries.empty() || Opts.MaxFunctions != 0;
@@ -3864,7 +3897,9 @@ void Pipeline::buildLowIR(
       AddsEntries ? Cache.SelectionFacts : Cache.Facts;
   if (!Kept || !Kept->matches(Img, Dbg, CandidateEntries))
     Kept = std::make_shared<PipelineAnalysisCache::Impl>(
-        Img, Dbg, std::move(CandidateEntries), Restricted);
+        Img, Dbg,
+        std::set<va_t>(CandidateEntries.begin(), CandidateEntries.end()),
+        Restricted);
   else {
     // Earlier runs' no-return answers hold for the same facts, and replaying
     // a retained body asks them again; the screening data behind them does

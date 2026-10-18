@@ -444,12 +444,24 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       std::set<va_t> NonLeaf;
       if (Img.Arch == Arch::X64 && Img.Format == BinaryFormat::COFF &&
           !Img.KnownCodeRanges.empty()) {
-        std::set<va_t> UnwindStarts;
-        for (const auto &[Start, End] : Img.KnownCodeRanges)
-          if (!Img.ContinuationCodeStarts.count(Start))
-            UnwindStarts.insert(Start);
+        // Whether a primary unwind record starts at Entry: a run lifts a few
+        // functions, and an image holds tens of thousands of records.  They
+        // are sorted once exceptions are parsed; any other order is scanned.
+        const auto &Ranges = Img.KnownCodeRanges;
+        const bool Sorted = std::is_sorted(Ranges.begin(), Ranges.end());
+        const auto StartsUnwind = [&](va_t Entry) {
+          if (Img.ContinuationCodeStarts.count(Entry))
+            return false;
+          if (!Sorted)
+            return llvm::any_of(Ranges, [&](const auto &Range) {
+              return Range.first == Entry;
+            });
+          const auto It = std::lower_bound(Ranges.begin(), Ranges.end(),
+                                           std::pair<va_t, va_t>(Entry, 0));
+          return It != Ranges.end() && It->first == Entry;
+        };
         for (const auto &LF : Result.LowFuncs)
-          if (!Absorbed.count(LF.Entry) && !UnwindStarts.count(LF.Entry) &&
+          if (!Absorbed.count(LF.Entry) && !StartsUnwind(LF.Entry) &&
               isSynthesizedFuncName(LF.Name) && movesStackOrCalls(LF))
             NonLeaf.insert(LF.Entry);
       }
