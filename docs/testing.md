@@ -4,6 +4,10 @@
 
 # Testing NeverD
 
+`NeverDSymLoadOriginBindingTests` checks transactional history rebinding,
+sorted conflict unions, independent forks and invalid batches. Historical
+metadata never creates available bytes or restores a pre-clobber memory epoch.
+
 `AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
 packed and RELR relocations on available CPU backends. Independent byte oracles
 cover word boundaries, untouched canaries, boolean queries, full-width extents,

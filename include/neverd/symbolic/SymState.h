@@ -199,6 +199,17 @@ public:
   /// should inspect `loadOrigins` instead.
   const LoadOrigin *loadOrigin(SymRef Value) const;
 
+  struct LoadOriginBinding {
+    SymRef Value;
+    LoadOrigin Origin;
+  };
+  /// Bind historical observations after a caller-proved value rebind. All
+  /// references belong to this context; each origin describes the complete
+  /// value. This never creates available memory facts or revives old bytes.
+  /// Conflicting origins remain a sorted union. Invalid values/addresses or
+  /// width mismatches reject the entire batch before publishing any history.
+  bool bindLoadOrigins(llvm::ArrayRef<LoadOriginBinding> Bindings);
+
   struct MemoryInputOrigin {
     SymRef Base;
     uint64_t Offset = 0;
