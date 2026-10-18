@@ -2522,6 +2522,7 @@ set(X86_64_TEST_SOURCES
   x86_64/test_jumptable_recursive.c
   x86_64/test_jumptable_rbp_base.s
   x86_64/test_jumptable_tail_stub.s
+  x86_64/test_jumptable_guard_chain.c
   x86_64/test_jumptable_inclusive_postload_clobber.s
   x86_64/test_jumptable_inclusive_postload_unrelated.s
   x86_64/test_jumptable_inclusive_preload_alias.s
@@ -2865,6 +2866,10 @@ foreach(src ${X86_64_TEST_SOURCES})
   elseif(src MATCHES "test_jumptable_recursive")
     # A position-independent table, whose offsets carry no relocation.
     set(extra_flags -O1 -fPIC)
+  elseif(src MATCHES "test_jumptable_guard_chain")
+    # -O0 compares a sparse switch's cases one by one, and the dense switch
+    # after it gets a position-independent table.
+    set(extra_flags -O0 -fPIC)
   elseif(src MATCHES "test_switch|test_jumptable")
     set(extra_flags -O1)
   elseif(src MATCHES "test_bmi")
