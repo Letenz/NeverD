@@ -403,6 +403,33 @@ TEST(SourceDialect, SpellsSparseArraysAndOneDeclarationPerObject) {
   EXPECT_EQ(Go.find("var counter int64\n"), std::string::npos) << Go;
 }
 
+TEST(SourceDialect, SpellsImageBytesFromStringsAndCharacters) {
+  // The emitter spells an image's bytes as a string, or as a list with text
+  // as characters.  Each dialect spells the same bytes, which C zero-fills
+  // past the initializer.
+  const char *C =
+      "unsigned char text[8] = \"a\\\"\\\\\\000\\n\\377\";\n"
+      "unsigned char list[6] = { '@', '\\'', 0x88, [5] = '\\\\', };\n";
+  const std::string Rust = spell(C, SourceDialect::Rust).Text;
+  EXPECT_NE(Rust.find(R"(static mut text: [u8; 8] = *b"a\"\\\0\n\xFF\0\0";)"),
+            std::string::npos)
+      << Rust;
+  EXPECT_NE(
+      Rust.find(
+          R"(static mut list: [u8; 6] = [b'@', b'\'', 0x88, 0, 0, b'\\'];)"),
+      std::string::npos)
+      << Rust;
+  const std::string Go = spell(C, SourceDialect::Go).Text;
+  EXPECT_NE(
+      Go.find(R"(var text [8]uint8 = [8]uint8{'a', '"', '\\', 0, 0xA, 0xFF})"),
+      std::string::npos)
+      << Go;
+  EXPECT_NE(
+      Go.find(R"(var list [6]uint8 = [6]uint8{'@', '\'', 0x88, 5: '\\'})"),
+      std::string::npos)
+      << Go;
+}
+
 TEST(SourceDialect, ShowsWhatItCannotSpellAsC) {
   const char *C = "#include <stdint.h>\n"
                   "int64_t k(int64_t v) {\n"

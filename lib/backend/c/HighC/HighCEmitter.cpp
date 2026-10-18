@@ -93,10 +93,26 @@ std::string uintptrOf(llvm::StringRef Address) {
   return "(uintptr_t)(" + Address.str() + ")";
 }
 
-/// How many pointer words, and how many nonzero bytes, a long image
-/// initializer gives each line.
+/// How many pointer words a long image initializer gives each line.
 constexpr uint64_t ImageWordsPerLine = 8;
-constexpr uint64_t ImageBytesPerLine = 16;
+/// The characters a line of a long list or string of image bytes holds at
+/// most, and from how many a string's line ends after a NUL or a newline.
+constexpr uint64_t ImageLineChars = 96;
+constexpr uint64_t ImageStringBreakChars = 48;
+/// The longest string C promises to translate (C11 5.2.4.1).
+constexpr uint64_t ImageStringMaxBytes = 4095;
+
+/// A byte as an element of a list of image bytes: text as its character, a
+/// zero as 0, and any other byte in hexadecimal.
+std::string byteListElement(uint8_t Byte) {
+  if (!Byte)
+    return "0";
+  if (Byte == '\'' || Byte == '\\')
+    return {'\'', '\\', static_cast<char>(Byte), '\''};
+  if (Byte >= 32 && Byte < 127)
+    return {'\'', static_cast<char>(Byte), '\''};
+  return "0x" + llvm::utohexstr(Byte);
+}
 
 unsigned partialIntegerBytes(const TypeRef &Type) {
   if (!Type ||
@@ -3025,28 +3041,7 @@ void HighCWriter::writeImageObjects() {
       OS << "_Alignas(" << Backing.Align << ") ";
     OS << "unsigned char " << Backing.Name << "["
        << Backing.Pad + (Backing.End - Backing.Base) << "]";
-    // A long initializer takes a few bytes a line, so no line runs to the
-    // object's size.
-    uint64_t NonZero = 0;
-    for (va_t Addr = Backing.Base; Addr < Backing.End; ++Addr)
-      if (const uint8_t *Byte = Opts.Image->readVA(Addr, 1); Byte && *Byte)
-        ++NonZero;
-    const bool Wrapped = NonZero > ImageBytesPerLine;
-    uint64_t Written = 0;
-    for (va_t Addr = Backing.Base; Addr < Backing.End; ++Addr) {
-      const uint8_t *Byte = Opts.Image->readVA(Addr, 1);
-      if (!Byte || !*Byte)
-        continue;
-      if (!Written)
-        OS << " = {";
-      if (Wrapped && Written % ImageBytesPerLine == 0)
-        OS << "\n ";
-      OS << " [" << Backing.Pad + (Addr - Backing.Base) << "] = 0x"
-         << llvm::utohexstr(*Byte) << ",";
-      ++Written;
-    }
-    if (Written)
-      OS << (Wrapped ? "\n}" : " }");
+    writeBackingBytes(Backing);
     OS << ";\n";
   }
   // Every object has its name before any initializer names it.
@@ -3112,6 +3107,93 @@ void HighCWriter::writeImageObjects() {
   }
   writePointerBackings(Deferred);
   OS << "\n";
+}
+
+void HighCWriter::writeBackingBytes(const ImageBacking &Backing) {
+  // The bytes after the alignment padding are the image's; a byte it does
+  // not hold is zero.
+  std::vector<uint8_t> Bytes(Backing.Pad + (Backing.End - Backing.Base));
+  for (va_t Addr = Backing.Base; Addr < Backing.End; ++Addr)
+    if (const uint8_t *Byte = Opts.Image->readVA(Addr, 1))
+      Bytes[Backing.Pad + (Addr - Backing.Base)] = *Byte;
+  // C zeroes what an initializer leaves out, so it stops at the last nonzero
+  // byte.  A list gives the bytes in order and names an index only after
+  // more zeros than it takes to write (" 0," each).
+  size_t Used = Bytes.size();
+  while (Used && !Bytes[Used - 1])
+    --Used;
+  if (!Used)
+    return;
+  std::vector<std::string> Elements;
+  size_t ListChars = 0;
+  for (size_t I = 0, Next = 0; I < Used; ++I) {
+    if (!Bytes[I])
+      continue;
+    std::string Element = "[" + std::to_string(I) + "] = ";
+    if ((I - Next) * 3 <= Element.size()) {
+      Elements.insert(Elements.end(), I - Next, "0");
+      Element.clear();
+    }
+    Elements.push_back(Element + byteListElement(Bytes[I]));
+    Next = I + 1;
+  }
+  for (const std::string &Element : Elements)
+    ListChars += Element.size() + 2;
+  // A string is shorter for text, and reads as it.  C promises compilers
+  // take strings of 4095 characters, and stores a NUL after them, so the
+  // array needs a byte to spare (C++ and GCC's
+  // -Wunterminated-string-initialization require it).
+  if (Used <= ImageStringMaxBytes && Used < Bytes.size()) {
+    std::string Escaped;
+    std::vector<size_t> Ends(Used);
+    for (size_t I = 0; I < Used; ++I) {
+      Escaped += escapeCString(
+          llvm::StringRef(reinterpret_cast<const char *>(&Bytes[I]), 1));
+      Ends[I] = Escaped.size();
+    }
+    if (Escaped.size() < ListChars) {
+      // A line ends between bytes: after a NUL or a newline once it is long
+      // enough, where the image's strings end, and before it runs too long.
+      std::vector<std::pair<size_t, size_t>> Lines;
+      size_t LineBegin = 0;
+      for (size_t I = 0; I < Used; ++I) {
+        const size_t PieceBegin = I ? Ends[I - 1] : 0;
+        if (PieceBegin > LineBegin && Ends[I] - LineBegin > ImageLineChars) {
+          Lines.emplace_back(LineBegin, PieceBegin);
+          LineBegin = PieceBegin;
+        }
+        if ((!Bytes[I] || Bytes[I] == '\n') &&
+            Ends[I] - LineBegin >= ImageStringBreakChars) {
+          Lines.emplace_back(LineBegin, Ends[I]);
+          LineBegin = Ends[I];
+        }
+      }
+      if (LineBegin < Escaped.size())
+        Lines.emplace_back(LineBegin, Escaped.size());
+      if (Lines.size() == 1) {
+        OS << " = \"" << Escaped << "\"";
+        return;
+      }
+      OS << " =";
+      for (const auto &[Begin, End] : Lines)
+        OS << "\n  \"" << llvm::StringRef(Escaped).slice(Begin, End) << "\"";
+      return;
+    }
+  }
+  // A long list takes a few elements a line, so no line runs to the
+  // object's size.
+  const bool Wrapped = ListChars > ImageLineChars;
+  OS << " = {";
+  size_t Line = 0;
+  for (const std::string &Element : Elements) {
+    if (Wrapped && (!Line || Line + Element.size() + 2 > ImageLineChars)) {
+      OS << "\n ";
+      Line = 0;
+    }
+    OS << " " << Element << ",";
+    Line += Element.size() + 2;
+  }
+  OS << (Wrapped ? "\n}" : " }");
 }
 
 std::string HighCWriter::backingReadable(const ImageBacking &Backing) const {

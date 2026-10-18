@@ -130,6 +130,15 @@ protected:
   }
   unsigned depth() const { return Depth; }
 
+  //===--- Literals ---===//
+
+  /// The bytes a narrow string literal spells, its parts joined, without its
+  /// terminator; none for another kind of string.
+  static std::optional<std::string> stringBytes(const Expr *E);
+  /// Whether \p Ty is an array of a known number of bytes (unsigned 8-bit
+  /// integers), as the emitter declares an image's bytes.
+  static bool byteArray(const CType *Ty);
+
   //===--- The program's types ---===//
 
   /// How the language reaches the member \p E names, a `.` or `->` access,

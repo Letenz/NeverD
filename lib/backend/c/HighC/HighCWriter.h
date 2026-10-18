@@ -1370,6 +1370,10 @@ public:
   /// the backing's `neverd.image` line names it; empty for a name the
   /// emitter made.
   std::string backingReadable(const ImageBacking &Backing) const;
+  /// The initializer of a backing's bytes, if any byte is nonzero: a string
+  /// of them within C's translation limits, or a list of them, whichever is
+  /// shorter.
+  void writeBackingBytes(const ImageBacking &Backing);
   /// The C address a relocated pointer slot holds: the function or data it
   /// names, or none when no C object names it.
   std::optional<std::string> relocatedSlotTarget(va_t Slot) const;
