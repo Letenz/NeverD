@@ -632,6 +632,10 @@ public:
   /// Whether the unit includes the standard header that declares the C
   /// library routine \p Name (libc::headerFor).
   bool includesHeaderOf(llvm::StringRef Name) const;
+  /// Whether the user declares the routine the call target \p Name names
+  /// (userPrototype): the unit declares it as the user does, not through
+  /// the header that declares the C library's routine of the name.
+  bool userDeclaresCallee(llvm::StringRef Name) const;
   TypeRef expectedDebugCallArgType(const FunctionSym &FS, size_t Index) const;
   TypeRef displayCallArgType(const HighExpr &Call, size_t Index) const;
   /// Display-only printed arity from TPI/PDB or \ref msvcCallee.

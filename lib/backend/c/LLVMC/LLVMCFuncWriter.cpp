@@ -25,6 +25,7 @@
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/ExceptionCommon.h"
 #include "neverd/loader/ExceptionEncoding.h"
@@ -2758,6 +2759,10 @@ LLVMCWriter::debugFunction(const llvm::Function &Callee) const {
         return FS;
   }
   return std::nullopt;
+}
+
+bool LLVMCWriter::userDeclaresRoutine(llvm::StringRef CName) const {
+  return !CName.empty() && userPrototype(Dbg, CName).has_value();
 }
 
 bool LLVMCWriter::calleeReturnsNothing(const llvm::CallBase &Call) const {
