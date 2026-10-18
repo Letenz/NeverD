@@ -459,10 +459,16 @@ bool chooseLibraries(neverd_session_t Sess) {
       Added.push_back(Name);
   json::Object Choice{{"added", json::Array(Added)},
                       {"removed", json::Array(Removed)}};
-  return reply(Sess,
-               neverd_type_libraries_set(Sess, text(std::move(Choice)).c_str()),
-               "types")
-      .has_value();
+  if (!reply(Sess,
+             neverd_type_libraries_set(Sess, text(std::move(Choice)).c_str()),
+             "types"))
+    return false;
+  // The project keeps the choice, as the workbench's does.
+  if (neverd_type_libraries_save(Sess) != 0) {
+    WithColor::error() << "types: " << takeLastError(Sess) << "\n";
+    return false;
+  }
+  return true;
 }
 
 /// The type libraries, as the workbench's Type libraries window lists them:

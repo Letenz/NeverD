@@ -179,10 +179,10 @@ library gives a name two declare. The libraries joined are listed first, in
 the order they join, then the others. `type_libraries_set {added?,removed?}` is a
 writer command that sets the choice whole, each a list of library names: an
 added library must be compatible and none of the image's, a removed one the
-image's. The engine keeps it in the project folder's `libraries.json`, which
-it reads again with the binary, so an analysis replica and the next session
-join the same libraries; it is no step of undo history, as a debug file's
-choice is none. The program's types are read anew and the analysis starts
+image's. The worker writes it to the project folder's `libraries.json` under
+the writer lock it holds, and the engine reads that again with the binary, so
+an analysis replica and the next session join the same libraries; it is no
+step of undo history, as a debug file's choice is none. The program's types are read anew and the analysis starts
 over. `project_sync` reads a `libraries.json` changed outside the worker and
 says so as `type_libraries`. Both are listed in `capabilities` when the
 engine has them.

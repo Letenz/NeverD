@@ -178,15 +178,19 @@ NEVERD_API int neverd_type_declarations_load(neverd_session_t Sess);
 /// neverd_free_string; NULL with neverd_last_error.
 NEVERD_API const char *neverd_type_libraries_json(neverd_session_t Sess);
 /// Sets the libraries the program joins beyond its image's own and of those
-/// it leaves out, {"added":[name,...],"removed":[name,...]}, which
-/// `<input>.neverd/libraries.json` keeps and neverd_session_load reads: an
-/// added library must be compatible and none of the image's, a removed one
-/// the image's.  The program's types are read anew.  Returns
-/// neverd_type_libraries_json's answer, or NULL with neverd_last_error.
+/// it leaves out, {"added":[name,...],"removed":[name,...]}: an added
+/// library must be compatible and none of the image's, a removed one the
+/// image's.  The program's types are read anew; neverd_type_libraries_save
+/// keeps the choice.  Returns neverd_type_libraries_json's answer, or NULL
+/// with neverd_last_error.
 NEVERD_API const char *neverd_type_libraries_set(neverd_session_t Sess,
                                                  const char *Json);
-/// Reads libraries.json again, as after another's change to the project;
-/// none is the image's own.  0, or -1 with neverd_last_error.
+/// Write or read the choice as `<input>.neverd/libraries.json`, which
+/// neverd_session_load reads too; without the file the program joins its
+/// image's libraries.  Reading it, as after another's change to the
+/// project, reads the program's types anew.  Return 0, or -1 with
+/// neverd_last_error.
+NEVERD_API int neverd_type_libraries_save(neverd_session_t Sess);
 NEVERD_API int neverd_type_libraries_load(neverd_session_t Sess);
 
 /// The local types a pointer may point at, best first, judged by what the

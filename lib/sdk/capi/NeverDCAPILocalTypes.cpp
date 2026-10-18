@@ -1294,18 +1294,6 @@ const char *neverd_type_libraries_set(neverd_session_t Sess, const char *Json) {
                   " is none the program joins of its own");
       return nullptr;
     }
-  // A program read from memory keeps the choice alone.
-  if (!S->MemoryInputBytes) {
-    ProjectWriteLock Lock(S->FilePath);
-    if (!Lock) {
-      S->setError("project writer unavailable: " + Lock.error());
-      return nullptr;
-    }
-    if (!saveSidecar(S, librariesPath(*S),
-                     llvm::json::Value(libraryChoiceJson(*Choice)),
-                     "type libraries"))
-      return nullptr;
-  }
   S->TypeLibraryChoice = std::move(*Choice);
   // A decompilation that read the prototypes read the libraries these
   // replace.
@@ -1314,6 +1302,25 @@ const char *neverd_type_libraries_set(neverd_session_t Sess, const char *Json) {
   if (ReadPrototypes)
     S->clearPipeline();
   return neverd_type_libraries_json(Sess);
+}
+
+int neverd_type_libraries_save(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->requireFileBacked() || !S->Loaded)
+    return -1;
+  ProjectWriteLock Lock(S->FilePath);
+  if (!Lock) {
+    S->setError("project writer unavailable: " + Lock.error());
+    return -1;
+  }
+  return saveSidecar(S, librariesPath(*S),
+                     llvm::json::Value(libraryChoiceJson(S->TypeLibraryChoice)),
+                     "type libraries")
+             ? 0
+             : -1;
 }
 
 int neverd_type_libraries_load(neverd_session_t Sess) {

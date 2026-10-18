@@ -243,6 +243,7 @@
           "neverd_type_declarations_save",
           "neverd_type_libraries_json",
           "neverd_type_libraries_load",
+          "neverd_type_libraries_save",
           "neverd_type_libraries_set",
           "neverd_types_convert",
           "neverd_types_languages_json",

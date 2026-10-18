@@ -330,6 +330,14 @@ def run(executable):
         assert joined(ok(owner, "type_libraries_set", {})) == ["windows-user-x64",
                                                              "windows-kernel-x64"]
         assert json.loads(kept.read_text()) == {"added": [], "removed": []}
+        # A choice another changed, as a pull brings it, is read once.
+        assert ok(owner, "project_sync")["type_libraries"] is False
+        kept.write_text('{"added": ["uefi-x64"], "removed": []}\n')
+        synced = ok(owner, "project_sync")
+        assert synced["type_libraries"] is True and synced["changed"] is True, synced
+        assert joined(ok(owner, "type_libraries")) == ["windows-user-x64", "windows-kernel-x64",
+                                                       "uefi-x64"]
+        assert ok(owner, "project_sync")["type_libraries"] is False
 
 
 if __name__ == "__main__":

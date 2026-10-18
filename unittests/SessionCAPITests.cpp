@@ -4564,6 +4564,8 @@ TEST_F(SessionCAPITest, TypeLibrariesAreChosenAndKeptWithTheProject) {
 
   Rows = libraries(neverd_type_libraries_set(
       Session, R"({"added":["musl-x64"],"removed":["linux-x64"]})"));
+  ASSERT_EQ(neverd_type_libraries_save(Session), 0)
+      << takeString(neverd_last_error(Session));
   EXPECT_EQ(Rows["linux-x64"].getBoolean("joined"), false);
   EXPECT_EQ(Rows["musl-x64"].getBoolean("joined"), true);
   // The header takes musl's types from musl's headers now, and none of

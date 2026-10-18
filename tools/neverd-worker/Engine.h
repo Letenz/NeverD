@@ -210,9 +210,18 @@ private:
   /// Whether the local types file holds other declarations than the
   /// Session's: git, another tool or a person changed it.
   bool localTypesChanged();
-  /// Whether libraries.json says another choice of type libraries than the
-  /// engine holds.
+  /// The session's libraries.json.
+  std::filesystem::path typeLibrariesPath() const;
+  /// libraries.json's choice of type libraries, {"added","removed"}, empty
+  /// lists without the file, or none for a file that does not parse.
+  std::optional<Json> typeLibrariesOnDisk();
+  /// Whether libraries.json says another choice of type libraries than it
+  /// held when the engine last read or wrote it.
   bool typeLibrariesChanged();
+  /// libraries.json as the engine last read or wrote it, null where it did
+  /// not parse.  Comparing the file with it reads no types, as asking the
+  /// engine for its choice would.
+  Json typeLibraryChoice_ = nullptr;
   /// The Session's type declarations as the history's rows, each at its
   /// place in the order made; none from an engine that keeps none.
   Json typeDeclarationRows() const;

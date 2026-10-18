@@ -1511,11 +1511,7 @@ const char *neverd_type_libraries_set(neverd_session_t s, const char *json) {
       }
       choice[key].push_back(name);
     }
-  const auto file =
-      neverd::project_files::path(std::filesystem::path(state.path),
-                                  neverd::project_files::File::TypeLibraries);
-  std::filesystem::create_directories(file.parent_path());
-  std::ofstream(file, std::ios::binary) << choice.dump();
+  // The worker writes libraries.json under the writer lock it holds.
   state.libraryChoice = std::move(choice);
   return neverd_type_libraries_json(s);
 }
