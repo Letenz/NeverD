@@ -46,4 +46,13 @@ NEVERD_HEADER_LIBRARY(LinuxARM64, "linux-arm64", LinuxARM64, LP64, Itanium,
                       Keywords)
 NEVERD_HEADER_LIBRARY(LinuxARM, "linux-arm", LinuxARM, ILP32, AAPCS32, Keywords)
 
+NEVERD_HEADER_LIBRARY(AndroidX64, "android-x64", AndroidX64, LP64, Itanium,
+                      Keywords)
+NEVERD_HEADER_LIBRARY(AndroidX86, "android-x86", AndroidX86, ILP32, I386SystemV,
+                      Keywords)
+NEVERD_HEADER_LIBRARY(AndroidARM64, "android-arm64", AndroidARM64, LP64,
+                      Itanium, Keywords)
+NEVERD_HEADER_LIBRARY(AndroidARM, "android-arm", AndroidARM, ILP32, AAPCS32,
+                      Keywords)
+
 #undef NEVERD_HEADER_LIBRARY

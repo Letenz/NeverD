@@ -22,6 +22,7 @@ LIBC_NO_RETURN_SYMBOL("assert_fail")
 LIBC_NO_RETURN_SYMBOL("assert_rtn")
 LIBC_NO_RETURN_SYMBOL("assert_perror_fail")
 // glibc's __assert and mingw-w64's _assert, which their headers declare
-// noreturn.
+// noreturn, and bionic's __assert2, which its assert calls.
 LIBC_NO_RETURN_SYMBOL("assert")
+LIBC_NO_RETURN_SYMBOL("assert2")
 LIBC_NO_RETURN_SYMBOL("stack_chk_fail")

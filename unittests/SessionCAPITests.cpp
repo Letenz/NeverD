@@ -4980,6 +4980,62 @@ TEST_F(SessionCAPITest, LinuxProgramsJoinTheirGlibcLibrary) {
   }
 }
 
+TEST_F(SessionCAPITest, AndroidProgramsJoinTheirBionicLibrary) {
+  // An Android program, which asks for Android's dynamic linker, and a
+  // native library an APK holds, which only the NDK's identification note
+  // marks, join bionic's library of their architecture, not glibc's: a
+  // 32-bit pthread_mutex_t is one word, and bionic's struct stat is not
+  // glibc's.
+  struct Program {
+    const char *File, *Library, *Model, *ABI;
+    int64_t Stat, Mutex;
+  };
+  const Program Programs[] = {
+      {"android_libc_calls_arm64", "android-arm64", "LP64", "itanium", 128, 40},
+      {"android_libc_calls_arm", "android-arm", "ILP32", "aapcs32", 104, 4},
+  };
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  for (const Program &P : Programs) {
+    SCOPED_TRACE(P.File);
+    std::ifstream Input(Fixtures / P.File, std::ios::binary);
+    const std::string Path =
+        write(P.File, std::string(std::istreambuf_iterator<char>(Input), {}));
+    neverd_session_t Android = neverd_session_create();
+    ASSERT_NE(Android, nullptr);
+    const auto Destroy =
+        llvm::make_scope_exit([&] { neverd_session_destroy(Android); });
+    ASSERT_EQ(neverd_session_load(Android, Path.c_str()), 1)
+        << takeString(neverd_last_error(Android));
+    ASSERT_GE(neverd_session_discover_functions(Android), 0)
+        << takeString(neverd_last_error(Android));
+    auto Parsed = llvm::json::parse(
+        takeString(neverd_local_types_json(Android, nullptr)));
+    ASSERT_TRUE(static_cast<bool>(Parsed));
+    const llvm::json::Object &Types = *Parsed->getAsObject();
+    EXPECT_EQ(Types.getString("dataModel"), P.Model);
+    EXPECT_EQ(Types.getString("recordABI"), P.ABI);
+    const llvm::json::Array *Headers = Types.getArray("headers");
+    ASSERT_TRUE(Headers && Headers->size() == 1u);
+    EXPECT_EQ((*Headers)[0].getAsObject()->getString("name"), P.Library);
+    for (const auto &[Name, Size] :
+         {std::pair<const char *, int64_t>{"stat", P.Stat},
+          {"pthread_mutex_t", P.Mutex}}) {
+      auto Type = llvm::json::parse(
+          takeString(neverd_local_type_json(Android, Name, nullptr)));
+      ASSERT_TRUE(static_cast<bool>(Type)) << Name;
+      EXPECT_EQ(Type->getAsObject()->getInteger("size"), Size) << Name;
+    }
+    // read takes bionic's prototype: the descriptor, the buffer, the count.
+    const int Index = neverd_func_find_by_name(Android, "Read");
+    ASSERT_GE(Index, 0);
+    const std::string Read = takeString(
+        neverd_decompile(Android, neverd_func_entry(Android, Index)));
+    EXPECT_NE(Read.find("read("), std::string::npos) << Read;
+    EXPECT_NE(Read.find(", 0x40)"), std::string::npos) << Read;
+  }
+}
+
 TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
   const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
   const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");
