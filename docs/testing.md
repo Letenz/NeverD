@@ -27,6 +27,10 @@ across calls and opaque parents, capacity/zero-work limits, unchanged variable
 identities, independent byte evaluation and reduced measured work. This cache
 is separate from per-call Solved maps and low-word projection caching.
 
+`NeverDSymLoadOriginBindingTests` checks transactional history rebinding,
+sorted conflict unions, independent forks and invalid batches. Historical
+metadata never creates available bytes or restores a pre-clobber memory epoch.
+
 `AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
 packed and RELR relocations on available CPU backends. Independent byte oracles
 cover word boundaries, untouched canaries, boolean queries, full-width extents,

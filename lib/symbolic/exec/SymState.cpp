@@ -394,6 +394,18 @@ void SymState::clobberMemory() {
   MemoryClobbered = true;
 }
 
+bool SymState::bindLoadOrigins(llvm::ArrayRef<LoadOriginBinding> Bindings) {
+  for (const auto &Binding : Bindings)
+    if (!Binding.Value || !Binding.Origin.Address || !Binding.Origin.Bytes ||
+        Binding.Value.index() >= Ctx->numNodes() ||
+        Binding.Origin.Address.index() >= Ctx->numNodes() ||
+        Ctx->width(Binding.Value) != unsigned(Binding.Origin.Bytes) * 8)
+      return false;
+  for (const auto &Binding : Bindings)
+    recordLoadOrigin(Binding.Value, Binding.Origin);
+  return true;
+}
+
 llvm::ArrayRef<SymState::LoadOrigin> SymState::loadOrigins(SymRef Value) const {
   auto It = LoadOrigins.find(Value.index());
   return It == LoadOrigins.end() ? llvm::ArrayRef<LoadOrigin>()
