@@ -2,6 +2,8 @@
 # out of component archives and libneverd: SDK hosts own their process heap.
 # Inspired by NeverC's neverc/cmake/modules/AddMimalloc.cmake at
 # 52e83efb3e3902c97130b9e3c83611080fa18ac4 (NeverC contributors, AGPL-3.0-only).
+# Source: https://github.com/NeverSight/NeverC/blob/52e83efb3e3902c97130b9e3c83611080fa18ac4/neverc/cmake/modules/AddMimalloc.cmake
+# See THIRD_PARTY_NOTICES.md for the integration changes and license notices.
 # Uses upstream's object override on Unix and CRT DLL redirection on Windows.
 include_guard(GLOBAL)
 

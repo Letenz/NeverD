@@ -3556,7 +3556,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       if (!next.at("delta").is_number_integer())
         throw Error("invalid_request", "delta must be an integer");
     } else if ((action == "negate" || action == "invert") &&
-               next.at("base") == numberBaseName(NumberBase::Struct)) {
+               next.at("base") ==
+                   std::string(numberBaseName(NumberBase::Struct))) {
       throw Error(
           "invalid_request",
           "A structure offset has no sign or bits of its own to change");
