@@ -259,6 +259,38 @@ std::string castOperand(const std::string &Text) {
   }
   return Text;
 }
+
+/// Whether \p Text is a postfix expression whose last step reads a member:
+/// `p->next`, `(*(T *)&slot).opaque`, and not a cast of one
+/// (`(uint32_t)s.len`) or an operation on it.
+bool readsMemberLast(llvm::StringRef Text) {
+  size_t End = Text.size();
+  while (End && (llvm::isAlnum(Text[End - 1]) || Text[End - 1] == '_'))
+    --End;
+  if (End == Text.size() || End == 0 ||
+      !(Text[End - 1] == '.' || Text.take_front(End).ends_with("->")))
+    return false;
+  int Depth = 0;
+  for (size_t I = 0; I < End; ++I) {
+    const char C = Text[I];
+    if (C == '"' || C == '\'')
+      return false;
+    if (C == '(' || C == '[') {
+      ++Depth;
+    } else if (C == ')' || C == ']') {
+      // A parenthesis the text opens with closes on an operand, which a
+      // member step follows, not on a cast's type.
+      if (--Depth == 0 && Text.front() == '(' && C == ')' &&
+          !Text.drop_front(I + 1).starts_with(".") &&
+          !Text.drop_front(I + 1).starts_with("->") &&
+          !Text.drop_front(I + 1).starts_with("["))
+        return false;
+    } else if (Depth == 0 && C == ' ') {
+      return false;
+    }
+  }
+  return Depth == 0;
+}
 } // namespace
 
 std::string HighCWriter::constStr(uint64_t Val, TypeRef Type) {
@@ -1006,6 +1038,12 @@ std::string HighCWriter::storedValueText(const HighExpr &Value,
         Inner && (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi))
       if (const std::string Text = exprStr(Value);
           isBarePointerName(*Inner, Text))
+        return "(" + typeToC(To) + ")(uintptr_t)(" + Text + ")";
+    // Or a value forwarded from a typed record's pointer member or from a
+    // pointer object (`*(uint32_t *)slot = funcs->opaque`), printed only
+    // then: printing has effects, such as the temporaries a copy takes.
+    if (printedPointerSource(Value))
+      if (const std::string Text = exprStr(Value); printsPointer(Value, Text))
         return "(" + typeToC(To) + ")(uintptr_t)(" + Text + ")";
   }
   if (Ordering == NdMemoryOrdering::None && Value.Type &&
@@ -2341,6 +2379,33 @@ TypeRef HighCWriter::typedPointerMemberLoad(const HighExpr &Value) const {
   const TypeRef Member = cDisplayType(
       typedMemberType(*Value.Operands[0], Size, accessClassOf(&Value)));
   return Member && Member->Kind == NdTypeKind::Ptr ? Member : nullptr;
+}
+
+const HighExpr *HighCWriter::printedPointerSource(const HighExpr &Value) const {
+  const HighExpr *Shown = forwardedExpr(&Value);
+  if (!Shown)
+    return nullptr;
+  // A temporary that carries a member prints as the load of it.
+  if (Shown->Kind == ExprKind::Var || Shown->Kind == ExprKind::Phi)
+    if (const auto Source = FieldForwardSources.find(varName(Shown->Var));
+        Source != FieldForwardSources.end() && Source->second)
+      Shown = Source->second;
+  return printedPointerType(*Shown) ? Shown : nullptr;
+}
+
+bool HighCWriter::printsPointer(const HighExpr &Value,
+                                llvm::StringRef Text) const {
+  if (const HighExpr *Shown = forwardedExpr(&Value);
+      Shown && isBarePointerName(*Shown, Text))
+    return true;
+  if (!printedPointerSource(Value))
+    return false;
+  // The text is the pointer itself, not a conversion of it.
+  return readsMemberLast(Text) ||
+         (!Text.empty() &&
+          (llvm::isAlpha(Text.front()) || Text.front() == '_') &&
+          llvm::all_of(Text,
+                       [](char C) { return llvm::isAlnum(C) || C == '_'; }));
 }
 
 TypeRef HighCWriter::printedPointerType(const HighExpr &Value) const {
@@ -5199,6 +5264,18 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec,
   UntypedArithmeticTexts.erase(&E);
   UnsignedCarrierTexts.erase(&E);
   std::string Text = exprStrImpl(E, ParentPrec, Destination);
+  // C has no bitwise, shift, multiplicative or remainder operator on a
+  // pointer: a local the text declares one, or a pointer member, is the
+  // address it holds as an integer there.
+  if (IntegerViewOperands.count(&E) && printsPointer(E, Text)) {
+    Text = "(uintptr_t)" + castOperand(Text);
+    if (getTargetRegInfo(Opts.TheArch).PointerSize == sizeof(uint64_t))
+      PrintedIntegerTypes[&E] = {sizeof(uint64_t), false};
+    return SourceRecorder && CurrentFunc
+               ? SourceRecorder->expression(CurrentFunc->Entry, E,
+                                            std::move(Text))
+               : Text;
+  }
   // A local's name has its declared type.
   std::string Storage;
   if (const llvm::StringRef Name = plainText(Text, Storage);
@@ -6474,6 +6551,13 @@ bool HighCWriter::isEmittedParamName(llvm::StringRef Name) const {
       }))
     return true;
   return false;
+}
+
+bool HighCWriter::namesFileScope(llvm::StringRef Name) const {
+  const std::string Key = Name.str();
+  return GlobalIdentifierAllocator.holds(Name) || UnitCallTargets.count(Key) ||
+         ExternFuncs.count(Key) || DefinedFuncs.count(Key) ||
+         RecordTypedefs.count(Key);
 }
 
 bool HighCWriter::isReservedParamDisplayName(llvm::StringRef Name) const {
