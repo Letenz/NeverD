@@ -3250,6 +3250,10 @@ ImportPrototypeArguments importPrototypeArguments(
       if (!Integer && Type->Kind != NdTypeKind::Ptr &&
           (Type->Kind != NdTypeKind::Struct || !Positional))
         return std::nullopt;
+      // An integer wider than a register takes more than one, an ARM pair's
+      // aligned, which these positions do not describe.
+      if (Integer && Type->Size > TRI.PointerSize)
+        return std::nullopt;
       ++Result.Integers;
       Result.Order.push_back(0);
       // A record takes its whole slot, by value or by its address.
