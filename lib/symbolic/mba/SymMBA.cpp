@@ -54,6 +54,147 @@ using namespace detail;
 
 namespace {
 
+SymRef projectBitWindow(SymContext &Ctx, SymRef Source, unsigned Low,
+                        unsigned Width, WorkBudget &Budget, size_t &Storage,
+                        unsigned Depth = 0) {
+  auto Original = [&] { return Ctx.mkExtract(Source, Low, Width); };
+  const size_t Words = (size_t(Ctx.width(Source)) - 1) / 64 + 1;
+  constexpr size_t NodeBytes = 128;
+  if (Depth >= 32 || Storage < NodeBytes ||
+      Words > (Storage - NodeBytes) / sizeof(uint64_t) ||
+      !Budget.consume(1 + Words))
+    return Original();
+  Storage -= NodeBytes + Words * sizeof(uint64_t);
+  const SymOp Op = Ctx.op(Source);
+  auto Part = [&](SymRef Value, unsigned Begin, unsigned Bits) {
+    return projectBitWindow(Ctx, Value, Begin, Bits, Budget, Storage,
+                            Depth + 1);
+  };
+  if (Op == SymOp::Extract)
+    return Part(Ctx.operand(Source, 0), Low + Ctx.node(Source).Aux, Width);
+  if (Op == SymOp::ZExt || Op == SymOp::SExt) {
+    SymRef Inner = Ctx.operand(Source, 0);
+    const unsigned Bits = Ctx.width(Inner);
+    if (Low >= Bits)
+      return Op == SymOp::ZExt ? Ctx.mkZero(Width)
+                               : Ctx.mkSExt(Part(Inner, Bits - 1, 1), Width);
+    SymRef Value = Part(Inner, Low, std::min(Width, Bits - Low));
+    return Op == SymOp::ZExt ? Ctx.mkZExt(Value, Width)
+                             : Ctx.mkSExt(Value, Width);
+  }
+  if ((Op == SymOp::LShr || Op == SymOp::AShr) &&
+      Ctx.isConst(Ctx.operand(Source, 1))) {
+    SymRef Inner = Ctx.operand(Source, 0);
+    const unsigned Bits = Ctx.width(Inner);
+    const auto CountRef = Ctx.operand(Source, 1);
+    const size_t CountWords = (size_t(Ctx.width(CountRef)) - 1) / 64 + 1;
+    if (CountWords > Storage / sizeof(uint64_t) || !Budget.consume(CountWords))
+      return Original();
+    Storage -= CountWords * sizeof(uint64_t);
+    const auto Count = Ctx.constValue(CountRef);
+    if (Count.uge(Bits) || Low >= Bits - unsigned(Count.getZExtValue()))
+      return Op == SymOp::LShr ? Ctx.mkZero(Width)
+                               : Ctx.mkSExt(Part(Inner, Bits - 1, 1), Width);
+    const unsigned Shift = unsigned(Count.getZExtValue());
+    SymRef Value =
+        Part(Inner, Low + Shift, std::min(Width, Bits - Shift - Low));
+    return Op == SymOp::LShr ? Ctx.mkZExt(Value, Width)
+                             : Ctx.mkSExt(Value, Width);
+  }
+  if (Op == SymOp::Mul && Ctx.numOperands(Source) == 2 &&
+      Ctx.isConst(Ctx.operand(Source, 0))) {
+    const auto Factor = Ctx.constValue(Ctx.operand(Source, 0));
+    if (Factor.isPowerOf2()) {
+      const unsigned Shift = Factor.logBase2();
+      if (Low < Shift && Width <= Shift - Low)
+        return Ctx.mkZero(Width);
+      const unsigned Padding = Low < Shift ? Shift - Low : 0;
+      SymRef Value = Part(Ctx.operand(Source, 1), Low < Shift ? 0 : Low - Shift,
+                          Width - Padding);
+      return Padding ? Ctx.mkConcat(Value, Ctx.mkZero(Padding)) : Value;
+    }
+  }
+  if (Op == SymOp::Ite) {
+    const auto Condition = Ctx.operand(Source, 0);
+    const auto Yes = Ctx.operand(Source, 1), No = Ctx.operand(Source, 2);
+    return Ctx.mkIte(Condition, Part(Yes, Low, Width), Part(No, Low, Width));
+  }
+  if (Op == SymOp::Add && Ctx.numOperands(Source) <= 32) {
+    const size_t Children = Ctx.numOperands(Source);
+    if (Children > Storage / (2 * sizeof(SymRef)) || !Budget.consume(Children))
+      return Original();
+    Storage -= Children * 2 * sizeof(SymRef);
+    llvm::SmallVector<SymRef, 8> Inputs(Ctx.operands(Source)), Values;
+    // Narrow at the top of the observed window, not at its bottom. Discarding
+    // bits below Low would lose the carry demonstrated by x=63, y=1, Low=6.
+    for (auto Child : Inputs)
+      Values.push_back(Part(Child, 0, Low + Width));
+    return Ctx.mkExtract(Ctx.mkAdd(Values), Low, Width);
+  }
+  if (isBitwise(Op) && Ctx.numOperands(Source) <= 32) {
+    const size_t Children = Ctx.numOperands(Source);
+    if (Children > Storage / (2 * sizeof(SymRef)) || !Budget.consume(Children))
+      return Original();
+    Storage -= Children * 2 * sizeof(SymRef);
+    // Builders may grow the operand arena while the child windows are made.
+    llvm::SmallVector<SymRef, 8> Inputs(Ctx.operands(Source));
+    llvm::SmallVector<SymRef, 8> Values;
+    for (SymRef Child : Inputs)
+      Values.push_back(Part(Child, Low, Width));
+    if (Op == SymOp::Not)
+      return Ctx.mkNot(Values.front());
+    if (Op == SymOp::And)
+      return Ctx.mkAnd(Values);
+    if (Op == SymOp::Or)
+      return Ctx.mkOr(Values);
+    return Ctx.mkXor(Values);
+  }
+  return Original();
+}
+
+SymRef foldObservedWindow(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                          size_t &Storage) {
+  if (Budget.exhausted() || !Budget.canConsume(1) || Storage < 128)
+    return Root;
+  if (Ctx.op(Root) == SymOp::Extract)
+    return projectBitWindow(Ctx, Ctx.operand(Root, 0), Ctx.node(Root).Aux,
+                            Ctx.width(Root), Budget, Storage);
+  if (Ctx.op(Root) != SymOp::And || Ctx.numOperands(Root) != 2 ||
+      !Ctx.isConst(Ctx.operand(Root, 0)))
+    return Root;
+  const auto Source = Ctx.operand(Root, 1);
+  // A masked leaf has no hidden lanes to project. Preserve the existing
+  // minimum-expression proof and its exact work budget for this common case.
+  if (Ctx.numOperands(Source) == 0)
+    return Root;
+  const unsigned Words = (Ctx.width(Root) - 1) / 64 + 1;
+  if (Words > Storage / sizeof(uint64_t) || !Budget.consume(Words))
+    return Root;
+  Storage -= Words * sizeof(uint64_t);
+  const auto Mask = Ctx.constValue(Ctx.operand(Root, 0));
+  // Testing a packed flag often observes one bit without shifting it to bit
+  // zero first. Use the same window transfer, then restore its original bit
+  // position. Arithmetic retains all lower bits that can carry into the
+  // observation; unsupported transfers retain their complete source.
+  if (Mask.isPowerOf2()) {
+    const unsigned Bit = Mask.logBase2();
+    auto Part = projectBitWindow(Ctx, Source, Bit, 1, Budget, Storage);
+    if (Part == Ctx.mkExtract(Source, Bit, 1))
+      return Root;
+    return Ctx.mkMul(Ctx.mkConst(Mask), Ctx.mkZExt(Part, Ctx.width(Root)));
+  }
+  // A shifted low mask is also an explicit observed window. Keep ordinary
+  // masked arithmetic in its original region: narrowing every internal mask
+  // hides whole-word relations that the existing MBA measurement can recover.
+  if (Ctx.op(Source) != SymOp::LShr && Ctx.op(Source) != SymOp::AShr)
+    return Root;
+  if (!Mask.isMask() || Mask.isAllOnes())
+    return Root;
+  auto Part =
+      projectBitWindow(Ctx, Source, 0, Mask.popcount(), Budget, Storage);
+  return Ctx.mkZExt(Part, Ctx.width(Root));
+}
+
 //===----------------------------------------------------------------------===//
 // Regions guarded by constant masks
 //===----------------------------------------------------------------------===//
@@ -803,6 +944,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
         Rebuilt = Ctx.rebuild(R, NewOps);
     }
 
+    Rebuilt = foldObservedWindow(Ctx, Rebuilt, Budget, RefinementStorage);
     if (!canMeasureAtRoot(Ctx, Rebuilt)) {
       Solved[Index] = Rebuilt;
       continue;

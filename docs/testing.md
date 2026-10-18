@@ -4,6 +4,10 @@
 
 # Testing NeverD
 
+`NeverDSymMBAObservedWindowTests` checks bounded observed-bit normalization,
+packed flags, extension windows, arithmetic carries and partial budgets with
+exhaustive narrow oracles and wide bit-vector equivalence proofs.
+
 `AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
 packed and RELR relocations on available CPU backends. Independent byte oracles
 cover word boundaries, untouched canaries, boolean queries, full-width extents,
