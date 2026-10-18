@@ -459,9 +459,17 @@ does the same on the image read without its PDB, of a type the user
 declares, and checks that another function's text stays as it was.
 
 `TypeParse.SizesAMemberReachedThroughANullPointer` reads
-`sizeof(((T *)0)->Member)`, as phnt's `RTL_FIELD_SIZE` spells it.
-`HeaderLibrary.*` reads the embedded Windows libraries and checks how a
-header library joins a program's types;
+`sizeof(((T *)0)->Member)`, as phnt's `RTL_FIELD_SIZE` spells it, and
+`TypeParse.ARoutineTakesItsPrototypeUnderItsAssemblerName` reads glibc's
+`__REDIRECT` (`__isoc23_strtol`) and C99's qualified parameter arrays.
+`HeaderLibrary.*` reads the embedded libraries and checks how a header
+library joins a program's types;
+`HeaderLibrary.TheLinuxLibrariesLayRecordsOutAsGlibcDoes` checks the sizes
+and offsets clang measures for glibc's `stat`, `timespec`,
+`pthread_mutex_t`, `FILE`, `sigaction` and `dirent` on each architecture, and
+`SessionCAPITest.LinuxImportsTakeGlibcsPrototypes` decompiles
+`unittests/types/fixtures/linux_libc_calls_{x64,x86,arm64,arm}`, built as
+`linux_libc_calls.c` says;
 `HeaderLibrary.TheUserLibrariesDeclareNtdllsNativeAPI` checks phnt's
 routines and the PEB, TEB and loader records each user mode library lays
 out. The user mode libraries read a checkout of
@@ -480,6 +488,32 @@ python3 scripts/check_type_renders.py --neverd build/bin/neverd \
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsUserARM64.h --data-model LLP64
 ```
+
+The Linux libraries read glibc's headers as each architecture's toolchain
+installs them: the host's for x64 and x86 (libc6-dev, libc6-dev-i386),
+`/usr/aarch64-linux-gnu` for ARM64 and `/usr/arm-linux-gnueabihf` for ARM
+(libc6-dev-arm64-cross, libc6-dev-armhf-cross), or another sysroot:
+`scripts/generate_linux_types.py --sysroot linux-arm=<directory>`. Check
+the x64 and x86 ones with their record ABIs:
+
+```sh
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/LinuxX64.h --data-model LP64
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/LinuxX86.h --data-model ILP32 \
+  --record-abi i386-sysv
+```
+
+Their C in the keywords spelling, which the libraries name builtins in,
+compiles, as do Go, JavaScript and, for x64, Rust and Python. Their portable
+and windows spellings and their C++ do not compile against a glibc host's
+own headers, which declare glibc's reserved `__` types as well: `__off_t` is
+`long` there, `int32_t` in the portable spelling, and C++ takes the
+`struct __fsid_t` a typedef of glibc's anonymous record names. On x64 the
+prototypes unit warns where it redeclares `vprintf` and its kin, whose
+va_list the library passes as the address it is. The checker builds for
+x86's targets only: `HeaderLibrary.TheLinuxLibrariesLayRecordsOutAsGlibcDoes`
+checks the ARM libraries' layouts against clang's.
 
 With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
 ntoskrnl.exe and its PDB,

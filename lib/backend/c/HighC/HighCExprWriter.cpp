@@ -1839,12 +1839,18 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       }
     }
     if (Callee) {
-      // A callee this file defines takes what its prototype declares.
-      if (const TypeRef Expected = Defined
-                                       ? emittedParamTypeAt(*Defined, I)
-                                       : expectedDebugCallArgType(*Callee, I)) {
-        S += exprStrAsTypedArg(*Op, Expected);
-        continue;
+      // A callee this file defines takes what its prototype declares.  A
+      // record the header declaring the callee defines, which the unit does
+      // not name, is reached through void *, which converts to it.
+      if (TypeRef Expected = Defined ? emittedParamTypeAt(*Defined, I)
+                                     : expectedDebugCallArgType(*Callee, I)) {
+        if (!Defined && headerRecordOfCallee(E, Expected))
+          Expected =
+              Expected->Kind == NdTypeKind::Ptr ? NdType::makePtr() : nullptr;
+        if (Expected) {
+          S += exprStrAsTypedArg(*Op, Expected);
+          continue;
+        }
       }
     }
     if (Msvc) {
@@ -2087,6 +2093,21 @@ bool HighCWriter::debugDeclaresCallee(const HighExpr &E) const {
   if (!libc::isKnownFunction(Symbol.str()) && Symbol.starts_with("_"))
     Symbol = Symbol.drop_front();
   return !libc::isKnownFunction(Symbol.str()) || !includesHeaderOf(Symbol);
+}
+
+bool HighCWriter::headerRecordOfCallee(const HighExpr &E,
+                                       const TypeRef &Type) const {
+  TypeRef Pointee = Type;
+  while (Pointee && Pointee->Kind == NdTypeKind::Ptr)
+    Pointee = Pointee->Pointee;
+  if (!Pointee || Pointee->Kind != NdTypeKind::Struct || Pointee->IsEnum ||
+      Pointee->SourceName.empty() || E.Kind != ExprKind::Call ||
+      E.IsIndirectCall || E.CallTarget.empty() || calledDefinition(E))
+    return false;
+  llvm::StringRef Symbol = E.CallTarget;
+  if (!libc::isKnownFunction(Symbol.str()) && Symbol.starts_with("_"))
+    Symbol = Symbol.drop_front();
+  return libc::isKnownFunction(Symbol.str()) && includesHeaderOf(Symbol);
 }
 
 bool HighCWriter::includesHeaderOf(llvm::StringRef Name) const {
@@ -2994,7 +3015,9 @@ TypeRef HighCWriter::displayCallArgType(const HighExpr &Call,
                                         size_t Index) const {
   auto FromFS = [&](const FunctionSym &FS) -> TypeRef {
     TypeRef Ty = cDisplayType(expectedDebugCallArgType(FS, Index));
-    return isNamedPointerDisplay(Ty) ? Ty : TypeRef{};
+    return isNamedPointerDisplay(Ty) && !headerRecordOfCallee(Call, Ty)
+               ? Ty
+               : TypeRef{};
   };
   if (Dbg && Call.CallAddr)
     if (auto FS = Dbg->resolveFunction(Call.CallAddr))
