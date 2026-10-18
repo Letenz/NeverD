@@ -6733,6 +6733,54 @@ TEST_F(SessionCAPITest, PEAnalysisCacheRetiresOnlyWhenHandlersGrowMetadata) {
   EXPECT_EQ(takeString(neverd_decompile(Session, Entries[0])), Source);
 }
 
+TEST_F(SessionCAPITest, PEWarmingSurvivesFunctionsThatInstallHandlers) {
+  // A full PE load decodes every handler's language tables, so preparing a
+  // function that installs one adds no metadata and keeps the analysis that
+  // warming built.  Its source reads the same as without warming.
+  const auto Fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "Inputs" / "source-patch" / "native-processes" /
+                       "x64-original.exe";
+  const auto Handled = [](neverd_session_t Owner) {
+    std::vector<neverd::va_t> Entries;
+    for (const auto &F :
+         neverd::sdk::toSession(Owner)->Img.ExceptionMetadata.Functions)
+      if (F.PersonalityVA && F.Kind == neverd::RuntimeFunctionKind::Primary &&
+          F.CodeRange.isValid())
+        Entries.push_back(F.CodeRange.Begin);
+    return Entries;
+  };
+  std::vector<std::string> Cold;
+  {
+    neverd_session_t Plain = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Plain, Fixture.string().c_str()), 1);
+    for (neverd::va_t Entry : Handled(Plain))
+      Cold.push_back(takeString(neverd_decompile(Plain, Entry)));
+    neverd_session_destroy(Plain);
+  }
+  ASSERT_GE(Cold.size(), 2u);
+
+  ASSERT_EQ(neverd_session_load(Session, Fixture.string().c_str()), 1);
+  auto &State = *neverd::sdk::toSession(Session);
+  auto Page = llvm::json::parse(
+      takeString(neverd_warm_functions_json(Session, 0, 4096)));
+  ASSERT_TRUE(bool(Page)) << llvm::toString(Page.takeError());
+  const auto *Result = Page->getAsObject();
+  ASSERT_NE(Result, nullptr);
+  EXPECT_EQ(Result->getBoolean("available"), true);
+  EXPECT_GT(Result->getInteger("prepared").value_or(0), 0);
+  const auto Facts =
+      neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache);
+  ASSERT_NE(Facts, nullptr);
+  const auto Entries = Handled(Session);
+  ASSERT_EQ(Entries.size(), Cold.size());
+  for (size_t I = 0; I < Entries.size(); ++I) {
+    ASSERT_EQ(neverd_prepare_function(Session, Entries[I]), 1);
+    EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+              Facts);
+    EXPECT_EQ(takeString(neverd_decompile(Session, Entries[I])), Cold[I]);
+  }
+}
+
 TEST_F(SessionCAPITest, AnalysisCacheChecksFeaturesAfterSelectionClearsResult) {
   const auto Path = write("cache.elf", makeAnalysisCacheELF(false));
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);

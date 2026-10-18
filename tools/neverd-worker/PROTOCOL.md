@@ -777,6 +777,6 @@ would otherwise build (`neverd_warm_functions_json`); decompiles return the
 same results either way. `background.warm` reports `{state,prepared}`: `off`,
 `pending`, `running`, `complete`, `full` (the engine refused more without
 discarding what it holds) or `unavailable` (an engine or image whose
-decompiles keep no such state, such as PE images), and `prepared` counts the
-functions it holds. Every revision change starts the preparation over, since
+decompiles keep no such state, such as one that is not x86-64), and
+`prepared` counts the functions it holds. Every revision change starts the preparation over, since
 the engine may have dropped it.
