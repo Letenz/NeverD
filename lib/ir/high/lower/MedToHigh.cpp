@@ -1204,13 +1204,41 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   // ranges unstructured is kept; on a tie reverse postorder stays.  How many
   // gotos either prints never enters the choice.  The observers see only the
   // conversion that is kept.
+  const bool Observed =
+      ExpressionObserver || ExpressionCloneObserver || StatementObserver;
+  if (Observed && ObservationReset) {
+    // Reverse postorder is kept unless it leaves a guarded range
+    // unstructured, so the observers watch it, and are told to forget it
+    // only when address order does better.
+    SEHAddressOrder = false;
+    HighFunc Func = convertOnce(Med, TheArch);
+    if (Func.UnstructuredExceptionRegions) {
+      auto Expression = std::move(ExpressionObserver);
+      auto Clone = std::move(ExpressionCloneObserver);
+      auto Statement = std::move(StatementObserver);
+      ExpressionObserver = {};
+      ExpressionCloneObserver = {};
+      StatementObserver = {};
+      SEHAddressOrder = true;
+      const HighFunc Ordered = convertOnce(Med, TheArch);
+      ExpressionObserver = std::move(Expression);
+      ExpressionCloneObserver = std::move(Clone);
+      StatementObserver = std::move(Statement);
+      if (Ordered.UnstructuredExceptionRegions <
+          Func.UnstructuredExceptionRegions) {
+        ObservationReset();
+        Func = convertOnce(Med, TheArch);
+      }
+    }
+    SEHAddressOrder = false;
+    return Func;
+  }
   auto SavedExpression = std::move(ExpressionObserver);
   auto SavedClone = std::move(ExpressionCloneObserver);
   auto SavedStatement = std::move(StatementObserver);
   ExpressionObserver = {};
   ExpressionCloneObserver = {};
   StatementObserver = {};
-  const bool Observed = SavedExpression || SavedClone || SavedStatement;
   SEHAddressOrder = false;
   HighFunc Func = convertOnce(Med, TheArch);
   if (Func.UnstructuredExceptionRegions) {

@@ -3044,6 +3044,65 @@ TEST(COFFExceptionIR, EmitsLosslessNamedMetadata) {
   EXPECT_NE(IRFunc->getMetadata(exception_rewrite::FunctionAttachment),
             nullptr);
 }
+TEST(COFFExceptionIR, ObserversWatchTheConversionAGuardedFunctionKeeps) {
+  MedFunc Func;
+  Func.Entry = 0x140001000;
+  Func.Name = "observed_eh";
+  Func.ReturnType = NdType::makeVoid();
+  for (unsigned Id : {0u, 1u}) {
+    MedBlock Block;
+    Block.Id = static_cast<int>(Id);
+    Block.StartAddr = Func.Entry + 0x20 * Id;
+    Block.EndAddr = Block.StartAddr + 0x10;
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = Block.StartAddr + 8;
+    Return.OriginSeq = 0;
+    Block.Ops.push_back(Return);
+    Func.Blocks.push_back(std::move(Block));
+  }
+  ExceptionFunction Metadata;
+  Metadata.CodeRange = {Func.Entry, Func.Entry + 0x30};
+  Metadata.ParseStatus = ExceptionParseStatus::Complete;
+  Metadata.Personality = ExceptionPersonality::CSpecificHandler;
+  SEHExceptionInfo SEH;
+  SEHScopeRecord Scope;
+  Scope.GuardedRange = {Func.Entry, Func.Entry + 0x10};
+  Scope.Kind = SEHScopeKind::CatchAll;
+  Scope.HandlerVA = Func.Entry + 0x20;
+  SEH.Scopes.push_back(Scope);
+  Metadata.SEH = std::move(SEH);
+  Func.ExceptionMetadata = std::move(Metadata);
+
+  // What the observers record and the IR kept, with a way to forget the
+  // observations and without one.
+  const auto Convert = [&](bool Forgets, size_t &Resets) {
+    MedToHighConverter Converter;
+    std::vector<std::pair<va_t, StmtKind>> Seen;
+    Converter.setStatementObserver([&](const MedOp &Op, const HighStmt &S) {
+      Seen.push_back({Op.Addr, S.Kind});
+    });
+    if (Forgets)
+      Converter.setObservationReset([&] {
+        Seen.clear();
+        ++Resets;
+      });
+    const HighFunc High = Converter.convert(Func, Arch::X64);
+    EXPECT_EQ(High.UnstructuredExceptionRegions, 0u);
+    std::string Dump;
+    llvm::raw_string_ostream OS(Dump);
+    Pipeline::dumpHighIR({High}, OS);
+    return std::pair{Dump, Seen};
+  };
+  size_t Resets = 0, Unused = 0;
+  const auto Kept = Convert(true, Resets);
+  ASSERT_FALSE(Kept.second.empty());
+  // The structured layout is the one kept, so nothing is forgotten, and the
+  // observers saw exactly what they see when the conversion is repeated.
+  EXPECT_EQ(Resets, 0u);
+  EXPECT_EQ(Kept, Convert(false, Unused));
+}
+
 TEST(COFFExceptionIR, StructuresReducibleSEHAndCxxRegionsInHighIR) {
   auto MakeFunction = [] {
     MedFunc Func;
