@@ -280,6 +280,14 @@ struct X87CallGraphBlock {
   bool Returns = false;
   bool Stops = false;
 };
+/// A no-return answer a raw callee build read: the callee, the depth it was
+/// asked at, and the answer.
+struct X87NoReturnAnswer {
+  va_t Target;
+  unsigned Depth;
+  bool NeverReturns;
+};
+
 struct X87CallGraph {
   enum class ProjectionRejection : uint8_t {
     None,
@@ -287,12 +295,20 @@ struct X87CallGraph {
     MissingTerminator,
     InconsistentBlocks,
     ExceedsProofWork,
+    /// The lift itself is incomplete (a decode failure, a path out of the
+    /// image).  Unlike the others it can follow from a no-return answer, so
+    /// it holds only while NoReturnAnswers do.
+    IncompleteLift,
   };
   std::vector<X87CallGraphBlock> Blocks;
   size_t Cost = 0;
   bool Complete = false;
   bool UsesContext = false;
   ProjectionRejection Rejection = ProjectionRejection::None;
+  /// For IncompleteLift, every no-return answer its build read.  The build
+  /// is a function of the image, the cache context and those answers, so
+  /// the same answers lift the same incomplete CFG again.
+  std::vector<X87NoReturnAnswer> NoReturnAnswers;
 };
 
 class X87CallGraphCache {
@@ -656,7 +672,9 @@ private:
   std::optional<size_t> graphBytes(const X87CallGraph &Graph) const {
     size_t Bytes = sizeof(Entry) + sizeof(X87CallGraph) + 16 * sizeof(void *);
     if (!accountAllocation(Bytes, Graph.Blocks.capacity(),
-                           sizeof(X87CallGraphBlock)))
+                           sizeof(X87CallGraphBlock)) ||
+        !accountAllocation(Bytes, Graph.NoReturnAnswers.capacity(),
+                           sizeof(X87NoReturnAnswer)))
       return std::nullopt;
     for (const auto &Block : Graph.Blocks)
       if (!accountAllocation(Bytes, Block.Steps.capacity(),
@@ -851,10 +869,18 @@ private:
       return Graph;
     // Another worker may have published while this worker built outside the
     // lock. Use its identical immutable projection without waiting on builds.
+    // An incomplete-lift refusal is identical only while its answers hold;
+    // this build read the answers of now, so it replaces the refusal.
     if (const auto Found = GraphIndex.find(Address);
         Found != GraphIndex.end()) {
-      Graphs.splice(Graphs.begin(), Graphs, Found->second);
-      return Graphs.front().Value;
+      if (Found->second->Value->Rejection !=
+          X87CallGraph::ProjectionRejection::IncompleteLift) {
+        Graphs.splice(Graphs.begin(), Graphs, Found->second);
+        return Graphs.front().Value;
+      }
+      RetainedBytes -= Found->second->Bytes;
+      Graphs.erase(Found->second);
+      GraphIndex.erase(Found);
     }
     if ((Graphs.size() >= MaxGraphs || *Bytes > MaxBytes - RetainedBytes) &&
         KeepResident) {
@@ -1037,6 +1063,20 @@ class X87CallEffectIndex {
     }
   }
 
+  /// Whether a request would read \p G's no-return answers again: always for
+  /// a complete projection or an immutable refusal, and for an
+  /// incomplete-lift refusal when the prover answers each question as before.
+  bool answersHold(const Graph &G) const {
+    if (G.Rejection != Graph::ProjectionRejection::IncompleteLift)
+      return true;
+    for (const X87NoReturnAnswer &Answer : G.NoReturnAnswers)
+      if (!Settings.NoReturnCallees ||
+          Settings.NoReturnCallees->neverReturns(Answer.Target, Answer.Depth) !=
+              Answer.NeverReturns)
+        return false;
+    return true;
+  }
+
   const Graph &graph(va_t Entry) {
     if (const auto It = Graphs.find(Entry); It != Graphs.end())
       return *It->second;
@@ -1052,7 +1092,9 @@ class X87CallEffectIndex {
     std::shared_ptr<X87CallGraphCache::PendingGraph> Flight;
     if (HasCodeOwner && SharedGraphs) {
       auto Request = SharedGraphs->acquire(Settings, Entry);
-      if (Request.Value)
+      // A refusal whose answers no longer hold is built again; the build
+      // replaces it.  Replay runs outside the cache's lock.
+      if (Request.Value && answersHold(*Request.Value))
         return *Graphs.emplace(Entry, std::move(Request.Value)).first->second;
       Flight = std::move(Request.Leader);
     }
@@ -1085,12 +1127,19 @@ class X87CallEffectIndex {
         Settings.ProtectedJumpTableRelocationSlots;
     Builder.UnsafeJumpTableBranches = Settings.UnsafeJumpTableBranches;
     CFGBuilder::CallRegisterBodyWitness Witness;
+    // Every no-return answer the build reads, with its depth, for a refusal
+    // of an incomplete lift; mayNeverReturn screens the image alone.
+    std::vector<X87NoReturnAnswer> Answers;
+    bool AnswersComplete = true;
     struct RecordingProver : NoReturnCalleeProver {
       const NoReturnCalleeProver &Original;
       CFGBuilder::CallRegisterBodyWitness &Witness;
+      std::vector<X87NoReturnAnswer> &Answers;
+      bool &AnswersComplete;
       RecordingProver(const NoReturnCalleeProver &P,
-                      CFGBuilder::CallRegisterBodyWitness &W)
-          : Original(P), Witness(W) {}
+                      CFGBuilder::CallRegisterBodyWitness &W,
+                      std::vector<X87NoReturnAnswer> &A, bool &Complete)
+          : Original(P), Witness(W), Answers(A), AnswersComplete(Complete) {}
       bool mayNeverReturn(va_t Target) const override {
         return Original.mayNeverReturn(Target);
       }
@@ -1102,19 +1151,25 @@ class X87CallEffectIndex {
           else
             Witness.NoReturnAnswers.emplace_back(Target, Result);
         }
+        if (AnswersComplete) {
+          if (Answers.size() >= Witness.MaxDependencies)
+            AnswersComplete = false;
+          else
+            Answers.push_back({Target, Depth, Result});
+        }
         return Result;
       }
     };
     const bool RetainBody =
         SharedGraphs && SharedGraphs->canRetainSummary(Settings);
     std::optional<RecordingProver> Recorder;
-    if (RetainBody) {
+    if (RetainBody)
       Builder.CollectCallRegisterBody = &Witness;
-      if (Settings.NoReturnCallees) {
-        Recorder.emplace(*Settings.NoReturnCallees, Witness);
-        Builder.setNoReturnCalleeProver(&*Recorder,
-                                        Settings.NoReturnCalleeDepth + 1);
-      }
+    if (SharedGraphs && Settings.NoReturnCallees) {
+      Recorder.emplace(*Settings.NoReturnCallees, Witness, Answers,
+                       AnswersComplete);
+      Builder.setNoReturnCalleeProver(&*Recorder,
+                                      Settings.NoReturnCalleeDepth + 1);
     }
     LowFunc F = Builder.build(Image, Dec, Entry);
     const llvm::scope_exit Retain([&] {
@@ -1136,11 +1191,20 @@ class X87CallEffectIndex {
       Complete.completed(It->second);
       return *It->second;
     };
-    // An incomplete lift can follow from a proof that ran out or threw, which
-    // another request may finish: it is never retained.
+    // An incomplete lift can follow from a no-return proof that ran out,
+    // which another request may finish.  It is retained with the answers its
+    // build read, and holds only while a request reads the same (a proof
+    // that threw leaves the build above).  Without them, it is not retained.
     if (!F.hasCompleteInstructionLift() || !F.TruncatedPathAddresses.empty() ||
-        F.Blocks.empty() || F.Blocks.front().StartAddr != Entry)
-      return G;
+        F.Blocks.empty() || F.Blocks.front().StartAddr != Entry) {
+      if (!SharedGraphs || !AnswersComplete)
+        return G;
+      G.Rejection = Graph::ProjectionRejection::IncompleteLift;
+      G.NoReturnAnswers = std::move(Answers);
+      It->second = SharedGraphs->publish(Settings, Entry, Built);
+      Complete.completed(It->second);
+      return *It->second;
+    }
     G.Blocks.resize(F.Blocks.size());
     for (size_t I = 0; I < F.Blocks.size(); ++I) {
       const LowBlock &Source = F.Blocks[I];
