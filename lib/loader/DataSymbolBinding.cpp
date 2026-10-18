@@ -131,6 +131,26 @@ collectExternalFunctionPointers(const BinaryImage &Image) {
   return Pointers;
 }
 
+namespace {
+/// The code address the relocated pointer-width word at \p Slot holds, where
+/// a relocation starts it at code and no data relocation also names it.
+std::optional<va_t> relocatedCodeTarget(const BinaryImage &Image, va_t Slot) {
+  const unsigned Width = Image.getPointerSize();
+  if (Width == 0 || Width != getPointerSize(Image.is64Bit()) ||
+      !Image.CodePtrRelocSlots.count(Slot) ||
+      Image.DataPtrRelocSlots.count(Slot))
+    return std::nullopt;
+  const uint8_t *Bytes = Image.readVA(Slot, Width);
+  if (!Bytes)
+    return std::nullopt;
+  const va_t Target = normalizeCodeAddress(readPtr(Bytes, Image.is64Bit()),
+                                           Image.Arch, Image.Mode);
+  if (!Image.isCodeAddress(Target))
+    return std::nullopt;
+  return Target;
+}
+} // namespace
+
 std::map<va_t, PointerVariableCallee>
 collectPointerVariableCallees(const BinaryImage &Image) {
   std::map<va_t, PointerVariableCallee> Callees;
@@ -147,17 +167,24 @@ collectPointerVariableCallees(const BinaryImage &Image) {
     if (!IsImportStorage(Slot))
       Callees[Slot].ImportName = std::move(Name);
   for (const uint64_t Slot : Image.CodePtrRelocSlots) {
-    if (Callees.count(Slot) || IsImportStorage(Slot) ||
-        Image.DataPtrRelocSlots.count(Slot))
+    if (Callees.count(Slot) || IsImportStorage(Slot))
       continue;
-    const uint8_t *Bytes = Image.readVA(Slot, Width);
-    if (!Bytes)
-      continue;
-    const uint64_t Target = normalizeCodeAddress(
-        readPtr(Bytes, Image.is64Bit()), Image.Arch, Image.Mode);
-    if (Image.isCodeAddress(Target))
-      Callees[Slot].LocalEntry = Target;
+    if (const std::optional<va_t> Target = relocatedCodeTarget(Image, Slot))
+      Callees[Slot].LocalEntry = *Target;
   }
   return Callees;
+}
+
+std::optional<va_t> ownRoutineOfImport(const BinaryImage &Image,
+                                       const Import &Imp) {
+  const va_t Slot = Imp.IATAddr;
+  if (!Slot || !Image.CodePtrRelocSlots.count(Slot))
+    return std::nullopt;
+  // A slot the loader binds to another module's routine is import storage.
+  const ImportStorageSlotCollection Storage =
+      Image.collectImportStorageSlot(Slot);
+  if (Storage.Slots.count(Slot) || Storage.Conflicts.count(Slot))
+    return std::nullopt;
+  return relocatedCodeTarget(Image, Slot);
 }
 } // namespace neverd

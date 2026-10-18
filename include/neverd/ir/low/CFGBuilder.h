@@ -1281,6 +1281,10 @@ private:
   /// that register (CFGBuilderX86GetPc.cpp).
   void rewriteGetPcThunkCall(const BinaryImage &Img, InsnRecord &Rec,
                              va_t Next);
+  /// The jump of an i386 PIC PLT entry the loader pairs with its import,
+  /// `jmp *disp(%ebx)` by the GOT address its callers hold in EBX, is lifted
+  /// as the jump through that import's slot (CFGBuilderX86PLT.cpp).
+  void rewriteI386PLTJump(const BinaryImage &Img, InsnRecord &Rec);
   struct OwnInteriorReturn {
     va_t Target;
     va_t CallSite;

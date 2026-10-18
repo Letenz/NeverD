@@ -1649,6 +1649,10 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
   }
   if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst);
       Load && !Load->isSimple() && Load->getPointerAddressSpace() == 0) {
+    // The slot a call reaches an import through, which the call names: the
+    // word read there is no value of the C (HighC prints none either).
+    if (isImportCalleeOnlyLoad(Load))
+      return;
     const std::string Type = typeToCLLVM(Load->getType());
     const llvm::Value *Address = Load->getPointerOperand();
     std::string AddressText;
@@ -6739,7 +6743,8 @@ LLVMCWriter::resolveImportCalleeName(const llvm::Value *Callee) const {
 }
 
 bool LLVMCWriter::isImportCalleeOnlyLoad(const llvm::LoadInst *LI) const {
-  if (!LI || LI->use_empty())
+  // An atomic load orders other accesses, which C keeps only by printing it.
+  if (!LI || LI->use_empty() || LI->isAtomic())
     return false;
   for (const llvm::User *User : LI->users()) {
     const llvm::Value *Callee = User;

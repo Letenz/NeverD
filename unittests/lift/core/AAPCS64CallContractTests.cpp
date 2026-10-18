@@ -17,15 +17,19 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/Regex.h"
+#include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
@@ -183,6 +187,75 @@ TEST(AAPCS64CallContract, APLTEntryPassesTheArgumentsOfItsImport) {
   EXPECT_NE(UidBody.find("getuid()"), std::string::npos) << UidBody;
 }
 
+TEST(AAPCS64CallContract, PLTEntriesOfVariadicSystemCallsPassTheirArgsOn) {
+  // syscall reads at most six arguments after the number, ptrace three after
+  // the request and prctl four after the option.  Each entry passes every
+  // argument on, which C does one by one.
+  constexpr va_t Sys = Plt, Trace = Plt + 0x10, Control = Plt + 0x20;
+  const BinaryImage Img = makeImage({{Sys, pltEntry(Sys, Got)},
+                                     {Trace, pltEntry(Trace, Got + 8)},
+                                     {Control, pltEntry(Control, Got + 16)}},
+                                    {}, {"syscall", "ptrace", "prctl"});
+  const std::string Source = highC(Img, {Sys, Trace, Control});
+  EXPECT_NE(Source.find("long sub_10100(long arg0, ...) {"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("return syscall(arg0, argument1, argument2, "
+                        "argument3, argument4, argument5, argument6);"),
+            std::string::npos)
+      << Source;
+  // glibc's request is an enumeration, which <sys/ptrace.h> declares.
+  EXPECT_NE(Source.find("#include <sys/ptrace.h>"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("long sub_10110(enum __ptrace_request arg0, ...) {"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("return ptrace(arg0, argument1, argument2, "
+                        "argument3);"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("int sub_10120(int arg0, ...) {"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("return prctl(arg0, argument1, argument2, argument3, "
+                        "argument4);"),
+            std::string::npos)
+      << Source;
+}
+
+TEST(AAPCS64CallContract, APLTEntryInLLVMCCallsItsImportByName) {
+  // The entry calls the word it loads from islower's slot.  Its function is
+  // not islower, which it calls by that name as <ctype.h> declares it; the
+  // word is no value of the C.
+  const BinaryImage Img =
+      makeImage({{Plt, pltEntry(Plt, Got)}}, {}, {"islower"});
+  llvm::LLVMContext Ctx;
+  llvm::SMDiagnostic Error;
+  const auto Module = llvm::parseAssemblyString(R"(
+target triple = "aarch64-unknown-linux-gnu"
+@__nd_codeptr_20000 = external global i64
+define i64 @sub_10100(i64 %arg0) {
+  %ld = load volatile i64, ptr @__nd_codeptr_20000, align 8
+  %fn = inttoptr i64 %ld to ptr
+  %call = tail call i64 %fn(i64 %arg0)
+  ret i64 %call
+}
+)",
+                                                Error, Ctx);
+  ASSERT_TRUE(Module) << Error.getMessage().str();
+  CEmitterOptions Options;
+  Options.TheArch = Img.Arch;
+  Options.Format = Img.Format;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options, nullptr, &Img,
+                                  Module->getFunction("sub_10100")));
+  EXPECT_NE(Source.find("#include <ctype.h>"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("uint64_t sub_10100(uint64_t arg0) {"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("return islower(arg0);"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("volatile"), std::string::npos) << Source;
+}
+
 TEST(AAPCS64CallContract, OnlyReachingEntryRegistersBecomeForwardedParameters) {
   for (unsigned Mode : {0, 1, 2, 3}) {
     SCOPED_TRACE(Mode);
@@ -338,24 +411,90 @@ TEST(AAPCS64CallContract, TheLLVMRoutePassesTheArgumentThroughAGOTSlot) {
   }
 }
 
+/// A shared object that defines g(x) { return x + x; } and calls it through
+/// its PLT entry, as `f: b g@plt` does for a preemptible g.  The loader
+/// relocates g's slot to g itself.
+constexpr va_t OwnG = Text, OwnF = Text + 0x10, OwnStub = Plt;
+BinaryImage makeOwnRoutinePLT(const char *Import = "g",
+                              const char *Alias = nullptr) {
+  constexpr uint32_t AddW0W0 = 0x0B000000u; // add w0, w0, w0
+  const uint32_t BranchToStub =
+      0x14000000u | (static_cast<uint32_t>(OwnStub - OwnF) >> 2 & 0x3FFFFFF);
+  std::vector<std::pair<va_t, const char *>> Functions = {{OwnG, "g"},
+                                                          {OwnF, "f"}};
+  if (Alias)
+    Functions.push_back({OwnG, Alias});
+  BinaryImage Img = makeImage({{OwnG, {AddW0W0, Ret}},
+                               {OwnF, {BranchToStub}},
+                               {OwnStub, pltEntry(OwnStub, Got)}},
+                              Functions, {Import},
+                              /*Defined=*/true);
+  for (unsigned B = 0; B < 8; ++B)
+    Img.Segments.back().Data[B] = static_cast<uint8_t>(OwnG >> (8 * B));
+  Img.CodePtrRelocSlots.insert(Got);
+  return Img;
+}
+
 TEST(AAPCS64CallContract,
      ASlotTheLoaderStartsAtThisImagesRoutinePassesItsArgs) {
-  // A shared object's PLT entry for g, a function it defines itself: the
-  // loader binds g's slot to g here, whose one argument the entry passes on.
-  constexpr va_t G = Text, Stub = Plt;
-  constexpr uint32_t AddW0W0 = 0x0B000000u; // add w0, w0, w0
-  BinaryImage Img =
-      makeImage({{G, {AddW0W0, Ret}}, {Stub, pltEntry(Stub, Got)}}, {{G, "g"}},
-                {"g"}, /*Defined=*/true);
-  for (unsigned B = 0; B < 8; ++B)
-    Img.Segments.back().Data[B] = static_cast<uint8_t>(G >> (8 * B));
-  Img.CodePtrRelocSlots.insert(Got);
-  const std::string Source = highC(Img, {G, Stub});
+  // The PLT entry passes g's one argument on, to g by its name.
+  const BinaryImage Img = makeOwnRoutinePLT();
+  const std::string Source = highC(Img, {OwnG, OwnStub});
   const std::string Entry = body(Source, "sub_10100");
   ASSERT_FALSE(Entry.empty()) << Source;
   EXPECT_NE(Entry.find("sub_10100(int64_t arg0)"), std::string::npos) << Entry;
-  EXPECT_NE(Entry.find("(arg0)"), std::string::npos) << Entry;
+  EXPECT_TRUE(llvm::Regex("[^[:alnum:]_]g\\(arg0\\)").match(Entry)) << Entry;
   EXPECT_EQ(Entry.find("unknown value"), std::string::npos) << Entry;
+}
+
+TEST(AAPCS64CallContract, ACallThroughAnAliasesSlotKeepsTheAliasesName) {
+  // libgcc's __lttf2 and __letf2 name one routine: a call through the slot
+  // the loader binds to one of them names the routine by that name.
+  const BinaryImage Img = makeOwnRoutinePLT("galias", "galias");
+  const std::string Source = highC(Img, {OwnG, OwnF, OwnStub});
+  for (const char *Name : {"f", "sub_10100"}) {
+    SCOPED_TRACE(Name);
+    const std::string Body = body(Source, Name);
+    ASSERT_FALSE(Body.empty()) << Source;
+    EXPECT_TRUE(llvm::Regex("[^[:alnum:]_]galias\\(arg0\\)").match(Body))
+        << Body;
+  }
+}
+
+TEST(AAPCS64CallContract, ACallToThePLTEntryOfItsOwnRoutinePassesItsArgs) {
+  // f reaches g through g's PLT entry and passes its argument on, whether
+  // or not the entry and g are decompiled with it.
+  const BinaryImage Img = makeOwnRoutinePLT();
+  for (const std::set<va_t> &Entries :
+       {std::set<va_t>{OwnG, OwnF, OwnStub}, std::set<va_t>{OwnF}}) {
+    SCOPED_TRACE(Entries.size());
+    const std::string Source = highC(Img, Entries);
+    const std::string F = body(Source, "f");
+    ASSERT_FALSE(F.empty()) << Source;
+    EXPECT_NE(F.find("f(int64_t arg0)"), std::string::npos) << F;
+    EXPECT_TRUE(llvm::Regex("[^[:alnum:]_]g\\(arg0\\)").match(F)) << F;
+    EXPECT_FALSE(llvm::Regex("[^[:alnum:]_]g_[[:xdigit:]]+\\(").match(Source))
+        << Source;
+  }
+  // The LLVM route passes it too, rather than a value of its own: inlined
+  // or not, what f returns depends on its argument.
+  llvm::LLVMContext Ctx;
+  const PipelineResult Result = run(Img, Ctx, {OwnG, OwnF}, true);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_TRUE(Result.LlvmModule);
+  const llvm::Function *Fn = Result.LlvmModule->getFunction("f");
+  ASSERT_NE(Fn, nullptr);
+  std::string IR;
+  llvm::raw_string_ostream OS(IR);
+  Fn->print(OS);
+  ASSERT_EQ(Fn->arg_size(), 1u) << IR;
+  EXPECT_FALSE(Fn->getArg(0)->use_empty()) << IR;
+  for (const llvm::BasicBlock &Block : *Fn)
+    for (const llvm::Instruction &I : Block)
+      if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&I);
+          Call && !llvm::isa<llvm::IntrinsicInst>(Call))
+        for (const llvm::Value *Argument : Call->args())
+          EXPECT_FALSE(llvm::isa<llvm::Constant>(Argument)) << IR;
 }
 
 } // namespace

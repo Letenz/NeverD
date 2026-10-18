@@ -51,6 +51,7 @@
 #include "neverd/backend/llvm/PEImportShadow.h"
 #include "neverd/libc/LibCResult.h"
 #include "neverd/libc/MinGWHeaderFunctions.h"
+#include "neverd/loader/DataSymbolBinding.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -327,6 +328,16 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
               DebugName =
                   symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch);
         }
+        // A call to a stub reaches its import, by whose name it calls; the
+        // stub's own body is not the import, and calls it by that name.
+        if (!Fn.isDeclaration() && !DebugName.empty() && Img)
+          if (const Import *Imp = Img->findImportStubAt(Addr);
+              Imp && !Imp->Name.empty() &&
+              cNameOfSymbol(DebugName, Opts.Format, Opts.TheArch) ==
+                  cNameOfSymbol(
+                      symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch),
+                      Opts.Format, Opts.TheArch))
+            DebugName.clear();
       }
     }
     // An image symbol carries the format's decoration; an LLVM name may have
@@ -1506,8 +1517,16 @@ std::string LLVMCWriter::boundImportCallee(const llvm::CallBase &Call) const {
   const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Slot);
   const auto SlotVA =
       Load ? imageDataVA(Load->getPointerOperand()) : std::nullopt;
+  // So does the slot of a symbol the image defines itself, which the loader
+  // starts at that routine (ownRoutineOfImport).
+  const auto OwnRoutineSlot = [&] {
+    const Import *Imp = Img->findImportAt(*SlotVA);
+    return Imp && Imp->IATAddr == *SlotVA &&
+           ownRoutineOfImport(*Img, *Imp).has_value();
+  };
   if (!CalledSymbol &&
-      (!Img || !SlotVA || !Img->ImportStorageSlots.count(*SlotVA)))
+      (!Img || !SlotVA ||
+       (!Img->ImportStorageSlots.count(*SlotVA) && !OwnRoutineSlot())))
     return {};
   return resolveImportCalleeName(Call.getCalledOperand());
 }
