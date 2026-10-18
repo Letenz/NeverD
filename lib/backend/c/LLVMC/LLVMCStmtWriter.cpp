@@ -3996,7 +3996,7 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     if (AfterCxxThrow)
       return true;
     emitIndent(Indent);
-    OS << renderDebugBreak(Opts.TheArch);
+    OS << renderDebugBreak(Opts.TheArch, Opts.Format);
     AfterCxxThrow = false;
     return true;
   }

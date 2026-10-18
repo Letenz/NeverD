@@ -22000,6 +22000,7 @@ TEST(HighCPointerAddresses, CxxThrowCallPrintsThrowWithoutDebugBreak) {
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("throw 0x140001100"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("__debugbreak"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("__builtin_debugtrap"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, ZeroArgMsvcThrowCtorDropsStaleCallOperands) {
@@ -24441,6 +24442,7 @@ TEST(LLVMCPointerAddresses, CxxThrowCallPrintsThrowWithoutDebugTrap) {
   OS.flush();
   EXPECT_NE(Source.find("throw;"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("__debugbreak"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("__builtin_debugtrap"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, EmptyIfCallReturnDoesNotLeaveUninitOrUnknownArgs) {
@@ -35395,7 +35397,9 @@ TEST(HighCPointerAddresses, ReturningCallFollowedByInt3PreservesDebugBreak) {
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS));
   OS.flush();
   EXPECT_NE(Source.find("abort_like("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__debugbreak"), std::string::npos) << Source;
+  // An ELF unit's breakpoint is the GNU builtin; no header declares
+  // Microsoft's __debugbreak there.
+  EXPECT_NE(Source.find("__builtin_debugtrap()"), std::string::npos) << Source;
   EXPECT_NE(Source.find("= abort_like("), std::string::npos) << Source;
   // The int32_t return converts the 64-bit value itself.
   EXPECT_NE(Source.find("return v0;"), std::string::npos) << Source;
@@ -46574,4 +46578,40 @@ struct FILEFUNC_LIKE {
   EXPECT_NE(Source.find("(uintptr_t)(funcs->opaque)"), std::string::npos)
       << Source;
   expectCSyntax("#include <stdint.h>\n" + Source);
+}
+
+TEST(HighCPointerAddresses, TrapsUseTheBuiltinsTheirHeadersDeclare) {
+  // ud2 and int3 are Microsoft's __ud2 and __debugbreak only where the unit
+  // includes <intrin.h>; elsewhere they are the GNU builtins.
+  for (const BinaryFormat Format : {BinaryFormat::ELF, BinaryFormat::COFF}) {
+    HighFunc Func;
+    Func.Name = "stop";
+    Func.Entry = 0x401000;
+    Func.ReturnType = NdType::makeVoid();
+    for (const Intrinsic Id : {Intrinsic::Int3, Intrinsic::Ud2}) {
+      HighStmt Trap;
+      Trap.Kind = StmtKind::Call;
+      Trap.CallExpr = HighExpr::makeCall("trap", 0, {});
+      Trap.CallExpr->IntrinsicId = Id;
+      Func.Body.push_back(std::move(Trap));
+    }
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = Format;
+    ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+    OS.flush();
+    const bool Coff = Format == BinaryFormat::COFF;
+    EXPECT_EQ(Source.find(Coff ? "__debugbreak()" : "__builtin_debugtrap()") !=
+                  std::string::npos,
+              true)
+        << Source;
+    EXPECT_EQ(Source.find(Coff ? "__ud2()" : "__builtin_trap()") !=
+                  std::string::npos,
+              true)
+        << Source;
+    if (!Coff)
+      expectCSyntax(Source);
+  }
 }

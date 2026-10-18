@@ -322,22 +322,26 @@ TEST_F(X86_64_Intrinsics, Decompile_XgetbvUsesIntrinsic) {
       << content.substr(0, 3000);
 }
 
-TEST_F(X86_64_Intrinsics, Decompile_Int3UsesDebugbreak) {
+// An ELF object's int3 is the GNU builtin: no header declares Microsoft's
+// __debugbreak there.
+TEST_F(X86_64_Intrinsics, Decompile_Int3UsesDebugTrapBuiltin) {
   auto r = decompileToHighC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled_high.c");
-  EXPECT_TRUE(content.find("__debugbreak") != std::string::npos)
-      << "Expected __debugbreak() in HighC decompile:\n"
+  EXPECT_TRUE(content.find("__builtin_debugtrap()") != std::string::npos)
+      << "Expected __builtin_debugtrap() in HighC decompile:\n"
       << content.substr(0, 3000);
+  EXPECT_EQ(content.find("__debugbreak"), std::string::npos);
 }
 
-TEST_F(X86_64_Intrinsics, LlvmC_Int3UsesDebugbreak) {
+TEST_F(X86_64_Intrinsics, LlvmC_Int3UsesDebugTrapBuiltin) {
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  EXPECT_TRUE(content.find("__debugbreak") != std::string::npos)
-      << "Expected __debugbreak() in LLVM C decompile:\n"
+  EXPECT_TRUE(content.find("__builtin_debugtrap()") != std::string::npos)
+      << "Expected __builtin_debugtrap() in LLVM C decompile:\n"
       << content.substr(0, 3000);
+  EXPECT_EQ(content.find("__debugbreak"), std::string::npos);
 }
 
 TEST_F(X86_64_Intrinsics, LlvmC_StoreForwarding_NoFrameInClflush) {

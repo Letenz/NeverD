@@ -74,7 +74,7 @@ InlineAsmRender renderX86InlineAsm(Arch TheArch, const std::string &AsmStr,
                                    bool ResultLive,
                                    const std::vector<std::string> &Args);
 std::string renderX86Fence(llvm::AtomicOrdering Ordering);
-const char *renderX86DebugBreak();
+const char *renderX86DebugBreak(BinaryFormat Format);
 bool isX86FastFailName(llvm::StringRef Name);
 std::string renderX86SegmentedLoad(
     Arch TheArch, const llvm::LoadInst &LI,
@@ -98,8 +98,10 @@ InlineAsmRender renderInlineAsm(Arch TheArch, const std::string &AsmStr,
 
 std::string renderFence(Arch TheArch, llvm::AtomicOrdering Ordering);
 
-/// Returns the arch-appropriate debug-break statement (with trailing newline).
-const char *renderDebugBreak(Arch TheArch);
+/// Returns the arch-appropriate debug-break statement (with trailing newline):
+/// x86's is Microsoft's `__debugbreak` in a COFF unit and the GNU builtin in
+/// any other, whose headers do not declare it.
+const char *renderDebugBreak(Arch TheArch, BinaryFormat Format);
 
 } // namespace neverd
 

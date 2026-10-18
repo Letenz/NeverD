@@ -76,6 +76,10 @@ struct FunctionSym {
   /// that prototype as the library declares it, in C.  Empty otherwise.
   std::string PrototypeLibrary;
   std::string PrototypeDeclaration;
+  /// The library is a C library's headers (glibc's, bionic's, musl's,
+  /// libSystem's), which a unit's C includes: a definition of the name in
+  /// the image is a copy of the routine they declare, not that routine.
+  bool PrototypeFromCLibrary = false;
   /// The function never returns, as its declaration says (`_Noreturn`).
   bool NoReturn = false;
 

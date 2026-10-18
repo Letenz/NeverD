@@ -361,11 +361,9 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
       // listing does (`_Unwind_Resume`).  So does a whole module's `main`,
       // which C holds to the parameters and result it gives main, not those
       // the code has.
-      if (libc::isKnownFunction(CName) ||
+      if (copiesHeaderRoutine(CName, Opts.Format) ||
           (libc::libcPrototype(CName, Opts.Format) &&
            ImportCNames.count(CName.str())) ||
-          (Opts.Format == BinaryFormat::COFF &&
-           libc::mingwHeadersDeclare(CName)) ||
           (!OnlyFunction && CName == "main")) {
         auto VA = rewrite_source::getOriginalVA(Fn);
         if (!VA)
@@ -432,6 +430,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   SelectedGlobals =
       Only ? referencedGlobals(*Only) : std::set<const llvm::GlobalValue *>{};
   EmittedGlobalNames.clear();
+  DeclaredCalleeNames.clear();
   RecordPointerTags.clear();
   CurMod = &Mod;
   prepareFunctionIdentifiers(Mod);
@@ -493,17 +492,28 @@ static void spellTagUses(std::string &Text, llvm::StringRef Tag,
 void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
   if (!Opts.EmitIncludes)
     return;
+  // A name the unit gives a function or an object, of its own or one it
+  // declares, is that, not a type.
+  const auto Held = [&](const std::string &Name) {
+    return GlobalIdentifierAllocator.holds(Name) ||
+           EmittedGlobalNames.count(Name) || DeclaredCalleeNames.count(Name);
+  };
   // A record only pointers name, which no definition below completes, is
-  // declared incomplete, as HighC declares it.  A name the unit gives a
-  // function or an object of its own is that, not a type.
+  // declared incomplete, as HighC declares it, unless a function of the
+  // unit or of a C library has its name: it is spelled by its tag
+  // (`struct stat64` beside stat64()).
   auto DeclareIncomplete = [&](const std::set<std::string> &Defined) {
     bool Any = false;
-    for (const std::string &Tag : RecordPointerTags)
-      if (!Defined.count(Tag) && !GlobalIdentifierAllocator.holds(Tag) &&
-          !EmittedGlobalNames.count(Tag)) {
-        OS << "typedef struct " << Tag << " " << Tag << ";\n";
-        Any = true;
+    for (const std::string &Tag : RecordPointerTags) {
+      if (Defined.count(Tag))
+        continue;
+      if (Held(Tag) || libc::isKnownFunction(Tag)) {
+        spellTagUses(Text, Tag, "struct");
+        continue;
       }
+      OS << "typedef struct " << Tag << " " << Tag << ";\n";
+      Any = true;
+    }
     if (Any)
       OS << "\n";
   };
@@ -552,10 +562,6 @@ void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
   std::vector<std::string> Declared = Definitions.Identifiers;
   llvm::append_range(Declared, Spelled);
   llvm::append_range(Declared, Enumerations);
-  const auto Held = [&](const std::string &Name) {
-    return GlobalIdentifierAllocator.holds(Name) ||
-           EmittedGlobalNames.count(Name);
-  };
   for (const std::string &Name : Declared)
     if (Held(Name)) {
       for (const std::string &Tag : Spelled)
@@ -1724,13 +1730,16 @@ void LLVMCWriter::writeImportCalleeDecls(llvm::Module &Mod) {
   auto Extern = [&](const std::string &Name) {
     return Weak.count(Name) ? "extern __attribute__((weak)) " : "extern ";
   };
-  for (const auto &[Name, Prototype] : Typed)
+  for (const auto &[Name, Prototype] : Typed) {
     OS << Extern(Name)
        << c_library::declaration(*Prototype, Name, Opts.TheArch, Opts.Format)
        << ";\n";
+    DeclaredCalleeNames.insert(Name);
+  }
   for (const auto &[Name, Calls] : Imports) {
     if (!Calls.Return)
       continue;
+    DeclaredCalleeNames.insert(Name);
     // One the user declares under another identifier links by its name.
     std::string Label;
     if (const auto Link = UserImportLinkNames.find(Name);
