@@ -250,8 +250,10 @@ constexpr const char *RustPrimitives[] = {
     "isize", "str",  "u8",  "u16", "u32", "u64", "u128", "usize",
 };
 
-NameSpelling::NameSpelling(const TypeLibrary &Library, Language Lang)
-    : Lang(Lang) {
+NameSpelling::NameSpelling(const TypeLibrary &Library, Language Lang,
+                           bool CppToo)
+    : Lang(Lang),
+      Reserved(CppToo && Lang == Language::C ? Language::Cpp : Lang) {
   const std::vector<const LocalType *> All = Library.types();
   llvm::StringSet<> Taken;
   for (const LocalType *Type : All) {
@@ -297,7 +299,7 @@ std::string NameSpelling::identifier(llvm::StringRef Name,
     for (const char *Word : JavaScriptPredeclared)
       if (Text == Word)
         return Text + "_";
-  return escapedName(Lang, Text);
+  return escapedName(Reserved, Text);
 }
 
 void NameSpelling::enumeration(const EnumDef &Enum, llvm::StringRef Owner,
@@ -804,7 +806,7 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
 
 std::vector<std::pair<std::string, std::string>>
 renamedNames(const TypeLibrary &Library, Language Lang) {
-  return render::NameSpelling(Library, Lang).renamed();
+  return render::NameSpelling(Library, Lang, /*CppToo=*/true).renamed();
 }
 
 std::string spellType(const TypeLibrary &Library, const TypeExpr &Type,

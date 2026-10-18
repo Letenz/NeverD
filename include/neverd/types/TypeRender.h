@@ -201,7 +201,8 @@ std::string renderTypes(const TypeLibrary &Library,
 
 /// The names \p Lang cannot spell as they are, such as `std::pair<int,int>`
 /// or an enumerator another enumeration has too, each with the identifier
-/// rendered source calls it by.  In the library's order.
+/// rendered source calls it by.  In the library's order.  C's are those of
+/// the C that C++ reads too, which steps around C++'s keywords as well.
 std::vector<std::pair<std::string, std::string>>
 renamedNames(const TypeLibrary &Library, Language Lang);
 
