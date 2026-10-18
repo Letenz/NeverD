@@ -8746,3 +8746,19 @@ that shadow known classes. ProcessReport tests cover the JSON request and full
 64-bit targets. Run the JNI, Dalvik and process-public suites; runtime tests for
 existing DEX state/language workloads protect initialization order. These tests
 do not claim native Java method execution or custom loader support.
+
+## Legacy aligned vector moves
+
+`NeverDX86LegacyAlignedMoveTests` checks MOVDQA, MOVAPS and MOVAPD register preservation and 16-byte alignment before memory access, including address-width wrapping and explicit FS/GS bases. Misaligned accesses must preserve destination registers and memory. Missing segment bases remain rejected. This is lifting/emulator coverage; exact symbolic recovery must separately prove the retained alignment guard.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` and `PEFixedImageTest.RawAlign*` check independent remainder proofs, invalid inputs, exact budgets, retained native guards and receipt tampering. Legacy move audits bind the complete operation span, including the alignment guard; they do not certify preservation of opaque machine-state banks.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```

@@ -616,6 +616,18 @@ target_include_directories(NeverDX86LegacyAtomicSemanticTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
+# Keeps legacy aligned SIMD loads and stores fault-atomic, with architectural
+# address-width wrapping and explicit FS/GS bases in strict emulation.
+add_neverd_unittest(NeverDX86LegacyAlignedMoveTests
+  x86_64/X86_64_LegacyAlignedMoveTests.cpp
+  LINK_COMPONENTS Decode IRLow Lift Loader
+)
+
+target_include_directories(NeverDX86LegacyAlignedMoveTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+
 # Keeps EVEX compare semantics independently runnable while each predicate and
 # masking rule is validated end to end through decode, lift, and emulation.
 add_neverd_unittest(NeverDX86EVEXCompareTests

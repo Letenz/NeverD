@@ -2041,3 +2041,19 @@ KernelFileObjectTests 与 KernelObjectTests 覆盖带类型的指针打开、类
 `KernelMDLChain.CreateMdl*` 和 `KernelMDLUserMapping.CreateMdl*` 覆盖完整位宽检查、未改动字节、零长度／回绕元数据、池及栈生命周期、锁、别名、释放失败、部分复用、IRP 拒绝与 IRQL。真实 WDK 用户映射夹具静态及动态创建独立池、调用者池内部和栈描述符，检查物理身份及完整卸载。原始探针区分包装字段写入、池标志转换与注入的分配／释放边界。
 
 `KernelMDLChain.AdvanceMdl*` 与 `KernelMDLUserMapping.AdvanceMdl*` 检查反复跨页、PFN 尾、末端拒绝、窄参数、稳定映射范围、清理失败、权限、存储所有权、进程上下文和依赖拒绝。真实 WDK 夹具执行静态／动态推进、显式撤销及自动解锁。原始探针分别执行完整推进函数、恢复辅助函数及注入映射类型／PTE 释放边界的撤销包装；不宣称运行系统页数据库。
+
+## 传统对齐向量移动
+
+`NeverDX86LegacyAlignedMoveTests` 检查 MOVDQA、MOVAPS 和 MOVAPD 的寄存器保持，以及访存前的 16 字节对齐检查，覆盖地址宽度回绕和显式 FS/GS 基址。错位访问必须保持目标寄存器和内存，缺少段基址时仍拒绝。此处验证提升与模拟语义；精确符号恢复还须单独证明保留的对齐条件。
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` 与 `PEFixedImageTest.RawAlign*` 检查独立余数证明、非法输入、精确预算、原生条件检查的保留以及凭据篡改。传统移动指令审计绑定包含对齐检查的完整操作范围，不证明不透明机器状态组的保持。
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
