@@ -948,8 +948,16 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
           limits::kMaxJumpTableTerminalUseEvidenceWork);
 
   for (const JumpTable &JT : CurMedFunc->JumpTables) {
+    // Module arbitration leaves a table's slots suppressible from the pointer
+    // mirror; it gives a large module none once its budget runs out.  A table
+    // among the code often has no mirror at all, past the limit of a code
+    // segment mirrored as one global, and omitting a LOAD only the switch reads
+    // never needs its slots suppressed.
+    const bool AmongCode =
+        JT.HasBaseAddr && Img->DataInCode.count(JT.BaseAddr) != 0;
     if (JT.EntrySize != Load.Output.Size || JT.Targets.empty() ||
-        JT.MutatedUnsafe || JT.SuppressibleRelocationSlots.empty())
+        JT.MutatedUnsafe ||
+        (JT.SuppressibleRelocationSlots.empty() && !AmongCode))
       continue;
 
     // The resolver authenticated a concrete Low LOAD occurrence.  Addr alone

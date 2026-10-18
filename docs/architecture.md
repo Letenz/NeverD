@@ -2391,7 +2391,11 @@ operations that only form its address are too: its forwarding copies and
 extensions back to the addition of the table's base, each read by nothing
 else (`collectSuppressedTableAddressOps`). The base is then never
 materialized, so a table in a code segment too large to mirror needs no
-global; the switch dispatches on its selector.
+global; the switch dispatches on its selector. Module arbitration decides which
+relocation slots the pointer mirror may leave out, and a large module's runs
+out of budget and protects every slot; the witness elides a table's LOAD only
+where its slots are suppressible, except for a table among the code, which
+often has no mirror at all, and whose LOAD only the switch reads needs none.
 
 The LLVM pointer-table role proof treats a frame slot as a PHI over the
 values stored to it (`collectFrameReloadSources`). As a PHI's recurrent arm

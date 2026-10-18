@@ -7742,7 +7742,9 @@ as a function of its own.
 `X86_32_FunctionDiscovery.SwitchTableAmongCodeLiftsPastTheMirrorLimit` lifts
 such a switch from a `.text` larger than the LLVM emitter mirrors as one
 global; it refuses the table's address without the table-base witness or the
-elided address operations. `APointerSpilledAcrossALoopsCallsKeepsItsTable`
+elided address operations. A variant with no arbitration budget, which leaves
+no slot suppressible as a large module's arbitration does, refuses it without
+the exception for a table among the code. `APointerSpilledAcrossALoopsCallsKeepsItsTable`
 walks an integer array in `.rdata` beside a code pointer with a pointer kept
 in a frame slot across a call (`add dword ptr [ebp-4], 4`), and fails as an
 ambiguous pointer table without the frame-slot recurrence.

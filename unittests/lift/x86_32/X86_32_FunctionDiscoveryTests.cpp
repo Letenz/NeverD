@@ -859,28 +859,34 @@ TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeLiftsPastTheMirrorLimit) {
   coff_loader::recordRelocatedPointerRunsInCode(Img);
   ASSERT_TRUE(Img.DataInCode.count(0x40102E));
 
-  for (bool NoOpt : {true, false}) {
-    SCOPED_TRACE(NoOpt);
-    llvm::LLVMContext Ctx;
-    PipelineOptions Opts;
-    Opts.EmitDumpOutput = false;
-    Opts.LiftMode = true;
-    Opts.NoOpt = NoOpt;
-    Opts.OnlyFunctionEntries = {0x401000};
-    const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
-    ASSERT_TRUE(Result.Success) << Result.Error;
-    ASSERT_NE(Result.LlvmModule, nullptr);
-    EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
-    if (!NoOpt)
-      continue; // the optimizer folds the cases' constants into arithmetic
-    bool Dispatches = false;
-    for (const llvm::Function &Function : *Result.LlvmModule)
-      for (const llvm::BasicBlock &Block : Function)
-        if (const auto *Switch =
-                llvm::dyn_cast_or_null<llvm::SwitchInst>(Block.getTerminator()))
-          Dispatches |= Switch->getNumCases() == 3;
-    EXPECT_TRUE(Dispatches) << "the three cases dispatch through a switch";
-  }
+  // A large module's arbitration runs out of budget and leaves no slot
+  // suppressible; a budget of zero does the same here.
+  for (std::optional<size_t> Budget :
+       {std::optional<size_t>(), std::optional<size_t>(0)})
+    for (bool NoOpt : {true, false}) {
+      SCOPED_TRACE(NoOpt);
+      SCOPED_TRACE(Budget.has_value());
+      llvm::LLVMContext Ctx;
+      PipelineOptions Opts;
+      Opts.EmitDumpOutput = false;
+      Opts.LiftMode = true;
+      Opts.NoOpt = NoOpt;
+      Opts.JumpTableEvidenceBudgetForTesting = Budget;
+      Opts.OnlyFunctionEntries = {0x401000};
+      const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      ASSERT_NE(Result.LlvmModule, nullptr);
+      EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+      if (!NoOpt)
+        continue; // the optimizer folds the cases' constants into arithmetic
+      bool Dispatches = false;
+      for (const llvm::Function &Function : *Result.LlvmModule)
+        for (const llvm::BasicBlock &Block : Function)
+          if (const auto *Switch = llvm::dyn_cast_or_null<llvm::SwitchInst>(
+                  Block.getTerminator()))
+            Dispatches |= Switch->getNumCases() == 3;
+      EXPECT_TRUE(Dispatches) << "the three cases dispatch through a switch";
+    }
 }
 
 TEST(X86_32_FunctionDiscovery, APointerSpilledAcrossALoopsCallsKeepsItsTable) {
