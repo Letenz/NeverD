@@ -368,6 +368,16 @@ model and record ABI are the program's:
 - a header record laid out with a type the program sizes otherwise is left
   out and reported (`conflicts`).
 
+A project changes which libraries join (`neverd_type_libraries_set`, the
+workbench's Type libraries window): it adds a library whose data model and
+record ABI are the program's, or leaves out one the image joins. The engine
+owns the choice, as it owns the debug files chosen: the session reads
+`libraries.json` from the project when it loads, an edit writes it and reads
+the program's types again, and undo history leaves it out. The image's
+libraries join in their rows' order but those left out, then those added in
+the order the user added them; `neverd_type_libraries_json` lists every
+library with what it joined, for a program or none.
+
 A C or C++ header rendered for a program joined to a library of a system's
 headers (`HeaderLibrarySystems.def`: glibc's, bionic's, musl's and Apple's
 libSystem, whose platform `<TargetConditionals.h>` tells) takes

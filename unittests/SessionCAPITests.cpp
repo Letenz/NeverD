@@ -4519,6 +4519,106 @@ TEST_F(SessionCAPITest, LibSystemsTypesComeFromApplesHeaders) {
   EXPECT_EQ(Source.find("_GNU_SOURCE"), std::string::npos) << Source;
 }
 
+TEST_F(SessionCAPITest, TypeLibrariesAreChosenAndKeptWithTheProject) {
+  // A glibc program joins glibc's library; the user may leave it out and
+  // join musl's instead, which libraries.json keeps for the next session.
+  std::ifstream Input(std::filesystem::path(__FILE__).parent_path() / "types" /
+                          "fixtures" / "linux_libc_calls_x64",
+                      std::ios::binary);
+  const std::string Program =
+      write("linux_libc_calls_x64",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Program.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto libraries = [&](const char *Raw) {
+    auto Parsed = llvm::json::parse(takeString(Raw));
+    EXPECT_TRUE(static_cast<bool>(Parsed))
+        << takeString(neverd_last_error(Session));
+    std::map<std::string, llvm::json::Object> Rows;
+    if (Parsed && Parsed->getAsObject())
+      if (const llvm::json::Array *List =
+              Parsed->getAsObject()->getArray("libraries"))
+        for (const llvm::json::Value &Row : *List)
+          if (const llvm::json::Object *Object = Row.getAsObject())
+            Rows[Object->getString("name").value_or("").str()] = *Object;
+    return Rows;
+  };
+  auto Rows = libraries(neverd_type_libraries_json(Session));
+  ASSERT_TRUE(Rows.count("linux-x64"));
+  EXPECT_EQ(Rows["linux-x64"].getBoolean("image"), true);
+  EXPECT_EQ(Rows["linux-x64"].getBoolean("joined"), true);
+  EXPECT_GT(Rows["linux-x64"].getInteger("types").value_or(0), 500);
+  EXPECT_EQ(Rows["musl-x64"].getBoolean("compatible"), true);
+  EXPECT_EQ(Rows["musl-x64"].getBoolean("joined"), false);
+  EXPECT_EQ(Rows["windows-user-x64"].getBoolean("compatible"), false);
+
+  // What the program may not join, or not leave out, fails and changes
+  // nothing.
+  for (const char *Wrong :
+       {R"({"added":["windows-user-x64"]})", R"({"added":["linux-x64"]})",
+        R"({"removed":["musl-x64"]})", R"({"added":["no-such-library"]})",
+        R"({"added":"musl-x64"})"}) {
+    EXPECT_EQ(neverd_type_libraries_set(Session, Wrong), nullptr) << Wrong;
+    EXPECT_FALSE(takeString(neverd_last_error(Session)).empty()) << Wrong;
+  }
+
+  Rows = libraries(neverd_type_libraries_set(
+      Session, R"({"added":["musl-x64"],"removed":["linux-x64"]})"));
+  EXPECT_EQ(Rows["linux-x64"].getBoolean("joined"), false);
+  EXPECT_EQ(Rows["musl-x64"].getBoolean("joined"), true);
+  // The header takes musl's types from musl's headers now, and none of
+  // glibc's.
+  const std::string Source = takeString(neverd_local_types_source(
+      Session, R"({"language":"c","types":["FILE"]})"));
+  EXPECT_NE(Source.find("musl's headers declare"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("defined(__GLIBC__) && !defined(__UCLIBC__)"),
+            std::string::npos)
+      << Source;
+
+  // The project keeps the choice, which the next session reads.
+  const auto Kept =
+      std::filesystem::path(Program + ".neverd") / "libraries.json";
+  ASSERT_TRUE(std::filesystem::exists(Kept));
+  neverd_session_destroy(Session);
+  Session = neverd_session_create();
+  ASSERT_EQ(neverd_session_load(Session, Program.c_str()), 1);
+  Rows = libraries(neverd_type_libraries_json(Session));
+  EXPECT_EQ(Rows["musl-x64"].getBoolean("joined"), true);
+  EXPECT_EQ(Rows["linux-x64"].getBoolean("joined"), false);
+
+  // Left with none, the header defines every type itself.
+  libraries(neverd_type_libraries_set(Session, R"({"removed":["linux-x64"]})"));
+  const std::string Alone =
+      takeString(neverd_local_types_source(Session, R"({"language":"c"})"));
+  EXPECT_EQ(Alone.find("NEVERD_LIBC_FROM_SYSTEM"), std::string::npos) << Alone;
+
+  // A libraries.json edited by hand to add a library laid out otherwise
+  // joins nothing of it and says why; the libraries joined are listed
+  // first, in the order they join.
+  {
+    std::ofstream Edited(Kept, std::ios::trunc);
+    Edited << R"({"added":["musl-x64","windows-user-x64","musl-x64"],)"
+              R"("removed":["linux-x64"]})";
+  }
+  ASSERT_EQ(neverd_type_libraries_load(Session), 0)
+      << takeString(neverd_last_error(Session));
+  auto Listed =
+      llvm::json::parse(takeString(neverd_type_libraries_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Listed));
+  const llvm::json::Array *List = Listed->getAsObject()->getArray("libraries");
+  ASSERT_TRUE(List && List->size() > 2);
+  const llvm::json::Object &Musl = *(*List)[0].getAsObject();
+  const llvm::json::Object &Windows = *(*List)[1].getAsObject();
+  EXPECT_EQ(Musl.getString("name"), "musl-x64");
+  EXPECT_GT(Musl.getInteger("types").value_or(0), 100);
+  EXPECT_EQ(Windows.getString("name"), "windows-user-x64");
+  EXPECT_EQ(Windows.getBoolean("joined"), true);
+  EXPECT_EQ(Windows.getBoolean("compatible"), false);
+  EXPECT_NE(Windows.getString("error").value_or("").find("lay out otherwise"),
+            llvm::StringRef::npos);
+  EXPECT_EQ((*List)[2].getAsObject()->getBoolean("joined"), false);
+}
+
 TEST_F(SessionCAPITest, AppleARMProgramsKeepALongDoubleThatIsADouble) {
   // Apple's 64-bit ARM lays records out as the Itanium ABI does, with a long
   // double that is a double, which the 64-bit System V targets' is not.

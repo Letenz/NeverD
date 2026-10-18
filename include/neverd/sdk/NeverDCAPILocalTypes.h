@@ -164,6 +164,31 @@ NEVERD_API const char *neverd_type_declarations_json(neverd_session_t Sess);
 NEVERD_API int neverd_type_declarations_save(neverd_session_t Sess);
 NEVERD_API int neverd_type_declarations_load(neverd_session_t Sess);
 
+/// The type libraries NeverD ships (HeaderLibraries.def), as IDA's type
+/// libraries window lists them: {"libraries":[{"name","dataModel",
+/// "recordABI","compatible"?:bool,"image":bool,"joined":bool,"types"?,
+/// "prototypes"?,"conflicts"?:[name,...],"error"?},...],"added":[name,...],
+/// "removed":[name,...]}.  "image" says whether the program's kind and
+/// architecture join it (HeaderLibraryImages.def), "compatible" whether its
+/// data model and record ABI are the program's, and "joined" whether its
+/// types join the program's now: the image's, but those "removed", then
+/// those "added", in order, each where no type before declares the name.
+/// The libraries joined come first, in the order they join, then the others
+/// in the table's.  Without a program every library is listed alone.  Free with
+/// neverd_free_string; NULL with neverd_last_error.
+NEVERD_API const char *neverd_type_libraries_json(neverd_session_t Sess);
+/// Sets the libraries the program joins beyond its image's own and of those
+/// it leaves out, {"added":[name,...],"removed":[name,...]}, which
+/// `<input>.neverd/libraries.json` keeps and neverd_session_load reads: an
+/// added library must be compatible and none of the image's, a removed one
+/// the image's.  The program's types are read anew.  Returns
+/// neverd_type_libraries_json's answer, or NULL with neverd_last_error.
+NEVERD_API const char *neverd_type_libraries_set(neverd_session_t Sess,
+                                                 const char *Json);
+/// Reads libraries.json again, as after another's change to the project;
+/// none is the image's own.  0, or -1 with neverd_last_error.
+NEVERD_API int neverd_type_libraries_load(neverd_session_t Sess);
+
 /// The local types a pointer may point at, best first, judged by what the
 /// code does through it, as an analyst checks a guess against the code.
 /// RequestJson is {"accesses":[{"offset","size","use":"read"|"write"|
