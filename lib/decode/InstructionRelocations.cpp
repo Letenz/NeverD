@@ -40,8 +40,11 @@ InstructionRelocations instructionRelocations(const BinaryImage &Img,
             if (Img.getPointerSize() == 4)
               TargetVA = static_cast<uint32_t>(TargetVA);
           }
+          // A loader-anchored i386 table base lies before its owner whether a
+          // GOTOFF or an absolute operand encodes it.
           const bool OwnerMatches =
-              It->second.Kind == RelocatedAddressFieldKind::I386ELFGOTOFF
+              It->second.Kind == RelocatedAddressFieldKind::I386ELFGOTOFF ||
+                      Img.RodataAnchorSeg.count(TargetVA)
                   ? Img.relocatedI386GOTOFFTargetBelongsToOwner(
                         TargetVA, It->second.TargetOwnerVA)
                   : Img.relocatedTargetBelongsToOwner(TargetVA,
