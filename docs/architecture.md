@@ -254,8 +254,29 @@ architecture (`recordABIOf`), so a 32-bit Linux program's records read,
 parse and render as GCC lays them out, and an ARM one's as the AAPCS does.
 Parsing and every renderer read the library's ABI; nothing else carries one.
 MinGW's compilers lay records out as Microsoft's but keep the x87's long
-double, which the Microsoft ABI does not hold: a MinGW program's DWARF long
-double reads as its bytes.
+double: 16 bytes on x64, and on x86 12 that align to four where a double
+aligns to eight (`LongDoubleAlign`). A Windows program whose own sections
+hold DWARF, which MinGW's GCC and Clang write and Microsoft's compilers do
+not, takes MinGW's ABI unless the DWARF's `long double` is a double, as
+clang-cl's `-gdwarf` is (`dwarfLongDoubleBytes`); the session reads that
+DWARF's types where no PDB describes the program, and nothing else of it.
+A stripped MinGW program tells nothing of its compiler and stays Microsoft's.
+Go's Windows programs hold DWARF too; Go has no long double, and their types
+read as any program's. A MinGW program joins the Windows libraries, whose
+records lay out as its own do (`libraryRecordABIOf`).
+
+C has no spelling of a long double that every compiler makes the same size:
+MSVC's is a double, MinGW's and GCC's on x86 the x87's. The portable and
+Windows spellings name one a record or a typedef holds
+`neverd_long_double_<n>`, which the
+prelude declares as the compiler's long double where `__SIZEOF_LONG_DOUBLE__`
+is `<n>`, and elsewhere as that many bytes aligned as the program aligns
+them, or for eight bytes as a double, so a MinGW program's records compile to
+their layout under MSVC and an MSVC program's under MinGW. A signature keeps
+`long double`, which its target's convention passes; the keywords spelling is
+the target's own, and a type shown alone, without the prelude, keeps the
+program's name; the C parser reads the name back as the long double of that
+size and refuses it in a program whose long double is another.
 
 A source reads whole or not at all. The C API keeps the user's declarations
 in order and reads them again over the program's types whenever those are
@@ -306,14 +327,27 @@ the name `__stat_time64`, which takes its prototype too. The loader records
 the dynamic linker an ELF image asks for and Android's identification note,
 and `linuxLibC` (`ELFOperatingSystem.h`) tells glibc's programs from
 bionic's (Android's linker, or the note an APK's native library carries
-alone) and musl's (musl's linker). The build embeds each file in a unit of
+alone) and musl's (musl's linker). `scripts/generate_darwin_types.py`
+renders what libSystem's headers declare for a program into `MacOSX64.h`,
+`MacOSARM64.h` and `IOSARM64.h`, from the projects whose source Apple
+publishes (Libc, xnu, libpthread, Libinfo, libmalloc, libplatform, dyld and
+AvailabilityVersions), laid out as each project's build installs its
+headers, with what those builds resolve by unifdef given as macros; an
+assembler name drops the underscore Mach-O gives C names, so that
+`stat$INODE64`, which an x64 macOS program imports, takes stat's prototype.
+The loader records the platforms a Mach-O image's build version commands
+name (`machOCommandPlatform`, `MachOPlatform.h`, which the emulator's images
+read too), and `darwinPlatform` (`DarwinOperatingSystem.h`) tells macOS
+programs from iOS ones; a program for Mac Catalyst, tvOS or watchOS, or one
+that names no platform or several, joins no library. The build embeds each file in a unit of
 its own, and
 `headerLibrary` reads each once. The C API joins the libraries the table
 names to an image (an x64 or x86 PE of the native subsystem joins its
 kernel's; one of the Windows GUI or console subsystem joins its user mode's,
 then, on x64 and x86, its kernel's for the few ntdll exports only the
 kernel's headers declare, such as `RtlIsNameLegalDOS8Dot3`; a Linux
-program on glibc, bionic or musl joins its architecture's) after the program's debug
+program on glibc, bionic or musl joins its architecture's, a Mach-O program
+its platform's) after the program's debug
 information and before the user's declarations, where the library's data
 model and record ABI are the program's:
 - a header type joins only where the program has no type of its name;

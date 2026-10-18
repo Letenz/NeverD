@@ -18,6 +18,7 @@
 #include "neverd/debug/DWARFLoader.h"
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/loader/ELF/ELFOperatingSystem.h"
+#include "neverd/loader/MachO/DarwinOperatingSystem.h"
 #include "neverd/support/FilePath.h"
 #include "neverd/support/ProjectFiles.h"
 #include "neverd/support/ProjectWriteLock.h"
@@ -28,6 +29,8 @@
 
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/DebugInfo/DWARF/DWARFContext.h"
+#include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 
@@ -44,13 +47,41 @@ types::DataModel dataModelOf(const BinaryImage &Img) {
                                                : types::DataModel::LP64;
 }
 
+/// The DWARF a Windows program's own sections hold, which MinGW's GCC and
+/// Clang write, as an object to read it from; none where it holds none, or
+/// where the load kept no copy of the file.
+llvm::Expected<std::unique_ptr<llvm::object::ObjectFile>>
+windowsDWARF(const BinaryImage &Img) {
+  if (Img.abiFormat() != BinaryFormat::COFF || Img.Raw.empty() ||
+      !Img.hasSection(".debug_info"))
+    return nullptr;
+  return llvm::object::ObjectFile::createObjectFile(llvm::MemoryBufferRef(
+      llvm::StringRef(reinterpret_cast<const char *>(Img.Raw.data()),
+                      Img.Raw.size()),
+      "image"));
+}
+
 /// How \p Img's compilers laid its records out: as Microsoft's for a
 /// Windows program, and for any other as its architecture's System V ABI
 /// says, which for a 32-bit one its data model does not; Apple's 64-bit ARM
-/// and Android's i386 keep a long double that is a double.
-types::RecordABI recordABIOf(const BinaryImage &Img) {
-  if (Img.abiFormat() == BinaryFormat::COFF)
-    return types::RecordABI::Microsoft;
+/// and Android's i386 keep a long double that is a double.  A Windows
+/// program's own DWARF, \p ImageDWARF, was MinGW's, which keeps the x87's
+/// long double on x64 and x86, unless its long double is a double, as
+/// clang-cl's is; one that names no long double is taken as MinGW's.
+types::RecordABI recordABIOf(const BinaryImage &Img,
+                             llvm::DWARFContext *ImageDWARF = nullptr) {
+  if (Img.abiFormat() == BinaryFormat::COFF) {
+    if (!ImageDWARF || types::dwarfLongDoubleBytes(*ImageDWARF) == 8u)
+      return types::RecordABI::Microsoft;
+    switch (Img.Arch) {
+    case Arch::X64:
+      return types::RecordABI::MinGW64;
+    case Arch::X86:
+      return types::RecordABI::MinGW32;
+    default:
+      return types::RecordABI::Microsoft;
+    }
+  }
   if (Img.Bits != Bitness::Bits32)
     return Img.abiFormat() == BinaryFormat::MachO && Img.Arch == Arch::AArch64
                ? types::RecordABI::AppleARM64
@@ -67,9 +98,10 @@ types::RecordABI recordABIOf(const BinaryImage &Img) {
 }
 
 /// An empty library for \p Img's types.
-std::unique_ptr<types::TypeLibrary> libraryFor(const BinaryImage &Img) {
+std::unique_ptr<types::TypeLibrary>
+libraryFor(const BinaryImage &Img, llvm::DWARFContext *ImageDWARF = nullptr) {
   auto Library = std::make_unique<types::TypeLibrary>(dataModelOf(Img));
-  Library->setRecordABI(recordABIOf(Img));
+  Library->setRecordABI(recordABIOf(Img, ImageDWARF));
   return Library;
 }
 
@@ -123,6 +155,12 @@ std::optional<HeaderImageKind> headerImageKind(const Session &S) {
     return HeaderImageKind::Kind;
 #include "neverd/types/HeaderLibraryImages.def"
   }
+  if (const std::optional<DarwinPlatform> Platform = darwinPlatform(S.Img)) {
+#define NEVERD_HEADER_DARWIN_PLATFORM(Name, Kind)                              \
+  if (*Platform == DarwinPlatform::Name)                                       \
+    return HeaderImageKind::Kind;
+#include "neverd/types/HeaderLibraryImages.def"
+  }
   return std::nullopt;
 }
 
@@ -135,7 +173,8 @@ void joinHeaders(Session &S) {
     return;
   const auto join = [&](types::HeaderLibrary Library) {
     if (types::headerLibraryModel(Library) != S.LocalTypes->dataModel() ||
-        types::headerLibraryRecordABI(Library) != S.LocalTypes->recordABI())
+        types::headerLibraryRecordABI(Library) !=
+            types::libraryRecordABIOf(S.LocalTypes->recordABI()))
       return;
     Session::JoinedHeaders Joined{Library, {}, {}};
     if (const types::TypeLibrary *Headers =
@@ -245,42 +284,66 @@ parseDeclarations(const llvm::json::Value &Rows, std::string &Error) {
   return Declarations;
 }
 
+/// Makes the types \p Context's units define, read into \p Library, the
+/// session's local types.
+llvm::Error adoptDWARFTypes(Session &S, llvm::DWARFContext &Context,
+                            std::unique_ptr<types::TypeLibrary> Library) {
+  auto Read = types::importDWARFTypes(Context, *Library);
+  if (!Read)
+    return Read.takeError();
+  S.LocalTypes = std::move(Library);
+  S.LocalTypeStats.Structs = Read->Structs;
+  S.LocalTypeStats.Unions = Read->Unions;
+  S.LocalTypeStats.Enums = Read->Enums;
+  S.LocalTypeStats.DeclaredOnly = Read->DeclaredOnly;
+  S.LocalTypeSkipped = std::move(Read->Skipped);
+  S.LocalTypeConflicts = std::move(Read->Conflicts);
+  S.LocalTypesSource = "dwarf";
+  return llvm::Error::success();
+}
+
 /// The session's local types, read from its PDB the first time; null with
 /// the session's error when they cannot be read.
 types::TypeLibrary *localTypes(Session &S) {
   if (S.LocalTypes)
     return S.LocalTypes.get();
   if (S.DbgKind == DebugInfoKind::DWARF && S.Dbg) {
-    auto Library = libraryFor(S.Img);
-    types::DWARFTypeImportStats Stats;
     if (llvm::Error Err =
             static_cast<const DWARFDebugContext &>(*S.Dbg).withDWARFContext(
-                [&](llvm::DWARFContext &Context) -> llvm::Error {
-                  auto Read = types::importDWARFTypes(Context, *Library);
-                  if (!Read)
-                    return Read.takeError();
-                  Stats = std::move(*Read);
-                  return llvm::Error::success();
+                [&](llvm::DWARFContext &Context) {
+                  return adoptDWARFTypes(S, Context, libraryFor(S.Img));
                 })) {
       S.setError("cannot read the DWARF's types: " +
                  llvm::toString(std::move(Err)));
       return nullptr;
     }
-    S.LocalTypes = std::move(Library);
-    S.LocalTypeStats.Structs = Stats.Structs;
-    S.LocalTypeStats.Unions = Stats.Unions;
-    S.LocalTypeStats.Enums = Stats.Enums;
-    S.LocalTypeStats.DeclaredOnly = Stats.DeclaredOnly;
-    S.LocalTypeSkipped = std::move(Stats.Skipped);
-    S.LocalTypeConflicts = std::move(Stats.Conflicts);
-    S.LocalTypesSource = "dwarf";
     joinHeaders(S);
     redeclare(S);
     return S.LocalTypes.get();
   }
   if (S.DbgKind != DebugInfoKind::PDB || !S.Dbg) {
-    S.LocalTypes = libraryFor(S.Img);
-    S.LocalTypesSource = "none";
+    // A Windows program's own DWARF, where no PDB describes it: its types,
+    // though the session reads nothing else of it, under the record ABI its
+    // long double tells.
+    auto Object = windowsDWARF(S.Img);
+    if (!Object) {
+      S.setError("cannot read the image's DWARF: " +
+                 llvm::toString(Object.takeError()));
+      return nullptr;
+    }
+    if (*Object) {
+      const std::unique_ptr<llvm::DWARFContext> Context =
+          llvm::DWARFContext::create(**Object);
+      if (llvm::Error Err =
+              adoptDWARFTypes(S, *Context, libraryFor(S.Img, Context.get()))) {
+        S.setError("cannot read the DWARF's types: " +
+                   llvm::toString(std::move(Err)));
+        return nullptr;
+      }
+    } else {
+      S.LocalTypes = libraryFor(S.Img);
+      S.LocalTypesSource = "none";
+    }
     joinHeaders(S);
     redeclare(S);
     return S.LocalTypes.get();
@@ -933,8 +996,9 @@ const char *neverd_types_convert(const char *RequestJson) {
     std::optional<llvm::StringRef> Name = Named->getAsString();
     ABI = Name ? types::recordABINamed(*Name) : std::nullopt;
     if (!ABI)
-      return refuse("\"recordABI\" must be microsoft, itanium, apple-arm64, "
-                    "i386-sysv, android-i386 or aapcs32");
+      return refuse("\"recordABI\" must be microsoft, mingw-x64, mingw-x86, "
+                    "itanium, apple-arm64, i386-sysv, android-i386 or "
+                    "aapcs32");
   }
   bool KeepGoing = false;
   std::string Error;

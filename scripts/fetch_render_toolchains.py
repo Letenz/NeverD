@@ -19,10 +19,14 @@ check_type_renders.py --toolchains reads:
   (wine64 runs 32-bit programs from Wine 9 on) in a prefix of its own;
 - the C library headers of armhf and arm64 Linux (Debian's cross packages)
   and of Android (bionic, at the commit the Android libraries were
-  generated from).
+  generated from);
+- Lua 5.4, which the Lua renders run on, built from lua.org's sources;
+- TypeScript's compiler, which checks the JavaScript renders' JSDoc, from
+  npm.
 
 It needs an x86-64 Linux host, dpkg and apt-get (Debian or Ubuntu) for
-the cross packages, and Wine for Windows' Python;
+the cross packages, Wine for Windows' Python, make and a C compiler for
+Lua, and node's npm for TypeScript;
 each part that cannot be fetched is reported and left out, and the checker
 skips what it would have checked.  Run it again to fetch what is missing;
 --force fetches everything again.
@@ -52,7 +56,8 @@ RUSTUP = ("https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/"
 # The targets check_type_renders.py compiles Rust for besides the host's.
 RUST_TARGETS = ("i686-unknown-linux-gnu", "armv7-unknown-linux-gnueabihf",
                 "i686-linux-android", "i686-pc-windows-msvc",
-                "x86_64-pc-windows-msvc", "aarch64-apple-darwin")
+                "x86_64-pc-windows-msvc", "x86_64-pc-windows-gnu",
+                "i686-pc-windows-gnu", "aarch64-apple-darwin")
 
 STANDALONE = ("https://github.com/astral-sh/python-build-standalone/releases/"
               "download/20261013/")
@@ -85,6 +90,13 @@ CROSS = {
 }
 
 BIONIC = "https://android.googlesource.com/platform/bionic/+archive/"
+
+# Lua's sources, with the SHA-256 lua.org lists.
+LUA = ("https://www.lua.org/ftp/lua-5.4.9.tar.gz",
+       "2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6")
+# TypeScript's compiler, whose package npm checks against the registry's
+# digest.
+TYPESCRIPT = "typescript@5.9.3"
 
 
 def say(text):
@@ -270,6 +282,41 @@ def fetch_bionic(root, force):
     return str(directory)
 
 
+def fetch_lua(root, force):
+    """Lua, built from its sources with the host's C compiler: 5.4's linux
+    target needs no readline."""
+    url, digest = LUA
+    directory = root / "lua"
+    lua = directory / "src" / "lua"
+    if force or not lua.exists():
+        with tempfile.TemporaryDirectory() as scratch:
+            archive = Path(scratch) / "lua.tar.gz"
+            download(url, archive)
+            if sha256(archive) != digest:
+                raise RuntimeError(f"{url} does not match its SHA-256")
+            with tarfile.open(archive) as tar:
+                tar.extractall(scratch, filter="data")
+            shutil.rmtree(directory, ignore_errors=True)
+            shutil.move(Path(scratch) / url.rsplit("/", 1)[1].removesuffix(
+                ".tar.gz"), directory)
+        run(["make", "-C", directory / "src", "linux"])
+    return lua
+
+
+def fetch_typescript(root, force):
+    """TypeScript's compiler, which runs on the host's node."""
+    directory = root / "typescript"
+    tsc = directory / "node_modules" / ".bin" / "tsc"
+    if force or not tsc.exists():
+        npm = shutil.which("npm")
+        if not npm:
+            raise RuntimeError("npm not found")
+        directory.mkdir(parents=True, exist_ok=True)
+        run([npm, "install", "--prefix", directory, "--no-audit", "--no-fund",
+             "--ignore-scripts", TYPESCRIPT])
+    return tsc
+
+
 def prepare_wine(root, force):
     wine = shutil.which("wine64") or shutil.which("wine")
     if not wine:
@@ -347,11 +394,19 @@ def main():
     def bionic():
         manifest["sysroots"]["bionic"] = fetch_bionic(root, arguments.force)
 
+    def lua():
+        manifest["lua"] = str(fetch_lua(root, arguments.force))
+
+    def typescript():
+        manifest["tsc"] = str(fetch_typescript(root, arguments.force))
+
     step("Rust and its cross targets", rust)
     step("Python for i386 Linux", python_i386)
     step("qemu, the armhf and arm64 C libraries, Python for 32-bit ARM", cross)
     step("Wine and Python for 32-bit Windows", win32)
     step("bionic's headers", bionic)
+    step("Lua", lua)
+    step("TypeScript", typescript)
     (root / "toolchains.json").write_text(json.dumps(manifest, indent=2) +
                                           "\n", encoding="utf-8")
     say(f"wrote {root / 'toolchains.json'}")

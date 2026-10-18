@@ -18,6 +18,10 @@ LIBC_NO_RETURN_SYMBOL("err")
 LIBC_NO_RETURN_SYMBOL("errx")
 LIBC_NO_RETURN_SYMBOL("verr")
 LIBC_NO_RETURN_SYMBOL("verrx")
+// The BSDs' <err.h>, Darwin's among them, also exits through errc and
+// verrc, which take the error code to report.
+LIBC_NO_RETURN_SYMBOL("errc")
+LIBC_NO_RETURN_SYMBOL("verrc")
 LIBC_NO_RETURN_SYMBOL("assert_fail")
 LIBC_NO_RETURN_SYMBOL("assert_rtn")
 LIBC_NO_RETURN_SYMBOL("assert_perror_fail")

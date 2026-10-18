@@ -17,12 +17,14 @@
 
 #include "neverd/types/TypeLayout.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <map>
 #include <set>
 
 namespace neverd::types::render {
@@ -79,9 +81,12 @@ class CWriter {
 public:
   /// \p Embedded: the C a decompiled unit holds, whose code spells the
   /// members as C allows; any other C names what C++ reads too.
+  /// \p Prelude: the C a header holds, whose prelude declares what the
+  /// writer names, such as a long double exactly as large.
   CWriter(const TypeLibrary &Library, const RenderOptions &Options,
-          bool Embedded = false)
+          bool Embedded = false, bool Prelude = false)
       : Library(Library), Options(Options), Cpp(Options.Lang == Language::Cpp),
+        Prelude(Prelude && !Embedded),
         Names(Library, Options.Lang, /*CppToo=*/!Embedded) {}
 
   std::string builtin(Builtin Type) const;
@@ -93,6 +98,9 @@ public:
   const std::set<Builtin> &builtins() const { return UsedBuiltins; }
   /// Whether a record rendered so far declares its alignment.
   bool alignsRecords() const { return AlignsRecords; }
+  /// The sizes of the long doubles records rendered so far hold, each of
+  /// which the prelude declares as exactly so large (longDouble).
+  const std::set<unsigned> &longDoubles() const { return LongDoubles; }
   /// Whether a member asks GNU's i386 compilers for the alignment of eight
   /// that Microsoft's give it.
   bool alignsEightByteMembers() const { return EightByteMembers; }
@@ -132,10 +140,14 @@ private:
   const TypeLibrary &Library;
   const RenderOptions &Options;
   const bool Cpp;
+  const bool Prelude;
   const NameSpelling Names;
   unsigned Digits = 1;
   unsigned Fillers = 0;
+  /// How many signatures the writer is in.
+  mutable unsigned Signatures = 0;
   mutable std::set<Builtin> UsedBuiltins;
+  mutable std::set<unsigned> LongDoubles;
   bool AlignsRecords = false;
   bool EightByteMembers = false;
   /// Whether a record asks GNU compilers for Microsoft's bit-field layout.
@@ -146,7 +158,23 @@ private:
 std::string CWriter::builtin(Builtin Type) const {
   UsedBuiltins.insert(Type);
   const BuiltinInfo &Info = builtinInfo(Type);
-  switch (spellingOf(Options)) {
+  const BuiltinSpelling Spelling = spellingOf(Options);
+  // A long double a record or a typedef holds, whose size compilers choose
+  // for themselves, as MSVC's double and MinGW's x87 bytes are: in a
+  // header, one exactly as large, which its prelude declares, for every
+  // compiler the spelling is for; the portable double is as large
+  // everywhere, and the keywords are the target's own.  A decompiled
+  // unit's code reads the program's own, and a type shown alone the
+  // program's own name.
+  if (Type == Builtin::LongDouble && Prelude && !Signatures) {
+    const unsigned Bytes = Library.builtinBytes(Type);
+    if (Spelling == BuiltinSpelling::Windows ||
+        (Spelling == BuiltinSpelling::Portable && Bytes > 8)) {
+      LongDoubles.insert(Bytes);
+      return exactLongDoubleName(Bytes);
+    }
+  }
+  switch (Spelling) {
   case BuiltinSpelling::Windows:
     return Info.Windows;
   case BuiltinSpelling::Keywords:
@@ -220,6 +248,10 @@ std::string CWriter::declare(const TypeExpr &Type,
   case TypeExprKind::Function: {
     if (!Type.Function)
       return spaced(builtin(Builtin::Void));
+    // A signature passes a long double as the target's convention does,
+    // not as the bytes a record holds.
+    ++Signatures;
+    const auto Leave = llvm::make_scope_exit([&] { --Signatures; });
     const FunctionDef &Function = *Type.Function;
     std::string Params;
     for (const Parameter &Param : Function.Params) {
@@ -725,10 +757,31 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
   Out += Cpp ? "#include <stddef.h>\n#include <stdint.h>\n"
              : "#include <stdbool.h>\n#include <stddef.h>\n#include "
                "<stdint.h>\n";
-  if (Writer.alignsRecords())
+  const bool ByteLongDoubles =
+      !Writer.longDoubles().empty() && *Writer.longDoubles().rbegin() > 8;
+  if (Writer.alignsRecords() || ByteLongDoubles)
     Out += "\n#ifndef DECLSPEC_ALIGN\n#if defined(_MSC_VER)\n#define "
            "DECLSPEC_ALIGN(x) __declspec(align(x))\n#else\n#define "
            "DECLSPEC_ALIGN(x) __attribute__((aligned(x)))\n#endif\n#endif\n";
+  // The program's long double: the compiler's own where it is as large,
+  // else as many bytes, aligned as the program aligns them, or for one of
+  // eight a double, which MSVC's long double is.
+  const std::string Align =
+      std::to_string(Library.alignOf(*makeBuiltin(Builtin::LongDouble)));
+  for (unsigned Bytes : Writer.longDoubles()) {
+    const std::string Size = std::to_string(Bytes);
+    const std::string Name = exactLongDoubleName(Bytes);
+    Out += "\n#ifndef NEVERD_LONG_DOUBLE_" + Size +
+           "\n#define NEVERD_LONG_DOUBLE_" + Size + "\n#if " +
+           (Bytes == 8 ? "defined(_MSC_VER) || " : "") +
+           "(defined(__SIZEOF_LONG_DOUBLE__) && __SIZEOF_LONG_DOUBLE__ == " +
+           Size + ")\ntypedef long double " + Name + ";\n#else\n" +
+           (Bytes == 8 ? "typedef double " + Name + ";\n"
+                       : "typedef struct DECLSPEC_ALIGN(" + Align +
+                             ")\n{\n    uint8_t bytes[" + Size + "];\n} " +
+                             Name + ";\n") +
+           "#endif\n#endif\n";
+  }
   // GNU's i386 compilers align an eight-byte member to eight as
   // Microsoft's do when asked, which a pack still reduces.
   if (Writer.alignsEightByteMembers())
@@ -983,7 +1036,7 @@ std::string renderCHeader(const TypeLibrary &Library,
     Defined = definedFor(Library, Roots);
   }
 
-  CWriter Writer(Library, Options);
+  CWriter Writer(Library, Options, /*Embedded=*/false, /*Prelude=*/true);
   std::string Declarations, Enums, Body;
   for (const LocalType *Type : All)
     Writer.forwardDeclaration(*Type, Declarations);
@@ -996,20 +1049,40 @@ std::string renderCHeader(const TypeLibrary &Library,
   size_t PrototypeCount = 0;
   if (Options.Prototypes && Roots.empty()) {
     std::vector<std::pair<llvm::StringRef, const FunctionDef *>> Sorted;
-    for (const auto &Entry : Library.prototypes())
-      if (Entry.second && isIdentifier(Entry.first()))
+    // A routine a program imports by a name C cannot spell, as Mach-O's
+    // stat$INODE64, is the assembler name of a C name that shares its
+    // prototype: the declaration a reader takes both names from.
+    std::map<const FunctionDef *, std::vector<llvm::StringRef>> Symbols;
+    for (const auto &Entry : Library.prototypes()) {
+      if (!Entry.second)
+        continue;
+      if (isIdentifier(Entry.first()))
         Sorted.emplace_back(Entry.first(), Entry.second.get());
+      else if (llvm::all_of(Entry.first(), [](char C) {
+                 return llvm::isPrint(C) && C != '"' && C != '\\';
+               }))
+        Symbols[Entry.second.get()].push_back(Entry.first());
+    }
     llvm::sort(Sorted);
+    for (auto &[Function, Names] : Symbols)
+      llvm::sort(Names);
     const bool Cpp = Options.Lang == Language::Cpp;
     for (const auto &[Name, Function] : Sorted) {
       if (Function->NoReturn)
         Prototypes += Cpp ? "[[noreturn]] " : "_Noreturn ";
       Prototypes += Writer.declare(
-                        *makeFunction(std::make_shared<FunctionDef>(*Function)),
-                        Name.str()) +
-                    ";\n";
+          *makeFunction(std::make_shared<FunctionDef>(*Function)), Name.str());
+      // The first C name of the prototype takes its first such name; C gives
+      // a routine one assembler name.
+      if (auto Labels = Symbols.find(Function);
+          Labels != Symbols.end() && !Labels->second.empty()) {
+        Prototypes += " __asm__(\"" + Labels->second.front().str() + "\")";
+        Labels->second.erase(Labels->second.begin());
+        ++PrototypeCount;
+      }
+      Prototypes += ";\n";
     }
-    PrototypeCount = Sorted.size();
+    PrototypeCount += Sorted.size();
   }
 
   std::string Out =

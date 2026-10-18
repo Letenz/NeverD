@@ -7,6 +7,7 @@
 #include "neverd/types/LocalTypes.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/ADT/bit.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -34,12 +35,26 @@ uint32_t scalarAlignment(uint64_t Bytes, RecordABI ABI) {
       llvm::bit_floor(std::min<uint64_t>(Bytes, scalarAlignLimitOf(ABI))));
 }
 
+/// The alignment \p ABI gives its long double where its size and the limit
+/// do not give it, as MinGW's x86 aligns its twelve bytes to four; 0 where
+/// they do.
+uint32_t longDoubleAlignOf(RecordABI ABI) {
+  switch (ABI) {
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
+                          LongDoubleBytes, LongDoubleAlign, Library)           \
+  case RecordABI::Name:                                                        \
+    return LongDoubleAlign;
+#include "neverd/types/RecordABIs.def"
+  }
+  llvm_unreachable("unknown record ABI");
+}
+
 } // namespace
 
 LayoutRules layoutRulesOf(RecordABI ABI) {
   switch (ABI) {
 #define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
-                          LongDoubleBytes)                                     \
+                          LongDoubleBytes, LongDoubleAlign, Library)           \
   case RecordABI::Name:                                                        \
     return LayoutRules::Rules;
 #include "neverd/types/RecordABIs.def"
@@ -50,7 +65,7 @@ LayoutRules layoutRulesOf(RecordABI ABI) {
 uint32_t scalarAlignLimitOf(RecordABI ABI) {
   switch (ABI) {
 #define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
-                          LongDoubleBytes)                                     \
+                          LongDoubleBytes, LongDoubleAlign, Library)           \
   case RecordABI::Name:                                                        \
     return ScalarAlignLimit;
 #include "neverd/types/RecordABIs.def"
@@ -61,12 +76,45 @@ uint32_t scalarAlignLimitOf(RecordABI ABI) {
 llvm::StringRef recordABIName(RecordABI ABI) {
   switch (ABI) {
 #define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
-                          LongDoubleBytes)                                     \
+                          LongDoubleBytes, LongDoubleAlign, Library)           \
   case RecordABI::Name:                                                        \
     return Spelling;
 #include "neverd/types/RecordABIs.def"
   }
   llvm_unreachable("unknown record ABI");
+}
+
+RecordABI libraryRecordABIOf(RecordABI ABI) {
+  switch (ABI) {
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
+                          LongDoubleBytes, LongDoubleAlign, Library)           \
+  case RecordABI::Name:                                                        \
+    return RecordABI::Library;
+#include "neverd/types/RecordABIs.def"
+  }
+  llvm_unreachable("unknown record ABI");
+}
+
+namespace {
+constexpr llvm::StringLiteral ExactLongDouble = "neverd_long_double_";
+} // namespace
+
+std::string exactLongDoubleName(unsigned Bytes) {
+  return (ExactLongDouble + llvm::Twine(Bytes)).str();
+}
+
+std::optional<unsigned> exactLongDoubleBytes(llvm::StringRef Name) {
+  unsigned Bytes = 0;
+  if (!Name.consume_front(ExactLongDouble) || Name.getAsInteger(10, Bytes) ||
+      Name.starts_with("0"))
+    return std::nullopt;
+  // The sizes the ABIs give it.
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
+                          LongDoubleBytes, LongDoubleAlign, Library)           \
+  if (Bytes == LongDoubleBytes)                                                \
+    return Bytes;
+#include "neverd/types/RecordABIs.def"
+  return std::nullopt;
 }
 
 RecordABI defaultRecordABI(DataModel Model) {
@@ -80,7 +128,7 @@ const BuiltinInfo &builtinInfo(Builtin Type) {
 unsigned builtinBytes(Builtin Type, DataModel Model, RecordABI ABI) {
   switch (ABI) {
 #define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
-                          LongDoubleBytes)                                     \
+                          LongDoubleBytes, LongDoubleAlign, Library)           \
   case RecordABI::Name:                                                        \
     if (Type == Builtin::WChar)                                                \
       return WCharBytes;                                                       \
@@ -345,6 +393,9 @@ uint32_t TypeLibrary::requiredAlignOf(const TypeExpr &Type) const {
 uint32_t TypeLibrary::alignOf(const TypeExpr &Type) const {
   switch (Type.Kind) {
   case TypeExprKind::Builtin:
+    if (Type.TheBuiltin == Builtin::LongDouble)
+      if (const uint32_t Align = longDoubleAlignOf(ABI))
+        return Align;
     return scalarAlignment(builtinBytes(Type.TheBuiltin), ABI);
   case TypeExprKind::Pointer:
     return Type.PointerBytes;

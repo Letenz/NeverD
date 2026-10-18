@@ -87,6 +87,10 @@ struct DynamicInfo {
   /// Mach-O: LC_BUILD_VERSION min OS version string (e.g. "14.0.0").
   std::string MinOSVersion;
 
+  /// Mach-O: the platforms (llvm::MachO::PlatformType) its build version
+  /// commands name, in order (machOCommandPlatform, MachOPlatform.h).
+  std::vector<uint32_t> MachOPlatforms;
+
   /// PE/COFF: security cookie RVA from Load Configuration directory.
   va_t SecurityCookieRVA = 0;
 

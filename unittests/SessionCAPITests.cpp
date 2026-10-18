@@ -4340,6 +4340,81 @@ TEST_F(SessionCAPITest, ThirtyTwoBitLinuxObjectsLayRecordsOutAsGCCDoes) {
             24);
 }
 
+TEST_F(SessionCAPITest, MinGWProgramsKeepTheX87LongDouble) {
+  // A Windows program's own DWARF is MinGW's, whose compilers lay
+  // Microsoft's records out with the x87's long double: sixteen bytes on
+  // x64, and on x86 twelve that align to four where a double aligns to
+  // eight.  clang-cl's DWARF names a long double that is a double, which
+  // keeps Microsoft's ABI.  Each joins the Windows libraries.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  struct Case {
+    const char *File;
+    const char *ABI;
+    const char *DataModel;
+    int64_t Size;
+    int64_t LongDouble;
+    int64_t LongDoubleBytes;
+    int64_t Double;
+    const char *Library;
+  };
+  for (const Case &Program : {Case{"mingw_types.x64.exe", "mingw-x64", "LLP64",
+                                   64, 16, 16, 32, "windows-user-x64"},
+                              Case{"mingw_types.x86.exe", "mingw-x86", "ILP32",
+                                   40, 4, 12, 16, "windows-user-x86"},
+                              Case{"mingw_types.msvc.exe", "microsoft", "LLP64",
+                                   40, 8, 8, 16, "windows-user-x64"}}) {
+    SCOPED_TRACE(Program.File);
+    neverd_session_destroy(Session);
+    Session = neverd_session_create();
+    std::ifstream Input(Fixtures / Program.File, std::ios::binary);
+    const std::string Image = write(
+        Program.File, std::string(std::istreambuf_iterator<char>(Input), {}));
+    ASSERT_EQ(neverd_session_load(Session, Image.c_str()), 1)
+        << takeString(neverd_last_error(Session));
+    auto Parsed = llvm::json::parse(
+        takeString(neverd_local_types_json(Session, nullptr)));
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    const llvm::json::Object *Root = Parsed->getAsObject();
+    ASSERT_TRUE(Root);
+    EXPECT_EQ(Root->getString("source"), "dwarf");
+    EXPECT_EQ(Root->getString("dataModel"), Program.DataModel);
+    EXPECT_EQ(Root->getString("recordABI"), Program.ABI);
+    bool Joined = false;
+    if (const llvm::json::Array *Headers = Root->getArray("headers"))
+      for (const llvm::json::Value &Header : *Headers)
+        if (const llvm::json::Object *Entry = Header.getAsObject())
+          Joined |= Entry->getString("name") == Program.Library &&
+                    !Entry->get("error");
+    EXPECT_TRUE(Joined) << llvm::formatv("{0:2}", *Parsed).str();
+
+    // In the program's own keywords: the portable spelling of a long double
+    // of eight bytes is a double.
+    auto Sample = llvm::json::parse(takeString(neverd_local_type_json(
+        Session, "sample", R"({"spelling":"keywords"})")));
+    ASSERT_TRUE(bool(Sample)) << takeString(neverd_last_error(Session));
+    const llvm::json::Object *Record = Sample->getAsObject();
+    ASSERT_TRUE(Record);
+    EXPECT_EQ(Record->getInteger("size"), Program.Size);
+    std::map<std::string, int64_t> Offsets, Sizes;
+    std::string LongDoubleType;
+    if (const llvm::json::Array *Members = Record->getArray("members"))
+      for (const llvm::json::Value &Member : *Members)
+        if (const llvm::json::Object *Field = Member.getAsObject()) {
+          const std::string Name = Field->getString("name").value_or("").str();
+          Offsets[Name] = Field->getInteger("offset").value_or(-1);
+          Sizes[Name] = Field->getInteger("size").value_or(-1);
+          if (Name == "ld")
+            LongDoubleType = Field->getString("type").value_or("").str();
+        }
+    EXPECT_EQ(Offsets["ld"], Program.LongDouble);
+    EXPECT_EQ(Offsets["d"], Program.Double);
+    // The member is the long double, not its bytes.
+    EXPECT_EQ(LongDoubleType, "long double");
+    EXPECT_EQ(Sizes["ld"], Program.LongDoubleBytes);
+  }
+}
+
 TEST_F(SessionCAPITest, AppleARMProgramsKeepALongDoubleThatIsADouble) {
   // Apple's 64-bit ARM lays records out as the Itanium ABI does, with a long
   // double that is a double, which the 64-bit System V targets' is not.
@@ -5281,6 +5356,64 @@ TEST_F(SessionCAPITest, MuslProgramsJoinTheirMuslLibrary) {
     EXPECT_EQ(HighC.find("typedef struct stat stat;") != std::string::npos,
               P.StatTypedef)
         << HighC;
+  }
+}
+
+TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
+  // A Mach-O program joins the library of the platform its build version
+  // names, for its architecture: macOS's on x64 and ARM64, iOS's on ARM64.
+  // An x64 program imports stat as stat$INODE64, which takes stat's
+  // prototype under that name: the output declares it with its assembler
+  // name, a char * path and the struct stat it fills.  ARM64's stat is
+  // <sys/stat.h>'s, whose record the call reaches through void *.
+  struct Program {
+    const char *File, *Library, *ABI, *Call, *Declaration;
+  };
+  const Program Programs[] = {
+      {"darwin_libc_calls_x64", "macos-x64", "itanium",
+       "stat_INODE64((char*)(uintptr_t)arg0, (stat*)&",
+       "extern int32_t stat_INODE64(char* arg0, stat* arg1) "
+       "__asm__(\"_stat$INODE64\");"},
+      {"darwin_libc_calls_arm64", "macos-arm64", "apple-arm64",
+       "stat((char*)(uintptr_t)arg0, (void*)&", "#include <sys/stat.h>"},
+      {"darwin_libc_calls_ios_arm64", "ios-arm64", "apple-arm64",
+       "stat((char*)(uintptr_t)arg0, (void*)&", "#include <sys/stat.h>"},
+  };
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  for (const Program &P : Programs) {
+    SCOPED_TRACE(P.File);
+    std::ifstream Input(Fixtures / P.File, std::ios::binary);
+    const std::string Path =
+        write(P.File, std::string(std::istreambuf_iterator<char>(Input), {}));
+    neverd_session_t Darwin = neverd_session_create();
+    ASSERT_NE(Darwin, nullptr);
+    const auto Destroy =
+        llvm::make_scope_exit([&] { neverd_session_destroy(Darwin); });
+    ASSERT_EQ(neverd_session_load(Darwin, Path.c_str()), 1)
+        << takeString(neverd_last_error(Darwin));
+    ASSERT_GE(neverd_session_discover_functions(Darwin), 0)
+        << takeString(neverd_last_error(Darwin));
+    auto Parsed =
+        llvm::json::parse(takeString(neverd_local_types_json(Darwin, nullptr)));
+    ASSERT_TRUE(static_cast<bool>(Parsed));
+    const llvm::json::Object &Types = *Parsed->getAsObject();
+    EXPECT_EQ(Types.getString("dataModel"), "LP64");
+    EXPECT_EQ(Types.getString("recordABI"), P.ABI);
+    const llvm::json::Array *Headers = Types.getArray("headers");
+    ASSERT_TRUE(Headers && Headers->size() == 1u);
+    EXPECT_EQ((*Headers)[0].getAsObject()->getString("name"), P.Library);
+    auto Stat = llvm::json::parse(
+        takeString(neverd_local_type_json(Darwin, "stat", nullptr)));
+    ASSERT_TRUE(static_cast<bool>(Stat));
+    EXPECT_EQ(Stat->getAsObject()->getInteger("size"), 144);
+
+    const int Index = neverd_func_find_by_name(Darwin, "_Size");
+    ASSERT_GE(Index, 0);
+    const std::string HighC =
+        takeString(neverd_decompile(Darwin, neverd_func_entry(Darwin, Index)));
+    EXPECT_NE(HighC.find(P.Call), std::string::npos) << HighC;
+    EXPECT_NE(HighC.find(P.Declaration), std::string::npos) << HighC;
   }
 }
 
@@ -9026,7 +9159,6 @@ TEST_F(SessionCAPITest, PersistedAddressEncodingsKeepCanonicalSaveRoundTrips) {
                         Renames);
   }
 }
-
 
 #ifndef _WIN32
 TEST_F(SessionCAPITest, ProjectPreparationReportsSetupFailures) {

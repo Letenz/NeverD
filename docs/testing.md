@@ -543,6 +543,8 @@ and offsets clang measures for glibc's `stat`, `timespec`,
 `HeaderLibrary.TheAndroidLibrariesLayRecordsOutAsBionicDoes` bionic's and
 the NDK's JNI records,
 `HeaderLibrary.TheMuslLibrariesLayRecordsOutAsMuslDoes` musl's,
+`HeaderLibrary.TheDarwinLibrariesLayRecordsOutAsLibSystemDoes` libSystem's
+and the routines it names by assembler names (`stat$INODE64`),
 `SessionCAPITest.LinuxProgramsJoinTheirGlibcLibrary` decompiles
 `unittests/types/fixtures/linux_libc_calls_{x64,x86,arm64,arm}`, built as
 `linux_libc_calls.c` says, and
@@ -553,6 +555,9 @@ the NDK's JNI records,
 `SessionCAPITest.MuslProgramsJoinTheirMuslLibrary` loads
 `musl_libc_calls_{x64,x86}`, `linux_libc_calls.c` built against musl's
 headers as `musl_libc_stub.c` says;
+`SessionCAPITest.DarwinProgramsJoinTheirPlatformsLibrary` loads
+`darwin_libc_calls_{x64,arm64,ios_arm64}`, built against the headers the
+Darwin libraries read as `darwin_libc_stub.c` says;
 `HeaderLibrary.TheUserLibrariesDeclareNtdllsNativeAPI` checks phnt's
 routines and the PEB, TEB and loader records each user mode library lays
 out. The user mode libraries read a checkout of
@@ -586,7 +591,18 @@ https://android.googlesource.com/platform/libnativehelper) and
 https://android.googlesource.com/platform/system/logging), and name their
 commits. The musl libraries read a checkout of musl (`--musl <checkout>`,
 of https://git.musl-libc.org/git/musl), whose headers it installs for each
-architecture in a build directory of its own, and name its version. Check the x64 and x86 Linux ones with their record ABIs:
+architecture in a build directory of its own, and name its version. The
+Darwin libraries read a checkout of each project `PROJECTS` in
+`scripts/generate_darwin_types.py` lists, of
+https://github.com/apple-oss-distributions, at the tag each generated
+library names, side by side in one directory
+(`scripts/generate_darwin_types.py --darwin <directory>`): the libraries
+name each project by its tag, so a checkout that is not at one fails. They
+need Perl for Libc's feature script, and write
+`LICENSES/darwin-headers.txt` again.
+`--install-headers <directory>` installs the headers alone and prints what
+clang takes to read them for each target, as the Darwin fixtures were
+built. Check the x64 and x86 Linux ones with their record ABIs:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
@@ -707,6 +723,10 @@ python3 scripts/compare_prototypes_with_ida.py --neverd build/bin/neverd \
 ```
 
 Declared types are covered at each layer:
+- `SessionCAPITest.MinGWProgramsKeepTheX87LongDouble`: the DWARF of
+  `mingw_types.{x64,x86,msvc}.exe`, built as `mingw_types.c` says, read under
+  MinGW's record ABI on x64 and x86 and under Microsoft's for clang-cl's,
+  with the Windows libraries joined;
 - `SessionCAPITest.DeclaredTypesJoinThePDBsAndStayWithTheProject`: declaring,
   replacing a PDB type in place, problems with their place, removal, and the
   declarations coming back with the next load, a PDB-less load reporting the
@@ -720,8 +740,11 @@ Rendered source must also compile with each record's size and offsets checked.
 `scripts/check_type_renders.py` runs `neverd types --all --asserts` and
 compiles the result:
 - C and C++ in all three builtin spellings with clang for the MSVC target, and
-  the portable spelling for the GNU target too; the C header, which the
-  workbench shows as C/C++, compiles as C++ as well;
+  the portable spelling for the GNU target too; the Windows spelling for both
+  Windows compilers, MSVC's and MinGW's, whose long doubles differ; the C
+  header, which the workbench shows as C/C++, compiles as C++ as well. Under
+  `--record-abi mingw-x64` or `mingw-x86` the program's compiler is MinGW's
+  and the other one MSVC's;
 - Rust with rustc in both of its spellings, exact widths and Windows' names
   as aliases, for the program's target (`--target`, `--emit=metadata`, which
   needs the target's standard library and no linker);
@@ -746,11 +769,14 @@ the checker (`--toolchains` names another directory): rustup with the
 standard library of each cross target; Python for i386 Linux from Debian's
 i386 packages, which runs on the host's 32-bit C library; Python for 32-bit
 ARM and 32-bit Windows from python-build-standalone, run by qemu-arm against
-the armhf C library of Debian's cross packages and by Wine; and the C
+the armhf C library of Debian's cross packages and by Wine; the C
 libraries' headers of armhf and arm64 Linux and of Android (bionic, at the
-commit the Android libraries name). It needs an x86-64 Debian or Ubuntu host
-with dpkg, apt-get and Wine; a part it cannot fetch is reported, and the
-checker skips what it would have checked, naming the script. Without
+commit the Android libraries name); Lua 5.4, built from lua.org's sources;
+and TypeScript's compiler, from npm. The checker takes a Lua or a `tsc` it
+finds first, and these where it finds none. It needs an x86-64 Debian or
+Ubuntu host with dpkg, apt-get, Wine, make, a C compiler and npm; a part it
+cannot fetch is reported, and the checker skips what it would have checked,
+naming the script. Without
 `--binary` it checks the fixture:
 
 ```sh

@@ -581,15 +581,17 @@ private:
   // Names.
   bool isTypeName(llvm::StringRef Word) const {
     return builtinKeyword(Word) || builtinWords().count(Word) ||
-           Library.find(Word) || Word == "size_t" || Word == "ptrdiff_t" ||
-           Word == "intptr_t" || Word == "uintptr_t" || Word == "ssize_t" ||
+           exactLongDoubleBytes(Word) || Library.find(Word) ||
+           Word == "size_t" || Word == "ptrdiff_t" || Word == "intptr_t" ||
+           Word == "uintptr_t" || Word == "ssize_t" ||
            (vaListWord(Word) && !Library.find(Word));
   }
-  /// The compiler's va_list, as <stdarg.h>, glibc, bionic and musl name it.
+  /// The compiler's va_list, as <stdarg.h>, glibc, bionic, musl and Darwin
+  /// name it.
   static bool vaListWord(llvm::StringRef Word) {
     return Word == "__builtin_va_list" || Word == "va_list" ||
            Word == "__gnuc_va_list" || Word == "__va_list" ||
-           Word == "__isoc_va_list";
+           Word == "__isoc_va_list" || Word == "__darwin_va_list";
   }
   /// Whether the token at \p Ahead may begin a declaration's type.
   bool startsType(size_t Ahead = 0) const {
@@ -834,7 +836,7 @@ private:
                            (Existing->Enum && Existing->Enum->Values.empty()));
     TypeExprRef Named;
     if ((!Existing || Declared) && !builtinWords().count(Name) &&
-        !builtinKeyword(Name)) {
+        !builtinKeyword(Name) && !exactLongDoubleBytes(Name)) {
       LocalType Local;
       Local.Name = Name;
       Local.Kind = Kind;
@@ -900,7 +902,8 @@ private:
   void defineTypedef(const std::string &Name, const TypeExprRef &Type,
                      const Token &At) {
     // The renderers' preludes name builtins; a builtin's name stays its own.
-    if (builtinWords().count(Name) || builtinKeyword(Name))
+    if (builtinWords().count(Name) || builtinKeyword(Name) ||
+        exactLongDoubleBytes(Name))
       return;
     // typedef struct X X names the record by itself.
     if (Type->Kind == TypeExprKind::Named && Type->Name == Name)
@@ -1043,7 +1046,21 @@ private:
         take();
         if (auto Found = builtinWords().find(W); Found != builtinWords().end())
           Spec.Type = makeBuiltin(Found->second);
-        else if (vaListWord(W) && !Library.find(W)) {
+        else if (const std::optional<unsigned> Bytes =
+                     exactLongDoubleBytes(W)) {
+          // The long double C's prelude declares exactly so large, which
+          // only the program's own is.
+          const unsigned Own = Library.builtinBytes(Builtin::LongDouble);
+          if (*Bytes != Own) {
+            fail(T, "'" + W.str() + "' is a long double of " +
+                        std::to_string(*Bytes) +
+                        " bytes, where the program's "
+                        "is of " +
+                        std::to_string(Own));
+            return false;
+          }
+          Spec.Type = makeBuiltin(Builtin::LongDouble);
+        } else if (vaListWord(W) && !Library.find(W)) {
           // Windows and i386 pass the variable arguments' address; other
           // targets a record of their own, which a parameter passes as its
           // address too: x86-64's decays from an array, and AAPCS64 passes
@@ -1478,6 +1495,12 @@ private:
       }
       Enumerator Value;
       Value.Name = take().Text;
+      // Darwin's headers mark an enumerator's availability after its name.
+      if (startsAttribute()) {
+        Attributes Marks;
+        if (!attributes(Marks))
+          return nullptr;
+      }
       if (accept("=")) {
         std::optional<int64_t> Given = constant();
         if (!Given)

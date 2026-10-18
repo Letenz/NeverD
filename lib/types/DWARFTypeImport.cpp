@@ -1112,4 +1112,16 @@ importDWARFTypes(llvm::DWARFContext &Context, DataModel Model,
   return std::move(Library);
 }
 
+std::optional<unsigned> dwarfLongDoubleBytes(llvm::DWARFContext &Context) {
+  // Compilers put base types beside the unit's other top-level entries.
+  for (const auto &Unit : Context.compile_units())
+    for (const llvm::DWARFDie &Die : Unit->getUnitDIE(false).children())
+      if (Die.getTag() == dw::DW_TAG_base_type &&
+          llvm::StringRef(Die.getShortName()) == "long double")
+        if (const std::optional<uint64_t> Bytes =
+                llvm::dwarf::toUnsigned(Die.find(dw::DW_AT_byte_size)))
+          return static_cast<unsigned>(*Bytes);
+  return std::nullopt;
+}
+
 } // namespace neverd::types

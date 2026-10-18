@@ -87,6 +87,13 @@ TEST(LocalTypes, BuiltinSizesFollowTheDataModelAndTheRecordABI) {
   EXPECT_EQ(sizes(DataModel::ILP32, RecordABI::I386SystemV), "4 12");
   EXPECT_EQ(sizes(DataModel::ILP32, RecordABI::AndroidI386), "4 8");
   EXPECT_EQ(sizes(DataModel::ILP32, RecordABI::AAPCS32), "4 8");
+  EXPECT_EQ(sizes(DataModel::LLP64, RecordABI::MinGW64), "2 16");
+  EXPECT_EQ(sizes(DataModel::ILP32, RecordABI::MinGW32), "2 12");
+  // A MinGW program joins the Windows libraries, whose records lay out as
+  // its own do.
+  EXPECT_EQ(libraryRecordABIOf(RecordABI::MinGW64), RecordABI::Microsoft);
+  EXPECT_EQ(libraryRecordABIOf(RecordABI::MinGW32), RecordABI::Microsoft);
+  EXPECT_EQ(libraryRecordABIOf(RecordABI::I386SystemV), RecordABI::I386SystemV);
   TypeLibrary ARM(DataModel::ILP32);
   ARM.setRecordABI(RecordABI::AAPCS32);
   EXPECT_EQ(ARM.builtinBytes(Builtin::LongDouble), 8u);
@@ -126,6 +133,14 @@ TEST(LocalTypes, ScalarsAlignAsTheirRecordABISays) {
   // Microsoft's long double is a double, and the 64-bit System V targets'
   // the x87's in sixteen bytes, aligned as large.
   EXPECT_EQ(alignment(DataModel::ILP32, std::nullopt, Builtin::LongDouble), 8u);
+  EXPECT_EQ(
+      alignment(DataModel::LLP64, RecordABI::MinGW64, Builtin::LongDouble),
+      16u);
+  // MinGW's x86 aligns its twelve bytes to four, and a double to eight.
+  EXPECT_EQ(
+      alignment(DataModel::ILP32, RecordABI::MinGW32, Builtin::LongDouble), 4u);
+  EXPECT_EQ(alignment(DataModel::ILP32, RecordABI::MinGW32, Builtin::Double),
+            8u);
   EXPECT_EQ(alignment(DataModel::LP64, std::nullopt, Builtin::LongDouble), 16u);
   EXPECT_EQ(layoutRulesOf(RecordABI::I386SystemV), LayoutRules::Itanium);
   EXPECT_EQ(recordABIName(RecordABI::I386SystemV), "i386-sysv");

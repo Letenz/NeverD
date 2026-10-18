@@ -286,6 +286,25 @@ GPL. The licenses and the note are preserved in
 [LICENSES/glibc-headers.txt](LICENSES/glibc-headers.txt). Generated on
 2026-10-17.
 
+## Darwin type libraries
+
+`lib/types/headers/MacOSX64.h`, `MacOSARM64.h` and `IOSARM64.h` hold the
+types and prototypes that libSystem's headers declare for macOS programs on
+x64 and ARM64 and iOS programs on ARM64, as
+`scripts/generate_darwin_types.py` renders them from the headers of Libc
+1752.120.2, xnu 12377.121.6, libpthread 539, Libinfo 600, libmalloc
+812.100.31, libplatform 375.120.2, dyld 1378 and AvailabilityVersions 157.2
+(https://github.com/apple-oss-distributions), installed as each project's
+build installs them. The headers are Copyright Apple Inc. and others, under
+the Apple Public Source License 2.0, and some under the BSD licenses of the
+code Apple takes from FreeBSD, NetBSD and others. The libraries are
+Modifications of Original Code under the Apple Public Source License 2.0,
+carry its notice, and hold only what NeverD reads from the headers and
+renders again: data structure layouts, the values of enumerations and
+function declarations. The license, and each notice the headers state, are
+in [LICENSES/darwin-headers.txt](LICENSES/darwin-headers.txt). Generated on
+2026-10-18.
+
 ## musl type libraries
 
 `lib/types/headers/MuslX64.h`, `MuslX86.h`, `MuslARM64.h` and `MuslARM.h`

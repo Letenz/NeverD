@@ -356,6 +356,66 @@ TEST(HeaderLibrary, TheMuslLibrariesLayRecordsOutAsMuslDoes) {
   }
 }
 
+TEST(HeaderLibrary, TheDarwinLibrariesLayRecordsOutAsLibSystemDoes) {
+  // libSystem's records as clang lays them out against the headers Apple's
+  // projects install, for each platform; macOS and iOS share them, but for
+  // the registers jmp_buf saves.  statfs's 2168 bytes are what the SDK's
+  // encoding of fstatfs$INODE64 says too (DarwinSourceDeclarations.inc).
+  struct Expected {
+    HeaderLibrary Library;
+    uint64_t JmpBuf;
+    // An x64 program imports stat as stat$INODE64; ARM64 has only 64-bit
+    // inodes.
+    bool Inode64;
+    // macOS names syslog syslog$DARWIN_EXTSN; iOS's is the plain one.
+    bool ExtendedSyslog;
+  };
+  const Expected Libraries[] = {
+      {HeaderLibrary::MacOSX64, 148, true, true},
+      {HeaderLibrary::MacOSARM64, 192, false, true},
+      {HeaderLibrary::IOSARM64, 192, false, false},
+  };
+  for (const Expected &E : Libraries) {
+    SCOPED_TRACE(headerLibraryName(E.Library).str());
+    std::string Error;
+    const TypeLibrary *Types = headerLibrary(E.Library, &Error);
+    ASSERT_NE(Types, nullptr) << Error;
+    const auto Check = [](const char *What, uint64_t Value) {
+      return "_Static_assert(" + std::string(What) +
+             " == " + std::to_string(Value) + ", \"" + What + "\");\n";
+    };
+    const std::string Assertions =
+        Check("sizeof(struct stat)", 144) +
+        Check("__builtin_offsetof(struct stat, st_size)", 96) +
+        Check("sizeof(struct timespec)", 16) +
+        Check("sizeof(pthread_mutex_t)", 64) + Check("sizeof(FILE)", 152) +
+        Check("__builtin_offsetof(FILE, _offset)", 144) +
+        Check("sizeof(struct sigaction)", 16) +
+        Check("sizeof(struct dirent)", 1048) +
+        Check("sizeof(struct statfs)", 2168) +
+        Check("sizeof(jmp_buf)", E.JmpBuf);
+    // A copy, which the assertions read without changing the library.
+    TypeLibrary Layout = *Types;
+    const ParseResult Laid = parseCTypes(Assertions, Layout);
+    EXPECT_TRUE(Laid.Problems.empty()) << Laid.Problems.front().Message;
+
+    const FunctionDef *Stat = Types->findPrototype("stat");
+    ASSERT_NE(Stat, nullptr);
+    EXPECT_EQ(Stat->Params.size(), 2u);
+    const FunctionDef *Inode64 = Types->findPrototype("stat$INODE64");
+    EXPECT_EQ(Inode64 != nullptr, E.Inode64);
+    if (Inode64)
+      EXPECT_EQ(Inode64->Params.size(), 2u);
+    ASSERT_NE(Types->findPrototype("realpath$DARWIN_EXTSN"), nullptr);
+    EXPECT_EQ(Types->findPrototype("syslog$DARWIN_EXTSN") != nullptr,
+              E.ExtendedSyslog);
+    ASSERT_NE(Types->findPrototype("_dyld_image_count"), nullptr);
+    ASSERT_NE(Types->findPrototype("os_unfair_lock_lock"), nullptr);
+    ASSERT_NE(Types->findPrototype("exit"), nullptr);
+    EXPECT_TRUE(Types->findPrototype("exit")->NoReturn);
+  }
+}
+
 TEST(HeaderLibrary, JoinsWhereTheProgramHasNoTypeOfTheName) {
   TypeLibrary Headers;
   ParseOptions Options;

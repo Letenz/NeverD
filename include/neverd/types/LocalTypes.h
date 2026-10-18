@@ -57,7 +57,7 @@ enum class LayoutRules : uint8_t {
 /// says (RecordABIs.def).
 enum class RecordABI : uint8_t {
 #define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
-                          LongDoubleBytes)                                     \
+                          LongDoubleBytes, LongDoubleAlign, Library)           \
   Name,
 #include "neverd/types/RecordABIs.def"
 };
@@ -68,6 +68,16 @@ LayoutRules layoutRulesOf(RecordABI ABI);
 uint32_t scalarAlignLimitOf(RecordABI ABI);
 /// \p ABI's name in the C API.
 llvm::StringRef recordABIName(RecordABI ABI);
+/// The ABI whose header libraries a program of \p ABI joins: its own, or
+/// Microsoft's for MinGW's, whose records lay out as Microsoft's do.
+RecordABI libraryRecordABIOf(RecordABI ABI);
+
+/// The name C gives a record's long double of \p Bytes where a compiler's
+/// own may be another size: its prelude declares it exactly so large, and
+/// C reads it back as the long double.
+std::string exactLongDoubleName(unsigned Bytes);
+/// The size of the long double \p Name names so; none where it names none.
+std::optional<unsigned> exactLongDoubleBytes(llvm::StringRef Name);
 /// The ABI a data model's compilers follow when nothing else says:
 /// Microsoft's for LLP64 and ILP32, the Itanium ABI's for LP64.
 RecordABI defaultRecordABI(DataModel Model);
