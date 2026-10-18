@@ -2286,7 +2286,7 @@ entry:
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
-  EXPECT_NE(Source.find("extern int (*_onexit(int (*)(void)))(void);"),
+  EXPECT_NE(Source.find("extern int32_t (*_onexit(int32_t (*)(void)))(void);"),
             std::string::npos)
       << Source;
   EXPECT_NE(
@@ -2328,7 +2328,7 @@ entry:
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
-  EXPECT_NE(Source.find("extern int (*_onexit(int (*)(void)))(void);"),
+  EXPECT_NE(Source.find("extern int32_t (*_onexit(int32_t (*)(void)))(void);"),
             std::string::npos)
       << Source;
   EXPECT_NE(Source.find("_onexit((int (*)(void))(uintptr_t)(function)))"),

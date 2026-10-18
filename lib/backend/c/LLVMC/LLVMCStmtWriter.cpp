@@ -5089,9 +5089,9 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
             ? Library.Prototype
             : nullptr;
     const std::string Param =
-        Prototype
-            ? c_library::typeSpelling(Prototype->Params[ArgIdx], Opts.TheArch)
-            : std::string();
+        Prototype ? c_library::typeSpelling(Prototype->Params[ArgIdx],
+                                            Opts.TheArch, Opts.Format)
+                  : std::string();
     // A zero is C's null pointer constant, which any pointer parameter
     // takes as it is (`RaiseException(code, 0, 0, 0)`).
     const auto *Constant =
