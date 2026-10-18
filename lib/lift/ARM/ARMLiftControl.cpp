@@ -158,19 +158,59 @@ bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
   case ARM_INS_PLI:
     S.emit(NdOp::NOP, {}, {});
     break;
+  // An MRS of APSR reads the lifted N, Z, C, V and GE flags and the
+  // machine's other bits: Q, and in a privileged mode the mode and the
+  // interrupt masks (`mrs r0, cpsr` before `cpsid i`).  An SPSR is the
+  // machine's.  A banked register has no typed contract.
   case ARM_INS_MRS: {
-    if (ARM.op_count >= 1) {
-      NdVar Dst = operandWrite(ARM.operands[0]);
-      emitMrsNzcv(S, Dst);
+    if (ARM.op_count != 2 || !isTransferRegister(ARM.operands[0]) ||
+        ARM.operands[1].type != ARM_OP_REG)
+      return false;
+    const auto Source = static_cast<arm_reg>(ARM.operands[1].reg);
+    if (Source == ARM_REG_SPSR) {
+      S.emitIntrinsic(Intrinsic::ArmMrs, operandWrite(ARM.operands[0]),
+                      {NdVar::cst(ArmMrsSpsr, 4)});
+      break;
     }
+    if (Source != ARM_REG_APSR && Source != ARM_REG_CPSR)
+      return false;
+    NdVar Machine = S.makeTemp(4);
+    S.emitIntrinsic(Intrinsic::ArmMrs, Machine, {NdVar::cst(ArmMrsApsr, 4)});
+    emitMrsApsr(S, operandWrite(ARM.operands[0]), Machine);
     break;
   }
+  // An MSR writes the fields of its mask: N, Z, C and V (f) and GE (s) to
+  // the lifted flags, and Q (f), the control field (c) and the extension
+  // field (x) to the machine, which also keeps every field of an SPSR.
+  // `msr cpsr_c, #0xd3` enters Supervisor mode with IRQs and FIQs masked and
+  // leaves the flags alone.
   case ARM_INS_MSR: {
-    if (ARM.op_count >= 2)
-      emitMsrNzcv(S, operandRead(S, ARM.operands[1]));
+    if (ARM.op_count != 2)
+      return false;
+    const std::optional<uint64_t> Field = msrField(ARM.operands[0]);
+    if (!Field || (ARM.operands[1].type != ARM_OP_IMM &&
+                   !isTransferRegister(ARM.operands[1])))
+      return false;
+    const NdVar Value = operandRead(S, ARM.operands[1]);
+    if (*Field & ArmMsrSpsr) {
+      S.emitVoidIntrinsic(Intrinsic::ArmMsr, {NdVar::cst(*Field, 4), Value});
+      break;
+    }
+    if (*Field & 8)
+      emitMsrNzcv(S, Value);
+    if (*Field & 4)
+      emitMsrGe(S, Value);
+    if (const uint64_t Machine = *Field & 0xB)
+      S.emitVoidIntrinsic(Intrinsic::ArmMsr, {NdVar::cst(Machine, 4), Value});
     break;
   }
+  // A CPS changes the interrupt masks or the mode, which the machine keeps.
   case ARM_INS_CPS:
+    if (const std::optional<uint64_t> Field = cpsField(ARM)) {
+      S.emitVoidIntrinsic(Intrinsic::ArmCps, {NdVar::cst(*Field, 4)});
+      break;
+    }
+    return false;
   case ARM_INS_SETEND:
   case ARM_INS_SETPAN:
   case ARM_INS_DBG:
@@ -219,7 +259,7 @@ bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
   case ARM_INS_MCR: {
     const std::optional<uint64_t> Field =
         coprocessorTransferField(ARM, /*TwoRegisters=*/false);
-    if (!Field || !coprocessorTransferRegister(ARM.operands[2]))
+    if (!Field || !isTransferRegister(ARM.operands[2]))
       return false;
     if (Insn->id == ARM_INS_MRC)
       S.emitIntrinsic(Intrinsic::ArmMrc, operandWrite(ARM.operands[2]),
@@ -235,8 +275,8 @@ bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
   case ARM_INS_MCRR: {
     const std::optional<uint64_t> Field =
         coprocessorTransferField(ARM, /*TwoRegisters=*/true);
-    if (!Field || !coprocessorTransferRegister(ARM.operands[2]) ||
-        !coprocessorTransferRegister(ARM.operands[3]))
+    if (!Field || !isTransferRegister(ARM.operands[2]) ||
+        !isTransferRegister(ARM.operands[3]))
       return false;
     NdVar Value = S.makeTemp(8);
     if (Insn->id == ARM_INS_MCRR) {

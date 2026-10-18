@@ -117,6 +117,9 @@ NEVERD_LINUX_VALUE(SignalActionSize, 32)
 NEVERD_LINUX_VALUE(SignalMaskSize, 8)
 #endif
 #ifdef NEVERD_LINUX_X64_SERVICE
+NEVERD_LINUX_X64_SERVICE(Poll, 7, 3)
+NEVERD_LINUX_X64_SERVICE(EpollCreate, 213, 1)
+NEVERD_LINUX_X64_SERVICE(EpollWait, 232, 4)
 NEVERD_LINUX_X64_SERVICE(Dup2, 33, 2)
 NEVERD_LINUX_X64_SERVICE(Open, 2, 3)
 NEVERD_LINUX_X64_SERVICE(Access, 21, 2)
@@ -203,6 +206,9 @@ NEVERD_LINUX_SERVICE(GetTimeOfDay, 96, 169, 2)
 NEVERD_LINUX_SERVICE(ClockGetTime, 228, 113, 2)
 NEVERD_LINUX_SERVICE(Nanosleep, 35, 101, 2)
 NEVERD_LINUX_SERVICE(PPoll, 271, 73, 5)
+NEVERD_LINUX_SERVICE(EpollCreate1, 291, 20, 1)
+NEVERD_LINUX_SERVICE(EpollCtl, 233, 21, 4)
+NEVERD_LINUX_SERVICE(EpollPwait, 281, 22, 6)
 NEVERD_LINUX_SERVICE(PSelect, 270, 72, 6)
 NEVERD_LINUX_SERVICE(Exit, 60, 93, 1)
 NEVERD_LINUX_SERVICE(ExitGroup, 231, 94, 1)
@@ -394,12 +400,8 @@ NEVERD_LINUX_DIAGNOSTIC(TimeCPUTargetMissing,
                         "CPU clock target process is not modeled")
 NEVERD_LINUX_DIAGNOSTIC(TimeThreadCPUClock,
                         "encoded per-thread CPU clocks are unmodeled")
-NEVERD_LINUX_DIAGNOSTIC(PollKernelMissing,
-                        "ppoll requires an explicit released GKI kernel")
 NEVERD_LINUX_DIAGNOSTIC(PollLimitMissing,
                         "ppoll requires an explicit guest descriptor limit")
-NEVERD_LINUX_DIAGNOSTIC(PollWaitUnsupported,
-                        "blocking ppoll waits are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(PollSignalMaskUnsupported,
                         "temporary ppoll signal masks are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(PollDescriptorUnsupported,

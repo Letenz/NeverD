@@ -43,6 +43,16 @@ public:
     return Files.descriptorStatus(FD, Result);
   }
   LinuxClock &clock() { return Clock; }
+  /// Libc's ppoll copies the timespec; the raw syscall updates guest memory.
+  llvm::Expected<std::optional<uint64_t>> poll(ServiceKind Kind,
+                                               const ProcessServiceEvent &Event,
+                                               ThreadContext *Thread,
+                                               bool PreserveTimeout) {
+    Files.setCurrentTask(Thread ? Thread->ID : ThreadID);
+    if (auto E = synchronizeDevices())
+      return std::move(E);
+    return Files.poll(Kind, Event, Result, Thread, PreserveTimeout);
+  }
   LinuxPriority &priority() { return Priority; }
   /// Run while the physical owner is stopped, after idle scheduling and before
   /// guest execution or another service observes device memory.

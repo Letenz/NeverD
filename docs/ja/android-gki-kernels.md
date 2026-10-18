@@ -1,5 +1,7 @@
 # 公開済み Android GKI カーネルの契約
 
+> 更新: poll/epoll とバッファ付き stdio の現行仕様は [共通契約](../linux-network-contracts.md#poll-and-epoll-waits) を参照してください。このページのゼロタイムアウトと GKI に限定した poll の説明は以前のサブセットです。
+
 NeverD は他の Linux 系統に先立ち、公開済み Android GKI 5.10–6.18 の各ブランチを優先します。プロセス要求で明示的に選択します。
 
 ```json

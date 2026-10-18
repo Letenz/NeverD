@@ -363,17 +363,19 @@ uint32_t boundCodePtrRunByNextAnchor(
       Anchors.insert(Field.TargetVA);
   }
 
+  // Only an anchor among the run's own slots can end it.  One past them names
+  // another object, aligned however its owner is: MSVC places an i386 jump
+  // table at whatever offset its function's code ends.
   for (auto It = Anchors.upper_bound(BaseAddr); It != Anchors.end(); ++It) {
     const va_t NextAnchor = *It;
+    const uint64_t Delta = NextAnchor - BaseAddr;
+    if (Delta / EntryStride >= Run)
+      break;
     if (!Img.CodePtrRelocSlots.count(NextAnchor))
       continue;
-    const uint64_t Delta = NextAnchor - BaseAddr;
     if (Delta % EntryStride != 0)
       return 0;
-    const uint64_t Slots = Delta / EntryStride;
-    if (Slots > std::numeric_limits<uint32_t>::max())
-      return 0;
-    return std::min(Run, static_cast<uint32_t>(Slots));
+    return static_cast<uint32_t>(Delta / EntryStride);
   }
   return Run;
 }

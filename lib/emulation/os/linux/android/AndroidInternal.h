@@ -115,6 +115,16 @@ struct GuestThreadExit {
 using BionicValue =
     std::variant<uint64_t, GuestCallback, GuestThreadWait, GuestThreadExit>;
 using BionicResult = llvm::Expected<std::optional<BionicValue>>;
+class Bionic;
+/// A libc operation may suspend more than once before its original import
+/// completes. Its byte/element accounting belongs to libc, not the scheduler.
+class NativeWait {
+public:
+  virtual ~NativeWait() = default;
+  virtual bool ready() const = 0;
+  virtual std::optional<uint64_t> nextWake() const = 0;
+  virtual BionicResult resume(Bionic &LibC) = 0;
+};
 class GuestThreads;
 class Bionic {
 public:
@@ -218,6 +228,7 @@ private:
   BionicResult kernelCall(std::optional<linux_model::ServiceKind> Kind,
                           const NativeCallEvent &Call);
   BionicResult usleep(const NativeCallEvent &Call);
+  BionicResult pollCall(const NativeCallEvent &Call);
   BionicResult openLibrary(NativeCallEvent &Call);
   BionicResult lookupSymbol(NativeCallEvent &Call);
   BionicResult closeLibrary(NativeCallEvent &Call);
@@ -250,24 +261,26 @@ private:
     bool CanRead = true, CanWrite = false, Writing = false;
     uint32_t BufferMode = 0;
     uint64_t Pending = 0;
+    std::optional<uint64_t> Reader;
   };
   std::map<uint64_t, InputStream> InputStreams;
   BionicResult openStream(const NativeCallEvent &Call);
   BionicResult streamCall(const NativeCallEvent &Call);
   BionicResult readStream(const NativeCallEvent &Call);
+  class StreamReadWait;
   BionicResult writeStream(const NativeCallEvent &Call);
   llvm::Expected<std::optional<bool>> flushStream(InputStream &Stream);
   llvm::Expected<std::optional<bool>> prepareStreamRead(InputStream &Stream);
   BionicResult bufferStream(const NativeCallEvent &Call);
   llvm::Expected<InputStream *> inputStream(uint64_t Handle);
-  llvm::Expected<std::optional<uint64_t>> streamBufferSize(uint32_t FD);
+  llvm::Expected<std::optional<uint64_t>>
+  streamBufferSize(uint32_t FD,
+                   std::optional<uint64_t> SuppliedSize = std::nullopt);
   llvm::Expected<bool> prepareStreamBuffer(InputStream &Stream);
   llvm::Expected<std::optional<uint64_t>>
   streamService(linux_model::ServiceKind Kind, uint32_t FD, uint64_t A1 = 0,
                 uint64_t A2 = 0);
-  llvm::Expected<std::optional<uint64_t>>
-  streamRead(InputStream &Stream, uint64_t Output, uint64_t Size);
-  llvm::Expected<bool> refillStream(InputStream &Stream);
+  llvm::Expected<std::optional<bool>> prepareStreamRefill(InputStream &Stream);
   llvm::Error copyStream(InputStream &Stream, uint64_t Output, uint64_t Size);
   BionicResult streamError(uint32_t Error, uint64_t ReturnValue);
   BionicResult malloc(const NativeCallEvent &Call);

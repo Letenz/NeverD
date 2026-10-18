@@ -56,6 +56,7 @@ public:
   void waitSemaphore(uint64_t Address, bool Shared);
   void wakeSemaphore(uint64_t Address);
   bool waitKernel();
+  void waitNative(std::unique_ptr<NativeWait> Pending);
   void suspend(const ServiceRequest &Request, size_t Event,
                WaitSource Source = WaitSource::NativeCall);
   llvm::Error finish(uint64_t Value, uint32_t ExitStatus = 0);
@@ -89,7 +90,8 @@ private:
   };
   struct Wait {
     std::variant<Join, Once, Mutex, Sleep, Semaphore,
-                 std::unique_ptr<linux_model::KernelWait>>
+                 std::unique_ptr<linux_model::KernelWait>,
+                 std::unique_ptr<NativeWait>>
         Operation;
     std::optional<ServiceRequest> Request;
     size_t Event = 0;

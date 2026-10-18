@@ -1,5 +1,7 @@
 # Contratos de los kernels Android GKI publicados
 
+> Actualización: consulte el [contrato actual](../linux-network-contracts.md#poll-and-epoll-waits) para poll/epoll y stdio con búfer. Las restricciones de esta página a espera cero y GKI describen el subconjunto anterior de poll.
+
 NeverD prioriza las ramas publicadas Android GKI 5.10–6.18 antes de otras variantes Linux. La solicitud selecciona expresamente una rama:
 
 ```json

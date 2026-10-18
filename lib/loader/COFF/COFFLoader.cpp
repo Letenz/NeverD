@@ -1033,6 +1033,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
                                             Buffer.getBufferIdentifier().str())
                                             .filename()));
   coff_loader::recordSymbolTableDataInCode(Img);
+  coff_loader::recordRelocatedPointerRunsInCode(Img);
   coff_loader::recordConstantCodeSlots(Img);
   // Classified before any table is read.  A PE is the format where schema and
   // language diverge most: Delphi and MSVC share the registration chain, Rust

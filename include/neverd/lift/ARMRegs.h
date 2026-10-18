@@ -48,6 +48,8 @@ constexpr unsigned CpsrNBit = 31;
 constexpr unsigned CpsrZBit = 30;
 constexpr unsigned CpsrCBit = 29;
 constexpr unsigned CpsrVBit = 28;
+/// GE[3:0], bits 19:16 of that word.
+constexpr unsigned CpsrGEBit = 16;
 
 /// CPSR flags (1-byte each, high offset to avoid collision)
 constexpr uint64_t NFLAG = 0x200;
@@ -73,6 +75,17 @@ constexpr uint64_t GE1FLAG = 0x215;
 constexpr uint64_t GE2FLAG = 0x216;
 constexpr uint64_t GE3FLAG = 0x217;
 constexpr uint64_t GEFLAG(unsigned N) { return GE0FLAG + N; }
+
+/// A modelled flag and its bit position in the APSR word an MRS reads and an
+/// MSR writes (ARMApsrFlags.def).
+struct ApsrFlagBit {
+  uint64_t Flag;
+  unsigned Bit;
+};
+inline constexpr ApsrFlagBit ApsrFlagBits[] = {
+#define NEVERD_ARM_APSR_BIT(Flag, Bit) {Flag, Bit},
+#include "neverd/lift/ARMApsrFlags.def"
+};
 
 /// Upper bound (exclusive) of the combined GPR+flag offset range.
 constexpr uint64_t RegSpaceEnd = GE3FLAG + 1;

@@ -975,16 +975,22 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
           backendJson(neverd_renames_json(session_)),
           backendJson(neverd_annotations_json(session_)), displayNames,
           [this](const std::string &name) -> std::optional<std::uint64_t> {
-            Json target;
+            // The address the resolve operation answers, without describing
+            // the function there; a query it refuses names nothing.
+            if (name.empty() || name.size() > 4096 ||
+                name.find('\0') != std::string::npos)
+              return std::nullopt;
             try {
-              target = execute("resolve", {{"query", name}});
+              requireLoaded();
+              analyzeBeforeFunctionQueries();
+              if (name.starts_with("0x") || name.starts_with("0X"))
+                return parseAddress(name);
+              if (const auto named = resolvedName(name))
+                return named->second;
+              return std::nullopt;
             } catch (const Error &) {
               return std::nullopt;
             }
-            if (target.is_object() && target.contains("address") &&
-                target["address"].is_string())
-              return parseAddress(target["address"].get<std::string>());
-            return std::nullopt;
           });
     std::vector<std::pair<std::size_t, std::ptrdiff_t>> shift;
     if (!sourceView) {
@@ -1703,6 +1709,25 @@ Engine::Reply Engine::executeResponse(const std::string &operation,
   Reply reply;
   reply.value = executeImpl(operation, p, &reply.encoded);
   return reply;
+}
+
+void Engine::analyzeBeforeFunctionQueries() {
+  const auto arch = folded(ownedString(neverd_session_arch_name(session_)));
+  // Those C ABI paths trigger the entire pipeline for VM architectures.
+  // Publish its completion and revision explicitly rather than silently
+  // mutating the Session under a revision advertised as not analyzed.
+  if (arch == "evm" || arch == "sbf")
+    analyze();
+}
+
+std::optional<std::pair<int, std::uint64_t>>
+Engine::resolvedName(const std::string &name) {
+  if (const int index = neverd_func_find_by_name(session_, name.c_str());
+      index >= 0)
+    return std::pair{index, neverd_func_entry(session_, index)};
+  if (const auto named = listing().resolveName(name))
+    return std::pair{neverd_func_find_by_addr(session_, *named), *named};
+  return std::nullopt;
 }
 
 Json Engine::executeImpl(const std::string &operation, const Json &p,
@@ -2494,14 +2519,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     return metadata();
   }
   if (operation == "functions" || operation == "resolve" ||
-      operation == "disasm") {
-    const auto arch = folded(ownedString(neverd_session_arch_name(session_)));
-    // Those C ABI paths trigger the entire pipeline for VM architectures.
-    // Publish its completion and revision explicitly rather than silently
-    // mutating the Session under a revision advertised as not analyzed.
-    if (arch == "evm" || arch == "sbf")
-      analyze();
-  }
+      operation == "disasm")
+    analyzeBeforeFunctionQueries();
   if (operation == "functions") {
     const auto offset =
         sizeField(p, "offset", 0, std::numeric_limits<std::size_t>::max());
@@ -2605,16 +2624,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       if (index < 0)
         if (const auto owner = listing().chunkOwner(address))
           index = neverd_func_find_by_addr(session_, *owner);
+    } else if (const auto named = resolvedName(query)) {
+      std::tie(index, address) = *named;
     } else {
-      index = neverd_func_find_by_name(session_, query.c_str());
-      if (index >= 0) {
-        address = neverd_func_entry(session_, index);
-      } else if (auto named = listing().resolveName(query)) {
-        address = *named;
-        index = neverd_func_find_by_addr(session_, address);
-      } else {
-        throw Error("not_found", "No function or name matches that symbol");
-      }
+      throw Error("not_found", "No function or name matches that symbol");
     }
     auto result =
         index < 0

@@ -1,5 +1,7 @@
 **언어**: [English](../process-emulation.md) | [简体中文](../zh-CN/process-emulation.md) | [繁體中文](../zh-TW/process-emulation.md) | [日本語](../ja/process-emulation.md) | [한국어](process-emulation.md) | [Français](../fr/process-emulation.md) | [Deutsch](../de/process-emulation.md) | [Español](../es/process-emulation.md) | [Italiano](../it/process-emulation.md) | [Русский](../ru/process-emulation.md) | [العربية](../ar/process-emulation.md)
 
+> 업데이트: poll/epoll 및 버퍼링된 stdio의 현재 동작은 [공통 계약](../linux-network-contracts.md#poll-and-epoll-waits)을 참고하세요. 이 페이지에서 poll을 시간 제한 0과 GKI로 한정한 설명은 이전 지원 범위입니다.
+
 [← 문서 색인](README.md)
 
 # 게스트 프로세스 에뮬레이션

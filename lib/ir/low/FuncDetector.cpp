@@ -309,6 +309,9 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
                                Img.Format == BinaryFormat::COFF &&
                                !Img.IsRelocatable;
   std::set<va_t> RelocationCodeTargets;
+  // What code names, as (naming address, code named): decided below, once the
+  // entries that bound each naming function are known.
+  std::vector<std::pair<va_t, va_t>> CodeNamedByCode;
   const uint32_t PointerSize = Img.getPointerSize();
   if (PointerSize != 0)
     for (va_t Slot : Img.CodePtrRelocSlots) {
@@ -322,10 +325,14 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
             Source != RegistrationPointerRoles->Sources.end() &&
             Source->second == Target)
           continue;
-      if (Img.hasExecutableCodeOwnerAt(Target) && !IsMachOLocalLabel(Target)) {
-        Entries.insert(Target);
-        RelocationCodeTargets.insert(Target);
+      if (!Img.hasExecutableCodeOwnerAt(Target) || IsMachOLocalLabel(Target))
+        continue;
+      if (IsX86LinkedCOFF && Img.hasExecutableCodeOwnerAt(Slot)) {
+        CodeNamedByCode.emplace_back(Slot, Target);
+        continue;
       }
+      Entries.insert(Target);
+      RelocationCodeTargets.insert(Target);
     }
 
   std::set<va_t> DirectCallTargets;
@@ -356,6 +363,42 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
 
   for (va_t Thunk : ExceptionThunks)
     Entries.erase(Thunk);
+
+  // Code a pointer table among the code names is a function of its own,
+  // except inside the function the table follows: there it is that
+  // function's label, such as a case of the switch whose table MSVC places
+  // after the function's code, which the jump-table resolver reads.  The
+  // bounded decoder below still decides whether a target is an entry.
+  std::set<va_t> CodeNamedTargets;
+  if (IsX86LinkedCOFF && Img.Entry != 0) {
+    const std::vector<va_t> Starts(Entries.begin(), Entries.end());
+    auto NamesOwnLabel = [&](va_t Namer, va_t Target) {
+      const auto Next = std::upper_bound(Starts.begin(), Starts.end(), Namer);
+      return Next != Starts.begin() && *std::prev(Next) < Target &&
+             (Next == Starts.end() || Target < *Next);
+    };
+    std::set<va_t> Labels;
+    for (const auto &[Namer, Target] : CodeNamedByCode)
+      if (NamesOwnLabel(Namer, Target))
+        Labels.insert(Target);
+    for (const auto &Named : CodeNamedByCode) {
+      const va_t Target = Named.second;
+      // An instruction starts with its opcode, never with a relocated field.
+      if (Entries.count(Target) || Labels.count(Target) ||
+          ExceptionThunks.count(Target) ||
+          Img.CodePtrRelocSlots.count(Target) ||
+          Img.DataPtrRelocSlots.count(Target) ||
+          Img.CodeAddressRelocOperands.count(Target) ||
+          Img.DataAddressRelocOperands.count(Target) ||
+          Img.DataInCode.count(Target) || !Img.hasExecutableCodeOwnerAt(Target))
+        continue;
+      if (RegistrationPointerRoles &&
+          RegistrationPointerRoles->RuntimeOnlyPointerTargets.count(Target))
+        continue;
+      CodeNamedTargets.insert(Target);
+    }
+    Entries.insert(CodeNamedTargets.begin(), CodeNamedTargets.end());
+  }
 
   auto IsCoveredMachODirectCallTarget = [&](va_t Addr) {
     return Img.Format == BinaryFormat::MachO &&
@@ -481,7 +524,8 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
                                UntypedCOFFExports.count(Addr) != 0 ||
                                    UnsymbolizedX86Entries.count(Addr) != 0 ||
                                    IsX86LinkedCallOrRelocTarget(Addr) ||
-                                   CodePointerTargets.count(Addr) != 0)
+                                   CodePointerTargets.count(Addr) != 0 ||
+                                   CodeNamedTargets.count(Addr) != 0)
               ? 1
               : 0;
     };

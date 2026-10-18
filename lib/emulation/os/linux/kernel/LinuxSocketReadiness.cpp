@@ -10,6 +10,32 @@
 #include "LinuxTime.h"
 
 namespace neverd::emulation::linux_model {
+LinuxFiles::Readiness
+LinuxFiles::descriptorReadiness(const Descriptor &Description,
+                                uint32_t Events) const {
+  constexpr unsigned ReadEvents = 0x001 | 0x040;
+  constexpr unsigned WriteEvents = 0x004 | 0x100;
+  if (std::holds_alternative<OpenFile>(Description) ||
+      std::holds_alternative<OpenProcFile>(Description) ||
+      std::holds_alternative<OpenDirectory>(Description))
+    return {Events & (ReadEvents | WriteEvents), {}, nullptr};
+  if (std::holds_alternative<ProcessDescriptor>(Description))
+    return {}; // Admitted live-task observation; no invented exit event.
+  const auto *Socket = std::get_if<OpenSocket>(&Description);
+  if (!Socket)
+    return {0, {}, PollDescriptorUnsupported};
+  // ERR/HUP/NVAL are result-only bits. A receive error is not evidence of
+  // asynchronous SO_ERROR, nor is read EOF evidence of a full socket hangup.
+  if (Events & ~(ReadEvents | WriteEvents | 0x008 | 0x010 | 0x020))
+    return {0, {}, "requested socket poll flags are unmodeled"};
+  unsigned Wanted =
+      (Events & ReadEvents ? 1 : 0) | (Events & WriteEvents ? 2 : 0);
+  auto R = socketReadiness(*Socket, Wanted);
+  R.Available = (R.Available & 1 ? Events & ReadEvents : 0) |
+                (R.Available & 2 ? Events & WriteEvents : 0);
+  return R;
+}
+
 LinuxFiles::Readiness LinuxFiles::socketReadiness(const OpenSocket &Socket,
                                                   unsigned Wanted) const {
   const bool Datagram = (Socket.Flags & 0xf) == 2;

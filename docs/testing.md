@@ -787,11 +787,14 @@ the checker (`--toolchains` names another directory): rustup with the
 standard library of each cross target; Python for i386 Linux from Debian's
 i386 packages, which runs on the host's 32-bit C library; Python for 32-bit
 ARM and 32-bit Windows from python-build-standalone, run by qemu-arm against
-the armhf C library of Debian's cross packages and by Wine; and the C
+the armhf C library of Debian's cross packages and by Wine; the C
 libraries' headers of armhf and arm64 Linux and of Android (bionic, at the
-commit the Android libraries name). It needs an x86-64 Debian or Ubuntu host
-with dpkg, apt-get and Wine; a part it cannot fetch is reported, and the
-checker skips what it would have checked, naming the script. Without
+commit the Android libraries name); Lua 5.4, built from lua.org's sources;
+and TypeScript's compiler, from npm. The checker takes a Lua or a `tsc` it
+finds first, and these where it finds none. It needs an x86-64 Debian or
+Ubuntu host with dpkg, apt-get, Wine, make, a C compiler and npm; a part it
+cannot fetch is reported, and the checker skips what it would have checked,
+naming the script. Without
 `--binary` it checks the fixture:
 
 ```sh
@@ -7563,6 +7566,18 @@ and its i386 build `mingw_text_data32.exe`, which keep a -1-headed pointer
 table in `.text` as GNU ld keeps `__CTOR_LIST__`: the table is data, the
 pointer to it in `.data` points to data, and its entry is a slot that holds
 code.
+`PointerRelocationBatch.PointerRunsAmongCodeAreData` records an i386 jump
+table's three relocated slots in `.text` as data slots and the displacement
+naming it as a data operand, and keeps the two fields of one
+`mov dword ptr [disp32], imm32` as operands.
+`TwoAdjacentEightBytePointersAreDataAmongX64Code` takes two eight-byte fields
+as data, and `PointerRunsAmongOtherCodeStayOperands` leaves an ARM literal pool
+and an object file's relocations alone.
+`X86_32_FunctionDiscovery.SwitchTableAmongCodeBelongsToItsFunction` builds a
+linked i386 image whose table follows its function two bytes past a four-byte
+boundary, with an aligned relocated `.rdata` pointer an instruction names past
+it: the cases stay the switch's labels rather than entries, and the CFG
+builder recovers all three. It fails without the run bound or the label rule.
 `SessionCAPITest.LLVMCReadsAPointerTableAmongCodeAsData` emits LLVM-C for the
 function that reads the table through `.data`, which was refused before.
 `NativePointerRelocationBoundary.MinGWPointerTableAmongCodeMirrorsItsFunction`
@@ -8284,6 +8299,13 @@ TF_STATUS_CODE replies, including exact guards and buffer release. The LP64
 `LinuxBinder` test checks rejected flags/status sizes/objects, unchanged arenas
 and consumed counts, and a successful retry of the same pending call. These
 checks validate message transport, not any Android service's response policy.
+`LinuxBinder` also checks page-rounded arenas through 4 MiB, both ends' read-only
+permissions, failed protection upgrades, dup/close/unmap lifetimes, oversized
+refusal without allocation and retry after memory-budget exhaustion.
+`AndroidBinder.LargeArenasRetainMultipleCopiedRequestsAndReplies` keeps two
+64 KiB requests live in one larger arena, verifies the second buffer beyond
+64 KiB, and executes guest-produced replies and buffer release at O0/O2 across
+all Android relocation forms and available CPU backends.
 Run `ctest -R 'Binder|GPUCommands|RejectedIndirectGPU|RejectedGPU|StatefulDescriptorsPages'`,
 then the five OS/memory/session owner labels described above.
 
@@ -8497,3 +8519,17 @@ and preserves unknown operands across call/exception boundaries without
 inventing forwarded entry parameters. `NeverDLLVMImportVeneerBoundaryTests`
 checks exact unwind-owned code pointers on ELF/COFF/Mach-O for x64/AArch64,
 adjacent symbol ends, and rejection of unproved/continuation/data addresses.
+
+
+### Buffered streams and poll/epoll
+
+Build `NeverDLinuxProcessTests` and `NeverDAndroidNativeTests` with CPU emulation
+and semantic fixtures enabled. Run `*LinuxPoll*`, `*LinuxPIDFDProcess*`,
+`*AndroidStreamWait*`, `*AndroidPoll*` and `*AndroidReceive*` first. The new tests
+cover x64/AArch64 kernel ABIs, retained inputs and output faults, alias lifetime,
+ONESHOT rearming, timeout copyback, and original libc callers over all six
+O0/O2 ordinary/APS2/RELR fixtures and available checked ARM64 backends. Buffered
+cases assert partial objects, newline/read-ahead, multiple suspensions, EOF,
+per-read timeout, thread-local errno and incomplete imports at unknown input.
+Run affected Linux and Android owner suites before review; unavailable backend
+skips do not count as executed coverage. All fixtures use explicit offline data.

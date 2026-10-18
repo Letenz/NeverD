@@ -1,5 +1,7 @@
 # 已釋出 Android GKI 核心契約
 
+> 更新：poll/epoll 與緩衝 stdio 的目前行為見[共享契約](../linux-network-contracts.md#poll-and-epoll-waits)。本頁將 poll 限於零逾時及 GKI 的說明屬於先前子集。
+
 NeverD 優先支援已釋出的 Android GKI 5.10–6.18 分支，再擴充套件其他 Linux 核心變體。程序請求須顯式選擇分支：
 
 ```json

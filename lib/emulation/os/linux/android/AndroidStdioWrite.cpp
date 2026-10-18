@@ -13,6 +13,8 @@
 namespace neverd::emulation::android_model {
 llvm::Expected<std::optional<bool>> Bionic::flushStream(InputStream &Stream) {
   using Reply = std::optional<bool>;
+  if (Stream.Reader && *Stream.Reader != threadID())
+    return failure("concurrent access to a suspended Bionic FILE is unmodeled");
   if (auto E = opaqueHandle(Stream.Token))
     return std::move(E);
   if (!Stream.Writing || !Stream.Pending)

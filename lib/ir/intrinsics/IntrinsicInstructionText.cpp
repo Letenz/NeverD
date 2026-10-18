@@ -288,6 +288,48 @@ armCoprocessorAsmField(llvm::StringRef Text) {
   return std::pair(*Id, Field);
 }
 
+std::string armStatusInstructionAsm(Intrinsic Id, uint64_t Field) {
+  switch (Id) {
+  case Intrinsic::ArmMrs:
+    if (Field == ArmMrsApsr)
+      return "mrs $0, apsr";
+    if (Field == ArmMrsSpsr)
+      return "mrs $0, spsr";
+    return {};
+  case Intrinsic::ArmMsr: {
+    const uint64_t Mask = Field & 0xF;
+    if (Mask == 0 || (Field & ~(ArmMsrSpsr | 0xF)) != 0)
+      return {};
+    // The assembler spells the fields in the order f, s, x, c.
+    std::string Text = Field & ArmMsrSpsr ? "msr spsr_" : "msr cpsr_";
+    for (const auto &[Bit, Letter] :
+         {std::pair{8u, 'f'}, {4u, 's'}, {2u, 'x'}, {1u, 'c'}})
+      if (Mask & Bit)
+        Text += Letter;
+    return Text + ", $0";
+  }
+  case Intrinsic::ArmCps: {
+    const uint64_t Imod = Field >> 9, Masks = (Field >> 6) & 7;
+    const bool ChangesMode = (Field >> 5) & 1;
+    const uint64_t Mode = Field & 0x1F;
+    // A CPS that enables or disables changes a mask, and one that does
+    // neither enters a mode; any other is UNPREDICTABLE.
+    if (Field > 0x7FF || Imod == 1 || (Imod == 0) != (Masks == 0) ||
+        (Imod == 0 && !ChangesMode) || (!ChangesMode && Mode != 0))
+      return {};
+    std::string Text = Imod == 2 ? "cpsie " : Imod == 3 ? "cpsid " : "cps ";
+    for (const auto &[Bit, Letter] : {std::pair{4u, 'a'}, {2u, 'i'}, {1u, 'f'}})
+      if (Masks & Bit)
+        Text += Letter;
+    if (ChangesMode)
+      Text += (Imod ? ", #" : "#") + hexImmediate(Mode);
+    return Text;
+  }
+  default:
+    return {};
+  }
+}
+
 std::string intrinsicInstructionText(Intrinsic Id,
                                      std::optional<uint64_t> Operand) {
   if (!Operand || !intrinsicCarriesInstructionOperand(Id))

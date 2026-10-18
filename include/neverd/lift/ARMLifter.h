@@ -141,9 +141,12 @@ public:
                        bool IsSub);
   static void emitNZ(LiftState &S, NdVar Result);
 
-  /// Pack NZCV into a GPR (MRS APSR) / restore NZCV from a GPR (MSR APSR_nzcv).
-  static void emitMrsNzcv(LiftState &S, NdVar Dst);
+  /// Pack the APSR word an MRS reads into a GPR: the lifted N, Z, C, V and
+  /// GE flags over \p Machine, the machine's word, for its other bits.
+  static void emitMrsApsr(LiftState &S, NdVar Dst, NdVar Machine);
+  /// Restore N, Z, C and V (MSR APSR_nzcvq) or GE (MSR APSR_g) from a GPR.
   static void emitMsrNzcv(LiftState &S, NdVar Src);
+  static void emitMsrGe(LiftState &S, NdVar Src);
 
   // Snapshot a source operand into a temp when it aliases the destination
   // register, so flag computation reads the pre-write value (e.g. `adds

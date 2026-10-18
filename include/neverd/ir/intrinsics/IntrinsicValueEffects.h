@@ -60,6 +60,7 @@ constexpr bool intrinsicHasOnlyValueEffects(Intrinsic Id, uint8_t NumInputs,
 constexpr bool intrinsicWritesOnlyItsOutput(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::Mrs:
+  case Intrinsic::ArmMrs:
   case Intrinsic::ArmMrc:
   case Intrinsic::ArmMrrc:
   case Intrinsic::A64_GetFPSR:
@@ -77,6 +78,7 @@ constexpr bool intrinsicWritesOnlyItsOutput(Intrinsic Id) {
 constexpr bool intrinsicReadsSystemRegister(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::Mrs:
+  case Intrinsic::ArmMrs:
   case Intrinsic::ArmMrc:
   case Intrinsic::ArmMrrc:
   case Intrinsic::ReadCr0:

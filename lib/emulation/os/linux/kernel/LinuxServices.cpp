@@ -86,7 +86,14 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::FGetXAttr:
     return Files.extendedAttribute(Kind, Event, Options.LinuxKernel, Result);
   case ServiceKind::PPoll:
-    return Files.poll(Event, Options.LinuxKernel, Result);
+  case ServiceKind::Poll:
+    return Files.poll(Kind, Event, Result, Thread);
+  case ServiceKind::EpollCreate:
+  case ServiceKind::EpollCreate1:
+  case ServiceKind::EpollCtl:
+  case ServiceKind::EpollWait:
+  case ServiceKind::EpollPwait:
+    return Files.epoll(Kind, Event, Result, Thread);
   case ServiceKind::PSelect:
     return Files.select(Event, Result, Thread);
   case ServiceKind::Getdents64:
