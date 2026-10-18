@@ -4,6 +4,11 @@
 
 # Testing NeverD
 
+`NeverDDirectTailCallMetadataTests` builds real x86, x64 and AArch64 CFGs and
+validates direct tail-call targets at strict instruction boundaries. It covers
+fallthrough and conditional transfers into known functions, an existing direct
+jump, ordinary calls and indirect tail calls.
+
 `AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
 packed and RELR relocations on available CPU backends. Independent byte oracles
 cover word boundaries, untouched canaries, boolean queries, full-width extents,

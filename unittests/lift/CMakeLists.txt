@@ -1,3 +1,8 @@
+add_neverd_unittest(NeverDDirectTailCallMetadataTests
+  core/DirectTailCallMetadataTests.cpp
+  LINK_COMPONENTS IRLow Lift
+)
+
 add_neverd_unittest(NeverDSEHRuntimeMemoryTests
   core/LowScalarConstantTests.cpp
   eh/SEHRuntimeMemoryTests.cpp
